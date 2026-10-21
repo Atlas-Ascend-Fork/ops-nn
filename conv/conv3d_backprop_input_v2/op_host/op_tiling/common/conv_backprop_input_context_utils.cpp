@@ -1258,7 +1258,7 @@ static bool ValidateFractalZStorageShape(const gert::TilingContext* context, con
     }
 
     size_t filterInputIndex = FILTER_INDEX;
-    if (opType == optiling::OpTypeV2::kExtendConvTranspose) {
+    if (opType == optiling::OpTypeV2::kExtendConvTranspose || opType == optiling::OpTypeV2::kExtendConvTransposeV2) {
         filterInputIndex = OUT_BACKPROP_INDEX;
     }
     const auto filterShape = context->GetInputShape(filterInputIndex);
