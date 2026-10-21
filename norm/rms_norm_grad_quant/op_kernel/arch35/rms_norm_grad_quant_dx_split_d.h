@@ -34,7 +34,7 @@ public:
                                 __gm__ uint8_t* scales_x, __gm__ uint8_t* offset_x, __gm__ uint8_t* dx,
                                 __gm__ uint8_t* dgamma)
     {
-#if (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
         if constexpr (IsSameType<T_DX, hifloat8_t>::value) {
             AscendC::SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(0);
         }

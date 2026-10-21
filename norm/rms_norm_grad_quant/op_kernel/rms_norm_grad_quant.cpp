@@ -35,7 +35,7 @@ __global__ __aicore__ void rms_norm_grad_quant(GM_ADDR dy, GM_ADDR x, GM_ADDR rs
         return;
     }
     AscendC::TPipe pipe;
-#if (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
     int64_t oriOverflowMode = AscendC::GetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>();
 #endif
 
@@ -98,7 +98,7 @@ __global__ __aicore__ void rms_norm_grad_quant(GM_ADDR dy, GM_ADDR x, GM_ADDR rs
             opDgamma.ProcessWithLargeRows();
         }
     }
-#if (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
     AscendC::SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(oriOverflowMode);
 #endif
 }
