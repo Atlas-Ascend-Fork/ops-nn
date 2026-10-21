@@ -57,9 +57,6 @@ aclnnStatus CheckParams(const aclTensor* input, const aclTensor* out)
     OP_CHECK_DTYPE_NOT_MATCH(out, outDtype, return ACLNN_ERR_PARAM_INVALID);
     OP_CHECK_MAX_DIM(input, MAX_LOGIT_DIM_NUM, return ACLNN_ERR_PARAM_INVALID);
     OP_CHECK_SHAPE_NOT_EQUAL(input, out, return ACLNN_ERR_PARAM_INVALID);
-    OP_CHECK(input->GetViewFormat() == Format::FORMAT_ND && input->GetStorageFormat() == Format::FORMAT_ND &&
-                 out->GetViewFormat() == Format::FORMAT_ND && out->GetStorageFormat() == Format::FORMAT_ND,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Logit only supports ND format."), return ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 } // namespace
