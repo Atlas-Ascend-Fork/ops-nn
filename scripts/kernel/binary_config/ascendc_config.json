@@ -683,7 +683,7 @@
     {"name":"SparseToDense", "compute_units": ["ascend950", "ascend350"], "auto_sync" : true},
     {"name":"TopKTopPSample", "compute_units": ["ascend910b", "ascend910_93"], "auto_sync" : true},
     {"name":"SyncBatchNormBackWardReduce", "compute_units": ["ascend950"], "auto_sync" : true},
-    {"name":"Renorm", "compute_units": ["ascend950"], "auto_sync" : true},
+    {"name":"Renorm", "compute_units": ["ascend950", "ascend960dt"], "auto_sync" : true},
     {"name":"SyncBatchNormBackWardElemt", "compute_units": ["ascend950"], "auto_sync" : true},
     {"name":"AdaLayerNormGrad", "compute_units": ["ascend910b", "ascend910_93"], "auto_sync" : true},
     {"name":"MultiAddRmsNormDynamicQuant", "compute_units": ["ascend910b", "ascend910_93"], "auto_sync" : true},

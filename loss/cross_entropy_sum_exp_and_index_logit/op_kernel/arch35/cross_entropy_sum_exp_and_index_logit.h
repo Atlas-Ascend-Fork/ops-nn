@@ -127,7 +127,11 @@ private:
         pI.blockLen = static_cast<uint32_t>(curN * sizeof(int32_t));
         pI.srcStride = 0;
         pI.dstStride = 0;
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+        DataCopyPad(tgt, targetGm_[baseRow], pI, padI, true); // target[curN] → UB，开启pre-allocation
+#else
         DataCopyPad(tgt, targetGm_[baseRow], pI, padI); // target[curN] → UB
+#endif
         if constexpr (std::is_same<T, bfloat16_t>::value) {
             LocalTensor<T> gmaxIn = globalMaxInBuf_.template Get<T>();
             DataCopyPadExtParams<T> padD{false, 0, 0, 0};
@@ -136,7 +140,11 @@ private:
             pD.blockLen = static_cast<uint32_t>(curN * sizeof(T));
             pD.srcStride = 0;
             pD.dstStride = 0;
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+            DataCopyPad(gmaxIn, globalMaxGm_[baseRow], pD, padD, true); // global_max(BF16) → UB，开启pre-allocation
+#else
             DataCopyPad(gmaxIn, globalMaxGm_[baseRow], pD, padD); // global_max(BF16) → UB
+#endif
             SetWaitFlag<HardEvent::MTE2_V>();
             Cast(gmax, gmaxIn, RoundMode::CAST_NONE, AlignUp32<float>(curN)); // BF16→FP32
             SetWaitFlag<HardEvent::V_S>();                                    // gmax 供标量读
@@ -147,7 +155,11 @@ private:
             pD.blockLen = static_cast<uint32_t>(curN * sizeof(float));
             pD.srcStride = 0;
             pD.dstStride = 0;
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+            DataCopyPad(gmax, globalMaxGm_[baseRow], pD, padD, true); // global_max(FP32) → UB，开启pre-allocation
+#else
             DataCopyPad(gmax, globalMaxGm_[baseRow], pD, padD); // global_max(FP32) → UB
+#endif
         }
         SetWaitFlag<HardEvent::MTE2_S>(); // gmax 供标量读
         SetWaitFlag<HardEvent::MTE2_V>(); // target 供向量读（VF1 LoadAlign）

@@ -69,7 +69,9 @@ public:
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true)
             .ExtendCfgInfo("opFile.value", "sigmoid_cross_entropy_with_logits_grad_v2_apt");
+        // AICore().AddConfig 为 per-soc 注册点：ascend960dt 复用 ascend950 的同一份配置
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig);
     }
 };
 OP_ADD(SigmoidCrossEntropyWithLogitsGradV2);

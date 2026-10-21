@@ -70,8 +70,10 @@ public:
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true)
             .ExtendCfgInfo("opFile.value", "grouped_dynamic_mx_quant_with_dual_axis");
+        // AICore().AddConfig 为 per-soc 注册点：ascend960dt 复用 ascend950 的同一份配置
         this->AICore().AddConfig("ascend950", aicoreConfig);
         this->AICore().AddConfig("ascend350", aicoreConfig);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig);
     }
 };
 
