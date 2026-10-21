@@ -176,7 +176,8 @@ bool CheckAttrRangeDilations(const gert::TilingContext* context, const int64_t* 
     auto y_ori_format = context->GetOutputDesc(Y_INDEX)->GetOriginFormat();
     int32_t kDilationUpTmp = (IsArchAfter35(context) || IsSocVersionFuse(context)) ? kDimUp : kDilationUp;
     bool isFuseInputNCDHW = false;
-    if (IsSocVersionFuse(context) && op_type == optiling::OpTypeV2::kExtendConvTranspose) {
+    if (IsSocVersionFuse(context) && (op_type == optiling::OpTypeV2::kExtendConvTranspose ||
+                                      op_type == optiling::OpTypeV2::kExtendConvTransposeV2)) {
         isFuseInputNCDHW = context->GetInputDesc(FILTER_INDEX)->GetOriginFormat() == ge::FORMAT_NCDHW;
     }
     if (y_ori_format == ge::FORMAT_NCDHW || isFuseInputNCDHW) {
@@ -190,7 +191,8 @@ bool CheckAttrRangeStrides(const gert::TilingContext* context, const int64_t* st
     const auto op_name = context->GetNodeName();
     auto y_ori_format = context->GetOutputDesc(Y_INDEX)->GetOriginFormat();
     bool isFuseInputNCDHW = false;
-    if (IsSocVersionFuse(context) && op_type == optiling::OpTypeV2::kExtendConvTranspose) {
+    if (IsSocVersionFuse(context) && (op_type == optiling::OpTypeV2::kExtendConvTranspose ||
+                                      op_type == optiling::OpTypeV2::kExtendConvTransposeV2)) {
         isFuseInputNCDHW = context->GetInputDesc(FILTER_INDEX)->GetOriginFormat() == ge::FORMAT_NCDHW;
     }
     if (y_ori_format == ge::FORMAT_NCDHW || isFuseInputNCDHW) {
