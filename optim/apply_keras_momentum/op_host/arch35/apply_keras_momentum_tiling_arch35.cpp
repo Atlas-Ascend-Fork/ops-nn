@@ -179,6 +179,13 @@ static void CalcBlockTiling(ApplyKerasMomentumTilingData* tiling, int64_t totalE
     }
     tiling->blockNum = static_cast<uint32_t>(
         CeilDiv(static_cast<int64_t>(totalElements), static_cast<int64_t>(tiling->blockFormer)));
+    if (tiling->blockNum > static_cast<uint32_t>(coreNum)) {
+        // blockDim 受硬件/编译器上限约束：块数封顶到核数，单块通过多次 UB 循环处理更多数据
+        tiling->blockNum = static_cast<uint32_t>(coreNum);
+        tiling->blockFormer = CeilAlign(
+            CeilDiv(static_cast<int64_t>(totalElements), static_cast<int64_t>(tiling->blockNum)),
+            static_cast<int64_t>(ELEM_ALIGN_FACTOR));
+    }
     tiling->blockDim = tiling->blockNum;
 }
 
