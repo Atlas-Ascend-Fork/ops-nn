@@ -10,76 +10,177 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
+"""SoftmaxV2 golden：kernel/GEIR = softmax_v2（numpy），aclnn = aclnnSoftmax，
+e2e = torch.ops.aten._softmax（torch）。真值为 CPU aten._softmax；
+half_to_float=True 且 x 为 fp16 时输出 fp32。"""
+
 import numpy as np
 import torch
-import copy
 
-__golden__ = {
-    "kernel": {"softmax_v2": "softmax_v2_golden"},
-    "aclnn": {"aclnnSoftmax": "aclnn_softmax_golden"},
+try:
+    import ml_dtypes  # noqa: F401
+except ImportError:  # pragma: no cover
+    ml_dtypes = None
+
+__spec__ = {
+    "softmax_v2": "SoftmaxV2Spec",
+    "aclnnSoftmax": "AclnnSoftmaxSpec",
+    "torch.ops.aten._softmax": "AtenSoftmaxSpec",
 }
 
 
-def _normalize_axis(axis, shape_length):
-    normalized_axis = []
-    if isinstance(axis, int):
-        normalized_axis = [axis]
-    elif isinstance(axis, tuple):
-        normalized_axis = list(axis)
-    elif isinstance(axis, list):
-        normalized_axis = copy.deepcopy(axis)
-    if not normalized_axis:
-        normalized_axis = [-1]
-    normalized_axis = [v if v >= 0 else v + shape_length for v in normalized_axis]
-    normalized_axis = tuple(list(set(normalized_axis)))
-    return normalized_axis
+def _np_to_torch(array):
+    """numpy → torch CPU 张量（bf16 经 uint16 位视图无损转换）。"""
+    array = np.ascontiguousarray(array)
+    if ml_dtypes is not None and array.dtype == np.dtype(ml_dtypes.bfloat16):
+        return torch.from_numpy(array.view(np.uint16)).view(torch.bfloat16)
+    return torch.from_numpy(array)
 
 
-def _softmax(x, axis=None, output_dtype="float32"):
-    x_dtype = x.dtype
-    if "float16" in str(x_dtype):
-        x = x.astype("float32", copy=True)
-    reduce_max = np.amax(x, axis=axis, keepdims=True)
-    sub_0 = np.subtract(x, reduce_max)
-    exp_0 = np.exp(sub_0)
-    reduce_sum = np.sum(exp_0, axis=axis, keepdims=True)
-    out = np.divide(exp_0, reduce_sum)
-    return out.astype(output_dtype, copy=False)
+def _compute_dtype(*tensors):
+    """计算精度：任一入参 fp64 则整体 fp64（Promote），否则 fp32。"""
+    for tensor in tensors:
+        if tensor.dtype == torch.float64:
+            return torch.float64
+    return torch.float32
 
 
-def softmax_v2_golden(x, *, axis=None, output_dtype="float32", **kwargs):
-    input_ori_shapes = kwargs.get("input_ori_shapes", [[]])
-    ori_shape = input_ori_shapes[0]
-
-    if axis is None:
-        axis = kwargs.get("axes")
-
-    axis = _normalize_axis(axis, len(ori_shape))
-    result = _softmax(x, axis, output_dtype)
-
-    return result
+def _torch_to_numpy(tensor, dtype_name):
+    """结果 → numpy，cast 到输出 dtype。"""
+    array = tensor.detach().cpu().numpy()
+    return np.ascontiguousarray(array.astype(dtype_name, copy=False))
 
 
-def aclnn_softmax_golden(selfT, dim, out, **kwargs):
-    """
-    Aclnn golden for aclnnSoftmax.
-    All the parameters (name & order) follow \
-        function `aclnnSoftmaxGetWorkspaceSize` in @aclnn_softmax.h \
-        without `workspaceSize` & `executor`.
-    When all dtypes are natively supported by torch, \
-        the Tensors in the parameters are all torch.Tensor. \
-        Conversely, when not, the Tensors in the parameters are all numpy.ndarray.
+def _normalize_axes(axes, ndim):
+    """axes/axis 归一化：负轴转正、去重排序，缺省 [-1]。"""
+    if axes is None:
+        axes = [-1]
+    if isinstance(axes, int):
+        axes = [axes]
+    axes = [int(a) for a in axes]
+    if not axes:
+        axes = [-1]
+    return sorted({a if a >= 0 else a + ndim for a in axes})
 
-    Args:
-        kwargs: tensor_{dtypes, formats}, scalar_dtypes, short_soc_version, testcase_name
 
-    Returns:
-        Output tensors.
-    """
-    input_data_dtype = selfT.dtype
-    if "float16" in str(input_data_dtype):
-        selfT = selfT.to(dtype=torch.float32)
+def _aten_softmax(x, axes, half_to_float):
+    """aten 真值：单轴直调；多轴折叠到末轴整体归约。"""
+    if len(axes) == 1:
+        return torch.ops.aten._softmax(x, axes[0], bool(half_to_float))
+    keep = [i for i in range(x.dim()) if i not in axes]
+    keep_shape = [x.shape[i] for i in keep]
+    axes_shape = [x.shape[i] for i in axes]
+    perm = keep + axes
+    folded = x.permute(perm).reshape(*keep_shape, -1)
+    out = torch.ops.aten._softmax(folded, -1, bool(half_to_float))
+    return out.reshape(*keep_shape, *axes_shape).permute(
+        [perm.index(i) for i in range(x.dim())]
+    )
 
-    result = torch.softmax(selfT, dim=dim)
-    result = result.to(dtype=out.dtype)
-    return result
+
+class SoftmaxV2Spec:
+    """kernel/GEIR 流程：numpy 入/出。"""
+
+    def golden(x, *, axes=None, axis=None, half_to_float=False, **kwargs):
+        """参数跟随 softmax_v2_def.cpp，axes 默认 [-1]，half_to_float 为 Bool 属性。"""
+        dim = _normalize_axes(axes if axes is not None else axis, x.ndim)
+        x_raw = _np_to_torch(x)
+        y = _aten_softmax(x_raw.to(_compute_dtype(x_raw)), dim, False)
+
+        out_dtypes = [str(d) for d in (kwargs.get("output_dtypes") or ())]
+        if out_dtypes:
+            target = out_dtypes[0]
+        elif half_to_float and x_raw.dtype == torch.float16:
+            target = "float32"
+        else:
+            target = str(x.dtype)
+        return _torch_to_numpy(y, target)
+
+    class ThirdPartyImpl:
+        """torch 三方标杆：axes → dim 适配。"""
+
+        def __init__(self, *, axes=None, half_to_float=False, **kwargs):
+            self.dim = int(axes[0]) if axes else -1
+            self.half_to_float = bool(half_to_float)
+
+        def __call__(self, x, **kwargs):
+            if self.half_to_float and not x.is_cuda:
+                # half_to_float 仅 CUDA 后端支持，CPU 以等价 fp32 计算实现
+                xf = x.float() if x.dtype == torch.float16 else x
+                return [torch.softmax(xf, dim=self.dim)]
+            return [torch.ops.aten._softmax(x, self.dim, self.half_to_float)]
+
+    third_party = {"torch": ThirdPartyImpl}
+    tolerance = {
+        "float16": {"standard": "mix_tolerance"},
+        "bfloat16": {"standard": "mix_tolerance"},
+        "float32": {"standard": "mix_tolerance"},
+    }
+
+
+class AclnnSoftmaxSpec:
+    """aclnn 流程：torch 入/出。"""
+
+    def golden(selfT, dim, out=None, **kwargs):
+        """参数跟随 aclnnSoftmaxGetWorkspaceSize（不含 workspaceSize 与 executor）。"""
+        dim = _normalize_axes(dim, selfT.dim())[0]
+        x = selfT.to(_compute_dtype(selfT))
+        y = _aten_softmax(x, [dim], False)
+        target = out.dtype if out is not None else selfT.dtype
+        return y.to(target)
+
+    class ThirdPartyImpl:
+        """torch 三方标杆：dim 直传。"""
+
+        def __init__(self, *, dim=-1, **kwargs):
+            self.dim = int(dim)
+
+        def __call__(self, *args, **kwargs):
+            # 入参名 self 与保留名冲突，按位置取 args[0]
+            return [torch.ops.aten._softmax(args[0], self.dim, False)]
+
+    third_party = {"torch": ThirdPartyImpl}
+    tolerance = {
+        "float16": {"standard": "mix_tolerance"},
+        "bfloat16": {"standard": "mix_tolerance"},
+        "float32": {"standard": "mix_tolerance"},
+    }
+
+
+class AtenSoftmaxSpec:
+    """e2e 流程：torch 入/出。"""
+
+    def golden(selfT, dim, half_to_float=False, **kwargs):
+        """参数跟随 aten schema；fp16 输入且 half_to_float=True 时输出 fp32。"""
+        dim = _normalize_axes(dim, selfT.dim())[0]
+        x_raw = selfT.detach().cpu()
+        y = _aten_softmax(x_raw.to(_compute_dtype(x_raw)), [dim], False)
+        target = (
+            torch.float32
+            if (half_to_float and x_raw.dtype == torch.float16)
+            else selfT.dtype
+        )
+        return y.to(target)
+
+    class ThirdPartyImpl:
+        """torch 三方标杆：dim/half_to_float 透传。"""
+
+        def __init__(self, *, dim=-1, half_to_float=False, **kwargs):
+            self.dim = int(dim)
+            self.half_to_float = bool(half_to_float)
+
+        def __call__(self, *args, **kwargs):
+            # 入参名 self 与保留名冲突，按位置取 args[0]
+            x = args[0]
+            if self.half_to_float and not x.is_cuda:
+                # half_to_float 仅 CUDA 后端支持，CPU 以等价 fp32 计算实现
+                xf = x.float() if x.dtype == torch.float16 else x
+                return [torch.softmax(xf, dim=self.dim)]
+            return [torch.ops.aten._softmax(x, self.dim, self.half_to_float)]
+
+    third_party = {"torch": ThirdPartyImpl}
+    tolerance = {
+        "float16": {"standard": "mix_tolerance"},
+        "bfloat16": {"standard": "mix_tolerance"},
+        "float32": {"standard": "mix_tolerance"},
+    }
