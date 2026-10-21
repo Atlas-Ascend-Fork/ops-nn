@@ -51,11 +51,12 @@ constexpr size_t DEFAULT_FP32_C0 = 8;
 constexpr size_t BLOCK_CUBE = 16;
 constexpr int32_t DILATION_LOWWER = 1;
 constexpr int32_t DILATION_UPPER = static_cast<int32_t>(UINT8_MAX);
-constexpr int64_t OUTPUT_PADDING_UPPER = static_cast<int64_t>(UINT8_MAX);
 constexpr int32_t STRIDE_LOWER = 1;
 constexpr int32_t STRIDE_UPPER = INT32_MAX - 1;
 constexpr int32_t PAD_LOWWER = 0;
 int32_t PAD_UPPER = static_cast<int32_t>(UINT8_MAX);
+constexpr int32_t OUTPUT_PADDING_LOWWER = 0;
+constexpr int32_t OUTPUT_PADDING_UPPER = INT32_MAX - 1;
 constexpr int32_t SHAPE_LOWER = 1;
 constexpr int32_t SHAPE_UPPER = INT32_MAX - 1;
 } // namespace
@@ -281,14 +282,10 @@ bool SetOutputPaddingAttr(const gert::TilingContext* context, Conv3dBpFilterV2Ru
 
     const int64_t* outputPaddingData = static_cast<const int64_t*>(outputPadding->GetData());
     for (size_t i = 0; i < outputPadding->GetSize(); i++) {
-        if (outputPaddingData[i] < 0 || outputPaddingData[i] > OUTPUT_PADDING_UPPER) {
-            OP_LOGD(op_name, "output_padding[%zu]=%ld out of valid range [0,255], use default value 0", i,
-                    outputPaddingData[i]);
-            runInfoV2.output_padding.output_padding_d = 0;
-            runInfoV2.output_padding.output_padding_h = 0;
-            runInfoV2.output_padding.output_padding_w = 0;
-            return true;
-        }
+        OP_CHECK_IF(outputPaddingData[i] < OUTPUT_PADDING_LOWWER || outputPaddingData[i] > OUTPUT_PADDING_UPPER,
+                    OP_LOGE(op_name, "output_padding[%zu]=%ld out of valid range [0,%d].", i, outputPaddingData[i],
+                            OUTPUT_PADDING_UPPER),
+                    return false);
     }
 
     std::vector<int64_t> normalized_output_padding(outputPadding->GetSize(), 0);

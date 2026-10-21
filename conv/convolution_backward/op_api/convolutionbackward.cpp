@@ -903,8 +903,7 @@ static const aclIntArray* AdaptOutputPaddingTo5D(const aclTensor* input, const a
                                                  aclOpExecutor* executor)
 {
     // only ascend950 support
-    auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    if (!Ops::NN::AclnnUtil::IsRegbase(curArch)) {
+    if (!Ops::NN::AclnnUtil::IsRegbase()) {
         OP_LOGD("unsupported soc, no need use output_padding.");
         return outputPadding;
     }

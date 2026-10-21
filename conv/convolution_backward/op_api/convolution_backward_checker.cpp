@@ -132,11 +132,11 @@ bool CheckResolutionGEKernelShape(const op::Shape& inputShape, const op::Shape& 
              OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
                  ACLNN_CONVOLUTION_BACKWARD_NAME, "input, padding",
                  FormatString("%ld,%ld", inputShape.GetDim(dimIdx), (*params.padding)[dimOrder]),
-                 FormatString(
-                     "(in_dim + pad_dim * 2) should be greater than or equal to "
-                     "((weight_shape - 1) * dilation + 1), current in_dim=%d, pad_dim=%d, weight_shape=%d, dilation=%d",
-                     inputShape.GetDim(dimIdx), (*params.padding)[dimOrder], weightShape[dimIdx],
-                     (*params.dilation)[dimOrder])),
+                 FormatString("(in_dim + pad_dim * 2 - output_padding) should be greater than or equal to "
+                              "((weight_shape - 1) * dilation + 1), current in_dim=%d, pad_dim=%d, output_padding= "
+                              "%d,weight_shape=%d, dilation=%d",
+                              inputShape.GetDim(dimIdx), (*params.padding)[dimOrder], outputPad, weightShape[dimIdx],
+                              (*params.dilation)[dimOrder])),
              return false);
     return true;
 }
@@ -496,6 +496,48 @@ bool ConvolutionBackwardChecker::CheckDtypeValidForBpFilter8bit(const DataType& 
     return true;
 }
 
+static bool CheckOutputPadding(const ConvolutionBackwardParams& params, size_t inputDim)
+{
+    if (params.transposed) {
+        OP_CHECK(CheckParamsValue(params.outputPadding, true),
+                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                     ACLNN_CONVOLUTION_BACKWARD_NAME, "outputPadding", AclarrayToString(params.outputPadding).c_str(),
+                     "when transposed=true, the value of outputPadding must be greater than or equal to 0"),
+                 return false);
+        if (inputDim == CONV3DINPUTDIM) {
+            const uint64_t paramsDim = inputDim - 2;
+            OP_CHECK(params.stride->Size() == paramsDim && params.dilation->Size() == paramsDim &&
+                         params.outputPadding->Size() == paramsDim,
+                     OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                         ACLNN_CONVOLUTION_BACKWARD_NAME, "stride, dilation, outputPadding, input",
+                         FormatString("%zu,%zu,%zu,%zu", params.stride->Size(), params.dilation->Size(),
+                                      params.outputPadding->Size(), inputDim),
+                         "the shape dim of [stride], [dilation] and [outputPadding] must be 2 less than the shape dim "
+                         "of input"),
+                     return false);
+            for (uint64_t i = 0; i < params.outputPadding->Size(); ++i) {
+                OP_CHECK((*params.outputPadding)[i] < (*params.stride)[i] ||
+                             (*params.outputPadding)[i] < (*params.dilation)[i],
+                         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                             ACLNN_CONVOLUTION_BACKWARD_NAME, "outputPadding",
+                             AclarrayToString(params.outputPadding).c_str(),
+                             "when transposed=true, the value of outputPadding must be less than stride or dilation"),
+                         return false);
+            }
+        }
+    } else if (params.outputPadding != nullptr) { // !transposed, outputPadding value is unneeded
+        for (uint64_t i = 0; i < params.outputPadding->Size(); ++i) {
+            OP_CHECK(
+                (*params.outputPadding)[i] == 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ACLNN_CONVOLUTION_BACKWARD_NAME, "outputPadding",
+                                                      AclarrayToString(params.outputPadding).c_str(),
+                                                      "when transposed=false, the value of outputPadding must be 0"),
+                return false);
+        }
+    }
+    return true;
+}
+
 bool ConvolutionBackwardChecker::CheckConvParams(size_t inputDim)
 {
     // stride >= 1
@@ -519,33 +561,8 @@ bool ConvolutionBackwardChecker::CheckConvParams(size_t inputDim)
                                                    "the value of dilation must be greater than or equal to 1"),
              return false);
     // outputPadding >= 0
-    if (params_.transposed) {
-        OP_CHECK(CheckParamsValue(params_.outputPadding, true),
-                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                     ACLNN_CONVOLUTION_BACKWARD_NAME, "outputPadding", AclarrayToString(params_.outputPadding).c_str(),
-                     "when transposed=true, the value of outputPadding must be greater than or equal to 0"),
-                 return false);
-        if (inputDim == CONV3DINPUTDIM) {
-            for (uint64_t i = 0; i < params_.outputPadding->Size(); ++i) {
-                OP_CHECK((*params_.outputPadding)[i] < (*params_.stride)[i] ||
-                             (*params_.outputPadding)[i] < (*params_.dilation)[i],
-                         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                             ACLNN_CONVOLUTION_BACKWARD_NAME, "outputPadding",
-                             AclarrayToString(params_.outputPadding).c_str(),
-                             "when transposed=true, the value of outputPadding must be less than stride or dilation"),
-                         return false);
-            }
-        }
-    } else if (params_.outputPadding != nullptr) { // !transposed, outputPadding value is unneeded
-        for (uint64_t i = 0; i < params_.outputPadding->Size(); ++i) {
-            OP_CHECK(
-                (*params_.outputPadding)[i] == 0,
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ACLNN_CONVOLUTION_BACKWARD_NAME, "outputPadding",
-                                                      AclarrayToString(params_.outputPadding).c_str(),
-                                                      "when transposed=false, the value of outputPadding must be 0"),
-                return false);
-        }
-    }
+    OP_CHECK(CheckOutputPadding(params_, inputDim), OP_LOGD("CheckOutputPadding failed, inputDim=%zu", inputDim),
+             return false);
 
     // group >= 1
     OP_CHECK(params_.groups >= 1,
@@ -777,9 +794,9 @@ bool ConvolutionBackwardChecker::CheckConvChannelAndGroup()
 bool ConvolutionBackwardChecker::CheckConv3DTransposedShape(const op::Shape& inputShape, const op::Shape& weightShape,
                                                             const op::Shape& gradOutShape)
 {
-    int64_t depthIdx = 2;  // NCDHW
-    int64_t heightIdx = 3; // NCDHW
-    int64_t widthIdx = 4;  // NCDHW
+    const int64_t depthIdx = NCDHW_D_DIM;
+    const int64_t heightIdx = NCDHW_H_DIM;
+    const int64_t widthIdx = NCDHW_W_DIM;
     if (!CheckResolutionGEKernelShape(inputShape, weightShape, params_, depthIdx) ||
         !CheckResolutionGEKernelShape(inputShape, weightShape, params_, heightIdx) ||
         !CheckResolutionGEKernelShape(inputShape, weightShape, params_, widthIdx)) {
@@ -809,9 +826,9 @@ bool ConvolutionBackwardChecker::CheckConv3DNonTransposedShape(const op::Shape& 
     struct ExpectValue expectValue = {};
     int64_t gradOutputCout = 0;
     if (!Ops::NN::AclnnUtil::IsRegbase()) {
-        int64_t depthIdx = 2;  // NCDHW
-        int64_t heightIdx = 3; // NCDHW
-        int64_t widthIdx = 4;  // NCDHW
+        const int64_t depthIdx = NCDHW_D_DIM;
+        const int64_t heightIdx = NCDHW_H_DIM;
+        const int64_t widthIdx = NCDHW_W_DIM;
         gradOutputCout = gradOutShape.GetDim(1);
         if (!CheckResolutionGEKernelShape(inputShape, weightShape, params_, depthIdx) ||
             !CheckResolutionGEKernelShape(inputShape, weightShape, params_, heightIdx) ||
