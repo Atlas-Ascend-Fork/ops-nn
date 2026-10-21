@@ -28,6 +28,12 @@
 //
 //   The INFER_SHAPE equivalent is in op_host/gn_training_update_infershape.cpp.
 //
+//   No rt1.0 (V1) infer-shape is registered here on purpose: V1 is the legacy
+//   ge::InferShapeFuncRegister mechanism. The graph route is served by the V2
+//   IMPL_OP_INFERSHAPE callbacks in op_host/gn_training_update_infershape.cpp;
+//   the canndev built-in legacy V1 for this op type is isolated by
+//   TILING_REG_FLAG in newer packages.
+//
 // CONTENTS:
 //   - InferDataTypeForGnTrainingUpdate() — the type inference function
 //   - IMPL_OP(...).InferDataType(...) — registration
@@ -47,8 +53,6 @@
 // =============================================================================
 
 #include "register/op_impl_registry.h" // IMPL_OP macro for operator registration
-#include "graph/operator_reg.h"        // IMPLEMT_COMMON_INFERFUNC, COMMON_INFER_FUNC_REG
-#include "graph/operator.h"            // ge::Operator, ge::TensorDesc
 #include "op_common/log/log.h"         // OP_LOGE
 #include <vector>
 
@@ -82,109 +86,6 @@ ge::graphStatus CheckInputDtypes(const std::vector<ge::DataType>& dtypes, const 
         }
         if (dt != ge::DT_FLOAT) {
             OP_LOGE(op_name, "input %zu dtype must be float32.", i);
-            return ge::GRAPH_FAILED;
-        }
-    }
-    return ge::GRAPH_SUCCESS;
-}
-
-constexpr int64_t kUnknownDimNum = -2; // unknown-rank marker {-2}
-
-bool IsUnknownRankShape(const ge::Shape& s) { return s.GetDimNum() == 1 && s.GetDim(0) == kUnknownDimNum; }
-
-// dim must be 1 unless unknown.
-bool DimIsOne(int64_t d) { return d < 0 || d == 1; }
-
-// Statistics/affine 5D tensors carry the group axis at axis 1 (NCHW) or
-// axis 3 (NHWC); every other non-batch axis must be 1. Both group axes
-// concrete and non-1 means a mixed/ambiguous layout. Unknown-rank shapes
-// cannot be validated and pass.
-bool StatShapeCanonical(const ge::Shape& shape)
-{
-    if (IsUnknownRankShape(shape)) {
-        return true;
-    }
-    if (!DimIsOne(shape.GetDim(2)) || !DimIsOne(shape.GetDim(4))) {
-        return false;
-    }
-    const int64_t d1 = shape.GetDim(1);
-    const int64_t d3 = shape.GetDim(3);
-    if (d1 >= 0 && d1 != 1 && d3 >= 0 && d3 != 1) {
-        return false;
-    }
-    return true;
-}
-
-// Per-dim equality with unknown-dim wildcard. An unknown-rank side matches
-// anything: its dims cannot be validated at compile time.
-bool DimsMatch(const ge::Shape& a, const ge::Shape& b)
-{
-    if (IsUnknownRankShape(a) || IsUnknownRankShape(b)) {
-        return true;
-    }
-    if (a.GetDimNum() != b.GetDimNum()) {
-        return false;
-    }
-    for (size_t i = 0; i < a.GetDimNum(); ++i) {
-        const int64_t da = a.GetDim(i);
-        const int64_t db = b.GetDim(i);
-        if (da >= 0 && db >= 0 && da != db) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// Shape contract for the V1 route. Absent optional inputs (dtype
-// DT_UNDEFINED) are skipped. Unknown rank only defers checks involving the
-// unknown tensor; concrete illegal shapes of the other inputs are rejected.
-ge::graphStatus CheckInputShapesV1(const ge::Shape& x_shape, const ge::Shape& sum_shape,
-                                   const ge::Shape& square_sum_shape, const ge::Shape* scale_shape,
-                                   const ge::Shape* offset_shape, const ge::Shape* mean_shape,
-                                   const ge::Shape* variance_shape, const char* op_name)
-{
-    // Unknown rank only defers the comparisons that actually involve the
-    // unknown value: x-side checks run when x rank is known, sum-side checks
-    // run when sum rank is known, cross checks when both are known.
-    const bool x_unknown_rank = IsUnknownRankShape(x_shape);
-    const bool sum_unknown_rank = IsUnknownRankShape(sum_shape);
-    if (!x_unknown_rank && x_shape.GetDimNum() != 4) {
-        OP_LOGE(op_name, "x must be 4D.");
-        return ge::GRAPH_FAILED;
-    }
-    if (!sum_unknown_rank) {
-        if (sum_shape.GetDimNum() != 5 ||
-            (!IsUnknownRankShape(square_sum_shape) && square_sum_shape.GetDimNum() != 5)) {
-            OP_LOGE(op_name, "sum/square_sum must be 5D.");
-            return ge::GRAPH_FAILED;
-        }
-        if (!DimsMatch(square_sum_shape, sum_shape)) {
-            OP_LOGE(op_name, "square_sum shape must equal sum shape.");
-            return ge::GRAPH_FAILED;
-        }
-        if (!StatShapeCanonical(sum_shape)) {
-            OP_LOGE(op_name, "sum shape must be [N,G,1,1,1] or [N,1,1,G,1].");
-            return ge::GRAPH_FAILED;
-        }
-        for (const ge::Shape* reserved : {mean_shape, variance_shape}) {
-            if (reserved != nullptr && !DimsMatch(*reserved, sum_shape)) {
-                OP_LOGE(op_name, "mean/variance shape must equal sum shape.");
-                return ge::GRAPH_FAILED;
-            }
-        }
-        for (const ge::Shape* affine : {scale_shape, offset_shape}) {
-            if (affine != nullptr && !IsUnknownRankShape(*affine) &&
-                (affine->GetDimNum() != 5 || !DimIsOne(affine->GetDim(0)) || !StatShapeCanonical(*affine))) {
-                OP_LOGE(op_name, "scale/offset shape must be [1,G,1,1,1] or [1,1,1,G,1].");
-                return ge::GRAPH_FAILED;
-            }
-        }
-    }
-    if (!x_unknown_rank && !sum_unknown_rank) {
-        const int64_t x_n = x_shape.GetDim(0);
-        const int64_t sum_n = sum_shape.GetDim(0);
-        if (x_n >= 0 && sum_n >= 0 && x_n != sum_n) {
-            OP_LOGE(op_name, "sum batch dim must equal x batch dim.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -241,89 +142,3 @@ static ge::graphStatus InferDataTypeForGnTrainingUpdate(gert::InferDataTypeConte
 IMPL_OP(GnTrainingUpdate).InferDataType(InferDataTypeForGnTrainingUpdate);
 IMPL_OP(GNTrainingUpdate).InferDataType(InferDataTypeForGnTrainingUpdate);
 } // namespace ops
-
-// ---------------------------------------------------------------------------
-// V1 (Runtime 1.0) infer-shape override for GNTrainingUpdate.
-//
-// CANN's built-in legacy op proto (libopgraph_legacy.so, reduce_ops.cc
-// GNTrainingUpdateInferShape) registers a V1 common infer func for the same
-// graph op type. GE's CallInferFunc prefers a V1 func on the OpDesc when one
-// exists, and the built-in V1 func hard-fails unless the input format is
-// NCHW/NHWC — this operator's interface is FORMAT_ND, so every GEIR case was
-// rejected before the V2 IMPL_OP_INFERSHAPE callback could run.
-//
-// This V1 func implements the same derivation as the V2 callbacks (y <- x;
-// batch_mean/batch_variance <- sum, shapes and dtypes) WITHOUT the
-// NCHW/NHWC-only format restriction, so FORMAT_ND graphs infer correctly.
-// The vendor opsproto so is loaded before the built-in package, so this
-// registration shadows the built-in V1 func for GNTrainingUpdate.
-// ---------------------------------------------------------------------------
-IMPLEMT_COMMON_INFERFUNC(InferShapeV1ForGnTrainingUpdate)
-{
-    // ---- input validation (same contract as the V2 callbacks) ----
-    // Name-based desc reads are safe for absent optional inputs: they report
-    // a default desc with DT_UNDEFINED dtype and are skipped.
-    const char* input_names[7] = {"x", "sum", "square_sum", "scale", "offset", "mean", "variance"};
-    std::vector<ge::DataType> input_dtypes;
-    std::vector<ge::Shape> input_shapes;
-    for (const char* name : input_names) {
-        auto desc = op.GetInputDescByName(name);
-        input_dtypes.push_back(desc.GetDataType());
-        input_shapes.push_back(desc.GetShape());
-        // Format contract: x 支持 FORMAT_ND/NCHW/NHWC（与 OpDef/aclnn/tiling
-        // 对齐），其余输入仅 FORMAT_ND。Absent optional inputs (DT_UNDEFINED)
-        // are skipped.
-        if (desc.GetDataType() != ge::DT_UNDEFINED) {
-            bool isX = (name == input_names[0]);
-            ge::Format fmt = desc.GetFormat();
-            bool fmtOk = isX ? (fmt == ge::FORMAT_ND || fmt == ge::FORMAT_NCHW || fmt == ge::FORMAT_NHWC) :
-                               (fmt == ge::FORMAT_ND);
-            if (!fmtOk) {
-                OP_LOGE("GnTrainingUpdate", "input %s format unsupported.", name);
-                return GRAPH_FAILED;
-            }
-        }
-    }
-    if (ops::CheckInputDtypes(input_dtypes, "GnTrainingUpdate") != ge::GRAPH_SUCCESS) {
-        return GRAPH_FAILED;
-    }
-    // Absent optional inputs report DT_UNDEFINED and are skipped in shape checks.
-    const auto present = [&input_dtypes, &input_shapes](size_t i) -> const ge::Shape* {
-        return input_dtypes[i] == ge::DT_UNDEFINED ? nullptr : &input_shapes[i];
-    };
-    if (ops::CheckInputShapesV1(input_shapes[0], input_shapes[1], input_shapes[2], present(3), present(4), present(5),
-                                present(6), "GnTrainingUpdate") != ge::GRAPH_SUCCESS) {
-        return GRAPH_FAILED;
-    }
-
-    // y <- x shape + dtype (normalization never changes the feature map)
-    auto x_desc = op.GetInputDescByName("x");
-    TensorDesc y_desc = op.GetOutputDescByName("y");
-    y_desc.SetShape(x_desc.GetShape());
-    y_desc.SetDataType(x_desc.GetDataType());
-    if (op.UpdateOutputDesc("y", y_desc) != GRAPH_SUCCESS) {
-        OP_LOGE("GnTrainingUpdate", "UpdateOutputDesc y failed.");
-        return GRAPH_FAILED;
-    }
-
-    // batch_mean / batch_variance <- sum shape + dtype (float32)
-    auto sum_desc = op.GetInputDescByName("sum");
-    TensorDesc mean_desc = op.GetOutputDescByName("batch_mean");
-    mean_desc.SetShape(sum_desc.GetShape());
-    mean_desc.SetDataType(sum_desc.GetDataType());
-    if (op.UpdateOutputDesc("batch_mean", mean_desc) != GRAPH_SUCCESS) {
-        OP_LOGE("GnTrainingUpdate", "UpdateOutputDesc batch_mean failed.");
-        return GRAPH_FAILED;
-    }
-
-    TensorDesc variance_desc = op.GetOutputDescByName("batch_variance");
-    variance_desc.SetShape(sum_desc.GetShape());
-    variance_desc.SetDataType(sum_desc.GetDataType());
-    if (op.UpdateOutputDesc("batch_variance", variance_desc) != GRAPH_SUCCESS) {
-        OP_LOGE("GnTrainingUpdate", "UpdateOutputDesc batch_variance failed.");
-        return GRAPH_FAILED;
-    }
-
-    return GRAPH_SUCCESS;
-}
-COMMON_INFER_FUNC_REG(GNTrainingUpdate, InferShapeV1ForGnTrainingUpdate);
