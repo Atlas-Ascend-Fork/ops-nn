@@ -85,6 +85,8 @@ inline int64_t RARecomputeBytesPerChannel(int64_t rDim, int64_t rFactor)
 {
     int64_t blockCount = Ops::Base::CeilDiv(rDim, rFactor);
     int64_t cacheCount = blockCount <= 1 ? 1 : ULONG_BIT_LEN - __builtin_clzl(blockCount - 1);
+    // All queues reserve FP32 storage: three R-by-C feature tiles, three C-sized
+    // parameter queues, and two C-by-cacheCount reduction queues, each double buffered.
     return FLOAT_BYTE_NUMBER * DOUBLE_BUFFER * (THREE * rFactor + THREE + TWO * cacheCount);
 }
 
@@ -100,13 +102,77 @@ inline void CalcRARecomputeLoopFactors(int64_t blockFactor, int64_t rDim, uint64
     if (maxChannels < BASIC_FACTOR) {
         return;
     }
-    // Keep a whole core's channels together when possible; otherwise split only
-    // after filling the UB budget at the minimum binary-reduction row count.
+    // Maximize C using the R=16 UB budget, then retain the largest R in {64, 32, 16}
+    // that fits this C tile. The cache refinement may narrow C afterward.
     aFactor = std::min(blockFactor, maxChannels);
     aFactorAligned = Ops::Base::CeilAlign(aFactor, BASIC_FACTOR);
     while (rFactor > MIN_R_FACTOR &&
            aFactorAligned * RARecomputeBytesPerChannel(rDim, rFactor) > static_cast<int64_t>(ubSize)) {
         rFactor /= TWO;
+    }
+}
+
+inline uint64_t RARecomputeLoopCount(int64_t blockFactor, int64_t rDim, int64_t aFactor, int64_t rFactor)
+{
+    uint64_t aLoops = blockFactor / aFactor + (blockFactor % aFactor != 0);
+    uint64_t rLoops = rDim / rFactor + (rDim % rFactor != 0);
+    return aLoops > UINT64_MAX / rLoops ? UINT64_MAX : aLoops * rLoops;
+}
+
+inline void CalcRARecomputeCacheFactors(int64_t blockFactor, int64_t rDim, int64_t aDim, int64_t dtypeSize,
+                                        int64_t numBlocks, uint64_t ubSize, uint64_t l2Size, int64_t& aFactor,
+                                        int64_t& aFactorAligned, int64_t& rFactor)
+{
+    constexpr int64_t COPY_ALIGN_BYTES = 256;
+    int64_t alignedChannels = COPY_ALIGN_BYTES / dtypeSize;
+    // 256B alignment is a performance gate for strided copies, not an API requirement.
+    // Require both the GM row pitch and the per-core C stride to be aligned.
+    // Unaligned layouts retain the wider UB tile to avoid inefficient narrow copies.
+    if (blockFactor <= BASIC_FACTOR || rDim < BASIC_FACTOR || numBlocks <= 0 || l2Size == 0 ||
+        aDim % alignedChannels != 0 || blockFactor % alignedChannels != 0) {
+        return;
+    }
+    // Estimate the shared-L2 working set as 3 * rDim * Ctile * numBlocks * dtypeSize:
+    // x/dy are read again for dx, whose writes may evict their cache lines.
+    // Use the full R dimension to model reuse between passes, rather than one R tile.
+    // This is a capacity heuristic; the platform reports total L2, not free space.
+    uint64_t cacheChannels = l2Size / THREE / dtypeSize / rDim / numBlocks;
+    cacheChannels = std::min(cacheChannels, static_cast<uint64_t>(blockFactor));
+    cacheChannels = cacheChannels / BASIC_FACTOR * BASIC_FACTOR;
+    // Keep the UB tile if even C=64 cannot fit, or the current C already fits.
+    if (cacheChannels < BASIC_FACTOR || cacheChannels >= static_cast<uint64_t>(aFactor)) {
+        return;
+    }
+    // Rank by ceil(blockFactor / Ctile) * ceil(rDim / Rtile), an estimate of the
+    // per-core C/R tile count rather than execution time.
+    uint64_t currentLoops = RARecomputeLoopCount(blockFactor, rDim, aFactor, rFactor);
+    uint64_t bestLoops = UINT64_MAX;
+    int64_t bestALoops = INT64_MAX;
+    int64_t bestA = aFactor;
+    int64_t bestR = rFactor;
+    // Try R=64/32/16 under both budgets; each R also changes the reduction-cache depth.
+    for (int64_t candidateR : {BASIC_FACTOR, BASIC_FACTOR / TWO, BASIC_FACTOR / (TWO * TWO)}) {
+        uint64_t ubChannels = ubSize / RARecomputeBytesPerChannel(rDim, candidateR);
+        ubChannels = ubChannels / BASIC_FACTOR * BASIC_FACTOR;
+        int64_t candidateA = static_cast<int64_t>(std::min(cacheChannels, ubChannels));
+        if (candidateA < BASIC_FACTOR) {
+            continue;
+        }
+        uint64_t loops = RARecomputeLoopCount(blockFactor, rDim, candidateA, candidateR);
+        int64_t aLoops = blockFactor / candidateA + (blockFactor % candidateA != 0);
+        // Equal tile counts favor fewer C loops to limit parameter reloads and tails.
+        if (loops < bestLoops || (loops == bestLoops && aLoops < bestALoops)) {
+            bestLoops = loops;
+            bestALoops = aLoops;
+            bestA = candidateA;
+            bestR = candidateR;
+        }
+    }
+    // Apply only a candidate whose total C/R tile count does not exceed the UB fallback.
+    if (bestLoops != UINT64_MAX && bestLoops <= currentLoops) {
+        aFactor = bestA;
+        aFactorAligned = bestA;
+        rFactor = bestR;
     }
 }
 
@@ -984,6 +1050,23 @@ ge::graphStatus BatchNormGradV3RARecomputeTilingBase::DoOpTiling()
     int64_t aDim_ = tilingData.baseTilingData.get_aDim();
     OP_TILING_CHECK(!SetRABlockFactorsCommon(tilingData, aDim_, dtypeSize, coreNum, blockSize),
                     VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to set RA block factors."),
+                    return ge::GRAPH_FAILED);
+
+    // Start with the UB-selected tile, then refine it if shared-L2 capacity is known.
+    CalcRARecomputeLoopFactors(tilingData.get_mainBlockFactor(), rDim_, ubSize, aLoopFactor, aLoopFactorAligned,
+                               rLoopFactor);
+    auto platformInfo = context_->GetPlatformInfo();
+    if (platformInfo != nullptr) {
+        uint64_t l2Size = 0;
+        auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+        ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L2, l2Size);
+        CalcRARecomputeCacheFactors(tilingData.get_mainBlockFactor(), rDim_, aDim_, dtypeSize,
+                                    tilingData.get_numBlocks(), ubSize, l2Size, aLoopFactor, aLoopFactorAligned,
+                                    rLoopFactor);
+    }
+    // UB capacity remains a hard constraint after the cache-based refinement.
+    OP_TILING_CHECK(aLoopFactorAligned * RARecomputeBytesPerChannel(rDim_, rLoopFactor) > static_cast<int64_t>(ubSize),
+                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "RA recompute UB budget exceeded."),
                     return ge::GRAPH_FAILED);
 
     // ub tiling

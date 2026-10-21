@@ -241,6 +241,11 @@ public:
         uint16_t outerLoopStride = VL_FP32;
         uint16_t innerLoopStride = aLoopFactorAligned;
         uint32_t factor = aLength;
+        uint16_t reductionRows = rLoopFactor;
+        uint16_t recursionTimes = 0;
+        for (int64_t rows = rLoopFactor; rows > 2; rows /= 2) {
+            ++recursionTimes;
+        }
         __VEC_SCOPE__
         {
             __ubuf__ float* dbetaAddr = (__ubuf__ float*)dbetaTensor.GetPhyAddr();
@@ -255,8 +260,7 @@ public:
             AscendC::Reg::RegTensor<float> aReg, bReg, cReg, dReg;
             for (uint16_t i = 0; i < outerLoopTimes; ++i) {
                 pMask = AscendC::Reg::UpdateMask<float>(count);
-                uint16_t recursionTimes = 5;
-                uint16_t loopTimes = 64;
+                uint16_t loopTimes = reductionRows;
                 for (uint16_t k = 0; k < recursionTimes; ++k) {
                     loopTimes = loopTimes >> 1;
                     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
@@ -328,6 +332,7 @@ public:
             AscendC::Reg::MaskReg pMask;
             uint32_t count = factor;
             AscendC::Reg::RegTensor<float> dyReg, xReg, meanReg, rstdReg, gammaReg, dxReg, dbetaReg, dgammaReg;
+            AscendC::Reg::RegTensor<float> rstdMulGammaReg;
             for (uint16_t i = 0; i < outerLoopTimes; ++i) {
                 pMask = AscendC::Reg::UpdateMask<float>(count);
                 LoadOneTensor<float>(meanAddr, meanReg, pMask, i * outerLoopStride);
@@ -335,6 +340,10 @@ public:
                 LoadOneTensor<WEIGHT_TYPE>(gammaAddr, gammaReg, pMask, i * outerLoopStride);
                 LoadOneTensor<float>(dbetaAddr, dbetaReg, pMask, i * outerLoopStride);
                 LoadOneTensor<float>(dgammaAddr, dgammaReg, pMask, i * outerLoopStride);
+                // rstd and gamma are invariant along R. Reuse their FP32 product
+                // for every row in this channel vector.
+                AscendC::Reg::Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(rstdMulGammaReg, rstdReg, gammaReg,
+                                                                               pMask);
                 for (uint16_t j = 0; j < innerLoopTimes; ++j) {
                     uint32_t offset = i * outerLoopStride + j * innerLoopStride;
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg, pMask, offset);
@@ -346,8 +355,8 @@ public:
                     AscendC::Reg::Muls<float, float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg, xReg, reciprocal,
                                                                                            pMask);
                     AscendC::Reg::Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(dyReg, dyReg, xReg, pMask);
-                    AscendC::Reg::Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(dxReg, rstdReg, gammaReg, pMask);
-                    AscendC::Reg::Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(dxReg, dxReg, dyReg, pMask);
+                    AscendC::Reg::Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(dxReg, rstdMulGammaReg, dyReg,
+                                                                                   pMask);
                     StoreOneTensor<DY_TYPE>(dxAddr, dxReg, pMask, offset);
                 }
             }
@@ -413,18 +422,25 @@ public:
         }
 
         int64_t resultOffset = resultCacheId * aLoopFactorAligned;
+        uint16_t outputLoopTimes = CeilDiv(aLength, VL_FP32);
+        uint32_t outputElements = aLength;
         __VEC_SCOPE__
         {
             __ubuf__ float* dbetaAddr = (__ubuf__ float*)dbetaTensor.GetPhyAddr() + resultOffset;
             __ubuf__ float* dgammaAddr = (__ubuf__ float*)dgammaTensor.GetPhyAddr() + resultOffset;
             __ubuf__ WEIGHT_TYPE* dbetaTypeAddr = (__ubuf__ WEIGHT_TYPE*)dbetaTensor.GetPhyAddr();
             __ubuf__ WEIGHT_TYPE* dgammaTypeAddr = (__ubuf__ WEIGHT_TYPE*)dgammaTensor.GetPhyAddr();
-            AscendC::Reg::MaskReg pFull = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
+            AscendC::Reg::MaskReg pMask;
             AscendC::Reg::RegTensor<float> dbetaReg, dgammaReg;
-            LoadOneTensor<float>(dbetaAddr, dbetaReg, pFull, 0);
-            LoadOneTensor<float>(dgammaAddr, dgammaReg, pFull, 0);
-            StoreOneTensor<WEIGHT_TYPE>(dbetaTypeAddr, dbetaReg, pFull, 0);
-            StoreOneTensor<WEIGHT_TYPE>(dgammaTypeAddr, dgammaReg, pFull, 0);
+            uint32_t count = outputElements;
+            for (uint16_t i = 0; i < outputLoopTimes; ++i) {
+                pMask = AscendC::Reg::UpdateMask<float>(count);
+                uint32_t offset = i * VL_FP32;
+                LoadOneTensor<float>(dbetaAddr, dbetaReg, pMask, offset);
+                LoadOneTensor<float>(dgammaAddr, dgammaReg, pMask, offset);
+                StoreOneTensor<WEIGHT_TYPE>(dbetaTypeAddr, dbetaReg, pMask, offset);
+                StoreOneTensor<WEIGHT_TYPE>(dgammaTypeAddr, dgammaReg, pMask, offset);
+            }
         }
 
         dbetaOutQue_.EnQue(dbetaTensor);
