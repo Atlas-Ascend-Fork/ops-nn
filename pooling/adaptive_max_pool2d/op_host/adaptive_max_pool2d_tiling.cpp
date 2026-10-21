@@ -93,14 +93,15 @@ ge::graphStatus AdaMaxPool2dBaseTiling::GetShapeAttrsInfo()
     OP_CHECK_NULL_WITH_CONTEXT(context_, outputSizePtr);
     OP_CHECK_IF(
         outputSizePtr->GetSize() != OUTPUTSIZE_DIM_MAX,
-        OP_LOGE_WITH_INVALID_ATTR(nodeName, "output_size", std::to_string(outputSizePtr->GetSize()).c_str(), "2"),
+        OP_LOGE_FOR_INVALID_LISTSIZE(nodeName, "output_size", std::to_string(outputSizePtr->GetSize()).c_str(), "2"),
         return ge::GRAPH_FAILED);
     const int64_t* outputSize = static_cast<const int64_t*>(outputSizePtr->GetData());
-    OP_CHECK_IF(outputSize[0] <= 0 || outputSize[1] <= 0,
-                OP_LOGE_WITH_INVALID_ATTR(
-                    nodeName, "output_size",
-                    (std::to_string(outputSize[0]) + ", " + std::to_string(outputSize[1])).c_str(), "> 0"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        outputSize[0] <= 0 || outputSize[1] <= 0,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            nodeName, "output_size", (std::to_string(outputSize[0]) + ", " + std::to_string(outputSize[1])).c_str(),
+            "each element of output_size (output H and W) must be greater than 0"),
+        return ge::GRAPH_FAILED);
     input_.Ho = outputSize[0];
     input_.Wo = outputSize[1];
     return ge::GRAPH_SUCCESS;

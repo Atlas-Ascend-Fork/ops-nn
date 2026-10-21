@@ -255,7 +255,7 @@ TEST(AdaptiveMaxPool2dTilingFail, tiling_fail_invalid_shape_zero_n)
     RunTilingAndExpect(&x_shape, &y_shape, &indices_shape, {1, 1}, ge::DT_FLOAT, ge::GRAPH_FAILED);
 }
 
-// OP_LOGE_WITH_INVALID_ATTR: the size of output_size only support 2
+// OP_LOGE_FOR_INVALID_LISTSIZE: the size of output_size only support 2
 TEST(AdaptiveMaxPool2dTilingFail, tiling_fail_output_size_len_not_2)
 {
     gert::StorageShape x_shape = {{1, 64, 3, 3}, {1, 64, 3, 3}};
@@ -264,7 +264,7 @@ TEST(AdaptiveMaxPool2dTilingFail, tiling_fail_output_size_len_not_2)
     RunTilingAndExpect(&x_shape, &y_shape, &indices_shape, {1, 1, 1}, ge::DT_FLOAT, ge::GRAPH_FAILED);
 }
 
-// OP_LOGE_WITH_INVALID_ATTR: the value of output_size should > 0
+// OP_LOGE_FOR_INVALID_LISTSIZE: the value of output_size should > 0
 TEST(AdaptiveMaxPool2dTilingFail, tiling_fail_output_size_le_zero)
 {
     gert::StorageShape x_shape = {{1, 64, 3, 3}, {1, 64, 3, 3}};

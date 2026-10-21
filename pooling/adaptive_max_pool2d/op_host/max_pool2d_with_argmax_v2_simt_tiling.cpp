@@ -129,14 +129,15 @@ ge::graphStatus AdaMaxPool2dTilingSIMT::CheckDataTypeAndAttrs()
     auto outputSizePtr = attrPtr->GetAttrPointer<gert::ContinuousVector>(0);
     OP_CHECK_NULL_WITH_CONTEXT(context_, outputSizePtr);
     OP_CHECK_IF(outputSizePtr->GetSize() != DOUB,
-                OP_LOGE_WITH_INVALID_ATTR(context_->GetNodeName(), "output_size",
-                                          std::to_string(outputSizePtr->GetSize()).c_str(), "2"),
+                OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "output_size",
+                                             std::to_string(outputSizePtr->GetSize()).c_str(), "2"),
                 return ge::GRAPH_FAILED);
     const int64_t* outputSize = static_cast<const int64_t*>(outputSizePtr->GetData());
     OP_CHECK_IF(outputSize[0] <= 0 || outputSize[1] <= 0,
-                OP_LOGE_WITH_INVALID_ATTR(
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                     context_->GetNodeName(), "output_size",
-                    (std::to_string(outputSize[0]) + ", " + std::to_string(outputSize[1])).c_str(), "> 0"),
+                    (std::to_string(outputSize[0]) + ", " + std::to_string(outputSize[1])).c_str(),
+                    "each element of output_size (output H and W) must be greater than 0"),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
