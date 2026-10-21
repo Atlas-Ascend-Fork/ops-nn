@@ -19,6 +19,7 @@
 #include "arch35/adaptive_sliding_window_basic_api_v4_tiling.h"
 #include "arch35/quant_batch_matmul_v4_asw_tiling.h"
 #include "arch35/quant_batch_matmul_v4_pergroup_arch35_tiling.h"
+#include "arch35/quant_batch_matmul_v4_pergroup_arch92_tiling.h"
 #include "arch35/quant_batch_matmul_v4_reg_base_tiling.h"
 #include "arch35/quant_batch_matmul_v4_weight_quant_mx_swat_tiling.h"
 #include "quant_batch_matmul_v4_compile_info.h"
@@ -36,6 +37,7 @@ constexpr int32_t PERGROUP_PRIORITY = 4;
 constexpr int32_t LUT_PRIORITY = 5;
 constexpr int32_t PERGROUP_ARCH35_PRIORITY = 6;
 constexpr int32_t WEIGHT_QUANT_MX_SWAT_PRIORITY = 7;
+constexpr int32_t PERGROUP_ARCH92_PRIORITY = 8;
 
 REGISTER_TILING_TEMPLATE("QuantBatchMatmulV4", AdaptiveSlidingWindowBasicTilingV4, BASIC_PERBLOCK_PRIORITY);
 REGISTER_TILING_TEMPLATE("QuantBatchMatmulV4", QuantBatchMatmulV4RegBase, REG_BASE_PRIORITY);
@@ -46,10 +48,12 @@ REGISTER_TILING_TEMPLATE("QuantBatchMatmulV4", AdaptiveSlidingWindowTilingV4, LU
 REGISTER_TILING_TEMPLATE("QuantBatchMatmulV4", QuantBatchMatmulV4PergroupArch35Tiling, PERGROUP_ARCH35_PRIORITY);
 REGISTER_TILING_TEMPLATE("QuantBatchMatmulV4", QuantBatchMatmulV4WeightQuantMxSwatTiling,
                          WEIGHT_QUANT_MX_SWAT_PRIORITY);
+REGISTER_TILING_TEMPLATE("QuantBatchMatmulV4", QuantBatchMatmulV4PerGroupTiling, PERGROUP_ARCH92_PRIORITY);
 
 ge::graphStatus QuantBatchMatmulV4TilingFunc(gert::TilingContext* context)
 {
     platform_ascendc::SocVersion socVersion;
+    NpuArch npuArch;
     bool supportMmadS8S4 = false;
     OP_LOGE_IF(context == nullptr, ge::GRAPH_FAILED, "QuantBatchMatmulV4", "tilingContext is null");
     auto compileInfoPtr = reinterpret_cast<const QuantBatchMatmulV4CompileInfo*>(context->GetCompileInfo());
@@ -58,11 +62,13 @@ ge::graphStatus QuantBatchMatmulV4TilingFunc(gert::TilingContext* context)
         OP_LOGE_IF(platformInfoPtr == nullptr, ge::GRAPH_FAILED, context->GetNodeName(), "platformInfoPtr is null");
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
         socVersion = ascendcPlatform.GetSocVersion();
+        npuArch = ascendcPlatform.GetCurNpuArch();
         std::string mmad;
         (void)platformInfoPtr->GetPlatformRes("AICoreintrinsicDtypeMap", "Intrinsic_mmad", mmad);
         supportMmadS8S4 = mmad.find("s8s4") != std::string::npos;
     } else {
         socVersion = compileInfoPtr->socVersion;
+        npuArch = compileInfoPtr->npuArch;
         supportMmadS8S4 = compileInfoPtr->supportMmadS8S4;
     }
     if (socVersion == platform_ascendc::SocVersion::ASCEND910B ||
@@ -70,6 +76,9 @@ ge::graphStatus QuantBatchMatmulV4TilingFunc(gert::TilingContext* context)
         socVersion == platform_ascendc::SocVersion::KIRINX90) {
         std::vector<int32_t> regitserList = {MSD_PRIORITY, PERBLOCK_PRIORITY, PERGROUP_PRIORITY};
         return TilingRegistry::GetInstance().DoTilingImpl(context, regitserList);
+    } else if (npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202) {
+        vector<int32_t> registerList = {PERGROUP_ARCH92_PRIORITY, REG_BASE_PRIORITY};
+        return TilingRegistry::GetInstance().DoTilingImpl(context, registerList);
     } else if (supportMmadS8S4) {
         vector<int32_t> regitserList = {LUT_PRIORITY};
         return TilingRegistry::GetInstance().DoTilingImpl(context, regitserList);
@@ -111,6 +120,7 @@ ge::graphStatus TilingParseForQuantBatchMatmulV4(gert::TilingParseContext* conte
     compileInfoPtr->supportMmadS8S4 = mmad.find("s8s4") != std::string::npos;
 
     compileInfoPtr->socVersion = ascendcPlatform.GetSocVersion();
+    compileInfoPtr->npuArch = ascendcPlatform.GetCurNpuArch();
 
     return ge::GRAPH_SUCCESS;
 }

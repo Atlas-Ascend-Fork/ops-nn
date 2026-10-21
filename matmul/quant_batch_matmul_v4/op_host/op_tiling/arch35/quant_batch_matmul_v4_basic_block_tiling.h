@@ -22,6 +22,8 @@
 #include <vector>
 
 #include "error_util.h"
+#include "tiling/platform/platform_ascendc.h"
+#include "quant_batch_matmul_v4_tiling.h"
 #include "../../../op_kernel/arch35/quant_batch_matmul_v4_tiling_data_apt.h"
 
 using std::ignore;
@@ -42,7 +44,6 @@ constexpr double BYTE_BITS = 8;
 constexpr int64_t BITS_16 = 16;
 constexpr int64_t BITS_4 = 4;
 constexpr int64_t BLOCK_CUBE = 16;
-constexpr int64_t ONE_BLOCK_SIZE = 32;
 constexpr int64_t BUFF_NUM_1 = 1;
 constexpr int64_t BUFF_NUM_2 = 2;
 constexpr int64_t BUFF_NUM_3 = 3;
@@ -87,6 +88,7 @@ struct PlatformParam {
     double frequency = 0.0;
     double hbmBW = 0.0;
     double l2BW = 0.0;
+    NpuArch npuArch = NpuArch::DAV_RESV;
 };
 
 struct BasicBlock {
@@ -151,9 +153,10 @@ public:
     void SetPlatformParam(const PlatformParam& param);
     void SetShape(int64_t mSize, int64_t nSize, int64_t kSize, int64_t groupSize);
     void SetAttr(const char* opName, bool transA, bool transB, bool hasBias, bool weightNzFlag);
-    void SetQuantType(bool isMxType);
+    void SetQuantType(bool isMxType, bool isHif4Type);
     void SetDtypeBits(const int64_t aDtypeBits, const int64_t bDtypeBits, const int64_t biasDtypeBits,
                       const int64_t yScaleDtypeBits);
+    void SetScaleDtypeBits(const int64_t aScaleDtypeBits, const int64_t bScaleDtypeBits);
     double GetMinMte2BW(int64_t baseM, int64_t baseN, int64_t mDim, int64_t nDim) const;
     double GetMte2BW(int64_t baseM, int64_t baseN, int64_t mDim, int64_t nDim) const;
     double GetMte2BWRatio(int64_t baseM, int64_t baseN, int64_t mDim, int64_t nDim) const;
@@ -312,15 +315,22 @@ protected:
     bool hasBias_;
     bool weightNzFlag_;
     bool isMxType_;
-
+    bool isHif4Type_;
     double aByteSize_;
     double bByteSize_;
+    double bL1ByteSize_;
     double biasByteSize_;
     double yScaleByteSize_;
+    double aScaleByteSize_;
+    double bScaleByteSize_;
 
     int64_t aDtypeBits_;
     int64_t bDtypeBits_;
+    int64_t bL1DtypeBits_;
     int64_t biasDtypeBits_;
+
+    int64_t aScaleDtypeBits_;
+    int64_t bScaleDtypeBits_;
 
     int64_t vFRate_;
 

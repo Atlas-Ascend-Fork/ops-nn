@@ -31,6 +31,7 @@ struct QuantBatchMatmulV4CompileInfo {
     bool supportL12BtBf16;
     bool supportMmadS8S4;
     platform_ascendc::SocVersion socVersion;
+    NpuArch npuArch;
 };
 
 } // namespace optiling

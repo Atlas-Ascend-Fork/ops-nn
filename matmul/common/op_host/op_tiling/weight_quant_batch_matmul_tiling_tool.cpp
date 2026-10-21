@@ -9,10 +9,11 @@
  */
 
 /*!
- * \file weight_quant_batch_matmul_v2_tiling_tool.cpp
+ * \file weight_quant_batch_matmul_tiling_tool.cpp
  * \brief
  */
-#include "weight_quant_batch_matmul_v2_tiling_tool.h"
+#include "weight_quant_batch_matmul_tiling_tool.h"
+#include "common/inc/op_host/op_const_def_nn.h"
 
 namespace optiling {
 
@@ -20,10 +21,11 @@ constexpr int64_t B32_BITS = 32;
 constexpr int64_t B16_BITS = 16;
 constexpr int64_t B8_BITS = 8;
 constexpr int64_t B4_BITS = 4;
+constexpr int64_t B64_BITS = 64;
 
 uint64_t GetBlockAlignSizeByDataType(ge::DataType dtype)
 {
-    if (dtype == ge::DT_INT4 || dtype == ge::DT_FLOAT4_E2M1) {
+    if (dtype == ge::DT_INT4 || dtype == ge::DT_FLOAT4_E2M1 || dtype == Ops::NN::DT_HIFLOAT4) {
         return ONE_BLK_SIZE + ONE_BLK_SIZE;
     } else {
         return ONE_BLK_SIZE / static_cast<uint32_t>(ge::GetSizeByDataType(dtype));
@@ -46,18 +48,34 @@ bool CheckOptionalInputByShape(const gert::StorageShape* storageShape)
 
 int64_t GetDtypeBits(ge::DataType dtype)
 {
-    if (dtype == ge::DT_INT4 || dtype == ge::DT_FLOAT4_E2M1 || dtype == ge::DT_FLOAT4_E1M2) {
+    if (dtype == ge::DT_INT4 || dtype == ge::DT_FLOAT4_E2M1 || dtype == ge::DT_FLOAT4_E1M2 ||
+        dtype == Ops::NN::DT_HIFLOAT4) {
         return B4_BITS;
-    } else if (dtype == ge::DT_INT8 || dtype == ge::DT_HIFLOAT8 || dtype == ge::DT_FLOAT8_E4M3FN) {
+    } else if (dtype == ge::DT_INT8 || dtype == ge::DT_HIFLOAT8 || dtype == ge::DT_FLOAT8_E4M3FN ||
+               dtype == ge::DT_FLOAT8_E8M0) {
         return B8_BITS;
     } else if (dtype == ge::DT_FLOAT16 || dtype == ge::DT_BF16) {
         return B16_BITS;
-    } else if (dtype == ge::DT_FLOAT) {
+    } else if (dtype == ge::DT_FLOAT || dtype == ge::DT_UINT32 || dtype == Ops::NN::DT_HIFLOAT4_SCALE) {
         return B32_BITS;
+    } else if (dtype == ge::DT_UINT64 || dtype == ge::DT_INT64) {
+        return B64_BITS;
     } else {
         return 0;
     }
 }
+
+bool Is4BitDtype(ge::DataType dtype)
+{
+    if (dtype == ge::DT_INT4 || dtype == ge::DT_FLOAT4_E2M1 || dtype == ge::DT_FLOAT4_E1M2 ||
+        dtype == Ops::NN::DT_HIFLOAT4) {
+        return true;
+    }
+
+    return false;
+}
+
+bool isNpuArch92(NpuArch npuArch) { return npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202; }
 
 const std::map<ge::DataType, matmul_tiling::DataType> DTYPE_MAP = {
     {ge::DT_FLOAT16, matmul_tiling::DataType::DT_FLOAT16},

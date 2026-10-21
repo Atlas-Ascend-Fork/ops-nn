@@ -214,4 +214,15 @@ struct alignas(sizeof(uint64_t)) QuantBatchMatmulV4WeightQuantMxSwatTilingData {
     uint32_t reserved = 0;
 };
 #pragma pack(pop)
+
+#pragma pack(push, 8)
+struct QuantBatchMatmulV4PerGroupTilingDataParams {
+    uint16_t cubeBlockDimN = 0;
+    uint16_t cubeBlockDimM = 0;
+    uint16_t scaleFactor = 0;
+    uint16_t enablePreAlloc = 0;
+    uint64_t groupSize = 0;
+    TCubeTiling matmulTiling;
+};
+#pragma pack(pop)
 } // namespace qbmmv4_tiling

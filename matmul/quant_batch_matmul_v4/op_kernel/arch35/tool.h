@@ -40,6 +40,7 @@ using AscendC::WaitFlag;
 namespace QuantBatchMatmulV4 {
 constexpr uint64_t SYNC_MODE0 = 0;
 constexpr uint64_t SYNC_MODE2 = 2;
+constexpr uint64_t SYNC_MODE4 = 4;
 constexpr uint64_t SYNC_AIV_ONLY_ALL_FLAG = 6;
 constexpr uint64_t SYNC_AIC_ONLY_ALL_FLAG = 7;
 constexpr uint64_t SYNC_AIV_AIC_FLAG = 8;
@@ -88,6 +89,12 @@ template <typename T>
 __aicore__ inline T Min(T a, T b)
 {
     return a < b ? a : b;
+}
+
+template <typename T>
+__aicore__ inline T Max(T a, T b)
+{
+    return a > b ? a : b;
 }
 
 template <typename T>

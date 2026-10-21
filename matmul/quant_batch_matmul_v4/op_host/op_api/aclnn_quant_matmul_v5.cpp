@@ -44,13 +44,18 @@ static const size_t SUPPORTED_K_ALIGN_NUM_INT4 = 2;
 static const size_t MX_SCALE_MAX_DIM = 3;
 static const size_t PENULTIMATE_DIM = 2;
 static const size_t MX_SCALE_LAST_DIM_SIZE = 2; // MicroScaling场景下scale tensor最后一维的大小
+static const size_t MXHIF4_SCALE_LAST_DIM_SIZE = 1;
 static const int64_t SUPPORTED_GROUP_SIZE = 32;
 static const int64_t MAX_SHAPE_SIZE_A8W4_INT = 29576;
 static const int64_t SUPPORTED_GROUP_SIZE_A8W4_INT = 256;
+static const int64_t ARCH92_SUPPORTED_GROUP_SIZE_64 = 64;
+static const int64_t ARCH92_SUPPORTED_GROUP_SIZE_128 = 128;
+static const int64_t SUPPORTED_GROUP_SIZE_A8HIF4 = 64;
 static const int64_t SUPPORTED_K_ALIGN_NUM = 64;
 static const int64_t SUPPORTED_TCG_A8W4_K_ALIGN_NUM = 32;
-static const int64_t SUPPORTED_MX_A8W4_K_ALIGN_NUM = 8;
 static const int64_t SUPPORTED_N_ALIGN_NUM = 8;
+static const int64_t SUPPORTED_MX_A8W4_K_N_ALIGN_NUM = 8;
+static const int64_t ARCH92_SUPPORTED_N_ALIGN_NUM = 64;
 static const uint64_t GROUP_M_OFFSET = 32;
 static const uint64_t GROUP_N_OFFSET = 16;
 static const uint64_t GROUP_MNK_BIT_SIZE = 0xFFFF;
@@ -58,19 +63,22 @@ static const std::initializer_list<op::DataType> EIGHT_BIT_INT_INPUT_LIST = {op:
 static const std::initializer_list<op::DataType> FOUR_BIT_INT_INPUT_LIST = {op::DataType::DT_INT4};
 static const std::initializer_list<op::DataType> EIGHT_BIT_FLOAT_INPUT_LIST = {op::DataType::DT_FLOAT8_E4M3FN,
                                                                                op::DataType::DT_FLOAT8_E5M2};
-static const std::initializer_list<op::DataType> FOUR_BIT_FLOAT_INPUT_LIST = {op::DataType::DT_FLOAT4_E2M1};
+static const std::initializer_list<op::DataType> FOUR_BIT_FLOAT_INPUT_LIST = {op::DataType::DT_FLOAT4_E2M1,
+                                                                              Ops::NN::DT_HIFLOAT4};
 static const std::initializer_list<op::DataType> Y_SUPPORT_LIST = {op::DataType::DT_BF16, op::DataType::DT_FLOAT16};
 static const std::initializer_list<op::DataType> Y_SCALE_SUPPORT_LIST = {op::DataType::DT_UINT64};
+static const std::initializer_list<op::DataType> Y_OFFSET_SUPPORT_LIST = {op::DataType::DT_FLOAT};
 static const std::initializer_list<op::DataType> X1_SCALE_SUPPORT_LIST = {op::DataType::DT_FLOAT};
 static const std::initializer_list<op::DataType> X2_SCALE_SUPPORT_LIST = {op::DataType::DT_UINT64};
-static const std::initializer_list<op::DataType> Y_OFFSET_SUPPORT_LIST = {op::DataType::DT_FLOAT};
+static const std::initializer_list<op::DataType> A8W4INT_X2_SCALE_SUPPORT_LIST_ARCH92 = {op::DataType::DT_FLOAT};
+static const std::initializer_list<op::DataType> A8W4FLOAT_X1_SUPPORT_LIST = {op::DataType::DT_FLOAT8_E4M3FN};
+static const std::initializer_list<op::DataType> A8W4FLOAT_X2_SUPPORT_LIST_ARCH35 = {op::DataType::DT_FLOAT4_E2M1};
 
 static constexpr const char* kOpName = "aclnnQuantMatmulV5GetWorkspaceSize";
 
-static inline bool Is960Series()
+static inline bool isA8W4HiF4(const aclTensor* x1, const aclTensor* x2)
 {
-    auto npuArch = op::GetCurrentPlatformInfo().GetCurNpuArch();
-    return npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
+    return x1->GetDataType() == op::DataType::DT_FLOAT8_E4M3FN && x2->GetDataType() == Ops::NN::DT_HIFLOAT4;
 }
 
 static inline bool isA8W4Float(const aclTensor* x1, const aclTensor* x2)
@@ -97,7 +105,8 @@ static inline bool isA8W4FloatMx(const aclTensor* x1, const aclTensor* x2, const
 
 static inline bool isA8W4Int(const aclTensor* x1, const aclTensor* x2)
 {
-    return x1->GetDataType() == op::DataType::DT_INT8 && x2->GetDataType() == op::DataType::DT_INT32;
+    return x1->GetDataType() == op::DataType::DT_INT8 &&
+           (x2->GetDataType() == op::DataType::DT_INT32 || x2->GetDataType() == op::DataType::DT_INT4);
 }
 
 static inline bool isA8W4IntAfterPre(const aclTensor* x1, const aclTensor* x2)
@@ -137,13 +146,8 @@ static inline bool IsMicroScaling(const aclTensor* x1Scale, const aclTensor* x2S
         return false;
     }
     return x1Scale->GetDataType() == op::DataType::DT_FLOAT8_E8M0 &&
-           x2Scale->GetDataType() == op::DataType::DT_FLOAT8_E8M0;
-}
-
-static inline bool IsTCG(const aclTensor* x1Scale, const aclTensor* x2Scale)
-{
-    return x1Scale == nullptr && x2Scale != nullptr &&
-           (x2Scale->GetDataType() == op::DataType::DT_BF16 || x2Scale->GetDataType() == op::DataType::DT_FLOAT16);
+           (x2Scale->GetDataType() == op::DataType::DT_FLOAT8_E8M0 ||
+            x2Scale->GetDataType() == Ops::NN::DT_HIFLOAT4_SCALE);
 }
 
 static inline bool IsHif8Input(const aclTensor* x1, const aclTensor* x2)
@@ -205,6 +209,7 @@ static inline bool CheckA8W4IntGroupSize(const aclTensor* x2Scale, int64_t group
 static inline bool CheckInputAttrExistence(const TupleAttr& boolsTrans, int64_t groupSize, const aclTensor* x2,
                                            TupleQuant& quantTensors, bool isA8W4INT = false)
 {
+    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
     bool transposeX1 = std::get<INDEX_X1_IN_INPUT_TUPLE>(boolsTrans);
     bool transposeX2 = std::get<INDEX_X2_IN_INPUT_TUPLE>(boolsTrans);
     if (transposeX1) {
@@ -222,11 +227,11 @@ static inline bool CheckInputAttrExistence(const TupleAttr& boolsTrans, int64_t 
     auto& x1Scale = std::get<INDEX_X1_SCALE_IN_QUANT_TUPLE>(quantTensors);
     auto& x2Scale = std::get<INDEX_X2_SCALE_IN_QUANT_TUPLE>(quantTensors);
     if (isX2Nz) {
-        if (x1Scale == nullptr && transposeX2) {
-            // A8W4 mode
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                kOpName, "transposeX2", "true",
-                "When the quant mode is A8W4 NZ T-CG, the value of transposeX2 cannot be true");
+        if ((x1Scale == nullptr || (npuArch == NpuArch::DAV_9201 && isA8W4INT)) && transposeX2) {
+            // A8W4 NZ T-CG mode || arch92 K-CG
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "transposeX2", "true",
+                                                  "When the quant mode is A8W4 NZ T-CG or Int8Int4 K-CG(arch92), the "
+                                                  "value of transposeX2 cannot be true");
             return false;
         } else if (IsMicroScaling(x1Scale, x2Scale) && !transposeX2) {
             // MxA8W4 mode
@@ -238,17 +243,33 @@ static inline bool CheckInputAttrExistence(const TupleAttr& boolsTrans, int64_t 
     }
 
     if (isA8W4INT) { // A8W4 INT
-        if (!CheckA8W4IntGroupSize(x2Scale, groupSize)) {
+        if (npuArch == NpuArch::DAV_9201) {
+            if (groupSize != ARCH92_SUPPORTED_GROUP_SIZE_64 && groupSize != ARCH92_SUPPORTED_GROUP_SIZE_128) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    kOpName, "groupSize", std::to_string(groupSize).c_str(),
+                    "when the quant mode is Int8Int4, the value of groupSize must be 64 or 128");
+                return false;
+            }
+        } else if (!CheckA8W4IntGroupSize(x2Scale, groupSize)) {
             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "A8W4 [int8/4] groupsize is not supported");
             return false;
         }
     } else { // A8W4 FLOAT
-        uint64_t groupSizeK = static_cast<uint64_t>(groupSize) & GROUP_MNK_BIT_SIZE;
-        if (groupSizeK != SUPPORTED_GROUP_SIZE) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                kOpName, "groupSizeK", std::to_string(groupSizeK).c_str(),
-                "When the quant mode is A8W4 fp8/4, the value of groupSizeK must be 32");
-            return false;
+        if (IsNpuArch92() && x2->GetDataType() == Ops::NN::DT_HIFLOAT4) {
+            if (groupSize != -1) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    kOpName, "groupSize", std::to_string(groupSize).c_str(),
+                    "when the quant mode is A8W4 HiF4, the value of groupSize must be -1");
+                return false;
+            }
+        } else {
+            uint64_t groupSizeK = static_cast<uint64_t>(groupSize) & GROUP_MNK_BIT_SIZE;
+            if (groupSizeK != SUPPORTED_GROUP_SIZE) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    kOpName, "groupSizeK", std::to_string(groupSizeK).c_str(),
+                    "When the quant mode is A8W4 fp8/4, the value of groupSizeK must be 32");
+                return false;
+            }
         }
     }
     return true;
@@ -259,6 +280,7 @@ static inline bool CheckInputExistence(TupleInput& inputTensors, TupleQuant& qua
 {
     auto x1 = std::get<INDEX_X1_IN_INPUT_TUPLE>(inputTensors);
     auto x2 = std::get<INDEX_X2_IN_INPUT_TUPLE>(inputTensors);
+    auto x1Scale = std::get<INDEX_X1_SCALE_IN_QUANT_TUPLE>(quantTensors);
     auto x2Scale = std::get<INDEX_X2_SCALE_IN_QUANT_TUPLE>(quantTensors);
     auto yScale = std::get<INDEX_Y_SCALE_IN_QUANT_TUPLE>(quantTensors);
     auto x1Offset = std::get<INDEX_X1_OFFSET_IN_QUANT_TUPLE>(quantTensors);
@@ -270,6 +292,7 @@ static inline bool CheckInputExistence(TupleInput& inputTensors, TupleQuant& qua
     OP_CHECK_NULL(x2Scale, return false);
     OP_CHECK_NULL(out, return false);
     isA8W4 = isA8W4Float(x1, x2) || isA8W4Int(x1, x2);
+
     // 不支持参数
     if (!isA8W4 && yScale != nullptr && !yScale->IsEmpty()) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "yScale", "not empty/null",
@@ -329,7 +352,7 @@ static inline bool CheckDimRange(TupleInput& inputTensors, TupleQuant& quantTens
         return false;
     }
     if (x1Scale != nullptr && op::GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_3510 &&
-        op::GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201 && !Is960Series()) {
+        op::GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201 && !IsNpuArch92()) {
         OP_CHECK_WRONG_DIMENSION(x2Scale, 1, return false);
     }
     OP_LOGD("QuantMatmul check dimension range success.");
@@ -425,16 +448,18 @@ static inline bool CheckDimRangeA8W4(TupleInput& inputTensors, TupleQuant& quant
 
 static bool CheckBasicInputDtypes(const aclTensor* x1, const aclTensor* x2, const aclTensor* out)
 {
-    if (!CheckType(x1->GetDataType(), EIGHT_BIT_FLOAT_INPUT_LIST)) {
+    if (!CheckType(x1->GetDataType(), A8W4FLOAT_X1_SUPPORT_LIST)) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(kOpName, "x1", op::ToString(x1->GetDataType()).GetString(),
                                               std::string("The dtype of x1 must be within the range ") +
-                                                  op::ToString(EIGHT_BIT_FLOAT_INPUT_LIST).GetString());
+                                                  op::ToString(A8W4FLOAT_X1_SUPPORT_LIST).GetString());
         return false;
     }
-    if (!CheckType(x2->GetDataType(), FOUR_BIT_FLOAT_INPUT_LIST)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(kOpName, "x2", op::ToString(x2->GetDataType()).GetString(),
-                                              std::string("The dtype of x2 must be within the range ") +
-                                                  op::ToString(FOUR_BIT_FLOAT_INPUT_LIST).GetString());
+    std::initializer_list<op::DataType> x2SupportList = IsNpuArch92() ? FOUR_BIT_FLOAT_INPUT_LIST :
+                                                                        A8W4FLOAT_X2_SUPPORT_LIST_ARCH35;
+    if (!CheckType(x2->GetDataType(), x2SupportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            kOpName, "x2", op::ToString(x2->GetDataType()).GetString(),
+            std::string("The dtype of x2 must be within the range ") + op::ToString(x2SupportList).GetString());
         return false;
     }
     if (!CheckType(out->GetDataType(), Y_SUPPORT_LIST)) {
@@ -542,6 +567,7 @@ static bool CheckDtypeA8W4Int(const TupleInput& inputTensors, const TupleQuant& 
     auto bias = std::get<INDEX_BIAS_IN_QUANT_TUPLE>(quantTensors);
     auto yScale = std::get<INDEX_Y_SCALE_IN_QUANT_TUPLE>(quantTensors);
     auto yOffset = std::get<INDEX_Y_OFFSET_IN_QUANT_TUPLE>(quantTensors);
+    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
 
     if (x1Scale == nullptr || x1Scale->IsEmpty()) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "In A8W4_Int mode, x1Scale does not support empty tensor or nullptr.");
@@ -555,7 +581,7 @@ static bool CheckDtypeA8W4Int(const TupleInput& inputTensors, const TupleQuant& 
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "In A8W4_Int mode, bias and yScale must be null.");
         return false;
     }
-    if (yOffset == nullptr || yOffset->IsEmpty()) {
+    if (npuArch != NpuArch::DAV_9201 && (yOffset == nullptr || yOffset->IsEmpty())) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "In A8W4_Int mode, yOffset does not support empty tensor or nullptr.");
         return false;
     }
@@ -566,8 +592,12 @@ static bool CheckDtypeA8W4Int(const TupleInput& inputTensors, const TupleQuant& 
     OP_CHECK_DTYPE_NOT_SUPPORT(x1, EIGHT_BIT_INT_INPUT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(x2, FOUR_BIT_INT_INPUT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(x1Scale, X1_SCALE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(x2Scale, X2_SCALE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(yOffset, Y_OFFSET_SUPPORT_LIST, return false);
+    if (npuArch == NpuArch::DAV_9201) {
+        OP_CHECK_DTYPE_NOT_SUPPORT(x2Scale, A8W4INT_X2_SCALE_SUPPORT_LIST_ARCH92, return false);
+    } else {
+        OP_CHECK_DTYPE_NOT_SUPPORT(x2Scale, X2_SCALE_SUPPORT_LIST, return false);
+        OP_CHECK_DTYPE_NOT_SUPPORT(yOffset, Y_OFFSET_SUPPORT_LIST, return false);
+    }
     OP_CHECK_DTYPE_NOT_SUPPORT(out, Y_SUPPORT_LIST, return false);
 
     return true;
@@ -584,7 +614,7 @@ static inline bool CheckFormat(const TupleInput& inputTensors, const TupleQuant&
     auto yOffset = std::get<INDEX_Y_OFFSET_IN_QUANT_TUPLE>(quantTensors);
 
     CHECK_RET(x1->GetStorageFormat() == op::Format::FORMAT_ND, false);
-    if (op::GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_3510) {
+    if (op::GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_3510 && !IsNpuArch92()) {
         CHECK_RET(x2->GetStorageFormat() == op::Format::FORMAT_ND, false);
     }
     CHECK_RET(x2Scale->GetStorageFormat() == op::Format::FORMAT_ND, false);
@@ -673,15 +703,15 @@ static inline bool CheckScaleX2Shape(const TupleQuant& quantTensors, int64_t x2N
             }
         }
     } else if (IsMicroScaling(x1Scale, x2Scale)) {
-        // MX_SCALE_LAST_DIM_SIZE:x2Scale Shape: (n, groupDim / MX_SCALE_LAST_DIM_SIZE, MX_SCALE_LAST_DIM_SIZE)
-        if (x2ScaleNDim != x2NDim ||
-            x2ScaleGroupDim != CeilDiv(groupDim, static_cast<int64_t>(MX_SCALE_LAST_DIM_SIZE)) ||
-            x2Scale->GetViewShape().GetDim(2) != MX_SCALE_LAST_DIM_SIZE) {
-            OP_LOGE_FOR_INVALID_SHAPE(
-                kOpName, "x2Scale", op::ToString(x2Scale->GetViewShape()).GetString(),
-                "[" + std::to_string(x2NDim) + ", " +
-                    std::to_string(CeilDiv(groupDim, static_cast<int64_t>(MX_SCALE_LAST_DIM_SIZE))) + ", " +
-                    std::to_string(MX_SCALE_LAST_DIM_SIZE) + "]");
+        // scaleLastDimSize: x2Scale Shape: (n, groupDim / scaleLastDimSize, scaleLastDimSize)
+        size_t scaleLastDimSize = x2Scale->GetDataType() == Ops::NN::DT_HIFLOAT4_SCALE ? MXHIF4_SCALE_LAST_DIM_SIZE :
+                                                                                         MX_SCALE_LAST_DIM_SIZE;
+        if (x2ScaleNDim != x2NDim || x2ScaleGroupDim != CeilDiv(groupDim, static_cast<int64_t>(scaleLastDimSize)) ||
+            x2Scale->GetViewShape().GetDim(2) != scaleLastDimSize) {
+            OP_LOGE_FOR_INVALID_SHAPE(kOpName, "x2Scale", op::ToString(x2Scale->GetViewShape()).GetString(),
+                                      "[" + std::to_string(x2NDim) + ", " +
+                                          std::to_string(CeilDiv(groupDim, static_cast<int64_t>(scaleLastDimSize))) +
+                                          ", " + std::to_string(scaleLastDimSize) + "]");
             return false;
         }
     } else {
@@ -736,7 +766,8 @@ static inline bool CheckA8W4KDim(const TupleInput& inputTensors, const TupleQuan
     auto x2Scale = std::get<INDEX_X2_SCALE_IN_QUANT_TUPLE>(quantTensors);
     if (isA8W4IntAfterPre(x1, x2)) {
         bool isPerChannel = x2Scale->GetViewShape().GetDimNum() == 1;
-        size_t kAlign = isPerChannel ? SUPPORTED_K_ALIGN_NUM_INT4 : SUPPORTED_GROUP_SIZE_A8W4_INT;
+        int64_t groupSize = std::get<INDEX_GROUP_SIZE_IN_QUANT_TUPLE>(quantTensors);
+        size_t kAlign = isPerChannel ? SUPPORTED_K_ALIGN_NUM_INT4 : static_cast<size_t>(groupSize);
         if (kDim % kAlign != 0) {
             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "the k dim must be aligned to %ld, which is %ld", kAlign, kDim);
             return false;
@@ -748,10 +779,10 @@ static inline bool CheckA8W4KDim(const TupleInput& inputTensors, const TupleQuan
                 "The value of k must be aligned to 32 and greater than 32 for T-CG quantization");
             return false;
         }
-    } else if (isA8W4FloatMx(x1, x2, x1Scale, x2Scale)) {
-        if (kDim % SUPPORTED_MX_A8W4_K_ALIGN_NUM != 0) {
+    } else if (isA8W4FloatMx(x1, x2, x1Scale, x2Scale) || isA8W4HiF4(x1, x2)) {
+        if (kDim % SUPPORTED_MX_A8W4_K_N_ALIGN_NUM != 0) {
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "k", std::to_string(kDim).c_str(),
-                                                  "The value of k must be aligned to 8 for MX quantization");
+                                                  "The value of k must be aligned to 8 for MX/HiF4 quantization");
             return false;
         }
     } else {
@@ -813,6 +844,19 @@ static inline bool CheckX1X2Shape(const TupleInput& inputTensors, const TupleQua
                 "When the quant mode is A8W4 NZ, the value of n must be aligned to 8");
             return false;
         }
+    } else if (IsNpuArch92() && isX2Nz) {
+        auto x1 = std::get<INDEX_X1_IN_INPUT_TUPLE>(inputTensors);
+        auto x1Scale = std::get<INDEX_X1_SCALE_IN_QUANT_TUPLE>(quantTensors);
+        auto x2Scale = std::get<INDEX_X2_SCALE_IN_QUANT_TUPLE>(quantTensors);
+        int64_t nAlignNum = (isA8W4HiF4(x1, x2) || isA8W4FloatMx(x1, x2, x1Scale, x2Scale)) ?
+                                SUPPORTED_MX_A8W4_K_N_ALIGN_NUM :
+                                ARCH92_SUPPORTED_N_ALIGN_NUM;
+        if (x2NDim % nAlignNum != 0) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                kOpName, "n", std::to_string(x2NDim).c_str(),
+                "When the quant mode is A8W4 NZ, the value of n must be aligned to " + std::to_string(nAlignNum));
+            return false;
+        }
     }
     return true;
 }
@@ -820,9 +864,12 @@ static inline bool CheckX1X2Shape(const TupleInput& inputTensors, const TupleQua
 static inline bool CheckShape(const TupleInput& inputTensors, const TupleQuant& quantTensors,
                               const TupleAttr& boolsTrans, const aclTensor* out)
 {
+    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
     auto x1 = std::get<INDEX_X1_IN_INPUT_TUPLE>(inputTensors);
     auto x2 = std::get<INDEX_X2_IN_INPUT_TUPLE>(inputTensors);
+    int64_t groupsize = std::get<INDEX_GROUP_SIZE_IN_QUANT_TUPLE>(quantTensors);
     bool isA8W4INT = isA8W4IntAfterPre(x1, x2);
+    bool isA8HiF4 = isA8W4HiF4(x1, x2);
     bool transposeX1 = std::get<INDEX_X1_IN_INPUT_TUPLE>(boolsTrans);
     bool transposeX2 = std::get<INDEX_X2_IN_INPUT_TUPLE>(boolsTrans);
 
@@ -839,10 +886,23 @@ static inline bool CheckShape(const TupleInput& inputTensors, const TupleQuant& 
         return false;
     }
     CHECK_RET(CheckX1X2Shape(inputTensors, quantTensors, x1KDim, x2KDim, x2NDim), false);
-    int64_t groupDim = isA8W4INT ? (x2KDim + SUPPORTED_GROUP_SIZE_A8W4_INT - 1) / SUPPORTED_GROUP_SIZE_A8W4_INT :
-                                   (x2KDim + SUPPORTED_GROUP_SIZE - 1) / SUPPORTED_GROUP_SIZE;
-    CHECK_RET(CheckScaleX1Shape(quantTensors, x1MDim, groupDim, isA8W4INT), false);
-    CHECK_RET(CheckScaleX2Shape(quantTensors, x2NDim, groupDim, transposeX2, isA8W4INT), false);
+    int64_t groupSizeX1 = isA8W4INT ? SUPPORTED_GROUP_SIZE_A8W4_INT : SUPPORTED_GROUP_SIZE;
+    int64_t groupDimX1 = (x2KDim + groupSizeX1 - 1) / groupSizeX1;
+    int64_t groupSizeX2 = isA8W4INT ? (npuArch == NpuArch::DAV_9201 ? groupsize : SUPPORTED_GROUP_SIZE_A8W4_INT) :
+                                      (isA8HiF4 ? SUPPORTED_GROUP_SIZE_A8HIF4 : SUPPORTED_GROUP_SIZE);
+    int64_t groupDimX2 = (x2KDim + groupSizeX2 - 1) / groupSizeX2;
+
+    auto x1Scale = std::get<INDEX_X1_SCALE_IN_QUANT_TUPLE>(quantTensors);
+    auto x2Scale = std::get<INDEX_X2_SCALE_IN_QUANT_TUPLE>(quantTensors);
+    bool isA8W4Mx = isA8W4FloatMx(x1, x2, x1Scale, x2Scale);
+    if (npuArch == NpuArch::DAV_9201 && (!isA8HiF4 && !isA8W4Mx) && x2KDim % groupSizeX2 != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            kOpName, "k", std::to_string(x2KDim).c_str(),
+            ("the value of k must be aligned to groupSize " + std::to_string(groupSizeX2)).c_str());
+        return false;
+    }
+    CHECK_RET(CheckScaleX1Shape(quantTensors, x1MDim, groupDimX1, isA8W4INT), false);
+    CHECK_RET(CheckScaleX2Shape(quantTensors, x2NDim, groupDimX2, transposeX2, isA8W4INT), false);
     CHECK_RET(CheckOutAndOffsetShape(quantTensors, x1MDim, x2NDim, out), false);
     return true;
 }
@@ -850,7 +910,7 @@ static inline bool CheckShape(const TupleInput& inputTensors, const TupleQuant& 
 static inline aclnnStatus CheckParamsA8W4Float(const TupleInput& inputTensors, const TupleQuant& quantTensors,
                                                const TupleAttr& boolsTrans, const aclTensor* out)
 {
-    if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510) {
+    if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510 || IsNpuArch92()) {
         // 1. 校验dtype是否符合要求
         CHECK_RET(CheckDtype(inputTensors, quantTensors, out), ACLNN_ERR_PARAM_INVALID);
         // 2. 检查format是否符合要求
@@ -858,7 +918,7 @@ static inline aclnnStatus CheckParamsA8W4Float(const TupleInput& inputTensors, c
         // 3. 检查shape是否符合要求
         CHECK_RET(CheckShape(inputTensors, quantTensors, boolsTrans, out), ACLNN_ERR_PARAM_INVALID);
     } else {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "A8W4 only Support NpuArch DAV3510");
+        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "A8W4 only Support NpuArch DAV3510, NpuArch DAV9201 and NpuArch DAV9202");
         return ACLNN_ERR_RUNTIME_ERROR;
     }
     return ACLNN_SUCCESS;
@@ -868,7 +928,8 @@ static inline aclnnStatus CheckParamsA8W4Int(const TupleInput& inputTensors, con
                                              const TupleAttr& boolsTrans, const aclTensor* out)
 {
     auto socVer = GetCurrentPlatformInfo().GetSocVersion();
-    if (socVer == SocVersion::ASCEND910B || socVer == SocVersion::ASCEND910_93) {
+    if (socVer == SocVersion::ASCEND910B || socVer == SocVersion::ASCEND910_93 ||
+        op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9201) {
         // 1. 校验dtype是否符合要求
         CHECK_RET(CheckDtypeA8W4Int(inputTensors, quantTensors, out), ACLNN_ERR_PARAM_INVALID);
         // 2. 检查format是否符合要求
@@ -876,7 +937,7 @@ static inline aclnnStatus CheckParamsA8W4Int(const TupleInput& inputTensors, con
         // 3. 检查shape是否符合要求
         CHECK_RET(CheckShape(inputTensors, quantTensors, boolsTrans, out), ACLNN_ERR_PARAM_INVALID);
     } else {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "A8W4Int only Support socversion A2 or A3");
+        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "A8W4Int only Support socversion A2 or A3 or NpuArch DAV_9201");
         return ACLNN_ERR_RUNTIME_ERROR;
     }
     return ACLNN_SUCCESS;
@@ -978,7 +1039,7 @@ static inline bool CheckA8W4FloatQuantType(const aclTensor* x1, const aclTensor*
                                            const aclTensor* x2Scale)
 {
     if (isA8W4Float(x1, x2)) {
-        if (!IsMicroScaling(x1Scale, x2Scale) && !IsTCG(x1Scale, x2Scale)) {
+        if (!IsMicroScaling(x1Scale, x2Scale) && !isA8W4FloatTCG(x1, x2, x1Scale)) {
             std::string scaleInfo = std::string("x1Scale=") +
                                     op::ToString(x1Scale != nullptr ? x1Scale->GetDataType() :
                                                                       op::DataType::DT_UNDEFINED)
@@ -986,8 +1047,7 @@ static inline bool CheckA8W4FloatQuantType(const aclTensor* x1, const aclTensor*
                                     ", x2Scale=" + op::ToString(x2Scale->GetDataType()).GetString();
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                 kOpName, "x1Scale/x2Scale", scaleInfo.c_str(),
-                "A8W4 float scenario only supports MX quantization (x1Scale and x2Scale are FLOAT8_E8M0) "
-                "or TCG quantization (x1Scale is null and x2Scale is BF16 or FLOAT16)");
+                "A8W4 float scenario only supports MX quantization or TCG quantization");
             return false;
         }
     }
@@ -1119,10 +1179,19 @@ static aclnnStatus aclnnQuantMatmulGetWorkspaceSizeCommonProcess(TupleInput& inp
     }
     bool isA8W4F = isA8W4Float(x1, x2);
     bool isPseudoQuant = isA8W4F || isA8W4Int(x1, x2);
-    if (isA8W4F) {
+    if (isA8W4F && !IsNpuArch92()) {
         CHECK_RET(A8W4InferGroupSize(groupSize), ACLNN_ERR_PARAM_INVALID);
         OP_LOGD("Infer groupSize success. groupSize: %ld.", groupSize);
     }
+
+    if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9201 && isA8W4FloatTCG(x1, x2, x1Scale)) {
+        if (groupSize != SUPPORTED_GROUP_SIZE) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "groupSize", std::to_string(groupSize).c_str(),
+                                                  "when the quant mode is A8W4 TCG, the value of groupSize must be 32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+    }
+
     if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510 && !isPseudoQuant) {
         auto x1DimNum = x1->GetViewShape().GetDimNum();
         auto x2DimNum = x2->GetViewShape().GetDimNum();
@@ -1239,6 +1308,14 @@ aclnnStatus aclnnQuantMatmulV5GetWorkspaceSize(const aclTensor* x1, const aclTen
         OP_CHECK_NULL(x2, return ACLNN_ERR_PARAM_NULLPTR);
         OP_CHECK(!IsFormatNZ(x2), OP_LOGE_FOR_INVALID_FORMAT(kOpName, "x2", "FORMAT_FRACTAL_NZ", "FORMAT_ND"),
                  return ACLNN_ERR_PARAM_INVALID);
+    }
+
+    if (IsNpuArch92()) {
+        if (x2->GetViewShape().GetDimNum() < static_cast<size_t>(MIN_DIM_NUM_ND)) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM(kOpName, "x2", std::to_string(x2->GetViewShape().GetDimNum()).c_str(), "2D");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        transposeX2 = GetTransposeAttrValue(x2, transposeX2, false);
     }
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);

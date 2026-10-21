@@ -24,6 +24,18 @@
 #include "ascendc/host_api/tiling/template_argument.h"
 #include "quant_batch_matmul_v4_tiling_data_apt.h"
 
+#if defined(DT_FLOAT8_E8M0) && defined(ORIG_DTYPE_X1_SCALE) && (ORIG_DTYPE_X1_SCALE == DT_FLOAT8_E8M0) && \
+    defined(ORIG_DTYPE_X2_SCALE) &&                                                                       \
+    (ORIG_DTYPE_X2_SCALE == DT_FLOAT8_E8M0 ||                                                             \
+     (defined(DT_HIFLOAT4_SCALE) && ORIG_DTYPE_X2_SCALE == DT_HIFLOAT4_SCALE))
+#define IS_MX_TYPE
+#endif
+
+#if defined(ORIG_DTYPE_X1) && defined(DT_FLOAT8_E4M3FN) && (ORIG_DTYPE_X1 == DT_FLOAT8_E4M3FN) && \
+    defined(ORIG_DTYPE_X2) && defined(DT_FLOAT4_E2M1) && (ORIG_DTYPE_X2 == DT_FLOAT4_E2M1)
+#define IS_FP8FP4_TYPE
+#endif
+
 #define QBMMV4_NOT_TRANS 0
 #define QBMMV4_B_TRANS 1
 #define QBMMV4_A_TRANS 2
@@ -36,6 +48,7 @@
 #define QBMMV4_MX 4
 #define QBMMV4_PER_TILE 5
 #define QBMMV4_INT4_ASYMMETRICAL 6
+#define QBMMV4_TCG 7
 
 #define QBMMV4_OPTION_ATTR_NONE 0
 #define QBMMV4_HAS_ANTIQUANT_OFFSET 1
@@ -46,21 +59,51 @@
 #define QBMMV4_BASIS 0
 #define QBMMV4_LUT_ASW 1
 #define QBMMV4_LUT_AL1FULL 2
+#define QBMMV4_ANTIQUANT_VECTOR 3
 
 ASCENDC_TPL_ARGS_DECL(QuantBatchMatmulV4,
                       ASCENDC_TPL_UINT_DECL(TRANS, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, QBMMV4_NOT_TRANS,
                                             QBMMV4_B_TRANS, QBMMV4_A_TRANS, QBMMV4_ALL_TRANS),
                       ASCENDC_TPL_UINT_DECL(QUANT_TYPE, ASCENDC_TPL_4_BW, ASCENDC_TPL_UI_LIST, QBMMV4_QUANT_TYPE_NONE,
                                             QBMMV4_PER_TENSOR, QBMMV4_PER_CHANNEL, QBMMV4_PER_GROUP, QBMMV4_MX,
-                                            QBMMV4_PER_TILE, QBMMV4_INT4_ASYMMETRICAL),
+                                            QBMMV4_PER_TILE, QBMMV4_INT4_ASYMMETRICAL, QBMMV4_TCG),
                       ASCENDC_TPL_UINT_DECL(OPTION_ATTRS, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST,
                                             QBMMV4_OPTION_ATTR_NONE, QBMMV4_HAS_ANTIQUANT_OFFSET),
                       ASCENDC_TPL_UINT_DECL(WEIGHTNZ, ASCENDC_TPL_1_BW, ASCENDC_TPL_UI_LIST, QBMMV4_NOT_WEIGHT_NZ,
                                             QBMMV4_IS_WEIGHT_NZ),
                       ASCENDC_TPL_UINT_DECL(KERNEL_TEMPLATE_TYPE, ASCENDC_TPL_4_BW, ASCENDC_TPL_UI_LIST, QBMMV4_BASIS,
-                                            QBMMV4_LUT_ASW, QBMMV4_LUT_AL1FULL), );
+                                            QBMMV4_LUT_ASW, QBMMV4_LUT_AL1FULL, QBMMV4_ANTIQUANT_VECTOR), );
+
 ASCENDC_TPL_SEL(
-#if !defined(__CCE_AICORE__) || !__FIXED_POINT_ONLY_CUBE_TO_L0C__
+#if !defined(__CCE_AICORE__) || (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202))
+#if !defined(__CCE_AICORE__) || (defined(IS_MX_TYPE) || defined(IS_FP8FP4_TYPE))
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_AIC_ONLY),
+                         ASCENDC_TPL_UINT_SEL(TRANS, ASCENDC_TPL_UI_LIST, QBMMV4_B_TRANS),
+                         ASCENDC_TPL_UINT_SEL(QUANT_TYPE, ASCENDC_TPL_UI_LIST, QBMMV4_MX),
+                         ASCENDC_TPL_UINT_SEL(OPTION_ATTRS, ASCENDC_TPL_UI_LIST, QBMMV4_OPTION_ATTR_NONE),
+                         ASCENDC_TPL_UINT_SEL(WEIGHTNZ, ASCENDC_TPL_UI_LIST, QBMMV4_IS_WEIGHT_NZ),
+                         ASCENDC_TPL_UINT_SEL(KERNEL_TEMPLATE_TYPE, ASCENDC_TPL_UI_LIST, QBMMV4_BASIS),
+                         ASCENDC_TPL_TILING_STRUCT_SEL(qbmmv4_tiling::QuantBatchMatmulV4TilingDataParams), ),
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_1_1),
+                         ASCENDC_TPL_UINT_SEL(TRANS, ASCENDC_TPL_UI_LIST, QBMMV4_NOT_TRANS),
+                         ASCENDC_TPL_UINT_SEL(QUANT_TYPE, ASCENDC_TPL_UI_LIST, QBMMV4_TCG),
+                         ASCENDC_TPL_UINT_SEL(OPTION_ATTRS, ASCENDC_TPL_UI_LIST, QBMMV4_OPTION_ATTR_NONE),
+                         ASCENDC_TPL_UINT_SEL(WEIGHTNZ, ASCENDC_TPL_UI_LIST, QBMMV4_IS_WEIGHT_NZ),
+                         ASCENDC_TPL_UINT_SEL(KERNEL_TEMPLATE_TYPE, ASCENDC_TPL_UI_LIST, QBMMV4_BASIS),
+                         ASCENDC_TPL_TILING_STRUCT_SEL(qbmmv4_tiling::QuantBatchMatmulV4PerGroupTilingDataParams), ),
+#endif
+
+#if !defined(__CCE_AICORE__) || (!defined(IS_MX_TYPE) && !defined(IS_FP8FP4_TYPE))
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_1_1),
+                         ASCENDC_TPL_UINT_SEL(TRANS, ASCENDC_TPL_UI_LIST, QBMMV4_NOT_TRANS),
+                         ASCENDC_TPL_UINT_SEL(QUANT_TYPE, ASCENDC_TPL_UI_LIST, QBMMV4_PER_GROUP),
+                         ASCENDC_TPL_UINT_SEL(OPTION_ATTRS, ASCENDC_TPL_UI_LIST, QBMMV4_OPTION_ATTR_NONE),
+                         ASCENDC_TPL_UINT_SEL(WEIGHTNZ, ASCENDC_TPL_UI_LIST, QBMMV4_IS_WEIGHT_NZ),
+                         ASCENDC_TPL_UINT_SEL(KERNEL_TEMPLATE_TYPE, ASCENDC_TPL_UI_LIST, QBMMV4_BASIS,
+                                              QBMMV4_ANTIQUANT_VECTOR),
+                         ASCENDC_TPL_TILING_STRUCT_SEL(qbmmv4_tiling::QuantBatchMatmulV4PerGroupTilingDataParams), ),
+#endif
+#elif !defined(__CCE_AICORE__) || !__FIXED_POINT_ONLY_CUBE_TO_L0C__
     ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_1_2),
                          ASCENDC_TPL_UINT_SEL(TRANS, ASCENDC_TPL_UI_LIST, QBMMV4_B_TRANS),
                          ASCENDC_TPL_UINT_SEL(QUANT_TYPE, ASCENDC_TPL_UI_LIST, QBMMV4_PER_GROUP),

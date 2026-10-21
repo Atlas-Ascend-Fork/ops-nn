@@ -568,6 +568,7 @@ function(AddOpTestCase)
         add_custom_target(${KERNEL_COMMON_COPY_TARGET}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/tbe/ascendc/common/cmct
             COMMAND cp -r ${PROJECT_SOURCE_DIR}/matmul/common/cmct/* ${CMAKE_BINARY_DIR}/tbe/ascendc/common/cmct
+            COMMAND cp -r ${PROJECT_SOURCE_DIR}/matmul/common/op_kernel/* ${CMAKE_BINARY_DIR}/tbe/ascendc/common
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/tbe/ascendc/common/blaze
             COMMAND cp -r ${BLAZE}/* ${CMAKE_BINARY_DIR}/tbe/ascendc/common/blaze
             COMMAND ${CMAKE_COMMAND} -E copy_directory ${TENSOR_API}/impl/tensor_api ${CMAKE_BINARY_DIR}/tbe/ascendc/common/tensor_api/impl/tensor_api

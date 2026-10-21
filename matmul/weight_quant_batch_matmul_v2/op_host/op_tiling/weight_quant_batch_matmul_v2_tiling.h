@@ -15,7 +15,7 @@
 #ifndef WEIGHT_QUANT_BATCH_MATMUL_V2_TILING_H
 #define WEIGHT_QUANT_BATCH_MATMUL_V2_TILING_H
 
-#include "weight_quant_batch_matmul_v2_tiling_tool.h"
+#include "matmul/common/op_host/op_tiling/weight_quant_batch_matmul_tiling_tool.h"
 #include "weight_quant_batch_matmul_v2_tiling_key.h"
 #include "op_host/tiling_base.h"
 #include "../../op_kernel/weight_quant_batch_matmul_v2_tiling_data.h"

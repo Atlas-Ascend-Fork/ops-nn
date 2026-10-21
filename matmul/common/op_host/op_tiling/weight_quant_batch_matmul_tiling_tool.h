@@ -9,15 +9,15 @@
  */
 
 /*!
- * \file weight_quant_batch_matmul_v2_tiling_tool.h
+ * \file weight_quant_batch_matmul_tiling_tool.h
  * \brief
  */
-#ifndef WEIGHT_QUANT_BATCH_MATMUL_V2_TOOL_H
-#define WEIGHT_QUANT_BATCH_MATMUL_V2_TOOL_H
+#pragma once
 
 #include "tiling/tiling_api.h"
 #include "op_host/tiling_templates_registry.h"
 #include "error_util.h"
+#include "tiling/platform/platform_ascendc.h"
 
 using AscendC::BLOCK_CUBE;
 using AscendC::ONE_BLK_SIZE;
@@ -49,5 +49,8 @@ bool CheckOptionalInputByShape(const gert::StorageShape* storageShape);
 matmul_tiling::DataType GetMatmulTilingDtype(ge::DataType dtype);
 
 ge::Format GetInputStorageFormat(const gert::TilingContext* context, size_t id);
+
+bool Is4BitDtype(ge::DataType dtype);
+
+bool isNpuArch92(NpuArch npuArch);
 } // namespace optiling
-#endif // WEIGHT_QUANT_BATCH_MATMUL_V2_TOOL_H

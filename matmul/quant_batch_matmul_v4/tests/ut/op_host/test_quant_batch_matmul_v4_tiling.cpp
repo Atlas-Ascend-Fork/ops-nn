@@ -290,6 +290,10 @@ static void TestOneParamCase(const QuantBatchMatmulV4TilingTestParam& param)
     // 6为替换原aivNum字符串的长度，配置vector_core_cnt
     compileInfoStr = compileInfoStr.replace(compileInfoStr.find("aivNum"), 6, to_string(aivNum));
     GetPlatFormInfos(compileInfoStr.c_str(), socInfos, aicoreSpec, intrinsics, version);
+    if (socVersion == "Ascend950") {
+        version["Short_SoC_version"] = socVersion;
+        version["NpuArch"] = "3510";
+    }
     aicoreSpec["cube_freq"] = "1800";
 
     // platform info
@@ -536,6 +540,7 @@ static void TestOneCoverageCase(const CoverageTestParam& param)
     tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
     map<string, string> soc_version_infos;
     soc_version_infos.insert(make_pair("Short_SoC_version", "Ascend950"));
+    soc_version_infos.insert(make_pair("NpuArch", "3510"));
     tilingContext->GetPlatformInfo()->SetPlatformRes("version", soc_version_infos);
 
     auto tilingParseFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling_parse;

@@ -63,7 +63,9 @@
 
 #include "quant_batch_matmul_v4_tiling_key.h"
 #include "quant_batch_matmul_v4_tiling_data_apt.h"
-#if !__FIXED_POINT_ONLY_CUBE_TO_L0C__
+#if (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202))
+#include "quant_batch_matmul_v4_920.h"
+#elif !__FIXED_POINT_ONLY_CUBE_TO_L0C__
 // define DTYPE_X2 should before cmct
 #if CMCT_PRETILE_INT4_INT4_ASYMMETRICAL
 #include "../quant_batch_matmul_v4_tiling_data.h"
@@ -103,7 +105,10 @@ __global__ __aicore__ void quant_batch_matmul_v4(GM_ADDR x1, GM_ADDR x2, GM_ADDR
                                                  GM_ADDR x2_offset, GM_ADDR y_offset, GM_ADDR x2_table, GM_ADDR y,
                                                  GM_ADDR workspace, GM_ADDR tiling)
 {
-#if !__FIXED_POINT_ONLY_CUBE_TO_L0C__
+#if (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202))
+    QuantBatchMatmulV4::Arch35::InvokeWeightQuantMatmulOpImpl920<TRANS, QUANT_TYPE, KERNEL_TEMPLATE_TYPE>(
+        x1, x2, bias, x1_scale, x2_scale, y_scale, x1_offset, x2_offset, y_offset, y, workspace, tiling);
+#elif !__FIXED_POINT_ONLY_CUBE_TO_L0C__
 #if CMCT_PRETILE_INT8_INT8_BF16
     REGISTER_TILING_DEFAULT(qbmmv4_tiling::QuantBatchMatmulV3BasicAPITilingData);
     if constexpr (TRANS == QBMMV4_NOT_TRANS) {

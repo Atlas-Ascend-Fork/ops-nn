@@ -20,6 +20,12 @@ using Ops::Base::CeilDiv;
 using Ops::NN::IsTransposeLastTwoDims;
 using Ops::NN::SwapLastTwoDimValue;
 
+bool IsNpuArch92()
+{
+    return op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9201 ||
+           op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9202;
+}
+
 bool CheckSpecialCase(const aclTensor* tensor, int64_t firstLastDim, int64_t secondLastDim)
 {
     if (tensor->GetViewShape().GetDim(firstLastDim) == tensor->GetViewShape().GetDim(secondLastDim)) {
@@ -29,7 +35,7 @@ bool CheckSpecialCase(const aclTensor* tensor, int64_t firstLastDim, int64_t sec
     return false;
 }
 
-bool GetTransposeAttrValue(const aclTensor* tensor, bool transpose)
+bool GetTransposeAttrValue(const aclTensor* tensor, bool transpose, bool checkSpecialCase = true)
 {
     int64_t dim1 = tensor->GetViewShape().GetDimNum() - 1;
     int64_t dim2 = tensor->GetViewShape().GetDimNum() - PENULTIMATE_DIM;
@@ -37,6 +43,10 @@ bool GetTransposeAttrValue(const aclTensor* tensor, bool transpose)
     if (tensor->GetViewStrides()[dim2] == 1 && tensor->GetViewStrides()[dim1] == tensor->GetViewShape().GetDim(dim2)) {
         OP_LOGD("QuantMatmul GetTransposeAttrValue, find tensor is not contiguous.");
         const_cast<aclTensor*>(tensor)->SetViewShape(SwapLastTwoDimValue(tensor->GetViewShape()));
+        // 如果不需要校验特殊case，则直接返回
+        if (!checkSpecialCase) {
+            return !transpose;
+        }
         if (!CheckSpecialCase(tensor, dim1, dim2)) {
             return !transpose;
         }

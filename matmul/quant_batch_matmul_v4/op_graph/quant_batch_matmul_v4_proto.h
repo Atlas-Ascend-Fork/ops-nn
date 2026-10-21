@@ -16,6 +16,7 @@
 #define OPS_MATMUL_QUANT_BATCH_MATMUL_V4_PROTO_H_
 
 #include "graph/operator_reg.h"
+#include "../../../common/inc/op_host/op_const_def_nn.h"
 
 namespace ge {
 /**
@@ -68,10 +69,11 @@ float32.
 */
 REG_OP(QuantBatchMatmulV4)
     .INPUT(x1, TensorType({DT_FLOAT8_E5M2, DT_FLOAT8_E4M3FN, DT_INT8, DT_INT4}))
-    .INPUT(x2, TensorType({DT_FLOAT4_E2M1, DT_INT4, DT_INT8}))
+    .INPUT(x2, TensorType({DT_FLOAT4_E2M1, DT_INT4, DT_INT8, Ops::NN::DT_HIFLOAT4}))
     .OPTIONAL_INPUT(bias, TensorType({DT_BF16, DT_FLOAT16, DT_FLOAT32}))
     .OPTIONAL_INPUT(x1_scale, TensorType({DT_FLOAT16, DT_BF16, DT_FLOAT8_E8M0, DT_FLOAT32}))
-    .OPTIONAL_INPUT(x2_scale, TensorType({DT_FLOAT16, DT_BF16, DT_FLOAT8_E8M0, DT_UINT64, DT_FLOAT32}))
+    .OPTIONAL_INPUT(x2_scale, TensorType({DT_FLOAT16, DT_BF16, DT_FLOAT8_E8M0, DT_UINT64, DT_FLOAT32,
+                                          Ops::NN::DT_HIFLOAT4_SCALE}))
     .OPTIONAL_INPUT(y_scale, TensorType({DT_UINT64}))
     .OPTIONAL_INPUT(x1_offset, TensorType({DT_FLOAT16, DT_BF16}))
     .OPTIONAL_INPUT(x2_offset, TensorType({DT_FLOAT16, DT_BF16}))

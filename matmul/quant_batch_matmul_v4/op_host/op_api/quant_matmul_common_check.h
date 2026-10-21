@@ -64,7 +64,7 @@ static const size_t MAX_DIM_NUM_NZ = 8;
 static const size_t PENULTIMATE_DIM = 2;
 
 bool CheckSpecialCase(const aclTensor* tensor, int64_t firstLastDim, int64_t secondLastDim);
-bool GetTransposeAttrValue(const aclTensor* tensor, bool transpose);
+bool GetTransposeAttrValue(const aclTensor* tensor, bool transpose, bool checkSpecialCase);
 op::Shape GetWeightNzShape(const aclTensor* input, bool transpose);
 bool CheckWeightNzStorageShape(const op::Shape& nzShape, const op::Shape& storageShape);
 const aclTensor* SetTensorToNZFormat(const aclTensor* input, op::Shape& shape, aclOpExecutor* executor);
@@ -87,5 +87,7 @@ aclnnStatus SpecialOutputProcess(const aclTensor* x1, const aclTensor* x2, const
                                  const aclTensor*& matmulRet, aclOpExecutor* executor);
 aclnnStatus PostMatmulCalcProcess(const aclTensor* matmulRet, const aclTensor* x1, const aclTensor* x2,
                                   const aclTensor* out, aclOpExecutor* executor);
+
+bool IsNpuArch92();
 
 #endif // OP_API_INC_QUANT_MATMUL_COMMON_CHECK_H

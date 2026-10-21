@@ -136,7 +136,7 @@ static void TestOneParamCase(const QuantBatchMatmulV4BasicBlockTilingTestParam& 
     tiling.SetPlatformParam(platformParam);
     tiling.SetShape(param.m, param.n, param.k, param.groupSize);
     tiling.SetAttr("QuantBatchMatmulV4", param.transA, param.transB, param.hasBias, param.weightNz);
-    tiling.SetQuantType(param.isMx);
+    tiling.SetQuantType(param.isMx, false);
     tiling.SetDtypeBits(param.aBits, param.bBits, param.biasBits, param.yScaleBits);
 
     bool ret = tiling.GetBasicBlockTiling();

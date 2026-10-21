@@ -20,12 +20,12 @@
 #include <vector>
 
 #include "op_host/tiling_templates_registry.h"
-#include "../../../../common/op_host/op_tiling/tiling_type_mm.h"
 #include "op_cache_tiling.h"
 
-#include "../../../../weight_quant_batch_matmul_v2/op_host/op_tiling/weight_quant_batch_matmul_v2_tiling_tool.h"
+#include "matmul/common/op_host/op_tiling/weight_quant_batch_matmul_tiling_tool.h"
 #include "../quant_batch_matmul_v4_compile_info.h"
 #include "../../../op_kernel/arch35/quant_batch_matmul_v4_tiling_data_apt.h"
+#include "../../../../common/op_host/op_tiling/tiling_type_mm.h"
 
 namespace optiling {
 using Ops::NN::Optiling::TilingBaseClass;
@@ -53,30 +53,29 @@ constexpr size_t GROUP_SIZE_INDEX = 4UL;
 // valid dim
 constexpr size_t VALID_INPUT_DIM_NUM = 2UL;
 constexpr size_t MATMUL_SHAPE_DIM_NUM = 2UL;
-constexpr size_t VALID_X1_SCALE_DIM_NUM = 3UL;
-constexpr size_t VALID_X2_SCALE_DIM_NUM = 3UL;
+constexpr size_t VALID_X1_SCALE_DIM_NUM = 2UL;
+constexpr size_t VALID_X2_SCALE_DIM_NUM = 2UL;
+constexpr size_t VALID_MX_X1_SCALE_DIM_NUM = 3UL;
+constexpr size_t VALID_MX_X2_SCALE_DIM_NUM = 3UL;
 constexpr size_t VALID_WEIGHT_NZ_DIM_NUM = 4UL;
 constexpr size_t VALID_BIAS_MIN_DIM = 1;
 constexpr size_t VALID_BIAS_MAX_DIM = 2;
 constexpr uint64_t VEC_INNER_AXIS_ALIGN_UINT = 128UL;
 constexpr uint64_t MAX_SHAPE_DIM = 0x7fffffffUL;
 constexpr uint64_t MIN_GROUP_SIZE = 32UL;
-constexpr uint64_t MX_GROUP_SIZE = 32UL;
-constexpr int32_t BASIC_PRIORITY = 1;
 constexpr uint64_t INT4_DTYPE_PARAM = 2;
 constexpr uint32_t WORKSPACE_SIZE = 16777216; // 16 * 1024 * 1024
 constexpr int32_t DB_BUFFER = 2;
 constexpr int32_t EXTRA_GROUP_NUM = 2;
-constexpr uint64_t K_ALIGN_SIZE = 32;
+constexpr uint64_t K_ALIGN_SIZE_32 = 32;
+constexpr uint64_t K_ALIGN_SIZE_64 = 64;
 constexpr uint64_t K_ALIGN_SIZE_MX = 8;
-constexpr uint64_t N_ALIGN_SIZE = 8;
+constexpr uint64_t N_ALIGN_SIZE_8 = 8;
+constexpr uint64_t N_ALIGN_SIZE_64 = 64;
 
 constexpr int64_t B64_BITS = 64;
 constexpr int64_t B8_BITS = 8;
 constexpr int64_t BLK_NUM_V100 = 32;
-constexpr int64_t L0A_SIZE_V100 = 65536;
-constexpr int64_t L0B_SIZE_V100 = 65536;
-constexpr int64_t L0C_SIZE_V100 = 262144;
 constexpr int64_t MTE2_MIN_LOAD_SIZE_V100 = 32768; // 实测16KB带宽较差，此处取32KB
 constexpr int64_t MIN_CACHE_LINE_V100 = 128;
 constexpr int64_t CACHE_LINE_V100 = 256;
@@ -84,12 +83,21 @@ constexpr int64_t GROUP_ALIGN_SIZE = 32;
 constexpr int64_t NZ_GROUP_SIZE_32 = 32;
 constexpr int64_t NZ_C0_SIZE = 32;
 constexpr int64_t NZ_GROUP_SIZE_64 = 64;
+constexpr int64_t MX_GROUP_SIZE = 32;
+constexpr int64_t HIF4_GROUP_SIZE = 64;
 constexpr int64_t MIN_SHAPE_SIZE = 1;
 constexpr int64_t VALID_BIAS_SHAPE_SIZE = 1;
+constexpr int64_t VALID_MX_SCALE_LAST_DIM = 2UL; // MicroScaling场景下scale tensor最后一维的大小
+constexpr int64_t VALID_MXHIF4_SCALE_LAST_DIM = 1UL;
 
-constexpr double FREQUENCY_v100 = 1.6;
+constexpr double FREQUENCY_V100 = 1.6;
+constexpr double FREQUENCY_V121 = 1.8;
+constexpr double FREQUENCY_V122 = 1.55;
 constexpr double HBM_BANDWIDTH_V100 = 1.6;
+constexpr double HBM_BANDWIDTH_V121 = 7.5;
+constexpr double HBM_BANDWIDTH_V122 = 2.25;
 constexpr double L2_BANDWIDTH_V100 = 5.4;
+constexpr double L2_BANDWIDTH_V121 = 13;
 
 enum class QuantType : uint32_t {
     NONE = 0,
@@ -98,10 +106,11 @@ enum class QuantType : uint32_t {
     PER_GROUP = 3,
     MX = 4,
     PER_TILE = 5,
-    INT4_ASYMMETRICAL = 6
+    INT4_ASYMMETRICAL = 6,
+    T_G = 7
 };
 
-enum class KernelTemplateType : uint32_t { BASIS = 0, LUT_ASW = 1, LUT_AL1FULL = 2 };
+enum class KernelTemplateType : uint32_t { BASIS = 0, LUT_ASW = 1, LUT_AL1FULL = 2, VECTOR_ANTIQUANT = 3 };
 
 enum class WeightFormat : uint32_t {
     ND = 0,
@@ -175,6 +184,7 @@ protected:
     matmul_v4::QuantBatchMatmulInfo inputParams_;
     uint32_t aivNum_;
     uint32_t aicNum_;
+    NpuArch npuArch_;
     std::unique_ptr<QuantBatchMatmulV4CompileInfo> compileInfoPtr_;
 
 private:
@@ -188,10 +198,13 @@ private:
     bool AnalyzeX2scaleDtype(const gert::CompileTimeTensorDesc* x2ScaleDesc);
     bool AnalyzeYScaleOffsetShape(const gert::StorageShape* yScaleShape, const gert::StorageShape* yOffsetShape) const;
     bool AnalyzeTranspose();
+    bool IsX2Hif4PerGroup();
+    bool AnalyzeGroupSize();
     bool AnalyzeAttrs();
     bool AnalyzeX2InputDim(const gert::StorageShape* x2Shape);
     bool AnalyzeInputs();
     bool AnalyzeX2ScalePerGroupShape(const gert::StorageShape* x2ScaleShape);
+    bool AnalyzeX2ScaleMxPerGroupShape(const gert::StorageShape* x2ScaleShape);
     bool AnalyzeShapeSize(const gert::StorageShape* x1Shape, const gert::StorageShape* x2Shape);
     bool ValidateShapeDimensions();
     bool AnalyzeBiasShape(const gert::StorageShape* biasShape);

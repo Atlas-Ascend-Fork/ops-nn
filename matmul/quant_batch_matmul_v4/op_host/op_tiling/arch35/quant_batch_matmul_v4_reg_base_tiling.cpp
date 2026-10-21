@@ -21,6 +21,7 @@
 #include "quant_batch_matmul_v4_reg_base_tiling.h"
 #include "matmul/common/op_host/math_util_nn.h"
 #include "error_util.h"
+#include "common/inc/op_host/op_const_def_nn.h"
 
 using AscendC::BLOCK_CUBE;   // uint32_t
 using AscendC::ONE_BLK_SIZE; // uint32_t
@@ -49,23 +50,39 @@ ge::graphStatus QuantBatchMatmulV4RegBase::DoOpTiling()
     tilingData_.nSize = inputParams_.nSize;
     tilingData_.mSize = inputParams_.mSize;
 
+    double frequency = FREQUENCY_V100;
+    double hbmBandwidth = HBM_BANDWIDTH_V100;
+    double l2Bandwidth = L2_BANDWIDTH_V100;
+    if (npuArch_ == NpuArch::DAV_9201) {
+        frequency = FREQUENCY_V121;
+        hbmBandwidth = HBM_BANDWIDTH_V121;
+        l2Bandwidth = L2_BANDWIDTH_V121;
+    } else if (npuArch_ == NpuArch::DAV_9202) {
+        frequency = FREQUENCY_V122;
+        hbmBandwidth = HBM_BANDWIDTH_V122;
+        l2Bandwidth = L2_BANDWIDTH_V121;
+    }
+
     PlatformParam platformParam = {aicNum_,
                                    aicNum_,
                                    static_cast<int64_t>(aicoreParams_.ubSize),
                                    static_cast<int64_t>(aicoreParams_.l1Size),
-                                   L0A_SIZE_V100,
-                                   L0B_SIZE_V100,
-                                   L0C_SIZE_V100,
+                                   static_cast<int64_t>(aicoreParams_.l0aSize),
+                                   static_cast<int64_t>(aicoreParams_.l0bSize),
+                                   static_cast<int64_t>(aicoreParams_.l0cSize),
                                    CACHE_LINE_V100,
                                    MIN_CACHE_LINE_V100,
-                                   FREQUENCY_v100,
-                                   HBM_BANDWIDTH_V100,
-                                   L2_BANDWIDTH_V100};
+                                   frequency,
+                                   hbmBandwidth,
+                                   l2Bandwidth,
+                                   npuArch_};
     tilingSolver_.SetPlatformParam(platformParam);
     tilingSolver_.SetShape(inputParams_.mSize, inputParams_.nSize, inputParams_.kSize, inputParams_.groupSize);
     tilingSolver_.SetAttr(inputParams_.opName, inputParams_.transA, inputParams_.transB, inputParams_.hasBias,
                           inputParams_.bFormat == ge::FORMAT_FRACTAL_NZ);
-    tilingSolver_.SetQuantType(inputParams_.antiQuantType == QuantType::MX);
+    tilingSolver_.SetQuantType(inputParams_.antiQuantType == QuantType::MX,
+                               inputParams_.x2ScaleDtype == Ops::NN::DT_HIFLOAT4_SCALE);
+    tilingSolver_.SetScaleDtypeBits(GetDtypeBits(inputParams_.x1ScaleDtype), GetDtypeBits(inputParams_.x2ScaleDtype));
     tilingSolver_.SetDtypeBits(GetDtypeBits(inputParams_.aDtype), GetDtypeBits(inputParams_.bDtype),
                                GetDtypeBits(inputParams_.biasDtype), B64_BITS);
     OP_CHECK_IF(!tilingSolver_.GetBasicBlockTiling(),
@@ -73,7 +90,9 @@ ge::graphStatus QuantBatchMatmulV4RegBase::DoOpTiling()
                         inputParams_.nSize, inputParams_.kSize),
                 return ge::GRAPH_FAILED);
     SetMatmulTiling();
-    SetBubTiling();
+    if (!isNpuArch92(npuArch_)) {
+        SetBubTiling();
+    }
 
     return ge::GRAPH_SUCCESS;
 }

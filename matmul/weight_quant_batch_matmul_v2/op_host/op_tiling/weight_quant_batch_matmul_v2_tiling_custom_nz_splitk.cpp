@@ -14,7 +14,7 @@
  */
 
 #include "weight_quant_batch_matmul_v2_tiling_custom_nz_splitk.h"
-#include "weight_quant_batch_matmul_v2_tiling_tool.h"
+#include "matmul/common/op_host/op_tiling/weight_quant_batch_matmul_tiling_tool.h"
 #include "weight_quant_batch_matmul_v2_tiling_key.h"
 #include "weight_quant_batch_matmul_v2_white_list.h"
 #include "../../op_kernel/weight_quant_batch_matmul_v2_kernel_tiling_key.h"
