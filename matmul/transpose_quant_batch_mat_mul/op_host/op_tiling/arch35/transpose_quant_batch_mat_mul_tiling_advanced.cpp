@@ -21,6 +21,7 @@
 #include "matmul/mat_mul_v3/op_host/op_tiling/arch35/matmul_v3_compile_info_advanced.h"
 #include "matmul/common/op_host/math_util_nn.h"
 #include "matmul/common/op_host/log_format_util.h"
+#include "../../../../../common/inc/op_host/op_const_def_nn.h"
 
 namespace {
 using namespace optiling;
@@ -100,7 +101,7 @@ static inline ge::graphStatus IsValidGroupSize(const int64_t groupSize, bool isM
 
 ge::graphStatus TQBMMGetShapeMKN(const gert::Shape& aShape, const gert::Shape& bShape,
                                  const gert::ContinuousVector* aPermList, const gert::ContinuousVector* bPermList,
-                                 MatMulV3Args& args, bool isMxfp8, bool isHIFP8)
+                                 MatMulV3Args& args, bool isMxfp8, bool isHIFP8, bool isHIFP4)
 {
     const int64_t* aPerm = static_cast<const int64_t*>(aPermList->GetData());
     const int64_t* bPerm = static_cast<const int64_t*>(bPermList->GetData());
@@ -127,13 +128,13 @@ ge::graphStatus TQBMMGetShapeMKN(const gert::Shape& aShape, const gert::Shape& b
             Ops::NN::FormatString("%s of %s must be positive numbers", "m, k, n", "x1, x2").c_str());
         return ge::GRAPH_FAILED;
     }
-    if (isMxfp8 && (kA % K_ALIGNMENT64 != 0)) {
+    if ((isMxfp8 || isHIFP4) && (kA % K_ALIGNMENT64 != 0)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             args.opName, "x1", Ops::Base::ToString(aShape).c_str(),
             Ops::NN::FormatString("%s of %s must be exactly divisible by %lu", "K-axis", "x1", K_ALIGNMENT64).c_str());
         return ge::GRAPH_FAILED;
     }
-    if (!isMxfp8 && !isHIFP8 && (kA != TQBMM_VALID_K || n != TQBMM_VALID_N)) {
+    if (!isMxfp8 && !isHIFP8 && !isHIFP4 && (kA != TQBMM_VALID_K || n != TQBMM_VALID_N)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             args.opName, "x2", Ops::Base::ToString(bShape).c_str(),
             Ops::NN::FormatString("The k-axis and n-axis of %s must be %d and %d", "x2", TQBMM_VALID_K, TQBMM_VALID_N)
@@ -149,7 +150,8 @@ ge::graphStatus TQBMMGetShapeMKN(const gert::Shape& aShape, const gert::Shape& b
 }
 
 ge::graphStatus TQBMMCheckPerm(const gert::ContinuousVector* aPermList, const gert::ContinuousVector* bPermList,
-                               const gert::ContinuousVector* yPermList, MatMulV3Args& args, bool isMxfp8, bool isHIFP8)
+                               const gert::ContinuousVector* yPermList, MatMulV3Args& args, bool isMxfp8, bool isHIFP8,
+                               bool isHIFP4)
 {
     // perm_x1
     const int64_t* aPerm = static_cast<const int64_t*>(aPermList->GetData());
@@ -164,7 +166,7 @@ ge::graphStatus TQBMMCheckPerm(const gert::ContinuousVector* aPermList, const ge
     // perm_x2
     const int64_t* bPerm = static_cast<const int64_t*>(bPermList->GetData());
     bool bPermCheck = ((bPerm[BATCH_IDX] == 0L) && (bPerm[KB_IDX] == 1L) && (bPerm[N_IDX] == 2L)); // bPerm is [0,1,2]
-    if (isMxfp8 || isHIFP8) {
+    if (isMxfp8 || isHIFP8 || isHIFP4) {
         bPermCheck = bPermCheck || ((bPerm[BATCH_IDX] == 0L) && (bPerm[KB_IDX] == 2L) && (bPerm[N_IDX] == 1L));
     }
     if (!bPermCheck) {
@@ -189,7 +191,8 @@ ge::graphStatus TQBMMCheckPerm(const gert::ContinuousVector* aPermList, const ge
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus TQBMMGetShape(const gert::TilingContext& context, MatMulV3Args& args, bool isMXFP8, bool isHIFP8)
+ge::graphStatus TQBMMGetShape(const gert::TilingContext& context, MatMulV3Args& args, bool isMXFP8, bool isHIFP8,
+                              bool isHIFP4)
 {
     const gert::Shape& aShape = context.GetInputShape(0)->GetOriginShape();
     const gert::Shape& bShape = context.GetInputShape(1)->GetOriginShape();
@@ -197,10 +200,11 @@ ge::graphStatus TQBMMGetShape(const gert::TilingContext& context, MatMulV3Args& 
     const gert::ContinuousVector* aPermList = attrs->GetAttrPointer<gert::ContinuousVector>(PERM_X1_IDX);
     const gert::ContinuousVector* bPermList = attrs->GetAttrPointer<gert::ContinuousVector>(PERM_X2_IDX);
     const gert::ContinuousVector* yPermList = attrs->GetAttrPointer<gert::ContinuousVector>(PERM_Y_IDX);
-    OP_TILING_CHECK((TQBMMCheckPerm(aPermList, bPermList, yPermList, args, isMXFP8, isHIFP8) != ge::GRAPH_SUCCESS),
-                    CUBE_INNER_ERR_REPORT(args.opName, "check perm failed"), return ge::GRAPH_FAILED);
     OP_TILING_CHECK(
-        (TQBMMGetShapeMKN(aShape, bShape, aPermList, bPermList, args, isMXFP8, isHIFP8) != ge::GRAPH_SUCCESS),
+        (TQBMMCheckPerm(aPermList, bPermList, yPermList, args, isMXFP8, isHIFP8, isHIFP4) != ge::GRAPH_SUCCESS),
+        CUBE_INNER_ERR_REPORT(args.opName, "check perm failed"), return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        (TQBMMGetShapeMKN(aShape, bShape, aPermList, bPermList, args, isMXFP8, isHIFP8, isHIFP4) != ge::GRAPH_SUCCESS),
         CUBE_INNER_ERR_REPORT(args.opName, "get m/k/n failed"), return ge::GRAPH_FAILED);
     if (attrs->GetAttrNum() >= ATTR_NUM) {
         int32_t batchSplitFactor = *(attrs->GetAttrPointer<int32_t>(ATTR_NUM - 1));
@@ -215,7 +219,7 @@ ge::graphStatus TQBMMGetShape(const gert::TilingContext& context, MatMulV3Args& 
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus IsValidDtype(const gert::TilingContext& context, const MatMulV3Args& args, bool isHIFP8)
+ge::graphStatus IsValidDtype(const gert::TilingContext& context, const MatMulV3Args& args, bool isHIFP8, bool isHIFP4)
 {
     auto scaleX1Desc = context.GetOptionalInputDesc(SCALE_X1_IDX);
     auto scaleX2Desc = context.GetOptionalInputDesc(SCALE_X2_IDX);
@@ -244,7 +248,11 @@ ge::graphStatus IsValidDtype(const gert::TilingContext& context, const MatMulV3A
         {ge::DT_FLOAT4_E2M1, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT8_E8M0, ge::DT_FLOAT8_E8M0, ge::DT_BF16},
         {ge::DT_HIFLOAT8, ge::DT_HIFLOAT8, ge::DT_UINT64, ge::DT_UINT64, ge::DT_FLOAT16},
         {ge::DT_HIFLOAT8, ge::DT_HIFLOAT8, ge::DT_UINT64, ge::DT_UINT64, ge::DT_BF16},
-        {ge::DT_HIFLOAT8, ge::DT_HIFLOAT8, ge::DT_UINT64, ge::DT_UINT64, ge::DT_HIFLOAT8}};
+        {ge::DT_HIFLOAT8, ge::DT_HIFLOAT8, ge::DT_UINT64, ge::DT_UINT64, ge::DT_HIFLOAT8},
+        {Ops::NN::DT_HIFLOAT4, Ops::NN::DT_HIFLOAT4, Ops::NN::DT_HIFLOAT4_SCALE, Ops::NN::DT_HIFLOAT4_SCALE,
+         ge::DT_FLOAT16},
+        {Ops::NN::DT_HIFLOAT4, Ops::NN::DT_HIFLOAT4, Ops::NN::DT_HIFLOAT4_SCALE, Ops::NN::DT_HIFLOAT4_SCALE,
+         ge::DT_BF16}};
     for (auto& supported : dtypeSuportList) {
         if (std::equal(dtype.begin(), dtype.end(), supported.begin())) {
             return ge::GRAPH_SUCCESS;
@@ -289,13 +297,13 @@ ge::graphStatus TransposeQuantBatchMatMulTiling::GetArgs()
 {
     TQBMMGetFormat(*context_, args_);
     TQBMMGetDtype(*context_, args_);
-    if (TQBMMGetShape(*context_, args_, isMXFP8_, isHIFP8_) != ge::GRAPH_SUCCESS) {
+    if (TQBMMGetShape(*context_, args_, isMXFP8_, isHIFP8_, isHIFP4_) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
     if (IsValidFormat(args_, isMXFP8_) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
-    return IsValidDtype(*context_, args_, isHIFP8_);
+    return IsValidDtype(*context_, args_, isHIFP8_, isHIFP4_);
 }
 
 bool TransposeQuantBatchMatMulTiling::CheckMxScaleDim(const size_t scaleDimNum, const char* scaleName) const
@@ -343,6 +351,41 @@ ge::graphStatus TransposeQuantBatchMatMulTiling::CheckMxScaleShape(const gert::S
                                               Ops::Base::ToString(scaleX2ShapePtr->GetStorageShape()).c_str(),
                                               Ops::NN::FormatString("In %s case, the shape of %s must be %s", "MXFP8",
                                                                     "x2Scale", "[b, numGroup, n, 2] after permX2")
+                                                  .c_str());
+        return ge::GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus TransposeQuantBatchMatMulTiling::CheckHifp4ScaleShape(const gert::StorageShape* scaleX1ShapePtr,
+                                                                      const gert::StorageShape* scaleX2ShapePtr,
+                                                                      const size_t scaleX1DimNum,
+                                                                      const size_t scaleX2DimNum, const int64_t b,
+                                                                      const int64_t m, const int64_t n, const int64_t k,
+                                                                      const int64_t* bPerm) const
+{
+    int64_t numGroup = ops::CeilDiv(static_cast<uint64_t>(k), HIF4_GROUP_SIZE);
+    bool invalidScaleX1 = scaleX1DimNum != EXPECTED_MX_SCALE_DIM || scaleX1ShapePtr->GetStorageShape().GetDim(0) != m ||
+                          scaleX1ShapePtr->GetStorageShape().GetDim(1) != b ||
+                          scaleX1ShapePtr->GetStorageShape().GetDim(NUM_TWO) != numGroup ||
+                          scaleX1ShapePtr->GetStorageShape().GetDim(NUM_THREE) != 1;
+    if (invalidScaleX1) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            args_.opName, "x1Scale", Ops::Base::ToString(scaleX1ShapePtr->GetStorageShape()).c_str(),
+            Ops::NN::FormatString("In %s case, the shape of %s must be %s", "HIFP4", "x1Scale", "[m, b, numGroup, 1]")
+                .c_str());
+        return ge::GRAPH_FAILED;
+    }
+    int64_t scaleN = scaleX2ShapePtr->GetStorageShape().GetDim(bPerm[NUM_TWO]);
+    int64_t scaleGroupNum = scaleX2ShapePtr->GetStorageShape().GetDim(bPerm[1]);
+    bool invalidScaleX2 = scaleX2DimNum != EXPECTED_MX_SCALE_DIM || scaleX2ShapePtr->GetStorageShape().GetDim(0) != b ||
+                          scaleN != n || scaleGroupNum != numGroup ||
+                          scaleX2ShapePtr->GetStorageShape().GetDim(NUM_THREE) != 1;
+    if (invalidScaleX2) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(args_.opName, "x2Scale",
+                                              Ops::Base::ToString(scaleX2ShapePtr->GetStorageShape()).c_str(),
+                                              Ops::NN::FormatString("In %s case, the shape of %s must be %s", "HIFP4",
+                                                                    "x2Scale", "[b, numGroup, n, 1] after permX2")
                                                   .c_str());
         return ge::GRAPH_FAILED;
     }
@@ -401,6 +444,9 @@ ge::graphStatus TransposeQuantBatchMatMulTiling::CheckScale(const int64_t b, con
     }
     auto scaleX1DimNum = isHIFP8_ ? 1 : scaleX1ShapePtr->GetStorageShape().GetDimNum();
     auto scaleX2DimNum = scaleX2ShapePtr->GetStorageShape().GetDimNum();
+    if (isHIFP4_) {
+        return CheckHifp4ScaleShape(scaleX1ShapePtr, scaleX2ShapePtr, scaleX1DimNum, scaleX2DimNum, b, m, n, k, bPerm);
+    }
     if (isMXFP8_) {
         return CheckMxScaleShape(scaleX1ShapePtr, scaleX2ShapePtr, scaleX1DimNum, scaleX2DimNum, b, m, n, k, bPerm);
     }
@@ -454,6 +500,8 @@ ge::graphStatus TransposeQuantBatchMatMulTiling::CheckArgs()
     OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOptionalInputDesc(SCALE_X2_IDX));
     OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOptionalInputShape(SCALE_X2_IDX));
     isHIFP8_ = IsHIFP8(context_->GetInputDesc(X1_IDX), context_->GetInputDesc(X2_IDX));
+    isHIFP4_ = IsHIFP4(context_->GetInputDesc(X1_IDX), context_->GetInputDesc(X2_IDX),
+                       context_->GetOptionalInputDesc(SCALE_X1_IDX), context_->GetOptionalInputDesc(SCALE_X2_IDX));
     isMXFP8_ = IsMicroScaling(context_->GetOptionalInputDesc(SCALE_X1_IDX),
                               context_->GetOptionalInputDesc(SCALE_X2_IDX));
     OP_TILING_CHECK((CheckScale(aShape[aPerm[BATCH_IDX]], aShape[aPerm[M_IDX]], bShape[bPerm[N_IDX]],

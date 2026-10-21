@@ -41,6 +41,8 @@ protected:
 private:
     void ResetFullLoadLoadBalance();
 
+    // 判断切分份数是否满足全载条件：3510在K内轴512B对齐时允许cnt==aicNum，9201/9202要求cnt>aicNum
+    bool CheckFullLoadCnt(uint64_t cnt, bool isKAligned) const;
     void CalcTailBasicBlockBL1Full();
     void CalcTailBasicBlockAL1Full();
     bool CheckBL1FullLoad() const;

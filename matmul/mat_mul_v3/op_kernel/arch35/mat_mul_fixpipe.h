@@ -69,17 +69,16 @@ __aicore__ inline void MatMulFixpipeOptiTensorKernel(GM_ADDR aGM, GM_ADDR bGM, G
     // 定义Kernel类型
     using MatmulKernel = Blaze::Gemm::Kernel::GemmUniversal<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
     using Params = typename MatmulKernel::Params;
-    static constexpr bool enable2UB = (AscendC::IsSameType<OutType, float>::value);
     Params params = {{tilingData.m, tilingData.n, tilingData.k, batch}, // shape
                      {aGM, bGM, cGM, biasGM, nullptr, nullptr, tilingData.k, tilingData.mL1, tilingData.nL1,
                       tilingData.kL1, tilingData.baseM, tilingData.baseN, tilingData.baseK, tilingData.l1BufferNum,
-                      tilingData.l0cDB, enable2UB, tilingData.ubDB, tilingData.rowStride},
+                      tilingData.l0cDB, tilingData.splitM, tilingData.ubDB, tilingData.rowStride},
                      {cGM}, // epilogue args
                      {tilingData.mL1, tilingData.nL1, tilingData.kL1, tilingData.baseM, tilingData.baseN,
                       tilingData.baseK, tilingData.mTailCnt, tilingData.nTailCnt, tilingData.mBaseTailSplitCnt,
                       tilingData.nBaseTailSplitCnt, tilingData.mTailMain, tilingData.nTailMain, tilingData.mmadParam,
                       static_cast<uint32_t>(tilingData.l2CacheDisable), tilingData.sliceM, tilingData.srcNdStride,
-                      tilingData.innerBatch}}; // scheduler params
+                      tilingData.innerBatch, tilingData.aswWindowLen}}; // scheduler params
     MatmulKernel mm;
     mm(params);
 }

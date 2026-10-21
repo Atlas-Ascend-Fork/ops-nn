@@ -58,14 +58,14 @@ __aicore__ inline void MatMulStreamKSplitKKernel(GM_ADDR aGM, GM_ADDR bGM, GM_AD
     // 定义Kernel类型
     using MatmulKernel = Blaze::Gemm::Kernel::GemmUniversal<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
     using Params = typename MatmulKernel::Params;
-    Params params = {
-        {tilingData.m, tilingData.n, tilingData.k, batch}, // shape
-        {aGM, bGM, cGM, biasGM, nullptr, workspaceGM, tilingData.mL1, tilingData.nL1, tilingData.kL1, tilingData.baseM,
-         tilingData.baseN, tilingData.baseK, tilingData.l1BufferNum, tilingData.l0cDB,
-         tilingData.splitSingleCoreKBase}, // gm addr
-        {cGM, workspaceGM},                // epilogue args
-        {tilingData.usedCoreNum, tilingData.baseM, tilingData.baseN, tilingData.baseK, tilingData.skSingleCoreK,
-         tilingData.kL1, tilingData.mmadParam, static_cast<uint32_t>(tilingData.l2CacheDisable)}}; // schedule params
+    Params params = {{tilingData.m, tilingData.n, tilingData.k, batch}, // shape
+                     {aGM, bGM, cGM, biasGM, nullptr, workspaceGM, tilingData.mL1, tilingData.nL1, tilingData.kL1,
+                      tilingData.baseM, tilingData.baseN, tilingData.baseK, tilingData.l1BufferNum, tilingData.l0cDB,
+                      tilingData.splitSingleCoreKBase}, // gm addr
+                     {cGM, workspaceGM},                // epilogue args
+                     {tilingData.usedCoreNum, tilingData.baseM, tilingData.baseN, tilingData.baseK,
+                      tilingData.skSingleCoreK, tilingData.kL1, tilingData.mmadParam,
+                      static_cast<uint32_t>(tilingData.l2CacheDisable), tilingData.aswWindowLen}}; // schedule params
     MatmulKernel mm;
     mm(params);
 }

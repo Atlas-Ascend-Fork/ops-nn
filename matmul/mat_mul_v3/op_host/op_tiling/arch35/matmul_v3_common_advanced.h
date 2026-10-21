@@ -58,6 +58,7 @@ constexpr uint64_t MIN_TATL_BLOCK_SIZE = 4096UL;
 constexpr double CUBE_BOUND_RATIO = 0.85;
 constexpr double EPSILON = 1e-9;
 constexpr uint64_t FP32_SPLIT_K_BASE_FACTOR = 3UL;
+constexpr double TIME_CONVERT_UNIT = 1000;
 constexpr int64_t FP32_K_SWITCH_BASE = 268435456; // 1024 * 32 * 8192
 constexpr uint64_t FP32_SPLIT_K_BASE1 = 1024UL;
 constexpr uint64_t FP32_SPLIT_K_BASE2 = 8192UL;
@@ -184,6 +185,7 @@ struct MatMulV3RunInfo {
     uint64_t mergeBatchBL1 = 1UL;
     uint64_t mergeBatchL0 = 1UL;
     bool needNdDma = false;
+    bool splitM = false;
     double cubeBoundParam = 0.0;
     double cubeBoundEdge = 0.0;
     MatMulV3TailInfo tailInfo;

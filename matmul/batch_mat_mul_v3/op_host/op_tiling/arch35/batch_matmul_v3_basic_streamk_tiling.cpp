@@ -23,6 +23,9 @@ using Ops::NN::MathUtil;
 namespace optiling {
 namespace batch_matmul_v3_advanced {
 using namespace strategy;
+
+constexpr uint64_t FIXPIPE_N_ALIGN_ELEMENTS = 32UL;
+
 MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3BasicStreamKTiling, DAV_3510, BATCH_STREAM_K);
 
 MatMulV3L0C2Out BatchMatMulV3BasicStreamKTiling::GetL0C2OutFlag() const
@@ -139,7 +142,8 @@ ge::graphStatus BatchMatMulV3BasicStreamKTiling::DoOpTiling()
 
 std::vector<size_t> BatchMatMulV3BasicStreamKTiling::GetWorkspaceSize() const
 {
-    size_t workspaceSize = compileInfo_.aicNum * BASIC_BLOCK_SIZE_256 * BASIC_BLOCK_SIZE_256 * DATA_SIZE_FP32;
+    size_t workspaceSize = compileInfo_.aicNum * runInfo_.baseM *
+                           ops::CeilAlign(runInfo_.baseN, FIXPIPE_N_ALIGN_ELEMENTS) * DATA_SIZE_FP32;
     OP_LOGI(args_.opName, "BatchMatMulV3 tiling workspace size is %lu", workspaceSize);
     return {workspaceSize};
 }

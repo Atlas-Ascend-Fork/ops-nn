@@ -133,6 +133,8 @@ struct MatMulV3BasicTilingData {
     uint32_t rowStride = 1;                                     // 非连续场景m轴stride
     uint32_t innerBatch = 1;                                    // 非连续transpose场景内轴batch值
     uint32_t splitSingleCoreKBase = 0;
+    uint8_t splitM = 0;       // fixpipe场景fp32输出m轴切分拷出标记，默认false
+    uint8_t aswWindowLen = 4; // ASW滑窗长度，host按核数自适应计算下发，语义同highlevel的aswWindowLen
 };
 #pragma pack(pop)
 

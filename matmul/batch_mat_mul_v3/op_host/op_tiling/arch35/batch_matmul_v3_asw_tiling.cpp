@@ -24,6 +24,8 @@ namespace optiling {
 namespace batch_matmul_v3_advanced {
 using namespace strategy;
 MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3AswTiling, DAV_3510, BASE);
+MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3AswTiling, DAV_9201, BASE);
+MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3AswTiling, DAV_9202, BASE);
 MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3AswTiling, DAV_RESV, BASE); // supportMmadS8S4平台
 
 ge::graphStatus BatchMatMulV3AswTiling::DoOpTiling()
@@ -31,7 +33,7 @@ ge::graphStatus BatchMatMulV3AswTiling::DoOpTiling()
     MatMulV3TilingHelper::ResetBase(compileInfo_, args_, runInfo_);
     MatMulV3TilingHelper::CalL1Tiling(compileInfo_, args_, runInfo_);
 
-    runInfo_.mixInfo.ubDB = runInfo_.baseM * runInfo_.baseN * DATA_SIZE_FP32 <= compileInfo_.ubSize ? DB_SIZE : 1UL;
+    runInfo_.mixInfo.ubDB = MatMulV3TilingHelper::CalcUbDB(compileInfo_, runInfo_.baseM, runInfo_.baseN);
 
     // 特殊处理3D非连续场景
     if (IsInputNonContiguousTranspose(context_, 0UL) && IsInputNonContiguousTranspose(context_, 1UL)) {

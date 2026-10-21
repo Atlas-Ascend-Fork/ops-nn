@@ -63,7 +63,7 @@ const uint64_t AIC_SYNC_AIV_FLAG = 6;
 
 constexpr uint64_t BLOCK_BYTE_SIZE = 32;
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
 const uint8_t AIC_SYNC_AIV_MODE_4 = 4;
 const uint64_t VEC0_FLAG_ID_OFFSET = 0;
 const uint64_t VEC1_FLAG_ID_OFFSET = 16;

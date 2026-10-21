@@ -292,8 +292,6 @@ public:
     constexpr static uint16_t AIV_SYNC_AIC_FLAG = 6;
     constexpr static uint16_t AIC_SYNC_AIV_FLAG = 8;
     constexpr static uint16_t FLAG_ID_MAX = 16;
-    constexpr static uint16_t BLOCK_BASE_M = 256;
-    constexpr static uint16_t BLOCK_BASE_N = 256;
 
     struct EpilogueArgs {
         GM_ADDR cGmAddr{nullptr};
@@ -365,6 +363,9 @@ public:
             int64_t curBlockIdx = AscendC::GetBlockIdx();
 
             TupleShape tileL0 = bs.GetTileL0Shape();
+            int64_t baseM = Get<MNK_M>(tileL0);
+            int64_t baseN = Get<MNK_N>(tileL0);
+            int64_t alignedBaseN = CeilAlign(baseN, AscendC::ONE_BLK_SIZE);
             int64_t isHf32 = bs.GetHf32Flag();
 
             if (curBlockIdx >= bs.GetBlockNum(usedCoreNum_)) {
@@ -404,7 +405,7 @@ public:
                     int64_t offsetBias = Get<3>(blockOffset);
                     int64_t offsetWorkspace = (((tmpTileIdx % usedCoreNum_) / skKTileNum) * skKTileNum +
                                                Get<MNK_K>(singleCoreCoord)) *
-                                              BLOCK_BASE_M * BLOCK_BASE_N;
+                                              baseM * alignedBaseN;
                     blockMmadOp.template operator()<BlockMmadBuilder::formatB>(
                         cGlobal_[offsetC], aGlobal_[offsetA], bGlobal_[offsetB], biasGlobal_[offsetBias],
                         workspaceGlobal_[offsetWorkspace], singleCoreShape, Get<MNK_K>(singleCoreCoord),
@@ -443,8 +444,9 @@ public:
                 skEpilogueParams.x3BatchBroadcast = params.epilogueArgs.x3BatchBroadcast;
                 skEpilogueParams.x3M = params.epilogueArgs.x3M;
             }
+            TupleShape tileL0 = bs.GetTileL0Shape();
             epilogueOp.Init(skEpilogueParams, problemShape_, tileL1, bs.GetMNKTileNum(), usedCoreNum_,
-                            bs.CheckIsSkScene(0));
+                            bs.CheckIsSkScene(0), tileL0);
             epilogueOp();
         }
     }

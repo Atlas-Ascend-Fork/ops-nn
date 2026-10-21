@@ -23,6 +23,8 @@ namespace batch_matmul_v3_advanced {
 using namespace strategy;
 
 MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3KEqZeroTiling, DAV_3510, BATCH_MATMUL_INPUT_K_EQUAL_ZERO);
+MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3KEqZeroTiling, DAV_9201, BATCH_MATMUL_INPUT_K_EQUAL_ZERO);
+MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3KEqZeroTiling, DAV_9202, BATCH_MATMUL_INPUT_K_EQUAL_ZERO);
 
 bool BatchMatMulV3KEqZeroTiling::IsCapable()
 {

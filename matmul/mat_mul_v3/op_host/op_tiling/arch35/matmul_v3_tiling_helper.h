@@ -23,15 +23,27 @@ namespace optiling {
 namespace matmul_v3_advanced {
 using StrideIndexPairs = std::vector<std::pair<int64_t, std::pair<int64_t, int64_t>>>;
 bool IsMatMulTiling(const MatMulV3Args& args, NpuArch npuArch);
+// 判断是否为DAV_3510系列(含9201/9202兼容版本)，语义与op_api层cube_util.h的IsNpuArch3510Series一致
+inline bool IsNpuArch3510Series(NpuArch npuArch)
+{
+    return npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
+}
 
 class MatMulV3TilingHelper {
 public:
     static void ResetBase(const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args, MatMulV3RunInfo& runInfo);
+    // cubeBoundEdge收缩系数：按芯片规格定义，3510为0.85，9201/9202为0.95
+    static double GetCubeBoundRatio(const MatmulV3CompileInfo& compileInfo);
+    // UB双缓冲判定：9201/9202按双缓冲空间(2倍)判断，3510按单缓冲判断
+    static uint64_t CalcUbDB(const MatmulV3CompileInfo& compileInfo, uint64_t baseM, uint64_t baseN);
+    // streamK的AIV/AIC核数配比：3510为2:1，9201/9202为1:1
+    static uint64_t GetAivToAicRatio(const MatmulV3CompileInfo& compileInfo);
     static void CalL1Tiling(const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args, MatMulV3RunInfo& runInfo);
     static uint64_t SelectSplitKBase(const gert::TilingContext* context, uint64_t mValue, uint64_t nValue,
                                      uint64_t kValue, uint64_t baseK);
     static MatMulV3L0C2Out GetL0C2Out(const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args,
-                                      const MatMulV3RunInfo& runInfo, bool isSplitK = false);
+                                      MatMulV3RunInfo& runInfo, bool isSplitK = false,
+                                      fe::PlatFormInfos* platformInfo = nullptr);
     static bool IsSplitSingleCoreK(const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args, bool isTensorApi,
                                    uint64_t singleCoreK = 0);
     static uint64_t GetStepSmallK(bool isBL1FullLoad, const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args,

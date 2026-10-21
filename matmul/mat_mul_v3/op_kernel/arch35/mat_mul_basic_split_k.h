@@ -66,7 +66,7 @@ __aicore__ inline void MatMulBasicSplitKKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR
                       tilingData.baseK, tilingData.mTailCnt, tilingData.nTailCnt, tilingData.mBaseTailSplitCnt,
                       tilingData.nBaseTailSplitCnt, tilingData.mTailMain, tilingData.nTailMain, tilingData.mmadParam,
                       static_cast<uint32_t>(tilingData.l2CacheDisable), tilingData.sliceM, tilingData.srcNdStride,
-                      tilingData.innerBatch}}; // scheduler params
+                      tilingData.innerBatch, tilingData.aswWindowLen}}; // scheduler params
     MatmulKernel mm;
     mm(params);
 }

@@ -57,7 +57,8 @@ __aicore__ inline void FusedMatMulWithScaleAddAswBasicKernel(GM_ADDR x1Gm, GM_AD
          matmulBaseTiling.baseN, matmulBaseTiling.baseK, matmulBaseTiling.mTailCnt, matmulBaseTiling.nTailCnt,
          matmulBaseTiling.mBaseTailSplitCnt, matmulBaseTiling.nBaseTailSplitCnt, matmulBaseTiling.mTailMain,
          matmulBaseTiling.nTailMain, matmulBaseTiling.mmadParam, static_cast<uint32_t>(matmulBaseTiling.l2CacheDisable),
-         matmulBaseTiling.sliceM, matmulBaseTiling.srcNdStride, matmulBaseTiling.innerBatch}};
+         matmulBaseTiling.sliceM, matmulBaseTiling.srcNdStride, matmulBaseTiling.innerBatch,
+         matmulBaseTiling.aswWindowLen}};
 
     MatmulKernel kernel;
     kernel(params);

@@ -12,7 +12,7 @@
  * \file gemm_v3.cpp
  * \brief
  */
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
 #include "../../mat_mul_v3/arch35/mat_mul_tiling_data.h"
 #include "gemm_v3_tiling_key.h"
 #include "../../mat_mul_v3/arch35/mat_mul_asw_kernel.h"
@@ -66,7 +66,7 @@ __global__ __aicore__ void gemm_v3(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR cGM, GM_ADD
     GM_ADDR biasGM = nullptr;
     constexpr bool aTran = (A_TRANS == 1);
     constexpr bool bTran = (B_TRANS == 1);
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
     REGISTER_TILING_DEFAULT(MatMulV3TilingData);
     GET_TILING_DATA_WITH_STRUCT(MatMulV3TilingData, tilingData, tilingGM);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);

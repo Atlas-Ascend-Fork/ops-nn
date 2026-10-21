@@ -101,6 +101,11 @@ constexpr size_t BATCH_DIM_INDEX = 0UL;
 constexpr size_t MATRIX_ROW_DIM_INDEX = 1UL;
 constexpr size_t MATRIX_COLUMN_DIM_INDEX = 2UL;
 
+inline bool IsDav3510Series(NpuArch arch)
+{
+    return arch == NpuArch::DAV_3510 || arch == NpuArch::DAV_9201 || arch == NpuArch::DAV_9202;
+}
+
 } // namespace
 
 namespace optiling {
@@ -157,7 +162,7 @@ void FusedMatMulBuiltInTiling::ExtractDtype()
 void FusedMatMulBuiltInTiling::ExtractAttrFlags()
 {
     args_.isHf32 = *context_->GetAttrs()->GetAttrPointer<bool>(ATTR_ENABLE_HF32_IDX);
-    if (args_.isHf32 && arch_ != NpuArch::DAV_3510) {
+    if (args_.isHf32 && !IsDav3510Series(arch_)) {
         OP_LOGW(args_.opName, "Hf32 flag is: %d, which is not supported yet", args_.isHf32);
     }
     innerPrecise_ = *context_->GetAttrs()->GetAttrPointer<int64_t>(ATTR_INNER_PRECISE_IDX);
@@ -377,7 +382,7 @@ std::vector<std::vector<ge::DataType>> FusedMatMulBuiltInTiling::GetDtypeSupport
         return DTYPE_LIST_GELU_DAV_3510;
     }
     // "" / relu
-    return (arch_ == NpuArch::DAV_3510) ? DTYPE_LIST_RELU_DAV_3510 : DTYPE_LIST_RELU_DAV_RESV;
+    return IsDav3510Series(arch_) ? DTYPE_LIST_RELU_DAV_3510 : DTYPE_LIST_RELU_DAV_RESV;
 }
 
 // ====== Phase 7: ValidateDtype (unified 5-element exact match) ======
@@ -424,7 +429,7 @@ ge::graphStatus FusedMatMulBuiltInTiling::ValidateDtype()
 // ====== Phase 8: ValidateMatrixBatchInfo (A5 Relu supports merging all x1 batch axes into M) ======
 ge::graphStatus FusedMatMulBuiltInTiling::ValidateMatrixBatchInfo()
 {
-    if (arch_ != NpuArch::DAV_RESV && !(arch_ == NpuArch::DAV_3510 && CanReluMergeBatchAndMAxis(context_))) {
+    if (arch_ != NpuArch::DAV_RESV && !(IsDav3510Series(arch_) && CanReluMergeBatchAndMAxis(context_))) {
         const auto& aShape = context_->GetInputShape(0)->GetOriginShape();
         const auto& bShape = context_->GetInputShape(1)->GetOriginShape();
         if (IsBatchBroadcast(aShape, bShape)) {

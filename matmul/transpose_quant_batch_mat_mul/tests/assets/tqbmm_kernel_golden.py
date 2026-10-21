@@ -57,21 +57,35 @@ _DTYPE_ATTR_MAP = {1: np.float16, 27: _util.np_bfloat16}
 _MX_GROUP_SIZE = 32
 
 
-def _is_mxfp8_mode(x1_scale, x2_scale):
+def _is_mxfp8_mode(x1_scale, x2_scale, group_size=0):
     """tiling IsMicroScaling: both scales must exist and be float8_e8m0.
 
     dtype matching is name-based because test frameworks may supply their own
     float8_e8m0 dtype class (the old golden also matched via "e8m0" substring).
     """
+    if group_size > 0:
+        return True
     if x1_scale is None or x2_scale is None:
         return False
-    return "e8m0" in _util.dtype_to_str(
-        x1_scale.dtype
-    ) and "e8m0" in _util.dtype_to_str(x2_scale.dtype)
+    if "e8m0" in _util.dtype_to_str(x1_scale.dtype) and "e8m0" in _util.dtype_to_str(
+        x2_scale.dtype
+    ):
+        return True
+    if (
+        x1_scale.ndim == 4
+        and x2_scale.ndim == 4
+        and x1_scale.shape[-1] == 2
+        and x2_scale.shape[-1] == 2
+    ):
+        return True
+    return False
 
 
 def _e8m0_to_float(arr):
     """Decode float8_e8m0 to float32: 2^(raw - 127), raw == 255 stays NaN."""
+    dt = arr.dtype
+    if dt == np.float32 or dt == np.float64:
+        return arr.astype(np.float32)
     raw = np.ascontiguousarray(arr).view(np.uint8).astype(np.float32)
     result = np.power(2.0, raw - 127.0)
     result[raw == 255.0] = np.nan
@@ -153,6 +167,12 @@ def _kernel_compute(
     is_hifp8_mode = "hifloat8" in _util.dtype_to_str(
         x1.dtype
     ) and "hifloat8" in _util.dtype_to_str(x2.dtype)
+    if not is_hifp8_mode:
+        if x2_scale is not None and getattr(x2_scale, "dtype", None) in (
+            np.uint64,
+            np.int64,
+        ):
+            is_hifp8_mode = True
 
     x1_f32 = x1.astype(np.float32)
     x2_f32 = x2.astype(np.float32)
@@ -163,7 +183,7 @@ def _kernel_compute(
     else:
         x2_t = x2_f32
 
-    if _is_mxfp8_mode(x1_scale, x2_scale):
+    if _is_mxfp8_mode(x1_scale, x2_scale, group_size):
         mm_out = _mxfp8_matmul(x1_t, x2_t, x1_scale, x2_scale, perm_x2)
     else:
         mm_out = _kc_matmul(x1_t, x2_t, x1_scale, x2_scale, is_hifp8_mode)

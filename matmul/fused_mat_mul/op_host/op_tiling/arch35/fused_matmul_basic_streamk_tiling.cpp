@@ -24,6 +24,8 @@ namespace fused_matmul {
 using namespace strategy;
 MM_REGISTER_TILING_TEMPLATE(FusedMatMul, FusedMatMulStreamKTiling, DAV_3510, BASIC_STREAM_K_INHERITED_FROM_MMV3);
 MM_REGISTER_TILING_TEMPLATE(FusedMatMul, FusedMatMulBatchStreamKTiling, DAV_3510, BATCH_STREAM_K_INHERITED_FROM_BMMV3);
+MM_REGISTER_TILING_TEMPLATE(FusedMatMul, FusedMatMulStreamKTiling, DAV_9201, BASIC_STREAM_K_INHERITED_FROM_MMV3);
+MM_REGISTER_TILING_TEMPLATE(FusedMatMul, FusedMatMulStreamKTiling, DAV_9202, BASIC_STREAM_K_INHERITED_FROM_MMV3);
 
 bool FusedMatMulStreamKTiling::IsCapable()
 {
@@ -33,6 +35,10 @@ bool FusedMatMulStreamKTiling::IsCapable()
     auto attrs = context_->GetAttrs();
     OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
     std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
+    if ((compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202) && opType != "relu" &&
+        opType != "16cast32") {
+        return false;
+    }
     // Only the op types in FusedOpTypeSupportStreamK support Stream-K.
     if (FusedOpTypeSupportStreamK.find(opType) == FusedOpTypeSupportStreamK.end()) {
         return false;

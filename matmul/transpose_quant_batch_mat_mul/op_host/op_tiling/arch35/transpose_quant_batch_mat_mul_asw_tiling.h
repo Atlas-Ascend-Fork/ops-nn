@@ -40,6 +40,7 @@ protected:
     ge::graphStatus GetTilingDataProcess(BatchMatMulV3TilingData& tilingData) const override;
 
     std::vector<size_t> GetWorkspaceSize() const override;
+    void CapBaseMForDequantUb();
     void CalL1Tiling();
     void CalStepKs();
     uint64_t GetDepthA1B1(uint64_t leftSize, uint64_t perDepthSize, uint64_t depthInit);
@@ -56,6 +57,7 @@ private:
     uint32_t scaleFactorA_ = 1;
     uint32_t scaleFactorB_ = 1;
     bool isMXFP4_ = false;
+    bool isHIFP4_ = false;
 };
 } // namespace transpose_quant_batch_mat_mul_advanced
 } // namespace optiling

@@ -16,6 +16,7 @@
 #define OPS_MATMUL_TRANSPOSE_QUANT_BATCH_MAT_MUL_PROTO_H_
 
 #include "graph/operator_reg.h"
+#include "../../../common/inc/op_host/op_const_def_nn.h"
 
 namespace ge {
 /**
@@ -23,9 +24,9 @@ namespace ge {
 * @par Inputs:
 * Five inputs, including:
 * @li x1: A matrix tensor. Must be one of the following types:
-* float8_e4m3fn, float8_e5m2, float4_e2m1, hifloat8. 3D. Has format ND.
+* float8_e4m3fn, float8_e5m2, float4_e2m1, hifloat8, hifloat4. 3D. Has format ND.
 * @li x2: A matrix tensor. Must be one of the following types:
-* float8_e4m3fn, float8_e5m2, float4_e2m1, hifloat8. 3D. Has format ND.
+* float8_e4m3fn, float8_e5m2, float4_e2m1, hifloat8, hifloat4. 3D. Has format ND.
 * @li bias: An optional tensor. Reserved parameter, currently not supported.
 * @li x1_scale: A matrix tensor, quantization parameter.
              Must be one of the following types: float32、float8_e8m0、uint64_t. The format
@@ -68,11 +69,11 @@ supports 32.
   The format supports ND. The shape dim must be 3D. \n
 */
 REG_OP(TransposeQuantBatchMatMul)
-    .INPUT(x1, TensorType({DT_FLOAT8_E4M3FN, DT_FLOAT8_E5M2, DT_FLOAT4_E2M1, DT_HIFLOAT8}))
-    .INPUT(x2, TensorType({DT_FLOAT8_E4M3FN, DT_FLOAT8_E5M2, DT_FLOAT4_E2M1, DT_HIFLOAT8}))
+    .INPUT(x1, TensorType({DT_FLOAT8_E4M3FN, DT_FLOAT8_E5M2, DT_FLOAT4_E2M1, DT_HIFLOAT8, Ops::NN::DT_HIFLOAT4}))
+    .INPUT(x2, TensorType({DT_FLOAT8_E4M3FN, DT_FLOAT8_E5M2, DT_FLOAT4_E2M1, DT_HIFLOAT8, Ops::NN::DT_HIFLOAT4}))
     .OPTIONAL_INPUT(bias, TensorType({DT_FLOAT, DT_FLOAT16, DT_BF16}))
-    .OPTIONAL_INPUT(x1_scale, TensorType({DT_FLOAT, DT_FLOAT8_E8M0, DT_UINT64}))
-    .OPTIONAL_INPUT(x2_scale, TensorType({DT_FLOAT, DT_FLOAT8_E8M0, DT_UINT64}))
+    .OPTIONAL_INPUT(x1_scale, TensorType({DT_FLOAT, DT_FLOAT8_E8M0, DT_UINT64, Ops::NN::DT_HIFLOAT4_SCALE}))
+    .OPTIONAL_INPUT(x2_scale, TensorType({DT_FLOAT, DT_FLOAT8_E8M0, DT_UINT64, Ops::NN::DT_HIFLOAT4_SCALE}))
     .OUTPUT(y, TensorType({DT_FLOAT16, DT_BF16, DT_HIFLOAT8}))
     .REQUIRED_ATTR(dtype, Int)
     .ATTR(group_size, Int, 0)

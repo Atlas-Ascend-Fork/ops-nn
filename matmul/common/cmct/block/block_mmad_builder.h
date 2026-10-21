@@ -226,7 +226,8 @@ public:
     __host_aicore__ static Status CanImplement(Arguments const& args)
     {
         if (l0M * l0K * sizeof(AType) * DOUBLE_BUFFER_COUNT > L0A_SIZE ||
-            l0N * l0K * sizeof(BType) * DOUBLE_BUFFER_COUNT > L0B_SIZE || l0M * l0N * sizeof(CType) > L0C_SIZE ||
+            l0N * l0K * sizeof(BType) * DOUBLE_BUFFER_COUNT > L0B_SIZE ||
+            l0M * l0N * sizeof(CType) > AscendC::TOTAL_L0C_SIZE ||
             (l1M * l1K * sizeof(AType) + l1K * l1N * sizeof(BType)) * DOUBLE_BUFFER_COUNT > L1_SIZE) {
             return Status::tileShapeErrorExceedsLimit;
         }

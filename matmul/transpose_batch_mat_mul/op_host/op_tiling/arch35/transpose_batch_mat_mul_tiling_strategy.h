@@ -28,6 +28,7 @@ constexpr int32_t BASE = 999;
 
 const static std::map<NpuArch, std::vector<int32_t>> TransposeBatchMatMulPrioritiesMap = {
     {NpuArch::DAV_3510, {strategy::BASE}},
+    {NpuArch::DAV_9201, {strategy::BASE}},
 };
 
 inline std::vector<int32_t> GetTransposeBatchMatMulPriorities(NpuArch NpuArch)

@@ -165,6 +165,8 @@ public:
         aicConfig.PrecisionReduceFlag(true).ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
         this->AICore().AddConfig("ascend950", aicConfig);
         this->AICore().AddConfig("ascend350", aicConfig);
+        this->AICore().AddConfig("ascend960dt", aicConfig);
+        this->AICore().AddConfig("ascend960pr", aicConfig);
 
         OpAICoreConfig config_kirin = GetKirinCoreConfig();
         this->AICore().AddConfig("kirinx90", config_kirin);

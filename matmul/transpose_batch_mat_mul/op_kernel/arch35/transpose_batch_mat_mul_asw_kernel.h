@@ -82,7 +82,7 @@ __aicore__ inline void TBMMTensorKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR biasGM
          tilingData.matMulTilingData.nBaseTailSplitCnt, tilingData.matMulTilingData.mTailMain,
          tilingData.matMulTilingData.nTailMain, static_cast<uint8_t>(tilingData.matMulTilingData.mmadParam),
          static_cast<uint32_t>(tilingData.matMulTilingData.l2CacheDisable), tilingData.sliceM, tilingData.srcNdStride,
-         tilingData.innerBatch}};
+         tilingData.innerBatch, tilingData.matMulTilingData.aswWindowLen}};
     MatmulKernel mm;
     mm(params);
 }

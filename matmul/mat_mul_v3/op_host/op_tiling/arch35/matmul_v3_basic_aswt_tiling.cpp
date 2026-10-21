@@ -26,6 +26,8 @@ using namespace strategy;
 
 // 注册BASIC_ASWT作为基础API实现的模板策略
 MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3BasicAswtTiling, DAV_3510, BASIC_ASWT);
+MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3BasicAswtTiling, DAV_9201, BASIC_ASWT);
+MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3BasicAswtTiling, DAV_9202, BASIC_ASWT);
 MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3BasicAswtTiling, DAV_RESV, BASIC_ASWT); // supportMmadS8S4平台
 
 bool MatMulV3BasicAswtTiling::IsCapable()
@@ -41,6 +43,16 @@ void MatMulV3BasicAswtTiling::ResetFullLoadLoadBalance()
     runInfo_.nBaseTailSplitCnt = 1UL;
     runInfo_.tailInfo.mTailMain = 0UL;
     runInfo_.tailInfo.nTailMain = 0UL;
+}
+
+bool MatMulV3BasicAswtTiling::CheckFullLoadCnt(uint64_t cnt, bool isKAligned) const
+{
+    if (compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202) {
+        // 9201/9202：要求切分份数大于核数
+        return cnt > compileInfo_.aicNum;
+    }
+    // 3510：K内轴512B对齐时允许cnt等于核数
+    return cnt > compileInfo_.aicNum || (isKAligned && cnt == compileInfo_.aicNum);
 }
 
 bool MatMulV3BasicAswtTiling::CheckAL1FullLoad() const
@@ -67,7 +79,7 @@ bool MatMulV3BasicAswtTiling::CheckAL1FullLoad() const
     uint64_t nCnt = MathUtil::CeilDivision(args_.nValue, runInfo_.singleCoreN);
     bool isKInner = !args_.isATrans && args_.isBTrans;
     bool isKAligned = isKInner && (args_.kValue * args_.aDtypeSize % BASIC_BLOCK_K_512_BYTE == 0);
-    if (nCnt < compileInfo_.aicNum || (!isKAligned && nCnt == compileInfo_.aicNum)) {
+    if (!CheckFullLoadCnt(nCnt, isKAligned)) {
         return false;
     }
     // 不支持Fixp Bound多轮场景
@@ -107,7 +119,7 @@ bool MatMulV3BasicAswtTiling::CheckBL1FullLoad() const
     uint64_t nCnt = MathUtil::CeilDivision(args_.nValue, runInfo_.singleCoreN);
     bool isKInner = !args_.isATrans && args_.isBTrans;
     bool isKAligned = isKInner && (args_.kValue * args_.aDtypeSize % BASIC_BLOCK_K_512_BYTE == 0);
-    if (mCnt < compileInfo_.aicNum || (!isKAligned && mCnt == compileInfo_.aicNum)) {
+    if (!CheckFullLoadCnt(mCnt, isKAligned)) {
         return false;
     }
     // 不超L1 Buffer
@@ -293,7 +305,7 @@ void MatMulV3BasicAswtTiling::DoBL1FullLoad()
     runInfo_.l1BufferNum = aL14BufferSize + bL1Size + bias4BufferSize > compileInfo_.l1Size ? DB_SIZE :
                                                                                               BASIC_L1_BUFFER_NUM;
     runInfo_.dbL0C = runInfo_.baseM * runInfo_.baseN * DATA_SIZE_FP32 * DB_SIZE <= compileInfo_.l0CSize ? DB_SIZE : 1UL;
-    runInfo_.mixInfo.ubDB = runInfo_.baseM * runInfo_.baseN * DATA_SIZE_FP32 <= compileInfo_.ubSize ? DB_SIZE : 1UL;
+    runInfo_.mixInfo.ubDB = MatMulV3TilingHelper::CalcUbDB(compileInfo_, runInfo_.baseM, runInfo_.baseN);
     uint64_t mCore = MathUtil::CeilDivision(args_.mValue, runInfo_.baseM);
     uint64_t batchNum = IsMatMulTiling(args_, compileInfo_.npuArch) ? 1UL : args_.batchInfo->batchC;
     runInfo_.usedCoreNum = std::min(mCore * batchNum, compileInfo_.aicNum);
@@ -326,7 +338,7 @@ ge::graphStatus MatMulV3BasicAswtTiling::DoOpTiling()
     bool isMatmul = strcmp(context_->GetNodeType(), "MatMulV3") == 0;
     bool isTensorApi = isMatmul && !args_.isAvoidTensorApi && compileInfo_.npuArch != NpuArch::DAV_RESV;
     isSplitK_ = MatMulV3TilingHelper::IsSplitSingleCoreK(compileInfo_, args_, isTensorApi);
-    l0C2Out_ = MatMulV3TilingHelper::GetL0C2Out(compileInfo_, args_, runInfo_, isSplitK_);
+    l0C2Out_ = MatMulV3TilingHelper::GetL0C2Out(compileInfo_, args_, runInfo_, isSplitK_, context_->GetPlatformInfo());
     if (CheckAL1FullLoad()) {
         DoAL1FullLoad();
         CheckApiLevelAndModel();
@@ -334,15 +346,17 @@ ge::graphStatus MatMulV3BasicAswtTiling::DoOpTiling()
         DoBL1FullLoad();
         CheckApiLevelAndModel();
     } else if (l0C2Out_ == MatMulV3L0C2Out::ON_THE_FLY) {
-        // 非fixpipe优化场景
-        if (args_.isATrans && !args_.isBTrans) {
-            uint64_t remainSizeForAL1BL1 = args_.hasBias ? (compileInfo_.l1Size - BIAS_TABLE_NUM * DATA_SIZE_FP32) :
-                                                           compileInfo_.l1Size;
-            runInfo_.stepKa = remainSizeForAL1BL1 / NUM_TWO / ((runInfo_.baseM + runInfo_.baseN) * runInfo_.baseK) /
-                              args_.aDtypeSize;
-            runInfo_.stepKb = runInfo_.stepKa; // has bias, adjust stepK to suitable value
-            runInfo_.depthA1 = runInfo_.stepKa * DB_SIZE;
-            runInfo_.depthB1 = runInfo_.stepKb * DB_SIZE;
+        if (compileInfo_.npuArch != NpuArch::DAV_9201 && compileInfo_.npuArch != NpuArch::DAV_9202) {
+            // 非fixpipe优化场景
+            if (args_.isATrans && !args_.isBTrans) {
+                uint64_t remainSizeForAL1BL1 = args_.hasBias ? (compileInfo_.l1Size - BIAS_TABLE_NUM * DATA_SIZE_FP32) :
+                                                               compileInfo_.l1Size;
+                runInfo_.stepKa = remainSizeForAL1BL1 / NUM_TWO / ((runInfo_.baseM + runInfo_.baseN) * runInfo_.baseK) /
+                                  args_.aDtypeSize;
+                runInfo_.stepKb = runInfo_.stepKa; // has bias, adjust stepK to suitable value
+                runInfo_.depthA1 = runInfo_.stepKa * DB_SIZE;
+                runInfo_.depthB1 = runInfo_.stepKb * DB_SIZE;
+            }
         }
         if (isSplitK_) {
             runInfo_.splitKBase = MatMulV3TilingHelper::SelectSplitKBase(context_, args_.mValue, args_.nValue,

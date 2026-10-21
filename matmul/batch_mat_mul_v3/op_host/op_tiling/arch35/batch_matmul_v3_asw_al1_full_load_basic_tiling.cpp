@@ -24,6 +24,8 @@ namespace optiling {
 namespace batch_matmul_v3_advanced {
 using namespace strategy;
 MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3AswAL1FullLoadBasicTiling, DAV_3510, AL1_FULL_LOAD_BASIC);
+MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3AswAL1FullLoadBasicTiling, DAV_9201, AL1_FULL_LOAD_BASIC);
+MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3AswAL1FullLoadBasicTiling, DAV_9202, AL1_FULL_LOAD_BASIC);
 
 // supportMmadS8S4平台
 MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3AswAL1FullLoadBasicTiling, DAV_RESV, AL1_FULL_LOAD_BASIC);

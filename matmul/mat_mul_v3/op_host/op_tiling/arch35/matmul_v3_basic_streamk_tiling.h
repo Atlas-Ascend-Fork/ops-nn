@@ -44,15 +44,13 @@ protected:
     ge::graphStatus GetTilingData(TilingResult& tiling) const override;
 
 private:
-    bool CheckStreamKSKTiling() const;
+    bool CheckStreamKSKTiling();
 
-    bool CheckStreamKDPSKTiling() const;
+    bool CheckStreamKDPSKTiling();
 
     MatMulV3L0C2Out GetL0C2OutFlag() const;
 
-    bool IsHalveBaseProfitable(bool halveN) const;
-
-    uint64_t GetPaddedFixWidth(uint64_t nValue, uint64_t nCnt) const;
+    void DoSkOpTiling();
 
     uint64_t mCnt_{1};
     uint64_t nCnt_{1};

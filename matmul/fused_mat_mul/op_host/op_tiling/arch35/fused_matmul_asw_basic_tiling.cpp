@@ -93,6 +93,8 @@ using CheckBatchFunc = bool (*)(const MatMulV3Args&);
 
 const static std::map<NpuArch, CheckBatchFunc> CheckBatchFuncMap = {
     {NpuArch::DAV_3510, CheckBatchDav3510},
+    {NpuArch::DAV_9201, CheckBatchDav3510},
+    {NpuArch::DAV_9202, CheckBatchDav3510},
 };
 } // namespace
 
@@ -100,6 +102,8 @@ namespace optiling {
 namespace fused_matmul {
 using namespace strategy;
 MM_REGISTER_TILING_TEMPLATE(FusedMatMul, FusedMatMulAswBasicApiTiling, DAV_3510, BASIC_ASWT_INHERITED_FROM_MMV3);
+MM_REGISTER_TILING_TEMPLATE(FusedMatMul, FusedMatMulAswBasicApiTiling, DAV_9201, BASIC_ASWT_INHERITED_FROM_MMV3);
+MM_REGISTER_TILING_TEMPLATE(FusedMatMul, FusedMatMulAswBasicApiTiling, DAV_9202, BASIC_ASWT_INHERITED_FROM_MMV3);
 MM_REGISTER_TILING_TEMPLATE(FusedMatMul, FusedMatMulAswBasicApiTiling, DAV_RESV, BASIC_ASWT_INHERITED_FROM_MMV3);
 
 bool FusedMatMulAswBasicApiTiling::CheckBatch() const

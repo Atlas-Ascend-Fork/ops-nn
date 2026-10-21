@@ -102,7 +102,8 @@ public:
     CopyUb2GmParams copyUb2GmParams_;
 
     __aicore__ inline void Init(Params const& params, BlockShape blockShapeInAiv, BlockShape tileL1ShapeInAiv,
-                                BlockCoord coordInAiv, uint64_t usedCoreNum, bool checkIsSkScene)
+                                BlockCoord coordInAiv, uint64_t usedCoreNum, bool checkIsSkScene,
+                                BlockShape tileL0Shape)
     {
         m_ = Get<MNK_M>(blockShapeInAiv);
         n_ = Get<MNK_N>(blockShapeInAiv);
@@ -112,6 +113,9 @@ public:
         nCnt_ = Get<MNK_N>(coordInAiv);
         kCnt_ = Get<MNK_K>(coordInAiv);
         bCnt_ = Get<MNK_B>(coordInAiv);
+        baseM_ = Get<MNK_M>(tileL0Shape);
+        baseN_ = Get<MNK_N>(tileL0Shape);
+        alignBaseN_ = CeilAlign(baseN_, AscendC::ONE_BLK_SIZE);
         usedCoreNum_ = usedCoreNum;
         // Decrease tile size of per vector core to prevent data race of cube and vector
         aivMte2Num_ = checkIsSkScene ? AscendC::GetTaskRation() : AscendC::BLOCK_CUBE;
@@ -307,7 +311,7 @@ public:
         copyGm2UbParams_.kCnt = kCnt_;
         copyGm2UbParams_.mBurst = CeilDiv(copyGm2UbParams_.mBurstOri, aivMte2Num_);
         // Calculate init address of workspace for moving into UB.
-        copyGm2UbParams_.offsetWorkspaceGM = aivParams_.indexParams * kCnt_ * BLOCK_BASE_M * BLOCK_BASE_N +
+        copyGm2UbParams_.offsetWorkspaceGM = aivParams_.indexParams * kCnt_ * baseM_ * alignBaseN_ +
                                              (aivParams_.kCntIndex * mBurstBase_ + copyGm2UbParams_.mBurst * index) *
                                                  aivParams_.curAlignedNInAiv;
         // Calculate init address of GM for moving out to GM.
@@ -323,7 +327,7 @@ public:
         // datasize for moving in ub, align to 32B
         copyGm2UbParams_.burstLen = CeilAlign(copyGm2UbParams_.mBurst * aivParams_.curAlignedNInAiv, BLOCK_SIZE);
         // gap of src between cur burst and next burst
-        copyGm2UbParams_.srcGap = BLOCK_BASE_M * BLOCK_BASE_N - copyGm2UbParams_.burstLen;
+        copyGm2UbParams_.srcGap = baseM_ * alignBaseN_ - copyGm2UbParams_.burstLen;
 
         // args for ub2gm
         copyUb2GmParams_.mLength = copyGm2UbParams_.mBurst;
@@ -335,8 +339,9 @@ public:
     __aicore__ inline void operator()() { Run(); }
 
 private:
-    constexpr static uint64_t BLOCK_BASE_M = 256UL;
-    constexpr static uint64_t BLOCK_BASE_N = 256UL;
+    uint64_t baseM_ = 0;
+    uint64_t baseN_ = 0;
+    uint64_t alignBaseN_ = 0;
     constexpr static uint64_t NUM_TWO = 2UL;
     constexpr static uint64_t MAIN_WINDOW = 4UL;
     constexpr static uint64_t UB2GM_SRCGAP_UNIT = 32UL;

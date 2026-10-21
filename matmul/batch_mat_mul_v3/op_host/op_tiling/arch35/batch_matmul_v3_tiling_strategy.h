@@ -42,9 +42,15 @@ const static std::map<NpuArch, std::vector<int32_t>> BatchMatMulV3PrioritiesMap 
       strategy::MERGE_BATCH_BASICAPI, strategy::ITER_BATCH_BROADCAST_BASICAPI, strategy::ITER_BATCH_BASICAPI,
       strategy::ITER_BATCH, strategy::AL1_FULL_LOAD_BASIC, strategy::BL1_FULL_LOAD_BASIC, strategy::ASW_BASIC,
       strategy::BASE}},
-    {NpuArch::DAV_RESV,
-     {strategy::ITER_BATCH_BASICAPI, strategy::AL1_FULL_LOAD_BASIC,
+    {NpuArch::DAV_9201,
+     {strategy::BATCH_MATMUL_INPUT_K_EQUAL_ZERO, strategy::ITER_BATCH_BASICAPI, strategy::AL1_FULL_LOAD_BASIC,
       strategy::BL1_FULL_LOAD_BASIC, strategy::ASW_BASIC, strategy::BASE}},
+    {NpuArch::DAV_9202,
+     {strategy::BATCH_MATMUL_INPUT_K_EQUAL_ZERO, strategy::ITER_BATCH_BASICAPI, strategy::AL1_FULL_LOAD_BASIC,
+      strategy::BL1_FULL_LOAD_BASIC, strategy::ASW_BASIC, strategy::BASE}},
+    {NpuArch::DAV_RESV,
+     {strategy::ITER_BATCH_BASICAPI, strategy::AL1_FULL_LOAD_BASIC, strategy::BL1_FULL_LOAD_BASIC, strategy::ASW_BASIC,
+      strategy::BASE}},
 };
 
 inline std::vector<int32_t> GetBatchMatMulV3Priorities(NpuArch NpuArch)

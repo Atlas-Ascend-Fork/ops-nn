@@ -17,6 +17,7 @@
 
 #include "error_util.h"
 #include "common/op_host/matmul_common_infershape.h"
+#include "../../../common/inc/op_host/op_const_def_nn.h"
 using namespace gert;
 namespace {
 #define CHECK(cond, log_func, return_expr) \
@@ -53,6 +54,11 @@ static inline bool IsHIFP8(const ge::DataType& dtypeX1, const ge::DataType& dtyp
     return dtypeX1 == ge::DT_HIFLOAT8 && dtypeX2 == ge::DT_HIFLOAT8;
 }
 
+static inline bool IsHIFP4(const ge::DataType& dtypeX1, const ge::DataType& dtypeX2)
+{
+    return dtypeX1 == Ops::NN::DT_HIFLOAT4 && dtypeX2 == Ops::NN::DT_HIFLOAT4;
+}
+
 static bool CheckDtypeValid(const ge::DataType& dtypeX1, const ge::DataType& dtypeX2, const ge::DataType& dtypeX1Scale,
                             const ge::DataType& dtypeX2Scale)
 {
@@ -64,15 +70,22 @@ static bool CheckDtypeValid(const ge::DataType& dtypeX1, const ge::DataType& dty
               CUBE_INNER_ERR_REPORT("TQBMM",
                                     "the dtype of input is only supported FLOAT8_E4M3FN or FLOAT4_E2M1 in MX mode."),
               return false);
-        // FP8
+        // HIFP4：数据 dtype 已由 IsHIFP4 判定，scale dtype 在下方的 scale 分支校验
+    } else if (IsHIFP4(dtypeX1, dtypeX2)) {
+        // HIFP4
     } else if (!IsHIFP8(dtypeX1, dtypeX2)) {
+        // FP8
         CHECK((dtypeX1 != ge::DT_FLOAT8_E4M3FN && dtypeX1 != ge::DT_FLOAT8_E5M2) ||
                   (dtypeX2 != ge::DT_FLOAT8_E4M3FN && dtypeX2 != ge::DT_FLOAT8_E5M2),
               CUBE_INNER_ERR_REPORT("TQBMM", "the dtype of input only supports FLOAT8_E4M3FN or FLOAT8_E5M2."),
               return false);
     }
-    // MXFP8/FP8 scale dtype check
-    if (!IsHIFP8(dtypeX1, dtypeX2)) {
+    // MXFP8/FP8/HIFP4 scale dtype check
+    if (IsHIFP4(dtypeX1, dtypeX2)) {
+        CHECK(dtypeX1Scale != Ops::NN::DT_HIFLOAT4_SCALE || dtypeX2Scale != Ops::NN::DT_HIFLOAT4_SCALE,
+              CUBE_INNER_ERR_REPORT("TQBMM", "the dtype of scale only supports HIFLOAT4_SCALE in HIFP4 mode."),
+              return false);
+    } else if (!IsHIFP8(dtypeX1, dtypeX2)) {
         CHECK((dtypeX1Scale != ge::DT_FLOAT && dtypeX1Scale != ge::DT_FLOAT8_E8M0) ||
                   (dtypeX2Scale != ge::DT_FLOAT && dtypeX2Scale != ge::DT_FLOAT8_E8M0),
               CUBE_INNER_ERR_REPORT("TQBMM", "the dtype of scale only supports FLOAT or FLOAT8_E8M0."), return false);

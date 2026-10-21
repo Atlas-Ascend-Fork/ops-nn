@@ -91,11 +91,22 @@ public:
                             AscendC::TQBmmCustomMatmulPolicy>>::type;
     MmType mm;
     constexpr static uint32_t BUFFER_NUM = 2;
+    // 960 系列（9201/9202）MIX 为 CV 1:1 松耦合，AIC/AIV 间无紧耦合 intra-block 通路，
+    // 跨核 flag 必须用 ffts 模式（CrossCoreSetFlag<2> + wait_flag_dev）；3510 保持 intra(4)。
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+    constexpr static uint8_t AIC_SYNC_AIV_MODE = 2;
+#else
     constexpr static uint8_t AIC_SYNC_AIV_MODE = 4;
+#endif
     constexpr static uint16_t FLAG_ID_MAX = 16;
     constexpr static uint16_t AIV_SYNC_AIC_FLAG = 6;
     constexpr static uint16_t AIC_SYNC_AIV_FLAG = 8;
+    // 960 系列（9201/9202）AIC:AIV 为 1:1，单 AIV 处理整块 M；3510 及更早平台为 1:2。
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+    constexpr static uint8_t CV_RATIO = 1;
+#else
     constexpr static uint8_t CV_RATIO = 2;
+#endif
     constexpr static uint16_t DATA_BLOCK = 32;
     constexpr static uint32_t FP32_OUTPUT_TIMES = 4;
 
@@ -112,12 +123,17 @@ protected:
     __aicore__ inline void WaitForVector()
     {
         AscendC::CrossCoreWaitFlag<AIC_SYNC_AIV_MODE, PIPE_FIX>(AIV_SYNC_AIC_FLAG);
+        // 960 系列 CV=1 无第二 AIV 子块，跨核 flag 无需 +FLAG_ID_MAX 镜像。
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 9201 && __NPU_ARCH__ != 9202)
         AscendC::CrossCoreWaitFlag<AIC_SYNC_AIV_MODE, PIPE_FIX>(AIV_SYNC_AIC_FLAG + FLAG_ID_MAX);
+#endif
     }
     __aicore__ inline void NotifyVector()
     {
         AscendC::CrossCoreSetFlag<AIC_SYNC_AIV_MODE, PIPE_FIX>(AIC_SYNC_AIV_FLAG);
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 9201 && __NPU_ARCH__ != 9202)
         AscendC::CrossCoreSetFlag<AIC_SYNC_AIV_MODE, PIPE_FIX>(AIC_SYNC_AIV_FLAG + FLAG_ID_MAX);
+#endif
     }
     __aicore__ inline void WaitForCube() { AscendC::CrossCoreWaitFlag<AIC_SYNC_AIV_MODE, PIPE_V>(AIC_SYNC_AIV_FLAG); }
     __aicore__ inline void CopyDataFromGm2Ub();
@@ -304,7 +320,7 @@ __aicore__ inline void TransposeQuantBatchMatMulAswKernel<LOCAL_TEMPLATE_FUNC_MI
 LOCAL_TEMPLATE_CLASS_MIX_PARAMS
 __aicore__ inline void TransposeQuantBatchMatMulAswKernel<LOCAL_TEMPLATE_FUNC_MIX_PARAMS>::DequantCompute()
 {
-    auto halfSingleM = CeilDiv(block_.params_.singleCoreM, static_cast<uint64_t>(2)); // 分配给2个AIV计算
+    auto halfSingleM = CeilDiv(block_.params_.singleCoreM, static_cast<uint64_t>(CV_RATIO)); // CV_RATIO 个子块平分 M
     auto singleMInVec = subBlockIdx_ == 1 ? block_.params_.singleCoreM - halfSingleM : halfSingleM;
     if (singleMInVec == 0) {
         return;
@@ -345,7 +361,7 @@ __aicore__ inline void TransposeQuantBatchMatMulAswKernel<LOCAL_TEMPLATE_FUNC_MI
 LOCAL_TEMPLATE_CLASS_MIX_PARAMS
 __aicore__ inline void TransposeQuantBatchMatMulAswKernel<LOCAL_TEMPLATE_FUNC_MIX_PARAMS>::CopyDataFromGm2Ub()
 {
-    auto halfSingleM = CeilDiv(block_.params_.singleCoreM, static_cast<uint64_t>(2)); // 分配给2个AIV计算
+    auto halfSingleM = CeilDiv(block_.params_.singleCoreM, static_cast<uint64_t>(CV_RATIO)); // CV_RATIO 个子块平分 M
     auto singleMInVec = subBlockIdx_ == 1 ? block_.params_.singleCoreM - halfSingleM : halfSingleM;
     // scale: GM -> UB
     scaleUb_ = vecQueScale_.AllocTensor<scaleType>();

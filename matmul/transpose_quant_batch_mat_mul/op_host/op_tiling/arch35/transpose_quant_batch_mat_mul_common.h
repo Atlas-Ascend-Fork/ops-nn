@@ -17,6 +17,7 @@
 #include "exe_graph/runtime/tiling_context.h"
 #include "exe_graph/runtime/compute_node_info.h"
 #include "matmul/mat_mul_v3/op_host/op_tiling/arch35/matmul_v3_common_advanced.h"
+#include "../../../../../common/inc/op_host/op_const_def_nn.h"
 
 namespace optiling {
 namespace transpose_quant_batch_mat_mul_advanced {
@@ -65,6 +66,7 @@ constexpr uint64_t MTE2_MIN_LOAD_SIZE_V100 = 32768;
 constexpr uint32_t BASIC_BLOCK_SIZE_512 = 512;
 constexpr uint32_t BASIC_BLOCK_SIZE_256 = 256;
 constexpr uint64_t MX_GROUP_SIZE = 32;
+constexpr uint64_t HIF4_GROUP_SIZE = 64;
 constexpr uint64_t K_ALIGNMENT64 = 64UL;
 static const uint64_t GROUP_M_OFFSET = 32;
 static const uint64_t GROUP_N_OFFSET = 16;
@@ -105,6 +107,18 @@ bool inline IsMXFP4(const gert::CompileTimeTensorDesc* x1, const gert::CompileTi
     bool isFp4Data = x1->GetDataType() == ge::DT_FLOAT4_E2M1 && x2->GetDataType() == ge::DT_FLOAT4_E2M1;
     bool isE8M0Scale = x1Scale->GetDataType() == ge::DT_FLOAT8_E8M0 && x2Scale->GetDataType() == ge::DT_FLOAT8_E8M0;
     return isFp4Data && isE8M0Scale;
+}
+
+bool inline IsHIFP4(const gert::CompileTimeTensorDesc* x1, const gert::CompileTimeTensorDesc* x2,
+                    const gert::CompileTimeTensorDesc* x1Scale, const gert::CompileTimeTensorDesc* x2Scale)
+{
+    if (x1 == nullptr || x2 == nullptr || x1Scale == nullptr || x2Scale == nullptr) {
+        return false;
+    }
+    bool isHifp4Data = x1->GetDataType() == Ops::NN::DT_HIFLOAT4 && x2->GetDataType() == Ops::NN::DT_HIFLOAT4;
+    bool isHifp4Scale = x1Scale->GetDataType() == Ops::NN::DT_HIFLOAT4_SCALE &&
+                        x2Scale->GetDataType() == Ops::NN::DT_HIFLOAT4_SCALE;
+    return isHifp4Data && isHifp4Scale;
 }
 } // namespace transpose_quant_batch_mat_mul_advanced
 } // namespace optiling

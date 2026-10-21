@@ -24,6 +24,8 @@ namespace matmul_v3_advanced {
 using namespace strategy;
 
 MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3AswTiling, DAV_3510, BASE);
+MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3AswTiling, DAV_9201, BASE);
+MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3AswTiling, DAV_9202, BASE);
 
 void MatMulV3AswTiling::CalcTailBasicBlock()
 {
@@ -60,9 +62,10 @@ uint64_t MatMulV3AswTiling::GetTilingKey() const
 {
     MatMulV3TilingKey tmp = MatMulV3TilingKey();
     MatMulV3TilingKey& tilingKey = tilingKeyObj == nullptr ? tmp : *tilingKeyObj;
+    MatMulV3RunInfo runInfo = runInfo_;
     return tilingKey.SetTrans(args_.isATrans, args_.isBTrans)
         .SetModel(MatMulV3Model::BASIC)
-        .SetL0C2Out(MatMulV3TilingHelper::GetL0C2Out(compileInfo_, args_, runInfo_))
+        .SetL0C2Out(MatMulV3TilingHelper::GetL0C2Out(compileInfo_, args_, runInfo, false, context_->GetPlatformInfo()))
         .GetTilingKey();
 }
 

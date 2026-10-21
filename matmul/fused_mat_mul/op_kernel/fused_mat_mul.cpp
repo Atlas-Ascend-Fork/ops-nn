@@ -15,12 +15,13 @@
 
 #include "../inc/macro.h"
 
-#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510) || __FIXED_POINT_ONLY_CUBE_TO_L0C__
+#if (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)) || \
+    __FIXED_POINT_ONLY_CUBE_TO_L0C__
 #include "../mat_mul_v3/mat_mul_v3_common.h"          // 共有,BLOCK_SIZE等定义
 #include "./arch35/fused_mat_mul_tilingkey.h"         // 共有,tilingKey模板参数
 #include "../mat_mul_v3/arch35/mat_mul_tiling_data.h" // 共有,tilingData定义
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
 #include "./arch35/fused_mat_mul_tiling_data.h"              // 3510独有,FusedMatMulTilingData的定义
 #include "cmct/kernel/kernel_matmul_mix.h"                   // 3510独有,KernelMatmulMix类
 #include "cmct/kernel/kernel_matmul.h"                       // 3510独有,KernelMatmul类
@@ -111,7 +112,7 @@ __aicore__ inline constexpr MatmulConfig GetCfgRelu()
 constexpr MatmulConfig MM_CFG_NO_PRELOAD_RELU = GetCfgRelu();
 #endif
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
 template <typename MatmulKernel, typename BlockMmadArgs, typename BlockEpilogueArgs>
 __aicore__ void inline KernelFunc(const FusedMatMulTilingData& tilingData, const BlockMmadArgs& mmadArgs,
                                   const BlockEpilogueArgs& epilogueArgs, GM_ADDR workspaceGM)
@@ -239,7 +240,7 @@ __global__ __aicore__ void fused_mat_mul(GM_ADDR x1GM, GM_ADDR x2GM, GM_ADDR bia
     constexpr bool bTran = (TRANS_MODEL == 2 || TRANS_MODEL == 3);
     using aLayout = std::conditional_t<aTran, layout::ColumnMajor, layout::RowMajor>;
     using bLayout = std::conditional_t<bTran, layout::ColumnMajor, layout::RowMajor>;
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
     REGISTER_TILING_DEFAULT(FusedMatMulTilingData);
     if constexpr (API_LEVEL == MAT_MUL_TENSOR_LEVEL) {
         static_assert(OPTYPE == F_OPTYPE_SCALE_ADD, "Tensor API only supports scale_add");

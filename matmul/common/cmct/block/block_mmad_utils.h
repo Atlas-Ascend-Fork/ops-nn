@@ -132,7 +132,7 @@ __aicore__ inline constexpr bool IsI8I8I32()
 template <class MatmulType>
 __aicore__ inline constexpr bool IsF8()
 {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
     return AscendC::IsSameType<typename MatmulType::T, fp8_e5m2_t>::value ||
            AscendC::IsSameType<typename MatmulType::T, fp8_e4m3fn_t>::value;
 #else
@@ -150,7 +150,7 @@ __aicore__ inline constexpr bool IsF8()
 template <class AType, class BType, class CType>
 __aicore__ inline constexpr bool IsFp8Fp8F32()
 {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
     return IsF8<AType>() && IsF8<BType>() && AscendC::IsSameType<typename CType::T, float>::value;
 #else
     return false;
@@ -167,7 +167,7 @@ __aicore__ inline constexpr bool IsFp8Fp8F32()
 template <class AType, class BType, class CType>
 __aicore__ inline constexpr bool IsHIF8HIF8F32()
 {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
     return AscendC::IsSameType<typename AType::T, hifloat8_t>::value &&
            AscendC::IsSameType<typename BType::T, hifloat8_t>::value &&
            AscendC::IsSameType<typename CType::T, float>::value;
@@ -220,7 +220,8 @@ __aicore__ inline constexpr bool IsTileShapeValid()
     }
     if constexpr (l0M * l0K * sizeof(typename AType::T) > L0A_SIZE ||
                   l0N * l0K * sizeof(typename BType::T) > L0B_SIZE ||
-                  l0M * l0N * sizeof(typename AscendC::GetMmDstType<typename AType::T>::Type) > L0C_SIZE) {
+                  l0M * l0N * sizeof(typename AscendC::GetMmDstType<typename AType::T>::Type) >
+                      AscendC::TOTAL_L0C_SIZE) {
         return false;
     }
     // Check align

@@ -17,9 +17,9 @@
 #include <map>
 #include "test_cube_util.h"
 
-const std::map<std::string, std::string> g_socToNpuArchMap = {{"Ascend910", "1001"},    {"Ascend910B", "2201"},
-                                                              {"ASCEND910_93", "2201"}, {"Ascend950", "3510"},
-                                                              {"Ascend310", "2002"},    {"Ascend310P", "2002"}};
+const std::map<std::string, std::string> g_socToNpuArchMap = {
+    {"Ascend910", "1001"},   {"Ascend910B", "2201"},  {"ASCEND910_93", "2201"}, {"Ascend950", "3510"},
+    {"Ascend960DT", "9201"}, {"Ascend960PR", "9202"}, {"Ascend310", "2002"},    {"Ascend310P", "2002"}};
 
 void GetPlatFormInfos(const char* compile_info_str, map<string, string>& soc_infos, map<string, string>& aicore_spec,
                       map<string, string>& intrinsics)

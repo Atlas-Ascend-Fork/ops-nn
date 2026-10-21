@@ -51,7 +51,7 @@ bool NeedCubeGoHF32(const op::DataType cubeTensorPromoteType, int8_t cubeMathTyp
 inline bool IsNpuArch3510Series()
 {
     auto npuArch = op::GetCurrentPlatformInfo().GetCurNpuArch();
-    return (npuArch == NpuArch::DAV_3510);
+    return (npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202);
 }
 
 // 检查针对x芯片，cube算子是否支持FP32

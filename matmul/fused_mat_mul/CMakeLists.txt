@@ -15,7 +15,7 @@ add_all_modules_sources(
 )
 
 add_kernel_sources(
-    COMPUTE_UNITS ascend950 ascend350
+    COMPUTE_UNITS ascend950 ascend350 ascend960dt ascend960pr
     AUTO_SYNC false
     OPTIONS "--cce-no-dcache-flush" "-DENABLE_CV_COMM_VIA_SSBUF=true"
 )

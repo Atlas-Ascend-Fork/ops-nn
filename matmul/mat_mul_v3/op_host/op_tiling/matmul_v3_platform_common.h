@@ -22,7 +22,8 @@
 #include "op_host/tiling_base.h"
 #include "error_util.h"
 namespace optiling {
-const std::initializer_list<NpuArch> AdvancedNpuArch = {NpuArch::DAV_3510, NpuArch::DAV_RESV}; // supportMmadS8S4平台
+const std::initializer_list<NpuArch> AdvancedNpuArch = {NpuArch::DAV_3510, NpuArch::DAV_9201, NpuArch::DAV_9202,
+                                                        NpuArch::DAV_RESV}; // supportMmadS8S4平台
 
 template <typename T>
 inline typename std::enable_if<std::is_same<T, gert::TilingParseContext>::value ||

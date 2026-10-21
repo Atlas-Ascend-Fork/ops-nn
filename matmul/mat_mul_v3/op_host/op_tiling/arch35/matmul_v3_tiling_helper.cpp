@@ -152,17 +152,20 @@ using ResetBaseFunc = void (*)(const MatmulV3CompileInfo&, const MatMulV3Args&, 
 
 const static std::map<NpuArch, ResetBaseFunc> ResetBaseFuncMap = {
     {NpuArch::DAV_3510, ResetBaseDav3510},
+    {NpuArch::DAV_9201, ResetBaseDav3510},
+    {NpuArch::DAV_9202, ResetBaseDav3510},
 };
 
 // ------------------------------ GetL0C2Out -------------------------------------------//
 MatMulV3L0C2Out GetL0C2OutDefault(const MatmulV3CompileInfo& /* compileInfo */, const MatMulV3Args& /* args */,
-                                  const MatMulV3RunInfo& /* runInfo */, bool /* isSplitK */)
+                                  MatMulV3RunInfo& /* runInfo */, bool /* isSplitK */,
+                                  fe::PlatFormInfos* /* platformInfo */)
 {
     return MatMulV3L0C2Out::ON_THE_FLY;
 }
 
 MatMulV3L0C2Out GetL0C2OutDav3510(const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args,
-                                  const MatMulV3RunInfo& runInfo, bool isSplitK)
+                                  MatMulV3RunInfo& runInfo, bool isSplitK, fe::PlatFormInfos* /* platformInfo */)
 {
     bool isValidMKN = args.kValue <= BASIC_BLOCK_SIZE_256 && args.mValue >= BASIC_BLOCK_SIZE_256;
     uint64_t mCnt = MathUtil::CeilDivision(args.mValue, runInfo.singleCoreM);
@@ -179,14 +182,56 @@ MatMulV3L0C2Out GetL0C2OutDav3510(const MatmulV3CompileInfo& compileInfo, const 
     if (args.aType == ge::DT_FLOAT16 || args.aType == ge::DT_BF16) {
         return MatMulV3L0C2Out::ND_FIXPIPE_1_1;
     }
+    if (args.aType == ge::DT_FLOAT) {
+        runInfo.splitM = true;
+    }
     return MatMulV3L0C2Out::ND_FIXPIPE_1_2;
 }
 
-using GetL0C2OutFunc = MatMulV3L0C2Out (*)(const MatmulV3CompileInfo&, const MatMulV3Args&, const MatMulV3RunInfo&,
-                                           bool);
+// 全 dtype 统一走 ND_FIXPIPE_1_1
+MatMulV3L0C2Out GetL0C2OutDav9201(const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args,
+                                  MatMulV3RunInfo& runInfo, bool isSplitK, fe::PlatFormInfos* platformInfo)
+{
+    if (platformInfo == nullptr) {
+        OP_LOGE(args.opName, "platformInfo is null");
+        return MatMulV3L0C2Out::ON_THE_FLY;
+    }
+    if (isSplitK) {
+        return MatMulV3L0C2Out::ON_THE_FLY;
+    }
+    uint64_t cDtypeSize = ge::GetSizeByDataType(args.cType);
+    bool isUnalignedN = args.nValue * cDtypeSize % 128UL != 0;
+    double hbmBW = MatMulV3TilingHelper::GetHbmBW(platformInfo);
+    double coreFreq = MatMulV3TilingHelper::GetCoreFreq(platformInfo);
+    double fixpBoundEdge = static_cast<double>(
+        MathUtil::CeilDivision(args.mValue * args.nValue, args.mValue + args.nValue));
+    bool isFixpDominantMte2 = static_cast<double>(args.kValue) <= fixpBoundEdge;
+    double singleCoreComputePower = coreFreq * NUM_EIGHT;
+    bool isFP32 = args.aType == ge::DT_FLOAT && !args.isHf32;
+    if (isFP32) {
+        singleCoreComputePower /= BASIC_BLOCK_SIZE_16;
+    }
+    double computePower = singleCoreComputePower * compileInfo.aicNum;
+    double cubeLeFixpEdge = static_cast<double>(cDtypeSize) * computePower * BASIC_BLOCK_K_512_BYTE /
+                            (hbmBW * TIME_CONVERT_UNIT);
+    bool isCubeLeFixp = static_cast<double>(args.kValue) <= cubeLeFixpEdge;
+    bool fixpipeBound = isUnalignedN && isFixpDominantMte2;
+    if (runInfo.cubeBoundParam <= runInfo.cubeBoundEdge) {
+        fixpipeBound = isCubeLeFixp && fixpipeBound;
+    }
+    if (!fixpipeBound) {
+        return MatMulV3L0C2Out::ON_THE_FLY;
+    }
+    return MatMulV3L0C2Out::ND_FIXPIPE_1_1;
+}
+
+using GetL0C2OutFunc = MatMulV3L0C2Out (*)(const MatmulV3CompileInfo&, const MatMulV3Args&, MatMulV3RunInfo&, bool,
+                                           fe::PlatFormInfos*);
 
 const static std::map<NpuArch, GetL0C2OutFunc> GetL0C2OutFuncMap = {
     {NpuArch::DAV_3510, GetL0C2OutDav3510},
+    {NpuArch::DAV_9201, GetL0C2OutDav9201},
+    {NpuArch::DAV_9202, GetL0C2OutDav9201},
 };
 
 uint64_t GetMaxBaseWithLimit(const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args,
@@ -290,6 +335,30 @@ void MatMulV3TilingHelper::ResetBase(const MatmulV3CompileInfo& compileInfo, con
     iter(compileInfo, args, runInfo);
 }
 
+double MatMulV3TilingHelper::GetCubeBoundRatio(const MatmulV3CompileInfo& compileInfo)
+{
+    if (compileInfo.npuArch == NpuArch::DAV_9201 || compileInfo.npuArch == NpuArch::DAV_9202) {
+        return 0.95;
+    }
+    return CUBE_BOUND_RATIO; // 3510: 0.85
+}
+
+uint64_t MatMulV3TilingHelper::CalcUbDB(const MatmulV3CompileInfo& compileInfo, uint64_t baseM, uint64_t baseN)
+{
+    uint64_t ubBufferSize = baseM * baseN * DATA_SIZE_FP32;
+    if (compileInfo.npuArch == NpuArch::DAV_9201 || compileInfo.npuArch == NpuArch::DAV_9202) {
+        // 9201/9202：需双倍UB空间才开启双缓冲
+        ubBufferSize *= DB_SIZE;
+    }
+    return ubBufferSize <= compileInfo.ubSize ? DB_SIZE : 1UL;
+}
+
+uint64_t MatMulV3TilingHelper::GetAivToAicRatio(const MatmulV3CompileInfo& compileInfo)
+{
+    // 3510: AIV数量为AIC的2倍；9201/9202: AIV与AIC数量相等
+    return compileInfo.npuArch == NpuArch::DAV_3510 ? NUM_TWO : NUM_ONE;
+}
+
 void MatMulV3TilingHelper::CalL1Tiling(const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args,
                                        MatMulV3RunInfo& runInfo)
 {
@@ -324,12 +393,13 @@ uint64_t MatMulV3TilingHelper::SelectSplitKBase(const gert::TilingContext* conte
 }
 
 MatMulV3L0C2Out MatMulV3TilingHelper::GetL0C2Out(const MatmulV3CompileInfo& compileInfo, const MatMulV3Args& args,
-                                                 const MatMulV3RunInfo& runInfo, bool isSplitK)
+                                                 MatMulV3RunInfo& runInfo, bool isSplitK,
+                                                 fe::PlatFormInfos* platformInfo)
 {
     auto iter = (GetL0C2OutFuncMap.find(compileInfo.npuArch) == GetL0C2OutFuncMap.end()) ?
                     GetL0C2OutDefault :
                     GetL0C2OutFuncMap.at(compileInfo.npuArch);
-    return iter(compileInfo, args, runInfo, isSplitK);
+    return iter(compileInfo, args, runInfo, isSplitK, platformInfo);
 }
 
 // SK场景需要传入singleCoreK
@@ -443,7 +513,7 @@ void MatMulV3TilingHelper::GetRebalanceBlock(const MatmulV3CompileInfo& compileI
     double l2BW = GetL2BW(platformInfo);
     double singleCoreComputePower = GetCoreFreq(platformInfo) * NUM_EIGHT;
     bool isFP32 = args.aType == ge::DT_FLOAT && !args.isHf32;
-    if (compileInfo.npuArch == NpuArch::DAV_3510 && isFP32) {
+    if (IsNpuArch3510Series(compileInfo.npuArch) && isFP32) {
         singleCoreComputePower /= BASIC_BLOCK_SIZE_16;
     }
     // balanceRateEdge用于判断是否取得最优解，进行减枝, 默认0.9
@@ -488,7 +558,7 @@ void MatMulV3TilingHelper::GetRebalanceBlock(const MatmulV3CompileInfo& compileI
         BASIC_BLOCK_SIZE_16,
         std::min(maxBaseN, ops::FloorAlign(baseMNBufferLimit / DATA_SIZE_FP32 / runInfo.baseM, baseNAlignUnit)));
     runInfo.cubeBoundParam = (1.0 / runInfo.baseM) + (1.0 / runInfo.baseN);
-    runInfo.cubeBoundEdge = runInfo.cubeBoundEdge * CUBE_BOUND_RATIO;
+    runInfo.cubeBoundEdge = runInfo.cubeBoundEdge * MatMulV3TilingHelper::GetCubeBoundRatio(compileInfo);
     double balanceRate = GetBalanceRateWithTail(args, compileInfo.npuArch, runInfo.usedCoreNum, runInfo.baseM,
                                                 runInfo.baseN);
 
@@ -502,13 +572,22 @@ void MatMulV3TilingHelper::GetRebalanceBlock(const MatmulV3CompileInfo& compileI
             // 当前最优解满足负载均衡阈值时，本轮解集无法在计算访存拿到收益时过滤本轮解集
             bool skipCond = balanceRate >= balanceRateEdge && curCubeBoundParam > runInfo.cubeBoundParam &&
                             curCubeBoundParam > runInfo.cubeBoundEdge && runInfo.cubeBoundEdge > 0;
-            // FP32 cubeBound 场景且mCnt*nCnt大于核数时，baseM/baseN需大于64
-            uint64_t usedCoreTmp = MathUtil::CeilDivision(args.mValue, curBaseM) *
-                                   MathUtil::CeilDivision(args.nValue, curBaseN);
-            skipCond = skipCond || (isFP32 && curCubeBoundParam < runInfo.cubeBoundEdge &&
-                                    ((curBaseM < FP32_MIN_BASE_BLOCK && args.mValue > curBaseM) ||
-                                     (curBaseN < FP32_MIN_BASE_BLOCK && args.nValue > curBaseN)) &&
-                                    usedCoreTmp > compileInfo.aicNum);
+            bool fp32SkipCond = false;
+            if (isFP32 && curCubeBoundParam < runInfo.cubeBoundEdge) {
+                if (compileInfo.npuArch == NpuArch::DAV_9201 || compileInfo.npuArch == NpuArch::DAV_9202) {
+                    // 9201/9202：小shape场景baseM/baseN下限取min(64, m/n)，避免误剪
+                    fp32SkipCond = curBaseM < std::min(FP32_MIN_BASE_BLOCK, args.mValue) ||
+                                   curBaseN < std::min(FP32_MIN_BASE_BLOCK, args.nValue);
+                } else {
+                    // 3510：FP32 cubeBound场景且mCnt*nCnt大于核数时，baseM/baseN需大于64
+                    uint64_t usedCoreTmp = MathUtil::CeilDivision(args.mValue, curBaseM) *
+                                           MathUtil::CeilDivision(args.nValue, curBaseN);
+                    fp32SkipCond = ((curBaseM < FP32_MIN_BASE_BLOCK && args.mValue > curBaseM) ||
+                                    (curBaseN < FP32_MIN_BASE_BLOCK && args.nValue > curBaseN)) &&
+                                   usedCoreTmp > compileInfo.aicNum;
+                }
+            }
+            skipCond = skipCond || fp32SkipCond;
             if (skipCond) {
                 continue;
             }
@@ -538,7 +617,7 @@ void MatMulV3TilingHelper::GetRebalanceBlock(const MatmulV3CompileInfo& compileI
     uint64_t nCore = MathUtil::CeilDivision(args.nValue, runInfo.baseN);
     runInfo.usedCoreNum = std::min(batchNum * mCore * nCore, runInfo.usedCoreNum);
     runInfo.dbL0C = runInfo.baseM * runInfo.baseN * DATA_SIZE_FP32 * DB_SIZE <= compileInfo.l0CSize ? DB_SIZE : 1UL;
-    runInfo.mixInfo.ubDB = runInfo.baseM * runInfo.baseN * DATA_SIZE_FP32 <= compileInfo.ubSize ? DB_SIZE : 1UL;
+    runInfo.mixInfo.ubDB = MatMulV3TilingHelper::CalcUbDB(compileInfo, runInfo.baseM, runInfo.baseN);
 }
 
 double MatMulV3TilingHelper::GetHbmBW(fe::PlatFormInfos* platformInfo)

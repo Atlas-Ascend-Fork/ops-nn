@@ -18,10 +18,12 @@
 #include "tqbmm_copy_cube_out.h"
 
 namespace AscendC {
+// TQBMM_DEFAULT_FIXPIPE_MODE 按架构门控（见 tqbmm_copy_cube_out.h）：960 系列（9201/9202）
+// fixpipe 1v1 使用 SINGLE_DST_MODE，3510 及更早平台使用 DUAL_DST_SPLIT_M。
 template <const auto& MM_CFG, typename IMPL, typename A_TYPE, typename B_TYPE, typename C_TYPE, typename BIAS_TYPE>
 class TQBmmCustomMatmulPolicy
     : public AscendC::Impl::Detail::MatmulPolicy<MM_CFG, IMPL, A_TYPE, B_TYPE, C_TYPE, BIAS_TYPE> {
 public:
-    using CopyCubeOut = TQBmmCustomCopyCubeOut<IMPL, A_TYPE, B_TYPE, C_TYPE, MM_CFG, McgShfMode::DUAL_DST_SPLIT_M>;
+    using CopyCubeOut = TQBmmCustomCopyCubeOut<IMPL, A_TYPE, B_TYPE, C_TYPE, MM_CFG, TQBMM_DEFAULT_FIXPIPE_MODE>;
 };
 } // namespace AscendC

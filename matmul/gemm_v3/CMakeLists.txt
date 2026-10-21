@@ -10,7 +10,7 @@
 
 add_all_modules_sources(
     ACLNNTYPE aclnn_exclude
-    DEPENDENCIES mat_mul_v3 transpose_batch_mat_mul
+    DEPENDENCIES mat_mul_v3 transpose_batch_mat_mul gemm
 )
 
 add_kernel_sources(
@@ -20,7 +20,7 @@ add_kernel_sources(
 
 add_kernel_sources(
     KERNEL_SRC arch35/gemm_v3.cpp
-    COMPUTE_UNITS ascend950 ascend350
+    COMPUTE_UNITS ascend950 ascend350 ascend960dt ascend960pr
     AUTO_SYNC false
     OPTIONS "--cce-no-dcache-flush"
 )

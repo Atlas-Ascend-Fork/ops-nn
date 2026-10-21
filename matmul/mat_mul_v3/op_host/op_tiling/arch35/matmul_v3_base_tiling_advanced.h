@@ -22,6 +22,7 @@
 #include "matmul_v3_tiling_data.h"
 #include "error_util.h"
 #include "matmul/common/op_host/log_format_util.h"
+#include "common/inc/op_host/op_const_def_nn.h"
 
 namespace optiling {
 namespace matmul_v3_advanced {
@@ -448,6 +449,8 @@ protected:
         tilingData.srcNdStride = sliceInfo.srcNdStride;
         tilingData.rowStride = sliceInfo.rowStride;
         tilingData.innerBatch = runInfo_.innerBatch;
+        tilingData.splitM = runInfo_.splitM;
+        tilingData.aswWindowLen = static_cast<uint8_t>(GetAswWindowLen());
         return ge::GRAPH_SUCCESS;
     };
 
@@ -559,6 +562,7 @@ private:
         {ge::DT_FLOAT8_E5M2, matmul_tiling::DataType::DT_FLOAT8_E5M2},
         {ge::DT_FLOAT8_E4M3FN, matmul_tiling::DataType::DT_FLOAT8_E4M3FN},
         {ge::DT_HIFLOAT8, matmul_tiling::DataType::DT_HIFLOAT8},
+        {Ops::NN::DT_HIFLOAT4, static_cast<matmul_tiling::DataType>(Ops::NN::DT_HIFLOAT4)},
         {ge::DT_FLOAT4_E2M1, matmul_tiling::DataType::DT_FLOAT4_E2M1},
         {ge::DT_INT8, matmul_tiling::DataType::DT_INT8}};
 };

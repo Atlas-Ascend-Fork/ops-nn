@@ -104,7 +104,8 @@ public:
     CopyUb2GmParams copyUb2GmParams_;
 
     __aicore__ inline void Init(Params const& params, BlockShape blockShapeInAiv, BlockShape tileL1ShapeInAiv,
-                                BlockCoord coordInAiv, uint64_t usedCoreNum, bool checkIsSkScene)
+                                BlockCoord coordInAiv, uint64_t usedCoreNum, bool checkIsSkScene,
+                                BlockShape tileL0Shape)
     {
         m_ = Get<MNK_M>(blockShapeInAiv);
         n_ = Get<MNK_N>(blockShapeInAiv);
@@ -114,6 +115,9 @@ public:
         mCnt_ = Get<MNK_M>(coordInAiv);
         nCnt_ = Get<MNK_N>(coordInAiv);
         kCnt_ = Get<MNK_K>(coordInAiv);
+        baseM_ = Get<MNK_M>(tileL0Shape);
+        baseN_ = Get<MNK_N>(tileL0Shape);
+        alignBaseN_ = CeilAlign(baseN_, AscendC::ONE_BLK_SIZE);
         usedCoreNum_ = usedCoreNum;
         aivMte2Num_ = checkIsSkScene ? AscendC::GetTaskRation() : AscendC::BLOCK_CUBE;
         cGlobal_.SetGlobalBuffer(reinterpret_cast<__gm__ OutType*>(params.cGmAddr));
@@ -155,7 +159,7 @@ public:
             DATABLOCK_SIZE);
         uint64_t wsBaseGM = copyGm2UbParams_.offsetWorkspaceGM;
         for (uint64_t k = 0; k < copyGm2UbParams_.kCnt; ++k) {
-            uint64_t gmOff = wsBaseGM + k * BLOCK_BASE_M * BLOCK_BASE_N;
+            uint64_t gmOff = wsBaseGM + k * baseM_ * alignBaseN_;
             DataCopyExtParams wsParams{static_cast<uint16_t>(copyGm2UbParams_.mBurst), wsRowBytes, wsSrcGap, wsDstGap,
                                        0};
             DataCopyPad<float>(ubAddTensor[k * tilePaddedSize], workspaceGlobal_[gmOff], wsParams, {false, 0, 0, 0});
@@ -180,8 +184,7 @@ public:
                                                   uint64_t tilePaddedSize)
     {
         uint64_t castBufOffset = copyGm2UbParams_.kCnt * tilePaddedSize;
-        AscendC::LocalTensor<OutType> ubX3Half =
-            ubAddTensor[castBufOffset].template ReinterpretCast<OutType>();
+        AscendC::LocalTensor<OutType> ubX3Half = ubAddTensor[castBufOffset].template ReinterpretCast<OutType>();
         LoadX3Padded(ubX3Half, paddedN);
 
         AscendC::LocalTensor<float> ubX3Float = ubAddTensor[tilePaddedSize];
@@ -196,8 +199,7 @@ public:
         }
         AscendC::PipeBarrier<PIPE_V>();
 
-        AscendC::LocalTensor<OutType> ubResult =
-            ubAddTensor[tilePaddedSize].template ReinterpretCast<OutType>();
+        AscendC::LocalTensor<OutType> ubResult = ubAddTensor[tilePaddedSize].template ReinterpretCast<OutType>();
         Cast(ubResult, ubAddTensor, AscendC::RoundMode::CAST_RINT, tilePaddedSize);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(FLAG_0);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(FLAG_0);
@@ -208,12 +210,11 @@ public:
                                                     uint64_t tilePaddedSize)
     {
         uint64_t castBufOffset = copyGm2UbParams_.kCnt * tilePaddedSize;
-        AscendC::LocalTensor<OutType> ubX3Half =
-            ubAddTensor[castBufOffset].template ReinterpretCast<OutType>();
+        AscendC::LocalTensor<OutType> ubX3Half = ubAddTensor[castBufOffset].template ReinterpretCast<OutType>();
         LoadX3Padded(ubX3Half, paddedN);
 
-        AscendC::LocalTensor<OutType> ubResultHalf =
-            ubAddTensor[castBufOffset + tilePaddedSize].template ReinterpretCast<OutType>();
+        AscendC::LocalTensor<OutType> ubResultHalf = ubAddTensor[castBufOffset + tilePaddedSize]
+                                                         .template ReinterpretCast<OutType>();
         AscendC::PipeBarrier<PIPE_V>();
         Cast(ubResultHalf, ubAddTensor, AscendC::RoundMode::CAST_RINT, tilePaddedSize);
         AscendC::PipeBarrier<PIPE_V>();
@@ -248,16 +249,14 @@ public:
         uint32_t x3RowBytes = static_cast<uint32_t>(aivParams_.curNL1InAiv * sizeof(OutType));
         uint32_t x3SrcGap = static_cast<uint32_t>((n_ - aivParams_.curNL1InAiv) * sizeof(OutType));
         uint32_t x3DstGap = static_cast<uint32_t>(
-            (paddedN * sizeof(OutType) - CeilAlign(aivParams_.curNL1InAiv * sizeof(OutType),
-            DATABLOCK_SIZE)) / DATABLOCK_SIZE);
-        DataCopyExtParams x3Params{static_cast<uint16_t>(copyGm2UbParams_.mBurst),
-            x3RowBytes, x3SrcGap, x3DstGap, 0};
+            (paddedN * sizeof(OutType) - CeilAlign(aivParams_.curNL1InAiv * sizeof(OutType), DATABLOCK_SIZE)) /
+            DATABLOCK_SIZE);
+        DataCopyExtParams x3Params{static_cast<uint16_t>(copyGm2UbParams_.mBurst), x3RowBytes, x3SrcGap, x3DstGap, 0};
         uint64_t x3Offset = copyUb2GmParams_.offsetCGm;
         if (x3BatchBroadcast_ && x3M_ > 0) {
             x3Offset = x3Offset % (x3M_ * n_);
         }
-        AscendC::DataCopyPad(ubX3, x3Global_[x3Offset],
-                             x3Params, {false, 0, 0, 0});
+        AscendC::DataCopyPad(ubX3, x3Global_[x3Offset], x3Params, {false, 0, 0, 0});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(FLAG_0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(FLAG_0);
     }
@@ -348,7 +347,7 @@ public:
                                      (aivParams_.kCntIndex * mBurstBase_ + copyGm2UbParams_.mBurst * index) * n_ +
                                      aivParams_.bCntIndex * m_ * n_;
         // moving into UB.
-        copyGm2UbParams_.offsetWorkspaceGM = aivParams_.indexParams * kCnt_ * BLOCK_BASE_M * BLOCK_BASE_N +
+        copyGm2UbParams_.offsetWorkspaceGM = aivParams_.indexParams * kCnt_ * baseM_ * alignBaseN_ +
                                              (aivParams_.kCntIndex * mBurstBase_ + copyGm2UbParams_.mBurst * index) *
                                                  aivParams_.curAlignedNInAiv;
         uint64_t singleCnt = 1;
@@ -364,8 +363,9 @@ public:
 
 private:
     constexpr static uint64_t NUM_TWO = 2UL;
-    constexpr static uint64_t BLOCK_BASE_N = 256UL;
-    constexpr static uint64_t BLOCK_BASE_M = 256UL;
+    uint64_t baseN_ = 0;
+    uint64_t baseM_ = 0;
+    uint64_t alignBaseN_ = 0;
     constexpr static uint64_t MAIN_WINDOW = 4UL;
     constexpr static uint64_t UB2GM_SRCGAP_UNIT = 32UL;
     constexpr static uint64_t DATABLOCK_SIZE = 32UL;

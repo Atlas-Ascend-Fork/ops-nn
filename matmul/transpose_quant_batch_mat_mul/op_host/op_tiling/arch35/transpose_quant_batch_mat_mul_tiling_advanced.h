@@ -46,6 +46,11 @@ protected:
                                       const size_t scaleX2DimNum, const int64_t b, const int64_t m, const int64_t n,
                                       const int64_t k, const int64_t* bPerm) const;
 
+    ge::graphStatus CheckHifp4ScaleShape(const gert::StorageShape* scaleX1ShapePtr,
+                                         const gert::StorageShape* scaleX2ShapePtr, const size_t scaleX1DimNum,
+                                         const size_t scaleX2DimNum, const int64_t b, const int64_t m, const int64_t n,
+                                         const int64_t k, const int64_t* bPerm) const;
+
     ge::graphStatus CheckNonMxScaleShape(const gert::StorageShape* scaleX1ShapePtr,
                                          const gert::StorageShape* scaleX2ShapePtr, const size_t scaleX1DimNum,
                                          const size_t scaleX2DimNum, const int64_t m, const int64_t n) const;
@@ -54,6 +59,7 @@ protected:
 
     bool isMXFP8_ = false;
     bool isHIFP8_ = false;
+    bool isHIFP4_ = false;
 };
 } // namespace transpose_quant_batch_mat_mul_advanced
 } // namespace optiling

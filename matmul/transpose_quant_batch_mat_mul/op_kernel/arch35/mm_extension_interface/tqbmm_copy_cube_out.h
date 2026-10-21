@@ -17,6 +17,16 @@
 
 namespace AscendC {
 
+// 960 系列（9201/9202）fixpipe 1v1：单 AIV 接收整块 M，任何路径都不做 dual-dst split M；
+// 3510 及更早平台为 1:2，保持 dual-dst split M。
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+constexpr bool TQBMM_CV_1V1 = true;
+constexpr McgShfMode TQBMM_DEFAULT_FIXPIPE_MODE = McgShfMode::SINGLE_DST_MODE;
+#else
+constexpr bool TQBMM_CV_1V1 = false;
+constexpr McgShfMode TQBMM_DEFAULT_FIXPIPE_MODE = McgShfMode::DUAL_DST_SPLIT_M;
+#endif
+
 template <typename IMPL, class A_TYPE, class B_TYPE, class C_TYPE, const auto& MM_CFG, McgShfMode FIXPIPE_MODE>
 class TQBmmCustomCopyCubeOut {
     using DstT = typename C_TYPE::T;
@@ -39,7 +49,7 @@ public:
                                 int32_t curCol, int32_t baseHeight, int32_t baseWidth, int32_t baseBlockHeight,
                                 int32_t baseBlockWidth, const ScheduleContext& context = 0)
     {
-        if constexpr (FIXPIPE_MODE == McgShfMode::DUAL_DST_SPLIT_M) {
+        if constexpr (!TQBMM_CV_1V1 && FIXPIPE_MODE == McgShfMode::DUAL_DST_SPLIT_M) {
             baseHeight = (baseHeight + 1) / 2 * 2; // 指令要求m必须是偶数，向上对齐到2的倍数
         }
         CopyOutImpl<enSequentialWrite>(co2Local, co1Local, curRow, curCol, baseHeight, baseWidth, baseBlockHeight,
@@ -52,7 +62,7 @@ private:
                                        int32_t baseHeight, int32_t baseWidth, int32_t baseBlockHeight,
                                        int32_t baseBlockWidth)
     {
-        if constexpr (FIXPIPE_MODE == McgShfMode::DUAL_DST_SPLIT_M && PhyPosIsUB(C_TYPE::pos)) {
+        if constexpr (!TQBMM_CV_1V1 && FIXPIPE_MODE == McgShfMode::DUAL_DST_SPLIT_M && PhyPosIsUB(C_TYPE::pos)) {
             ASCENDC_ASSERT((baseHeight % 2 == 0), // 校验tileHeight是否2对齐
                            { KERNEL_LOG(KERNEL_ERROR, "If split M when copy cube out, baseHeight must be even."); });
         }
@@ -91,7 +101,7 @@ private:
     {
         int64_t dstOffset = 0;
         if constexpr (AscendC::Impl::Detail::MatmulFeatureTrait<MM_CFG>::IsSupportL0CToUB() &&
-                      PhyPosIsUB(C_TYPE::pos) &&
+                      PhyPosIsUB(C_TYPE::pos) && !TQBMM_CV_1V1 &&
                       ((A_TYPE::ibShare && B_TYPE::ibShare) || FIXPIPE_MODE == McgShfMode::DUAL_DST_SPLIT_M)) {
             dstOffset = (static_cast<int64_t>(static_cast<int64_t>(
                              curRow * MATMUL_MODULE(MatmulShapeTiling)->GetTiling().GetBaseM() * stride)) >>
@@ -117,7 +127,7 @@ private:
         if constexpr (PhyPosIsUB(C_TYPE::pos) &&
                       AscendC::Impl::Detail::MatmulFeatureTrait<MM_CFG>::IsSupportL0CToUB()) {
             fixpipe.SetSubBlockId(MATMUL_MODULE(MatmulSubBlockInfo)->GetSubBlockIdx());
-            if constexpr (A_TYPE::ibShare && B_TYPE::ibShare) {
+            if constexpr (!TQBMM_CV_1V1 && A_TYPE::ibShare && B_TYPE::ibShare) {
                 fixpipe.SetMcgShfMode(McgShfMode::DUAL_DST_SPLIT_M);
             } else {
                 fixpipe.SetMcgShfMode(FIXPIPE_MODE);
