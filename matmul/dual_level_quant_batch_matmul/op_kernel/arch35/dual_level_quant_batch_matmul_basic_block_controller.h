@@ -17,6 +17,7 @@
 
 #include "../dual_level_quant_batch_matmul_tiling_data.h"
 #include "dual_level_quant_batch_matmul_basic_block.h"
+#include "dual_level_quant_batch_matmul_basic_block_920.h"
 #include "dual_level_quant_batch_matmul_block.h"
 #include "dual_level_quant_batch_matmul_cube_compute_tools.h"
 #include "tool_arch35.h"
@@ -41,7 +42,9 @@ public:
 
 private:
     DualLevelQuantBatchMatmulBaseBlock block_;
-    DualLevelQuantMatmulBasicBlock<LOCAL_TEMPLATE_FUNC_PARAMS> basicBlock_;
+    AscendC::Std::conditional_t<hasTwoAiv, DualLevelQuantMatmulBasicBlock<LOCAL_TEMPLATE_FUNC_PARAMS>,
+                                DualLevelQuantMatmulBasicBlock920<LOCAL_TEMPLATE_FUNC_PARAMS>>
+        basicBlock_;
 };
 
 LOCAL_TEMPLATE_CLASS_PARAMS
@@ -51,9 +54,11 @@ __aicore__ inline void DualLevelQuantBatchMatmulBasicBlockController<LOCAL_TEMPL
 {
     uint64_t blockIdx = GetBlockIdx();
     if ASCEND_IS_AIV {
-        blockIdx = blockIdx / AscendC::GetTaskRation();
+        if constexpr (hasTwoAiv) {
+            blockIdx = blockIdx / AscendC::GetTaskRation();
+        }
     }
-    block_.Init(tilingData, blockIdx);
+    block_.Init(tilingData, blockIdx, hasTwoAiv ? WINDOW_LEN : WINDOW_LEN_FOR_96);
     basicBlock_.Init(reinterpret_cast<__gm__ x1Type*>(x1), reinterpret_cast<__gm__ x2Type*>(x2),
                      reinterpret_cast<__gm__ x1Level0ScaleType*>(x1Level0Scale),
                      reinterpret_cast<__gm__ x1Level1ScaleType*>(x1Level1Scale),
@@ -86,8 +91,12 @@ __aicore__ inline void DualLevelQuantBatchMatmulBasicBlockController<LOCAL_TEMPL
         l0Params.mL1Size = block_.offset_.singleCoreM;
         l0Params.nL1Size = block_.offset_.singleCoreN;
         // 固定128的二级切分，后续考虑动态切分
-        l0Params.mL0Size = DualLevelQuantBatchMatmul::Arch35::Min<uint64_t>(L0_BASE_M, block_.offset_.singleCoreM);
-        l0Params.nL0Size = DualLevelQuantBatchMatmul::Arch35::Min<uint64_t>(L0_BASE_N, block_.offset_.singleCoreN);
+        l0Params.mIterSize = DualLevelQuantBatchMatmul::Arch35::Min<uint64_t>(L0_BASE_M, block_.offset_.singleCoreM);
+        l0Params.nIterSize = DualLevelQuantBatchMatmul::Arch35::Min<uint64_t>(L0_BASE_N, block_.offset_.singleCoreN);
+        if constexpr (hasTwoAiv) {
+            l0Params.mL0Size = l0Params.mIterSize;
+            l0Params.nL0Size = l0Params.nIterSize;
+        }
         basicBlock_.ComputeBasicBlock(block_.offset_, l0Params);
     }
     basicBlock_.WaitAivToAic();

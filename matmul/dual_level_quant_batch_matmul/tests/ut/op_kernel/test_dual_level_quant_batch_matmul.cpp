@@ -42,7 +42,7 @@ TEST_F(TestDualLevelQuantBatchMatmul, kernelTest)
 {
     auto wrapper = [](GM_ADDR x1, GM_ADDR x2, GM_ADDR x1_level0_scale, GM_ADDR x1_level1_scale, GM_ADDR x2_level0_scale,
                       GM_ADDR x2_level1_scale, GM_ADDR bias, GM_ADDR y, GM_ADDR workspace, GM_ADDR tiling) {
-        ::dual_level_quant_batch_matmul<DLQBMM_SOC_RESERVERD, DLQBMM_DEFAULT, DLQBMM_TEMPLATE_CUBEBOUND,
+        ::dual_level_quant_batch_matmul<DLQBMM_SOC_MIX_AIC_1_2, DLQBMM_DEFAULT, DLQBMM_TEMPLATE_CUBEBOUND,
                                         DLQBMM_QUANT_TYPE_MX, DLQBMM_QUANT_TYPE_PER_GROUP, false, true, true, true>(
             x1, x2, x1_level0_scale, x1_level1_scale, x2_level0_scale, x2_level1_scale, bias, y, workspace, tiling);
     };

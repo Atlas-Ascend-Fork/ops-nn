@@ -43,8 +43,8 @@ static ge::graphStatus DualLevelQuantBatchMatmulTilingFunc(gert::TilingContext* 
     auto* compileInfoPtr = reinterpret_cast<const DualLevelQuantBatchMatmulCompileInfo*>(context->GetCompileInfo());
     OPS_CHECK_NULL_WITH_CONTEXT(context, compileInfoPtr);
     NpuArch npuArch = compileInfoPtr->npuArch;
-    if (npuArch != NpuArch::DAV_3510) {
-        OP_LOGE(context->GetNodeName(), "Platform not supported, only supports dav3510 platform");
+    if (npuArch != NpuArch::DAV_3510 && npuArch != NpuArch::DAV_9201) {
+        OP_LOGE(context->GetNodeName(), "Platform not supported, only supports dav3510 and dav9201 platforms");
         return ge::GRAPH_FAILED;
     }
     return TilingRegistry::GetInstance().DoTilingImpl(context);
@@ -60,13 +60,20 @@ static ge::graphStatus TilingParseForDualLevelQuantBatchMatmul(gert::TilingParse
     auto compileInfoPtr = context->GetCompiledInfo<DualLevelQuantBatchMatmulCompileInfo>();
     OPS_CHECK_NULL_WITH_CONTEXT(context, compileInfoPtr);
 
+    compileInfoPtr->npuArch = ascendcPlatform.GetCurNpuArch();
     compileInfoPtr->aivNum = ascendcPlatform.GetCoreNumAiv();
     compileInfoPtr->aicNum = ascendcPlatform.GetCoreNumAic();
     OP_LOGE_IF(compileInfoPtr->aicNum == 0, ge::GRAPH_FAILED, context->GetNodeName(), "aicNum is 0");
     OP_LOGE_IF(compileInfoPtr->aivNum == 0, ge::GRAPH_FAILED, context->GetNodeName(), "aivNum is 0");
-    OP_LOGE_IF(compileInfoPtr->aivNum != CORE_RATIO * compileInfoPtr->aicNum, ge::GRAPH_FAILED, context->GetNodeName(),
-               "aicNum:aivNum should be 1:2, actual aicNum: %u, aivNum: %u.", compileInfoPtr->aicNum,
-               compileInfoPtr->aivNum);
+    if (compileInfoPtr->npuArch == NpuArch::DAV_3510) {
+        OP_LOGE_IF(compileInfoPtr->aivNum != CORE_RATIO * compileInfoPtr->aicNum, ge::GRAPH_FAILED,
+                   context->GetNodeName(), "aicNum:aivNum should be 1:2, actual aicNum: %u, aivNum: %u.",
+                   compileInfoPtr->aicNum, compileInfoPtr->aivNum);
+    } else if (compileInfoPtr->npuArch == NpuArch::DAV_9201) {
+        OP_LOGE_IF(compileInfoPtr->aivNum != compileInfoPtr->aicNum, ge::GRAPH_FAILED, context->GetNodeName(),
+                   "aicNum:aivNum should be 1:1, actual aicNum: %u, aivNum: %u.", compileInfoPtr->aicNum,
+                   compileInfoPtr->aivNum);
+    }
 
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfoPtr->ubSize);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L1, compileInfoPtr->l1Size);
@@ -74,7 +81,6 @@ static ge::graphStatus TilingParseForDualLevelQuantBatchMatmul(gert::TilingParse
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_A, compileInfoPtr->l0aSize);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_B, compileInfoPtr->l0bSize);
     compileInfoPtr->workspaceNum = ascendcPlatform.GetLibApiWorkSpaceSize();
-    compileInfoPtr->npuArch = ascendcPlatform.GetCurNpuArch();
 
     TilingPrepareForOpCache(context);
     return ge::GRAPH_SUCCESS;

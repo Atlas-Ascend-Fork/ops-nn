@@ -29,29 +29,7 @@ using AscendC::CrossCoreWaitFlag;
 using AscendC::LocalTensor;
 using AscendC::TPosition;
 
-#ifdef LOCAL_TEMPLATE_CLASS_PARAMS
-#undef LOCAL_TEMPLATE_CLASS_PARAMS
-#endif
-#define LOCAL_TEMPLATE_CLASS_PARAMS                                                                                   \
-    template <typename x1Type, typename x2Type, typename x1Level1ScaleType, typename x1Level0ScaleType,               \
-              typename x2Level1ScaleType, typename x2Level0ScaleType, typename biasType, typename yType, bool aTrans, \
-              bool bTrans, bool hasBias>
-
-#ifdef LOCAL_TEMPLATE_FUNC_PARAMS
-#undef LOCAL_TEMPLATE_FUNC_PARAMS
-#endif
-#define LOCAL_TEMPLATE_FUNC_PARAMS                                                                               \
-    x1Type, x2Type, x1Level1ScaleType, x1Level0ScaleType, x2Level1ScaleType, x2Level0ScaleType, biasType, yType, \
-        aTrans, bTrans, hasBias
-
 namespace DualLevelQuantBatchMatmul::Arch35 {
-
-enum SyncMode {
-    SYNC_MODE0 = 0, // C/V全核同步
-    SYNC_MODE1 = 1, // AIV之间的同步
-    SYNC_MODE2 = 2, // CV之间的同步
-    SYNC_MODE4 = 4, // CV分离的同步
-};
 
 LOCAL_TEMPLATE_CLASS_PARAMS
 class DualLevelQuantMatmulBasicBlock {
@@ -90,7 +68,8 @@ protected:
     LocalTensor<float> cTmpFp32Ub_{TPosition::VECIN, 0, 248 * 1024};
 
     DualLevelQuantBatchMatmulVectorCompute<x1Level0ScaleType, x2Level0ScaleType, biasType, yType, hasBias> vecCompute_;
-    DualLevelQuantBatchMatmulCubeCompute<x1Type, x2Type, x1Level1ScaleType, x2Level1ScaleType, float> cubeCompute_;
+    DualLevelQuantBatchMatmulCubeCompute<x1Type, x2Type, x1Level1ScaleType, x2Level1ScaleType, float, true>
+        cubeCompute_;
 
     uint64_t cvLoopIdx_ = 0;
 };
@@ -118,7 +97,7 @@ __aicore__ inline void DualLevelQuantMatmulBasicBlock<LOCAL_TEMPLATE_FUNC_PARAMS
     fixpParams.nL0Size = l0Params.nL0Size;
     fixpParams.outNSize = fixpParams.nL0Size;
 
-    offsetParams.mUbSize = Ops::Base::CeilDiv<uint64_t>(l0Params.mL0Size, 2);
+    offsetParams.mUbSize = Ops::Base::CeilDiv<uint64_t>(l0Params.mIterSize, 2);
 
     for (uint64_t kGmOffset = 0; kGmOffset < offsetParams.kSize; kGmOffset += offsetParams.l0BaseK) {
         offsetParams.kGmOffset = kGmOffset;
@@ -143,8 +122,8 @@ __aicore__ inline void DualLevelQuantMatmulBasicBlock<LOCAL_TEMPLATE_FUNC_PARAMS
 {
     cubeCompute_.WaitMte1ToMte2(offsetParams);
     cubeCompute_.CopyGmToL1(offsetParams, l0Params);
-    for (uint64_t nL1Offset = 0; nL1Offset < l0Params.nL1Size; nL1Offset += l0Params.nL0Size) {
-        for (uint64_t mL1Offset = 0; mL1Offset < l0Params.mL1Size; mL1Offset += l0Params.mL0Size) {
+    for (uint64_t nL1Offset = 0; nL1Offset < l0Params.nL1Size; nL1Offset += l0Params.nIterSize) {
+        for (uint64_t mL1Offset = 0; mL1Offset < l0Params.mL1Size; mL1Offset += l0Params.mIterSize) {
             CrossCoreWaitFlag<SyncMode::SYNC_MODE4, PIPE_FIX>(AIV_TO_AIC_ID);
             CrossCoreWaitFlag<SyncMode::SYNC_MODE4, PIPE_FIX>(AIV_TO_AIC_ID + AIV_SYNC_FLAG_DIST);
 
@@ -164,20 +143,20 @@ LOCAL_TEMPLATE_CLASS_PARAMS
 __aicore__ inline void DualLevelQuantMatmulBasicBlock<LOCAL_TEMPLATE_FUNC_PARAMS>::ComputeAivBasicBlock(
     DualLevelQbmmBasicBlockOffsetParams& offsetParams, L0CopyAndCalcParams& l0Params, uint64_t kGmOffset)
 {
-    if (kGmOffset % offsetParams.level0ScaleKUbSize == 0) {
+    if (kGmOffset % offsetParams.x1Level0ScaleKUbSize == 0) {
         vecCompute_.WaitVToMte2ForX1();
         vecCompute_.CopyX1Level0ScaleToUb(offsetParams, l0Params);
     }
     vecCompute_.WaitVToMte2ForX2();
     vecCompute_.CopyX2Level0ScaleAndBiasToUb(offsetParams, l0Params);
     vecCompute_.SetAndWaitMte2ToV();
-    for (uint64_t nL1Offset = 0; nL1Offset < l0Params.nL1Size; nL1Offset += l0Params.nL0Size) {
-        uint64_t cFp32BufId = nL1Offset / l0Params.nL0Size;
+    for (uint64_t nL1Offset = 0; nL1Offset < l0Params.nL1Size; nL1Offset += l0Params.nIterSize) {
+        uint64_t cFp32BufId = nL1Offset / l0Params.nIterSize;
         if (kGmOffset == 0) {
             vecCompute_.WaitMte3ToV(cFp32BufId);
             vecCompute_.InitUb(cFp32BufId, nL1Offset);
         }
-        for (uint64_t mL1Offset = 0; mL1Offset < l0Params.mL1Size; mL1Offset += l0Params.mL0Size) {
+        for (uint64_t mL1Offset = 0; mL1Offset < l0Params.mL1Size; mL1Offset += l0Params.mIterSize) {
             CrossCoreWaitFlag<SyncMode::SYNC_MODE4, PIPE_V>(AIC_TO_AIV_ID);
             vecCompute_.AntiQuantCompute(cFp32BufId, cvLoopIdx_, mL1Offset, nL1Offset, cTmpFp32Ub_, offsetParams,
                                          l0Params);
@@ -192,7 +171,7 @@ __aicore__ inline void DualLevelQuantMatmulBasicBlock<LOCAL_TEMPLATE_FUNC_PARAMS
         }
     }
 
-    if ((kGmOffset + offsetParams.l0BaseK) % offsetParams.level0ScaleKUbSize == 0 ||
+    if ((kGmOffset + offsetParams.l0BaseK) % offsetParams.x1Level0ScaleKUbSize == 0 ||
         kGmOffset + offsetParams.l0BaseK >= offsetParams.kSize) {
         vecCompute_.SetVToMte2ForX1();
     }

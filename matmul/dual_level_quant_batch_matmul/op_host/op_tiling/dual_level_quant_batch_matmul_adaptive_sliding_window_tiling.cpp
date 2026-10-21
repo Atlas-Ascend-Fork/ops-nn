@@ -37,6 +37,7 @@ constexpr uint32_t DOUBLE_CORE_NUM = 2;
 constexpr uint32_t BASIC_BLOCK_SIZE_16 = 16;
 constexpr uint32_t BASIC_BLOCK_SIZE_32 = 32;
 constexpr uint32_t BASIC_BLOCK_SIZE_128 = 128;
+constexpr uint32_t BASIC_BLOCK_SIZE_160 = 160;
 constexpr uint32_t BASIC_BLOCK_SIZE_256 = 256;
 constexpr uint32_t BASIC_BLOCK_SIZE_512 = 512;
 constexpr uint32_t BASIC_BLOCK_SIZE_1024 = 1024;
@@ -45,6 +46,7 @@ constexpr uint32_t CORE_NUM_HALF = 2;
 constexpr uint32_t DB_SIZE = 2;
 
 constexpr uint64_t WINDOW_LEN = 4;                // v100 的滑窗大小
+constexpr uint64_t WINDOW_LEN_FOR_96 = 8;         // v121 的滑窗大小
 constexpr uint64_t MTE2_CACHELINE_SIZE = 256;     // MTE2 的最小 CACHELINE
 constexpr uint64_t LOAD_BALANCE_THRESHOLD = 1792; // 内轴非对齐时，执行负载均衡的阈值
 
@@ -93,7 +95,10 @@ ge::graphStatus DualLevelQuantBatchMatmulTilingASW::DoLibApiTiling() { return ge
 
 uint64_t DualLevelQuantBatchMatmulTilingASW::GetTilingKey() const
 {
-    uint64_t socVersionType = DLQBMM_SOC_RESERVERD;
+    uint64_t socVersionType = DLQBMM_SOC_MIX_AIC_1_2;
+    if (compileInfo_.npuArch == NpuArch::DAV_9201) {
+        socVersionType = DLQBMM_SOC_MIX_AIC_1_1;
+    }
     uint64_t subSocVersionType = DLQBMM_DEFAULT;
     uint64_t templateCustom = DLQBMM_TEMPLATE_CUBEBOUND;
     uint64_t level1QuantType = DLQBMM_QUANT_TYPE_MX;
@@ -186,9 +191,16 @@ bool DualLevelQuantBatchMatmulTilingASW::AnalyseSlidingWinInfo()
 // baseK满足32B对齐时，同时满足原则1和原则2
 bool DualLevelQuantBatchMatmulTilingASW::CalcBasicBlock()
 {
-    // baseM=256, baseN=256, baseK=512
-    adaptiveWin_.baseM = std::min(matmulInfo_.mSize, static_cast<uint64_t>(BASIC_BLOCK_SIZE_256));
-    adaptiveWin_.baseM = ops::CeilAlign(adaptiveWin_.baseM, GetShapeWithDataType(L1_ALIGN_SIZE, matmulInfo_.x1Dtype));
+    uint64_t baseMMax = static_cast<uint64_t>(BASIC_BLOCK_SIZE_256);
+    if (compileInfo_.npuArch == NpuArch::DAV_9201) {
+        baseMMax = static_cast<uint64_t>(BASIC_BLOCK_SIZE_160);
+    }
+    // baseM=256(3510) or 160(9201), baseN=256, baseK=512
+    adaptiveWin_.baseM = std::min(matmulInfo_.mSize, baseMMax);
+    adaptiveWin_.baseM = ops::CeilAlign(adaptiveWin_.baseM,
+                                        compileInfo_.npuArch == NpuArch::DAV_9201 ?
+                                            CUBE_BLOCK :
+                                            GetShapeWithDataType(L1_ALIGN_SIZE, matmulInfo_.x1Dtype));
     adaptiveWin_.baseN = std::min(matmulInfo_.nSize, static_cast<uint64_t>(BASIC_BLOCK_SIZE_256));
     adaptiveWin_.baseN = ops::CeilAlign(adaptiveWin_.baseN, CUBE_BLOCK);
     adaptiveWin_.baseK = ops::CeilAlign(std::min(matmulInfo_.kSize, static_cast<uint64_t>(BASIC_BLOCK_SIZE_512)),
@@ -198,7 +210,7 @@ bool DualLevelQuantBatchMatmulTilingASW::CalcBasicBlock()
                         ops::CeilDiv(matmulInfo_.nSize, adaptiveWin_.baseN);
     bool isSmallBlock = oriBlock < compileInfo_.aicNum;
     if (isSmallBlock) {
-        AdjustBasicBlock();
+        AdjustBasicBlock(baseMMax, static_cast<uint64_t>(BASIC_BLOCK_SIZE_256));
     }
     return true;
 }
@@ -208,13 +220,22 @@ void AdjustMNCoreRatio(uint64_t& xCore, uint64_t& yCore, uint64_t& baseX, uint64
                        uint64_t aicNum, F&& updateFunc)
 {
     while (baseX >= baseY * BASEM_BASEN_RATIO && xCore < aicNum / CORE_NUM_HALF && baseX != baseAlignNum) {
+        uint64_t oldXCore = xCore;
+        uint64_t oldYCore = yCore;
+
         xCore = xCore * DOUBLE_CORE_NUM;
         yCore = aicNum / xCore;
-        updateFunc();
+        // updateFunc 返回 false 表示翻倍 core 后 baseX/baseY 超出基本块上限，
+        // 此时 baseX/baseY 未被更新，只需回滚 core 数并停止继续调整
+        if (!updateFunc()) {
+            xCore = oldXCore;
+            yCore = oldYCore;
+            break;
+        }
     }
 }
 
-void DualLevelQuantBatchMatmulTilingASW::AdjustBasicBlock()
+void DualLevelQuantBatchMatmulTilingASW::AdjustBasicBlock(uint64_t baseMMax, uint64_t baseNMax)
 {
     uint64_t baseMAlignNum = matmulInfo_.transA ? GetShapeWithDataType(L2_ALIGN_SIZE, matmulInfo_.x1Dtype) : CUBE_BLOCK;
     uint64_t baseNAlignNum = matmulInfo_.transB ? CUBE_BLOCK : GetShapeWithDataType(L2_ALIGN_SIZE, matmulInfo_.x1Dtype);
@@ -240,27 +261,29 @@ void DualLevelQuantBatchMatmulTilingASW::AdjustBasicBlock()
             tempBaseM = ops::CeilAlign(ops::CeilDiv(matmulInfo_.mSize, mCore), baseMAlignNum);
         }
 
-        auto updateFunc = [&tempBaseM, &tempBaseN, &mCore, &nCore, baseMAlignNum, baseNAlignNum, this]() {
-            tempBaseM = ops::CeilAlign(ops::CeilDiv(matmulInfo_.mSize, mCore), baseMAlignNum);
-            tempBaseN = ops::CeilAlign(ops::CeilDiv(matmulInfo_.nSize, nCore), baseNAlignNum);
+        auto updateFunc = [&tempBaseM, &tempBaseN, &mCore, &nCore, baseMAlignNum, baseNAlignNum, baseMMax, baseNMax,
+                           this]() -> bool {
+            uint64_t newBaseM = ops::CeilAlign(ops::CeilDiv(matmulInfo_.mSize, mCore), baseMAlignNum);
+            uint64_t newBaseN = ops::CeilAlign(ops::CeilDiv(matmulInfo_.nSize, nCore), baseNAlignNum);
+            if (newBaseM > baseMMax || newBaseN > baseNMax) {
+                return false;
+            }
+            tempBaseM = newBaseM;
+            tempBaseN = newBaseN;
             mCore = ops::CeilDiv(matmulInfo_.mSize, static_cast<uint64_t>(tempBaseM));
             nCore = ops::CeilDiv(matmulInfo_.nSize, static_cast<uint64_t>(tempBaseN));
+            return true;
         };
         AdjustMNCoreRatio(nCore, mCore, tempBaseN, tempBaseM, baseNAlignNum, static_cast<uint64_t>(compileInfo_.aicNum),
                           updateFunc);
         AdjustMNCoreRatio(mCore, nCore, tempBaseM, tempBaseN, baseMAlignNum, static_cast<uint64_t>(compileInfo_.aicNum),
                           updateFunc);
 
-        uint64_t kValueAlign = ops::CeilAlign(static_cast<uint64_t>(matmulInfo_.kSize), baseKAlignNum);
         uint64_t kValueMax = GetShapeWithDataType(compileInfo_.l0aSize / DB_SIZE, matmulInfo_.x1Dtype) /
-                             std::max(tempBaseM, tempBaseN) / L0_SPLIT_NUM;
+                             std::min(std::max(tempBaseM, tempBaseN), static_cast<uint64_t>(BASIC_BLOCK_SIZE_128));
         if (kValueMax >= baseKAlignNum) {
             adaptiveWin_.baseM = tempBaseM;
             adaptiveWin_.baseN = tempBaseN;
-            kValueMax = ops::FloorAlign(kValueMax, baseKAlignNum);
-            adaptiveWin_.baseK = std::min(kValueAlign, kValueMax);
-            adaptiveWin_.baseK = adaptiveWin_.baseK > BASEK_LIMIT ? adaptiveWin_.baseK / CORE_NUM_HALF :
-                                                                    adaptiveWin_.baseK;
             adaptiveWin_.useTailWinLogic = false;
         }
     }
@@ -335,6 +358,7 @@ bool DualLevelQuantBatchMatmulTilingASW::OptimizeEdgeBasicBlock()
                    matmulInfo_.level1GroupSize == MICROSCALE_GROUP_SIZE;
     bool balanceAfterFixp = matmulInfo_.kSize < static_cast<uint64_t>(BASIC_BLOCK_SIZE_1024);
     bool isInnerAxisAlign = GetSizeWithDataType(matmulInfo_.kSize, matmulInfo_.x1Dtype) % MTE2_CACHELINE_SIZE == 0UL;
+    adaptiveWin_.windowLen = compileInfo_.npuArch == NpuArch::DAV_3510 ? WINDOW_LEN : WINDOW_LEN_FOR_96;
     if (mBaseTail > 0UL && !matmulInfo_.transA &&
         (isInnerAxisAlign || (matmulInfo_.mSize >= LOAD_BALANCE_THRESHOLD && !isMxfp4))) {
         if (!GetOuterMAxisTailCnt(adaptiveWin_.mBaseTailSplitCnt, adaptiveWin_.mTailMain)) {
@@ -354,12 +378,12 @@ bool DualLevelQuantBatchMatmulTilingASW::GetOuterMAxisTailCnt(uint64_t& baseTail
 {
     OP_TILING_CHECK(
         matmulInfo_.mSize == 0UL,
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(matmulInfo_.opName, "mSize", "0", "The M-axis size cannot be 0"),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(matmulInfo_.opName, "mSize", "0", "the M-axis size can not be 0"),
         return false);
     uint64_t mCnt = ops::CeilDiv(matmulInfo_.mSize, adaptiveWin_.baseM);
     uint64_t mTailSize = matmulInfo_.mSize % adaptiveWin_.baseM;
     uint64_t baseTailCntMax = std::min((adaptiveWin_.baseM - mTailSize) / BASIC_BLOCK_SIZE_16, mCnt);
-    uint64_t windowSize = std::min(WINDOW_LEN, mCnt);
+    uint64_t windowSize = std::min(adaptiveWin_.windowLen, mCnt);
     uint64_t mainWindowNum = mCnt / windowSize - 1UL;
     uint64_t tailWindowSize = mCnt - mainWindowNum * windowSize;
     uint64_t perfRes = (mainWindowNum + 1UL) * adaptiveWin_.baseM;
@@ -393,9 +417,10 @@ bool DualLevelQuantBatchMatmulTilingASW::GetOuterNAxisTailCnt(uint64_t& baseTail
     uint64_t totalWindows = ops::CeilDiv<uint64_t>(nCnt * mCnt, compileInfo_.aicNum);
 
     OP_TILING_CHECK(nCnt == 0UL,
-                    OP_LOGE(matmulInfo_.opName, "Subtraction underflow: nCnt(%lu) - 1UL and \
-the divisor is zero: WINDOW_LEN %% nCnt.",
-                            nCnt),
+                    OP_LOGE(matmulInfo_.opName,
+                            "Subtraction underflow: nCnt(%lu) - 1UL and the divisor is zero: "
+                            "adaptiveWin_.windowLen(%lu) %% nCnt.",
+                            nCnt, adaptiveWin_.windowLen),
                     return false);
     uint64_t mainWindows = ops::CeilDiv<uint64_t>((nCnt - 1UL) * mCnt + mCnt % compileInfo_.aicNum,
                                                   compileInfo_.aicNum);
@@ -403,7 +428,8 @@ the divisor is zero: WINDOW_LEN %% nCnt.",
     OP_TILING_CHECK(compileInfo_.aicNum == 0UL, OP_LOGE(matmulInfo_.opName, "The number of enabled Cube cores is 0."),
                     return false);
     if (nCnt * mCnt <= compileInfo_.aicNum ||
-        (mCnt % compileInfo_.aicNum == 0UL && (nCnt % WINDOW_LEN == 0UL || WINDOW_LEN % nCnt == 0UL))) {
+        (mCnt % compileInfo_.aicNum == 0UL &&
+         (nCnt % adaptiveWin_.windowLen == 0UL || adaptiveWin_.windowLen % nCnt == 0UL))) {
         mainWindows = totalWindows;
     }
     OP_TILING_CHECK(totalWindows < mainWindows,

@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <vector>
 #include "error_util.h"
+#include "matmul/common/op_host/log_format_util.h"
 #include "graph/utils/type_utils.h"
 #include "matmul/common/op_host/math_util_nn.h"
 #include "matmul/common/op_host/op_tiling/debug_tiling.h"
@@ -41,6 +42,14 @@ ge::graphStatus CheckContext(gert::TilingContext* context, uint64_t tilingDataSi
     OPS_CHECK_NULL_WITH_CONTEXT(context, context->GetInputDesc(X2_LEVEL0_SCALE_INDEX));
     OPS_CHECK_NULL_WITH_CONTEXT(context, context->GetInputDesc(X2_LEVEL1_SCALE_INDEX));
     OPS_CHECK_NULL_WITH_CONTEXT(context, context->GetOutputDesc(OUTPUT_Y_INDEX));
+    // check the Required input shape
+    OPS_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(X1_INDEX));
+    OPS_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(X2_INDEX));
+    OPS_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(X1_LEVEL0_SCALE_INDEX));
+    OPS_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(X1_LEVEL1_SCALE_INDEX));
+    OPS_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(X2_LEVEL0_SCALE_INDEX));
+    OPS_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(X2_LEVEL1_SCALE_INDEX));
+
     OPS_CHECK_NULL_WITH_CONTEXT(context, attrs->GetAttrPointer<int64_t>(ATTR_DTYPE_INDEX));
 
     // check Raw TilingData
@@ -56,13 +65,14 @@ ge::graphStatus CheckContext(gert::TilingContext* context, uint64_t tilingDataSi
 bool CheckAttrs([[maybe_unused]] const gert::TilingContext* context, [[maybe_unused]] NpuArch npuArch,
                 const DualLevelQuantBatchMatmulInfo& inputParams)
 {
-    OP_TILING_CHECK(inputParams.transA != false || inputParams.transB != true,
-                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "transA, transB",
-                                                           (std::string(inputParams.transA ? "true" : "false") + ", " +
-                                                            (inputParams.transB ? "true" : "false"))
-                                                               .c_str(),
-                                                           "x1 transpose must be false and x2 transpose must be true"),
-                    return false);
+    OP_TILING_CHECK(
+        inputParams.transA != false || inputParams.transB != true,
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "transA, transB",
+                                               Ops::NN::FormatString("%s, %s", inputParams.transA ? "true" : "false",
+                                                                     inputParams.transB ? "true" : "false")
+                                                   .c_str(),
+                                               "transposeX1 must be false and transposeX2 must be true"),
+        return false);
     OP_TILING_CHECK(inputParams.level1GroupSize != MICROSCALING_GROUP_SIZE,
                     OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "level1GroupSize",
                                               std::to_string(inputParams.level1GroupSize).c_str(),
@@ -81,41 +91,44 @@ bool CheckDtypes([[maybe_unused]] const gert::TilingContext* context, [[maybe_un
 {
     OP_TILING_CHECK(
         inputParams.x1Dtype != ge::DT_FLOAT4_E2M1 || inputParams.x2Dtype != ge::DT_FLOAT4_E2M1,
-        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "x1, x2",
-                                               (ge::TypeUtils::DataTypeToSerialString(inputParams.x1Dtype) + ", " +
-                                                ge::TypeUtils::DataTypeToSerialString(inputParams.x2Dtype))
-                                                   .c_str(),
-                                               "dtype is only supported to be float4_e2m1"),
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "x1, x2",
+            Ops::NN::FormatString("%s, %s", ge::TypeUtils::DataTypeToSerialString(inputParams.x1Dtype).c_str(),
+                                  ge::TypeUtils::DataTypeToSerialString(inputParams.x2Dtype).c_str())
+                .c_str(),
+            "the dtypes of x1 and x2 must be float4_e2m1"),
         return false);
     OP_TILING_CHECK(inputParams.x1Level0ScaleDtype != ge::DT_FLOAT || inputParams.x2Level0ScaleDtype != ge::DT_FLOAT,
                     OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
                         context->GetNodeName(), "x1Level0Scale, x2Level0Scale",
-                        (ge::TypeUtils::DataTypeToSerialString(inputParams.x1Level0ScaleDtype) + ", " +
-                         ge::TypeUtils::DataTypeToSerialString(inputParams.x2Level0ScaleDtype))
+                        Ops::NN::FormatString(
+                            "%s, %s", ge::TypeUtils::DataTypeToSerialString(inputParams.x1Level0ScaleDtype).c_str(),
+                            ge::TypeUtils::DataTypeToSerialString(inputParams.x2Level0ScaleDtype).c_str())
                             .c_str(),
-                        "dtype is only supported to be float"),
+                        "the dtypes of x1Level0Scale and x2Level0Scale must be float"),
                     return false);
     OP_TILING_CHECK(
         inputParams.x1Level1ScaleDtype != ge::DT_FLOAT8_E8M0 || inputParams.x2Level1ScaleDtype != ge::DT_FLOAT8_E8M0,
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             context->GetNodeName(), "x1Level1Scale, x2Level1Scale",
-            (ge::TypeUtils::DataTypeToSerialString(inputParams.x1Level1ScaleDtype) + ", " +
-             ge::TypeUtils::DataTypeToSerialString(inputParams.x2Level1ScaleDtype))
+            Ops::NN::FormatString("%s, %s",
+                                  ge::TypeUtils::DataTypeToSerialString(inputParams.x1Level1ScaleDtype).c_str(),
+                                  ge::TypeUtils::DataTypeToSerialString(inputParams.x2Level1ScaleDtype).c_str())
                 .c_str(),
-            "dtype is only supported to be float8_e8m0"),
+            "the dtypes of x1Level1Scale and x2Level1Scale must be float8_e8m0"),
         return false);
     if (inputParams.hasBias) {
         OP_TILING_CHECK(
             inputParams.biasDtype != ge::DT_FLOAT,
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "bias",
                                                   ge::TypeUtils::DataTypeToSerialString(inputParams.biasDtype).c_str(),
-                                                  "dtype is only supported to be float"),
+                                                  "the dtype of bias must be float"),
             return false);
     }
     OP_TILING_CHECK(inputParams.yDtype != ge::DT_FLOAT16 && inputParams.yDtype != ge::DT_BF16,
                     OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
                         context->GetNodeName(), "y", ge::TypeUtils::DataTypeToSerialString(inputParams.yDtype).c_str(),
-                        "dtype is only supported to be float16 or bfloat16"),
+                        "the dtype of y must be float16 or bfloat16"),
                     return false);
     return true;
 }
@@ -148,7 +161,7 @@ bool CheckInputShape(const gert::TilingContext* context, const char* variableNam
             dim != static_cast<uint64_t>(shape.GetDim(i++)),
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
                 context->GetNodeName(), variableName, Ops::Base::ToString(shape).c_str(),
-                ("The shape of " + std::string(variableName) + " must be " + ToShapeString(expectedShape)).c_str()),
+                ("the shape of " + std::string(variableName) + " must be " + ToShapeString(expectedShape)).c_str()),
             return false);
     }
     return true;
@@ -156,14 +169,15 @@ bool CheckInputShape(const gert::TilingContext* context, const char* variableNam
 
 bool IsInputsValid(const gert::TilingContext* context, const DualLevelQuantBatchMatmulInfo& inputParams)
 {
-    OP_TILING_CHECK(inputParams.mSize == 0 || inputParams.nSize == 0 || inputParams.kSize == 0,
-                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                        context->GetNodeName(), "mSize, nSize, kSize",
-                        (std::to_string(inputParams.mSize) + ", " + std::to_string(inputParams.nSize) + ", " +
-                         std::to_string(inputParams.kSize))
-                            .c_str(),
-                        "The sizes of M, N and K axes cannot be 0"),
-                    return false);
+    OP_TILING_CHECK(
+        inputParams.mSize == 0 || inputParams.nSize == 0 || inputParams.kSize == 0,
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "mSize, nSize, kSize",
+            Ops::NN::FormatString("%s, %s, %s", std::to_string(inputParams.mSize).c_str(),
+                                  std::to_string(inputParams.nSize).c_str(), std::to_string(inputParams.kSize).c_str())
+                .c_str(),
+            "the sizes of M, N and K axes can not be 0"),
+        return false);
     OP_TILING_CHECK(
         inputParams.x1Format != ge::FORMAT_ND,
         OP_LOGE_FOR_INVALID_FORMAT(context->GetNodeName(), "x1",
@@ -188,12 +202,18 @@ bool CheckInputs([[maybe_unused]] gert::TilingContext* context, [[maybe_unused]]
     auto& x1Level1ScaleShape = context->GetInputShape(X1_LEVEL1_SCALE_INDEX)->GetOriginShape();
     auto& x2Level0ScaleShape = context->GetInputShape(X2_LEVEL0_SCALE_INDEX)->GetOriginShape();
     auto& x2Level1ScaleShape = context->GetInputShape(X2_LEVEL1_SCALE_INDEX)->GetOriginShape();
-    OP_TILING_CHECK(x1Level0ScaleShape.GetShapeSize() == 0 || x1Level1ScaleShape.GetShapeSize() == 0 ||
-                        x2Level0ScaleShape.GetShapeSize() == 0 || x2Level1ScaleShape.GetShapeSize() == 0,
-                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
-                        context->GetNodeName(), "x1Level0Scale/x1Level1Scale/x2Level0Scale/x2Level1Scale", "0",
-                        "The shape size of x1Level0Scale/x1Level1Scale/x2Level0Scale/x2Level1Scale cannot be 0"),
-                    return false);
+    OP_TILING_CHECK(
+        x1Level0ScaleShape.GetShapeSize() == 0 || x1Level1ScaleShape.GetShapeSize() == 0 ||
+            x2Level0ScaleShape.GetShapeSize() == 0 || x2Level1ScaleShape.GetShapeSize() == 0,
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context->GetNodeName(), "x1Level0Scale, x1Level1Scale, x2Level0Scale, x2Level1Scale",
+            Ops::NN::FormatString("%s, %s, %s, %s", std::to_string(x1Level0ScaleShape.GetShapeSize()).c_str(),
+                                  std::to_string(x1Level1ScaleShape.GetShapeSize()).c_str(),
+                                  std::to_string(x2Level0ScaleShape.GetShapeSize()).c_str(),
+                                  std::to_string(x2Level1ScaleShape.GetShapeSize()).c_str())
+                .c_str(),
+            "the shape sizes of x1Level0Scale, x1Level1Scale, x2Level0Scale and x2Level1Scale can not be 0"),
+        return false);
 
     // check input shape
     uint64_t level1ScaleKSize = ops::CeilDiv<uint64_t>(inputParams.kSize, MICROSCALING_GROUP_SIZE * 2UL);
@@ -213,11 +233,13 @@ bool CheckInputs([[maybe_unused]] gert::TilingContext* context, [[maybe_unused]]
     }
 
     if (inputParams.hasBias) {
-        auto& biasShape = context->GetInputShape(BIAS_INDEX)->GetOriginShape();
+        auto* biasShapePtr = context->GetOptionalInputShape(BIAS_INDEX);
+        OP_TILING_CHECK(biasShapePtr == nullptr, OP_LOGE(context, "Optional input bias shape is null"), return false);
+        auto& biasShape = biasShapePtr->GetOriginShape();
         OP_TILING_CHECK(biasShape.GetShapeSize() == 0,
                         OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
                             context->GetNodeName(), "bias", "0",
-                            "The shape size of bias cannot be 0, if no bias is needed, please use a null pointer"),
+                            "the shape size of bias can not be 0; pass a null pointer when bias is not needed"),
                         return false);
         if (!CheckInputShape(context, "bias", biasShape, {inputParams.nSize})) {
             return false;

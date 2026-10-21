@@ -25,6 +25,21 @@
 #include "op_kernel/math_util.h"
 #include "lib/matmul_intf.h"
 
+#ifdef LOCAL_TEMPLATE_CLASS_PARAMS
+#undef LOCAL_TEMPLATE_CLASS_PARAMS
+#endif
+#define LOCAL_TEMPLATE_CLASS_PARAMS                                                                                   \
+    template <typename x1Type, typename x2Type, typename x1Level1ScaleType, typename x1Level0ScaleType,               \
+              typename x2Level1ScaleType, typename x2Level0ScaleType, typename biasType, typename yType, bool aTrans, \
+              bool bTrans, bool hasBias, bool hasTwoAiv>
+
+#ifdef LOCAL_TEMPLATE_FUNC_PARAMS
+#undef LOCAL_TEMPLATE_FUNC_PARAMS
+#endif
+#define LOCAL_TEMPLATE_FUNC_PARAMS                                                                               \
+    x1Type, x2Type, x1Level1ScaleType, x1Level0ScaleType, x2Level1ScaleType, x2Level0ScaleType, biasType, yType, \
+        aTrans, bTrans, hasBias, hasTwoAiv
+
 using AscendC::DataCopyExtParams;
 using AscendC::DataCopyPad;
 using AscendC::DataCopyPadExtParams;
@@ -45,6 +60,17 @@ static constexpr uint32_t L0B_BUFFER_SIZE_BYTE = 64 * 1024;
 
 // 参数约束定义
 static constexpr uint64_t MX_GROUPSIZE = 32;
+
+// 滑窗相关定义
+static constexpr uint64_t WINDOW_LEN = 4;
+static constexpr uint64_t WINDOW_LEN_FOR_96 = 8;
+
+enum SyncMode {
+    SYNC_MODE0 = 0, // C/V全核同步
+    SYNC_MODE1 = 1, // AIV之间的同步
+    SYNC_MODE2 = 2, // CV之间的同步
+    SYNC_MODE4 = 4, // CV分离的同步
+};
 
 template <typename T>
 __aicore__ inline void DataCopyPad2D(const LocalTensor<T>& dst, const GlobalTensor<T>& src, uint32_t blockCount,

@@ -32,7 +32,8 @@ struct DualLevelQbmmBasicBlockOffsetParams {
     uint64_t nSize;
     uint64_t mUbSize;
     uint64_t level0GroupSize;
-    uint64_t level0ScaleKUbSize;
+    uint64_t x1Level0ScaleKUbSize;
+    uint64_t x2Level0ScaleKUbSize;
     uint64_t level1ScaleKL1Size;
     uint64_t level0ScaleGmGroupNum; // GM上x1Level0Scale groupNum轴的长度
 };
@@ -70,7 +71,8 @@ class DualLevelQuantBatchMatmulBaseBlock {
 public:
     __aicore__ inline DualLevelQuantBatchMatmulBaseBlock() = default;
 
-    __aicore__ inline void Init(const DualLevelQuantBatchMatmulBasicTilingData* tilingData, uint64_t blockIdx);
+    __aicore__ inline void Init(const DualLevelQuantBatchMatmulBasicTilingData* tilingData, uint64_t blockIdx,
+                                uint64_t windowLen);
 
     __aicore__ inline void UpdateBasicIndex(uint64_t roundIdx);
 
@@ -87,7 +89,6 @@ public:
 
 private:
     static constexpr uint64_t CUBE_BLOCK = 16UL;
-    static constexpr uint64_t WINDOW_LEN = 4;
     static constexpr uint64_t L0_BASE_K_SIZE = 512;
     static constexpr uint64_t LEVEL1_SCALE_K_L1_SIZE = 4096;
     static constexpr uint64_t LEVEL0_SCALE_K_UB_RATIO = 32;
@@ -95,7 +96,7 @@ private:
 };
 
 __aicore__ inline void DualLevelQuantBatchMatmulBaseBlock::Init(
-    const DualLevelQuantBatchMatmulBasicTilingData* tilingData, uint64_t blockIdx)
+    const DualLevelQuantBatchMatmulBasicTilingData* tilingData, uint64_t blockIdx, uint64_t windowLen)
 {
     tiling_ = tilingData;
     blockIdx_ = blockIdx;
@@ -104,7 +105,8 @@ __aicore__ inline void DualLevelQuantBatchMatmulBaseBlock::Init(
     offset_.kSize = tilingData->kSize;
     offset_.nSize = tilingData->nSize;
     offset_.level0GroupSize = tilingData->level0GroupSize;
-    offset_.level0ScaleKUbSize = LEVEL0_SCALE_K_UB_SIZE; // 512 * 32，x1_level0_scale一次载入的k方向的大小
+    offset_.x1Level0ScaleKUbSize = LEVEL0_SCALE_K_UB_SIZE; // 512 * 32，x1_level0_scale一次载入的k方向的大小
+    offset_.x2Level0ScaleKUbSize = L0_BASE_K_SIZE;
     offset_.l0BaseK = L0_BASE_K_SIZE;
     offset_.level1ScaleKL1Size = LEVEL1_SCALE_K_L1_SIZE;
     offset_.level0ScaleGmGroupNum = Ops::Base::CeilDiv(offset_.kSize, offset_.level0GroupSize);
@@ -114,7 +116,7 @@ __aicore__ inline void DualLevelQuantBatchMatmulBaseBlock::Init(
     params_.totalCnt = params_.mCnt * params_.nCnt;
     params_.round = Ops::Base::CeilDiv<uint64_t>(params_.totalCnt, tiling_->usedCoreNum);
 
-    params_.mCoreNum = DualLevelQuantBatchMatmul::Arch35::Min(WINDOW_LEN, params_.mCnt);
+    params_.mCoreNum = DualLevelQuantBatchMatmul::Arch35::Min(windowLen, params_.mCnt);
     params_.mainRow = params_.mCnt / params_.mCoreNum - 1; // 主轮滑窗行数
     params_.mTailCoreNum = params_.mCnt -
                            params_.mCoreNum * params_.mainRow; // m轴尾块分核大小，mCnt % params_.mCoreNum

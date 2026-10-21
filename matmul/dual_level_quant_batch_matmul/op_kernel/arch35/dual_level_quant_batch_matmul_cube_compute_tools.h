@@ -36,12 +36,14 @@ static constexpr AscendC::FixpipeConfig CFG_ROW_MAJOR_UB = {AscendC::CO2Layout::
 static constexpr uint64_t K_ALIGNMENT64 = 64UL; // 处理K轴非64对齐的场景
 
 struct L0CopyAndCalcParams {
-    uint64_t mL0Size; // M方向当前在L0上实际计算的大小
-    uint64_t mL1Size; // M方向当前在L1上实际载入的大小
-    uint64_t kL0Size; // K方向当前在L0上实际计算的大小
-    uint64_t kL1Size; // K方向当前在L1上实际载入的大小
-    uint64_t nL0Size; // N方向当前在L0上实际计算的大小
-    uint64_t nL1Size; // N方向当前在L1上实际载入的大小
+    uint64_t mL0Size;   // M方向当前在L0上实际计算的大小
+    uint64_t mL1Size;   // M方向当前在L1上实际载入的大小
+    uint64_t mIterSize; // M方向循环迭代的大小
+    uint64_t kL0Size;   // K方向当前在L0上实际计算的大小
+    uint64_t kL1Size;   // K方向当前在L1上实际载入的大小
+    uint64_t nL0Size;   // N方向当前在L0上实际计算的大小
+    uint64_t nL1Size;   // N方向当前在L1上实际载入的大小
+    uint64_t nIterSize; // N方向循环迭代的大小
     uint64_t
         scaleKL1Size; // scale的K方向在L1上实际载入的大小，mx group数为scaleKL1Size/32，认为A和B的scale在L1载入量一致
     bool isFirstKLoop; // 是否是第一次K方向的循环，用于控制L0C的初始值
@@ -178,19 +180,25 @@ __aicore__ inline void MmadCompute(const LocalTensor<DstType>& cL0Tensor, const 
  * @tparam outSplitN 是否要在N方向切分，搬运成多个ND矩阵
  */
 
-template <typename DstType, typename SrcType, bool outSplitN = false>
+template <typename DstType, typename SrcType, bool isAicAiv1_2, bool outSplitN = false>
 __aicore__ inline void FixL0CToDst(const LocalTensor<DstType>& outTensor, const LocalTensor<SrcType>& cL0Tensor,
                                    const FixL0CToDstParams& fixL0CToDstParams)
 {
     AscendC::FixpipeParamsC310<AscendC::CO2Layout::ROW_MAJOR> fixParams;
     fixParams.params.ndNum = 1;
     fixParams.mSize = Ops::Base::CeilAlign(fixL0CToDstParams.mL0Size, 2UL);
-    fixParams.nSize = Ops::Base::CeilAlign(fixL0CToDstParams.outNSize, static_cast<uint64_t>(BLOCK_CUBE));
     fixParams.srcStride = Ops::Base::CeilAlign(fixL0CToDstParams.mL0Size, static_cast<uint64_t>(BLOCK_CUBE));
-    fixParams.dstStride = FIXP_DST_STRIDE;
     fixParams.unitFlag = UNIT_FLAG_UPDATE;
     fixParams.quantPre = QuantMode_t::NoQuant;
-    fixParams.dualDstCtl = 1;
+    if constexpr (isAicAiv1_2) {
+        fixParams.nSize = Ops::Base::CeilAlign(fixL0CToDstParams.outNSize, static_cast<uint64_t>(BLOCK_CUBE));
+        fixParams.dstStride = FIXP_DST_STRIDE;
+        fixParams.dualDstCtl = 1;
+    } else {
+        fixParams.nSize = Ops::Base::CeilAlign(fixL0CToDstParams.nL0Size, static_cast<uint64_t>(BLOCK_CUBE));
+        fixParams.dstStride = fixL0CToDstParams.outNSize;
+        fixParams.dualDstCtl = 0;
+    }
     AscendC::Fixpipe<DstType, SrcType, CFG_ROW_MAJOR_UB>(outTensor, cL0Tensor, fixParams);
 }
 

@@ -29,6 +29,7 @@ struct AdaptiveSlidingWindow {
     uint64_t totalBlockCnt = 0; // 基本块总数(mBlockCnt * nBlockCnt)
     uint64_t mTail = 0;         // M/N 方向剩余的非对齐尾部大小 (用于计算 mBaseTail)
     uint64_t nTail = 0;
+    uint64_t windowLen = 0;  // 滑窗大小
     uint64_t singleWinM = 0; // 主窗口的M/N方向基本块数量
     uint64_t singleWinN = 0;
     uint64_t totalWinCnt = 0;       // 窗口总数，即核执行最大轮数
@@ -93,7 +94,7 @@ private:
      * 在初始基本块基础上调整 基本块 大小
      * 当 totalBlockCnt < CoreNum 时，强制减小 baseM/baseN 以填满核
      */
-    void AdjustBasicBlock();
+    void AdjustBasicBlock(uint64_t baseMMax, uint64_t baseNMax);
 
     /**
      * 尾块重切分逻辑，提高尾核利用率

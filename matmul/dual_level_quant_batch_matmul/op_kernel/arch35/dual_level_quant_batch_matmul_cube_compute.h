@@ -38,10 +38,12 @@ using AscendC::WaitFlag;
 
 namespace DualLevelQuantBatchMatmul::Arch35 {
 
-#define DLQBMM_CUBE_COMPUTE_TEMPLATE_PARAM \
-    template <typename xType, typename wType, typename xScaleType, typename wScaleType, typename cType>
+#define DLQBMM_CUBE_COMPUTE_TEMPLATE_PARAM                                                              \
+    template <typename xType, typename wType, typename xScaleType, typename wScaleType, typename cType, \
+              bool isAicAiv1_2>
 
-#define DLQBMM_CUBE_COMPUTE_CLASS DualLevelQuantBatchMatmulCubeCompute<xType, wType, xScaleType, wScaleType, cType>
+#define DLQBMM_CUBE_COMPUTE_CLASS \
+    DualLevelQuantBatchMatmulCubeCompute<xType, wType, xScaleType, wScaleType, cType, isAicAiv1_2>
 
 DLQBMM_CUBE_COMPUTE_TEMPLATE_PARAM
 class DualLevelQuantBatchMatmulCubeCompute {
@@ -250,7 +252,7 @@ __aicore__ inline void DLQBMM_CUBE_COMPUTE_CLASS::LaunchMatmul(uint64_t mL1Offse
     WaitFlag<HardEvent::MTE1_M>(EVENT_MTE1_M_ID);
     MmadCompute<cType, xType, wType>(cL0Tensor, aL0Tensor, bL0Tensor, l0Params);
     SetFlag<HardEvent::M_MTE1>(EVENT_M_MTE1_ID + l0BufIdx_ % L0AB_BUFFER_NUM);
-    FixL0CToDst<cType, cType>(cTmpUb, cL0Tensor, fixpParams);
+    FixL0CToDst<cType, cType, isAicAiv1_2>(cTmpUb, cL0Tensor, fixpParams);
     l0BufIdx_++;
 }
 

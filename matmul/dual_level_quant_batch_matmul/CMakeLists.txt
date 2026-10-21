@@ -14,12 +14,12 @@ add_all_modules_sources(
 
 add_kernel_sources(
     KERNEL_SRC arch35/dual_level_quant_batch_matmul.cpp
-    COMPUTE_UNITS ascend950 ascend350
+    COMPUTE_UNITS ascend950 ascend350 ascend960dt
 )
 
 if ((UT_TEST_ALL OR OP_KERNEL_UT) AND NOT UT_DONE)
     AddOpTestCase(
-        "ascend950pr_9599"
+        "ascend950pr_9599;ascend960dt_968b7"
         "-DDTYPE_X1=fp4x2_e2m1_t -DORIG_DTYPE_X1=DT_FLOAT4_E2M1 -DFORMAT_X1=FORMAT_ND \
     -DDTYPE_X2=fp4x2_e2m1_t -DORIG_DTYPE_X2=DT_FLOAT4_E2M1 -DFORMAT_X2=FORMAT_FRACTAL_NZ \
     -DDTYPE_X1_LEVEL0_SCALE=float -DORIG_DTYPE_X1_LEVEL0_SCALE=DT_FLOAT -DFORMAT_X1_LEVEL0_SCALE=FORMAT_ND \

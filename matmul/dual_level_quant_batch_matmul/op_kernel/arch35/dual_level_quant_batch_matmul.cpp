@@ -42,13 +42,12 @@ __global__ __aicore__ void dual_level_quant_batch_matmul(GM_ADDR x1, GM_ADDR x2,
     }
 
     AscendC::InitSocState();
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     REGISTER_TILING_DEFAULT(DualLevelQuantBatchMatmulBasicTilingData);
 
     GET_TILING_DATA_WITH_STRUCT(DualLevelQuantBatchMatmulBasicTilingData, tilingDataIn, tiling);
     DualLevelQuantBatchMatmulBasicBlockController<DTYPE_X1, DTYPE_X2, DTYPE_X1_LEVEL1_SCALE, DTYPE_X1_LEVEL0_SCALE,
                                                   DTYPE_X2_LEVEL1_SCALE, DTYPE_X2_LEVEL0_SCALE, DTYPE_BIAS, DTYPE_Y,
-                                                  false, true, HAS_BIAS>
+                                                  false, true, HAS_BIAS, SOC_VERSION_TYPE == DLQBMM_SOC_MIX_AIC_1_2>
         op;
     op.Init(x1, x2, x1Level0Scale, x1Level1Scale, x2Level0Scale, x2Level1Scale, bias, y, &tilingDataIn);
     op.Process();

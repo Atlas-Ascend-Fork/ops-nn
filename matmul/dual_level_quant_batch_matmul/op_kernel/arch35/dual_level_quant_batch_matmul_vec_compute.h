@@ -152,11 +152,11 @@ __aicore__ inline void DLQBMM_VEC_COMPUTE_CLASS::CopyX1Level0ScaleToUb(
     const DualLevelQbmmBasicBlockOffsetParams& basicBlockParam, const L0CopyAndCalcParams& l0Params)
 {
     // 计算K方向需要搬运的group数量
-    uint64_t x1Level0ScaleGroupNum = basicBlockParam.kGmOffset + basicBlockParam.level0ScaleKUbSize >
+    uint64_t x1Level0ScaleGroupNum = basicBlockParam.kGmOffset + basicBlockParam.x1Level0ScaleKUbSize >
                                              basicBlockParam.kSize ?
                                          Ops::Base::CeilDiv(basicBlockParam.kSize - basicBlockParam.kGmOffset,
                                                             basicBlockParam.level0GroupSize) :
-                                         Ops::Base::CeilDiv(basicBlockParam.level0ScaleKUbSize,
+                                         Ops::Base::CeilDiv(basicBlockParam.x1Level0ScaleKUbSize,
                                                             basicBlockParam.level0GroupSize);
 
     // 第一轮：处理M方向 [0, mL0Size) 范围的数据
@@ -167,7 +167,7 @@ __aicore__ inline void DLQBMM_VEC_COMPUTE_CLASS::CopyX1Level0ScaleToUb(
     // 两种场景：
     // - K方向多倍载入一次全部搬运：scale的K维度覆盖全部K轴
     // - K方向部分搬运：scale的K维度只覆盖部分K轴
-    if (basicBlockParam.level0ScaleKUbSize > basicBlockParam.kSize) {
+    if (basicBlockParam.x1Level0ScaleKUbSize > basicBlockParam.kSize) {
         CopyX1Level0ScaleToUbForAllKDim(basicBlockParam, l0Params, x1Level0ScaleGroupNum, realMFirstRound,
                                         vectorMOffset);
     } else {
@@ -248,7 +248,7 @@ __aicore__ inline void DLQBMM_VEC_COMPUTE_CLASS::CopyX2Level0ScaleAndBiasToUb(
         x2Level0ScaleB32Gm_[Ops::Base::CeilDiv(basicBlockParam.kGmOffset, basicBlockParam.level0GroupSize) *
                                 basicBlockParam.nSize +
                             basicBlockParam.nGmOffset],
-        ubX2ScaleBlockLen, l0Params.nL1Size, basicBlockParam.nSize, B_SCALE_B32_OFFSET);
+        ubX2ScaleBlockLen, l0Params.nL1Size, B_SCALE_B32_OFFSET, basicBlockParam.nSize);
 
     if constexpr (hasBias) {
         if (basicBlockParam.kGmOffset != 0) {
@@ -297,7 +297,7 @@ __aicore__ inline void DLQBMM_VEC_COMPUTE_CLASS::AntiQuantCompute(
                                                                      mUbOffset * L0C_BASE_N);
     __ubuf__ float* x2Level0ScaleAddr = (__ubuf__ float*)x2Level0ScaleB32Ub_.GetPhyAddr(
         mte2BufIdx_ % DOUBLE_BUFFER_NUM * B_SCALE_B32_OFFSET + nL1Offset);
-    uint64_t x1ScaleGroupSizeNum = basicBlockParam.level0ScaleKUbSize > basicBlockParam.kSize ?
+    uint64_t x1ScaleGroupSizeNum = basicBlockParam.x1Level0ScaleKUbSize > basicBlockParam.kSize ?
                                        basicBlockParam.level0ScaleGmGroupNum :
                                        X1_LEVEL0_SCALE_B32_STORE_INNER_SIZE;
     __ubuf__ float* x1Level0ScaleAddr = (__ubuf__ float*)x1Level0ScaleB32Ub_.GetPhyAddr(
