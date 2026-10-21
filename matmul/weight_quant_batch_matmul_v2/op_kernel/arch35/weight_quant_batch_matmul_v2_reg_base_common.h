@@ -123,12 +123,6 @@ __aicore__ inline T Max(T a, T b)
     return (a > b) ? (a) : (b);
 }
 
-template <typename T>
-__aicore__ inline T Min(T a, T b)
-{
-    return (a > b) ? (b) : (a);
-}
-
 __aicore__ inline int64_t CeilDiv(int64_t x, int64_t y)
 {
 #ifdef __CCE_KT_TEST__

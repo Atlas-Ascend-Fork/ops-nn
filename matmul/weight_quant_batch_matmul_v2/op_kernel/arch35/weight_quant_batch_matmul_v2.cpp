@@ -26,9 +26,15 @@
 #include "lib/matmul_intf.h"
 #include "weight_quant_batch_matmul_v2_arch35_tiling_key.h"
 #include "weight_quant_batch_matmul_v2_arch35_tiling_data.h"
+#if (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201))
+#include "asw/weight_quant_batch_matmul_v2_adaptive_sliding_window.h"
+#include "asw/weight_quant_batch_matmul_v2_adaptive_sliding_window_mix.h"
+#include "asw/weight_quant_batch_matmul_v2_adaptive_sliding_window_mx.h"
+#include "asw/weight_quant_batch_matmul_v2_adaptive_sliding_window_general.h"
+#endif
 
-#if !defined(__DAV_310R6__) && !__FIXED_POINT_ONLY_CUBE_TO_L0C__
-#if defined(A16) && (defined(WQBMMV2_S4) || defined(F4) || (defined(WQBMMV2_S8) && defined(WEIGHT_ND)))
+#if !defined(__DAV_310R6__) && !__FIXED_POINT_ONLY_CUBE_TO_L0C__ && !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201))
+#if defined(A16) && (defined(WQBMMV2_S4) || defined(FP4) || (defined(WQBMMV2_S8) && defined(WEIGHT_ND)))
 #include "weight_quant_batch_matmul_v2_reg_base.h"
 #endif
 #if defined(A16) && defined(WQBMMV2_S8) && !defined(WEIGHT_ND)
@@ -62,6 +68,7 @@ using WeightQuantBatchMatmulV2::InvokeKernel;
 
 using namespace WeightQuantBatchMatmulV2;
 using namespace WeightQuantBatchMatmulV2::Arch35;
+using namespace AscendC;
 
 constexpr MatmulConfigMode configMode = MatmulConfigMode::CONFIG_NORM;
 constexpr MatmulBatchParams batchParams{false, BatchMode::BATCH_LESS_THAN_L1, false, BatchOutMode::MULTI_BATCH};
@@ -70,7 +77,7 @@ constexpr MatmulBatchParams batchParamsNoBatchOut{false, BatchMode::BATCH_LESS_T
                                                   BatchOutMode::SINGLE_BATCH};
 constexpr MatmulConfig MM_CFG_MULTI_BATCH_NO_BATCH_OUT = GetMMConfig<configMode>(batchParamsNoBatchOut);
 
-#if !__FIXED_POINT_ONLY_CUBE_TO_L0C__
+#if !__FIXED_POINT_ONLY_CUBE_TO_L0C__ && !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201))
 static constexpr VecAntiQuantConfig VEC_ANTIQUANT_CONFIGS[] = {
     {2, 512},  // idx 0
     {4, 512},  // idx 1
@@ -141,6 +148,37 @@ static constexpr VecAntiQuantConfig VEC_ANTIQUANT_CONFIG_5 = VEC_ANTIQUANT_CONFI
     } while (0)
 #endif
 
+#if (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201))
+#define INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201(templateClass, ...)                                                 \
+    do {                                                                                                             \
+        AscendC::TPipe tPipe;                                                                                        \
+        GET_TILING_DATA_WITH_STRUCT(wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWTilingData, tilingDataIn, tiling);    \
+        using DtypeBias = AscendC::Std::conditional_t<IS_BIAS_FP32, float, DTYPE_X>;                                 \
+        templateClass<DTYPE_X, DTYPE_WEIGHT, DtypeBias, DTYPE_Y, __VA_ARGS__> op;                                    \
+        op.Init(x, weight, antiquantScale, antiquantOffset, quantScale, quantOffset, bias, y, userWS, &tilingDataIn, \
+                &tPipe);                                                                                             \
+        op.Process();                                                                                                \
+    } while (0)
+#define INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201_NO_TPIPE(templateClass, ...)                                         \
+    do {                                                                                                              \
+        GET_TILING_DATA_WITH_STRUCT(wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWTilingData, tilingDataIn, tiling);     \
+        using DtypeBias = AscendC::Std::conditional_t<IS_BIAS_FP32, float, DTYPE_X>;                                  \
+        templateClass<DTYPE_X, DTYPE_WEIGHT, DtypeBias, DTYPE_Y, __VA_ARGS__> op;                                     \
+        op.Init(x, weight, antiquantScale, antiquantOffset, quantScale, quantOffset, bias, y, userWS, &tilingDataIn); \
+        op.Process();                                                                                                 \
+    } while (0)
+
+#define INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201_GENERAL(templateClass, ...)                                          \
+    do {                                                                                                              \
+        GET_TILING_DATA_WITH_STRUCT(wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWTilingData, tilingDataIn, tiling);     \
+        using DtypeBias = AscendC::Std::conditional_t<IS_BIAS_FP32, float, DTYPE_X>;                                  \
+        templateClass<DTYPE_X, DTYPE_WEIGHT, DTYPE_X, DtypeBias, DTYPE_Y, __VA_ARGS__> op;                            \
+        op.Init(x, weight, antiquantScale, antiquantOffset, quantScale, quantOffset, bias, y, userWS, &tilingDataIn); \
+        op.Process();                                                                                                 \
+    } while (0)
+
+#endif
+
 template <int SOC_VERSION_TYPE, int SUB_SOC_VERSION_TYPE, int ANTIQUANT_SCENARIO, int ALGORITHM, int SUB_ALGORITHM,
           int TEMPLATE_CUSTOM, int API_CONSTEXPR, bool TRANS_A, bool TRANS_B, int ANTIQUANT_TYPE, int QUANT_TYPE,
           bool HAS_ANTIQUANT_OFFSET, bool HAS_BIAS, bool IS_BIAS_FP32, bool IS_WEIGHT_NZ>
@@ -149,14 +187,21 @@ __global__ __aicore__ void weight_quant_batch_matmul_v2(GM_ADDR x, GM_ADDR weigh
                                                         GM_ADDR quantOffset, GM_ADDR bias, GM_ADDR y, GM_ADDR workspace,
                                                         GM_ADDR tiling)
 {
-#if !defined(__DAV_310R6__) && !__FIXED_POINT_ONLY_CUBE_TO_L0C__
+#if (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201))
+    GM_ADDR userWS = GetUserWorkspace(workspace);
+    if (userWS == nullptr) {
+        return;
+    }
+#endif
+
+#if !defined(__DAV_310R6__) && !__FIXED_POINT_ONLY_CUBE_TO_L0C__ && !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201))
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     REGISTER_TILING_DEFAULT(wqbmmv2_tiling::WeightQuantBatchMatmulV2ASTilingDataParams);
     using DtypeBias = AscendC::Std::conditional_t<IS_BIAS_FP32, float, DTYPE_X>;
     static constexpr QuantType antiquantType = static_cast<QuantType>(ANTIQUANT_TYPE);
     static constexpr QuantType quantType = static_cast<QuantType>(QUANT_TYPE);
     if constexpr (SUB_ALGORITHM == WQBMMV2_SUB_ALGO_ANTI_REG_SCSC) {
-#if defined(A16) && (defined(WQBMMV2_S4) || defined(F4) || (defined(WQBMMV2_S8) && defined(WEIGHT_ND)))
+#if defined(A16) && (defined(WQBMMV2_S4) || defined(FP4) || (defined(WQBMMV2_S8) && defined(WEIGHT_ND)))
         INVOKE_WEIGHT_QUANT_BMM_OP_REG_BASE_IMPL(DtypeBias, WeightQuantBatchMatmulV2RegBaseKernel, TRANS_A, TRANS_B,
                                                  HAS_ANTIQUANT_OFFSET, antiquantType, IS_WEIGHT_NZ);
 #endif
@@ -282,6 +327,72 @@ __global__ __aicore__ void weight_quant_batch_matmul_v2(GM_ADDR x, GM_ADDR weigh
         INVOKE_WEIGHT_QUANT_BMM_ADAPTIVE_SPLIT_OP_IMPL(DtypeBias, WeightQuantBatchMatmulV2BasicBlockController, wqmmCfg,
                                                        VEC_ANTIQUANT_CONFIG_5);
     }
+#endif
+#elif (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201))
+    using DtypeBias = AscendC::Std::conditional_t<IS_BIAS_FP32, float, DTYPE_X>;
+    static constexpr WeightQuantBatchMatmulV2::QuantType
+        AntiquantType = static_cast<WeightQuantBatchMatmulV2::QuantType>(ANTIQUANT_TYPE);
+    static constexpr WeightQuantBatchMatmulV2::QuantType quantType = static_cast<WeightQuantBatchMatmulV2::QuantType>(
+        QUANT_TYPE);
+    REGISTER_TILING_DEFAULT(wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWTilingData);
+
+#if (defined(A16) && ((defined(WEIGHT_FP4) && defined(MICROSCALING)) || defined(WEIGHT_HIFP4)))
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
+    GET_TILING_DATA_WITH_STRUCT(wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWTilingData, tilingDataIn, tiling);
+    WeightQuantBatchMatmulV2ASWMxKernel<DTYPE_X, DTYPE_WEIGHT, DtypeBias, DTYPE_ANTIQUANT_SCALE, DTYPE_Y, QuantType::MX>
+        op;
+    op.Init(x, weight, antiquantScale, antiquantOffset, quantScale, quantOffset, bias, y, userWS, &tilingDataIn);
+    op.Process();
+#endif
+
+#if defined(FORMAT_WEIGHT) && (FORMAT_WEIGHT == FORMAT_FRACTAL_NZ)
+    if constexpr (!TRANS_B) {
+        KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+        INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201_GENERAL(WeightQuantBatchMatmulV2ASWGeneralKernel, TRANS_B,
+                                                         AntiquantType, HAS_ANTIQUANT_OFFSET, quantType, CubeFormat::NZ,
+                                                         HAS_BIAS);
+    } else if constexpr (ANTIQUANT_TYPE == WQBMMV2_ANTIQUANT_TYPE_PER_GROUP) {
+        KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+        if constexpr (TEMPLATE_CUSTOM == WQBMMV2_TEMPLATE_L1_QUARTER_BUFFER) {
+            INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201(WeightQuantBatchMatmulV2ASWMixKernel, TRANS_B, AntiquantType,
+                                                     HAS_ANTIQUANT_OFFSET, quantType, HAS_BIAS, true, false);
+        } else if constexpr (TEMPLATE_CUSTOM == WQBMMV2_TEMPLATE_UB_QUARTER_BUFFER) {
+            INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201(WeightQuantBatchMatmulV2ASWMixKernel, TRANS_B, AntiquantType,
+                                                     HAS_ANTIQUANT_OFFSET, quantType, HAS_BIAS, false, true);
+        } else {
+            INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201(WeightQuantBatchMatmulV2ASWMixKernel, TRANS_B, AntiquantType,
+                                                     HAS_ANTIQUANT_OFFSET, quantType, HAS_BIAS, false, false);
+        }
+
+    } else if constexpr (ANTIQUANT_TYPE == WQBMMV2_ANTIQUANT_TYPE_PER_CHANNEL) {
+        if constexpr (HAS_BIAS) {
+            KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+        } else {
+            KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
+        }
+        INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201_NO_TPIPE(WeightQuantBatchMatmulV2ASWKernel, TRANS_B, AntiquantType,
+                                                          HAS_ANTIQUANT_OFFSET, quantType, CubeFormat::NZ, HAS_BIAS);
+    }
+#else
+#if defined(WQBMMV2_S8) || defined(WQBMMV2_HIFP8)
+    INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201_GENERAL(WeightQuantBatchMatmulV2ASWGeneralKernel, TRANS_B, AntiquantType,
+                                                     HAS_ANTIQUANT_OFFSET, quantType, CubeFormat::ND, HAS_BIAS);
+#else
+    if constexpr (ANTIQUANT_TYPE == WQBMMV2_ANTIQUANT_TYPE_PER_CHANNEL ||
+                  ANTIQUANT_TYPE == WQBMMV2_ANTIQUANT_TYPE_PER_TENSOR) {
+        if constexpr (HAS_BIAS) {
+            KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+            INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201_NO_TPIPE(WeightQuantBatchMatmulV2ASWKernel, TRANS_B, AntiquantType,
+                                                              HAS_ANTIQUANT_OFFSET, quantType, CubeFormat::ND,
+                                                              HAS_BIAS);
+        } else {
+            KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
+            INVOKE_WEIGHT_QUANT_BMM_OP_ASW_IMPL_9201_NO_TPIPE(WeightQuantBatchMatmulV2ASWKernel, TRANS_B, AntiquantType,
+                                                              HAS_ANTIQUANT_OFFSET, quantType, CubeFormat::ND,
+                                                              HAS_BIAS);
+        }
+    }
+#endif
 #endif
 #else
 #ifndef DTYPE_BIAS

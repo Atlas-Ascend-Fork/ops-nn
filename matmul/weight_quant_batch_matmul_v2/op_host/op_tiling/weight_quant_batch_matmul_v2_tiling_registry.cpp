@@ -23,6 +23,7 @@
 #include "weight_quant_batch_matmul_v2_weight_nz_tiling.h"
 #include "op_cache_tiling.h"
 #include "platform/platform_infos_def.h"
+#include "arch35/weight_quant_batch_matmul_v2_checker_for_920r1.h"
 
 using Ops::NN::TilingPrepareForOpCache;
 using Ops::NN::Optiling::TilingRegistry;
@@ -42,6 +43,8 @@ constexpr int32_t ANTI_REG_PRIORITY = 8;
 constexpr int32_t ITERBATCH_PRIORITY = 9;
 constexpr int32_t ASW_PRIORITY = 11;
 constexpr int32_t CUSTOM_DEPRECATED_PRIORITY = 11; // 注册在 TilingRegistryArch，与 ASW_PRIORITY 不冲突
+constexpr int32_t ASW_MIX_PRIORITY = 12;
+constexpr int32_t ASW_GENERAL_PRIORITY = 13;
 
 REGISTER_TILING_TEMPLATE("WeightQuantBatchMatmulV2", WeightQuantBatchMatmulV2TilingSplitK, SPLIT_K_PRIORITY);
 REGISTER_TILING_TEMPLATE("WeightQuantBatchMatmulV2", WeightQuantBatchMatmulV2TilingMsdGroup, MSD_GROUP_PRIORITY);
@@ -92,7 +95,17 @@ static ge::graphStatus WeightQuantBatchMatmulV2TilingFunc(gert::TilingContext* c
         socVersion = compileInfoPtr->socVersion;
         supportMmadS8S4 = compileInfoPtr->supportMmadS8S4;
     }
-    if (socVersion != platform_ascendc::SocVersion::ASCEND310P) {
+    auto platformInfoPtr = context->GetPlatformInfo();
+    if (platformInfoPtr != nullptr &&
+        platform_ascendc::PlatformAscendC(platformInfoPtr).GetCurNpuArch() == NpuArch::DAV_9201) {
+        WeightQuantBatchMatmulV2CheckerFor920R1 wqbmmv2Checker(context);
+        OP_TILING_CHECK(
+            wqbmmv2Checker.Check() != ge::GRAPH_SUCCESS,
+            VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "WeightQuantBatchMatMul para is illegal"),
+            return ge::GRAPH_FAILED);
+        std::vector<int32_t> registerList = {ASW_MIX_PRIORITY, ASW_GENERAL_PRIORITY};
+        return TilingRegistry::GetInstance().DoTilingImpl(context, registerList);
+    } else if (socVersion != platform_ascendc::SocVersion::ASCEND310P) {
         OP_LOGI(context->GetNodeName(), "Platform support Intrinsic_fix_pipe_l0c2out");
         if (supportMmadS8S4) {
             OP_LOGI(context->GetNodeName(), "Platform support Intrinsic_mmad s8s4");

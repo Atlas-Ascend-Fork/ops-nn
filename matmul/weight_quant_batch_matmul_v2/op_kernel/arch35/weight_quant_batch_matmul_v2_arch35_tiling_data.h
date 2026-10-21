@@ -204,4 +204,21 @@ struct alignas(8) WeightQuantBatchMatmulV2TilingData {
     TCubeTiling matmulTiling;
 };
 #pragma pack(pop)
+
+#pragma pack(push, 8)
+struct alignas(8) WeightQuantBatchMatmulV2ASWTilingData {
+    uint32_t hasBias = 0;
+    uint32_t mTailTile = 0;
+    uint32_t nTailTile = 0;
+    uint32_t lastRoundBaseN = 0;
+    uint64_t mainTileNum = 0;
+    uint32_t lastRoundBaseNTail = 0;
+    uint16_t evadeDuplicateBlock = 0;
+    uint16_t enablePreAlloc = 0;
+    uint64_t groupSize = 0;
+
+    AscendC::tiling::TCubeTiling matmulTiling;
+};
+#pragma pack(pop)
+
 } // namespace wqbmmv2_tiling

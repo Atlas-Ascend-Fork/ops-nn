@@ -14,6 +14,7 @@
  */
 
 #include "weight_quant_batch_matmul_v2_tiling.h"
+#include "common/inc/op_host/op_const_def_nn.h"
 
 #include "op_cache_tiling.h"
 #include "matmul/common/op_host/math_util_nn.h"
@@ -215,7 +216,7 @@ void GetInputs(WeightQuantBatchMatmulInfo& matmulInfo, const gert::TilingContext
         matmulInfo.hasAntiQuantOffset = true;
     }
     size_t antiQuantScaleShapeSize = static_cast<size_t>(antiQuantScaleShape->GetStorageShape().GetShapeSize());
-    if (matmulInfo.antiQuantScaleDtype == ge::DT_FLOAT8_E8M0) {
+    if (matmulInfo.antiQuantScaleDtype == ge::DT_FLOAT8_E8M0 || matmulInfo.bDtype == Ops::NN::DT_HIFLOAT4) {
         matmulInfo.antiQuantType = QuantType::MX;
     } else {
         if (antiQuantScaleShapeSize == 1) {

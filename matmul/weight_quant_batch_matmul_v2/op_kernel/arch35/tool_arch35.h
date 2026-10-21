@@ -82,6 +82,12 @@ __aicore__ inline T CeilDiv(T a, T b)
 }
 
 template <typename T>
+__aicore__ inline T Min(T a, T b)
+{
+    return (a > b) ? (b) : (a);
+}
+
+template <typename T>
 __aicore__ inline void DataCopyPad2D(const LocalTensor<T>& dst, const GlobalTensor<T>& src, uint32_t blockCount,
                                      uint32_t blockLen, uint32_t dstInnerLength, uint32_t srcInnerLength)
 {
@@ -105,6 +111,29 @@ __aicore__ inline void DataCopyPad2D(const LocalTensor<T>& dst, const GlobalTens
         padParams.rightPadding = padParams.rightPadding >> 1;
     }
     DataCopyPad(dst, src, params, padParams);
+}
+
+template <typename T>
+__aicore__ inline void DataCopyPad2D(const LocalTensor<T>& dst, const GlobalTensor<T>& src, uint32_t dim1,
+                                     uint32_t dim0, uint32_t fullDim0)
+{
+    DataCopyExtParams params;
+    params.blockCount = dim1;
+    params.blockLen = dim0 * sizeof(T);
+    params.srcStride = (fullDim0 - dim0) * sizeof(T);
+    params.dstStride = 0;
+    DataCopyPadExtParams<T> padParams;
+    if (dim0 % (32 / sizeof(T)) != 0) {
+        padParams.isPad = true;
+        padParams.rightPadding = CeilAlign(dim0, static_cast<uint32_t>(32 / sizeof(T))) - dim0;
+        padParams.paddingValue = 0;
+    }
+#if defined(__DAV_920R1__)
+    // 最后一个参数enablePreReadIgnoreSync = true表示开启PreAllocation
+    DataCopyPad(dst, src, params, padParams, true);
+#else
+    DataCopyPad(dst, src, params, padParams);
+#endif
 }
 
 template <typename T>

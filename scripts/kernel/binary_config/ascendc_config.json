@@ -514,7 +514,7 @@
     {"name":"InitEmbeddingHashTable", "compute_units": ["ascend950", "ascend350"], "auto_sync" : false, "impl_mode" : "", "compile_options": {"ascend950": ["--cce-no-dcache-flush"], "ascend350": ["--cce-no-dcache-flush"]}},
     {"name":"MedianDim", "compute_units": ["ascend310p"], "auto_sync" : true},
     {"name":"DetectMatMul", "compute_units": ["ascend910b", "ascend310p", "ascend910_93"], "auto_sync" : false},
-    {"name":"WeightQuantBatchMatmulV2", "compute_units": ["ascend910b", "ascend910_93", "ascend310p", "ascend950"], "auto_sync": false, "compile_options": {"ascend950":["--cce-no-dcache-flush", "-DENABLE_CV_COMM_VIA_SSBUF=true"]}},
+    {"name":"WeightQuantBatchMatmulV2", "compute_units": ["ascend910b", "ascend910_93", "ascend310p", "ascend950", "ascend960dt"], "auto_sync": false, "compile_options": {"ascend950":["--cce-no-dcache-flush", "-DENABLE_CV_COMM_VIA_SSBUF=true"], "ascend960dt":["--cce-no-dcache-flush", "-DENABLE_CV_COMM_VIA_SSBUF=true"]}},
     {"name":"WeightQuantBatchMatmulExperiment", "compute_units": ["ascend910b"], "auto_sync": false, "impl_mode" : ""},
     {"name": "MatmulCompress", "compute_units": ["ascend310p"], "auto_sync" : false},
     {"name":"TransQuantParamV2", "compute_units": ["ascend910b", "ascend310p", "ascend910_93", "ascend960dt", "kirinx90", "kirin9030", "ascend350"], "auto_sync" : false},
