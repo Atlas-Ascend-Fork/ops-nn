@@ -51,6 +51,8 @@ public:
             .PrecisionReduceFlag(true)
             .ExtendCfgInfo("opFile.value", "softplus_v2_grad");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig);
+        this->AICore().AddConfig("ascend960pr", aicoreConfig);
     }
 };
 

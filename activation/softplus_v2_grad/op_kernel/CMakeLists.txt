@@ -12,6 +12,6 @@
 
 add_kernel_sources(
     KERNEL_SRC arch35/softplus_v2_grad.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend960dt ascend960pr
     AUTO_SYNC false
 )
