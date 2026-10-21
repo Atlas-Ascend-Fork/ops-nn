@@ -56,6 +56,11 @@ bool Conv3DDWV2BasicBlockTilingArch35::IsArchAfter35()
            platformInfo_.npuArch == NpuArch::DAV_9202;
 }
 
+bool Conv3DDWV2BasicBlockTilingArch35::IsSocVersion960()
+{
+    return platformInfo_.npuArch == NpuArch::DAV_9201 || platformInfo_.npuArch == NpuArch::DAV_9202;
+}
+
 bool Conv3DDWV2BasicBlockTilingArch35::CheckVectorCoreNum()
 {
     if (!IsArchAfter35()) {

@@ -47,9 +47,11 @@ __aicore__ inline void WaitForVecBeforeLoadToB2(Intf* self)
 {
 #ifndef __CCE_KT_TEST__
     CvCrossCoreWait<Intf, PIPE_MTE3, PIPE_MTE1>(self, FLAG_MTE1_ID_1);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     if constexpr (Intf::conv3dConfig.enableC04Flag) {
         CvCrossCoreWait<Intf, PIPE_MTE3, PIPE_MTE1>(self, FLAG_MTE1_ID_1 + CROSS_CORE_FLAG_ID_MAX);
     }
+#endif
 #endif
 }
 
@@ -58,9 +60,11 @@ __aicore__ inline void NotifyVecAfterLoadToB2(Intf* self)
 {
 #ifndef __CCE_KT_TEST__
     CvCrossCoreSet<Intf, PIPE_MTE1, PIPE_V>(self, FLAG_MTE1_ID_2);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     if constexpr (Intf::conv3dConfig.enableC04Flag) {
         CvCrossCoreSet<Intf, PIPE_MTE1, PIPE_MTE3>(self, FLAG_MTE1_ID_2 + CROSS_CORE_FLAG_ID_MAX);
     }
+#endif
 #endif
 }
 

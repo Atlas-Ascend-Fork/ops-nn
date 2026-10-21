@@ -49,6 +49,8 @@ constexpr int32_t SPLIT_WO_SIZE = 128;
 constexpr int32_t LOAD3D_PAD_THRESHOLD = 255;
 constexpr int32_t SPLIT_WO_THRESHOLD4SPLIT_KERNEL = 256;
 
+constexpr uint64_t WORKSIZE = 16777216;
+
 struct PlatformCompileInfo {
     platform_ascendc::SocVersion socVersion;
     NpuArch npuArch;

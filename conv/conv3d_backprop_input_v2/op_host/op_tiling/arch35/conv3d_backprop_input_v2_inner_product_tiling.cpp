@@ -1585,6 +1585,9 @@ ge::graphStatus Conv3DDXV2InnerProductTiling::GetWorkspaceSize()
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
     workspaces[0] = GetSysWorkspaceSize();
+    if (IsSocVersion960()) {
+        workspaces[0] += WORKSIZE;
+    }
 
     if (isGetTilingFromRepo) {
         workspaces[0] = usrSpaceSize;

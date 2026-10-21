@@ -438,6 +438,9 @@ ge::graphStatus Conv3DBackpropFilterV2StreamKTiling::GetWorkspaceSize()
         userWorkSpaceSize = WORKSPACE_PIECE_NUM * blockTiling_.usedCoreNum * platformInfo_.l0c_size;
     }
     workspaces[0] = userWorkSpaceSize;
+    if (IsSocVersion960()) {
+        workspaces[0] += WORKSIZE;
+    }
     return ge::GRAPH_SUCCESS;
 }
 

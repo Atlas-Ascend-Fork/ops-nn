@@ -287,6 +287,9 @@ ge::graphStatus Conv3DBackpropFilterV2WinogradTiling::GetWorkspaceSize()
                          platformInfo_.core_num;
 
     workspaces[0] = userWorkSpaceSize;
+    if (IsSocVersion960()) {
+        workspaces[0] += WORKSIZE;
+    }
     return ge::GRAPH_SUCCESS;
 }
 

@@ -134,6 +134,8 @@ protected:
 
     bool IsArchAfter35();
 
+    bool IsSocVersion960();
+
     bool CheckVectorCoreNum();
 
     ge::graphStatus SetPlatformCompileInfo();
