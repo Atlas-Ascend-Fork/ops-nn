@@ -132,3 +132,148 @@ TEST_F(MaxPoolExt2InfershapeTest, invalid_strides_013)
     MaxPoolExt2InfershapeTestCase({1, 8, 8, 3}, {}, ge::DT_FLOAT, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 0, 2, 1}, "SAME",
                                   "NHWC", ge::GRAPH_FAILED);
 }
+
+// NHWC SAME 非整除：out_H = ceil(7/2) = 4、out_W = ceil(5/2) = 3
+TEST_F(MaxPoolExt2InfershapeTest, nhwc_same_non_divisible_014)
+{
+    MaxPoolExt2InfershapeTestCase({4, 7, 5, 3}, {4, 4, 3, 3}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 2, 1},
+                                  {1, 2, 2, 1}, "SAME", "NHWC", ge::GRAPH_SUCCESS);
+}
+
+// NHWC SAME 步长为 1：输出 H/W 与输入一致
+TEST_F(MaxPoolExt2InfershapeTest, nhwc_same_stride_one_015)
+{
+    MaxPoolExt2InfershapeTestCase({2, 9, 9, 8}, {2, 9, 9, 8}, ge::DT_FLOAT, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 1, 1, 1},
+                                  "SAME", "NHWC", ge::GRAPH_SUCCESS);
+}
+
+// NHWC VALID 非方形窗口：out_H = ceil((7-2+1)/2) = 3、out_W = ceil((9-3+1)/3) = 3
+TEST_F(MaxPoolExt2InfershapeTest, nhwc_valid_rect_kernel_016)
+{
+    MaxPoolExt2InfershapeTestCase({1, 7, 9, 2}, {1, 3, 3, 2}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 3, 1},
+                                  {1, 2, 3, 1}, "VALID", "NHWC", ge::GRAPH_SUCCESS);
+}
+
+// NCHW VALID 非整除：out_H = ceil((7-3+1)/2) = 3、out_W = ceil((5-3+1)/2) = 2
+TEST_F(MaxPoolExt2InfershapeTest, nchw_valid_non_divisible_017)
+{
+    MaxPoolExt2InfershapeTestCase({1, 3, 7, 5}, {1, 3, 3, 2}, ge::DT_INT16, ge::FORMAT_NCHW, {1, 1, 3, 3}, {1, 1, 2, 2},
+                                  "VALID", "NCHW", ge::GRAPH_SUCCESS);
+}
+
+// NHWC SAME 动态 H：未知维（-1）透传，W 照常推导，不产生负维度以外的错值
+TEST_F(MaxPoolExt2InfershapeTest, nhwc_same_dynamic_h_018)
+{
+    MaxPoolExt2InfershapeTestCase({1, -1, 16, 3}, {1, -1, 8, 3}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 2, 1},
+                                  {1, 2, 2, 1}, "SAME", "NHWC", ge::GRAPH_SUCCESS);
+}
+
+// NCHW VALID 动态 W：未知维（-1）透传，H 照常推导
+TEST_F(MaxPoolExt2InfershapeTest, nchw_valid_dynamic_w_019)
+{
+    MaxPoolExt2InfershapeTestCase({1, 3, 8, -1}, {1, 3, 4, -1}, ge::DT_FLOAT, ge::FORMAT_NCHW, {1, 1, 2, 2},
+                                  {1, 1, 2, 2}, "VALID", "NCHW", ge::GRAPH_SUCCESS);
+}
+
+// 非法 padding 取值
+TEST_F(MaxPoolExt2InfershapeTest, invalid_padding_020)
+{
+    MaxPoolExt2InfershapeTestCase({1, 8, 8, 3}, {}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2, 1}, "FULL",
+                                  "NHWC", ge::GRAPH_FAILED);
+}
+
+// 输入维度非 4
+TEST_F(MaxPoolExt2InfershapeTest, invalid_rank_021)
+{
+    MaxPoolExt2InfershapeTestCase({1, 8, 8}, {}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME",
+                                  "NHWC", ge::GRAPH_FAILED);
+}
+
+// ksize 长度非 4
+TEST_F(MaxPoolExt2InfershapeTest, invalid_ksize_length_022)
+{
+    MaxPoolExt2InfershapeTestCase({1, 8, 8, 3}, {}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 2}, {1, 2, 2, 1}, "SAME",
+                                  "NHWC", ge::GRAPH_FAILED);
+}
+
+// strides 长度非 4
+TEST_F(MaxPoolExt2InfershapeTest, invalid_strides_length_023)
+{
+    MaxPoolExt2InfershapeTestCase({1, 8, 8, 3}, {}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2}, "SAME",
+                                  "NHWC", ge::GRAPH_FAILED);
+}
+
+// NHWC 下 ksize 通道维（索引 3）非 1
+TEST_F(MaxPoolExt2InfershapeTest, invalid_ksize_channel_nhwc_024)
+{
+    MaxPoolExt2InfershapeTestCase({1, 8, 8, 3}, {}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 2, 3}, {1, 2, 2, 1}, "SAME",
+                                  "NHWC", ge::GRAPH_FAILED);
+}
+
+// NCHW 下 ksize 通道维（索引 1）非 1
+TEST_F(MaxPoolExt2InfershapeTest, invalid_ksize_channel_nchw_025)
+{
+    MaxPoolExt2InfershapeTestCase({1, 3, 8, 8}, {}, ge::DT_FLOAT16, ge::FORMAT_NCHW, {1, 3, 2, 2}, {1, 1, 2, 2}, "SAME",
+                                  "NCHW", ge::GRAPH_FAILED);
+}
+
+// ksize batch 维非 1
+TEST_F(MaxPoolExt2InfershapeTest, invalid_ksize_batch_026)
+{
+    MaxPoolExt2InfershapeTestCase({1, 8, 8, 3}, {}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {2, 2, 2, 1}, {1, 2, 2, 1}, "SAME",
+                                  "NHWC", ge::GRAPH_FAILED);
+}
+
+// strides 空间维为负
+TEST_F(MaxPoolExt2InfershapeTest, negative_strides_027)
+{
+    MaxPoolExt2InfershapeTestCase({1, 8, 8, 3}, {}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, -2, 2, 1},
+                                  "SAME", "NHWC", ge::GRAPH_FAILED);
+}
+
+// data_format 属性缺省：按 REG_OP 默认值 NHWC 推导
+TEST_F(MaxPoolExt2InfershapeTest, default_data_format_028)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolExt2")->infer_shape;
+    gert::StorageShape inputShapeStorage = {{1, 8, 8, 3}, {1, 8, 8, 3}};
+    gert::StorageShape outputShapeStorage = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&inputShapeStorage})
+                      .OutputShapes({&outputShapeStorage})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<vector<int64_t>>({1, 2, 2, 1})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<vector<int64_t>>({1, 2, 2, 1})},
+                                  {"padding", Ops::NN::AnyValue::CreateFrom<string>("SAME")}})
+                      .Build();
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto outputDesc = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+    gert::Shape expectedOutputShape = {1, 4, 4, 3};
+    ASSERT_EQ(Ops::Base::ToString(*outputDesc), Ops::Base::ToString(expectedOutputShape));
+}
+
+// 未知秩（-2）：推导成功，输出按 rank 4 全未知维（-1）返回
+TEST_F(MaxPoolExt2InfershapeTest, unknown_rank_029)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolExt2")->infer_shape;
+    gert::StorageShape inputShapeStorage = {{-2}, {}};
+    gert::StorageShape outputShapeStorage = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&inputShapeStorage})
+                      .OutputShapes({&outputShapeStorage})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<vector<int64_t>>({1, 2, 2, 1})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<vector<int64_t>>({1, 2, 2, 1})},
+                                  {"padding", Ops::NN::AnyValue::CreateFrom<string>("SAME")},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<string>("NHWC")}})
+                      .Build();
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto outputDesc = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+    gert::Shape expectedOutputShape = {-1, -1, -1, -1};
+    ASSERT_EQ(Ops::Base::ToString(*outputDesc), Ops::Base::ToString(expectedOutputShape));
+}

@@ -32,7 +32,8 @@ VALID 模式空输出处理:
   tf.nn.max_pool2d 在 CPU 上对空输出抛 InvalidArgumentError
   预计算输出 shape，若空间维度为 0 则直接返回空数组
 
-NaN 不传播: TF CPU 默认 propagate_nans=false，与 kernel C++ > 运算符行为一致
+NaN 传播: SE 文档第1.4/3.3.5/5.4节要求 propagate_nans=true（NaN 参与比较时被选为最大值），
+与 kernel 的 isnan 检查行为一致；TF CPU 默认 propagate_nans=false，需手动补全
 """
 
 import os
@@ -103,6 +104,35 @@ def _compute_output_shape_nhwc(input_shape_nhwc, ksize_nhwc, strides_nhwc, paddi
     return (n, h_out, w_out, c)
 
 
+def _apply_nan_propagation(x_tensor, y_tensor, ksize_list, strides_list, padding):
+    """补全 propagate_nans=true 语义：池化窗口内存在 NaN 时输出为 NaN。
+
+    TensorFlow CPU 默认 propagate_nans=false（忽略 NaN），需要手动补全：
+    1. 对 isnan(x) 做 max_pool，得到窗口内是否含 NaN 的 mask
+    2. 将含 NaN 的输出位置设为 NaN
+
+    调用方已将 data_format 统一为 NHWC，此函数始终以 NHWC 格式计算。
+    """
+    if x_tensor.dtype not in (tf.float16, tf.float32, tf.float64):
+        return y_tensor
+
+    nan_mask = tf.cast(tf.math.is_nan(x_tensor), x_tensor.dtype)
+    nan_pooled = tf.nn.max_pool2d(
+        input=nan_mask,
+        ksize=ksize_list,
+        strides=strides_list,
+        padding=padding,
+        data_format="NHWC",
+    )
+    nan_locations = nan_pooled > tf.constant(0.0, dtype=x_tensor.dtype)
+    y_tensor = tf.where(
+        nan_locations,
+        tf.constant(float("nan"), dtype=x_tensor.dtype),
+        y_tensor,
+    )
+    return y_tensor
+
+
 def _tf_max_pool_core(x_np, ksize, strides, padding, data_format="NHWC"):
     """Core tf-based max_pool2d computation. Takes numpy, returns numpy."""
     ksize_list = list(ksize) if not isinstance(ksize, list) else ksize
@@ -144,6 +174,10 @@ def _tf_max_pool_core(x_np, ksize, strides, padding, data_format="NHWC"):
         strides=strides_list,
         padding=padding,
         data_format="NHWC",
+    )
+
+    y_tensor = _apply_nan_propagation(
+        x_tensor, y_tensor, ksize_list, strides_list, padding
     )
 
     if orig_data_format == "NCHW":
@@ -284,6 +318,9 @@ class MaxPoolExt2KernelSpec:
                     strides=self.strides_list,
                     padding=self.padding,
                     data_format="NHWC",
+                )
+                result = _apply_nan_propagation(
+                    x, result, self.ksize_list, self.strides_list, self.padding
                 )
 
             if self.need_dtype_restore:
