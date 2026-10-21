@@ -22,7 +22,7 @@
  *          一次性 MTE2 搬入 UB，主循环内 DIST_BRC_B32 广播进寄存器，零重复 GM 访存；
  *        - scale = gamma/sqrt(var+eps)（nogb 时为 sqrt(var+eps)）按 64-plane chunk
  *          一次向量化预计算进 TBuf（64 lane 全利用），tile 前导仅 2 次广播 load，
- *          主循环每 VL 仅 Sub→Mul→Add 3 条 VF 指令（无 gamma/beta 时 Sub→Div 2 条），
+ *          主循环每 VL 仅 Sub→MulDstAdd 2 条 VF 指令（无 gamma/beta 时 Sub→Div 2 条），
  *          寄存器直通、无中间 tensor 物化，纯带宽 bound；
  *        - x/y 双缓冲队列深度 2，MTE2↔V↔MTE3 满流水；
  *        - batch_mean/batch_variance 由 plane 归属核（rIdx==0）对本核连续 stats 段
@@ -213,6 +213,9 @@ private:
     // 向量化预计算到 scaleBuf_（TBuf，同 V pipe 程序序，无需事件）；tile 前导仅 2 次广播 load
     __aicore__ inline void PrecomputeScale(__ubuf__ float* varAddr, __ubuf__ float* gammaAddr, int64_t cnt)
     {
+        // Scale error is amplified when the affine result nearly cancels beta.
+        static constexpr AscendC::Reg::DivSpecificMode scaleDivMode = {AscendC::Reg::MaskMergeMode::ZEROING, true};
+        static constexpr AscendC::Reg::SqrtSpecificMode scaleSqrtMode = {AscendC::Reg::MaskMergeMode::ZEROING, true};
         __ubuf__ float* scaleAddr = (__ubuf__ float*)scaleBuf_.Get<float>().GetPhyAddr();
         __VEC_SCOPE__
         {
@@ -228,8 +231,8 @@ private:
                 DataCopy<float, LoadDist::DIST_NORM>(gReg, gammaAddr);
                 DataCopy<float, LoadDist::DIST_NORM>(vReg, varAddr);
                 Adds(vReg, vReg, epsilon_, validMask);
-                Sqrt(vReg, vReg, validMask);
-                Div(sReg, gReg, vReg, validMask);
+                Sqrt<float, &scaleSqrtMode>(vReg, vReg, validMask);
+                Div<float, &scaleDivMode>(sReg, gReg, vReg, validMask);
             } else {
                 DataCopy<float, LoadDist::DIST_NORM>(vReg, varAddr);
                 Adds(vReg, vReg, epsilon_, validMask);
@@ -351,8 +354,7 @@ private:
                 LoadXToFp32(xAddr, xReg, fullMask, offset);
                 Sub(yReg, xReg, meanReg, fullMask);
                 if constexpr (hasGammaBeta) {
-                    Mul(yReg, yReg, sqrtReg, fullMask);
-                    Add(yReg, yReg, betaReg, fullMask);
+                    Reg::MulDstAdd(yReg, sqrtReg, betaReg, fullMask);
                 } else {
                     Div(yReg, yReg, sqrtReg, fullMask);
                 }
@@ -365,8 +367,7 @@ private:
                 LoadXToFp32(xAddr, xReg, tailMask, offset);
                 Sub(yReg, xReg, meanReg, tailMask);
                 if constexpr (hasGammaBeta) {
-                    Mul(yReg, yReg, sqrtReg, tailMask);
-                    Add(yReg, yReg, betaReg, tailMask);
+                    Reg::MulDstAdd(yReg, sqrtReg, betaReg, tailMask);
                 } else {
                     Div(yReg, yReg, sqrtReg, tailMask);
                 }

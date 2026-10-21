@@ -14,40 +14,38 @@
  *        （对齐 canndev built-in ELMTWISE_INFER_SHAPEANDTYPE 的 type 推导语义）
  */
 
-#include "graph/operator_reg.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 
-namespace ge {
-IMPLEMT_COMMON_INFERFUNC(INInferV2LegacyV1InferShape)
-{
-    const auto inferY = ELMTWISE_INFER_SHAPEANDTYPE("x", "y");
-    const auto inferMean = ELMTWISE_INFER_SHAPEANDTYPE("mean", "batch_mean");
-    const auto inferVariance = ELMTWISE_INFER_SHAPEANDTYPE("variance", "batch_variance");
-    if (inferY(op) != GRAPH_SUCCESS || inferMean(op) != GRAPH_SUCCESS || inferVariance(op) != GRAPH_SUCCESS) {
-        return GRAPH_FAILED;
-    }
-    return GRAPH_SUCCESS;
-}
-
-// GE can select the legacy V1 registry before runtime2.0 inference. Register
-// all three output mappings together: repeated registrations keep only one.
-COMMON_INFER_FUNC_REG(INInferV2, INInferV2LegacyV1InferShape);
-} // namespace ge
-
 namespace ops {
-static ge::graphStatus InferDataTypeForINInferV2(gert::InferDataTypeContext* context)
+ge::graphStatus InferDataTypeForINInferV2(gert::InferDataTypeContext* context)
 {
+    if (context == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGI("Begin InferDataTypeForINInferV2");
     // optional 输入缺席时框架会压实输入存储，raw index 的 GetInputDataType(3)/(4) 会错位，
     // 必须用 IR 原型序访问器（与 infershape 的 GetOptionalInputShape 同理）；
     // mean/variance 缺席（语义必需）时返回 DT_UNDEFINED，由后续校验/tiling 拦截
-    const ge::DataType xDataType = context->GetRequiredInputDataType(0);    // x
-    const ge::DataType meanDataType = context->GetOptionalInputDataType(3); // mean
-    const ge::DataType varDataType = context->GetOptionalInputDataType(4);  // variance
-    context->SetOutputDataType(0, xDataType);                               // y 同 x
-    context->SetOutputDataType(1, meanDataType);                            // batch_mean 同 mean
-    context->SetOutputDataType(2, varDataType);                             // batch_variance 同 variance
+    const ge::DataType outputTypes[] = {
+        context->GetRequiredInputDataType(0),
+        context->GetOptionalInputDataType(3),
+        context->GetOptionalInputDataType(4),
+    };
+    for (size_t i = 0; i < 3; ++i) {
+        const auto* instance = context->GetIrOutputInstanceInfo(i);
+        if (instance == nullptr || instance->GetInstanceNum() == 0) {
+            OP_CHECK_IF(i == 0, OP_LOGE(context->GetNodeName(), "Required output y is missing."),
+                        return ge::GRAPH_FAILED);
+            continue;
+        }
+        OP_CHECK_IF(instance->GetInstanceNum() != 1,
+                    OP_LOGE(context->GetNodeName(), "Output %zu must have one instance.", i), return ge::GRAPH_FAILED);
+        const auto status = context->SetOutputDataType(instance->GetInstanceStart(), outputTypes[i]);
+        if (status != ge::GRAPH_SUCCESS) {
+            return status;
+        }
+    }
     return ge::GRAPH_SUCCESS;
 }
 
