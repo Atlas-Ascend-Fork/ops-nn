@@ -165,7 +165,7 @@ usage() {
         echo "    --soc=soc_version      Compile for specified Ascend SoC (comma-separated for multiple)"
         echo "    --vendor_name=name     Specify custom operator pkg vendor name"
         echo "    --ops=op1,op2,...      Compile specified operators (comma-separated for multiple)"
-        echo "    -j[n]                  Compile thread nums, default is 8"
+        echo "    -j[n]                  Compile thread nums, default is CPU core count"
         echo "    -O[n]                  Compile optimization options, support [O0 O1 O2 O3]"
         echo "    --asan                 Enable ASAN (Address Sanitizer) on the host side"
         echo "    --ccache=<VALUE>       Enable or disable ccache (VALUE: on/off/true/false/disable), Default: on"
@@ -269,7 +269,7 @@ usage() {
         echo "Ophost Build Options:"
         echo $dotted_line
         echo "    --ophost               Build ophost library"
-        echo "    -j[n]                  Compile thread nums, default is 8"
+        echo "    -j[n]                  Compile thread nums, default is CPU core count"
         echo "    -O[n]                  Compile optimization options, support [O0 O1 O2 O3]"
         echo "    --build-type=<TYPE>    Specify build type (TYPE options: Release/Debug), Default: Release"
         echo "    --ccache=<VALUE>       Enable or disable ccache (VALUE: on/off/true/false/disable), Default: on"
@@ -283,7 +283,7 @@ usage() {
         echo "ONNXPlugin Build Options:"
         echo $dotted_line
         echo "    --onnxplugin           Build onnxplugin library"
-        echo "    -j[n]                  Compile thread nums, default is 8, eg: -j8"
+        echo "    -j[n]                  Compile thread nums, default is CPU core count, eg: -j8"
         echo "    -O[n]                  Compile optimization options, support [O0 O1 O2 O3], eg:-O3"
         echo "    --build-type=<TYPE>    Specify build type (TYPE options: Release/Debug), Default: Release"
         echo "    --ccache=<VALUE>       Enable or disable ccache (VALUE: on/off/true/false/disable), Default: on"
@@ -297,7 +297,7 @@ usage() {
         echo "TFPlugin Build Options:"
         echo $dotted_line
         echo "    --tfplugin             Build tfplugin library"
-        echo "    -j[n]                  Compile thread nums, default is 8, eg: -j8"
+        echo "    -j[n]                  Compile thread nums, default is CPU core count, eg: -j8"
         echo "    -O[n]                  Compile optimization options, support [O0 O1 O2 O3], eg:-O3"
         echo "    --build-type=<TYPE>    Specify build type (TYPE options: Release/Debug), Default: Release"
         echo "    --ccache=<VALUE>       Enable or disable ccache (VALUE: on/off/true/false/disable), Default: on"
@@ -311,7 +311,7 @@ usage() {
         echo "Opgraph Build Options:"
         echo $dotted_line
         echo "    --opgraph              Build opgraph library"
-        echo "    -j[n]                  Compile thread nums, default is 8"
+        echo "    -j[n]                  Compile thread nums, default is CPU core count"
         echo "    -O[n]                  Compile optimization options, support [O0 O1 O2 O3]"
         echo "    --build-type=<TYPE>    Specify build type (TYPE options: Release/Debug), Default: Release"
         echo $dotted_line
@@ -324,7 +324,7 @@ usage() {
         echo "Opapi Build Options:"
         echo $dotted_line
         echo "    --opapi                Build opapi library"
-        echo "    -j[n]                  Compile thread nums, default is 8"
+        echo "    -j[n]                  Compile thread nums, default is CPU core count"
         echo "    -O[n]                  Compile optimization options, support [O0 O1 O2 O3]"
         echo "    --build-type=<TYPE>    Specify build type (TYPE options: Release/Debug), Default: Release"
         echo $dotted_line
@@ -378,7 +378,7 @@ usage() {
   echo "    Build parameters "
   echo $dotted_line
   echo "    --help, -h Print usage"
-  echo "    -j[n] Compile thread nums, default is 8"
+  echo "    -j[n] Compile thread nums, default is CPU core count"
   echo "    -v Cmake compile verbose"
   echo "    -O[n] Compile optimization options, support [O0 O1 O2 O3]"
   echo "    -u Compile all ut, default run ophost opgraph opapi test"
@@ -399,7 +399,7 @@ usage() {
   echo "    --ops Compile specified operator, use snake name, like: --ops=add,add_lora, use ',' to separate different operator"
   echo "    --soc Compile binary with specified Ascend SoC, like: --soc=ascend910b"
 	echo "    --soc supported prefixes: [ascend910b ascend910_93 ascend950 ascend350 ascend310p kirinx90 kirin9030 mc62 ascend5162a], case-insensitive"
-  echo "    --vendor_name Specify the custom operator pkg vendor name, like: --vendor_name=customize, default to customize-nn"
+  echo "    --vendor_name Specify the custom operator pkg vendor name, like: --vendor_name=customize, default to custom"
   echo "    --tfplugin build optf_plugin_nn.so"
   echo "    --onnxplugin build oponnx_plugin_nn.so"
   echo "    --opapi build opapi_nn.so"
