@@ -2,7 +2,7 @@
     "op_type": "TopKTopPSample",
     "op_list": [
         {
-            "bin_filename": "TopKTopPSample_0910_93_fp16",
+            "bin_filename": "TopKTopPSample_fp16",
             "inputs": [
                 {
                     "name": "logits",
@@ -86,7 +86,7 @@
             ]
         },
         {
-            "bin_filename": "TopKTopPSample_0910_93_bf16",
+            "bin_filename": "TopKTopPSample_bf16",
             "inputs": [
                 {
                     "name": "logits",

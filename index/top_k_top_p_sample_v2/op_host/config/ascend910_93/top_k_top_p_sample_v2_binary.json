@@ -2,7 +2,7 @@
     "op_type": "TopKTopPSampleV2",
     "op_list": [
         {
-            "bin_filename": "TopKTopPSampleV2_0910_93_fp16",
+            "bin_filename": "TopKTopPSampleV2_fp16",
             "inputs": [
                 {
                     "name": "logits",
@@ -131,7 +131,7 @@
             ]
         },
         {
-            "bin_filename": "TopKTopPSampleV2_0910_93_bf16",
+            "bin_filename": "TopKTopPSampleV2_bf16",
             "inputs": [
                 {
                     "name": "logits",
@@ -260,7 +260,7 @@
             ]
         },
         {
-            "bin_filename": "TopKTopPSampleV2_0910_93_fp32",
+            "bin_filename": "TopKTopPSampleV2_fp32",
             "inputs": [
                 {
                     "name": "logits",
