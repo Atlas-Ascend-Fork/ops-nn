@@ -12,6 +12,7 @@
 #include <iostream>
 #include "infershape_test_util.h" // NOLINT
 #include "ut_op_common.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "../../../op_graph/apply_ftrl_proto.h"
 
 class ApplyFtrl : public testing::Test {
@@ -44,4 +45,90 @@ TEST_F(ApplyFtrl, ApplyFtrl_infershape_case_0)
                       .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+}
+
+TEST_F(ApplyFtrl, missing_lr_reports_input_once)
+{
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyFtrl");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    gert::StorageShape tensorShape = {{2, 3}, {2, 3}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType("ApplyFtrl")
+                      .NodeIoNum(8, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&tensorShape, &tensorShape, &tensorShape, &tensorShape, nullptr, &scalarShape,
+                                    &scalarShape, &scalarShape})
+                      .OutputShapes({&tensorShape})
+                      .Build();
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    manager.GetRawErrorMessages();
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    // The builder materializes default shapes for nullptr entries; clear the actual input slot.
+    auto kernelContext = holder.GetContext<gert::KernelContext>();
+    ASSERT_NE(kernelContext->MutableInput(4), nullptr);
+    kernelContext->MutableInput(4)->Set(nullptr, nullptr);
+    ASSERT_EQ(context->GetInputShape(4), nullptr);
+    EXPECT_EQ(impl->infer_shape(context), ge::GRAPH_FAILED);
+    auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0004");
+    EXPECT_NE(errors[0].error_message.find("ApplyFtrl"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("lr"), std::string::npos);
+    // InferShape-only UTs can use the SDK's older EZ0004 template.
+    const auto& message = errors[0].error_message;
+    EXPECT_TRUE(message == "Parameter lr of ApplyFtrl is required, but it is empty." ||
+                message == "OP[ApplyFtrl] get [lr] failed.")
+        << message;
+}
+
+TEST_F(ApplyFtrl, missing_output_storage_reports_infershape_failure_once)
+{
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyFtrl");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    gert::StorageShape tensorShape = {{2, 3}, {2, 3}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType("ApplyFtrl")
+                      .NodeIoNum(8, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&tensorShape, &tensorShape, &tensorShape, &tensorShape, &scalarShape, &scalarShape,
+                                    &scalarShape, &scalarShape})
+                      .OutputShapes({&tensorShape})
+                      .Build();
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(context, nullptr);
+    auto kernelContext = holder.GetContext<gert::KernelContext>();
+    ASSERT_NE(kernelContext->GetOutput(0), nullptr);
+    kernelContext->GetOutput(0)->Set(nullptr, nullptr);
+    ASSERT_EQ(context->GetOutputShape(0), nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_shape(context), ge::GRAPH_FAILED);
+    auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1014");
+    EXPECT_NE(errors[0].error_message.find("ApplyFtrl"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("output var shape storage is nullptr"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("expected output-slot count=1"), std::string::npos);
+}
+
+TEST_F(ApplyFtrl, null_context_reports_infershape_failure_once)
+{
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyFtrl");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_shape(nullptr), ge::GRAPH_FAILED);
+    auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1014");
+    EXPECT_NE(errors[0].error_message.find("ApplyFtrl"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("InferShapeContext is nullptr"), std::string::npos);
 }

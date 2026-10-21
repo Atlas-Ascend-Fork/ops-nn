@@ -12,6 +12,9 @@
  * \file apply_ftrl_infershape.cpp
  * \brief
  */
+#include <string>
+#include <vector>
+
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 
@@ -26,30 +29,52 @@ static constexpr size_t L2_INDEX = 6;
 static constexpr size_t LR_POWER_INDEX = 7;
 
 namespace ops {
+static ge::graphStatus ReportInferShapeFailure(const char* opName, const char* reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason);
+    return ge::GRAPH_FAILED;
+}
+
 static ge::graphStatus InferShapeForApplyFtrl(gert::InferShapeContext* context)
 {
+    if (context == nullptr) {
+        return ReportInferShapeFailure("ApplyFtrl",
+                                       "InferShapeContext is nullptr. Check the GE infer-shape invocation.");
+    }
     // input shape
     OP_LOGD(context, "Begin to do InferShapeForApplyFtrl.");
     const gert::Shape* varShape = context->GetInputShape(VAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
+    OP_CHECK_IF(varShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* accumShape = context->GetInputShape(ACCUM_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, accumShape);
+    OP_CHECK_IF(accumShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "accum"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* linearShape = context->GetInputShape(LINEAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, linearShape);
+    OP_CHECK_IF(linearShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "linear"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* gradShape = context->GetInputShape(GRAD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
+    OP_CHECK_IF(gradShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "grad"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* lrShape = context->GetInputShape(LR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, lrShape);
+    OP_CHECK_IF(lrShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "lr"), return ge::GRAPH_FAILED);
     const gert::Shape* l1Shape = context->GetInputShape(L1_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, l1Shape);
+    OP_CHECK_IF(l1Shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "l1"), return ge::GRAPH_FAILED);
     const gert::Shape* l2Shape = context->GetInputShape(L2_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, l2Shape);
+    OP_CHECK_IF(l2Shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "l2"), return ge::GRAPH_FAILED);
     const gert::Shape* lrPowerShape = context->GetInputShape(LR_POWER_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, lrPowerShape);
+    OP_CHECK_IF(lrPowerShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "lr_power"),
+                return ge::GRAPH_FAILED);
 
     // output shape
     gert::Shape* varRefShape = context->GetOutputShape(VAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varRefShape);
+    if (varRefShape == nullptr) {
+        return ReportInferShapeFailure(context->GetNodeName(),
+                                       "InferShape: output var shape storage is nullptr; expected output-slot count=1. "
+                                       "Check the GE InferShapeContext output allocation.");
+    }
 
     *varRefShape = *varShape;
 

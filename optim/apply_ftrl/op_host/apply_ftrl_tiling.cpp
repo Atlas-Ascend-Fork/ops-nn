@@ -12,6 +12,9 @@
  * \file apply_ftrl_tiling.cpp
  * \brief
  */
+#include <string>
+#include <vector>
+
 #include "apply_ftrl_tiling.h"
 
 #include <graph/utils/type_utils.h>
@@ -35,10 +38,23 @@ constexpr static int32_t INPUT_NUM = 8;
 const static std::map<int32_t, string> TENSOR_INDEX_LIST = {{1, "accum"}, {2, "linear"}, {3, "grad"}};
 const static std::map<int32_t, string> SCALAR_INDEX_LIST = {{4, "lr"}, {5, "l1"}, {6, "l2"}, {7, "lr_power"}};
 
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
+
 ge::graphStatus ApplyFtrlRegbaseTiling::CheckScalarShape(int32_t inputIdx)
 {
     auto inputShape = tilingContext_->GetInputShape(inputIdx);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputShape);
+    OP_CHECK_IF(inputShape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), SCALAR_INDEX_LIST.at(inputIdx).c_str()),
+                return ge::GRAPH_FAILED);
     auto storageShape = inputShape->GetStorageShape();
     std::string paramName = SCALAR_INDEX_LIST.at(inputIdx);
     OP_CHECK_IF((!storageShape.IsScalar() && storageShape.GetShapeSize() != 1),
@@ -52,69 +68,68 @@ ge::graphStatus ApplyFtrlRegbaseTiling::CheckScalarShape(int32_t inputIdx)
 ge::graphStatus ApplyFtrlRegbaseTiling::CheckSameShape(int32_t inputIdx, const gert::Shape& input0Shape)
 {
     auto inputShape = tilingContext_->GetInputShape(inputIdx);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputShape);
+    OP_CHECK_IF(inputShape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), TENSOR_INDEX_LIST.at(inputIdx).c_str()),
+                return ge::GRAPH_FAILED);
     auto curStorageShape = inputShape->GetStorageShape();
-    if (curStorageShape != input0Shape) {
-        return ge::GRAPH_FAILED;
-    }
+    OP_CHECK_IF(curStorageShape != input0Shape,
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    tilingContext_->GetNodeName(), (string("var and ") + TENSOR_INDEX_LIST.at(inputIdx)).c_str(),
+                    (Ops::Base::ToString(input0Shape) + " and " + Ops::Base::ToString(curStorageShape)).c_str(),
+                    "Set accum, linear and grad to the same shape as var"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus ApplyFtrlRegbaseTiling::CheckSameDtype(int32_t inputIdx, const ge::DataType& input0Dtype)
 {
     auto inputDesc = tilingContext_->GetInputDesc(inputIdx);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputDesc);
+    const auto& paramName = inputIdx >= SCALAR_INPUT_LR_INDEX ? SCALAR_INDEX_LIST.at(inputIdx) :
+                                                                TENSOR_INDEX_LIST.at(inputIdx);
+    OP_CHECK_IF(inputDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), paramName.c_str()),
+                return ge::GRAPH_FAILED);
     auto curDtype = inputDesc->GetDataType();
-    if (curDtype != input0Dtype) {
-        return ge::GRAPH_FAILED;
-    }
+    OP_CHECK_IF(
+        curDtype != input0Dtype,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(tilingContext_->GetNodeName(), (string("var and ") + paramName).c_str(),
+                                               (ge::TypeUtils::DataTypeToSerialString(input0Dtype) + " and " +
+                                                ge::TypeUtils::DataTypeToSerialString(curDtype))
+                                                   .c_str(),
+                                               "Set all input dtypes to the same dtype as var"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus ApplyFtrlRegbaseTiling::CheckShapeAndType()
 {
     auto inputShape = tilingContext_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputShape);
+    OP_CHECK_IF(inputShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     auto inputStorageShape = inputShape->GetStorageShape();
 
     auto inputVarDesc = tilingContext_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputVarDesc);
+    OP_CHECK_IF(inputVarDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     auto inputDtype = inputVarDesc->GetDataType();
-    // check scalar input
     for (const auto& pair : SCALAR_INDEX_LIST) {
-        OP_CHECK_IF(
-            CheckScalarShape(pair.first) != ge::GRAPH_SUCCESS,
-            OP_LOGE_FOR_INVALID_SHAPEDIM(
-                tilingContext_->GetNodeName(), pair.second.c_str(),
-                std::to_string(tilingContext_->GetInputShape(pair.first)->GetStorageShape().GetDimNum()).c_str(), "0D"),
-            return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CheckSameDtype(pair.first, inputDtype) != ge::GRAPH_SUCCESS,
-                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-                        tilingContext_->GetNodeName(), (string("var and ") + pair.second).c_str(),
-                        (ge::TypeUtils::DataTypeToSerialString(inputDtype) + " and " +
-                         ge::TypeUtils::DataTypeToSerialString(tilingContext_->GetInputDesc(pair.first)->GetDataType()))
-                            .c_str(),
-                        (string("The dtypes of input ") + pair.second + " and var must be the same").c_str()),
-                    return ge::GRAPH_FAILED);
+        auto ret = CheckScalarShape(pair.first);
+        if (ret != ge::GRAPH_SUCCESS) {
+            return ret;
+        }
+        ret = CheckSameDtype(pair.first, inputDtype);
+        if (ret != ge::GRAPH_SUCCESS) {
+            return ret;
+        }
     }
-    // check tensor input
     for (const auto& pair : TENSOR_INDEX_LIST) {
-        OP_CHECK_IF(CheckSameShape(pair.first, inputStorageShape) != ge::GRAPH_SUCCESS,
-                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
-                        tilingContext_->GetNodeName(), (string("var and ") + pair.second).c_str(),
-                        (Ops::Base::ToString(inputStorageShape) + " and " +
-                         Ops::Base::ToString(tilingContext_->GetInputShape(pair.first)->GetStorageShape()))
-                            .c_str(),
-                        (string("The shapes of input ") + pair.second + " and var must be the same").c_str()),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CheckSameDtype(pair.first, inputDtype) != ge::GRAPH_SUCCESS,
-                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-                        tilingContext_->GetNodeName(), (string("var and ") + pair.second).c_str(),
-                        (ge::TypeUtils::DataTypeToSerialString(inputDtype) + " and " +
-                         ge::TypeUtils::DataTypeToSerialString(tilingContext_->GetInputDesc(pair.first)->GetDataType()))
-                            .c_str(),
-                        (string("The dtypes of input ") + pair.second + " and var must be the same").c_str()),
-                    return ge::GRAPH_FAILED);
+        auto ret = CheckSameShape(pair.first, inputStorageShape);
+        if (ret != ge::GRAPH_SUCCESS) {
+            return ret;
+        }
+        ret = CheckSameDtype(pair.first, inputDtype);
+        if (ret != ge::GRAPH_SUCCESS) {
+            return ret;
+        }
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -123,7 +138,8 @@ ge::graphStatus ApplyFtrlRegbaseTiling::DoElewiseTiling()
 {
     ElewiseBaseTiling eleBaseTiling(tilingContext_);
     auto varDesc = tilingContext_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, varDesc);
+    OP_CHECK_IF(varDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     ge::DataType varDType = varDesc->GetDataType();
     ge::graphStatus ret = ge::GRAPH_FAILED;
     if (varDType == ge::DT_FLOAT) {
@@ -144,12 +160,28 @@ ge::graphStatus ApplyFtrlRegbaseTiling::SetTilingData()
 {
     OP_LOGD(tilingContext_->GetNodeName(), "Enter SetTilingData");
     size_t* currentWorkspace = tilingContext_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, currentWorkspace);
+    if (currentWorkspace == nullptr) {
+        return ReportTilingFailure(
+            tilingContext_->GetNodeName(),
+            "SetTilingData: GetWorkspaceSizes(1) returned nullptr; required output-slot count=1. "
+            "Check the TilingContext workspace container and its capacity.");
+    }
     currentWorkspace[0] = SYS_WORKSPACE;
     tilingKey = GET_TPL_TILING_KEY(tiling_->elewiseTiling.scheMode);
     tilingContext_->SetTilingKey(tilingKey);
     uint32_t numBlocks = static_cast<uint32_t>(tiling_->elewiseTiling.blockNum);
-    OP_CHECK_IF(numBlocks <= 0, OP_LOGE(tilingContext_, "Get numBlocks failed"), return ge::GRAPH_FAILED);
+    if (numBlocks == 0) {
+        const auto& result = tiling_->elewiseTiling;
+        return ReportTilingFailure(
+            tilingContext_->GetNodeName(),
+            "SetTilingData: ElewiseBaseTiling returned GRAPH_SUCCESS but produced invalid tiling data; blockNum=" +
+                std::to_string(result.blockNum) + "; expected blockNum>0, dim0=" + std::to_string(result.dim0) +
+                ", coreNum=" + std::to_string(result.coreNum) + ", blockFormer=" + std::to_string(result.blockFormer) +
+                ", tilingKey=" + std::to_string(tilingKey) +
+                ", shape=" + Ops::Base::ToString(tilingContext_->GetInputShape(0)->GetStorageShape()) +
+                ", dtype=" + ge::TypeUtils::DataTypeToSerialString(tilingContext_->GetInputDesc(0)->GetDataType()) +
+                ". Preserve input metadata and tiling logs for the opbase implementation owner.");
+    }
     tilingContext_->SetBlockDim(numBlocks);
     return ge::GRAPH_SUCCESS;
 }
@@ -157,16 +189,34 @@ ge::graphStatus ApplyFtrlRegbaseTiling::SetTilingData()
 ge::graphStatus ApplyFtrlRegbaseTiling::RunTiling()
 {
     if (tilingContext_ == nullptr) {
-        return ge::GRAPH_FAILED;
+        return ReportTilingFailure("ApplyFtrl", "RunTiling: TilingContext is nullptr. Check the GE tiling invocation.");
     }
-    OP_CHECK_IF(CheckShapeAndType() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext_, "Shape and dtype check failed."),
-                return ge::GRAPH_FAILED);
+    auto ret = CheckShapeAndType();
+    if (ret != ge::GRAPH_SUCCESS) {
+        return ret;
+    }
 
+    auto rawTilingData = tilingContext_->GetRawTilingData();
+    const auto requiredBytes = sizeof(ApplyFtrlRegbaseTilingData);
+    if (rawTilingData == nullptr) {
+        return ReportTilingFailure(
+            tilingContext_->GetNodeName(),
+            "RunTiling: raw tiling buffer is nullptr; requiredBytes=" + std::to_string(requiredBytes) +
+                ". Check the GE TilingContext output buffer allocation.");
+    }
+    const auto actualBytes = rawTilingData->GetCapacity();
+    if (actualBytes < requiredBytes) {
+        return ReportTilingFailure(
+            tilingContext_->GetNodeName(),
+            "RunTiling: tiling buffer capacity is insufficient; requiredBytes=" + std::to_string(requiredBytes) +
+                ", actualBytes=" + std::to_string(actualBytes) + ". Check the registered maximum tiling data size.");
+    }
     tiling_ = tilingContext_->GetTilingData<ApplyFtrlRegbaseTilingData>();
-    OP_CHECK_IF((tiling_ == nullptr), OP_LOGE(tilingContext_, "Get ApplyFtrlRegbaseTiling from GE context failed"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(DoElewiseTiling() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext_, "elewiseBaseTiling failed"),
-                return ge::GRAPH_FAILED);
+    ret = DoElewiseTiling();
+    OP_CHECK_IF(
+        ret != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(tilingContext_, "DoElewiseTiling failed, rc=%u; propagate the lower-layer error", ret),
+        return ret);
     return SetTilingData();
 }
 

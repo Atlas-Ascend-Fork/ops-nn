@@ -21,6 +21,7 @@
 
 #include "../../../../op_host/apply_ftrl_tiling.h"
 #include "ut_op_util.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "kernel_run_context_facker.h"
@@ -162,4 +163,194 @@ TEST_F(TestApplyFtrlTiling, apply_ftrl_testcase_bfloat16)
     auto inputFormat = ge::FORMAT_ND;
     std::string expectStr = "7840 10995116277762 4096 2 2 2 1536 1184 2560 1 ";
     DoApplyFtrlTilingCase(inputShape, inputDtype, inputFormat, expectStr);
+}
+class ApplyFtrlTilingAccessor : public optiling::ApplyFtrlRegbaseTiling {
+public:
+    using optiling::ApplyFtrlRegbaseTiling::ApplyFtrlRegbaseTiling;
+    using optiling::ApplyFtrlRegbaseTiling::DoElewiseTiling;
+    using optiling::ApplyFtrlRegbaseTiling::SetTilingData;
+};
+
+// Exercise the registered tiling entry so outer wrappers cannot hide duplicate reports.
+static void CheckApplyFtrlError(int scenario, const std::string& code, const std::string& parameter,
+                                const std::string& actual, const std::string& reason)
+{
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyFtrl");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling, nullptr);
+    gert::StorageShape tensorShape = {{2, 3}, {2, 3}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    gert::StorageShape invalidScalar = {{2}, {2}};
+    gert::StorageShape differentShape = {{6}, {6}};
+    auto data = gert::TilingData::CreateCap(scenario == 6 ? 1 : 4096);
+    auto workspace = gert::ContinuousVector::Create<size_t>(scenario == 7 ? 0 : 1);
+    auto dtype = scenario == 3 ? ge::DT_INT32 : ge::DT_FLOAT;
+    ApplyFtrlUtCompileInfo compileInfo;
+    fe::PlatFormInfos platform;
+    map<string, string> socInfos, aicoreSpec, intrinsics;
+    map<string, string> socVersion = {{"Short_SoC_version", "ASCEND950"}};
+    InitPlatForm(platform, socInfos, aicoreSpec, intrinsics, socVersion);
+    platform.SetPlatformRes("SoCInfo", socInfos);
+    platform.SetPlatformRes("AICoreSpec", aicoreSpec);
+    platform.SetCoreNumByCoreType("AICore");
+    platform.SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    platform.SetPlatformRes("version", socVersion);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("ApplyFtrl")
+                      .NodeIoNum(8, 1)
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform))
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&tensorShape, scenario == 1 ? &differentShape : &tensorShape, &tensorShape,
+                                    &tensorShape,
+                                    scenario == 4 ? nullptr : (scenario == 0 ? &invalidScalar : &scalarShape),
+                                    &scalarShape, &scalarShape, &scalarShape})
+                      .OutputShapes({&tensorShape})
+                      .NodeInputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, scenario == 2 ? ge::DT_FLOAT16 : dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(7, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(data.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                      .Build();
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    manager.GetRawErrorMessages();
+    auto context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    if (scenario == 4) {
+        auto kernelContext = holder.GetContext<gert::KernelContext>();
+        ASSERT_NE(kernelContext->MutableInput(4), nullptr);
+        kernelContext->MutableInput(4)->Set(nullptr, nullptr);
+        ASSERT_EQ(context->GetInputShape(4), nullptr);
+    }
+    if (scenario == 5) {
+        *holder.GetContext<gert::KernelContext>()->GetOutputPointer<gert::TilingData*>(
+            gert::TilingContext::kOutputTilingData) = nullptr;
+        ASSERT_EQ(context->GetRawTilingData(), nullptr);
+    }
+    if (scenario == 9) {
+        // Compare the dependency's own diagnostics with the registered wrapper's diagnostics.
+        auto nodeInfo = context->GetComputeNodeInfo();
+        auto kernelContext = holder.GetContext<gert::KernelContext>();
+        const size_t platformIndex = nodeInfo->GetInputsNum() + nodeInfo->GetOutputsNum() + 1;
+        ASSERT_NE(kernelContext->MutableInput(platformIndex), nullptr);
+        kernelContext->MutableInput(platformIndex)->Set(nullptr, nullptr);
+        ASSERT_EQ(context->GetPlatformInfo(), nullptr);
+        ApplyFtrlTilingAccessor tiling(context);
+        tiling.tiling_ = context->GetTilingData<ApplyFtrlOpTiling::ApplyFtrlRegbaseTilingData>();
+        ASSERT_NE(tiling.tiling_, nullptr);
+        auto lowerStatus = tiling.DoElewiseTiling();
+        auto lowerErrors = manager.GetRawErrorMessages();
+        ASSERT_NE(lowerStatus, ge::GRAPH_SUCCESS);
+        ASSERT_FALSE(lowerErrors.empty());
+        EXPECT_EQ(impl->tiling(context), lowerStatus);
+        auto wrapperErrors = manager.GetRawErrorMessages();
+        ASSERT_EQ(wrapperErrors.size(), lowerErrors.size());
+        for (size_t i = 0; i < lowerErrors.size(); ++i) {
+            EXPECT_EQ(wrapperErrors[i].error_id, lowerErrors[i].error_id);
+            EXPECT_EQ(wrapperErrors[i].error_message, lowerErrors[i].error_message);
+        }
+        return;
+    }
+    if (scenario == 8) {
+        ApplyFtrlTilingAccessor tiling(context);
+        ASSERT_EQ(tiling.RunTiling(), ge::GRAPH_SUCCESS);
+        ASSERT_TRUE(manager.GetRawErrorMessages().empty());
+        ASSERT_GT(tiling.tiling_->elewiseTiling.blockNum, 0);
+        // Corrupt only the successful result, keeping legal inputs, resources and storage.
+        tiling.tiling_->elewiseTiling.blockNum = 0;
+        EXPECT_EQ(tiling.SetTilingData(), ge::GRAPH_FAILED);
+    } else {
+        EXPECT_EQ(impl->tiling(context), ge::GRAPH_FAILED);
+    }
+    auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, code);
+    EXPECT_NE(errors[0].error_message.find("ApplyFtrl"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find(parameter), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find(actual), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find(reason), std::string::npos);
+    if (scenario == 5 || scenario == 6) {
+        EXPECT_NE(errors[0].error_message.find("requiredBytes=" +
+                                               std::to_string(sizeof(ApplyFtrlOpTiling::ApplyFtrlRegbaseTilingData))),
+                  std::string::npos);
+    }
+    if (scenario == 8) {
+        for (const auto* field :
+             {"GRAPH_SUCCESS", "expected blockNum>0", "dim0=6", "coreNum=", "blockFormer=", "tilingKey=", "shape="}) {
+            EXPECT_NE(errors[0].error_message.find(field), std::string::npos);
+        }
+    }
+}
+
+TEST_F(TestApplyFtrlTiling, invalid_scalar_reports_shape_once)
+{
+    CheckApplyFtrlError(0, "EZ0009", "lr", "2", "scalar(0D) or have shape size 1");
+}
+
+TEST_F(TestApplyFtrlTiling, mismatched_shape_reports_once)
+{
+    CheckApplyFtrlError(1, "EZ0010", "var and accum", "6", "same shape as var");
+}
+
+TEST_F(TestApplyFtrlTiling, mismatched_dtype_reports_once)
+{
+    CheckApplyFtrlError(2, "EZ0021", "var and accum", "DT_FLOAT16", "same dtype as var");
+}
+
+TEST_F(TestApplyFtrlTiling, unsupported_dtype_reports_once)
+{
+    CheckApplyFtrlError(3, "EZ0019", "var", "DT_INT32", "fp32, fp16 or bf16");
+}
+
+TEST_F(TestApplyFtrlTiling, missing_scalar_reports_input_once)
+{
+    CheckApplyFtrlError(4, "EZ0004", "lr", "", "required");
+}
+
+TEST_F(TestApplyFtrlTiling, null_context_reports_tiling_failure_once)
+{
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyFtrl");
+    ASSERT_NE(impl, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->tiling(nullptr), ge::GRAPH_FAILED);
+    auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1008");
+    EXPECT_NE(errors[0].error_message.find("ApplyFtrl"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("TilingContext is nullptr"), std::string::npos);
+}
+
+TEST_F(TestApplyFtrlTiling, missing_tiling_buffer_reports_stage_failure_once)
+{
+    CheckApplyFtrlError(5, "EZ1008", "raw tiling buffer",
+                        "requiredBytes=", "Check the GE TilingContext output buffer allocation");
+}
+
+TEST_F(TestApplyFtrlTiling, insufficient_tiling_buffer_reports_capacity_once)
+{
+    CheckApplyFtrlError(6, "EZ1008", "tiling buffer capacity", "actualBytes=1", "requiredBytes=");
+}
+
+TEST_F(TestApplyFtrlTiling, insufficient_workspace_slots_reports_stage_failure_once)
+{
+    CheckApplyFtrlError(7, "EZ1008", "GetWorkspaceSizes(1)", "required output-slot count=1", "workspace container");
+}
+
+TEST_F(TestApplyFtrlTiling, corrupted_successful_block_count_reports_tiling_failure_once)
+{
+    CheckApplyFtrlError(8, "EZ1008", "blockNum=0", "dtype=DT_FLOAT", "opbase implementation owner");
+}
+
+TEST_F(TestApplyFtrlTiling, lower_tiling_failure_preserves_reports_without_adding_another)
+{
+    CheckApplyFtrlError(9, "", "", "", "");
 }
