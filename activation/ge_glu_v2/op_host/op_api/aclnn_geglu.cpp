@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -72,8 +72,25 @@ static bool CheckDtypeValid(const aclTensor* self, const aclTensor* out, const a
     return true;
 }
 
-static bool CheckSliceDimSizes(const aclTensor* self, const aclTensor* out, const aclTensor* outGelu, int64_t sliceDim)
+static bool CheckShape(const aclTensor* self, int64_t dim, const aclTensor* out, const aclTensor* outGelu)
 {
+    OP_CHECK_MAX_DIM(self, MAX_SUPPORT_DIMS_NUMS, return false);
+    OP_CHECK_MAX_DIM(out, MAX_SUPPORT_DIMS_NUMS, return false);
+    OP_CHECK_MAX_DIM(outGelu, MAX_SUPPORT_DIMS_NUMS, return false);
+
+    int64_t dimNum = self->GetViewShape().GetDimNum();
+    if (dimNum == 0) {
+        dimNum = 1;
+    }
+
+    if ((-dimNum > dim) || ((dimNum - 1) < dim)) {
+        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR,
+                "Expected aclnnGeGlu dim value %ld to be in range [%ld, %ld] but check failed.", dim, -dimNum,
+                dimNum - 1);
+        return false;
+    }
+
+    auto sliceDim = dim < 0 ? dimNum + dim : dim;
     auto selfSliceDimSize = self->GetViewShape().GetDim(sliceDim);
     auto outSliceDimSize = out->GetViewShape().GetDim(sliceDim);
     auto outGeluSliceDimSize = outGelu->GetViewShape().GetDim(sliceDim);
@@ -95,12 +112,16 @@ static bool CheckSliceDimSizes(const aclTensor* self, const aclTensor* out, cons
                 outGeluSliceDimSize, selfSliceDimSize / SLICE_NUM);
         return false;
     }
-    return true;
-}
 
-static bool CheckOtherDimsMatch(const aclTensor* self, const aclTensor* out, const aclTensor* outGelu, int64_t dimNum,
-                                int64_t sliceDim, int64_t dim)
-{
+    int64_t outDimNum = out->GetViewShape().GetDimNum();
+    int64_t outGeluDimNum = outGelu->GetViewShape().GetDimNum();
+
+    OP_CHECK(outDimNum == outGeluDimNum && outDimNum == dimNum,
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                     "outDimNum[%ld] and outGeluDimNum[%ld] must be the same with inputDimNum[%ld].", outDimNum,
+                     outGeluDimNum, dimNum),
+             return false);
+
     for (int64_t idx = 0; idx < dimNum; idx++) {
         if (idx == sliceDim) {
             continue;
@@ -116,43 +137,6 @@ static bool CheckOtherDimsMatch(const aclTensor* self, const aclTensor* out, con
             return false);
     }
     return true;
-}
-
-static bool CheckShape(const aclTensor* self, int64_t dim, const aclTensor* out, const aclTensor* outGelu)
-{
-    OP_CHECK_MAX_DIM(self, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(out, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(outGelu, MAX_SUPPORT_DIMS_NUMS, return false);
-
-    int64_t dimNum = self->GetViewShape().GetDimNum();
-    if (dimNum == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Not support the input self is scalar. Dim num of self can not be 0.");
-        return false;
-    }
-
-    if ((-dimNum > dim) || ((dimNum - 1) < dim)) {
-        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR,
-                "Expected aclnnGeGlu dim value %ld to be in range [%ld, %ld] but check failed.", dim, -dimNum,
-                dimNum - 1);
-        return false;
-    }
-
-    auto sliceDim = dim < 0 ? dimNum + dim : dim;
-
-    if (!CheckSliceDimSizes(self, out, outGelu, sliceDim)) {
-        return false;
-    }
-
-    int64_t outDimNum = out->GetViewShape().GetDimNum();
-    int64_t outGeluDimNum = outGelu->GetViewShape().GetDimNum();
-
-    OP_CHECK(
-        outDimNum == outGeluDimNum && outDimNum == dimNum,
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "outDimNum[%ld] and outGeluDimNum[%ld] must be the same as inputDimNum[%ld].",
-                outDimNum, outGeluDimNum, dimNum),
-        return false);
-
-    return CheckOtherDimsMatch(self, out, outGelu, dimNum, sliceDim, dim);
 }
 
 static bool checkApproximate(int64_t approximate)

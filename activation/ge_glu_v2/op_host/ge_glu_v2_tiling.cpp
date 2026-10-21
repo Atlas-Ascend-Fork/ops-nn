@@ -13,7 +13,6 @@
  * \brief
  */
 #include "ge_glu_v2_tiling.h"
-#include <graph/utils/type_utils.h>
 #include "register/tilingdata_base.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
@@ -52,6 +51,107 @@ static const int64_t COMMON_BUFFER_SIZE_LIMIT_REGBASE = 4880;
 static const int64_t FP32_BUFFER_SIZE_VREDUCE_ERF_REGBASE = 4224;
 static const int64_t COMMON_BUFFER_SIZE_LIMIT = 6144;
 static const int64_t FP32_BUFFER_SIZE_VREDUCE_ERF = 4912;
+
+// RegBase per-template perElementBytes: bytes per bufferSize element, computed from InitBuffer allocations
+// tanh (approximate=1) align/last_axis_big
+static const int64_t REGBASE_TANH_ALIGN_PER_ELEM_FP16 = 16;
+static const int64_t REGBASE_TANH_ALIGN_PER_ELEM_BF16 = 16;
+static const int64_t REGBASE_TANH_ALIGN_PER_ELEM_FP32 = 32;
+// tanh (approximate=1) vreduce (ny==1)
+static const int64_t REGBASE_TANH_VREDUCE_PER_ELEM_FP16 = 20;
+static const int64_t REGBASE_TANH_VREDUCE_PER_ELEM_BF16 = 32;
+static const int64_t REGBASE_TANH_VREDUCE_PER_ELEM_FP32 = 40;
+// erf (approximate=0) align/last_axis_big
+static const int64_t REGBASE_ERF_ALIGN_PER_ELEM_FP16 = 32;
+static const int64_t REGBASE_ERF_ALIGN_PER_ELEM_BF16 = 32;
+static const int64_t REGBASE_ERF_ALIGN_PER_ELEM_FP32 = 40;
+// erf (approximate=0) vreduce (ny==1)
+static const int64_t REGBASE_ERF_VREDUCE_PER_ELEM_FP16 = 36;
+static const int64_t REGBASE_ERF_VREDUCE_PER_ELEM_BF16 = 36;
+static const int64_t REGBASE_ERF_VREDUCE_PER_ELEM_FP32 = 48;
+
+static int64_t GetRegbasePerElem(int64_t typeSize, int64_t approximate, int64_t ny)
+{
+    bool isVreduce = (ny == 1);
+    if (approximate == APPROXIMATE_USING_TANH) {
+        if (isVreduce) {
+            if (typeSize == FP32_DTYPE_BYTES) {
+                return REGBASE_TANH_VREDUCE_PER_ELEM_FP32;
+            }
+            if (typeSize == BF16_DTYPE_BYTES) {
+                return REGBASE_TANH_VREDUCE_PER_ELEM_BF16;
+            }
+            return REGBASE_TANH_VREDUCE_PER_ELEM_FP16;
+        } else {
+            if (typeSize == FP32_DTYPE_BYTES) {
+                return REGBASE_TANH_ALIGN_PER_ELEM_FP32;
+            }
+            if (typeSize == BF16_DTYPE_BYTES) {
+                return REGBASE_TANH_ALIGN_PER_ELEM_BF16;
+            }
+            return REGBASE_TANH_ALIGN_PER_ELEM_FP16;
+        }
+    } else {
+        if (isVreduce) {
+            if (typeSize == FP32_DTYPE_BYTES) {
+                return REGBASE_ERF_VREDUCE_PER_ELEM_FP32;
+            }
+            if (typeSize == BF16_DTYPE_BYTES) {
+                return REGBASE_ERF_VREDUCE_PER_ELEM_BF16;
+            }
+            return REGBASE_ERF_VREDUCE_PER_ELEM_FP16;
+        } else {
+            if (typeSize == FP32_DTYPE_BYTES) {
+                return REGBASE_ERF_ALIGN_PER_ELEM_FP32;
+            }
+            if (typeSize == BF16_DTYPE_BYTES) {
+                return REGBASE_ERF_ALIGN_PER_ELEM_BF16;
+            }
+            return REGBASE_ERF_ALIGN_PER_ELEM_FP16;
+        }
+    }
+}
+
+static const int64_t REGBASE_MIN_BUFFER_SIZE = 2048;
+static const int64_t REGBASE_MAX_SHAPE_BUFFER_SIZE_MULTI_TIMES = 2;
+static int64_t CalcRegbaseBufSize(uint64_t ubSize, int64_t typeSize, int64_t blockSize, int64_t approximate, int64_t ny,
+                                  int64_t x, int64_t coreNum)
+{
+    int64_t maxPerElem = GetRegbasePerElem(typeSize, approximate, ny);
+    int64_t raw = static_cast<int64_t>(ubSize) / maxPerElem;
+    int64_t floored = raw / blockSize * blockSize;
+    int64_t bufSize = floored > 0 ? floored : blockSize;
+
+    // 大尾轴模板均匀切分，避免小尾块导致流水无法覆盖
+    if (ny > bufSize) {
+        int64_t divide = (ny + bufSize - 1) / bufSize;
+        bufSize = (ny + divide - 1) / divide;
+        bufSize = (bufSize + blockSize - 1) / blockSize * blockSize;
+    }
+
+    // 调整bufSize 适应小shape场景，尽量均匀分到多核
+    int64_t perCoreElem = ((x * ny) + coreNum - 1) / coreNum;
+    perCoreElem = (perCoreElem + blockSize - 1) / blockSize * blockSize;
+    if (bufSize <= REGBASE_MIN_BUFFER_SIZE) {
+        return bufSize;
+    }
+    if (perCoreElem <= REGBASE_MIN_BUFFER_SIZE) {
+        return REGBASE_MIN_BUFFER_SIZE;
+    }
+    if (perCoreElem <= bufSize) {
+        return perCoreElem;
+    }
+    // 大于 bufSize
+    if (perCoreElem <= bufSize * REGBASE_MAX_SHAPE_BUFFER_SIZE_MULTI_TIMES) {
+        int64_t balanceDiv = (perCoreElem + bufSize - 1) / bufSize;
+        int64_t balanceBufSize = perCoreElem / balanceDiv;
+        balanceBufSize = (balanceBufSize + blockSize - 1) / blockSize * blockSize;
+        balanceBufSize = balanceBufSize < REGBASE_MIN_BUFFER_SIZE ? REGBASE_MIN_BUFFER_SIZE : balanceBufSize;
+        return balanceBufSize;
+    }
+    // 大于 REGBASE_MAX_SHAPE_BUFFER_SIZE_MULTI_TIMES * bufSize
+    return bufSize;
+}
 
 constexpr uint32_t BATCH_MODE = 1;
 
@@ -125,7 +225,13 @@ static void GetTilingDataBig(GeGluV2TilingData& tilingData, TilingParam& tilingP
 
 static void GetFp16TilingData(GeGluV2TilingData& tilingData, TilingParam& tilingParam)
 {
-    int64_t bufSizeLimit = tilingParam.isRegbase ? COMMON_BUFFER_SIZE_LIMIT_REGBASE : COMMON_BUFFER_SIZE_LIMIT;
+    int64_t bufSizeLimit;
+    if (tilingParam.isRegbase) {
+        bufSizeLimit = CalcRegbaseBufSize(tilingParam.ubSize, FP16_DTYPE_BYTES, FP16_BLOCK_SIZE,
+                                          tilingParam.approximate, tilingParam.ny, tilingParam.x, tilingParam.coreNum);
+    } else {
+        bufSizeLimit = COMMON_BUFFER_SIZE_LIMIT;
+    }
     tilingParam.blockSize = FP16_BLOCK_SIZE;
 
     if (tilingParam.ny == 1) {
@@ -152,11 +258,18 @@ static void GetFp16TilingData(GeGluV2TilingData& tilingData, TilingParam& tiling
     }
 
     tilingData.set_blockSize(FP16_BLOCK_SIZE);
+    tilingData.set_bufSize(tilingParam.bufSize);
 }
 
 static void GetBf16TilingData(GeGluV2TilingData& tilingData, TilingParam& tilingParam)
 {
-    int64_t bufSizeLimit = tilingParam.isRegbase ? COMMON_BUFFER_SIZE_LIMIT_REGBASE : COMMON_BUFFER_SIZE_LIMIT;
+    int64_t bufSizeLimit;
+    if (tilingParam.isRegbase) {
+        bufSizeLimit = CalcRegbaseBufSize(tilingParam.ubSize, BF16_DTYPE_BYTES, BFP16_BLOCK_SIZE,
+                                          tilingParam.approximate, tilingParam.ny, tilingParam.x, tilingParam.coreNum);
+    } else {
+        bufSizeLimit = COMMON_BUFFER_SIZE_LIMIT;
+    }
     tilingParam.blockSize = BFP16_BLOCK_SIZE;
 
     if (tilingParam.ny == 1) {
@@ -183,18 +296,26 @@ static void GetBf16TilingData(GeGluV2TilingData& tilingData, TilingParam& tiling
     }
 
     tilingData.set_blockSize(BFP16_BLOCK_SIZE);
+    tilingData.set_bufSize(tilingParam.bufSize);
 }
 
 static void GetFp32TilingData(GeGluV2TilingData& tilingData, TilingParam& tilingParam)
 {
-    int64_t commBufSizeLimit = tilingParam.isRegbase ? COMMON_BUFFER_SIZE_LIMIT_REGBASE : COMMON_BUFFER_SIZE_LIMIT;
-    int64_t vReduceErfBufSizeLimit = tilingParam.isRegbase ? FP32_BUFFER_SIZE_VREDUCE_ERF_REGBASE :
-                                                             FP32_BUFFER_SIZE_VREDUCE_ERF;
+    int64_t commBufSizeLimit;
+    int64_t vReduceErfBufSizeLimit;
+    if (tilingParam.isRegbase) {
+        commBufSizeLimit = CalcRegbaseBufSize(tilingParam.ubSize, FP32_DTYPE_BYTES, FP32_BLOCK_SIZE,
+                                              tilingParam.approximate, tilingParam.ny, tilingParam.x,
+                                              tilingParam.coreNum);
+        vReduceErfBufSizeLimit = commBufSizeLimit;
+    } else {
+        commBufSizeLimit = COMMON_BUFFER_SIZE_LIMIT;
+        vReduceErfBufSizeLimit = FP32_BUFFER_SIZE_VREDUCE_ERF;
+    }
 
     tilingParam.blockSize = FP32_BLOCK_SIZE;
 
     if (tilingParam.ny == 1) {
-        // 根据ub大小、存活空间个数计算，32B对齐
         tilingParam.bufSize = tilingParam.approximate == 1 ? commBufSizeLimit : vReduceErfBufSizeLimit;
         tilingParam.useUbCoeff = NY1_B4_USE_UB_BYTE_COFF;
         GetTilingDataSmall(tilingData, tilingParam, true);
@@ -218,6 +339,7 @@ static void GetFp32TilingData(GeGluV2TilingData& tilingData, TilingParam& tiling
     }
 
     tilingData.set_blockSize(FP32_BLOCK_SIZE);
+    tilingData.set_bufSize(tilingParam.bufSize);
 }
 
 static void GetFp16TilingDataAscend310P(GeGluV2TilingData& tilingData, TilingParam& tilingParam)
@@ -238,6 +360,7 @@ static void GetFp16TilingDataAscend310P(GeGluV2TilingData& tilingData, TilingPar
     }
 
     tilingData.set_blockSize(FP16_BLOCK_SIZE);
+    tilingData.set_bufSize(tilingParam.bufSize);
 }
 
 static void GetFp32TilingDataAscend310P(GeGluV2TilingData& tilingData, TilingParam& tilingParam)
@@ -258,6 +381,7 @@ static void GetFp32TilingDataAscend310P(GeGluV2TilingData& tilingData, TilingPar
     }
 
     tilingData.set_blockSize(FP32_BLOCK_SIZE);
+    tilingData.set_bufSize(tilingParam.bufSize);
 }
 
 static ge::graphStatus CheckInputParams(gert::TilingContext* context)
@@ -269,13 +393,10 @@ static ge::graphStatus CheckInputParams(gert::TilingContext* context)
     int32_t typeSize = ge::GetSizeByDataType(dtype);
 
     OP_CHECK_IF(dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT,
-                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "input", ge::TypeUtils::DataTypeToSerialString(dtype),
-                                          "DT_FLOAT16,DT_BF16,DT_FLOAT"),
+                OP_LOGE(context, "input dtype only support fp16, fp32, bf16 currently, please check."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((typeSize <= 0),
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "typeSize", std::to_string(typeSize),
-                                                      "The value of typesize must be greater than 0"),
+    OP_CHECK_IF((typeSize <= 0), OP_LOGE(context, "typeSize is invalid %d, please check.", typeSize),
                 return ge::GRAPH_FAILED);
 
     // How to check split dim is -1.
@@ -284,15 +405,19 @@ static ge::graphStatus CheckInputParams(gert::TilingContext* context)
 
 static ge::graphStatus TilingPrepare4GeGluV2(gert::TilingParseContext* context)
 {
+    OP_LOGD(context, "TilingPrepare4GeGluV2 enter.");
+
     auto compileInfo = context->GetCompiledInfo<GeGluV2CompileInfo>();
     OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
     auto platformInfo = context->GetPlatformInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
+    OP_LOGD(context, "Tiling totalCoreNum: %d", compileInfo->totalCoreNum);
     if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2002) {
         compileInfo->totalCoreNum = compileInfo->totalCoreNum + ascendcPlatform.GetCoreNumVector();
     }
+    OP_LOGD(context, "Tiling totalCoreNum: %d", compileInfo->totalCoreNum);
 
     OP_CHECK_IF((compileInfo->totalCoreNum <= 0), OP_LOGE(context, "TilingPrepare4GeGluV2 fail to get core num."),
                 return ge::GRAPH_FAILED);
@@ -305,6 +430,8 @@ static ge::graphStatus TilingPrepare4GeGluV2(gert::TilingParseContext* context)
 
     compileInfo->isAscend310P = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2002;
     compileInfo->isRegbase = IsRegbaseSocVersion(context);
+    OP_LOGD(context, "TilingPrepare4GeGluV2 exit. coreNum: %d ubSize: %lu", compileInfo->totalCoreNum,
+            compileInfo->ubSizePlatForm);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -324,15 +451,13 @@ static size_t GetAttrSplitDim(const gert::TilingContext* context)
     size_t splitDimU = splitDim < 0 ? splitDim + inputShapeSize : splitDim;
 
     OP_CHECK_IF((splitDimU >= inputShapeSize),
-                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                    context->GetNodeName(), "splitDim,inputShapeSize",
-                    std::to_string(splitDimU) + "," + std::to_string(inputShapeSize),
-                    "The value of splitDim  must be in the range [-inputShapeSize, inputShapeSize]"),
+                OP_LOGE(context, "The value of attr [dim] must be in the range [-%zu, %zu], but got [%zu].",
+                        inputShapeSize, inputShapeSize, splitDimU),
                 return SPLIT_ERROR_STATUS);
 
     OP_CHECK_IF((inputShape.GetDim(splitDimU) % SPLIT_FACTOR != 0),
-                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "input", Ops::Base::ToString(inputShape),
-                                                      "splitDim of input must be an even number"),
+                OP_LOGE(context, "The dim of: %zu can not be split with factor: %u on value %ld.", splitDimU,
+                        SPLIT_FACTOR, inputShape.GetDim(splitDimU)),
                 return SPLIT_ERROR_STATUS);
 
     return splitDimU;
@@ -352,9 +477,10 @@ static ge::graphStatus GetTilingAttr(const gert::TilingContext* context, TilingP
     auto* attrApproximate = attrs->GetAttrPointer<int64_t>(ATTR_APPROXIMATE_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, attrApproximate);
     auto approximate = static_cast<int64_t>(*attrApproximate);
-    OP_CHECK_IF((approximate != 0 && approximate != 1),
-                OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "approximate", std::to_string(approximate), "0,1"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (approximate != 0 && approximate != 1),
+        OP_LOGE(context, "The value of attr [approximate] must be in the enum [0, 1], but got [%ld].", approximate),
+        return ge::GRAPH_FAILED);
     tilingParam.approximate = approximate;
 
     return ge::GRAPH_SUCCESS;
@@ -379,11 +505,7 @@ static ge::graphStatus GetTillingParam(const gert::TilingContext* context, Tilin
         }
     }
     int64_t ny = n * y;
-    OP_CHECK_IF(
-        (x == 0 || ny == 0),
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "inputShape", Ops::Base::ToString(inputShape),
-                                              "inputShape cannot be an empty tensor"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((x == 0 || ny == 0), OP_LOGE(context, "Get input tensor is empty."), return ge::GRAPH_FAILED);
 
     auto compileInfo = context->GetCompileInfo<GeGluV2CompileInfo>();
     tilingParam.x = x;
@@ -426,6 +548,7 @@ static void GetTillingData(ge::DataType dtype, TilingParam& tilingParam, GeGluV2
 
 static ge::graphStatus Tiling4GeGluV2(gert::TilingContext* context)
 {
+    OP_LOGD(context, "Tiling4GeGluV2 enter.");
     context->SetScheduleMode(BATCH_MODE);
     OP_CHECK_IF(CheckInputParams(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "InputParams not valid."),
                 return ge::GRAPH_FAILED);
@@ -449,7 +572,6 @@ static ge::graphStatus Tiling4GeGluV2(gert::TilingContext* context)
     context->SetBlockDim(tilingData.get_realCoreNum());
     context->SetTilingKey(tilingData.get_tilingKey());
     size_t* workspaces = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
     workspaces[0] = WORK_SPACE_SIZE + tilingParam.coreNum * BYTES_ONE_BLOCK * FP32_DTYPE_BYTES;
 
     OP_LOGD(context, "tilingData is splitSize:%ld, group:%ld, realCoreNum:%ld, numPerCore:%ld, loopNum:%ld, \
@@ -461,6 +583,7 @@ static ge::graphStatus Tiling4GeGluV2(gert::TilingContext* context)
             tilingData.get_blockSize(), tilingData.get_activateLeft(), tilingData.get_ny(),
             tilingData.get_approximate());
 
+    OP_LOGD(context, "Tiling4GeGluV2 exit.");
     return ge::GRAPH_SUCCESS;
 }
 

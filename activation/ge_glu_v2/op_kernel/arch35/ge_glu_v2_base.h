@@ -21,6 +21,106 @@
 namespace GeGluV2 {
 using namespace AscendC;
 
+constexpr uint32_t VF_VL_FP32 = 64;
+
+constexpr AscendC::Reg::CastTrait castTraitB162B32Even = {
+    AscendC::Reg::RegLayout::ZERO,
+    AscendC::Reg::SatMode::UNKNOWN,
+    AscendC::Reg::MaskMergeMode::ZEROING,
+    AscendC::RoundMode::UNKNOWN,
+};
+
+constexpr AscendC::Reg::CastTrait castTraitB322B16Even = {
+    AscendC::Reg::RegLayout::ZERO,
+    AscendC::Reg::SatMode::NO_SAT,
+    AscendC::Reg::MaskMergeMode::ZEROING,
+    AscendC::RoundMode::CAST_RINT,
+};
+
+template <typename T>
+__simd_callee__ inline void LoadToFloat(AscendC::Reg::RegTensor<float>& dst, __ubuf__ T* src,
+                                        AscendC::Reg::MaskReg& mask, uint32_t offset)
+{
+    if constexpr (IsSameType<T, float>::value) {
+        AscendC::Reg::LoadAlign<float>(dst, src + offset);
+    } else {
+        AscendC::Reg::RegTensor<T> tmp;
+        AscendC::Reg::LoadAlign<T, AscendC::Reg::LoadDist::DIST_UNPACK_B16>(tmp, src + offset);
+        AscendC::Reg::Cast<float, T, castTraitB162B32Even>(dst, tmp, mask);
+    }
+}
+
+template <typename T>
+__simd_callee__ inline void StoreFromFloat(__ubuf__ T* dst, AscendC::Reg::RegTensor<float>& src,
+                                           AscendC::Reg::MaskReg& mask, uint32_t offset)
+{
+    if constexpr (IsSameType<T, float>::value) {
+        AscendC::Reg::StoreAlign<float>(dst + offset, src, mask);
+    } else {
+        AscendC::Reg::RegTensor<T> tmp;
+        AscendC::Reg::Cast<T, float, castTraitB322B16Even>(tmp, src, mask);
+        AscendC::Reg::StoreAlign<T, AscendC::Reg::StoreDist::DIST_PACK_B32>(dst + offset, tmp, mask);
+    }
+}
+
+__simd_callee__ inline void VFGeluTanh(AscendC::Reg::RegTensor<float>& gelu, AscendC::Reg::RegTensor<float>& x,
+                                       AscendC::Reg::RegTensor<float>& tmp, AscendC::Reg::MaskReg& mask)
+{
+    AscendC::Reg::Mul(tmp, x, x, mask);
+    AscendC::Reg::Mul(tmp, x, tmp, mask);
+    AscendC::Reg::Muls(tmp, tmp, 0.044715f, mask);
+    AscendC::Reg::Add(tmp, x, tmp, mask);
+    AscendC::Reg::Muls(tmp, tmp, 1.5957691f, mask);
+    AscendC::Reg::Muls(tmp, tmp, -1.0f, mask);
+    AscendC::Reg::Exp(tmp, tmp, mask);
+    AscendC::Reg::Adds(tmp, tmp, 1.0f, mask);
+    AscendC::Reg::Div(gelu, x, tmp, mask);
+}
+
+template <typename TOut, typename TIn>
+__simd_vf__ inline void GeGluV2ComputeVf(__ubuf__ TIn* x1Addr, __ubuf__ TIn* x2Addr, __ubuf__ TOut* geluAddr,
+                                         __ubuf__ TOut* mulAddr, uint32_t size)
+{
+    AscendC::Reg::RegTensor<float> x2Reg, x1Reg, geluReg, tmpReg;
+    uint32_t vfLoopNum = (size + VF_VL_FP32 - 1) / VF_VL_FP32;
+    for (uint32_t i = 0; i < vfLoopNum; i++) {
+        uint32_t remain = size - i * VF_VL_FP32;
+        uint32_t active = remain > VF_VL_FP32 ? VF_VL_FP32 : remain;
+        AscendC::Reg::MaskReg mask = AscendC::Reg::UpdateMask<float>(active);
+
+        LoadToFloat<TIn>(x2Reg, x2Addr, mask, i * VF_VL_FP32);
+        VFGeluTanh(geluReg, x2Reg, tmpReg, mask);
+        StoreFromFloat<TOut>(geluAddr, geluReg, mask, i * VF_VL_FP32);
+
+        LoadToFloat<TIn>(x1Reg, x1Addr, mask, i * VF_VL_FP32);
+        AscendC::Reg::Mul(tmpReg, geluReg, x1Reg, mask);
+        StoreFromFloat<TOut>(mulAddr, tmpReg, mask, i * VF_VL_FP32);
+    }
+}
+
+__simd_vf__ inline void GeGluV2ComputeVfFp16(__ubuf__ half* x1Addr, __ubuf__ half* x2Addr, __ubuf__ half* geluAddr,
+                                             __ubuf__ half* mulAddr, uint32_t size)
+{
+    AscendC::Reg::RegTensor<float> x2Reg, tmpReg;
+    AscendC::Reg::RegTensor<half> x1Reg, geluHalfReg, mulReg;
+    uint32_t vfLoopNum = (size + VF_VL_FP32 - 1) / VF_VL_FP32;
+    for (uint32_t i = 0; i < vfLoopNum; i++) {
+        uint32_t remain = size - i * VF_VL_FP32;
+        uint32_t active = remain > VF_VL_FP32 ? VF_VL_FP32 : remain;
+        AscendC::Reg::MaskReg mask = AscendC::Reg::UpdateMask<float>(active);
+
+        LoadToFloat<half>(x2Reg, x2Addr, mask, i * VF_VL_FP32);
+        VFGeluTanh(tmpReg, x2Reg, tmpReg, mask);
+        AscendC::Reg::Cast<half, float, castTraitB322B16Even>(geluHalfReg, tmpReg, mask);
+        AscendC::Reg::StoreAlign<half, AscendC::Reg::StoreDist::DIST_PACK_B32>(geluAddr + i * VF_VL_FP32, geluHalfReg,
+                                                                               mask);
+
+        AscendC::Reg::LoadAlign<half, AscendC::Reg::LoadDist::DIST_UNPACK_B16>(x1Reg, x1Addr + i * VF_VL_FP32);
+        AscendC::Reg::Mul<half>(mulReg, geluHalfReg, x1Reg, mask);
+        AscendC::Reg::StoreAlign<half, AscendC::Reg::StoreDist::DIST_PACK_B32>(mulAddr + i * VF_VL_FP32, mulReg, mask);
+    }
+}
+
 template <typename T>
 class GeGluV2Base {
 public:
@@ -277,9 +377,9 @@ __aicore__ inline void GeGluV2Base<T>::ComputeGeluErf(LocalTensor<float>& gelu_o
     AscendC::Adds(tmpBuf1, tmpBuf2, ERF_ONE, length);
     AscendC::Muls(tmpBuf2, tmpBuf1, ERF_DOT_FIVE, length);
 
-    if constexpr (std::is_same<T, float>::value) {
-        gelu_out = computeOutQue.template AllocTensor<T>();
-    }
+    // if constexpr (std::is_same<T, float>::value) {
+    //     gelu_out = computeOutQue.template AllocTensor<T>();
+    // }
 
     AscendC::Mul(gelu_out, ubx2_fp32, tmpBuf2, length);
 }
@@ -364,6 +464,7 @@ __aicore__ inline void GeGluV2Base<T>::ParseTilingData(const GeGluV2TilingData* 
     m_tilingData.activateLeft = tilingData->activateLeft;
     m_tilingData.ny = tilingData->ny;
     m_tilingData.approximate = tilingData->approximate;
+    m_tilingData.bufSize = tilingData->bufSize;
 }
 } // namespace GeGluV2
 #endif // GeGluV2_BASE_H

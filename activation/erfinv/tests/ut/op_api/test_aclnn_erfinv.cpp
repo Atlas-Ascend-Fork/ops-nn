@@ -272,3 +272,32 @@ TEST_F(l2ErfinvTest, 018_ascend910B_support_bf16)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACLNN_SUCCESS);
 }
+
+// inplace，selfRef为整型，不在支持范围内
+TEST_F(l2ErfinvTest, 019_inplace_dtype_int32)
+{
+    auto selfDesc = TensorDesc({2, 4}, ACL_INT32, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnInplaceErfinv, INPUT(selfDesc), OUTPUT());
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// inplace，bf16（910A不支持bf16，910B及以上支持）
+TEST_F(l2ErfinvTest, 020_inplace_dtype_bfloat16)
+{
+    auto selfDesc = TensorDesc({4, 4}, ACL_BF16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnInplaceErfinv, INPUT(selfDesc), OUTPUT());
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    if (GetCurrentPlatformInfo().GetSocVersion() >= SocVersion::ASCEND910B &&
+        GetCurrentPlatformInfo().GetSocVersion() <= SocVersion::ASCEND910E) {
+        EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+    } else {
+        EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+    }
+}

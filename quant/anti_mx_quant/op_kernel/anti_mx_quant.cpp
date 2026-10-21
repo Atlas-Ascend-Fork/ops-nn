@@ -41,7 +41,7 @@ __global__ __aicore__ void anti_mx_quant(GM_ADDR x, GM_ADDR mxScale, GM_ADDR y, 
 
     (void)workspace; // Tail-axis path does not use workspace
 
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
     int64_t oriOverflowMode = AscendC::GetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>();
 #endif
 
@@ -51,7 +51,7 @@ __global__ __aicore__ void anti_mx_quant(GM_ADDR x, GM_ADDR mxScale, GM_ADDR y, 
         op.Process();
     }
 
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
     AscendC::SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(oriOverflowMode);
 #endif
 }

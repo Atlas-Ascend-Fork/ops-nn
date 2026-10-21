@@ -40,6 +40,7 @@ public:
             .ExtendCfgInfo("opFile.value", "swish_apt");
         this->AICore().AddConfig("ascend950", aicoreConfig);
         this->AICore().AddConfig("ascend350", aicoreConfig);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig);
     }
 };
 

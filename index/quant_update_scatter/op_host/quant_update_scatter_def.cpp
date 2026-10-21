@@ -91,6 +91,7 @@ public:
             .ExtendCfgInfo("opFile.value", "quant_update_scatter_apt");
         this->AICore().AddConfig("ascend950", config_950);
         this->AICore().AddConfig("ascend350", config_950);
+        this->AICore().AddConfig("ascend960dt", config_950);
     }
 };
 OP_ADD(QuantUpdateScatter);

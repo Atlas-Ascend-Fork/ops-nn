@@ -39,6 +39,7 @@ constexpr uint16_t FP4_E2M1_MAX_EXP = 0x0100;
 constexpr uint16_t FP4_E1M2_MAX_EXP = 0x0000;
 constexpr uint16_t MAX_EXP_FOR_BF16 = 0x7f80;
 constexpr uint16_t MAX_EXP_FOR_FP8 = 0x00ff;
+constexpr uint16_t BF16_ONE = 0x3f80;
 constexpr uint16_t BF16_EXP_BIAS = 0x7f00;
 constexpr uint16_t NAN_CUSTOMIZATION = 0x7f81;
 constexpr uint16_t SPECIAL_EXP_THRESHOLD = 0x0040;
@@ -76,6 +77,8 @@ static constexpr Reg::CastTrait castTraitOne = {Reg::RegLayout::ONE, Reg::SatMod
                                                 RoundMode::UNKNOWN};
 static constexpr Reg::CastTrait castTrait32to8 = {Reg::RegLayout::ZERO, Reg::SatMode::SAT, Reg::MaskMergeMode::ZEROING,
                                                   RoundMode::CAST_RINT};
+static constexpr Reg::CastTrait castTraitBf16ToE8m0 = {Reg::RegLayout::ZERO, Reg::SatMode::NO_SAT,
+                                                       Reg::MaskMergeMode::ZEROING, RoundMode::CAST_TRUNC};
 
 template <typename T, typename U>
 __aicore__ inline void ComputeMxScaleOCP(const int64_t dataLen, const uint16_t loop, __ubuf__ T* xAddr,
@@ -92,7 +95,6 @@ __aicore__ inline void ComputeMxScaleOCP(const int64_t dataLen, const uint16_t l
 
     Reg::RegTensor<uint16_t> infReg;
     Reg::RegTensor<uint16_t> dstTypeExpMaxReg;
-    Reg::RegTensor<uint16_t> fp8NanReg;
     Reg::RegTensor<uint16_t> zeroReg;
     Reg::RegTensor<uint16_t> biasReg;
     Reg::RegTensor<uint16_t> nanReg;
@@ -113,7 +115,6 @@ __aicore__ inline void ComputeMxScaleOCP(const int64_t dataLen, const uint16_t l
         Reg::Duplicate(dstTypeExpMaxReg, FP4_E1M2_MAX_EXP);
     }
     Reg::Duplicate(infReg, MAX_EXP_FOR_BF16);
-    Reg::Duplicate(fp8NanReg, MAX_EXP_FOR_FP8);
     Reg::Duplicate(zeroReg, 0);
     Reg::Duplicate(biasReg, BF16_EXP_BIAS);
     Reg::Duplicate(nanReg, NAN_CUSTOMIZATION);
@@ -130,18 +131,65 @@ __aicore__ inline void ComputeMxScaleOCP(const int64_t dataLen, const uint16_t l
         }
         Reg::Max(expMaxReg, expMaxReg, expReg, maskAll);
     }
-    Reg::Compare<uint16_t, CMPMODE::NE>(infMask, expMaxReg, infReg, maskAll);
-    Reg::Compare<uint16_t, CMPMODE::LE>(invalidDataMask, expMaxReg, dstTypeExpMaxReg, maskAll);
-    Reg::Sub(expMaxReg, expMaxReg, dstTypeExpMaxReg, maskAll);
-    Reg::ShiftRights(mxScaleReg, expMaxReg, SHR_NUM_FOR_BF16, maskAll);
-    Reg::Select<uint16_t>(mxScaleReg, mxScaleReg, fp8NanReg, infMask);
-    Reg::Select<uint16_t>(mxScaleReg, zeroReg, mxScaleReg, invalidDataMask);
-    Reg::Pack<uint8_t, uint16_t, Reg::HighLowPart::LOWEST>(scaleReg, mxScaleReg);
-    Reg::Compare<uint16_t, CMPMODE::EQ>(specialDataMask, expMaxReg, biasReg, maskAll);
-    Reg::Sub(reversedScaleReg, biasReg, expMaxReg, maskAll);
-    Reg::Select<uint16_t>(reversedScaleReg, reversedScaleReg, nanReg, infMask);
-    Reg::Select<uint16_t>(reversedScaleReg, zeroReg, reversedScaleReg, invalidDataMask);
-    Reg::Select<uint16_t>(reversedScaleReg, specialExpReg, reversedScaleReg, specialDataMask);
+    if constexpr (IsSameType<U, fp8_e4m3fn_t>::value || IsSameType<U, fp8_e5m2_t>::value) {
+        Reg::Compare<uint16_t, CMPMODE::NE>(infMask, expMaxReg, infReg, maskAll);
+        Reg::Compare<uint16_t, CMPMODE::LE>(invalidDataMask, expMaxReg, dstTypeExpMaxReg, maskAll);
+#if __NPU_ARCH__ == 9201
+        // ===== fp8 output: bf16 multiply then cast bf16 -> e8m0 (9201) =====
+        uint16_t dstTypeExpMaxRecip = 0;
+        if constexpr (IsSameType<U, fp8_e4m3fn_t>::value) {
+            dstTypeExpMaxRecip = BF16_ONE - FP8_E4M3_MAX_EXP;
+        } else {
+            dstTypeExpMaxRecip = BF16_ONE - FP8_E5M2_MAX_EXP;
+        }
+        Reg::RegTensor<uint16_t> dstTypeExpMaxRecipReg;
+        Reg::Duplicate(dstTypeExpMaxRecipReg, dstTypeExpMaxRecip);
+        Reg::Mul<bfloat16_t>((Reg::RegTensor<bfloat16_t>&)expMaxReg, (Reg::RegTensor<bfloat16_t>&)expMaxReg,
+                             (Reg::RegTensor<bfloat16_t>&)dstTypeExpMaxRecipReg, maskAll);
+        Reg::Cast<fp8_e8m0_t, bfloat16_t, castTraitBf16ToE8m0>((Reg::RegTensor<fp8_e8m0_t>&)mxScaleReg,
+                                                               (Reg::RegTensor<bfloat16_t>&)expMaxReg, maskAll);
+        Reg::Pack<uint8_t, uint16_t, Reg::HighLowPart::LOWEST>(scaleReg, mxScaleReg);
+        // reversed scale (1/scale), using Mul-modified expMaxReg
+        Reg::Compare<uint16_t, CMPMODE::EQ>(specialDataMask, expMaxReg, biasReg, maskAll);
+        Reg::Sub(reversedScaleReg, biasReg, expMaxReg, maskAll);
+        Reg::Select<uint16_t>(reversedScaleReg, reversedScaleReg, nanReg, infMask);
+        Reg::Select<uint16_t>(reversedScaleReg, zeroReg, reversedScaleReg, invalidDataMask);
+        Reg::Select<uint16_t>(reversedScaleReg, specialExpReg, reversedScaleReg, specialDataMask);
+#else
+        // ===== fp8 output: bit manipulation (default, e.g. 3510) =====
+        {
+            Reg::RegTensor<uint16_t> fp8NanReg;
+            Reg::Duplicate(fp8NanReg, MAX_EXP_FOR_FP8);
+            Reg::Sub(expMaxReg, expMaxReg, dstTypeExpMaxReg, maskAll);
+            Reg::ShiftRights(mxScaleReg, expMaxReg, SHR_NUM_FOR_BF16, maskAll);
+            Reg::Select<uint16_t>(mxScaleReg, mxScaleReg, fp8NanReg, infMask);
+            Reg::Select<uint16_t>(mxScaleReg, zeroReg, mxScaleReg, invalidDataMask);
+            Reg::Pack<uint8_t, uint16_t, Reg::HighLowPart::LOWEST>(scaleReg, mxScaleReg);
+        }
+        // reversed scale
+        Reg::Compare<uint16_t, CMPMODE::EQ>(specialDataMask, expMaxReg, biasReg, maskAll);
+        Reg::Sub(reversedScaleReg, biasReg, expMaxReg, maskAll);
+        Reg::Select<uint16_t>(reversedScaleReg, reversedScaleReg, nanReg, infMask);
+        Reg::Select<uint16_t>(reversedScaleReg, zeroReg, reversedScaleReg, invalidDataMask);
+        Reg::Select<uint16_t>(reversedScaleReg, specialExpReg, reversedScaleReg, specialDataMask);
+#endif
+    } else {
+        // ===== fp4 output: bit manipulation, unchanged =====
+        Reg::Compare<uint16_t, CMPMODE::NE>(infMask, expMaxReg, infReg, maskAll);
+        Reg::Compare<uint16_t, CMPMODE::LE>(invalidDataMask, expMaxReg, dstTypeExpMaxReg, maskAll);
+        Reg::RegTensor<uint16_t> fp8NanReg;
+        Reg::Duplicate(fp8NanReg, MAX_EXP_FOR_FP8);
+        Reg::Sub(expMaxReg, expMaxReg, dstTypeExpMaxReg, maskAll);
+        Reg::ShiftRights(mxScaleReg, expMaxReg, SHR_NUM_FOR_BF16, maskAll);
+        Reg::Select<uint16_t>(mxScaleReg, mxScaleReg, fp8NanReg, infMask);
+        Reg::Select<uint16_t>(mxScaleReg, zeroReg, mxScaleReg, invalidDataMask);
+        Reg::Pack<uint8_t, uint16_t, Reg::HighLowPart::LOWEST>(scaleReg, mxScaleReg);
+        Reg::Compare<uint16_t, CMPMODE::EQ>(specialDataMask, expMaxReg, biasReg, maskAll);
+        Reg::Sub(reversedScaleReg, biasReg, expMaxReg, maskAll);
+        Reg::Select<uint16_t>(reversedScaleReg, reversedScaleReg, nanReg, infMask);
+        Reg::Select<uint16_t>(reversedScaleReg, zeroReg, reversedScaleReg, invalidDataMask);
+        Reg::Select<uint16_t>(reversedScaleReg, specialExpReg, reversedScaleReg, specialDataMask);
+    }
 }
 
 template <typename T, typename U, const uint64_t scaleAlg>

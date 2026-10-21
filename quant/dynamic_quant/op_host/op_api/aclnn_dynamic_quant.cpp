@@ -531,7 +531,7 @@ aclnnStatus aclnnDynamicQuantV3GetWorkspaceSize(const aclTensor* x, const aclTen
                    DFX_IN(x, smoothScalesOptional, groupIndexOptional, dstType, isSymmetrical, quantMode),
                    DFX_OUT(yOut, scaleOut, offsetOut));
     if (!Ops::NN::AclnnUtil::IsRegbase()) {
-        OP_LOGE(ACLNN_ERR_INNER, "aclnnDynamicQuantV3 only support socVersion Ascend950");
+        OP_LOGE(ACLNN_ERR_INNER, "aclnnDynamicQuantV3 only support regbase soc version");
         return ACLNN_ERR_INNER;
     }
     DynamicQuantParams dynamicQuantParams{
@@ -561,7 +561,7 @@ aclnnStatus aclnnDynamicQuantV4GetWorkspaceSize(const aclTensor* x, const aclTen
                    DFX_IN(x, smoothScalesOptional, groupIndexOptional, dstType, isSymmetrical, quantMode, dstTypeMax),
                    DFX_OUT(yOut, scaleOut, offsetOut));
     if (!Ops::NN::AclnnUtil::IsRegbase()) {
-        OP_LOGE(ACLNN_ERR_INNER, "aclnnDynamicQuantV4 only support socVersion Ascend950");
+        OP_LOGE(ACLNN_ERR_INNER, "aclnnDynamicQuantV4 only support regbase soc version");
         return ACLNN_ERR_INNER;
     }
     DynamicQuantParams dynamicQuantParams{x,

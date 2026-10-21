@@ -374,6 +374,7 @@ __aicore__ inline void GeGluV2Base<T>::ParseTilingData(const GeGluV2TilingData* 
     m_tilingData.activateLeft = tilingData->activateLeft;
     m_tilingData.ny = tilingData->ny;
     m_tilingData.approximate = tilingData->approximate;
+    m_tilingData.bufSize = tilingData->bufSize;
 }
 } // namespace GeGluV2
 #endif // GeGluV2_BASE_H

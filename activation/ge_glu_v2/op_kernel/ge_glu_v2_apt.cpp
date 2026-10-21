@@ -13,25 +13,25 @@
  * \brief
  */
 
-#include "arch35/tanh/ge_glu_v2_bf16_align.h"
-#include "arch35/tanh/ge_glu_v2_bf16_align_last_axis_big.h"
-#include "arch35/tanh/ge_glu_v2_bf16_vreduce.h"
-#include "arch35/tanh/ge_glu_v2_fp16_align.h"
-#include "arch35/tanh/ge_glu_v2_fp16_align_last_axis_big.h"
-#include "arch35/tanh/ge_glu_v2_fp16_vreduce.h"
-#include "arch35/tanh/ge_glu_v2_fp32_align.h"
-#include "arch35/tanh/ge_glu_v2_fp32_vreduce.h"
-#include "arch35/tanh/ge_glu_v2_fp32_align_last_axis_big.h"
+#include "arch35/tanh/ge_glu_v2_bf16_align_arch35.h"
+#include "arch35/tanh/ge_glu_v2_bf16_align_last_axis_big_arch35.h"
+#include "arch35/tanh/ge_glu_v2_bf16_vreduce_arch35.h"
+#include "arch35/tanh/ge_glu_v2_fp16_align_arch35.h"
+#include "arch35/tanh/ge_glu_v2_fp16_align_last_axis_big_arch35.h"
+#include "arch35/tanh/ge_glu_v2_fp16_vreduce_arch35.h"
+#include "arch35/tanh/ge_glu_v2_fp32_align_arch35.h"
+#include "arch35/tanh/ge_glu_v2_fp32_vreduce_arch35.h"
+#include "arch35/tanh/ge_glu_v2_fp32_align_last_axis_big_arch35.h"
 
-#include "arch35/erf/ge_glu_v2_bf16_align_erf.h"
-#include "arch35/erf/ge_glu_v2_bf16_align_last_axis_big_erf.h"
-#include "arch35/erf/ge_glu_v2_bf16_vreduce_erf.h"
-#include "arch35/erf/ge_glu_v2_fp16_align_erf.h"
-#include "arch35/erf/ge_glu_v2_fp16_align_last_axis_big_erf.h"
-#include "arch35/erf/ge_glu_v2_fp16_vreduce_erf.h"
-#include "arch35/erf/ge_glu_v2_fp32_align_erf.h"
-#include "arch35/erf/ge_glu_v2_fp32_vreduce_erf.h"
-#include "arch35/erf/ge_glu_v2_fp32_align_last_axis_big_erf.h"
+#include "arch35/erf/ge_glu_v2_bf16_align_erf_arch35.h"
+#include "arch35/erf/ge_glu_v2_bf16_align_last_axis_big_erf_arch35.h"
+#include "arch35/erf/ge_glu_v2_bf16_vreduce_erf_arch35.h"
+#include "arch35/erf/ge_glu_v2_fp16_align_erf_arch35.h"
+#include "arch35/erf/ge_glu_v2_fp16_align_last_axis_big_erf_arch35.h"
+#include "arch35/erf/ge_glu_v2_fp16_vreduce_erf_arch35.h"
+#include "arch35/erf/ge_glu_v2_fp32_align_erf_arch35.h"
+#include "arch35/erf/ge_glu_v2_fp32_vreduce_erf_arch35.h"
+#include "arch35/erf/ge_glu_v2_fp32_align_last_axis_big_erf_arch35.h"
 
 using namespace GeGluV2;
 

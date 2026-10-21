@@ -61,6 +61,7 @@ public:
             .ExtendCfgInfo("opFile.value", "p_relu_grad_update_apt");
         this->AICore().AddConfig("ascend950", aicoreConfig);
         this->AICore().AddConfig("ascend350", aicoreConfig);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig);
     }
 };
 OP_ADD(PReluGradUpdate); // 添加算子信息库

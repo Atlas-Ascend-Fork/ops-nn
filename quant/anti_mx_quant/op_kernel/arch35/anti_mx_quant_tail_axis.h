@@ -112,7 +112,7 @@ template <typename T, typename U>
 __aicore__ inline void AntiMxQuantTailAxis<T, U>::Init(GM_ADDR x, GM_ADDR mxScale, GM_ADDR y,
                                                        const AntiMxQuantTilingData* tilingData)
 {
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
     SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(0);
 #endif
     ParseTilingData(tilingData);

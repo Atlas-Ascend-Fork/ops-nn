@@ -49,7 +49,8 @@ static bool CheckSocVersionIsSupportBf16(void)
     OP_LOGI("ReluAclnn", "curArch is %u", static_cast<uint32_t>(curArch));
     switch (curArch) {
         case NpuArch::DAV_2201:
-        case NpuArch::DAV_3510: {
+        case NpuArch::DAV_3510:
+        case NpuArch::DAV_9201: {
             return true;
         }
         default: {

@@ -254,17 +254,27 @@ __aicore__ inline void SparseSliceDimension<T>::Process()
     ubLoopNum_ = ops::CeilDiv<int64_t>(curCoreProcessNum_, valuePerUbAligned_);
     ubLoopTailCount_ = curCoreProcessNum_ - (ubLoopNum_ - 1) * valuePerUbAligned_;
     int64_t offset = 0;
+
+    LocalTensor<int64_t> sliceStartUb = sliceStartBuf_.Get<int64_t>();
+    LocalTensor<int64_t> sliceEndUb = sliceEndBuf_.Get<int64_t>();
+    LocalTensor<int32_t> counterUb = countBuf_.Get<int32_t>(REDUCE_OUTPUT_NUM);
+#if (__NPU_ARCH__ == 9201)
+    for (int32_t i = 0; i < rankNumbers_; i++) {
+        sliceStartUb.SetValue(i, sliceStart_[i]);
+        sliceEndUb.SetValue(i, sliceEnd_[i]);
+    }
+    event_t eventIdSToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_V));
+    SetFlag<HardEvent::S_V>(eventIdSToV);
+    WaitFlag<HardEvent::S_V>(eventIdSToV);
+#else
     uint64_t copyMask = 24;
 
     LocalTensor<int64_t> startTemp(TPosition::VECIN, START_TILING_DATA_OFFSET, TILING_DATA_ARRAY_SIZE);
     LocalTensor<int64_t> endTemp(TPosition::VECIN, END_TILING_DATA_OFFSET, TILING_DATA_ARRAY_SIZE);
 
-    LocalTensor<int64_t> sliceStartUb = sliceStartBuf_.Get<int64_t>();
-    LocalTensor<int64_t> sliceEndUb = sliceEndBuf_.Get<int64_t>();
-    LocalTensor<int32_t> counterUb = countBuf_.Get<int32_t>(REDUCE_OUTPUT_NUM);
-
     DataCopy(sliceStartUb, startTemp, copyMask);
     DataCopy(sliceEndUb, endTemp, copyMask);
+#endif
     Duplicate(counterUb, 0, REDUCE_OUTPUT_NUM);
 
     for (int64_t loopIndex = 0; loopIndex < ubLoopNum_ - 1; loopIndex++) {
@@ -520,7 +530,8 @@ __aicore__ inline void SparseSliceDimension<T>::CompareMultiDim(const LocalTenso
             pregIndicesB32 = Reg::UpdateMask<int32_t>(sreg0);
             Reg::LoadAlign<int8_t, Reg::LoadDist::DIST_UNPACK4_B8>(vregInMask,
                                                                    (__ubuf__ int8_t*)(maskUbAddr + loopIndex * vl));
-            Reg::Reduce<ReduceType::SUM, int32_t>(reduceResult, (Reg::RegTensor<int32_t>&)vregInMask, pregIndicesB32);
+            Reg::Reduce<Reg::ReduceType::SUM, int32_t>(reduceResult, (Reg::RegTensor<int32_t>&)vregInMask,
+                                                       pregIndicesB32);
             Reg::Add(vregCounterIn, vregCounterIn, reduceResult, pregB32First);
         }
         Reg::StoreAlign<int32_t, Reg::StoreDist::DIST_NORM>((__ubuf__ int32_t*)(counterUbAddr), vregCounterIn,

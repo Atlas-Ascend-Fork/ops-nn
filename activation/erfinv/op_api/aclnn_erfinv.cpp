@@ -31,6 +31,13 @@ static const std::initializer_list<DataType> ASCEND910B_DTYPE_SUPPORT_LIST = {
 
 static const std::initializer_list<DataType> FLOAT_LIST = {DataType::DT_FLOAT16, DataType::DT_FLOAT, DataType::DT_BF16};
 
+// inplace场景selfRef既是输入也是输出，只支持浮点类型
+static const std::initializer_list<DataType> ASCEND_INPLACE_DTYPE_SUPPORT_LIST = {DataType::DT_FLOAT,
+                                                                                  DataType::DT_FLOAT16};
+
+static const std::initializer_list<DataType> ASCEND910B_INPLACE_DTYPE_SUPPORT_LIST = {
+    DataType::DT_FLOAT, DataType::DT_FLOAT16, DataType::DT_BF16};
+
 static const std::initializer_list<DataType> GetDtypeSupportList()
 {
     auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
@@ -38,6 +45,15 @@ static const std::initializer_list<DataType> GetDtypeSupportList()
         return ASCEND910B_DTYPE_SUPPORT_LIST;
     }
     return ASCEND_DTYPE_SUPPORT_LIST;
+}
+
+static const std::initializer_list<DataType> GetInplaceDtypeSupportList()
+{
+    auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (curArch == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(curArch)) {
+        return ASCEND910B_INPLACE_DTYPE_SUPPORT_LIST;
+    }
+    return ASCEND_INPLACE_DTYPE_SUPPORT_LIST;
 }
 
 static inline bool CheckNotNull(const aclTensor* self, const aclTensor* out)
@@ -85,17 +101,46 @@ static aclnnStatus CheckParams(const aclTensor* self, const aclTensor* out)
     return ACLNN_SUCCESS;
 }
 
-aclnnStatus aclnnErfinvGetWorkspaceSize(const aclTensor* self, aclTensor* out, uint64_t* workspaceSize,
-                                        aclOpExecutor** executor)
+static inline bool CheckInplaceNotNull(const aclTensor* selfRef)
 {
-    OP_CHECK_COMM_INPUT(workspaceSize, executor);
+    OP_CHECK_NULL(selfRef, return false);
+    return true;
+}
 
-    L2_DFX_PHASE_1(aclnnErfinv, DFX_IN(self), DFX_OUT(out));
+static inline bool CheckInplaceDtypeValid(const aclTensor* selfRef)
+{
+    // 检查selfRef的数据类型是否在支持列表内，inplace场景selfRef既是输入也是输出，只支持浮点类型
+    auto DTYPE_SUPPORT_LIST = GetInplaceDtypeSupportList();
+    OP_CHECK_DTYPE_NOT_SUPPORT(selfRef, DTYPE_SUPPORT_LIST, return false);
 
-    // 固定写法，参数检查
-    auto ret = CheckParams(self, out);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    return true;
+}
 
+static inline bool CheckInplaceShape(const aclTensor* selfRef)
+{
+    // selfRef的数据维度不能超过8
+    OP_CHECK_MAX_DIM(selfRef, MAX_DIM_LEN, return false);
+
+    return true;
+}
+
+static aclnnStatus CheckInplaceParams(const aclTensor* selfRef)
+{
+    // 1. 检查参数是否为空指针
+    CHECK_RET(CheckInplaceNotNull(selfRef), ACLNN_ERR_PARAM_NULLPTR);
+
+    // 2. 检查输入的数据类型是否在API支持的数据类型范围之内，需要根据api定义校验
+    CHECK_RET(CheckInplaceDtypeValid(selfRef), ACLNN_ERR_PARAM_INVALID);
+
+    // 3. 检查shape是否满足约束
+    CHECK_RET(CheckInplaceShape(selfRef), ACLNN_ERR_PARAM_INVALID);
+
+    return ACLNN_SUCCESS;
+}
+
+static aclnnStatus ExecErfinvGetWorkspaceSize(const aclTensor* self, const aclTensor* out, uint64_t* workspaceSize,
+                                              aclOpExecutor** executor)
+{
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
@@ -137,11 +182,33 @@ aclnnStatus aclnnErfinvGetWorkspaceSize(const aclTensor* self, aclTensor* out, u
     return ACLNN_SUCCESS;
 }
 
+aclnnStatus aclnnErfinvGetWorkspaceSize(const aclTensor* self, aclTensor* out, uint64_t* workspaceSize,
+                                        aclOpExecutor** executor)
+{
+    OP_CHECK_COMM_INPUT(workspaceSize, executor);
+
+    L2_DFX_PHASE_1(aclnnErfinv, DFX_IN(self), DFX_OUT(out));
+
+    // 固定写法，参数检查
+    auto ret = CheckParams(self, out);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
+    return ExecErfinvGetWorkspaceSize(self, out, workspaceSize, executor);
+}
+
 aclnnStatus aclnnInplaceErfinvGetWorkspaceSize(const aclTensor* selfRef, uint64_t* workspaceSize,
                                                aclOpExecutor** executor)
 {
+    OP_CHECK_COMM_INPUT(workspaceSize, executor);
+
+    L2_DFX_PHASE_1(aclnnInplaceErfinv, DFX_IN(selfRef), DFX_OUT(selfRef));
+
+    // 固定写法，参数检查，inplace场景selfRef既是输入也是输出，校验规则与aclnnErfinv不同
+    auto ret = CheckInplaceParams(selfRef);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
     auto out = const_cast<aclTensor*>(selfRef);
-    return aclnnErfinvGetWorkspaceSize(selfRef, out, workspaceSize, executor);
+    return ExecErfinvGetWorkspaceSize(selfRef, out, workspaceSize, executor);
 }
 
 aclnnStatus aclnnErfinv(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor, const aclrtStream stream)

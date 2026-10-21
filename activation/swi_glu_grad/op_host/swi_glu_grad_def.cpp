@@ -48,6 +48,7 @@ public:
             .ExtendCfgInfo("opFile.value", "swi_glu_grad_apt");
         this->AICore().AddConfig("ascend950", regbaseCfg);
         this->AICore().AddConfig("ascend350", regbaseCfg);
+        this->AICore().AddConfig("ascend960dt", regbaseCfg);
 
         OpAICoreConfig config_without_bf16;
         config_without_bf16.DynamicCompileStaticFlag(true)
