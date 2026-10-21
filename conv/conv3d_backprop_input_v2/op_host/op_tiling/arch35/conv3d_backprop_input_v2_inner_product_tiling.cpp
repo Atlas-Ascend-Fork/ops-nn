@@ -127,6 +127,39 @@ bool IsStrictOneDimShape(const Conv3dBpInputV2RunInfo& runInfo)
            runInfo.dilation_h == 1 && runInfo.backprop_pad_u == 0 && runInfo.backprop_pad_d == 0;
 }
 
+bool IsOutputPaddingAllZero(gert::TilingContext* context, optiling::OpTypeV2 opType)
+{
+    const bool hasOutputPadding = opType == optiling::OpTypeV2::kConv3DTransposeV2 ||
+                                  opType == optiling::OpTypeV2::kExtendConvTranspose ||
+                                  opType == optiling::OpTypeV2::kExtendConvTransposeV2;
+    // Conv3DBackpropInputV2 has no output_padding attribute; transpose variants do.
+    if (!hasOutputPadding) {
+        return true;
+    }
+
+    const auto outputPadding = GetAttrVector(context, OUTPUT_PADDING_INDEX, kConv3DbpDim, "output_padding");
+    if (outputPadding.size() != static_cast<size_t>(kConv3DbpDim)) {
+        return false;
+    }
+    for (const auto& value : outputPadding) {
+        if (value != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsSplitAdmissionAttrsValid(const Conv3dBpInputV2RunInfo& runInfo, gert::TilingContext* context,
+                                optiling::OpTypeV2 opType)
+{
+    const bool isUnitDilation = runInfo.dilation_d == 1 && runInfo.dilation_h == 1 && runInfo.dilation_w == 1;
+    const bool isZeroPadding = runInfo.pad_h == 0 && runInfo.pad_t == 0 && runInfo.pad_u == 0 && runInfo.pad_d == 0 &&
+                               runInfo.pad_l == 0 && runInfo.pad_r == 0;
+    const int32_t maxStrideW = std::min(runInfo.kernel_w, PAD_DIM_UP);
+    // splitW/balanceM当前只支持dilation=1,pad=0,outputpadding=0,stride<min(kw,255)场景
+    return isUnitDilation && isZeroPadding && IsOutputPaddingAllZero(context, opType) && runInfo.stride_w < maxStrideW;
+}
+
 bool IsNcdhwOnly(const Conv3dBpInputV2RunInfo& runInfo)
 {
     return runInfo.outBackpropFormat == ge::FORMAT_NCDHW && runInfo.filterFormat == ge::FORMAT_NCDHW &&
@@ -874,11 +907,6 @@ bool Conv3DDXV2InnerProductTiling::ChooseLocalWTile(const L0TilingParams& l0Para
 bool Conv3DDXV2InnerProductTiling::RunLocalWRecompute(L0TilingParams& l0Params, L1TilingParams& l1Params,
                                                       CoreTilingParams& coreParams)
 {
-    (void)CalcKSegment();
-    if (tilingRunInfo_.enableSplitK) {
-        // 优先split K
-        return false;
-    }
     InitBaseMNK(l0Params);
     if (!ChooseLocalWTile(l0Params)) {
         return false;
@@ -946,9 +974,24 @@ void Conv3DDXV2InnerProductTiling::RestoreLocalWAttempt(const LocalWAttemptState
     localWSplitTileW_ = state.localWSplitTileW;
 }
 
-bool Conv3DDXV2InnerProductTiling::TryJointLocalWSplit()
+uint64_t Conv3DDXV2InnerProductTiling::GetStrategyCriticalWork(uint64_t baseM, uint64_t singleCoreCin,
+                                                               uint64_t singleCoreM) const
 {
-    if (!IsJointLocalWSplitCapable()) {
+    if (baseM == 0 || singleCoreCin == 0 || singleCoreM == 0) {
+        return UINT64_MAX;
+    }
+    const uint64_t nCnt = Ops::Base::CeilDiv(tilingRunInfo_.nValue, singleCoreCin);
+    const uint64_t parallelWork = static_cast<uint64_t>(runInfo_.batch_n) * static_cast<uint64_t>(runInfo_.real_g) *
+                                  nCnt;
+    // 复用balanceM评分
+    const MSplitChoice current = EvaluateMSplit(static_cast<uint64_t>(runInfo_.dedx_w), baseM, parallelWork,
+                                                static_cast<uint64_t>(coreNum_), singleCoreM);
+    return current.criticalWork;
+}
+
+bool Conv3DDXV2InnerProductTiling::TryJointLocalWSplit(uint64_t baselineCriticalWork)
+{
+    if (!IsSplitAdmissionAttrsValid(runInfo_, context_, opType_) || !IsJointLocalWSplitCapable()) {
         return false;
     }
 
@@ -970,15 +1013,26 @@ bool Conv3DDXV2InnerProductTiling::TryJointLocalWSplit()
         restore();
         return false;
     }
+    // 与当前已决定的tiling策略对比评分，仅当切w严格更优时才启用
+    const uint64_t localWCriticalWork = GetStrategyCriticalWork(l0Params.baseM, coreParams.singleCoreCin,
+                                                                coreParams.singleCoreM);
+    if (localWCriticalWork >= baselineCriticalWork) {
+        OP_LOGD(context_->GetNodeName(),
+                "Skip joint local-W tiling: criticalWork=%ld not better than current tiling criticalWork=%ld",
+                static_cast<int64_t>(localWCriticalWork), static_cast<int64_t>(baselineCriticalWork));
+        restore();
+        return false;
+    }
     SetTilingData(coreParams, l1Params, l0Params);
     const uint64_t mCnt = Ops::Base::CeilDiv(static_cast<uint64_t>(runInfo_.dedx_w), localWSplitTileW_);
     OP_LOGW(
         context_->GetNodeName(),
         "Enable joint local-W tiling: W=%ld, mCnt=%ld, tileW=%ld, baseM=%u, baseN=%u, baseK=%u, stepKa=%u, stepKb=%u, "
-        "localL1W=%ld, coreNum=%ld",
+        "localL1W=%ld, coreNum=%ld, criticalWork=%ld, baselineCriticalWork=%ld",
         static_cast<int64_t>(runInfo_.dedx_w), static_cast<int64_t>(mCnt), static_cast<int64_t>(localWSplitTileW_),
         l0Params.baseM, l0Params.baseN, l0Params.baseK, l1Params.stepKa, l1Params.stepKb,
-        static_cast<int64_t>(GetLocalWSplitL1Width(l0Params.baseM)), static_cast<int64_t>(tilingData_.get_coreNum()));
+        static_cast<int64_t>(GetLocalWSplitL1Width(l0Params.baseM)), static_cast<int64_t>(tilingData_.get_coreNum()),
+        static_cast<int64_t>(localWCriticalWork), static_cast<int64_t>(baselineCriticalWork));
     return true;
 }
 
@@ -1017,8 +1071,8 @@ bool Conv3DDXV2InnerProductTiling::IsBalancedMSplitCapable()
 
 bool Conv3DDXV2InnerProductTiling::ApplyBalancedMSplit(CoreTilingParams& coreParams, const L0TilingParams& l0Params)
 {
-    if (!IsBalancedMSplitCapable() || coreParams.singleCoreM == 0 || coreParams.singleCoreCin == 0 ||
-        l0Params.baseM == 0) {
+    if (!IsSplitAdmissionAttrsValid(runInfo_, context_, opType_) || !IsBalancedMSplitCapable() ||
+        coreParams.singleCoreM == 0 || coreParams.singleCoreCin == 0 || l0Params.baseM == 0) {
         return false;
     }
 
@@ -1523,11 +1577,6 @@ ge::graphStatus Conv3DDXV2InnerProductTiling::DoLibApiTiling()
         return ge::GRAPH_SUCCESS;
     }
 
-    if (TryJointLocalWSplit()) {
-        PrintTilingSummary();
-        return ge::GRAPH_SUCCESS;
-    }
-
     // 计算K轴分段大小实现Cout轴切分，判断是否需要切分
     if (CalcKSegment() == ge::GRAPH_SUCCESS && tilingRunInfo_.enableSplitK) {
         OP_LOGD(opName_, "Enable Split K.");
@@ -1565,8 +1614,14 @@ ge::graphStatus Conv3DDXV2InnerProductTiling::DoLibApiTiling()
         CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "check vector coreNum failed.");
         return ge::GRAPH_FAILED;
     }
+
     ApplyBalancedMSplit(coreParams, l0Params);
     SetTilingData(coreParams, l1Params, l0Params);
+    // 切w与当前tiling结果对比
+    const uint64_t baselineCriticalWork = GetStrategyCriticalWork(l0Params.baseM, coreParams.singleCoreCin,
+                                                                  coreParams.singleCoreM);
+    TryJointLocalWSplit(baselineCriticalWork);
+
     PrintTilingSummary();
     return ge::GRAPH_SUCCESS;
 }

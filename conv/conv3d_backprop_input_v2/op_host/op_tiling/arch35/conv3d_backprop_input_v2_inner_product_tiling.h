@@ -185,8 +185,9 @@ protected:
     bool IsLocalWGroupOneAdmitted() const;
     bool ChooseLocalWTile(const L0TilingParams& l0Params);
     bool RunLocalWRecompute(L0TilingParams& l0Params, L1TilingParams& l1Params, CoreTilingParams& coreParams);
-    bool TryJointLocalWSplit();
+    bool TryJointLocalWSplit(uint64_t baselineCriticalWork);
     uint64_t GetLocalWSplitL1Width(uint64_t baseM) const;
+    uint64_t GetStrategyCriticalWork(uint64_t baseM, uint64_t singleCoreCin, uint64_t singleCoreM) const;
     bool IsBalancedMSplitCapable();
     bool IsBalancedMBusinessAdmitted() const;
     void InitLocalWBaseMNK(L0TilingParams& l0Params);
