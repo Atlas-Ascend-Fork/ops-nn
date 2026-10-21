@@ -179,8 +179,8 @@ bool IndexPutWithSortV2Tiling::IsIndexedContinuous(const int64_t* arr, int64_t s
                     return false;
                 }
             }
+            prevIndex = i; // 更新前一个1的位置
         }
-        prevIndex = i; // 更新前一个1的位置
     }
     return true;
 }
