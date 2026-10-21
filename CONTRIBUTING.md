@@ -77,7 +77,7 @@ ${op_class}                    # 算子分类
 **提交前准备：**
 
 - 建议在需求评审通过后，再提交 PR。
-- 提交 PR 前需完成开发环境准备，并仔细了解项目特定的开发规范和版权声明要求（如涉及开源代码片段引用，请参考片段引用指导），确保您的贡献符合项目标准,签署 CLA。具体操作步骤请参阅：[PR 操作指南](https://gitcode.com/cann/community/blob/master/contributor/pull_request_operation.md)。
+- 提交 PR 前需完成开发环境准备，并仔细了解项目特定的开发规范和版权声明要求（如涉及开源代码片段引用，请参考片段引用指导），确保您的贡献符合项目标准，签署 CLA。具体操作步骤请参阅：[PR 操作指南](https://gitcode.com/cann/community/blob/master/contributor/pull_request_operation.md)。
 
 **交付件要求：**
 
