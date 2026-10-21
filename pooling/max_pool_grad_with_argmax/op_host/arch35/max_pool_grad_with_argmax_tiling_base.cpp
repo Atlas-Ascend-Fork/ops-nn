@@ -14,6 +14,7 @@
  */
 
 #include "max_pool_grad_with_argmax_tiling.h"
+#include "op_host/tiling_util.h"
 #include "graph/utils/type_utils.h"
 #include "exe_graph/runtime/infer_shape_context.h"
 
@@ -251,6 +252,17 @@ ge::graphStatus MaxPoolGradWithArgmaxBaseTiling::GetShapeAttrsInfo()
     }
 
     PrintInputData();
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus MaxPoolGradWithArgmaxBaseTiling::GetWorkspaceSize()
+{
+    if (context_->GetPlatformInfo() == nullptr || !Ops::NN::OpTiling::IsRegbaseSocVersion(context_)) {
+        return MaxPoolGradWithArgmaxTilingCommon::GetWorkspaceSize();
+    }
+    size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    currentWorkspace[0] = 0;
     return ge::GRAPH_SUCCESS;
 }
 

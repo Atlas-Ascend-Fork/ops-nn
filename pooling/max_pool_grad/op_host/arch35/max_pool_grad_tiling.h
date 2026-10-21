@@ -67,6 +67,7 @@ public:
 
 protected:
     ge::graphStatus GetShapeAttrsInfo() override;
+    ge::graphStatus GetWorkspaceSize() override;
 };
 
 class MaxPoolGradNCHWTilingHelper : public MaxPoolGradNCHWTilingCommon {

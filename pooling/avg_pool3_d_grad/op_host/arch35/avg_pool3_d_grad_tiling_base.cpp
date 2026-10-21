@@ -17,6 +17,7 @@
 #include <cstdint>
 
 #include "op_host/tiling_templates_registry.h"
+#include "op_host/tiling_util.h"
 #include "log/log.h"
 #include "error_util.h"
 #include "platform/platform_info.h"
@@ -554,7 +555,8 @@ ge::graphStatus AvgPool3DGradTilingBase::GetWorkspaceSize()
 {
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
-    currentWorkspace[0] = kMinWorkspaceBytes;
+    const bool isRegbase = context_->GetPlatformInfo() != nullptr && Ops::NN::OpTiling::IsRegbaseSocVersion(context_);
+    currentWorkspace[0] = isRegbase ? 0U : static_cast<size_t>(kMinWorkspaceBytes);
     return ge::GRAPH_SUCCESS;
 }
 

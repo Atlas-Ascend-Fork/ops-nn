@@ -256,10 +256,9 @@ uint64_t MaxPool3DWithArgmaxV2TilingSIMT::GetTilingKey() const
 
 ge::graphStatus MaxPool3DWithArgmaxV2TilingSIMT::GetWorkspaceSize()
 {
-    auto sys_workspace = SYS_WORKSPACE_SIZE;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
-    currentWorkspace[0] = static_cast<size_t>(sys_workspace);
+    currentWorkspace[0] = Ops::NN::OpTiling::IsRegbaseSocVersion(context_) ? 0U : SYS_WORKSPACE_SIZE;
     return ge::GRAPH_SUCCESS;
 }
 

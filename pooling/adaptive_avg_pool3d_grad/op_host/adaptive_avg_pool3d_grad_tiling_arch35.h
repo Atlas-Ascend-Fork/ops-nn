@@ -21,6 +21,7 @@
 #include "op_host/tiling_base.h"
 #include "op_host/tiling_templates_registry.h"
 #include "util/math_util.h"
+#include "op_host/tiling_util.h"
 #include "../op_kernel/arch35/adaptive_avg_pool3d_grad_struct.h"
 
 namespace optiling {

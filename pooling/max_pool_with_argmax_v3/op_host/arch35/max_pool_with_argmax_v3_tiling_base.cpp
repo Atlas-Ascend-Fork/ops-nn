@@ -18,6 +18,7 @@
 #include "error_util.h"
 #include "platform/platform_info.h"
 #include "max_pool_with_argmax_v3_tiling.h"
+#include "op_host/tiling_util.h"
 
 using namespace AscendC;
 using namespace ge;
@@ -254,10 +255,10 @@ uint64_t MaxPoolWithArgmaxV3BaseTiling::GetTilingKey() const { return 0; }
 
 ge::graphStatus MaxPoolWithArgmaxV3BaseTiling::GetWorkspaceSize()
 {
-    auto sys_workspace = WS_SYS_SIZE;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
-    currentWorkspace[0] = sys_workspace;
+    const bool isRegbase = context_->GetPlatformInfo() != nullptr && Ops::NN::OpTiling::IsRegbaseSocVersion(context_);
+    currentWorkspace[0] = isRegbase ? 0U : static_cast<size_t>(WS_SYS_SIZE);
 
     return ge::GRAPH_SUCCESS;
 }

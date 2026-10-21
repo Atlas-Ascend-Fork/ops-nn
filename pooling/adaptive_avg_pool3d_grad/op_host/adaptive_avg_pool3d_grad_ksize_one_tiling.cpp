@@ -87,7 +87,8 @@ ge::graphStatus AdaptiveAvgPool3dGradTilingKsizeOne::GetWorkspaceSize()
 {
     auto workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
-    workspaces[0] = WORKSPACE_SIZE;
+    const bool isRegbase = Ops::NN::OpTiling::IsRegbaseSocVersion(context_);
+    workspaces[0] = isRegbase ? 0U : static_cast<size_t>(WORKSPACE_SIZE);
     return ge::GRAPH_SUCCESS;
 }
 

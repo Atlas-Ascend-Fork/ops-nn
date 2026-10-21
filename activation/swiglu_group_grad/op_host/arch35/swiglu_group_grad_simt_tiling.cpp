@@ -16,6 +16,7 @@
 #include <algorithm>
 #include "swiglu_group_grad_simt_tiling.h"
 #include "op_host/tiling_templates_registry.h"
+#include "op_host/tiling_util.h"
 
 namespace optiling {
 
@@ -45,7 +46,8 @@ ge::graphStatus SwigluGroupGradSimtTiling::GetWorkspaceSize()
 {
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
-    currentWorkspace[0] = WS_SYS_SIZE;
+    const bool isRegbase = context_->GetPlatformInfo() != nullptr && Ops::NN::OpTiling::IsRegbaseSocVersion(context_);
+    currentWorkspace[0] = isRegbase ? 0U : static_cast<size_t>(WS_SYS_SIZE);
     return ge::GRAPH_SUCCESS;
 }
 

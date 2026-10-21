@@ -14,6 +14,7 @@
  */
 
 #include "adaptive_avg_pool2d_grad_nchw_small_kernel_tiling.h"
+#include "op_host/tiling_util.h"
 #include <algorithm>
 #include <sstream>
 #include <limits>
@@ -574,7 +575,8 @@ ge::graphStatus AdaptiveAvgPool2dGradTilingSmallKernel::GetWorkspaceSize()
 {
     auto workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
-    workspaces[0] = WORKSPACE_SIZE;
+    const bool isRegbase = context_->GetPlatformInfo() != nullptr && Ops::NN::OpTiling::IsRegbaseSocVersion(context_);
+    workspaces[0] = isRegbase ? 0U : static_cast<size_t>(WORKSPACE_SIZE);
     return ge::GRAPH_SUCCESS;
 }
 

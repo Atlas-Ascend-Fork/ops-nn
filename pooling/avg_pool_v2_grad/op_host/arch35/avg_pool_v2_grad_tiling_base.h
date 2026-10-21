@@ -23,6 +23,7 @@
 #include "op_host/tiling_base.h"
 #include "util/math_util.h"
 #include "op_common/op_host/util/platform_util.h"
+#include "op_host/tiling_util.h"
 #include "avg_pool_v2_grad_tiling_common.h"
 
 namespace optiling {

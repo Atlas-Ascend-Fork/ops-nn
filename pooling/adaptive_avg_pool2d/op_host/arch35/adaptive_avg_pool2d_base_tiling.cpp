@@ -15,6 +15,7 @@
 
 #include "log/log.h"
 #include "adaptive_avg_pool2d_base_tiling.h"
+#include "op_host/tiling_util.h"
 
 using Ops::NN::Optiling::TilingRegistry;
 using namespace std;
@@ -208,10 +209,10 @@ ge::graphStatus AdaptivePool2dBaseTiling::DoLibApiTiling() { return ge::GRAPH_SU
 
 ge::graphStatus AdaptivePool2dBaseTiling::GetWorkspaceSize()
 {
-    auto sys_workspace = SYS_WORKSPACE_SIZE;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
-    currentWorkspace[0] = static_cast<size_t>(sys_workspace);
+    const bool isRegbase = Ops::NN::OpTiling::IsRegbaseSocVersion(context_);
+    currentWorkspace[0] = isRegbase ? 0U : SYS_WORKSPACE_SIZE;
     return ge::GRAPH_SUCCESS;
 }
 

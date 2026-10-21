@@ -146,6 +146,7 @@ ge::graphStatus MaxPoolWithArgmaxV3BigKernelMulCoreTiling::DoOpTiling()
 }
 ge::graphStatus MaxPoolWithArgmaxV3BigKernelMulCoreTiling::GetWorkspaceSize()
 {
+    // Process() 调用无参 SyncAll() 需要系统区，业务区也从 workspace 原始地址绑定，二者均保留。
     auto sysWorkspace = WS_SYS_SIZE + VALUE_WORKSPACE_SIZE + INDEX_WORKSPACE_SIZE;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);

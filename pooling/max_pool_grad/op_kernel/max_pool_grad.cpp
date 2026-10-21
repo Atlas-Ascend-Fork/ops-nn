@@ -27,7 +27,8 @@ template <uint64_t KERNEL_MODE = TPL_SIMT_KERNEL, uint64_t FORMAT = TPL_NCHW_FOR
 __global__ __aicore__ void max_pool_grad(GM_ADDR orig_x, GM_ADDR orig_y, GM_ADDR grads, GM_ADDR y, GM_ADDR workspace,
                                          GM_ADDR tiling)
 {
-    if (workspace == nullptr || GetUserWorkspace(workspace) == nullptr || g_coreType == AIC) {
+    // NCHW 大/小核模板不消费 workspace；判空只放在 SIMT 分支，避免 RegBase 置 0 后误返回。
+    if (g_coreType == AIC) {
         return;
     }
 
@@ -36,6 +37,10 @@ __global__ __aicore__ void max_pool_grad(GM_ADDR orig_x, GM_ADDR orig_y, GM_ADDR
     REGISTER_TILING_DEFAULT(MaxPoolGradWithArgmaxSimtTilingCommonData);
 
     if constexpr (KERNEL_MODE == TPL_SIMT_KERNEL) {
+        // SIMT 使用 workspace 作为 argmax 业务区并调用 SyncAll()，保留判空。
+        if (workspace == nullptr || GetUserWorkspace(workspace) == nullptr) {
+            return;
+        }
         GET_TILING_DATA_WITH_STRUCT(MaxPoolGradWithArgmaxSimtTilingCommonData, tilingData, tiling);
         if constexpr (INDICES_DTYPE == TPL_INT32) {
             MaxPoolGrad::MaxPoolGradSIMT<DTYPE_X1, int32_t, FORMAT> op(&pipe, &tilingData);

@@ -424,4 +424,16 @@ ge::graphStatus MaxPoolGradTilingBase::GetShapeAttrsInfo()
     SetOtherInputParams();
     return ge::GRAPH_SUCCESS;
 }
+
+ge::graphStatus MaxPoolGradTilingBase::GetWorkspaceSize()
+{
+    // RegBase 的 NCHW 大/小核模板不消费 workspace；其他架构委托基类原实现。
+    if (!Ops::NN::OpTiling::IsRegbaseSocVersion(context_)) {
+        return MaxPoolGradWithArgmaxTilingCommon::GetWorkspaceSize();
+    }
+    size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    currentWorkspace[0] = 0;
+    return ge::GRAPH_SUCCESS;
+}
 } // namespace optiling

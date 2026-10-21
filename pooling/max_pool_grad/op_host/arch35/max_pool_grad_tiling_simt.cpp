@@ -89,6 +89,7 @@ ge::graphStatus MaxPoolGradTiling::GetWorkspaceSize()
     size_t argmaxSize = argmaxCount * indicesSize;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    // SIMT 模板需要 16MB 系统区 + argmax 业务区，不得削减。
     currentWorkspace[0] = argmaxSize + WS_SYS_SIZE;
 
     return ge::GRAPH_SUCCESS;

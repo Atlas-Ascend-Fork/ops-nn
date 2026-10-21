@@ -50,7 +50,8 @@ template <uint64_t INDEX_DTYPE = TPL_INT32, uint64_t IS_SIMT = 0, uint64_t IS_CH
 __global__ __aicore__ void max_pool3d_grad_with_argmax(GM_ADDR x, GM_ADDR grad, GM_ADDR argmax, GM_ADDR y,
                                                        GM_ADDR workspace, GM_ADDR tiling)
 {
-    if (workspace == nullptr || GetUserWorkspace(workspace) == nullptr || g_coreType == AIC) {
+    // arch35 模板不消费 workspace；RegBase Host 侧置 0，故不做判空。
+    if (g_coreType == AIC) {
         return;
     }
     TPipe pipe;

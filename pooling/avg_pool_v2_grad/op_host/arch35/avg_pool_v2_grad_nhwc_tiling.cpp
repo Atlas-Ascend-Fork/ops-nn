@@ -396,10 +396,10 @@ ge::graphStatus AvgPoolV2GradCommonNHWCTiling::DoLibApiTiling() { return ge::GRA
 
 ge::graphStatus AvgPoolV2GradCommonNHWCTiling::GetWorkspaceSize()
 {
-    auto sysWorkspace = ASCENDC_TOOLS_WORKSPACE;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
-    currentWorkspace[0] = sysWorkspace;
+    const bool isRegbase = context_->GetPlatformInfo() != nullptr && Ops::NN::OpTiling::IsRegbaseSocVersion(context_);
+    currentWorkspace[0] = isRegbase ? 0U : static_cast<size_t>(ASCENDC_TOOLS_WORKSPACE);
 
     return ge::GRAPH_SUCCESS;
 }

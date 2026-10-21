@@ -42,6 +42,7 @@ public:
 
 protected:
     ge::graphStatus GetShapeAttrsInfo() override;
+    ge::graphStatus GetWorkspaceSize() override;
     ge::graphStatus PostTiling() override;
 };
 } // namespace optiling

@@ -48,7 +48,8 @@ template <uint64_t TEMPLATE_MODE = TPL_SMALL_KERNEL, uint64_t INDEX_DTYPE = TPL_
 __global__ __aicore__ void adaptive_avg_pool3d_grad(GM_ADDR y_grad, GM_ADDR x, GM_ADDR x_grad, GM_ADDR workspace,
                                                     GM_ADDR tiling)
 {
-    if (workspace == nullptr || GetUserWorkspace(workspace) == nullptr || g_coreType == AIC) {
+    // arch35 模板不消费 workspace；RegBase Host 侧置 0，故不做判空。
+    if (g_coreType == AIC) {
         return;
     }
     TPipe pipe;

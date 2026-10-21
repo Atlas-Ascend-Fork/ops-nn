@@ -541,7 +541,8 @@ ge::graphStatus MaxPoolV3BaseTiling::GetWorkspaceSize()
     auto platformInfo = context_->GetPlatformInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
-    currentWorkspace[0] = ascendcPlatform.GetLibApiWorkSpaceSize();
+    const bool isRegbase = Ops::NN::OpTiling::IsRegbaseNpuArch(ascendcPlatform.GetCurNpuArch());
+    currentWorkspace[0] = isRegbase ? 0U : ascendcPlatform.GetLibApiWorkSpaceSize();
 
     return ge::GRAPH_SUCCESS;
 }

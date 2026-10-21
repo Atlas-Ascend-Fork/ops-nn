@@ -325,7 +325,6 @@ ge::graphStatus MaxPool3DWithArgmaxV2BigKernelRegbaseTiling::DoLibApiTiling() { 
 
 ge::graphStatus MaxPool3DWithArgmaxV2BigKernelRegbaseTiling::GetWorkspaceSize()
 {
-    auto sys_workspace = WS_SYS_SIZE;
     // When multiple cores collaborate on one window, reserve a workspace slot per sub-core for the
     // local (max value, real index) result of phase 1, later reduced by the first sub-core in phase 2.
     int64_t userWorkspace = 0;
@@ -339,7 +338,14 @@ ge::graphStatus MaxPool3DWithArgmaxV2BigKernelRegbaseTiling::GetWorkspaceSize()
     }
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
-    currentWorkspace[0] = sys_workspace + userWorkspace;
+    // userWorkspace > 0 的多核协作路径调用 SyncAll()，需要系统区；
+    // 仅 RegBase 且无业务区时整体置 0，其余情况保留 WS_SYS_SIZE + userWorkspace。
+    const bool isRegbase = Ops::NN::OpTiling::IsRegbaseSocVersion(context_);
+    if (isRegbase && userWorkspace == 0) {
+        currentWorkspace[0] = 0U;
+    } else {
+        currentWorkspace[0] = static_cast<size_t>(WS_SYS_SIZE) + static_cast<size_t>(userWorkspace);
+    }
 
     return ge::GRAPH_SUCCESS;
 }

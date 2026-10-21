@@ -13,6 +13,7 @@
  * \brief
  */
 #include "op_api/op_util.h"
+#include "op_host/tiling_util.h"
 
 #include "pool_tiling_templates_registry.h"
 #include "pool_3d_one_kize_tiling.h"
@@ -74,7 +75,8 @@ ge::graphStatus Pool3DOneKsizeTiling::GetWorkspaceSize()
     auto platformInfo = context_->GetPlatformInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
-    currentWorkspace[0] = ascendcPlatform.GetLibApiWorkSpaceSize();
+    const bool isRegbase = Ops::NN::OpTiling::IsRegbaseNpuArch(ascendcPlatform.GetCurNpuArch());
+    currentWorkspace[0] = isRegbase ? 0U : ascendcPlatform.GetLibApiWorkSpaceSize();
 
     return ge::GRAPH_SUCCESS;
 }

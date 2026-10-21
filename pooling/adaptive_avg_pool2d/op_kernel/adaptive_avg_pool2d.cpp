@@ -9,7 +9,7 @@
  */
 
 /* !
- * \file adaptive_avg_pool2d_apt.cpp
+ * \file adaptive_avg_pool2d.cpp
  * \brief
  */
 
@@ -42,7 +42,8 @@ template <uint64_t TEMPLATE_MODE = TPL_SIMT_KERNEL, uint64_t DTYPE_MODE = TPL_IN
           uint64_t BIG_KERNEL_COPY_MODE = TPL_BIG_KERNEL_NDDMA>
 __global__ __aicore__ void adaptive_avg_pool2d(GM_ADDR x, GM_ADDR y, GM_ADDR workspace, GM_ADDR tiling)
 {
-    if (workspace == nullptr || GetUserWorkspace(workspace) == nullptr || g_coreType == AIC) {
+    // 各模板均不消费 workspace；RegBase Host 侧置 0，故不做判空。
+    if (g_coreType == AIC) {
         return;
     }
     TPipe pipe;

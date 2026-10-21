@@ -20,6 +20,7 @@
 #include "platform/platform_info.h"
 #include "../../../max_pool_with_argmax_v3/op_host/arch35/max_pool_with_argmax_v3_tiling.h"
 #include "max_pool_grad_with_argmax_v3_tiling_base.h"
+#include "op_host/tiling_util.h"
 
 using namespace AscendC;
 using namespace ge;
@@ -286,6 +287,17 @@ ge::graphStatus MaxPoolGradWithArgmaxV3BaseTiling::GetShapeAttrsInfo()
     }
 
     PrintInputData();
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus MaxPoolGradWithArgmaxV3BaseTiling::GetWorkspaceSize()
+{
+    if (context_->GetPlatformInfo() == nullptr || !Ops::NN::OpTiling::IsRegbaseSocVersion(context_)) {
+        return MaxPoolGradWithArgmaxTilingCommon::GetWorkspaceSize();
+    }
+    size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    currentWorkspace[0] = 0;
     return ge::GRAPH_SUCCESS;
 }
 
