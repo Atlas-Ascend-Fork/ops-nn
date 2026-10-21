@@ -56,13 +56,15 @@ def parse_ini_to_obj(ini_file, tbe_ops_info):
                 op = {}
                 tbe_ops_info[op_name] = op
             else:
-                key1 = line[:line.index("=")].strip()
-                key2 = line[line.index("=")+1:].strip()
+                key1 = line[: line.index("=")].strip()
+                key2 = line[line.index("=") + 1 :].strip()
                 key1_0, key1_1 = key1.split(".")
-                if not key1_0 in op:
+                if key1_0 not in op:
                     op[key1_0] = {}
                 if key1_1 in op[key1_0]:
-                    raise RuntimeError("Op:" + op_name + " " + key1_0 + " " + key1_1 + " is repeated!")
+                    raise RuntimeError(
+                        "Op:" + op_name + " " + key1_0 + " " + key1_1 + " is repeated!"
+                    )
                 op[key1_0][key1_1] = key2
 
 
@@ -71,13 +73,9 @@ def check_op_info(tbe_ops):
     Check info info
     """
     print("\n\n==============check valid for ops info start==============")
-    not_valid_op = []
     required_op_input_info_keys = ["paramType", "name"]
     required_op_output_info_keys = ["paramType", "name"]
-    shape_type_valid_value = ["fix", "range", "list"]
-    need_compile_valid_value = ["true", "false"]
     param_type_valid_value = ["dynamic", "optional", "required"]
-    required_attr_key = ["type", "value", "paramType"]
     is_valid = True
     for op_key in tbe_ops:
         op = tbe_ops[op_key]
@@ -86,30 +84,54 @@ def check_op_info(tbe_ops):
             if op_info_key.startswith("input"):
                 op_input_info = op[op_info_key]
                 missing_keys = []
-                for  required_op_input_info_key in required_op_input_info_keys:
-                    if not required_op_input_info_key in op_input_info:
+                for required_op_input_info_key in required_op_input_info_keys:
+                    if required_op_input_info_key not in op_input_info:
                         missing_keys.append(required_op_input_info_key)
                 if len(missing_keys) > 0:
-                    print("op: " + op_key + " " + op_info_key + " missing: " + ",".join(missing_keys))
+                    print(
+                        "op: "
+                        + op_key
+                        + " "
+                        + op_info_key
+                        + " missing: "
+                        + ",".join(missing_keys)
+                    )
                     is_valid = False
                 else:
-                    if not op_input_info["paramType"] in param_type_valid_value:
-                        print("op: " + op_key + " " + op_info_key + \
-                              " paramType not valid, valid key:[dynamic, optional, required]")
+                    if op_input_info["paramType"] not in param_type_valid_value:
+                        print(
+                            "op: "
+                            + op_key
+                            + " "
+                            + op_info_key
+                            + " paramType not valid, valid key:[dynamic, optional, required]"
+                        )
                         is_valid = False
             if op_info_key.startswith("output"):
                 op_input_info = op[op_info_key]
                 missing_keys = []
-                for  required_op_input_info_key in required_op_output_info_keys:
-                    if not required_op_input_info_key in op_input_info:
+                for required_op_input_info_key in required_op_output_info_keys:
+                    if required_op_input_info_key not in op_input_info:
                         missing_keys.append(required_op_input_info_key)
                 if len(missing_keys) > 0:
-                    print("op: " + op_key + " " + op_info_key + " missing: " + ",".join(missing_keys))
+                    print(
+                        "op: "
+                        + op_key
+                        + " "
+                        + op_info_key
+                        + " missing: "
+                        + ",".join(missing_keys)
+                    )
                     is_valid = False
                 else:
-                    if not op_input_info["paramType"] in param_type_valid_value:
-                        print("op: " + op_key + " " + op_info_key + \
-                              " paramType not valid, valid key:[fix, range, list]")
+                    if op_input_info["paramType"] not in param_type_valid_value:
+                        print(
+                            "op: "
+                            + op_key
+                            + " "
+                            + op_info_key
+                            + " paramType not valid, valid key:[fix, range, list]"
+                        )
                         is_valid = False
     print("==============check valid for ops info end================\n\n")
     return is_valid
@@ -127,8 +149,11 @@ def write_json_file(tbe_ops_info, json_file_path):
     json_file_real_path = os.path.realpath(json_file_path)
     with open(json_file_real_path, "w") as f:
         # Only the owner and group have rights
-        os.chmod(json_file_real_path, stat.S_IWGRP + stat.S_IWUSR + stat.S_IRGRP + stat.S_IRUSR)
-        json.dump(tbe_ops_info, f, sort_keys=True, indent=4, separators=(',', ':'))
+        os.chmod(
+            json_file_real_path,
+            stat.S_IWGRP + stat.S_IWUSR + stat.S_IRGRP + stat.S_IRUSR,
+        )
+        json.dump(tbe_ops_info, f, sort_keys=True, indent=4, separators=(",", ":"))
     print("Compile op info cfg successfully.")
 
 
@@ -149,7 +174,7 @@ def parse_ini_to_json(ini_file_paths, outfile_path):
     return True
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = sys.argv
 
     output_file_path = "tbe_ops_info.json"
@@ -168,5 +193,3 @@ if __name__ == '__main__':
     if not parse_ini_to_json(ini_file_path_list, output_file_path):
         sys.exit(1)
     sys.exit(0)
-
-

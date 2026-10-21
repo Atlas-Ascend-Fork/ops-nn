@@ -17,12 +17,8 @@ from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 from atk.tasks.api_execute.aclnn_base_api import AclnnBaseApi
-import torchair
 import random
-import numpy as np
-import os
 import json
-import uuid
 
 
 @register("ascend_method_dequant_swiglu_quant")
@@ -76,14 +72,17 @@ class MethodDequantSwigluQuant(BaseApi):
             groupIdx = group_index[g_idx].to(torch.int32)
             if groupIdx == 0:
                 continue
-            x_tensor = x[offset: (offset + groupIdx)].to(torch.float32)
+            x_tensor = x[offset : (offset + groupIdx)].to(torch.float32)
             if "int32" in str(x_dtype):
                 if bias is not None and bias.dtype is torch.int32:
                     x_tensor = torch.add(x_tensor, bias[g_idx])
                 res = torch.mul(x_tensor, weight_scale[g_idx].to(torch.float32))
 
                 if activate_scale is not None:
-                    res = torch.mul(res, activate_scale[offset: (offset + groupIdx)].to(torch.float32))
+                    res = torch.mul(
+                        res,
+                        activate_scale[offset : (offset + groupIdx)].to(torch.float32),
+                    )
 
                 if bias is not None and bias.dtype is not torch.int32:
                     res = torch.add(res, bias[g_idx].to(torch.float32))
@@ -112,10 +111,14 @@ class MethodDequantSwigluQuant(BaseApi):
 
             if quant_scale is not None:
                 if quant_mode == "static":
-                    if(len(quant_scale.shape)==1):
-                        quant_scale = quant_scale.unsqueeze(1).expand(-1, output.shape[1])
-                    if(quant_offset is not None and len(quant_offset.shape)==1):
-                        quant_offset = quant_offset.unsqueeze(1).expand(-1, output.shape[1])
+                    if len(quant_scale.shape) == 1:
+                        quant_scale = quant_scale.unsqueeze(1).expand(
+                            -1, output.shape[1]
+                        )
+                    if quant_offset is not None and len(quant_offset.shape) == 1:
+                        quant_offset = quant_offset.unsqueeze(1).expand(
+                            -1, output.shape[1]
+                        )
                     output = torch.div(output, quant_scale[g_idx].to(torch.float32))
                     output = torch.add(output, quant_offset[g_idx].to(torch.float32))
 
@@ -130,13 +133,13 @@ class MethodDequantSwigluQuant(BaseApi):
 
             output = torch.clamp(output, -128, 127)
             output = torch.round(output)
-            res_y[offset: (offset + groupIdx)] = output
-            res_scale[offset: (offset + groupIdx)] = scale_out
+            res_y[offset : (offset + groupIdx)] = output
+            res_scale[offset : (offset + groupIdx)] = scale_out
             offset = offset + groupIdx
 
         return res_y.to(torch.int8), res_scale
 
-    def generate_random_list(self,length, total_sum):
+    def generate_random_list(self, length, total_sum):
         if length <= 0:
             return []
         if total_sum < length:
@@ -150,16 +153,17 @@ class MethodDequantSwigluQuant(BaseApi):
         return result
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-
         quant_mode = input_data.kwargs.get("quant_mode")
         if quant_mode == "static":
             quant_mode = 0
         else:
             quant_mode = 1
         x = input_data.kwargs.get("x")
-        quant_offset = input_data.kwargs.get("quant_offset", None) if quant_mode == 0 else None
+        quant_offset = (
+            input_data.kwargs.get("quant_offset", None) if quant_mode == 0 else None
+        )
         group_index = json.loads(input_data.kwargs.get("group_index", None))
-        group_index = torch.tensor(group_index, dtype = torch.int64)
+        group_index = torch.tensor(group_index, dtype=torch.int64)
         weight_scale = input_data.kwargs.get("weight_scale")
         activation_scale = input_data.kwargs.get("activation_scale")
         if self.device == "cpu":
@@ -212,27 +216,28 @@ class DequantSwigluQuantAclnnApi(AclnnBaseApi):
 
     def pre_process_data(self, input_data: InputDataset):
         import ctypes
-        from atk.tasks.backends.lib_interface.acl_wrapper import nnopbase, AclDataType, AclFormat, AclTensor
+        from atk.tasks.backends.lib_interface.acl_wrapper import AclTensor
+
         AclTensorPtr = ctypes.POINTER(AclTensor)
         null_void_ptr = ctypes.c_void_p(None)
         null_tensor_ptr = ctypes.cast(null_void_ptr, AclTensorPtr)
-        if input_data.kwargs.get("bias", None) == None:
+        if input_data.kwargs.get("bias", None) is None:
             input_data.kwargs["bias"] = null_tensor_ptr
-        if input_data.kwargs.get("quant_scale", None) == None:
+        if input_data.kwargs.get("quant_scale", None) is None:
             input_data.kwargs["quant_scale"] = null_tensor_ptr
         self.quant_mode = input_data.kwargs.get("quant_mode")
         if self.quant_mode == "static":
-            input_data.kwargs["quant_offset"] = input_data.kwargs.get("quant_offset", None)
+            input_data.kwargs["quant_offset"] = input_data.kwargs.get(
+                "quant_offset", None
+            )
         else:
             input_data.kwargs["quant_offset"] = null_tensor_ptr
-        x = input_data.kwargs.get("x")
         group_index_list = json.loads(input_data.kwargs.get("group_index", "[]"))
         input_data.kwargs["group_index"] = torch.tensor(
             group_index_list, dtype=torch.int64
         ).npu()
 
     def init_by_input_data(self, input_data: InputDataset):
-
         self.pre_process_data(input_data)
         input_args, output_packages = super().init_by_input_data(input_data)
         return input_args, output_packages
