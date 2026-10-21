@@ -16,20 +16,21 @@
 - 算子功能：
 
   MultiScaleDeformableAttention正向算子功能主要通过采样位置（sample location）、注意力权重（attention weights）、映射后的value特征、多尺度特征起始索引位置、多尺度特征图的空间大小（便于将采样位置由归一化的值变成绝对位置）等参数来遍历不同尺寸特征图的不同采样点。而反向算子的功能为根据正向的输入对输出的贡献及初始梯度求出输入对应的梯度。
+
+- 布局约定（kernel视角）：
+
+  本算子kernel按照**转置后的排布**实现。sampling_locations与attention_weights的查询维（num_queries）被移动到最后一维，即kernel收到的输入为：
+
+  - `sampling_locations = (bs, num_heads, num_levels, num_points, 2, num_queries)`，其中倒数第2维为采样点坐标分量（恒为2，第0、1个元素分别对应x、y方向），最后一维为查询维；
+  - `attention_weights = (bs, num_heads, num_levels, num_points, num_queries)`。
+
+  aclnn对外接口接受公开排布 `(bs, num_queries, num_heads, num_levels, num_points, 2)` / `(bs, num_queries, num_heads, num_levels, num_points)`，由aclnn适配层完成上述转置后下发kernel；图模式（GE）下调用方需直接按转置排布连接本算子节点。
+
 - 计算公式：
 
     设$b \in [0, bs)$、$q \in [0, num\_queries)$、$h \in [0, num\_heads)$、$\ell \in [0, num\_levels)$、$p \in [0, num\_points)$、$c \in [0, channels)$，分别为batch、查询、头、特征图、采样点、通道的索引。第$\ell$层特征图的高和宽为$H_\ell$、$W_\ell$，即$\mathrm{spatialShape}[\ell] = (H_\ell, W_\ell)$；第$\ell$层特征图像素$(y, x)$在$\mathrm{value}$的$num\_keys$维上的展平索引为$k_\ell(y, x) = \mathrm{levelStartIndex}[\ell] + y \cdot W_\ell + x$。采样点$\mathrm{location}[b, q, h, \ell, p] = (u, v)$（最后一维第0、1个元素分别对应$x$、$y$方向）映射到像素坐标$x = u \cdot W_\ell - 0.5$、$y = v \cdot H_\ell - 0.5$；记$x_0 = \lfloor x \rfloor$、$x_1 = x_0 + 1$、$y_0 = \lfloor y \rfloor$、$y_1 = y_0 + 1$，$\alpha_x = x - x_0$、$\alpha_y = y - y_0$，双线性插值权重$w_{00} = (1-\alpha_y)(1-\alpha_x)$、$w_{10} = (1-\alpha_y)\alpha_x$、$w_{01} = \alpha_y(1-\alpha_x)$、$w_{11} = \alpha_y\alpha_x$，并记四邻点特征向量$V_{y_i, x_j} := \mathrm{value}[b,\; k_\ell(y_i, x_j),\; h,\; :]$（$i, j \in \{0, 1\}$，越界邻点按0处理）。
 
-    - 正向输出为：
-
-      $$
-      \mathrm{output}[b,\; q,\; h \times channels + c] =
-      \sum_{\ell=0}^{num\_levels-1} \sum_{p=0}^{num\_points-1}
-      \mathrm{attnWeight}[b, q, h, \ell, p] \cdot
-      \sum_{i,j \in \{0,1\}} w_{ij} \cdot V_{y_i, x_j}[c]
-      $$
-
-    - 反向算子根据梯度$\mathrm{gradOutput}$（shape为$(bs, num\_queries, num\_heads \times channels)$，最后一维按$h \times channels + c$排布）计算$\mathrm{value}$、$\mathrm{location}$、$\mathrm{attnWeight}$三个输入的梯度。记$\mathrm{gradOutput}$中head$h$的切片为$G_{b,q,h,c} := \mathrm{gradOutput}[b,\; q,\; h \times channels + c]$。
+    - 反向算子根据梯度$\mathrm{gradOutput}$计算$\mathrm{value}$、$\mathrm{location}$、$\mathrm{attnWeight}$三个输入的梯度。记$\mathrm{gradOutput}$中head $h$的切片为$G_{b,q,h,c} := \mathrm{gradOutput}[b,\; q,\; h \times channels + c]$（gradOutput布局为$(bs, num\_queries, num\_heads \times channels)$，kernel不转置该输入）。
       1. 按注意力权重展开：
 
          $$
@@ -47,7 +48,7 @@
          \end{aligned}
          $$
 
-      3. 计算$\mathrm{attnWeight}$的梯度$\mathrm{gradAttnWeight}$（shape与attnWeight一致），为输出梯度与采样得到的特征向量的内积：
+      3. 计算$\mathrm{attnWeight}$的梯度$\mathrm{gradAttnWeight}$，为输出梯度与采样得到的特征向量的内积：
 
          $$
          \mathrm{gradAttnWeight}[b, q, h, \ell, p] =
@@ -55,7 +56,7 @@
          \left( \sum_{i,j \in \{0,1\}} w_{ij} \cdot V_{y_i, x_j}[c] \right)
          $$
 
-      4. 计算$\mathrm{location}$的梯度$\mathrm{gradLocation}$（shape与location一致）。采样点像素坐标$(x, y)$的梯度由双线性插值的一阶偏导得到：
+      4. 计算$\mathrm{location}$的梯度$\mathrm{gradLocation}$。采样点像素坐标$(x, y)$的梯度由双线性插值的一阶偏导得到：
 
          $$
          \nabla x_{b,q,h,\ell,p} =
@@ -71,13 +72,15 @@
              + (V_{y_1, x_1}[c] - V_{y_0, x_1}[c])\alpha_x \big]
          $$
 
-      5. 由$x = u \cdot W_\ell - 0.5$、$y = v \cdot H_\ell - 0.5$，按链式法则缩放回归一化坐标的梯度，写入$\mathrm{gradLocation}$（最后一维第0、1个元素分别对应$x$、$y$方向，与location一致）：
+      5. 由$x = u \cdot W_\ell - 0.5$、$y = v \cdot H_\ell - 0.5$，按链式法则缩放回归一化坐标的梯度：
 
          $$
          \mathrm{gradLocation}[b, q, h, \ell, p] = (\nabla u, \nabla v), \qquad
          \nabla u = W_\ell \cdot \nabla x_{b,q,h,\ell,p}, \qquad
          \nabla v = H_\ell \cdot \nabla y_{b,q,h,\ell,p}
          $$
+
+    - 上述公式按逻辑排布（query维在第1维）书写；kernel收发的`sampling_locations`、`attention_weights`、`grad_sampling_locations`、`grad_attention_weights`四个tensor的物理排布为转置排布（见"布局约定"），语义相同，仅在维度顺序上相差一次`transpose(0, 2, 3, 4, 5, 1)`（attnWeight侧为`transpose(0, 2, 3, 4, 1)`）。
 
 ## 参数说明
 
@@ -121,14 +124,14 @@
     <tr>
       <td>sampling_locations</td>
       <td>输入</td>
-      <td>采样点位置tensor，shape为(bs, num_queries, num_heads, num_levels, num_points, 2)。对应公式中的`location`。</td>
+      <td>采样点位置tensor，shape为(bs, num_heads, num_levels, num_points, 2, num_queries)，倒数第2维为坐标分量（恒为2）。对应公式中的`location`。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>attention_weights</td>
       <td>输入</td>
-      <td>采样点权重tensor，shape为(bs, num_queries, num_heads, num_levels, num_points)。对应公式中的`​attnWeight`。</td>
+      <td>采样点权重tensor，shape为(bs, num_heads, num_levels, num_points, num_queries)。对应公式中的`attnWeight`。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
@@ -149,14 +152,14 @@
     <tr>
       <td>grad_sampling_locations</td>
       <td>输出</td>
-      <td>输入sampling_locations对应的梯度，shape与sampling_locations一致。对应公式中的`gradLocation`。</td>
+      <td>输入sampling_locations对应的梯度，shape与sampling_locations一致，即(bs, num_heads, num_levels, num_points, 2, num_queries)。对应公式中的`gradLocation`。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>grad_attention_weights</td>
       <td>输出</td>
-      <td>输入attention_weights对应的梯度，shape与attention_weights一致。对应公式中的`gradAttnWeight`。</td>
+      <td>输入attention_weights对应的梯度，shape与attention_weights一致，即(bs, num_heads, num_levels, num_points, num_queries)。对应公式中的`gradAttnWeight`。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
@@ -164,7 +167,7 @@
 
 ## 约束说明
 
-- 通道数channels%8 = 0，且channels<=256
+- 通道数channels % 8 = 0，且channels <= 256
 - 查询的数量num_queries < 500000
 - 特征图的数量num_levels <= 16
 - 头的数量num_heads <= 16
