@@ -2,7 +2,7 @@
   "op_type": "GroupNormSiluQuant",
   "op_list": [
     {
-      "bin_filename": "GroupNormSiluQuant_float16_910b",
+      "bin_filename": "GroupNormSiluQuant_float16",
       "inputs": [
         {
           "name": "x",
@@ -103,7 +103,7 @@
         ]
     },
     {
-      "bin_filename": "GroupNormSiluQuant_bf16_910b",
+      "bin_filename": "GroupNormSiluQuant_bf16",
       "inputs": [
         {
           "name": "x",
