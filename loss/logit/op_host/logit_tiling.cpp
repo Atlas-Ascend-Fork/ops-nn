@@ -82,10 +82,6 @@ ge::graphStatus LogitTiling::RunBigKernelTiling(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
     float epsilon = *(attrs->GetFloat(0));
-
-    if (epsilon <= 0) {
-        epsilon = 1e-6;
-    }
     // 获取数据类型
     auto temp = tilingContext->GetInputDesc(0);
     if (temp == nullptr) {

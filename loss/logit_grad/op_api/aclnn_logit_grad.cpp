@@ -53,10 +53,6 @@ aclnnStatus CheckParams(const aclTensor* x, const aclTensor* dy, const aclTensor
     OP_CHECK_MAX_DIM(x, MAX_LOGIT_GRAD_DIM_NUM, return ACLNN_ERR_PARAM_INVALID);
     OP_CHECK_SHAPE_NOT_EQUAL(x, dy, return ACLNN_ERR_PARAM_INVALID);
     OP_CHECK_SHAPE_NOT_EQUAL(x, out, return ACLNN_ERR_PARAM_INVALID);
-    OP_CHECK(x->GetViewFormat() == Format::FORMAT_ND && x->GetStorageFormat() == Format::FORMAT_ND &&
-                 dy->GetViewFormat() == Format::FORMAT_ND && dy->GetStorageFormat() == Format::FORMAT_ND &&
-                 out->GetViewFormat() == Format::FORMAT_ND && out->GetStorageFormat() == Format::FORMAT_ND,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "LogitGrad only supports ND format."), return ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 } // namespace
