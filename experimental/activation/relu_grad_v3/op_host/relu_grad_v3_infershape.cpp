@@ -61,7 +61,15 @@ static ge::graphStatus InferShapeReluGradV3(gert::InferShapeContext* context)
         }
         OP_CHECK_IF(xDim != yDim && xDim != 1 && yDim != 1, OP_LOGE(context, "input shapes are not broadcastable"),
                     return ge::GRAPH_FAILED);
-        zShape->SetDim(i, std::max(xDim, yDim));
+        // 取非 1 的输入维度作为输出维度：标量(1)与未知维(-1)广播时须保留未知维，
+        // 否则 std::max(-1, 1) 会把未知维错误地固定为 1。
+        if (xDim == 1) {
+            zShape->SetDim(i, yDim);
+        } else if (yDim == 1) {
+            zShape->SetDim(i, xDim);
+        } else {
+            zShape->SetDim(i, std::max(xDim, yDim));
+        }
     }
 
     OP_LOGD(context->GetNodeName(), "End to do InferShapeReluGradV3");

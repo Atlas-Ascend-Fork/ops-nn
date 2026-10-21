@@ -25,7 +25,7 @@
 #include "kernel_run_context_facker.h"
 #include "register/op_impl_registry.h"
 
-class ReluGradV3Infershape : public testing::Tes {
+class ReluGradV3Infershape : public testing::Test {
 protected:
     static void SetUpTestCase() { std::cout << "ReluGradV3Infershape SetUp" << std::endl; }
 
@@ -93,6 +93,27 @@ TEST_F(ReluGradV3Infershape, relu_grad_v3_infershape_4d_broadcast_test)
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
     auto output = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
     ASSERT_EQ(Ops::Base::ToString(*output), "[8, 32, 128, 64]");
+}
+
+TEST_F(ReluGradV3Infershape, relu_grad_v3_infershape_scalar_broadcast_unknown_dim_test)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("ReluGradV3")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape xShape = {{2, -1}, {2, -1}};
+    gert::StorageShape yShape = {{1}, {1}};
+    gert::StorageShape zShape;
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&xShape, &yShape})
+                      .OutputShapes({&zShape})
+                      .Build();
+
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto output = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+    ASSERT_EQ(Ops::Base::ToString(*output), "[2, -1]");
 }
 
 TEST_F(ReluGradV3Infershape, relu_grad_v3_infershape_incompatible_broadcast_test)
