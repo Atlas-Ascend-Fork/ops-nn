@@ -52,11 +52,12 @@ __global__ __aicore__ void swiglu_backward_mx_quant_with_dual_axis(GM_ADDR x, GM
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
 
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
     int64_t oriOverflowMode = AscendC::GetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>();
 #endif
 
     REGISTER_TILING_DEFAULT(SwigluBackwardMxQuantWithDualAxisTilingData);
+
     GET_TILING_DATA_WITH_STRUCT(SwigluBackwardMxQuantWithDualAxisTilingData, tilingData, tiling);
 
     TPipe pipe;
@@ -66,7 +67,7 @@ __global__ __aicore__ void swiglu_backward_mx_quant_with_dual_axis(GM_ADDR x, GM
     op.Init(x, y_grad, group_index, x_grad1, mx_scale1, x_grad2, mx_scale2);
     op.Process();
 
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
     AscendC::SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(oriOverflowMode);
 #endif
 }
