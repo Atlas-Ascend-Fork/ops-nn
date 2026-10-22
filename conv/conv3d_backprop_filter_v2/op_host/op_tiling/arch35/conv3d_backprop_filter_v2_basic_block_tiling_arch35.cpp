@@ -63,10 +63,6 @@ bool Conv3DDWV2BasicBlockTilingArch35::IsSocVersion960()
 
 bool Conv3DDWV2BasicBlockTilingArch35::CheckVectorCoreNum()
 {
-    if (!IsArchAfter35()) {
-        return true;
-    }
-
     auto platformInfoPtr = context_->GetPlatformInfo();
     OP_CHECK_IF(platformInfoPtr == nullptr, OP_LOGE(opName_, "platformInfoPtr is null"), return false);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
@@ -284,9 +280,6 @@ void Conv3DDWV2BasicBlockTilingArch35::SetBasicBlockAttrsTiling()
     mmInfo_.mValue = static_cast<uint64_t>(runInfo_.cout1_g) * static_cast<uint64_t>(BLOCK_CUBE);
     mmInfo_.nValue = static_cast<uint64_t>(runInfo_.kh) * runInfo_.kw * runInfo_.cin1_g *
                      static_cast<uint64_t>(BLOCK_CUBE);
-    if (!IsArchAfter35()) {
-        mmInfo_.nValue *= runInfo_.kd;
-    }
     mmInfo_.kValue = static_cast<uint64_t>(runInfo_.ho) * runInfo_.wo;
     blockTiling_.usedCoreNum = platformInfo_.core_num;
 }
@@ -366,12 +359,7 @@ uint64_t Conv3DDWV2BasicBlockTilingArch35::GetBaseK(uint64_t baseM, uint64_t bas
     return blockBaseK;
 }
 
-void Conv3DDWV2BasicBlockTilingArch35::InitBaseMNK()
-{
-    if (IsArchAfter35()) {
-        InitBaseBlock();
-    }
-}
+void Conv3DDWV2BasicBlockTilingArch35::InitBaseMNK() { InitBaseBlock(); }
 
 void Conv3DDWV2BasicBlockTilingArch35::UpdateStepMNK()
 {
