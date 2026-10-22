@@ -21,6 +21,7 @@
 namespace {
 
 constexpr uint64_t MTE2_MIN_LOAD_SIZE = 32768UL;
+constexpr uint64_t HIF4_GROUP_SIZE = 64UL;
 constexpr uint64_t MIN_CARRY_DATA_SIZE_32K = 32UL * 1024UL;
 constexpr uint64_t FULL_LOAD_DATA_SIZE_64K = 64UL * 1024UL;
 constexpr uint64_t CACHE_LINE_512B = 512UL;
@@ -75,7 +76,10 @@ L1TilingDataCalculator::L1TilingDataCalculator(const QuantBatchMatmulInfo& input
 bool L1TilingDataCalculator::Compute(L1TilingMode mode)
 {
     l1TilingData_ = L1TilingData();
-    if (!ValidateInput() || !InitLeftL1Size()) {
+    if (!ValidateInput()) {
+        return false;
+    }
+    if (!InitLeftL1Size()) {
         return false;
     }
     bool computeResult = false;
@@ -189,7 +193,7 @@ bool L1TilingDataCalculator::ComputeL1TilingDefault()
         OP_TILING_CHECK(
             baseL1Size == 0UL,
             CUBE_INNER_ERR_REPORT(inputParams_.opName,
-                                  "Invalid MX L1 divisor: baseL1Size(%lu) should be greater than 0.", baseL1Size),
+                                  "Invalid MX/HIF4 L1 divisor: baseL1Size(%lu) should be greater than 0.", baseL1Size),
             return false);
         uint64_t depthInit = GetDepthA1B1();
         l1TilingData_.depthKa_ = depthInit;
@@ -286,6 +290,7 @@ bool L1TilingDataCalculator::TryApplyStreamKL1Step(uint64_t stepK, uint64_t targ
                                                    uint64_t baseBSize, bool requireKAxisTailMte2Align)
 {
     uint64_t kL1 = std::min(stepK * baseK_, targetK);
+    // 当前KL1是否256B对齐
     if (requireKAxisTailMte2Align && !IsKAxisTailMte2Aligned(kL1, inputParams_)) {
         return false;
     }
@@ -297,12 +302,15 @@ bool L1TilingDataCalculator::TryApplyStreamKL1Step(uint64_t stepK, uint64_t targ
     l1TilingData_.scaleFactorB_ = qmmv3_tiling_const::SCALER_FACTOR_MIN;
 
     uint64_t usedL1Size = l1TilingData_.depthKa_ * baseASize + l1TilingData_.depthKb_ * baseBSize;
+    // 超l1,当前解也无效，如果不超l1 则可以将当前解返回。
     if (usedL1Size > leftL1Size_) {
         return false;
     }
     if (!inputParams_.isMxPerGroup) {
         return true;
     }
+
+    // 计算scale的多载系数，如果不
     if (!CalScaleFactorsStreamK(baseASize, baseBSize, targetK)) {
         return false;
     }
@@ -313,6 +321,7 @@ bool L1TilingDataCalculator::TryApplyStreamKL1Step(uint64_t stepK, uint64_t targ
 bool L1TilingDataCalculator::SearchStreamKL1Step(uint64_t stepKMax, uint64_t targetK, uint64_t baseASize,
                                                  uint64_t baseBSize, bool requireKAxisTailMte2Align)
 {
+    // stepk 最大到最小值
     for (uint64_t stepKOffset = 0UL; stepKOffset < stepKMax; ++stepKOffset) {
         uint64_t stepK = stepKMax - stepKOffset;
         if (TryApplyStreamKL1Step(stepK, targetK, baseASize, baseBSize, requireKAxisTailMte2Align)) {
@@ -330,6 +339,7 @@ bool L1TilingDataCalculator::ComputeL1TilingStreamK()
     uint64_t baseBSize = GetSizeWithDataType(baseN_ * baseK_, inputParams_.bDtype);
     bool needKAxisTailMte2Align = !inputParams_.transA || inputParams_.transB;
     for (uint32_t alignPass = 0U; alignPass < qmmv3_tiling_const::DOUBLE_BUFFER_NUM; ++alignPass) {
+        //
         bool requireKAxisTailMte2Align = needKAxisTailMte2Align && alignPass == 0U;
         if (SearchStreamKL1Step(stepKMax, targetK, baseASize, baseBSize, requireKAxisTailMte2Align)) {
             return true;
@@ -377,7 +387,7 @@ bool L1TilingDataCalculator::CalStepKs()
             l1TilingData_.stepKb_ = limitedStepKb;
         }
     }
-    if (inputParams_.isMxPerGroup) {
+    if (inputParams_.isMxPerGroup || inputParams_.isHif4PerGroup) {
         // Limit max stepK to 4 to avoid issue queue stalls. MX unifies kAL1 and kBL1 later.
         l1TilingData_.stepKa_ = std::min(l1TilingData_.stepKa_, 4UL);
         l1TilingData_.stepKb_ = std::min(l1TilingData_.stepKb_, 4UL);

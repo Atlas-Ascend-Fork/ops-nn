@@ -88,6 +88,18 @@ struct MatmulShape {
     int64_t b;
 };
 
+struct TileL1L0Param {
+    uint64_t curM = 0;
+    uint64_t curN = 0;
+    uint64_t curAlignM = 0;
+    uint64_t curAlignN = 0;
+    uint64_t curGmAKL1 = 0;
+    uint64_t curGmBKL1 = 0;
+    uint64_t curPadAKL1 = 0; // pad to 64 align
+    uint64_t curPadBKL1 = 0; // pad to 64 align
+    uint64_t curKL0 = 0;
+};
+
 __aicore__ inline uint64_t LoadQuantScalarFromGm(GM_ADDR x3GmAddr)
 {
     return *reinterpret_cast<__gm__ uint64_t*>(x3GmAddr);

@@ -25,6 +25,8 @@ constexpr int IDX_M_BASE_NORM_CNT = 0;
 constexpr int IDX_M_BASE_TAIL_MAIN = 1;
 constexpr int IDX_N_BASE_NORM_CNT = 2;
 constexpr int IDX_N_BASE_TAIL_MAIN = 3;
+constexpr int IDX_C = 2;
+constexpr int IDX_BIAS = 3;
 
 using TupleL1L0Shape = AscendC::Shape<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t>;
 
@@ -225,6 +227,73 @@ __aicore__ inline AscendC::Coord<int64_t, int64_t, int64_t, int64_t> GetOffsetSt
     }
 
     return {offsetA, offsetB, offsetC, offsetBias};
+}
+
+// GetQuantStreamkOffset: StreamK专用offset计算，额外返回x1/x2 scale的GM偏移
+template <class BlockCoord_, class ProblemShape_, CubeFormat LayoutB = CubeFormat::ND, class B_T>
+__aicore__ inline AscendC::Std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t> GetQuantStreamkOffset(
+    BlockCoord_ blockCoord, ProblemShape_ problemShape, AscendC::Shape<int64_t, int64_t, int64_t, int64_t> tileL1,
+    int64_t kSingleCore, bool transA, bool transB, bool isBias, uint32_t aQuantMode, uint32_t bQuantMode)
+{
+    auto offsetWithoutScale = GetOffsetStreamK<BlockCoord_, ProblemShape_, LayoutB, B_T>(
+        blockCoord, problemShape, tileL1, kSingleCore, transA, transB, isBias);
+
+    int64_t x1scaleOffset = Get<MNK_M>(offsetWithoutScale);
+    int64_t x2scaleOffset = Get<MNK_N>(offsetWithoutScale);
+
+    int64_t m = Get<MNK_M>(problemShape);
+    int64_t n = Get<MNK_N>(problemShape);
+    int64_t k = Get<MNK_K>(problemShape);
+
+    int64_t mL1 = Get<MNK_M>(tileL1);
+    int64_t nL1 = Get<MNK_N>(tileL1);
+    if (aQuantMode == static_cast<uint32_t>(QuantBatchMatmul::QuantMode::MX_PERGROUP_MODE)) {
+        int64_t scaleK = CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
+        int64_t singleCoreScaleK = CeilDiv(kSingleCore, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
+
+        if (transA) {
+            x1scaleOffset = Get<MNK_B>(blockCoord) * m * scaleK + Get<MNK_M>(blockCoord) * mL1 * MXFP_MULTI_BASE_SIZE +
+                            Get<MNK_K>(blockCoord) * m * singleCoreScaleK;
+        } else {
+            x1scaleOffset = Get<MNK_B>(blockCoord) * m * scaleK + Get<MNK_M>(blockCoord) * mL1 * scaleK +
+                            Get<MNK_K>(blockCoord) * singleCoreScaleK;
+        }
+
+        if (transB) {
+            x2scaleOffset = Get<MNK_B>(blockCoord) * n * scaleK + Get<MNK_N>(blockCoord) * nL1 * scaleK +
+                            Get<MNK_K>(blockCoord) * singleCoreScaleK;
+        } else {
+            x2scaleOffset = Get<MNK_B>(blockCoord) * n * scaleK + Get<MNK_N>(blockCoord) * nL1 * MXFP_MULTI_BASE_SIZE +
+                            Get<MNK_K>(blockCoord) * singleCoreScaleK * n;
+        }
+    } else if (aQuantMode == static_cast<uint32_t>(QuantBatchMatmul::QuantMode::HIF4_PEGROUP_MODE)) {
+        // hifloat4_scale在A转置和B不转置的排布如下：
+        // E8,E1_8  E8,E1_8  E8,E1_8  E8,E1_8
+        // E1_16    E1_16    E1_16    E1_16
+        // E8,E1_8  E8,E1_8  E8,E1_8  E8,E1_8
+        // E1_16    E1_16    E1_16    E1_16
+        int64_t scaleK = CeilDiv(k, MXFP_DIVISOR_SIZE);
+        int64_t singleCoreScaleK = CeilDiv(kSingleCore, MXFP_DIVISOR_SIZE);
+
+        if (transA) {
+            x1scaleOffset = ((Get<MNK_M>(blockCoord) * mL1) >> 1) + Get<MNK_K>(blockCoord) * m * singleCoreScaleK;
+        } else {
+            x1scaleOffset = Get<MNK_M>(blockCoord) * mL1 * scaleK + Get<MNK_K>(blockCoord) * singleCoreScaleK;
+        }
+
+        if (transB) {
+            x2scaleOffset = Get<MNK_N>(blockCoord) * nL1 * scaleK + Get<MNK_K>(blockCoord) * singleCoreScaleK;
+        } else {
+            x2scaleOffset = ((Get<MNK_N>(blockCoord) * nL1) >> 1) + Get<MNK_K>(blockCoord) * singleCoreScaleK * n;
+        }
+    } else if (aQuantMode == static_cast<uint32_t>(QuantBatchMatmul::QuantMode::PERTENSOR_MODE)) {
+        x1scaleOffset = 0;
+    } else if (bQuantMode == static_cast<uint32_t>(QuantBatchMatmul::QuantMode::PERTENSOR_MODE)) {
+        x2scaleOffset = 0;
+    }
+
+    return {Get<MNK_M>(offsetWithoutScale), Get<MNK_N>(offsetWithoutScale),   x1scaleOffset, x2scaleOffset,
+            Get<IDX_C>(offsetWithoutScale), Get<IDX_BIAS>(offsetWithoutScale)};
 }
 
 // GetOffsetIterBatch

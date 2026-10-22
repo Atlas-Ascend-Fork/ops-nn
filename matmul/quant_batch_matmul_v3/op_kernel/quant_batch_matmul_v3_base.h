@@ -379,6 +379,24 @@ __aicore__ inline constexpr bool IsFp4()
 {
     return AscendC::IsSameType<T, fp4x2_e2m1_t>::value;
 }
+#else
+// 960等不支持Mmad S8S4/S4S4的平台不预定义__CUBE_S8S4_S4S4__，MX(E8M0)走Blaze路径，
+// CMCT路径无需MX功能，此处兜底恒false以保证arch35公共模板中DequantBmm::IsMxType名字可解析。
+template <typename T>
+__aicore__ inline constexpr bool IsMxType()
+{
+    return false;
+}
+#endif
+
+#if defined(__NPU_ARCH__) && (((defined(__CCE_AICORE__) && (__CCE_AICORE__ == 310)) && !(__NPU_ARCH__ == 3113)) || \
+                              (__NPU_ARCH__ == 5102) || (__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
+template <typename x1Dtype, typename scaleDytpe>
+__aicore__ inline constexpr bool IsMxOrHif4Type()
+{
+    return AscendC::IsSameType<scaleDytpe, AscendC::fp8_e8m0_t>::value ||
+           AscendC::IsSameType<x1Dtype, hifloat4x2_t>::value;
+}
 #endif
 
 #if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 220) || \

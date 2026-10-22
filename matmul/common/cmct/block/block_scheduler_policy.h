@@ -37,5 +37,6 @@ struct BuiltInFlatQuantScheduler {};
 struct BuiltInRotateQuantScheduler {};
 struct BuiltInMulScheduler {};
 struct BuiltInVectorScheduler {};
+struct BuiltInStreamKSchedulerQbmm {};
 } // namespace Gemm
 } // namespace Cmct

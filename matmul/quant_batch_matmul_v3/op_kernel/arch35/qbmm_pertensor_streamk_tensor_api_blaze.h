@@ -49,6 +49,7 @@ __aicore__ inline void QbmmPertensorStreamKTensorApiKernel(GM_ADDR aGM, GM_ADDR 
     const DequantBmm::QuantBatchMatmulV3StreamKBasicAPITilingData*
         quantBmmTilingData = static_cast<const DequantBmm::QuantBatchMatmulV3StreamKBasicAPITilingData*>(tilingData);
     DequantBmm::BasicAPICubeTiling matmulTiling = quantBmmTilingData->matmulTiling;
+    DequantBmm::SlidingWindowParams slidingWinParams = quantBmmTilingData->adaptiveSlidingWin;
     bool hasBias = matmulTiling.isBias != 0U;
     constexpr bool isIntScale = AscendC::IsSameType<X2ScaleType, uint64_t>::value ||
                                 AscendC::IsSameType<X2ScaleType, int64_t>::value;
@@ -68,7 +69,8 @@ __aicore__ inline void QbmmPertensorStreamKTensorApiKernel(GM_ADDR aGM, GM_ADDR 
         {aGM, bGM, cGM, biasMmadGm, perTokenScale, scale},
         {cGM, workspaceGm, scale, perTokenScale, biasEpilogueGm, isBiasEpilogue, quantBmmTilingData->params.biasDtype},
         {AscendC::GetBlockNum(), matmulTiling.baseM, matmulTiling.baseN, matmulTiling.baseK,
-         quantBmmTilingData->streamKTiling.singleCoreK, static_cast<int64_t>(kernelKL1)}};
+         quantBmmTilingData->streamKTiling.singleCoreK, static_cast<int64_t>(kernelKL1), 0,
+         Blaze::Gemm::L2_CACHE_DEFAULT, slidingWinParams.windowLen}};
 
     MatmulKernel qbmm;
     qbmm(params);

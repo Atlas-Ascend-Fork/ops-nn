@@ -47,7 +47,7 @@
 #define QBMMV3_IS_HIF4_DTYPE_TPL false
 #endif
 
-#if (ORIG_DTYPE_SCALE == DT_FLOAT8_E8M0) || QBMMV3_IS_HIF4_DTYPE_TPL
+#if ((__NPU_ARCH__ != 9201 && ORIG_DTYPE_SCALE == DT_FLOAT8_E8M0) || QBMMV3_IS_HIF4_DTYPE_TPL)
 #include "qbmm_mx_basic_api_cmct.h"
 #else
 #include "qbmm_cube_basic_api_cmct.h"
@@ -63,6 +63,15 @@
 #include "qbmm_mx_l0c_pingpong.h"
 #include "qbmm_mx_streamk_tensor_api_blaze.h"
 #endif
+#endif
+
+// CMCT BasicAPI StreamK kernel：960PR(9202)全量化走 CMCT；960DT(9201)仅 HIF4 走 CMCT BasicAPI。
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9202 && SUPPORT_MX_WITHOUT_BATCH_TILING_KEY)
+#include "qbmm_mx_streamk.h"
+#endif
+
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9202 && SUPPORT_NON_MX_STREAMK_TILING_KEY))
+#include "qbmm_fixpipe_quant_streamk.h"
 #endif
 
 #ifdef IS_A4W4I
@@ -266,6 +275,27 @@ constexpr CubeFormat format_y = CubeFormat::ND;
         QbmmPertensorStreamKTensorApiKernel<DTYPE_X1, DTYPE_X2, DTYPE_SCALE, DTYPE_Y, DTYPE_BIAS, aLayout, bLayout, \
                                             cLayout, fullLoadMode>(x1, x2, scale, bias, pertokenScale, y, user1,    \
                                                                    &tilingData);                                    \
+    } while (0)
+#endif
+
+// Ascend960(DAV_9201/9202) CMCT BasicAPI StreamK: MX per-group / HIF4 path.
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9202 && (SUPPORT_MX_WITHOUT_BATCH_TILING_KEY))
+#define QUANT_BMMV3_MX_STREAMK_CMCT_IMPL_CLASS(aLayout, bLayout)                                                     \
+    do {                                                                                                             \
+        GET_TILING_DATA_WITH_STRUCT(DequantBmm::QuantBatchMatmulV3StreamKBasicAPITilingData, tilingData, tiling);    \
+        QBMMStreamKMXKernel<DTYPE_X1, DTYPE_X2, DTYPE_SCALE, DTYPE_BIAS, DTYPE_Y, aLayout, bLayout,                  \
+                            Cmct::Gemm::layout::RowMajor>(x1, x2, bias, y, scale, pertokenScale, user1, &tilingData, \
+                                                          0);                                                        \
+    } while (0)
+#endif
+// Ascend960PR(DAV_9202) CMCT BasicAPI StreamK: per-tensor fixpipe quant path.
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9202 && SUPPORT_NON_MX_STREAMK_TILING_KEY)
+#define QUANT_BMMV3_FIXPIPE_QUANT_STREAMK_CMCT_IMPL_CLASS(aLayout, bLayout)                                       \
+    do {                                                                                                          \
+        GET_TILING_DATA_WITH_STRUCT(DequantBmm::QuantBatchMatmulV3StreamKBasicAPITilingData, tilingData, tiling); \
+        QBMMStreamKFixpipeQuantKernel<DTYPE_X1, DTYPE_X2, DTYPE_SCALE, DTYPE_BIAS, DTYPE_Y, aLayout, bLayout,     \
+                                      Cmct::Gemm::layout::RowMajor>(x1, x2, bias, y, scale, pertokenScale, user1, \
+                                                                    &tilingData, 0);                              \
     } while (0)
 #endif
 
@@ -484,7 +514,9 @@ UT_STATIC __global__ __aicore__ void quant_batch_matmul_v3(GM_ADDR x1, GM_ADDR x
         if constexpr (DequantBmm::IsMxType<DTYPE_SCALE>()) {
 #if IS_MX
 #if defined(FORMAT_X2) && FORMAT_X2 == FORMAT_FRACTAL_NZ
-#if IS_BLAZE
+// MX/HIF4共用Blaze子块：宏组对E8M0与HIFLOAT4_SCALE构建均有定义（IS_MX已含HIF4输入对），
+// HIF4的StreamK由块内kernelType{11}分支统一覆盖，无需单独分发。
+#if defined(ORIG_DTYPE_SCALE) && (ORIG_DTYPE_SCALE == DT_FLOAT8_E8M0) && IS_BLAZE
         if constexpr (TPL_BATCHMODE == TPL_WITHOUT_BATCH && TPL_KERNELTYPE == TPL_NO_VEC_EPILOGUE_WITH_MMAPI &&
                       TPL_APILEVEL == TPL_API_LEVEL_BLAZE) {
             QUANT_BMMV3_MX_WITHOUT_BATCH_BLAZE_IMPL_CLASS(TeALayout, TeBLayoutNz, asc::te::nd_ext_layout_ptn, 0);
@@ -528,8 +560,23 @@ UT_STATIC __global__ __aicore__ void quant_batch_matmul_v3(GM_ADDR x1, GM_ADDR x
             QUANT_BMMV3_MX_CMCT_IMPL_CLASS(CmctALayout, CmctBLayoutNz, Cmct::Gemm::layout::RowMajorAlign,
                                            Cmct::Gemm::A_FULL_LOAD_MODE);
         }
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9202) && (SUPPORT_STREAMK_TILING_KEY)
+        if constexpr (TPL_BATCHMODE == TPL_WITHOUT_BATCH && TPL_KERNELTYPE == TPL_VEC_EPILOGUE_STREAMK_WITH_MMAPI &&
+                      TPL_APILEVEL == TPL_API_LEVEL_BASIC) {
+            // mx streamk weightNz, cmct(9202)
+            if constexpr (TPL_ATRANS == 0 && TPL_BTRANS == 0) {
+                QUANT_BMMV3_MX_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::RowMajor, Cmct::Gemm::layout::Nz);
+            } else if constexpr (TPL_ATRANS == 0 && TPL_BTRANS == 1) {
+                QUANT_BMMV3_MX_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::RowMajor, Cmct::Gemm::layout::Zn);
+            } else if constexpr (TPL_ATRANS == 1 && TPL_BTRANS == 0) {
+                QUANT_BMMV3_MX_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::ColumnMajor, Cmct::Gemm::layout::Nz);
+            } else if constexpr (TPL_ATRANS == 1 && TPL_BTRANS == 1) {
+                QUANT_BMMV3_MX_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::ColumnMajor, Cmct::Gemm::layout::Zn);
+            }
+        }
+#endif
 #else
-#if IS_BLAZE
+#if defined(ORIG_DTYPE_SCALE) && (ORIG_DTYPE_SCALE == DT_FLOAT8_E8M0) && IS_BLAZE
         if constexpr (TPL_BATCHMODE == TPL_WITHOUT_BATCH && TPL_KERNELTYPE == TPL_NO_VEC_EPILOGUE_WITH_MMAPI &&
                       TPL_APILEVEL == TPL_API_LEVEL_BLAZE) {
             QUANT_BMMV3_MX_WITHOUT_BATCH_BLAZE_IMPL_CLASS(TeALayout, TeBLayoutNd, asc::te::nd_ext_layout_ptn, 0);
@@ -573,10 +620,26 @@ UT_STATIC __global__ __aicore__ void quant_batch_matmul_v3(GM_ADDR x1, GM_ADDR x
             QUANT_BMMV3_MX_CMCT_IMPL_CLASS(CmctALayout, CmctBLayoutNd, Cmct::Gemm::layout::RowMajorAlign,
                                            Cmct::Gemm::A_FULL_LOAD_MODE);
         }
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9202) && (SUPPORT_STREAMK_TILING_KEY)
+        if constexpr (TPL_BATCHMODE == TPL_WITHOUT_BATCH && TPL_KERNELTYPE == TPL_VEC_EPILOGUE_STREAMK_WITH_MMAPI &&
+                      TPL_APILEVEL == TPL_API_LEVEL_BASIC) {
+            // mxfp8/hif4 streamk, cmct(9202)
+            if constexpr (TPL_ATRANS == 0 && TPL_BTRANS == 0) {
+                QUANT_BMMV3_MX_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::RowMajor, Cmct::Gemm::layout::RowMajor);
+            } else if constexpr (TPL_ATRANS == 0 && TPL_BTRANS == 1) {
+                QUANT_BMMV3_MX_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::RowMajor, Cmct::Gemm::layout::ColumnMajor);
+            } else if constexpr (TPL_ATRANS == 1 && TPL_BTRANS == 0) {
+                QUANT_BMMV3_MX_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::ColumnMajor, Cmct::Gemm::layout::RowMajor);
+            } else if constexpr (TPL_ATRANS == 1 && TPL_BTRANS == 1) {
+                QUANT_BMMV3_MX_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::ColumnMajor,
+                                                       Cmct::Gemm::layout::ColumnMajor);
+            }
+        }
+#endif
 #endif
 #endif
     } else {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202) && IS_BLAZE && \
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201) && IS_BLAZE && \
     SUPPORT_NON_MX_STREAMK_TILING_KEY
         // Non-MX per-tensor StreamK uses the no-batch tiling key; keep it outside the legacy with-batch dispatch.
         if constexpr (TPL_BATCHMODE == TPL_WITHOUT_BATCH && TPL_KERNELTYPE == TPL_VEC_EPILOGUE_STREAMK_WITH_MMAPI &&
@@ -586,6 +649,26 @@ UT_STATIC __global__ __aicore__ void quant_batch_matmul_v3(GM_ADDR x1, GM_ADDR x
 #elif defined(FORMAT_X2) && FORMAT_X2 == FORMAT_FRACTAL_NZ
             QUANT_BMMV3_PERTENSOR_STREAMK_BLAZE_IMPL_CLASS(TeALayout, TeBLayoutNz, asc::te::nd_ext_layout_ptn, 0);
 #endif
+        }
+#endif
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9202) && (SUPPORT_STREAMK_TILING_KEY) && defined(FORMAT_X2) && \
+    (FORMAT_X2 == FORMAT_ND)
+        // Ascend960PR per-tensor fixpipe quant StreamK, no-batch tiling key, 仅支持x2为ND格式。
+        if constexpr (TPL_BATCHMODE == TPL_WITHOUT_BATCH && TPL_KERNELTYPE == TPL_VEC_EPILOGUE_STREAMK_WITH_MMAPI &&
+                      TPL_APILEVEL == TPL_API_LEVEL_BASIC) {
+            if constexpr (TPL_ATRANS == 0 && TPL_BTRANS == 0) {
+                QUANT_BMMV3_FIXPIPE_QUANT_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::RowMajor,
+                                                                  Cmct::Gemm::layout::RowMajor);
+            } else if constexpr (TPL_ATRANS == 0 && TPL_BTRANS == 1) {
+                QUANT_BMMV3_FIXPIPE_QUANT_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::RowMajor,
+                                                                  Cmct::Gemm::layout::ColumnMajor);
+            } else if constexpr (TPL_ATRANS == 1 && TPL_BTRANS == 0) {
+                QUANT_BMMV3_FIXPIPE_QUANT_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::ColumnMajor,
+                                                                  Cmct::Gemm::layout::RowMajor);
+            } else if constexpr (TPL_ATRANS == 1 && TPL_BTRANS == 1) {
+                QUANT_BMMV3_FIXPIPE_QUANT_STREAMK_CMCT_IMPL_CLASS(Cmct::Gemm::layout::ColumnMajor,
+                                                                  Cmct::Gemm::layout::ColumnMajor);
+            }
         }
 #endif
 #if IS_BLAZE

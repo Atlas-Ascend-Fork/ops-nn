@@ -60,6 +60,24 @@ constexpr uint16_t INPUT_BUFFER_FLAG_1 = 1;
 constexpr uint16_t INPUT_BUFFER_FLAG_2 = 2;
 constexpr uint16_t INPUT_BUFFER_FLAG_3 = 3;
 
+// StreamK tiling coordination indices shared between block scheduler and mmad.
+constexpr uint64_t IDX_M_TILE_IDX = 0UL;
+constexpr uint64_t IDX_N_TILE_IDX = 1UL;
+constexpr uint64_t IDX_K_TILE_IDX = 2UL;
+
+constexpr uint64_t L0_TRANS_ALIGN = 2UL;
+
+constexpr uint16_t SCALE_BUFFER_NUM = 2;
+constexpr uint16_t AB_L1_TWO_BUFFER = 2;
+constexpr uint16_t BIAS_BUFFER_FLAG_0 = 4;
+constexpr uint16_t BIAS_BUFFER_FLAG_1 = 5;
+constexpr uint16_t X2_SCALE_BUFFER_FLAG_0 = 0;
+constexpr uint16_t X2_SCALE_BUFFER_FLAG_1 = 1;
+
+constexpr static uint64_t DEQ_SCALE_MUL = 0xFFFFE000;
+constexpr static uint32_t DEQ_SCALE_MUL32 = 0xFFFFE000;
+constexpr static uint32_t LEFT_SHIFT_16 = 16;
+
 enum class QuantMode : uint32_t {
     DEFAULT = 0x0U,
     PERTENSOR_MODE = 0x1U,

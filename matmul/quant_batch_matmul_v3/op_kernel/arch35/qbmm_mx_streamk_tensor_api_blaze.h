@@ -47,6 +47,7 @@ __aicore__ inline void QbmmMxStreamKBasicApiKernel(GM_ADDR aGM, GM_ADDR bGM, GM_
     const DequantBmm::QuantBatchMatmulV3StreamKBasicAPITilingData* quantBmmTilingData_;
     quantBmmTilingData_ = static_cast<const DequantBmm::QuantBatchMatmulV3StreamKBasicAPITilingData*>(tilingData);
     DequantBmm::BasicAPICubeTiling matmulTiling = quantBmmTilingData_->matmulTiling;
+    DequantBmm::SlidingWindowParams slidingWinParams = quantBmmTilingData_->adaptiveSlidingWin;
 
     typename MatmulKernel::QBMMStreamKParams qbmmParams{matmulTiling.scaleKL1,
                                                         static_cast<uint32_t>(matmulTiling.dbL0C),
@@ -57,7 +58,8 @@ __aicore__ inline void QbmmMxStreamKBasicApiKernel(GM_ADDR aGM, GM_ADDR bGM, GM_
                   {aGM, bGM, cGM, biasGm, perTokenScale, scale},
                   {cGM, workspaceGm},
                   {AscendC::GetBlockNum(), matmulTiling.baseM, matmulTiling.baseN, matmulTiling.baseK,
-                   quantBmmTilingData_->streamKTiling.singleCoreK, quantBmmTilingData_->streamKTiling.kL1},
+                   quantBmmTilingData_->streamKTiling.singleCoreK, quantBmmTilingData_->streamKTiling.kL1, 0,
+                   Blaze::Gemm::L2_CACHE_DEFAULT, slidingWinParams.windowLen},
                   qbmmParams};
 
     MatmulKernel qbmm;
