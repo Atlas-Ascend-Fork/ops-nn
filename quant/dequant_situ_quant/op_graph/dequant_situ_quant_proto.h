@@ -49,10 +49,10 @@ namespace ge {
 * @li INT8 path: weight_scale required, activation_scale/group_index must be absent, x dim > 1.
 * @li INT32 path: weight_scale and activation_scale required, quant_scale/quant_offset must be absent,
 *        x rank == 2, quant_type must be dynamic.
-* @li BF16 path: weight_scale/activation_scale/bias/group_index must be absent, x rank == 2,
-*        quant_type must be dynamic.
-* @li FLOAT16 path: weight_scale/activation_scale/bias/group_index must be absent, x rank == 2,
-*        quant_type must be dynamic.
+* @li BF16 path: weight_scale/activation_scale/bias must be absent, x rank == 2,
+*        quant_type must be dynamic. group_index is optional (per-expert row counts).
+* @li FLOAT16 path: weight_scale/activation_scale/bias must be absent, x rank == 2,
+*        quant_type must be dynamic. group_index is optional (per-expert row counts).
 * @li When quant_type is 'static', quant_scale must be provided.
 * @li When quant_type is 'dynamic', quant_scale is optional (used as smoothScale).
 */

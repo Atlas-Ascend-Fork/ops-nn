@@ -109,13 +109,13 @@ std::tuple<at::Tensor, at::Tensor> dequant_situ_quant(const at::Tensor& x,
                             bias->scalar_type());
             }
         } else {
-            // BF16/FP16路径：预反量化输入，所有可选输入必须为空
+            // BF16/FP16路径：预反量化输入，可选输入仅允许 group_index
+            // （MoE 分组行计数，kernel 按组跳过死尾行），其余可选输入必须为空
             TORCH_CHECK(TensorAbsent(weight_scale), "weight_scale must be absent for bfloat16/float16 x");
             TORCH_CHECK(TensorAbsent(activation_scale), "activation_scale must be absent for bfloat16/float16 x");
             TORCH_CHECK(TensorAbsent(bias), "bias must be absent for bfloat16/float16 x");
             TORCH_CHECK(TensorAbsent(quant_scale), "quant_scale must be absent for bfloat16/float16 x");
             TORCH_CHECK(TensorAbsent(quant_offset), "quant_offset must be absent for bfloat16/float16 x");
-            TORCH_CHECK(TensorAbsent(group_index), "group_index must be absent for bfloat16/float16 x");
         }
     }
 

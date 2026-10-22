@@ -165,7 +165,8 @@ def dequant_situ_quant(
         activation_scale/group_index 必须为 None；
       - int32：dequantOut = cast(x) * weight_scale * activation_scale + bias，
         weight_scale/activation_scale 必选，quant_scale/quant_offset 必须为 None；
-      - bfloat16/float16：预反量化路径，dequantOut = cast(x)，所有可选输入必须为 None。
+      - bfloat16/float16：预反量化路径，dequantOut = cast(x)，除 group_index 外的可选输入
+        必须为 None；group_index 可选（MoE 分组行计数，kernel 按组处理并跳过死尾行）。
     随后执行 Situ 激活（activate_left 决定 gate/up 分别取 dequantOut 的前/后半），
     再按 quant_type 执行 static 或 dynamic 量化。
 
@@ -184,8 +185,10 @@ def dequant_situ_quant(
             int32 路径必须为 None。
         quant_offset (Optional[torch.Tensor]): 量化 offset，1 维 float32，shape 为 (H,) 或 (1,)，
             仅 static 模式生效；int32 路径必须为 None。
-        group_index (Optional[torch.Tensor]): MoE 分组索引，1 维 int64，shape 为 (K,)。
-            仅 int32 路径可选提供；int8/bfloat16/float16 路径必须为 None。
+        group_index (Optional[torch.Tensor]): MoE 分组索引，1 维 int64，shape 为 (K,)，
+            每个元素是对应专家的行计数（段长，各专家的行连续排布，总和不超过 x 的行数）。
+            int32/bfloat16/float16 路径可选提供；int8 路径必须为 None。
+            提供时 kernel 只处理前 sum(group_index) 行，未覆盖的死尾行输出保持 0。
         beta (float): Situ 激活 beta 参数，默认 4.0，不能为 0。
         linear_beta (float): Situ 激活 up 分支线性 beta 参数，默认 25.0，<=0 时不启用。
         activate_left (bool): True 时 gate 取 dequantOut 前半部分、up 取后半部分，

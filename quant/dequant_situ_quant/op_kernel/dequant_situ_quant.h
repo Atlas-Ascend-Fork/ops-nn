@@ -894,9 +894,11 @@ public:
             if (hasBias_) {
                 biasGm_.SetGlobalBuffer((__gm__ float*)bias, expertNum_ * inputWidth_);
             }
-            if (hasGroupIndex_) {
-                groupIndexGm_.SetGlobalBuffer((__gm__ int64_t*)groupIndex, expertNum_);
-            }
+        }
+        if (hasGroupIndex_) {
+            // Hoisted out of the int32-only block: the BF16/FP16 group path
+            // also reads the INT64 per-expert row counts via groupIndexGm_.
+            groupIndexGm_.SetGlobalBuffer((__gm__ int64_t*)groupIndex, expertNum_);
         }
         yGm_.SetGlobalBuffer((__gm__ int8_t*)y, rowLen_ * outputWidth_);
         yScaleGm_.SetGlobalBuffer((__gm__ float*)yScale, rowLen_);
@@ -954,11 +956,8 @@ public:
             return;
         }
 
-        if constexpr (!std::is_same_v<XType, int32_t>) {
-            ProcessGroup(0, rowLen_, 0);
-            return;
-        }
-
+        // Group skipping is dtype-agnostic: the BF16/FP16 (already
+        // dequantized) routed path may also carry per-expert row groups.
         if (!hasGroupIndex_) {
             ProcessGroup(0, rowLen_, 0);
             return;

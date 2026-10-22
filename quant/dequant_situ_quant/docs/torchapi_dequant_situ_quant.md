@@ -173,7 +173,8 @@ cann_ops_nn.dequant_situ_quant(
         <td>group_index</td>
         <td>Tensor</td>
         <td>可选</td>
-        <td>MoE group索引。不支持非连续，数据格式支持ND。</td>
+        <td>MoE group索引，各专家连续排布的行计数（段长），总和不超过x行数；
+            超出计数总和的死尾行不参与计算、输出保持0。不支持非连续，数据格式支持ND。</td>
         <td>int64</td>
         <td>1维，shape为(K,)</td>
     </tr>
@@ -274,8 +275,8 @@ cann_ops_nn.dequant_situ_quant(
   | ---- | ---- | ---- | ---- |
   | INT8 | x, weight_scale | bias, quant_scale, quant_offset | activation_scale, group_index |
   | INT32 | x, weight_scale, activation_scale | bias, group_index | quant_scale, quant_offset |
-  | BF16 | x | — | weight_scale, activation_scale, bias, quant_scale, quant_offset, group_index |
-  | FLOAT16 | x | — | weight_scale, activation_scale, bias, quant_scale, quant_offset, group_index |
+  | BF16 | x | group_index | weight_scale, activation_scale, bias, quant_scale, quant_offset |
+  | FLOAT16 | x | group_index | weight_scale, activation_scale, bias, quant_scale, quant_offset |
 
 - 该接口支持训练、推理场景下使用。
 - 该接口支持单算子模式和TorchAir图模式调用。
