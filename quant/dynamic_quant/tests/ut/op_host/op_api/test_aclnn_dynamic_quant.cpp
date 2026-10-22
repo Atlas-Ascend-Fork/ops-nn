@@ -119,3 +119,29 @@ TEST_F(l2_dynamic_quant_test, ascend950PR_9589_dynamic_quant_bf16_int32_testcase
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
     EXPECT_EQ(aclRet, ACLNN_SUCCESS);
 }
+
+// x为空而scale非空(pertoken下x=[M,0]时scale=[M])，scale应回填0
+TEST_F(l2_dynamic_quant_test, ascend910B2_dynamic_quant_fp16_empty_x_scale_not_empty)
+{
+    TensorDesc x_desc = TensorDesc({2, 0}, ACL_FLOAT16, ACL_FORMAT_ND);
+    TensorDesc y_desc = TensorDesc({2, 0}, ACL_INT8, ACL_FORMAT_ND);
+    TensorDesc scale_desc = TensorDesc({2}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnDynamicQuant, INPUT(x_desc, (aclTensor*)nullptr), OUTPUT(y_desc, scale_desc));
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+// x/y/scale全为空，维持早退返回成功
+TEST_F(l2_dynamic_quant_test, ascend910B2_dynamic_quant_fp16_all_empty)
+{
+    TensorDesc x_desc = TensorDesc({0, 4}, ACL_FLOAT16, ACL_FORMAT_ND);
+    TensorDesc y_desc = TensorDesc({0, 4}, ACL_INT8, ACL_FORMAT_ND);
+    TensorDesc scale_desc = TensorDesc({0}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnDynamicQuant, INPUT(x_desc, (aclTensor*)nullptr), OUTPUT(y_desc, scale_desc));
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}

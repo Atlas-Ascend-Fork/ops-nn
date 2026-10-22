@@ -14,6 +14,7 @@
 #include "dynamic_quant.h"
 #include "quant/dynamic_quant_v2/op_host/op_api/aclnn_dynamic_quant_v2.h"
 #include "level0/fault_injection.h"
+#include "level0/fill.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 
@@ -365,6 +366,27 @@ static aclnnStatus Int42Int32PackedTensor(const aclTensor* out, const aclTensor*
     outTensor = outTemp;
     return ACLNN_SUCCESS;
 }
+
+// x/y为空而scale/offset非空时(pertoken下x=[M,0]时scale=[M]、pertensor下scale恒为[1]、
+// perchannel下x=[0,K]时scale=[K])，早退会跳过写scale/offset导致输出残留未初始化数据；
+// 回填0与kernel对全零行产出的scale=0一致。写法对齐仓内先例 loss/binary_cross_entropy。
+static aclnnStatus FillOutWithValueZero(const aclTensor* out, aclOpExecutor* executor)
+{
+    const aclScalar* valueScalar = executor->AllocScalar(0);
+    CHECK_COND(valueScalar != nullptr, ACLNN_ERR_INNER_NULLPTR, "alloc fill zero scalar failed.");
+    auto valueTensor = executor->ConvertToTensor(valueScalar, out->GetDataType());
+    CHECK_COND(valueTensor != nullptr, ACLNN_ERR_INNER_NULLPTR, "convert fill zero scalar failed.");
+    auto fillShape = op::ToShapeVector(out->GetOriginalShape());
+    aclIntArray* shapeArray = executor->AllocIntArray(fillShape.data(), fillShape.size());
+    CHECK_COND(shapeArray != nullptr, ACLNN_ERR_INNER_NULLPTR, "alloc fill shape failed.");
+    const aclTensor* dims = executor->ConvertToTensor(fillShape.data(), fillShape.size(), op::DataType::DT_INT64);
+    CHECK_COND(dims != nullptr, ACLNN_ERR_INNER_NULLPTR, "convert fill dims failed.");
+    auto filled = l0op::Fill(dims, valueTensor, shapeArray, executor);
+    CHECK_COND(filled != nullptr, ACLNN_ERR_INNER_NULLPTR, "fill empty-tensor out failed.");
+    auto viewCopyResult = l0op::ViewCopy(filled, out, executor);
+    CHECK_COND(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR, "viewcopy empty-tensor out failed.");
+    return ACLNN_SUCCESS;
+}
 }; // namespace
 
 aclnnStatus InputsContiguous(const aclTensor* tensor, const aclTensor*& reformatedTensor, const std::string& tensorName,
@@ -389,9 +411,17 @@ aclnnStatus GetDynamicQuantResultByL0Api(DynamicQuantParams& dynamicQuantParams,
     aclnnStatus ret = CheckParams(dynamicQuantParams);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
-    // 空Tensor处理
+    // 空Tensor处理：scale/offset非空时需回填确定值0，避免输出残留未初始化数据
     if (dynamicQuantParams.x->IsEmpty() || dynamicQuantParams.y->IsEmpty() || dynamicQuantParams.scale->IsEmpty()) {
-        *workspaceSize = 0;
+        if (!dynamicQuantParams.scale->IsEmpty()) {
+            ret = FillOutWithValueZero(dynamicQuantParams.scale, uniqueExecutor.get());
+            CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        }
+        if (dynamicQuantParams.offset != nullptr && !dynamicQuantParams.offset->IsEmpty()) {
+            ret = FillOutWithValueZero(dynamicQuantParams.offset, uniqueExecutor.get());
+            CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        }
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
     }
