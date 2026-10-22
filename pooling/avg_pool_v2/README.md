@@ -17,12 +17,14 @@
 - 计算公式：
   输入input（$N,C,H,W$）、输出out（$N,C,H_{out},W_{out}$）和池化步长（$strides$）、池化窗口大小($kH,kW$)的关系是
 
+  设`pads=[pad_top,pad_bottom,pad_left,pad_right]`，则
+
   $$
-  H_{out}=\lfloor \frac{H_{in}+2*paddings[0]-kH}{strides[0]}+1 \rfloor
+  H_{out}=\lfloor \frac{H_{in}+pad_{top}+pad_{bottom}-kH}{strides[0]}+1 \rfloor
   $$
 
   $$
-  W_{out}=\lfloor \frac{W_{in}+2*paddings[1]-kW}{strides[1]}+1 \rfloor
+  W_{out}=\lfloor \frac{W_{in}+pad_{left}+pad_{right}-kW}{strides[1]}+1 \rfloor
   $$
 
   $$
