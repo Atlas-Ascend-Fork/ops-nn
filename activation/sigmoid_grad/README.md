@@ -55,7 +55,7 @@
       <td>输入</td>
       <td>损失函数对sigmoid输出的梯度，公式中的grad\_output。</td>
       <td><ul><li>支持空Tensor。</li><li>shape需要与output，grad_input一致。</li></ul></td>
-      <td>FLOAT、FLOAT16、BFLOAT16、DOUBLE、COMPLEX64、COMPLEX128</td>
+      <td>FLOAT16、BFLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
       <td>√</td>
@@ -65,7 +65,7 @@
       <td>输入</td>
       <td>前向sigmoid的输出，公式中的out。</td>
       <td><ul><li>支持空Tensor。</li><li>shape需要与grad_output，grad_input一致。</li></ul></td>
-      <td>FLOAT、FLOAT16、BFLOAT16、DOUBLE、COMPLEX64、COMPLEX128</td>
+      <td>FLOAT16、BFLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
       <td>√</td>
@@ -75,7 +75,7 @@
       <td>输出</td>
       <td>为self的梯度值，公式中的grad\_input。</td>
       <td>数据类型、shape需要与grad_output，output一致。</td>
-      <td>FLOAT、FLOAT16、BFLOAT16、DOUBLE、COMPLEX64、COMPLEX128</td>
+      <td>FLOAT16、BFLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
       <td>√</td>
@@ -83,7 +83,7 @@
    </tbody>
   </table>
 
- - <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16、DOUBLE、COMPLEX64、COMPLEX128。
+ - SigmoidGrad算子注册支持的数据类型为FLOAT16、BFLOAT16、FLOAT。
 
 ## 约束说明
 
