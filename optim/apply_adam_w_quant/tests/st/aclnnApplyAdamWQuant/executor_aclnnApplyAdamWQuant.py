@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2025 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
@@ -12,13 +12,11 @@
 
 import torch
 from dataclasses import dataclass
-import numpy as np
-import math
 from atk.configs.dataset_config import InputDataset
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 from atk.tasks.api_execute.aclnn_base_api import AclnnBaseApi
-from atk.tasks.backends.lib_interface.acl_wrapper import AclFormat
+
 
 @dataclass
 class AdamWQuantParams:
@@ -41,6 +39,7 @@ class AdamWQuantParams:
     quant_mode: str
     block_size: int
 
+
 def quantize_state(state, qmap, absmax):
     normalized = state / absmax
     distances = torch.abs(normalized[:, None] - qmap[None, :])
@@ -56,19 +55,49 @@ def quantize_state(state, qmap, absmax):
 
     return indices.to(torch.uint8)
 
+
 def single_tensor_adamwquant(adamwquant_params: AdamWQuantParams):
-    var_ref, grad, state_m, state_v, absmax_m, absmax_v, qmap_m, qmap_v,\
-        step, lr, beta1, beta2, eps, weight_decay, gnorm_scale, block_size = adamwquant_params.varRef,\
-        adamwquant_params.grad, adamwquant_params.mRef, adamwquant_params.vRef, adamwquant_params.absmaxMRef,\
-        adamwquant_params.absmaxVRef, adamwquant_params.qmapM, adamwquant_params.qmapV, adamwquant_params.step_t,\
-        adamwquant_params.lr, adamwquant_params.beta1, adamwquant_params.beta2, adamwquant_params.eps,\
-        adamwquant_params.weight_decay, adamwquant_params.gnorm_scale, adamwquant_params.block_size
+    (
+        var_ref,
+        grad,
+        state_m,
+        state_v,
+        absmax_m,
+        absmax_v,
+        qmap_m,
+        qmap_v,
+        step,
+        lr,
+        beta1,
+        beta2,
+        eps,
+        weight_decay,
+        gnorm_scale,
+        block_size,
+    ) = (
+        adamwquant_params.varRef,
+        adamwquant_params.grad,
+        adamwquant_params.mRef,
+        adamwquant_params.vRef,
+        adamwquant_params.absmaxMRef,
+        adamwquant_params.absmaxVRef,
+        adamwquant_params.qmapM,
+        adamwquant_params.qmapV,
+        adamwquant_params.step_t,
+        adamwquant_params.lr,
+        adamwquant_params.beta1,
+        adamwquant_params.beta2,
+        adamwquant_params.eps,
+        adamwquant_params.weight_decay,
+        adamwquant_params.gnorm_scale,
+        adamwquant_params.block_size,
+    )
     # print(f"jisuan:{qmap_m}")
 
     step += 1
 
-    bias_correction1 = 1 - beta1 ** step
-    bias_correction2_sqrt = torch.sqrt(1 - beta2 ** step)
+    bias_correction1 = 1 - beta1**step
+    bias_correction2_sqrt = torch.sqrt(1 - beta2**step)
     step_size = -lr * bias_correction2_sqrt / bias_correction1
 
     params_flat = var_ref.flatten()
@@ -97,13 +126,13 @@ def single_tensor_adamwquant(adamwquant_params: AdamWQuantParams):
 
         s1_update = s1_dequant * beta1 + (1 - beta1) * g_block_scaled
 
-        s2_update = s2_dequant * beta2 + (1 - beta2) * (g_block_scaled ** 2)
+        s2_update = s2_dequant * beta2 + (1 - beta2) * (g_block_scaled**2)
 
         denom = torch.sqrt(s2_update) + eps * bias_correction2_sqrt
         p_block += step_size * s1_update / denom
 
         if weight_decay > 0:
-            p_block *= (1 - lr * weight_decay)
+            p_block *= 1 - lr * weight_decay
 
         new_absmax1 = torch.max(torch.abs(s1_update))
         new_absmax2 = torch.max(s2_update)
@@ -122,6 +151,7 @@ def single_tensor_adamwquant(adamwquant_params: AdamWQuantParams):
     updated_v = state_v_flat.reshape(state_v.shape)
 
     return updated_params, updated_m, updated_v, new_absmax_m, new_absmax_v
+
 
 @dataclass
 class AdamWQuantParameters:
@@ -143,11 +173,15 @@ class AdamWQuantParameters:
     quant_mode: str
     block_size: int
 
+
 def adamw_8bit_blockwise_step(params: AdamWQuantParameters):
-    varRef_dtype, grad_dtype, mRef_dtype, vRef_dtype, qmapM_dtype, qmapV_dtype,\
-        absmaxMRef_dtype, absmaxVRef_dtype, step_dtype = params.varRef.dtype, params.grad.dtype,\
-        params.mRef.dtype, params.vRef.dtype, params.qmapM.dtype, params.qmapV.dtype,\
-        params.absmaxMRef.dtype, params.absmaxVRef.dtype, params.step_t.dtype
+    (
+        varRef_dtype,
+        step_dtype,
+    ) = (
+        params.varRef.dtype,
+        params.step_t.dtype,
+    )
     varRef = params.varRef
     grad = params.grad
     mRef = params.mRef
@@ -170,66 +204,65 @@ def adamw_8bit_blockwise_step(params: AdamWQuantParameters):
         varRef, grad = varRef.to(torch.float32), grad.to(torch.float32)
 
     if "int64" in str(step_dtype):
-        step_t =step_t.to(torch.float32)
+        step_t = step_t.to(torch.float32)
 
     adamwquant_params = AdamWQuantParams(
-        varRef = varRef,
-        grad = grad,
-        mRef = mRef,
-        vRef = vRef,
-        qmapM = qmapM,
-        qmapV = qmapV,
-        absmaxMRef = absmaxMRef,
-        absmaxVRef = absmaxVRef,
-        step_t = step_t,
-        lr = lr,
-        beta1 = beta1,
-        beta2 = beta2,
-        weight_decay = weight_decay,
-        eps = eps,
-        gnorm_scale = gnorm_scale,
-        quant_mode = quant_mode,
-        block_size = block_size
+        varRef=varRef,
+        grad=grad,
+        mRef=mRef,
+        vRef=vRef,
+        qmapM=qmapM,
+        qmapV=qmapV,
+        absmaxMRef=absmaxMRef,
+        absmaxVRef=absmaxVRef,
+        step_t=step_t,
+        lr=lr,
+        beta1=beta1,
+        beta2=beta2,
+        weight_decay=weight_decay,
+        eps=eps,
+        gnorm_scale=gnorm_scale,
+        quant_mode=quant_mode,
+        block_size=block_size,
     )
 
-    updated_params, updated_m, updated_v, new_absmax_m, new_absmax_v = single_tensor_adamwquant(adamwquant_params)
+    updated_params, updated_m, updated_v, new_absmax_m, new_absmax_v = (
+        single_tensor_adamwquant(adamwquant_params)
+    )
 
     if "bfloat16" in str(varRef_dtype) or "float16" in str(varRef_dtype):
         updated_params = updated_params.to(varRef_dtype)
-    
+
     return updated_params, updated_m, updated_v, new_absmax_m, new_absmax_v
+
 
 @register("executor_apply_adam_w_quant")
 class FunctionApi(BaseApi):
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        if self.device == "gpu":
-            device = f"cuda:{self.device_id}"
-        elif self.device == "npu":
-            device = f"{self.device}:{self.device_id}"
-        else:
-            device = "cpu"
-
+        if self.device not in ("gpu", "npu"):
             params = AdamWQuantParameters(
-                varRef = input_data.kwargs["varRef"],
-                grad = input_data.kwargs["grad"],
-                mRef = input_data.kwargs["mRef"], 
-                vRef = input_data.kwargs["vRef"],
-                qmapM = input_data.kwargs["qmapM"],
-                qmapV = input_data.kwargs["qmapV"],
-                absmaxMRef = input_data.kwargs["absmaxMRef"],
-                absmaxVRef = input_data.kwargs["absmaxVRef"],
-                step_t = input_data.kwargs["step"],
-                lr = input_data.kwargs["lr"],
-                beta1 = input_data.kwargs["beta1"],
-                beta2 = input_data.kwargs["beta2"],
-                weight_decay = input_data.kwargs["weightDecay"],
-                eps = input_data.kwargs["eps"],
-                gnorm_scale = input_data.kwargs["gnormScale"],
-                quant_mode = input_data.kwargs["quantMode"],
-                block_size = input_data.kwargs["blockSize"]
+                varRef=input_data.kwargs["varRef"],
+                grad=input_data.kwargs["grad"],
+                mRef=input_data.kwargs["mRef"],
+                vRef=input_data.kwargs["vRef"],
+                qmapM=input_data.kwargs["qmapM"],
+                qmapV=input_data.kwargs["qmapV"],
+                absmaxMRef=input_data.kwargs["absmaxMRef"],
+                absmaxVRef=input_data.kwargs["absmaxVRef"],
+                step_t=input_data.kwargs["step"],
+                lr=input_data.kwargs["lr"],
+                beta1=input_data.kwargs["beta1"],
+                beta2=input_data.kwargs["beta2"],
+                weight_decay=input_data.kwargs["weightDecay"],
+                eps=input_data.kwargs["eps"],
+                gnorm_scale=input_data.kwargs["gnormScale"],
+                quant_mode=input_data.kwargs["quantMode"],
+                block_size=input_data.kwargs["blockSize"],
             )
-            
-            updated_params, updated_m, updated_v, new_absmax_m, new_absmax_v = adamw_8bit_blockwise_step(params)
+
+            updated_params, updated_m, updated_v, new_absmax_m, new_absmax_v = (
+                adamw_8bit_blockwise_step(params)
+            )
 
             return updated_params
 
@@ -239,15 +272,16 @@ class FunctionApi(BaseApi):
         # print("before----------------------------------------------------")
         qmap_m_customize = torch.linspace(-1, 1, steps=256, dtype=torch.float32)
         qmap_v_customize = torch.linspace(0, 1, steps=256, dtype=torch.float32)
-        if self.device == 'pyaclnn':
-            input_data.kwargs['qmapM'] = qmap_m_customize.npu()
-            input_data.kwargs['qmapV'] = qmap_v_customize.npu()
+        if self.device == "pyaclnn":
+            input_data.kwargs["qmapM"] = qmap_m_customize.npu()
+            input_data.kwargs["qmapV"] = qmap_v_customize.npu()
         else:
-            input_data.kwargs['qmapM'] = qmap_m_customize.cpu()
-            input_data.kwargs['qmapV'] = qmap_v_customize.cpu()
+            input_data.kwargs["qmapM"] = qmap_m_customize.cpu()
+            input_data.kwargs["qmapV"] = qmap_v_customize.cpu()
         # print("----------------------------------------------------")
         # print(input_data.kwargs['qmapM'])
         # print("----------------------------------------------------")
+
 
 @register("aclnn_apply_adam_w_quant")
 class ApplyAdamWQuantAclnnApi(AclnnBaseApi):
