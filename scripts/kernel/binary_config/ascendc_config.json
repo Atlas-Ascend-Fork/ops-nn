@@ -507,7 +507,7 @@
     {"name":"Pad", "compute_units": ["ascend950"], "auto_sync": false, "impl_mode" : ""},
     {"name":"EmbeddingHashTableExport", "compute_units": ["ascend950", "ascend350"], "auto_sync" : false, "impl_mode" : "", "compile_options": {"ascend950": ["--cce-no-dcache-flush"], "ascend350": ["--cce-no-dcache-flush"]}},
     {"name":"EmbeddingHashTableLookupOrInsert", "compute_units": ["ascend950", "ascend350"], "auto_sync" : false, "impl_mode" : "", "compile_options": {"ascend950": ["--cce-no-dcache-flush"], "ascend350": ["--cce-no-dcache-flush"]}},
-    {"name":"EmbeddingHashTableEvict", "compute_units": ["ascend950"], "auto_sync" : false, "impl_mode" : ""},
+    {"name":"EmbeddingHashTableEvict", "compute_units": ["ascend950", "ascend960dt"], "auto_sync" : false, "impl_mode" : ""},
     {"name":"EmbeddingHashTableImport", "compute_units": ["ascend950", "ascend350"], "auto_sync" : false, "impl_mode" : "", "compile_options": {"ascend950": ["--cce-no-dcache-flush"], "ascend350": ["--cce-no-dcache-flush"]}},
     {"name":"InitEmbeddingHashTable", "compute_units": ["ascend950", "ascend350"], "auto_sync" : false, "impl_mode" : "", "compile_options": {"ascend950": ["--cce-no-dcache-flush"], "ascend350": ["--cce-no-dcache-flush"]}},
     {"name":"MedianDim", "compute_units": ["ascend310p"], "auto_sync" : true},
