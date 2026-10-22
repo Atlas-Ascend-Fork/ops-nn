@@ -654,12 +654,14 @@ public:
                 }
                 this->inQueueX_.EnQue(xLocal);
                 xLocal = this->inQueueX_.template DeQue<T1>();
-                // Convert signed/floating values to unsigned radix keys before byte extraction.
-                LocalTensor<UT> xUbCopy = PreProcess(xLocal, currTileSize, round, tileId);
                 LocalTensor<uint8_t> inputB8Ub = this->inputB8Que_.template AllocTensor<uint8_t>();
                 LocalTensor<uint16_t> histUb = this->outIdxQueue_.template AllocTensor<uint16_t>();
                 LocalTensor<uint16_t> histCumsumUb = this->outValueQueue_.template AllocTensor<uint16_t>();
+                // Count NaNs in the original values: PreProcess overwrites xLocal with sortable keys.
+                // Negative subnormal FP32 values become NaN bit patterns after that transformation.
                 static_cast<Derived*>(this)->OnRadixInputLoaded(xLocal, currTileSize, round, tileId, histCumsumUb);
+                // Convert signed/floating values to unsigned radix keys before byte extraction.
+                LocalTensor<UT> xUbCopy = PreProcess(xLocal, currTileSize, round, tileId);
                 LocalTensor<T3> blockExcusiveUbTmp = blockExcusiveUb.template ReinterpretCast<T3>();
                 PreGlobalExcusiveSum(xUbCopy, blockExcusiveUbTmp, histUb, histCumsumUb, inputB8Ub, currTileSize, round,
                                      tileId);
