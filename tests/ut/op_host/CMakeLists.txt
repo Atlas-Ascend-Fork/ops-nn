@@ -18,6 +18,11 @@ if(UT_TEST_ALL OR OP_HOST_UT OR OP_GRAPH_UT OR OP_API_UT)
         endif()
     endforeach()
 
+    if(UT_TEST_ALL OR OP_HOST_UT)
+        add_subdirectory(${OPS_NN_DIR}/common/tests/ut/op_host
+                         ${CMAKE_CURRENT_BINARY_DIR}/common_op_host)
+    endif()
+
     if(EXISTS ${OPS_NN_DIR}/common/tests/ut/framework/CMakeLists.txt)
         # 全量模式(ASCEND_OP_NAME 空)接入；--ops 模式仅当命中 common 框架插件算子时接入
         set(_nn_include_common_fw OFF)

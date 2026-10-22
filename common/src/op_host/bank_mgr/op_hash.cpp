@@ -22,11 +22,15 @@ uint32_t CommonHash(const void* src, uint32_t len, uint32_t seed)
         ky++;
         HashCombine(tmp_ky, hash_ky);
     }
-    const uint8_t* rest_ky = static_cast<const uint8_t*>(src);
-    for (uint32_t i = len & 3; i; i--) {
-        tmp_ky <<= kEightBitShift;
-        tmp_ky |= rest_ky[i - 1];
+    const uint8_t* rest_ky = reinterpret_cast<const uint8_t*>(ky);
+    if ((len & 3U) != 0U) {
+        tmp_ky = 0U;
+        for (uint32_t i = len & 3U; i != 0U; i--) {
+            tmp_ky <<= kEightBitShift;
+            tmp_ky |= rest_ky[i - 1U];
+        }
     }
+    // Preserve the existing extra block combine when there is no tail.
     HashCombine(tmp_ky, hash_ky);
 
     hash_ky ^= len;
