@@ -12,15 +12,11 @@
 
 import numpy as np
 
-__golden__ = {
-    "kernel": {
-        "bnll": "bnll_golden"
-    }
-}
+__golden__ = {"kernel": {"bnll": "bnll_golden"}}
 
 
 def bnll_golden(x, **kwargs):
-    '''
+    """
     Golden function for BNLL kernel.
     BNLL(x) = ln(1 + exp(x))
 
@@ -35,14 +31,11 @@ def bnll_golden(x, **kwargs):
 
     Returns:
         Output tensor with same dtype as input (numpy.ndarray)
-    '''
+    """
     input_dtype = x.dtype
     x_f64 = x.astype(np.float64)
 
-    result = np.where(
-        x_f64 > 0,
-        x_f64 + np.log1p(np.exp(-x_f64)),
-        np.log1p(np.exp(x_f64))
-    )
+    # np.where 会同时求值两侧；仅对非正指数求 exp，避免未选分支溢出。
+    result = np.maximum(x_f64, 0) + np.log1p(np.exp(-np.abs(x_f64)))
 
     return result.astype(input_dtype, copy=False)

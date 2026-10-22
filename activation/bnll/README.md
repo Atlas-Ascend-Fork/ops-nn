@@ -64,3 +64,10 @@ $$
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
 | GE图模式  | [test_geir_bnll.cpp](examples/test_geir_bnll.cpp) | 通过GE IR接口方式调用BNLL算子。 |
+
+
+## Golden 的 Host 回归
+
+NumPy Kernel golden 使用 `max(x, 0) + log1p(exp(-abs(x)))`，指数输入始终非正，避免 `np.where` 同时求值未选分支时产生溢出；保留原有 float64 中间精度及输入 dtype/shape，正负无穷和 NaN 按公式传播。
+
+运行 `python3 activation/bnll/tests/assets/test_bnll_golden_branch_overflow.py` 可检查真实注册 golden，在 RuntimeWarning 作为错误和 NumPy overflow/invalid 严格模式下验证大值、普通值、标量、矩阵及空输入，使用 CPU Torch `logaddexp` 独立参考。仅验证 Host golden；不代表 TTK 设备执行、CANN 构建、NPU 算子精度或性能验证。
