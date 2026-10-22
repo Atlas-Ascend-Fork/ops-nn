@@ -8,7 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-/*!\\file add_rms_norm_hi_f4_quant_apt.cpp
+/*!\\file add_rms_norm_hi_f4_quant.cpp
  * \\brief
  */
 #include "arch92/add_rms_norm_hi_f4_quant_hif4_r_full_load.h"

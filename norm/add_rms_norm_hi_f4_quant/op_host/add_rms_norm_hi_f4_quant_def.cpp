@@ -93,10 +93,7 @@ public:
         this->Attr("scale_alg").AttrType(OPTIONAL).Int(0);
 
         OpAICoreConfig config960;
-        config960.DynamicCompileStaticFlag(true)
-            .DynamicRankSupportFlag(true)
-            .DynamicShapeSupportFlag(true)
-            .ExtendCfgInfo("opFile.value", "add_rms_norm_hi_f4_quant_apt");
+        config960.DynamicCompileStaticFlag(true).DynamicRankSupportFlag(true).DynamicShapeSupportFlag(true);
         this->AICore().AddConfig("ascend960dt", config960);
     }
 };
