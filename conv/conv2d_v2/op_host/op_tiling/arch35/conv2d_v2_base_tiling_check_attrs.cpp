@@ -252,7 +252,8 @@ ge::graphStatus Conv2dBaseTiling::CheckGroupsLegal()
         return ge::GRAPH_FAILED;
     }
 
-    if (paramInfo_.nodeType == "Conv2DV2" && oriShapeAttrInfo_.oriGroups == 1 && oriShapeAttrInfo_.oriWeightC != 0) {
+    if (oriShapeAttrInfo_.oriGroups == 1 && oriShapeAttrInfo_.oriWeightC > 0 && oriShapeAttrInfo_.oriFmapC > 0 &&
+        oriShapeAttrInfo_.oriFmapC != oriShapeAttrInfo_.oriWeightC) {
         if (oriShapeAttrInfo_.oriFmapC % oriShapeAttrInfo_.oriWeightC == 0) {
             oriShapeAttrInfo_.oriGroups = oriShapeAttrInfo_.oriFmapC / oriShapeAttrInfo_.oriWeightC;
             OP_LOGD(context_->GetNodeName(),
