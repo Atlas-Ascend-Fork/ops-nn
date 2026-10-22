@@ -49,7 +49,7 @@
   <tr>
     <td>x</td>
     <td>输入</td>
-    <td>公式中的输入x，任意形状的张量。</td>
+    <td>公式中的输入x，ND张量，rank限制见约束说明。</td>
     <td>FLOAT16、FLOAT</td>
     <td>ND</td>
   </tr>
@@ -88,7 +88,7 @@
 - 输入tensor支持的数据类型为FLOAT16和FLOAT，输出与输入数据类型一致。
 - 输入tensor的格式必须为ND。
 - alpha2属性必须大于0，否则可能导致除零或数值不稳定。
-- 输入支持任意shape（包括0元素空tensor），算子内部已处理空tensor边界情况。
+- 输入支持0元素空tensor。Ascend 950（Arch35）上，输入rank需不超过8；rank大于8时Host tiling校验失败。
 
 ## 调用说明
 
