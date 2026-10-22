@@ -719,7 +719,7 @@ static aclnnStatus AttrPreProcess(ConvolutionBackwardParams& params, aclOpExecut
 }
 
 static aclnnStatus CastInputByCubeMathType(const aclTensor*& inputTensor, const string& tensorName,
-                                           ConvolutionBackwardParams& params, const op::DataType promoteDtype,
+                                           const ConvolutionBackwardParams& params, const op::DataType promoteDtype,
                                            aclOpExecutor* executor, bool vecMode)
 {
     // vector 兜底保持原始 dtype 与 ND 系格式，跳过 Cast/TransData
@@ -1148,7 +1148,7 @@ static void CalcPostDilationPadAmount(const ConvolutionBackwardParams& params, i
                                       int64_t& postDilationPadLeft, int64_t& padUp, int64_t& padLeft, int64_t& padH,
                                       int64_t& padW)
 {
-    if (params.padding->Size() == 4) {
+    if (params.padding->Size() == CONV2DINPUTDIM) {
         postDilationPadUp = -(*params.padding)[kPadding4UpIdx];
         postDilationPadLeft = -(*params.padding)[kPadding4LeftIdx];
         padUp = (*params.padding)[kPadding4UpIdx];

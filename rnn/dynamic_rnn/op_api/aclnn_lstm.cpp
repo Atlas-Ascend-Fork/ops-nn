@@ -248,6 +248,9 @@ LstmSingleLayerDirec(const aclTensor* input, const aclTensorList* params, const 
     if (l0op::SingleLayerLstmSupports(input, initH, direction, &refusal)) {
         OP_CHECK_NULL(initH, return nullptrInner);
         OP_CHECK_NULL(initC, return nullptrInner);
+        if (initH == nullptr || initC == nullptr) {
+            return nullptrInner;
+        }
         /* The two operators disagree on the state rank: DynamicRNN takes [1, B, H], SingleLayerLstm
          * takes [B, H]. */
         const op::Shape stateShape = {initH->GetViewShape().GetDim(1), initH->GetViewShape().GetDim(2)};

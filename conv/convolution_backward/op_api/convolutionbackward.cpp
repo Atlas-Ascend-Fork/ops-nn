@@ -933,16 +933,19 @@ static aclnnStatus TransposeConv3DBackpropFilterInputs(const aclTensor*& input, 
     // change input format
     input = l0op::Transpose(input, permAfter, executor);
     OP_CHECK(input != nullptr, OP_LOGD("input transpose return null."), return ACLNN_ERR_INNER_INFERSHAPE_ERROR);
-    const_cast<aclTensor*>(input)->SetOriginalFormat(Format::FORMAT_NDHWC);
-    const_cast<aclTensor*>(input)->SetStorageFormat(Format::FORMAT_NDHWC);
-    const_cast<aclTensor*>(input)->SetViewFormat(Format::FORMAT_NDHWC);
+    // l0op返回const指针，此处仅需修改tensor的format元数据
+    aclTensor* mutableInput = const_cast<aclTensor*>(input);
+    mutableInput->SetOriginalFormat(Format::FORMAT_NDHWC);
+    mutableInput->SetStorageFormat(Format::FORMAT_NDHWC);
+    mutableInput->SetViewFormat(Format::FORMAT_NDHWC);
     // change output format
     outBackprop = l0op::Transpose(outBackprop, permAfter, executor);
     OP_CHECK(outBackprop != nullptr, OP_LOGD("outBackprop transpose return null."),
              return ACLNN_ERR_INNER_INFERSHAPE_ERROR);
-    const_cast<aclTensor*>(outBackprop)->SetOriginalFormat(Format::FORMAT_NDHWC);
-    const_cast<aclTensor*>(outBackprop)->SetStorageFormat(Format::FORMAT_NDHWC);
-    const_cast<aclTensor*>(outBackprop)->SetViewFormat(Format::FORMAT_NDHWC);
+    aclTensor* mutableOutBackprop = const_cast<aclTensor*>(outBackprop);
+    mutableOutBackprop->SetOriginalFormat(Format::FORMAT_NDHWC);
+    mutableOutBackprop->SetStorageFormat(Format::FORMAT_NDHWC);
+    mutableOutBackprop->SetViewFormat(Format::FORMAT_NDHWC);
     // change stride
     if (stride5->Size() == CONV3D_DIM) {
         auto oriStrideData = stride5->GetData();
