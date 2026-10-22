@@ -144,9 +144,9 @@ aclnnStatus aclnnInplaceRelu(
 先确保 custom run 包已经安装，并加载 CANN 环境：
 
 ```bash
-source /usr/local/Ascend/cann-8.5.0-beta.1/set_env.sh
-export LD_LIBRARY_PATH=/usr/local/Ascend/cann-8.5.0-beta.1/opp/vendors/customize_nn/op_api/lib:${LD_LIBRARY_PATH}
-cd /root/src/cann/ops-nn/experimental/activation/relu/examples
+source /usr/local/Ascend/cann/set_env.sh
+export LD_LIBRARY_PATH=${ASCEND_HOME_PATH}/opp/vendors/customize_nn/op_api/lib:${LD_LIBRARY_PATH}
+cd <ops-nn-repo>/experimental/activation/relu/examples
 bash run.sh
 ```
 
@@ -158,7 +158,7 @@ bash run.sh
 
 ```bash
 source /usr/local/Ascend/cann/set_env.sh
-cd /root/src/cann/ops-nn
+cd <ops-nn-repo>
 bash build.sh --experimental --ops=relu -u --opapi -j8 -O2
 ```
 
@@ -171,6 +171,6 @@ source /root/src/kernel/ascend-kernel/.venv/bin/activate
 cd /root/src/testcase
 atk node --backend npu --devices 2 \
   node --backend cpu task --task accuracy \
-  -c /root/src/cann/ops-nn/experimental/activation/relu/tests/st/aclnnRelu/all_aclnnRelu.json \
-  -p /root/src/cann/ops-nn/experimental/activation/relu/tests/st/aclnnRelu/executor_aclnnRelu.py
+  -c <ops-nn-repo>/experimental/activation/relu/tests/st/aclnnRelu/all_aclnnRelu.json \
+  -p <ops-nn-repo>/experimental/activation/relu/tests/st/aclnnRelu/executor_aclnnRelu.py
 ```
