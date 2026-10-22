@@ -30,8 +30,8 @@ if _TORCHAIR_AVAILABLE:
 
     def ClippedSwiglu(
         x: Tensor,
-        *,
         group_index: Optional[Tensor],
+        *,
         dim: int = -1,
         alpha: float = 1.702,
         limit: float = 7.0,
@@ -70,8 +70,8 @@ if _TORCHAIR_AVAILABLE:
     @register_fx_node_ge_converter(torch.ops.cann_ops_nn.clipped_swiglu.default)
     def convert_clipped_swiglu(
         x: Tensor,
-        *,
         group_index: Optional[Tensor] = None,
+        *,
         dim: int = -1,
         alpha: float = 1.702,
         limit: float = 7.0,
@@ -82,7 +82,7 @@ if _TORCHAIR_AVAILABLE:
     ):
         return ClippedSwiglu(
             x,
-            group_index=group_index,
+            group_index,
             dim=dim,
             alpha=alpha,
             limit=limit,
