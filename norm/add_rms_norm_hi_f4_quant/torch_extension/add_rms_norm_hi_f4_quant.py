@@ -8,6 +8,8 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
+from typing import Optional
+
 import torch
 from torch.library import impl
 
@@ -92,7 +94,7 @@ def add_rms_norm_hi_f4_quant(
     x2: torch.Tensor,
     gamma: torch.Tensor,
     *,
-    beta_optional: torch.Tensor | None = None,
+    beta_optional: Optional[torch.Tensor] = None,
     epsilon: float = 1e-6,
     output_rstd: bool = False,
     scale_alg: int = 0,
@@ -110,7 +112,7 @@ def add_rms_norm_hi_f4_quant(
         x2 (torch.Tensor): 输入张量，shape 与 dtype 均需与 x1 一致，NPU 张量。
         gamma (torch.Tensor): RMSNorm 缩放参数，1-D，shape 与 x1 尾轴一致，dtype 与 x1 一致
             或 float32。
-        beta_optional (torch.Tensor | None, optional): RMSNorm 偏置参数，1-D，shape 与
+        beta_optional (Optional[torch.Tensor], optional): RMSNorm 偏置参数，1-D，shape 与
             gamma 一致，dtype 与 x1 一致或 float32。默认 None。
         epsilon (float, optional): 防止除零的小常数。默认 1e-6。
         output_rstd (bool, optional): 是否计算并输出 rstd 的真实值（RMS 倒数）。默认 False；
