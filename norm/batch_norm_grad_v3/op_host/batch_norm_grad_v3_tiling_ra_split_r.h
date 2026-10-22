@@ -47,6 +47,8 @@ private:
     int64_t CalcUsedCoreNum() const;
 
 private:
+    bool packed_{false};
+    int64_t rowsPerGroup_{1};
     int64_t usedCoreNum_{0};
     int64_t rLoopFactor_{0};
     int64_t blockFactor_{0};

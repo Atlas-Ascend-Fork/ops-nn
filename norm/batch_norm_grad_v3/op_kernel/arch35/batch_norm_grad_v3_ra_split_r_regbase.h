@@ -19,6 +19,7 @@
 #include "kernel_operator.h"
 #include "../inc/platform.h"
 #include "batch_norm_grad_v3_common.h"
+#include "batch_norm_grad_v3_rc_packed_regbase.h"
 
 namespace BatchNormGradV3 {
 using namespace AscendC;
@@ -28,12 +29,14 @@ using namespace AscendC;
 constexpr uint32_t RA_SPLIT_R_MODE_GENERIC = 0;
 constexpr uint32_t RA_SPLIT_R_MODE_FUSED_SINGLE = 1;
 constexpr uint32_t RA_SPLIT_R_MODE_FUSED_PAIR = 2;
+constexpr uint32_t RA_SPLIT_R_MODE_PACKED = 3;
 
 template <typename DY_TYPE, typename WEIGHT_TYPE, uint32_t MODE = RA_SPLIT_R_MODE_GENERIC>
 class BatchNormGradV3RASplitR {
 public:
     int64_t outputMask_ = OUTPUT_MASK_ALL;
 
+    static constexpr uint32_t MODE_PACKED = RA_SPLIT_R_MODE_PACKED;
     static constexpr uint32_t MODE_GENERIC = RA_SPLIT_R_MODE_GENERIC;
     static constexpr uint32_t MODE_FUSED_SINGLE = RA_SPLIT_R_MODE_FUSED_SINGLE;
     static constexpr uint32_t MODE_FUSED_PAIR = RA_SPLIT_R_MODE_FUSED_PAIR;
@@ -52,6 +55,11 @@ public:
         tilingData_ = tilingData;
         int64_t offset = blockIdx_ * tilingData_->blockFactor * tilingData_->aDim;
         aFactorAlign_ = tilingData_->aFactorAlign;
+        if constexpr (MODE == MODE_PACKED) {
+            while (rowsPerGroup_ * 2 * tilingData_->aDim <= VL_FP32) {
+                rowsPerGroup_ *= 2;
+            }
+        }
         if (blockIdx_ == (tilingData_->usedCoreNum - 1)) {
             currBlockFactor_ = tilingData_->tailBlockFactor;
             binaryBlockCnt_ = tilingData_->lastCoreBlockCnt;
@@ -355,7 +363,7 @@ private:
 
     __aicore__ inline void Stage0InitBuffer()
     {
-        int64_t rDimSize = currLoopFactor_ * aFactorAlign_;
+        int64_t rDimSize = PackedRows(currLoopFactor_) * aFactorAlign_;
         int64_t aDimSize = aFactorAlign_ * sizeof(float);
         pipe_->InitBuffer(dyInQue_, BUFFER_NUM, rDimSize * sizeof(DY_TYPE));
         pipe_->InitBuffer(xInQue_, BUFFER_NUM, rDimSize * sizeof(DY_TYPE));
@@ -388,8 +396,13 @@ private:
         ProcessOneAFactor(baseOffset, aLength);
         meanInQue_.FreeTensor(meanTensor_);
         int64_t cacheOffset = resultCacheId_ * aFactorAlign_;
-        DataCopy(dbetaWsTensor_, dbetaCacheTensor_[cacheOffset], aFactorAlign_);
-        DataCopy(dgammaWsTensor_, dgammaCacheTensor_[cacheOffset], aFactorAlign_);
+        if constexpr (MODE == MODE_PACKED) {
+            PackedFinalize(dbetaWsTensor_, dbetaCacheTensor_[cacheOffset]);
+            PackedFinalize(dgammaWsTensor_, dgammaCacheTensor_[cacheOffset]);
+        } else {
+            DataCopy(dbetaWsTensor_, dbetaCacheTensor_[cacheOffset], aFactorAlign_);
+            DataCopy(dgammaWsTensor_, dgammaCacheTensor_[cacheOffset], aFactorAlign_);
+        }
         dbetaWsOutQue_.EnQue(dbetaWsTensor_);
         int64_t wsOffset = baseOffset + blockIdx_ * tilingData_->aDim;
         StoreDbetaDgammaToWs(wsOffset, aLength);
@@ -426,6 +439,10 @@ private:
     __aicore__ inline void ProcessMainBlock(const int64_t rLength, const int64_t aLength,
                                             const LocalTensor<DY_TYPE> dyTensor, const LocalTensor<DY_TYPE> xTensor)
     {
+        if constexpr (MODE == MODE_PACKED) {
+            PackedInputs<false>(rLength, dyTensor, xTensor);
+            return;
+        }
         uint16_t outerLoopTimes = CeilDiv(aLength, VL_FP32);
         uint16_t innerLoopTimes = rLength;
         uint16_t outerLoopStride = VL_FP32;
@@ -462,6 +479,10 @@ private:
 
     __aicore__ inline void ProcessFoldBlock(int64_t rLength, int64_t aLength)
     {
+        if constexpr (MODE == MODE_PACKED) {
+            PackedInputs<true>(rLength, dyFoldTensor_, xFoldTensor_);
+            return;
+        }
         uint16_t outerLoopTimes = CeilDiv(aLength, VL_FP32);
         uint16_t innerLoopTimes = rLength;
         uint16_t outerLoopStride = VL_FP32;
@@ -503,6 +524,10 @@ private:
     __aicore__ inline void ProcessSummation(int64_t loopIdx, uint32_t rLength, uint32_t aLength)
     {
         int64_t cacheId = GetCacheID(loopIdx);
+        rLength = PackedRows(rLength);
+        if constexpr (MODE == MODE_PACKED) {
+            aLength *= rowsPerGroup_;
+        }
         uint32_t srcShape[2] = {rLength, static_cast<uint32_t>(aFactorAlign_)};
         ReduceSum<float, Pattern::Reduce::RA, true>(dbetaWsTensor_, dyMainTensor_, srcShape, false);
         ReduceSum<float, Pattern::Reduce::RA, true>(dgammaWsTensor_, xMainTensor_, srcShape, false);
@@ -566,9 +591,8 @@ private:
 
         // 合并队列:一次 Alloc，dbeta 入 [0]、dgamma 入 [rowSize*dstStride]，一次 EnQue
         LocalTensor<float> dbetaWsTensor = dbetaWsInQue_.AllocTensor<float>();
-        DataCopyPad<float, PaddingMode::Normal>(dbetaWsTensor, dbetaWorkSpace_[offset], copyParams, PadParam);
-        DataCopyPad<float, PaddingMode::Normal>(dbetaWsTensor[rowSize * dstStride], dgammaWorkSpace_[offset],
-                                                copyParams, PadParam);
+        CopyChannel(dbetaWsTensor, dbetaWorkSpace_[offset], copyParams, PadParam);
+        CopyChannel(dbetaWsTensor[rowSize * dstStride], dgammaWorkSpace_[offset], copyParams, PadParam);
         dbetaWsInQue_.EnQue(dbetaWsTensor);
     }
 
@@ -697,7 +721,7 @@ private:
     {
         pipe_->Reset();
 
-        int64_t rDimSize = tilingData_->dxLoopFactor * aFactorAlign_;
+        int64_t rDimSize = PackedRows(tilingData_->dxLoopFactor) * aFactorAlign_;
         int64_t aDimSize = aFactorAlign_ * sizeof(float);
         pipe_->InitBuffer(dyInQue_, BUFFER_NUM, rDimSize * sizeof(DY_TYPE));
         pipe_->InitBuffer(xInQue_, BUFFER_NUM, rDimSize * sizeof(DY_TYPE));
@@ -755,10 +779,11 @@ private:
                                        const LocalTensor<WEIGHT_TYPE>& gammaTensor,
                                        const LocalTensor<DY_TYPE>& dyTensor, const LocalTensor<DY_TYPE>& xTensor)
     {
-        uint16_t outerLoopTimes = CeilDiv(aLength, VL_FP32);
-        uint16_t innerLoopTimes = rLength;
+        uint16_t outerLoopTimes = CeilDiv(PackedLanes(aLength), VL_FP32);
+        uint16_t innerLoopTimes = PackedRows(rLength);
         uint16_t outerLoopStride = VL_FP32;
         uint16_t innerLoopStride = aFactorAlign_;
+        uint16_t inputLoopStride = PackedInputStride(aLength);
         float reciprocal = reciprocal_;
 
         __VEC_SCOPE__
@@ -772,8 +797,9 @@ private:
             __ubuf__ float* dbetaAddr = (__ubuf__ float*)dbetaTensor.GetPhyAddr();
             __ubuf__ float* dgammaAddr = (__ubuf__ float*)dgammaTensor.GetPhyAddr();
             Reg::MaskReg pMask;
-            uint32_t count = aLength;
+            uint32_t count = PackedLanes(aLength);
             Reg::RegTensor<float> dyReg, xReg, meanReg, rstdReg, gammaReg, dxReg, dbetaReg, dgammaReg;
+            Reg::RegTensor<float> rstdMulGammaReg;
             for (uint16_t i = 0; i < outerLoopTimes; ++i) {
                 pMask = Reg::UpdateMask<float>(count);
                 LoadOneTensor<float>(meanAddr, meanReg, pMask, i * outerLoopStride);
@@ -781,18 +807,19 @@ private:
                 LoadOneTensor<WEIGHT_TYPE>(gammaAddr, gammaReg, pMask, i * outerLoopStride);
                 LoadOneTensor<float>(dbetaAddr, dbetaReg, pMask, i * outerLoopStride);
                 LoadOneTensor<float>(dgammaAddr, dgammaReg, pMask, i * outerLoopStride);
+                Reg::Mul<float, Reg::MaskMergeMode::ZEROING>(rstdMulGammaReg, rstdReg, gammaReg, pMask);
                 for (uint16_t j = 0; j < innerLoopTimes; ++j) {
                     uint32_t offset = i * outerLoopStride + j * innerLoopStride;
-                    LoadOneTensor<DY_TYPE>(dyAddr, dyReg, pMask, offset);
-                    LoadOneTensor<DY_TYPE>(xAddr, xReg, pMask, offset);
+                    uint32_t inputOffset = i * outerLoopStride + j * inputLoopStride;
+                    LoadOneTensor<DY_TYPE>(dyAddr, dyReg, pMask, inputOffset);
+                    LoadOneTensor<DY_TYPE>(xAddr, xReg, pMask, inputOffset);
                     Reg::Sub<float, Reg::MaskMergeMode::ZEROING>(xReg, xReg, meanReg, pMask);
                     Reg::Mul<float, Reg::MaskMergeMode::ZEROING>(xReg, xReg, rstdReg, pMask);
                     Reg::Mul<float, Reg::MaskMergeMode::ZEROING>(xReg, xReg, dgammaReg, pMask);
                     Reg::Add<float, Reg::MaskMergeMode::ZEROING>(xReg, xReg, dbetaReg, pMask);
                     Reg::Muls<float, float, Reg::MaskMergeMode::ZEROING>(xReg, xReg, reciprocal, pMask);
                     Reg::Sub<float, Reg::MaskMergeMode::ZEROING>(dyReg, dyReg, xReg, pMask);
-                    Reg::Mul<float, Reg::MaskMergeMode::ZEROING>(dxReg, rstdReg, gammaReg, pMask);
-                    Reg::Mul<float, Reg::MaskMergeMode::ZEROING>(dxReg, dxReg, dyReg, pMask);
+                    Reg::Mul<float, Reg::MaskMergeMode::ZEROING>(dxReg, rstdMulGammaReg, dyReg, pMask);
                     StoreOneTensor<DY_TYPE>(dxAddr, dxReg, pMask, offset);
                 }
             }
@@ -802,6 +829,10 @@ private:
     __aicore__ inline void StoreDxToGM(const int64_t offset, const int64_t rowSize, const int64_t colSize,
                                        const int64_t dstStride, const int64_t srcStride)
     {
+        if constexpr (MODE == MODE_PACKED) {
+            PackedStoreDx(offset, rowSize);
+            return;
+        }
         DataCopyExtParams copyParams;
         copyParams.blockCount = rowSize;
         copyParams.blockLen = colSize * sizeof(DY_TYPE);
@@ -818,6 +849,10 @@ private:
     __aicore__ inline void LoadDyXToUb(const int64_t offset, const uint32_t rowSize, const uint32_t colSize,
                                        const int64_t dstStride, const int64_t srcStride)
     {
+        if constexpr (MODE == MODE_PACKED) {
+            PackedLoadInputs(offset, rowSize);
+            return;
+        }
         DataCopyExtParams params;
         params.blockCount = rowSize;
         params.blockLen = colSize * sizeof(DY_TYPE);
@@ -845,8 +880,8 @@ private:
 
         // 合并队列:一次 Alloc，mean 入 [0]、rstd 入 [aFactorAlign_]，一次 EnQue
         meanTensor_ = meanInQue_.template AllocTensor<float>();
-        DataCopyPad(meanTensor_, meanGm_[offset], copyParams, padParam);
-        DataCopyPad(meanTensor_[aFactorAlign_], rstdGm_[offset], copyParams, padParam);
+        CopyChannel(meanTensor_, meanGm_[offset], copyParams, padParam);
+        CopyChannel(meanTensor_[aFactorAlign_], rstdGm_[offset], copyParams, padParam);
         meanInQue_.EnQue(meanTensor_);
     }
 
@@ -859,11 +894,90 @@ private:
         copyParams.dstStride = 0;
         DataCopyPadExtParams<WEIGHT_TYPE> PadParam{false, 0, 0, 0};
         LocalTensor<WEIGHT_TYPE> gammaTensor = gammaInQue_.template AllocTensor<WEIGHT_TYPE>();
-        DataCopyPad(gammaTensor, gammaGm_[offset], copyParams, PadParam);
+        CopyChannel(gammaTensor, gammaGm_[offset], copyParams, PadParam);
         gammaInQue_.EnQue(gammaTensor);
     }
 
 private:
+    __aicore__ inline uint32_t PackedInputStride(uint32_t channels) const
+    {
+        if constexpr (MODE == MODE_PACKED) {
+            uint32_t lanes = channels * rowsPerGroup_;
+            // Dense groups must retain the 32-byte alignment required by LoadAlign.
+            // Keep the existing input allocation so the last full-vector load is safe.
+            if (lanes * sizeof(DY_TYPE) % ONE_BLK_SIZE == 0) {
+                return lanes;
+            }
+        }
+        return aFactorAlign_;
+    }
+    __aicore__ inline int64_t PackedRows(int64_t rows) const
+    {
+        if constexpr (MODE == MODE_PACKED) {
+            return (rows + rowsPerGroup_ - 1) / rowsPerGroup_;
+        }
+        return rows;
+    }
+    __aicore__ inline uint32_t PackedLanes(uint32_t channels) const
+    {
+        if constexpr (MODE == MODE_PACKED) {
+            return channels * rowsPerGroup_;
+        }
+        return channels;
+    }
+    template <typename T>
+    __aicore__ inline void CopyChannel(const LocalTensor<T>& dst, const GlobalTensor<T>& src,
+                                       const DataCopyExtParams& copy, const DataCopyPadExtParams<T>& pad)
+    {
+        if constexpr (MODE == MODE_PACKED) {
+            PackedCopyChannel(dst, src, tilingData_->aDim, rowsPerGroup_);
+        } else {
+            DataCopyPad(dst, src, copy, pad);
+        }
+    }
+
+    template <bool FOLD>
+    __aicore__ inline void PackedInputs(int64_t rows, const LocalTensor<DY_TYPE>& dy, const LocalTensor<DY_TYPE>& x)
+    {
+        uint32_t channels = tilingData_->aDim;
+        uint32_t lanes = rowsPerGroup_ * channels;
+        uint16_t groups = PackedRows(rows);
+        uint32_t elements = rows * channels;
+        ComputePackedInputs<DY_TYPE, FOLD>(reinterpret_cast<__ubuf__ DY_TYPE*>(dy.GetPhyAddr()),
+                                           reinterpret_cast<__ubuf__ DY_TYPE*>(x.GetPhyAddr()),
+                                           reinterpret_cast<__ubuf__ float*>(meanTensor_.GetPhyAddr()),
+                                           reinterpret_cast<__ubuf__ float*>(rstdTensor_.GetPhyAddr()),
+                                           reinterpret_cast<__ubuf__ float*>(dyMainTensor_.GetPhyAddr()),
+                                           reinterpret_cast<__ubuf__ float*>(xMainTensor_.GetPhyAddr()),
+                                           PackedInputStride(channels), lanes, groups, elements);
+    }
+
+    __aicore__ inline void PackedFinalize(const LocalTensor<float>& dst, const LocalTensor<float>& src)
+    {
+        FinalizePackedChannels(reinterpret_cast<__ubuf__ float*>(dst.GetPhyAddr()),
+                               reinterpret_cast<__ubuf__ float*>(src.GetPhyAddr()), tilingData_->aDim, rowsPerGroup_);
+    }
+
+    __aicore__ inline void PackedLoadInputs(int64_t offset, uint32_t rows)
+    {
+        LocalTensor<DY_TYPE> dy = dyInQue_.template AllocTensor<DY_TYPE>();
+        LocalTensor<DY_TYPE> x = xInQue_.template AllocTensor<DY_TYPE>();
+        bool dense = PackedInputStride(tilingData_->aDim) == PackedLanes(tilingData_->aDim);
+        PackedCopyInput(dy, dyGm_[offset], rows, tilingData_->aDim, rowsPerGroup_, dense);
+        PackedCopyInput(x, xGm_[offset], rows, tilingData_->aDim, rowsPerGroup_, dense);
+        dyInQue_.EnQue(dy);
+        xInQue_.EnQue(x);
+    }
+
+    __aicore__ inline void PackedStoreDx(int64_t offset, uint32_t rows)
+    {
+        LocalTensor<DY_TYPE> dx = dxOutQue_.template DeQue<DY_TYPE>();
+        if ((outputMask_ & OUTPUT_MASK_DX) != OUTPUT_MASK_NONE) {
+            PackedCopyOutput(dxGm_[offset], dx, rows, tilingData_->aDim, rowsPerGroup_);
+        }
+        dxOutQue_.FreeTensor(dx);
+    }
+    uint32_t rowsPerGroup_{1};
     const BatchNormGradV3RASplitRTilingData* tilingData_{nullptr};
     TPipe* pipe_{nullptr};
 
@@ -911,4 +1025,5 @@ private:
     float reciprocal_{0.0};
 };
 } // namespace BatchNormGradV3
+
 #endif // __BATCH_NORM_GRAD_V3_RA_SPLIT_R_REGBASE_H__

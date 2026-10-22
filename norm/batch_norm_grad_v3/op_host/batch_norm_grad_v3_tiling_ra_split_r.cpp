@@ -20,7 +20,6 @@ using namespace AscendC;
 
 namespace optiling {
 
-constexpr uint64_t STAGE0_R_ELEM_NUM = 4; // mainX, foldX, mainDy, foldDy
 constexpr uint64_t STAGE0_A_ELEM_NUM = 4; // mean, rstd, dbeta, dgamma
 constexpr uint64_t STAGE2_A_ELEM_NUM = 5; // mean, rstd, dbeta, dgamma, gamma
 constexpr uint64_t STAGE2_R_ELEM_NUM = 3; // dy, x, dx
@@ -28,6 +27,9 @@ constexpr uint64_t DOUBLE_BUFF = 2;
 constexpr uint64_t WORKSPACE_NUM = 2;
 constexpr uint64_t ULONG_BIT_LEN = 64;
 constexpr int64_t R_LOOP_FACTOR = 64;
+constexpr int64_t WIDE_C_MIN_CHANNEL_VECTORS = 4;
+constexpr int64_t WIDE_C_MIN_R_LOOPS = 2;
+constexpr int64_t WIDE_C_TILE_VECTOR_COUNT = 2;
 // R轴足够长(>LONG_R_FACTOR*coreNum)时即便切A的备选模板能填满核，切R仍更优。
 // 16 来自Ascend950实测标定:R更短时切A那路的固定开销摊薄后两者基本持平，更长时切R稳定胜出。
 constexpr int64_t LONG_R_FACTOR = 16;
@@ -37,6 +39,12 @@ constexpr uint64_t BNG_V3_RA_SPLIT_R_TILING_KEY = 50000000;
 // fused子变体:stage0载入的dy/x在stage2复用，省第二遍GM重读。次高位区分(对齐RAR家族31/32惯例)。
 constexpr uint64_t BNG_V3_RA_SPLIT_R_FUSED_SINGLE_TILING_KEY = 51000000;
 constexpr uint64_t BNG_V3_RA_SPLIT_R_FUSED_PAIR_TILING_KEY = 52000000;
+constexpr uint64_t BNG_V3_RA_SPLIT_R_PACKED_TILING_KEY = 53000000;
+constexpr int64_t RC_PACKED_MAX_CHANNELS = 32;
+constexpr int64_t RC_PACKED_VECTOR_ELEMENTS = 64;
+constexpr int64_t RC_PACKED_MIN_GROUPS_PER_CORE = 4;
+// Ascend950 paired measurements: small R cannot amortize the cross-core stages.
+constexpr int64_t RC_PACKED_MIN_R = 32768;
 constexpr size_t BNG_WORKSPACE_RESERVED = 16 * 1024 * 1024;
 constexpr int64_t CONST_ONE = 1;
 // fused kernel InitBuffer 的 input queue 深度(与 kernel 内 BUFFER_NUM / C128_FUSED_INPUT_BUFFER 一致):
@@ -51,6 +59,10 @@ constexpr uint64_t MERGED_ADIM_QUEUE_NUM = 5; // fused aDim 队列合计:meanInQ
 
 int64_t BatchNormGradV3TilingRASplitR::CalcBlockFactor() const
 {
+    if (packed_) {
+        return std::max(RC_PACKED_MIN_GROUPS_PER_CORE * rowsPerGroup_,
+                        Ops::Base::CeilAlign(Ops::Base::CeilDiv(r1Dim, static_cast<int64_t>(coreNum)), rowsPerGroup_));
+    }
     return std::max(R_LOOP_FACTOR, Ops::Base::CeilDiv(r1Dim, static_cast<int64_t>(coreNum)));
 }
 
@@ -88,13 +100,35 @@ bool BatchNormGradV3TilingRASplitR::IsCapable()
 ge::graphStatus BatchNormGradV3TilingRASplitR::DoOpTiling()
 {
     dyTypeSize_ = ge::GetSizeByDataType(dyDtype);
+    // Select an internal layout only after the unchanged IsCapable admitted Split-R.
+    packed_ = aDim >= 1 && aDim <= RC_PACKED_MAX_CHANNELS && r1Dim >= RC_PACKED_MIN_R;
+    rowsPerGroup_ = 1;
+    if (packed_) {
+        while (rowsPerGroup_ * 2 * aDim <= RC_PACKED_VECTOR_ELEMENTS) {
+            rowsPerGroup_ *= 2;
+        }
+    }
     blockFactor_ = CalcBlockFactor();
     usedCoreNum_ = CalcUsedCoreNum();
     tailBlockFactor_ = (r1Dim % blockFactor_ == 0) ? blockFactor_ : r1Dim % blockFactor_;
-    aFactor_ = std::min(Ops::Base::GetVRegSize(context_) / dyTypeSize_, aDim);
+    int64_t vectorChannels = Ops::Base::GetVRegSize(context_) / dyTypeSize_;
+    aFactor_ = std::min(vectorChannels, aDim);
+    // Wider copies amortize unaligned channel strides; keep the original tile
+    // for aligned strides, where the paired measurements show no stable gain.
+    if (!packed_ && dyTypeSize_ == FLOAT_BYTE_SIZE && aDim % static_cast<int64_t>(blockSize / dyTypeSize_) != 0 &&
+        aDim > WIDE_C_MIN_CHANNEL_VECTORS * vectorChannels && blockFactor_ >= WIDE_C_MIN_R_LOOPS * R_LOOP_FACTOR) {
+        aFactor_ = std::min(WIDE_C_TILE_VECTOR_COUNT * vectorChannels, aDim);
+    }
     aFactorAlign_ = Ops::Base::CeilAlign(aFactor_, static_cast<int64_t>(blockSize / dyTypeSize_));
     aLoopTimes_ = Ops::Base::CeilDiv(aDim, aFactorAlign_);
     aFactorTail_ = (aDim % aFactorAlign_ == 0) ? aFactorAlign_ : aDim % aFactorAlign_;
+
+    if (packed_) {
+        aFactor_ = aDim;
+        aFactorAlign_ = RC_PACKED_VECTOR_ELEMENTS;
+        aLoopTimes_ = 1;
+        aFactorTail_ = aDim;
+    }
 
     OP_TILING_CHECK(ge::GRAPH_SUCCESS != Stage0Stage1UbTiling(),
                     VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed Stage0Stage1UbTiling."),
@@ -108,7 +142,7 @@ ge::graphStatus BatchNormGradV3TilingRASplitR::DoOpTiling()
 ge::graphStatus BatchNormGradV3TilingRASplitR::Stage0Stage1UbTiling()
 {
     // 一次计算一个tiling块
-    rLoopFactor_ = std::min(R_LOOP_FACTOR, blockFactor_);
+    rLoopFactor_ = std::min(R_LOOP_FACTOR * rowsPerGroup_, blockFactor_);
     binaryBlockCnt_ = Ops::Base::CeilDiv(blockFactor_, rLoopFactor_);
     binaryFoldPoint_ = (binaryBlockCnt_ <= 1) ? 1 : 1L << (ULONG_BIT_LEN - 1 - __builtin_clzl(binaryBlockCnt_ - 1));
     cacheBuffCnt_ = ULONG_BIT_LEN - __builtin_clzl(binaryBlockCnt_);
@@ -119,8 +153,9 @@ ge::graphStatus BatchNormGradV3TilingRASplitR::Stage0Stage1UbTiling()
     lastCoreLoopTail_ = (tailBlockFactor_ % rLoopFactor_) == 0 ? rLoopFactor_ : tailBlockFactor_ % rLoopFactor_;
 
     // 校验UB是否越界
-    uint64_t rElemUbSize = Ops::Base::CeilAlign(
-        aFactorAlign_ * rLoopFactor_ * STAGE0_R_ELEM_NUM * dyTypeSize_ * DOUBLE_BUFF, blockSize / dyTypeSize_);
+    // Two double-buffered input queues plus two single-buffered fp32 temporaries.
+    uint64_t rElemUbSize = Ops::Base::CeilDiv(rLoopFactor_, rowsPerGroup_) * aFactorAlign_ *
+                           (4 * dyTypeSize_ + 2 * FLOAT_BYTE_SIZE);
     // kernel Stage0InitBuffer 开了 dbetaCacheBuffer_ + dgammaCacheBuffer_ 两份,此处按 2 份计
     uint64_t cacheBuffSize = PAIRED_BUFFER_NUM * Ops::Base::CeilAlign(cacheBuffCnt_ * aFactorAlign_ * FLOAT_BYTE_SIZE,
                                                                       blockSize / FLOAT_BYTE_SIZE);
@@ -145,6 +180,7 @@ ge::graphStatus BatchNormGradV3TilingRASplitR::Stage2UbTiling()
                                                     ubSize, aElemUbSize + rElemUbSize),
                     return ge::GRAPH_FAILED);
     int64_t dxLoopFactor = Ops::Base::FloorDiv(ubSize - aElemUbSize, rElemUbSize);
+    dxLoopFactor *= rowsPerGroup_;
     dxLoopFactor_ = std::min(blockFactor_, dxLoopFactor);
     dxLoopTimes_ = Ops::Base::CeilDiv(blockFactor_, dxLoopFactor_),
     dxLoopTail_ = (blockFactor_ % dxLoopFactor_ == 0) ? dxLoopFactor_ : blockFactor_ % dxLoopFactor_;
@@ -157,6 +193,9 @@ ge::graphStatus BatchNormGradV3TilingRASplitR::Stage2UbTiling()
 
 uint64_t BatchNormGradV3TilingRASplitR::GetTilingKey() const
 {
+    if (packed_) {
+        return BNG_V3_RA_SPLIT_R_PACKED_TILING_KEY;
+    }
     // fused快速路径触发条件(各核行数一致 binaryBlockCnt==2)：
     //  - single(aLoopTimes==1, C≤aFactor): dtype无关,fp32/fp16/bf16均可(只驻留1个tile,UB~224KB放得下)；
     //  - pair(aLoopTimes==2): 仅fp32。fp16/bf16的aFactor=128→aFactorAlign=128使所有buffer翻倍,
