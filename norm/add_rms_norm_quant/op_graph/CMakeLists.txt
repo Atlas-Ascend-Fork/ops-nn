@@ -9,3 +9,9 @@
 # ----------------------------------------------------------------------------
 message(STATUS "=== Debug: start ops.norm.add_rms_norm_quant.graph_plugin.CMakeLists.txt ")
 add_graph_plugin_sources()
+
+# Operator prototypes used to construct fusion graphs.
+target_sources(${GRAPH_PLUGIN_NAME}_proto_headers INTERFACE
+    ${PROJECT_SOURCE_DIR}/norm/add_rms_norm/op_graph/add_rms_norm_proto.h
+    ${PROJECT_SOURCE_DIR}/quant/quantize/op_graph/quantize_proto.h
+)
