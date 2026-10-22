@@ -151,7 +151,10 @@ class Conv2DTransposeFixpipeFusionPassTest : public testing::Test {
 protected:
     static void SetUpTestCase() {}
 
-    static void TearDownTestCase() {}
+    // cube_vector_combine 存于 PlatformInfoManager 全局单例，dual* 用例设置的 fuse 状态若不在套件
+    // 结束时复位，会泄漏给同进程内后续依赖 GetArchKey() 的融合套件（如 Conv2dToConv2dV2、
+    // Conv2DPostCubeToExtendConv2D，误取 FUSE 档位的 dtype/format 支持表导致融合被错误拒绝）
+    static void TearDownTestCase() { SetCubeVectorCombine(""); }
 
     // the cube vector combine res is global in the PlatformInfoManager, patch it in place
     // (get the full PlatFormInfos, modify the SoCInfo section and update back) so the other
