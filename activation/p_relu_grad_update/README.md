@@ -81,7 +81,7 @@
       <td>ND</td>
   </tr>
   <tr>
-      <td>updates</td>
+      <td>update</td>
       <td>输出</td>
       <td>weights梯度计算的中间结果，用于后续reduce计算</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
