@@ -157,9 +157,6 @@ static bool CheckDim(const aclTensor* self, const aclTensor* scale, const aclTen
     }
 
     int64_t dimNum = static_cast<int64_t>(self->GetViewShape().GetDimNum());
-    if (dimNum == 0) {
-        dimNum = 1;
-    }
     int64_t lastDim = self->GetViewShape().GetDim(dimNum - 1);
     if (scaleDim != lastDim && scaleDim != 1) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "the last dim size(%ld) of x must be same as scale and offset(%ld).", lastDim,
@@ -252,7 +249,8 @@ static bool CheckShape(const aclTensor* x, const aclTensor* y, const aclTensor* 
         return false;
     }
 
-    // self的数据维度不能超过8
+    // self的数据维度范围为1-8
+    OP_CHECK_MIN_DIM(x, 1, return false);
     OP_CHECK_MAX_DIM(x, MAX_DIM_LEN, return false);
 
     // check x scale offset last dim size

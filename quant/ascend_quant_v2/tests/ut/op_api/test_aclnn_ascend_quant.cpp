@@ -244,6 +244,25 @@ TEST_F(l2_ascend_quant_test, ascend910B2_output_int32_error_shape)
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
+TEST_F(l2_ascend_quant_test, ascend910B2_output_int8_scalar_error)
+{
+    auto tensor_1_desc = TensorDesc({}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2).Value(vector<float>{1});
+    auto tensor_scale = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_offset = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto out_tensor_desc = TensorDesc({}, ACL_INT8, ACL_FORMAT_ND);
+    int32_t dstType = ACL_INT8;
+    bool sqrtMode = false;
+    const char* roundMode = "round";
+
+    auto ut = OP_API_UT(aclnnAscendQuant,
+                        INPUT(tensor_1_desc, tensor_scale, tensor_offset, sqrtMode, roundMode, dstType),
+                        OUTPUT(out_tensor_desc));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
 TEST_F(l2_ascend_quant_test, ascend910B2_output_int4_scalar_error)
 {
     auto tensor_1_desc = TensorDesc({}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2).Value(vector<float>{1});
