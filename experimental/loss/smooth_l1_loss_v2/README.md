@@ -112,7 +112,7 @@
 
 | 调用方式 | 调用样例                                                                   | 说明                                                             |
 |--------------|------------------------------------------------------------------------|----------------------------------------------------------------|
-| aclnn调用 | [test_aclnn_smooth_l1_loss_v2](./examples/test_aclnn_smooth_l1_loss_v2.cpp) | 通过[aclnnSmoothL1Loss](./docs/aclnnsmoothl1lossv2.md)文档说明的两段式接口调用该算子。    |
+| aclnn调用 | [test_aclnn_smooth_l1_loss_v2](./examples/test_aclnn_smooth_l1_loss_v2.cpp) | 通过[aclnnSmoothL1Loss](./docs/aclnnSmoothL1LossV2.md)文档说明的两段式接口调用该算子。    |
 
 ## 贡献说明
 
