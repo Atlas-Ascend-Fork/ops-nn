@@ -61,20 +61,10 @@ ge::graphStatus NonZeroAscendCTilingImpl::CalcShapeInfo()
         }
     }
 
-    // 坐标反解用 stride：mulInDimList[d] = shape[d+1] * ... * shape[rank-1]
-    mulInDimList_[rank_ - 1] = 1;
-    for (int64_t d = rank_ - 2; d >= 0; d--) {
-        mulInDimList_[d] = mulInDimList_[d + 1] * shape_[d + 1];
-    }
-    for (int64_t d = rank_; d < MAX_DIM_NUM; d++) {
-        mulInDimList_[d] = 1;
-    }
-
-    // 输入元素字节数：bool/int8/uint8=1、fp16/bf16=2、fp32/int32=4（kernel 按位模式判零）
+    // 输入元素字节数：bool/int8/uint8=1、fp16=2、bf16 用 -2 编码、fp32/int32=4（kernel 按位模式判零）
     auto xDesc = context_->GetInputDesc(INPUT_X_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
     ge::DataType xDtype = xDesc->GetDataType();
-    xIsBf16_ = (xDtype == ge::DT_BF16) ? 1 : 0;
     switch (xDtype) {
         case ge::DT_BOOL:
         case ge::DT_INT8:
@@ -82,13 +72,27 @@ ge::graphStatus NonZeroAscendCTilingImpl::CalcShapeInfo()
             xElemSize_ = 1;
             break;
         case ge::DT_FLOAT16:
-        case ge::DT_BF16:
             xElemSize_ = 2;
+            break;
+        case ge::DT_BF16:
+            xElemSize_ = -2; // 符号位标记 bf16，kernel 侧取绝对值得到字节数并据此选择 Cast 目标类型
             break;
         default:
             xElemSize_ = 4;
             break;
     }
+
+    // 输出元素字节数：int32=4、int64=8。GE 图模式（jit_compile）下 NonZero 内部输出为 int32 + 后置 Cast，
+    // kernel 据此切换输出值与 outShape 刷新协议的写出位宽
+    auto yDesc = context_->GetOutputDesc(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, yDesc);
+    ge::DataType yDtype = yDesc->GetDataType();
+    OP_CHECK_IF(yDtype != ge::DT_INT32 && yDtype != ge::DT_INT64,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "y dtype",
+                                                      std::to_string(static_cast<int32_t>(yDtype)).c_str(),
+                                                      "only support int32 or int64"),
+                return ge::GRAPH_FAILED);
+    yElemSize_ = (yDtype == ge::DT_INT32) ? INT32_BYTE : 8;
 
     auto attrs = context_->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
@@ -107,8 +111,6 @@ ge::graphStatus NonZeroAscendCTilingImpl::CalcShapeInfo()
         numPerCore8_ = 0;
         tailNum_ = numel_;
     }
-    // 尾核不 align8，保证 totalCapacity == numel
-    tailCapacity_ = tailNum_;
 
     return ge::GRAPH_SUCCESS;
 }
@@ -151,20 +153,17 @@ ge::graphStatus NonZeroAscendCTilingImpl::SetKernelTiling()
     tilingData_.set_realCoreNum(realCoreNum_);
     tilingData_.set_numPerCore8(numPerCore8_);
     tilingData_.set_tailNum(tailNum_);
-    tilingData_.set_tailCapacity(tailCapacity_);
-    tilingData_.set_transpose(transpose_);
+    tilingData_.set_transpose(transpose_ | ((yElemSize_ == 4) ? 2 : 0));
     tilingData_.set_xElemSize(xElemSize_);
-    tilingData_.set_xIsBf16(xIsBf16_);
     tilingData_.set_shape(shape_);
-    tilingData_.set_mulInDimList(mulInDimList_);
 
     tilingData_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData_.GetDataSize());
 
     OP_LOGD(context_->GetNodeName(),
             "NonZero arch22 tiling: numel=%ld, rank=%ld, realCoreNum=%ld, numPerCore8=%ld, tailNum=%ld, "
-            "tailCapacity=%ld, transpose=%ld",
-            numel_, rank_, realCoreNum_, numPerCore8_, tailNum_, tailCapacity_, transpose_);
+            "transpose=%ld, xElemSize=%ld",
+            numel_, rank_, realCoreNum_, numPerCore8_, tailNum_, transpose_, xElemSize_);
     return ge::GRAPH_SUCCESS;
 }
 

@@ -95,19 +95,26 @@ public:
         realCoreNum_ = tilingData_->realCoreNum;
         numPerCore8_ = tilingData_->numPerCore8;
         tailNum_ = tilingData_->tailNum;
-        transpose_ = tilingData_->transpose;
-        elemSize_ = tilingData_->xElemSize;
-        isBf16_ = tilingData_->xIsBf16;
+        // transpose 字段编码：bit0=transpose（1 输出 [dim,num]），bit1=输出为 int32（GE 图模式内部输出 int32 + 后置
+        // Cast）
+        int64_t transposeEnc = tilingData_->transpose;
+        transpose_ = transposeEnc & 1;
+        yElemSize_ = ((transposeEnc & 2) != 0) ? 4 : 8;
+        // xElemSize 以符号位编码 bf16：负值表示 bfloat16，绝对值即元素字节数
+        int64_t rawElemSize = tilingData_->xElemSize;
+        isBf16_ = (rawElemSize < 0) ? 1 : 0;
+        elemSize_ = (rawElemSize < 0) ? -rawElemSize : rawElemSize;
 
         for (int32_t d = 0; d < MAX_DIM; d++) {
             shape_[d] = tilingData_->shape[d];
-            mulInDimList_[d] = tilingData_->mulInDimList[d];
         }
 
         xGm_.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t*>(x),
                              static_cast<uint64_t>(numel_) * static_cast<uint64_t>(elemSize_));
         yGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(y),
                              static_cast<uint64_t>(numel_) * static_cast<uint64_t>(rank_));
+        yGm32_.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(y),
+                               static_cast<uint64_t>(numel_) * static_cast<uint64_t>(rank_));
         outShapeGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(outShape), 9U * 8U);
         countsGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(workspace), static_cast<uint64_t>(COUNTS_MAX) * 8U);
 
@@ -331,13 +338,18 @@ private:
             xQueR1_.FreeTensor(xIn);
 
             if (blkCnt > 0) {
-                SyncSToV();
-                LocalTensor<int64_t> c64 = c64QueR1_.AllocTensor<int64_t>();
-                Cast<int64_t, int32_t>(c64, coord, RoundMode::CAST_NONE, blkCnt);
-                c64QueR1_.EnQue(c64);
-                LocalTensor<int64_t> c64Out = c64QueR1_.DeQue<int64_t>();
-                UbToGm(yGm_[prefix + outStart], c64Out, blkCnt);
-                c64QueR1_.FreeTensor(c64Out);
+                if (yElemSize_ == 4) {
+                    SyncSToMTE3();
+                    UbToGm(yGm32_[prefix + outStart], coord, blkCnt);
+                } else {
+                    SyncSToV();
+                    LocalTensor<int64_t> c64 = c64QueR1_.AllocTensor<int64_t>();
+                    Cast<int64_t, int32_t>(c64, coord, RoundMode::CAST_NONE, blkCnt);
+                    c64QueR1_.EnQue(c64);
+                    LocalTensor<int64_t> c64Out = c64QueR1_.DeQue<int64_t>();
+                    UbToGm(yGm_[prefix + outStart], c64Out, blkCnt);
+                    c64QueR1_.FreeTensor(c64Out);
+                }
             }
             outStart += blkCnt;
             processed += blockNum;
@@ -364,12 +376,23 @@ private:
         return xUb.GetValue(idx) != 0U;
     }
 
+    // 坐标反解用后缀积 stride：stride(d) = shape[d+1] * ... * shape[rank-1]，由 shape 现场计算
+    __aicore__ inline int64_t StrideOf(int32_t d) const
+    {
+        int64_t stride = 1;
+        for (int32_t k = d + 1; k < rank_; k++) {
+            stride *= shape_[k];
+        }
+        return stride;
+    }
+
     __aicore__ inline void CollectCoord(LocalTensor<int32_t>& coordUb, uint32_t cnt, int64_t linear)
     {
         int64_t rem = linear;
         for (int32_t d = 0; d < rank_; d++) {
-            int32_t coord = static_cast<int32_t>(rem / mulInDimList_[d]);
-            rem = rem % mulInDimList_[d];
+            int64_t stride = StrideOf(d);
+            int32_t coord = static_cast<int32_t>(rem / stride);
+            rem = rem % stride;
             coordUb.SetValue(static_cast<int64_t>(d) * BLOCK_MAX + cnt, coord);
         }
     }
@@ -428,6 +451,7 @@ private:
 
     __aicore__ inline void WriteOutShape(int64_t total)
     {
+        // shape 刷新协议固定按 3 个 int64 写出 [magic, dim0, dim1]（GE 运行侧按 int64 解析，与输出值位宽无关）
         LocalTensor<int64_t> shapeUb = shapeQue_.AllocTensor<int64_t>();
         shapeUb.SetValue(0, static_cast<int64_t>(OUTSHAPE_DIM_BASE));
         if (transpose_ == 1) {
@@ -467,8 +491,9 @@ private:
             if (IsNonZero(xIn, i)) {
                 int64_t rem = baseOff + i;
                 for (int32_t d = 0; d < rank_; d++) {
-                    int32_t coord = static_cast<int32_t>(rem / mulInDimList_[d]);
-                    rem = rem % mulInDimList_[d];
+                    int64_t stride = StrideOf(d);
+                    int32_t coord = static_cast<int32_t>(rem / stride);
+                    rem = rem % stride;
                     packUb.SetValue(static_cast<int64_t>(t) * rank_ + d, coord);
                 }
                 t++;
@@ -479,6 +504,12 @@ private:
 
     __aicore__ inline void WriteBlockNumMajor(LocalTensor<int32_t>& packUb, uint32_t t, int64_t dstBase)
     {
+        if (yElemSize_ == 4) {
+            SyncSToMTE3();
+            UbToGm(yGm32_[dstBase * rank_], packUb, static_cast<uint32_t>(t) * static_cast<uint32_t>(rank_));
+            AscendC::PipeBarrier<PIPE_ALL>();
+            return;
+        }
         SyncSToV();
         LocalTensor<int64_t> p64 = packI64Que_.AllocTensor<int64_t>();
         Cast<int64_t, int32_t>(p64, packUb, RoundMode::CAST_NONE, static_cast<uint32_t>(t * rank_));
@@ -544,16 +575,25 @@ private:
                 LocalTensor<int32_t> coordUb = coordQue_.AllocTensor<int32_t>();
                 t = FillBlockCoord(xIn, coordUb, blockNum, coreOff + processed);
                 if (t > 0) {
-                    SyncSToV();
                     int64_t dstBase = prefix + localBefore;
-                    for (int32_t d = 0; d < rank_; d++) {
-                        LocalTensor<int64_t> t64 = tmpI64Que_.AllocTensor<int64_t>();
-                        Cast(t64, coordUb[static_cast<int64_t>(d) * BLOCK_MAX], RoundMode::CAST_NONE, t);
-                        tmpI64Que_.EnQue(t64);
-                        LocalTensor<int64_t> t64In = tmpI64Que_.DeQue<int64_t>();
-                        UbToGm(yGm_[static_cast<int64_t>(d) * total + dstBase], t64In, t);
-                        AscendC::PipeBarrier<PIPE_ALL>();
-                        tmpI64Que_.FreeTensor(t64In);
+                    if (yElemSize_ == 4) {
+                        SyncSToMTE3();
+                        for (int32_t d = 0; d < rank_; d++) {
+                            UbToGm(yGm32_[static_cast<int64_t>(d) * total + dstBase],
+                                   coordUb[static_cast<int64_t>(d) * BLOCK_MAX], t);
+                            AscendC::PipeBarrier<PIPE_ALL>();
+                        }
+                    } else {
+                        SyncSToV();
+                        for (int32_t d = 0; d < rank_; d++) {
+                            LocalTensor<int64_t> t64 = tmpI64Que_.AllocTensor<int64_t>();
+                            Cast(t64, coordUb[static_cast<int64_t>(d) * BLOCK_MAX], RoundMode::CAST_NONE, t);
+                            tmpI64Que_.EnQue(t64);
+                            LocalTensor<int64_t> t64In = tmpI64Que_.DeQue<int64_t>();
+                            UbToGm(yGm_[static_cast<int64_t>(d) * total + dstBase], t64In, t);
+                            AscendC::PipeBarrier<PIPE_ALL>();
+                            tmpI64Que_.FreeTensor(t64In);
+                        }
                     }
                 }
                 coordQue_.FreeTensor(coordUb);
@@ -569,6 +609,7 @@ private:
     const NonZeroTilingData* tilingData_ = nullptr;
     GlobalTensor<uint8_t> xGm_;
     GlobalTensor<int64_t> yGm_;
+    GlobalTensor<int32_t> yGm32_;
     GlobalTensor<int64_t> outShapeGm_;
     GlobalTensor<int32_t> countsGm_;
 
@@ -598,9 +639,9 @@ private:
     int64_t tailNum_ = 0;
     int64_t transpose_ = 0;
     int64_t elemSize_ = 0;
+    int64_t yElemSize_ = 8;
     int64_t isBf16_ = 0;
     int64_t shape_[MAX_DIM] = {1, 1, 1, 1, 1, 1, 1, 1};
-    int64_t mulInDimList_[MAX_DIM] = {1, 1, 1, 1, 1, 1, 1, 1};
 };
 } // namespace NonZero
 
