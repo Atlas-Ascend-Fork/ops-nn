@@ -60,6 +60,21 @@ TEST_F(l2_gemm_syrk_test, gemm_syrk_3d_bf16_default_scale)
     EXPECT_EQ(aclRet, ACLNN_SUCCESS);
 }
 
+// 3D bf16, 行主序稠密但 storage format 标签为 NCL（at::Tensor->aclTensor 桥接的
+// 3D 张量映射）: 布局门以 shape/stride 判定为 ND 等价, 应放行
+TEST_F(l2_gemm_syrk_test, gemm_syrk_3d_ncl_label_dense)
+{
+    op::SocVersionManager socVersionManager(op::SocVersion::ASCEND950);
+    auto a_desc = TensorDesc({2, 128, 64}, ACL_BF16, ACL_FORMAT_NCL).ValueRange(0, 1);
+    auto c_desc = TensorDesc({2, 128, 128}, ACL_BF16, ACL_FORMAT_NCL).ValueRange(0, 1);
+
+    auto ut = OP_API_UT(aclnnGemmSyrk, INPUT(a_desc, c_desc, nullptr, nullptr), OUTPUT(), false, "full");
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
 // transpose_x=true: a 为转置 (k, m) 存储
 TEST_F(l2_gemm_syrk_test, gemm_syrk_transpose_x)
 {

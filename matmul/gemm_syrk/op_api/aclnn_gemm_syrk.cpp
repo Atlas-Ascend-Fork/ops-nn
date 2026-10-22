@@ -16,6 +16,7 @@
 #include "opdev/make_op_executor.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
+#include "aclnn_kernels/transdata.h"
 #include "level0/muls.h"
 #include "level0/zero_op.h"
 #include "gemm_syrk.h"
@@ -24,6 +25,7 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 #include "opdev/platform.h"
+#include "opdev/shape_utils.h"
 #include "matmul/common/op_host/op_api/cube_util.h"
 #include "matmul/common/op_host/log_format_util.h"
 
@@ -83,14 +85,58 @@ static aclnnStatus CheckDtype(const GemmSyrkParams& params)
     return ACLNN_SUCCESS;
 }
 
+static bool IsValidLinearView(const aclTensor* tensor)
+{
+    if (tensor->GetStorageFormat() == Format::FORMAT_FRACTAL_NZ) {
+        return false;
+    }
+    const auto& viewShape = tensor->GetViewShape();
+    const auto& viewStrides = tensor->GetViewStrides();
+    const int64_t dimNum = viewShape.GetDimNum();
+    if (dimNum <= 0 || static_cast<int64_t>(viewStrides.size()) != dimNum) {
+        return false;
+    }
+    int64_t maxOffset = tensor->GetViewOffset();
+    for (int64_t i = 0; i < dimNum; ++i) {
+        const int64_t dim = viewShape.GetDim(i);
+        if (dim < 0 || viewStrides[i] < 0) {
+            return false; // 负维度/负 stride 的描述符非法
+        }
+        if (dim > 0) {
+            maxOffset += (dim - 1) * viewStrides[i];
+        }
+    }
+    if (viewShape.GetShapeSize() == 0) {
+        return true; // 空张量不访问数据, 调用侧已按 no-op 处理
+    }
+    const auto& storageShape = tensor->GetStorageShape();
+    if (storageShape.GetDimNum() == 0) {
+        // storageDims 缺省(aclCreateTensor 传 nullptr 时 storageShape 为空): 描述符
+        // 不携带真实 buffer 容量, 无法判越界, 只保留上面的自洽性判定
+        return true;
+    }
+    // storageDims 已显式声明(含与 viewShape 同形): 声明的容量是有效信息, 一律校验。
+    // 同形 + 连续/offset=0 的稠密张量 maxOffset = shapeSize - 1 < shapeSize 恒过;
+    // 同形但 viewOffset 非零或 stride 跨度超出声明容量的描述符在此被拒绝
+    return storageShape.GetShapeSize() > maxOffset;
+}
+
 static aclnnStatus CheckFormat(const GemmSyrkParams& params)
 {
-    if (params.a->GetStorageFormat() != Format::FORMAT_ND) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "a only supports ND format.");
+    if (!IsValidLinearView(params.a)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "a must be a valid view of a linear (ND) storage: shape %s, strides %s, storage format %s.",
+                op::ToString(params.a->GetViewShape()).GetString(),
+                op::ToString(params.a->GetViewStrides()).GetString(),
+                op::ToString(params.a->GetStorageFormat()).GetString());
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (params.cRef->GetStorageFormat() != Format::FORMAT_ND) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "c only supports ND format.");
+    if (!IsValidLinearView(params.cRef)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "c must be a valid view of a linear (ND) storage: shape %s, strides %s, storage format %s.",
+                op::ToString(params.cRef->GetViewShape()).GetString(),
+                op::ToString(params.cRef->GetViewStrides()).GetString(),
+                op::ToString(params.cRef->GetStorageFormat()).GetString());
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -186,6 +232,11 @@ static aclnnStatus GemmSyrkGetWorkspaceSizeCommon(const GemmSyrkParams& params, 
     auto aContig = l0op::Contiguous(params.a, executor);
     CHECK_RET(aContig != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto cContig = l0op::Contiguous(params.cRef, executor);
+    CHECK_RET(cContig != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    aContig = l0op::ReFormat(aContig, op::Format::FORMAT_ND, executor);
+    CHECK_RET(aContig != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    cContig = l0op::ReFormat(cContig, op::Format::FORMAT_ND, executor);
     CHECK_RET(cContig != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     if (k == 0 || alphaValue == 0.0F) {
