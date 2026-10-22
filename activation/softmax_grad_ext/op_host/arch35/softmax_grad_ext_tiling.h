@@ -74,18 +74,83 @@ TILING_DATA_FIELD_DEF(int64_t, binAddCacheBufferCount);
 TILING_DATA_FIELD_DEF(int64_t, binAddResultCacheID);
 END_TILING_DATA_DEF;
 
+// ara 全载
+BEGIN_TILING_DATA_DEF(SoftmaxGradExtARATilingData)
+TILING_DATA_FIELD_DEF(int64_t, totalRLen);    // R轴大小
+TILING_DATA_FIELD_DEF(int64_t, totalA0Len);   // 合轴后A0轴大小（尾轴合轴）
+TILING_DATA_FIELD_DEF(int64_t, totalTiles);   // 总tile数 = a1 * a0Outer
+TILING_DATA_FIELD_DEF(int64_t, tilesPerCore); // 单核tile数
+TILING_DATA_FIELD_DEF(int64_t, usedCoreNums); // 实际用核数
+TILING_DATA_FIELD_DEF(int64_t, a0Outer);      // A0切块数
+TILING_DATA_FIELD_DEF(int64_t, tileA0Len);    // A0单块长
+TILING_DATA_FIELD_DEF(int64_t, tileA0Tail);   // A0尾块长
+TILING_DATA_FIELD_DEF(int64_t, x2IsScalar);   // x2是否为单点输入
+// 二分累加
+TILING_DATA_FIELD_DEF(uint16_t, binaryAddK);
+TILING_DATA_FIELD_DEF(uint16_t, binaryAddLast);
+TILING_DATA_FIELD_DEF(uint16_t, binaryAddInnerLoop);
+TILING_DATA_FIELD_DEF(uint16_t, remainderLoopCount);
+TILING_DATA_FIELD_DEF(uint16_t, quotientLoopCount);
+TILING_DATA_FIELD_DEF(uint16_t, remainderTailCount);
+TILING_DATA_FIELD_DEF(uint32_t, remainderOffset);
+TILING_DATA_FIELD_DEF(uint32_t, baseLineOffset);
+TILING_DATA_FIELD_DEF(uint32_t, validNumInXUb);
+TILING_DATA_FIELD_DEF(uint32_t, quotientTailOffset);
+TILING_DATA_FIELD_DEF(uint32_t, remainderTailOffset);
+TILING_DATA_FIELD_DEF(uint32_t, remainderTailOffset0);
+TILING_DATA_FIELD_DEF(uint32_t, remainderTailOffset1);
+TILING_DATA_FIELD_DEF(uint32_t, remainderTailOffset2);
+TILING_DATA_FIELD_DEF(uint32_t, remainderTailOffset3);
+TILING_DATA_FIELD_DEF(uint32_t, remainderTailOffset4);
+TILING_DATA_FIELD_DEF(uint32_t, remainderTailOffset5);
+TILING_DATA_FIELD_DEF(uint32_t, remainderTailOffset6);
+TILING_DATA_FIELD_DEF(uint32_t, remainderTailOffset7);
+END_TILING_DATA_DEF;
+
+// ara重计算
+BEGIN_TILING_DATA_DEF(SoftmaxGradExtARARecomputeTilingData)
+TILING_DATA_FIELD_DEF(int64_t, totalRLen);    // R轴大小
+TILING_DATA_FIELD_DEF(int64_t, totalA0Len);   // 合轴后A0轴大小（尾轴合轴）
+TILING_DATA_FIELD_DEF(int64_t, totalTiles);   // 总tile数 = a1 * tileA0Outer
+TILING_DATA_FIELD_DEF(int64_t, tilesPerCore); // 单核tile数
+TILING_DATA_FIELD_DEF(int64_t, usedCoreNums); // 实际用核数
+TILING_DATA_FIELD_DEF(int64_t, tileA0Outer);  // A0切块数
+TILING_DATA_FIELD_DEF(int64_t, tileA0Len);    // A0单块长
+TILING_DATA_FIELD_DEF(int64_t, tileA0Tail);   // A0尾块长
+TILING_DATA_FIELD_DEF(int64_t, x2IsScalar);   // x2是否为单点输入
+// 二分累加
+TILING_DATA_FIELD_DEF(int64_t, binAddRFactor);
+TILING_DATA_FIELD_DEF(int64_t, binAddRLoop);
+TILING_DATA_FIELD_DEF(int64_t, binAddRTotalLoop);
+TILING_DATA_FIELD_DEF(int64_t, binAddRTail);
+TILING_DATA_FIELD_DEF(int64_t, binAddBasicBlockLoop);
+TILING_DATA_FIELD_DEF(int64_t, binAddMainFoldCount);
+TILING_DATA_FIELD_DEF(int64_t, binAddCacheBufferCount);
+TILING_DATA_FIELD_DEF(int64_t, binAddResultCacheID);
+// R切分多核（mc）：a0==64 lane 且旧切法占不满核时，按 (a1, R分块) 满核两阶段协同
+TILING_DATA_FIELD_DEF(int64_t, mcEnabled);     // 1=启用 mc 路径
+TILING_DATA_FIELD_DEF(int64_t, mcA1Len);       // A1 大小
+TILING_DATA_FIELD_DEF(int64_t, mcChunksPerA1); // 每 A1 的 R 分块数
+END_TILING_DATA_DEF;
+
 constexpr int32_t TEMPLATE_AR_SMALL_R_PRIORITY = 50;
 constexpr int32_t TEMPLATE_AR_FULL_LOAD_PRIORITY = 100;
 constexpr int32_t TEMPLATE_AR_RECOMPUTE_PRIORITY = 200;
+constexpr int32_t TEMPLATE_ARA_FULL_LOAD_PRIORITY = 300;
+constexpr int32_t TEMPLATE_ARA_RECOMPUTE_PRIORITY = 400;
 
 constexpr int64_t TILINGKEY_AR_SMALL_R = 500;
 constexpr int64_t TILINGKEY_AR = 1000;
 constexpr int64_t TILINGKEY_AR_RECOMPUTE = 2000;
+constexpr int64_t TILINGKEY_ARA = 10000;
+constexpr int64_t TILINGKEY_ARA_RECOMPUTE = 20000;
 
 // softmax_grad_ext
 REGISTER_TILING_DATA_CLASS(SoftmaxGradExt, SoftmaxGradExtARSmallRTilingData);
 REGISTER_TILING_DATA_CLASS(SoftmaxGradExt_1000, SoftmaxGradExtARTilingData);
 REGISTER_TILING_DATA_CLASS(SoftmaxGradExt_2000, SoftmaxGradExtARRecomputeTilingData);
+REGISTER_TILING_DATA_CLASS(SoftmaxGradExt_10000, SoftmaxGradExtARATilingData);
+REGISTER_TILING_DATA_CLASS(SoftmaxGradExt_20000, SoftmaxGradExtARARecomputeTilingData);
 
 struct SoftmaxGradExtCompileInfo {
     // std::shared_ptr<AutoTilingCompileInfo> dslCompileInfo;
@@ -250,6 +315,8 @@ public:
     {}
     ~SoftmaxGradExtTilingARRecompute() override = default;
 
+    void Reset(gert::TilingContext* context) override { SoftmaxGradExtTilingBase::Reset(context); }
+
 protected:
     bool IsCapable() override;
     ge::graphStatus DoOpTiling() override;
@@ -275,6 +342,79 @@ private:
     int64_t mainFoldCount_{0};
     int64_t binAddCacheBufferCount_{0};
     int64_t binAddResultCacheID_{0};
+};
+
+// ara 全载
+class SoftmaxGradExtTilingARA : virtual public SoftmaxGradExtTilingBase {
+public:
+    explicit SoftmaxGradExtTilingARA(gert::TilingContext* context)
+        : TilingBaseClass(context), SoftmaxGradExtTilingBase(context)
+    {}
+    ~SoftmaxGradExtTilingARA() override = default;
+
+    void Reset(gert::TilingContext* context) override { SoftmaxGradExtTilingBase::Reset(context); }
+
+protected:
+    bool IsCapable() override;
+    ge::graphStatus DoOpTiling() override;
+    uint64_t GetTilingKey() const override;
+    ge::graphStatus PostTiling() override;
+
+    ge::graphStatus BinaryAddTiling();
+
+private:
+    SoftmaxGradExtARATilingData tilingData_;
+
+    int64_t a0TileBase_{0};
+    int64_t tileA0Len_{0};
+    int64_t totalTiles_{0};
+    int64_t tilesPerCore_{0};
+
+    int64_t binaryAddQuotient_{0};
+};
+
+// ara重计算
+class SoftmaxGradExtTilingARARecompute : virtual public SoftmaxGradExtTilingBase {
+public:
+    explicit SoftmaxGradExtTilingARARecompute(gert::TilingContext* context)
+        : TilingBaseClass(context), SoftmaxGradExtTilingBase(context)
+    {}
+    ~SoftmaxGradExtTilingARARecompute() override = default;
+
+    void Reset(gert::TilingContext* context) override { SoftmaxGradExtTilingBase::Reset(context); }
+
+protected:
+    bool IsCapable() override;
+    ge::graphStatus DoOpTiling() override;
+    uint64_t GetTilingKey() const override;
+    ge::graphStatus PostTiling() override;
+
+    ge::graphStatus ComputeBinaryAddParams();
+    int64_t GetCacheID(const int64_t idx);
+
+private:
+    SoftmaxGradExtARARecomputeTilingData tilingData_;
+
+    // tiling 切分
+    int64_t totalTiles_{0};
+    int64_t tilesPerCore_{0};
+    int64_t a0TileBase_{0};
+    int64_t a0Outer_{0};
+    int64_t tileA0Len_{0};
+    int64_t tileA0Tail_{0};
+
+    // 二分累加
+    int64_t binAddRFactor_{0};
+    int64_t binAddRLoop_{0};
+    int64_t binAddRTotalLoop_{0};
+    int64_t binAddRTail_{0};
+    int64_t binAddBasicBlockLoop_{0};
+    int64_t mainFoldCount_{0};
+    int64_t binAddCacheBufferCount_{1};
+    int64_t binAddResultCacheID_{0};
+
+    // R切分多核
+    bool mcEnabled_{false};
 };
 
 extern ge::graphStatus TilingForSoftmaxGradExt(gert::TilingContext* context);

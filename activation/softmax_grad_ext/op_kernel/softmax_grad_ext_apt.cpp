@@ -16,6 +16,8 @@
 #include "arch35/softmax_grad_ext_ar_full_load.h"
 #include "arch35/softmax_grad_ext_ar_small_r.h"
 #include "arch35/softmax_grad_ext_ar_recompute.h"
+#include "arch35/softmax_grad_ext_ara_full_load.h"
+#include "arch35/softmax_grad_ext_ara_recompute.h"
 
 using namespace SoftmaxGradExt;
 
@@ -23,6 +25,8 @@ namespace {
 #define TILINGKEY_AR_SMALL_R 500
 #define TILINGKEY_AR 1000
 #define TILINGKEY_AR_RECOMPUTE 2000
+#define TILINGKEY_ARA 10000
+#define TILINGKEY_ARA_RECOMPUTE 20000
 } // namespace
 
 extern "C" __global__ __aicore__ void softmax_grad_ext(GM_ADDR grad, GM_ADDR x1, GM_ADDR x2, GM_ADDR y,
@@ -53,6 +57,20 @@ extern "C" __global__ __aicore__ void softmax_grad_ext(GM_ADDR grad, GM_ADDR x1,
         TPipe pipe;
         SoftmaxGradExtARRecompute<DTYPE_GRAD> op(&pipe);
         op.Init(grad, x1, x2, y, tilingData);
+        op.Process();
+    } else if (TILING_KEY_IS(TILINGKEY_ARA)) {
+        GET_TILING_DATA_WITH_STRUCT(SoftmaxGradExtARATilingData, tilingDataIn, tiling);
+        const SoftmaxGradExtARATilingData* __restrict tilingData = &tilingDataIn;
+        TPipe pipe;
+        SoftmaxGradExtARA<DTYPE_GRAD> op(tilingData);
+        op.Init(grad, x1, x2, y, &pipe);
+        op.Process();
+    } else if (TILING_KEY_IS(TILINGKEY_ARA_RECOMPUTE)) {
+        GET_TILING_DATA_WITH_STRUCT(SoftmaxGradExtARARecomputeTilingData, tilingDataIn, tiling);
+        const SoftmaxGradExtARARecomputeTilingData* __restrict tilingData = &tilingDataIn;
+        TPipe pipe;
+        SoftmaxGradExtARARecompute<DTYPE_GRAD> op(tilingData);
+        op.Init(grad, x1, x2, y, &pipe);
         op.Process();
     }
 }

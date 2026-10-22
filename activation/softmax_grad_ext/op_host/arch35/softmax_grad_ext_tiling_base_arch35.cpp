@@ -180,11 +180,15 @@ ge::graphStatus SoftmaxGradExtTilingBase::GetAndCheckAxes()
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
     auto attrAxis = attrs->GetAttrPointer<int64_t>(CONST_ZERO); // 默认-1轴reduce
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrAxis);
-    reduceAxes_ = xShapeSize_ - CONST_ONE;
-    OP_TILING_CHECK((*attrAxis != -1 && *attrAxis != reduceAxes_),
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        context_->GetNodeName(), "Axes is: %ld, axes only support -1 or %ld", *attrAxis, reduceAxes_),
-                    return ge::GRAPH_FAILED);
+    // 支持任意单一合法轴：负轴归一化到 [0, dim-1]，越界仍报错；
+    // axes=-1/最后一维时 reduceAxes_ 恒为最后一维，与原实现完全一致
+    int64_t axes = *attrAxis;
+    OP_TILING_CHECK(
+        (axes < -xShapeSize_ || axes > xShapeSize_ - CONST_ONE),
+        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Axes is: %ld, axes should be in [%ld, %ld]", axes,
+                                        -xShapeSize_, xShapeSize_ - CONST_ONE),
+        return ge::GRAPH_FAILED);
+    reduceAxes_ = axes < CONST_ZERO ? axes + xShapeSize_ : axes;
     return ge::GRAPH_SUCCESS;
 }
 
