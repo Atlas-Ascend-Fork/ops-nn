@@ -278,7 +278,7 @@ aclnnStatus aclnnNorm(
 - 确定性计算
 
   <!-- npu="A3,910b,910,310p,310b" id7 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：aclnnNorm默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：aclnnNorm默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
   <!-- end id7 -->
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：aclnnNorm默认确定性实现。

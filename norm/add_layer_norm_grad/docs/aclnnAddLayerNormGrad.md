@@ -381,7 +381,7 @@ aclnnStatus aclnnAddLayerNormGrad(
   - 当输入是Inf时，输出为Inf。
   - 当输入是NaN时，输出为NaN。
 - 确定性计算：
-  - aclnnAddLayerNormGrad默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnAddLayerNormGrad默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
 ## 调用示例
 

@@ -326,7 +326,7 @@ aclnnStatus aclnnBatchNorm(
 - 确定性计算：
 
   <!-- npu="A3,910b,910,310p" id10 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：aclnnBatchNorm默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：aclnnBatchNorm默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
   <!-- end id10 -->
   <!-- npu="950" id11 -->
   - <term>Ascend 950PR&950DT系列产品</term>：aclnnBatchNorm默认确定性实现。

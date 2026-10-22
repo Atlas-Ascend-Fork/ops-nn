@@ -349,7 +349,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
 
 - 确定性计算
   <!-- npu="A3,910b" id7 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：aclnnGroupNormSwishGrad默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：aclnnGroupNormSwishGrad默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
   <!-- end id7 -->
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：aclnnGroupNormSwishGrad默认确定性实现。

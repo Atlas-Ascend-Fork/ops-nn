@@ -346,7 +346,7 @@ aclnnStatus aclnnDeepNormGrad(
   * 当输入是Inf时，输出为Inf。
   * 当输入是NaN时，输出为NaN。
 - 确定性计算：
-  - aclnnDeepNormGrad默认非确定性实现，不支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnDeepNormGrad默认非确定性实现，不支持通过aclrtSetSysParamOpt开启确定性。
 
 ## 调用示例
 
