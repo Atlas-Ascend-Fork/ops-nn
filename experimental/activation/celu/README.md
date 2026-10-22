@@ -22,7 +22,6 @@
 | <term>Atlas 200I/500 A2推理产品</term> | × |
 | <term>Atlas推理系列产品</term> | × |
 | <term>Atlas训练系列产品</term> | × |
-| <term>Kirin xxx</term> | × |
 
 ## 功能说明
 
@@ -48,42 +47,32 @@ celu/
 ├── op_host/                    # Host 侧代码
 │   ├── celu_def.cpp            # 算子定义（输入输出规格、属性定义）
 │   ├── celu_infershape.cpp     # 形状推导
-│   └── celu_tiling.cpp         # Tiling 配置
+│   ├── celu_tiling.cpp         # Tiling 配置
+│   └── CMakeLists.txt          # 编译配置
 ├── op_kernel/                  # Kernel 侧代码
 │   ├── celu.cpp                # Kernel 主入口（模板分发）
 │   ├── celu.h                  # Kernel 头文件
 │   ├── celu_tiling_data.h      # TilingData 结构体定义
 │   └── celu_tiling_key.h       # TilingKey 分支定义
-├── op_api/                     # ACLNN 接口（自动生成）
-│   ├── aclnn_celu.cpp          # L2 API 实现
-│   ├── aclnn_celu.h            # L2 API 头文件
-│   ├── celu.cpp                # L0 API 实现
-│   └── celu.h                  # L0 API 头文件
-├── tests/                      # 测试代码
-│   ├── ut/                     # 单元测试
-│   └── st/                     # 系统测试
+├── tests/                      # 测试用例目录（当前待补充）
 ├── examples/                   # 调用示例
 │   └── arch35/
 │       └── test_aclnn_celu.cpp # aclnn 两段式调用示例
-├── CMakeLists.txt              # 构建配置
-└── build.sh                    # 构建脚本
+└── CMakeLists.txt              # 构建配置
 ```
 
 ## 快速验证
 
 ```bash
 # 1. 设置环境变量
-source /usr/local/Ascend/ascend-toolkit/set_env.sh
+source /usr/local/Ascend/cann/set_env.sh
 
-# 2. 编译算子（仅支持 Ascend950）
-bash build.sh --soc=ascend950 -j8
-
-# 3. 运行 UT 测试
-bash build.sh -u --soc=ascend950
-
-# 4. 运行 ST 测试（Real 模式，需 NPU）
-bash build.sh -s --soc=ascend950
+# 2. 编译并安装算子包（仅支持 Ascend950）
+bash build.sh --pkg --experimental --soc=ascend950 --ops=celu -j8
+./build_out/cann-ops-nn-custom_linux-${arch}.run
 ```
+
+> 说明：当前算子暂未提供 UT/ST 用例。
 
 ## 参数说明
 
@@ -127,7 +116,7 @@ bash build.sh -s --soc=ascend950
   <tr>
     <td>alpha3</td>
     <td>属性</td>
-    <td><ul><li>正区的固定输出值，对应公式中的 alpha3。</li><li>默认值为 1.0。</li></ul></td>
+    <td><ul><li>正区固定输出值的系数，正区实际输出为 alpha3 × 3。</li><li>默认值为 1.0。</li></ul></td>
     <td>FLOAT</td>
     <td>-</td>
   </tr>
@@ -246,5 +235,5 @@ int main()
 <!--
 ## 参考资源
 
-- [算子设计文档](docs/celu设计文档.md) <!-- 待开发阶段补充 -->
->
+- 算子设计文档（待开发阶段补充）
+-->

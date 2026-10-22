@@ -81,7 +81,7 @@ aclnnStatus aclnnApplyProximalGradientDescent(
 
 ```bash
 # 1. 加载 CANN 环境
-source /home/cjl/Ascend/ascend-toolkit/set_env.sh
+source /usr/local/Ascend/cann/set_env.sh
 
 # 2. 在算子根目录执行构建
 cd ops/apply_proximal_gradient_descent
