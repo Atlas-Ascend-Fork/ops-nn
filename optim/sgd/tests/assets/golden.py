@@ -31,9 +31,10 @@ parenthesization: arch35 ``sgd_dag.h`` computes
 slot constraint.  Cross-check must reproduce that actual device operation
 order, then cast all three writeback values to the NPU input dtype.
 
-Promote contract: half/bfloat16 inputs may be lifted to float32 for CPU support;
-float32 and float64 inputs are never narrowed.  TTK promotes both inputs and
-``output_dtypes`` before invoking this Spec when ``cross_check`` is active.
+The CPU oracle evaluates intermediate arithmetic in float64 to avoid sharing
+float32 overflow with the device. The independent third-party composition keeps
+the device's float32 operation order. Output conversion still follows TTK's
+requested dtypes, and masked accum/stat writeback preserves the original bits.
 """
 
 import numpy as np
@@ -95,13 +96,6 @@ def _numpy_to_torch(array):
     return torch.from_numpy(value)
 
 
-def _f32_floor(tensor):
-    """Lift only fp16/bf16; preserve fp32/fp64 supplied by Promote."""
-    if tensor.dtype in (torch.float16, torch.bfloat16):
-        return tensor.to(torch.float32)
-    return tensor
-
-
 def _scalar_value(tensor):
     """Read an already-quantized scalar without rebuilding it from a literal."""
     return float(tensor.reshape(-1)[0].item())
@@ -114,21 +108,22 @@ def _compute(
     accum,
     momentum,
     stat,
-    dampening=0.0,
-    weight_decay=0.0,
-    nesterov=False,
+    dampening=None,
+    weight_decay=None,
+    nesterov=None,
     **kwargs,
 ):
-    """Torch competitor composition shared by TestSpec and legacy entry.
+    """CPU reference shared by TestSpec and the legacy entry.
 
     Inputs and outputs are Torch tensors.  This is the high-precision CPU
     true-value path, so it keeps the legacy expanded Nesterov formula; the
     independent ``_SgdCompose`` below follows the grouped arch35 DAG order.
     """
-    if kwargs.get("golden_mode") == "Promote":
-        p, g, a, s = parameters, gradient, accum, stat
-    else:
-        p, g, a, s = map(_f32_floor, (parameters, gradient, accum, stat))
+    # Keep the CPU oracle independent from the device's float32 intermediates.
+    # Products may exceed float32 even when the final mathematical result fits.
+    p, g, a, s = (
+        value.to(torch.float64) for value in (parameters, gradient, accum, stat)
+    )
     learning_rate_value = _scalar_value(learning_rate)
     momentum_value = _scalar_value(momentum)
 
@@ -238,9 +233,9 @@ def _kernel_golden(
     accum,
     momentum,
     stat,
-    dampening=0.0,
-    weight_decay=0.0,
-    nesterov=False,
+    dampening=None,
+    weight_decay=None,
+    nesterov=None,
     **kwargs,
 ):
     """Kernel/GEIR container shell: NumPy in, NumPy out."""
@@ -276,9 +271,9 @@ def sgd_golden(
     accum,
     momentum,
     stat,
-    dampening=0.0,
-    weight_decay=0.0,
-    nesterov=False,
+    dampening=None,
+    weight_decay=None,
+    nesterov=None,
     **kwargs,
 ):
     """Compatibility ``__golden__`` entry; delegates to the shared core."""
@@ -301,9 +296,9 @@ class _SgdCompose:
 
     def __init__(
         self,
-        dampening=0.0,
-        weight_decay=0.0,
-        nesterov=False,
+        dampening=None,
+        weight_decay=None,
+        nesterov=None,
         **kwargs,
     ):
         attrs = {
@@ -397,9 +392,9 @@ class SgdKernelSpec:
         accum,
         momentum,
         stat,
-        dampening=0.0,
-        weight_decay=0.0,
-        nesterov=False,
+        dampening=None,
+        weight_decay=None,
+        nesterov=None,
         **kwargs,
     ):
         return _kernel_golden(
@@ -421,5 +416,4 @@ class SgdKernelSpec:
 
 # 【不存在】ACLNN 通路：optim/sgd/CMakeLists.txt 使用 ACLNNTYPE
 # aclnn_exclude，且算子目录没有 op_api/aclnn_sgd 实现；因此 __spec__ 不注册 aclnnSgd。
-# 【不存在】e2e 通路：需求明确不提供本算子的 torch_npu 绑定，也没有可调用的
-# aclnnSgd 底层接口；因此不保留 TorchSpec 空壳。
+# 本目录未交付 torch_npu 绑定或可调用的 aclnnSgd 实现，因此不注册 TorchSpec。

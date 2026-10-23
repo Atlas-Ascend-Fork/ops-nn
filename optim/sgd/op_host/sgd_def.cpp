@@ -17,11 +17,11 @@
  * FRACTAL_Z_3D 五种，本算子只做 ND。依据是 ops-nn 仓内 arch35 全族 optim 算子
  * （apply_momentum / apply_ftrl / apply_adam_w_v2 / apply_adamax /
  * apply_centered_rms_prop）的 def.cpp 一律只声明 ge::FORMAT_ND，无一例声明私有
- * format —— 跟随本仓 arch35 既定约定，非自行设计。已于 CP1 批准。
+ * format。当前支持范围及产品差异见算子 README。
  *
  * R2（ascend950 不碰 ascend910b）天然满足：ops-nn 仓内不存在 SGD 算子（optim/fused_sgd 是语义
  * 不同的另一个算子，且无 arch35 目录），本算子为净新增，只 AddConfig("ascend950")，
- * 不触碰任何 ascend910b 配置（先例：apply_momentum、apply_adamax 亦只有 ascend950 config）。
+ * 不触碰任何 ascend910b 配置；apply_momentum 另有 ascend350 等配置，不代表本算子的注册范围。
  *
  * accum / stat 【不声明为 Output】—— 与 ascend910b 形态一致（canndev proto
  * nn_training_ops.h:1431 亦只有一个 OUTPUT），两者靠覆写输入 GM 原地回写。

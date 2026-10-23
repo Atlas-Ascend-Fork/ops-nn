@@ -12,7 +12,12 @@
 
 import numpy as np
 
-__golden__ = {"kernel": {"relu6_grad": "relu6_grad_golden"}}
+__golden__ = {
+    "kernel": {
+        "relu6_grad": "relu6_grad_golden",
+        "Relu6Grad": "relu6_grad_golden",
+    }
+}
 
 
 def relu6_grad_golden(gradients, features, **kwargs):
@@ -29,22 +34,18 @@ def relu6_grad_golden(gradients, features, **kwargs):
     (any comparison with NaN is false). dy is passed through verbatim when
     the mask is true, so dy = NaN/Inf propagates only inside the (0, 6) band.
     """
-    import tensorflow as tf
+    import torch
 
-    with tf.device("/CPU:0"):
-        dy = tf.convert_to_tensor(np.asarray(gradients))
-        x = tf.convert_to_tensor(np.asarray(features))
-        output_dtype = dy.dtype
-        promote = kwargs.get("golden_mode") == "Promote"
-        if not promote and output_dtype in (tf.float16, tf.bfloat16):
-            dy, x = tf.cast(dy, tf.float32), tf.cast(x, tf.float32)
-        mask = tf.logical_and(x > 0.0, x < 6.0)
-        # Kernel uses Select.  Native TF Relu6Grad multiplies by the mask and
-        # produces NaN for out-of-band NaN/Inf gradients; keep the paths distinct.
-        output = tf.where(mask, dy, tf.zeros_like(dy))
-        if not promote:
-            output = tf.cast(output, output_dtype)
-        return np.asarray(output.numpy())
+    output_dtype = np.asarray(gradients).dtype
+    # Keep CPU reference arithmetic independent of the device's float32 path.
+    # NumPy conversion also accepts bfloat16 arrays unsupported by from_numpy.
+    dy = torch.from_numpy(np.array(gradients, dtype=np.float64, copy=True))
+    x = torch.from_numpy(np.array(features, dtype=np.float64, copy=True))
+    mask = (x > 0.0) & (x < 6.0)
+    output = torch.where(mask, dy, torch.zeros_like(dy)).numpy()
+    if kwargs.get("golden_mode") == "Promote":
+        return output
+    return output.astype(output_dtype)
 
 
 # ----------------------------------------------------------------------------
@@ -108,6 +109,7 @@ class Relu6GradTensorFlowSpec:
 
 __spec__ = {
     "relu6_grad": "Relu6GradKernelSpec",
+    "Relu6Grad": "Relu6GradKernelSpec",
     "tf.raw_ops.Relu6Grad": "Relu6GradTensorFlowSpec",
 }
 

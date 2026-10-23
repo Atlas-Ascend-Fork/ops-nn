@@ -18,7 +18,7 @@
 #include "tiling/platform/platform_ascendc.h"
 #include "log/log.h"
 #include "register/tilingdata_base.h"
-#include "atvoss/elewise/elewise_tiling.h"
+#include "atvoss/broadcast/broadcast_tiling.h"
 #include "activation/relu6_grad/op_kernel/arch35/relu6_grad_dag.h"
 #include "activation/relu6_grad/op_kernel/arch35/relu6_grad_struct.h"
 #include "op_host/tiling_templates_registry.h"
@@ -138,12 +138,22 @@ static ge::graphStatus Tiling4Relu6Grad(gert::TilingContext* tilingContextGen)
     return tiling.DoTiling();
 }
 
-ge::graphStatus TilingPrepareForRelu6Grad([[maybe_unused]] gert::TilingParseContext* context)
+ge::graphStatus TilingPrepareForRelu6Grad(gert::TilingParseContext* context)
 {
+    auto compileInfo = context->GetCompiledInfo<Ops::Base::BroadcastCompileInfo>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    auto platformInfo = context->GetPlatformInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+
+    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+    compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
+    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo->ubSize);
     return ge::GRAPH_SUCCESS;
 }
 
-IMPL_OP_OPTILING(Relu6Grad).Tiling(Tiling4Relu6Grad).TilingParse<ElewiseCompileInfo>(TilingPrepareForRelu6Grad);
+IMPL_OP_OPTILING(Relu6Grad)
+    .Tiling(Tiling4Relu6Grad)
+    .TilingParse<Ops::Base::BroadcastCompileInfo>(TilingPrepareForRelu6Grad);
 
 REGISTER_OPS_TILING_TEMPLATE(Relu6Grad, Relu6GradTiling, RELU6_GRAD_COMMON_TILING_PRIORITY);
 } // namespace optiling

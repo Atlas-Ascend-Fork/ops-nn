@@ -20,7 +20,7 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include "platform/platform_infos_def.h"
 #include "ut_op_util.h"
-#include "atvoss/elewise/elewise_tiling.h"
+#include "atvoss/broadcast/broadcast_tiling.h"
 #include "../../../../op_host/arch35/relu6_grad_tiling_arch35.h"
 
 using namespace ut_util;
@@ -62,7 +62,7 @@ static ge::graphStatus RunTiling(ge::DataType gradDtype, ge::DataType featDtype,
     fe::PlatFormInfos platform_info;
     platform_info.Init();
 
-    optiling::ElewiseCompileInfo compile_info;
+    Ops::Base::BroadcastCompileInfo compile_info;
     compile_info.coreNum = 64;
     compile_info.ubSize = 262144;
 

@@ -147,8 +147,7 @@ ge::graphStatus SgdRegbaseTiling::CheckShapeAndType()
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputParamDesc);
     auto inputDtype = inputParamDesc->GetDataType();
 
-    // ascend910b 只校验了 parameters 的 rank，其余 5 个输入的同形 / 同 dtype 完全未校验
-    // （canndev CheckSgdDimension 仅看 parameters）。ascend950 侧补齐，见 01 §6.5。
+    // 检查全部输入的shape与dtype；不能仅依赖parameters的rank校验。
     // 内层 CheckRank 已用 OP_LOGE_FOR_INVALID_SHAPEDIM 结构化上报，此处只作调用链留痕，
     // 不重复打 ERROR（R6 要求的是"校验必须走结构化宏"，不是"每层都再报一次"）。
     OP_CHECK_IF(CheckRank(inputStorageShape) != ge::GRAPH_SUCCESS, OP_LOGD(tilingContext_, "rank check failed"),

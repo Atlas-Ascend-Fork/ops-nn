@@ -76,6 +76,10 @@ namespace ge {
  *    (the TBE implementation declares reuse=('accum', 'parameters', 'stat')).
  *@li When "momentum" is 0 (including -0.0), "accum" and "stat" are NOT written at all
  *    and keep their input values bit-for-bit; "parameters" is still updated as usual.
+ *    The momentum multiplication is still evaluated: 0 * inf can propagate NaN
+ *    into "parameters" even when the writeback mask is zero.
+ *@li On <term>Ascend 950PR&950DT系列产品</term>, intermediate arithmetic uses float32.
+ *    Float16 and bfloat16 results use round-to-nearest, ties-to-even conversion.
  *@li The rank of "parameters" must be in the range [1, 8]; rank-0 (scalar) is rejected.
  *    Empty tensors (any axis being 0) are rejected as well.
  *

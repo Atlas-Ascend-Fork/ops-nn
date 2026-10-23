@@ -35,6 +35,8 @@
 #include <map>
 #include <cmath>
 #include <limits>
+#include <memory>
+#include <new>
 #include "assert.h"
 
 #include "graph.h"
@@ -159,23 +161,41 @@ static int32_t GenConstTensor(const vector<int64_t>& shape, DataType dtype, doub
     size_t bytes = numel * GetDataTypeSize(dtype);
 
     if (dtype == ge::DT_FLOAT) {
-        float* p = new (std::nothrow) float[numel];
+        std::unique_ptr<float[]> p(new (std::nothrow) float[numel]);
+        if (!p) {
+            return FAILED;
+        }
         float v = (float)value;
         for (size_t i = 0; i < numel; ++i)
             p[i] = v;
-        tensor = Tensor(desc, (uint8_t*)p, bytes);
+        tensor = Tensor(desc);
+        if (tensor.SetData(reinterpret_cast<const uint8_t*>(p.get()), bytes) != ge::GRAPH_SUCCESS) {
+            return FAILED;
+        }
     } else if (dtype == ge::DT_FLOAT16) {
-        uint16_t* p = new (std::nothrow) uint16_t[numel];
+        std::unique_ptr<uint16_t[]> p(new (std::nothrow) uint16_t[numel]);
+        if (!p) {
+            return FAILED;
+        }
         uint16_t v = FloatToHalfBits((float)value);
         for (size_t i = 0; i < numel; ++i)
             p[i] = v;
-        tensor = Tensor(desc, (uint8_t*)p, bytes);
+        tensor = Tensor(desc);
+        if (tensor.SetData(reinterpret_cast<const uint8_t*>(p.get()), bytes) != ge::GRAPH_SUCCESS) {
+            return FAILED;
+        }
     } else if (dtype == ge::DT_BF16) {
-        uint16_t* p = new (std::nothrow) uint16_t[numel];
+        std::unique_ptr<uint16_t[]> p(new (std::nothrow) uint16_t[numel]);
+        if (!p) {
+            return FAILED;
+        }
         uint16_t v = FloatToBf16Bits((float)value);
         for (size_t i = 0; i < numel; ++i)
             p[i] = v;
-        tensor = Tensor(desc, (uint8_t*)p, bytes);
+        tensor = Tensor(desc);
+        if (tensor.SetData(reinterpret_cast<const uint8_t*>(p.get()), bytes) != ge::GRAPH_SUCCESS) {
+            return FAILED;
+        }
     } else {
         return FAILED;
     }
@@ -200,6 +220,7 @@ static int BuildRelu6GradGraph(Graph& graph, std::vector<ge::Tensor>& inputData,
         if (GenConstTensor(sDy, dtype, dyVal, t, d) != SUCCESS)
             return FAILED;
         ph.update_input_desc_x(d);
+        ph.update_output_desc_y(d);
         inputData.push_back(t);
         graph.AddOp(ph);
         op.set_input_gradients(ph);
@@ -207,7 +228,7 @@ static int BuildRelu6GradGraph(Graph& graph, std::vector<ge::Tensor>& inputData,
     }
     // Input features (x)
     {
-        auto ph = ge::op::Data("phX_" + caseTag).set_attr_index(0);
+        auto ph = ge::op::Data("phX_" + caseTag).set_attr_index(1);
         TensorDesc d(ge::Shape(sX), FORMAT_ND, dtype);
         d.SetPlacement(ge::kPlacementHost);
         d.SetFormat(FORMAT_ND);
@@ -215,6 +236,7 @@ static int BuildRelu6GradGraph(Graph& graph, std::vector<ge::Tensor>& inputData,
         if (GenConstTensor(sX, dtype, xVal, t, d) != SUCCESS)
             return FAILED;
         ph.update_input_desc_x(d);
+        ph.update_output_desc_y(d);
         inputData.push_back(t);
         graph.AddOp(ph);
         op.set_input_features(ph);
@@ -273,7 +295,7 @@ static int RunOneCase(const CaseSpec& spec)
     graph.SetInputs(inputs).SetOutputs(outputs);
 
     std::map<AscendString, AscendString> buildOpts;
-    ge::Session* session = new Session(buildOpts);
+    ge::Session* session = new (std::nothrow) Session(buildOpts);
     if (!session)
         return FAILED;
 
@@ -293,10 +315,23 @@ static int RunOneCase(const CaseSpec& spec)
         return FAILED;
     }
 
+    if (output.size() != 1) {
+        printf("Expected exactly one output, got %zu\n", output.size());
+        delete session;
+        return FAILED;
+    }
     int failCount = 0;
     for (size_t i = 0; i < output.size(); ++i) {
-        int64_t numel = output[i].GetTensorDesc().GetShape().GetShapeSize();
+        const auto& desc = output[i].GetTensorDesc();
+        int64_t numel = desc.GetShape().GetShapeSize();
         uint8_t* raw = output[i].GetData();
+        if (desc.GetShape().GetDims() != spec.outShape || desc.GetDataType() != spec.dtype || numel < 0 ||
+            output[i].GetSize() != static_cast<size_t>(numel) * GetDataTypeSize(spec.dtype) ||
+            (numel != 0 && raw == nullptr)) {
+            printf("Output shape, dtype or buffer mismatch\n");
+            delete session;
+            return FAILED;
+        }
         for (int64_t j = 0; j < numel; ++j) {
             double got;
             if (spec.dtype == ge::DT_FLOAT) {
@@ -336,12 +371,8 @@ static int RunOneCase(const CaseSpec& spec)
 
 int main(int argc, char* argv[])
 {
-    (void)argc;
-    (void)argv;
-
-    std::map<AscendString, AscendString> globalOpts = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
-    if (ge::GEInitialize(globalOpts) != SUCCESS) {
-        printf("GEInitialize failed\n");
+    if (argc > 2) {
+        printf("Usage: %s [case_tag|--list]\n", argv[0]);
         return FAILED;
     }
 
@@ -377,6 +408,16 @@ int main(int argc, char* argv[])
         {"bf16_boundary_x_eq_0", ge::DT_BF16, 1.0, 0.0, {4}, {4}, {4}, exact(0.0, 2e-2)},
         {"bf16_boundary_x_eq_6", ge::DT_BF16, 1.0, 6.0, {4}, {4}, {4}, exact(0.0, 2e-2)},
         {"bf16_x_pos_inf", ge::DT_BF16, 1.0, kInf, {4}, {4}, {4}, exact(0.0, 2e-2)},
+        // --- output shape must be inferred from both broadcast inputs ---
+        {"fp16_broadcast", ge::DT_FLOAT16, 1.5, 2.0, {2, 1, 5}, {1, 3, 1}, {2, 3, 5}, exact(1.5, 5e-3)},
+        {"fp32_broadcast_rank8",
+         ge::DT_FLOAT,
+         2.5,
+         3.0,
+         {2, 1, 2, 1, 2, 1, 2, 1},
+         {1, 2, 1, 2, 1, 2, 1, 2},
+         {2, 2, 2, 2, 2, 2, 2, 2},
+         exact(2.5, 1e-5)},
         //     the case passes iff the graph compiles and runs (expect is unused for numel == 0). ---
         {"fp32_empty_1d", ge::DT_FLOAT, 2.5, 3.0, {0}, {0}, {0}, exact(0.0, 1e-5)},
         {"fp32_empty_2d", ge::DT_FLOAT, 2.5, 3.0, {2, 0}, {2, 0}, {2, 0}, exact(0.0, 1e-5)},
@@ -385,6 +426,32 @@ int main(int argc, char* argv[])
         {"fp16_empty_1d", ge::DT_FLOAT16, 1.5, 2.0, {0}, {0}, {0}, exact(0.0, 5e-3)},
         {"bf16_empty_2d", ge::DT_BF16, 1.0, 2.0, {0, 3}, {0, 3}, {0, 3}, exact(0.0, 2e-2)},
     };
+
+    if (argc == 2 && string(argv[1]) == "--list") {
+        for (const auto& c : cases) {
+            std::cout << c.tag << std::endl;
+        }
+        return SUCCESS;
+    }
+    if (argc == 2) {
+        vector<CaseSpec> selected;
+        for (const auto& c : cases) {
+            if (c.tag == argv[1]) {
+                selected.push_back(c);
+            }
+        }
+        if (selected.empty()) {
+            printf("Unknown case: %s\n", argv[1]);
+            return FAILED;
+        }
+        cases = std::move(selected);
+    }
+
+    std::map<AscendString, AscendString> globalOpts = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
+    if (ge::GEInitialize(globalOpts) != SUCCESS) {
+        printf("GEInitialize failed\n");
+        return FAILED;
+    }
 
     int allFail = 0;
     for (const auto& c : cases) {

@@ -5793,10 +5793,10 @@
     <td><a href="../../vfusion/normalize_bbox/README.md">normalize_bbox</a></td>
     <td>✓</td>
     <td>✓</td>
-    <td>✓</td>
+    <td>✗</td>
     <td>✓</td>
     <td>AI Core</td>
-    <td>将目标检测Prediction阶段筛选后的预选框绝对像素坐标，按对应图像的高与宽逐batch归一化到[0, 1]区间，得到相对坐标框。</td>
+    <td>将目标检测Prediction阶段筛选后的预选框绝对像素坐标，按对应图像的高与宽逐batch换算为相对坐标，结果不截断，输入框越界时输出可超出[0, 1]。</td>
   </tr>
   <tr>
     <td>vfusion</td>

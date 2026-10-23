@@ -57,14 +57,14 @@
     <tr>
       <td>features</td>
       <td>输入</td>
-      <td>作为输入传递给对应Relu6操作的特征，或其输出，使用任一者产生相同结果，公式中的features。其shape须与gradients一致，或为标量[1]。</td>
+      <td>作为输入传递给对应Relu6操作的特征，或其输出，使用任一者产生相同结果，公式中的features。与gradients的shape关系见约束说明。</td>
       <td>FLOAT16、FLOAT、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>backprops</td>
       <td>输出</td>
-      <td>公式中的输出张量，shape与gradients一致。</td>
+      <td>公式中的输出张量，shape由输入shape按各产品的广播约束确定，见约束说明。</td>
       <td>FLOAT16、FLOAT、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -73,8 +73,13 @@
 ## 约束说明
 
 - gradients、features、backprops的数据类型须保持一致，不支持混合数据类型。
-- 不支持广播：features的shape须与gradients完全一致，或为标量[1]。
 - 支持动态shape与动态rank。
+- <term>Ascend 950PR&950DT系列产品</term>：
+  - 输入shape约束：gradients与features支持双向广播，各自rank不超过8；GE图模式支持满足广播关系的空Tensor。
+  - 输出shape约束：输出为两个输入广播后的shape；空Tensor的输出元素数为0。
+- <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：
+  - 输入shape约束：features的shape须与gradients一致，或为[1]。
+  - 输出shape约束：与gradients一致。
 
 ## 实现方案
 
@@ -83,6 +88,7 @@
 | 计算图原型 | `op_graph/relu6_grad_proto.h` | `REG_OP(Relu6Grad)`，二输入一输出 |
 | 算子定义 | `op_host/relu6_grad_def.cpp` | `OpDef::AddConfig("ascend950", ...)` |
 | InferShape | `op_host/relu6_grad_infershape.cpp` | 复用`Ops::Base::InferShape4Broadcast` |
+| 图模式InferDataType | `op_graph/relu6_grad_graph_infer.cpp` | 校验两个输入dtype一致并推导输出dtype |
 | Tiling | `op_host/arch35/relu6_grad_tiling_arch35.{h,cpp}` | 按dtype分支调用`Ops::Base::BroadcastBaseTiling<OpDag>` |
 | DAG | `op_kernel/arch35/relu6_grad_dag.h` | fp32通路原生计算；fp16/bf16通路提升fp32中间精度 |
 | Struct | `op_kernel/arch35/relu6_grad_struct.h` | `BRC_TEMP_SCH_MODE_KEY_DECL/SEL` |
@@ -90,7 +96,7 @@
 
 ### fp32通路
 
-```Cpp
+```text
 In0(dy) ─CopyInBrc─+
                    +──────────────────────────────+
                                                   |
@@ -102,13 +108,13 @@ In1(x)  ─CopyInBrc─+                              |
    Const(0,fp32) ─Duplicate─ Zero ─────────────── ┴ Select(mask, dy, Zero) ─ CopyOut ─ Out0
 ```
 
-```Cpp
 `Vec::Compare<u8, fp32, GT/LT>`输出位掩码，`Vec::And<u8>`合成`(0 < x < 6)`
 区间mask；`Vec::Select<u8, fp32, TENSOR_TENSOR>`按`mask ? dy : 0`逐元素
 选择，避免分支，硬件原生vsel实现。
 
 ### fp16 / bf16通路
 
+```text
 In0/In1 ─CopyInBrc─ Cast(->fp32) ─+
                                   +─ Compare ── And ─ Select ── Cast(->T,RINT) ─ CopyOut ─ Out0
               Const(0,fp32) ── Zero ─+
@@ -126,4 +132,4 @@ In0/In1 ─CopyInBrc─ Cast(->fp32) ─+
 
 | 调用方式   | 样例代码           | 说明                                            |
 | ---------------- | --------------------------- |-----------------------------------------------|
-| 图模式 | [test_geir_relu6_grad.cpp](examples/arch35/test_geir_relu6_grad.cpp)  | 通过[算子IR](op_graph/relu6_grad_proto.h)构图方式调用Relu6Grad算子。 |
+| GE图模式 | [test_geir_relu6_grad.cpp](examples/arch35/test_geir_relu6_grad.cpp)  | 通过[算子IR](op_graph/relu6_grad_proto.h)构图方式调用Relu6Grad算子。 |

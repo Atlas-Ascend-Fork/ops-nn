@@ -33,6 +33,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <cmath>
 #include "assert.h"
 #include "graph.h"
 #include "types.h"
@@ -53,7 +54,7 @@ using std::string;
 using std::vector;
 #define ADD_INPUT(intputIndex, intputName, intputDtype, inputShape, inputValue)                                     \
     vector<int64_t> placeholder##intputIndex##_shape = inputShape;                                                  \
-    auto placeholder##intputIndex = op::Data("placeholder" + intputIndex).set_attr_index(0);                        \
+    auto placeholder##intputIndex = op::Data("placeholder" + intputIndex).set_attr_index(intputIndex - 1);          \
     TensorDesc placeholder##intputIndex##_desc = TensorDesc(ge::Shape(placeholder##intputIndex##_shape), FORMAT_ND, \
                                                             intputDtype);                                           \
     placeholder##intputIndex##_desc.SetPlacement(ge::kPlacementHost);                                               \
@@ -155,11 +156,15 @@ int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorD
     uint32_t byteSizeFloat32 = 4;
     uint32_t data_len = size * byteSizeFloat32;
     float* pData = new (std::nothrow) float[size];
+    if (pData == nullptr) {
+        return FAILED;
+    }
 
     for (size_t i = 0; i < size; ++i) {
         *(pData + i) = value;
     }
     input_tensor = Tensor(input_tensor_desc, (uint8_t*)pData, data_len);
+    delete[] pData;
     return SUCCESS;
 }
 
@@ -173,19 +178,26 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
     }
     uint32_t data_len = size * GetDataTypeSize(data_type);
     int32_t* pData = new (std::nothrow) int32_t[data_len];
+    if (pData == nullptr) {
+        return FAILED;
+    }
     for (size_t i = 0; i < size; ++i) {
         *(pData + i) = value;
     }
     input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
+    delete[] pData;
     return SUCCESS;
 }
 
 int32_t WriteDataToFile(string bin_file, uint64_t data_size, uint8_t* inputData)
 {
-    FILE* fp = fopen(bin_file.c_str(), "w");
-    fwrite(inputData, sizeof(uint8_t), data_size, fp);
-    fclose(fp);
-    return SUCCESS;
+    FILE* fp = fopen(bin_file.c_str(), "wb");
+    if (fp == nullptr) {
+        return FAILED;
+    }
+    const size_t written = fwrite(inputData, sizeof(uint8_t), data_size, fp);
+    const int closeStatus = fclose(fp);
+    return written == data_size && closeStatus == 0 ? SUCCESS : FAILED;
 }
 
 int CreateOppInGraph(DataType inDtype, float momentumValue, std::vector<ge::Tensor>& input,
@@ -210,7 +222,39 @@ int CreateOppInGraph(DataType inDtype, float momentumValue, std::vector<ge::Tens
     ADD_INPUT_ATTR(nesterov, false);
 
     outputs.push_back(sgd1);
+    // Expose the two input slots after SGD has completed its in-place writes.
+    auto accumOut = op::Identity("accum_out").set_input_x(placeholder4);
+    auto statOut = op::Identity("stat_out").set_input_x(placeholder6);
+    accumOut.AddControlInput(sgd1);
+    statOut.AddControlInput(sgd1);
+    outputs.push_back(accumOut);
+    outputs.push_back(statOut);
     return SUCCESS;
+}
+
+bool CheckOutputs(const std::vector<ge::Tensor>& output, float momentum)
+{
+    if (output.size() != 3) {
+        return false;
+    }
+    const double accumT = 3.5 * static_cast<double>(momentum) + 0.5;
+    const double expected[] = {1.0 - accumT * 0.1, momentum != 0.0f ? accumT : 3.5, momentum != 0.0f ? 0.0 : 1.0};
+    for (size_t index = 0; index < output.size(); ++index) {
+        const auto& tensor = output[index];
+        if (tensor.GetTensorDesc().GetDataType() != DT_FLOAT ||
+            tensor.GetTensorDesc().GetShape().GetDims() != std::vector<int64_t>({2, 30}) ||
+            tensor.GetSize() != 60 * sizeof(float) || tensor.GetData() == nullptr) {
+            return false;
+        }
+        const float* values = reinterpret_cast<const float*>(tensor.GetData());
+        for (size_t i = 0; i < 60; ++i) {
+            if (!std::isfinite(values[i]) || std::abs(values[i] - expected[index]) > 1e-6) {
+                printf("output[%zu][%zu] = %f, expected %f\n", index, i, values[i], expected[index]);
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 int main(int argc, char* argv[])
@@ -246,6 +290,7 @@ int main(int argc, char* argv[])
     ret = CreateOppInGraph(inDtype, momentumValue, input, inputs, outputs, graph);
     if (ret != SUCCESS) {
         printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
+        GEFinalize();
         return FAILED;
     }
 
@@ -257,10 +302,11 @@ int main(int argc, char* argv[])
 
     };
     printf("%s - INFO - [XIR]: Start to create ir session using build options\n", GetTime().c_str());
-    ge::Session* session = new Session(build_options);
+    ge::Session* session = new (std::nothrow) Session(build_options);
 
     if (session == nullptr) {
         printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
+        GEFinalize();
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Create ir session using build options success\n", GetTime().c_str());
@@ -271,6 +317,12 @@ int main(int argc, char* argv[])
     };
     uint32_t graph_id = 0;
     ret = session->AddGraph(graph_id, graph, graph_options);
+    if (ret != SUCCESS) {
+        printf("%s - ERROR - [XIR]: AddGraph failed\n", GetTime().c_str());
+        delete session;
+        GEFinalize();
+        return FAILED;
+    }
 
     printf("%s - INFO - [XIR]: Session add ir compute graph to ir session success\n", GetTime().c_str());
     printf("%s - INFO - [XIR]: dump graph to txt\n", GetTime().c_str());
@@ -286,6 +338,12 @@ int main(int argc, char* argv[])
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Session run ir compute graph success\n", GetTime().c_str());
+    if (!CheckOutputs(output, momentumValue)) {
+        printf("SGD result verification failed\n");
+        delete session;
+        GEFinalize();
+        return FAILED;
+    }
 
     int input_num = input.size();
     for (int i = 0; i < input_num; i++) {
@@ -295,7 +353,11 @@ int main(int argc, char* argv[])
         int64_t input_shape = input[i].GetTensorDesc().GetShape().GetShapeSize();
         std::cout << "this is " << i << "th input, input shape size =" << input_shape << std::endl;
         uint32_t data_size = input_shape * GetDataTypeSize(input[i].GetTensorDesc().GetDataType());
-        WriteDataToFile((const char*)input_file.c_str(), data_size, input_data_i);
+        if (WriteDataToFile(input_file, data_size, input_data_i) != SUCCESS) {
+            delete session;
+            GEFinalize();
+            return FAILED;
+        }
     }
 
     int output_num = output.size();
@@ -306,7 +368,11 @@ int main(int argc, char* argv[])
         int64_t output_shape = output[i].GetTensorDesc().GetShape().GetShapeSize();
         std::cout << "this is " << i << "th output, output shape size =" << output_shape << std::endl;
         uint32_t data_size = output_shape * GetDataTypeSize(output[i].GetTensorDesc().GetDataType());
-        WriteDataToFile((const char*)output_file.c_str(), data_size, output_data_i);
+        if (WriteDataToFile(output_file, data_size, output_data_i) != SUCCESS) {
+            delete session;
+            GEFinalize();
+            return FAILED;
+        }
         float* resultData = (float*)output_data_i;
         for (int64_t j = 0; j < output_shape; j++) {
             LOG_PRINT("result[%ld] is: %f\n", j, resultData[j]);
@@ -319,16 +385,6 @@ int main(int argc, char* argv[])
     ge::AscendString warning_msg = ge::GEGetWarningMsgV2();
     std::string warning_str(warning_msg.GetString());
     std::cout << "Warning message: " << warning_str << std::endl;
-    // 在 GEFinalize() 之前 delete session，与上游样例
-    // /workspace/ops-nn/activation/celu/examples/test_geir_celu.cpp:241-243 对齐。
-    // 本文件原先只在 RunGraph 失败分支删 session、成功路径漏删（session 泄漏）。
-    //
-    // ⚠ 澄清：补这两行【不能】消除进程收尾时的 `corrupted size vs. prev_size` 核心转储。
-    //   实测该崩溃在 GEFinalize() 内部发生，且用**未经改动的上游样例 test_geir_celu
-    //   打内置算子 Celu** 可等价复现（同样的报错、同样的位置、同样 exit 134），
-    //   与本算子无关，属环境/GE 侧收尾问题。
-    //   崩溃点在全部结果打印完毕之后，不影响计算结果的正确性；但也【不得】因此把它
-    //   当成"跑通了"——排障时先跑一遍 celu 对照，再判断是不是自己的问题。
     delete session;
     session = nullptr;
     printf("%s - INFO - [XIR]: Start to finalize ir graph session\n", GetTime().c_str());

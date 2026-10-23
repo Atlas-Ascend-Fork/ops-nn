@@ -25,6 +25,7 @@
 
 #include <gtest/gtest.h> // NOLINT
 #include <iostream>
+#include <limits>
 #include <vector>
 #include "infershape_test_util.h" // NOLINT
 #include "ut_op_common.h"
@@ -138,4 +139,29 @@ TEST_F(SGD, sgd_infershape_negative_weight_decay_rejected)
     gert::StorageShape bigShape = {{96, 256}, {96, 256}};
     gert::StorageShape scalarShape = {{1}, {1}};
     ASSERT_EQ(RunSgdInferShape(bigShape, scalarShape, 0.0f, -0.01f, false), ge::GRAPH_FAILED);
+}
+
+TEST_F(SGD, sgd_infershape_nan_weight_decay_rejected)
+{
+    gert::StorageShape bigShape = {{96, 256}, {96, 256}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    ASSERT_EQ(RunSgdInferShape(bigShape, scalarShape, 0.0f, std::numeric_limits<float>::quiet_NaN(), false),
+              ge::GRAPH_FAILED);
+}
+
+TEST_F(SGD, sgd_infershape_negative_infinite_weight_decay_rejected)
+{
+    gert::StorageShape bigShape = {{96, 256}, {96, 256}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    ASSERT_EQ(RunSgdInferShape(bigShape, scalarShape, 0.0f, -std::numeric_limits<float>::infinity(), false),
+              ge::GRAPH_FAILED);
+}
+
+TEST_F(SGD, sgd_infershape_nonnegative_weight_decay_boundaries)
+{
+    gert::StorageShape bigShape = {{96, 256}, {96, 256}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    for (float weightDecay : {-0.0f, 0.5f, std::numeric_limits<float>::infinity()}) {
+        EXPECT_EQ(RunSgdInferShape(bigShape, scalarShape, 0.0f, weightDecay, false), ge::GRAPH_SUCCESS);
+    }
 }

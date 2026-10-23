@@ -18,9 +18,8 @@
  *   - UNKNOWN_RANK(-2) 透传 —— GE 下 dims = {-2}（DimNum == 1），不触发 rank 拒绝；
  *   - nesterov == true 时 dampening 必须为 0；weight_decay >= 0。
  *
- * 注：ascend910b 把这两条属性校验放在 InferShape 里而非 Verify（其 SGDVerify 只调
- * CheckSgdDimension），属职责错位（见 01 §6.5）。ascend950 侧在 InferShape 与 Tiling
- * 两个独立入口都做，保证任一入口进来都拦得住。
+ * InferShape与op_host/arch35/sgd_tiling.cpp分别校验属性，保证图推导和
+ * 独立Tiling入口均拒绝非法属性。
  */
 #include "log/log.h"
 #include "register/op_impl_registry.h"
@@ -60,7 +59,7 @@ static ge::graphStatus InferShapeForSgd(gert::InferShapeContext* context)
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dampening", std::to_string(dampeningVal).c_str(),
                                               "attr dampening must be 0 when attr nesterov is true"),
         return ge::GRAPH_FAILED);
-    OP_CHECK_IF(weightDecayVal < 0.0f,
+    OP_CHECK_IF(!(weightDecayVal >= 0.0f),
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "weight_decay",
                                                       std::to_string(weightDecayVal).c_str(),
                                                       "attr weight_decay must be more than or equal to 0"),

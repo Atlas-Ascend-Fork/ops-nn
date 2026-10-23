@@ -15,6 +15,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <cmath>
 #include "assert.h"
 
 #include "graph.h"
@@ -25,7 +26,7 @@
 #include "ge_api.h"
 #include "array_ops.h"
 #include "ge_ir_build.h"
-#include "nn_detect_ops.h"
+#include "../../op_graph/normalize_bbox_proto.h"
 
 #define FAILED -1
 #define SUCCESS 0
@@ -146,6 +147,7 @@ int main(int argc, char* argv[])
     ret = GenFloatData(boxesShape, tensor_boxes, boxesDesc, boxesDtype);
     if (ret != SUCCESS) {
         printf("GenFloatData boxes failed\n");
+        GEFinalize();
         return FAILED;
     }
     boxesData.update_input_desc_x(boxesDesc);
@@ -163,6 +165,7 @@ int main(int argc, char* argv[])
     ret = GenInt32Data(shapeHwShape, tensor_shape_hw, shapeHwDesc);
     if (ret != SUCCESS) {
         printf("GenInt32Data shape_hw failed\n");
+        GEFinalize();
         return FAILED;
     }
     shapeHwData.update_input_desc_x(shapeHwDesc);
@@ -182,9 +185,10 @@ int main(int argc, char* argv[])
 
     std::map<AscendString, AscendString> build_options = {};
     printf("%s - INFO - [XIR]: Create session\n", GetTime().c_str());
-    ge::Session* session = new Session(build_options);
+    ge::Session* session = new (std::nothrow) Session(build_options);
     if (session == nullptr) {
         printf("Create session failed\n");
+        GEFinalize();
         return FAILED;
     }
 
@@ -212,27 +216,40 @@ int main(int argc, char* argv[])
     }
     printf("%s - INFO - [XIR]: RunGraph success\n", GetTime().c_str());
 
-    // verify output
-    int output_num = output.size();
-    printf("output_num=%d\n", output_num);
-    for (int i = 0; i < output_num; i++) {
-        DataType outDtype = output[i].GetTensorDesc().GetDataType();
-        int64_t outSize = output[i].GetTensorDesc().GetShape().GetShapeSize();
-        printf("output[%d] dtype=%d shapeSize=%ld\n", i, outDtype, outSize);
-        uint8_t* outData = output[i].GetData();
-        if (outData == nullptr) {
-            printf("output[%d] GetData() returned nullptr\n", i);
-            continue;
-        }
-        if (outDtype == ge::DT_FLOAT) {
-            float* p = (float*)outData;
-            // boxes[i] = (i*10+5)%1000, divisor = [100, 200, 100, 200] (h=100, w=200)
-            float divisors[4] = {100.0f, 200.0f, 100.0f, 200.0f};
-            for (int64_t j = 0; j < outSize; j++) {
-                float expect = static_cast<float>((j * 10 + 5) % 1000) / divisors[j % 4];
-                printf("  result[%ld] = %f (expect %f)\n", j, p[j], expect);
+    bool valid = output.size() == 1;
+    if (valid) {
+        const auto& tensor = output[0];
+        valid = tensor.GetTensorDesc().GetDataType() == boxesDtype &&
+                tensor.GetTensorDesc().GetShape().GetDims() == boxesShape &&
+                tensor.GetSize() == 8 * GetDataTypeSize(boxesDtype) && tensor.GetData() != nullptr;
+        for (size_t j = 0; valid && j < 8; ++j) {
+            float actual;
+            if (boxesDtype == DT_FLOAT) {
+                memcpy(&actual, tensor.GetData() + j * sizeof(float), sizeof(float));
+            } else {
+                uint16_t bits;
+                memcpy(&bits, tensor.GetData() + j * sizeof(bits), sizeof(bits));
+                const int exponent = (bits >> 10) & 0x1f;
+                const int mantissa = bits & 0x3ff;
+                actual = exponent == 0 ? std::ldexp(static_cast<float>(mantissa), -24) :
+                                         std::ldexp(static_cast<float>(1024 + mantissa), exponent - 25);
+                actual = (bits & 0x8000) ? -actual : actual;
+                if (exponent == 31) {
+                    valid = false;
+                    break;
+                }
             }
+            const float expected = static_cast<float>((j * 10 + 5) % 1000) / (j % 2 == 0 ? 100.0f : 200.0f);
+            const float tolerance = boxesDtype == DT_FLOAT16 ? 1e-4f + 1e-3f * std::abs(expected) : 1e-6f;
+            printf("result[%zu] = %f (expect %f)\n", j, actual, expected);
+            valid = std::isfinite(actual) && std::abs(actual - expected) <= tolerance;
         }
+    }
+    if (!valid) {
+        printf("NormalizeBBox result verification failed\n");
+        delete session;
+        GEFinalize();
+        return FAILED;
     }
 
     delete session;
