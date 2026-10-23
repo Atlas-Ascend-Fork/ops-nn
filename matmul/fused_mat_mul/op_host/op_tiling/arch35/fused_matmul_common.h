@@ -60,6 +60,7 @@ enum class FusedOpType : std::uint8_t {
     QUANT = F_OPTYPE_QUANT,
     RELU_QUANT = F_OPTYPE_RELU_QUANT,
     SCALE_ADD = F_OPTYPE_SCALE_ADD,
+    SIGMOID = F_OPTYPE_SIGMOID,
 };
 
 enum class FusedInnerPrecise : std::uint8_t {
@@ -76,7 +77,8 @@ const std::map<std::string, FusedOpType> FUSED_OP_TYPE_MAP = {{"", FusedOpType::
                                                               {"16cast32", FusedOpType::CAST32},
                                                               {"quant", FusedOpType::QUANT},
                                                               {"relu_quant", FusedOpType::RELU_QUANT},
-                                                              {"scale_add", FusedOpType::SCALE_ADD}};
+                                                              {"scale_add", FusedOpType::SCALE_ADD},
+                                                              {"sigmoid", FusedOpType::SIGMOID}};
 
 const std::set<std::string> FusedOpTypeSupportStreamK = {"", "relu", "16cast32", "add", "mul", "gelu_erf", "gelu_tanh"};
 

@@ -88,6 +88,16 @@ static const std::vector<std::vector<ge::DataType>> DTYPE_LIST_GELU_DAV_3510 = {
     {ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_UNDEFINED, ge::DT_UNDEFINED},
 };
 
+// opType: sigmoid (optional bias, no x3, only DAV_3510)
+static const std::vector<std::vector<ge::DataType>> DTYPE_LIST_SIGMOID_DAV_3510 = {
+    {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_UNDEFINED},
+    {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_UNDEFINED},
+    {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_UNDEFINED, ge::DT_UNDEFINED},
+    {ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_UNDEFINED},
+    {ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_UNDEFINED},
+    {ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_UNDEFINED, ge::DT_UNDEFINED},
+};
+
 // opType group: quant / relu_quant (x3 required, only DAV_RESV)
 static const std::vector<std::vector<ge::DataType>> DTYPE_LIST_QUANT_DAV_RESV = {
     {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_INT8, ge::DT_FLOAT16, ge::DT_UINT64},
@@ -188,7 +198,7 @@ ge::graphStatus FusedMatMulBuiltInTiling::ValidateOpSpecific()
         return ge::GRAPH_FAILED;
     }
 
-    // gelu: input dims must be 2
+    // GELU: input and output dims must be 2.
     if (IsGeluOpType(opType_)) {
         const size_t aDimNum = aShape.GetDimNum();
         const size_t bDimNum = bShape.GetDimNum();
@@ -197,6 +207,30 @@ ge::graphStatus FusedMatMulBuiltInTiling::ValidateOpSpecific()
             OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
                 args_.opName, "x1, x2, y", Ops::NN::FormatString("%zu, %zu, %zu", aDimNum, bDimNum, cDimNum).c_str(),
                 Ops::NN::FormatString("The shape dims of %s must be %zu for gelu op type", "x1, x2, y", NUM_TWO)
+                    .c_str());
+            return ge::GRAPH_FAILED;
+        }
+    }
+
+    // Sigmoid: positive K, default scales, and 2D inputs/output.
+    if (opType_ == "sigmoid") {
+        const auto* attrs = context_->GetAttrs();
+        const auto* alpha = attrs->GetAttrPointer<float>(ATTR_ALPHA_IDX);
+        const auto* beta = attrs->GetAttrPointer<float>(ATTR_BETA_IDX);
+        OP_TILING_CHECK((alpha != nullptr && *alpha != 1.0F) || (beta != nullptr && *beta != 1.0F),
+                        CUBE_INNER_ERR_REPORT(args_.opName, "alpha and beta must both be 1 for sigmoid op type"),
+                        return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(
+            args_.kValue == 0UL,
+            CUBE_INNER_ERR_REPORT(args_.opName, "The K-axis of x1 and x2 must be greater than 0 for sigmoid op type"),
+            return ge::GRAPH_FAILED);
+        const size_t aDimNum = aShape.GetDimNum();
+        const size_t bDimNum = bShape.GetDimNum();
+        const size_t cDimNum = context_->GetOutputShape(0)->GetOriginShape().GetDimNum();
+        if (aDimNum != NUM_TWO || bDimNum != NUM_TWO || cDimNum != NUM_TWO) {
+            OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                args_.opName, "x1, x2, y", Ops::NN::FormatString("%zu, %zu, %zu", aDimNum, bDimNum, cDimNum).c_str(),
+                Ops::NN::FormatString("The shape dims of %s must be %zu for sigmoid op type", "x1, x2, y", NUM_TWO)
                     .c_str());
             return ge::GRAPH_FAILED;
         }
@@ -377,6 +411,9 @@ std::vector<std::vector<ge::DataType>> FusedMatMulBuiltInTiling::GetDtypeSupport
     }
     if (opType_ == "16cast32") {
         return DTYPE_LIST_16CAST32_DAV_3510;
+    }
+    if (opType_ == "sigmoid") {
+        return DTYPE_LIST_SIGMOID_DAV_3510;
     }
     if (IsGeluOpType(opType_)) {
         return DTYPE_LIST_GELU_DAV_3510;

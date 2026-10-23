@@ -126,8 +126,7 @@ bool FusedMatMulAswBasicApiTiling::IsCapable()
         OP_LOGD(args_.opName, "ND is the only supported format for basic api");
         return false;
     }
-    const bool isGeluOp = (opType == "gelu_erf" || opType == "gelu_tanh");
-    if (opType == "add" || opType == "mul" || isGeluOp) {
+    if (opType == "add" || opType == "mul" || IsGeluOpType(opType) || opType == "sigmoid") {
         // AIV epilogue ops require one AIC paired with two AIVs.
         if (compileInfo_.aivNum != (compileInfo_.aicNum * NUM_TWO)) {
             OP_LOGD(args_.opName, "FusedMatMul aswt model only support aivNum == aicNum *2");
@@ -177,7 +176,7 @@ void FusedMatMulAswBasicApiTiling::AdjustSmallNTiling(string opType)
         return;
     }
 
-    // Small-N GELU keeps N in one aligned tile and stretches M to improve AIC utilization.
+    // Keep N in one aligned tile and stretch M to improve AIC utilization.
     runInfo_.baseM = tmpBaseM;
     runInfo_.baseN = tmpBaseN;
     runInfo_.dbL0C = DB_SIZE;
@@ -240,21 +239,24 @@ ge::graphStatus FusedMatMulAswBasicApiTiling::DoOpTiling()
     auto attrs = context_->GetAttrs();
     OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
     std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
-    const bool isGeluOp = (opType == "gelu_erf" || opType == "gelu_tanh");
-    if (isGeluOp) {
-        // AIV epilogue ops share ASWT tiling, but use different kernel epilogues.
+    if (IsGeluOpType(opType)) {
         OP_TILING_CHECK((MatMulV3AswTiling::DoOpTiling() != ge::GRAPH_SUCCESS),
                         CUBE_INNER_ERR_REPORT(args_.opName, "Do MatMul AswTiling failed in FusedMatMul."),
                         return ge::GRAPH_FAILED);
-        if (isGeluOp) {
-            if (IsSmallNShape(args_, opType)) {
-                // For small-N GELU, increase baseM to reduce data movement bound.
-                AdjustSmallNTiling(opType);
-            }
-            // gelu 暂时只支持Basic模板
-            fullLoad_ = MatMulV3FullLoad::NONE_FULL_LOAD;
-            l0C2Out_ = MatMulV3L0C2Out::ON_THE_FLY;
+        if (IsSmallNShape(args_, opType)) {
+            AdjustSmallNTiling(opType);
         }
+        fullLoad_ = MatMulV3FullLoad::NONE_FULL_LOAD;
+        l0C2Out_ = MatMulV3L0C2Out::ON_THE_FLY;
+        UpdateAswDepth();
+        return ge::GRAPH_SUCCESS;
+    }
+    if (opType == "sigmoid") {
+        OP_TILING_CHECK((MatMulV3AswTiling::DoOpTiling() != ge::GRAPH_SUCCESS),
+                        CUBE_INNER_ERR_REPORT(args_.opName, "Do MatMul AswTiling failed for FusedMatMul sigmoid."),
+                        return ge::GRAPH_FAILED);
+        fullLoad_ = MatMulV3FullLoad::NONE_FULL_LOAD;
+        l0C2Out_ = MatMulV3L0C2Out::ND_FIXPIPE_1_2;
         UpdateAswDepth();
         return ge::GRAPH_SUCCESS;
     }
@@ -274,18 +276,6 @@ uint64_t FusedMatMulAswBasicApiTiling::GetTilingKey() const
 {
     MatMulV3TilingKey tmp = MatMulV3TilingKey();
     MatMulV3TilingKey& tilingKey = tilingKeyObj == nullptr ? tmp : *tilingKeyObj;
-    auto attrs = context_->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
-    std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
-    if (opType == "gelu_erf" || opType == "gelu_tanh") {
-        // GELU Basic fallback uses no full load and ON_THE_FLY.
-        return tilingKey.SetTrans(args_.isATrans, args_.isBTrans)
-            .SetFullLoad(MatMulV3FullLoad::NONE_FULL_LOAD)
-            .SetModel(MatMulV3Model::BASIC)
-            .SetL0C2Out(MatMulV3L0C2Out::ON_THE_FLY)
-            .SetApiLevel(MatMulV3ApiLevel::BASIC_LEVEL)
-            .GetTilingKey();
-    }
     return tilingKey.SetTrans(args_.isATrans, args_.isBTrans)
         .SetFullLoad(fullLoad_)
         .SetModel(MatMulV3Model::BASIC)
@@ -305,11 +295,11 @@ ge::graphStatus FusedMatMulAswBasicApiTiling::PostTiling()
         return ge::GRAPH_SUCCESS;
     }
     std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
-    if ((opType == "gelu_erf" || opType == "gelu_tanh") && IsSmallNShape(args_, opType)) {
+    if (IsGeluOpType(opType) && IsSmallNShape(args_, opType)) {
         size_t* workspaces = context_->GetWorkspaceSizes(1);
         OP_TILING_CHECK(workspaces == nullptr, CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "workspace is nullptr"),
                         return ge::GRAPH_FAILED);
-        // Kernel indexes the GELU GM workspace with the output matrix offset, so reserve the full output area.
+        // The CMCT GELU kernel indexes GM workspace with the output matrix offset.
         workspaces[0] += static_cast<size_t>(args_.mValue * args_.nValue * DATA_SIZE_FP32);
     }
     return ge::GRAPH_SUCCESS;

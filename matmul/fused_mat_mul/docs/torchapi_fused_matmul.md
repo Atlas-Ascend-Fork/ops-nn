@@ -38,6 +38,7 @@
   - "gelu_erf"：$y = gelu\_erf(x @ x2 + bias)$。
   - "gelu_tanh"：$y = gelu\_tanh(x @ x2 + bias)$。
   - "relu"：$y = relu(x @ x2 + bias)$。
+  - "sigmoid"：$y = sigmoid(x @ x2 + bias) = 1 / (1 + exp(-(x @ x2 + bias)))$。
   - "16cast32"：$y = cast\_float32(x @ x2 + bias)$。
 
   当fused_op_type="add"，且alpha或beta不为1时：
@@ -69,11 +70,11 @@ cann_ops_nn.fused_matmul(
 | --- | --- | --- | --- | --- | --- |
 | x | Tensor | 必选 | 矩阵乘的第一个输入矩阵，最后两维为(M, K)。 | torch.float16、torch.bfloat16、torch.float32 | fused_op_type为""、"relu"时支持2-6维；为"add"、"mul"时支持2-3维；其他取值支持2维 |
 | x2 | Tensor | 必选 | 矩阵乘的第二个输入矩阵，最后两维为(K, N)，数据类型与x一致，K轴长度与x一致。 | 与x一致 | fused_op_type为""、"relu"时支持2-6维；为"add"、"mul"时支持2-3维；其他取值支持2维 |
-| bias | Tensor | 可选 | 矩阵乘的偏置。仅当fused_op_type为""、"16cast32"、"relu"、"add"、"mul"、"gelu_erf"或"gelu_tanh"时生效。 | torch.float16、torch.bfloat16、torch.float32 | 1-2维 |
+| bias | Tensor | 可选 | 矩阵乘的偏置。仅当fused_op_type为""、"16cast32"、"relu"、"add"、"mul"、"gelu_erf"、"gelu_tanh"或"sigmoid"时生效。 | torch.float16、torch.bfloat16、torch.float32 | (N,)或(1, N)，N为x2逻辑shape的最后一维 |
 | x3 | Tensor | 可选 | 融合运算的输入矩阵。fused_op_type为"add"或"mul"时必须传入，其他场景必须为None。 | 与x一致 | 2-3维 |
 | alpha | float | 可选 | 矩阵乘结果的缩放系数。传入None时取值为1.0，传入的数值在接口内部转换为FP32。 | - | - |
 | beta | float | 可选 | x3的缩放系数。传入None时取值为1.0，传入的数值在接口内部转换为FP32。 | - | - |
-| fused_op_type | str | 可选 | 融合模式。支持""、"16cast32"、"add"、"mul"、"gelu_erf"、"gelu_tanh"、"relu"，默认值为""。"scale_add"仅供算子内部使用，不支持用户传入。 | - | - |
+| fused_op_type | str | 可选 | 融合模式。支持""、"16cast32"、"add"、"mul"、"gelu_erf"、"gelu_tanh"、"relu"、"sigmoid"，默认值为""。"scale_add"仅供算子内部使用，不支持用户传入。 | - | - |
 
 ## 返回值说明
 
@@ -83,7 +84,9 @@ cann_ops_nn.fused_matmul(
 
 ## 约束说明
 
-- GELU（gelu_erf、gelu_tanh）支持可选 bias，计算顺序为先计算矩阵乘并加 bias，再执行 GELU。bias 的数据类型必须与矩阵输入一致或为 FLOAT32，shape 为 (N,) 或 (1, N)；传入 bias 时，矩阵乘的 K 轴必须大于 0。
+- 所有支持 bias 的融合模式均要求 bias 的 shape 为 (N,) 或 (1, N)，其中 N 为 x2 逻辑 shape 的最后一维。bias 的数据类型必须与矩阵输入一致或为 FLOAT32；传入 bias 时，矩阵乘的 K 轴必须大于 0。
+- GELU（gelu_erf、gelu_tanh）和 Sigmoid（sigmoid）的计算顺序为先计算矩阵乘并加 bias，再逐元素执行激活；未传入 bias 时不加偏置。
+- 当fused_op_type="sigmoid"时，仅支持Ascend 950PR&950DT系列产品，x、x2和输出必须为二维，数据类型必须同为torch.float16或同为torch.bfloat16；x的shape为(M, K)，x2的shape为(K, N)，输出的shape为(M, N)，M、N和K均必须大于0，x3必须为None，alpha和beta只能为None或1。
 
 - 该接口当前支持单算子模式调用。
 - x、x2、bias和x3必须是NPU Tensor，可选Tensor可以传入None。
@@ -111,9 +114,9 @@ cann_ops_nn.fused_matmul(
   import torch_npu
   import cann_ops_nn
 
-  x = torch.randn((32, 21, 9), dtype=torch.bfloat16).npu()
-  x2 = torch.randn((32, 9, 16), dtype=torch.bfloat16).npu()
-  x3 = torch.randn((32, 21, 16), dtype=torch.bfloat16).npu()
+  x = torch.randn((32, 21, 9), dtype=torch.bfloat16).to("npu")
+  x2 = torch.randn((32, 9, 16), dtype=torch.bfloat16).to("npu")
+  x3 = torch.randn((32, 21, 16), dtype=torch.bfloat16).to("npu")
 
   y = cann_ops_nn.fused_matmul(
       x,
@@ -123,5 +126,20 @@ cann_ops_nn.fused_matmul(
       beta=0.5,
       fused_op_type="add",
   )
+  print(y.shape, y.dtype)
+  ```
+
+- Sigmoid融合调用
+
+  ```python
+  import torch
+  import torch_npu
+  import cann_ops_nn
+
+  x = torch.randn((32, 64), dtype=torch.bfloat16).to("npu")
+  x2 = torch.randn((64, 128), dtype=torch.bfloat16).to("npu")
+  bias = torch.randn((128,), dtype=torch.float32).to("npu")
+
+  y = cann_ops_nn.fused_matmul(x, x2, bias=bias, fused_op_type="sigmoid")
   print(y.shape, y.dtype)
   ```

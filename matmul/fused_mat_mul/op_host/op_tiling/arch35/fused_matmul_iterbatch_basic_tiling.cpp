@@ -74,7 +74,7 @@ bool FusedMatMulIterBatchApiTiling::IsCapable()
     if ((compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202) && opType != "relu") {
         return false;
     }
-    if (opType == "gelu_erf" || opType == "gelu_tanh" || opType == "scale_add") {
+    if (IsGeluOpType(opType) || opType == "scale_add" || opType == "sigmoid") {
         OP_LOGD(args_.opName, "IterBatch model is not supported for opType %s", opType.c_str());
         return false;
     }

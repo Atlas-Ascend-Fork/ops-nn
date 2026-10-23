@@ -103,6 +103,8 @@ __aicore__ inline void GemmSyrkBlazeKernel(GM_ADDR aGm, GM_ADDR cInGm, GM_ADDR c
                            // single tail block per axis carries the remainder).
                            {block}};
 
+    params.epilogueParams.problemShape = params.problemShape;
+
     MatmulKernel kernel;
     kernel(params);
 }

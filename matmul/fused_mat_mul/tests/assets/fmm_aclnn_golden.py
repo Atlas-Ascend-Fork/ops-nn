@@ -66,7 +66,7 @@ def torch_fused_matmul_core(
       * cube_math_type == 2 + fp32 -> forced downgrade to fp16
       * bf16/fp16 inputs -> upcast to fp32 (mirrors NPU cube fp32 accumulator)
       * matmul + bias (if present)
-      * fused op applied: relu/add/mul/gelu_erf/gelu_tanh/16cast32
+      * fused op applied: relu/add/mul/gelu_erf/gelu_tanh/sigmoid/16cast32
       * result cast to out_dtype
     """
     import torch
@@ -93,6 +93,8 @@ def torch_fused_matmul_core(
                 mm_out = mm_out * x3.to(out_dtype)
     elif fused_op_type == "relu":
         mm_out = torch.clamp(mm_out, min=0)
+    elif fused_op_type == "sigmoid":
+        mm_out = torch.sigmoid(mm_out)
     elif fused_op_type == "gelu_erf":
         mm_out = 0.5 * mm_out * (1.0 + torch.erf(mm_out / np.sqrt(2.0)))
     elif fused_op_type == "gelu_tanh":

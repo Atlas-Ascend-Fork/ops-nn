@@ -36,6 +36,7 @@
 
 // Scale/add handles optional scalar pointers dynamically in the epilogue.
 #define F_OPTYPE_SCALE_ADD 9
+#define F_OPTYPE_SIGMOID 10
 
 #define F_INNER_PRECISE_HIGH_PRECISION 0
 #define F_INNER_PRECISE_HIGH_PERFORMANCE 1

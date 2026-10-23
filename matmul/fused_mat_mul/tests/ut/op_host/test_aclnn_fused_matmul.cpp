@@ -830,3 +830,137 @@ TEST_F(l2_fusedmatmul_test, ascend950_test_empty_output_success)
     uint64_t workspace_size = 0;
     EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_INNER_NULLPTR);
 }
+
+TEST_F(l2_fusedmatmul_test, ascend950_test_sigmoid_transposed_x2_bias_uses_logical_n)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    TensorDesc x1_desc = TensorDesc({4, 32}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc x2_desc = TensorDesc({32, 64}, ACL_BF16, ACL_FORMAT_ND, {1, 32}, 0, {64, 32});
+    TensorDesc out_desc = TensorDesc({4, 64}, ACL_BF16, ACL_FORMAT_ND);
+    for (auto bias_dtype : {ACL_BF16, ACL_FLOAT}) {
+        TensorDesc bias_desc = TensorDesc({1, 64}, bias_dtype, ACL_FORMAT_ND);
+        ScalarDesc one_desc = ScalarDesc(1.0F, ACL_FLOAT);
+        auto ut = OP_API_UT(aclnnFusedMatmulV2,
+                            INPUT(x1_desc, x2_desc, bias_desc, (aclTensor*)nullptr, one_desc, one_desc, "sigmoid", 0),
+                            OUTPUT(out_desc));
+        uint64_t workspace_size = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_SUCCESS);
+    }
+}
+
+TEST_F(l2_fusedmatmul_test, ascend950_test_sigmoid_empty_inputs_failed)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    for (const auto& shape : vector<array<int64_t, 3>>{{0, 32, 64}, {4, 0, 64}, {4, 32, 0}}) {
+        TensorDesc x1_desc = TensorDesc({shape[0], shape[1]}, ACL_FLOAT16, ACL_FORMAT_ND);
+        TensorDesc x2_desc = TensorDesc({shape[1], shape[2]}, ACL_FLOAT16, ACL_FORMAT_ND);
+        TensorDesc out_desc = TensorDesc({shape[0], shape[2]}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnFusedMatmul,
+                            INPUT(x1_desc, x2_desc, (aclTensor*)nullptr, (aclTensor*)nullptr, "sigmoid", 0),
+                            OUTPUT(out_desc));
+        uint64_t workspace_size = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_INNER_NULLPTR);
+    }
+}
+
+TEST_F(l2_fusedmatmul_test, ascend950_test_sigmoid_bias_shape)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    const vector<vector<int64_t>> bias_shapes = {{64}, {1, 64}, {64, 64}, {63}, {65}};
+    for (size_t i = 0; i < bias_shapes.size(); ++i) {
+        SCOPED_TRACE(i);
+        TensorDesc x1_desc = TensorDesc({4, 32}, ACL_FLOAT16, ACL_FORMAT_ND);
+        TensorDesc x2_desc = TensorDesc({32, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        TensorDesc bias_desc = TensorDesc(bias_shapes[i], ACL_FLOAT, ACL_FORMAT_ND);
+        TensorDesc out_desc = TensorDesc({4, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnFusedMatmulV2,
+                            INPUT(x1_desc, x2_desc, bias_desc, (aclTensor*)nullptr, (aclScalar*)nullptr,
+                                  (aclScalar*)nullptr, "sigmoid", 0),
+                            OUTPUT(out_desc));
+        uint64_t workspace_size = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), i < 2 ? ACLNN_SUCCESS : ACLNN_ERR_PARAM_INVALID);
+    }
+}
+
+TEST_F(l2_fusedmatmul_test, ascend950_test_sigmoid_fp16_bf16_without_bias_success)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    for (auto dtype : {ACL_FLOAT16, ACL_BF16}) {
+        TensorDesc x1_desc = TensorDesc({4, 32}, dtype, ACL_FORMAT_ND);
+        TensorDesc x2_desc = TensorDesc({32, 64}, dtype, ACL_FORMAT_ND);
+        TensorDesc out_desc = TensorDesc({4, 64}, dtype, ACL_FORMAT_ND);
+        uint64_t workspace_size = 0;
+        auto ut = OP_API_UT(aclnnFusedMatmul,
+                            INPUT(x1_desc, x2_desc, (aclTensor*)nullptr, (aclTensor*)nullptr, "sigmoid", 0),
+                            OUTPUT(out_desc));
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_SUCCESS);
+        auto ut_v2 = OP_API_UT(aclnnFusedMatmulV2,
+                               INPUT(x1_desc, x2_desc, (aclTensor*)nullptr, (aclTensor*)nullptr, (aclScalar*)nullptr,
+                                     (aclScalar*)nullptr, "sigmoid", 0),
+                               OUTPUT(out_desc));
+        EXPECT_EQ(ut_v2.TestGetWorkspaceSize(&workspace_size), ACLNN_SUCCESS);
+    }
+}
+
+TEST_F(l2_fusedmatmul_test, ascend950_test_sigmoid_x3_failed)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    TensorDesc x1_desc = TensorDesc({4, 32}, ACL_FLOAT16, ACL_FORMAT_ND);
+    TensorDesc x2_desc = TensorDesc({32, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    TensorDesc x3_desc = TensorDesc({4, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    TensorDesc out_desc = TensorDesc({4, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    uint64_t workspace_size = 0;
+    auto ut = OP_API_UT(aclnnFusedMatmul, INPUT(x1_desc, x2_desc, (aclTensor*)nullptr, x3_desc, "sigmoid", 0),
+                        OUTPUT(out_desc));
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_NULLPTR);
+    auto ut_v2 = OP_API_UT(
+        aclnnFusedMatmulV2,
+        INPUT(x1_desc, x2_desc, (aclTensor*)nullptr, x3_desc, (aclScalar*)nullptr, (aclScalar*)nullptr, "sigmoid", 0),
+        OUTPUT(out_desc));
+    EXPECT_EQ(ut_v2.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_NULLPTR);
+}
+
+TEST_F(l2_fusedmatmul_test, ascend950_test_sigmoid_batch_shape_failed)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    TensorDesc x1_desc = TensorDesc({1, 4, 32}, ACL_FLOAT16, ACL_FORMAT_ND);
+    TensorDesc x2_desc = TensorDesc({1, 32, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    TensorDesc out_desc = TensorDesc({1, 4, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnFusedMatmulV2,
+                        INPUT(x1_desc, x2_desc, (aclTensor*)nullptr, (aclTensor*)nullptr, (aclScalar*)nullptr,
+                              (aclScalar*)nullptr, "sigmoid", 0),
+                        OUTPUT(out_desc));
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_fusedmatmul_test, ascend950_test_sigmoid_fp32_failed)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    TensorDesc x1_desc = TensorDesc({4, 32}, ACL_FLOAT, ACL_FORMAT_ND);
+    TensorDesc x2_desc = TensorDesc({32, 64}, ACL_FLOAT, ACL_FORMAT_ND);
+    TensorDesc out_desc = TensorDesc({4, 64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnFusedMatmul,
+                        INPUT(x1_desc, x2_desc, (aclTensor*)nullptr, (aclTensor*)nullptr, "sigmoid", op::USE_HF32),
+                        OUTPUT(out_desc));
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_fusedmatmul_test, ascend950_test_sigmoid_nondefault_scale_failed)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    for (const auto& scales : vector<array<float, 2>>{{2.0F, 1.0F}, {1.0F, 2.0F}}) {
+        TensorDesc x1_desc = TensorDesc({4, 32}, ACL_FLOAT16, ACL_FORMAT_ND);
+        TensorDesc x2_desc = TensorDesc({32, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        TensorDesc out_desc = TensorDesc({4, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        ScalarDesc alpha_desc = ScalarDesc(scales[0], ACL_FLOAT);
+        ScalarDesc beta_desc = ScalarDesc(scales[1], ACL_FLOAT);
+        auto ut = OP_API_UT(
+            aclnnFusedMatmulV2,
+            INPUT(x1_desc, x2_desc, (aclTensor*)nullptr, (aclTensor*)nullptr, alpha_desc, beta_desc, "sigmoid", 0),
+            OUTPUT(out_desc));
+        uint64_t workspace_size = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+    }
+}

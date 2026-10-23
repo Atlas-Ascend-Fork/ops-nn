@@ -46,10 +46,10 @@ static constexpr size_t DIM_LEN_MAX = 3;
 static constexpr size_t DIM_LEN_MAX_RELU = 6;
 static constexpr float FUSED_MATMUL_DEFAULT_SCALE_VALUE = 1.0F;
 
-static const std::vector<const char*> kAllSupportedOpTypes = {"",         "16cast32",  "add", "mul",
-                                                              "gelu_erf", "gelu_tanh", "relu"};
-static const std::vector<const char*> kSupportedBiasOpTypes = {"",    "16cast32", "relu",     "add",
-                                                               "mul", "gelu_erf", "gelu_tanh"};
+static const std::vector<const char*> kAllSupportedOpTypes = {"",         "16cast32",  "add",  "mul",
+                                                              "gelu_erf", "gelu_tanh", "relu", "sigmoid"};
+static const std::vector<const char*> kSupportedBiasOpTypes = {"",    "16cast32", "relu",      "add",
+                                                               "mul", "gelu_erf", "gelu_tanh", "sigmoid"};
 static const std::vector<const char*> kSupportedFp32OpTypes = {"", "relu", "add", "mul"};
 static const std::vector<const char*> kSupportedX3OpTypes = {"add", "mul"};
 static const std::vector<const char*> kSupportedIn16CastOut32OpTypes = {"16cast32"};
@@ -95,7 +95,7 @@ bool CheckFusedOpType(const char* fusedOpType)
 {
     if (!IsInSupportedOpTypes(fusedOpType, kAllSupportedOpTypes)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "fusedOpType must be in the type of ''/16cast32/add/mul/gelu_erf/gelu_tanh/relu");
+                "fusedOpType must be in the type of ''/16cast32/add/mul/gelu_erf/gelu_tanh/relu/sigmoid");
         return false;
     }
     return true;
@@ -113,6 +113,9 @@ bool CheckNotNull(const aclTensor* x1, const aclTensor* x2, const aclTensor* bia
     }
     if (IsInSupportedOpTypes(fusedOpType, kSupportedX3OpTypes)) {
         OP_CHECK_NULL(x3, return false);
+    } else if (strcmp(fusedOpType, "sigmoid") == 0 && x3 != nullptr) {
+        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR, "x3 is not supported for sigmoid fusedOpType");
+        return false;
     }
     OP_CHECK_NULL(y, return false);
     return true;
@@ -296,14 +299,23 @@ static inline bool CheckX3Shape(const aclTensor* x3, const aclTensor* y)
     return true;
 }
 
-static bool CheckBiasShape(const aclTensor* bias)
+static bool CheckBiasShape(const aclTensor* bias, const aclTensor* x2)
 {
     if (bias == nullptr) {
         return true;
     }
-    size_t biasDimNum = bias->GetViewShape().GetDimNum();
+    const auto& biasShape = bias->GetViewShape();
+    const size_t biasDimNum = biasShape.GetDimNum();
     if (biasDimNum != 1 && biasDimNum != DIM_LEN_MIN) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Input dimension of bias cannot be larger than 2");
+        return false;
+    }
+    const auto& x2Shape = x2->GetViewShape();
+    const int64_t n = x2Shape[x2Shape.GetDimNum() - 1];
+    if (biasShape[biasDimNum - 1] != n || (biasDimNum == DIM_LEN_MIN && biasShape[0] != 1)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "aclnnFusedMatmul", "bias", op::ToString(biasShape).GetString(),
+            FormatString("The shape of bias must be [%ld] or [1, %ld]", n, n).c_str());
         return false;
     }
     return true;
@@ -374,6 +386,12 @@ static inline bool CheckShape(const aclTensor* x1, const aclTensor* x2, const ac
     }
     if (isGelu) {
         CHECK_RET(CheckGeluBatchShape(x1), false);
+    }
+    if (strcmp(fusedOpType, "sigmoid") == 0 && xDimNum != DIM_LEN_MIN) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnFusedMatmul", "x", FormatString("%zuD", xShape.GetDimNum()).c_str(),
+            FormatString("The shape dim of %s must be %zuD for sigmoid op type", "x", DIM_LEN_MIN).c_str());
+        return false;
     }
     if (x3 != nullptr) {
         CHECK_RET(CheckX3Shape(x3, y), false);
@@ -473,7 +491,7 @@ static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, const a
     // 2. 检查A和B是否为2维，且是否满足matmul shape MN 与传入的x3 shape Mn相同
     CHECK_RET(CheckShape(x1, x2, x3, fusedOpType, y), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckKZeroBias(x1, bias), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckBiasShape(bias), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckBiasShape(bias, x2), ACLNN_ERR_PARAM_INVALID);
 
     // 3. 检查输入的数据类型是否在支持的数据类型之内
     CHECK_RET(CheckDtypeValid(x1, x2, bias, x3, fusedOpType, y), ACLNN_ERR_PARAM_INVALID);
@@ -573,7 +591,7 @@ static const aclTensor* BuildSplitEpilogueOp(const aclTensor* splitMmOut, const 
                cast             cast
                  |               |
                   \              /
-                    fusedmatmul_op - add/mul/gelu_erf/gelu_tanh - contiguous - mat3
+                    fusedmatmul_op - add/mul/gelu_erf/gelu_tanh/sigmoid - contiguous - mat3
                           |
                         cast
                           |

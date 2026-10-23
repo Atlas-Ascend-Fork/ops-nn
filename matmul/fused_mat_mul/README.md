@@ -20,6 +20,12 @@
   y = OP((x1 @ x2 + bias), x3)
   $$
 
+  sigmoid运算:
+
+  $$
+  y = sigmoid(x1 @ x2 + bias) = \frac{1}{1 + \exp(-(x1 @ x2 + bias))}
+  $$
+
   16cast32运算:
 
   $$
@@ -74,7 +80,7 @@
         <td>bias</td>
         <td>输入</td>
         <td>公式中的输入bias。</td>
-        <td><ul><li>仅当fusedOpType为""、"16cast32"、"relu"、"add"、"mul"、"gelu_erf"、"gelu_tanh"时生效，其他情况传入空指针即可。</li></ul></td>
+        <td><ul><li>仅当fusedOpType为""、"16cast32"、"relu"、"add"、"mul"、"gelu_erf"、"gelu_tanh"、"sigmoid"时生效，shape必须为(N,)或(1, N)，N为x2逻辑shape的最后一维；不使用bias时传入空指针。</li></ul></td>
         <td>FLOAT16、BFLOAT16、FLOAT32</td>
         <td>ND</td>
       </tr>
@@ -106,7 +112,7 @@
         <td>fusedOpType</td>
         <td>输入</td>
         <td>公式中的输入OP。</td>
-        <td><ul><li>融合模式取值必须是""（表示不做融合）、"16cast32"、"add"、"mul"、"gelu_erf"、"gelu_tanh"、"relu"中的一种。</li><li>"scale_add"仅供算子内部使用，不支持用户直接传入；使用缩放系数时，运行日志中可能出现该取值。</li></ul></td>
+        <td><ul><li>融合模式取值必须是""（表示不做融合）、"16cast32"、"add"、"mul"、"gelu_erf"、"gelu_tanh"、"relu"、"sigmoid"中的一种。</li><li>"scale_add"仅供算子内部使用，不支持用户直接传入；使用缩放系数时，运行日志中可能出现该取值。</li></ul></td>
         <td>STRING</td>
         <td>-</td>
       </tr>
@@ -122,7 +128,10 @@
 
 ## 约束说明
 
-- GELU（gelu_erf、gelu_tanh）支持可选 bias，计算顺序为先计算矩阵乘并加 bias，再执行 GELU。bias 的数据类型必须与矩阵输入一致或为 FLOAT32，shape 为 (N,) 或 (1, N)；传入 bias 时，矩阵乘的 K 轴必须大于 0。
+- 所有支持 bias 的融合模式均要求 bias 的 shape 为 (N,) 或 (1, N)，其中 N 为 x2 逻辑 shape 的最后一维。bias 的数据类型必须与矩阵输入一致或为 FLOAT32；传入 bias 时，矩阵乘的 K 轴必须大于 0。
+- GELU（gelu_erf、gelu_tanh）和 Sigmoid（sigmoid）的计算顺序为先计算矩阵乘并加 bias，再逐元素执行激活；未传入 bias 时不加偏置。
+- 当fusedOpType取值为"sigmoid"时，仅支持Ascend 950PR&950DT系列产品，x1、x2和y必须为二维，数据类型必须同为FLOAT16或同为BFLOAT16；x1的shape为(M, K)，x2的shape为(K, N)，y的shape为(M, N)，M、N和K均必须大于0，x3必须传入空指针。
+- 当fusedOpType取值为"sigmoid"时，alpha和beta只能取1或不设置，不支持空Tensor。
 
 - 当fusedOpType取值为"gelu_erf"、"gelu_tanh"时，x1、x2的数据类型必须为BFLOAT16、FLOAT16;当fusedOpType为""、"relu"时, x1、x2的数据类型必须为FLOAT32（仅支持开启HFLOAT32场景）、BFLOAT16、FLOAT16；当fusedOpType取值为"16cast32"时，x1、x2的数据类型必须为BFLOAT16、FLOAT16；当fusedOpType为"add"、"mul"时, x1、x2、x3的数据类型必须为FLOAT32（仅支持开启HFLOAT32场景）、BFLOAT16、FLOAT16。
 - 当fusedOpType取值为"16cast32"时，输出y的数据类型必须为FLOAT32。

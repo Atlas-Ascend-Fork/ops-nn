@@ -62,6 +62,12 @@
   y = relu(x1 @ x2 + bias)
   $$
 
+  sigmoid运算:
+
+  $$
+  y = sigmoid(x1 @ x2 + bias) = \frac{1}{1 + \exp(-(x1 @ x2 + bias))}
+  $$
+
   16cast32运算:
 
   $$
@@ -142,7 +148,7 @@ aclnnStatus aclnnFusedMatmul(
         <td>bias</td>
         <td>输入</td>
         <td>表示偏置项，对应公式中的bias。</td>
-        <td><li>仅当fusedOpType为""、"16cast32"、"relu"、"add"、"mul"、"gelu_erf"、"gelu_tanh"时生效，其他情况传入空指针即可。</li></td>
+        <td><li>仅当fusedOpType为""、"16cast32"、"relu"、"add"、"mul"、"gelu_erf"、"gelu_tanh"、"sigmoid"时生效，shape必须为(N,)或(1, N)，N为x2逻辑shape的最后一维；不使用bias时传入空指针。</li></td>
         <td>FLOAT16、BFLOAT16、FLOAT32</td>
         <td>ND</td>
         <td>1-2</td>
@@ -188,7 +194,7 @@ aclnnStatus aclnnFusedMatmul(
         <td>fusedOpType</td>
         <td>输入</td>
         <td>表示指定Matmul算子支持的融合模式，对应公式中的OP。</td>
-        <td><li>融合模式取值必须是""（表示不做融合）、"16cast32"、"add"、"mul"、"gelu_erf"、"gelu_tanh"、"relu"中的一种。</li></td>
+        <td><li>融合模式取值必须是""（表示不做融合）、"16cast32"、"add"、"mul"、"gelu_erf"、"gelu_tanh"、"relu"、"sigmoid"中的一种。</li></td>
         <td>STRING</td>
         <td>-</td>
         <td>-</td>
@@ -246,16 +252,19 @@ aclnnStatus aclnnFusedMatmul(
       </tr></thead>
     <tbody>
       <tr>
-        <td rowspan="2">ACLNN_ERR_PARAM_NULLPTR</td>
-        <td rowspan="2">161001</td>
+        <td rowspan="3">ACLNN_ERR_PARAM_NULLPTR</td>
+        <td rowspan="3">161001</td>
         <td>传入的x1、x2和y是空指针。</td>
       </tr>
       <tr>
         <td>fusedOpType为add、mul时，传入的x3为空指针。</td>
       </tr>
       <tr>
-        <td rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
-        <td rowspan="7">161002</td>
+        <td>fusedOpType为sigmoid时，传入的x3不为空指针。</td>
+      </tr>
+      <tr>
+        <td rowspan="9">ACLNN_ERR_PARAM_INVALID</td>
+        <td rowspan="9">161002</td>
         <td>x1和x2的数据类型不在支持的范围之内。</td>
       </tr>
       <tr>
@@ -268,10 +277,16 @@ aclnnStatus aclnnFusedMatmul(
         <td>fusedOpType为"add"、"mul"时，x3的shape不满足要求：x3为二维时，Shape[-2]、Shape[-1]需要与y的Shape[-2]、Shape[-1]保持一致；x3为三维时，Shape[-2]、Shape[-1]需要与y的Shape[-2]、Shape[-1]保持一致，且batch轴需要与y一致或为1。</td>
       </tr>
       <tr>
-        <td>传入的fusedOpType不属于""、"16cast32"、"add"、"mul"、"gelu_tanh"、"gelu_erf"以及"relu"中的一种。</td>
+        <td>传入的fusedOpType不属于""、"16cast32"、"add"、"mul"、"gelu_tanh"、"gelu_erf"、"relu"、"sigmoid"中的一种。</td>
       </tr>
       <tr>
         <td>x1和x2无法做数据类型推导。</td>
+      </tr>
+      <tr>
+        <td>bias的shape不为(N,)或(1, N)，N为x2逻辑shape的最后一维。</td>
+      </tr>
+      <tr>
+        <td>传入bias时，矩阵乘的K轴长度为0。</td>
       </tr>
       <tr>
         <td>当传入的fusedOpType属于""、"add"、"mul"、"relu"中的一种,且输入的数据类型为float32时, cubeMathType只支持3。</td>
@@ -321,7 +336,9 @@ aclnnStatus aclnnFusedMatmul(
 
 ## 约束说明
 
-- GELU（gelu_erf、gelu_tanh）支持可选 bias，计算顺序为先计算矩阵乘并加 bias，再执行 GELU。bias 的数据类型必须与矩阵输入一致或为 FLOAT32，shape 为 (N,) 或 (1, N)；传入 bias 时，矩阵乘的 K 轴必须大于 0。
+- 所有支持 bias 的融合模式均要求 bias 的 shape 为 (N,) 或 (1, N)，其中 N 为 x2 逻辑 shape 的最后一维。bias 的数据类型必须与矩阵输入一致或为 FLOAT32；传入 bias 时，矩阵乘的 K 轴必须大于 0。
+- GELU（gelu_erf、gelu_tanh）和 Sigmoid（sigmoid）的计算顺序为先计算矩阵乘并加 bias，再逐元素执行激活；未传入 bias 时不加偏置。
+- 当fusedOpType取值为"sigmoid"时，仅支持Ascend 950PR&950DT系列产品，x1、x2和y必须为二维，数据类型必须同为FLOAT16或同为BFLOAT16；x1的shape为(M, K)，x2的shape为(K, N)，y的shape为(M, N)，M、N和K均必须大于0，x3必须传入空指针。
 
 - 确定性说明：
 
@@ -337,7 +354,7 @@ aclnnStatus aclnnFusedMatmul(
 <!-- end -->
 - 当fusedOpType取值为"add"、"mul"时，在BMM（三维）场景下，x1、x2和y支持三维；x3支持2-3维，二维x3可按矩阵广播用于三维输出，三维x3的batch轴需要与y一致或为1。
 - 当fusedOpType取值为"16cast32"时，输出y的数据类型必须为FLOAT32。
-- 当x1或x2为空Tensor时，fusedOpType取值为""、"relu"、"gelu_erf"、"gelu_tanh"、"add"、"mul"时支持，取值为"16cast32"时不支持。
+- 当x1或x2为空Tensor时，fusedOpType取值为""、"relu"、"gelu_erf"、"gelu_tanh"、"add"、"mul"时支持，取值为"16cast32"、"sigmoid"时不支持。
 
 ## 调用示例
 

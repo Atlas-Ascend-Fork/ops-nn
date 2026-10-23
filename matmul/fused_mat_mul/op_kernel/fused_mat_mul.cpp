@@ -30,6 +30,7 @@
 #include "../mat_mul_v3/arch35/mat_mul_streamk_basic_cmct.h" // 3510独有,低阶API实现,MM,streamK模板
 #include "../mat_mul_v3/arch35/mat_mul_mix_basic_cmct.h"     // 3510独有,低阶API实现,MM,MixWithoutQue模板
 #include "./arch35/fused_mat_mul_gelu_basic_cmct.h"          // 3510独有,低阶API实现,MM+GELU,MixWithoutQue模板
+#include "./arch35/fused_mat_mul_sigmoid_asw_basic.h"        // Blaze MM+Sigmoid Fixpipe template
 #include "../mat_mul_v3/arch35/mat_mul_fixpipe_opti_basic_cmct.h"      // 3510独有,低阶API实现,FixpipeOpti模板
 #include "../mat_mul_v3/arch35/mat_mul_input_k_eq_zero_clear_output.h" // 3510独有,K=0清零输出
 #include "./arch35/fused_mat_mul_input_k_eq_zero_copy_x3.h"            // 3510 K=0 add returns x3
@@ -247,6 +248,13 @@ __global__ __aicore__ void fused_mat_mul(GM_ADDR x1GM, GM_ADDR x2GM, GM_ADDR bia
         GET_TILING_DATA_WITH_STRUCT(FusedMatMulTilingData, tilingData, tilingGM);
         FusedMatMulAdvanced::FusedMatMulWithScaleAddAswBasicKernel<DTYPE_X1>(x1GM, x2GM, x3GM, yGM, workspaceGM,
                                                                              tilingData);
+    } else if constexpr (OPTYPE == F_OPTYPE_SIGMOID) {
+        static_assert(API_LEVEL == MAT_MUL_BASIC_LEVEL && MODEL == MAT_MUL_BASIC && FULL_LOAD == MAT_MUL_NO_FULL_LOAD &&
+                          L0C2OUT_MODEL == MAT_MUL_1V2_ND_ALIG_FIXPIPE,
+                      "Sigmoid only supports the Blaze Basic Fixpipe template");
+        GET_TILING_DATA_WITH_STRUCT(MatMulV3BasicTilingData, tilingData, tilingGM);
+        FusedMatMulAdvanced::FusedMatMulSigmoidAswBasicKernel<DTYPE_X1, DTYPE_BIAS, aTran, bTran>(
+            x1GM, x2GM, biasGM, yGM, workspaceGM, tilingData);
     } else if constexpr (API_LEVEL == MAT_MUL_BASIC_LEVEL) { // 基础API
         if constexpr (OPTYPE == F_OPTYPE_NONE) {             // opType=empty
             if constexpr (BATCH_ITER_MODEL == MAT_MUL_MERGE_BATCH) {

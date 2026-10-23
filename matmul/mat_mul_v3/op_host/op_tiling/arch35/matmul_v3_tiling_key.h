@@ -14,12 +14,14 @@
  */
 #pragma once
 
+#include <cstdint>
 #include <sstream>
 #include "../../../op_kernel/arch35/mat_mul_v3_tiling_key_public.h"
 
 namespace optiling {
 namespace matmul_v3_advanced {
 constexpr uint64_t DECIMAL_DIVISOR = 10UL;
+constexpr int HEXADECIMAL_BASE = 16;
 
 class MMTilingKey {
 public:
@@ -56,30 +58,21 @@ public:
         std::stringstream ss;
         ss << std::hex << std::uppercase << tilingkey;
         std::string tilingkey_str = ss.str();
-        uint64_t tilingkey_hex = std::stoull(tilingkey_str);
-        return tilingkey_hex;
+        return std::stoull(tilingkey_str, nullptr, HEXADECIMAL_BASE);
     }
 
     static MatMulV3Model GetModel(const uint64_t tilingkey)
     {
-        uint64_t tilingkey_hex = GetHexTilingKey(tilingkey);
-        constexpr uint64_t ModelDigit = 3;
-        uint64_t divisor = 1;
-        for (uint64_t i = 0; i < ModelDigit; i++) {
-            divisor *= DECIMAL_DIVISOR; // Obtain digit of one decimal number
-        }
-        return static_cast<MatMulV3Model>((tilingkey_hex / divisor) % DECIMAL_DIVISOR);
+        const uint64_t tilingkey_hex = GetHexTilingKey(tilingkey);
+        constexpr uint64_t MODEL_SHIFT = 12UL;
+        return static_cast<MatMulV3Model>((tilingkey_hex >> MODEL_SHIFT) % HEXADECIMAL_BASE);
     }
 
     static MatMulV3BatchModel GetBatchModel(const uint64_t tilingkey)
     {
-        uint64_t tilingkey_hex = GetHexTilingKey(tilingkey);
-        constexpr uint64_t BachModelDigit = 2;
-        uint64_t divisor = 1;
-        for (uint64_t i = 0; i < BachModelDigit; i++) {
-            divisor *= DECIMAL_DIVISOR; // Obtain digit of one decimal number
-        }
-        return static_cast<MatMulV3BatchModel>((tilingkey_hex / divisor) % DECIMAL_DIVISOR);
+        const uint64_t tilingkey_hex = GetHexTilingKey(tilingkey);
+        constexpr uint64_t BATCH_MODEL_SHIFT = 8UL;
+        return static_cast<MatMulV3BatchModel>((tilingkey_hex >> BATCH_MODEL_SHIFT) % HEXADECIMAL_BASE);
     }
 
     MatMulV3TilingKey& SetApiLevel(MatMulV3ApiLevel apiLevel)
@@ -90,8 +83,8 @@ public:
 
     static MatMulV3ApiLevel GetApiLevel(const uint64_t tilingkey)
     {
-        uint64_t tilingkey_hex = GetHexTilingKey(tilingkey);
-        return static_cast<MatMulV3ApiLevel>(tilingkey_hex % DECIMAL_DIVISOR);
+        const uint64_t tilingkey_hex = GetHexTilingKey(tilingkey);
+        return static_cast<MatMulV3ApiLevel>(tilingkey_hex % HEXADECIMAL_BASE);
     }
 
     MatMulV3TilingKey& SetFullLoad(MatMulV3FullLoad fullLoad)

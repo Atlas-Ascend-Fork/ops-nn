@@ -83,6 +83,9 @@ def _kernel_compute(
 
     if fused_op_type == "relu":
         mm_out = np.maximum(mm_out, 0)
+    elif fused_op_type == "sigmoid":
+        with np.errstate(over="ignore"):
+            mm_out = 1.0 / (1.0 + np.exp(-mm_out))
     elif fused_op_type == "add":
         mm_out = mm_out + x3
     elif fused_op_type == "scale_add":

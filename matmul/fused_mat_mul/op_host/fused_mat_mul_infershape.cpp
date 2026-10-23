@@ -34,10 +34,10 @@ const int DIM_SIZE_TWO = 2;
 const int64_t INNER_PRECISE_HIGH_PRECISION = 0;
 const int64_t INNER_PRECISE_HIGH_PERFORMANCE = 1;
 
-const std::vector<const char*> kAllSupportedOpTypes = {"",          "16cast32", "add",   "mul",        "gelu_erf",
-                                                       "gelu_tanh", "relu",     "quant", "relu_quant", "scale_add"};
-const std::vector<const char*> kSupportedBiasOpTypes = {"",      "16cast32",   "relu",     "add",      "mul",
-                                                        "quant", "relu_quant", "gelu_erf", "gelu_tanh"};
+const std::vector<const char*> kAllSupportedOpTypes = {
+    "", "16cast32", "add", "mul", "gelu_erf", "gelu_tanh", "relu", "quant", "relu_quant", "scale_add", "sigmoid"};
+const std::vector<const char*> kSupportedBiasOpTypes = {"",      "16cast32",   "relu",     "add",       "mul",
+                                                        "quant", "relu_quant", "gelu_erf", "gelu_tanh", "sigmoid"};
 const std::vector<const char*> kSupportedX3OpTypes = {"add", "mul", "quant", "relu_quant", "scale_add"};
 const std::vector<const char*> kQuantOpTypes = {"quant", "relu_quant"};
 const std::vector<const char*> kBroadcastBatchOpTypes = {"relu", "quant", "relu_quant"};
@@ -84,11 +84,11 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
                 CUBE_INNER_ERR_REPORT(op_name, "fusedmatmul is only supported bf16/fp16/hf32, do not support fp32."),
                 return ge::GRAPH_FAILED);
     // OpType合法性校验
-    OP_CHECK_IF(
-        !IsInSupportedOpTypes(fused_op_type, kAllSupportedOpTypes),
-        CUBE_INNER_ERR_REPORT(op_name, "fusedOpType must be in the type of "
-                                       "''/16cast32/add/mul/gelu_erf/gelu_tanh/relu/quant/relu_quant/scale_add"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!IsInSupportedOpTypes(fused_op_type, kAllSupportedOpTypes),
+                CUBE_INNER_ERR_REPORT(op_name,
+                                      "fusedOpType must be in the type of "
+                                      "''/16cast32/add/mul/gelu_erf/gelu_tanh/relu/quant/relu_quant/scale_add/sigmoid"),
+                return ge::GRAPH_FAILED);
     // 不支持bias的OpType拦截bias
     if (!IsInSupportedOpTypes(fused_op_type, kSupportedBiasOpTypes)) {
         OP_CHECK_IF(shape_bias != nullptr && shape_bias->GetDimNum() != 0,
@@ -104,10 +104,11 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
                     return ge::GRAPH_FAILED);
     } else {
         // 不支持x3输入的OpType拦截x3为非空
-        OP_CHECK_IF(shape_c != nullptr && shape_c->GetDimNum() != 0,
-                    CUBE_INNER_ERR_REPORT(
-                        op_name, "shape c must have no data when fused_op_type is ''/16cast32/gelu_tanh/gelu_erf/relu"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            shape_c != nullptr && shape_c->GetDimNum() != 0,
+            CUBE_INNER_ERR_REPORT(
+                op_name, "shape c must have no data when fused_op_type is ''/16cast32/gelu_tanh/gelu_erf/relu/sigmoid"),
+            return ge::GRAPH_FAILED);
     }
     OP_LOGD(context->GetNodeName(), "a_shape: %s, b_shape: %s, transpose_a: %d, transpose_b: %d",
             Shape2String(*shape_a).c_str(), Shape2String(*shape_b).c_str(), *trans_a, *trans_b);
@@ -116,8 +117,11 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
     int dim_a = shape_a->GetDimNum();
     int dim_b = shape_b->GetDimNum();
     const bool is_empty = strcmp(fused_op_type, "") == 0;
+    const bool is_sigmoid = strcmp(fused_op_type, "sigmoid") == 0;
     const bool support_broadcast_batch = IsInSupportedOpTypes(fused_op_type, kBroadcastBatchOpTypes);
-    const int max_dim = (is_empty || support_broadcast_batch) ? kMatmulV2ReluMaxShapeSize : kMatmulV2MaxShapeSize;
+    const int max_dim = is_sigmoid                            ? kMatmulV2MinShapeSize :
+                        (is_empty || support_broadcast_batch) ? kMatmulV2ReluMaxShapeSize :
+                                                                kMatmulV2MaxShapeSize;
     const int dim_out = support_broadcast_batch ? std::max(dim_a, dim_b) : dim_a;
     OP_CHECK_IF(dim_a < kMatmulV2MinShapeSize || dim_b < kMatmulV2MinShapeSize || dim_a > max_dim || dim_b > max_dim ||
                     (!support_broadcast_batch && dim_a != dim_b),
@@ -147,6 +151,9 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
 
     OP_CHECK_IF(a_k != b_k,
                 CUBE_INNER_ERR_REPORT(op_name, "The k-axis of a(%d) and b(%d) tensors must be the same", a_k, b_k),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(is_sigmoid && a_k == 0,
+                CUBE_INNER_ERR_REPORT(op_name, "The K-axis of x1 and x2 must be greater than 0 for sigmoid op type"),
                 return ge::GRAPH_FAILED);
 
     if (shape_bias != nullptr && shape_bias->GetDimNum() != 0) {
