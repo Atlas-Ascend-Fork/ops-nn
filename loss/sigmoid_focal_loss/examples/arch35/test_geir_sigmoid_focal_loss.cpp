@@ -38,11 +38,11 @@ constexpr float RTOL = 1.0e-5F;
 
 float FocalLoss(float logit, int32_t target, float weight)
 {
-    const float probability = 1.0F / (1.0F + std::exp(-logit));
     const float targetValue = static_cast<float>(target);
+    const float probability = 1.0F / (1.0F + std::exp(-logit));
     const float minimum = 1.17549435e-38F;
-    const float bce = -targetValue * std::log(std::max(probability, minimum)) -
-                      (1.0F - targetValue) * std::log(std::max(1.0F - probability, minimum));
+    const float logTerm = std::log1p(std::exp(-std::fabs(logit)));
+    const float bce = (targetValue > 0.5F ? std::max(-logit, 0.0F) : std::max(logit, 0.0F)) + logTerm;
     const float pt = (1.0F - probability) * targetValue + probability * (1.0F - targetValue);
     const float alphaFactor = ALPHA * targetValue + (1.0F - ALPHA) * (1.0F - targetValue);
     return bce * alphaFactor * std::pow(std::max(pt, minimum), GAMMA) * weight;

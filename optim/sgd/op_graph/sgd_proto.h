@@ -34,7 +34,7 @@ namespace ge {
  *      accum_t -= grad * (1 - stat) * d
  *  }
  *  if (nesterov) {
- *      parameters -= grad * lr + accum_t * m * lr
+ *      parameters -= (grad + accum_t * m) * lr
  *  } else {
  *      parameters -= accum_t * lr
  *  }
@@ -69,11 +69,16 @@ namespace ge {
  * parameters: A mutable tensor. Has the same shape, dtype and format as input "parameters".
  *
  *@attention Constraints:
- *@li Only one output is declared on the graph, but the operator updates THREE tensors
- *    in place: "parameters", "accum" and "stat". "accum" and "stat" are returned by
- *    overwriting their input memory and are therefore not visible as graph outputs.
- *    Callers must treat them as mutable. This mirrors the 910B/910C behaviour
- *    (the TBE implementation declares reuse=('accum', 'parameters', 'stat')).
+ *@li Only one output is declared on the graph. "accum" and "stat" are updated in
+ *    place by overwriting their input memory and are therefore not visible as
+ *    graph outputs; callers must treat "parameters", "accum" and "stat" as
+ *    mutable. The updated "parameters" value is written to the graph output
+ *    slot; whether that output memory is bound to the input "parameters"
+ *    storage is decided by the graph engine's output allocation (the 910B/910C
+ *    TBE implementation obtained this binding via reuse=('accum', 'parameters',
+ *    'stat'); this arch35 delivery declares no equivalent mechanism), so
+ *    callers must read the update from the graph output rather than assume
+ *    the input buffer is refreshed.
  *@li When "momentum" is 0 (including -0.0), "accum" and "stat" are NOT written at all
  *    and keep their input values bit-for-bit; "parameters" is still updated as usual.
  *    The momentum multiplication is still evaluated: 0 * inf can propagate NaN
@@ -82,6 +87,8 @@ namespace ge {
  *    Float16 and bfloat16 results use round-to-nearest, ties-to-even conversion.
  *@li The rank of "parameters" must be in the range [1, 8]; rank-0 (scalar) is rejected.
  *    Empty tensors (any axis being 0) are rejected as well.
+ *@li When "nesterov" is true, "dampening" must be 0, and "weight_decay" must be
+ *    greater than or equal to 0 (NaN is rejected).
  *
  *@par Third-party framework compatibility
  * The writeback mask matches PyTorch's torch.optim.SGD, which skips the whole momentum

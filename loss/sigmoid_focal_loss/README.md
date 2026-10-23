@@ -5,12 +5,12 @@
 
 | 产品 | 是否支持 |
 | ---- | :----: |
-| Ascend 950PR&950DT系列产品 | √ |
-| Atlas A3系列产品 | √ |
-| Atlas A2系列产品 | √ |
-| Atlas 200I/500 A2推理产品 | √ |
-| Atlas推理系列产品 | √ |
-| Atlas训练系列产品 | √ |
+| <term>Ascend 950PR&950DT系列产品</term> | √ |
+| <term>Atlas A3系列产品</term> | × |
+| <term>Atlas A2系列产品</term> | × |
+| <term>Atlas 200I/500 A2推理产品</term> | × |
+| <term>Atlas推理系列产品</term> | × |
+| <term>Atlas训练系列产品</term> | × |
 
 ## 功能说明
 
@@ -19,7 +19,7 @@
 - 计算公式：设$x=\operatorname{FP32}(pred)$、$t=\operatorname{FP32}(target)$、$p=\sigma(x)$、$\varepsilon=1.17549435\times10^{-38}$，则每个元素的损失为：
 
 $$
-\operatorname{BCE}(x,t)=-t\log(\max(p,\varepsilon))-(1-t)\log(\max(1-p,\varepsilon))
+\operatorname{BCE}(x,t)=t\max(-x,0)+(1-t)\max(x,0)+\log(1+e^{-|x|})
 $$
 
 $$
@@ -66,13 +66,14 @@ $$
 - `target`的元素值应属于二值集合{0,1}。
 - `weight`存在时必须与`pred`的dtype相同，输出`y`的dtype与`pred`相同。
 - `gamma`和`alpha`必须为有限值，并分别位于闭区间[0.0,5.0]和[0.0,1.0]。
+- `pred`含±Inf时逐元素损失按公式极限取确定值：预测方向与`target`一致时为0，方向相反时为+Inf。
 - rank-2空Tensor受支持：`none`返回同形空Tensor，`sum`返回标量0，`mean`返回标量NaN。
 
 ## 调用说明
 
 <table style="table-layout: fixed; width: 1000px">
 <colgroup><col style="width: 180px"><col style="width: 120px"><col style="width: 700px"></colgroup>
-<thead><tr><th>调用方式</th><th>调用样例</th><th>说明</th></tr></thead>
+<thead><tr><th>调用方式</th><th>样例代码</th><th>说明</th></tr></thead>
 <tbody>
 <tr><td>GE图模式</td><td><a href="examples/arch35/test_geir_sigmoid_focal_loss.cpp">静态shape样例</a></td><td>通过<a href="op_graph/sigmoid_focal_loss_proto.h">算子IR</a>构图调用SigmoidFocalLoss算子。</td></tr>
 </tbody>

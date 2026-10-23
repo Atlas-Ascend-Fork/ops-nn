@@ -78,7 +78,8 @@
 
 ## 约束说明
 
-- input_grad与input_x的dtype和shape必须一致。
+- GE图模式：input_grad与input_x的dtype和shape必须一致。
+- aclnn API（aclnnSoftshrinkBackward）：input_grad（gradOutput）与input_x（self）的shape须满足broadcast关系，gradInput的shape须与broadcast结果一致；两者dtype可不同（不同时内部转换为FLOAT计算）。
 - 支持0-8维ND格式。
 
 ## 调用说明

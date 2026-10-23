@@ -24,7 +24,7 @@
 using namespace std;
 
 extern "C" __global__ __aicore__ void soft_shrink_grad(GM_ADDR input_grad, GM_ADDR input_x, GM_ADDR output_y,
-                                                      GM_ADDR workspace, GM_ADDR tiling);
+                                                       GM_ADDR workspace, GM_ADDR tiling);
 
 class SoftShrinkGradKernelTest : public testing::Test {
 protected:
@@ -175,6 +175,39 @@ TEST_F(SoftShrinkGradKernelTest, test_fp32_non_aligned)
     td->blockFormer = numElements;
     td->blockNum = 1;
     td->ubFormer = ubFormer;
+    td->lambd = 0.5f;
+
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    ICPU_RUN_KF(soft_shrink_grad, blockDim, gradBuf, xBuf, yBuf, workspace, tiling);
+
+    AscendC::GmFree(gradBuf);
+    AscendC::GmFree(xBuf);
+    AscendC::GmFree(yBuf);
+    AscendC::GmFree(workspace);
+    AscendC::GmFree(tiling);
+}
+
+TEST_F(SoftShrinkGradKernelTest, test_empty_tensor_guard)
+{
+    // Empty-tensor tiling (dim0 == 0) zero-fills the scheduling params and still
+    // launches 1 block (SetBlockDim(1)). The kernel must guard blockLength_/
+    // ubLength_ <= 0: no zero-sized buffers, no divide by ubFormer == 0.
+    size_t dataSize = 64 * sizeof(float); // allocate minimal buffers anyway
+    size_t tilingSize = sizeof(SoftShrinkGradTilingData);
+    uint32_t blockDim = 1;
+
+    uint8_t* gradBuf = (uint8_t*)AscendC::GmAlloc(dataSize);
+    uint8_t* xBuf = (uint8_t*)AscendC::GmAlloc(dataSize);
+    uint8_t* yBuf = (uint8_t*)AscendC::GmAlloc(dataSize);
+    uint8_t* workspace = (uint8_t*)AscendC::GmAlloc(1024 * 1024);
+    uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(tilingSize);
+
+    SoftShrinkGradTilingData* td = reinterpret_cast<SoftShrinkGradTilingData*>(tiling);
+    td->dim0 = 0;
+    td->coreNum = 0;
+    td->blockFormer = 0;
+    td->blockNum = 0;
+    td->ubFormer = 0;
     td->lambd = 0.5f;
 
     AscendC::SetKernelMode(KernelMode::AIV_MODE);

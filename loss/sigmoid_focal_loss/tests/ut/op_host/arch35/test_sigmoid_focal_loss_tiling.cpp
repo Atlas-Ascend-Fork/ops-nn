@@ -191,6 +191,56 @@ TEST(SigmoidFocalLossReviewRegression, MeanScaleIsInvRTotalForReviewedShapesAndN
     }
 }
 
+TEST(SigmoidFocalLossReviewRegression, Branch0RejectsBlockPlanThatOverflowsInt64)
+{
+    const int64_t int64Max = std::numeric_limits<int64_t>::max();
+    for (uint64_t dtypeBytes : {sizeof(uint16_t), sizeof(float)}) {
+        const optiling::SigmoidFocalLossElewiseUbPlan plan = optiling::ComputeElewiseUbPlan(kUbSize, dtypeBytes, 3U,
+                                                                                            0U);
+        // The reject/accept offsets below stay deterministic only while the tile is
+        // inside (512, 8192]: 512 is the blockFormer alignment, 8192 keeps the
+        // accepted neighbour below the loop-count limit for both dtypes.
+        ASSERT_GT(plan.tile, 512U);
+        ASSERT_LE(plan.tile, 8192U);
+
+        auto runBranch0 = [&](int64_t total, uint32_t cores, SigmoidFocalLossTilingData& split, uint32_t& blockDim,
+                              uint64_t& userWorkspaceBytes) {
+            uint64_t key = std::numeric_limits<uint64_t>::max();
+            optiling::ComputeBranch0Tiling({total, cores, kUbSize, dtypeBytes}, split, key, blockDim,
+                                           userWorkspaceBytes);
+        };
+
+        // Single core with totalElements near INT64_MAX: blockFormer's 512-alignment
+        // or the kernel loop count (blockElements + tile - 1) would overflow int64;
+        // the tiling must reject instead of emitting a wrapped negative plan.
+        for (int64_t total : {int64Max, int64Max - 511}) {
+            SigmoidFocalLossTilingData split{};
+            uint32_t blockDim = 1;
+            uint64_t userWorkspaceBytes = 1;
+            runBranch0(total, 1U, split, blockDim, userWorkspaceBytes);
+            EXPECT_EQ(blockDim, 0U);
+            EXPECT_EQ(split.elewiseTile, 0);
+        }
+
+        // In-bounds neighbour on a single core and the huge multi-core shape must
+        // still produce a valid plan.
+        for (uint32_t cores : {1U, 64U}) {
+            const int64_t total = cores == 1U ? int64Max - 8192 : int64Max;
+            SigmoidFocalLossTilingData split{};
+            uint32_t blockDim = 0;
+            uint64_t userWorkspaceBytes = 1;
+            runBranch0(total, cores, split, blockDim, userWorkspaceBytes);
+            EXPECT_NE(blockDim, 0U);
+            EXPECT_GT(split.elewiseTile, 0);
+            EXPECT_EQ(userWorkspaceBytes, 0U);
+            EXPECT_GT(split.blockFormer, 0);
+            EXPECT_GT(split.blockTail, 0);
+            EXPECT_LE(split.blockFormer, int64Max);
+            EXPECT_LE(split.blockTail, int64Max);
+        }
+    }
+}
+
 struct NamedHostCase {
     std::string name;
     HostTilingCase value;

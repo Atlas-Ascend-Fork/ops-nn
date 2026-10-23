@@ -82,6 +82,18 @@ def _attr(kwargs, name, default):
     return value
 
 
+def _f32_attr(value):
+    """Quantize one float attribute to float32 (GOLDEN.04/1).
+
+    Host tiling stores ``dampening``/``weight_decay`` as float32 before
+    selecting the zero/non-zero DAG branch.  An attribute in ``(0, 2^-150]``
+    is non-zero as a Python float64 but rounds to float32 zero; both the
+    branch decision and the arithmetic must follow the quantized value, or
+    the reference diverges from the device for legal inputs.
+    """
+    return float(np.float32(float(value)))
+
+
 def _numpy_to_torch(array):
     """Convert a contiguous NumPy/ML-dtypes array without changing its value.
 
@@ -118,6 +130,11 @@ def _compute(
     Inputs and outputs are Torch tensors.  This is the high-precision CPU
     true-value path, so it keeps the legacy expanded Nesterov formula; the
     independent ``_SgdCompose`` below follows the grouped arch35 DAG order.
+
+    Attribute defaults are ``None`` so that ``_attr`` can resolve each one
+    from the ``attributes`` container when the caller did not pass a named
+    value; pre-filling ``0.0`` here would silently shadow container values
+    (GOLDEN.02/1).
     """
     # Keep the CPU oracle independent from the device's float32 intermediates.
     # Products may exceed float32 even when the final mathematical result fits.
@@ -133,8 +150,10 @@ def _compute(
         "nesterov": nesterov,
         **kwargs,
     }
-    dampening_value = float(_attr(attrs, "dampening", 0.0))
-    weight_decay_value = float(_attr(attrs, "weight_decay", 0.0))
+    # Both float attributes participate in zero/non-zero branch decisions on
+    # the device as float32 values, so quantize before deciding (GOLDEN.04/1).
+    dampening_value = _f32_attr(_attr(attrs, "dampening", 0.0))
+    weight_decay_value = _f32_attr(_attr(attrs, "weight_decay", 0.0))
     use_nesterov = bool(_attr(attrs, "nesterov", False))
 
     # Step 1: the zero branch is genuinely absent; writing ``p * 0`` would
@@ -214,11 +233,15 @@ def _torch_to_numpy(tensor, target_dtype=None, reference=None):
             )
         return bits.view(_NP_BFLOAT16)
 
-    # Legacy raw-bf16 input representation.  A masked writeback tensor is still
-    # bfloat16 and must preserve its bits; computed float tensors retain the old
-    # numeric astype(uint16) behaviour.
-    if target_name == "uint16" and result.dtype == torch.bfloat16:
-        return result.view(torch.uint16).numpy().copy()
+    # Legacy raw-bf16 input representation: uint16 arrays carry bf16 BITS
+    # (symmetric with ``_numpy_to_torch``'s ``view(np.uint16)`` decoding).
+    # Masked writeback tensors are already bfloat16 and keep their bits;
+    # computed float tensors are rounded to bfloat16 — matching the device
+    # CAST_RINT writeback — and then viewed as bits.  A numeric
+    # astype(uint16) would truncate fractions, reject negatives and wrap
+    # out-of-range values, matching neither the bit pattern nor the value.
+    if target_name == "uint16":
+        return result.to(torch.bfloat16).view(torch.uint16).numpy().copy()
 
     if result.dtype == torch.bfloat16:
         result = result.to(torch.float32)

@@ -12,6 +12,16 @@
 This operator is delivered only through GEIR. GEIR and Kernel consume this
 raw-op TestSpec; there are no ACLNN or torch delivery paths for this operator.
 TF and ONNX TestSpec paths are not supported by TTK.
+
+Third-party reference evaluation: torchvision.ops.sigmoid_focal_loss and
+mmcv.ops.sigmoid_focal_loss implement alpha_t * (1 - p_t)^gamma * BCE and are
+semantically close to this operator's public formula in the regular domain,
+but neither applies the declared epsilon=FLT_MIN clamp on the p_t term,
+neither supports this contract's per-element weight input, and MMCV is not
+installed in the validation environment. They are therefore not used as the
+executable golden; the reference below follows the public README formula with
+log1p/clamp stable forms (including the deterministic +/-Inf limits), and
+ThirdPartyImpl keeps an original-dtype torch chain for cross-checking.
 """
 
 import torch

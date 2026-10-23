@@ -103,10 +103,17 @@ __simd_vf__ inline void BcePtVf(__ubuf__ float* target, __ubuf__ float* pred, __
         Reg::Exp(expReg, expReg, mask);
         Reg::Adds(logTermReg, expReg, 1.0f, mask);
         Reg::Log(logTermReg, logTermReg, mask);
+        // Select the per-target linear term instead of computing max(x,0)-x*t:
+        // the subtraction turns +/-Inf logits into Inf-Inf or Inf*0 NaN, while the
+        // select form yields the formula limits (golden uses the same structure).
         Reg::Duplicate(maxReg, 0.0f, mask);
-        Reg::Max(maxReg, logitReg, maxReg, mask);
-        Reg::Mul(firstReg, logitReg, targetReg, mask);
-        Reg::Sub(maxReg, maxReg, firstReg, mask);
+        Reg::Sub(firstReg, maxReg, logitReg, mask);
+        Reg::Max(firstReg, firstReg, maxReg, mask);
+        Reg::Max(secondReg, logitReg, maxReg, mask);
+        Reg::MaskReg targetOne;
+        Reg::Duplicate(qReg, 0.5f, mask);
+        Reg::Compare<float, CMPMODE::GT>(targetOne, targetReg, qReg, mask);
+        Reg::Select<float>(maxReg, firstReg, secondReg, targetOne);
         Reg::Add(maxReg, maxReg, logTermReg, mask);
         Reg::StoreAlign(bce + off, maxReg, mask);
         Reg::Duplicate(qReg, 1.0f, mask);
@@ -207,7 +214,7 @@ __simd_vf__ inline void FocalPreElewiseVf(__ubuf__ DType* pred, __ubuf__ int32_t
     for (uint16_t i = 0; i < repeat; ++i) {
         const int32_t off = static_cast<int32_t>(i) * static_cast<int32_t>(FP32_VECTOR_LENGTH);
         auto mask = Reg::UpdateMask<float>(remain);
-        Reg::RegTensor<float> logitReg, targetReg, scratchReg0, scratchReg1, scratchReg2, scratchReg3;
+        Reg::RegTensor<float> logitReg, targetReg, scratchReg0, scratchReg1, scratchReg2, scratchReg3, scratchReg4;
         if constexpr (IsSameType<DType, float>::value) {
             Reg::LoadAlign(logitReg, reinterpret_cast<__ubuf__ float*>(pred) + off);
         } else {
@@ -233,11 +240,17 @@ __simd_vf__ inline void FocalPreElewiseVf(__ubuf__ DType* pred, __ubuf__ int32_t
 
         Reg::Adds(scratchReg3, scratchReg0, 1.0f, mask);
         Reg::Log(scratchReg3, scratchReg3, mask);
+        // Same Inf-safe select as BcePtVf: pick the per-target linear term instead of
+        // max(x,0)-x*t, which NaNs on +/-Inf logits instead of the formula limits.
         Reg::Duplicate(scratchReg1, 0.0f, mask);
+        Reg::Sub(scratchReg0, scratchReg1, logitReg, mask);
+        Reg::Max(scratchReg0, scratchReg0, scratchReg1, mask);
         Reg::Max(scratchReg1, logitReg, scratchReg1, mask);
-        Reg::Mul(scratchReg0, logitReg, targetReg, mask);
-        Reg::Sub(scratchReg1, scratchReg1, scratchReg0, mask);
-        Reg::Add(logitReg, scratchReg1, scratchReg3, mask);
+        Reg::MaskReg targetOne;
+        Reg::Duplicate(scratchReg4, 0.5f, mask);
+        Reg::Compare<float, CMPMODE::GT>(targetOne, targetReg, scratchReg4, mask);
+        Reg::Select<float>(scratchReg4, scratchReg0, scratchReg1, targetOne);
+        Reg::Add(logitReg, scratchReg4, scratchReg3, mask);
 
         Reg::Duplicate(scratchReg0, 1.0f, mask);
         Reg::Sub(scratchReg0, scratchReg0, scratchReg2, mask);

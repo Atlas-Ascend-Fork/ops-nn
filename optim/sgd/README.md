@@ -92,6 +92,6 @@
 
 本算子不提供aclnn单算子接口，通过图引擎（Graph Engine，GE）图模式调用。
 
-| 调用方式 | 调用样例 | 说明 |
+| 调用方式 | 样例代码 | 说明 |
 | --- | --- | --- |
 | GE图模式 | [test_geir_sgd.cpp](examples/test_geir_sgd.cpp) | 通过[SGD算子IR](op_graph/sgd_proto.h)构图并调用算子。 |

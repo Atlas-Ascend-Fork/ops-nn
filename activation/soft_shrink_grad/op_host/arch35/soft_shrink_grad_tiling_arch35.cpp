@@ -23,7 +23,8 @@
  *   - Flatten all dims into dim0
  *   - Multi-core split with 512-element alignment
  *   - UB split with 256B alignment
- *   - 3 TilingKeys: FP32 direct, FP16 promote, BF16 promote
+ *   - TilingKey carries only BUFFER_MODE (0=single, 1=double); dtype is resolved
+ *     at kernel compile time via DTYPE_INPUT_GRAD (see soft_shrink_grad_tiling_key.h)
  */
 
 #include <cmath>
@@ -259,6 +260,8 @@ static ge::graphStatus SoftShrinkGradTilingFunc(gert::TilingContext* context)
                 OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
 
     if (totalIdx == 0) {
+        // Empty tensor: zero scheduling params are safe because the kernel guards
+        // blockLength_/ubLength_ <= 0 (no zero-sized buffers, no divide).
         tiling->dim0 = 0;
         context->SetBlockDim(1);
         ASCENDC_TPL_SEL_PARAM(context, 0);

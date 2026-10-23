@@ -43,7 +43,3 @@ __global__ __aicore__ void sigmoid_focal_loss(GM_ADDR pred, GM_ADDR target, GM_A
         }
     }
 }
-
-// [REF_SAMPLE] The sample entry assembled x/scale/bias and y pointer arrays,
-// selected rank-4/rank-8 TilingData, then called kernel.Init() and
-// kernel.Process() to compute y=x*scale+bias. It is intentionally inactive.

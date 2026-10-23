@@ -83,6 +83,16 @@ void ComputeBranch0Tiling(const SigmoidFocalLossBranch0TilingInputs& inputs, Sig
     const uint64_t blockFormer = ceilAlign(ceilDiv(total, initialCoreNum), blockAlignElements);
     const uint64_t blockNum = ceilDiv(total, blockFormer);
     const uint64_t blockTail = total - (blockNum - 1U) * blockFormer;
+    // Single-core plans with totalElements near INT64_MAX overflow either blockFormer's
+    // 512-alignment or the kernel's (blockElements + elewiseTile - 1) loop count when
+    // narrowed to int64; reject instead of emitting a wrapped negative plan.
+    const uint64_t int64LoopLimit = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - elewiseTile + 1U;
+    if (blockFormer > int64LoopLimit || blockTail > int64LoopLimit) {
+        OP_LOGE("SigmoidFocalLoss",
+                "Branch0 block plan overflows int64: total=%lu cores=%u blockFormer=%lu blockTail=%lu tile=%lu", total,
+                inputs.availableCoreNum, blockFormer, blockTail, elewiseTile);
+        return;
+    }
 
     output.totalElements = inputs.totalElements;
     output.usedCoreNum = static_cast<int32_t>(blockNum);
@@ -912,8 +922,6 @@ static ge::graphStatus TilingPrepareForSigmoidFocalLoss(gert::TilingParseContext
     return ge::GRAPH_SUCCESS;
 }
 
-// [REF_SAMPLE] The sample tiling implemented broadcast normalization, rank
-// dispatch, multicore splitting and shape/stride population for scale+bias.
 IMPL_OP_OPTILING(SigmoidFocalLoss)
     .Tiling(TilingFuncSigmoidFocalLoss)
     .TilingParse<SigmoidFocalLossCompileInfo>(TilingPrepareForSigmoidFocalLoss);

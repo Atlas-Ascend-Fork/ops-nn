@@ -26,7 +26,7 @@ using namespace AscendC;
 
 // SoftShrinkGrad kernel using Ordinary Kernel-Side APIs (non-VF Function).
 // Compute: output_y[i] = input_grad[i] if |input_x[i]| > lambd OR isnan(input_x[i]), else 0
-// NaN protection per spec.yaml: NaN positions pass through input_grad.
+// NaN protection per docs/aclnnSoftshrinkBackward.md and README.md: NaN positions pass through input_grad.
 template <typename T, int BUFFER_MODE>
 class SoftShrinkGrad {
     static constexpr int32_t BUFFER_NUM = BUFFER_MODE ? 2 : 1;
@@ -73,6 +73,12 @@ __aicore__ inline void SoftShrinkGrad<T, BUFFER_MODE>::Init(GM_ADDR inputGrad, G
     blockLength_ = isLastBlock ? blockTail : tilingData->blockFormer;
     ubLength_ = tilingData->ubFormer;
     lambd_ = tilingData->lambd;
+
+    // Empty tensors and idle cores must not initialize zero-sized queues or GM views.
+    if (blockLength_ <= 0 || ubLength_ <= 0) {
+        blockLength_ = 0;
+        return;
+    }
 
     int64_t gmOffset = tilingData->blockFormer * blockIdx;
     gmInputGrad.SetGlobalBuffer((__gm__ T*)inputGrad + gmOffset, blockLength_);
@@ -239,6 +245,10 @@ __aicore__ inline void SoftShrinkGrad<T, BUFFER_MODE>::Compute(int64_t currentNu
 template <typename T, int BUFFER_MODE>
 __aicore__ inline void SoftShrinkGrad<T, BUFFER_MODE>::Process()
 {
+    // Empty-tensor tiling produces ubFormer=0 (dim0=0); guard the divide below.
+    if (ubLength_ <= 0 || blockLength_ <= 0) {
+        return;
+    }
     int64_t loopCount = (blockLength_ + ubLength_ - 1) / ubLength_;
     for (int64_t i = 0; i < loopCount; i++) {
         int64_t currentNum = (i == (loopCount - 1)) ? (blockLength_ - ubLength_ * i) : ubLength_;
