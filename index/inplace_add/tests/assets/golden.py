@@ -21,21 +21,18 @@ The operator copies ``x`` into ``y`` and then accumulates ``v`` into the rows
 Kernel and GEIR resolve the snake-case operator name and share
 :class:`InplaceAddKernelSpec`.  TensorFlow E2E cases resolve the exact CSV
 ``api_name`` and use :class:`InplaceAddTensorFlowSpec`.  The legacy
-``__golden__`` entry remains available and calls the same Torch computation core.
+``__golden__`` entry remains available and calls the same TensorFlow computation core.
 
-The CPU golden is used only as the precision truth and is never timed as the XPU
-competitor.  It computes in the dtype TTK supplies, so a Promote call that supplies
-float32 or float64 is not cast back down to the original input dtype.  The default
-third-party leg uses native ``torch.index_add`` because it covers the complete dtype
-matrix.  The exact TensorFlow counterpart, ``tf.raw_ops.InplaceAdd``, is both
-registered as a TensorFlow E2E TestSpec and available through TTK's
-``--provider tf`` filter when the endpoint supports the testcase dtype.
+The CPU golden computes in the dtype TTK supplies and is never timed as the
+GPU competitor. In cross_check mode it supplies the promoted reference; in
+two-party mode CPU and NPU are peer implementations. A Promote call supplying
+float32 or float64 is not cast back down to the original input dtype.
+The third-party leg uses native ``torch.index_add``. The TensorFlow API
+``tf.raw_ops.InplaceAdd`` is registered separately as an E2E TestSpec.
 
-The CPU golden and Torch third-party leg share index normalization, wide-unsigned
-adaptation, and output restoration.  In TTK's NumPy path, complex32 is represented
-by a trailing pair of float16 components, so those two legs add the components
-directly.  The explicit Torch complex32 path keeps a compatibility promotion in the
-golden leg only.
+The CPU golden uses TensorFlow because this operator has a TensorFlow E2E path.
+The GPU competitor uses Torch. In TTK's NumPy path, complex32 is represented by
+a trailing pair of float16 components, which are added independently.
 """
 
 from math import gcd
@@ -61,9 +58,7 @@ __golden__ = {
 # select Promote for the CPU golden plus the third-party leg and therefore need a
 # reachable XPU endpoint. Current cross_check detects float32 RMSE overflow and
 # recomputes it in float64, so valid full-range finite BF16 values no longer need a
-# binary_equal workaround. Complex outputs intentionally have no declaration here:
-# resolve.py maps them to local isclose, or to binary_equal when the CLI explicitly
-# selects `--compare binary`. Integer outputs always resolve to binary_equal.
+# binary_equal workaround. Complex and integer outputs use binary_equal.
 #
 # binary_equal first compares bytes, then treats output/golden NaNs at the same
 # positions as equivalent if the byte comparison differs. Finite values and Inf
@@ -80,13 +75,9 @@ _TOL = {
     "uint16": {"standard": "binary_equal"},
     "uint32": {"standard": "binary_equal"},
     "uint64": {"standard": "binary_equal"},
+    "complex32": {"standard": "binary_equal"},
+    "complex64": {"standard": "binary_equal"},
 }
-
-# Compatibility for callers that pass a real torch.complex32 Tensor directly.
-# TTK's NumPy complex32 representation arrives here as float16 components and does
-# not hit this mapping; the CPU and Torch reference legs therefore use the same
-# component representation exercised by the binary kernel.
-_GOLDEN_PROMOTE = {torch.complex32: torch.complex64}
 
 
 def _is_wide_unsigned(dtype):
@@ -160,21 +151,18 @@ def _is_empty_work(y, idx):
 
 
 def _inplace_add_golden_compute(x, indices, v):
-    y, idx, updates, result_dtype, return_torch = _prepare_inplace_add_inputs(
-        x, indices, v
-    )
-    if _is_empty_work(y, idx):
-        return _restore_inplace_add_output(y, result_dtype, return_torch)
-    update_shape = (idx.numel(),) + tuple(y.shape[1:])
-    updates = updates.reshape(update_shape)
-    compute_dtype = _GOLDEN_PROMOTE.get(y.dtype)
-    if compute_dtype is None:
-        y = torch.index_add(y, 0, idx.reshape(-1), updates)
-    else:
-        y = torch.index_add(
-            y.to(compute_dtype), 0, idx.reshape(-1), updates.to(compute_dtype)
-        ).to(y.dtype)
-    return _restore_inplace_add_output(y, result_dtype, return_torch)
+    """TensorFlow reference; TTK alone owns floating-point promotion."""
+    import tensorflow as tf
+
+    y = tf.convert_to_tensor(_to_numpy_array(x))
+    updates = tf.convert_to_tensor(_to_numpy_array(v))
+    idx = tf.reshape(tf.convert_to_tensor(_to_numpy_array(indices)), [-1])
+    if int(tf.size(y)) == 0 or int(tf.size(idx)) == 0:
+        return y.numpy()
+    idx = tf.math.floormod(idx, tf.shape(y, out_type=idx.dtype)[0])
+    update_shape = (int(tf.size(idx)),) + tuple(y.shape[1:])
+    updates = tf.reshape(updates, update_shape)
+    return tf.tensor_scatter_nd_add(y, tf.reshape(idx, [-1, 1]), updates).numpy()
 
 
 def _inplace_add_third_party_compute(x, indices, v):
@@ -223,10 +211,23 @@ class InplaceAddKernelSpec:
     def customize_inputs(x, indices, v, **kwargs):
         """Generate unique numerical indices or explicit safety-only conflicts."""
         testcase_name = kwargs.get("testcase_name", "")
+        # Preserve malformed inputs for the operator's validation boundary.
+        # The input hook must not repair rank/shape errors or reject them first.
+        if (
+            x.ndim == 0
+            or indices.ndim != 1
+            or v.ndim != x.ndim
+            or v.shape[0] != indices.size
+            or v.shape[1:] != x.shape[1:]
+        ):
+            return (x, indices, v)
         if indices.size == 0 or x.shape[0] == 0:
             return (x, indices, v)
 
         n = x.shape[0]
+        if indices.size > n and "conflict_safety" not in testcase_name:
+            return (x, indices, v)
+        indices_shape = indices.shape
         conflict_safety_only = "conflict_safety" in testcase_name
         if "explicit_duplicate" in testcase_name:
             values = np.zeros(indices.size, dtype=indices.dtype)
@@ -262,11 +263,6 @@ class InplaceAddKernelSpec:
             values = (np.arange(indices.size, dtype=np.int64) * step) % n
             values = values.astype(indices.dtype, copy=False)
         else:
-            if indices.size > n:
-                raise ValueError(
-                    "InplaceAdd numerical cases require K <= N so normalized rows "
-                    "stay unique."
-                )
             values = np.arange(indices.size, dtype=indices.dtype)
 
         indices = np.resize(values, indices.size).astype(indices.dtype, copy=False)
@@ -302,16 +298,9 @@ class InplaceAddKernelSpec:
         elif "fp16_overflow" in testcase_name:
             x = np.full_like(x, 60000.0)
             v = np.full_like(v, 60000.0)
-        return (x, indices.reshape(indices.shape), v)
+        return (x, indices.reshape(indices_shape), v)
 
-    # Provider order is intentional: TTK uses the first available provider for
-    # cross_check output, and Torch covers every dtype exposed by this operator.
-    # TensorFlow is the exact named competitor and is available for explicit
-    # provider-filtered validation on dtypes implemented by that endpoint.
-    third_party = {
-        "torch": _InplaceAddTorchCompose,
-        "tf": "tf.raw_ops.InplaceAdd",
-    }
+    third_party = {"torch": _InplaceAddTorchCompose}
     tolerance = _TOL
 
 
@@ -331,31 +320,27 @@ def _to_numpy_array(value):
     return np.array(value, copy=True)
 
 
-def _promote_reference_array(array):
-    """Promote floating inputs so cross-check uses an independent CPU truth."""
-    target_dtype = {
-        "float16": np.float32,
-        "bfloat16": np.float32,
-        "float32": np.float64,
-        "complex64": np.complex128,
-    }.get(array.dtype.name)
-    return array.astype(target_dtype) if target_dtype is not None else array
-
-
 def tensorflow_inplace_add_golden(x, i, v, name=None, **kwargs):
     """CPU golden for ``tf.raw_ops.InplaceAdd(x, i, v, name)`` E2E cases."""
     del name, kwargs
-    x_array = _promote_reference_array(_to_numpy_array(x))
+    x_array = _to_numpy_array(x)
     indices_array = _to_numpy_array(i)
-    v_array = _promote_reference_array(_to_numpy_array(v))
+    v_array = _to_numpy_array(v)
     return [_inplace_add_golden_compute(x_array, indices_array, v_array)]
+
+
+class _InplaceAddTfTorchCompose:
+    def __call__(self, x, i, v, **kwargs):
+        return _InplaceAddTorchCompose.__call__(self, x, i, v, **kwargs)
 
 
 class InplaceAddTensorFlowSpec:
     """TensorFlow E2E spec registered by the CSV ``api_name``."""
 
-    golden = staticmethod(tensorflow_inplace_add_golden)
-    third_party = {"tf": "tf.raw_ops.InplaceAdd"}
+    # Use TTK's native TF CPU fallback: it promotes the saved raw inputs before
+    # invoking the API. Its custom E2E plugin path receives unpromoted tensors.
+    golden = None
+    third_party = {"torch": _InplaceAddTfTorchCompose}
     tolerance = _TOL
 
 
@@ -372,7 +357,7 @@ def inplace_add_golden(x, indices, v, *args, **kwargs):
     return _inplace_add_golden_compute(x, indices, v)
 
 
-# 【不存在】ACLNN 通路：op_host/ 下无 op_api 目录、docs/ 下无 aclnnInplaceAdd.md，
+# 【不存在】ACLNN 通路：算子目录下无 op_api 目录、docs/ 下无 aclnnInplaceAdd.md，
 # 本算子不交付 aclnn 接口；同名 aclnnInplaceAdd 是逐元素/Broadcast 的 self += alpha * other，
 # 与按索引行更新的语义不同，不能拿来顶替。
 # 【不存在】Torch E2E 通路：op-plugin 517f2e7 中，aten::add_ 调用逐元素

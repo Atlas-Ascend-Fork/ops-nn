@@ -28,6 +28,9 @@ constexpr uint64_t TILINGKEY_NDC1HWC0_CHANNEL = 200000;
 constexpr uint64_t TILINGKEY_SPLIT_REDUCE = 300000;
 
 constexpr int64_t RESERVE_FOR_ALIGN = 512;
+// SIMD/SIMT share UB. Recovery needs at least 32 KiB DCache and the compiler's
+// 8 KiB VF stack reservation; FP16 cannot overflow a sum of int64-many inputs.
+constexpr int64_t SUM_RECOVERY_RESERVE = 40 * 1024;
 constexpr int64_t FP32_BYTE = 4;
 constexpr int64_t B16_BYTE = 2;
 constexpr int64_t NUM_2 = 2;
@@ -396,7 +399,8 @@ ge::graphStatus BN3DTrainingReduceDenseChannelTiling::BuildDenseTilingData()
     td_.cPerCore = static_cast<uint64_t>(cPerCore);
     td_.numC0 = static_cast<uint64_t>(c0_ > 0 ? c0_ : 0);
 
-    const int64_t ubBudget = static_cast<int64_t>(aicoreParams_.ubSize) - RESERVE_FOR_ALIGN;
+    const int64_t recoveryReserve = dataType_ == ge::DT_FLOAT16 ? 0 : SUM_RECOVERY_RESERVE;
+    const int64_t ubBudget = static_cast<int64_t>(aicoreParams_.ubSize) - recoveryReserve - RESERVE_FOR_ALIGN;
     OP_CHECK_IF(!SolveUbSplit(r0Align, elemSize, ubBudget),
                 OP_LOGE(context_->GetNodeName(),
                         "Failed to solve UB split, r0: %ld, r0Align: %ld, elemSize: %ld, ubBudget: %ld", r0_, r0Align,
@@ -446,6 +450,12 @@ ge::graphStatus BN3DTrainingReduceDenseChannelTiling::DoOpTiling()
 ge::graphStatus BN3DTrainingReduceDenseChannelTiling::PostTiling()
 {
     context_->SetBlockDim(blockNum_);
+    if (!isEmptyChannel_ && dataType_ != ge::DT_FLOAT16) {
+        OP_CHECK_IF(aicoreParams_.ubSize <= SUM_RECOVERY_RESERVE ||
+                        context_->SetDynUBufSize(static_cast<uint32_t>(aicoreParams_.ubSize - SUM_RECOVERY_RESERVE)) !=
+                            ge::GRAPH_SUCCESS,
+                    OP_LOGE(context_->GetNodeName(), "Failed to reserve UB for sum recovery"), return ge::GRAPH_FAILED);
+    }
     if (splitReduce_) {
         OP_CHECK_IF(context_->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
                     OP_LOGE(context_->GetNodeName(), "Failed to set batch schedule mode for split reduce"),

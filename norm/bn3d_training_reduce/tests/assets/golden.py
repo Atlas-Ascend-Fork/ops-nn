@@ -16,7 +16,7 @@
   square_sum = Σ x^2
 输出为原始和，不做 1/R 缩放；两个输出恒 FLOAT32，与输入 dtype 无关。
 
-## 通路支持表（= 01 §3.3 的 ✅ 集合，`__spec__` 注册项与之逐条相等）
+## 本文件注册的直接通路
 
 | 通路   | 支持 | 依据（实测） |
 |--------|------|-------------|
@@ -24,7 +24,7 @@
 | geir   | ✅   | `op_graph/bn3d_training_reduce_proto.h:44` 有 `REG_OP(BN3DTrainingReduce)` |
 | aclnn  | ❌   | 无 `op_host/op_api/`、无 `docs/aclnn*.md`；`op_host/CMakeLists.txt:13`
 |        |      | 显式 `ACLNNTYPE aclnn_exclude`（本算子图模式专用，不对外提供 aclnn） |
-| e2e    | ❌   | 见文件末尾【不存在】说明 |
+| e2e    | —    | 未注册独立 Python 入口；复合 BatchNorm 的框架调用需单独验证 |
 
 kernel 与 geir 共用一个注册键（算子蛇形名），故 `__spec__` 只有一条。
 
@@ -47,16 +47,10 @@ Python 私有改写（`__x` → `_Cls__x`），故实现单列为 `_golden_impl`
 
 `_compute` 用 `torch.sum` / `torch.square` 竞品接口实现，不写 numpy 纯公式。
 
-## 精度档位：本算子 golden 整体 fp64
+## 精度由 TTK 判据决定
 
-BN3DTrainingReduce 属大规约 / 对消敏感家族（同 in_training_update_grad、
-l2_normalize_grad、instance_norm_grad），单个输出槽位可归约 1e5 量级的元素。
-当前内核使用 FP32 分块 Kahan / TwoSum 补偿，golden 不能复刻其切分和归约顺序，
-故用独立的 CPU FP64 原生规约作高精度真值。
-这是 golden 的**档位选择**，不是对框架 Promote 的 cast 干预：框架在
-cross_check 下已按 DTYPE_PROMOTE_MAP 把输入抬一档（fp16/bf16→fp32、fp32→fp64）
-并同步抬了 `output_dtypes`，本文件只再向上兜到 fp64，绝不向下砍——
-末尾 astype 用的是 kwargs 里**已抬过的** `output_dtypes`，不是硬编码 float32。
+三方 Promote 使用 TTK 下发的输入精度，入口、计算和出口均不额外 cast。
+两方使用内核的 FP32 累加精度。CPU 归约不复制内核的分块或补偿算法。
 
 ## 随机三方回归与近零定向用例必须并存
 
@@ -78,12 +72,13 @@ import torch
 # 1. 判据 tolerance —— 逐 dtype 配
 # ══════════════════════════════════════════════════════════════════════
 # TTK 按输出 dtype 解析判据；本算子两个输出恒为 fp32，与输入 dtype 无关。
-# 因此这里只声明 float32。若保留 float16/bfloat16，它们不会被任何输出命中，
-# 反而容易让维护者误以为判据随输入 dtype 变化。
-# cross_check 是 NPU 相对独立 GPU 实现的补充竞争力门槛；正式精度按当前 TTK 的
-# --compare close 验收，使用 FP32 的 rtol、atol 与 ptol 混合容差。
+# 仍显式覆盖 def.cpp 的全部浮点类型；实际输出只命中 float32。
+# cross_check 使用独立 GPU 实现和 TTK Promote 真值；无 XPU 的两方验证
+# 必须另行记录，不能视为三方 cross_check 已通过。
 _TOL = {
     "float32": {"standard": "cross_check", "level": "L1"},
+    "float16": {"standard": "cross_check", "level": "L1"},
+    "bfloat16": {"standard": "cross_check", "level": "L1"},
 }
 
 
@@ -136,22 +131,26 @@ def _is_ndhwc(kwargs):
 def _compute(x, **kwargs):
     """返回 [sum, square_sum]，顺序照 bn3d_training_reduce_def.cpp 的输出序。
 
-    fp64 真值（见文件头「精度档位」）。禁融合算子：先 square 再 sum，两步拼接。
+    三方保留 TTK Promote 精度；两方与内核一样使用 FP32 累加。
     """
-    x64 = x.to(torch.float64)
+    work = (
+        x
+        if str(kwargs.get("golden_mode", "")).lower() == "promote"
+        else x.to(torch.float32)
+    )
 
     if _is_ndc1hwc0(x, kwargs):
         dims = list(_NDC1HWC0_REDUCE_DIMS)
         keepdim = True  # 保留 C1、C0 的同时把 N/D/H/W 压成 1 → [1,1,C1,1,1,C0]
     elif _is_ndhwc(kwargs):
-        dims = list(range(x64.ndim - 1))
+        dims = list(range(work.ndim - 1))
         keepdim = False
     else:
-        dims = [d for d in range(x64.ndim) if d != _CHANNEL_DIM]
+        dims = [d for d in range(work.ndim) if d != _CHANNEL_DIM]
         keepdim = False  # channel-first 输出压成一维 [C]
 
-    s = torch.sum(x64, dim=dims, keepdim=keepdim)
-    sq = torch.sum(torch.square(x64), dim=dims, keepdim=keepdim)
+    s = torch.sum(work, dim=dims, keepdim=keepdim)
+    sq = torch.sum(torch.square(work), dim=dims, keepdim=keepdim)
     return [s, sq]
 
 
@@ -164,8 +163,8 @@ class _Compose:
     当前 TTK 的 cross_check 与 xpu_perf 共用这一个 third_party，因此这里使用
     竞品 GPU 上真实、原生且可计时的 `torch.sum` / `torch.square`。数学语义
     与算子对齐，但不复制 NPU 内部的 Kahan/TwoSum、分块大小或归约树；
-    那些是 NPU 实现细节，复制进竞品腿会改变真实性能标杆。独立高精度真值
-    由 CPU fp64 `_compute` 承担，本类仅承担 GPU fp32 竞品腿。
+    那些是 NPU 实现细节，复制进竞品腿会改变真实性能标杆。独立高精度参考
+    由 TTK Promote 后的 CPU `_compute` 承担，本类仅承担 GPU fp32 竞品腿。
 
     浮点输出必须 cast 回 NPU 的输出 dtype，否则竞品对 golden 的误差远小于 NPU，
     ratio 会凭空爆表。本算子两个输出恒 fp32。
@@ -202,22 +201,16 @@ def _golden_impl(x, **kwargs):
 
     参数名取自 op_host/bn3d_training_reduce_def.cpp：输入只有 x，无属性。
     """
-    # bfloat16 的 numpy 表示（ml_dtypes）torch 不认，先过一次 float32 再进 fp64。
+    # BF16 容器通过位视图桥接，不修改输入精度。
     arr = np.ascontiguousarray(x)
     if "bfloat16" in str(arr.dtype):
-        arr = arr.astype(np.float32)
-    t = torch.from_numpy(arr)
+        t = torch.from_numpy(arr.view(np.int16)).view(torch.bfloat16)
+    else:
+        t = torch.from_numpy(arr)
 
     outs = _compute(t, **kwargs)
 
-    # 照 kwargs 里的 output_dtypes 转回。cross_check 下框架已把它抬过一档，
-    # 这里跟着走即可；**不要**硬编码 float32，那会把 fp64 真值砍回去。
-    od = kwargs.get("output_dtypes") or []
-    od = [d[0] if isinstance(d, (list, tuple)) else str(d) for d in od]
-    return [
-        o.numpy().astype(od[i]) if i < len(od) else o.numpy()
-        for i, o in enumerate(outs)
-    ]
+    return [o.numpy() for o in outs]
 
 
 def __golden_bn3d_training_reduce(x, **kwargs):
@@ -251,14 +244,7 @@ __golden__ = {"kernel": {"bn3d_training_reduce": "__golden_bn3d_training_reduce"
 #   与 canndev 一致 —— Ascend 950PR/DT 上的 aclnnBatchNorm 仍走 BatchNormV3 单算子，
 #   不经过本算子。
 #
-# 【不存在】e2e 通路：torch_npu 不会执行本算子（aclnn 都没有，无从绑定）。
-#   实测依据（查二进制符号，非 dir(torch.ops.npu) 前缀推断）：
-#     SO=.../torch_npu/lib/libtorch_npu.so
-#     strings $SO | grep -c 'aclnnBN3DTrainingReduce'   → 0
-#   防伪 ①（方法有效性对照组）：
-#     strings $SO | grep -o 'aclnnBatchNorm[A-Za-z0-9]*' → aclnnBatchNorm /
-#     aclnnBatchNormBackward / aclnnBatchNormElemt ... 有命中，证明查法能查到符号。
-#   防伪 ②（排除 torch_npu 版本滞后）：本算子 aclnn 接口自始不存在（aclnn_exclude），
-#     不是"torch_npu 还没跟上"，故 0 命中是结论而非时序假象；
-#     同族已入仓的 INTrainingReduceV2 同样 0 命中，与之一致。
-# ---------------------------------------------------------------------------
+# 框架复合通路：不能由 aclnn 符号缺失推断 e2e 不存在。旧版 torch_npu
+# BatchNorm 训练可能通过 OpCommand("BN3DTrainingReduce") 调用此内部算子。
+# 本文件仅提供独立 reduce 语义的 kernel/GEIR golden；复合 BatchNorm 的
+# 框架路由、附加输出和运行版本需单独确认，不注册语义不同的替代入口。

@@ -26,6 +26,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <cmath>
+#include <limits>
+#include <memory>
 #include <vector>
 #include <string>
 #include <map>
@@ -148,14 +150,25 @@ int32_t GenInputData(const vector<int64_t>& shapes, Tensor& inputTensor, TensorD
 {
     desc.SetRealDimCnt(shapes.size());
     size_t size = 1;
-    for (size_t i = 0; i < shapes.size(); i++)
-        size *= shapes[i];
-    uint32_t dataLen = size * GetDataTypeSize(dtype);
-    uint8_t* pData = new (std::nothrow) uint8_t[dataLen];
-    if (pData == nullptr)
+    for (const auto dim : shapes) {
+        if (dim < 0 || (size != 0 && static_cast<uint64_t>(dim) > std::numeric_limits<size_t>::max() / size)) {
+            return FAILED;
+        }
+        size *= static_cast<size_t>(dim);
+    }
+    if (size > std::numeric_limits<size_t>::max() / GetDataTypeSize(dtype)) {
         return FAILED;
-
-    actualFp32.resize(size);
+    }
+    const size_t dataLen = size * GetDataTypeSize(dtype);
+    std::unique_ptr<uint8_t[]> storage(new (std::nothrow) uint8_t[dataLen]);
+    if (storage == nullptr)
+        return FAILED;
+    uint8_t* pData = storage.get();
+    try {
+        actualFp32.resize(size);
+    } catch (const std::exception&) {
+        return FAILED;
+    }
     if (dtype == ge::DT_FLOAT) {
         float* p = reinterpret_cast<float*>(pData);
         for (size_t i = 0; i < size; ++i) {
@@ -176,7 +189,6 @@ int32_t GenInputData(const vector<int64_t>& shapes, Tensor& inputTensor, TensorD
         }
     }
     inputTensor = Tensor(desc, pData, dataLen);
-    delete[] pData;
     return SUCCESS;
 }
 
@@ -262,6 +274,7 @@ int main(int argc, char* argv[])
     ret = GenInputData(xShape, tensorX, xDesc, xDtype, actualFp32);
     if (ret != SUCCESS) {
         printf("GenInputData x failed\n");
+        ge::GEFinalize();
         return FAILED;
     }
     xData.update_input_desc_x(xDesc);
@@ -281,6 +294,7 @@ int main(int argc, char* argv[])
     ge::Session* session = new Session(buildOptions);
     if (session == nullptr) {
         printf("Create session failed\n");
+        ge::GEFinalize();
         return FAILED;
     }
 
@@ -339,7 +353,7 @@ int main(int argc, char* argv[])
 
     int outputNum = output.size();
     printf("output_num=%d\n", outputNum);
-    if (outputNum < 2) {
+    if (outputNum != 2) {
         printf("%s - ERROR - [XIR]: expect 2 outputs (sum, square_sum), got %d\n", GetTime().c_str(), outputNum);
         delete session;
         GEFinalize();
@@ -360,8 +374,10 @@ int main(int argc, char* argv[])
             failCnt++;
             continue;
         }
-        if (outSize != outLen) {
-            printf("  ERROR: output shapeSize %ld != expected %ld\n", outSize, outLen);
+        if (output[i].GetTensorDesc().GetShape().GetDims() != vector<int64_t>{outLen} ||
+            output[i].GetSize() != static_cast<size_t>(outLen) * sizeof(float) ||
+            (outLen != 0 && output[i].GetData() == nullptr)) {
+            printf("  ERROR: output must be a channel vector [%ld] with matching storage\n", outLen);
             failCnt++;
             continue;
         }

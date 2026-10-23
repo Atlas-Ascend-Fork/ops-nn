@@ -11,14 +11,14 @@
 
 """BNInference kernel/GEIR golden in the TestSpec multi-path format.
 
-Pathway support copied from the approved requirement baseline:
+Direct pathways registered by this file:
 
 | pathway | support | evidence |
 |---------|---------|----------|
 | kernel  | yes | ``op_kernel/`` contains the arch35 implementation |
 | GEIR    | yes | ``op_graph/`` contains the guarded ``REG_OP(BNInference)`` |
 | ACLNN   | no  | no ``op_host/op_api`` implementation or ACLNN symbol |
-| e2e     | no  | the installed torch_npu binary has no ``aclnnBNInference`` symbol |
+| e2e     | not registered | composite framework BatchNorm routes require separate verification |
 
 The CPU golden follows the two observable canndev ``BnHost`` foldings::
 
@@ -258,9 +258,7 @@ def _validate_empty_input(x, channel_count, scale, offset, kwargs):
         raise ValueError("mean length does not match any public channel axis")
 
 
-def _parameter_compute(
-    value, channel_count, rank, channel_axis, name, reference, compute_dtype
-):
+def _parameter_compute(value, channel_count, rank, channel_axis, name):
     if value is None:
         return None
     tensor = _as_torch_tensor(value)
@@ -270,28 +268,15 @@ def _parameter_compute(
         )
     shape = [1] * rank
     shape[channel_axis] = channel_count
-    return torch.reshape(tensor.to(device=reference.device, dtype=compute_dtype), shape)
+    return torch.reshape(tensor, shape)
 
 
-def _golden_compute_dtype(*tensors):
-    """Keep TTK Promote inputs; only raise CPU FP16/BF16 to FP32."""
-    return (
-        torch.float64
-        if any(
-            tensor is not None and tensor.dtype == torch.float64 for tensor in tensors
-        )
-        else torch.float32
-    )
-
-
-def _momentum_factor(momentum, reference, compute_dtype):
+def _momentum_factor(momentum):
     """Read only momentum[0], matching canndev BnHost's public 4-input path."""
     momentum_tensor = _as_torch_tensor(momentum)
     if momentum_tensor.numel() == 0:
         raise ValueError("momentum must contain at least one element")
-    first = momentum_tensor.reshape(-1)[0].to(
-        device=reference.device, dtype=compute_dtype
-    )
+    first = momentum_tensor.reshape(-1)[0]
     zero = torch.zeros_like(first)
     one = torch.ones_like(first)
     return torch.where(torch.eq(first, zero), zero, torch.div(one, first))
@@ -331,25 +316,15 @@ def _compute(
         )
         return [x_tensor.clone()]
     channel_axis = _channel_axis(x_tensor, channel_count, kwargs)
-    compute_inputs = [
-        x_tensor,
-        mean_tensor,
-        variance_tensor,
-        scale_tensor,
-        offset_tensor,
-    ]
-    if not pre_folded and optional_mask == 0:
-        compute_inputs.append(momentum_tensor)
-    compute_dtype = _golden_compute_dtype(*compute_inputs)
-    x_compute = x_tensor.to(dtype=compute_dtype)
+    # TTK Promote owns the precision of each tensor. Native Torch arithmetic
+    # handles mixed input dtypes; the reference must not recast those tensors.
+    x_compute = x_tensor
     mean_compute = _parameter_compute(
         mean_tensor,
         channel_count,
         x_tensor.ndim,
         channel_axis,
         "mean",
-        x_compute,
-        compute_dtype,
     )
     variance_compute = _parameter_compute(
         variance_tensor,
@@ -357,8 +332,6 @@ def _compute(
         x_tensor.ndim,
         channel_axis,
         "variance",
-        x_compute,
-        compute_dtype,
     )
     gamma_compute = _parameter_compute(
         scale_tensor,
@@ -366,8 +339,6 @@ def _compute(
         x_tensor.ndim,
         channel_axis,
         "scale",
-        x_compute,
-        compute_dtype,
     )
     beta_compute = _parameter_compute(
         offset_tensor,
@@ -375,8 +346,6 @@ def _compute(
         x_tensor.ndim,
         channel_axis,
         "offset",
-        x_compute,
-        compute_dtype,
     )
     if pre_folded:
         base = torch.mul(torch.add(x_compute, mean_compute), variance_compute)
@@ -390,7 +359,7 @@ def _compute(
     # promotes tensor inputs to FP64 for the cross-check reference.
     epsilon_compute = variance_compute.new_tensor(np.float32(epsilon).item())
     if optional_mask == 0:
-        factor = _momentum_factor(momentum_tensor, x_compute, compute_dtype)
+        factor = _momentum_factor(momentum_tensor)
         alpha = torch.neg(torch.mul(factor, mean_compute))
         scaled_variance = torch.mul(factor, variance_compute)
         sqrt_radicand = torch.sqrt(torch.add(scaled_variance, epsilon_compute))
@@ -419,12 +388,6 @@ def _compute(
     return [affine]
 
 
-def _output_dtype_names(kwargs):
-    return [
-        _normalize_dtype_name(value) for value in (kwargs.get("output_dtypes") or ())
-    ]
-
-
 def _kernel_golden(
     x,
     mean,
@@ -441,30 +404,30 @@ def _kernel_golden(
     epsilon_value = float(_attribute_value(kwargs, "epsilon", epsilon))
     mode_value = int(_attribute_value(kwargs, "mode", mode))
     del use_global_stats
-    outputs = _compute(
-        x,
-        mean,
-        variance,
-        momentum,
-        scale,
-        offset,
-        epsilon=epsilon_value,
-        mode=mode_value,
-        **kwargs,
-    )
-    dtype_names = _output_dtype_names(kwargs)
     is_promote = str(kwargs.get("golden_mode", "")).lower() == "promote"
-    result = []
-    for index, output in enumerate(outputs):
-        array = _to_numpy(output)
-        if (
-            not is_promote
-            and index < len(dtype_names)
-            and dtype_names[index] is not None
-        ):
-            array = array.astype(_numpy_dtype(dtype_names[index]), copy=False)
-        result.append(np.ascontiguousarray(array))
-    return result
+    if is_promote:
+        outputs = _compute(
+            x,
+            mean,
+            variance,
+            momentum,
+            scale,
+            offset,
+            epsilon=epsilon_value,
+            mode=mode_value,
+            **kwargs,
+        )
+    else:
+        # Two-party comparison follows the same FP32 widening and typed graph
+        # boundaries as the NPU/GPU path, including the final narrowing to x.
+        inputs = [
+            None if value is None else _as_torch_tensor(value)
+            for value in (x, mean, variance, momentum, scale, offset)
+        ]
+        outputs = _BNInferenceNative(epsilon=epsilon_value, mode=mode_value, **kwargs)(
+            *inputs, **kwargs
+        )
+    return [_to_numpy(output) for output in outputs]
 
 
 class _BNInferenceNative:
@@ -784,7 +747,5 @@ def bn_inference_golden(
 # 【不适用】ACLNN通路：2026-08-23 对项目私有 CANN 9.2.0 的 libopapi.so
 # 执行 strings，aclnnBNInference 命中 0；对照 aclnnBatchNorm 系列有命中。
 # 本算子也没有 op_host/op_api 实现或 aclnn 接口文档。
-# 【不适用】e2e通路：2026-08-23 对 torch_npu 2.7.1.post5 的
-# libtorch_npu.so 执行 strings，aclnnBNInference 命中 0；对照
-# aclnnBatchNorm/aclnnBatchNormBackward 均有命中。该二进制时间为
-# 2026-07-30，晚于 BNInference 公共 REG_OP 的 2020-10-16 入库时间。
+# 未注册独立 e2e 入口。缺少同名 aclnn 符号不能排除框架通过 GE/OpCommand
+# 调用本算子；复合 BatchNorm 的语义和当前版本路由需另行确认。

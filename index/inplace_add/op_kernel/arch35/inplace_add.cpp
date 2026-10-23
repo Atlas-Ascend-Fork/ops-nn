@@ -93,16 +93,16 @@ __aicore__ inline void InplaceAddCopy(int64_t total, int64_t coreIdx, int64_t co
     constexpr int64_t chunkElems = static_cast<int64_t>(UB_CHUNK_BYTES / sizeof(T));
     constexpr int64_t alignElems = static_cast<int64_t>(GM_ALIGN_BYTES / sizeof(T));
 
-    int64_t perCore = (total + coreNum - 1) / coreNum;
+    // Alignment can put the last slice beyond INT64_MAX even when total is
+    // valid. Keep the intermediate bounds unsigned and clamp before narrowing.
+    const uint64_t totalElems = static_cast<uint64_t>(total);
+    const uint64_t cores = static_cast<uint64_t>(coreNum);
+    uint64_t perCore = (totalElems + cores - 1) / cores;
     perCore = ((perCore + alignElems - 1) / alignElems) * alignElems;
-    int64_t start = coreIdx * perCore;
-    int64_t end = start + perCore;
-    if (start > total) {
-        start = total;
-    }
-    if (end > total) {
-        end = total;
-    }
+    const uint64_t sliceStart = static_cast<uint64_t>(coreIdx) * perCore;
+    const uint64_t sliceEnd = sliceStart + perCore;
+    const int64_t start = static_cast<int64_t>(sliceStart < totalElems ? sliceStart : totalElems);
+    const int64_t end = static_cast<int64_t>(sliceEnd < totalElems ? sliceEnd : totalElems);
 
     // TQueBind and not TQue: the queue position picks the sync events, and a
     // VECIN-only queue inserts MTE2->V, which does not hold the store back until
@@ -114,7 +114,7 @@ __aicore__ inline void InplaceAddCopy(int64_t total, int64_t coreIdx, int64_t co
     xGlobal.SetGlobalBuffer(xGm);
     yGlobal.SetGlobalBuffer(yGm);
 
-    for (int64_t offset = start; offset < end; offset += chunkElems) {
+    for (int64_t offset = start; offset < end;) {
         int64_t len = end - offset;
         if (len > chunkElems) {
             len = chunkElems;
@@ -127,6 +127,7 @@ __aicore__ inline void InplaceAddCopy(int64_t total, int64_t coreIdx, int64_t co
         LocalTensor<T> outLocal = que.DeQue<T>();
         DataCopyPad(yGlobal[offset], outLocal, params);
         que.FreeTensor(outLocal);
+        offset += len;
     }
 }
 

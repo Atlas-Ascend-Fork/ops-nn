@@ -43,6 +43,7 @@
 #include <limits>
 
 #include "bn3d_training_reduce_common.h"
+#include "bn3d_training_reduce_recover_sum.h"
 
 namespace BN3DTrainingReduceOps {
 using namespace AscendC;
@@ -168,6 +169,7 @@ public:
             __ubuf__ float* squareSumUb = (__ubuf__ float*)squareSumLocal.GetPhyAddr();
 
             ProcessChannelRound(cBase, curRound, accUb, sumUb, squareSumUb);
+            RecoverSum(cBase, curRound, sumUb);
 
             outQueueSum_.EnQue<T_SUM>(sumLocal);
             outQueueSquareSum_.EnQue<T_SUM>(squareSumLocal);
@@ -267,9 +269,21 @@ private:
         LocalTensor<T_SUM> sumLocal = outQueueSum_.AllocTensor<T_SUM>();
         LocalTensor<T_SUM> squareSumLocal = outQueueSquareSum_.AllocTensor<T_SUM>();
         FinalizeChannel(accUb, (__ubuf__ float*)sumLocal.GetPhyAddr(), (__ubuf__ float*)squareSumLocal.GetPhyAddr(), 0);
+        RecoverSum(channel, 1, (__ubuf__ float*)sumLocal.GetPhyAddr());
         outQueueSum_.EnQue<T_SUM>(sumLocal);
         outQueueSquareSum_.EnQue<T_SUM>(squareSumLocal);
         CopyOutSumSquareSum(channel, 1);
+    }
+
+    __aicore__ inline void RecoverSum(uint64_t cBase, uint32_t count, __ubuf__ float* sumUb)
+    {
+        if constexpr (!IsSameType<T_X, half>::value) {
+            // SIMD and SIMT share the Vector pipeline. EnQue below orders the
+            // recovered UB output before MTE3, including the split-reduce root.
+            Simt::VF_CALL<RecoverNonFiniteSum<T_X>>(Simt::Dim3(RECOVER_SUM_THREADS), (__gm__ T_X*)xGm_.GetPhyAddr(),
+                                                    sumUb, numN_, numC_, numR0_, cBase, count * outPerChannel_,
+                                                    outPerChannel_);
+        }
     }
 
     __aicore__ inline void ProcessChannelRound(uint64_t cBase, uint32_t curRound, __ubuf__ float* accUb,

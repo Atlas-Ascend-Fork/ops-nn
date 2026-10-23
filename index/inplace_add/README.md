@@ -15,7 +15,7 @@
 
 - 算子功能：根据`indices`指定的第0维位置，将`v`中的切片加到`x`的对应切片，并将更新结果输出到`y`。接口不声明`x`与`y`共享存储。
 - 使用场景：兼容TensorFlow的`InplaceAdd`图算子，用于按行执行索引更新；本算子不是普通的逐元素或Broadcast Add。
-- 计算公式：设`x`的shape为$[N, d_1, \dots, d_{D-1}]$，`indices`的shape为$[K]$，`v`的shape为$[K, d_1, \dots, d_{D-1}]$。记$row_j$为第$j$个更新对应的实际目标行，其确定规则见“产品差异说明”。在目标行互不重复的前提下，计算公式如下：
+- 计算公式：设`x`的shape为$[N, d_1, \dots, d_{D-1}]$，`indices`的shape为$[K]$，`v`的shape为$[K, d_1, \dots, d_{D-1}]$。记$row_j$为第$j$个更新对应的实际目标行，其确定规则见“约束说明”。在目标行互不重复的前提下，计算公式如下：
 
   $$
   y_{i} =
@@ -98,27 +98,34 @@
   </tbody>
 </table>
 
-### 产品差异说明
-
-各支持产品的输入和输出均使用ND格式，`indices`的数据类型均为INT32。不同产品的能力子集如下：
-
-| 产品 | 参数或场景 | `x`、`v`、`y`数据类型 | 静态shape能力 | 动态shape能力 | 索引、空Tensor及规模限制 |
-| :--- | :----------- | :-------------------- | :------------ | :------------ | :----------------------- |
-| <term>Ascend 950PR&950DT系列产品</term> | `indices`为运行期输入或编译期常量 | FLOAT16、FLOAT、BFLOAT16、INT8、INT16、INT32、INT64、UINT8、UINT16、UINT32、UINT64、COMPLEX32、COMPLEX64 | 输入ND->输出ND；`x`、`v`、`y`支持1～8维，`indices`仅支持1维。 | 输入ND->输出ND；支持动态shape和动态Rank。 | 当$N>0$时，按$row_j=((indices_j \bmod N)+N)\bmod N$确定目标行。支持$K=0$；当$N=0$时要求$K=0$，当任一尾维为0时输出为空。$N$和$K$不超过INT32最大值；尾维大小、张量元素数、合计处理规模及字节大小必须在INT64可表示范围内。 |
-| <term>Atlas A3系列产品</term><br><term>Atlas A2系列产品</term><br><term>Atlas 200I/500 A2推理产品</term><br><term>Atlas推理系列产品</term> | `indices`为运行期输入或编译期常量 | FLOAT16、FLOAT、INT32 | 输入ND->输出ND；`x`、`v`、`y`支持1～8维，`indices`仅支持1维。 | 输入ND->输出ND；支持动态shape和动态Rank。 | 要求$0\leq indices_j<N$；不支持空Tensor。 |
-| <term>Atlas训练系列产品</term> | `x`、`v`、`y`为FLOAT或INT32，`indices`为运行期输入或编译期常量 | FLOAT、INT32 | 输入ND->输出ND；`x`、`v`、`y`支持1～8维，`indices`仅支持1维。 | 输入ND->输出ND；支持动态shape和动态Rank。 | 要求$0\leq indices_j<N$；不支持空Tensor。 |
-| <term>Atlas训练系列产品</term> | `x`、`v`、`y`为FLOAT16，且`indices`在编译期为常量 | FLOAT16 | 仅支持静态shape，输入ND->输出ND；`x`、`v`、`y`支持1～8维，`indices`仅支持1维。 | 不支持。 | 要求$0\leq indices_j<N$；不支持空Tensor。 |
-
 ## 约束说明
 
+- 各支持产品的输入和输出均使用ND格式，`x`、`v`、`y`支持1～8维，`indices`仅支持1维。
+- 对支持动态shape/rank的产品，图编译期用`-1`表示未知维度、`[-2]`表示未知rank；输出`y`继承`x`的shape。执行期应先解析为具体非负维度，再按对应产品的rank、空Tensor及规模限制校验。
 - `v.shape[0]`必须等于`indices.shape[0]`；`v.shape[1:]`必须等于`x.shape[1:]`。
 - `x`、`v`、`y`的数据类型必须一致，`indices`的数据类型必须为INT32。
 - 当多个索引对应同一目标行时，输出内容未定义，不保证累加顺序、确定性或具体数值。
 - 整数加法不提供饱和运算保证，调用方不应依赖整数溢出后的结果。
 - 本算子不提供aclnn单算子接口，仅支持GE图模式调用。现有同名`aclnnInplaceAdd`执行的是逐元素或Broadcast计算`self += alpha * other`，与本算子的按索引行更新语义不同，不能混用。
+- <term>Ascend 950PR&950DT系列产品</term>：
+  - 数据类型：`x`、`v`、`y`支持FLOAT16、FLOAT、BFLOAT16、INT8、INT16、INT32、INT64、UINT8、UINT16、UINT32、UINT64、COMPLEX32、COMPLEX64。
+  - 输入场景：`indices`支持运行期输入或编译期常量。
+  - shape能力：支持静态shape、动态shape和动态Rank，输入ND->输出ND。
+  - 索引规则：当$N>0$时，按$row_j=((indices_j \bmod N)+N)\bmod N$确定目标行。
+  - 空Tensor：支持$K=0$；当$N=0$时要求$K=0$，当任一尾维为0时输出为空。
+  - 规模限制：$N$和$K$不超过INT32最大值；尾维大小、张量元素数、合计处理规模及字节大小必须在INT64可表示范围内。
+- <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>、<term>Atlas推理系列产品</term>：
+  - 数据类型：`x`、`v`、`y`支持FLOAT16、FLOAT、INT32。
+  - 输入场景：`indices`支持运行期输入或编译期常量。
+  - shape能力：支持静态shape、动态shape和动态Rank，输入ND->输出ND。
+  - 索引规则：要求$0\leq indices_j<N$；不支持空Tensor。
+- <term>Atlas训练系列产品</term>：
+  - 当`x`、`v`、`y`为FLOAT或INT32时，`indices`支持运行期输入或编译期常量，支持静态shape、动态shape和动态Rank，输入ND->输出ND。
+  - 当`x`、`v`、`y`为FLOAT16时，`indices`必须为编译期常量，仅支持静态shape，输入ND->输出ND。
+  - 索引规则：要求$0\leq indices_j<N$；不支持空Tensor。
 
 ## 调用说明
 
 | 调用方式 | 样例代码 | 说明 |
 | :------- | :------- | :--- |
-| GE图模式 | [test_geir_inplace_add](examples/test_geir_inplace_add.cpp) | 通过[算子IR](op_graph/inplace_add_proto.h)构建InplaceAdd算子图并执行RunGraph与数值校验；样例覆盖FLOAT、FLOAT16、BFLOAT16、INT8、UINT8、INT32。 |
+| GE图模式 | [test_geir_inplace_add](examples/test_geir_inplace_add.cpp) | 通过[算子IR](op_graph/inplace_add_proto.h)构图方式调用InplaceAdd算子，支持FLOAT、FLOAT16、BFLOAT16、INT8、UINT8、INT32输入。 |
