@@ -57,7 +57,10 @@ struct PlatformInfo {
 static ge::graphStatus ValidateTensorDesc(gert::TilingContext* context, const gert::CompileTimeTensorDesc* desc,
                                           const char* tensorName)
 {
-    OP_CHECK_NULL_WITH_CONTEXT(context, desc);
+    if (desc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), tensorName);
+        return ge::GRAPH_FAILED;
+    }
     const ge::DataType dataType = desc->GetDataType();
     if (dataType != ge::DT_INT32) {
         OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), tensorName, Ops::Base::ToString(dataType).c_str(), "INT32");
@@ -92,9 +95,15 @@ static ge::graphStatus ValidateTensorDescriptors(gert::TilingContext* context)
 static ge::graphStatus ValidateAttr(gert::TilingContext* context, int64_t& outputSize)
 {
     const auto* attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "output_size");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t* outputSizePtr = attrs->GetAttrPointer<int64_t>(OUTPUT_SIZE_ATTR);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outputSizePtr);
+    if (outputSizePtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "output_size");
+        return ge::GRAPH_FAILED;
+    }
     if (*outputSizePtr < 0 || *outputSizePtr > std::numeric_limits<int32_t>::max()) {
         OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "output_size", std::to_string(*outputSizePtr).c_str(),
                                   "an integer in [0, INT32_MAX]");
@@ -107,7 +116,10 @@ static ge::graphStatus ValidateAttr(gert::TilingContext* context, int64_t& outpu
 static ge::graphStatus ReadConcreteLength(gert::TilingContext* context, const gert::StorageShape* storageShape,
                                           const char* tensorName, int64_t& length)
 {
-    OP_CHECK_NULL_WITH_CONTEXT(context, storageShape);
+    if (storageShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), tensorName);
+        return ge::GRAPH_FAILED;
+    }
     const gert::Shape shape = storageShape->GetStorageShape();
     if (shape.GetDimNum() != 1) {
         const std::string actual = std::to_string(shape.GetDimNum()) + "D";
@@ -268,20 +280,25 @@ static ge::graphStatus ValidateOutputView(gert::TilingContext* context, int64_t 
 static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, PlatformInfo& info)
 {
     auto* platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(context, "platform info is nullptr");
+        return ge::GRAPH_FAILED;
+    }
     auto platform = platform_ascendc::PlatformAscendC(platformInfo);
     info.coreNum = static_cast<int64_t>(platform.GetCoreNumAiv());
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, info.ubSize);
     if (info.coreNum <= 0 || info.coreNum > std::numeric_limits<uint32_t>::max()) {
-        OP_LOGE(context->GetNodeName(),
-                "Invalid internal AIV core count, actual=%s, reason=expected an integer in [1, UINT32_MAX]",
-                std::to_string(info.coreNum).c_str());
+        OP_LOGE_WITHOUT_REPORT(
+            context->GetNodeName(),
+            "Invalid internal AIV core count, actual=%s, reason=expected an integer in [1, UINT32_MAX]",
+            std::to_string(info.coreNum).c_str());
         return ge::GRAPH_FAILED;
     }
     if (info.ubSize < MIN_UB_BYTES) {
-        OP_LOGE(context->GetNodeName(),
-                "Invalid internal UB size, actual=%s, reason=expected at least 40960 bytes for the DCache reserve",
-                std::to_string(info.ubSize).c_str());
+        OP_LOGE_WITHOUT_REPORT(
+            context->GetNodeName(),
+            "Invalid internal UB size, actual=%s, reason=expected at least 40960 bytes for the DCache reserve",
+            std::to_string(info.ubSize).c_str());
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -303,19 +320,19 @@ static ge::graphStatus ComputeTiling(gert::TilingContext* context, int64_t segme
     const int64_t unaligned = std::max(ideal, PER_CORE_MIN);
     const int64_t warpUnits = Ops::Base::CeilDiv(unaligned, WARP_SIZE);
     if (warpUnits > std::numeric_limits<int64_t>::max() / WARP_SIZE) {
-        OP_LOGE(context->GetNodeName(),
-                "Invalid internal per-core output size, actual=%s, "
-                "reason=expected a value whose warp alignment fits in int64",
-                std::to_string(unaligned).c_str());
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                               "Invalid internal per-core output size, actual=%s, "
+                               "reason=expected a value whose warp alignment fits in int64",
+                               std::to_string(unaligned).c_str());
         return ge::GRAPH_FAILED;
     }
     const int64_t perCore = warpUnits * WARP_SIZE;
     const int64_t needed = std::min(Ops::Base::CeilDiv(outputSize, perCore), physicalCoreNum);
     if (needed <= 0 || needed > std::numeric_limits<uint32_t>::max()) {
-        OP_LOGE(context->GetNodeName(),
-                "Invalid internal required AIV core count, actual=%s, "
-                "reason=expected an integer in [1, UINT32_MAX]",
-                std::to_string(needed).c_str());
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                               "Invalid internal required AIV core count, actual=%s, "
+                               "reason=expected an integer in [1, UINT32_MAX]",
+                               std::to_string(needed).c_str());
         return ge::GRAPH_FAILED;
     }
     tiling->perCoreOutput = perCore;
@@ -335,12 +352,15 @@ static void DumpTilingData(gert::TilingContext* context, const ExpandIntoJaggedP
 static ge::graphStatus SetRuntimeConfig(gert::TilingContext* context, const ExpandIntoJaggedPermuteTilingData* tiling)
 {
     size_t* workspaceSizes = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, workspaceSizes);
+    if (workspaceSizes == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(context, "failed to get workspace size buffer");
+        return ge::GRAPH_FAILED;
+    }
     workspaceSizes[0] = WS_SYS_SIZE;
     context->SetBlockDim(tiling->needCoreNum);
     const ge::graphStatus localMemoryStatus = context->SetLocalMemorySize(0);
     if (localMemoryStatus != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "SetLocalMemorySize(0) failed, status=%u", localMemoryStatus);
+        OP_LOGE_WITHOUT_REPORT(context, "SetLocalMemorySize(0) failed, status=%u", localMemoryStatus);
         return localMemoryStatus;
     }
     context->SetTilingKey(GET_TPL_TILING_KEY(EXPAND_JAGGED_MODE_OUTPUT_BLOCK));
@@ -350,7 +370,7 @@ static ge::graphStatus SetRuntimeConfig(gert::TilingContext* context, const Expa
 static ge::graphStatus ExpandIntoJaggedPermuteTilingFunc(gert::TilingContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE(OP_NAME, "tiling context is nullptr");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "tiling context is nullptr");
         return ge::GRAPH_FAILED;
     }
     int64_t segmentCount = 0;
@@ -370,9 +390,12 @@ static ge::graphStatus ExpandIntoJaggedPermuteTilingFunc(gert::TilingContext* co
         return status;
     }
     auto* tiling = context->GetTilingData<ExpandIntoJaggedPermuteTilingData>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+    if (tiling == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(context, "tiling data is nullptr");
+        return ge::GRAPH_FAILED;
+    }
     if (memset_s(tiling, sizeof(*tiling), 0, sizeof(*tiling)) != EOK) {
-        OP_LOGE(context, "memset_s failed while initializing %zu-byte tiling data", sizeof(*tiling));
+        OP_LOGE_WITHOUT_REPORT(context, "memset_s failed while initializing %zu-byte tiling data", sizeof(*tiling));
         return ge::GRAPH_FAILED;
     }
     status = ComputeTiling(context, segmentCount, outputSize, outputStride, platform.coreNum, tiling);

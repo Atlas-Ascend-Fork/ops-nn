@@ -13,6 +13,7 @@
  * \brief expand_into_jagged_permute_tiling.cpp
  */
 #include "expand_into_jagged_permute_tiling.h"
+#include <string>
 #include "register/op_impl_registry.h"
 #include "util/math_util.h"
 #include "log/log.h"
@@ -20,6 +21,49 @@
 #include "tiling/platform/platform_ascendc.h"
 
 namespace optiling {
+namespace {
+constexpr char OP_NAME[] = "ExpandIntoJaggedPermute";
+constexpr char PERMUTE_NAME[] = "permute";
+constexpr char INPUT_OFFSETS_NAME[] = "input_offsets";
+constexpr char OUTPUT_OFFSETS_NAME[] = "output_offsets";
+constexpr char OUTPUT_SIZE_NAME[] = "output_size";
+constexpr size_t PERMUTE_INDEX = 0;
+constexpr size_t INPUT_OFFSETS_INDEX = 1;
+constexpr size_t OUTPUT_OFFSETS_INDEX = 2;
+constexpr size_t OUTPUT_SIZE_ATTR = 0;
+
+static ge::graphStatus ValidateInputDesc(const gert::TilingContext* context, size_t index, const char* tensorName)
+{
+    const auto* desc = context->GetInputDesc(index);
+    if (desc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), tensorName);
+        return ge::GRAPH_FAILED;
+    }
+    const ge::DataType dataType = desc->GetDataType();
+    if (dataType != ge::DT_INT32) {
+        OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), tensorName, Ops::Base::ToString(dataType).c_str(), "INT32");
+        return ge::GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+static ge::graphStatus ReadInputShape(const gert::TilingContext* context, size_t index, const char* tensorName,
+                                      const gert::StorageShape*& storageShape)
+{
+    storageShape = context->GetInputShape(index);
+    if (storageShape == nullptr || context->GetInputTensor(index) == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), tensorName);
+        return ge::GRAPH_FAILED;
+    }
+    const gert::Shape shape = storageShape->GetStorageShape();
+    if (shape.GetDimNum() != 1) {
+        const std::string actual = std::to_string(shape.GetDimNum()) + "D";
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), tensorName, actual.c_str(), "1D");
+        return ge::GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
+} // namespace
 
 template <typename T>
 static T GetCeilInt(const T& value1, const T& value2)
@@ -32,69 +76,57 @@ static T GetCeilInt(const T& value1, const T& value2)
 
 static inline ge::graphStatus InputParamCheck(const gert::TilingContext* context)
 {
-    const gert::StorageShape* permuteShape = context->GetInputShape(0);
-    const gert::StorageShape* inputoffsetShape = context->GetInputShape(1);
-    const gert::StorageShape* outputoffsetShape = context->GetInputShape(2);
+    if (context == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "tiling context is nullptr");
+        return ge::GRAPH_FAILED;
+    }
+    if (ValidateInputDesc(context, PERMUTE_INDEX, PERMUTE_NAME) != ge::GRAPH_SUCCESS ||
+        ValidateInputDesc(context, INPUT_OFFSETS_INDEX, INPUT_OFFSETS_NAME) != ge::GRAPH_SUCCESS ||
+        ValidateInputDesc(context, OUTPUT_OFFSETS_INDEX, OUTPUT_OFFSETS_NAME) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    auto dataTensor0 = context->GetInputTensor(0);
-    auto dataTensor1 = context->GetInputTensor(1);
-    auto dataTensor2 = context->GetInputTensor(2);
-    auto nodeName = context->GetNodeName();
+    const gert::StorageShape* permuteShape = nullptr;
+    const gert::StorageShape* inputoffsetShape = nullptr;
+    const gert::StorageShape* outputoffsetShape = nullptr;
+    if (ReadInputShape(context, PERMUTE_INDEX, PERMUTE_NAME, permuteShape) != ge::GRAPH_SUCCESS ||
+        ReadInputShape(context, INPUT_OFFSETS_INDEX, INPUT_OFFSETS_NAME, inputoffsetShape) != ge::GRAPH_SUCCESS ||
+        ReadInputShape(context, OUTPUT_OFFSETS_INDEX, OUTPUT_OFFSETS_NAME, outputoffsetShape) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    auto permuteTypePtr = context->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, permuteTypePtr);
-    auto permuteType = permuteTypePtr->GetDataType();
-
-    auto inputoffsetTypePtr = context->GetInputDesc(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputoffsetTypePtr);
-    auto inputoffsetType = inputoffsetTypePtr->GetDataType();
-
-    auto outputoffsetTypePtr = context->GetInputDesc(2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outputoffsetTypePtr);
-    auto outputoffsetType = outputoffsetTypePtr->GetDataType();
-
-    OP_CHECK_IF(
-        permuteType != inputoffsetType && permuteType != outputoffsetType && inputoffsetType != outputoffsetType,
-        OP_LOGE(
-            nodeName,
-            "[ExpandIntoJaggedPermuteTilingData] the datatype of permute、inputoffset and outputoffset is not same."),
-        return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF(
-        permuteShape == nullptr || inputoffsetShape == nullptr || outputoffsetShape == nullptr ||
-            dataTensor0 == nullptr || dataTensor1 == nullptr || dataTensor2 == nullptr,
-        OP_LOGE(nodeName,
-                "[ExpandIntoJaggedPermuteTilingData] permute or inputOffsets is nullptr or outputoff is nullptr."),
-        return ge::GRAPH_FAILED);
-    OP_CHECK_IF(permuteShape->GetStorageShape().GetDimNum() != 1,
-                OP_LOGE(nodeName, "[ExpandIntoJaggedPermuteTilingData] permuteShape's shape is not 1D."),
-                return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF(inputoffsetShape->GetStorageShape().GetDimNum() != 1,
-                OP_LOGE(nodeName, "[ExpandIntoJaggedPermuteTilingData] inputoffsetShape's shape is not 1D."),
-                return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF(outputoffsetShape->GetStorageShape().GetDimNum() != 1,
-                OP_LOGE(nodeName, "[ExpandIntoJaggedPermuteTilingData] outputoffsetShape's shape is not 1D."),
-                return ge::GRAPH_FAILED);
-    return ge::GRAPH_SUCCESS;
-
-    OP_CHECK_IF(permuteShape->GetStorageShape().GetDim(0) + 1 != outputoffsetShape->GetStorageShape().GetDim(0) ||
-                    permuteShape->GetStorageShape().GetDim(0) + 1 != inputoffsetShape->GetStorageShape().GetDim(0),
-                OP_LOGE(nodeName, "[ExpandIntoJaggedPermuteTilingData] outputoffsetShape and inputoffsetShape should "
-                                  "be one more than permuteShape."),
-                return ge::GRAPH_FAILED);
+    const int64_t permuteLength = permuteShape->GetStorageShape().GetDim(0);
+    const int64_t inputOffsetLength = inputoffsetShape->GetStorageShape().GetDim(0);
+    const int64_t outputOffsetLength = outputoffsetShape->GetStorageShape().GetDim(0);
+    if (permuteLength + 1 != inputOffsetLength || permuteLength + 1 != outputOffsetLength) {
+        const std::string actual = "permute=" + std::to_string(permuteLength) +
+                                   ", input_offsets=" + std::to_string(inputOffsetLength) +
+                                   ", output_offsets=" + std::to_string(outputOffsetLength);
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "permute, input_offsets and output_offsets", actual.c_str(),
+            "The lengths of input_offsets and output_offsets must both equal permute length + 1");
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
-static inline void Init(gert::TilingContext* context, ExpandIntoJaggedPermuteParam& param)
+static inline ge::graphStatus Init(gert::TilingContext* context, ExpandIntoJaggedPermuteParam& param)
 {
     size_t sysWorkspaceSize = 16 * 1024 * 1024;
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
+    if (currentWorkspace == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(context, "failed to get workspace size buffer");
+        return ge::GRAPH_FAILED;
+    }
     currentWorkspace[0] = sysWorkspaceSize;
     OP_LOGI(context, "get platform from compileInfo");
 
-    auto ascendPlaform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    auto* platformInfo = context->GetPlatformInfo();
+    if (platformInfo == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(context, "platform info is nullptr");
+        return ge::GRAPH_FAILED;
+    }
+    auto ascendPlaform = platform_ascendc::PlatformAscendC(platformInfo);
     param.coreNum = static_cast<int64_t>(ascendPlaform.GetCoreNumAiv());
     uint64_t maxCoreMemery;
     ascendPlaform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, maxCoreMemery);
@@ -105,13 +137,31 @@ static inline void Init(gert::TilingContext* context, ExpandIntoJaggedPermutePar
     const gert::StorageShape* outputoffsetShape = context->GetInputShape(2);
 
     auto attrs = context->GetAttrs();
-    const int32_t* outputSizePtr = attrs->GetAttrPointer<int32_t>(0);
+    if (attrs == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), OUTPUT_SIZE_NAME);
+        return ge::GRAPH_FAILED;
+    }
+    const int64_t* outputSizePtr = attrs->GetAttrPointer<int64_t>(OUTPUT_SIZE_ATTR);
+    if (outputSizePtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), OUTPUT_SIZE_NAME);
+        return ge::GRAPH_FAILED;
+    }
     param.outputSize = *outputSizePtr;
+    if (param.outputSize < 0) {
+        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), OUTPUT_SIZE_NAME, std::to_string(param.outputSize).c_str(),
+                                  "a non-negative integer");
+        return ge::GRAPH_FAILED;
+    }
 
     param.permute = permuteShape->GetStorageShape().GetDim(0);
     param.inputoffset = inputoffsetShape->GetStorageShape().GetDim(0);
     param.outputoffset = outputoffsetShape->GetStorageShape().GetDim(0);
     param.dtypeSize = ge::GetSizeByDataType(context->GetInputDesc(0)->GetDataType());
+    if (param.coreNum <= 0 || param.dtypeSize <= 0) {
+        OP_LOGE_WITHOUT_REPORT(context, "invalid internal tiling metadata: coreNum=%ld, dtypeSize=%ld", param.coreNum,
+                               param.dtypeSize);
+        return ge::GRAPH_FAILED;
+    }
 
     param.oneTaskInputOffsetLen = SIZE;
     param.cacheLine = SIZE;
@@ -119,6 +169,7 @@ static inline void Init(gert::TilingContext* context, ExpandIntoJaggedPermutePar
     param.oneTaskLen = param.cacheLine / param.dtypeSize;
     param.taskNum = GetCeilInt(param.permute, param.oneTaskInputOffsetLen);
     param.numTail = param.permute - SIZE * (param.taskNum - 1);
+    return ge::GRAPH_SUCCESS;
 }
 
 static ge::graphStatus SetTilingKey(ExpandIntoJaggedPermuteParam& param)
@@ -145,7 +196,10 @@ static ge::graphStatus SetTilingData(gert::TilingContext* context, const ExpandI
     tilingData.set_oneTaskOffsetLen(param.oneTaskInputOffsetLen);
     tilingData.set_oneTaskLen(param.oneTaskLen);
     auto rawTilingData = context->GetRawTilingData();
-    OP_CHECK_NULL_WITH_CONTEXT(context, rawTilingData);
+    if (rawTilingData == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(context, "raw tiling data is nullptr");
+        return ge::GRAPH_FAILED;
+    }
     tilingData.SaveToBuffer(rawTilingData->GetData(), rawTilingData->GetCapacity());
     rawTilingData->SetDataSize(tilingData.GetDataSize());
     context->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
@@ -169,6 +223,10 @@ static inline void PrintTilingData(const gert::TilingContext* context, const Exp
 
 static ge::graphStatus TilingForExpandIntoJaggedPermute(gert::TilingContext* context)
 {
+    if (context == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "tiling context is nullptr");
+        return ge::GRAPH_FAILED;
+    }
     auto nodeName = context->GetNodeName();
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> ExpandIntoJaggedPermute Tiling start <<<<<<<<<<<<<<<<.");
 
@@ -176,9 +234,10 @@ static ge::graphStatus TilingForExpandIntoJaggedPermute(gert::TilingContext* con
         return ge::GRAPH_FAILED;
     }
     ExpandIntoJaggedPermuteParam param;
-    Init(context, param);
-    SetTilingKey(param);
-    SetTilingData(context, param);
+    if (Init(context, param) != ge::GRAPH_SUCCESS || SetTilingKey(param) != ge::GRAPH_SUCCESS ||
+        SetTilingData(context, param) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     PrintTilingData(context, param);
     return context->SetTilingKey(param.tilingKey);
 }
@@ -186,6 +245,7 @@ static ge::graphStatus TilingForExpandIntoJaggedPermute(gert::TilingContext* con
 ge::graphStatus TilingPrepareExpandIntoJaggedPermute(gert::TilingParseContext* context)
 {
     if (context == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "tiling parse context is nullptr");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

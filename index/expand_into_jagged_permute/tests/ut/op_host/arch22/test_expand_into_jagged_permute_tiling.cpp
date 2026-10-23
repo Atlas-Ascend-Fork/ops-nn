@@ -100,6 +100,10 @@ TEST_F(ExpandIntoJaggedPermuteTiling, test_tiling_int32)
                       .Build();
     gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(tiling_context, nullptr);
-    // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+
+    auto* input_offsets_context_shape = const_cast<gert::StorageShape*>(tiling_context->GetInputShape(1));
+    ASSERT_NE(input_offsets_context_shape, nullptr);
+    *input_offsets_context_shape = {{5}, {5}};
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
 }
