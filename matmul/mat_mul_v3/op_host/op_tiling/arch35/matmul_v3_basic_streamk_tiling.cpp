@@ -453,6 +453,10 @@ std::vector<size_t> MatMulV3BasicStreamKTiling::GetWorkspaceSize() const
 {
     size_t workspaceSize = compileInfo_.aicNum * runInfo_.baseM *
                            ops::CeilAlign(runInfo_.baseN, FIXPIPE_N_ALIGN_ELEMENTS) * DATA_SIZE_FP32;
+    // 9201/9202申请workspacesize时先恢复额外RPC申请
+    if (compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202) {
+        workspaceSize += RPC_WORKSIZE * MB_SIZE;
+    }
     OP_LOGI(args_.opName, "MatMulV3 tiling workspace size is %lu", workspaceSize);
     return {workspaceSize};
 }
