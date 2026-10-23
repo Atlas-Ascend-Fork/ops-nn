@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -83,16 +83,10 @@ static bool CheckNotNull(const aclTensor* selfRef, const aclTensor* mask, const 
     return true;
 }
 
-static bool IsRegbaseOrAscend960()
-{
-    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    return Ops::NN::AclnnUtil::IsRegbase(npuArch) || npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
-}
-
 static inline const std::initializer_list<op::DataType>& GetDtypeSupportList()
 {
     auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    if (curArch == NpuArch::DAV_2201 || IsRegbaseOrAscend960()) {
+    if (curArch == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(curArch)) {
         return ASCEND910B_SELFREF_DTYPE_SUPPORT_LIST;
     } else {
         return ASCEND910_SELFREF_DTYPE_SUPPORT_LIST;
@@ -506,7 +500,7 @@ aclnnStatus aclnnInplaceMaskedScatterGetWorkspaceSize(aclTensor* selfRef, const 
         return ACLNN_SUCCESS;
     }
 
-    if (!IsRegbaseOrAscend960() && source->IsEmpty()) {
+    if (!Ops::NN::AclnnUtil::IsRegbase() && source->IsEmpty()) {
         // 根据实际支持情况补充
         *workspaceSize = 0;
         uniqueExecutor.ReleaseTo(executor);
@@ -551,7 +545,7 @@ aclnnStatus aclnnInplaceMaskedScatterGetWorkspaceSize(aclTensor* selfRef, const 
     CHECK_RET(maskBool != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     const aclTensor* opOut = nullptr;
-    if (!IsRegbaseOrAscend960()) { // 判断芯片架构
+    if (!Ops::NN::AclnnUtil::IsRegbase()) { // 判断芯片架构
         opOut = l0op::MaskedScatter(selfRefContiguous, maskBool, sourceContiguous, uniqueExecutor.get());
     } else {
         auto retStatus = ProcessBroadcast(selfRefContiguous, maskBool, sourceContiguous, &opOut, uniqueExecutor.get());

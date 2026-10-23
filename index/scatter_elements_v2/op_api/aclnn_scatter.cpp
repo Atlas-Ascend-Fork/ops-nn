@@ -53,11 +53,6 @@ extern "C" {
 static constexpr int64_t MIN_INDICES_FOR_SORTED = 32;
 static constexpr int64_t MIN_UPDATES_FOR_SORTED = 512;
 
-static bool IsRegbaseOrAscend960(NpuArch npuArch)
-{
-    return Ops::NN::AclnnUtil::IsRegbase(npuArch) || npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
-}
-
 static const std::initializer_list<op::DataType> ASCEND910_DTYPE_SUPPORT_LIST = {
     op::DataType::DT_UINT8,  op::DataType::DT_INT8,      op::DataType::DT_INT16,     op::DataType::DT_INT32,
     op::DataType::DT_INT64,  op::DataType::DT_BOOL,      op::DataType::DT_FLOAT16,   op::DataType::DT_FLOAT,
@@ -112,7 +107,7 @@ static bool IsUseScatterAddWithSorted(const aclTensor* varRef, const aclTensor* 
 static const std::initializer_list<DataType>& GetDtypeSupportList()
 {
     auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    if (curArch == NpuArch::DAV_2201 || IsRegbaseOrAscend960(curArch)) {
+    if (curArch == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(curArch)) {
         return ASCEND910B_DTYPE_SUPPORT_LIST;
     } else {
         return ASCEND910_DTYPE_SUPPORT_LIST;
@@ -216,7 +211,7 @@ static bool CheckTensorDim(const aclTensor* self, const aclTensor* index, const 
     auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
     OP_LOGD("aclnnScatter CheckTensorDim curArch =%u, selfDimSize:%ld, indexDimSize:%ld, srcDimSize:%ld.", curArch,
             selfDimSize, indexDimSize, srcDimSize);
-    if (IsRegbaseOrAscend960(curArch)) {
+    if (Ops::NN::AclnnUtil::IsRegbase(curArch)) {
         if (selfDimSize == 0) {
             selfDimSize = 1;
         }
@@ -609,11 +604,11 @@ static aclnnStatus ExecScatterBase(const aclTensor* self, int64_t dim, const acl
     bool flag910b = false;
     bool flagRebase = false;
     auto selfType = selfContiguous->GetDataType();
-    if (curArch == NpuArch::DAV_2201 || IsRegbaseOrAscend960(curArch)) {
+    if (curArch == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(curArch)) {
         aicoreSupport = CheckType(selfType, AICORE_910B_DTYPE_SUPPORT_LIST);
         scatterAddRegbaseSupport = CheckType(selfType, SCATTER_ADD_AICORE_REGBASE_DTYPE_SUPPORT_LIST);
-        flag910b = !(IsRegbaseOrAscend960(curArch));
-        flagRebase = IsRegbaseOrAscend960(curArch);
+        flag910b = !(Ops::NN::AclnnUtil::IsRegbase(curArch));
+        flagRebase = Ops::NN::AclnnUtil::IsRegbase(curArch);
     } else {
         // 转换BF16数据类型为FP32，因算子暂不支持BF16
         if (selfType == op::DataType::DT_BF16 || srcContiguous->GetDataType() == op::DataType::DT_BF16) {
@@ -753,7 +748,7 @@ static aclnnStatus ExecScatterBase(const aclTensor* self, int64_t dim, const acl
 
     int64_t dimInput = dimFinal;
     // 310P统一走aicpu,无需Transpose
-    bool needTranspose = (dimFinal != (selfDimNum - 1)) && aicoreSupport && (!IsRegbaseOrAscend960(curArch));
+    bool needTranspose = (dimFinal != (selfDimNum - 1)) && aicoreSupport && (!Ops::NN::AclnnUtil::IsRegbase(curArch));
     if (needTranspose) {
         selfContiguous = l0op::Transpose(selfContiguous, valuePerm, executor);
         CHECK_COND(selfContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR, "transpose self failed!");

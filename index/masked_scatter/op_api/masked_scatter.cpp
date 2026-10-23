@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -75,10 +75,7 @@ static bool CheckShapeLimit(const aclTensor* self, const aclTensor* mask, const 
 static bool IsAiCoreSupport(const aclTensor* self, const aclTensor* mask, const aclTensor* source)
 {
     // 只需要判断dtype
-    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    bool useRegbase = Ops::NN::AclnnUtil::IsRegbase(npuArch) || npuArch == NpuArch::DAV_9201 ||
-                      npuArch == NpuArch::DAV_9202;
-    auto supportList = useRegbase ? AICORE_DTYPE_SUPPORT_LIST_REGBASE : AICORE_DTYPE_SUPPORT_LIST;
+    auto supportList = Ops::NN::AclnnUtil::IsRegbase() ? AICORE_DTYPE_SUPPORT_LIST_REGBASE : AICORE_DTYPE_SUPPORT_LIST;
     bool result = CheckType(self->GetDataType(), supportList);
     result = result && (mask->GetDataType() == op::DataType::DT_BOOL);
     result = result && CheckShapeLimit(self, mask, source);

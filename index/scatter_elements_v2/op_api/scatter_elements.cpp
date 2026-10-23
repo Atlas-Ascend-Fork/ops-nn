@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License")
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -280,7 +280,7 @@ bool UseScatterElementsV2(const aclTensor* data, const aclTensor* indices, const
 {
     auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
     auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    if (Ops::NN::AclnnUtil::IsRegbase(npuArch) || npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202) {
+    if (Ops::NN::AclnnUtil::IsRegbase(npuArch)) {
         if (REGBASE_DTYPE_SUPPORT_LIST.count(reduction) == 0) {
             return false;
         }
@@ -325,7 +325,7 @@ bool UseScatterElements(const aclTensor* data, const aclTensor* indices, const a
     // Ascend310P无二进制，统一走acipu, ScatterElements目前仅在910A上使用
     auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
     OP_CHECK(socVersion == SocVersion::ASCEND910 || Ops::NN::AclnnUtil::IsRegbase(),
-             OP_LOGD("ScatterElements only support Aicore for ASCEND910 and arch3510"), return false);
+             OP_LOGD("ScatterElements only support Aicore for ASCEND910 and RegBase architectures"), return false);
 
     if (Ops::NN::AclnnUtil::IsRegbase()) {
         if (REGBASE_DTYPE_SUPPORT_LIST.count(reduction) == 0 ||

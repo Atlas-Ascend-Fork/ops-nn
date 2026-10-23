@@ -42,15 +42,9 @@ static const std::initializer_list<op::DataType> ASCEND910B_DTYPE_SUPPORT_LIST =
     op::DataType::DT_INT32,   op::DataType::DT_INT64, op::DataType::DT_BOOL,
     op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT, op::DataType::DT_BF16};
 
-static bool IsRegbaseOrAscend960()
-{
-    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    return Ops::NN::AclnnUtil::IsRegbase(npuArch) || npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
-}
-
 static const std::initializer_list<DataType> GetDtypeSupportList()
 {
-    if (IsRegbaseOrAscend960()) {
+    if (Ops::NN::AclnnUtil::IsRegbase()) {
         return ASCEND950_DTYPE_SUPPORT_LIST_SELF;
     }
     if (GetCurrentPlatformInfo().GetSocVersion() >= SocVersion::ASCEND910B &&
@@ -297,7 +291,7 @@ static const aclTensor* InitializeTensor(const aclTensor* x, aclOpExecutor* exec
 // 将int64_t 转为为1维tensor
 static const aclTensor* IntToTensor(int64_t repeats, aclOpExecutor* executor)
 {
-    if (!IsRegbaseOrAscend960()) {
+    if (!Ops::NN::AclnnUtil::IsRegbase()) {
         auto repeatsScalar = executor->AllocScalar(repeats);
         auto repeatsTensor = executor->ConvertToTensor(repeatsScalar, op::DataType::DT_INT64);
         auto baseShape = getBaseShape(executor);
