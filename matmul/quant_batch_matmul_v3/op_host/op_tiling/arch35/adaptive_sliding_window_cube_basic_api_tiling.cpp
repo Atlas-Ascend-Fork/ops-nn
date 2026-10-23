@@ -163,10 +163,13 @@ uint64_t AdaptiveSlidingWindowCubeBasicAPITiling::GetBatchMode() const
 
 bool AdaptiveSlidingWindowCubeBasicAPITiling::CalcBasicBlock()
 {
-    if (compileInfo_.npuArch != NpuArch::DAV_3510) {
+    if (compileInfo_.npuArch != NpuArch::DAV_3510 && compileInfo_.npuArch != NpuArch::DAV_9201 &&
+        compileInfo_.npuArch != NpuArch::DAV_9202) {
         return AdaptiveSlidingWindowTiling::CalcBasicBlock();
     }
-    BaseBlockMode mode = compileInfo_.supportMmadS8S4 ? BaseBlockMode::MMAD_S8S4 : BaseBlockMode::CUBE_BASIC;
+    BaseBlockMode mode = (compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202) ?
+                             BaseBlockMode::LOAD_BALANCE :
+                             BaseBlockMode::CUBE_BASIC;
     BaseBlockCalculator calculator(inputParams_, compileInfo_, GetBatchCoreCnt());
     if (!calculator.Compute(mode)) {
         return false;
