@@ -444,23 +444,24 @@ static inline aclnnStatus CheckOptionalAlg(const QuantMatmulActivationQuantWeigh
 {
     CHECK_RET(params.activationType != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     const std::string activationType(params.activationType);
-    if (activationType != "gelu_tanh" && activationType != "gelu_erf" && activationType != "swiglu") {
+    if (activationType != "gelu_tanh" && activationType != "gelu_erf" && activationType != "swiglu" &&
+        activationType != "silu") {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "activationType", activationType,
-                                              "The activationType must be gelu_tanh, gelu_erf or swiglu");
+                                              "The activationType must be gelu_tanh, gelu_erf, swiglu or silu");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const bool isWeightNz = params.x2 != nullptr &&
                             ge::GetPrimaryFormat(params.x2->GetStorageFormat()) == op::Format::FORMAT_FRACTAL_NZ;
-    if (activationType == "swiglu" &&
-        ((params.transposeX1 && isWeightNz) || (params.scaleAlg != 0 && params.scaleAlg != 1) ||
-         (params.roundMode != nullptr && std::string(params.roundMode) != "rint"))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "swiglu constraints", "unsupported",
-                                              "SwiGLU MX requires transposeX1=false for WeightNZ, scaleAlg=0/1 and "
-                                              "roundMode=rint");
+    const bool isSwiGluOrSilu = activationType == "swiglu" || activationType == "silu";
+    if (isSwiGluOrSilu && ((params.transposeX1 && isWeightNz) || (params.scaleAlg != 0 && params.scaleAlg != 1) ||
+                           (params.roundMode != nullptr && std::string(params.roundMode) != "rint"))) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "activation constraints", "unsupported",
+                                              "SwiGLU and SiLU MX require transposeX1=false for WeightNZ, "
+                                              "scaleAlg=0/1 and roundMode=rint");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (activationType == "swiglu" && (!IsMxFp8Input(params.x1, params.x2, params.y, params.yScale))) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(apiName, "x1/x2/y", "non-MXFP8", "SwiGLU MX only supports MXFP8");
+    if (isSwiGluOrSilu && (!IsMxFp8Input(params.x1, params.x2, params.y, params.yScale))) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(apiName, "x1/x2/y", "non-MXFP8", "SwiGLU and SiLU MX only support MXFP8");
         return ACLNN_ERR_PARAM_INVALID;
     }
     CHECK_RET(params.quantMode != nullptr, ACLNN_ERR_PARAM_NULLPTR);

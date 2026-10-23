@@ -10,7 +10,7 @@
 
 /*!
  * \file quant_matmul_activation_quant_base_block_calculator.cpp
- * \brief Base-block alignment for GELU and paired-column SwiGLU MX quantization.
+ * \brief Base-block alignment for GELU/SiLU and paired-column SwiGLU MX quantization.
  */
 #include "quant_matmul_activation_quant_base_block_calculator.h"
 
@@ -19,7 +19,7 @@
 
 namespace optiling {
 
-using QuantMatmulActivationQuantTilingConstant::GELU_BASEN_ALIGN;
+using QuantMatmulActivationQuantTilingConstant::MX_BASEN_ALIGN;
 using QuantMatmulActivationQuantTilingConstant::SWIGLU_BASEN_ALIGN;
 
 QuantBaseBlockCalculator::QuantBaseBlockCalculator(const QuantBatchMatmulInfo& inputParams,
@@ -33,8 +33,7 @@ uint64_t QuantBaseBlockCalculator::GetBaseNAlignSize(uint64_t innerAlignSize) co
     if (isSwiglu_) {
         return SWIGLU_BASEN_ALIGN;
     }
-    return this->inputParams_.transB ? GELU_BASEN_ALIGN :
-                                       GetShapeWithDataType(innerAlignSize, this->inputParams_.bDtype);
+    return this->inputParams_.transB ? MX_BASEN_ALIGN : GetShapeWithDataType(innerAlignSize, this->inputParams_.bDtype);
 }
 
 } // namespace optiling

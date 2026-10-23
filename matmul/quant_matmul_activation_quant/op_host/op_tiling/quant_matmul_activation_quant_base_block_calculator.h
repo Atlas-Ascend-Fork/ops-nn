@@ -10,7 +10,7 @@
 
 /*!
  * \file quant_matmul_activation_quant_base_block_calculator.h
- * \brief Base-block alignment for GELU and paired-column SwiGLU MX quantization.
+ * \brief Base-block alignment for GELU/SiLU and paired-column SwiGLU MX quantization.
  */
 #pragma once
 

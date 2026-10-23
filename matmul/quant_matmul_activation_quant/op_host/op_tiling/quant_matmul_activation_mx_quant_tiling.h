@@ -33,7 +33,8 @@ protected:
     ge::graphStatus DoLibApiTiling() override;
     ge::graphStatus UpdateTilingData();
     uint64_t GetTilingKey() const override;
-    uint64_t GetKernelType() const override;
+    uint64_t GetFullLoadMode() const;
+    uint64_t GetEpilogueType() const;
     uint64_t GetBatchMode() const override;
 
 private:

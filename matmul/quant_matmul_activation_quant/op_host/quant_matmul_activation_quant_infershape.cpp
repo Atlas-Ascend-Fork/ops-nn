@@ -13,6 +13,7 @@
  * \brief InferShape and InferDataType for QuantMatmulActivationQuant
  */
 #include <string>
+#include <string_view>
 
 #include "common/op_host/matmul_common_infershape.h"
 #include "graph/utils/type_utils.h"
@@ -73,12 +74,21 @@ const char* GetValidOpNameForInferDataType(gert::InferDataTypeContext* context)
     return OP_NAME;
 }
 
+static bool IsSwiGluOrSilu(const char* activation)
+{
+    if (activation == nullptr) {
+        return false;
+    }
+    const std::string_view name{activation};
+    return name == "swiglu" || name == "silu";
+}
+
 template <typename Context>
-static bool CheckSwiGluAttrs(Context* context, const char* opName)
+static bool CheckMxFp8ActivationAttrs(Context* context, const char* opName)
 {
     const auto* attrs = context->GetAttrs();
     const auto* activation = attrs == nullptr ? nullptr : attrs->template GetAttrPointer<char>(ACTIVATION_TYPE_INDEX);
-    if (activation == nullptr || std::string(activation) != "swiglu") {
+    if (!IsSwiGluOrSilu(activation)) {
         return true;
     }
     const auto* groupSize = attrs->template GetAttrPointer<int64_t>(GROUP_SIZE_INDEX);
@@ -92,14 +102,14 @@ static bool CheckSwiGluAttrs(Context* context, const char* opName)
         (scaleAlg != nullptr && *scaleAlg != 0 && *scaleAlg != 1) ||
         (yDtype != nullptr && *yDtype != ge::DT_FLOAT8_E4M3FN && *yDtype != ge::DT_FLOAT8_E5M2)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            opName, "SwiGLU MX attributes", "invalid",
+            opName, "SwiGLU/SiLU MX attributes", "invalid",
             "the attributes require FP8, group_size=[1,1,32], quant_mode=mx, round_mode=rint and scale_alg=0/1");
         return false;
     }
     return true;
 }
 
-static bool CheckSwiGluInputTypes(gert::InferShapeContext* context, const char* opName)
+static bool CheckMxFp8ActivationInputTypes(gert::InferShapeContext* context, const char* opName)
 {
     const auto isFp8 = [](const auto* desc) {
         return desc != nullptr &&
@@ -112,15 +122,16 @@ static bool CheckSwiGluInputTypes(gert::InferShapeContext* context, const char* 
                                                                    x2Desc->GetDataType() == ge::DT_FLOAT8_E4M3FN);
     if (!isFp8(x1Desc) || ge::GetPrimaryFormat(x1Desc->GetStorageFormat()) != ge::FORMAT_ND || !isFp8(x2Desc) ||
         !isSupportedX2Format) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(opName, "x1, x2", "unsupported dtype/format",
-                                               "SwiGLU requires FP8 x1/x2, ND x1, and ND x2 or E4M3FN FRACTAL_NZ x2");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            opName, "x1, x2", "unsupported dtype/format",
+            "SwiGLU and SiLU require FP8 x1/x2, ND x1, and ND x2 or E4M3FN FRACTAL_NZ x2");
         return false;
     }
     const auto* attrs = context->GetAttrs();
     const auto* transposeX1 = attrs == nullptr ? nullptr : attrs->GetAttrPointer<bool>(0);
     if (x2Format == ge::FORMAT_FRACTAL_NZ && transposeX1 != nullptr && *transposeX1) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "transposeX1", "true",
-                                              "SwiGLU WeightNZ requires transposeX1 to be false");
+                                              "SwiGLU and SiLU WeightNZ require transposeX1 to be false");
         return false;
     }
     const auto* yDtype = attrs == nullptr ? nullptr : attrs->GetAttrPointer<int64_t>(Y_DTYPE_INDEX);
@@ -130,7 +141,7 @@ static bool CheckSwiGluInputTypes(gert::InferShapeContext* context, const char* 
             FormatString("%lld, %s", static_cast<long long>(yDtype == nullptr ? -1LL : *yDtype),
                          ge::TypeUtils::DataTypeToSerialString(x1Desc->GetDataType()).c_str())
                 .c_str(),
-            "SwiGLU requires y_dtype to match x1");
+            "SwiGLU and SiLU require y_dtype to match x1");
         return false;
     }
     for (uint32_t index : {X1_SCALE_INDEX, X2_SCALE_INDEX}) {
@@ -139,7 +150,7 @@ static bool CheckSwiGluInputTypes(gert::InferShapeContext* context, const char* 
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
                 opName, index == X1_SCALE_INDEX ? "x1Scale" : "x2Scale",
                 desc == nullptr ? "null" : ge::TypeUtils::DataTypeToSerialString(desc->GetDataType()).c_str(),
-                "SwiGLU input scales must have FLOAT8_E8M0 dtype");
+                "SwiGLU and SiLU input scales must have FLOAT8_E8M0 dtype");
             return false;
         }
     }
@@ -150,7 +161,7 @@ static bool CheckSwiGluInputTypes(gert::InferShapeContext* context, const char* 
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
             opName, "bias",
             biasDesc == nullptr ? "null" : ge::TypeUtils::DataTypeToSerialString(biasDesc->GetDataType()).c_str(),
-            "SwiGLU bias must have FLOAT dtype");
+            "SwiGLU and SiLU bias must have FLOAT dtype");
         return false;
     }
     return true;
@@ -181,13 +192,14 @@ static ge::graphStatus InferShape4QuantMatmulActivationQuant(gert::InferShapeCon
     auto out_shape_y_scale = context->GetOutputShape(Y_SCALE_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, out_shape_y);
     OP_CHECK_NULL_WITH_CONTEXT(context, out_shape_y_scale);
-    if (!CheckSwiGluAttrs(context, opName)) {
+    if (!CheckMxFp8ActivationAttrs(context, opName)) {
         return ge::GRAPH_FAILED;
     }
     const auto* shapeAttrs = context->GetAttrs();
     const auto* activation = shapeAttrs == nullptr ? nullptr : shapeAttrs->GetAttrPointer<char>(ACTIVATION_TYPE_INDEX);
     const bool is_swiglu = activation != nullptr && std::string(activation) == "swiglu";
-    if (is_swiglu && !CheckSwiGluInputTypes(context, opName)) {
+    const bool is_swiglu_or_silu = IsSwiGluOrSilu(activation);
+    if (is_swiglu_or_silu && !CheckMxFp8ActivationInputTypes(context, opName)) {
         return ge::GRAPH_FAILED;
     }
 
@@ -285,14 +297,15 @@ static ge::graphStatus InferShape4QuantMatmulActivationQuant(gert::InferShapeCon
     out_shape_y->SetDim(num_dim - 2, M);
     out_shape_y->SetDim(num_dim - 1, outputN);
 
-    if (is_swiglu) {
+    if (is_swiglu_or_silu) {
         const auto* bias = context->GetOptionalInputShape(BIAS_INDEX);
         if (bias != nullptr && bias->GetDimNum() > 0 && !Ops::NN::CheckIsUnknownDimNum(*bias)) {
             const size_t biasRank = bias->GetDimNum();
             const bool validRank = biasRank == 1 || (num_dim == 3 && biasRank == 3);
             if (!validRank) {
                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(opName, "bias", FormatString("%zuD", biasRank).c_str(),
-                                                         "SwiGLU bias must be [N], or [B,1,N] for a rank-3 output");
+                                                         "SwiGLU and SiLU bias must be [N], or [B,1,N] for a "
+                                                         "rank-3 output");
                 return ge::GRAPH_FAILED;
             }
             const auto matches = [](int64_t a, int64_t b) { return a == UNKNOWN_DIM || b == UNKNOWN_DIM || a == b; };
@@ -300,7 +313,8 @@ static ge::graphStatus InferShape4QuantMatmulActivationQuant(gert::InferShapeCon
                 (biasRank == 3 &&
                  (!matches(bias->GetDim(0), out_shape_y->GetDim(0)) || !matches(bias->GetDim(1), 1)))) {
                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(opName, "bias", Ops::Base::ToString(*bias).c_str(),
-                                                      "SwiGLU bias dimensions must match the pre-split matmul output");
+                                                      "SwiGLU and SiLU bias dimensions must match the matmul "
+                                                      "output");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -337,7 +351,7 @@ static ge::graphStatus InferDataType4QuantMatmulActivationQuant(gert::InferDataT
 
     OP_CHECK_NULL_WITH_CONTEXT(context, context);
     const char* opName = GetValidOpNameForInferDataType(context);
-    if (!CheckSwiGluAttrs(context, opName)) {
+    if (!CheckMxFp8ActivationAttrs(context, opName)) {
         return ge::GRAPH_FAILED;
     }
 
@@ -355,14 +369,13 @@ static ge::graphStatus InferDataType4QuantMatmulActivationQuant(gert::InferDataT
         return ge::GRAPH_FAILED;
     }
     const auto* activation = attrs->GetAttrPointer<char>(ACTIVATION_TYPE_INDEX);
-    if (activation != nullptr && std::string(activation) == "swiglu" &&
-        y_dtype != static_cast<int64_t>(context->GetInputDataType(X1_INDEX))) {
+    if (IsSwiGluOrSilu(activation) && y_dtype != static_cast<int64_t>(context->GetInputDataType(X1_INDEX))) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             opName, "y_dtype, x1 dtype",
             FormatString("%lld, %s", static_cast<long long>(y_dtype),
                          ge::TypeUtils::DataTypeToSerialString(context->GetInputDataType(X1_INDEX)).c_str())
                 .c_str(),
-            "SwiGLU requires y_dtype to match x1");
+            "SwiGLU and SiLU require y_dtype to match x1");
         return ge::GRAPH_FAILED;
     }
 

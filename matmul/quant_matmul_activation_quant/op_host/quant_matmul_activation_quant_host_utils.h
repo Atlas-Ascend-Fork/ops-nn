@@ -50,7 +50,7 @@ constexpr uint64_t GROUP_MKN_BIT_SIZE = 0xFFFF;
 constexpr uint64_t MXFP_BASEK_FACTOR = 64UL;
 constexpr uint64_t MXFP_MULTI_BASE_SIZE = 2UL;
 
-constexpr uint64_t GELU_BASEN_ALIGN = 32UL;
+constexpr uint64_t MX_BASEN_ALIGN = 32UL;
 constexpr uint64_t SWIGLU_BRANCH_COUNT = 2UL;
 constexpr uint64_t SWIGLU_N_ALIGN = 64UL;
 constexpr uint64_t SWIGLU_MX_MAX_SINGLE_MN = 64UL * 256UL;

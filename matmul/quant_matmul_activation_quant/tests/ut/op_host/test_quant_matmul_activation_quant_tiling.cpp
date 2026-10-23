@@ -440,6 +440,8 @@ TEST_P(TestQuantMatmulActivationQuantTiling, generalTest)
                 EXPECT_EQ(data.nTailMain, 0U);
                 EXPECT_LE(ops::CeilAlign(static_cast<uint64_t>(data.baseM), 2UL) * data.baseN, 2UL * 64UL * 256UL);
                 EXPECT_LE(ops::CeilAlign(static_cast<uint64_t>(data.baseK), 64UL) * data.baseN, 65536UL / 2UL);
+            } else if (param.activationType == "silu") {
+                EXPECT_EQ(data.activationType, QMMAQ::ActivationAlg::SILU);
             } else {
                 EXPECT_EQ(data.activationType,
                           param.activationType == "gelu_erf" ? QMMAQ::ActivationAlg::ERF : QMMAQ::ActivationAlg::TANH);
@@ -462,12 +464,14 @@ TEST_P(TestQuantMatmulActivationQuantTiling, generalTest)
             checkTilingFields(*batchData);
         }
         const bool isSwiglu = param.activationType == "swiglu";
-        const uint64_t noFullLoadKey = GET_TPL_TILING_KEY(
-            static_cast<uint64_t>(param.transposeX1), static_cast<uint64_t>(param.transposeX2), batchMode,
-            static_cast<uint64_t>(isSwiglu ? TPL_SWIGLU_NO_FULLLOAD : TPL_GELU_NO_FULLLOAD));
-        const uint64_t fullLoadKey = GET_TPL_TILING_KEY(
-            static_cast<uint64_t>(param.transposeX1), static_cast<uint64_t>(param.transposeX2), batchMode,
-            static_cast<uint64_t>(isSwiglu ? TPL_SWIGLU_FULLLOAD : TPL_GELU_FULLLOAD));
+        const bool isSilu = param.activationType == "silu";
+        const uint64_t epilogueType = isSwiglu ? TPL_EPILOGUE_SWIGLU : (isSilu ? TPL_EPILOGUE_SILU : TPL_EPILOGUE_GELU);
+        const uint64_t noFullLoadKey = GET_TPL_TILING_KEY(static_cast<uint64_t>(param.transposeX1),
+                                                          static_cast<uint64_t>(param.transposeX2), batchMode,
+                                                          TPL_NO_FULLLOAD, epilogueType);
+        const uint64_t fullLoadKey = GET_TPL_TILING_KEY(static_cast<uint64_t>(param.transposeX1),
+                                                        static_cast<uint64_t>(param.transposeX2), batchMode,
+                                                        TPL_A_FULLLOAD, epilogueType);
         const uint64_t actualTilingKey = tilingContext->GetTilingKey();
         EXPECT_TRUE(actualTilingKey == noFullLoadKey || actualTilingKey == fullLoadKey)
             << "caseName=" << param.caseName

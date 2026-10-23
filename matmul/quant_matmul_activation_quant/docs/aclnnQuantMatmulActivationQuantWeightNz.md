@@ -24,7 +24,9 @@
 
 ## 功能说明
 
-- 接口功能：融合量化的矩阵乘、激活以及动态量化计算。当前支持激活为gelu（包括gelu_tanh和gelu_erf）和swiglu，量化模式为MX [量化模式](../../../docs/zh/context/quant_mode_introduction.md)。最小支持输入维度为2维，最大支持输入维度为6维。相似接口有aclnnMm（仅支持2维Tensor作为输入的矩阵乘）和aclnnBatchMatMul（仅支持三维的矩阵乘，其中第一维是Batch维度），本接口在其他接口的基础上融合了激活及动态MX量化，提高硬件计算效率。
+- 接口功能：融合量化的矩阵乘、激活以及动态量化计算。当前支持激活为GELU（tanh/erf）、SwiGLU及SiLU，量化模式为MX [量化模式](../../../docs/zh/context/quant_mode_introduction.md)。最小支持输入维度为2维，最大支持输入维度为6维。相似接口有aclnnMm（仅支持2维Tensor作为输入的矩阵乘）和aclnnBatchMatMul（仅支持三维的矩阵乘，其中第一维是Batch维度），本接口在其他接口的基础上融合了激活及动态MX量化，提高硬件计算效率。
+
+激活类型、FP8/FP4、ND/WeightNZ及转置组合的支持范围见[激活能力对照表](../README.md#激活能力对照表)，本接口对应其中的WeightNZ行。
 
 - 计算公式：
 
@@ -49,25 +51,27 @@
 
     <summary><strong>激活计算公式</strong></summary>
 
-      - gelu_tanh(高性能近似)：
+      - GELU（tanh，高性能近似）：
 
         $$
         activationOut=GELU(matmulOut)=matmulOut × Φ(matmulOut)=0.5 * matmulOut * (1 + tanh( \sqrt{2 / \pi} * (matmulOut + 0.044715 * matmulOut^{3})))
         $$
 
-      - gelu_erf：
+      - GELU（erf）：
 
         $$
         activationOut=GELU(matmulOut)=0.5 * matmulOut * (1 + erf(matmulOut / \sqrt{2}))
         $$
 
-      - swiglu：原始N必须为正数且是64的倍数，先在完整FP32矩阵乘结果上加bias，再沿尾轴按`matmulOut=[gate | linear]`等分：
+      - SwiGLU：原始N必须为正数且是64的倍数，先在完整FP32矩阵乘结果上加bias，再沿尾轴按`matmulOut=[gate | linear]`等分：
 
         $$
         activationOut=SiLU(gate) * linear
         $$
 
         激活结果以RNE舍入为BF16后执行MX量化。
+
+      - SiLU：逐元素计算`SiLU(matmulOut)`（`SiLU(x) = x * sigmoid(x)`），结果以RNE舍入为BF16后执行MX量化，输出保留原始N列。
 
     </details>
 
@@ -227,7 +231,7 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(
             <li>transposeX1为false情况下x1各个维度表示：（batch, m, k），batch可不存在。</li>
             <li>transposeX1为true情况下x1各个维度表示：（batch, k, m），batch可不存在。</li>
             <li>当x1、x2、y的数据类型均为FLOAT4_E2M1时（MXFP4场景），x1不支持转置，即transposeX1不能为true。</li>
-            <li>activationType为swiglu时，x1不支持转置，即transposeX1必须为false。</li>
+            <li>activationType为"swiglu"或"silu"时，x1不支持转置，即transposeX1必须为false。</li>
           </ul>
         </td>
         <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1</td>
@@ -335,7 +339,7 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(
         <td>activationType</td>
         <td>输入</td>
         <td>激活的类型。</td>
-        <td>支持{"gelu_tanh", "gelu_erf", "swiglu"}。</td>
+        <td>支持{"gelu_tanh", "gelu_erf", "swiglu", "silu"}。</td>
         <td>STRING</td>
         <td>-</td>
         <td>-</td>
@@ -404,7 +408,7 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(
         <td>
           <ul>
             <li>不支持空Tensor。</li>
-            <li>gelu场景shape和矩阵乘计算结果一致，为(batch, m, n)；swiglu场景为(batch, m, n/2)。batch可不存在。</li>
+            <li>GELU和SiLU场景shape和矩阵乘计算结果一致，为(batch, m, n)；SwiGLU场景为(batch, m, n/2)。batch可不存在。</li>
           </ul>
         </td>
         <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1</td>
@@ -421,7 +425,7 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(
             <li>不支持空Tensor。</li>
             <li>shape在尾轴轴上为y对应轴的值除以32向上取整，并对其进行偶数pad，pad填充值为0。</li>
             <li>yScale输出需要对每两行数据进行交织处理。</li>
-            <li>gelu场景shape为(batch, m, ceil(n/64), 2)；swiglu场景shape为(batch, m, ceil((n/2)/64), 2)。batch可不存在。</li>
+            <li>GELU和SiLU场景shape为(batch, m, ceil(n/64), 2)；SwiGLU场景shape为(batch, m, ceil((n/2)/64), 2)。batch可不存在。</li>
           </ul>
         </td>
         <td>FLOAT8_E8M0</td>
@@ -576,7 +580,7 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(
     groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32
     $$
 
-  - y的shape支持2~6维。gelu场景为(batch, m, n)，swiglu场景为(batch, m, n/2)；batch可不存在，m与x1的m一致，原始n与x2的n一致。
+  - y的shape支持2~6维。GELU和SiLU场景为(batch, m, n)，SwiGLU场景为(batch, m, n/2)；batch可不存在，m与x1的m一致，原始n与x2的n一致。
 
   <details>
     <summary><strong>MX量化场景约束：</strong></summary>
@@ -591,9 +595,9 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(
         | FLOAT8_E5M2   | FLOAT8_E4M3FN | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT8_E5M2               | FLOAT8_E8M0 |
         | FLOAT4_E2M1   | FLOAT4_E2M1   | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT4_E2M1               | FLOAT8_E8M0 |
 
-    - GELU和SwiGLU场景的y数据类型都必须与x1一致；SwiGLU仅支持上述FP8组合，不支持MXFP4。
+    - GELU、SwiGLU和SiLU场景的y数据类型都必须与x1一致；SwiGLU和SiLU仅支持上述FP8组合，不支持MXFP4。
 
-    - x1数据类型、x2数据类型、x1、x2、x1Scale、x2Scale和groupSize的取值关系。为同时表示两类激活，令h=n（GELU）或h=n/2（SwiGLU）：
+    - x1数据类型、x2数据类型、x1、x2、x1Scale、x2Scale和groupSize的取值关系。为统一表示输出宽度，令h=n（GELU和SiLU）或h=n/2（SwiGLU）：
 
         |量化类型|x1数据类型|x2数据类型|x1 shape|x2 shape|x1Scale shape|x2Scale shape|bias shape|yScale shape|[gsM, gsN, gsK]|groupSize|
         |-------|--------|--------|--------|--------|-------------|-------------|------------|---------------------------------------|--|--|
@@ -603,11 +607,11 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(
 
     - 注：上表中gsM、gsK和gsN分别表示groupSizeM、groupSizeK和groupSizeN。
     - MX量化场景下，x1和x1Scale的转置属性需要保持一致，x2和x2Scale的转置属性需要保持一致。
-    - gelu和swiglu场景yOut的数据类型都由x1的数据类型决定，两者必须保持一致；swiglu仅支持MXFP8，不支持MXFP4。
-    - swiglu场景约束：
+    - SwiGLU和SiLU场景约束：
       - 仅支持MXFP8，x1和y支持FLOAT8_E4M3FN/FLOAT8_E5M2，WeightNZ x2仅支持FLOAT8_E4M3FN。
       - x1不支持转置，即transposeX1必须为false；x2支持转置和不转置。
-      - 原始N必须为正数且是64的倍数；bias按原始N传入，y的N维度为原始N/2。
+      - SwiGLU的原始N必须为正数且是64的倍数；bias按原始N传入，y的N维度为原始N/2。
+      - SiLU的原始N须大于1，无额外对齐要求；bias按原始N传入，y保留完整N列，不做N/2 split。
       - scaleAlg仅支持取值0和1，roundMode仅支持{"rint"}。
     - MXFP4场景约束（x1、x2、y数据类型均为FLOAT4_E2M1）：
       - x1不支持转置，即transposeX1不能为true。
@@ -622,7 +626,7 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-x1为FLOAT8_E4M3FN，x2为FLOAT8_E4M3FN（NZ格式），x1Scale为FLOAT8_E8M0，x2Scale为FLOAT8_E8M0，激活为gelu_tanh，scaleAlg为0（场景1）。
+x1为FLOAT8_E4M3FN，x2为FLOAT8_E4M3FN（NZ格式），x1Scale为FLOAT8_E8M0，x2Scale为FLOAT8_E8M0，激活为GELU（tanh），scaleAlg为0（场景1）。
 
   ```cpp
   #include <iostream>

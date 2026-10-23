@@ -192,14 +192,8 @@ std::tuple<at::Tensor, at::Tensor> quant_matmul_activation_quant(
         output = at::empty(output_size, at::TensorOptions().dtype(x1.scalar_type()).device(x1.device()));
     }
 
-    at::Tensor scale;
-    if (activation_type == "swiglu") {
-        scale = at::empty(scale_size, at::TensorOptions().dtype(c10::ScalarType::Float8_e8m0fnu).device(x1.device()));
-    } else {
-        // Preserve GELU's existing scale initialization, including padding groups.
-        auto scaleCpu = at::zeros(scale_size, at::TensorOptions().dtype(c10::ScalarType::Float8_e8m0fnu));
-        scale = scaleCpu.to(at::TensorOptions().device(x1.device()));
-    }
+    at::Tensor scale = at::empty(scale_size,
+                                 at::TensorOptions().dtype(c10::ScalarType::Float8_e8m0fnu).device(x1.device()));
 
     TensorWrapper output_wrapper = {output, output_acltype};
     TensorWrapper scale_wrapper = {scale, aclDataType::ACL_FLOAT8_E8M0};

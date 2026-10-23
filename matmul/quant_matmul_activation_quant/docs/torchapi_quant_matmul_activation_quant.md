@@ -25,7 +25,9 @@
 
 - 接口功能：
 
-  融合量化的矩阵乘、激活以及动态量化，按x2格式封装ND或WeightNZ接口。当前支持激活为gelu和swiglu、MX量化模式。输入`x1`、`x2`为FP8或FP4量化矩阵，必选输入`x2_scale`、`x1_scale`为MX量化缩放因子，`bias`为偏置项；矩阵乘结果经激活函数后做动态量化，输出量化结果`y`和量化尺度`y_scale`。Torch的逻辑视图固定按`(..., M, K)`和`(..., K, N)`传入；FP4在PyTorch侧以uint8双元素打包，连续非转置布局的被打包轴物理长度减半，转置布局则由stride决定被打包轴，由C++桥接层恢复逻辑维度。M/N/K不通过相等维度猜测转置，ACLNN根据最后两维stride处理转置视图。
+  融合量化的矩阵乘、激活以及动态量化，按x2格式封装ND或WeightNZ接口。当前支持激活为GELU、SwiGLU和SiLU、MX量化模式。输入`x1`、`x2`为FP8或FP4量化矩阵，必选输入`x2_scale`、`x1_scale`为MX量化缩放因子，`bias`为偏置项；矩阵乘结果经激活函数后做动态量化，输出量化结果`y`和量化尺度`y_scale`。Torch的逻辑视图固定按`(..., M, K)`和`(..., K, N)`传入；FP4在PyTorch侧以uint8双元素打包，连续非转置布局的被打包轴物理长度减半，转置布局则由stride决定被打包轴，由C++桥接层恢复逻辑维度。M/N/K不通过相等维度猜测转置，ACLNN根据最后两维stride处理转置视图。
+
+各激活的FP8/FP4、ND/WeightNZ、转置及输出宽度限制见[激活能力对照表](../README.md#激活能力对照表)。表中的`transposeX1/X2`在本接口中通过Tensor及对应scale的转置视图表达。
 
 - 计算公式：
 
@@ -39,23 +41,25 @@
 
   - 激活计算公式：
 
-    - gelu_tanh（高性能近似）：
+    - GELU（tanh，高性能近似）：
     $$
     activationOut=GELU(matmulOut)=matmulOut × Φ(matmulOut)=0.5 * matmulOut * (1 + tanh( \sqrt{2 / \pi} * (matmulOut + 0.044715 * matmulOut^{3})))
     $$
 
-    - gelu_erf：
+    - GELU（erf）：
     $$
     activationOut=GELU(matmulOut)=0.5 * matmulOut * (1 + erf(matmulOut / \sqrt{2}))
     $$
 
-    - swiglu：原始N必须为正数且是64的倍数。先在完整FP32矩阵乘结果上加bias，再沿尾轴按`matmulOut=[gate | linear]`连续等分：
+    - SwiGLU：原始N必须为正数且是64的倍数。先在完整FP32矩阵乘结果上加bias，再沿尾轴按`matmulOut=[gate | linear]`连续等分：
 
     $$
     activationOut=SiLU(gate) * linear
     $$
 
     SwiGLU结果以RNE舍入为BF16后执行MX量化，输出宽度为原始N的二分之一。
+
+    - SiLU：逐元素计算`SiLU(matmulOut)`（`SiLU(x) = x * sigmoid(x)`），结果以RNE舍入为BF16后执行MX量化，输出保留原始N列。
 
   - 动态量化计算公式：
 
@@ -164,7 +168,7 @@ cann_ops_nn.quant_matmul_activation_quant(x1, x2, x2_scale, *, x1_scale=None, bi
 | `x1scale_dtype` | int | 可选 | `x1_scale`的数据类型枚举值。不传入时根据`x1_scale`的scalar_type自动推导。 | int | - |
 | `x2scale_dtype` | int | 可选 | `x2_scale`的数据类型枚举值。不传入时根据`x2_scale`的scalar_type自动推导。 | int | - |
 | `group_sizes` | List[int] | 可选 | 分组量化大小`[groupSizeM, groupSizeN, groupSizeK]`，每个元素取值范围为[0, 65535]。 | list | `(3,)` |
-| `activation_type` | str | 可选 | 激活函数类型，支持`"gelu_tanh"`、`"gelu_erf"`、`"swiglu"`，默认值`"gelu_tanh"`。 | string | - |
+| `activation_type` | str | 可选 | 激活函数类型，支持`"gelu_tanh"`、`"gelu_erf"`、`"swiglu"`、`"silu"`，默认值`"gelu_tanh"`。 | string | - |
 | `quant_mode` | str | 可选 | 量化模式，当前支持`"mx"`，默认值`"mx"`。 | string | - |
 | `round_mode` | str | 可选 | 舍入模式。当`output_dtype`为FLOAT4_E2M1时，支持`"rint"`、`"floor"`、`"round"`；当`output_dtype`为FLOAT8_E4M3FN/FLOAT8_E5M2时，仅支持`"rint"`。默认值`"rint"`。 | string | - |
 | `scale_alg` | int | 可选 | 缩放算法。当`output_dtype`为FLOAT4_E2M1时，支持取值0和2，0表示场景1，2表示场景3（开启`dst_type_max`）；当`output_dtype`为FLOAT8_E4M3FN/FLOAT8_E5M2时，支持取值0和1，0表示场景1，1表示场景2。默认值0。 | int | - |
@@ -174,8 +178,8 @@ cann_ops_nn.quant_matmul_activation_quant(x1, x2, x2_scale, *, x1_scale=None, bi
 
 | 输出名 | 输出类型 | 可选/必选 | 描述 | 数据类型 | 维度(shape) |
 | --- | --- | --- | --- | --- | --- |
-| `y` | Tensor | 必选 | 动态量化后的矩阵乘及激活计算结果。 | torch.float8_e4m3fn、torch.float8_e5m2、torch.uint8（FP4双元素打包，显式dtype=296） | GELU：`(..., M, N)`；SwiGLU：`(..., M, N/2)` |
-| `y_scale` | Tensor | 必选 | 动态量化后每个分组对应的量化尺度，最后一维固定为2。 | torch.float8_e8m0fnu | `(..., M, CeilDiv(H, 64), 2)`，GELU时H=N，SwiGLU时H=N/2 |
+| `y` | Tensor | 必选 | 动态量化后的矩阵乘及激活计算结果。 | torch.float8_e4m3fn、torch.float8_e5m2、torch.uint8（FP4双元素打包，显式dtype=296） | GELU和SiLU：`(..., M, N)`；SwiGLU：`(..., M, N/2)` |
+| `y_scale` | Tensor | 必选 | 动态量化后每个分组对应的量化尺度，最后一维固定为2。 | torch.float8_e8m0fnu | `(..., M, CeilDiv(H, 64), 2)`，GELU和SiLU时H=N，SwiGLU时H=N/2 |
 
 ## 约束说明
 
@@ -195,8 +199,8 @@ cann_ops_nn.quant_matmul_activation_quant(x1, x2, x2_scale, *, x1_scale=None, bi
 - `x1_scale`、`x2_scale`必须传入，其batch维度（除最后三维外的维度）的数量和每一维的值必须与对应的`x1`、`x2`完全一致；对应输入为2D时，该输入的scale须为3D。
 - `x1_scale`、`x2_scale`最后一维必须为2。
 - `group_sizes`若传入，必须包含三个元素`[groupSizeM, groupSizeN, groupSizeK]`，每个元素取值范围为[0, 65535]，当前MX场景仅支持[0, 0, 0]、[1, 1, 32]。
-- GELU和SwiGLU的输出类型都必须与`x1_dtype`或`x1`的逻辑数据类型一致。
-- 下表列出支持的数据类型组合；SwiGLU仅支持其中的FP8组合：
+- GELU、SwiGLU和SiLU的输出类型都必须与`x1_dtype`或`x1`的逻辑数据类型一致。
+- 下表列出支持的数据类型组合；SwiGLU和SiLU仅支持其中的FP8组合：
 
   | x1            | x2            | x1_scale   |  x2_scale    | bias             | y                         | y_scale      |
   |---------------|---------------|-------------|-------------|------------------|---------------------------|-------------|
@@ -272,6 +276,36 @@ cann_ops_nn.quant_matmul_activation_quant(x1, x2, x2_scale, *, x1_scale=None, bi
     print("y_scale: ", y_scale.cpu())
     ```
 
+  - SiLU FP8场景示例（ND，N=65）：
+
+    SiLU输出为`y=[..., M, N]`、`y_scale=[..., M, ceil(N/64), 2]`。本例取N=65，展示输出保留全部65列，无需满足SwiGLU的64倍数限制。
+
+    ```python
+    import torch
+    import torch_npu
+    import cann_ops_nn
+
+    m, k, n = 5, 64, 65
+    x1 = torch.randn(m, k, dtype=torch.float32).to(torch.float8_e4m3fn).npu()
+    x2 = torch.randn(k, n, dtype=torch.float32).to(torch.float8_e4m3fn).npu()  # 保持ND格式
+
+    scale_k = (k + 63) // 64
+    # E8M0的字节编码127表示1.0；分别构造x1、x2的单位scale。
+    x1_scale = torch.full((m, scale_k, 2), 127, dtype=torch.uint8).view(torch.float8_e8m0fnu).npu()
+    x2_scale = torch.full((scale_k, n, 2), 127, dtype=torch.uint8).view(torch.float8_e8m0fnu).npu()
+
+    y, y_scale = torch.ops.cann_ops_nn.quant_matmul_activation_quant(
+        x1, x2, x2_scale, x1_scale=x1_scale, bias=None,
+        activation_type="silu", quant_mode="mx", round_mode="rint",
+        scale_alg=1, dst_type_max=0.0)
+
+    # SiLU不做N/2 split：y为(5, 65)，y_scale为(5, 2, 2)。
+    assert tuple(y.shape) == (m, n)
+    assert tuple(y_scale.shape) == (m, (n + 63) // 64, 2)
+    print("y shape:", tuple(y.shape))
+    print("y_scale shape:", tuple(y_scale.shape))
+    ```
+
   - FP4场景示例：
 
     ```python
@@ -307,12 +341,12 @@ cann_ops_nn.quant_matmul_activation_quant(x1, x2, x2_scale, *, x1_scale=None, bi
 
 - 原始`N`必须为正数且是64的倍数；输出宽度`N/2`可有32列尾块。
 - `x1`、`x2`为E4M3FN或E5M2，`y`的数据类型必须与`x1`一致；输入和输出scale为E8M0。
-- `x2`支持ND或WeightNZ；WeightNZ场景`x2`仅支持E4M3FN。`transpose_x1=false`，`transpose_x2`支持false或true；不支持MXFP4。
+- `x2`支持ND或WeightNZ，具体数据类型和转置组合见[激活能力对照表](../README.md#激活能力对照表)。
 - `bias`可为空；非空时为FP32`[N]`，三维输出场景还支持`[B,1,N]`。bias在split之前作用于完整原始N宽度，不接受`[N/2]`。
 - 输入rank为2～6，batch轴右对齐广播；scale的batch维必须与对应输入一致。
 - `quant_mode="mx"`、`round_mode="rint"`、`scale_alg=0/1`；group size为默认值或`[1,1,32]`。
 
-SwiGLU输出形状为`y=[...,M,N/2]`、`y_scale=[...,M,ceil((N/2)/64),2]`。GELU输出宽度仍为N。两个32元素量化组构成一个64元素scale存储组，末尾不足的元素不写入y。
+SwiGLU输出形状为`y=[...,M,N/2]`、`y_scale=[...,M,ceil((N/2)/64),2]`。GELU和SiLU输出宽度仍为N。两个32元素量化组构成一个64元素scale存储组，末尾不足的元素不写入y。
 
 ND与WeightNZ接口约束分别见[aclnnQuantMatmulActivationQuant](aclnnQuantMatmulActivationQuant.md)和[aclnnQuantMatmulActivationQuantWeightNz](aclnnQuantMatmulActivationQuantWeightNz.md)。
 

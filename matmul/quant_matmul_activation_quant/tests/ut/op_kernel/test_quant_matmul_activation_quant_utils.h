@@ -220,7 +220,7 @@ private:
         param.n = ParseU32(fields[index++]);
         param.k = ParseU32(fields[index++]);
         const auto activation = ut_str::Trim(fields[index++]);
-        const std::vector<std::string> activations = {"gelu_tanh", "gelu_erf", "swiglu"};
+        const std::vector<std::string> activations = {"gelu_tanh", "gelu_erf", "swiglu", "silu"};
         const auto found = std::find(activations.begin(), activations.end(), activation);
         if (found == activations.end()) {
             throw std::runtime_error("invalid activationType: " + activation);
@@ -278,9 +278,9 @@ private:
         constexpr uint64_t c0 = 32;
         constexpr uint64_t blockCube = 16;
         if (param.transB) {
-            return AlignUp(param.k, c0) * param.n;
+            return AlignUp(param.k, c0) * AlignUp(param.n, blockCube);
         }
-        return param.n * AlignUp(param.k, blockCube);
+        return AlignUp(param.n, c0) * AlignUp(param.k, blockCube);
     }
 
     static uint64_t WeightNzOffset(const QuantMatmulActivationQuantKernelTestParam& param, uint32_t k, uint32_t n)
@@ -289,7 +289,8 @@ private:
         constexpr uint64_t blockCube = 16;
         if (param.transB) {
             // ZN backing order: [ceil(K/32), ceil(N/16), 16, 32].
-            return (k % c0) + (k / c0) * c0 * param.n + (n % blockCube) * c0 + (n / blockCube) * blockCube * c0;
+            return (k % c0) + (k / c0) * c0 * AlignUp(param.n, blockCube) + (n % blockCube) * c0 +
+                   (n / blockCube) * blockCube * c0;
         }
         // NZ backing order: [ceil(N/32), ceil(K/16), 16, 32].
         const uint64_t alignedK = AlignUp(param.k, blockCube);
@@ -303,18 +304,20 @@ private:
                 std::string::npos) {
             throw std::runtime_error("caseName must be a nonempty GoogleTest parameter name");
         }
-        const bool e4m3 = param.kernelUtTarget == "QMMAQ_E4M3" && param.inputDtype == 36 && param.outputDtype == 36;
-        const bool e5m2 = param.kernelUtTarget == "QMMAQ_E5M2" && param.inputDtype == 36 && param.outputDtype == 35;
+        const bool e4m3 = param.kernelUtTarget == "QMMAQ_E4M3" && param.inputDtype == 36 && param.weightDtype == 35 &&
+                          param.outputDtype == 36;
+        const bool e5m2 = param.kernelUtTarget == "QMMAQ_E5M2" && param.inputDtype == 35 && param.weightDtype == 36 &&
+                          param.outputDtype == 35;
         const bool e5m2Gelu = param.kernelUtTarget == "QMMAQ_E5M2_GELU" && param.inputDtype == 35 &&
-                              param.outputDtype == 35;
+                              param.weightDtype == 35 && param.outputDtype == 35;
         const bool e4m3WeightNz = IsWeightNz(param) && param.inputDtype == 36 && param.weightDtype == 36 &&
                                   param.outputDtype == 36;
-        const bool ndDtypes = (e4m3 || e5m2 || e5m2Gelu) && param.weightDtype == 35;
+        const bool ndDtypes = e4m3 || e5m2 || e5m2Gelu;
         if (param.socVersion != "Ascend950" || !(ndDtypes || e4m3WeightNz)) {
             throw std::runtime_error("socVersion/kernelUtTarget/dtypes do not match a compiled kernel specialization");
         }
-        if (IsWeightNz(param) && param.activation != 2) {
-            throw std::runtime_error("WeightNZ kernel cases must use SwiGLU");
+        if (IsWeightNz(param) && param.activation != 2 && param.activation != 3) {
+            throw std::runtime_error("WeightNZ kernel cases must use SwiGLU or SiLU");
         }
         if (param.m == 0 || param.n == 0 || param.k == 0 || param.blocks == 0 || param.scaleAlg > 1 ||
             param.biasMode > 2 || (param.activation == 2 && param.n % 64 != 0) ||
@@ -331,12 +334,16 @@ private:
         const uint64_t batches = BatchCount(batchC);
         const uint64_t width = param.activation == 2 ? param.n / 2 : param.n;
         if (param.dataPattern != "batch_constant" && param.dataPattern != "coordinate" &&
-            param.dataPattern != "subnormal_bias" && param.dataPattern != "gate_subnormal") {
+            param.dataPattern != "subnormal_bias" && param.dataPattern != "gate_subnormal" &&
+            param.dataPattern != "activation_bias") {
             throw std::runtime_error("invalid dataPattern");
         }
         if ((param.dataPattern == "subnormal_bias" || param.dataPattern == "gate_subnormal") &&
             (param.activation != 2 || param.biasMode == 0)) {
             throw std::runtime_error("subnormal_bias/gate_subnormal requires SwiGLU with bias");
+        }
+        if (param.dataPattern == "activation_bias" && param.biasMode == 0) {
+            throw std::runtime_error("activation_bias requires bias");
         }
         const uint64_t expectedRows = batches * (param.dataPattern == "coordinate" ? param.m : 1);
         if (param.expectedY.size() != expectedRows * width ||
@@ -356,7 +363,7 @@ private:
             throw std::runtime_error("invalid baseM/baseN/baseK/kL1/scaleKL1/nBufferNum/dbL0C/mTailTile/nTailTile");
         }
         uint64_t resourceBaseN = param.baseN;
-        if (IsWeightNz(param)) {
+        if (IsWeightNz(param) && param.activation == 2) {
             const uint64_t halfN = param.n / 2;
             const uint64_t outputBaseN = std::min<uint64_t>(param.baseN / 2, halfN);
             resourceBaseN = outputBaseN * 2;
@@ -460,16 +467,22 @@ private:
     template <int BATCHMODE>
     static Entry GetKernelEntry(const QuantMatmulActivationQuantKernelTestParam& item)
     {
-        // [SwiGLU][transposeX2][A full-load]. Match host kernel-type dispatch for each CSV case.
-        constexpr Entry entries[2][2][2] = {{{quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_GELU_NO_FULLLOAD>,
-                                              quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_GELU_FULLLOAD>},
-                                             {quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_GELU_NO_FULLLOAD>,
-                                              quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_GELU_FULLLOAD>}},
-                                            {{quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_SWIGLU_NO_FULLLOAD>,
-                                              quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_SWIGLU_FULLLOAD>},
-                                             {quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_SWIGLU_NO_FULLLOAD>,
-                                              quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_SWIGLU_FULLLOAD>}}};
-        return entries[item.activation == 2][item.transB][item.fullLoad];
+        // [epilogue][transposeX2][A full-load]. Match host dispatch for each CSV case.
+        constexpr Entry entries[3][2][2] = {
+            {{quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_NO_FULLLOAD, TPL_EPILOGUE_GELU>,
+              quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_A_FULLLOAD, TPL_EPILOGUE_GELU>},
+             {quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_NO_FULLLOAD, TPL_EPILOGUE_GELU>,
+              quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_A_FULLLOAD, TPL_EPILOGUE_GELU>}},
+            {{quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_NO_FULLLOAD, TPL_EPILOGUE_SWIGLU>,
+              quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_A_FULLLOAD, TPL_EPILOGUE_SWIGLU>},
+             {quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_NO_FULLLOAD, TPL_EPILOGUE_SWIGLU>,
+              quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_A_FULLLOAD, TPL_EPILOGUE_SWIGLU>}},
+            {{quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_NO_FULLLOAD, TPL_EPILOGUE_SILU>,
+              quant_matmul_activation_quant<0, 0, BATCHMODE, TPL_A_FULLLOAD, TPL_EPILOGUE_SILU>},
+             {quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_NO_FULLLOAD, TPL_EPILOGUE_SILU>,
+              quant_matmul_activation_quant<0, 1, BATCHMODE, TPL_A_FULLLOAD, TPL_EPILOGUE_SILU>}}};
+        const uint32_t activationIndex = item.activation == 2 ? 1U : (item.activation == 3 ? 2U : 0U);
+        return entries[activationIndex][item.transB][item.fullLoad];
     }
 
 public:
@@ -536,11 +549,12 @@ public:
         const bool varied = item.dataPattern == "coordinate";
         const bool subnormal = item.dataPattern == "subnormal_bias";
         const bool gateSubnormal = item.dataPattern == "gate_subnormal";
+        const bool activationBias = item.dataPattern == "activation_bias";
         for (uint32_t batch = 0; batch < batchA; ++batch) {
             for (uint32_t row = 0; row < item.m; ++row) {
                 const size_t rowIndex = static_cast<size_t>(batch) * item.m + row;
                 for (uint32_t k = 0; k < item.k; ++k) {
-                    x1.Data()[rowIndex * item.k + k] = (subnormal || gateSubnormal) ?
+                    x1.Data()[rowIndex * item.k + k] = (subnormal || gateSubnormal || activationBias) ?
                                                            0 :
                                                            (varied ? variedA[(batch + row + 2 * k) % 3] :
                                                                      aValues[batch % 3]);
@@ -575,6 +589,12 @@ public:
         auto* biasData = reinterpret_cast<float*>(bias.Data());
         for (uint32_t batch = 0; batch < biasBatches; ++batch) {
             for (uint32_t n = 0; n < item.n; ++n) {
+                if (activationBias) {
+                    // Zero matmul isolates activation behavior, including negative and saturated sigmoid inputs.
+                    constexpr std::array<float, 8> values = {0.0F, -1.0F, 1.0F, -20.0F, 20.0F, -90.0F, 90.0F, -0.0F};
+                    biasData[static_cast<size_t>(batch) * item.n + n] = values[n % values.size()];
+                    continue;
+                }
                 if (subnormal) {
                     // Normal FP32 bias values yield nonzero BF16 subnormals after SiLU(gate=1) * linear.
                     const uint32_t group = n < item.n / 2 ? 0 : (n - item.n / 2) / 32;

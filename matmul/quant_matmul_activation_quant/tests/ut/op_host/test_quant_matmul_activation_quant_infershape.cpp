@@ -159,12 +159,20 @@ TEST_P(TestQuantMatmulActivationQuantInferShape, InferShapeFromCsv)
     gert::StorageShape x2Shape;
     x2Shape.MutableOriginShape() = param.x2;
     if (param.x2IsNz && param.x2.GetDimNum() >= 2UL) {
-        int64_t dim0 = param.x2.GetDim(param.x2.GetDimNum() - 2UL);
-        int64_t dim1 = param.x2.GetDim(param.x2.GetDimNum() - 1UL);
-        x2Shape.MutableStorageShape() = gert::Shape({dim0 / 16, dim1 / 16, 16, 16});
-        for (size_t i = 0UL; i < param.x2.GetDimNum() - 2UL; ++i) {
-            x2Shape.MutableStorageShape().SetDim(i, param.x2.GetDim(i));
+        const size_t batchDims = param.x2.GetDimNum() - 2UL;
+        const int64_t c0 = param.x2Dtype == ge::DT_FLOAT4_E2M1 ? 64 : 32;
+        const auto ceilDiv = [](int64_t value, int64_t alignment) {
+            return value < 0 ? value : value / alignment + (value % alignment != 0);
+        };
+        auto& storage = x2Shape.MutableStorageShape();
+        storage.SetDimNum(batchDims + 4UL);
+        for (size_t i = 0UL; i < batchDims; ++i) {
+            storage.SetDim(i, param.x2.GetDim(i));
         }
+        storage.SetDim(batchDims, ceilDiv(param.x2.GetDim(batchDims + 1UL), c0));
+        storage.SetDim(batchDims + 1UL, ceilDiv(param.x2.GetDim(batchDims), 16));
+        storage.SetDim(batchDims + 2UL, 16);
+        storage.SetDim(batchDims + 3UL, c0);
     } else {
         x2Shape.MutableStorageShape() = param.x2;
     }

@@ -93,7 +93,7 @@ ge::graphStatus QuantMatmulActivationQuantMXBasicAPITiling::UpdateTilingData()
 ge::graphStatus QuantMatmulActivationQuantMXBasicAPITiling::ValidateTilingData() const
 {
     const bool isSwiglu = tilingData_.activationType == QMMAQ::ActivationAlg::SWIGLU;
-    const uint64_t baseNAlign = isSwiglu ? SWIGLU_BASEN_ALIGN : GELU_BASEN_ALIGN;
+    const uint64_t baseNAlign = isSwiglu ? SWIGLU_BASEN_ALIGN : MX_BASEN_ALIGN;
     OP_TILING_CHECK(
         tilingData_.baseN % baseNAlign != 0,
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "baseN", std::to_string(tilingData_.baseN).c_str(),
@@ -104,7 +104,7 @@ ge::graphStatus QuantMatmulActivationQuantMXBasicAPITiling::ValidateTilingData()
     if (!isSwiglu && tilingData_.nTailTile != 0U) {
         const uint64_t ceilDiv = ops::CeilDiv(static_cast<uint64_t>(tilingData_.baseN),
                                               static_cast<uint64_t>(tilingData_.nTailTile));
-        OP_TILING_CHECK(ceilDiv % GELU_BASEN_ALIGN != 0,
+        OP_TILING_CHECK(ceilDiv % MX_BASEN_ALIGN != 0,
                         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "CeilDiv(baseN, nTailTile)",
                                                               std::to_string(ceilDiv).c_str(),
                                                               "CeilDiv(baseN, nTailTile) should be aligned to 32."),
@@ -145,18 +145,26 @@ void QuantMatmulActivationQuantMXBasicAPITiling::SetFinalTilingData()
     }
 }
 
-uint64_t QuantMatmulActivationQuantMXBasicAPITiling::GetKernelType() const
+uint64_t QuantMatmulActivationQuantMXBasicAPITiling::GetFullLoadMode() const
+{
+    return isAFullLoad_ ? TPL_A_FULLLOAD : TPL_NO_FULLLOAD;
+}
+
+uint64_t QuantMatmulActivationQuantMXBasicAPITiling::GetEpilogueType() const
 {
     if (tilingData_.activationType == QMMAQ::ActivationAlg::SWIGLU) {
-        return isAFullLoad_ ? TPL_SWIGLU_FULLLOAD : TPL_SWIGLU_NO_FULLLOAD;
+        return TPL_EPILOGUE_SWIGLU;
     }
-    return isAFullLoad_ ? TPL_GELU_FULLLOAD : TPL_GELU_NO_FULLLOAD;
+    if (tilingData_.activationType == QMMAQ::ActivationAlg::SILU) {
+        return TPL_EPILOGUE_SILU;
+    }
+    return TPL_EPILOGUE_GELU;
 }
 
 uint64_t QuantMatmulActivationQuantMXBasicAPITiling::GetTilingKey() const
 {
     return GET_TPL_TILING_KEY(static_cast<uint64_t>(inputParams_.transA), static_cast<uint64_t>(inputParams_.transB),
-                              GetBatchMode(), GetKernelType());
+                              GetBatchMode(), GetFullLoadMode(), GetEpilogueType());
 }
 
 uint64_t QuantMatmulActivationQuantMXBasicAPITiling::GetBatchMode() const

@@ -73,8 +73,7 @@ uint64_t QuantMatmulActivationQuantHelper<BaseT>::GetBaseNAlignSize(uint64_t inn
         // Scheduler tiles H=N/2; keep each main H tile aligned to a y_scale group.
         return SWIGLU_BASEN_ALIGN;
     }
-    return this->inputParams_.transB ? GELU_BASEN_ALIGN :
-                                       GetShapeWithDataType(innerAlignSize, this->inputParams_.bDtype);
+    return this->inputParams_.transB ? MX_BASEN_ALIGN : GetShapeWithDataType(innerAlignSize, this->inputParams_.bDtype);
 }
 
 template <typename BaseT>
@@ -116,7 +115,7 @@ void QuantMatmulActivationQuantHelper<BaseT>::CalculateCurrentPerf(uint64_t merg
     const uint64_t totalWindows = ops::CeilDiv(this->adaptiveWin_.nBlockCnt * this->adaptiveWin_.mBlockCnt,
                                                this->aicoreParams_.aicNum);
     newTailMain = ops::CeilAlign(ops::CeilDiv((mergeLen * this->adaptiveWin_.baseN + nTail), mergeLen + 1UL),
-                                 GELU_BASEN_ALIGN);
+                                 MX_BASEN_ALIGN);
     uint64_t newTailLast = mergeLen * (this->adaptiveWin_.baseN - newTailMain) + nTail;
     uint64_t newMainRound = 0UL;
     uint64_t newTailRound = 0UL;
@@ -163,7 +162,7 @@ void QuantMatmulActivationQuantHelper<BaseT>::GetOuterNAxisTailCnt(uint64_t& bas
     uint64_t tailWindows = totalWindows - mainWindows;
     uint64_t perfRes = mainWindows * baseN + tailWindows * nTail;
 
-    uint64_t baseTailCntMax = std::min((baseN - nTail) / GELU_BASEN_ALIGN, this->adaptiveWin_.nBlockCnt);
+    uint64_t baseTailCntMax = std::min((baseN - nTail) / MX_BASEN_ALIGN, this->adaptiveWin_.nBlockCnt);
     for (uint64_t mergeLen = 1UL; mergeLen < baseTailCntMax; ++mergeLen) {
         uint64_t newTailMain = 0UL;
         uint64_t curPerf = 0UL;
@@ -184,7 +183,7 @@ void QuantMatmulActivationQuantHelper<BaseT>::CalcTailBasicBlockAfullLoad()
     uint64_t nTileAlignValid = 1UL;
     if (this->adaptiveWin_.tailWinBlockCnt != 0UL) {
         while (this->CalUsedCoreNum(this->adaptiveWin_.mTailTile, (nTile + 1UL)) <= this->aicoreParams_.aicNum &&
-               ops::CeilDiv(this->adaptiveWin_.baseN, nTile + 1UL) >= GELU_BASEN_ALIGN) {
+               ops::CeilDiv(this->adaptiveWin_.baseN, nTile + 1UL) >= MX_BASEN_ALIGN) {
             nTile += 1UL;
             if (this->IsInValidWeighNzTailSplit(nTile, true)) {
                 continue;
@@ -220,7 +219,7 @@ uint64_t QuantMatmulActivationQuantHelper<BaseT>::GetTailSplitState(bool isPreSp
 template <typename BaseT>
 bool QuantMatmulActivationQuantHelper<BaseT>::IsAligned32(uint64_t value) const
 {
-    return value != 0 && value % GELU_BASEN_ALIGN == 0;
+    return value != 0 && value % MX_BASEN_ALIGN == 0;
 }
 
 template <typename BaseT>
@@ -371,12 +370,16 @@ bool QuantMatmulActivationQuantHelper<BaseT>::AnalyzeAttrs()
                                                       "activationType cannot be null"),
                 return false);
     std::string activationType(activationTypePtr);
-    OP_CHECK_IF(!(activationType == "gelu_tanh" || activationType == "gelu_erf" || activationType == "swiglu"),
+    OP_CHECK_IF(!(activationType == "gelu_tanh" || activationType == "gelu_erf" || activationType == "swiglu" ||
+                  activationType == "silu"),
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(this->inputParams_.opName, "activationType", activationType,
-                                                      "activationType must be one of gelu_tanh, gelu_erf, or swiglu."),
+                                                      "activationType must be one of gelu_tanh, gelu_erf, swiglu, or "
+                                                      "silu."),
                 return false);
     if (activationType == "swiglu") {
         activationType_ = QMMAQ::ActivationAlg::SWIGLU;
+    } else if (activationType == "silu") {
+        activationType_ = QMMAQ::ActivationAlg::SILU;
     } else if (activationType == "gelu_erf") {
         activationType_ = QMMAQ::ActivationAlg::ERF;
     } else {
@@ -506,7 +509,7 @@ bool QuantMatmulActivationQuantHelper<BaseT>::CheckDtype() const
     auto yDtype = outDesc->GetDataType();
     auto yScaleDtype = outScaleDesc->GetDataType();
 
-    bool isFp8 = IsFp8Dtype(this->inputParams_.aDtype) && IsFp8Dtype(this->inputParams_.bDtype);
+    bool isMxFp8 = IsFp8Dtype(this->inputParams_.aDtype) && IsFp8Dtype(this->inputParams_.bDtype);
     bool isFp4 = IsFp4Dtype(this->inputParams_.aDtype) && IsFp4Dtype(this->inputParams_.bDtype);
     OP_CHECK_IF(
         this->context_->GetOptionalInputShape(BIAS_INDEX) != nullptr && this->inputParams_.biasDtype != ge::DT_FLOAT,
@@ -515,7 +518,7 @@ bool QuantMatmulActivationQuantHelper<BaseT>::CheckDtype() const
             ge::TypeUtils::DataTypeToSerialString(this->inputParams_.biasDtype).c_str(),
             "the dtype of bias must be FLOAT"),
         return false);
-    if (activationType_ == QMMAQ::ActivationAlg::SWIGLU) {
+    if (activationType_ == QMMAQ::ActivationAlg::SWIGLU || activationType_ == QMMAQ::ActivationAlg::SILU) {
         const auto isNd = [](const auto* desc) {
             return desc != nullptr && ge::GetPrimaryFormat(desc->GetStorageFormat()) == ge::FORMAT_ND;
         };
@@ -532,16 +535,17 @@ bool QuantMatmulActivationQuantHelper<BaseT>::CheckDtype() const
                           !isNd(this->context_->GetOptionalInputDesc(BIAS_INDEX))) ||
                          (this->inputParams_.transA && x2Format == ge::FORMAT_FRACTAL_NZ)),
                     OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                        this->inputParams_.opName, "SwiGLU input formats", "unsupported",
-                        "SwiGLU requires ND x1/scales/outputs/bias and ND x2 or E4M3FN FRACTAL_NZ x2; "
-                        "transposeX1 is only supported with ND x2"),
+                        this->inputParams_.opName, "SwiGLU/SiLU input formats", "unsupported",
+                        "SwiGLU and SiLU require ND x1/scales/outputs/bias and ND x2 or E4M3FN "
+                        "FRACTAL_NZ x2; transposeX1 is only supported with ND x2"),
                     return false);
     }
 
-    OP_CHECK_IF(activationType_ == QMMAQ::ActivationAlg::SWIGLU && !isFp8,
-                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(this->inputParams_.opName, "x1, x2", "non-FP8",
-                                                       "SwiGLU MX only supports MXFP8 inputs"),
-                return false);
+    OP_CHECK_IF(
+        (activationType_ == QMMAQ::ActivationAlg::SWIGLU || activationType_ == QMMAQ::ActivationAlg::SILU) && !isMxFp8,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(this->inputParams_.opName, "x1, x2", "non-FP8",
+                                               "SwiGLU and SiLU MX only support MXFP8 inputs"),
+        return false);
 
     OP_CHECK_IF(yDtype != this->inputParams_.aDtype,
                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
@@ -553,7 +557,7 @@ bool QuantMatmulActivationQuantHelper<BaseT>::CheckDtype() const
                 return false);
 
     // 校验y的Dtype
-    if (isFp8) {
+    if (isMxFp8) {
         OP_CHECK_IF(yDtype != ge::DT_FLOAT8_E4M3FN && yDtype != ge::DT_FLOAT8_E5M2,
                     OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(this->inputParams_.opName, "y",
                                                           ge::TypeUtils::DataTypeToSerialString(yDtype).c_str(),
@@ -599,12 +603,12 @@ bool QuantMatmulActivationQuantHelper<BaseT>::CheckDtype() const
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(this->inputParams_.opName, "attrs", "null", "attrs cannot be null"),
         return false);
     const char* roundModePtr = attrs->template GetAttrPointer<char>(ATTR_INDEX_ROUND_MODE);
-    OP_CHECK_IF(isFp8 && roundMode_ != QMMAQ::MX_QUANT_ROUND_MODE::RINT,
+    OP_CHECK_IF(isMxFp8 && roundMode_ != QMMAQ::MX_QUANT_ROUND_MODE::RINT,
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(this->inputParams_.opName, "roundMode",
                                                       roundModePtr != nullptr ? roundModePtr : "null",
                                                       "roundMode must be rint for FP8 MX quantization."),
                 return false);
-    OP_CHECK_IF(scaleAlg_ == QMMAQ::QuantAlg::BLAS && !isFp8,
+    OP_CHECK_IF(scaleAlg_ == QMMAQ::QuantAlg::BLAS && !isMxFp8,
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(this->inputParams_.opName, "scaleAlg", "1",
                                                       "Output y must have an FP8 dtype for MX quantization when "
                                                       "scaleAlg is 1."),

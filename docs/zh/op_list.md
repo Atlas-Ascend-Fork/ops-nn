@@ -3226,7 +3226,7 @@
     <td>✓</td>
     <td>✓</td>
     <td>AI Core</td>
-    <td>完成量化的矩阵乘计算后计算Gelu激活再执行动态MX量化。</td>
+    <td>完成量化矩阵乘后计算GELU、SwiGLU或SiLU激活，再执行动态MX量化。</td>
   </tr>
   <tr>
     <td>matmul</td>

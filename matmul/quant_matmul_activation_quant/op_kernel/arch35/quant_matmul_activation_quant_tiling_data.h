@@ -29,6 +29,7 @@ enum class ActivationAlg : uint8_t {
     TANH = 0,
     ERF = 1,
     SWIGLU = 2,
+    SILU = 3,
 };
 
 enum class MX_QUANT_ROUND_MODE : uint8_t {

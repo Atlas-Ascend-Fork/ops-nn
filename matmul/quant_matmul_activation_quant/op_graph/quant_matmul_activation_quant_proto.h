@@ -18,8 +18,9 @@
 #include "graph/operator_reg.h"
 
 namespace ge {
+// clang-format off
 /**
-* @brief The fusion operator of QuantBatchMatmul, Gelu, SwiGLU and mxQuant.
+* @brief The fusion operator of QuantBatchMatmul, activation and mxQuant.
 
 * @par Inputs:
  * @li x1: A matrix tensor. Must be one of the following types: float8_e5m2, float8_e4m3fn, float4_e2m1 \n
@@ -54,7 +55,7 @@ z, 2), when the shape of x1 is (k, m), scale is (z, m, 2), where z = ceil(k / 64
 
 * @par Attributes:
 * @li transpose_x1: A bool. If true, changes the shape of "x1" from [m, k] to [k, m] before multiplication.
-* Default: false. For SwiGLU, true is supported with ND x2; WeightNZ x2 requires false.
+* Default: false. For SwiGLU and SiLU, true is supported with ND x2; WeightNZ x2 requires false.
 * @li transpose_x2: A bool. If true, changes the shape of "x2" from [k, n] to [n, k] before multiplication.
 * Default: false.
 * @li group_size: An optional Int. Indicating the ratio between pertoken_scale/scale and x1/x2 in group dequantization.
@@ -67,8 +68,8 @@ values in x1 along the k-dimension. \n
 * input shape, eg: group_size_m = m / scale_m （m % scale_m must be 0). \n
 * Final group_size_m, group_size_n, group_size_k should satisify following requirements: \n
 * In mx quantification, the supported final [group_size_m, group_size_n, group_size_k] combinations are [1, 1, 32]. \n
-* @li activation_type: An optional string. The activation algorithm to use: 'gelu_tanh', 'gelu_erf' or 'swiglu', default
-is 'gelu_tanh'.
+* @li activation_type: An optional string. The activation algorithm to use: 'gelu_tanh', 'gelu_erf', 'swiglu' or
+'silu', default is 'gelu_tanh'.
 * @li y_dtype: A Int. Declare the output dtype.
 * @li quant_mode: An optional string. Declare the quant mode.Support mx. Defaults to "mx".
 * @li round_mode: An optional string. Defaults to "rint".
@@ -79,8 +80,8 @@ value.Defaults to 0.
 
 
 * @par Outputs:
- * @li y: A matrix tensor. The data type is float8_e5m2, float8_e4m3fn, float4_e2m1. The format supports ND. For GELU,
- * the shape is (batch, m, n); for SwiGLU, the shape is (batch, m, n / 2). \n
+ * @li y: A matrix tensor. The data type is float8_e5m2, float8_e4m3fn, float4_e2m1. The format supports ND.
+ * The shape is (batch, m, n) for GELU and SiLU, or (batch, m, n / 2) for SwiGLU. \n
 * @li
 y_scale: An output tensor of type FLOAT8_E8M0. Shape needs to meet the following conditions: \n
 * - rank(mxscale) = rank(x) + 1.
@@ -97,15 +98,12 @@ y_scale: An output tensor of type FLOAT8_E8M0. Shape needs to meet the following
 * when the out shape is 3D.
 * @li Inputs does not support tensor with dimension size 0.
 * @li When x2 is ND format, x1 should be ND format.
-* @li When activation_type is 'swiglu', x1 and x2 must be FP8, x1 must be ND,
+* @li When activation_type is 'swiglu' or 'silu', x1 and x2 must be FP8, x1 must be ND,
 * x2 must be ND or FLOAT8_E4M3FN NZ; transpose_x1 is supported for ND x2 and must be false for WeightNZ x2;
-* y_dtype must match x1.
-* The pre-activation N must be positive and divisible by 64; round_mode must be 'rint'
-* and scale_alg must be 0 or 1. SwiGLU uses only the FP8 rows in the table below.
+* y_dtype must match x1; round_mode must be 'rint'; scale_alg must be 0 or 1.
+* For SwiGLU, the pre-activation N must be divisible by 64.
 * @li In mx quantification, when x1 type and x2 type are both float8_e4m3fn/float8_e5m2 and x1_scale/x2_scale types are
 float8_e8m0:
-*      - x1 and x2 inner axis (the last dimension of view shape, independent of transpose_x1/transpose_x2) must be even.
-*      - k must be greater than 2.
  *      - supported final [group_size_m, group_size_n, group_size_k] is [1, 1, 32].
  * @li In mx quantification, when x1 type and x2 type are both float4_e2m1 and x1_scale/x2_scale types are
  * float8_e8m0 (MXFP4 scenario):
@@ -123,36 +121,28 @@ format.
 * @li The following are the supported data type combinations by platform.
 
 * - Ascend 950PR&950DT products:
-*\n
-| x1                        | x2            | bias         | x1_scale   | x2_scale   | out                       |
-y_scale    | | :-----------------------: | :-----------: | :----------: | :---------: | :---------: |
-:-----------------------: | :---------: | | float8_e4m3fn             | float8_e4m3fn | null/float32 | float8_e8m0 |
-float8_e8m0 | float8_e4m3fn             | float8_e8m0 | | float8_e5m2               | float8_e5m2   | null/float32 |
-float8_e8m0 | float8_e8m0 | float8_e5m2               | float8_e8m0 | | float8_e4m3fn             | float8_e5m2   |
-null/float32 | float8_e8m0 | float8_e8m0 | float8_e4m3fn             | float8_e8m0 | | float8_e5m2               |
-float8_e4m3fn | null/float32 | float8_e8m0 | float8_e8m0 | float8_e5m2               | float8_e8m0 | | float4_e2m1 |
-float4_e2m1   | null/float32 | float8_e8m0 | float8_e8m0 | float4_e2m1               | float8_e8m0 |
-*\n
-
+*
+* | x1            | x2            | bias         | x1_scale    | x2_scale    | out           | y_scale     |
+* | :-----------: | :-----------: | :----------: | :---------: | :---------: | :-----------: | :---------: |
+* | float8_e4m3fn | float8_e4m3fn | null/float32 | float8_e8m0 | float8_e8m0 | float8_e4m3fn | float8_e8m0 |
+* | float8_e5m2   | float8_e5m2   | null/float32 | float8_e8m0 | float8_e8m0 | float8_e5m2   | float8_e8m0 |
+* | float8_e4m3fn | float8_e5m2   | null/float32 | float8_e8m0 | float8_e8m0 | float8_e4m3fn | float8_e8m0 |
+* | float8_e5m2   | float8_e4m3fn | null/float32 | float8_e8m0 | float8_e8m0 | float8_e5m2   | float8_e8m0 |
+* | float4_e2m1   | float4_e2m1   | null/float32 | float8_e8m0 | float8_e8m0 | float4_e2m1   | float8_e8m0 |
+*
 * - Ascend 950PR&950DT products with group_sizes scenarios, supported data type and shapes combinations:
-*\n
-| quantization      | x1 type                            | x1_scale type  | x1 shape      | x2 shape      | x2_scale
-shape                           | x1_scale shape                        | group_size      |
-|-------------------|------------------------------------|----------------|---------------|---------------|------------------------------------------|---------------------------------------|-----------------|
-| mx                | float8_e4m3fn/float8_e5m2          | float8_e8m0    | (batch, m, k) | (batch, n, k) | (n, ceil(k /
-64), 2)                     | (m, ceil(k / 64), 2)                  | [1, 1, 32]      | | mx                |
-float8_e4m3fn/float8_e5m2          | float8_e8m0    | (batch, m, k) | (batch, k, n) | (ceil(k / 64), n, 2) | (m, ceil(k
-/ 64), 2)                  | [1, 1, 32]      | | mx                | float8_e4m3fn/float8_e5m2          | float8_e8m0 |
-(batch, k, m) | (batch, k, n) | (ceil(k / 64), n, 2)                     | (ceil(k / 64), m, 2)                  | [1,
-1, 32]      | | mx                | float8_e4m3fn/float8_e5m2          | float8_e8m0    | (batch, k, m) | (batch, n, k)
-| (n, ceil(k / 64), 2)                     | (ceil(k / 64), m, 2)                  | [1, 1, 32]      |
-| mx                | float4_e2m1                       | float8_e8m0    | (batch, m, k) | (batch, k, n) | (ceil(k /
-64), n, 2)                     | (m, ceil(k / 64), 2)                  | [1, 1, 32]      | | mx                |
-float4_e2m1                       | float8_e8m0    | (batch, m, k) | (batch, n, k) | (n, ceil(k /
-64), 2)                     | (m, ceil(k / 64), 2)                  | [1, 1, 32]      |
-
-*\n
+*
+* | quantization | x1 type                   | x1_scale type | x1 shape      | x2 shape      | x2_scale shape       | x1_scale shape       | group_size |
+* | ------------ | ------------------------- | ------------- | ------------- | ------------- | -------------------- | -------------------- | ---------- |
+* | mx           | float8_e4m3fn/float8_e5m2 | float8_e8m0   | (batch, m, k) | (batch, n, k) | (n, ceil(k / 64), 2) | (m, ceil(k / 64), 2) | [1, 1, 32] |
+* | mx           | float8_e4m3fn/float8_e5m2 | float8_e8m0   | (batch, m, k) | (batch, k, n) | (ceil(k / 64), n, 2) | (m, ceil(k / 64), 2) | [1, 1, 32] |
+* | mx           | float8_e4m3fn/float8_e5m2 | float8_e8m0   | (batch, k, m) | (batch, k, n) | (ceil(k / 64), n, 2) | (ceil(k / 64), m, 2) | [1, 1, 32] |
+* | mx           | float8_e4m3fn/float8_e5m2 | float8_e8m0   | (batch, k, m) | (batch, n, k) | (n, ceil(k / 64), 2) | (ceil(k / 64), m, 2) | [1, 1, 32] |
+* | mx           | float4_e2m1               | float8_e8m0   | (batch, m, k) | (batch, k, n) | (ceil(k / 64), n, 2) | (m, ceil(k / 64), 2) | [1, 1, 32] |
+* | mx           | float4_e2m1               | float8_e8m0   | (batch, m, k) | (batch, n, k) | (n, ceil(k / 64), 2) | (m, ceil(k / 64), 2) | [1, 1, 32] |
+*
 */
+// clang-format on
 REG_OP(QuantMatmulActivationQuant)
     .INPUT(x1, TensorType({DT_FLOAT8_E5M2, DT_FLOAT8_E4M3FN, DT_FLOAT4_E2M1}))
     .INPUT(x2, TensorType({DT_FLOAT8_E5M2, DT_FLOAT8_E4M3FN, DT_FLOAT4_E2M1}))

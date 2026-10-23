@@ -13,8 +13,7 @@ from functools import lru_cache
 import ml_dtypes
 import numpy as np
 
-try:  # TTK resolves float8_e8m0 through en_dtypes; mirror it so binary_equal
-    # sees identical dtype strings on both sides (fallback keeps portability).
+try:  # Match TTK's native storage dtype, with an ml_dtypes fallback.
     from en_dtypes import float8_e8m0 as np_float8_e8m0
 except ModuleNotFoundError:  # pragma: no cover
     np_float8_e8m0 = ml_dtypes.float8_e8m0fnu
@@ -35,9 +34,9 @@ __spec__ = {
 
 def fp8_dtype(dtype):
     """Normalize GE dtype codes and framework dtype names."""
-    if dtype in (23, 35) or "e5m2" in str(dtype).lower():
+    if dtype in (23, 35, 291) or "e5m2" in str(dtype).lower():
         return "float8_e5m2"
-    if dtype in (24, 36) or "e4m3" in str(dtype).lower():
+    if dtype in (24, 36, 292) or "e4m3" in str(dtype).lower():
         return "float8_e4m3fn"
     raise ValueError("The MXFP8 reference requires E4M3FN or E5M2")
 
@@ -54,6 +53,7 @@ _FP32_TINY = np.float32(np.finfo(np.float32).tiny)
 # gets a zero reciprocal in the OCP kernel lineage (zeroScaleOnZeroExp=true).
 _MX_BF16_NORMAL_MIN = np.float64(2.0) ** -126
 _QUANTIZE_CHUNK_ELEMENTS = 1 << 20
+_MX_GROUP_SIZE = 32
 
 
 def _ftz_float32(value):
@@ -260,6 +260,11 @@ def _quantize_mx_fp4(values, scale_alg, round_mode, dst_type_max):
                 (127 - scale_codes.astype(np.int32))[..., None],
             )
         normalized = np.where(zero_reciprocal[..., None], 0.0, normalized)
+        # QuantizeFp4Vf multiplies the BF16 activation and reciprocal into a
+        # BF16 register before the FP4 cast. Preserve that rounding boundary:
+        # a tiny negative product may round to -0 here, whereas a direct FP64
+        # -> FP4 floor cast would incorrectly produce -0.5.
+        normalized = round_bfloat16(normalized)
         encoded = encode_fp4(normalized, round_mode)
         encoded[~finite] = np.uint8(0)
         quantized[row_start:row_end] = encoded.reshape(chunk_rows, padded_width)[
@@ -272,7 +277,15 @@ def _quantize_mx_fp4(values, scale_alg, round_mode, dst_type_max):
     )
 
 
-def quantize_mx(values, output_dtype, scale_alg=0, round_mode="rint", dst_type_max=0.0):
+def quantize_mx(
+    values,
+    output_dtype,
+    scale_alg=0,
+    round_mode="rint",
+    dst_type_max=0.0,
+    *,
+    zero_scale_on_zero_exp=True,
+):
     """Quantize FP32 values in 32-element groups, stored as ceil(N/64),2."""
     output_dtype = mx_dtype(output_dtype)
     if output_dtype == "float4_e2m1":
@@ -309,7 +322,7 @@ def quantize_mx(values, output_dtype, scale_alg=0, round_mode="rint", dst_type_m
         amax[~finite] = 0.0
         # A finite group whose members are all BF16 subnormals or zeros has a zero raw
         # BF16 exponent field. The OCP kernel lineage (zeroScaleOnZeroExp=true, used by
-        # the swiglu/gelu_mx epilogues) writes a zero reciprocal for such groups, so the
+        # the SwiGLU/GELU MX epilogues) writes a zero reciprocal for such groups, so the
         # whole group quantizes to zero. cuBLAS (scale_alg=1) keeps the computed scale.
         subnormal_group = np.logical_and(finite, amax < _MX_BF16_NORMAL_MIN)
         if scale_alg == 0:
@@ -330,9 +343,19 @@ def quantize_mx(values, output_dtype, scale_alg=0, round_mode="rint", dst_type_m
             blocks.astype(np.float64),
             (127 - codes.astype(np.int32))[..., None],
         )
-        normalized = np.where(zero_reciprocal[..., None], 0.0, normalized)
+        if scale_alg == 0 and not zero_scale_on_zero_exp:
+            # SiLU follows DynamicMxQuant: zero reciprocal when sharedExp == 0.
+            normalized = np.where(
+                codes[..., None] == 0, np.copysign(0.0, blocks), normalized
+            )
+        else:
+            normalized = np.where(zero_reciprocal[..., None], 0.0, normalized)
+        # GenScale emits a NaN reciprocal for any group containing Inf/NaN.
+        # E8M0 code 0xFF is NaN, not the finite exponent used by ldexp above:
+        # all members of that group become NaN before the FP8 SAT cast, which
+        # converts NaN to zero under the kernel's default CTRL[50] setting.
+        normalized[~finite] = np.nan
         encoded = encode_fp8(normalized, output_dtype)
-        encoded[~finite] = np.uint8(0x7F)
         quantized[row_start:row_end] = encoded.reshape(chunk_rows, padded_width)[
             :, :width
         ]
@@ -344,7 +367,7 @@ def quantize_mx(values, output_dtype, scale_alg=0, round_mode="rint", dst_type_m
 
 def _dequantize_operand(values, scales, k_axis):
     # Finite FP8 * E8M0 can exceed FP32 even when the scaled dot product is finite.
-    # Keep reference operands wide until the complete matmul result is rounded to FP32.
+    # Keep reference operands wide; round the accumulator at each MX group below.
     values = np.asarray(values, dtype=np.float64)
     scales = np.asarray(scales, dtype=np.float64)
     k = values.shape[k_axis]
@@ -370,7 +393,13 @@ def _dequantize_operand(values, scales, k_axis):
 def matmul_mx(
     x1, x2, x1_scale, x2_scale, bias=None, transpose_x1=False, transpose_x2=False
 ):
-    """Broadcast all batch axes; add the full-N FP32 bias before activation."""
+    """Accumulate MX K groups in FP32, initializing the first group with bias.
+
+    FP64 group dot products avoid premature operand dequantization overflow.
+    The running accumulator is rounded to FP32 after each 32-element MX group;
+    bias participates from the first group instead of being added after MatMul.
+    This models the accumulation boundary, not Cube's internal reduction tree.
+    """
     if x1_scale is None or x2_scale is None:
         raise ValueError("MX inputs require explicit x1_scale and x2_scale")
     x1, x2 = np.asarray(x1), np.asarray(x2)
@@ -384,19 +413,89 @@ def matmul_mx(
         b = np.swapaxes(b, -1, -2)
     if a.shape[-1] != b.shape[-2]:
         raise ValueError("The contraction dimensions must match")
-    result = np.matmul(a, b).astype(np.float32)
+    output_shape = np.broadcast_shapes(a.shape[:-2], b.shape[:-2]) + (
+        a.shape[-2],
+        b.shape[-1],
+    )
     if bias is not None:
         bias = np.asarray(bias, dtype=np.float32)
-        valid_shapes = [(result.shape[-1],)]
-        if result.ndim == 3:
-            valid_shapes.append((result.shape[0], 1, result.shape[-1]))
+        valid_shapes = [(output_shape[-1],)]
+        if len(output_shape) == 3:
+            valid_shapes.append((output_shape[0], 1, output_shape[-1]))
         if bias.shape not in valid_shapes:
             raise ValueError("Bias must be [N], or [B,1,N] for a rank-3 output")
-        result = result + bias
+        result = np.broadcast_to(bias, output_shape).copy()
+    else:
+        result = np.zeros(output_shape, dtype=np.float32)
+    with np.errstate(over="ignore", invalid="ignore"):
+        for start in range(0, a.shape[-1], _MX_GROUP_SIZE):
+            end = min(start + _MX_GROUP_SIZE, a.shape[-1])
+            partial = np.matmul(a[..., start:end], b[..., start:end, :])
+            partial += result
+            result = partial.astype(np.float32)
     return result
 
 
-def activate(values, activation_type):
+def _fma_float32(lhs, rhs, addend):
+    """Model one FP32 fused multiply-add, rather than two FP32 roundings."""
+    return (
+        np.asarray(lhs, dtype=np.float64) * np.asarray(rhs, dtype=np.float64)
+        + np.asarray(addend, dtype=np.float64)
+    ).astype(np.float32)
+
+
+def _erf_kernel_float32(values):
+    """Model arch35 gelu.h::ErfCallee for implementation-consistency testing.
+
+    Preserve the coefficient bit patterns, FP32 Horner FMA boundaries, and
+    exp-based large-argument branch. This is the kernel's approximation, not
+    a higher-accuracy replacement for math.erf.
+    """
+    values = np.asarray(values, dtype=np.float32)
+    split = np.array(0x3F8060FE, dtype=np.uint32).view(np.float32)
+    p_large = np.array(
+        [
+            0x38EB4C3A,
+            0xBAAE005B,
+            0x3C09919F,
+            0xBD24D99A,
+            0x3E235519,
+            0x3F69B4F9,
+            0x3F210A14,
+        ],
+        dtype=np.uint32,
+    ).view(np.float32)
+    p_small = np.array(
+        [
+            0x38B1E96A,
+            0xBA574D20,
+            0x3BAAD5EA,
+            0xBCDC1BE7,
+            0x3DE718AF,
+            0xBEC093AC,
+            0x3E0375D3,
+        ],
+        dtype=np.uint32,
+    ).view(np.float32)
+    magnitude = np.abs(values)
+    large = magnitude >= split
+    argument = np.where(large, magnitude, values * values)
+    polynomial = np.where(large, p_large[0], p_small[0])
+    for large_coeff, small_coeff in zip(p_large[1:], p_small[1:]):
+        polynomial = _fma_float32(
+            polynomial, argument, np.where(large, large_coeff, small_coeff)
+        )
+    tail = np.where(large, -magnitude, values)
+    polynomial = _fma_float32(polynomial, tail, tail)
+    exponent = polynomial * np.float32(math.log(2.0))
+    exp_value = _ftz_float32(np.exp(_ftz_float32(exponent)))
+    large_result = np.copysign(np.float32(1.0) - exp_value, values)
+    # Use the kernel's final LT selection so NaN follows its exp branch too.
+    return np.where(magnitude < split, polynomial, large_result)
+
+
+def activate(values, activation_type, *, kernel_erf=True):
+    """Apply activation; kernel_erf=False retains the math.erf diagnostic path."""
     values = np.asarray(values, dtype=np.float32)
     with np.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
         if activation_type == "swiglu":
@@ -413,22 +512,26 @@ def activate(values, activation_type):
             denom = np.float32(1.0) + exp_neg
             silu_gate = _div_ftz_float32(gate, denom)
             return silu_gate * linear
+        if activation_type == "silu":
+            # Match standalone SiLU: x / (1 + exp(-x)) with FP32 FTZ division.
+            exp_neg = _ftz_float32(np.exp(_ftz_float32(-values)))
+            denom = np.float32(1.0) + exp_neg
+            return _div_ftz_float32(values, denom)
         if activation_type == "gelu_tanh":
-            return (
-                0.5
-                * values
-                * (
-                    1
-                    + np.tanh(
-                        np.float32(math.sqrt(2 / math.pi))
-                        * (values + np.float32(0.044715) * values**3)
-                    )
-                )
+            # The equivalent sigmoid form avoids cancellation in 1 + tanh(x)
+            # for negative inputs; MX quantization can amplify that lost tail.
+            exponent = -np.float32(math.sqrt(8 / math.pi)) * (
+                values + np.float32(0.044715) * values**3
             )
+            exp_neg = _ftz_float32(np.exp(_ftz_float32(exponent)))
+            return _div_ftz_float32(values, np.float32(1.0) + exp_neg)
         if activation_type == "gelu_erf":
-            erf = np.vectorize(math.erf, otypes=[np.float32])(
-                values / np.float32(math.sqrt(2))
-            )
+            if kernel_erf:
+                erf = _erf_kernel_float32(values * np.float32(0.707106781))
+            else:
+                erf = np.vectorize(math.erf, otypes=[np.float32])(
+                    values / np.float32(math.sqrt(2))
+                )
             return 0.5 * values * (1 + erf)
     raise ValueError("Unsupported activation_type")
 
@@ -459,8 +562,11 @@ def reference(
     transpose_x1=False,
     transpose_x2=False,
 ):
-    if activation_type == "swiglu" and mx_dtype(output_dtype) == "float4_e2m1":
-        raise ValueError("SwiGLU requires MXFP8")
+    if (
+        activation_type in ("swiglu", "silu")
+        and mx_dtype(output_dtype) == "float4_e2m1"
+    ):
+        raise ValueError("SwiGLU and SiLU require MXFP8")
     matrix = matmul_mx(x1, x2, x1_scale, x2_scale, bias, transpose_x1, transpose_x2)
     activated = round_bfloat16(activate(matrix, activation_type))
     return quantize_mx(
@@ -469,6 +575,7 @@ def reference(
         scale_alg,
         round_mode=round_mode,
         dst_type_max=dst_type_max,
+        zero_scale_on_zero_exp=activation_type != "silu",
     )
 
 
@@ -606,12 +713,7 @@ def _unpack_fp4(value):
 
 
 def _raw_outputs(raw_y, raw_scale, dtype, torch_output=False, pack_fp4_output=False):
-    """Return quantized y codes and E8M0 scale bytes in storage dtypes.
-
-    TTK's default comparison then routes each output independently and reports
-    one precision per output: FP8 y through mix_tolerance on decoded values,
-    FP4 y and E8M0 y_scale through binary_equal on their raw codes.
-    """
+    """Keep native output encodings for the per-output ULP comparison."""
     dtype = mx_dtype(dtype)
     raw_y = np.ascontiguousarray(raw_y, dtype=np.uint8)
     raw_scale = np.ascontiguousarray(raw_scale, dtype=np.uint8)
@@ -646,40 +748,128 @@ def _raw_outputs(raw_y, raw_scale, dtype, torch_output=False, pack_fp4_output=Fa
     ]
 
 
-# Per-output precision standard for TTK's default comparison routing
-# (Spec.tolerance). y routes to mix_tolerance with the plain double-permille
-# standard: an element is off when its relative error exceeds 1 permille
-# (rtol=0.001, atol=0), and at most 1 permille of the elements may be off
-# (required_matched_ratio=0.999). For FP8 outputs an adjacent-code difference
-# already has a 3%-12% relative error, so the off-elements are exactly the
-# code mismatches and the standard reads as a bit-error rate. The plain
-# standard sets no outlier-magnitude cap, so max_abs_error_limit is the
-# unreachable decoded-value spread (2x the finite max: E4M3 896, E5M2
-# 114688); float('inf') is not usable because the metrics must survive the
-# CSV literal_eval round trip. NaN/Inf mismatches still fail unconditionally
-# (TTK built-in). FP4 y and y_scale route to binary_equal: every output code
-# and scale byte must match exactly, so a wrong scale algorithm cannot pass by
-# compensating the quantized values.
-_MX_TOLERANCE = {
-    "float4_e2m1": {"standard": "binary_equal"},
-    "float4_e2m1fn": {"standard": "binary_equal"},
-    "float8_e4m3fn": {
-        "rtol": 0.001,
-        "atol": 0.0,
-        "required_matched_ratio": 0.999,
-        "max_abs_error_limit": 896.0,
-    },
-    "float8_e5m2": {
-        "rtol": 0.001,
-        "atol": 0.0,
-        "required_matched_ratio": 0.999,
-        "max_abs_error_limit": 114688.0,
-    },
+_MX_ULP_DTYPES = {
+    "float4_e2m1": "float4_e2m1",
+    "float4_e2m1fn": "float4_e2m1",
+    "uint8": "packed_float4_e2m1",
+    "float8_e4m3fn": "float8_e4m3fn",
+    "float8_e5m2": "float8_e5m2",
+    "float8_e8m0": "float8_e8m0",
+    "float8_e8m0fnu": "float8_e8m0",
 }
 
 
+@lru_cache(maxsize=4)
+def _mx_ulp_table(dtype):
+    """ULP distances between codes; -1 denotes a NaN/Inf mismatch."""
+    codes = np.arange(256, dtype=np.uint8)
+    if dtype == "float8_e8m0":
+        ranks = codes.astype(np.int16)
+        with np.errstate(over="ignore"):
+            values = decode_e8m0(codes)
+    else:
+        sign = 8 if dtype == "float4_e2m1" else 128
+        magnitude = (codes & (sign - 1)).astype(np.int16)
+        # Ordered signed ranks merge +/-0 and avoid uint8 subtraction overflow.
+        ranks = np.where(codes & sign, -magnitude, magnitude)
+        values = decode_fp4(codes) if sign == 8 else decode_fp8(codes, dtype)
+    distances = np.abs(ranks[:, None] - ranks[None, :])
+    nonfinite = ~np.isfinite(values)
+    special = nonfinite[:, None] | nonfinite[None, :]
+    same_special = (values[:, None] == values[None, :]) | (
+        np.isnan(values[:, None]) & np.isnan(values[None, :])
+    )
+    distances[special] = -1
+    distances[special & same_special] = 0
+    return distances
+
+
+def _compare_mx_output(actual, golden, name):
+    """Require at least 99.9% of this output's elements to be within 1 ULP."""
+    if actual.shape != golden.shape:
+        return {
+            "pass": False,
+            "precision": 0.0,
+            "error_info": f"{name}: shape mismatch {actual.shape} != {golden.shape}",
+        }
+    dtype = _MX_ULP_DTYPES.get(str(golden.dtype).removeprefix("torch."))
+    actual_dtype = _MX_ULP_DTYPES.get(str(actual.dtype).removeprefix("torch."))
+    if (
+        dtype is None
+        or actual_dtype != dtype
+        or (name == "y_scale") != (dtype == "float8_e8m0")
+    ):
+        return {
+            "pass": False,
+            "precision": 0.0,
+            "error_info": f"{name}: unsupported or mismatched dtypes {actual.dtype}, {golden.dtype}",
+        }
+    packed = dtype == "packed_float4_e2m1"
+    table = _mx_ulp_table("float4_e2m1" if packed else dtype)
+    actual, golden = _mx_output_bytes(actual), _mx_output_bytes(golden)
+    elements_per_byte = 2 if packed else 1
+    total = actual.size * elements_per_byte
+    over_1ulp = nonfinite_mismatches = max_ulp = 0
+    diff_indices = []
+    for start in range(0, actual.size, _QUANTIZE_CHUNK_ELEMENTS):
+        a = actual[start : start + _QUANTIZE_CHUNK_ELEMENTS]
+        g = golden[start : start + _QUANTIZE_CHUNK_ELEMENTS]
+        if packed:
+            # E2E FP4 carries two logical elements per uint8, low nibble first.
+            a = np.stack((a & 0x0F, a >> 4), axis=-1).reshape(-1)
+            g = np.stack((g & 0x0F, g >> 4), axis=-1).reshape(-1)
+        distances = table[a, g]
+        over_1ulp += int(np.count_nonzero(distances > 1))
+        nonfinite_mismatches += int(np.count_nonzero(distances < 0))
+        max_ulp = max(max_ulp, int(np.max(distances, initial=0)))
+        if len(diff_indices) < 20:
+            indices = np.flatnonzero((distances > 1) | (distances < 0))
+            diff_indices.extend(
+                (indices[: 20 - len(diff_indices)] + start * elements_per_byte).tolist()
+            )
+    # Integer arithmetic keeps exactly 1/1000 inclusive, even for small outputs.
+    passed = nonfinite_mismatches == 0 and over_1ulp * 1000 <= total
+    result = {
+        "pass": passed,
+        "precision": 100.0 * (1 - (over_1ulp + nonfinite_mismatches) / total)
+        if total
+        else 100.0,
+        "diff_indices": diff_indices,
+        "metrics": {
+            "max_ulp": max_ulp,
+            "over_1ulp_count": over_1ulp,
+            "over_1ulp_ratio": over_1ulp / total if total else 0.0,
+            "nonfinite_mismatch_count": nonfinite_mismatches,
+            "element_count": total,
+        },
+    }
+    if not passed:
+        result["error_info"] = (
+            f"{name}: {over_1ulp}/{total} elements exceed 1 ULP (limit 0.001); "
+            f"NaN/Inf mismatches: {nonfinite_mismatches}"
+        )
+    return result
+
+
+def _mx_output_bytes(value):
+    """Preserve native codes for NumPy outputs and ACLNN CPU Torch tensors."""
+    if isinstance(value, np.ndarray):
+        return np.ascontiguousarray(value).view(np.uint8).reshape(-1)
+    import torch
+
+    return value.detach().cpu().contiguous().view(torch.uint8).numpy().reshape(-1)
+
+
+def compare_mx_outputs(y, y_scale, golden_y, golden_y_scale, **kwargs):
+    """Apply the same independent y/y_scale criterion to GELU, SwiGLU and SiLU."""
+    return [
+        _compare_mx_output(y, golden_y, "y"),
+        _compare_mx_output(y_scale, golden_y_scale, "y_scale"),
+    ]
+
+
 class QuantMatmulActivationQuantTestSpec:
-    tolerance = _MX_TOLERANCE
+    compare = staticmethod(compare_mx_outputs)
 
     @staticmethod
     def golden(
@@ -704,8 +894,8 @@ class QuantMatmulActivationQuantTestSpec:
             raise ValueError("This TestSpec covers MX quantization")
         input_formats = kwargs.get("input_formats", ())
         if _is_fractal_nz(input_formats):
-            if activation_type == "swiglu" and transpose_x1:
-                raise ValueError("SwiGLU WeightNZ requires transpose_x1=false")
+            if activation_type in ("swiglu", "silu") and transpose_x1:
+                raise ValueError("SwiGLU and SiLU WeightNZ require transpose_x1=false")
             input_ori_shapes = kwargs.get("input_ori_shapes", ())
             if len(input_ori_shapes) <= 1 or input_ori_shapes[1] is None:
                 raise ValueError("WeightNZ kernel golden requires input_ori_shapes[1]")
@@ -726,7 +916,7 @@ class QuantMatmulActivationQuantTestSpec:
 
 
 class QuantMatmulActivationQuantAclnnTestSpec:
-    tolerance = _MX_TOLERANCE
+    compare = staticmethod(compare_mx_outputs)
 
     @staticmethod
     def golden(
@@ -764,8 +954,8 @@ class QuantMatmulActivationQuantAclnnTestSpec:
             dtype = str(yOut.dtype) if yOut is not None else str(x1.dtype)
         dtype = mx_dtype(dtype)
         if _is_fractal_nz(kwargs.get("tensor_formats", ())):
-            if activationType == "swiglu" and transposeX1:
-                raise ValueError("SwiGLU WeightNZ requires transpose_x1=false")
+            if activationType in ("swiglu", "silu") and transposeX1:
+                raise ValueError("SwiGLU and SiLU WeightNZ require transpose_x1=false")
             # TTK passes a logical x2 view backed by the physical NZ storage.
             # Recover and decode that storage before _numpy() copies the view.
             x2 = weight_nz_to_nd(x2, tuple(x2.shape), dtype)
@@ -783,7 +973,7 @@ class QuantMatmulActivationQuantAclnnTestSpec:
 
 
 class QuantMatmulActivationQuantE2ETestSpec:
-    tolerance = _MX_TOLERANCE
+    compare = staticmethod(compare_mx_outputs)
 
     @staticmethod
     def golden(

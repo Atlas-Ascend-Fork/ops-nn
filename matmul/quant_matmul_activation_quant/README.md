@@ -13,7 +13,9 @@
 
 ## 功能说明
 
-- 算子功能：融合量化的矩阵乘、激活以及动态量化，当前支持激活为gelu和swiglu、MX [量化模式](../../docs/zh/context/quant_mode_introduction.md)。支持FP8（FLOAT8_E4M3FN/FLOAT8_E5M2）和FP4（FLOAT4_E2M1）数据类型输入输出。x2支持ND和NZ两种数据格式，当x2为NZ格式时通过[aclnnQuantMatmulActivationQuantWeightNz](docs/aclnnQuantMatmulActivationQuantWeightNz.md)接口调用，当x2为ND格式时通过[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)接口调用。
+- 算子功能：融合量化的矩阵乘、激活以及动态量化，当前支持激活为GELU、SwiGLU和SiLU、MX [量化模式](../../docs/zh/context/quant_mode_introduction.md)。支持FP8（FLOAT8_E4M3FN/FLOAT8_E5M2）和FP4（FLOAT4_E2M1）数据类型输入输出。x2支持ND和NZ两种数据格式，当x2为NZ格式时通过[aclnnQuantMatmulActivationQuantWeightNz](docs/aclnnQuantMatmulActivationQuantWeightNz.md)接口调用，当x2为ND格式时通过[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)接口调用。
+
+各激活的数据类型、ND/WeightNZ格式、转置及输出形状限制见[激活能力对照表](#激活能力对照表)。
 
 - 计算公式：
 
@@ -29,23 +31,28 @@
 
     - 激活计算公式：
 
-      - gelu_tanh(高性能近似)：
-      $$
-      activationOut=GELU(matmulOut)=matmulOut × Φ(matmulOut)=0.5 * matmulOut * (1 + tanh( \sqrt{2 / \pi} * (matmulOut + 0.044715 * matmulOut^{3})))
-      $$
+      - GELU（tanh，高性能近似）：
 
-      - gelu_erf：
-      $$
-      activationOut=GELU(matmulOut)=0.5 * matmulOut * (1 + erf(matmulOut / \sqrt{2}))
-      $$
+        $$
+        activationOut=GELU(matmulOut)=matmulOut × Φ(matmulOut)=0.5 * matmulOut * (1 + tanh( \sqrt{2 / \pi} * (matmulOut + 0.044715 * matmulOut^{3})))
+        $$
 
-      - swiglu：原始N必须为正数且是64的倍数。先在完整FP32矩阵乘结果上加bias，再沿尾轴按`matmulOut=[gate | linear]`连续等分：
+      - GELU（erf）：
 
-      $$
-      activationOut=SiLU(gate) * linear
-      $$
+        $$
+        activationOut=GELU(matmulOut)=0.5 * matmulOut * (1 + erf(matmulOut / \sqrt{2}))
+        $$
 
-      SwiGLU结果以RNE舍入为BF16后执行MX量化，输出宽度为原始N的二分之一。
+      - SwiGLU：原始N必须为正数且是64的倍数。先在完整FP32矩阵乘结果上加bias，再沿尾轴按`matmulOut=[gate | linear]`连续等分：
+
+        $$
+        activationOut=SiLU(gate) * linear
+        $$
+
+        SwiGLU结果以RNE舍入为BF16后执行MX量化，输出宽度为原始N的二分之一。
+
+      - SiLU：在完整FP32矩阵乘结果上加bias，逐元素计算
+        `SiLU(matmulOut)`（`SiLU(x) = x * sigmoid(x)`），再以RNE舍入为BF16后执行MX量化。输出保留原始N列。
 
     - 动态量化计算公式：
 
@@ -142,6 +149,28 @@
 - `scale_alg=1`使用BLAS算法，按目标FP8最大有限值计算scale并将E8M0指数向上取整，可降低边界值量化溢出的风险。输入可能触及FP8表示边界且业务要求有限输出时，建议使用该算法。
 - 在相同输出dtype、32元素分组和`scale_alg`下，融合算子只是在量化前增加矩阵乘和激活，scale生成方式以及FP8转换规则与拆分调用小算子保持一致。
 
+## 激活能力对照表
+
+以下均为MX量化模式，`N`表示矩阵乘的原始输出宽度，`H`表示激活后的输出宽度。GELU包含`gelu_tanh`和`gelu_erf`，SwiGLU、SiLU分别对应`swiglu`、`silu`。
+
+| 激活 | 输入/输出类型 | x2格式 | transposeX1 | transposeX2 | 原始N约束 | 输出宽度H | scaleAlg | roundMode |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| GELU | FP8 | ND | false/true | false/true | N > 0，无额外对齐要求 | N | 0/1 | rint |
+| GELU | FP8 | WeightNZ | false/true | false/true | N > 1，无额外对齐要求 | N | 0/1 | rint |
+| GELU | FP4 | ND | false/true | false/true | 正偶数 | N | 0/2 | rint/floor/round |
+| GELU | FP4 | WeightNZ | false | false/true | 正偶数 | N | 0/2 | rint/floor/round |
+| SwiGLU | FP8 | ND | false/true | false/true | 正数且为64的倍数 | N/2 | 0/1 | rint |
+| SwiGLU | FP8 | WeightNZ | false | false/true | 正数且为64的倍数 | N/2 | 0/1 | rint |
+| SiLU | FP8 | ND | false/true | false/true | N > 0，无额外对齐要求，可为65 | N | 0/1 | rint |
+| SiLU | FP8 | WeightNZ | false | false/true | N > 1，无额外对齐要求，可为65 | N | 0/1 | rint |
+
+- **SiLU逐元素计算，不做N/2 split，输出保留完整N列；SwiGLU的N为64倍数限制不适用于SiLU。SwiGLU和SiLU均不支持FP4。**
+- FP8场景中，`x1`和`y`同为FLOAT8_E4M3FN或同为FLOAT8_E5M2；ND的`x2`可为这两种类型，WeightNZ的`x2`仅支持FLOAT8_E4M3FN。FP4场景中，`x1`、`x2`、`y`均为FLOAT4_E2M1。所有场景的输入和输出scale均为E8M0。
+- 输出逻辑shape统一为`y=[..., M, H]`、`y_scale=[..., M, ceil(H/64), 2]`。因此SiLU的`y_scale=[..., M, ceil(N/64), 2]`，N=65时为`[..., M, 2, 2]`；FP4在PyTorch侧的`y`按uint8双元素打包，物理尾轴为H/2。
+- 表中的`transposeX1/X2`为ACLNN参数，对应算子属性`transpose_x1/x2`；PyTorch API通过Tensor及对应scale的转置视图表达。WeightNZ还要求K > 1；FP4还要求K > 2且x1、x2的内轴为偶数。
+
+ND和WeightNZ分别通过[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)和[aclnnQuantMatmulActivationQuantWeightNz](docs/aclnnQuantMatmulActivationQuantWeightNz.md)调用；[PyTorch API](docs/torchapi_quant_matmul_activation_quant.md)按x2格式选择接口。
+
 ## 参数说明
 
 <table class="tg" style="undefined;table-layout: fixed; width: 1166px"><colgroup>
@@ -218,7 +247,7 @@
 | transpose_x1 | 表示x1的输入shape是否转置。 | false |
 | transpose_x2 | 表示x2的输入shape是否转置。 | false |
 | group_size | 用于输入m、n、k方向上的量化分组大小，由groupSizeM、groupSizeN、groupSizeK三个值拼接组成。当前MX场景仅支持[1, 1, 32]。 | 0 |
-| activation_type | 激活函数类型，支持"gelu_tanh"、"gelu_erf"和"swiglu"。 | "gelu_tanh" |
+| activation_type | 激活函数类型，支持"gelu_tanh"、"gelu_erf"、"swiglu"和"silu"。 | "gelu_tanh" |
 | y_dtype | 输出y的数据类型。 | DT_FLOAT8_E4M3FN |
 | quant_mode | 量化模式，当前支持"mx"。 | "mx" |
 | round_mode | 舍入模式。当y为FLOAT4_E2M1时支持"rint"、"floor"、"round"；当y为FLOAT8时仅支持"rint"。 | "rint" |
@@ -239,7 +268,7 @@
     | FLOAT4_E2M1   | FLOAT4_E2M1   | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT4_E2M1               | FLOAT8_E8M0 |
 
   - x2为FLOAT8_E5M2时仅支持ND格式，不支持NZ格式。
-  - GELU和SwiGLU场景y的数据类型都由x1的数据类型决定，两者必须保持一致；SwiGLU仅支持MXFP8，不支持MXFP4。
+  - GELU、SwiGLU和SiLU场景y的数据类型都由x1的数据类型决定，必须保持一致；SwiGLU和SiLU仅支持MXFP8，不支持MXFP4。
   - MXFP4场景约束（x1、x2、y数据类型均为FLOAT4_E2M1）：
     - scale_alg仅支持取值0和2。
     - 当scale_alg为2时，dst_type_max支持取值0.0和6.0-12.0。
@@ -263,11 +292,11 @@
 
 - 原始`N`必须为正数且是64的倍数；输出宽度`N/2`可有32列尾块。
 - `x1`、`x2`为E4M3FN或E5M2，`y`的数据类型必须与`x1`一致；输入和输出scale为E8M0。
-- `x2`支持ND或WeightNZ；WeightNZ场景`x2`仅支持E4M3FN。ND场景`transpose_x1`支持false或true；WeightNZ场景要求`transpose_x1=false`，`transpose_x2`支持false或true；不支持MXFP4。
+- `x2`支持ND或WeightNZ，具体数据类型和转置组合见[激活能力对照表](#激活能力对照表)。
 - `bias`可为空；非空时为FP32`[N]`，三维输出场景还支持`[B,1,N]`。bias在split之前作用于完整原始N宽度，不接受`[N/2]`。
 - 输入rank为2～6，batch轴右对齐广播；scale的batch维必须与对应输入一致。
 - `quant_mode="mx"`、`round_mode="rint"`、`scale_alg=0/1`；group size为默认值或`[1,1,32]`。
 
-SwiGLU输出形状为`y=[...,M,N/2]`、`y_scale=[...,M,ceil((N/2)/64),2]`。GELU输出宽度仍为N。两个32元素量化组构成一个64元素scale存储组，末尾不足的元素不写入y。
+SwiGLU输出形状为`y=[...,M,N/2]`、`y_scale=[...,M,ceil((N/2)/64),2]`。GELU和SiLU输出宽度仍为N。两个32元素量化组构成一个64元素scale存储组，末尾不足的元素不写入y。
 
 ND与WeightNZ接口约束分别见[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)和[aclnnQuantMatmulActivationQuantWeightNz](docs/aclnnQuantMatmulActivationQuantWeightNz.md)。

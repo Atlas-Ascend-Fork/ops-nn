@@ -80,6 +80,7 @@ __global__ __aicore__ void quant_batch_matmul_inplace_add(GM_ADDR x1, GM_ADDR x2
                                                           GM_ADDR x1_scale, GM_ADDR y, GM_ADDR workspace,
                                                           GM_ADDR tiling)
 {
+    AscendC::InitSocState();
     REGISTER_NONE_TILING;
 #if QBMMIA_IS_MX || QBMMIA_IS_HIF8
     if constexpr (TPL_KERNEL_TYPE == TPL_NO_VEC_EPILOGUE_WITH_MMAPI_WITHOUT_BATCH) {
@@ -98,4 +99,5 @@ __global__ __aicore__ void quant_batch_matmul_inplace_add(GM_ADDR x1, GM_ADDR x2
 #endif
     }
 #endif
+    AscendC::PipeBarrier<PIPE_ALL>();
 }

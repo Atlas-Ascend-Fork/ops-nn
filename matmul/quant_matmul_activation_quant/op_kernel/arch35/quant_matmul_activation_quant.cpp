@@ -10,7 +10,7 @@
 
 /*!
  * \file quant_matmul_activation_quant.cpp
- * \brief Ascend950 entry dispatch for GELU and SwiGLU MX quantization.
+ * \brief Ascend950 entry dispatch for GELU, SwiGLU and SiLU MX quantization.
  */
 #if ASC_DEVKIT_MAJOR >= 9
 #include "kernel_basic_intf.h"
@@ -66,7 +66,7 @@ struct QbmmAQLayoutBNz<1> {
 
 } // namespace
 
-template <int TPL_ATRANS, int TPL_BTRANS, int TPL_BATCHMODE, int TPL_KERNELTYPE>
+template <int TPL_ATRANS, int TPL_BTRANS, int TPL_BATCHMODE, int TPL_FULLLOADMODE, int TPL_EPILOGUETYPE>
 __global__ __aicore__ void quant_matmul_activation_quant(GM_ADDR x1, GM_ADDR x2, GM_ADDR bias, GM_ADDR x1_scale,
                                                          GM_ADDR x2_scale, GM_ADDR y, GM_ADDR y_scale,
                                                          GM_ADDR workspace, GM_ADDR tiling)
@@ -75,90 +75,41 @@ __global__ __aicore__ void quant_matmul_activation_quant(GM_ADDR x1, GM_ADDR x2,
     REGISTER_NONE_TILING;
 
     using LayoutA = typename QbmmAQLayoutA<TPL_ATRANS>::Type;
-    using LayoutBNd = typename QbmmAQLayoutBNd<TPL_BTRANS>::Type;
-    using LayoutBNz = typename QbmmAQLayoutBNz<TPL_BTRANS>::Type;
+#if defined(FORMAT_X2) && defined(FORMAT_FRACTAL_NZ) && FORMAT_X2 == FORMAT_FRACTAL_NZ
+    using LayoutB = typename QbmmAQLayoutBNz<TPL_BTRANS>::Type;
+#else
+    using LayoutB = typename QbmmAQLayoutBNd<TPL_BTRANS>::Type;
+#endif
 
-    {
-        if constexpr (TPL_BATCHMODE == TPL_WITH_BATCH) {
-            GET_TILING_DATA_WITH_STRUCT(QMMAQ::QMMAQTilingData, tilingData, tiling);
-#if defined(FORMAT_X2) && defined(FORMAT_FRACTAL_NZ) && FORMAT_X2 == FORMAT_FRACTAL_NZ
-            if constexpr (TPL_KERNELTYPE == TPL_GELU_NO_FULLLOAD) {
-                QuantMatmulGeluMxQuantKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNz,
-                                             asc::te::nd_ext_layout_ptn, Blaze::Gemm::NONE_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_GELU_FULLLOAD) {
-                QuantMatmulGeluMxQuantKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNz,
-                                             asc::te::nd_ext_layout_ptn, Blaze::Gemm::A_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_SWIGLU_NO_FULLLOAD) {
-                QuantMatmulSwiGluQuantMxKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNz,
-                                               asc::te::nd_ext_layout_ptn, Blaze::Gemm::NONE_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_SWIGLU_FULLLOAD) {
-                QuantMatmulSwiGluQuantMxKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNz,
-                                               asc::te::nd_ext_layout_ptn, Blaze::Gemm::A_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            }
-#else
-            if constexpr (TPL_KERNELTYPE == TPL_GELU_NO_FULLLOAD) {
-                QuantMatmulGeluMxQuantKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNd,
-                                             asc::te::nd_ext_layout_ptn, Blaze::Gemm::NONE_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_GELU_FULLLOAD) {
-                QuantMatmulGeluMxQuantKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNd,
-                                             asc::te::nd_ext_layout_ptn, Blaze::Gemm::A_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_SWIGLU_NO_FULLLOAD) {
-                QuantMatmulSwiGluQuantMxKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNd,
-                                               asc::te::nd_ext_layout_ptn, Blaze::Gemm::NONE_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_SWIGLU_FULLLOAD) {
-                QuantMatmulSwiGluQuantMxKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNd,
-                                               asc::te::nd_ext_layout_ptn, Blaze::Gemm::A_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            }
-#endif
-        } else if constexpr (TPL_BATCHMODE == TPL_WITHOUT_BATCH) {
-            GET_TILING_DATA_WITH_STRUCT(QMMAQ::QMMAQWithoutBatchTilingData, tilingData, tiling);
-#if defined(FORMAT_X2) && defined(FORMAT_FRACTAL_NZ) && FORMAT_X2 == FORMAT_FRACTAL_NZ
-            if constexpr (TPL_KERNELTYPE == TPL_GELU_NO_FULLLOAD) {
-                QuantMatmulGeluMxQuantWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNz,
-                                                         asc::te::nd_ext_layout_ptn, Blaze::Gemm::NONE_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_GELU_FULLLOAD) {
-                QuantMatmulGeluMxQuantWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNz,
-                                                         asc::te::nd_ext_layout_ptn, Blaze::Gemm::A_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_SWIGLU_NO_FULLLOAD) {
-                QuantMatmulSwiGluQuantMxWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNz,
-                                                           asc::te::nd_ext_layout_ptn,
-                                                           Blaze::Gemm::NONE_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_SWIGLU_FULLLOAD) {
-                QuantMatmulSwiGluQuantMxWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNz,
-                                                           asc::te::nd_ext_layout_ptn, Blaze::Gemm::A_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            }
-#else
-            if constexpr (TPL_KERNELTYPE == TPL_GELU_NO_FULLLOAD) {
-                QuantMatmulGeluMxQuantWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNd,
-                                                         asc::te::nd_ext_layout_ptn, Blaze::Gemm::NONE_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_GELU_FULLLOAD) {
-                QuantMatmulGeluMxQuantWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNd,
-                                                         asc::te::nd_ext_layout_ptn, Blaze::Gemm::A_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_SWIGLU_NO_FULLLOAD) {
-                QuantMatmulSwiGluQuantMxWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNd,
-                                                           asc::te::nd_ext_layout_ptn,
-                                                           Blaze::Gemm::NONE_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            } else if constexpr (TPL_KERNELTYPE == TPL_SWIGLU_FULLLOAD) {
-                QuantMatmulSwiGluQuantMxWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutBNd,
-                                                           asc::te::nd_ext_layout_ptn, Blaze::Gemm::A_FULL_LOAD_MODE>(
-                    x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
-            }
-#endif
+    if constexpr (TPL_BATCHMODE == TPL_WITH_BATCH) {
+        GET_TILING_DATA_WITH_STRUCT(QMMAQ::QMMAQTilingData, tilingData, tiling);
+        if constexpr (TPL_EPILOGUETYPE == TPL_EPILOGUE_GELU) {
+            QuantMatmulGeluMxQuantKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutB, asc::te::nd_ext_layout_ptn,
+                                         TPL_FULLLOADMODE>(x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace,
+                                                           &tilingData);
+        } else if constexpr (TPL_EPILOGUETYPE == TPL_EPILOGUE_SWIGLU) {
+            QuantMatmulSwiGluQuantMxKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutB, asc::te::nd_ext_layout_ptn,
+                                           TPL_FULLLOADMODE>(x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace,
+                                                             &tilingData);
+        } else if constexpr (TPL_EPILOGUETYPE == TPL_EPILOGUE_SILU) {
+            QuantMatmulSiluQuantMxKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutB, asc::te::nd_ext_layout_ptn,
+                                         TPL_FULLLOADMODE>(x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace,
+                                                           &tilingData);
+        }
+    } else if constexpr (TPL_BATCHMODE == TPL_WITHOUT_BATCH) {
+        GET_TILING_DATA_WITH_STRUCT(QMMAQ::QMMAQWithoutBatchTilingData, tilingData, tiling);
+        if constexpr (TPL_EPILOGUETYPE == TPL_EPILOGUE_GELU) {
+            QuantMatmulGeluMxQuantWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutB,
+                                                     asc::te::nd_ext_layout_ptn, TPL_FULLLOADMODE>(
+                x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
+        } else if constexpr (TPL_EPILOGUETYPE == TPL_EPILOGUE_SWIGLU) {
+            QuantMatmulSwiGluQuantMxWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutB,
+                                                       asc::te::nd_ext_layout_ptn, TPL_FULLLOADMODE>(
+                x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
+        } else if constexpr (TPL_EPILOGUETYPE == TPL_EPILOGUE_SILU) {
+            QuantMatmulSiluQuantMxWithoutBatchKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, LayoutA, LayoutB,
+                                                     asc::te::nd_ext_layout_ptn, TPL_FULLLOADMODE>(
+                x1, x2, bias, x1_scale, x2_scale, y, y_scale, workspace, &tilingData);
         }
     }
     AscendC::PipeBarrier<PIPE_ALL>();
