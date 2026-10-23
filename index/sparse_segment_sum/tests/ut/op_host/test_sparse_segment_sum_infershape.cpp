@@ -153,6 +153,64 @@ TEST_F(SparseSegmentSumInfershapeTest, sparse_segment_sum_infershape_non_const_s
     EXPECT_EQ(outputShape->GetDim(1), expectedDim1);
 }
 
+TEST_F(SparseSegmentSumInfershapeTest, sparse_segment_sum_infershape_empty_segment_ids)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("SparseSegmentSum")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape xShape = {{4, 8}, {4, 8}};
+    gert::StorageShape indicesShape = {{0}, {0}};
+    gert::Shape yShape = {};
+
+    std::unique_ptr<uint8_t[]> segmentIdsTensorHolder;
+    auto segmentIdsTensor = CreateConstTensor<int32_t>({}, ge::DT_INT32, segmentIdsTensorHolder);
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(kInputNum, kOutputNum)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&xShape, &indicesShape, segmentIdsTensor})
+                      .OutputShapes({&yShape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    auto outputShape = context->GetOutputShape(kOutputIndex);
+    ASSERT_NE(outputShape, nullptr);
+    EXPECT_EQ(*outputShape, gert::Shape({0, 8}));
+}
+
+TEST_F(SparseSegmentSumInfershapeTest, sparse_segment_sum_infershape_empty_int64_rank1)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("SparseSegmentSum")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::Shape xShape = {4};
+    gert::Shape indicesShape = {0};
+    gert::Shape segmentIdsShape = {0};
+    gert::Shape yShape = {};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(kInputNum, kOutputNum)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&xShape, &indicesShape, &segmentIdsShape})
+                      .OutputShapes({&yShape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    auto outputShape = context->GetOutputShape(kOutputIndex);
+    ASSERT_NE(outputShape, nullptr);
+    EXPECT_EQ(*outputShape, gert::Shape({0}));
+}
+
 TEST_F(SparseSegmentSumInfershapeTest, sparse_segment_sum_infershape_indices_not_1d)
 {
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("SparseSegmentSum")->infer_shape;
@@ -183,8 +241,8 @@ TEST_F(SparseSegmentSumInfershapeTest, sparse_segment_sum_infershape_indices_seg
     ASSERT_NE(inferShapeFunc, nullptr);
 
     gert::Shape xShape = {8, 16};
-    gert::Shape indicesShape = {3};
-    gert::Shape segmentIdsShape = {4};
+    gert::Shape indicesShape = {1};
+    gert::Shape segmentIdsShape = {0};
     gert::Shape yShape = {};
 
     auto holder = gert::InferShapeContextFaker()

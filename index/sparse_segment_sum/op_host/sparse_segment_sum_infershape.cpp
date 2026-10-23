@@ -236,8 +236,10 @@ static ge::graphStatus InferShapeForSparseSegmentSum(gert::InferShapeContext* co
     bool can_get_segment_ids = GetConstIntToShape<gert::InferShapeContext>(context, kInputIndex2, const_shape);
     gert::Shape dims_0_shape;
     dims_0_shape.SetDimNum(kNum1);
-    if (can_get_segment_ids) {
-        int64_t segment_ShapeSize = segment_ids_shape->GetShapeSize();
+    if (segment_ids_shape->GetShapeSize() == 0) {
+        dims_0_shape.SetDim(kOutputIndex0, 0);
+    } else if (can_get_segment_ids) {
+        const int64_t segment_ShapeSize = segment_ids_shape->GetShapeSize();
         const gert::Tensor* segment_ids_tensor = context->GetInputTensor(kInputIndex2);
         OPS_CHECK_NULL_WITH_CONTEXT(context, segment_ids_tensor);
         if (segment_ids_tensor->GetDataType() == DT_INT32) {
