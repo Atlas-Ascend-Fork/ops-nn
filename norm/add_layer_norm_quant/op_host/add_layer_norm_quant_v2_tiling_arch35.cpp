@@ -95,6 +95,16 @@ void AddLayerNormQuantV2RegbaseTiling::ComputeBinaryAddVars()
             this->binaryAddK_, this->binaryAddLastNum_);
 }
 
+// kernel 侧 bias 缓冲：IS_BIAS_ELEWISE 已按 BUFFER_NUM 份计入 inOut/elewise 队列；
+// IS_BIAS_BROADCAST 下 kernel 同样 InitBuffer 一份 bias（full-load 1 份、welford BUFFER_NUM 份），
+// 但 UB 记账原先只算 ELEWISE，导致 broadcast bias 的缓冲未计入 → UB 越界 → 设备 VEC_ERROR。
+// rank-1 bias 已在 GetShapeInfo 中并入 weightTensorNums_（作为一份 weight buffer），
+// 只有 rank>1 的 broadcast bias 需要在这里补一份，避免重复计数。
+int64_t AddLayerNormQuantV2RegbaseTiling::GetExtraBroadcastBiasBufNum() const
+{
+    return ((this->biasType_ == BIAS_TYPE::BROADCAST_BIAS) && (this->weightTensorNums_ == CONST_2)) ? 1 : 0;
+}
+
 void AddLayerNormQuantV2RegbaseTiling::ApplyFullLoadTilingResult(int64_t rowStep, int64_t binaryAddNum)
 {
     this->rowsPerLoop_ = (rowStep <= this->rowsPerCore_) ? rowStep : this->rowsPerCore_;
@@ -186,13 +196,20 @@ void AddLayerNormQuantV2RegbaseTiling::SetTilingDataAndTilingKeyAndWorkSpace(Add
 
 bool AddLayerNormQuantV2RegbaseTiling::DoTiling()
 {
+    // 流程类失败（真正的校验原因已由各子函数用 OP_LOGE_FOR_INVALID_* 上报），此处仅补充上下文，不再结构化上报
     OP_CHECK_IF((nullptr == context_),
-                OP_LOGE("AddLayerNormQuantRegbaseTiling", "Helper context_ get nullptr, return failed."), return false);
-    OP_CHECK_IF(!GetBaseInfo(), OP_LOGE(context_->GetNodeName(), "GetBaseInfo failed, return false"), return false);
-    OP_CHECK_IF(!GetShapeInfo(), OP_LOGE(context_->GetNodeName(), "GetShapeInfo failed, return false"), return false);
-    OP_CHECK_IF(!CheckDtype(), OP_LOGE(context_->GetNodeName(), "CheckDtype failed, return false"), return false);
-    OP_CHECK_IF(!DoBlockTiling(), OP_LOGE(context_->GetNodeName(), "DoBlockTiling failed, return false"), return false);
-    OP_CHECK_IF(!DoUbTiling(), OP_LOGE(context_->GetNodeName(), "DoUbTiling failed, return false"), return false);
+                OP_LOGE_WITHOUT_REPORT("AddLayerNormQuantRegbaseTiling", "Helper context_ get nullptr, return failed."),
+                return false);
+    OP_CHECK_IF(!GetBaseInfo(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetBaseInfo failed, return false"),
+                return false);
+    OP_CHECK_IF(!GetShapeInfo(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetShapeInfo failed, return false"),
+                return false);
+    OP_CHECK_IF(!CheckDtype(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "CheckDtype failed, return false"),
+                return false);
+    OP_CHECK_IF(!DoBlockTiling(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoBlockTiling failed, return false"),
+                return false);
+    OP_CHECK_IF(!DoUbTiling(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoUbTiling failed, return false"),
+                return false);
     OP_LOGW(context_->GetNodeName(), "Finish DoTiling");
     return true;
 }
@@ -220,7 +237,8 @@ bool AddLayerNormQuantV2RegbaseTiling::GetPlatformInfo()
         this->sysWorkspaceSize_ = compileInfo->sysWorkspaceSize_;
     } else {
         auto platformInfo = this->context_->GetPlatformInfo();
-        OP_CHECK_IF(nullptr == platformInfo, OP_LOGE(context_->GetNodeName(), "platform info is null"), return false);
+        OP_CHECK_IF(nullptr == platformInfo, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "platform info is null"),
+                    return false);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, this->ubSize_);
         this->aivCoreNum_ = ascendcPlatform.GetCoreNumAiv();
@@ -231,9 +249,11 @@ bool AddLayerNormQuantV2RegbaseTiling::GetPlatformInfo()
     this->vlFp32_ = this->vecRegSize_ / sizeof(float);
 
     OP_CHECK_IF((this->ubSize_ <= 0),
-                OP_LOGE(context_->GetNodeName(), "ubSize_ less or equal than zero, please check."), return false);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "ubSize_ less or equal than zero, please check."),
+                return false);
     OP_CHECK_IF((this->aivCoreNum_ <= 0),
-                OP_LOGE(context_->GetNodeName(), "socCoreNums_ less or equal than zero, please check."), return false);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "socCoreNums_ less or equal than zero, please check."),
+                return false);
 
     OP_LOGW("GetPlatformInfo", "aivCoreNum: %u, ubSize: %lu, blockSize: %u, vecRegSize: %u", this->aivCoreNum_,
             this->ubSize_, this->blockSize_, this->vecRegSize_);
@@ -243,10 +263,13 @@ bool AddLayerNormQuantV2RegbaseTiling::GetPlatformInfo()
 bool AddLayerNormQuantV2RegbaseTiling::GetAttrs()
 {
     auto attrs = context_->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE(context_->GetNodeName(), "Get attrs nullptr, return false."), return false);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Get attrs nullptr, return false."),
+                return false);
 
     const char* qms = attrs->GetAttrPointer<char>(QUANT_MODE_IDX);
-    OP_CHECK_IF(nullptr == qms, OP_LOGE(context_->GetNodeName(), "Get required attr quantMode failed, tiling failed"),
+    OP_CHECK_IF(nullptr == qms,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "quant_mode", "nullptr",
+                                                      "required attribute quant_mode must be provided"),
                 return false);
     std::string quantModeStr = qms;
     this->isDynamicQuant_ = (quantModeStr == "dynamic");
@@ -271,18 +294,19 @@ bool AddLayerNormQuantV2RegbaseTiling::GetAttrs()
 
 bool AddLayerNormQuantV2RegbaseTiling::GetBaseInfo()
 {
-    OP_CHECK_IF(!GetPlatformInfo(), OP_LOGE(context_->GetNodeName(), "GetPlatformInfo failed, return false"),
+    OP_CHECK_IF(!GetPlatformInfo(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetPlatformInfo failed, return false"), return false);
+    OP_CHECK_IF(!GetAttrs(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetAttrs failed, return false"),
                 return false);
-    OP_CHECK_IF(!GetAttrs(), OP_LOGE(context_->GetNodeName(), "GetAttrs failed, return false"), return false);
     return true;
 }
 
 bool AddLayerNormQuantV2RegbaseTiling::GetShapeInfo()
 {
-    OP_CHECK_IF((!CheckTensorAndAttr()), OP_LOGE(context_->GetNodeName(), "Check tensor shape and attr failed."),
-                return false);
-    OP_CHECK_IF((!CheckOptionalTensor()), OP_LOGE(context_->GetNodeName(), "Check optional tensor shape failed."),
-                return false);
+    OP_CHECK_IF((!CheckTensorAndAttr()),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check tensor shape and attr failed."), return false);
+    OP_CHECK_IF((!CheckOptionalTensor()),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check optional tensor shape failed."), return false);
     this->dataTypeX1_ = context_->GetInputTensor(X1_IDX)->GetDataType();
     this->dtSizeX1_ = GetSizeByDataType(this->dataTypeX1_);
     auto xShape = context_->GetInputShape(X1_IDX)->GetStorageShape();
@@ -317,18 +341,20 @@ bool AddLayerNormQuantV2RegbaseTiling::GetShapeInfo()
             this->dtSizeX1_, this->avgFactor_);
 
     if (this->isDynamicQuant_) {
-        OP_CHECK_IF(!GetShapeInfoDynamicQuant(), OP_LOGE(context_->GetNodeName(), "Check tensor shape failed."),
-                    return false);
+        OP_CHECK_IF(!GetShapeInfoDynamicQuant(),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check tensor shape failed."), return false);
     } else {
-        OP_CHECK_IF(!GetShapeInfoStaticQuant(), OP_LOGE(context_->GetNodeName(), "Check tensor shape failed."),
-                    return false);
+        OP_CHECK_IF(!GetShapeInfoStaticQuant(),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check tensor shape failed."), return false);
     }
     return true;
 }
 
 bool AddLayerNormQuantV2RegbaseTiling::GetShapeInfoStaticQuant()
 {
-    OP_CHECK_IF(!(this->scale1Exist_), OP_LOGE(context_->GetNodeName(), "Static Quant required at least one scale."),
+    OP_CHECK_IF(!(this->scale1Exist_),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context_->GetNodeName(), "scales1/scales2", "[false, false]",
+                                                       "static quant requires at least one of scales1 or scales2"),
                 return false);
 
     this->quantTensorNums_ = 1;
@@ -351,8 +377,13 @@ bool AddLayerNormQuantV2RegbaseTiling::GetShapeInfoStaticQuant()
                      (!this->scale2Exist_ && this->offset1Exist_ && !this->offset2Exist_) ||
                      (!this->scale2Exist_ && !this->offset1Exist_ && !this->offset2Exist_);
     OP_CHECK_IF(!validComb,
-                OP_LOGE(context_->GetNodeName(), "Bad scale_offset comb, get [s1, s2, z1, z2] = [1, %d, %d, %d]",
-                        this->scale2Exist_, this->offset1Exist_, this->offset2Exist_),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    context_->GetNodeName(), "scales2/zero_points1/zero_points2",
+                    (std::string("[") + (this->scale2Exist_ ? "true" : "false") + ", " +
+                     (this->offset1Exist_ ? "true" : "false") + ", " + (this->offset2Exist_ ? "true" : "false") + "]")
+                        .c_str(),
+                    "invalid scale/zero-point combination: (s2&&z1&&z2) || (s2&&!z1&&!z2) || (!s2&&z1&&!z2) || "
+                    "(!s2&&!z1&&!z2)"),
                 return false);
 
     this->quantTensorNums_ = ConditionalIncreaseOne(this->quantTensorNums_, this->scale2Exist_);
@@ -370,7 +401,13 @@ bool AddLayerNormQuantV2RegbaseTiling::GetShapeInfoDynamicQuant()
     this->quantTensorNums_ = 0;
 
     OP_CHECK_IF((this->offset1Exist_ || this->offset2Exist_),
-                OP_LOGE(context_->GetNodeName(), "Asymmetric quant not support in DynamicQuant yet."), return false);
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context_->GetNodeName(), "zero_points1/zero_points2",
+                                                       (std::string("[") + (this->offset1Exist_ ? "true" : "false") +
+                                                        ", " + (this->offset2Exist_ ? "true" : "false") + "]")
+                                                           .c_str(),
+                                                       "asymmetric quant (zero points) is not supported when "
+                                                       "quant_mode is 'dynamic'"),
+                return false);
 
     /*
         s1  s2  z1  z2      ok
@@ -384,8 +421,12 @@ bool AddLayerNormQuantV2RegbaseTiling::GetShapeInfoDynamicQuant()
     bool validComb = (this->scale1Exist_ && this->scale2Exist_) || (this->scale1Exist_ && !this->scale2Exist_) ||
                      (!this->scale1Exist_ && !this->scale2Exist_);
     OP_CHECK_IF(!validComb,
-                OP_LOGE(context_->GetNodeName(), "Bad scale_offset comb, get [s1, s2] = [%d, %d]", this->scale1Exist_,
-                        this->scale2Exist_),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    context_->GetNodeName(), "scales1/scales2",
+                    (std::string("[") + (this->scale1Exist_ ? "true" : "false") + ", " +
+                     (this->scale2Exist_ ? "true" : "false") + "]")
+                        .c_str(),
+                    "invalid scale combination for dynamic quant: (s1&&s2) || (s1&&!s2) || (!s1&&!s2)"),
                 return false);
 
     this->quantTensorNums_ = ConditionalIncreaseOne(this->quantTensorNums_, this->scale1Exist_);
@@ -423,8 +464,10 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckDynQuantFullLoadTiling()
     int64_t quantBufSize = this->colsAligned_ * this->quantTensorNums_ * this->dtSizeScale_;
     int64_t weightBufSize = this->colsAligned_ * this->weightTensorNums_ * this->dtSizeX1_;
 
+    // broadcast bias 在 kernel 中只申请 1 份（不随 bufferNum/rowStep 放大），作为固定开销扣除
+    int64_t broadcastBiasBufSize = GetExtraBroadcastBiasBufNum() * this->dtSizeX1_ * this->colsAligned_;
     int64_t ubAvaliable = static_cast<int64_t>(this->ubSize_) -
-                          (binaryAddUbSize + quantBufSize + weightBufSize + UB_RESERVED_BYTE);
+                          (binaryAddUbSize + quantBufSize + weightBufSize + broadcastBiasBufSize + UB_RESERVED_BYTE);
 
     // ele queues
     int64_t x1x2InCols = this->dtSizeX1_ * 1 + this->dtSizeX1_ * 1;
@@ -449,8 +492,8 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckDynQuantFullLoadTiling()
             outScalePoints, tmpXBufCols, tmpMeanRstdPoints);
 
     OP_LOGW("CheckDynQuantFullLoadTiling",
-            "ubAvaliable=%ld, binaryAddUbSize: %ld, quantBufSize: %ld, weightBufSize: %ld", ubAvaliable,
-            binaryAddUbSize, quantBufSize, weightBufSize);
+            "ubAvaliable=%ld, binaryAddUbSize: %ld, quantBufSize: %ld, weightBufSize: %ld, broadcastBiasBufSize: %ld",
+            ubAvaliable, binaryAddUbSize, quantBufSize, weightBufSize, broadcastBiasBufSize);
     OP_LOGW("CheckDynQuantFullLoadTiling", "inOutCols=%ld, rowFactor=%ld, rowStep: %ld, ret: %d", inOutCols, rowFactor,
             rowStep, ret);
     if (ret) {
@@ -467,6 +510,8 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckDynQuantWelfordTiling()
     int64_t elewiseSliceNums = this->bufferNum_ * this->dtSizeX1_ * (2 + 1) +
                                this->bufferNum_ * sizeof(int8_t) * this->outQuantNums_;
     elewiseSliceNums += (this->biasType_ == BIAS_TYPE::ELEWISE_BIAS) ? (this->bufferNum_ * this->dtSizeX1_ * 1) : 0;
+    // welford 的 broadcast bias 同样按 BUFFER_NUM 份申请
+    elewiseSliceNums += GetExtraBroadcastBiasBufNum() * (this->bufferNum_ * this->dtSizeX1_ * 1);
     // COUNT(meanBuf,varBuf) = 2, binaryAddBuf <= colSliceLen.
     int64_t tmpSliceNums = sizeof(float) * (this->bufferNum_ * this->outQuantNums_ + 1);
 
@@ -506,8 +551,10 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckStcQuantFullLoadTiling()
     int64_t quantBufSize = this->colsAligned_ * this->quantTensorNums_ * this->dtSizeScale_;
     int64_t weightBufSize = this->colsAligned_ * this->weightTensorNums_ * this->dtSizeX1_;
 
+    // broadcast bias 在 kernel 中只申请 1 份（不随 bufferNum/rowStep 放大），作为固定开销扣除
+    int64_t broadcastBiasBufSize = GetExtraBroadcastBiasBufNum() * this->dtSizeX1_ * this->colsAligned_;
     int64_t ubAvaliable = static_cast<int64_t>(this->ubSize_) -
-                          (binaryAddUbSize + quantBufSize + weightBufSize + UB_RESERVED_BYTE);
+                          (binaryAddUbSize + quantBufSize + weightBufSize + broadcastBiasBufSize + UB_RESERVED_BYTE);
     // COUNT(x1,x2) = 2, COUNT(y1,y2) = 2, COUNT(x,) = 1
     int64_t inOutCols = (this->dtSizeX1_ * 2 + sizeof(int8_t) * 2 + this->dtSizeX1_ * 1) * this->bufferNum_ *
                         this->colsAligned_;
@@ -520,8 +567,8 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckStcQuantFullLoadTiling()
 
     bool ret = (rowStep >= 1);
     OP_LOGW("CheckStcQuantFullLoadTiling",
-            "ubAvaliable=%ld, binaryAddUbSize: %ld, quantBufSize: %ld, weightBufSize: %ld", ubAvaliable,
-            binaryAddUbSize, quantBufSize, weightBufSize);
+            "ubAvaliable=%ld, binaryAddUbSize: %ld, quantBufSize: %ld, weightBufSize: %ld, broadcastBiasBufSize: %ld",
+            ubAvaliable, binaryAddUbSize, quantBufSize, weightBufSize, broadcastBiasBufSize);
     OP_LOGW("CheckStcQuantFullLoadTiling", "inOutCols=%ld, tmpBufsCols=%ld, rowFactor=%ld, rowStep: %ld, ret: %d",
             inOutCols, tmpBufsCols, rowFactor, rowStep, ret);
     if (ret) {
@@ -537,6 +584,8 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckStcQuantWelfordTiling()
     // COUNT(x1,x2) = 2, COUNT(y1,y2) = 2, COUNT(x,) = 1
     int64_t elewiseSliceNums = this->bufferNum_ * this->dtSizeX1_ * (2 + 1) + this->bufferNum_ * sizeof(int8_t) * 2;
     elewiseSliceNums += (this->biasType_ == BIAS_TYPE::ELEWISE_BIAS) ? (this->bufferNum_ * this->dtSizeX1_ * 1) : 0;
+    // welford 的 broadcast bias 同样按 BUFFER_NUM 份申请
+    elewiseSliceNums += GetExtraBroadcastBiasBufNum() * (this->bufferNum_ * this->dtSizeX1_ * 1);
     // COUNT(meanBuf,varBuf) = 2, binaryAddBuf <= colSliceLen.
     int64_t tmpSliceNums = sizeof(float) * (2 + 1);
 
@@ -742,7 +791,8 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckOptionalInputDtype(ge::DataType x1Dt
             return true;
         }
         auto desc = context_->GetOptionalInputDesc(idx);
-        OP_CHECK_IF(desc == nullptr, OP_LOGE(context_->GetNodeName(), "%s desc is nullptr", name), return false);
+        OP_CHECK_IF(desc == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "%s desc is nullptr", name),
+                    return false);
         auto dt = desc->GetDataType();
         // 四个可选输入各自 dtype 要么和 x1 一致，要么是 fp32
         if (dt != x1Dtype && dt != ge::DT_FLOAT) {
@@ -775,21 +825,24 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckDtype()
 
     // 获取主输入 dtype
     auto x1Desc = context_->GetInputDesc(X1_IDX);
-    OP_CHECK_IF(x1Desc == nullptr, OP_LOGE(context_->GetNodeName(), "x1 desc is nullptr"), return false);
+    OP_CHECK_IF(x1Desc == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "x1 desc is nullptr"), return false);
     ge::DataType x1Dtype = x1Desc->GetDataType();
     auto x2Desc = context_->GetInputDesc(X2_IDX);
-    OP_CHECK_IF(x2Desc == nullptr, OP_LOGE(context_->GetNodeName(), "x2 desc is nullptr"), return false);
+    OP_CHECK_IF(x2Desc == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "x2 desc is nullptr"), return false);
     ge::DataType x2Dtype = x2Desc->GetDataType();
     auto gammaDesc = context_->GetInputDesc(GAMMA_IDX);
-    OP_CHECK_IF(gammaDesc == nullptr, OP_LOGE(context_->GetNodeName(), "gamma desc is nullptr"), return false);
+    OP_CHECK_IF(gammaDesc == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "gamma desc is nullptr"),
+                return false);
     ge::DataType gammaDtype = gammaDesc->GetDataType();
     auto betaDesc = context_->GetInputDesc(BETA_IDX);
-    OP_CHECK_IF(betaDesc == nullptr, OP_LOGE(context_->GetNodeName(), "beta desc is nullptr"), return false);
+    OP_CHECK_IF(betaDesc == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "beta desc is nullptr"),
+                return false);
     ge::DataType betaDtype = betaDesc->GetDataType();
 
     // 校验 x1 支持的 dtype
     if (x1Dtype != ge::DT_FLOAT16 && x1Dtype != ge::DT_BF16 && x1Dtype != ge::DT_FLOAT) {
-        OP_LOGE(context_->GetNodeName(), "Unsupported x1 dtype: %s", Ops::Base::ToString(x1Dtype).c_str());
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x1", Ops::Base::ToString(x1Dtype).c_str(),
+                                              "x1 dtype must be float16, bfloat16 or float32");
         return false;
     }
 
@@ -807,7 +860,8 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckDtype()
     // 校验 bias（如果存在，必须和 x1 相同）
     if (this->biasType_ != BIAS_TYPE::NO_BIAS) {
         auto biasDesc = context_->GetOptionalInputDesc(BIAS_IDX);
-        OP_CHECK_IF(biasDesc == nullptr, OP_LOGE(context_->GetNodeName(), "bias desc is nullptr"), return false);
+        OP_CHECK_IF(biasDesc == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "bias desc is nullptr"),
+                    return false);
         ge::DataType biasDtype = biasDesc->GetDataType();
         if (biasDtype != x1Dtype) {
             OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
@@ -839,8 +893,8 @@ bool AddLayerNormQuantV2RegbaseTiling::CheckOutputDtype(ge::DataType x1Dtype)
             return true;
         }
         auto desc = context_->GetOutputDesc(idx);
-        OP_CHECK_IF(desc == nullptr, OP_LOGE(context_->GetNodeName(), "%s desc is nullptr", name.c_str()),
-                    return false);
+        OP_CHECK_IF(desc == nullptr,
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "%s desc is nullptr", name.c_str()), return false);
         auto dt = desc->GetDataType();
         if (dt != expected) {
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), name.c_str(),

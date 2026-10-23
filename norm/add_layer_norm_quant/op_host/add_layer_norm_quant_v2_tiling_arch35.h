@@ -74,6 +74,7 @@ private:
 
     void ComputeBinaryAddVars();
     void ApplyFullLoadTilingResult(int64_t rowStep, int64_t binaryAddNum);
+    int64_t GetExtraBroadcastBiasBufNum() const;
 
     bool CheckDtype();
     bool CheckOptionalInputDtype(ge::DataType x1Dtype);

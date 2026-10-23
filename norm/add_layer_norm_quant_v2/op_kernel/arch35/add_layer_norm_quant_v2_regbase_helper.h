@@ -21,6 +21,8 @@
 #include "kernel_operator.h"
 #include "../../add_layer_norm/arch35/add_layer_norm_regbase_common.h"
 #include "../../norm_common/reduce_common_regbase.h"
+// 本算子本地 x 加法结合序修正（(x1+x2)+bias，对齐 910 系与冻结 golden），不改共享 loader
+#include "add_layer_norm_quant_v2_regbase_residual.h"
 
 namespace AddLayerNormQuantRegbase {
 using namespace AddLayerNorm;
@@ -241,11 +243,11 @@ __aicore__ inline void VFCalcMeanVarFast(LocalTensor<X1_TYPE>& x1Local, LocalTen
         Duplicate(colsNum, colsNumFp, pregMain);
         for (uint16_t i = 0; i < rowsCount; i++) {
             if constexpr (IS_BIAS_BROADCAST) {
-                LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(localAddr.x1Addr, localAddr.x2Addr,
-                                                                       localAddr.biasAddr, x, pregLoop,
-                                                                       i * colsPerLoopAlign, i * colsPerLoopAlign, 0);
+                LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, x, pregLoop, i * colsPerLoopAlign,
+                    i * colsPerLoopAlign, 0);
             } else {
-                LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                     localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, x, pregLoop, i * colsPerLoopAlign,
                     i * colsPerLoopAlign, i * colsPerLoopAlign);
             }
@@ -330,19 +332,19 @@ __aicore__ inline void VFCalcMeanVar(LocalTensor<X1_TYPE>& x1Local, LocalTensor<
             for (uint16_t i = 0; i < (uint16_t)(binaryAddRemainderLoop - 1); i++) {
                 pregLoop = UpdateMask<float>(sreg0);
                 if constexpr (IS_BIAS_BROADCAST) {
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, binaryAddQ, pregLoop,
                         i * vlFp32 + k * colsPerLoopAlign, i * vlFp32 + k * colsPerLoopAlign, i * vlFp32);
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, binaryAddR, pregLoop,
                         i * vlFp32 + k * colsPerLoopAlign + binaryAddOffset,
                         i * vlFp32 + k * colsPerLoopAlign + binaryAddOffset, i * vlFp32 + binaryAddOffset);
                 } else {
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, binaryAddQ, pregLoop,
                         i * vlFp32 + k * colsPerLoopAlign, i * vlFp32 + k * colsPerLoopAlign,
                         i * vlFp32 + k * colsPerLoopAlign);
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, binaryAddR, pregLoop,
                         i * vlFp32 + k * colsPerLoopAlign + binaryAddOffset,
                         i * vlFp32 + k * colsPerLoopAlign + binaryAddOffset,
@@ -367,23 +369,23 @@ __aicore__ inline void VFCalcMeanVar(LocalTensor<X1_TYPE>& x1Local, LocalTensor<
             {
                 pregLoop = UpdateMask<float>(sreg0);
                 if constexpr (IS_BIAS_BROADCAST) {
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, binaryAddQ, pregMain,
                         (binaryAddRemainderLoop - 1) * vlFp32 + k * colsPerLoopAlign,
                         (binaryAddRemainderLoop - 1) * vlFp32 + k * colsPerLoopAlign,
                         (binaryAddRemainderLoop - 1) * vlFp32);
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, binaryAddR, pregLoop,
                         (binaryAddRemainderLoop - 1) * vlFp32 + k * colsPerLoopAlign + binaryAddOffset,
                         (binaryAddRemainderLoop - 1) * vlFp32 + k * colsPerLoopAlign + binaryAddOffset,
                         (binaryAddRemainderLoop - 1) * vlFp32 + binaryAddOffset);
                 } else {
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, binaryAddQ, pregMain,
                         (binaryAddRemainderLoop - 1) * vlFp32 + k * colsPerLoopAlign,
                         (binaryAddRemainderLoop - 1) * vlFp32 + k * colsPerLoopAlign,
                         (binaryAddRemainderLoop - 1) * vlFp32 + k * colsPerLoopAlign);
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, binaryAddR, pregLoop,
                         (binaryAddRemainderLoop - 1) * vlFp32 + k * colsPerLoopAlign + binaryAddOffset,
                         (binaryAddRemainderLoop - 1) * vlFp32 + k * colsPerLoopAlign + binaryAddOffset,
@@ -410,13 +412,13 @@ __aicore__ inline void VFCalcMeanVar(LocalTensor<X1_TYPE>& x1Local, LocalTensor<
             }
             for (uint16_t i = 0; i < static_cast<uint16_t>(binaryAddQuotientLoop - binaryAddRemainderLoop); i++) {
                 if constexpr (IS_BIAS_BROADCAST) {
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, x, pregMain,
                         (i + binaryAddRemainderLoop) * vlFp32 + k * colsPerLoopAlign,
                         (i + binaryAddRemainderLoop) * vlFp32 + k * colsPerLoopAlign,
                         (i + binaryAddRemainderLoop) * vlFp32);
                 } else {
-                    LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+                    LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
                         localAddr.x1Addr, localAddr.x2Addr, localAddr.biasAddr, x, pregMain,
                         (i + binaryAddRemainderLoop) * vlFp32 + k * colsPerLoopAlign,
                         (i + binaryAddRemainderLoop) * vlFp32 + k * colsPerLoopAlign,
@@ -547,7 +549,8 @@ __aicore__ inline void VFWelfordParallelUpdateCommon(LocalTensor<X1_TYPE>& x1Loc
         biasAddr = (__ubuf__ X1_TYPE*)biasLocal[0].GetPhyAddr();
     }
 
-    AddLayerNorm::VFWelfordParallelUpdateCommon<INIT, X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
+    // 本地副本：x 的加法结合序改为 (x1+x2)+bias，其余指令序列与共享实现一致
+    VFWelfordParallelUpdateX1X2First<INIT, X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(
         x1Addr, x2Addr, biasAddr, xOutAddr, tmpMeanAddr, tmpVarAddr, calLen, loopCount, scale);
 }
 

@@ -240,8 +240,8 @@ public:
             uint32_t sreg0 = colsCount;
             for (uint16_t i = 0; i < colsLoopCount; i++) {
                 pregLoop = UpdateMask<float>(sreg0);
-                LoadInputsToReg<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(x1Addr, x2Addr, biasAddr, x, pregLoop,
-                                                                       i * vlFp32, i * vlFp32, i * vlFp32);
+                LoadInputsToRegX1X2First<X1_TYPE, X1_TYPE, X1_TYPE, TILING_KEY>(x1Addr, x2Addr, biasAddr, x, pregLoop,
+                                                                                i * vlFp32, i * vlFp32, i * vlFp32);
                 LoadGammaBeta(gammaAddr, betaAddr, gamma, beta, pregLoop, i * vlFp32);
                 LoadQuantParams(scale1Addr, scale1, pregLoop, i * vlFp32);
                 CONST_CONDITIONAL_EXPR(IS_SCALE2_EXIST, LoadQuantParams(scale2Addr, scale2, pregLoop, i * vlFp32));
