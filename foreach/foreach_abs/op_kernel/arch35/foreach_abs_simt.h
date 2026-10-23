@@ -15,6 +15,9 @@
 
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
+#include "simt_api/math_functions.h"
+#include "simt_api/asc_fp16.h"
+#include "simt_api/asc_bf16.h"
 #include "foreach_abs_tiling_data.h"
 #include "foreach_abs_tiling_key.h"
 
@@ -28,17 +31,11 @@ template <typename T>
 struct AbsCompute {
     __simt_callee__ static inline T Compute(T val)
     {
-        return (val >= static_cast<T>(0)) ? val : (static_cast<T>(0) - val);
-    }
-};
-
-template <>
-struct AbsCompute<bfloat16_t> {
-    __simt_callee__ static inline bfloat16_t Compute(bfloat16_t val)
-    {
-        float f32 = static_cast<float>(val);
-        float absF32 = (f32 >= 0.0f) ? f32 : (0.0f - f32);
-        return static_cast<bfloat16_t>(absF32);
+        if constexpr (std::is_same<T, float>::value) {
+            return fabsf(val);
+        } else {
+            return __habs(val);
+        }
     }
 };
 
@@ -57,12 +54,16 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void OpForeachAbsSimtKern
 {
     __gm__ T* inputPtr = SimtGetTensorAddr<T>(xList, tensorId);
     __gm__ T* outputPtr = SimtGetTensorAddr<T>(yList, tensorId);
+    const IDX_T stride = static_cast<IDX_T>(AscendC::Simt::GetThreadNum() * AscendC::Simt::GetBlockNum());
     for (IDX_T localIdx = static_cast<IDX_T>(AscendC::Simt::GetBlockIdx() * AscendC::Simt::GetThreadNum() +
                                              AscendC::Simt::GetThreadIdx());
-         localIdx < elementCount;
-         localIdx += static_cast<IDX_T>(AscendC::Simt::GetThreadNum() * AscendC::Simt::GetBlockNum())) {
+         localIdx < elementCount;) {
         T val = inputPtr[localIdx];
         outputPtr[localIdx] = AbsCompute<T>::Compute(val);
+        if (elementCount - localIdx <= stride) {
+            break;
+        }
+        localIdx += stride;
     }
 }
 

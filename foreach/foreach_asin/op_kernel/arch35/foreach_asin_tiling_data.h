@@ -24,7 +24,7 @@ struct ForeachAsinTilingData {
     int32_t needCoreNum;                                             // 实际使用核数
     int64_t totalElements;                                           // 所有 tensor 的总元素数
     int64_t perCoreElements;                                         // 单核处理元素数
-    int32_t tensorNum;                                               // tensor 数量（1~256）
+    int32_t tensorNum;                                               // tensor 数量（0~256，0 表示空列表）
     int64_t tensorCumulativeOffset[FOREACH_ASIN_MAX_TENSOR_NUM + 1]; // 累计偏移量数组
 };
 

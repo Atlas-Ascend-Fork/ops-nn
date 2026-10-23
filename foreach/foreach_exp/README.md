@@ -55,7 +55,7 @@
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>表示进行指数运算的输出张量列表，对应公式中的`y`。该参数中所有Tensor的数据类型保持一致。当`x`的数据类型为INT16、INT8、UINT8时，数据类型为FLOAT32，其他情况下与入参`x`的数据类型一致。数据格式与入参`x`的数据格式一致，shape size大于等于入参`x`的shape size。</td>
+      <td>表示进行指数运算的输出张量列表，对应公式中的`y`。该参数中所有Tensor的数据类型保持一致。当`x`的数据类型为INT16、INT8、UINT8时，数据类型为FLOAT32，其他情况下与入参`x`的数据类型一致。数据格式与入参`x`的数据格式一致，shape size等于入参`x`的shape size。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -65,11 +65,17 @@
 
 ## 约束说明
 
-无
+- x/y中单个Tensor列表的Tensor数量不能超过256。
+- x与y的Tensor数量必须一致。
+- x中所有Tensor的数据类型必须一致。
+- y中对应位置的Tensor的数据类型：当x为INT16、INT8、UINT8时为FLOAT32，其他情况与x一致。
+- x/y中单个Tensor的维度取值范围为0-8维，超过时报错。
+- y中对应位置的Tensor的shape必须与x一致。
+- 支持空Tensor（元素数为0）。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| aclnn接口  | [test_aclnn_foreach_exp](examples/test_aclnn_foreach_exp.cpp) | 通过[aclnnForeachExp](docs/aclnnForeachExp.md)接口方式调用ForeachExp算子。 |
-| 图模式 | -  | 通过[算子IR](op_graph/foreach_exp_proto.h)构图方式调用ForeachExp算子。         |
+| aclnn API  | [test_aclnn_foreach_exp](examples/test_aclnn_foreach_exp.cpp) | 通过[aclnnForeachExp](docs/aclnnForeachExp.md)接口方式调用ForeachExp算子。 |
+| GE图模式 | -  | 通过[算子IR](op_graph/foreach_exp_proto.h)构图方式调用ForeachExp算子。         |

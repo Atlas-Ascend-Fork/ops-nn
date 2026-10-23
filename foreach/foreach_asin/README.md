@@ -55,7 +55,7 @@
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>表示进行反正弦运算的输出张量列表，对应公式中的`y`。数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size大于等于入参`x`的shape size。该参数中所有Tensor的数据类型保持一致。</td>
+      <td>表示进行反正弦运算的输出张量列表，对应公式中的`y`。Tensor数量与入参`x`一致。该参数中所有Tensor的数据类型保持一致。数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape与入参`x`对应位置的Tensor一致。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -65,11 +65,17 @@
 
 ## 约束说明
 
-- 输出不支持非连续Tensor。
+- x/y中单个Tensor列表的Tensor数量不能超过256。
+- x与y的Tensor数量必须一致。
+- x中所有Tensor的数据类型必须一致。
+- y中对应位置的Tensor的数据类型与x一致。
+- x/y中单个Tensor的维度取值范围为0-8维，超过时报错。
+- y中对应位置的Tensor的shape必须与x一致。
+- 支持空Tensor（元素数为0）。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| aclnn接口  | [test_aclnn_foreach_asin](examples/test_aclnn_foreach_asin.cpp) | 通过[aclnnForeachAsin](docs/aclnnForeachAsin.md)接口方式调用ForeachAsin算子。 |
-| 图模式 | -  | 通过[算子IR](op_graph/foreach_asin_proto.h)构图方式调用ForeachAsin算子。         |
+| aclnn API  | [test_aclnn_foreach_asin](examples/test_aclnn_foreach_asin.cpp) | 通过[aclnnForeachAsin](docs/aclnnForeachAsin.md)接口方式调用ForeachAsin算子。 |
+| GE图模式 | -  | 通过[算子IR](op_graph/foreach_asin_proto.h)构图方式调用ForeachAsin算子。         |
