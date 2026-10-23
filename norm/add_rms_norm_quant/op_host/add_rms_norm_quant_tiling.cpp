@@ -115,6 +115,8 @@ static uint32_t CalcTilingKeyWithOptionalInput(gert::TilingContext* context)
 static void CalcOptionalUbNum(const uint32_t hasScales2, const uint32_t hasBeta, const uint32_t hasZeroPoints1,
                               const uint32_t hasZeroPoints2)
 {
+    optionalUbNum_0 = 0;
+    optionalUbNum_1 = 0;
     // 可选参数占用ubFactor的大小, 有beta和s2时，才是新增场景，否则不做改变
     if (hasScales2 > INT_ZERO || hasBeta > INT_ZERO) {
         optionalUbNum_0 = hasBeta * SIZE_HALF + hasZeroPoints1 * SIZE_FLOAT + SIZE_FLOAT;
