@@ -11,17 +11,13 @@
 
 import torch
 from atk.configs.dataset_config import InputDataset
-from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 from atk.tasks.api_execute.aclnn_base_api import AclnnBaseApi
-from atk.tasks.dataset.base_dataset import OpsDataset
-import numpy as np
 
 
 @register("function_aclnnForeachAddcdivScalar")
 class aclnnForeachAddcdivScalarExecutor(BaseApi):
-
     def converter(self, func, *args, **kwargs):
         def _convert(data, dtype):
             if isinstance(data, torch.Tensor):
@@ -37,7 +33,9 @@ class aclnnForeachAddcdivScalarExecutor(BaseApi):
                 return any(_has_float16(x) for x in data)
             return False
 
-        if any(_has_float16(x) for x in args) or any(_has_float16(v) for v in kwargs.values()):
+        if any(_has_float16(x) for x in args) or any(
+            _has_float16(v) for v in kwargs.values()
+        ):
             promoted_args = [_convert(x, torch.float32) for x in args]
             promoted_kwargs = {k: _convert(v, torch.float32) for k, v in kwargs.items()}
             result = func(*promoted_args, **promoted_kwargs)
@@ -49,14 +47,15 @@ class aclnnForeachAddcdivScalarExecutor(BaseApi):
         x2 = input_data.kwargs["x2"]
         x3 = input_data.kwargs["x3"]
         scalar = input_data.kwargs["scalar"][0].item()
-        
+
         output = None
-        if self.device == 'cpu':
+        if self.device == "cpu":
             output = self.converter(torch._foreach_addcdiv, x1, x2, x3, scalar)
         else:
             output = torch._foreach_addcdiv(x1, x2, x3, scalar)
-        
+
         return output
+
 
 @register("aclnnfunction_aclnnForeachAddcdivScalar")
 class aclnnfunctionExecutor(AclnnBaseApi):

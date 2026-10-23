@@ -14,16 +14,17 @@
 #define OPS_NN_FOREACH_ADDCDIV_SCALAR_TILING_ARCH35_H
 
 constexpr int32_t MAX_TENSOR_NUM_FOREACH_ADDCDIV_SCALAR = 256;
+constexpr int32_t FOREACH_ADDCDIV_SCALAR_MAX_CORE_COUNT = 80;
 
 struct ForeachAddcdivScalarTilingDataHost {
     int32_t needCoreNum;
     int32_t tensorCount;
     int64_t totalDataCount;
     int64_t tensorDataCountList[MAX_TENSOR_NUM_FOREACH_ADDCDIV_SCALAR];
-    uint16_t tensorStartList[80];
-    uint16_t tensorEndList[80];
-    int64_t tensorStartOffsetList[80];
-    int64_t tensorEndOffsetList[80];
+    uint16_t tensorStartList[FOREACH_ADDCDIV_SCALAR_MAX_CORE_COUNT];
+    uint16_t tensorEndList[FOREACH_ADDCDIV_SCALAR_MAX_CORE_COUNT];
+    int64_t tensorStartOffsetList[FOREACH_ADDCDIV_SCALAR_MAX_CORE_COUNT];
+    int64_t tensorEndOffsetList[FOREACH_ADDCDIV_SCALAR_MAX_CORE_COUNT];
 };
 
 struct ForeachAddcdivScalarCompileInfo {

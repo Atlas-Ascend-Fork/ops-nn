@@ -76,7 +76,7 @@
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>表示混合运算的输出张量列表，对应公式中的`y`。数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape size大于等于入参`x1`的shape size。该参数中所有Tensor的数据类型保持一致。</td>
+      <td>表示混合运算的输出张量列表，对应公式中的`y`。数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape与入参`x1`的shape一致。该参数中所有Tensor的数据类型保持一致。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -86,12 +86,17 @@
 
 ## 约束说明
 
-- 输出不支持非连续Tensor。
+- 张量列表`x1`、`x2`、`x3`包含的Tensor个数必须相等，且与`y`的元素个数一致，单个Tensor列表中Tensor的数量不超过256个。
+- `x1`、`x2`、`x3`、`y`中每个Tensor的维度数不超过8且形状一致；`scalar`的维度数不超过8且元素个数为1。
+- 图模式（GE/IR）通路支持动态 Shape/Rank 标记：`-1` 表示动态维度、`-2` 表示动态 Rank，Host 推导按标记透传；执行前须完成具体化，各 Tensor 的维度必须为具体非负值（Tiling 对含负维标记的输入返回失败）。
+- 输出非连续Tensor支持情况：aclnnForeachAddcdivScalar（V1）支持非连续输出Tensor（内部自动转连续并写回）；aclnnForeachAddcdivScalarV2与图模式（IR）不支持非连续输出Tensor。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| aclnn接口  | [test_aclnn_foreach_addcdiv_scalar](examples/test_aclnn_foreach_addcdiv_scalar.cpp) | 通过[aclnnForeachAddcdivScalar](docs/aclnnForeachAddcdivScalar.md)接口方式调用ForeachAddcdivScalar算子。 |
-| aclnn接口  | [test_aclnn_foreach_addcdiv_scalar_v2](examples/test_aclnn_foreach_addcdiv_scalar_v2.cpp) | 通过[aclnnForeachAddcdivScalarV2](docs/aclnnForeachAddcdivScalarV2.md)接口方式调用ForeachAddcdivScalar算子。 |
-| 图模式 | -  | 通过[算子IR](op_graph/foreach_addcdiv_scalar_proto.h)构图方式调用ForeachAddcdivScalar算子。         |
+| aclnn API  | [test_aclnn_foreach_addcdiv_scalar](examples/test_aclnn_foreach_addcdiv_scalar.cpp) | 通过[aclnnForeachAddcdivScalar](docs/aclnnForeachAddcdivScalar.md)接口方式调用ForeachAddcdivScalar算子。 |
+| aclnn API  | [test_aclnn_foreach_addcdiv_scalar_v2](examples/test_aclnn_foreach_addcdiv_scalar_v2.cpp) | 通过[aclnnForeachAddcdivScalarV2](docs/aclnnForeachAddcdivScalarV2.md)接口方式调用ForeachAddcdivScalar算子。 |
+| GE图模式 | -  | 通过[算子IR](op_graph/foreach_addcdiv_scalar_proto.h)构图方式调用ForeachAddcdivScalar算子。         |
+
+- 说明：本仓库仅交付上表中的 aclnn 与图模式通路；E2E Torch/TF 通路不在本仓库交付范围内（如需通过框架调用，可依赖 torch_npu 的 `torch._foreach_addcdiv` 等外部通路）。

@@ -70,6 +70,7 @@ public:
             .PrecisionReduceFlag(false)
             .ExtendCfgInfo("opFile.value", "foreach_addcdiv_scalar");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
 
         OpAICoreConfig config_kirin = GetKirinCoreConfig();
         this->AICore().AddConfig("kirinx90", config_kirin);

@@ -30,16 +30,16 @@ extern "C" {
  * out_i = {x}_{1i}+ \frac{{x}_{2i}}{{x}_{3i}}\times{scalar}
  * @domain aclnnop_math
  * 参数描述：
- * @param [in]   input
+ * @param [in]   x1
  * 输入Tensor，数据类型支持FLOAT、FLOAT16、BFLOAT16。数据格式支持ND。
- * @param [in]   input
+ * @param [in]   x2
  * 输入Tensor，数据类型支持FLOAT，FLOAT16，BFLOAT16。数据格式支持ND。
- * @param [in]   input
+ * @param [in]   x3
  * 输入Tensor，数据类型支持FLOAT，FLOAT16，BFLOAT16。数据格式支持ND。
- * @param [in]  input
- * 输入Scalar，数据类型支持FLOAT、FLOAT16。数据格式支持ND。
- * @param [in]   out
- * 输出Tensor，数据类型支持FLOAT、FLOAT16、BFLOAT16、INT32。数据格式支持ND。
+ * @param [in]   scalar
+ * 输入Scalar，数据类型支持FLOAT32、FLOAT16、DOUBLE。
+ * @param [out]  out
+ * 输出Tensor，数据类型支持FLOAT、FLOAT16、BFLOAT16。数据格式支持ND。
  * @param [out]  workspaceSize   返回用户需要在npu device侧申请的workspace大小。
  * @param [out]  executor         返回op执行器，包含了算子计算流程。
  * @return       aclnnStatus      返回状态码

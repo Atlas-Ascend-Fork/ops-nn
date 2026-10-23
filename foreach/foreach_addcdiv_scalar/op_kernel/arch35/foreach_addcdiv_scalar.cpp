@@ -14,7 +14,7 @@
  * \file foreach_addcdiv_scalar.cpp
  * \brief Kernel entry point for foreach_addcdiv_scalar operator (arch35/Ascend950).
  *        Dispatches to SIMT Process based on TilingKey (dtype combination).
- *        Scalar value is stored in TilingData (MDE 3.1).
+ *        The scalar value is read from the scalar GM input, not from TilingData.
  */
 
 #include "foreach_addcdiv_scalar_simt.h"

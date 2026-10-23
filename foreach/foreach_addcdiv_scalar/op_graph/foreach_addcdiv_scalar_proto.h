@@ -21,7 +21,7 @@ namespace ge {
  * @brief Apply AddcDiv operation for each tensor in tensor list with a scalar in manner
  * of element-wise
  * @par Inputs:
- * Three inputs:
+ * Four inputs:
  * @li x1: A tensor list containing multiple tensors
  * @li x2: Second tensor list containing multiple tensors
  * @li x3: Third tensor list containing multiple tensors

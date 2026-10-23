@@ -44,7 +44,7 @@
 aclnnStatus aclnnForeachDivListGetWorkspaceSize(
   const aclTensorList *x1,
   const aclTensorList *x2,
-  const aclTensorList *out,
+  aclTensorList       *out,
   uint64_t            *workspaceSize,
   aclOpExecutor      **executor)
 ```
@@ -107,7 +107,7 @@ aclnnStatus aclnnForeachDivList(
       <td>out（aclTensorList*）</td>
       <td>输出</td>
       <td>表示除法运算的输出张量列表，对应公式中的`y`。</td>
-      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape size大于等于入参`x1`的shape size。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape与入参`x1`的shape一致。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>0-8</td>
@@ -161,16 +161,17 @@ aclnnStatus aclnnForeachDivList(
       <td>传入的x1、x2、out是空指针。</td>
     </tr>
     <tr>
-      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="2">161002</td>
+      <td rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="6">161002</td>
       <td>x1、x2、out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
       <td>x1、x2、out的数据类型不一致。</td>
     </tr>
     <tr>
-      <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="3">561002</td>
+      <td>x1、x2、out的数据格式不在支持的范围之内。</td>
+    </tr>
+    <tr>
       <td>x1、x2、out的shape不满足约束。</td>
     </tr>
     <tr>
@@ -226,6 +227,7 @@ aclnnStatus aclnnForeachDivList(
 
 ## 约束说明
 
+- `x1`、`x2`、`out`的Tensor列表长度必须一致，单个Tensor列表中Tensor的数量不超过256个。
 - 确定性计算：
   - aclnnForeachDivList默认确定性实现。
 

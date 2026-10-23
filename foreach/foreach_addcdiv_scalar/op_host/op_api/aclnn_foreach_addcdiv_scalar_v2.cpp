@@ -141,6 +141,13 @@ static inline bool ForeachAddcdivScalarV2CheckShape(const aclTensorList* self, c
         return false;
     }
 
+    // tensorlist size检查
+    if (self->Size() != out->Size()) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor lists must have the same number of tensors, got %lu and %lu",
+                self->Size(), out->Size());
+        return false;
+    }
+
     // tensorlist中tensor shape一致性检查
     for (uint64_t i = 0; i < self->Size(); i++) {
         OP_CHECK_SHAPE_NOT_EQUAL((*self)[i], (*x2)[i], return false);

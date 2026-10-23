@@ -23,9 +23,9 @@ namespace ge {
  * @par Inputs:
  * Two inputs:
  * @li x1: A tensor list containing multiple tensors
- * @li x2: Another tensor list containing multiple tensorsr
+ * @li x2: Another tensor list containing multiple tensors
  * @par Outputs:
- * @li y: A tensor list which store the tensors whose value are div by the scalars in scalar list
+ * @li y: A tensor list which stores each element-wise division result of x1 by x2
  */
 REG_OP(ForeachDivList)
     .DYNAMIC_INPUT(x1, TensorType({DT_FLOAT, DT_FLOAT16, DT_BF16}))

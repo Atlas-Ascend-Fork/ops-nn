@@ -29,8 +29,8 @@ extern "C" {
 
 static const std::initializer_list<DataType> EMPTY_LIST = {};
 
-static const std::initializer_list<DataType> SCALAR_FLOAT_SUPPORT_LIST = {DataType::DT_FLOAT, DataType::DT_DOUBLE};
-static const std::initializer_list<DataType> SCALAR_FLOAT16_SUPPORT_LIST = {DataType::DT_FLOAT16, DataType::DT_DOUBLE};
+static const std::initializer_list<DataType> SCALAR_FLOAT_SUPPORT_LIST = {DataType::DT_FLOAT};
+static const std::initializer_list<DataType> SCALAR_FLOAT16_SUPPORT_LIST = {DataType::DT_FLOAT16};
 
 static const std::initializer_list<DataType> ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPPORT_LIST = {
     DataType::DT_FLOAT, DataType::DT_FLOAT16, DataType::DT_BF16};
@@ -56,8 +56,12 @@ static inline bool CheckNotNull(const aclTensorList* x1, const aclTensorList* x2
 }
 
 static inline bool CheckFormat(const aclTensorList* x1, const aclTensorList* x2, const aclTensorList* x3,
-                               const aclTensorList* out)
+                               const aclTensor* scalar, const aclTensorList* out)
 {
+    if (IsPrivateFormat(scalar->GetStorageFormat())) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+        return false;
+    }
     for (uint64_t i = 0; i < x1->Size(); i++) {
         if (IsPrivateFormat((*out)[i]->GetStorageFormat()) || IsPrivateFormat((*x1)[i]->GetStorageFormat()) ||
             IsPrivateFormat((*x2)[i]->GetStorageFormat()) || IsPrivateFormat((*x3)[i]->GetStorageFormat())) {
@@ -106,6 +110,17 @@ static inline bool CheckDtypeValid(const aclTensorList* x1, const aclTensorList*
     return true;
 }
 
+static inline bool CheckScalar(const aclTensor* scalar)
+{
+    OP_CHECK_MAX_DIM(scalar, MAX_SUPPORT_DIMS_NUMS, return false);
+    if (scalar->GetViewShape().GetShapeSize() != 1) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The element count of scalar must be 1, but got %ld.",
+                scalar->GetViewShape().GetShapeSize());
+        return false;
+    }
+    return true;
+}
+
 static inline bool CheckShape(const aclTensorList* x1, const aclTensorList* x2, const aclTensorList* x3,
                               const aclTensorList* out)
 {
@@ -142,8 +157,9 @@ static inline aclnnStatus CheckParams(const aclTensorList* x1, const aclTensorLi
     CHECK_RET(CheckTensorListNotNull(out, "out"), ACLNN_ERR_PARAM_INVALID);
 
     CHECK_RET(CheckDtypeValid(x1, x2, x3, scalar, out), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckScalar(scalar), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(x1, x2, x3, out), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckFormat(x1, x2, x3, out), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckFormat(x1, x2, x3, scalar, out), ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 

@@ -27,7 +27,7 @@ struct ForeachDivListTilingData {
     int32_t needCoreNum;
     int64_t totalElements;
     int32_t tensorCount;
-    int32_t maxTensorElements;
+    int64_t maxTensorElements;
     int64_t elementCounts[MAX_TENSOR_NUM_FOREACH_DIV_LIST];
 };
 

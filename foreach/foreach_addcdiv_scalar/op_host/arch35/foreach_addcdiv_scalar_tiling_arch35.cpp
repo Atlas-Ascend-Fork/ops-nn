@@ -14,12 +14,13 @@
  * \file foreach_addcdiv_scalar_tiling_arch35.cpp
  * \brief Tiling implementation for foreach_addcdiv_scalar operator (arch35/Ascend950).
  *        Computes per-core tensor assignment using AssignDataToEachCore algorithm.
- *        Scalar value is stored in TilingData as scalarVal (MDE 3.1).
+ *        The scalar value is read by the kernel from the scalar GM input, not from TilingData.
  */
 
 #include <vector>
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include "register/op_def_registry.h"
 #include "tiling/tiling_api.h"
 #include "platform/platform_info.h"
@@ -34,6 +35,10 @@ constexpr int64_t DCACHE_SIZE = 128 * 1024;
 constexpr int64_t SINGLE_CORE_MIN_ELEMENTS = 1024;
 constexpr int64_t ALIGN_SIZE = 32;
 constexpr int64_t INPUT_X1_IDX = 0;
+constexpr int64_t INPUT_X2_IDX = 1;
+constexpr int64_t INPUT_X3_IDX = 2;
+constexpr int64_t INPUT_SCALAR_IDX = 3;
+constexpr int64_t MAX_SUPPORT_DIM_NUMS = 8;
 
 static ge::graphStatus GetTilingKeyByDtype(gert::TilingContext* context, ge::DataType dtype, uint64_t& tilingKey)
 {
@@ -131,6 +136,134 @@ static void AssignDataToEachCore(ForeachAddcdivScalarTilingDataHost& tilingDataH
     }
 }
 
+static bool IsScalarDtypeMatched(ge::DataType dataType, ge::DataType scalarDtype)
+{
+    if (dataType == ge::DT_FLOAT16) {
+        return scalarDtype == ge::DT_FLOAT16;
+    }
+    if (dataType == ge::DT_FLOAT || dataType == ge::DT_BF16) {
+        return scalarDtype == ge::DT_FLOAT;
+    }
+    return false;
+}
+
+static bool IsShapeAllNonNegative(const gert::Shape& shape)
+{
+    for (size_t dimIdx = 0; dimIdx < shape.GetDimNum(); dimIdx++) {
+        if (shape.GetDim(dimIdx) < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static ge::graphStatus CheckTensorListInfo(gert::TilingContext* context, uint64_t tensorNum)
+{
+    auto computeNodeInfoPtr = context->GetComputeNodeInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoPtr);
+
+    for (int64_t listIdx = INPUT_X2_IDX; listIdx <= INPUT_X3_IDX; listIdx++) {
+        auto instanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(listIdx);
+        OP_CHECK_NULL_WITH_CONTEXT(context, instanceInfoPtr);
+        OP_CHECK_IF(instanceInfoPtr->GetInstanceNum() != tensorNum,
+                    OP_LOGE(context, "The tensor num of input x%ld is %lu, which is not equal to that of x1 %lu.",
+                            listIdx + 1, instanceInfoPtr->GetInstanceNum(), tensorNum),
+                    return ge::GRAPH_FAILED);
+    }
+
+    OP_CHECK_IF(context->GetComputeNodeOutputNum() != tensorNum,
+                OP_LOGE(context, "The tensor num of output y is %zu, which is not equal to that of x1 %lu.",
+                        context->GetComputeNodeOutputNum(), tensorNum),
+                return ge::GRAPH_FAILED);
+
+    ge::DataType dataType = ge::DT_UNDEFINED;
+    if (tensorNum > 0) {
+        auto x1DescPtr = context->GetDynamicInputDesc(INPUT_X1_IDX, 0);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x1DescPtr);
+        dataType = x1DescPtr->GetDataType();
+    }
+
+    for (uint64_t i = 0; i < tensorNum; i++) {
+        auto x1ShapePtr = context->GetDynamicInputShape(INPUT_X1_IDX, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x1ShapePtr);
+        const auto& x1Shape = x1ShapePtr->GetStorageShape();
+        OP_CHECK_IF(static_cast<int64_t>(x1Shape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                    OP_LOGE(context, "The dim num of x1[%lu] must be less than or equal to 8, but got %zu.", i,
+                            x1Shape.GetDimNum()),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(!IsShapeAllNonNegative(x1Shape), OP_LOGE(context, "The dims of x1[%lu] must be non-negative.", i),
+                    return ge::GRAPH_FAILED);
+        auto x1DescPtr = context->GetDynamicInputDesc(INPUT_X1_IDX, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x1DescPtr);
+        OP_CHECK_IF(x1DescPtr->GetDataType() != dataType,
+                    OP_LOGE(context, "The dtype of x1[%lu] must be consistent with that of x1[0].", i),
+                    return ge::GRAPH_FAILED);
+
+        for (int64_t listIdx = INPUT_X2_IDX; listIdx <= INPUT_X3_IDX; listIdx++) {
+            auto shapePtr = context->GetDynamicInputShape(listIdx, i);
+            OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
+            const auto& shape = shapePtr->GetStorageShape();
+            OP_CHECK_IF(static_cast<int64_t>(shape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                        OP_LOGE(context, "The dim num of x%ld[%lu] must be less than or equal to 8, but got %zu.",
+                                listIdx + 1, i, shape.GetDimNum()),
+                        return ge::GRAPH_FAILED);
+            OP_CHECK_IF(!IsShapeAllNonNegative(shape),
+                        OP_LOGE(context, "The dims of x%ld[%lu] must be non-negative.", listIdx + 1, i),
+                        return ge::GRAPH_FAILED);
+            OP_CHECK_IF(
+                shape != x1Shape,
+                OP_LOGE(context, "The shape of x%ld[%lu] must be the same as that of x1[%lu].", listIdx + 1, i, i),
+                return ge::GRAPH_FAILED);
+            auto descPtr = context->GetDynamicInputDesc(listIdx, i);
+            OP_CHECK_NULL_WITH_CONTEXT(context, descPtr);
+            OP_CHECK_IF(descPtr->GetDataType() != dataType,
+                        OP_LOGE(context, "The dtype of x%ld[%lu] must be the same as that of x1.", listIdx + 1, i),
+                        return ge::GRAPH_FAILED);
+        }
+
+        auto outShapePtr = context->GetOutputShape(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, outShapePtr);
+        const auto& outShape = outShapePtr->GetStorageShape();
+        OP_CHECK_IF(static_cast<int64_t>(outShape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                    OP_LOGE(context, "The dim num of y[%lu] must be less than or equal to 8, but got %zu.", i,
+                            outShape.GetDimNum()),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(!IsShapeAllNonNegative(outShape), OP_LOGE(context, "The dims of y[%lu] must be non-negative.", i),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(outShape.GetShapeSize() != x1Shape.GetShapeSize(),
+                    OP_LOGE(context, "The shape size of y[%lu] must be the same as that of x1[%lu].", i, i),
+                    return ge::GRAPH_FAILED);
+        auto outDescPtr = context->GetOutputDesc(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, outDescPtr);
+        OP_CHECK_IF(outDescPtr->GetDataType() != dataType,
+                    OP_LOGE(context, "The dtype of y[%lu] must be the same as that of x1.", i),
+                    return ge::GRAPH_FAILED);
+    }
+
+    auto scalarShapePtr = context->GetRequiredInputShape(INPUT_SCALAR_IDX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, scalarShapePtr);
+    const auto& scalarShape = scalarShapePtr->GetStorageShape();
+    OP_CHECK_IF(static_cast<int64_t>(scalarShape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                OP_LOGE(context, "The dim num of scalar must be less than or equal to 8, but got %zu.",
+                        scalarShape.GetDimNum()),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(scalarShape.GetShapeSize() != 1,
+                OP_LOGE(context, "The element count of scalar must be 1, but got %ld.", scalarShape.GetShapeSize()),
+                return ge::GRAPH_FAILED);
+    if (tensorNum > 0) {
+        auto scalarDescPtr = context->GetRequiredInputDesc(INPUT_SCALAR_IDX);
+        OP_CHECK_NULL_WITH_CONTEXT(context, scalarDescPtr);
+        ge::DataType scalarDtype = scalarDescPtr->GetDataType();
+        OP_CHECK_IF(!IsScalarDtypeMatched(dataType, scalarDtype),
+                    OP_LOGE(context,
+                            "The dtype of scalar must be float32 when x1 is float32/bfloat16, and float16 "
+                            "when x1 is float16, but got x1 dtype %d and scalar dtype %d.",
+                            static_cast<int32_t>(dataType), static_cast<int32_t>(scalarDtype)),
+                    return ge::GRAPH_FAILED);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus ForeachAddcdivScalarTilingFunc(gert::TilingContext* context)
 {
     int64_t coreNum = 0;
@@ -147,10 +280,13 @@ static ge::graphStatus ForeachAddcdivScalarTilingFunc(gert::TilingContext* conte
     OP_CHECK_NULL_WITH_CONTEXT(context, idxInstanceInfoPtr);
     uint64_t tensorNum = idxInstanceInfoPtr->GetInstanceNum();
 
-    OP_CHECK_IF((static_cast<int32_t>(tensorNum) > MAX_TENSOR_NUM_FOREACH_ADDCDIV_SCALAR),
+    OP_CHECK_IF((tensorNum > static_cast<uint64_t>(MAX_TENSOR_NUM_FOREACH_ADDCDIV_SCALAR)),
                 OP_LOGE(context, "tensorNum %lu exceeds MAX_TENSOR_NUM_FOREACH_ADDCDIV_SCALAR %d", tensorNum,
                         MAX_TENSOR_NUM_FOREACH_ADDCDIV_SCALAR),
                 return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF(CheckTensorListInfo(context, tensorNum) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "CheckTensorListInfo failed."), return ge::GRAPH_FAILED);
 
     int64_t totalDataCount = 0;
     ge::DataType dataType = ge::DT_FLOAT;
@@ -163,6 +299,11 @@ static ge::graphStatus ForeachAddcdivScalarTilingFunc(gert::TilingContext* conte
         OP_CHECK_NULL_WITH_CONTEXT(context, idxTensorShapePtr);
         auto idxTensorShape = idxTensorShapePtr->GetStorageShape();
         int64_t numel = idxTensorShape.GetShapeSize();
+        OP_CHECK_IF(numel < 0,
+                    OP_LOGE(context, "The element count of x1[%lu] must be non-negative, but got %ld.", i, numel),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(totalDataCount > std::numeric_limits<int64_t>::max() - numel - SINGLE_CORE_MIN_ELEMENTS,
+                    OP_LOGE(context, "The total element count overflows at x1[%lu].", i), return ge::GRAPH_FAILED);
         tilingDataHost.tensorDataCountList[i] = numel;
         totalDataCount += numel;
 
@@ -192,7 +333,7 @@ static ge::graphStatus ForeachAddcdivScalarTilingFunc(gert::TilingContext* conte
     }
 
     int64_t needCoreNum = (totalDataCount + SINGLE_CORE_MIN_ELEMENTS - 1) / SINGLE_CORE_MIN_ELEMENTS;
-    needCoreNum = std::min(needCoreNum, coreNum);
+    needCoreNum = std::min(needCoreNum, std::min(coreNum, static_cast<int64_t>(FOREACH_ADDCDIV_SCALAR_MAX_CORE_COUNT)));
     needCoreNum = std::max(needCoreNum, static_cast<int64_t>(1));
 
     tilingDataHost.needCoreNum = static_cast<int32_t>(needCoreNum);
@@ -200,6 +341,7 @@ static ge::graphStatus ForeachAddcdivScalarTilingFunc(gert::TilingContext* conte
     AssignDataToEachCore(tilingDataHost, needCoreNum, dataTypeSize);
 
     ForeachAddcdivScalarTilingDataHost* tilingData = context->GetTilingData<ForeachAddcdivScalarTilingDataHost>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tilingData);
     *tilingData = tilingDataHost;
 
     context->SetBlockDim(needCoreNum);
@@ -214,6 +356,7 @@ static ge::graphStatus ForeachAddcdivScalarTilingFunc(gert::TilingContext* conte
                 return ge::GRAPH_FAILED);
 
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
     currentWorkspace[0] = 0;
 
     return ge::GRAPH_SUCCESS;

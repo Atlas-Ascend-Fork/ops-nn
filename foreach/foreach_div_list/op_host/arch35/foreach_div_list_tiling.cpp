@@ -32,6 +32,8 @@ namespace optiling {
 constexpr int64_t DCACHE_SIZE = 128 * 1024;
 constexpr int64_t SINGLE_CORE_MIN_ELEMENTS = 1024;
 constexpr int64_t INPUT_IDX_X1 = 0;
+constexpr int64_t INPUT_IDX_X2 = 1;
+constexpr int64_t MAX_SUPPORT_DIM_NUMS = 8;
 constexpr int32_t WS_ALIGN = 128;
 
 // Get tiling key from dtype (SE order: FP32=0, FP16=1, BF16=2)
@@ -88,6 +90,79 @@ static int64_t ComputeWorkspaceSize(int32_t tensorCount)
     return ((rawSize + WS_ALIGN - 1) / WS_ALIGN) * WS_ALIGN;
 }
 
+static ge::graphStatus CheckTensorListInfo(gert::TilingContext* context, uint64_t tensorNum)
+{
+    auto computeNodeInfoPtr = context->GetComputeNodeInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoPtr);
+
+    auto instanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_X2);
+    OP_CHECK_NULL_WITH_CONTEXT(context, instanceInfoPtr);
+    OP_CHECK_IF(instanceInfoPtr->GetInstanceNum() != tensorNum,
+                OP_LOGE(context, "The tensor num of input x2 is %lu, which is not equal to that of x1 %lu.",
+                        instanceInfoPtr->GetInstanceNum(), tensorNum),
+                return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF(context->GetComputeNodeOutputNum() != tensorNum,
+                OP_LOGE(context, "The tensor num of output y is %zu, which is not equal to that of x1 %lu.",
+                        context->GetComputeNodeOutputNum(), tensorNum),
+                return ge::GRAPH_FAILED);
+
+    ge::DataType dataType = ge::DT_UNDEFINED;
+    if (tensorNum > 0) {
+        auto x1DescPtr = context->GetDynamicInputDesc(INPUT_IDX_X1, 0);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x1DescPtr);
+        dataType = x1DescPtr->GetDataType();
+    }
+
+    for (uint64_t i = 0; i < tensorNum; i++) {
+        auto x1ShapePtr = context->GetDynamicInputShape(INPUT_IDX_X1, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x1ShapePtr);
+        const auto& x1Shape = x1ShapePtr->GetStorageShape();
+        OP_CHECK_IF(static_cast<int64_t>(x1Shape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                    OP_LOGE(context, "The dim num of x1[%lu] must be less than or equal to 8, but got %zu.", i,
+                            x1Shape.GetDimNum()),
+                    return ge::GRAPH_FAILED);
+        auto x1DescPtr = context->GetDynamicInputDesc(INPUT_IDX_X1, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x1DescPtr);
+        OP_CHECK_IF(x1DescPtr->GetDataType() != dataType,
+                    OP_LOGE(context, "The dtype of x1[%lu] must be consistent with that of x1[0].", i),
+                    return ge::GRAPH_FAILED);
+
+        auto x2ShapePtr = context->GetDynamicInputShape(INPUT_IDX_X2, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x2ShapePtr);
+        const auto& x2Shape = x2ShapePtr->GetStorageShape();
+        OP_CHECK_IF(static_cast<int64_t>(x2Shape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                    OP_LOGE(context, "The dim num of x2[%lu] must be less than or equal to 8, but got %zu.", i,
+                            x2Shape.GetDimNum()),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(x2Shape != x1Shape,
+                    OP_LOGE(context, "The shape of x2[%lu] must be the same as that of x1[%lu].", i, i),
+                    return ge::GRAPH_FAILED);
+        auto x2DescPtr = context->GetDynamicInputDesc(INPUT_IDX_X2, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x2DescPtr);
+        OP_CHECK_IF(x2DescPtr->GetDataType() != dataType,
+                    OP_LOGE(context, "The dtype of x2[%lu] must be the same as that of x1.", i),
+                    return ge::GRAPH_FAILED);
+
+        auto outShapePtr = context->GetOutputShape(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, outShapePtr);
+        const auto& outShape = outShapePtr->GetStorageShape();
+        OP_CHECK_IF(static_cast<int64_t>(outShape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                    OP_LOGE(context, "The dim num of y[%lu] must be less than or equal to 8, but got %zu.", i,
+                            outShape.GetDimNum()),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(outShape.GetShapeSize() != x1Shape.GetShapeSize(),
+                    OP_LOGE(context, "The shape size of y[%lu] must be the same as that of x1[%lu].", i, i),
+                    return ge::GRAPH_FAILED);
+        auto outDescPtr = context->GetOutputDesc(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, outDescPtr);
+        OP_CHECK_IF(outDescPtr->GetDataType() != dataType,
+                    OP_LOGE(context, "The dtype of y[%lu] must be the same as that of x1.", i),
+                    return ge::GRAPH_FAILED);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus ForeachDivListTilingFunc(gert::TilingContext* context)
 {
     // 1. Get platform info
@@ -106,14 +181,17 @@ static ge::graphStatus ForeachDivListTilingFunc(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, idxInstanceInfoPtr);
     uint64_t tensorNum = idxInstanceInfoPtr->GetInstanceNum();
 
-    OP_CHECK_IF((static_cast<int32_t>(tensorNum) > MAX_TENSOR_NUM_FOREACH_DIV_LIST),
+    OP_CHECK_IF((tensorNum > static_cast<uint64_t>(MAX_TENSOR_NUM_FOREACH_DIV_LIST)),
                 OP_LOGE(context, "tensorNum %lu exceeds MAX_TENSOR_NUM_FOREACH_DIV_LIST %d", tensorNum,
                         MAX_TENSOR_NUM_FOREACH_DIV_LIST),
                 return ge::GRAPH_FAILED);
 
+    OP_CHECK_IF(CheckTensorListInfo(context, tensorNum) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "CheckTensorListInfo failed."), return ge::GRAPH_FAILED);
+
     // 3. Compute per-tensor element counts, totalElements, maxTensorElements
     int64_t totalElements = 0;
-    int32_t maxTensorElements = 0;
+    int64_t maxTensorElements = 0;
     ge::DataType dataType = ge::DT_FLOAT;
     ForeachDivListTilingData* tilingData = context->GetTilingData<ForeachDivListTilingData>();
 
@@ -122,10 +200,14 @@ static ge::graphStatus ForeachDivListTilingFunc(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, idxTensorShapePtr);
         auto idxTensorShape = idxTensorShapePtr->GetStorageShape();
         int64_t numel = idxTensorShape.GetShapeSize();
+        OP_CHECK_IF(
+            numel < 0,
+            OP_LOGE(context, "The element count of x1[%lu] is negative (%ld); concrete shape is required.", i, numel),
+            return ge::GRAPH_FAILED);
         tilingData->elementCounts[i] = numel;
         totalElements += numel;
         if (numel > maxTensorElements) {
-            maxTensorElements = static_cast<int32_t>(numel);
+            maxTensorElements = numel;
         }
         if (i == 0) {
             auto idxTensorDtypePtr = context->GetDynamicInputDesc(INPUT_IDX_X1, i);
