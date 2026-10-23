@@ -40,6 +40,7 @@
 #include "ut_op_util.h"
 
 #include "../../../../op_host/arch35/max_pool3d_grad_tiling.h"
+#include "test_max_pool3d_grad_partition_verify.h"
 
 using namespace std;
 using namespace ge;
@@ -340,7 +341,7 @@ TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_007_ncdhw_small_kernel_align_
 }
 
 // 极小 shape 无 pad: 所有 TrySplit* 因核数不满足失败 -> SplitUnalignDHW 的 isPad=0&&isOverlap=0
-// 分支 + while 循环自然退出
+// 分支 + while 循环自然退出; 多核调整将 wOutputInner 2->1(totalBaseBlockNum 4->8), BlockDim 4->8
 TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_008_ncdhw_small_kernel_split_unalign)
 {
     Mp3dgCase c;
@@ -351,7 +352,7 @@ TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_008_ncdhw_small_kernel_split_
     auto* ctx = RunTilingFunc(c, ge::GRAPH_SUCCESS);
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->GetTilingKey(), TILING_KEY_SMALL_CHECK_RANGE);
-    EXPECT_EQ(ctx->GetBlockDim(), 4U);
+    EXPECT_EQ(ctx->GetBlockDim(), 8U);
 }
 
 // fp16 D/H/W=1 带 pad: SplitUnalignDHW 循环条件立即不成立, 走尾部 wOutputInner=min(wX, beat)
@@ -375,7 +376,8 @@ TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_009_ncdhw_small_kernel_tiny_p
     EXPECT_EQ(ctx->GetBlockDim(), 6U);
 }
 
-// fp16 大 W 带 pad: DynamicAdjustmentDWH 的 W 轴调整分支(d/h 均切到 1 后仍不满足核数)
+// fp16 大 W 带 pad: DynamicAdjustmentDWH 的 W 轴调整分支(d/h 均切到 1 后仍不满足核数);
+// 多核调整将 wOutputInner 667->400(wOutputOuter 3->5, totalBaseBlockNum 48->80), BlockDim 24->40 铺满核
 TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_010_ncdhw_small_kernel_dynamic_adjust_w)
 {
     Mp3dgCase c;
@@ -393,7 +395,7 @@ TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_010_ncdhw_small_kernel_dynami
     auto* ctx = RunTilingFunc(c, ge::GRAPH_SUCCESS);
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->GetTilingKey(), TILING_KEY_SMALL_CHECK_RANGE);
-    EXPECT_EQ(ctx->GetBlockDim(), 24U);
+    EXPECT_EQ(ctx->GetBlockDim(), 40U);
 }
 
 // ============================ Simt 正常路径 (NDHWC / SmallKernel 不满足) ============================
@@ -837,4 +839,200 @@ TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_048_fail_workspace_null)
     Mp3dgCase c;
     c.withWorkspace = false;
     RunTilingFunc(c, ge::GRAPH_FAILED);
+}
+
+// ============================ 多核利用率调整(对齐路径) ============================
+
+// VALID 无 pad 且 k<s(无 overlap): TrySplitAlignD 成功(isCheckRange=0, dOutputInner=15, totalBlock=48,
+// usedCoreNum=24); 多核调整按 dStride=3 网格步长将 dOutputInner 15->9(dOutputOuter 3->4,
+// totalBlock 48->64), usedCoreNum 24->32; H/W 整轴(8, 8%3!=0)向下对齐会跨核分配边界被回退, 保持整轴
+TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_049_ncdhw_small_kernel_multicore_align_path)
+{
+    Mp3dgCase c;
+    c.xShape = {1, 16, 32, 8, 8};
+    c.origYShape = {1, 16, 11, 3, 3};
+    c.gradsShape = {1, 16, 11, 3, 3};
+    c.yShape = {1, 16, 32, 8, 8};
+    c.ksize = {1, 1, 2, 2, 2};
+    c.strides = {1, 1, 3, 3, 3};
+    auto* ctx = RunTilingFunc(c, ge::GRAPH_SUCCESS);
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_EQ(ctx->GetTilingKey(), TILING_KEY_SMALL_INT32);
+    EXPECT_EQ(ctx->GetBlockDim(), 32U);
+    auto* raw = ctx->GetRawTilingData();
+    ASSERT_NE(raw, nullptr);
+    const int64_t* data = reinterpret_cast<const int64_t*>(raw->GetData());
+    EXPECT_EQ(data[18], 1);  // highAxisInner
+    EXPECT_EQ(data[20], 16); // highAxisOuter
+    EXPECT_EQ(data[21], 9);  // dOutputInner(15 -> 9)
+    EXPECT_EQ(data[22], 5);  // dOutputTail
+    EXPECT_EQ(data[23], 4);  // dOutputOuter(3 -> 4)
+    EXPECT_EQ(data[24], 8);  // hOutputInner 保持整轴
+    EXPECT_EQ(data[27], 8);  // wOutputInner 保持整轴
+    EXPECT_EQ(data[30], 2);  // normalCoreProcessNum
+    EXPECT_EQ(data[32], 32); // usedCoreNum(24 -> 32)
+}
+
+// ============================ 多核利用率调整(NC 路径) ============================
+
+// NC=161: TrySplitNC 二分得 highAxisInner=4(totalBlock=41, normal=2, usedCoreNum=21); 多核调整将
+// highAxisInner 4->3(totalBlock 41->54), usedCoreNum 21->27; D/H/W(整轴 4, 4%2==0)按 stride=2 网格
+// 步长缩减会使 totalBlock 翻倍跨核分配边界, 回退保持整轴
+TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_050_ncdhw_small_kernel_multicore_nc_path)
+{
+    Mp3dgCase c;
+    c.xShape = {161, 1, 4, 4, 4};
+    c.origYShape = {161, 1, 2, 2, 2};
+    c.gradsShape = {161, 1, 2, 2, 2};
+    c.yShape = {161, 1, 4, 4, 4};
+    auto* ctx = RunTilingFunc(c, ge::GRAPH_SUCCESS);
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_EQ(ctx->GetTilingKey(), TILING_KEY_SMALL_INT32);
+    EXPECT_EQ(ctx->GetBlockDim(), 27U);
+    auto* raw = ctx->GetRawTilingData();
+    ASSERT_NE(raw, nullptr);
+    const int64_t* data = reinterpret_cast<const int64_t*>(raw->GetData());
+    EXPECT_EQ(data[18], 3);  // highAxisInner(4 -> 3)
+    EXPECT_EQ(data[19], 2);  // highAxisTail
+    EXPECT_EQ(data[20], 54); // highAxisOuter(41 -> 54)
+    EXPECT_EQ(data[21], 4);  // dOutputInner 保持整轴
+    EXPECT_EQ(data[24], 4);  // hOutputInner 保持整轴
+    EXPECT_EQ(data[27], 4);  // wOutputInner 保持整轴
+    EXPECT_EQ(data[30], 2);  // normalCoreProcessNum
+    EXPECT_EQ(data[32], 27); // usedCoreNum(21 -> 27)
+}
+
+// ============================ 多核优化验证: 效果回归 + 划分语义 ============================
+
+namespace {
+constexpr int64_t UT_AVAILABLE_UB = 196608 - 5120; // UB_SIZE - UB_RESERVED_SIZE(见 ncdhw 公共 tiling)
+
+Mp3dgCase MakeMulticoreCase(std::vector<int64_t> x, std::vector<int64_t> g, std::vector<int64_t> k,
+                            std::vector<int64_t> s, std::string padding, std::vector<int64_t> pads, ge::DataType dt,
+                            std::string fmt = "NCDHW")
+{
+    Mp3dgCase c;
+    c.xShape = x;
+    c.origYShape = g;
+    c.gradsShape = g;
+    c.yShape = x;
+    c.ksize = k;
+    c.strides = s;
+    c.padding = padding;
+    c.pads = pads;
+    c.xDtype = dt;
+    c.origYDtype = dt;
+    c.gradsDtype = dt;
+    c.dataFormat = fmt;
+    return c;
+}
+} // namespace
+
+// 多核调整效果回归: 对 4 个调整生效场景 + 2 个本就铺满/回退场景, 断言
+//   1) usedCoreNum 不低于优化前基线(核利用不倒退), normalCoreProcessNum 不劣化(makespan 不变长);
+//   2) tiling key 不变(不切换 kernel 模板), BlockDim == usedCoreNum;
+//   3) 块数守恒 normal*(used-1)+tail == totalBaseBlockNum;
+//   4) buffer 重算后仍满足 UB 约束(多核调整只减 inner, 总量单调不增的实证)
+TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_051_multicore_effect_sweep)
+{
+    struct EffectCase {
+        const char* tag;
+        Mp3dgCase c;
+        uint64_t baseKey;
+        int64_t baseUsed;   // 优化前 usedCoreNum
+        int64_t baseNormal; // 优化前 normalCoreProcessNum
+    };
+    const std::vector<EffectCase> cases = {
+        {"unalign_w_667_to_400",
+         MakeMulticoreCase({1, 1, 4, 4, 2000}, {1, 1, 3, 3, 1001}, {1, 1, 2, 2, 2}, {1, 1, 2, 2, 2}, "CALCULATED",
+                           {1, 1, 1, 1, 1, 1}, ge::DT_FLOAT16),
+         TILING_KEY_SMALL_CHECK_RANGE, 24, 2},
+        {"unalign_tiny_w_2_to_1",
+         MakeMulticoreCase({1, 1, 2, 2, 2}, {1, 1, 1, 1, 1}, {1, 1, 2, 2, 2}, {1, 1, 2, 2, 2}, "VALID",
+                           {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT),
+         TILING_KEY_SMALL_CHECK_RANGE, 4, 1},
+        {"align_d_15_to_9",
+         MakeMulticoreCase({1, 16, 32, 8, 8}, {1, 16, 11, 3, 3}, {1, 1, 2, 2, 2}, {1, 1, 3, 3, 3}, "VALID",
+                           {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT),
+         TILING_KEY_SMALL_INT32, 24, 2},
+        {"nc_161_high_4_to_3",
+         MakeMulticoreCase({161, 1, 4, 4, 4}, {161, 1, 2, 2, 2}, {1, 1, 2, 2, 2}, {1, 1, 2, 2, 2}, "VALID",
+                           {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT),
+         TILING_KEY_SMALL_INT32, 21, 2},
+        {"nc_80_already_full",
+         MakeMulticoreCase({5, 16, 4, 4, 4}, {5, 16, 2, 2, 2}, {1, 1, 2, 2, 2}, {1, 1, 2, 2, 2}, "VALID",
+                           {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT),
+         TILING_KEY_SMALL_INT32, 40, 1},
+        {"align_rollback_unchanged",
+         MakeMulticoreCase({1, 8, 16, 16, 16}, {1, 8, 8, 8, 8}, {1, 1, 2, 2, 2}, {1, 1, 2, 2, 2}, "VALID",
+                           {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT),
+         TILING_KEY_SMALL_INT32, 32, 2},
+    };
+    for (const auto& ec : cases) {
+        auto* ctx = RunTilingFunc(ec.c, ge::GRAPH_SUCCESS);
+        ASSERT_NE(ctx, nullptr) << ec.tag;
+        EXPECT_EQ(ctx->GetTilingKey(), ec.baseKey) << ec.tag;
+        auto* td = ctx->GetTilingData<Pool3DGradNameSpace::Pool3DGradNCDHWTilingData>();
+        ASSERT_NE(td, nullptr) << ec.tag;
+        EXPECT_EQ(static_cast<int64_t>(ctx->GetBlockDim()), td->usedCoreNum) << ec.tag;
+        EXPECT_GE(td->usedCoreNum, ec.baseUsed) << ec.tag;
+        EXPECT_LE(td->normalCoreProcessNum, ec.baseNormal) << ec.tag;
+        const int64_t totalBlocks = td->highAxisOuter * td->dOutputOuter * td->hOutputOuter * td->wOutputOuter;
+        EXPECT_EQ(td->normalCoreProcessNum * (td->usedCoreNum - 1) + td->tailCoreProcessNum, totalBlocks) << ec.tag;
+        const bool isPad = ec.c.padding == "CALCULATED" || ec.c.padding == "SAME";
+        const int64_t totalBuf = (td->inputBufferSize + td->outputBufferSize + td->gradBufferSize +
+                                  td->argmaxBufferSize) *
+                                     2 +
+                                 (isPad ? td->inputBufferSize : 0);
+        EXPECT_LE(totalBuf, UT_AVAILABLE_UB) << ec.tag;
+        std::cout << "[multicore-effect][" << ec.tag << "] usedCoreNum " << ec.baseUsed << " -> " << td->usedCoreNum
+                  << "/" << 40 << ", normalCoreProcessNum " << td->normalCoreProcessNum << std::endl;
+    }
+}
+
+// 划分语义验证(纯 host, 不执行 kernel): 复刻 kernel 侧 PStart/PEnd/窗口公式, 对调整后的
+// d/h/w inner/outer/tail 逐轴穷举 (grad 位置 p, 窗口内位置 a), 断言
+//   1) 恰好一个 tile 同时覆盖 p 与 a —— 梯度贡献不丢不重(与 IS_CHECK_RANGE=1 过滤语义互补);
+//   2) isCheckRange=0(无过滤)时, tile 覆盖的 p 的窗口完整落在 tile 内 —— scatter 无越界写
+TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_052_partition_semantics)
+{
+    struct SemCase {
+        const char* tag;
+        Mp3dgCase c;
+    };
+    const std::vector<SemCase> cases = {
+        {"unalign_w_667_to_400", MakeMulticoreCase({1, 1, 4, 4, 2000}, {1, 1, 3, 3, 1001}, {1, 1, 2, 2, 2},
+                                                   {1, 1, 2, 2, 2}, "CALCULATED", {1, 1, 1, 1, 1, 1}, ge::DT_FLOAT16)},
+        {"unalign_tiny_w_2_to_1", MakeMulticoreCase({1, 1, 2, 2, 2}, {1, 1, 1, 1, 1}, {1, 1, 2, 2, 2}, {1, 1, 2, 2, 2},
+                                                    "VALID", {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT)},
+        {"unalign_pad_h_split", MakeMulticoreCase({1, 4, 8, 8, 8}, {1, 4, 4, 4, 4}, {1, 1, 3, 3, 3}, {1, 1, 2, 2, 2},
+                                                  "CALCULATED", {1, 1, 1, 1, 1, 1}, ge::DT_FLOAT)},
+        {"align_d_15_to_9", MakeMulticoreCase({1, 16, 32, 8, 8}, {1, 16, 11, 3, 3}, {1, 1, 2, 2, 2}, {1, 1, 3, 3, 3},
+                                              "VALID", {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT)},
+        {"align_h_6_to_4_fp16", MakeMulticoreCase({1, 1, 8, 256, 256}, {1, 1, 1, 128, 128}, {1, 1, 1, 2, 2},
+                                                  {1, 1, 8, 2, 2}, "VALID", {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT16)},
+        {"align_rollback_unchanged", MakeMulticoreCase({1, 8, 16, 16, 16}, {1, 8, 8, 8, 8}, {1, 1, 2, 2, 2},
+                                                       {1, 1, 2, 2, 2}, "VALID", {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT)},
+        {"nc_161_high_4_to_3", MakeMulticoreCase({161, 1, 4, 4, 4}, {161, 1, 2, 2, 2}, {1, 1, 2, 2, 2}, {1, 1, 2, 2, 2},
+                                                 "VALID", {0, 0, 0, 0, 0, 0}, ge::DT_FLOAT)},
+    };
+    for (const auto& sc : cases) {
+        auto* ctx = RunTilingFunc(sc.c, ge::GRAPH_SUCCESS);
+        ASSERT_NE(ctx, nullptr) << sc.tag;
+        const bool checkRange = (ctx->GetTilingKey() == TILING_KEY_SMALL_CHECK_RANGE);
+        auto* td = ctx->GetTilingData<Pool3DGradNameSpace::Pool3DGradNCDHWTilingData>();
+        ASSERT_NE(td, nullptr) << sc.tag;
+        EXPECT_EQ(td->dilationD, 1);
+        EXPECT_EQ(td->dilationH, 1);
+        EXPECT_EQ(td->dilationW, 1);
+        mp3dg_partition_verify::VerifyAxisPartition(td->dOutput, td->dArgmax, td->dKernel, td->dStride, td->padD,
+                                                    td->dOutputInner, td->dOutputTail, td->dOutputOuter, !checkRange);
+        mp3dg_partition_verify::VerifyAxisPartition(td->hOutput, td->hArgmax, td->hKernel, td->hStride, td->padH,
+                                                    td->hOutputInner, td->hOutputTail, td->hOutputOuter, !checkRange);
+        mp3dg_partition_verify::VerifyAxisPartition(td->wOutput, td->wArgmax, td->wKernel, td->wStride, td->padW,
+                                                    td->wOutputInner, td->wOutputTail, td->wOutputOuter, !checkRange);
+        std::cout << "[partition-semantics][" << sc.tag << "] inner(d,h,w)=(" << td->dOutputInner << ","
+                  << td->hOutputInner << "," << td->wOutputInner << ") checkRange=" << checkRange << " PASS"
+                  << std::endl;
+    }
 }

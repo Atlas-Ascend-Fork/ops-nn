@@ -51,7 +51,7 @@ VALID and CALCULATED.
 * @li pads: A list of 6 ints. Supports only padding along the D,
 * H and W dimensions in sequence of head, tail, top, bottom, left and right.
 * to use.
-* @li data_format: An optional string, supported values: ["NCDHW", "NDHWC"],With the default format "NCDHW". \n
+* @li data_format: An optional string, supported values: ["NCDHW", "NDHWC"],With the default format "NDHWC". \n
 
 * @par Outputs:
 * y: A Tensor. Has the same dtype, shape and format as input "orig_x".

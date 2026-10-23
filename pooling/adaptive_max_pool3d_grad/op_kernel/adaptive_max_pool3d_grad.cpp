@@ -13,7 +13,7 @@
  * \brief Adaptive MaxPool3D Grad kernel entry
  */
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__CCE_AICORE__) && (__CCE_AICORE__ == 310 || __CCE_AICORE__ == 920)
 #include "arch35/adaptive_max_pool3d_grad_simt.h"
 #else
 #include "adaptive_max_pool3d_grad_normal.h"
@@ -22,7 +22,7 @@
 using namespace AdaptiveMaxPool3DGrad;
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__CCE_AICORE__) && (__CCE_AICORE__ == 310 || __CCE_AICORE__ == 920)
 using namespace AdaptiveMaxPool3dGradOp;
 template <uint64_t TEMPLATE_MODE = TPL_SIMT_KERNEL, uint64_t INDEX_DTYPE = TPL_INT32>
 __global__ __aicore__ void adaptive_max_pool3d_grad(GM_ADDR x, GM_ADDR grad, GM_ADDR argmax, GM_ADDR y,

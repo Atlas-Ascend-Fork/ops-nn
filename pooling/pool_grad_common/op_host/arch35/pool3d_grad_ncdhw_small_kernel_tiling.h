@@ -136,7 +136,8 @@ public:
     ge::graphStatus PostTiling(gert::TilingContext* context_, uint64_t key);
     Pool3DGradNCDHWSplitInfo& GetSplitData();
     Pool3DGradNCDHWBaseInfo& GetBaseData();
-    void DoBufferCalculate();
+    // 多核调整后需按算子侧实现(如大 kernel 口径)刷新 buffer, 因此需虚化
+    virtual void DoBufferCalculate();
 
 private:
     void DoUBTiling();
@@ -156,6 +157,13 @@ private:
     void PrintBaseData() const;
     void PrintSplitData() const;
     void DoBlockTiling();
+    // 单轴贪心搜索: 逐步缩减 inner 增大 outer, normalCoreProcessNum 跳升时回退(负载不均加剧)
+    void SearchOuterSingle(int64_t& inner, int64_t step);
+    // stride 网格对齐版: kernel=1 时窗口为单点可用 step=1; 否则整轴先向下对齐到 stride 网格,
+    // 再按 stride 步长缩减, 保证 isCheckRange=0 路径 tile 边界不切割 pooling 窗口
+    void SearchOuterSingleAligned(int64_t& inner, int64_t stride, int64_t kernelSize);
+    // 多核利用率调整: usedCoreNum < totalCoreNum 时按 NC -> D -> H -> W 优先级缩减 inner
+    void AdjustInnerSplitForMultiCore();
 
     Pool3DGradNCDHWBaseInfo baseData;
     Pool3DGradNCDHWSplitInfo splitData;

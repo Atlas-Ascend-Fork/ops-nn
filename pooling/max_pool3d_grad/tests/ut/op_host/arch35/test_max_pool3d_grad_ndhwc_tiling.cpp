@@ -29,6 +29,7 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "../../../../op_host/arch35/max_pool3d_grad_tiling.h"
+#include "test_max_pool3d_grad_partition_verify.h"
 
 using namespace ge;
 using namespace ut_util;
@@ -353,4 +354,144 @@ TEST_F(MaxPool3DGradNdhwcTiling, ncdhw_big_kv_big_kernel_buffer)
     // (NoSplit 判据同口径; 超前向预算时按预算封顶, 由 kernel 侧分块处理)
     const int64_t hwAligned = (4 * 8 + 7) / 8 * 8;
     EXPECT_EQ(r.td.inputBufferSize, 4 * hwAligned * 4);
+}
+
+// ==================== 多核优化验证: 效果回归 + 划分语义 ====================
+
+// 多核调整效果回归(64 核平台): usedCoreNum 不低于优化前基线, normalCoreProcessNum 不劣化,
+// tiling key 不变, 块数守恒
+TEST_F(MaxPool3DGradNdhwcTiling, ndhwc_multicore_effect_sweep)
+{
+    struct EffectCase {
+        const char* tag;
+        gert::StorageShape xShape;
+        gert::StorageShape yShape;
+        std::vector<int64_t> ksize;
+        std::vector<int64_t> strides;
+        std::string padding;
+        std::vector<int64_t> pads;
+        ge::DataType dtype;
+        uint64_t baseKey;
+        int64_t baseUsed;
+        int64_t baseNormal;
+    };
+    const std::vector<EffectCase> cases = {
+        {"big_kernel_h_4_to_3",
+         {{1, 12, 12, 12, 32}, {1, 12, 12, 12, 32}},
+         {{1, 2, 2, 2, 32}, {1, 2, 2, 2, 32}},
+         {1, 6, 6, 6, 1},
+         {1, 6, 6, 6, 1},
+         "CALCULATED",
+         {0, 0, 0, 0, 0, 0},
+         ge::DT_FLOAT16,
+         GET_TPL_TILING_KEY(TPL_INT32, 0, 1, 1, 0),
+         36,
+         2},
+        {"valid_already_full",
+         {{2, 4, 8, 8, 16}, {2, 4, 8, 8, 16}},
+         {{2, 2, 4, 4, 16}, {2, 2, 4, 4, 16}},
+         {1, 2, 2, 2, 1},
+         {1, 2, 2, 2, 1},
+         "VALID",
+         {0, 0, 0, 0, 0, 0},
+         ge::DT_FLOAT,
+         GET_TPL_TILING_KEY(TPL_INT32, 0, 1, 0, 0),
+         64,
+         2},
+        {"pad_already_full",
+         {{2, 8, 8, 8, 16}, {2, 8, 8, 8, 16}},
+         {{2, 5, 5, 5, 16}, {2, 5, 5, 5, 16}},
+         {1, 2, 2, 2, 1},
+         {1, 2, 2, 2, 1},
+         "CALCULATED",
+         {1, 1, 1, 1, 1, 1},
+         ge::DT_FLOAT,
+         GET_TPL_TILING_KEY(TPL_INT32, 0, 1, 1, 0),
+         64,
+         1},
+    };
+    for (const auto& ec : cases) {
+        NdhwcTilingResult r;
+        RunNdhwcTiling(ec.xShape, ec.yShape, ec.yShape, ec.dtype, ec.ksize, ec.strides, ec.padding, ec.pads, r);
+        ASSERT_EQ(r.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(r.tilingKey, ec.baseKey) << ec.tag;
+        EXPECT_GE(r.td.base.usedCoreNum, ec.baseUsed) << ec.tag;
+        EXPECT_LE(r.td.base.normalCoreProcessNum, ec.baseNormal) << ec.tag;
+        const int64_t totalBlocks = r.td.base.highAxisOuter * r.td.cOutputOuter * r.td.base.dOutputOuter *
+                                    r.td.base.hOutputOuter * r.td.base.wOutputOuter;
+        EXPECT_EQ(r.td.base.normalCoreProcessNum * (r.td.base.usedCoreNum - 1) + r.td.base.tailCoreProcessNum,
+                  totalBlocks)
+            << ec.tag;
+        std::cout << "[multicore-effect][ndhwc][" << ec.tag << "] usedCoreNum " << ec.baseUsed << " -> "
+                  << r.td.base.usedCoreNum << "/64" << std::endl;
+    }
+}
+
+// 划分语义验证(纯 host): 复刻 kernel 侧 PStart/PEnd/窗口公式, 对 d/h/w 轴穷举
+// (grad 位置 p, 窗口内位置 a), 断言恰好一个 tile 同时覆盖; isCheckRange=0 时窗口完整落在 tile 内
+TEST_F(MaxPool3DGradNdhwcTiling, ndhwc_partition_semantics)
+{
+    struct SemCase {
+        const char* tag;
+        gert::StorageShape xShape;
+        gert::StorageShape yShape;
+        std::vector<int64_t> ksize;
+        std::vector<int64_t> strides;
+        std::string padding;
+        std::vector<int64_t> pads;
+        ge::DataType dtype;
+    };
+    const std::vector<SemCase> cases = {
+        {"big_kernel_h_4_to_3",
+         {{1, 12, 12, 12, 32}, {1, 12, 12, 12, 32}},
+         {{1, 2, 2, 2, 32}, {1, 2, 2, 2, 32}},
+         {1, 6, 6, 6, 1},
+         {1, 6, 6, 6, 1},
+         "CALCULATED",
+         {0, 0, 0, 0, 0, 0},
+         ge::DT_FLOAT16},
+        {"valid_align_dhw",
+         {{2, 4, 8, 8, 16}, {2, 4, 8, 8, 16}},
+         {{2, 2, 4, 4, 16}, {2, 2, 4, 4, 16}},
+         {1, 2, 2, 2, 1},
+         {1, 2, 2, 2, 1},
+         "VALID",
+         {0, 0, 0, 0, 0, 0},
+         ge::DT_FLOAT},
+        {"pad_unalign_dhw",
+         {{2, 8, 8, 8, 16}, {2, 8, 8, 8, 16}},
+         {{2, 5, 5, 5, 16}, {2, 5, 5, 5, 16}},
+         {1, 2, 2, 2, 1},
+         {1, 2, 2, 2, 1},
+         "CALCULATED",
+         {1, 1, 1, 1, 1, 1},
+         ge::DT_FLOAT},
+        {"nonoverlap_big_kv",
+         {{1, 8, 8, 8, 16}, {1, 8, 8, 8, 16}},
+         {{1, 2, 2, 1, 16}, {1, 2, 2, 1, 16}},
+         {1, 4, 4, 8, 1},
+         {1, 4, 4, 8, 1},
+         "VALID",
+         {0, 0, 0, 0, 0, 0},
+         ge::DT_FLOAT},
+    };
+    const uint64_t keyCk0 = GET_TPL_TILING_KEY(TPL_INT32, 0, 1, 0, 0);
+    for (const auto& sc : cases) {
+        NdhwcTilingResult r;
+        RunNdhwcTiling(sc.xShape, sc.yShape, sc.yShape, sc.dtype, sc.ksize, sc.strides, sc.padding, sc.pads, r);
+        ASSERT_EQ(r.status, ge::GRAPH_SUCCESS) << sc.tag;
+        const bool checkRange = (r.tilingKey != keyCk0);
+        const auto& b = r.td.base;
+        EXPECT_EQ(b.dilationD, 1);
+        EXPECT_EQ(b.dilationH, 1);
+        EXPECT_EQ(b.dilationW, 1);
+        mp3dg_partition_verify::VerifyAxisPartition(b.dOutput, b.dArgmax, b.dKernel, b.dStride, b.padD, b.dOutputInner,
+                                                    b.dOutputTail, b.dOutputOuter, !checkRange);
+        mp3dg_partition_verify::VerifyAxisPartition(b.hOutput, b.hArgmax, b.hKernel, b.hStride, b.padH, b.hOutputInner,
+                                                    b.hOutputTail, b.hOutputOuter, !checkRange);
+        mp3dg_partition_verify::VerifyAxisPartition(b.wOutput, b.wArgmax, b.wKernel, b.wStride, b.padW, b.wOutputInner,
+                                                    b.wOutputTail, b.wOutputOuter, !checkRange);
+        std::cout << "[partition-semantics][ndhwc][" << sc.tag << "] inner(d,h,w)=(" << b.dOutputInner << ","
+                  << b.hOutputInner << "," << b.wOutputInner << ") checkRange=" << checkRange << " PASS" << std::endl;
+    }
 }

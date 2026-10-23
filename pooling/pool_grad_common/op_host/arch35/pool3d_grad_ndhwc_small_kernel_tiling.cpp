@@ -350,6 +350,27 @@ void Pool3DGradNDHWCSmallKernelCommonTiling::DoUBTiling()
 
 void Pool3DGradNDHWCSmallKernelCommonTiling::DoBlockTiling()
 {
+    // inner 变化后 outer/tail 需同步重算, 保证 SearchOuterSingle 调整过程中多核分配自洽
+    splitData.wOutputOuter = Ops::Base::CeilDiv(inputData->wX, splitData.wOutputInner);
+    int64_t wTail = inputData->wX % splitData.wOutputInner;
+    splitData.wOutputTail = (wTail == 0) ? splitData.wOutputInner : wTail;
+
+    splitData.hOutputOuter = Ops::Base::CeilDiv(inputData->hX, splitData.hOutputInner);
+    int64_t hTail = inputData->hX % splitData.hOutputInner;
+    splitData.hOutputTail = (hTail == 0) ? splitData.hOutputInner : hTail;
+
+    splitData.dOutputOuter = Ops::Base::CeilDiv(inputData->dX, splitData.dOutputInner);
+    int64_t dTail = inputData->dX % splitData.dOutputInner;
+    splitData.dOutputTail = (dTail == 0) ? splitData.dOutputInner : dTail;
+
+    splitData.nOutputOuter = Ops::Base::CeilDiv(inputData->nX, splitData.nOutputInner);
+    int64_t nTail = inputData->nX % splitData.nOutputInner;
+    splitData.nOutputTail = (nTail == 0) ? splitData.nOutputInner : nTail;
+
+    splitData.cOutputOuter = Ops::Base::CeilDiv(inputData->cX, splitData.cOutputInner);
+    int64_t cTail = inputData->cX % splitData.cOutputInner;
+    splitData.cOutputTail = (cTail == 0) ? splitData.cOutputInner : cTail;
+
     splitData.totalBaseBlockNum = splitData.nOutputOuter * splitData.cOutputOuter * splitData.dOutputOuter *
                                   splitData.hOutputOuter * splitData.wOutputOuter;
     splitData.normalCoreProcessNum = Ops::Base::CeilDiv(splitData.totalBaseBlockNum, baseData.totalCoreNum);
@@ -358,10 +379,101 @@ void Pool3DGradNDHWCSmallKernelCommonTiling::DoBlockTiling()
                                    splitData.normalCoreProcessNum * (splitData.usedCoreNum - 1);
 }
 
+void Pool3DGradNDHWCSmallKernelCommonTiling::SearchOuterSingle(int64_t& inner, int64_t step)
+{
+    int64_t lastNormCoreProcessNum = splitData.normalCoreProcessNum;
+    while (inner > step) {
+        inner -= step;
+        DoBlockTiling();
+        int64_t newNormCoreProcessNum = splitData.normalCoreProcessNum;
+        if (newNormCoreProcessNum > lastNormCoreProcessNum) {
+            inner += step;
+            DoBlockTiling();
+            break;
+        }
+        lastNormCoreProcessNum = newNormCoreProcessNum;
+    }
+}
+
+void Pool3DGradNDHWCSmallKernelCommonTiling::SearchOuterSingleAligned(int64_t& inner, int64_t stride,
+                                                                      int64_t kernelSize)
+{
+    if (kernelSize == 1) {
+        // 窗口为单点, 任意 tile 边界均不切割窗口
+        SearchOuterSingle(inner, 1);
+        return;
+    }
+    if (inner <= stride) {
+        return;
+    }
+    if (inner % stride != 0) {
+        // 整轴(TrySplitN/对齐路径的未切分轴)未按 stride 对齐: 先向下对齐到 stride 网格;
+        // CeilDiv(totalBaseBlockNum, totalCoreNum) 跳升则回退, 该轴不可切
+        int64_t originInner = inner;
+        int64_t lastNormCoreProcessNum = splitData.normalCoreProcessNum;
+        inner = inner / stride * stride;
+        DoBlockTiling();
+        if (splitData.normalCoreProcessNum > lastNormCoreProcessNum) {
+            inner = originInner;
+            DoBlockTiling();
+            return;
+        }
+    }
+    SearchOuterSingle(inner, stride);
+}
+
+void Pool3DGradNDHWCSmallKernelCommonTiling::AdjustInnerSplitForMultiCore()
+{
+    DoBlockTiling();
+    if (splitData.usedCoreNum >= baseData.totalCoreNum) {
+        return;
+    }
+
+    // N 轴(高轴): 各平面独立, 任意 inner 均安全
+    SearchOuterSingle(splitData.nOutputInner, 1);
+    if (splitData.usedCoreNum >= baseData.totalCoreNum) {
+        DoBufferCalculate();
+        return;
+    }
+
+    if (splitData.isCheckRange == 1) {
+        // 非对齐兜底路径: kernel 侧 IS_CHECK_RANGE=1 逐 lane 过滤越界写, 任意 inner 安全
+        SearchOuterSingle(splitData.dOutputInner, 1);
+        if (splitData.usedCoreNum >= baseData.totalCoreNum) {
+            DoBufferCalculate();
+            return;
+        }
+        SearchOuterSingle(splitData.hOutputInner, 1);
+        if (splitData.usedCoreNum >= baseData.totalCoreNum) {
+            DoBufferCalculate();
+            return;
+        }
+        SearchOuterSingle(splitData.wOutputInner, 1);
+    } else if (baseData.isPad == 0 && baseData.isOverlap == 0) {
+        // 对齐/N 路径(isCheckRange=0): kernel 侧 scatter 无越界过滤,
+        // D/H/W tile 边界必须保持在 stride 网格上(无 pad 无 overlap 时窗口不跨边界)
+        SearchOuterSingleAligned(splitData.dOutputInner, inputData->dStride, inputData->dKernel);
+        if (splitData.usedCoreNum >= baseData.totalCoreNum) {
+            DoBufferCalculate();
+            return;
+        }
+        SearchOuterSingleAligned(splitData.hOutputInner, inputData->hStride, inputData->hKernel);
+        if (splitData.usedCoreNum >= baseData.totalCoreNum) {
+            DoBufferCalculate();
+            return;
+        }
+        SearchOuterSingleAligned(splitData.wOutputInner, inputData->wStride, inputData->wKernel);
+    }
+    // isCheckRange=0 且有 pad/overlap 的 N 路径: D/H/W 为整轴(单 tile), 切分会产生跨界窗口,
+    // 仅调整 N 轴
+    DoBufferCalculate();
+}
+
 ge::graphStatus Pool3DGradNDHWCSmallKernelCommonTiling::DoOpTiling(gert::TilingContext* context)
 {
     DoUBTiling();
-    DoBlockTiling();
+    AdjustInnerSplitForMultiCore();
+    DoBlockTiling(); // 安全冗余, 确保最终 outer/tail 与多核分配一致
     SetTilingData(context);
     return ge::GRAPH_SUCCESS;
 }

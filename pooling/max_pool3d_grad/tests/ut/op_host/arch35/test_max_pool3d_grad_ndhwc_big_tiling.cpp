@@ -283,6 +283,7 @@ TEST_F(MaxPool3DGradNdhwcBigTiling, big_kernel_pad3_stride2_fp16)
 }
 
 // P0-44 后 non-overlap 由大 kernel 认领（原 reject_non_overlap_falls_to_simt 过时）
+// 多核调整: usedCoreNum 36<64, hOutputInner 4->3(hOutputOuter 3->4, blocks 72->96), usedCoreNum 36->48
 TEST_F(MaxPool3DGradNdhwcBigTiling, non_overlap_k_eq_s_cube_claimed_by_big_kernel)
 {
     gert::StorageShape xShape = {{1, 12, 12, 12, 32}, {1, 12, 12, 12, 32}};
@@ -290,7 +291,7 @@ TEST_F(MaxPool3DGradNdhwcBigTiling, non_overlap_k_eq_s_cube_claimed_by_big_kerne
     gert::StorageShape dxShape = {{1, 12, 12, 12, 32}, {1, 12, 12, 12, 32}};
     auto attrs = MakeAttrs({1, 6, 6, 6, 1}, {1, 6, 6, 6, 1}, "CALCULATED", {0, 0, 0, 0, 0, 0});
     RunBigTilingCase(xShape, yShape, dxShape, attrs, {1, 6, 6, 6, 1}, {1, 6, 6, 6, 1}, ge::DT_FLOAT16,
-                     GET_TPL_TILING_KEY(TPL_INT32, 0, 1, 1, 0), true, 512, 72, 32, 32, 13824, 256, 3072, 12, 1, 3, 4, 2,
+                     GET_TPL_TILING_KEY(TPL_INT32, 0, 1, 1, 0), true, 512, 96, 32, 32, 13824, 256, 2304, 12, 1, 4, 3, 2,
                      6);
 }
 
