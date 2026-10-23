@@ -11,5 +11,5 @@
 
 add_kernel_sources(
     KERNEL_SRC arch35/scatter_max_with_argmax.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
 )

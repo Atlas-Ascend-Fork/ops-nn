@@ -87,6 +87,7 @@ public:
 
         /* Pass the configuration explicitly so ValueDepend and compile flags are retained. */
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 

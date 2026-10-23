@@ -12,8 +12,8 @@
 # lives in rnn/dynamic_rnn/op_api/ and dispatches here by SoC and capability, so no aclnnSingleLayerLstm
 # may be generated from the OpDef. op_api/single_layer_lstm.cpp -- the L0 wrapper aclnnLSTM calls -- is
 # compiled anyway.
-set(SUPPORT_COMPUTE_UNIT "ascend950")
-set(SUPPORT_TILING_DIR "arch35")
+set(SUPPORT_COMPUTE_UNIT "ascend950" "ascend350")
+set(SUPPORT_TILING_DIR "arch35" "arch35")
 add_all_modules_sources(
     OPTYPE single_layer_lstm
     ACLNNTYPE aclnn_exclude
@@ -32,7 +32,7 @@ add_all_modules_sources(
 # Measured both ways on a MIX 1:2 kernel: with the macros bad=0, without them bad=26949/32768.
 add_kernel_sources(
     KERNEL_SRC arch35/single_layer_lstm.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
     OPTIONS
         -DENABLE_CV_COMM_VIA_SSBUF=1
         -D__MIX_CORE_AIC_RATION__=2

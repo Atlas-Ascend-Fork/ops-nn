@@ -43,6 +43,7 @@ public:
             .PrecisionReduceFlag(false)
             .ExtendCfgInfo("opFile.value", "lamb_update_with_lr");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 

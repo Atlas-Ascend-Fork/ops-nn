@@ -56,6 +56,7 @@ public:
             .NeedCheckSupportFlag(false)    // 跳过框架 support check
             .ExtendCfgInfo("opFile.value", "gn_training_reduce_apt");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 OP_ADD(GNTrainingReduce);

@@ -54,6 +54,7 @@ public:
             .PrecisionReduceFlag(true)
             .ExtendCfgInfo("opFile.value", "foreach_pow_scalar_and_tensor");
         this->AICore().AddConfig("ascend950", aicoreConfig950);
+        this->AICore().AddConfig("ascend350", aicoreConfig950);
         this->AICore().AddConfig("ascend910_93");
         this->AICore().AddConfig("ascend910b");
 

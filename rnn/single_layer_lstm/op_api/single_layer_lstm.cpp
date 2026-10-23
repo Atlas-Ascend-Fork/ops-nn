@@ -65,8 +65,9 @@ bool SingleLayerLstmSupports(const aclTensor* x, const aclTensor* initH, const c
     if (x == nullptr || initH == nullptr || direction == nullptr) {
         return no("x, initH or direction is null");
     }
-    if (GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND950) {
-        return no("this operator is implemented for ascend950 only");
+    if (GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND950 &&
+        GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND350) {
+        return no("this operator is implemented for ascend950/ascend350 only");
     }
     /* All floating inputs and outputs share the declared dtype. */
     const int64_t inBytes = WidthOf(initH->GetDataType());
@@ -141,8 +142,9 @@ const SingleLayerLstmResult SingleLayerLstm(const aclTensor* x, const aclTensor*
      * launching lets the caller report an unsupported-SoC error instead of the framework refusing at
      * binary lookup with "binary_info_config.json of socVersion [...] does not support opType", which
      * says nothing about which operator the caller asked for. */
-    if (GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND950) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "SingleLayerLstm is implemented for ascend950 only.");
+    if (GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND950 &&
+        GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND350) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "SingleLayerLstm is implemented for ascend950/ascend350 only.");
         return LSTM_NULLPTR_INNER;
     }
 

@@ -9,9 +9,9 @@
 # -----------------------------------------------------------------------------------------------------------
 
 # 支持的芯片版本（与 SUPPORT_TILING_DIR 一一对应）
-set(SUPPORT_COMPUTE_UNIT "ascend950")
+set(SUPPORT_COMPUTE_UNIT "ascend950" "ascend350")
 # 每种芯片版本对应的 tiling 文件目录（op_host 下的子目录）
-set(SUPPORT_TILING_DIR "arch35")
+set(SUPPORT_TILING_DIR "arch35" "arch35")
 
 add_all_modules_sources(
     OPTYPE gn_training_reduce

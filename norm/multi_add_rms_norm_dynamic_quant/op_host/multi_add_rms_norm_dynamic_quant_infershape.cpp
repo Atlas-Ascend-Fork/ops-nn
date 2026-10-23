@@ -106,12 +106,13 @@ static ge::graphStatus InferShape4MultiAddRmsNormDynamicQuant(gert::InferShapeCo
     const gert::Shape* smooth2Shape = context->GetOptionalInputShape(SMOOTH2_IDX);
     bool smooth2Exist = CheckOptionalShapeExisting(smooth2Shape);
 
-    // Ascend950 走独立分支并直接返回; 拿不到 platform 或其它 soc 一律走下方原有逻辑, 行为不变。
+    // Ascend950/Ascend350 走独立分支并直接返回; 拿不到 platform 或其它 soc 一律走下方原有逻辑, 行为不变。
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optionalInfo;
     bool isAscend950 = (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(
                             platformInfo, optionalInfo) == ge::GRAPH_SUCCESS) &&
-                       (platformInfo.str_info.short_soc_version == "Ascend950");
+                       (platformInfo.str_info.short_soc_version == "Ascend950" ||
+                        platformInfo.str_info.short_soc_version == "Ascend350");
     if (isAscend950) {
         // gamma 与 smooth 一致性校验交给 regbase tiling(CheckInputShapeValue);此处不做以避免 GE 图 prepare
         // 阶段 optional smooth 占位/索引 shape 误判(对齐姊妹算子 add_rms_norm_dynamic_quant 的 infershape)。
@@ -147,7 +148,7 @@ static ge::graphStatus InferShape4MultiAddRmsNormDynamicQuant(gert::InferShapeCo
             *y2Shape = gert::Shape({1});
             *outScale2Shape = gert::Shape({1});
         }
-        OP_LOGI(context, "End to do InferShape4MultiAddRmsNormDynamicQuant (Ascend950)");
+        OP_LOGI(context, "End to do InferShape4MultiAddRmsNormDynamicQuant (Ascend950/Ascend350)");
         return ge::GRAPH_SUCCESS;
     }
 

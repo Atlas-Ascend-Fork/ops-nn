@@ -61,6 +61,7 @@ public:
             .NeedCheckSupportFlag(false)
             .ExtendCfgInfo("opFile.value", "scatter_max");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 

@@ -54,7 +54,8 @@ static graphStatus InferShape4SoftmaxFocalLoss(gert::InferShapeContext* context)
     fe::OptionalInfo optionalInfo;
     const bool isAscend950 = (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(
                                   platformInfo, optionalInfo) == ge::GRAPH_SUCCESS) &&
-                             (platformInfo.str_info.short_soc_version == "Ascend950");
+                             (platformInfo.str_info.short_soc_version == "Ascend950" ||
+                              platformInfo.str_info.short_soc_version == "Ascend350");
     if (isAscend950) {
         const auto* attrs = context->GetAttrs();
         OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
