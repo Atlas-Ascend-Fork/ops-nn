@@ -70,7 +70,7 @@
   <tr>
     <td>alpha3</td>
     <td>属性</td>
-    <td><ul><li>正区的固定输出值，对应公式中的alpha3。</li><li>默认值为1.0。</li></ul></td>
+    <td><ul><li>正区线性缩放系数，对应公式中的alpha3。</li><li>默认值为1.0。</li></ul></td>
     <td>FLOAT</td>
     <td>-</td>
   </tr>
