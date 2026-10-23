@@ -69,6 +69,16 @@ constexpr static AscendC::Reg::CastTrait castTraitB322B16Odd = {
     AscendC::RoundMode::CAST_RINT,
 };
 
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+// Keep the even halfwords written by the first Cast when packing the odd part.
+constexpr static AscendC::Reg::CastTrait castTraitB322B16OddMerging = {
+    AscendC::Reg::RegLayout::ONE,
+    AscendC::Reg::SatMode::NO_SAT,
+    AscendC::Reg::MaskMergeMode::MERGING,
+    AscendC::RoundMode::CAST_RINT,
+};
+#endif
+
 __aicore__ inline uint32_t CeilDiv(uint32_t x, uint32_t y)
 {
     if (y > 0) {
@@ -1287,8 +1297,10 @@ __aicore__ inline void VFInnerNormalizeAndSwishUnAlign(__ubuf__ T1* xLocal, __ub
             LoadGammaAndBetaData<T2, hasGamma, hasBeta>(gamma, beta, gammaLocal, betaLocal, pregMain, i);
             if constexpr (IsSameType<T1, half>::value || IsSameType<T1, bfloat16_t>::value) {
                 RegTensor<T1> xTmp;
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 9201)
                 RegTensor<T1> yEvenTmp;
                 RegTensor<T1> yOddTmp;
+#endif
                 RegTensor<T1> yTmp;
                 for (uint16_t j = 0; j < loopCount; j++) {
                     LoadUnAlign(xTmp, uSrc, xLocal, VL);
@@ -1301,10 +1313,15 @@ __aicore__ inline void VFInnerNormalizeAndSwishUnAlign(__ubuf__ T1* xLocal, __ub
                         VFInnerNormalize<hasGamma, hasBeta>(xEven, mean, rstd, gamma, beta, yEven, pregMain);
                         VFInnerNormalize<hasGamma, hasBeta>(xOdd, mean, rstd, gamma, beta, yOdd, pregMain);
                     }
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+                    Cast<T1, float, castTraitB322B16Even>(yTmp, yEven, pregMain);
+                    Cast<T1, float, castTraitB322B16OddMerging>(yTmp, yOdd, pregMain);
+#else
                     Cast<T1, float, castTraitB322B16Even>(yEvenTmp, yEven, pregMain);
                     Cast<T1, float, castTraitB322B16Odd>(yOddTmp, yOdd, pregMain);
                     Or((RegTensor<int16_t>&)yTmp, (RegTensor<int16_t>&)yEvenTmp, (RegTensor<int16_t>&)yOddTmp,
                        pregMain);
+#endif
                     StoreUnAlign(yLocal, yTmp, uDst, VL);
                 }
                 uint32_t sreg0 = tailNum;
@@ -1320,10 +1337,15 @@ __aicore__ inline void VFInnerNormalizeAndSwishUnAlign(__ubuf__ T1* xLocal, __ub
                         VFInnerNormalize<hasGamma, hasBeta>(xEven, mean, rstd, gamma, beta, yEven, pregLoop);
                         VFInnerNormalize<hasGamma, hasBeta>(xOdd, mean, rstd, gamma, beta, yOdd, pregLoop);
                     }
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+                    Cast<T1, float, castTraitB322B16Even>(yTmp, yEven, pregLoop);
+                    Cast<T1, float, castTraitB322B16OddMerging>(yTmp, yOdd, pregLoop);
+#else
                     Cast<T1, float, castTraitB322B16Even>(yEvenTmp, yEven, pregLoop);
                     Cast<T1, float, castTraitB322B16Odd>(yOddTmp, yOdd, pregLoop);
                     Or((RegTensor<int16_t>&)yTmp, (RegTensor<int16_t>&)yEvenTmp, (RegTensor<int16_t>&)yOddTmp,
                        pregLoop);
+#endif
                     StoreUnAlign(yLocal, yTmp, uDst, tailNum);
                 }
                 StoreUnAlignPost(yLocal, uDst, 0);

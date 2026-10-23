@@ -11,6 +11,8 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <tuple>
+#include <cstring>
 #include <gtest/gtest.h>
 #include "log/log.h"
 #include "array_ops.h"
@@ -299,3 +301,132 @@ TEST_F(SwiGluTiling, swi_glu_tiling_100)
     auto tilingData = tiling_context->GetRawTilingData();
     ASSERT_NE(tilingData, nullptr);
 }
+
+// UB sizes are test inputs, not hard-coded platform specifications.
+class SwiGluRegbaseTiling : public testing::TestWithParam<std::tuple<std::string, uint64_t, ge::DataType, bool>> {};
+
+TEST_P(SwiGluRegbaseTiling, platform_capacity_and_empty_input)
+{
+    const auto [arch, ubSize, dtype, empty] = GetParam();
+    SCOPED_TRACE(::testing::Message() << "arch=" << arch << " ub=" << ubSize << " dtype=" << dtype
+                                      << " empty=" << empty);
+    std::string op_type("SwiGlu");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+
+    std::map<std::string, std::string> soc_version_infos = {
+        {"Short_SoC_version", arch == "9201" ? "Ascend960DT" : "Ascend950"}, {"NpuArch", arch}};
+    map<string, string> npuarchs = {{"NpuArch", arch}};
+    string compile_info_string = R"({
+            "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                            "Intrinsic_fix_pipe_l0c2out": false,
+                            "Intrinsic_data_move_l12ub": true,
+                            "Intrinsic_data_move_l0c2ub": true,
+                            "Intrinsic_data_move_out2l1_nd2nz": false,
+                            "UB_SIZE": 245760, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                            "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                            "CORE_NUM": 64}
+                            })";
+    compile_info_string.replace(compile_info_string.find("245760"), 6, std::to_string(ubSize));
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    // compile info
+    struct SwiGluCompileInfo {};
+    SwiGluCompileInfo compile_info;
+
+    // tilingParseFunc simulate
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+
+    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version",
+                                                                                            soc_version_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", npuarchs);
+    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+
+    // tilingFunc simulate
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    gert::StorageShape x_shape = empty ? gert::StorageShape{{0}, {0}} :
+                                         gert::StorageShape{{1024, 16384}, {1024, 16384}};
+    gert::StorageShape y_shape = empty ? gert::StorageShape{{0}, {0}} : gert::StorageShape{{1024, 8192}, {1024, 8192}};
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .InputShapes({&x_shape})
+                      .OutputShapes({&y_shape})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"dim", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_version_infos);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", npuarchs);
+
+    ASSERT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+    auto tiling_key = tiling_context->GetTilingKey();
+    ASSERT_EQ(tiling_key, empty ? 100U : static_cast<uint64_t>(dtype));
+    EXPECT_EQ(tiling_context->GetWorkspaceSizes(1)[0], 0U);
+    auto tilingData = tiling_context->GetRawTilingData();
+    ASSERT_NE(tilingData, nullptr);
+    if (!empty) {
+        // Decode the serialized kernel ABI, not TilingDataBase's host-side cached fields.
+        struct KernelTilingPrefix {
+            uint32_t is32BAligned;
+            uint32_t isDoubleBuffer;
+            uint64_t rowLen;
+            uint64_t colLen;
+            uint32_t baseRowLen;
+            uint32_t baseColLen;
+        } result{};
+        static_assert(sizeof(KernelTilingPrefix) == 32);
+        ASSERT_GE(tilingData->GetDataSize(), sizeof(result));
+        std::memcpy(&result, tilingData->GetData(), sizeof(result));
+        EXPECT_EQ(result.rowLen, 1024U);
+        EXPECT_EQ(result.colLen, 8192U);
+        EXPECT_EQ(result.is32BAligned, 1U);
+        EXPECT_EQ(result.isDoubleBuffer, 1U);
+        EXPECT_EQ(tiling_context->GetBlockDim(), 64U);
+        // Fixed shapes exercise the real search, not just the UB-size query.
+        const bool fp32 = dtype == ge::DT_FLOAT;
+        const uint32_t expectedRows = ubSize == 262144 ? (fp32 ? 9 : 25) : (fp32 ? 27 : 19);
+        const uint32_t expectedCols = ubSize == 262144 ? (fp32 ? 1024 : 512) : (fp32 ? 512 : 1024);
+        EXPECT_EQ(result.baseRowLen, expectedRows);
+        EXPECT_EQ(result.baseColLen, expectedCols);
+        const uint64_t bytesPerElement = fp32 ? 28 : 20;
+        EXPECT_LE(result.baseRowLen * result.baseColLen * bytesPerElement, ubSize);
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Arch35, SwiGluRegbaseTiling,
+                         testing::Combine(testing::Values(std::string("3510"), std::string("9201")),
+                                          testing::Values(uint64_t{262144}, uint64_t{393216}),
+                                          testing::Values(ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16), testing::Bool()));
