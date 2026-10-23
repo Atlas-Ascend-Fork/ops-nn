@@ -19,11 +19,13 @@
 namespace AddRmsNormCast {
 template <typename T_X>
 class KernelAddRmsNormCastRegBaseSpiltReduce {
+    static constexpr uint32_t BUFFER_NUM = 2;
+
 public:
     __aicore__ inline KernelAddRmsNormCastRegBaseSpiltReduce(TPipe* pipe) { pipe_ = pipe; }
 
     __aicore__ inline void Init(GM_ADDR x1, GM_ADDR x2, GM_ADDR gamma, GM_ADDR y1, GM_ADDR y2, GM_ADDR rstd, GM_ADDR x,
-                                GM_ADDR workspace, const AddRmsNormCastRegbaseTilingData* tilingData)
+                                const AddRmsNormCastRegbaseTilingData* tilingData)
     {
         numM_ = tilingData->numM;
         numN_ = tilingData->numN;
@@ -42,7 +44,7 @@ public:
         blockIdx_ = GetBlockIdx();
 
         CalBlockTail();
-        InitBuffer(x1, x2, gamma, y1, y2, rstd, x, workspace);
+        InitBuffer(x1, x2, gamma, y1, y2, rstd, x);
     }
 
     __aicore__ inline void CalBlockTail()
@@ -58,13 +60,12 @@ public:
     }
 
     __aicore__ inline void InitBuffer(GM_ADDR x1, GM_ADDR x2, GM_ADDR gamma, GM_ADDR y1, GM_ADDR y2, GM_ADDR rstd,
-                                      GM_ADDR x, GM_ADDR workspace)
+                                      GM_ADDR x)
     {
         // Init GM
         uint64_t gmOffset = blockIdx_ * mPerCore_ * numN_;
         uint64_t gmLen = mCore_ * numN_;
         uint64_t rstdGmOffset = blockIdx_ * mPerCore_;
-        uint64_t workSpaceOffset = blockIdx_ * numN_;
         x1Gm_.SetGlobalBuffer((__gm__ T_X*)x1 + gmOffset, gmLen);
         x2Gm_.SetGlobalBuffer((__gm__ T_X*)x2 + gmOffset, gmLen);
         y1Gm_.SetGlobalBuffer((__gm__ float*)y1 + gmOffset, gmLen);
@@ -72,24 +73,21 @@ public:
         xGm_.SetGlobalBuffer((__gm__ T_X*)x + gmOffset, gmLen);
         gammaGm_.SetGlobalBuffer((__gm__ T_X*)gamma, numN_);
         rstdGm_.SetGlobalBuffer((__gm__ float*)rstd + rstdGmOffset, mCore_);
-        // Init workspace
-        xOutTmpGm_.SetGlobalBuffer((__gm__ float*)workspace + workSpaceOffset, numN_);
 
         // Init Buffer
         uint64_t ubFactorRstd = AddRmsNormCast::B32_BLOCK_NUM;
-        pipe_->InitBuffer(inQueueX1_, 1, baseNReduceAlign_ * sizeof(T_X));
-        pipe_->InitBuffer(inQueueX2_, 1, baseNReduceAlign_ * sizeof(T_X));
-        pipe_->InitBuffer(outQueueY1_, 1, baseNDtypeAlign_ * sizeof(float));
-        pipe_->InitBuffer(outQueueY2_, 1, baseNDtypeAlign_ * sizeof(T_X));
-        pipe_->InitBuffer(outQueueX_, 1, baseNReduceAlign_ * sizeof(T_X));
-        pipe_->InitBuffer(inQueueGamma_, 1, baseNDtypeAlign_ * sizeof(T_X));
+        pipe_->InitBuffer(inQueueX1_, BUFFER_NUM, baseNReduceAlign_ * sizeof(T_X));
+        pipe_->InitBuffer(inQueueX2_, BUFFER_NUM, baseNReduceAlign_ * sizeof(T_X));
+        pipe_->InitBuffer(outQueueY1_, BUFFER_NUM, baseNDtypeAlign_ * sizeof(float));
+        pipe_->InitBuffer(outQueueY2_, BUFFER_NUM, baseNDtypeAlign_ * sizeof(T_X));
+        pipe_->InitBuffer(outQueueX_, BUFFER_NUM, baseNReduceAlign_ * sizeof(T_X));
+        pipe_->InitBuffer(inQueueGamma_, BUFFER_NUM, baseNDtypeAlign_ * sizeof(T_X));
         pipe_->InitBuffer(outQueueRstd_, 1, ubFactorRstd * sizeof(float));
         pipe_->InitBuffer(reduceSumBuf_, reduceSumBufAlign_ * sizeof(float));
         pipe_->InitBuffer(level1Buf_, RmsNorm::ONCE_VECTOR_SIZE * sizeof(float));
         pipe_->InitBuffer(level2Buf_, RmsNorm::ONCE_VECTOR_SIZE * sizeof(float));
         pipe_->InitBuffer(level3Buf_, RmsNorm::ONCE_VECTOR_SIZE * sizeof(float));
         pipe_->InitBuffer(tempBuf_, V_LENGTH * sizeof(float));
-        pipe_->InitBuffer(xOutTmpBuf_, baseNReduceAlign_ * sizeof(float));
     }
 
     __aicore__ inline void Process()
@@ -104,16 +102,16 @@ public:
         for (uint64_t mIdx = 0; mIdx < mCore_; mIdx++) {
             uint64_t xGmOffset = mIdx * numN_;
 
-            // Process rstd & Copy out xOut(x1+x2)
+            // Reduce before writing x, which may share GM with either input.
             LocalTensor<float> rstdLocal = outQueueRstd_.AllocTensor<float>();
             SubProcessRstd<true>(rstdLocal, 0, xGmOffset, masterLoop, powerTailLoop, powerTailTail, avgFactor_,
                                  epsilon_);
-            // Copy out y
-            PipeBarrier<PIPE_V>();
+            outQueueRstd_.EnQue(rstdLocal);
+            rstdLocal = outQueueRstd_.DeQue<float>();
+            CopyOutRstd(rstdLocal, mIdx, 1);
+            // Recompute and copy out x/y from each original input block.
             SubProcessY(rstdLocal, mIdx);
-            // Copy out rstd
-            outQueueRstd_.EnQue<float>(rstdLocal);
-            CopyOutRstd(mIdx, 1);
+            outQueueRstd_.FreeTensor(rstdLocal);
         }
     }
 
@@ -149,20 +147,17 @@ private:
         outQueueY.FreeTensor(yLocal);
     }
 
-    __aicore__ inline void CopyOutRstd(uint64_t gmOffset, uint32_t num)
+    __aicore__ inline void CopyOutRstd(LocalTensor<float>& rstdLocal, uint64_t gmOffset, uint32_t num)
     {
-        LocalTensor<float> rstdLocal = outQueueRstd_.DeQue<float>();
         RmsNorm::DataCopyImpl<float>(rstdGm_[gmOffset], rstdLocal, 1, num, 0, 0);
-        outQueueRstd_.FreeTensor(rstdLocal);
     }
 
     /**
-     * @brief Copy in xGm_[srcGmOffset:srcGmOffset+count] and reduce to dst[dstOffset].
+     * @brief Reduce the original x1/x2 block to dst[dstOffset] without writing x.
      */
     __aicore__ inline void ComputeFormerHandle(LocalTensor<float>& dstLocal, uint64_t srcGmOffset, uint64_t dstOffset,
-                                               uint64_t workSpaceOffset, uint64_t count, uint64_t powerSplit)
+                                               uint64_t count, uint64_t powerSplit)
     {
-        LocalTensor<float> xOutTmpLocal = xOutTmpBuf_.Get<float>();
         uint32_t calCount = CeilAlign((uint64_t)(count * sizeof(T_X)), ALIGN_32_FACTOR) / sizeof(T_X);
         CopyInX(inQueueX1_, x1Gm_, srcGmOffset, count, 0, calCount - count);
         CopyInX(inQueueX2_, x2Gm_, srcGmOffset, count, 0, calCount - count);
@@ -177,22 +172,10 @@ private:
             Duplicate(x2Local[calCount], (T_X)0.0, dupLen);
         }
 
-        LocalTensor<T_X> xOutLocal = outQueueX_.AllocTensor<T_X>();
-        NormCommon::ReduceSumRstd<T_X, true, true, false>(dstLocal, xOutLocal, xOutTmpLocal, x1Local, x2Local,
-                                                          workLocal, dstOffset, calNum, powerSplit);
-        outQueueX_.EnQue<T_X>(xOutLocal);
+        NormCommon::ReduceSumRstd<T_X, false, false, false>(dstLocal, x1Local, workLocal, x1Local, x2Local, workLocal,
+                                                            dstOffset, calNum, powerSplit);
         inQueueX1_.FreeTensor(x1Local);
         inQueueX2_.FreeTensor(x2Local);
-
-        CopyOutXY(xGm_, outQueueX_, srcGmOffset, count);
-        // Copy xOut to workspace
-        event_t eventVMTE3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
-        event_t eventMTE3V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
-        SetFlag<HardEvent::V_MTE3>(eventVMTE3);
-        WaitFlag<HardEvent::V_MTE3>(eventVMTE3);
-        RmsNorm::DataCopyImpl<float>(xOutTmpGm_[workSpaceOffset], xOutTmpLocal, 1, count);
-        SetFlag<HardEvent::MTE3_V>(eventMTE3V);
-        WaitFlag<HardEvent::MTE3_V>(eventMTE3V);
     }
 
     template <bool IS_RSTD>
@@ -200,7 +183,6 @@ private:
                                           uint64_t masterLoop, uint64_t tailLoop, uint64_t tail, float avgFactor = 1.0f,
                                           float epsilon = 0.0f)
     {
-        uint64_t workspaceOffset{0};
         uint64_t offset{curRow};
         uint32_t level1Idx{0};
         uint32_t level2Idx{0};
@@ -216,13 +198,11 @@ private:
         // Use TailBlock as MainBlock and reduce 2 nearby Mainblock twice.
         for (uint32_t repeat = 0; repeat < tailLoop; repeat++) {
             // Tail
-            ComputeFormerHandle(tempLocal, offset, 0, workspaceOffset, powerSplit_, powerSplit_);
+            ComputeFormerHandle(tempLocal, offset, 0, powerSplit_, powerSplit_);
             offset += powerSplit_;
-            workspaceOffset += powerSplit_;
             // Main
-            ComputeFormerHandle(tempLocal, offset, 1, workspaceOffset, powerSplit_, powerSplit_);
+            ComputeFormerHandle(tempLocal, offset, 1, powerSplit_, powerSplit_);
             offset += powerSplit_;
-            workspaceOffset += powerSplit_;
 
             RmsNorm::ComputeSum(level1Local, tempLocal, level1Idx, SUM_COUNT);
             level1Idx += 1;
@@ -233,22 +213,18 @@ private:
         uint64_t powerSplitHalf = powerSplit_ / CONST_FACTOR_2;
         if (tail > 0 && tail <= powerSplitHalf) {
             // Tail
-            ComputeFormerHandle(tempLocal, offset, 0, workspaceOffset, powerSplitHalf + tail, powerSplitHalf);
+            ComputeFormerHandle(tempLocal, offset, 0, powerSplitHalf + tail, powerSplitHalf);
             offset += powerSplitHalf + tail;
-            workspaceOffset += powerSplitHalf + tail;
             // Main
-            ComputeFormerHandle(tempLocal, offset, 1, workspaceOffset, powerSplitHalf, powerSplitHalf);
+            ComputeFormerHandle(tempLocal, offset, 1, powerSplitHalf, powerSplitHalf);
             offset += powerSplitHalf;
-            workspaceOffset += powerSplitHalf;
         } else if (tail > powerSplitHalf) {
             // Half Main & Half Tail
-            ComputeFormerHandle(tempLocal, offset, 0, workspaceOffset, powerSplit_, powerSplit_);
+            ComputeFormerHandle(tempLocal, offset, 0, powerSplit_, powerSplit_);
             offset += powerSplit_;
-            workspaceOffset += powerSplit_;
             // Other Tail
-            ComputeFormerHandle(tempLocal, offset, 1, workspaceOffset, tail, powerSplitHalf);
+            ComputeFormerHandle(tempLocal, offset, 1, tail, powerSplitHalf);
             offset += tail;
-            workspaceOffset += tail;
         }
         if (tail > 0) {
             RmsNorm::ComputeSum(level1Local, tempLocal, level1Idx, SUM_COUNT);
@@ -257,9 +233,8 @@ private:
         }
         // Stage3: Cal MasterLoop
         for (uint32_t repeat = 0; repeat < masterLoop; repeat++) {
-            ComputeFormerHandle(level1Local, offset, level1Idx, workspaceOffset, powerSplit_, powerSplit_);
+            ComputeFormerHandle(level1Local, offset, level1Idx, powerSplit_, powerSplit_);
             offset += powerSplit_;
-            workspaceOffset += powerSplit_;
             level1Idx += 1;
             RmsNorm::ComputeMultiLevelReduce(level1Local, level2Local, level3Local, level1Idx, level2Idx, level3Idx);
         }
@@ -267,40 +242,86 @@ private:
                                        avgFactor, epsilon);
     }
 
+    // Consume the recomputed fp32 sum in registers; no block or whole-row sum cache is needed.
+    __aicore__ inline void ComputeRecomputeY(LocalTensor<T_X>& xLocal, LocalTensor<float>& y1Local,
+                                             LocalTensor<T_X>& y2Local, LocalTensor<T_X>& x1Local,
+                                             LocalTensor<T_X>& x2Local, LocalTensor<T_X>& gammaLocal,
+                                             LocalTensor<float>& rstdLocal, uint32_t count)
+    {
+        __ubuf__ T_X* x1Addr = (__ubuf__ T_X*)x1Local.GetPhyAddr();
+        __ubuf__ T_X* x2Addr = (__ubuf__ T_X*)x2Local.GetPhyAddr();
+        __ubuf__ T_X* gammaAddr = (__ubuf__ T_X*)gammaLocal.GetPhyAddr();
+        __ubuf__ float* rstdAddr = (__ubuf__ float*)rstdLocal.GetPhyAddr();
+        __ubuf__ float* y1Addr = (__ubuf__ float*)y1Local.GetPhyAddr();
+        __ubuf__ T_X* y2Addr = (__ubuf__ T_X*)y2Local.GetPhyAddr();
+        __ubuf__ T_X* xAddr = (__ubuf__ T_X*)xLocal.GetPhyAddr();
+        uint16_t repeats = CeilDivision(count, V_LENGTH);
+        __VEC_SCOPE__
+        {
+            uint32_t remaining = count;
+            RegTensor<T_X> x1Reg, x2Reg, y2Reg;
+            RegTensor<float> sumReg, rstdReg, gammaReg, normalizedReg, y1Reg;
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(rstdReg, rstdAddr);
+            for (uint16_t i = 0; i < repeats; ++i) {
+                MaskReg mask = UpdateMask<float>(remaining);
+                uint32_t offset = static_cast<uint32_t>(i) * V_LENGTH;
+                if constexpr (IsSameType<T_X, float>::value) {
+                    LoadAlign(x1Reg, x1Addr + offset);
+                    LoadAlign(x2Reg, x2Addr + offset);
+                } else {
+                    LoadAlign<T_X, LoadDist::DIST_UNPACK_B16>(x1Reg, x1Addr + offset);
+                    LoadAlign<T_X, LoadDist::DIST_UNPACK_B16>(x2Reg, x2Addr + offset);
+                }
+                NormCommon::CastAddVF(sumReg, x1Reg, x2Reg, mask);
+                if constexpr (IsSameType<T_X, float>::value) {
+                    StoreAlign(xAddr + offset, sumReg, mask);
+                } else {
+                    Cast<T_X, float, castTraitB322B16>(y2Reg, sumReg, mask);
+                    StoreAlign<T_X, StoreDist::DIST_PACK_B32>(xAddr + offset, y2Reg, mask);
+                }
+                NormCommon::LoadCastRegVF(gammaReg, gammaAddr, i, mask);
+                Mul(normalizedReg, sumReg, rstdReg, mask);
+                Mul(y1Reg, normalizedReg, gammaReg, mask);
+                StoreAlign(y1Addr + offset, y1Reg, mask);
+                if constexpr (IsSameType<T_X, float>::value) {
+                    StoreAlign(y2Addr + offset, y1Reg, mask);
+                } else {
+                    Cast<T_X, float, castTraitB322B16>(y2Reg, y1Reg, mask);
+                    StoreAlign<T_X, StoreDist::DIST_PACK_B32>(y2Addr + offset, y2Reg, mask);
+                }
+            }
+        }
+    }
+
     __aicore__ inline void SubProcessY(LocalTensor<float>& rstdLocal, uint64_t mIdx)
     {
-        LocalTensor<float> xOutTmpLocal = xOutTmpBuf_.Get<float>();
         for (uint64_t nIdx = 0; nIdx < nCnt_; nIdx++) {
             uint64_t realN = (nIdx == nCnt_ - 1) ? tailN_ : baseN_;
             CopyInGamma(nIdx * baseN_, realN);
             LocalTensor<T_X> gammaLocal = inQueueGamma_.DeQue<T_X>();
 
             uint64_t gmOffsetXY = mIdx * numN_ + nIdx * baseN_;
-            uint64_t gmOffsetXTmp = nIdx * baseN_;
-            DataCopyPadExtParams<float> padParams{
-                true,                    // isPad
-                static_cast<uint8_t>(0), // leftPadding
-                static_cast<uint8_t>(0), // rightPadding
-                static_cast<float>(0.0)  // paddingValue
-            };
-            event_t eventVMTE2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
-            event_t eventMTE2V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-            SetFlag<HardEvent::V_MTE2>(eventVMTE2);
-            WaitFlag<HardEvent::V_MTE2>(eventVMTE2);
-            RmsNorm::DataCopyImpl<float>(xOutTmpLocal, xOutTmpGm_[gmOffsetXTmp], 1, realN, 0, 0, padParams);
-            SetFlag<HardEvent::MTE2_V>(eventMTE2V);
-            WaitFlag<HardEvent::MTE2_V>(eventMTE2V);
+            // Load both original inputs before x can overwrite either GM block.
+            CopyInX(inQueueX1_, x1Gm_, gmOffsetXY, realN);
+            CopyInX(inQueueX2_, x2Gm_, gmOffsetXY, realN);
+            LocalTensor<T_X> x1Local = inQueueX1_.DeQue<T_X>();
+            LocalTensor<T_X> x2Local = inQueueX2_.DeQue<T_X>();
 
             LocalTensor<float> y1Local = outQueueY1_.AllocTensor<float>();
             LocalTensor<T_X> y2Local = outQueueY2_.AllocTensor<T_X>();
-            AddRmsNormCast::ComputeY<T_X, T_X>(y1Local, y2Local, xOutTmpLocal, gammaLocal, rstdLocal, 0,
-                                               baseNDtypeAlign_);
+            LocalTensor<T_X> xLocal = outQueueX_.AllocTensor<T_X>();
+            ComputeRecomputeY(xLocal, y1Local, y2Local, x1Local, x2Local, gammaLocal, rstdLocal, realN);
+
+            inQueueX1_.FreeTensor(x1Local);
+            inQueueX2_.FreeTensor(x2Local);
 
             inQueueGamma_.FreeTensor(gammaLocal);
             outQueueY1_.EnQue<float>(y1Local);
             outQueueY2_.EnQue<T_X>(y2Local);
+            outQueueX_.EnQue<T_X>(xLocal);
             CopyOutXY(y1Gm_, outQueueY1_, gmOffsetXY, realN);
             CopyOutXY(y2Gm_, outQueueY2_, gmOffsetXY, realN);
+            CopyOutXY(xGm_, outQueueX_, gmOffsetXY, realN);
         }
     }
 
@@ -314,7 +335,6 @@ private:
     GlobalTensor<T_X> y2Gm_;
     GlobalTensor<float> rstdGm_;
     GlobalTensor<T_X> xGm_;
-    GlobalTensor<float> xOutTmpGm_;
     // UB Buffer
     TQue<QuePosition::VECIN, 1> inQueueX1_;
     TQue<QuePosition::VECIN, 1> inQueueX2_;
@@ -328,7 +348,6 @@ private:
     TBuf<TPosition::VECCALC> level2Buf_;
     TBuf<TPosition::VECCALC> level3Buf_;
     TBuf<TPosition::VECCALC> tempBuf_;
-    TBuf<TPosition::VECCALC> xOutTmpBuf_;
     // Tiling data
     uint64_t numM_{0};
     uint64_t numN_{0};

@@ -13,6 +13,8 @@
  * \brief
  */
 
+#include <cstdint>
+
 #include "add_rms_norm_cast_tiling.h"
 #include "norm/norm_common/op_host/norm_tiling_check_common.h"
 
@@ -31,7 +33,6 @@ constexpr uint64_t EPS_ATTR_INDEX = 0;
 constexpr uint32_t LOG_2 = 2;
 constexpr uint32_t NUM_TWO = 2;
 constexpr uint32_t MAX_DIM_CNT = 8;
-constexpr uint32_t WORKSPACE_COUNT = 1;
 constexpr uint32_t ALING_FACTOR_512 = 512;
 constexpr uint32_t DEFAULT_SYS_WORKSPACE = 16 * 1024 * 1024;
 constexpr uint32_t DOUBLE_BUFFER_NUM = 2;
@@ -158,10 +159,30 @@ ge::graphStatus AddRmsNormCastRegbaseTiling::SetInputParams()
     uint64_t numM = 1;
     uint64_t numN = 1;
     for (size_t i = 0; i < x1DimNum - gammaDimNum; i++) {
-        numM *= x1Shape.GetDim(i);
+        const int64_t dim = x1Shape.GetDim(i);
+        if (dim < 0 || (dim != 0 && numM > static_cast<uint64_t>(INT64_MAX) / dim)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                nodeName.c_str(), "x1", Ops::Base::ToString(x1Shape).c_str(),
+                "Outer dimensions must be nonnegative and their product must not exceed INT64_MAX");
+            return ge::GRAPH_FAILED;
+        }
+        numM *= dim;
     }
     for (size_t i = 0; i < gammaDimNum; i++) {
-        numN *= gammaShape.GetDim(i);
+        const int64_t dim = gammaShape.GetDim(i);
+        if (dim < 0 || (dim != 0 && numN > static_cast<uint64_t>(INT64_MAX) / dim)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                nodeName.c_str(), "gamma", Ops::Base::ToString(gammaShape).c_str(),
+                "Reduction dimensions must be nonnegative and their product must not exceed INT64_MAX");
+            return ge::GRAPH_FAILED;
+        }
+        numN *= dim;
+    }
+    if (numM != 0 && numN > static_cast<uint64_t>(INT64_MAX) / sizeof(float) / numM) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            nodeName.c_str(), "x1", Ops::Base::ToString(x1Shape).c_str(),
+            "The tensor byte size calculated with sizeof(float) must not exceed INT64_MAX");
+        return ge::GRAPH_FAILED;
     }
     tilingParams.numM = numM;
     tilingParams.numN = numN;
@@ -259,15 +280,15 @@ uint64_t AddRmsNormCastRegbaseTiling::CalUBTotalSize(uint64_t baseM, uint64_t ba
                     1 * baseM * baseNReduceAlign * tilingParams.xDtypeSize + // y2(alloc bigger than use)
                     1 * baseMB32Align * sizeof(float);                       // rstd
     } else {
-        totalSize = LEVEL_BUFFER_CNT * baseNReduceAlign * tilingParams.xDtypeSize + // x1/x2/xout
-                    1 * baseNReduceAlign * sizeof(float) +                          // xoutTmp(alloc bigger than use)
-                    1 * reduceSumBufLenAlign * sizeof(float) +                      // reduceBuf
-                    1 * baseNDtypeAlign * tilingParams.xDtypeSize +                 // gamma
-                    1 * baseNDtypeAlign * sizeof(float) +                           // y1(alloc bigger than use)
-                    1 * baseNDtypeAlign * tilingParams.xDtypeSize +                 // y2
-                    1 * tilingParams.b32BlockNum * sizeof(float) +                  // rstd
-                    LEVEL_BUFFER_CNT * onceVectorSize * sizeof(float) +             // levelbuf
-                    1 * tilingParams.vecLength * sizeof(float);                     // tempBuf
+        // Match split kernel's two physical buffers per input/output queue.
+        totalSize = DOUBLE_BUFFER_NUM * (LEVEL_BUFFER_CNT * baseNReduceAlign * tilingParams.xDtypeSize + // x1/x2/xout
+                                         baseNDtypeAlign * tilingParams.xDtypeSize +                     // gamma
+                                         baseNDtypeAlign * sizeof(float) +                               // y1
+                                         baseNDtypeAlign * tilingParams.xDtypeSize) +                    // y2
+                    reduceSumBufLenAlign * sizeof(float) +
+                    tilingParams.b32BlockNum * sizeof(float) +          // rstd stays single-buffered
+                    LEVEL_BUFFER_CNT * onceVectorSize * sizeof(float) + // levelbuf
+                    tilingParams.vecLength * sizeof(float);             // tempBuf
     }
 
     return totalSize;
@@ -347,7 +368,9 @@ ge::graphStatus AddRmsNormCastRegbaseTiling::SetTilingParams()
     tmpUBSize = CalUBTotalSize(1, tilingParams.xReduceAlignNum, TILING_TYPE_SPILT);
     if (tmpUBSize <= tilingParams.maxUbSize) {
         uint64_t tmpPower = tilingParams.xReduceAlignNum;
-        while (CalUBTotalSize(1, tmpPower * MULTI_FACTOR_2, TILING_TYPE_SPILT) <= tilingParams.maxUbSize) {
+        // Each split must fit the row: powerLoop starts at one in the split kernel.
+        while (tmpPower <= tilingParams.numN / MULTI_FACTOR_2 &&
+               CalUBTotalSize(1, tmpPower * MULTI_FACTOR_2, TILING_TYPE_SPILT) <= tilingParams.maxUbSize) {
             tmpPower *= MULTI_FACTOR_2;
         }
         tilingParams.powerSplit = tmpPower;
@@ -431,19 +454,8 @@ ge::graphStatus AddRmsNormCastRegbaseTiling::DoLibApiTiling() { return ge::GRAPH
 ge::graphStatus AddRmsNormCastRegbaseTiling::GetWorkspaceSize()
 {
     tilingParams.workspaceSize = 0;
-    if (TILING_TYPE_SPILT == tilingParams.tilingType) {
-        const uint64_t workspaceCount = WORKSPACE_COUNT;
-        const uint64_t usedCoreNum = tilingParams.usedCoreNum;
-        const uint64_t numN = tilingParams.numN;
-
-        // check： workspaceCount * usedCoreNum * numN * sizeof(float) < UINT64_MAX
-        const uint64_t maxAllowed = std::numeric_limits<uint64_t>::max() / workspaceCount / usedCoreNum / sizeof(float);
-        if (numN > maxAllowed) {
-            OP_LOGE(nodeName.c_str(), "Overflow detected: numN is %lu.", numN);
-            return ge::GRAPH_FAILED;
-        }
-        tilingParams.workspaceSize = WORKSPACE_COUNT * tilingParams.usedCoreNum * tilingParams.numN * sizeof(float);
-    } else if (TILING_TYPE_MAGIC_AND_WONDERFUL == tilingParams.tilingType) {
+    // Reserve per-core rstd slots for every SingleN configuration.
+    if (TILING_TYPE_MAGIC_AND_WONDERFUL == tilingParams.tilingType) {
         tilingParams.workspaceSize = tilingParams.usedCoreNum * MIGIC_AND_WONDERFUL_BYTES;
     }
 
@@ -465,7 +477,10 @@ ge::graphStatus AddRmsNormCastRegbaseTiling::PostTiling()
     OP_LOGW(nodeName.c_str(), "Tiling usrWorkspaceSize is %lu.", tilingParams.workspaceSize);
 
     size_t usrWorkspaceSize = tilingParams.workspaceSize;
-    size_t sysWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+    // The generated release entry places user workspace after the platform's reserved prefix.
+    // These kernels need no workspace when they do not access the user region.
+    // Recheck this allocation when adding device-side Printf/DumpTensor or an instrumented entry.
+    size_t sysWorkSpaceSize = usrWorkspaceSize == 0 ? 0 : ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     currentWorkspace[0] = usrWorkspaceSize + sysWorkSpaceSize;
     return ge::GRAPH_SUCCESS;

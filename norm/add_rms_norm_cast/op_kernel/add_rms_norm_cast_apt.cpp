@@ -47,7 +47,7 @@ extern "C" __global__ __aicore__ void add_rms_norm_cast(GM_ADDR x1, GM_ADDR x2, 
             op.Process();
         } else if (TILING_KEY_IS(101)) {
             KernelAddRmsNormCastRegBaseSpiltReduce<DTYPE_X1> op(&pipe);
-            op.Init(x1, x2, gamma, y1, y2, rstd, x, workspace, tilingData);
+            op.Init(x1, x2, gamma, y1, y2, rstd, x, tilingData);
             op.Process();
         } else if (TILING_KEY_IS(102)) {
             KernelAddRmsNormCastRegBaseSingleN<DTYPE_X1> op(&pipe);

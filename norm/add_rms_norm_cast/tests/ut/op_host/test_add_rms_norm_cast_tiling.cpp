@@ -46,6 +46,12 @@ struct EmptyReductionTilingCase {
     uint64_t expectedRowsPerLoop;
 };
 
+struct SingleNWorkspaceTilingCase {
+    int64_t rows;
+    ge::DataType dtype;
+    size_t expectedUserWorkspaceBytes;
+};
+
 // Wire-layout mirror of optiling::AddRmsNormCastRegbaseTilingData (TILING_DATA_FIELD_DEF order,
 // natural alignment as enforced by the tiling data generator placeholders).
 struct AddRmsNormCastRegbaseTilingDataMirror {
@@ -512,6 +518,7 @@ TEST_F(AddRmsNormCastTiling, add_rms_norm_cast_regbase_tiling_100)
     // Check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 100);
+    EXPECT_EQ(tiling_context->GetWorkspaceSizes(1)[0], 0U);
     // dlog_setlevel(0, 3, 0);
 }
 
@@ -619,6 +626,7 @@ TEST_F(AddRmsNormCastTiling, add_rms_norm_cast_regbase_tiling_101)
     // Check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 101);
+    ASSERT_EQ(tiling_context->GetWorkspaceSizes(1)[0], 0U);
     // dlog_setlevel(0, 3, 0);
 }
 // overflow check
@@ -719,20 +727,25 @@ TEST_F(AddRmsNormCastTiling, add_rms_norm_cast_regbase_overflow_check)
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
 }
 // setschedulemode=1
-TEST_F(AddRmsNormCastTiling, add_rms_norm_cast_regbase_tiling_102)
+class AddRmsNormCastSingleNWorkspaceTiling : public AddRmsNormCastTiling,
+                                             public testing::WithParamInterface<SingleNWorkspaceTilingCase> {};
+
+TEST_P(AddRmsNormCastSingleNWorkspaceTiling, allocates_workspace_for_all_single_n_core_counts)
 {
+    const auto& testCase = GetParam();
+    const int64_t rows = testCase.rows;
     // dlog_setlevel(0, 0, 0);
-    gert::StorageShape input_shape_x1 = {{1, 1, 7168}, {1, 1, 7168}};
-    gert::StorageShape input_shape_x2 = {{1, 1, 7168}, {1, 1, 7168}};
+    gert::StorageShape input_shape_x1 = {{rows, 1, 7168}, {rows, 1, 7168}};
+    gert::StorageShape input_shape_x2 = {{rows, 1, 7168}, {rows, 1, 7168}};
     gert::StorageShape gamma_shape = {{
                                           7168,
                                       },
                                       {
                                           7168,
                                       }};
-    gert::StorageShape out_shape_y = {{1, 1, 7168}, {1, 1, 7168}};
-    gert::StorageShape rstd_shape = {{1, 1, 1}, {1, 1, 1}};
-    gert::StorageShape out_shape_x = {{1, 1, 7168}, {1, 1, 7168}};
+    gert::StorageShape out_shape_y = {{rows, 1, 7168}, {rows, 1, 7168}};
+    gert::StorageShape rstd_shape = {{rows, 1, 1}, {rows, 1, 1}};
+    gert::StorageShape out_shape_x = {{rows, 1, 7168}, {rows, 1, 7168}};
 
     std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
     map<string, string> npuarchs = {{"NpuArch", "3510"}};
@@ -797,13 +810,13 @@ TEST_F(AddRmsNormCastTiling, add_rms_norm_cast_regbase_tiling_102)
                       .OutputShapes({&out_shape_y, &out_shape_y, &rstd_shape, &out_shape_x})
                       .CompileInfo(&compile_info)
                       .PlatformInfo(reinterpret_cast<char*>(&platform_info))
-                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(0, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(3, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)}})
                       .TilingData(param.get())
                       .Workspace(ws_size)
@@ -823,8 +836,25 @@ TEST_F(AddRmsNormCastTiling, add_rms_norm_cast_regbase_tiling_102)
     // Check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 102);
+    ASSERT_EQ(tiling_context->GetBlockDim(), static_cast<uint64_t>(rows));
+    auto platform = platform_ascendc::PlatformAscendC(tiling_context->GetPlatformInfo());
+    const size_t systemWorkspace = platform.GetLibApiWorkSpaceSize();
+    ASSERT_GT(systemWorkspace, 0U);
+    // All SingleN configurations retain per-core slots and the generated entry's system prefix.
+    const size_t expectedWorkspace = systemWorkspace + testCase.expectedUserWorkspaceBytes;
+    EXPECT_EQ(tiling_context->GetWorkspaceSizes(1)[0], expectedWorkspace);
     // dlog_setlevel(0, 3, 0);
 }
+
+INSTANTIATE_TEST_SUITE_P(CoreCountBoundaries, AddRmsNormCastSingleNWorkspaceTiling,
+                         testing::Values(SingleNWorkspaceTilingCase{1, ge::DT_FLOAT16, 128},
+                                         SingleNWorkspaceTilingCase{7, ge::DT_FLOAT16, 896},
+                                         SingleNWorkspaceTilingCase{8, ge::DT_FLOAT16, 1024},
+                                         SingleNWorkspaceTilingCase{16, ge::DT_FLOAT16, 2048},
+                                         SingleNWorkspaceTilingCase{1, ge::DT_BF16, 128},
+                                         SingleNWorkspaceTilingCase{7, ge::DT_BF16, 896},
+                                         SingleNWorkspaceTilingCase{8, ge::DT_BF16, 1024},
+                                         SingleNWorkspaceTilingCase{16, ge::DT_BF16, 2048}));
 
 TEST_F(AddRmsNormCastTiling, add_rms_norm_cast_regbase_tiling_103)
 {
@@ -930,6 +960,7 @@ TEST_F(AddRmsNormCastTiling, add_rms_norm_cast_regbase_tiling_103)
     // Check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 103);
+    EXPECT_EQ(tiling_context->GetWorkspaceSizes(1)[0], 0U);
     // dlog_setlevel(0, 3, 0);
 }
 
@@ -1032,3 +1063,93 @@ TEST_F(AddRmsNormCastTiling, add_rms_norm_cast_regbase_tiling_norm_dim_zero)
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 8200);
 }
+
+struct AddRmsNormCastSplitTilingCase {
+    ge::DataType dtype;
+    int64_t columns;
+    uint64_t expectedSplit;
+    uint64_t expectedLoop;
+};
+
+class AddRmsNormCastSplitTiling : public testing::TestWithParam<AddRmsNormCastSplitTilingCase> {};
+
+TEST_P(AddRmsNormCastSplitTiling, verifies_split_row_bounds)
+{
+    const auto& testCase = GetParam();
+    gert::StorageShape inputShape = {{3, testCase.columns}, {3, testCase.columns}};
+    gert::StorageShape gammaShape = {{testCase.columns}, {testCase.columns}};
+    gert::StorageShape rstdShape = {{3, 1}, {3, 1}};
+    fe::PlatFormInfos platformInfo;
+    ASSERT_TRUE(platformInfo.Init());
+    std::map<std::string, std::string> versionInfo = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+    platformInfo.SetPlatformRes("version", versionInfo);
+    optiling::AddRmsNormCastCompileInfo compileInfo{64, 245760, platform_ascendc::SocVersion::ASCEND950};
+    auto tilingData = gert::TilingData::CreateCap(4096);
+    auto workspaceHolder = gert::ContinuousVector::Create<size_t>(4096);
+    ASSERT_NE(tilingData, nullptr);
+    ASSERT_NE(workspaceHolder, nullptr);
+    auto* workspace = reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get());
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("AddRmsNormCast")
+                      .NodeIoNum(3, 4)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&inputShape, &inputShape, &gammaShape})
+                      .OutputShapes({&inputShape, &inputShape, &rstdShape, &inputShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)}})
+                      .TilingData(tilingData.get())
+                      .Workspace(workspace)
+                      .Build();
+    auto* context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("AddRmsNormCast");
+    ASSERT_NE(opImpl, nullptr);
+    ASSERT_NE(opImpl->tiling, nullptr);
+    ASSERT_EQ(opImpl->tiling(context), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(context->GetTilingKey(), 101);
+    auto* rawTilingData = context->GetRawTilingData();
+    ASSERT_NE(rawTilingData, nullptr);
+    ASSERT_NE(rawTilingData->GetData(), nullptr);
+    optiling::AddRmsNormCastRegbaseTilingData layoutProbe;
+    ASSERT_EQ(layoutProbe.GetDataSize(), sizeof(AddRmsNormCastRegbaseTilingDataMirror));
+    ASSERT_GE(rawTilingData->GetDataSize(), sizeof(AddRmsNormCastRegbaseTilingDataMirror));
+    AddRmsNormCastRegbaseTilingDataMirror decoded{};
+    std::memcpy(&decoded, rawTilingData->GetData(), sizeof(decoded));
+    EXPECT_EQ(decoded.numN, static_cast<uint64_t>(testCase.columns));
+    EXPECT_EQ(decoded.powerSplit, testCase.expectedSplit);
+    EXPECT_EQ(decoded.powerLoop, testCase.expectedLoop);
+    ASSERT_GE(decoded.powerSplit, 256U);
+    EXPECT_EQ(decoded.powerSplit % 256, 0U);
+    EXPECT_EQ(decoded.powerSplit & (decoded.powerSplit - 1), 0U);
+    ASSERT_LE(decoded.powerSplit, decoded.numN);
+    ASSERT_GE(decoded.powerLoop, 1U);
+    ASSERT_LE(decoded.powerLoop, decoded.numN / decoded.powerSplit);
+    const uint64_t powerMain = decoded.powerSplit * decoded.powerLoop;
+    ASSERT_LE(powerMain, decoded.numN);
+    const uint64_t powerTail = decoded.numN - powerMain;
+    const uint64_t tailBranches = powerTail / decoded.powerSplit + (powerTail % decoded.powerSplit != 0 ? 1 : 0);
+    // The split kernel subtracts these branches from powerLoop to get masterLoop.
+    EXPECT_LE(tailBranches, decoded.powerLoop);
+}
+
+INSTANTIATE_TEST_SUITE_P(Ascend950, AddRmsNormCastSplitTiling,
+                         testing::Values(AddRmsNormCastSplitTilingCase{ge::DT_FLOAT16, 16000, 8192, 1},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_BF16, 16000, 8192, 1},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_FLOAT16, 16383, 8192, 1},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_BF16, 16383, 8192, 1},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_FLOAT16, 16384, 8192, 2},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_BF16, 16384, 8192, 2},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_FLOAT16, 16385, 8192, 2},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_BF16, 16385, 8192, 2},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_FLOAT16, 32768, 8192, 4},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_BF16, 32768, 8192, 4},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_FLOAT16, 229376, 8192, 16},
+                                         AddRmsNormCastSplitTilingCase{ge::DT_BF16, 229376, 8192, 16}));
