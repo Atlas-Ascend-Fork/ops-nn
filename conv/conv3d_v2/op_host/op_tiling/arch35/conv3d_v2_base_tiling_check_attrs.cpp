@@ -280,11 +280,11 @@ ge::graphStatus Conv3dBaseTilingV2::ApplySamesPad(const string& padMode)
 
 ge::graphStatus Conv3dBaseTilingV2::ParsePadLegal()
 {
-    OP_LOGE_IF(GetOriPadFromAttrPad() != ge::GRAPH_SUCCESS, ge::GRAPH_FAILED, context_->GetNodeName(),
-               "%s AscendC: GetOriPadFromAttrPad Failed.", paramInfo_.nodeType.c_str());
+    OP_LOGE_IF(GetOriPadFromAttrPad() != ge::GRAPH_SUCCESS, ge::GRAPH_FAILED, paramInfo_.nodeType.c_str(),
+               "AscendC: GetOriPadFromAttrPad Failed.");
 
-    OP_LOGE_IF(GetOriPadFromPadMode() != ge::GRAPH_SUCCESS, ge::GRAPH_FAILED, context_->GetNodeName(),
-               "%s AscendC: GetOriPadFromPadMode Failed.", paramInfo_.nodeType.c_str());
+    OP_LOGE_IF(GetOriPadFromPadMode() != ge::GRAPH_SUCCESS, ge::GRAPH_FAILED, paramInfo_.nodeType.c_str(),
+               "AscendC: GetOriPadFromPadMode Failed.");
 
     if (CheckOriPadLegal() != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
@@ -318,16 +318,15 @@ ge::graphStatus Conv3dBaseTilingV2::ParseGroupLegal()
         oriShapeAttrInfo_.oriFmapC > 0 && oriShapeAttrInfo_.oriFmapC != oriShapeAttrInfo_.oriWeightC) {
         if (oriShapeAttrInfo_.oriFmapC % oriShapeAttrInfo_.oriWeightC == 0) {
             oriShapeAttrInfo_.oriGroups = oriShapeAttrInfo_.oriFmapC / oriShapeAttrInfo_.oriWeightC;
-            OP_LOGD(context_->GetNodeName(),
-                    "%s AscendC: Attr groups is implicitly changed, original groups %ld, actual groups %ld",
-                    paramInfo_.nodeType.c_str(), *groupsPtr, oriShapeAttrInfo_.oriGroups);
+            OP_LOGD(paramInfo_.nodeType.c_str(),
+                    "AscendC: Attr groups is implicitly changed, original groups %ld, actual groups %ld.", *groupsPtr,
+                    oriShapeAttrInfo_.oriGroups);
         }
     }
 
     if ((apiInputPlatformInfo_.npuArch == NpuArch::DAV_9201 || apiInputPlatformInfo_.npuArch == NpuArch::DAV_9202) &&
         descInfo_.weightFormat == ge::FORMAT_NDHWC && oriShapeAttrInfo_.oriGroups != 1) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: weight NDHWC format not support groups > 1.",
-                paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: weight NDHWC format not support groups > 1.");
         return ge::GRAPH_FAILED;
     }
 
@@ -421,11 +420,10 @@ ge::graphStatus Conv3dBaseTilingV2::ParseQuantRoundModeLegal()
         if (roundMode.empty()) {
             return ge::GRAPH_SUCCESS;
         }
-        OP_LOGW(context_->GetNodeName(), "%s AscendC: the input round_mode is suggested to be set as an empty str",
-                paramInfo_.nodeType.c_str());
+        OP_LOGW(paramInfo_.nodeType.c_str(),
+                "AscendC: the input round_mode is suggested to be set as an empty string.");
         if (!convBase_.CheckValidString(roundMode, context_)) {
-            OP_LOGE(context_->GetNodeName(), "%s AscendC: the input round_mode has invalid str",
-                    paramInfo_.nodeType.c_str());
+            OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: the input round_mode has invalid string.");
             return ge::GRAPH_FAILED;
         }
     }

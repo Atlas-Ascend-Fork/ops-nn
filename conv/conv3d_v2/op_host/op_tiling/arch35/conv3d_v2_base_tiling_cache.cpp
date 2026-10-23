@@ -32,8 +32,7 @@ bool Conv3dBaseTilingV2::GetTilingFromCache()
     }
 
     Conv3dTilingCache& tilingCache = Conv3dTilingCache::GetInstance();
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: current cache size is %zu.", paramInfo_.nodeType.c_str(),
-            tilingCache.GetCacheSize());
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: current cache size is %zu.", tilingCache.GetCacheSize());
     GetCacheTilingInputArgs();
     if (tilingCache.GetCachedTiling(cacheInputArgs_, cachedTilingData_)) {
         TranslateCachedTilingData();
@@ -50,8 +49,7 @@ bool Conv3dBaseTilingV2::AddTilingToCache()
 
     Conv3dTilingCache& tilingCache = Conv3dTilingCache::GetInstance();
     if (tilingCache.GetCacheSize() == MAX_CACHE_SIZE) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: current cache size is 4096, do not add tiling to cache.",
-                paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: current cache size is 4096, do not add tiling to cache.");
         return false;
     }
     GetCachedTilingData();

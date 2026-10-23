@@ -24,7 +24,7 @@ ge::graphStatus Conv3dBaseTilingV2::Conv3DInfoInitAndCheck()
     convBase_.ConvBaseInitFixpipeInfo(fixpipeInfo_);
     convBase_.InitNumBlocksConstParas();
     convBase_.GetConvBaseCoreInfo(convOpsConstParams_);
-    convBase_.ConvBaseInitNodeInfo(context_->GetNodeName(), paramInfo_.nodeType.c_str());
+    convBase_.ConvBaseInitNodeInfo(paramInfo_.nodeType);
 
     if (CheckL1SizeLimits() != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
@@ -131,20 +131,18 @@ void Conv3dBaseTilingV2::NumBlocksDecision()
     convBase_.UpdateFlagInfo(flagInfo_);
     if (flagInfo_.mSplitModeFlag) { // M split mode
         numBlocksRes = convBase_.NumBlocksDecisionMsplitMode();
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: get tiling from Mmode formulaic algorithm, belongs to fast_tiling.",
-                paramInfo_.nodeType.c_str());
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: batchDim / mDim / nDim / doDim / groupDim / minCost: %u, %u, %u, %u, %u, %lu.",
-                paramInfo_.nodeType.c_str(), numBlocksRes.batchDim, numBlocksRes.mDim, numBlocksRes.nDim,
-                numBlocksRes.doDim, numBlocksRes.groupDim, numBlocksRes.minCost);
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: get tiling from Mmode formulaic algorithm, belongs to fast_tiling.");
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: batchDim / mDim / nDim / doDim / groupDim / minCost: %u, %u, %u, %u, %u, %lu.",
+                numBlocksRes.batchDim, numBlocksRes.mDim, numBlocksRes.nDim, numBlocksRes.doDim, numBlocksRes.groupDim,
+                numBlocksRes.minCost);
     } else { // HW split mode
         numBlocksRes = convBase_.NumBlocksDecisionHWsplitMode();
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: get tiling from HWmode formulaic algorithm, belongs to fast_tiling.",
-                paramInfo_.nodeType.c_str());
-        OP_LOGD(context_->GetNodeName(),
-                "Conv3D AscendC: batchDim / hoDim / nDim / doDim / groupDim / minCost: %u, %u, %u, %u, %u, %lu.",
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: get tiling from HWmode formulaic algorithm, belongs to fast_tiling.");
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: batchDim / hoDim / nDim / doDim / groupDim / minCost: %u, %u, %u, %u, %u, %lu.",
                 numBlocksRes.batchDim, numBlocksRes.hoDim, numBlocksRes.nDim, numBlocksRes.doDim, numBlocksRes.groupDim,
                 numBlocksRes.minCost);
     }
@@ -181,7 +179,7 @@ ge::graphStatus Conv3dBaseTilingV2::GetConv3dApiTiling()
     }
 
     if (conv3dApiTiling_.GetTiling(tilingData_) == -1) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: get api tiling wrong.", paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: get api tiling wrong.");
         return ge::GRAPH_FAILED;
     }
 
@@ -240,13 +238,12 @@ void Conv3dBaseTilingV2::Conv3dOpTilingSetShape()
     }
 
     stringstream ss;
-    ss << paramInfo_.nodeType.c_str() << " AscendC: api got: orgCo: " << shapeInfo_.co << ", orgkH: " << shapeInfo_.kh
-       << ", orgkW: " << shapeInfo_.kw << ", orgCi: " << shapeInfo_.ci << ", orgHi: " << shapeInfo_.hi
-       << ", orgWi: " << shapeInfo_.wi << ", singleCo: " << singleCoreCo << ", singleHo: " << singleCoreHo
-       << ", singleM: " << singleCoreMo << ", singleGroups: " << singleGroups << ", singleGroupOpt: " << singleGroupOpt
-       << ", enlarge: " << enlarge << ", hf32Enable: " << attrInfo_.hf32Mode
-       << ", hf32TransMode: " << static_cast<uint32_t>(hf32TransMode);
-    OP_LOGD(context_->GetNodeName(), "%s", ss.str().c_str());
+    ss << "AscendC: api got: orgCo: " << shapeInfo_.co << ", orgkH: " << shapeInfo_.kh << ", orgkW: " << shapeInfo_.kw
+       << ", orgCi: " << shapeInfo_.ci << ", orgHi: " << shapeInfo_.hi << ", orgWi: " << shapeInfo_.wi
+       << ", singleCo: " << singleCoreCo << ", singleHo: " << singleCoreHo << ", singleM: " << singleCoreMo
+       << ", singleGroups: " << singleGroups << ", singleGroupOpt: " << singleGroupOpt << ", enlarge: " << enlarge
+       << ", hf32Enable: " << attrInfo_.hf32Mode << ", hf32TransMode: " << static_cast<uint32_t>(hf32TransMode);
+    OP_LOGD(paramInfo_.nodeType.c_str(), "%s", ss.str().c_str());
 }
 } // namespace conv_ops_tiling
 } // namespace optiling

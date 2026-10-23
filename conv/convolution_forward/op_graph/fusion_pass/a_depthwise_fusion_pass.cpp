@@ -74,6 +74,7 @@ bool ADepthwiseFusionPass::ConvFusionReplaceImpl(GraphPtr& graph, GNode& depthwi
                       return false);
 
     std::vector<GNode> nodesBeforeFuse = {depthwiseNode};
+    FUSION_PASS_CHECK_NOLOG(!ReportMatchNodes(nodesBeforeFuse, passContext), return false);
     FUSION_PASS_CHECK_NOLOG(!CanFuseNodes(nodesBeforeFuse), return false);
 
     GNodePtr filterProducer = depthwiseNode.GetInDataNodesAndPortIndexs(FILTER_INPUT_INDEX).first;
@@ -89,7 +90,7 @@ bool ADepthwiseFusionPass::ConvFusionReplaceImpl(GraphPtr& graph, GNode& depthwi
     if (producerType == ASCEND_WEIGHT_QUANT) {
         FUSION_PASS_CHECK_NOLOG(!DealQuantNodeCase(*graph, *filterProducer, depthwiseNode), return false);
     } else {
-        FUSION_PASS_CHECK_NOLOG(!InsertReshapeForConsumers(*graph, *filterProducer, TARGET_TYPES), return false);
+        FUSION_PASS_CHECK_NOLOG(!InsertReshapeForConsumers(*graph, *filterProducer, TARGET_TYPES, false), return false);
     }
 
     FUSION_PASS_CHECK_NOLOG(!ReportFuseNodes(nodesBeforeFuse, insertedReshapeNodes, passContext), return false);
@@ -115,7 +116,8 @@ bool ADepthwiseFusionPass::DealQuantNodeCase(Graph& graph, GNode& quantNode, GNo
         if (upstreamFormat != Format::FORMAT_HWCN && upstreamFormat != Format::FORMAT_NCHW) {
             continue;
         }
-        FUSION_PASS_CHECK_NOLOG(!InsertReshapeForConsumers(graph, *upstreamProducer, TARGET_TYPES_QUANT), return false);
+        FUSION_PASS_CHECK_NOLOG(!InsertReshapeForConsumers(graph, *upstreamProducer, TARGET_TYPES_QUANT, true),
+                                return false);
     }
     return true;
 }
@@ -153,19 +155,21 @@ bool ADepthwiseFusionPass::UpdateQuantAndDepthwiseFilterDesc(GNode& quantNode, G
 }
 
 bool ADepthwiseFusionPass::InsertReshapeForConsumers(Graph& graph, GNode& producer,
-                                                     const std::set<AscendString>& targetTypes)
+                                                     const std::set<AscendString>& targetTypes, bool isQuantCase)
 {
-    for (size_t outIdx = 0; outIdx < producer.GetOutputsSize(); ++outIdx) {
-        std::vector<int64_t> curPreShape;
-        std::vector<int64_t> curNewShape;
-        bool resolved = false;
-        FUSION_PASS_CHECK_NOLOG(
-            !ResolveReshapeShapes(producer, static_cast<int32_t>(outIdx), resolved, curPreShape, curNewShape),
-            return false);
-        if (!resolved) {
-            continue;
-        }
+    std::vector<int64_t> curPreShape;
+    std::vector<int64_t> curNewShape;
+    if (!isQuantCase) {
+        FilterShapeResult shapeResult;
+        FUSION_PASS_CHECK(!ComputeFilterShapes(convDescInfo.filterDesc.GetOriginShape().GetDims(),
+                                               convDescInfo.filterDesc.GetOriginFormat(), shapeResult),
+                          OP_LOGE(FUSION_NAME, "%s compute filter shapes failed.", convDescInfo.nodeNameStr.c_str()),
+                          return false);
+        curPreShape = shapeResult.preShape;
+        curNewShape = shapeResult.newShape;
+    }
 
+    for (size_t outIdx = 0; outIdx < producer.GetOutputsSize(); ++outIdx) {
         auto consumers = producer.GetOutDataNodesAndPortIndexs(static_cast<int32_t>(outIdx));
         for (auto& consumerPair : consumers) {
             if (consumerPair.first == nullptr) {
@@ -188,6 +192,19 @@ bool ADepthwiseFusionPass::InsertReshapeForConsumers(Graph& graph, GNode& produc
                 OP_LOGE(FUSION_NAME, "%s get consumer input desc failed.", convDescInfo.nodeNameStr.c_str()),
                 return false);
 
+            if (isQuantCase) {
+                FilterShapeResult shapeResult;
+                bool resolved = false;
+                FUSION_PASS_CHECK_NOLOG(!ResolveReshapeShapes(producer, static_cast<int32_t>(outIdx), consumerInDesc,
+                                                              resolved, shapeResult),
+                                        return false);
+                if (!resolved) {
+                    continue;
+                }
+                curPreShape = shapeResult.preShape;
+                curNewShape = shapeResult.newShape;
+            }
+
             ReshapeDescInfo descInfo = BuildReshapeDescInfo(consumerInDesc, curPreShape, curNewShape);
             ReshapeEdgeInfo edge{graph, producer, consumer, static_cast<int32_t>(outIdx), consumerInIdx};
             FUSION_PASS_CHECK_NOLOG(!InsertReshapeBetween(edge, descInfo), return false);
@@ -198,8 +215,8 @@ bool ADepthwiseFusionPass::InsertReshapeForConsumers(Graph& graph, GNode& produc
     return true;
 }
 
-bool ADepthwiseFusionPass::ResolveReshapeShapes(GNode& producer, int32_t outIdx, bool& resolved,
-                                                std::vector<int64_t>& curPreShape, std::vector<int64_t>& curNewShape)
+bool ADepthwiseFusionPass::ResolveReshapeShapes(GNode& producer, int32_t outIdx, const TensorDesc& consumerInDesc,
+                                                bool& resolved, FilterShapeResult& shapeResult)
 {
     resolved = false;
     TensorDesc producerOutDesc;
@@ -207,12 +224,9 @@ bool ADepthwiseFusionPass::ResolveReshapeShapes(GNode& producer, int32_t outIdx,
                       OP_LOGE(FUSION_NAME, "%s get producer output desc failed.", convDescInfo.nodeNameStr.c_str()),
                       return false);
 
-    FilterShapeResult shapeResult;
-    FUSION_PASS_CHECK_NOLOG(!ComputeFilterShapes(producerOutDesc.GetOriginShape().GetDims(),
-                                                 producerOutDesc.GetOriginFormat(), shapeResult),
-                            return true);
-    curPreShape = shapeResult.preShape;
-    curNewShape = shapeResult.newShape;
+    FUSION_PASS_CHECK_NOLOG(
+        !ComputeFilterShapes(consumerInDesc.GetOriginShape().GetDims(), producerOutDesc.GetOriginFormat(), shapeResult),
+        return true);
     resolved = true;
     return true;
 }
@@ -326,4 +340,7 @@ void ADepthwiseFusionPass::SetTensorDescShape(TensorDesc& desc, const std::vecto
     desc.SetOriginShape(Shape(dims));
 }
 
+#if GE_COMPILER_VERSION_NUM >= 90100000U
+REG_FUSION_PASS(ADepthwiseFusionPass).Stage(CustomPassStage::kCompatibleInherited);
+#endif
 } // namespace Ops

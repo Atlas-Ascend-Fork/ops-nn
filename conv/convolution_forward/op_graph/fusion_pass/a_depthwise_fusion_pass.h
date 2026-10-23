@@ -78,10 +78,10 @@ protected:
 private:
     bool DealQuantNodeCase(ge::Graph& graph, ge::GNode& quantNode, ge::GNode& depthwiseNode);
     bool UpdateQuantAndDepthwiseFilterDesc(ge::GNode& quantNode, ge::GNode& depthwiseNode) const;
-    bool InsertReshapeForConsumers(ge::Graph& graph, ge::GNode& producer,
-                                   const std::set<ge::AscendString>& targetTypes);
-    bool ResolveReshapeShapes(ge::GNode& producer, int32_t outIdx, bool& resolved, std::vector<int64_t>& curPreShape,
-                              std::vector<int64_t>& curNewShape);
+    bool InsertReshapeForConsumers(ge::Graph& graph, ge::GNode& producer, const std::set<ge::AscendString>& targetTypes,
+                                   bool isQuantCase);
+    bool ResolveReshapeShapes(ge::GNode& producer, int32_t outIdx, const ge::TensorDesc& consumerInDesc, bool& resolved,
+                              ADepthwiseFusion::FilterShapeResult& shapeResult);
     ADepthwiseFusion::ReshapeDescInfo BuildReshapeDescInfo(const ge::TensorDesc& consumerInDesc,
                                                            const std::vector<int64_t>& curPreShape,
                                                            const std::vector<int64_t>& curNewShape) const;

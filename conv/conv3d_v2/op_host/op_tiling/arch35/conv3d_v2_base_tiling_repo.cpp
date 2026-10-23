@@ -225,8 +225,9 @@ bool Conv3dBaseTilingV2::TranslateApiTilingAux(shared_ptr<tuningtiling::Conv3DV2
     uint32_t kernelValueInKSize = flagInfo_.isKernelSplit ? convRepoTiling->khL1 * convRepoTiling->kwL1 :
                                                             kernelHxkernelW;
     if (kernelValueInKSize == 0) {
-        OP_LOGE(context_->GetNodeName(), "kernelValueInKSize is zero, khL1=%lu, kwL1=%lu, kernelH=%lu, kernelW=%lu",
-                convRepoTiling->khL1, convRepoTiling->kwL1, convRepoTiling->kernelH, convRepoTiling->kernelW);
+        OP_LOGE(paramInfo_.nodeType.c_str(),
+                "kernelValueInKSize is zero, khL1=%lu, kwL1=%lu, kernelH=%lu, kernelW=%lu.", convRepoTiling->khL1,
+                convRepoTiling->kwL1, convRepoTiling->kernelH, convRepoTiling->kernelW);
         return false;
     }
     uint32_t cinAInCore = convRepoTiling->kAL1 / kernelValueInKSize;
@@ -303,28 +304,27 @@ void Conv3dBaseTilingV2::SetUnionDataXt(shared_ptr<tuningtiling::Conv3DV2TunnerT
 void Conv3dBaseTilingV2::PrintInputArgs(shared_ptr<tuningtiling::Conv3DV2InputArgs> conv3DInput)
 {
     stringstream ss;
-    ss << paramInfo_.nodeType.c_str() << "ops tiling input args: aDtype: " << conv3DInput->aDtype
-       << ", bDtype: " << conv3DInput->bDtype << ", cDtype: " << conv3DInput->cDtype
-       << ", biasDtype: " << conv3DInput->biasDtype << ", aShapeN: " << conv3DInput->aShapeN
-       << ", aShapeD: " << conv3DInput->aShapeD << ", aShapeH: " << conv3DInput->aShapeH
-       << ", aShapeW: " << conv3DInput->aShapeW << ", bShapeN: " << conv3DInput->bShapeN
-       << ", bShapeC: " << conv3DInput->bShapeC << ", bShapeD: " << conv3DInput->bShapeD
-       << ", bShapeH: " << conv3DInput->bShapeH << ", bShapeW: " << conv3DInput->bShapeW
-       << ", cShapeD: " << conv3DInput->cShapeD << ", cShapeH: " << conv3DInput->cShapeH
-       << ", cShapeW: " << conv3DInput->cShapeW << ", aFormat: " << conv3DInput->aFormat
-       << ", bFormat: " << conv3DInput->bFormat << ", cFormat: " << conv3DInput->cFormat
-       << ", groups: " << conv3DInput->groups << ", strideD: " << conv3DInput->strideD
-       << ", strideH: " << conv3DInput->strideH << ", strideW: " << conv3DInput->strideW
-       << ", dilationD: " << conv3DInput->dilationD << ", dilationH: " << conv3DInput->dilationH
-       << ", dilationW: " << conv3DInput->dilationW << ", padHead: " << conv3DInput->padHead
-       << ", padTail: " << conv3DInput->padTail << ", padTop: " << conv3DInput->padTop
-       << ", padBottom: " << conv3DInput->padBottom << ", padLeft: " << conv3DInput->padLeft
-       << ", padRight: " << conv3DInput->padRight << ", biasFlag: " << conv3DInput->biasFlag
-       << ", reserverdParam1: " << conv3DInput->reserverdParam1 << ", reserverdParam2: " << conv3DInput->reserverdParam2
-       << ", reserverdParam3: " << conv3DInput->reserverdParam3 << ", reserverdParam4: " << conv3DInput->reserverdParam4
-       << ", reserverdParam5: " << conv3DInput->reserverdParam5
+    ss << "ops tiling input args: aDtype: " << conv3DInput->aDtype << ", bDtype: " << conv3DInput->bDtype
+       << ", cDtype: " << conv3DInput->cDtype << ", biasDtype: " << conv3DInput->biasDtype
+       << ", aShapeN: " << conv3DInput->aShapeN << ", aShapeD: " << conv3DInput->aShapeD
+       << ", aShapeH: " << conv3DInput->aShapeH << ", aShapeW: " << conv3DInput->aShapeW
+       << ", bShapeN: " << conv3DInput->bShapeN << ", bShapeC: " << conv3DInput->bShapeC
+       << ", bShapeD: " << conv3DInput->bShapeD << ", bShapeH: " << conv3DInput->bShapeH
+       << ", bShapeW: " << conv3DInput->bShapeW << ", cShapeD: " << conv3DInput->cShapeD
+       << ", cShapeH: " << conv3DInput->cShapeH << ", cShapeW: " << conv3DInput->cShapeW
+       << ", aFormat: " << conv3DInput->aFormat << ", bFormat: " << conv3DInput->bFormat
+       << ", cFormat: " << conv3DInput->cFormat << ", groups: " << conv3DInput->groups
+       << ", strideD: " << conv3DInput->strideD << ", strideH: " << conv3DInput->strideH
+       << ", strideW: " << conv3DInput->strideW << ", dilationD: " << conv3DInput->dilationD
+       << ", dilationH: " << conv3DInput->dilationH << ", dilationW: " << conv3DInput->dilationW
+       << ", padHead: " << conv3DInput->padHead << ", padTail: " << conv3DInput->padTail
+       << ", padTop: " << conv3DInput->padTop << ", padBottom: " << conv3DInput->padBottom
+       << ", padLeft: " << conv3DInput->padLeft << ", padRight: " << conv3DInput->padRight
+       << ", biasFlag: " << conv3DInput->biasFlag << ", reserverdParam1: " << conv3DInput->reserverdParam1
+       << ", reserverdParam2: " << conv3DInput->reserverdParam2 << ", reserverdParam3: " << conv3DInput->reserverdParam3
+       << ", reserverdParam4: " << conv3DInput->reserverdParam4 << ", reserverdParam5: " << conv3DInput->reserverdParam5
        << ", reserverdParam6: " << conv3DInput->reserverdParam6;
-    OP_LOGD(context_->GetNodeName(), "%s", ss.str().c_str());
+    OP_LOGD(paramInfo_.nodeType.c_str(), "%s", ss.str().c_str());
 }
 
 } // namespace conv_ops_tiling

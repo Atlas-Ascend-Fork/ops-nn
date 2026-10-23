@@ -64,10 +64,10 @@ protected:
     bool DefaultConvFusionReplaceImpl(const ge::GNode& convNode, ge::CustomPassContext& passContext);
 
     // Weak-symbol guarded graph fuse inspector entries: no-op (return true) when the GE runtime does
-    // not export GraphFuseInspectorUtils; return false on CanFuse rejection or ReportFuse failure.
     bool CanFuseNodes(const std::vector<ge::GNode>& nodesBeforeFuse);
     bool ReportFuseNodes(const std::vector<ge::GNode>& nodesBeforeFuse, const std::vector<ge::GNode>& nodesAfterFuse,
                          ge::CustomPassContext& passContext);
+    bool ReportMatchNodes(const std::vector<ge::GNode>& matchedNodes, ge::CustomPassContext& passContext);
 
 protected:
     NpuArch npuArch = NpuArch::DAV_RESV;

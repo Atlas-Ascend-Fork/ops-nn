@@ -91,13 +91,13 @@ inline std::string FormatString(const char* fmt, ...)
 
 class __attribute__((visibility("default"))) ConvBaseDeci {
 public:
-    ConvBaseDeci(){};
+    ConvBaseDeci() {};
     void SetMKN(uint32_t m0, uint32_t k0, uint32_t n0);
     void SetAiCoreNum(uint32_t aicoreNum);
     ge::graphStatus GetNumBlocksInfo(ConvAscendcTilingInfo& tilingInfo);
     void ConvBaseInitAttrInfo(const ConvAscendcAttrInfo& attrInfo);
     void GetConvBaseCoreInfo(ConvOpsConstParams& convOpsConstParams);
-    void ConvBaseInitNodeInfo(const string& nodeName, const string& nodeType);
+    void ConvBaseInitNodeInfo(const string& nodeType);
     void InitNumBlocksConstParas();
     bool CheckInstrLimitsHWmode();
     bool CheckInstrLimitsMmode();

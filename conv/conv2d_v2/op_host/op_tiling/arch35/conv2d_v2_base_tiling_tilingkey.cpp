@@ -425,19 +425,18 @@ ge::graphStatus Conv2dBaseTiling::SetTilingKey()
             tilingKeyPara_.innerBatch, tilingKeyPara_.disContinuous, 0, 0, 0, tilingKeyPara_.smallKernel);
     }
 
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: c04 mode status is: %d", paramInfo_.nodeType.c_str(),
-            flagInfo_.enableC04Flag);
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: c04 mode status is: %d.", flagInfo_.enableC04Flag);
     std::stringstream ss;
-    ss << paramInfo_.nodeType << " AscendC: tiling key: " << tilingKey_ << ". fmpTiling[" << tilingKeyPara_.fmpTiling
-       << "], weightTiling[" << tilingKeyPara_.weightTiling << "], l1PingPong[" << tilingKeyPara_.l1PingPong
-       << "], l0PingPong[" << tilingKeyPara_.l0PingPong << "], outputOrder[" << tilingKeyPara_.outputOrder
-       << "], iterOrder[" << tilingKeyPara_.iterOrder << "], groupType[" << tilingKeyPara_.groupType
-       << "], enableSmallChannel[" << tilingKeyPara_.enableSmallChannel << "], weightUbTrans["
-       << tilingKeyPara_.weightUbTrans << "], fmapCppyMode[" << tilingKeyPara_.fmapCppyMode << "], innerBatch["
-       << tilingKeyPara_.innerBatch << "], disContinuous[" << tilingKeyPara_.disContinuous << "], batchOne["
-       << tilingKeyPara_.batchOne << "], noPad[" << tilingKeyPara_.noPad << "], smallWeight["
-       << tilingKeyPara_.smallWeight << "], smallKernel[" << tilingKeyPara_.smallKernel << "].";
-    OP_LOGD(context_->GetNodeName(), "%s", ss.str().c_str());
+    ss << "AscendC: tiling key: " << tilingKey_ << ". fmpTiling[" << tilingKeyPara_.fmpTiling << "], weightTiling["
+       << tilingKeyPara_.weightTiling << "], l1PingPong[" << tilingKeyPara_.l1PingPong << "], l0PingPong["
+       << tilingKeyPara_.l0PingPong << "], outputOrder[" << tilingKeyPara_.outputOrder << "], iterOrder["
+       << tilingKeyPara_.iterOrder << "], groupType[" << tilingKeyPara_.groupType << "], enableSmallChannel["
+       << tilingKeyPara_.enableSmallChannel << "], weightUbTrans[" << tilingKeyPara_.weightUbTrans << "], fmapCppyMode["
+       << tilingKeyPara_.fmapCppyMode << "], innerBatch[" << tilingKeyPara_.innerBatch << "], disContinuous["
+       << tilingKeyPara_.disContinuous << "], batchOne[" << tilingKeyPara_.batchOne << "], noPad["
+       << tilingKeyPara_.noPad << "], smallWeight[" << tilingKeyPara_.smallWeight << "], smallKernel["
+       << tilingKeyPara_.smallKernel << "].";
+    OP_LOGD(paramInfo_.nodeType.c_str(), "%s", ss.str().c_str());
     return ge::GRAPH_SUCCESS;
 }
 } // namespace conv_ops_tiling

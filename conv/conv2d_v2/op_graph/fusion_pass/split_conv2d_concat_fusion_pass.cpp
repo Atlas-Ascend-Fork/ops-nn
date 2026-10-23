@@ -14,6 +14,7 @@
 #include "ge/compliant_node_builder.h"
 #include "graph/utils/type_utils.h"
 #include "register/register_custom_pass.h"
+#include "version/ge-compiler_version.h"
 
 namespace Ops {
 using namespace NN;
@@ -582,4 +583,8 @@ void ASplitConv2dConcatPass::PrintGraphStructure() const
 {
     OP_LOGI(splitNodeName.GetString(), "split_conv2d_concat fusion success: groups=%lld.", groups);
 }
+
+#if GE_COMPILER_VERSION_NUM >= 90100000U
+REG_FUSION_PASS(ASplitConv2dConcatPass).Stage(CustomPassStage::kCompatibleInherited);
+#endif
 } // namespace Ops

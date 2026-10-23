@@ -295,6 +295,7 @@ bool QuantUnsqueezeConv2DFusionPass::ConvFusionReplaceImpl(GraphPtr& graph, GNod
         nodesBeforeFuse.emplace_back(*broadcastNode);
     }
 
+    FUSION_PASS_CHECK_NOLOG(!ReportMatchNodes(nodesBeforeFuse, passContext), return false);
     FUSION_PASS_CHECK_NOLOG(!CanFuseNodes(nodesBeforeFuse), return false);
 
     FUSION_PASS_CHECK(!UpdateQuantUnsqueezeDesc(),
@@ -308,4 +309,8 @@ bool QuantUnsqueezeConv2DFusionPass::ConvFusionReplaceImpl(GraphPtr& graph, GNod
     FUSION_PASS_CHECK_NOLOG(!ReportFuseNodes(nodesBeforeFuse, nodesBeforeFuse, passContext), return false);
     return true;
 }
+
+#if GE_COMPILER_VERSION_NUM >= 90100000U
+REG_FUSION_PASS(QuantUnsqueezeConv2DFusionPass).Stage(CustomPassStage::kCompatibleInherited);
+#endif
 } // namespace Ops

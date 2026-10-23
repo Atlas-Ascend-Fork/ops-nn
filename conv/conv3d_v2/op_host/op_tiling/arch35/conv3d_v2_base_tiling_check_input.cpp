@@ -65,7 +65,7 @@ ge::graphStatus Conv3dBaseTilingV2::ParseWeightShape()
 
     auto k0 = CUBE_MKN_MAP.GetMKN(dtypeMap.at(descInfo_.fMapDtype), MKN_K_IDX);
     if (k0 == 0) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: Get k0 = 0.", paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: Get k0 = 0.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -180,7 +180,7 @@ ge::graphStatus Conv3dBaseTilingV2::CheckWeightNZFormatShape()
     auto c0 = static_cast<int64_t>(CUBE_MKN_MAP.GetMKN(dtypeMap.at(descInfo_.weightDtype), MKN_K_IDX));
     auto n0 = static_cast<int64_t>(CUBE_MKN_MAP.GetMKN(dtypeMap.at(descInfo_.weightDtype), MKN_N_IDX));
     if (c0 == 0 || n0 == 0) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: Get c0 or n0 = 0.", paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: Get c0 or n0 = 0.");
         return ge::GRAPH_FAILED;
     }
     int64_t n1 = (oriShapeAttrInfo_.oriWeightN + n0 - 1) / n0;
@@ -207,11 +207,10 @@ bool Conv3dBaseTilingV2::GetPosByFormat(const ge::Format format, const std::stri
 {
     string formatStr = formatToStrTab[format];
     // util func illegal scene protect, not a useful dfx
-    OP_LOGE_IF(formatStr.length() != CONV3D_DIM_SIZE_LIMIT, false, context_->GetNodeName(),
-               "%s AscendC: %s format is not 5D.", paramInfo_.nodeType.c_str(), inputStr.c_str());
-    OP_LOGE_IF(pos.length() != 1 || formatStr.find(pos) == string::npos, false, context_->GetNodeName(),
-               "%s AscendC: position %s not in 5d format: %s", paramInfo_.nodeType.c_str(), pos.c_str(),
-               formatStr.c_str());
+    OP_LOGE_IF(formatStr.length() != CONV3D_DIM_SIZE_LIMIT, false, paramInfo_.nodeType.c_str(),
+               "AscendC: %s format is not 5D.", inputStr.c_str());
+    OP_LOGE_IF(pos.length() != 1 || formatStr.find(pos) == string::npos, false, paramInfo_.nodeType.c_str(),
+               "AscendC: position %s not in 5d format: %s.", pos.c_str(), formatStr.c_str());
     posIdx = formatStr.find(pos);
     return true;
 }

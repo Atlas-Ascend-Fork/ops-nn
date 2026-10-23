@@ -63,6 +63,19 @@ bool ConvFusionBasePass::ReportFuseNodes(const std::vector<GNode>& nodesBeforeFu
     return true;
 }
 
+bool ConvFusionBasePass::ReportMatchNodes(const std::vector<GNode>& matchedNodes, CustomPassContext& passContext)
+{
+#if GE_COMPILER_VERSION_NUM >= 90200000U
+    if (ge::fusion::GraphFuseInspectorUtils::ReportMatch == nullptr) {
+        return true;
+    }
+    if (ge::fusion::GraphFuseInspectorUtils::ReportMatch(matchedNodes, passContext) != SUCCESS) {
+        OP_LOGW(convDescInfo.nodeNameStr, "ReportMatch failed, match_times statistic may be incomplete.");
+    }
+#endif
+    return true;
+}
+
 bool ConvFusionBasePass::DefaultConvFusionReplaceImpl(const GNode& convNode, CustomPassContext& passContext)
 {
     auto boundary = ConstructBoundary(convNode);

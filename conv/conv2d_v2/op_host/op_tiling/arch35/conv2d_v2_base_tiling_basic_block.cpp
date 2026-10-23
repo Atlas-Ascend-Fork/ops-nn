@@ -309,7 +309,7 @@ void Conv2dBaseTiling::GenerateSingleCandidateCaseCommon(
     unordered_set<pair<uint32_t, uint32_t>, pair_hash>& candidates) const
 {
     if (dim == 0) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: numBlocks is equal to 0", context_->GetNodeType());
+        OP_LOGD(context_->GetNodeType(), "AscendC: numBlocks is equal to 0.");
         return;
     }
 
@@ -337,7 +337,7 @@ unordered_set<pair<uint32_t, uint32_t>, pair_hash> Conv2dBaseTiling::GenerateCan
     const uint32_t gcd1 = static_cast<uint32_t>(Gcd(static_cast<uint64_t>(cores), cut1));
     const uint32_t gcd2 = Gcd(cores, cut2);
     if (gcd1 == 0 || gcd2 == 0 || min(cut2, cores) == 0 || min(cut1, static_cast<uint64_t>(cores)) == 0) {
-        OP_LOGW(context_->GetNodeName(), "%s AscendC: candidates is invalid, which is 0", context_->GetNodeType());
+        OP_LOGW(context_->GetNodeType(), "AscendC: candidates is invalid, which is 0.");
         candidates.emplace(0, 0);
         return candidates;
     }

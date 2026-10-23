@@ -13,6 +13,7 @@
 #include "conv/common/op_graph/fusion_pass/conv_fusion_utils_pass.h"
 #include "es_nn_ops.h"
 #include "ge/es_graph_builder.h"
+#include "version/ge-compiler_version.h"
 
 namespace Ops {
 using namespace NN;
@@ -260,4 +261,7 @@ bool Conv3DDequantToQuantConv3DFusionPass::UpdateQuantConv3DDesc(GNode* quantCon
     return true;
 }
 
+#if GE_COMPILER_VERSION_NUM >= 90100000U
+REG_FUSION_PASS(Conv3DDequantToQuantConv3DFusionPass).Stage(CustomPassStage::kCompatibleInherited);
+#endif
 } // namespace Ops

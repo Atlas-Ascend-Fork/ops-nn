@@ -57,8 +57,7 @@ ge::graphStatus Conv2dBaseTiling::GetDisContinuousFlag()
     }
 
     if (context_->GetInputOffset(0) != 0) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: disContinuous inputOffset should be 0",
-                paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: disContinuous inputOffset should be 0");
         return ge::GRAPH_FAILED;
     }
     // check view_shape is HWNC & storage_shape is NCHW
@@ -81,7 +80,7 @@ ge::graphStatus Conv2dBaseTiling::GetDisContinuousFlag()
         return ge::GRAPH_FAILED;
     }
     flagInfo_.disContinuousFlag = true;
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: disContinuous HWNC input", paramInfo_.nodeType.c_str());
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: disContinuous HWNC input.");
     return ge::GRAPH_SUCCESS;
 }
 
@@ -222,7 +221,7 @@ ge::graphStatus Conv2dBaseTiling::CheckWeightShape()
 
     auto k0 = CUBE_MKN_MAP.GetMKN(dtypeMap.at(descInfo_.weightDtype), MKN_K_IDX);
     if (k0 == 0) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: Get k0 = 0", paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: Get k0 = 0.");
         return ge::GRAPH_FAILED;
     }
 
@@ -499,22 +498,21 @@ ge::graphStatus Conv2dBaseTiling::CheckParamsDtype()
     // check int8 input not support  c04
     if (opInfo_->isCubeVectorFuse && descInfo_.weightFormat == ge::Format::FORMAT_FRACTAL_Z_C04 &&
         dtypeMap.at(descInfo_.fMapDtype) == ConvDtype::INT8) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: int8 input not support C04.", context_->GetNodeType());
+        OP_LOGE(context_->GetNodeType(), "AscendC: int8 input not support C04.");
         return ge::GRAPH_FAILED;
     }
 
     std::vector<std::vector<ge::DataType>> supportedTypesList;
     fe::PlatFormInfos* platformInfoPtr = context_->GetPlatformInfo();
     if (platformInfoPtr == nullptr) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: GetPlatformInfo return nullptr.", paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: GetPlatformInfo return nullptr.");
         return ge::GRAPH_FAILED;
     }
     GetSupportedDataTypes(GetNpuArchKey(*platformInfoPtr), flagInfo_.quantFlag, descInfo_.fMapFormat,
                           flagInfo_.extendConvFlag, supportedTypesList);
-    OP_TILING_CHECK(
-        supportedTypesList.size() == 0,
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: Get supported types list fail.", paramInfo_.nodeType.c_str()),
-        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(supportedTypesList.size() == 0,
+                    OP_LOGE(context_->GetNodeType(), "AscendC: Get supported types list fail."),
+                    return ge::GRAPH_FAILED);
 
     if (flagInfo_.hasBias) {
         return CheckParamsDtypeWithBias(supportedTypesList);

@@ -1064,8 +1064,9 @@ bool Conv2dTiling::CheckL1SizeLimitsKernelFullLoad(bool isC04)
                              platformInfo.l1Size)
                     .c_str());
         } else {
-            OP_LOGD(nodeType, "%s AscendC: KernelSplitMinL1LoadSize > L1size, current L1size: %lu, maxL1Size: %lu",
-                    nodeType.c_str(), minL1LoadSize, platformInfo.l1Size);
+            OP_LOGD(nodeType.c_str(),
+                    "AscendC: KernelSplitMinL1LoadSize > L1size, current L1size: %lu, maxL1Size: %lu.", minL1LoadSize,
+                    platformInfo.l1Size);
         }
         return false;
     }

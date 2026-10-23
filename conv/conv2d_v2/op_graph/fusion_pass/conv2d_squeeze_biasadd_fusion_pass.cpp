@@ -136,6 +136,7 @@ bool Conv2DSqueezeBiasaddFusionPass::ConvFusionReplaceImpl(GraphPtr& graph, GNod
                                                            CustomPassContext& passContext)
 {
     std::vector<GNode> nodesBeforeFuse = {*convNode, matchNode, *biasaddNode};
+    FUSION_PASS_CHECK_NOLOG(!ReportMatchNodes(nodesBeforeFuse, passContext), return false);
     FUSION_PASS_CHECK(!UpdateBiasAddDesc(), OP_LOGE(convDescInfo.nodeNameStr, "Update biasadd desc failed."),
                       return false);
     FUSION_PASS_CHECK(RelinkEdges(*graph, matchNode) != SUCCESS,

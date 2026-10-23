@@ -27,6 +27,9 @@ public:
     static bool CanFuse(const std::vector<GNode>& nodesBeforeFuse, AscendString& failedReason) __attribute__((weak));
     static Status ReportFuse(const std::vector<GNode>& nodesBeforeFuse, const std::vector<GNode>& nodesAfterFuse,
                              CustomPassContext& ctx) __attribute__((weak));
+#if GE_COMPILER_VERSION_NUM >= 90200000U
+    static Status ReportMatch(const std::vector<GNode>& matchedNodes, CustomPassContext& ctx) __attribute__((weak));
+#endif
 };
 } // namespace fusion
 } // namespace ge

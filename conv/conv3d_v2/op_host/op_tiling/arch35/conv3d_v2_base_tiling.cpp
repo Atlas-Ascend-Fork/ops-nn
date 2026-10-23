@@ -65,11 +65,11 @@ void Conv3dBaseTilingV2::SetApiInputPlatformInfo()
     apiInputPlatformInfo_.ubSize = opInfo_->ubSize;
     apiInputPlatformInfo_.btSize = opInfo_->btSize;
     apiInputPlatformInfo_.fbSize = opInfo_->fbSize;
-    OP_LOGD(context_->GetNodeName(),
-            "%s AscendC: Tiling get platformInfo: l1Size: %ld, l0CSize: %ld, l0ASize: %ld, l0BSize: %ld, ubSize: %ld "
+    OP_LOGD(paramInfo_.nodeType.c_str(),
+            "AscendC: Tiling get platformInfo: l1Size: %ld, l0CSize: %ld, l0ASize: %ld, l0BSize: %ld, ubSize: %ld "
             "btSize: %ld, fbSize: %ld.",
-            paramInfo_.nodeType.c_str(), opInfo_->l1Size, opInfo_->l0cSize, opInfo_->l0aSize, opInfo_->l0bSize,
-            opInfo_->ubSize, opInfo_->btSize, opInfo_->fbSize);
+            opInfo_->l1Size, opInfo_->l0cSize, opInfo_->l0aSize, opInfo_->l0bSize, opInfo_->ubSize, opInfo_->btSize,
+            opInfo_->fbSize);
 }
 
 ge::graphStatus Conv3dBaseTilingV2::ApiTilingGetPlatformInfo()
@@ -109,14 +109,13 @@ void Conv3dBaseTilingV2::GetDescInfo()
 ge::graphStatus Conv3dBaseTilingV2::CheckNullPtr()
 {
     if (context_->GetAttrs() == nullptr) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: attrs got from ge is nullptr.", paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: attrs got from ge is nullptr.");
         return ge::GRAPH_FAILED;
     }
     auto biasDescPtr = context_->GetOptionalInputDesc(INPUT_BIAS_INDEX);
     auto biasShapePtr = context_->GetOptionalInputShape(INPUT_BIAS_INDEX);
     if ((biasDescPtr == nullptr && biasShapePtr != nullptr) || (biasDescPtr != nullptr && biasShapePtr == nullptr)) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: biasDescPtr and biasShapePtr are not consistent.",
-                paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: biasDescPtr and biasShapePtr are not consistent.");
         return ge::GRAPH_FAILED;
     }
 
@@ -124,8 +123,7 @@ ge::graphStatus Conv3dBaseTilingV2::CheckNullPtr()
     auto scaleShapePtr = context_->GetOptionalInputShape(INPUT_SCALE_INDEX);
     if ((scaleDescPtr == nullptr && scaleShapePtr != nullptr) ||
         (scaleDescPtr != nullptr && scaleShapePtr == nullptr)) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: scaleDescPtr and scaleShapePtr are not consistent.",
-                paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: scaleDescPtr and scaleShapePtr are not consistent.");
         return ge::GRAPH_FAILED;
     }
 
@@ -165,7 +163,7 @@ ge::graphStatus Conv3dBaseTilingV2::GetShapeAttrsInfo()
     GetDescInfo();
     // paramsFormat get format in CheckInputDesc func
     if (!GetConvParamsIdx(paramInfo_.paramsFormat, paramInfo_.paramsIdxVec)) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: conv3d get param Index failed.", paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: conv3d get param Index failed.");
         return ge::GRAPH_FAILED;
     }
     if (ParseFmapShape() != ge::GRAPH_SUCCESS || ParseWeightShape() != ge::GRAPH_SUCCESS ||
@@ -232,10 +230,10 @@ ge::graphStatus Conv3dBaseTilingV2::GetConv3DAxisPosInfo()
     auto fMapDesc = context_->GetInputDesc(INPUT_FMAP_INDEX);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, fMapDesc);
     string fmapOriFormat = ge::TypeUtils::FormatToSerialString(fMapDesc->GetOriginFormat());
-    OP_TILING_CHECK(fmapOriFormat != "NCDHW" && fmapOriFormat != "NDHWC",
-                    OP_LOGE(context_->GetNodeName(), "%s AscendC: unsupported fmapOriFormat %s.",
-                            paramInfo_.nodeType.c_str(), fmapOriFormat.c_str()),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        fmapOriFormat != "NCDHW" && fmapOriFormat != "NDHWC",
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: unsupported fmapOriFormat %s.", fmapOriFormat.c_str()),
+        return ge::GRAPH_FAILED);
 
     conv3dOriginFormatAixsPosInfo_.nIndex = fmapOriFormat.find('N');
     conv3dOriginFormatAixsPosInfo_.cIndex = fmapOriFormat.find('C');
@@ -271,10 +269,10 @@ ConvGroupType Conv3dBaseTilingV2::GetGroupsInfo()
                               dtypeSizeTab.at(descInfo_.weightDtype) <=
                           apiInputPlatformInfo_.ubSize - OPT_GROUP_RESERVED_SIZE;
     if (enableOptGroup) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: group type: Opt Group.", paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: group type: Opt Group.");
         return ConvGroupType::OPT_GROUP_CONV;
     } else {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: group type: original Group.", paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: group type: original Group.");
         return ConvGroupType::ORI_GROUP_CONV;
     }
 }
@@ -294,8 +292,7 @@ ge::graphStatus Conv3dBaseTilingV2::DoLibApiTiling()
 
     PrintLibApiTilingData();
     if (AddTilingToCache()) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: success to add fast_tiling to cache",
-                paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: success to add fast_tiling to cache.");
     }
 
     return ge::GRAPH_SUCCESS;
@@ -307,14 +304,13 @@ ge::graphStatus Conv3dBaseTilingV2::DoOpTiling()
     flagInfo_.useTilingCache = false;
     flagInfo_.useTilingRepo = false;
     if (GetTilingFromCache()) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: get tiling from cached_tiling.", paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: get tiling from cached_tiling.");
         flagInfo_.useTilingCache = true;
     } else if (GetTilingFromRepo()) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: get tiling from knowledge_tiling.", paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: get tiling from knowledge_tiling.");
         flagInfo_.useTilingRepo = true;
         if (AddTilingToCache()) {
-            OP_LOGD(context_->GetNodeName(), "%s AscendC: success to add repo tiling to cache",
-                    paramInfo_.nodeType.c_str());
+            OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: success to add repo tiling to cache.");
         }
     }
     if (flagInfo_.useTilingCache || flagInfo_.useTilingRepo) {
@@ -333,7 +329,7 @@ ge::graphStatus Conv3dBaseTilingV2::DoOpTiling()
         return ge::GRAPH_SUCCESS;
     }
 
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: get tiling from fast_tiling.", paramInfo_.nodeType.c_str());
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: get tiling from fast_tiling.");
     if (PrepareTiling() != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
@@ -369,13 +365,13 @@ ge::graphStatus Conv3dBaseTilingV2::PostTiling()
     void* tilingBuf = context_->GetRawTilingData()->GetData();
     size_t tilingBufCap = context_->GetRawTilingData()->GetCapacity();
     if (tilingBuf == nullptr || tilingBufCap < sizeof(tilingData_)) {
-        OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: tiling buffer null or capacity too small, cap=%zu need=%zu.",
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: tiling buffer null or capacity too small, cap=%zu need=%zu.",
                 tilingBufCap, sizeof(tilingData_));
         return ge::GRAPH_FAILED;
     }
     errno_t cpyRet = memcpy_s(tilingBuf, tilingBufCap, &tilingData_, sizeof(tilingData_));
     if (cpyRet != EOK) {
-        OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: memcpy_s tiling data failed, ret=%d.", cpyRet);
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: memcpy_s tiling data failed, ret=%d.", cpyRet);
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(sizeof(tilingData_));

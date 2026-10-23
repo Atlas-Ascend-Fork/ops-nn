@@ -69,11 +69,11 @@ void Conv2dBaseTiling::SetApiInputPlatformInfo()
     apiInputPlatformInfo.ubSize = opInfo_->ubSize;
     apiInputPlatformInfo.btSize = opInfo_->btSize;
     apiInputPlatformInfo.fbSize = opInfo_->fbSize;
-    OP_LOGD(context_->GetNodeName(),
-            "%s AscendC: Tiling get platformInfo: l1Size: %ld, l0CSize: %ld, l0ASize: %ld, l0BSize: %ld, ubSize: %ld, "
+    OP_LOGD(paramInfo_.nodeType.c_str(),
+            "AscendC: Tiling get platformInfo: l1Size: %ld, l0CSize: %ld, l0ASize: %ld, l0BSize: %ld, ubSize: %ld, "
             "btSize: %ld, fbSize: %ld, isCubeVectorFuse: %d.",
-            paramInfo_.nodeType.c_str(), opInfo_->l1Size, opInfo_->l0cSize, opInfo_->l0aSize, opInfo_->l0bSize,
-            opInfo_->ubSize, opInfo_->btSize, opInfo_->fbSize, opInfo_->isCubeVectorFuse);
+            opInfo_->l1Size, opInfo_->l0cSize, opInfo_->l0aSize, opInfo_->l0bSize, opInfo_->ubSize, opInfo_->btSize,
+            opInfo_->fbSize, opInfo_->isCubeVectorFuse);
 }
 
 ge::graphStatus Conv2dBaseTiling::InitConv2dApiTiling()
@@ -127,8 +127,7 @@ bool Conv2dBaseTiling::EnableOptGroup()
                                  C0_BYTE_SIZE <=
                          (apiInputPlatformInfo.ubSize - OPT_GROUP_RESERVED_SIZE * INDEX_UB_NUMS);
         if (vselrFlag) {
-            OP_LOGD(context_->GetNodeName(), "%s AscendC: Opt Group use vselr to trans weight.",
-                    paramInfo_.nodeType.c_str());
+            OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: Opt Group use vselr to trans weight.");
         }
         return vselrFlag;
     }
@@ -169,10 +168,10 @@ void Conv2dBaseTiling::GetGroupsInfo()
 
     if (EnableOptGroup()) {
         flagInfo_.convGroupType = ConvGroupType::OPT_GROUP_CONV;
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: group type: Opt Group.", paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: group type: Opt Group.");
     } else {
         flagInfo_.convGroupType = ConvGroupType::ORI_GROUP_CONV;
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: group type: original Group.", paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: group type: original Group.");
     }
 }
 
@@ -268,28 +267,26 @@ bool Conv2dBaseTiling::IsEnableC04()
 
     if (descInfo_.weightDtype != ge::DataType::DT_FLOAT && descInfo_.weightDtype != ge::DataType::DT_FLOAT16 &&
         descInfo_.weightDtype != ge::DataType::DT_BF16) {
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: unSupported datatype: %s for c04 mode, only support [FP16, BF16, FP32].",
-                paramInfo_.nodeType.c_str(), DTYPE_TO_STR.at(dtypeMap.at(descInfo_.weightDtype)).c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: unSupported datatype: %s for c04 mode, only support [FP16, BF16, FP32].",
+                DTYPE_TO_STR.at(dtypeMap.at(descInfo_.weightDtype)).c_str());
         return false;
     }
 
     if (attrInfo_.groups > 1) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: groups is %u > 1, c04 mode cannot be enabled.",
-                paramInfo_.nodeType.c_str(), attrInfo_.groups);
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: groups is %u > 1, c04 mode cannot be enabled.",
+                attrInfo_.groups);
         return false;
     }
 
     if (shapeInfo_.ci > C04_CIN_SIZE) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: cin is %lu > 4, c04 mode cannot be enabled.",
-                paramInfo_.nodeType.c_str(), shapeInfo_.ci);
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: cin is %lu > 4, c04 mode cannot be enabled.", shapeInfo_.ci);
         return false;
     }
 
     if (GetC04UbLoadMaxNsize() == 0) {
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: Ubsize is not enough to load even a n0 size block, c04 mode cannot be enabled.",
-                paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: Ubsize is not enough to load even a n0 size block, c04 mode cannot be enabled.");
         return false;
     }
 
@@ -362,7 +359,7 @@ ge::graphStatus Conv2dBaseTiling::GetAndCheckInfo()
 ge::graphStatus Conv2dBaseTiling::ParseAndCheckInfo()
 {
     if (!GetConvParamsIdx(paramInfo_.paramsFormat, paramInfo_.paramsIdxVec)) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: conv2d get param Index failed.", paramInfo_.nodeType.c_str());
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: conv2d get param Index failed.");
         return ge::GRAPH_FAILED;
     }
     if (GetDisContinuousFlag() != ge::GRAPH_SUCCESS) {
@@ -409,17 +406,16 @@ ge::graphStatus Conv2dBaseTiling::GetShapeAttrsInfo()
     std::stringstream dmaWarningLog;
     dmaWarningLog << "The conv2d has entered the DMA processing process. A timeout AiCore error may be reported."
                   << " If a timeout AiCore error is reported, reduce the conv2d specifications and try again.";
-    OP_LOGW_IF(featureFlagInfo_ == ConvAscendcFeatureFlag::IS_DMA_FLAG, context_->GetNodeName(), "%s",
+    OP_LOGW_IF(featureFlagInfo_ == ConvAscendcFeatureFlag::IS_DMA_FLAG, paramInfo_.nodeType.c_str(), "%s",
                dmaWarningLog.str().c_str());
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus Conv2dBaseTiling::CheckNullPtr()
 {
-    OP_TILING_CHECK(
-        context_->GetAttrs() == nullptr,
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: attrs got from ge is nullptr", paramInfo_.nodeType.c_str()),
-        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(context_->GetAttrs() == nullptr,
+                    OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: attrs got from ge is nullptr."),
+                    return ge::GRAPH_FAILED);
     auto fMapDesc = context_->GetInputDesc(INPUT_FMAP_INDEX);
     auto weightDesc = context_->GetInputDesc(INPUT_WEIGHT_INDEX);
     auto outputDesc = context_->GetOutputDesc(OUTPUT_INDEX);
@@ -448,8 +444,7 @@ ge::graphStatus Conv2dBaseTiling::GetFeatureFlag()
     if (CheckLoad3DLimits() != ge::GRAPH_SUCCESS ||
         CheckL1SizeLimitsKernelFullLoad(IsEnableC04()) != ge::GRAPH_SUCCESS) {
         if (flagInfo_.disContinuousFlag) {
-            OP_LOGE(context_->GetNodeName(), "%s AscendC: DMA not support disContinuous input.",
-                    paramInfo_.nodeType.c_str());
+            OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: DMA not support disContinuous input.");
             return ge::GRAPH_FAILED;
         }
         featureFlagInfo_ = ConvAscendcFeatureFlag::IS_DMA_FLAG;
@@ -497,8 +492,7 @@ ge::graphStatus Conv2dBaseTiling::DoLibApiTiling()
     }
     PrintLibApiTilingData();
     if (AddTilingToCache()) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: success to add fast tiling to cache",
-                paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: success to add fast tiling to cache.");
     }
 
     return ge::GRAPH_SUCCESS;
@@ -514,14 +508,13 @@ ge::graphStatus Conv2dBaseTiling::DoOpTiling()
     flagInfo_.useTilingCache = false;
     flagInfo_.useTilingRepo = false;
     if (GetTilingFromCache()) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: get tiling from cached_tiling.", paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: get tiling from cached_tiling.");
         flagInfo_.useTilingCache = true;
     } else if (GetTilingFromRepo()) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: get tiling from knowledge_tiling.", paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: get tiling from knowledge_tiling.");
         flagInfo_.useTilingRepo = true;
         if (AddTilingToCache()) {
-            OP_LOGD(context_->GetNodeName(), "%s AscendC: success to add repo tiling to cache",
-                    paramInfo_.nodeType.c_str());
+            OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: success to add repo tiling to cache.");
         }
     }
     if (CheckDisContinuousInstrLimits() != ge::GRAPH_SUCCESS) {
@@ -691,7 +684,7 @@ void Conv2dBaseTiling::CalcASWTStrategy()
     }
     tilingData_.set_mWindows(mWindows);
     flagInfo_.isASWT = true;
-    OP_LOGI(context_->GetNodeName(),
+    OP_LOGI(paramInfo_.nodeType.c_str(),
             "[ASWT] enabled, mWindows=%u, totalBlocks=%lu, usedCores=%lu, aicoreNum=%u, innerBatch=%u",
             tilingData_.get_mWindows(), totalBlocks, usedCores, opInfo_->aicoreNum,
             static_cast<uint32_t>(tilingData_.get_innerBatch()));
@@ -703,7 +696,7 @@ ge::graphStatus Conv2dBaseTiling::GetWorkspaceSize()
     OPS_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
     if (opInfo_->isCubeVectorFuse) {
         workspaces[0] = 0;
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: Fuse workspace size is 0.", paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: Fuse workspace size is 0.");
     } else {
         workspaces[0] = MIN_WORKSPACE_SIZE;
     }

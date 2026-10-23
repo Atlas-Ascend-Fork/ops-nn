@@ -71,8 +71,8 @@ ge::graphStatus Conv2dBaseTiling::CheckLoad3DAllPadOverflow()
     bool allPadW = attrInfo_.padLeft >= dilatedKernelW || attrInfo_.padRight >= dilatedKernelW;
     if ((allPadH || allPadW) &&
         (dilatedKernelH > LOAD3D_ALLPAD_VIRTUAL_LIMIT || dilatedKernelW > LOAD3D_ALLPAD_VIRTUAL_LIMIT)) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: Load3D allPad overflow (dilatedKernel > 511), fall back to DMA.",
-                paramInfo_.nodeType.c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: Load3D allPad overflow (dilatedKernel > 511), fall back to DMA.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -82,32 +82,31 @@ ge::graphStatus Conv2dBaseTiling::CheckLoad3DLimits()
 {
     // LOAD3D limits
     if (attrInfo_.strideH > LOAD3D_MAX_STRIDE_H_W || attrInfo_.strideW > LOAD3D_MAX_STRIDE_H_W) {
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: Attrs does not satisfy Load3D's limits: strideH=%u, strideW=%u, which must <= %u.",
-                paramInfo_.nodeType.c_str(), attrInfo_.strideH, attrInfo_.strideW, LOAD3D_MAX_STRIDE_H_W);
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: Attrs does not satisfy Load3D's limits: strideH=%u, strideW=%u, which must <= %u.",
+                attrInfo_.strideH, attrInfo_.strideW, LOAD3D_MAX_STRIDE_H_W);
         return ge::GRAPH_FAILED;
     }
 
     if (attrInfo_.padTop > LOAD3D_MAX_PAD || attrInfo_.padBottom > LOAD3D_MAX_PAD ||
         attrInfo_.padLeft > LOAD3D_MAX_PAD || attrInfo_.padRight > LOAD3D_MAX_PAD) {
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: Attrs does not satisfy Load3D's limit: pads=[%u, %u, %u, %u], each dim must <= %u.",
-                paramInfo_.nodeType.c_str(), attrInfo_.padTop, attrInfo_.padBottom, attrInfo_.padLeft,
-                attrInfo_.padRight, LOAD3D_MAX_PAD);
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: Attrs does not satisfy Load3D's limit: pads=[%u, %u, %u, %u], each dim must <= %u.",
+                attrInfo_.padTop, attrInfo_.padBottom, attrInfo_.padLeft, attrInfo_.padRight, LOAD3D_MAX_PAD);
         return ge::GRAPH_FAILED;
     }
 
     if (attrInfo_.dilationH > LOAD3D_MAX_DILATION_H_W || attrInfo_.dilationW > LOAD3D_MAX_DILATION_H_W) {
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: Attrs does not satisfy Load3D's limits: dilationH=%u, dilationW=%u, which must <= %u.",
-                paramInfo_.nodeType.c_str(), attrInfo_.dilationH, attrInfo_.dilationW, LOAD3D_MAX_DILATION_H_W);
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: Attrs does not satisfy Load3D's limits: dilationH=%u, dilationW=%u, which must <= %u.",
+                attrInfo_.dilationH, attrInfo_.dilationW, LOAD3D_MAX_DILATION_H_W);
         return ge::GRAPH_FAILED;
     }
 
     if (shapeInfo_.kh > LOAD3D_MAX_FILTER_H_W || shapeInfo_.kw > LOAD3D_MAX_FILTER_H_W) {
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: Weight shape does not satisfy Load3D's limits: kh=%lu, kw=%lu, which must <= %lu.",
-                paramInfo_.nodeType.c_str(), shapeInfo_.kh, shapeInfo_.kw, LOAD3D_MAX_FILTER_H_W);
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: Weight shape does not satisfy Load3D's limits: kh=%lu, kw=%lu, which must <= %lu.",
+                shapeInfo_.kh, shapeInfo_.kw, LOAD3D_MAX_FILTER_H_W);
         return ge::GRAPH_FAILED;
     }
 
@@ -120,9 +119,9 @@ ge::graphStatus Conv2dBaseTiling::CheckLoad3DLimits()
     uint64_t load3dPosk = shapeInfo_.kh * shapeInfo_.kw * k0;
     if (load3dPosk > load3dPoskLimit) {
         OP_LOGD(
-            context_->GetNodeName(),
-            "%s AscendC: Weight shape does not satisfy Load3D's limits: kH(%lu)*kW(%lu)*k0(%u)=%lu, which must <= %lu.",
-            paramInfo_.nodeType.c_str(), shapeInfo_.kh, shapeInfo_.kw, k0, load3dPosk, load3dPoskLimit);
+            paramInfo_.nodeType.c_str(),
+            "AscendC: Weight shape does not satisfy Load3D's limits: kH(%lu)*kW(%lu)*k0(%u)=%lu, which must <= %lu.",
+            shapeInfo_.kh, shapeInfo_.kw, k0, load3dPosk, load3dPoskLimit);
         return ge::GRAPH_FAILED;
     }
 
@@ -153,9 +152,9 @@ ge::graphStatus Conv2dBaseTiling::CheckL1SizeLimitsKernelFullLoad(bool isC04)
 
     uint64_t minL1LoadSize = biasUsedL1Size + scaleUsedL1Size + fmapUsedL1Size + weightUsedL1Size;
     if (minL1LoadSize > opInfo_->l1Size) {
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: KernelSplitMinL1LoadSize > L1size, current L1size: %lu, maxL1Size: %lu",
-                context_->GetNodeType(), minL1LoadSize, opInfo_->l1Size);
+        OP_LOGD(paramInfo_.nodeType.c_str(),
+                "AscendC: KernelSplitMinL1LoadSize > L1size, current L1size: %lu, maxL1Size: %lu", minL1LoadSize,
+                opInfo_->l1Size);
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -168,11 +167,11 @@ ge::graphStatus Conv2dBaseTiling::CheckInstructionLimits()
         uint64_t loadAL1loop1SrcStrideLimits = MAX_40_BIT_NUM;
         uint64_t loadAL1loop1SrcStride = shapeInfo_.hi * shapeInfo_.wi * dtypeSizeTab.at(descInfo_.fMapDtype);
         if (descInfo_.fMapFormat == ge::FORMAT_NCHW && loadAL1loop1SrcStride > loadAL1loop1SrcStrideLimits) {
-            OP_LOGE(context_->GetNodeName(),
-                    "%s AscendC: Fmap shape exceeds DataCopy's limits: hi(%lu)*wi(%lu)*datatype size(%u)=%lu, which "
+            OP_LOGE(paramInfo_.nodeType.c_str(),
+                    "AscendC: Fmap shape exceeds DataCopy's limits: hi(%lu)*wi(%lu)*datatype size(%u)=%lu, which "
                     "must <= %lu",
-                    paramInfo_.nodeType.c_str(), shapeInfo_.hi, shapeInfo_.wi, dtypeSizeTab.at(descInfo_.fMapDtype),
-                    loadAL1loop1SrcStride, loadAL1loop1SrcStrideLimits);
+                    shapeInfo_.hi, shapeInfo_.wi, dtypeSizeTab.at(descInfo_.fMapDtype), loadAL1loop1SrcStride,
+                    loadAL1loop1SrcStrideLimits);
             return ge::GRAPH_FAILED;
         }
     }

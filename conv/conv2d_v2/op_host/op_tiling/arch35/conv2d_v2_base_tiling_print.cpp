@@ -38,27 +38,26 @@ void Conv2dBaseTiling::PrintOpTilingData()
        << ", hasBias: " << static_cast<uint32_t>(tilingData_.get_hasBias())
        << ", total_shape_cout: " << tilingData_.get_total_shape_cout()
        << ", strideWriteDstStride: " << tilingData_.get_strideWriteDstStride();
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: ops tilingdata: %s", paramInfo_.nodeType.c_str(), ss.str().c_str());
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: ops tilingdata: %s", ss.str().c_str());
 }
 
 void Conv2dBaseTiling::PrintTilingInfo() const
 {
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: tiling running mode: %s.", paramInfo_.nodeType.c_str(),
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: tiling running mode: %s.",
             FeatureFlagEnumToString(featureFlagInfo_));
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: weight desc: format: %s, dtype: %s.", paramInfo_.nodeType.c_str(),
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: weight desc: format: %s, dtype: %s.",
             formatToStrTab.at(descInfo_.weightFormat).c_str(), dtypeToStrTab.at(descInfo_.weightDtype).c_str());
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: featuremap desc: format: %s, dtype: %s.", paramInfo_.nodeType.c_str(),
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: featuremap desc: format: %s, dtype: %s.",
             formatToStrTab.at(descInfo_.fMapFormat).c_str(), dtypeToStrTab.at(descInfo_.fMapDtype).c_str());
     if (flagInfo_.hasBias) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: bias desc: format %s, dtype: %s.", paramInfo_.nodeType.c_str(),
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: bias desc: format %s, dtype: %s.",
                 formatToStrTab.at(descInfo_.biasFormat).c_str(), dtypeToStrTab.at(descInfo_.biasDtype).c_str());
     }
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: output desc: format: %s, dtype: %s.", paramInfo_.nodeType.c_str(),
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: output desc: format: %s, dtype: %s.",
             formatToStrTab.at(descInfo_.outFormat).c_str(), dtypeToStrTab.at(descInfo_.outDtype).c_str());
     if (flagInfo_.extendConvFlag && (attrInfo_.dualOutput != 0)) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: output1 desc: format: %s, dtype: %s.",
-                paramInfo_.nodeType.c_str(), formatToStrTab.at(descInfo_.out1Format).c_str(),
-                dtypeToStrTab.at(descInfo_.out1Dtype).c_str());
+        OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: output1 desc: format: %s, dtype: %s.",
+                formatToStrTab.at(descInfo_.out1Format).c_str(), dtypeToStrTab.at(descInfo_.out1Dtype).c_str());
     }
 }
 
@@ -133,8 +132,8 @@ void Conv2dBaseTiling::PrintLibApiTilingData()
               << ", kwUb: " << static_cast<uint32_t>(tilingData_.get_kwUb())
               << ", unionDataXt: " << static_cast<uint32_t>(tilingData_.get_unionDataXt())
               << ", fixedShiftValue: " << static_cast<uint32_t>(tilingData_.get_fixedShiftValue());
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: api tilingdata: %s", paramInfo_.nodeType.c_str(), ss.str().c_str());
-    OP_LOGD(context_->GetNodeName(), "%s", ssPartTwo.str().c_str());
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: api tilingdata: %s", ss.str().c_str());
+    OP_LOGD(paramInfo_.nodeType.c_str(), "%s", ssPartTwo.str().c_str());
 }
 
 } // namespace conv_ops_tiling

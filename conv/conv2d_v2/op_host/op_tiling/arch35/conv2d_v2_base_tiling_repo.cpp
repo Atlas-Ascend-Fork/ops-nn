@@ -20,7 +20,7 @@ namespace optiling {
 namespace conv_ops_tiling {
 bool Conv2dBaseTiling::GetTilingFromRepo()
 {
-    OP_LOGD(context_->GetNodeName(), "Entering GetTilingFromRepo.");
+    OP_LOGD(paramInfo_.nodeType.c_str(), "Entering GetTilingFromRepo.");
     string nodeType = context_->GetNodeType();
     auto compileInfoPtr = static_cast<const ConvTilingParseInfo*>(context_->GetCompileInfo());
     OPS_CHECK_NULL_WITH_CONTEXT(context_, compileInfoPtr);
@@ -363,25 +363,24 @@ void Conv2dBaseTiling::SetUnionDataXt(shared_ptr<tuningtiling::Conv2DV2TunnerTil
 void Conv2dBaseTiling::PrintInputArgs(shared_ptr<tuningtiling::Conv2DV2InputArgs> conv2DInput)
 {
     stringstream ss;
-    ss << paramInfo_.nodeType.c_str() << "ops tiling input args: aDtype: " << conv2DInput->aDtype
-       << ", bDtype: " << conv2DInput->bDtype << ", cDtype: " << conv2DInput->cDtype
-       << ", biasDtype: " << conv2DInput->biasDtype << ", aShapeN: " << conv2DInput->aShapeN
-       << ", aShapeH: " << conv2DInput->aShapeH << ", aShapeW: " << conv2DInput->aShapeW
-       << ", bShapeN: " << conv2DInput->bShapeN << ", bShapeC: " << conv2DInput->bShapeC
-       << ", bShapeH: " << conv2DInput->bShapeH << ", bShapeW: " << conv2DInput->bShapeW
-       << ", cShapeH: " << conv2DInput->cShapeH << ", cShapeW: " << conv2DInput->cShapeW
-       << ", aFormat: " << conv2DInput->aFormat << ", bFormat: " << conv2DInput->bFormat
-       << ", cFormat: " << conv2DInput->cFormat << ", groups: " << conv2DInput->groups
-       << ", strideH: " << conv2DInput->strideH << ", strideW: " << conv2DInput->strideW
-       << ", dilationH: " << conv2DInput->dilationH << ", dilationW: " << conv2DInput->dilationW
-       << ", padTop: " << conv2DInput->padTop << ", padBottom: " << conv2DInput->padBottom
-       << ", padLeft: " << conv2DInput->padLeft << ", padRight: " << conv2DInput->padRight
-       << ", biasFlag: " << conv2DInput->biasFlag << ", hf32Flag: " << conv2DInput->hf32Flag
-       << ", reserverdParam1: " << conv2DInput->reserverdParam1 << ", reserverdParam2: " << conv2DInput->reserverdParam2
-       << ", reserverdParam3: " << conv2DInput->reserverdParam3 << ", reserverdParam4: " << conv2DInput->reserverdParam4
-       << ", reserverdParam5: " << conv2DInput->reserverdParam5
+    ss << "ops tiling input args: aDtype: " << conv2DInput->aDtype << ", bDtype: " << conv2DInput->bDtype
+       << ", cDtype: " << conv2DInput->cDtype << ", biasDtype: " << conv2DInput->biasDtype
+       << ", aShapeN: " << conv2DInput->aShapeN << ", aShapeH: " << conv2DInput->aShapeH
+       << ", aShapeW: " << conv2DInput->aShapeW << ", bShapeN: " << conv2DInput->bShapeN
+       << ", bShapeC: " << conv2DInput->bShapeC << ", bShapeH: " << conv2DInput->bShapeH
+       << ", bShapeW: " << conv2DInput->bShapeW << ", cShapeH: " << conv2DInput->cShapeH
+       << ", cShapeW: " << conv2DInput->cShapeW << ", aFormat: " << conv2DInput->aFormat
+       << ", bFormat: " << conv2DInput->bFormat << ", cFormat: " << conv2DInput->cFormat
+       << ", groups: " << conv2DInput->groups << ", strideH: " << conv2DInput->strideH
+       << ", strideW: " << conv2DInput->strideW << ", dilationH: " << conv2DInput->dilationH
+       << ", dilationW: " << conv2DInput->dilationW << ", padTop: " << conv2DInput->padTop
+       << ", padBottom: " << conv2DInput->padBottom << ", padLeft: " << conv2DInput->padLeft
+       << ", padRight: " << conv2DInput->padRight << ", biasFlag: " << conv2DInput->biasFlag
+       << ", hf32Flag: " << conv2DInput->hf32Flag << ", reserverdParam1: " << conv2DInput->reserverdParam1
+       << ", reserverdParam2: " << conv2DInput->reserverdParam2 << ", reserverdParam3: " << conv2DInput->reserverdParam3
+       << ", reserverdParam4: " << conv2DInput->reserverdParam4 << ", reserverdParam5: " << conv2DInput->reserverdParam5
        << ", reserverdParam6: " << conv2DInput->reserverdParam6;
-    OP_LOGD(context_->GetNodeName(), "%s", ss.str().c_str());
+    OP_LOGD(paramInfo_.nodeType.c_str(), "%s", ss.str().c_str());
 }
 
 } // namespace conv_ops_tiling

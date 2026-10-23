@@ -300,8 +300,8 @@ ge::graphStatus ConvBase::CheckKernelSplitL1SizeLimitsInHWSplitMode()
     uint64_t usdL1SizeUnderMinHWtiling = CalcMinUsedL1SizeInHWsplitMode(convOpsConstParams_.k0, convOpsConstParams_.k0,
                                                                         wiAL1min, hiAL1min);
     if (usdL1SizeUnderMinHWtiling > platformInfo_.l1Size) {
-        OP_LOGE(nodeInfo_.nodeName, "%s AscendC: MinL1LoadSize > L1size, current L1size: %lu, maxL1Size: %lu",
-                nodeInfo_.nodeType.c_str(), usdL1SizeUnderMinHWtiling, platformInfo_.l1Size);
+        OP_LOGE(nodeInfo_.nodeType.c_str(), "AscendC: MinL1LoadSize > L1size, current L1size: %lu, maxL1Size: %lu.",
+                usdL1SizeUnderMinHWtiling, platformInfo_.l1Size);
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -320,9 +320,9 @@ ge::graphStatus ConvBase::CheckC04L1SizeLimitsInHWSplitMode()
         C04_CIN_SIZE, ConvAlignB(C04_CIN_SIZE * shapeInfo_.kh * shapeInfo_.kw, convOpsConstParams_.k0), tempWi,
         hiAL1min);
     if (usdL1SizeUnderMinHWtiling > opInfo_->l1Size) {
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: c04 minUsedL1SizeInHWmode: %lu > maxL1Size: %lu, c04 mode cannot be enabled.",
-                context_->GetNodeType(), usdL1SizeUnderMinHWtiling, opInfo_->l1Size);
+        OP_LOGD(context_->GetNodeType(),
+                "AscendC: c04 minUsedL1SizeInHWmode: %lu > maxL1Size: %lu, c04 mode cannot be enabled.",
+                usdL1SizeUnderMinHWtiling, opInfo_->l1Size);
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -333,9 +333,9 @@ ge::graphStatus ConvBase::CheckC04L1SizeLimitsInMsplitMode()
     uint64_t c04UsdL1SizeUnderMinMtiling = CalcMinUsedL1SizeInMsplitMode(
         C04_CIN_SIZE, ConvAlignB(C04_CIN_SIZE * shapeInfo_.kh * shapeInfo_.kw, convOpsConstParams_.k0));
     if (c04UsdL1SizeUnderMinMtiling > opInfo_->l1Size) {
-        OP_LOGD(context_->GetNodeName(),
-                "%s AscendC: c04 minUsedL1SizeInMmode: %lu > maxL1Size: %lu, c04 mode cannot be enabled.",
-                context_->GetNodeType(), c04UsdL1SizeUnderMinMtiling, opInfo_->l1Size);
+        OP_LOGD(context_->GetNodeType(),
+                "AscendC: c04 minUsedL1SizeInMmode: %lu > maxL1Size: %lu, c04 mode cannot be enabled.",
+                c04UsdL1SizeUnderMinMtiling, opInfo_->l1Size);
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

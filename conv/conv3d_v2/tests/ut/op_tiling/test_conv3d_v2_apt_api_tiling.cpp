@@ -362,7 +362,6 @@ TEST_F(TestConv3dV2Tiling, Demo_api_tiling)
     tilingInfo.attrInfo.roundMode = 0;
     tilingInfo.attrInfo.dualOutput = 0;
 
-    tilingInfo.nodeInfo.nodeName = "conv3d_v2";
     tilingInfo.nodeInfo.nodeType = "conv3d_v2";
 
     tilingInfo.numBlocksRes.batchDim = 1;

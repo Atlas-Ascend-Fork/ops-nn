@@ -335,7 +335,6 @@ struct ConvAscendcShapesInfo {
 };
 
 struct ConvAscendcNodeInfo {
-    std::string nodeName = "";
     std::string nodeType = "";
 };
 

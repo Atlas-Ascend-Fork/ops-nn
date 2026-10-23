@@ -110,8 +110,8 @@ ge::graphStatus Conv2dBaseTiling::CheckPadLegal()
     oriShapeAttrInfo_.oriPadLeft = padPtr->GetData()[PAD_LEFT_INDEX];
     oriShapeAttrInfo_.oriPadRight = padPtr->GetData()[PAD_RIGHT_INDEX];
 
-    OP_LOGE_IF(!UpdateOriPadFromPadMode(), ge::GRAPH_FAILED, context_->GetNodeName(),
-               "%s AscendC: UpdateOriPadFromPadMode Failed.", paramInfo_.nodeType.c_str());
+    OP_LOGE_IF(!UpdateOriPadFromPadMode(), ge::GRAPH_FAILED, paramInfo_.nodeType.c_str(),
+               "AscendC: UpdateOriPadFromPadMode Failed.");
 
     uint64_t maxPad = (apiInputPlatformInfo.isCubeVectorFuse) ? LOAD3D_MAX_PAD : MAX_ATTRS_SHAPE;
     if (oriShapeAttrInfo_.oriPadTop < 0 || oriShapeAttrInfo_.oriPadBottom < 0 || oriShapeAttrInfo_.oriPadLeft < 0 ||
@@ -162,11 +162,10 @@ ge::graphStatus Conv2dBaseTiling::CheckRoundModeLegal()
         if (roundMode.empty()) {
             return ge::GRAPH_SUCCESS;
         }
-        OP_LOGW(context_->GetNodeName(), "%s AscendC: the input round_mode is suggested to be set as an empty string",
-                paramInfo_.nodeType.c_str());
+        OP_LOGW(paramInfo_.nodeType.c_str(),
+                "AscendC: the input round_mode is suggested to be set as an empty string.");
         if (!convBase_.CheckValidString(roundMode, context_)) {
-            OP_LOGE(context_->GetNodeName(), "%s AscendC: the input round_mode has invalid string",
-                    paramInfo_.nodeType.c_str());
+            OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: the input round_mode has invalid string.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -231,8 +230,8 @@ ge::graphStatus Conv2dBaseTiling::CheckGroupsLegal()
     // weight format groups != 1 case not supported yet
     if (oriShapeAttrInfo_.oriGroups != 1 && descInfo_.weightFormat == ge::FORMAT_NHWC &&
         (apiInputPlatformInfo.npuArch == NpuArch::DAV_9201 || apiInputPlatformInfo.npuArch == NpuArch::DAV_9202)) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: weight NHWC format unsupport groups (%ld) != 1.",
-                paramInfo_.nodeType.c_str(), oriShapeAttrInfo_.oriGroups);
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: weight NHWC format unsupport groups (%ld) != 1.",
+                oriShapeAttrInfo_.oriGroups);
         return ge::GRAPH_FAILED;
     }
 
@@ -256,9 +255,9 @@ ge::graphStatus Conv2dBaseTiling::CheckGroupsLegal()
         oriShapeAttrInfo_.oriFmapC != oriShapeAttrInfo_.oriWeightC) {
         if (oriShapeAttrInfo_.oriFmapC % oriShapeAttrInfo_.oriWeightC == 0) {
             oriShapeAttrInfo_.oriGroups = oriShapeAttrInfo_.oriFmapC / oriShapeAttrInfo_.oriWeightC;
-            OP_LOGD(context_->GetNodeName(),
-                    "%s AscendC: Attr groups is implicitly changed, original groups %lu actual groups %lu",
-                    paramInfo_.nodeType.c_str(), *groupsPtr, oriShapeAttrInfo_.oriGroups);
+            OP_LOGD(paramInfo_.nodeType.c_str(),
+                    "AscendC: Attr groups is implicitly changed, original groups %lu actual groups %lu.", *groupsPtr,
+                    oriShapeAttrInfo_.oriGroups);
         }
     }
 
@@ -330,8 +329,8 @@ ge::graphStatus Conv2dBaseTiling::CheckExtendReluLegal()
         }
     }
 
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: reluMode0 is %u, reluMode1 is %u.", context_->GetNodeType(),
-            fixpipeInfo_.reluMode0, fixpipeInfo_.reluMode1);
+    OP_LOGD(context_->GetNodeType(), "AscendC: reluMode0 is %u, reluMode1 is %u.", fixpipeInfo_.reluMode0,
+            fixpipeInfo_.reluMode1);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -391,7 +390,7 @@ ge::graphStatus Conv2dBaseTiling::CheckExtendConv2dReluWeightAndClipValue(const 
     auto enableReluPtr = context_->GetAttrs()->GetBool(enabelReluInputIdx);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, enableReluPtr);
     if (!*enableReluPtr) {
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: reluMode is NORELU", context_->GetNodeType());
+        OP_LOGD(context_->GetNodeType(), "AscendC: reluMode is NORELU.");
         return ge::GRAPH_SUCCESS;
     }
 
@@ -400,7 +399,7 @@ ge::graphStatus Conv2dBaseTiling::CheckExtendConv2dReluWeightAndClipValue(const 
     auto reluWeightShapePtr = context_->GetOptionalInputShape(reluWeightInputIdx);
     if (reluWeightShapePtr == nullptr) {
         reluMode = static_cast<uint8_t>(ReluMode::NORMALRELU);
-        OP_LOGD(context_->GetNodeName(), "%s AscendC: reluMode is NORMALRELU", context_->GetNodeType());
+        OP_LOGD(context_->GetNodeType(), "AscendC: reluMode is NORMALRELU.");
         return ge::GRAPH_SUCCESS;
     }
 
@@ -412,9 +411,9 @@ ge::graphStatus Conv2dBaseTiling::CheckExtendConv2dReluWeightAndClipValue(const 
         reluMode = static_cast<uint8_t>(ReluMode::VECTORRELU);
     }
 
-    OP_LOGD(context_->GetNodeName(),
-            "%s AscendC: reluMode is %u, enableRelu[1] reluWeightShapeLen[%zu] enableClipValue[%d].",
-            context_->GetNodeType(), reluMode, reluWeightShapeLen, clipValuePtr != nullptr);
+    OP_LOGD(context_->GetNodeType(),
+            "AscendC: reluMode is %u, enableRelu[1] reluWeightShapeLen[%zu] enableClipValue[%d].", reluMode,
+            reluWeightShapeLen, clipValuePtr != nullptr);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -470,13 +469,12 @@ ge::graphStatus Conv2dBaseTiling::CheckFixedShiftValueLegal()
                                                                                      FIX_SHIFT_VAL_LEN_A16W8;
 
     if (oriShapeAttrInfo_.fixedShiftValue < 0 || oriShapeAttrInfo_.fixedShiftValue > fixedShiftValueLen) {
-        OP_LOGE(context_->GetNodeName(), "%s AscendC: fixedShiftValue(%ld) from attr are out of range[0, %ld].",
-                paramInfo_.nodeType.c_str(), oriShapeAttrInfo_.fixedShiftValue, fixedShiftValueLen);
+        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: fixedShiftValue(%ld) from attr are out of range[0, %ld].",
+                oriShapeAttrInfo_.fixedShiftValue, fixedShiftValueLen);
         return ge::GRAPH_FAILED;
     }
 
-    OP_LOGD(context_->GetNodeName(), "%s AscendC: fixedShiftValue is %ld", paramInfo_.nodeType.c_str(),
-            oriShapeAttrInfo_.fixedShiftValue);
+    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: fixedShiftValue is %ld.", oriShapeAttrInfo_.fixedShiftValue);
 
     tilingData_.set_fixedShiftValue(static_cast<uint8_t>(oriShapeAttrInfo_.fixedShiftValue));
 

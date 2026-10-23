@@ -287,6 +287,7 @@ bool PadDepthwiseConv2dFusionPass::ConvFusionReplaceImpl(GraphPtr& graph, GNode&
                       OP_LOGE(convDescInfo.nodeNameStr, "Get Pad input desc failed."), return false);
 
     std::vector<GNode> nodesBeforeFuse = {convNode, *padNode};
+    FUSION_PASS_CHECK_NOLOG(!ReportMatchNodes(nodesBeforeFuse, passContext), return false);
     FUSION_PASS_CHECK_NOLOG(!CanFuseNodes(nodesBeforeFuse), return false);
 
     FUSION_PASS_CHECK(convNode.UpdateInputDesc(CONV_FMAP_INPUT_INDEX, padXDesc) != GRAPH_SUCCESS,

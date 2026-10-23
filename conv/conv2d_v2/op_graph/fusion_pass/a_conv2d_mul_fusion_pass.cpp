@@ -297,6 +297,7 @@ bool AConv2dMulFusion::ConvFusionReplaceImpl(GraphPtr& graph, GNode& convNode, C
                       return false);
 
     std::vector<GNode> nodesBeforeFuse = {convNode, *mulNode};
+    FUSION_PASS_CHECK_NOLOG(!ReportMatchNodes(nodesBeforeFuse, passContext), return false);
     FUSION_PASS_CHECK_NOLOG(!CanFuseNodes(nodesBeforeFuse), return false);
 
     FUSION_PASS_CHECK(!RelinkConvOutputToMulConsumers(*graph, convNode),

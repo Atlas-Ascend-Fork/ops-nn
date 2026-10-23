@@ -200,7 +200,7 @@ void ConvTilingBase::LogLoad3DLimitError(const std::string& paramName, const std
     if (platformInfo.isCubeVectorFuse) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(nodeType.c_str(), paramName.c_str(), actualValue.c_str(), reason.c_str());
     } else {
-        OP_LOGD(nodeType, "%s AscendC: %s", nodeType.c_str(), reason.c_str());
+        OP_LOGD(nodeType.c_str(), "AscendC: %s", reason.c_str());
     }
 }
 

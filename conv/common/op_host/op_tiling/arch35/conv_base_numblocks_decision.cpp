@@ -99,7 +99,7 @@ ge::graphStatus ConvBaseDeci::GetNumBlocksInfo(ConvAscendcTilingInfo& tilingInfo
     ConvBaseInit(tilingInfo.shapeInfo, tilingInfo.descInfo, tilingInfo.flagInfo);
     ConvBaseInitAttrInfo(tilingInfo.attrInfo);
     ConvBaseInitPlatformInfo(tilingInfo.platformInfo);
-    ConvBaseInitNodeInfo(tilingInfo.nodeInfo.nodeName, tilingInfo.nodeInfo.nodeType);
+    ConvBaseInitNodeInfo(tilingInfo.nodeInfo.nodeType);
     InitNumBlocksConstParas();
     GetConvBaseCoreInfo(tilingInfo.convOpsConstParams);
     if (NumBlocksDecision(tilingInfo.numBlocksRes) != 0) {
@@ -125,11 +125,7 @@ void ConvBaseDeci::ConvBaseInitPlatformInfo(const ConvAscendcPlatformInfo& platf
     aicoreNum_ = platformInfo_.aicoreNum;
 }
 
-void ConvBaseDeci::ConvBaseInitNodeInfo(const string& nodeName, const string& nodeType)
-{
-    nodeInfo_.nodeName = nodeName;
-    nodeInfo_.nodeType = nodeType;
-}
+void ConvBaseDeci::ConvBaseInitNodeInfo(const string& nodeType) { nodeInfo_.nodeType = nodeType; }
 
 void ConvBaseDeci::ConvBaseInitAttrInfo(const ConvAscendcAttrInfo& attrInfo) { attrInfo_ = attrInfo; }
 
@@ -171,21 +167,19 @@ bool ConvBaseDeci::CheckInstrLimitsMmode()
     uint64_t c04AlignSize = ADDR_ALIGN_SIZE / (dtypeSizeTab.at(descInfo_.fMapDtype) * C04_CIN_SIZE);
     if (flagInfo_.enableC04Flag && shapeInfo_.wi * c04AlignSize > N_VALUE_MAX) {
         stringstream ss;
-        ss << nodeInfo_.nodeType.c_str()
-           << " AscendC: Fmap can't enable m split mode due to C04 address align limits: "
-              "wi("
-           << shapeInfo_.wi << ") < " << N_VALUE_MAX / c04AlignSize << ".";
-        OP_LOGD(nodeInfo_.nodeName, "%s", ss.str().c_str());
+        ss << "AscendC: Fmap can't enable m split mode due to C04 address align limits: wi(" << shapeInfo_.wi << ") < "
+           << N_VALUE_MAX / c04AlignSize << ".";
+        OP_LOGD(nodeInfo_.nodeType.c_str(), "%s", ss.str().c_str());
         return false;
     }
     if (descInfo_.fMapFormat == ge::Format::FORMAT_NDHWC) {
         uint64_t loadAL1SrcNdMatixStride = shapeInfo_.ci * shapeInfo_.hi * shapeInfo_.wi * attrInfo_.dilationD;
         if (loadAL1SrcNdMatixStride > MAX_40_BIT_NUM) {
             stringstream ss;
-            ss << nodeInfo_.nodeType.c_str() << " AscendC: Fmap can't enable m split mode due to DN2NZ's limits: ci("
-               << shapeInfo_.ci << ") * hi(" << shapeInfo_.hi << ") * wi(" << shapeInfo_.wi << ") * di("
-               << attrInfo_.dilationD << ") > " << MAX_40_BIT_NUM << ".";
-            OP_LOGD(nodeInfo_.nodeName, "%s", ss.str().c_str());
+            ss << "AscendC: Fmap can't enable m split mode due to DN2NZ's limits: ci(" << shapeInfo_.ci << ") * hi("
+               << shapeInfo_.hi << ") * wi(" << shapeInfo_.wi << ") * di(" << attrInfo_.dilationD << ") > "
+               << MAX_40_BIT_NUM << ".";
+            OP_LOGD(nodeInfo_.nodeType.c_str(), "%s", ss.str().c_str());
             return false;
         }
     }
@@ -224,16 +218,16 @@ void ConvBaseDeci::GetNumBlocksRes()
 {
     if (flagInfo_.mSplitModeFlag) {
         numBlocksRes_ = NumBlocksDecisionMsplitMode();
-        OP_LOGD(nodeInfo_.nodeName,
-                "%s AscendC: batchDim / mDim / nDim / doDim / groupDim / minCost: %u, %u, %u, %u, %u, %lu.",
-                nodeInfo_.nodeType.c_str(), numBlocksRes_.batchDim, numBlocksRes_.mDim, numBlocksRes_.nDim,
-                numBlocksRes_.doDim, numBlocksRes_.groupDim, numBlocksRes_.minCost);
+        OP_LOGD(nodeInfo_.nodeType.c_str(),
+                "AscendC: batchDim / mDim / nDim / doDim / groupDim / minCost: %u, %u, %u, %u, %u, %lu.",
+                numBlocksRes_.batchDim, numBlocksRes_.mDim, numBlocksRes_.nDim, numBlocksRes_.doDim,
+                numBlocksRes_.groupDim, numBlocksRes_.minCost);
     } else {
         numBlocksRes_ = NumBlocksDecisionHWsplitMode();
-        OP_LOGD(nodeInfo_.nodeName,
-                "%s AscendC: batchDim / hoDim / nDim / doDim / groupDim / minCost: %u, %u, %u, %u, %u, %lu.",
-                nodeInfo_.nodeType.c_str(), numBlocksRes_.batchDim, numBlocksRes_.hoDim, numBlocksRes_.nDim,
-                numBlocksRes_.doDim, numBlocksRes_.groupDim, numBlocksRes_.minCost);
+        OP_LOGD(nodeInfo_.nodeType.c_str(),
+                "AscendC: batchDim / hoDim / nDim / doDim / groupDim / minCost: %u, %u, %u, %u, %u, %lu.",
+                numBlocksRes_.batchDim, numBlocksRes_.hoDim, numBlocksRes_.nDim, numBlocksRes_.doDim,
+                numBlocksRes_.groupDim, numBlocksRes_.minCost);
     }
 }
 
@@ -358,8 +352,8 @@ ge::graphStatus ConvBaseDeci::CheckL1SizeLimitsInHWsplitMode()
     uint64_t usdL1SizeUnderMinHWtiling = CalcMinUsedL1SizeInHWsplitMode(
         convOpsConstParams_.k0, shapeInfo_.kh * shapeInfo_.kw * convOpsConstParams_.k0, wiAL1min, hiAL1min);
     if (usdL1SizeUnderMinHWtiling > platformInfo_.l1Size) {
-        OP_LOGD(nodeInfo_.nodeName, "%s AscendC: MinL1LoadSize > L1size, current L1size: %lu, maxL1Size: %lu",
-                nodeInfo_.nodeType.c_str(), usdL1SizeUnderMinHWtiling, platformInfo_.l1Size);
+        OP_LOGD(nodeInfo_.nodeType.c_str(), "AscendC: MinL1LoadSize > L1size, current L1size: %lu, maxL1Size: %lu.",
+                usdL1SizeUnderMinHWtiling, platformInfo_.l1Size);
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -370,8 +364,9 @@ ge::graphStatus ConvBaseDeci::CheckL1SizeLimitsInMSplitMode()
     uint64_t usdL1SizeUnderMinMtiling = CalcMinUsedL1SizeInMsplitMode(
         convOpsConstParams_.k0, shapeInfo_.kh * shapeInfo_.kw * convOpsConstParams_.k0);
     if (usdL1SizeUnderMinMtiling > platformInfo_.l1Size) {
-        OP_LOGD(nodeInfo_.nodeName, "%s AscendC: MinL1LoadSizeInMmode > L1size, current L1size: %lu, maxL1Size: %lu",
-                nodeInfo_.nodeType.c_str(), usdL1SizeUnderMinMtiling, platformInfo_.l1Size);
+        OP_LOGD(nodeInfo_.nodeType.c_str(),
+                "AscendC: MinL1LoadSizeInMmode > L1size, current L1size: %lu, maxL1Size: %lu.",
+                usdL1SizeUnderMinMtiling, platformInfo_.l1Size);
         return ge::GRAPH_FAILED;
     }
     // load3dv2 win max value
