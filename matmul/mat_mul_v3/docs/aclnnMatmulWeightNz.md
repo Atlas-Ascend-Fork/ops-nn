@@ -24,7 +24,7 @@
 ## 功能说明
 
 - 接口功能：完成张量self与张量mat2的矩阵乘计算，mat2仅支持NZ格式，只支持self为2维, mat2为4维。
-  相似接口有aclnnMatmul（mat2仅支持ND）、 aclnnMm（支持2维Tensor作为输入的矩阵乘）和aclnnBatchMatmul（仅支持3维的矩阵乘，其中第1维为batch）。
+  相似接口有aclnnMatmul（mat2仅支持ND）、aclnnMm（支持2维Tensor作为输入的矩阵乘）和aclnnBatchMatmul（仅支持3维的矩阵乘，其中第1维为batch）。
 - 计算公式：
 
   $$
@@ -96,8 +96,8 @@ aclnnStatus aclnnMatmulWeightNz(
         <td>表示矩阵乘的第二个矩阵，公式中的mat2。</td>
         <td>数据类型需要与self满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。<br>
         mat2的Reduce维度需要与self的Reduce维度大小相等。<br>
-        当B矩阵不转置时， NZ格式各个维度表示：（n1，k1，k0，n0），其中k0 = 16， n0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil（k，k0） = k1, mat2 shape中的n1与out的n满足以下关系: ceil(n, n0) = n1。<br>
-        当B矩阵转置时， NZ格式各个维度表示：（k1，n1，n0，k0），其中n0 = 16， k0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil（k，k0） = k1, mat2 shape中的n1与out的n满足以下关系: ceil(n, n0) = n1。<br>
+        当B矩阵不转置时，NZ格式各个维度表示：（n1，k1，k0，n0），其中k0 = 16，n0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil（k，k0） = k1, mat2 shape中的n1与out的n满足以下关系: ceil(n, n0) = n1。<br>
+        当B矩阵转置时，NZ格式各个维度表示：（k1，n1，n0，k0），其中n0 = 16，k0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil（k，k0） = k1, mat2 shape中的n1与out的n满足以下关系: ceil(n, n0) = n1。<br>
         </td>
         <td>BFLOAT16、FLOAT16、FLOAT32</td>
         <td>NZ</td>

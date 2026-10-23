@@ -140,14 +140,14 @@
       <td>y1</td>
       <td>输出</td>
       <td>表示量化输出Tensor，对应公式中的`y1`。</td>
-      <td>INT8、 INT4、 HIFLOAT8、 FLOAT8_E5M2、 FLOAT8_E4M3FN</td>
+      <td>INT8、INT4、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>y2</td>
       <td>输出</td>
       <td>表示量化输出Tensor，对应公式中的`y2`。未传入`scales2`时，该输出为无效占位Tensor，不参与计算；`x`为空时占位shape为[0]，否则为[1]。</td>
-      <td>INT8、 INT4、 HIFLOAT8、 FLOAT8_E5M2、 FLOAT8_E4M3FN</td>
+      <td>INT8、INT4、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN</td>
       <td>ND</td>
     </tr>
     <tr>

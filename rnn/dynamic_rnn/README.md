@@ -57,7 +57,7 @@
     <tr>
       <td>x</td>
       <td>输入</td>
-      <td>输入数据（T， Batch, input_size）。</td>
+      <td>输入数据（T，Batch, input_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
@@ -78,7 +78,7 @@
     <tr>
       <td>seq_length</td>
       <td>输入</td>
-      <td>每个batch真实的长度，维度为（T， Batch, input_size）。</td>
+      <td>每个batch真实的长度，维度为（T，Batch, input_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
@@ -106,56 +106,56 @@
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>输出结果，维度为（T， batch_size, hidden_size）。</td>
+      <td>输出结果，维度为（T，batch_size, hidden_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>output_h</td>
       <td>输出</td>
-      <td>输出结果，维度为（T， batch_size, hidden_size）。</td>
+      <td>输出结果，维度为（T，batch_size, hidden_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>output_c</td>
       <td>输出</td>
-      <td>输出结果，维度为（T， batch_size, hidden_size）。</td>
+      <td>输出结果，维度为（T，batch_size, hidden_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>i</td>
       <td>输出</td>
-      <td>输出结果，维度为（T， batch_size, hidden_size）。</td>
+      <td>输出结果，维度为（T，batch_size, hidden_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>j</td>
       <td>输出</td>
-      <td>输出结果，维度为（T， batch_size, hidden_size）。</td>
+      <td>输出结果，维度为（T，batch_size, hidden_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>f</td>
       <td>输出</td>
-      <td>输出结果，维度为（T， batch_size, hidden_size）。</td>
+      <td>输出结果，维度为（T，batch_size, hidden_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>o</td>
       <td>输出</td>
-      <td>输出结果，维度为（T， batch_size, hidden_size）。</td>
+      <td>输出结果，维度为（T，batch_size, hidden_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>tanhc</td>
       <td>输出</td>
-      <td>输出结果，维度为（T， batch_size, hidden_size）。</td>
+      <td>输出结果，维度为（T，batch_size, hidden_size）。</td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
     </tr>
