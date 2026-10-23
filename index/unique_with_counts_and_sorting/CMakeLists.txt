@@ -8,8 +8,8 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-set(SUPPORT_COMPUTE_UNIT "ascend950" "ascend350")
-set(SUPPORT_TILING_DIR "arch35" "arch35")
+set(SUPPORT_COMPUTE_UNIT "ascend950" "ascend960dt" "ascend960pr" "ascend350")
+set(SUPPORT_TILING_DIR "arch35" "arch35" "arch35" "arch35")
 add_all_modules_sources(OPTYPE unique_with_counts_and_sorting ACLNNTYPE aclnn_exclude
     DEPENDENCIES kth_value unique_consecutive
     COMPUTE_UNIT ${SUPPORT_COMPUTE_UNIT}
