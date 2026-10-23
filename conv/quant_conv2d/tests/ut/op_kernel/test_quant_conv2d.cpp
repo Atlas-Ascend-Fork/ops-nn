@@ -238,6 +238,7 @@ void TestSimpleKernel(const std::vector<uint64_t>& inputShape, const std::vector
     uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(sizeof(Conv2DTilingData));
 
     memset(workspace, 0, workspaceSize);
+    memset(tiling, 0, sizeof(Conv2DTilingData));
 
     Conv2DTilingData* tilingData = reinterpret_cast<Conv2DTilingData*>(tiling);
     TilingInput tilingInput = {inputShape, weightShape, outputShape, pads, strides, dilations};

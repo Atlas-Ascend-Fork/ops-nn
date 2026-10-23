@@ -22,6 +22,7 @@
 #include <securec.h>
 
 #include "conv/common/op_kernel/arch35/conv_tilingkey.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_base.h"
 
 namespace optiling {
 namespace conv_ops_tiling {
@@ -506,6 +507,9 @@ ge::graphStatus Conv2dBaseTiling::DoLibApiTiling()
 // calculate total tilingdata
 ge::graphStatus Conv2dBaseTiling::DoOpTiling()
 {
+    if (SetStrideWriteParams() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     PrintTilingInfo();
     flagInfo_.useTilingCache = false;
     flagInfo_.useTilingRepo = false;
@@ -547,6 +551,79 @@ uint64_t Conv2dBaseTiling::GetTilingKey() const
 {
     // default 0
     return tilingKey_;
+}
+
+ge::graphStatus Conv2dBaseTiling::SetStrideWriteParams()
+{
+    tilingData_.set_total_shape_cout(0);
+    tilingData_.set_strideWriteDstStride(0);
+
+    if (!opInfo_->isCubeVectorFuse) {
+        return ge::GRAPH_SUCCESS;
+    }
+
+    constexpr uint64_t strideWriteAlignBytes = 32;
+    const size_t totalShapeAttrIdx = flagInfo_.extendConvFlag ? ATTR_TOTAL_SHAPE_EXTENDCONV_INDEX :
+                                                                ATTR_TOTAL_SHAPE_INDEX;
+    const auto totalShapeAttr = context_->GetAttrs()->GetListInt(totalShapeAttrIdx);
+    if (totalShapeAttr == nullptr || totalShapeAttr->GetSize() != CONV2D_DIM_SIZE_LIMIT) {
+        OP_LOGW(context_->GetNodeName(), "%s AscendC: strideWrite total_shape attr not found, idx: %zu, attrNum: %zu.",
+                paramInfo_.nodeType.c_str(), totalShapeAttrIdx, context_->GetAttrs()->GetAttrNum());
+        return ge::GRAPH_SUCCESS;
+    }
+    std::vector<int64_t> totalShape(totalShapeAttr->GetData(), totalShapeAttr->GetData() + totalShapeAttr->GetSize());
+    const auto outShape = GetOutputShapeVec(context_, OUTPUT_INDEX);
+    if (outShape.size() != CONV2D_DIM_SIZE_LIMIT) {
+        OP_LOGW(context_->GetNodeName(), "%s AscendC: strideWrite output shape dim not 4, dimNum: %zu.",
+                paramInfo_.nodeType.c_str(), outShape.size());
+        return ge::GRAPH_SUCCESS;
+    }
+    const uint32_t cIdx = (descInfo_.outFormat == ge::FORMAT_NHWC) ? CONV2D_DIM_SIZE_LIMIT - 1 : FORMAT_NCHW_C_INDEX;
+
+    bool onlyCDiff = totalShape[cIdx] > outShape[cIdx];
+    for (size_t d = 0; d < outShape.size(); d++) {
+        if (d != cIdx && totalShape[d] != outShape[d]) {
+            onlyCDiff = false;
+            break;
+        }
+    }
+    if (!onlyCDiff) {
+        OP_LOGE(context_->GetNodeName(),
+                "%s AscendC: strideWrite total_shape must differ from output shape only on C dim and be larger, "
+                "total_shape: [%ld, %ld, %ld, %ld], output shape: [%ld, %ld, %ld, %ld].",
+                paramInfo_.nodeType.c_str(), totalShape[0], totalShape[1], totalShape[2], totalShape[3], outShape[0],
+                outShape[1], outShape[2], outShape[3]);
+        return ge::GRAPH_FAILED;
+    }
+
+    const uint32_t dtypeSize = ge::GetSizeByDataType(descInfo_.outDtype);
+    const uint64_t totalShapeCout = static_cast<uint64_t>(totalShape[cIdx]);
+    const uint64_t curCout = static_cast<uint64_t>(outShape[cIdx]);
+    if (dtypeSize == 0 || totalShapeCout * dtypeSize % strideWriteAlignBytes != 0 ||
+        curCout * dtypeSize % strideWriteAlignBytes != 0) {
+        OP_LOGE(context_->GetNodeName(),
+                "%s AscendC: strideWrite shape C must be 32B aligned, dtypeSize: %u, total_shape_cout: %lu, "
+                "current cout: %lu.",
+                paramInfo_.nodeType.c_str(), dtypeSize, totalShapeCout, curCout);
+        return ge::GRAPH_FAILED;
+    }
+
+    const uint64_t totalH = static_cast<uint64_t>(
+        totalShape[cIdx == FORMAT_NCHW_C_INDEX ? FORMAT_NCHW_H_INDEX : FORMAT_NCHW_C_INDEX]);
+    const uint64_t totalW = static_cast<uint64_t>(
+        totalShape[cIdx == FORMAT_NCHW_C_INDEX ? FORMAT_NCHW_W_INDEX : FORMAT_NCHW_H_INDEX]);
+    const uint64_t dstStride = (descInfo_.outFormat == ge::FORMAT_NHWC) ? totalShapeCout :
+                                                                          totalH * totalW * totalShapeCout;
+
+    tilingData_.set_total_shape_cout(totalShapeCout);
+    tilingData_.set_strideWriteDstStride(dstStride);
+
+    OP_LOGD(context_->GetNodeName(),
+            "%s AscendC: strideWrite enabled, total_shape: [%ld, %ld, %ld, %ld], total_shape_cout: %lu, "
+            "strideWriteDstStride: %lu.",
+            paramInfo_.nodeType.c_str(), totalShape[0], totalShape[1], totalShape[2], totalShape[3], totalShapeCout,
+            dstStride);
+    return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus Conv2dBaseTiling::PostTiling()

@@ -128,6 +128,9 @@ struct TConv2DTiling {
     uint8_t clipMode1 = 0;
     int8_t offsetx = 0;
     int8_t roundMode = 0;
+
+    uint64_t total_shape_cout = 0;
+    uint64_t strideWriteDstStride = 0;
 };
 
 struct Conv2DTilingData {
@@ -227,6 +230,9 @@ struct Conv2DTilingData {
     int8_t offsetx = 0;
     int8_t roundMode = 0;
     uint32_t mWindows = 0;
+
+    uint64_t total_shape_cout = 0;
+    uint64_t strideWriteDstStride = 0;
 };
 
 #pragma pack()

@@ -22,6 +22,37 @@
 namespace conv {
 using namespace AscendC;
 
+enum class ConvFormat : std::uint8_t {
+    ND = 0,
+    NCHW,
+    NHWC,
+    HWCN,
+    NC1HWC0,
+    FRACTAL_Z,
+    FRACTAL_Z_C04,
+    NDC1HWC0,
+    FRACTAL_Z_3D,
+    NCDHW,
+    NDHWC,
+    DHWCN
+};
+
+enum class ConvCoutFallback : uint8_t { COUT, ORG_CO };
+
+template <ConvFormat FMT, ConvCoutFallback FB = ConvCoutFallback::COUT, typename CONV_TILING>
+__aicore__ __forceinline__ uint64_t ConvGetEffectiveCout(const CONV_TILING* tiling)
+{
+    if constexpr (FMT == ConvFormat::NCHW || FMT == ConvFormat::NHWC) {
+        if (tiling->strideWriteDstStride != 0) {
+            return tiling->total_shape_cout;
+        }
+    }
+    if constexpr (FB == ConvCoutFallback::ORG_CO) {
+        return tiling->orgCo;
+    }
+    return tiling->cout;
+}
+
 // 新加bitmode
 #pragma pack(push, 1) // 确保无填充，严格按位排列
 typedef struct {

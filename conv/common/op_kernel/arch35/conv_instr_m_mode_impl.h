@@ -275,6 +275,8 @@ private:
 
     __aicore__ inline void InnerBatchParamsCHW(FixpipeParamsArch3510<CO2Layout::COLUMN_MAJOR>& intriParams)
     {
+        uint64_t effectiveCout = ConvGetEffectiveCout<Intf::formatOutput, ConvCoutFallback::ORG_CO>(
+            self_->ctx.convTilingData);
         intriParams.mSize = currentML0_;
         intriParams.nSize = currentNL0_;
         intriParams.params.dnNum = self_->ctx.innerBatch;
@@ -292,12 +294,14 @@ private:
             intriParams.params.srcNzMatrixStride = self_->ctx.currentML0Align * CeilDiv(currentNL0_, BLOCK_L0_N);
         }
         intriParams.params.srcNzC0Stride = 1;
-        intriParams.params.dstDnMatrixStride = self_->ctx.convTilingData->orgCo * valueHoWo_;
+        intriParams.params.dstDnMatrixStride = effectiveCout * valueHoWo_;
         intriParams.dstStride = valueHoWo_;
     }
 
     __aicore__ inline void InnerBatchParamsHWC(FixpipeParamsArch3510<CO2Layout::ROW_MAJOR>& intriParams)
     {
+        uint64_t effectiveCout = ConvGetEffectiveCout<Intf::formatOutput, ConvCoutFallback::ORG_CO>(
+            self_->ctx.convTilingData);
         intriParams.mSize = currentML0_;
         intriParams.nSize = currentNL0_;
         intriParams.params.ndNum = self_->ctx.innerBatch;
@@ -308,18 +312,20 @@ private:
             intriParams.srcStride = self_->ctx.currentML0Align;
             intriParams.params.srcNdStride = self_->ctx.currentML0Align * CeilDiv(currentNL0_, BLOCK_L0_N);
         }
-        intriParams.params.dstNdStride = self_->ctx.convTilingData->orgCo * valueHoWo_;
-        intriParams.dstStride = self_->ctx.convTilingData->orgCo;
+        intriParams.params.dstNdStride = effectiveCout * valueHoWo_;
+        intriParams.dstStride = effectiveCout;
     }
 
     __aicore__ inline void SetFixpipeIntriParamsHWC(FixpipeParamsArch3510<CO2Layout::ROW_MAJOR>& intriParams)
     {
+        uint64_t effectiveCout = ConvGetEffectiveCout<Intf::formatOutput, ConvCoutFallback::ORG_CO>(
+            self_->ctx.convTilingData);
         intriParams.nSize = currentNL0_;
         intriParams.mSize = currentML0_;
         intriParams.srcStride = AlignB(currentML0_, BLOCK_L0_M);
-        intriParams.dstStride = self_->ctx.convTilingData->orgCo;
+        intriParams.dstStride = effectiveCout;
         intriParams.params.ndNum = 1;
-        intriParams.params.dstNdStride = currentML0_ * self_->ctx.convTilingData->orgCo;
+        intriParams.params.dstNdStride = currentML0_ * effectiveCout;
         intriParams.params.srcNdStride = currentML0_ * currentNL0_ / BLOCK_L0_N;
         SetBaseParams<CO2Layout::ROW_MAJOR>(intriParams);
     }
@@ -502,16 +508,18 @@ private:
         }
         uint64_t offsetMAL1 = self_->ctx.mAL1Iter * self_->ctx.mAL1 + self_->ctx.mL0Iter * self_->ctx.mL0;
 
+        uint64_t effectiveCout = ConvGetEffectiveCout<Intf::formatOutput, ConvCoutFallback::ORG_CO>(
+            self_->ctx.convTilingData);
+
         if constexpr (Intf::formatOutput == ConvFormat::NCDHW) {
             offset += offsetCout * self_->ctx.convTilingData->orgDo * valueHoWo_ + self_->ctx.dOutIter * valueHoWo_ +
                       offsetMAL1;
         } else if constexpr (Intf::formatOutput == ConvFormat::NDHWC) {
-            offset += self_->ctx.dOutIter * valueHoWo_ * self_->ctx.convTilingData->orgCo +
-                      offsetMAL1 * self_->ctx.convTilingData->orgCo + offsetCout;
+            offset += self_->ctx.dOutIter * valueHoWo_ * effectiveCout + offsetMAL1 * effectiveCout + offsetCout;
         } else if constexpr (Intf::formatOutput == ConvFormat::NCHW) {
             offset += offsetCout * valueHoWo_ + offsetMAL1;
         } else {
-            offset += offsetMAL1 * self_->ctx.convTilingData->orgCo + offsetCout;
+            offset += offsetMAL1 * effectiveCout + offsetCout;
         }
 
         return offset;

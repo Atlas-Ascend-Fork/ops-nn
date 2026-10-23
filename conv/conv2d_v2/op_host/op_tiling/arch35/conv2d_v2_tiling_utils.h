@@ -48,6 +48,8 @@ constexpr uint32_t ATTR_DATAFORMAT_INDEX = 4;
 constexpr uint32_t ATTR_PAD_MODE_INDEX = 6;
 constexpr uint32_t ATTR_ENABLE_HF32_INDEX = 7;
 constexpr uint32_t ATTR_FIXED_SHIFT_VALUE_INDEX = 9;
+constexpr uint32_t ATTR_TOTAL_SHAPE_INDEX = 10;
+constexpr uint32_t ATTR_TOTAL_SHAPE_EXTENDCONV_INDEX = 16;
 
 constexpr uint32_t ATTR_QUANT_DTYPE_INDEX = 0;
 constexpr uint32_t ATTR_QUANT_STRIDE_INDEX = 1;

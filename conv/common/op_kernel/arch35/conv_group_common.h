@@ -108,17 +108,18 @@ __aicore__ __forceinline__ void ConvGroupCommon<CONV, CONV_TILING>::CalcStartAdd
     weightStartAddr = convOps->groupIdxStart * convOps->coPerGroup + convOps->nIdxStart;
     outputStartAddr = convOps->batchIdxStart * convOps->outputOneBatchSize +
                       convOps->groupIdxStart * convOps->coPerGroup + convOps->nIdxStart;
+    uint64_t effectiveCout = ConvGetEffectiveCout<CONV::C_FORMAT>(convTilingData);
     if constexpr (CONV::isMMode) {
-        outputStartAddr += convOps->mIdxStart * convTilingData->cout;
+        outputStartAddr += convOps->mIdxStart * effectiveCout;
     } else {
-        outputStartAddr += convOps->hoIdxStart * convTilingData->wout * convTilingData->cout;
+        outputStartAddr += convOps->hoIdxStart * convTilingData->wout * effectiveCout;
         if constexpr (CONV::A_FORMAT == ConvFormat::NHWC) {
-            outputStartAddr += convOps->woIdxStart * convTilingData->cout;
+            outputStartAddr += convOps->woIdxStart * effectiveCout;
         }
     }
     if constexpr (CONV::A_FORMAT == ConvFormat::NDHWC) {
         fmStartAddr += diIdxStart * hwIn * convTilingData->cin;
-        outputStartAddr += doIdxStart * hwOut * convTilingData->cout;
+        outputStartAddr += doIdxStart * hwOut * effectiveCout;
     }
 }
 
@@ -157,8 +158,9 @@ __aicore__ __forceinline__ void ConvGroupCommon<CONV, CONV_TILING>::CalcStartAdd
     hwOut = convTilingData->hout * convTilingData->wout;
     dhwOut = dout * hwOut;
     dhwIn = din * hwIn;
+    uint64_t effectiveCout = ConvGetEffectiveCout<CONV::C_FORMAT>(convTilingData);
     convOps->fmapOneBatchSize = dhwIn * convTilingData->cin;
-    convOps->outputOneBatchSize = dhwOut * convTilingData->cout;
+    convOps->outputOneBatchSize = dhwOut * effectiveCout;
 
     if constexpr (CONV::A_FORMAT == ConvFormat::NDHWC || CONV::A_FORMAT == ConvFormat::NHWC) {
         fmapOneGroupSize = convOps->ciPerGroup;
@@ -281,20 +283,21 @@ __aicore__ __forceinline__ void ConvGroupCommon<CONV, CONV_TILING>::CalcOutputSt
     const uint64_t doIdxStart)
 {
     if constexpr (CONV::C_FORMAT == ConvFormat::NDHWC || CONV::C_FORMAT == ConvFormat::NHWC) {
+        uint64_t effectiveCout = ConvGetEffectiveCout<CONV::C_FORMAT>(convTilingData);
         outputOneGroupSize = convTilingData->coutOpt;
         outputStartAddr = convOps->batchIdxStart * convOps->outputOneBatchSize +
                           convOps->groupIdxStart * convTilingData->coutOpt + convOps->nIdxStart;
 
         if constexpr (CONV::C_FORMAT == ConvFormat::NDHWC) {
-            outputStartAddr += doIdxStart * hwOut * convTilingData->cout;
+            outputStartAddr += doIdxStart * hwOut * effectiveCout;
         }
 
         if constexpr (CONV::isMMode) {
-            outputStartAddr += convOps->mIdxStart * convTilingData->cout;
+            outputStartAddr += convOps->mIdxStart * effectiveCout;
         } else {
-            outputStartAddr += convOps->hoIdxStart * convTilingData->wout * convTilingData->cout;
+            outputStartAddr += convOps->hoIdxStart * convTilingData->wout * effectiveCout;
             if constexpr (CONV::C_FORMAT == ConvFormat::NHWC) {
-                outputStartAddr += convOps->woIdxStart * convTilingData->cout;
+                outputStartAddr += convOps->woIdxStart * effectiveCout;
             }
         }
     } else if constexpr (CONV::C_FORMAT == ConvFormat::NCDHW || CONV::C_FORMAT == ConvFormat::NCHW) {
@@ -378,8 +381,9 @@ __aicore__ __forceinline__ void ConvGroupCommon<CONV, CONV_TILING>::CalcStartAdd
     hwOut = convTilingData->hout * convTilingData->wout;
     dhwOut = dout * hwOut;
     dhwIn = din * hwIn;
+    uint64_t effectiveCout = ConvGetEffectiveCout<CONV::C_FORMAT>(convTilingData);
     convOps->fmapOneBatchSize = convTilingData->cin * dhwIn;
-    convOps->outputOneBatchSize = convTilingData->cout * dhwOut;
+    convOps->outputOneBatchSize = effectiveCout * dhwOut;
     if constexpr (CONV::A_FORMAT == ConvFormat::NDHWC || CONV::A_FORMAT == ConvFormat::NHWC) {
         fmapOneGroupSize = convTilingData->cinOpt;
         CalcStartAddrOptGroupHWC(doIdxStart, diIdxStart, kd);

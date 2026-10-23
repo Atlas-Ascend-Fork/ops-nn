@@ -234,6 +234,7 @@ void TestSimpleKernel(const std::vector<uint64_t>& inputShape, const std::vector
     uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(sizeof(Conv2DTilingData));
 
     memset(workspace, 0, workspaceSize);
+    memset(tiling, 0, sizeof(Conv2DTilingData));
 
     Conv2DTilingData* tilingData = reinterpret_cast<Conv2DTilingData*>(tiling);
     TilingInput tilingInput = {inputShape, weightShape, outputShape, pads, strides, dilations};
@@ -252,6 +253,69 @@ void TestSimpleKernel(const std::vector<uint64_t>& inputShape, const std::vector
     AscendC::GmFree(workspace);
     AscendC::GmFree(tiling);
 }
+
+void TestStrideWriteKernel(const std::vector<uint64_t>& inputShape, const std::vector<uint64_t>& weightShape,
+                           const uint64_t totalShapeCout)
+{
+    AscendC::SetKernelMode(KernelMode::MIX_MODE);
+    const uint64_t numBlocks = 1;
+    std::vector<uint64_t> pads = {0, 0, 0, 0};
+    std::vector<uint64_t> strides = {1, 1};
+    std::vector<uint64_t> dilations = {1, 1};
+    ConvShape convShapeH = {inputShape[DIM2], pads[0], pads[1], dilations[0], strides[0], weightShape[DIM2]};
+    ConvShape convShapeW = {inputShape[DIM3], pads[DIM2], pads[DIM3], dilations[1], strides[1], weightShape[DIM3]};
+    uint64_t ho = CalcOutputShape(convShapeH);
+    uint64_t wo = CalcOutputShape(convShapeW);
+    std::vector<uint64_t> outputShape = {inputShape[0], weightShape[0], ho, wo};
+    std::vector<uint64_t> totalOutputShape = {inputShape[0], totalShapeCout, ho, wo};
+
+    size_t inputBtyes = VectorReduceMul(inputShape) * FP16_SIZE;
+    size_t weightBytes = VectorReduceMul(weightShape) * FP16_SIZE;
+    size_t outputBytes = VectorReduceMul(totalOutputShape) * FP16_SIZE;
+    size_t workspaceSize = SIZE_1K * SIZE_1K * NUM_16;
+    uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputBtyes);
+    uint8_t* weight = (uint8_t*)AscendC::GmAlloc(weightBytes);
+    uint8_t* output = (uint8_t*)AscendC::GmAlloc(outputBytes);
+    uint8_t* workspace = (uint8_t*)AscendC::GmAlloc(workspaceSize);
+    uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(sizeof(Conv2DTilingData));
+
+    memset(workspace, 0, workspaceSize);
+    memset(tiling, 0, sizeof(Conv2DTilingData));
+    memset(output, 0xAA, outputBytes);
+
+    Conv2DTilingData* tilingData = reinterpret_cast<Conv2DTilingData*>(tiling);
+    TilingInput tilingInput = {inputShape, weightShape, outputShape, pads, strides, dilations};
+    SetTilingData(tilingData, tilingInput);
+    tilingData->total_shape_cout = totalShapeCout;
+    tilingData->strideWriteDstStride = ho * wo * totalShapeCout;
+
+    auto conv2dv2_func = [](GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_ADDR offset_w, GM_ADDR y, GM_ADDR workspace,
+                            GM_ADDR tiling) {
+        ::conv2dv2<0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(x, filter, bias, offset_w, y, workspace, tiling);
+    };
+    ICPU_RUN_KF(conv2dv2_func, numBlocks, input, weight, nullptr, nullptr, output, workspace, tiling);
+
+    const size_t planeBytes = ho * wo * FP16_SIZE;
+    for (uint64_t b = 0; b < inputShape[0]; b++) {
+        for (uint64_t c = 0; c < totalShapeCout; c++) {
+            const uint8_t* plane = output + static_cast<size_t>(b * totalShapeCout + c) * planeBytes;
+            bool anyWritten = false;
+            for (size_t i = 0; i < planeBytes; i++) {
+                if (plane[i] != 0xAA) {
+                    anyWritten = true;
+                    break;
+                }
+            }
+            EXPECT_EQ(anyWritten, c < weightShape[0]);
+        }
+    }
+
+    AscendC::GmFree(input);
+    AscendC::GmFree(weight);
+    AscendC::GmFree(output);
+    AscendC::GmFree(workspace);
+    AscendC::GmFree(tiling);
+}
 } // namespace
 TEST_F(Conv2DV2KernelTest, conv2dv2_kernel_test_base)
 {
@@ -259,4 +323,12 @@ TEST_F(Conv2DV2KernelTest, conv2dv2_kernel_test_base)
     std::vector<uint64_t> weightShape = {16, 16, 1, 1};
 
     TestSimpleKernel(inputShape, weightShape);
+}
+
+TEST_F(Conv2DV2KernelTest, conv2dv2_kernel_test_stridewrite_nchw)
+{
+    std::vector<uint64_t> inputShape = {2, 16, 2, 2};
+    std::vector<uint64_t> weightShape = {16, 16, 1, 1};
+
+    TestStrideWriteKernel(inputShape, weightShape, 32);
 }

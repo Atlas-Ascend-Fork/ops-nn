@@ -27,21 +27,6 @@ using namespace AscendC;
 
 enum class ConvCfgTypeID : std::uint8_t { CONV_ID_Unknown = 0, CONV_ID_Normal, CONV_ID_Test, CONV_ID_END };
 
-enum class ConvFormat : std::uint8_t {
-    ND = 0,
-    NCHW,
-    NHWC,
-    HWCN,
-    NC1HWC0,
-    FRACTAL_Z,
-    FRACTAL_Z_C04,
-    NDC1HWC0,
-    FRACTAL_Z_3D,
-    NCDHW,
-    NDHWC,
-    DHWCN
-};
-
 template <typename ScaleT, typename ReluWeightT, typename ClipValue0T, typename ClipValue1T>
 struct Extendconv2dFixpipeParams {
     __aicore__ inline Extendconv2dFixpipeParams(){};

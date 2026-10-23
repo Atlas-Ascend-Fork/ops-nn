@@ -1196,15 +1196,16 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
     uint64_t groupCoutOff = curGroupCoutOff_;
 
     constexpr CO2Layout Layout = isNHWCout ? CO2Layout::ROW_MAJOR : CO2Layout::COLUMN_MAJOR;
+    uint64_t effectiveCout = (tiling_->strideWriteDstStride != 0) ? tiling_->total_shape_cout : tiling_->cout;
     uint64_t hwOut = static_cast<uint64_t>(tiling_->hout) * tiling_->wout;
-    uint64_t batchOutOff = static_cast<uint64_t>(curBatchIdx_) * hwOut * tiling_->cout;
+    uint64_t batchOutOff = static_cast<uint64_t>(curBatchIdx_) * hwOut * effectiveCout;
     uint64_t nOutOff;
     uint32_t dstStride;
     uint64_t outOff;
     if constexpr (isNHWCout) {
         nOutOff = groupCoutOff + static_cast<uint64_t>(nIdx_) * tiling_->singleCoreCo + nOff;
-        dstStride = static_cast<uint32_t>(tiling_->cout);
-        outOff = static_cast<uint64_t>(outOffset) * tiling_->cout;
+        dstStride = effectiveCout;
+        outOff = static_cast<uint64_t>(outOffset) * effectiveCout;
     } else {
         nOutOff = (groupCoutOff + static_cast<uint64_t>(nIdx_) * tiling_->singleCoreCo + nOff) * hwOut;
         dstStride = static_cast<uint32_t>(hwOut);
@@ -1237,7 +1238,7 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
     if constexpr (isNHWCout) {
         fp.params.ndNum = fpDnNum;
         fp.params.srcNdStride = (fpDnNum == 1) ? 0 : AlignB(curM, GM0);
-        fp.params.dstNdStride = fpDstDnStride * tiling_->cout;
+        fp.params.dstNdStride = fpDstDnStride * effectiveCout;
     } else {
         fp.params.dnNum = fpDnNum;
         fp.params.srcNzMatrixStride = (fpDnNum == 1) ? (curMAlign * CeilDiv(actualCo, GM0)) : AlignB(curM, GM0);

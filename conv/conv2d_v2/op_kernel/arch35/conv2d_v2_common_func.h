@@ -191,9 +191,12 @@ struct Init {
         self->ctx.kAL1fullload = alignCinKhKw == self->ctx.convTilingData->kAL1;
         self->ctx.kBL1fullload = alignCinKhKw == self->ctx.convTilingData->kBL1;
         self->ctx.singleCoreCo = self->ctx.convTilingData->singleCoreCo; // Cout Size in Single Core
+        uint64_t effectiveCout = (self->ctx.convTilingData->strideWriteDstStride != 0) ?
+                                     self->ctx.convTilingData->total_shape_cout :
+                                     self->ctx.convTilingData->orgCo;
         self->ctx.fmapOneBatchSize = self->ctx.convTilingData->orgCi * self->ctx.convTilingData->orgHi *
                                      self->ctx.convTilingData->orgWi;
-        self->ctx.outputOneBatchSize = self->ctx.convTilingData->orgCo * self->ctx.convTilingData->orgHo *
+        self->ctx.outputOneBatchSize = effectiveCout * self->ctx.convTilingData->orgHo *
                                        self->ctx.convTilingData->orgWo;
     }
 

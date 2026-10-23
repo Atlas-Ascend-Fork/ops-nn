@@ -228,11 +228,13 @@ public:
 
     __aicore__ inline void SetFixpipeIntriParamsHWC(FixpipeParamsArch3510<CO2Layout::ROW_MAJOR>& intriParams)
     {
+        uint64_t effectiveCout = ConvGetEffectiveCout<Intf::formatOutput, ConvCoutFallback::ORG_CO>(
+            self_->ctx.convTilingData);
         if constexpr (Intf::isDmaFlag) {
             intriParams.mSize = self_->ctx.currentWoL0;
             intriParams.params.srcNdStride = AlignB(self_->ctx.currentWoL0, BLOCK_L0_M);
             intriParams.params.ndNum = self_->ctx.currentHoL0;
-            intriParams.params.dstNdStride = self_->ctx.singleCoreWo * self_->ctx.convTilingData->orgCo;
+            intriParams.params.dstNdStride = self_->ctx.singleCoreWo * effectiveCout;
         } else if (likely(self_->ctx.convTilingData->woL0 >= self_->ctx.singleCoreWo)) {
             intriParams.mSize = currentML0_;
             intriParams.params.srcNdStride = 0;
@@ -242,10 +244,10 @@ public:
             intriParams.mSize = self_->ctx.currentWoL0;
             intriParams.params.srcNdStride = self_->ctx.currentWoL0;
             intriParams.params.ndNum = self_->ctx.currentHoL0;
-            intriParams.params.dstNdStride = self_->ctx.singleCoreWo * self_->ctx.convTilingData->orgCo;
+            intriParams.params.dstNdStride = self_->ctx.singleCoreWo * effectiveCout;
         }
 
-        intriParams.dstStride = self_->ctx.convTilingData->orgCo;
+        intriParams.dstStride = effectiveCout;
         intriParams.srcStride = AlignB(currentML0_, BLOCK_L0_M);
         intriParams.nSize = currentNL0_;
         SetBaseParams<CO2Layout::ROW_MAJOR>(intriParams);
@@ -392,18 +394,19 @@ public:
             offsetCout += self_->ctx.groupOptIter * self_->ctx.convTilingData->orgCo /
                           self_->ctx.convTilingData->groups * self_->ctx.convTilingData->enlarge;
         }
+        uint64_t effectiveCout = ConvGetEffectiveCout<Intf::formatOutput, ConvCoutFallback::ORG_CO>(
+            self_->ctx.convTilingData);
+
         if constexpr (Intf::formatOutput == ConvFormat::NCDHW) {
             offset += offsetCout * self_->ctx.convTilingData->orgDo * valueHoWo_ + self_->ctx.dOutIter * valueHoWo_ +
                       offsetH * self_->ctx.convTilingData->orgWo + offsetW;
         } else if constexpr (Intf::formatOutput == ConvFormat::NDHWC) {
-            offset += self_->ctx.dOutIter * valueHoWo_ * self_->ctx.convTilingData->orgCo +
-                      offsetH * self_->ctx.convTilingData->orgWo * self_->ctx.convTilingData->orgCo +
-                      offsetW * self_->ctx.convTilingData->orgCo + offsetCout;
+            offset += self_->ctx.dOutIter * valueHoWo_ * effectiveCout +
+                      offsetH * self_->ctx.convTilingData->orgWo * effectiveCout + offsetW * effectiveCout + offsetCout;
         } else if constexpr (Intf::formatOutput == ConvFormat::NCHW) {
             offset += offsetCout * valueHoWo_ + offsetH * self_->ctx.convTilingData->orgWo + offsetW;
         } else {
-            offset += offsetH * self_->ctx.convTilingData->orgWo * self_->ctx.convTilingData->orgCo +
-                      offsetW * self_->ctx.convTilingData->orgCo + offsetCout;
+            offset += offsetH * self_->ctx.convTilingData->orgWo * effectiveCout + offsetW * effectiveCout + offsetCout;
         }
 
         return offset;

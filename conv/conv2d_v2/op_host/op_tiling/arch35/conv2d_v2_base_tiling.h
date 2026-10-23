@@ -55,6 +55,7 @@ protected:
     [[nodiscard]] uint64_t GetTilingKey() const override;
     ge::graphStatus GetWorkspaceSize() override;
     ge::graphStatus PostTiling() override;
+    ge::graphStatus SetStrideWriteParams();
 
     ge::graphStatus GetAndCheckInfo();
     ge::graphStatus ParseAndCheckInfo();

@@ -184,8 +184,9 @@ __aicore__ __forceinline__ void ConvCommon<CONV, CONV_TILING>::CalcStartAddrComm
     hwIn = convTilingData->hin * convTilingData->win;
     hwOut = convTilingData->hout * convTilingData->wout;
 
+    uint64_t effectiveCout = ConvGetEffectiveCout<CONV::C_FORMAT>(convTilingData);
     convOps->fmapOneBatchSize = convTilingData->cin * din * hwIn;
-    convOps->outputOneBatchSize = convTilingData->cout * dout * hwOut;
+    convOps->outputOneBatchSize = effectiveCout * dout * hwOut;
 
     if (convTilingData->hasBias) {
         biasStartAddr = convOps->nIdxStart;
@@ -207,8 +208,9 @@ __aicore__ __forceinline__ void ConvCommon<CONV, CONV_TILING>::CalcOutputStartAd
             outputStartAddr = convOps->batchIdxStart * convOps->outputOneBatchSize + convOps->nIdxStart * dout * hwOut +
                               convOps->mIdxStart;
         } else if constexpr (CONV::C_FORMAT == ConvFormat::NDHWC || CONV::C_FORMAT == ConvFormat::NHWC) {
+            uint64_t effectiveCout = ConvGetEffectiveCout<CONV::C_FORMAT>(convTilingData);
             outputStartAddr = convOps->batchIdxStart * convOps->outputOneBatchSize +
-                              convOps->mIdxStart * convTilingData->cout + convOps->nIdxStart;
+                              convOps->mIdxStart * effectiveCout + convOps->nIdxStart;
         }
         if constexpr (CONV::C_FORMAT == ConvFormat::NCDHW) {
             outputStartAddr += doIdxStart * hwOut;
@@ -220,13 +222,15 @@ __aicore__ __forceinline__ void ConvCommon<CONV, CONV_TILING>::CalcOutputStartAd
             outputStartAddr = convOps->batchIdxStart * convOps->outputOneBatchSize + convOps->nIdxStart * dout * hwOut +
                               convOps->hoIdxStart * convTilingData->wout;
         } else if constexpr (CONV::C_FORMAT == ConvFormat::NDHWC || CONV::C_FORMAT == ConvFormat::NHWC) {
+            uint64_t effectiveCout = ConvGetEffectiveCout<CONV::C_FORMAT>(convTilingData);
             outputStartAddr = convOps->batchIdxStart * convOps->outputOneBatchSize +
-                              convOps->hoIdxStart * convTilingData->wout * convTilingData->cout + convOps->nIdxStart;
+                              convOps->hoIdxStart * convTilingData->wout * effectiveCout + convOps->nIdxStart;
         }
         if constexpr (CONV::C_FORMAT == ConvFormat::NCHW) {
             outputStartAddr += convOps->woIdxStart;
         } else if constexpr (CONV::C_FORMAT == ConvFormat::NHWC) {
-            outputStartAddr += convOps->woIdxStart * convTilingData->cout;
+            uint64_t effectiveCout = ConvGetEffectiveCout<CONV::C_FORMAT>(convTilingData);
+            outputStartAddr += convOps->woIdxStart * effectiveCout;
         }
         if constexpr (CONV::C_FORMAT == ConvFormat::NCDHW) {
             outputStartAddr += doIdxStart * hwOut;

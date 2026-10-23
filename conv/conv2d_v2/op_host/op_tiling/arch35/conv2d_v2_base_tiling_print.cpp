@@ -35,7 +35,9 @@ void Conv2dBaseTiling::PrintOpTilingData()
        << ", cinOpt: " << tilingData_.get_cinOpt() << ", coutOpt: " << tilingData_.get_coutOpt()
        << ", groupOpt: " << tilingData_.get_groupOpt() << ", enlarge: " << tilingData_.get_enlarge()
        << ", groupDim: " << tilingData_.get_groupDim()
-       << ", hasBias: " << static_cast<uint32_t>(tilingData_.get_hasBias());
+       << ", hasBias: " << static_cast<uint32_t>(tilingData_.get_hasBias())
+       << ", total_shape_cout: " << tilingData_.get_total_shape_cout()
+       << ", strideWriteDstStride: " << tilingData_.get_strideWriteDstStride();
     OP_LOGD(context_->GetNodeName(), "%s AscendC: ops tilingdata: %s", paramInfo_.nodeType.c_str(), ss.str().c_str());
 }
 
@@ -92,7 +94,8 @@ void Conv2dBaseTiling::PrintLibApiTilingDataPartOne(std::stringstream& ss)
        << ", offsetx: " << static_cast<uint32_t>(tilingData_.get_offsetx())
        << ", roundMode: " << static_cast<uint32_t>(tilingData_.get_roundMode())
        << ", innerBatch: " << static_cast<uint32_t>(tilingData_.get_innerBatch())
-       << ", mWindows: " << tilingData_.get_mWindows();
+       << ", mWindows: " << tilingData_.get_mWindows() << ", total_shape_cout: " << tilingData_.get_total_shape_cout()
+       << ", strideWriteDstStride: " << tilingData_.get_strideWriteDstStride();
 }
 
 void Conv2dBaseTiling::PrintLibApiTilingData()

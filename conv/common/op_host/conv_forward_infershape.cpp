@@ -1716,7 +1716,8 @@ IMPL_OP_INFERSHAPE(Conv2DV2)
     .InferShape(Ops::NN::Conv::InferShapeForConv2DV2)
     .InferShapeRange(Ops::NN::Conv::InferShapeRangeForConv2DV2)
     .InferDataType(Ops::NN::Conv::InferDataTypeConv2DV2)
-    .PrivateAttr("fixed_shift_value", static_cast<int64_t>(0));
+    .PrivateAttr("fixed_shift_value", static_cast<int64_t>(0))
+    .PrivateAttr("total_shape", std::vector<int64_t>{});
 
 IMPL_OP_INFERSHAPE(Conv3DV2)
     .InferShape(Ops::NN::Conv::InferShapeForConv3DV2)
@@ -1736,6 +1737,7 @@ IMPL_OP_INFERSHAPE(ExtendConv2D)
     .InferShape(Ops::NN::Conv::InferShapeForExtendConv2D)
     .InferShapeRange(Ops::NN::Conv::InferShapeRangeForExtendConv2D)
     .InferDataType(Ops::NN::Conv::InferDataTypeExtendConv2D)
-    .PrivateAttr("fixed_shift_value", static_cast<int64_t>(0));
+    .PrivateAttr("fixed_shift_value", static_cast<int64_t>(0))
+    .PrivateAttr("total_shape", std::vector<int64_t>{});
 } // namespace NN
 } // namespace Ops
