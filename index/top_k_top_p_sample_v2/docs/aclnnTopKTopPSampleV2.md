@@ -57,7 +57,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
 
     | 参数类型 | ≤0 | 有效域 | 无效域 |
     | :-------:| :------:|:-------:|:-------:|
-    |`topK[b]`|跳过topK采样|1≤topK≤min(ksMax, 1024, vocSize),执行topK采样|topK>min(ksMax, 1024, vocSize),跳过topK采样,选择全部有效元素|
+    |`topK[b]`|跳过topK采样|1≤topK≤min(ksMax, 1024, vocSize),执行topK采样|topK>min(ksMax, 1024, vocSize),跳过topK采样，选择全部有效元素|
 
   * 对当前batch分割为若干子段，滚动计算topKValue[b]：
 
@@ -162,7 +162,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
 
     | 参数类型 | ≤0 | 有效域 | 无效域 |
     | :-------:| :------:|:-------:|:-------:|
-    |`minPs[b]`|跳过minP采样,保留前序结果不变|0<minPs<1,执行minP采样|minPs≥1,仅保留1个最大token|
+    |`minPs[b]`|跳过minP采样，保留前序结果不变|0<minPs<1,执行minP采样|minPs≥1,仅保留1个最大token|
 
   * 如果min_ps[b]∈(0, 1)，则执行min_p采样：
     $$
@@ -347,7 +347,7 @@ aclnnStatus aclnnTopKTopPSampleV2(
       <tr>
         <td>logits</td>
         <td>输入</td>
-        <td>表示待采样的输入词频，词频索引固定为最后一维,对应公式`logits`。</td>
+        <td>表示待采样的输入词频，词频索引固定为最后一维，对应公式`logits`。</td>
         <td><ul><li>不支持空tensor。</li></ul></td>
         <td>FLOAT16、BFLOAT16、FLOAT32</td>
         <td>ND</td>

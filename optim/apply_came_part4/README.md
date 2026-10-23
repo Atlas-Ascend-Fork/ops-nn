@@ -66,77 +66,77 @@
     <tr>
       <td>param_in</td>
       <td>输入</td>
-      <td>待更新参数,形状(N,M)。</td>
+      <td>待更新参数，形状(N,M)。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>m</td>
       <td>输入</td>
-      <td>一阶动量,形状(N,M),与param_in一致。</td>
+      <td>一阶动量，形状(N,M),与param_in一致。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>r_in</td>
       <td>输入</td>
-      <td>行置信因子,形状(N,)。</td>
+      <td>行置信因子，形状(N,)。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>c_in</td>
       <td>输入</td>
-      <td>列置信因子,形状(M,)。</td>
+      <td>列置信因子，形状(M,)。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>weight_decay</td>
       <td>输入</td>
-      <td>权重衰减系数,标量(1,)。</td>
+      <td>权重衰减系数，标量(1,)。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>lr</td>
       <td>输入</td>
-      <td>学习率,标量(1,)。</td>
+      <td>学习率，标量(1,)。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>beta3</td>
       <td>输入</td>
-      <td>置信因子衰减系数,标量(1,)。</td>
+      <td>置信因子衰减系数，标量(1,)。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>sum_u_r</td>
       <td>输入</td>
-      <td>r方向更新量归约,形状(N,)。</td>
+      <td>r方向更新量归约，形状(N,)。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>sum_u_c</td>
       <td>输入</td>
-      <td>c方向更新量归约,形状(M,)。</td>
+      <td>c方向更新量归约，形状(M,)。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>sum_u_rc</td>
       <td>输入</td>
-      <td>全局更新量归约,标量(1,)。</td>
+      <td>全局更新量归约，标量(1,)。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>sum_r</td>
       <td>输入(可选)</td>
-      <td>全N行r_in的归约和,标量(1,);缺省时kernel内归约。</td>
+      <td>全N行r_in的归约和，标量(1,);缺省时kernel内归约。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
@@ -150,21 +150,21 @@
     <tr>
       <td>param_out</td>
       <td>输出</td>
-      <td>更新后参数,形状(N,M)。</td>
+      <td>更新后参数，形状(N,M)。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>r_out</td>
       <td>输出</td>
-      <td>更新后行置信因子,形状(N,)。</td>
+      <td>更新后行置信因子，形状(N,)。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>c_out</td>
       <td>输出</td>
-      <td>更新后列置信因子,形状(M,)。</td>
+      <td>更新后列置信因子，形状(M,)。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -173,11 +173,11 @@
 
 ## 约束说明
 
-- param_in/m必须为2D,r_in/c_in必须为1D;r_in长度 = param_in第0维,c_in长度 = param_in第1维(tiling校验,不一致返回GRAPH_FAILED)。
+- param_in/m必须为2D,r_in/c_in必须为1D;r_in长度 = param_in第0维,c_in长度 = param_in第1维(tiling校验，不一致返回GRAPH_FAILED)。
 - 无属性(attr)。
-- sqrt域:s = r_out⊙c_out/denom逐元素需 ≥ 0,denom ≠ 0;否则按IEEE语义产生inf/nan传播(与torch公式语义一致,非算子错误)。
-- 空tensor(N=0或M=0)不做守卫:不崩溃,但非空维输出不写入(未定义),行为对齐A2。
-- 支持关系:Atlas A2系列(ascend910b/ascend910_93)由canndev仓内置ascendc实现支持(ascendc_config.json compute_units=[ascend910b,ascend910_93],kernel binary构建配置binary_json_cfg.ini已收录;TBE旧式aic-ops-info.ini未收录,以动态编译形式提供);Ascend 950PR/950DT由本仓vendor包支持(arch35)。两实现互不影响,vendor包只许安装到Ascend 950环境——其proto/tiling注册无soc维度,误入A2环境会遮蔽canndev内置实现并因tiling数据结构不匹配导致算子不可用。
+- sqrt域:s = r_out⊙c_out/denom逐元素需 ≥ 0,denom ≠ 0;否则按IEEE语义产生inf/nan传播(与torch公式语义一致，非算子错误)。
+- 空tensor(N=0或M=0)不做守卫：不崩溃，但非空维输出不写入(未定义),行为对齐A2。
+- 支持关系:Atlas A2系列(ascend910b/ascend910_93)由canndev仓内置ascendc实现支持(ascendc_config.json compute_units=[ascend910b,ascend910_93],kernel binary构建配置binary_json_cfg.ini已收录;TBE旧式aic-ops-info.ini未收录，以动态编译形式提供);Ascend 950PR/950DT由本仓vendor包支持(arch35)。两实现互不影响,vendor包只许安装到Ascend 950环境——其proto/tiling注册无soc维度，误入A2环境会遮蔽canndev内置实现并因tiling数据结构不匹配导致算子不可用。
 
 ## 调用说明
 

@@ -1816,7 +1816,7 @@
     <td>✓</td>
     <td>✓</td>
     <td>AI Core</td>
-    <td>用于将张量中的值按照给定的边界进行离散化,根据给定的边界将输入张量中的每个值映射到对应的分箱区间，并返回该值所属区间索引。</td>
+    <td>用于将张量中的值按照给定的边界进行离散化，根据给定的边界将输入张量中的每个值映射到对应的分箱区间，并返回该值所属区间索引。</td>
   </tr>
   <tr>
     <td>index</td>
@@ -2226,7 +2226,7 @@
     <td>✓</td>
     <td>✓</td>
     <td>AI Core</td>
-    <td>算子RepeatInterleave的反向,将y_grad tensor的axis维度按repeats进行ReduceSum。</td>
+    <td>算子RepeatInterleave的反向，将y_grad tensor的axis维度按repeats进行ReduceSum。</td>
   </tr>
   <tr>
     <td>index</td>

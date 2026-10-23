@@ -225,7 +225,7 @@ aclnnStatus aclnnConvolutionBackward(
     <tr>
       <td>transposed</td>
       <td>输入</td>
-      <td>转置卷积开启标志位,当其值为True时开启转置卷积。</td>
+      <td>转置卷积开启标志位，当其值为True时开启转置卷积。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -261,7 +261,7 @@ aclnnStatus aclnnConvolutionBackward(
       <td>outputMask</td>
       <td>输入</td>
       <td>
-       <ul><li>输出掩码参数,指定输出中是否包含输入、权重、偏差的梯度。</li>
+       <ul><li>输出掩码参数，指定输出中是否包含输入、权重、偏差的梯度。</li>
        <li>反向传播过程输出掩码参数为True对应位置的梯度。</li></ul>
       </td>
       <td>-</td>
