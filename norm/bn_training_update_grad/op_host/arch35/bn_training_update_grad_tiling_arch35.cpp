@@ -340,7 +340,8 @@ int64_t BNTrainingUpdateGradTiling::SolveNhwcWindowMax() const
 int64_t BNTrainingUpdateGradTiling::SolveNhwcTileRows(int64_t window) const
 {
     // 行 tile：g/x 双队列 × DOUBLE_BUFFER(2) × tileRows × W × dsize；常驻项随 W 结算
-    int64_t fixed = RESERVED_UB + 8 * (window + VL) * FLOAT_BYTES;
+    // （确定性 rowSplit 再加 Phase2 gather 暂存 [核数,VL]——mode=1 恒 0 不受影响）
+    int64_t fixed = RESERVED_UB + 8 * (window + VL) * FLOAT_BYTES + p2StageBytes_;
     int64_t tileRows = (ubSize_ - fixed) / (4 * window * xDtypeSize_);
     if (tileRows > NHWC_TILE_MAX_ROWS) {
         tileRows = NHWC_TILE_MAX_ROWS; // DataCopyPad blockCount 上限
@@ -368,15 +369,17 @@ ge::graphStatus BNTrainingUpdateGradTiling::CalcNhwcSplit()
     if (rowSplitOk) {
         nhwcSplitMode_ = 2;
         channelCores_ = coreNum_;
+        // 确定性 Phase2 收集暂存：[VL] fp32（逐核 1D 收集 + 固定序向量累加的 UB 舞台）
+        p2StageBytes_ = isDeterministic_ ? VL * FLOAT_BYTES : 0;
         SplitRangeAcrossCores(rows_); // cFormer* 语义=行段
-        cLenCap_ = pitchC;            // 单窗全 C（W 预算内 ⇒ 必单窗成立）
+        cLenCap_ = pitchC; // 单窗全 C（W 预算内 ⇒ 必单窗成立）；确定性归约复用为 ws 槽宽
         if (numC_ == 1) {
             // C==1 reroute：kernel 走整段 1D（ND 快路 AccumChunk 形态），sliceR 语义复用为
             // chunk 元素数（快路公式：4 队列双缓冲 + 两路 fp32 scratch + Kahan/尾槽）
             int64_t ubAvail = ubSize_ - RESERVED_UB;
             int64_t fastFixed = (4 * (1 + VL) + (1 + VL) + 2 * (8 + VL)) * FLOAT_BYTES + REDUCE_TMP_RESERVE +
                                 2 * VL * FLOAT_BYTES + 4 * VL * FLOAT_BYTES + 256;
-            int64_t fastAvail = ubAvail - fastFixed - 4 * VL * xDtypeSize_ - 4 * VL * FLOAT_BYTES;
+            int64_t fastAvail = ubAvail - fastFixed - 4 * VL * xDtypeSize_ - 4 * VL * FLOAT_BYTES - p2StageBytes_;
             int64_t chunk = fastAvail / (2 * 2 * xDtypeSize_ + 2 * FLOAT_BYTES);
             if (chunk > rows_) {
                 chunk = rows_; // 段不超过行段总量（单段兜底）
@@ -448,23 +451,35 @@ ge::graphStatus BNTrainingUpdateGradTiling::FillTilingData()
     tilingData->nhwcSplitMode = nhwcSplitMode_;
     tilingData->epsilon = epsilon_;
     tilingData->reserved = 0.0f;
+    tilingData->isDeterministic = isDeterministic_ ? 1 : 0;
 
     context_->SetBlockDim(channelCores_);
-    context_->SetTilingKey(0); // key 恒为 0；ND/NHWC 运行时按 isNhwc 分发，dtype 编译期三二进制
+    context_->SetTilingKey(0); // key 恒为 0；ND/NHWC 运行时按 isNhwc/isDeterministic 分发，dtype 编译期三二进制
     if (nhwcSplitMode_ == 2) {
-        // kernel 使用 SyncAll（rowSplit 跨核合并：0 号核覆盖写 → 全核栅障 → 其余核原子加），
-        // 需设置为 batch mode，所有核同时启动——否则分波启动下 SyncAll 等不到后波核，死锁
+        // kernel 使用 SyncAll（rowSplit 跨核合并：确定性两段归约栅障 / 原子加路径 0 号核覆盖写
+        // → 全核栅障 → 其余核原子加），需设置为 batch mode，所有核同时启动——否则分波启动下
+        // SyncAll 等不到后波核，死锁
         context_->SetScheduleMode(1);
+    }
+    // 确定性 rowSplit workspace：系统区 + 用户区 [核数][2][cLenCap] fp32（每核 off/scale 各一槽，
+    // 槽序=核序；kernel 侧 GetUserWorkspace 跳过系统区取用户区起始）
+    if (nhwcSplitMode_ == 2 && isDeterministic_) {
+        auto platformInfo = context_->GetPlatformInfo();
+        OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+        auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+        size_t sysWs = ascendcPlatform.GetLibApiWorkSpaceSize();
+        wsBytes_ = static_cast<int64_t>(sysWs) + channelCores_ * 2 * cLenCap_ * FLOAT_BYTES;
     }
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
-    workspaces[0] = static_cast<size_t>(wsBytes_); // 恒 0：rowSplit 原子加直写零 ws，ND/channelSplit 零通信
+    workspaces[0] = static_cast<size_t>(wsBytes_); // 默认 0：rowSplit 原子加直写零 ws；确定性 rowSplit=系统+用户区
 
     if (isNhwc_) {
         OP_LOGI(context_,
                 "BNTrainingUpdateGrad tiling(NHWC): rows=%ld, C=%ld, mode=%ld, cores=%ld, window=%ld, tileRows=%ld, "
-                "wsBytes=%ld, eps=%f",
-                rows_, numC_, nhwcSplitMode_, channelCores_, cLenCap_, sliceR_, wsBytes_, epsilon_);
+                "det=%d, wsBytes=%ld, eps=%f",
+                rows_, numC_, nhwcSplitMode_, channelCores_, cLenCap_, sliceR_, tilingData->isDeterministic, wsBytes_,
+                epsilon_);
     } else {
         OP_LOGI(context_,
                 "BNTrainingUpdateGrad tiling: N=%ld, C=%ld, R=%ld, channelCores=%ld, cLenCap=%ld, sliceR=%ld, "
@@ -482,6 +497,9 @@ ge::graphStatus BNTrainingUpdateGradTiling::DoTiling()
     if (GetShapeAndDtype() != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
+    // 确定性计算开关（GE 侧 ge.deterministic=1 / TTK --deterministic-level 1 下发）：
+    // 仅 rowSplit 消费——原子加直写换固定核序两段归约，其余路径本就逐位确定
+    isDeterministic_ = context_->GetDeterministic() == 1;
     // ND→NHWC reroute（先于 CalcCoreSplit，不触发 ND 慢路拒收报错）：
     // ① C==1 大规模（≥1M 元素）：单核 DMA-bound 场景切到 NHWC rowSplit 多核（G22）；
     // ② R==1（含 rank2）：ND 慢路在巨 C 下 rowsPerTile<1 拒收（C ≳ 3.8K 起），布局与

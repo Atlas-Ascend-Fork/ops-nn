@@ -30,9 +30,14 @@
  * tileRows；rowsPerTile 恒 1（占位不消费）。两种切分（nhwcSplitMode）：
  *   1 = channelSplit：C 按 channelCores=min(C,coreNum) 均分（cFormer* 语义为通道段），
  *       每核独占通道段扫全部行，零通信零 workspace；段长 > Wmax 时 c 窗口化（C 无上限）。
- *   2 = rowSplit：rows 按 coreNum 均分（cFormer* 语义为行段），每核独占行段×全部 C，
- *       0 号核覆盖写输出 + SyncAll + 其余核浮点原子加直写（零 workspace；原子和顺序
- *       不定，误差 O(eps)，部分和数量 = 核数 ≤64）。
+ *   2 = rowSplit：rows 按 coreNum 均分（cFormer* 语义为行段），每核独占行段×全部 C。
+ *       isDeterministic=0（默认）：0 号核覆盖写输出 + SyncAll + 其余核浮点原子加直写（零
+ *       workspace；原子和顺序不定，误差 O(eps)，部分和数量 = 核数 ≤64）。
+ *       isDeterministic=1（ge.deterministic=1）：两段确定性归约——各核部分和写用户
+ *       workspace 固定槽（核序即槽序）→ SyncAll → 全核按 C 段并行 2D gather [核数,64]
+ *       + ReduceSum(RA) 固定布局归约 → 直写输出；相同输入逐位复现（对齐
+ *       bn_training_reduce 确定性变体；ws 须经 GetUserWorkspace 取用户区，直绑原始
+ *       workspace 头部会踩 950 运行时保留的 16MB 系统区/SyncAll 信箱）。
  */
 
 #ifndef BN_TRAINING_UPDATE_GRAD_TILING_DATA_H
@@ -44,18 +49,21 @@ struct BNTrainingUpdateGradTilingData {
     int64_t numN; // ND: N（dim0）；NHWC: rows = numel/C（kernel 不直接消费，保留供 host 日志与问题定位核对）
     int64_t numC;      // ND: C（dim1）；NHWC: C（最后一维）
     int64_t innerSize; // ND: R = prod(d2:)；NHWC: 恒 1
-    int64_t channelCores; // ND: channel 切分核数；NHWC: blockDim（kernel 不直接消费：blockDim 已定，保留供核对）
+    int64_t channelCores; // ND: channel 切分核数；NHWC: blockDim（rowSplit 确定性归约的 ws 行数/gather blockCount）
     int64_t
         cFormerCoreNum; // ND: 前 cFormerCoreNum 核每核 cFormerLen 个 channel；NHWC: 切分维（mode1=通道段/mode2=行段）
     int64_t cFormerLen;
     int64_t cLatterLen;
-    int64_t cLenCap;     // ND: channel chunk 长度上限；NHWC: c 窗口宽 W（64 对齐）
+    int64_t cLenCap; // ND: channel chunk 长度上限；NHWC: c 窗口宽 W（64 对齐）；rowSplit 确定性归约复用为 ws 槽宽
     int64_t sliceR;      // ND: R 维分片长度；NHWC: 每 tile 行数 tileRows
     int64_t rowsPerTile; // ND: 每 tile 的 n 行数上限；NHWC: 恒 1（占位，不消费）
     int64_t isNhwc; // 0=ND 原路径（kernel 不读其余 NHWC 字段）；1=NHWC 统一计算体（含 ND reroute）
-    int64_t nhwcSplitMode; // NHWC 切分模式：1=channelSplit（零通信）；2=rowSplit（0核覆盖写+SyncAll+其余核原子加直写）
+    int64_t nhwcSplitMode; // NHWC 切分模式：1=channelSplit（零通信）；2=rowSplit（原子加直写/确定性两段归约）
     float epsilon;  // 加到 batch_variance 上再开方取倒数
     float reserved; // 结构体 8B 对齐填充
+    int64_t
+        isDeterministic; // 0=默认（rowSplit 浮点原子加直写，顺序不定误差 O(eps)）；1=确定性模式（ge.deterministic=1：
+                         // rowSplit 走用户 ws 两段归约，跨核部分和按固定核序求和，输出逐位可复现）
 };
 
 #endif // BN_TRAINING_UPDATE_GRAD_TILING_DATA_H

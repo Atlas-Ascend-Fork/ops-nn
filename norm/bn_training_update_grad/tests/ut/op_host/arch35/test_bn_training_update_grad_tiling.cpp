@@ -57,13 +57,15 @@ gert::StorageShape MakeShape(const std::vector<int64_t>& dims)
 // 四输入(grads/x/batch_mean/batch_variance) 两输出(diff_scale/diff_offset)，format 固定 ND。
 // hasEpsilon=false 时不下发 epsilon 属性（OPTIONAL 缺省 0.0001，须放行）。
 // xFmt 独立于 gradsFmt（grads/x 格式一致性校验用）；td 非空时回填 tiling data 快照；
-// scheduleMode 非空时回填调度模式（rowSplit 含 SyncAll 须为 1=batch mode，其余默认 0）。
+// scheduleMode 非空时回填调度模式（rowSplit 含 SyncAll 须为 1=batch mode，其余默认 0）；
+// deterministic=true 时经 faker 下发 ge.deterministic=1（rowSplit 切两段确定性归约）。
 ge::graphStatus RunTiling(const std::vector<int64_t>& gradsDims, int64_t c, uint64_t& tilingKey,
                           int64_t* blockDim = nullptr, size_t* workspaceSize = nullptr,
                           ge::DataType gradsDt = ge::DT_FLOAT, ge::DataType xDt = ge::DT_FLOAT,
                           ge::DataType statDt = ge::DT_FLOAT, ge::Format fmt = ge::FORMAT_ND, bool hasEpsilon = true,
                           const std::vector<int64_t>* xDims = nullptr, ge::Format xFmt = ge::FORMAT_ND,
-                          BNTrainingUpdateGradTilingData* td = nullptr, uint32_t* scheduleMode = nullptr)
+                          BNTrainingUpdateGradTilingData* td = nullptr, uint32_t* scheduleMode = nullptr,
+                          bool deterministic = false)
 {
     string compile_info_string = R"({
             "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -122,25 +124,27 @@ ge::graphStatus RunTiling(const std::vector<int64_t>& gradsDims, int64_t c, uint
     if (hasEpsilon) {
         attrs.emplace_back("epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-5f));
     }
-    auto holder = gert::TilingContextFaker()
-                      .SetOpType(kOpType)
-                      .NodeIoNum(4, 2)
-                      .IrInstanceNum({1, 1, 1, 1})
-                      .InputShapes({&grads, &x, &stat, &stat})
-                      .OutputShapes({&stat, &stat})
-                      .CompileInfo(&compile_info)
-                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
-                      .NodeInputTd(0, gradsDt, fmt, fmt)
-                      .NodeInputTd(1, xDt, xFmt, xFmt)
-                      .NodeInputTd(2, statDt, fmt, fmt)
-                      .NodeInputTd(3, statDt, fmt, fmt)
-                      .NodeOutputTd(0, statDt, fmt, fmt)
-                      .NodeOutputTd(1, statDt, fmt, fmt)
-                      .NodeAttrs(attrs)
-                      .TilingData(param.get())
-                      .Workspace(ws_size)
-                      .Build();
-
+    gert::TilingContextFaker faker;
+    faker.SetOpType(kOpType)
+        .NodeIoNum(4, 2)
+        .IrInstanceNum({1, 1, 1, 1})
+        .InputShapes({&grads, &x, &stat, &stat})
+        .OutputShapes({&stat, &stat})
+        .CompileInfo(&compile_info)
+        .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+        .NodeInputTd(0, gradsDt, fmt, fmt)
+        .NodeInputTd(1, xDt, xFmt, xFmt)
+        .NodeInputTd(2, statDt, fmt, fmt)
+        .NodeInputTd(3, statDt, fmt, fmt)
+        .NodeOutputTd(0, statDt, fmt, fmt)
+        .NodeOutputTd(1, statDt, fmt, fmt)
+        .NodeAttrs(attrs)
+        .TilingData(param.get())
+        .Workspace(ws_size);
+    if (deterministic) {
+        faker.DeterministicInfo(1); // ge.deterministic=1：rowSplit 切两段确定性归约
+    }
+    auto holder = faker.Build();
     gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
     if (tiling_context == nullptr || tiling_context->GetPlatformInfo() == nullptr) {
         return ge::GRAPH_FAILED;
@@ -379,6 +383,74 @@ TEST_F(BNTrainingUpdateGradTilingUT, accept_nhwc_row_split)
     EXPECT_EQ(ws, 0U);         // 原子加直写：零 workspace
     // rowSplit 跨核合并含 SyncAll：须 batch mode（所有核同波启动），否则分波启动死锁
     EXPECT_EQ(schedMode, 1U);
+}
+
+// NHWC rowSplit 确定性模式（ge.deterministic=1）：两段归约替代原子加，ws=系统区+用户区
+TEST_F(BNTrainingUpdateGradTilingUT, accept_nhwc_row_split_deterministic)
+{
+    uint64_t key = 0;
+    int64_t blockDim = 0;
+    size_t ws = 0;
+    uint32_t schedMode = 0;
+    BNTrainingUpdateGradTilingData td = {};
+    EXPECT_EQ(RunTiling({200, 7}, 7, key, &blockDim, &ws, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_NHWC,
+                        true, nullptr, ge::FORMAT_NHWC, &td, &schedMode, /*deterministic=*/true),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(td.isNhwc, 1);
+    EXPECT_EQ(td.nhwcSplitMode, 2);
+    EXPECT_EQ(td.isDeterministic, 1);
+    EXPECT_EQ(td.cLenCap, 64); // ws 槽宽 = W = ceil64(7)
+    // 用户区 = 核数 × 2 槽 × cLenCap × 4B = 64×2×64×4 = 32768（另加系统区，不精确断言）
+    EXPECT_GE(ws, 32768U);
+    EXPECT_EQ(blockDim, 64);  // rowSplit 恒满核
+    EXPECT_EQ(schedMode, 1U); // 确定性两段归约含 SyncAll：batch mode
+}
+
+// NHWC rowSplit 确定性大 C（C=4096 单窗）：用户区按 cLenCap=4096 结算
+TEST_F(BNTrainingUpdateGradTilingUT, accept_nhwc_row_split_deterministic_c4096)
+{
+    uint64_t key = 0;
+    size_t ws = 0;
+    BNTrainingUpdateGradTilingData td = {};
+    EXPECT_EQ(RunTiling({100, 4096}, 4096, key, nullptr, &ws, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_NHWC,
+                        true, nullptr, ge::FORMAT_NHWC, &td, nullptr, /*deterministic=*/true),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(td.nhwcSplitMode, 2);
+    EXPECT_EQ(td.isDeterministic, 1);
+    EXPECT_EQ(td.cLenCap, 4096);
+    EXPECT_GE(ws, 64U * 2U * 4096U * 4U); // 用户区下界（另加系统区）
+}
+
+// ND C==1 大规模 reroute + 确定性（G22 同构）：rowSplit 两段归约，ws>0
+TEST_F(BNTrainingUpdateGradTilingUT, accept_nd_c1_reroute_deterministic)
+{
+    uint64_t key = 0;
+    int64_t blockDim = 0;
+    size_t ws = 0;
+    BNTrainingUpdateGradTilingData td = {};
+    EXPECT_EQ(RunTiling({32, 1, 224, 16, 5, 96}, 1, key, &blockDim, &ws, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                        ge::FORMAT_ND, true, nullptr, ge::FORMAT_ND, &td, nullptr, /*deterministic=*/true),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(td.isNhwc, 1);
+    EXPECT_EQ(td.nhwcSplitMode, 2);
+    EXPECT_EQ(td.numC, 1);
+    EXPECT_EQ(td.isDeterministic, 1);
+    EXPECT_GE(ws, 64U * 2U * 64U * 4U); // cLenCap=ceil64(1)=64 的用户区下界
+    EXPECT_EQ(blockDim, 64);
+}
+
+// 确定性模式不触碰 channelSplit（零通信零 ws 不变；isDeterministic 仅透传字段）
+TEST_F(BNTrainingUpdateGradTilingUT, deterministic_channel_split_unchanged)
+{
+    uint64_t key = 0;
+    size_t ws = 1;
+    BNTrainingUpdateGradTilingData td = {};
+    EXPECT_EQ(RunTiling({2, 4, 5, 3}, 3, key, nullptr, &ws, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_NHWC,
+                        true, nullptr, ge::FORMAT_NHWC, &td, nullptr, /*deterministic=*/true),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(td.nhwcSplitMode, 1);
+    EXPECT_EQ(td.isDeterministic, 1);
+    EXPECT_EQ(ws, 0U); // channelSplit 零通信：确定性开关不引入 ws
 }
 
 // NHWC rowSplit 大 C（C=4096 在窗预算内，单窗全 C）

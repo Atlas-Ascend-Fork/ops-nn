@@ -51,9 +51,10 @@
  *        - [rows, C] 行主序（C=最后一维）；每核 (行范围/通道段, c 窗口) 二维职责；
  *        - channelSplit（mode=1，C 大）：每核独占通道段扫全部行，零通信零 workspace；
  *          段长 > 窗预算时 c 窗口化（窗口外层 × 行 tile 内层，元素恰读一次，C 无上限）；
- *        - rowSplit（mode=2，C 小）：每核独占行段×全部 C，0 号核覆盖写输出 + SyncAll +
- *          其余核浮点原子加直写（零 workspace——TTK bin 模式实测 ws 段 DataCopyPad 写入
- *          触发 VECTOR_CORE_EXCEPTION，故弃 ws 两段归约；原子和顺序不定，误差 O(eps)）
+ *        - rowSplit（mode=2，C 小）：每核独占行段×全部 C；缺省 0 号核覆盖写输出 + SyncAll +
+ *          其余核浮点原子加直写（零 ws——原子和顺序不定，误差 O(eps)）；ge.deterministic=1 时
+ *          切换两段确定性归约（各核部分和落用户 ws 固定槽 → SyncAll → 固定布局 gather+RA 归约，
+ *          相同输入逐位复现；ws 取 GetUserWorkspace 用户区，直绑原始地址会踩 16MB 系统区）
  *          ——并行度恒=核数（G22 C==1 单核 DMA-bound 的解法）；
  *        - 计算体与慢路 ComputeTile 同构（VL 块外层 × 行内层 + 块内寄存器累加器，每
  *          tile 每块仅一次 acc UB RMW——实测安全的唯一累加器结构），mean/rstd 按 64
@@ -156,7 +157,13 @@ public:
         varGm_.SetGlobalBuffer((__gm__ float*)batchVar, tl_->numC);
         diffScaleGm_.SetGlobalBuffer((__gm__ float*)diffScale, tl_->numC);
         diffOffsetGm_.SetGlobalBuffer((__gm__ float*)diffOffset, tl_->numC);
-        (void)workspace; // rowSplit 原子加直写输出：零 workspace（ws 段写实测 VECTOR_CORE_EXCEPTION）
+        // 确定性 rowSplit：用户区 ws [核数][2][cLenCap] fp32。必须经 GetUserWorkspace 取用户区
+        // 起始——950 运行时 workspace 头部保留 16MB 系统区（ffts 跨核同步 SyncAll 信箱所在），
+        // 直绑原始地址写入会踩信箱触发 VECTOR_CORE_EXCEPTION（bn_training_reduce/lp_norm_reduce
+        // 同款先例；当初 ws 尝试即败于此，非 ws 通路本身不可用）。绑定为 bn3d 同款单参形态。
+        if (tl_->isNhwc != 0 && tl_->nhwcSplitMode == 2 && tl_->isDeterministic != 0) {
+            wsGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(GetUserWorkspace(workspace)));
+        }
 
         if (tl_->isNhwc != 0) {
             InitNhwcBuffer();
@@ -307,6 +314,11 @@ private:
         pipe_->InitBuffer(kahanOff_, (window + VL_FP32) * sizeof(float));
         pipe_->InitBuffer(kahanScale_, (window + VL_FP32) * sizeof(float));
         pipe_->InitBuffer(reduceTmp_, REDUCE_TMP_BYTES);
+        if (tl_->nhwcSplitMode == 2 && tl_->isDeterministic != 0) {
+            // 确定性 Phase2 收集暂存：[VL] fp32（逐核 1D 收集 + 固定序向量累加）；
+            // host 侧 p2StageBytes_ 已计入 tileRows/chunk 预算，UB 不越界
+            pipe_->InitBuffer(p2Que_, 1, VL_FP32 * sizeof(float));
+        }
         if (tl_->numC == 1) {
             // C==1 reroute：AccumChunk 的 scratch/尾槽/归约 dst（ND 快路同款尺寸口径）
             pipe_->InitBuffer(accRowG_, (tileRows + 2 * VL_FP32) * sizeof(float));
@@ -339,16 +351,24 @@ private:
         }
     }
 
-    // rowSplit：本核行段 [cStart_, cStart_+cRangeLen_)×全部 C（单窗）；0 号核覆盖写输出 →
-    // SyncAll → 其余核 SetAtomicAdd 原子加直写（bn_training_reduce 同款已验证形态：
-    // SetAtomicAdd + DataCopyPad + SetAtomicNone），零 workspace、零两段归约——TTK bin 模式
-    // 实测 ws 段 DataCopyPad 写入触发 VECTOR_CORE_EXCEPTION（ws 段走 HUGE_PAGE_ONLY 分配），
-    // 原子加直写输出 GM 无此问题。SyncAll 要求所有核同波常驻（tiling 侧 rowSplit 分支已设
-    // SetScheduleMode(1) batch mode）。
-    // 输出为各核部分和的浮点原子和：顺序不定但误差 O(eps)（部分和数量 = 核数 ≤64）。
+    // rowSplit：本核行段 [cStart_, cStart_+cRangeLen_)×全部 C（单窗）
+    // isDeterministic=1（ge.deterministic=1）：两段确定性归约（bn_training_reduce 确定性变体同款）
+    //   Phase1 各核部分和写用户 ws 固定槽（槽序=核序）→ 全核 SyncAll → Phase2 全核按 C 段并行
+    //   2D gather [核数,64] + ReduceSum(RA) 固定布局归约 → 直写输出；相同输入逐位复现。
+    // isDeterministic=0（默认）：0 号核覆盖写输出 + SyncAll + 其余核浮点原子加直写（零 ws；
+    // SetAtomicAdd + DataCopyPad + SetAtomicNone，bn_training_reduce 同款已验证形态）。原子和
+    // 顺序不定但误差 O(eps)（部分和数量 = 核数 ≤64）——性能优先的缺省形态。
+    // ws 注意：两段归约的 ws 必须经 GetUserWorkspace 取用户区（Init 已绑定）——直写原始 workspace
+    // 指针会踩头部 16MB 系统区（ffts SyncAll 信箱）触发 VECTOR_CORE_EXCEPTION，当初"弃 ws"的根因。
     __aicore__ inline void ProcessNhwcRowSplit()
     {
         ProcessNhwcWindow(0, tl_->numC, cStart_, cStart_ + cRangeLen_);
+        if (tl_->isDeterministic != 0) {
+            RowSplitWritePartialsToWs();
+            SyncAll();
+            RowSplitGatherReduce();
+            return;
+        }
         if (GetBlockIdx() == 0) {
             // 0 号核覆盖写（初值无关）→ 全核栅障 → 其余核原子加：总和等价于"清零后全
             // 原子加"，输出对调用方的初始内容零依赖（TTK 输出预填全 1 亦正确）。
@@ -363,6 +383,57 @@ private:
         WriteAccToGm(diffOffsetGm_, (__ubuf__ float*)accOff_.Get<float>().GetPhyAddr(), tl_->numC);
         WriteAccToGm(diffScaleGm_, (__ubuf__ float*)accScale_.Get<float>().GetPhyAddr(), tl_->numC);
         SetAtomicNone();
+    }
+
+    // 确定性 Phase1：本核部分和 [C] 落用户 ws 固定槽（槽序=核序，Phase2 gather 布局由此固定）。
+    // 槽布局 [核][2][cLenCap]（off 在前、scale 在后）；经 WriteAccToGm 的 outQue EnQue/DeQue
+    // 完成 V→MTE3 同步，随后 SyncAll 栅障（跨核 GM 可见性由 barrier 保证，bn_training_reduce 同款）。
+    __aicore__ inline void RowSplitWritePartialsToWs()
+    {
+        int64_t core = static_cast<int64_t>(GetBlockIdx());
+        int64_t slot = tl_->cLenCap; // ws 槽宽（64 对齐，host/kernel 共用 cLenCap）
+        WriteAccToGm(wsGm_[core * 2 * slot], (__ubuf__ float*)accOff_.Get<float>().GetPhyAddr(), tl_->numC);
+        WriteAccToGm(wsGm_[core * 2 * slot + slot], (__ubuf__ float*)accScale_.Get<float>().GetPhyAddr(), tl_->numC);
+    }
+
+    // 确定性 Phase2：全核按 C 段并行（前多后少均分），每段固定布局收集全部核的部分和并归约。
+    // 输出只由唯一归属核覆写（无原子），段内求和序 = ws 槽序 = 核序（跨段不交换）——逐位确定。
+    __aicore__ inline void RowSplitGatherReduce()
+    {
+        int64_t cores = tl_->channelCores;
+        int64_t cTotal = tl_->numC;
+        int64_t core = static_cast<int64_t>(GetBlockIdx());
+        int64_t cPer = (cTotal + cores - 1) / cores;
+        int64_t c0 = core * cPer;
+        int64_t c1 = (c0 + cPer < cTotal) ? (c0 + cPer) : cTotal;
+        for (int64_t base = c0; base < c1; base += static_cast<int64_t>(VL_FP32)) {
+            int64_t w = (c1 - base < static_cast<int64_t>(VL_FP32)) ? (c1 - base) : static_cast<int64_t>(VL_FP32);
+            GatherReduceChunk(base, w, 0, diffOffsetGm_);
+            GatherReduceChunk(base, w, 1, diffScaleGm_);
+        }
+    }
+
+    // 单段确定性归约：逐核 1D DataCopyPad 整槽收集（blockLen 恒 VL*4=256B ≥ 32B 且无 padding，
+    // 规避 rightPadding≤32B/sizeof(T) 的 MTE 约束——补零式收集的 rightPad=63 会触发 AI Core
+    // MTE 异常 78；槽内 [w,64) 为 Phase1 未写的驻留垃圾，AccumulateFrom 按 w 截断不进累加器）
+    // + 固定核序向量累加（AccumulateFrom 已验证形态），求和序 = ws 槽序 = 核序——逐位确定。
+    __aicore__ inline void GatherReduceChunk(int64_t c0, int64_t w, int64_t outIdx, GlobalTensor<float>& outGm)
+    {
+        int64_t cores = tl_->channelCores;
+        int64_t slot = tl_->cLenCap;
+        __ubuf__ float* accAddr = (__ubuf__ float*)kahanOff_.Get<float>().GetPhyAddr(); // Phase2 阶段空闲复用
+        ZeroBuf(kahanOff_, static_cast<int64_t>(VL_FP32));                              // 死 lane 恒 0
+        for (int64_t g = 0; g < cores; g++) {
+            LocalTensor<float> stage = p2Que_.AllocTensor<float>();
+            DataCopyExtParams cpIn{1, static_cast<uint32_t>(VL_FP32 * sizeof(float)), 0, 0, 0};
+            DataCopyPadExtParams<float> padIn{false, 0, 0, 0.0f};
+            DataCopyPad(stage, wsGm_[g * 2 * slot + outIdx * slot + c0], cpIn, padIn);
+            p2Que_.EnQue(stage);
+            stage = p2Que_.DeQue<float>();
+            AccumulateFrom((__ubuf__ float*)stage.GetPhyAddr(), accAddr, w);
+            p2Que_.FreeTensor(stage);
+        }
+        WriteAccToGm(outGm[c0], accAddr, w);
     }
 
     // 一个 (c 窗口, 行范围)：staging 窗口统计量 + 清 acc/kahan + 行 tile 循环（2D
@@ -488,16 +559,24 @@ private:
 
     // Kahan 补偿累加（寄存器源变体）：tileSumReg → acc，comp 为补偿位。KahanAdd（UB 源）
     // 保留供快路；深 rows 部分和上万次顺序累加的 fp32 截断由 Kahan 压到 O(eps)。
+    // 非有限防护：部分和为 ±Inf 时补偿位 c=(t-sum)-y=Inf-Inf=NaN，后续 y=src-c=NaN 会
+    // 毒化累加器（三方校验实测：golden/GPU 输出 ±Inf 而 NPU 输出 NaN）。NaN lane 补偿位
+    // 清零后，非有限路径退化为 IEEE 普通加法语义（对齐 golden/torch.sum）；有限路径
+    // c!=c 恒 false 原值保留，Kahan 精度不受影响。
     __aicore__ inline void KahanAddReg(__ubuf__ float* accAddr, __ubuf__ float* compAddr, RegTensor<float>& srcReg,
                                        MaskReg& mask)
     {
-        RegTensor<float> sumReg, cReg, yReg, tReg;
+        RegTensor<float> sumReg, cReg, yReg, tReg, zeroReg;
+        MaskReg nanMask;
         DataCopy<float, LoadDist::DIST_NORM>(sumReg, accAddr);
         DataCopy<float, LoadDist::DIST_NORM>(cReg, compAddr);
         Sub(yReg, srcReg, cReg, mask); // y = src - c
         Add(tReg, sumReg, yReg, mask); // t = sum + y
         Sub(cReg, tReg, sumReg, mask); // (t - sum)
         Sub(cReg, cReg, yReg, mask);   // c = (t - sum) - y
+        Duplicate(zeroReg, 0.0f);
+        MicroAPI::Compare<float, CMPMODE::NE>(nanMask, cReg, cReg, mask); // c != c ⟺ NaN lane
+        MicroAPI::Select(cReg, zeroReg, cReg, nanMask);                   // c = nan ? 0 : c
         DataCopy<float, StoreDist::DIST_NORM>(accAddr, tReg, mask);
         DataCopy<float, StoreDist::DIST_NORM>(compAddr, cReg, mask);
     }
@@ -533,12 +612,15 @@ private:
     // Kahan 补偿累加(全 lane 同算,仅 lane0 有意义):src → acc,comp 为补偿位。
     // 深 R 下 chunk 部分和上千次顺序累加的 fp32 截断是精度瓶颈(实测 1x8x18.7M 例
     // 重对消 channel 误差 3.2e-3 超联合容差);Kahan 把累加误差从 O(n·eps) 降到 O(eps)。
+    // 非有限防护:同 KahanAddReg——±Inf 部分和下补偿位 c=Inf-Inf=NaN,NaN lane 清零
+    // 退化为 IEEE 普通加法(对齐 golden/torch.sum),有限路径 Kahan 精度不变。
     __aicore__ inline void KahanAdd(__ubuf__ float* accAddr, __ubuf__ float* compAddr, __ubuf__ float* srcAddr)
     {
         __VEC_SCOPE__
         {
-            RegTensor<float> srcReg, sumReg, cReg, yReg, tReg;
+            RegTensor<float> srcReg, sumReg, cReg, yReg, tReg, zeroReg;
             MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+            MaskReg nanMask;
             DataCopy<float, LoadDist::DIST_NORM>(srcReg, srcAddr);
             DataCopy<float, LoadDist::DIST_NORM>(sumReg, accAddr);
             DataCopy<float, LoadDist::DIST_NORM>(cReg, compAddr);
@@ -546,6 +628,9 @@ private:
             Add(tReg, sumReg, yReg, fullMask); // t = sum + y
             Sub(cReg, tReg, sumReg, fullMask); // (t - sum)
             Sub(cReg, cReg, yReg, fullMask);   // c = (t - sum) - y
+            Duplicate(zeroReg, 0.0f);
+            MicroAPI::Compare<float, CMPMODE::NE>(nanMask, cReg, cReg, fullMask); // c != c ⟺ NaN lane
+            MicroAPI::Select(cReg, zeroReg, cReg, nanMask);                       // c = nan ? 0 : c
             DataCopy<float, StoreDist::DIST_NORM>(accAddr, tReg, fullMask);
             DataCopy<float, StoreDist::DIST_NORM>(compAddr, cReg, fullMask);
         }
@@ -1197,9 +1282,11 @@ private:
     TQue<QuePosition::VECIN, 1> statMeanQue_;
     TQue<QuePosition::VECIN, 1> statVarQue_;
     TQue<QuePosition::VECOUT, 1> outQue_;
-    TBuf<> accRowG_; // grads 二维累加器 [cLen*sliceR]（跨 n 行按位累加）
-    TBuf<> accRowP_; // grads*xnorm 二维累加器
-    TBuf<> dstG_;    // ReduceSum AR 结果 [cLen]
+    TQue<QuePosition::VECIN, 1> p2Que_; // 确定性 rowSplit Phase2 gather 暂存 [核数, VL] fp32
+    GlobalTensor<float> wsGm_;          // 确定性 rowSplit 用户区 ws（GetUserWorkspace 绑定）
+    TBuf<> accRowG_;                    // grads 二维累加器 [cLen*sliceR]（跨 n 行按位累加）
+    TBuf<> accRowP_;                    // grads*xnorm 二维累加器
+    TBuf<> dstG_;                       // ReduceSum AR 结果 [cLen]
     TBuf<> dstP_;
     TBuf<> accOff_;     // 核内 diff_offset 部分和 [cLen]（跨 rSlice 累加）
     TBuf<> accScale_;   // 核内 diff_scale 部分和 [cLen]

@@ -60,9 +60,11 @@ private:
 
     // NHWC 信息
     bool isNhwc_ = false;
-    int64_t nhwcSplitMode_ = 0; // 1=channelSplit；2=rowSplit
-    int64_t rows_ = 0;          // NHWC 总行数 = numel/C
-    int64_t wsBytes_ = 0;       // 恒 0：rowSplit 原子加直写零 ws；ND/channelSplit 零通信
+    int64_t nhwcSplitMode_ = 0;    // 1=channelSplit；2=rowSplit
+    int64_t rows_ = 0;             // NHWC 总行数 = numel/C
+    int64_t wsBytes_ = 0;          // 默认 0：rowSplit 原子加直写零 ws；确定性 rowSplit=系统 ws+用户 ws
+    bool isDeterministic_ = false; // ge.deterministic=1：rowSplit 切换两段确定性归约（ws 槽序=核序）
+    int64_t p2StageBytes_ = 0;     // 确定性 rowSplit 的 Phase2 gather 暂存（核数×VL×4B，计入 UB 预算）
 
     // 切分结果
     int64_t channelCores_ = 1;
