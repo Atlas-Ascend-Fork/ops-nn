@@ -103,11 +103,11 @@ ge::graphStatus MaxPool3DGradSimtTiling::GetShapeAttrsInfo()
     auto inputGrad = context_->GetInputShape(THIPOS);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, inputGrad);
     auto gradShape = EnsureNotScalar(inputGrad->GetStorageShape());
+    gradShapeSize = gradShape.GetShapeSize();
 
     auto outX = context_->GetOutputShape(FIRPOS);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, outX);
     auto outShape = EnsureNotScalar(outX->GetStorageShape());
-    outShapeSize = outShape.GetShapeSize();
 
     if (inputShape.GetDimNum() != NCDHW_DIMS) {
         OP_LOGE_FOR_INVALID_SHAPEDIM(opName_, "x", std::to_string(inputShape.GetDimNum()).c_str(), "5");
@@ -237,20 +237,19 @@ uint64_t MaxPool3DGradSimtTiling::GetTilingKey() const
     int64_t outDataCountGrad = inputData.inputShape[N_DIM_] * inputData.inputShape[C_DIM_] *
                                inputData.inputShape[D_DIM_] * inputData.inputShape[H_DIM_] *
                                inputData.inputShape[W_DIM_];
-    uint32_t idxDtype = outDataCountGrad <= static_cast<int64_t>(MAX_INT32) ? TPL_INT32 : TPL_INT64;
+    const uint32_t useINT64Index = static_cast<uint32_t>((outDataCountGrad > static_cast<int64_t>(MAX_INT32)) ||
+                                                         (gradShapeSize > static_cast<int64_t>(MAX_INT32)));
+    uint32_t idxDtype = useINT64Index ? TPL_INT64 : TPL_INT32;
     uint32_t isChannelLast = (inputData.data_format == "ncdhw") ? 0 : 1;
     uint32_t isSimt = 1;
     uint32_t isCheckRange = 0;
-    int64_t outDataCountPos = inputData.inputShape[N_DIM_] * inputData.inputShape[C_DIM_] *
-                              inputData.gradShape[D_DIM_] * inputData.gradShape[H_DIM_] * inputData.gradShape[W_DIM_];
-    uint32_t useINT64Index = outDataCountPos <= MAX_INT32 ? 0 : 1;
     return GET_TPL_TILING_KEY(idxDtype, isSimt, isChannelLast, isCheckRange, useINT64Index);
 }
 
 ge::graphStatus MaxPool3DGradSimtTiling::GetWorkspaceSize()
 {
     auto sys_workspace = WS_SYS_SIZE;
-    size_t argmaxSize = outShapeSize * 8;
+    size_t argmaxSize = static_cast<size_t>(gradShapeSize) * sizeof(int64_t);
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
     currentWorkspace[0] = argmaxSize + sys_workspace;

@@ -27,7 +27,6 @@ using namespace AscendC;
 using namespace Pool3DGradNameSpace;
 
 constexpr uint32_t BUFFER_NUM = 2;
-constexpr int64_t RATIO = 2;
 constexpr int32_t BK_MERGE_BUF_ALIGN = 32;
 
 template <typename TYPE_ORIG_X, typename TYPE_ARGMAX, typename T3, const uint32_t IS_CHECK_RANGE>
@@ -234,11 +233,11 @@ __aicore__ inline void Pool3DGradSmallKernel<TYPE_ORIG_X, TYPE_ARGMAX, T3, IS_CH
     Duplicate(argmaxLocal, TYPE_ARGMAX(0), tilingData_.argmaxBufferSize / sizeof(TYPE_ARGMAX));
     __local_mem__ TYPE_ARGMAX* argmaxAddr = (__local_mem__ TYPE_ARGMAX*)argmaxLocal.GetPhyAddr();
 
-    if (wOutputActual_ * RATIO > vlT2_) {
+    if (wArgmaxActual_ > vlT2_) {
         SingleRowGather(computeAddr, argmaxAddr);
-    } else if (hOutputActual_ * wOutputActual_ * RATIO > vlT2_) {
+    } else if (hArgmaxActual_ * wArgmaxActual_ > vlT2_) {
         MultiRowGather(computeAddr, argmaxAddr);
-    } else if (dOutputActual_ * hOutputActual_ * wOutputActual_ * RATIO > vlT2_) {
+    } else if (dArgmaxActual_ * hArgmaxActual_ * wArgmaxActual_ > vlT2_) {
         MultiDepGather(computeAddr, argmaxAddr);
     } else {
         MultiNcGather(computeAddr, argmaxAddr);

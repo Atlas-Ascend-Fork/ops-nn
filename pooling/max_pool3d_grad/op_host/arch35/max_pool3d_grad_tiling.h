@@ -196,7 +196,7 @@ private:
     int dDimPos = 2;
     int hDimPos = 3;
     int wDimPos = 4;
-    int64_t outShapeSize = 0;
+    int64_t gradShapeSize = 0;
     int64_t coreNum = 0;
     int64_t ubSize = 0;
     ge::DataType dtype = ge::DataType::DT_FLOAT;

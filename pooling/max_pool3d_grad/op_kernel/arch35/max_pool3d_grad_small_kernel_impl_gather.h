@@ -157,11 +157,11 @@ __aicore__ inline void Pool3DGradSmallKernel<TYPE_ORIG_X, TYPE_ARGMAX, T3, IS_CH
     uint16_t hKernel = tilingData_.hKernel;
     uint16_t wKernel = tilingData_.wKernel;
     uint32_t wStride = tilingData_.wStride;
-    uint16_t rate4D = dInputActualPad_ * hInputActualPad_ * wInputActualAlignedPad_;
+    uint32_t rate4D = dInputActualPad_ * hInputActualPad_ * wInputActualAlignedPad_;
     uint16_t num3D = dArgmaxActual_ * hArgmaxActual_ * wArgmaxActual_;
-    uint16_t rate3D = tilingData_.dStride * hInputActualPad_ * wInputActualAlignedPad_;
+    uint32_t rate3D = tilingData_.dStride * hInputActualPad_ * wInputActualAlignedPad_;
     uint16_t num2D = hArgmaxActual_ * wArgmaxActual_;
-    uint16_t rate2D = tilingData_.hStride * wInputActualAlignedPad_;
+    uint32_t rate2D = tilingData_.hStride * wInputActualAlignedPad_;
     uint16_t wOutputActual = wArgmaxActual_;
     uint16_t eachBatchCount = dArgmaxActual_ * hArgmaxActual_ * wArgmaxActual_;
     uint16_t ncBatchCount = vlT2_ / eachBatchCount;
@@ -224,9 +224,9 @@ __aicore__ inline void Pool3DGradSmallKernel<TYPE_ORIG_X, TYPE_ARGMAX, T3, IS_CH
     uint16_t hKernel = tilingData_.hKernel;
     uint16_t dKernel = tilingData_.dKernel;
     uint32_t wStride = tilingData_.wStride;
-    uint16_t rate3D = tilingData_.dStride * hInputActualPad_ * wInputActualAlignedPad_;
+    uint32_t rate3D = tilingData_.dStride * hInputActualPad_ * wInputActualAlignedPad_;
     uint16_t num2D = hArgmaxActual_ * wArgmaxActual_;
-    uint16_t rate2D = tilingData_.hStride * wInputActualAlignedPad_;
+    uint32_t rate2D = tilingData_.hStride * wInputActualAlignedPad_;
     uint16_t wOutputActual = wArgmaxActual_;
     uint16_t eachDepCount = hArgmaxActual_ * wArgmaxActual_;
     uint16_t dBatchCount = vlT2_ / eachDepCount;
