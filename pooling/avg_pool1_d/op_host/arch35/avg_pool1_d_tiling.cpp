@@ -50,8 +50,8 @@ static ge::graphStatus ValidateDtype(gert::TilingContext* context)
     // SE §5.3: format must be ND
     auto format = inputDesc->GetStorageFormat();
     OP_CHECK_IF(format != ge::FORMAT_ND,
-                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(format).c_str(),
-                                                      "format must be ND"),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(format).c_str(),
+                                                       "format must be ND"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -162,6 +162,18 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& u
     return ge::GRAPH_SUCCESS;
 }
 
+// README §计算公式要求 L_out 取下取整/上取整；被除数 (L + pads - ksize) 在
+// ksize > L_padded 且 L > 0 时可为负，而 C++ 整数除法向零截断，需要显式取到 floor。
+// 除数 strides 已校验 >= 1，故只需处理负被除数。
+static int64_t FloorDiv(int64_t value, int64_t divisor)
+{
+    int64_t quotient = value / divisor;
+    if (value < 0 && quotient * divisor != value) {
+        quotient -= 1;
+    }
+    return quotient;
+}
+
 // ══ 计算 L_out（MDE §3.2 / SE §6.4）══
 static int64_t ComputeLOut(int64_t L, int64_t ksize, int64_t strides, int64_t padLeft, int64_t padRight, bool ceilMode)
 {
@@ -170,10 +182,12 @@ static int64_t ComputeLOut(int64_t L, int64_t ksize, int64_t strides, int64_t pa
     }
     int64_t LOut;
     if (ceilMode) {
-        LOut = (L + padLeft + padRight - ksize + strides - 1) / strides + 1;
+        LOut = FloorDiv(L + padLeft + padRight - ksize + strides - 1, strides) + 1;
     } else {
-        LOut = (L + padLeft + padRight - ksize) / strides + 1;
+        LOut = FloorDiv(L + padLeft + padRight - ksize, strides) + 1;
     }
+    // ceil_mode 末窗口修正（需求 §4.5.2）：仅当 padLeft > 0 时生效，确保最后一个窗口的起始点
+    // 落在图像内；padLeft == 0 时有意不做该修正（与 PyTorch 的 ceil_mode 行为不同）。
     if (padLeft > 0 && (LOut - 1) * strides >= L + padLeft) {
         LOut -= 1;
     }

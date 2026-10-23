@@ -95,6 +95,21 @@ TEST_F(AvgPool1dInfershape, avg_pool1_d_floor_basic)
                      {.expectSuccess = true, .expectOutputShape = {1, 1, 4}});
 }
 
+// Scenario: ceil mode, pad_left=0, tail window start >= L: (1,1,2), ksize=1, strides=2, pads=[0,0]
+// L_out = floor((2+0+0-1+2-1)/2)+1 = 2；pad_left == 0 时不做 ceil 末窗口修正（需求 §4.5.2），
+// 故输出 shape 末维为 2（与 PyTorch 的 1 有意不同）。
+TEST_F(AvgPool1dInfershape, avg_pool1_d_ceil_pad_left_zero_keeps_tail)
+{
+    DoInferShapeCase({.xShape = {1, 1, 2},
+                      .dt = ge::DT_FLOAT,
+                      .ksize = 1,
+                      .strides = 2,
+                      .pads = {0, 0},
+                      .ceilMode = true,
+                      .countIncludePad = false},
+                     {.expectSuccess = true, .expectOutputShape = {1, 1, 2}});
+}
+
 // Scenario: ceil mode, (1,2,10), ksize=3, strides=2, pads=[1,1], ceil_mode=true
 // L_out = (10+1+1-3+2-1)/2+1 = 6
 TEST_F(AvgPool1dInfershape, avg_pool1_d_ceil_mode)
@@ -147,6 +162,48 @@ TEST_F(AvgPool1dInfershape, avg_pool1_d_empty_tensor)
                       .strides = 1,
                       .pads = {0, 0},
                       .ceilMode = false,
+                      .countIncludePad = false},
+                     {.expectSuccess = true, .expectOutputShape = {1, 1, 0}});
+}
+
+// Scenario: ksize > L_padded, L>0, floor mode, (1,1,1), ksize=2, strides=2, pads=[0,0]
+// Negative dividend (-strides < -1 < 0): L_out = floor((1-2)/2)+1 = 0
+TEST_F(AvgPool1dInfershape, avg_pool1_d_negative_dividend_floor)
+{
+    DoInferShapeCase({.xShape = {1, 1, 1},
+                      .dt = ge::DT_FLOAT16,
+                      .ksize = 2,
+                      .strides = 2,
+                      .pads = {0, 0},
+                      .ceilMode = false,
+                      .countIncludePad = false},
+                     {.expectSuccess = true, .expectOutputShape = {1, 1, 0}});
+}
+
+// Scenario: floor mode, ksize 远大于 L_padded: (1,1,1), ksize=10, strides=1, pads=[0,0]
+// 负被除数 (1-10) = -9, L_out = floor(-9/1)+1 = -8 -> 触发 LOut<0 截断为 0
+TEST_F(AvgPool1dInfershape, avg_pool1_d_ksize_much_larger_than_l)
+{
+    DoInferShapeCase({.xShape = {1, 1, 1},
+                      .dt = ge::DT_FLOAT16,
+                      .ksize = 10,
+                      .strides = 1,
+                      .pads = {0, 0},
+                      .ceilMode = false,
+                      .countIncludePad = false},
+                     {.expectSuccess = true, .expectOutputShape = {1, 1, 0}});
+}
+
+// Scenario: ceil mode, 负被除数: (1,1,1), ksize=15, strides=13, pads=[0,1]
+// (1+0+1-15+13-1) = -1, L_out = floor(-1/13)+1 = 0（覆盖 infershape 的 ceil 负被除数分支）
+TEST_F(AvgPool1dInfershape, avg_pool1_d_negative_dividend_ceil)
+{
+    DoInferShapeCase({.xShape = {1, 1, 1},
+                      .dt = ge::DT_FLOAT16,
+                      .ksize = 15,
+                      .strides = 13,
+                      .pads = {0, 1},
+                      .ceilMode = true,
                       .countIncludePad = false},
                      {.expectSuccess = true, .expectOutputShape = {1, 1, 0}});
 }

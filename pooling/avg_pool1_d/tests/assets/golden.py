@@ -43,9 +43,33 @@ import torch.nn.functional as F
 # __spec__: TestSpec registry.
 # TTK Test framework looks up operator name via this dict "avg_pool1_d" corresponding TestSpec class,
 # then calls TestSpec.golden() method to get CPU reference result,with NPU output for precision comparison.
+# Also register the OpDef name "AvgPool1D": delivered CSVs use op_name=AvgPool1D and TTK resolves
+# the plugin by that literal name, so registering only the file name makes TTK report
+# "Golden function for operator AvgPool1D is not provided".
 __spec__ = {
     "avg_pool1_d": "AvgPool1DTestSpec",
+    "AvgPool1D": "AvgPool1DTestSpec",
 }
+
+
+def _compute_l_out(L, ksize, strides, pad_left, pad_right, ceil_mode):
+    """L_out by the README formula, identical to op_host ComputeLOut.
+
+    floor/ceil semantics as documented; Python // is floor, which matters when the
+    numerator L + pads - ksize is negative (ksize > L_padded, L > 0).
+    strides >= 1 and ksize >= 1 are validated operator preconditions.
+    """
+    if L == 0:
+        return 0
+    if ceil_mode:
+        numerator = L + pad_left + pad_right - ksize + strides - 1
+    else:
+        numerator = L + pad_left + pad_right - ksize
+    L_out = numerator // strides + 1
+    # 需求 §4.5.2：ceil 修正仅在 pad_left > 0 时生效（算子语义，与 PyTorch 的 ceil_mode 有意不同）
+    if pad_left > 0 and (L_out - 1) * strides >= L + pad_left:
+        L_out -= 1
+    return max(L_out, 0)
 
 
 def _torch_compute(
@@ -71,6 +95,16 @@ def _torch_compute(
     orig_ndim = x.ndim
     orig_shape = list(x.shape)
 
+    L = orig_shape[-1]
+    L_out = _compute_l_out(L, ksize, strides, pad_left, pad_right, ceil_mode)
+
+    # @constraint: empty input (L=0 or any leading dim 0) and L>0 with L_out=0 both return an empty
+    # output of shape (original leading dims, L_out), matching the operator Output shape.
+    # Must return before reshape/pad: x.reshape(-1, 1, 0) and F.avg_pool1d on an empty tensor both
+    # raise, while the README documents L=0 empty-tensor input as supported.
+    if x.numel() == 0 or L_out == 0:
+        return x.new_zeros(orig_shape[:-1] + [L_out])
+
     # avg_pool1d input(L)onPyTorch 3D input (N, C, L)
     # - >3D: beforefor Nin C=1after L not
     # - 2D: inbefore N=1 (1, C, L)
@@ -80,15 +114,7 @@ def _torch_compute(
     elif orig_ndim == 2:
         x = x.unsqueeze(0)
 
-    L = x.shape[-1]
-
-    if L == 0:
-        # @constraint: SE section 1.4 boundary: L==0 returns L_out=0
-        # PyTorch avg_pool1d does not support L=0, return empty tensor early
-        y_shape = list(x.shape)
-        y_shape[-1] = 0
-        y = x.new_zeros(y_shape)
-    elif pad_left == pad_right and pad_left <= ksize / 2:
+    if pad_left == pad_right and pad_left <= ksize / 2:
         # ===== paddingpad_left == pad_right=====
         # padding PyTorch avg_pool1d
         # PyTorch padding parameters int
@@ -111,17 +137,8 @@ def _torch_compute(
         x_padded = F.pad(x, (pad_left, pad_right), mode="constant", value=0)
         L_padded = L + pad_left + pad_right
 
-        # Compute L_out by SE section 5.2 formula (with ceil_mode fix).
-        # PyTorch avg_pool1d in padding=0 not ceil_mode not
-        # in padding after SE output 1
-        # SE compute L_out PyTorch output
-        if ceil_mode:
-            L_out = (L_padded - ksize + strides - 1) // strides + 1
-        else:
-            L_out = (L_padded - ksize) // strides + 1
-        if pad_left > 0 and (L_out - 1) * strides >= L + pad_left:
-            L_out -= 1
-        L_out = max(L_out, 0)
+        # L_out is computed at function entry by the README formula (same as op_host ComputeLOut);
+        # it is not derived again here. The L_out=0 case already returned an empty output above.
 
         if count_include_pad:
             # ----- 2acount_include_pad=True -----
@@ -189,6 +206,14 @@ def _torch_compute(
                 * divisor_padded.view(1, 1, -1)
                 / divisor_valid.view(1, 1, -1)
             )
+
+    # 复现算子语义（README 约束 / 需求 §4.5.2）：pad_left == 0 时算子保留最后一个窗口，而 PyTorch 的
+    # ceil_mode 会丢弃它。该窗口完全落在原始数据区之外、不含有效元素，kernel 将 divisor 钳为 1，
+    # 因此算子在该位置的取值恒为 0。此处按算子输出长度截断/补齐，使参考与算子口径一致。
+    if y.shape[-1] > L_out:
+        y = y[..., :L_out]
+    elif y.shape[-1] < L_out:
+        y = torch.cat([y, y.new_zeros(*y.shape[:-1], L_out - y.shape[-1])], dim=-1)
 
     # Restore original ndim: reshape back to original shape
     if orig_ndim > 3:

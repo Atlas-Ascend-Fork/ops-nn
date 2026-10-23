@@ -6,7 +6,7 @@
 | :----------------------------------------------------------- | :------: |
 | <term>Ascend 950PR&950DT系列产品</term>                       |    √     |
 | <term>Atlas A3系列产品</term>     |    ×     |
-| <term>Atlas A2系列产品</term>      |    √     |
+| <term>Atlas A2系列产品</term>      |    ×     |
 | <term>Atlas 200I/500 A2推理产品</term>                      |    ×     |
 | <term>Atlas推理系列产品</term>                               |    ×     |
 | <term>Atlas训练系列产品</term>                               |    ×     |
@@ -23,7 +23,7 @@ $$
 L_{out} = \begin{cases} \left\lfloor \frac{L_{padded} - ksize}{strides} \right\rfloor + 1, & ceil\_mode = False \\ \left\lceil \frac{L_{padded} - ksize}{strides} \right\rceil + 1, & ceil\_mode = True \end{cases}
 $$
 
-当pad_left > 0且最后一个窗口的起始位置落在padding区时（即(L_out - 1) * strides >= L + pad_left），L_out减1。
+当pad_left > 0且最后一个窗口的起始位置落在padding区时（即(L_out - 1) * strides >= L + pad_left），L_out减1。若按公式计算得到的L_out <= 0，则按0处理并输出空tensor（不报错）。
 
 每个输出窗口的值为：
 
@@ -105,8 +105,11 @@ $$
 - 数据格式仅支持ND。
 - 输出y与输入x同dtype。
 - 支持空tensor输入（L=0时输出空tensor）。
-- 当ceil_mode=True且最后一个窗口的起始位置落在padding区时（即(L_out - 1) * strides >= L + pad_left），L_out减1。
-- 当窗口内无有效元素（data_num==0）时将报错（除零错误）。
+- 若按公式计算得到的L_out <= 0（例如ksize大于L_padded），L_out按0处理并输出空tensor，算子不报错；PyTorch在同类配置下会报错（Output size is too small），此处为有意偏离。
+- 当pad_left > 0且最后一个窗口的起始位置落在padding区时（即(L_out - 1) * strides >= L + pad_left），L_out减1；pad_left为0时不做该修正（与PyTorch的ceil_mode行为有意不同：保留该末窗口可避免PyTorch在pad_l=0时的NaN问题）。
+- pad_left为0且最后一个窗口完全落在原始数据区之外时，该窗口保留在输出中并按补零窗口计算（无有效元素，结果为0）。
+- divisor在count_include_pad=False时取窗口与原始数据区的交集大小，最小为1，不会出现除零错误。
+- 输入x与输出y需为连续tensor；算子声明AutoContiguous，非连续输入由框架自动转换为连续tensor。
 - 确定性实现：采用单线程内顺序累加，不使用原子操作，相同输入多次执行结果一致。
 - NaN输入按IEEE 754规则传播，Inf输入按IEEE 754规则传播。
 
@@ -115,14 +118,14 @@ $$
 <table><thead>
   <tr>
     <th>调用方式</th>
-    <th>调用样例</th>
+    <th>样例代码</th>
     <th>说明</th>
   </tr></thead>
 <tbody>
   <tr>
-    <td>图模式调用</td>
+    <td>GE图模式</td>
     <td><a href="./examples/test_geir_avg_pool1_d.cpp">test_geir_avg_pool1_d</a></td>
-    <td>参见<a href="../../docs/zh/invocation/quick_op_invocation.md">算子调用</a>完成算子编译和验证。</td>
+    <td>通过<a href="./op_graph/avg_pool1_d_proto.h">avg_pool1_d_proto.h</a>定义算子IR构图方式调用AvgPool1D算子，详见<a href="../../docs/zh/invocation/quick_op_invocation.md">算子调用</a>。</td>
   </tr>
 </tbody>
 </table>

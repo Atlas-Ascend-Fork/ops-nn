@@ -253,6 +253,95 @@ TEST_F(AvgPool1dTiling, avg_pool1_d_fp16_empty_tensor)
                   .expectCip = 0});
 }
 
+// Scenario: ksize > L_padded, L>0, floor mode, (1,1,1), ksize=2, strides=2, pads=[0,0]
+// Negative dividend (-strides < -1 < 0): L_out = floor((1-2)/2)+1 = 0, totalOutputElements=0
+TEST_F(AvgPool1dTiling, avg_pool1_d_fp16_negative_dividend_floor)
+{
+    DoTilingCase({.xShape = {1, 1, 1},
+                  .dt = ge::DT_FLOAT16,
+                  .ksize = 2,
+                  .strides = 2,
+                  .pads = {0, 0},
+                  .ceilMode = false,
+                  .countIncludePad = false},
+                 {.expectSuccess = true,
+                  .expectTotal = 0,
+                  .expectL = 1,
+                  .expectLOut = 0,
+                  .expectKsize = 2,
+                  .expectStrides = 2,
+                  .expectPadLeft = 0,
+                  .expectPadRight = 0,
+                  .expectCip = 0});
+}
+
+// Scenario: ksize > L_padded + strides - 1, L>0, ceil mode, (1,1,1), ksize=15, strides=13, pads=[0,1]
+// Negative dividend: (1+0+1-15+13-1) = -1, L_out = floor(-1/13)+1 = 0, totalOutputElements=0
+TEST_F(AvgPool1dTiling, avg_pool1_d_fp16_negative_dividend_ceil)
+{
+    DoTilingCase({.xShape = {1, 1, 1},
+                  .dt = ge::DT_FLOAT16,
+                  .ksize = 15,
+                  .strides = 13,
+                  .pads = {0, 1},
+                  .ceilMode = true,
+                  .countIncludePad = false},
+                 {.expectSuccess = true,
+                  .expectTotal = 0,
+                  .expectL = 1,
+                  .expectLOut = 0,
+                  .expectKsize = 15,
+                  .expectStrides = 13,
+                  .expectPadLeft = 0,
+                  .expectPadRight = 1,
+                  .expectCip = 0});
+}
+
+// Scenario: floor mode, ksize 远大于 L_padded: (1,1,1), ksize=10, strides=1, pads=[0,0]
+// 负被除数 (1-10) = -9, L_out = floor(-9/1)+1 = -8 -> 触发 LOut<0 截断为 0，算子返回成功
+TEST_F(AvgPool1dTiling, avg_pool1_d_fp16_ksize_much_larger_than_l)
+{
+    DoTilingCase({.xShape = {1, 1, 1},
+                  .dt = ge::DT_FLOAT16,
+                  .ksize = 10,
+                  .strides = 1,
+                  .pads = {0, 0},
+                  .ceilMode = false,
+                  .countIncludePad = false},
+                 {.expectSuccess = true,
+                  .expectTotal = 0,
+                  .expectL = 1,
+                  .expectLOut = 0,
+                  .expectKsize = 10,
+                  .expectStrides = 1,
+                  .expectPadLeft = 0,
+                  .expectPadRight = 0,
+                  .expectCip = 0});
+}
+
+// Scenario: ceil mode, pad_left=0, tail window start >= L: (1,1,2), ksize=1, strides=2, pads=[0,0]
+// L_out = floor((2+0+0-1+2-1)/2)+1 = 2；pad_left == 0 时不做 ceil 末窗口修正（需求 §4.5.2），
+// 故算子保留该末窗口，L_out = 2、totalOutputElements = 2（与 PyTorch 的 1 有意不同）。
+TEST_F(AvgPool1dTiling, avg_pool1_d_fp32_ceil_pad_left_zero_keeps_tail)
+{
+    DoTilingCase({.xShape = {1, 1, 2},
+                  .dt = ge::DT_FLOAT,
+                  .ksize = 1,
+                  .strides = 2,
+                  .pads = {0, 0},
+                  .ceilMode = true,
+                  .countIncludePad = false},
+                 {.expectSuccess = true,
+                  .expectTotal = 2,
+                  .expectL = 2,
+                  .expectLOut = 2,
+                  .expectKsize = 1,
+                  .expectStrides = 2,
+                  .expectPadLeft = 0,
+                  .expectPadRight = 0,
+                  .expectCip = 0});
+}
+
 // Scenario: 4D input (N,C,H,L), float32, (2,3,4,10), ksize=2, strides=2, pads=[0,0]
 // L_out = (10+0+0-2)/2+1 = 5, NC=2*3*4=24, totalOutputElements=24*5=120, needCoreNum=1
 TEST_F(AvgPool1dTiling, avg_pool1_d_fp32_4d_input)

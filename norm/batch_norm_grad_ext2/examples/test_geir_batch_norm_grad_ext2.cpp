@@ -100,6 +100,8 @@ int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorD
         pData[i] = value;
     }
     input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), size * sizeof(float));
+    // Tensor 会拷贝一份数据，这里释放本次分配，避免缓冲区泄漏。
+    delete[] pData;
     return SUCCESS;
 }
 
@@ -146,7 +148,10 @@ int main(int argc, char* argv[])
     std::vector<Operator> inputs{};
     std::vector<Operator> outputs{};
 
-    std::cout << argv[1] << std::endl;
+    // 该样例按文档以无参数方式运行；仅在显式传入参数时才打印，避免解引用空指针。
+    if (argc > 1) {
+        std::cout << argv[1] << std::endl;
+    }
     std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
     LOG_PRINT("init ge\n");
     Status ret = ge::GEInitialize(global_options);

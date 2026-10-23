@@ -180,7 +180,7 @@ ge::graphStatus BatchNormGradExt2TilingBase::CheckSmallShapesValid()
         int64_t a = storageShape.GetDim(INDEX_0);
         if (a != aDim) {
             std::string errMsg = "The first dim of the parameter should be equal to " + std::to_string(aDim);
-            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), inputParamNames[i],
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), outputParamNames[i],
                                                   Ops::Base::ToString(storageShape).c_str(), errMsg.c_str());
             return ge::GRAPH_FAILED;
         }

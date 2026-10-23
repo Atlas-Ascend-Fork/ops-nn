@@ -288,11 +288,12 @@ ge::graphStatus BatchNormGradExt2InferBase::CheckDtypeValid()
             expectedDtypesStr += "]";
         }
     }
-    OP_CHECK_IF(
-        invalid == true,
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "y_backprop, x, scale, reserve_space_1, reserve_space_2",
-                                  incorrectDtypeStr.c_str(), expectedDtypesStr.c_str()),
-        return ge::GRAPH_FAILED);
+    std::string dtypeMismatchReason = "The dtypes of these parameters must be one of " + expectedDtypesStr;
+    OP_CHECK_IF(invalid == true,
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(),
+                                                       "y_backprop, x, scale, reserve_space_1 and reserve_space_2",
+                                                       incorrectDtypeStr.c_str(), dtypeMismatchReason.c_str()),
+                return ge::GRAPH_FAILED);
 
     auto weightDesc = context_->GetInputDesc(PARAM_INPUT_WEIGHT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, weightDesc);
@@ -353,21 +354,13 @@ ge::graphStatus BatchNormGradExt2InferBase::GetShapeAttrsInfo()
     const float* epsilonPtr = attrs->GetFloat(PARAM_ATTRS_EPSILON_INDEX);
     epsilon_ = (epsilonPtr == nullptr) ? DEFAULT_EPSILON : *epsilonPtr;
 
-    auto outputMask = attrs->GetAttrPointer<gert::ContinuousVector>(PARAM_ATTRS_OUTPUT_MASK);
-    if (outputMask == nullptr) {
-        enableDx = true;
-        enableDgamma = true;
-        enableDbeta = true;
-    } else {
-        OP_CHECK_IF(outputMask->GetSize() != 3,
-                    OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "output_mask",
-                                                 std::to_string(outputMask->GetSize()).c_str(), "3"),
-                    return ge::GRAPH_PARAM_INVALID);
-        auto outputMaskData = static_cast<const bool*>(outputMask->GetData());
-        enableDx = static_cast<bool>(outputMaskData[0]);
-        enableDgamma = static_cast<bool>(outputMaskData[1]);
-        enableDbeta = static_cast<bool>(outputMaskData[2]);
-    }
+    // 需求文档 §3.1/§5：本算子只注册 epsilon/data_format/is_training 三个属性，
+    // 不存在 output_mask。原先按 index 3 读取该属性属于越界访问（已注册属性数仅为 3），
+    // 会读到脏指针并使 size 校验失败，导致推理模式静态 shape 编译整体失败。
+    // 推理模式按接口语义固定产出全部扩展输出，因此三个使能恒为 true。
+    enableDx = true;
+    enableDgamma = true;
+    enableDbeta = true;
 
     // 大shape shape和format检查
     OP_CHECK_IF(CheckBigShapesFormatValid() != ge::GRAPH_SUCCESS,
@@ -432,8 +425,8 @@ ge::graphStatus BatchNormGradExt2InferBase::GetDyInfo()
     } else {
         OP_LOGE_FOR_INVALID_FORMAT(context_->GetNodeName(), "y_backprop",
                                    ge::TypeUtils::FormatToSerialString(dyFormat_).c_str(),
-                                   "NCHW, NCDHW, NHWC and NDHWC");
-        return ge::GRAPH_PARAM_INVALID;
+                                   "NCHW, NHWC, NCDHW and NDHWC");
+        return ge::GRAPH_FAILED;
     }
     // 特殊场景处理, R1AR0, A==1时转（1,1,R1*R0)
     if (aDim == 1) {

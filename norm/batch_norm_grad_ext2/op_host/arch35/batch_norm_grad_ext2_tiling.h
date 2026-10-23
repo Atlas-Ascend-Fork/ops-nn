@@ -43,7 +43,6 @@ static constexpr int64_t INPUT_NUM = 5;
 constexpr int64_t PARAM_ATTRS_EPSILON_INDEX = 0;
 constexpr int64_t PARAM_ATTRS_DATA_FORMAT_INDEX = 1;
 constexpr int64_t PARAM_ATTRS_ISTRAING_INDEX = 2;
-constexpr int64_t PARAM_ATTRS_OUTPUT_MASK = 3;
 
 constexpr int64_t PARAM_INPUT_DY = 0;               // dy
 constexpr int64_t PARAM_INPUT_WEIGHT_INDEX = 2;     // wweight、scale

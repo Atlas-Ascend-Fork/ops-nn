@@ -17,6 +17,31 @@ BatchNormGradExt2对BatchNorm的反向梯度进行计算，输出输入梯度、
 
 输入支持4D/5D张量，支持NCDHW/NCHW/NHWC/NDHWC格式。
 
+## 训练/推理模式说明
+
+本算子通过 `is_training` 属性区分训练与推理两种模式。
+
+### 训练模式（`is_training=true`）
+
+```text
+scale_backprop  = sum(y_backprop * (x - mean) / sqrt(var + epsilon))
+offset_backprop = sum(y_backprop)
+x_backprop      = scale / sqrt(var + epsilon) *
+                  (y_backprop - mean(y_backprop) - mean(y_backprop * x_hat) * x_hat)
+reserve_space_3 = 0
+reserve_space_4 = 0
+```
+
+此时 `reserve_space_2` 的语义为正向保留的 `save_invstd`（即 `rstd = 1 / sqrt(var + epsilon)`），**不是** variance；扩展输出 `reserve_space_3`、`reserve_space_4` 固定置零。
+
+### 推理模式（`is_training=false`）
+
+```text
+x_backprop = y_backprop * scale / sqrt(var + epsilon)
+```
+
+`x_backprop` 的 shape 与输入梯度 `y_backprop` 一致；此模式下 `reserve_space_2` 才按 variance 处理。`scale_backprop`、`offset_backprop` 为扩展输出，按接口语义固定输出。
+
 ## 参数说明
 
 |参数名|输入/输出|数据类型|格式|说明|
