@@ -11,7 +11,7 @@
 /*!
  * \file test_in_training_reduce_v2_infershape.cpp
  * \brief arch35 核心路径 UT —— InferShape
- *   契约（spec.yaml / DESIGN §6.2）：
+ *   推导约束（对应op_host/in_training_reduce_v2_infershape.cpp）：
  *     - InferShape：输入 x [N,C,H,W] → sum/square_sum shape 均为 [N,C,1,1]
  *                   （N,C 取自 x、空间轴置 1）；5D [N,C,D,H,W] → [N,C,1,1,1]。
  *     - C 轴位置由 origin format 决定：channel-first（NCHW/NCDHW/ND）在 dim 1，
@@ -19,7 +19,7 @@
  *       storage format，约束不到 origin format —— 后者由用户网络决定（TF 来源
  *       天然是 NHWC），GE 会插 TransData 转排布，但 InferShape 跑在其之前。
  *
- *   InferDataType（输出恒 DT_FLOAT）和静态图 legacy V1 bridge 位于
+ *   InferDataType（输出恒 DT_FLOAT）和图推导的runtime2.0注册位于
  *   op_graph/in_training_reduce_v2_graph_infer.cpp，由 op_graph UT 与安装后的
  *   GEIR 用例验证；本文件只验证 runtime2.0 InferShape。
  */

@@ -98,7 +98,7 @@ public:
         pipe_.InitBuffer(squareBinaryAddBuf_, scratchBufferBytes_);
     }
 
-    // sub-R 分块路径 buffer 规划（DESIGN §6.3 路 A）。
+    // sub-R 分块路径 buffer 规划。
     __aicore__ inline void InitSubR()
     {
         // 部分和槽位只与 chunksPerGroup 有关，与 R 无关；分组时多留 1 格给组间 carry。

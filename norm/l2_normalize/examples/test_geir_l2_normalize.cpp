@@ -13,7 +13,9 @@
  * \brief GE graph construction sample for L2Normalize (arch35 ND format).
  */
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <map>
 #include <string>
@@ -121,6 +123,27 @@ int CreateGraph(DataType dt, std::vector<ge::Tensor>& input, std::vector<Operato
     return SUCCESS;
 }
 
+bool CheckOutput(const std::vector<ge::Tensor>& output)
+{
+    constexpr size_t elementCount = 4 * 16;
+    if (output.size() != 1 || output[0].GetTensorDesc().GetShape().GetDims() != std::vector<int64_t>{4, 16} ||
+        output[0].GetTensorDesc().GetDataType() != DT_FLOAT || output[0].GetSize() != elementCount * sizeof(float) ||
+        output[0].GetData() == nullptr) {
+        LOG_PRINT("FAIL - unexpected output metadata or buffer\n");
+        return false;
+    }
+    // Each row contains sixteen ones: 1 / sqrt(16) = 0.25.
+    for (size_t index = 0; index < elementCount; ++index) {
+        float value = 0.0f;
+        std::memcpy(&value, output[0].GetData() + index * sizeof(float), sizeof(float));
+        if (!std::isfinite(value) || std::fabs(value - 0.25f) > 1e-6f) {
+            LOG_PRINT("FAIL - output[%zu]=%.9g, expected 0.25\n", index, static_cast<double>(value));
+            return false;
+        }
+    }
+    return true;
+}
+
 int main(int argc, char* argv[])
 {
     Graph graph("tc_ge_irrun_test");
@@ -151,6 +174,8 @@ int main(int argc, char* argv[])
             result = FAILED;
         } else if (session.RunGraph(gid, input, output) != SUCCESS) {
             LOG_PRINT("%s - FAIL - [XIR]: RunGraph failed\n", GetTime().c_str());
+            result = FAILED;
+        } else if (!CheckOutput(output)) {
             result = FAILED;
         } else {
             LOG_PRINT("%s - PASS - [XIR]: Session RunGraph succeeded, outputs=%zu\n", GetTime().c_str(), output.size());

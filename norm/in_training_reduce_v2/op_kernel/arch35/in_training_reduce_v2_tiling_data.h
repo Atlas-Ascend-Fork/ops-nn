@@ -28,7 +28,7 @@ struct INTrainingReduceV2ARFullReduceTilingData {
     int64_t cTail;              // C 轴尾块长度
     uint64_t binaryAddQuotient; // 小于 rAlign 的最大 2 的幂（pairwise 折叠点）
     int64_t perCoreCnt;         // 平均每个核处理的 tile 数
-    // ---- sub-R 分块路径（DESIGN §6.3 路 A；R 超单次 UB 容量时启用）----
+    // ---- sub-R 分块路径（R 超单次 UB 容量时启用）----
     uint64_t isSubRTiling; // 0=R 全载路径；1=sub-R 分块路径
     uint64_t rFactor;      // sub-R 分块的块大小（元素数，VL_FP32 整数倍）
     uint64_t numChunks;    // ceil(numR / rFactor)，每行分块数

@@ -10,7 +10,7 @@
 
 /*!
  * \file in_training_reduce_v2_sub_r.h
- * \brief sub-R 分块路径（DESIGN §6.3 路 A）：R 超单次 UB 容量时按 rFactor 分块搬入，
+ * \brief sub-R 分块路径：R 超单次 UB 容量时按 rFactor 分块搬入，
  *        每块归约得 Σx/Σx² 的高低双分量部分和，再做固定顺序补偿树归约。
  *        部分和缓存按 chunksPerGroup 分组：每组折叠一次，高低两分量写入 carry 槽参与下一组折叠，
  *        避免全量部分和缓存限制 R；numGroups==1 时只需一次组内折叠。

@@ -11,7 +11,7 @@
 /*!
  * \file test_in_training_reduce_v2_tiling.cpp
  * \brief arch35 核心路径 UT —— Tiling（AR_FULL_REDUCE / R 全载）
- *   契约（spec.yaml / DESIGN §5.1/§6.3）：
+ *   切分约束（对应op_host/arch35中的Tiling实现）：
  *     - TilingKey == 200000（AR_FULL_REDUCE）
  *     - IsCapable 对 NCHW / ND / NCDHW 返回 true（一期支持）
  *     - 输入 1（x）/ 输出 2（sum, square_sum），无 attr

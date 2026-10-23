@@ -11,8 +11,8 @@
 message(STATUS "=== Debug: start ops.norm.in_training_reduce_v2.tests.CMakeLists.txt ")
 
 # 仅纳入 ut 子目录参与主构建（UT 集成到 nn_op_host_ut）。
-# st/ 是独立自包含的 C++ ST 工程（自带 project() + Real 模式 FATAL_ERROR），
-# 通过 tests/st/run.sh 单独构建，不并入主 UT 构建树。
+# 系统测试参考实现位于 tests/assets/golden.py，由 ops-test-kit 加载，
+# 不作为 C++ ST 工程并入主 UT 构建树。
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ut/CMakeLists.txt")
     add_subdirectory(ut)
 endif()

@@ -99,7 +99,7 @@ bool INTrainingReduceV2ARFullReduceTiling::IsCapable()
         outputBytesPerRow > usable - alignedInputBytes * DOUBLE_BUFFER_COUNT ||
         binAddBufferOneline >
             (usable - alignedInputBytes * DOUBLE_BUFFER_COUNT - outputBytesPerRow) / REDUCE_SCRATCH_COUNT) {
-        // 单行 R 全载超单次 UB 容量 → sub-R 分块路径（DESIGN §6.3 路 A），同 TilingKey + isSubRTiling 标志。
+        // 单行 R 全载超单次 UB 容量 → sub-R 分块路径，同 TilingKey + isSubRTiling 标志。
         return DoSubRTiling(rAlign, binAddQuotient, elemSize);
     }
     const uint64_t bytesPerRow = alignedInputBytes * DOUBLE_BUFFER_COUNT + outputBytesPerRow +
@@ -189,7 +189,7 @@ uint64_t INTrainingReduceV2ARFullReduceTiling::CalcSubRUbBytes(uint64_t rFactor,
     return inBytes + partialBytes + outBytes;
 }
 
-// sub-R 分块 tiling（DESIGN §6.3 路 A）：R 超单次 UB 容量时，按 rFactor 分块搬入，
+// sub-R 分块 tiling：R 超单次 UB 容量时，按 rFactor 分块搬入，
 // 每块归约累进独立 fp32 累加器，跨块固定顺序树归约。按行(N*C)切核。
 //
 // 两段式：
