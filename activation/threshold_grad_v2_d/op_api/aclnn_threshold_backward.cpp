@@ -10,11 +10,9 @@
 #include "aclnn_threshold_backward.h"
 #include "../../relu_grad/op_api/relu_grad.h"
 #include "threshold_grad.h"
+#include "../../threshold_grad_v2/op_api/threshold_grad_v2.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/common/op_error_check.h"
-#include "level0/greater.h"
-#include "level0/select.h"
-#include "level0/zero_op.h"
 #include "aclnn/aclnn_base.h"
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
@@ -148,26 +146,16 @@ aclnnStatus aclnnThresholdBackwardGetWorkspaceSize(const aclTensor* gradOutput, 
 
     // 调用 ReluGrad or ThresholdGradV2D 算子kernel
     const aclTensor* opOut;
-    auto selfDtype = selfContiguous->GetDataType();
 
-    bool isIntegerType = (selfDtype == DataType::DT_INT32 || selfDtype == DataType::DT_INT8 ||
-                          selfDtype == DataType::DT_UINT8 || selfDtype == DataType::DT_INT64);
-    if (isIntegerType) {
+    if (IsFloatEqual(thresholdVal_, 0.0)) {
+        opOut = l0op::ReluGrad(gradOutputContiguous, selfContiguous, uniqueExecutor.get());
+    } else if (Ops::NN::AclnnUtil::IsRegbase()) {
         auto thresholdTensor = uniqueExecutor->ConvertToTensor(threshold, selfContiguous->GetDataType());
         CHECK_RET(thresholdTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        // 整数减法在dtype边界会回绕导致符号翻转，改用直接比较得到mask，任意整型均精确
-        auto mask = l0op::Greater(selfContiguous, thresholdTensor, uniqueExecutor.get());
-        CHECK_RET(mask != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        auto zeroTensor = l0op::ZerosLike(gradOutputContiguous, uniqueExecutor.get());
-        CHECK_RET(zeroTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        opOut = l0op::SelectV2(mask, gradOutputContiguous, zeroTensor, uniqueExecutor.get());
-        CHECK_RET(opOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    } else if (IsFloatEqual(thresholdVal_, 0.0)) {
-        opOut = l0op::ReluGrad(gradOutputContiguous, selfContiguous, uniqueExecutor.get());
+        opOut = l0op::ThresholdGradV2(gradOutputContiguous, selfContiguous, thresholdTensor, uniqueExecutor.get());
     } else {
         opOut = l0op::ThresholdGradV2D(gradOutputContiguous, selfContiguous, thresholdVal_, uniqueExecutor.get());
     }
-
     CHECK_RET(opOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
     // 固定写法，将计算结果拷贝到输出out上，out可能是非连续的tensor
     auto viewCopyResult = l0op::ViewCopy(opOut, out, uniqueExecutor.get());

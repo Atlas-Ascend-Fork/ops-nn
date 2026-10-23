@@ -25,7 +25,7 @@ namespace ge {
 
  * @par Inputs:
  * Two inputs, including:
- * @li gradients: A tensor of type int32, float16 or bfloat16.
+ * @li gradients: A tensor of type int8, uint8, int32, float16, bfloat16 or float.
  * @li features: A tensor of the same type and shape as "gradients". \n
 
  * @par Attributes:
@@ -37,9 +37,9 @@ namespace ge {
 #ifndef OPS_PROTO_DEF_THRESHOLDGRADV2D
 #define OPS_PROTO_DEF_THRESHOLDGRADV2D
 REG_OP(ThresholdGradV2D)
-    .INPUT(gradients, TensorType({DT_INT32, DT_FLOAT16, DT_BF16}))
-    .INPUT(features, TensorType({DT_INT32, DT_FLOAT16, DT_BF16}))
-    .OUTPUT(backprops, TensorType({DT_INT32, DT_FLOAT16, DT_BF16}))
+    .INPUT(gradients, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_FLOAT16, DT_BF16, DT_FLOAT}))
+    .INPUT(features, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_FLOAT16, DT_BF16, DT_FLOAT}))
+    .OUTPUT(backprops, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_FLOAT16, DT_BF16, DT_FLOAT}))
     .REQUIRED_ATTR(threshold, Float)
     .OP_END_FACTORY_REG(ThresholdGradV2D)
 #endif
