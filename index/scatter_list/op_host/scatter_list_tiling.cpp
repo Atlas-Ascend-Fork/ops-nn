@@ -25,6 +25,17 @@
 
 namespace optiling {
 
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
+
 static const int64_t VAR_INDEX = 0;
 static const int64_t MASK_INDEX = 3;
 static const int64_t DIM_0 = 0;
@@ -136,7 +147,9 @@ private:
 ge::graphStatus ScatterListTiling::GetPlatformData()
 {
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "platform info is null");
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     platform_ascendc::SocVersion socVersion = ascendcPlatform.GetSocVersion();
     supportMovePad = (socVersion == platform_ascendc::SocVersion::ASCEND910B ||
@@ -144,20 +157,28 @@ ge::graphStatus ScatterListTiling::GetPlatformData()
     isAscend910 = (socVersion == platform_ascendc::SocVersion::ASCEND910);
 
     totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF(totalCoreNum <= 0, OP_LOGE(context, "PrepareTiling fail to get core num."), return ge::GRAPH_FAILED);
+    if (totalCoreNum <= 0) {
+        return ReportTilingFailure(context->GetNodeName(), "AIV core count must be positive");
+    }
     uint64_t platformUbSize = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, platformUbSize);
     totalUbSize = platformUbSize;
-    OP_CHECK_IF(totalUbSize <= 0, OP_LOGE(context, "PrepareTiling fail to get ub size."), return ge::GRAPH_FAILED);
+    if (totalUbSize <= 0) {
+        return ReportTilingFailure(context->GetNodeName(), "UB size must be positive");
+    }
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus ScatterListTiling::GetVarTensorNum()
 {
     auto computeNodeInfoPtr = context->GetComputeNodeInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoPtr);
+    if (computeNodeInfoPtr == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "compute node info is null");
+    }
     auto anchorInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(VAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, anchorInstanceInfoPtr);
+    if (anchorInstanceInfoPtr == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "var instance info is null");
+    }
     varTensorNum = anchorInstanceInfoPtr->GetInstanceNum();
     OP_CHECK_IF(
         varTensorNum == 0,
@@ -165,11 +186,13 @@ ge::graphStatus ScatterListTiling::GetVarTensorNum()
                                                   "var can not be a empty tensor list"),
         return ge::GRAPH_FAILED);
     auto varTensorShapePtr = context->GetDynamicInputShape(VAR_INDEX, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varTensorShapePtr);
+    OP_CHECK_IF(varTensorShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     auto varTensorShape = varTensorShapePtr->GetStorageShape();
     for (int64_t i = 1; i < varTensorNum; i++) {
         auto varTensorShape2Ptr = context->GetDynamicInputShape(VAR_INDEX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, varTensorShape2Ptr);
+        OP_CHECK_IF(varTensorShape2Ptr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                    return ge::GRAPH_FAILED);
         auto varTensorShape2 = varTensorShape2Ptr->GetStorageShape();
         OP_CHECK_IF(varTensorShape2 != varTensorShape,
                     OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "var",
@@ -235,7 +258,8 @@ ge::graphStatus ScatterListTiling::ReShape(const gert::Shape& updatesShape, cons
 ge::graphStatus ScatterListTiling::GetVarAndUpdateData()
 {
     auto varTensorShapePtr = context->GetDynamicInputShape(VAR_INDEX, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varTensorShapePtr);
+    OP_CHECK_IF(varTensorShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     auto varTensorShape = varTensorShapePtr->GetStorageShape();
     varTensorDims = varTensorShape.GetDimNum();
     OP_CHECK_IF(
@@ -244,7 +268,8 @@ ge::graphStatus ScatterListTiling::GetVarAndUpdateData()
                                                  "The dimension of each var tensor must be greater than or equal to 1"),
         return ge::GRAPH_FAILED);
     auto updatesShapePtr = context->GetInputShape(updatesIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context, updatesShapePtr);
+    OP_CHECK_IF(updatesShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "updates"),
+                return ge::GRAPH_FAILED);
     auto updatesShape = updatesShapePtr->GetStorageShape();
     updatesDims = updatesShape.GetDimNum();
     dim0Count = updatesShape.GetDim(DIM_0);
@@ -273,7 +298,9 @@ ge::graphStatus ScatterListTiling::GetAxisAndUpdatesDtype(const gert::Shape& upd
                                                           const gert::Shape& varTensorShape)
 {
     const int64_t* axis = context->GetAttrs()->GetAttrPointer<int64_t>(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, axis);
+    if (axis == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "axis attribute is null");
+    }
     newAxis = *axis;
     newAxis = newAxis < 0 ? (updatesDims + newAxis) : newAxis;
     OP_CHECK_IF((newAxis <= 0 || newAxis >= updatesDims),
@@ -281,15 +308,20 @@ ge::graphStatus ScatterListTiling::GetAxisAndUpdatesDtype(const gert::Shape& upd
                                                       "axis is error"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(ReShape(updatesShape, varTensorShape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "get var and update failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "ReShape failed"), return ge::GRAPH_FAILED);
     auto varTensorDescPtr = context->GetDynamicInputDesc(VAR_INDEX, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varTensorDescPtr);
+    OP_CHECK_IF(varTensorDescPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     auto varTensorDtype = varTensorDescPtr->GetDataType();
     auto updatesDescPtr = context->GetInputDesc(updatesIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context, updatesDescPtr);
+    OP_CHECK_IF(updatesDescPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "updates"),
+                return ge::GRAPH_FAILED);
     updatesDtype = updatesDescPtr->GetDataType();
     updatesDtypeSize = ge::GetSizeByDataType(updatesDtype);
-    OP_CHECK_IF(updatesDtypeSize <= 0, OP_LOGE(context, "typeSize is invalid %ld, please check.", updatesDtypeSize),
+    OP_CHECK_IF(updatesDtypeSize <= 0,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "updates",
+                                                      Ops::Base::ToString(updatesDtype).c_str(),
+                                                      "dtype byte size must be positive"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(varTensorDtype != updatesDtype,
                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
@@ -305,7 +337,8 @@ ge::graphStatus ScatterListTiling::GetAxisAndUpdatesDtype(const gert::Shape& upd
 ge::graphStatus ScatterListTiling::GetIndiceData()
 {
     auto indiceShapePtr = context->GetInputShape(indiceIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context, indiceShapePtr);
+    OP_CHECK_IF(indiceShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "indice"),
+                return ge::GRAPH_FAILED);
     auto indiceShape = indiceShapePtr->GetStorageShape();
     indiceDims = indiceShape.GetDimNum();
     OP_CHECK_IF(
@@ -330,10 +363,14 @@ ge::graphStatus ScatterListTiling::GetIndiceData()
         indiceCount = indiceCount * DOUBLE_SIZE;
     }
     auto indiceDescPtr = context->GetInputDesc(indiceIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context, indiceDescPtr);
+    OP_CHECK_IF(indiceDescPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "indice"),
+                return ge::GRAPH_FAILED);
     auto indiceDtype = indiceDescPtr->GetDataType();
     int64_t indiceDtypeSize = ge::GetSizeByDataType(indiceDtype);
-    OP_CHECK_IF(indiceDtypeSize <= 0, OP_LOGE(context, "typeSize is invalid %ld, please check.", indiceDtypeSize),
+    OP_CHECK_IF(indiceDtypeSize <= 0,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "indice",
+                                                      Ops::Base::ToString(indiceDtype).c_str(),
+                                                      "dtype byte size must be positive"),
                 return ge::GRAPH_FAILED);
     indiceOneBlock = BLOCK_SIZE / indiceDtypeSize;
     indiceCount = Ops::Base::CeilAlign(indiceCount, indiceOneBlock);
@@ -350,7 +387,9 @@ ge::graphStatus ScatterListTiling::GetMaskData()
     }
 
     auto maskShapePtr = context->GetOptionalInputShape(MASK_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, maskShapePtr);
+    if (maskShapePtr == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "mask shape is null");
+    }
     auto maskShape = maskShapePtr->GetStorageShape();
     auto maskDims = maskShape.GetDimNum();
     OP_CHECK_IF(
@@ -367,11 +406,16 @@ ge::graphStatus ScatterListTiling::GetMaskData()
         return ge::GRAPH_FAILED);
     maskCount = dim0Count;
     auto maskDescPtr = context->GetOptionalInputDesc(MASK_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, maskDescPtr);
+    if (maskDescPtr == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "mask desc is null");
+    }
     auto maskDtype = maskDescPtr->GetDataType();
     int64_t maskDtypeSize = ge::GetSizeByDataType(maskDtype);
-    OP_CHECK_IF(maskDtypeSize <= 0, OP_LOGE(context, "typeSize is invalid %ld, please check.", maskDtypeSize),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        maskDtypeSize <= 0,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "mask", Ops::Base::ToString(maskDtype).c_str(),
+                                              "dtype byte size must be positive"),
+        return ge::GRAPH_FAILED);
     auto maskOneBlock = BLOCK_SIZE / maskDtypeSize;
     maskCount = Ops::Base::CeilAlign(maskCount, maskOneBlock);
     maskUbSize = maskCount * maskDtypeSize;
@@ -732,7 +776,9 @@ ge::graphStatus ScatterListTiling::SetTilingData()
     context->SetTilingKey(tilingData.get_tilingKey());
 
     size_t* workspaces = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
+    if (workspaces == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "GetWorkspaceSizes(1) returned null");
+    }
     workspaces[0] = WORK_SPACE_SIZE;
     PrintTilingData();
     return ge::GRAPH_SUCCESS;
@@ -742,31 +788,31 @@ static ge::graphStatus Tiling4ScatterList(gert::TilingContext* context)
 {
     ScatterListTiling tilingObject(context);
     if (tilingObject.GetPlatformData() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "GetPlatformData return failed.");
+        OP_LOGE_WITHOUT_REPORT(context, "GetPlatformData failed");
         return ge::GRAPH_FAILED;
     }
     if (tilingObject.GetVarTensorNum() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "GetVarTensorNum return failed.");
+        OP_LOGE_WITHOUT_REPORT(context, "GetVarTensorNum failed");
         return ge::GRAPH_FAILED;
     }
     if (tilingObject.GetVarAndUpdateData() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "GetVarAndUpdateData return failed.");
+        OP_LOGE_WITHOUT_REPORT(context, "GetVarAndUpdateData failed");
         return ge::GRAPH_FAILED;
     }
     if (tilingObject.GetIndiceData() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "GetIndiceData return failed.");
+        OP_LOGE_WITHOUT_REPORT(context, "GetIndiceData failed");
         return ge::GRAPH_FAILED;
     }
     if (tilingObject.GetMaskData() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "GetMaskData return failed.");
+        OP_LOGE_WITHOUT_REPORT(context, "GetMaskData failed");
         return ge::GRAPH_FAILED;
     }
     if (tilingObject.GetOtherData() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "GetOtherData return failed.");
+        OP_LOGE_WITHOUT_REPORT(context, "GetOtherData failed");
         return ge::GRAPH_FAILED;
     }
     if (tilingObject.SetTilingData() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "SetTilingData return failed.");
+        OP_LOGE_WITHOUT_REPORT(context, "SetTilingData failed");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
