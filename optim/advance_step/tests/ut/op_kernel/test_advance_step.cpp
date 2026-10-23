@@ -9,6 +9,7 @@
  */
 
 #include <array>
+#include <cstring>
 #include <vector>
 #include <iostream>
 #include <string>
@@ -166,6 +167,64 @@ TEST_F(advance_step_test, test_advance_step_int_2)
     AscendC::GmFree((void*)block_tables);
     AscendC::GmFree((void*)accepted_num);
     AscendC::GmFree((void*)spec_token);
+    AscendC::GmFree((void*)workspace);
+    AscendC::GmFree((void*)tiling);
+}
+
+TEST_F(advance_step_test, test_advance_step_wide_block_tables)
+{
+    constexpr int64_t kNumSeqs = 3;
+    constexpr int64_t kNumQueries = 2;
+    constexpr int64_t kBlockSize = 4;
+    constexpr int64_t kTableStride = 2;
+    constexpr int64_t kNeedCoreNum = 40;
+    const size_t seqSize = kNumSeqs * sizeof(int64_t);
+    const size_t tableSize = kNumSeqs * kTableStride * sizeof(int64_t);
+
+    uint8_t* input_tokens = (uint8_t*)AscendC::GmAlloc(seqSize);
+    uint8_t* sampled_token_ids = (uint8_t*)AscendC::GmAlloc(kNumQueries * sizeof(int64_t));
+    uint8_t* input_positions = (uint8_t*)AscendC::GmAlloc(seqSize);
+    uint8_t* seq_lens = (uint8_t*)AscendC::GmAlloc(seqSize);
+    uint8_t* slot_mapping = (uint8_t*)AscendC::GmAlloc(seqSize);
+    uint8_t* block_tables = (uint8_t*)AscendC::GmAlloc(tableSize);
+    uint8_t* workspace = (uint8_t*)AscendC::GmAlloc(16781184);
+    uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(sizeof(AdvanceStepTilingDataTest));
+
+    const int64_t inputTokensHost[kNumSeqs] = {0};
+    const int64_t sampledHost[kNumQueries] = {5, 6};
+    const int64_t positionsHost[kNumSeqs] = {0};
+    const int64_t seqLensHost[kNumSeqs] = {0, 4, 0};
+    const int64_t slotHost[kNumSeqs] = {-1, -1, -1};
+    const int64_t tablesHost[kNumSeqs * kTableStride] = {7, 99, 11, 42, 21, 77};
+    memcpy(input_tokens, inputTokensHost, seqSize);
+    memcpy(sampled_token_ids, sampledHost, kNumQueries * sizeof(int64_t));
+    memcpy(input_positions, positionsHost, seqSize);
+    memcpy(seq_lens, seqLensHost, seqSize);
+    memcpy(slot_mapping, slotHost, seqSize);
+    memcpy(block_tables, tablesHost, tableSize);
+
+    AdvanceStepTilingDataTest* tilingData = reinterpret_cast<AdvanceStepTilingDataTest*>(tiling);
+    tilingData->needCoreNum = kNeedCoreNum;
+    tilingData->blockTablesStride = kTableStride;
+    tilingData->numSeqs = kNumSeqs;
+    tilingData->numQueries = kNumQueries;
+    tilingData->blockSize = kBlockSize;
+
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    ICPU_SET_TILING_KEY(1);
+    ICPU_RUN_KF(advance_step, 1, input_tokens, sampled_token_ids, input_positions, seq_lens, slot_mapping, block_tables,
+                nullptr, nullptr, input_tokens, input_positions, seq_lens, slot_mapping, workspace,
+                (uint8_t*)tilingData);
+
+    const int64_t expectedSlot[kNumSeqs] = {28, 168, -1};
+    EXPECT_EQ(0, memcmp(slot_mapping, expectedSlot, seqSize));
+
+    AscendC::GmFree((void*)input_tokens);
+    AscendC::GmFree((void*)sampled_token_ids);
+    AscendC::GmFree((void*)input_positions);
+    AscendC::GmFree((void*)seq_lens);
+    AscendC::GmFree((void*)slot_mapping);
+    AscendC::GmFree((void*)block_tables);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
 }

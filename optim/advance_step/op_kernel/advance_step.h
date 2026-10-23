@@ -101,8 +101,8 @@ __aicore__ inline void KernelAdvanceStep<T>::Process()
         int64_t block_index = next_input_pos / block_size; // 第几个q块
         int64_t block_offset = next_input_pos % block_size;
 
-        int64_t slot_num = (block_tables_ptr.GetValue(block_index) + block_tables_stride * index) * block_size +
-                           block_offset;
+        int64_t physical_block = block_tables_ptr.GetValue(block_tables_stride * index + block_index);
+        int64_t slot_num = physical_block * block_size + block_offset;
         // Update slot_mapping
         slot_mapping_ptr.SetValue(index, slot_num);
     }

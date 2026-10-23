@@ -35,10 +35,6 @@
   $$
 
   $$
-  blockTablesStride = blockTables.stride(0)
-  $$
-
-  $$
   inputTokens[blockIdx] = sampledTokenIds[blockIdx]
   $$
 
@@ -51,7 +47,7 @@
   $$
 
   $$
-  slotMapping[blockIdx] = (blockTables[blockIdx] + blockTablesStride * blockIdx) * blockSize + (seqLens[blockIdx] \% blockSize)
+  slotMapping[blockIdx] = blockTables[blockIdx][inputPositions[blockIdx] / blockSize] * blockSize + (inputPositions[blockIdx] \% blockSize)
   $$
 
 ## 函数原型

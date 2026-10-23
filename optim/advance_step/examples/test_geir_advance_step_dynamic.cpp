@@ -251,9 +251,8 @@ GoldenOutputs ComputeV1Golden(const V1Feeds& feeds)
         out.seqLens[static_cast<size_t>(i)] = pos + 1;
         const int64_t blockIndex = pos / blockSize;
         const int64_t blockOffset = pos % blockSize;
-        out.slotMapping[static_cast<size_t>(i)] = (feeds.blockTables[static_cast<size_t>(blockIndex)] + stride * i) *
-                                                      blockSize +
-                                                  blockOffset;
+        const int64_t physicalBlock = feeds.blockTables[static_cast<size_t>(i * stride + blockIndex)];
+        out.slotMapping[static_cast<size_t>(i)] = physicalBlock * blockSize + blockOffset;
     }
     const int64_t nPad = numSeqs - numQueries;
     for (int64_t k = 0; k < nPad; k += kV1PaddingStride) {
