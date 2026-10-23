@@ -111,7 +111,6 @@ protected:
     uint32_t blockIdx_;
     uint32_t subBlockIdx_;
     blockType block_;
-    TPipe* pipe_;
     GlobalTensor<aType> aGlobal_;
     GlobalTensor<bType> bGlobal_;
     GlobalTensor<cType> cGlobal_;
@@ -191,7 +190,6 @@ __aicore__ inline void QuantBmmPertokenRegbaseKernel<LOCAL_TEMPLATE_FUNC_MIX_PAR
         blockIdx_ = blockIdx_ / AscendC::GetTaskRation();
         subBlockIdx_ = AscendC::GetSubBlockIdx();
     }
-    pipe_ = pipe;
     tilingData_ = static_cast<const DequantBmm::QuantBatchMatmulV3TilingDataParams*>(tilingData);
 
     biasDtype_ = tilingData_->params.biasDtype;

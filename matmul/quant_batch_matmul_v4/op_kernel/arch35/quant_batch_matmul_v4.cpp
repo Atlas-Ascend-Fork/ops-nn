@@ -90,13 +90,12 @@ using namespace QuantBatchMatmulV4;
 #endif
 #endif
 
-#define QBMM_QUANT_GB_IMPL_CLASS(xLayout, wLayout, yLayout)                                                       \
-    do {                                                                                                          \
-        AscendC::TPipe tPipe;                                                                                     \
-        GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);                                                    \
-        GET_TILING_DATA(tilingData, tiling);                                                                      \
-        QbmmCmctPertileKernel<DTYPE_X1, DTYPE_X2, DTYPE_BIAS, float, float, DTYPE_Y, xLayout, wLayout, yLayout,   \
-                              DTYPE_LOC_LOCAL>(x1, x2, bias, x2_scale, x1_scale, y, userWS, &tilingData, &tPipe); \
+#define QBMM_QUANT_GB_IMPL_CLASS(xLayout, wLayout, yLayout)                                                     \
+    do {                                                                                                        \
+        GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);                                                  \
+        GET_TILING_DATA(tilingData, tiling);                                                                    \
+        QbmmCmctPertileKernel<DTYPE_X1, DTYPE_X2, DTYPE_BIAS, float, float, DTYPE_Y, xLayout, wLayout, yLayout, \
+                              DTYPE_LOC_LOCAL>(x1, x2, bias, x2_scale, x1_scale, y, userWS, &tilingData);       \
     } while (0)
 
 template <int TRANS, int QUANT_TYPE, int OPTION_ATTRS, int WEIGHTNZ, int KERNEL_TEMPLATE_TYPE>

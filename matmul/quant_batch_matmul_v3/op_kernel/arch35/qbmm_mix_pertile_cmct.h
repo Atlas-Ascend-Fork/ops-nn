@@ -26,7 +26,7 @@ template <class xType, class wType, class biasType, class scaleType, class ptSca
 
 __aicore__ inline void QbmmCmctPertileKernel(GM_ADDR x, GM_ADDR weight, GM_ADDR bias, GM_ADDR scale,
                                              GM_ADDR perTokenScale, GM_ADDR y, GM_ADDR workSpace,
-                                             const void* tilingParamsIn, AscendC::TPipe* que)
+                                             const void* tilingParamsIn)
 {
     using L1Tileshape = AscendC::Shape<Cmct::Gemm::_0, Cmct::Gemm::_0, Cmct::Gemm::_0>;
     using L0Tileshape = AscendC::Shape<Cmct::Gemm::_0, Cmct::Gemm::_0, Cmct::Gemm::_0>;

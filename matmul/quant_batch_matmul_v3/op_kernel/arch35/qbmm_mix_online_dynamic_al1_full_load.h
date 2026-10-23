@@ -45,6 +45,7 @@ protected:
     AscendC::MatmulImpl<aT, bT, cT, biasT, mmCfg, AscendC::MatmulCallBackFunc<nullptr, nullptr, nullptr>,
                         AscendC::QBmmCustomMatmulPolicy>
         mm;
+    TPipe* pipe_ = nullptr;
     TQue<QuePosition::A1, 1> InQueueAL1_;
     LocalTensor<aType> al1Local_;
     bool isMMultiCore_;
