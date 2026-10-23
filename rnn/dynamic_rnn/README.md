@@ -225,7 +225,7 @@
     <tr>
       <td>forget_bias</td>
       <td>属性</td>
-      <td>默认1.0。</td>
+      <td>默认0.0。</td>
       <td>FLOAT</td>
       <td>-</td>
     </tr>
