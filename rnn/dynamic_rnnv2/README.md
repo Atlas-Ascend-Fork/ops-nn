@@ -162,7 +162,7 @@
     <tr>
       <td>cell_type</td>
       <td>属性</td>
-      <td>默认为"LSTM",当前实现"LSTM"、"GRU"。</td>
+      <td>默认为"LSTM"，当前仅实现"LSTM"。</td>
       <td>STRING</td>
       <td>-</td>
     </tr>
