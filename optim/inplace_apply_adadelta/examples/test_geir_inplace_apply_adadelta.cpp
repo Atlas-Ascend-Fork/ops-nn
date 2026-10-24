@@ -26,6 +26,7 @@
  */
 
 #include <cstring>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -166,12 +167,56 @@ int32_t WriteDataToFile(string bin_file, uint64_t data_size, uint8_t* inputData)
         return FAILED;
     }
     size_t written = fwrite(inputData, sizeof(uint8_t), data_size, fp);
-    fclose(fp);
+    int close_ret = fclose(fp);
     if (written != data_size) {
         printf("WriteDataToFile: short write %zu/%lu\n", written, data_size);
         return FAILED;
     }
+    if (close_ret != 0) {
+        printf("WriteDataToFile: fclose failed for %s\n", bin_file.c_str());
+        return FAILED;
+    }
     return SUCCESS;
+}
+
+static bool SameShape(const vector<int64_t>& expected, const ge::Shape& actual)
+{
+    if (expected.size() != actual.GetDimNum()) {
+        return false;
+    }
+    for (size_t i = 0; i < expected.size(); ++i) {
+        if (expected[i] != actual.GetDim(i)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool VerifyConstantOutput(const ge::Tensor& output, const vector<int64_t>& expectedShape, DataType expectedDtype,
+                                 float expectedValue, const char* name)
+{
+    const auto& desc = output.GetTensorDesc();
+    if (!SameShape(expectedShape, desc.GetShape()) || desc.GetDataType() != expectedDtype) {
+        printf("[FAIL] %s metadata mismatch\n", name);
+        return false;
+    }
+    const float* data = reinterpret_cast<const float*>(output.GetData());
+    if (data == nullptr) {
+        printf("[FAIL] %s output data is null\n", name);
+        return false;
+    }
+    const size_t count = static_cast<size_t>(desc.GetShape().GetShapeSize());
+    constexpr float rtol = 1.22e-4F;
+    constexpr float atol = 1.22e-4F;
+    for (size_t i = 0; i < count; ++i) {
+        const float tolerance = atol + rtol * std::fabs(expectedValue);
+        if (!std::isfinite(data[i]) || std::fabs(data[i] - expectedValue) > tolerance) {
+            printf("[FAIL] %s[%zu]: expected=%.8g actual=%.8g tolerance=%.4e\n", name, i, expectedValue, data[i],
+                   tolerance);
+            return false;
+        }
+    }
+    return true;
 }
 
 // 构造一个 GE Data 输入（host 占位，device 填充 tensor），并绑定到 op 的指定输入端口
@@ -212,7 +257,7 @@ int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vect
 
     // shape 约定
     std::vector<int64_t> tensorShape = {2, 4, 4, 4}; // var / accum / accum_update / grad 的 shape（共 128 元素）
-    std::vector<int64_t> scalarShape = {1};          // lr / rho / epsilon 的 shape
+    std::vector<int64_t> scalarShape = {};           // lr / rho / epsilon 的 Rank 0 shape
 
     int idx = 0;
     // 7 个输入 —— 顺序须与 REG_OP(InplaceApplyAdadelta) 的 .INPUT 顺序一致
@@ -268,21 +313,26 @@ int main(int argc, char* argv[])
     Graph graph(graph_name);
     std::vector<ge::Tensor> input;
 
+    const std::string deviceId = argc > 1 ? argv[1] : "0";
+    if (deviceId.empty() || deviceId.find_first_not_of("0123456789") != std::string::npos) {
+        std::cerr << "Invalid device id: " << deviceId << std::endl;
+        return FAILED;
+    }
+    std::cout << "device id: " << deviceId << std::endl;
     printf("%s - INFO - [XIR]: Start to initialize ge using ge global options\n", GetTime().c_str());
-    std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
+    std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", deviceId.c_str()},
+                                                           {"ge.graphRunMode", "1"}};
     Status ret = ge::GEInitialize(global_options);
     if (ret != SUCCESS) {
-        printf("%s - INFO - [XIR]: Initialize ge using ge global options failed\n", GetTime().c_str());
+        const ge::AscendString errorMsg = ge::GEGetErrorMsgV2();
+        printf("%s - ERROR - [XIR]: Initialize ge failed, status=%u, detail=%s\n", GetTime().c_str(), ret,
+               errorMsg.GetString() == nullptr ? "" : errorMsg.GetString());
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Initialize ge using ge global options success\n", GetTime().c_str());
 
     std::vector<Operator> inputs{};
     std::vector<Operator> outputs{};
-
-    if (argc > 1) {
-        std::cout << "device id arg: " << argv[1] << std::endl;
-    }
 
     DataType inDtype = DT_FLOAT;
     std::cout << "input dtype: " << inDtype << std::endl;
@@ -345,6 +395,26 @@ int main(int argc, char* argv[])
     }
     printf("%s - INFO - [XIR]: Session run ir compute graph success\n", GetTime().c_str());
 
+    const vector<int64_t> expectedShape = {2, 4, 4, 4};
+    constexpr float rho = 0.9F;
+    constexpr float lr = 0.01F;
+    constexpr float epsilon = 1.0e-6F;
+    constexpr float grad = 0.2F;
+    constexpr float accum = 0.1F;
+    constexpr float accumUpdate = 0.05F;
+    const float accumNew = rho * accum + (1.0F - rho) * grad * grad;
+    const float update = std::sqrt(accumUpdate + epsilon) / std::sqrt(accumNew + epsilon) * grad;
+    const float varNew = 1.0F - lr * update;
+    const float accumUpdateNew = rho * accumUpdate + (1.0F - rho) * update * update;
+    bool allPass = true;
+    allPass &= VerifyConstantOutput(output[0], expectedShape, inDtype, varNew, "var");
+    allPass &= VerifyConstantOutput(output[1], expectedShape, inDtype, accumNew, "accum");
+    allPass &= VerifyConstantOutput(output[2], expectedShape, inDtype, accumUpdateNew, "accum_update");
+    if (allPass) {
+        printf("Shape, dtype and values PASSED for [2,4,4,4]\n");
+        printf("InplaceApplyAdadelta static GEIR verification PASSED\n");
+    }
+
     int input_num = input.size();
     for (int i = 0; i < input_num; i++) {
         std::cout << "input " << i << " dtype :  " << input[i].GetTensorDesc().GetDataType() << std::endl;
@@ -391,5 +461,5 @@ int main(int argc, char* argv[])
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Finalize ir graph session success\n", GetTime().c_str());
-    return SUCCESS;
+    return allPass ? SUCCESS : FAILED;
 }

@@ -51,7 +51,9 @@ struct InferShapeResult {
     std::array<std::vector<int64_t>, 3> outputDims;
 };
 
-static InferShapeResult RunInferShape(const std::initializer_list<int64_t>& tensorDims)
+using InputShapes = std::array<gert::StorageShape, 7>;
+
+static InferShapeResult RunInferShape(const InputShapes& shapes)
 {
     InferShapeResult result{ge::GRAPH_FAILED, {}};
     auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("InplaceApplyAdadelta");
@@ -59,8 +61,7 @@ static InferShapeResult RunInferShape(const std::initializer_list<int64_t>& tens
         return result;
     }
 
-    gert::StorageShape tensorShape = {tensorDims, tensorDims};
-    gert::StorageShape scalarShape = {{1}, {1}};
+    auto inputs = shapes;
     // Deliberately use sentinel output shapes. This makes the test fail if
     // InferShape returns success without writing every output.
     gert::StorageShape varOut = {{7, 11}, {7, 11}};
@@ -70,8 +71,7 @@ static InferShapeResult RunInferShape(const std::initializer_list<int64_t>& tens
     auto holder = gert::InferShapeContextFaker()
                       .NodeIoNum(7, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
-                      .InputShapes({&tensorShape, &tensorShape, &tensorShape, &scalarShape, &scalarShape, &scalarShape,
-                                    &tensorShape})
+                      .InputShapes({&inputs[0], &inputs[1], &inputs[2], &inputs[3], &inputs[4], &inputs[5], &inputs[6]})
                       .OutputShapes({&varOut, &accumOut, &accumUpdateOut})
                       .Build();
 
@@ -83,6 +83,18 @@ static InferShapeResult RunInferShape(const std::initializer_list<int64_t>& tens
         }
     }
     return result;
+}
+
+static InputShapes ValidInputs(const std::initializer_list<int64_t>& tensorDims)
+{
+    gert::StorageShape tensorShape = {tensorDims, tensorDims};
+    gert::StorageShape scalarShape = {{}, {1}};
+    return {tensorShape, tensorShape, tensorShape, scalarShape, scalarShape, scalarShape, tensorShape};
+}
+
+static InferShapeResult RunInferShape(const std::initializer_list<int64_t>& tensorDims)
+{
+    return RunInferShape(ValidInputs(tensorDims));
 }
 
 static void ExpectAllOutputShapes(const InferShapeResult& result, const std::vector<int64_t>& expected)
@@ -104,4 +116,46 @@ TEST_F(InplaceApplyAdadelta, infershape_empty) { ExpectAllOutputShapes(RunInferS
 TEST_F(InplaceApplyAdadelta, infershape_rank_8)
 {
     ExpectAllOutputShapes(RunInferShape({2, 2, 2, 2, 2, 2, 2, 2}), {2, 2, 2, 2, 2, 2, 2, 2});
+}
+
+TEST_F(InplaceApplyAdadelta, infershape_rank_0_normalized_storage)
+{
+    auto inputs = ValidInputs({});
+    for (size_t index : {0, 1, 2, 6}) {
+        inputs[index].MutableStorageShape() = gert::Shape({1});
+    }
+    ExpectAllOutputShapes(RunInferShape(inputs), {});
+}
+
+TEST_F(InplaceApplyAdadelta, infershape_rank_9_rejected)
+{
+    EXPECT_EQ(RunInferShape({1, 1, 1, 1, 1, 1, 1, 1, 1}).status, ge::GRAPH_FAILED);
+}
+
+TEST_F(InplaceApplyAdadelta, infershape_main_shapes_must_match)
+{
+    for (size_t index : {1, 2, 6}) {
+        auto inputs = ValidInputs({2, 3});
+        inputs[index] = gert::StorageShape({6}, {6});
+        EXPECT_EQ(RunInferShape(inputs).status, ge::GRAPH_FAILED) << "input " << index;
+    }
+}
+
+TEST_F(InplaceApplyAdadelta, infershape_logical_shapes_must_match)
+{
+    auto inputs = ValidInputs({});
+    inputs[1] = gert::StorageShape({1}, {1});
+    inputs[0].MutableStorageShape() = gert::Shape({1});
+    inputs[2].MutableStorageShape() = gert::Shape({1});
+    inputs[6].MutableStorageShape() = gert::Shape({1});
+    EXPECT_EQ(RunInferShape(inputs).status, ge::GRAPH_FAILED);
+}
+
+TEST_F(InplaceApplyAdadelta, infershape_scalar_inputs_must_have_rank_0)
+{
+    for (size_t index : {3, 4, 5}) {
+        auto inputs = ValidInputs({2, 3});
+        inputs[index] = gert::StorageShape({1}, {1});
+        EXPECT_EQ(RunInferShape(inputs).status, ge::GRAPH_FAILED) << "input " << index;
+    }
 }

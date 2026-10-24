@@ -55,7 +55,7 @@ public:
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
             .AutoContiguous();
 
-        // 标量输入 (shape = [1])
+        // Rank 0 标量输入 (shape = [])
         this->Input("lr")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT, ge::DT_FLOAT16})

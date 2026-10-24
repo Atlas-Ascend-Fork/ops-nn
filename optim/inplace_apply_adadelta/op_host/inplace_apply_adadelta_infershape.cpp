@@ -24,6 +24,8 @@
  *   V2 相对 V1 净变更：补充 accum(1) / accum_update(2) 两个输出 shape。
  */
 
+#include <array>
+
 #include "util/shape_util.h"
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_shape_context.h"
@@ -34,19 +36,75 @@ using namespace ge;
 namespace ops {
 
 constexpr size_t INPUT_VAR_INDEX = 0;
+constexpr size_t INPUT_ACCUM_INDEX = 1;
+constexpr size_t INPUT_ACCUM_UPDATE_INDEX = 2;
+constexpr size_t INPUT_LR_INDEX = 3;
+constexpr size_t INPUT_RHO_INDEX = 4;
+constexpr size_t INPUT_EPSILON_INDEX = 5;
+constexpr size_t INPUT_GRAD_INDEX = 6;
 constexpr size_t OUTPUT_VAR_INDEX = 0;
 constexpr size_t OUTPUT_ACCUM_INDEX = 1;
 constexpr size_t OUTPUT_ACCUM_UPDATE_INDEX = 2;
 
+static bool ShapeEqual(const gert::Shape& lhs, const gert::Shape& rhs)
+{
+    if (lhs.GetDimNum() != rhs.GetDimNum()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.GetDimNum(); ++i) {
+        if (lhs.GetDim(i) != rhs.GetDim(i)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static ge::graphStatus InferShape4InplaceApplyAdadelta(gert::InferShapeContext* context)
 {
-    // Input(0) = var; all outputs share var shape (四张量同形，无广播)
     const gert::Shape* inputShape = context->GetInputShape(INPUT_VAR_INDEX);
-    if (inputShape == nullptr) {
+    const auto* var = context->GetInputTensor(INPUT_VAR_INDEX);
+    if (inputShape == nullptr || var == nullptr) {
         return ge::GRAPH_FAILED;
     }
 
-    // Output(0) = var
+    // The legacy ApplyAdadeltaD verifier accepts at most eight dimensions.
+    constexpr size_t MAX_VAR_RANK = 8;
+    const size_t varRank = var->GetOriginShape().GetDimNum();
+    if (varRank > MAX_VAR_RANK) {
+        OP_LOGE(context->GetNodeName(), "var rank must be in [0, 8], got %zu", varRank);
+        return ge::GRAPH_FAILED;
+    }
+
+    constexpr std::array<size_t, 3> MAIN_INPUTS = {INPUT_ACCUM_INDEX, INPUT_ACCUM_UPDATE_INDEX, INPUT_GRAD_INDEX};
+    constexpr std::array<const char*, 3> MAIN_NAMES = {"accum", "accum_update", "grad"};
+    for (size_t i = 0; i < MAIN_INPUTS.size(); ++i) {
+        const auto* input = context->GetInputTensor(MAIN_INPUTS[i]);
+        if (input == nullptr) {
+            OP_LOGE(context->GetNodeName(), "missing shape for %s", MAIN_NAMES[i]);
+            return ge::GRAPH_FAILED;
+        }
+        if (!ShapeEqual(var->GetOriginShape(), input->GetOriginShape()) ||
+            !ShapeEqual(var->GetStorageShape(), input->GetStorageShape())) {
+            OP_LOGE(context->GetNodeName(), "var and %s must have the same origin and storage shapes", MAIN_NAMES[i]);
+            return ge::GRAPH_FAILED;
+        }
+    }
+
+    constexpr std::array<size_t, 3> SCALAR_INPUTS = {INPUT_LR_INDEX, INPUT_RHO_INDEX, INPUT_EPSILON_INDEX};
+    constexpr std::array<const char*, 3> SCALAR_NAMES = {"lr", "rho", "epsilon"};
+    for (size_t i = 0; i < SCALAR_INPUTS.size(); ++i) {
+        const auto* input = context->GetInputTensor(SCALAR_INPUTS[i]);
+        if (input == nullptr) {
+            OP_LOGE(context->GetNodeName(), "missing shape for %s", SCALAR_NAMES[i]);
+            return ge::GRAPH_FAILED;
+        }
+        if (input->GetOriginShape().GetDimNum() != 0 || input->GetStorageShape().GetShapeSize() != 1) {
+            OP_LOGE(context->GetNodeName(), "%s must be a rank-0 scalar tensor, got rank %zu with %ld storage elements",
+                    SCALAR_NAMES[i], input->GetOriginShape().GetDimNum(), input->GetStorageShape().GetShapeSize());
+            return ge::GRAPH_FAILED;
+        }
+    }
+
     gert::Shape* varOutShape = context->GetOutputShape(OUTPUT_VAR_INDEX);
     if (varOutShape == nullptr) {
         return ge::GRAPH_FAILED;

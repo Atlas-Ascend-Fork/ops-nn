@@ -19,7 +19,7 @@
  * \brief InplaceApplyAdadelta TilingData structure
  *
  * Note: lr / rho / epsilon are not carried in TilingData. They are passed
- * as 1-element scalar Tensors (GM addr) and read by Kernel at runtime.
+ * as rank-0 scalar Tensors (one physical GM element) and read by Kernel at runtime.
  * TilingData only carries shape-splitting information and the optional
  * use_locking attribute.
  */

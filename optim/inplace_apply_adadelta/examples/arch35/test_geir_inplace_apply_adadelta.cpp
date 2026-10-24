@@ -167,9 +167,13 @@ int32_t WriteDataToFile(string bin_file, uint64_t data_size, uint8_t* inputData)
         return FAILED;
     }
     size_t written = fwrite(inputData, sizeof(uint8_t), data_size, fp);
-    fclose(fp);
+    int close_ret = fclose(fp);
     if (written != data_size) {
         printf("WriteDataToFile: short write %zu/%lu\n", written, data_size);
+        return FAILED;
+    }
+    if (close_ret != 0) {
+        printf("WriteDataToFile: fclose failed for %s\n", bin_file.c_str());
         return FAILED;
     }
     return SUCCESS;
@@ -206,7 +210,7 @@ static bool VerifyConstantOutput(const ge::Tensor& output, const vector<int64_t>
     constexpr float atol = 1.22e-4F;
     for (size_t i = 0; i < count; ++i) {
         const float tolerance = atol + rtol * std::fabs(expectedValue);
-        if (std::fabs(data[i] - expectedValue) > tolerance) {
+        if (!std::isfinite(data[i]) || std::fabs(data[i] - expectedValue) > tolerance) {
             printf("[FAIL] %s[%zu]: expected=%.8g actual=%.8g tolerance=%.4e\n", name, i, expectedValue, data[i],
                    tolerance);
             return false;
@@ -253,7 +257,7 @@ int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vect
 
     // shape 约定
     std::vector<int64_t> tensorShape = {2, 4, 4, 4}; // var / accum / accum_update / grad 的 shape（共 128 元素）
-    std::vector<int64_t> scalarShape = {1};          // lr / rho / epsilon 的 shape
+    std::vector<int64_t> scalarShape = {};           // lr / rho / epsilon 的 Rank 0 shape
 
     int idx = 0;
     // 7 个输入 —— 顺序须与 REG_OP(InplaceApplyAdadelta) 的 .INPUT 顺序一致
@@ -309,21 +313,26 @@ int main(int argc, char* argv[])
     Graph graph(graph_name);
     std::vector<ge::Tensor> input;
 
+    const std::string deviceId = argc > 1 ? argv[1] : "0";
+    if (deviceId.empty() || deviceId.find_first_not_of("0123456789") != std::string::npos) {
+        std::cerr << "Invalid device id: " << deviceId << std::endl;
+        return FAILED;
+    }
+    std::cout << "device id: " << deviceId << std::endl;
     printf("%s - INFO - [XIR]: Start to initialize ge using ge global options\n", GetTime().c_str());
-    std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
+    std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", deviceId.c_str()},
+                                                           {"ge.graphRunMode", "1"}};
     Status ret = ge::GEInitialize(global_options);
     if (ret != SUCCESS) {
-        printf("%s - INFO - [XIR]: Initialize ge using ge global options failed\n", GetTime().c_str());
+        const ge::AscendString errorMsg = ge::GEGetErrorMsgV2();
+        printf("%s - ERROR - [XIR]: Initialize ge failed, status=%u, detail=%s\n", GetTime().c_str(), ret,
+               errorMsg.GetString() == nullptr ? "" : errorMsg.GetString());
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Initialize ge using ge global options success\n", GetTime().c_str());
 
     std::vector<Operator> inputs{};
     std::vector<Operator> outputs{};
-
-    if (argc > 1) {
-        std::cout << "device id arg: " << argv[1] << std::endl;
-    }
 
     DataType inDtype = DT_FLOAT;
     std::cout << "input dtype: " << inDtype << std::endl;

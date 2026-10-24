@@ -27,7 +27,7 @@
  *
  * Inputs (7 Tensor): var, accum, accum_update, lr, rho, epsilon, grad
  *   - var/accum/accum_update/grad: full tensors (shape == var.shape)
- *   - lr/rho/epsilon: 1-element scalar tensors (shape={1})
+ *   - lr/rho/epsilon: rank-0 scalar tensors (logical shape={}, one physical element)
  * Outputs (3 Tensor): var, accum, accum_update (三显式 inplace 输出，均 alias 对应 INPUT)
  *
  * Template parameters:
@@ -51,8 +51,8 @@
  *   比较结果均为 false（mask 位=0），走「保留」分支，原值（含 NaN/Inf 位模式）透传。
  *   Step2 保持 sqrt * reciprocal_sqrt * grad 的运算顺序，避免把整个
  *   表达式改写为一次除法而改变 FLT_MAX 附近 update^2 的溢出边界。
- *   FP32 reciprocal_sqrt 使用原生近似初值加一次非融合 Newton-Raphson
- *   修正，以保持参考 CPU 的指令级舍入边界。参考 CPU 的 FP16 向量主体
+ *   FP32 reciprocal_sqrt 使用 0-ULP sqrt + reciprocal，避免近似初值的
+ *   单边误差在极值学习率下被放大。参考 CPU 的 FP16 向量主体
  *   使用 8-element packet reciprocal_sqrt；不足一个 packet 的全局尾部
  *   则按标量顺序先将 sqrt 舍入到 half，再执行 reciprocal。Kernel 对这两种
  *   路径分别复现，避免尾元素跨越 half 舍入格点。
@@ -129,9 +129,10 @@ private:
     // native approximate seed followed by one non-fused Newton step.
     __aicore__ inline void RefinedRsqrt(const LocalTensor<float>& dst, const LocalTensor<float>& src,
                                         int64_t current_num);
-    // 0-ULP primitives used by the FP16 scalar-tail path. Its evaluation order
-    // is half(1 / half(sqrt(x))), so sqrt and reciprocal must be separated by
-    // an explicit fp32 -> half -> fp32 rounding boundary.
+    // 0-ULP primitives used by the FP32 path and the FP16 scalar-tail path.
+    // The FP16 scalar-tail evaluation order is half(1 / half(sqrt(x))), so its
+    // sqrt and reciprocal are separated by an explicit fp32 -> half -> fp32
+    // rounding boundary at the call site.
     __aicore__ inline void ExactSqrt(const LocalTensor<float>& dst, const LocalTensor<float>& src, int64_t current_num);
     __aicore__ inline void ExactReciprocal(const LocalTensor<float>& dst, const LocalTensor<float>& src,
                                            int64_t current_num);
@@ -205,7 +206,7 @@ __aicore__ inline float InplaceApplyAdadelta<T, BUFFER_MODE>::FlushScalar(float 
     return x;
 }
 
-// Read the three 1-element scalar tensors through UB. GlobalTensor::GetValue
+// Read the three rank-0 scalar tensors (one physical element each) through UB. GlobalTensor::GetValue
 // is not permitted in production kernels; a dedicated 32B slot per scalar
 // avoids both out-of-bounds GM reads and source/destination overlap.
 template <typename T, int BUFFER_MODE>
@@ -302,7 +303,7 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::Init(GM_ADDR var, G
     pipe.InitBuffer(ftz_value_buf, ub_length_ * sizeof(float));
     pipe.InitBuffer(scalar_buf, SCALAR_COUNT * SCALAR_SLOT_BYTES);
 
-    // Read lr/rho/epsilon from their 1-element GM Tensors into fp32 scalars.
+    // Read lr/rho/epsilon from their rank-0 GM Tensors into fp32 scalars.
     // Every core executes this (not just block 0) so each core has its own
     // local copies of the three values for the per-core Process() loop.
     LoadScalarsFromGm(lrAddr, rhoAddr, epsilonAddr);
@@ -554,7 +555,8 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::Compute(int64_t cur
 // fp32, executing that single primitive, and immediately rounding the result
 // back to half. It does not keep the complete Adadelta expression in fp32.
 //
-// Keep all arithmetic intermediates in half for the same rounding boundaries.
+// Keep arithmetic intermediates in half at the reference rounding boundaries.
+// The accum and var multiply-add expressions round once after the addition.
 // sqrt and reciprocal-sqrt are evaluated in fp32 and cast back to half before
 // the following multiply. The final incomplete reference packet is adjusted
 // separately because its scalar reciprocal-sqrt rounds sqrt to half first.
@@ -569,7 +571,6 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::ComputeStepsFp16(
     LocalTensor<float> sqrtF = fp32_var_buf.Get<float>();
     LocalTensor<float> rsqrtF = fp32_accum_buf.Get<float>();
 
-    const T lrH = static_cast<T>(lr_);
     const T rhoH = static_cast<T>(rho_);
     const T oneMinusRhoH = static_cast<T>(one_minus_rho_);
     const T epsH = static_cast<T>(eps_);
@@ -577,8 +578,8 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::ComputeStepsFp16(
     // Step1: accum_new = accum * rho + grad^2 * (1 - rho)
     Mul(tmp1H, g, g, current_num);
     Muls(tmp1H, tmp1H, oneMinusRhoH, current_num);
-    Muls(a_out, a, rhoH, current_num);
-    Add(a_out, a_out, tmp1H, current_num);
+    Duplicate(tmp2H, rhoH, current_num);
+    Fma(a_out, a, tmp2H, tmp1H, current_num);
 
     // Step2: update = half(half(sqrt(half(au + eps)) *
     //                          rsqrt(half(accum_new + eps))) * grad)
@@ -643,8 +644,8 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::ComputeStepsFp16(
     Mul(tmp1H, tmp1H, g, current_num);
 
     // Step3: var_new = var - lr * update
-    Muls(tmp2H, tmp1H, lrH, current_num);
-    Sub(v_out, v, tmp2H, current_num);
+    Duplicate(tmp2H, static_cast<T>(-lr_), current_num);
+    Fma(v_out, tmp1H, tmp2H, v, current_num);
 
     // Step4: accum_update_new = au_old * rho + update^2 * (1 - rho)
     Mul(tmp2H, tmp1H, tmp1H, current_num);
@@ -683,17 +684,20 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::ComputeStepsFp32(
     ApplyFtz(tmp1, current_num);
     Adds(tmp2, a_out, eps_, current_num);
     ApplyFtz(tmp2, current_num);
-    RefinedRsqrt(tmp2, tmp2, current_num);
+    ExactSqrt(tmp2, tmp2, current_num);
+    PipeBarrier<PIPE_V>();
+    ExactReciprocal(tmp2, tmp2, current_num);
     ApplyFtz(tmp2, current_num);
     Mul(tmp1, tmp1, tmp2, current_num);
     ApplyFtz(tmp1, current_num);
     Mul(tmp1, tmp1, g, current_num);
     ApplyFtz(tmp1, current_num);
 
-    // Step3: var_new = var - lr * update
-    Muls(tmp2, tmp1, lr_, current_num);
-    ApplyFtz(tmp2, current_num);
-    Sub(v_out, v, tmp2, current_num);
+    // Step3: var_new = var - lr * update. Keep the multiply and subtraction
+    // fused, matching the TensorFlow GPU expression and avoiding a premature
+    // fp32 overflow before the subtraction.
+    Duplicate(tmp2, -lr_, current_num);
+    Fma(v_out, tmp1, tmp2, v, current_num);
     ApplyFtz(v_out, current_num);
 
     // Step4: accum_update_new = rho * accum_update + (1-rho) * update^2

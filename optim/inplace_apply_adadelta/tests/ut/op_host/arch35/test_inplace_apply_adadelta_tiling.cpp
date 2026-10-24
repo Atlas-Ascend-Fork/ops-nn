@@ -17,7 +17,7 @@
  * Schema:
  *   Inputs  (7): var, accum, accum_update, lr, rho, epsilon, grad
  *     - var / accum / accum_update / grad: share var.shape, dtype in {FP16, FP32}
- *     - lr / rho / epsilon: scalar tensors (shape == {1}), same dtype as var
+ *     - lr / rho / epsilon: rank-0 scalar tensors (shape == {}), same dtype as var
  *   Outputs (3): var, accum, accum_update  (three explicit in-place outputs)
  *   Attrs   (1): use_locking (optional bool, default false)
  *
@@ -36,7 +36,7 @@
  * count, dims, buffer threshold and slot count are identical to the single
  * output V1 baseline.
  *
- * Test coverage (18 cases):
+ * Test coverage (20 cases):
  *   T01 FP32 single buffer (small shape)
  *   T02 FP32 double buffer (large shape)
  *   T03 FP16 single buffer (small shape)
@@ -47,14 +47,16 @@
  *   T08 C1 shape mismatch: accum.shape != var.shape -> FAILED
  *   T09 C1 shape mismatch: accum_update.shape != var.shape -> FAILED
  *   T10 C1 shape mismatch: grad.shape != var.shape -> FAILED
- *   T11 C3 scalar form: lr.shape != {1} -> FAILED
+ *   T11 C3 scalar form: lr.shape == {2} -> FAILED
  *   T12 use_locking == true  -> TilingData.useLocking == 1
  *   T13 use_locking == false -> TilingData.useLocking == 0
- *   T14 rank == 9 (out of [1, 8]) -> FAILED
+ *   T14 rank == 9 (out of [0, 8]) -> FAILED
  *   T15 8D shape (rank == 8 boundary) -> SUCCESS
- *   T16 rank == 0 (0-dim scalar var, lower-bound of [1, 8]) -> FAILED
- *   T17 rank == 0 with storage shape normalized to {1} -> FAILED
- *   T18 epsilon rank == 0 with storage shape normalized to {1} -> FAILED
+ *   T16 rank == 0 (0-dim scalar var) -> SUCCESS
+ *   T17 rank == 0 with storage shape normalized to {1} -> SUCCESS
+ *   T18 lr/rho/epsilon rank == 0 with storage shape normalized to {1} -> SUCCESS
+ *   T19 C3 scalar form: rho.shape == {1} -> FAILED
+ *   T20 C3 scalar form: epsilon.shape == {1, 1} -> FAILED
  */
 
 #include <gtest/gtest.h>
@@ -124,7 +126,7 @@ static InplaceApplyAdadeltaTilingResult DoInplaceApplyAdadeltaTilingCase(
     const std::initializer_list<int64_t>& accumUpdateShape, const std::initializer_list<int64_t>& lrShape,
     const std::initializer_list<int64_t>& rhoShape, const std::initializer_list<int64_t>& epsilonShape,
     const std::initializer_list<int64_t>& gradShape, ge::DataType tensorDtype, ge::Format inputFormat, bool useLocking,
-    bool normalizeVarRankZeroStorage = false, bool normalizeEpsilonRankZeroStorage = false)
+    bool normalizeVarRankZeroStorage = false)
 {
     InplaceApplyAdadeltaTilingResult result{ge::GRAPH_FAILED, 0, 0, 0};
 
@@ -166,7 +168,14 @@ static InplaceApplyAdadeltaTilingResult DoInplaceApplyAdadeltaTilingCase(
         accumUpdateStorage.MutableStorageShape() = gert::Shape({1});
         gradStorage.MutableStorageShape() = gert::Shape({1});
     }
-    if (normalizeEpsilonRankZeroStorage) {
+    // GE represents a logical rank-0 scalar with one physical storage element.
+    if (lrShape.size() == 0) {
+        lrStorage.MutableStorageShape() = gert::Shape({1});
+    }
+    if (rhoShape.size() == 0) {
+        rhoStorage.MutableStorageShape() = gert::Shape({1});
+    }
+    if (epsilonShape.size() == 0) {
         epsilonStorage.MutableStorageShape() = gert::Shape({1});
     }
 
@@ -220,12 +229,12 @@ static InplaceApplyAdadeltaTilingResult DoInplaceApplyAdadeltaTilingCase(
 }
 
 // Convenience wrapper: build a "valid" context where all 4 tensor inputs share
-// the same shape and lr/rho/epsilon are shape {1}. Returns the tiling result.
+// the same shape and lr/rho/epsilon are logical rank-0 scalars. Returns the tiling result.
 static InplaceApplyAdadeltaTilingResult DoInplaceApplyAdadeltaValidCase(
     const std::initializer_list<int64_t>& tensorShape, ge::DataType tensorDtype, bool useLocking = false)
 {
-    return DoInplaceApplyAdadeltaTilingCase(tensorShape, tensorShape, tensorShape, {1}, {1}, {1}, tensorShape,
-                                            tensorDtype, ge::FORMAT_ND, useLocking);
+    return DoInplaceApplyAdadeltaTilingCase(tensorShape, tensorShape, tensorShape, {}, {}, {}, tensorShape, tensorDtype,
+                                            ge::FORMAT_ND, useLocking);
 }
 
 // =====================================================================
@@ -313,7 +322,7 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c1_accum_shape_mis
 {
     auto result = DoInplaceApplyAdadeltaTilingCase(
         /*var=*/{2048}, /*accum=*/{1024}, /*accum_update=*/{2048},
-        /*lr=*/{1}, /*rho=*/{1}, /*epsilon=*/{1}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }
 
@@ -324,7 +333,7 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c1_accum_update_sh
 {
     auto result = DoInplaceApplyAdadeltaTilingCase(
         /*var=*/{2048}, /*accum=*/{2048}, /*accum_update=*/{1024},
-        /*lr=*/{1}, /*rho=*/{1}, /*epsilon=*/{1}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }
 
@@ -335,18 +344,18 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c1_grad_shape_mism
 {
     auto result = DoInplaceApplyAdadeltaTilingCase(
         /*var=*/{2048}, /*accum=*/{2048}, /*accum_update=*/{2048},
-        /*lr=*/{1}, /*rho=*/{1}, /*epsilon=*/{1}, /*grad=*/{1024}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{1024}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }
 
 // =====================================================================
-// T11 C3 scalar form: lr is NOT a 1-element Tensor -> FAILED
+// T11 C3 scalar form: lr rank == 1 and has two elements -> FAILED
 // =====================================================================
 TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c3_lr_not_scalar)
 {
     auto result = DoInplaceApplyAdadeltaTilingCase(
         /*var=*/{2048}, /*accum=*/{2048}, /*accum_update=*/{2048},
-        /*lr=*/{2}, /*rho=*/{1}, /*epsilon=*/{1}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
+        /*lr=*/{2}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }
 
@@ -371,7 +380,7 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_use_locking_false)
 }
 
 // =====================================================================
-// T14 var rank == 9 (out of valid range [1, 8]) -> FAILED
+// T14 var rank == 9 (out of valid range [0, 8]) -> FAILED
 // =====================================================================
 TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_9_invalid)
 {
@@ -379,7 +388,7 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_9_invalid)
         /*var=*/{2, 1, 1, 1, 1, 1, 1, 1, 2},
         /*accum=*/{2, 1, 1, 1, 1, 1, 1, 1, 2},
         /*accum_update=*/{2, 1, 1, 1, 1, 1, 1, 1, 2},
-        /*lr=*/{1}, /*rho=*/{1}, /*epsilon=*/{1},
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{},
         /*grad=*/{2, 1, 1, 1, 1, 1, 1, 1, 2}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }
@@ -397,41 +406,65 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_8_boundary)
 }
 
 // =====================================================================
-// T16 var rank == 0 (0-dim scalar, lower-bound of [1, 8]) -> FAILED
+// T16 var rank == 0 (0-dim scalar) -> SUCCESS
 // =====================================================================
-TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_0_invalid)
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_0_valid)
 {
     auto result = DoInplaceApplyAdadeltaTilingCase(
         /*var=*/{}, // 0-dim scalar var
         /*accum=*/{},
         /*accum_update=*/{},
-        /*lr=*/{1}, /*rho=*/{1}, /*epsilon=*/{1},
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{},
         /*grad=*/{}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
-    // var rank == 0 must be rejected (rank must be in [1, 8])
-    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_EQ(result.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(result.totalNum, 1);
 }
 
 // =====================================================================
-// T17 var origin rank == 0, storage shape normalized to {1} -> FAILED
+// T17 var origin rank == 0, storage shape normalized to {1} -> SUCCESS
 // =====================================================================
-TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_origin_rank_0_normalized_storage_invalid)
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_origin_rank_0_normalized_storage_valid)
 {
     auto result = DoInplaceApplyAdadeltaTilingCase(
         /*var=*/{}, /*accum=*/{}, /*accum_update=*/{},
-        /*lr=*/{1}, /*rho=*/{1}, /*epsilon=*/{1}, /*grad=*/{}, ge::DT_FLOAT, ge::FORMAT_ND,
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{}, ge::DT_FLOAT, ge::FORMAT_ND,
         /*useLocking=*/false, /*normalizeVarRankZeroStorage=*/true);
+    EXPECT_EQ(result.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(result.totalNum, 1);
+}
+
+// =====================================================================
+// T18 lr/rho/epsilon origin rank == 0, storage normalized to {1} -> SUCCESS
+// =====================================================================
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_scalar_rank_0_normalized_storage_valid)
+{
+    auto result = DoInplaceApplyAdadeltaTilingCase(
+        /*var=*/{2048}, /*accum=*/{2048}, /*accum_update=*/{2048},
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND,
+        /*useLocking=*/false);
+    EXPECT_EQ(result.status, ge::GRAPH_SUCCESS);
+}
+
+// =====================================================================
+// T19 C3 scalar form: rho shape {1} is rank 1, not a rank-0 scalar -> FAILED
+// =====================================================================
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rho_rank_1_shape_1_invalid)
+{
+    auto result = DoInplaceApplyAdadeltaTilingCase(
+        /*var=*/{2048}, /*accum=*/{2048}, /*accum_update=*/{2048},
+        /*lr=*/{}, /*rho=*/{1}, /*epsilon=*/{}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND,
+        /*useLocking=*/false);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }
 
 // =====================================================================
-// T18 epsilon origin rank == 0, storage shape normalized to {1} -> FAILED
+// T20 C3 scalar form: epsilon shape {1, 1} is rank 2 -> FAILED
 // =====================================================================
-TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_epsilon_rank_0_normalized_storage_invalid)
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_epsilon_rank_2_shape_1_1_invalid)
 {
     auto result = DoInplaceApplyAdadeltaTilingCase(
         /*var=*/{2048}, /*accum=*/{2048}, /*accum_update=*/{2048},
-        /*lr=*/{1}, /*rho=*/{1}, /*epsilon=*/{}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND,
-        /*useLocking=*/false, /*normalizeVarRankZeroStorage=*/false,
-        /*normalizeEpsilonRankZeroStorage=*/true);
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{1, 1}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND,
+        /*useLocking=*/false);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }

@@ -13,7 +13,7 @@
 
 ## 功能说明
 
-- 算子功能：执行Adadelta优化器的单步参数更新（三显式inplace输出）。根据当前梯度、梯度平方累积accum和更新量平方累积accum_update，计算参数更新量并**原地**更新权重参数var以及accum、accum_update。相对V1（ApplyAdadelta，单输出algorithmic inplace），本算子将输出端口升级为3个（var/accum/accum_update，均inplace alias对应 INPUT），完整反映Adadelta算法的inplace更新语义。
+- 算子功能：执行Adadelta优化器的单步参数更新（三显式inplace输出）。根据当前梯度、梯度平方累积accum和更新量平方累积accum_update，计算参数更新量并**原地**更新权重参数var以及accum、accum_update。相对V1（ApplyAdadelta，单输出algorithmic inplace），本算子将输出端口升级为3个（var/accum/accum_update，均与同名输入构成inplace关系），完整反映Adadelta算法的inplace更新语义。
 
 - 计算公式：
 
@@ -26,11 +26,11 @@
       \end{aligned}
   $$
 
-  其中 `rho` 为衰减系数（取值范围 [0, 1)），`epsilon` 为数值稳定常数（必须 > 0），`lr` 为学习率。
+  其中 `rho` 为衰减系数（取值范围 [0, 1)），`epsilon` 为数值稳定常数（通常取正值），`lr` 为学习率。
 
 ## 参数说明
 
-<table style="undefined;table-layout: fixed; width: 1430px">
+<table style="table-layout: fixed; width: 1430px">
   <colgroup>
     <col style="width: 127px">
     <col style="width: 120px">
@@ -51,42 +51,42 @@
     <tr>
       <td>var</td>
       <td>输入/输出(inplace)</td>
-      <td>待更新的权重参数，对应公式中的var。Kernel内inplace更新，输出var与输入var共享Device内存。</td>
+      <td>待更新的权重参数，对应公式中的var。输出var与输入var构成inplace关系。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>accum</td>
       <td>输入/输出(inplace)</td>
-      <td>梯度平方累积，对应公式中的accum。shape/dtype必须与var一致；输出accum与输入accum共享Device内存。</td>
+      <td>梯度平方累积，对应公式中的accum。shape/dtype必须与var一致；输出accum与输入accum构成inplace关系。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>accum_update</td>
       <td>输入/输出(inplace)</td>
-      <td>更新量平方累积，对应公式中的accum_update。shape/dtype 必须与var一致；输出accum_update与输入accum_update共享Device内存。</td>
+      <td>更新量平方累积，对应公式中的accum_update。shape/dtype 必须与var一致；输出accum_update与输入accum_update构成inplace关系。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>lr</td>
       <td>输入</td>
-      <td>学习率，对应公式中的lr。shape={1}的1元素scalar Tensor，dtype必须与var一致。</td>
+      <td>学习率，对应公式中的lr。Rank 0 scalar Tensor（shape={}），dtype必须与var一致。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>rho</td>
       <td>输入</td>
-      <td>衰减系数，对应公式中的rho。shape={1}的1元素scalar Tensor，取值范围[0, 1)。</td>
+      <td>衰减系数，对应公式中的rho。Rank 0 scalar Tensor（shape={}），取值范围[0, 1)。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>epsilon</td>
       <td>输入</td>
-      <td>数值稳定常数，对应公式中的epsilon。shape={1}的1元素scalar Tensor，必须>0。</td>
+      <td>数值稳定常数，对应公式中的epsilon。Rank 0 scalar Tensor（shape={}）；通常取正值，非正值按公式计算。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
@@ -100,28 +100,28 @@
     <tr>
       <td>use_locking</td>
       <td>属性</td>
-      <td>是否在更新时加锁。默认false。当前实现不强制互斥锁，仅作语义占位。</td>
+      <td>仅保留接口兼容性，与A2老算子ApplyAdadeltaD的实现保持兼容一致性。默认false，不参与计算流程或并发锁控制。</td>
       <td>BOOL</td>
       <td>-</td>
     </tr>
     <tr>
       <td>var(output)</td>
       <td>输出</td>
-      <td>更新后的var Tensor，与输入var共享Device内存（inplace）。</td>
+      <td>更新后的var Tensor，与输入var构成inplace关系。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>accum(output)</td>
       <td>输出</td>
-      <td>更新后的accum Tensor，与输入accum共享Device内存（inplace）。</td>
+      <td>更新后的accum Tensor，与输入accum构成inplace关系。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>accum_update (output)</td>
       <td>输出</td>
-      <td>更新后的accum_update Tensor，与输入accum_update共享Device内存（inplace）。</td>
+      <td>更新后的accum_update Tensor，与输入accum_update构成inplace关系。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
@@ -130,13 +130,15 @@
 
 ## 约束说明
 
-- var/accum/accum_update/grad四者shape必须完全一致；var rank∈[1, 8]（ND 格式）。
-- lr/rho/epsilon必须为1元素scalar Tensor（shape `{1}`），dtype与var 一致。
-- 仅支持FLOAT/FLOAT16；FP16路径中间计算Cast up到FP32域进行。
-- 空Tensor（totalNum == 0）时SetBlockDim(1)。
+- var/accum/accum_update/grad四者shape必须完全一致；var rank∈[0, 8]（ND 格式）。
+- GE图模式支持静态shape、未知维度（`-1`）和未知Rank（`-2`）构图；运行时四个主张量的具体shape须一致，具体rank为0～8，三个输出采用对应输入的具体shape。
+- lr/rho/epsilon必须为Rank 0 scalar Tensor（shape `{}`，物理存储为1个元素），dtype与var一致。
+- 仅支持FLOAT/FLOAT16；FP16中间结果保存为half，accum和var更新中的乘加使用Fma并在加法后舍入为half；开方和倒数开方使用FP32暂存，结果转回half。
+- FP32路径采用DAZ/FTZ数值语义：var、accum、accum_update、grad以及lr、rho、epsilon中的有限次正规数在参与计算前转为同符号的零；各FP32算术步骤产生的有限次正规结果在进入下一步前同样转为同符号的零。判定条件为`|x| < 1.17549435e-38`，恰好等于该阈值的最小正规数保留。NaN和Inf不由DAZ/FTZ处理改写，后续结果按具体浮点运算传播。
+- 支持合法同形的空Tensor。当var、accum、accum_update和grad的shape完全一致且包含零长度维时（例如`[0]`或`[0, 3]`），算子成功返回；var、accum和accum_update三个输出分别保持对应输入的shape、dtype及inplace关系，不执行元素计算。lr、rho和epsilon仍须为Rank 0 scalar Tensor。
 
 ## 调用说明
 
-| 调用方式   | 调用样例                                                | 说明                            |
+| 调用方式   | 样例代码                                                | 说明                            |
 | :--------- | :------------------------------------------------------ | :------------------------------ |
-| 图模式 | [test_geir_inplace_apply_adadelta](./examples/test_geir_inplace_apply_adadelta.cpp) | 通过 [算子IR](./op_graph/inplace_apply_adadelta_proto.h) 构图方式调用InplaceApplyAdadelta算子。 |
+| GE图模式 | [test_geir_inplace_apply_adadelta](./examples/test_geir_inplace_apply_adadelta.cpp) | 通过 [算子IR](./op_graph/inplace_apply_adadelta_proto.h) 构图方式调用InplaceApplyAdadelta算子；此样例演示静态shape。 |

@@ -43,9 +43,9 @@ namespace ge {
  *   @li var:          A Tensor of type float16 or float32. Weight to update.
  *   @li accum:        A Tensor of type float16 or float32. Gradient squared accumulator.
  *   @li accum_update: A Tensor of type float16 or float32. Update squared accumulator.
- *   @li lr:           Scalar Tensor ([1]) learning rate.
- *   @li rho:          Scalar Tensor ([1]) decay rate, range [0, 1).
- *   @li epsilon:      Scalar Tensor ([1]) numerical-stability constant, must be > 0.
+ *   @li lr:           Rank-0 scalar Tensor ([]) learning rate.
+ *   @li rho:          Rank-0 scalar Tensor ([]) decay rate, range [0, 1).
+ *   @li epsilon:      Rank-0 scalar Tensor ([]) numerical-stability constant, typically positive.
  *   @li grad:         A Tensor, same shape/dtype as var.
  *
  * @par Outputs:

@@ -23,8 +23,8 @@
  *   key 1: BUFFER_MODE=1 (double buffer)
  * Dtype is injected by the build system from the op definition as DTYPE_VAR.
  *
- * Scalar parameters (lr, rho, epsilon) are 1-element Tensor inputs
- * (index 3/4/5). They are read by Kernel from GM at runtime, NOT passed
+ * Scalar parameters (lr, rho, epsilon) are rank-0 Tensor inputs
+ * (index 3/4/5), each backed by one physical element. They are read by Kernel from GM at runtime, NOT passed
  * via TilingData. Tiling here only handles shape splitting.
  *
  * V2 输出接线变更（3 输出）不影响 buffer 阈值和 UB slot 计算。
@@ -90,7 +90,7 @@ constexpr uint32_t EMPTY_TENSOR_BLOCK_DIM = 1;
 // per TilingKey as a conservative allowance.
 //
 // Note: this slot estimate is conservative (includes 4 input + 3 output queues).
-// The 3 scalar Tensor inputs (lr/rho/eps) are 1-element, so their UB footprint
+// The 3 rank-0 scalar Tensor inputs (lr/rho/eps) each have one physical element, so their UB footprint
 // is negligible; we keep the numbers as a safe over-estimate.
 static int64_t GetTensorSlots(ge::DataType dataType, uint64_t bufferMode)
 {
@@ -160,12 +160,12 @@ static bool ShapeEqual(const gert::Shape& a, const gert::Shape& b)
     return true;
 }
 
-// C3 constraint check: lr/rho/epsilon are non-zero-rank, 1-element Tensors.
-// GE normalizes a rank-0 Tensor to storage shape [1], so the origin rank must
-// also be checked to distinguish it from a valid 1-element Tensor.
+// C3 constraint check: lr/rho/epsilon are rank-0 scalar Tensors.
+// GE may normalize a rank-0 Tensor to storage shape [1]. Validate the logical
+// origin rank and also require the normalized storage to contain one element.
 static bool IsScalarShape(const gert::StorageShape& shape)
 {
-    return shape.GetOriginShape().GetDimNum() > 0 && shape.GetStorageShape().GetShapeSize() == SCALAR_ELEMENT_COUNT;
+    return shape.GetOriginShape().GetDimNum() == 0 && shape.GetStorageShape().GetShapeSize() == SCALAR_ELEMENT_COUNT;
 }
 
 // Input indices (REG_OP(InplaceApplyAdadelta) order)
@@ -187,19 +187,22 @@ static ge::graphStatus CheckShapeC1(gert::TilingContext* context, const gert::St
     auto gradShape = context->GetInputShape(kIdxGrad);
     OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
 
-    OP_CHECK_IF(!ShapeEqual(varShape->GetStorageShape(), accumShape->GetStorageShape()),
+    OP_CHECK_IF(!ShapeEqual(varShape->GetOriginShape(), accumShape->GetOriginShape()) ||
+                    !ShapeEqual(varShape->GetStorageShape(), accumShape->GetStorageShape()),
                 OP_LOGE(context->GetNodeName(), "C1 shape mismatch: shape(var) != shape(accum)"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!ShapeEqual(varShape->GetStorageShape(), accumUpdateShape->GetStorageShape()),
+    OP_CHECK_IF(!ShapeEqual(varShape->GetOriginShape(), accumUpdateShape->GetOriginShape()) ||
+                    !ShapeEqual(varShape->GetStorageShape(), accumUpdateShape->GetStorageShape()),
                 OP_LOGE(context->GetNodeName(), "C1 shape mismatch: shape(var) != shape(accum_update)"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!ShapeEqual(varShape->GetStorageShape(), gradShape->GetStorageShape()),
+    OP_CHECK_IF(!ShapeEqual(varShape->GetOriginShape(), gradShape->GetOriginShape()) ||
+                    !ShapeEqual(varShape->GetStorageShape(), gradShape->GetStorageShape()),
                 OP_LOGE(context->GetNodeName(), "C1 shape mismatch: shape(var) != shape(grad)"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
-// C3: lr / rho / epsilon must be 1-element Tensors.
+// C3: lr / rho / epsilon must be rank-0 scalar Tensors.
 static ge::graphStatus CheckScalarsC3(gert::TilingContext* context)
 {
     auto lrShape = context->GetInputShape(kIdxLr);
@@ -208,11 +211,11 @@ static ge::graphStatus CheckScalarsC3(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, rhoShape);
     auto epsShape = context->GetInputShape(kIdxEps);
     OP_CHECK_NULL_WITH_CONTEXT(context, epsShape);
-    OP_CHECK_IF(!IsScalarShape(*lrShape), OP_LOGE(context, "C3: lr must be a non-zero-rank 1-element Tensor"),
+    OP_CHECK_IF(!IsScalarShape(*lrShape), OP_LOGE(context, "C3: lr must be a rank-0 scalar Tensor"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!IsScalarShape(*rhoShape), OP_LOGE(context, "C3: rho must be a non-zero-rank 1-element Tensor"),
+    OP_CHECK_IF(!IsScalarShape(*rhoShape), OP_LOGE(context, "C3: rho must be a rank-0 scalar Tensor"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!IsScalarShape(*epsShape), OP_LOGE(context, "C3: epsilon must be a non-zero-rank 1-element Tensor"),
+    OP_CHECK_IF(!IsScalarShape(*epsShape), OP_LOGE(context, "C3: epsilon must be a rank-0 scalar Tensor"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -222,13 +225,13 @@ static ge::graphStatus GetShapeAndDataType(gert::TilingContext* context, int64_t
     auto varShape = context->GetInputShape(kIdxVar);
     OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
 
-    // DESIGN §4.3: var rank ∈ [1, 8]. Defense-in-depth at Tiling layer.
+    // Keep the legacy ApplyAdadeltaD eight-dimensional upper bound; scalar
+    // main tensors are valid in TensorFlow ApplyAdadelta.
     constexpr size_t kMaxRank = 8;
     // GE may normalize a rank-0 origin shape to storage shape [1]. The
     // contract applies to the origin rank, not the normalized storage rank.
     const size_t varRank = varShape->GetOriginShape().GetDimNum();
-    OP_CHECK_IF(varRank == 0 || varRank > kMaxRank,
-                OP_LOGE(context->GetNodeName(), "var rank must be in [1, 8], got %zu", varRank),
+    OP_CHECK_IF(varRank > kMaxRank, OP_LOGE(context->GetNodeName(), "var rank must be in [0, 8], got %zu", varRank),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(CheckShapeC1(context, varShape) != ge::GRAPH_SUCCESS,
