@@ -113,25 +113,14 @@ static ge::graphStatus HandleScalarInput(gert::InferShapeContext* context, const
         return GRAPH_SUCCESS;
     }
 
-    auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
-    const bool* attrKeepDims = attrs->GetAttrPointer<bool>(kAttrKeepDimsIdx);
-    const bool keepDims = (attrKeepDims == nullptr) ? kKeepDimsDefault : (*attrKeepDims);
-
     const gert::Tensor* axesTensor = context->GetInputTensor(kInputAxesIdx);
     if (axesTensor != nullptr && axesTensor->GetShapeSize() > 0) {
         OP_LOGE(context->GetNodeName(), "scalar input: axes must be empty, got %ld axes", axesTensor->GetShapeSize());
         return GRAPH_FAILED;
     }
 
-    if (keepDims) {
-        *yShape = gert::Shape({1});
-    } else {
-        *yShape = gert::Shape();
-    }
+    *yShape = gert::Shape();
     OP_LOGI(context->GetNodeName(), "EuclideanNorm output shape: %s.", Ops::Base::ToString(*yShape).c_str());
-    OP_LOGD(context->GetNodeName(), "scalar input: keepDims=%d, yShape dims=%zu", static_cast<int>(keepDims),
-            yShape->GetDimNum());
     return GRAPH_SUCCESS;
 }
 

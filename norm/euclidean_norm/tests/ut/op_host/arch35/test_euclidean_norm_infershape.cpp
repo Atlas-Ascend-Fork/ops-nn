@@ -133,3 +133,31 @@ TEST_F(EuclideanNormInfershape, infershape_invalid_duplicate_axes)
 
     EXPECT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
+TEST_F(EuclideanNormInfershape, infershape_scalar_keepdims_true_stays_scalar)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("EuclideanNorm")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape xShape = {{}, {}};
+    gert::StorageShape outShape;
+    auto axesHolder = MakeAxesConstTensor({});
+    auto* axesTensor = reinterpret_cast<gert::Tensor*>(axesHolder.get());
+
+    bool keepDims = true;
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType("EuclideanNorm")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes(std::vector<void*>{static_cast<void*>(&xShape), static_cast<void*>(axesTensor)})
+                      .OutputShapes({&outShape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"keep_dims", Ops::NN::AnyValue::CreateFrom<bool>(keepDims)}})
+                      .Build();
+
+    EXPECT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto* out = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(out->GetDimNum(), 0U);
+}
