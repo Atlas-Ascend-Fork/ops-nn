@@ -178,6 +178,9 @@ __aicore__ inline void DequantSwigluQuantBase<TEMPLATE_DSQ_ARGS>::Init(
 TEMPLATE_DSQ_DECLARE
 __aicore__ inline void DequantSwigluQuantBase<TEMPLATE_DSQ_ARGS>::Process()
 {
+    // swigluMode==1的gather偏移表需在no-group分支return前创建
+    CreateOffsetLocalTensor(UbSingleOutSize_, tl_->swigluMode);
+
     if constexpr (!hasGroupIndex_) {
         realDimx_ = tl_->inDimx;
         // do protect realDimx_ < 0, ignore this group
@@ -185,8 +188,6 @@ __aicore__ inline void DequantSwigluQuantBase<TEMPLATE_DSQ_ARGS>::Process()
         ProcessSingleGroup(0, realDimx_, 0);
         return;
     }
-
-    CreateOffsetLocalTensor(UbSingleOutSize_, tl_->swigluMode);
 
     groupOffset_ = 0;
     for (int32_t groupIdx = 0; groupIdx < tl_->inGroupNum; ++groupIdx) {

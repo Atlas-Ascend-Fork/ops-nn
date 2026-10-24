@@ -403,6 +403,30 @@ extern "C" __global__ __aicore__ void dequant_swiglu_quant(GM_ADDR xGM, GM_ADDR 
         op.Init(xGM, weightSscaleGM, activationScaleGM, nullptr, quantScaleGM, quantOffsetGM, groupIndex, yGM, scaleGM,
                 tilingData);
         op.Process();
+    } else if (TILING_KEY_IS(DEQUANT_SWIGLU_QUANT_WITHOUT_GROUP_FP32_QS)) {
+        GET_TILING_DATA_WITH_STRUCT(DequantSwigluQuantBaseTilingData, tilingDataIn, tiling);
+        const DequantSwigluQuantBaseTilingData* __restrict__ tilingData = &tilingDataIn;
+        // DTYPE_GROUP_INDEX == float mean have no groupIndex
+        DequantSwigluQuantOps::DequantSwigluQuantBase<float, float, float, bfloat16_t> op(&pipe);
+        op.Init(xGM, weightSscaleGM, activationScaleGM, nullptr, quantScaleGM, nullptr, groupIndex, yGM, scaleGM,
+                tilingData);
+        op.Process();
+    } else if (TILING_KEY_IS(DEQUANT_SWIGLU_QUANT_WITHOUT_GROUP_FP16_QS)) {
+        GET_TILING_DATA_WITH_STRUCT(DequantSwigluQuantBaseTilingData, tilingDataIn, tiling);
+        const DequantSwigluQuantBaseTilingData* __restrict__ tilingData = &tilingDataIn;
+        // DTYPE_GROUP_INDEX == float mean have no groupIndex
+        DequantSwigluQuantOps::DequantSwigluQuantBase<float, half, float, bfloat16_t> op(&pipe);
+        op.Init(xGM, weightSscaleGM, activationScaleGM, nullptr, quantScaleGM, nullptr, groupIndex, yGM, scaleGM,
+                tilingData);
+        op.Process();
+    } else if (TILING_KEY_IS(DEQUANT_SWIGLU_QUANT_WITHOUT_GROUP_BF16_QS)) {
+        GET_TILING_DATA_WITH_STRUCT(DequantSwigluQuantBaseTilingData, tilingDataIn, tiling);
+        const DequantSwigluQuantBaseTilingData* __restrict__ tilingData = &tilingDataIn;
+        // DTYPE_GROUP_INDEX == float mean have no groupIndex
+        DequantSwigluQuantOps::DequantSwigluQuantBase<float, bfloat16_t, float, bfloat16_t> op(&pipe);
+        op.Init(xGM, weightSscaleGM, activationScaleGM, nullptr, quantScaleGM, nullptr, groupIndex, yGM, scaleGM,
+                tilingData);
+        op.Process();
     } else if (TILING_KEY_IS(10001)) {
         GET_TILING_DATA_WITH_STRUCT(SwiGluTilingData, tilingDataIn, tiling);
         const SwiGluTilingData* __restrict__ tilingData = &tilingDataIn;

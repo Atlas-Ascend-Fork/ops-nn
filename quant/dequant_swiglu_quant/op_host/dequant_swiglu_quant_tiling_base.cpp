@@ -62,6 +62,7 @@ constexpr uint32_t PERFORMANCE_COL_LEN = 1536;
 constexpr uint32_t PERFORMANCE_ROW_LEN = 128;
 constexpr uint32_t MIN_CORE = 12;
 const int64_t DYNAMIC_INT_X_FLOAT32_BIAS_QUANT_D_PERFORMANCE = 30013;
+constexpr int64_t ATTR_SWIGLU_MODE_INDEX = 5;
 
 // Tiling优选参数
 struct GluSingleTilingOptParam {
@@ -536,6 +537,18 @@ ge::graphStatus DequantSwigluQuantTiling::GetShapeAttrsInfoInner()
 
     if (!SetAttr(attrs)) {
         return ge::GRAPH_FAILED;
+    }
+
+    // fp16的x无变体SwiGLU内核分支（Dsk路径SUPPORT_DTYPE仅int32/bf16），
+    // 本路径也不感知swiglu_mode，显式拒绝而非静默按mode0计算
+    if (xInputDataType == ge::DT_FLOAT16) {
+        auto* swigluMode = attrs->GetAttrPointer<int>(ATTR_SWIGLU_MODE_INDEX);
+        OP_CHECK_IF(swigluMode != nullptr && *swigluMode != 0,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "swiglu_mode",
+                                                          std::to_string(*swigluMode).c_str(),
+                                                          "swiglu_mode non-zero is not supported for float16 x, "
+                                                          "please use int32 or bfloat16 x"),
+                    return ge::GRAPH_FAILED);
     }
 
     if (checkInputShape(context_, xInputDataType) == ge::GRAPH_FAILED) {

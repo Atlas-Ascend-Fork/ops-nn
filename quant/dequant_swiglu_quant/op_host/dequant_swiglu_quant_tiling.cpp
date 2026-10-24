@@ -487,15 +487,27 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckIllegalParam()
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "group_index", speGroupType_ ? "2D" : "1D",
                                                   "When swiglu_mode is 1, group_index must be 1D"),
             return ge::GRAPH_FAILED);
+        // 无group_index且mode非0时，bias组合无对应内核分支，显式拒绝
+        OP_CHECK_IF(!IsPerformanceAndGroupIndexBrach() && hasBias_,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "bias", "not None",
+                                                          "bias is not supported when group_index is not provided "
+                                                          "and swiglu_mode is not 0"),
+                    return ge::GRAPH_FAILED);
+        // 静态量化的quant_scale/offset校验按group场景实现（要求dim(0)==groupNum），
+        // 无group_index时不支持静态量化，显式拒绝
+        OP_CHECK_IF(!IsPerformanceAndGroupIndexBrach() && quantMode_ != QUANT_MODE_DYNAMIC,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "quant_mode", "static",
+                                                          "static quant is not supported when group_index is not "
+                                                          "provided and swiglu_mode is not 0"),
+                    return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus DequantSwigluQuantDskTiling::GetShapeAttrsInfoInner()
 {
-    if (!IsPerformanceAndGroupIndexBrach()) {
-        return ge::GRAPH_SUCCESS;
-    }
+    // shape解析与group无关（无group时groupNum_为0），须完整解析，
+    // 提前返回会使inDimx_/inDimy_/outDimy_未初始化，blockDim算出0
     // get 2H from x, get H from y, check if 2H can be divided by 64
     auto shapeX = context_->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context_, shapeX);
@@ -503,7 +515,16 @@ ge::graphStatus DequantSwigluQuantDskTiling::GetShapeAttrsInfoInner()
     int64_t inputShapeXTotalNum = inputShapeX.GetShapeSize();
     int64_t inputShapeXRank = inputShapeX.GetDimNum();
     inDimy_ = inputShapeX.GetDim(inputShapeXRank - 1);
+    // 0可被64整除，后续对齐检查拦不住，须在除法前校验，否则inDimy_为0时除零
+    OP_CHECK_IF(
+        inDimy_ <= 0,
+        OP_LOGE_FOR_INVALID_SHAPE(context_->GetNodeName(), "x", std::to_string(inDimy_).c_str(), "greater than 0"),
+        return ge::GRAPH_FAILED);
     inDimx_ = inputShapeXTotalNum / inDimy_;
+    OP_CHECK_IF(inDimx_ <= 0,
+                OP_LOGE_FOR_INVALID_SHAPE(context_->GetNodeName(), "x", std::to_string(inputShapeXTotalNum).c_str(),
+                                          "shape size greater than 0"),
+                return ge::GRAPH_FAILED);
     auto shapeY = context_->GetOutputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context_, shapeY);
     const gert::Shape& outputShapeY = shapeY->GetStorageShape();
@@ -556,7 +577,20 @@ bool DequantSwigluQuantDskTiling::IsCapable()
     if (Ops::NN::OpTiling::IsRegbaseSocVersion(context_)) {
         return false;
     }
-    return IsPerformanceAndGroupIndexBrach();
+    if (IsPerformanceAndGroupIndexBrach()) {
+        return true;
+    }
+    // swiglu_mode非0仅Base kernel实现，无group时路由到本tiling；mode0仍走通用tiling保留性能分支
+    auto* xDesc = context_->GetInputDesc(X_INDEX);
+    if (xDesc == nullptr || SUPPORT_DTYPE.find(xDesc->GetDataType()) == SUPPORT_DTYPE.end()) {
+        return false;
+    }
+    auto* attrs = context_->GetAttrs();
+    if (attrs == nullptr) {
+        return false;
+    }
+    auto* swigluMode = attrs->GetAttrPointer<int>(SWIGLU_MODE_INDEX);
+    return swigluMode != nullptr && *swigluMode != 0;
 }
 
 void DequantSwigluQuantDskTiling::CountTilingKey()
