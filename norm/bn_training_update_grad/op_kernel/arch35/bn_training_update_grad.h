@@ -415,14 +415,19 @@ private:
 
     // 单段确定性归约：逐核 1D DataCopyPad 整槽收集（blockLen 恒 VL*4=256B ≥ 32B 且无 padding，
     // 规避 rightPadding≤32B/sizeof(T) 的 MTE 约束——补零式收集的 rightPad=63 会触发 AI Core
-    // MTE 异常 78；槽内 [w,64) 为 Phase1 未写的驻留垃圾，AccumulateFrom 按 w 截断不进累加器）
-    // + 固定核序向量累加（AccumulateFrom 已验证形态），求和序 = ws 槽序 = 核序——逐位确定。
+    // MTE 异常 78；槽内 [w,64) 为 Phase1 未写的驻留垃圾，KahanAccumulateFrom 按 w 截断不进累加器）
+    // + 固定核序 Kahan 向量累加（KahanAddReg 已验证形态，含 ±Inf 部和 NaN 防护），求和序 =
+    // ws 槽序 = 核序——逐位确定。跨核部分和 ~cores 次裸 fp32 顺序加在 |acc|≫|partial| 的深
+    // 归约下每步 0.5 ULP(|acc|) 截断（139 万行例 24 部分和偏 1 ULP 致 rmse 比值超限），Kahan
+    // 压回 O(eps)；补偿位复用 Phase2 空闲的 kahanScale_。
     __aicore__ inline void GatherReduceChunk(int64_t c0, int64_t w, int64_t outIdx, GlobalTensor<float>& outGm)
     {
         int64_t cores = tl_->channelCores;
         int64_t slot = tl_->cLenCap;
-        __ubuf__ float* accAddr = (__ubuf__ float*)kahanOff_.Get<float>().GetPhyAddr(); // Phase2 阶段空闲复用
-        ZeroBuf(kahanOff_, static_cast<int64_t>(VL_FP32));                              // 死 lane 恒 0
+        __ubuf__ float* accAddr = (__ubuf__ float*)kahanOff_.Get<float>().GetPhyAddr();    // Phase2 空闲复用
+        __ubuf__ float* compAddr = (__ubuf__ float*)kahanScale_.Get<float>().GetPhyAddr(); // Phase2 空闲(补偿位)
+        ZeroBuf(kahanOff_, static_cast<int64_t>(VL_FP32));                                 // 死 lane 恒 0
+        ZeroBuf(kahanScale_, static_cast<int64_t>(VL_FP32));                               // 补偿位清零
         for (int64_t g = 0; g < cores; g++) {
             LocalTensor<float> stage = p2Que_.AllocTensor<float>();
             DataCopyExtParams cpIn{1, static_cast<uint32_t>(VL_FP32 * sizeof(float)), 0, 0, 0};
@@ -430,10 +435,34 @@ private:
             DataCopyPad(stage, wsGm_[g * 2 * slot + outIdx * slot + c0], cpIn, padIn);
             p2Que_.EnQue(stage);
             stage = p2Que_.DeQue<float>();
-            AccumulateFrom((__ubuf__ float*)stage.GetPhyAddr(), accAddr, w);
+            KahanAccumulateFrom((__ubuf__ float*)stage.GetPhyAddr(), accAddr, compAddr, w);
             p2Que_.FreeTensor(stage);
         }
         WriteAccToGm(outGm[c0], accAddr, w);
+    }
+
+    // Phase2 Kahan 向量累加：src → acc（comp 为补偿位），逐 lane 独立补偿；loads 不带 mask、
+    // 算子/存储按 cnt 截断（AccumulateFrom 同款形态），死 lane 垃圾不入累加器。
+    __aicore__ inline void KahanAccumulateFrom(__ubuf__ float* srcAddr, __ubuf__ float* accAddr,
+                                               __ubuf__ float* compAddr, int64_t cnt)
+    {
+        VfLoops lp = MakeVfLoops(cnt);
+        __VEC_SCOPE__
+        {
+            RegTensor<float> srcReg;
+            MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+            for (uint16_t i = 0; i < lp.fullLoops; i++) {
+                uint32_t offset = i * VL_FP32;
+                DataCopy<float, LoadDist::DIST_NORM>(srcReg, srcAddr + offset);
+                KahanAddReg(accAddr + offset, compAddr + offset, srcReg, fullMask);
+            }
+            for (uint16_t i = lp.fullLoops; i < lp.totalLoops; i++) {
+                MaskReg tailMask = UpdateMask<float>(lp.tailCount);
+                uint32_t offset = i * VL_FP32;
+                DataCopy<float, LoadDist::DIST_NORM>(srcReg, srcAddr + offset);
+                KahanAddReg(accAddr + offset, compAddr + offset, srcReg, tailMask);
+            }
+        }
     }
 
     // 一个 (c 窗口, 行范围)：staging 窗口统计量 + 清 acc/kahan + 行 tile 循环（2D
