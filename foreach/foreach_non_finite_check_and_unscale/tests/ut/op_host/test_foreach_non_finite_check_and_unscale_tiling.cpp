@@ -9,6 +9,7 @@
  */
 
 #include <iostream>
+#include <tuple>
 #include <vector>
 #include <gtest/gtest.h>
 #include "log/log.h"
@@ -318,14 +319,20 @@ TEST_F(ForeachNonFiniteCheckAndUnscaleTiling, test_tiling_bfloat16_1)
     ASSERT_EQ(tiling_key, 3);
 }
 
-TEST_F(ForeachNonFiniteCheckAndUnscaleTiling, test_tiling_float32_regbase)
+class ForeachNonFiniteCheckAndUnscaleRegbaseTilingTest
+    : public ForeachNonFiniteCheckAndUnscaleTiling,
+      public testing::WithParamInterface<std::tuple<const char*, ge::DataType>> {};
+
+TEST_P(ForeachNonFiniteCheckAndUnscaleRegbaseTilingTest, platform_and_dtype)
 {
+    const auto& [socVersion, dtype] = GetParam();
+    const std::string npuArch = std::string(socVersion) == "Ascend960DT" ? "9201" : "3510";
     std::string op_type("ForeachNonFiniteCheckAndUnscale");
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
     auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
     auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
-    std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
-    std::map<std::string, std::string> npu_arch_infos = {{"NpuArch", "3510"}};
+    std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", socVersion}, {"NpuArch", npuArch}};
+    std::map<std::string, std::string> npu_arch_infos = {{"NpuArch", npuArch}};
 
     string compile_info_string = R"({
                                         "hardware_info": {
@@ -391,7 +398,7 @@ TEST_F(ForeachNonFiniteCheckAndUnscaleTiling, test_tiling_float32_regbase)
                       .InputShapes({&scaledGradsShapes, &foundInfShape, &invScaleShape})
                       .CompileInfo(&compile_info)
                       .PlatformInfo(reinterpret_cast<char*>(&platform_info))
-                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -414,6 +421,10 @@ TEST_F(ForeachNonFiniteCheckAndUnscaleTiling, test_tiling_float32_regbase)
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 100);
 }
+
+INSTANTIATE_TEST_SUITE_P(RegbasePlatforms, ForeachNonFiniteCheckAndUnscaleRegbaseTilingTest,
+                         testing::Combine(testing::Values("Ascend950", "Ascend350", "Ascend960DT"),
+                                          testing::Values(ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16)));
 
 TEST_F(ForeachNonFiniteCheckAndUnscaleTiling, test_tiling_float32_zero_size)
 {

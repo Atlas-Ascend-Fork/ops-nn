@@ -32,6 +32,9 @@ static const std::initializer_list<DataType> EMPTY_LIST = {};
 
 static const std::initializer_list<DataType>& GetDtypeSupportList()
 {
+    if (Ops::NN::AclnnUtil::IsRegbase()) {
+        return TENSOR_DTYPE_SUPPORT_LIST;
+    }
     auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
     switch (socVersion) {
         case SocVersion::ASCEND910B:

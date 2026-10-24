@@ -264,4 +264,66 @@ TEST_P(L2ForeachNonFiniteCheckAndUnscaleTest, private_inv_scale_format)
 INSTANTIATE_TEST_SUITE_P(A2AndA3, L2ForeachNonFiniteCheckAndUnscaleTest,
                          testing::Values(op::SocVersion::ASCEND910B, op::SocVersion::ASCEND910_93));
 
+class L2ForeachNonFiniteCheckAndUnscaleRegbaseTest : public testing::TestWithParam<NpuArch> {};
+
+TEST_P(L2ForeachNonFiniteCheckAndUnscaleRegbaseTest, supported_and_unsupported_dtypes)
+{
+    op::SocVersionManager socVersion(op::SocVersion::RESERVED_VERSION);
+    op::NpuArchManager npuArch(GetParam());
+    auto foundInf = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto invScale = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    for (auto dtype : {ACL_FLOAT, ACL_FLOAT16, ACL_BF16, ACL_INT32}) {
+        SCOPED_TRACE(static_cast<int>(dtype));
+        auto scaledGrads = TensorListDesc({TensorDesc({2, 3}, dtype, ACL_FORMAT_ND)});
+        auto ut = OP_API_UT(aclnnForeachNonFiniteCheckAndUnscale, INPUT(scaledGrads, foundInf, invScale), OUTPUT());
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize),
+                  dtype == ACL_INT32 ? ACLNN_ERR_PARAM_INVALID : ACLNN_SUCCESS);
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(RegbaseArchitectures, L2ForeachNonFiniteCheckAndUnscaleRegbaseTest,
+                         testing::Values(NpuArch::DAV_3510, NpuArch::DAV_5102, NpuArch::DAV_9201, NpuArch::DAV_9202));
+
+TEST(L2ForeachNonFiniteCheckAndUnscalePlatformTest, ascend350)
+{
+    op::NpuArchManager npuArch(NpuArch::DAV_3510);
+    op::SocVersionManager socVersion(op::SocVersion::ASCEND350);
+    auto scaledGrads = TensorListDesc({TensorDesc({2, 3}, ACL_BF16, ACL_FORMAT_ND)});
+    auto foundInf = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto invScale = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnForeachNonFiniteCheckAndUnscale, INPUT(scaledGrads, foundInf, invScale), OUTPUT());
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+}
+
+TEST(L2ForeachNonFiniteCheckAndUnscalePlatformTest, reduced_dtype_platforms)
+{
+    for (auto soc : {op::SocVersion::ASCEND310P, op::SocVersion::KIRINX90, op::SocVersion::KIRIN9030}) {
+        SCOPED_TRACE(static_cast<int>(soc));
+        op::SocVersionManager socVersion(soc);
+        for (auto dtype : {ACL_FLOAT, ACL_FLOAT16, ACL_BF16}) {
+            SCOPED_TRACE(static_cast<int>(dtype));
+            auto scaledGrads = TensorListDesc({TensorDesc({2, 3}, dtype, ACL_FORMAT_ND)});
+            auto foundInf = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+            auto invScale = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+            auto ut = OP_API_UT(aclnnForeachNonFiniteCheckAndUnscale, INPUT(scaledGrads, foundInf, invScale), OUTPUT());
+            uint64_t workspaceSize = 0;
+            EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize),
+                      dtype == ACL_BF16 ? ACLNN_ERR_PARAM_INVALID : ACLNN_SUCCESS);
+        }
+    }
+}
+
+TEST(L2ForeachNonFiniteCheckAndUnscalePlatformTest, unsupported_platform)
+{
+    op::SocVersionManager socVersion(op::SocVersion::ASCEND910);
+    auto scaledGrads = TensorListDesc({TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND)});
+    auto foundInf = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto invScale = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnForeachNonFiniteCheckAndUnscale, INPUT(scaledGrads, foundInf, invScale), OUTPUT());
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}
+
 } // namespace
