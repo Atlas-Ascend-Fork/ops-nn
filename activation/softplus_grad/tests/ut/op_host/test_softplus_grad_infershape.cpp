@@ -25,15 +25,9 @@
 
 class SoftplusGradInfershapeTest : public testing::Test {
 protected:
-    static void SetUpTestCase()
-    {
-        std::cout << "SoftplusGradInfershapeTest SetUp" << std::endl;
-    }
+    static void SetUpTestCase() { std::cout << "SoftplusGradInfershapeTest SetUp" << std::endl; }
 
-    static void TearDownTestCase()
-    {
-        std::cout << "SoftplusGradInfershapeTest TearDown" << std::endl;
-    }
+    static void TearDownTestCase() { std::cout << "SoftplusGradInfershapeTest TearDown" << std::endl; }
 };
 
 TEST_F(SoftplusGradInfershapeTest, infershape_fp32_test)
@@ -315,4 +309,28 @@ TEST_F(SoftplusGradInfershapeTest, infershape_different_dim_broadcast_test)
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
     auto output0 = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
     ASSERT_EQ(Ops::Base::ToString(*output0), "[2, 4]");
+}
+
+TEST_F(SoftplusGradInfershapeTest, infershape_unknown_rank_broadcast_test)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("SoftplusGrad")->infer_shape;
+
+    gert::Shape grad_shape = {-2};
+    gert::Shape feat_shape = {2, 3};
+    gert::Shape y_shape = {};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1}, {1})
+                      .InputShapes({&grad_shape, &feat_shape})
+                      .OutputShapes({&y_shape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto output0 = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+    ASSERT_EQ(output0->GetDimNum(), 1U);
+    ASSERT_EQ(output0->GetDim(0), -2);
 }

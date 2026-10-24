@@ -82,6 +82,11 @@ static ge::graphStatus InferShapeSoftplusGrad(gert::InferShapeContext* context)
         return ge::GRAPH_FAILED;
     }
 
+    if (Ops::Base::IsUnknownRank(*inShape1) || Ops::Base::IsUnknownRank(*inShape2)) {
+        Ops::Base::SetUnknownRank(*outShape);
+        return ge::GRAPH_SUCCESS;
+    }
+
     *outShape = *inShape1;
     if (!BroadcastShapeToOutShape(inShape2, outShape)) {
         return ge::GRAPH_FAILED;
