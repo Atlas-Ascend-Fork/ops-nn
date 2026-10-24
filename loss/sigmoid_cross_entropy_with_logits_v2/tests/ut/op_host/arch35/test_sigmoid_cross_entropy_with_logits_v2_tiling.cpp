@@ -25,7 +25,7 @@
 #include "test_cube_util.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
-#include "../../../op_host/arch35/sigmoid_cross_entropy_with_logits_v2_tiling.h"
+#include "../../../../op_host/arch35/sigmoid_cross_entropy_with_logits_v2_tiling.h"
 
 using namespace std;
 using namespace ge;
