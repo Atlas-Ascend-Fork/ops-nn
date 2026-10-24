@@ -136,6 +136,7 @@ ge::graphStatus InferDataType4EmbeddingHashTableImport(gert::InferDataTypeContex
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "counters",
                                                   ge::TypeUtils::DataTypeToSerialString(countersDtype).c_str(),
                                                   errMsg.c_str());
+            return ge::GRAPH_FAILED;
         }
     }
 
