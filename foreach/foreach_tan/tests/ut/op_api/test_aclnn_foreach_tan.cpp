@@ -12,7 +12,7 @@
 #include <array>
 #include <float.h>
 #include "gtest/gtest.h"
-#include "../../../../op_host/op_api/aclnn_foreach_tan.h"
+#include "../../../op_host/op_api/aclnn_foreach_tan.h"
 
 #include "op_api_ut_common/tensor_desc.h"
 #include "op_api_ut_common/scalar_desc.h"
