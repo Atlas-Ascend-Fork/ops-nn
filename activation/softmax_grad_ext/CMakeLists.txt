@@ -14,3 +14,8 @@ set(SUPPORT_COMPUTE_UNIT "ascend950" "ascend350")
 set(SUPPORT_TILING_DIR "arch35" "arch35")
 
 add_modules_sources(HOSTNAME ${OPHOST_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR} OPTYPE softmax_grad_ext ACLNNTYPE aclnn_exclude COMPUTE_UNIT ${SUPPORT_COMPUTE_UNIT} TILING_DIR ${SUPPORT_TILING_DIR} DISABLE_IN_OPP TRUE)
+
+add_kernel_sources(
+    KERNEL_SRC softmax_grad_ext.cpp
+    COMPUTE_UNITS ascend950 ascend350
+)

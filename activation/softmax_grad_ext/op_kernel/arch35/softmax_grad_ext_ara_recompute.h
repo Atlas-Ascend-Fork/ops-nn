@@ -149,7 +149,7 @@ public:
             // Pass2: 逐段重读 grad/x1/x2 输出（尾段非整 quad，走逐行路径）
             bool flatVec = IsFlatVecEnabled(curTileA0Len, tilingData_->binAddRFactor);
             if (flatVec) {
-                BuildTiledSum(curTileA0Len);
+                BuildTiledSum();
             }
             for (int64_t idx = 0; idx < tilingData_->binAddRTotalLoop; idx++) {
                 int64_t curTileRLen = idx == (tilingData_->binAddRTotalLoop - 1) ? tilingData_->binAddRTail :
@@ -170,7 +170,8 @@ public:
 private:
     // mc（R 切分多核）路径：P1 各核按 (a1, R 分块) 求部分和写入输出张量头部 overlay，
     // SyncAll 后各核汇总 S，再次 SyncAll 后 P2 全宽连续读写；a0 整除 64 lane（16/32/64）时启用，
-    // a0<64 的段累加与部分和汇总走掩码逐行（AccumulateSegmentTail / LoadFinalSumMc 掩码累加）
+    // a0<64 的段累加走 AccumulateSegmentFlat（tiled lane j=列 j%a0），
+    // 部分和汇总由 LoadFinalSumMc 标量折叠（S[c] = Σ_g xSum[c + g*a0]）完成
     __aicore__ inline void ProcessMulticore()
     {
         int64_t blockIdx = GetBlockIdx();
@@ -306,38 +307,6 @@ private:
         }
     }
 
-    // mc P1 段内掩码累加：a0<64 时 64 lane 打包多行、同列部分和分布在 lane j 与 j+32，
-    // flat 满车道 Add 进 xSum 语义错误，改按行掩码逐行累加进 xSum[0, a0)
-    __aicore__ inline void AccumulateSegmentTail(__ubuf__ T* gradLocal, __ubuf__ T* x1Local, int64_t curTileRLen,
-                                                 uint32_t curTileA0Len, __ubuf__ float* xSumLocal)
-    {
-        __VEC_SCOPE__
-        {
-            RegTensor<float> accReg;
-            RegTensor<float> sumReg;
-            RegTensor<float> gradReg;
-            RegTensor<float> x1Reg;
-            RegTensor<float> mulReg;
-            MaskReg pRow;
-            uint16_t loopA0Num = static_cast<uint16_t>(ops::CeilDiv(curTileA0Len, VL_FP32));
-            for (uint16_t k = 0; k < loopA0Num; k++) {
-                uint32_t sreg = curTileA0Len;
-                pRow = UpdateMask<float>(sreg);
-                LoadAlign<float, LoadDist::DIST_NORM>(sumReg, xSumLocal + k * static_cast<uint32_t>(VL_FP32));
-                Duplicate(accReg, 0.0, pRow);
-                for (uint16_t r = 0; r < static_cast<uint16_t>(curTileRLen); r++) {
-                    uint32_t offset = static_cast<uint32_t>(r) * curTileA0Len + k * static_cast<uint32_t>(VL_FP32);
-                    LoadTensorForDtypeTIn(gradLocal, gradReg, pRow, offset);
-                    LoadTensorForDtypeTIn(x1Local, x1Reg, pRow, offset);
-                    Mul(mulReg, gradReg, x1Reg, pRow);
-                    Add(accReg, accReg, mulReg, pRow);
-                }
-                Add(sumReg, sumReg, accReg, pRow);
-                StoreAlign(xSumLocal + k * static_cast<uint32_t>(VL_FP32), sumReg, pRow);
-            }
-        }
-    }
-
     // mc P2 前置：读取本 a1 全部部分和并汇总为 S（分批 [64] 向量），随后平铺供 flat 输出使用
     __aicore__ inline void LoadFinalSumMc(int64_t a1Idx)
     {
@@ -395,7 +364,7 @@ private:
             AscendC::PipeBarrier<PIPE_ALL>();
         }
         if (a0Len >= static_cast<uint32_t>(CONST_EIGHT)) {
-            BuildTiledSum(a0);
+            BuildTiledSum();
         } else {
             // a0<8：DataCopy 的 count/地址须 8 float 对齐，改用标量平铺 tiled[j] = S[j%a0]
             LocalTensor<float> tiledTensor = reduceSumTempBuffer_.Get<float>();
@@ -597,7 +566,7 @@ private:
     }
 
     // P2 前将 xSum 平铺为 [tileA0Len] * groups 的 64 lane 模式（复用 P1 scratch 缓冲，两阶段分时互斥）
-    __aicore__ inline void BuildTiledSum(uint32_t curTileA0Len)
+    __aicore__ inline void BuildTiledSum()
     {
         uint32_t tileA0Len = static_cast<uint32_t>(tilingData_->tileA0Len);
         uint32_t groups = static_cast<uint32_t>(static_cast<uint32_t>(VL_FP32) / tileA0Len);
