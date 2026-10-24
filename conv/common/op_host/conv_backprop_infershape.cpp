@@ -42,6 +42,12 @@ constexpr int32_t UNKNOWN_SHAPE_DIM = -1;
 constexpr size_t kXIndex = 0;
 constexpr size_t kOutBackpropIndex = 2;
 constexpr size_t kGroupsAttrIndex = 3;
+// legacy Conv2DBackpropFilter插入output_padding(5)后私有属性后移：padding(6) from_depthwise(7) _op_impl_mode_enum(8)
+constexpr size_t kFromDepthwiseAttrIdx = 7;
+// 本函数另被Conv2DBackpropFilterV2(内置def: padding(5) from_depthwise(6) use_hf32(7))跨仓调用，
+// 其from_depthwise@6；legacy旧def(skew场景)亦为@6。故按属性总数区分布局：>=9走legacy新布局@7，否则@6
+constexpr size_t kFromDepthwiseAttrIdxV2 = 6;
+constexpr size_t kLegacyNewLayoutAttrNum = 9;
 constexpr size_t kNDimIndexOfNFirst = 0;
 constexpr size_t kCDimIndexOfNSecond = 1;
 constexpr size_t kCDimIndexOfHWCN = 2;
@@ -232,7 +238,12 @@ ge::graphStatus InferShapeForConv2DBackpropFilter(gert::InferShapeContext* conte
     const auto runtime_attrs = context->GetAttrs();
     OP_CHECK_IF(runtime_attrs == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get runtime attrs"),
                 return ge::GRAPH_FAILED);
-    const auto from_depthwise = runtime_attrs->GetBool(6); // from_depthwise attr idx: 6
+    const bool* from_depthwise = nullptr;
+    if (runtime_attrs->GetAttrNum() >= kLegacyNewLayoutAttrNum) {
+        from_depthwise = runtime_attrs->GetBool(kFromDepthwiseAttrIdx);
+    } else if (runtime_attrs->GetAttrNum() > kFromDepthwiseAttrIdxV2) {
+        from_depthwise = runtime_attrs->GetBool(kFromDepthwiseAttrIdxV2);
+    }
     if (from_depthwise == nullptr || !*from_depthwise) {
         return PartialInferFilterShapeWhenConstInvisible(context);
     }

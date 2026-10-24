@@ -49,7 +49,7 @@ EsTensorHolder CreateConv2DBpFilterNode(EsGraphBuilder& builder, const char* opT
                                         std::vector<int64_t> strides, std::vector<int64_t> pads,
                                         std::vector<int64_t> dilations, int64_t groups, const std::string& dataFormat,
                                         DataType outDtype, const std::vector<int64_t>& outShape, Format outFormat,
-                                        bool fromDepthwise = false)
+                                        bool fromDepthwise = false, const std::vector<int64_t>& outputPadding = {})
 {
     auto* graph = builder.GetCGraphBuilder()->GetGraph();
     auto node = CompliantNodeBuilder(graph)
@@ -84,6 +84,10 @@ EsTensorHolder CreateConv2DBpFilterNode(EsGraphBuilder& builder, const char* opT
     node.SetAttr("data_format", fmt);
     node.SetAttr("_op_impl_mode_enum", kDefaultImplMode);
     node.SetAttr("from_depthwise", fromDepthwise);
+    if (!outputPadding.empty()) {
+        std::vector<int64_t> outputPaddingVal = outputPadding;
+        node.SetAttr("output_padding", outputPaddingVal);
+    }
 
     return EsTensorHolder(builder.GetCGraphBuilder()->GetTensorHolderFromNode(node, 0));
 }
@@ -129,6 +133,18 @@ bool GetNodeBoolAttr(GraphPtr& graph, const std::string& type, const std::string
     return false;
 }
 
+bool GetNodeOutputPaddingAttr(GraphPtr& graph, const std::string& type, std::vector<int64_t>& attrValue)
+{
+    for (auto node : graph->GetAllNodes()) {
+        AscendString nodeType;
+        node.GetType(nodeType);
+        if (nodeType.GetString() == type) {
+            return node.GetAttr("output_padding", attrValue) == GRAPH_SUCCESS;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 class Conv2dBpFilterToV3FusionPassTest : public testing::Test {
@@ -156,6 +172,29 @@ TEST_F(Conv2dBpFilterToV3FusionPassTest, patternTest)
     EXPECT_TRUE(CheckNodeExists(graph, "Squeeze"));
     EXPECT_TRUE(CheckNodeExists(graph, "Cast"));
     EXPECT_TRUE(CheckNodeOutputDesc(graph, "Cast", {64, 32, 1, 3, 3}, DT_FLOAT16));
+}
+
+// 非零output_padding经融合传递到中间节点并完成D维扩维(4元NCHW→5元NCDHW)
+TEST_F(Conv2dBpFilterToV3FusionPassTest, outputPaddingTransferTest)
+{
+    auto builder = EsGraphBuilder("outputPaddingTransferTest");
+    auto x = builder.CreateInput(0, "x", DT_FLOAT16, FORMAT_NCHW, {2, 32, 16, 16});
+    auto filterSize = builder.CreateInput(1, "filter_size", DT_INT64, FORMAT_ND, {4});
+    auto outBackprop = builder.CreateInput(2, "out_backprop", DT_FLOAT16, FORMAT_NCHW, {2, 64, 8, 8});
+
+    // 2D语义4元{N,C,H,W},NCHW在D位(index=1)扩维后期望{0,0,0,1,1}...NCDHW即{N,C,D,H,W}={0,0,0,1,1}
+    auto y = CreateConv2DBpFilterNode(builder, "Conv2DBackpropFilter", x, filterSize, outBackprop, {1, 1, 1, 1},
+                                      {0, 0, 0, 0}, {1, 1, 1, 1}, 1, "NCHW", DT_FLOAT16, {64, 32, 3, 3}, FORMAT_NCHW,
+                                      false, {0, 0, 1, 1});
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv2DBackpropFilterToV3FusionPass pass({AscendString("Conv2DBackpropFilter")});
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(CheckNodeExists(graph, "Conv3DBackpropFilter"));
+    std::vector<int64_t> outputPaddingOnV3;
+    ASSERT_TRUE(GetNodeOutputPaddingAttr(graph, "Conv3DBackpropFilter", outputPaddingOnV3));
+    EXPECT_EQ(outputPaddingOnV3, (std::vector<int64_t>{0, 0, 0, 1, 1}));
 }
 
 // Test 2: unsupportedPlatformFail - Ascend910_93 not supported

@@ -41,6 +41,7 @@ REG_OP(Conv3DBackpropFilter)
     .ATTR(dilations, ListInt, {1, 1, 1, 1, 1})
     .ATTR(groups, Int, 1)
     .ATTR(data_format, String, "NDHWC")
+    .ATTR(output_padding, ListInt, {0, 0, 0, 0, 0})
     .OP_END_FACTORY_REG(Conv3DBackpropFilter)
 #endif
 

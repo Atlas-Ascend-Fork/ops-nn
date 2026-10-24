@@ -13,7 +13,7 @@
 
 ## 功能说明
 
-- 算子功能：计算三维卷积核权重张量$w$的梯度 $\frac{\partial L}{\partial w}$。
+- 算子功能：计算三维卷积权重张量$w$的梯度 $\frac{\partial L}{\partial w}$。
 
 - 计算公式：
 
@@ -21,12 +21,30 @@
   \frac{\partial L}{\partial w_{c_{out}, c_{in}, r, p, q}} = \sum_{n=1}^{N} \sum_{d=1}^{D_{out}} \sum_{i=1}^{H_{out}} \sum_{j=1}^{W_{out}} x_{n, c_{in}, d \cdot s_D + r, i \cdot s_H + p, j \cdot s_W + q} \cdot \frac{\partial L}{\partial y_{n, c_{out}, d, i, j}}
   $$
 
+  其中$r$、$p$、$q$分别为卷积权重在D、H、W维度上的索引，卷积权重尺寸$k_D$、$k_H$、$k_W$由'filter_size'给出。
+
+  假定$x$的shape为($N,C_{in},D_{in},H_{in},W_{in}$)、$out\_backprop$的shape为($N,C_{out},D_{out},H_{out},W_{out}$)，转置卷积场景下（output_padding非零），他们与卷积步长($s_D$,$s_H$,$s_W$)、卷积权重尺寸($k_D$,$k_H$,$k_W$)、膨胀参数($dilation$)、填充参数($pads$)、输出附加尺寸($output\_padding$)的关系是：
+
+  $$
+  D_{in} = (D_{out} - 1) \cdot s_D - (pads[0] + pads[1]) + dilation[0] \cdot (k_D - 1) + output\_padding[0] + 1
+  $$
+
+  $$
+  H_{in} = (H_{out} - 1) \cdot s_H - (pads[2] + pads[3]) + dilation[1] \cdot (k_H - 1) + output\_padding[1] + 1
+  $$
+
+  $$
+  W_{in} = (W_{out} - 1) \cdot s_W - (pads[4] + pads[5]) + dilation[2] \cdot (k_W - 1) + output\_padding[2] + 1
+  $$
+
+  其中$output\_padding[0]$、$output\_padding[1]$、$output\_padding[2]$分别为output_padding属性在D、H、W维度上的取值（N、C维度必须为0），$pads[0]$~$pads[5]$依次对应front、back、top、bottom、left、right方向上的填充量。
+
 ## 参数说明
 
 | <div style="width:120px">参数名</div>  | <div style="width:120px">输入/输出/属性</div>  | <div style="width:350px">描述</div> | <div style="width:350px">数据类型</div>  | <div style="width:220px">数据格式</div> |
 | ------------------| ------------------ | ------------------------------------------------------------------------------------------- | ----------------- | --------------------- |
 | x | 输入 | <ul><li>一个5D张量，为特征图，相当于公式中的$x_{n, c_{in}, d \cdot s_D + r, i \cdot s_H + p, j \cdot s_W + q}$。</li><li>$N$相当于'x'的N维度。</li><li>$c_{in}$相当于'x'的C维度。</li><li>数据格式需要与'out_backprop'一致。</li></ul> | FLOAT16、FLOAT32、BFLOAT16 | NDHWC、NCDHW |
-| filter_size | 输入 | <ul><li>一个1D张量，用于表示滤波器的形状，该滤波器是一个5D张量。</li><li>张量中整数的顺序由滤波器格式决定，这些整数表示滤波器各维度的长度。</li></ul> | INT32、INT64 | - |
+| filter_size | 输入 | <ul><li>一个1D张量，用于表示卷积权重的形状，该卷积权重是一个5D张量。</li><li>张量中整数的顺序由卷积权重格式决定，这些整数表示卷积权重各维度的长度。</li></ul> | INT32、INT64 | - |
 | out_backprop | 输入 | <ul><li>一个5D张量，相当于公式中的$\frac{\partial L}{\partial y_{n, c_{out}, d, i, j}}$。</li><li>$c_{out}$相当于'out_backprop'中的C维度。</li><li>$H_{out}$、$W_{out}$、$D_{out}$相当于'out_backprop'中的H维度、W维度和D维度。</li><li>数据格式需要与'x'一致。</li></ul> | FLOAT16、FLOAT32、BFLOAT16 | NDHWC、NCDHW |
 | strides | 必填属性 | <ul><li>一个包含5个整数的元组或列表，指定滑动窗口在特征图每个维度上的步长。</li><li>轴顺序与特征图格式一致。</li><li>$s_H$与$s_W$、$s_D$相当于'strides'属性的H维度、W维度和D维度。</li></ul> | - | - |
 | pads | 必填属性 | <ul><li>一个包含6个整数的元组/列表，指定特征图在每个方向上的填充量。</li><li>仅沿D、H和W维度进行填充。</li><li>通过为各方向设置合适的填充值，即可实现“SAME”和“VALID”两种填充模式。</li></ul> | - | - |

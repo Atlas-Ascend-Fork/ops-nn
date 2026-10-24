@@ -94,6 +94,11 @@ bool ConvBackpropFusionBasePass::GetNodeAttrs(const GNode& node)
         convBpAttr.padding = "";
     }
 
+    if (node.GetAttr("output_padding", convBpAttr.output_padding) != GRAPH_SUCCESS) {
+        OP_LOGD(GetNodeType().GetString(), "Get output_padding attrs from %s failed, set default value",
+                name.GetString());
+    }
+
     convBpAttr.dataFormat = std::string(format.GetString());
 
     // 判断out_backprop的dtype，动态算子时为第3个输入，静态算子时为第2个输入
@@ -148,6 +153,11 @@ void ConvBackpropFusionBasePass::SetNodeAttrs(ge::GNode& outNode)
     outNode.SetAttr("_op_impl_mode_enum", convBpAttr.opImplModeEnum);
     outNode.SetAttr("enable_hf32", convBpAttr.hf32);
     outNode.SetAttr("padding", convBpAttr.padding);
+    // output_padding仅FilterV2/TransposeV2等声明了该属性的算子支持,Conv2DBackpropInput链路
+    // 源节点无此属性且读取为空,空vector禁止Set,避免向未声明属性的目标节点写入
+    if (!convBpAttr.output_padding.empty()) {
+        outNode.SetAttr("output_padding", convBpAttr.output_padding);
+    }
 }
 
 } // namespace ops

@@ -303,19 +303,21 @@ void ConvBackpropFusionUtilsPass::ExpandAttrs(std::vector<int64_t>& strides, std
     if (dataFormat == "NCHW") {
         strides.insert(strides.begin() + D_DIM_NCDHW_INDEX, EXPAND_AXIS_DEFAULT_VALUE);
         dilations.insert(dilations.begin() + D_DIM_NCDHW_INDEX, EXPAND_AXIS_DEFAULT_VALUE);
-        if (outputPadding != nullptr) {
+        // output_padding为空(GNode未设置且无proto默认,如UT裸节点)时跳过扩维,
+        // 空vector按insert位置越界属于UB,由调用侧空保护决定是否写入V2节点
+        if (outputPadding != nullptr && !outputPadding->empty()) {
             outputPadding->insert(outputPadding->begin() + D_DIM_NCDHW_INDEX, EXPAND_PAD_DEFAULT_VALUE);
         }
     } else if (dataFormat == "NHWC") {
         strides.insert(strides.begin() + D_DIM_NDHWC_INDEX, EXPAND_AXIS_DEFAULT_VALUE);
         dilations.insert(dilations.begin() + D_DIM_NDHWC_INDEX, EXPAND_AXIS_DEFAULT_VALUE);
-        if (outputPadding != nullptr) {
+        if (outputPadding != nullptr && !outputPadding->empty()) {
             outputPadding->insert(outputPadding->begin() + D_DIM_NDHWC_INDEX, EXPAND_PAD_DEFAULT_VALUE);
         }
     } else if (dataFormat == "HWCN") {
         strides.insert(strides.begin(), EXPAND_AXIS_DEFAULT_VALUE);
         dilations.insert(dilations.begin(), EXPAND_AXIS_DEFAULT_VALUE);
-        if (outputPadding != nullptr) {
+        if (outputPadding != nullptr && !outputPadding->empty()) {
             outputPadding->insert(outputPadding->begin(), EXPAND_PAD_DEFAULT_VALUE);
         }
     }

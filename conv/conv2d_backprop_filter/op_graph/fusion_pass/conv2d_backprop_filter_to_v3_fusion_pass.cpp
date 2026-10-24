@@ -40,7 +40,7 @@ bool Conv2DBackpropFilterToV3FusionPass::GetNodeAttrs(const ge::GNode& node)
     OP_CHECK_IF(!ConvBackpropFusionBasePass::GetNodeAttrs(node),
                 OP_LOGE(GetNodeType().GetString(), "Base GetNodeAttrs failed"), return false);
     ConvBackpropFusionUtilsPass::ExpandAttrs(convBpAttr.strides, convBpAttr.pads, convBpAttr.dilations,
-                                             convBpAttr.dataFormat);
+                                             convBpAttr.dataFormat, &convBpAttr.output_padding);
     return true;
 }
 

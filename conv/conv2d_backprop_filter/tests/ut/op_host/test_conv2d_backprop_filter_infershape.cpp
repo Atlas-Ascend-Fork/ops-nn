@@ -47,6 +47,7 @@ static gert::KernelRunContextHolder BuildConv2DBackpropFilterContext(
                     {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1})},
                     {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
                     {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                    {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
                     {"padding", Ops::NN::AnyValue::CreateFrom<std::string>("")},
                     {"from_depthwise", Ops::NN::AnyValue::CreateFrom<bool>(false)},
                     {"_op_impl_mode_enum", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}});
@@ -194,6 +195,7 @@ TEST_F(Conv2DBackpropFilterRuntimeInferShape, dynamicFilterSizePartialInferWithD
                     {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1})},
                     {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(2)},
                     {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                    {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
                     {"padding", Ops::NN::AnyValue::CreateFrom<std::string>("")},
                     {"from_depthwise", Ops::NN::AnyValue::CreateFrom<bool>(false)},
                     {"_op_impl_mode_enum", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}});
@@ -223,6 +225,7 @@ TEST_F(Conv2DBackpropFilterRuntimeInferShape, dynamicFilterSizeXChannelNotDivisi
                     {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1})},
                     {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(2)},
                     {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                    {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
                     {"padding", Ops::NN::AnyValue::CreateFrom<std::string>("")},
                     {"from_depthwise", Ops::NN::AnyValue::CreateFrom<bool>(false)},
                     {"_op_impl_mode_enum", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}});
@@ -230,4 +233,83 @@ TEST_F(Conv2DBackpropFilterRuntimeInferShape, dynamicFilterSizeXChannelNotDivisi
     auto holder = faker.InputShapes({&x_shape, &filter_size_shape, &dedy_shape}).OutputShapes({&output_shape}).Build();
     auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropFilter")->infer_shape;
     EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+// 锁定私有属性索引：output_padding(5)插入def后，from_depthwise应位于idx 7（padding 6、_op_impl_mode_enum 8）。
+// padding填非空"VALID"作错位哨兵：若索引回退/再错位，GetBool(7)将读到'V'误判true触发dw折叠，本用例即失败。
+TEST_F(Conv2DBackpropFilterRuntimeInferShape, fromDepthwiseFalseAttrIdxShiftGuardSuccess)
+{
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 32, 16, 16}, {2, 32, 16, 16}};
+    gert::StorageShape dedy_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
+    gert::StorageShape output_shape = {{}, {}};
+    gert::InferShapeContextFaker faker;
+    faker.NodeIoNum(3, 1)
+        .IrInstanceNum({1, 1, 1})
+        .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+        .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+        .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+        .NodeAttrs({{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1})},
+                    {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                    {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1})},
+                    {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+                    {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                    {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                    {"padding", Ops::NN::AnyValue::CreateFrom<std::string>("VALID")},
+                    {"from_depthwise", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                    {"_op_impl_mode_enum", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}});
+    size_t total_size = 0;
+    tensor_holder = gert::Tensor::CreateFollowing(kFilterSizeEleNum, ge::DT_INT64, total_size);
+    auto tensor = reinterpret_cast<gert::Tensor*>(tensor_holder.get());
+    tensor->MutableStorageShape().AppendDim(kFilterSizeEleNum);
+    tensor->MutableOriginShape().AppendDim(kFilterSizeEleNum);
+    tensor->SetOriginFormat(ge::FORMAT_ND);
+    tensor->SetStorageFormat(ge::FORMAT_ND);
+    std::vector<int64_t> filterSizeValues = {64, 32, 3, 3};
+    (void)memcpy_s(tensor->GetData<uint8_t>(), total_size - sizeof(gert::Tensor), filterSizeValues.data(),
+                   filterSizeValues.size() * sizeof(int64_t));
+    auto holder = faker.InputShapes({&x_shape, tensor, &dedy_shape}).OutputShapes({&output_shape}).Build();
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropFilter")->infer_shape;
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)), "[64, 32, 3, 3]");
+}
+
+// depthwise转换链(from_depthwise=true,由DepthwiseDwMulFusionPass按名设置)：y按dw折叠 N维=C*N、C维置1
+TEST_F(Conv2DBackpropFilterRuntimeInferShape, fromDepthwiseTrueFoldYShapeSuccess)
+{
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{1, 32, 16, 16}, {1, 32, 16, 16}};
+    gert::StorageShape dedy_shape = {{1, 64, 16, 16}, {1, 64, 16, 16}};
+    gert::StorageShape output_shape = {{}, {}};
+    gert::InferShapeContextFaker faker;
+    faker.NodeIoNum(3, 1)
+        .IrInstanceNum({1, 1, 1})
+        .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+        .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+        .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+        .NodeAttrs({{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1})},
+                    {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                    {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1})},
+                    {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+                    {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                    {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                    {"padding", Ops::NN::AnyValue::CreateFrom<std::string>("")},
+                    {"from_depthwise", Ops::NN::AnyValue::CreateFrom<bool>(true)},
+                    {"_op_impl_mode_enum", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}});
+    size_t total_size = 0;
+    tensor_holder = gert::Tensor::CreateFollowing(kFilterSizeEleNum, ge::DT_INT64, total_size);
+    auto tensor = reinterpret_cast<gert::Tensor*>(tensor_holder.get());
+    tensor->MutableStorageShape().AppendDim(kFilterSizeEleNum);
+    tensor->MutableOriginShape().AppendDim(kFilterSizeEleNum);
+    tensor->SetOriginFormat(ge::FORMAT_ND);
+    tensor->SetStorageFormat(ge::FORMAT_ND);
+    std::vector<int64_t> filterSizeValues = {64, 32, 3, 3};
+    (void)memcpy_s(tensor->GetData<uint8_t>(), total_size - sizeof(gert::Tensor), filterSizeValues.data(),
+                   filterSizeValues.size() * sizeof(int64_t));
+    auto holder = faker.InputShapes({&x_shape, tensor, &dedy_shape}).OutputShapes({&output_shape}).Build();
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropFilter")->infer_shape;
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)), "[2048, 1, 3, 3]");
 }

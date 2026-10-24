@@ -185,6 +185,10 @@ GraphUniqPtr Conv3DBackpropFilterToV2FusionPass::Replacement(const GNode& convBp
     conv3dBackpropFilterV2Node->SetAttr("_op_impl_mode_enum", convBpAttr.opImplModeEnum);
     conv3dBackpropFilterV2Node->SetAttr("from_depthwise", convBpAttr.from_depthwise);
     conv3dBackpropFilterV2Node->SetAttr("padding", convBpAttr.padding);
+    // 3D场景output_padding为NCDHW 5元,与FilterV2 proto默认对齐,无需ExpandAttrs扩维
+    if (!convBpAttr.output_padding.empty()) {
+        conv3dBackpropFilterV2Node->SetAttr("output_padding", convBpAttr.output_padding);
+    }
 
     // V2 kernel仅注册fp32-y组合：声明dtype非fp32时，V2输出desc固定fp32，由输出侧Cast恢复声明dtype
     const auto origDtype = outputDesc.GetDataType();

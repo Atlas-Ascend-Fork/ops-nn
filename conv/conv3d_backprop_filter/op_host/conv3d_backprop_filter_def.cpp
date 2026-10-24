@@ -95,6 +95,7 @@ public:
         this->Attr("dilations").AttrType(OPTIONAL).ListInt({1, 1, 1, 1, 1});
         this->Attr("groups").AttrType(OPTIONAL).Int(1);
         this->Attr("data_format").AttrType(OPTIONAL).String("NDHWC");
+        this->Attr("output_padding").AttrType(OPTIONAL).ListInt({0, 0, 0, 0, 0});
 
         OpAICoreConfig aicore_config;
         aicore_config.DynamicCompileStaticFlag(false)

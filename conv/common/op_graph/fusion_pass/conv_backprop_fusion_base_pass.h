@@ -37,6 +37,7 @@ struct ConvBackpropAttrs {
     bool hf32 = false;
     bool from_depthwise = false;
     ge::AscendString padding = "";
+    std::vector<int64_t> output_padding;
 
     void Reset()
     {
@@ -50,6 +51,7 @@ struct ConvBackpropAttrs {
         hf32 = false;
         from_depthwise = false;
         padding = "";
+        output_padding.clear();
     }
 };
 
