@@ -18,7 +18,9 @@
 #include <fstream>
 #include <vector>
 #include <tuple>
+#include <utility>
 #include <gtest/gtest.h>
+#include "securec.h"
 // #include "test_common.h"
 // #include "pad_ops.h"
 #include "array_ops.h"
@@ -1824,7 +1826,7 @@ TEST_F(BatchNormGradV3Tiling, batch_norm_grad_v3_ra_full_load)
     EXPECT_EQ(outputMask, 7);
     ASSERT_NE(tilingData, nullptr);
     EXPECT_EQ(to_string<int32_t>(tilingData->GetData(), tilingData->GetDataSize() - sizeof(int64_t)),
-              "4 0 1637 0 1 0 0 0 64 0 37 0 25 0 26 0 0 0 0 0 0 0 63 0 26 0 25 0 62 0 1 0 26 0 32 0 25 0 32 0 1 0 2 0 "
+              "4 0 1637 0 1 0 0 0 64 0 37 0 25 0 26 0 0 0 0 0 0 0 26 0 64 0 37 0 25 0 1 0 64 0 64 0 37 0 64 0 1 0 2 0 "
               "0 0 2 0 0 0 2 0 0 0 1 0 ");
 }
 
@@ -2644,7 +2646,10 @@ TEST_P(BatchNormGradV3LegacyTiling, batch_norm_grad_v3_legacy_train_split_load_c
 // 50000000 generic / 51000000 fused-single / 52000000 fused-pair
 static void RunSplitRTilingKeyCase(int64_t n, int64_t c, ge::DataType dyDtype, uint32_t ubSize, uint32_t coreNum,
                                    uint64_t expectedKey, bool expectNotSplitR = false,
-                                   const std::vector<bool>* outputMask = nullptr)
+                                   const std::vector<bool>* outputMask = nullptr,
+                                   const std::vector<int64_t>* expectedFullLoadSplit = nullptr,
+                                   ge::DataType weightDtype = ge::DT_FLOAT,
+                                   const std::vector<int64_t>* expectedFullLoadReduction = nullptr)
 {
     gert::StorageShape dy_shape = {{n, c, 1, 1}, {n, c, 1, 1}};
     gert::StorageShape x_shape = {{n, c, 1, 1}, {n, c, 1, 1}};
@@ -2714,14 +2719,14 @@ static void RunSplitRTilingKeyCase(int64_t n, int64_t c, ge::DataType dyDtype, u
         .PlatformInfo(reinterpret_cast<char*>(&platform_info))
         .NodeInputTd(0, dyDtype, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
         .NodeInputTd(1, dyDtype, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
-        .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(2, weightDtype, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(6, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeOutputTd(0, dyDtype, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
-        .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
-        .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(1, weightDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(2, weightDtype, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeAttrs({{"is_training", Ops::NN::AnyValue::CreateFrom<bool>(true)},
                     {"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-05)}})
         .TilingData(param.get())
@@ -2746,8 +2751,10 @@ static void RunSplitRTilingKeyCase(int64_t n, int64_t c, ge::DataType dyDtype, u
     auto raw = tiling_context->GetRawTilingData();
     int64_t actualMask = 0;
     ASSERT_GE(raw->GetDataSize(), sizeof(actualMask));
-    std::memcpy(&actualMask, static_cast<const uint8_t*>(raw->GetData()) + raw->GetDataSize() - sizeof(actualMask),
-                sizeof(actualMask));
+    ASSERT_EQ(memcpy_s(&actualMask, sizeof(actualMask),
+                       static_cast<const uint8_t*>(raw->GetData()) + raw->GetDataSize() - sizeof(actualMask),
+                       sizeof(actualMask)),
+              EOK);
     int64_t expectedMask = 7;
     if (outputMask != nullptr) {
         expectedMask = 0;
@@ -2764,6 +2771,141 @@ static void RunSplitRTilingKeyCase(int64_t n, int64_t c, ge::DataType dyDtype, u
         EXPECT_NE(actualKey, static_cast<uint64_t>(52000000));
     } else {
         EXPECT_EQ(tiling_context->GetTilingKey(), expectedKey);
+    }
+    if (expectedFullLoadSplit != nullptr) {
+        constexpr size_t FULL_LOAD_SPLIT_FIELD_COUNT = 5;
+        constexpr size_t FULL_LOAD_SPLIT_FIELD_OFFSET = 11;
+        ASSERT_EQ(tiling_context->GetTilingKey(), static_cast<uint64_t>(20000000));
+        ASSERT_EQ(expectedFullLoadSplit->size(), FULL_LOAD_SPLIT_FIELD_COUNT);
+        ASSERT_GE(raw->GetDataSize(), (FULL_LOAD_SPLIT_FIELD_OFFSET + FULL_LOAD_SPLIT_FIELD_COUNT) * sizeof(int64_t));
+        int64_t split[FULL_LOAD_SPLIT_FIELD_COUNT] = {};
+        ASSERT_EQ(memcpy_s(split, sizeof(split),
+                           static_cast<const uint8_t*>(raw->GetData()) + FULL_LOAD_SPLIT_FIELD_OFFSET * sizeof(int64_t),
+                           sizeof(split)),
+                  EOK);
+        for (size_t i = 0; i < FULL_LOAD_SPLIT_FIELD_COUNT; ++i) {
+            EXPECT_EQ(split[i], (*expectedFullLoadSplit)[i]);
+        }
+        EXPECT_EQ(split[1] * split[3] + split[2] * split[4], c);
+        EXPECT_EQ(split[0], split[3] + split[4]);
+        EXPECT_LE(split[0], coreNum);
+    }
+    if (expectedFullLoadReduction != nullptr) {
+        constexpr size_t FULL_LOAD_REDUCTION_FIELD_COUNT = 8;
+        constexpr size_t FULL_LOAD_REDUCTION_FIELD_OFFSET = 20;
+        ASSERT_TRUE(tiling_context->GetTilingKey() == 20000000 || tiling_context->GetTilingKey() == 21000000);
+        ASSERT_EQ(expectedFullLoadReduction->size(), FULL_LOAD_REDUCTION_FIELD_COUNT);
+        ASSERT_GE(raw->GetDataSize(),
+                  (FULL_LOAD_REDUCTION_FIELD_OFFSET + FULL_LOAD_REDUCTION_FIELD_COUNT) * sizeof(int64_t));
+        int64_t reduction[FULL_LOAD_REDUCTION_FIELD_COUNT] = {};
+        ASSERT_EQ(
+            memcpy_s(reduction, sizeof(reduction),
+                     static_cast<const uint8_t*>(raw->GetData()) + FULL_LOAD_REDUCTION_FIELD_OFFSET * sizeof(int64_t),
+                     sizeof(reduction)),
+            EOK);
+        for (size_t i = 0; i < FULL_LOAD_REDUCTION_FIELD_COUNT; ++i) {
+            EXPECT_EQ(reduction[i], (*expectedFullLoadReduction)[i]);
+        }
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_full_load_vector_core_partition)
+{
+    for (auto dtype : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
+        // numBlocks, mainBlockFactor, tailBlockFactor, mainBlockCount, tailBlockCount.
+        for (int64_t channels : {64, 96, 128, 160, 176, 256, 512, 3504, 3584}) {
+            int64_t cores = (channels + 63) / 64;
+            int64_t mainFactor = (channels + cores - 1) / cores;
+            int64_t blockChannels = dtype == ge::DT_FLOAT ? 8 : 16;
+            mainFactor = std::min(channels, (mainFactor + blockChannels - 1) / blockChannels * blockChannels);
+            int64_t tail = channels % mainFactor;
+            std::vector<int64_t> split{(channels + mainFactor - 1) / mainFactor, mainFactor, tail,
+                                       channels / mainFactor, tail > 0 ? 1 : 0};
+            RunSplitRTilingKeyCase(128, channels, dtype, 253952, 56, 20000000, false, nullptr, &split);
+        }
+        // Existing wider per-core blocks keep the original partition.
+        std::vector<int64_t> wideSplit{56, 128, 0, 56, 0};
+        RunSplitRTilingKeyCase(128, 7168, dtype, 253952, 56, 20000000, false, nullptr, &wideSplit);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_full_load_unaligned_rows_keep_core_partition)
+{
+    std::vector<int64_t> fp32Split{17, 8, 1, 16, 1};
+    RunSplitRTilingKeyCase(128, 129, ge::DT_FLOAT, 253952, 56, 20000000, false, nullptr, &fp32Split);
+    std::vector<int64_t> fp16Split{9, 15, 9, 8, 1};
+    for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+        RunSplitRTilingKeyCase(128, 129, dtype, 253952, 56, 20000000, false, nullptr, &fp16Split);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_full_load_vector_core_partition_ub_fallback)
+{
+    // 64 FP32 channels at R=128 need 215552B; retain the original 8-core split below that budget.
+    std::vector<int64_t> originalSplit{8, 8, 0, 8, 0};
+    RunSplitRTilingKeyCase(128, 64, ge::DT_FLOAT, 215551, 56, 20000000, false, nullptr, &originalSplit);
+    std::vector<int64_t> vectorSplit{1, 64, 0, 1, 0};
+    RunSplitRTilingKeyCase(128, 64, ge::DT_FLOAT, 215552, 56, 20000000, false, nullptr, &vectorSplit);
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_full_load_small_r_partition_and_reduction)
+{
+    const std::vector<std::pair<ge::DataType, ge::DataType>> dtypePairs{{ge::DT_FLOAT, ge::DT_FLOAT},
+                                                                        {ge::DT_FLOAT16, ge::DT_FLOAT16},
+                                                                        {ge::DT_BF16, ge::DT_BF16},
+                                                                        {ge::DT_FLOAT16, ge::DT_FLOAT},
+                                                                        {ge::DT_BF16, ge::DT_FLOAT}};
+    // foldStep1, foldOffset1, foldStep2, foldOffset2, foldStep3, foldOffset3, recursion, reduceRows.
+    const std::vector<std::pair<int64_t, std::vector<int64_t>>> reductionCases{
+        {1, {0, 1, 0, 0, 0, 0, 0, 0}}, {2, {0, 1, 0, 0, 0, 0, 0, 0}}, {3, {0, 2, 1, 0, 0, 2, 0, 1}},
+        {4, {1, 2, 0, 2, 0, 2, 0, 1}}, {5, {0, 4, 1, 0, 1, 2, 0, 2}}, {9, {0, 8, 1, 0, 3, 2, 1, 4}}};
+    const std::vector<int64_t> smallSplit{3, 48, 33, 2, 1};
+    for (const auto& dtype : dtypePairs) {
+        for (const auto& testCase : reductionCases) {
+            const auto* expectedSplit = testCase.first <= 4 ? &smallSplit : nullptr;
+            RunSplitRTilingKeyCase(testCase.first, 129, dtype.first, 253952, 56, 20000000, false, nullptr,
+                                   expectedSplit, dtype.second, &testCase.second);
+        }
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_channel_boundary)
+{
+    RunSplitRTilingKeyCase(256, 31, ge::DT_FLOAT, 245760, 64, 21000000);
+    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 245760, 64, 21000000);
+    RunSplitRTilingKeyCase(256, 33, ge::DT_FLOAT, 245760, 64, 20000000);
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_weight_types_and_tail_groups)
+{
+    const std::vector<std::pair<ge::DataType, ge::DataType>> dtypePairs{{ge::DT_FLOAT, ge::DT_FLOAT},
+                                                                        {ge::DT_FLOAT16, ge::DT_FLOAT16},
+                                                                        {ge::DT_BF16, ge::DT_BF16},
+                                                                        {ge::DT_FLOAT16, ge::DT_FLOAT},
+                                                                        {ge::DT_BF16, ge::DT_FLOAT}};
+    const std::vector<int64_t> fiveGroups{0, 4, 1, 0, 1, 2, 0, 2};
+    const std::vector<int64_t> sixGroups{1, 4, 0, 2, 1, 2, 0, 2};
+    const std::vector<int64_t> seventeenGroups{0, 16, 1, 0, 7, 2, 2, 8};
+    const std::vector<int64_t> eighteenGroups{1, 16, 0, 2, 7, 2, 2, 8};
+    for (const auto& dtype : dtypePairs) {
+        RunSplitRTilingKeyCase(257, 1, dtype.first, 245760, 64, 21000000, false, nullptr, nullptr, dtype.second,
+                               &fiveGroups);
+        RunSplitRTilingKeyCase(321, 1, dtype.first, 245760, 64, 21000000, false, nullptr, nullptr, dtype.second,
+                               &sixGroups);
+        RunSplitRTilingKeyCase(257, 3, dtype.first, 245760, 64, 21000000, false, nullptr, nullptr, dtype.second,
+                               &seventeenGroups);
+        RunSplitRTilingKeyCase(273, 3, dtype.first, 245760, 64, 21000000, false, nullptr, nullptr, dtype.second,
+                               &eighteenGroups);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_exact_ub_boundary_by_weight_type)
+{
+    for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+        RunSplitRTilingKeyCase(256, 16, dtype, 59136, 64, 21000000, false, nullptr, nullptr, dtype);
+        RunSplitRTilingKeyCase(256, 16, dtype, 59135, 64, 20000000, false, nullptr, nullptr, dtype);
+        RunSplitRTilingKeyCase(256, 16, dtype, 59904, 64, 21000000, false, nullptr, nullptr, ge::DT_FLOAT);
+        RunSplitRTilingKeyCase(256, 16, dtype, 59903, 64, 20000000, false, nullptr, nullptr, ge::DT_FLOAT);
     }
 }
 
@@ -2825,6 +2967,55 @@ TEST_F(BatchNormGradV3Tiling, ra_split_r_not_capable_single_rival_core)
 TEST_F(BatchNormGradV3Tiling, ra_split_r_fused_pair_ub_fallback_generic)
 {
     RunSplitRTilingKeyCase(5120, 128, ge::DT_FLOAT, 196608, 40, 50000000);
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_dispatch)
+{
+    for (auto dtype : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
+        for (int64_t channels : {1, 3, 8}) {
+            RunSplitRTilingKeyCase(257, channels, dtype, 245760, 64, 21000000);
+        }
+        // Packed must not steal long-R inputs from Split-R.
+        RunSplitRTilingKeyCase(8192, 1, dtype, 245760, 64, 51000000);
+        RunSplitRTilingKeyCase(320, 32, dtype, 245760, 64, 50000000);
+    }
+    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 245760, 64, 21000000);
+    RunSplitRTilingKeyCase(257, 16, ge::DT_FLOAT16, 245760, 64, 21000000);
+    RunSplitRTilingKeyCase(257, 16, ge::DT_BF16, 245760, 64, 21000000);
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_admission_boundaries)
+{
+    for (auto dtype : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
+        RunSplitRTilingKeyCase(255, 1, dtype, 245760, 64, 20000000);
+        RunSplitRTilingKeyCase(256, 1, dtype, 245760, 64, 21000000);
+    }
+    // Keep the original R thresholds, including inputs not selected by Split-R.
+    RunSplitRTilingKeyCase(957, 1, ge::DT_FLOAT, 245760, 64, 21000000);
+    RunSplitRTilingKeyCase(958, 1, ge::DT_FLOAT, 245760, 64, 40000000);
+    for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+        RunSplitRTilingKeyCase(765, 1, dtype, 245760, 64, 21000000);
+        RunSplitRTilingKeyCase(766, 1, dtype, 245760, 64, 40000000);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_ub_fallback)
+{
+    // Ordinary full-load fits both budgets; only the packed implementation needs the larger UB.
+    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 220000, 64, 21000000);
+    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 200000, 64, 20000000);
+    for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+        RunSplitRTilingKeyCase(256, 16, dtype, 62000, 64, 21000000);
+        RunSplitRTilingKeyCase(256, 16, dtype, 59000, 64, 20000000);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_output_masks)
+{
+    for (uint64_t bits = 0; bits < 8; ++bits) {
+        std::vector<bool> mask{bool(bits & 1), bool(bits & 2), bool(bits & 4)};
+        RunSplitRTilingKeyCase(321, 1, ge::DT_FLOAT, 245760, 64, 21000000, false, &mask);
+    }
 }
 
 TEST_F(BatchNormGradV3Tiling, output_mask_all_combinations)

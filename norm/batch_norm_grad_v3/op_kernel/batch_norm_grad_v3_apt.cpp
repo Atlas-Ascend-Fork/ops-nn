@@ -34,6 +34,7 @@ using namespace BNGV3RARRecomputeSplitR0;
 #define BATCH_NORM_GRAD_V3_RAR_SPLIT_R1 31000000UL
 #define BATCH_NORM_GRAD_V3_RAR_RECOMPUTE_SPLIT_R0 32000000UL
 #define BATCH_NORM_GRAD_V3_RA_FULL_LOAD 20000000UL
+#define BATCH_NORM_GRAD_V3_RA_FULL_LOAD_PACKED 21000000UL
 #define BATCH_NORM_GRAD_V3_RA_RECOMPUTE 40000000UL
 #define BATCH_NORM_GRAD_V3_RA_SPLIT_R_TILING_KEY 50000000UL
 #define BATCH_NORM_GRAD_V3_RA_SPLIT_R_FUSED_SINGLE 51000000UL
@@ -71,6 +72,11 @@ extern "C" __global__ __aicore__ void batch_norm_grad_v3(GM_ADDR dy, GM_ADDR x, 
         const BatchNormGradV3RARRecomputeTilingData* __restrict tilingData = &tilingDataIn;
         BatchNormGradV3RARSplitR1<DTYPE_DY, DTYPE_WEIGHT, DOUBLE_BUFFER> op(&pipe);
         op.Init(dy, x, save_mean, save_rstd, weight, dx, dweight, dbias, usrWorkspace, tilingData);
+        op.Process();
+    } else if (TILING_KEY_IS(BATCH_NORM_GRAD_V3_RA_FULL_LOAD_PACKED)) {
+        GET_TILING_DATA_WITH_STRUCT(BatchNormGradV3RAFullLoadTilingData, tilingDataIn, tiling);
+        BatchNormGradV3RAFullLoad<DTYPE_DY, DTYPE_WEIGHT, DOUBLE_BUFFER, true> op(&pipe);
+        op.Init(dy, x, save_mean, save_rstd, weight, dx, dweight, dbias, usrWorkspace, &tilingDataIn);
         op.Process();
     } else if (TILING_KEY_IS(BATCH_NORM_GRAD_V3_RA_FULL_LOAD)) {
         GET_TILING_DATA_WITH_STRUCT(BatchNormGradV3RAFullLoadTilingData, tilingDataIn, tiling);

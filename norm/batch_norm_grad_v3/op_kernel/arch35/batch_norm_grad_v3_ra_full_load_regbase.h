@@ -26,7 +26,7 @@ using AscendC::Reg::LocalMemBar;
 using AscendC::Reg::MaskMergeMode;
 using AscendC::Reg::MemType;
 
-template <typename DY_TYPE, typename WEIGHT_TYPE, int BUFFER_NUM = 1>
+template <typename DY_TYPE, typename WEIGHT_TYPE, int BUFFER_NUM = 1, bool PACKED = false>
 class BatchNormGradV3RAFullLoad {
 public:
     int64_t outputMask_ = OUTPUT_MASK_ALL;
@@ -63,6 +63,13 @@ public:
         const BatchNormGradV3BaseTilingData& baseTilingData = tilingData->baseTilingData;
         rDim_ = baseTilingData.r1Dim;
         aDim_ = baseTilingData.aDim;
+        originalR_ = rDim_;
+        if constexpr (PACKED) {
+            while (packedRowsPerGroup_ * TWO * aDim_ <= VL_FP32) {
+                packedRowsPerGroup_ *= TWO;
+            }
+            rDim_ = CeilDiv(originalR_, packedRowsPerGroup_);
+        }
         numBlocks = tilingData->numBlocks;
         mainBlockCount = tilingData->mainBlockCount;
         mainBlockFactor = tilingData->mainBlockFactor;
@@ -135,36 +142,39 @@ public:
     }
 
 public:
-    __aicore__ inline void ProcessBlock(const int64_t gmOffset, const int64_t factor, const int64_t stride)
+    __aicore__ inline void ProcessBlock(const int64_t gmOffset, const int64_t channelFactor, const int64_t stride)
     {
+        const int64_t factor = PACKED ? channelFactor * packedRowsPerGroup_ : channelFactor;
+        const uint32_t channels = channelFactor;
+        const uint16_t rowsPerGroup = packedRowsPerGroup_;
         /* Process one Block */
         // load dy
         LocalTensor<DY_TYPE> dy = dyInQue_.template AllocTensor<DY_TYPE>();
-        CopyIn(dy, dyGm_[gmOffset], rDim_, factor, stride, aDim_);
+        LoadInput(dy, dyGm_[gmOffset], channelFactor, stride);
         dyInQue_.EnQue(dy);
         dy = dyInQue_.template DeQue<DY_TYPE>();
 
         // load x
         LocalTensor<DY_TYPE> x = xInQue_.template AllocTensor<DY_TYPE>();
-        CopyIn(x, xGm_[gmOffset], rDim_, factor, stride, aDim_);
+        LoadInput(x, xGm_[gmOffset], channelFactor, stride);
         xInQue_.EnQue(x);
         x = xInQue_.template DeQue<DY_TYPE>();
 
         // load mean
         LocalTensor<float> mean = meanInQue_.template AllocTensor<float>();
-        CopyIn(mean, meanGm_[gmOffset], 1, factor, 0, aDim_);
+        LoadChannel(mean, meanGm_[gmOffset], channelFactor);
         meanInQue_.EnQue(mean);
         mean = meanInQue_.template DeQue<float>();
 
         // load rstd
         LocalTensor<float> rstd = rstdInQue_.template AllocTensor<float>();
-        CopyIn(rstd, rstdGm_[gmOffset], 1, factor, 0, aDim_);
+        LoadChannel(rstd, rstdGm_[gmOffset], channelFactor);
         rstdInQue_.EnQue(rstd);
         rstd = rstdInQue_.template DeQue<float>();
 
         // load gamma
         LocalTensor<WEIGHT_TYPE> gamma = gammaInQue_.template AllocTensor<WEIGHT_TYPE>();
-        CopyIn(gamma, gammaGm_[gmOffset], 1, factor, 0, aDim_);
+        LoadChannel(gamma, gammaGm_[gmOffset], channelFactor);
         gammaInQue_.EnQue(gamma);
         gamma = gammaInQue_.template DeQue<WEIGHT_TYPE>();
 
@@ -176,7 +186,7 @@ public:
         uint16_t innerLoop = rDim_;
         uint32_t outerStride = 64;
         uint32_t innerStride = stride;
-        float reciprocal = 1.0f / (float)rDim_;
+        float reciprocal = 1.0f / static_cast<float>(originalR_);
 
         // dichotomy add
         uint16_t vfFoldLoopStep1 = foldLoopStep1;
@@ -187,6 +197,19 @@ public:
         uint32_t vfFoldLoopOffset3 = foldLoopOffset3;
         uint32_t vfReduceLoopTimes = reduceLoopTimes;
         uint32_t vfReduceRecursionLoop = reduceRecursionLoop;
+        uint16_t fullFoldLoopStep1 = vfFoldLoopStep1;
+        uint16_t packedTailLoops = 0;
+        uint32_t lastGroupElements = factor;
+        if constexpr (PACKED) {
+            uint32_t tailRows = originalR_ % packedRowsPerGroup_;
+            if (tailRows != 0) {
+                packedTailLoops = 1;
+                lastGroupElements = tailRows * channels;
+                if (innerLoop > FOUR && innerLoop % TWO == 0) {
+                    --fullFoldLoopStep1;
+                }
+            }
+        }
 
         if (rDim_ == ONE) {
             __VEC_SCOPE__
@@ -207,18 +230,20 @@ public:
                 AscendC::Reg::RegTensor<float> meanReg, rstdReg, gammaReg;
                 for (uint16_t i = 0; i < outerLoop; ++i) {
                     pMask = AscendC::Reg::UpdateMask<float>(count);
+                    Reg::MaskReg lastGroupMask = GetLastGroupMask(pMask, lastGroupElements);
                     LoadOneTensor<float>(meanAddr, meanReg, pMask, i * outerStride);
                     LoadOneTensor<float>(rstdAddr, rstdReg, pMask, i * outerStride);
                     LoadOneTensor<WEIGHT_TYPE>(gammaAddr, gammaReg, pMask, i * outerStride);
                     LoadOneTensor<DY_TYPE>(xAddr, xReg, pMask, i * outerStride);
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg, pMask, i * outerStride);
+                    MaskPackedTailDy(dyReg, lastGroupMask, packedTailLoops);
                     Move<float, AscendC::Reg::MaskMergeMode::MERGING>(dbetaReg, dyReg, pMask);
-                    StoreOneTensor<WEIGHT_TYPE>(dbetaAddr, dbetaReg, pMask, i * outerStride);
+                    StoreGradient(dbetaAddr, dbetaReg, pMask, i * outerStride, channels, rowsPerGroup);
                     Move<float, AscendC::Reg::MaskMergeMode::MERGING>(dgammaReg, xReg, pMask);
                     Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(dgammaReg, dgammaReg, meanReg, pMask);
                     Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(dgammaReg, dgammaReg, dyReg, pMask);
-                    Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(dgammaReg, dgammaReg, rstdReg, pMask);
-                    StoreOneTensor<WEIGHT_TYPE>(dgammaAddr, dgammaReg, pMask, i * outerStride);
+                    Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(dgammaReg, dgammaReg, rstdReg, lastGroupMask);
+                    StoreGradient(dgammaAddr, dgammaReg, pMask, i * outerStride, channels, rowsPerGroup);
 
                     // dx = rstd * gamma * (dy - reciprocal * (dbeta + (x - mean) * rstd * dgamma))
                     Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg, xReg, meanReg, pMask);
@@ -252,6 +277,7 @@ public:
                 AscendC::Reg::RegTensor<float> meanReg, rstdReg, gammaReg;
                 for (uint16_t i = 0; i < outerLoop; ++i) {
                     pMask = AscendC::Reg::UpdateMask<float>(count);
+                    Reg::MaskReg lastGroupMask = GetLastGroupMask(pMask, lastGroupElements);
                     LoadOneTensor<float>(meanAddr, meanReg, pMask, i * outerStride);
                     LoadOneTensor<float>(rstdAddr, rstdReg, pMask, i * outerStride);
                     LoadOneTensor<WEIGHT_TYPE>(gammaAddr, gammaReg, pMask, i * outerStride);
@@ -259,18 +285,19 @@ public:
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg, pMask, i * outerStride);
                     LoadOneTensor<DY_TYPE>(xAddr, xReg2, pMask, i * outerStride + innerStride);
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg2, pMask, i * outerStride + innerStride);
+                    MaskPackedTailDy(dyReg2, lastGroupMask, packedTailLoops);
                     // dbetaReg = dyReg + dyReg2
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dbetaReg, dyReg, dyReg2, pMask);
-                    StoreOneTensor<WEIGHT_TYPE>(dbetaAddr, dbetaReg, pMask, i * outerStride);
+                    StoreGradient(dbetaAddr, dbetaReg, pMask, i * outerStride, channels, rowsPerGroup);
                     // dgammaReg = (xReg - meanReg) * rstdReg * dyReg + (xReg2 - meanReg) * rstdReg * dyReg2
                     Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg, xReg, meanReg, pMask);
                     Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg, xReg, dyReg, pMask);
                     Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg, xReg, rstdReg, pMask);
                     Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg2, xReg2, meanReg, pMask);
                     Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg2, xReg2, dyReg2, pMask);
-                    Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg2, xReg2, rstdReg, pMask);
+                    Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg2, xReg2, rstdReg, lastGroupMask);
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dgammaReg, xReg, xReg2, pMask);
-                    StoreOneTensor<WEIGHT_TYPE>(dgammaAddr, dgammaReg, pMask, i * outerStride);
+                    StoreGradient(dgammaAddr, dgammaReg, pMask, i * outerStride, channels, rowsPerGroup);
 
                     // dx = rstd * gamma * (dy - reciprocal * (dbeta + (x - mean) * rstd * dgamma))
                     ComputeStoreDx(xAddr, dyAddr, dxAddr, meanReg, rstdReg, gammaReg, dgammaReg, dbetaReg, reciprocal,
@@ -301,6 +328,7 @@ public:
                 AscendC::Reg::RegTensor<float> meanReg, rstdReg, gammaReg;
                 for (uint16_t i = 0; i < outerLoop; ++i) {
                     pMask = AscendC::Reg::UpdateMask<float>(count);
+                    Reg::MaskReg lastGroupMask = GetLastGroupMask(pMask, lastGroupElements);
                     LoadOneTensor<float>(meanAddr, meanReg, pMask, i * outerStride);
                     LoadOneTensor<float>(rstdAddr, rstdReg, pMask, i * outerStride);
                     LoadOneTensor<WEIGHT_TYPE>(gammaAddr, gammaReg, pMask, i * outerStride);
@@ -310,10 +338,11 @@ public:
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg2, pMask, i * outerStride + innerStride);
                     LoadOneTensor<DY_TYPE>(xAddr, xReg3, pMask, i * outerStride + innerStride * 2);
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg3, pMask, i * outerStride + innerStride * 2);
+                    MaskPackedTailDy(dyReg3, lastGroupMask, packedTailLoops);
                     // dbetaReg = dyReg + dyReg2 + dyReg3
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dbetaReg, dyReg, dyReg2, pMask);
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dbetaReg, dbetaReg, dyReg3, pMask);
-                    StoreOneTensor<WEIGHT_TYPE>(dbetaAddr, dbetaReg, pMask, i * outerStride);
+                    StoreGradient(dbetaAddr, dbetaReg, pMask, i * outerStride, channels, rowsPerGroup);
                     // dgammaReg = (xReg - meanReg) * rstdReg * dyReg
                     //           + (xReg2 - meanReg) * rstdReg * dyReg2
                     //           + (xReg3 - meanReg) * rstdReg * dyReg3
@@ -326,9 +355,9 @@ public:
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dgammaReg, xReg, xReg2, pMask);
                     Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg3, xReg3, meanReg, pMask);
                     Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg3, xReg3, dyReg3, pMask);
-                    Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg3, xReg3, rstdReg, pMask);
+                    Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg3, xReg3, rstdReg, lastGroupMask);
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dgammaReg, dgammaReg, xReg3, pMask);
-                    StoreOneTensor<WEIGHT_TYPE>(dgammaAddr, dgammaReg, pMask, i * outerStride);
+                    StoreGradient(dgammaAddr, dgammaReg, pMask, i * outerStride, channels, rowsPerGroup);
 
                     // dx = rstd * gamma * (dy - reciprocal * (dbeta + (x - mean) * rstd * dgamma))
                     ComputeStoreDx(xAddr, dyAddr, dxAddr, meanReg, rstdReg, gammaReg, dgammaReg, dbetaReg, reciprocal,
@@ -363,6 +392,7 @@ public:
                 AscendC::Reg::RegTensor<float> meanReg, rstdReg, gammaReg;
                 for (uint16_t i = 0; i < outerLoop; ++i) {
                     pMask = AscendC::Reg::UpdateMask<float>(count);
+                    Reg::MaskReg lastGroupMask = GetLastGroupMask(pMask, lastGroupElements);
                     LoadOneTensor<float>(meanAddr, meanReg, pMask, i * outerStride);
                     LoadOneTensor<float>(rstdAddr, rstdReg, pMask, i * outerStride);
                     LoadOneTensor<WEIGHT_TYPE>(gammaAddr, gammaReg, pMask, i * outerStride);
@@ -373,9 +403,10 @@ public:
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dyReg, dyReg, dyReg3, pMask);
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg2, pMask, i * outerStride + innerStride);
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg4, pMask, i * outerStride + innerStride * 3);
+                    MaskPackedTailDy(dyReg4, lastGroupMask, packedTailLoops);
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dyReg2, dyReg2, dyReg4, pMask);
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dbetaReg, dyReg, dyReg2, pMask);
-                    StoreOneTensor<WEIGHT_TYPE>(dbetaAddr, dbetaReg, pMask, i * outerStride);
+                    StoreGradient(dbetaAddr, dbetaReg, pMask, i * outerStride, channels, rowsPerGroup);
 
                     // calc dgamma
                     LoadOneTensor<DY_TYPE>(xAddr, xReg, pMask, i * outerStride);
@@ -398,10 +429,10 @@ public:
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg4, pMask, i * outerStride + innerStride * 3);
                     Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg4, xReg4, meanReg, pMask);
                     Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg4, xReg4, dyReg4, pMask);
-                    Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg4, xReg4, rstdReg, pMask);
+                    Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg4, xReg4, rstdReg, lastGroupMask);
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(xReg2, xReg2, xReg4, pMask);
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dgammaReg, xReg, xReg2, pMask);
-                    StoreOneTensor<WEIGHT_TYPE>(dgammaAddr, dgammaReg, pMask, i * outerStride);
+                    StoreGradient(dgammaAddr, dgammaReg, pMask, i * outerStride, channels, rowsPerGroup);
 
                     // dx = rstd * gamma * (dy - reciprocal * (dbeta + (x - mean) * rstd * dgamma))
                     ComputeStoreDx(xAddr, dyAddr, dxAddr, meanReg, rstdReg, gammaReg, dgammaReg, dbetaReg, reciprocal,
@@ -441,44 +472,17 @@ public:
                 AscendC::Reg::RegTensor<float> meanReg, rstdReg, gammaReg;
                 for (uint16_t i = 0; i < outerLoop; ++i) {
                     pMask = AscendC::Reg::UpdateMask<float>(count);
+                    Reg::MaskReg lastGroupMask = GetLastGroupMask(pMask, lastGroupElements);
                     LoadOneTensor<float>(meanAddr, meanReg, pMask, i * outerStride);
                     LoadOneTensor<float>(rstdAddr, rstdReg, pMask, i * outerStride);
-                    for (uint16_t j = 0; j < vfFoldLoopStep1; ++j) {
-                        AscendC::Reg::RegTensor<float> dy1Reg, dy2Reg, x1Reg, x2Reg;
-                        AscendC::Reg::RegTensor<float> dyFold1Reg, dyFold2Reg, xFold1Reg, xFold2Reg;
-
-                        LoadOneTensor<DY_TYPE>(xAddr, x1Reg, pMask, i * outerStride + (2 * j + 0) * innerStride);
-                        LoadOneTensor<DY_TYPE>(dyAddr, dy1Reg, pMask, i * outerStride + (2 * j + 0) * innerStride);
-                        Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, meanReg, pMask);
-                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, dy1Reg, pMask);
-                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, rstdReg, pMask);
-                        LoadOneTensor<DY_TYPE>(dyAddr, dyFold1Reg, pMask,
-                                               i * outerStride + (2 * j + 0 + vfFoldLoopOffset1) * innerStride);
-                        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dy1Reg, dy1Reg, dyFold1Reg, pMask);
-                        LoadOneTensor<DY_TYPE>(xAddr, xFold1Reg, pMask,
-                                               i * outerStride + (2 * j + 0 + vfFoldLoopOffset1) * innerStride);
-                        Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, meanReg, pMask);
-                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, dyFold1Reg, pMask);
-                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, rstdReg, pMask);
-                        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, xFold1Reg, pMask);
-                        LoadOneTensor<DY_TYPE>(xAddr, x2Reg, pMask, i * outerStride + (2 * j + 1) * innerStride);
-                        LoadOneTensor<DY_TYPE>(dyAddr, dy2Reg, pMask, i * outerStride + (2 * j + 1) * innerStride);
-                        Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(x2Reg, x2Reg, meanReg, pMask);
-                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(x2Reg, x2Reg, dy2Reg, pMask);
-                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(x2Reg, x2Reg, rstdReg, pMask);
-                        LoadOneTensor<DY_TYPE>(dyAddr, dyFold2Reg, pMask,
-                                               i * outerStride + (2 * j + 1 + vfFoldLoopOffset1) * innerStride);
-                        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dy2Reg, dy2Reg, dyFold2Reg, pMask);
-                        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dy1Reg, dy1Reg, dy2Reg, pMask);
-                        StoreOneTensor<float>(dbetawsAddr, dy1Reg, pMask, i * outerStride + j * innerStride);
-                        LoadOneTensor<DY_TYPE>(xAddr, xFold2Reg, pMask,
-                                               i * outerStride + (2 * j + 1 + vfFoldLoopOffset1) * innerStride);
-                        Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold2Reg, xFold2Reg, meanReg, pMask);
-                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold2Reg, xFold2Reg, dyFold2Reg, pMask);
-                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold2Reg, xFold2Reg, rstdReg, pMask);
-                        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(x2Reg, x2Reg, xFold2Reg, pMask);
-                        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, x2Reg, pMask);
-                        StoreOneTensor<float>(dgammawsAddr, x1Reg, pMask, i * outerStride + j * innerStride);
+                    // Keep the partial group out of the complete-group loop.
+                    for (uint16_t j = 0; j < fullFoldLoopStep1; ++j) {
+                        FoldFourRows(dyAddr, xAddr, dbetawsAddr, dgammawsAddr, meanReg, rstdReg, pMask, pMask,
+                                     i * outerStride, innerStride, vfFoldLoopOffset1, j, 0);
+                    }
+                    for (uint16_t j = fullFoldLoopStep1; j < vfFoldLoopStep1; ++j) {
+                        FoldFourRows(dyAddr, xAddr, dbetawsAddr, dgammawsAddr, meanReg, rstdReg, pMask, lastGroupMask,
+                                     i * outerStride, innerStride, vfFoldLoopOffset1, j, packedTailLoops);
                     }
                     for (uint16_t j = 0; j < vfFoldLoopStep2; ++j) {
                         AscendC::Reg::RegTensor<float> dy1Reg, dy2Reg, x1Reg, x2Reg;
@@ -492,13 +496,14 @@ public:
                         LoadOneTensor<DY_TYPE>(
                             dyAddr, dyFold1Reg, pMask,
                             i * outerStride + vfFoldLoopOffset2 * innerStride + vfFoldLoopOffset1 * innerStride);
+                        MaskPackedTailDy(dyFold1Reg, lastGroupMask, packedTailLoops);
                         Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dy1Reg, dy1Reg, dyFold1Reg, pMask);
                         LoadOneTensor<DY_TYPE>(
                             xAddr, xFold1Reg, pMask,
                             i * outerStride + vfFoldLoopOffset2 * innerStride + vfFoldLoopOffset1 * innerStride);
                         Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, meanReg, pMask);
                         Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, dyFold1Reg, pMask);
-                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, rstdReg, pMask);
+                        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, rstdReg, lastGroupMask);
                         Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, xFold1Reg, pMask);
                         LoadOneTensor<DY_TYPE>(dyAddr, dy2Reg, pMask,
                                                i * outerStride + (vfFoldLoopOffset2 + 1) * innerStride);
@@ -553,10 +558,10 @@ public:
                     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
                     LoadTwoTensorSum(dbetawsAddr, dbetaReg, pMask, i * outerStride + 0 * innerStride,
                                      i * outerStride + 1 * innerStride);
-                    StoreOneTensor<WEIGHT_TYPE>(dbetaAddr, dbetaReg, pMask, i * outerStride);
+                    StoreGradient(dbetaAddr, dbetaReg, pMask, i * outerStride, channels, rowsPerGroup);
                     LoadTwoTensorSum(dgammawsAddr, dgammaReg, pMask, i * outerStride + 0 * innerStride,
                                      i * outerStride + 1 * innerStride);
-                    StoreOneTensor<WEIGHT_TYPE>(dgammaAddr, dgammaReg, pMask, i * outerStride);
+                    StoreGradient(dgammaAddr, dgammaReg, pMask, i * outerStride, channels, rowsPerGroup);
 
                     // dx = rstd * gamma * (dy - reciprocal * (dbeta + (x - mean) * rstd * dgamma))
                     LoadOneTensor<WEIGHT_TYPE>(gammaAddr, gammaReg, pMask, i * outerStride);
@@ -586,7 +591,7 @@ public:
         dbetaOutQue_.EnQue(dbeta);
         dbeta = dbetaOutQue_.template DeQue<WEIGHT_TYPE>();
         if ((outputMask_ & OUTPUT_MASK_DBETA) != OUTPUT_MASK_NONE) {
-            CopyOut(dbetaGm_[gmOffset], dbeta, factor);
+            CopyOut(dbetaGm_[gmOffset], dbeta, channelFactor);
         }
         dbetaOutQue_.FreeTensor(dbeta);
 
@@ -594,7 +599,7 @@ public:
         dgammaOutQue_.EnQue(dgamma);
         dgamma = dgammaOutQue_.template DeQue<WEIGHT_TYPE>();
         if ((outputMask_ & OUTPUT_MASK_DGAMMA) != OUTPUT_MASK_NONE) {
-            CopyOut(dgammaGm_[gmOffset], dgamma, factor);
+            CopyOut(dgammaGm_[gmOffset], dgamma, channelFactor);
         }
         dgammaOutQue_.FreeTensor(dgamma);
 
@@ -602,12 +607,111 @@ public:
         dxOutQue_.EnQue(dx);
         dx = dxOutQue_.template DeQue<DY_TYPE>();
         if ((outputMask_ & OUTPUT_MASK_DX) != OUTPUT_MASK_NONE) {
-            CopyOut(dxGm_[gmOffset], dx, rDim_, factor, aDim_, stride);
+            if constexpr (PACKED) {
+                PackedCopyOutput(dxGm_[gmOffset], dx, originalR_, channels, rowsPerGroup);
+            } else {
+                CopyOut(dxGm_[gmOffset], dx, rDim_, factor, aDim_, stride);
+            }
         }
         dxOutQue_.FreeTensor(dx);
     }
 
 private:
+    __aicore__ inline void LoadInput(const LocalTensor<DY_TYPE>& dst, const GlobalTensor<DY_TYPE>& src,
+                                     int64_t channels, int64_t stride)
+    {
+        if constexpr (PACKED) {
+            PackedCopyInput(dst, src, originalR_, channels, packedRowsPerGroup_);
+        } else {
+            CopyIn(dst, src, rDim_, channels, stride, aDim_);
+        }
+    }
+
+    template <typename T>
+    __aicore__ inline void LoadChannel(const LocalTensor<T>& dst, const GlobalTensor<T>& src, int64_t channels)
+    {
+        if constexpr (PACKED) {
+            PackedCopyChannel(dst, src, channels, packedRowsPerGroup_);
+        } else {
+            CopyIn(dst, src, 1, channels, 0, aDim_);
+        }
+    }
+
+    __aicore__ inline void MaskPackedTailDy(Reg::RegTensor<float>& dy, Reg::MaskReg& valid, uint16_t tailMaskLoops)
+    {
+        if constexpr (PACKED) {
+            // Keep tail padding in registers; only real rows contribute to dbeta.
+            for (uint16_t t = 0; t < tailMaskLoops; ++t) {
+                Reg::Muls<float, float, Reg::MaskMergeMode::ZEROING>(dy, dy, 1.0f, valid);
+            }
+        }
+    }
+
+    __aicore__ inline Reg::MaskReg GetLastGroupMask(const Reg::MaskReg& mask, uint32_t elements)
+    {
+        if constexpr (PACKED) {
+            return Reg::UpdateMask<float>(elements);
+        } else {
+            return mask;
+        }
+    }
+
+    __aicore__ inline void FoldFourRows(__ubuf__ DY_TYPE* dyAddr, __ubuf__ DY_TYPE* xAddr, __ubuf__ float* dbetawsAddr,
+                                        __ubuf__ float* dgammawsAddr, Reg::RegTensor<float>& meanReg,
+                                        Reg::RegTensor<float>& rstdReg, Reg::MaskReg& pMask,
+                                        Reg::MaskReg& lastGroupMask, uint32_t outerOffset, uint32_t innerStride,
+                                        uint32_t foldOffset, uint16_t j, uint16_t tailMaskLoops)
+    {
+        AscendC::Reg::RegTensor<float> dy1Reg, dy2Reg, x1Reg, x2Reg;
+        AscendC::Reg::RegTensor<float> dyFold1Reg, dyFold2Reg, xFold1Reg, xFold2Reg;
+
+        LoadOneTensor<DY_TYPE>(xAddr, x1Reg, pMask, outerOffset + (2 * j + 0) * innerStride);
+        LoadOneTensor<DY_TYPE>(dyAddr, dy1Reg, pMask, outerOffset + (2 * j + 0) * innerStride);
+        Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, meanReg, pMask);
+        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, dy1Reg, pMask);
+        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, rstdReg, pMask);
+        LoadOneTensor<DY_TYPE>(dyAddr, dyFold1Reg, pMask, outerOffset + (2 * j + 0 + foldOffset) * innerStride);
+        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dy1Reg, dy1Reg, dyFold1Reg, pMask);
+        LoadOneTensor<DY_TYPE>(xAddr, xFold1Reg, pMask, outerOffset + (2 * j + 0 + foldOffset) * innerStride);
+        Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, meanReg, pMask);
+        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, dyFold1Reg, pMask);
+        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold1Reg, xFold1Reg, rstdReg, pMask);
+        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, xFold1Reg, pMask);
+        LoadOneTensor<DY_TYPE>(xAddr, x2Reg, pMask, outerOffset + (2 * j + 1) * innerStride);
+        LoadOneTensor<DY_TYPE>(dyAddr, dy2Reg, pMask, outerOffset + (2 * j + 1) * innerStride);
+        Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(x2Reg, x2Reg, meanReg, pMask);
+        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(x2Reg, x2Reg, dy2Reg, pMask);
+        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(x2Reg, x2Reg, rstdReg, pMask);
+        LoadOneTensor<DY_TYPE>(dyAddr, dyFold2Reg, pMask, outerOffset + (2 * j + 1 + foldOffset) * innerStride);
+        MaskPackedTailDy(dyFold2Reg, lastGroupMask, tailMaskLoops);
+        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dy2Reg, dy2Reg, dyFold2Reg, pMask);
+        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(dy1Reg, dy1Reg, dy2Reg, pMask);
+        StoreOneTensor<float>(dbetawsAddr, dy1Reg, pMask, outerOffset + j * innerStride);
+        LoadOneTensor<DY_TYPE>(xAddr, xFold2Reg, pMask, outerOffset + (2 * j + 1 + foldOffset) * innerStride);
+        Sub<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold2Reg, xFold2Reg, meanReg, pMask);
+        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold2Reg, xFold2Reg, dyFold2Reg, pMask);
+        Mul<float, AscendC::Reg::MaskMergeMode::ZEROING>(xFold2Reg, xFold2Reg, rstdReg, lastGroupMask);
+        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(x2Reg, x2Reg, xFold2Reg, pMask);
+        Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(x1Reg, x1Reg, x2Reg, pMask);
+        StoreOneTensor<float>(dgammawsAddr, x1Reg, pMask, outerOffset + j * innerStride);
+    }
+
+    __aicore__ inline void StoreGradient(__ubuf__ WEIGHT_TYPE* dst, Reg::RegTensor<float>& value, Reg::MaskReg& mask,
+                                         uint32_t offset, uint32_t channels, uint16_t rowsPerGroup)
+    {
+        if constexpr (PACKED) {
+            PackedFoldChannels(value, channels, rowsPerGroup);
+            uint32_t count = channels;
+            Reg::MaskReg channelMask = Reg::UpdateMask<float>(count);
+            StoreOneTensor<WEIGHT_TYPE>(dst, value, channelMask, offset);
+            PackedBroadcastChannels(value, channels, rowsPerGroup);
+        } else {
+            StoreOneTensor<WEIGHT_TYPE>(dst, value, mask, offset);
+        }
+    }
+
+    int64_t originalR_{0};
+    uint16_t packedRowsPerGroup_{1};
     TPipe* pipe_ = nullptr;
     int64_t rDim_;
     int64_t aDim_;

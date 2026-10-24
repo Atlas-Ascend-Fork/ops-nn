@@ -123,6 +123,7 @@ TILING_DATA_FIELD_DEF(int64_t, outputMask); // bits: dx, dweight, dbias
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(BatchNormGradV3_20000000, BatchNormGradV3RAFullLoadTilingData);
+REGISTER_TILING_DATA_CLASS(BatchNormGradV3_21000000, BatchNormGradV3RAFullLoadTilingData);
 
 BEGIN_TILING_DATA_DEF(BatchNormGradV3RARecomputeTilingData)
 TILING_DATA_FIELD_DEF_STRUCT(BatchNormGradV3BaseTilingData, baseTilingData);
@@ -473,6 +474,8 @@ protected:
     ge::graphStatus PostTiling() override;
 
 private:
+    bool CanUsePacked(int64_t& groups) const;
+    bool CalculateBlockFactors(int64_t dtypeSize, int64_t weightDtypeSize, int64_t power2k);
     void CalculateLoopFactors(int64_t dtypeSize, int64_t weightDtypeSize, int64_t rDim_, int64_t power2k);
     void SetReduceLoopTimes(int64_t power2k, int64_t rDim_);
 
@@ -480,6 +483,10 @@ private:
     int64_t reservUbSizeForAlign{0};
     int64_t binaryAddUbNeed{0};
     int64_t binaryAddQuotient{0};
+    // Implementation choice within the existing full-load admission.
+    bool packed_{false};
+    bool vectorCorePartition_{false};
+    int64_t packedGroups_{0};
     BatchNormGradV3RAFullLoadTilingData tilingData;
 };
 

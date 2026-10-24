@@ -64,6 +64,11 @@ static constexpr int64_t BNG_NEED_RESERVE_UB_PARAM_NUM = 5; // mean rstd gamma d
 static constexpr uint64_t BNG_V3_TK_DEFAULT = 0;
 static constexpr uint64_t BNG_V3_RAR_ALL_LOAD_TK_BASE = 10000000;
 static constexpr uint64_t BNG_V3_RA_ALL_LOAD_TK_BASE = 20000000;
+static constexpr uint64_t BNG_V3_RA_PACKED_ALL_LOAD_TK_BASE = 21000000;
+static constexpr int64_t RA_FULL_LOAD_UNROLLED_ROWS = 4;
+static constexpr int64_t RA_PACKED_MAX_CHANNELS = 32;
+static constexpr int64_t RA_PACKED_MIN_REDUCE = 256;
+static constexpr int64_t RA_PACKED_MAX_GROUPS = 192;
 static constexpr uint64_t BNG_V3_RAR_RECOMPUTE_TK_BASE = 30000000;
 static constexpr uint64_t BNG_V3_RA_RECOMPUTE_TK_BASE = 40000000;
 static constexpr uint64_t BNG_V3_RAR_RECOMPUTE_SPLIT_R1 = 1000000;
@@ -897,6 +902,36 @@ ge::graphStatus BatchNormGradV3RARRecomputeTilingBase::PostTiling()
     return ge::GRAPH_SUCCESS;
 }
 
+bool BatchNormGradV3RAFullLoadTilingBase::CanUsePacked(int64_t& groups) const
+{
+    groups = 0;
+    // Keep small reductions on the existing paths and bound single-core work.
+    if (r0Dim != 1 || aDim < 1 || aDim > RA_PACKED_MAX_CHANNELS || r1Dim < RA_PACKED_MIN_REDUCE ||
+        vlFp32 != BASIC_FACTOR || blockSize == 0) {
+        return false;
+    }
+    int64_t rowsPerGroup = 1;
+    while (rowsPerGroup * TWO * aDim <= static_cast<int64_t>(vlFp32)) {
+        rowsPerGroup *= TWO;
+    }
+    if (r1Dim > rowsPerGroup * RA_PACKED_MAX_GROUPS) {
+        return false;
+    }
+    int64_t packedGroups = Ops::Base::CeilDiv(r1Dim, rowsPerGroup);
+    int64_t power2k = packedGroups <= 1 ? 1 : (1L << (ULONG_BIT_LEN - 1 - __builtin_clzl(packedGroups - 1)));
+    int64_t binaryRows = packedGroups > RA_FULL_LOAD_UNROLLED_ROWS ? power2k / TWO : 0;
+    int64_t aligned = 0;
+    // Match the packed kernel: one full vector per group, double-buffered
+    // feature/parameter queues and two FP32 reduction scratch tensors.
+    if (CalcRAFullLoadALoopFactor(vlFp32, packedGroups, binaryRows, ge::GetSizeByDataType(dyDtype),
+                                  ge::GetSizeByDataType(weightDtype), blockSize, ubSize,
+                                  aligned) != static_cast<int64_t>(vlFp32)) {
+        return false;
+    }
+    groups = packedGroups;
+    return true;
+}
+
 bool BatchNormGradV3RAFullLoadTilingBase::IsCapable()
 {
     int64_t dtypeSize = dyDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
@@ -929,11 +964,31 @@ ge::graphStatus BatchNormGradV3RAFullLoadTilingBase::DoOpTiling()
 
     int64_t dtypeSize = dyDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
     int64_t weightDtypeSize = weightDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
+    // Select the implementation only after the original full-load admission succeeds.
+    packed_ = CanUsePacked(packedGroups_);
+    if (packed_) {
+        tilingData.baseTilingData.set_blockNum(1);
+        tilingData.baseTilingData.set_formerBlockDim(aDim);
+        tilingData.baseTilingData.set_tailBlockNum(0);
+        tilingData.baseTilingData.set_tailBlockDim(0);
+        tilingData.set_numBlocks(1);
+        tilingData.set_mainBlockFactor(aDim);
+        tilingData.set_tailBlockFactor(0);
+        tilingData.set_mainBlockCount(1);
+        tilingData.set_tailBlockCount(0);
+        tilingData.set_mainALoopFactor(aDim);
+        tilingData.set_mainALoopFactorAligned(vlFp32);
+        tilingData.set_tailALoopFactor(aDim);
+        tilingData.set_tailALoopFactorAligned(vlFp32);
+        int64_t power2k = packedGroups_ <= 1 ? 1 : (1L << (ULONG_BIT_LEN - 1 - __builtin_clzl(packedGroups_ - 1)));
+        SetReduceLoopTimes(power2k, packedGroups_);
+        return ge::GRAPH_SUCCESS;
+    }
     int64_t rDim_ = tilingData.baseTilingData.get_r1Dim();
-    int64_t aDim_ = tilingData.baseTilingData.get_aDim();
-    int64_t power2k = 1L << (63 - __builtin_clzl(rDim_ - 1));
+    // Match the original full-load power calculation; handle R<=1 to avoid clzl(0).
+    int64_t power2k = (rDim_ <= 1) ? 1 : (1L << (ULONG_BIT_LEN - 1 - __builtin_clzl(rDim_ - 1)));
 
-    OP_TILING_CHECK(!SetRABlockFactorsCommon(tilingData, aDim_, dtypeSize, coreNum, blockSize),
+    OP_TILING_CHECK(!CalculateBlockFactors(dtypeSize, weightDtypeSize, power2k),
                     VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to set RA block factors."),
                     return ge::GRAPH_FAILED);
     CalculateLoopFactors(dtypeSize, weightDtypeSize, rDim_, power2k);
@@ -942,30 +997,71 @@ ge::graphStatus BatchNormGradV3RAFullLoadTilingBase::DoOpTiling()
     return ge::GRAPH_SUCCESS;
 }
 
+bool BatchNormGradV3RAFullLoadTilingBase::CalculateBlockFactors(int64_t dtypeSize, int64_t weightDtypeSize,
+                                                                int64_t power2k)
+{
+    vectorCorePartition_ = false;
+    if (!SetRABlockFactorsCommon(tilingData, aDim, dtypeSize, coreNum, blockSize)) {
+        return false;
+    }
+    if (tilingData.get_mainBlockFactor() >= static_cast<int64_t>(vlFp32)) {
+        return true;
+    }
+    // Long strided copies with an unaligned GM row pitch lose parallelism
+    // when merged. Keep their original partition; R<=4 uses the unrolled path.
+    if (r1Dim > RA_FULL_LOAD_UNROLLED_ROWS && static_cast<uint64_t>(aDim * dtypeSize) % blockSize != 0) {
+        return true;
+    }
+    // Size the core count for one FP32 vector: 256B for FP32 inputs, 128B for
+    // FP16/BF16 inputs. Keep wider existing blocks and retain their parallelism.
+    int64_t channels = static_cast<int64_t>(vlFp32);
+    int64_t binaryRows = r1Dim > RA_FULL_LOAD_UNROLLED_ROWS ? power2k / TWO : 0;
+    int64_t aligned = 0;
+    // Merge narrow blocks only when the entire R-by-C tile fits in one UB loop.
+    if (CalcRAFullLoadALoopFactor(channels, r1Dim, binaryRows, dtypeSize, weightDtypeSize, blockSize, ubSize,
+                                  aligned) != channels) {
+        return true;
+    }
+    int64_t numBlocks = Ops::Base::CeilDiv(aDim, channels);
+    if (numBlocks >= tilingData.get_numBlocks()) {
+        return true;
+    }
+    // Balance C without misaligning the GM offsets between cores. An aligned
+    // row pitch also keeps the final block at least one data block wide.
+    channels = std::min(
+        aDim, Ops::Base::CeilAlign(Ops::Base::CeilDiv(aDim, numBlocks), static_cast<int64_t>(blockSize / dtypeSize)));
+    int64_t mainBlocks = aDim / channels;
+    int64_t tailChannels = aDim % channels;
+    int64_t tailBlocks = tailChannels > 0 ? 1 : 0;
+    tilingData.set_numBlocks(mainBlocks + tailBlocks);
+    tilingData.set_mainBlockFactor(channels);
+    tilingData.set_tailBlockFactor(tailChannels);
+    tilingData.set_mainBlockCount(mainBlocks);
+    tilingData.set_tailBlockCount(tailBlocks);
+    vectorCorePartition_ = true;
+    return true;
+}
+
 void BatchNormGradV3RAFullLoadTilingBase::CalculateLoopFactors(int64_t dtypeSize, int64_t weightDtypeSize,
                                                                int64_t rDim_, int64_t power2k)
 {
-    auto calculateLoopFactors = [&](int64_t blockFactor, int64_t& loopFactor, int64_t& loopFactorAligned) {
-        for (int64_t factor = 1; factor <= blockFactor; ++factor) {
-            int64_t factorAligned = Ops::Base::CeilDiv(static_cast<uint64_t>(factor * dtypeSize), blockSize) *
-                                    blockSize / dtypeSize;
-            int64_t total_bytes = rDim_ * factorAligned * dtypeSize * DOUBLE_BUFFER * THREE +
-                                  factorAligned * FLOAT_BYTE_NUMBER * DOUBLE_BUFFER * TWO +
-                                  factorAligned * weightDtypeSize * DOUBLE_BUFFER * THREE +
-                                  power2k * factorAligned * FLOAT_BYTE_NUMBER * TWO;
-            if (static_cast<uint64_t>(total_bytes) > ubSize) {
-                break;
-            }
-            loopFactor = factor;
-            loopFactorAligned = factorAligned;
-        }
-    };
+    int64_t mainALoopFactorAligned = 0;
+    int64_t tailALoopFactorAligned = 0;
+    int64_t binaryRows = rDim_ > RA_FULL_LOAD_UNROLLED_ROWS ? power2k / TWO : 0;
 
-    int64_t mainALoopFactor = 0, mainALoopFactorAligned = 0;
-    int64_t tailALoopFactor = 0, tailALoopFactorAligned = 0;
+    int64_t mainALoopFactor = CalcRAFullLoadALoopFactor(tilingData.get_mainBlockFactor(), rDim_, binaryRows, dtypeSize,
+                                                        weightDtypeSize, blockSize, ubSize, mainALoopFactorAligned,
+                                                        vlFp32);
+    int64_t tailALoopFactor = CalcRAFullLoadALoopFactor(tilingData.get_tailBlockFactor(), rDim_, binaryRows, dtypeSize,
+                                                        weightDtypeSize, blockSize, ubSize, tailALoopFactorAligned,
+                                                        vlFp32);
 
-    calculateLoopFactors(tilingData.get_mainBlockFactor(), mainALoopFactor, mainALoopFactorAligned);
-    calculateLoopFactors(tilingData.get_tailBlockFactor(), tailALoopFactor, tailALoopFactorAligned);
+    if (vectorCorePartition_) {
+        // CalculateBlockFactors already checked the full-vector UB budget.
+        // Keep the reduction/VF row stride aligned even for partial vectors.
+        mainALoopFactorAligned = vlFp32;
+        tailALoopFactorAligned = tailALoopFactor > 0 ? vlFp32 : 0;
+    }
 
     tilingData.set_mainALoopFactor(mainALoopFactor);
     tilingData.set_mainALoopFactorAligned(mainALoopFactorAligned);
@@ -976,7 +1072,9 @@ void BatchNormGradV3RAFullLoadTilingBase::CalculateLoopFactors(int64_t dtypeSize
 void BatchNormGradV3RAFullLoadTilingBase::SetReduceLoopTimes(int64_t power2k, int64_t rDim_)
 {
     int64_t reduceLoopTimes = power2k / TWO;
-    int64_t reduceRecursionLoop = std::max(static_cast<int64_t>(std::log2(reduceLoopTimes)) - 1, 0L);
+    int64_t reduceRecursionLoop = reduceLoopTimes > 1 ?
+                                      static_cast<int64_t>(ULONG_BIT_LEN - __builtin_clzl(reduceLoopTimes)) - TWO :
+                                      0;
     tilingData.set_reduceLoopTimes(reduceLoopTimes);
     tilingData.set_reduceRecursionLoop(reduceRecursionLoop);
 
@@ -1000,7 +1098,7 @@ uint64_t BatchNormGradV3RAFullLoadTilingBase::GetTilingKey() const
         VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "DoLibApiTiling Not supported datatype.");
         return BNG_V3_TK_DEFAULT;
     }
-    uint64_t tilingKeyValue = BNG_V3_RA_ALL_LOAD_TK_BASE;
+    uint64_t tilingKeyValue = packed_ ? BNG_V3_RA_PACKED_ALL_LOAD_TK_BASE : BNG_V3_RA_ALL_LOAD_TK_BASE;
     OP_LOGD(context_->GetNodeName(), "BatchNormGradV3 get tiling key: %lx", tilingKeyValue);
     return tilingKeyValue;
 }
