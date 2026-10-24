@@ -1,12 +1,11 @@
 /**
- * This program is free software, you can redistribute it and/or modify.
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This file is a part of the CANN Open Software.
- * Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
+ * This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING
- * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
- * the software repository for the full text of the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "gtest/gtest.h"
 #include "infershape_test_util.h"
@@ -172,6 +171,40 @@ TEST_F(GroupedDynamicBlockQuantProto, infershape_case_1)
     gert::Shape* ScaleShape = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(1);
     ASSERT_EQ(Ops::Base::ToString(*YShape), "[6, 2000, 2000]");
     ASSERT_EQ(Ops::Base::ToString(*ScaleShape), "[6, 25, 16]");
+}
+
+TEST_F(GroupedDynamicBlockQuantProto, infershape_rejects_scalar_group_list)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("GroupedDynamicBlockQuant")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    constexpr int64_t rowBlockSize = 128;
+    constexpr int64_t colBlockSize = 128;
+    gert::StorageShape xShape = {{2000, 2000}, {2000, 2000}};
+    gert::StorageShape groupListShape = {{}, {}};
+    gert::StorageShape yShape = {{2000, 2000}, {2000, 2000}};
+    gert::StorageShape scaleShape = {{1, 1}, {1, 1}};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(2, 2)
+                      .IrInstanceNum({1, 1})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT8_E4M3FN, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeAttrs({
+                          {"min_scale", Ops::NN::AnyValue::CreateFrom<int64_t>(0.0)},
+                          {"round_mode", Ops::NN::AnyValue::CreateFrom<string>("rint")},
+                          {"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(36)},
+                          {"row_block_size", Ops::NN::AnyValue::CreateFrom<int64_t>(rowBlockSize)},
+                          {"col_block_size", Ops::NN::AnyValue::CreateFrom<int64_t>(colBlockSize)},
+                          {"group_list_type", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                      })
+                      .InputShapes({&xShape, &groupListShape})
+                      .OutputShapes({&yShape, &scaleShape})
+                      .Build();
+
+    EXPECT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
 
 TEST_F(GroupedDynamicBlockQuantProto, infershape_case_2)

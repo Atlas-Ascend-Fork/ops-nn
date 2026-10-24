@@ -102,6 +102,12 @@ ge::graphStatus InferShapeForGroupedDynamicBlockQuant(gert::InferShapeContext* c
 
     const gert::Shape* inputGroupListShape = context->GetInputShape(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputGroupListShape);
+    if (inputGroupListShape->GetDimNum() != INPUT_DIM_ONE) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "group_list",
+                                                 std::to_string(inputGroupListShape->GetDimNum()),
+                                                 "The shape dim of group_list must be 1");
+        return ge::GRAPH_FAILED;
+    }
     int64_t groupNum = inputGroupListShape->GetDim(0);
 
     auto attrs = context->GetAttrs();
