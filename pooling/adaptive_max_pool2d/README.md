@@ -37,11 +37,11 @@
   $$
 
   $$
-  y(N,C,m,n)=\underset {j\in [H^m_{left},H^m_{right}], k \in [W^n_{left},W^n_{right}] }{max} input(N,C,j,k)
+  y(N,C,m,n)=\underset {j\in [H^m_{left},H^m_{right}), k \in [W^n_{left},W^n_{right}) }{max} input(N,C,j,k)
   $$
 
   $$
-  indices(N,C,m,n)=\underset {j\in [H^m_{left},H^m_{right}], k \in [W^n_{left},W^n_{right}] }{argmax} input(N,C,j,k)
+  indices(N,C,m,n)=\underset {j\in [H^m_{left},H^m_{right}), k \in [W^n_{left},W^n_{right}) }{argmax} input(N,C,j,k)
   $$
 
 ## 参数说明
