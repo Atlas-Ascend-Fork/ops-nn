@@ -81,10 +81,10 @@ aclnnStatus aclnnLogSigmoid(
       <td>self（aclTensor*）</td>
       <td>输入</td>
       <td>待进行LogSigmoid计算的入参，公式中的x。</td>
-      <td><ul><li>支持空Tensor。</li><li>self与out的shape一致。</li><li>self与out的数据类型一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>self与out的shape一致。</li><li>self与out的数据类型一致。</li><li>超过8维时，接口会展平为一维计算后恢复原shape。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>1-8</td>
+      <td>-</td>
       <td>√</td>
     </tr>
     <tr>
@@ -94,7 +94,7 @@ aclnnStatus aclnnLogSigmoid(
       <td><ul><li>self与out的shape一致。</li><li>self与out的数据类型一致。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>1-8</td>
+      <td>-</td>
       <td>√</td>
     </tr>
        <tr>
