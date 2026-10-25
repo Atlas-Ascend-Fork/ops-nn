@@ -92,7 +92,7 @@ aclnnStatus aclnnLogSoftmaxBackward(
       <td>dim（int64_t）</td>
       <td>输入</td>
       <td>反向传播函数的维度。</td>
-      <td>取值范围[-dim_num, dim_num]（dim_num为gradOutput的shape维度）。</td>
+      <td>取值范围[-dim_num, dim_num-1]（dim_num为gradOutput的shape维度）。</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
