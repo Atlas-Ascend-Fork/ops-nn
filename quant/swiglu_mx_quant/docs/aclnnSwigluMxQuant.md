@@ -362,7 +362,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>mxscaleOut（aclTensor*）</td>
       <td>输出</td>
       <td>表示每个分组对应的量化尺度，对应公式中的mxscale和Sb</td>
-      <td><ul><li>shape在axis轴上为yOut对应轴的值除以blocksize=32向上取整，并对其进行偶数pad，pad填充值为0。</li><li>当axis为非尾轴且groupIndexOptional存在时，shape在axis轴上为yOut对应轴的值整除64再加groupNum。</li><li>当axis为非尾轴时，mxscaleOut输出需要对每两行数据进行交织处理。</li><li>不支持空Tensor。</li></ul></td>
+      <td><ul><li>除axis轴和末尾新增的scale维外，其余维度与yOut一致。未分组或axis为尾轴时，axis轴大小为ceil(ceil(yOut对应axis轴长度/32)/2)，末尾新增的大小为2的维度存放相邻两个32元素块的scale；32元素块数为奇数时按偶数块补齐，补充值为0。</li><li>当axis为非尾轴且groupIndexOptional存在时，axis轴大小为yOut对应轴长度整除64再加groupNum，末尾scale维大小仍为2。</li><li>当axis为非尾轴时，mxscaleOut输出需要对每两行数据进行交织处理。</li><li>不支持空Tensor。</li></ul></td>
       <td>FLOAT8_E8M0</td>
       <td>ND</td>
       <td>3-8</td>
