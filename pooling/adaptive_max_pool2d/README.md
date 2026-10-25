@@ -65,7 +65,7 @@
     <tr>
       <td>x</td>
       <td>输入</td>
-      <td><ul><li>待进行AdaptiveMaxPool2d计算的入参。H轴W轴2个维度的乘积不能大于int32的最大表示。数据类型与出参y的保持一致。</li><li>shape为[N, C, Hin, Win]。</li></ul></td>
+      <td><ul><li>待进行AdaptiveMaxPool2d计算的入参。H轴W轴2个维度的乘积不能大于int32的最大表示。数据类型与出参y的保持一致。</li><li>shape为[N, C, Hin, Win]或[C, Hin, Win]。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -79,14 +79,14 @@
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td><ul><li>待进行AdaptiveMaxPool2d计算的出参。shape与出参indices的保持一致，数据类型与入参x的保持一致。</li><li>shape为[N, C, Hout, Wout]。</li></ul></td>
+      <td><ul><li>待进行AdaptiveMaxPool2d计算的出参。shape与出参indices的保持一致，数据类型与入参x的保持一致。</li><li>shape为[N, C, Hout, Wout]或[C, Hout, Wout]。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>indices</td>
       <td>输出</td>
-      <td><ul><li>表示y元素在输入x中的索引位置。shape与出参y的保持一致。</li><li>shape为[N, C, Hout, Wout]。</li></ul></td>
+      <td><ul><li>表示y元素在输入x中的索引位置。shape与出参y的保持一致。</li><li>shape为[N, C, Hout, Wout]或[C, Hout, Wout]。</li></ul></td>
       <td>INT32</td>
       <td>ND</td>
     </tr>
