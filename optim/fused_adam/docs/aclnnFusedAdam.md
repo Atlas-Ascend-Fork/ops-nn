@@ -382,7 +382,7 @@ aclnnStatus aclnnFusedAdam(
 
 - 输入tensorList中paramsRef、gradsRef、expAvgsRef、expAvgSqsRef中，tensor个数必须保持一致，且下标相同的tensor的shape必须保持一致。
 
-- stateSteps类型为tensorList，支持INT64、FLOAT32，其tensor个数必须和paramsRef、gradsRef、expAvgsRef、expAvgSqsRef、maxExpAvgSqsRef一致。每个tensor元素个数至少为1，如果元素个数大于1则取第0个元素的值作为stateSteps的值。
+- stateSteps类型为tensorList，支持INT64、FLOAT32，其tensor个数必须和paramsRef、gradsRef、expAvgsRef、expAvgSqsRef一致；amsgrad为true时，maxExpAvgSqsRef也必须与这些tensorList的tensor个数一致。每个stateSteps tensor元素个数至少为1，如果元素个数大于1则取第0个元素的值作为stateSteps的值。
 
 - amsgrad为false时，maxExpAvgSqsRef可为空；amsgrad为true时，maxExpAvgSqsRef必选tensor数量，每个tensor的shape和dtype必须与paramsRef、gradsRef、expAvgsRef、expAvgSqsRef一致。
 
