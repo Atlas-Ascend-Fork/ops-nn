@@ -55,12 +55,8 @@ TILING_DATA_FIELD_DEF(int64_t, parallelN);
 TILING_DATA_FIELD_DEF(int64_t, ubSize);
 // 二分累加参数
 TILING_DATA_FIELD_DEF(int64_t, dichotomyAddPower);
-TILING_DATA_FIELD_DEF(int64_t, dichotomyAddK);
-TILING_DATA_FIELD_DEF(int64_t, dichotomyAddLastNum);
 // 归约/分组参数
-TILING_DATA_FIELD_DEF(int64_t, powerOfTwoForReduce);
 TILING_DATA_FIELD_DEF(int64_t, coresPerGroup);
-TILING_DATA_FIELD_DEF(float, groupInvCnt);
 END_TILING_DATA_DEF;
 REGISTER_TILING_DATA_CLASS(GroupNormSiluQuant_1000, GroupNormSiluQuantRegbaseTilingData)
 REGISTER_TILING_DATA_CLASS(GroupNormSiluQuant_1100, GroupNormSiluQuantRegbaseTilingData)

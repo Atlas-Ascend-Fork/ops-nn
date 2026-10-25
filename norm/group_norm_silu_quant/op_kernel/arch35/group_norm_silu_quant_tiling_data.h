@@ -41,11 +41,7 @@ struct GroupNormSiluQuantRegbaseTilingData {
     int64_t parallelN;
     int64_t ubSize;
     int64_t dichotomyAddPower;
-    int64_t dichotomyAddK;
-    int64_t dichotomyAddLastNum;
-    int64_t powerOfTwoForReduce;
     int64_t coresPerGroup; // split-reduce(1140): 每个 group 分到的核数(按 shapeD 通道切); 其它 tilingKey 恒为 1
-    float groupInvCnt; // split-reduce(1140): 1.0/(shapeD*hwNum), 主机预算避免设备标量浮点除法
 };
 
 #endif // GROUP_NORM_SILU_QUANT_TILING_DATA_H_

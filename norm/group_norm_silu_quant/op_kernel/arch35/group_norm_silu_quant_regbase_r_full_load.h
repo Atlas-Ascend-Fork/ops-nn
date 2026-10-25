@@ -10,7 +10,7 @@
 
 /*!
  * \file group_norm_silu_quant_regbase_r_full_load.h
- * \brief GroupNormSiluQuant arch35 调度: R(reduce)轴全载入(整行进 UB), two-pass 两遍算 mean/rstd。
+ * \brief GroupNormSiluQuant arch35 调度: R(reduce)轴全载入(整行进 UB)。统计量统一走公共层
  *        对偶为 r_partial_load(R 部分载入 + Welford 单遍)。IsGeneralized=false 为常规版; true 为大 channel
  *        通用版(gamma/quantScale 按组载入), 二者原为独立文件, 现合一, 差异走 if constexpr。
  */
@@ -82,7 +82,8 @@ private:
         }
     }
 
-    // 常规版 two-pass 全载双缓冲流水的单次迭代。逐行原样保留(CalMeanAndRstd 与 NormalizeAndSwish 均不动)。
+    // 常规版 two-pass 全载双缓冲流水的单次迭代。统计量走公共层(CalMeanAndRstdByCommonStat), 搬运与 NormalizeAndSwish
+    // 不动。
     __aicore__ inline void ProcessTwoPassTile(int64_t i, int64_t numPerCoreExtent, uint32_t& numPerCoreProcess,
                                               uint32_t numPerCoreTail, uint64_t xGmBaseOffset, uint64_t offset,
                                               __local_mem__ float* dichotomyAddLocal, event_t eventIDMte2ToVPing,
@@ -110,8 +111,7 @@ private:
         if (i > 1) {
             WaitFlag<HardEvent::MTE3_V>(isPing ? eventIDMte3ToVPing : eventIDMte3ToVPong);
         }
-        CalMeanAndRstd<T1>(xLocal, meanLocal, rstdLocal, dichotomyAddLocal, numPerCoreProcess, dichotomyAddPower,
-                           dichotomyAddK, dichotomyAddLastNum, powerOfTwoForReduce, elemNum, eps);
+        CalMeanAndRstdByCommonStat(xLocal, meanLocal, rstdLocal, dichotomyAddLocal, numPerCoreProcess);
         NormalizeAndSwish(xUbOffset, yUbOffset, offset + i * onceNumPerCore, numPerCoreProcess, i);
         if (i < numPerCoreExtent - BUFFER_NUM) {
             SetFlag<HardEvent::V_MTE2>(isPing ? eventIDVToMte2Ping : eventIDVToMte2Pong);
@@ -124,7 +124,8 @@ private:
         }
     }
 
-    // 泛化版 two-pass 全载双缓冲流水的单次迭代。逐行原样保留(CalMeanAndRstd 与 NormalizeAndSwish 均不动)。
+    // 泛化版 two-pass 全载双缓冲流水的单次迭代。统计量走公共层(CalMeanAndRstdByCommonStat), 搬运与 NormalizeAndSwish
+    // 不动。
     __aicore__ inline void ProcessTwoPassTileGen(int64_t i, int64_t numPerCoreExtent, uint32_t& numPerCoreProcess,
                                                  uint32_t numPerCoreTail, uint64_t xGmBaseOffset, uint64_t offset,
                                                  __local_mem__ float* dichotomyAddLocal, event_t eventIDMte2ToVPing,
@@ -152,8 +153,7 @@ private:
         if (i > 1) {
             WaitFlag<HardEvent::MTE3_V>(isPingG ? eventIDMte3ToVPing : eventIDMte3ToVPong);
         }
-        CalMeanAndRstd<T1>(xLocalG, meanLocalG, rstdLocalG, dichotomyAddLocal, numPerCoreProcess, dichotomyAddPower,
-                           dichotomyAddK, dichotomyAddLastNum, powerOfTwoForReduce, elemNum, eps);
+        CalMeanAndRstdByCommonStat(xLocalG, meanLocalG, rstdLocalG, dichotomyAddLocal, numPerCoreProcess);
         if (i > 0) {
             WaitFlag<HardEvent::V_MTE2>(eventIDVToMte2);
         }
@@ -169,6 +169,30 @@ private:
         CopySilu2Gm<int8_t>(siluGm[xGmOffsetG], yTensor[yUbOffsetG], numPerCoreProcess, elemNum);
         if (i < numPerCoreExtent - BUFFER_NUM) {
             SetFlag<HardEvent::MTE3_V>(isPingG ? eventIDMte3ToVPing : eventIDMte3ToVPong);
+        }
+    }
+
+    // 逐行走公共统计量层。本 key 的"段 = 组"(整行一次全载), 故退化为: 一段 -> 均值 -> 一段 eps -> 收口。
+    __aicore__ inline void CalMeanAndRstdByCommonStat(__local_mem__ T1* xLocal, __local_mem__ float* meanLocal,
+                                                      __local_mem__ float* rstdLocal, __local_mem__ float* accBuf,
+                                                      uint16_t rowCount)
+    {
+        __local_mem__ float* tmpMeanLocal = accBuf;
+        __local_mem__ float* tmpVarLocal = accBuf + VL_FP32;
+        __local_mem__ float* statScratch = accBuf + 2 * VL_FP32;
+        uint32_t rowStride = RoundUp<T1>(elemNum);
+        for (uint16_t row = 0; row < rowCount; row++) {
+            __local_mem__ T1* rowPtr = xLocal + row * rowStride;
+            float mean = 0.0f;
+            float m2 = 0.0f;
+            float count = 0.0f;
+            float sumHi = 0.0f;
+            float sumLo = 0.0f;
+            int32_t sk = SumScaleExp(static_cast<uint32_t>(elemNum));
+            WelfordSegmentStat<T1>(rowPtr, tmpMeanLocal, tmpVarLocal, statScratch, static_cast<uint32_t>(elemNum), mean,
+                                   m2, count, Pow2f(-sk), sumHi, sumLo);
+            WelfordGroupFinalize(meanLocal + row, rstdLocal + row, statScratch, mean, m2, count, eps, sumHi, sumLo,
+                                 Pow2f(sk));
         }
     }
 
@@ -364,7 +388,6 @@ private:
         // 32B 块读一致。
         yRowStride = RoundUp<int8_t>(elemNum);
         ySpanPerPing = onceNumPerCore * yRowStride;
-        powerOfTwoForReduce = tiling->powerOfTwoForReduce;
         if constexpr (IsGeneralized) {
             hwNumAlign = RoundUp<T1>(hwNum);
         } else {
@@ -382,7 +405,11 @@ private:
         int32_t realNumPerCore = numPerCore > innerNumPerCore ? innerNumPerCore : numPerCore;
         int32_t meanSize = RoundUp<T1>(realNumPerCore * (FLOAT_BYTE_SIZE / sizeof(T1)));
         int32_t rstdSize = RoundUp<T1>(realNumPerCore * (FLOAT_BYTE_SIZE / sizeof(T1)));
-        int32_t dichotomySize = RoundUp<T1>((dichotomyAddPower / FP32_ONE_REPEAT) * (FLOAT_BYTE_SIZE / sizeof(T1)));
+        // 该缓冲兼作公共统计量层的累加器(WELFORD_ACC_FLOATS), 取两者较大值;
+        // host 侧 GetDichotomyExtraSize 同步维护, 两处必须一起改。
+        int32_t dichotomyRawSize = (dichotomyAddPower / FP32_ONE_REPEAT) * (FLOAT_BYTE_SIZE / sizeof(T1));
+        int32_t welfordAccSize = WELFORD_ACC_FLOATS * (FLOAT_BYTE_SIZE / sizeof(T1));
+        int32_t dichotomySize = RoundUp<T1>(dichotomyRawSize > welfordAccSize ? dichotomyRawSize : welfordAccSize);
         int32_t meanOutSz = 0;
         int32_t rstdOutSz = 0;
         if constexpr (IsSameType<T2, half>::value || IsSameType<T2, bfloat16_t>::value) {
@@ -468,9 +495,6 @@ private:
     int64_t innerNumPerCore{MAX_ONCE_NUM_PER_CORE};
     int64_t onceNumPerCore;
     int64_t dichotomyAddPower;
-    int64_t dichotomyAddK;
-    int64_t dichotomyAddLastNum;
-    int64_t powerOfTwoForReduce;
     float eps;
     bool activateSilu{true};
     bool isFold{false};

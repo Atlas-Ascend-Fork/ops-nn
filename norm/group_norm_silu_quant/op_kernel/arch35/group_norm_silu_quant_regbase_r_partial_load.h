@@ -23,6 +23,7 @@ using namespace AscendC;
 template <typename T1, typename T2, bool IsGeneralized, int32_t BUFFER_NUM = 2>
 class GroupNormSiluQuantRPartialLoad
     : public GroupNormSiluQuantLoadBase<GroupNormSiluQuantRPartialLoad<T1, T2, IsGeneralized, BUFFER_NUM>, T1, T2> {
+    static constexpr uint64_t U64_BIT_LEN = 64; // 取严格大于 n 的最小 2 的幂用
 public:
     __aicore__ inline GroupNormSiluQuantRPartialLoad(){};
 
@@ -46,56 +47,73 @@ private:
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_MTE2>(eventIDMte3ToMte2);
     }
 
+    // 逐批走公共统计量层。本 key 的"段 != 组"(一行分 welfordLoopCount 批扫):
+    // 每批出 Welford 部分统计量 -> 跨批 Welford 合并 -> 收口。单遍扫描, 无需第二趟。
     __aicore__ inline void CalMeanAndRstdByWelford(uint64_t curNumPerCore, uint64_t curInnerNumPerCore)
     {
         __local_mem__ float* tmpMeanLocal = (__local_mem__ float*)tMeanTensor.GetPhyAddr();
         __local_mem__ float* tmpVarLocal = (__local_mem__ float*)tVarTensor.GetPhyAddr();
+        __local_mem__ float* statScratch = (__local_mem__ float*)dichotomyAddTensor.GetPhyAddr();
         __local_mem__ float* meanLocal = (__local_mem__ float*)meanTensor.GetPhyAddr();
         __local_mem__ float* rstdLocal = (__local_mem__ float*)rstdTensor.GetPhyAddr();
-        __local_mem__ float* dichotomyAddLocal = (__local_mem__ float*)dichotomyAddTensor.GetPhyAddr();
         uint64_t xGmOffset = blockIdx * tiling->numPerCore * elemNum;
-        uint32_t welfordLen = parallelN;
-        count = 0;
-        auto eventIDMte2ToVPing = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
-        auto eventIDMte2ToVPong = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
-        auto eventIDVToMte2Ping = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
-        auto eventIDVToMte2Pong = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
+        auto evM2VPing = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
+        auto evM2VPong = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
+        auto evV2M2Ping = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
+        auto evV2M2Pong = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
+
+        // ---- 每批部分统计量 -> 跨批 Welford 合并 ----
+        float mean = 0.0f;
+        float m2 = 0.0f;
+        float count = 0.0f;
+        // 段间走成对合并(见 base.h WelfordPairwiseAcc): 段数 = elemNum/parallelN 可达数十,
+        // 顺序累加误差线性累积(实测 60 段时 1.15 ULP, 成对 0.15 ULP)。
+        WelfordPairwiseAcc acc;
+        WelfordAccInit(acc);
+        uint32_t batchLen = parallelN;
+        // 补偿求和的缩放指数按**整组** elemNum 定: 同一组的所有批次必须用同一个缩放,
+        // 否则各批部分和不在同一量纲、不能直接相加。
+        int32_t sumScaleK = SumScaleExp(static_cast<uint32_t>(elemNum));
         for (int64_t i = 0; i < welfordLoopCount; i++) {
             if (i == welfordLoopCount - 1) {
-                welfordLen = welfordLoopTail;
+                batchLen = welfordLoopTail;
             }
-            int64_t xPhase1Offset = (i % BUFFER_NUM) * parallelNAlign;
+            int64_t ubOff = (i % BUFFER_NUM) * parallelNAlign;
             bool isPing = (i % BUFFER_NUM) == 0;
             if (i > BUFFER_NUM - 1) {
-                WaitFlag<HardEvent::V_MTE2>(isPing ? eventIDVToMte2Ping : eventIDVToMte2Pong);
+                WaitFlag<HardEvent::V_MTE2>(isPing ? evV2M2Ping : evV2M2Pong);
             }
-            CopyX2UB<T1>(xGm[xGmOffset + curNumPerCore * elemNum + i * parallelN], xPhase1Tensor[xPhase1Offset], 1,
-                         welfordLen);
-            SetFlag<HardEvent::MTE2_V>(isPing ? eventIDMte2ToVPing : eventIDMte2ToVPong);
-            WaitFlag<HardEvent::MTE2_V>(isPing ? eventIDMte2ToVPing : eventIDMte2ToVPong);
-            __local_mem__ T1* x1Local = (__local_mem__ T1*)xPhase1Tensor[xPhase1Offset].GetPhyAddr();
-            count = count + 1;
-            float scale = static_cast<float>(1.0) / static_cast<float>(count);
-            VFWelfordParallelUpdate<T1>(x1Local, tmpMeanLocal, tmpVarLocal, i, welfordLen, scale);
+            CopyX2UB<T1>(xGm[xGmOffset + curNumPerCore * elemNum + i * parallelN], xPhase1Tensor[ubOff], 1, batchLen);
+            SetFlag<HardEvent::MTE2_V>(isPing ? evM2VPing : evM2VPong);
+            WaitFlag<HardEvent::MTE2_V>(isPing ? evM2VPing : evM2VPong);
+            __local_mem__ T1* x1Local = (__local_mem__ T1*)xPhase1Tensor[ubOff].GetPhyAddr();
+            float bMean = 0.0f;
+            float bM2 = 0.0f;
+            float bCnt = 0.0f;
+            float bHi = 0.0f;
+            float bLo = 0.0f;
+            WelfordSegmentStat<T1>(x1Local, tmpMeanLocal, tmpVarLocal, statScratch, batchLen, bMean, bM2, bCnt,
+                                   Pow2f(-sumScaleK), bHi, bLo);
+            WelfordAccPush(acc, bMean, bM2, bCnt, bHi, bLo);
             if (i < welfordLoopCount - BUFFER_NUM) {
-                SetFlag<HardEvent::V_MTE2>(isPing ? eventIDVToMte2Ping : eventIDVToMte2Pong);
+                SetFlag<HardEvent::V_MTE2>(isPing ? evV2M2Ping : evV2M2Pong);
             }
         }
-        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(eventIDMte2ToVPing);
-        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(eventIDMte2ToVPong);
-        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventIDVToMte2Ping);
-        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventIDVToMte2Pong);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(evM2VPing);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(evM2VPong);
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(evV2M2Ping);
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(evV2M2Pong);
+        float sumHi = 0.0f;
+        float sumLo = 0.0f;
+        WelfordAccFinalize(acc, mean, m2, count, sumHi, sumLo);
         if constexpr (!IsGeneralized) {
             ProcessGammaAndBeta(curNumPerCore);
         }
-        float reduceScale = float(1.0) / static_cast<float>(elemNum);
-        float scale = float(1.0) / static_cast<float>(parallelN);
-        VFWelfordParallelFinalize(meanLocal, rstdLocal, tmpMeanLocal, tmpVarLocal, dichotomyAddLocal, parallelN,
-                                  dichotomyAddPower, dichotomyAddK, dichotomyAddLastNum, curInnerNumPerCore,
-                                  welfordLoopTail, reduceScale, scale, count, eps, welfordAlign);
-        auto eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
-        SetFlag<HardEvent::V_MTE2>(eventId);
-        WaitFlag<HardEvent::V_MTE2>(eventId);
+        WelfordGroupFinalize(meanLocal + curInnerNumPerCore, rstdLocal + curInnerNumPerCore, statScratch, mean, m2,
+                             count, eps, sumHi, sumLo, Pow2f(sumScaleK));
+        auto evId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
+        SetFlag<HardEvent::V_MTE2>(evId);
+        WaitFlag<HardEvent::V_MTE2>(evId);
     }
 
     __aicore__ inline void NormalizeAndSwish(uint64_t curNumPerCore, uint64_t curInnerNumPerCore)
@@ -510,8 +528,9 @@ private:
         LocalTensor<T1> ubTensor = innerBuf.template Get<T1>();
 
         int32_t xPhase1Size = parallelNAlign * BUFFER_NUM;
-        int32_t tMeanSize = RoundUp<T1>(parallelNAlign * (FLOAT_BYTE_SIZE / sizeof(T1)));
-        int32_t tVarSize = RoundUp<T1>(parallelNAlign * (FLOAT_BYTE_SIZE / sizeof(T1)));
+        // 公共统计量层的 lane 累加器固定 VL_FP32 宽(与 parallelN 无关), 故按 VL_FP32 开
+        int32_t tMeanSize = RoundUp<T1>(VL_FP32 * (FLOAT_BYTE_SIZE / sizeof(T1)));
+        int32_t tVarSize = RoundUp<T1>(VL_FP32 * (FLOAT_BYTE_SIZE / sizeof(T1)));
         int32_t tMeanOffset = xPhase1Size;
         int32_t tVarOffset = tMeanOffset + tMeanSize;
         int32_t dichotomyAddOffset = tVarOffset + tVarSize;
@@ -624,8 +643,6 @@ private:
     int64_t innerLoopTail;
     int64_t innerNumPerCore{MAX_ONCE_NUM_PER_CORE};
     int64_t dichotomyAddPower;
-    int64_t dichotomyAddK;
-    int64_t dichotomyAddLastNum;
     float eps;
     bool activateSilu{true};
 

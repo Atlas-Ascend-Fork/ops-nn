@@ -251,28 +251,16 @@ static ge::graphStatus CheckAttrParams(const gert::TilingContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
-static void GetDichotomyAddParams(const gert::TilingContext* context, uint64_t r, uint64_t& power, uint64_t& dichotomyK,
-                                  uint64_t& extraSize, uint64_t& lastNum)
+// 归约只剩公共统计量层一套(见 kernel base.h), 二分折叠的 dichotomyK / lastNum 已无人使用,
+// 本函数只保留 UB 预算仍需的 power 与 extraSize。
+static void GetDichotomyAddParams(const gert::TilingContext* context, uint64_t r, uint64_t& power, uint64_t& extraSize)
 {
     auto compileInfo = context->GetCompileInfo<GroupNormSiluQuantRegbaseCompileInfo>();
     uint32_t vl = compileInfo->vectorLength / FLOAT32_BYTES;
     uint32_t blockSize = compileInfo->blockSizePlatform;
     uint64_t basePower = (1L << (ULONG_BIT_LEN - 1 - __builtin_clzl(r)));
     power = basePower == r ? basePower / DICHOTOMY_ADD_COEFF : basePower;
-    uint64_t extraOriSize = power / vl;
-    extraSize = RoundUp(extraOriSize * FLOAT32_BYTES, blockSize);
-    dichotomyK = 0;
-    if (extraOriSize < vl) {
-        lastNum = extraOriSize;
-        return;
-    }
-    uint64_t totalNum = extraOriSize / vl;
-    uint64_t base = 1;
-    lastNum = vl;
-    while (base < totalNum) {
-        dichotomyK++;
-        base *= DICHOTOMY_ADD_COEFF;
-    }
+    extraSize = RoundUp((power / vl) * FLOAT32_BYTES, blockSize);
 }
 
 static uint64_t GetOptionalInputTensorSize(const gert::TilingContext* context,
@@ -320,7 +308,6 @@ static uint64_t CalcFoldQuantScaleUbSize(const gert::TilingContext* context,
     // per-channel 只需 shapeC。 大 channel(shapeC>MAX_CHANNEL_SIZE)走 R_PARTIAL_LOAD_GENERALIZED, kernel 按 shapeC
     // 逐通道读、不 fold; 故大 channel 不 fold。
     // 判据必须与 kernel r_full_load.h 的 `isFold = hwNum <= NDDMA_SIZE || (!hasGamma && !hasBeta)` 完全一致。
-    // issue #21 的 L1_014: hwNum=28224(>NDDMA) 但没有 gamma/beta, kernel 照样 fold, 而这里旧判据只看 hwNum,
     // 于是 per-channel quantScale 只按 shapeC 个 fp32 预留, kernel 却按 numGroups*elemNumAlign 展开写
     // (4*28224 个 fp32 = 451KB, UB 仅 253952B) → MTE2 写越界 errcode 82。
     bool hasGammaOrBeta = context->GetOptionalInputDesc(INPUT_IDX_GAMMA) != nullptr ||
@@ -380,7 +367,6 @@ static bool TrySetFullLoad(const gert::TilingContext* context, GroupNormSiluQuan
 // R_PARTIAL_LOAD_GENERALIZED(1120)之间选。
 // 1100 会在 welford 结束后把整段 gamma/beta/quantScale 一次性载入 UB(见 kernel r_partial_load.h 的
 // LoadOptionalInputs), 因此只有整段装得下才能选它; 装不下必须走 1120(按通道范围流式载入)。
-// issue #21: 旧判据是 isLargeChannel && hasOptional, 把"要不要整段常驻"与"有没有 gamma/beta"绑在了一起,
 // 而 quantScale 是否整段常驻只取决于 C。大 C 且无 gamma/beta 时被错选进 1100, 随后
 // ubSize - ... 无符号下溢成 2^61 级记账, 内核据此搬运即 UB 越界。
 static void SetPartialFallback(const gert::TilingContext* context, GroupNormSiluQuantRegbaseTilingData& tilingData,
@@ -470,12 +456,11 @@ static uint64_t AccumulateBaseOtherUb(const gert::TilingContext* context,
     uint64_t otherUbSize = gammaUbSize + betaUbSize + meanUbSize + rstdUbSize + quantScaleUbSize;
     meanUbExtraSize = 0;
     rstdUbExtraSize = 0;
+    // mean/rstd 的 cast 暂存缓冲由内核的 T2 决定, 而 kernel 入口一律实例化成 <DTYPE_X, DTYPE_X>
+    // (见 op_kernel/arch35/group_norm_silu_quant.cpp), 即 T2 恒等于 x 的 dtype, 与 gamma/beta 无关。
+    // 于是这里跳过了 extras, 而内核照 T2=half 开了 meanOut/rstdOut, 少记 2*RoundUp(realNumPerCore*2,32)=8KB
+    // → 1110 的 fold quantScale 尾部写出 UB, errcode 341。
     outDtypeSize = xDtypeSize;
-    if (context->GetInputDesc(INPUT_IDX_GAMMA) != nullptr) {
-        outDtypeSize = ge::GetSizeByDataType(context->GetInputDesc(INPUT_IDX_GAMMA)->GetDataType());
-    } else if (context->GetInputDesc(INPUT_IDX_BETA) != nullptr) {
-        outDtypeSize = ge::GetSizeByDataType(context->GetInputDesc(INPUT_IDX_BETA)->GetDataType());
-    }
     if (outDtypeSize != FLOAT32_BYTES) {
         meanUbExtraSize = RoundUp(realNumPerCore * xDtypeSize, blockSize);
         rstdUbExtraSize = RoundUp(realNumPerCore * xDtypeSize, blockSize);
@@ -484,16 +469,27 @@ static uint64_t AccumulateBaseOtherUb(const gert::TilingContext* context,
     return otherUbSize;
 }
 
+// 公共统计量层累加器的布局常量, 须与 kernel 侧 WELFORD_ACC_FLOATS 的构成一致
+// (op_kernel/arch35/group_norm_silu_quant_regbase_base.h)。
+static constexpr uint64_t WELFORD_ACC_LANE_MULT = 4;    // tmpMean / tmpVar / sumHi / sumLo 各 VL_FP32 个
+static constexpr uint64_t WELFORD_ACC_SLOT_FLOATS = 16; // 两个 32B 对齐标量槽
+
 // 只取二分累加的额外 UB 字节(内部临时量丢弃)。逐行原样保留。
 static uint64_t GetDichotomyExtraSize(const gert::TilingContext* context, uint64_t reduceCount)
 {
     uint64_t dichotomyAddPower = 0;
-    uint64_t dichotomyAddK = 0;
     uint64_t dichotomyAddExtraSize = 0;
-    uint64_t dichotomyAddLastNum = 0;
-    GetDichotomyAddParams(context, reduceCount, dichotomyAddPower, dichotomyAddK, dichotomyAddExtraSize,
-                          dichotomyAddLastNum);
-    return dichotomyAddExtraSize;
+    GetDichotomyAddParams(context, reduceCount, dichotomyAddPower, dichotomyAddExtraSize);
+    /* 该缓冲同时承载公共统计量层的累加器, 尺寸须与 kernel 侧 WELFORD_ACC_FLOATS 一致:
+         4*VL_FP32 + 16 个 float = tmpMean / tmpVar / mean 补偿求和的双浮点 hi 与 lo / 两个标量槽。
+       ★ VL_FP32 必须从平台取(与 kernel 的 VECTOR_REG_WIDTH 同源), 不能写死:
+         写死 64 在本 SoC 上数值正确, 但矢量宽度一变 host 预留就与 kernel 分叉。
+       ★ host/kernel 两侧必须同时维护: 只改 kernel 会让 host 预留不足 -> 缓冲重叠。
+         实测症状(L0_034, D=1/HW=1/n=1 档): meanOut 先写故幸存、100% 正确, 后写的 rstdOut
+         被覆盖、整列 0.0%。该档 dichotomyAddPower 极小, 本缓冲尺寸恰由本项决定, 故最先暴露。 */
+    const uint64_t vlFp32 = static_cast<uint64_t>(Ops::Base::GetVRegSize(context)) / FLOAT32_BYTES;
+    const uint64_t kWelfordAccBytes = (WELFORD_ACC_LANE_MULT * vlFp32 + WELFORD_ACC_SLOT_FLOATS) * sizeof(float);
+    return dichotomyAddExtraSize > kWelfordAccBytes ? dichotomyAddExtraSize : kWelfordAccBytes;
 }
 
 /*
@@ -565,16 +561,9 @@ static void SetDichotomyAddParams(const gert::TilingContext* context, GroupNormS
 {
     uint64_t reduceCount = tilingData.get_shapeD() * tilingData.get_hwNum();
     uint64_t dichotomyAddPower = 0;
-    uint64_t dichotomyAddK = 0;
     uint64_t dichotomyAddExtraSize = 0;
-    uint64_t dichotomyAddLastNum = 0;
-    GetDichotomyAddParams(context, reduceCount, dichotomyAddPower, dichotomyAddK, dichotomyAddExtraSize,
-                          dichotomyAddLastNum);
-    uint64_t powerOfTwoForReduce = (1L << (ULONG_BIT_LEN - __builtin_clzl(reduceCount)));
-    tilingData.set_powerOfTwoForReduce(powerOfTwoForReduce);
+    GetDichotomyAddParams(context, reduceCount, dichotomyAddPower, dichotomyAddExtraSize);
     tilingData.set_dichotomyAddPower(dichotomyAddPower);
-    tilingData.set_dichotomyAddK(dichotomyAddK);
-    tilingData.set_dichotomyAddLastNum(dichotomyAddLastNum);
 }
 
 static void SetWelfordParallelN(const gert::TilingContext* context, uint64_t xDtypeSize, uint64_t ubRemain,
@@ -594,17 +583,13 @@ static void SetWelfordParallelN(const gert::TilingContext* context, uint64_t xDt
     uint32_t maxParallelN = DownAlign((ubRemain / xDtypeSize) / totalNum, welfordBase);
 
     uint64_t dichotomyAddPower = 0;
-    uint64_t dichotomyAddK = 0;
     uint64_t dichotomyAddExtraSize = 0;
-    uint64_t dichotomyAddLastNum = 0;
-    GetDichotomyAddParams(context, maxParallelN, dichotomyAddPower, dichotomyAddK, dichotomyAddExtraSize,
-                          dichotomyAddLastNum);
+    GetDichotomyAddParams(context, maxParallelN, dichotomyAddPower, dichotomyAddExtraSize);
     uint32_t ubCurUse = maxParallelN * BUFFER_NUM * xDtypeSize + dichotomyAddExtraSize +
                         maxParallelN * BUFFER_NUM * FLOAT32_BYTES;
     while (ubCurUse > ubRemain) {
         maxParallelN -= welfordBase;
-        GetDichotomyAddParams(context, maxParallelN, dichotomyAddPower, dichotomyAddK, dichotomyAddExtraSize,
-                              dichotomyAddLastNum);
+        GetDichotomyAddParams(context, maxParallelN, dichotomyAddPower, dichotomyAddExtraSize);
         ubCurUse = maxParallelN * BUFFER_NUM * xDtypeSize + dichotomyAddExtraSize +
                    maxParallelN * BUFFER_NUM * FLOAT32_BYTES;
     }
@@ -612,11 +597,8 @@ static void SetWelfordParallelN(const gert::TilingContext* context, uint64_t xDt
     if (maxParallelN > tilingData.get_elemNum()) {
         maxParallelN = tilingData.get_elemNum();
     }
-    GetDichotomyAddParams(context, maxParallelN, dichotomyAddPower, dichotomyAddK, dichotomyAddExtraSize,
-                          dichotomyAddLastNum);
+    GetDichotomyAddParams(context, maxParallelN, dichotomyAddPower, dichotomyAddExtraSize);
     tilingData.set_dichotomyAddPower(dichotomyAddPower);
-    tilingData.set_dichotomyAddK(dichotomyAddK);
-    tilingData.set_dichotomyAddLastNum(dichotomyAddLastNum);
     tilingData.set_parallelN(maxParallelN);
 }
 
@@ -755,7 +737,7 @@ static void ComputeWelfordGeneralizedLoop(const gert::TilingContext* context,
         loopTail = (tilingData.get_shapeD() - (loopNum - 1) * count) * hwNumAlign;
         processSize = count * hwNumAlign;
         innerLoopNum = 1;
-        // 下溢保护: ubRemain 是 uint32, 减到负数会翻成 40 亿级记账, 内核据此搬运即越界(issue #21 同类)
+        // 下溢保护: ubRemain 是 uint32, 减到负数会翻成 40 亿级记账, 内核据此搬运即越界
         ubRemain = ubRemain > gammaRealSize + betaRealSize ? ubRemain - gammaRealSize - betaRealSize : 0;
     } else {
         gammaRealSize = GetOptionalInputTensorSize(context, tilingData, INPUT_IDX_GAMMA, 1);
@@ -911,7 +893,6 @@ static void SetBlockTiling(const gert::TilingContext* context, GroupNormSiluQuan
                                tilingData.get_numPerCore() * (tilingData.get_realCoreNum() - 1));
     tilingData.set_shapeN(shapeN);
     tilingData.set_coresPerGroup(1); // 默认非 split-reduce; split-reduce 分支会覆盖
-    tilingData.set_groupInvCnt(1.0f);
     uint64_t xShapeSize = xShape.GetShapeSize();
     if (xShapeSize == 0) {
         int64_t realCoreNum = tilingData.get_realCoreNum();
@@ -924,7 +905,7 @@ static void SetBlockTiling(const gert::TilingContext* context, GroupNormSiluQuan
 //   固定部分: inQue 2*TILE*sizeof(T1) + outQue 2*TILE*1 + (fbuf+rbuf+wbuf) 3*TILE*4 + reduf 32*4 + partBuf 32
 //             + combBuf(coresPerGroup*2 个 float 对齐 + 32) + mrFBuf 2*VL_FP32*4 + mrOBuf 2*VL_FP32*sizeof(T1)
 //   通道常驻: 仅在存在 gamma/beta 时, 每通道 (sizeof(T2)+4) 字节 x chanAlign(=CeilDiv(shapeD, coresPerGroup))
-// issue #21: 原先没有这道校验, chanPerCore=169013 时通道常驻需 2.03MB 而 UB 只有 253952B → MTE2 写越界(errcode 82)。
+// 通道常驻超出 UB 预算时必须拒收 split-reduce, 否则内核 MTE2 写越界。
 static bool SplitReduceFitsUb(const gert::TilingContext* context, GroupNormSiluQuantRegbaseTilingData& tilingData,
                               int64_t coresPerGroup)
 {
@@ -986,11 +967,13 @@ static uint64_t MaybeSetSplitReduce(const gert::TilingContext* context, GroupNor
     }
     tilingData.set_tilingKey(static_cast<int64_t>(GroupNormSiluQuantRegbaseTilingKey::TILINGKEY_R_SPLIT_REDUCE));
     tilingData.set_coresPerGroup(coresPerGroup);
-    tilingData.set_groupInvCnt(1.0f / static_cast<float>(elemNum)); // 1/(shapeD*hwNum)
     tilingData.set_realCoreNum(aAxis * coresPerGroup);
     tilingData.set_ubSize(compileInfo->ubSizePlatForm);
     // userWorkspace: 每核 2 个 float(sum,sumsq),按 32B 对齐
-    uint64_t bytes = static_cast<uint64_t>(aAxis * coresPerGroup) * 2 * sizeof(float);
+    // 每核落一个 Welford 部分状态 {mean, M2, count, 非有限探针} = 4 float。
+    // 跨核合并用公共 WelfordCombine(与 lane 间/批间同一套公式), 故只需一遍扫数据、一次 SyncAll。
+    // 每核两个区段各 4 float: 区段1 {缩放和, M2, count, 预留}, 区段2 {eps 部分和, 预留x3}
+    uint64_t bytes = static_cast<uint64_t>(aAxis * coresPerGroup) * 8 * sizeof(float);
     return RoundUp(bytes, 32);
 }
 
@@ -1015,7 +998,6 @@ static bool MaybeSetManyTinyGroups(const gert::TilingContext* context, GroupNorm
         return false; // 小通道本就 fold 批量,不慢,不接管
     }
     tilingData.set_tilingKey(static_cast<int64_t>(GroupNormSiluQuantRegbaseTilingKey::TILINGKEY_MANY_TINY_GROUPS));
-    tilingData.set_groupInvCnt(1.0f / static_cast<float>(elemNum)); // 1/hwNum(shapeD==1)
     tilingData.set_ubSize(compileInfo->ubSizePlatForm);
     // realCoreNum/numPerCore/numLastCore 沿用 SetBlockTiling 按 A 轴切好的值(每核一段连续组),无需 workspace
     return true;
@@ -1064,9 +1046,10 @@ ge::graphStatus Tiling4GroupNormSiluQuantRegBase(gert::TilingContext* context)
     // ub tiling
     size_t sysWorkspaceSize = RESERVED_WORKSPACE_SIZE;
     SetTilingForRegbase(context, tilingData);
-    uint64_t splitUserWs = MaybeSetSplitReduce(context, tilingData); // 可能覆盖为 split-reduce(1140)
+    uint64_t splitUserWs = 0;
+    splitUserWs = MaybeSetSplitReduce(context, tilingData); // 可能覆盖为 split-reduce(1140)
     if (splitUserWs == 0) {
-        MaybeSetManyTinyGroups(context, tilingData); // 可能覆盖为 many-tiny-groups(1150),与 split 互斥,无 workspace
+        MaybeSetManyTinyGroups(context, tilingData); // 可能覆盖为 many-tiny-groups(1150), 与 split 互斥, 无 workspace
     }
     // UB 记账兜底: 1100/1110/1120/1130 都靠 processSize 驱动搬运, 解不出正值说明 UB 装不下该形状,
     // 必须显式拒收 —— 不能把 0 或下溢值下发给内核(issue #21 就是下溢值被下发后 UB 越界)。
@@ -1091,15 +1074,13 @@ ge::graphStatus Tiling4GroupNormSiluQuantRegBase(gert::TilingContext* context)
     OP_LOGI(context->GetNodeName(),
             "tilingData is numGroups:%ld, hwNum:%ld, elemNum:%ld, shapeN:%ld, shapeC:%ld, shapeD:%ld, realCoreNum:%ld, \
             numPerCore:%ld, numLastCore:%ld, processSize:%ld, loopNum:%ld, loopTail:%ld, innerLoopNum:%ld, \
-            innerLoopTail:%ld, tilingKey:%ld, epsilon:%f, activateSilu:%ld, parallelN:%ld, ubSize:%ld, dichotomyAddPower:%ld, \
-            dichotomyAddK:%ld, dichotomyAddLastNum:%ld, powerOfTwoForReduce:%ld",
+            innerLoopTail:%ld, tilingKey:%ld, epsilon:%f, activateSilu:%ld, parallelN:%ld, ubSize:%ld, dichotomyAddPower:%ld",
             tilingData.get_numGroups(), tilingData.get_hwNum(), tilingData.get_elemNum(), tilingData.get_shapeN(),
             tilingData.get_shapeC(), tilingData.get_shapeD(), tilingData.get_realCoreNum(), tilingData.get_numPerCore(),
             tilingData.get_numLastCore(), tilingData.get_processSize(), tilingData.get_loopNum(),
             tilingData.get_loopTail(), tilingData.get_innerLoopNum(), tilingData.get_innerLoopTail(),
             tilingData.get_tilingKey(), tilingData.get_epsilon(), tilingData.get_activateSilu(),
-            tilingData.get_parallelN(), tilingData.get_ubSize(), tilingData.get_dichotomyAddPower(),
-            tilingData.get_dichotomyAddK(), tilingData.get_dichotomyAddLastNum(), tilingData.get_powerOfTwoForReduce());
+            tilingData.get_parallelN(), tilingData.get_ubSize(), tilingData.get_dichotomyAddPower());
 
     // block dim, tilingKey
     context->SetBlockDim(tilingData.get_realCoreNum());

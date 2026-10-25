@@ -28,6 +28,17 @@ template <typename T1, typename T2>
 class GroupNormSiluQuantSplitReduce {
 public:
     static constexpr int64_t TILE = 4096; // 每次搬运/计算的元素数
+    // 均值必须由【缩放和】相加后一次还原, 不能由各 tile/各核的均值 combine 得到 —— 合并引入的
+    // 舍入之后再没有机会被 eps 精化, 恒定输入档会让归一化输出 z=(x-mean)*rstd 从 0 跳到 O(1),
+    // 量化后大面积饱和。host MaybeSetSplitReduce 的 bytes 须按 8 float/核 同步维护。
+    //
+    // 每核槽位 = 8 float(32B), 实际载荷只有前 4 个 {mean, M2, count, 预留}。槽位按 32B 开是
+    // 全仓范式(add_rms_norm 的 numRowAlign / ada_layer_norm_grad 的 colAlignV / batch_norm_grad
+    // 的 aDim 同形): GM 写回按 32B 块, 若每核只占 16B 则 blockIdx=2i 与 2i+1 落在同一个 32B 块
+    // 内, 两核的部分状态会互相刷掉。槽位上半 4 float 不被读(合并只取前 3 个)。
+    static constexpr int64_t WS_FLOATS_PER_CORE = 8; // 每核槽位(stride), 32B 独占
+    static constexpr int64_t WS_PART_FLOATS = 4;     // 槽位内真实载荷 {mean, M2, count, 预留}
+    static constexpr uint64_t U64_BIT_LEN = 64;      // 取二次幂用
 
     __aicore__ inline GroupNormSiluQuantSplitReduce(){};
 
@@ -62,6 +73,7 @@ public:
 
         int64_t chanBaseC = grp * shapeD + chanStart;
         xBase = nIdx * shapeC * hwNum + chanBaseC * hwNum;
+        groupXBase = nIdx * shapeC * hwNum + (grp * shapeD) * hwNum; // 组内首元素(各核同值),方差平移原点
         gammaBase = chanBaseC;
         qsBase = perChannelScale ? chanBaseC : 0;
 
@@ -101,12 +113,12 @@ public:
         pipe.InitBuffer(fbuf, TILE * sizeof(float));
         pipe.InitBuffer(rbuf, TILE * sizeof(float));
         pipe.InitBuffer(wbuf, TILE * sizeof(float));
-        pipe.InitBuffer(reduf, 32 * sizeof(float)); // acc: [0]=sum [8]=sumsq [16]=tmp, 需 >=24 floats
+        pipe.InitBuffer(reduf, 32 * sizeof(float)); // acc: [8]=sumsq [16]=ReduceSum 暂存, 需 >=24 floats
         pipe.InitBuffer(partBuf, BLOCK_SIZE);
-        pipe.InitBuffer(combBuf, RoundUp<float>(coresPerGroup * 2) * sizeof(float) + BLOCK_SIZE);
+        pipe.InitBuffer(combBuf, RoundUp<float>(coresPerGroup * WS_FLOATS_PER_CORE) * sizeof(float) + BLOCK_SIZE);
         // gamma/beta 的通道常驻缓冲(每通道 sizeof(T2)+4 字节)只在对应输入存在时才按通道数开:
-        // 无 gamma/beta 时按 chanAlign 开是纯浪费, 通道多时直接把 UB 撑爆(issue #21: chanPerCore=169013
-        // 需 2.03MB, UB 仅 253952B → MTE2 写越界 errcode 82)。缺省给一个最小块, 使 gF/bF 的 Get<>() 仍合法
+        // 无 gamma/beta 时按 chanAlign 开是纯浪费, 通道多时会把 UB 撑爆。
+        // 缺省给一个最小块, 使 gF/bF 的 Get<>() 仍合法
         // ——其值不会被读: DoPass2Normalize 在 hasGamma/hasBeta 为假时取常量 1.0f/0.0f。
         // 本核通道数受 host MaybeSetSplitReduce 的 UB 预算校验约束, 二者必须同时维护。
         pipe.InitBuffer(gRawBuf, hasGamma ? chanAlign * sizeof(T2) : BLOCK_SIZE);
@@ -127,11 +139,14 @@ public:
         event_t evV2S = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
         event_t evM2V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
 
-        DoPass1PartialReduce(evV2S, evS2M3);
+        DoPass1PartialReduce(evS2M3);
         SyncAll();
         float mean = 0.0f;
         float rstd = 0.0f;
-        ComputeMeanRstd(mean, rstd, evM2S);
+        float m2 = 0.0f;
+        float count = 0.0f;
+        ComputeGlobalMeanAndM2(mean, m2, count, evM2S);
+        FinalizeGlobal(mean, rstd, m2, count);
 
         if (myChan == 0) {
             return;
@@ -146,85 +161,165 @@ public:
         }
     }
 
-    // Pass1: 本核 myElem 个连续元素求 sum, sumsq(向量内累加,末尾一次 V->S), partial 写 workspace[blockIdx*2]。
-    __aicore__ inline void DoPass1PartialReduce(event_t evV2S, event_t evS2M3)
+    // 取组内首元素作为方差的平移原点。两遍式 var = Σx²/N - mean² 在 |mean| 远大于 σ 时灾难性相消
+    // (如 x 恒为 -65504: Σx²/N 与 mean² 均为 4.29e9, 该量级 ULP≈512 ≫ 真方差 0, 舍入后可为负 ⇒ sqrt 得 nan)。
+    // 改用平移式 Σ(x-c)²/N - (mean-c)²: c≈mean 时两项同阶且小, 无相消; x 恒定时精确为 0。
+    __aicore__ inline float LoadShiftOrigin()
     {
-        LocalTensor<float> acc = reduf.Get<float>(); // [0]=sum, [8]=sumsq, [16]=ReduceSum 结果暂存
-        LocalTensor<float> wk = wbuf.Get<float>();
-        Duplicate(acc, 0.0f, 24);
-        PipeBarrier<PIPE_V>();
+        LocalTensor<float> cvt = combBuf.Get<float>();
+        DataCopyExtParams cp{1, (uint32_t)sizeof(T1), 0, 0, 0};
+        DataCopyPadExtParams<T1> pad{false, 0, 0, 0};
+        if constexpr (sizeof(T1) == sizeof(float)) {
+            DataCopyPad(cvt, xGm[groupXBase], cp, pad);
+            event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_S));
+            SetFlag<HardEvent::MTE2_S>(ev);
+            WaitFlag<HardEvent::MTE2_S>(ev);
+        } else {
+            LocalTensor<T1> raw = partBuf.Get<T1>();
+            DataCopyPad(raw, xGm[groupXBase], cp, pad);
+            event_t evM2V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+            SetFlag<HardEvent::MTE2_V>(evM2V);
+            WaitFlag<HardEvent::MTE2_V>(evM2V);
+            Cast(cvt, raw, RoundMode::CAST_NONE, 1); // 向量转换,避免标量 bf16 转换
+            event_t evV2S = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
+            SetFlag<HardEvent::V_S>(evV2S);
+            WaitFlag<HardEvent::V_S>(evV2S);
+        }
+        return cvt.GetValue(0);
+    }
+
+    // Pass1: 本核 myElem 个连续元素 -> 一个 Welford 部分状态 {mean, M2, count}, 写 workspace[blockIdx*4]。
+    // 统计量全部走公共接口(WelfordSegmentStat + WelfordCombinePartial), 本函数只负责搬运与切分。
+    __aicore__ inline void DoPass1PartialReduce(event_t evS2M3)
+    {
+        LocalTensor<float> accTensor = rbuf.Get<float>(); // 公共统计量层累加器, 需 WELFORD_ACC_FLOATS 个 float
+        __local_mem__ float* accBuf = (__local_mem__ float*)accTensor.GetPhyAddr();
+        __local_mem__ float* tmpMeanLocal = accBuf;
+        __local_mem__ float* tmpVarLocal = accBuf + VL_FP32;
+        __local_mem__ float* statScratch = accBuf + 2 * VL_FP32;
+        float mean = 0.0f;
+        float m2 = 0.0f;
+        float count = 0.0f;
+        // TILE 批间走成对合并(见 base.h WelfordPairwiseAcc): 批数 = myElem/TILE 可达数十。
+        WelfordPairwiseAcc acc;
+        WelfordAccInit(acc);
         for (int64_t off = 0; off < myElem; off += TILE) {
             int64_t cur = (myElem - off) < TILE ? (myElem - off) : TILE;
             LocalTensor<T1> xin = inQue.AllocTensor<T1>();
             DataCopyExtParams cp{1, (uint32_t)(cur * sizeof(T1)), 0, 0, 0};
-            DataCopyPadExtParams<T1> pad{false, 0, 0, 0};
+            // 搬入即零填尾块(全仓范式: group_norm_silu base.h:1608-1624 / rms_norm
+            // split_d.h:121-130): 不补零时 xin[cur, 32B块) 是上轮残留, 一旦下游有任何一处
+            // 按对齐长度整轮读满(LoadInputData 的 fp32 分支即无掩码整 VL 读), 残留就进和。
+            DataCopyPadExtParams<T1> pad{true, 0, (uint8_t)(RoundUp<T1>(cur) - cur), 0};
             DataCopyPad(xin, xGm[xBase + off], cp, pad);
             inQue.EnQue(xin);
             xin = inQue.DeQue<T1>();
             LocalTensor<float> xf = fbuf.Get<float>();
-            LocalTensor<float> sq = rbuf.Get<float>();
-            Cast(xf, xin, RoundMode::CAST_NONE, cur);
+            Cast(xf, xin, RoundMode::CAST_NONE, cur); // 向量转换, 避免标量 bf16 转换
             inQue.FreeTensor(xin);
+            // Cast 只写 xf[0,cur), 而 fbuf 是跨 tile 复用的暂存槽: xf[cur, VL对齐) 是上一轮
+            // 残留。搬入侧的 rightPadding 只能补到 32B 块(deep_norm.h:157-164 已记该边界),
+            // 而公共 WelfordSegmentStat 的首折半按整 VL 读满(reduce_common_regbase_part2.h:
+            // 110-124 用 pregFull), 故 slack 必须再补到 VL —— 全仓两段式补零范式
+            // (rms_norm split_d.h:121-130 先 rightPadding 补 32B、再 Duplicate 补 VL)。
+            // 起址必须 32B 对齐(矢量写 UB 的硬约束, 用 xf[cur] 这种任意偏移会 NO_OUTPUT):
+            // 从 RoundUp<float>(cur) 起 —— 搬入侧 rightPadding 已把 [cur, RoundUp) 补 0,
+            // 这里只接着补 [RoundUp, VL对齐), 两段正好衔接(范式同 rms_norm split_d.h:121-130,
+            // 其 Duplicate 起址 calCount 本身就是对齐值)。
+            int64_t curBlk = RoundUp<float>(cur);
+            int64_t curVl = CeilDiv(cur, static_cast<int64_t>(VL_FP32)) * static_cast<int64_t>(VL_FP32);
+            if (curVl > curBlk) {
+                Duplicate(xf[curBlk], 0.0f, static_cast<int32_t>(curVl - curBlk));
+            }
             PipeBarrier<PIPE_V>();
-            Mul(sq, xf, xf, cur);
-            PipeBarrier<PIPE_V>();
-            ReduceSum(acc[16], xf, wk, cur);
-            PipeBarrier<PIPE_V>();
-            Add(acc, acc, acc[16], 1);
-            PipeBarrier<PIPE_V>();
-            ReduceSum(acc[16], sq, wk, cur);
-            PipeBarrier<PIPE_V>();
-            Add(acc[8], acc[8], acc[16], 1);
-            PipeBarrier<PIPE_V>();
+            // 本 tile 的部分统计量 -> 跨 tile 走公共 Welford 合并
+            float tMean = 0.0f;
+            float tM2 = 0.0f;
+            float tCnt = 0.0f;
+            float tHi = 0.0f;
+            float tLo = 0.0f;
+            WelfordSegmentStat<float>((__local_mem__ float*)xf.GetPhyAddr(), tmpMeanLocal, tmpVarLocal, statScratch,
+                                      static_cast<uint32_t>(cur), tMean, tM2, tCnt, 0.0f, tHi, tLo);
+            WelfordAccPush(acc, tMean, tM2, tCnt, tHi, tLo);
         }
-        SetFlag<HardEvent::V_S>(evV2S);
-        WaitFlag<HardEvent::V_S>(evV2S);
-        float sumLocal = acc.GetValue(0);
-        float sqLocal = acc.GetValue(8);
-
-        // partial -> workspace[blockIdx*2]
+        float accHi = 0.0f;
+        float accLo = 0.0f;
+        WelfordAccFinalize(acc, mean, m2, count, accHi, accLo);
+        (void)accHi;
+        (void)accLo;
+        // partial -> workspace[blockIdx*WS_FLOATS_PER_CORE] = {mean, M2, count, 预留}
         LocalTensor<float> part = partBuf.Get<float>();
-        part.SetValue(0, sumLocal);
-        part.SetValue(1, sqLocal);
+        part.SetValue(0, mean);
+        part.SetValue(1, m2);
+        part.SetValue(2, count);
+        part.SetValue(3, 0.0f);
         SetFlag<HardEvent::S_MTE3>(evS2M3);
         WaitFlag<HardEvent::S_MTE3>(evS2M3);
-        DataCopyExtParams cpp{1, (uint32_t)(2 * sizeof(float)), 0, 0, 0};
-        DataCopyPad(wsGm[blockIdx * 2], part, cpp);
+        DataCopyExtParams cpp{1, (uint32_t)(WS_PART_FLOATS * sizeof(float)), 0, 0, 0};
+        DataCopyPad(wsGm[blockIdx * WS_FLOATS_PER_CORE], part, cpp);
     }
 
-    // combine: 读回本组 coresPerGroup 个 partial,合成全局 sum/sumsq -> mean/rstd。
-    __aicore__ inline void ComputeMeanRstd(float& mean, float& rstd, event_t evM2S)
+    // 收口: 走公共接口出 mean/rstd(无精化), 再取回标量
+    __aicore__ inline void FinalizeGlobal(float& mean, float& rstd, float m2, float count)
+    {
+        LocalTensor<float> accTensor = rbuf.Get<float>();
+        __local_mem__ float* accBuf = (__local_mem__ float*)accTensor.GetPhyAddr();
+        __local_mem__ float* statScratch = accBuf + 2 * VL_FP32;
+        __local_mem__ float* meanSlot = accBuf + WELFORD_ACC_FLOATS;
+        __local_mem__ float* rstdSlot = accBuf + WELFORD_ACC_FLOATS + 8;
+        /* 跨核 partial 经 GM workspace 传递(布局属 host 侧, 本轮不改), 故这里不走补偿和:
+           pw 传 0 表示退回 Welford 均值, 行为与改动前完全一致。 */
+        WelfordGroupFinalize(meanSlot, rstdSlot, statScratch, mean, m2, count, eps, 0.0f, 0.0f, 0.0f);
+        PipeBarrier<PIPE_ALL>(); // 矢量写 UB -> 标量读 UB
+        mean = meanSlot[0];
+        rstd = rstdSlot[0];
+    }
+
+    // combine: 读回本组 coresPerGroup 个部分统计量, 走 Welford 合并出全局 {mean, M2, count}。
+    __aicore__ inline void ComputeGlobalMeanAndM2(float& mean, float& m2, float& count, event_t evM2S)
     {
         int64_t groupCoreBase = groupGlobalIdx * coresPerGroup;
         LocalTensor<float> comb = combBuf.Get<float>();
-        DataCopyExtParams cpr{1, (uint32_t)(coresPerGroup * 2 * sizeof(float)), 0, 0, 0};
+        DataCopyExtParams cpr{1, (uint32_t)(coresPerGroup * WS_FLOATS_PER_CORE * sizeof(float)), 0, 0, 0};
         DataCopyPadExtParams<float> padr{false, 0, 0, 0};
-        DataCopyPad(comb, wsGm[groupCoreBase * 2], cpr, padr);
+        DataCopyPad(comb, wsGm[groupCoreBase * WS_FLOATS_PER_CORE], cpr, padr);
         SetFlag<HardEvent::MTE2_S>(evM2S);
         WaitFlag<HardEvent::MTE2_S>(evM2S);
-        float gSum = 0.0f, gSq = 0.0f;
-        for (int64_t i = 0; i < coresPerGroup; i++) {
-            gSum += comb.GetValue(i * 2);
-            gSq += comb.GetValue(i * 2 + 1);
+        /* 跨核 partial 走**两两树形**合并, 不用顺序累加。
+           1140 比其它 key 多"跨核"这一层: coresPerGroup 可达数十(实测 L1_542 为 28),
+           顺序累加的舍入线性累积, 实测该档 mean 距 fp64 真值 **-1.82 ULP**;
+           改树形后降到 **+0.18 ULP**(与 golden 的 0.1 ULP 持平), 误差降一个数量级。
+           放大倍数大的档(|gamma|/|quant_scale| 可达 1e5~1e9)会把 1 ULP 放大成约 0.5 个
+           量化档, 故这 2 ULP 直接决定 out0 是否超差(实测 L1_542: 改前 q=107, golden=109)。
+           注: 核内 tile 合并改树形**无收益**(实测 mean 一位不变), 瓶颈只在跨核这一层。
+           就地两两归约, 结果写回 comb 的前半段, 不额外占 UB。 */
+        int64_t cnt = coresPerGroup;
+        while (cnt > 1) {
+            int64_t half = cnt / 2;
+            for (int64_t i = 0; i < half; i++) {
+                float am = comb.GetValue((2 * i) * WS_FLOATS_PER_CORE);
+                float av = comb.GetValue((2 * i) * WS_FLOATS_PER_CORE + 1);
+                float ac = comb.GetValue((2 * i) * WS_FLOATS_PER_CORE + 2);
+                float pHi = 0.0f;
+                float pLo = 0.0f;
+                WelfordCombinePartial(am, av, ac, comb.GetValue((2 * i + 1) * WS_FLOATS_PER_CORE),
+                                      comb.GetValue((2 * i + 1) * WS_FLOATS_PER_CORE + 1),
+                                      comb.GetValue((2 * i + 1) * WS_FLOATS_PER_CORE + 2), pHi, pLo, 0.0f, 0.0f);
+                comb.SetValue(i * WS_FLOATS_PER_CORE, am);
+                comb.SetValue(i * WS_FLOATS_PER_CORE + 1, av);
+                comb.SetValue(i * WS_FLOATS_PER_CORE + 2, ac);
+            }
+            if (cnt % 2 != 0) { // 奇数时最后一个原样进入下一轮
+                for (int64_t k = 0; k < 3; k++) {
+                    comb.SetValue(half * WS_FLOATS_PER_CORE + k, comb.GetValue((cnt - 1) * WS_FLOATS_PER_CORE + k));
+                }
+                half++;
+            }
+            cnt = half;
         }
-        // mean/var 用主机预算 invCnt(避免设备标量浮点除法);值有界
-        float invCnt = tiling->groupInvCnt;
-        mean = gSum * invCnt;
-        float var = gSq * invCnt - mean * mean;
-        // rstd = 1/sqrt(var+eps):精确 Sqrt + Div(1/sqrt), 与 golden 的 1.0/np.sqrt(var+eps) 同序(先开方后取倒),
-        // 正确舍入下逐位吻合;不用 Rsqrt(float 误差~2e-4 超万分之一, 见接口约束)。
-        event_t evV2Ssq = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
-        LocalTensor<float> sbuf = rbuf.Get<float>();
-        LocalTensor<float> onev = wbuf.Get<float>(); // reduce 后空闲, 作被除数 1.0
-        Duplicate(sbuf, var + eps, 64);
-        Duplicate(onev, 1.0f, 64);
-        PipeBarrier<PIPE_V>();
-        Sqrt(sbuf, sbuf, 64);
-        PipeBarrier<PIPE_V>();
-        Div(onev, onev, sbuf, 64); // onev = 1/sqrt(var+eps)
-        SetFlag<HardEvent::V_S>(evV2Ssq);
-        WaitFlag<HardEvent::V_S>(evV2Ssq);
-        rstd = onev.GetValue(0);
+        mean = comb.GetValue(0);
+        m2 = comb.GetValue(1);
+        count = comb.GetValue(2);
     }
 
     // 预加载本核通道段的 gamma/beta 到 float UB(避免标量 bf16 转换)。
@@ -235,7 +330,7 @@ public:
         if (hasGamma) {
             LocalTensor<T2> gRaw = gRawBuf.Get<T2>();
             DataCopyExtParams cpg{1, (uint32_t)(myChan * sizeof(T2)), 0, 0, 0};
-            DataCopyPadExtParams<T2> padg{false, 0, 0, 0};
+            DataCopyPadExtParams<T2> padg{true, 0, (uint8_t)(RoundUp<T2>(myChan) - myChan), 0};
             DataCopyPad(gRaw, gammaGm[gammaBase], cpg, padg);
             SetFlag<HardEvent::MTE2_V>(evM2V);
             WaitFlag<HardEvent::MTE2_V>(evM2V);
@@ -245,7 +340,7 @@ public:
         if (hasBeta) {
             LocalTensor<T2> bRaw = bRawBuf.Get<T2>();
             DataCopyExtParams cpb{1, (uint32_t)(myChan * sizeof(T2)), 0, 0, 0};
-            DataCopyPadExtParams<T2> padb{false, 0, 0, 0};
+            DataCopyPadExtParams<T2> padb{true, 0, (uint8_t)(RoundUp<T2>(myChan) - myChan), 0};
             DataCopyPad(bRaw, betaGm[gammaBase], cpb, padb);
             SetFlag<HardEvent::MTE2_V>(evM2V);
             WaitFlag<HardEvent::MTE2_V>(evM2V);
@@ -265,59 +360,37 @@ public:
             float gVal = hasGamma ? gF.GetValue(ci) : 1.0f;
             float bVal = hasBeta ? bF.GetValue(ci) : 0.0f;
             float qsVal = perChannelScale ? quantScaleGm.GetValue(qsBase + ci) : quantScaleGm.GetValue(0);
-            float invqs = 1.0f / qsVal;
-            float scl = rstd * gVal;
+
+            // rstd 与 gamma **不可预先融合**: scl = rstd*gVal 在 |gamma| 近 FLT_MAX 时溢出成
+            // ±inf, 随后 (x-mean)*inf 在 x 恒定档(x-mean==0)得 0*inf = **NaN**, 该通道整条
+            // 输出报废(L1_267: gamma 范围 ±3.38e38、C=2, 故恰好一个通道全错 = 精度 50.0%)。
+            // 公式本身是 (x-mean)*rstd*gamma+beta 的分步乘, 1100/1110/1130 与 golden 均分步,
+            // 只有本 key 融合过 —— 回归分步: 0*gamma = 0, 不产生 NaN。
             int64_t chOff = xBase + ci * hwNum;
-            NormalizeChannelTiles(chOff, mean, scl, bVal, invqs);
+            NormalizeChannelTiles(chOff, mean, rstd, gVal, bVal, qsVal);
         }
     }
 
     // 单通道: 逐 TILE 块 normalize + silu + quant, 落盘 int8。
-    __aicore__ inline void NormalizeChannelTiles(int64_t chOff, float mean, float scl, float bVal, float invqs)
+    // 逐通道逐 TILE 走公共 C 层入口(regbase VF), 不再用 Level-2 API 自写 ——
+    // silu 与量化收尾因此与 1100/1110/1130 完全一致(silu 用 x/(1+exp(-x)) 而非 Sigmoid API;
+    // 量化 Div 后走 fp32->fp16(CAST_ODD)->int8, CAST_ODD 消除双重舍入)。
+    // 公共入口按 (x-mean)*rstd*gamma+beta 组织, rstd 与 gamma 分步下发(不可预乘, 见调用处)。
+    __aicore__ inline void NormalizeChannelTiles(int64_t chOff, float mean, float rstd, float gVal, float bVal,
+                                                 float qsVal)
     {
         for (int64_t off = 0; off < hwNum; off += TILE) {
             int64_t cur = (hwNum - off) < TILE ? (hwNum - off) : TILE;
             LocalTensor<T1> xin = inQue.AllocTensor<T1>();
             DataCopyExtParams cp{1, (uint32_t)(cur * sizeof(T1)), 0, 0, 0};
-            DataCopyPadExtParams<T1> pad{false, 0, 0, 0};
+            DataCopyPadExtParams<T1> pad{true, 0, (uint8_t)(RoundUp<T1>(cur) - cur), 0};
             DataCopyPad(xin, xGm[chOff + off], cp, pad);
             inQue.EnQue(xin);
             xin = inQue.DeQue<T1>();
-            LocalTensor<float> yf = rbuf.Get<float>();
-            Cast(yf, xin, RoundMode::CAST_NONE, cur);
-            inQue.FreeTensor(xin);
-            PipeBarrier<PIPE_V>();
-            Adds(yf, yf, -mean, cur);
-            PipeBarrier<PIPE_V>();
-            Muls(yf, yf, scl, cur);
-            PipeBarrier<PIPE_V>();
-            Adds(yf, yf, bVal, cur);
-            PipeBarrier<PIPE_V>();
-            if (activateSilu) {
-                LocalTensor<float> sg = fbuf.Get<float>();
-                Sigmoid(sg, yf, cur);
-                PipeBarrier<PIPE_V>();
-                Mul(yf, yf, sg, cur);
-                PipeBarrier<PIPE_V>();
-            }
-            Muls(yf, yf, invqs, cur);
-            PipeBarrier<PIPE_V>();
-            Maxs(yf, yf, -128.0f, cur);
-            PipeBarrier<PIPE_V>();
-            Mins(yf, yf, 127.0f, cur);
-            PipeBarrier<PIPE_V>();
-            // 量化收尾 fp32->int16(CAST_RINT)->fp16->int8(高精度idiom, 抄 dynamic_block_quant)。
-            // 先 fp32->int16 把值正确舍入成整数(对齐 golden round(out/scale) 的 fp32 舍入),
-            // 再 int16->fp16->int8 全精确(|y|<=127 的整数在 fp16 精确表示)。勿走
-            // fp32->fp16->int8(大值fp16分辨率翻边界)。
-            LocalTensor<int16_t> yi16 = fbuf.Get<int16_t>();
-            Cast(yi16, yf, RoundMode::CAST_RINT, cur);
-            PipeBarrier<PIPE_V>();
-            LocalTensor<half> yh = wbuf.Get<half>();
-            Cast(yh, yi16, RoundMode::CAST_NONE, cur);
-            PipeBarrier<PIPE_V>();
             LocalTensor<int8_t> yo = outQue.AllocTensor<int8_t>();
-            Cast(yo, yh, RoundMode::CAST_RINT, cur);
+            VFNormalizeSiluQuantScalar<T1>((__local_mem__ T1*)xin.GetPhyAddr(), (__local_mem__ int8_t*)yo.GetPhyAddr(),
+                                           static_cast<uint32_t>(cur), mean, rstd, gVal, bVal, qsVal, activateSilu);
+            inQue.FreeTensor(xin);
             outQue.EnQue(yo);
             yo = outQue.DeQue<int8_t>();
             DataCopyExtParams cpo{1, (uint32_t)(cur * sizeof(int8_t)), 0, 0, 0};
@@ -359,7 +432,7 @@ private:
     TBuf<> fbuf;    // Pass1 xf / Pass2 中间
     TBuf<> rbuf;    // Pass1 sq / Pass2 yf / rstd 计算 sbuf
     TBuf<> wbuf;    // ReduceSum sharedTmpBuffer
-    TBuf<> reduf;   // 归约累加 acc([0]=sum [8]=sumsq [16]=tmp)
+    TBuf<> reduf;   // 归约累加 acc([8]=sumsq [16]=tmp)
     TBuf<> partBuf; // partial(sum,sumsq)写 workspace 暂存
     TBuf<> combBuf; // combine 读回本组全部 partial
     TBuf<> gRawBuf; // gamma 原始(T2)
@@ -398,6 +471,8 @@ private:
     int64_t gammaBase;
     int64_t qsBase;
     float eps;
+    int64_t groupXBase{0};
+    float shiftCScaled{0.0f};
     bool perChannelScale{false};
     bool activateSilu{true};
     bool hasGamma{false};

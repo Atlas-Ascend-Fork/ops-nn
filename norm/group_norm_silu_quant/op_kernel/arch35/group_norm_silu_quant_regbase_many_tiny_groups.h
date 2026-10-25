@@ -42,6 +42,7 @@ public:
     // hwNum<=32 => padElems<=AlignUp(32*4,32)/4=32(fp32) 或 AlignUp(32*2,32)/2=32(bf16/half), 故 MAX_PAD=32。
     static constexpr int64_t MAX_PAD = 32;
     static constexpr int64_t TILE_CAP = GROUPS_PER_TILE * MAX_PAD; // 2048: 每 tile fp32 元素容量
+    static constexpr uint64_t U64_BIT_LEN = 64;                    // 取严格大于 n 的最小 2 的幂用
 
     __aicore__ inline GroupNormSiluQuantManyTinyGroups(){};
 
@@ -116,7 +117,8 @@ public:
         pipe.InitBuffer(outQue, 2, TILE_CAP * sizeof(int8_t));
         pipe.InitBuffer(xfBuf, (TILE_CAP + VL_FP32) * sizeof(float)); // x(fp32); 归约后原地做 normalize
         pipe.InitBuffer(sqBuf, (TILE_CAP + VL_FP32) * sizeof(float)); // x^2 / sigmoid 暂存 / int16 量化中转(复用)
-        pipe.InitBuffer(aExpBuf, TILE_CAP * sizeof(float)); // 广播后的 A(=rstd*gamma) / invqs / fp16 量化中转(复用)
+        pipe.InitBuffer(aExpBuf,
+                        TILE_CAP * sizeof(float)); // 广播后的 A(=rstd*gamma) / quantScale / fp16 量化中转(复用)
         pipe.InitBuffer(bExpBuf, TILE_CAP * sizeof(float)); // 广播后的 Bb(=beta-mean*A)
         pipe.InitBuffer(brcbBuf, B * 8 * sizeof(float));    // Brcb 输出([B][8] 块)
         // per-group 标量(B 宽 fp32); 归约 dst 多留 VL_FP32 余量
@@ -177,11 +179,10 @@ private:
         const int32_t n = static_cast<int32_t>(curB * padElems); // 本 tile 参与向量计算的元素数(含 gap)
         CopyInTile(gTile, curB, n);
         ComputeMeanRstdTile(curB, n);
-        float invqsScalar = 1.0f;
-        LoadAffineParams(curB, cBase, invqsScalar);
+        float quantScaleScalar = 1.0f;
+        LoadAffineParams(curB, cBase, quantScaleScalar);
         FoldAffineTile(curB);
-        NormalizeSiluQuantTile(curB, n, invqsScalar);
-        QuantizeStoreTile(gTile, curB, n);
+        NormalizeSiluQuantStoreTile(gTile, curB, n, quantScaleScalar);
         // ---- 写 mean/rstd(本 tile curB 个, 输出 shape [N,numGroups] flat, 偏移 gTile) ----
         LocalTensor<float> meanT = meanBuf.Get<float>();
         LocalTensor<float> rstdT = rstdBuf.Get<float>();
@@ -211,50 +212,44 @@ private:
         PipeBarrier<PIPE_V>();
     }
 
-    // 分段归约(两遍法): 一条 WholeReduceSum 出 curB 个组和, 算 mean/rstd。
+    // 逐组走公共统计量层。本 key 的"段 = 组", 故退化为: 一段 -> 均值 -> 一段 eps -> 收口。
+    // 组内元素连续、行距 padElems; 组循环属于调度, 归本 key。
+    // 旧实现自写 mean = Σx/hwNum(无 2 的幂缩放、无补偿求和) + 两遍法 var, 与其它 key 各一套;
+    // 现统一到公共接口, 数学与 1100/1110/1140 完全一致(四档探针依据见 base.h 公共统计量层注释)。
     __aicore__ inline void ComputeMeanRstdTile(int64_t curB, int32_t n)
     {
         LocalTensor<float> xf = xfBuf.Get<float>();
-        LocalTensor<float> sq = sqBuf.Get<float>();
-        LocalTensor<float> sumT = sumBuf.Get<float>();
-        LocalTensor<float> sqSumT = sqSumBuf.Get<float>();
         LocalTensor<float> meanT = meanBuf.Get<float>();
         LocalTensor<float> rstdT = rstdBuf.Get<float>();
-        LocalTensor<float> tmp = tmpBuf.Get<float>();
-        LocalTensor<float> one = oneBuf.Get<float>();
-        LocalTensor<float> aExp = aExpBuf.Get<float>();
-        const int32_t cb = static_cast<int32_t>(curB);
-        // ---- Pass1: sum -> mean。清 xf 归约过读 slack(末组过读到 [n,n+VL))。 ----
+        LocalTensor<float> accTensor = sqBuf.Get<float>(); // 归约阶段复用为公共层累加器
+        // 归约过读 slack 清零(末组会向后多读到 VL 边界)
         Duplicate(xf[n], 0.0f, static_cast<int32_t>(VL_FP32));
         PipeBarrier<PIPE_V>();
-        WholeReduceSum(sumT, xf, static_cast<int32_t>(hwNum), cb, 1, 1, srcRepStride);
-        PipeBarrier<PIPE_V>();
-        Muls(meanT, sumT, invCnt, cb); // mean = sum / hwNum
-        PipeBarrier<PIPE_V>();
-        // ---- Pass2: var = Σ(x-mean)²/hwNum(两遍法)。避免 E[x²]-mean² 对低方差组(hw 小)的 catastrophic
-        //      cancellation(会致 rstd 偏差且放大微抖成偶现), 对齐 golden np.var 的两遍算法。 ----
-        BroadcastGroups(aExp, meanT, curB); // meanExp[g*padElems+j] = mean[g]
-        Sub(sq, xf, aExp, n);               // x - mean(gap: 0-mean, 归约 mask=hwNum 屏蔽 gap)
-        PipeBarrier<PIPE_V>();
-        Mul(sq, sq, sq, n); // (x-mean)²
-        PipeBarrier<PIPE_V>();
-        Duplicate(sq[n], 0.0f,
-                  static_cast<int32_t>(VL_FP32)); // 清归约过读 slack(sqBuf 复用为 int16 量化, slack 残留可能 NaN)
-        PipeBarrier<PIPE_V>();
-        WholeReduceSum(sqSumT, sq, static_cast<int32_t>(hwNum), cb, 1, 1, srcRepStride);
-        PipeBarrier<PIPE_V>();
-        Muls(tmp, sqSumT, invCnt, cb); // var = M2 / hwNum
-        PipeBarrier<PIPE_V>();
-        Adds(tmp, tmp, eps, cb); // var + eps
-        PipeBarrier<PIPE_V>();
-        Sqrt(tmp, tmp, cb); // sqrt(var+eps)
-        PipeBarrier<PIPE_V>();
-        Div(rstdT, one, tmp, cb); // rstd = 1/sqrt(var+eps)
-        PipeBarrier<PIPE_V>();
+        __local_mem__ float* accBuf = (__local_mem__ float*)accTensor.GetPhyAddr();
+        __local_mem__ float* tmpMeanLocal = accBuf;
+        __local_mem__ float* tmpVarLocal = accBuf + VL_FP32;
+        __local_mem__ float* statScratch = accBuf + 2 * VL_FP32;
+        __local_mem__ float* xfLocal = (__local_mem__ float*)xf.GetPhyAddr();
+        __local_mem__ float* meanLocal = (__local_mem__ float*)meanT.GetPhyAddr();
+        __local_mem__ float* rstdLocal = (__local_mem__ float*)rstdT.GetPhyAddr();
+        for (int64_t g = 0; g < curB; g++) {
+            __local_mem__ float* grpPtr = xfLocal + g * padElems;
+            float mean = 0.0f;
+            float m2 = 0.0f;
+            float count = 0.0f;
+            float sumHi = 0.0f;
+            float sumLo = 0.0f;
+            int32_t sk = SumScaleExp(static_cast<uint32_t>(hwNum));
+            WelfordSegmentStat<float>(grpPtr, tmpMeanLocal, tmpVarLocal, statScratch, static_cast<uint32_t>(hwNum),
+                                      mean, m2, count, Pow2f(-sk), sumHi, sumLo);
+            WelfordGroupFinalize(meanLocal + g, rstdLocal + g, statScratch, mean, m2, count, eps, sumHi, sumLo,
+                                 Pow2f(sk));
+        }
+        PipeBarrier<PIPE_ALL>(); // 后续对 meanT/rstdT 做矢量广播
     }
 
-    // 载 gamma/beta/quantScale(channel 连续段), cast fp32; per-tensor 取 invqsScalar。
-    __aicore__ inline void LoadAffineParams(int64_t curB, int64_t cBase, float& invqsScalar)
+    // 载 gamma/beta/quantScale(channel 连续段), cast fp32; per-tensor 取 quantScaleScalar。
+    __aicore__ inline void LoadAffineParams(int64_t curB, int64_t cBase, float& quantScaleScalar)
     {
         const int32_t cb = static_cast<int32_t>(curB);
         LocalTensor<float> gammaT = gammaBuf.Get<float>();
@@ -289,7 +284,7 @@ private:
             WaitFlag<HardEvent::MTE2_V>(evM2V);
         } else {
             // per-tensor: 单标量广播, 直接取倒数(标量除法; 量化 scale 精度不敏感, 与 b16/split_reduce 同)
-            invqsScalar = 1.0f / quantScaleGm.GetValue(0);
+            quantScaleScalar = quantScaleGm.GetValue(0);
         }
     }
 
@@ -321,67 +316,33 @@ private:
     }
 
     // 广播 A/Bb 一次性向量化 normalize; silu; 量化 y/quantScale -> clamp 到 [-128,127]。
-    __aicore__ inline void NormalizeSiluQuantTile(int64_t curB, int32_t n, float invqsScalar)
+    // 归一化+silu+量化+落盘: 走公共 C 层入口(向量版, regbase VF), 不再用 Level-2 API 自写 ——
+    // silu 与量化收尾因此与其它 key 完全一致。A/B 已由 FoldAffineTile 折好(A=rstd*gamma、
+    // B=beta-mean*rstd*gamma), quantScale 按 per-channel/per-tensor 广播到逐元素。
+    __aicore__ inline void NormalizeSiluQuantStoreTile(int64_t gTile, int64_t curB, int32_t n, float quantScaleScalar)
     {
-        const int32_t cb = static_cast<int32_t>(curB);
         LocalTensor<float> xf = xfBuf.Get<float>();
-        LocalTensor<float> sq = sqBuf.Get<float>();
-        LocalTensor<float> one = oneBuf.Get<float>();
         LocalTensor<float> qsRaw = qsRawBuf.Get<float>();
         LocalTensor<float> aVec = aBuf.Get<float>();
         LocalTensor<float> bVec = bBuf.Get<float>();
         LocalTensor<float> aExp = aExpBuf.Get<float>();
         LocalTensor<float> bExp = bExpBuf.Get<float>();
+        LocalTensor<float> qsExp = sqBuf.Get<float>(); // 归约阶段已用完, 此处复用为 quantScale 广播缓冲
         BroadcastGroups(aExp, aVec, curB);
         BroadcastGroups(bExp, bVec, curB);
-        Mul(xf, xf, aExp, n); // x * A[g]
-        PipeBarrier<PIPE_V>();
-        Add(xf, xf, bExp, n); // + Bb[g]  => 归一化后(pre-silu)
-        PipeBarrier<PIPE_V>();
-        // ---- silu ----
-        if (activateSilu) {
-            Sigmoid(sq, xf, n);
-            PipeBarrier<PIPE_V>();
-            Mul(xf, xf, sq, n); // y = x * sigmoid(x)
-            PipeBarrier<PIPE_V>();
-        }
-        // ---- 量化 y/quantScale ----
         if (perChannelScale) {
-            LocalTensor<float> qsInv = tmpBuf.Get<float>(); // 复用 tmp(B 宽)存 invqs
-            Div(qsInv, one, qsRaw, cb);
-            PipeBarrier<PIPE_V>();
-            BroadcastGroups(aExp, qsInv, curB); // 复用 aExp 存广播后的 invqs
-            Mul(xf, xf, aExp, n);
-            PipeBarrier<PIPE_V>();
+            BroadcastGroups(qsExp, qsRaw, curB);
         } else {
-            Muls(xf, xf, invqsScalar, n);
-            PipeBarrier<PIPE_V>();
+            Duplicate(qsExp, quantScaleScalar, n);
         }
-        Maxs(xf, xf, -128.0f, n);
-        PipeBarrier<PIPE_V>();
-        Mins(xf, xf, 127.0f, n);
-        PipeBarrier<PIPE_V>();
-    }
-
-    // 量化收尾 fp32->int16->fp16->int8, 逐组连续落盘 int8。
-    __aicore__ inline void QuantizeStoreTile(int64_t gTile, int64_t curB, int32_t n)
-    {
-        LocalTensor<float> xf = xfBuf.Get<float>();
-        // 量化收尾 fp32->int16(CAST_RINT)->fp16->int8(高精度 idiom, 与 split_reduce 一致):
-        // fp32->int16 正确舍入成整数(对齐 golden round(out/scale) 的 fp32 舍入), int16->fp16->int8 全精确
-        // (|y|<=127 的整数在 fp16 可精确表示); 勿走 fp32->fp16->int8(大值 fp16 分辨率翻边界)。
-        LocalTensor<int16_t> yi16 = sqBuf.Get<int16_t>();
-        Cast(yi16, xf, RoundMode::CAST_RINT, n);
-        PipeBarrier<PIPE_V>();
-        LocalTensor<half> yh = aExpBuf.Get<half>();
-        Cast(yh, yi16, RoundMode::CAST_NONE, n);
         PipeBarrier<PIPE_V>();
         LocalTensor<int8_t> yo = outQue.AllocTensor<int8_t>();
-        Cast(yo, yh, RoundMode::CAST_RINT, n);
+        VFNormalizeSiluQuantVec((__local_mem__ float*)xf.GetPhyAddr(), (__local_mem__ int8_t*)yo.GetPhyAddr(),
+                                (__local_mem__ float*)aExp.GetPhyAddr(), (__local_mem__ float*)bExp.GetPhyAddr(),
+                                (__local_mem__ float*)qsExp.GetPhyAddr(), static_cast<uint32_t>(n), activateSilu);
         outQue.EnQue(yo);
         yo = outQue.DeQue<int8_t>();
-        // 逐组连续落盘: UB 组行按 padElems(int8 字节)对齐, GM 上 hwNum 连续; CopySilu2Gm 在 padElems!=hwNum
-        // 时逐行拷贝。
+        // 逐组连续落盘: UB 组行按 padElems 对齐, GM 上 hwNum 连续; padElems!=hwNum 时逐行拷贝
         CopySilu2Gm<int8_t>(siluGm[gTile * hwNum], yo, static_cast<uint16_t>(curB), static_cast<uint32_t>(hwNum),
                             static_cast<uint32_t>(padElems));
         outQue.FreeTensor(yo);
