@@ -88,6 +88,8 @@
 ## 约束说明
 
 - 三个输入张量的shape必须完全一致，不支持广播。
+- 输入张量的维度（rank）范围为 0~8：支持 0 维（标量）输入，不支持 9 维及以上张量（rank>8 报错）。
+- 输出 clamp_max_grad 为全轴归约得到的 0 维标量（shape 为 `()`）。
 - 当clamp_max_mask为BOOL类型时，y_grad和x_clamped_loss必须为相同的浮点类型（均为FLOAT16或均为FLOAT32）。
 - 当clamp_max_mask为浮点类型时，三个输入必须为相同的浮点类型。
 - 输入张量必须是连续存储。

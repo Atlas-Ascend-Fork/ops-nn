@@ -133,7 +133,7 @@ TEST_F(Relu6ProtoTest, relu6_infershape_bf16_test)
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
 }
 
-TEST_F(Relu6ProtoTest, relu6_infershape_scalar_test)
+TEST_F(Relu6ProtoTest, relu6_infershape_scalar_reject_test)
 {
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optiCompilationInfo;
@@ -145,6 +145,7 @@ TEST_F(Relu6ProtoTest, relu6_infershape_scalar_test)
 
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("Relu6")->infer_shape;
 
+    // 0 维（标量）输入超出 proto 声明的 1D~8D 范围，InferShape 应拒绝
     gert::Shape input_shape_0 = {};
     gert::Shape output_shape_0 = {};
 
@@ -157,7 +158,35 @@ TEST_F(Relu6ProtoTest, relu6_infershape_scalar_test)
                       .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .Build();
 
-    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(Relu6ProtoTest, relu6_infershape_rank9_reject_test)
+{
+    fe::PlatformInfo platformInfo;
+    fe::OptionalInfo optiCompilationInfo;
+    platformInfo.soc_info.ai_core_cnt = 64;
+    platformInfo.str_info.short_soc_version = "Ascend950";
+    optiCompilationInfo.soc_version = "Ascend950";
+    fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
+
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("Relu6")->infer_shape;
+
+    // 9 维输入超出 proto 声明的 1D~8D 范围，InferShape 应拒绝
+    gert::Shape input_shape_0 = {1, 1, 1, 1, 1, 1, 1, 1, 2};
+    gert::Shape output_shape_0 = {};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&input_shape_0})
+                      .OutputShapes({&output_shape_0})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
 
 TEST_F(Relu6ProtoTest, relu6_infershape_empty_test)

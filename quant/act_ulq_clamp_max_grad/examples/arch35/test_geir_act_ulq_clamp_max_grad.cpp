@@ -17,6 +17,8 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <cmath>
+#include <algorithm>
 #include "assert.h"
 
 #include "graph.h"
@@ -31,6 +33,9 @@
 
 #define FAILED -1
 #define SUCCESS 0
+
+// 数值校验结果标记：仅在真的执行了校验且不通过时置 true
+static bool g_precision_failed = false;
 
 using namespace ge;
 using std::map;
@@ -129,19 +134,42 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
 {
     input_tensor_desc.SetRealDimCnt(shapes.size());
     size_t size = 1;
-    for (uint32_t i = 0; i < shapes.size(); i++) {
-        size *= shapes[i];
+    for (size_t i = 0; i < shapes.size(); i++) {
+        size *= static_cast<size_t>(shapes[i]);
     }
-    uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[size];
+    uint32_t data_len = static_cast<uint32_t>(size) * GetDataTypeSize(data_type);
+    uint8_t* pData = new (std::nothrow) uint8_t[data_len];
     if (pData == nullptr) {
         printf("ERROR: failed to allocate memory for input data\n");
         return FAILED;
     }
-    for (uint32_t i = 0; i < size; ++i) {
-        *(pData + i) = value;
+    // 按 dtype 写入正确位型。历史实现用 int32_t* 写整数 2，对浮点张量等价于
+    // 次正规数 (~2.8e-45) 而非 2.0，是错误的；此处按真实 dtype 落位。
+    if (data_type == ge::DT_FLOAT) {
+        float v = static_cast<float>(value);
+        for (size_t i = 0; i < size; ++i) {
+            reinterpret_cast<float*>(pData)[i] = v;
+        }
+    } else if (data_type == ge::DT_FLOAT16 || data_type == ge::DT_BF16) {
+        // 2.0 在 fp16 与 bf16 下位型均为 0x4000
+        uint16_t bits = (value == 2) ? 0x4000 : 0;
+        for (size_t i = 0; i < size; ++i) {
+            reinterpret_cast<uint16_t*>(pData)[i] = bits;
+        }
+    } else if (data_type == ge::DT_INT64 || data_type == ge::DT_UINT64) {
+        for (size_t i = 0; i < size; ++i) {
+            reinterpret_cast<int64_t*>(pData)[i] = value;
+        }
+    } else if (data_type == ge::DT_INT16 || data_type == ge::DT_UINT16) {
+        for (size_t i = 0; i < size; ++i) {
+            reinterpret_cast<int16_t*>(pData)[i] = static_cast<int16_t>(value);
+        }
+    } else {
+        for (size_t i = 0; i < size; ++i) {
+            reinterpret_cast<int32_t*>(pData)[i] = value;
+        }
     }
-    input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
+    input_tensor = Tensor(input_tensor_desc, pData, data_len);
     delete[] pData;
     return SUCCESS;
 }
@@ -274,6 +302,28 @@ void ProcessIOData(std::vector<ge::Tensor>& input, std::vector<ge::Tensor>& outp
             LOG_PRINT("result[%ld] is: %u\n", j, resultData[j]);
         }
     }
+
+    // 数值校验：clamp_max_grad = sum(y_grad * (x_clamped_loss + |clamp_max_mask|))
+    if (input.size() >= 3 && !output.empty() && input[0].GetTensorDesc().GetDataType() == ge::DT_FLOAT &&
+        output[0].GetTensorDesc().GetDataType() == ge::DT_FLOAT) {
+        const float* yGrad = reinterpret_cast<const float*>(input[0].GetData());
+        const float* mask = reinterpret_cast<const float*>(input[1].GetData());
+        const float* xLoss = reinterpret_cast<const float*>(input[2].GetData());
+        int64_t n = input[0].GetTensorDesc().GetShape().GetShapeSize();
+        double golden = 0.0;
+        for (int64_t k = 0; k < n; ++k) {
+            golden += static_cast<double>(yGrad[k]) *
+                      (static_cast<double>(xLoss[k]) + std::fabs(static_cast<double>(mask[k])));
+        }
+        double got = static_cast<double>(reinterpret_cast<const float*>(output[0].GetData())[0]);
+        double absErr = std::fabs(got - golden);
+        double relErr = absErr / std::max(1.0, std::fabs(golden));
+        g_precision_failed = (relErr > 1e-5);
+        printf("[CHECK] clamp_max_grad golden=%.6f device=%.6f abs_err=%.6g rel_err=%.6g -> %s\n", golden, got, absErr,
+               relErr, g_precision_failed ? "FAIL" : "PASS");
+    } else {
+        printf("[CHECK] numeric validation skipped (requires 3 float inputs and float output)\n");
+    }
 }
 
 int main(int argc, char* argv[])
@@ -283,13 +333,16 @@ int main(int argc, char* argv[])
     Graph graph(graph_name);
     std::vector<ge::Tensor> input;
 
-    if (argc < 2) {
-        printf("Usage: %s <data_type>\n", argv[0]);
-        return FAILED;
-    }
-    std::cout << argv[1] << std::endl;
-
     DataType inDtype = DT_FLOAT;
+    if (argc >= 2) {
+        std::string dtypeArg = argv[1];
+        std::cout << dtypeArg << std::endl;
+        if (dtypeArg == "float16" || dtypeArg == "fp16" || dtypeArg == "half") {
+            inDtype = DT_FLOAT16;
+        }
+    } else {
+        printf("%s - WARN - [XIR]: no <data_type> argument, default to float\n", GetTime().c_str());
+    }
 
     std::cout << inDtype << std::endl;
 
@@ -313,6 +366,11 @@ int main(int argc, char* argv[])
     ge::AscendString warning_msg = ge::GEGetWarningMsgV2();
     std::string warning_str(warning_msg.GetString());
     std::cout << "Warning message: " << warning_str << std::endl;
+    if (g_precision_failed) {
+        printf("%s - ERROR - [XIR]: Precision check failed\n", GetTime().c_str());
+        ge::GEFinalize();
+        return FAILED;
+    }
     printf("%s - INFO - [XIR]: Precision is ok\n", GetTime().c_str());
     printf("%s - INFO - [XIR]: Start to finalize ir graph session\n", GetTime().c_str());
     Status ret = ge::GEFinalize();

@@ -41,17 +41,9 @@ constexpr uint32_t WS_SYS_SIZE = 0U;
 constexpr int64_t BUFFER_NUM = 4;
 // 双缓冲阈值：数据量大于此值时启用双缓冲（迭代三扩展）
 constexpr int64_t MIN_SPLIT_THRESHOLD = 1024;
-
-static const gert::Shape g_vec_1_shape = {1};
-
-/// \brief 确保 shape 不为标量（0 维），若为标量则转换为 {1}
-static inline const gert::Shape EnsureNotScalar(const gert::Shape& in_shape)
-{
-    if (in_shape.GetDimNum() == 0) {
-        return g_vec_1_shape;
-    }
-    return in_shape;
-}
+// 维度约束：proto.h 声明输入支持 1D~8D，拒绝 0 维标量与超过 8 维的输入
+constexpr size_t RELU6_MIN_RANK = 1;
+constexpr size_t RELU6_MAX_RANK = 8;
 
 /// \brief 获取平台信息：UB 大小、AI Core 数量
 static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& ubSize, int64_t& coreNum)
@@ -71,10 +63,17 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
 {
     auto inputX = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputX);
-    auto inputShapeX = EnsureNotScalar(inputX->GetStorageShape());
+    auto inputShapeX = inputX->GetStorageShape();
+    // 维度校验：仅支持 1D~8D（proto 契约），拒绝 0 维标量与超过 8 维的输入
+    OP_CHECK_IF(inputShapeX.GetDimNum() < RELU6_MIN_RANK || inputShapeX.GetDimNum() > RELU6_MAX_RANK,
+                OP_LOGE(context, "Relu6: input rank %zu is out of supported range [1, 8]", inputShapeX.GetDimNum()),
+                return ge::GRAPH_FAILED);
     auto outY = context->GetOutputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, outY);
-    auto outShapeY = EnsureNotScalar(outY->GetStorageShape());
+    auto outShapeY = outY->GetStorageShape();
+    OP_CHECK_IF(outShapeY.GetDimNum() < RELU6_MIN_RANK || outShapeY.GetDimNum() > RELU6_MAX_RANK,
+                OP_LOGE(context, "Relu6: output rank %zu is out of supported range [1, 8]", outShapeY.GetDimNum()),
+                return ge::GRAPH_FAILED);
 
     // Shape 校验：输入输出元素数一致
     OP_CHECK_IF(inputShapeX.GetShapeSize() != outShapeY.GetShapeSize(),

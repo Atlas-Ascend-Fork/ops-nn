@@ -147,3 +147,15 @@ TEST_F(Relu6TilingTest, test_tiling_5d_shape_011)
 {
     Relu6TilingTestCase({1, 2, 3, 4, 5}, ge::DT_BF16, ge::GRAPH_SUCCESS);
 }
+
+TEST_F(Relu6TilingTest, test_tiling_scalar_reject_012)
+{
+    // 0 维（标量）超出 proto 声明的 1D~8D 范围，Tiling 应拒绝
+    Relu6TilingTestCase({}, ge::DT_FLOAT16, ge::GRAPH_FAILED);
+}
+
+TEST_F(Relu6TilingTest, test_tiling_rank9_reject_013)
+{
+    // 9 维超出 proto 声明的 1D~8D 范围，Tiling 应拒绝
+    Relu6TilingTestCase({1, 1, 1, 1, 1, 1, 1, 1, 2}, ge::DT_FLOAT, ge::GRAPH_FAILED);
+}

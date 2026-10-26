@@ -37,6 +37,11 @@
  *       O(n·eps·max_val)。当 src 含大值或累加元素较多时，顺序累加误差远超
  *       1e-6 阈值。Kahan summation 误差降为 O(eps·max_val)，对齐 golden 精度。
  *       算法语义不变（仍为 x[r,c] + sum(src[start:end,c])），仅优化累加精度。
+ *   v4: Kahan 补偿项加非有限值保护。根因：当 sum/t 为 ±Inf 时补偿项
+ *       (t-sum)-y 计算 Inf-Inf=NaN，并经 kahanC 反馈把后续所有项污染为 NaN，
+ *       使本应传播为 ±Inf 的结果变成 NaN（违反 README 的 NaN/Inf 传播契约，
+ *       Inf+Inf=Inf、Inf+(-Inf)=NaN）。修复：仅当 t、sum 均有限时更新补偿，
+ *       否则退化为普通 IEEE 顺序加法；有限输入时精度与 v3 完全一致。
  */
 
 #ifndef ADD_ROW_RANGES_SIMT_H_
@@ -45,6 +50,7 @@
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "simt_api/common_functions.h"
+#include "simt_api/math_functions.h"
 #include "simt_api/asc_fp16.h"
 #include "add_row_ranges_tiling_data.h"
 #include "add_row_ranges_tiling_key.h"
@@ -150,7 +156,15 @@ __simt_vf__ __aicore__ __launch_bounds__(THREAD_NUM) inline void OpAddRowRangesS
                     float val = ToFloat<T>(srcGm[static_cast<int64_t>(j) * N + c]);
                     float y = val - kahanC;
                     float t = sum + y;
-                    kahanC = (t - sum) - y;
+                    // Kahan 误差项 (t - sum) - y 仅在 sum、t 均为有限值时成立。
+                    // 一旦出现 ±Inf，Inf - Inf = NaN 会经 kahanC 反馈污染后续所有项，
+                    // 使本应传播为 ±Inf 的结果变成 NaN（违反 README 的 NaN/Inf 传播契约）。
+                    // 非有限时置零补偿，退化为普通 IEEE 顺序加法，保留 Inf/NaN 传播语义。
+                    if (isfinite(t) && isfinite(sum)) {
+                        kahanC = (t - sum) - y;
+                    } else {
+                        kahanC = 0.0f;
+                    }
                     sum = t;
                 }
 

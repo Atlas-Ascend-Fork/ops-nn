@@ -82,7 +82,9 @@ __aicore__ inline void Relu6<T>::Init(GM_ADDR x, GM_ADDR y, const Relu6TilingDat
     // 计算当前 AI Core 需要处理的元素数量
     int64_t remainderLength = tilingData->totalNum - tilingData->blockFactor * AscendC::GetBlockIdx();
     if (remainderLength <= 0) {
-        blockLength_ = 0; // 空闲核，Process() 中 loopCount=0 直接返回
+        // 空张量 / 空闲核：无数据可处理，Process() 直接返回
+        blockLength_ = 0;
+        ubLength_ = 1; // 保证除数非零，成员状态自洽（本路径不做实际搬运）
         return;
     }
     blockLength_ = (remainderLength > tilingData->blockFactor) ? tilingData->blockFactor : remainderLength;
@@ -151,6 +153,10 @@ __aicore__ inline void Relu6<T>::Compute(int64_t currentNum)
 template <typename T>
 __aicore__ inline void Relu6<T>::Process()
 {
+    // 空张量 / 空闲核（blockLength_==0）：无数据可处理，直接返回，避免 ubLength_==0 参与除法
+    if (blockLength_ == 0) {
+        return;
+    }
     int64_t loopCount = (blockLength_ + ubLength_ - 1) / ubLength_;
     if (loopCount == 0) {
         return;
@@ -180,8 +186,10 @@ __aicore__ inline void Relu6<T>::Process()
 
         // CopyIn：预取下一轮数据（与当前轮的 Compute/CopyOut 流水并行）
         if (i < loopCount - 1) {
-            int64_t nextNum = ubLength_;
-            CopyIn(i + 1, nextNum);
+            int64_t nextIndex = i + 1;
+            // 尾块预取必须使用实际长度，避免按满块 ubLength_ 越界读取 GM
+            int64_t nextNum = (nextIndex == (loopCount - 1)) ? (blockLength_ - ubLength_ * nextIndex) : ubLength_;
+            CopyIn(nextIndex, nextNum);
         }
     }
 }

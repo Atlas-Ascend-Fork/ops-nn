@@ -24,6 +24,9 @@ using namespace ge;
 
 namespace ops {
 
+static constexpr size_t RELU6_MIN_DIM_NUM = 1;
+static constexpr size_t RELU6_MAX_DIM_NUM = 8;
+
 static ge::graphStatus InferShape4Relu6(gert::InferShapeContext* context)
 {
     const gert::Shape* inputShape = context->GetInputShape(0);
@@ -35,6 +38,16 @@ static ge::graphStatus InferShape4Relu6(gert::InferShapeContext* context)
     if (outputShape == nullptr) {
         return ge::GRAPH_FAILED;
     }
+
+    if (Ops::Base::IsUnknownRank(*inputShape)) {
+        Ops::Base::SetUnknownRank(*outputShape);
+        return ge::GRAPH_SUCCESS;
+    }
+    // 维度校验：仅支持 1D~8D（proto 契约），拒绝 0 维标量与超过 8 维的输入
+    OP_CHECK_IF(inputShape->GetDimNum() < RELU6_MIN_DIM_NUM || inputShape->GetDimNum() > RELU6_MAX_DIM_NUM,
+                OP_LOGE(context->GetNodeName(), "Relu6: input rank %zu is out of supported range [1, 8]",
+                        inputShape->GetDimNum()),
+                return ge::GRAPH_FAILED);
 
     *outputShape = *inputShape;
     OP_LOGI(context->GetNodeName(), "[InferShape] output0 shape=%s", Ops::Base::ToString(*outputShape).c_str());

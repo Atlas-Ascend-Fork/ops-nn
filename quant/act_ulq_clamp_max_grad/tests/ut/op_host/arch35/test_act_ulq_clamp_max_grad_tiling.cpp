@@ -39,9 +39,9 @@
 #include <gtest/gtest.h>
 #include "tiling_context_faker.h"
 #include "tiling_case_executor.h"
-#include "math/act_ulq_clamp_max_grad/op_host/arch35/act_ulq_clamp_max_grad_tiling_arch35.h"
-#include "math/act_ulq_clamp_max_grad/op_kernel/arch35/act_ulq_clamp_max_grad_tiling_data.h"
-#include "math/act_ulq_clamp_max_grad/op_kernel/arch35/act_ulq_clamp_max_grad_tiling_key.h"
+#include "../../../../op_host/arch35/act_ulq_clamp_max_grad_tiling_arch35.h"
+#include "../../../../op_kernel/arch35/act_ulq_clamp_max_grad_tiling_data.h"
+#include "../../../../op_kernel/arch35/act_ulq_clamp_max_grad_tiling_key.h"
 
 namespace ActULQClampMaxGradUT {
 using namespace std;
