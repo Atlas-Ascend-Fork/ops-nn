@@ -13,6 +13,8 @@
  * \brief
  */
 
+#include <cmath>
+
 #include "dynamic_mx_quant_with_dual_axis_tiling.h"
 #include "op_common/op_host/util/platform_util.h"
 #include "error_util.h"
@@ -142,6 +144,17 @@ ge::graphStatus DynamicMxQuantWithDualAxisTiling::GetAttr()
     auto* attrDstTypeMax = attrs->GetAttrPointer<float>(INDEX_ATTR_DST_DTYPE_MAX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrDstTypeMax);
     tilingParams.dstTypeMax = static_cast<float>(*attrDstTypeMax);
+
+    OP_CHECK_IF(!std::isfinite(tilingParams.dstTypeMax),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "dst_type_max",
+                                                      std::to_string(tilingParams.dstTypeMax),
+                                                      "The value of dst_type_max must be finite"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingParams.dstTypeMax != 0.0 && (yDtype != ge::DT_FLOAT4_E2M1 || tilingParams.scaleAlg != 2),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "dst_type_max",
+                                                      std::to_string(tilingParams.dstTypeMax),
+                                                      "A non-zero dst_type_max requires FLOAT4_E2M1 and scale_alg=2"),
+                return ge::GRAPH_FAILED);
 
     if (tilingParams.dstTypeMax != 0.0) {
         tilingParams.invDstTypeMax = 1.0 / tilingParams.dstTypeMax;
