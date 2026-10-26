@@ -24,13 +24,12 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.dirname(__file__))
 
-import numeric_ulp  # noqa: E402
+import matmul_golden_util as _util  # noqa: E402
 import flat_quant_golden as _kernel  # noqa: E402
 
 compute_mx_fp4 = _kernel.compute_mx_fp4
 compute_int4 = _kernel.compute_int4
 MXFP4_DST_DTYPE = _kernel.MXFP4_DST_DTYPE
-numeric_ulp_compare = numeric_ulp.numeric_ulp_compare
 
 _GE_DTYPE_TO_DST = {
     "float4_e2m1": MXFP4_DST_DTYPE,
@@ -47,7 +46,7 @@ class AclnnFlatQuantTestSpec:
         n = len(outputs) // 2
         results = []
         for i in range(n):
-            r = numeric_ulp_compare(outputs[i], outputs[n + i])
+            r = _util.numeric_ulp_compare(outputs[i], outputs[n + i])
             results.append(r)
         return results
 

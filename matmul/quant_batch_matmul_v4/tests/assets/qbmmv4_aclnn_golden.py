@@ -44,19 +44,7 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from matmul_golden_util import (
-    nz_to_nd,
-    dtype_to_str,
-    torch_to_numpy,
-    torch_dtype_to_str,
-    write_back,
-)
-from matmul_quant_util import (
-    u64_to_deq_scale,
-    u64_to_offset,
-    sanitize_e8m0_scale,
-    generate_u64_scale,
-)
+import matmul_golden_util as _util
 from qbmmv4_kernel_golden import (
     qbmmv4_kernel_compute,
     FP8_INPUT_DTYPE,
@@ -74,7 +62,8 @@ _DTYPE_TO_CANN_ENUM = {
 }
 
 # ============================================================================
-# Import V3 kernel golden (isolated to avoid module conflicts)
+# Import V3 kernel golden (loaded under a distinct module name so it does not
+# clash with the ttk spec loader / other goldens in the same process)
 # ============================================================================
 
 _v3_assets_path = os.path.normpath(
@@ -85,21 +74,6 @@ _v3_assets_path = os.path.normpath(
 )
 _v3_kernel_golden_path = os.path.join(_v3_assets_path, "qbmmv3_kernel_golden.py")
 
-_saved_sys_path = sys.path.copy()
-_saved_sys_modules = {
-    k: v
-    for k, v in sys.modules.items()
-    if k in ("matmul_golden_util", "matmul_quant_util", "qbmmv4_kernel_golden")
-}
-
-for mod_name in ("matmul_golden_util", "matmul_quant_util", "qbmmv4_kernel_golden"):
-    if mod_name in sys.modules:
-        del sys.modules[mod_name]
-
-sys.path = [_v3_assets_path] + [
-    p for p in _saved_sys_path if "quant_batch_matmul_v4" not in p
-]
-
 _v3_spec = importlib.util.spec_from_file_location(
     "v3_kernel_golden", _v3_kernel_golden_path
 )
@@ -107,66 +81,20 @@ v3_kernel_golden = importlib.util.module_from_spec(_v3_spec)
 _v3_spec.loader.exec_module(v3_kernel_golden)
 _qbmmv3_kernel_compute = v3_kernel_golden.qbmmv3_kernel_compute
 
-sys.path = _saved_sys_path
-sys.modules.update(_saved_sys_modules)
-
-for mod_name in ("matmul_golden_util", "matmul_quant_util", "qbmmv4_kernel_golden"):
-    if mod_name in sys.modules:
-        del sys.modules[mod_name]
-
 
 # ============================================================================
 # shared helpers
 # ============================================================================
 
 
-def _to_np(*tensors):
-    """torch tensor -> numpy。None 保持 None，已是 numpy 则跳过。"""
-    result = []
-    for t in tensors:
-        if t is None:
-            result.append(None)
-        elif isinstance(t, np.ndarray):
-            result.append(t)
-        else:
-            result.append(torch_to_numpy(t))
-    return tuple(result)
-
-
-def _out_dtype(out, fallback):
-    """返回 out tensor 的 dtype 名，若 out 为 None 则用 fallback。
-
-    对应 C++ GetDtypeAndTranspose: dtype = out->GetDataType()
-    """
-    if out is not None:
-        (out_np,) = _to_np(out)
-        if out_np is not None:
-            return dtype_to_str(out_np.dtype)
-    if isinstance(fallback, np.ndarray):
-        return dtype_to_str(fallback.dtype)
-    return torch_dtype_to_str(fallback.dtype)
-
-
 def _out_shape(out):
     """从 out tensor 获取 output shape。"""
     if out is None:
         return ()
-    (out_np,) = _to_np(out)
+    (out_np,) = _util.to_numpy(out)
     if out_np is not None:
         return (out_np.shape,)
     return ()
-
-
-def _nz_to_nd_if_needed(tensor_np, tensor_idx, kwargs):
-    """若 tensor 为 FRACTAL_NZ 格式，转换为 ND。"""
-    tensor_formats = kwargs.get("tensor_formats", ())
-    if len(tensor_formats) <= tensor_idx or tensor_formats[tensor_idx] != "FRACTAL_NZ":
-        return tensor_np
-    storage_shapes = kwargs.get("tensor_storage_shapes", ())
-    ori_shape = storage_shapes[tensor_idx] if len(storage_shapes) > tensor_idx else None
-    if ori_shape is not None and tuple(tensor_np.shape) != tuple(ori_shape):
-        tensor_np = nz_to_nd(tensor_np, ori_shape)
-    return tensor_np
 
 
 # ============================================================================
@@ -183,8 +111,8 @@ def _is_v4_branch(x1_np, x2_np, x1_scale_np, x2_scale_np, x2_offset_np):
       else
           -> l0op::QuantBatchMatmulV3
     """
-    x1_dt = dtype_to_str(x1_np.dtype)
-    x2_dt = dtype_to_str(x2_np.dtype)
+    x1_dt = _util.dtype_to_str(x1_np.dtype)
+    x2_dt = _util.dtype_to_str(x2_np.dtype)
 
     # isA8W4Float: FP8 x FP4 (MX 或 T_CG)
     if x1_dt in FP8_INPUT_DTYPE and x2_dt in FP4_INPUT_DTYPE:
@@ -196,8 +124,8 @@ def _is_v4_branch(x1_np, x2_np, x1_scale_np, x2_scale_np, x2_offset_np):
         and x2_dt == "int8"
         and x1_scale_np is not None
         and x2_scale_np is not None
-        and dtype_to_str(x1_scale_np.dtype) == "float32"
-        and dtype_to_str(x2_scale_np.dtype) == "float32"
+        and _util.dtype_to_str(x1_scale_np.dtype) == "float32"
+        and _util.dtype_to_str(x2_scale_np.dtype) == "float32"
         and x1_scale_np.ndim == x1_np.ndim
         and x2_scale_np.ndim == x2_np.ndim
     ):
@@ -210,11 +138,11 @@ def _is_v4_branch(x1_np, x2_np, x1_scale_np, x2_scale_np, x2_offset_np):
         and x1_scale_np is not None
         and x2_scale_np is not None
         and x2_offset_np is not None
-        and dtype_to_str(x1_scale_np.dtype) == "float32"
+        and _util.dtype_to_str(x1_scale_np.dtype) == "float32"
         and x1_scale_np.ndim >= 2
-        and dtype_to_str(x2_scale_np.dtype) == "float32"
+        and _util.dtype_to_str(x2_scale_np.dtype) == "float32"
         and x2_scale_np.ndim >= 2
-        and dtype_to_str(x2_offset_np.dtype) == "float16"
+        and _util.dtype_to_str(x2_offset_np.dtype) == "float16"
         and x2_offset_np.ndim >= 2
     ):
         return True
@@ -276,18 +204,6 @@ def _v4_compute(
 # ============================================================================
 
 
-def _decode_u64_scale(scale_np):
-    """UINT64/int64 scale 解码为 float32 deq_scale + offset。"""
-    if scale_np is None:
-        return scale_np, None
-    scale_dt = dtype_to_str(scale_np.dtype)
-    if scale_dt not in ("uint64", "int64"):
-        return scale_np, None
-    deq_scale = u64_to_deq_scale(scale_np)
-    offset = u64_to_offset(scale_np)
-    return deq_scale, offset
-
-
 def _v3_compute(
     x1_np,
     x2_np,
@@ -312,9 +228,9 @@ def _v3_compute(
     pertoken_scale = x1_scale_np
 
     if scale is not None:
-        scale_dt = dtype_to_str(scale.dtype)
+        scale_dt = _util.dtype_to_str(scale.dtype)
         if scale_dt in ("uint64", "int64"):
-            deq_scale, u64_offset = _decode_u64_scale(scale)
+            deq_scale, u64_offset = _util.decode_u64_scale(scale)
             scale = deq_scale
             if offset is None:
                 offset = u64_offset
@@ -323,7 +239,7 @@ def _v3_compute(
     if out_dtype:
         temp_kwargs["output_dtypes"] = [out_dtype]
     if scale is not None:
-        temp_kwargs["scale_dtype"] = dtype_to_str(scale.dtype)
+        temp_kwargs["scale_dtype"] = _util.dtype_to_str(scale.dtype)
     if out_shapes:
         temp_kwargs["output_shapes"] = out_shapes
         temp_kwargs["output_ori_shapes"] = out_shapes
@@ -365,24 +281,24 @@ def _customize_inputs_impl(x1, x2, x1Scale, x2Scale, yScale, bias, **kwargs):
     for tensor in [x1, x2, x1Scale, x2Scale]:
         if tensor is None:
             continue
-        cleaned = sanitize_e8m0_scale(tensor, testcase_name)
+        cleaned = _util.sanitize_e8m0_scale(tensor, testcase_name)
         if cleaned is not tensor:
-            write_back(tensor, cleaned)
+            _util.write_back(tensor, cleaned)
 
     # 2. UINT64 scale 生成
     for tensor in [x2Scale, yScale]:
         if tensor is None:
             continue
         if isinstance(tensor, np.ndarray):
-            tensor_dt = dtype_to_str(tensor.dtype)
+            tensor_dt = _util.dtype_to_str(tensor.dtype)
         else:
             tensor_dt = str(tensor.dtype).replace("torch.", "")
         if tensor_dt in ("uint64", "int64"):
             tensor_shape = tuple(tensor.shape)
-            new_scale = generate_u64_scale(tensor_shape)
+            new_scale = _util.generate_u64_scale(tensor_shape)
             if tensor_dt == "int64":
                 new_scale = new_scale.astype(np.int64)
-            write_back(tensor, new_scale)
+            _util.write_back(tensor, new_scale)
 
 
 # ============================================================================
@@ -425,11 +341,9 @@ class AclnnQuantMatmulV5TestSpec:
             y_scale_np,
             x2_offset_np,
             bias_np,
-        ) = _to_np(x1, x2, x1Scale, x2Scale, yScale, x2Offset, bias)
+        ) = _util.to_numpy(x1, x2, x1Scale, x2Scale, yScale, x2Offset, bias)
 
-        x2_np = _nz_to_nd_if_needed(x2_np, 1, kwargs)
-
-        out_dtype = _out_dtype(out, x1)
+        out_dtype = _util.dtype_to_str(out if out is not None else x1.dtype)
         out_shapes = _out_shape(out)
 
         is_v4 = _is_v4_branch(x1_np, x2_np, x1_scale_np, x2_scale_np, x2_offset_np)

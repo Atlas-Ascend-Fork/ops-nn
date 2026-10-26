@@ -29,24 +29,15 @@ sys.path.insert(
     ),
 )
 import matmul_golden_util as _util
-from matmul_quant_util import (
-    unpack_groupsize,
-    scale_generate,
-    ceil_div,
-)
-
-
-def _scale_e8m0_to_f32(scale):
-    return scale.astype(np.float32)
 
 
 def _compute_mx(x1, x2, x1_scale, x2_scale, transpose_x1, transpose_x2, group_size):
-    gs_m, gs_n, gs_k = unpack_groupsize(group_size)
+    gs_m, gs_n, gs_k = _util.unpack_groupsize(group_size)
 
     x1 = x1.astype(np.float32)
     x2 = x2.astype(np.float32)
-    x1s = _scale_e8m0_to_f32(x1_scale)
-    x2s = _scale_e8m0_to_f32(x2_scale)
+    x1s = _util.e8m0_to_float(x1_scale)
+    x2s = _util.e8m0_to_float(x2_scale)
 
     if transpose_x1:
         x1 = np.swapaxes(x1, -2, -1)
@@ -70,7 +61,7 @@ def _compute_mx(x1, x2, x1_scale, x2_scale, transpose_x1, transpose_x2, group_si
 
     k = x1.shape[-1]
 
-    if ceil_div(k, gs_k) % 2 != 0:
+    if _util.ceil_div(k, gs_k) % 2 != 0:
         x1s = x1s[:, :-1]
         x2s = x2s[:-1, :]
 
@@ -114,7 +105,7 @@ def _compute_hif8_tt(x1, x2, x1_scale, x2_scale, transpose_x1, transpose_x2):
     s1 = x1_scale.astype(np.float32).reshape(-1)[0]
     s2 = x2_scale.astype(np.float32).reshape(-1)[0]
     merged = np.array(s1 * s2, dtype=np.float32)
-    merged = scale_generate(merged)
+    merged = _util.scale_generate(merged)
 
     return matmul_out * merged
 

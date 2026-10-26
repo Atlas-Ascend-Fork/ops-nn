@@ -40,52 +40,11 @@ import bmmv3_kernel_golden as _kernel
 # ============================================================================
 
 
-def _to_np(*tensors):
-    """torch tensor → numpy。None 保持 None，已是 numpy 则跳过。"""
-    result = []
-    for t in tensors:
-        if t is None:
-            result.append(None)
-        elif isinstance(t, np.ndarray):
-            result.append(t)
-        else:
-            result.append(_util.torch_to_numpy(t))
-    return tuple(result)
-
-
 def _opImplMode(cubeMathType):
     """cubeMathType → kernel opImplMode: KEEP_DTYPE=0, HF32=64。"""
     if cubeMathType is None:
         return 0
     return 64 if int(cubeMathType) in (1, 3) else 0
-
-
-def _out_dtype(out, fallback):
-    """返回 out tensor 的 dtype 名，若 out 为 None 则用 fallback 的 dtype。"""
-    if out is not None:
-        (out_np,) = _to_np(out)
-        if out_np is not None:
-            return _util.dtype_to_str(out_np.dtype)
-    if isinstance(fallback, np.ndarray):
-        return _util.dtype_to_str(fallback.dtype)
-    return _util.torch_dtype_to_str(fallback.dtype)
-
-
-def _nz_to_nd_if_needed(mat2_np, kwargs):
-    """若 tensor_formats 指示 mat2 为 FRACTAL_NZ，转换为 ND。
-
-    ACLNN 层在此完成转换，传给 kernel golden 的 mat2 始终为 ND。
-    kernel golden 自身的 NZ→ND 守卫作为 kernel 模式的安全网保留。
-    """
-    tensor_formats = kwargs.get("tensor_formats", ())
-    if len(tensor_formats) <= 1 or tensor_formats[1] != "FRACTAL_NZ":
-        return mat2_np
-
-    storage_shapes = kwargs.get("tensor_storage_shapes", ())
-    ori_shape = storage_shapes[1] if len(storage_shapes) > 1 else None
-    if ori_shape is not None and tuple(mat2_np.shape) != tuple(ori_shape):
-        mat2_np = _util.nz_to_nd(mat2_np, ori_shape)
-    return mat2_np
 
 
 def _apply_cube_type(x1, x2, cubeMathType):
@@ -136,16 +95,13 @@ class AclnnBatchMatMulTestSpec:
     def golden(self, mat2, out=None, cubeMathType=0, **kwargs):
         """aclnnBatchMatMul: self @ mat2。"""
         # 1) torch → numpy
-        self_np, mat2_np = _to_np(self, mat2)
+        self_np, mat2_np = _util.to_numpy(self, mat2)
 
-        # 2) NZ→ND 格式转换（若 mat2 为 FRACTAL_NZ）
-        mat2_np = _nz_to_nd_if_needed(mat2_np, kwargs)
-
-        # 3) cubeMathType 精度模拟
+        # 2) cubeMathType 精度模拟
         self_np, mat2_np = _apply_cube_type(self_np, mat2_np, cubeMathType)
 
         # 4) 调 kernel golden 做核心 matmul
-        out_dtype = _out_dtype(out, self)
+        out_dtype = _util.dtype_to_str(out if out is not None else self.dtype)
         return _kernel_bmm(
             self_np, mat2_np, cubeMathType=cubeMathType, out_dtype=out_dtype, **kwargs
         )
@@ -155,8 +111,14 @@ class AclnnBatchMatMulWeightNzTestSpec:
     compare = _util.isclose_compare
 
     @staticmethod
+    def customize_inputs(self, mat2, out=None, cubeMathType=0, **kwargs):
+        """aclnn 输入定制：NZ mat2 规范化（in-place 覆写 storage）。"""
+        _util.prepare_nz_input(mat2, kwargs.get("tensor_formats", ()), 1)
+
+    @staticmethod
     def golden(self, mat2, out=None, cubeMathType=0, **kwargs):
-        """aclnnBatchMatMulWeightNz — 委托 BatchMatMul，NZ→ND 已在其中处理。"""
+        """aclnnBatchMatMulWeightNz: self @ mat2（mat2 为 NZ，先解码为 ND）。"""
+        mat2 = _util.nz_input_to_nd(mat2, kwargs.get("tensor_formats", ()), 1)
         return AclnnBatchMatMulTestSpec.golden(
             self, mat2, out=out, cubeMathType=cubeMathType, **kwargs
         )
@@ -171,12 +133,12 @@ class AclnnAddbmmTestSpec:
     ):
         """aclnnAddbmm: beta*self + alpha * sum_i(batch1_i @ batch2_i)。"""
         # 1) torch → numpy
-        self_np, batch1_np, batch2_np = _to_np(self, batch1, batch2)
+        self_np, batch1_np, batch2_np = _util.to_numpy(self, batch1, batch2)
 
         # 2) cubeMathType 精度模拟
         batch1_np, batch2_np = _apply_cube_type(batch1_np, batch2_np, cubeMathType)
 
-        out_dtype = _out_dtype(out, self)
+        out_dtype = _util.dtype_to_str(out if out is not None else self.dtype)
 
         # 3) 调 kernel golden 做核心 matmul
         bmm = _kernel_bmm(
@@ -242,12 +204,12 @@ class AclnnBaddbmmTestSpec:
     ):
         """aclnnBaddbmm: beta*self + alpha*(batch1 @ batch2)。"""
         # 1) torch → numpy
-        self_np, batch1_np, batch2_np = _to_np(self, batch1, batch2)
+        self_np, batch1_np, batch2_np = _util.to_numpy(self, batch1, batch2)
 
         # 2) cubeMathType 精度模拟
         batch1_np, batch2_np = _apply_cube_type(batch1_np, batch2_np, cubeMathType)
 
-        out_dtype = _out_dtype(out, self)
+        out_dtype = _util.dtype_to_str(out if out is not None else self.dtype)
 
         # 3) 调 kernel golden 做核心 matmul
         bmm = _kernel_bmm(
@@ -307,7 +269,7 @@ class AclnnEinsumTestSpec:
     @staticmethod
     def golden(tensors, equation, output=None, **kwargs):
         """aclnnEinsum: tensors 为 tensor 列表，equation 为字符串。"""
-        np_tensors = _to_np(*tensors)
+        np_tensors = _util.to_numpy(*tensors)
         return np.einsum(equation, *np_tensors)
 
 

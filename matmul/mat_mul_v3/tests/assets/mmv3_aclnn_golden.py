@@ -44,28 +44,6 @@ _CUBE_MATH_USE_HF32 = 3
 _CUBE_MATH_USE_FP32_ADD = 4
 
 
-def _to_np(*tensors):
-    result = []
-    for tensor in tensors:
-        if tensor is None:
-            result.append(None)
-        elif isinstance(tensor, np.ndarray):
-            result.append(tensor)
-        else:
-            result.append(_util.torch_to_numpy(tensor))
-    return tuple(result)
-
-
-def _out_dtype(out, fallback):
-    if out is not None:
-        (out_np,) = _to_np(out)
-        if out_np is not None:
-            return _util.dtype_to_str(out_np.dtype)
-    if isinstance(fallback, np.ndarray):
-        return _util.dtype_to_str(fallback.dtype)
-    return _util.torch_dtype_to_str(fallback.dtype)
-
-
 def _apply_cube_type(x1, x2, cubeMathType):
     """USE_FP16: fp32 inputs are truncated to fp16 before the mm."""
     if cubeMathType is None or int(cubeMathType) != _CUBE_MATH_USE_FP16:
@@ -104,28 +82,31 @@ class AclnnMatmulTestSpec:
 
     @staticmethod
     def golden(self, mat2, out=None, cubeMathType=0, **kwargs):
-        self_np, mat2_np = _to_np(self, mat2)
-        tensor_formats = kwargs.get("tensor_formats", ())
-        if len(tensor_formats) > 1 and tensor_formats[1] == "FRACTAL_NZ":
-            storage_shapes = kwargs.get("tensor_storage_shapes", ())
-            original_shape = storage_shapes[1] if len(storage_shapes) > 1 else None
-            if original_shape is not None and tuple(mat2_np.shape) != tuple(
-                original_shape
-            ):
-                mat2_np = _util.nz_to_nd(mat2_np, original_shape)
+        self_np, mat2_np = _util.to_numpy(self, mat2)
         self_np, mat2_np = _apply_cube_type(self_np, mat2_np, cubeMathType)
         return _kernel_bmm(
             self_np,
             mat2_np,
             cubeMathType=cubeMathType,
-            out_dtype=_out_dtype(out, self),
+            out_dtype=_util.dtype_to_str(out if out is not None else self.dtype),
             **kwargs,
         )
 
 
 class AclnnMatmulWeightNzTestSpec(AclnnMatmulTestSpec):
-    """aclnnMatmulWeightNz shares the plain mm semantics; the NZ conversion
-    above is driven by the tensor_formats kwarg."""
+    """aclnnMatmulWeightNz: mat2 为 NZ（tensor index 1），先解码为 ND 再计算。"""
+
+    @staticmethod
+    def customize_inputs(self, mat2, out=None, cubeMathType=0, **kwargs):
+        """aclnn 输入定制：NZ mat2 规范化（in-place 覆写 storage）。"""
+        _util.prepare_nz_input(mat2, kwargs.get("tensor_formats", ()), 1)
+
+    @staticmethod
+    def golden(self, mat2, out=None, cubeMathType=0, **kwargs):
+        mat2 = _util.nz_input_to_nd(mat2, kwargs.get("tensor_formats", ()), 1)
+        return AclnnMatmulTestSpec.golden(
+            self, mat2, out=out, cubeMathType=cubeMathType, **kwargs
+        )
 
 
 class AclnnMmTestSpec(AclnnMatmulTestSpec):
@@ -179,11 +160,11 @@ class AclnnAddmmTestSpec:
     def golden(
         self, mat1, mat2, beta=1.0, alpha=1.0, out=None, cubeMathType=0, **kwargs
     ):
-        self_np, mat1_np, mat2_np = _to_np(self, mat1, mat2)
+        self_np, mat1_np, mat2_np = _util.to_numpy(self, mat1, mat2)
         mat1_dtype, mat2_dtype = mat1_np.dtype, mat2_np.dtype
         mat1_np, mat2_np = _apply_cube_type(mat1_np, mat2_np, cubeMathType)
         cube_math_type = 0 if cubeMathType is None else int(cubeMathType)
-        out_dtype = _out_dtype(out, self)
+        out_dtype = _util.dtype_to_str(out if out is not None else self.dtype)
         alpha = float(alpha)
         beta = float(beta)
 
@@ -265,8 +246,30 @@ class AclnnAddmmTestSpec:
 
 
 class AclnnAddmmWeightNzTestSpec(AclnnAddmmTestSpec):
-    """aclnnAddmmWeightNz shares the addmm semantics; the NZ conversion is
-    handled by the kernel golden via the tensor_formats kwarg."""
+    """aclnnAddmmWeightNz: mat2 为 NZ（tensor index 2），先解码为 ND 再计算。"""
+
+    @staticmethod
+    def customize_inputs(
+        self, mat1, mat2, beta=1.0, alpha=1.0, out=None, cubeMathType=0, **kwargs
+    ):
+        """aclnn 输入定制：NZ mat2 规范化（in-place 覆写 storage）。"""
+        _util.prepare_nz_input(mat2, kwargs.get("tensor_formats", ()), 2)
+
+    @staticmethod
+    def golden(
+        self, mat1, mat2, beta=1.0, alpha=1.0, out=None, cubeMathType=0, **kwargs
+    ):
+        mat2 = _util.nz_input_to_nd(mat2, kwargs.get("tensor_formats", ()), 2)
+        return AclnnAddmmTestSpec.golden(
+            self,
+            mat1,
+            mat2,
+            beta=beta,
+            alpha=alpha,
+            out=out,
+            cubeMathType=cubeMathType,
+            **kwargs,
+        )
 
 
 class AclnnInplaceAddmmTestSpec(AclnnAddmmTestSpec):

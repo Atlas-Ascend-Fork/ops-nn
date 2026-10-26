@@ -55,12 +55,6 @@ _NPU_DTYPE_TO_NP_VIEW = {
 }
 
 
-def _group_sizes_pack(group_sizes):
-    """[gm, gn, gk] -> (gm << 32) | (gn << 16) | gk (tiling group_size packing)."""
-    gm, gn, gk = (list(group_sizes) + [0, 0, 0])[:3] if group_sizes else (0, 0, 0)
-    return (gm << 32) | (gn << 16) | gk
-
-
 def _apply_npu_dtype_view(tensor, npu_dtype, arg_name):
     """Reinterpret a uint8 carrier tensor as its declared NPU dtype.
 
@@ -128,7 +122,7 @@ class TorchNpuNpuTransposeQuantBatchmatmulTestSpec:
             x1Scale=x1_scale,
             x2Scale=x2_scale,
             dtype=0,
-            groupSize=_group_sizes_pack(group_sizes),
+            groupSize=_util.pack_group_sizes(group_sizes),
             permX1=perm_x1,
             permX2=perm_x2,
             permY=perm_y,

@@ -34,21 +34,7 @@ sys.path.insert(
         os.path.dirname(os.path.abspath(__file__)), "../../../common/tests/st/arch35"
     ),
 )
-from matmul_golden_util import (
-    nz_to_nd,
-    dtype_to_str,
-    cast_output_dtype,
-    np_bfloat16,
-)
-from matmul_quant_util import (
-    gen_axes_for_transpose,
-    get_effective_group_size,
-    u64_to_deq_scale,
-    sanitize_e8m0_scale,
-    generate_u64_scale,
-    ceil_div,
-    unpack_groupsize,
-)
+import matmul_golden_util as _util
 
 # FP8 输入 dtype (E4M3FN / E5M2)
 FP8_INPUT_DTYPE = ("float8_e4m3fn", "float8_e5m2")
@@ -72,10 +58,10 @@ def determine_quant_mode(x1, x2, x1_scale, x2_scale, y_scale, x2_offset):
 
     返回: "MX", "INT4_ASYMMETRICAL", "PER_TILE", "T_CG"
     """
-    x1_dt = dtype_to_str(x1.dtype)
-    x2_dt = dtype_to_str(x2.dtype)
-    x1s_dt = dtype_to_str(x1_scale.dtype) if x1_scale is not None else None
-    x2s_dt = dtype_to_str(x2_scale.dtype) if x2_scale is not None else None
+    x1_dt = _util.dtype_to_str(x1.dtype)
+    x2_dt = _util.dtype_to_str(x2.dtype)
+    x1s_dt = _util.dtype_to_str(x1_scale.dtype) if x1_scale is not None else None
+    x2s_dt = _util.dtype_to_str(x2_scale.dtype) if x2_scale is not None else None
 
     # 1. MX: E8M0 scale (对应 QuantType::MX)
     if x1s_dt == "float8_e8m0" or x2s_dt == "float8_e8m0":
@@ -147,7 +133,7 @@ def compute_mx(
     x1_scale_f = x1_scale.astype(np.float32)
     x2_scale_f = x2_scale.astype(np.float32)
 
-    gs = get_effective_group_size(group_size)
+    gs = _util.get_effective_group_size(group_size)
 
     if x1_scale_f.ndim == 3:
         x1_scale_f = x1_scale_f.reshape(x1_scale_f.shape[0], -1)
@@ -155,14 +141,14 @@ def compute_mx(
         x2_scale_f = x2_scale_f.reshape(x2_scale_f.shape[0], -1)
 
     if transpose_x1:
-        axes = gen_axes_for_transpose(len(x1_f.shape) - 2, [1, 0])
+        axes = _util.gen_axes_for_transpose(len(x1_f.shape) - 2, [1, 0])
         x1_f = np.transpose(x1_f, axes)
-        axes_s = gen_axes_for_transpose(len(x1_scale_f.shape) - 2, [1, 0])
+        axes_s = _util.gen_axes_for_transpose(len(x1_scale_f.shape) - 2, [1, 0])
         x1_scale_f = np.transpose(x1_scale_f, axes_s)
     if transpose_x2:
-        axes = gen_axes_for_transpose(len(x2_f.shape) - 2, [1, 0])
+        axes = _util.gen_axes_for_transpose(len(x2_f.shape) - 2, [1, 0])
         x2_f = np.transpose(x2_f, axes)
-        axes_s = gen_axes_for_transpose(len(x2_scale_f.shape) - 2, [1, 0])
+        axes_s = _util.gen_axes_for_transpose(len(x2_scale_f.shape) - 2, [1, 0])
         x2_scale_f = np.transpose(x2_scale_f, axes_s)
 
     x1_scale_br = np.repeat(x1_scale_f, gs, axis=-1)
@@ -183,7 +169,7 @@ def compute_mx(
     if bias is not None:
         out = out + bias.astype(np.float32)
 
-    return cast_output_dtype(out, out_dtype_str)
+    return _util.cast_output_dtype(out, out_dtype_str)
 
 
 def compute_t_cg(
@@ -210,7 +196,7 @@ def compute_t_cg(
        x2 -> scale_mid(bf16/fp16) -> scale_mid * scale -> fp32 -> x1_dtype -> fp32
     5. 转置 x1 (若 transpose_x1)
     6. matmul(x1, x2_deq)
-    7. y_scale 后乘 (fixpipe): u64_to_deq_scale 解码 uint64->float32
+    7. y_scale 后乘 (fixpipe): _util.u64_to_deq_scale 解码 uint64->float32
     8. + bias (FP32 opt)
     9. cast 到 out_dtype
     """
@@ -218,12 +204,12 @@ def compute_t_cg(
     x2_f = x2.astype(np.float32)
     x2_scale_f = x2_scale.astype(np.float32)
 
-    gs = get_effective_group_size(group_size)
+    gs = _util.get_effective_group_size(group_size)
 
     if transpose_x2:
-        axes = gen_axes_for_transpose(len(x2_f.shape) - 2, [1, 0])
+        axes = _util.gen_axes_for_transpose(len(x2_f.shape) - 2, [1, 0])
         x2_f = np.transpose(x2_f, axes)
-        axes_s = gen_axes_for_transpose(len(x2_scale_f.shape) - 2, [1, 0])
+        axes_s = _util.gen_axes_for_transpose(len(x2_scale_f.shape) - 2, [1, 0])
         x2_scale_f = np.transpose(x2_scale_f, axes_s)
 
     x2_scale_br = np.repeat(x2_scale_f, gs, axis=-2)
@@ -232,27 +218,29 @@ def compute_t_cg(
         x2_scale_br = x2_scale_br[..., :k_dim, :]
 
     scale_mid = (
-        np_bfloat16 if dtype_to_str(x2_scale.dtype) == "bfloat16" else np.float16
+        _util.np_bfloat16
+        if _util.dtype_to_str(x2_scale.dtype) == "bfloat16"
+        else np.float16
     )
     x2_cvt = x2_f.astype(scale_mid)
     x2_deq = (x2_cvt * x2_scale_br.astype(scale_mid)).astype(np.float32)
     x2_deq = x2_deq.astype(x1.dtype).astype(np.float32)
 
     if transpose_x1:
-        axes = gen_axes_for_transpose(len(x1_f.shape) - 2, [1, 0])
+        axes = _util.gen_axes_for_transpose(len(x1_f.shape) - 2, [1, 0])
         x1_f = np.transpose(x1_f, axes)
 
     out = np.matmul(x1_f, x2_deq)
 
     if y_scale is not None:
-        deq_scale = u64_to_deq_scale(y_scale)
+        deq_scale = _util.u64_to_deq_scale(y_scale)
         deq_scale_br = deq_scale.reshape(1, -1)[:, : out.shape[-1]]
         out = out * deq_scale_br
 
     if bias is not None:
         out = out + bias.astype(np.float32)
 
-    return cast_output_dtype(out, out_dtype_str)
+    return _util.cast_output_dtype(out, out_dtype_str)
 
 
 def compute_per_tile(
@@ -281,7 +269,7 @@ def compute_per_tile(
     if group_size < 0:
         group_size_m, group_size_n, group_size_k = 1, 128, 128
     else:
-        group_size_m, group_size_n, group_size_k = unpack_groupsize(group_size)
+        group_size_m, group_size_n, group_size_k = _util.unpack_groupsize(group_size)
 
     x1_f = x1.astype(np.int32)
     x2_f = x2.astype(np.int32)
@@ -289,14 +277,14 @@ def compute_per_tile(
     x2_scale_f = x2_scale.astype(np.float32)
 
     if transpose_x1:
-        axes = gen_axes_for_transpose(len(x1_f.shape) - 2, [1, 0])
+        axes = _util.gen_axes_for_transpose(len(x1_f.shape) - 2, [1, 0])
         x1_f = np.transpose(x1_f, axes)
-        s_axes = gen_axes_for_transpose(len(x1_scale_f.shape) - 2, [1, 0])
+        s_axes = _util.gen_axes_for_transpose(len(x1_scale_f.shape) - 2, [1, 0])
         x1_scale_f = np.transpose(x1_scale_f, s_axes)
     if transpose_x2:
-        axes = gen_axes_for_transpose(len(x2_f.shape) - 2, [1, 0])
+        axes = _util.gen_axes_for_transpose(len(x2_f.shape) - 2, [1, 0])
         x2_f = np.transpose(x2_f, axes)
-        s_axes = gen_axes_for_transpose(len(x2_scale_f.shape) - 2, [1, 0])
+        s_axes = _util.gen_axes_for_transpose(len(x2_scale_f.shape) - 2, [1, 0])
         x2_scale_f = np.transpose(x2_scale_f, s_axes)
 
     m = x1_f.shape[-2]
@@ -308,7 +296,7 @@ def compute_per_tile(
     # x2Scale: [ceil(K/gK), ceil(N/gN)] -> repeat N -> [ceil(K/gK), N]
     x2_scale_expanded = np.repeat(x2_scale_f, group_size_n, axis=-1)[..., :n]
 
-    k_tile_count = ceil_div(k, group_size_k)
+    k_tile_count = _util.ceil_div(k, group_size_k)
 
     out = np.zeros((*x1_f.shape[:-2], m, n), dtype=np.float32)
     for k_idx in range(k_tile_count):
@@ -322,7 +310,7 @@ def compute_per_tile(
 
     if bias is not None:
         out = out + bias.astype(np.float32)
-    return cast_output_dtype(out, out_dtype_str)
+    return _util.cast_output_dtype(out, out_dtype_str)
 
 
 def compute_int4_asymmetrical(
@@ -362,16 +350,16 @@ def compute_int4_asymmetrical(
     x2_f = x2.astype(np.int32)
 
     if transpose_x1:
-        axes = gen_axes_for_transpose(len(x1_f.shape) - 2, [1, 0])
+        axes = _util.gen_axes_for_transpose(len(x1_f.shape) - 2, [1, 0])
         x1_f = np.transpose(x1_f, axes)
     if transpose_x2:
-        axes = gen_axes_for_transpose(len(x2_f.shape) - 2, [1, 0])
+        axes = _util.gen_axes_for_transpose(len(x2_f.shape) - 2, [1, 0])
         x2_f = np.transpose(x2_f, axes)
 
     m = x1_f.shape[-2]
     k = x1_f.shape[-1]
     n = x2_f.shape[-1]
-    n_kgroups = ceil_div(k, GROUP_SIZE_K)
+    n_kgroups = _util.ceil_div(k, GROUP_SIZE_K)
 
     x1_scale_f = x1_scale.astype(np.float32)
     x2_scale_f = x2_scale.astype(np.float32)
@@ -392,7 +380,7 @@ def compute_int4_asymmetrical(
     # x1Scale: [M, 1] -> broadcast to [M, N] via last dim
     out = out * x1_scale_f[..., :, 0:1]
 
-    return cast_output_dtype(out, out_dtype_str)
+    return _util.cast_output_dtype(out, out_dtype_str)
 
 
 # ============================================================================
@@ -518,7 +506,7 @@ class QuantBatchMatmulV4TestSpec:
         input_ori_shapes = kwargs.get("input_ori_shapes", ())
         if len(input_formats) > 1 and input_formats[1] == "FRACTAL_NZ":
             ori_shape = input_ori_shapes[1] if len(input_ori_shapes) > 1 else None
-            x2 = nz_to_nd(x2, ori_shape)
+            x2 = _util.nz_to_nd(x2, ori_shape)
 
         return qbmmv4_kernel_compute(
             x1,
@@ -562,14 +550,14 @@ class QuantBatchMatmulV4TestSpec:
         """输入预处理: 清洗 E8M0 NaN + 生成 UINT64 scale。"""
         testcase_name = kwargs.get("testcase_name", "unknown")
 
-        x1_scale = sanitize_e8m0_scale(x1_scale, testcase_name)
-        x2_scale = sanitize_e8m0_scale(x2_scale, testcase_name)
+        x1_scale = _util.sanitize_e8m0_scale(x1_scale, testcase_name)
+        x2_scale = _util.sanitize_e8m0_scale(x2_scale, testcase_name)
 
         if y_scale is not None and y_scale.dtype.name == "uint64":
-            y_scale = generate_u64_scale(y_scale.shape)
+            y_scale = _util.generate_u64_scale(y_scale.shape)
 
         if x2_scale is not None and x2_scale.dtype.name == "uint64":
-            x2_scale = generate_u64_scale(x2_scale.shape)
+            x2_scale = _util.generate_u64_scale(x2_scale.shape)
 
         return (
             x1,

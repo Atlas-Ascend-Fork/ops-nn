@@ -30,18 +30,6 @@ import matmul_golden_util as _util
 import tbmm_kernel_golden as _kernel
 
 
-def _to_np(*tensors):
-    result = []
-    for t in tensors:
-        if t is None:
-            result.append(None)
-        elif isinstance(t, np.ndarray):
-            result.append(t)
-        else:
-            result.append(_util.torch_to_numpy(t))
-    return tuple(result)
-
-
 def _enable_hf32(cubeMathType):
     if cubeMathType is None:
         return False
@@ -59,27 +47,6 @@ def _apply_cube_type(x1, x2, cubeMathType):
     if x2 is not None and x2.dtype == np.float32:
         x2 = x2.astype(np.float16)
     return x1, x2
-
-
-def _out_dtype(out, fallback):
-    if out is not None:
-        (out_np,) = _to_np(out)
-        if out_np is not None:
-            return _util.dtype_to_str(out_np.dtype)
-    if isinstance(fallback, np.ndarray):
-        return _util.dtype_to_str(fallback.dtype)
-    return _util.torch_dtype_to_str(fallback.dtype)
-
-
-def _nz_to_nd_if_needed(x2_np, kwargs):
-    tensor_formats = kwargs.get("tensor_formats", ())
-    if len(tensor_formats) <= 1 or tensor_formats[1] != "FRACTAL_NZ":
-        return x2_np
-    storage_shapes = kwargs.get("tensor_storage_shapes", ())
-    ori_shape = storage_shapes[1] if len(storage_shapes) > 1 else None
-    if ori_shape is not None and tuple(x2_np.shape) != tuple(ori_shape):
-        x2_np = _util.nz_to_nd(x2_np, ori_shape)
-    return x2_np
 
 
 class AclnnTransposeBatchMatMulTestSpec:
@@ -110,11 +77,7 @@ class AclnnTransposeBatchMatMulTestSpec:
             fp32_scale = np.random.uniform(low=-5, high=5, size=scale_np.shape).astype(
                 np.float32
             )
-            u32 = np.ascontiguousarray(fp32_scale).view(np.uint32).copy()
-            u32 &= np.uint32(0xFFFFE000)
-            new_scale = np.zeros(scale_np.shape, np.uint64)
-            new_scale |= u32.astype(np.uint64)
-            new_scale |= np.uint64(1 << 46)
+            new_scale = _util.pack_u64_scale(_util.scale_generate(fp32_scale))
             scale.copy_(
                 torch.from_numpy(new_scale.astype(np.int64).copy()).to(scale.device)
             )
@@ -133,10 +96,9 @@ class AclnnTransposeBatchMatMulTestSpec:
         out=None,
         **kwargs,
     ):
-        x1_np, x2_np, bias_np, scale_np = _to_np(x1, x2, bias, scale)
-        x2_np = _nz_to_nd_if_needed(x2_np, kwargs)
+        x1_np, x2_np, bias_np, scale_np = _util.to_numpy(x1, x2, bias, scale)
         x1_np, x2_np = _apply_cube_type(x1_np, x2_np, cubeMathType)
-        out_dtype = _out_dtype(out, x1)
+        out_dtype = _util.dtype_to_str(out if out is not None else x1.dtype)
 
         perm_x1 = tuple(permX1) if permX1 is not None else (0, 1, 2)
         perm_x2 = tuple(permX2) if permX2 is not None else (0, 1, 2)

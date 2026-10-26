@@ -25,24 +25,14 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "../../../common/tests/st/arch35")
 )
 import matmul_golden_util as _util
-import numeric_ulp
-
-np_bfloat16 = _util.np_bfloat16
-np_fp4_e2m1 = _util.np_fp4_e2m1
-np_fp4_e1m2 = _util.np_fp4_e1m2
-np_fp8_e4m3 = _util.np_fp8_e4m3
-np_fp8_e5m2 = _util.np_fp8_e5m2
-np_mx_scale = _util.np_mx_scale
-np_int4 = _util.np_int4
-numeric_ulp_compare = numeric_ulp.numeric_ulp_compare
 
 MXFP4_DST_DTYPE = 40
 
 _MX_DTYPE_MAP = {
-    "float4_e2m1": np_fp4_e2m1,
-    "float4_e1m2": np_fp4_e1m2,
-    "float8_e4m3fn": np_fp8_e4m3,
-    "float8_e5m2": np_fp8_e5m2,
+    "float4_e2m1": _util.np_fp4_e2m1,
+    "float4_e1m2": _util.np_fp4_e1m2,
+    "float8_e4m3fn": _util.np_fp8_e4m3,
+    "float8_e5m2": _util.np_fp8_e5m2,
 }
 
 
@@ -188,7 +178,7 @@ def mx_quantize(
         fp_array, scale_axis, mx_ele_dtype, max_norm, subnormal
     ):
         fp_abs_max = np.max(np.abs(fp_array), axis=scale_axis, keepdims=True).astype(
-            np_bfloat16
+            _util.np_bfloat16
         )
 
         binary_ints = np.array(fp_abs_max.view(np.uint16))
@@ -220,13 +210,13 @@ def mx_quantize(
             return -float.fromhex("0x1.8p2"), float.fromhex("0x1.8p2")
         if "float4_e1m2" in str(dt):
             return -float.fromhex("0x1.Cp0"), float.fromhex("0x1.Cp0")
-        if "float8_e8m0" in str(dt):
+        if _util.dtype_to_str(dt) == "float8_e8m0":
             return float.fromhex("0x1.p-127"), float.fromhex("0x1.p127")
         if "float8_e5m2" in str(dt):
             return -float.fromhex("0x1.Cp15"), float.fromhex("0x1.Cp15")
         if "float8_e4m3fn" in str(dt):
             return -float.fromhex("0x1.Cp8"), float.fromhex("0x1.Cp8")
-        if "hifloat8" in str(dt):
+        if _util.dtype_to_str(dt) == "hifloat8":
             return -float.fromhex("0x1.p15"), float.fromhex("0x1.p15")
         if "complex32" in str(dt):
             dt = "float16"
@@ -470,7 +460,7 @@ def mx_quantize(
         scale_array_pad = interleave(scale_array_pad, axis=axis)
     scale_array_pad = scale_array_pad.reshape(result_shape)
 
-    scale_array = scale_array_pad.astype(np_mx_scale, copy=False)
+    scale_array = scale_array_pad.astype(_util.np_fp8_e8m0, copy=False)
 
     return ele_array, scale_array
 
@@ -493,7 +483,7 @@ def compute_mx_fp4(x, p1, p2):
     p1_f = p1.astype(np.float32)
     p2_f = p2.astype(np.float32)
     x1 = np.matmul(x_f, p2_f).astype(x.dtype)
-    x2 = np.matmul(p1_f, x1.astype(np.float32)).astype(np_bfloat16)
+    x2 = np.matmul(p1_f, x1.astype(np.float32)).astype(_util.np_bfloat16)
     x2 = x2.reshape(x2.shape[0], -1)
 
     ele_array, scale_array = mx_quantize(
@@ -532,7 +522,7 @@ def compute_int4(x, p1, p2, clip_ratio):
     out = x2 * qscale2.astype(np.float16)
     qscale = (qscale / ratio).flatten()
     out = np.clip(out, -8, 7)
-    out = np.round(out).astype(np_int4).reshape(x_shape)
+    out = np.round(out).astype(_util.np_int4).reshape(x_shape)
 
     return [out, qscale]
 
@@ -553,7 +543,7 @@ class FlatQuantTestSpec:
         n = len(outputs) // 2
         results = []
         for i in range(n):
-            r = numeric_ulp_compare(outputs[i], outputs[n + i])
+            r = _util.numeric_ulp_compare(outputs[i], outputs[n + i])
             results.append(r)
         return results
 

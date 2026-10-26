@@ -10,25 +10,33 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """
-Quant-specific utilities for matmul golden implementations.
+量化专属工具。
 
-Extracted from matmul_golden_util for use by quant operators (qbmmv3, qbmmv4, wqbmmv2).
+matmul golden 公共 util 的 quant 分类模块，包含：
+  - 通用数学：ceil_div
+  - scale/offset 生成与截断：scale_generate / f32_2_s9 / needs_scale_generate
+  - e8m0 输入规整：sanitize_e8m0_scale
+  - UINT64 量化参数编解码：u64_to_deq_scale / u64_to_offset / pack_u64_scale /
+    generate_u64_scale / decode_u64_scale
+  - group_size 解码与打包：unpack_groupsize / get_effective_group_size /
+    pack_group_sizes
+  - packed weight 打包/解包：pack_int32_from_int4 / pack_int32_from_fp4 /
+    unpack_int32_to_int4 / unpack_float_to_fp4
+
+golden 资产请统一从总入口 ``matmul_golden_util`` 引用。
 """
 
 import warnings
+
 import numpy as np
 import torch
-import en_dtypes
-import matmul_golden_util
+
+from matmul_dtype_util import dtype_to_str
+from matmul_torch_util import torch_to_numpy
+
 
 # ============================================================================
-# dtype constants
-# ============================================================================
-
-np_mx_scale = en_dtypes.float8_e8m0
-
-# ============================================================================
-# Generic utilities (used only by quant operators)
+# Generic arithmetic
 # ============================================================================
 
 
@@ -37,11 +45,6 @@ def ceil_div(a, b):
     if b == 0:
         return 0
     return (a + b - 1) // b
-
-
-def gen_axes_for_transpose(offset, base):
-    """生成多维转置的轴序列，保留前 offset 个维度，交换最后两个维度。"""
-    return [x for x in range(offset)] + [x + offset for x in base]
 
 
 # ============================================================================
@@ -84,7 +87,7 @@ def sanitize_e8m0_scale(tensor, testcase_name="unknown"):
     if tensor is None or "float8_e8m0" not in str(tensor.dtype):
         return tensor
 
-    tensor_np = matmul_golden_util.torch_to_numpy(tensor)
+    tensor_np = torch_to_numpy(tensor)
     nan_count = int(np.isnan(tensor_np.astype(np.float32)).sum())
     if nan_count == 0:
         return tensor
@@ -99,20 +102,6 @@ def sanitize_e8m0_scale(tensor, testcase_name="unknown"):
         return new_data.astype(tensor.dtype)
     new_data_e8m0 = new_data.astype(tensor_np.dtype)
     return torch.from_numpy(new_data_e8m0.view(np.uint8)).view(tensor.dtype)
-
-
-def get_input_range(input_ranges, index):
-    """从 input_ranges 列表中提取指定索引的 (low, high) 范围。"""
-    if input_ranges is None:
-        return None
-    try:
-        if index < len(input_ranges):
-            rng = input_ranges[index]
-            if rng is not None and len(rng) >= 2:
-                return rng[0], rng[1]
-    except (TypeError, IndexError):
-        pass
-    return None
 
 
 # ============================================================================
@@ -143,7 +132,7 @@ def pack_u64_scale(fp32_scale, fp32_offset=None):
     u64 = u32_scale.astype(np.uint64)
     u64 |= np.uint64(1 << 46)
     if fp32_offset is not None:
-        s9 = np.clip(np.round(fp32_offset), -256, 255).astype(np.int64)
+        s9 = f32_2_s9(fp32_offset).astype(np.int64)
         s9 = s9.astype(np.uint64) & np.uint64(0x1FF)
         u64 |= s9 << np.uint64(37)
     return u64
@@ -152,17 +141,19 @@ def pack_u64_scale(fp32_scale, fp32_offset=None):
 def generate_u64_scale(shape):
     """生成随机 uint64 scale，模拟硬件 fixpipe 精度。"""
     fp32_scale = np.random.uniform(low=-5, high=5, size=shape).astype(np.float32)
-    u32 = np.ascontiguousarray(fp32_scale).view(np.uint32).copy()
-    u32 &= np.uint32(0xFFFFE000)
-    u64 = u32.astype(np.uint64)
-    return u64
+    return scale_generate(fp32_scale).view(np.uint32).astype(np.uint64)
 
 
-def quant_scale_generate(scale_shape):
-    """为 int8 输出量化生成随机 scale 和 offset 并打包为 uint64 格式。"""
-    fp32_scale = np.random.uniform(low=-5, high=5, size=scale_shape).astype(np.float32)
-    fp32_offset = np.random.uniform(low=-5, high=5, size=scale_shape).astype(np.float32)
-    return pack_u64_scale(fp32_scale, fp32_offset)
+def decode_u64_scale(scale):
+    """解码 UINT64 scale，返回 (float32 deq_scale, float32 offset)。
+
+    scale 为 None 或非 uint64/int64 时原样返回 (scale, None)。
+    """
+    if scale is None:
+        return scale, None
+    if dtype_to_str(scale.dtype) not in ("uint64", "int64"):
+        return scale, None
+    return u64_to_deq_scale(scale), u64_to_offset(scale)
 
 
 # ============================================================================
@@ -170,11 +161,21 @@ def quant_scale_generate(scale_shape):
 # ============================================================================
 
 
-def unpack_groupsize(group_size):
-    """解包 group_size 为 (gs_m, gs_n, gs_k)。"""
-    gs_m = (group_size >> 32) & 0xFFFF
-    gs_n = (group_size >> 16) & 0xFFFF
+def _extract_group_size_fields(group_size):
+    """从编码的 groupSize 中提取 (gs_m, gs_n, gs_k) 原始字段（未经默认值回退）。
+
+    groupSize 编码格式: (groupSizeM << 32) | (groupSizeN << 16) | groupSizeK
+    每个字段占 16 位，共占用 int64 的低 48 位。
+    """
     gs_k = group_size & 0xFFFF
+    gs_n = (group_size >> 16) & 0xFFFF
+    gs_m = (group_size >> 32) & 0xFFFF
+    return gs_m, gs_n, gs_k
+
+
+def unpack_groupsize(group_size):
+    """解包 group_size 为 (gs_m, gs_n, gs_k)，为 0 的字段回退为 1。"""
+    gs_m, gs_n, gs_k = _extract_group_size_fields(group_size)
     if gs_m == 0:
         gs_m = 1
     if gs_n == 0:
@@ -185,33 +186,25 @@ def unpack_groupsize(group_size):
 
 
 def get_effective_group_size(group_size):
-    """从编码的 groupSize 中提取 K 方向的分组大小。
-
-    groupSize 编码格式: (groupSizeM << 32) | (groupSizeN << 16) | groupSizeK
-    每个字段占 16 位，共占用 int64 的低 48 位。
-    """
+    """从编码的 groupSize 中提取 K 方向的分组大小，非法/为 0 时回退 32。"""
     if group_size < 0:
         return 32
-    gsK = group_size & 0xFFFF
-    if gsK > 0:
-        return gsK
+    _, _, gs_k = _extract_group_size_fields(group_size)
+    if gs_k > 0:
+        return gs_k
     return 32
 
 
-def decode_group_size(group_size):
-    """从编码的 groupSize 中提取 (gsM, gsN, gsK) 三元组。"""
-    if group_size <= 0:
-        return 128, 128, 128
-    gsK = group_size & 0xFFFF
-    gsN = (group_size >> 16) & 0xFFFF
-    gsM = (group_size >> 32) & 0xFFFF
-    if gsM == 0:
-        gsM = 128
-    if gsN == 0:
-        gsN = 128
-    if gsK == 0:
-        gsK = 128
-    return gsM, gsN, gsK
+def pack_group_sizes(group_sizes):
+    """归一化 group_sizes 为编码整数：None→0；int 直通；list/tuple→(m<<32)|(n<<16)|k。"""
+    if group_sizes is None:
+        return 0
+    if isinstance(group_sizes, (list, tuple)):
+        gs_m = int(group_sizes[0]) if len(group_sizes) > 0 else 0
+        gs_n = int(group_sizes[1]) if len(group_sizes) > 1 else 0
+        gs_k = int(group_sizes[2]) if len(group_sizes) > 2 else 0
+        return (gs_m << 32) | (gs_n << 16) | gs_k
+    return int(group_sizes)
 
 
 # ============================================================================
@@ -219,25 +212,24 @@ def decode_group_size(group_size):
 # ============================================================================
 
 
-def pack_int32_from_int4(weight_int4, axis=-1):
-    """将 INT4 打包为 INT32 (INT4Pack)，每 8 个 int4 值打包进 1 个 int32。
+def _pack_int32_low_nibble(values, axis):
+    """将每 8 个低 4 位元素打包进 1 个 int32（INT4/FP4 共用位操作）。
 
-    匹配 op-plugin ConvertWeightToINT4PackKernelNpuOpApi.cpp 的 convert_to_int4_pack：
-      packed[i] = (a&0xF) | (b&0xF)<<4 | (c&0xF)<<8 | ... | (h&0xF)<<28
+    packed[i] = (a&0xF) | (b&0xF)<<4 | (c&0xF)<<8 | ... | (h&0xF)<<28
 
     Args:
-        weight_int4: int32 数组，每个元素值在 [-8, 7] 范围内，最后一维长度必须是 8 的倍数
+        values: int32 数组，最后一维长度必须是 8 的倍数
         axis: 打包轴，-1 表示最后一维
 
     Returns:
         int32 数组，打包后指定轴长度变为原来的 1/8
     """
-    if weight_int4 is None:
+    if values is None:
         return None
 
-    orig_shape = weight_int4.shape
+    orig_shape = values.shape
     if len(orig_shape) < 2:
-        return weight_int4
+        return values
 
     if axis == -1:
         axis = len(orig_shape) - 1
@@ -248,7 +240,7 @@ def pack_int32_from_int4(weight_int4, axis=-1):
     n_packed = n_unpacked // 8
 
     if axis == len(orig_shape) - 1:
-        w = weight_int4.reshape(*orig_shape[:-1], n_packed, 8).astype(np.int64)
+        w = values.reshape(*orig_shape[:-1], n_packed, 8).astype(np.int64)
         packed = np.zeros((*orig_shape[:-1], n_packed), dtype=np.int64)
         for i in range(8):
             packed |= (w[..., i] & 0xF) << (i * 4)
@@ -256,7 +248,7 @@ def pack_int32_from_int4(weight_int4, axis=-1):
         new_shape[axis] = n_packed
         return packed.astype(np.int32).reshape(new_shape)
     elif axis == 0:
-        w = weight_int4.reshape(n_packed, 8, *orig_shape[1:]).astype(np.int64)
+        w = values.reshape(n_packed, 8, *orig_shape[1:]).astype(np.int64)
         packed = np.zeros((n_packed, *orig_shape[1:]), dtype=np.int64)
         for i in range(8):
             packed |= (w[:, i, ...] & 0xF) << (i * 4)
@@ -267,11 +259,26 @@ def pack_int32_from_int4(weight_int4, axis=-1):
         raise ValueError(f"Unsupported axis: {axis}")
 
 
+def pack_int32_from_int4(weight_int4, axis=-1):
+    """将 INT4 打包为 INT32 (INT4Pack)，每 8 个 int4 值打包进 1 个 int32。
+
+    匹配 op-plugin ConvertWeightToINT4PackKernelNpuOpApi.cpp 的 convert_to_int4_pack。
+
+    Args:
+        weight_int4: int32 数组，每个元素值在 [-8, 7] 范围内，最后一维长度必须是 8 的倍数
+        axis: 打包轴，-1 表示最后一维
+
+    Returns:
+        int32 数组，打包后指定轴长度变为原来的 1/8
+    """
+    return _pack_int32_low_nibble(weight_int4, axis)
+
+
 def pack_int32_from_fp4(fp4_indices, axis=-1):
     """将 FP4 索引打包为 INT32 (FP4Pack)，每 8 个 fp4 索引打包进 1 个 int32。
 
     匹配 op-plugin ConvertWeightToINT4PackKernelNpuOpApi.cpp 的打包逻辑，
-    位操作与 int4 相同：packed[i] = (a&0xF) | (b&0xF)<<4 | ... | (h&0xF)<<28
+    位操作与 int4 相同。
 
     Args:
         fp4_indices: int32 数组，每个元素值在 [0, 15] 范围内，最后一维长度必须是 8 的倍数
@@ -280,39 +287,7 @@ def pack_int32_from_fp4(fp4_indices, axis=-1):
     Returns:
         int32 数组，打包后指定轴长度变为原来的 1/8
     """
-    if fp4_indices is None:
-        return None
-
-    orig_shape = fp4_indices.shape
-    if len(orig_shape) < 2:
-        return fp4_indices
-
-    if axis == -1:
-        axis = len(orig_shape) - 1
-
-    n_unpacked = orig_shape[axis]
-    if n_unpacked % 8 != 0:
-        raise ValueError(f"pack axis {axis} size {n_unpacked} is not a multiple of 8")
-    n_packed = n_unpacked // 8
-
-    if axis == len(orig_shape) - 1:
-        w = fp4_indices.reshape(*orig_shape[:-1], n_packed, 8)
-        packed = np.zeros((*orig_shape[:-1], n_packed), dtype=np.int64)
-        for i in range(8):
-            packed |= (w[..., i].astype(np.int64) & 0xF) << (i * 4)
-        new_shape = list(orig_shape)
-        new_shape[axis] = n_packed
-        return packed.astype(np.int32).reshape(new_shape)
-    elif axis == 0:
-        w = fp4_indices.reshape(n_packed, 8, *orig_shape[1:])
-        packed = np.zeros((n_packed, *orig_shape[1:]), dtype=np.int64)
-        for i in range(8):
-            packed |= (w[:, i, ...].astype(np.int64) & 0xF) << (i * 4)
-        new_shape = list(orig_shape)
-        new_shape[axis] = n_packed
-        return packed.astype(np.int32).reshape(new_shape)
-    else:
-        raise ValueError(f"Unsupported axis: {axis}")
+    return _pack_int32_low_nibble(fp4_indices, axis)
 
 
 # ============================================================================
@@ -432,95 +407,3 @@ def unpack_float_to_fp4(weight_float, axis=-1):
         return result.reshape(new_shape)
     else:
         raise ValueError(f"Unsupported axis: {axis}")
-
-
-# ============================================================================
-# Dtype name utility
-# ============================================================================
-
-
-def get_dtype_name(tensor):
-    """Get dtype string from torch.Tensor or numpy.ndarray."""
-    if tensor is None:
-        return None
-    return str(tensor.dtype).replace("torch.", "")
-
-
-# ============================================================================
-# 950 (DAV_3510) parameter validation
-# ============================================================================
-
-
-def validate_wqbmmv2_constraints(
-    x,
-    weight,
-    antiquant_scale,
-    antiquant_offset=None,
-    quant_scale=None,
-    quant_offset=None,
-    bias=None,
-    **kwargs,
-):
-    """Validate WQBMMV2 950 (DAV_3510) parameter constraints and emit warnings.
-
-    Does not modify any tensors. Only warns about configurations that would
-    cause NPU parameter validation failures on Ascend 950.
-
-    Supports both kernel (input_formats) and aclnn (tensor_formats) kwargs.
-    """
-    testcase_name = kwargs.get("testcase_name", "unknown")
-    x_dtype = get_dtype_name(x)
-    weight_dtype = get_dtype_name(weight)
-    scale_dtype = get_dtype_name(antiquant_scale)
-    offset_dtype = get_dtype_name(antiquant_offset)
-    bias_dtype = get_dtype_name(bias)
-
-    formats = kwargs.get("input_formats") or kwargs.get("tensor_formats")
-    weight_format = formats[1] if formats and len(formats) > 1 else "ND"
-
-    is_fp4_weight = weight_dtype in ("float32",)
-    is_fp8_weight = weight_dtype in ("float8_e4m3fn", "hifloat8")
-    is_int8_weight = weight_dtype == "int8"
-
-    if quant_scale is not None:
-        warnings.warn(
-            f"[{testcase_name}] 950 does not support quantScale, must be null. "
-            f"Got dtype={get_dtype_name(quant_scale)}"
-        )
-    if quant_offset is not None:
-        warnings.warn(
-            f"[{testcase_name}] 950 does not support quantOffset, must be null. "
-            f"Got dtype={get_dtype_name(quant_offset)}"
-        )
-
-    if (is_fp4_weight or is_fp8_weight) and antiquant_offset is not None:
-        warnings.warn(
-            f"[{testcase_name}] 950 requires antiquantOffset=null when weight is "
-            f"{weight_dtype}, got dtype={offset_dtype}"
-        )
-
-    if antiquant_scale is not None and scale_dtype != "float8_e8m0":
-        if x_dtype is not None and scale_dtype != x_dtype:
-            warnings.warn(
-                f"[{testcase_name}] 950 requires antiquantScale dtype ({scale_dtype}) "
-                f"to match x dtype ({x_dtype}) when not float8_e8m0"
-            )
-
-    if antiquant_offset is not None and x_dtype is not None:
-        if offset_dtype != x_dtype:
-            warnings.warn(
-                f"[{testcase_name}] 950 requires antiquantOffset dtype ({offset_dtype}) "
-                f"to match x dtype ({x_dtype})"
-            )
-
-    if bias is not None and x_dtype == "bfloat16":
-        if (is_fp4_weight or is_fp8_weight) and bias_dtype != "bfloat16":
-            warnings.warn(
-                f"[{testcase_name}] 950 requires bias dtype=bfloat16 when weight is "
-                f"{weight_dtype} and x=bfloat16, got bias dtype={bias_dtype}"
-            )
-        if is_int8_weight and weight_format == "FRACTAL_NZ" and bias_dtype != "float32":
-            warnings.warn(
-                f"[{testcase_name}] 950 requires bias dtype=float32 when weight is "
-                f"int8+FRACTAL_NZ and x=bfloat16, got bias dtype={bias_dtype}"
-            )

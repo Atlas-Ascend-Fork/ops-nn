@@ -28,7 +28,7 @@ for _d in (_common, _assets):
         sys.path.insert(0, _d)
 
 _util = import_module("matmul_golden_util")
-_quant_util = import_module("matmul_quant_util")
+_validate = import_module("wqbmmv2_validate_util")
 _kernel = import_module("wqbmmv2_kernel_golden")
 
 
@@ -86,7 +86,7 @@ def _common_golden(
     _unpack_packed_weight(np_args, weight_dtype_str, transpose_weight)
 
     input_ori_shapes_out = tuple(a.shape if a is not None else None for a in np_args)
-    out_dtype_str = _util.torch_dtype_to_str(y.dtype)
+    out_dtype_str = _util.dtype_to_str(y.dtype)
 
     result = _kernel.wqbmm_kernel_compute(
         *np_args,
@@ -108,7 +108,12 @@ def _preprocess_nz_weight(np_args, input_formats, weight_dtype_str):
         and np_args[1] is not None
         and np_args[1].ndim == 2
     ):
-        np_args[1] = _util.nz_2d_to_nd(np_args[1], weight_dtype_str)
+        m, n = np_args[1].shape
+        n0 = _util.get_nz_n0(weight_dtype_str)
+        nz_4d = np.ascontiguousarray(np_args[1]).reshape(
+            (n + n0 - 1) // n0, (m + 15) // 16, 16, n0
+        )
+        np_args[1] = _util.nz_to_nd(nz_4d, (m, n))
 
 
 def _preprocess_scale_dtype(np_args, tensor_dtypes, kwargs):
@@ -116,8 +121,8 @@ def _preprocess_scale_dtype(np_args, tensor_dtypes, kwargs):
         tensor_dtypes[2] if tensor_dtypes and len(tensor_dtypes) > 2 else None
     )
     if scale_dtype_str == "float8_e8m0" and np_args[2] is not None:
-        np_args[2] = np_args[2].astype(_quant_util.np_mx_scale)
-        np_args[2] = _quant_util.sanitize_e8m0_scale(
+        np_args[2] = np_args[2].astype(_util.np_fp8_e8m0)
+        np_args[2] = _util.sanitize_e8m0_scale(
             np_args[2],
             kwargs.get("testcase_name", "unknown"),
         )
@@ -129,15 +134,13 @@ def _unpack_packed_weight(np_args, weight_dtype_str, transpose_weight):
     if weight_dtype_str == "int32":
         if transpose_weight:
             np_args[1] = np.ascontiguousarray(np_args[1].T)
-        np_args[1] = _quant_util.unpack_int32_to_int4(np_args[1], axis=-1)
+        np_args[1] = _util.unpack_int32_to_int4(np_args[1], axis=-1)
         if transpose_weight:
             np_args[1] = np.swapaxes(np_args[1], -2, -1)
     elif weight_dtype_str == "float32":
         if transpose_weight:
             np_args[1] = np.ascontiguousarray(np_args[1].T)
-        np_args[1] = _quant_util.unpack_float_to_fp4(
-            np_args[1].astype(np.float32), axis=-1
-        )
+        np_args[1] = _util.unpack_float_to_fp4(np_args[1].astype(np.float32), axis=-1)
         if transpose_weight:
             np_args[1] = np.swapaxes(np_args[1], -2, -1)
 
@@ -160,11 +163,11 @@ def _aclnn_customize_inputs(
     testcase_name = kwargs.get("testcase_name", "unknown")
 
     if antiquantScale is not None:
-        sanitized = _quant_util.sanitize_e8m0_scale(antiquantScale, testcase_name)
+        sanitized = _util.sanitize_e8m0_scale(antiquantScale, testcase_name)
         if sanitized is not antiquantScale:
             _util.write_back(antiquantScale, sanitized)
 
-    _quant_util.validate_wqbmmv2_constraints(
+    _validate.validate_wqbmmv2_constraints(
         x,
         weight,
         antiquantScale,

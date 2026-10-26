@@ -30,17 +30,6 @@ import matmul_golden_util as _util
 from qbmmia_aclnn_golden import AclnnQuantBatchMatmulInplaceAddTestSpec
 
 
-def _group_sizes_to_int(group_sizes):
-    if group_sizes is None:
-        return 0
-    if isinstance(group_sizes, (list, tuple)):
-        gs_m = int(group_sizes[0]) if len(group_sizes) > 0 else 0
-        gs_n = int(group_sizes[1]) if len(group_sizes) > 1 else 0
-        gs_k = int(group_sizes[2]) if len(group_sizes) > 2 else 0
-        return (gs_m << 32) | (gs_n << 16) | gs_k
-    return int(group_sizes)
-
-
 class TorchNpuAddQuantMatmulTestSpec(AclnnQuantBatchMatmulInplaceAddTestSpec):
     @classmethod
     def golden(
@@ -61,7 +50,7 @@ class TorchNpuAddQuantMatmulTestSpec(AclnnQuantBatchMatmulInplaceAddTestSpec):
         transpose_x1 = _util.detect_transpose_from_strides(x1)
         transpose_x2 = _util.detect_transpose_from_strides(x2)
 
-        group_size = _group_sizes_to_int(group_sizes)
+        group_size = _util.pack_group_sizes(group_sizes)
 
         # hif8 场景：检测非连续布局，恢复存储布局后转为 hifloat8 numpy
         if x1_dtype is not None and int(x1_dtype) == 290:

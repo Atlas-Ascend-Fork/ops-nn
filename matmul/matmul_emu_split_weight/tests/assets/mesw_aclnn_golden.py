@@ -14,7 +14,6 @@
 import os
 import sys
 
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(
@@ -23,28 +22,6 @@ sys.path.insert(
 
 import matmul_golden_util as _util
 import mesw_kernel_golden as _kernel
-
-
-def _to_np(*tensors):
-    result = []
-    for t in tensors:
-        if t is None:
-            result.append(None)
-        elif isinstance(t, np.ndarray):
-            result.append(t)
-        else:
-            result.append(_util.torch_to_numpy(t))
-    return tuple(result)
-
-
-def _out_dtype(out, fallback):
-    if out is not None:
-        (out_np,) = _to_np(out)
-        if out_np is not None:
-            return _util.dtype_to_str(out_np.dtype)
-    if isinstance(fallback, np.ndarray):
-        return _util.dtype_to_str(fallback.dtype)
-    return _util.torch_dtype_to_str(fallback.dtype)
 
 
 def _detect_transpose(tensor, kwargs, key):
@@ -57,10 +34,10 @@ def _detect_transpose(tensor, kwargs, key):
 class AclnnMatmulEmuSplitWeightTestSpec:
     @staticmethod
     def golden(x, w_high, w_low, out=None, w_low_scale=0.00390625, y_dtype=0, **kwargs):
-        x_np, w_high_np, w_low_np = _to_np(x, w_high, w_low)
+        x_np, w_high_np, w_low_np = _util.to_numpy(x, w_high, w_low)
         transpose_x = _detect_transpose(x, kwargs, "transpose_x")
         transpose_w = _detect_transpose(w_high, kwargs, "transpose_w")
-        out_dtype = _out_dtype(out, x)
+        out_dtype = _util.dtype_to_str(out if out is not None else x.dtype)
         temp_kwargs = dict(kwargs)
         if out_dtype:
             temp_kwargs["output_dtypes"] = [out_dtype]

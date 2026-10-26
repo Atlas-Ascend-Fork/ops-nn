@@ -48,7 +48,6 @@ sys.path.insert(
 )
 
 import matmul_golden_util as _util
-from matmul_quant_util import pack_u64_scale, u64_to_deq_scale
 
 # CANN dtype enum -> numpy dtype for the "dtype" attribute (DT_FLOAT16 / DT_BF16).
 _DTYPE_ATTR_MAP = {1: np.float16, 27: _util.np_bfloat16}
@@ -60,15 +59,16 @@ _MX_GROUP_SIZE = 32
 def _is_mxfp8_mode(x1_scale, x2_scale, group_size=0):
     """tiling IsMicroScaling: both scales must exist and be float8_e8m0.
 
-    dtype matching is name-based because test frameworks may supply their own
-    float8_e8m0 dtype class (the old golden also matched via "e8m0" substring).
+    dtype 口径经 matmul_dtype_util.dtype_to_str 统一（e8m0fnu / en float8_e8m0
+    均归一为 "float8_e8m0"），此处按规范名精确比较。
     """
     if group_size > 0:
         return True
     if x1_scale is None or x2_scale is None:
         return False
-    if "e8m0" in _util.dtype_to_str(x1_scale.dtype) and "e8m0" in _util.dtype_to_str(
-        x2_scale.dtype
+    if (
+        _util.dtype_to_str(x1_scale.dtype) == "float8_e8m0"
+        and _util.dtype_to_str(x2_scale.dtype) == "float8_e8m0"
     ):
         return True
     if (
@@ -81,17 +81,6 @@ def _is_mxfp8_mode(x1_scale, x2_scale, group_size=0):
     return False
 
 
-def _e8m0_to_float(arr):
-    """Decode float8_e8m0 to float32: 2^(raw - 127), raw == 255 stays NaN."""
-    dt = arr.dtype
-    if dt == np.float32 or dt == np.float64:
-        return arr.astype(np.float32)
-    raw = np.ascontiguousarray(arr).view(np.uint8).astype(np.float32)
-    result = np.power(2.0, raw - 127.0)
-    result[raw == 255.0] = np.nan
-    return result
-
-
 def _kc_matmul(x1, x2, x1_scale, x2_scale, is_hifp8_mode):
     """matmul + post-scale, matching the AIV VFDoDequant order (acc * s2 * s1)."""
     mm_out = np.matmul(x1, x2)
@@ -99,7 +88,7 @@ def _kc_matmul(x1, x2, x1_scale, x2_scale, is_hifp8_mode):
     if is_hifp8_mode:
         if x2_scale is not None:
             if x2_scale.dtype in (np.int64, np.uint64):
-                x2_scale = u64_to_deq_scale(x2_scale)
+                x2_scale = _util.u64_to_deq_scale(x2_scale)
             mm_out = mm_out * x2_scale.astype(np.float32).reshape(1, 1, -1)
         return mm_out
 
@@ -128,7 +117,7 @@ def _mxfp8_matmul(x1, x2, x1_scale, x2_scale, perm_x2):
         x2_scale = np.transpose(x2_scale, (0, 2, 1, 3))  # [b, n, G, 2] -> [b, G, n, 2]
 
     # [m, b, G, 2] -> [b, m, K]: one scale per 32 K elements, broadcast to K.
-    x1_scale_f = _e8m0_to_float(x1_scale).reshape(M, B, num_group * 2)
+    x1_scale_f = _util.e8m0_to_float(x1_scale).reshape(M, B, num_group * 2)
     s1 = np.transpose(x1_scale_f, (1, 0, 2))
     s1 = np.repeat(s1, _MX_GROUP_SIZE, axis=-1)[..., :K]
 
@@ -136,7 +125,7 @@ def _mxfp8_matmul(x1, x2, x1_scale, x2_scale, perm_x2):
     # so the pair dim must sit next to G before flattening into sequential
     # 32-element groups (verified against the device on multiple N values).
     x2_scale_f = (
-        _e8m0_to_float(x2_scale).transpose(0, 1, 3, 2).reshape(B, num_group * 2, N)
+        _util.e8m0_to_float(x2_scale).transpose(0, 1, 3, 2).reshape(B, num_group * 2, N)
     )
     s2 = np.repeat(x2_scale_f, _MX_GROUP_SIZE, axis=-2)[..., :K, :]
 
@@ -164,9 +153,10 @@ def _kernel_compute(
     the kernel: bias is never read, group_size only matters for the MXFP8
     tiling check, and batch_split_factor must be 1.
     """
-    is_hifp8_mode = "hifloat8" in _util.dtype_to_str(
-        x1.dtype
-    ) and "hifloat8" in _util.dtype_to_str(x2.dtype)
+    is_hifp8_mode = (
+        _util.dtype_to_str(x1.dtype) == "hifloat8"
+        and _util.dtype_to_str(x2.dtype) == "hifloat8"
+    )
     if not is_hifp8_mode:
         if x2_scale is not None and getattr(x2_scale, "dtype", None) in (
             np.uint64,
@@ -273,7 +263,7 @@ class TransposeQuantBatchMatMulTestSpec:
                 .uniform(-5, 5, x2_scale.shape)
                 .astype(np.float32)
             )
-            x2_scale = pack_u64_scale(fp32_scale).astype(x2_scale.dtype)
+            x2_scale = _util.pack_u64_scale(fp32_scale).astype(x2_scale.dtype)
 
         return x1, x2, bias, x1_scale, x2_scale
 

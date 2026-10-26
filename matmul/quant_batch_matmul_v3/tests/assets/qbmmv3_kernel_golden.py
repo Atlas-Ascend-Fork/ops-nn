@@ -26,22 +26,7 @@ sys.path.insert(
         os.path.dirname(os.path.abspath(__file__)), "../../../common/tests/st/arch35"
     ),
 )
-from matmul_golden_util import (
-    dtype_to_str,
-    cast_output_dtype,
-    nz_to_nd,
-)
-from matmul_quant_util import (
-    unpack_groupsize,
-    u64_to_deq_scale,
-    u64_to_offset,
-    needs_scale_generate,
-    scale_generate,
-    sanitize_e8m0_scale,
-    gen_axes_for_transpose,
-    ceil_div,
-    np_mx_scale,
-)
+import matmul_golden_util as _util
 
 
 # PerBlock 模式支持的输入 dtype（FP8/HIF8，不含 FP4）
@@ -87,7 +72,7 @@ def determine_quant_mode(
       "T-T"             — 无 pertoken + scale[-1]==1
       "T-C"             — 无 pertoken + scale[-1]==N
     """
-    x1_dtype = dtype_to_str(x1.dtype)
+    x1_dtype = _util.dtype_to_str(x1.dtype)
     is_fp8_hif8 = x1_dtype in PERBLOCK_INPUT_DTYPE
 
     # M, N 从 output shape 获取（infershape 保证输出为 [..., M, N]）
@@ -103,9 +88,14 @@ def determine_quant_mode(
     if scale_dtype == "float8_e8m0":
         return "G-G"
 
+    # int8 per-tile（分块 K 缩放）：pertoken/scale 均为多维（如 scale (Kg,1)、
+    # pertoken (M,Kg)）时按 PerBlock 路径计算（数学上即 per-K-tile 分块累加，
+    # group_size_k 分块）。与 fp8 perblock 判定条件一致，仅放开 int8 输入。
+    is_int8_pertile = x1_dtype == "int8"
+
     scale_last = scale.shape[-1]
     is_x2_perblock = (
-        is_fp8_hif8
+        (is_fp8_hif8 or is_int8_pertile)
         and scale_dtype == "float32"
         and scale.ndim > 1
         and (scale.ndim > 2 or scale.shape[0] != 1 or group_size_n > 1)
@@ -122,7 +112,9 @@ def determine_quant_mode(
     pertoken_last = pertoken_scale.shape[-1]
 
     is_x1_perblock = (
-        is_fp8_hif8 and pertoken_scale.dtype == np.float32 and pertoken_scale.ndim > 1
+        (is_fp8_hif8 or is_int8_pertile)
+        and pertoken_scale.dtype == np.float32
+        and pertoken_scale.ndim > 1
     )
     if is_x1_perblock and is_x2_perblock:
         return "B-B"
@@ -168,38 +160,35 @@ def compute_mx(
     x1 = x1.astype(np.float32)
     x2 = x2.astype(np.float32)
 
+    # scale 布局（与 tiling AnalyzeMxGroupInfo 约定一致）：非 batch 维 3 维，随输入声明
+    # 朝向镜像、K 轴位置放 K/64 组对（末维 pair=2）：
+    #   x1_scale: no-t1 (P..,M,G,2) / t1 (P..,G,M,2)
+    #   x2_scale: no-t2 (P..,G,N,2) / t2 (P..,N,G,2)
+    # 统一归一为 x1 (P..,M,2G)、x2 (P..,2G,N) 后按 32-block 展开并对齐 K 轴，
+    # 支持任意 batch 前缀（2D/3D 无前缀情形与旧实现代数等价）。
     if transpose_x1:
         x1 = np.swapaxes(x1, -1, -2)
-        x1_scale_mx = np.swapaxes(x1_scale_mx, -1, -2)
-        if len(x1_scale_mx.shape) == 3:
-            x1_scale_mx = x1_scale_mx.reshape(
-                x1_scale_mx.shape[0] * x1_scale_mx.shape[1], x1_scale_mx.shape[2]
-            )
-        x1_scale_mx = np.swapaxes(x1_scale_mx, -1, -2)
-    else:
-        if len(x1_scale_mx.shape) == 3:
-            x1_scale_mx = x1_scale_mx.reshape(
-                x1_scale_mx.shape[0], x1_scale_mx.shape[1] * x1_scale_mx.shape[2]
-            )
+        x1_scale_mx = np.swapaxes(x1_scale_mx, -3, -2)
+    x1_scale_mx = x1_scale_mx.reshape(
+        x1_scale_mx.shape[:-2] + (x1_scale_mx.shape[-2] * 2,)
+    )
 
     if transpose_x2:
         x2 = np.swapaxes(x2, -1, -2)
-        if len(x2_scale_mx.shape) == 3:
-            x2_scale_mx = x2_scale_mx.reshape(
-                x2_scale_mx.shape[0], x2_scale_mx.shape[1] * x2_scale_mx.shape[2]
-            )
+        x2_scale_mx = x2_scale_mx.reshape(
+            x2_scale_mx.shape[:-2] + (x2_scale_mx.shape[-2] * 2,)
+        )
         x2_scale_mx = np.swapaxes(x2_scale_mx, -1, -2)
     else:
         x2_scale_mx = np.swapaxes(x2_scale_mx, -1, -2)
-        if len(x2_scale_mx.shape) == 3:
-            x2_scale_mx = x2_scale_mx.reshape(
-                x2_scale_mx.shape[0] * x2_scale_mx.shape[1], x2_scale_mx.shape[2]
-            )
+        x2_scale_mx = x2_scale_mx.reshape(
+            x2_scale_mx.shape[:-3] + (x2_scale_mx.shape[-3] * 2, x2_scale_mx.shape[-1])
+        )
 
     k_dim = x1.shape[-1]
-    if ceil_div(k_dim, 32) % 2 != 0:
-        x1_scale_mx = x1_scale_mx[:, :-1]
-        x2_scale_mx = x2_scale_mx[:-1, :]
+    if _util.ceil_div(k_dim, 32) % 2 != 0:
+        x1_scale_mx = x1_scale_mx[..., :-1]
+        x2_scale_mx = x2_scale_mx[..., :-1, :]
 
     x1_scale_mx_broadcast = np.repeat(x1_scale_mx, 32, axis=-1)
     x2_scale_mx_broadcast = np.repeat(x2_scale_mx, 32, axis=-2)
@@ -228,9 +217,9 @@ def compute_mx(
 
     y = np.matmul(x1, x2)
     if bias is not None:
-        y = cast_output_dtype(y + bias.astype(np.float32), y_dtype)
+        y = _util.cast_output_dtype(y + bias.astype(np.float32), y_dtype)
     else:
-        y = cast_output_dtype(y, y_dtype)
+        y = _util.cast_output_dtype(y, y_dtype)
     return y
 
 
@@ -266,14 +255,16 @@ def compute_perblock(
     x2_scale_fp32 = x2_scale.astype(np.float32)
 
     if transpose_x1:
-        x1 = np.transpose(x1, gen_axes_for_transpose(len(x1.shape) - 2, [1, 0]))
+        x1 = np.transpose(x1, _util.gen_axes_for_transpose(len(x1.shape) - 2, [1, 0]))
         x1_scale_fp32 = np.transpose(
-            x1_scale_fp32, gen_axes_for_transpose(len(x1_scale_fp32.shape) - 2, [1, 0])
+            x1_scale_fp32,
+            _util.gen_axes_for_transpose(len(x1_scale_fp32.shape) - 2, [1, 0]),
         )
     if transpose_x2:
-        x2 = np.transpose(x2, gen_axes_for_transpose(len(x2.shape) - 2, [1, 0]))
+        x2 = np.transpose(x2, _util.gen_axes_for_transpose(len(x2.shape) - 2, [1, 0]))
         x2_scale_fp32 = np.transpose(
-            x2_scale_fp32, gen_axes_for_transpose(len(x2_scale_fp32.shape) - 2, [1, 0])
+            x2_scale_fp32,
+            _util.gen_axes_for_transpose(len(x2_scale_fp32.shape) - 2, [1, 0]),
         )
 
     batch_x1 = list(x1.shape[:-2])
@@ -331,7 +322,7 @@ def compute_perblock(
     if has_batch:
         y = np.zeros((batch_all, m, n), dtype=np.float32)
         for i in range(batch_all):
-            for k_idx in range(ceil_div(k, group_size_k)):
+            for k_idx in range(_util.ceil_div(k, group_size_k)):
                 k_start = k_idx * group_size_k
                 k_end = min((k_idx + 1) * group_size_k, k)
                 x1_scale_col = np.expand_dims(x1_scale_m_expanded[i, :, k_idx], axis=1)
@@ -345,7 +336,7 @@ def compute_perblock(
             y = y.reshape(batch_out + [m, n])
     else:
         y = np.zeros((m, n), dtype=np.float32)
-        for k_idx in range(ceil_div(k, group_size_k)):
+        for k_idx in range(_util.ceil_div(k, group_size_k)):
             k_start = k_idx * group_size_k
             k_end = min((k_idx + 1) * group_size_k, k)
             x1_scale_col = np.expand_dims(x1_scale_m_expanded[:, k_idx], axis=1)
@@ -355,7 +346,7 @@ def compute_perblock(
 
     if bias is not None:
         y = y + bias.astype(np.float32)
-    return cast_output_dtype(y, y_dtype)
+    return _util.cast_output_dtype(y, y_dtype)
 
 
 def compute_pertoken(
@@ -381,10 +372,10 @@ def compute_pertoken(
     if not is_bias_vec and bias is not None and bias_dtype in FLOAT_BIAS_DTYPE:
         out = out + bias.astype(np.float32)
     if is_bias_vec and bias is not None:
-        return cast_output_dtype(out + bias.astype(np.float32), y_dtype)
+        return _util.cast_output_dtype(out + bias.astype(np.float32), y_dtype)
     if y_dtype == "float32":
         return out.astype(np.float32)
-    return cast_output_dtype(out, y_dtype)
+    return _util.cast_output_dtype(out, y_dtype)
 
 
 def compute_tc(
@@ -407,7 +398,7 @@ def compute_tc(
     T-C-static(uint64) 和 T-C-dynamic(float32/bf16) 合并处理，bias 位置由 is_bias_vec 决定。
 
     doubleScale 按 kernel 流水线区分（由 do_merge_trunc 控制）：
-    - Cube 路径 (do_merge_trunc=True and not is_bias_vec): merge=scale*pertoken → scale_generate 19-bit 截断 → apply
+    - Cube 路径 (do_merge_trunc=True and not is_bias_vec): merge=scale*pertoken → _util.scale_generate 19-bit 截断 → apply
       对应 qbmm_cube_on_the_fly.h:159-162: deqScale = scale * pertoken; & DEQ_SCALE_MUL
       IsNonMxCubeBasicApiCapable 排除 IsFp8OrHif8TTFloatBiasMix 场景 (tiling_util.h:176-180)
     - Mix  路径 (is_bias_vec 或 do_merge_trunc=False): 分离乘法 out*scale → *pertoken，无截断
@@ -437,29 +428,29 @@ def compute_tc(
             # Cube 路径: merge + 19-bit 截断 (qbmm_cube_on_the_fly.h:159-162)
             # IsNonMxCubeBasicApiCapable 排除 IsFp8OrHif8TTFloatBiasMix 场景
             merged = x2_scale.astype(np.float32) * pertoken_scale.astype(np.float32)
-            merged = scale_generate(merged)
+            merged = _util.scale_generate(merged)
             if merged.ndim == 1:
                 merged = np.expand_dims(merged, axis=0)
             out = out * merged
         else:
             # Mix 路径: 分离乘法, 无截断 (qbmm_mix_online_dynamic.h:684-707)
             if do_scale_gen:
-                x2_scale = scale_generate(x2_scale)
+                x2_scale = _util.scale_generate(x2_scale)
             if x2_scale.ndim == 1:
                 x2_scale = np.expand_dims(x2_scale, axis=0)
             out = out * x2_scale.astype(np.float32) * pertoken_scale.astype(np.float32)
     else:
         if do_scale_gen:
-            x2_scale = scale_generate(x2_scale)
+            x2_scale = _util.scale_generate(x2_scale)
         if x2_scale.ndim == 1:
             x2_scale = np.expand_dims(x2_scale, axis=0)
         out = out * x2_scale.astype(np.float32)
 
     if is_bias_vec and bias is not None:
-        return cast_output_dtype(out + bias.astype(np.float32), y_dtype)
+        return _util.cast_output_dtype(out + bias.astype(np.float32), y_dtype)
     if y_dtype == "float32":
         return out.astype(np.float32)
-    return cast_output_dtype(out, y_dtype)
+    return _util.cast_output_dtype(out, y_dtype)
 
 
 def compute_requant(matmul_out, x2_scale, offset, bias, bias_dtype):
@@ -468,22 +459,20 @@ def compute_requant(matmul_out, x2_scale, offset, bias, bias_dtype):
 
     计算流程:
     1. + INT32 bias（int32 域加法，反量化前加入）
-    2. 转 float32: f32_2_s9(out × x2Scale) — float32 域乘法 + 9bit 量化截断
-    3. + f32_2_s9(offset)（若有）
+    2. 转 float32: _util.f32_2_s9(out × x2Scale) — float32 域乘法 + 9bit 量化截断
+    3. + _util.f32_2_s9(offset)（若有）
     4. clip[-128, 127] → int8
 
     注: 仅 INT8×INT8+UINT64 scale 支持 requant
     """
-    from matmul_quant_util import f32_2_s9
-
     out = matmul_out
     if bias is not None and bias_dtype == "int32":
         out = out + bias
 
     out = out.astype(np.float32)
-    out = f32_2_s9(out * x2_scale.astype(np.float32))
+    out = _util.f32_2_s9(out * x2_scale.astype(np.float32))
     if offset is not None:
-        out = f32_2_s9(out) + f32_2_s9(offset)
+        out = _util.f32_2_s9(out) + _util.f32_2_s9(offset)
     return np.clip(out, -128, 127).astype(np.int8)
 
 
@@ -531,23 +520,23 @@ def qbmmv3_kernel_compute(
     - K-C (PerToken): compute_pertoken
     - T-C (PerTensor/PerChannel): compute_tc / compute_requant / compute_int32
     """
-    # 获取 scale 的原始 dtype（用于判断是否需要 scale_generate）
-    scale_dtype = kwargs.get("scale_dtype", dtype_to_str(scale.dtype))
+    # 获取 scale 的原始 dtype（用于判断是否需要 _util.scale_generate）
+    scale_dtype = kwargs.get("scale_dtype", _util.dtype_to_str(scale.dtype))
 
     # 获取输出 dtype
     y_dtype = kwargs.get("output_dtypes", ["float32"])[0]
 
     # 转换 dtype 为字符串
-    x1_dtype = dtype_to_str(x1.dtype)
-    x2_dtype = dtype_to_str(x2.dtype)
-    bias_dtype = dtype_to_str(bias.dtype) if bias is not None else None
+    x1_dtype = _util.dtype_to_str(x1.dtype)
+    x2_dtype = _util.dtype_to_str(x2.dtype)
+    bias_dtype = _util.dtype_to_str(bias.dtype) if bias is not None else None
 
     # 准备 scale（MX 模式不转 float32）
-    x2_scale = scale.astype(np.float32) if scale.dtype != np_mx_scale else scale
+    x2_scale = scale.astype(np.float32) if scale.dtype != _util.np_fp8_e8m0 else scale
     x1_scale = pertoken_scale
 
     # 解包 group_size
-    group_size_m, group_size_n, group_size_k = unpack_groupsize(group_size)
+    group_size_m, group_size_n, group_size_k = _util.unpack_groupsize(group_size)
 
     # 判定量化模式
     output_shapes = kwargs.get("output_ori_shapes", kwargs.get("output_shapes", ()))
@@ -563,8 +552,10 @@ def qbmmv3_kernel_compute(
         output_shapes,
     )
 
-    # 判断是否需要 scale_generate
-    do_scale_gen = needs_scale_generate(x1_dtype, x2_scale, bias_dtype, scale_dtype)
+    # 判断是否需要 _util.scale_generate
+    do_scale_gen = _util.needs_scale_generate(
+        x1_dtype, x2_scale, bias_dtype, scale_dtype
+    )
 
     # 判断 bias 是否为向量（影响 bias 加法位置）
     is_bias_vec = bias_dtype is not None and (
@@ -694,7 +685,7 @@ def qbmmv3_kernel_compute(
             # fallback
             if matmul_out.dtype == np.int32:
                 matmul_out = matmul_out.astype(np.float32)
-            y = cast_output_dtype(matmul_out * x2_scale, y_dtype)
+            y = _util.cast_output_dtype(matmul_out * x2_scale, y_dtype)
 
     return [y]
 
@@ -726,9 +717,9 @@ class QuantBatchMatmulV3TestSpec:
         """
         # customize_inputs 逻辑
         if scale.dtype in (np.uint64, np.int64):
-            deq_scale = u64_to_deq_scale(scale)
+            deq_scale = _util.u64_to_deq_scale(scale)
             if offset is not None:
-                offset = u64_to_offset(scale)
+                offset = _util.u64_to_offset(scale)
         else:
             deq_scale = scale
 
@@ -737,7 +728,7 @@ class QuantBatchMatmulV3TestSpec:
 
         if len(input_formats) > 1 and input_formats[1] == "FRACTAL_NZ":
             ori_shape = input_ori_shapes[1] if len(input_ori_shapes) > 1 else None
-            x2 = nz_to_nd(x2, ori_shape)
+            x2 = _util.nz_to_nd(x2, ori_shape)
 
         if (
             len(input_formats) > 2
@@ -745,7 +736,7 @@ class QuantBatchMatmulV3TestSpec:
             and kwargs.get("scale_dtype") not in ("uint64", "int64")
         ):
             ori_shape = input_ori_shapes[2] if len(input_ori_shapes) > 2 else None
-            deq_scale = nz_to_nd(deq_scale, ori_shape)
+            deq_scale = _util.nz_to_nd(deq_scale, ori_shape)
 
         # 调用 kernel compute
         return qbmmv3_kernel_compute(
@@ -785,10 +776,10 @@ class QuantBatchMatmulV3TestSpec:
         out_dtype = output_dtypes[0]
 
         # 清洗 E8M0 NaN
-        x1 = sanitize_e8m0_scale(x1, testcase_name)
-        x2 = sanitize_e8m0_scale(x2, testcase_name)
-        scale = sanitize_e8m0_scale(scale, testcase_name)
-        pertoken_scale = sanitize_e8m0_scale(pertoken_scale, testcase_name)
+        x1 = _util.sanitize_e8m0_scale(x1, testcase_name)
+        x2 = _util.sanitize_e8m0_scale(x2, testcase_name)
+        scale = _util.sanitize_e8m0_scale(scale, testcase_name)
+        pertoken_scale = _util.sanitize_e8m0_scale(pertoken_scale, testcase_name)
 
         # UINT64 scale 生成
         if scale.dtype in ("uint64", "int64"):
@@ -798,10 +789,7 @@ class QuantBatchMatmulV3TestSpec:
             fp32_deq_scale = np.random.uniform(
                 low=-5, high=5, size=deq_scale_shape
             ).astype(np.float32)
-            uint32_deq_scale = np.frombuffer(fp32_deq_scale, np.uint32).reshape(
-                deq_scale_shape
-            )
-            uint32_deq_scale &= 0xFFFFE000
+            uint32_deq_scale = _util.scale_generate(fp32_deq_scale).view(np.uint32)
 
             if out_dtype != "int8":
                 scale = np.zeros(deq_scale_shape, np.uint64)
@@ -814,9 +802,7 @@ class QuantBatchMatmulV3TestSpec:
                         low=-5, high=5, size=offset.shape
                     ).astype(np.float32)
                     s9_offset = (
-                        np.clip(np.round(fp32_offset), -256, 255)
-                        .astype(int)
-                        .reshape(offset.shape)
+                        _util.f32_2_s9(fp32_offset).astype(int).reshape(offset.shape)
                     )
                     s9_offset &= 0x1FF
                     s9_offset = (

@@ -23,7 +23,6 @@ that the golden always consumes exactly what the NPU received.
 import os
 import sys
 
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(
@@ -32,62 +31,6 @@ sys.path.insert(
 
 import matmul_golden_util as _util
 import tqbmm_kernel_golden as _kernel
-
-
-def _to_np(*tensors):
-    """torch tensor -> numpy. None stays None, numpy arrays pass through.
-
-    torch's custom float8_e8m0 scalar types (e.g. "torch.float8_e8m0fnu") are
-    not convertible via tensor.numpy(); their raw 8-bit payload is carried
-    through as en_dtypes.float8_e8m0 so the kernel-level golden can decode it
-    with the same 2^(raw - 127) semantics.
-    """
-    result = []
-    for t in tensors:
-        if t is None:
-            result.append(None)
-        elif isinstance(t, np.ndarray):
-            result.append(t)
-        else:
-            import torch  # imported lazily: only needed for torch inputs
-
-            t = t.detach().cpu()
-            if "e8m0" in str(t.dtype):
-                raw = t.view(torch.uint8).numpy()
-                t = np.ascontiguousarray(raw).view(_util.np_mx_scale)
-            else:
-                t = _util.torch_to_numpy(t)
-            result.append(t)
-    return tuple(result)
-
-
-def _out_dtype(out, fallback):
-    """Return the output dtype name, falling back to the given tensor dtype.
-
-    When neither is available None is returned and the caller keeps its own
-    output dtype resolution (e.g. the dtype enum at E2E level).
-    """
-    if out is not None:
-        (out_np,) = _to_np(out)
-        if out_np is not None:
-            return _util.dtype_to_str(out_np.dtype)
-    if fallback is None:
-        return None
-    if isinstance(fallback, np.ndarray):
-        return _util.dtype_to_str(fallback.dtype)
-    return _util.torch_dtype_to_str(fallback.dtype)
-
-
-def _nz_to_nd_if_needed(x2_np, kwargs):
-    """Convert x2 from FRACTAL_NZ storage back to logical ND (WeightNz variant)."""
-    tensor_formats = kwargs.get("tensor_formats", ())
-    if len(tensor_formats) <= 1 or tensor_formats[1] != "FRACTAL_NZ":
-        return x2_np
-    storage_shapes = kwargs.get("tensor_storage_shapes", ())
-    ori_shape = storage_shapes[1] if len(storage_shapes) > 1 else None
-    if ori_shape is not None and tuple(x2_np.shape) != tuple(ori_shape):
-        x2_np = _util.nz_to_nd(x2_np, ori_shape)
-    return x2_np
 
 
 class AclnnTransposeQuantBatchMatMulTestSpec:
@@ -109,10 +52,12 @@ class AclnnTransposeQuantBatchMatMulTestSpec:
         out=None,
         **kwargs,
     ):
-        x1_np, x2_np, bias_np, s1_np, s2_np = _to_np(x1, x2, bias, x1Scale, x2Scale)
-        x2_np = _nz_to_nd_if_needed(x2_np, kwargs)
+        x2_nd = _util.nz_input_to_nd(x2, kwargs.get("tensor_formats", ()), 1, n0=32)
+        x1_np, x2_np, bias_np, s1_np, s2_np = _util.to_numpy(
+            x1, x2_nd, bias, x1Scale, x2Scale
+        )
 
-        out_dtype = _out_dtype(out, None)
+        out_dtype = _util.dtype_to_str(out)
 
         perm_x1 = tuple(permX1) if permX1 is not None else (1, 0, 2)
         perm_x2 = tuple(permX2) if permX2 is not None else (0, 1, 2)
@@ -140,6 +85,25 @@ class AclnnTransposeQuantBatchMatMulTestSpec:
 
 class AclnnTransposeQuantBatchMatMulWeightNzTestSpec:
     compare = _util.isclose_compare
+
+    @staticmethod
+    def customize_inputs(
+        x1,
+        x2,
+        bias=None,
+        x1Scale=None,
+        x2Scale=None,
+        dtype=0,
+        groupSize=0,
+        permX1=None,
+        permX2=None,
+        permY=None,
+        batchSplitFactor=1,
+        out=None,
+        **kwargs,
+    ):
+        """aclnn 输入定制：NZ x2 规范化（in-place 覆写 storage，框架不捕获返回值）。"""
+        _util.prepare_nz_input(x2, kwargs.get("tensor_formats", ()), 1, n0=32)
 
     @staticmethod
     def golden(

@@ -56,11 +56,7 @@ class TorchNpuNpuTransposeBatchmatmulTestSpec:
             fp32_scale = np.random.uniform(low=-5, high=5, size=scale_shape).astype(
                 np.float32
             )
-            u32 = np.ascontiguousarray(fp32_scale).view(np.uint32).copy()
-            u32 &= np.uint32(0xFFFFE000)
-            new_scale = np.zeros(scale_shape, np.uint64)
-            new_scale |= u32.astype(np.uint64)
-            new_scale |= np.uint64(1 << 46)
+            new_scale = _util.pack_u64_scale(_util.scale_generate(fp32_scale))
             scale.copy_(
                 torch.from_numpy(new_scale.astype(np.int64).copy()).to(scale.device)
             )

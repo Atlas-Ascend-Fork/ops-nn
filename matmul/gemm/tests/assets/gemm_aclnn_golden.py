@@ -21,7 +21,6 @@ __spec__ = {"aclnnGemm": "AclnnGemmTestSpec"}
 import os
 import sys
 
-import numpy as np
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "../../../mat_mul_v3/tests/assets")
@@ -32,12 +31,6 @@ sys.path.insert(
 
 import matmul_golden_util as _util
 from mmv3_aclnn_golden import AclnnAddmmTestSpec
-
-
-def _to_np(tensor):
-    if isinstance(tensor, np.ndarray):
-        return tensor
-    return _util.torch_to_numpy(tensor)
 
 
 class AclnnGemmTestSpec:
@@ -56,7 +49,7 @@ class AclnnGemmTestSpec:
         cubeMathType=0,
         **kwargs,
     ):
-        a_np, b_np, c_np = _to_np(A), _to_np(B), _to_np(C)
+        a_np, b_np, c_np = _util.to_numpy(A, B, C)
         if int(transA):
             a_np = a_np.T
         if int(transB):

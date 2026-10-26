@@ -19,6 +19,8 @@ import os
 import sys
 from importlib import import_module
 
+import numpy as np
+
 _assets = os.path.dirname(os.path.abspath(__file__))
 _common = os.path.join(_assets, "../../../common/tests/st/arch35")
 
@@ -28,28 +30,6 @@ for _d in (_common, _assets):
 
 _aclnn = import_module("wqbmmv2_aclnn_golden")
 _util = import_module("matmul_golden_util")
-_quant_util = import_module("matmul_quant_util")
-
-_FP4_E2M1_TABLE = [
-    0.0,
-    0.5,
-    1.0,
-    1.5,
-    2.0,
-    3.0,
-    4.0,
-    6.0,
-    -0.0,
-    -0.5,
-    -1.0,
-    -1.5,
-    -2.0,
-    -3.0,
-    -4.0,
-    -6.0,
-]
-
-_N0_PACKED = 2
 
 
 def _get_logical_shape(weight, is_transposed):
@@ -75,38 +55,14 @@ def _get_logical_shape(weight, is_transposed):
         return (N_packed, K)
 
 
-def _get_nz_storage_shape(packed_shape, is_transposed):
-    """计算 NZ storage shape (A5 only, n0_packed=2, k0=16)
-
-    packed_shape: (outer, inner) where outer 是 K 或 N, inner 是 N_packed 或 K_packed
-    非转置: packed=(K, N_packed) → storage=(n1, k1, 16, 2)
-    转置: packed=(N, K_packed) → storage=(k1, n1, 16, 2)
-    """
-    M, L = packed_shape
-    if not is_transposed:
-        # M=K, L=N_packed
-        k1 = (M + 15) // 16
-        n1 = (L + _N0_PACKED - 1) // _N0_PACKED
-        return (n1, k1, 16, _N0_PACKED)
-    else:
-        # M=N, L=K_packed
-        n1 = (M + 15) // 16
-        k1 = (L + _N0_PACKED - 1) // _N0_PACKED
-        return (k1, n1, 16, _N0_PACKED)
-
-
 def _write_nz_to_storage(weight, nz_data):
-    """将 NZ 4D 数据直接写入 weight 底层 storage"""
-    import torch
-    import numpy as np
+    """将 NZ 数据按 storage_offset 写入 weight 底层 storage（in-place）。
 
-    storage = weight.untyped_storage()
-    offset = weight.storage_offset() * weight.element_size()
-    nz_flat = np.ascontiguousarray(nz_data.ravel())
-    nz_bytes = torch.from_numpy(nz_flat.view(np.uint8))
-    byte_offset = offset
-    byte_len = nz_bytes.numel()
-    storage[byte_offset : byte_offset + byte_len] = nz_bytes
+    torch 2.x 的 UntypedStorage 不支持 numpy()/frombuffer，且
+    ``storage[slice] = Tensor`` 会报 "can only set storage content with a int
+    types"；统一走 util 的 set_ uint8 全 buffer 视图写入。
+    """
+    _util.overwrite_storage(weight, nz_data)
 
 
 def _pack_int4_weight(weight, need_nz, is_transposed):
@@ -129,8 +85,20 @@ def _pack_int4_weight(weight, need_nz, is_transposed):
         # ND 非转置: 容器 (K, N_packed)，int4 沿 N 打包（与 aclnn golden unpack axis=-1 一致）
         K, N_packed = weight.shape
         unpacked = torch.randint(-8, 8, (K, N_packed * 8), dtype=torch.int32)
-        packed = _quant_util.pack_int32_from_int4(unpacked.numpy(), axis=-1)
+        packed = _util.pack_int32_from_int4(unpacked.numpy(), axis=-1)
         weight.copy_(torch.from_numpy(packed))
+        return
+
+    if need_nz and not is_transposed:
+        # NZ 非转置（packed-quant 载体约定）: 容器 view (K, N_packed)，
+        # 逻辑 (K, N) 沿 N 打包后做 ND→NZ；n0 按载体 dtype（int32→2）与
+        # aclnn golden 解码侧 get_nz_n0 一致。
+        K, N_packed = weight.shape
+        unpacked = torch.randint(-8, 8, (K, N_packed * 8), dtype=torch.int32)
+        packed = _util.pack_int32_from_int4(unpacked.numpy(), axis=-1)
+        n0 = _util.get_nz_n0(str(weight.dtype).replace("torch.", ""))
+        nz_data = _util.nd_to_nz(packed, n0=n0)
+        _write_nz_to_storage(weight, nz_data)
         return
 
     # 获取逻辑形状 (N, K) 用于生成 unpacked 数据
@@ -140,17 +108,19 @@ def _pack_int4_weight(weight, need_nz, is_transposed):
     # 生成 unpacked 数据，逻辑形状 (N, K)
     unpacked = torch.randint(-8, 8, (N, K), dtype=torch.int32)
     # 打包: (N, K) → (N, K_packed)
-    packed = _quant_util.pack_int32_from_int4(unpacked.numpy(), axis=-1)
+    packed = _util.pack_int32_from_int4(unpacked.numpy(), axis=-1)
 
     if need_nz:
-        # NZ 场景: 转置 packed 以匹配 view shape，然后做 ND→NZ
+        # NZ 场景: 转置 packed 以匹配 view shape，然后做 ND→NZ。
+        # n0 按容器 dtype 取 packed-quant 约定（int32/float32 → 2，与 aclnn golden
+        # 解码侧 get_nz_n0 一致；勿用缺省，否则 int64 中间量会按 16 分形导致尺寸不符）
+        n0 = _util.get_nz_n0(str(weight.dtype).replace("torch.", ""))
         if is_transposed:
             # packed (N, K_packed) → (K_packed, N) 匹配 view shape
             packed_for_nz = packed.T
         else:
             packed_for_nz = packed
-        storage_shape = _get_nz_storage_shape(packed_for_nz.shape, is_transposed=False)
-        nz_data = _util.nd_to_nz(packed_for_nz, storage_shape, is_transposed=False)
+        nz_data = _util.nd_to_nz(packed_for_nz, n0=n0)
         _write_nz_to_storage(weight, nz_data)
     else:
         # ND 场景: 转置 packed 以匹配 view shape，然后 copy_
@@ -176,11 +146,22 @@ def _pack_fp4_weight(weight, need_nz, is_transposed):
     """
     import torch
 
+    if need_nz and not is_transposed:
+        # NZ 非转置（packed-quant 载体约定）: 容器 view (K, N_packed)，逻辑 (K, N)
+        # 沿 N 打包后 ND→NZ；n0 按载体 dtype（float32→2）。
+        K, N_packed = weight.shape
+        fp4_indices = torch.randint(0, 16, (K, N_packed * 8), dtype=torch.int32)
+        packed = _util.pack_int32_from_fp4(fp4_indices.numpy(), axis=-1)
+        n0 = _util.get_nz_n0(str(weight.dtype).replace("torch.", ""))
+        nz_data = _util.nd_to_nz(packed, n0=n0)
+        _write_nz_to_storage(weight, nz_data.view(np.float32))
+        return
+
     if not need_nz and not is_transposed:
         # ND 非转置: 容器 (K, N_packed)，fp4 沿 N 打包（与 aclnn golden unpack axis=-1 一致）
         K, N_packed = weight.shape
         fp4_indices = torch.randint(0, 16, (K, N_packed * 8), dtype=torch.int32)
-        packed = _quant_util.pack_int32_from_fp4(fp4_indices.numpy(), axis=-1)
+        packed = _util.pack_int32_from_fp4(fp4_indices.numpy(), axis=-1)
         weight.copy_(torch.from_numpy(packed).view(weight.dtype))
         return
 
@@ -191,17 +172,17 @@ def _pack_fp4_weight(weight, need_nz, is_transposed):
     # 生成 unpacked 数据，逻辑形状 (N, K)
     fp4_indices = torch.randint(0, 16, (N, K), dtype=torch.int32)
     # 打包: (N, K) → (N, K_packed)
-    packed = _quant_util.pack_int32_from_fp4(fp4_indices.numpy(), axis=-1)
+    packed = _util.pack_int32_from_fp4(fp4_indices.numpy(), axis=-1)
 
     if need_nz:
-        # NZ 场景: 转置 packed 以匹配 view shape，然后做 ND→NZ
+        # NZ 场景: 转置 packed 以匹配 view shape，然后做 ND→NZ（n0 同上按容器 dtype）
+        n0 = _util.get_nz_n0(str(weight.dtype).replace("torch.", ""))
         if is_transposed:
             packed_for_nz = packed.T
         else:
             packed_for_nz = packed
-        storage_shape = _get_nz_storage_shape(packed_for_nz.shape, is_transposed=False)
-        nz_data = _util.nd_to_nz(packed_for_nz, storage_shape, is_transposed=False)
-        _write_nz_to_storage(weight, nz_data.view(weight.dtype))
+        nz_data = _util.nd_to_nz(packed_for_nz, n0=n0)
+        _write_nz_to_storage(weight, nz_data.view(np.float32))
     else:
         # ND 场景: 转置 packed 以匹配 view shape，然后 copy_
         if is_transposed:
@@ -278,7 +259,7 @@ class WeightQuantBatchMatmulV2TorchApiTestSpec:
         testcase_name = kwargs.get("testcase_name", "unknown")
 
         if antiquant_scale is not None:
-            sanitized = _quant_util.sanitize_e8m0_scale(antiquant_scale, testcase_name)
+            sanitized = _util.sanitize_e8m0_scale(antiquant_scale, testcase_name)
             if sanitized is not antiquant_scale:
                 _util.write_back(antiquant_scale, sanitized)
 

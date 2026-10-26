@@ -19,7 +19,6 @@ import os
 import sys
 
 import numpy as np
-from ml_dtypes import bfloat16
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "../../../common/tests/st/arch35")
@@ -27,44 +26,7 @@ sys.path.insert(
 import matmul_golden_util as _util
 
 
-_DTYPE_ATTR_MAP = {1: np.float16, 27: bfloat16}
-
-
-def _e8m0_to_float(arr):
-    raw = arr.view(np.uint8).astype(np.float32)
-    result = np.power(2.0, raw - 127.0)
-    result[raw == 255.0] = np.nan
-    return result
-
-
-def _cast_output_dtype(arr, dtype_name):
-    dtype_map = {"float16": np.float16, "float32": np.float32, "bfloat16": bfloat16}
-    target = dtype_map.get(dtype_name)
-    if target is not None:
-        return arr.astype(target)
-    return arr.astype(dtype_name)
-
-
-def _nz_to_nd(data, ori_shape=None):
-    shape = data.shape
-    batch_dims = len(shape) - 4
-    perm = list(range(batch_dims)) + [
-        batch_dims + 1,
-        batch_dims + 2,
-        batch_dims + 0,
-        batch_dims + 3,
-    ]
-    data = np.transpose(data, perm)
-    m1 = shape[batch_dims + 1]
-    m0_actual = shape[batch_dims + 2]
-    n1 = shape[batch_dims + 0]
-    n0_actual = shape[batch_dims + 3]
-    data = data.reshape(*shape[:batch_dims], m1 * m0_actual, n1 * n0_actual)
-    if ori_shape is not None:
-        target_M = ori_shape[-2]
-        target_N = ori_shape[-1]
-        data = data[..., :target_M, :target_N]
-    return data
+_DTYPE_ATTR_MAP = {1: np.float16, 27: _util.np_bfloat16}
 
 
 def customize_inputs(
@@ -87,7 +49,7 @@ def customize_inputs(
     input_ori_shapes = kwargs.get("input_ori_shapes", ())
     if len(input_formats) > 1 and input_formats[1] == "FRACTAL_NZ":
         ori_shape = input_ori_shapes[1] if len(input_ori_shapes) > 1 else None
-        x2 = _nz_to_nd(x2, ori_shape)
+        x2 = _util.nz_to_nd(x2, ori_shape)
     return (
         x1,
         x2,
@@ -127,8 +89,8 @@ def _kernel_compute(
 
     x1_l0 = x1_level0_scale.astype(np.float32)
     x2_l0 = x2_level0_scale.astype(np.float32)
-    x1_l1 = _e8m0_to_float(x1_level1_scale)
-    x2_l1 = _e8m0_to_float(x2_level1_scale)
+    x1_l1 = _util.e8m0_to_float(x1_level1_scale)
+    x2_l1 = _util.e8m0_to_float(x2_level1_scale)
 
     M, K = x1_f32.shape
     N = x2_f32.shape[1]
@@ -164,7 +126,7 @@ def _kernel_compute(
 
     output_dtypes = kwargs.get("output_dtypes", None)
     if output_dtypes is not None:
-        acc = _cast_output_dtype(acc, output_dtypes[0])
+        acc = _util.cast_output_dtype(acc, output_dtypes[0])
     else:
         target_dtype = _DTYPE_ATTR_MAP.get(dtype, np.float16)
         acc = acc.astype(target_dtype)
@@ -198,7 +160,7 @@ class DualLevelQuantBatchMatmulTestSpec:
         if len(input_formats) > 1 and input_formats[1] == "FRACTAL_NZ":
             ori_shape = input_ori_shapes[1] if len(input_ori_shapes) > 1 else None
             if ori_shape is not None and tuple(x2.shape) != tuple(ori_shape):
-                x2 = _nz_to_nd(x2, ori_shape)
+                x2 = _util.nz_to_nd(x2, ori_shape)
 
         return _kernel_compute(
             x1,

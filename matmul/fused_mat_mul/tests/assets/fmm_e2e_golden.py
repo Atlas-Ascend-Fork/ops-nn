@@ -23,14 +23,43 @@ sys.path.insert(
 import matmul_golden_util as _util
 from fmm_aclnn_golden import torch_fused_matmul_core
 
+# HF32（hfloat32）用例：fp32 数据 + hf32 计算模式。torch 通路无 per-call
+# cubeMathType 参数，需进程级开关 ALLOW_MATMUL_HF32（torch.npu.matmul.allow_hf32）
+# 驱动 op-plugin 传 USE_HF32（否则 aclnnFusedMatmul 拒绝 fp32）；
+# golden 侧同步按 cmt=3 做 hf32 截断建模。开关只影响 fp32，套件内其余
+# fp16/bf16 用例为 no-op（CheckCubeMathTypeForMm 对 BF16+HF32 仅告警）。
+_USE_HF32_FOR_FP32 = True
+
+
+def _enable_hf32_for_fp32(*tensors):
+    """fp32 输入时开启进程级 hf32 开关，返回 golden 应使用的 cube_math_type。"""
+    if not _USE_HF32_FOR_FP32:
+        return None
+    if not any(t is not None and t.dtype == torch.float32 for t in tensors):
+        return None
+    try:
+        import torch_npu  # noqa: F401
+
+        torch.npu.matmul.allow_hf32 = True
+    except Exception:  # noqa: BLE001  (CPU/离线环境无 torch_npu)
+        pass
+    return 3
+
 
 class TorchNpuFusedMatmulTestSpec:
     compare = _util.isclose_compare
 
     @staticmethod
+    def customize_inputs(x1, x2, *, bias=None, x3=None, fused_op_type="", **kwargs):
+        """执行前设置 hf32 开关：torch 通路无 per-call cubeMathType，只能靠进程级
+        ALLOW_MATMUL_HF32 让 op-plugin 传 USE_HF32；该钩子在设备执行前被调用。"""
+        _enable_hf32_for_fp32(x1, x2, bias, x3)
+
+    @staticmethod
     def golden(x1, x2, *, bias=None, x3=None, fused_op_type="", **kwargs):
         """torch_npu.npu_fused_matmul: y = FUSED_OP(x1 @ x2 + bias, x3)."""
         out_dtype = torch.float32 if fused_op_type == "16cast32" else x1.dtype
+        cube_math_type = _enable_hf32_for_fp32(x1, x2, bias, x3)
         return torch_fused_matmul_core(
             x1,
             x2,
@@ -38,7 +67,7 @@ class TorchNpuFusedMatmulTestSpec:
             x3,
             fused_op_type=fused_op_type,
             out_dtype=out_dtype,
-            cube_math_type=None,
+            cube_math_type=cube_math_type,
         )
 
 

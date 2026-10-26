@@ -17,7 +17,7 @@ Kernel golden receives numpy.ndarray inputs/outputs.  The FRACTAL_NZ layout of
 x2 (when input_formats[1] == 'FRACTAL_NZ') is converted back to logical ND via
 ``matmul_golden_util.nz_to_nd`` before the matmul.  HF32 execution is simulated
 when ``enable_hf32`` is True.  Scale (INT64/UINT64) is decoded via
-``matmul_quant_util.u64_to_deq_scale`` before quantization.
+``matmul_golden_util.u64_to_deq_scale`` before quantization.
 """
 
 import os
@@ -29,7 +29,6 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "../../../common/tests/st/arch35")
 )
 import matmul_golden_util as _util
-from matmul_quant_util import u64_to_deq_scale
 
 
 def _kernel_compute(
@@ -72,7 +71,7 @@ def _kernel_compute(
 
     if scale is not None:
         if scale.dtype in (np.int64, np.uint64):
-            scale = u64_to_deq_scale(scale)
+            scale = _util.u64_to_deq_scale(scale)
         mm_out = np.transpose(mm_out, axes=list(perm_y))
         M, B, N = mm_out.shape
         mm_out = mm_out.reshape(M, B * N)
@@ -157,11 +156,7 @@ class TransposeBatchMatMulTestSpec:
             fp32_scale = np.random.uniform(low=-5, high=5, size=scale_shape).astype(
                 np.float32
             )
-            u32 = np.ascontiguousarray(fp32_scale).view(np.uint32).copy()
-            u32 &= np.uint32(0xFFFFE000)
-            new_scale = np.zeros(scale_shape, np.uint64)
-            new_scale |= u32.astype(np.uint64)
-            new_scale |= np.uint64(1 << 46)
+            new_scale = _util.pack_u64_scale(_util.scale_generate(fp32_scale))
             if scale_orig_dtype == np.int64:
                 new_scale = new_scale.astype(np.int64)
             scale = new_scale

@@ -23,11 +23,13 @@ from importlib import import_module
 _common = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "../../../common/tests/st/arch35"
 )
-if _common not in sys.path:
-    sys.path.insert(0, _common)
+_assets = os.path.dirname(os.path.abspath(__file__))
+for _d in (_common, _assets):
+    if _d not in sys.path:
+        sys.path.insert(0, _d)
 
 _util = import_module("matmul_golden_util")
-_quant_util = import_module("matmul_quant_util")
+_validate = import_module("wqbmmv2_validate_util")
 
 
 # ============================================================================
@@ -54,9 +56,9 @@ def prepare_weight(weight, inter_dtype, is_f8_weight, transpose_weight):
     """准备 weight：转换为 fp32，按需截断到中间精度，可选转置。"""
     weight_f = weight.astype(np.float32)
     if inter_dtype == np.float16:
-        weight_f = weight_f.astype(np.float16).astype(np.float32)
+        weight_f = _util.truncate(weight_f, np.float16)
     elif inter_dtype == _util.np_bfloat16 and is_f8_weight:
-        weight_f = weight_f.astype(_util.np_bfloat16).astype(np.float32)
+        weight_f = _util.truncate(weight_f, _util.np_bfloat16)
     if transpose_weight:
         weight_f = _util.transpose_last_two_dims(weight_f)
     return weight_f
@@ -66,7 +68,7 @@ def prepare_scale(antiquant_scale, inter_dtype, is_f8_weight, transpose_weight):
     """准备 antiquant scale：转为 fp32，f8+bf16 时额外截断，可选转置。"""
     scale_f = antiquant_scale.astype(np.float32)
     if is_f8_weight and inter_dtype == _util.np_bfloat16:
-        scale_f = scale_f.astype(_util.np_bfloat16).astype(np.float32)
+        scale_f = _util.truncate(scale_f, _util.np_bfloat16)
     if transpose_weight and scale_f.ndim >= 2:
         scale_f = _util.transpose_last_two_dims(scale_f)
     return scale_f
@@ -99,7 +101,7 @@ def finalize(out, bias, x_dtype_str, out_dtype_str):
     if bias is not None:
         out = out + bias.astype(np.float32)
     if x_dtype_str == "bfloat16" and out_dtype_str != "int8":
-        out = out.astype(_util.np_bfloat16).astype(np.float32)
+        out = _util.truncate(out, _util.np_bfloat16)
     return _util.cast_output_dtype(out, out_dtype_str)
 
 
@@ -276,7 +278,7 @@ def _compute_pergroup(
         offset_f = prepare_offset(antiquant_offset, inter_dtype, transpose_weight)
 
     k_size = weight_f.shape[-2]
-    num_groups = _quant_util.ceil_div(k_size, antiquant_group_size)
+    num_groups = _util.ceil_div(k_size, antiquant_group_size)
     for g_idx in range(num_groups):
         k_start = g_idx * antiquant_group_size
         k_end = min((g_idx + 1) * antiquant_group_size, k_size)
@@ -325,7 +327,7 @@ def _compute_mx(
 
     scale_f = antiquant_scale.astype(np.float32)
     if inter_dtype == np.float16:
-        scale_f = scale_f.astype(np.float16).astype(np.float32)
+        scale_f = _util.truncate(scale_f, np.float16)
     if transpose_weight and scale_f.ndim >= 2:
         scale_f = _util.transpose_last_two_dims(scale_f)
 
@@ -334,7 +336,7 @@ def _compute_mx(
     scale_k = scale_br.shape[-2]
 
     if scale_k > k_dim:
-        if _quant_util.ceil_div(k_dim, 32) % 2 != 0:
+        if _util.ceil_div(k_dim, 32) % 2 != 0:
             scale_br = scale_br[..., :-1, :]
         weight_dims = len(weight_f.shape)
         weight_pad_len = scale_br.shape[-2] - weight_f.shape[-2]
@@ -393,8 +395,8 @@ def _compute_packed_scale(
 
     out = np.matmul(x_f, weight_f)
 
-    deq_scale_f = _quant_util.u64_to_deq_scale(antiquant_scale)
-    deq_scale_f = deq_scale_f.astype(np.float16).astype(np.float32)
+    deq_scale_f = _util.u64_to_deq_scale(antiquant_scale)
+    deq_scale_f = _util.truncate(deq_scale_f, np.float16)
     deq_scale_br = deq_scale_f.reshape(1, -1)[:, : out.shape[-1]]
     out = out * deq_scale_br
 
@@ -459,11 +461,9 @@ class WeightQuantBatchMatmulV2TestSpec:
     ):
         testcase_name = kwargs.get("testcase_name", "unknown")
 
-        antiquant_scale = _quant_util.sanitize_e8m0_scale(
-            antiquant_scale, testcase_name
-        )
+        antiquant_scale = _util.sanitize_e8m0_scale(antiquant_scale, testcase_name)
 
-        _quant_util.validate_wqbmmv2_constraints(
+        _validate.validate_wqbmmv2_constraints(
             x,
             weight,
             antiquant_scale,

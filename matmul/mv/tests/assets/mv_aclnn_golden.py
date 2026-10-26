@@ -35,30 +35,6 @@ sys.path.insert(
 import matmul_golden_util as _util
 
 
-def _to_np(*tensors):
-    """torch tensor → numpy。None 保持 None，已是 numpy 则跳过。"""
-    result = []
-    for t in tensors:
-        if t is None:
-            result.append(None)
-        elif isinstance(t, np.ndarray):
-            result.append(t)
-        else:
-            result.append(_util.torch_to_numpy(t))
-    return tuple(result)
-
-
-def _out_dtype(out, fallback):
-    """返回 out tensor 的 dtype 名，若 out 为 None 则用 fallback 的 dtype。"""
-    if out is not None:
-        (out_np,) = _to_np(out)
-        if out_np is not None:
-            return _util.dtype_to_str(out_np.dtype)
-    if isinstance(fallback, np.ndarray):
-        return _util.dtype_to_str(fallback.dtype)
-    return _util.torch_dtype_to_str(fallback.dtype)
-
-
 def _apply_cube_type(x1, x2, cubeMathType):
     """cubeMathType 精度模拟。
 
@@ -89,13 +65,13 @@ class AclnnMvTestSpec:
     def golden(self, vec, out=None, cubeMathType=0, **kwargs):
         """aclnnMv: self (n x m) @ vec (m,) → out (n,)"""
         # 1) torch → numpy
-        self_np, vec_np = _to_np(self, vec)
+        self_np, vec_np = _util.to_numpy(self, vec)
 
         # 2) 空 tensor 处理：self 为空时返回全 0
         if self_np is None or self_np.size == 0:
-            out_dtype = _out_dtype(out, self)
+            out_dtype = _util.dtype_to_str(out if out is not None else self.dtype)
             if out is not None:
-                (out_np,) = _to_np(out)
+                (out_np,) = _util.to_numpy(out)
                 return np.zeros_like(out_np)
             return np.zeros(self_np.shape[0] if self_np is not None else 0)
 
@@ -116,7 +92,7 @@ class AclnnMvTestSpec:
         result = result.squeeze(-1)  # (n, 1) → (n,)
 
         # 6) Cast to output dtype
-        out_dtype = _out_dtype(out, self)
+        out_dtype = _util.dtype_to_str(out if out is not None else self.dtype)
         return _util.cast_output_dtype(result, out_dtype) if out_dtype else result
 
 

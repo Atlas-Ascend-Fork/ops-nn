@@ -33,7 +33,6 @@ sys.path.insert(
 )
 
 import matmul_golden_util as _util
-import matmul_quant_util as _quant
 import qbmmv3_kernel_golden as _kernel
 
 
@@ -42,72 +41,14 @@ import qbmmv3_kernel_golden as _kernel
 # ============================================================================
 
 
-def _to_np(*tensors):
-    """torch tensor → numpy。None 保持 None，已是 numpy 则跳过。"""
-    result = []
-    for t in tensors:
-        if t is None:
-            result.append(None)
-        elif isinstance(t, np.ndarray):
-            result.append(t)
-        else:
-            result.append(_util.torch_to_numpy(t))
-    return tuple(result)
-
-
-def _out_dtype(out, fallback):
-    """返回 out tensor 的 dtype 名，若 out 为 None 则用 fallback 的 dtype。
-
-    对应 C++ GetDtypeAndTranspose (aclnn_quant_matmul_v4.cpp:1633):
-      dtype = static_cast<int64_t>(out->GetDataType());
-    """
-    if out is not None:
-        (out_np,) = _to_np(out)
-        if out_np is not None:
-            return _util.dtype_to_str(out_np.dtype)
-    if isinstance(fallback, np.ndarray):
-        return _util.dtype_to_str(fallback.dtype)
-    return _util.torch_dtype_to_str(fallback.dtype)
-
-
 def _out_shape(out):
     """从 out tensor 获取 output shape（用于 determine_quant_mode 推断 M/N）。"""
     if out is None:
         return ()
-    (out_np,) = _to_np(out)
+    (out_np,) = _util.to_numpy(out)
     if out_np is not None:
         return (out_np.shape,)
     return ()
-
-
-def _nz_to_nd_if_needed(tensor_np, tensor_idx, kwargs):
-    """若 tensor_formats 指示 tensor 为 FRACTAL_NZ，转换为 ND。
-
-    ACLNN 层在此完成转换，传给 kernel golden 的 tensor 始终为 ND。
-    """
-    tensor_formats = kwargs.get("tensor_formats", ())
-    if len(tensor_formats) <= tensor_idx or tensor_formats[tensor_idx] != "FRACTAL_NZ":
-        return tensor_np
-    storage_shapes = kwargs.get("tensor_storage_shapes", ())
-    ori_shape = storage_shapes[tensor_idx] if len(storage_shapes) > tensor_idx else None
-    if ori_shape is not None and tuple(tensor_np.shape) != tuple(ori_shape):
-        tensor_np = _util.nz_to_nd(tensor_np, ori_shape)
-    return tensor_np
-
-
-def _decode_u64_scale(scale_np):
-    """UINT64/int64 scale 解码为 float32 deq_scale + offset。
-
-    对应 kernel golden golden() 方法中的 customize_inputs 逻辑。
-    """
-    if scale_np is None:
-        return scale_np, None
-    scale_dt = _util.dtype_to_str(scale_np.dtype)
-    if scale_dt not in ("uint64", "int64"):
-        return scale_np, None
-    deq_scale = _quant.u64_to_deq_scale(scale_np)
-    offset = _quant.u64_to_offset(scale_np)
-    return deq_scale, offset
 
 
 def _kernel_qbmm(
@@ -169,7 +110,7 @@ def _customize_inputs_impl(x1, x2, scale, offset, bias, pertoken_scale, **kwargs
     for tensor in [x1, x2, scale, pertoken_scale]:
         if tensor is None:
             continue
-        cleaned = _quant.sanitize_e8m0_scale(tensor, testcase_name)
+        cleaned = _util.sanitize_e8m0_scale(tensor, testcase_name)
         if cleaned is not tensor:
             _util.write_back(tensor, cleaned)
 
@@ -181,7 +122,7 @@ def _customize_inputs_impl(x1, x2, scale, offset, bias, pertoken_scale, **kwargs
             scale_dt = str(scale.dtype).replace("torch.", "")
         if scale_dt in ("uint64", "int64"):
             scale_shape = tuple(scale.shape)
-            new_scale = _quant.generate_u64_scale(scale_shape)
+            new_scale = _util.generate_u64_scale(scale_shape)
             if scale_dt == "int64":
                 new_scale = new_scale.astype(np.int64)
             _util.write_back(scale, new_scale)
@@ -211,19 +152,17 @@ class AclnnQuantMatmulV3TestSpec:
         **kwargs,
     ):
         # 1) torch → numpy
-        x1_np, x2_np, scale_np, offset_np, bias_np = _to_np(x1, x2, scale, offset, bias)
+        x1_np, x2_np, scale_np, offset_np, bias_np = _util.to_numpy(
+            x1, x2, scale, offset, bias
+        )
 
-        # 2) NZ→ND
-        x2_np = _nz_to_nd_if_needed(x2_np, 1, kwargs)
-        scale_np = _nz_to_nd_if_needed(scale_np, 2, kwargs)
-
-        # 3) UINT64 解码
-        deq_scale, u64_offset = _decode_u64_scale(scale_np)
+        # 2) UINT64 解码
+        deq_scale, u64_offset = _util.decode_u64_scale(scale_np)
         if u64_offset is not None and offset_np is None:
             offset_np = u64_offset
 
         # 4) dtype + output shape 推断
-        out_dtype = _out_dtype(out, x1)
+        out_dtype = _util.dtype_to_str(out if out is not None else x1.dtype)
         out_shapes = _out_shape(out)
 
         # 5) 调 kernel golden
@@ -276,18 +215,15 @@ class AclnnQuantMatmulV4TestSpec:
         out=None,
         **kwargs,
     ):
-        x1_np, x2_np, scale_np, offset_np, pertoken_np, bias_np = _to_np(
+        x1_np, x2_np, scale_np, offset_np, pertoken_np, bias_np = _util.to_numpy(
             x1, x2, scale, offset, pertokenScaleOptional, bias
         )
 
-        x2_np = _nz_to_nd_if_needed(x2_np, 1, kwargs)
-        scale_np = _nz_to_nd_if_needed(scale_np, 2, kwargs)
-
-        deq_scale, u64_offset = _decode_u64_scale(scale_np)
+        deq_scale, u64_offset = _util.decode_u64_scale(scale_np)
         if u64_offset is not None and offset_np is None:
             offset_np = u64_offset
 
-        out_dtype = _out_dtype(out, x1)
+        out_dtype = _util.dtype_to_str(out if out is not None else x1.dtype)
         out_shapes = _out_shape(out)
 
         return _kernel_qbmm(
@@ -347,18 +283,15 @@ class AclnnQuantMatmulWeightNzTestSpec:
         out=None,
         **kwargs,
     ):
-        x1_np, x2_np, x2Scale_np, x2Offset_np, bias_np, x1Scale_np = _to_np(
+        x1_np, x2_np, x2Scale_np, x2Offset_np, bias_np, x1Scale_np = _util.to_numpy(
             x1, x2, x2Scale, x2Offset, bias, x1Scale
         )
 
-        # x2 为 NZ 格式
-        x2_np = _nz_to_nd_if_needed(x2_np, 1, kwargs)
-
-        deq_scale, u64_offset = _decode_u64_scale(x2Scale_np)
+        deq_scale, u64_offset = _util.decode_u64_scale(x2Scale_np)
         if u64_offset is not None and x2Offset_np is None:
             x2Offset_np = u64_offset
 
-        out_dtype = _out_dtype(out, x1)
+        out_dtype = _util.dtype_to_str(out if out is not None else x1.dtype)
         out_shapes = _out_shape(out)
 
         return _kernel_qbmm(
