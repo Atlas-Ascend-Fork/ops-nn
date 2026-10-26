@@ -104,3 +104,153 @@ TEST_F(INTrainingUpdateGradTest, in_training_update_grad_infer_shape_unknown_ran
     EXPECT_EQ(op.GetOutputDesc(0).GetShape().GetDims(), expected);
     EXPECT_EQ(op.GetOutputDesc(1).GetShape().GetDims(), expected);
 }
+
+// 混合未知秩：dy 具体而 x/variance/mean 为 [-2]（GEIR 动态图投影场景，FR-005）——
+// 必须透传 unknown，不得因 dy 具体而进入严格校验拒绝
+TEST_F(INTrainingUpdateGradTest, in_training_update_grad_infer_shape_mixed_unknown_rank)
+{
+    ge::op::INTrainingUpdateGrad op;
+    ge::Format format = ge::FORMAT_NDC1HWC0;
+    auto full_tensor = create_desc_with_ori({2, 4, 2, 8, 8, 16}, ge::DT_FLOAT, format, {2, 4, 2, 8, 8, 16}, format);
+    auto unknown = create_desc({-2}, ge::DT_FLOAT);
+    op.UpdateInputDesc("dy", full_tensor);
+    op.UpdateInputDesc("x", unknown);
+    op.UpdateInputDesc("variance", unknown);
+    op.UpdateInputDesc("mean", unknown);
+    Runtime2TestParam param;
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_SUCCESS);
+    std::vector<int64_t> expected{-2};
+    EXPECT_EQ(op.GetOutputDesc(0).GetShape().GetDims(), expected);
+    EXPECT_EQ(op.GetOutputDesc(1).GetShape().GetDims(), expected);
+}
+
+// N=0：README 承诺拒绝，Host 门应独立拒绝（FR-006）
+TEST_F(INTrainingUpdateGradTest, in_training_update_grad_infer_shape_reject_non_positive_n)
+{
+    ge::op::INTrainingUpdateGrad op;
+    ge::Format format = ge::FORMAT_NDC1HWC0;
+    auto full_tensor = create_desc_with_ori({0, 4, 2, 8, 8, 16}, ge::DT_FLOAT, format, {0, 4, 2, 8, 8, 16}, format);
+    auto param_tensor = create_desc_with_ori({0, 1, 2, 1, 1, 16}, ge::DT_FLOAT, format, {0, 1, 2, 1, 1, 16}, format);
+    op.UpdateInputDesc("dy", full_tensor);
+    op.UpdateInputDesc("x", full_tensor);
+    op.UpdateInputDesc("variance", param_tensor);
+    op.UpdateInputDesc("mean", param_tensor);
+    Runtime2TestParam param;
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+}
+
+// C0=65 超 64 lane 上界：Host 门独立拒绝（FR-006）
+TEST_F(INTrainingUpdateGradTest, in_training_update_grad_infer_shape_reject_c0_over_64)
+{
+    ge::op::INTrainingUpdateGrad op;
+    ge::Format format = ge::FORMAT_NDC1HWC0;
+    auto full_tensor = create_desc_with_ori({2, 4, 2, 8, 8, 65}, ge::DT_FLOAT, format, {2, 4, 2, 8, 8, 65}, format);
+    auto param_tensor = create_desc_with_ori({2, 1, 2, 1, 1, 65}, ge::DT_FLOAT, format, {2, 1, 2, 1, 1, 65}, format);
+    op.UpdateInputDesc("dy", full_tensor);
+    op.UpdateInputDesc("x", full_tensor);
+    op.UpdateInputDesc("variance", param_tensor);
+    op.UpdateInputDesc("mean", param_tensor);
+    Runtime2TestParam param;
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+}
+
+// ---------------- Host 图构建门校验：静态形状/_dtype 违约在此拒绝（原放行至 tiling 门） ----------------
+
+// dy 已知秩但非 6 维：Host 门拒绝
+TEST_F(INTrainingUpdateGradTest, in_training_update_grad_infer_shape_reject_rank_not_six)
+{
+    ge::op::INTrainingUpdateGrad op;
+    ge::Format format = ge::FORMAT_NDC1HWC0;
+    auto full_tensor = create_desc_with_ori({2, 2, 8, 8, 16}, ge::DT_FLOAT, format, {2, 2, 8, 8, 16}, format);
+    auto param_tensor = create_desc_with_ori({2, 1, 2, 1, 1, 16}, ge::DT_FLOAT, format, {2, 1, 2, 1, 1, 16}, format);
+    op.UpdateInputDesc("dy", full_tensor);
+    op.UpdateInputDesc("x", full_tensor);
+    op.UpdateInputDesc("variance", param_tensor);
+    op.UpdateInputDesc("mean", param_tensor);
+    Runtime2TestParam param;
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+}
+
+// x 与 dy 形状不一致：Host 门拒绝
+TEST_F(INTrainingUpdateGradTest, in_training_update_grad_infer_shape_reject_x_mismatch)
+{
+    ge::op::INTrainingUpdateGrad op;
+    ge::Format format = ge::FORMAT_NDC1HWC0;
+    auto dy_tensor = create_desc_with_ori({2, 4, 2, 8, 8, 16}, ge::DT_FLOAT, format, {2, 4, 2, 8, 8, 16}, format);
+    auto x_tensor = create_desc_with_ori({2, 4, 2, 8, 9, 16}, ge::DT_FLOAT, format, {2, 4, 2, 8, 9, 16}, format);
+    auto param_tensor = create_desc_with_ori({2, 1, 2, 1, 1, 16}, ge::DT_FLOAT, format, {2, 1, 2, 1, 1, 16}, format);
+    op.UpdateInputDesc("dy", dy_tensor);
+    op.UpdateInputDesc("x", x_tensor);
+    op.UpdateInputDesc("variance", param_tensor);
+    op.UpdateInputDesc("mean", param_tensor);
+    Runtime2TestParam param;
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+}
+
+// variance 非期望的 (N,1,C1,1,1,C0)：Host 门拒绝
+TEST_F(INTrainingUpdateGradTest, in_training_update_grad_infer_shape_reject_variance_mismatch)
+{
+    ge::op::INTrainingUpdateGrad op;
+    ge::Format format = ge::FORMAT_NDC1HWC0;
+    auto full_tensor = create_desc_with_ori({2, 4, 2, 8, 8, 16}, ge::DT_FLOAT, format, {2, 4, 2, 8, 8, 16}, format);
+    auto bad_param = create_desc_with_ori({2, 4, 2, 1, 1, 16}, ge::DT_FLOAT, format, {2, 4, 2, 1, 1, 16}, format);
+    op.UpdateInputDesc("dy", full_tensor);
+    op.UpdateInputDesc("x", full_tensor);
+    op.UpdateInputDesc("variance", bad_param);
+    op.UpdateInputDesc("mean", bad_param);
+    Runtime2TestParam param;
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+}
+
+// dy dtype 非 fp16/fp32：Host 门拒绝（InferDataType）
+TEST_F(INTrainingUpdateGradTest, in_training_update_grad_infer_dtype_reject_invalid_dy)
+{
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingUpdateGrad"), nullptr);
+    auto data_type_func = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingUpdateGrad")->infer_datatype;
+    ASSERT_NE(data_type_func, nullptr);
+    ge::DataType dy_dt = ge::DT_INT32;
+    ge::DataType param_dt = ge::DT_FLOAT;
+    ge::DataType out_dt = ge::DT_FLOAT;
+    auto context_holder = gert::InferDataTypeContextFaker()
+                              .IrInputNum(4)
+                              .NodeIoNum(4, 2)
+                              .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .InputDataTypes({&dy_dt, &dy_dt, &param_dt, &param_dt})
+                              .OutputDataTypes({&out_dt, &out_dt})
+                              .Build();
+    auto context = context_holder.GetContext<gert::InferDataTypeContext>();
+    ASSERT_NE(context, nullptr);
+    EXPECT_EQ(data_type_func(context), ge::GRAPH_FAILED);
+}
+
+// x 与 dy dtype 不一致：Host 门拒绝（InferDataType）
+TEST_F(INTrainingUpdateGradTest, in_training_update_grad_infer_dtype_reject_x_mismatch)
+{
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingUpdateGrad"), nullptr);
+    auto data_type_func = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingUpdateGrad")->infer_datatype;
+    ASSERT_NE(data_type_func, nullptr);
+    ge::DataType dy_dt = ge::DT_FLOAT;
+    ge::DataType x_dt = ge::DT_FLOAT16;
+    ge::DataType param_dt = ge::DT_FLOAT;
+    ge::DataType out_dt = ge::DT_FLOAT;
+    auto context_holder = gert::InferDataTypeContextFaker()
+                              .IrInputNum(4)
+                              .NodeIoNum(4, 2)
+                              .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_NDC1HWC0, ge::FORMAT_NDC1HWC0)
+                              .InputDataTypes({&dy_dt, &x_dt, &param_dt, &param_dt})
+                              .OutputDataTypes({&out_dt, &out_dt})
+                              .Build();
+    auto context = context_holder.GetContext<gert::InferDataTypeContext>();
+    ASSERT_NE(context, nullptr);
+    EXPECT_EQ(data_type_func(context), ge::GRAPH_FAILED);
+}

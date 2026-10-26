@@ -26,7 +26,7 @@
 
 ## 参数说明
 
-<table style="undefined;table-layout: fixed; width: 1005px"><colgroup>
+<table style="table-layout: fixed; width: 1005px"><colgroup>
   <col style="width: 170px">
   <col style="width: 170px">
   <col style="width: 352px">
@@ -95,9 +95,12 @@
 - 入参`dy`、`x`的数据类型须一致，同为FLOAT16或同为FLOAT32；`variance`、`mean`与两个输出恒为FLOAT32。
 - 归约轴（D、H、W）中存在0时，`res_gamma`、`res_beta`的所有元素均为0。
 - N、C1、C0维度需大于0；为0时不支持，算子拒绝执行。
+- C0维度需不大于64（单fp32向量寄存器64 lane上限）；超出时算子拒绝执行。
+- 各维度乘积需在uint32范围内（D、H*W、C1、D*H*W、N*C1、H*W*C0、N*C1*C0均不超过2^32-1）；超出时算子拒绝执行。
+- 动态Shape/动态Rank输入：输出shape按`variance`透传，输入校验在算子tiling阶段完成。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| 图模式 | [test_geir_in_training_update_grad](examples/test_geir_in_training_update_grad.cpp) | 通过[算子IR](op_graph/in_training_update_grad_proto.h)构图方式调用INTrainingUpdateGrad算子。 |
+| GE图模式 | [test_geir_in_training_update_grad](examples/test_geir_in_training_update_grad.cpp) | 通过[算子IR](op_graph/in_training_update_grad_proto.h)构图方式调用INTrainingUpdateGrad算子。 |

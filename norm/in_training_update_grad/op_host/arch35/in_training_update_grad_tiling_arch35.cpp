@@ -45,10 +45,21 @@ constexpr int64_t FP16_BYTE = 2;
 constexpr int64_t DOUBLE_BUFFER = 2;
 constexpr int64_t MAX_BLOCK_COUNT = 65535; // DataCopyExtParams.blockCount is uint16
 constexpr int64_t SINGLE_AIV_THRESHOLD_BYTES = 32L * 1024L;
+// The kernel lays dy/x UB rows out with a 32B-aligned padded stride (register loads need 32B-aligned
+// row starts), so capacity is accounted with the padded row size, not the raw C0 footprint.
+constexpr int64_t UB_ALIGN_BYTES = 32;
+// The arch35 register implementation computes at most 64 C0 lanes per row (one fp32 vector
+// register); C0 beyond that silently truncates lanes >= 64 or raises a device aivec error, so the
+// tiling gate rejects it up front instead of producing wrong results.
+constexpr int64_t MAX_C0_LANES = 64;
+// TilingData members and DataCopyExtParams fields are uint32: every derived product must fit
+// before the narrowing cast, or the kernel would compute wrapped offsets/strides.
+constexpr int64_t UINT32_LIMIT = 0xFFFFFFFFLL;
 
-constexpr uint64_t TILINGKEY_REDUCE_EMPTY = 50000;
-constexpr uint64_t TILINGKEY_FULL_LOAD = 100000;
-constexpr uint64_t TILINGKEY_STREAM = 200000;
+int64_t CeilAlign32(int64_t bytes) { return (bytes + UB_ALIGN_BYTES - 1) / UB_ALIGN_BYTES * UB_ALIGN_BYTES; }
+
+// Tiling keys come from the shared tiling_data.h (single source with the kernel dispatch).
+namespace Keys = InTrainingUpdateGradKeys;
 
 constexpr float DEFAULT_EPSILON = 1e-6f;
 } // namespace
@@ -212,11 +223,33 @@ ge::graphStatus InTrainingUpdateGradTilingBase::GetShapeAttrsInfo()
             return ge::GRAPH_FAILED);
     }
 
-    numHW_ = numH_ * numW_;
-    reduceR_ = numD_ * numHW_;
-    groupNum_ = numN_ * numC1_;
-    blockLenElem_ = numHW_ * numC0_;
     epsilon_ = DEFAULT_EPSILON;
+
+    // Shared kernel-envelope gate (all three tiling templates): C0 lane bound and uint32 fits.
+    // Every product is validated by pairwise quotient BEFORE it is computed (dims are
+    // non-negative here), so extreme dim values cannot overflow the int64 check itself.
+    OP_CHECK_IF((numC0_ > MAX_C0_LANES),
+                OP_LOGE(context_->GetNodeName(),
+                        "C0 dim of input dy must not exceed %lld (one fp32 vector "
+                        "register); got %lld",
+                        static_cast<long long>(MAX_C0_LANES), static_cast<long long>(numC0_)),
+                return ge::GRAPH_FAILED);
+    const auto pairFits = [](int64_t a, int64_t b) {
+        return a <= UINT32_LIMIT && b <= (a > 0 ? UINT32_LIMIT / a : UINT32_LIMIT);
+    };
+    const auto rejectProduct = [this](const std::string& name) {
+        OP_LOGE(context_->GetNodeName(), "Dim product %s of input dy exceeds the uint32 kernel envelope", name.c_str());
+        return ge::GRAPH_FAILED;
+    };
+    OP_CHECK_IF(!pairFits(numH_, numW_), rejectProduct("H*W"), return ge::GRAPH_FAILED);
+    numHW_ = numH_ * numW_;
+    OP_CHECK_IF(!pairFits(numD_, numHW_), rejectProduct("D*H*W"), return ge::GRAPH_FAILED);
+    reduceR_ = numD_ * numHW_;
+    OP_CHECK_IF(!pairFits(numN_, numC1_), rejectProduct("N*C1"), return ge::GRAPH_FAILED);
+    groupNum_ = numN_ * numC1_;
+    OP_CHECK_IF(!pairFits(numHW_, numC0_), rejectProduct("H*W*C0"), return ge::GRAPH_FAILED);
+    blockLenElem_ = numHW_ * numC0_;
+    OP_CHECK_IF(!pairFits(groupNum_, numC0_), rejectProduct("N*C1*C0"), return ge::GRAPH_FAILED);
 
     return CheckDtype();
 }
@@ -253,6 +286,17 @@ ge::graphStatus InTrainingUpdateGradReduceEmptyTiling::DoOpTiling()
 
     int64_t perCoreElements = Ops::Base::CeilDiv(totalLength, blockNum_);
     int64_t lastCoreElements = totalLength - (blockNum_ - 1) * perCoreElements;
+    // Non-negative invariant before the uint32 narrowing casts: a negative tail count wraps
+    // to a huge uint32 in the kernel's copy loop and overruns the output buffers. This holds
+    // by construction (perCoreElements = ceil(total / blockNum) implies (blockNum-1)*perCore <
+    // total), but is checked so that a future formula change fails loudly here instead of on
+    // device.
+    OP_CHECK_IF((perCoreElements < 0 || lastCoreElements < 0),
+                OP_LOGE(context_->GetNodeName(),
+                        "ReduceEmpty element split produced a negative count: "
+                        "perCoreElements=%lld, lastCoreElements=%lld",
+                        static_cast<long long>(perCoreElements), static_cast<long long>(lastCoreElements)),
+                return ge::GRAPH_FAILED);
     td_.perCoreElements = static_cast<uint32_t>(perCoreElements);
     td_.lastCoreElements = static_cast<uint32_t>(lastCoreElements);
 
@@ -262,6 +306,10 @@ ge::graphStatus InTrainingUpdateGradReduceEmptyTiling::DoOpTiling()
     }
     int64_t perCoreLoops = Ops::Base::CeilDiv(perCoreElements, perCorePerLoop);
     int64_t perCoreLastLoop = perCoreElements - (perCoreLoops - 1) * perCorePerLoop;
+    OP_CHECK_IF((perCoreLastLoop < 0),
+                OP_LOGE(context_->GetNodeName(), "ReduceEmpty per-core loop split produced a negative count: %lld",
+                        static_cast<long long>(perCoreLastLoop)),
+                return ge::GRAPH_FAILED);
     td_.perCoreLoops = static_cast<uint32_t>(perCoreLoops);
     td_.perCorePerLoopElements = static_cast<uint32_t>(perCorePerLoop);
     td_.perCoreLastLoopElements = static_cast<uint32_t>(perCoreLastLoop);
@@ -272,13 +320,17 @@ ge::graphStatus InTrainingUpdateGradReduceEmptyTiling::DoOpTiling()
     }
     int64_t lastCoreLoops = Ops::Base::CeilDiv(lastCoreElements, lastCorePerLoop);
     int64_t lastCoreLastLoop = lastCoreElements - (lastCoreLoops - 1) * lastCorePerLoop;
+    OP_CHECK_IF((lastCoreLastLoop < 0),
+                OP_LOGE(context_->GetNodeName(), "ReduceEmpty last-core loop split produced a negative count: %lld",
+                        static_cast<long long>(lastCoreLastLoop)),
+                return ge::GRAPH_FAILED);
     td_.lastCoreLoops = static_cast<uint32_t>(lastCoreLoops);
     td_.lastCorePerLoopElements = static_cast<uint32_t>(lastCorePerLoop);
     td_.lastCoreLastLoopElements = static_cast<uint32_t>(lastCoreLastLoop);
     return ge::GRAPH_SUCCESS;
 }
 
-uint64_t InTrainingUpdateGradReduceEmptyTiling::GetTilingKey() const { return TILINGKEY_REDUCE_EMPTY; }
+uint64_t InTrainingUpdateGradReduceEmptyTiling::GetTilingKey() const { return Keys::REDUCE_EMPTY; }
 
 ge::graphStatus InTrainingUpdateGradReduceEmptyTiling::PostTiling()
 {
@@ -309,12 +361,25 @@ bool InTrainingUpdateGradFullLoadTiling::IsCapable()
         return false;
     }
     int64_t elemSize = (dyDataType_ == ge::DT_FLOAT16) ? FP16_BYTE : FP32_BYTE;
+    // The aggregate copy's srcStride is a uint32 byte gap: (numC1-1)*blockLenElem*elemSize.
+    // Validate by quotient (blockBytes = blockLenElem*elemSize cannot overflow int64 because
+    // blockLenElem already fits uint32) instead of multiplying the three factors first.
+    const int64_t blockBytes = blockLenElem_ * elemSize;
+    if (numC1_ > 1 && (blockBytes > UINT32_LIMIT || (numC1_ - 1) > UINT32_LIMIT / blockBytes)) {
+        return false;
+    }
     int64_t regPad = vectorLength_;
-    int64_t spatialBytes = reduceR_ * numC0_ * elemSize;
-    int64_t need = DOUBLE_BUFFER * (spatialBytes + regPad) * 2 + // dy + x
-                   2 * (numC0_ * FP32_BYTE + regPad) +           // variance + mean
-                   DOUBLE_BUFFER * (numC0_ * FP32_BYTE) * 2 +    // res_gamma + res_beta
-                   numC0_ * FP32_BYTE;                           // rstd
+    // Padded row footprint: rows are stored at a 32B-aligned stride even when C0*elemSize is not.
+    int64_t spatialBytes = reduceR_ * CeilAlign32(numC0_ * elemSize);
+    // TPipe::InitBuffer rounds every buffer length up to a 32B multiple before allocating, so each
+    // term must be accounted at its aligned length. dy/x stay aligned as is (rows are 32B-strided
+    // and regPad is a 32B multiple); scalar buffers need explicit rounding.
+    int64_t scalarBuf = CeilAlign32(numC0_ * FP32_BYTE + regPad);        // variance/mean/rstd/cGamma/cBeta
+    int64_t need = DOUBLE_BUFFER * (spatialBytes + regPad) * 2 +         // dy + x
+                   2 * scalarBuf +                                       // variance + mean
+                   DOUBLE_BUFFER * CeilAlign32(numC0_ * FP32_BYTE) * 2 + // res_gamma + res_beta (masked stores)
+                   scalarBuf +                                           // rstd (full-register reload, padded)
+                   2 * scalarBuf;                                        // Kahan cGamma + cBeta (reloaded, padded)
     return need <= static_cast<int64_t>(aicoreParams_.ubSize);
 }
 
@@ -339,7 +404,7 @@ ge::graphStatus InTrainingUpdateGradFullLoadTiling::DoOpTiling()
     return ge::GRAPH_SUCCESS;
 }
 
-uint64_t InTrainingUpdateGradFullLoadTiling::GetTilingKey() const { return TILINGKEY_FULL_LOAD; }
+uint64_t InTrainingUpdateGradFullLoadTiling::GetTilingKey() const { return Keys::FULL_LOAD; }
 
 ge::graphStatus InTrainingUpdateGradFullLoadTiling::PostTiling()
 {
@@ -373,12 +438,18 @@ ge::graphStatus InTrainingUpdateGradStreamTiling::DoOpTiling()
 
     int64_t elemSize = (dyDataType_ == ge::DT_FLOAT16) ? FP16_BYTE : FP32_BYTE;
     int64_t regPad = vectorLength_;
-    int64_t overhead = 2 * (numC0_ * FP32_BYTE + regPad) +        // variance + mean
-                       DOUBLE_BUFFER * (numC0_ * FP32_BYTE) * 2 + // res_gamma + res_beta
-                       numC0_ * FP32_BYTE +                       // rstd
-                       DOUBLE_BUFFER * regPad * 2;                // register pad reserved for dy + x
+    // TPipe::InitBuffer rounds every buffer length up to a 32B multiple before allocating, so the
+    // scalar buffers must be accounted at their aligned length. dy/x chunks stay aligned (rows are
+    // 32B-strided, regPad is a 32B multiple) and keep the register-pad reservation below.
+    int64_t scalarBuf = CeilAlign32(numC0_ * FP32_BYTE + regPad);
+    int64_t overhead = 2 * scalarBuf +                 // variance + mean
+                       DOUBLE_BUFFER * scalarBuf * 2 + // res_gamma + res_beta (reloaded)
+                       scalarBuf +                     // rstd (full-register reload, padded)
+                       2 * scalarBuf +                 // Kahan cGamma + cBeta (reloaded, padded)
+                       DOUBLE_BUFFER * regPad * 2;     // register pad reserved for dy + x
     int64_t avail = static_cast<int64_t>(aicoreParams_.ubSize) - overhead;
-    int64_t perRowBytes = numC0_ * elemSize;
+    // Padded row footprint: rows are stored at a 32B-aligned stride even when C0*elemSize is not.
+    int64_t perRowBytes = CeilAlign32(numC0_ * elemSize);
     int64_t streamTileRows = avail / (DOUBLE_BUFFER * perRowBytes * 2);
     if (streamTileRows < 1) {
         streamTileRows = 1;
@@ -401,7 +472,7 @@ ge::graphStatus InTrainingUpdateGradStreamTiling::DoOpTiling()
     return ge::GRAPH_SUCCESS;
 }
 
-uint64_t InTrainingUpdateGradStreamTiling::GetTilingKey() const { return TILINGKEY_STREAM; }
+uint64_t InTrainingUpdateGradStreamTiling::GetTilingKey() const { return Keys::STREAM; }
 
 ge::graphStatus InTrainingUpdateGradStreamTiling::PostTiling()
 {

@@ -72,12 +72,27 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
     for (uint32_t i = 0; i < shapes.size(); i++) {
         size *= shapes[i];
     }
-    uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[data_len == 0 ? 1 : data_len];
-    for (uint32_t i = 0; i < size; ++i) {
-        *(pData + i) = value;
+    uint32_t unitSize = GetDataTypeSize(data_type);
+    uint32_t data_len = size * unitSize;
+    // Byte-wise buffer; every element gets the full value pattern of its dtype width.
+    uint8_t* pData = new (std::nothrow) uint8_t[data_len == 0 ? 1 : data_len];
+    if (pData == nullptr) {
+        printf("%s - ERROR - [XIR]: Allocate host input buffer failed\n", GetTime().c_str());
+        return FAILED;
     }
-    input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
+    for (uint32_t i = 0; i < data_len; i += unitSize) {
+        for (uint32_t j = 0; j < unitSize; ++j) {
+            pData[i + j] = static_cast<uint8_t>(value);
+        }
+    }
+    // Hand the buffer to the Tensor with a deleter: ownership transfers and the memory is
+    // released by the Tensor itself, so the lifetime never depends on constructor copy semantics.
+    input_tensor.SetTensorDesc(input_tensor_desc);
+    if (input_tensor.SetData(pData, data_len, [](uint8_t* p) { delete[] p; }) != ge::GRAPH_SUCCESS) {
+        delete[] pData;
+        printf("%s - ERROR - [XIR]: Set tensor data failed\n", GetTime().c_str());
+        return FAILED;
+    }
     return SUCCESS;
 }
 

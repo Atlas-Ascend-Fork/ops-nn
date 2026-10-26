@@ -17,6 +17,24 @@
 
 #include <cstdint>
 
+// Tiling keys: the single source of truth shared by the host tiling (GetTilingKey) and the
+// kernel entry dispatch. Both sides include this header, so the values cannot drift apart;
+// a mismatched binary would previously dispatch on independently maintained literals.
+// The AscendC precompilation phase only accepts numeric constants or macros inside
+// TILING_KEY_IS(), so the values are exposed as macros; the namespace constants below are
+// derived from the same macros for host-side (non-TILING_KEY_IS) use.
+#define IN_UG_TILING_KEY_REDUCE_EMPTY 50000
+#define IN_UG_TILING_KEY_FULL_LOAD 100000
+#define IN_UG_TILING_KEY_STREAM 200000
+
+namespace InTrainingUpdateGradKeys {
+constexpr uint64_t REDUCE_EMPTY = IN_UG_TILING_KEY_REDUCE_EMPTY;
+constexpr uint64_t FULL_LOAD = IN_UG_TILING_KEY_FULL_LOAD;
+constexpr uint64_t STREAM = IN_UG_TILING_KEY_STREAM;
+static_assert(REDUCE_EMPTY != FULL_LOAD && REDUCE_EMPTY != STREAM && FULL_LOAD != STREAM,
+              "in_training_update_grad tiling keys must be distinct");
+} // namespace InTrainingUpdateGradKeys
+
 // FullLoad (TilingKey 100000): the whole spatial block (R*C0) of one (n,c1) group fits UB.
 struct InTrainingUpdateGradFullLoadTilingData {
     uint32_t numC1;

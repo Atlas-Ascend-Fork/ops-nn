@@ -27,10 +27,12 @@ TilingKey routing (mirrors op_host/arch35/in_training_update_grad_tiling_arch35.
     100000 FullLoad    : R > 0 AND D <= 65535 AND (one group's R*C0 block fits UB, double buffered)
     200000 Stream      : R > 0 AND (does not fit UB OR D > 65535)
 
-The FullLoad UB-fit predicate is copied byte-for-byte from InTrainingUpdateGradFullLoadTiling::IsCapable
-(Ascend950: UB_SIZE = 253952, vectorLength/regPad = 256, C0 = 16), giving the boundaries:
-    fp32 : R = D*H*W <= 984  -> FullLoad ; R >= 985  -> Stream
-    fp16 : R = D*H*W <= 1968 -> FullLoad ; R >= 1969 -> Stream
+The FullLoad UB-fit predicate mirrors InTrainingUpdateGradFullLoadTiling::IsCapable
+(Ascend950: UB_SIZE = 253952, vectorLength/regPad = 256, C0 = 16), including the padded
+32B row stride (CeilAlign32(C0*elemSize); no-op for C0=16 at both dtypes) and the
+rstd / Kahan-compensation register padding, giving the boundaries:
+    fp32 : R = D*H*W <= 980  -> FullLoad ; R >= 981  -> Stream
+    fp16 : R = D*H*W <= 1961 -> FullLoad ; R >= 1962 -> Stream
 
 Only shape / CSV are produced here; nothing is run on NPU/TTK, no operator code is touched.
 """
@@ -45,7 +47,9 @@ import sys
 # ---------------------------------------------------------------------------
 # Platform / tiling constants (Ascend950, arch35) -- keep in sync with the host tiling.
 # ---------------------------------------------------------------------------
-UB_SIZE = 253952  # bytes, Ascend950 UB
+UB_SIZE = (
+    245760  # bytes, Ascend950PR UB (matches UT fixture and runtime GetCoreMemSize)
+)
 REG_PAD = 256  # vectorLength (VReg width in bytes) on arch35
 C0 = 16  # NDC1HWC0 last dim
 FP32_BYTE = 4
@@ -60,7 +64,8 @@ KEY_FULL_LOAD = 100000
 KEY_STREAM = 200000
 
 # FullLoad R upper bounds derived from full_load_fits() below (documentation only; predicate is authoritative).
-RMAX = {"float32": 984, "float16": 1968}
+# UB_SIZE=245760 matches the UT fixture and the runtime GetCoreMemSize(UB) on Ascend950PR.
+RMAX = {"float32": 948, "float16": 1897}
 
 MEM_CAP = 48 * 1024 * 1024  # cap dy+x host bytes per case so the CSV stays cheap to run
 
@@ -109,13 +114,17 @@ DT_TAG = {"float32": "f32", "float16": "f16"}
 # ---------------------------------------------------------------------------
 def full_load_fits(reduce_r, dtype):
     elem = FP16_BYTE if dtype == "float16" else FP32_BYTE
-    spatial_bytes = reduce_r * C0 * elem
+    # Padded 32B-aligned row stride (matches the kernel's UB row layout); CeilAlign32 is a
+    # no-op for C0=16 at both dtypes but is kept explicit to mirror the host formula.
+    row_stride_bytes = (C0 * elem + 31) // 32 * 32
+    spatial_bytes = reduce_r * row_stride_bytes
     need = (
         DOUBLE_BUFFER * (spatial_bytes + REG_PAD) * 2  # dy + x
         + 2 * (C0 * FP32_BYTE + REG_PAD)  # variance + mean
-        + DOUBLE_BUFFER * (C0 * FP32_BYTE) * 2  # res_gamma + res_beta
-        + C0 * FP32_BYTE
-    )  # rstd
+        + DOUBLE_BUFFER * (C0 * FP32_BYTE) * 2  # res_gamma + res_beta (masked stores)
+        + (C0 * FP32_BYTE + REG_PAD)  # rstd (full-register reload, padded)
+        + 2 * (C0 * FP32_BYTE + REG_PAD)  # Kahan cGamma + cBeta (padded)
+    )
     return need <= UB_SIZE
 
 
@@ -300,10 +309,51 @@ SYS_BOTH = [
 
 # (tag, N, D, C1, H, W, dtype) -- sit exactly on that dtype's FullLoad/Stream boundary.
 SYS_DTYPE_SPECIFIC = [
-    ("fl_boundary_max", 1, 1, 1, 24, 41, "float32"),  # R=984  -> FullLoad (fp32 max)
-    ("st_boundary_over", 1, 1, 1, 5, 197, "float32"),  # R=985  -> Stream  (fp32 min)
-    ("fl_boundary_max", 1, 1, 1, 48, 41, "float16"),  # R=1968 -> FullLoad (fp16 max)
-    ("st_boundary_over", 1, 1, 1, 11, 179, "float16"),  # R=1969 -> Stream  (fp16 min)
+    (
+        "fl_boundary_max",
+        1,
+        1,
+        1,
+        24,
+        39,
+        "float32",
+    ),  # R=936  -> FullLoad (fp32 max region)
+    (
+        "st_boundary_over",
+        1,
+        1,
+        1,
+        4,
+        238,
+        "float32",
+    ),  # R=952  -> Stream  (fp32: just over boundary)
+    (
+        "fl_boundary_max",
+        1,
+        1,
+        1,
+        37,
+        51,
+        "float16",
+    ),  # R=1887 -> FullLoad (fp16 max region)
+    (
+        "st_boundary_over",
+        1,
+        1,
+        1,
+        10,
+        190,
+        "float16",
+    ),  # R=1900 -> Stream  (fp16: just over boundary)
+]
+
+# DFX nonfinite tier: names carry `_nonfinite` so the golden's _inject_nonfinite hook
+# replaces pinned elements with inf/nan; without this tier that hook never fires and
+# non-finite propagation stays unverified. One representative shape per regime.
+SYS_NONFINITE = [
+    ("nf_nonfinite", 1, 1, 1, 8, 8),  # small FullLoad
+    ("nf_nonfinite", 2, 1, 2, 4, 4),  # multi-group FullLoad
+    ("nf_nonfinite", 1, 2, 1, 32, 40),  # Stream (R=2560)
 ]
 
 
@@ -391,6 +441,10 @@ def gen():
     for tag, n, d, c1, h, w, dtype in SYS_DTYPE_SPECIFIC:
         n2, c12 = mem_guard(n, c1, d * h * w, dtype)
         add(tag, n2, d, c12, h, w, dtype)
+    for tag, n, d, c1, h, w in SYS_NONFINITE:
+        for dtype in ("float32", "float16"):
+            n2, c12 = mem_guard(n, c1, d * h * w, dtype)
+            add(tag, n2, d, c12, h, w, dtype)
 
     # ---- random body: fill each (key, dtype) bucket ----
     for dtype in ("float32", "float16"):

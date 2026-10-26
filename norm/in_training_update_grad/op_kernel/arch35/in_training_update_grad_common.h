@@ -33,6 +33,11 @@ using AscendC::Reg::UpdateMask;
 constexpr uint32_t VECTOR_REG_WIDTH = 256U;                    // DAV_3510 vector register width in bytes
 constexpr uint32_t VL_FP32 = VECTOR_REG_WIDTH / sizeof(float); // 64
 constexpr uint32_t BUFFER_NUM = 2;
+// VEC register loads (DataCopy on RegTensor) fetch a full 256B register and require the source UB
+// address to be 32B aligned (device raises aivec errcode 340 otherwise). A (rows, C0) dy/x block is
+// read row by row at element offset r*rowStride, so every row start must stay 32B aligned; the UB row
+// stride is therefore padded up to the 32B boundary whenever C0*sizeof(T) is not a 32B multiple.
+constexpr uint32_t UB_ALIGN_BYTES = 32U;
 
 // eps and IEEE guards for rsqrt(variance + eps)
 constexpr float IN_EPSILON = 1e-6f;
@@ -46,7 +51,51 @@ constexpr AscendC::Reg::CastTrait castTraitB162B32 = {
     AscendC::RoundMode::UNKNOWN,
 };
 
-__aicore__ inline uint32_t CeilDiv(uint32_t a, uint32_t b) { return (b == 0) ? 0 : (a + b - 1) / b; }
+// Quotient-safe ceil division: a+b-1 wraps uint32 when a is near 2^32 (e.g. numHW with
+// streamTileRows=2), which would make the chunk-loop count 0 and leave outputs unwritten.
+__aicore__ inline uint32_t CeilDiv(uint32_t a, uint32_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    return static_cast<uint32_t>((static_cast<uint64_t>(a) + b - 1U) / b);
+}
+
+// Padded row stride (elements) of a (rows, C0) UB block: the smallest multiple of sizeof(T)
+// whose byte length is 32B aligned. Equals c0 itself when C0*sizeof(T) is already a 32B multiple.
+__aicore__ inline uint32_t RowStrideElems(uint32_t c0, uint32_t elemSize)
+{
+    uint32_t rowBytes = c0 * elemSize;
+    uint32_t strideBytes = (rowBytes + UB_ALIGN_BYTES - 1U) / UB_ALIGN_BYTES * UB_ALIGN_BYTES;
+    return strideBytes / elemSize;
+}
+
+// Copy `rows` contiguous GM rows of C0 elements into a UB block laid out with the padded
+// RowStrideElems stride. DataCopyPad advances the destination by CeilAlign(blockLen, 32B) per
+// block, which is exactly the padded stride, so dstStride stays 0 and row r lands at
+// r*RowStrideElems(c0, sizeof(T)) elements. blockCount is uint16, hence the 65535-row chunking.
+template <typename T>
+__aicore__ inline void CopyInRowsPadded(const LocalTensor<T>& dst, const GlobalTensor<T>& src, uint32_t rows,
+                                        uint32_t c0)
+{
+    constexpr uint32_t MAX_ROW_BLOCKS = 65535U;
+    uint32_t rowStride = RowStrideElems(c0, sizeof(T));
+    DataCopyExtParams copyParams;
+    copyParams.blockLen = c0 * sizeof(T);
+    copyParams.srcStride = 0;
+    copyParams.dstStride = 0;
+    DataCopyPadExtParams<T> padParams;
+    padParams.isPad = false;
+    padParams.leftPadding = 0;
+    padParams.rightPadding = 0;
+    padParams.paddingValue = 0;
+    for (uint32_t start = 0; start < rows; start += MAX_ROW_BLOCKS) {
+        uint32_t blockRows = (rows - start > MAX_ROW_BLOCKS) ? MAX_ROW_BLOCKS : rows - start;
+        copyParams.blockCount = static_cast<uint16_t>(blockRows);
+        DataCopyPad<T, PaddingMode::Normal>(dst[start * rowStride], src[static_cast<uint64_t>(start) * c0], copyParams,
+                                            padParams);
+    }
+}
 
 // Load one register of `T` from UB at `offset`, promoting fp16 -> fp32 (fp32 loads directly).
 template <typename T>
@@ -80,7 +129,6 @@ __aicore__ inline void ComputeRstd(__local_mem__ float* varUb, __local_mem__ flo
         RegTensor<float> scalarZero;
         RegTensor<float> t1;
         RegTensor<float> t3;
-        RegTensor<float> t4;
         RegTensor<float> rstd;
 
         MaskReg cmpRegZero;
@@ -99,17 +147,21 @@ __aicore__ inline void ComputeRstd(__local_mem__ float* varUb, __local_mem__ flo
 
             DataCopy(var, varUb + a * VL_FP32);
             Adds(var, var, eps, pregLoop);
-            Div(r, one, var, pregLoop);
-            Sqrt(y, r, pregLoop);
+            // Seed y = 1/sqrt(var) via sqrt-first: 1/var is fp32 subnormal for var near FLT_MAX
+            // (2.9e-39 < 1.18e-38) and flushes to zero, and overflows to inf for var near the
+            // subnormal range; sqrt(var) and its reciprocal stay normal across [eps, FLT_MAX].
+            Sqrt(t, var, pregLoop);
+            Div(y, one, t, pregLoop);
             Muls(t, var, float(-0.5), pregLoop);
             Mul(t, t, y, pregLoop);
             Mula(t1, t, y, pregLoop);
             Mul(rstd, y, t1, pregLoop);
+            // Second refinement with the residual computed directly as 1 - var*rstd^2: the
+            // historical form var*(1/var - rstd^2) reuses the 1/var quantity and inherits the
+            // same subnormal flush (which halves rstd for huge var).
             Muls(t3, var, float(-1.0), pregLoop);
+            Mul(r, rstd, rstd, pregLoop);
             Mula(s, t3, r, pregLoop);
-            Muls(t4, rstd, float(-1.0), pregLoop);
-            Mula(r, t4, rstd, pregLoop);
-            Mula(s, var, r, pregLoop);
             Mul(s, s, rstd, pregLoop);
             Mula(rstd, s, scalar1, pregLoop);
             CompareScalar(cmpRegZero, var, RSTD_POS_INF, pregLoop);
@@ -171,11 +223,14 @@ __aicore__ inline void AccumulateGroupC0(__local_mem__ T* dyUb, __local_mem__ T*
         RegTensor<float> yReg;
         RegTensor<float> tReg;
         RegTensor<float> dReg;
-        // nan-guard: on inf/nan input the running sum overflows to inf (matches ascend910b), but the
-        // Kahan compensation (t-sum)-y = inf-inf = nan then poisons the next row's sum -> nan.
-        // Zero the compensation whenever it is nan so the sum stays inf, aligned with ascend910b/golden.
+        // nan/inf-guard: on inf/nan input the running sum overflows to ±inf (matching the golden's
+        // fp32 rounding of an out-of-range true value), but the Kahan compensation (t-sum)-y then
+        // becomes nan or ±inf; a ±inf compensation poisons the next row through y = term-(±inf) =
+        // ∓inf and t = sum+y = nan. Zero the compensation whenever it is non-finite (nan or ±inf)
+        // so the sum stays ±inf. Finiteness test: (c-c)==0 holds only for finite c (inf-inf and
+        // nan-nan both produce nan).
         RegTensor<float> zeroReg;
-        MaskReg nanMask;
+        MaskReg finiteMask;
 
         uint32_t sregC0 = c0;
         MaskReg preg = UpdateMask<float>(sregC0); // C0 (=16) active lanes
@@ -193,8 +248,11 @@ __aicore__ inline void AccumulateGroupC0(__local_mem__ T* dyUb, __local_mem__ T*
             DataCopy(cGamma, cGammaUb);
             DataCopy(cBeta, cBetaUb);
         }
+        // Rows are laid out with the padded 32B-aligned stride (RowStrideElems): the register
+        // loads fetch a full 256B from each row start, which must stay 32B aligned for every r.
+        uint32_t rowStride = RowStrideElems(c0, sizeof(T));
         for (uint16_t r = 0; r < static_cast<uint16_t>(rowCount); r++) {
-            uint32_t off = r * c0;
+            uint32_t off = r * rowStride;
             LoadTensorT<T>(dyUb, dyReg, preg, off);
             LoadTensorT<T>(xUb, xReg, preg, off);
             Sub(xReg, xReg, meanReg, preg);  // x - mean
@@ -205,16 +263,18 @@ __aicore__ inline void AccumulateGroupC0(__local_mem__ T* dyUb, __local_mem__ T*
             Add(tReg, accGamma, yReg, preg);
             Sub(dReg, tReg, accGamma, preg);
             Sub(cGamma, dReg, yReg, preg);
-            Compare<float, CMPMODE::EQ>(nanMask, cGamma, cGamma, preg); // false only where cGamma is nan
-            Select(cGamma, cGamma, zeroReg, nanMask);                   // nan -> 0, keep sum at inf
+            Sub(dReg, cGamma, cGamma, preg);                  // finite -> 0; nan/±inf -> nan
+            CompareScalar(finiteMask, dReg, RSTD_ZERO, preg); // true only where cGamma is finite
+            Select(cGamma, cGamma, zeroReg, finiteMask);      // non-finite -> 0, keep sum at ±inf
             Move(accGamma, tReg, preg);
             // Kahan accBeta += dy
             Sub(yReg, dyReg, cBeta, preg);
             Add(tReg, accBeta, yReg, preg);
             Sub(dReg, tReg, accBeta, preg);
             Sub(cBeta, dReg, yReg, preg);
-            Compare<float, CMPMODE::EQ>(nanMask, cBeta, cBeta, preg);
-            Select(cBeta, cBeta, zeroReg, nanMask);
+            Sub(dReg, cBeta, cBeta, preg);
+            CompareScalar(finiteMask, dReg, RSTD_ZERO, preg);
+            Select(cBeta, cBeta, zeroReg, finiteMask);
             Move(accBeta, tReg, preg);
         }
         DataCopy(accGammaUb, accGamma, preg);

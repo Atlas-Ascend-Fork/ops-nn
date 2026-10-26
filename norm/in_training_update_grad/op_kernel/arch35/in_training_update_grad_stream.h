@@ -36,6 +36,7 @@ public:
         blockLenElem_ = tilingData->blockLenElem;
         streamTileRows_ = tilingData->streamTileRows;
         epsilon_ = tilingData->epsilon;
+        c0Stride_ = RowStrideElems(numC0_, sizeof(T_DY));
     }
 
     __aicore__ inline void Init(GM_ADDR dy, GM_ADDR x, GM_ADDR variance, GM_ADDR mean, GM_ADDR resGamma,
@@ -48,17 +49,22 @@ public:
         resGammaGm_.SetGlobalBuffer((__gm__ float*)resGamma);
         resBetaGm_.SetGlobalBuffer((__gm__ float*)resBeta);
 
-        uint32_t chunkBytes = streamTileRows_ * numC0_ * sizeof(T_DY) + VECTOR_REG_WIDTH;
+        // Chunk = streamTileRows padded rows (row stride c0Stride_, 32B aligned) plus one vector
+        // register for the full-register C0 loads.
+        uint32_t chunkBytes = streamTileRows_ * c0Stride_ * sizeof(T_DY) + VECTOR_REG_WIDTH;
         pipe_.InitBuffer(dyQueue_, BUFFER_NUM, chunkBytes);
         pipe_.InitBuffer(xQueue_, BUFFER_NUM, chunkBytes);
         pipe_.InitBuffer(varQueue_, 1, numC0_ * sizeof(float) + VECTOR_REG_WIDTH);
         pipe_.InitBuffer(meanQueue_, 1, numC0_ * sizeof(float) + VECTOR_REG_WIDTH);
-        pipe_.InitBuffer(gammaOutQueue_, BUFFER_NUM, numC0_ * sizeof(float));
-        pipe_.InitBuffer(betaOutQueue_, BUFFER_NUM, numC0_ * sizeof(float));
-        pipe_.InitBuffer(rstdBuf_, numC0_ * sizeof(float));
-        // Kahan compensation, resident across chunks (same lifetime as the C0 accumulators).
-        pipe_.InitBuffer(cGammaBuf_, numC0_ * sizeof(float));
-        pipe_.InitBuffer(cBetaBuf_, numC0_ * sizeof(float));
+        // res_gamma/res_beta live in the output queue tensors and are re-loaded as accumulators
+        // (initAcc=false) by full-register (256B) loads; pad each buffer for the same reason.
+        pipe_.InitBuffer(gammaOutQueue_, BUFFER_NUM, numC0_ * sizeof(float) + VECTOR_REG_WIDTH);
+        pipe_.InitBuffer(betaOutQueue_, BUFFER_NUM, numC0_ * sizeof(float) + VECTOR_REG_WIDTH);
+        // rstd and the Kahan compensation buffers are re-read by full-register (256B) loads in
+        // AccumulateGroupC0; pad each so the load never runs past the allocation.
+        pipe_.InitBuffer(rstdBuf_, numC0_ * sizeof(float) + VECTOR_REG_WIDTH);
+        pipe_.InitBuffer(cGammaBuf_, numC0_ * sizeof(float) + VECTOR_REG_WIDTH);
+        pipe_.InitBuffer(cBetaBuf_, numC0_ * sizeof(float) + VECTOR_REG_WIDTH);
     }
 
     __aicore__ inline void Process()
@@ -68,8 +74,11 @@ public:
             return;
         }
         uint32_t startGroup = blockIdx * perCoreGroups_;
-        uint32_t endGroup = startGroup + perCoreGroups_;
-        endGroup = endGroup > groupNum_ ? groupNum_ : endGroup;
+        // The tail core's startGroup + perCoreGroups_ can exceed the uint32 range (e.g.
+        // groupNum = 2^32-1 with perCoreGroups_ = 2^26); compute and clamp in 64 bits so the
+        // wrap can never shrink the loop to zero iterations and leave outputs unwritten.
+        uint64_t endGroup64 = static_cast<uint64_t>(startGroup) + perCoreGroups_;
+        uint32_t endGroup = endGroup64 > groupNum_ ? groupNum_ : static_cast<uint32_t>(endGroup64);
 
         for (uint32_t g = startGroup; g < endGroup; g++) {
             ProcessGroup(g);
@@ -147,18 +156,26 @@ private:
     {
         LocalTensor<T_DY> dyLocal = dyQueue_.AllocTensor<T_DY>();
         LocalTensor<T_DY> xLocal = xQueue_.AllocTensor<T_DY>();
-        DataCopyExtParams copyParams;
-        copyParams.blockCount = 1;
-        copyParams.blockLen = rows * numC0_ * sizeof(T_DY);
-        copyParams.srcStride = 0;
-        copyParams.dstStride = 0;
-        DataCopyPadExtParams<T_DY> padParams;
-        padParams.isPad = false;
-        padParams.leftPadding = 0;
-        padParams.rightPadding = 0;
-        padParams.paddingValue = 0;
-        DataCopyPad<T_DY, PaddingMode::Normal>(dyLocal, dyGm_[chunkOffset], copyParams, padParams);
-        DataCopyPad<T_DY, PaddingMode::Normal>(xLocal, xGm_[chunkOffset], copyParams, padParams);
+        if (c0Stride_ == numC0_) {
+            // 32B-aligned rows: keep the single contiguous chunk copy (one MTE descriptor).
+            DataCopyExtParams copyParams;
+            copyParams.blockCount = 1;
+            copyParams.blockLen = rows * numC0_ * sizeof(T_DY);
+            copyParams.srcStride = 0;
+            copyParams.dstStride = 0;
+            DataCopyPadExtParams<T_DY> padParams;
+            padParams.isPad = false;
+            padParams.leftPadding = 0;
+            padParams.rightPadding = 0;
+            padParams.paddingValue = 0;
+            DataCopyPad<T_DY, PaddingMode::Normal>(dyLocal, dyGm_[chunkOffset], copyParams, padParams);
+            DataCopyPad<T_DY, PaddingMode::Normal>(xLocal, xGm_[chunkOffset], copyParams, padParams);
+        } else {
+            // Padded rows: a chunk never crosses a D-slice, so its rows stay contiguous in GM and
+            // each row lands at r*c0Stride_ elements in UB.
+            CopyInRowsPadded<T_DY>(dyLocal, dyGm_[chunkOffset], rows, numC0_);
+            CopyInRowsPadded<T_DY>(xLocal, xGm_[chunkOffset], rows, numC0_);
+        }
         dyQueue_.EnQue(dyLocal);
         xQueue_.EnQue(xLocal);
         dyLocal = dyQueue_.template DeQue<T_DY>();
@@ -213,6 +230,7 @@ private:
     uint32_t perCoreGroups_;
     uint32_t blockLenElem_;
     uint32_t streamTileRows_;
+    uint32_t c0Stride_; // padded 32B-aligned row stride (elements); == numC0_ when already aligned
     float epsilon_;
 };
 } // namespace InTrainingUpdateGrad

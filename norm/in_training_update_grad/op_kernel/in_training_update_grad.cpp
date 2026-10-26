@@ -22,10 +22,7 @@
 
 using namespace AscendC;
 using namespace InTrainingUpdateGrad;
-
-#define TILINGKEY_REDUCE_EMPTY 50000
-#define TILINGKEY_FULL_LOAD 100000
-#define TILINGKEY_STREAM 200000
+namespace Keys = InTrainingUpdateGradKeys;
 
 extern "C" __global__ __aicore__ void in_training_update_grad(GM_ADDR dy, GM_ADDR x, GM_ADDR variance, GM_ADDR mean,
                                                               GM_ADDR res_gamma, GM_ADDR res_beta, GM_ADDR workspace,
@@ -33,17 +30,21 @@ extern "C" __global__ __aicore__ void in_training_update_grad(GM_ADDR dy, GM_ADD
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     REGISTER_TILING_DEFAULT(InTrainingUpdateGradFullLoadTilingData);
-    if (TILING_KEY_IS(TILINGKEY_FULL_LOAD)) {
+    // Dispatch on the shared key constants (tiling_data.h); the host tiling can only return
+    // these three values. An unrecognized key (e.g. a foreign host-tiling library version)
+    // leaves the outputs untouched on purpose: the tiling struct layout is unknown, and a
+    // missing output is observable while a misinterpreted struct would corrupt memory.
+    if (TILING_KEY_IS(IN_UG_TILING_KEY_FULL_LOAD)) {
         GET_TILING_DATA_WITH_STRUCT(InTrainingUpdateGradFullLoadTilingData, tilingData, tiling);
         InTrainingUpdateGradFullLoad<DTYPE_DY> op(&tilingData);
         op.Init(dy, x, variance, mean, res_gamma, res_beta);
         op.Process();
-    } else if (TILING_KEY_IS(TILINGKEY_STREAM)) {
+    } else if (TILING_KEY_IS(IN_UG_TILING_KEY_STREAM)) {
         GET_TILING_DATA_WITH_STRUCT(InTrainingUpdateGradStreamTilingData, tilingData, tiling);
         InTrainingUpdateGradStream<DTYPE_DY> op(&tilingData);
         op.Init(dy, x, variance, mean, res_gamma, res_beta);
         op.Process();
-    } else if (TILING_KEY_IS(TILINGKEY_REDUCE_EMPTY)) {
+    } else if (TILING_KEY_IS(IN_UG_TILING_KEY_REDUCE_EMPTY)) {
         GET_TILING_DATA_WITH_STRUCT(InTrainingUpdateGradReduceEmptyTilingData, tilingData, tiling);
         InTrainingUpdateGradReduceEmpty op(&tilingData);
         op.Init(res_gamma, res_beta);

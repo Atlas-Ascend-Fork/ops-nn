@@ -21,8 +21,8 @@ TTK TestSpec for in_training_update_grad (kernel / GEIR 通路, arch35/Ascend950
 本算子是大规约（D*H*W 可至数万），内核用 fp32+Kahan 补偿、精度已达 fp32 地板；
 fp32 朴素累加的 golden 在大/对消规约（如 D=80000）上自带 ~eps*kappa 的误差，
 比内核还差（实测差 4~5 倍），拿它当参照会把更准的内核误判成不达标——
-故 golden 的精度档必须严格高于内核。档位不由 golden 自己硬抬,而是照
-ttk_golden_logic.md 三/四: 三方档由 TTK Promote 抬(golden 零 cast), 泛化档跟内核的
+故 golden 的精度档必须严格高于内核。档位不由 golden 自己硬抬, 而是按 TTK 档位规则:
+三方档(cross_check)由 TTK Promote 抬(golden 零 cast), 泛化档跟内核的
 加宽行为(f16/bf16 抬 f32, f32 不再加宽)——见 _work_dtype。
 
 Canonical IO order (in_training_update_grad_def.cpp):
@@ -56,7 +56,7 @@ def _work_dtype(*tensors):
 
     golden 自己不做 Promote:三方档(cross_check)由 TTK 抬(入口 dtype 已整体高一档),
     这里再 `.to(float64)` 是重复动作、还会掩盖 Promote 空转;两方泛化档 TTK 不提升,
-    规范(ttk_golden_logic.md 三/四)要求跟 NPU 的加宽行为——内核把 f16/bf16 抬到 f32
+    按 TTK 档位规则须跟 NPU 的加宽行为——内核把 f16/bf16 抬到 f32
     做中间量,f32 不再加宽。
     """
     if any(t.dtype == torch.float64 for t in tensors):
@@ -80,7 +80,7 @@ def _compute(dy, x, variance, mean, **_):
 
 
 def _tp_widen(t):
-    """三方腿的计算档: 跟 NPU 的加宽行为(ttk_golden_logic.md 三/四 的 GPU 列)。
+    """三方腿的计算档: 跟 NPU 的加宽行为(TTK 档位规则的 third_party 列)。
 
     内核把 f16/bf16 抬到 f32 做中间量, f32 不再加宽。本算子两个输出恒为 fp32,
     内核不窄回, 故三方也不窄回。此前 res_beta = dy.sum() 直接留在 fp16,
@@ -169,7 +169,7 @@ def in_training_update_grad_golden(dy, x, variance, mean, **kwargs):
 __spec__ = {"in_training_update_grad": "InTrainingUpdateGradSpec"}
 __golden__ = {"kernel": {"in_training_update_grad": "in_training_update_grad_golden"}}
 
-# 【不存在】aclnn 通路：canndev 无 op_api/aclnnINTrainingUpdateGrad（01 §3.3，纯 GE 图算子）。
+# 【不存在】aclnn 通路：canndev 无 op_api/aclnnINTrainingUpdateGrad（纯 GE 图算子，接口调研结论）。
 # 【不存在】e2e 通路：torch_npu 二进制 0 引用（strings libtorch_npu.so 无 INTraining 子串）；
 #   该算子仅由 GE 图在做 InstanceNorm 训练反向时内部构造，torch 侧无直达通路。
-# 【不存在】tf / onnx / caffe 通路：canndev framework 插件全树 grep 0 命中（01 §3.3）。
+# 【不存在】tf / onnx / caffe 通路：canndev framework 插件全树 grep 0 命中（接口调研结论）。

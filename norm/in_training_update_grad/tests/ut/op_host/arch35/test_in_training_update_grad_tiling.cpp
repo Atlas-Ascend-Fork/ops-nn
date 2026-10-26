@@ -191,6 +191,80 @@ TEST_F(INTrainingUpdateGradTiling, accept_fp16_input)
     EXPECT_EQ(key, 100000U);
 }
 
+// ---------------- 32B 行对齐：C0*sizeof(T) 非 32B 倍数时按填充行步长计容量 ----------------
+
+// fp32 C0=4（行 16B，UB 内填充到 32B 行距）：小归约仍走 full-load
+TEST_F(INTrainingUpdateGradTiling, tilingkey_full_load_misaligned_c0_fp32)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTiling6D(2, 2, 2, 8, 8, 4, key), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 100000U);
+}
+
+// fp16 C0=8（行 16B，UB 内填充到 32B 行距）：小归约走 full-load
+TEST_F(INTrainingUpdateGradTiling, tilingkey_full_load_misaligned_c0_fp16)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTiling6D(2, 2, 2, 8, 8, 8, key, ge::DT_FLOAT16), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 100000U);
+}
+
+// fp32 C0=4、reduceR=2000：紧凑布局放得下 UB，但填充行距(32B/行)放不下 -> 降级 stream。
+// 若按紧凑足迹误判 full-load，内核逐行寄存器加载会因行地址未 32B 对齐在设备上崩溃。
+TEST_F(INTrainingUpdateGradTiling, tilingkey_stream_when_padded_rows_exceed_ub)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTiling6D(1, 1, 1, 50, 40, 4, key), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 200000U);
+}
+
+// ---------------- 内核包络：C0 上界与 uint32 乘积边界 ----------------
+
+// C0>64（单 fp32 向量寄存器 64 lane）必须受控拒绝：内核对超出 lane 静默截断或设备错误
+TEST_F(INTrainingUpdateGradTiling, reject_c0_over_64_lanes)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTiling6D(2, 2, 2, 8, 8, 65, key), ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling6D(2, 2, 2, 8, 8, 302, key, ge::DT_FLOAT16), ge::GRAPH_FAILED);
+}
+
+// H*W*C0 超 uint32：TilingData/DataCopyExtParams 字段窄化回绕，必须在入口拒绝
+TEST_F(INTrainingUpdateGradTiling, reject_blockLenElem_over_uint32)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTiling6D(1, 1, 1, 67108864, 1, 64, key), ge::GRAPH_FAILED); // H*W*C0 = 2^32
+}
+
+// 极端维度使 int64 乘积本身溢出（H=W=2^40 -> H*W=2^80）：旧"先乘后比"为 UB，
+// 逐对商判必须可靠拒绝而非依赖溢出后的偶然值
+TEST_F(INTrainingUpdateGradTiling, reject_int64_overflowing_dims)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTiling6D(1, 1, 1, 1099511627776LL, 1099511627776LL, 16, key), ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling6D(1099511627776LL, 1, 1099511627776LL, 1, 1, 16, key), ge::GRAPH_FAILED); // N*C1 溢出
+}
+
+// Kahan 补偿缓冲计入容量后，原误判 full-load 的边界形状降级 stream（修复前公式漏计
+// cGamma/cBeta 及 rstd/补偿缓冲的寄存器填充，边界输入内核分配超 UB 至多 128B+）。
+// reduceR=951 fp32 C0=16：旧公式 need=245440 放得下；新公式 need=246336 恰超 UB=245760。
+TEST_F(INTrainingUpdateGradTiling, tilingkey_stream_when_kahan_buffers_exceed_ub)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTiling6D(1, 1, 1, 951, 1, 16, key), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 200000U);
+}
+
+// TPipe::InitBuffer 把每个缓冲长度向上对齐到 32B 倍数后才分配；C0 非 8 倍数时每个标量
+// 缓冲（variance/mean/rstd/cGamma/cBeta 及双缓冲输出队列）多占 4~28B、合计至多 252B，
+// Host 容量公式必须按对齐后长度记账，否则被判定放得下的形状内核实际越过 UB 末尾。
+// reduceR=1901 fp32 C0=1：对齐前 need=245668 放得下；对齐后 need=245920 恰超 UB=245760。
+TEST_F(INTrainingUpdateGradTiling, tilingkey_stream_when_tpipe_alignment_exceeds_ub)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTiling6D(1, 1, 1, 1901, 1, 1, key), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 200000U);
+}
+
 // ---------------- 反向：非法输入必须被校验拒绝 ----------------
 
 // dy 的 dtype 非 fp16/fp32
