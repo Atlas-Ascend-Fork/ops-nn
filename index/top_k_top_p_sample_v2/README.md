@@ -419,7 +419,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
     * 如果需要单独跳过topP模块，请传入[batch, 1]大小的Tensor，并使每个元素均≥1。
     * 如果需要单独跳过minP模块，请传入`minPs=nullptr`或者传入[batch, 1]大小的Tensor，并使每个元素均≤0
     * 如果需要单独跳过sample模块，传入`q=nullptr`即可；如需使用sample模块，则必须传入尺寸为[batch, vocSize]的Tensor。
-    * 如果需要输出中间结果，isNeedSampleResult设为true，并且传入`q=nullptr`，此时logitsSelectIdx不输出。
+    * 如果需要输出中间结果，isNeedSampleResult设为true，并且传入`q=nullptr`。此时仍须传入非空的`logitsSelectIdx`输出Tensor（INT64，shape需与`logits`前n-1维一致）；算子不会写入有效索引值，调用方不得读取该Tensor内容。
 
 ## 调用说明
 

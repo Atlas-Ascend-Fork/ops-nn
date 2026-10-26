@@ -457,7 +457,7 @@ aclnnStatus aclnnTopKTopPSampleV2(
       <tr>
         <td>logitsSelectIdx</td>
         <td>输出</td>
-        <td>表示经过topK-topP-minP-sample计算流程后，每个batch中词频最大元素max(probsOpt[batch, :])在输入logits中的位置索引。</td>
+        <td>当isNeedSampleResult为false时，表示每个batch中词频最大元素在输入logits中的位置索引。isNeedSampleResult为true时仍须传入该非空输出Tensor，但算子不生成有效索引值，调用方不得读取其内容。</td>
         <td><ul><li>不支持空Tensor。</li><li>shape需要与`logits`前n-1维一致。</li></ul></td>
         <td>INT64</td>
         <td>ND</td>
@@ -627,7 +627,7 @@ aclnnStatus aclnnTopKTopPSampleV2(
     - 如果需要单独跳过topP模块，请传入[batch, 1]大小的Tensor，并使每个元素均≥1。
     - 如果需要单独跳过minP模块，请传入`minPs=nullptr`或者传入[batch, 1]大小的Tensor，并使每个元素均≤0。
     - 如果需要单独跳过sample模块，传入`q=nullptr`即可；如需使用sample模块，则必须传入尺寸为[batch, vocSize]的Tensor。
-    - 如果需要输出中间结果，isNeedSampleResult设为true，并且传入`q=nullptr`，此时logitsSelectIdx不输出。
+    - 如果需要输出中间结果，isNeedSampleResult设为true，并且传入`q=nullptr`。此时仍须传入非空的`logitsSelectIdx`输出Tensor，但算子不生成有效索引值，调用方不得读取其内容。
 
 ## 调用示例
 
