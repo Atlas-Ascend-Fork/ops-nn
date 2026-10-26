@@ -66,20 +66,14 @@ QBMMV3StreamKTiling960::QBMMV3StreamKTiling960(gert::TilingContext* context,
 
 bool QBMMV3StreamKTiling960::IsCapable()
 {
-    // 量化场景分流：9202保持MX per-group；9201在主线A5(3510)场景（MX per-group +
-    // 非MX per-tensor向量反量化）。
-    bool isQuantCapable = false;
-    if (compileInfo_.npuArch == NpuArch::DAV_9202) {
-        isQuantCapable = inputParams_.isMxPerGroup;
-    } else {
-        isQuantCapable = inputParams_.isMxPerGroup || IsPertensorStreamKInput();
-    }
+    // 量化场景分流：9201/9202 可走 SK 的量化场景一致（MX per-group + 非MX per-tensor + HIF4 per-group），均走 Blaze。
+    bool isQuantCapable = inputParams_.isMxPerGroup || IsPertensorStreamKInput();
     if (compileInfo_.aicNum != compileInfo_.aivNum || !isQuantCapable || inputParams_.batchC > 1) {
         return false;
     }
-    // 960DT(9201)仅Blaze路径（CMCT kernel仅9202编译），Blaze依赖运行时tensorapi，不可用时本模板放弃。
-    if (compileInfo_.npuArch == NpuArch::DAV_9201 && !IsTensorapiCapable()) {
-        OP_LOGD(inputParams_.opName, "QBMM StreamK on DAV_9201 requires tensorapi runtime for Blaze path.");
+    // Blaze 路径依赖运行时 tensorapi，不可用时本模板放弃。
+    if (!IsTensorapiCapable()) {
+        OP_LOGD(inputParams_.opName, "QBMM StreamK requires tensorapi runtime for Blaze path.");
         return false;
     }
     return true;
@@ -281,13 +275,9 @@ uint64_t QBMMV3StreamKTiling960::GetKernelType() const { return TPL_VEC_EPILOGUE
 
 uint64_t QBMMV3StreamKTiling960::GetApiLevel(NpuArch npuArch) const
 {
-    // 960DT(9201)所有量化（MX per-group等）统一走Blaze路径：直接复用3510的
-    // QbmmMxStreamKBasicApiKernel（tiling data已统一）；IsCapable已保证9201下tensorapi可用。
-    // 960PR(9202)所有StreamK走CMCT BasicAPI。
-    if (npuArch == NpuArch::DAV_9201) {
-        return static_cast<uint64_t>(QMMApiLevel::BLAZE_LEVEL);
-    }
-    return static_cast<uint64_t>(QMMApiLevel::BASIC_LEVEL);
+    // 960DT/960PR(9201/9202)所有StreamK量化场景统一走Blaze路径：直接复用3510的
+    // QbmmMxStreamKBasicApiKernel（tiling data已统一）。
+    return static_cast<uint64_t>(QMMApiLevel::BLAZE_LEVEL);
 }
 
 uint64_t QBMMV3StreamKTiling960::GetTilingKey() const
