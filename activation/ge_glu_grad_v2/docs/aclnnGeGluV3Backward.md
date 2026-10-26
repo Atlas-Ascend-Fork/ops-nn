@@ -120,7 +120,7 @@ aclnnStatus aclnnGeGluV3Backward(
       <td>approximate（int64_t）</td>
       <td>输入</td>
       <td>-</td>
-      <td>取值范围是0('none')、1('tanh')。Atlas推理系列产品只支持1('tanh')。</td>
+      <td>取值范围是0('none')、1('tanh')。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -172,6 +172,9 @@ aclnnStatus aclnnGeGluV3Backward(
   <!-- npu="910,310p" id7 -->
   - <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：数据类型支持FLOAT32、FLOAT16。
   <!-- end id7 -->
+  <!-- npu="310p" id8 -->
+  - <term>Atlas推理系列产品</term>：“approximate”只支持1('tanh')。
+  <!-- end id8 -->
 
 - **返回值：**
 

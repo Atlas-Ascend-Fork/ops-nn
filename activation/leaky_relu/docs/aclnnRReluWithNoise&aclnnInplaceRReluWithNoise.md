@@ -431,7 +431,9 @@ aclnnStatus aclnnInplaceRReluWithNoise(
   </tbody>
   </table>
 
+   <!-- npu="910" id8 -->
    - <term>Atlas训练系列产品</term>：数据类型支持FLOAT16、FLOAT。
+   <!-- end id8 -->
 
 - **返回值：**
 

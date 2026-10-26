@@ -307,7 +307,9 @@ aclnnStatus aclnnInplaceLeakyRelu(
   </tbody>
   </table>
 
+   <!-- npu="910" id8 -->
    - <term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16、DOUBLE。
+   <!-- end id8 -->
 
 - **返回值：**
 

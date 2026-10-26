@@ -315,8 +315,6 @@ aclnnStatus aclnnClaGateBackward(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-- <term>Ascend 950PR&950DT系列产品</term>：
-
   ```cpp
   #include <cstdint>
   #include <cstring>
