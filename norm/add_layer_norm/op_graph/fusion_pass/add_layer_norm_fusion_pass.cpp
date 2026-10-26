@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "acl/acl_rt.h"
+#include "arch_utils.h"
 #include "common/inc/error_util.h"
 #include "ge/compliant_node_builder.h"
 #include "ge/es_graph_builder.h"
@@ -29,7 +30,6 @@
 #include "ge/fusion/graph_rewriter.h"
 #include "ge/fusion/pass/pattern_fusion_pass.h"
 #include "ge/fusion/subgraph_boundary.h"
-#include "platform/platform_info.h"
 #include "version/ge-compiler_version.h"
 
 namespace ge {
@@ -97,7 +97,7 @@ constexpr int32_t kMean = 1;
 constexpr int32_t kRstd = 2;
 constexpr int32_t kFusedX = 3;
 
-const std::set<std::string> kSupportedNpuArch = {"3510", "5102"};
+const std::set<std::string> kSupportedNpuArchs = {"3510", "5102", "9201", "9202"};
 
 struct InputSpec {
     NodeIo inside;
@@ -233,23 +233,6 @@ size_t ExternalConsumerCount(const GNode& node, const int32_t port, const std::v
 }
 
 bool IsSingleConsumer(const GNode& node) { return node.GetOutDataNodesAndPortIndexs(0).size() == 1U; }
-
-bool GetNpuArch(std::string& npuArch)
-{
-    fe::PlatFormInfos platformInfos;
-    fe::OptionalInfos optionalInfos;
-    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfos, optionalInfos) != SUCCESS) {
-        OPS_LOG_D(kPassName.c_str(), "Failed to get platform info.");
-        return false;
-    }
-    if (!platformInfos.GetPlatformRes("version", "NpuArch", npuArch)) {
-        OPS_LOG_D(kPassName.c_str(), "NpuArch is unavailable in platform info.");
-        return false;
-    }
-    return !npuArch.empty();
-}
-
-bool IsSupportedPlatform(const std::string& npuArch) { return kSupportedNpuArch.count(npuArch) != 0U; }
 
 bool CheckAxis(const GNode& layerNorm, const bool isV4, const TensorDesc& xDesc)
 {
@@ -1169,6 +1152,9 @@ Status AddLayerNormFusionPass::Run(GraphPtr& graph, CustomPassContext& passConte
     if (graph == nullptr) {
         return GRAPH_NOT_CHANGED;
     }
+    if (!ops::CheckNpuArch(kPassName, kSupportedNpuArchs)) {
+        return GRAPH_NOT_CHANGED;
+    }
     if (!CanUsePassContextOptionsForVersion(GetRuntimeGeCompilerVersion())) {
         OPS_LOG_D(kPassName.c_str(), "CustomPassContext options require GE compiler 9.0 or later; stay silent.");
         return GRAPH_NOT_CHANGED;
@@ -1190,11 +1176,6 @@ Status AddLayerNormFusionPass::Run(GraphPtr& graph, CustomPassContext& passConte
     }
     const bool isTrain = IsTrainGraphRunMode(graphRunMode);
     const bool allowMixPrecision = IsAllowMixPrecision(precisionMode);
-    std::string npuArch;
-    if (!GetNpuArch(npuArch) || !IsSupportedPlatform(npuArch)) {
-        OPS_LOG_D(kPassName.c_str(), "Unsupported NpuArch=%s.", npuArch.c_str());
-        return GRAPH_NOT_CHANGED;
-    }
 
     struct ScheduledNorm {
         GNode node;

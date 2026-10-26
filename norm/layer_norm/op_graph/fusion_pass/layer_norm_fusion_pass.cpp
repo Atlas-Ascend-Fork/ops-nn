@@ -17,12 +17,12 @@
 #include <string>
 #include <vector>
 
+#include "arch_utils.h"
 #include "common/inc/error_util.h"
 #include "cube_utils/cube_fp16_t.h"
 #include "es_math_ops.h"
 #include "es_nn_ops.h"
 #include "ge/ge_utils.h"
-#include "platform/platform_info.h"
 
 namespace ops {
 namespace {
@@ -51,31 +51,9 @@ constexpr int64_t kLastAxis = -1;
 constexpr size_t kScalarDimNum = 1U;
 constexpr int64_t kScalarDimValue = 1L;
 
-const std::set<std::string> kSupportedNpuArch = {"3510"};
+const std::set<std::string> kSupportedNpuArchs = {"3510", "9201", "9202"};
 
 bool IsBitSet(size_t config, size_t bit) { return ((config >> bit) & 1U) != 0U; }
-
-bool IsSupportedPlatform()
-{
-    fe::PlatFormInfos platform_infos;
-    fe::OptionalInfos optional_infos;
-    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_infos, optional_infos) !=
-        SUCCESS) {
-        OPS_LOG_D(kPassName.c_str(), "platform_rejected : get platform info failed.");
-        return false;
-    }
-    std::string arch_str;
-    if (!platform_infos.GetPlatformRes("version", "NpuArch", arch_str)) {
-        OPS_LOG_D(kPassName.c_str(), "platform_rejected : NpuArch not found.");
-        return false;
-    }
-    if (kSupportedNpuArch.count(arch_str) == 0U) {
-        OPS_LOG_D(kPassName.c_str(), "platform_rejected : NpuArch=%s.", arch_str.c_str());
-        return false;
-    }
-    OPS_LOG_D(kPassName.c_str(), "platform_accepted : NpuArch=%s.", arch_str.c_str());
-    return true;
-}
 
 bool GetCapturedNode(const std::unique_ptr<MatchResult>& match_result, size_t index, GNode& node)
 {
@@ -310,7 +288,7 @@ PatternUniqPtr MakePattern(size_t config, bool form_b)
 
 std::vector<PatternUniqPtr> LayerNormFusionPass::Patterns()
 {
-    if (!IsSupportedPlatform()) {
+    if (!ops::CheckNpuArch(kPassName, kSupportedNpuArchs)) {
         return {};
     }
     std::vector<PatternUniqPtr> patterns;
@@ -329,7 +307,6 @@ std::vector<PatternUniqPtr> LayerNormFusionPass::Patterns()
 
 bool LayerNormFusionPass::MeetRequirements(const std::unique_ptr<MatchResult>& match_result)
 {
-    OPS_LOG_D(kPassName.c_str(), "guard_begin.");
     Matched matched;
     if (!CollectMatched(match_result, matched)) {
         return false;
@@ -377,7 +354,6 @@ bool LayerNormFusionPass::MeetRequirements(const std::unique_ptr<MatchResult>& m
 
 std::unique_ptr<Graph> LayerNormFusionPass::Replacement(const std::unique_ptr<MatchResult>& match_result)
 {
-    OPS_LOG_D(kPassName.c_str(), "replacement_begin.");
     Matched matched;
     if (!CollectMatched(match_result, matched)) {
         return nullptr;

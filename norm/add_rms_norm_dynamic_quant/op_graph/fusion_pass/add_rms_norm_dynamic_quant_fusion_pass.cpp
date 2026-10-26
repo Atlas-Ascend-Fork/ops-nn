@@ -7,9 +7,10 @@
 #include "acl/acl_rt.h"
 #include "es_nn_ops.h"
 #include "es_math_ops.h"
+#include "arch_utils.h"
 #include "common/inc/error_util.h"
 #include "ge/ge_utils.h"
-#include "platform/platform_info.h"
+#include <set>
 #include "ge/fusion/graph_rewriter.h"
 #include "ge/fusion/pass/pattern_fusion_pass.h"
 #include "version/ge-compiler_version.h"
@@ -23,7 +24,8 @@ using ge::es::EsTensorHolder;
 using namespace ge::fusion;
 
 const std::string kPass = "AddRmsNormDynamicQuantFusionPass";
-const std::string kSupportedNpuArch = "3510";
+const std::set<std::string> kSupportedNpuArchs = {"3510", "9201", "9202"};
+
 constexpr float kDefaultEpsilon = 1e-6f;
 constexpr int32_t kMinGeCompilerVersion = 90000000;
 constexpr int kQuantInputCount = 6;
@@ -107,22 +109,6 @@ std::string Type(const GNode& node)
     return node.GetType(value) == ge::GRAPH_SUCCESS && value.GetString() ? value.GetString() : "";
 }
 bool HasInput(const GNode& node, int port) { return node.GetInDataNodesAndPortIndexs(port).first != nullptr; }
-bool CheckPlatform()
-{
-    fe::PlatFormInfos infos;
-    fe::OptionalInfos options;
-    std::string arch;
-    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(infos, options) != ge::GRAPH_SUCCESS ||
-        !infos.GetPlatformRes("version", "NpuArch", arch)) {
-        OPS_LOG_D(kPass.c_str(), "guard_rejected : cannot obtain platform architecture.");
-        return false;
-    }
-    if (arch != kSupportedNpuArch) {
-        OPS_LOG_D(kPass.c_str(), "guard_rejected : unsupported NpuArch=%s.", arch.c_str());
-        return false;
-    }
-    return true;
-}
 bool InferenceMode(const ge::CustomPassContext& context)
 {
 #if defined(GE_COMPILER_VERSION_NUM) && (GE_COMPILER_VERSION_NUM >= 90000000)
@@ -394,7 +380,7 @@ ge::Status AddRmsNormDynamicQuantFusionPass::Run(ge::GraphPtr& graph, ge::Custom
         OPS_LOG_D(kPass.c_str(), "skip : input graph is null.");
         return ge::SUCCESS;
     }
-    if (!CheckPlatform()) {
+    if (!ops::CheckNpuArch(kPass, kSupportedNpuArchs)) {
         return ge::SUCCESS;
     }
     if (!InferenceMode(context)) {

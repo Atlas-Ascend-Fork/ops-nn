@@ -11,14 +11,15 @@
 #define OPS_NN_ADD_LAYER_NORM_QUANT_FUSION_COMMON_H
 
 #include <array>
+#include <set>
 #include <string>
 #include <vector>
+#include "arch_utils.h"
 #include "error_util.h"
 #include "ge/fusion/pass/pattern_fusion_pass.h"
 #include "ge/ge_utils.h"
 #include "es_nn_ops.h"
 #include "es_math_ops.h"
-#include "platform/platform_info.h"
 
 namespace ops {
 namespace aln_quant {
@@ -28,7 +29,8 @@ using ge::es::EsGraphBuilder;
 using ge::es::EsTensorHolder;
 using namespace ge::fusion;
 
-const std::string kSupportedNpuArch = "3510";
+const std::set<std::string> kSupportedNpuArchs = {"3510", "9201", "9202"};
+
 constexpr float kDefaultEpsilon = 1e-5f;
 
 inline std::string Name(const GNode& node)
@@ -52,15 +54,6 @@ inline ge::DataType InputType(const GNode& node, int index)
     return node.GetInputDesc(index, desc) == ge::GRAPH_SUCCESS ? desc.GetDataType() : ge::DT_UNDEFINED;
 }
 inline bool IsFloat(ge::DataType type) { return type == ge::DT_FLOAT16 || type == ge::DT_BF16 || type == ge::DT_FLOAT; }
-// Support Ascend950 (NpuArch 3510) only.
-inline bool IsSupportedPlatform()
-{
-    fe::PlatFormInfos infos;
-    fe::OptionalInfos options;
-    std::string arch;
-    return fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(infos, options) == ge::GRAPH_SUCCESS &&
-           infos.GetPlatformRes("version", "NpuArch", arch) && arch == kSupportedNpuArch;
-}
 struct Captures {
     GNode norm;
     std::vector<GNode> quant;

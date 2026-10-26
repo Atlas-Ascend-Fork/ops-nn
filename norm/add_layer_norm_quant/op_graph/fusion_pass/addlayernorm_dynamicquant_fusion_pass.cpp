@@ -38,7 +38,7 @@ PatternUniqPtr MakePattern(int branches, bool bias, bool mul, int smooth_mask, i
 } // namespace
 std::vector<PatternUniqPtr> AddLayerNormDynamicQuantFusionPass::Patterns()
 {
-    if (!IsSupportedPlatform()) {
+    if (!ops::CheckNpuArch(kPass, kSupportedNpuArchs)) {
         OPS_LOG_D(kPass.c_str(), "patterns_skipped : platform unsupported or unavailable.");
         return {};
     }
@@ -58,7 +58,6 @@ std::vector<PatternUniqPtr> AddLayerNormDynamicQuantFusionPass::Patterns()
 }
 bool AddLayerNormDynamicQuantFusionPass::MeetRequirements(const std::unique_ptr<MatchResult>& match)
 {
-    OPS_LOG_D(kPass.c_str(), "guard_begin.");
     Captures nodes;
     if (!match || !Capture(*match, nodes)) {
         OPS_LOG_D(kPass.c_str(), "guard_rejected : capture unavailable.");
@@ -89,7 +88,6 @@ bool AddLayerNormDynamicQuantFusionPass::MeetRequirements(const std::unique_ptr<
 }
 GraphUniqPtr AddLayerNormDynamicQuantFusionPass::Replacement(const std::unique_ptr<MatchResult>& match)
 {
-    OPS_LOG_D(kPass.c_str(), "replacement_begin.");
     Captures nodes;
     if (!match || !Capture(*match, nodes)) {
         OPS_LOG_E(kPass.c_str(), "replacement_rejected : capture unavailable.");

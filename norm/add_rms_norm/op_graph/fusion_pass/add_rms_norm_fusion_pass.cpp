@@ -15,28 +15,19 @@
 #include <string>
 #include <utility>
 
+#include "arch_utils.h"
 #include "common/inc/error_util.h"
 #include "es_math_ops.h"
 #include "es_nn_ops.h"
 #include "ge/ge_utils.h"
-#include "platform/platform_info.h"
 
 namespace ops {
 namespace {
 const std::string kPassName = "AddRmsNormFusionGraphPass";
-const std::set<std::string> kSupportedNpuArchs = {"3510", "5102"};
+const std::set<std::string> kSupportedNpuArchs = {"3510", "5102", "9201", "9202"};
+
 constexpr float kDefaultEpsilon = 1e-5f;
 constexpr size_t kInputCount = 3U;
-
-bool CheckPlatform()
-{
-    fe::PlatFormInfos platform_info;
-    fe::OptionalInfos optional_info;
-    std::string arch;
-    return fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) ==
-               ge::GRAPH_SUCCESS &&
-           platform_info.GetPlatformRes("version", "NpuArch", arch) && kSupportedNpuArchs.count(arch) != 0;
-}
 
 bool SetOutputDesc(const ge::es::EsTensorHolder& tensor, const ge::TensorDesc& desc)
 {
@@ -82,11 +73,10 @@ ge::fusion::PatternUniqPtr MakePattern()
 
 std::vector<ge::fusion::PatternUniqPtr> AddRmsNormFusionGraphPass::Patterns()
 {
-    if (!CheckPlatform()) {
+    if (!ops::CheckNpuArch(kPassName, kSupportedNpuArchs)) {
         OPS_LOG_D(kPassName.c_str(), "guard_rejected : unsupported/unavailable NpuArch.");
         return {};
     }
-    OPS_LOG_D(kPassName.c_str(), "begin pattern construction.");
     std::vector<ge::fusion::PatternUniqPtr> patterns;
     auto pattern = MakePattern();
     if (pattern != nullptr) {
@@ -98,7 +88,6 @@ std::vector<ge::fusion::PatternUniqPtr> AddRmsNormFusionGraphPass::Patterns()
 
 bool AddRmsNormFusionGraphPass::MeetRequirements(const std::unique_ptr<ge::fusion::MatchResult>& match_result)
 {
-    OPS_LOG_D(kPassName.c_str(), "guard_begin.");
     ge::fusion::NodeIo add;
     if (match_result == nullptr || match_result->GetCapturedTensor(1, add) != ge::SUCCESS) {
         OPS_LOG_D(kPassName.c_str(), "guard_rejected : cannot read captured Add node.");
@@ -132,7 +121,6 @@ bool AddRmsNormFusionGraphPass::MeetRequirements(const std::unique_ptr<ge::fusio
 ge::fusion::GraphUniqPtr AddRmsNormFusionGraphPass::Replacement(
     const std::unique_ptr<ge::fusion::MatchResult>& match_result)
 {
-    OPS_LOG_D(kPassName.c_str(), "begin replacement: Add -> RmsNorm matched.");
     ge::fusion::NodeIo norm;
     ge::fusion::NodeIo add;
     if (match_result == nullptr || match_result->GetCapturedTensor(0, norm) != ge::SUCCESS ||

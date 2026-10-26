@@ -31,6 +31,7 @@
 
 namespace ops {
 namespace {
+const std::set<std::string> kSupportedNpuArchs = {"3510", "9201", "9202"};
 const std::string kPassName = "ZInplaceAddLayerNormFusionPass";
 
 const char* const kAddLayerNormType = "AddLayerNorm";
@@ -115,25 +116,28 @@ SceneCheckResult CheckScene(CustomPassContext& passContext)
 #endif
 }
 
-// 守卫 G2：平台check。
-bool IsSupportedPlatform(int64_t& l2Size)
+// 检查平台架构并获取 L2 大小。
+bool CheckPlatform(int64_t& l2Size)
 {
-    fe::PlatformInfo platformInfo;
-    fe::OptionalInfo optionalInfo;
-    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfo, optionalInfo) !=
-        ge::SUCCESS) {
-        OPS_LOG_D(kPassName.c_str(), "Get platform info failed, skip.");
+    fe::PlatFormInfos platformInfos;
+    fe::OptionalInfos optionalInfos;
+    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfos, optionalInfos) !=
+        ge::GRAPH_SUCCESS) {
+        OPS_LOG_D(kPassName.c_str(), "Failed to get platform info.");
         return false;
     }
-
-    const std::string curSoc = platformInfo.str_info.short_soc_version;
-    static const std::set<std::string> kSupportSoc = {"Ascend910B", "Ascend910_93", "Ascend950"};
-    if (kSupportSoc.count(curSoc) == 0U) {
-        OPS_LOG_D(kPassName.c_str(), "Platform %s is not supported, skip.", curSoc.c_str());
+    std::string arch;
+    if (!platformInfos.GetPlatformRes("version", "NpuArch", arch)) {
+        OPS_LOG_D(kPassName.c_str(), "NpuArch is unavailable.");
         return false;
     }
-
-    l2Size = static_cast<int64_t>(platformInfo.soc_info.l2_size);
+    if (kSupportedNpuArchs.count(arch) == 0U) {
+        OPS_LOG_D(kPassName.c_str(), "Unsupported NpuArch=%s.", arch.c_str());
+        return false;
+    }
+    uint64_t size = 0U;
+    platformInfos.GetLocalMemSize(fe::LocalMemType::L2, size);
+    l2Size = static_cast<int64_t>(size);
     return true;
 }
 
@@ -148,6 +152,16 @@ bool IsInplaceSafe(const GNode& node)
         const GNodePtr producer = peer.first;
         if (producer == nullptr) {
             OPS_LOG_D(kPassName.c_str(), "Input %d has no producer, skip.", inputIdx);
+            return false;
+        }
+
+        AscendString producerType;
+        if (producer->GetType(producerType) != GRAPH_SUCCESS) {
+            OPS_LOG_D(kPassName.c_str(), "Failed to get producer type for input %d.", inputIdx);
+            return false;
+        }
+        if (producerType == AscendString("Data")) {
+            OPS_LOG_D(kPassName.c_str(), "Input %d comes directly from Data, skip.", inputIdx);
             return false;
         }
 
@@ -405,6 +419,10 @@ Status ZInplaceAddLayerNormFusionPass::Run(GraphPtr& graph, CustomPassContext& p
     if (graph == nullptr) {
         return GRAPH_NOT_CHANGED;
     }
+    int64_t l2Size = 0L;
+    if (!CheckPlatform(l2Size)) {
+        return GRAPH_NOT_CHANGED;
+    }
 
     // 全局守卫：与具体节点无关，只判一次
     const SceneCheckResult scene = CheckScene(passContext);
@@ -415,11 +433,6 @@ Status ZInplaceAddLayerNormFusionPass::Run(GraphPtr& graph, CustomPassContext& p
     }
     if (scene == SceneCheckResult::TRAIN) {
         OPS_LOG_D(kPassName.c_str(), "Train mode is not supported, skip.");
-        return GRAPH_NOT_CHANGED;
-    }
-
-    int64_t l2Size = 0L;
-    if (!IsSupportedPlatform(l2Size)) {
         return GRAPH_NOT_CHANGED;
     }
 

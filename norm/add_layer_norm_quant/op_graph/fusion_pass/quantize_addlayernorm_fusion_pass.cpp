@@ -59,7 +59,7 @@ bool QuantAttributes(const GNode& q)
 } // namespace
 std::vector<PatternUniqPtr> QuantizeAddLayerNormPass::Patterns()
 {
-    if (!IsSupportedPlatform()) {
+    if (!ops::CheckNpuArch(kPass, kSupportedNpuArchs)) {
         OPS_LOG_D(kPass.c_str(), "patterns_skipped : platform unsupported or unavailable.");
         return {};
     }
@@ -73,7 +73,6 @@ std::vector<PatternUniqPtr> QuantizeAddLayerNormPass::Patterns()
 }
 bool QuantizeAddLayerNormPass::MeetRequirements(const std::unique_ptr<MatchResult>& match)
 {
-    OPS_LOG_D(kPass.c_str(), "guard_begin.");
     Captures nodes;
     if (!match || !Capture(*match, nodes)) {
         OPS_LOG_D(kPass.c_str(), "guard_rejected : capture unavailable.");
@@ -109,7 +108,6 @@ bool QuantizeAddLayerNormPass::MeetRequirements(const std::unique_ptr<MatchResul
 }
 GraphUniqPtr QuantizeAddLayerNormPass::Replacement(const std::unique_ptr<MatchResult>& match)
 {
-    OPS_LOG_D(kPass.c_str(), "replacement_begin.");
     Captures nodes;
     if (!match || !Capture(*match, nodes)) {
         OPS_LOG_E(kPass.c_str(), "replacement_rejected : capture unavailable.");

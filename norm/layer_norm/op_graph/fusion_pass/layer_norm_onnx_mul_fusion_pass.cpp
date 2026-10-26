@@ -20,12 +20,12 @@
 #include <string>
 #include <vector>
 
+#include "arch_utils.h"
 #include "common/inc/error_util.h"
 #include "cube_utils/cube_fp16_t.h"
 #include "es_math_ops.h"
 #include "es_nn_ops.h"
 #include "ge/ge_utils.h"
-#include "platform/platform_info.h"
 
 namespace ops {
 namespace {
@@ -71,31 +71,9 @@ constexpr size_t kCommConfigNum = 32U;
 // pattern 总数 = 32（有 affine，bit0~bit4 全用） + 8（无 affine，bit3/bit4 无意义跳过）。
 constexpr size_t kExpectedPatternNum = 40U;
 
+const std::set<std::string> kSupportedNpuArchs = {"3510", "5102", "9201", "9202"};
+
 bool IsBitSet(size_t config, size_t bit) { return ((config >> bit) & 1U) != 0U; }
-
-const std::set<std::string> kSupportedNpuArch = {"3510", "5102"};
-
-bool IsSupportedPlatform()
-{
-    fe::PlatFormInfos platform_infos;
-    fe::OptionalInfos optional_infos;
-    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_infos, optional_infos) !=
-        SUCCESS) {
-        OPS_LOG_D(kPassName.c_str(), "Get platform info failed, Skip.");
-        return false;
-    }
-    std::string arch_str;
-    if (!platform_infos.GetPlatformRes("version", "NpuArch", arch_str)) {
-        OPS_LOG_D(kPassName.c_str(), "Platform NpuArch not found, Skip.");
-        return false;
-    }
-    OPS_LOG_D(kPassName.c_str(), "Platform NpuArch: %s", arch_str.c_str());
-    if (kSupportedNpuArch.count(arch_str) == 0U) {
-        OPS_LOG_D(kPassName.c_str(), "Platform %s is not supported, Skip.", arch_str.c_str());
-        return false;
-    }
-    return true;
-}
 
 std::string TypeOf(const GNode& node)
 {
@@ -533,7 +511,7 @@ bool CreateAffineConst(es::EsGraphBuilder& builder, const Matched& m, es::EsTens
 std::vector<PatternUniqPtr> LayerNormONNXMULFusionPass::Patterns()
 {
     OPS_LOG_D(kPassName.c_str(), "Enter Patterns for LayerNormONNXMULFusionPass.");
-    if (!IsSupportedPlatform()) {
+    if (!ops::CheckNpuArch(kPassName, kSupportedNpuArchs)) {
         return {};
     }
     std::vector<PatternUniqPtr> patterns;
@@ -551,7 +529,6 @@ std::vector<PatternUniqPtr> LayerNormONNXMULFusionPass::Patterns()
 
 bool LayerNormONNXMULFusionPass::MeetRequirements(const std::unique_ptr<MatchResult>& match_result)
 {
-    OPS_LOG_D(kPassName.c_str(), "guard_begin.");
     Matched m;
     if (!CollectMatched(match_result, m)) {
         return false;
@@ -580,7 +557,6 @@ bool LayerNormONNXMULFusionPass::MeetRequirements(const std::unique_ptr<MatchRes
 
 std::unique_ptr<Graph> LayerNormONNXMULFusionPass::Replacement(const std::unique_ptr<MatchResult>& match_result)
 {
-    OPS_LOG_D(kPassName.c_str(), "replacement_begin.");
     Matched m;
     if (!CollectMatched(match_result, m) || !CheckValue(m)) {
         return nullptr;

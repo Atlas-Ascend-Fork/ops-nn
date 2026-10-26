@@ -8,9 +8,10 @@
 #include <vector>
 #include "es_nn_ops.h"
 #include "es_math_ops.h"
+#include "arch_utils.h"
 #include "common/inc/error_util.h"
 #include "ge/ge_utils.h"
-#include "platform/platform_info.h"
+#include <set>
 
 namespace ops {
 namespace {
@@ -21,7 +22,8 @@ using ge::es::EsTensorHolder;
 using namespace ge::fusion;
 
 const std::string kPass = "AddRmsNormQuantFusionPass";
-const std::string kSupportedNpuArch = "3510";
+const std::set<std::string> kSupportedNpuArchs = {"3510", "9201", "9202"};
+
 constexpr int64_t kLastDimAlignment = 16;
 constexpr float kDefaultEpsilon = 1e-5f;
 constexpr size_t kZeroPointsBit = 0U;
@@ -141,22 +143,6 @@ int64_t Elements(const TensorDesc& desc)
     auto dims = desc.GetShape().GetDims();
     return std::accumulate(dims.begin(), dims.end(), int64_t{1}, std::multiplies<int64_t>());
 }
-bool CheckPlatform()
-{
-    fe::PlatFormInfos infos;
-    fe::OptionalInfos options;
-    std::string arch;
-    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(infos, options) != ge::GRAPH_SUCCESS ||
-        !infos.GetPlatformRes("version", "NpuArch", arch)) {
-        OPS_LOG_D(kPass.c_str(), "guard_rejected : cannot obtain platform architecture.");
-        return false;
-    }
-    if (arch != kSupportedNpuArch) {
-        OPS_LOG_D(kPass.c_str(), "guard_rejected : unsupported NpuArch=%s.", arch.c_str());
-        return false;
-    }
-    return true;
-}
 bool CheckNorm(const GNode& norm)
 {
     const auto x1 = InputDesc(norm, 0);
@@ -190,7 +176,7 @@ bool CheckQuant(const GNode& norm, const GNode& quant)
 } // namespace
 std::vector<PatternUniqPtr> AddRmsNormQuantFusionPass::Patterns()
 {
-    if (!CheckPlatform()) {
+    if (!ops::CheckNpuArch(kPass, kSupportedNpuArchs)) {
         return {};
     }
     std::vector<PatternUniqPtr> patterns;

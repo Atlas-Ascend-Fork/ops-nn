@@ -17,32 +17,23 @@
 #include <vector>
 
 #include "acl/acl_rt.h"
+#include "arch_utils.h"
 #include "common/inc/error_util.h"
 #include "es_nn_ops.h"
 #include "ge/ge_utils.h"
 #include "ge/fusion/graph_rewriter.h"
 #include "ge/fusion/pass/pattern_fusion_pass.h"
-#include "platform/platform_info.h"
 #include "version/ge-compiler_version.h"
 
 namespace ops {
 namespace {
 const std::string kPassName = "InplaceAddRmsNormFusionPass";
 constexpr int32_t kMinGeCompilerVersion = 90000000;
-const std::set<std::string> kSupportedNpuArchs = {"3510", "5102"};
+const std::set<std::string> kSupportedNpuArchs = {"3510", "5102", "9201", "9202"};
+
 constexpr float kDefaultEpsilon = 1e-6f;
 constexpr size_t kInputCount = 3U;
 constexpr size_t kOutputCount = 3U;
-
-bool CheckPlatform()
-{
-    fe::PlatFormInfos platform_info;
-    fe::OptionalInfos optional_info;
-    std::string arch;
-    return fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) ==
-               ge::GRAPH_SUCCESS &&
-           platform_info.GetPlatformRes("version", "NpuArch", arch) && kSupportedNpuArchs.count(arch) != 0;
-}
 
 bool HasType(const ge::GNode& node, const std::string& expected)
 {
@@ -252,8 +243,7 @@ ge::Status Rewrite(const ge::GNode& norm)
 
 ge::Status InplaceAddRmsNormFusionPass::Run(ge::GraphPtr& graph, ge::CustomPassContext& context)
 {
-    OPS_LOG_D(kPassName.c_str(), "begin.");
-    if (graph == nullptr || !CheckPlatform()) {
+    if (graph == nullptr || !ops::CheckNpuArch(kPassName, kSupportedNpuArchs)) {
         OPS_LOG_D(kPassName.c_str(), "guard_rejected : null graph or unsupported/unavailable NpuArch.");
         return ge::SUCCESS;
     }
@@ -274,7 +264,6 @@ ge::Status InplaceAddRmsNormFusionPass::Run(ge::GraphPtr& graph, ge::CustomPassC
             return ge::FAILED;
         }
     }
-    OPS_LOG_D(kPassName.c_str(), "end.");
     return ge::SUCCESS;
 }
 

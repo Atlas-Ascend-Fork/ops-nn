@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,20 @@ protected:
         optional_info.soc_version = soc;
         PlatformInfoManager::Instance().platform_info_map_[soc] = platform_info;
         PlatformInfoManager::Instance().SetOptionalCompilationInfo(optional_info);
+
+        fe::PlatFormInfos infos;
+        (void)infos.Init();
+        const std::map<std::string, std::string> archs = {{"Ascend950", "3510"},    {"Ascend350", "3510"},
+                                                          {"MC62", "5102"},         {"Ascend910B", "2201"},
+                                                          {"Ascend910_93", "2201"}, {"Ascend310P", "2002"}};
+        const auto arch = archs.find(soc);
+        std::map<std::string, std::string> version = {{"NpuArch", arch == archs.end() ? "" : arch->second}};
+        infos.SetPlatformRes("version", version);
+        fe::OptionalInfos options;
+        (void)options.Init();
+        options.SetSocVersion(soc);
+        PlatformInfoManager::Instance().platform_infos_map_[soc] = infos;
+        PlatformInfoManager::Instance().SetOptionalCompilationInfo(options);
     }
 
     static std::shared_ptr<Graph> BuildGraph(const std::vector<int64_t>& x_shape,

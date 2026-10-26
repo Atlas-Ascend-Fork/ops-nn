@@ -58,20 +58,28 @@ protected:
 
     static void SetPlatform(const std::string& soc, int64_t l2Size = kL2Size)
     {
-        PlatformInfo platformInfo;
-        OptionalInfo optionalInfo;
-        platformInfo.soc_info.ai_core_cnt = 64;
-        platformInfo.soc_info.l2_size = static_cast<uint64_t>(l2Size);
-        platformInfo.str_info.short_soc_version = soc;
-        optionalInfo.soc_version = soc;
-        PlatformInfoManager::Instance().platform_info_map_[soc] = platformInfo;
-        PlatformInfoManager::Instance().SetOptionalCompilationInfo(optionalInfo);
+        fe::PlatFormInfos infos;
+        (void)infos.Init();
+        const std::map<std::string, std::string> archs = {{"Ascend950", "3510"},    {"Ascend350", "3510"},
+                                                          {"MC62", "5102"},         {"Ascend910B", "2201"},
+                                                          {"Ascend910_93", "2201"}, {"Ascend310P", "2002"}};
+        const auto arch = archs.find(soc);
+        std::map<std::string, std::string> version = {{"NpuArch", arch == archs.end() ? "" : arch->second}};
+        infos.SetPlatformRes("version", version);
+        std::map<std::string, std::string> socInfo = {{"ai_core_cnt", "64"}, {"l2_size", std::to_string(l2Size)}};
+        infos.SetPlatformRes("SoCInfo", socInfo);
+        fe::OptionalInfos options;
+        (void)options.Init();
+        options.SetSocVersion(soc);
+        PlatformInfoManager::Instance().platform_infos_map_[soc] = infos;
+        PlatformInfoManager::Instance().SetOptionalCompilationInfo(options);
     }
 
     // 构造单个 AddLayerNorm 节点的图。额外消费者经成员 extraConsumer_ 暴露给用例。
     std::shared_ptr<Graph> BuildGraph(bool withBias, int64_t rows = kRowsInBand, int64_t cols = kCols,
                                       DataType xDtype = DT_FLOAT16, DataType gammaDtype = DT_FLOAT16,
-                                      bool extraConsumerOnX1 = false, bool extraConsumerOnY = false)
+                                      bool extraConsumerOnX1 = false, bool extraConsumerOnY = false,
+                                      int32_t directDataInput = -1)
     {
         const std::vector<int64_t> xShape = {rows, cols};
         const std::vector<int64_t> pShape = {cols};
@@ -79,6 +87,16 @@ protected:
         auto builder = es::EsGraphBuilder("inplace_add_layer_norm_fusion_test");
         auto x1 = builder.CreateInput(kX1Idx, "x1", xDtype, FORMAT_ND, xShape);
         auto x2 = builder.CreateInput(kX2Idx, "x2", xDtype, FORMAT_ND, xShape);
+        if (directDataInput != kX1Idx) {
+            x1 = es::Cast(x1, xDtype);
+            UpdateInputDesc(x1, 0, xDtype, xShape);
+            UpdateOutputDesc(x1, 0, xDtype, xShape);
+        }
+        if (directDataInput != kX2Idx) {
+            x2 = es::Cast(x2, xDtype);
+            UpdateInputDesc(x2, 0, xDtype, xShape);
+            UpdateOutputDesc(x2, 0, xDtype, xShape);
+        }
         auto gamma = builder.CreateInput(kGammaIdx, "gamma", gammaDtype, FORMAT_ND, pShape);
         auto beta = builder.CreateInput(kBetaIdx, "beta", gammaDtype, FORMAT_ND, pShape);
 
@@ -184,8 +202,10 @@ TEST_F(ZInplaceAddLayerNormFusionPassTest, control_edges_transferred_to_new_node
     ASSERT_NE(extraConsumer_.GetInDataNodesAndPortIndexs(0).first, nullptr)
         << "extra consumer node was not built or not wired";
 
-    // extraConsumer_ --ctrl--> AddLayerNorm --ctrl--> extraConsumer_ 都挂上，覆盖入/出两个方向
-    ASSERT_EQ(graph->AddControlEdge(extraConsumer_, addLn), GRAPH_SUCCESS);
+    // 上游输入节点 --ctrl--> AddLayerNorm --ctrl--> 下游消费者。
+    auto inputProducer = addLn.GetInDataNodesAndPortIndexs(kX1Idx).first;
+    ASSERT_NE(inputProducer, nullptr);
+    ASSERT_EQ(graph->AddControlEdge(*inputProducer, addLn), GRAPH_SUCCESS);
     ASSERT_EQ(graph->AddControlEdge(addLn, extraConsumer_), GRAPH_SUCCESS);
     ASSERT_EQ(addLn.GetInControlNodes().size(), 1U);
     ASSERT_EQ(addLn.GetOutControlNodes().size(), 1U);
@@ -274,12 +294,40 @@ TEST_F(ZInplaceAddLayerNormFusionPassTest, guard_reject_unsupported_platform)
     EXPECT_EQ(CountOpType(graph, kInplaceAddLayerNorm), 0);
 }
 
-TEST_F(ZInplaceAddLayerNormFusionPassTest, platform_ascend910b_supported)
+TEST_F(ZInplaceAddLayerNormFusionPassTest, platform_ascend910b_rejected)
 {
     SetPlatform("Ascend910B");
     auto graph = BuildGraph(false);
-    EXPECT_EQ(RunPass(graph), SUCCESS);
-    EXPECT_EQ(CountOpType(graph, kInplaceAddLayerNorm), 1);
+    EXPECT_EQ(RunPass(graph), GRAPH_NOT_CHANGED);
+    EXPECT_EQ(CountOpType(graph, kAddLayerNorm), 1);
+    EXPECT_EQ(CountOpType(graph, kInplaceAddLayerNorm), 0);
+}
+
+TEST_F(ZInplaceAddLayerNormFusionPassTest, platform_ascend910_93_rejected)
+{
+    SetPlatform("Ascend910_93");
+    auto graph = BuildGraph(false);
+    EXPECT_EQ(RunPass(graph), GRAPH_NOT_CHANGED);
+    EXPECT_EQ(CountOpType(graph, kAddLayerNorm), 1);
+    EXPECT_EQ(CountOpType(graph, kInplaceAddLayerNorm), 0);
+}
+
+TEST_F(ZInplaceAddLayerNormFusionPassTest, guard_reject_direct_data_input)
+{
+    for (int32_t inputIdx = 0; inputIdx < 2; ++inputIdx) {
+        SCOPED_TRACE(inputIdx);
+        auto graph = BuildGraph(false, kRowsInBand, kCols, DT_FLOAT16, DT_FLOAT16, false, false, inputIdx);
+        GNode addLn;
+        ASSERT_TRUE(FindNodeByType(graph, kAddLayerNorm, addLn));
+        auto producer = addLn.GetInDataNodesAndPortIndexs(inputIdx).first;
+        ASSERT_NE(producer, nullptr);
+        AscendString type;
+        ASSERT_EQ(producer->GetType(type), GRAPH_SUCCESS);
+        ASSERT_EQ(type, AscendString("Data"));
+        EXPECT_EQ(RunPass(graph), GRAPH_NOT_CHANGED);
+        EXPECT_EQ(CountOpType(graph, kAddLayerNorm), 1);
+        EXPECT_EQ(CountOpType(graph, kInplaceAddLayerNorm), 0);
+    }
 }
 
 // ---------- 守卫 G4：x1 被其它节点消费时不可原地 ----------

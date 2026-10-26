@@ -15,14 +15,15 @@
 #include <string>
 #include <vector>
 
+#include "arch_utils.h"
 #include "common/inc/error_util.h"
 #include "es_math_ops.h"
 #include "es_nn_ops.h"
 #include "ge/ge_utils.h"
-#include "platform/platform_info.h"
 
 namespace ops {
 namespace {
+const std::set<std::string> kSupportedNpuArchs = {"3510", "5102", "9201", "9202"};
 const std::string kPassName = "LayerNormRemoveBroadcastFusionPass";
 
 const int64_t kLNCaptureIdx = 0l;
@@ -87,24 +88,6 @@ PatternUniqPtr MakePattern()
         .CaptureTensor({*gamma_brc.GetProducer(), 0})
         .CaptureTensor({*beta_brc.GetProducer(), 0});
     return pattern;
-}
-
-bool IsSupportedPlatform()
-{
-    fe::PlatformInfo platform_info;
-    fe::OptionalInfo optional_info;
-    OP_LOGE_IF(
-        fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) != SUCCESS,
-        false, kPassName.c_str(), "Get platform_info failed.");
-
-    const std::string soc = platform_info.str_info.short_soc_version;
-    OPS_LOG_D(kPassName.c_str(), "Platform short soc: %s", soc.c_str());
-    const static std::set<std::string> support_soc = {"Ascend950", "Ascend350", "MC62"};
-    if (support_soc.count(soc) == 0) {
-        OPS_LOG_D(kPassName.c_str(), "Platform is not support!");
-        return false;
-    }
-    return true;
 }
 
 bool CheckNormAxis(const GNode& ln_node, const Shape& x_shape, size_t norm_axis)
@@ -214,7 +197,7 @@ std::vector<es::EsTensorHolder> CreateReplacementInputs(es::EsGraphBuilder& grap
 
 std::vector<PatternUniqPtr> LayerNormRemoveBroadcastFusionPass::Patterns()
 {
-    if (!IsSupportedPlatform()) {
+    if (!ops::CheckNpuArch(kPassName, kSupportedNpuArchs)) {
         OPS_LOG_D(kPassName.c_str(), "Platform is not support.");
         return {};
     }
