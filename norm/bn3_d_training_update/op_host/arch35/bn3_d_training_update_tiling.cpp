@@ -128,23 +128,16 @@ ge::graphStatus Bn3dTrainingUpdateTiling::CheckAttrs()
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
     const float* factor = attrs->GetAttrPointer<float>(ATTR_FACTOR);
     const float* epsilon = attrs->GetAttrPointer<float>(ATTR_EPSILON);
+
     OP_CHECK_IF(factor == nullptr || epsilon == nullptr,
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "factor/epsilon", "nullptr",
                                                       "both attributes are REQUIRED"),
                 return ge::GRAPH_FAILED);
-    // factor:契约(def.cpp / proto.h)未声明范围约束,A2 亦不校验 ⇒ 不按取值范围拒绝,只保留有限性门
-    // (NaN/Inf 会让 EMA 结果整体污染,属"无意义输入"而非"范围越界")。factor == 0 是 PyTorch momentum
-    // 的合法用法(running 统计量冻结,mean_out == mean),硬拒会造成相对 A2 的支持面回退。
-    OP_CHECK_IF(std::isnan(*factor) || std::isinf(*factor),
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "factor",
-                                                      std::to_string(*factor).c_str(), "factor must be a finite float"),
-                return ge::GRAPH_FAILED);
-    // epsilon:归一化分母为 sqrt(saveVar + epsilon),epsilon <= 0 时在常量特征(saveVar == 0)上退化为
-    // 1/sqrt(0) = inf/NaN,产物无意义 ⇒ 保留 > 0 的拒绝(epsilon 无 0 值合法语义)。
+
     OP_CHECK_IF(
-        std::isnan(*epsilon) || std::isinf(*epsilon) || !(*epsilon > 0.0f),
+        *epsilon < 0.0f,
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "epsilon", std::to_string(*epsilon).c_str(),
-                                              "epsilon must be a finite float > 0"),
+                                              "The value of attribute epsilon cannot be less than 0"),
         return ge::GRAPH_FAILED);
     factor_ = *factor;
     epsilon_ = *epsilon;

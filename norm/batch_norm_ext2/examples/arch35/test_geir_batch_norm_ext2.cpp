@@ -29,7 +29,7 @@
 #include "ge_api.h"
 #include "array_ops.h"
 #include "ge_ir_build.h"
-#include "../op_graph/batch_norm_ext2_proto.h"
+#include "../../op_graph/batch_norm_ext2_proto.h"
 
 #define FAILED -1
 #define SUCCESS 0
@@ -187,8 +187,8 @@ int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vect
     ADD_INPUT(1, input_x, inDtype, xShape, FORMAT_NCHW);
     ADD_INPUT(2, input_scale, inDtype, channelShape, FORMAT_ND);
     ADD_INPUT(3, input_offset, inDtype, channelShape, FORMAT_ND);
-    ADD_INPUT(4, input_mean, inDtype, channelShape, FORMAT_ND);
-    ADD_INPUT(5, input_variance, inDtype, channelShape, FORMAT_ND);
+    // input_mean / input_variance 为 OPTIONAL_INPUT,仅供推理态使用;
+    // 训练态(下方 is_training=true)按算子契约必须为空,故此处不接入这两路输入。
     ADD_OUTPUT(1, output_y, inDtype, xShape, FORMAT_NCHW);
     ADD_OUTPUT(2, output_mean, inDtype, channelShape, FORMAT_ND);
     ADD_OUTPUT(3, output_variance, inDtype, channelShape, FORMAT_ND);

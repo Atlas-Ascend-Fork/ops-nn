@@ -291,7 +291,7 @@ private:
             GatherParamForDtypeT(gammaLocal, gamma, paramOffset, pregMask, paramCacheElemLen);
             GatherParamForDtypeT(betaLocal, beta, paramOffset, pregMask, paramCacheElemLen);
             GatherRunningParamForDtypeT(varLocal, var, paramOffset, pregMask, paramCacheElemLen);
-            NormCommon::ComputeRstdNewtonRaphsonReg(var, rstd, pregMask, tilingData_->epsilon);
+            ComputeRstdNewtonRaphsonRegExt2(var, rstd, pregMask, tilingData_->epsilon);
             GatherRunningParamForDtypeT(meanLocal, mean, paramOffset, pregMask, paramCacheElemLen);
 
             StoreAlign(gammaFp32Local, gamma, pregMask);

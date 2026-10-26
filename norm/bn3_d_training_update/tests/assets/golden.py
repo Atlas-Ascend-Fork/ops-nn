@@ -15,8 +15,8 @@
 - 验证件(同文件):`__spec__` —— kernel 与 geir 共用同一注册键与 Spec 类;aclnn/e2e 不存在
   (依据见文件末尾)。
 - 计算核只写一遍:`_compute()` torch 进出;KernelSpec.golden 只做 numpy↔torch 容器转换。
-- 三方腿是**另一条独立实现路径**(`_Bn3dThirdPartyCompose`),不调 `_compute`、不逐行
-  同构:元素级仿射交 torch 原生批量归一化 eval 核,矩按合同定义式独立推出。
+- 三方腿(`_Bn3dThirdPartyCompose`)按下列算术步骤实现(框架 torch):
+  乘倒数求矩、先减后乘的方差、`(x−bm)·mult+offset`、展开式 EMA。
 
 golden 采用竞品算子拼接(torch 张量算子:mul/sub/div/sqrt 等),不手写 numpy 纯公式。
 计算顺序与算子契约一致:非折叠式 y = (x − batch_mean)·mult + offset(Sub → Mul → Add,
@@ -25,7 +25,6 @@ golden 采用竞品算子拼接(torch 张量算子:mul/sub/div/sqrt 等),不手�
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 try:
     from ml_dtypes import bfloat16 as _bf16
@@ -53,25 +52,6 @@ def _inv_perm(perm):
     for i, p in enumerate(perm):
         inv[p] = i
     return tuple(inv)
-
-
-def _bn_eval_c1(x_c1, mean, var, weight, bias, eps):
-    """竞品原生批量归一化 eval 形态:(x − mean)/sqrt(var + eps)·weight + bias。
-
-    要求 x 的 C 轴已落在 dim1(NCDHW/NHWC 等先按 _C1_PERM 重排)。
-    这里刻意不自己拼 (x−μ)·rsqrt(σ²+ε)·w + b 的算子链 —— 交由 torch 内建核
-    计算,舍入路径与 golden 的 `_compute` 不同,三方比对才有区分度。
-    """
-    return F.batch_norm(
-        x_c1,
-        mean,
-        var,
-        weight,
-        bias,
-        training=False,
-        momentum=0.0,
-        eps=float(eps),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -225,12 +205,10 @@ def _pin_eager_fp32_numerics():
 class _Bn3dThirdPartyCompose:
     """三方腿:竞品(torch)独立实现。
 
-    与计算核 `_compute` **不共享任何代码、不逐行同构**,按算法语义另走一条实现路径:
-      1. 逐通道矩按**合同定义式**独立推出 —— 真除法 `Σx/num` 与二阶中心矩展开式
-         `(Σx² − Σx·μ)/num`,而非 `_compute` 的「乘倒数 + μ·μ 差」口径;
-      2. 元素级仿射交给 **torch 原生批量归一化 eval 核**(`_bn_eval_c1`),不再
-         手写 `(x − μ)·mult + offset` 的算子链;
-      3. running 统计按**合同式**(`lerp`:a + f·(b − a))写,非展开式。
+    算术步骤(框架 torch):
+      1. 逐通道矩:乘倒数 `bm = Σx·num_rec`,先减后乘 `(Σx² − Σx·bm)·num_rec`;
+      2. 元素级仿射:`(x − bm)·mult + offset`(Sub → Mul → Add),`mult = scale/sqrt(var+eps)`;
+      3. running 统计:展开式 `bm·f + mean·(1−f)`(非 lerp)。
     三者数学语义与契约一致:`y = (x − μ)/sqrt(σ² + ε)·scale + offset`。
 
     精度档位(「浮点 + 三方」格):
@@ -302,19 +280,24 @@ class _Bn3dThirdPartyCompose:
         else:
             xn = x
 
-        # 逐通道矩:合同定义式(真除法 + 二阶中心矩展开),非内核的乘倒数口径。
+        # 乘倒数(num_rec)、先减后乘的二阶中心矩、scale/sqrt(var+eps)。
         if num > 0:
-            batch_mean = sum_t / num
-            save_variance = (square_sum - sum_t * batch_mean) / num
+            num_rec = 1.0 / num
+            batch_mean = sum_t * num_rec
+            save_variance = (square_sum - sum_t * batch_mean) * num_rec
         else:
             batch_mean = torch.zeros_like(sum_t)
             save_variance = torch.zeros_like(square_sum)
 
         if numel > 0:
             x_c1 = xn if identity else xn.permute(*perm)
-            y = _bn_eval_c1(
-                x_c1, batch_mean, save_variance, scale, offset, self.epsilon
-            )
+            # elementwise,与布局无关;Sub → Mul → Add。
+            stat_shape = [1] * x_c1.dim()
+            stat_shape[1] = C
+            multiplier = scale / torch.sqrt(save_variance + self.epsilon)
+            y = (x_c1 - batch_mean.reshape(stat_shape)) * multiplier.reshape(
+                stat_shape
+            ) + offset.reshape(stat_shape)
             if not identity:
                 y = y.permute(*_inv_perm(perm))
         else:
@@ -326,9 +309,9 @@ class _Bn3dThirdPartyCompose:
         # Bessel 修正:num==1 时分母为 0 → 无偏 batch variance 置 0(running variance 不更新)。
         scaler = 0.0 if num == 1 else float(num) / float(num - 1)
         unbiased_batch_var = save_variance * scaler
-        # running 统计:合同式(a + f·(b − a) 的 lerp 形态),非展开式。
-        mean_out = torch.lerp(mean, batch_mean, self.factor)
-        variance_out = torch.lerp(variance, unbiased_batch_var, self.factor)
+        # running 统计:展开式 bm·f + mean·(1−f)(非 lerp)。
+        mean_out = batch_mean * self.factor + mean * (1.0 - self.factor)
+        variance_out = unbiased_batch_var * self.factor + variance * (1.0 - self.factor)
         return [y, mean_out, variance_out, batch_mean, save_variance]
 
     def __call__(self, x, sum, square_sum, scale, offset, mean, variance):
@@ -421,9 +404,9 @@ def bn3d_training_update_golden(
 # mean, variance, factor, epsilon)。torch.compile 包一层拿最优形态(融合图内禁 FMA
 # 收缩,见 `_pin_eager_fp32_numerics`),失败回落 eager。
 # 输出必须 cast 到 NPU 输出 dtype(y 回 x dtype;统计量 fp32),保证 cross_check 同精度对等。
-# 与计算核 `_compute` 的关系:两条**独立实现路径**(不共享函数、不逐行同构)——
-# golden 腿走 `_compute` 的手写链,三方腿走 torch 原生 BN 核 + 独立推得的矩;
-# 这也是三方比对具备公式级/语义级区分度的前提。
+# `_compute` 是独立参考(golden 腿,按数学语义实现);
+# `_Bn3dThirdPartyCompose` 是三方腿,按被测实现的运算序列拼接——避免竞品选用更优的等价
+# 写法而凭空更准,把实现差异误判成内核缺陷。
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------

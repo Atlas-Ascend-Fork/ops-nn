@@ -156,4 +156,4 @@
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| 图模式调用 | [test_geir_batch_norm_ext2](./examples/test_geir_batch_norm_ext2.cpp)   | 通过[算子IR](./op_graph/batch_norm_ext2_proto.h)构图方式调用BatchNormExt2算子。 |
+| 图模式调用 | [test_geir_batch_norm_ext2](./examples/arch35/test_geir_batch_norm_ext2.cpp)   | 通过[算子IR](./op_graph/batch_norm_ext2_proto.h)构图方式调用BatchNormExt2算子。 |

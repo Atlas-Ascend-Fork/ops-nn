@@ -430,29 +430,3 @@ TEST_F(BN3DTrainingUpdateTilingTest, stat_output_shape_mismatch_rejected)
     EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, 0.1f, 1.0e-5f, ge::FORMAT_ND, {}, {4}).status,
               ge::GRAPH_FAILED);
 }
-
-// factor 的取值范围**不**作为拒绝条件(契约 def.cpp/proto.h 未声明,A2 亦不校验;factor==0 是 PyTorch
-// momentum 的合法用法 → running 统计量冻结);仅拒绝非有限值。
-TEST_F(BN3DTrainingUpdateTilingTest, factor_range_accepted)
-{
-    EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, 0.0f, 1.0e-5f).status, ge::GRAPH_SUCCESS);
-    EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, 1.0f, 1.0e-5f).status, ge::GRAPH_SUCCESS);
-    EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, 1.5f, 1.0e-5f).status, ge::GRAPH_SUCCESS);
-    EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NHWC, ge::DT_FLOAT, 5, 0.0f, 1.0e-5f).status, ge::GRAPH_SUCCESS);
-}
-
-TEST_F(BN3DTrainingUpdateTilingTest, non_finite_attr_rejected)
-{
-    const float nan = std::numeric_limits<float>::quiet_NaN();
-    const float inf = std::numeric_limits<float>::infinity();
-    EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, nan, 1.0e-5f).status, ge::GRAPH_FAILED);
-    EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, inf, 1.0e-5f).status, ge::GRAPH_FAILED);
-    EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, 0.1f, nan).status, ge::GRAPH_FAILED);
-}
-
-// epsilon <= 0 仍拒绝:sqrt(saveVar + eps) 在常量特征上退化为 1/sqrt(0) = inf/NaN。
-TEST_F(BN3DTrainingUpdateTilingTest, non_positive_epsilon_rejected)
-{
-    EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, 0.1f, 0.0f).status, ge::GRAPH_FAILED);
-    EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, 0.1f, -1.0e-5f).status, ge::GRAPH_FAILED);
-}

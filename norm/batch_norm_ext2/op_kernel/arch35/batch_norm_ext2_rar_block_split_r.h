@@ -371,8 +371,8 @@ public:
         gammaTensor = gammaQueue.DeQue<T2>();
         betaTensor = betaQueue.DeQue<T2>();
         // 需要等runningMeanVar计算完成后，才能计算成Rstd
-        NormCommon::ComputeRstdNewtonRaphson<false>(batchRstdTensor, batchRstdTensor, static_cast<uint32_t>(currentA),
-                                                    tilingData->epsilon, 1.0f, VL_F32);
+        ComputeRstdNewtonRaphsonExt2<false>(batchRstdTensor, batchRstdTensor, static_cast<uint32_t>(currentA),
+                                            tilingData->epsilon, 1.0f, VL_F32);
 
         NormalizeX(batchMeanTensor, batchRstdTensor, gammaTensor, betaTensor);
 
@@ -621,7 +621,11 @@ private:
                 RegTensor<float> delta2;
                 RegTensor<float> delta3;
                 RegTensor<float> delat4;
+                RegTensor<float> zero;
+                MaskReg eqMask;
                 MaskReg mask0;
+                MaskReg pregAll = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
+                Duplicate(zero, 0.0f, pregAll);
                 uint32_t sreg0 = processR0Num * processR1Num;
                 for (uint16_t i = 0; i < loopCount; i++) {
                     mask0 = AscendC::MicroAPI::UpdateMask<float>(sreg0);
@@ -630,6 +634,9 @@ private:
                     LoadAlign(tmpM2, m2TensorAddr + a_idx * formerRAlignNum + i * VL_F32);
                     // delata1 = x1 - mean
                     Sub(delta1, x1, tmpMean, mask0);
+                    // x1 与 mean 相等时（含同为 ±inf），delta 应为 0；否则 -inf-(-inf)=NaN 会持续污染均值
+                    Compare(eqMask, x1, tmpMean, mask0);
+                    Select(delta1, zero, delta1, eqMask);
                     // delta2 = delta1 * scale
                     Muls(delta2, delta1, scale, mask0);
                     // mean = mean + delta2

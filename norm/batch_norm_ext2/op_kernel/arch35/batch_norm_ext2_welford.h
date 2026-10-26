@@ -551,7 +551,11 @@ private:
             RegTensor<float> delta2;
             RegTensor<float> delta3;
             RegTensor<float> delat4;
+            RegTensor<float> zero;
+            MaskReg eqMask;
             MaskReg pregLoop;
+            MaskReg pregAll = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
+            Duplicate(zero, 0.0f, pregAll);
             uint32_t sreg0 = calLen;
             for (uint16_t i = 0; i < loopCount; i++) {
                 pregLoop = AscendC::MicroAPI::UpdateMask<float>(sreg0);
@@ -560,6 +564,9 @@ private:
                 LoadAlign(tmpMean, tmpMeanLocal + i * VL_FP32);
                 // delata1 = x1 - mean
                 Sub(delta1, x1, tmpMean, pregLoop);
+                // x1 与 mean 相等时（含同为 ±inf），delta 应为 0；否则 -inf-(-inf)=NaN 会持续污染均值
+                Compare(eqMask, x1, tmpMean, pregLoop);
+                Select(delta1, zero, delta1, eqMask);
                 // delta2 = delta1 * scale
                 Muls(delta2, delta1, scale, pregLoop);
                 // mean = mean + delta2
@@ -686,7 +693,7 @@ private:
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(var, var, reduceScale1, pregMerge);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
-            NormCommon::ComputeRstdNewtonRaphsonReg<false>(var, rstd, pregMerge, eps);
+            ComputeRstdNewtonRaphsonRegExt2<false>(var, rstd, pregMerge, eps);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdLocal + offset, rstd, pregMerge);
         }
     }
@@ -913,7 +920,7 @@ private:
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(var, var, reduceScale1, pregMerge);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
-            NormCommon::ComputeRstdNewtonRaphsonReg<false>(var, rstd, pregMerge, eps);
+            ComputeRstdNewtonRaphsonRegExt2<false>(var, rstd, pregMerge, eps);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdLocal + offset, rstd, pregMerge);
         }
     }
@@ -1119,7 +1126,7 @@ private:
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(var, var, reduceScale1, pregMerge);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
-            NormCommon::ComputeRstdNewtonRaphsonReg<false>(var, rstd, pregMerge, eps);
+            ComputeRstdNewtonRaphsonRegExt2<false>(var, rstd, pregMerge, eps);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdLocal + offset, rstd, pregMerge);
         }
     }
@@ -1301,7 +1308,7 @@ private:
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(var, var, reduceScale1, pregMerge);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
-            NormCommon::ComputeRstdNewtonRaphsonReg<false>(var, rstd, pregMerge, eps);
+            ComputeRstdNewtonRaphsonRegExt2<false>(var, rstd, pregMerge, eps);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdLocal + offset, rstd, pregMerge);
         }
     }

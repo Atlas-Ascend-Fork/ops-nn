@@ -247,7 +247,7 @@ private:
 
                 AscendC::MicroAPI::MaskReg
                     pregRstdAll1 = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
-                NormCommon::ComputeRstdNewtonRaphsonReg(var, rstd, pregRstdAll1, tilingData_->epsilon);
+                ComputeRstdNewtonRaphsonRegExt2(var, rstd, pregRstdAll1, tilingData_->epsilon);
 
                 // load gamma、beta
                 LoadTwoTensorForDtypeT<T2>(gamma, beta, gammaLocal, betaLocal, pregMaskFp32, pregMaskFp32, offset,

@@ -275,7 +275,7 @@ private:
                 LoadParamForDtypeT(gammaLocal, gamma, preg, aOffset);
                 LoadParamForDtypeT(betaLocal, beta, preg, aOffset);
                 LoadRunningParamForDtypeT(varLocal, var, preg, aOffset);
-                NormCommon::ComputeRstdNewtonRaphsonReg(var, rstd, preg, tilingData_->epsilon);
+                ComputeRstdNewtonRaphsonRegExt2(var, rstd, preg, tilingData_->epsilon);
                 LoadRunningParamForDtypeT(meanLocal, mean, preg, aOffset);
 
                 StoreAlign(gammaFp32Local + aOffset, gamma, preg);

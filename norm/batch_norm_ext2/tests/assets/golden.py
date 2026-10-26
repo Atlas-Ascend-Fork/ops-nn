@@ -182,7 +182,12 @@ def _golden_batch_norm_ext2(
             if data_format == "NHWC"
             else st.reshape(1, -1, 1, 1)
         )
-        y_t = torch.add(torch.mul((xt - mean_t) * rstd_t, scale_t), bias_t)
+        # 逐元素乘 + 逐个加两步拼接(禁 addcmul 这类 FMA 融合算子)。
+        # 逐元素乘之前先把按通道的两个因子合成一次:y = (x-mean)*(rstd*scale)+offset,
+        # 与 (x-mean)*rstd*scale 数学等价(fp64 下差异 <= 数个 ulp),但逐元素乘法
+        # 由两次并为一次——scale 极小时 (x-mean)*rstd 的假 inf 不再出现。
+        k_t = rstd_t * scale_t
+        y_t = torch.add(torch.mul(xt - mean_t, k_t), bias_t)
         batch_mean = mean_t.reshape(-1).numpy()
         batch_var = var_t.reshape(-1).numpy()
         rstd = rstd_t.reshape(-1).numpy()
@@ -281,6 +286,10 @@ class _BatchNormExt2Compose:
             mean_t = mean_flat.reshape(bshape)
             var_t = var_flat.reshape(bshape)
             rstd_t = torch.rsqrt(var_t + eps_t)
+            # 训练分支与训练 kernel 的归一化段逐项对齐:Sub→Mul(rstd)→Mul(gamma)→Add(beta),
+            # 即 ((x-mean)*rstd)*scale+offset(见 batch_norm_ext2_welford.h /
+            # batch_norm_ext2_rar_block_split_r.h 的 CalculateNormalizeVF)。
+            # 推理分支是 scale 先乘,见下方注释;两个分支各自对齐对应的 kernel 分支。
             y = (x_f32 - mean_t) * rstd_t * s_f32.reshape(bshape) + o_f32.reshape(
                 bshape
             )
@@ -295,9 +304,12 @@ class _BatchNormExt2Compose:
             m_f32 = input_mean.to(dtype=torch.float32).reshape(-1)
             v_f32 = input_variance.to(dtype=torch.float32).reshape(-1)
             rstd_t = torch.rsqrt(v_f32 + eps_t)
-            y = (x_f32 - m_f32.reshape(bshape)) * rstd_t.reshape(
+            # 推理分支与推理 kernel 对齐(Sub→Mul(gamma)→Mul(rstd)→Add(beta),
+            # 见 batch_norm_ext2_infer.h):|mean| 可达 FLT_MAX 时,先乘 rstd 会让中间量
+            # ((x-m)*rstd) 先溢出为 inf,即便随后乘 <1 的 scale 本可回落 -> 竞品多出假 inf。
+            y = (x_f32 - m_f32.reshape(bshape)) * s_f32.reshape(
                 bshape
-            ) * s_f32.reshape(bshape) + o_f32.reshape(bshape)
+            ) * rstd_t.reshape(bshape) + o_f32.reshape(bshape)
             out_mean = m_f32
             out_var = v_f32
             out_rs1 = m_f32

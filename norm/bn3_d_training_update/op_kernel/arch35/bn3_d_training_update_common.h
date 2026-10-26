@@ -129,18 +129,18 @@ __simd_callee__ inline void StoreFp32Aligned(__ubuf__ float* dst, RegTensor<floa
 // 一个 VL 块上的通道折叠(唯一一份通道数学)。**非折叠式**:只算 3 个量,不再算
 // `addend = offset − mult·bm` —— offset 由调用方**原样**放进系数向量第 3 路,在热循环里最后相加。
 //   bm      = sum * numRec                        // 乘倒数,非除法
-//   saveVar = square_sum * numRec − bm²           // 平方差形式 E[x²]−μ²
+//   saveVar = (square_sum − sum·bm) * numRec      // 先减后乘:避免 sq·numRec 与 bm² 直接相减的抵消放大
 //   mult    = scale / sqrt(saveVar + eps)         // +eps → sqrt → div(高精度模式)
-// 共 **7 个向量算子**(Muls/Muls/Mul/Sub/Adds/Sqrt/Div)。
+// 共 **7 个向量算子**(Muls/Mul/Sub/Muls/Adds/Sqrt/Div)。
 __simd_callee__ inline void FoldRegs(RegTensor<float>& sumReg, RegTensor<float>& sqReg, RegTensor<float>& scaleReg,
                                      RegTensor<float>& multReg, RegTensor<float>& bmReg, RegTensor<float>& saveVarReg,
                                      MaskReg& mask, float numRec, float epsilon)
 {
     RegTensor<float> tmpReg;
-    AscendC::Reg::Muls(bmReg, sumReg, numRec, mask);
-    AscendC::Reg::Muls(saveVarReg, sqReg, numRec, mask);
-    AscendC::Reg::Mul(tmpReg, bmReg, bmReg, mask);
-    AscendC::Reg::Sub(saveVarReg, saveVarReg, tmpReg, mask);
+    AscendC::Reg::Muls(bmReg, sumReg, numRec, mask);      // bm = sum * numRec
+    AscendC::Reg::Mul(tmpReg, sumReg, bmReg, mask);       // sum * bm
+    AscendC::Reg::Sub(tmpReg, sqReg, tmpReg, mask);       // square_sum − sum * bm
+    AscendC::Reg::Muls(saveVarReg, tmpReg, numRec, mask); // saveVar = (square_sum − sum * bm) * numRec
     AscendC::Reg::Adds(tmpReg, saveVarReg, epsilon, mask);
     AscendC::Reg::Sqrt(tmpReg, tmpReg, mask);
     AscendC::Reg::Div<float, &kHighPrecisionDiv>(multReg, scaleReg, tmpReg, mask);
