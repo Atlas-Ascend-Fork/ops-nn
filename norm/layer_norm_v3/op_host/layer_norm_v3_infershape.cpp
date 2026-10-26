@@ -15,6 +15,7 @@
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 #include "op_api/runtime2_util_nn.h"
+#include "util/shape_util.h"
 
 using namespace Ops::Base;
 using namespace ge;
@@ -37,6 +38,17 @@ static graphStatus InferShape4LayerNormV3(gert::InferShapeContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, mean_shape);
     gert::Shape* rstd_shape = context->GetOutputShape(output_rstd_index);
     OP_CHECK_NULL_WITH_CONTEXT(context, rstd_shape);
+
+    // 动态 rank（-2 / UNKNOWN_RANK）：x 的秩未知时 GetDimNum() 只会取到 1（{-2} 标记的存储形态），
+    // 后续按 x 秩推导 mean/rstd 会得到与 y 矛盾的 [1]。def 已声明 DynamicRankSupportFlag(true)，
+    // 此处显式把三个输出都置为未知秩。
+    if (Ops::Base::IsUnknownRank(*x_shape)) {
+        Ops::Base::SetUnknownRank(*y_shape);
+        Ops::Base::SetUnknownRank(*mean_shape);
+        Ops::Base::SetUnknownRank(*rstd_shape);
+        OP_LOGD(context->GetNodeName(), "x is unknown rank, set all outputs to unknown rank");
+        return GRAPH_SUCCESS;
+    }
 
     const gert::RuntimeAttrs* attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
