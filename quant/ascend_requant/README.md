@@ -84,24 +84,6 @@ $$
 
 ## 调用说明
 
-<table style="table-layout: fixed; width: 1000px">
-<colgroup>
-<col style="width: 200px">
-<col style="width: 200px">
-<col style="width: 600px">
-</colgroup>
-<thead>
-<tr>
-<th>调用方式</th>
-<th>样例代码</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>GE图模式</td>
-<td>-</td>
-<td>通过 <a href="op_graph/ascend_requant_proto.h">AscendRequant算子IR</a> 注册图引擎算子原型。</td>
-</tr>
-</tbody>
-</table>
+| 调用方式 | 调用样例 | 说明 |
+|----------|----------|------|
+| 图模式调用 | [test_geir_ascend_requant](./examples/test_geir_ascend_requant.cpp) | 通过[算子IR](./op_graph/ascend_requant_proto.h)构图方式调用AscendRequant算子。 |

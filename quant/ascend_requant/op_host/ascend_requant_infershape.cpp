@@ -11,43 +11,10 @@
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "op_common/log/log.h"
-#include "graph/operator_reg.h"
 
 using namespace ge;
 
 namespace ops {
-
-static ge::graphStatus InferShapeAndType4AscendRequant(ge::Operator& op)
-{
-    const ge::TensorDesc x_desc = op.GetInputDesc(0);
-    const ge::TensorDesc req_scale_desc = op.GetInputDesc(1);
-    const std::vector<int64_t>& x_dims = x_desc.GetShape().GetDims();
-    const std::vector<int64_t>& req_dims = req_scale_desc.GetShape().GetDims();
-
-    const bool x_known = (x_dims != ge::UNKNOWN_RANK);
-    const bool req_known = (req_dims != ge::UNKNOWN_RANK);
-    if (x_known && req_known && req_dims.size() > x_dims.size()) {
-        ge::AscendString op_name;
-        (void)op.GetName(op_name);
-        OP_LOGE(op_name.GetString(),
-                "rank(req_scale)[%zu] must be <= rank(x)[%zu], "
-                "req_scale is not broadcastable to x (shape_mismatch).",
-                req_dims.size(), x_dims.size());
-        return ge::GRAPH_FAILED;
-    }
-
-    ge::TensorDesc y_desc = op.GetOutputDesc(0);
-    y_desc.SetShape(ge::Shape(x_dims));
-    y_desc.SetOriginShape(ge::Shape(x_dims));
-    y_desc.SetDataType(ge::DT_INT8);
-    const ge::graphStatus ret = op.UpdateOutputDesc(0U, y_desc);
-    if (ret != ge::GRAPH_SUCCESS) {
-        return ge::GRAPH_FAILED;
-    }
-    return ge::GRAPH_SUCCESS;
-}
-
-COMMON_INFER_FUNC_REG(AscendRequant, InferShapeAndType4AscendRequant);
 
 static ge::graphStatus InferShape4AscendRequant(gert::InferShapeContext* context)
 {
