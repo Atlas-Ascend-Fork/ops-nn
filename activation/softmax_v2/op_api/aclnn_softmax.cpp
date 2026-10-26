@@ -23,6 +23,7 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/platform.h"
+#include "op_api/aclnn_util.h"
 
 using namespace op;
 #ifdef __cplusplus
@@ -137,8 +138,20 @@ aclnnStatus aclnnSoftmaxGetWorkspaceSize(const aclTensor* self, int64_t dim, acl
     auto self_contiguous = l0op::Contiguous(self, uniqueExecutor.get());
     CHECK_RET(self_contiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    // 调用SoftmaxGrad算子kernel
-    auto op_out = l0op::SoftmaxV2(self_contiguous, dim, uniqueExecutor.get());
+    // 混合精度场景按promote推断高精度dtype执行，避免低精度中转截断（仅regbase）
+    const aclTensor* softmaxInput = self_contiguous;
+    if (Ops::NN::AclnnUtil::IsRegbase()) {
+        auto promoteType = op::PromoteType(self->GetDataType(), out->GetDataType());
+        if (promoteType != op::DataType::DT_UNDEFINED && CheckType(promoteType, ASCEND910B_DTYPE_SUPPORT_LIST) &&
+            promoteType != self->GetDataType()) {
+            auto selfCasted = l0op::Cast(self_contiguous, promoteType, uniqueExecutor.get());
+            CHECK_RET(selfCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            softmaxInput = selfCasted;
+        }
+    }
+
+    // 调用SoftmaxV2算子kernel
+    auto op_out = l0op::SoftmaxV2(softmaxInput, dim, uniqueExecutor.get());
     CHECK_RET(op_out != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     // 固定写法，将计算结果转换成输出out的数据类型

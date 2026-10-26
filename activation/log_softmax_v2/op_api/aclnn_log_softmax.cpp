@@ -145,8 +145,15 @@ aclnnStatus aclnnLogSoftmaxGetWorkspaceSize(const aclTensor* self, int64_t dim, 
     auto selfContiguous = l0op::Contiguous(self, uniqueExecutor.get());
     CHECK_RET(selfContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    // 将输入self的数据类型转换成隐式数据类型
-    auto selfCasted = l0op::Cast(selfContiguous, outType, uniqueExecutor.get());
+    // 将输入self的数据类型转换成隐式数据类型，混合精度场景按promote推断高精度dtype（仅regbase）
+    op::DataType execType = outType;
+    if (Ops::NN::AclnnUtil::IsRegbase()) {
+        auto promoteType = op::PromoteType(self->GetDataType(), outType);
+        if (promoteType != op::DataType::DT_UNDEFINED && CheckType(promoteType, DTYPE_SUPPORT_LIST)) {
+            execType = promoteType;
+        }
+    }
+    auto selfCasted = l0op::Cast(selfContiguous, execType, uniqueExecutor.get());
     CHECK_RET(selfCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     // 调用LogSoftmaxV2算子kernel

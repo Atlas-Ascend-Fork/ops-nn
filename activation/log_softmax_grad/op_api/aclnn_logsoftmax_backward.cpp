@@ -139,8 +139,24 @@ aclnnStatus aclnnLogSoftmaxBackwardGetWorkspaceSize(const aclTensor* gradOutput,
     auto output_contiguous = l0op::Contiguous(output, uniqueExecutor.get());
     CHECK_RET(output_contiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
+    // 混合精度场景按promote推断高精度dtype执行，避免低精度中转截断（仅regbase）
+    const aclTensor* gradOutputInput = gradOutput_contiguous;
+    const aclTensor* outputInput = output_contiguous;
+    if (Ops::NN::AclnnUtil::IsRegbase()) {
+        auto promoteType = op::PromoteType(gradOutput->GetDataType(), out->GetDataType());
+        if (promoteType != op::DataType::DT_UNDEFINED && CheckType(promoteType, dtype_support_list) &&
+            promoteType != gradOutput->GetDataType()) {
+            auto gradOutputCasted = l0op::Cast(gradOutput_contiguous, promoteType, uniqueExecutor.get());
+            CHECK_RET(gradOutputCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            auto outputCasted = l0op::Cast(output_contiguous, promoteType, uniqueExecutor.get());
+            CHECK_RET(outputCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            gradOutputInput = gradOutputCasted;
+            outputInput = outputCasted;
+        }
+    }
+
     // 调用LogSoftmaxGrad算子kernel
-    auto op_out = l0op::LogSoftmaxGrad(gradOutput_contiguous, output_contiguous, dim, uniqueExecutor.get());
+    auto op_out = l0op::LogSoftmaxGrad(gradOutputInput, outputInput, dim, uniqueExecutor.get());
     CHECK_RET(op_out != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     // 固定写法，将计算结果转换成输出out的数据类型
