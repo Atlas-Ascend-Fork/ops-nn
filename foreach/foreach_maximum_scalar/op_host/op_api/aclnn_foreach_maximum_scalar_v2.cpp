@@ -19,6 +19,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
 #include "../../foreach_utils/op_host/foreach_null_check_helper.h"
+#include <cmath>
 
 using namespace op;
 
@@ -156,10 +157,14 @@ static inline aclnnStatus CheckScalarValueValid(const aclScalar* scalar, const D
     }
 
     double val_1 = static_cast<double>(scalar->ToDouble());
+    if (tensorDtype != DataType::DT_INT32 && (std::isinf(val_1) || std::isnan(val_1))) {
+        return ACLNN_SUCCESS;
+    }
 
     switch (tensorDtype) {
         case DataType::DT_INT32:
-            if (val_1 < static_cast<double>(INT32_MIN_VAL) || val_1 > static_cast<double>(INT32_MAX_VAL)) {
+            if (std::isnan(val_1) || std::isinf(val_1) || val_1 < static_cast<double>(INT32_MIN_VAL) ||
+                val_1 > static_cast<double>(INT32_MAX_VAL)) {
                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Scalar value exceeds int32 range.");
                 return ACLNN_ERR_PARAM_INVALID;
             }
