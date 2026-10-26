@@ -12,4 +12,8 @@ message(STATUS "=== Debug: start ops.foreach.foreach_pow_scalar_and_tensor.op_ho
 
 set(SUPPORT_COMPUTE_UNIT "ascend910_93" "ascend910b" "kirinx90" "kirin9030" "ascend950" "ascend350")
 set(SUPPORT_TILING_DIR   "arch22"       "arch22"     "arch22"   "arch22"    "arch35" "arch35")
-add_modules_sources(DIR ${CMAKE_CURRENT_SOURCE_DIR} OPTYPE foreach_pow_scalar_and_tensor ACLNNTYPE aclnn COMPUTE_UNIT ${SUPPORT_COMPUTE_UNIT} TILING_DIR ${SUPPORT_TILING_DIR} DEPENDENCIES foreach_utils)
+add_modules_sources(HOSTNAME ${OPHOST_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR} OPTYPE foreach_pow_scalar_and_tensor ACLNNTYPE aclnn_exclude COMPUTE_UNIT ${SUPPORT_COMPUTE_UNIT} TILING_DIR ${SUPPORT_TILING_DIR} DEPENDENCIES foreach_utils)
+
+# Add foreach_utils include directory for contiguous helper
+get_filename_component(FOREACH_UTILS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../foreach_utils ABSOLUTE)
+target_include_directories(${OPHOST_NAME}_opapi_obj PRIVATE ${FOREACH_UTILS_DIR}/op_host)
