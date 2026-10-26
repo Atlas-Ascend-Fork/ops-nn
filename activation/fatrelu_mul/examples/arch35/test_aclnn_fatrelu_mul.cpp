@@ -51,10 +51,31 @@ int Init(int32_t deviceId, aclrtStream* stream)
     auto ret = aclInit(nullptr);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclInit failed. ERROR: %d\n", ret); return ret);
     ret = aclrtSetDevice(deviceId);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); aclFinalize(); return ret);
     ret = aclrtCreateStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); aclrtResetDevice(deviceId);
+              aclFinalize(); return ret);
     return 0;
+}
+
+// 错误返回前释放已申请的 device/acl 资源（DEMO.04：与main正常路径的释放顺序一致）
+void FinalizeAclResources(int32_t deviceId, aclrtStream stream)
+{
+    aclrtDestroyStream(stream);
+    aclrtResetDevice(deviceId);
+    aclFinalize();
+}
+
+void ReleaseAclTensor(aclTensor** tensor, void** deviceAddr)
+{
+    if (*tensor != nullptr) {
+        aclDestroyTensor(*tensor);
+        *tensor = nullptr;
+    }
+    if (*deviceAddr != nullptr) {
+        aclrtFree(*deviceAddr);
+        *deviceAddr = nullptr;
+    }
 }
 
 template <typename T>
@@ -67,7 +88,8 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
     // 调用aclrtMemcpy将host侧数据复制到device侧内存上
     ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); aclrtFree(*deviceAddr);
+              *deviceAddr = nullptr; return ret);
 
     // 计算连续tensor的strides
     std::vector<int64_t> strides(shape.size(), 1);
@@ -100,7 +122,7 @@ int main()
     aclTensor* input = nullptr;
     // 创建threshold aclTensor
     ret = CreateAclTensor(inputHostData, inputShape, &inputDeviceAddr, aclDataType::ACL_FLOAT, &input);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, FinalizeAclResources(deviceId, stream); return ret);
 
     // 创建threshold aclTensor
     std::vector<int64_t> threShape = {1};
@@ -112,7 +134,8 @@ int main()
     aclTensor* threshold = nullptr;
     // 创建threshold aclTensor
     ret = CreateAclTensor(threData, threShape, &threDeviceAddr, aclDataType::ACL_FLOAT, &threshold);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, ReleaseAclTensor(&input, &inputDeviceAddr); FinalizeAclResources(deviceId, stream);
+              return ret);
 
     std::vector<int64_t> outShape = {2, 2};
     std::vector<float> outHostData(2 * 2, 1);
@@ -120,7 +143,8 @@ int main()
     void* outDeviceAddr = nullptr;
     // 创建out aclTensor
     ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, ReleaseAclTensor(&input, &inputDeviceAddr);
+              ReleaseAclTensor(&threshold, &threDeviceAddr); FinalizeAclResources(deviceId, stream); return ret);
 
     // 3. 调用CANN算子库API，需要修改为具体的Api名称
     uint64_t workspaceSize = 16 * 1024 * 1024;
@@ -128,22 +152,34 @@ int main()
 
     // 调用aclnnFatreluMul第一段接口
     ret = aclnnFatreluMulGetWorkspaceSize(input, threshold, out, &workspaceSize, &executor);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnFatreluMulGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnFatreluMulGetWorkspaceSize failed. ERROR: %d\n", ret);
+              ReleaseAclTensor(&input, &inputDeviceAddr); ReleaseAclTensor(&threshold, &threDeviceAddr);
+              ReleaseAclTensor(&out, &outDeviceAddr); FinalizeAclResources(deviceId, stream); return ret);
 
     // 根据第一段接口计算出的workspaceSize申请device内存
     void* workspaceAddr = nullptr;
     if (workspaceSize > 0) {
         ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret);
+                  ReleaseAclTensor(&input, &inputDeviceAddr); ReleaseAclTensor(&threshold, &threDeviceAddr);
+                  ReleaseAclTensor(&out, &outDeviceAddr); FinalizeAclResources(deviceId, stream); return ret);
     }
 
     // 调用aclnnFatreluMul第二段接口
     ret = aclnnFatreluMul(workspaceAddr, workspaceSize, executor, stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnFatreluMul failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(
+        ret == ACL_SUCCESS, LOG_PRINT("aclnnFatreluMul failed. ERROR: %d\n", ret); aclDestroyAclOpExecutor(executor);
+        ReleaseAclTensor(&input, &inputDeviceAddr); ReleaseAclTensor(&threshold, &threDeviceAddr);
+        ReleaseAclTensor(&out, &outDeviceAddr);
+        if (workspaceAddr != nullptr) { aclrtFree(workspaceAddr); } FinalizeAclResources(deviceId, stream); return ret);
 
     // 4. （固定写法）同步等待任务执行结束
     ret = aclrtSynchronizeStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(
+        ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret);
+        aclDestroyAclOpExecutor(executor); ReleaseAclTensor(&input, &inputDeviceAddr);
+        ReleaseAclTensor(&threshold, &threDeviceAddr); ReleaseAclTensor(&out, &outDeviceAddr);
+        if (workspaceAddr != nullptr) { aclrtFree(workspaceAddr); } FinalizeAclResources(deviceId, stream); return ret);
 
     // 5. 获取输出的值，将device侧内存上的结果复制至host侧，需要根据具体API的接口定义修改
     PrintOutResult(outShape, &outDeviceAddr);

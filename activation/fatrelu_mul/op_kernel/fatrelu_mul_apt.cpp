@@ -12,22 +12,22 @@
 // fatrelu_mul_package/op_kernel/fatrelu_mul_apt.cpp
 // =============================================================================
 //
-// ROLE: Ascend C kernel entry point for FatreluMul (implemented stage).
+// ROLE: Ascend C kernel entry point for FatreluMul.
 //   This file contains the __global__ kernel function that runs on the NPU.
-//   Per docs/fatrelu_mul/develop/proto.md §3, the kernel entry signature is:
+//   The kernel entry signature is:
 //
 //     template <typename D_T_X, int64_t kPath>
 //     __global__ __aicore__ void FatreluMul(
 //         GM_ADDR input, GM_ADDR threshold, GM_ADDR output, GM_ADDR workspace, GM_ADDR tiling)
 //
-//   Entry chain per docs/fatrelu_mul/design/Kernel.md「Kernel 入口」: TPL 分发
+//   Entry chain: TPL 分发
 //   （D_T_X / kPath 由 ASCENDC_TPL_SEL 实例化，host 侧 ASCENDC_TPL_SEL_PARAM
 //   编码 tilingKey 选择 sub-kernel）+
 //   TilingData 反序列化（GET_TILING_DATA_WITH_STRUCT，非模板化共用结构体）+
 //   核守卫（blockIdx ≥ need_core_num 直接返回，含空 Tensor 短路）+
 //   FatreluMulKernel<D_T_X, kPath> 实例化（Init / Process）。
 //   The compute chain lives in arch35/FatreluMul_kernel.h（small-tail 行组路径
-//   per branches/DESIGN-BRANCH-0.md §3–§5；big-tail per DESIGN-BRANCH-1.md）.
+//   / big-tail 行分段路径）.
 //
 //   NOTE: the OpDef's ExtendCfgInfo("opFile.value", "fatrelu_mul_apt") 按仓内
 //   约定（elu / fast_gelu_v2 等）使用 snake_case 算子目录名 + "_apt" 后缀，
@@ -36,11 +36,11 @@
 // CONTENTS:
 //   - GET_TILING_DATA_WITH_STRUCT(FatreluMulTilingData, td, tiling)
 //                                        (global non-templated TilingData)
-//   - template<typename D_T_X, int64_t kPath> __global__ void FatreluMul(...)  (proto.md kernel entry)
+//   - template<typename D_T_X, int64_t kPath> __global__ void FatreluMul(...)
 //   - template<typename D_T_X, int64_t kPath> __global__ void fatrelu_mul(...) (build-system adapter entry)
 //
 // OPERATOR NAME VARIANTS:
-//   PascalCase   : FatreluMul   — proto.md kernel entry name, kernel class prefix
+//   PascalCase   : FatreluMul   — kernel entry name, kernel class prefix
 //   snake_case   : fatrelu_mul  — opInterface name used by the build system
 //   UPPER        : FATRELUMUL   — TPL path value macros (FatreluMul_struct.h)
 //
@@ -50,7 +50,7 @@
 //   renamed per tiling key via -Dfatrelu_mul=fatrelu_mul_<tilingKey>_tilingkey)
 //   invokes the kernel entry through the identifier `fatrelu_mul<TEMPLATE_PARAMS>`.
 //   Therefore the snake_case adapter entry `fatrelu_mul` below forwards to the
-//   proto.md-declared entry `FatreluMul`. Both are compiled inline into the
+//   kernel entry `FatreluMul`. Both are compiled inline into the
 //   generated wrapper TU (__global__ is #undef'd to inline before inclusion).
 //
 // KEY MACROS AND CONVENTIONS:
@@ -65,38 +65,37 @@
 // =============================================================================
 
 #include "kernel_operator.h"               // Ascend C kernel framework (AscendC:: namespace)
-#include "arch35/FatreluMul_struct.h"      // ASCENDC_TPL_* 模板参数（= TilingKey.md）
-#include "arch35/FatreluMul_tiling_data.h" // FatreluMulTilingData / kMaxInputSlots / kMaxOutputSlots（= TilingData.md）
-#include "arch35/FatreluMul_kernel.h"      // FatreluMulKernel<T, kPath>（= Kernel.md + branches/ 各分支设计）
+#include "arch35/FatreluMul_struct.h"      // ASCENDC_TPL_* 模板参数
+#include "arch35/FatreluMul_tiling_data.h" // FatreluMulTilingData / kMaxInputSlots / kMaxOutputSlots
+#include "arch35/FatreluMul_kernel.h"      // FatreluMulKernel<T, kPath>
 
 // FatreluMulTilingData is a single non-templated struct shared by both TPL
 // instantiations (kPath): the row model (x as (batch_size, 2*half_dim))
-// carries rank 2-8 through the batch_size / half_dim scalars, so no per-rank
-// tiling data variants exist (docs/fatrelu_mul/design/TilingData.md).
+// carries rank >= 2 through the batch_size / half_dim scalars, so no per-rank
+// tiling data variants exist.
 
 // ===========================================================================
 // template<typename D_T_X, int64_t kPath> __global__ __aicore__ void FatreluMul(...)
 //
-// The proto.md §3 kernel entry (PascalCase). Each AIV core reaches this
+// The kernel entry (PascalCase). Each AIV core reaches this
 // function through the snake_case adapter entry below.
 //
 // Template parameters:
 //   D_T_X — TPL dtype 参数（ASCENDC_TPL_DATATYPE_DECL，FatreluMul_struct.h），
 //           框架按 tilingKey 的 dtype 位选择实例（float / half / bfloat16_t）
 //   kPath — TPL-instantiated path selector (FatreluMul_struct.h:
-//           FATRELUMUL_PATH_SMALL_TAIL = 0 / FATRELUMUL_PATH_BIG_TAIL = 1，per
-//           docs/fatrelu_mul/design/TilingKey.md；host 侧 TilingFunc 按 BranchRoute.md
-//           判界 SetTilingKey 选择 sub-kernel).
+//           FATRELUMUL_PATH_SMALL_TAIL = 0 / FATRELUMUL_PATH_BIG_TAIL = 1；
+//           host 侧 TilingFunc 判界 SetTilingKey 选择 sub-kernel).
 //
 // Parameters (all GM_ADDR = global memory pointers on device):
 //   input     — x: gate_up concatenated tensor, last dim 2d (d = half_dim)
 //   threshold — FatReLU threshold scalar Tensor (single element)
 //   output    — y: y.shape = x.shape[:-1] + (d,)
 //   workspace — workspace buffer (framework entry-signature convention only:
-//               本算子无 device workspace，不绑定，Kernel.md「Kernel 入口」)
+//               本算子无 device workspace，不绑定)
 //   tiling    — tiling data buffer (contains FatreluMulTilingData)
 //
-// Entry chain (docs/fatrelu_mul/design/Kernel.md「Kernel 入口」):
+// Entry chain:
 //   REGISTER_NONE_TILING → KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY) →
 //   GET_TILING_DATA_WITH_STRUCT(FatreluMulTilingData) → 核守卫（blockIdx ≥
 //   need_core_num 直接返回，空 Tensor 短路时 need_core_num=1 / rows_former=0，
@@ -108,8 +107,7 @@ __global__ __aicore__ void FatreluMul(GM_ADDR input, GM_ADDR threshold, GM_ADDR 
                                       GM_ADDR tiling)
 {
     // 槽位绑定：输入 x / threshold 两路、输出 y 一路（kMaxInputSlots /
-    // kMaxOutputSlots，TilingData.md §1；threshold 为单元素标量 Tensor，GM 直读、
-    // 不占 UB 槽位）
+    // kMaxOutputSlots；threshold 为单元素标量 Tensor，GM 直读、不占 UB 槽位）
     GM_ADDR ins[kMaxInputSlots] = {input, threshold};
     GM_ADDR outs[kMaxOutputSlots] = {output};
 
@@ -127,7 +125,7 @@ __global__ __aicore__ void FatreluMul(GM_ADDR input, GM_ADDR threshold, GM_ADDR 
     GET_TILING_DATA_WITH_STRUCT(FatreluMulTilingData, td, tiling);
 
     // 核守卫：blockIdx 超出参与计算核数直接返回（need_core_num = SetBlockDim 值，
-    // 对齐内置旧代际 kernel 口径，REQUIREMENTS §5.7）
+    // 对齐内置旧代际 kernel 口径）
     if (AscendC::GetBlockIdx() >= td.need_core_num) {
         return;
     }
@@ -146,7 +144,7 @@ __global__ __aicore__ void FatreluMul(GM_ADDR input, GM_ADDR threshold, GM_ADDR 
 // Build-system adapter entry (snake_case = opInterface.value). The auto-gen
 // wrapper calls `fatrelu_mul<TEMPLATE_PARAMS>(...)` (macro-renamed per tiling
 // key), so this entry must exist under the snake_case name; it forwards to the
-// proto.md §3 kernel entry FatreluMul<D_T_X, kPath> one-to-one.
+// kernel entry FatreluMul<D_T_X, kPath> one-to-one.
 // ===========================================================================
 template <typename D_T_X, int64_t kPath>
 __global__ __aicore__ void fatrelu_mul(GM_ADDR input, GM_ADDR threshold, GM_ADDR output, GM_ADDR workspace,

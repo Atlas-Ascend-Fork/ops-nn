@@ -23,6 +23,7 @@ static constexpr int64_t IDX_0 = 0;
 static constexpr int64_t SIZE_2 = 2;
 static constexpr int64_t UNKNOWN_RANK_DIM = -2;
 static constexpr int64_t UNKNOWN_DIM_VALUE = -1;
+static constexpr int64_t MIN_RANK = 2; // rank(x) >= 2 (no upper bound, row-model rank transparent)
 
 static ge::graphStatus InferShape4FatreluMul(gert::InferShapeContext* context)
 {
@@ -45,6 +46,13 @@ static ge::graphStatus InferShape4FatreluMul(gert::InferShapeContext* context)
     }
 
     size_t xDimNum = xShape->GetDimNum();
+    // rank contract: rank(x) >= 2, no upper bound (row model
+    // is rank transparent); a lower rank has no valid last dim to halve (rank=0
+    // would underflow GetDim(xDimNum-1)). -1/-2 dynamic dims keep their dedicated
+    // propagation branches above and are unaffected by this guard.
+    const int64_t xRank = static_cast<int64_t>(xDimNum);
+    OP_CHECK_IF(xRank < MIN_RANK, OP_LOGE(context->GetNodeName(), "The rank of x should be >= 2, but is %ld.", xRank),
+                return ge::GRAPH_FAILED);
     yShape->SetDimNum(xDimNum);
 
     *yShape = *xShape;

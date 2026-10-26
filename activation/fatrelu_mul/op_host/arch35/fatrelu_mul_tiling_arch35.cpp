@@ -13,8 +13,7 @@
 // =============================================================================
 //
 // ROLE: Host-side tiling implementation for FatreluMul on arch35 (Ascend 950).
-//   按 docs/fatrelu_mul/design/HostTiling.md「Tiling 整体结构」实现公共 TilingFunc
-//   （含 docs/fatrelu_mul/design/BranchRoute.md 分支判定）：
+//   公共 TilingFunc 实现（含分支判定）：
 //     1. 平台量获取：优先 GetCompileInfo<FatreluMulCompileInfo>（TilingParse
 //        缓存的 coreNum / ubSize）；CompileInfo 值越可信界（含 0，界见
 //        FatreluMulCompileInfoPlausible——CANN 9.0.0-beta.2 do_op_tiling 通路
@@ -33,10 +32,10 @@
 //     6. 多核切分: need_core_num = max(1, min(可用 AIV 核数, coresByData))、
 //        coresByData = ceil(batch*2d*sizeof(T)/4096) 再钳 batch（每核 ≥ 1 整行）；
 //        rows_former = batch / need、rows_tail_core = batch % need（大小核均衡）。
-//     7. 判界选 key（BranchRoute.md 判定顺序第二条）: half_dim > tile_elems →
+//     7. 判界选 key: half_dim > tile_elems →
 //        BIG_TAIL（rows_per_group = 0）；否则 SMALL_TAIL
 //        （rows_per_group = tile_elems / half_dim 向下取整 ≥ 1）。
-//     8. 填 TilingData（docs/fatrelu_mul/design/TilingData.md 全 7 字段）+ 维测
+//     8. 填 TilingData（全 7 字段）+ 维测
 //        日志 + SetBlockDim/SetTilingKey（ASCENDC_TPL_SEL_PARAM 编码 dtype + path，
 //        FatreluMul_struct.h）+ workspace 显式置 0（无 device workspace）。
 //
@@ -61,9 +60,9 @@
 #include "op_common/op_host/util/platform_util.h" // platform_ascendc::PlatformAscendC, fe::PlatFormInfos
 #include "graph/utils/type_utils.h"               // ge::TypeUtils::DataTypeToSerialString / FormatToSerialString
 #include "graph/types.h"                          // ge::DataType, ge::Format
-#include "../../op_kernel/arch35/FatreluMul_tiling_data.h" // FatreluMulTilingData（全局 TilingData，docs/fatrelu_mul/design/TilingData.md）
-#include "../../op_kernel/arch35/FatreluMul_struct.h" // FATRELUMUL_PATH_SMALL_TAIL/BIG_TAIL, ASCENDC_TPL_SEL_PARAM（docs/fatrelu_mul/design/TilingKey.md）
-#include "fatrelu_mul_tiling_arch35.h" // FatreluMulCompileInfo
+#include "../../op_kernel/arch35/FatreluMul_tiling_data.h" // FatreluMulTilingData（全局 TilingData）
+#include "../../op_kernel/arch35/FatreluMul_struct.h"      // FATRELUMUL_PATH_SMALL_TAIL/BIG_TAIL, ASCENDC_TPL_SEL_PARAM
+#include "fatrelu_mul_tiling_arch35.h"                     // FatreluMulCompileInfo
 
 #include <algorithm>
 #include <cstdint>
@@ -73,24 +72,23 @@
 namespace optiling {
 
 // ---------------------------------------------------------------------------
-// 公共 tiling 常量（docs/fatrelu_mul/design/HostTiling.md）
+// 公共 tiling 常量
 // ---------------------------------------------------------------------------
 constexpr int64_t FATRELUMUL_ALIGN_BYTES = 256;         // Vector 指令效率对齐（UB 块 256B 整数倍）
 constexpr int64_t FATRELUMUL_UB_BYTES_MIN = 32;         // 单 buffer ≥ 1 个 block（ONE_BLK_SIZE=32B）兜底
 constexpr int64_t FATRELUMUL_MIN_BYTES_PER_CORE = 4096; // 每核 ≥ 4KB 输入（= 32768 bits / 8，EleWise 范式口径）
-constexpr int64_t FATRELUMUL_MIN_RANK = 2;              // spec.yaml：rank(x) ∈ [2, 8]
-constexpr int64_t FATRELUMUL_MAX_RANK = 8;
-constexpr int64_t FATRELUMUL_DTYPE_BYTES_FP32 = 4; // fp32 每元素字节数（x / threshold / y 同 dtype）
-constexpr int64_t FATRELUMUL_DTYPE_BYTES_FP16 = 2; // fp16 / bf16 每元素字节数
-constexpr int64_t FATRELUMUL_LAST_DIM_DIVISOR = 2; // x 末维 2d 折半因子（halfDim = lastDim / 2）
-constexpr int64_t FATRELUMUL_BUF_COPIES = 3; // T 路 buffer 份数（HostTiling.md「存活节点分析」P 表）
+constexpr int64_t FATRELUMUL_MIN_RANK = 2;              // rank(x) ≥ 2（上界无，行模型 rank 透明）
+constexpr int64_t FATRELUMUL_DTYPE_BYTES_FP32 = 4;      // fp32 每元素字节数（x / threshold / y 同 dtype）
+constexpr int64_t FATRELUMUL_DTYPE_BYTES_FP16 = 2;      // fp16 / bf16 每元素字节数
+constexpr int64_t FATRELUMUL_LAST_DIM_DIVISOR = 2;      // x 末维 2d 折半因子（halfDim = lastDim / 2）
+constexpr int64_t FATRELUMUL_BUF_COPIES = 3;            // T 路 buffer 份数（x1 / x2 / y 各一份）
 
 // ---------------------------------------------------------------------------
 // FatreluMulCompileInfoPlausible(coreNum, ubSize) — CompileInfo 垃圾值防御界
 //
 // 界仅用于判定 GetCompileInfo 下发值是否可信（CANN runtime 异常防御），不是
 // 平台量本身——tileElems / 多核切分仍以（可信来源的）运行期 coreNum / ubSize
-// 计算，ubSize 本身禁止硬编码（HostTiling.md「UB 切分」）。真实平台量级：
+// 计算，ubSize 本身禁止硬编码。真实平台量级：
 // AIV 核数 ~1e2（arch35 950PR 实测 56）、UB 容量 ~2.5e5B（arch35 253952B），
 // 上界各放宽 3~4 个数量级容纳后续代际；下界 ubSize ≥ 32B（ONE_BLK_SIZE，同
 // FATRELUMUL_UB_BYTES_MIN）、coreNum ≥ 1。实测垃圾值为 1e11~1e13 量级指针样
@@ -116,7 +114,7 @@ static inline int64_t FatreluMulCeilDiv(int64_t a, int64_t b) { return (a + b - 
 // ---------------------------------------------------------------------------
 // FatreluMulShapeToVector(shp) — StorageShape → int64 维度向量
 // 读运行时 storage shape（行模型前提：x 进 kernel 必为 ND 连续，OpDef
-// AutoContiguous() 承接非连续输入，Interface.md「数据 Format 支持」）。
+// AutoContiguous() 承接非连续输入）。
 // ---------------------------------------------------------------------------
 static std::vector<int64_t> FatreluMulShapeToVector(const gert::StorageShape* shp)
 {
@@ -130,7 +128,7 @@ static std::vector<int64_t> FatreluMulShapeToVector(const gert::StorageShape* sh
 
 // ---------------------------------------------------------------------------
 // FatreluMulDtypeBytes(dt) — x dtype → 每元素字节数（不支持 dtype 返回 -1）
-// spec.yaml dtype_policy：x / threshold / y 同 dtype，支持 {fp32, fp16, bf16}。
+// dtype 约束：x / threshold / y 同 dtype，支持 {fp32, fp16, bf16}。
 // ---------------------------------------------------------------------------
 static int64_t FatreluMulDtypeBytes(const ge::DataType dt)
 {
@@ -144,7 +142,7 @@ static int64_t FatreluMulDtypeBytes(const ge::DataType dt)
 }
 
 // ---------------------------------------------------------------------------
-// FatreluMulRowModel — 行模型展开量（HostTiling.md「输入预处理」）
+// FatreluMulRowModel — 行模型展开量（输入预处理）
 //
 // x (n1, ..., n_{r-1}, 2d) → (batchSize, 2*halfDim)；y → (batchSize, halfDim)
 // ---------------------------------------------------------------------------
@@ -154,7 +152,7 @@ struct FatreluMulRowModel {
 };
 
 // ---------------------------------------------------------------------------
-// FatreluMulMultiCore — 多核切分量（HostTiling.md「多核切分」，行域）
+// FatreluMulMultiCore — 多核切分量（行域）
 // ---------------------------------------------------------------------------
 struct FatreluMulMultiCore {
     int64_t needCoreNum;  // 参与计算的核数（= SetBlockDim 值；空 Tensor 短路置 1）
@@ -164,7 +162,7 @@ struct FatreluMulMultiCore {
 
 // ---------------------------------------------------------------------------
 // FatreluMulCheckInput(ctx, xShape, thresholdShape, yShape) — 异常值校验
-// 纵深防御（主拦截在 aclnn 第一段接口 161001/161002，Interface.md「错误码映射」）：
+// 纵深防御（主拦截在 aclnn 第一段接口 161001/161002）：
 // 校验顺序 dtype → format → 维度 → attr(N/A 无属性) → shape，任一失败
 // return GRAPH_FAILED，保证 L2 反向用例即使绕过接口层也不会把非法
 // shape/dtype 带进切分计算（除零 / 越界）。
@@ -183,7 +181,7 @@ static ge::graphStatus FatreluMulCheckInput(const gert::TilingContext* ctx, cons
     const ge::DataType tDtype = tDesc->GetDataType();
     const ge::DataType yDtype = yDesc->GetDataType();
 
-    // 1) dtype：支持集 + 组合一致性（threshold / y 与 x 同 dtype，spec.yaml dtype_policy.same_as_first_input）
+    // 1) dtype：支持集 + 组合一致性（threshold / y 与 x 同 dtype）
     OP_CHECK_IF(FATRELUMUL_SUPPORTED_DTYPES.find(xDtype) == FATRELUMUL_SUPPORTED_DTYPES.end(),
                 OP_LOGE(ctx->GetNodeName(), "x dtype %s not in the supported list {float32, float16, bfloat16}",
                         ge::TypeUtils::DataTypeToSerialString(xDtype).c_str()),
@@ -207,10 +205,10 @@ static ge::graphStatus FatreluMulCheckInput(const gert::TilingContext* ctx, cons
         OP_LOGE(ctx->GetNodeName(), "inputs/outputs format not in the supported list (ND only)"),
         return ge::GRAPH_FAILED);
 
-    // 3) 维度：rank(x) ∈ [2, 8]；rank(y) == rank(x)；threshold 单元素（0-d 或总元素数 1）
+    // 3) 维度：rank(x) ≥ 2；rank(y) == rank(x)；threshold 单元素（0-d 或总元素数 1）
     const int64_t rankX = static_cast<int64_t>(xShape.size());
-    OP_CHECK_IF(rankX < FATRELUMUL_MIN_RANK || rankX > FATRELUMUL_MAX_RANK,
-                OP_LOGE(ctx->GetNodeName(), "x rank %ld must be in [2, 8]", static_cast<long>(rankX)),
+    OP_CHECK_IF(rankX < FATRELUMUL_MIN_RANK,
+                OP_LOGE(ctx->GetNodeName(), "x rank %ld must be >= 2", static_cast<long>(rankX)),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(static_cast<int64_t>(yShape.size()) != rankX,
                 OP_LOGE(ctx->GetNodeName(), "y rank %ld must equal x rank %ld", static_cast<long>(yShape.size()),
@@ -225,7 +223,7 @@ static ge::graphStatus FatreluMulCheckInput(const gert::TilingContext* ctx, cons
                         static_cast<long>(thresholdNumel)),
                 return ge::GRAPH_FAILED);
 
-    // 4) attr 值域：N/A —— 本算子无任何属性（spec.yaml attributes: []），跳过
+    // 4) attr 值域：N/A —— 本算子无任何属性，跳过
 
     // 5) shape（非 broadcast 型 → 一致性校验变体）：x 末维为偶数；
     //    y.shape == x.shape[:-1] + (x末维/2,)
@@ -250,20 +248,27 @@ static ge::graphStatus FatreluMulCheckInput(const gert::TilingContext* ctx, cons
 // FatreluMulExpandRowModel(xShape, rm) — 行模型展开（输入预处理）
 // batchSize = ∏(前 n-1 维)（任一前导维为 0 → batch=0，走空 Tensor 短路）；
 // halfDim = lastDim / 2（偶数末维减半，奇数已在校验段拒绝）。
+// 乘积为 int64 运算前溢出保护（CODE.06）：前导维乘积回绕会使 batchSize 变负/
+// 归零，后续多核切分行区间失真，越界即 GRAPH_FAILED（spec N 合法域 [0,2^63-1]
+// 内的 shape metadata 一律不得以回绕值参与切分）。
 // ---------------------------------------------------------------------------
-static void FatreluMulExpandRowModel(const std::vector<int64_t>& xShape, FatreluMulRowModel* rm)
+static ge::graphStatus FatreluMulExpandRowModel(const std::vector<int64_t>& xShape, FatreluMulRowModel* rm)
 {
     const int64_t rank = static_cast<int64_t>(xShape.size());
     rm->batchSize = 1;
     for (int64_t i = 0; i < rank - 1; ++i) {
-        rm->batchSize *= xShape[i];
+        OP_CHECK_IF(__builtin_mul_overflow(rm->batchSize, xShape[i], &rm->batchSize),
+                    OP_LOGE("FatreluMul", "batchSize product overflow at x dim[%ld]=%ld", static_cast<long>(i),
+                            static_cast<long>(xShape[i])),
+                    return ge::GRAPH_FAILED);
     }
     rm->halfDim = xShape[rank - 1] / FATRELUMUL_LAST_DIM_DIVISOR;
+    return ge::GRAPH_SUCCESS;
 }
 
 // ---------------------------------------------------------------------------
 // FatreluMulPerElemDepth(dtypeBytes) — per-dtype 每元素 buffer 深度（B/elem）
-// 「存活节点分析」P 结论表（HostTiling.md）：
+// 存活分析结论（T 路 / fp32 路各三份）：
 //   fp32      ：T 路 3 份 × 4B            = 12（全程原生 fp32，无 Cast 中间 buffer）
 //   fp16/bf16 ：T 路 3 份 × 2B + fp32 路 3 份 × 4B = 18（Cast↑×2 + Cast↓×1 断链独立 buffer）
 // ---------------------------------------------------------------------------
@@ -299,25 +304,37 @@ static int64_t FatreluMulComputeTileElems(int64_t ubSize, int64_t dtypeBytes)
 // ---------------------------------------------------------------------------
 // FatreluMulMultiCoreSplit(batchSize, halfDim, dtypeBytes, availableAivCores, mc)
 // 行域多核切分（对齐内置旧代际 kernel 口径：kernel 入口 blockIdx >=
-// needCoreNum 直接返回，REQUIREMENTS §5.7）：
+// needCoreNum 直接返回）：
 //   1) 数据量约束核数：batchSize × 2d × sizeof(T) 总量按每核 4KB 均摊向上取整，
 //      钳到 batchSize（行粒度上限：每核 ≥ 1 整行，行不可跨核拆分）
 //   2) 实际核数：min(可用 AIV 核数, 数据量约束核数)，下限 1
 //   3) 大小核均衡：整除部分为基准，余数行按前缀分给前 rowsTailCore 核
+// 总字节乘积为 int64 运算前溢出保护（CODE.06）：batchSize*2*halfDim*dtypeBytes
+// 逐步 checked 乘法，回绕即 GRAPH_FAILED；乘积合法时另防 CeilDiv 的
+// a+b-1 加法上溢（totalBytes > INT64_MAX-4095 一并拒绝）。
 // ---------------------------------------------------------------------------
-static void FatreluMulMultiCoreSplit(int64_t batchSize, int64_t halfDim, int64_t dtypeBytes, int64_t availableAivCores,
-                                     FatreluMulMultiCore* mc)
+static ge::graphStatus FatreluMulMultiCoreSplit(int64_t batchSize, int64_t halfDim, int64_t dtypeBytes,
+                                                int64_t availableAivCores, FatreluMulMultiCore* mc)
 {
-    int64_t coresByData = FatreluMulCeilDiv(batchSize * 2 * halfDim * dtypeBytes, FATRELUMUL_MIN_BYTES_PER_CORE);
+    int64_t totalBytes = 0;
+    OP_CHECK_IF(__builtin_mul_overflow(batchSize, int64_t{2}, &totalBytes) ||
+                    __builtin_mul_overflow(totalBytes, halfDim, &totalBytes) ||
+                    __builtin_mul_overflow(totalBytes, dtypeBytes, &totalBytes) ||
+                    totalBytes > INT64_MAX - (FATRELUMUL_MIN_BYTES_PER_CORE - 1),
+                OP_LOGE("FatreluMul", "total bytes product overflow: batchSize=%ld, halfDim=%ld, dtypeBytes=%ld",
+                        static_cast<long>(batchSize), static_cast<long>(halfDim), static_cast<long>(dtypeBytes)),
+                return ge::GRAPH_FAILED);
+    int64_t coresByData = FatreluMulCeilDiv(totalBytes, FATRELUMUL_MIN_BYTES_PER_CORE);
     coresByData = std::min(coresByData, batchSize); // 行粒度上限：每核 ≥ 1 整行
     mc->needCoreNum = std::max(int64_t{1}, std::min(availableAivCores, coresByData));
     mc->rowsFormer = batchSize / mc->needCoreNum;
     mc->rowsTailCore = batchSize % mc->needCoreNum;
+    return ge::GRAPH_SUCCESS;
 }
 
 // ---------------------------------------------------------------------------
 // FatreluMulFillAndLogTilingData(ctx, td, rm, mc, tileElems, rowsPerGroup)
-// 全字段赋值（docs/fatrelu_mul/design/TilingData.md §1，不增不删；两路径共用
+// 全字段赋值（全 7 字段不增不删；两路径共用
 // 同一非模板化结构体，路径不用的字段置 0）+ 维测日志（全字段 OP_LOGI 逐字段
 // 打印，Broadcast 范式维测规范）。字段单位：元素数（need_core_num 为核数）。
 // ---------------------------------------------------------------------------
@@ -325,14 +342,14 @@ static void FatreluMulFillAndLogTilingData(const gert::TilingContext* ctx, Fatre
                                            const FatreluMulRowModel& rm, const FatreluMulMultiCore& mc,
                                            int64_t tileElems, int64_t rowsPerGroup)
 {
-    // —— 行模型展开量（「输入预处理」FatreluMulExpandRowModel 产出）——
+    // —— 行模型展开量（FatreluMulExpandRowModel 产出）——
     td->batch_size = rm.batchSize;
     td->half_dim = rm.halfDim;
-    // —— 多核切分（「多核切分」FatreluMulMultiCoreSplit 产出）——
+    // —— 多核切分（FatreluMulMultiCoreSplit 产出）——
     td->need_core_num = mc.needCoreNum; // 兼作 SetBlockDim 值
     td->rows_former = mc.rowsFormer;
     td->rows_tail_core = mc.rowsTailCore;
-    // —— UB 切分（「UB 切分」FatreluMulComputeTileElems 产出）——
+    // —— UB 切分（FatreluMulComputeTileElems 产出）——
     td->tile_elems = tileElems;        // dtype 相关运行期量，判界 d vs tileElems 已在上游完成
     td->rows_per_group = rowsPerGroup; // 仅 key 0（small-tail）计算；key 1 / 空 Tensor 短路置 0
     // —— 维测：全字段逐项 OP_LOGI（INFO 级）——
@@ -346,7 +363,7 @@ static void FatreluMulFillAndLogTilingData(const gert::TilingContext* ctx, Fatre
 
 // ---------------------------------------------------------------------------
 // TilingFuncFatreluMul(context) — tiling 入口（CANN runtime 调用）
-// 步骤顺序 = HostTiling.md「Tiling 整体结构」flowchart：
+// 步骤顺序：
 //   平台量 → 异常值校验 → 行模型展开 → 空 Tensor 短路 → UB 切分 → 多核切分
 //   → 判界选 key → 填 TilingData → SetBlockDim / SetTilingKey / ws[0]=0
 // ---------------------------------------------------------------------------
@@ -358,8 +375,7 @@ static ge::graphStatus TilingFuncFatreluMul(gert::TilingContext* context)
     // 现场查询两字段（CANN 9.0.0-beta.2 实测：do_op_tiling 通路
     // （TTK kernel / asc_op_compiler）compile_info 载荷缺失时，框架下发的
     // CompileInfo 为未初始化垃圾值——coreNum/ubSize 出现 1e11~1e13 量级
-    // 指针样值且随设备首次 launch 漂移；零值守卫拦不住非零垃圾，见
-    // docs/fatrelu_mul/develop/LOG.md 2026-09-08 白盒失败修复条目）。
+    // 指针样值且随设备首次 launch 漂移；零值守卫拦不住非零垃圾）。
     uint64_t coreNum = 0;
     uint64_t ubSize = 0;
     const auto* compileInfo = context->GetCompileInfo<FatreluMulCompileInfo>();
@@ -398,9 +414,10 @@ static ge::graphStatus TilingFuncFatreluMul(gert::TilingContext* context)
     auto* td = context->GetTilingData<FatreluMulTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, td);
 
-    // ===== 4) 行模型展开：batchSize / halfDim =====
+    // ===== 4) 行模型展开：batchSize / halfDim（int64 乘积溢出保护，CODE.06）=====
     FatreluMulRowModel rm;
-    FatreluMulExpandRowModel(xShape, &rm);
+    OP_CHECK_IF(FatreluMulExpandRowModel(xShape, &rm) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context->GetNodeName(), "FatreluMulExpandRowModel failed"), return ge::GRAPH_FAILED);
 
     FatreluMulMultiCore mc = {1, 0, 0};
     int64_t tileElems = 0;
@@ -425,9 +442,11 @@ static ge::graphStatus TilingFuncFatreluMul(gert::TilingContext* context)
                     OP_LOGE(context->GetNodeName(), "tileElems=%ld invalid, ubSize=%lu", static_cast<long>(tileElems),
                             static_cast<unsigned long>(ubSize)),
                     return ge::GRAPH_FAILED);
-        // ===== 7) 多核切分（行域，动态核数）=====
-        FatreluMulMultiCoreSplit(rm.batchSize, rm.halfDim, dtypeBytes, static_cast<int64_t>(coreNum), &mc);
-        // ===== 8) 判界选 key（BranchRoute.md「分支优先级与互斥」第二条）=====
+        // ===== 7) 多核切分（行域，动态核数；总字节乘积溢出保护，CODE.06）=====
+        OP_CHECK_IF(FatreluMulMultiCoreSplit(rm.batchSize, rm.halfDim, dtypeBytes, static_cast<int64_t>(coreNum),
+                                             &mc) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(context->GetNodeName(), "FatreluMulMultiCoreSplit failed"), return ge::GRAPH_FAILED);
+        // ===== 8) 判界选 key =====
         if (rm.halfDim > tileElems) {
             path = FATRELUMUL_PATH_BIG_TAIL; // 行分段：行内段长 tileElems，尾段 kernel 运行期推导
             rowsPerGroup = 0;
@@ -440,7 +459,7 @@ static ge::graphStatus TilingFuncFatreluMul(gert::TilingContext* context)
     // ===== 9) 填 TilingData + 维测日志 =====
     FatreluMulFillAndLogTilingData(context, td, rm, mc, tileElems, rowsPerGroup);
 
-    // ===== 10) SetBlockDim / SetTilingKey（ASCENDC_TPL_SEL_PARAM 编码 dtype + path，TilingKey.md）=====
+    // ===== 10) SetBlockDim / SetTilingKey（ASCENDC_TPL_SEL_PARAM 编码 dtype + path）=====
     context->SetBlockDim(static_cast<uint32_t>(td->need_core_num));
     ASCENDC_TPL_SEL_PARAM(context, static_cast<uint32_t>(xDtype), static_cast<uint64_t>(path));
     OP_LOGI(context->GetNodeName(), "FatreluMul tilingKey: dtype=%s, path=%ld (0=small-tail, 1=big-tail), blockDim=%ld",

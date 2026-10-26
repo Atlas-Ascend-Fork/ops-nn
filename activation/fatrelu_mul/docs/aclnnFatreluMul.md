@@ -29,20 +29,20 @@
 
 - 计算公式：
 
-  给定输入张量input，最后一维的长度为2d，进行以下计算：
+  给定输入张量x，最后一维的长度为2d，进行以下计算：
 
-  1. 将input分割为两部分：
+  1. 将x分割为两部分：
 
      $$
-     x_1 = \text{input}[..., :d], \quad x_2 = \text{input}[..., d:]
+     x_1 = x[..., :d], \quad x_2 = x[..., d:]
      $$
   2. 对x1应用Threshold激活函数，定义如下：
 
      $$
      \text{Threshold}(x, \text{threshold}) =
         \begin{cases}
-        0 & \text{if } x < \text{threshold} \\
-        x & \text{if } x \geq \text{threshold}
+        0 & \text{if } x \leq \text{threshold} \\
+        x & \text{if } x > \text{threshold}
         \end{cases}
      $$
 
@@ -63,7 +63,7 @@
 
 ```Cpp
 aclnnStatus aclnnFatreluMulGetWorkspaceSize(
-  const aclTensor *input,
+  const aclTensor *x,
   const aclTensor *threshold,
   const aclTensor *out,
   uint64_t        *workspaceSize,
@@ -105,20 +105,20 @@ aclnnStatus aclnnFatreluMul(
     </tr></thead>
    <tbody>
       <tr>
-      <td>input（aclTensor*）</td>
+      <td>x（aclTensor*）</td>
       <td>输入</td>
-      <td>输入的张量，公式中的input。</td>
-      <td><ul><li>支持空Tensor。</li><li>最后一维值为偶数且小于等于1024。</li><li>其他维度的乘积小于等于200000。</li></ul></td>
+      <td>输入的张量，公式中的x。</td>
+      <td><ul><li>支持空Tensor。</li><li>最后一维值为偶数。</li><li>Atlas A2系列、Atlas A3系列、kirin系列产品：最后一维值不大于1024，其他维度的乘积不大于200000。</li><li>Atlas推理系列、Atlas训练系列产品：最后一维值不大于1024，其他维度的乘积不大于200000。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
-      <td>2-8</td>
+      <td>不小于2</td>
       <td>√</td>
     </tr>
      <tr>
       <td>threshold（aclTensor*）</td>
       <td>输入</td>
       <td>Threshold计算的边界值，公式中的threshold。</td>
-      <td><ul><li>数据类型和数据格式与input保持一致。</li><li>要求tensor中元素只有一个。</li><li>不支持NaN和Inf。</li></ul></td>
+      <td><ul><li>数据类型和数据格式与x保持一致。</li><li>要求tensor中元素只有一个。</li><li>不支持NaN和Inf。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
       <td>0-8</td>
@@ -128,10 +128,10 @@ aclnnStatus aclnnFatreluMul(
       <td>out（aclTensor*）</td>
       <td>输出</td>
       <td>输出的张量，公式中的out。</td>
-      <td><ul><li>输出的数据类型与输入input的数据类型保持一致。</li><li>输出shape最后一维的值为输入shape最后一维值的二分之一。</li><li>其他维度的值和输入input的shape其他维度的值保持一致。</li></ul></td>
+      <td><ul><li>输出的数据类型与输入x的数据类型保持一致。</li><li>输出shape最后一维的值为输入shape最后一维值的二分之一。</li><li>其他维度的值和输入x的shape其他维度的值保持一致。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
-      <td>2-8</td>
+      <td>不小于2</td>
       <td>×</td>
     </tr>
       <tr>
@@ -179,12 +179,32 @@ aclnnStatus aclnnFatreluMul(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的input、threshold或out是空指针。</td>
+      <td>传入的x、threshold或out是空指针。</td>
     </tr>
     <tr>
-      <td rowspan="8">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="8">161002</td>
-      <td>input的数据类型不在支持的范围之内。</td>
+      <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="3">161002</td>
+      <td>x的数据类型不在支持的范围之内。</td>
+    </tr>
+    <tr>
+      <td>threshold的数据类型不在支持的范围之内。</td>
+    </tr>
+    <tr>
+      <td>out的数据类型不在支持的范围之内。</td>
+    </tr>
+    <tr>
+      <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="4">561002</td>
+      <td>x的维度（rank）小于2。</td>
+    </tr>
+    <tr>
+      <td>x最后一维的长度不是偶数。</td>
+    </tr>
+    <tr>
+      <td>threshold的元素个数不为1。</td>
+    </tr>
+    <tr>
+      <td>out的shape与x的shape不匹配（前导维度不一致或最后一维不为x最后一维的二分之一）。</td>
     </tr>
   </tbody></table>
 
@@ -235,6 +255,8 @@ aclnnStatus aclnnFatreluMul(
 
 - 确定性计算：
   - aclnnFatreluMul默认确定性实现。
+
+- 输入x中gate段（前半）为NaN的元素，输出对应位置为0。
 
 - 典型场景尾轴为16的倍数，当尾轴为非32Byte对齐时，建议走小算子拼接逻辑。
 

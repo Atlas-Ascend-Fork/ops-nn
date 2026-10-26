@@ -13,6 +13,7 @@
 __spec__ = {
     "aclnnFatreluMul": "FatreluMulTestSpec",
     "fatrelu_mul": "FatreluMulTestSpec",
+    "FatreluMul": "FatreluMulTestSpec",  # GE类型名变体(I-0028): board st-design按GE op type(REG_OP(FatreluMul), fatrelu_mul_proto.h:35)生成CamelCase op_name;只追加不删除
 }
 
 import numpy
@@ -39,8 +40,17 @@ class FatreluMulTestSpec:
         d = xt.shape[-1] // 2
         gate = xt[..., :d]
         up = xt[..., d:]
+        if tt.numel() < 1:
+            # 空threshold守卫(T14/golden_fix#3,对齐tiling契约: numel!=1一律拒绝,
+            # fatrelu_mul_tiling_arch35.cpp:219-226): 非空x无可定义期望值→按拒绝语义
+            # 报错; 空x短路路径(API成功,输出空)t不参与任何元素比较→按实际行为返回空输出
+            if gate.numel() > 0:
+                raise ValueError("threshold numel 0 must be 1 (single-element tensor)")
+            return [gate * up]
         t = tt.reshape(-1)[0]
-        gate_act = torch.where(gate <= t, torch.zeros_like(gate), gate)
+        # GT 极性(2026-10-24用户裁定对齐arch22与vLLM CUDA, Issue #7274): gate>t保留,否则置0;
+        # NaN>t恒False→NaN置0; 非NaN域与原LE形逐位一致(x==t仍→0, x>t仍→x)
+        gate_act = torch.where(gate > t, gate, torch.zeros_like(gate))
         return [gate_act * up]
 
     class TorchFatreluMul:
@@ -49,7 +59,7 @@ class FatreluMulTestSpec:
 
             gate, up = torch.chunk(x, 2, dim=-1)
             t = threshold.reshape(-1)[0]
-            gate_act = torch.where(gate <= t, torch.zeros_like(gate), gate)
+            gate_act = torch.where(gate > t, gate, torch.zeros_like(gate))
             return [torch.mul(gate_act, up)]
 
     third_party = {"torch": TorchFatreluMul}

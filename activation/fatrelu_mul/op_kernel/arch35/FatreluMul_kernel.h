@@ -15,68 +15,66 @@
 // ROLE: FatreluMul device-side kernel implementation (arch35 / DAV_3510, pure
 //   Vector operator).
 //   Kernel template class FatreluMulKernel<T, kPath> + the cross-branch shared
-//   fp32-domain VF compute chain FatreluMulVF. Implemented per:
-//     - docs/fatrelu_mul/design/Kernel.md — shared skeleton: shared VF chain
-//       (CompareScalar(LE) + Select + Mul, one asc_vf_call consumes the whole
-//       chain), shared ComputeTile entry, fp16/bf16 Cast up/down organization,
-//       per-dtype TBuf count (P_fp32 = 3 / P_fp16·bf16 = 6, no cross-dtype
-//       kPhysNodes constant);
-//     - docs/fatrelu_mul/design/branches/DESIGN-BRANCH-0.md §3–§5 — small-tail
-//       row-group path (tilingKey = 0, FATRELUMUL_PATH_SMALL_TAIL):
-//         §5.1 Init   : GM binding (x / threshold / y) + per-dtype TBuf
-//                       allocation (one role one buffer) + threshold scalar GM
-//                       direct read + this-core row range / row pitch
-//                       precompute + sync event IDs (FetchEventID)
-//         §5.2 CopyIn : row-group strided multi-row DataCopyPad (x1 / x2 half
-//                       zones, blockCount = gRows, blockLen = d·S, GM srcStride
-//                       = d·S byte gap, UB dstStride = 0 → hardware lays each
-//                       row at CeilAlign(d·S, 32B) pitch);
-//         §5.3 Compute: flat in-group single shared-chain call — fp32 direct
-//                       ComputeTile; fp16/bf16 Cast(CAST_NONE)↑ ×2 →
-//                       ComputeTile → Cast(CAST_RINT)↓;
-//         §5.4 CopyOut: symmetric row-group multi-row DataCopyPad back to y
-//                       (only d·S valid bytes per row, pitch dummies dropped);
-//         §5.5 Process: TBuf single-buffer group pipeline — in-group
-//                       MTE2→V→MTE3 ordered by MTE2_V / V_MTE3 RAW pairs,
-//                       cross-group buffer release by V_MTE2 / MTE3_V WAR
-//                       pairs (first group skips WAR Wait, last group skips
-//                       WAR Set; next-group CopyIn overlaps this-group CopyOut
-//                       — disjoint buffers).
+//   fp32-domain VF compute chain FatreluMulVF. Design:
+//     - shared skeleton: shared VF chain (CompareScalar(GT) + Select + Mul,
+//       one asc_vf_call consumes the whole chain), shared ComputeTile entry,
+//       fp16/bf16 Cast up/down organization, per-dtype TBuf count (P_fp32 = 3 /
+//       P_fp16·bf16 = 6, no cross-dtype kPhysNodes constant);
+//     - small-tail row-group path (tilingKey = 0, FATRELUMUL_PATH_SMALL_TAIL):
+//         Init   : GM binding (x / threshold / y) + per-dtype TBuf allocation
+//                   (one role one buffer) + threshold scalar GM direct read
+//                   + this-core row range / row pitch precompute + sync event
+//                   IDs (FetchEventID)
+//         CopyIn : row-group strided multi-row DataCopyPad (x1 / x2 half
+//                   zones, blockCount = gRows, blockLen = d·S, GM srcStride
+//                   = d·S byte gap, UB dstStride = 0 → hardware lays each
+//                   row at CeilAlign(d·S, 32B) pitch);
+//         Compute: flat in-group single shared-chain call — fp32 direct
+//                   ComputeTile; fp16/bf16 Cast(CAST_NONE)↑ ×2 →
+//                   ComputeTile → Cast(CAST_RINT)↓;
+//         CopyOut: symmetric row-group multi-row DataCopyPad back to y
+//                   (only d·S valid bytes per row, pitch dummies dropped);
+//         Process: TBuf single-buffer group pipeline — in-group
+//                   MTE2→V→MTE3 ordered by MTE2_V / V_MTE3 RAW pairs,
+//                   cross-group buffer release by V_MTE2 / MTE3_V WAR
+//                   pairs (first group skips WAR Wait, last group skips
+//                   WAR Set; next-group CopyIn overlaps this-group CopyOut
+//                   — disjoint buffers).
 //   Empty-tensor short-circuit sub-path (batch_size == 0 || half_dim == 0,
 //   host sets rows_former = 0 / tile_elems = 0 / rows_per_group = 0): Process
 //   returns at rowCount_ == 0 with no CopyIn / Compute / CopyOut / Sync, and
 //   Init skips TBuf allocation (tile_elems == 0) and pitch derivation
 //   (half_dim == 0, prevents 0-divisor).
 //
-//   The big-tail path (kPath = FATRELUMUL_PATH_BIG_TAIL, tilingKey = 1,
-//   docs/fatrelu_mul/design/branches/DESIGN-BRANCH-1.md §3–§5) is dispatched via
-//   `if constexpr` in the shared class (same members / same shared VF chain):
-//         §5.1 Init   : shared with small-tail (GM binding + per-dtype TBuf
-//                       allocation + threshold scalar GM direct read + sync
-//                       event IDs); no row-group pitch precompute;
-//         §5.2 CopyIn : in-row flat segmentation — per segment two
-//                       blockCount=1 DataCopyPad (gate seg → B0, up seg → B1;
-//                       blockLen = segLen·S valid bytes, non-32B-align legal;
-//                       the two half-zone segs are GM (d − segLen) elements
-//                       apart → no blockCount=2 batching);
-//         §5.3 Compute: per-segment shared-chain call — fp32 direct
-//                       ComputeTile; fp16/bf16 Cast(CAST_NONE)↑ ×2 →
-//                       ComputeTile → Cast(CAST_RINT)↓; segLen runtime-derived
-//                       (full seg = TE / tail seg = d % TE, UpdateMask masks
-//                       the tail);
-//         §5.4 CopyOut: per-segment single DataCopyPad back to y
-//                       (blockLen = segLen·S valid bytes, dense single path);
-//         §5.5 Process: row × segment double loop (rowStart/rowCount per
-//                       §2 multicore split; x1/x2/y seg offsets r·2d+s·TE /
-//                       r·2d+d+s·TE / r·d+s·TE); per-segment four-event sync
-//                       (MTE2_V / V_MTE3 RAW in-segment; V_MTE2 / MTE3_V WAR
-//                       cross-segment — first segment skips WAR Wait, last
-//                       segment skips WAR Set; Set/Wait strictly paired);
-//                       PipeBarrier<PIPE_ALL> drains the pipeline at exit.
+//   The big-tail path (kPath = FATRELUMUL_PATH_BIG_TAIL, tilingKey = 1) is
+//   dispatched via `if constexpr` in the shared class (same members / same
+//   shared VF chain):
+//         Init   : shared with small-tail (GM binding + per-dtype TBuf
+//                   allocation + threshold scalar GM direct read + sync event
+//                   IDs); no row-group pitch precompute;
+//         CopyIn : in-row flat segmentation — per segment two
+//                   blockCount=1 DataCopyPad (gate seg → B0, up seg → B1;
+//                   blockLen = segLen·S valid bytes, non-32B-align legal;
+//                   the two half-zone segs are GM (d − segLen) elements
+//                   apart → no blockCount=2 batching);
+//         Compute: per-segment shared-chain call — fp32 direct
+//                   ComputeTile; fp16/bf16 Cast(CAST_NONE)↑ ×2 →
+//                   ComputeTile → Cast(CAST_RINT)↓; segLen runtime-derived
+//                   (full seg = TE / tail seg = d % TE, UpdateMask masks
+//                   the tail);
+//         CopyOut: per-segment single DataCopyPad back to y
+//                   (blockLen = segLen·S valid bytes, dense single path);
+//         Process: row × segment double loop (rowStart/rowCount per
+//                   row-domain multicore split; x1/x2/y seg offsets
+//                   r·2d+s·TE / r·2d+d+s·TE / r·d+s·TE); per-segment
+//                   four-event sync (MTE2_V / V_MTE3 RAW in-segment;
+//                   V_MTE2 / MTE3_V WAR cross-segment — first segment
+//                   skips WAR Wait, last segment skips WAR Set; Set/Wait
+//                   strictly paired); PipeBarrier<PIPE_ALL> drains the
+//                   pipeline at exit.
 //
 // CONTENTS:
-//   - FatreluMulVF            — shared fp32-domain VF chain (Kernel.md「范式
-//                                特有 Kernel 子节 · 共享 VF 计算链」)
+//   - FatreluMulVF            — shared fp32-domain VF compute chain
 //   - class FatreluMulKernel<T, kPath> — Init / Process / CopyIn / Compute /
 //                                CopyOut / ComputeTile
 //
@@ -91,8 +89,8 @@
 #include <type_traits>
 
 #include "kernel_operator.h"        // Ascend C core framework (AscendC:: namespace)
-#include "FatreluMul_struct.h"      // FATRELUMUL_PATH_SMALL_TAIL / BIG_TAIL (= TilingKey.md)
-#include "FatreluMul_tiling_data.h" // FatreluMulTilingData / kMaxInputSlots / kMaxOutputSlots (= TilingData.md)
+#include "FatreluMul_struct.h"      // FATRELUMUL_PATH_SMALL_TAIL / BIG_TAIL
+#include "FatreluMul_tiling_data.h" // FatreluMulTilingData / kMaxInputSlots / kMaxOutputSlots
 
 // ---------------------------------------------------------------------------
 // FATRELUMUL_MAX_BLOCK_COUNT — DataCopyExtParams.blockCount 上限（防御性钳制；
@@ -110,13 +108,12 @@ __aicore__ inline int64_t FatreluMulMin(int64_t a, int64_t b) { return (a < b) ?
 // FatreluMulVF — 共享 VF 计算链（fp32 域，跨分支跨 dtype 共用；C 函数格式、
 // 非类成员，成员变量一律在 asc_vf_call 调用侧提取为参数传入 — VF 硬约束 5）
 //
-// 语义（docs/fatrelu_mul/design/Overview.md「数学公式(LaTeX)」，spec.yaml
-// math_semantics 同口径）：
-//   act = (x1f <= t) ? 0 : x1f   —— LE 极性（Kernel.md「mask 极性分析与逐元素
-//                                   对应」）：NaN <= t 为 False → NaN 保留；
-//                                   x1 == t 单点边界同置 0
+// 语义（数学定义，2026-10-24 用户裁定 gate 段 NaN 置 0，对齐 arch22 与 vLLM
+//   CUDA，Issue #7274）：
+//   act = (x1f > t) ? x1f : 0    —— GT 极性：NaN > t 为 False → NaN 置 0；
+//                                   x1 == t 单点边界同置 0（非 NaN 域与 LE 形逐位一致）
 //   yf  = act * x2f              —— 单次比较/选择精确、单次乘法仅一次输出舍入；
-//                                   NaN / ±Inf 随 Mul 按 IEEE 754 传播
+//                                   x2 半区 NaN / ±Inf 随 Mul 按 IEEE 754 传播
 // 一条 asc_vf_call 吃掉整链（LoadAlign → CompareScalar → Duplicate → Select →
 // Mul → StoreAlign，禁止拆成多个操作）；cmpMask / act 全程寄存器、不落 UB。
 // ===========================================================================
@@ -132,9 +129,9 @@ __simd_vf__ inline void FatreluMulVF(__ubuf__ float* yfAddr, __ubuf__ float* x1f
         mask = AscendC::Reg::UpdateMask<float>(remaining); // remaining 内部自动递减 VL_T（尾段 mask）
         AscendC::Reg::LoadAlign(x1fReg, x1fAddr + off); // UB → 寄存器（地址 32B 对齐：off × 4B 为 256B 倍数）
         AscendC::Reg::LoadAlign(x2fReg, x2fAddr + off);
-        AscendC::Reg::CompareScalar<float, AscendC::CMPMODE::LE>(cmpMask, x1fReg, thresholdF32, mask);
+        AscendC::Reg::CompareScalar<float, AscendC::CMPMODE::GT>(cmpMask, x1fReg, thresholdF32, mask);
         AscendC::Reg::Duplicate(zeroReg, 0.0f, mask);                  // 0 向量寄存器构造，不占 UB
-        AscendC::Reg::Select<float>(actReg, zeroReg, x1fReg, cmpMask); // cmpMask=1 → 0；=0 → x1f（NaN 保留）
+        AscendC::Reg::Select<float>(actReg, x1fReg, zeroReg, cmpMask); // cmpMask=1 → x1f；=0 → 0（NaN 置 0）
         AscendC::Reg::Mul(yfReg, actReg, x2fReg, mask);      // NaN / ±Inf 按 IEEE 754 传播，不饱和不报错
         AscendC::Reg::StoreAlign(yfAddr + off, yfReg, mask); // 寄存器 → UB（带 mask）
     }
@@ -154,7 +151,7 @@ __simd_vf__ inline void FatreluMulVF(__ubuf__ float* yfAddr, __ubuf__ float* x1f
 //
 // Shared members (both paths):
 //   pipe_        — TPipe for TBuf static allocation
-//   td_          — FatreluMulTilingData (global non-templated, TilingData.md)
+//   td_          — FatreluMulTilingData (global non-templated)
 //   gmX_ / gmThreshold_ / gmY_ — GM tensor views (x / threshold / y)
 //   threshold_   — scalar threshold read once from GM in T dtype
 //   buf_[]       — per-dtype P TBuf slots (fp32: B0=x1/B1=x2/B2=y;
@@ -172,7 +169,7 @@ template <typename T, int64_t kPath>
 class FatreluMulKernel {
 public:
     // TBuf 槽位索引（一角色一 buffer；fp32 用 B0-B2 / fp16·bf16 用 B0-B5，
-    // 语义与 buf_ 声明处注释一致，Kernel.md「TBuf 分配」）
+    // 语义与 buf_ 声明处注释一致）
     static constexpr int64_t kB0 = 0;     // B0 = x1
     static constexpr int64_t kB1 = 1;     // B1 = x2
     static constexpr int64_t kB2 = 2;     // B2 = y(fp32) / x1f(fp16·bf16)
@@ -182,21 +179,20 @@ public:
     static constexpr int64_t kBufNum = 6; // per-dtype P 份（fp32 用 3 / fp16·bf16 用 6）
     // -----------------------------------------------------------------------
     // Init — GM binding + TBuf allocation + threshold direct read + row range
-    //        / pitch precompute + event IDs (DESIGN-BRANCH-0.md §5.1)
+    //        / pitch precompute + event IDs
     // -----------------------------------------------------------------------
     __aicore__ inline void Init(GM_ADDR* ins, GM_ADDR* outs, const FatreluMulTilingData* td)
     {
         td_ = td;
-        // GM 绑定（kMaxInputSlots=2 / kMaxOutputSlots=1，TilingData.md §1；
-        // threshold 为单元素标量 Tensor，GM 直读、不占 UB 槽位）
+        // GM 绑定（kMaxInputSlots=2 / kMaxOutputSlots=1；threshold 为单元素
+        // 标量 Tensor，GM 直读、不占 UB 槽位）
         gmX_.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(ins[0]));
         gmThreshold_.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(ins[1]));
         gmY_.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(outs[0]));
-        // threshold 标量 GM 直读：按输入 dtype T 读入（Kernel.md「Init」共享口径 #1；
-        // 先舍入到 x dtype 再比较，对齐 PyTorch threshold.to<scalar_t>()，
-        // Overview.md「精度敏感点」①）
+        // threshold 标量 GM 直读：按输入 dtype T 读入（先舍入到 x dtype
+        // 再比较，对齐 PyTorch threshold.to<scalar_t>()）
         threshold_ = T(gmThreshold_.GetValue(0));
-        // TBuf 分配（§4 一角色一 buffer；tile_elems 已 256B 对齐 ⇒ 各 buffer 字节数
+        // TBuf 分配（一角色一 buffer；tile_elems 已 256B 对齐 ⇒ 各 buffer 字节数
         // 32B 整数倍，满足 InitBuffer 约束；空 Tensor 短路 tile_elems=0 → 跳过分配）
         if (td_->tile_elems > 0) {
             const uint32_t bytesT = static_cast<uint32_t>(td_->tile_elems * static_cast<int64_t>(sizeof(T)));
@@ -215,13 +211,13 @@ public:
             }
         }
         if constexpr (kPath == FATRELUMUL_PATH_SMALL_TAIL) {
-            // 本核行区间（行域多核切分消费，TilingData.md「kernel 消费点」；
-            // 入口已做 blockIdx ≥ need_core_num 守卫）
+            // 本核行区间（行域多核切分消费；入口已做 blockIdx ≥
+            // need_core_num 守卫）
             const int64_t bIdx = AscendC::GetBlockIdx();
             rowStart_ = bIdx * td_->rows_former + FatreluMulMin(bIdx, td_->rows_tail_core);
             rowCount_ = td_->rows_former + (bIdx < td_->rows_tail_core ? 1 : 0);
             // 行距与 pitch 安全有效组行数（kernel 运行期推导，不入 TilingData——
-            // 「尾块运行期推导」约束，见 §2.5）；half_dim == 0（空 Tensor 短路）
+            // 尾块运行期推导约束）；half_dim == 0（空 Tensor 短路）
             // 时不做除法（防 0 除子：rowCount_==0 直接返回，不消费派生量）
             if (td_->half_dim > 0) {
                 const int64_t S = static_cast<int64_t>(sizeof(T));
@@ -235,7 +231,7 @@ public:
             }
         }
         // 流水线同步事件 ID（FetchEventID 托管分配，不可硬编码；同类型事件全程共用
-        // 1 个，见 §5.5；GetTPipePtr 为全局作用域函数，非 AscendC 命名空间成员）
+        // 1 个；GetTPipePtr 为全局作用域函数，非 AscendC 命名空间成员）
         evMte2ToV_ = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_V));
         evVtoMte3_ = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_MTE3));
         evVtoMte2_ = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_MTE2));
@@ -244,11 +240,10 @@ public:
 
     // -----------------------------------------------------------------------
     // Process — small-tail 行组流水（同步编排；首组跳跨组 WaitFlag、末组跳跨组
-    //           SetFlag，Set/Wait 逐组配对，DESIGN-BRANCH-0.md §5.5）
-    // big-tail（kPath = FATRELUMUL_PATH_BIG_TAIL）行×段双循环按
-    // DESIGN-BRANCH-1.md §5.3：段偏移/段长全部运行期推导（§2 公式），
-    // per-段三段式流水 CopyIn → Compute → CopyOut（同步对在各自方法内按
-    // §5.5 四事件表落位），kernel 退出前 PipeBarrier<PIPE_ALL> 排空。
+    //           SetFlag，Set/Wait 逐组配对）
+    // big-tail（kPath = FATRELUMUL_PATH_BIG_TAIL）行×段双循环：段偏移/段长
+    // 全部运行期推导，per-段三段式流水 CopyIn → Compute → CopyOut（同步对在
+    // 各自方法内按四事件表落位），kernel 退出前 PipeBarrier<PIPE_ALL> 排空。
     // -----------------------------------------------------------------------
     __aicore__ inline void Process()
     {
@@ -286,13 +281,13 @@ public:
                 } // 释放输出 buffer 给下组
             }
         } else {
-            // FATRELUMUL_PATH_BIG_TAIL（tilingKey=1，行内分段）：DESIGN-BRANCH-1.md §5.3
-            // 本核行区间（§2 公式(2)，行域多核切分；入口已做 blockIdx ≥ need_core_num 守卫；
+            // FATRELUMUL_PATH_BIG_TAIL（tilingKey=1，行内分段）：
+            // 本核行区间（行域多核切分；入口已做 blockIdx ≥ need_core_num 守卫；
             // 进入本分支即非空 batch_size ≥ 1 且 d > tileElems，每核 rowCount ≥ 1）
             const int64_t b = AscendC::GetBlockIdx();
             const int64_t d = td_->half_dim; // d > tile_elems（本分支判界）
             const int64_t te = td_->tile_elems;
-            const int64_t rowStart = b * td_->rows_former + FatreluMulMin(b, td_->rows_tail_core); // §2 公式(2)
+            const int64_t rowStart = b * td_->rows_former + FatreluMulMin(b, td_->rows_tail_core);
             const int64_t rowCount = td_->rows_former + (b < td_->rows_tail_core ? 1 : 0);
             const int64_t lastRow = rowStart + rowCount - 1;
             const int64_t fullSegs = d / te; // 主段数（主段长恒 TE）
@@ -301,14 +296,14 @@ public:
             bool isFirst = true;
             for (int64_t r = rowStart; r <= lastRow; ++r) {
                 for (int64_t s = 0; s < segCount; ++s) {
-                    const int64_t segLen = (s < fullSegs) ? te : tailSeg; // §2 公式(3)
-                    const int64_t x1Off = r * 2 * d + s * te;             // gate 段首（元素索引）
-                    const int64_t x2Off = r * 2 * d + d + s * te;         // up 段首
-                    const int64_t yOff = r * d + s * te;                  // y 段首
+                    const int64_t segLen = (s < fullSegs) ? te : tailSeg;
+                    const int64_t x1Off = r * 2 * d + s * te;     // gate 段首（元素索引）
+                    const int64_t x2Off = r * 2 * d + d + s * te; // up 段首
+                    const int64_t yOff = r * d + s * te;          // y 段首
                     const bool isLast = (r == lastRow) && (s == segCount - 1);
-                    CopyIn(x1Off, x2Off, segLen, isFirst); // §5.2（MTE2）
-                    Compute(segLen, isFirst, isLast);      // §5.3（V）
-                    CopyOut(yOff, segLen, isLast);         // §5.4（MTE3）
+                    CopyIn(x1Off, x2Off, segLen, isFirst); // MTE2
+                    Compute(segLen, isFirst, isLast);      // V
+                    CopyOut(yOff, segLen, isLast);         // MTE3
                     isFirst = false;
                 }
             }
@@ -330,7 +325,7 @@ private:
         constexpr uint32_t kRepF32 = AscendC::GetVecLen() / sizeof(float); // 256 / 4 = 64
         const uint16_t repeatTime = static_cast<uint16_t>((count + kRepF32 - 1) / kRepF32);
         // T → fp32 精确上行（fp16/bf16 ⊂ fp32，无二次舍入）：threshold 先舍入到 x dtype
-        // 再比较、比较前无二次舍入（Overview.md 精度敏感点①）。bf16 为编译器内建
+        // 再比较、比较前无二次舍入。bf16 为编译器内建
         // __bf16 类型，bisheng 后端不支持其 →float 的标量 static_cast（"not support
         // bf16 type cast"），须走 CANN 标量转换 API AscendC::ToFloat（kernel_scalar_
         // convert.h，与内置 drop_out_do_mask 读标量同场景用法）。
@@ -345,7 +340,6 @@ private:
 
     // -----------------------------------------------------------------------
     // CopyIn — small-tail GM → UB（MTE2）：行组带 stride 多行整块搬运
-    // （DESIGN-BRANCH-0.md §5.2）
     //   r0 = 组首全局行号，gRows = 组行数（尾组运行期推导）
     // x1 / x2 半区各一次 DataCopyPad：blockCount = gRows、blockLen = d·S（不要求
     // 32B 对齐，硬件只写有效字节）；GM 侧 srcStride = d 元素（行尾→下一行同半区
@@ -357,8 +351,7 @@ private:
         const int64_t d = td_->half_dim;
         const int64_t S = static_cast<int64_t>(sizeof(T));
         AscendC::DataCopyExtParams params;
-        params.blockCount = static_cast<uint16_t>(
-            gRows); // ≤ FATRELUMUL_MAX_BLOCK_COUNT（rowsPerGroupEff_ 已钳制，§5.1）
+        params.blockCount = static_cast<uint16_t>(gRows); // ≤ FATRELUMUL_MAX_BLOCK_COUNT（rowsPerGroupEff_ 已钳制）
         params.blockLen = static_cast<uint32_t>(d * S); // 行有效字节（≥2B，不要求 32B 对齐）
         params.srcStride = d * S; // GM 侧 gap（byte）：x1 行尾→下行 x1 行头 = d 元素
         params.dstStride = 0;     // UB 侧 gap（32B 单位）=0：硬件按 CeilAlign(d·S,32) 推进
@@ -372,7 +365,7 @@ private:
 
     // -----------------------------------------------------------------------
     // Compute — small-tail 组内平坦计算（V pipe；Cast 与 VF 链同属 Vector
-    // pipe，指令序保序，无 LocalMemBar）（DESIGN-BRANCH-0.md §5.3）
+    // pipe，指令序保序，无 LocalMemBar）
     //   gElems = gRows × rowPitchElems（含行距哑元；哑元随平坦序列流过 VF 链，
     //   结果落 B5/B2 padding 槽位，CopyOut 只写有效字节）
     // -----------------------------------------------------------------------
@@ -386,7 +379,7 @@ private:
             ComputeTile(reinterpret_cast<__ubuf__ float*>(buf_[kB2].Get<float>().GetPhyAddr()),
                         reinterpret_cast<__ubuf__ float*>(buf_[kB0].Get<float>().GetPhyAddr()),
                         reinterpret_cast<__ubuf__ float*>(buf_[kB1].Get<float>().GetPhyAddr()),
-                        count); // 共享 VF 链（Kernel.md「共享 VF 计算链」）
+                        count); // 共享 VF 链
         } else {
             // fp16/bf16 路径 — P=6（B0/B1/B5 T 路 + B2/B3/B4 fp32 路），存活峰值 3 / 分配 6
             // Cast↑×2（CAST_NONE 无损上行，断链，src/dst 独立）：
@@ -405,7 +398,7 @@ private:
 
     // -----------------------------------------------------------------------
     // CopyOut — small-tail UB → GM（MTE3）：与 CopyIn 对称的行组多行整块
-    // DataCopyPad（3 参形式无 padParams）（DESIGN-BRANCH-0.md §5.4）
+    // DataCopyPad（3 参形式无 padParams）
     //   blockCount = gRows、blockLen = d·S（只写有效字节，哑元丢弃）；
     //   UB 侧 srcStride = 0（硬件按 CeilAlign(d·S,32) 推进跳过行尾哑元），
     //   GM 侧 dstStride = 0（y 行连续：y 第 r 行首 r·d，blockLen 恰好首尾相接）。
@@ -428,21 +421,20 @@ private:
 
     // -----------------------------------------------------------------------
     // CopyIn — big-tail GM → UB（MTE2）：行内 flat 分段搬运
-    // （DESIGN-BRANCH-1.md §5.2）
-    //   x1Off / x2Off = gate / up 段首全局元素偏移（§2 公式(3)：r·2d+s·TE /
+    //   x1Off / x2Off = gate / up 段首全局元素偏移（r·2d+s·TE /
     //   r·2d+d+s·TE），segLen = 段长（主段 TE / 尾段 d%TE，运行期推导）。
     // 每段两笔 blockCount=1 的 DataCopyPad：两半区段在 GM 相隔 (d − segLen)
     // 元素（尾段间隔与主段不同、字节量不保证 32B 整数倍），不合批 blockCount=2
     // + srcStride 单笔搬运；blockLen = segLen·S 有效字节（不要求 32B 对齐）；
     // isPad=false —— 段尾 dummy 不参与计算，由 VF 链 UpdateMask 按有效元素数
-    // 屏蔽。同步（§5.5 事件 1/2）：!isFirst 时 WaitFlag(V_MTE2) 跨段 WAR
+    // 屏蔽。同步：!isFirst 时 WaitFlag(V_MTE2) 跨段 WAR
     // （上段 V 读毕 B0/B1 → 本段 MTE2 才可覆写，首轮跳过）；MTE2 写完 B0/B1
     // 后 SetFlag(MTE2_V) RAW 发布。
     // -----------------------------------------------------------------------
     __aicore__ inline void CopyIn(int64_t x1Off, int64_t x2Off, int64_t segLen, bool isFirst)
     {
         if (!isFirst) {
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(evVtoMte2_); // WAR 反向同步(跨段)，§5.5 事件 2
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(evVtoMte2_); // WAR 反向同步(跨段)
         }
         AscendC::DataCopyExtParams copParams;
         copParams.blockCount = 1; // 单块 [1, FATRELUMUL_MAX_BLOCK_COUNT]
@@ -455,16 +447,16 @@ private:
         // MTE2 写 B0 ← GM gate 段；MTE2 写 B1 ← GM up 段（GlobalTensor::operator[] 元素索引）
         AscendC::DataCopyPad(buf_[kB0].Get<T>(), gmX_[x1Off], copParams, padParams);
         AscendC::DataCopyPad(buf_[kB1].Get<T>(), gmX_[x2Off], copParams, padParams);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMte2ToV_); // RAW 正向同步，§5.5 事件 1
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMte2ToV_); // RAW 正向同步
     }
 
     // -----------------------------------------------------------------------
-    // Compute — big-tail per-段计算（V pipe；DESIGN-BRANCH-1.md §5.3）
+    // Compute — big-tail per-段计算（V pipe）
     //   segLen = 段元素数（与 VF 链 UpdateMask 同一计数，尾段任意长度均被
     //   掩码精确处理，段尾 UB 残留不被读写）：fp32 直连共享入口 ComputeTile
     // （B0/B1 → B2）；fp16/bf16 走共享子链 Cast↑×2 → ComputeTile → Cast↓
-    // （B0/B1 → B2/B3 → B4 → B5，Kernel.md「Cast 上/下行组织」）。
-    // 同步（§5.5 事件 1/2/3/4）：WaitFlag(MTE2_V) RAW 段内（等 MTE2 写完
+    // （B0/B1 → B2/B3 → B4 → B5）。
+    // 同步：WaitFlag(MTE2_V) RAW 段内（等 MTE2 写完
     // B0/B1）；!isFirst 时 WaitFlag(MTE3_V) 跨段 WAR（上段 MTE3 读毕 y buffer，
     // 首轮跳过）；!isLast 时 SetFlag(V_MTE2) WAR 发布（释放 B0/B1 给下段
     // MTE2，末段跳过）；SetFlag(V_MTE3) RAW 发布（V 写完 y buffer → 本段
@@ -472,10 +464,9 @@ private:
     // -----------------------------------------------------------------------
     __aicore__ inline void Compute(int64_t segLen, bool isFirst, bool isLast)
     {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMte2ToV_); // RAW：等 MTE2 写完 B0/B1，§5.5 事件 1
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMte2ToV_); // RAW：等 MTE2 写完 B0/B1
         if (!isFirst) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
-                evMte3ToV_); // WAR(跨段)：上段 MTE3 读毕 y buffer，§5.5 事件 4
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(evMte3ToV_); // WAR(跨段)：上段 MTE3 读毕 y buffer
         }
         const uint32_t count = static_cast<uint32_t>(segLen);
         if constexpr (std::is_same_v<T, float>) {
@@ -493,18 +484,18 @@ private:
             AscendC::Cast(buf_[kB5].Get<T>(), buf_[kB4].Get<float>(), AscendC::RoundMode::CAST_RINT, count);
         }
         if (!isLast) {
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(evVtoMte2_); // WAR 发布(跨段)：释放 B0/B1，§5.5 事件 2
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(evVtoMte2_); // WAR 发布(跨段)：释放 B0/B1
         }
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evVtoMte3_); // RAW 发布：y buffer 就绪，§5.5 事件 3
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evVtoMte3_); // RAW 发布：y buffer 就绪
     }
 
     // -----------------------------------------------------------------------
     // CopyOut — big-tail UB → GM（MTE3）：单路径 dense 段写回
-    // （DESIGN-BRANCH-1.md §5.4，与 CopyIn 对称）
+    // （与 CopyIn 对称）
     //   yOff = r·d + s·TE（y 段首全局元素偏移）；blockLen = segLen·S 有效字节
     // （非 32B 对齐合法——UB→GM 统一 DataCopyPad、不用普通 DataCopy，UB 侧
-    // 不足 32B 由硬件补 dummy 读出、写 GM 时自动丢弃）。同步（§5.5 事件
-    // 3/4）：WaitFlag(V_MTE3) RAW 段内（等 V 写完 y buffer）；!isLast 时
+    // 不足 32B 由硬件补 dummy 读出、写 GM 时自动丢弃）。同步：WaitFlag(V_MTE3)
+    // RAW 段内（等 V 写完 y buffer）；!isLast 时
     // SetFlag(MTE3_V) WAR 发布（释放 y buffer 给下段 V，末段跳过）。
     // -----------------------------------------------------------------------
     __aicore__ inline void CopyOut(int64_t yOff, int64_t segLen, bool isLast)
@@ -523,26 +514,26 @@ private:
             AscendC::DataCopyPad(gmY_[yOff], buf_[kB5].Get<T>(), copParams); // B5 = y(T)
         }
         if (!isLast) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(evMte3ToV_); // WAR 发布(跨段)，§5.5 事件 4
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(evMte3ToV_); // WAR 发布(跨段)
         }
     }
 
     // ---- shared members ----
     AscendC::TPipe pipe_;                                     // TBuf 静态分配
-    const FatreluMulTilingData* td_ = nullptr;                // 全局非模板 TilingData（TilingData.md）
+    const FatreluMulTilingData* td_ = nullptr;                // 全局非模板 TilingData
     AscendC::GlobalTensor<T> gmX_;                            // x：gate_up 拼接张量（行模型 (batch, 2d)）
     AscendC::GlobalTensor<T> gmThreshold_;                    // threshold：单元素标量 Tensor（GM 直读）
     AscendC::GlobalTensor<T> gmY_;                            // y：(batch, d)
     T threshold_ = static_cast<T>(0);                         // 标量阈值（寄存器参与比较，不占 UB）
     AscendC::TBuf<AscendC::TPosition::VECCALC> buf_[kBufNum]; // per-dtype 槽位数（fp32=3 / fp16·bf16=6）
 
-    // ---- small-tail path members（DESIGN-BRANCH-0.md §5.1）----
+    // ---- small-tail path members ----
     int64_t rowStart_ = 0;        // 本核行区间起点 = blockIdx·rows_former + min(blockIdx, rows_tail_core)
     int64_t rowCount_ = 0;        // 本核行数 = rows_former + (blockIdx < rows_tail_core ? 1 : 0)
     int64_t rowPitchElems_ = 0;   // UB 内行距（元素）= CeilAlign(d·S, 32) / S
     int64_t rowsPerGroupEff_ = 0; // pitch 安全组行数 = min(rows_per_group, tileElems/pitchElems, blockCount 上限)
 
-    // ---- sync event IDs（DESIGN-BRANCH-0.md §5.5；FetchEventID 托管分配）----
+    // ---- sync event IDs（FetchEventID 托管分配）----
     int32_t evMte2ToV_ = 0; // MTE2_V：组内 RAW（CopyIn 写 B0/B1 → Compute 读）
     int32_t evVtoMte3_ = 0; // V_MTE3：组内 RAW（Compute 写输出 buffer → CopyOut 读）
     int32_t evVtoMte2_ = 0; // V_MTE2：跨组 WAR（Compute 读毕 B0/B1 → 下组 CopyIn 覆写）

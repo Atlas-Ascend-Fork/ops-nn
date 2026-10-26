@@ -21,20 +21,20 @@
 
 - 计算公式：
 
-  给定输入张量input，最后一维的长度为2d，进行以下计算：
+  给定输入张量x，最后一维的长度为2d，进行以下计算：
 
-  1. 将input分割为两部分：
+  1. 将x分割为两部分：
 
      $$
-     x_1 = \text{input}[..., :d], \quad x_2 = \text{input}[..., d:]
+     x_1 = x[..., :d], \quad x_2 = x[..., d:]
      $$
   2. 对x1应用Threshold激活函数，定义如下：
 
      $$
      \text{Threshold}(x, \text{threshold}) =
         \begin{cases}
-        0 & \text{if } x < \text{threshold} \\
-        x & \text{if } x \geq \text{threshold}
+        0 & \text{if } x \leq \text{threshold} \\
+        x & \text{if } x > \text{threshold}
         \end{cases}
      $$
 
@@ -68,9 +68,9 @@
     </tr></thead>
   <tbody>
     <tr>
-      <td>input</td>
+      <td>x</td>
       <td>输入</td>
-      <td>公式中的输入input。</td>
+      <td>公式中的输入x。</td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>

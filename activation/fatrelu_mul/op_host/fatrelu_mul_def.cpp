@@ -54,7 +54,7 @@ public:
         aicoreConfig
             .DynamicCompileStaticFlag(true) // dynamic-static unified compile
             .DynamicFormatFlag(false)       // fixed format (ND only)
-            .DynamicRankSupportFlag(true)   // 2D~8D variable rank
+            .DynamicRankSupportFlag(true)   // 2D and above variable rank
             .DynamicShapeSupportFlag(true)  // variable shape support
             .NeedCheckSupportFlag(false)    // skip framework support check
             .PrecisionReduceFlag(true)      // allow safe precision reduction

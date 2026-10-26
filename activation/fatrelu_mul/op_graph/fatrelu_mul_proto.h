@@ -23,9 +23,9 @@ namespace ge {
 * performs Threshold calculation on x1 on the left, and multiplies the calculation result by x2. \n
 
 * @par Inputs:
-* @li x: A tensor of type float, float16 or bfloat16. Shape support 2D ~ 8D.
+* @li x: A tensor of type float, float16 or bfloat16. Shape support 2D and above.
 * The format must be ND.
-* @li threshold: A scalar, type is float, used to set the threshold of "x".
+* @li threshold: A scalar, type is same as x (float, float16 or bfloat16), used to set the threshold of "x".
 
 * @par Outputs:
 * y: A tensor has the same type and format as "x".
@@ -34,7 +34,7 @@ namespace ge {
 */
 REG_OP(FatreluMul)
     .INPUT(x, TensorType({DT_BF16, DT_FLOAT16, DT_FLOAT}))
-    .INPUT(threshold, TensorType({DT_FLOAT, DT_FLOAT, DT_FLOAT}))
+    .INPUT(threshold, TensorType({DT_BF16, DT_FLOAT16, DT_FLOAT}))
     .OUTPUT(y, TensorType({DT_BF16, DT_FLOAT16, DT_FLOAT}))
     .OP_END_FACTORY_REG(FatreluMul)
 

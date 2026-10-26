@@ -16,7 +16,7 @@
 //   本文件是 tilingKey 位编码的唯一事实源（参照仓内 fast_gelu_v2_tiling_key.h 模式）：
 //     - host 侧（fatrelu_mul_tiling_arch35.cpp TilingFunc）经
 //       ASCENDC_TPL_SEL_PARAM(context, dtype, FATRELUMUL_PATH_SMALL_TAIL / BIG_TAIL)
-//       设置 tilingKey（BranchRoute.md 判定顺序：空 Tensor 短路 → 判界 halfDim vs tileElems）；
+//       设置 tilingKey（判定顺序：空 Tensor 短路 → 判界 halfDim vs tileElems）；
 //     - kernel 侧（fatrelu_mul_apt.cpp）按 ASCENDC_TPL_SEL 声明实例化 sub-kernel：
 //       D_T_X（dtype 模板参数）× PATH → 3 dtype × 2 path = 6 个实例，
 //       框架为每个实例生成独立 .o 并按 tilingKey 分发。
@@ -29,21 +29,20 @@
 //
 // OPERATOR NAME VARIANTS:
 //   PascalCase   : FatreluMul   — ASCENDC_TPL_ARGS_DECL 第一参数（生成代码前缀）
-//   文件名前缀    : FatreluMul_  — DevView.md「命名规范」
+//   文件名前缀    : FatreluMul_
 //   UPPER        : FATRELUMUL   — 宏名 / 头文件守卫 / TPL 路径常量前缀
 //
 // =============================================================================
 
 // FatreluMul TilingKey 模板参数 —— dtype + 行模型双路径（small-tail 行打包 / big-tail 行分段）
-// 落位：op_kernel/arch35/FatreluMul_struct.h（与 DevView.md 工程结构一致）
+// 落位：op_kernel/arch35/FatreluMul_struct.h
 #ifndef FATRELUMUL_STRUCT_H_
 #define FATRELUMUL_STRUCT_H_
 #include "ascendc/host_api/tiling/template_argument.h"
 
 // 路径常量：取值仅作 TPL 枚举标识。
 // tilingKey 位编码取「值在 DECL 枚举列表中的下标」，非常量值本身
-// （GET_TPL_TILING_KEY 位编码规则：UINT 参数按下标编码占 bitWidth 位，见 ascendc-build-system skill
-//   references/tiling-key-encoding.md）：
+// （GET_TPL_TILING_KEY 位编码规则：UINT 参数按下标编码占 bitWidth 位）：
 //   GET_TPL_TILING_KEY(dtype, FATRELUMUL_PATH_SMALL_TAIL) → dtype 值占低 8 bit，PATH 下标 0 → tilingKey = dtype 值
 //   GET_TPL_TILING_KEY(dtype, FATRELUMUL_PATH_BIG_TAIL)   → dtype 值占低 8 bit，PATH 下标 1 占 bit 8
 #define FATRELUMUL_PATH_SMALL_TAIL 0 // 行打包路径：空 Tensor 短路 或 0 < d ≤ tileElems

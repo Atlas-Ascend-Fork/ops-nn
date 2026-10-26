@@ -44,8 +44,8 @@
 
 // Include the global tiling data struct definition — this is shared between
 // host-side tiling and device-side kernel (same struct, different compilation).
-// FatreluMulTilingData is non-templated (row model carries rank 2-8 via the
-// batch_size / half_dim scalars), per docs/fatrelu_mul/design/TilingData.md.
+// FatreluMulTilingData is non-templated (row model carries rank >= 2 via the
+// batch_size / half_dim scalars).
 #include "../../op_kernel/arch35/FatreluMul_tiling_data.h"
 
 namespace optiling {
