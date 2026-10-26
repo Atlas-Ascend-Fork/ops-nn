@@ -10,7 +10,11 @@
 
 /*!
  * \file fake_quant_with_min_max_vars_per_channel_gradient_tiling.h
- * \brief
+ * \brief FakeQuantWithMinMaxVarsPerChannelGradient host tiling 公共定义
+ *
+ * 注：TilingData 已迁移为新写法（POD 结构体，见
+ * op_kernel/arch35/fake_quant_with_min_max_vars_per_channel_gradient_tilingdata.h），
+ * 本文件不再声明 BEGIN_TILING_DATA_DEF / REGISTER_TILING_DATA_CLASS。
  */
 #ifndef OPS_BUILD_IN_OP_TILING_RUNTIME_FAKE_QUANT_WITH_MIN_MAX_VARS_PER_CHANNEL_GRADIENT_H
 #define OPS_BUILD_IN_OP_TILING_RUNTIME_FAKE_QUANT_WITH_MIN_MAX_VARS_PER_CHANNEL_GRADIENT_H
@@ -23,25 +27,6 @@
 #include "platform/platform_infos_def.h"
 
 namespace optiling {
-BEGIN_TILING_DATA_DEF(FakeQuantWithMinMaxVarsPerChannelGradientTilingData)
-TILING_DATA_FIELD_DEF(uint32_t, usedCoreNum);
-TILING_DATA_FIELD_DEF(uint32_t, rowsPerCore);
-TILING_DATA_FIELD_DEF(uint32_t, tailRows);
-TILING_DATA_FIELD_DEF(uint32_t, totalRows);
-TILING_DATA_FIELD_DEF(uint32_t, channelNum);
-TILING_DATA_FIELD_DEF(uint32_t, tileLen);
-TILING_DATA_FIELD_DEF(int32_t, quantMin);
-TILING_DATA_FIELD_DEF(int32_t, quantMax);
-TILING_DATA_FIELD_DEF(uint32_t, dTileLen);
-TILING_DATA_FIELD_DEF(uint32_t, numDChunks);
-TILING_DATA_FIELD_DEF(uint32_t, splitMode); // 0 = split rows, 1 = split d-chunks
-TILING_DATA_FIELD_DEF(uint32_t, chunksPerCore);
-TILING_DATA_FIELD_DEF(uint32_t, tailChunks);
-END_TILING_DATA_DEF;
-
-REGISTER_TILING_DATA_CLASS(FakeQuantWithMinMaxVarsPerChannelGradient,
-                           FakeQuantWithMinMaxVarsPerChannelGradientTilingData)
-
 struct FakeQuantWithMinMaxVarsPerChannelGradientCompileInfo {
     int32_t totalCoreNum = 0;
     uint64_t ubSizePlatForm = 0;

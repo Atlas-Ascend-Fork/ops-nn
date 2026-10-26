@@ -34,13 +34,13 @@
 
   $$backprops\_wrt\_x[..., c] = gradients[..., c] \times mask[..., c]$$
 
-  $$backprop\_wrt\_min[c] = \sum_{i: x_i < nudgedMin[c]} gradients_i$$
+  $$backprops\_wrt\_min[c] = \sum_{i: x_i < nudgedMin[c]} gradients_i$$
 
-  $$backprop\_wrt\_max[c] = \sum_{i: x_i > nudgedMax[c]} gradients_i$$
+  $$backprops\_wrt\_max[c] = \sum_{i: x_i > nudgedMax[c]} gradients_i$$
 
   - 当某通道`x`为NaN时，`mask = 0`（NaN比较结果为false）；当`gradients`为NaN时，NaN通过乘法自然传播。
-  - 当某通道`|min[c]| + |max[c]| = 0`（退化）时：`backprops_wrt_x`透传`gradients`，`backprop_wrt_min/max`为0。
-  - backprop_wrt_min/max的跨行归约使用Kahan补偿求和，减少浮点累加误差。
+  - 当某通道`max[c] <= min[c]`（退化，覆盖 `|min[c]| + |max[c]| = 0` 与 `min[c] == max[c] != 0` 的零宽区间）时：`backprops_wrt_x`透传`gradients`，`backprops_wrt_min/max`为0。退化透传以该通道`x`非NaN为前提；若`x`为NaN，仍按上一条NaN规则得`mask = 0`（即`backprops_wrt_x = 0`）。
+  - backprops_wrt_min/max的跨行归约使用Kahan补偿求和，减少浮点累加误差。
 
 ## 参数说明
 
@@ -89,6 +89,27 @@
       <td>ND</td>
     </tr>
     <tr>
+      <td>backprops_wrt_x</td>
+      <td>输出</td>
+      <td><ul><li>表示x的梯度，经per-channel mask门控后的gradients；</li><li>shape和输入x一致。</li></ul></td>
+      <td>FLOAT</td>
+      <td>ND</td>
+    </tr>
+    <tr>
+      <td>backprops_wrt_min</td>
+      <td>输出</td>
+      <td><ul><li>表示min的per-channel梯度，即各通道x &lt; nudgedMin[c]的元素对应的gradients之和；</li><li>shape为[C]，与min一致。</li></ul></td>
+      <td>FLOAT</td>
+      <td>ND</td>
+    </tr>
+    <tr>
+      <td>backprops_wrt_max</td>
+      <td>输出</td>
+      <td><ul><li>表示max的per-channel梯度，即各通道x &gt; nudgedMax[c]的元素对应的gradients之和；</li><li>shape为[C]，与max一致。</li></ul></td>
+      <td>FLOAT</td>
+      <td>ND</td>
+    </tr>
+    <tr>
       <td>num_bits</td>
       <td>可选属性</td>
       <td><ul><li>表示量化位宽；</li><li>取值范围[2, 16]；</li><li>默认值为8。</li></ul></td>
@@ -102,27 +123,6 @@
       <td>BOOL</td>
       <td>-</td>
     </tr>
-    <tr>
-      <td>backprops_wrt_x</td>
-      <td>输出</td>
-      <td><ul><li>表示x的梯度，经per-channel mask门控后的gradients；</li><li>shape和输入x一致。</li></ul></td>
-      <td>FLOAT</td>
-      <td>ND</td>
-    </tr>
-    <tr>
-      <td>backprop_wrt_min</td>
-      <td>输出</td>
-      <td><ul><li>表示min的per-channel梯度，即各通道x &lt; nudgedMin[c]的元素对应的gradients之和；</li><li>shape为[C]，与min一致。</li></ul></td>
-      <td>FLOAT</td>
-      <td>ND</td>
-    </tr>
-    <tr>
-      <td>backprop_wrt_max</td>
-      <td>输出</td>
-      <td><ul><li>表示max的per-channel梯度，即各通道x &gt; nudgedMax[c]的元素对应的gradients之和；</li><li>shape为[C]，与max一致。</li></ul></td>
-      <td>FLOAT</td>
-      <td>ND</td>
-    </tr>
   </tbody>
 </table>
 
@@ -132,11 +132,15 @@
 - 输入`min`、`max`必须为1-D Tensor（rank=1），且长度等于`x`最后一维的大小C。
 - `min`和`max`的长度必须一致。
 - `num_bits`取值范围为[2, 16]。
-- `x`的rank范围必须为[1, 8]。
-- 当某通道`|min[c]| + |max[c]| = 0`时，该通道`backprops_wrt_x`透传`gradients`，`backprop_wrt_min/max`为0。
+- `x`的rank范围必须为[1, 8]，且各维非空（`C >= 1`、元素总数 > 0）。
+- 支持动态shape：shape中的`-1`表示未知维、`-2`表示未知rank，运行期由实际输入确定；推导阶段对未知维不做跨输入比较。
+- 当某通道`max[c] <= min[c]`（退化，覆盖 `|min[c]| + |max[c]| = 0` 与 `min[c] == max[c] != 0` 的零宽区间）时，该通道`backprops_wrt_x`透传`gradients`，`backprops_wrt_min/max`为0。
+- 约束校验位置：跨输入形状关系（`gradients`与`x`同形、`min`/`max`为rank-1且长度等于`x`最后一维C、`min`与`max`长度相等）与`x`的rank范围[1, 8]在Host InferShape阶段校验；`x`各维非空（`C >= 1`、元素总数 > 0）与`num_bits`取值范围在Tiling阶段校验（Tiling先于Kernel执行）。上述任一不满足时返回`GRAPH_FAILED`，非法输入不会下发到Kernel；数据类型由算子注册约束（仅FLOAT32）。
+- Nudge中间量（`scale`、`zp`、`nudgedMin`、`nudgedMax`）与反向梯度均在FLOAT32下求值；`scale`严格按`(max[c]-min[c])/(qMax-qMin)`的**单步Sub后单步Div**计算（与同仓前向算子`FakeQuantWithMinMaxVarsPerChannel`及TF参考模型一致），以保证与参考实现逐位一致。
+- 特殊取值（`min`/`max`/`x`/`gradients`取`±FLT_MAX`、`±inf`或次正规数等）不在本算子定义域内：该域下`scale`、`nudgedMin/nudgedMax`、掩码与通道和由FLOAT32中间结果（可能出现`±inf`/`NaN`）与设备浮点行为共同决定，本文档不承诺其取值，对此类输入的比较结果不作为精度判定依据。
 
 ## 调用说明
 
 | 调用方式 | 样例代码 | 说明 |
 | :--- | :--- | :--- |
-| GE图模式 | - | 通过GE IR构图方式调用FakeQuantWithMinMaxVarsPerChannelGradient算子（[算子IR定义](op_graph/fake_quant_with_min_max_vars_per_channel_gradient_proto.h)）。min/max作为1-D tensor输入（per-channel可训练变量），num_bits/narrow_range作为属性。TF插件会将所有输入/输出format设为NHWC。|
+| GE图模式 | [test_geir_fake_quant_with_min_max_vars_per_channel_gradient.cpp](examples/test_geir_fake_quant_with_min_max_vars_per_channel_gradient.cpp) | 通过GE IR构图方式调用FakeQuantWithMinMaxVarsPerChannelGradient算子（[算子IR定义](op_graph/fake_quant_with_min_max_vars_per_channel_gradient_proto.h)）。min/max作为1-D tensor输入（per-channel可训练变量），num_bits/narrow_range作为属性。TF插件仅将 **rank-4** 张量的format设为NHWC；rank-1 的 min/max 输入与 rank-1 的 backprops_wrt_min/backprops_wrt_max 输出保持 ND。|

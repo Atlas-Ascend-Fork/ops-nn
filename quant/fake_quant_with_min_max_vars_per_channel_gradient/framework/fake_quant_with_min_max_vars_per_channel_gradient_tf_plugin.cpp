@@ -16,7 +16,35 @@
 #include "framework/plugin_util.h"
 
 namespace domi {
-// TensorFlow FakeQuantWithMinMaxVarsPerChannelGradient: auto mapping plus NHWC format setup on inputs/output.
+// TensorFlow FakeQuantWithMinMaxVarsPerChannelGradient: auto mapping plus NHWC format setup.
+// NHWC only applies to rank-4 tensors; rank-1 inputs (min/max) and rank-1 outputs
+// (backprops_wrt_min/backprops_wrt_max) must stay ND, otherwise the format is invalid for them.
+static bool SetNhwcFormatForRank4Input(ge::Operator& op, size_t idx)
+{
+    auto tensor = op.GetInputDesc(idx);
+    const bool isNhwc = tensor.GetShape().GetDimNum() == 4U;
+    tensor.SetOriginFormat(isNhwc ? ge::FORMAT_NHWC : ge::FORMAT_ND);
+    tensor.SetFormat(isNhwc ? ge::FORMAT_NHWC : ge::FORMAT_ND);
+    if (op.UpdateInputDesc(idx, tensor) != ge::GRAPH_SUCCESS) {
+        OP_LOGE(GetOpName(op).c_str(), "update input format failed.");
+        return false;
+    }
+    return true;
+}
+
+static bool SetNhwcFormatForRank4Output(ge::Operator& op, size_t idx)
+{
+    auto tensor = op.GetOutputDesc(idx);
+    const bool isNhwc = tensor.GetShape().GetDimNum() == 4U;
+    tensor.SetOriginFormat(isNhwc ? ge::FORMAT_NHWC : ge::FORMAT_ND);
+    tensor.SetFormat(isNhwc ? ge::FORMAT_NHWC : ge::FORMAT_ND);
+    if (op.UpdateOutputDesc(idx, tensor) != ge::GRAPH_SUCCESS) {
+        OP_LOGE(GetOpName(op).c_str(), "update output format failed.");
+        return false;
+    }
+    return true;
+}
+
 static Status ParseParamsFakeQuantWithMinMaxVarsPerChannelGradient(const google::protobuf::Message* op_src,
                                                                    ge::Operator& op)
 {
@@ -25,20 +53,12 @@ static Status ParseParamsFakeQuantWithMinMaxVarsPerChannelGradient(const google:
         return FAILED;
     }
     for (size_t i = 0; i < op.GetInputsSize(); i++) {
-        auto tensor = op.GetInputDesc(i);
-        tensor.SetOriginFormat(ge::FORMAT_NHWC);
-        tensor.SetFormat(ge::FORMAT_NHWC);
-        if (op.UpdateInputDesc(i, tensor) != ge::GRAPH_SUCCESS) {
-            OP_LOGE(GetOpName(op).c_str(), "update input format failed.");
+        if (!SetNhwcFormatForRank4Input(op, i)) {
             return FAILED;
         }
     }
     for (size_t i = 0; i < op.GetOutputsSize(); i++) {
-        auto tensor = op.GetOutputDesc(i);
-        tensor.SetOriginFormat(ge::FORMAT_NHWC);
-        tensor.SetFormat(ge::FORMAT_NHWC);
-        if (op.UpdateOutputDesc(i, tensor) != ge::GRAPH_SUCCESS) {
-            OP_LOGE(GetOpName(op).c_str(), "update output format failed.");
+        if (!SetNhwcFormatForRank4Output(op, i)) {
             return FAILED;
         }
     }

@@ -22,11 +22,15 @@
 #define FAKE_QUANT_WITH_MIN_MAX_VARS_PER_CHANNEL_GRADIENT_REGBASE_H
 
 #include "kernel_operator.h"
+#include "fake_quant_with_min_max_vars_per_channel_gradient_tilingdata.h"
 
 namespace FakeQuantWMMVPCG {
 using namespace AscendC;
 
 constexpr uint32_t FP32_VL = 64; // 256B / 4B per FP32 vector reg
+// VEC UB access alignment in bytes (issue #30: AIC error 340 "The address for VEC to access
+// UB is not aligned. subErrType: 0x4" when Reg::DataCopy starts at an unaligned UB address).
+constexpr uint32_t VEC_ADDR_ALIGN_BYTES = 32;
 constexpr uint32_t SPLIT_MODE_ROWS = 0;
 constexpr uint32_t SPLIT_MODE_DCHUNKS = 1;
 
@@ -51,7 +55,7 @@ private:
     __aicore__ inline void ProcessRowChunk(uint32_t absRowIdx, uint32_t dOffset, uint32_t dCount, bool writeBpx,
                                            bool accumulate);
     __aicore__ inline void ProcessRowBatch(uint32_t startRowIdx, uint32_t dOffset, uint32_t dCount, uint32_t batchRows);
-    __aicore__ inline void ZeroWorkspaceSlot();
+    __aicore__ inline bool CanUseRowBatch(uint32_t dOffset, uint32_t dCount) const;
     __aicore__ inline void WriteAccToWorkspace(uint32_t dOffset, uint32_t dCount);
     __aicore__ inline void MergePhase();
     __aicore__ inline void ComputeChunkRegbase(__ubuf__ T* gPtr, __ubuf__ T* xPtr, __ubuf__ T* loPtr, __ubuf__ T* hiPtr,
@@ -200,7 +204,7 @@ __aicore__ inline void Kernel<T>::PrepareNudgedChunk(uint32_t dOffset, uint32_t 
         // Default vdiv on dav_c310 only achieves ~14-bit precision and round-mismatches
         // when min ~= -max, causing zp to land on the wrong int (off by 1). The
         // 0 ULP IEEE 754 Div (PRECISION_0ULP_FTZ_FALSE) gives bit-equal results
-        // with CPU/TF for fp32 division. See zp-precision-trap.md.
+        // with CPU/TF for fp32 division.
         static constexpr AscendC::Reg::DivSpecificMode DIV_HP_ZP_MODE = {
             .mrgMode = AscendC::Reg::MaskMergeMode::ZEROING,
             .precisionMode = false,
@@ -217,20 +221,30 @@ __aicore__ inline void Kernel<T>::PrepareNudgedChunk(uint32_t dOffset, uint32_t 
         AscendC::Reg::RegTensor<float> vQminVec;
         AscendC::Reg::RegTensor<float> vQmaxVec;
         AscendC::Reg::RegTensor<float> vQRange;
-        AscendC::Reg::RegTensor<float> vZero;
-        AscendC::Reg::RegTensor<float> vNegInf;
+        AscendC::Reg::RegTensor<float> vZeroF;
+        AscendC::Reg::RegTensor<float> vOneF;
         AscendC::Reg::RegTensor<float> vPosInf;
+        AscendC::Reg::RegTensor<float> vNegInf;
+        AscendC::Reg::RegTensor<float> vFlag;
         AscendC::Reg::MaskReg pMask;
         AscendC::Reg::MaskReg cmpLo;
         AscendC::Reg::MaskReg cmpHi;
-        AscendC::Reg::MaskReg cmpDegenerate;
+        AscendC::Reg::MaskReg maskMinZ;
+        AscendC::Reg::MaskReg maskMaxZ;
+        AscendC::Reg::MaskReg zzMask;
 
         AscendC::Reg::Duplicate(vQminVec, qminF);
         AscendC::Reg::Duplicate(vQmaxVec, qmaxF);
         AscendC::Reg::Duplicate(vQRange, qRange);
-        AscendC::Reg::Duplicate(vZero, 0.0f);
-        AscendC::Reg::Duplicate(vNegInf, -3.4e38f);
-        AscendC::Reg::Duplicate(vPosInf, 3.4e38f);
+        AscendC::Reg::Duplicate(vZeroF, 0.0f);
+        AscendC::Reg::Duplicate(vOneF, 1.0f);
+        // ±inf 常量（用于 min==max==0 通道的哨兵）
+        {
+            uint32_t fullLanes = FP32_VL;
+            AscendC::Reg::MaskReg allLanes = AscendC::Reg::UpdateMask<float>(fullLanes);
+            AscendC::Reg::Div<float, &DIV_HP_ZP_MODE>(vPosInf, vOneF, vZeroF, allLanes);
+            AscendC::Reg::Sub(vNegInf, vZeroF, vPosInf, allLanes);
+        }
 
         uint32_t remain = dCount;
         for (uint16_t i = 0; i < loopNum; ++i) {
@@ -239,13 +253,13 @@ __aicore__ inline void Kernel<T>::PrepareNudgedChunk(uint32_t dOffset, uint32_t 
             AscendC::Reg::DataCopy(vMax, maxPtr + i * FP32_VL);
 
             AscendC::Reg::Sub(vScale, vMax, vMin, pMask);
-            AscendC::Reg::Compare<float, CMPMODE::LE>(cmpDegenerate, vScale, vZero, pMask);
             AscendC::Reg::Div<float, &DIV_HP_ZP_MODE>(vScale, vScale, vQRange, pMask);
 
             // zp = qmin - min/scale (TF original formula). High-precision 0 ULP Div
             // is required because min ~= -max would otherwise round wrong (see DIV_HP_ZP_MODE above).
-            // degenerate (scale==0) may produce inf/NaN here, but is overwritten via cmpDegenerate
-            // Select on vNudgedMin/vNudgedMax below (zp itself is not stored).
+            // NOTE: no degeneracy short-circuit — TF's reference Nudge() uses this raw formula
+            // even when max<=min (scale<=0): the nudged interval then simply reverses
+            // (nudged_min > nudged_max) and the three independent output masks follow TF.
             AscendC::Reg::Div<float, &DIV_HP_ZP_MODE>(vZpf, vMin, vScale, pMask);
             AscendC::Reg::Sub(vZpf, vQminVec, vZpf, pMask);
 
@@ -263,8 +277,18 @@ __aicore__ inline void Kernel<T>::PrepareNudgedChunk(uint32_t dOffset, uint32_t 
             AscendC::Reg::Sub(vNudgedMax, vQmaxVec, vNzp, pMask);
             AscendC::Reg::Mul(vNudgedMax, vNudgedMax, vScale, pMask);
 
-            AscendC::Reg::Select(vNudgedMin, vNegInf, vNudgedMin, cmpDegenerate);
-            AscendC::Reg::Select(vNudgedMax, vPosInf, vNudgedMax, cmpDegenerate);
+            // TF 特例（FakeQuantWithMinMaxVarsPerChannelGradientFunctor）：
+            //   min == 0 且 max == 0 的通道 → bpx = gradients 全量传播、bpmin/bpmax = 0。
+            // 用 nudged = [-inf, +inf] 哨兵等价实现：(x>=-inf)&(x<=+inf) 对所有有限值及 ±inf
+            // 成立 → bpx = g；x<-inf / x>+inf 恒假 → bpmin/bpmax = 0。
+            // 已知微差：该特例通道若 x 含 NaN，TF 仍给 bpx=g，本实现给 0（测试数据未覆盖）。
+            AscendC::Reg::Compare<float, CMPMODE::EQ>(maskMinZ, vMin, vZeroF, pMask);
+            AscendC::Reg::Compare<float, CMPMODE::EQ>(maskMaxZ, vMax, vZeroF, pMask);
+            AscendC::Reg::Select(vFlag, vOneF, vZeroF, maskMinZ);
+            AscendC::Reg::Select(vFlag, vFlag, vZeroF, maskMaxZ);
+            AscendC::Reg::Compare<float, CMPMODE::GT>(zzMask, vFlag, vZeroF, pMask);
+            AscendC::Reg::Select(vNudgedMin, vNegInf, vNudgedMin, zzMask);
+            AscendC::Reg::Select(vNudgedMax, vPosInf, vNudgedMax, zzMask);
 
             AscendC::Reg::DataCopy(minPtr + i * FP32_VL, vNudgedMin, pMask);
             AscendC::Reg::DataCopy(maxPtr + i * FP32_VL, vNudgedMax, pMask);
@@ -327,14 +351,23 @@ __aicore__ inline void Kernel<T>::ComputeChunkRegbase(__ubuf__ T* gPtr, __ubuf__
         AscendC::Reg::RegTensor<float> vAddMax;
         AscendC::Reg::RegTensor<float> vCMin;
         AscendC::Reg::RegTensor<float> vCMax;
+        AscendC::Reg::RegTensor<float> vCNew;
+        AscendC::Reg::RegTensor<float> vAbsT;
+        AscendC::Reg::RegTensor<float> vAbsLo;
+        AscendC::Reg::RegTensor<float> vFltMax;
         AscendC::Reg::RegTensor<float> vY;
         AscendC::Reg::RegTensor<float> vT;
         AscendC::Reg::RegTensor<float> vZero;
         AscendC::Reg::MaskReg pMask;
         AscendC::Reg::MaskReg cmpLo;
         AscendC::Reg::MaskReg cmpHi;
+        AscendC::Reg::MaskReg cmpGe;
+        AscendC::Reg::MaskReg cmpLe;
+        AscendC::Reg::MaskReg infMask;
+        AscendC::Reg::MaskReg zzM;
 
         AscendC::Reg::Duplicate(vZero, 0.0f);
+        AscendC::Reg::Duplicate(vFltMax, 3.4028234663852886e+38f); // FLT_MAX
 
         uint32_t remain = calCount;
         for (uint16_t i = 0; i < loopNum; ++i) {
@@ -353,34 +386,54 @@ __aicore__ inline void Kernel<T>::ComputeChunkRegbase(__ubuf__ T* gPtr, __ubuf__
 
             AscendC::Reg::Compare<float, CMPMODE::LT>(cmpLo, vX, vLo, pMask);
             AscendC::Reg::Compare<float, CMPMODE::GT>(cmpHi, vX, vHi, pMask);
+            AscendC::Reg::Compare<float, CMPMODE::GE>(cmpGe, vX, vLo, pMask);
+            AscendC::Reg::Compare<float, CMPMODE::LE>(cmpLe, vX, vHi, pMask);
+            // min==max==0 通道在 PrepareNudgedChunk 中被编码为 lo=-inf 哨兵；
+            // 该特例的 bpmin/bpmax 必须恒为 0（TF 直接短路）。这里用 |lo|>FLT_MAX 识别，
+            // 用于把 g*mask 的 inf*0=NaN 贡献强制清零（L0_015: g=inf 时污染累加器）。
+            AscendC::Reg::Abs(vAbsLo, vLo, pMask);
+            AscendC::Reg::Compare<float, CMPMODE::GT>(zzM, vAbsLo, vFltMax, pMask);
 
             AscendC::Reg::RegTensor<float> vOne;
             AscendC::Reg::RegTensor<float> vMask;
             AscendC::Reg::Duplicate(vOne, 1.0f);
-            AscendC::Reg::Select(vMask, vZero, vOne, cmpLo);  // 0 if x<lo else 1
-            AscendC::Reg::Select(vMask, vZero, vMask, cmpHi); // 0 if x>hi else keep
+            // bpx 掩码必须用 (x>=lo) & (x<=hi)（TF 语义）：NaN 时两个比较均为 false → bpx=0。
+            // 不能用 ~(x<lo) & ~(x>hi)：NaN 会误判为 in-range（issue30 B 类 L0_020）。
+            AscendC::Reg::Select(vMask, vOne, vZero, cmpGe);  // 1 if x>=lo else 0
+            AscendC::Reg::Select(vMask, vMask, vZero, cmpLe); // 且需 x<=hi，else 0
             AscendC::Reg::Mul(vBpx, vG, vMask, pMask);
             AscendC::Reg::DataCopy(bpxPtr + i * FP32_VL, vBpx, pMask);
 
             if (accumulate) {
                 // Kahan compensated summation for bp_min:
                 //   y = input - c;  t = acc + y;  c = (t - acc) - y;  acc = t
+                // WHY 冻结 c：|t| 为 inf 时（输入含 ±inf），(t - acc) 会得到 inf - inf = NaN
+                // 并污染后续累加；TF 的简单求和保持 inf 的吸收性。此处当 |t|>FLT_MAX（即 inf）
+                // 时保留旧补偿项，使累加器与 TF 一致（L0_015 bp_max = inf）。
                 AscendC::Reg::Select(vMask, vOne, vZero, cmpLo);
                 AscendC::Reg::Mul(vAddMin, vG, vMask, pMask);
+                AscendC::Reg::Select(vAddMin, vZero, vAddMin, zzM); // 双零通道贡献恒 0
                 AscendC::Reg::Sub(vY, vAddMin, vCMin, pMask);
                 AscendC::Reg::Add(vT, vBpMinAcc, vY, pMask);
-                AscendC::Reg::Sub(vCMin, vT, vBpMinAcc, pMask);
-                AscendC::Reg::Sub(vCMin, vCMin, vY, pMask);
+                AscendC::Reg::Abs(vAbsT, vT, pMask);
+                AscendC::Reg::Compare<float, CMPMODE::GT>(infMask, vAbsT, vFltMax, pMask);
+                AscendC::Reg::Sub(vCNew, vT, vBpMinAcc, pMask);
+                AscendC::Reg::Sub(vCNew, vCNew, vY, pMask);
+                AscendC::Reg::Select(vCMin, vCMin, vCNew, infMask);
                 AscendC::Reg::DataCopy(bpMinCompPtr + i * FP32_VL, vCMin, pMask);
                 AscendC::Reg::DataCopy(bpMinAccPtr + i * FP32_VL, vT, pMask);
 
                 // Kahan compensated summation for bp_max
                 AscendC::Reg::Select(vMask, vOne, vZero, cmpHi);
                 AscendC::Reg::Mul(vAddMax, vG, vMask, pMask);
+                AscendC::Reg::Select(vAddMax, vZero, vAddMax, zzM); // 双零通道贡献恒 0
                 AscendC::Reg::Sub(vY, vAddMax, vCMax, pMask);
                 AscendC::Reg::Add(vT, vBpMaxAcc, vY, pMask);
-                AscendC::Reg::Sub(vCMax, vT, vBpMaxAcc, pMask);
-                AscendC::Reg::Sub(vCMax, vCMax, vY, pMask);
+                AscendC::Reg::Abs(vAbsT, vT, pMask);
+                AscendC::Reg::Compare<float, CMPMODE::GT>(infMask, vAbsT, vFltMax, pMask);
+                AscendC::Reg::Sub(vCNew, vT, vBpMaxAcc, pMask);
+                AscendC::Reg::Sub(vCNew, vCNew, vY, pMask);
+                AscendC::Reg::Select(vCMax, vCMax, vCNew, infMask);
                 AscendC::Reg::DataCopy(bpMaxCompPtr + i * FP32_VL, vCMax, pMask);
                 AscendC::Reg::DataCopy(bpMaxAccPtr + i * FP32_VL, vT, pMask);
             }
@@ -478,34 +531,29 @@ __aicore__ inline void Kernel<T>::ProcessRowBatch(uint32_t startRowIdx, uint32_t
 }
 
 template <typename T>
-__aicore__ inline void Kernel<T>::ZeroWorkspaceSlot()
+__aicore__ inline bool Kernel<T>::CanUseRowBatch(uint32_t dOffset, uint32_t dCount) const
 {
-    LocalTensor<T> bpMinAccLocal = bpMinAccBuf_.template Get<T>();
-    LocalTensor<T> bpMaxAccLocal = bpMaxAccBuf_.template Get<T>();
-#ifdef __CCE_AICORE__
-    __ubuf__ T* minPtr = (__ubuf__ T*)bpMinAccLocal.GetPhyAddr();
-    __ubuf__ T* maxPtr = (__ubuf__ T*)bpMaxAccLocal.GetPhyAddr();
-    uint16_t loopNum = static_cast<uint16_t>((channelNum_ + FP32_VL - 1) / FP32_VL);
-    __VEC_SCOPE__
-    {
-        AscendC::Reg::RegTensor<float> vZero;
-        AscendC::Reg::MaskReg pMask;
-        AscendC::Reg::Duplicate(vZero, 0.0f);
-        uint32_t remain = channelNum_;
-        for (uint16_t i = 0; i < loopNum; ++i) {
-            pMask = AscendC::Reg::UpdateMask<float>(remain);
-            AscendC::Reg::DataCopy(minPtr + i * FP32_VL, vZero, pMask);
-            AscendC::Reg::DataCopy(maxPtr + i * FP32_VL, vZero, pMask);
-        }
+    // WHY: ProcessRowBatch hands per-row UB pointers (gBuf base + r * dCount) to
+    // ComputeChunkRegbase, whose Reg::DataCopy loads must start at a 32B-aligned UB address
+    // (issue #30, AIC error 340). A batch of multiple rows is only safe when:
+    //   1. rowsPerBatch_ > 1  — otherwise ProcessRowBatch never emits a second in-batch row;
+    //   2. dOffset == 0 && dCount == channelNum_ — the single contiguous GM span copied by
+    //      ProcessRowBatch then corresponds exactly to whole rows, so the in-batch layout
+    //      row r at offset r*dCount stays valid (for chunked D the contiguous span would
+    //      straddle row boundaries and the per-row offsets would be wrong);
+    //   3. the row byte stride dCount * sizeof(T) is a multiple of the 32B VEC UB alignment,
+    //      so every in-batch row starts at an aligned address (dCount=2 -> 8B stride was the
+    //      failing case: (5231,9695,2) gradients/x with channelNum=2, rowsPerBatch=32).
+    // Otherwise fall back to per-row ProcessRowChunk, which always copies one row to the
+    // (aligned) buffer start. Semantics are unchanged: same Kahan accumulation order, same
+    // GM addressing, same write-back per row.
+    if (rowsPerBatch_ <= 1) {
+        return false;
     }
-#endif
-    PipeBarrier<PIPE_ALL>();
-    DataCopyExtParams cp{1, static_cast<uint32_t>(channelNum_ * sizeof(T)), 0, 0, 0};
-    uint64_t minWsOffset = static_cast<uint64_t>(blockIdx_) * wsStride_;
-    uint64_t maxWsOffset = static_cast<uint64_t>(usedCoreNum_) * wsStride_ + minWsOffset;
-    DataCopyPad(workspaceGm_[minWsOffset], bpMinAccLocal, cp);
-    DataCopyPad(workspaceGm_[maxWsOffset], bpMaxAccLocal, cp);
-    PipeBarrier<PIPE_ALL>();
+    if (dOffset != 0 || dCount != channelNum_) {
+        return false;
+    }
+    return (dCount * sizeof(T)) % VEC_ADDR_ALIGN_BYTES == 0;
 }
 
 template <typename T>
@@ -628,13 +676,19 @@ __aicore__ inline void Kernel<T>::Process()
             ZeroAccChunk(dCount);
 
             uint32_t numRows = rowEnd_ - rowStart_;
-            uint32_t numBatches = numRows / rowsPerBatch_;
-            uint32_t remainderRows = numRows % rowsPerBatch_;
-            for (uint32_t b = 0; b < numBatches; ++b) {
-                ProcessRowBatch(rowStart_ + b * rowsPerBatch_, dOffset, dCount, rowsPerBatch_);
-            }
-            for (uint32_t r = rowEnd_ - remainderRows; r < rowEnd_; ++r) {
-                ProcessRowChunk(r, dOffset, dCount, /*writeBpx=*/true, /*accumulate=*/true);
+            if (CanUseRowBatch(dOffset, dCount)) {
+                uint32_t numBatches = numRows / rowsPerBatch_;
+                uint32_t remainderRows = numRows % rowsPerBatch_;
+                for (uint32_t b = 0; b < numBatches; ++b) {
+                    ProcessRowBatch(rowStart_ + b * rowsPerBatch_, dOffset, dCount, rowsPerBatch_);
+                }
+                for (uint32_t r = rowEnd_ - remainderRows; r < rowEnd_; ++r) {
+                    ProcessRowChunk(r, dOffset, dCount, /*writeBpx=*/true, /*accumulate=*/true);
+                }
+            } else {
+                for (uint32_t r = rowStart_; r < rowEnd_; ++r) {
+                    ProcessRowChunk(r, dOffset, dCount, /*writeBpx=*/true, /*accumulate=*/true);
+                }
             }
 
             LocalTensor<T> bpMinAccLocal = bpMinAccBuf_.template Get<T>();
@@ -648,7 +702,13 @@ __aicore__ inline void Kernel<T>::Process()
         return;
     }
 
-    ZeroWorkspaceSlot();
+    // WHY: no workspace pre-initialization needed here (old ZeroWorkspaceSlot removed).
+    // In split-rows mode every core covers all d-chunks (chunkStart_=0 .. chunkEnd_=numDChunks_)
+    // and WriteAccToWorkspace writes the core's whole slot range [0, channelNum) before
+    // SyncAll; MergePhase only reads [mergeStart, mergeEnd) inside [0, channelNum) and never
+    // the [channelNum, wsStride) padding. The removed init cleared channelNum elements from
+    // dTileLen-sized UB buffers, which read/wrote past the buffers (AIC 341 "VEC access UB
+    // out of bounds") whenever channelNum > dTileLen.
 
     for (uint32_t c = chunkStart_; c < chunkEnd_; ++c) {
         uint32_t dOffset = c * dTileLen_;
@@ -658,13 +718,19 @@ __aicore__ inline void Kernel<T>::Process()
         ZeroAccChunk(dCount);
 
         uint32_t numRows = rowEnd_ - rowStart_;
-        uint32_t numBatches = numRows / rowsPerBatch_;
-        uint32_t remainderRows = numRows % rowsPerBatch_;
-        for (uint32_t b = 0; b < numBatches; ++b) {
-            ProcessRowBatch(rowStart_ + b * rowsPerBatch_, dOffset, dCount, rowsPerBatch_);
-        }
-        for (uint32_t r = rowEnd_ - remainderRows; r < rowEnd_; ++r) {
-            ProcessRowChunk(r, dOffset, dCount, /*writeBpx=*/true, /*accumulate=*/true);
+        if (CanUseRowBatch(dOffset, dCount)) {
+            uint32_t numBatches = numRows / rowsPerBatch_;
+            uint32_t remainderRows = numRows % rowsPerBatch_;
+            for (uint32_t b = 0; b < numBatches; ++b) {
+                ProcessRowBatch(rowStart_ + b * rowsPerBatch_, dOffset, dCount, rowsPerBatch_);
+            }
+            for (uint32_t r = rowEnd_ - remainderRows; r < rowEnd_; ++r) {
+                ProcessRowChunk(r, dOffset, dCount, /*writeBpx=*/true, /*accumulate=*/true);
+            }
+        } else {
+            for (uint32_t r = rowStart_; r < rowEnd_; ++r) {
+                ProcessRowChunk(r, dOffset, dCount, /*writeBpx=*/true, /*accumulate=*/true);
+            }
         }
 
         WriteAccToWorkspace(dOffset, dCount);

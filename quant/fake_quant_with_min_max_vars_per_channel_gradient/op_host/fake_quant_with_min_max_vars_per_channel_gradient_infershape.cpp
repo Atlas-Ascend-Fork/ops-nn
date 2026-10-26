@@ -30,6 +30,8 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientInferShape(gert:
 {
     OP_LOGD(context, "Begin to do FakeQuantWithMinMaxVarsPerChannelGradientInferShape");
 
+    const gert::Shape* gradShape = context->GetInputShape(INPUT_IDX_GRADIENTS);
+    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
     const gert::Shape* xShape = context->GetInputShape(INPUT_IDX_X);
     OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
     const gert::Shape* minShape = context->GetInputShape(INPUT_IDX_MIN);
@@ -43,6 +45,60 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientInferShape(gert:
     OP_CHECK_NULL_WITH_CONTEXT(context, bpMinShape);
     gert::Shape* bpMaxShape = context->GetOutputShape(OUTPUT_IDX_BPMAX);
     OP_CHECK_NULL_WITH_CONTEXT(context, bpMaxShape);
+
+    // Cross-input constraints (README): x rank in [1, 8]; gradients shape == x shape;
+    // min/max are 1-D with length == x last dim C and equal lengths. The kernel indexes
+    // gradients/x/min/max linearly by channelNum_ = C, so a mismatch would cause out-of-range
+    // device reads/writes. Unknown rank (dim_num == 0 on a dynamic-rank graph) is skipped here
+    // and re-checked at tiling with the concrete shape; unknown dims are skipped as well.
+    const size_t xRank = xShape->GetDimNum();
+    if (Ops::Base::IsUnknownRank(*xShape)) {
+        // True unknown rank (dynamic-rank graph): relationships are checked at tiling.
+        *bpxShape = *xShape;
+        *bpMinShape = *minShape;
+        *bpMaxShape = *maxShape;
+        return ge::GRAPH_SUCCESS;
+    }
+    // Known rank, including the illegal rank-0 scalar: x rank must be in [1, 8].
+    if (xRank < 1U || xRank > 8U) {
+        OP_LOGE(context, "x rank %zu out of range [1, 8]", xRank);
+        return ge::GRAPH_FAILED;
+    }
+    const size_t gradRank = gradShape->GetDimNum();
+    if (!Ops::Base::IsUnknownRank(*gradShape)) {
+        if (gradRank != xRank) {
+            OP_LOGE(context, "gradients rank %zu != x rank %zu", gradRank, xRank);
+            return ge::GRAPH_FAILED;
+        }
+        for (size_t i = 0U; i < xRank; ++i) {
+            const int64_t xDim = xShape->GetDim(i);
+            const int64_t gDim = gradShape->GetDim(i);
+            if (xDim >= 0 && gDim >= 0 && xDim != gDim) {
+                OP_LOGE(context, "gradients dim %zu (%ld) != x dim (%ld)", i, gDim, xDim);
+                return ge::GRAPH_FAILED;
+            }
+        }
+    }
+    const int64_t channelNum = xShape->GetDim(static_cast<int64_t>(xRank) - 1);
+    const size_t minRank = minShape->GetDimNum();
+    const size_t maxRank = maxShape->GetDimNum();
+    const bool minUnknown = Ops::Base::IsUnknownRank(*minShape);
+    const bool maxUnknown = Ops::Base::IsUnknownRank(*maxShape);
+    // A known rank must be 1 (rank-0 scalar min/max is illegal); unknown rank is deferred to
+    // tiling, which only sees concrete shapes.
+    if ((!minUnknown && minRank != 1U) || (!maxUnknown && maxRank != 1U)) {
+        OP_LOGE(context, "min/max must be 1-D, got min rank %zu max rank %zu", minRank, maxRank);
+        return ge::GRAPH_FAILED;
+    }
+    if (!minUnknown && !maxUnknown) {
+        const int64_t minLen = minShape->GetDim(0);
+        const int64_t maxLen = maxShape->GetDim(0);
+        if (channelNum >= 0 && minLen >= 0 && maxLen >= 0 &&
+            (minLen != channelNum || maxLen != channelNum || minLen != maxLen)) {
+            OP_LOGE(context, "min/max length (%ld/%ld) must equal channel C (%ld)", minLen, maxLen, channelNum);
+            return ge::GRAPH_FAILED;
+        }
+    }
 
     *bpxShape = *xShape;
     *bpMinShape = *minShape;

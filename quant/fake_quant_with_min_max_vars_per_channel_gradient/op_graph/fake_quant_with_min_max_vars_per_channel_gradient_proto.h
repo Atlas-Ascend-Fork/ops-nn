@@ -24,11 +24,11 @@ namespace ge {
 *@par Inputs:
 *Four inputs, including:
 *@li gradients: A Tensor of type float. Backpropagated gradients above the
-*   FakeQuantWithMinMaxVarsPerChannel operation, shape one of: [d], [b, d],
-*   [b, h, w, d].
+*   FakeQuantWithMinMaxVarsPerChannel operation; rank in [1, 8], last dim is
+*   the channel number C.
 *@li x: A Tensor of type float. Same shape as gradients.
-*@li min: A 1-D Tensor of type float, shape [d].
-*@li max: A 1-D Tensor of type float, shape [d]. \n
+*@li min: A 1-D Tensor of type float, shape [C].
+*@li max: A 1-D Tensor of type float, shape [C]. \n
 
 *@par Attributes:
 *@li num_bits: An optional attribute of type int. Defaults to 8.
@@ -36,8 +36,8 @@ namespace ge {
 
 *@par Outputs:
 *@li backprops_wrt_x: A Tensor of type float. Same shape as x.
-*@li backprops_wrt_min: A 1-D Tensor of type float, shape [d].
-*@li backprops_wrt_max: A 1-D Tensor of type float, shape [d]. \n
+*@li backprops_wrt_min: A 1-D Tensor of type float, shape [C].
+*@li backprops_wrt_max: A 1-D Tensor of type float, shape [C]. \n
 
 *@par Third-party framework compatibility
 * Compatible with TensorFlow operator FakeQuantWithMinMaxVarsPerChannelGradient.
