@@ -37,6 +37,67 @@ protected:
     static void TearDownTestCase() { std::cout << "AddRmsNormDynamicQuantTilingArch35 TearDown" << std::endl; }
 };
 
+static void ExecuteEpsilonTestCase(const std::vector<std::pair<std::string, Ops::NN::AnyValue>>& attrs,
+                                   float expected_epsilon)
+{
+    gert::StorageShape input_shape = {{2, 64}, {2, 64}};
+    gert::StorageShape gamma_shape = {{64}, {64}};
+    gert::StorageShape reduce_shape = {{2}, {2}};
+    fe::PlatFormInfos platform_info;
+    ASSERT_TRUE(platform_info.Init());
+    std::map<std::string, std::string> soc_version_infos = {{"NpuArch", "3510"}};
+    platform_info.SetPlatformRes("version", soc_version_infos);
+    optiling::AddRmsNormDynamicQuantCompileInfo compile_info;
+    auto tiling_data = gert::TilingData::CreateCap(4096);
+    auto workspace_holder = gert::ContinuousVector::Create<size_t>(3);
+    ASSERT_NE(tiling_data, nullptr);
+    ASSERT_NE(workspace_holder, nullptr);
+    auto* workspace = reinterpret_cast<gert::ContinuousVector*>(workspace_holder.get());
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("AddRmsNormDynamicQuant")
+                      .NodeIoNum(3, 5)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&input_shape, &input_shape, &gamma_shape})
+                      .OutputShapes({&input_shape, &input_shape, &input_shape, &reduce_shape, &reduce_shape})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs(attrs)
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(&platform_info)
+                      .TilingData(tiling_data.get())
+                      .Workspace(workspace)
+                      .Build();
+    auto* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context, nullptr);
+    ASSERT_NE(tiling_context->GetAttrs(), nullptr);
+    if (attrs.empty()) {
+        ASSERT_EQ(tiling_context->GetAttrs()->GetFloat(0), nullptr);
+    } else {
+        ASSERT_NE(tiling_context->GetAttrs()->GetFloat(0), nullptr);
+    }
+
+    optiling::AddRmsNormDynamicQuantRegbaseTiling tiling(tiling_context);
+    ASSERT_EQ(tiling.SetInputParams(), ge::GRAPH_SUCCESS);
+    EXPECT_FLOAT_EQ(tiling.tilingParams.epsilon, expected_epsilon);
+}
+
+TEST_F(AddRmsNormDynamicQuantTilingArch35, missing_epsilon_uses_default) { ExecuteEpsilonTestCase({}, 1e-6f); }
+
+TEST_F(AddRmsNormDynamicQuantTilingArch35, explicit_epsilon_is_preserved)
+{
+    for (float epsilon : {0.0f, 1e-6f, 0.01f}) {
+        SCOPED_TRACE(epsilon);
+        ExecuteEpsilonTestCase({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(epsilon)}}, epsilon);
+    }
+}
+
 static void ExecuteTestCase(gert::StorageShape input_shape, gert::StorageShape gamma_shape,
                             gert::StorageShape out_shape, gert::StorageShape reduce_shape, int num_inputs,
                             ge::DataType input_dtype, ge::DataType output_dtype, std::vector<bool> output_mask,

@@ -20,6 +20,7 @@ namespace optiling {
 using namespace NormCheck;
 
 constexpr uint64_t EPS_ATTR_INDEX = 0;
+constexpr float DEFAULT_EPSILON = 1e-6f;
 constexpr uint32_t LOG_2 = 2;
 constexpr uint32_t CONST_TWO = 2;
 constexpr uint32_t CONST_FOUR = 4;
@@ -84,7 +85,7 @@ ge::graphStatus AddRmsNormDynamicQuantRegbaseTiling::SetInputParams()
     auto attrs = context_->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
     const float* epsilon = attrs->GetFloat(EPS_ATTR_INDEX);
-    tilingParams.epsilon = *epsilon;
+    tilingParams.epsilon = epsilon == nullptr ? DEFAULT_EPSILON : *epsilon;
     tilingParams.needRun = true;
     if ((0 == numN) || (0 == numM)) {
         tilingParams.needRun = false;
