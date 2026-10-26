@@ -309,6 +309,9 @@ aclnnStatus aclnnAddRmsNorm(
 
 - 确定性计算：
   - aclnnAddRmsNorm默认确定性实现。
+- Batch一致性说明：
+
+  默认非Batch一致性实现，支持通过aclrtSetSysParamOpt(ACL_OPT_DETERMINISTIC, 3)开启Batch一致性。开启后，非归约轴的计算结果与所在批次大小、位置无关；归约轴不支持Batch一致性。开启Batch一致性后，性能可能存在劣化。
 
 ## 调用示例
 
