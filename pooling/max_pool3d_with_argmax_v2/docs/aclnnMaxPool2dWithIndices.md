@@ -39,7 +39,7 @@
   - out tensor的shape推导公式，indices tensor的shape和out tensor相同：
 
     $$
-    [N, C, H_{out}, W_{out}]=[N,C,\lfloor{\frac{H_{in}+2 \times {padding[0] - dilation[0] \times(kernelSize[0] - 1) - 1}}{stride[0]}}\rfloor + 1,\lfloor{\frac{W_{in}+2 \times {padding[1] - dilation[1] \times(kernelSize[1] - 1) - 1}}{stride[1]}}\rfloor + 1]
+    [N, C, H_{out}, W_{out}]=[N,C,\lfloor{\frac{H_{in}+2 \times padding[0] - dilation[0] \times (kernelSize[0] - 1) - 1}{stride[0]}}\rfloor + 1,\lfloor{\frac{W_{in}+2 \times padding[1] - dilation[1] \times (kernelSize[1] - 1) - 1}{stride[1]}}\rfloor + 1]
     $$
 
     当 $ceilMode$ 为True且 $(H_{out}-1) \times stride[0] \ge H_{in} + padding[0]$，则 $H_{out} = H_{out} - 1$；W维度同理。
