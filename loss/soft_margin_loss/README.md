@@ -81,7 +81,9 @@ $$
 
 ## 约束说明
 
-无。
+- 数值边界（算子在float32精度下计算，FLOAT16/BFLOAT16输入同样适用）：
+  - 溢出：当逐元素满足 $-target \times self > \ln(FLT\_MAX) \approx 88.72$ 时，$\exp(-target \times self)$ 溢出为+inf，输出 $log(1+inf)=inf$；`reduction`为'mean'或'sum'时，任一元素为inf会使标量输出为inf。典型场景为预测方向严重错误（如target=1且self取较大的负值）。
+  - 下溢：当逐元素满足 $target \times self > \ln(2^{24}) \approx 16.64$ 时，$\exp(-target \times self) < 2^{-24}$，$1+\exp(-target \times self)$ 舍入为1，输出为0。
 
 ## 调用说明
 

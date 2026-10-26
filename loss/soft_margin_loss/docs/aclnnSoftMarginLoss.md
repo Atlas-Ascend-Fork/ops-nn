@@ -124,10 +124,10 @@ aclnnStatus aclnnSoftMarginLoss(
       <td class="tg-0lax">out（aclTensor*）</td>
       <td class="tg-0lax">输出</td>
       <td class="tg-0lax">公式中输出的损失函数out。</td>
-      <td class="tg-0lax">若reduction取值为'none'，则shape需要与self和target进行<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape一致，否则out为scalar。</td>
+      <td class="tg-0lax">若reduction取值为'none'，则shape需要与self和target进行<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape一致，否则out为0维标量（shape=[]）。</td>
       <td class="tg-0lax">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0lax">ND</td>
-      <td class="tg-0lax">1-8</td>
+      <td class="tg-0lax">reduction='none'时为1-8（与broadcast后的shape一致）；reduction='mean'或'sum'时为0维标量</td>
       <td class="tg-0lax">√</td>
     </tr>
     <tr>
@@ -233,6 +233,10 @@ aclnnStatus aclnnSoftMarginLoss(
 
 - 确定性计算：
   - aclnnSoftMarginLoss默认确定性实现。
+
+- 数值边界（算子在float32精度下计算，FLOAT16/BFLOAT16输入同样适用）：
+  - 溢出：当逐元素满足 $-target \times self > \ln(FLT\_MAX) \approx 88.72$ 时，$\exp(-target \times self)$ 溢出为+inf，输出 $log(1+inf)=inf$；reduction为'mean'或'sum'时，任一元素为inf会使标量输出为inf。典型场景为预测方向严重错误（如target=1且self取较大的负值）。
+  - 下溢：当逐元素满足 $target \times self > \ln(2^{24}) \approx 16.64$ 时，$\exp(-target \times self) < 2^{-24}$，$1+\exp(-target \times self)$ 舍入为1，输出为0。
 
 ## 调用示例
 
