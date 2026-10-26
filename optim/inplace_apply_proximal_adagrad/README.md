@@ -35,7 +35,7 @@
   - `var`（参数）与`accum`（梯度平方累加器）均为Ref Tensor，算子执行后**原地更新**。
   - `lr`、`l1`、`l2`为0-D标量Tensor，分别要求`lr > 0`、`l1 ≥ 0`、`l2 ≥ 0`。
   - 逐元素独立计算，天然确定性，无跨元素/跨核依赖。
-  - `float16` / `bfloat16`输入在算子内部Cast为`float32`完成中间计算，再Cast回`float16` / `float16`输出，与PyTorch / TensorFlow实现约定一致。
+  - `float16` / `bfloat16`输入在算子内部Cast为`float32`完成中间计算，再Cast回`float16` / `bfloat16`输出，与PyTorch / TensorFlow实现约定一致。
   - `bfloat16`路径上`lr` / `l1` / `l2`标量读取与`accum` tail padding 1.0构造均通过LocalTensor借道 + Vector Cast实现，规避`bisheng`编译器后端在scalar路径上对bf16类型转换的限制（"not support bf16 type cast"）。
   - 与ApplyProximalAdagrad V1（1输出var）不同，V2显式暴露2个输出端口（var + accum），均通过inplace alias与对应输入共享存储。
 
