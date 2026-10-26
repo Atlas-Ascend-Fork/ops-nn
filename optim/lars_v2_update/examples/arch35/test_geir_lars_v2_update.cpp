@@ -243,11 +243,19 @@ int main(int argc, char* argv[])
     ret = session->RunGraph(graph_id, input, output);
     if (ret != SUCCESS) {
         printf("%s - INFO - [XIR]: Run graph failed\n", GetTime().c_str());
+        // Free input buffers allocated by GenOnesDataFloat32 (Tensor does not take ownership).
+        for (auto& inTensor : input) {
+            delete[] reinterpret_cast<float*>(inTensor.GetData());
+        }
         delete session;
         GEFinalize();
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Session run ir compute graph success\n", GetTime().c_str());
+    // Free input buffers allocated by GenOnesDataFloat32 (Tensor does not take ownership).
+    for (auto& inTensor : input) {
+        delete[] reinterpret_cast<float*>(inTensor.GetData());
+    }
 
     int output_num = output.size();
     bool allVerified = true;
@@ -283,6 +291,8 @@ int main(int argc, char* argv[])
         return FAILED;
     }
     printf("Shape, dtype and values PASSED for [2,2]\n");
+
+    delete session;
 
     printf("%s - INFO - [XIR]: Start to finalize ir graph session\n", GetTime().c_str());
     ret = ge::GEFinalize();

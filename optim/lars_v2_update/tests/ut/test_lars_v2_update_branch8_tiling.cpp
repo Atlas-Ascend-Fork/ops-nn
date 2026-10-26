@@ -9,10 +9,8 @@
  */
 
 // Unit tests for lars_v2_update Branch-8 tiling (DESIGN-BRANCH-8.md §2,
-// tilingKey = 8 RANK_8). Test-first TDD red baseline (Task 25): the
-// ComputeBranch8Tiling function is a stub (returns false, does not fill `out`),
-// so every case is expected to FAIL (0 passed). Task 26 implements the real
-// Branch-8 pipeline and these cases must then all pass.
+// tilingKey = 8 RANK_8). ComputeBranch8Tiling is implemented in
+// op_host/lars_v2_update_tiling.cpp (real Branch-8 pipeline); all cases must pass.
 //
 // Coverage (DESIGN-BRANCH-8.md §2 切分公式 主块/尾块/非对齐/边界/各 rank 档):
 //   - 5D [8,8,8,8,8]            (主块: axis=0, a_i=4, a_o=2, aligned tail)

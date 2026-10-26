@@ -23,10 +23,10 @@ namespace ge {
  * @par Inputs:
  * @li w: Weight tensor. Must be float32.
  * @li g: Gradient tensor. Same type and shape as w.
- * @li w_square_sum: Scalar (0-d). Sum of w^2. Always float32.
- * @li g_square_sum: Scalar (0-d). Sum of g^2. Always float32.
- * @li weight_decay: Scalar (0-d). Weight decay coefficient. Always float32.
- * @li learning_rate: Scalar (0-d). Learning rate. Always float32.
+ * @li w_square_sum: Size-1 tensor (any rank, e.g. 0-d scalar or [1]). Sum of w^2. Always float32.
+ * @li g_square_sum: Size-1 tensor (any rank, e.g. 0-d scalar or [1]). Sum of g^2. Always float32.
+ * @li weight_decay: Size-1 tensor (any rank, e.g. 0-d scalar or [1]). Weight decay coefficient. Always float32.
+ * @li learning_rate: Size-1 tensor (any rank, e.g. 0-d scalar or [1]). Learning rate. Always float32.
  *
  * @par Outputs:
  * @li g_new: Updated gradient. Same type and shape as w.

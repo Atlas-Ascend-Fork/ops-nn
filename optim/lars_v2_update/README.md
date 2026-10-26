@@ -136,14 +136,17 @@
 ## 约束说明
 
 - 输入w和g必须具有相同的形状和数据类型（Tiling阶段校验dtype为DT_FLOAT且shape完全一致，见`op_host/arch35/lars_v2_update_tiling_arch35.cpp`）。
-- 输出g_new与w同型同形同dtype（InferShape由CANN runtime广播推导，Tiling阶段兜底校验g_new与w同形）。
+- 输出g_new与w同型同形同dtype（InferShape直接复制w的shape，不做广播；Tiling阶段兜底校验g_new与w同形）。
 - w_square_sum、g_square_sum、weight_decay、learning_rate恒为FLOAT类型标量（元素数为1，广播到w的shape参与计算；Tiling阶段校验dtype与元素数）。
 - 支持维度0~8维（0维标量按1维处理，Tiling阶段校验维数不超过8）。
-- 支持空Tensor（元素数为0，如shape含0维，输出为空Tensor不报错，Kernel侧totalTiles==0短路跳过计算）。
+- 支持空Tensor（元素数为0，如shape含0维，输出为空Tensor不报错，Kernel侧totalTiles==0整体短路、每tile count<=0时跳过该tile）。
 - 输入数据中的NaN按IEEE 754语义传播（硬件向量指令对NaN的裁剪语义与框架参考实现可能存在差异，NaN输入场景需上层框架保证，算子侧不做NaN拦截）。
+- 属性hyperpara/epsilon传入inf/nan时不校验不拦截，按IEEE 754浮点语义直接参与计算（hyperpara=inf→g_new全±Inf；hyperpara/epsilon=nan→g_new全NaN；epsilon=inf→coeff=0→g_new全零），与输入NaN传播策略一致。
+- 总元素数无独立软件上限：单轴长度与总规模仅受设备HBM容量约束（w/g/g_new三份全尺寸fp32缓冲共占12×numel字节），GM偏移与shape/stride全链int64，超大shape由Tiling分块处理。
+- use_clip=True时learning_rate必须非零（参与coeff/learning_rate裁剪，为0时除零）；epsilon不应配置为使分母weight_decay×w_norm+g_norm+epsilon为0的取值（如全零范数且epsilon=0）。
 
 ## 调用说明
 
-| 调用方式 | 调用样例                                                                   | 说明                                                           |
+| 调用方式 | 样例代码                                                                   | 说明                                                           |
 |--------------|------------------------------------------------------------------------|----------------------------------------------------------------|
-| 图模式调用 | [test_geir_lars_v2_update](./examples/test_geir_lars_v2_update.cpp)   | 通过[算子IR](./op_graph/lars_v2_update_proto.h)构图方式调用LarsV2Update算子。 |
+| GE图模式 | [test_geir_lars_v2_update](./examples/arch35/test_geir_lars_v2_update.cpp)   | 通过[算子IR](./op_graph/lars_v2_update_proto.h)构图方式调用LarsV2Update算子，样例含CPU golden数值校验（dtype/shape/逐元素）。 |
