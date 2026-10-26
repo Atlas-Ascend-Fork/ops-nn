@@ -409,7 +409,14 @@ def aclnn_convolution_backward_golden(
         if tensor_dtypes and idx < len(tensor_dtypes):
             dtype_str = str(tensor_dtypes[idx]) if tensor_dtypes[idx] else None
             if dtype_str in ("hifloat8", "float8_e4m3fn", "float8_e5m2"):
-                from ttk.utilities import numpy_hifloat8
+                try:
+                    from ttk.utilities import numpy_hifloat8
+                except ImportError:
+                    from ttk.utilities.dtypes import resolve_numpy_dtype
+
+                    def numpy_hifloat8():
+                        return resolve_numpy_dtype("hifloat8")
+
                 import ml_dtypes
 
                 np_dtype_map = {
