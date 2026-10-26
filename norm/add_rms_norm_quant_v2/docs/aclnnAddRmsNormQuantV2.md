@@ -59,7 +59,7 @@
     y2Out=round((y*scales2)+zero\_points2)
     $$
 
-  > **说明**：`rmsNormOut`为RmsNorm归一化结果（不含beta），`betaOptional`与`rmsNormOut`相互独立，可任意组合使用。
+  > **说明**：`rmsNormOut`为RmsNorm归一化结果（不含beta）。`betaOptional`、`xOut`与`rmsNormOut`的合法组合参见[约束说明](#约束说明)。
 
 ## 函数原型
 
@@ -144,7 +144,7 @@ aclnnStatus aclnnAddRmsNormQuantV2(
       <td>gamma（const aclTensor*）</td>
       <td>输入</td>
       <td>表示标准化过程中的权重张量。对应公式中的`g`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape与`x1`需要norm（层归一化）的维度保持一致，数据类型与`x1`保持一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape与`x1`需要norm（层归一化）的维度保持一致；支持的其他shape及适用场景参见<a href="#约束说明">约束说明</a>。</li><li>数据类型与`x1`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
@@ -154,7 +154,7 @@ aclnnStatus aclnnAddRmsNormQuantV2(
       <td>scales1（const aclTensor*）</td>
       <td>输入</td>
       <td>表示量化过程中得到y1Out进行的scales张量，对应公式中的`scales1`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape与`gamma`保持一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape与`gamma`保持一致，或为[1]，具体适用场景参见<a href="#约束说明">约束说明</a>。</li><li>当参数`divMode`的值为True时，该参数的值不能为0。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
@@ -254,7 +254,7 @@ aclnnStatus aclnnAddRmsNormQuantV2(
       <td>xOut（aclTensor*）</td>
       <td>输出</td>
       <td>表示x1和x2的和，对应公式中的`x`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape与`x1`保持一致，数据类型与`x1`保持一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>是否允许传入空指针及与其他参数的组合约束参见<a href="#约束说明">约束说明</a>。</li><li>非空时，shape、数据类型与`x1`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
@@ -264,7 +264,7 @@ aclnnStatus aclnnAddRmsNormQuantV2(
       <td>rmsNormOut（aclTensor*）</td>
       <td>输出</td>
       <td>表示进行RmsNorm之后的结果（不含beta），对应公式中的`rmsNormOut`。</td>
-      <td><ul><li>支持空Tensor。</li><li>可选输出，支持传入空指针。当传入空指针时，不输出rmsNormOut。</li><li>shape和数据类型与`x1`保持一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>可选输出，支持传入空指针。当传入空指针时，不输出rmsNormOut。与其他参数的组合约束参见<a href="#约束说明">约束说明</a>。</li><li>非空时，shape和数据类型与`x1`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
@@ -416,8 +416,22 @@ aclnnStatus aclnnAddRmsNormQuantV2(
 <!-- end id14 -->
 
 <!-- npu="310p" id9 -->
-- <term>Atlas推理系列产品</term>：`x1`、`x2`、`y1Out`、`y2Out`、`xOut`、`rmsNormOut`的norm轴长度，以及`gamma`、`scales1`、`scales2Optional`、`zeroPoints1Optional`、`zeroPoints2Optional`、`betaOptional`的长度必须大于等于32Bytes。
+- <term>Atlas推理系列产品</term>：在下述量化参数与`gamma`同shape的组合中，`gamma`的元素个数（即`x1`需要norm的维度的大小之积）不得小于32；输入不支持包含inf和NaN。
 <!-- end id9 -->
+
+<!-- npu="A3,910b" id17 -->
+- <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：支持以下参数组合，其中N表示`x1`最后一维的大小：
+  - 单元素量化参数：`gamma`的shape为[N]或[1, N]；`scales1`、`zeroPoints1Optional`均为必传，shape为[1]；`scales2Optional`、`zeroPoints2Optional`均为空指针；`divMode`为True。输出与偏置须满足以下一种组合：
+    - `betaOptional`必传且shape与`gamma`一致，`xOut`必传，`rmsNormOut`为空指针。
+    - `betaOptional`和`xOut`均为空指针，`rmsNormOut`必传。
+
+    以上两种组合中，`y1Out`、`y2Out`均必传，`y2Out`无有效量化结果。
+  - 量化参数与`gamma`同shape：`gamma`的shape与`x1`需要norm的维度一致，`scales1`的shape与`gamma`一致；`scales2Optional`、`zeroPoints1Optional`、`zeroPoints2Optional`可选，非空时shape与`scales1`一致；`betaOptional`可选，非空时shape与`gamma`一致；`divMode`支持True和False；`y1Out`、`y2Out`、`xOut`均必传，`rmsNormOut`为空指针。当`scales2Optional`非空时，`y2Out`为有效量化结果；否则，`y2Out`无有效量化结果。
+<!-- end id17 -->
+
+<!-- npu="310p" id18 -->
+- <term>Atlas推理系列产品</term>：支持量化参数与`gamma`同shape的组合：`gamma`的shape与`x1`需要norm的维度一致，`scales1`的shape与`gamma`一致；`scales2Optional`、`zeroPoints1Optional`、`zeroPoints2Optional`可选，非空时shape与`scales1`一致；`betaOptional`可选，非空时shape与`gamma`一致；`divMode`支持True和False；`y1Out`、`y2Out`、`xOut`均必传，`rmsNormOut`为空指针。当`scales2Optional`非空时，`y2Out`为有效量化结果；否则，`y2Out`无有效量化结果。
+<!-- end id18 -->
 
 <!-- npu="950" id16 -->
 - <term>Ascend 950PR&950DT系列产品</term>上`betaOptional`与`rmsNormOut`相互独立：
