@@ -52,6 +52,7 @@
 | y | 输出 | <ul><li>相当于公式中的($N,C_{out},D_{out},H_{out},W_{out}$)。</li><li>数据格式与'x'一致。</li></ul> | FLOAT16、INT8 | NCDHW                         |
 
 ## 约束说明
+
 * input_size
     - 可输入的轴序列如下：
         - [batch, in_channels, in_depth, in_height, in_width]
@@ -75,4 +76,5 @@
 * 由于硬件资源限制，算子在部分参数取值组合场景下会执行失败，请根据日志信息提示分析并排查问题。若无法解决，请单击 [Link](https://www.hiascend.com/support)获取技术支持。
 
 ## 调用说明
+
 该算子无对应的aclnn接口，仅在图模式调用Conv2DTranspose算子且输入类型为INT8时，会转为ExtendConvTranspose进行量化相关实现。

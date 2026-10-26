@@ -1,6 +1,5 @@
 # aclnnHingeLossGrad
 
-
 ## 产品支持情况
 
 |产品             |  是否支持  |
@@ -36,8 +35,6 @@ aclnnStatus aclnnHingeLossGrad(
 ## aclnnHingeLossGradGetWorkspaceSize
 
 - **参数说明**：
-
-    </style>
     <table class="tg" style="undefined;table-layout: fixed; width: 1547px"><colgroup>
     <col style="width: 217px">
     <col style="width: 120px">
@@ -127,7 +124,6 @@ aclnnStatus aclnnHingeLossGrad(
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../../docs/zh/context/aclnn_return_code.md)。
 
   第一段接口完成入参校验，出现以下场景时报错：
-    </style>
   <table class="tg" style="undefined;table-layout: fixed; width: 1150px"><colgroup>
   <col style="width: 269px">
   <col style="width: 135px">
@@ -195,7 +191,6 @@ aclnnStatus aclnnHingeLossGrad(
       </tbody>
     </table>
 
-
 - **返回值**：
 
   **aclnnStatus**：返回状态码，具体参见[aclnn返回码](../../../../docs/zh/context/aclnn_return_code.md)。
@@ -206,7 +201,9 @@ aclnnStatus aclnnHingeLossGrad(
   - aclnnHingeLossGrad默认确定性实现。
 
 ## 调用示例
+
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../../docs/zh/context/compile_and_run_sample.md)。
+
 ```Cpp
 #include <iostream>
 #include <vector>

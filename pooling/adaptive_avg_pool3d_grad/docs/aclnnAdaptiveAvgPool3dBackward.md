@@ -2,7 +2,6 @@
 
 ## 产品支持情况
 
-
 <!-- npu="950" id1 -->
 - <term>Ascend 950PR&950DT系列产品</term>：支持
 <!-- end id1 -->
@@ -218,7 +217,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
 
 - 确定性计算：
   <!-- npu="A3,910b,310p,910" id11 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：aclnnAdaptiveAvgPool3dBackward默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：aclnnAdaptiveAvgPool3dBackward默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
   <!-- end id11 -->
   <!-- npu="950" id12 -->
   - <term>Ascend 950PR&950DT系列产品</term>：aclnnAdaptiveAvgPool3dBackward默认确定性实现。

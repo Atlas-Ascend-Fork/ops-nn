@@ -1,11 +1,11 @@
 # aclnnEmbeddingDenseGrad
 
-
 ## 产品支持情况
 
 | 产品 | 是否支持 |
 | ---- | :----: |
 | Atlas 310P 推理系列产品 | √ |
+
 ## 功能说明
 
 - 接口功能：计算 `Embedding` 算子的反向梯度。给定前向输出对 `grad` 的梯度以及索引 `indices`，按 `scatter-add` 语义将 `grad` 的每一行累加到输出 `y` 中 `indices[i]` 指定的行上。

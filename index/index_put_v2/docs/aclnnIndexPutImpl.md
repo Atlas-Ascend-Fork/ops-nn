@@ -1,6 +1,5 @@
 # aclnnIndexPutImpl
 
-
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
@@ -254,7 +253,7 @@ aclnnStatus aclnnIndexPutImpl(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnIndexPutImpl默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnIndexPutImpl默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
 - 输入参数selfRef, indices, values一般有以下约束：
   - indices中的Tensor个数不能超过selfRef的维度（最大8维）。

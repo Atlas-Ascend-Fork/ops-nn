@@ -328,7 +328,7 @@ aclnnStatus aclnnMultiScaleDeformableAttentionGrad(
 ## 约束说明
 
 - 确定性计算
-  - aclnnMultiScaleDeformableAttentionGrad默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnMultiScaleDeformableAttentionGrad默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
 - 通道数channels%8 = 0，且channels<=256
 - 查询的数量num_queries < 500000

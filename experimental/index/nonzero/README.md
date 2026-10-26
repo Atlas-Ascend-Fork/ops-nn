@@ -53,6 +53,7 @@
 ## 实现说明
 
 **核内算法**：
+
 - 每核按 `TILE_ELEMS=8192` 宽的 tile 读取输入（DataCopyPad GM→UB），对 0 做
   `Compares(CMPMODE::NE)` 得到按位打包的 mask。
 - bfloat16/int32 无可用 setcc，先 `Cast` 到 float 再比较；float32/float16 直接比较。
@@ -63,12 +64,14 @@
   （每对 4 个 int32 hi/lo 字），避免每 2 对一次写回的固定开销。
 
 **输出布局**（framework / aclnn 构建）：
+
 - 单核扫描全部行，索引对直接写回输出缓冲区 y 的连续位置
   （`y[0..K*2)` 为 INT64，契约要求 [K, 2] 紧凑排列，且 aclnn host 无法做多核
   归并；跨核屏障 SyncAll 在本平台即使全核 blockDim 也死锁，故强制单核）。
 - Workspace: 8 个 int32（首元素存非零计数）。
 
 **Host 端**：
+
 - 读取 workspace 计数确定实际 K（动态输出形状 [K, ndim] 由框架按此值返回）。
 
 **性能**（vs `torch.nonzero`，msprof kernel 纯耗时）：

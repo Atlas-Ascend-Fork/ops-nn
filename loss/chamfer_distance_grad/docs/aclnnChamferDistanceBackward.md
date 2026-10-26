@@ -1,6 +1,5 @@
 # aclnnChamferDistanceBackward
 
-
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
@@ -302,7 +301,7 @@ aclnnStatus aclnnChamferDistanceBackward(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnChamferDistanceBackward默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnChamferDistanceBackward默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
 ## 调用示例
 

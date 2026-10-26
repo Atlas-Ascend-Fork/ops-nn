@@ -247,7 +247,7 @@ aclnnStatus aclnnEmbeddingDenseBackward(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnEmbeddingDenseBackward默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnEmbeddingDenseBackward默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
 <!-- npu="910" id8 -->
 - <term>Atlas训练系列产品</term>：

@@ -63,7 +63,6 @@ $$
 W_{out} = \lfloor{\frac{W_{in} + {s_w} - 1}{s_w}}\rfloor
 $$
 
-
 **输出Shape：**
 
 反向传播的输出`y`与输入`orig_x`的Shape完全一致：
@@ -73,6 +72,7 @@ y.shape = orig\_x.shape = (N, C, D_{in}, H_{in}, W_{in})
 $$
 
 **参数说明：**
+
 - $k_d, k_h, k_w$：ksize在D、H、W维度上的窗口大小
 - $s_d, s_h, s_w$：strides在D、H、W维度上的步长
 

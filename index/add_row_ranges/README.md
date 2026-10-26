@@ -22,6 +22,7 @@ x_{out}(r, c) = x(r, c) + \sum_{j=indices[r,0]}^{indices[r,1]-1} src(j, c)
 $$
 
 特殊处理：
+
 - 当`indices[r, 0] >= indices[r, 1]`时，该行为空范围，跳过累加，`x_out(r, c) = x(r, c)`
 - 当`indices[r, 0] == -1`或`indices[r, 1] == -1`时，该行为空范围，跳过累加，`x_out(r, c) = x(r, c)`
 

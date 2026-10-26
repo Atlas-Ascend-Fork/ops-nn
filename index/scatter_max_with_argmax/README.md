@@ -45,6 +45,7 @@
 ```
 
 输出:
+
 ```bash
   y:      [N, D1, D2, ...] float32   # scatter max 结果，未被任何index覆盖的位置为0
   argmax: [N, D1, D2, ...] int32     # 最大值来源索引(0~M-1)，未被指到位置为 M

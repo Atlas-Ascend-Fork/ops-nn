@@ -1,6 +1,5 @@
 # aclnnWeightQuantBatchMatmulV2
 
-
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
@@ -361,7 +360,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
 <details>
 <summary><term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term></summary>
 
-  - **确定性说明**：默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - **确定性说明**：默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
   - `x`（aclTensor *,计算输入）：矩阵为非转置时，m大小在[1, 2^31-1]范围内；转置时，m大小在[1, 65535]范围内。
   - `weight`（aclTensor *,计算输入）：维度支持2维，Reduce维度k需要与`x`的Reduce维度k大小相等。数据类型支持INT8、INT4、INT32，当`weight`[数据格式](../../../docs/zh/context/data_format.md)为FRACTAL_NZ且数据类型为INT4或INT32时，或者当`weight`[数据格式](../../../docs/zh/context/data_format.md)为ND且数据类型为INT32时，仅在INT4Pack场景支持，需配合`aclnnConvertWeightToINT4Pack`接口完成从INT32到INT4Pack的转换，以及从ND到FRACTAL_NZ的转换，[详情可参考样例](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)，若数据类型为INT4，则`weight`的内轴应为偶数。[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)仅支持转置场景。shape支持(k, n)，其中k表示矩阵第1维的大小，n表示矩阵第2维的大小。
@@ -398,7 +397,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
 <details>
 <summary><term>Atlas推理系列产品</term></summary>
 
-  - **确定性说明**：默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - **确定性说明**：默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
   - `x`（aclTensor *,计算输入）：数据类型支持FLOAT16。shape支持2~6维，输入shape需要为(batch, m, k)，其中batch表示矩阵的批次大小，支持0~4维，m表示单个batch矩阵第1维的大小，k表示单个batch矩阵的第2维的大小，batch维度需要与`weight`的batch维度满足[broadcast关系](../../../docs/zh/context/broadcast_relationship.md)。当伪量化算法模式为pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)时，`m*k`不能超过512000000。
   - `weight`（aclTensor *,计算输入）：维度支持2~6维，batch维度需要与`x`的batch维度满足[broadcast关系](../../../docs/zh/context/broadcast_relationship.md)，数据类型支持INT8。具体如下：

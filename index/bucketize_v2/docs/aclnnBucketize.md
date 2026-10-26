@@ -1,6 +1,5 @@
 # aclnnBucketize
 
-
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
@@ -380,7 +379,7 @@ aclnnStatus aclnnBucketize(
 
 ### Pytorch AtenIR
 
-```
+```Cpp
 - func: bucketize.Tensor_out(Tensor self, Tensor boundaries, *, bool outInt32=False, bool right=False, Tensor(a!) out) -> Tensor(a!)
   dispatch:
     CPU: bucketize_out_cpu

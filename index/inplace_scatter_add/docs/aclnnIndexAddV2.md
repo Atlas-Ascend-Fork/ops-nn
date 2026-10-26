@@ -1,6 +1,5 @@
 # aclnnIndexAddV2
 
-
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
@@ -273,7 +272,7 @@ aclnnStatus aclnnIndexAddV2(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnIndexAddV2默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnIndexAddV2默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 - index取值范围
   - index输入取值范围在[0,self.shape[dim])范围内，即索引值输入范围为self在dim维度上的shape大小，不支持负索引和越界索引。
 - 高性能模式（mode=0）额外限制：

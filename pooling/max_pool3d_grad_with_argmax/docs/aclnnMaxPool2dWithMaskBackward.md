@@ -1,6 +1,5 @@
 # aclnnMaxPool2dWithMaskBackward
 
-
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
@@ -293,7 +292,7 @@ aclnnStatus aclnnMaxPool2dWithMaskBackward(
 
 - 确定性计算：
   <!-- npu="A3,910b,910" id11 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>：aclnnMaxPool2dWithMaskBackward默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>：aclnnMaxPool2dWithMaskBackward默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
   <!-- end id11 -->
   <!-- npu="950" id12 -->
   - <term>Ascend 950PR&950DT系列产品</term>：aclnnMaxPool2dWithMaskBackward默认确定性实现。

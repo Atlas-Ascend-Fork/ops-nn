@@ -48,6 +48,7 @@ y.shape = x1.shape = (N, H_{in}, W_{in}, C)
 $$
 
 **参数说明：**
+
 - $k_h, k_w$：ksize在H、W维度上的窗口大小
 - $s_h, s_w$：strides在H、W维度上的步长
 

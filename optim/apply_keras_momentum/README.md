@@ -116,6 +116,7 @@
 > **注**：accum 为 in-place 更新（与 TensorFlow ResourceApplyKerasMomentum 一致），不作为显式输出返回，计算结果直接写回输入地址。
 
 ## 约束说明
+
 - var、accum、grad必须具有相同的数据类型和形状。
 - lr、momentum为标量Tensor（shape={1}），数据类型为FLOAT。
 - use_locking、use_nesterov为Bool类型属性，默认值为false。

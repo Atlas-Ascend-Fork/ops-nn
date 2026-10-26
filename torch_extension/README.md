@@ -254,7 +254,7 @@ torch.use_deterministic_algorithms(True)
 # 后续算子调用将使用确定性实现
 ```
 
-实现原理：`ACLNN_CMD` 宏在每次算子调用前读取 `at::globalContext().deterministicAlgorithms()`，通过 `aclrtCtxSetSysParamOpt(ACL_OPT_DETERMINISTIC, ...)` 将标志写入当前 device context，算子根据该标志选择确定性实现路径。
+实现原理：`ACLNN_CMD` 宏在每次算子调用前读取 `at::globalContext().deterministicAlgorithms()`，通过 `aclrtSetSysParamOpt(ACL_OPT_DETERMINISTIC, ...)` 将标志写入当前 device context，算子根据该标志选择确定性实现路径。
 
 ### 算子库查找机制
 

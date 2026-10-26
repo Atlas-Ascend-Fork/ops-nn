@@ -34,7 +34,6 @@ $$
 
 其中：$w$=var（权重），$n$=accum（梯度平方累积），$z$=linear（线性累加器），$g$=grad（梯度），$\eta$=lr（学习率），$\lambda_1$=l1，$\lambda_2$=l2，$\lambda_s$=l2Shrinkage，$p$=lrPower。
 
-
 ## 参数说明
 
 <table style="table-layout: fixed; width: 1500px"><colgroup>

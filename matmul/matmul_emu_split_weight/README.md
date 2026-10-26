@@ -112,6 +112,7 @@
   </table>
 
 ## 约束说明
+
 - x、w_high、w_low、y均为2维。
 - x的K维度必须与w_high/w_low的K维度一致。
 - M、K、N取值范围为(0, INT32_MAX]。

@@ -17,6 +17,7 @@ grad\_input = (1 - target \times predict > 0) \ ? (-target \times grad\_output) 
 $$
 
 其中：
+
 - `predict`：模型预测值
 - `target`：真实标签，通常取值为 +1 或 -1
 - `grad_output`：来自上游的反向传播梯度

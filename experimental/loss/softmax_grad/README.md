@@ -20,6 +20,7 @@ dx_{i,j} = y_{i,j} \cdot (dy_{i,j} - dot_i)
 $$
 
 其中：
+
 - `y`：softmax正向输出（每行概率和为1），shape [N, C]
 - `dy`：上游梯度，shape [N, C]
 - `dx`：对softmax输入logits的梯度，shape [N, C]

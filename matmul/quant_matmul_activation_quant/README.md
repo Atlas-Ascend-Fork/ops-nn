@@ -259,6 +259,7 @@ ND和WeightNZ分别通过[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmul
 - 不支持空tensor。
 - 支持连续tensor，[非连续tensor](../../docs/zh/context/non_contiguous_tensor.md)仅支持最后两根轴转置场景。
 - 输入和输出支持以下数据类型组合:
+
     | x1            | x2            | x1_scale    | x2_scale    | bias         | y                         | y_scale      |
     |---------------|---------------|-------------|-------------|--------------|---------------------------|-------------|
     | FLOAT8_E4M3FN | FLOAT8_E4M3FN | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT8_E4M3FN             | FLOAT8_E8M0 |

@@ -258,7 +258,7 @@ aclnnStatus aclnnScatterList(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnScatterList默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnScatterList默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
 - <term>Ascend 950PR&950DT系列产品</term>：各输入的shape需满足以下关系，不满足时第一段接口返回561002。记varRef列表中的张量个数为B。
   - varRef：列表中每个张量的shape需相同，每个张量的维度数需大于等于1。

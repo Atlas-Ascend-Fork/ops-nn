@@ -266,7 +266,7 @@ aclnnStatus aclnnNLLLoss(
 ## 约束说明
 
 - 确定性计算：
-    - aclnnNLLLoss默认非确定性实现，支持通过`aclrtCtxSetSysParamOpt`开启确定性。
+    - aclnnNLLLoss默认非确定性实现，支持通过`aclrtSetSysParamOpt`开启确定性。
 
 ## 调用示例
 

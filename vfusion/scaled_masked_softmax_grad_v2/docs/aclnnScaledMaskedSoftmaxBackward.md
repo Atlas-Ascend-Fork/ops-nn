@@ -232,7 +232,7 @@ aclnnStatus aclnnScaledMaskedSoftmaxBackward(
 ## 约束说明
 
 - 确定性计算
-  - aclnnScaledMaskedSoftmaxBackward默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnScaledMaskedSoftmaxBackward默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
 - 尾轴S2范围在(0,4096]。
 - mask的shape支持前两维和gradOutput、y不同，但需要满足[broadcast关系](../../../docs/zh/context/broadcast_relationship.md)。

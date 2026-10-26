@@ -590,7 +590,6 @@ aclnnStatus aclnnQuantMatmulWeightNz(
     - K-T量化场景下，x1Scale的shape为(m,)，x2Scale的shape为(1,)，其中m与x1的m一致。
     - 当x1与x2数据类型为FLOAT8_E4M3FN和HIFLOAT8时，仅支持transA为false。
 
-
   - **G-B量化 && B-B量化场景约束：**
   <a id="G-B量化 && B-B量化"></a>
     - 输入和输出支持以下数据类型组合：

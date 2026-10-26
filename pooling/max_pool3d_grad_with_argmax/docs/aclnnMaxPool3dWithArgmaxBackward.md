@@ -1,6 +1,5 @@
 # aclnnMaxPool3dWithArgmaxBackward
 
-
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
@@ -191,7 +190,7 @@ aclnnStatus aclnnMaxPool3dWithArgmaxBackward(
   </tbody></table>
 
   <!-- npu="A3,910b" id7 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：`indices`数据类型不支持INT64。depth * height * width不支持大于max int32。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：`indices`数据类型不支持INT64。depth* height * width不支持大于max int32。
 
   <!-- end id7 -->
 
@@ -301,7 +300,7 @@ aclnnStatus aclnnMaxPool3dWithArgmaxBackward(
 
 - 确定性计算：
   <!-- npu="A3,910b" id11 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：aclnnMaxPool3dWithArgmaxBackward默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：aclnnMaxPool3dWithArgmaxBackward默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
   <!-- end id11 -->
   <!-- npu="950" id12 -->
   - <term>Ascend 950PR&950DT系列产品</term>：aclnnMaxPool3dWithArgmaxBackward默认确定性实现。

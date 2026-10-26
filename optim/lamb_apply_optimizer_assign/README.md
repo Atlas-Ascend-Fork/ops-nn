@@ -155,7 +155,6 @@
 - shape约束：所有输入的shape需两两满足broadcast规则。`inputv`与`inputm`是原地(in-place)更新的动量输出，两者shape必须**完全相同**，且全部输入的broadcast结果必须恰好等于该shape（否则原地写回会越界）；三个输出的shape均取该shape。其余输入（含`grad`）可向其广播。
 - 所有输入及输出的维度数为0~8。当全部输入均为0维时，三个输出的shape为(1,)。
 
-
 - 所有输入的数据类型必须一致，同为FLOAT16或同为FLOAT。
 
 ## 调用说明

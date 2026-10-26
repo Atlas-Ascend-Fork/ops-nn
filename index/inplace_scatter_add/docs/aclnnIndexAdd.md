@@ -1,6 +1,5 @@
 # aclnnIndexAdd
 
-
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
@@ -256,7 +255,7 @@ aclnnStatus aclnnIndexAdd(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnIndexAdd默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - aclnnIndexAdd默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 - index取值范围
   - index输入取值范围在[0，self.shape[dim])范围内，即索引值输入范围为self在dim维度上的shape大小。
 

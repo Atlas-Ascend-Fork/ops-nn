@@ -97,7 +97,7 @@
 
 ## 目录结构
 
-```
+```text
 gemm_syrk/
 ├── CMakeLists.txt
 ├── op_graph/gemm_syrk_proto.h            # IR 定义（Input("c")/Output("c") 同名原地；图模式暂未支持）

@@ -44,7 +44,9 @@ h = o \odot co
 $$
 
   其中`forget_bias`（$f_b$，默认1.0）在f门sigmoid之前加上；`cell_clip`（$c_{clip}$，默认3.0）大于0时对cs裁剪到$[-c_{clip}, c_{clip}]$，等于0不裁剪；$p_i/p_f/p_o$为peephole项，`use_peephole`（默认false）为true时分别取$cs_{prev} \odot wci$、$cs_{prev} \odot wcf$、$co \odot wco$，否则为0。
+
 - **语义要点**：
+
   - **单步cell**：对标`tf.raw_ops.LSTMBlockCell`（8输入、无seq_len_max），不是`BlockLSTMV2`的多步循环形态。
   - **门序i|ci|f|o**：`w`列序前H列为i门、次H列为ci、再次H列为f门、末H列为o门（ICFO，非IFCO）。
   - **peephole权重恒传入**：`use_peephole`为false时`wci/wcf/wco`不参与计算，但8个输入槽位固定（TF侧约定零填充而非缺席）。

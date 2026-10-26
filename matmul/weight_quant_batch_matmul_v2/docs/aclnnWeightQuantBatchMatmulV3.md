@@ -374,7 +374,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
 <details>
 <summary><term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term></summary>
 
-  - **确定性说明**：默认非确定性实现，支持通过aclrtCtxSetSysParamOpt开启确定性。
+  - **确定性说明**：默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
   - **公共约束**
     - 当weight数据格式为FRACTAL_NZ且数据类型为INT4/INT32时，或者当weight数据格式为ND且数据类型为INT32时，仅在INT4Pack场景支持，需要配合aclnnConvertWeightToINT4Pack接口完成从INT32到INT4Pack的转换，以及从ND到FRACTAL_NZ的转换，<a href="../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md" target="_blank">详情可参考</a>，若数据类型为INT4，则weight的内轴应为偶数。

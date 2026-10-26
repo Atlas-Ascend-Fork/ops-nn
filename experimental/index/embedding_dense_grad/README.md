@@ -5,6 +5,7 @@
 | 产品 | 是否支持 |
 | ---- | :----: |
 | Atlas 310P 推理系列产品 | √ |
+
 ## 功能说明
 
 - 算子功能：`Embedding` 前向的反向算子，根据前向的索引 `indices` 将上游梯度 `grad` 累加（scatter-add）回词表梯度 `y` 上。当 `padding_idx` 有效时，该索引对应的行梯度被置零；当 `scale_grad_by_freq` 为 `true` 时，按各索引出现的频次对梯度做缩放。
