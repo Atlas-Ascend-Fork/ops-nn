@@ -13,26 +13,9 @@
 
 ## 功能说明
 
-- 算子功能：激活函数，返回与输入tensor shape相同的tensor，tensor中value大于等于0时，取该value，小于0，取0。
-- 计算公式：
-
-  $$
-  gradInput
-  =
-  \begin{cases}
-  gradOutput, & self > 0 \\
-  weight \times gradOutput, & self \le 0
-  \end{cases}
-  $$
-
-  $$
-  update
-  =
-  \begin{cases}
-  0, & self > 0 \\
-  self \times gradOutput, & self \le 0
-  \end{cases}
-  $$
+- 算子功能：对 PReluGradUpdate 生成的中间结果 `updates` 按照 `weights` 相对 `features` 的广播维度求和，输出权重梯度 `da`。
+- 计算公式：`da = ReduceSum(updates, axes)`；`axes` 为 `weights` 在 `features` 中广播扩展的维度。标量权重时对所有维度求和。
+- `updates` 的元素由 PReluGradUpdate 根据 `features` 与 `grads` 计算；本算子只负责归约，不计算 `gradInput` 或生成 `updates`。
 
 ## 参数说明
 
@@ -79,7 +62,7 @@
   <tr>
       <td>updates</td>
       <td>输入</td>
-      <td>weights梯度计算的中间结果，用于计算da</td>
+      <td>PReluGradUpdate 输出的权重梯度中间结果</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
   </tr>
