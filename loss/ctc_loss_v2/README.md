@@ -93,7 +93,7 @@
       <td>neg_log_likelihood</td>
       <td>输出</td>
       <td>表示输出的损失值，公式中的h。</td>
-      <td>int64_t</td>
+      <td>与log_probs一致</td>
       <td>ND</td>
     </tr>
     <tr>
