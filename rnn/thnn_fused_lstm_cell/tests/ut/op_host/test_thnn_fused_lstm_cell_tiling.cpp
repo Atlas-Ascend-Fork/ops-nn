@@ -13,8 +13,13 @@
  * \brief
  */
 
+#include <atomic>
+#include <array>
+#include <chrono>
+#include <functional>
 #include <iostream>
 #include <fstream>
+#include <thread>
 #include <vector>
 #include <gtest/gtest.h>
 #include "log/log.h"
@@ -40,7 +45,7 @@ protected:
     static void TearDownTestCase() { std::cout << "ThnnFusedLstmCellTiling TearDown" << std::endl; }
 };
 
-void TestThnnFusedLstmCellTiling(int64_t batchSize, int64_t hiddenSize, ge::DataType dataType)
+std::vector<uint8_t> RunThnnFusedLstmCellTiling(int64_t batchSize, int64_t hiddenSize, ge::DataType dataType)
 {
     // dlog_setlevel(0, 0, 0);
     gert::StorageShape commonShape = {{batchSize, hiddenSize}, {batchSize, hiddenSize}};
@@ -66,13 +71,19 @@ void TestThnnFusedLstmCellTiling(int64_t batchSize, int64_t hiddenSize, ge::Data
     ThnnFusedLstmCellCompileInfo compileInfo;
 
     std::string op_type("ThnnFusedLstmCell");
-    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
-    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
-    auto tilingParseFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str());
+    if (opImpl == nullptr) {
+        ADD_FAILURE() << "ThnnFusedLstmCell implementation is not registered.";
+        return {};
+    }
+    auto tilingFunc = opImpl->tiling;
     auto param = gert::TilingData::CreateCap(4096);
     auto workspaceSizeHoler = gert::ContinuousVector::Create<size_t>(4096);
     auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceSizeHoler.get());
-    ASSERT_NE(param, nullptr);
+    if (param == nullptr || workspaceSizeHoler == nullptr) {
+        ADD_FAILURE() << "Failed to allocate tiling context data.";
+        return {};
+    }
     auto holder = gert::TilingContextFaker()
                       .SetOpType("ThnnFusedLstmCell")
                       .NodeIoNum(5, 3)
@@ -94,13 +105,26 @@ void TestThnnFusedLstmCellTiling(int64_t batchSize, int64_t hiddenSize, ge::Data
                       .Build();
 
     gert::TilingContext* tilingContext = holder.GetContext<gert::TilingContext>();
-    ASSERT_NE(tilingContext->GetPlatformInfo(), nullptr);
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    if (tilingContext == nullptr || tilingContext->GetPlatformInfo() == nullptr) {
+        ADD_FAILURE() << "Failed to create tiling context.";
+        return {};
+    }
+    tilingContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tilingContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
-    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+    if (tilingFunc(tilingContext) != ge::GRAPH_SUCCESS) {
+        ADD_FAILURE() << "ThnnFusedLstmCell tiling failed.";
+        return {};
+    }
+    auto rawTilingData = tilingContext->GetRawTilingData();
+    if (rawTilingData == nullptr || rawTilingData->GetData() == nullptr) {
+        ADD_FAILURE() << "ThnnFusedLstmCell tiling data is empty.";
+        return {};
+    }
+    auto data = static_cast<uint8_t*>(rawTilingData->GetData());
+    return {data, data + rawTilingData->GetDataSize()};
     // dlog_setlevel(0, 3, 0);
 }
 
@@ -108,5 +132,62 @@ TEST_F(ThnnFusedLstmCellTiling, thnn_fused_lstm_cell_float_succ)
 {
     std::cout << "run case: "
               << "thnn_fused_lstm_cell_float_succ" << std::endl;
-    TestThnnFusedLstmCellTiling(40, 8, ge::DT_FLOAT);
+    auto tilingData = RunThnnFusedLstmCellTiling(40, 8, ge::DT_FLOAT);
+    EXPECT_FALSE(tilingData.empty());
+}
+
+static void RunConcurrentTiling(int64_t batchSize, int64_t hiddenSize, std::atomic<int>& ready,
+                                std::atomic<bool>& start, const std::vector<uint8_t>& expectedTilingData,
+                                std::atomic<bool>& matched)
+{
+    ready.fetch_add(1);
+    while (!start.load()) {
+        std::this_thread::yield();
+    }
+    for (size_t idx = 0; idx < 200; ++idx) {
+        auto tilingData = RunThnnFusedLstmCellTiling(batchSize, hiddenSize, ge::DT_FLOAT);
+        if (tilingData != expectedTilingData) {
+            matched.store(false);
+            return;
+        }
+    }
+}
+
+TEST_F(ThnnFusedLstmCellTiling, thnn_fused_lstm_cell_concurrent_tiling)
+{
+    constexpr size_t thread_num = 4;
+    std::atomic<int> ready{0};
+    std::atomic<bool> start{false};
+    std::atomic<bool> matched{true};
+    std::array<std::thread, thread_num> threads;
+    std::array<std::vector<uint8_t>, thread_num> expectedTilingData;
+
+    expectedTilingData[0] = RunThnnFusedLstmCellTiling(40, 8, ge::DT_FLOAT);
+    expectedTilingData[1] = RunThnnFusedLstmCellTiling(32, 16, ge::DT_FLOAT);
+    expectedTilingData[2] = RunThnnFusedLstmCellTiling(24, 24, ge::DT_FLOAT);
+    expectedTilingData[3] = RunThnnFusedLstmCellTiling(16, 32, ge::DT_FLOAT);
+    for (const auto& data : expectedTilingData) {
+        EXPECT_FALSE(data.empty());
+    }
+
+    threads[0] = std::thread(RunConcurrentTiling, 40, 8, std::ref(ready), std::ref(start),
+                             std::cref(expectedTilingData[0]), std::ref(matched));
+    threads[1] = std::thread(RunConcurrentTiling, 32, 16, std::ref(ready), std::ref(start),
+                             std::cref(expectedTilingData[1]), std::ref(matched));
+    threads[2] = std::thread(RunConcurrentTiling, 24, 24, std::ref(ready), std::ref(start),
+                             std::cref(expectedTilingData[2]), std::ref(matched));
+    threads[3] = std::thread(RunConcurrentTiling, 16, 32, std::ref(ready), std::ref(start),
+                             std::cref(expectedTilingData[3]), std::ref(matched));
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (ready.load() != static_cast<int>(thread_num) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    bool allThreadsReady = ready.load() == static_cast<int>(thread_num);
+    start.store(true);
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    ASSERT_TRUE(allThreadsReady);
+    EXPECT_TRUE(matched.load());
 }

@@ -46,20 +46,20 @@ struct AclnnParams {
     aclTensor* hyOut;
     aclTensor* cyOut;
     aclTensor* storageOut;
-} aclnnParams;
+};
 
 struct AclnnInfo {
     int64_t B;
     int64_t H;
     ge::DataType dtype;
     aclOpExecutor* executor;
-} info;
+};
 
 struct BaseOpOutputs {
     aclTensor* hy;
     aclTensor* cy;
     aclTensor* storage;
-} baseOuts;
+};
 
 static const std::initializer_list<op::DataType> DTYPE_COMMON_SUPPORT_LIST = {op::DataType::DT_FLOAT,
                                                                               op::DataType::DT_FLOAT16};
@@ -80,7 +80,7 @@ const int64_t INDEX_4 = 4;
 
 } // namespace
 
-static aclnnStatus CheckParamsNullptr()
+static aclnnStatus CheckParamsNullptr(const AclnnParams& aclnnParams)
 {
     OP_CHECK_NULL(aclnnParams.inputGates, return ACLNN_ERR_PARAM_NULLPTR);
     OP_CHECK_NULL(aclnnParams.hiddenGates, return ACLNN_ERR_PARAM_NULLPTR);
@@ -101,7 +101,7 @@ static aclnnStatus CheckParamsNullptr()
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus CheckDimsAndListLength()
+static aclnnStatus CheckDimsAndListLength(const AclnnParams& aclnnParams)
 {
     OP_CHECK_WRONG_DIMENSION(aclnnParams.inputGates, INDEX_2, return ACLNN_ERR_PARAM_INVALID);
     OP_CHECK_WRONG_DIMENSION(aclnnParams.hiddenGates, INDEX_2, return ACLNN_ERR_PARAM_INVALID);
@@ -116,14 +116,14 @@ static aclnnStatus CheckDimsAndListLength()
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus CheckShapes()
+static aclnnStatus CheckShapes(const AclnnParams& aclnnParams, AclnnInfo* info)
 {
     auto cxShape = aclnnParams.cx->GetViewShape();
-    info.B = cxShape.GetDim(0);
-    info.H = cxShape.GetDim(1);
-    op::Shape gatesShape = {info.B, info.H * INDEX_4};
-    op::Shape commonShape = {info.B, info.H};
-    op::Shape biasShape = {info.H * INDEX_4};
+    info->B = cxShape.GetDim(0);
+    info->H = cxShape.GetDim(1);
+    op::Shape gatesShape = {info->B, info->H * INDEX_4};
+    op::Shape commonShape = {info->B, info->H};
+    op::Shape biasShape = {info->H * INDEX_4};
 
     OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(aclnnParams.inputGates, gatesShape, return ACLNN_ERR_PARAM_INVALID);
     OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(aclnnParams.hiddenGates, gatesShape, return ACLNN_ERR_PARAM_INVALID);
@@ -140,90 +140,72 @@ static aclnnStatus CheckShapes()
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus CheckDtypes()
+static aclnnStatus CheckDtypes(const AclnnParams& aclnnParams, AclnnInfo* info)
 {
     auto DTYPE_SUPPORT_LIST = GetDtypeSupportList();
     OP_CHECK_DTYPE_NOT_SUPPORT(aclnnParams.inputGates, DTYPE_SUPPORT_LIST, return ACLNN_ERR_PARAM_INVALID);
-    info.dtype = aclnnParams.inputGates->GetDataType();
-    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.hiddenGates, info.dtype, return ACLNN_ERR_PARAM_INVALID);
-    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.cx, info.dtype, return ACLNN_ERR_PARAM_INVALID);
+    info->dtype = aclnnParams.inputGates->GetDataType();
+    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.hiddenGates, info->dtype, return ACLNN_ERR_PARAM_INVALID);
+    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.cx, info->dtype, return ACLNN_ERR_PARAM_INVALID);
     if (aclnnParams.inputBiasOptional) {
-        OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.inputBiasOptional, info.dtype, return ACLNN_ERR_PARAM_INVALID);
-        OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.hiddenBiasOptional, info.dtype, return ACLNN_ERR_PARAM_INVALID);
+        OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.inputBiasOptional, info->dtype, return ACLNN_ERR_PARAM_INVALID);
+        OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.hiddenBiasOptional, info->dtype, return ACLNN_ERR_PARAM_INVALID);
     }
-    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.hyOut, info.dtype, return ACLNN_ERR_PARAM_INVALID);
-    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.cyOut, info.dtype, return ACLNN_ERR_PARAM_INVALID);
-    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.storageOut, info.dtype, return ACLNN_ERR_PARAM_INVALID);
+    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.hyOut, info->dtype, return ACLNN_ERR_PARAM_INVALID);
+    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.cyOut, info->dtype, return ACLNN_ERR_PARAM_INVALID);
+    OP_CHECK_DTYPE_NOT_MATCH(aclnnParams.storageOut, info->dtype, return ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus CheckParamsValid()
+static aclnnStatus MakeParamsContig(AclnnParams* aclnnParams, const AclnnInfo& info)
 {
-    aclnnStatus ret;
-
-    // 空指针校验
-    ret = CheckParamsNullptr();
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "CheckParamsNullptr failed, certain incoming nullptrs may be invalid."),
-             return ret);
-
-    if (aclnnParams.inputGates->IsEmpty())
-        return ACLNN_SUCCESS; // 跳至空Tensor处理流程
-
-    // tensor dim校验
-    ret = CheckDimsAndListLength();
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
-
-    // shape关系校验
-    ret = CheckShapes();
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
-
-    // dtype校验
-    ret = CheckDtypes();
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
-
+    aclnnParams->inputGates = l0op::Contiguous(aclnnParams->inputGates, info.executor);
+    CHECK_RET(aclnnParams->inputGates != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    aclnnParams->hiddenGates = l0op::Contiguous(aclnnParams->hiddenGates, info.executor);
+    CHECK_RET(aclnnParams->hiddenGates != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    aclnnParams->cx = l0op::Contiguous(aclnnParams->cx, info.executor);
+    CHECK_RET(aclnnParams->cx != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (aclnnParams->inputBiasOptional) {
+        aclnnParams->inputBiasOptional = l0op::Contiguous(aclnnParams->inputBiasOptional, info.executor);
+        CHECK_RET(aclnnParams->inputBiasOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        aclnnParams->hiddenBiasOptional = l0op::Contiguous(aclnnParams->hiddenBiasOptional, info.executor);
+        CHECK_RET(aclnnParams->hiddenBiasOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
     return ACLNN_SUCCESS;
 }
 
-static void MakeParamsContig()
+static aclnnStatus HandleParams(AclnnParams* aclnnParams, const AclnnInfo& info)
 {
-    aclnnParams.inputGates = l0op::Contiguous(aclnnParams.inputGates, info.executor);
-    aclnnParams.hiddenGates = l0op::Contiguous(aclnnParams.hiddenGates, info.executor);
-    aclnnParams.cx = l0op::Contiguous(aclnnParams.cx, info.executor);
-    if (aclnnParams.inputBiasOptional) {
-        aclnnParams.inputBiasOptional = l0op::Contiguous(aclnnParams.inputBiasOptional, info.executor);
-        aclnnParams.hiddenBiasOptional = l0op::Contiguous(aclnnParams.hiddenBiasOptional, info.executor);
-    }
-}
-
-static aclnnStatus HandleParams()
-{
-    if (!aclnnParams.inputBiasOptional) {
+    if (!aclnnParams->inputBiasOptional) {
         op::Shape biasShape = {info.H * INDEX_4};
         auto biasTmp = info.executor->AllocTensor(biasShape, info.dtype, op::Format::FORMAT_ND);
         CHECK_RET(biasTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        aclnnParams.inputBiasOptional = l0op::ZerosLike(biasTmp, info.executor);
-        aclnnParams.hiddenBiasOptional = l0op::ZerosLike(biasTmp, info.executor);
-        CHECK_RET(aclnnParams.inputBiasOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(aclnnParams.hiddenBiasOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        aclnnParams->inputBiasOptional = l0op::ZerosLike(biasTmp, info.executor);
+        aclnnParams->hiddenBiasOptional = l0op::ZerosLike(biasTmp, info.executor);
+        CHECK_RET(aclnnParams->inputBiasOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(aclnnParams->hiddenBiasOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus RunBaseOp()
+static aclnnStatus RunBaseOp(const AclnnParams& aclnnParams, const AclnnInfo& info, BaseOpOutputs* baseOuts)
 {
     op::Shape gatesShape = {info.B, info.H * INDEX_4};
     op::Shape commonShape = {info.B, info.H};
-    baseOuts.hy = info.executor->AllocTensor(commonShape, info.dtype, op::Format::FORMAT_ND);
-    baseOuts.cy = info.executor->AllocTensor(commonShape, info.dtype, op::Format::FORMAT_ND);
-    baseOuts.storage = info.executor->AllocTensor(gatesShape, info.dtype, op::Format::FORMAT_ND);
+    baseOuts->hy = info.executor->AllocTensor(commonShape, info.dtype, op::Format::FORMAT_ND);
+    CHECK_RET(baseOuts->hy != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    baseOuts->cy = info.executor->AllocTensor(commonShape, info.dtype, op::Format::FORMAT_ND);
+    CHECK_RET(baseOuts->cy != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    baseOuts->storage = info.executor->AllocTensor(gatesShape, info.dtype, op::Format::FORMAT_ND);
+    CHECK_RET(baseOuts->storage != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto ret = l0op::ThnnFusedLstmCell(aclnnParams.inputGates, aclnnParams.hiddenGates, aclnnParams.cx,
-                                       aclnnParams.inputBiasOptional, aclnnParams.hiddenBiasOptional, baseOuts.hy,
-                                       baseOuts.cy, baseOuts.storage, info.executor);
+                                       aclnnParams.inputBiasOptional, aclnnParams.hiddenBiasOptional, baseOuts->hy,
+                                       baseOuts->cy, baseOuts->storage, info.executor);
     OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Run l0op::ThnnFusedLstmCell failed."), return ret);
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus ViewCopyResults()
+static aclnnStatus ViewCopyResults(const AclnnParams& aclnnParams, const AclnnInfo& info, const BaseOpOutputs& baseOuts)
 {
     const aclTensor* res = nullptr;
     res = l0op::ViewCopy(baseOuts.hy, aclnnParams.hyOut, info.executor);
@@ -244,8 +226,12 @@ aclnnStatus aclnnThnnFusedLstmCellGetWorkspaceSize(const aclTensor* inputGates, 
     L2_DFX_PHASE_1(aclnnThnnFusedLstmCell, DFX_IN(inputGates, hiddenGates, cx, inputBiasOptional, hiddenBiasOptional),
                    DFX_OUT(hyOut, cyOut, storageOut));
 
-    aclnnParams = AclnnParams{inputGates,         hiddenGates, cx,    inputBiasOptional,
-                              hiddenBiasOptional, hyOut,       cyOut, storageOut};
+    OP_CHECK_COMM_INPUT(workspaceSize, executor);
+
+    AclnnParams aclnnParams{inputGates,         hiddenGates, cx,    inputBiasOptional,
+                            hiddenBiasOptional, hyOut,       cyOut, storageOut};
+    AclnnInfo info{};
+    BaseOpOutputs baseOuts{};
 
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
@@ -254,9 +240,10 @@ aclnnStatus aclnnThnnFusedLstmCellGetWorkspaceSize(const aclTensor* inputGates, 
 
     aclnnStatus ret;
 
-    // 参数校验，顺便填充info
-    ret = CheckParamsValid();
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    // 空指针校验
+    ret = CheckParamsNullptr(aclnnParams);
+    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "CheckParamsNullptr failed, certain incoming nullptrs may be invalid."),
+             return ret);
 
     // 预处理
     // 空tensor处理
@@ -265,19 +252,33 @@ aclnnStatus aclnnThnnFusedLstmCellGetWorkspaceSize(const aclTensor* inputGates, 
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
     }
+
+    // tensor dim校验
+    ret = CheckDimsAndListLength(aclnnParams);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
+    // shape关系校验
+    ret = CheckShapes(aclnnParams, &info);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
+    // dtype校验
+    ret = CheckDtypes(aclnnParams, &info);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
     // 转连续
-    MakeParamsContig();
+    ret = MakeParamsContig(&aclnnParams, info);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     // bias处理
-    ret = HandleParams();
+    ret = HandleParams(&aclnnParams, info);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     // 运行底层算子
-    ret = RunBaseOp();
+    ret = RunBaseOp(aclnnParams, info, &baseOuts);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     // ViewCopy输出
-    ret = ViewCopyResults();
+    ret = ViewCopyResults(aclnnParams, info, baseOuts);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     // 获取workspace大小

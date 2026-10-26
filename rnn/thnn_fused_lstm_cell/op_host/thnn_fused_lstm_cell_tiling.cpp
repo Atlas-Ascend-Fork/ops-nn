@@ -35,8 +35,7 @@ struct ThnnFusedLstmCellTilingInfo {
     uint32_t taskSize; // 按照fp32算，单个任务块能容纳（处理）的元素数量
     uint32_t tailSize; // 单个门行尾任务块的元素数量
     uint32_t aivNum;
-} info;
-ThnnFusedLstmCellTilingData tiling;
+};
 const uint32_t bufCnt = 17;
 const uint32_t BUFFER_NUM = 2;
 const size_t INDEX_2 = 2;
@@ -44,35 +43,60 @@ const uint32_t SIZE_UNIT_BYTE = 256;
 const uint32_t FP32CNT_UNIT = SIZE_UNIT_BYTE / sizeof(float);
 const uint32_t UB_RSV_SIZE = 8 * 1024;
 
-ge::graphStatus GetInfo(gert::TilingContext* context)
+ge::graphStatus GetInfo(gert::TilingContext* context, ThnnFusedLstmCellTilingInfo* info)
 {
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, info.ubByteSize);
-    info.aivNum = ascendcPlatform.GetCoreNumAiv();
-    if (info.aivNum == 0U) {
+    auto platformInfo = context->GetPlatformInfo();
+    if (platformInfo == nullptr) {
+        OP_LOGE(context->GetNodeName(), "Failed to get platform info.");
+        return ge::GRAPH_FAILED;
+    }
+    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, info->ubByteSize);
+    info->aivNum = ascendcPlatform.GetCoreNumAiv();
+    if (info->aivNum == 0U) {
         OP_LOGE(context->GetNodeName(), "Invalid number of aicore!");
         return ge::GRAPH_FAILED;
     }
-    info.sysWorkspaceByteSize = static_cast<size_t>(ascendcPlatform.GetLibApiWorkSpaceSize());
-    info.cxShape = context->GetInputShape(INDEX_2)->GetOriginShape();
+    info->sysWorkspaceByteSize = static_cast<size_t>(ascendcPlatform.GetLibApiWorkSpaceSize());
+    auto cxShape = context->GetInputShape(INDEX_2);
+    if (cxShape == nullptr) {
+        OP_LOGE(context->GetNodeName(), "Failed to get input shape at index %zu.", INDEX_2);
+        return ge::GRAPH_FAILED;
+    }
+    auto cxOriginShape = cxShape->GetOriginShape();
+    if (cxOriginShape.GetDimNum() < 2) {
+        OP_LOGE(context->GetNodeName(), "cx shape rank %zu is less than 2.", cxOriginShape.GetDimNum());
+        return ge::GRAPH_FAILED;
+    }
+    info->cxShape = cxOriginShape;
     return ge::GRAPH_SUCCESS;
 }
 
-void FillTilingInfo()
+ge::graphStatus FillTilingInfo(gert::TilingContext* context, ThnnFusedLstmCellTilingInfo* info)
 {
-    info.B = static_cast<uint64_t>(info.cxShape[0]);
-    info.H = static_cast<uint64_t>(info.cxShape[1]);
-    info.BH = info.B * info.H;
-    info.taskSize = (static_cast<uint32_t>(info.ubByteSize) / BUFFER_NUM - UB_RSV_SIZE) / bufCnt / SIZE_UNIT_BYTE *
-                    FP32CNT_UNIT;
-    info.col = (info.H + static_cast<uint64_t>(info.taskSize) - 1ULL) / static_cast<uint64_t>(info.taskSize);
-    info.tailSize = static_cast<uint32_t>(info.H) % info.taskSize;
-    info.tailSize = (info.tailSize != 0U) ? info.tailSize : info.taskSize;
-    info.taskTotal = info.col * info.B;
-    info.taskSingle = (info.taskTotal + static_cast<uint64_t>(info.aivNum) - 1ULL) / static_cast<uint64_t>(info.aivNum);
+    info->B = static_cast<uint64_t>(info->cxShape[0]);
+    info->H = static_cast<uint64_t>(info->cxShape[1]);
+    info->BH = info->B * info->H;
+    if (info->ubByteSize <= static_cast<uint64_t>(BUFFER_NUM) * UB_RSV_SIZE) {
+        OP_LOGE(context->GetNodeName(), "UB size %zu is too small for tiling.", static_cast<size_t>(info->ubByteSize));
+        return ge::GRAPH_FAILED;
+    }
+    info->taskSize = (static_cast<uint32_t>(info->ubByteSize) / BUFFER_NUM - UB_RSV_SIZE) / bufCnt / SIZE_UNIT_BYTE *
+                     FP32CNT_UNIT;
+    if (info->taskSize == 0U) {
+        OP_LOGE(context->GetNodeName(), "Invalid task size 0 from UB size %zu.", static_cast<size_t>(info->ubByteSize));
+        return ge::GRAPH_FAILED;
+    }
+    info->col = (info->H + static_cast<uint64_t>(info->taskSize) - 1ULL) / static_cast<uint64_t>(info->taskSize);
+    info->tailSize = static_cast<uint32_t>(info->H) % info->taskSize;
+    info->tailSize = (info->tailSize != 0U) ? info->tailSize : info->taskSize;
+    info->taskTotal = info->col * info->B;
+    info->taskSingle = (info->taskTotal + static_cast<uint64_t>(info->aivNum) - 1ULL) /
+                       static_cast<uint64_t>(info->aivNum);
+    return ge::GRAPH_SUCCESS;
 }
 
-void PrintTilingData(gert::TilingContext* context)
+void PrintTilingData(gert::TilingContext* context, const ThnnFusedLstmCellTilingInfo& info)
 {
     OP_LOGD(context->GetNodeName(), "Start PrintTilingData()");
     OP_LOGD(context->GetNodeName(), "B = %llu.", info.B);
@@ -87,30 +111,35 @@ void PrintTilingData(gert::TilingContext* context)
     OP_LOGD(context->GetNodeName(), "End PrintTilingData()");
 }
 
-void SetTilingData()
+void SetTilingData(const ThnnFusedLstmCellTilingInfo& info, ThnnFusedLstmCellTilingData* tiling)
 {
-    tiling.set_B(info.B);
-    tiling.set_H(info.H);
-    tiling.set_BH(info.BH);
-    tiling.set_col(info.col);
-    tiling.set_taskTotal(info.taskTotal);
-    tiling.set_taskSingle(info.taskSingle);
-    tiling.set_taskSize(info.taskSize);
-    tiling.set_tailSize(info.tailSize);
+    tiling->set_B(info.B);
+    tiling->set_H(info.H);
+    tiling->set_BH(info.BH);
+    tiling->set_col(info.col);
+    tiling->set_taskTotal(info.taskTotal);
+    tiling->set_taskSingle(info.taskSingle);
+    tiling->set_taskSize(info.taskSize);
+    tiling->set_tailSize(info.tailSize);
 }
 
 ge::graphStatus ThnnFusedLstmCellTilingFunc(gert::TilingContext* context)
 {
+    ThnnFusedLstmCellTilingInfo info{};
+    ThnnFusedLstmCellTilingData tiling{};
+
     // 信息获取
-    if (GetInfo(context) != ge::GRAPH_SUCCESS) {
+    if (GetInfo(context, &info) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
     // 参数计算
-    FillTilingInfo();
+    if (FillTilingInfo(context, &info) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     // 参数打印
-    PrintTilingData(context);
+    PrintTilingData(context, info);
     // 参数填充
-    SetTilingData();
+    SetTilingData(info, &tiling);
     // tiling设定
     context->SetBlockDim(info.aivNum);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
