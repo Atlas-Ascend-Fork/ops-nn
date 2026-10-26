@@ -1,12 +1,11 @@
 /**
- * This program is free software, you can redistribute it and/or modify.
  * Copyright (c) 2025 Huawei Technologies Co., Ltd.
- * This file is a part of the CANN Open Software.
- * Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING
- * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
- * the software repository for the full text of the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "gtest/gtest.h"
 #include <array>
@@ -17,6 +16,7 @@
 #include "op_api_ut_common/op_api_ut.h"
 #include "op_api_ut_common/scalar_desc.h"
 #include "op_api_ut_common/tensor_desc.h"
+#include "opdev/platform.h"
 
 #include <unistd.h>
 
@@ -173,7 +173,7 @@ TEST_F(l2_nonzero_test, aclnnNonzero_15_input_error_shape_len)
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
-TEST_F(l2_nonzero_test, aclnnNonzero_16_input_error_shape_dim)
+TEST_F(l2_nonzero_test, aclnnNonzero_16_input_shape_dim_exceed_int32)
 {
     auto tensorDesc9 = TensorDesc(
                            {
@@ -191,7 +191,13 @@ TEST_F(l2_nonzero_test, aclnnNonzero_16_input_error_shape_dim)
     // SAMPLE: only test GetWorkspaceSize
     uint64_t workspace_size = 0;
     aclnnStatus aclRet = ut_self.TestGetWorkspaceSize(&workspace_size);
-    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+    // A5 与 Ascend960（Arch92）已支持超大 shape；其他平台（A2/A3）输入单维度超过 INT32_MAX 仍被 CheckDims 拦截
+    auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (curArch == NpuArch::DAV_3510 || curArch == NpuArch::DAV_9201 || curArch == NpuArch::DAV_9202) {
+        EXPECT_EQ(aclRet, ACL_SUCCESS);
+    } else {
+        EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+    }
 }
 
 TEST_F(l2_nonzero_test, ascend910B2_aclnnNonzero_16_bf16)

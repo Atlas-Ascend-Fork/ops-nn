@@ -100,8 +100,12 @@ inline static aclnnStatus CheckParams(const aclTensor* self, const aclTensor* ou
     CHECK_RET(CheckDtypeValid(self, out), ACLNN_ERR_PARAM_INVALID);
     // 3.  检查输出shape
     CHECK_RET(CheckShape(self, out), ACLNN_ERR_PARAM_INVALID);
-    // 4. 检查输入shape
-    CHECK_RET(CheckDims(self), ACLNN_ERR_PARAM_INVALID);
+    // 4. 检查输入shape：A2/A3 输出索引受 int32 精度限制，输入单维度不能超过 INT32_MAX；A5 与
+    // Ascend960（Arch92）已支持超大 shape，跳过该校验
+    auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (curArch != NpuArch::DAV_3510 && !NonZeroArch::IsArch92(curArch)) {
+        CHECK_RET(CheckDims(self), ACLNN_ERR_PARAM_INVALID);
+    }
     return ACLNN_SUCCESS;
 }
 
