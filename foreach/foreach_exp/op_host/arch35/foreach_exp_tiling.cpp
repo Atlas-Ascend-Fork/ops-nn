@@ -145,17 +145,15 @@ static ge::graphStatus ValidateForeachExp(gert::TilingContext* context)
                          "th tensor in tensor list y must be less than or equal to " + std::to_string(MAX_DIM_NUM))
                             .c_str()),
                     return ge::GRAPH_FAILED);
-        // 校验 y 的元素数不小于对应位置的 x
-        OP_CHECK_IF(
-            outputStorageShape.GetShapeSize() < dataCount,
-            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
-                context->GetNodeName(), "y",
-                (std::to_string(dataCount) + " and " + std::to_string(outputStorageShape.GetShapeSize())).c_str(),
-                ("The shape size of the " + std::to_string(i) +
-                 "th tensor in tensor list y should be greater than or equal to that of the tensor "
-                 "in the same position of the another tensor list x")
-                    .c_str()),
-            return ge::GRAPH_FAILED);
+        // 校验 y 的 shape 与对应位置的 x 严格一致
+        OP_CHECK_IF(outputStorageShape != inputStorageShape,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "y", Ops::Base::ToString(outputStorageShape).c_str(),
+                        ("The shape of the tensor y[" + std::to_string(i) +
+                         "]:" + Ops::Base::ToString(outputStorageShape) + " must be same as that of the tensor x[" +
+                         std::to_string(i) + "]:" + Ops::Base::ToString(inputStorageShape))
+                            .c_str()),
+                    return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
 }
