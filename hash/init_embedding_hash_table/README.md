@@ -64,14 +64,14 @@
     <tr>
       <td>initializer_mode</td>
       <td>输入属性</td>
-      <td>控制初始化的hash表中填充的默认值，random填充sampled_values里面的值，const填充constant_value属性值。</td>
+      <td>支持random（使用sampled_values初始化）和constant（使用constant_value初始化）。</td>
       <td>STRING</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>constant_value</td>
       <td>输入属性</td>
-      <td>hash表的初始填充值，initializer_mode为const时生效。</td>
+      <td>hash表的初始填充值，initializer_mode为constant时生效。</td>
       <td>FLOAT</td>
       <td>ND</td>
     </tr>
