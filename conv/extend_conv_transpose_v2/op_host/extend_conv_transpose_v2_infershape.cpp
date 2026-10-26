@@ -152,18 +152,18 @@ static bool GetConv3DStridesAndDilations(const InferShapeContext* context, Forma
                 return false);
     // already checked in first infer shape logic, double check just for security
     OP_CHECK_IF(strides_list->GetSize() != kConv3dInputSizeLimit,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(context->GetNodeName(), "strides",
-                                               std::to_string(strides_list->GetSize()).c_str(),
-                                               std::to_string(kConv3dInputSizeLimit).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(context->GetNodeName(), "strides",
+                                              std::to_string(strides_list->GetSize()).c_str(),
+                                              std::to_string(kConv3dInputSizeLimit).c_str()),
                 return false);
 
     const auto dilations_list = runtime_attrs->GetAttrPointer<gert::ContinuousVector>(kConv3DDilationsIdx);
     OP_CHECK_IF(dilations_list == nullptr,
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get dilations attrs."), return false);
     OP_CHECK_IF(dilations_list->GetSize() != kConv3dInputSizeLimit,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(context->GetNodeName(), "dilations",
-                                               std::to_string(dilations_list->GetSize()).c_str(),
-                                               std::to_string(kConv3dInputSizeLimit).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(context->GetNodeName(), "dilations",
+                                              std::to_string(dilations_list->GetSize()).c_str(),
+                                              std::to_string(kConv3dInputSizeLimit).c_str()),
                 return false);
 
     const auto strides = static_cast<const int64_t*>(strides_list->GetData());
@@ -276,9 +276,9 @@ static bool GetConv3DTransposeOutputPadding(const gert::InferShapeContext* const
     OP_CHECK_IF(output_padding_list == nullptr,
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get output_padding attrs."), return false);
     OP_CHECK_IF(output_padding_list->GetSize() != kConv3dDimSizeLimit,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(context->GetNodeName(), "output_padding",
-                                               std::to_string(output_padding_list->GetSize()).c_str(),
-                                               std::to_string(kConv3dDimSizeLimit).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(context->GetNodeName(), "output_padding",
+                                              std::to_string(output_padding_list->GetSize()).c_str(),
+                                              std::to_string(kConv3dDimSizeLimit).c_str()),
                 return false);
 
     const auto output_padding_data = static_cast<const int64_t*>(output_padding_list->GetData());

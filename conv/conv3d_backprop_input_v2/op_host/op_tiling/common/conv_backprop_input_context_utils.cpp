@@ -330,8 +330,8 @@ bool CheckTransposeAttr(gert::TilingContext* context, OtherParams& otherParams)
     OP_CHECK_IF(outputPadding == nullptr,
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get output_padding attrs."), return false);
     OP_CHECK_IF(outputPadding->GetSize() != K_ORI_SHAPE_DIM_3D,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(context->GetNodeName(), "output_padding",
-                                               std::to_string(outputPadding->GetSize()).c_str(), "5"),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(context->GetNodeName(), "output_padding",
+                                              std::to_string(outputPadding->GetSize()).c_str(), "5"),
                 return false);
     const auto outputPaddingData = static_cast<const int64_t*>(outputPadding->GetData());
     if (yDesc->GetOriginFormat() == ge::FORMAT_NCDHW) {
@@ -1743,25 +1743,26 @@ static bool CheckAttrSizes(const char* op_name, const gert::ContinuousVector* st
                            const int64_t* groups)
 {
     // stridesDim == 5
-    OP_CHECK_IF(strides == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "strides", "null", "non_empty_value"),
+    OP_CHECK_IF(strides == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "strides", "null", "non_empty_value"),
                 return false);
-    OP_CHECK_IF(
-        strides->GetSize() != kStridesDim,
-        OP_LOGE_WITH_INVALID_ATTR(op_name, "strides", std::to_string(strides->GetSize()), std::to_string(kStridesDim)),
-        return false);
+    OP_CHECK_IF(strides->GetSize() != kStridesDim,
+                OP_LOGE_FOR_INVALID_SHAPESIZE(op_name, "strides", std::to_string(strides->GetSize()),
+                                              std::to_string(kStridesDim)),
+                return false);
     // padsDim == 6
-    OP_CHECK_IF(pads == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "pads", "null", "non_empty_value"), return false);
-    OP_CHECK_IF(pads->GetSize() != kPadsDim,
-                OP_LOGE_WITH_INVALID_ATTR(op_name, "pads", std::to_string(pads->GetSize()), std::to_string(kPadsDim)),
-                return false);
+    OP_CHECK_IF(pads == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "pads", "null", "non_empty_value"), return false);
+    OP_CHECK_IF(
+        pads->GetSize() != kPadsDim,
+        OP_LOGE_FOR_INVALID_SHAPESIZE(op_name, "pads", std::to_string(pads->GetSize()), std::to_string(kPadsDim)),
+        return false);
     // dilationsDim == 5
-    OP_CHECK_IF(dilations == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "dilations", "null", "non_empty_value"),
+    OP_CHECK_IF(dilations == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "dilations", "null", "non_empty_value"),
                 return false);
     OP_CHECK_IF(dilations->GetSize() != kDilationsDim,
-                OP_LOGE_FOR_INVALID_SHAPEDIM(op_name, "dilations", std::to_string(dilations->GetSize()),
-                                             std::to_string(kDilationsDim)),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(op_name, "dilations", std::to_string(dilations->GetSize()),
+                                              std::to_string(kDilationsDim)),
                 return false);
-    OP_CHECK_IF(groups == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "groups", "null", "non_empty_value"),
+    OP_CHECK_IF(groups == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "groups", "null", "non_empty_value"),
                 return false);
     return true;
 }

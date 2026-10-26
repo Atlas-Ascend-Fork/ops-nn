@@ -117,14 +117,14 @@ bool SetStridesAttr(const gert::TilingContext* context, Conv3dBpFilterV2RunInfo&
 {
     const auto op_name = (context->GetNodeName() == nullptr) ? "nil" : context->GetNodeName();
     const auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "attrs", "null", "non_empty_value"), return false);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "attrs", "null", "non_empty_value"), return false);
 
     const auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(STRIDES_INDEX);
-    OP_CHECK_IF(strides == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "strides", "null", "non_empty_value"),
+    OP_CHECK_IF(strides == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "strides", "null", "non_empty_value"),
                 return false);
     OP_CHECK_IF(strides->GetSize() != CONV_BACKPROP_SHAPE_DIM,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(op_name, "strides length", std::to_string(strides->GetSize()),
-                                               std::to_string(CONV_BACKPROP_SHAPE_DIM)),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(op_name, "strides length", std::to_string(strides->GetSize()),
+                                              std::to_string(CONV_BACKPROP_SHAPE_DIM)),
                 return false);
     const int64_t* strides_data = static_cast<const int64_t*>(strides->GetData());
     std::vector<int64_t> normalized_strides(strides->GetSize(), 0);
@@ -134,10 +134,10 @@ bool SetStridesAttr(const gert::TilingContext* context, Conv3dBpFilterV2RunInfo&
 
     // check param limit
     OP_CHECK_IF(normalized_strides[NCDHW_N_INDEX] != 1 || normalized_strides[NCDHW_C_INDEX] != 1,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(op_name, "stride_n or stride_c",
-                                               std::to_string(normalized_strides[NCDHW_N_INDEX]) + " or " +
-                                                   std::to_string(normalized_strides[NCDHW_C_INDEX]),
-                                               "1"),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(op_name, "stride_n or stride_c",
+                                              std::to_string(normalized_strides[NCDHW_N_INDEX]) + " or " +
+                                                  std::to_string(normalized_strides[NCDHW_C_INDEX]),
+                                              "both 1"),
                 return false);
     OP_CHECK_IF(!CheckRange<int64_t>(normalized_strides[NCDHW_D_INDEX], static_cast<int64_t>(STRIDE_LOWER),
                                      static_cast<int64_t>(SHAPE_UPPER)),
@@ -169,13 +169,13 @@ static bool ValidateDilationsBasicInfo(const char* op_name, const gert::TilingCo
                                        const gert::ContinuousVector*& dilations)
 {
     const auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "attrs", "null", "non_empty_value"), return false);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "attrs", "null", "non_empty_value"), return false);
     dilations = attrs->GetAttrPointer<gert::ContinuousVector>(DIALTIONS_INDEX);
-    OP_CHECK_IF(dilations == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "dilations", "null", "non_empty_value"),
+    OP_CHECK_IF(dilations == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "dilations", "null", "non_empty_value"),
                 return false);
     OP_CHECK_IF(dilations->GetSize() != CONV_BACKPROP_SHAPE_DIM,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(op_name, "dilations length", std::to_string(dilations->GetSize()),
-                                               std::to_string(CONV_BACKPROP_SHAPE_DIM)),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(op_name, "dilations length", std::to_string(dilations->GetSize()),
+                                              std::to_string(CONV_BACKPROP_SHAPE_DIM)),
                 return false);
     return true;
 }
@@ -183,10 +183,10 @@ static bool ValidateDilationsBasicInfo(const char* op_name, const gert::TilingCo
 static bool CheckDilationsNC(const char* op_name, const std::vector<int64_t>& normalized_dilations)
 {
     OP_CHECK_IF(normalized_dilations[NCDHW_N_INDEX] != 1 || normalized_dilations[NCDHW_C_INDEX] != 1,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(op_name, "dilation_n or dilation_c",
-                                               std::to_string(normalized_dilations[NCDHW_N_INDEX]) + " or " +
-                                                   std::to_string(normalized_dilations[NCDHW_C_INDEX]),
-                                               "1"),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(op_name, "dilation_n or dilation_c",
+                                              std::to_string(normalized_dilations[NCDHW_N_INDEX]) + " or " +
+                                                  std::to_string(normalized_dilations[NCDHW_C_INDEX]),
+                                              "both 1"),
                 return false);
     return true;
 }
@@ -311,7 +311,7 @@ void SetHf32Flag(const char* op_name, const gert::RuntimeAttrs* attrs, Conv3dBpF
     if (runInfoV2.a_dtype == ge::DT_FLOAT && (attrs->GetAttrNum() > ENABLE_HF32_INDEX)) {
         auto enableHf32Ptr = attrs->GetBool(ENABLE_HF32_INDEX);
         if (enableHf32Ptr == nullptr) {
-            OP_LOGE_WITH_INVALID_ATTR(op_name, "enable_hf32", "null", "non_empty_value");
+            OP_LOGE_FOR_INVALID_VALUE(op_name, "enable_hf32", "null", "non_empty_value");
             return;
         }
         bool enableHf32 = *enableHf32Ptr;
@@ -322,9 +322,9 @@ void SetHf32Flag(const char* op_name, const gert::RuntimeAttrs* attrs, Conv3dBpF
 
 static bool ValidateGroupsAttr(const char* op_name, const gert::RuntimeAttrs* attrs, int32_t& groups)
 {
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "attrs", "null", "non_empty_value"), return false);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "attrs", "null", "non_empty_value"), return false);
     const auto groups_attr = attrs->GetAttrPointer<int64_t>(GROUPS_INDEX);
-    OP_CHECK_IF(groups_attr == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "groups", "null", "non_empty_value"),
+    OP_CHECK_IF(groups_attr == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "groups", "null", "non_empty_value"),
                 return false);
     groups = static_cast<int32_t>(*groups_attr);
     OP_CHECK_IF(groups <= 0,
@@ -788,12 +788,12 @@ bool CheckGradOutputShape(const gert::TilingContext* context, Conv3dBpFilterV2Ru
 
 static bool ValidatePadsAttr(const char* op_name, const gert::RuntimeAttrs* attrs, const gert::ContinuousVector*& pads)
 {
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_ATTR(op_name, "attrs", "null", "non_empty_value"), return false);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "attrs", "null", "non_empty_value"), return false);
     pads = attrs->GetAttrPointer<gert::ContinuousVector>(PADS_INDEX);
     OP_CHECK_IF(pads == nullptr, CUBE_INNER_ERR_REPORT(op_name, "failed to get pads from context fail."), return false);
     OP_CHECK_IF(pads->GetSize() != CONV_BACKPROP_PADS_DIM,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(op_name, "pads size", std::to_string(pads->GetSize()),
-                                               std::to_string(CONV_BACKPROP_PADS_DIM)),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(op_name, "pads size", std::to_string(pads->GetSize()),
+                                              std::to_string(CONV_BACKPROP_PADS_DIM)),
                 return false);
     return true;
 }

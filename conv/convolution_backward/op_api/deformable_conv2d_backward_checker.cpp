@@ -154,18 +154,18 @@ bool DeformableConv2dBackwardChecker::CheckAttrs()
              return false);
     OP_CHECK(
         params_.stride->Size() == STRIDE_ARRAY_DIM_SIZE,
-        OP_LOGE_WITH_INVALID_ATTR_SIZE(ACLNN_DEFORMABLE_NAME, "stride", std::to_string(params_.stride->Size()).c_str(),
-                                       std::to_string(STRIDE_ARRAY_DIM_SIZE).c_str()),
+        OP_LOGE_FOR_INVALID_SHAPESIZE(ACLNN_DEFORMABLE_NAME, "stride", std::to_string(params_.stride->Size()).c_str(),
+                                      std::to_string(STRIDE_ARRAY_DIM_SIZE).c_str()),
         return false);
-    OP_CHECK(params_.padding->Size() == PADDING_ARRAY_DIM_SIZE,
-             OP_LOGE_WITH_INVALID_ATTR_SIZE(ACLNN_DEFORMABLE_NAME, "padding",
-                                            std::to_string(params_.padding->Size()).c_str(),
-                                            std::to_string(PADDING_ARRAY_DIM_SIZE).c_str()),
-             return false);
+    OP_CHECK(
+        params_.padding->Size() == PADDING_ARRAY_DIM_SIZE,
+        OP_LOGE_FOR_INVALID_SHAPESIZE(ACLNN_DEFORMABLE_NAME, "padding", std::to_string(params_.padding->Size()).c_str(),
+                                      std::to_string(PADDING_ARRAY_DIM_SIZE).c_str()),
+        return false);
     OP_CHECK(params_.dilation->Size() == DILATION_ARRAY_DIM_SIZE,
-             OP_LOGE_WITH_INVALID_ATTR_SIZE(ACLNN_DEFORMABLE_NAME, "dilation",
-                                            std::to_string(params_.dilation->Size()).c_str(),
-                                            std::to_string(DILATION_ARRAY_DIM_SIZE).c_str()),
+             OP_LOGE_FOR_INVALID_SHAPESIZE(ACLNN_DEFORMABLE_NAME, "dilation",
+                                           std::to_string(params_.dilation->Size()).c_str(),
+                                           std::to_string(DILATION_ARRAY_DIM_SIZE).c_str()),
              return false);
 
     int64_t kH = (*params_.kernelSize)[INDEX_ZERO];

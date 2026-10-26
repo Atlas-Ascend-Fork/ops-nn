@@ -35,7 +35,7 @@ bool GetFusionMode(Conv3dBpInputV2RunInfo& runInfoV2, const char* opName, const 
         return true;
     }
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_ATTR(opName, "attrs", "null", "non_empty_value"), return false);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_FOR_INVALID_VALUE(opName, "attrs", "null", "non_empty_value"), return false);
     size_t idx = K_FUSION_MODE_CONV3D_TRANSPOSE_IDX;
     if (idx < attrs->GetAttrNum()) {
         const int64_t* fusionMode = attrs->GetAttrPointer<int64_t>(idx);
@@ -60,9 +60,9 @@ bool GetImplMode(Conv3dBpInputV2RunInfo& runInfoV2, const char* opName, const ge
     }
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_ATTR(opName, "attrs", "null", "non_empty_value"), return false);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_FOR_INVALID_VALUE(opName, "attrs", "null", "non_empty_value"), return false);
     auto inputDesc = context->GetInputDesc(OUT_BACKPROP_INDEX);
-    OP_CHECK_IF(inputDesc == nullptr, OP_LOGE_WITH_INVALID_ATTR(opName, "out_backprop", "null", "non_empty_value"),
+    OP_CHECK_IF(inputDesc == nullptr, OP_LOGE_FOR_INVALID_VALUE(opName, "out_backprop", "null", "non_empty_value"),
                 return false);
     ge::DataType aDtype = inputDesc->GetDataType();
     size_t enableHf32Index = 5U; // dx enablehf32 idx is 5
@@ -72,7 +72,7 @@ bool GetImplMode(Conv3dBpInputV2RunInfo& runInfoV2, const char* opName, const ge
     if (aDtype == ge::DT_FLOAT && enableHf32Index < attrs->GetAttrNum()) {
         auto enableHf32Ptr = attrs->GetBool(enableHf32Index);
         if (enableHf32Ptr == nullptr) {
-            OP_LOGE_WITH_INVALID_ATTR(opName, "enable_hf32", "null", "non_empty_value");
+            OP_LOGE_FOR_INVALID_VALUE(opName, "enable_hf32", "null", "non_empty_value");
             return false;
         }
         bool enableHf32 = *enableHf32Ptr;
@@ -715,10 +715,10 @@ bool ValidateOutputPaddingData(const char* opName, const gert::ContinuousVector*
                                std::vector<int64_t>& outputPaddingValue)
 {
     OP_CHECK_IF(outputPadding->GetData() == nullptr,
-                OP_LOGE_WITH_INVALID_ATTR(opName, "output_padding GetData", "null", "non_empty_value"), return false);
+                OP_LOGE_FOR_INVALID_VALUE(opName, "output_padding GetData", "null", "non_empty_value"), return false);
     OP_CHECK_IF(outputPadding->GetSize() != OUTPUT_PADDING_DIM,
-                OP_LOGE_WITH_INVALID_ATTR_SIZE(opName, "output_padding", std::to_string(outputPadding->GetSize()),
-                                               std::to_string(OUTPUT_PADDING_DIM)),
+                OP_LOGE_FOR_INVALID_SHAPESIZE(opName, "output_padding", std::to_string(outputPadding->GetSize()),
+                                              std::to_string(OUTPUT_PADDING_DIM)),
                 return false);
     const auto outputPaddingData = static_cast<const int64_t*>(outputPadding->GetData());
     outputPaddingAllzero = true;
@@ -759,17 +759,20 @@ bool CheckOffsetXAndOffsetW(const char* opName, const gert::TilingContext* conte
 {
     const auto offsetX = attrs->GetAttrPointer<int64_t>(OFFSET_X_INDEX);
     OP_CHECK_IF(offsetX != nullptr && *offsetX != 0,
-                OP_LOGE_WITH_INVALID_ATTR(opName, "offset_x", "null", "non_empty_value"), return false);
+                OP_LOGE_FOR_INVALID_VALUE(opName, "offset_x", std::to_string(*offsetX), "0"), return false);
     auto offsetWShape = context->GetOptionalInputShape(OFFSET_W_INDEX);
     OP_CHECK_IF(offsetWShape != nullptr && offsetWShape->GetStorageShape().GetShapeSize() != 0,
-                OP_LOGE_WITH_INVALID_ATTR(opName, "offset_w", "null", "non_empty_value"), return false);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "offset_w",
+                                                      std::to_string(offsetWShape->GetStorageShape().GetShapeSize()),
+                                                      "offset_w must be an empty tensor"),
+                return false);
     return true;
 }
 
 bool CheckTranspose(const char* opName, const gert::TilingContext* context)
 {
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_ATTR(opName, "attrs", "null", "non_empty_value"), return false);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_FOR_INVALID_VALUE(opName, "attrs", "null", "non_empty_value"), return false);
 
     auto outputPadding = attrs->GetAttrPointer<gert::ContinuousVector>(OUTPUT_PADDING_INDEX);
     if (outputPadding != nullptr) {
@@ -792,7 +795,9 @@ bool CheckTranspose(const char* opName, const gert::TilingContext* context)
         }
         auto biasShape = context->GetOptionalInputShape(BIAS_INDEX);
         if (biasShape != nullptr && biasShape->GetStorageShape().GetShapeSize() != 0) {
-            OP_LOGE_WITH_INVALID_ATTR(opName, "biasShape", "null", "non_empty_value");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "biasShape",
+                                                  std::to_string(biasShape->GetStorageShape().GetShapeSize()),
+                                                  "bias must be an empty tensor");
             return false;
         }
     }
