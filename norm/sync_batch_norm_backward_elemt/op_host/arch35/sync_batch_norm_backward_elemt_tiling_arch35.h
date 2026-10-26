@@ -27,7 +27,7 @@ using SyncBatchNormBackwardElemtNs::SyncBatchNormBackwardElemtTilingData;
 
 class SyncBatchNormBackwardElemtTiling {
 public:
-    explicit SyncBatchNormBackwardElemtTiling(gert::TilingContext* context) : tilingContext(context){};
+    explicit SyncBatchNormBackwardElemtTiling(gert::TilingContext* context) : tilingContext(context) {};
     ge::graphStatus RunTiling();
     SyncBatchNormBackwardElemtTilingData* tiling;
 

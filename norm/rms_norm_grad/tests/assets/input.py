@@ -24,13 +24,14 @@ def _prod_func(src_list):
 
 def _to_torch(arr):
     import torch
-    if arr.dtype.name == 'bfloat16':
+
+    if arr.dtype.name == "bfloat16":
         return torch.from_numpy(arr.view(np.int16)).view(torch.bfloat16)
     return torch.from_numpy(arr)
 
 
 def rms_norm_grad_input(dy, x, rstd, gamma, **kwargs):
-    '''
+    """
     Input function for rms_norm_grad.
     All the parameters (names and order) follow rms_norm_grad_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
@@ -40,7 +41,7 @@ def rms_norm_grad_input(dy, x, rstd, gamma, **kwargs):
 
     Returns:
         Input tensors
-    '''
+    """
     import torch
 
     n = _prod_func(rstd.shape)

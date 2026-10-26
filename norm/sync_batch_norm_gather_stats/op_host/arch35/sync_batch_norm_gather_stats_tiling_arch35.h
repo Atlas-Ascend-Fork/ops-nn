@@ -168,5 +168,5 @@ private:
     int64_t cLoopTail_ = 0;
     int64_t cTailTail_ = 0;
 };
-};     // namespace optiling
+}; // namespace optiling
 #endif // SYNC_BATCH_NORM_GATHER_STATS_TILING_H

@@ -12,15 +12,12 @@
 
 import torch
 from atk.configs.dataset_config import InputDataset
-from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
-from atk.tasks.dataset.base_dataset import OpsDataset
 
 
 @register("function_softmax_backward")
 class MethodTorchNnSoftmaxApi(BaseApi):
-
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         origin_dtype = input_data.kwargs["gradOutput"].dtype
         input_gradOutput = input_data.kwargs["gradOutput"]
@@ -30,11 +27,16 @@ class MethodTorchNnSoftmaxApi(BaseApi):
 
         if (origin_dtype == torch.float16) or (origin_dtype == torch.bfloat16):
             # output = torch.nn.functional.softmax(input_d.to(torch.float32), dim).to(origin_dtype)
-            output_tensor = torch.ops.aten._softmax_backward_data(input_gradOutput.to(torch.float32),
-                                                                  input_Output.to(torch.float32), input_dim, 1).to(
-                origin_dtype)
+            output_tensor = torch.ops.aten._softmax_backward_data(
+                input_gradOutput.to(torch.float32),
+                input_Output.to(torch.float32),
+                input_dim,
+                1,
+            ).to(origin_dtype)
         else:
-            output_tensor = torch.ops.aten._softmax_backward_data(input_gradOutput, input_Output, input_dim, 1)
+            output_tensor = torch.ops.aten._softmax_backward_data(
+                input_gradOutput, input_Output, input_dim, 1
+            )
 
         # print(output_tensor[0])
 
