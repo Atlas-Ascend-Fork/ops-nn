@@ -723,9 +723,37 @@ TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, WeightNzMxFp8Success_1)
     ASSERT_EQ(tiling_data_result, golden_tiling_data);
 }
 
+TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, WeightNzHifp8Success_0)
+{
+    // HIFP8 mode with x2 = FRACTAL_NZ, perm_x2 = [0, 1, 2], fp16 output
+    ge::graphStatus ret = RunTqbmmTiling(
+        {64, 1, 128}, {1, 128, 96}, {1}, {96}, {64, 1, 96}, MakeTqbmmAttrs(0, 1, {1, 0, 2}, {0, 1, 2}, {1, 0, 2}),
+        DT_HIFLOAT8, DT_HIFLOAT8, DT_UINT64, DT_UINT64, DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ);
+    EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
+}
+
+TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, WeightNzHifp8Success_1)
+{
+    // HIFP8 mode with x2 = FRACTAL_NZ, perm_x2 = [0, 2, 1], bf16 output
+    ge::graphStatus ret = RunTqbmmTiling({777, 118, 512}, {118, 128, 512}, {1}, {128}, {777, 118, 128},
+                                         MakeTqbmmAttrs(0, 1, {1, 0, 2}, {0, 2, 1}, {1, 0, 2}), DT_HIFLOAT8,
+                                         DT_HIFLOAT8, DT_UINT64, DT_UINT64, DT_BF16, ge::FORMAT_ND,
+                                         ge::FORMAT_FRACTAL_NZ);
+    EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
+}
+
+TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, WeightNzHifp8OutHifp8Success)
+{
+    // HIFP8 mode with x2 = FRACTAL_NZ and HIFLOAT8 (T-C) output, perm_x2 = [0, 1, 2]
+    ge::graphStatus ret = RunTqbmmTiling(
+        {64, 1, 128}, {1, 128, 96}, {1}, {96}, {64, 1, 96}, MakeTqbmmAttrs(0, 1, {1, 0, 2}, {0, 1, 2}, {1, 0, 2}),
+        DT_HIFLOAT8, DT_HIFLOAT8, DT_UINT64, DT_UINT64, DT_HIFLOAT8, ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ);
+    EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
+}
+
 TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, WeightNzFp8_Fail)
 {
-    // non-mxfp8 (FP8) mode with x2 = FRACTAL_NZ must fail in CheckWeightNz (!isMxfp branch)
+    // non-mx and non-hifp8 (FP8) mode with x2 = FRACTAL_NZ must fail in CheckWeightNz (!isMxfp && !isHIFP8 branch)
     ge::graphStatus ret = RunTqbmmTiling({284, 1172, 1472}, {1172, 192, 1472}, {284}, {192}, {284, 1172, 192},
                                          MakeTqbmmAttrs(32, 1, {1, 0, 2}, {0, 2, 1}, {1, 0, 2}), DT_FLOAT8_E4M3FN,
                                          DT_FLOAT8_E4M3FN, DT_FLOAT, DT_FLOAT, DT_BF16, ge::FORMAT_ND,

@@ -48,13 +48,14 @@ static inline void TQBMMGetFormat(const gert::TilingContext& context, MatMulV3Ar
     args.outFormat = (formatOut != ge::FORMAT_FRACTAL_NZ) ? ge::FORMAT_ND : formatOut;
 }
 
-static inline ge::graphStatus CheckWeightNz(const gert::TilingContext& context, MatMulV3Args& args, bool isMxFp)
+static inline ge::graphStatus CheckWeightNz(const gert::TilingContext& context, MatMulV3Args& args, bool isMxFp,
+                                            bool isHIFP8)
 {
-    if (!isMxFp) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
-            args.opName, "x2", "FRACTAL_NZ",
-            Ops::NN::FormatString("In %s case, the format of %s cannot be %s", "non-mxfp8 mode", "x2", "FRACTAL_NZ")
-                .c_str());
+    if (!isMxFp && !isHIFP8) {
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(args.opName, "x2", "FRACTAL_NZ",
+                                               Ops::NN::FormatString("In %s case, the format of %s cannot be %s",
+                                                                     "non-mx and non-hifp8 mode", "x2", "FRACTAL_NZ")
+                                                   .c_str());
         return ge::GRAPH_FAILED;
     }
     auto bShape = context.GetInputShape(X2_IDX)->GetOriginShape();
@@ -269,7 +270,7 @@ ge::graphStatus IsValidDtype(const gert::TilingContext& context, const MatMulV3A
     return ge::GRAPH_FAILED;
 }
 
-ge::graphStatus IsValidFormat(const MatMulV3Args& args, bool isMXFP8)
+ge::graphStatus IsValidFormat(const MatMulV3Args& args, bool isMXFP8, bool isHIFP8)
 {
     if (args.aFormat == ge::FORMAT_FRACTAL_NZ || args.outFormat == ge::FORMAT_FRACTAL_NZ) {
         OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
@@ -280,11 +281,11 @@ ge::graphStatus IsValidFormat(const MatMulV3Args& args, bool isMXFP8)
             Ops::NN::FormatString("The formats of %s cannot be %s", "x1, y", "FRACTAL_NZ").c_str());
         return ge::GRAPH_FAILED;
     }
-    if (args.bFormat == ge::FORMAT_FRACTAL_NZ && !isMXFP8) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
-            args.opName, "x2", "FRACTAL_NZ",
-            Ops::NN::FormatString("In %s case, the format of %s cannot be %s", "non-mxfp8 mode", "x2", "FRACTAL_NZ")
-                .c_str());
+    if (args.bFormat == ge::FORMAT_FRACTAL_NZ && !isMXFP8 && !isHIFP8) {
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(args.opName, "x2", "FRACTAL_NZ",
+                                               Ops::NN::FormatString("In %s case, the format of %s cannot be %s",
+                                                                     "non-mx and non-hifp8 mode", "x2", "FRACTAL_NZ")
+                                                   .c_str());
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -300,7 +301,7 @@ ge::graphStatus TransposeQuantBatchMatMulTiling::GetArgs()
     if (TQBMMGetShape(*context_, args_, isMXFP8_, isHIFP8_, isHIFP4_) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
-    if (IsValidFormat(args_, isMXFP8_) != ge::GRAPH_SUCCESS) {
+    if (IsValidFormat(args_, isMXFP8_, isHIFP8_) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
     return IsValidDtype(*context_, args_, isHIFP8_, isHIFP4_);
@@ -514,7 +515,7 @@ ge::graphStatus TransposeQuantBatchMatMulTiling::CheckArgs()
                     CUBE_INNER_ERR_REPORT(args_.opName, "invalid group_size"), return ge::GRAPH_FAILED);
     // check format
     if (ge::GetPrimaryFormat(context_->GetInputDesc(1)->GetStorageFormat()) == ge::FORMAT_FRACTAL_NZ) {
-        OP_TILING_CHECK((CheckWeightNz(*context_, args_, isMXFP8_) != ge::GRAPH_SUCCESS),
+        OP_TILING_CHECK((CheckWeightNz(*context_, args_, isMXFP8_, isHIFP8_) != ge::GRAPH_SUCCESS),
                         CUBE_INNER_ERR_REPORT(args_.opName, "invalid weightNz"), return ge::GRAPH_FAILED);
     }
     // bias

@@ -17,8 +17,6 @@
 #include "transpose_quant_batch_mat_mul_asw_kernel_advanced.h"
 #include "transpose_quant_batch_mat_mul_tiling_key_public.h"
 #include "transpose_quant_batch_mat_mul_asw_block_advanced.h"
-#include "blaze/gemm/block/block_mmad_a8w8_fixpipe_quant.h"
-#include "blaze/gemm/block/block_mmad_a8w8_mix.h"
 #include "transpose_quant_batch_mat_mul_mx.h"
 #include "transpose_quant_batch_mat_mul_fixpipe_quant.h"
 #include "transpose_quant_batch_mat_mul_mix.h"

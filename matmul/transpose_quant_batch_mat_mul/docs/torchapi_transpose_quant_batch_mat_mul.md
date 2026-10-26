@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：完成张量x1与张量x2的量化矩阵乘计算，底层封装aclnnTransposeQuantBatchMatMul；当x2为FRACTAL_NZ格式时，封装aclnnTransposeQuantBatchMatMulWeightNz（仅MXFP8场景）。该接口支持三种量化模式：**MX量化**（MXFP8与MXFP4）、**FP8量化**（K-C场景）、**HIFP8量化**。
+- 接口功能：完成张量x1与张量x2的量化矩阵乘计算，底层封装aclnnTransposeQuantBatchMatMul；当x2为FRACTAL_NZ格式时，封装aclnnTransposeQuantBatchMatMulWeightNz（MXFP8与HIFP8场景）。该接口支持三种量化模式：**MX量化**（MXFP8与MXFP4）、**FP8量化**（K-C场景）、**HIFP8量化**。
 - 三种量化模式说明：
 
   | 量化模式 | x1/x2数据类型 | x1_scale | x2_scale | K/N约束 |
@@ -109,11 +109,12 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
 
 ## 约束说明
 
-- 该接口当前支持单算子模式调用。
+- 该接口支持单算子模式和TorchAir图模式调用。
+- 图模式（TorchAir）下三种量化模式复用同一个GE Converter，按输入/scale数据类型自动分派：MXFP8（torch.float8_e4m3fn + torch.float8_e8m0fnu scale）与MXFP4（torch.uint8 + x1_dtype/x2_dtype指定float4_e2m1fn_x2 + torch.float8_e8m0fnu scale）可以在同一个图中同时使用；FP8（K-C，torch.float32 scale）与HIFP8（x1_dtype/x2_dtype指定hifloat8 + torch.uint64/int64 scale）同样由该Converter支持。图模式下MXFP4、HIFP8仍需传入x1_dtype/x2_dtype，其语义与单算子模式一致。
 - x1、x2必须是NPU Tensor；x1_scale、x2_scale按量化模式要求传入（见下表）。
 - 仅支持3维Tensor：x1的shape为(M, B, K)，x2的shape为(B, K, N)或(B, N, K)，x1与x2的batch轴和K轴必须一致，不支持batch轴广播。
 - perm_x1仅支持[1, 0, 2]；perm_y仅支持[1, 0, 2]；perm_x2支持[0, 1, 2]和[0, 2, 1]（FP8（K-C）量化模式仅支持[0, 1, 2]）。
-- batch_split_factor当前仅支持取值1。
+- batch_split_factor当前仅支持取值1（单算子模式由Tiling校验，图模式由GE Converter在转换时校验）。
 - bias为预留参数，当前暂不支持。
 - 不支持空Tensor。
 - dtype为34时表示HIFLOAT8输出（仅T-C量化支持），torch侧以torch.uint8承载，需用户自行按HIFLOAT8解析。
@@ -127,7 +128,7 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
   - x1_scale的shape必须为(M, B, K/64, 2)；x2_scale的shape在perm_x2为[0, 1, 2]时必须为(B, K/64, N, 2)，在perm_x2为[0, 2, 1]时必须为(B, N, K/64, 2)，最后一维必须为2。
   - group_sizes必须显式传入，且groupSizeM、groupSizeN取值为0或1，groupSizeK取值为32。
   - MXFP4场景数据按两个FLOAT4_E2M1拼包存储（Tensor最后一维为物理长度，即逻辑长度的一半）：x1的最后一维为K/2；x2在perm_x2为[0, 1, 2]时最后一维为N/2，在perm_x2为[0, 2, 1]时最后一维为K/2。此时Tensor实际存储类型（如torch.uint8）无法自动推导出FP4类型，必须通过x1_dtype、x2_dtype指定为torch_npu.float4_e2m1fn_x2。
-  - 仅x2支持FRACTAL_NZ格式（仅MXFP8）。
+  - 仅x2支持FRACTAL_NZ格式（MXFP8）。
 - **FP8（K-C）量化模式**：
   - x1与x2的数据类型支持torch.float8_e4m3fn与torch.float8_e5m2，可任意组合。
   - x1_scale的数据类型必须为torch.float32，shape为(M,)；x2_scale的数据类型必须为torch.float32，shape为(N,)。
@@ -138,6 +139,8 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
   - x2_scale的数据类型必须为torch.uint64或torch.int64，shape为(N,)；两者均按64位**位模式**解释，int64不是数值语义。其每个元素的**低32位存放torch.float32的位模式**（1.0编码为0x000000003F800000），高32位无意义。不要传入数值语义的整数（例如scale=2就传2），否则2会被按位重解释为float32的denormal位模式，导致结果错误且无告警。
   - x1_scale传入None，该参数不参与计算。
   - K、N无特殊对齐约束（均为正数即可），perm_x2支持[0, 1, 2]和[0, 2, 1]。
+  - x2支持FRACTAL_NZ格式（与MXFP8一致，x2的NZ转换为viewshape视角下shape不变，仅物理排布不同）。
+  - dtype支持1(fp16)、27(bf16)、34(HIFLOAT8)；dtype=34（T-C）时输出HIFLOAT8，torch侧以torch.uint8承载，需自行按HIFLOAT8解析；x2是否NZ均支持。
   - group_sizes传[0, 0, 0]。
 
 ## 确定性计算
@@ -252,4 +255,108 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
         x2_dtype=torch_npu.hifloat8,
     )
     print(y.shape, y.dtype)
+    ```
+
+- 图模式（torchair）调用
+
+  图模式使用与单算子模式相同的接口参数与约束（如batch_split_factor仅支持1，见"约束说明"），TorchAir在执行时通过GE Converter将其转换为`TransposeQuantBatchMatMul`图算子。
+
+  - FP8（K-C）场景示例：
+
+    ```python
+    import torch
+    import torch_npu
+    import cann_ops_nn
+
+    @torch.compile(backend="npu")
+    def func(x1, x2, x1_scale, x2_scale):
+        return cann_ops_nn.transpose_quant_batch_mat_mul(
+            x1,
+            x2,
+            dtype=1,
+            x1_scale=x1_scale,
+            x2_scale=x2_scale,
+            group_sizes=[0, 0, 0],
+        )
+
+    M, B, K, N = 64, 2, 512, 128
+    x1 = torch.randn(M, B, K).to(torch.float8_e4m3fn).npu()
+    x2 = torch.randn(B, K, N).to(torch.float8_e5m2).npu()
+    x1_scale = torch.rand(M).to(torch.float32).npu()
+    x2_scale = torch.rand(N).to(torch.float32).npu()
+    y = func(x1, x2, x1_scale, x2_scale)
+    print(y.shape, y.dtype)
+    ```
+
+  - HIFP8场景示例：
+
+    ```python
+    import numpy as np
+    import torch
+    import torch_npu
+    import cann_ops_nn
+
+    @torch.compile(backend="npu")
+    def func(x1, x2, x2_scale):
+        return cann_ops_nn.transpose_quant_batch_mat_mul(
+            x1,
+            x2,
+            dtype=1,
+            x2_scale=x2_scale,
+            group_sizes=[0, 0, 0],
+            x1_dtype=torch_npu.hifloat8,
+            x2_dtype=torch_npu.hifloat8,
+        )
+
+    M, B, K, N = 64, 16, 128, 96
+    x1 = torch.randint(0, 128, (M, B, K), dtype=torch.uint8).npu()
+    x2 = torch.randint(0, 128, (B, K, N), dtype=torch.uint8).npu()
+    f32_bits = np.full(N, np.float32(1.0).view(np.uint32), dtype=np.uint32)
+    x2_scale = torch.from_numpy(f32_bits.astype(np.uint64)).npu()
+    y = func(x1, x2, x2_scale)
+    print(y.shape, y.dtype)
+    ```
+
+  - MXFP8与MXFP4混合示例：
+
+    ```python
+    import torch
+    import torch_npu
+    import cann_ops_nn
+
+    @torch.compile(backend="npu")
+    def func(x1_mxfp8, x2_mxfp8, s1_mxfp8, s2_mxfp8):
+        # MXFP8
+        y_mxfp8 = cann_ops_nn.transpose_quant_batch_mat_mul(
+            x1_mxfp8,
+            x2_mxfp8,
+            dtype=27,
+            x1_scale=s1_mxfp8,
+            x2_scale=s2_mxfp8,
+            group_sizes=[1, 1, 32],
+        )
+        # MXFP4（与MXFP8在同一个图里）
+        x1_mxfp4 = torch.randint(0, 256, (64, 16, 64), dtype=torch.uint8).npu()
+        x2_mxfp4 = torch.randint(0, 256, (16, 128, 128), dtype=torch.uint8).npu()
+        s1_mxfp4 = torch.ones(64, 16, 2, 2, dtype=torch.float8_e8m0fnu).npu()
+        s2_mxfp4 = torch.ones(16, 2, 256, 2, dtype=torch.float8_e8m0fnu).npu()
+        y_mxfp4 = cann_ops_nn.transpose_quant_batch_mat_mul(
+            x1_mxfp4,
+            x2_mxfp4,
+            dtype=27,
+            x1_scale=s1_mxfp4,
+            x2_scale=s2_mxfp4,
+            group_sizes=[1, 1, 32],
+            x1_dtype=torch_npu.float4_e2m1fn_x2,
+            x2_dtype=torch_npu.float4_e2m1fn_x2,
+        )
+        return y_mxfp8, y_mxfp4
+
+    M, B, K, N = 64, 16, 128, 256
+    x1_mxfp8 = torch.randn(M, B, K).to(torch.float8_e4m3fn).npu()
+    x2_mxfp8 = torch.randn(B, K, N).to(torch.float8_e4m3fn).npu()
+    s1_mxfp8 = torch.ones(M, B, K // 64, 2, dtype=torch.float8_e8m0fnu).npu()
+    s2_mxfp8 = torch.ones(B, K // 64, N, 2, dtype=torch.float8_e8m0fnu).npu()
+    y_mxfp8, y_mxfp4 = func(x1_mxfp8, x2_mxfp8, s1_mxfp8, s2_mxfp8)
+    print(y_mxfp8.shape, y_mxfp8.dtype, y_mxfp4.shape, y_mxfp4.dtype)
     ```

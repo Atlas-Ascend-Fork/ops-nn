@@ -24,7 +24,7 @@
 
 ## 功能说明
 
-- 接口功能：完成张量x1与张量x2量化的矩阵乘计算，相较于原有aclnnTransposeQuantBatchMatMul接口，新接口仅支持x1为ND格式，x2为NZ格式，只支持x1为3维，x2为5维。支持MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)。Tensor支持转置，转置序列根据传入的数列进行变更。permX1代表张量x1的转置序列，permX2代表张量x2的转置序列，序列值为0的是batch维度，其余两个维度做矩阵乘法。
+- 接口功能：完成张量x1与张量x2量化的矩阵乘计算，相较于原有aclnnTransposeQuantBatchMatMul接口，新接口仅支持x1为ND格式，x2为NZ格式，只支持x1为3维，x2为5维。支持MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)（MXFP8/MXFP4）以及HIFP8量化模式。Tensor支持转置，转置序列根据传入的数列进行变更。permX1代表张量x1的转置序列，permX2代表张量x2的转置序列，序列值为0的是batch维度，其余两个维度做矩阵乘法。
 
 - 示例：（x2的NZ转换为ND对应的viewshape视角）
   - 假设x1的shape是(M, B, K)，x2的shape是(B, K, N)，x1Scale和x2Scale不为None，batchSplitFactor等于1时，计算输出out的shape是(M, B, N)。
@@ -92,7 +92,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>
           数据类型需要与x2满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。
         </td>
-        <td>FLOAT8_E4M3FN、FLOAT4_E2M1</td>
+        <td>FLOAT8_E4M3FN、FLOAT4_E2M1、HIFLOAT8</td>
         <td>ND</td>
         <td>3</td>
         <td>√</td>
@@ -107,7 +107,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
             <li>x2的k维度需要与x1的K维度大小相等。</li>
         </ul>
         </td>
-        <td>FLOAT8_E4M3FN、FLOAT4_E2M1</td>
+        <td>FLOAT8_E4M3FN、FLOAT4_E2M1、HIFLOAT8</td>
         <td>NZ</td>
         <td>5</td>
         <td>√</td>
@@ -127,11 +127,14 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>输入</td>
         <td>表示左矩阵的量化系数。</td>
         <td>
-          shape要求为(M, B, K/64, 2)
+          <ul>
+            <li>MX量化场景：shape要求为(M, B, K/64, 2)。</li>
+            <li>HIFP8量化场景：可选输入，若传入则shape要求为(1,)。</li>
+          </ul>
         </td>
-        <td>FLOAT8_E8M0</td>
+        <td>FLOAT8_E8M0、UINT64</td>
         <td>ND</td>
-        <td>4</td>
+        <td>4或1</td>
         <td>√</td>
       </tr>
       <tr>
@@ -139,22 +142,25 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>输入</td>
         <td>表示右矩阵的量化系数。</td>
         <td>
-          <li>permX2为[0, 1, 2]时，shape要求为(B, K/64, N, 2)</li>
-          <li>permX2为[0, 2, 1]时，shape要求为(B, N, K/64, 2)</li>
+          <ul>
+            <li>MX量化场景：permX2为[0, 1, 2]时，shape要求为(B, K/64, N, 2)；permX2为[0, 2, 1]时，shape要求为(B, N, K/64, 2)。</li>
+            <li>HIFP8量化场景：shape要求为(N,)，元素为float32位模式（低32位有效），dtype按UINT64承载。</li>
+          </ul>
         </td>
-        <td>FLOAT8_E8M0</td>
+        <td>FLOAT8_E8M0、UINT64</td>
         <td>ND</td>
-        <td>4</td>
+        <td>4或1</td>
         <td>√</td>
       </tr>
       <tr>
         <td>dtype（int32_t）</td>
         <td>输入</td>
-        <td>用于指定输出矩阵的数据类型，支持的值为：1、27。</td>
+        <td>用于指定输出矩阵的数据类型，支持的值为：1、27、34。</td>
         <td>
         <ul>
           <li>取值为1,表示输出矩阵类型为FLOAT16。</li>
           <li>取值为27,表示输出矩阵类型为BFLOAT16。</li>
+          <li>取值为34,表示输出矩阵类型为HIFLOAT8（仅HIFP8量化场景支持，需用户自行按HIFLOAT8解析）。</li>
         </ul>
         </td>
         <td>INT32</td>
@@ -167,7 +173,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>输入</td>
         <td>用于输入M、N、K方向上的量化分组大小。</td>
         <td>
-        由3个方向的groupSizeM，groupSizeN，groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（groupSize中的高16位的数值无效）
+        由3个方向的groupSizeM，groupSizeN，groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（groupSize中的高16位的数值无效）。仅MX量化场景生效，HIFP8量化场景需传0。
         </td>
         <td>INT64</td>
         <td>-</td>
@@ -223,7 +229,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>
         不支持空Tensor。
         </td>
-        <td>BFLOAT16、FLOAT16</td>
+        <td>BFLOAT16、FLOAT16、HIFLOAT8（仅HIFP8量化场景）</td>
         <td>ND</td>
         <td>3</td>
         <td>√</td>
@@ -350,7 +356,8 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
 <!-- npu="950" id7 -->
 - <term>Ascend 950PR&950DT系列产品</term>：
   - x1只支持3维，x2只支持昇腾私有格式，调用此接口之前，必须完成x2从ND到昇腾私有格式的转换。
-  - K仅支持64的倍数。groupSize的groupSizeM和groupSizeN仅支持0或1，groupSizeK仅支持32。
+  - MX量化场景：K仅支持64的倍数。groupSize的groupSizeM和groupSizeN仅支持0或1，groupSizeK仅支持32。
+  - HIFP8量化场景：x1、x2为HIFLOAT8，x1Scale可选（为空或(1,)），x2Scale为UINT64类型且shape为(N,)，groupSize传0，K、N为正数即可，无对齐要求；dtype为34时输出HIFLOAT8（T-C场景），需用户自行按HIFLOAT8解析。
   - groupSize相关约束：
     - 仅在MX量化场景中生效。
     - 传入的groupSize内部会按如下公式分解得到groupSizeM、groupSizeN、groupSizeK，当其中有1个或多个为0，会根据x1/x2/x1Scale/x2Scale输入shape重新设置groupSizeM、groupSizeN、groupSizeK用于计算。原理：假设groupSizeM=0，表示M方向量化分组值由接口推断，推断公式为groupSizeM = M / scaleM（需保证M能被scaleM整除），其中M与x1 shape中的M一致，scaleM与x1Scale shape中的M一致。

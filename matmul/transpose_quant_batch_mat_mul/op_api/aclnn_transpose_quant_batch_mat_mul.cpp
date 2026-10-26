@@ -505,13 +505,13 @@ static bool CheckShapeValid(const aclTensor* x1, const aclTensor* x2, const aclT
     return CheckScaleValid(x1Scale, x2Scale, x1BatchDim, m, n, x1KDim, permX2, isMxFp, isHIFP8, isHIFP4);
 }
 
-static inline bool CheckWeightNz(const aclTensor* x2, bool isMxFp)
+static inline bool CheckWeightNz(const aclTensor* x2, bool isMxFp, bool isHIFP8)
 {
-    if (!isMxFp) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
-            OP_NAME, "x2", "FRACTAL_NZ",
-            Ops::NN::FormatString("In %s case, the format of %s cannot be %s", "non-mxfp8 mode", "x2", "FRACTAL_NZ")
-                .c_str());
+    if (!isMxFp && !isHIFP8) {
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(OP_NAME, "x2", "FRACTAL_NZ",
+                                               Ops::NN::FormatString("In %s case, the format of %s cannot be %s",
+                                                                     "non-mx and non-hifp8 mode", "x2", "FRACTAL_NZ")
+                                                   .c_str());
         return false;
     }
     auto storageShapeDim = x2->GetStorageShape().GetDimNum();
@@ -577,7 +577,7 @@ inline static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, 
     CHECK_RET(CheckDtypeValid(x1, x2, x1Scale, x2Scale, out, dtype), ACLNN_ERR_PARAM_INVALID);
     // check nz
     if (ge::GetPrimaryFormat(x2->GetStorageFormat()) == Format::FORMAT_FRACTAL_NZ) {
-        CHECK_RET(CheckWeightNz(x2, isMxFp), ACLNN_ERR_PARAM_INVALID);
+        CHECK_RET(CheckWeightNz(x2, isMxFp, isHIFP8), ACLNN_ERR_PARAM_INVALID);
     }
     // 不支持x1Format、 outFormat、 x1scaleFormat、 x2scaleFormat为NZ
     if (ge::GetPrimaryFormat(x1->GetStorageFormat()) == Format::FORMAT_FRACTAL_NZ ||

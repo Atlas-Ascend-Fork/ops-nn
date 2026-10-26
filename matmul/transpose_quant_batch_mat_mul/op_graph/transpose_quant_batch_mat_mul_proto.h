@@ -27,6 +27,8 @@ namespace ge {
 * float8_e4m3fn, float8_e5m2, float4_e2m1, hifloat8, hifloat4. 3D. Has format ND.
 * @li x2: A matrix tensor. Must be one of the following types:
 * float8_e4m3fn, float8_e5m2, float4_e2m1, hifloat8, hifloat4. 3D. Has format ND.
+* In MX (MXFP8/MXFP4) and HIFP8 quantification, x2 also supports the FRACTAL_NZ format
+* (5D storage shape, the logical shape is still 3D).
 * @li bias: An optional tensor. Reserved parameter, currently not supported.
 * @li x1_scale: A matrix tensor, quantization parameter.
              Must be one of the following types: float32、float8_e8m0、uint64_t. The format

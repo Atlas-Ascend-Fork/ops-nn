@@ -30,7 +30,6 @@ __aicore__ inline void TqbmmMxTensorApiKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR 
     using BiasType = BIAS_TYPE;
     using X2ScaleType = SCALE_TYPE;
     using OutType = C_TYPE;
-    using L0CType = typename AscendC::GetMmDstType<AType>::Type;
 
     using BlockEpilogue = Blaze::Epilogue::Block::BlockEpilogueEmpty;
 

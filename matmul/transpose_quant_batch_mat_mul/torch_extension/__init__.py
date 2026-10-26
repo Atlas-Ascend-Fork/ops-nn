@@ -9,6 +9,9 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-__all__ = ["transpose_quant_batch_mat_mul"]
+__all__ = ["transpose_quant_batch_mat_mul", "convert_transpose_quant_batch_mat_mul"]
 
 from .transpose_quant_batch_mat_mul import transpose_quant_batch_mat_mul
+from .graph_convert_transpose_quant_batch_mat_mul import (
+    convert_transpose_quant_batch_mat_mul,
+)

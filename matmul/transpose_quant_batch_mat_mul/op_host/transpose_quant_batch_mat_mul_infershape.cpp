@@ -37,10 +37,11 @@ const size_t DIM_0 = 0;
 const size_t VALID_K = 512;
 const size_t VALID_N = 128;
 const size_t VALID_BATCH_SPLIT_FACTOR = 1;
+constexpr static int64_t UNKNOWN_DIM = static_cast<int64_t>(-1);
 constexpr static int64_t UNKNOWN_DIM_NUM = static_cast<int64_t>(-2);
 constexpr static int64_t N_DIM_NUM = 2;
 constexpr static size_t PERM_DIM_NUM = 3;
-const std::initializer_list<ge::DataType> OUT_TYPE_LIST = {ge::DT_FLOAT16, ge::DT_BF16};
+const std::initializer_list<ge::DataType> OUT_TYPE_LIST = {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_HIFLOAT8};
 constexpr size_t ATTR_INDEX_DST_TYPE = 0;
 constexpr int64_t Y_INDEX = 0;
 
@@ -219,10 +220,14 @@ static ge::graphStatus InferShapeForTransposeQuantBatchMatMul(InferShapeContext*
                                 shapeX1Transposed.GetDimNum(), shapeX2Transposed.GetDimNum()),
           return ge::GRAPH_FAILED);
     // check x1 and x2 k-axis
-    CHECK(shapeX1Transposed.GetDim(DIM_2) != shapeX2Transposed.GetDim(DIM_1),
+    const int64_t kX1 = shapeX1Transposed.GetDim(DIM_2);
+    const int64_t kX2 = shapeX2Transposed.GetDim(DIM_1);
+    CHECK(kX1 != UNKNOWN_DIM && kX2 != UNKNOWN_DIM && kX1 != kX2,
           CUBE_INNER_ERR_REPORT(nameOp, "The k-axis of the two inputs are different."), return ge::GRAPH_FAILED);
     // check x1 and x2 batch-axis
-    CHECK(shapeX1Transposed.GetDim(DIM_0) != shapeX2Transposed.GetDim(DIM_0),
+    const int64_t batchX1 = shapeX1Transposed.GetDim(DIM_0);
+    const int64_t batchX2 = shapeX2Transposed.GetDim(DIM_0);
+    CHECK(batchX1 != UNKNOWN_DIM && batchX2 != UNKNOWN_DIM && batchX1 != batchX2,
           CUBE_INNER_ERR_REPORT(nameOp, "The batch-axis must be equal, transposed shape of x1 and x2 is %s, %s.",
                                 Ops::Base::ToString(shapeX1Transposed).c_str(),
                                 Ops::Base::ToString(shapeX2Transposed).c_str()),

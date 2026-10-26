@@ -122,7 +122,7 @@
   </tr>
 </tbody></table>
 
-- Ascend 950PR&950DT系列产品：只有输入x2支持FRACTAL_NZ格式。
+- Ascend 950PR&950DT系列产品：只有输入x2支持FRACTAL_NZ格式（x2为NZ格式时走[aclnnTransposeQuantBatchMatMulWeightNz](docs/aclnnTransposeQuantBatchMatMulWeightNz.md)，支持MXFP8与HIFP8量化模式）。
 
 ## 约束说明
 
