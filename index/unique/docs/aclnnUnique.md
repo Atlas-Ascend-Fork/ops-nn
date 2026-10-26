@@ -117,10 +117,10 @@ aclnnStatus aclnnUnique(
     <tr>
       <td>inverseOut</td>
       <td>输出</td>
-      <td>第二个输出张量，当 returnInverse 为 True 时有意义，返回 self 中各元素在 valueOut 中出现的位置下标。</td>
+      <td>第二个输出张量，当 returnInverse 为 True 时有意义，返回 self 中各元素在 valueOut 中出现的位置下标，shape 与 self 保持一致。</td>
       <td></td>
-      <td></td>
-      <td></td>
+      <td>INT64</td>
+      <td>ND</td>
       <td></td>
       <td></td>
     </tr>
