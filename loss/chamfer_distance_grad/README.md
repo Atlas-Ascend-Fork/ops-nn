@@ -133,6 +133,8 @@
 
 xyz1、xyz2的shape为(B, N, 2)，grad_dist1、grad_dist2、idx1、idx2的shape为(B, N)。所有输入shape中的B和N数值保持一致。
 
+与前向 `ChamferDistance` 配套调用时，前向 `xyz1`、`xyz2` 的 shape 为 `(2,B,N)`，本反向接口要求 `(B,N,2)`。调用反向接口前，需分别按轴序 `(1,2,0)` 转置两个前向输入后传入。
+
 ## 调用说明
 
 | 调用方式 | 调用样例                                                                   | 说明                                                             |
