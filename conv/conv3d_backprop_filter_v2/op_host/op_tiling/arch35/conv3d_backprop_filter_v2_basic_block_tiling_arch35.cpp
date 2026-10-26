@@ -45,6 +45,8 @@ const int32_t strideIndex = 0;
 const int32_t dilationIndex = 2;
 const int32_t groupIndex = 3;
 const int32_t enabelHF32Index = 3;
+constexpr uint64_t AIV_AIC_RATIO_1 = 1;
+constexpr uint64_t AIV_AIC_RATIO_2 = 2;
 } // namespace
 
 namespace Ops {
@@ -72,14 +74,14 @@ bool Conv3DDWV2BasicBlockTilingArch35::CheckVectorCoreNum()
         OP_LOGE(opName_, "CheckVectorCoreNum failed, aicCoreCount is 0");
         return false;
     }
-    uint64_t aicAivRatio = 1;
+    uint64_t aivAicRatio = AIV_AIC_RATIO_1;
     if (platformInfo_.npuArch == NpuArch::DAV_3510) {
-        aicAivRatio = 2;
+        aivAicRatio = AIV_AIC_RATIO_2;
     }
-    if (aivCoreCount < aicCoreCount * aicAivRatio) {
+    if (aivCoreCount < aicCoreCount * aivAicRatio) {
         OP_LOGE(opName_,
                 "CheckVectorCoreNum failed, aivCoreCount[%lu] and aicCoreCount[%lu] ratio is less than [%lu]:1",
-                aivCoreCount, aicCoreCount, aicAivRatio);
+                aivCoreCount, aicCoreCount, aivAicRatio);
         return false;
     }
     return true;

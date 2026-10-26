@@ -180,6 +180,8 @@ constexpr uint32_t LOCAL_W_G1_MAX_N_BLOCK = 6;
 constexpr uint32_t LOCAL_W_G1_MAX_N_BLOCK_WIDE = 48;
 constexpr int32_t LOCAL_W_G1_WIDE_MIN_W = 2 * 1024;
 constexpr uint32_t LOCAL_W_BASE_N_CAP = 128;
+constexpr uint64_t AIV_AIC_RATIO_1 = 1;
+constexpr uint64_t AIV_AIC_RATIO_2 = 2;
 } // namespace
 
 ge::graphStatus Conv3DDXV2InnerProductTiling::GetPlatformInfo() { return ge::GRAPH_SUCCESS; }
@@ -721,7 +723,7 @@ uint64_t Conv3DDXV2InnerProductTiling::GetCVRation()
     if (aicCoreCount && (aivCoreCount >= aicCoreCount)) {
         return aivCoreCount / aicCoreCount;
     }
-    return 2; // v100, v120 C:V=1:2
+    return AIV_AIC_RATIO_2; // v100, v120 V:C = 2:1
 }
 
 bool Conv3DDXV2InnerProductTiling::NeedVectorCore()
@@ -754,14 +756,14 @@ bool Conv3DDXV2InnerProductTiling::CheckVectorCoreNum()
         OP_LOGE(opName_, "CheckVectorCoreNum failed, aicCoreCount is 0");
         return false;
     }
-    uint64_t aicAivRatio = 1;
+    uint64_t aivAicRatio = AIV_AIC_RATIO_1;
     if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510) {
-        aicAivRatio = 2;
+        aivAicRatio = AIV_AIC_RATIO_2;
     }
-    if (aivCoreCount < aicCoreCount * aicAivRatio) {
+    if (aivCoreCount < aicCoreCount * aivAicRatio) {
         OP_LOGE(opName_,
                 "CheckVectorCoreNum failed, aivCoreCount[%lu] and aicCoreCount[%lu] ratio is less than [%lu]:1",
-                aivCoreCount, aicCoreCount, aicAivRatio);
+                aivCoreCount, aicCoreCount, aivAicRatio);
         return false;
     }
     return true;
