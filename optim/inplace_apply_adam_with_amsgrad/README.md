@@ -146,7 +146,7 @@ $$
 
 ## 约束说明
 
-- 11个张量输入必须共享同一数据类型（FLOAT、FLOAT16或BFLOAT16），混合dtype组合将被拒绝。
+- var、m、v、vhat、grad 五个状态张量必须共享同一数据类型（FLOAT、FLOAT16或BFLOAT16）；beta1_power、beta2_power、lr、beta1、beta2、epsilon 六个标量输入固定为 FLOAT。
 - var、m、v、vhat、grad五个状态张量shape必须完全一致，五者之间不支持广播。
 - beta1_power、beta2_power、lr、beta1、beta2、epsilon必须为rank-0标量或shape为[1]的张量。
 - 仅支持ND格式。
