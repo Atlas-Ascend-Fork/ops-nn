@@ -25,20 +25,25 @@ constexpr int64_t UB_THRES_INT32 = 55296; // 216K / 4Byte
 constexpr uint64_t VALID_INDICES = 2;
 constexpr uint64_t INVALID_INDICES = 1;
 
-template <typename T>
+template <typename T, typename S>
 __simt_vf__ LAUNCH_BOUND(THREAD_DIM)
-__aicore__ inline void SimtLinearIndexProcess(int tensorId, __gm__ int* strideAddr, __gm__ int* valueSizeAddr,
+__aicore__ inline void SimtLinearIndexProcess(int tensorId, __gm__ S* strideAddr, __gm__ S* valueSizeAddr,
                                               __gm__ T* indexAddr, __ubuf__ T* outputUbAddr, uint64_t calcNum)
 {
     for (int64_t i = threadIdx.x; i < calcNum; i = i + blockDim.x) {
         T indexValue = indexAddr[i];
-        int stride = strideAddr[tensorId];
-        int valueSize = valueSizeAddr[tensorId];
-        outputUbAddr[i] = outputUbAddr[i] + static_cast<T>(((indexValue % valueSize + valueSize) % valueSize) * stride);
+        S stride = strideAddr[tensorId];
+        S valueSize = valueSizeAddr[tensorId];
+        // Adding valueSize unconditionally can overflow even when the normalized index fits.
+        T normalizedIndex = indexValue % valueSize;
+        if (normalizedIndex < 0) {
+            normalizedIndex += valueSize;
+        }
+        outputUbAddr[i] = outputUbAddr[i] + static_cast<T>(normalizedIndex * stride);
     }
 }
 
-template <typename T>
+template <typename T, typename S>
 class LinearIndexSimtKernelV2 {
 public:
     __aicore__ inline LinearIndexSimtKernelV2() = delete;
@@ -63,8 +68,8 @@ public:
 private:
     __aicore__ inline void ProcessMain(int loopIdx, uint64_t calcNum)
     {
-        __gm__ int* strideAddr = (__gm__ int*)strideGm_.GetPhyAddr();
-        __gm__ int* valueSizeAddr = (__gm__ int*)valueSizeGm_.GetPhyAddr();
+        __gm__ S* strideAddr = (__gm__ S*)strideGm_.GetPhyAddr();
+        __gm__ S* valueSizeAddr = (__gm__ S*)valueSizeGm_.GetPhyAddr();
         LocalTensor<T> outputUbBuf = outputUb_.Get<T>();
         Duplicate(outputUbBuf, static_cast<T>(0), ubThres_);
         PipeBarrier<PIPE_V>();
@@ -77,8 +82,8 @@ private:
             }
             indexGm_.SetGlobalBuffer(GetTensorAddr(indexList_, i) + idxAddrOffset_ + loopIdx * ubThres_);
             __gm__ T* indexAddr = (__gm__ T*)indexGm_.GetPhyAddr();
-            asc_vf_call<SimtLinearIndexProcess<T>>(dim3(THREAD_DIM), i, strideAddr, valueSizeAddr, indexAddr,
-                                                   outputUbAddr, calcNum);
+            asc_vf_call<SimtLinearIndexProcess<T, S>>(dim3(THREAD_DIM), i, strideAddr, valueSizeAddr, indexAddr,
+                                                      outputUbAddr, calcNum);
         }
         auto mte3WaitVEventID = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
         SetFlag<HardEvent::V_MTE3>(mte3WaitVEventID);
@@ -113,8 +118,8 @@ private:
     __aicore__ inline void SetGmAddr(GM_ADDR stride, GM_ADDR valueSize, GM_ADDR output,
                                      const LinearIndexV2TilingData& tiling)
     {
-        valueSizeGm_.SetGlobalBuffer((__gm__ int*)valueSize);
-        strideGm_.SetGlobalBuffer((__gm__ int*)stride);
+        valueSizeGm_.SetGlobalBuffer((__gm__ S*)valueSize);
+        strideGm_.SetGlobalBuffer((__gm__ S*)stride);
         outputGm_.SetGlobalBuffer((__gm__ T*)output + idxAddrOffset_);
         InitGlobalMemory(outputGm_, dataNum_, static_cast<T>(0));
         SyncAll();
@@ -132,8 +137,8 @@ private:
 private:
     GM_ADDR indexList_;
     GlobalTensor<T> indexGm_;
-    GlobalTensor<int> valueSizeGm_;
-    GlobalTensor<int> strideGm_;
+    GlobalTensor<S> valueSizeGm_;
+    GlobalTensor<S> strideGm_;
     GlobalTensor<T> outputGm_;
     TBuf<TPosition::VECCALC> outputUb_;
 

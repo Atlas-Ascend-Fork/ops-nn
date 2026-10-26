@@ -806,7 +806,7 @@ static std::pair<const aclTensor*, const aclTensor*> ProcessIndicesArch3510(cons
     int64_t row = linearIndex->GetViewShape().GetDim(0);
     if (row == 1) {
         FVector<int32_t> posIdxVec = {0};
-        auto posIdx = executor->ConvertToTensor(posIdxVec.data(), posIdxVec.size(), linearIndex->GetDataType());
+        auto posIdx = executor->ConvertToTensor(posIdxVec.data(), posIdxVec.size(), DataType::DT_INT32);
         return std::make_pair(linearIndex, posIdx);
     }
     auto sortResult = l0op::Sort(linearIndex, -1, false, true, op::DataType::DT_INT32, executor);
@@ -1043,9 +1043,19 @@ static const aclTensor* SortedIndexPutProcess(const aclTensor* selfCast, const a
     for (int64_t i = 0; i < static_cast<int64_t>(definedValueSize.size()); i++) {
         OP_LOGI("definedValueSize[%ld] = %ld", i, definedValueSize[i]);
     }
-    auto strideTensor = executor->ConvertToTensor(definedStride.data(), definedStride.size(), DataType::DT_INT32);
-    auto valueSizeTensor = executor->ConvertToTensor(definedValueSize.data(), definedValueSize.size(),
-                                                     DataType::DT_INT32);
+    // Both the dimension sizes and the resulting linear offsets must fit in the selected type.
+    // Even int32 indices can produce int64 offsets when indexing a large multi-dimensional tensor.
+    const bool useInt64 = selfCast->GetViewShape().GetShapeSize() > static_cast<int64_t>(INT32_MAX_LIMIT);
+    const auto metadataDtype = useInt64 ? DataType::DT_INT64 : DataType::DT_INT32;
+    auto strideTensor = executor->ConvertToTensor(definedStride.data(), definedStride.size(), metadataDtype);
+    auto valueSizeTensor = executor->ConvertToTensor(definedValueSize.data(), definedValueSize.size(), metadataDtype);
+    CHECK_RET(strideTensor != nullptr && valueSizeTensor != nullptr, nullptr);
+    if (useInt64) {
+        for (auto& index : definedIndices) {
+            index = l0op::Cast(index, DataType::DT_INT64, executor);
+            CHECK_RET(index != nullptr, nullptr);
+        }
+    }
 
     // Indices Broadcast
     auto ret = IndicesBroadcastUndeter(definedIndices, executor); // scalar tensor will be broadcast

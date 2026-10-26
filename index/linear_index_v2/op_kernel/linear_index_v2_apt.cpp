@@ -29,10 +29,12 @@ extern "C" __global__ __aicore__ void linear_index_v2(GM_ADDR indexList, GM_ADDR
     GET_TILING_DATA(tilingData, tiling);
     AscendC::TPipe pipe;
     if (TILING_KEY_IS(0)) {
-        LinearIndexSimtKernelV2<int64_t> op(indexList, stride, valueSize, output, workSpace, tilingData, pipe);
+        LinearIndexSimtKernelV2<int64_t, DTYPE_STRIDE> op(indexList, stride, valueSize, output, workSpace, tilingData,
+                                                          pipe);
         op.Process();
     } else if (TILING_KEY_IS(1)) {
-        LinearIndexSimtKernelV2<int32_t> op(indexList, stride, valueSize, output, workSpace, tilingData, pipe);
+        LinearIndexSimtKernelV2<int32_t, DTYPE_STRIDE> op(indexList, stride, valueSize, output, workSpace, tilingData,
+                                                          pipe);
         op.Process();
     }
 }
