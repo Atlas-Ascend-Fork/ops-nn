@@ -113,10 +113,6 @@ bool AdaptiveSlidingWindowMXBasicAPITiling::IsWithoutBatchTilingData() const
 
 bool AdaptiveSlidingWindowMXBasicAPITiling::IsHif4BlazeCapable() const
 {
-    // 暂时先让HIF4都走CMCT 等ops-tensor适配代码上库后放开118-120行
-    if (inputParams_.isHif4PerGroup) {
-        return false;
-    }
     // 9202 上 hif4 内核只实现 CMCT(basic) 路径，不消费 WithoutBatchTilingData，禁止走 blaze/without-batch
     if (inputParams_.isHif4PerGroup && compileInfo_.npuArch != NpuArch::DAV_9201) {
         return false;

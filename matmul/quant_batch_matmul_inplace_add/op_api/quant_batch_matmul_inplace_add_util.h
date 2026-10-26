@@ -48,6 +48,8 @@ constexpr size_t LAST_FIRST_DIM_INDEX = 1;
 constexpr size_t LAST_THIRD_DIM_INDEX = 3;
 constexpr int64_t MXFP_MULTI_BASE_SIZE = 2L;
 constexpr int64_t SPLIT_SIZE = 64L;
+constexpr int64_t HIF4_MULTI_BASE_SIZE = 1L;
+constexpr int64_t HIF4_GROUP_SIZE = 64L;
 
 static const int32_t GROUP_M_OFFSET = 32;
 static const int32_t GROUP_N_OFFSET = 16;

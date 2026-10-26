@@ -484,12 +484,6 @@ UT_STATIC __global__ __aicore__ void quant_batch_matmul_v3(GM_ADDR x1, GM_ADDR x
                              TPL_APILEVEL == TPL_API_LEVEL_BLAZE) {
             QUANT_BMMV3_MX_WITHOUT_BATCH_BLAZE_IMPL_CLASS(TeALayout, TeBLayoutNd, asc::te::nd_ext_layout_ptn,
                                                           Blaze::Gemm::A_FULL_LOAD_MODE);
-        } else if constexpr (TPL_KERNELTYPE == TPL_NO_VEC_EPILOGUE_WITH_MMAPI && TPL_APILEVEL == TPL_API_LEVEL_BLAZE) {
-            QUANT_BMMV3_MX_BLAZE_IMPL_CLASS(TeALayout, TeBLayoutNd, asc::te::nd_ext_layout_ptn, 0);
-        } else if constexpr (TPL_KERNELTYPE == TPL_NO_VEC_EPILOGUE_CUSTOM_GMTOAL1_WITH_MMAPI &&
-                             TPL_APILEVEL == TPL_API_LEVEL_BLAZE) {
-            QUANT_BMMV3_MX_BLAZE_IMPL_CLASS(TeALayout, TeBLayoutNd, asc::te::nd_ext_layout_ptn,
-                                            Blaze::Gemm::A_FULL_LOAD_MODE);
         }
 #endif
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)

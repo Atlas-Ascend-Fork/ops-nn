@@ -250,13 +250,14 @@ groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32.",
                     CUBE_INNER_ERR_REPORT(inputParams_.opName, "The perTokenScale shape check failed."), return false);
     OP_TILING_CHECK(!Hif4ScaleShapeCheck(scaleShape),
                     CUBE_INNER_ERR_REPORT(inputParams_.opName, "The scale shape check failed."), return false);
-    // hif4 场景下不支持 k 轴为 2
-    OP_TILING_CHECK(inputParams_.kSize == 2,
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName,
-                                          "When the dtype of input is HIFLOAT4, the K dimension must not be 2. Actual "
-                                          "x1 inner axis shape is [%ld], x2 inner axis shape is [%ld].",
-                                          dimValueOfMKN[0], dimValueOfMKN[2]),
-                    return false);
+    // hif4 场景下 K 需大于 2（与 aclnn/torch 接口约束一致，K<=2 时无法判断是否转置）
+    OP_TILING_CHECK(
+        inputParams_.kSize <= 2UL,
+        CUBE_INNER_ERR_REPORT(inputParams_.opName,
+                              "When the dtype of input is HIFLOAT4, the K dimension must be greater than 2. "
+                              "Actual x1 inner axis shape is [%ld], x2 inner axis shape is [%ld].",
+                              dimValueOfMKN[0], dimValueOfMKN[2]),
+        return false);
     OP_TILING_CHECK(
         (dimValueOfMKN[2] % 2 != 0 || dimValueOfMKN[0] % 2 != 0),
         CUBE_INNER_ERR_REPORT(inputParams_.opName,

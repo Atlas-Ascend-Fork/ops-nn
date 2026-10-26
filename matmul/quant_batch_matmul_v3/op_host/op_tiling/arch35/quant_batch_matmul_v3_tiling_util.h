@@ -137,6 +137,10 @@ inline uint64_t GetShapeWithDataType(uint64_t size, ge::DataType dtype)
         dtype == Ops::NN::DT_HIFLOAT4) {
         return size + size;
     }
+    if (dtype == Ops::NN::DT_HIFLOAT4_SCALE) {
+        // hif4_scale 为 4Byte
+        return size / HIF4_SCALE_BYTES;
+    }
     uint64_t dtypeSize = static_cast<uint64_t>(ge::GetSizeByDataType(dtype));
     return dtypeSize == 0UL ? 0UL : size / dtypeSize;
 }
@@ -146,6 +150,10 @@ inline uint64_t GetSizeWithDataType(uint64_t shape, ge::DataType dtype)
     if (dtype == ge::DT_FLOAT4_E2M1 || dtype == ge::DT_FLOAT4_E1M2 || dtype == ge::DT_INT4 ||
         dtype == Ops::NN::DT_HIFLOAT4) {
         return (shape + 1UL) >> 1UL;
+    }
+    if (dtype == Ops::NN::DT_HIFLOAT4_SCALE) {
+        // hif4_scale 为 4Byte
+        return shape * HIF4_SCALE_BYTES;
     }
     return shape * static_cast<uint64_t>(ge::GetSizeByDataType(dtype));
 }

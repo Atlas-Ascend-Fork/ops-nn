@@ -43,6 +43,7 @@ constexpr size_t LAST_SECOND_DIM_INDEX = 2;
 constexpr uint64_t GROUP_MKN_BIT_SIZE = 0xFFFF;
 constexpr uint64_t MXFP_BASEK_FACTOR = 64UL;
 constexpr uint64_t MXFP_MULTI_BASE_SIZE = 2UL;
+constexpr uint64_t HIF4_MULTI_BASE_SIZE = 1UL;
 
 } // namespace QuantBatchMatmulInplaceAddTilingConstant
 #endif

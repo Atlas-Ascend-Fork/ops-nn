@@ -28,6 +28,7 @@
 namespace optiling {
 
 constexpr uint64_t BASIC_ALIGN_16 = 16;
+constexpr uint64_t HIF4_SCALE_BYTES = 4UL;
 
 // QuantBatchMatmulV4 input index
 constexpr uint32_t X1_INDEX_V4 = 0;
@@ -228,9 +229,12 @@ protected:
     {
         if (dtype == ge::DT_INT4 || dtype == ge::DT_FLOAT4_E2M1 || dtype == Ops::NN::DT_HIFLOAT4) {
             return size + size;
-        } else {
-            return size / static_cast<T>(ge::GetSizeByDataType(dtype));
         }
+        if (dtype == Ops::NN::DT_HIFLOAT4_SCALE) {
+            // hif4_scale 为 4Byte
+            return size / static_cast<T>(HIF4_SCALE_BYTES);
+        }
+        return size / static_cast<T>(ge::GetSizeByDataType(dtype));
     }
 
     template <typename T>
@@ -238,9 +242,12 @@ protected:
     {
         if (dtype == ge::DT_FLOAT4_E2M1 || dtype == ge::DT_INT4 || dtype == Ops::NN::DT_HIFLOAT4) {
             return (shape + 1) >> 1;
-        } else {
-            return shape * static_cast<T>(ge::GetSizeByDataType(dtype));
         }
+        if (dtype == Ops::NN::DT_HIFLOAT4_SCALE) {
+            // hif4_scale 为 4Byte
+            return shape * static_cast<T>(HIF4_SCALE_BYTES);
+        }
+        return shape * static_cast<T>(ge::GetSizeByDataType(dtype));
     }
 
     static constexpr uint64_t MB_SIZE = 1024UL * 1024UL;

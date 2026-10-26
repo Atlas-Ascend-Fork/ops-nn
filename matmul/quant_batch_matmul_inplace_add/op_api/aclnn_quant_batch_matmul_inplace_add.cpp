@@ -27,6 +27,7 @@
 #include "matmul/common/op_host/log_format_util.h"
 #include "quant_batch_matmul_inplace_add.h"
 #include "../../quant_batch_matmul_v4/op_host/op_api/quant_matmul_common_check.h"
+#include "common/inc/op_host/op_const_def_nn.h"
 #include "util/math_util.h"
 
 using namespace op;
@@ -82,21 +83,24 @@ static aclnnStatus CheckFormat(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddP
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus IsMxQuantDim(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParams& params)
+static aclnnStatus CheckScaleQuantDim(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParams& params,
+                                      const char* quantMode)
 {
     auto x1ScaleDimNum = params.x1ScaleOptional->GetViewShape().GetDimNum();
     auto x2ScaleDimNum = params.x2Scale->GetViewShape().GetDimNum();
     if (x2ScaleDimNum != MX_X2_SCALE_DIM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
             "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "x2Scale", FormatString("%zuD", x2ScaleDimNum).c_str(),
-            FormatString("when the quantization mode is mx, the shape dim of x2Scale must be %zu", MX_X2_SCALE_DIM)
+            FormatString("when the quantization mode is %s, the shape dim of x2Scale must be %zu", quantMode,
+                         MX_X2_SCALE_DIM)
                 .c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (x1ScaleDimNum != MX_X1_SCALE_DIM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
             "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "x1Scale", FormatString("%zuD", x1ScaleDimNum).c_str(),
-            FormatString("when the quantization mode is mx, the shape dim of x1Scale must be %zu", MX_X1_SCALE_DIM)
+            FormatString("when the quantization mode is %s, the shape dim of x1Scale must be %zu", quantMode,
+                         MX_X1_SCALE_DIM)
                 .c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -177,9 +181,24 @@ static inline bool IsMicroScaling(const aclTensor* x1Scale, const aclTensor* x2S
            x2Scale->GetDataType() == op::DataType::DT_FLOAT8_E8M0;
 }
 
+static inline bool IsHif4Scaling(const aclTensor* x1Scale, const aclTensor* x2Scale)
+{
+    if (x1Scale == nullptr || x2Scale == nullptr) {
+        return false;
+    }
+    return x1Scale->GetDataType() == static_cast<op::DataType>(Ops::NN::DT_HIFLOAT4_SCALE) &&
+           x2Scale->GetDataType() == static_cast<op::DataType>(Ops::NN::DT_HIFLOAT4_SCALE);
+}
+
 static inline bool IsHiFloat8Input(const aclTensor* x1, const aclTensor* x2)
 {
     return x1->GetDataType() == op::DataType::DT_HIFLOAT8 && x2->GetDataType() == op::DataType::DT_HIFLOAT8;
+}
+
+static inline bool IsHiFloat4Input(const aclTensor* x1, const aclTensor* x2)
+{
+    return x1->GetDataType() == static_cast<op::DataType>(Ops::NN::DT_HIFLOAT4) &&
+           x2->GetDataType() == static_cast<op::DataType>(Ops::NN::DT_HIFLOAT4);
 }
 
 static bool CheckMKN(int64_t m, int64_t k, int64_t n)
@@ -203,6 +222,31 @@ static bool CheckMKN(int64_t m, int64_t k, int64_t n)
     return true;
 }
 
+static bool CheckMKN4HIF4(const aclTensor* x1, const aclTensor* x2, int64_t k)
+{
+    // hif4 内轴偶数校验
+    auto x1DimNum = x1->GetViewShape().GetDimNum();
+    auto x1InnerAxis = x1->GetViewShape().GetDim(x1DimNum - 1);
+    auto x2DimNum = x2->GetViewShape().GetDimNum();
+    auto x2InnerAxis = x2->GetViewShape().GetDim(x2DimNum - 1);
+    if (x1InnerAxis > 0 && x2InnerAxis > 0 &&
+        ((static_cast<uint64_t>(x1InnerAxis) & 1UL) != 0UL || (static_cast<uint64_t>(x2InnerAxis) & 1UL) != 0UL)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "x1 inner, x2 inner",
+            FormatString("%ld, %ld", x1InnerAxis, x2InnerAxis).c_str(),
+            "when the dtype of input is HIFLOAT4, the inner axis of x1 and x2 must be even");
+        return false;
+    }
+    // hif4 k轴大于2校验
+    if (k > 0 && k <= 2) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "k", std::to_string(k).c_str(),
+            "when the dtype of input is HIFLOAT4, the K dimension must be greater than 2");
+        return false;
+    }
+    return true;
+}
+
 static bool CheckGroupSize(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParams& params)
 {
     auto groupSize = params.groupSize;
@@ -211,11 +255,25 @@ static bool CheckGroupSize(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParam
     uint64_t groupSizeK = static_cast<uint64_t>(groupSize) & GROUP_MNK_BIT_SIZE;
     if (IsMicroScaling(params.x1ScaleOptional, params.x2Scale)) {
         if (groupSizeK != static_cast<uint64_t>(PERGROUP_GROUP_SIZE) || groupSizeM != 1UL || groupSizeN != 1UL) {
+            // 4295032864: assembled by groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32,
+            // i.e. groupSizeK = 32, groupSizeN = 1, groupSizeM = 1
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                 "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "groupSize, groupSizeM, groupSizeN, groupSizeK",
                 FormatString("%ld, %lu, %lu, %lu", groupSize, groupSizeM, groupSizeN, groupSizeK).c_str(),
                 "when the quantization mode is mx, groupSize must be 4295032864 and Torch API group_sizes must be [1, "
                 "1, 32]");
+            return false;
+        }
+    } else if (IsHif4Scaling(params.x1ScaleOptional, params.x2Scale)) {
+        if (groupSizeK != static_cast<uint64_t>(HIF4_GROUP_SIZE) || groupSizeM != 1UL || groupSizeN != 1UL) {
+            // 4295032896: assembled by groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32,
+            // i.e. groupSizeK = 64, groupSizeN = 1, groupSizeM = 1
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "groupSize, groupSizeM, groupSizeN, groupSizeK",
+                FormatString("%ld, %lu, %lu, %lu", groupSize, groupSizeM, groupSizeN, groupSizeK).c_str(),
+                "when the quantization mode is hif4, groupSize must be 4295032896 and Torch API group_sizes must be "
+                "[1, "
+                "1, 64]");
             return false;
         }
     } else if (groupSize != 0L) {
@@ -307,24 +365,54 @@ static aclnnStatus CheckMxScaleLastDim(const QBMMInplaceAdd::QuantBatchMatmulInp
     return ACLNN_SUCCESS;
 }
 
+static aclnnStatus CheckHif4ScaleLastDim(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParams& params)
+{
+    if (!IsHif4Scaling(params.x1ScaleOptional, params.x2Scale)) {
+        return ACLNN_SUCCESS;
+    }
+
+    auto scale1LastDimValue = params.x1ScaleOptional->GetViewShape().GetDim(MX_X1_SCALE_DIM - 1);
+    auto scale2LastDimValue = params.x2Scale->GetViewShape().GetDim(MX_X2_SCALE_DIM - 1);
+    if (scale1LastDimValue != HIF4_MULTI_BASE_SIZE) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "x1Scale",
+            op::ToString(params.x1ScaleOptional->GetViewShape()).GetString(),
+            FormatString("when the quantization mode is hif4, the last dimension of x1Scale must be %ld",
+                         HIF4_MULTI_BASE_SIZE)
+                .c_str());
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (scale2LastDimValue != HIF4_MULTI_BASE_SIZE) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "x2Scale",
+            op::ToString(params.x2Scale->GetViewShape()).GetString(),
+            FormatString("when the quantization mode is hif4, the last dimension of x2Scale must be %ld",
+                         HIF4_MULTI_BASE_SIZE)
+                .c_str());
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    return ACLNN_SUCCESS;
+}
+
 static void GetExpectedScaleShape(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParams& params,
                                   const MatmulShapeInfo& shapeInfo, op::Shape& x1ScaleExpectShape,
                                   op::Shape& x2ScaleExpectShape)
 {
-    if (!IsMicroScaling(params.x1ScaleOptional, params.x2Scale)) {
+    if (!(IsMicroScaling(params.x1ScaleOptional, params.x2Scale) ||
+          IsHif4Scaling(params.x1ScaleOptional, params.x2Scale))) {
         x1ScaleExpectShape = {1};
         x2ScaleExpectShape = {1};
         return;
     }
 
-    x1ScaleExpectShape = params.transposeX1 ? op::Shape{Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE), shapeInfo.mDim,
-                                                        MXFP_MULTI_BASE_SIZE} :
-                                              op::Shape{shapeInfo.mDim, Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE),
-                                                        MXFP_MULTI_BASE_SIZE};
-    x2ScaleExpectShape = params.transposeX2 ? op::Shape{shapeInfo.nDim, Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE),
-                                                        MXFP_MULTI_BASE_SIZE} :
-                                              op::Shape{Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE), shapeInfo.nDim,
-                                                        MXFP_MULTI_BASE_SIZE};
+    int64_t baseSize = IsHif4Scaling(params.x1ScaleOptional, params.x2Scale) ? HIF4_MULTI_BASE_SIZE :
+                                                                               MXFP_MULTI_BASE_SIZE;
+    x1ScaleExpectShape = params.transposeX1 ?
+                             op::Shape{Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE), shapeInfo.mDim, baseSize} :
+                             op::Shape{shapeInfo.mDim, Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE), baseSize};
+    x2ScaleExpectShape = params.transposeX2 ?
+                             op::Shape{shapeInfo.nDim, Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE), baseSize} :
+                             op::Shape{Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE), shapeInfo.nDim, baseSize};
 }
 
 static aclnnStatus CheckExpectedShapes(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParams& params,
@@ -395,7 +483,13 @@ static aclnnStatus CheckShape(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddPa
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "CheckMKN failed.");
         return ACLNN_ERR_PARAM_INVALID;
     }
+    if (IsHiFloat4Input(params.x1, params.x2) && !CheckMKN4HIF4(params.x1, params.x2, shapeInfo.kDim)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "CheckMKN4HIF4 failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_COND(CheckMxScaleLastDim(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "CheckMxScaleLastDim failed.");
+    CHECK_COND(CheckHif4ScaleLastDim(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
+               "CheckHif4ScaleLastDim failed.");
     return CheckExpectedShapes(params, shapeInfo);
 }
 
@@ -530,6 +624,34 @@ static aclnnStatus CheckHif8DtypeValid(const QBMMInplaceAdd::QuantBatchMatmulInp
     return ACLNN_SUCCESS;
 }
 
+static aclnnStatus CheckHif4DtypeValid(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParams& params)
+{
+    if (params.x1ScaleOptional->GetDataType() != static_cast<op::DataType>(Ops::NN::DT_HIFLOAT4_SCALE)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "x1Scale",
+            op::ToString(params.x1ScaleOptional->GetDataType()).GetString(),
+            "when the quantization mode is hif4, the dtype of x1Scale must be HIFLOAT4_SCALE");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.x2Scale->GetDataType() != static_cast<op::DataType>(Ops::NN::DT_HIFLOAT4_SCALE)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "x2Scale",
+            op::ToString(params.x2Scale->GetDataType()).GetString(),
+            "when the quantization mode is hif4, the dtype of x2Scale must be HIFLOAT4_SCALE");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!CheckType(params.yRef->GetDataType(), YREF_DTYPE_SUPPORT_LIST)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "yRef",
+                                              op::ToString(params.yRef->GetDataType()).GetString(),
+                                              FormatString("the dtype of yRef must be in dtype support list %s",
+                                                           op::ToString(YREF_DTYPE_SUPPORT_LIST).GetString())
+                                                  .c_str());
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    OP_LOGD("QuantBatchMatmulInplaceAdd CheckHif4DtypeValid success.");
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus CheckDtype(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParams& params)
 {
     auto x1Dtype = params.x1->GetDataType();
@@ -538,10 +660,22 @@ static aclnnStatus CheckDtype(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddPa
     auto x2ScaleDtype = params.x2Scale->GetDataType();
     if ((x1Dtype == DataType::DT_FLOAT8_E4M3FN || x1Dtype == DataType::DT_FLOAT8_E5M2) &&
         (x2Dtype == DataType::DT_FLOAT8_E4M3FN || x2Dtype == DataType::DT_FLOAT8_E5M2)) {
-        CHECK_COND(IsMxQuantDim(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Check IsMxQuantDim failed.");
+        CHECK_COND(CheckScaleQuantDim(params, "mx") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
+                   "Check CheckScaleQuantDim for mx failed.");
         return CheckMxfp8DtypeValid(params);
     } else if (IsHiFloat8Input(params.x1, params.x2)) {
         return CheckHif8DtypeValid(params);
+    } else if (IsHiFloat4Input(params.x1, params.x2)) {
+        if (GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_9201) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "x1, x2",
+                FormatString("%s, %s", op::ToString(x1Dtype).GetString(), op::ToString(x2Dtype).GetString()).c_str(),
+                "when the dtypes of x1 and x2 are HIFLOAT4, the current NpuArch must be DAV_9201");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        CHECK_COND(CheckScaleQuantDim(params, "hif4") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
+                   "Check CheckScaleQuantDim for hif4 failed.");
+        return CheckHif4DtypeValid(params);
     } else {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "x1, x2, x1Scale, x2Scale",
@@ -631,7 +765,7 @@ static inline bool InferGroupSize(QBMMInplaceAdd::QuantBatchMatmulInplaceAddPara
     auto inputSizeM = transX1 ? x1->GetViewShape().GetDim(x1DimNum - 1) :
                                 x1->GetViewShape().GetDim(x1DimNum - PENULTIMATE_DIM);
     int64_t scaleSizeM = 0;
-    if (IsMicroScaling(x1Scale, x2Scale)) {
+    if (IsMicroScaling(x1Scale, x2Scale) || IsHif4Scaling(x1Scale, x2Scale)) {
         scaleSizeM = x1Scale->GetViewShape().GetDim(transX1 ? 1 : 0);
     } else {
         scaleSizeM = transX1 ? x1Scale->GetViewShape().GetDim(x1ScaleDimNum - 1) :
@@ -644,6 +778,9 @@ static inline bool InferGroupSize(QBMMInplaceAdd::QuantBatchMatmulInplaceAddPara
     if (IsMicroScaling(x1Scale, x2Scale)) {
         scaleSizeK = x1Scale->GetViewShape().GetDim(transX1 ? 0 : 1) *
                      2; // when scale type is e8m0, scalex1 shape is [m, k/2, 2] or [k/2, m, 2]
+    } else if (IsHif4Scaling(x1Scale, x2Scale)) {
+        scaleSizeK = x1Scale->GetViewShape().GetDim(
+            transX1 ? 0 : 1); // when scale type is hif4_scale, scalex1 shape is [m, k, 1] or [k, m, 1]
     } else {
         scaleSizeK = transX1 ? x1Scale->GetViewShape().GetDim(x1ScaleDimNum - PENULTIMATE_DIM) :
                                x1Scale->GetViewShape().GetDim(x1ScaleDimNum - 1);
@@ -652,7 +789,7 @@ static inline bool InferGroupSize(QBMMInplaceAdd::QuantBatchMatmulInplaceAddPara
     auto inputSizeN = transX2 ? x2->GetViewShape().GetDim(x2DimNum - PENULTIMATE_DIM) :
                                 x2->GetViewShape().GetDim(x2DimNum - 1);
     int64_t scaleSizeN = 0;
-    if (IsMicroScaling(x1Scale, x2Scale)) {
+    if (IsMicroScaling(x1Scale, x2Scale) || IsHif4Scaling(x1Scale, x2Scale)) {
         scaleSizeN = x2Scale->GetViewShape().GetDim(transX2 ? 0 : 1);
     } else {
         scaleSizeN = transX2 ? x2Scale->GetViewShape().GetDim(x2ScaleDimNum - PENULTIMATE_DIM) :
@@ -707,12 +844,11 @@ static aclnnStatus aclnnQuantBatchMatmulInplaceAddGetWorkspaceSizeCommon(
     CHECK_RET(TensorContiguousProcess(params.x2, params.transposeX2, executor), ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(MxScaleContiguousProcess(params.x1ScaleOptional, executor), ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(MxScaleContiguousProcess(params.x2Scale, executor), ACLNN_ERR_INNER_NULLPTR);
+    auto ret = CheckParams(params);
+    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(InferGroupSize(params), ACLNN_ERR_PARAM_INVALID);
     OP_LOGD("Infer groupSize success. groupSize: %ld.", params.groupSize);
     CHECK_COND(CheckGroupSize(params), ACLNN_ERR_PARAM_INVALID, "CheckGroupSize failed.");
-    // 固定写法，参数检查
-    auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     MatmulShapeInfo shapeInfo = GetMatmulShapeInfo(params);
     if (shapeInfo.mDim == 0 || shapeInfo.nDim == 0) {
         OP_LOGD("aclnnQuantBatchMatmulInplaceAdd empty tensor m/n=0");

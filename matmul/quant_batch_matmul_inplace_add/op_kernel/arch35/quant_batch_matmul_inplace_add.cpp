@@ -20,6 +20,12 @@
 #include "quant_batch_matmul_inplace_add_tiling_data.h"
 #include "quant_batch_matmul_inplace_add_tiling_key.h"
 
+#if defined(DT_HIFLOAT4)
+#define QBMMIA_IS_HIF4 (ORIG_DTYPE_X1 == DT_HIFLOAT4 && ORIG_DTYPE_X2 == DT_HIFLOAT4)
+#else
+#define QBMMIA_IS_HIF4 false
+#endif
+
 #if defined(ORIG_DTYPE_X1) && defined(ORIG_DTYPE_X2) && defined(ORIG_DTYPE_X2_SCALE) && defined(DT_FLOAT8_E4M3FN) && \
     defined(DT_FLOAT8_E5M2) && defined(DT_FLOAT8_E8M0)
 #define QBMMIA_IS_MX                                                           \
@@ -39,13 +45,13 @@
 #if QBMMIA_IS_HIF8
 #include "qbmmia_cube_without_batch_tensor_api_blaze.h"
 #endif
-#if QBMMIA_IS_MX
+#if QBMMIA_IS_MX || QBMMIA_IS_HIF4
 #include "qbmmia_mx_without_batch_tensor_api_blaze.h"
 #endif
 
 using namespace AscendC;
 
-#if QBMMIA_IS_MX
+#if QBMMIA_IS_MX || QBMMIA_IS_HIF4
 #define QBMMIA_MX_WITHOUT_BATCH_DISPATCH(aLayout, bLayout, fullLoadMode)                                           \
     QbmmiaMxWithoutBatchTensorApiKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, aLayout, bLayout, asc::te::nd_ext_layout_ptn, \
                                         fullLoadMode>(x1, x2, x2_scale, x1_scale, y, &tilingData)
@@ -82,17 +88,17 @@ __global__ __aicore__ void quant_batch_matmul_inplace_add(GM_ADDR x1, GM_ADDR x2
 {
     AscendC::InitSocState();
     REGISTER_NONE_TILING;
-#if QBMMIA_IS_MX || QBMMIA_IS_HIF8
+#if QBMMIA_IS_MX || QBMMIA_IS_HIF8 || QBMMIA_IS_HIF4
     if constexpr (TPL_KERNEL_TYPE == TPL_NO_VEC_EPILOGUE_WITH_MMAPI_WITHOUT_BATCH) {
         GET_TILING_DATA_WITH_STRUCT(QMMIA::QbmmiaWithoutBatchTilingData, tilingData, tiling);
-#if QBMMIA_IS_MX
+#if QBMMIA_IS_MX || QBMMIA_IS_HIF4
         QBMMIA_MX_WITHOUT_BATCH_LAYOUT_DISPATCH(0);
 #else
         QBMMIA_CUBE_WITHOUT_BATCH_LAYOUT_DISPATCH(0);
 #endif
     } else if constexpr (TPL_KERNEL_TYPE == TPL_NO_VEC_EPILOGUE_CUSTOM_GMTOAL1_WITH_MMAPI_WITHOUT_BATCH) {
         GET_TILING_DATA_WITH_STRUCT(QMMIA::QbmmiaWithoutBatchTilingData, tilingData, tiling);
-#if QBMMIA_IS_MX
+#if QBMMIA_IS_MX || QBMMIA_IS_HIF4
         QBMMIA_MX_WITHOUT_BATCH_LAYOUT_DISPATCH(Blaze::Gemm::A_FULL_LOAD_MODE);
 #else
         QBMMIA_CUBE_WITHOUT_BATCH_LAYOUT_DISPATCH(Blaze::Gemm::A_FULL_LOAD_MODE);

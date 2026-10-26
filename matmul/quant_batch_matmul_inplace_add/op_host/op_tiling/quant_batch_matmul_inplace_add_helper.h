@@ -30,6 +30,13 @@ namespace optiling {
 using namespace QuantBatchMatmulInplaceAddTilingConstant;
 using Ops::NN::FormatString;
 
+// 早期 cann 版本未收录 HIFLOAT4_SCALE，DataTypeToSerialString 会退化为 UNDEFINED，统一兜底
+inline std::string ScaleDtypeToSerialString(const ge::DataType dtype)
+{
+    return dtype == Ops::NN::DT_HIFLOAT4_SCALE ? std::string("HIFLOAT4_SCALE") :
+                                                 ge::TypeUtils::DataTypeToSerialString(dtype);
+}
+
 template <typename BaseT>
 class QuantBatchMatmulInplaceAddHelper : public BaseT {
 public:
@@ -48,10 +55,13 @@ protected:
     const char* GetDefaultOpName() const override;
     bool IsFp8Dtype(const ge::DataType dtype) const;
     bool IsHiFloat8Dtype(const ge::DataType dtype) const;
-    bool IsMxQuant() const;
+    bool IsHiFloat4Dtype(const ge::DataType dtype) const;
+    bool IsMxBasicApiCapable() const;
     bool IsHiFloat8TTQuant() const;
     bool CheckParamsForMxQuant(const gert::Shape& x1ScaleShape, const gert::Shape& x2ScaleShape) const;
+    bool CheckParamsForHif4Quant(const gert::Shape& x1ScaleShape, const gert::Shape& x2ScaleShape) const;
     bool CheckParamsForPerTensorQuant(const gert::Shape& x1ScaleShape, const gert::Shape& x2ScaleShape) const;
+    bool CheckScaleDtype(const char* inputDtypeDesc, ge::DataType expectedScaleDtype) const;
     bool CheckShapeVaild(const gert::Shape& x1Shape, const gert::Shape& x2Shape) const;
     bool InitMatmulSize(const gert::Shape& x1Shape, const gert::Shape& x2Shape);
     bool ValidateQuantParams(const gert::Shape& x1ScaleShape, const gert::Shape& scaleShape);
@@ -105,6 +115,9 @@ bool QuantBatchMatmulInplaceAddHelper<BaseT>::ValidateQuantParams(const gert::Sh
 {
     if (this->inputParams_.scaleDtype == ge::DT_FLOAT8_E8M0) {
         return CheckParamsForMxQuant(x1ScaleShape, scaleShape);
+    }
+    if (this->inputParams_.scaleDtype == Ops::NN::DT_HIFLOAT4_SCALE) {
+        return CheckParamsForHif4Quant(x1ScaleShape, scaleShape);
     }
     return CheckParamsForPerTensorQuant(x1ScaleShape, scaleShape);
 }
@@ -172,6 +185,7 @@ bool QuantBatchMatmulInplaceAddHelper<BaseT>::AnalyzeDtype()
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(this->inputParams_.opName, "output", "null", "output can not be null"),
         return false);
     this->inputParams_.cDtype = outDesc->GetDataType();
+    this->SetFormat();
     return CheckDtype();
 }
 
@@ -188,11 +202,19 @@ bool QuantBatchMatmulInplaceAddHelper<BaseT>::IsHiFloat8Dtype(const ge::DataType
 }
 
 template <typename BaseT>
-bool QuantBatchMatmulInplaceAddHelper<BaseT>::IsMxQuant() const
+bool QuantBatchMatmulInplaceAddHelper<BaseT>::IsHiFloat4Dtype(const ge::DataType dtype) const
 {
-    return IsFp8Dtype(this->inputParams_.aDtype) && IsFp8Dtype(this->inputParams_.bDtype) &&
-           this->inputParams_.scaleDtype == ge::DT_FLOAT8_E8M0 &&
-           this->inputParams_.perTokenScaleDtype == ge::DT_FLOAT8_E8M0 && this->inputParams_.isMxPerGroup;
+    return dtype == Ops::NN::DT_HIFLOAT4;
+}
+
+template <typename BaseT>
+bool QuantBatchMatmulInplaceAddHelper<BaseT>::IsMxBasicApiCapable() const
+{
+    const bool isMxfp8 = IsFp8Dtype(this->inputParams_.aDtype) && IsFp8Dtype(this->inputParams_.bDtype) &&
+                         this->inputParams_.isMxPerGroup;
+    const bool isHif4 = this->inputParams_.isHif4PerGroup && IsHiFloat4Dtype(this->inputParams_.aDtype) &&
+                        IsHiFloat4Dtype(this->inputParams_.bDtype);
+    return isMxfp8 || isHif4;
 }
 
 template <typename BaseT>
@@ -201,6 +223,24 @@ bool QuantBatchMatmulInplaceAddHelper<BaseT>::IsHiFloat8TTQuant() const
     return IsHiFloat8Dtype(this->inputParams_.aDtype) && IsHiFloat8Dtype(this->inputParams_.bDtype) &&
            this->inputParams_.scaleDtype == ge::DT_FLOAT && this->inputParams_.perTokenScaleDtype == ge::DT_FLOAT &&
            this->inputParams_.isDoubleScale && this->inputParams_.isPerTensor;
+}
+
+template <typename BaseT>
+bool QuantBatchMatmulInplaceAddHelper<BaseT>::CheckScaleDtype(const char* inputDtypeDesc,
+                                                              ge::DataType expectedScaleDtype) const
+{
+    std::string reason = FormatString("when the dtype of x1 and x2 is %s, the dtype of x1Scale and x2Scale must be %s",
+                                      inputDtypeDesc, ScaleDtypeToSerialString(expectedScaleDtype).c_str());
+    OP_CHECK_IF(this->inputParams_.scaleDtype != expectedScaleDtype ||
+                    this->inputParams_.perTokenScaleDtype != expectedScaleDtype,
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    this->inputParams_.opName, "x1Scale, x2Scale",
+                    FormatString("%s, %s", ScaleDtypeToSerialString(this->inputParams_.perTokenScaleDtype).c_str(),
+                                 ScaleDtypeToSerialString(this->inputParams_.scaleDtype).c_str())
+                        .c_str(),
+                    reason.c_str()),
+                return false);
+    return true;
 }
 
 template <typename BaseT>
@@ -220,42 +260,30 @@ bool QuantBatchMatmulInplaceAddHelper<BaseT>::CheckDtype() const
                                                    .c_str(),
                                                "transposeX1 must be true and transposeX2 must be false"),
         return false);
-    bool isFp8 = IsFp8Dtype(this->inputParams_.aDtype) && IsFp8Dtype(this->inputParams_.bDtype);
-    bool isHiFloat8 = IsHiFloat8Dtype(this->inputParams_.aDtype) && IsHiFloat8Dtype(this->inputParams_.bDtype);
+    const bool isFp8 = IsFp8Dtype(this->inputParams_.aDtype) && IsFp8Dtype(this->inputParams_.bDtype);
+    const bool isHiFloat8 = IsHiFloat8Dtype(this->inputParams_.aDtype) && IsHiFloat8Dtype(this->inputParams_.bDtype);
+    const bool isHiFloat4 = IsHiFloat4Dtype(this->inputParams_.aDtype) && IsHiFloat4Dtype(this->inputParams_.bDtype);
     if (isFp8) {
-        OP_CHECK_IF(
-            this->inputParams_.scaleDtype != ge::DT_FLOAT8_E8M0 ||
-                this->inputParams_.perTokenScaleDtype != ge::DT_FLOAT8_E8M0,
-            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-                this->inputParams_.opName, "x1Scale, x2Scale",
-                FormatString("%s, %s",
-                             ge::TypeUtils::DataTypeToSerialString(this->inputParams_.perTokenScaleDtype).c_str(),
-                             ge::TypeUtils::DataTypeToSerialString(this->inputParams_.scaleDtype).c_str())
-                    .c_str(),
-                "when the dtype of x1 and x2 is FLOAT8_E4M3FN/FLOAT8_E5M2, the dtype of x1Scale and x2Scale must be "
-                "FLOAT8_E8M0"),
-            return false);
-    } else if (isHiFloat8) {
-        OP_CHECK_IF(
-            this->inputParams_.scaleDtype != ge::DT_FLOAT || this->inputParams_.perTokenScaleDtype != ge::DT_FLOAT,
-            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-                this->inputParams_.opName, "x1Scale, x2Scale",
-                FormatString("%s, %s",
-                             ge::TypeUtils::DataTypeToSerialString(this->inputParams_.perTokenScaleDtype).c_str(),
-                             ge::TypeUtils::DataTypeToSerialString(this->inputParams_.scaleDtype).c_str())
-                    .c_str(),
-                "when the dtype of x1 and x2 is HIFLOAT8, the dtype of x1Scale and x2Scale must be FLOAT"),
-            return false);
-    } else {
-        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-            this->inputParams_.opName, "x1, x2",
-            FormatString("%s, %s", ge::TypeUtils::DataTypeToSerialString(this->inputParams_.aDtype).c_str(),
-                         ge::TypeUtils::DataTypeToSerialString(this->inputParams_.bDtype).c_str())
-                .c_str(),
-            "the dtypes of x1 and x2 must both be FLOAT8_E4M3FN/FLOAT8_E5M2 or both be HIFLOAT8");
-        return false;
+        return CheckScaleDtype("FLOAT8_E4M3FN/FLOAT8_E5M2", ge::DT_FLOAT8_E8M0);
     }
-    return true;
+    if (isHiFloat8) {
+        return CheckScaleDtype("HIFLOAT8", ge::DT_FLOAT);
+    }
+    if (isHiFloat4 && this->compileInfo_.npuArch == NpuArch::DAV_9201) {
+        return CheckScaleDtype("HIFLOAT4", Ops::NN::DT_HIFLOAT4_SCALE);
+    }
+    const char* supportedDtypes = this->compileInfo_.npuArch == NpuArch::DAV_9201 ?
+                                      "the dtypes of x1 and x2 must both be FLOAT8_E4M3FN/FLOAT8_E5M2, both be "
+                                      "HIFLOAT8 or both be HIFLOAT4" :
+                                      "the dtypes of x1 and x2 must both be FLOAT8_E4M3FN/FLOAT8_E5M2 or both be "
+                                      "HIFLOAT8";
+    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+        this->inputParams_.opName, "x1, x2",
+        FormatString("%s, %s", ge::TypeUtils::DataTypeToSerialString(this->inputParams_.aDtype).c_str(),
+                     ge::TypeUtils::DataTypeToSerialString(this->inputParams_.bDtype).c_str())
+            .c_str(),
+        supportedDtypes);
+    return false;
 }
 
 template <typename BaseT>
@@ -325,6 +353,97 @@ bool QuantBatchMatmulInplaceAddHelper<BaseT>::CheckParamsForMxQuant(const gert::
                                  expectedKDimValue, this->inputParams_.mSize)
                         .c_str()),
                 return false);
+    return true;
+}
+
+template <typename BaseT>
+bool QuantBatchMatmulInplaceAddHelper<BaseT>::CheckParamsForHif4Quant(const gert::Shape& x1ScaleShape,
+                                                                      const gert::Shape& x2ScaleShape) const
+{
+    auto x1ScaleDimNum = x1ScaleShape.GetDimNum();
+    auto x2ScaleDimNum = x2ScaleShape.GetDimNum();
+    OP_CHECK_IF(x1ScaleDimNum != MX_X1_SCALE_DIM,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    this->inputParams_.opName, "x1Scale", FormatString("%zuD", x1ScaleDimNum).c_str(),
+                    "when the quantization mode is hif4, the shape dim of x1Scale must be 3"),
+                return false);
+    OP_CHECK_IF(x2ScaleDimNum != MX_X2_SCALE_DIM,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    this->inputParams_.opName, "x2Scale", FormatString("%zuD", x2ScaleDimNum).c_str(),
+                    "when the quantization mode is hif4, the shape dim of x2Scale must be 3"),
+                return false);
+    auto x2ScaleNDim = static_cast<uint64_t>(this->inputParams_.transB ? x2ScaleShape.GetDim(0) :
+                                                                         x2ScaleShape.GetDim(1));
+    auto x2ScaleKDim = static_cast<uint64_t>(this->inputParams_.transB ? x2ScaleShape.GetDim(1) :
+                                                                         x2ScaleShape.GetDim(0));
+    auto x1ScaleMDim = static_cast<uint64_t>(this->inputParams_.transA ? x1ScaleShape.GetDim(1) :
+                                                                         x1ScaleShape.GetDim(0));
+    auto x1ScaleKDim = static_cast<uint64_t>(this->inputParams_.transA ? x1ScaleShape.GetDim(0) :
+                                                                         x1ScaleShape.GetDim(1));
+    auto x1ScaleLastDim = static_cast<uint64_t>(x1ScaleShape.GetDim(MX_X1_SCALE_DIM - 1));
+    auto x2ScaleLastDim = static_cast<uint64_t>(x2ScaleShape.GetDim(MX_X2_SCALE_DIM - 1));
+    auto expectedKDimValue = ops::CeilDiv(this->inputParams_.kSize, MXFP_BASEK_FACTOR);
+    // x2Scale [ceil(k, 64), n, 1]
+    OP_CHECK_IF(x2ScaleKDim != expectedKDimValue || x2ScaleNDim != this->inputParams_.nSize ||
+                    x2ScaleLastDim != HIF4_MULTI_BASE_SIZE,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    this->inputParams_.opName, "x2Scale",
+                    FormatString("[%lu, %lu, %lu]", x2ScaleKDim, x2ScaleNDim, x2ScaleLastDim).c_str(),
+                    FormatString("when the quantization mode is hif4pergroup, the shape of x2Scale must be "
+                                 "[%lu, %lu, 1]",
+                                 expectedKDimValue, this->inputParams_.nSize)
+                        .c_str()),
+                return false);
+    // x1Scale [ceil(k, 64), m, 1]
+    OP_CHECK_IF(x1ScaleMDim != this->inputParams_.mSize || x1ScaleKDim != expectedKDimValue ||
+                    x1ScaleLastDim != HIF4_MULTI_BASE_SIZE,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    this->inputParams_.opName, "x1Scale",
+                    FormatString("[%lu, %lu, %lu]", x1ScaleKDim, x1ScaleMDim, x1ScaleLastDim).c_str(),
+                    FormatString("when the quantization mode is hif4pergroup, the shape of x1Scale must be "
+                                 "[%lu, %lu, 1]",
+                                 expectedKDimValue, this->inputParams_.mSize)
+                        .c_str()),
+                return false);
+
+    // groupsizeM N K [1 1 64]
+    OP_CHECK_IF(
+        this->inputParams_.groupSizeM != 1ULL || this->inputParams_.groupSizeN != 1ULL ||
+            this->inputParams_.groupSizeK != MXFP_BASEK_FACTOR,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            this->inputParams_.opName, "groupSizeM groupSizeN groupSizeK",
+            FormatString("[%lu, %lu, %lu]", this->inputParams_.groupSizeM, this->inputParams_.groupSizeN,
+                         this->inputParams_.groupSizeK)
+                .c_str(),
+            "when the quantization mode is hif4pergroup, the groupSizeM, groupSizeN, groupSizeK must be [1, 1, 64]"),
+        return false);
+
+    // k > 2, 否则torch通路没法判断是否转置
+    if (this->inputParams_.kSize <= 2UL) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            this->inputParams_.opName, "k", std::to_string(this->inputParams_.kSize).c_str(),
+            "when the dtype of input is HIFLOAT4, the K dimension must be greater than 2");
+        return false;
+    }
+
+    // 内轴为偶数, 因为只支持transA True, transB False, 所以内轴是m和n
+    OP_TILING_CHECK(this->inputParams_.mSize % 2 != 0 || this->inputParams_.nSize % 2 != 0,
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                        this->inputParams_.opName, "x1 inner, x2 inner",
+                        FormatString("%lu, %lu", this->inputParams_.mSize, this->inputParams_.nSize).c_str(),
+                        "when the dtype of input is HIFLOAT4, the inner axis of x1 and x2 must be an even number"),
+                    return false);
+
+    // 只支持ND ND
+    OP_TILING_CHECK(
+        this->inputParams_.aFormat != ge::Format::FORMAT_ND || this->inputParams_.bFormat != ge::Format::FORMAT_ND,
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+            this->inputParams_.opName, "x1, x2",
+            FormatString("%s, %s", ge::TypeUtils::FormatToSerialString(this->inputParams_.aFormat).c_str(),
+                         ge::TypeUtils::FormatToSerialString(this->inputParams_.bFormat).c_str())
+                .c_str(),
+            "when the dtype of input is HIFLOAT4, the format of x1 and x2 must be ND"),
+        return false);
     return true;
 }
 

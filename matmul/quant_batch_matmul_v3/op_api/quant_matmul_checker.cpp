@@ -238,6 +238,8 @@ static inline bool CheckMxGroupSize(int64_t groupSize, const GroupSizeMNK& group
 {
     if (groupSizeMnk.k != static_cast<uint64_t>(PERGROUP_GROUP_SIZE) || groupSizeMnk.m != 1ULL ||
         groupSizeMnk.n != 1ULL) {
+        // 4295032864: assembled by groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32,
+        // i.e. groupSizeK = 32, groupSizeN = 1, groupSizeM = 1
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             apiName, "groupSize, groupSizeM, groupSizeN, groupSizeK",
             FormatString("%ld, %lu, %lu, %lu", groupSize, groupSizeMnk.m, groupSizeMnk.n, groupSizeMnk.k).c_str(),
@@ -251,6 +253,8 @@ static inline bool CheckMxGroupSize(int64_t groupSize, const GroupSizeMNK& group
 static inline bool CheckHif4GroupSize(int64_t groupSize, const GroupSizeMNK& groupSizeMnk, const char* apiName)
 {
     if (groupSizeMnk.k != static_cast<uint64_t>(HIFP4_GROUP_SIZE) || groupSizeMnk.m != 1ULL || groupSizeMnk.n != 1ULL) {
+        // 4295032896: assembled by groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32,
+        // i.e. groupSizeK = 64, groupSizeN = 1, groupSizeM = 1
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             apiName, "groupSize, groupSizeM, groupSizeN, groupSizeK",
             FormatString("%ld, %lu, %lu, %lu", groupSize, groupSizeMnk.m, groupSizeMnk.n, groupSizeMnk.k).c_str(),

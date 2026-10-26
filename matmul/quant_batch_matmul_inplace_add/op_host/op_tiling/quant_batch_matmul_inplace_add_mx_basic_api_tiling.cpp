@@ -16,12 +16,14 @@
 #include "quant_batch_matmul_inplace_add_mx_basic_api_tiling.h"
 #include "op_host/tiling_templates_registry.h"
 #include "../../op_kernel/arch35/quant_batch_matmul_inplace_add_tiling_key.h"
+#include "../../../quant_batch_matmul_v3/op_host/op_tiling/arch35/quant_batch_matmul_v3_tiling_util.h"
 
 using namespace QuantBatchMatmulInplaceAddArch35TilingKey;
 
 namespace {
 constexpr int32_t MX_BASIC_API_TILING_PRIORITY = 0;
-const std::vector<int32_t> supportedNpuArch = {static_cast<int32_t>(NpuArch::DAV_3510)};
+const std::vector<int32_t> supportedNpuArch = {static_cast<int32_t>(NpuArch::DAV_3510),
+                                               static_cast<int32_t>(NpuArch::DAV_9201)};
 } // namespace
 
 namespace optiling {
@@ -38,7 +40,10 @@ void QuantBatchMatmulInplaceAddMXBasicAPITiling::Reset()
     tilingDataSize_ = sizeof(QMMIA::QbmmiaWithoutBatchTilingData);
 }
 
-bool QuantBatchMatmulInplaceAddMXBasicAPITiling::IsCapable() { return IsMxQuant() && inputParams_.batchC == 1UL; }
+bool QuantBatchMatmulInplaceAddMXBasicAPITiling::IsCapable()
+{
+    return IsMxBasicApiCapable() && inputParams_.batchC == 1UL;
+}
 
 const void* QuantBatchMatmulInplaceAddMXBasicAPITiling::GetTilingData() const { return &withoutBatchTilingData_; }
 
@@ -53,6 +58,14 @@ ge::graphStatus QuantBatchMatmulInplaceAddMXBasicAPITiling::DoLibApiTiling()
     auto ret = AdaptiveSlidingWindowMXBasicAPITiling::DoLibApiTiling();
     if (ret != ge::GRAPH_SUCCESS) {
         return ret;
+    }
+    // TE HIF4新方案合入并且适配后放开，如果未命中QBMMV3中BLAZE tiling
+    // 基类不会生成 withoutBatch 数据，直接报错避免下发全零 tiling。
+    if (inputParams_.isHif4PerGroup && basicTiling_.baseK % (qmmv3_tiling_const::MXFP_DIVISOR_SIZE * 2UL) != 0UL) {
+        CUBE_INNER_ERR_REPORT(inputParams_.opName,
+                              "When the dtype of x1 and x2 is HIFLOAT4, baseK[%u] must be an even multiple of 64.",
+                              basicTiling_.baseK);
+        return ge::GRAPH_FAILED;
     }
     UpdateTilingData();
     return ge::GRAPH_SUCCESS;

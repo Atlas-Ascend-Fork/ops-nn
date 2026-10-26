@@ -15,7 +15,7 @@ add_all_modules_sources(
 
 add_kernel_sources(
     KERNEL_SRC arch35/quant_batch_matmul_inplace_add.cpp
-    COMPUTE_UNITS ascend950 ascend350
+    COMPUTE_UNITS ascend950 ascend350 ascend960dt
     AUTO_SYNC false
 )
 
