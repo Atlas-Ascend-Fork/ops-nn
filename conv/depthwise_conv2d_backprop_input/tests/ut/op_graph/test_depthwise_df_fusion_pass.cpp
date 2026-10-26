@@ -556,3 +556,74 @@ TEST_F(DepthwiseDfFusionPassTest, staticDInputSizeAttrPropagated)
     EXPECT_EQ(pass.Run(graphBuilt, ctx), SUCCESS);
     EXPECT_TRUE(CheckNodeExists(graphBuilt, "Conv2DBackpropInputD"));
 }
+
+TEST_F(DepthwiseDfFusionPassTest, nonArch35FilterNegativeDimFail)
+{
+    SetPlatform("Ascend910_93");
+    auto builder = EsGraphBuilder("nonArch35FilterNegativeDimFail");
+    auto filter = builder.CreateInput(0, "filter", DT_FLOAT16, FORMAT_HWCN, {3, -1, 64, 32});
+    auto outBackprop = builder.CreateInput(1, "out_backprop", DT_FLOAT16, FORMAT_NCHW, {2, 64, 16, 16});
+
+    auto y = CreateDepthwiseConv2DBpInputDNode(builder, "DepthwiseConv2DBackpropInputD", filter, outBackprop,
+                                               {1, 1, 2, 2}, {0, 0, 1, 1}, {1, 1, 1, 1}, 64, "NCHW", DT_FLOAT16,
+                                               {2, 64, 32, 32}, FORMAT_NCHW);
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::DepthwiseDfFusionPass pass({AscendString("DepthwiseConv2DBackpropInputD")});
+    EXPECT_EQ(pass.Run(graph, ctx), GRAPH_NOT_CHANGED);
+    EXPECT_FALSE(CheckNodeExists(graph, "TransposeD"));
+    EXPECT_FALSE(CheckNodeExists(graph, "Reshape"));
+}
+
+TEST_F(DepthwiseDfFusionPassTest, nonArch35DynamicFilterNegativeDimFail)
+{
+    SetPlatform("Ascend910_93");
+    auto builder = EsGraphBuilder("nonArch35DynamicFilterNegativeDimFail");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT32, FORMAT_ND, {4});
+    auto filter = builder.CreateInput(1, "filter", DT_FLOAT16, FORMAT_NCHW, {32, 1, -1, 3});
+    auto outBackprop = builder.CreateInput(2, "out_backprop", DT_FLOAT16, FORMAT_NCHW, {2, 64, 16, 16});
+
+    auto y = CreateDepthwiseConv2DBpInputNode(builder, "DepthwiseConv2DBackpropInput", inputSize, filter, outBackprop,
+                                              {1, 1, 2, 2}, {0, 0, 1, 1}, {1, 1, 1, 1}, 64, "NCHW", DT_FLOAT16,
+                                              {2, 64, 32, 32}, FORMAT_NCHW);
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::DepthwiseDfFusionPass pass({AscendString("DepthwiseConv2DBackpropInput")});
+    EXPECT_EQ(pass.Run(graph, ctx), GRAPH_NOT_CHANGED);
+    EXPECT_FALSE(CheckNodeExists(graph, "TransposeD"));
+    EXPECT_FALSE(CheckNodeExists(graph, "Reshape"));
+}
+
+TEST_F(DepthwiseDfFusionPassTest, staticDInputSizeAttrForwardSuccess)
+{
+    SetPlatform("Ascend910_93");
+    auto builder = EsGraphBuilder("staticDInputSizeAttrForwardSuccess");
+    auto filter = builder.CreateInput(0, "filter", DT_FLOAT16, FORMAT_NCHW, {32, 1, 3, 3});
+    auto outBackprop = builder.CreateInput(1, "out_backprop", DT_FLOAT16, FORMAT_NCHW, {2, 32, 16, 16});
+
+    auto y = CreateDepthwiseConv2DBpInputDNode(builder, "DepthwiseConv2DBackpropInputD", filter, outBackprop,
+                                               {1, 1, 2, 2}, {0, 0, 1, 1}, {1, 1, 1, 1}, 32, "NCHW", DT_FLOAT16,
+                                               {2, 32, 32, 32}, FORMAT_NCHW);
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::DepthwiseDfFusionPass pass({AscendString("DepthwiseConv2DBackpropInputD")});
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+
+    bool checked = false;
+    const std::string targetType = "DepthwiseConv2DBackpropInputD";
+    for (auto node : graph->GetAllNodes()) {
+        AscendString nodeType;
+        node.GetType(nodeType);
+        if (nodeType.GetString() != targetType) {
+            continue;
+        }
+        std::vector<int64_t> inputSize;
+        EXPECT_EQ(node.GetAttr("input_size", inputSize), GRAPH_SUCCESS);
+        EXPECT_EQ(inputSize, (std::vector<int64_t>{2, 32, 32, 32}));
+        checked = true;
+    }
+    EXPECT_TRUE(checked);
+}

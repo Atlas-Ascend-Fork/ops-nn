@@ -144,6 +144,129 @@ static bool GetFilterCnDimIndex(const ge::Format& format, size_t dimNum, size_t&
     return true;
 }
 
+// input_size的const数据在编译期不可见(动态图)时，把结构上可确定的维度填回，其余维度保持-1交给运行时
+ge::graphStatus PartialInferInputShapeWhenConstInvisible(gert::InferShapeContext* context, size_t filter_index,
+                                                         int64_t channel_multiplier)
+{
+    const auto op_name = context->GetNodeName();
+    auto y_shape = context->GetOutputShape(0);
+    OP_CHECK_IF(y_shape == nullptr, CUBE_INNER_ERR_REPORT(op_name, "Get %s failed", "y shape"),
+                return ge::GRAPH_FAILED);
+    // 仅在输出全未知(const不可见)时补推；const可见或已部分推导的场景直接返回
+    bool allUnknown = true;
+    for (size_t idx = 0; idx < y_shape->GetDimNum(); ++idx) {
+        if (y_shape->GetDim(idx) >= 0) {
+            allUnknown = false;
+            break;
+        }
+    }
+    if (!allUnknown) {
+        return ge::GRAPH_SUCCESS;
+    }
+
+    const auto y_desc = context->GetOutputDesc(0);
+    OP_CHECK_IF(y_desc == nullptr, CUBE_INNER_ERR_REPORT(op_name, "Get %s failed", "y desc"), return ge::GRAPH_FAILED);
+    size_t yCIdx = 0;
+    size_t yNIdx = 0;
+    if (!GetFilterCnDimIndex(y_desc->GetOriginFormat(), y_shape->GetDimNum(), yCIdx, yNIdx)) {
+        return ge::GRAPH_SUCCESS;
+    }
+
+    // y的C维 = filter的C维 * channel_multiplier
+    const auto filter_desc = context->GetInputDesc(filter_index);
+    const auto filter_shape = context->GetInputShape(filter_index);
+    if (filter_desc == nullptr || filter_shape == nullptr) {
+        return ge::GRAPH_SUCCESS;
+    }
+    size_t filterCIdx = 0;
+    size_t filterNIdx = 0;
+    if (Ops::Base::IsUnknownRank(*filter_shape) ||
+        !GetFilterCnDimIndex(filter_desc->GetOriginFormat(), filter_shape->GetDimNum(), filterCIdx, filterNIdx)) {
+        return ge::GRAPH_SUCCESS;
+    }
+    const int64_t filterC = filter_shape->GetDim(filterCIdx);
+    if (filterC > 0 && channel_multiplier > 0) {
+        y_shape->SetDim(yCIdx, filterC * channel_multiplier);
+    }
+
+    OP_LOGD(op_name, "partial inferred y_shape: %s", Ops::Base::ToString(*y_shape).c_str());
+    return ge::GRAPH_SUCCESS;
+}
+
+// InferShapeRange注册：对齐1.0 InferConv2dBpInputOutShapeRange的range语义。
+// 动态维下界N=0、D/H/W=1(有效卷积语义)，C维由filter的C维*channel_multiplier收敛，
+// shape静态维保持[v,v]；避免下游动态apt实现拿到[-1,-1]退化range被para_check拒绝
+ge::graphStatus InferShapeRangeForConvBackprop(gert::InferShapeRangeContext* context, size_t filter_index,
+                                               int64_t channel_multiplier)
+{
+    auto y_range = context->GetOutputShapeRange(0);
+    OP_CHECK_IF(y_range == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "Get %s failed", "y range"),
+                return ge::GRAPH_FAILED);
+    auto y_min = y_range->GetMin();
+    auto y_max = y_range->GetMax();
+    OP_CHECK_IF(y_min == nullptr || y_max == nullptr,
+                CUBE_INNER_ERR_REPORT(context->GetNodeName(), "Get %s failed", "y range min/max"),
+                return ge::GRAPH_FAILED);
+
+    const auto filter_range = context->GetInputShapeRange(filter_index);
+    const auto filter_desc = context->GetInputDesc(filter_index);
+    int64_t filterC = UNKNOWN_SHAPE_DIM;
+    if (filter_range != nullptr && filter_range->GetMin() != nullptr && filter_desc != nullptr) {
+        size_t filterCIdx = 0;
+        size_t filterNIdx = 0;
+        if (GetFilterCnDimIndex(filter_desc->GetOriginFormat(), filter_range->GetMin()->GetDimNum(), filterCIdx,
+                                filterNIdx)) {
+            filterC = filter_range->GetMin()->GetDim(filterCIdx);
+        }
+    }
+
+    // min未初始化为当前shape时(如faker场景)，以filter维数起步(2D filter 4维/3D filter 5维与y一致)
+    size_t dimNum = y_min->GetDimNum();
+    if (dimNum == 0) {
+        if (filter_range == nullptr || filter_range->GetMin() == nullptr ||
+            filter_range->GetMin()->GetDimNum() < kConv2dDimSizeLimit) {
+            return ge::GRAPH_SUCCESS;
+        }
+        dimNum = filter_range->GetMin()->GetDimNum();
+        y_min->SetDimNum(dimNum);
+        y_max->SetDimNum(dimNum);
+        for (size_t idx = 0; idx < dimNum; ++idx) {
+            y_min->SetDim(idx, UNKNOWN_SHAPE_DIM);
+        }
+    }
+
+    const auto y_desc = context->GetOutputDesc(0);
+    if (y_desc == nullptr) {
+        return ge::GRAPH_SUCCESS;
+    }
+    size_t nIdx = 0;
+    size_t cIdx = 0;
+    if (!GetFilterCnDimIndex(y_desc->GetOriginFormat(), dimNum, cIdx, nIdx)) {
+        return ge::GRAPH_SUCCESS;
+    }
+
+    // C维 = filter的C维 * channel_multiplier，filter的C维未知时保持-1
+    const int64_t cDim = (filterC > 0 && channel_multiplier > 0) ? filterC * channel_multiplier : UNKNOWN_SHAPE_DIM;
+
+    for (size_t idx = 0; idx < dimNum; ++idx) {
+        const int64_t cur = y_min->GetDim(idx);
+        if (cur >= 0) {
+            y_min->SetDim(idx, cur);
+            y_max->SetDim(idx, cur);
+        } else if (idx == cIdx) {
+            y_min->SetDim(idx, cDim);
+            y_max->SetDim(idx, cDim);
+        } else if (idx == nIdx) {
+            y_min->SetDim(idx, 0);
+            y_max->SetDim(idx, UNKNOWN_SHAPE_DIM);
+        } else {
+            y_min->SetDim(idx, 1);
+            y_max->SetDim(idx, UNKNOWN_SHAPE_DIM);
+        }
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 // bpf家族(groups attr idx: 3，输入序x(0)/filter_size(1)/out_backprop(2))的groups读取
 static const int64_t* GetFilterGroupsAttr(const gert::InferShapeContext* context)
 {

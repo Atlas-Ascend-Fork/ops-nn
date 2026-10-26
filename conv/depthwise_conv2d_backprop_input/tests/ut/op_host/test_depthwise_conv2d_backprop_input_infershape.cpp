@@ -167,7 +167,7 @@ TEST_F(DepthwiseConv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFi
               ge::GRAPH_FAILED);
 }
 
-// 校验规格：input_size为非const时，out_backprop shape支持-1
+// 校验规格：input_size为非const时，out_backprop shape支持-1；y的C维=filter的C维(cin==filter_c，对齐1.0)
 TEST_F(DepthwiseConv2DBackpropInputRuntimeInferShape, dynamicInputSizeDynamicDedyStaticFilterSuccess)
 {
     std::unique_ptr<uint8_t[]> tensor_holder;
@@ -178,10 +178,10 @@ TEST_F(DepthwiseConv2DBackpropInputRuntimeInferShape, dynamicInputSizeDynamicDed
     auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("DepthwiseConv2DBackpropInput")->infer_shape;
     EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
     EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)),
-              "[-1, -1, -1, -1]");
+              "[-1, 64, -1, -1]");
 }
 
-// 校验规格：input_size为非const时，out_backprop shape支持-2
+// 校验规格：input_size为非const时，out_backprop shape支持-2；y的C维=filter的C维补推
 TEST_F(DepthwiseConv2DBackpropInputRuntimeInferShape, dynamicInputSizeUnknownRankDedyStaticFilterSuccess)
 {
     std::unique_ptr<uint8_t[]> tensor_holder;
@@ -192,7 +192,7 @@ TEST_F(DepthwiseConv2DBackpropInputRuntimeInferShape, dynamicInputSizeUnknownRan
     auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("DepthwiseConv2DBackpropInput")->infer_shape;
     EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
     EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)),
-              "[-1, -1, -1, -1]");
+              "[-1, 64, -1, -1]");
 }
 
 // 校验规格：input_size为const时，out_backprop shape不支持-2（支持-1）

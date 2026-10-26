@@ -225,6 +225,15 @@ static ge::graphStatus InferShape4Conv2DTranspose(gert::InferShapeContext* conte
         ret = FixZeroPlaceholderShape(context);
     }
     if (ret == ge::GRAPH_SUCCESS) {
+        int64_t channelMultiplier = 1;
+        const auto runtimeAttrs = context->GetAttrs();
+        const int64_t* groups = runtimeAttrs == nullptr ? nullptr : runtimeAttrs->GetAttrPointer<int64_t>(kGroupsIdx);
+        if (groups != nullptr && *groups > 0) {
+            channelMultiplier = *groups;
+        }
+        ret = PartialInferInputShapeWhenConstInvisible(context, kFilterIndex, channelMultiplier);
+    }
+    if (ret == ge::GRAPH_SUCCESS) {
         auto yShape = context->GetOutputShape(0);
         if (yShape != nullptr) {
             OP_LOGD(context->GetNodeName(), "[InferShape] Conv2DTranspose y_shape: %s",
@@ -234,10 +243,22 @@ static ge::graphStatus InferShape4Conv2DTranspose(gert::InferShapeContext* conte
     return ret;
 }
 
+static ge::graphStatus InferShapeRange4Conv2DTranspose(gert::InferShapeRangeContext* context)
+{
+    int64_t channelMultiplier = 1;
+    const auto runtimeAttrs = context->GetAttrs();
+    const int64_t* groups = runtimeAttrs == nullptr ? nullptr : runtimeAttrs->GetAttrPointer<int64_t>(kGroupsIdx);
+    if (groups != nullptr && *groups > 0) {
+        channelMultiplier = *groups;
+    }
+    return InferShapeRangeForConvBackprop(context, kFilterIndex, channelMultiplier);
+}
+
 } // namespace Conv
 
 IMPL_OP_INFERSHAPE(Conv2DTranspose)
     .InferShape(Ops::NN::Conv::InferShape4Conv2DTranspose)
+    .InferShapeRange(Ops::NN::Conv::InferShapeRange4Conv2DTranspose)
     .InferDataType(Ops::NN::Conv::InferDataTypeForConvTransposeV2)
     .InputsDataDependency({0})
     .PrivateAttr("padding", "")

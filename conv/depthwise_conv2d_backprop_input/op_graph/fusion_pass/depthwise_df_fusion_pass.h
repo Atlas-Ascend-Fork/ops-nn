@@ -25,12 +25,12 @@ protected:
     bool MeetRequirements(const ge::GNode& matchedNode) override;
     ge::fusion::GraphUniqPtr Replacement(const ge::GNode& matchedNode) override;
     bool GetNodeAttrs(const ge::GNode& node) override;
-    void SetNodeAttrs(ge::GNode& outNode) override;
 
     bool ValidateFilterDesc(const ge::GNode& matchedNode);
     bool GetResizeDepthwiseFilterShape(std::vector<int64_t>& resizeShape);
 
 private:
+    bool ValidateFilterShapePositive();
     bool ValidateArch35Descs(const bool isInputSizeConst);
     bool IsInputSizeConst(const ge::GNode& matchedNode) const;
     void CreateBoundaryInputs(ge::es::EsGraphBuilder& builder, ge::es::EsTensorHolder& iFilterHolder,

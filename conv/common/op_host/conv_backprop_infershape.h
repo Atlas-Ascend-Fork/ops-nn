@@ -18,6 +18,7 @@
 
 #include <graph/utils/type_utils.h>
 #include <exe_graph/runtime/infer_shape_context.h>
+#include <exe_graph/runtime/infer_shape_range_context.h>
 #include <log/log.h>
 #include <util/shape_util.h>
 #include <register/op_impl_registry.h>
@@ -28,6 +29,10 @@ namespace NN {
 namespace Conv {
 ge::graphStatus InferShapeForConvBackprop(gert::InferShapeContext* context, size_t const_tensor_idx,
                                           const char* const_tensor_name, size_t dim_num);
+ge::graphStatus PartialInferInputShapeWhenConstInvisible(gert::InferShapeContext* context, size_t filter_index = 1,
+                                                         int64_t channel_multiplier = 1);
+ge::graphStatus InferShapeRangeForConvBackprop(gert::InferShapeRangeContext* context, size_t filter_index,
+                                               int64_t channel_multiplier);
 // Conv2DBackpropFilterV2 和 Conv2DBackpropFilterV3 共用
 ge::graphStatus InferShapeForConv2DBackpropFilter(gert::InferShapeContext* context);
 ge::graphStatus PartialInferFilterShapeWhenConstInvisible(gert::InferShapeContext* context);

@@ -71,6 +71,40 @@ bool ConvBackpropFusionUtilsPass::IsArch35()
     return SUPPORT_SOC_LIST.find(soc) != SUPPORT_SOC_LIST.end() && SUPPORT_SOC_LIST.at(soc) == NpuArch::DAV_3510;
 }
 
+bool ConvBackpropFusionUtilsPass::IsUnknownRankShape(const std::vector<int64_t>& dims)
+{
+    return dims.size() == UNKNOWN_RANK_DIM && dims[0] == UNKNOWN_RANK_DIM_VALUE;
+}
+
+// 按origin format定位D/H/W下标，任一维未知(含维数非5或unknown rank)即视为动态
+bool ConvBackpropFusionUtilsPass::IsDhwUnknown(const TensorDesc& desc)
+{
+    const auto& dims = desc.GetShape().GetDims();
+    if (IsUnknownRankShape(dims)) {
+        return true;
+    }
+    const auto format = desc.GetOriginFormat();
+    size_t dIdx = 0;
+    size_t hIdx = 0;
+    size_t wIdx = 0;
+    if (format == FORMAT_NCDHW) {
+        dIdx = static_cast<size_t>(D_DIM_NCDHW_INDEX);
+        hIdx = static_cast<size_t>(H_DIM_NCDHW_INDEX);
+        wIdx = static_cast<size_t>(W_DIM_NCDHW_INDEX);
+    } else if (format == FORMAT_NDHWC) {
+        dIdx = static_cast<size_t>(D_DIM_NDHWC_INDEX);
+        hIdx = static_cast<size_t>(H_DIM_NDHWC_INDEX);
+        wIdx = static_cast<size_t>(W_DIM_NDHWC_INDEX);
+    } else if (format == FORMAT_DHWCN) {
+        dIdx = static_cast<size_t>(D_DIM_DHWCN_INDEX);
+        hIdx = static_cast<size_t>(H_DIM_DHWCN_INDEX);
+        wIdx = static_cast<size_t>(W_DIM_DHWCN_INDEX);
+    } else {
+        return true;
+    }
+    return dims.size() != static_cast<size_t>(CONV_DIM_LENGTH) || dims[dIdx] < 0 || dims[hIdx] < 0 || dims[wIdx] < 0;
+}
+
 bool ConvBackpropFusionUtilsPass::GetNodeName(const GNode& node, std::string& nodeName)
 {
     AscendString rawNodeName;
@@ -333,6 +367,21 @@ void ConvBackpropFusionUtilsPass::ExpandOutputDesc(const TensorDesc& output2DDes
     output3DDesc.SetDataType(output2DDesc.GetDataType());
     output3DDesc.SetShape(Get3DShape(output2DDesc.GetShape(), output2DDesc.GetFormat()));
     output3DDesc.SetOriginShape(Get3DShape(output2DDesc.GetOriginShape(), output2DDesc.GetOriginFormat()));
+    // 透传shape range到5D desc：D维插入位置与Get3DShape保持一致(NCHW/NHWC/HWCN分别处理)，
+    // 插入的D维恒为静态1([1,1])，避免下游动态实现拿到退化range
+    constexpr size_t conv2dRangeDimNum = 4;
+    std::vector<std::pair<int64_t, int64_t>> shapeRange;
+    if (output2DDesc.GetShapeRange(shapeRange) == GRAPH_SUCCESS && shapeRange.size() == conv2dRangeDimNum) {
+        const std::pair<int64_t, int64_t> dDimRange = {EXPAND_AXIS_DEFAULT_VALUE, EXPAND_AXIS_DEFAULT_VALUE};
+        if (output2DDesc.GetOriginFormat() == ge::FORMAT_NHWC) {
+            shapeRange.insert(shapeRange.begin() + D_DIM_NDHWC_INDEX, dDimRange);
+        } else if (output2DDesc.GetOriginFormat() == ge::FORMAT_HWCN) {
+            shapeRange.insert(shapeRange.begin(), dDimRange);
+        } else if (output2DDesc.GetOriginFormat() == ge::FORMAT_NCHW) {
+            shapeRange.insert(shapeRange.begin() + D_DIM_NCDHW_INDEX, dDimRange);
+        }
+        (void)output3DDesc.SetShapeRange(shapeRange);
+    }
 }
 
 } // namespace ops

@@ -117,6 +117,23 @@ std::string GetNodeStringAttr(GraphPtr& graph, const std::string& type, const st
     return "";
 }
 
+std::vector<int64_t> GetNodePadsAttr(GraphPtr& graph, const std::string& type)
+{
+    for (auto node : graph->GetAllNodes()) {
+        AscendString nodeType;
+        node.GetType(nodeType);
+        if (nodeType.GetString() != type) {
+            continue;
+        }
+        std::vector<int64_t> pads;
+        if (node.GetAttr("pads", pads) == GRAPH_SUCCESS) {
+            return pads;
+        }
+        return {};
+    }
+    return {};
+}
+
 } // namespace
 
 class Conv3dBpInputToV2FusionPassTest : public testing::Test {
@@ -412,4 +429,85 @@ TEST_F(Conv3dBpInputToV2FusionPassTest, unknownRankDedyNormalizeSuccess)
     ops::Conv3DBackpropInputToV2FusionPass pass({AscendString("Conv3DBackpropInput")});
     EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
     EXPECT_TRUE(CheckNodeExists(graph, "Conv3DBackpropInputV2"));
+}
+
+// 对齐legacy SetConv3dDynamicPads：padding=SAME且y的D/H/W未知时pads置-1
+TEST_F(Conv3dBpInputToV2FusionPassTest, samePaddingDhwDynamicPadsRewriteSuccess)
+{
+    auto builder = es::EsGraphBuilder("samePaddingDhwDynamicPadsRewriteSuccess");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT64, FORMAT_ND, {5});
+    auto filter = builder.CreateInput(1, "filter", DT_FLOAT16, FORMAT_NCDHW, {512, 1, 4, 4, 1037});
+    auto dedy = builder.CreateInput(2, "out_backprop", DT_FLOAT16, FORMAT_NDHWC, {-1, 1, -1, -1, 1037});
+
+    auto y = CreateConv3dBpInputNode(builder, "Conv3DBackpropInput", inputSize, filter, dedy, {1, 2, 2, 2, 1},
+                                     {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, 1, "NDHWC", DT_FLOAT16, {-1, 1, -1, -1, 512},
+                                     FORMAT_NDHWC, "SAME");
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DBackpropInputToV2FusionPass pass({AscendString("Conv3DBackpropInput")});
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(CheckNodeExists(graph, "Conv3DBackpropInputV2"));
+    EXPECT_EQ(GetNodePadsAttr(graph, "Conv3DBackpropInputV2"), (std::vector<int64_t>{-1, -1, -1, -1, -1, -1}));
+}
+
+// 仅batch未知(D/H/W静态)时不置-1，pads保持原值，对齐legacy的batch-only例外
+TEST_F(Conv3dBpInputToV2FusionPassTest, samePaddingBatchOnlyDynamicPadsKeepSuccess)
+{
+    auto builder = es::EsGraphBuilder("samePaddingBatchOnlyDynamicPadsKeepSuccess");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT64, FORMAT_ND, {5});
+    auto filter = builder.CreateInput(1, "filter", DT_FLOAT16, FORMAT_NCDHW, {512, 1, 4, 4, 1037});
+    auto dedy = builder.CreateInput(2, "out_backprop", DT_FLOAT16, FORMAT_NDHWC, {-1, 1, 4, 4, 1037});
+
+    auto y = CreateConv3dBpInputNode(builder, "Conv3DBackpropInput", inputSize, filter, dedy, {1, 2, 2, 2, 1},
+                                     {1, 1, 0, 0, 2, 2}, {1, 1, 1, 1, 1}, 1, "NDHWC", DT_FLOAT16, {-1, 1, 8, 8, 512},
+                                     FORMAT_NDHWC, "SAME");
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DBackpropInputToV2FusionPass pass({AscendString("Conv3DBackpropInput")});
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(CheckNodeExists(graph, "Conv3DBackpropInputV2"));
+    EXPECT_EQ(GetNodePadsAttr(graph, "Conv3DBackpropInputV2"), (std::vector<int64_t>{1, 1, 0, 0, 2, 2}));
+}
+
+// 3D直连路径：源节点y的range应随TensorDesc拷贝保留到V2节点
+TEST_F(Conv3dBpInputToV2FusionPassTest, outputRangeForwardSuccess)
+{
+    auto builder = es::EsGraphBuilder("outputRangeForwardSuccess");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT64, FORMAT_ND, {5});
+    auto filter = builder.CreateInput(1, "filter", DT_FLOAT16, FORMAT_NCDHW, {512, 1, 4, 4, 1037});
+    auto dedy = builder.CreateInput(2, "out_backprop", DT_FLOAT16, FORMAT_NDHWC, {-1, 1, -1, -1, 1037});
+
+    auto y = CreateConv3dBpInputNode(builder, "Conv3DBackpropInput", inputSize, filter, dedy, {1, 2, 2, 2, 1},
+                                     {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, 1, "NDHWC", DT_FLOAT16, {-1, 1, -1, -1, 512},
+                                     FORMAT_NDHWC, "SAME");
+    auto* producer = y.GetProducer();
+    TensorDesc yDesc;
+    EXPECT_EQ(producer->GetOutputDesc(0, yDesc), GRAPH_SUCCESS);
+    yDesc.SetShapeRange({{0, -1}, {1, 1}, {1, -1}, {1, -1}, {512, 512}});
+    EXPECT_EQ(producer->UpdateOutputDesc(0, yDesc), GRAPH_SUCCESS);
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DBackpropInputToV2FusionPass pass({AscendString("Conv3DBackpropInput")});
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(CheckNodeExists(graph, "Conv3DBackpropInputV2"));
+
+    bool checked = false;
+    const std::string targetType = "Conv3DBackpropInputV2";
+    for (auto node : graph->GetAllNodes()) {
+        AscendString nodeType;
+        node.GetType(nodeType);
+        if (nodeType.GetString() != targetType) {
+            continue;
+        }
+        TensorDesc v2YDesc;
+        EXPECT_EQ(node.GetOutputDesc(0, v2YDesc), GRAPH_SUCCESS);
+        std::vector<std::pair<int64_t, int64_t>> range;
+        EXPECT_EQ(v2YDesc.GetShapeRange(range), GRAPH_SUCCESS);
+        EXPECT_EQ(range, (std::vector<std::pair<int64_t, int64_t>>{{0, -1}, {1, 1}, {1, -1}, {1, -1}, {512, 512}}));
+        checked = true;
+    }
+    EXPECT_TRUE(checked);
 }

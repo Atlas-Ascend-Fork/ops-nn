@@ -124,6 +124,10 @@ public:
 
     static bool IsArch35();
 
+    static bool IsUnknownRankShape(const std::vector<int64_t>& dims);
+
+    static bool IsDhwUnknown(const ge::TensorDesc& desc);
+
     static bool GetNodeName(const ge::GNode& node, std::string& nodeName);
 
     static int64_t GetAiCoreCount();

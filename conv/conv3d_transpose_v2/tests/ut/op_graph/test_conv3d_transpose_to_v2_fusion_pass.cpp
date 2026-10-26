@@ -41,13 +41,11 @@ void SetPlatform(const std::string& soc)
     PlatformInfoManager::Instance().SetOptionalCompilationInfo(optionalInfo);
 }
 
-es::EsTensorHolder CreateConv3DTransposeNode(es::EsGraphBuilder& builder, const char* opType,
-                                             const es::EsTensorHolder& inputSize, const es::EsTensorHolder& x,
-                                             const es::EsTensorHolder& filter, const es::EsTensorHolder& bias,
-                                             std::vector<int64_t> strides, std::vector<int64_t> pads,
-                                             std::vector<int64_t> dilations, int64_t groups,
-                                             const std::string& dataFormat, DataType outDtype,
-                                             const std::vector<int64_t>& outShape, Format outFormat)
+es::EsTensorHolder CreateConv3DTransposeNode(
+    es::EsGraphBuilder& builder, const char* opType, const es::EsTensorHolder& inputSize, const es::EsTensorHolder& x,
+    const es::EsTensorHolder& filter, const es::EsTensorHolder& bias, std::vector<int64_t> strides,
+    std::vector<int64_t> pads, std::vector<int64_t> dilations, int64_t groups, const std::string& dataFormat,
+    DataType outDtype, const std::vector<int64_t>& outShape, Format outFormat, const std::string& padding = "")
 {
     auto* graph = builder.GetCGraphBuilder()->GetGraph();
     auto node = es::CompliantNodeBuilder(graph)
@@ -85,6 +83,10 @@ es::EsTensorHolder CreateConv3DTransposeNode(es::EsGraphBuilder& builder, const 
     AscendString fmt = dataFormat.c_str();
     node.SetAttr("data_format", fmt);
     node.SetAttr("_op_impl_mode_enum", DEFAULT_IMPL_MODE);
+    if (!padding.empty()) {
+        AscendString paddingStr = padding.c_str();
+        node.SetAttr("padding", paddingStr);
+    }
 
     return es::EsTensorHolder(builder.GetCGraphBuilder()->GetTensorHolderFromNode(node, 0));
 }
@@ -439,4 +441,74 @@ TEST_F(Conv3DTransposeToV2FusionPassTest, unknownRankXNoBiasNormalizeSuccess)
     ops::Conv3DTransposeToV2FusionPass pass({AscendString("Conv3DTranspose")});
     EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
     EXPECT_TRUE(CheckNodeExists(graph, "Conv3DTransposeV2"));
+}
+
+// 对齐legacy SetConv3dDynamicPads：padding=SAME且y的D/H/W未知时pads置-1
+TEST_F(Conv3DTransposeToV2FusionPassTest, samePaddingDhwDynamicPadsRewriteSuccess)
+{
+    auto builder = es::EsGraphBuilder("samePaddingDhwDynamicPadsRewriteSuccess");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT64, FORMAT_ND, {5});
+    auto x = builder.CreateInput(1, "x", DT_FLOAT16, FORMAT_NCDHW, {-1, 16, -1, -1, -1});
+    auto filter = builder.CreateInput(2, "filter", DT_FLOAT16, FORMAT_NCDHW, {8, 16, 3, 3, 3});
+    auto bias = builder.CreateInput(3, "bias", DT_FLOAT16, FORMAT_ND, {8});
+
+    auto y = CreateConv3DTransposeNode(builder, "Conv3DTranspose", inputSize, x, filter, bias, {1, 1, 2, 2, 2},
+                                       {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, 1, "NCDHW", DT_FLOAT16, {-1, 8, -1, -1, -1},
+                                       FORMAT_NCDHW, "SAME");
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DTransposeToV2FusionPass pass({AscendString("Conv3DTranspose")});
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(CheckNodeExists(graph, "Conv3DTransposeV2"));
+
+    bool checked = false;
+    const std::string targetType = "Conv3DTransposeV2";
+    for (auto node : graph->GetAllNodes()) {
+        AscendString nodeType;
+        node.GetType(nodeType);
+        if (nodeType.GetString() != targetType) {
+            continue;
+        }
+        std::vector<int64_t> pads;
+        EXPECT_EQ(node.GetAttr("pads", pads), GRAPH_SUCCESS);
+        EXPECT_EQ(pads, (std::vector<int64_t>{-1, -1, -1, -1, -1, -1}));
+        checked = true;
+    }
+    EXPECT_TRUE(checked);
+}
+
+// 仅batch未知(D/H/W静态)时不置-1，pads保持原值，对齐legacy的batch-only例外
+TEST_F(Conv3DTransposeToV2FusionPassTest, samePaddingBatchOnlyDynamicPadsKeepSuccess)
+{
+    auto builder = es::EsGraphBuilder("samePaddingBatchOnlyDynamicPadsKeepSuccess");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT64, FORMAT_ND, {5});
+    auto x = builder.CreateInput(1, "x", DT_FLOAT16, FORMAT_NCDHW, {-1, 16, 4, 8, 8});
+    auto filter = builder.CreateInput(2, "filter", DT_FLOAT16, FORMAT_NCDHW, {8, 16, 3, 3, 3});
+    auto bias = builder.CreateInput(3, "bias", DT_FLOAT16, FORMAT_ND, {8});
+
+    auto y = CreateConv3DTransposeNode(builder, "Conv3DTranspose", inputSize, x, filter, bias, {1, 1, 2, 2, 2},
+                                       {1, 1, 0, 0, 2, 2}, {1, 1, 1, 1, 1}, 1, "NCDHW", DT_FLOAT16, {-1, 8, 7, 15, 15},
+                                       FORMAT_NCDHW, "SAME");
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DTransposeToV2FusionPass pass({AscendString("Conv3DTranspose")});
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(CheckNodeExists(graph, "Conv3DTransposeV2"));
+
+    bool checked = false;
+    const std::string targetType = "Conv3DTransposeV2";
+    for (auto node : graph->GetAllNodes()) {
+        AscendString nodeType;
+        node.GetType(nodeType);
+        if (nodeType.GetString() != targetType) {
+            continue;
+        }
+        std::vector<int64_t> pads;
+        EXPECT_EQ(node.GetAttr("pads", pads), GRAPH_SUCCESS);
+        EXPECT_EQ(pads, (std::vector<int64_t>{1, 1, 0, 0, 2, 2}));
+        checked = true;
+    }
+    EXPECT_TRUE(checked);
 }

@@ -11,6 +11,7 @@
 #include "conv3d_transpose_to_v2_fusion_pass.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include "es_nn_ops.h"
 #include "log/log.h"
@@ -47,8 +48,6 @@ const std::vector<int32_t> FILTER_TRANSPOSE_PERM_NCDHW_TO_NDHWC = {0, 2, 3, 4, 1
 AscendString Conv3DTransposeToV2FusionPass::GetNodeType() const { return PASS_NAME; }
 
 namespace {
-bool IsUnknownRankShape(const std::vector<int64_t>& dims) { return dims.size() == 1 && dims[0] == -2; }
-
 void ApplyConv3DTransposeV2InputOutputDesc(GNode* v2Node, const TensorDesc& input0Desc, const TensorDesc& input1Desc,
                                            const TensorDesc& input2Desc, bool hasBias, const TensorDesc& biasDesc,
                                            bool hasOffsetW, const TensorDesc& offsetWDesc, bool needTranspose,
@@ -56,7 +55,7 @@ void ApplyConv3DTransposeV2InputOutputDesc(GNode* v2Node, const TensorDesc& inpu
 {
     // 与1.0 TBE通用化层保持一致：x为unknown rank shape [-2]时，归一为-1*5后传给V2节点
     TensorDesc xDescForV2 = input1Desc;
-    if (IsUnknownRankShape(xDescForV2.GetShape().GetDims())) {
+    if (ConvBackpropFusionUtilsPass::IsUnknownRankShape(xDescForV2.GetShape().GetDims())) {
         const std::vector<int64_t> unknownDims = {-1, -1, -1, -1, -1};
         xDescForV2.SetShape(ge::Shape(unknownDims));
         xDescForV2.SetOriginShape(ge::Shape(unknownDims));
@@ -87,7 +86,7 @@ bool Conv3DTransposeToV2FusionPass::MeetRequirements(const GNode& matchedNode)
     OP_CHECK_IF(matchedNode.GetInputDesc(FILTER_INDEX, filterDesc) != GRAPH_SUCCESS,
                 OP_LOGD(GetNodeType().GetString(), "Get filter desc failed."), return false);
     const auto& filterDims = filterDesc.GetShape().GetDims();
-    OP_CHECK_IF(IsUnknownRankShape(filterDims),
+    OP_CHECK_IF(ConvBackpropFusionUtilsPass::IsUnknownRankShape(filterDims),
                 OP_LOGD(GetNodeType().GetString(), "filter shape [-2] is not supported, skip fusion."), return false);
 
     return true;
@@ -124,6 +123,16 @@ bool Conv3DTransposeToV2FusionPass::GetNodeAttrs(const GNode& node)
     offsetX = DEFAULT_OFFSET_X;
     node.GetAttr("output_padding", outputPadding);
     node.GetAttr("offset_x", offsetX);
+
+    // 对齐legacy SetConv3dDynamicPads：padding=SAME且y的D/H/W未知(动态)时pads置-1，
+    // 交由V2 tiling按SAME语义重算；仅batch未知时不置
+    constexpr size_t conv3dPadsNum = 6;
+    if (strncmp(convBpAttr.padding.GetString(), "SAME", sizeof("SAME") - 1) == 0 &&
+        convBpAttr.pads.size() == conv3dPadsNum &&
+        (ConvBackpropFusionUtilsPass::IsUnknownRankShape(input1Desc.GetShape().GetDims()) ||
+         ConvBackpropFusionUtilsPass::IsDhwUnknown(outputDesc))) {
+        convBpAttr.pads.assign(conv3dPadsNum, -1);
+    }
 
     return true;
 }

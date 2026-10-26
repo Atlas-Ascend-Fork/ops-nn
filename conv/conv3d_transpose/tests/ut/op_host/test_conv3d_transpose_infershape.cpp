@@ -204,3 +204,52 @@ TEST_F(Conv3DTransposeRuntimeInferShape, realConstInputSizeNotAffectedSuccess)
     EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)),
               "[2, 16, 7, 17, 17]");
 }
+
+// input_size const不可见(动态图)时，y的C维=filter的C维*groups，其余维度保持-1交运行时推导
+static gert::KernelRunContextHolder BuildConv3DTransposeDynamicContext(gert::StorageShape& x_shape,
+                                                                       gert::StorageShape& filter_shape,
+                                                                       ge::Format x_format, ge::Format filter_format,
+                                                                       const int64_t groups)
+{
+    gert::StorageShape output_shape = {{}, {}};
+    gert::StorageShape input_size_shape = {{kInputSizeEleNum}, {kInputSizeEleNum}};
+    gert::InferShapeContextFaker faker;
+    faker.NodeIoNum(3, 1)
+        .IrInstanceNum({1, 1, 1})
+        .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, ge::DT_FLOAT16, x_format, x_format)
+        .NodeInputTd(2, ge::DT_FLOAT16, filter_format, filter_format)
+        .NodeOutputTd(0, ge::DT_FLOAT16, x_format, x_format)
+        .NodeAttrs({{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2, 2})},
+                    {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1, 1, 1})},
+                    {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1, 1})},
+                    {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(groups)},
+                    {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCDHW")},
+                    {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0, 0})},
+                    {"offset_x", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}});
+    return faker.InputShapes({&input_size_shape, &x_shape, &filter_shape}).OutputShapes({&output_shape}).Build();
+}
+
+TEST_F(Conv3DTransposeRuntimeInferShape, dynamicInputSizePartialInferSuccess)
+{
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{-1, 16, -1, -1, -1}, {-1, 16, -1, -1, -1}};
+    gert::StorageShape filter_shape = {{8, 16, 3, 3, 3}, {8, 16, 3, 3, 3}};
+    auto holder = BuildConv3DTransposeDynamicContext(x_shape, filter_shape, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW, 1);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv3DTranspose")->infer_shape;
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)),
+              "[-1, 16, -1, -1, -1]");
+}
+
+TEST_F(Conv3DTransposeRuntimeInferShape, dynamicInputSizePartialInferGroupsSuccess)
+{
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{-1, 16, -1, -1, -1}, {-1, 16, -1, -1, -1}};
+    gert::StorageShape filter_shape = {{8, 16, 3, 3, 3}, {8, 16, 3, 3, 3}};
+    auto holder = BuildConv3DTransposeDynamicContext(x_shape, filter_shape, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW, 2);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv3DTranspose")->infer_shape;
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)),
+              "[-1, 32, -1, -1, -1]");
+}

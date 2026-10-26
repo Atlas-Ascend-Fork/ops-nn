@@ -84,16 +84,21 @@ bool DepthwiseDfFusionPass::IsInputSizeConst(const GNode& matchedNode) const
     return inputSizeNode->GetType(inputSizeNodeType) == GRAPH_SUCCESS && inputSizeNodeType == "Const";
 }
 
-bool DepthwiseDfFusionPass::ValidateArch35Descs(const bool isInputSizeConst)
+bool DepthwiseDfFusionPass::ValidateFilterShapePositive()
 {
     const TensorDesc& filterDesc = isDynamic ? input1Desc : input0Desc;
-    const TensorDesc& dedyDesc = isDynamic ? input2Desc : input1Desc;
     auto filterOriShapeDims = filterDesc.GetOriginShape().GetDims();
     for (auto filterDim : filterOriShapeDims) {
         OP_CHECK_IF(filterDim <= 0,
                     OP_LOGE(GetNodeType().GetString(), "%ld in filter shape should be positive.", filterDim),
                     return false);
     }
+    return true;
+}
+
+bool DepthwiseDfFusionPass::ValidateArch35Descs(const bool isInputSizeConst)
+{
+    const TensorDesc& dedyDesc = isDynamic ? input2Desc : input1Desc;
     auto dedyOriShape = dedyDesc.GetOriginShape();
     size_t dedyDims = dedyOriShape.GetDims().size();
     const bool isUnknownRankDedy = dedyDims == UNKNOWN_RANK_DIM && dedyOriShape.GetDim(0) == UNKNOWN_RANK_DIM_VALUE;
@@ -117,6 +122,8 @@ bool DepthwiseDfFusionPass::ValidateArch35Descs(const bool isInputSizeConst)
 
 bool DepthwiseDfFusionPass::ValidateFilterDesc(const GNode& matchedNode)
 {
+    OP_CHECK_IF(!ValidateFilterShapePositive(),
+                OP_LOGD(GetNodeType().GetString(), "ValidateFilterShapePositive failed"), return false);
     if (isArch35) {
         // input_size是否const仅在动态场景有意义(D算子input_size为属性恒为const)；
         // TensorDesc不含const信息，需经节点查producer是否Const，故在调用侧求值后传入
@@ -176,16 +183,6 @@ bool DepthwiseDfFusionPass::GetNodeAttrs(const GNode& node)
                     OP_LOGE(GetNodeType().GetString(), "Failed to get input_size attr"), return false);
     }
     return true;
-}
-
-void DepthwiseDfFusionPass::SetNodeAttrs(GNode& outNode)
-{
-    ConvBackpropFusionBasePass::SetNodeAttrs(outNode);
-    if (!isDynamic) {
-        if (outNode.SetAttr("input_size", convBpAttr.input_size) != GRAPH_SUCCESS) {
-            OP_LOGD(GetNodeType().GetString(), "Set input_size attr failed");
-        }
-    }
 }
 
 void DepthwiseDfFusionPass::CreateBoundaryInputs(EsGraphBuilder& builder, EsTensorHolder& iFilterHolder,
@@ -349,6 +346,8 @@ GraphUniqPtr DepthwiseDfFusionPass::BuildStaticTargetNode(EsGraphBuilder& builde
                                          static_cast<int32_t>(GRAD_OUTPUT_INDEX_D)) != GRAPH_SUCCESS,
                 OP_LOGE(GetNodeType().GetString(), "Add edge grad output to target failed"), return nullptr);
     SetNodeAttrs(targetNode);
+    OP_CHECK_IF(targetNode.SetAttr("input_size", convBpAttr.input_size) != GRAPH_SUCCESS,
+                OP_LOGE(GetNodeType().GetString(), "Set input_size attr failed"), return nullptr);
     OP_CHECK_IF(targetNode.SetAttr("from_depthwise", convBpAttr.from_depthwise) != GRAPH_SUCCESS,
                 OP_LOGE(GetNodeType().GetString(), "Set from_depthwise attr failed"), return nullptr);
     OP_CHECK_IF(targetNode.UpdateInputDesc(FILTER_INDEX_D, targetFilterDesc) != GRAPH_SUCCESS ||

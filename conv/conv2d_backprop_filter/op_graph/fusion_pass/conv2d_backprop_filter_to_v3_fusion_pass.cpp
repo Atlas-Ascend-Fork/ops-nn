@@ -10,6 +10,8 @@
 
 #include "conv2d_backprop_filter_to_v3_fusion_pass.h"
 
+#include <cstring>
+
 #include "es_math_ops.h"
 
 namespace ops {
@@ -17,6 +19,7 @@ namespace {
 constexpr size_t X_INDEX = 0;
 constexpr size_t FILTER_SIZE_INDEX = 1;
 constexpr size_t CONV2D_BP_FILTER_INPUT_NUM = 3;
+constexpr size_t CONV2D_PADS_NUM = 4;
 } // namespace
 
 AscendString Conv2DBackpropFilterToV3FusionPass::GetNodeType() const { return CONV2D_BP_FILTER_TO_V3_PASS; }
@@ -39,6 +42,13 @@ bool Conv2DBackpropFilterToV3FusionPass::GetNodeAttrs(const ge::GNode& node)
 {
     OP_CHECK_IF(!ConvBackpropFusionBasePass::GetNodeAttrs(node),
                 OP_LOGE(GetNodeType().GetString(), "Base GetNodeAttrs failed"), return false);
+
+    // padding=SAME时pads依赖运行时shape计算，置-1交由V2 tiling按SAME语义重算，避免初始值[0,0,0,0]被下游按VALID语义消费
+    if (strncmp(convBpAttr.padding.GetString(), "SAME", sizeof("SAME") - 1) == 0 &&
+        convBpAttr.pads.size() == CONV2D_PADS_NUM) {
+        convBpAttr.pads.assign(CONV2D_PADS_NUM, -1);
+    }
+
     ConvBackpropFusionUtilsPass::ExpandAttrs(convBpAttr.strides, convBpAttr.pads, convBpAttr.dilations,
                                              convBpAttr.dataFormat, &convBpAttr.output_padding);
     return true;

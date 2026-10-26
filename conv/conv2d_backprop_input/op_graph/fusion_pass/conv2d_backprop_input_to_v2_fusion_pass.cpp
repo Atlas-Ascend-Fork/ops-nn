@@ -10,6 +10,8 @@
 
 #include "conv2d_backprop_input_to_v2_fusion_pass.h"
 
+#include <cstring>
+
 namespace ops {
 namespace {
 const AscendString PASS_NAME = "Conv2DBackpropInputToV2FusionPass";
@@ -19,6 +21,7 @@ constexpr size_t INPUT_SIZE_INDEX = 0;
 constexpr size_t FILTER_INDEX = 1;
 constexpr size_t GRAD_OUTPUT_INDEX = 2;
 constexpr size_t CONV2D_BP_INPUT_INPUT_NUM = 3;
+constexpr size_t CONV2D_PADS_NUM = 4;
 
 } // namespace
 
@@ -42,6 +45,13 @@ bool Conv2DBackpropInputToV2FusionPass::GetNodeAttrs(const ge::GNode& node)
 {
     OP_CHECK_IF(!ConvBackpropFusionBasePass::GetNodeAttrs(node),
                 OP_LOGE(GetNodeType().GetString(), "Base GetNodeAttrs failed"), return false);
+
+    // padding=SAME时pads依赖运行时shape计算，置-1交由V2 tiling按SAME语义重算，
+    // 避免框架侧初始值[0,0,0,0]被下游按VALID语义消费
+    if (strncmp(convBpAttr.padding.GetString(), "SAME", sizeof("SAME") - 1) == 0 &&
+        convBpAttr.pads.size() == CONV2D_PADS_NUM) {
+        convBpAttr.pads.assign(CONV2D_PADS_NUM, -1);
+    }
 
     ConvBackpropFusionUtilsPass::ExpandAttrs(convBpAttr.strides, convBpAttr.pads, convBpAttr.dilations,
                                              convBpAttr.dataFormat);

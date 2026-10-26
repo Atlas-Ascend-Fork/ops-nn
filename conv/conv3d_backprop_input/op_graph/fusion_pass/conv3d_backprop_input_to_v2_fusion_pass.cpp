@@ -10,6 +10,8 @@
 
 #include "conv3d_backprop_input_to_v2_fusion_pass.h"
 
+#include <cstring>
+
 #include "es_nn_ops.h"
 #include "log/log.h"
 #include "register/register_custom_pass.h"
@@ -26,8 +28,7 @@ namespace {
 constexpr int32_t INPUT_SIZE_IDX = 0;
 constexpr int32_t FILTER_IDX = 1;
 constexpr int32_t OUT_BACKPROP_IDX = 2;
-
-bool IsUnknownRankShape(const std::vector<int64_t>& dims) { return dims.size() == 1 && dims[0] == -2; }
+constexpr size_t CONV3D_PADS_NUM = 6;
 } // namespace
 
 bool Conv3DBackpropInputToV2FusionPass::MeetRequirements(const GNode& matchedNode)
@@ -41,9 +42,24 @@ bool Conv3DBackpropInputToV2FusionPass::MeetRequirements(const GNode& matchedNod
     TensorDesc filterDescForCheck;
     OP_CHECK_IF(matchedNode.GetInputDesc(FILTER_IDX, filterDescForCheck) != GRAPH_SUCCESS,
                 OP_LOGD(GetNodeType().GetString(), "Get filter desc failed."), return false);
-    OP_CHECK_IF(IsUnknownRankShape(filterDescForCheck.GetShape().GetDims()),
+    OP_CHECK_IF(ConvBackpropFusionUtilsPass::IsUnknownRankShape(filterDescForCheck.GetShape().GetDims()),
                 OP_LOGD(GetNodeType().GetString(), "filter shape [-2] is not supported, skip fusion."), return false);
 
+    return true;
+}
+
+bool Conv3DBackpropInputToV2FusionPass::GetNodeAttrs(const ge::GNode& node)
+{
+    OP_CHECK_IF(!ConvBackpropFusionBasePass::GetNodeAttrs(node),
+                OP_LOGE(GetNodeType().GetString(), "Base GetNodeAttrs failed"), return false);
+
+    // padding=SAME且y的D/H/W未知(动态)时pads置-1，交由V2 tiling按SAME语义重算；仅batch未知时不置
+    if (strncmp(convBpAttr.padding.GetString(), "SAME", sizeof("SAME") - 1) == 0 &&
+        convBpAttr.pads.size() == CONV3D_PADS_NUM &&
+        (ConvBackpropFusionUtilsPass::IsUnknownRankShape(input2Desc.GetShape().GetDims()) ||
+         ConvBackpropFusionUtilsPass::IsDhwUnknown(outputDesc))) {
+        convBpAttr.pads.assign(CONV3D_PADS_NUM, -1);
+    }
     return true;
 }
 
@@ -186,7 +202,7 @@ GraphUniqPtr Conv3DBackpropInputToV2FusionPass::Replacement(const GNode& convBpI
 
     // 与1.0 TBE通用化层保持一致：out_backprop为unknown rank shape [-2]时，归一为-1*5，
     // 避免维数1的[-2]流到V2 tiling的维数校验报错
-    if (IsUnknownRankShape(input2Desc.GetShape().GetDims())) {
+    if (ConvBackpropFusionUtilsPass::IsUnknownRankShape(input2Desc.GetShape().GetDims())) {
         const std::vector<int64_t> unknownDims = {-1, -1, -1, -1, -1};
         input2Desc.SetShape(ge::Shape(unknownDims));
         input2Desc.SetOriginShape(ge::Shape(unknownDims));

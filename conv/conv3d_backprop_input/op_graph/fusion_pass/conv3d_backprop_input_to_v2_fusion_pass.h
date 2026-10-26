@@ -27,6 +27,7 @@ public:
 protected:
     ge::AscendString GetNodeType() const override;
     bool MeetRequirements(const ge::GNode& matchedNode) override;
+    bool GetNodeAttrs(const ge::GNode& node) override;
     bool CheckTransposeNeeded() override;
     ge::fusion::GraphUniqPtr Replacement(const ge::GNode& convBpInputNode) override;
 

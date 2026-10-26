@@ -49,7 +49,8 @@ EsTensorHolder CreateConv2DBpFilterNode(EsGraphBuilder& builder, const char* opT
                                         std::vector<int64_t> strides, std::vector<int64_t> pads,
                                         std::vector<int64_t> dilations, int64_t groups, const std::string& dataFormat,
                                         DataType outDtype, const std::vector<int64_t>& outShape, Format outFormat,
-                                        bool fromDepthwise = false, const std::vector<int64_t>& outputPadding = {})
+                                        bool fromDepthwise = false, const std::vector<int64_t>& outputPadding = {},
+                                        const std::string& padding = "")
 {
     auto* graph = builder.GetCGraphBuilder()->GetGraph();
     auto node = CompliantNodeBuilder(graph)
@@ -87,6 +88,10 @@ EsTensorHolder CreateConv2DBpFilterNode(EsGraphBuilder& builder, const char* opT
     if (!outputPadding.empty()) {
         std::vector<int64_t> outputPaddingVal = outputPadding;
         node.SetAttr("output_padding", outputPaddingVal);
+    }
+    if (!padding.empty()) {
+        AscendString paddingStr = padding.c_str();
+        node.SetAttr("padding", paddingStr);
     }
 
     return EsTensorHolder(builder.GetCGraphBuilder()->GetTensorHolderFromNode(node, 0));
@@ -512,4 +517,38 @@ TEST_F(Conv2dBpFilterToV3FusionPassTest, fromDepthwiseDefaultFalse)
     bool fromDepthwise = true;
     EXPECT_TRUE(GetNodeBoolAttr(graph, "Conv3DBackpropFilter", "from_depthwise", fromDepthwise));
     EXPECT_FALSE(fromDepthwise);
+}
+
+// 对齐legacy：padding=SAME时pads的H/W维置-1，交由V2/V3 tiling按SAME语义重算
+TEST_F(Conv2dBpFilterToV3FusionPassTest, samePaddingPadsRewriteSuccess)
+{
+    auto builder = EsGraphBuilder("samePaddingPadsRewriteSuccess");
+    auto x = builder.CreateInput(0, "x", DT_FLOAT16, FORMAT_NCHW, {-1, 32, -1, -1});
+    auto filterSize = builder.CreateInput(1, "filter_size", DT_INT32, FORMAT_ND, {4});
+    auto outBackprop = builder.CreateInput(2, "out_backprop", DT_FLOAT16, FORMAT_NCHW, {-1, 64, -1, -1});
+
+    auto y = CreateConv2DBpFilterNode(builder, "Conv2DBackpropFilter", x, filterSize, outBackprop, {1, 1, 1, 1},
+                                      {0, 0, 0, 0}, {1, 1, 1, 1}, 1, "NCHW", DT_FLOAT16, {-1, 32, -1, -1}, FORMAT_NCHW,
+                                      false, {}, "SAME");
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv2DBackpropFilterToV3FusionPass pass({AscendString("Conv2DBackpropFilter")});
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(CheckNodeExists(graph, "Conv3DBackpropFilter"));
+
+    bool checked = false;
+    const std::string targetType = "Conv3DBackpropFilter";
+    for (auto node : graph->GetAllNodes()) {
+        AscendString nodeType;
+        node.GetType(nodeType);
+        if (nodeType.GetString() != targetType) {
+            continue;
+        }
+        std::vector<int64_t> pads;
+        EXPECT_EQ(node.GetAttr("pads", pads), GRAPH_SUCCESS);
+        EXPECT_EQ(pads, (std::vector<int64_t>{0, 0, -1, -1, -1, -1}));
+        checked = true;
+    }
+    EXPECT_TRUE(checked);
 }

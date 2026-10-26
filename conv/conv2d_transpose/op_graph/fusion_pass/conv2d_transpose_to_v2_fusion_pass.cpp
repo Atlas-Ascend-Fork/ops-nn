@@ -10,6 +10,8 @@
 
 #include "conv2d_transpose_to_v2_fusion_pass.h"
 
+#include <cstring>
+
 namespace ops {
 namespace {
 const AscendString PASS_NAME = "Conv2DTransposeToV2FusionPass";
@@ -23,6 +25,7 @@ constexpr size_t OFFSET_W_INDEX = 4;
 constexpr size_t CONV2D_TRANSPOSE_INPUT_NUM = 3;
 
 constexpr int64_t DEFAULT_OFFSET_X = 0;
+constexpr size_t CONV2D_PADS_NUM = 4;
 
 } // namespace
 
@@ -94,6 +97,20 @@ bool Conv2DTransposeToV2FusionPass::GetNodeAttrs(const GNode& node)
     node.GetAttr("output_padding", outputPadding);
     offsetX = DEFAULT_OFFSET_X;
     node.GetAttr("offset_x", offsetX);
+
+    // 对齐legacy行为：padding=SAME或auto_pad=SAME_UPPER/SAME_LOWER时pads依赖运行时shape计算，
+    // 置-1交由V2 tiling按SAME语义重算，避免初始值[0,0,0,0]被下游按VALID语义消费
+    bool samePadding = strncmp(convBpAttr.padding.GetString(), "SAME", sizeof("SAME") - 1) == 0;
+    ge::AscendString autoPad;
+    if (node.GetAttr("auto_pad", autoPad) == GRAPH_SUCCESS) {
+        const std::string autoPadStr = autoPad.GetString();
+        if (autoPadStr == "SAME_UPPER" || autoPadStr == "SAME_LOWER") {
+            samePadding = true;
+        }
+    }
+    if (samePadding && convBpAttr.pads.size() == CONV2D_PADS_NUM) {
+        convBpAttr.pads.assign(CONV2D_PADS_NUM, -1);
+    }
 
     ConvBackpropFusionUtilsPass::ExpandAttrs(convBpAttr.strides, convBpAttr.pads, convBpAttr.dilations,
                                              convBpAttr.dataFormat, &outputPadding);

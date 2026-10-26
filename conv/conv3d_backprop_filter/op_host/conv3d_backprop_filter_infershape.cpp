@@ -39,6 +39,9 @@ static ge::graphStatus InferShape4Conv3DBackpropFilter(gert::InferShapeContext* 
         ret = InferShapeForConvBackprop(context, 1, "filter_size", kConv3dDimSizeLimit);
     }
     if (ret == ge::GRAPH_SUCCESS) {
+        ret = PartialInferFilterShapeWhenConstInvisible(context);
+    }
+    if (ret == ge::GRAPH_SUCCESS) {
         auto yShape = context->GetOutputShape(0);
         if (yShape != nullptr) {
             OP_LOGD(context->GetNodeName(), "[InferShape] Conv3DBackpropFilter y_shape: %s",

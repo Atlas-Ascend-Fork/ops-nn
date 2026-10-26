@@ -39,6 +39,9 @@ static ge::graphStatus InferShape4Conv3DBackpropInput(gert::InferShapeContext* c
         ret = InferShapeForConvBackprop(context, 0, "input_size", kConv3dDimSizeLimit);
     }
     if (ret == ge::GRAPH_SUCCESS) {
+        ret = PartialInferInputShapeWhenConstInvisible(context);
+    }
+    if (ret == ge::GRAPH_SUCCESS) {
         auto yShape = context->GetOutputShape(0);
         if (yShape != nullptr) {
             OP_LOGD(context->GetNodeName(), "[InferShape] Conv3DBackpropInput y_shape: %s",
@@ -48,10 +51,16 @@ static ge::graphStatus InferShape4Conv3DBackpropInput(gert::InferShapeContext* c
     return ret;
 }
 
+static ge::graphStatus InferShapeRange4Conv3DBackpropInput(gert::InferShapeRangeContext* context)
+{
+    return InferShapeRangeForConvBackprop(context, 1, 1);
+}
+
 } // namespace Conv
 
 IMPL_OP_INFERSHAPE(Conv3DBackpropInput)
     .InferShape(Ops::NN::Conv::InferShape4Conv3DBackpropInput)
+    .InferShapeRange(Ops::NN::Conv::InferShapeRange4Conv3DBackpropInput)
     .InferDataType(Ops::NN::Conv::InferDataTypeForConvBackpropInputV2)
     .InputsDataDependency({0})
     .PrivateAttr("padding", "")
