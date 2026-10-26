@@ -49,7 +49,7 @@
       <td>ND</td>
     </tr>
     <tr>
-      <td>y</td>
+      <td>z</td>
       <td>输出</td>
       <td>输出一个张量。</td>
       <td>DT_BF16、FLOAT16、DT_FLOAT</td>
