@@ -296,7 +296,7 @@ aclnnStatus aclnnFusedQuantMatmulWeightNz(
     <tr>
       <td rowspan="1">ACLNN_ERR_PARAM_NULLPTR</td>
       <td rowspan="1">161001</td>
-      <td>传入的x1、x2、x1Scale、x2Scale或out是空指针。</td>
+      <td>传入的x1、x2、x1Scale、x2Scale、out或fusedOpType是空指针。</td>
     </tr>
     <tr>
       <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
@@ -389,10 +389,9 @@ aclnnStatus aclnnFusedQuantMatmulWeightNz(
     - 该接口仅支持x2为NZ格式，此时x2是NZ格式时，k、n不能为1。
     - 数据类型为INT32时，每个INT32数据存放8个INT4数据。
     - 可使用aclnnConvertWeightToINT4Pack接口完成x2从INT32（1个int32在0~3bit位存储1个int4）到INT32（1个int32存储8个int4）或INT4（1个int4表示1个int4）的数据格式转换，具体参见[aclnnConvertWeightToINT4Pack接口](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
-    - AI处理器亲和数据排布格式下，shape支持4~8维。
-      - 转置时维度为：（batch，k1，n1，n0，k0），batch可不存在，其中k0 = 32，n0 = 16，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 32） = k1。
-      - 不转置时维度为：（batch，n1，k1，k0，n0），batch可不存在，其中k0 = 16，n0 = 32，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 16） = k1。
-      - 可使用aclnnCalculateMatmulWeightSizeV2接口以及aclnnTransMatmulWeight接口完成输入Format从ND到AI处理器亲和数据排布格式的转换。
+    - x2按逻辑shape声明，维度为2~6。不转置时为（batch，k，n），转置时为（batch，n，k），batch可不存在。数据格式为NZ。不要把NZ内部块排布当作入参shape。
+      - 内部存储才是4~8维。不转置时为（batch，n1，k1，k0，n0），其中k0 = 16，n0 = 32，ceil（k / 16） = k1；转置时为（batch，k1，n1，n0，k0），其中k0 = 32，n0 = 16，ceil（k / 32） = k1。
+      - 可使用aclnnCalculateMatmulWeightSizeV2接口以及aclnnTransMatmulWeight接口，把原始ND数据转换成上述内部排布。入参仍声明逻辑shape，并设置format为NZ。
   - x1Scale约束如下：
     - shape支持1维，形状为（m,），数据类型支持FLOAT32。
   - x2Scale的约束如下：

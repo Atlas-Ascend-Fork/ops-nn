@@ -146,10 +146,39 @@ int CreateAclTensorX2(const std::vector<T>& hostData, const std::vector<int64_t>
     std::vector<int64_t> storageShape;
     storageShape.push_back(GetShapeSize(shape));
 
-    // 调用aclCreateTensor接口创建aclTensor
-    *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_FRACTAL_NZ,
+    // 先按ND声明，供aclnnTransMatmulWeight原地转换成NZ亲和排布。
+    *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
                               storageShape.data(), storageShape.size(), *deviceAddr);
     return 0;
+}
+
+int TransNdWeightToNz(aclTensor* weightNd, aclrtStream stream, void* deviceAddr, const std::vector<int64_t>& shape,
+                      aclDataType dataType, aclTensor** weightNz)
+{
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor = nullptr;
+    auto ret = aclnnTransMatmulWeightGetWorkspaceSize(weightNd, &workspaceSize, &executor);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransMatmulWeightGetWorkspaceSize failed. ERROR: %d\n", ret);
+              return ret);
+    void* workspaceAddr = nullptr;
+    std::unique_ptr<void, aclError (*)(void*)> workspacePtr(nullptr, aclrtFree);
+    if (workspaceSize > 0) {
+        ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate trans workspace failed. ERROR: %d\n", ret); return ret);
+        workspacePtr.reset(workspaceAddr);
+    }
+    ret = aclnnTransMatmulWeight(workspaceAddr, workspaceSize, executor, stream);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransMatmulWeight failed. ERROR: %d\n", ret); return ret);
+
+    std::vector<int64_t> strides(shape.size(), 1);
+    for (int64_t i = static_cast<int64_t>(shape.size()) - 2; i >= 0; --i) {
+        strides[static_cast<size_t>(i)] = shape[static_cast<size_t>(i + 1)] * strides[static_cast<size_t>(i + 1)];
+    }
+    std::vector<int64_t> storageShape{GetShapeSize(shape)};
+    *weightNz = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0,
+                                aclFormat::ACL_FORMAT_FRACTAL_NZ, storageShape.data(), storageShape.size(), deviceAddr);
+    CHECK_RET(*weightNz != nullptr, LOG_PRINT("create NZ weight tensor failed.\n"); return 1);
+    return ACL_SUCCESS;
 }
 
 int aclnnQuantMatmulWeightNzTest(int32_t deviceId, aclrtStream& stream)
@@ -175,11 +204,19 @@ int aclnnQuantMatmulWeightNzTest(int32_t deviceId, aclrtStream& stream)
     std::vector<int64_t> x2Shape = {b, k, n};
     void* x2DeviceAddr = nullptr;
     aclTensor* x2 = nullptr;
-    std::vector<int8_t> x2HostData(b * k * n, 1);
-    ret = CreateAclTensorX2(x2HostData, x2Shape, &x2DeviceAddr, aclDataType::ACL_INT8, &x2);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x2HPTensorPtr(x2, aclDestroyTensor);
+    std::vector<int8_t> x2HostData(static_cast<size_t>(b * k * n));
+    for (size_t i = 0; i < x2HostData.size(); ++i) {
+        x2HostData[i] = static_cast<int8_t>(static_cast<int>(i % 7) - 3);
+    }
+    aclTensor* x2Nd = nullptr;
+    ret = CreateAclTensorX2(x2HostData, x2Shape, &x2DeviceAddr, aclDataType::ACL_INT8, &x2Nd);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x2NdTensorPtr(x2Nd, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> x2HPDeviceAddrPtr(x2DeviceAddr, aclrtFree);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
+    ret = TransNdWeightToNz(x2Nd, stream, x2DeviceAddr, x2Shape, aclDataType::ACL_INT8, &x2);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x2HPTensorPtr(x2, aclDestroyTensor);
+    x2NdTensorPtr.reset();
     // 创建x1Scale aclTensor
     std::vector<int64_t> x1ScaleShape = {b, m};
     void* x1ScaleDeviceAddr = nullptr;

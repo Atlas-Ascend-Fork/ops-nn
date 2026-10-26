@@ -184,10 +184,9 @@ TEST_F(l2_mv_test, l2_mv_test_06)
     test_run({0, 0}, ACL_FLOAT16, ACL_FORMAT_ND, {-10, 10}, {0}, ACL_FLOAT16, ACL_FORMAT_ND, {-15, -10}, {0},
              ACL_FLOAT16, ACL_FORMAT_ND, 1);
 
-    // self为空tensor时，如果vec + out dtype一致，则支持运算
-    // 1. self可以和vec/out dtype不一致
-    test_run({3, 0}, ACL_FLOAT16, ACL_FORMAT_ND, {-10, 10}, {0}, ACL_FLOAT, ACL_FORMAT_ND, {-15, -10}, {3}, ACL_FLOAT,
-             ACL_FORMAT_ND, 1);
+    // self为空tensor时，dtype仍须与vec、out一致
+    test_run_invalid({3, 0}, ACL_FLOAT16, ACL_FORMAT_ND, {-10, 10}, {0}, ACL_FLOAT, ACL_FORMAT_ND, {-15, -10}, {3},
+                     ACL_FLOAT, ACL_FORMAT_ND, 1);
     test_run_invalid({3, 0}, ACL_FLOAT16, ACL_FORMAT_ND, {-10, 10}, {0}, ACL_FLOAT16, ACL_FORMAT_ND, {-15, -10}, {3},
                      ACL_FLOAT, ACL_FORMAT_ND, 1);
     // 2. 该场景下，out dtype为不支持的数据类型也行
@@ -273,4 +272,18 @@ TEST_F(l2_mv_test, ascend910B_fp32_cubeMathType_all4)
              ACL_FORMAT_ND, 4);
     test_run({101, 301}, ACL_FLOAT, ACL_FORMAT_ND, {-10, 10}, {301}, ACL_FLOAT, ACL_FORMAT_ND, {-15, -10}, {101},
              ACL_FLOAT, ACL_FORMAT_ND, 4);
+}
+
+// A2：cubeMathType=2 + BF16、cubeMathType=3 + 非FP32 按资料返回 161002
+TEST_F(l2_mv_test, ascend910B_bf16_cubeMathType_unsupported)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    test_run_invalid({4, 4}, ACL_BF16, ACL_FORMAT_ND, {-1, 1}, {4}, ACL_BF16, ACL_FORMAT_ND, {-1, 1}, {4}, ACL_BF16,
+                     ACL_FORMAT_ND, 2);
+    test_run_invalid({4, 4}, ACL_BF16, ACL_FORMAT_ND, {-1, 1}, {4}, ACL_BF16, ACL_FORMAT_ND, {-1, 1}, {4}, ACL_BF16,
+                     ACL_FORMAT_ND, 3);
+    test_run_invalid({4, 4}, ACL_FLOAT16, ACL_FORMAT_ND, {-1, 1}, {4}, ACL_FLOAT16, ACL_FORMAT_ND, {-1, 1}, {4},
+                     ACL_FLOAT16, ACL_FORMAT_ND, 3);
+    test_run({4, 4}, ACL_BF16, ACL_FORMAT_ND, {-1, 1}, {4}, ACL_BF16, ACL_FORMAT_ND, {-1, 1}, {4}, ACL_BF16,
+             ACL_FORMAT_ND, 0);
 }

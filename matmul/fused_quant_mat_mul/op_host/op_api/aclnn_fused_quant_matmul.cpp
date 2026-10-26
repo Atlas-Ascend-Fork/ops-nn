@@ -36,8 +36,8 @@ using Ops::NN::SwapLastTwoDimValue;
 
 namespace {
 // 校验x1、x2、x1scale、x2scale、out必须存在，校验yscale、x1offset、x2offset、yoffset、x3、groupsize不支持
-static inline bool CheckInputExistence(TupleInput& inputTensors, TupleQuant& quantTensors, TupleFused& fusedTensors,
-                                       const aclTensor* out)
+static inline aclnnStatus CheckInputExistence(TupleInput& inputTensors, TupleQuant& quantTensors,
+                                              TupleFused& fusedTensors, const aclTensor* out)
 {
     auto x1 = std::get<INDEX_X1_IN_INPUT_TUPLE>(inputTensors);
     auto x2 = std::get<INDEX_X2_IN_INPUT_TUPLE>(inputTensors);
@@ -50,37 +50,37 @@ static inline bool CheckInputExistence(TupleInput& inputTensors, TupleQuant& qua
     int64_t groupSize = std::get<INDEX_GROUP_SIZE_IN_QUANT_TUPLE>(quantTensors);
     auto x3 = std::get<INDEX_X3_IN_FUSED_TUPLE>(fusedTensors);
     // 必选参数
-    OP_CHECK_NULL(x1, return false);
-    OP_CHECK_NULL(x2, return false);
-    OP_CHECK_NULL(x1Scale, return false);
-    OP_CHECK_NULL(x2Scale, return false);
-    OP_CHECK_NULL(out, return false);
-    // 不支持参数
+    OP_CHECK_NULL(x1, return ACLNN_ERR_PARAM_NULLPTR);
+    OP_CHECK_NULL(x2, return ACLNN_ERR_PARAM_NULLPTR);
+    OP_CHECK_NULL(x1Scale, return ACLNN_ERR_PARAM_NULLPTR);
+    OP_CHECK_NULL(x2Scale, return ACLNN_ERR_PARAM_NULLPTR);
+    OP_CHECK_NULL(out, return ACLNN_ERR_PARAM_NULLPTR);
+    // 不支持参数。日志与返回码都用 161002，避免被外层统一映射成 161001。
     if (yScale != nullptr && !yScale->IsEmpty()) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Do not support yScale now, yScale should be empty tensor or nullptr.");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (x1Offset != nullptr && !x1Offset->IsEmpty()) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Do not support x1Offset now, x1Offset should be empty tensor or nullptr.");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (x2Offset != nullptr && !x2Offset->IsEmpty()) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Do not support x2Offset now, x2Offset should be empty tensor or nullptr.");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (yOffset != nullptr && !yOffset->IsEmpty()) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Do not support yOffset now, yOffset should be empty tensor or nullptr.");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (x3 != nullptr && !x3->IsEmpty()) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Do not support x3 now, x3 should be empty tensor or nullptr.");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (groupSize != 0) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Do not support groupSize now, groupSize should be 0.");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    return true;
+    return ACLNN_SUCCESS;
 }
 
 static inline bool CheckDimRange(TupleInput& inputTensors, TupleQuant& quantTensors, const aclTensor* out)
@@ -134,8 +134,9 @@ static aclnnStatus PreMatmulCalcProcess(TupleInput& inputTensors, TupleQuant& qu
     bool transposeX2 = std::get<INDEX_X2_IN_INPUT_TUPLE>(boolsTrans);
 
     CHECK_RET(executor != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
-    // 校验tensor是否存在或不支持。
-    CHECK_RET(CheckInputExistence(inputTensors, quantTensors, fusedTensors, out), ACLNN_ERR_PARAM_NULLPTR);
+    // 校验tensor是否存在或不支持。必选空指针返回 161001，预留参数传值返回 161002。
+    auto existRet = CheckInputExistence(inputTensors, quantTensors, fusedTensors, out);
+    CHECK_RET(existRet == ACLNN_SUCCESS, existRet);
 
     // 对存在的tensor进行contiguous处理
     bool tempTransposeValue = false;

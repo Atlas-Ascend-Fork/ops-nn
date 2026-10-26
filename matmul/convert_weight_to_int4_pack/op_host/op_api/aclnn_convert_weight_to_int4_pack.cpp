@@ -254,8 +254,31 @@ static bool CheckStorageShapeValid(const aclTensor* weightInt4Pack, int64_t weig
 
 static bool CheckShapeValid(const aclTensor* weight, const aclTensor* weightInt4Pack)
 {
-    size_t weightDimNum = weight->GetViewShape().GetDimNum() - 1;
-    size_t weightInt4PackDimNum = weightInt4Pack->GetViewShape().GetDimNum() - 1;
+    const size_t weightRank = weight->GetViewShape().GetDimNum();
+    const size_t weightInt4PackRank = weightInt4Pack->GetViewShape().GetDimNum();
+    if (weight->GetViewShape().GetShapeSize() == 0 || weightInt4Pack->GetViewShape().GetShapeSize() == 0) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "weight and weightInt4Pack do not support empty tensor.");
+        return false;
+    }
+    if (weightRank != weightInt4PackRank) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "weight and weightInt4Pack dim num should be the same, but got [%zu] and [%zu].", weightRank,
+                weightInt4PackRank);
+        return false;
+    }
+    for (size_t i = 0; i + 2 < weightRank; ++i) {
+        const int64_t weightDim = weight->GetViewShape().GetDim(i);
+        const int64_t weightInt4PackDim = weightInt4Pack->GetViewShape().GetDim(i);
+        if (weightDim != weightInt4PackDim) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                    "weight and weightInt4Pack shape should match on non-packed dims, but dim[%zu] is [%ld] and [%ld].",
+                    i, weightDim, weightInt4PackDim);
+            return false;
+        }
+    }
+
+    size_t weightDimNum = weightRank - 1;
+    size_t weightInt4PackDimNum = weightInt4PackRank - 1;
     int64_t weightDimFirst = weight->GetViewShape().GetDim(weightDimNum - 1);
     int64_t weightDimLast = weight->GetViewShape().GetDim(weightDimNum);
     int64_t weightInt4PackDimFirst = weightInt4Pack->GetViewShape().GetDim(weightInt4PackDimNum - 1);

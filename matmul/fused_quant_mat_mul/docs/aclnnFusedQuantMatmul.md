@@ -238,7 +238,7 @@ aclnnStatus aclnnFusedQuantMatmul(
         <td>groupSizeOptional</td>
         <td>输入</td>
         <td>用于输入m、n、k方向上的量化分组大小。</td>
-        <td>预留参数，当前版本不支持，需要传入nullptr。</td>
+        <td>预留参数，当前版本不支持，需要传入0。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -296,7 +296,7 @@ aclnnStatus aclnnFusedQuantMatmul(
     <tr>
       <td rowspan="1">ACLNN_ERR_PARAM_NULLPTR</td>
       <td rowspan="1">161001</td>
-      <td>传入的x1、x2、x1Scale、x2Scale或out是空指针。</td>
+      <td>传入的x1、x2、x1Scale、x2Scale、out或fusedOpType是空指针。</td>
     </tr>
     <tr>
       <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>

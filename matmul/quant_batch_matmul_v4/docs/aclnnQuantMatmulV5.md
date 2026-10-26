@@ -467,7 +467,7 @@ aclnnStatus aclnnQuantMatmulV5(
             <li>空Tensor支持情况见<a href="#空tensor支持情况">空Tensor支持情况</a>。</li>
           </ul>
         </td>
-        <td>FLOAT16、INT8、BFLOAT16、INT32、FLOAT32</td>
+        <td>FLOAT16、INT8、BFLOAT16、INT32、FLOAT32<sup>2</sup></td>
         <td>ND</td>
         <td>2～6，具体限制见<a href="#约束说明">约束说明</a>。</td>
         <td>-</td>

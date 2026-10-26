@@ -113,7 +113,7 @@ TEST_F(l2_FusedQuantMatmul_test, ascend910B_invalid_group_size)
                               nullptr, "gelu_tanh", 32),
                         OUTPUT(out_desc));
     uint64_t workspace_size = 0;
-    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_NULLPTR);
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
 }
 
 TEST_F(l2_FusedQuantMatmul_test, ascend910B_invalid_input_dtype_fp16)
@@ -178,7 +178,7 @@ TEST_F(l2_FusedQuantMatmul_test, ascend910B_unsupported_y_scale)
                               nullptr, nullptr, "gelu_tanh", 0),
                         OUTPUT(out_desc));
     uint64_t workspace_size = 0;
-    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_NULLPTR);
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
 }
 
 TEST_F(l2_FusedQuantMatmul_test, ascend910B_unsupported_x3)
@@ -195,7 +195,7 @@ TEST_F(l2_FusedQuantMatmul_test, ascend910B_unsupported_x3)
                               x3_desc, "gelu_tanh", 0),
                         OUTPUT(out_desc));
     uint64_t workspace_size = 0;
-    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_NULLPTR);
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
 }
 
 TEST_F(l2_FusedQuantMatmul_test, ascend910B_gelu_erf_success)

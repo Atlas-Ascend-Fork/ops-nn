@@ -47,15 +47,31 @@ static const aclTensor* MVProcess(const aclTensor* self, const aclTensor* vec, c
 }
 } // namespace
 
-// 1. vec、out的数据类型要与self一致
+// 1. self、vec、out的数据类型必须一致。空tensor也要校验，避免非法dtype被静默放行。
 static bool CheckDtypeSame(const aclTensor* self, const aclTensor* vec, const aclTensor* out)
 {
-    // 1. vec、out的数据类型要与self一致
-    // 先校验out和vec dtype一致
     OP_CHECK_DTYPE_NOT_SAME(out, vec, return false);
-    // self不为空tensor时，校验self和vec dtype一致
-    if (!self->IsEmpty()) {
-        OP_CHECK_DTYPE_NOT_SAME(self, vec, return false);
+    OP_CHECK_DTYPE_NOT_SAME(self, vec, return false);
+    return true;
+}
+
+// A2/A3/950 资料约束：cubeMathType=2 不支持 BF16；cubeMathType=3 仅支持 FLOAT32。
+static bool CheckMvCubeMathType(const aclTensor* self, int8_t cubeMathType)
+{
+    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (npuArch != NpuArch::DAV_2201 && !IsNpuArch3510Series()) {
+        return true;
+    }
+    const auto dtype = self->GetDataType();
+    if (cubeMathType == USE_FP16 && dtype == DataType::DT_BF16) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "cubeMathType 2 (USE_FP16) is not supported when input dtype is BF16.");
+        return false;
+    }
+    if (cubeMathType == USE_HF32 && dtype != DataType::DT_FLOAT) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "cubeMathType 3 (USE_HF32) is only supported when input dtype is FLOAT32, but got %s.",
+                op::ToString(dtype).GetString());
+        return false;
     }
     return true;
 }
@@ -89,6 +105,7 @@ static aclnnStatus CheckInputParams(const aclTensor* self, const aclTensor* vec,
     auto archRule = BuildRule();
     CHECK_RET(archRule != nullptr, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(archRule->CheckInput(self, vec, nullptr, out, cubeMathType), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckMvCubeMathType(self, cubeMathType), ACLNN_ERR_PARAM_INVALID);
 
     // 3. shape: self必须为2维: n x m, vec必须为1维：m, out必须为1维：n
     CHECK_RET(CheckShape(self, vec, out), ACLNN_ERR_PARAM_INVALID);
