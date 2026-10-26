@@ -243,9 +243,18 @@ static aclnnStatus ExecAclnnIndexAddV2GetWorkspaceSize(const aclTensor* self, co
     }
     auto ret = CheckParams(self, dim, index, source, alpha, out);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    if (self->IsEmpty() || source->IsEmpty()) {
+    if (self->IsEmpty()) {
         // 根据实际支持情况补充
         *workspaceSize = 0;
+        uniqueExecutor.ReleaseTo(executor);
+        return ACLNN_SUCCESS;
+    }
+    if (source->IsEmpty()) {
+        auto selfContiguous = l0op::Contiguous(self, uniqueExecutor.get());
+        CHECK_RET(selfContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        auto viewCopyResult = l0op::ViewCopy(selfContiguous, out, uniqueExecutor.get());
+        CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
     }

@@ -347,3 +347,38 @@ TEST_F(l2_index_add_v2_test, Ascend910B_case_FLOAT_mode_0_int32_dim_1)
     uint64_t workspace_size = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
 }
+
+TEST_F(l2_index_add_v2_test, Ascend910B_case_FLOAT_empty_source)
+{
+    auto tensor_desc = TensorDesc({5, 3}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(-10, 10);
+    int32_t dims = 0;
+    auto index_desc = TensorDesc({0}, ACL_INT32, ACL_FORMAT_NCHW).Value(vector<int32_t>{});
+    auto source_desc = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(-10, 10);
+    auto scalar_desc = ScalarDesc(1.0f);
+    int64_t mode = 0;
+
+    auto ut = OP_API_UT(aclnnIndexAddV2, INPUT(tensor_desc, dims, index_desc, source_desc, scalar_desc, mode),
+                        OUTPUT(tensor_desc));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+TEST_F(l2_index_add_v2_test, Ascend910B_case_FLOAT_empty_self)
+{
+    auto tensor_desc = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(-10, 10);
+    int32_t dims = 0;
+    auto index_desc = TensorDesc({0}, ACL_INT32, ACL_FORMAT_NCHW).Value(vector<int32_t>{});
+    auto source_desc = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(-10, 10);
+    auto scalar_desc = ScalarDesc(1.0f);
+    int64_t mode = 0;
+
+    auto ut = OP_API_UT(aclnnIndexAddV2, INPUT(tensor_desc, dims, index_desc, source_desc, scalar_desc, mode),
+                        OUTPUT(tensor_desc));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+    EXPECT_EQ(workspace_size, 0);
+}
