@@ -116,12 +116,43 @@ def _torch_rms_prop(var, ms, mom, lr, rho, momentum, epsilon, grad):
 
 
 class _TorchRMSPropCompose:
+    """Independent third-party leg: a self-contained torch composition that does
+    NOT delegate to the CPU golden's ``_torch_rms_prop``. It uses an equivalent
+    but different operation order so ``cross_check`` keeps independent
+    discrimination instead of comparing the golden against itself."""
+
     def __init__(self, use_locking=False, **kwargs):
         del use_locking, kwargs
 
     def __call__(self, var, ms, mom, lr, rho, momentum, epsilon, grad, **kwargs):
         del kwargs
-        return _torch_rms_prop(var, ms, mom, lr, rho, momentum, epsilon, grad)
+        target_dtype = var.dtype
+        if target_dtype in (torch.float16, torch.bfloat16):
+            var = var.float()
+            ms = ms.float()
+            mom = mom.float()
+            grad = grad.float()
+
+        lr_value = lr.reshape(-1)[0].to(var.dtype)
+        rho_value = rho.reshape(-1)[0].to(var.dtype)
+        momentum_value = momentum.reshape(-1)[0].to(var.dtype)
+        epsilon_value = epsilon.reshape(-1)[0].to(var.dtype)
+        epsilon_floor = torch.tensor(
+            torch.finfo(torch.float32).tiny, dtype=var.dtype, device=var.device
+        )
+        # Keep the documented NaN contract: epsilon <= FLT_MIN (or NaN) clamps to
+        # FLT_MIN. torch.where (not torch.maximum) matches the contract, which
+        # maps NaN epsilon to the floor instead of propagating NaN.
+        epsilon_value = torch.where(
+            epsilon_value > epsilon_floor, epsilon_value, epsilon_floor
+        )
+
+        ms_out = ms + (1.0 - rho_value) * (grad * grad - ms)
+        mom_out = momentum_value * mom + (lr_value * grad) * torch.rsqrt(
+            ms_out + epsilon_value
+        )
+        var_out = var - mom_out
+        return [value.to(target_dtype) for value in (var_out, ms_out, mom_out)]
 
 
 class InplaceApplyRMSPropKernelSpec:

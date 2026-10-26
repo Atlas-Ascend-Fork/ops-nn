@@ -20,34 +20,154 @@
  *
  * Inputs:  var(0), ms(1), mom(2), lr(3), rho(4), momentum(5), epsilon(6), grad(7)
  * Outputs: var(0), ms(1), mom(2), each takes shape of corresponding input.
+ *
+ * This gate independently rejects the documented contract violations that are
+ * decidable from the input shapes alone (rank bounds, state-tensor shape identity,
+ * scalar {1} shapes, required inputs), matching the operator's
+ * INFER_AND_TILING_INDEPENDENT interception policy. Unresolved dynamic markers
+ * (-1 unknown dim / -2 unknown rank) are NOT rejected here: the operator contract
+ * delegates their rejection to Tiling. The dtype gate lives in
+ * op_graph/inplace_apply_rms_prop_graph_infer.cpp, which owns the operator's single
+ * InferDataType registration.
  */
 
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_shape_context.h"
+#include "op_common/log/log.h"
 #include "op_common/op_host/util/shape_util.h"
 
 using namespace ge;
 
 namespace ops {
 
+namespace {
+constexpr size_t kStateInputCount = 3; // var, ms, mom
+constexpr size_t kLrInputIndex = 3;    // lr, rho, momentum, epsilon follow
+constexpr size_t kScalarInputCount = 4;
+constexpr size_t kGradInputIndex = 7;
+constexpr size_t kOutputCount = 3;
+constexpr size_t kMaxRank = 8;
+
+const char* const kStateNames[kStateInputCount] = {"var", "ms", "mom"};
+const char* const kScalarNames[kScalarInputCount] = {"lr", "rho", "momentum", "epsilon"};
+
+// A shape is decidable at this gate only when neither its rank nor any dimension is
+// still unknown. Partially known shapes keep propagating and are re-checked by Tiling.
+bool IsFullyKnown(const gert::Shape& shape)
+{
+    if (Ops::Base::IsUnknownRank(shape)) {
+        return false;
+    }
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        if (shape.GetDim(i) < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ShapeEqual(const gert::Shape& a, const gert::Shape& b)
+{
+    if (a.GetDimNum() != b.GetDimNum()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.GetDimNum(); ++i) {
+        if (a.GetDim(i) != b.GetDim(i)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// State tensors are rank [1, 8] tensors; grad shares their shape.
+ge::graphStatus CheckStateTensors(gert::InferShapeContext* context, const gert::Shape* const* stateShapes,
+                                  const gert::Shape* gradShape)
+{
+    for (size_t i = 0; i < kStateInputCount; ++i) {
+        if (Ops::Base::IsUnknownRank(*stateShapes[i])) {
+            continue;
+        }
+        const size_t rank = stateShapes[i]->GetDimNum();
+        if (rank < 1 || rank > kMaxRank) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), kStateNames[i],
+                                                     std::to_string(rank).c_str(), "rank must be in [1, 8]");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (!Ops::Base::IsUnknownRank(*gradShape)) {
+        const size_t gradRank = gradShape->GetDimNum();
+        if (gradRank < 1 || gradRank > kMaxRank) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "grad", std::to_string(gradRank).c_str(),
+                                                     "rank must be in [1, 8]");
+            return ge::GRAPH_FAILED;
+        }
+    }
+
+    const gert::Shape* others[kStateInputCount] = {stateShapes[1], stateShapes[2], gradShape};
+    const char* relationNames[kStateInputCount] = {"var and ms", "var and mom", "var and grad"};
+    for (size_t i = 0; i < kStateInputCount; ++i) {
+        if (!IsFullyKnown(*stateShapes[0]) || !IsFullyKnown(*others[i])) {
+            continue;
+        }
+        if (!ShapeEqual(*stateShapes[0], *others[i])) {
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), relationNames[i],
+                (Ops::Base::ToString(*stateShapes[0]) + " and " + Ops::Base::ToString(*others[i])).c_str(),
+                "state tensors and grad must have identical shapes");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+// lr / rho / momentum / epsilon are 1-element rank-1 tensors.
+ge::graphStatus CheckScalarTensors(gert::InferShapeContext* context, const gert::Shape* const* scalarShapes)
+{
+    for (size_t i = 0; i < kScalarInputCount; ++i) {
+        const gert::Shape& shape = *scalarShapes[i];
+        if (Ops::Base::IsUnknownRank(shape)) {
+            continue;
+        }
+        const size_t rank = shape.GetDimNum();
+        const int64_t firstDim = rank == 0 ? -1 : shape.GetDim(0);
+        const bool isScalarShape = (rank == 1) && (firstDim == 1 || firstDim < 0);
+        if (!isScalarShape) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), kScalarNames[i],
+                                                  Ops::Base::ToString(shape).c_str(),
+                                                  "scalar parameter must have shape {1}");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    return ge::GRAPH_SUCCESS;
+}
+} // namespace
+
 static ge::graphStatus InferShape4InplaceApplyRMSProp(gert::InferShapeContext* context)
 {
-    constexpr size_t kStateInputCount = 3;
-    constexpr size_t kGradInputIndex = 7;
-    constexpr size_t kOutputCount = 3;
     const gert::Shape* stateShapes[kStateInputCount] = {};
     gert::Shape* outputShapes[kOutputCount] = {};
     for (size_t i = 0; i < kStateInputCount; ++i) {
         stateShapes[i] = context->GetInputShape(i);
         outputShapes[i] = context->GetOutputShape(i);
-        if (stateShapes[i] == nullptr || outputShapes[i] == nullptr) {
-            return ge::GRAPH_FAILED;
-        }
+        OP_CHECK_NULL_WITH_CONTEXT(context, stateShapes[i]);
+        OP_CHECK_NULL_WITH_CONTEXT(context, outputShapes[i]);
     }
     const gert::Shape* gradShape = context->GetInputShape(kGradInputIndex);
-    if (gradShape == nullptr) {
+    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
+
+    const gert::Shape* scalarShapes[kScalarInputCount] = {};
+    for (size_t i = 0; i < kScalarInputCount; ++i) {
+        scalarShapes[i] = context->GetInputShape(kLrInputIndex + i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, scalarShapes[i]);
+    }
+
+    if (CheckStateTensors(context, stateShapes, gradShape) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
+    if (CheckScalarTensors(context, scalarShapes) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
     // Unknown rank means shape relationships cannot be checked yet. Preserve
     // the dynamic-rank contract for every in-place state output.
     bool unknownRank = Ops::Base::IsUnknownRank(*gradShape);
@@ -67,17 +187,6 @@ static ge::graphStatus InferShape4InplaceApplyRMSProp(gert::InferShapeContext* c
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus InferDataType4InplaceApplyRMSProp(gert::InferDataTypeContext* context)
-{
-    constexpr size_t kOutputCount = 3;
-    for (size_t i = 0; i < kOutputCount; ++i) {
-        context->SetOutputDataType(i, context->GetInputDataType(i));
-    }
-    return ge::GRAPH_SUCCESS;
-}
-
-IMPL_OP_INFERSHAPE(InplaceApplyRMSProp)
-    .InferShape(InferShape4InplaceApplyRMSProp)
-    .InferDataType(InferDataType4InplaceApplyRMSProp);
+IMPL_OP_INFERSHAPE(InplaceApplyRMSProp).InferShape(InferShape4InplaceApplyRMSProp);
 
 } // namespace ops

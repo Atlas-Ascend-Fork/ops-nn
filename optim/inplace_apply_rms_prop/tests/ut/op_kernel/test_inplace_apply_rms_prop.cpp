@@ -12,7 +12,7 @@
 
 /*!
  * \file test_inplace_apply_rms_prop.cpp
- * \brief Kernel UT for InplaceApplyRMSProp (arch35 / ascend950).
+ * \brief Kernel UT for InplaceApplyRMSProp (arch35 / Ascend950/Ascend350).
  *
  * The kernel template is included directly so the UT can invoke each supported
  * dtype and buffer mode in the CPU harness.
@@ -105,6 +105,30 @@ static void FillArray(uint8_t* gm, size_t n, float value)
     }
 }
 
+// Integer schMode encoding of the compute dtype, matching the kernel entry
+// template <uint32_t SCH_MODE, uint32_t BUFFER_MODE> in
+// op_kernel/inplace_apply_rms_prop.cpp: 0=fp32, 1=fp16, 2=bf16.
+template <typename T>
+static constexpr uint32_t SchModeOf();
+
+template <>
+constexpr uint32_t SchModeOf<float>()
+{
+    return 0;
+}
+
+template <>
+constexpr uint32_t SchModeOf<half>()
+{
+    return 1;
+}
+
+template <>
+constexpr uint32_t SchModeOf<bfloat16_t>()
+{
+    return 2;
+}
+
 class inplace_apply_rms_prop_kernel_test : public testing::Test {
 protected:
     static void SetUpTestCase() { cout << "inplace_apply_rms_prop_kernel_test SetUp\n" << endl; }
@@ -154,12 +178,12 @@ static void LaunchInplaceApplyRmsPropOnce(size_t totalNum, float lrVal, float rh
     tilingData->ubFactor = static_cast<int64_t>(totalNum >= 256 ? 256 : (totalNum > 0 ? totalNum : 1));
 
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
-    ICPU_SET_TILING_KEY(static_cast<uint64_t>(BUFFER_MODE) * 256);
+    ICPU_SET_TILING_KEY(static_cast<uint64_t>(SchModeOf<T>()) + static_cast<uint64_t>(BUFFER_MODE) * 256);
 
     uint32_t blockDim = 1;
     auto KernelInplaceApplyRmsProp = [](GM_ADDR a, GM_ADDR b, GM_ADDR c, GM_ADDR d, GM_ADDR e, GM_ADDR f, GM_ADDR g,
                                         GM_ADDR h, GM_ADDR i, GM_ADDR j, GM_ADDR k, GM_ADDR l, GM_ADDR m) {
-        ::inplace_apply_rms_prop<T, BUFFER_MODE>(a, b, c, d, e, f, g, h, i, j, k, l, m);
+        ::inplace_apply_rms_prop<SchModeOf<T>(), BUFFER_MODE>(a, b, c, d, e, f, g, h, i, j, k, l, m);
     };
     ICPU_RUN_KF(KernelInplaceApplyRmsProp, blockDim, var, ms, mom, lr, rho, momentum, epsilon, grad, var_out, ms_out,
                 mom_out, workspace, tiling);
@@ -357,7 +381,7 @@ TEST_F(inplace_apply_rms_prop_kernel_test, test_empty_input_no_op)
     uint32_t blockDim = 1;
     auto KernelInplaceApplyRmsProp = [](GM_ADDR a, GM_ADDR b, GM_ADDR c, GM_ADDR d, GM_ADDR e, GM_ADDR f, GM_ADDR g,
                                         GM_ADDR h, GM_ADDR i, GM_ADDR j, GM_ADDR k, GM_ADDR l, GM_ADDR m) {
-        ::inplace_apply_rms_prop<float, 0>(a, b, c, d, e, f, g, h, i, j, k, l, m);
+        ::inplace_apply_rms_prop<0, 0>(a, b, c, d, e, f, g, h, i, j, k, l, m);
     };
     ICPU_RUN_KF(KernelInplaceApplyRmsProp, blockDim, var, ms, mom, lr, rho, momentum, epsilon, grad, var_out, ms_out,
                 mom_out, workspace, tiling);

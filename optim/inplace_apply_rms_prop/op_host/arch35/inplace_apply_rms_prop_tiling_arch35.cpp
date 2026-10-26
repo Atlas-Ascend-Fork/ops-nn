@@ -18,13 +18,13 @@
  * \file inplace_apply_rms_prop_tiling_arch35.cpp
  * \brief InplaceApplyRMSProp tiling implementation (arch35)
  *
- * TilingKey selection:
- *   TilingKey 0:   D_T_X=C_DT_FLOAT,   BUFFER_MODE=0
- *   TilingKey 256: D_T_X=C_DT_FLOAT,   BUFFER_MODE=1
- *   TilingKey 1:   D_T_X=C_DT_FLOAT16, BUFFER_MODE=0
- *   TilingKey 257: D_T_X=C_DT_FLOAT16, BUFFER_MODE=1
- *   TilingKey 27:  D_T_X=C_DT_BF16,    BUFFER_MODE=0
- *   TilingKey 283: D_T_X=C_DT_BF16,    BUFFER_MODE=1
+ * TilingKey selection (schMode encodes the compute dtype as an integer; no dtype enum):
+ *   TilingKey 0:   schMode=0 (FP32) + BUFFER_MODE=0
+ *   TilingKey 256: schMode=0 (FP32) + BUFFER_MODE=1
+ *   TilingKey 1:   schMode=1 (FP16) + BUFFER_MODE=0
+ *   TilingKey 257: schMode=1 (FP16) + BUFFER_MODE=1
+ *   TilingKey 2:   schMode=2 (BF16) + BUFFER_MODE=0
+ *   TilingKey 258: schMode=2 (BF16) + BUFFER_MODE=1
  *
  * Scalar parameters (lr / rho / momentum / epsilon) are shape {1}
  * Tensor inputs (index 3/4/5/6). They are read by Kernel from GM at runtime, NOT
@@ -32,8 +32,10 @@
  */
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
+#include "platform/platform_infos_def.h"
 #include "register/op_def_registry.h"
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/math_util.h"
@@ -54,6 +56,34 @@ constexpr uint64_t SINGLE_BUFFER_MODE = 0;
 constexpr uint64_t DOUBLE_BUFFER_MODE = 1;
 constexpr int64_t SCALAR_FP32_UB_BYTES = 256;
 constexpr int64_t SCALAR_REDUCED_UB_BYTES = 256;
+// The reduced-precision vector helpers (RmsBf16ToF32 / RmsF32ToBf16) load UB into vector
+// registers with full-width, unmasked Reg::DataCopy, so their last loop iteration reads
+// CeilAlign(n, lanes) elements with lanes = GetVecLen() / sizeof(float). Keeping ubFactor a
+// multiple of the platform's fp32 lane count makes the physical read range of every tile
+// stay inside the tile buffers, independently of the platform-reported UB size.
+// The lane count is derived from the platform's vector register width (AICoreSpec
+// vector_reg_width, in bytes -- the same value GetVecLen() returns). The fallback matches
+// the arch35 targets registered by this operator (Ascend950 / Ascend350 both report
+// vector_reg_width=256B, i.e. 64 fp32 lanes).
+constexpr int64_t FALLBACK_VF_LANE_ELEMENTS = 64;
+
+static int64_t GetVfLaneElements(gert::TilingContext* context)
+{
+    fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
+    if (platformInfoPtr != nullptr) {
+        std::string vectorRegWidth;
+        if (platformInfoPtr->GetPlatformRes("AICoreSpec", "vector_reg_width", vectorRegWidth)) {
+            const int64_t widthBytes = static_cast<int64_t>(std::strtoll(vectorRegWidth.c_str(), nullptr, 10));
+            if (widthBytes > 0 && widthBytes % static_cast<int64_t>(sizeof(float)) == 0) {
+                return widthBytes / static_cast<int64_t>(sizeof(float));
+            }
+            OP_LOGW(context->GetNodeName(),
+                    "unexpected AICoreSpec vector_reg_width '%s'; falling back to %ld fp32 lanes",
+                    vectorRegWidth.c_str(), FALLBACK_VF_LANE_ELEMENTS);
+        }
+    }
+    return FALLBACK_VF_LANE_ELEMENTS;
+}
 
 static int64_t GetDataTypeBytes(ge::DataType dataType)
 {
@@ -134,7 +164,15 @@ static ge::graphStatus ComputeSplit(gert::TilingContext* context, InplaceApplyRm
         return ge::GRAPH_FAILED;
     }
     const int64_t maxUbElements = FloorDiv(tensorUbBytes, tensorBytesPerElement);
-    tiling->ubFactor = FloorAlign(maxUbElements, alignElements);
+    // Only the reduced-precision paths load UB into vector registers with full-width, unmasked
+    // Reg::DataCopy, so only they need ubFactor to be a multiple of the platform's fp32 vector
+    // lane count; the fp32 path keeps the native UB block alignment.
+    int64_t ubAlignment = alignElements;
+    if (dataType != ge::DT_FLOAT) {
+        const int64_t vfLaneElements = GetVfLaneElements(context);
+        ubAlignment = vfLaneElements > ubAlignment ? vfLaneElements : ubAlignment;
+    }
+    tiling->ubFactor = FloorAlign(maxUbElements, ubAlignment);
     if (tiling->ubFactor <= 0) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "ubFactor", std::to_string(tiling->ubFactor),
                                               "ubFactor must be greater than 0");
@@ -245,8 +283,82 @@ static ge::graphStatus CheckScalarsC3(gert::TilingContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
+// Reject negative/unknown dimensions that a product check cannot catch: GetShapeSize() is a plain
+// product and returns a non-negative value for [-1, -1] (-> 1) or [0, -1] (-> 0). Mirrors the
+// per-dimension check used by optim/fused_adam (CheckShapeAllPositive on the storage shape).
+static ge::graphStatus CheckShapeAllPositive(gert::TilingContext* context, const gert::StorageShape* varShape)
+{
+    const gert::Shape& storageShape = varShape->GetStorageShape();
+    for (size_t i = 0; i < storageShape.GetDimNum(); ++i) {
+        if (storageShape.GetDim(i) < 0) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "var",
+                                                  Ops::Base::ToString(storageShape).c_str(),
+                                                  "runtime storage shape must have non-negative dimensions");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+// Every state tensor must independently satisfy the documented rank range, so a rank
+// violation is reported as a dimension error instead of being masked by the shape-identity
+// check below, which would otherwise reject it as a shape mismatch with a different code.
+static ge::graphStatus CheckStateRanks(gert::TilingContext* context)
+{
+    constexpr size_t kMaxRank = 8;
+    constexpr size_t kStateIndices[] = {kIdxMs, kIdxMom, kIdxGrad};
+    constexpr const char* kStateNames[] = {"ms", "mom", "grad"};
+    for (size_t i = 0; i < sizeof(kStateIndices) / sizeof(kStateIndices[0]); ++i) {
+        auto shape = context->GetInputShape(kStateIndices[i]);
+        OP_CHECK_NULL_WITH_CONTEXT(context, shape);
+        const size_t rank = shape->GetOriginShape().GetDimNum();
+        if (rank < 1 || rank > kMaxRank) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), kStateNames[i],
+                                                     std::to_string(rank).c_str(), "rank must be in [1, 8]");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+// The OpDef registers ND-only layouts and disables the framework support check
+// (.NeedCheckSupportFlag(false)), so the operator host side owns the layout gate. The
+// kernel interprets the global buffers as contiguous ND, so any other storage format
+// must be rejected before execution.
+static ge::graphStatus CheckFormats(gert::TilingContext* context)
+{
+    constexpr size_t kInputCount = 8;
+    constexpr size_t kOutputCount = 3;
+    constexpr const char* kInputNames[kInputCount] = {"var", "ms", "mom", "lr", "rho", "momentum", "epsilon", "grad"};
+    constexpr const char* kOutputNames[kOutputCount] = {"var", "ms", "mom"};
+    for (size_t i = 0; i < kInputCount; ++i) {
+        auto desc = context->GetInputDesc(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, desc);
+        const auto format = desc->GetFormat().GetStorageFormat();
+        if (format != ge::FORMAT_ND) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), kInputNames[i], Ops::Base::ToString(format),
+                                                   "only ND is supported");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    for (size_t i = 0; i < kOutputCount; ++i) {
+        auto desc = context->GetOutputDesc(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, desc);
+        const auto format = desc->GetFormat().GetStorageFormat();
+        if (format != ge::FORMAT_ND) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), kOutputNames[i], Ops::Base::ToString(format),
+                                                   "only ND is supported");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus GetShapeAndDataType(gert::TilingContext* context, int64_t& totalNum, ge::DataType& dataType)
 {
+    if (CheckFormats(context) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     auto varShape = context->GetInputShape(kIdxVar);
     OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
 
@@ -257,7 +369,13 @@ static ge::graphStatus GetShapeAndDataType(gert::TilingContext* context, int64_t
                                                  "rank must be in [1, 8]");
         return ge::GRAPH_FAILED;
     }
+    if (CheckStateRanks(context) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
+    if (CheckShapeAllPositive(context, varShape) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     if (CheckShapeC1(context, varShape) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
@@ -309,11 +427,24 @@ static ge::graphStatus SetWorkspace(gert::TilingContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus HandleEmptyTensor(gert::TilingContext* context, uint32_t dTypeX)
+// Encode the compute dtype as an integer schMode so TilingKey does not couple the
+// operator semantic dtype (convention ascendc-op-conventions.md §1).
+static uint32_t DataTypeToSchMode(ge::DataType dataType)
+{
+    if (dataType == ge::DT_FLOAT16) {
+        return 1; // fp16
+    }
+    if (dataType == ge::DT_BF16) {
+        return 2; // bf16
+    }
+    return 0; // fp32
+}
+
+static ge::graphStatus HandleEmptyTensor(gert::TilingContext* context, uint32_t schMode)
 {
     context->SetBlockDim(1);
     uint32_t bufMode = SINGLE_BUFFER_MODE;
-    ASCENDC_TPL_SEL_PARAM(context, dTypeX, bufMode);
+    ASCENDC_TPL_SEL_PARAM(context, schMode, bufMode);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -354,9 +485,9 @@ static ge::graphStatus InplaceApplyRMSPropTilingFunc(gert::TilingContext* contex
         return ge::GRAPH_FAILED;
     }
 
-    uint32_t dTypeX = static_cast<uint32_t>(dataType);
+    uint32_t schMode = DataTypeToSchMode(dataType);
     if (totalNum == 0) {
-        return HandleEmptyTensor(context, dTypeX);
+        return HandleEmptyTensor(context, schMode);
     }
 
     uint64_t bufferMode = SINGLE_BUFFER_MODE;
@@ -367,7 +498,7 @@ static ge::graphStatus InplaceApplyRMSPropTilingFunc(gert::TilingContext* contex
     }
 
     context->SetBlockDim(usedCoreNum);
-    ASCENDC_TPL_SEL_PARAM(context, dTypeX, static_cast<uint32_t>(bufferMode));
+    ASCENDC_TPL_SEL_PARAM(context, schMode, static_cast<uint32_t>(bufferMode));
     return ge::GRAPH_SUCCESS;
 }
 

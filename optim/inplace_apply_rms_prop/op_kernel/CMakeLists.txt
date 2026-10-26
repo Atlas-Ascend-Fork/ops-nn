@@ -11,5 +11,5 @@
 
 add_kernel_sources(
     KERNEL_SRC inplace_apply_rms_prop.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
 )

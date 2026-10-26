@@ -12,7 +12,7 @@
 
 /*!
  * \file test_inplace_apply_rms_prop_tiling.cpp
- * \brief Tiling UT for InplaceApplyRMSProp operator (arch35 / ascend950).
+ * \brief Tiling UT for InplaceApplyRMSProp operator (arch35 / Ascend950/Ascend350).
  *
  * Schema:
  *   Inputs  (8): var, ms, mom, lr, rho, momentum, epsilon, grad
@@ -21,13 +21,13 @@
  *   Outputs (3): var, ms, mom
  *   Attrs   (1): use_locking (optional bool, default false)
  *
- * TilingKey encoding (D_T_X / BUFFER_MODE via ASCENDC_TPL_SEL_PARAM):
- *   D_T_X = C_DT_FLOAT   (=0) + BUFFER_MODE=0  -> key 0
- *   D_T_X = C_DT_FLOAT   (=0) + BUFFER_MODE=1  -> key 256
- *   D_T_X = C_DT_FLOAT16 (=1) + BUFFER_MODE=0  -> key 1
- *   D_T_X = C_DT_FLOAT16 (=1) + BUFFER_MODE=1  -> key 257
- *   D_T_X = C_DT_BF16    (=27) + BUFFER_MODE=0 -> key 27
- *   D_T_X = C_DT_BF16    (=27) + BUFFER_MODE=1 -> key 283
+ * TilingKey encoding (schMode / BUFFER_MODE via ASCENDC_TPL_SEL_PARAM):
+ *   schMode = FP32 (=0) + BUFFER_MODE=0 -> key 0
+ *   schMode = FP32 (=0) + BUFFER_MODE=1 -> key 256
+ *   schMode = FP16 (=1) + BUFFER_MODE=0 -> key 1
+ *   schMode = FP16 (=1) + BUFFER_MODE=1 -> key 257
+ *   schMode = BF16 (=2) + BUFFER_MODE=0 -> key 2
+ *   schMode = BF16 (=2) + BUFFER_MODE=1 -> key 258
  *
  * BufferMode threshold:
  *   MIN_SPLIT_THRESHOLD = 1024
@@ -68,18 +68,17 @@ protected:
     static void TearDownTestCase() { std::cout << "TestInplaceApplyRMSPropTiling TearDown" << std::endl; }
 };
 
-// TilingKey 公式: D_T_X + BUFFER_MODE * 256
-// ASCENDC_TPL 框架对 dtype 的内部编码：FP32 = 0, FP16 = 1, BF16 = 27（非 2）
-// （ge::DT_BF16 的枚举值即 27，框架沿用其原始值，不做重新映射）
-static constexpr uint64_t DTYPE_CODE_FP32 = 0;
-static constexpr uint64_t DTYPE_CODE_FP16 = 1;
-static constexpr uint64_t DTYPE_CODE_BF16 = 27;
-static constexpr uint64_t TILING_KEY_FP32_SINGLE = DTYPE_CODE_FP32 + 0 * 256; // 0
-static constexpr uint64_t TILING_KEY_FP32_DOUBLE = DTYPE_CODE_FP32 + 1 * 256; // 256
-static constexpr uint64_t TILING_KEY_FP16_SINGLE = DTYPE_CODE_FP16 + 0 * 256; // 1
-static constexpr uint64_t TILING_KEY_FP16_DOUBLE = DTYPE_CODE_FP16 + 1 * 256; // 257
-static constexpr uint64_t TILING_KEY_BF16_SINGLE = DTYPE_CODE_BF16 + 0 * 256; // 27
-static constexpr uint64_t TILING_KEY_BF16_DOUBLE = DTYPE_CODE_BF16 + 1 * 256; // 283
+// TilingKey 公式: schMode + BUFFER_MODE * 256
+// schMode 为整型运算 dtype 编码：FP32 = 0, FP16 = 1, BF16 = 2（由 Host ChooseTilingKey 决策）
+static constexpr uint64_t SCH_MODE_FP32 = 0;
+static constexpr uint64_t SCH_MODE_FP16 = 1;
+static constexpr uint64_t SCH_MODE_BF16 = 2;
+static constexpr uint64_t TILING_KEY_FP32_SINGLE = SCH_MODE_FP32 + 0 * 256; // 0
+static constexpr uint64_t TILING_KEY_FP32_DOUBLE = SCH_MODE_FP32 + 1 * 256; // 256
+static constexpr uint64_t TILING_KEY_FP16_SINGLE = SCH_MODE_FP16 + 0 * 256; // 1
+static constexpr uint64_t TILING_KEY_FP16_DOUBLE = SCH_MODE_FP16 + 1 * 256; // 257
+static constexpr uint64_t TILING_KEY_BF16_SINGLE = SCH_MODE_BF16 + 0 * 256; // 2
+static constexpr uint64_t TILING_KEY_BF16_DOUBLE = SCH_MODE_BF16 + 1 * 256; // 258
 
 static void InitPlatForm(fe::PlatFormInfos& platFormInfo, map<string, string>& socInfos,
                          map<string, string>& aicoreSpec, map<string, string>& intrinsics,
@@ -134,6 +133,8 @@ struct InplaceApplyRMSPropTilingArgs {
     ge::DataType epsilonDtype = ge::DT_UNDEFINED;
     ge::DataType gradDtype = ge::DT_UNDEFINED;
     bool hasUseLockingAttr = true;
+    // 0 = do not inject AICoreSpec vector_reg_width (the tiling falls back to its default)
+    int64_t vectorRegWidth = 0;
 };
 
 static inline ge::DataType ResolveDtype(ge::DataType override, ge::DataType base)
@@ -236,6 +237,9 @@ static InplaceApplyRMSPropTilingResult DoInplaceApplyRMSPropTilingCase(const Inp
 
     gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
     EXPECT_NE(tiling_context->GetPlatformInfo(), nullptr);
+    if (args.vectorRegWidth > 0) {
+        aicoreSpec["vector_reg_width"] = std::to_string(args.vectorRegWidth);
+    }
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
@@ -551,6 +555,25 @@ TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_fp16_double_ub_budg
     EXPECT_LE(result.ubFactor * kBytesPerElement + kScalarBufferBytes, kUbSize);
 }
 
+// The reduced-precision VF helpers load UB into vector registers with full-width,
+// unmasked loads, so ubFactor must stay a multiple of the fp32 vector lane count for
+// the physical read range to remain inside the tile buffers on any platform UB size.
+TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_ub_factor_vector_lane_alignment)
+{
+    constexpr int64_t kVfLaneElements = 64;
+    const std::vector<InplaceApplyRMSPropTilingResult> results = {
+        DoInplaceApplyRMSPropValidCase({64, 64, 64}, ge::DT_FLOAT16, /*useLocking=*/false),
+        DoInplaceApplyRMSPropValidCase({64, 64, 64}, ge::DT_BF16, /*useLocking=*/false),
+        DoInplaceApplyRMSPropValidCase({64, 20}, ge::DT_FLOAT16, /*useLocking=*/false),
+        DoInplaceApplyRMSPropValidCase({64, 20}, ge::DT_BF16, /*useLocking=*/false),
+        DoInplaceApplyRMSPropValidCase({256}, ge::DT_FLOAT16, /*useLocking=*/false),
+        DoInplaceApplyRMSPropValidCase({256}, ge::DT_BF16, /*useLocking=*/false)};
+    for (const auto& result : results) {
+        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(result.ubFactor % kVfLaneElements, 0);
+    }
+}
+
 TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_bf16_double_ub_budget)
 {
     auto result = DoInplaceApplyRMSPropValidCase({64, 20}, ge::DT_BF16, /*useLocking=*/false);
@@ -588,4 +611,49 @@ TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_scalar_rank_0_inval
                                        /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
     auto result = DoInplaceApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+}
+
+// ms/mom/grad must be rank-checked independently: when only one of them exceeds the
+// documented rank range, Tiling must reject it on the rank rule rather than reporting the
+// downstream shape-identity mismatch.
+TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_state_rank_checked_independently)
+{
+    const std::initializer_list<int64_t> rank8 = {2, 2, 2, 2, 2, 2, 2, 2};
+    const std::initializer_list<int64_t> rank9 = {2, 2, 2, 2, 2, 2, 2, 2, 2};
+
+    InplaceApplyRMSPropTilingArgs msRank9{
+        rank8, rank9, rank8, {1}, {1}, {1}, {1}, rank8, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false};
+    EXPECT_EQ(DoInplaceApplyRMSPropTilingCase(msRank9).status, ge::GRAPH_FAILED);
+
+    InplaceApplyRMSPropTilingArgs momRank9{
+        rank8, rank8, rank9, {1}, {1}, {1}, {1}, rank8, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false};
+    EXPECT_EQ(DoInplaceApplyRMSPropTilingCase(momRank9).status, ge::GRAPH_FAILED);
+
+    InplaceApplyRMSPropTilingArgs gradRank9{
+        rank8, rank8, rank8, {1}, {1}, {1}, {1}, rank9, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false};
+    EXPECT_EQ(DoInplaceApplyRMSPropTilingCase(gradRank9).status, ge::GRAPH_FAILED);
+}
+
+// The OpDef registers ND-only layouts and disables the framework support check, so Tiling
+// owns the layout gate and must reject a non-ND storage format before execution.
+TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_non_nd_format_rejected)
+{
+    InplaceApplyRMSPropTilingArgs args{/*var=*/{2048},  /*ms=*/{2048}, /*mom=*/{2048},
+                                       /*lr=*/{1},      /*rho=*/{1},   /*momentum=*/{1}, /*epsilon=*/{1},
+                                       /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_NCHW,  /*useLocking=*/false};
+    EXPECT_EQ(DoInplaceApplyRMSPropTilingCase(args).status, ge::GRAPH_FAILED);
+}
+
+// ubFactor must follow the platform-reported vector register width (AICoreSpec
+// vector_reg_width, in bytes), not a hard-coded width: 512B -> 128 fp32 lanes.
+TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_ub_factor_follows_platform_lane_width)
+{
+    InplaceApplyRMSPropTilingArgs args{/*var=*/{64, 64, 64}, /*ms=*/{64, 64, 64},   /*mom=*/{64, 64, 64},
+                                       /*lr=*/{1},           /*rho=*/{1},           /*momentum=*/{1},
+                                       /*epsilon=*/{1},      /*grad=*/{64, 64, 64}, ge::DT_BF16,
+                                       ge::FORMAT_ND,        /*useLocking=*/false};
+    args.vectorRegWidth = 512;
+    auto result = DoInplaceApplyRMSPropTilingCase(args);
+    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(result.ubFactor % 128, 0);
 }

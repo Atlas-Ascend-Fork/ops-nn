@@ -81,6 +81,33 @@ static ge::graphStatus RunAndGetOutputShape(gert::StorageShape& tensorShape, ger
     return status;
 }
 
+static ge::graphStatus RunInferShapeWithInputs(gert::StorageShape& varShape, gert::StorageShape& msShape,
+                                               gert::StorageShape& momShape, gert::StorageShape& scalarShape,
+                                               gert::StorageShape& gradShape, std::vector<int64_t>& outputDims)
+{
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("InplaceApplyRMSProp");
+    if (opImpl == nullptr || opImpl->infer_shape == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto inferShapeFunc = opImpl->infer_shape;
+
+    gert::StorageShape outputShape = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(8, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&varShape, &msShape, &momShape, &scalarShape, &scalarShape, &scalarShape,
+                                    &scalarShape, &gradShape})
+                      .OutputShapes({&outputShape, &outputShape, &outputShape})
+                      .Build();
+
+    auto* ctx = holder.GetContext<gert::InferShapeContext>();
+    auto status = inferShapeFunc(ctx);
+    if (status == ge::GRAPH_SUCCESS) {
+        outputDims = ShapeToVec(ctx->GetOutputShape(0));
+    }
+    return status;
+}
+
 TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_0)
 {
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("InplaceApplyRMSProp"), nullptr);
@@ -192,12 +219,77 @@ TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_7_unknown_rank)
     EXPECT_EQ(outDims[0], -2);
 }
 
+// rank 0 (scalar storage) violates the documented rank contract for the state tensors
+// and the {1} shape contract for the scalar parameters, so this gate must reject it.
 TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_8_rank0)
 {
     gert::StorageShape varShape = {{}, {}};
     gert::StorageShape scalarShape = {{}, {}};
     std::vector<int64_t> outDims;
 
-    ASSERT_EQ(RunAndGetOutputShape(varShape, scalarShape, outDims), ge::GRAPH_SUCCESS);
-    EXPECT_TRUE(outDims.empty());
+    ASSERT_EQ(RunAndGetOutputShape(varShape, scalarShape, outDims), ge::GRAPH_FAILED);
 }
+
+TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_9_state_shape_mismatch)
+{
+    gert::StorageShape varShape = {{2, 4}, {2, 4}};
+    gert::StorageShape msShape = {{2, 8}, {2, 8}};
+    gert::StorageShape momShape = {{2, 4}, {2, 4}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    gert::StorageShape gradShape = {{2, 4}, {2, 4}};
+    std::vector<int64_t> outDims;
+
+    EXPECT_EQ(RunInferShapeWithInputs(varShape, msShape, momShape, scalarShape, gradShape, outDims), ge::GRAPH_FAILED);
+}
+
+TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_10_grad_shape_mismatch)
+{
+    gert::StorageShape varShape = {{2, 4}, {2, 4}};
+    gert::StorageShape msShape = {{2, 4}, {2, 4}};
+    gert::StorageShape momShape = {{2, 4}, {2, 4}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    gert::StorageShape gradShape = {{4, 2}, {4, 2}};
+    std::vector<int64_t> outDims;
+
+    EXPECT_EQ(RunInferShapeWithInputs(varShape, msShape, momShape, scalarShape, gradShape, outDims), ge::GRAPH_FAILED);
+}
+
+TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_11_scalar_shape_not_one)
+{
+    gert::StorageShape varShape = {{2, 4}, {2, 4}};
+    gert::StorageShape msShape = {{2, 4}, {2, 4}};
+    gert::StorageShape momShape = {{2, 4}, {2, 4}};
+    gert::StorageShape scalarShape = {{2}, {2}};
+    gert::StorageShape gradShape = {{2, 4}, {2, 4}};
+    std::vector<int64_t> outDims;
+
+    EXPECT_EQ(RunInferShapeWithInputs(varShape, msShape, momShape, scalarShape, gradShape, outDims), ge::GRAPH_FAILED);
+}
+
+TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_12_rank_exceeds_max)
+{
+    gert::StorageShape varShape = {{2, 2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2, 2}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    std::vector<int64_t> outDims;
+
+    EXPECT_EQ(RunAndGetOutputShape(varShape, scalarShape, outDims), ge::GRAPH_FAILED);
+}
+
+TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_13_partial_dim_keeps_deferring)
+{
+    // A -1 dimension is not decidable here; it keeps propagating for the Tiling gate.
+    gert::StorageShape varShape = {{-1, 4}, {-1, 4}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    std::vector<int64_t> outDims;
+
+    ASSERT_EQ(RunAndGetOutputShape(varShape, scalarShape, outDims), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(outDims.size(), 2u);
+    EXPECT_EQ(outDims[0], -1);
+    EXPECT_EQ(outDims[1], 4);
+}
+
+// NOTE: the operator's single InferDataType registration lives in op_graph, which is not
+// part of this op_host UT target, so the dtype gate is deliberately NOT asserted here -- an
+// earlier draft asserted it against an absent registration, which proved nothing. The gate
+// is covered end-to-end by the validation workflow's host-execution node, which invokes the
+// registered callback through the installed operator package.

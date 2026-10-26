@@ -22,7 +22,7 @@
  * 输出 (3): var / ms / mom（三个显式 inplace 输出端口）
  * 属性 (1): use_locking (bool, default=false, 语义占位)
  *
- * 仅适配 Ascend950 (arch35 / DAV_3510)。
+ * 适配 Ascend950 与 Ascend350 (arch35 / DAV_3510)。
  */
 #include "register/op_def_registry.h"
 
@@ -57,6 +57,7 @@ void AddAicoreConfig(OpDef& op)
         .NeedCheckSupportFlag(false)
         .PrecisionReduceFlag(true);
     op.AICore().AddConfig("ascend950", config);
+    op.AICore().AddConfig("ascend350", config);
 }
 } // namespace
 

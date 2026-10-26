@@ -140,7 +140,9 @@ __aicore__ inline float InplaceApplyRmsProp<T, BUFFER_MODE>::LoadScalarF32(GM_AD
         copy_params.dstStride = 0;
         DataCopyPadExtParams<float> pad_params{true, 0, 0, 0};
         DataCopyPad(scalar_ub, scalar_gm, copy_params, pad_params);
-        PipeBarrier<PIPE_MTE2>();
+        event_t mte2_s = static_cast<event_t>(pipe.FetchEventID(HardEvent::MTE2_S));
+        SetFlag<HardEvent::MTE2_S>(mte2_s);
+        WaitFlag<HardEvent::MTE2_S>(mte2_s);
         return scalar_ub.GetValue(0);
     } else {
         LocalTensor<T> scalar_in = in_buf.Get<T>();
@@ -310,7 +312,7 @@ __aicore__ inline void InplaceApplyRmsProp<T, BUFFER_MODE>::ComputeReduced(Local
     LocalTensor<float> gF = fp32_grad_buf.Get<float>();
     LocalTensor<float> tmp1 = tmp_buf1.Get<float>();
     LocalTensor<float> tmp2 = tmp_buf2.Get<float>();
-    // Ascend950 reduced-precision VCONV operates on aligned lane groups.
+    // arch35 (Ascend950/Ascend350) reduced-precision VCONV operates on aligned lane groups.
     // CopyIn pads each UB tile, so converting the rounded-up count is safe;
     // all arithmetic and output copies remain limited to the real element count.
     constexpr int32_t kFp16CastAlignment = 16;

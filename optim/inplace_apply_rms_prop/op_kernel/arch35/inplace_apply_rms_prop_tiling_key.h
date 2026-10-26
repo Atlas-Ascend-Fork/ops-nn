@@ -19,7 +19,7 @@
  * \brief InplaceApplyRMSProp TilingKey template parameter declaration (arch35)
  *
  * Template parameters:
- *   - D_T_X:        Data type (C_DT_FLOAT, C_DT_FLOAT16, C_DT_BF16)
+ *   - schMode:      Compute-dtype mode (0=fp32, 1=fp16, 2=bf16), decided by Host ChooseTilingKey
  *   - BUFFER_MODE:  Buffer mode (0=single buffer, 1=double buffer)
  */
 
@@ -28,25 +28,16 @@
 
 #include "ascendc/host_api/tiling/template_argument.h"
 
-// Kernel UT host 编译时 ASCENDC_CPU_DEBUG 被定义，ASCENDC_TPL_DATATYPE_DECL
-// 宏展开为 ParamStruct{...} 构造函数，要求 C_DT_* 为有效的 C++ 标识符。
-// graph/c_types.h 定义了这些枚举值。真机 kernel 编译时此宏未定义，该 include 被跳过。
-#ifdef ASCENDC_CPU_DEBUG
-#include "graph/c_types.h"
-#endif
-
 // ASCENDC_TPL_ARGS_DECL 首参须与 opFile.value(inplace_apply_rms_prop) 的 PascalCase 'InplaceApplyRmsProp'
 // 一致（snake_case 单一约定），而非 OP_ADD/REG_OP 的 'InplaceApplyRMSProp'。两条链路独立，详见
 // apply_adamax 的同类处理（ApplyAdaMax → ApplyAdamax）。
+// 运算 dtype 不进入 TilingKey：按约定 ascendc-op-conventions.md §1（反例点名 apply_rms_prop），
+// dtype 差异编码为整型 schMode，由 Host 侧 ChooseTilingKey 统一决策。
 ASCENDC_TPL_ARGS_DECL(InplaceApplyRmsProp,
-                      ASCENDC_TPL_DATATYPE_DECL(D_T_X, C_DT_FLOAT, C_DT_FLOAT16, C_DT_BF16, ASCENDC_TPL_INPUT(0)),
+                      ASCENDC_TPL_UINT_DECL(schMode, ASCENDC_TPL_8_BW, ASCENDC_TPL_UI_LIST, 0, 1, 2),
                       ASCENDC_TPL_UINT_DECL(BUFFER_MODE, 8, ASCENDC_TPL_UI_LIST, 0, 1));
 
-ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_DATATYPE_SEL(D_T_X, C_DT_FLOAT),
-                                     ASCENDC_TPL_UINT_SEL(BUFFER_MODE, ASCENDC_TPL_UI_LIST, 0, 1)),
-                ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_DATATYPE_SEL(D_T_X, C_DT_FLOAT16),
-                                     ASCENDC_TPL_UINT_SEL(BUFFER_MODE, ASCENDC_TPL_UI_LIST, 0, 1)),
-                ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_DATATYPE_SEL(D_T_X, C_DT_BF16),
+ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(schMode, ASCENDC_TPL_UI_LIST, 0, 1, 2),
                                      ASCENDC_TPL_UINT_SEL(BUFFER_MODE, ASCENDC_TPL_UI_LIST, 0, 1)));
 
 #endif // _INPLACE_APPLY_RMS_PROP_TILING_KEY_H_

@@ -23,7 +23,7 @@
  *   Outputs (3 Tensor): var, ms, mom (inplace aliases)
  *
  * Template parameters (matching inplace_apply_rms_prop_tiling_key.h):
- *   - D_T_X:        Data type, from ASCENDC_TPL_DATATYPE_DECL
+ *   - SCH_MODE:     Compute dtype mode (0=fp32, 1=fp16, 2=bf16), integer TilingKey
  *   - BUFFER_MODE:  Buffer mode (0=single, 1=double), from ASCENDC_TPL_UINT_DECL
  */
 
@@ -33,14 +33,26 @@
 // （CANN 对 OpType 中的 acronym 'RMS' 按整体处理，不拆为 r_m_s。
 //  build/tbe/dynamic/inplace_apply_rms_prop.py 中 origin_func_name="inplace_apply_rms_prop"，
 //  与 apply_adamax/apply_adadelta 等同样以 acronym 整段命名的算子一致。）
-template <typename D_T_X, int BUFFER_MODE>
+// 运算 dtype 不进入 TilingKey：按约定 ascendc-op-conventions.md §1 编码为整型 SCH_MODE，
+// 由 Host 侧 ChooseTilingKey 决策，kernel 内映射到具体计算类型。
+template <uint32_t SCH_MODE, uint32_t BUFFER_MODE>
 __global__ __aicore__ void inplace_apply_rms_prop(GM_ADDR var, GM_ADDR ms, GM_ADDR mom, GM_ADDR lr, GM_ADDR rho,
                                                   GM_ADDR momentum, GM_ADDR epsilon, GM_ADDR grad, GM_ADDR var_out,
                                                   GM_ADDR ms_out, GM_ADDR mom_out, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(InplaceApplyRmsPropTilingData);
     GET_TILING_DATA_WITH_STRUCT(InplaceApplyRmsPropTilingData, tilingData, tiling);
-    NsInplaceApplyRmsProp::InplaceApplyRmsProp<D_T_X, BUFFER_MODE> op;
-    op.Init(var, ms, mom, lr, rho, momentum, epsilon, grad, var_out, ms_out, mom_out, &tilingData);
-    op.Process();
+    if constexpr (SCH_MODE == 1) {
+        NsInplaceApplyRmsProp::InplaceApplyRmsProp<half, BUFFER_MODE> op;
+        op.Init(var, ms, mom, lr, rho, momentum, epsilon, grad, var_out, ms_out, mom_out, &tilingData);
+        op.Process();
+    } else if constexpr (SCH_MODE == 2) {
+        NsInplaceApplyRmsProp::InplaceApplyRmsProp<bfloat16_t, BUFFER_MODE> op;
+        op.Init(var, ms, mom, lr, rho, momentum, epsilon, grad, var_out, ms_out, mom_out, &tilingData);
+        op.Process();
+    } else {
+        NsInplaceApplyRmsProp::InplaceApplyRmsProp<float, BUFFER_MODE> op;
+        op.Init(var, ms, mom, lr, rho, momentum, epsilon, grad, var_out, ms_out, mom_out, &tilingData);
+        op.Process();
+    }
 }
