@@ -94,7 +94,7 @@ aclnnStatus aclnnGatherV2(
         <td>-</td>
         <td>FLOAT、FLOAT16、INT64、INT32、INT16、INT8、UINT8、BOOL、DOUBLE、COMPLEX64、COMPLEX128、BFLOAT16</td>
         <td>ND</td>
-        <td>1-8</td>
+        <td>0-8</td>
         <td>√</td>
       </tr>
       <tr>
@@ -111,20 +111,20 @@ aclnnStatus aclnnGatherV2(
         <td>index</td>
         <td>输入</td>
         <td>输入aclTensor。</td>
-        <td>数据维度支持1-8维。取值范围在0 ~ self.shape[dim]内（包含0，不包含self.shape[dim]）。</td>
+        <td>数据维度支持0-8维。零维index按shape为(1,)的单元素索引处理；self为标量时，index的元素个数必须为1。取值范围在0 ~ self.shape[dim]内（包含0，不包含self.shape[dim]）。</td>
         <td>INT64、INT32</td>
         <td>ND</td>
-        <td>1-8</td>
+        <td>0-8</td>
         <td>√</td>
       </tr>
       <tr>
         <td>out</td>
         <td>输出</td>
         <td>输出aclTensor。</td>
-        <td>数据类型需要与self一致，数据维度支持1-8维，维数等于self维数与index维数之和减一，除dim维扩展为跟index的shape一样外，其他维长度与self相应维一致。</td>
+        <td>数据类型需要与self一致，数据维度支持0-8维，self为标量时输出标量；否则维数等于self维数与index维数之和减一，除dim维扩展为跟index的shape一样外，其他维长度与self相应维一致。</td>
         <td>与self一致</td>
         <td>ND</td>
-        <td>1-8</td>
+        <td>0-8</td>
         <td>-</td>
       </tr>
       <tr>
