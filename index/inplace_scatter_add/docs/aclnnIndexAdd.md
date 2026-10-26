@@ -111,9 +111,9 @@ aclnnStatus aclnnIndexAdd(
         <td>源张量。</td>
         <td>source的shape除dim维度之外，其他维度的值需要与self的shape相等。</td>
         <td>与self一致</td>
-        <td>-</td>
+        <td>ND</td>
         <td>与self一致</td>
-        <td>-</td>
+        <td>√</td>
       </tr>
       <tr>
         <td>alpha（aclScalar*）</td>
