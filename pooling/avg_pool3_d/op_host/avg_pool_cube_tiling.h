@@ -137,19 +137,32 @@ public:
 template <class CompileInfo, size_t range_size>
 ge::graphStatus ParseCubeCompileInfo(gert::TilingParseContext* context)
 {
-    OP_CHECK_IF(context == nullptr, OP_LOGE("nil", "context is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{"AvgPool3D", "TilingParse context is null"})),
+                return ge::GRAPH_FAILED);
     auto op_name = context->GetNodeName();
-    OP_CHECK_IF(op_name == nullptr, OP_LOGE("nil", "compute_node_info is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(op_name == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{"AvgPool3D", "TilingParse node name is null"})),
+                return ge::GRAPH_FAILED);
     auto compile_info = context->GetCompiledInfo<CompileInfo>();
     auto json_str = context->GetCompiledJson();
     fe::PlatFormInfos* platform_info = context->GetPlatformInfo();
     OP_CHECK_IF(compile_info == nullptr || json_str == nullptr || platform_info == nullptr,
-                OP_LOGE(op_name, "compile_info/json/PlatFormInfos is null"), return ge::GRAPH_FAILED);
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{op_name, "TilingParse compile_info/json/PlatFormInfos is null"})),
+                return ge::GRAPH_FAILED);
     compile_info->ParseRuntimePlatformInfo(op_name, *platform_info);
     OP_CHECK_IF(!compile_info->AnalyzeCompileInfo(op_name, json_str),
-                OP_LOGE(op_name, "failed to analyze compile info"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!compile_info->CheckRangeSize(range_size), OP_LOGE(op_name, "repo_range/repo_seeds/cost_range invalid"),
-                return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(op_name, "failed to analyze compile info"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !compile_info->CheckRangeSize(range_size),
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{op_name, "TilingParse repo_range/repo_seeds/cost_range size is invalid"})),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }

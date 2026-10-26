@@ -88,7 +88,10 @@ auto max(T a, T b) -> T
 inline std::unique_ptr<nlohmann::json> GetCompileInfoJson(gert::TilingParseContext* context)
 {
     auto json_str = context->GetCompiledJson();
-    OP_CHECK_IF(json_str == nullptr, OP_LOGE(context->GetNodeName(), "json_str is nullptr!"), return nullptr);
+    OP_CHECK_IF(json_str == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{context->GetNodeName(), "json_str is nullptr!"})),
+                return nullptr);
     std::unique_ptr<nlohmann::json> parsed_object_cinfo = std::make_unique<nlohmann::json>(
         nlohmann::json(nlohmann::json::parse(json_str)));
     return parsed_object_cinfo;
@@ -217,10 +220,18 @@ int64_t AvgPool3dGradTiling::AlignUp(int64_t num, int64_t rnd) const
 ge::graphStatus AvgPool3dGradTiling::InitDHW()
 {
     auto inputShape1 = tilingContext_->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputShape1);
+    OP_CHECK_IF(
+        inputShape1 == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(tilingContext_).c_str(), "grads",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto gradShape = inputShape1->GetStorageShape();
     auto attrs = tilingContext_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(tilingContext_).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto kSize = attrs->GetAttrPointer<gert::ContinuousVector>(0);
     auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(1);
     auto pads = attrs->GetAttrPointer<gert::ContinuousVector>(2);
@@ -239,10 +250,18 @@ ge::graphStatus AvgPool3dGradTiling::InitDHW()
     auto padsData = static_cast<const int64_t*>(pads->GetData());
 
     auto inputShape0 = tilingContext_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputShape0);
+    OP_CHECK_IF(
+        inputShape0 == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(tilingContext_).c_str(), "orig_input_shape",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto shapeDim = inputShape0->GetStorageShape().GetDim(0);
     const gert::Tensor* shapeTensor = tilingContext_->GetInputTensor(ORIG_INPUT_SHAPE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, shapeTensor);
+    OP_CHECK_IF(
+        shapeTensor == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(tilingContext_).c_str(), "orig_input_shape",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     const uint32_t* shapeValue = shapeTensor->GetData<uint32_t>();
     if (shapeValue == nullptr) {
         return ge::GRAPH_FAILED;
@@ -550,13 +569,17 @@ ge::graphStatus AvgPool3dGradTiling::Init()
 {
     OP_LOGD(tilingContext_->GetNodeName(), "Tiling initing");
     auto compileInfo = static_cast<const AvgPool3DGradCubeCompileInfo*>(tilingContext_->GetCompileInfo());
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE(tilingContext_->GetNodeName(), "compile info is nullptr"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{tilingContext_->GetNodeName(), "compile info is nullptr"})),
+        return ge::GRAPH_FAILED);
 
     gert::Shape gradShape;
     ge::DataType dtype;
     OP_CHECK_IF(InitBaseParams(gradShape, dtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(tilingContext_->GetNodeName(), "InitBaseParams failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(), "InitBaseParams failed"),
+                return ge::GRAPH_FAILED);
 
     int64_t ndhwShape = 1;
     int64_t ncShape = 1;
@@ -571,8 +594,11 @@ ge::graphStatus AvgPool3dGradTiling::Init()
     SetWorkspace(dtype, ncShape);
     CalcCoreNumAndDetermineFlag(compileInfo, ncShape, ndhwShape, gradShape.GetDim(0));
 
-    OP_CHECK_IF(coreNum_ == 0UL, OP_LOGE(tilingContext_->GetNodeName(), "CoreNum is zero, error."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        coreNum_ == 0UL,
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{tilingContext_->GetNodeName(), "CoreNum is zero, error."})),
+        return ge::GRAPH_FAILED);
     uint64_t ubSizePlatform = compileInfo->ub_size;
     DispatchTilingStrategy(ubSizePlatform, dtype, cShape, ndhwShape);
     if (dtype == ge::DT_BF16 || dtype == ge::DT_FLOAT16) {
@@ -850,7 +876,7 @@ ge::graphStatus TilingAvgPool3dGradVec(gert::TilingContext* context)
 {
     AvgPool3dGradTiling tilingObject(context);
     if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "tiling init fail");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "tiling init fail");
         return ge::GRAPH_FAILED;
     }
     return tilingObject.SetKernelTiling();
@@ -860,15 +886,25 @@ ge::graphStatus TilingPrepareForAvgPool3dGradVec(gert::TilingParseContext* conte
 {
     OP_LOGD(context->GetNodeName(), "Tiling Prepare For AvgPool3dGrad start");
     auto compileInfo = context->GetCompiledInfo<AvgPool3DGradCubeCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "compileInfo is null; Tiling cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "platformInfo is null; Tiling cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->core_num = ascendcPlatform.GetCoreNumAiv();
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ub_size = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ub_size <= 0), OP_LOGE(context->GetNodeName(), "Failed to get ub size"),
+    OP_CHECK_IF((compileInfo->ub_size <= 0),
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{context->GetNodeName(), "Failed to get ub size"})),
                 return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "ub_size_platform is %lu", compileInfo->ub_size);
     uint64_t totalUbSize = 0;
@@ -887,7 +923,11 @@ ge::graphStatus TilingForAvgPool3DGrad(gert::TilingContext* context)
         return TilingRegistry::GetInstance().DoTilingImpl(context);
     }
     auto compileInfo = static_cast<const AvgPool3DGradCubeCompileInfo*>(context->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "compileInfo is null; Tiling cannot continue"})),
+                return ge::GRAPH_FAILED);
     if (compileInfo->is_ascend_c) {
         return TilingAvgPool3dGradVec(context);
     } else {

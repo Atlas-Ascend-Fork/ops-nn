@@ -12,6 +12,7 @@
  * \file adaptive_max_pool3d_grad_simt_tiling.cpp
  * \brief
  */
+#include "log/log.h"
 #include <iostream>
 #include "adaptive_max_pool3d_grad_tiling_arch35.h"
 
@@ -63,7 +64,12 @@ ge::graphStatus AdaptiveMaxPool3dGradTilingSimt::GetWorkspaceSize()
 {
     constexpr int64_t WS_SYS_SIZE = 16 * 1024 * 1024;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(
+        currentWorkspace == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{Ops::Base::GetOpInfo(context_).c_str(),
+                                                            "currentWorkspace is null; Tiling cannot continue"})),
+        return ge::GRAPH_FAILED);
     currentWorkspace[0] = static_cast<size_t>(WS_SYS_SIZE);
     return ge::GRAPH_SUCCESS;
 }

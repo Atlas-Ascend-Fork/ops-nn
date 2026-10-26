@@ -164,7 +164,7 @@ const std::tuple<const aclTensor*, const aclTensor*> MaxPoolWithArgmaxV1(
     auto out = executor->AllocTensor(outputStorageShape, outputShape, self->GetDataType(), self->GetStorageFormat(),
                                      self->GetOriginalFormat());
     if (out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
 
@@ -184,7 +184,7 @@ const std::tuple<const aclTensor*, const aclTensor*> MaxPoolWithArgmaxV1(
     auto indices = executor->AllocTensor(maskStorageShape, maskShape, dataTpye, self->GetStorageFormat(),
                                          self->GetOriginalFormat());
     if (indices == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc indices tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc indices tensor failed.");
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
 

@@ -52,6 +52,10 @@ ge::graphStatus AdaptiveMaxPool3dBigPoolTiling::DoOpTiling()
         calInfo_.blockFactor = calInfo_.totalIdx / input_.coreNum;
         calInfo_.blockTail = calInfo_.totalIdx % input_.coreNum;
     } else {
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "platform coreNum is zero; tiling cannot calculate block partition"}));
         return ge::GRAPH_FAILED;
     }
     if (calInfo_.blockFactor == 0) {

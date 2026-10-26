@@ -105,7 +105,10 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetPlatformInfo()
     auto platformPtr = context_->GetPlatformInfo();
     if (platformPtr == nullptr) {
         auto compileInfoPtr = static_cast<const MaxPoolWithArgmaxCompileInfo*>(context_->GetCompileInfo());
-        OP_TILING_CHECK(compileInfoPtr == nullptr, CUBE_INNER_ERR_REPORT(context_, "compile info is null"),
+        OP_TILING_CHECK(compileInfoPtr == nullptr,
+                        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                                  (std::vector<const char*>{context_->GetNodeName(),
+                                                                            "platform fallback compile info is null"})),
                         return ge::GRAPH_FAILED);
         coreNum = compileInfoPtr->coreNum;
 
@@ -118,7 +121,11 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetPlatformInfo()
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatform);
         ubSize = static_cast<int64_t>(ubSizePlatform);
     }
-    OP_TILING_CHECK(coreNum == 0, CUBE_INNER_ERR_REPORT(context_, "coreNum is 0"), return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        coreNum == 0,
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context_->GetNodeName(), "platform coreNum is zero"})),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -126,7 +133,10 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetPlatformInfo()
 ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetShapeAttrsInfo()
 {
     auto inputX = context_->GetInputShape(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, inputX);
+    OP_CHECK_IF(
+        inputX == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     auto inputShape = EnsureNotScalar(inputX->GetStorageShape());
 
     OP_TILING_CHECK(
@@ -138,7 +148,10 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetShapeAttrsInfo()
                                                   std::to_string(inputShape.GetShapeSize()).c_str(), "greater than 0"),
                     return ge::GRAPH_FAILED);
     auto inputDesc = context_->GetInputDesc(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+    OP_CHECK_IF(inputDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "required input x descriptor is missing"),
+                return ge::GRAPH_FAILED);
     dtype = inputDesc->GetDataType();
     if (dtype != ge::DataType::DT_BF16 && dtype != ge::DataType::DT_FLOAT16 && dtype != ge::DataType::DT_FLOAT) {
         OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "x", Ops::Base::ToString(dtype).c_str(),
@@ -147,10 +160,20 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetShapeAttrsInfo()
     }
 
     auto outX = context_->GetOutputShape(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, outX);
+    OP_CHECK_IF(outX == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "outX is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto outShape = EnsureNotScalar(outX->GetStorageShape());
     auto indicesX = context_->GetOutputShape(1);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, indicesX);
+    OP_CHECK_IF(indicesX == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "indicesX is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto indicesShape = EnsureNotScalar(indicesX->GetStorageShape());
     if (indicesShape != outShape) {
         std::string errorMsg = Ops::Base::ToString(outShape) + " and " + Ops::Base::ToString(indicesShape);
@@ -159,7 +182,13 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetShapeAttrsInfo()
         return ge::GRAPH_FAILED;
     }
     auto runtimeAttrs = context_->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, runtimeAttrs);
+    OP_CHECK_IF(
+        runtimeAttrs == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "runtimeAttrs is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     std::string inputFormatStr("NHWC");
     const char* inputFormat = runtimeAttrs->GetAttrPointer<char>(DATA_FORMAT_POS);
@@ -202,7 +231,10 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetShapeAttrsInfo()
     int32_t hValue = 0;
     int32_t wValue = 0;
     const gert::TypedContinuousVector<int64_t>* kernelSize = runtimeAttrs->GetListInt(KERNEL_POS);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, kernelSize);
+    OP_CHECK_IF(kernelSize == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "ksize",
+                                                         "required parameter ksize is missing"),
+                return ge::GRAPH_FAILED);
     nValue = *(kernelSize->GetData());
     cValue = *(kernelSize->GetData() + c_dim);
     OP_TILING_CHECK((nValue != DIGIT_ONE) || (cValue != DIGIT_ONE),
@@ -222,7 +254,10 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetShapeAttrsInfo()
                     return ge::GRAPH_FAILED);
 
     const gert::TypedContinuousVector<int64_t>* stride = runtimeAttrs->GetListInt(STRIDE_POS);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, stride);
+    OP_CHECK_IF(stride == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "strides",
+                                                         "required parameter strides is missing"),
+                return ge::GRAPH_FAILED);
     nValue = *(stride->GetData());
     cValue = *(stride->GetData() + c_dim);
     OP_TILING_CHECK((nValue != DIGIT_ONE) || (cValue != DIGIT_ONE),
@@ -287,7 +322,10 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetShapeAttrsInfo()
     }
 
     const bool* includeBatchInIndex = runtimeAttrs->GetAttrPointer<bool>(INCLUDE_BATCH_IN_INDEX_POS);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, includeBatchInIndex);
+    OP_CHECK_IF(includeBatchInIndex == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "include_batch_in_index",
+                                                         "required parameter include_batch_in_index is missing"),
+                return ge::GRAPH_FAILED);
     inputData.includeBatchInIndex = static_cast<int64_t>(*includeBatchInIndex);
     // only support false now
     OP_TILING_CHECK(inputData.includeBatchInIndex != 0,
@@ -297,7 +335,10 @@ ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetShapeAttrsInfo()
                     return ge::GRAPH_FAILED);
 
     const bool* nanProp = runtimeAttrs->GetAttrPointer<bool>(NAN_PROP_POS);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, nanProp);
+    OP_CHECK_IF(nanProp == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "nan_prop",
+                                                         "required parameter nan_prop is missing"),
+                return ge::GRAPH_FAILED);
     inputData.nanProp = static_cast<int64_t>(*nanProp);
 
     return ge::GRAPH_SUCCESS;
@@ -314,7 +355,13 @@ uint64_t MaxPoolWithArgmaxBaseTiling::GetTilingKey() const { return 0; }
 ge::graphStatus MaxPoolWithArgmaxBaseTiling::GetWorkspaceSize()
 {
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(
+        currentWorkspace == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "currentWorkspace is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     const bool isRegbase = context_->GetPlatformInfo() != nullptr && Ops::NN::OpTiling::IsRegbaseSocVersion(context_);
     currentWorkspace[0] = isRegbase ? 0U : static_cast<size_t>(WS_SYS_SIZE);
 

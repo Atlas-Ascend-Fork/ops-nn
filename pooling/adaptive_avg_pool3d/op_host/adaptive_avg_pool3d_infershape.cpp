@@ -40,13 +40,29 @@ namespace ops {
 static ge::graphStatus InferShape4AdaptiveAvgPool3d(gert::InferShapeContext* context)
 {
     const gert::Shape* x_shape = context->GetInputShape(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     gert::Shape* y_shape = context->GetOutputShape(Y_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    OP_CHECK_IF(
+        y_shape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "y_shape is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto attr_ptr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attr_ptr);
+    OP_CHECK_IF(
+        attr_ptr == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "attr_ptr is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto output_size_ptr = attr_ptr->GetAttrPointer<gert::ContinuousVector>(OUTPUT_SIZE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_size_ptr);
+    OP_CHECK_IF(output_size_ptr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "output_size",
+                                                         "required parameter output_size is missing"),
+                return ge::GRAPH_FAILED);
     auto output_size = static_cast<const int64_t*>(output_size_ptr->GetData());
     if (Ops::Base::IsUnknownRank(*x_shape)) {
         Ops::Base::SetUnknownRank(*y_shape);
@@ -65,7 +81,10 @@ static ge::graphStatus InferShape4AdaptiveAvgPool3d(gert::InferShapeContext* con
     y_shape->SetDimNum(input_dim_num);
 
     const char* data_format = attr_ptr->GetAttrPointer<char>(DATA_FORTMAT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, data_format);
+    OP_CHECK_IF(data_format == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "data_format",
+                                                         "required parameter data_format is missing"),
+                return ge::GRAPH_FAILED);
     std::string data_format_str = data_format;
     size_t s_idx = 0;
     if (data_format_str == "NCDHW") {

@@ -28,7 +28,13 @@ namespace optiling {
 bool MaxPool3DWithArgmaxV2BigKernelTiling::IsCapable()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "platformInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     if (Ops::NN::OpTiling::IsRegbaseSocVersion(context_)) {
         return false;

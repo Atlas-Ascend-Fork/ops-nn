@@ -29,14 +29,26 @@ static ge::graphStatus InferShape4AdaptiveAvgPool2dGrad(gert::InferShapeContext*
 {
     // input 1: y_grad shape
     const gert::Shape* gradShape = context->GetInputShape(Y_GRAD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
+    OP_CHECK_IF(
+        gradShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "input_grad",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     // output shape
     gert::Shape* xGradShape = context->GetOutputShape(OUTPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xGradShape);
+    OP_CHECK_IF(xGradShape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "xGradShape is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
 
     auto attr_ptr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attr_ptr);
+    OP_CHECK_IF(
+        attr_ptr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto output_size_ptr = attr_ptr->GetAttrPointer<gert::ContinuousVector>(0);
     size_t output_size_len = output_size_ptr->GetSize();
     auto output_size = static_cast<const int64_t*>(output_size_ptr->GetData());

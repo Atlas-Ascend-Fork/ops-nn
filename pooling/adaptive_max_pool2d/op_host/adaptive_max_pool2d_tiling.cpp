@@ -45,10 +45,20 @@ uint64_t AdaMaxPool2dBaseTiling::GetTilingKey() const { return 0; }
 ge::graphStatus AdaMaxPool2dBaseTiling::GetPlatformInfo()
 {
     auto compileInfo = context_->GetCompileInfo<AdaptiveMaxPool2dCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "compileInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     input_.coreNum = compileInfo->coreNum;
     input_.ubSizePlatForm = compileInfo->ubSizePlatForm;
-    OP_CHECK_IF(input_.coreNum <= 0, OP_LOGE(context_, "GetPlatformInfo get corenum <= 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(input_.coreNum <= 0,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(), "GetPlatformInfo get corenum <= 0"})),
+                return ge::GRAPH_FAILED);
     sysWorkspaceSize_ = compileInfo->sysWorkspaceSize;
     return ge::GRAPH_SUCCESS;
 }
@@ -59,9 +69,15 @@ ge::graphStatus AdaMaxPool2dBaseTiling::GetShapeAttrsInfo()
     OP_LOGD(nodeName, "GetShapeAttrsInfo begin.");
 
     auto inputX = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputX);
+    OP_CHECK_IF(
+        inputX == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     auto inputXDesc = context_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputXDesc);
+    OP_CHECK_IF(inputXDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "required input x descriptor is missing"),
+                return ge::GRAPH_FAILED);
     auto xDtype = inputXDesc->GetDataType();
     OP_CHECK_IF((xDtype != ge::DT_FLOAT && xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16),
                 OP_LOGE_FOR_INVALID_DTYPE(nodeName, "x", ge::TypeUtils::DataTypeToSerialString(xDtype).c_str(),
@@ -88,9 +104,17 @@ ge::graphStatus AdaMaxPool2dBaseTiling::GetShapeAttrsInfo()
                 return ge::GRAPH_FAILED);
 
     auto attrPtr = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrPtr);
+    OP_CHECK_IF(attrPtr == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "attrPtr is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto outputSizePtr = attrPtr->GetAttrPointer<gert::ContinuousVector>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputSizePtr);
+    OP_CHECK_IF(outputSizePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "output_size",
+                                                         "required parameter output_size is missing"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         outputSizePtr->GetSize() != OUTPUTSIZE_DIM_MAX,
         OP_LOGE_FOR_INVALID_LISTSIZE(nodeName, "output_size", std::to_string(outputSizePtr->GetSize()).c_str(), "2"),
@@ -126,9 +150,21 @@ static ge::graphStatus TilingPrepare4AdaptiveMaxPool2d(gert::TilingParseContext*
     OP_LOGD(context, "TilingPrepare4AdaptiveMaxPool2d enter.");
 
     auto compileInfo = context->GetCompiledInfo<AdaptiveMaxPool2dCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "compileInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "platformInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
@@ -139,8 +175,15 @@ static ge::graphStatus TilingPrepare4AdaptiveMaxPool2d(gert::TilingParseContext*
     size_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     compileInfo->sysWorkspaceSize = sysWorkspaceSize;
 
-    OP_CHECK_IF((compileInfo->coreNum <= 0), OP_LOGE(context, "Failed to get corenum size"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context, "Failed to get ub size"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->coreNum <= 0),
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(), "Failed to get corenum size"})),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0),
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{context->GetNodeName(), "Failed to get ub size"})),
+                return ge::GRAPH_FAILED);
     OP_LOGD(context, "ub_size_platform is %lu", compileInfo->ubSizePlatForm);
     OP_LOGD(context, "TilingPrepare4AdaptiveMaxPool2d end");
     return ge::GRAPH_SUCCESS;

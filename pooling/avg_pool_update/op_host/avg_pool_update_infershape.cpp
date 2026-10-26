@@ -26,10 +26,18 @@ static ge::graphStatus InferShapeAvgPoolUpdate(gert::InferShapeContext* context)
     OP_LOGD(context->GetNodeName(), "Begin to do InferShapeAvgPoolUpdate");
 
     const gert::Shape* x1Shape = context->GetInputShape(IDX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x1Shape);
+    OP_CHECK_IF(
+        x1Shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x1",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* yShape = context->GetOutputShape(IDX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    OP_CHECK_IF(yShape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "yShape is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
 
     // 输出 y shape 直接复制 x1 shape（正确处理动态 shape: rank 未知 -2 / dim 未知 -1）
     *yShape = *x1Shape;

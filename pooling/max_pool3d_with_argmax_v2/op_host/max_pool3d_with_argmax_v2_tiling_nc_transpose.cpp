@@ -66,8 +66,11 @@ ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::GetPlatformInfo()
     auto platformPtr = context_->GetPlatformInfo();
     if (platformPtr == nullptr) {
         auto compileInfoPtr = static_cast<const MaxPool3DWithArgmaxV2CompileInfo*>(context_->GetCompileInfo());
-        OP_CHECK_IF(compileInfoPtr == nullptr, CUBE_INNER_ERR_REPORT(context_, "compile info is null"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            compileInfoPtr == nullptr,
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{context_->GetNodeName(), "compile info is null"})),
+            return ge::GRAPH_FAILED);
         ubSize = compileInfoPtr->ubSize;
         coreNum = compileInfoPtr->coreNum;
     } else {
@@ -77,20 +80,32 @@ ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::GetPlatformInfo()
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatform);
         ubSize = ubSizePlatform;
     }
-    OP_CHECK_IF(coreNum == 0, CUBE_INNER_ERR_REPORT(context_, "coreNum is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(coreNum == 0,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{context_->GetNodeName(), "coreNum is 0"})),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::ValidatePlatformAndInput()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "platformInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     if (!Ops::NN::OpTiling::IsRegbaseSocVersion(context_)) {
         return ge::GRAPH_PARAM_INVALID;
     }
 
     auto inputX = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputX);
+    OP_CHECK_IF(
+        inputX == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     auto inputShape = inputX->GetStorageShape();
     OP_CHECK_IF(
         inputShape.GetDimNum() != NCDHW_DIMS,
@@ -103,7 +118,10 @@ ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::ValidatePlatformAndInput
                 return ge::GRAPH_FAILED);
 
     auto inputDesc = context_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+    OP_CHECK_IF(inputDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "required input x descriptor is missing"),
+                return ge::GRAPH_FAILED);
     dtype = inputDesc->GetDataType();
     OP_CHECK_IF(
         dtype != ge::DataType::DT_BF16 && dtype != ge::DataType::DT_FLOAT16 && dtype != ge::DataType::DT_FLOAT,
@@ -118,11 +136,21 @@ ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::ParseShapeAndFormat()
     auto inputX = context_->GetInputShape(0);
     auto inputShape = inputX->GetStorageShape();
     auto outX = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outX);
+    OP_CHECK_IF(outX == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "outX is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto outShape = outX->GetStorageShape();
-
     auto runtimeAttrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runtimeAttrs);
+    OP_CHECK_IF(
+        runtimeAttrs == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "runtimeAttrs is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     std::string inputFormatStr("NCDHW");
     const char* inputFormat = runtimeAttrs->GetAttrPointer<char>(FORMAT_POS);
     if (inputFormat != nullptr) {
@@ -158,7 +186,13 @@ ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::GetShapeAttrsInfo()
         return ret;
     }
     auto runtimeAttrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runtimeAttrs);
+    OP_CHECK_IF(
+        runtimeAttrs == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "runtimeAttrs is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     ret = ParseKernelStrideAttrs(runtimeAttrs);
     if (ret != ge::GRAPH_SUCCESS) {
         return ret;
@@ -180,14 +214,20 @@ ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::ParseKernelStrideAttrs(c
     int32_t hValue = 0;
     int32_t wValue = 0;
     const gert::TypedContinuousVector<int64_t>* kernelSize = runtimeAttrs->GetListInt(KERNEL_POS);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, kernelSize);
+    OP_CHECK_IF(kernelSize == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "ksize",
+                                                         "required parameter ksize is missing"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(kernelSize->GetSize() < 3,
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "ksize",
                                                       std::to_string(kernelSize->GetSize()).c_str(),
                                                       "ksize list size must be greater than or equal to 3"),
                 return ge::GRAPH_FAILED);
     const int64_t* kData = kernelSize->GetData();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, kData);
+    OP_CHECK_IF(kData == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "ksize",
+                                                         "required parameter ksize is missing"),
+                return ge::GRAPH_FAILED);
     dValue = *kData;
     hValue = *(kData + 1);
     wValue = *(kData + MP_MAX_3D_DIM_TWO);
@@ -201,7 +241,10 @@ ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::ParseKernelStrideAttrs(c
                 return ge::GRAPH_FAILED);
 
     const gert::TypedContinuousVector<int64_t>* stride = runtimeAttrs->GetListInt(STRIDE_POS);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, stride);
+    OP_CHECK_IF(stride == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "strides",
+                                                         "required parameter strides is missing"),
+                return ge::GRAPH_FAILED);
     dValue = *(stride->GetData());
     hValue = *(stride->GetData() + 1);
     wValue = *(stride->GetData() + MP_MAX_3D_DIM_TWO);
@@ -222,7 +265,10 @@ ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::ParsePadDilationAttrs(co
     int32_t hValue = 0;
     int32_t wValue = 0;
     const gert::TypedContinuousVector<int64_t>* padding = runtimeAttrs->GetListInt(PADDING_POS);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, padding);
+    OP_CHECK_IF(
+        padding == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "pads", "required parameter pads is missing"),
+        return ge::GRAPH_FAILED);
     dValue = *(padding->GetData());
     hValue = *(padding->GetData() + 1);
     wValue = *(padding->GetData() + MP_MAX_3D_DIM_TWO);
@@ -541,7 +587,7 @@ void MaxPool3DWithArgmaxV2NcTransposeTiling::DoUBTiling()
                                       "wInner=%ld, hInner=%ld, dInner=%ld, ncInner=%ld",
                                       splitData_.wOutputInner, splitData_.hOutputInner, splitData_.dOutputInner,
                                       splitData_.ncInner),
-                return );
+                return);
     DoBufferCalculate();
 
     splitData_.wOutputOuter = Ops::Base::CeilDiv(baseData_.wOutput, splitData_.wOutputInner);
@@ -617,7 +663,7 @@ void MaxPool3DWithArgmaxV2NcTransposeTiling::SetTilingData()
                                       "NcTranspose: outer values must be positive, "
                                       "dOuter=%ld, hOuter=%ld, wOuter=%ld",
                                       splitData_.dOutputOuter, splitData_.hOutputOuter, splitData_.wOutputOuter),
-                return );
+                return);
 }
 
 ge::graphStatus MaxPool3DWithArgmaxV2NcTransposeTiling::DoOpTiling()

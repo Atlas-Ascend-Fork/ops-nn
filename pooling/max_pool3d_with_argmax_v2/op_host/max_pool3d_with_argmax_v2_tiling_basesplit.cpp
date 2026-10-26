@@ -56,11 +56,18 @@ ge::graphStatus MaxPool3DWithArgmaxV2BaseSplitTiling::PadCalc()
 {
     if (inputData.kernelSize[D_DIM] == 0 || inputData.kernelSize[H_DIM] == 0 || inputData.kernelSize[W_DIM] == 0 ||
         inputData.stride[D_DIM] == 0 || inputData.stride[H_DIM] == 0 || inputData.stride[W_DIM] == 0) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "ksize, strides",
+                                                 "each spatial kernel size and stride must be nonzero");
         return ge::GRAPH_FAILED;
     }
 
     const array<uint64_t, DHW_DIMS> inputCalc{InputCalc(D_DIM), InputCalc(H_DIM), InputCalc(W_DIM)};
     if (inputCalc[D_DIM] == 0 || inputCalc[H_DIM] == 0 || inputCalc[W_DIM] == 0) {
+        std::string shapeMsg = "{" + std::to_string(inputData.inputShape[D_DIM]) + ", " +
+                               std::to_string(inputData.inputShape[H_DIM]) + ", " +
+                               std::to_string(inputData.inputShape[W_DIM]) + "}";
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x", shapeMsg.c_str(),
+                                              "each spatial dimension of x must be greater than 0");
         return ge::GRAPH_FAILED;
     }
 
@@ -93,6 +100,11 @@ ge::graphStatus MaxPool3DWithArgmaxV2BaseSplitTiling::InputPadCalc(const array<i
 
     if (padInputData.padInputShape[D_DIM] == 0 || padInputData.padInputShape[H_DIM] == 0 ||
         padInputData.padInputShape[W_DIM] == 0) {
+        std::string shapeMsg = "{" + std::to_string(padInputData.padInputShape[D_DIM]) + ", " +
+                               std::to_string(padInputData.padInputShape[H_DIM]) + ", " +
+                               std::to_string(padInputData.padInputShape[W_DIM]) + "}";
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x", shapeMsg.c_str(),
+                                              "each spatial dimension of x must be greater than 0");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

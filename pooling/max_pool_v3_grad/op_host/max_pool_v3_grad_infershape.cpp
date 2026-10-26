@@ -43,19 +43,40 @@ constexpr size_t ATTR_LIST_SIZE = 4;
 static ge::graphStatus CheckAttrsValid(const gert::InferShapeContext* context)
 {
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     auto ksizeAttr = attrs->GetListInt(ATTR_INDEX_KSIZE);
     auto stridesAttr = attrs->GetListInt(ATTR_INDEX_STRIDES);
     auto padsAttr = attrs->GetListInt(ATTR_INDEX_PADS);
 
-    OP_CHECK_NULL_WITH_CONTEXT(context, ksizeAttr);
-    OP_CHECK_NULL_WITH_CONTEXT(context, stridesAttr);
-    OP_CHECK_NULL_WITH_CONTEXT(context, padsAttr);
+    OP_CHECK_IF(
+        ksizeAttr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ksize",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        stridesAttr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "strides",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        padsAttr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "pads",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     if (ksizeAttr->GetSize() != ATTR_LIST_SIZE || stridesAttr->GetSize() != ATTR_LIST_SIZE ||
         padsAttr->GetSize() != ATTR_LIST_SIZE) {
-        OP_LOGE(context->GetNodeName(), "ksize, strides and pads must contain four elements.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "ksize, strides, pads",
+            (std::to_string(ksizeAttr->GetSize()) + ", " + std::to_string(stridesAttr->GetSize()) + ", " +
+             std::to_string(padsAttr->GetSize()))
+                .c_str(),
+            "each list must contain four elements");
         return ge::GRAPH_FAILED;
     }
 
@@ -63,30 +84,60 @@ static ge::graphStatus CheckAttrsValid(const gert::InferShapeContext* context)
     const int64_t* strides = stridesAttr->GetData();
     const int64_t* pads = padsAttr->GetData();
 
-    OP_CHECK_NULL_WITH_CONTEXT(context, ksize);
-    OP_CHECK_NULL_WITH_CONTEXT(context, strides);
-    OP_CHECK_NULL_WITH_CONTEXT(context, pads);
+    OP_CHECK_IF(
+        ksize == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ksize",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        strides == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "strides",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        pads == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "pads",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     const char* paddingMode = attrs->GetAttrPointer<char>(ATTR_INDEX_PADDING_MODE);
     const char* dataFormat = attrs->GetAttrPointer<char>(ATTR_INDEX_DATA_FORMAT);
     const bool* globalPooling = attrs->GetAttrPointer<bool>(ATTR_INDEX_GLOBAL_POOLING);
     const bool* ceilMode = attrs->GetAttrPointer<bool>(ATTR_INDEX_CEIL_MODE);
 
-    OP_CHECK_NULL_WITH_CONTEXT(context, paddingMode);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dataFormat);
-    OP_CHECK_NULL_WITH_CONTEXT(context, globalPooling);
-    OP_CHECK_NULL_WITH_CONTEXT(context, ceilMode);
+    OP_CHECK_IF(
+        paddingMode == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "padding_mode",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        dataFormat == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "data_format",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        globalPooling == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "global_pooling",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        ceilMode == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ceil_mode",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     const std::string paddingModeString(paddingMode);
     const std::string dataFormatString(dataFormat);
 
     if (dataFormatString != "NCHW" && dataFormatString != "NHWC") {
-        OP_LOGE(context->GetNodeName(), "data_format must be NCHW or NHWC.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data_format", dataFormat,
+                                              "supported formats are NCHW and NHWC");
         return ge::GRAPH_FAILED;
     }
 
     if (paddingModeString != "CALCULATED" && paddingModeString != "SAME" && paddingModeString != "VALID") {
-        OP_LOGE(context->GetNodeName(), "padding_mode must be CALCULATED, SAME or VALID.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "padding_mode", paddingMode,
+                                              "supported modes are CALCULATED, SAME and VALID");
         return ge::GRAPH_FAILED;
     }
 
@@ -95,38 +146,61 @@ static ge::graphStatus CheckAttrsValid(const gert::InferShapeContext* context)
     const size_t widthIndex = dataFormatString == "NCHW" ? 3 : 2;
 
     if (strides[0] != 1 || strides[channelIndex] != 1) {
-        OP_LOGE(context->GetNodeName(), "The N/C dimensions of strides must be 1.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "strides",
+                                              (std::to_string(strides[0]) + ", " + std::to_string(strides[1]) + ", " +
+                                               std::to_string(strides[2]) + ", " + std::to_string(strides[3]))
+                                                  .c_str(),
+                                              "N/C dimensions of strides must be 1");
         return ge::GRAPH_FAILED;
     }
 
     if (strides[heightIndex] < 1 || strides[heightIndex] > 63 || strides[widthIndex] < 1 || strides[widthIndex] > 63) {
-        OP_LOGE(context->GetNodeName(), "The H/W dimensions of strides must be in [1, 63].");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "strides",
+                                              (std::to_string(strides[0]) + ", " + std::to_string(strides[1]) + ", " +
+                                               std::to_string(strides[2]) + ", " + std::to_string(strides[3]))
+                                                  .c_str(),
+                                              "H/W dimensions of strides must be in [1, 63]");
         return ge::GRAPH_FAILED;
     }
 
     if (!(*globalPooling)) {
         if (ksize[0] != 1 || ksize[channelIndex] != 1) {
-            OP_LOGE(context->GetNodeName(), "The N/C dimensions of ksize must be 1.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "ksize",
+                                                  (std::to_string(ksize[0]) + ", " + std::to_string(ksize[1]) + ", " +
+                                                   std::to_string(ksize[2]) + ", " + std::to_string(ksize[3]))
+                                                      .c_str(),
+                                                  "N/C dimensions of ksize must be 1");
             return ge::GRAPH_FAILED;
         }
 
         if (ksize[heightIndex] < 1 || ksize[heightIndex] > 255 || ksize[widthIndex] < 1 || ksize[widthIndex] > 255) {
-            OP_LOGE(context->GetNodeName(), "The H/W dimensions of ksize must be in [1, 255].");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "ksize",
+                                                  (std::to_string(ksize[0]) + ", " + std::to_string(ksize[1]) + ", " +
+                                                   std::to_string(ksize[2]) + ", " + std::to_string(ksize[3]))
+                                                      .c_str(),
+                                                  "H/W dimensions of ksize must be in [1, 255]");
             return ge::GRAPH_FAILED;
         }
 
         if (paddingModeString == "CALCULATED" && (pads[0] < 0 || pads[1] < 0 || pads[2] < 0 || pads[3] < 0)) {
-            OP_LOGE(context->GetNodeName(), "pads must be nonnegative under CALCULATED mode.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "pads",
+                                                  (std::to_string(pads[0]) + ", " + std::to_string(pads[1]) + ", " +
+                                                   std::to_string(pads[2]) + ", " + std::to_string(pads[3]))
+                                                      .c_str(),
+                                                  "pads must be nonnegative under CALCULATED mode");
             return ge::GRAPH_FAILED;
         }
 
         // 该约束与正向 MaxPoolV3 保持一致。
         if (paddingModeString == "CALCULATED" && (pads[0] >= ksize[heightIndex] || pads[1] >= ksize[heightIndex] ||
                                                   pads[2] >= ksize[widthIndex] || pads[3] >= ksize[widthIndex])) {
-            OP_LOGE(context->GetNodeName(),
-                    "pads must be less than the corresponding ksize under CALCULATED mode, "
-                    "ksize H=%ld, W=%ld.",
-                    ksize[heightIndex], ksize[widthIndex]);
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                context->GetNodeName(), "pads, ksize",
+                (std::to_string(pads[0]) + ", " + std::to_string(pads[1]) + ", " + std::to_string(pads[2]) + ", " +
+                 std::to_string(pads[3]) + "; ksize H/W: " + std::to_string(ksize[heightIndex]) + ", " +
+                 std::to_string(ksize[widthIndex]))
+                    .c_str(),
+                "each pad must be smaller than the corresponding kernel size under CALCULATED mode");
             return ge::GRAPH_FAILED;
         }
     }
@@ -161,21 +235,29 @@ static ge::graphStatus HandleShape(const gert::InferShapeContext* context, const
 
     // 已知 rank 的输入必须为 4D；含 -1 的 rank=3/5 仍非法，只有真正的 unknown rank([-2]) 放行
     if (!origInputUnknownRank && origInputShape->GetDimNum() != EXPECTED_RANK) {
-        OP_LOGE(context->GetNodeName(), "orig_input must be a 4D tensor.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "orig_input",
+                                     std::to_string(origInputShape->GetDimNum()).c_str(), "4");
         return ge::GRAPH_FAILED;
     }
     if (!origOutputUnknownRank && origOutputShape->GetDimNum() != EXPECTED_RANK) {
-        OP_LOGE(context->GetNodeName(), "orig_output must be a 4D tensor.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "orig_output",
+                                     std::to_string(origOutputShape->GetDimNum()).c_str(), "4");
         return ge::GRAPH_FAILED;
     }
     if (!gradUnknownRank && gradShape->GetDimNum() != EXPECTED_RANK) {
-        OP_LOGE(context->GetNodeName(), "grad must be a 4D tensor.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "grad", std::to_string(gradShape->GetDimNum()).c_str(),
+                                     "4");
         return ge::GRAPH_FAILED;
     }
 
     // 必须在 unknown rank 提前返回之前拦截，避免非法动态维度被误放行
     if (HasIllegalDimValue(*origInputShape) || HasIllegalDimValue(*origOutputShape) || HasIllegalDimValue(*gradShape)) {
-        OP_LOGE(context->GetNodeName(), "input shape contains an invalid dimension (less than -2).");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "orig_input, orig_output, grad",
+            (Ops::Base::ToString(*origInputShape) + ", " + Ops::Base::ToString(*origOutputShape) + ", " +
+             Ops::Base::ToString(*gradShape))
+                .c_str(),
+            "dimension values must be at least -2");
         return ge::GRAPH_FAILED;
     }
 
@@ -192,14 +274,20 @@ static ge::graphStatus HandleShape(const gert::InferShapeContext* context, const
         const size_t channelIndex = dataFormat == "NCHW" ? 1 : 3;
         if (!IsDimCompatible(origInputShape->GetDim(0), origOutputShape->GetDim(0)) ||
             !IsDimCompatible(origInputShape->GetDim(channelIndex), origOutputShape->GetDim(channelIndex))) {
-            OP_LOGE(context->GetNodeName(), "orig_output N/C dimensions must match orig_input.");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "orig_input, orig_output",
+                (Ops::Base::ToString(*origInputShape) + ", " + Ops::Base::ToString(*origOutputShape)).c_str(),
+                "known N/C dimensions must match");
             return ge::GRAPH_FAILED;
         }
 
         if (!gradUnknownRank) {
             for (size_t i = 0; i < EXPECTED_RANK; ++i) {
                 if (!IsDimCompatible(origOutputShape->GetDim(i), gradShape->GetDim(i))) {
-                    OP_LOGE(context->GetNodeName(), "grad shape must match orig_output shape.");
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), "grad, orig_output",
+                        (Ops::Base::ToString(*gradShape) + ", " + Ops::Base::ToString(*origOutputShape)).c_str(),
+                        "known dimensions must match");
                     return ge::GRAPH_FAILED;
                 }
             }
@@ -219,10 +307,16 @@ ge::graphStatus InferShapeMaxPoolV3Grad(gert::InferShapeContext* context)
     OP_LOGD(context->GetNodeName(), "runtime2.0 MaxPoolV3Grad infershape running");
 
     auto origInputDesc = context->GetInputDesc(ORIG_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, origInputDesc);
+    OP_CHECK_IF(
+        origInputDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "orig_input",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     const ge::Format origInputFormat = origInputDesc->GetOriginFormat();
     if (origInputFormat != ge::FORMAT_ND && origInputFormat != ge::FORMAT_NCHW && origInputFormat != ge::FORMAT_NHWC) {
-        OP_LOGE(context->GetNodeName(), "orig_input format must be ND, NCHW or NHWC.");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "orig_input",
+                                               Ops::Base::ToString(origInputDesc->GetOriginFormat()).c_str(),
+                                               "supported formats are ND, NCHW and NHWC");
         return ge::GRAPH_FAILED;
     }
 
@@ -235,15 +329,40 @@ ge::graphStatus InferShapeMaxPoolV3Grad(gert::InferShapeContext* context)
     const gert::Shape* origOutputShape = context->GetInputShape(ORIG_OUTPUT_INDEX);
     const gert::Shape* gradShape = context->GetInputShape(GRAD_INDEX);
     gert::Shape* outGradShape = context->GetOutputShape(OUT_GRAD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, origInputShape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, origOutputShape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outGradShape);
+    OP_CHECK_IF(
+        origInputShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "orig_input",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        origOutputShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "orig_output",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        gradShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "grad",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        outGradShape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                            "outGradShape is null; InferShape cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     const char* dataFormatAttr = attrs->GetAttrPointer<char>(ATTR_INDEX_DATA_FORMAT);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dataFormatAttr);
+    OP_CHECK_IF(
+        dataFormatAttr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "data_format",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     return HandleShape(context, std::string(dataFormatAttr), origInputShape, origOutputShape, gradShape, outGradShape);
 }

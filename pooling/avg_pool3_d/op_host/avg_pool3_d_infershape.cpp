@@ -104,7 +104,10 @@ static bool GetConv3DXShape(const InferShapeContext* context, size_t x_idx, Form
                             Conv3DInputShapesForAvgPool3d& shapes)
 {
     const auto x_shape = context->GetInputShape(x_idx);
-    OP_LOGE_IF(x_shape == nullptr, false, context->GetNodeName(), "failed to get x shape.");
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x shape is missing"),
+        return false);
     if (x_shape->GetDimNum() != kConv3dInputSizeLimit) {
         OP_LOGE_FOR_INVALID_SHAPEDIM("AvgPool3D", "X", std::to_string(x_shape->GetDimNum()).c_str(), "5");
         return false;
@@ -154,9 +157,17 @@ static bool GetConv3DPads(const InferShapeContext* context, const Conv3DInputSha
                           size_t pads_idx, size_t padding_idx, Conv3DAttrsForAvgPool3d& attrs)
 {
     const auto runtime_attrs = context->GetAttrs();
-    OP_LOGE_IF(runtime_attrs == nullptr, false, context->GetNodeName(), "failed to get runtime attrs");
+    OP_CHECK_IF(runtime_attrs == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "runtime_attrs is null; shape/type inference cannot continue"})),
+                return false);
     const auto pads_list = runtime_attrs->GetAttrPointer<gert::ContinuousVector>(pads_idx);
-    OP_LOGE_IF(pads_list == nullptr, false, context->GetNodeName(), "failed to get pads attrs");
+    OP_CHECK_IF(
+        pads_list == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "pads", "required parameter pads is missing"),
+        return false);
     if (pads_list->GetSize() != LEN_6 and pads_list->GetSize() != LEN_3 and pads_list->GetSize() != LEN_1) {
         OP_LOGE_FOR_INVALID_LISTSIZE("AvgPool3D", "Size of pads", std::to_string(pads_list->GetSize()).c_str(),
                                      "[6, 3, 1]");
@@ -210,10 +221,18 @@ static bool GetStridesForAvgPool3D(const InferShapeContext* context, ge::Format 
                                    Conv3DAttrsForAvgPool3d& attrs)
 {
     const auto runtime_attrs = context->GetAttrs();
-    OP_LOGE_IF(runtime_attrs == nullptr, false, context->GetNodeName(), "failed to get runtime attrs");
+    OP_CHECK_IF(runtime_attrs == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "runtime_attrs is null; shape/type inference cannot continue"})),
+                return false);
 
     const auto strides_list = runtime_attrs->GetAttrPointer<gert::ContinuousVector>(kAvgPool3DStridesIdx);
-    OP_LOGE_IF(strides_list == nullptr, false, context->GetNodeName(), "failed to get strides attrs");
+    OP_CHECK_IF(strides_list == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "strides",
+                                                         "required parameter strides is missing"),
+                return false);
     const auto strides_list_data = static_cast<const int64_t*>(strides_list->GetData());
 
     if (strides_list->GetSize() == 1) {
@@ -256,10 +275,18 @@ static bool GetStridesForAvgPool3D(const InferShapeContext* context, ge::Format 
 static bool GetKSize(const InferShapeContext* context, ge::Format x_format, Conv3DInputShapesForAvgPool3d& shapes)
 {
     const auto runtime_attrs = context->GetAttrs();
-    OP_LOGE_IF(runtime_attrs == nullptr, false, context->GetNodeName(), "failed to get runtime attrs");
+    OP_CHECK_IF(runtime_attrs == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "runtime_attrs is null; shape/type inference cannot continue"})),
+                return false);
 
     const auto ksize_list = runtime_attrs->GetAttrPointer<gert::ContinuousVector>(kAvgPool3DKSizeIdx);
-    OP_LOGE_IF(ksize_list == nullptr, false, context->GetNodeName(), "failed to get ksize attrs");
+    OP_CHECK_IF(ksize_list == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "ksize",
+                                                         "required parameter ksize is missing"),
+                return false);
     const auto ksize_list_data = static_cast<const int64_t*>(ksize_list->GetData());
 
     if (ksize_list->GetSize() == 1) {
@@ -348,25 +375,47 @@ static bool CalcAvgPool3DOutputShape(const char* op_name, const Conv3DInputShape
 static ge::graphStatus InferShapeForAvgPool3D(InferShapeContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("AvgPool3D", "context is null");
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{"AvgPool3D", "context is null"}));
         return ge::GRAPH_FAILED;
     }
     const auto op_name = context->GetNodeName() == nullptr ? "AvgPool3D" : context->GetNodeName();
 
     const auto runtime_attrs = context->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context, runtime_attrs);
+    OP_CHECK_IF(runtime_attrs == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "runtime_attrs is null; shape/type inference cannot continue"})),
+                return ge::GRAPH_FAILED);
     const auto ceil_mode = runtime_attrs->GetAttrPointer<bool>(kAvgPool3DCeilModeIdx);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, ceil_mode);
+    OP_CHECK_IF(ceil_mode == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "ceil_mode",
+                                                         "required parameter ceil_mode is missing"),
+                return ge::GRAPH_FAILED);
 
     const auto x_desc = context->GetInputDesc(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, x_desc);
+    OP_CHECK_IF(
+        x_desc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x descriptor is missing"),
+        return ge::GRAPH_FAILED);
     const auto x_format = x_desc->GetOriginFormat();
 
     const auto y_shape = context->GetOutputShape(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    OP_CHECK_IF(
+        y_shape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "y_shape is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     const auto y_desc = context->GetOutputDesc(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, y_desc);
+    OP_CHECK_IF(
+        y_desc == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(), "y_desc is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     const auto y_format = y_desc->GetOriginFormat();
 
     Conv3DInputShapesForAvgPool3d shapes;
@@ -380,7 +429,7 @@ static ge::graphStatus InferShapeForAvgPool3D(InferShapeContext* context)
         return ge::GRAPH_SUCCESS;
     }
 
-    OP_LOGE(op_name, "failed to infer shape for AvgPool3D");
+    OP_LOGE_WITHOUT_REPORT(op_name, "failed to infer shape for AvgPool3D");
     return ge::GRAPH_FAILED;
 }
 

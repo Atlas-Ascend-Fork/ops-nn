@@ -25,23 +25,40 @@ static ge::graphStatus Tiling4MaxPool3DWithArgmaxV2(gert::TilingContext* context
 static ge::graphStatus TilingPrepare4MaxPool3DWithArgmaxV2(gert::TilingParseContext* context)
 {
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfoPtr == nullptr, OP_LOGE(context, "platformInfoPtr is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        platformInfoPtr == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(), "platformInfoPtr is null"})),
+        return ge::GRAPH_FAILED);
 
     auto compileInfoPtr = context->GetCompiledInfo<MaxPool3DWithArgmaxV2CompileInfo>();
-    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context, "compileInfoPtr is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfoPtr == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{context->GetNodeName(), "compileInfoPtr is null"})),
+                return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     compileInfoPtr->coreNum = ascendcPlatform.GetCoreNum();
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfoPtr->ubSize);
 
-    OP_CHECK_IF(compileInfoPtr->coreNum <= 0,
-                OP_LOGE(context->GetNodeName(), "MaxPool3DWithArgmaxV2: coreNum = %zu, should be greater than 0",
-                        compileInfoPtr->coreNum),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(compileInfoPtr->ubSize <= 0,
-                OP_LOGE(context->GetNodeName(), "MaxPool3DWithArgmaxV2: ubSize = %zu, should be greater than 0",
-                        compileInfoPtr->ubSize),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        compileInfoPtr->coreNum <= 0,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "MaxPool3DWithArgmaxV2: coreNum = %zu, should be greater than 0",
+                               compileInfoPtr->coreNum);
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "MaxPool3DWithArgmaxV2: coreNum = (see diagnostic), should be greater than 0"})),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        compileInfoPtr->ubSize <= 0,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "MaxPool3DWithArgmaxV2: ubSize = %zu, should be greater than 0",
+                               compileInfoPtr->ubSize);
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "MaxPool3DWithArgmaxV2: ubSize = (see diagnostic), should be greater than 0"})),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }

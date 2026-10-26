@@ -40,12 +40,23 @@ static ge::graphStatus InferShapePaddingValid(gert::InferShapeContext* context, 
 {
     const char* opName_ = "MaxPoolV2";
     auto inShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inShape);
+    OP_CHECK_IF(
+        inShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     auto outShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
+    OP_CHECK_IF(
+        outShape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "outShape is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     *outShape = *inShape;
     auto ksize = context->GetInputTensor(INPUT_KSIZE_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, ksize);
+    OP_CHECK_IF(ksize == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "ksize",
+                                                         "required parameter ksize is missing"),
+                return ge::GRAPH_FAILED);
     if (ksize->GetShapeSize() != SHAPE_NHWC_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of ksize", std::to_string(ksize->GetShapeSize()).c_str(), "4");
         return GRAPH_FAILED;
@@ -53,7 +64,10 @@ static ge::graphStatus InferShapePaddingValid(gert::InferShapeContext* context, 
     int64_t hksizeData = static_cast<int64_t>(ksize->GetData<int32_t>()[hDim]);
     int64_t wksizeData = static_cast<int64_t>(ksize->GetData<int32_t>()[wDim]);
     auto strides = context->GetInputTensor(INPUT_STRIDES_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, strides);
+    OP_CHECK_IF(strides == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "strides",
+                                                         "required parameter strides is missing"),
+                return ge::GRAPH_FAILED);
     if (strides->GetShapeSize() != SHAPE_NHWC_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of strides", std::to_string(strides->GetShapeSize()).c_str(),
                                      "4");
@@ -78,12 +92,23 @@ static ge::graphStatus InferShapePaddingSame(gert::InferShapeContext* context, s
 {
     const char* opName_ = "MaxPoolV2";
     auto inShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inShape);
+    OP_CHECK_IF(
+        inShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     auto outShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
+    OP_CHECK_IF(
+        outShape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "outShape is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     *outShape = *inShape;
     auto strides = context->GetInputTensor(INPUT_STRIDES_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, strides);
+    OP_CHECK_IF(strides == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "strides",
+                                                         "required parameter strides is missing"),
+                return ge::GRAPH_FAILED);
     if (static_cast<uint64_t>(strides->GetShapeSize()) != SHAPE_NHWC_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of strides",
                                      std::to_string(static_cast<uint64_t>(strides->GetShapeSize())).c_str(), "4");
@@ -113,25 +138,44 @@ static ge::graphStatus InferShape4MaxPoolV2(gert::InferShapeContext* context)
 {
     const char* opName_ = "MaxPoolV2";
     auto inShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inShape);
+    OP_CHECK_IF(
+        inShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     auto outShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
+    OP_CHECK_IF(
+        outShape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "outShape is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     if (Ops::Base::IsUnknownRank(*inShape)) {
         Ops::Base::SetUnknownShape(INSHAPE_DIM_NUM, *outShape);
         return ge::GRAPH_SUCCESS;
     }
 
     auto srcTd = context->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, srcTd);
+    OP_CHECK_IF(
+        srcTd == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x descriptor is missing"),
+        return ge::GRAPH_FAILED);
     auto inputFormat = srcTd->GetOriginFormat();
     size_t hDim = inputFormat == FORMAT_NHWC ? 1 : 2;
     size_t wDim = inputFormat == FORMAT_NHWC ? 2 : 3;
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(), "attrs is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     auto paddingMode = attrs->GetAttrPointer<char>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, paddingMode);
+    OP_CHECK_IF(paddingMode == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "padding",
+                                                         "required parameter padding is missing"),
+                return ge::GRAPH_FAILED);
     auto it = std::find_if(kFuncMap.begin(), kFuncMap.end(),
                            [&paddingMode](const std::pair<std::string, InferShapePaddingFunc>& item) -> bool {
                                return item.first == paddingMode;

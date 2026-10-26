@@ -12,6 +12,7 @@
  * \file adaptive_max_pool3d_grad_tiling.cpp
  * \brief
  */
+#include "log/log.h"
 #include "adaptive_max_pool3d_grad_tiling.h"
 #include "adaptive_max_pool3d_grad_tiling_arch35.h"
 #include <iostream>
@@ -28,19 +29,33 @@ static ge::graphStatus TilingPrepare4AdaptiveMaxPool3DGrad(gert::TilingParseCont
 {
     OP_LOGD(context, "Enter TilingPrepare4AdaptiveMaxPool3DGrad.");
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfoPtr == nullptr, OP_LOGE(context, "platformInfoPtr is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(platformInfoPtr == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(), "platformInfoPtr is null"})),
+                return ge::GRAPH_FAILED);
 
     auto compileInfoPtr = context->GetCompiledInfo<Tiling4AdaptiveMaxPool3DGradCompileInfo>();
-    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context, "compileInfoPtr is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfoPtr == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(), "compileInfoPtr is null"})),
+                return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     compileInfoPtr->curSocVersion = ascendcPlatform.GetSocVersion();
     compileInfoPtr->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfoPtr->maxUbSize);
-    OP_CHECK_IF((compileInfoPtr->totalCoreNum <= 0), OP_LOGE(context, "Failed to get corenum size"),
+    OP_CHECK_IF((compileInfoPtr->totalCoreNum <= 0),
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(), "Failed to get corenum size"})),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((compileInfoPtr->maxUbSize <= 0), OP_LOGE(context, "Failed to get maxub size"),
+    OP_CHECK_IF((compileInfoPtr->maxUbSize <= 0),
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(), "Failed to get maxub size"})),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

@@ -90,8 +90,11 @@ ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetPlatformInfo()
     auto platformPtr = context_->GetPlatformInfo();
     if (platformPtr == nullptr) {
         auto compileInfoPtr = static_cast<const MaxPool3DWithArgmaxV2CompileInfo*>(context_->GetCompileInfo());
-        OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context_->GetNodeName(), "compile info is null"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            compileInfoPtr == nullptr,
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{context_->GetNodeName(), "compile info is null"})),
+            return ge::GRAPH_FAILED);
         coreNum = compileInfoPtr->coreNum;
 
         ubSize = compileInfoPtr->ubSize;
@@ -103,7 +106,10 @@ ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetPlatformInfo()
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatform);
         ubSize = ubSizePlatform;
     }
-    OP_CHECK_IF(coreNum == 0, OP_LOGE(context_->GetNodeName(), "coreNum is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(coreNum == 0,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{context_->GetNodeName(), "coreNum is 0"})),
+                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -111,14 +117,23 @@ ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetPlatformInfo()
 ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetShapeAttrsInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "platformInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     if (!Ops::NN::OpTiling::IsRegbaseSocVersion(context_)) {
         return ge::GRAPH_PARAM_INVALID;
     }
 
     auto inputX = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputX);
+    OP_CHECK_IF(
+        inputX == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     auto inputShape = EnsureNotScalar(inputX->GetStorageShape());
     if (inputShape.GetDimNum() != NCDHW_DIMS) {
         OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), "x", std::to_string(inputShape.GetDimNum()).c_str(),
@@ -131,7 +146,10 @@ ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetShapeAttrsInfo()
         return ge::GRAPH_FAILED;
     }
     auto inputDesc = context_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+    OP_CHECK_IF(inputDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "required input x descriptor is missing"),
+                return ge::GRAPH_FAILED);
     dtype = inputDesc->GetDataType();
     if (dtype != ge::DataType::DT_BF16 && dtype != ge::DataType::DT_FLOAT16 && dtype != ge::DataType::DT_FLOAT) {
         OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "x", ge::TypeUtils::DataTypeToSerialString(dtype).c_str(),
@@ -140,10 +158,20 @@ ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetShapeAttrsInfo()
     }
 
     auto outX = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outX);
+    OP_CHECK_IF(outX == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "outX is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto outShape = EnsureNotScalar(outX->GetStorageShape());
     auto indicesX = context_->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, indicesX);
+    OP_CHECK_IF(indicesX == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "indicesX is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto indicesShape = EnsureNotScalar(indicesX->GetStorageShape());
     if (indicesShape != outShape) {
         std::string shapeMsg = Ops::Base::ToString(indicesShape) + " and " + Ops::Base::ToString(outShape);
@@ -152,7 +180,13 @@ ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetShapeAttrsInfo()
         return ge::GRAPH_FAILED;
     }
     auto runtimeAttrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runtimeAttrs);
+    OP_CHECK_IF(
+        runtimeAttrs == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "runtimeAttrs is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     std::string inputFormatStr("NCDHW");
     const char* inputFormat = runtimeAttrs->GetAttrPointer<char>(FORMAT_POS);
     if (inputFormat != nullptr) {
@@ -186,19 +220,29 @@ ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetShapeAttrsInfo()
                                                    uint64_t(outShape.GetDim(w_dim))};
 
     auto outputIndicesDesc = context_->GetOutputDesc(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputIndicesDesc);
+    OP_CHECK_IF(
+        outputIndicesDesc == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "outputIndicesDesc is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto indicesDtype = outputIndicesDesc->GetDataType();
     OP_CHECK_IF(inputShape.GetDim(d_dim) * inputShape.GetDim(h_dim) * inputShape.GetDim(w_dim) >
                         static_cast<int64_t>(std::numeric_limits<int32_t>::max()) &&
                     indicesDtype != ge::DT_INT64,
-                OP_LOGI(context_->GetNodeName(),
-                        "The value of D*H*W exceeds INT32_MAX, the data type of indices should be DT_INT64"),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "indices",
+                                                      ge::TypeUtils::DataTypeToSerialString(indicesDtype).c_str(),
+                                                      "D*H*W exceeds int32 max, indices must be int64"),
                 return ge::GRAPH_FAILED);
     int32_t dValue = 0;
     int32_t hValue = 0;
     int32_t wValue = 0;
     const gert::TypedContinuousVector<int64_t>* kernelSize = runtimeAttrs->GetListInt(KERNEL_POS);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, kernelSize);
+    OP_CHECK_IF(kernelSize == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "ksize",
+                                                         "required parameter ksize is missing"),
+                return ge::GRAPH_FAILED);
     dValue = *(kernelSize->GetData());
     hValue = *(kernelSize->GetData() + 1);
     wValue = *(kernelSize->GetData() + MP_MAX_3D_DIM_TWO);
@@ -215,7 +259,10 @@ ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetShapeAttrsInfo()
     int32_t khValue = hValue;
     int32_t kwValue = wValue;
     const gert::TypedContinuousVector<int64_t>* stride = runtimeAttrs->GetListInt(STRIDE_POS);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, stride);
+    OP_CHECK_IF(stride == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "strides",
+                                                         "required parameter strides is missing"),
+                return ge::GRAPH_FAILED);
     dValue = *(stride->GetData());
     hValue = *(stride->GetData() + 1);
     wValue = *(stride->GetData() + MP_MAX_3D_DIM_TWO);
@@ -229,7 +276,10 @@ ge::graphStatus MaxPool3DWithArgmaxV2GatherTiling::GetShapeAttrsInfo()
     }
 
     const gert::TypedContinuousVector<int64_t>* padding = runtimeAttrs->GetListInt(PADDING_POS);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, padding);
+    OP_CHECK_IF(
+        padding == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "pads", "required parameter pads is missing"),
+        return ge::GRAPH_FAILED);
     dValue = *(padding->GetData());
     hValue = *(padding->GetData() + 1);
     wValue = *(padding->GetData() + MP_MAX_3D_DIM_TWO);

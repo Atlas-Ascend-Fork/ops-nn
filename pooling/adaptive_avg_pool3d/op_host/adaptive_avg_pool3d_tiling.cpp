@@ -247,7 +247,13 @@ static ge::graphStatus KernelTiling(gert::TilingContext* context, const Adaptive
 
     auto sysWorkspaceSize = compileInfo->sysWorkspaceSize;
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
+    OP_CHECK_IF(
+        currentWorkspace == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "currentWorkspace is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     currentWorkspace[0] = sysWorkspaceSize;
 
     OP_LOGD(nodeName, "Tiling end.");
@@ -267,25 +273,41 @@ static ge::graphStatus Tiling4AdaptiveAvgPool3d(gert::TilingContext* context)
     auto compileInfo = static_cast<const AdaptiveAvgPool3dCompileInfo*>(context->GetCompileInfo());
 
     const gert::Shape xShape = context->GetInputShape(X_INDEX)->GetStorageShape();
-    OP_CHECK_IF(xShape.GetDimNum() != X_DIMS, OP_LOGE(nodeName, "Check x shape failed, the dims of x not equal to 5."),
+    OP_CHECK_IF(xShape.GetDimNum() != X_DIMS,
+                OP_LOGE_FOR_INVALID_SHAPEDIM("AdaptiveAvgPool3d", "x", std::to_string(xShape.GetDimNum()).c_str(), "5"),
                 return ge::GRAPH_FAILED);
 
     auto dataType = context->GetInputDesc(X_INDEX)->GetDataType();
     int32_t dataTypeKey = FP32_DTYPE_KEY;
     OP_CHECK_IF(GetDataTypeKey(dataType, dataTypeKey) == false,
-                OP_LOGE(nodeName, "The dtype of input must be in [float32, float16, bfloat16]."),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("AdaptiveAvgPool3d", "x", Ops::Base::ToString(dataType),
+                                                      "The dtype of input must be in [float32, float16, bfloat16]"),
                 return ge::GRAPH_FAILED);
 
     auto attrPtr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
+    OP_CHECK_IF(attrPtr == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "attrPtr is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto outputSizePtr = attrPtr->GetAttrPointer<gert::ContinuousVector>(OUTPUT_SIZE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outputSizePtr);
+    OP_CHECK_IF(outputSizePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "output_size",
+                                                         "required parameter output_size is missing"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(outputSizePtr->GetSize() != OUTPUT_SIZE_DIMS,
-                OP_LOGE(nodeName, "Check output_size failed, the size of output_size not equal to 3."),
+                OP_LOGE_FOR_INVALID_LISTSIZE("AdaptiveAvgPool3d", "output_size",
+                                             std::to_string(outputSizePtr->GetSize()).c_str(), "3"),
                 return ge::GRAPH_FAILED);
     const int64_t* outputSize = static_cast<const int64_t*>(outputSizePtr->GetData());
     OP_CHECK_IF(outputSize[DIM0] <= 0 || outputSize[DIM1] <= 0 || outputSize[DIM2] <= 0,
-                OP_LOGE(nodeName, "Check output_size failed, the value of output_size should be greater than 0."),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    "AdaptiveAvgPool3d", "output_size",
+                    (std::to_string(outputSize[DIM0]) + ", " + std::to_string(outputSize[DIM1]) + ", " +
+                     std::to_string(outputSize[DIM2]))
+                        .c_str(),
+                    "The value of output_size should be greater than 0"),
                 return ge::GRAPH_FAILED);
 
     TilingParams params;
@@ -311,18 +333,34 @@ static ge::graphStatus TilingPrepare4AdaptiveAvgPool3d(gert::TilingParseContext*
     auto nodeName = context->GetNodeName();
     OP_LOGD(nodeName, "TilingPrepare4AdaptiveAvgPool3d start.");
     auto compileInfo = context->GetCompiledInfo<AdaptiveAvgPool3dCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "compileInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "platformInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->totalCoreNum <= 0), OP_LOGE(nodeName, "Failed to get core num."),
+    OP_CHECK_IF((compileInfo->totalCoreNum <= 0),
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{nodeName, "Failed to get core num."})),
                 return ge::GRAPH_FAILED);
     compileInfo->sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(nodeName, "Failed to get ub size."),
+    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0),
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{nodeName, "Failed to get ub size."})),
                 return ge::GRAPH_FAILED);
     OP_LOGD(nodeName, "TilingPrepare4AdaptiveAvgPool3d end.");
 

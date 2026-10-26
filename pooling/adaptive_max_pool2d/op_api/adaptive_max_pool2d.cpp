@@ -80,13 +80,13 @@ std::tuple<aclTensor*, aclTensor*> AdaptiveMaxPool2d(const aclTensor* self, cons
 
     auto outputOut = executor->AllocTensor(outShape, self->GetDataType(), self->GetStorageFormat());
     if (outputOut == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "outputOut is nullptr.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "outputOut is nullptr.");
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
     if (IsAscend950iCoreSupport(self)) {
         auto indicesInt32Out = executor->AllocTensor(outShape, op::DataType::DT_INT32, self->GetStorageFormat());
         if (indicesInt32Out == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "indicesInt32Out is nullptr.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "indicesInt32Out is nullptr.");
             return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
         }
         OP_LOGI("beigin adaptive maxpool2d.\n");
@@ -94,7 +94,7 @@ std::tuple<aclTensor*, aclTensor*> AdaptiveMaxPool2d(const aclTensor* self, cons
     }
     auto indicesInt64Out = executor->AllocTensor(outShape, op::DataType::DT_INT64, self->GetStorageFormat());
     if (indicesInt64Out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "indicesInt64Out is nullptr.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "indicesInt64Out is nullptr.");
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
     return AdapativeMaxPool2dAiCpu(self, outputSize, outputOut, indicesInt64Out, executor);

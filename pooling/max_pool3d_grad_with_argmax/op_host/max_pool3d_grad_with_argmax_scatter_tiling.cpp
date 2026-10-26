@@ -12,6 +12,7 @@
  * \file max_pool3d_grad_with_argmax_scatter_tiling.cpp
  * \brief
  */
+#include "log/log.h"
 #include <iostream>
 #include "max_pool3d_grad_with_argmax_tiling.h"
 #include "../../pool_3d_common/op_host/arch22/max_pool3d_grad_tiling_common.h"
@@ -56,7 +57,11 @@ void MaxPool3DGradWithArgmaxScatterTiling::PrintScatterTilingData()
 ge::graphStatus MaxPool3DGradWithArgmaxScatterTiling::DoOpTiling()
 {
     bool res = SetScatterTilingParams();
-    OP_CHECK_IF(!res, OP_LOGE(context_->GetNodeName(), "Scatter cal tiling params failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!res,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(), "Scatter cal tiling params failed."})),
+                return ge::GRAPH_FAILED);
     maxPoolGradParams.tilingType = TILING_TYPE_SCATTER;
     SetOtherTilingParams();
     SetBaseTilingData();

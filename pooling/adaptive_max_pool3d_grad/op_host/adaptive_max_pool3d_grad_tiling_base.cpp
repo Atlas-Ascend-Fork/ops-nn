@@ -13,6 +13,7 @@
  * \brief
  */
 
+#include "log/log.h"
 #include "adaptive_max_pool3d_grad_tiling.h"
 
 namespace optiling {
@@ -34,14 +35,19 @@ bool AdaptiveMaxPool3DGradTilingBase::CheckInputShape()
     size_t argmaxDimNum = argmaxShape->GetStorageShape().GetDimNum();
 
     // xDimNum should be 5(format:NCDHW)
-    OP_CHECK_IF((xDimNum != NCDHW_DIM_NUM) || (gradDimNum != NCDHW_DIM_NUM) || (argmaxDimNum != NCDHW_DIM_NUM),
-                OP_LOGE(context_->GetNodeName(),
-                        "Input dim num should equal = %lu, actual is xDim: %lu, gradDim: %lu, argmaxDim: %lu.",
-                        NCDHW_DIM_NUM, xDimNum, gradDimNum, argmaxDimNum),
-                return false);
+    OP_CHECK_IF(
+        (xDimNum != NCDHW_DIM_NUM) || (gradDimNum != NCDHW_DIM_NUM) || (argmaxDimNum != NCDHW_DIM_NUM),
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context_->GetNodeName(), "x, grad, argmax",
+            (std::to_string(xDimNum) + ", " + std::to_string(gradDimNum) + ", " + std::to_string(argmaxDimNum)).c_str(),
+            "all input ranks must be 5 (NCDHW)"),
+        return false);
     for (uint32_t i = 0; i < xDimNum; i++) {
         OP_CHECK_IF(xShape->GetStorageShape().GetDim(i) == 0,
-                    OP_LOGE(context_->GetNodeName(), "Input x shape can not be 0."), return false);
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x",
+                                                          Ops::Base::ToString(xShape->GetStorageShape()).c_str(),
+                                                          "input x must not contain zero dimensions"),
+                    return false);
     }
 
     // gradShape&argmaxShape's shape should be equal
@@ -49,9 +55,10 @@ bool AdaptiveMaxPool3DGradTilingBase::CheckInputShape()
         uint64_t gradDimValue = gradShape->GetStorageShape().GetDim(i);
         uint64_t argmaxDimValue = argmaxShape->GetStorageShape().GetDim(i);
         OP_CHECK_IF(gradDimValue != argmaxDimValue,
-                    OP_LOGE(context_->GetNodeName(),
-                            "Input dim check invalid, grad[%lu] is %lu, argmax[%lu] is %lu, not equal.", i,
-                            gradDimValue, i, argmaxDimValue),
+                    OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                        context_->GetNodeName(), "grad, argmax",
+                        (std::to_string(gradDimValue) + ", " + std::to_string(argmaxDimValue)).c_str(),
+                        (std::string("dimensions must match at axis ") + std::to_string(i)).c_str()),
                     return false);
     }
 
@@ -59,11 +66,12 @@ bool AdaptiveMaxPool3DGradTilingBase::CheckInputShape()
     for (size_t i = 0; i < NC_DIM_NUM; i++) {
         uint64_t xDimValue = xShape->GetStorageShape().GetDim(i);
         uint64_t gradDimValue = gradShape->GetStorageShape().GetDim(i);
-        OP_CHECK_IF(
-            (gradDimValue != xDimValue),
-            OP_LOGE(context_->GetNodeName(), "Input dim check invalid, grad[%lu] is %lu, x[%lu] is %lu, not equal.", i,
-                    gradDimValue, i, xDimValue),
-            return false);
+        OP_CHECK_IF((gradDimValue != xDimValue),
+                    OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                        context_->GetNodeName(), "grad, x",
+                        (std::to_string(gradDimValue) + ", " + std::to_string(xDimValue)).c_str(),
+                        (std::string("dimensions must match at axis ") + std::to_string(i)).c_str()),
+                    return false);
     }
 
     return true;
@@ -71,21 +79,39 @@ bool AdaptiveMaxPool3DGradTilingBase::CheckInputShape()
 
 ge::graphStatus AdaptiveMaxPool3DGradTilingBase::CheckInputDtype()
 {
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(X_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(GRAD_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(ARGMAX_INDEX));
+    OP_CHECK_IF(
+        context_->GetInputDesc(X_INDEX) == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context_).c_str(), "x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        context_->GetInputDesc(GRAD_INDEX) == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context_).c_str(), "grad",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        context_->GetInputDesc(ARGMAX_INDEX) == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context_).c_str(), "argmax",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto xDataType = context_->GetInputDesc(X_INDEX)->GetDataType();
     auto gradDataType = context_->GetInputDesc(GRAD_INDEX)->GetDataType();
     auto argmaxDataType = context_->GetInputDesc(ARGMAX_INDEX)->GetDataType();
 
     OP_CHECK_IF(xDataType != gradDataType,
-                OP_LOGE(context_->GetNodeName(), "Data type invalid, x data type not equal grad data type."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context_->GetNodeName(), "x, grad",
+                    (Ops::Base::ToString(xDataType) + ", " + Ops::Base::ToString(gradDataType)).c_str(),
+                    "x and grad must have the same dtype"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF((xDataType != ge::DT_FLOAT) && (xDataType != ge::DT_FLOAT16) && (xDataType != ge::DT_BF16),
-                OP_LOGE(context_->GetNodeName(), "Data type invalid, x data type not fp32/fp16/bf16."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (xDataType != ge::DT_FLOAT) && (xDataType != ge::DT_FLOAT16) && (xDataType != ge::DT_BF16),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", Ops::Base::ToString(xDataType).c_str(),
+                                              "supported dtypes are float32, float16 and bfloat16"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(argmaxDataType != ge::DT_INT32,
-                OP_LOGE(context_->GetNodeName(), "Data type invalid, argmax data type not equal int32."),
+                OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "argmax",
+                                          Ops::Base::ToString(argmaxDataType).c_str(), "int32"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -94,8 +120,10 @@ ge::graphStatus AdaptiveMaxPool3DGradTilingBase::CheckInputValid()
 {
     // Check index range
     OP_CHECK_IF(maxPoolGradParams.diDim * maxPoolGradParams.hiDim * maxPoolGradParams.wiDim > MAX_INT32,
-                OP_LOGE(context_->GetNodeName(),
-                        "Shape too big, diDim * hiDim * wiDim should not bigger than max range of int32."),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context_->GetNodeName(), "x",
+                    std::to_string(maxPoolGradParams.diDim * maxPoolGradParams.hiDim * maxPoolGradParams.wiDim).c_str(),
+                    "D * H * W must not exceed INT32_MAX"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -132,7 +160,11 @@ ge::graphStatus AdaptiveMaxPool3DGradTilingBase::SetInputParams()
     const gert::Shape xShape = context_->GetInputShape(X_INDEX)->GetStorageShape();
     const gert::Shape gradShape = context_->GetInputShape(GRAD_INDEX)->GetStorageShape();
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context_).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     uint64_t n = xShape.GetDim(0);
     uint64_t c = xShape.GetDim(1);
@@ -166,13 +198,16 @@ void AdaptiveMaxPool3DGradTilingBase::SetOtherInputParams()
 ge::graphStatus AdaptiveMaxPool3DGradTilingBase::GetShapeAttrsInfo()
 {
     OP_LOGD(context_->GetNodeName(), "Enter AdaptiveMaxPool3DGradTilingBase GetShapeAttrsInfo.");
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputDtype(), OP_LOGE(context_->GetNodeName(), "The input dtype is invalid."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputDtype(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The input dtype is invalid."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputShape(), OP_LOGE(context_->GetNodeName(), "The input relationship is invalid."),
+    OP_CHECK_IF(!CheckInputShape(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The input relationship is invalid."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != SetInputParams(), OP_LOGE(context_->GetNodeName(), "Set input shape failed."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputValid(), OP_LOGE(context_->GetNodeName(), "The input shape is invalid."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != SetInputParams(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Set input shape failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputValid(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The input shape is invalid."),
                 return ge::GRAPH_FAILED);
     SetOtherInputParams();
     return ge::GRAPH_SUCCESS;
@@ -187,7 +222,9 @@ ge::graphStatus AdaptiveMaxPool3DGradTilingBase::DoLibApiTiling() { return ge::G
 ge::graphStatus AdaptiveMaxPool3DGradTilingBase::GetPlatformInfo()
 {
     auto compileInfo = reinterpret_cast<const Tiling4AdaptiveMaxPool3DGradCompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE(context_->GetNodeName(), "compile info is null"),
+    OP_CHECK_IF(compileInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{context_->GetNodeName(), "compile info is null"})),
                 return ge::GRAPH_FAILED);
     maxPoolGradParams.totalCoreNum = compileInfo->totalCoreNum;
     maxPoolGradParams.maxUbSize = compileInfo->maxUbSize;

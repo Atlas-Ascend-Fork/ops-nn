@@ -63,10 +63,18 @@ ge::graphStatus InferShapeForMaxPoolWithArgmax(gert::InferShapeContext* context)
     }
     OP_LOGD(context->GetNodeName(), "runtime2.0 MaxPoolWithArgmax infershape running");
     auto src_td = context->GetInputDesc(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, src_td);
+    OP_CHECK_IF(
+        src_td == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x descriptor is missing"),
+        return ge::GRAPH_FAILED);
     auto input_format = src_td->GetOriginFormat();
     auto indices_td = context->GetOutputDesc(INDEX_OUT_INDICES);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, indices_td);
+    OP_CHECK_IF(indices_td == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "indices_td is null; shape/type inference cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto indices_dtype = indices_td->GetDataType();
     OP_LOGD(context->GetNodeName(), "indices_dtype = %d", indices_dtype);
 
@@ -77,10 +85,18 @@ ge::graphStatus InferShapeForMaxPoolWithArgmax(gert::InferShapeContext* context)
     }
 
     auto attrs = context->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(), "attrs is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     auto ksize = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_KSIZE);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, ksize);
+    OP_CHECK_IF(ksize == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "ksize",
+                                                         "required parameter ksize is missing"),
+                return ge::GRAPH_FAILED);
     if (ksize->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "ksize", std::to_string(ksize->GetSize()).c_str(),
                                      std::to_string(ATTR_LIST_SHAPE_SIZE).c_str());
@@ -89,7 +105,10 @@ ge::graphStatus InferShapeForMaxPoolWithArgmax(gert::InferShapeContext* context)
     auto ksize_data = static_cast<const int64_t*>(ksize->GetData());
 
     auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_STRIDES);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, strides);
+    OP_CHECK_IF(strides == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "strides",
+                                                         "required parameter strides is missing"),
+                return ge::GRAPH_FAILED);
     if (strides->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "strides", std::to_string(strides->GetSize()).c_str(),
                                      std::to_string(ATTR_LIST_SHAPE_SIZE).c_str());
@@ -98,7 +117,10 @@ ge::graphStatus InferShapeForMaxPoolWithArgmax(gert::InferShapeContext* context)
     auto strides_data = static_cast<const int64_t*>(strides->GetData());
 
     const char* dataFormatPtr = attrs->GetAttrPointer<char>(INDEX_DATA_FORMAT);
-    OP_LOGE_IF(dataFormatPtr == nullptr, GRAPH_FAILED, context->GetNodeName(), "Get dataFormat failed.");
+    OP_CHECK_IF(dataFormatPtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "data_format",
+                                                         "required parameter data_format is missing"),
+                return GRAPH_FAILED);
     std::string dataFormatStr(dataFormatPtr);
     if (ksize_data[INDEX_ZERO] != KSIZE_STRIDES_FIXED_DIM_VALUE &&
         strides_data[INDEX_ZERO] != KSIZE_STRIDES_FIXED_DIM_VALUE) {
@@ -134,7 +156,10 @@ ge::graphStatus InferShapeForMaxPoolWithArgmax(gert::InferShapeContext* context)
     }
 
     const char* paddingPtr = attrs->GetAttrPointer<char>(INDEX_PADS);
-    OP_LOGE_IF(paddingPtr == nullptr, GRAPH_FAILED, context->GetNodeName(), "Get pads failed.");
+    OP_CHECK_IF(paddingPtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "padding",
+                                                         "required parameter padding is missing"),
+                return GRAPH_FAILED);
     std::string padStr(paddingPtr);
     if (padStr != "SAME" && padStr != "VALID") {
         OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "padding", padStr.c_str(), "SAME or VALID");
@@ -142,12 +167,25 @@ ge::graphStatus InferShapeForMaxPoolWithArgmax(gert::InferShapeContext* context)
     }
 
     const gert::Shape* in_shape = context->GetInputShape(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, in_shape);
+    OP_CHECK_IF(
+        in_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     gert::Shape* out_shape = context->GetOutputShape(INDEX_OUT_MAX);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, out_shape);
+    OP_CHECK_IF(out_shape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "out_shape is null; shape/type inference cannot continue"})),
+                return ge::GRAPH_FAILED);
     *out_shape = *in_shape;
     gert::Shape* out_indices_shape = context->GetOutputShape(INDEX_OUT_INDICES);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, out_indices_shape);
+    OP_CHECK_IF(out_indices_shape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "out_indices_shape is null; shape/type inference cannot continue"})),
+                return ge::GRAPH_FAILED);
     *out_indices_shape = *in_shape;
     auto dimNums = in_shape->GetDimNum();
     if (Ops::Base::IsUnknownShape(*in_shape)) {
@@ -226,9 +264,17 @@ static ge::graphStatus InferDataTypeForMaxPoolWithArgmax(gert::InferDataTypeCont
     context->SetOutputDataType(INDEX_OUT_MAX, x);
 
     auto attrsPtr = context->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context, attrsPtr);
+    OP_CHECK_IF(
+        attrsPtr == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "attrsPtr is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     const int64_t* dstDtype = attrsPtr->GetAttrPointer<int64_t>(INDEX_DTYPE);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, dstDtype);
+    OP_CHECK_IF(dstDtype == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "Targmax",
+                                                         "required parameter Targmax is missing"),
+                return ge::GRAPH_FAILED);
     ge::DataType indicesDtype = *dstDtype == INT32_DTYPE ? ge::DT_INT32 : ge::DT_INT64;
 
     context->SetOutputDataType(INDEX_OUT_INDICES, indicesDtype);

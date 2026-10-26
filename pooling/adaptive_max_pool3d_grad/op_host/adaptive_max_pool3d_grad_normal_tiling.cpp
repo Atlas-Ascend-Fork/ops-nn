@@ -12,6 +12,7 @@
  * \file adaptive_max_pool3d_grad_normal_tiling.cpp
  * \brief
  */
+#include "log/log.h"
 #include "adaptive_max_pool3d_grad_tiling.h"
 #include <iostream>
 
@@ -108,7 +109,8 @@ bool AdaptiveMaxPool3DGradNormalTiling::SetNormalParamsUB()
         maxPoolGradParams.ubCutAxis = TILING_UB_CUT_WO;
         return true;
     }
-    OP_LOGE(context_->GetNodeName(), "Normal set tiling failed.");
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{context_->GetNodeName(), "Normal set tiling failed."}));
     return false;
 }
 
@@ -193,7 +195,8 @@ void AdaptiveMaxPool3DGradNormalTiling::PrintNormalTilingData()
 ge::graphStatus AdaptiveMaxPool3DGradNormalTiling::DoOpTiling()
 {
     bool res = SetNormalTilingParams();
-    OP_CHECK_IF(!res, OP_LOGE(context_->GetNodeName(), "Normal cal tiling params failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!res, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Normal cal tiling params failed."),
+                return ge::GRAPH_FAILED);
     maxPoolGradParams.tilingType = TILING_TYPE_NORMAL;
     context_->SetScheduleMode(1);
     SetOtherTilingParams();

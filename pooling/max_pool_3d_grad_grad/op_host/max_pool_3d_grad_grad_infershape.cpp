@@ -51,16 +51,28 @@ ge::graphStatus ParseSpatial(gert::InferShapeContext* context, size_t index, con
                              std::array<int64_t, SPATIAL_DIM_NUM>& values)
 {
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto vector = attrs->GetAttrPointer<gert::ContinuousVector>(index);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vector);
+    OP_CHECK_IF(
+        vector == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), attrName,
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     const size_t size = vector->GetSize();
     OP_CHECK_IF(
         size != 1 && size != 3 && size != 5,
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), attrName, std::to_string(size).c_str(), "1, 3 or 5"),
         return ge::GRAPH_FAILED);
     auto data = static_cast<const int64_t*>(vector->GetData());
-    OP_CHECK_NULL_WITH_CONTEXT(context, data);
+    OP_CHECK_IF(
+        data == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), attrName,
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (size == 1) {
         values = {data[0], data[0], data[0]};
     } else if (size == 3) {
@@ -88,15 +100,27 @@ ge::graphStatus ValidateAttrs(gert::InferShapeContext* context, std::array<int64
         return ge::GRAPH_FAILED;
     }
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto pads = attrs->GetAttrPointer<gert::ContinuousVector>(PADS_ATTR);
-    OP_CHECK_NULL_WITH_CONTEXT(context, pads);
+    OP_CHECK_IF(
+        pads == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "pads",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         pads->GetSize() != PADS_NUM,
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "pads", std::to_string(pads->GetSize()).c_str(), "6"),
         return ge::GRAPH_FAILED);
     auto padData = static_cast<const int64_t*>(pads->GetData());
-    OP_CHECK_NULL_WITH_CONTEXT(context, padData);
+    OP_CHECK_IF(
+        padData == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "pads",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     same = false;
     for (size_t i = 0; i < PADS_NUM; ++i) {
         OP_CHECK_IF(
@@ -107,7 +131,11 @@ ge::graphStatus ValidateAttrs(gert::InferShapeContext* context, std::array<int64
         same = same || padData[i] != 0;
     }
     const char* format = attrs->GetAttrPointer<char>(DATA_FORMAT_ATTR);
-    OP_CHECK_NULL_WITH_CONTEXT(context, format);
+    OP_CHECK_IF(
+        format == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "data_format",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(std::string(format) != "NDHWC",
                 OP_LOGE_FOR_INVALID_FORMAT(context->GetNodeName(), "data_format", format, "NDHWC"),
                 return ge::GRAPH_FAILED);
@@ -118,7 +146,11 @@ ge::graphStatus ValidateDtypeAndFormat(gert::InferShapeContext* context)
 {
     for (size_t i = 0; i < INPUT_NUM; ++i) {
         auto desc = context->GetInputDesc(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, desc);
+        OP_CHECK_IF(desc == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        Ops::Base::GetOpInfo(context).c_str(), INPUT_NAMES[i],
+                        "required input, descriptor, attribute or attribute data is missing"),
+                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(desc->GetDataType() != ge::DT_FLOAT16,
                     OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), INPUT_NAMES[i],
                                               std::to_string(desc->GetDataType()).c_str(), "DT_FLOAT16"),
@@ -134,7 +166,11 @@ ge::graphStatus ValidateDtypeAndFormat(gert::InferShapeContext* context)
             return ge::GRAPH_FAILED);
     }
     auto outputDesc = context->GetOutputDesc(Y_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
+    OP_CHECK_IF(outputDesc == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "outputDesc is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(outputDesc->GetOriginFormat() != ge::FORMAT_ND,
                 OP_LOGE_FOR_INVALID_FORMAT(context->GetNodeName(), "y",
                                            std::to_string(outputDesc->GetOriginFormat()).c_str(), "FORMAT_ND"),
@@ -293,9 +329,21 @@ ge::graphStatus ValidateShapes(gert::InferShapeContext* context, const std::arra
     const gert::Shape* x = context->GetInputShape(0);
     const gert::Shape* origY = context->GetInputShape(1);
     const gert::Shape* grads = context->GetInputShape(2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x);
-    OP_CHECK_NULL_WITH_CONTEXT(context, origY);
-    OP_CHECK_NULL_WITH_CONTEXT(context, grads);
+    OP_CHECK_IF(
+        x == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "orig_x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        origY == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "orig_y",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        grads == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "grads",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (ValidateKnownShape(context, *x, "orig_x") != ge::GRAPH_SUCCESS ||
         ValidateKnownShape(context, *origY, "orig_y") != ge::GRAPH_SUCCESS ||
         ValidateKnownShape(context, *grads, "grads") != ge::GRAPH_SUCCESS ||
@@ -314,7 +362,10 @@ ge::graphStatus ValidateShapes(gert::InferShapeContext* context, const std::arra
 
 ge::graphStatus InferShapeForMaxPool3DGradGrad(gert::InferShapeContext* context)
 {
-    OP_CHECK_IF(context == nullptr, OP_LOGE("MaxPool3DGradGrad", "context is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{"MaxPool3DGradGrad", "context is null"})),
+                return ge::GRAPH_FAILED);
     std::array<int64_t, SPATIAL_DIM_NUM> kernel = {}, stride = {};
     bool same = false;
     if (ValidateDtypeAndFormat(context) != ge::GRAPH_SUCCESS ||
@@ -322,7 +373,11 @@ ge::graphStatus InferShapeForMaxPool3DGradGrad(gert::InferShapeContext* context)
         return ge::GRAPH_FAILED;
     }
     gert::Shape* yShape = context->GetOutputShape(Y_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    OP_CHECK_IF(yShape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "yShape is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
     return ValidateShapes(context, kernel, stride, same, yShape);
 }
 

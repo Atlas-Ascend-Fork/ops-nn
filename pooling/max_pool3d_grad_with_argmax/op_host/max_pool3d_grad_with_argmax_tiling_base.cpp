@@ -13,6 +13,7 @@
  * \brief
  */
 
+#include "log/log.h"
 #include "max_pool3d_grad_with_argmax_tiling.h"
 
 namespace optiling {
@@ -34,14 +35,19 @@ bool MaxPool3DGradWithArgmaxTilingBase::CheckInputShape()
     size_t argmaxDimNum = argmaxShape->GetStorageShape().GetDimNum();
 
     // xDimNum should be 5(format:NCDHW)
-    OP_CHECK_IF((xDimNum != NCDHW_DIM_NUM) || (gradDimNum != NCDHW_DIM_NUM) || (argmaxDimNum != NCDHW_DIM_NUM),
-                OP_LOGE(context_->GetNodeName(),
-                        "Input dim num should be %lu, actual is xDim: %lu, gradDim: %lu, argmaxDim: %lu.",
-                        NCDHW_DIM_NUM, xDimNum, gradDimNum, argmaxDimNum),
-                return false);
+    OP_CHECK_IF(
+        (xDimNum != NCDHW_DIM_NUM) || (gradDimNum != NCDHW_DIM_NUM) || (argmaxDimNum != NCDHW_DIM_NUM),
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context_->GetNodeName(), "x, grad, argmax",
+            (std::to_string(xDimNum) + ", " + std::to_string(gradDimNum) + ", " + std::to_string(argmaxDimNum)).c_str(),
+            "all input ranks must be 5 (NCDHW)"),
+        return false);
     for (uint32_t i = 0; i < xDimNum; i++) {
         OP_CHECK_IF(xShape->GetStorageShape().GetDim(i) == 0,
-                    OP_LOGE(context_->GetNodeName(), "Input x shape can not be 0."), return false);
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x",
+                                                          Ops::Base::ToString(xShape->GetStorageShape()).c_str(),
+                                                          "input x must not contain zero dimensions"),
+                    return false);
     }
 
     // gradShape&argmaxShape's shape should be equal
@@ -49,9 +55,10 @@ bool MaxPool3DGradWithArgmaxTilingBase::CheckInputShape()
         uint64_t gradDimValue = gradShape->GetStorageShape().GetDim(i);
         uint64_t argmaxDimValue = argmaxShape->GetStorageShape().GetDim(i);
         OP_CHECK_IF(gradDimValue != argmaxDimValue,
-                    OP_LOGE(context_->GetNodeName(),
-                            "Input dim check invalid, grad[%lu] is %lu, argmax[%lu] is %lu, not equal.", i,
-                            gradDimValue, i, argmaxDimValue),
+                    OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                        context_->GetNodeName(), "grad, argmax",
+                        (std::to_string(gradDimValue) + ", " + std::to_string(argmaxDimValue)).c_str(),
+                        (std::string("dimensions must match at axis ") + std::to_string(i)).c_str()),
                     return false);
     }
 
@@ -59,11 +66,12 @@ bool MaxPool3DGradWithArgmaxTilingBase::CheckInputShape()
     for (size_t i = 0; i < NC_DIM_NUM; i++) {
         uint64_t xDimValue = xShape->GetStorageShape().GetDim(i);
         uint64_t gradDimValue = gradShape->GetStorageShape().GetDim(i);
-        OP_CHECK_IF(
-            (gradDimValue != xDimValue),
-            OP_LOGE(context_->GetNodeName(), "Input dim check invalid, grad[%lu] is %lu, x[%lu] is %lu, not equal.", i,
-                    gradDimValue, i, xDimValue),
-            return false);
+        OP_CHECK_IF((gradDimValue != xDimValue),
+                    OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                        context_->GetNodeName(), "grad, x",
+                        (std::to_string(gradDimValue) + ", " + std::to_string(xDimValue)).c_str(),
+                        (std::string("dimensions must match at axis ") + std::to_string(i)).c_str()),
+                    return false);
     }
 
     return true;
@@ -71,26 +79,52 @@ bool MaxPool3DGradWithArgmaxTilingBase::CheckInputShape()
 
 ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::CheckInputDtype()
 {
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(X_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(GRAD_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(ARGMAX_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOutputDesc(Y_INDEX));
+    OP_CHECK_IF(
+        context_->GetInputDesc(X_INDEX) == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context_).c_str(), "x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        context_->GetInputDesc(GRAD_INDEX) == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context_).c_str(), "grad",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        context_->GetInputDesc(ARGMAX_INDEX) == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context_).c_str(), "argmax",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context_->GetOutputDesc(Y_INDEX) == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{Ops::Base::GetOpInfo(context_).c_str(),
+                                              "context_->GetOutputDesc(Y_INDEX) is null; Tiling cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto xDataType = context_->GetInputDesc(X_INDEX)->GetDataType();
     auto gradDataType = context_->GetInputDesc(GRAD_INDEX)->GetDataType();
     auto argmaxDataType = context_->GetInputDesc(ARGMAX_INDEX)->GetDataType();
     auto yOutDataType = context_->GetOutputDesc(Y_INDEX)->GetDataType();
 
     OP_CHECK_IF(xDataType != gradDataType,
-                OP_LOGE(context_->GetNodeName(), "Data type invalid, x data type not equal grad data type."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context_->GetNodeName(), "x, grad",
+                    (Ops::Base::ToString(xDataType) + ", " + Ops::Base::ToString(gradDataType)).c_str(),
+                    "x and grad must have the same dtype"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(xDataType != yOutDataType,
-                OP_LOGE(context_->GetNodeName(), "Data type invalid, x data type not equal y data type."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context_->GetNodeName(), "x, y",
+                    (Ops::Base::ToString(xDataType) + ", " + Ops::Base::ToString(yOutDataType)).c_str(),
+                    "x and y must have the same dtype"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF((xDataType != ge::DT_FLOAT) && (xDataType != ge::DT_FLOAT16) && (xDataType != ge::DT_BF16),
-                OP_LOGE(context_->GetNodeName(), "Data type invalid, x data type not fp32/fp16/bf16."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (xDataType != ge::DT_FLOAT) && (xDataType != ge::DT_FLOAT16) && (xDataType != ge::DT_BF16),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", Ops::Base::ToString(xDataType).c_str(),
+                                              "supported dtypes are float32, float16 and bfloat16"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(argmaxDataType != ge::DT_INT32,
-                OP_LOGE(context_->GetNodeName(), "Data type invalid, argmax data type not equal int32."),
+                OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "argmax",
+                                          Ops::Base::ToString(argmaxDataType).c_str(), "int32"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -98,24 +132,32 @@ ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::CheckInputDtype()
 ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::CheckAttrShape()
 {
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context_).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     int32_t kSizeDimNum = attrs->GetListInt(KSIZE_ATTR_INDEX)->GetSize();
     int32_t stridesDimNum = attrs->GetListInt(STRIDES_ATTR_INDEX)->GetSize();
     int32_t padsDimNum = attrs->GetListInt(PADS_ATTR_INDEX)->GetSize();
     int32_t dilationsDimNum = attrs->GetListInt(DILATION_ATTR_INDEX)->GetSize();
 
     // Check attr dim num
-    OP_CHECK_IF((kSizeDimNum != DHW_DIM_NUM) && (kSizeDimNum != 1),
-                OP_LOGE(context_->GetNodeName(), "Attr kSize dim num invalid, dim num should equal 3 or 1."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (kSizeDimNum != DHW_DIM_NUM) && (kSizeDimNum != 1),
+        OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "ksize", std::to_string(kSizeDimNum).c_str(), "1 or 3"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF((stridesDimNum != DHW_DIM_NUM) && (stridesDimNum != 1) && (stridesDimNum != 0),
-                OP_LOGE(context_->GetNodeName(), "Attr strides dim num invalid, dim num should equal 3 or 1 or 0."),
+                OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "strides", std::to_string(stridesDimNum).c_str(),
+                                             "0, 1 or 3"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF((padsDimNum != DHW_DIM_NUM) && (padsDimNum != 1),
-                OP_LOGE(context_->GetNodeName(), "Attr pads dim num invalid, dim num should equal 3 or 1."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (padsDimNum != DHW_DIM_NUM) && (padsDimNum != 1),
+        OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "pads", std::to_string(padsDimNum).c_str(), "1 or 3"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF((dilationsDimNum != DHW_DIM_NUM) && (dilationsDimNum != 1),
-                OP_LOGE(context_->GetNodeName(), "Attr dilations dim num invalid, dim num should equal 3 or 1."),
+                OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "dilation",
+                                             std::to_string(dilationsDimNum).c_str(), "1 or 3"),
                 return ge::GRAPH_FAILED);
 
     // Check attr value bigger than 0
@@ -125,26 +167,30 @@ ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::CheckAttrShape()
     auto dilationsVector = attrs->GetListInt(DILATION_ATTR_INDEX)->GetData();
     for (uint32_t i = 0; i < (uint32_t)kSizeDimNum; i++) {
         OP_CHECK_IF((kSizeVector[i] <= 0),
-                    OP_LOGE(context_->GetNodeName(), "Attr value invalid, kSize[%u] is %ld, should bigger than 0.", i,
-                            kSizeVector[i]),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "ksize",
+                                                          std::to_string(kSizeVector[i]).c_str(),
+                                                          "every element must be greater than 0"),
                     return ge::GRAPH_FAILED);
     }
     for (uint32_t i = 0; i < (uint32_t)stridesDimNum; i++) {
         OP_CHECK_IF((stridesVector[i] <= 0),
-                    OP_LOGE(context_->GetNodeName(), "Attr value invalid, strides[%u] is %ld, should bigger than 0.", i,
-                            stridesVector[i]),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "strides",
+                                                          std::to_string(stridesVector[i]).c_str(),
+                                                          "every element must be greater than 0"),
                     return ge::GRAPH_FAILED);
     }
     for (uint32_t i = 0; i < (uint32_t)padsDimNum; i++) {
         OP_CHECK_IF((padsVector[i] < 0),
-                    OP_LOGE(context_->GetNodeName(), "Attr value invalid, pads[%u] is %ld, should bigger or equal 0.",
-                            i, padsVector[i]),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "pads",
+                                                          std::to_string(padsVector[i]).c_str(),
+                                                          "every element must be nonnegative"),
                     return ge::GRAPH_FAILED);
     }
     for (uint32_t i = 0; i < (uint32_t)dilationsDimNum; i++) {
         OP_CHECK_IF((dilationsVector[i] <= 0),
-                    OP_LOGE(context_->GetNodeName(), "Attr value invalid, dilations[%u] is %ld, should bigger than 0.",
-                            i, dilationsVector[i]),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "dilation",
+                                                          std::to_string(dilationsVector[i]).c_str(),
+                                                          "every element must be greater than 0"),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -170,7 +216,11 @@ ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::SetInputParams()
 ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::SetAttrParams()
 {
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context_).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     int32_t kSizeDimNum = attrs->GetListInt(KSIZE_ATTR_INDEX)->GetSize();
     int32_t stridesDimNum = attrs->GetListInt(STRIDES_ATTR_INDEX)->GetSize();
     int32_t padsDimNum = attrs->GetListInt(PADS_ATTR_INDEX)->GetSize();
@@ -223,13 +273,18 @@ ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::CheckInputValid()
 
     // check 1
     OP_CHECK_IF((pDTop > (kd / 2)) || (pHTop > (kh / 2)) || (pWTop > (kw / 2)),
-                OP_LOGE(context_->GetNodeName(), "Attr size invalid, padSize should be smaller than kernelSize div 2"),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    context_->GetNodeName(), "pads, ksize, dilation",
+                    (std::to_string(pDTop) + ", " + std::to_string(pHTop) + ", " + std::to_string(pWTop)).c_str(),
+                    "pads must not exceed half the kernel size"),
                 return ge::GRAPH_FAILED);
     // check 2
     OP_CHECK_IF((pDTop > ((kd - 1) * dilationD + 1) / 2) || (pHTop > ((kh - 1) * dilationH + 1) / 2) ||
                     (pWTop > ((kw - 1) * dilationW + 1) / 2),
-                OP_LOGE(context_->GetNodeName(),
-                        "Attr size invalid, padSize should be smaller than ((kernelSize - 1) * dilation + 1) / 2."),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    context_->GetNodeName(), "pads, ksize, dilation",
+                    (std::to_string(pDTop) + ", " + std::to_string(pHTop) + ", " + std::to_string(pWTop)).c_str(),
+                    "pads must not exceed half the effective kernel size"),
                 return ge::GRAPH_FAILED);
     // check 3
     // Check outerDim invaild
@@ -249,18 +304,23 @@ ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::CheckInputValid()
     doExpected = ((doExpected - 1) * sd >= maxPoolGradParams.diDim + pDTop) ? doExpected - 1 : doExpected;
     hoExpected = ((hoExpected - 1) * sh >= maxPoolGradParams.hiDim + pHTop) ? hoExpected - 1 : hoExpected;
     woExpected = ((woExpected - 1) * sw >= maxPoolGradParams.wiDim + pWTop) ? woExpected - 1 : woExpected;
-    OP_CHECK_IF(
-        (doExpected <= 0) || (static_cast<uint64_t>(doExpected) != maxPoolGradParams.doDim) || (hoExpected <= 0) ||
-            (static_cast<uint64_t>(hoExpected) != maxPoolGradParams.hoDim) || (woExpected <= 0) ||
-            (static_cast<uint64_t>(woExpected) != maxPoolGradParams.woDim),
-        OP_LOGE(context_->GetNodeName(), "OuterDim size invalid, doExpected: %ld, hoExpected: %ld, woExpected: %ld.",
-                doExpected, hoExpected, woExpected),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((doExpected <= 0) || (static_cast<uint64_t>(doExpected) != maxPoolGradParams.doDim) ||
+                    (hoExpected <= 0) || (static_cast<uint64_t>(hoExpected) != maxPoolGradParams.hoDim) ||
+                    (woExpected <= 0) || (static_cast<uint64_t>(woExpected) != maxPoolGradParams.woDim),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context_->GetNodeName(), "grad",
+                    Ops::Base::ToString(context_->GetInputShape(GRAD_INDEX)->GetStorageShape()).c_str(),
+                    (std::string("expected D/H/W: ") + std::to_string(doExpected) + ", " + std::to_string(hoExpected) +
+                     ", " + std::to_string(woExpected))
+                        .c_str()),
+                return ge::GRAPH_FAILED);
     // check 4
     // Check index range
     OP_CHECK_IF(maxPoolGradParams.diDim * maxPoolGradParams.hiDim * maxPoolGradParams.wiDim > MAX_INT32,
-                OP_LOGE(context_->GetNodeName(),
-                        "Shape too big, diDim * hiDim * wiDim should not be bigger than max range of int32."),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context_->GetNodeName(), "x",
+                    std::to_string(maxPoolGradParams.diDim * maxPoolGradParams.hiDim * maxPoolGradParams.wiDim).c_str(),
+                    "D * H * W must not exceed INT32_MAX"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -286,17 +346,20 @@ void MaxPool3DGradWithArgmaxTilingBase::SetOtherInputParams()
 ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::GetShapeAttrsInfo()
 {
     OP_LOGD(context_->GetNodeName(), "Enter MaxPool3DGradWithArgmaxTilingBase GetShapeAttrsInfo.");
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputDtype(), OP_LOGE(context_->GetNodeName(), "The input dtype is invalid."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputDtype(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The input dtype is invalid."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputShape(), OP_LOGE(context_->GetNodeName(), "The input relationship is invalid."),
+    OP_CHECK_IF(!CheckInputShape(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The input relationship is invalid."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckAttrShape(), OP_LOGE(context_->GetNodeName(), "The attr shape is invalid."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != SetInputParams(), OP_LOGE(context_->GetNodeName(), "Set input shape failed."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != SetAttrParams(), OP_LOGE(context_->GetNodeName(), "Set attr shape failed."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputValid(), OP_LOGE(context_->GetNodeName(), "The input shape is invalid."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckAttrShape(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The attr shape is invalid."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != SetInputParams(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Set input shape failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != SetAttrParams(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Set attr shape failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputValid(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The input shape is invalid."),
                 return ge::GRAPH_FAILED);
     SetOtherInputParams();
     return ge::GRAPH_SUCCESS;
@@ -311,7 +374,9 @@ ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::DoLibApiTiling() { return ge:
 ge::graphStatus MaxPool3DGradWithArgmaxTilingBase::GetPlatformInfo()
 {
     auto compileInfo = reinterpret_cast<const Tiling4MaxPool3DGradWithArgmaxCompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE(context_->GetNodeName(), "compile info is null"),
+    OP_CHECK_IF(compileInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{context_->GetNodeName(), "compile info is null"})),
                 return ge::GRAPH_FAILED);
     maxPoolGradParams.totalCoreNum = compileInfo->totalCoreNum;
     maxPoolGradParams.maxUbSize = compileInfo->maxUbSize;

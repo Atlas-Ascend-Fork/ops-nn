@@ -77,10 +77,18 @@ ge::graphStatus InferShapeForMaxPoolWithArgmaxV3(gert::InferShapeContext* contex
 {
     OP_LOGD(context->GetNodeName(), "runtime2.0 MaxPoolWithArgmaxV3 infershape running");
     auto src_td = context->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, src_td);
+    OP_CHECK_IF(
+        src_td == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto input_format = src_td->GetOriginFormat();
     auto indices_td = context->GetOutputDesc(INDEX_OUT_INDICES);
-    OP_CHECK_NULL_WITH_CONTEXT(context, indices_td);
+    OP_CHECK_IF(indices_td == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "indices_td is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto indices_dtype = indices_td->GetDataType();
     OP_LOGD(context->GetNodeName(), "indices_dtype = %d", indices_dtype);
 
@@ -96,10 +104,18 @@ ge::graphStatus InferShapeForMaxPoolWithArgmaxV3(gert::InferShapeContext* contex
     size_t input_w_dim = SHAPE_W_DIM;
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     auto ksize = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_KSIZE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, ksize);
+    OP_CHECK_IF(
+        ksize == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ksize",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (ksize->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "ksize", std::to_string(ksize->GetSize()).c_str(), "2");
         return GRAPH_FAILED;
@@ -107,7 +123,11 @@ ge::graphStatus InferShapeForMaxPoolWithArgmaxV3(gert::InferShapeContext* contex
     auto ksize_data = static_cast<const int64_t*>(ksize->GetData());
 
     auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_STRIDES);
-    OP_CHECK_NULL_WITH_CONTEXT(context, strides);
+    OP_CHECK_IF(
+        strides == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "strides",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (strides->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "strides", std::to_string(strides->GetSize()).c_str(),
                                      "2");
@@ -116,7 +136,11 @@ ge::graphStatus InferShapeForMaxPoolWithArgmaxV3(gert::InferShapeContext* contex
     auto strides_data = static_cast<const int64_t*>(strides->GetData());
 
     auto pads = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_PADS);
-    OP_CHECK_NULL_WITH_CONTEXT(context, pads);
+    OP_CHECK_IF(
+        pads == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "pads",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (pads->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "pads", std::to_string(pads->GetSize()).c_str(), "2");
         return GRAPH_FAILED;
@@ -124,7 +148,11 @@ ge::graphStatus InferShapeForMaxPoolWithArgmaxV3(gert::InferShapeContext* contex
     auto pads_data = static_cast<const int64_t*>(pads->GetData());
 
     auto dilation = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_DILATION);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dilation);
+    OP_CHECK_IF(
+        dilation == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "dilation",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (dilation->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "dilation", std::to_string(dilation->GetSize()).c_str(),
                                      "2");
@@ -133,10 +161,18 @@ ge::graphStatus InferShapeForMaxPoolWithArgmaxV3(gert::InferShapeContext* contex
     auto dilation_data = static_cast<const int64_t*>(dilation->GetData());
 
     auto ceil_mode = attrs->GetAttrPointer<bool>(INDEX_CEIL_MODE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, ceil_mode);
+    OP_CHECK_IF(
+        ceil_mode == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ceil_mode",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     const char* data_format = attrs->GetAttrPointer<char>(INDEX_DATA_FORMAT);
-    OP_CHECK_NULL_WITH_CONTEXT(context, data_format);
+    OP_CHECK_IF(
+        data_format == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "data_format",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     std::string data_format_str = data_format;
     if (data_format_str == "NHWC") {
@@ -145,12 +181,26 @@ ge::graphStatus InferShapeForMaxPoolWithArgmaxV3(gert::InferShapeContext* contex
     }
 
     const gert::Shape* in_shape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, in_shape);
+    OP_CHECK_IF(
+        in_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     gert::Shape* out_max_shape = context->GetOutputShape(INDEX_OUT_MAX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, out_max_shape);
+    OP_CHECK_IF(
+        out_max_shape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                            "out_max_shape is null; InferShape cannot continue"})),
+        return ge::GRAPH_FAILED);
     *out_max_shape = *in_shape;
     gert::Shape* out_indices_shape = context->GetOutputShape(INDEX_OUT_INDICES);
-    OP_CHECK_NULL_WITH_CONTEXT(context, out_indices_shape);
+    OP_CHECK_IF(
+        out_indices_shape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                            "out_indices_shape is null; InferShape cannot continue"})),
+        return ge::GRAPH_FAILED);
     *out_indices_shape = *in_shape;
 
     if (Ops::Base::IsUnknownRank(*in_shape) || Ops::Base::IsUnknownShape(*in_shape)) {
@@ -197,9 +247,17 @@ static ge::graphStatus InferDataTypeForMaxPoolWithArgmaxV3(gert::InferDataTypeCo
     context->SetOutputDataType(INDEX_OUT_MAX, x);
 
     auto attrsPtr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrsPtr);
+    OP_CHECK_IF(
+        attrsPtr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     const int64_t* dstDtype = attrsPtr->GetAttrPointer<int64_t>(INDEX_DTYPE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dstDtype);
+    OP_CHECK_IF(
+        dstDtype == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "dtype",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     ge::DataType indicesDtype = *dstDtype == INT32_DTYPE ? ge::DT_INT32 : ge::DT_INT64;
 
     context->SetOutputDataType(INDEX_OUT_INDICES, indicesDtype);

@@ -28,7 +28,13 @@ namespace optiling {
 bool MaxPool3DWithArgmaxV2HugeKernelTiling::IsCapable()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "platformInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     if (Ops::NN::OpTiling::IsRegbaseSocVersion(context_)) {
         return false;
@@ -87,7 +93,13 @@ ge::graphStatus MaxPool3DWithArgmaxV2HugeKernelTiling::GetWorkspaceSize()
                        (splitData.partW + inputData.kernelSize[W_DIM] - 1) / splitData.partW +
                    1);
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(
+        currentWorkspace == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "currentWorkspace is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     currentWorkspace[0] = sys_workspace + wsSize;
 
     return ge::GRAPH_SUCCESS;

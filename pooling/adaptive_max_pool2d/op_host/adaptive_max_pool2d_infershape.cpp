@@ -41,21 +41,43 @@ constexpr const char* kOpName = "AdaptiveMaxPool2d";
 namespace ops {
 static ge::graphStatus InferShape4AdaptiveMaxPool2d(gert::InferShapeContext* context)
 {
-    OP_LOGD(context->GetNodeName(), "runtime2.0 AdaptiveMaxPool2d infershape running");
     if (context == nullptr) {
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{kOpName, "inference context is null"}));
         return ge::GRAPH_FAILED;
     }
+    OP_LOGD(context->GetNodeName(), "runtime2.0 AdaptiveMaxPool2d infershape running");
     const gert::Shape* x_shape = context->GetInputShape(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     gert::Shape* y_shape = context->GetOutputShape(Y_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    OP_CHECK_IF(
+        y_shape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "y_shape is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     gert::Shape* argmax_shape = context->GetOutputShape(INDEX_OUT_ARGMAX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, argmax_shape);
+    OP_CHECK_IF(argmax_shape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "argmax_shape is null; shape/type inference cannot continue"})),
+                return ge::GRAPH_FAILED);
 
     auto attr_ptr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attr_ptr);
+    if (attr_ptr == nullptr) {
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{kOpName, "inference attribute container is null"}));
+        return ge::GRAPH_FAILED;
+    }
     const gert::ContinuousVector* output_size_ptr = attr_ptr->GetAttrPointer<gert::ContinuousVector>(INDEX_OUTPUT_SIZE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_size_ptr);
+    if (output_size_ptr == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(kOpName, "output_size", "required attribute output_size is missing");
+        return ge::GRAPH_FAILED;
+    }
 
     if (Ops::Base::IsUnknownRank(*x_shape)) {
         Ops::Base::SetUnknownRank(*y_shape);
@@ -97,10 +119,12 @@ static ge::graphStatus InferShape4AdaptiveMaxPool2d(gert::InferShapeContext* con
 
 static ge::graphStatus InferDtype4AdaptiveMaxPool2d(gert::InferDataTypeContext* context)
 {
-    OP_LOGD(context->GetNodeName(), "AdaptiveMaxPool2dInferDtype enter");
     if (context == nullptr) {
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{kOpName, "inference context is null"}));
         return ge::GRAPH_FAILED;
     }
+    OP_LOGD(context->GetNodeName(), "AdaptiveMaxPool2dInferDtype enter");
     const ge::DataType x_dtype = context->GetInputDataType(X_INDEX);
     context->SetOutputDataType(Y_INDEX, x_dtype);
 
@@ -117,9 +141,16 @@ static ge::graphStatus InferDtype4AdaptiveMaxPool2d(gert::InferDataTypeContext* 
 
     // A5 (Ascend950): use argmax_dtype attribute (3 -> INT32, otherwise INT64).
     auto attr_ptr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attr_ptr);
+    if (attr_ptr == nullptr) {
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{kOpName, "inference attribute container is null"}));
+        return ge::GRAPH_FAILED;
+    }
     const int64_t* argmax_dtype = attr_ptr->GetAttrPointer<int64_t>(INDEX_DTYPE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, argmax_dtype);
+    if (argmax_dtype == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(kOpName, "argmax_dtype", "required attribute argmax_dtype is missing");
+        return ge::GRAPH_FAILED;
+    }
     ge::DataType out1_dtype = (*argmax_dtype == INT32_DTYPE) ? ge::DT_INT32 : ge::DT_INT64;
     context->SetOutputDataType(INDEX_OUT_ARGMAX, out1_dtype);
     OP_LOGD(context->GetNodeName(), "AdaptiveMaxPool2dInferDtype end");

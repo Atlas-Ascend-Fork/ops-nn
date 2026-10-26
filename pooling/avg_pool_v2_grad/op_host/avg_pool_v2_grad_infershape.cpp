@@ -95,7 +95,11 @@ ge::graphStatus InferShape4AvgPoolV2Grad(gert::InferShapeContext* context)
     OP_LOGD(context->GetNodeName(), "runtime2.0 AvgPoolV2Grad infershape running");
 
     auto gradDesc = context->GetInputDesc(IDX_GRAD_INPUT);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradDesc);
+    OP_CHECK_IF(
+        gradDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "input_grad",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto gradOriFormat = gradDesc->GetOriginFormat();
 
     if (gradOriFormat != FORMAT_ND && gradOriFormat != FORMAT_NCHW && gradOriFormat != FORMAT_NHWC) {
@@ -105,14 +109,22 @@ ge::graphStatus InferShape4AvgPoolV2Grad(gert::InferShapeContext* context)
     }
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     const char* dataFormatPtr = attrs->GetAttrPointer<char>(ATTR_FORMAT_POS);
     OP_LOGE_IF(dataFormatPtr == nullptr, GRAPH_FAILED, context->GetNodeName(), "Get dataFormat failed.");
     std::string dataFormatStr(dataFormatPtr);
 
     auto padding_mode = attrs->GetAttrPointer<char>(ATTR_PADDING_MODE_POS);
-    OP_CHECK_NULL_WITH_CONTEXT(context, padding_mode);
+    OP_CHECK_IF(
+        padding_mode == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "padding_mode",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (strcmp(padding_mode, "SAME") != 0 && strcmp(padding_mode, "VALID") != 0 &&
         strcmp(padding_mode, "CALCULATED") != 0) {
         OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "padding_mode", padding_mode, "SAME, VALID and CALCULATED");
@@ -120,7 +132,11 @@ ge::graphStatus InferShape4AvgPoolV2Grad(gert::InferShapeContext* context)
     }
 
     auto ksize = attrs->GetAttrPointer<gert::ContinuousVector>(ATTR_KERNEL_POS);
-    OP_CHECK_NULL_WITH_CONTEXT(context, ksize);
+    OP_CHECK_IF(
+        ksize == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ksize",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (ksize->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "ksize", std::to_string(ksize->GetSize()).c_str(), "4");
         return GRAPH_FAILED;
@@ -136,7 +152,11 @@ ge::graphStatus InferShape4AvgPoolV2Grad(gert::InferShapeContext* context)
     }
 
     auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(ATTR_STRIDE_POS);
-    OP_CHECK_NULL_WITH_CONTEXT(context, strides);
+    OP_CHECK_IF(
+        strides == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "strides",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (strides->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "strides", std::to_string(strides->GetSize()).c_str(),
                                      "4");
@@ -153,7 +173,11 @@ ge::graphStatus InferShape4AvgPoolV2Grad(gert::InferShapeContext* context)
     }
 
     const gert::Tensor* inputShape0 = context->GetInputTensor(IDX_ORIGIN_INPUT);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputShape0);
+    OP_CHECK_IF(
+        inputShape0 == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "orig_input_shape",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     size_t inputDimNum = static_cast<size_t>(inputShape0->GetOriginShape().GetShapeSize());
     const int32_t* shapeValue = inputShape0->GetData<int32_t>();
     if (inputDimNum != CHW_DIMS && inputDimNum != NCHW_DIMS) {
@@ -162,10 +186,18 @@ ge::graphStatus InferShape4AvgPoolV2Grad(gert::InferShapeContext* context)
         return GRAPH_FAILED;
     }
     const gert::Shape* inputShape1 = context->GetInputShape(IDX_ORIGIN_INPUT);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputShape1);
+    OP_CHECK_IF(
+        inputShape1 == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "orig_input_shape",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* OutShape = context->GetOutputShape(IDX_OUTPUT);
-    OP_CHECK_NULL_WITH_CONTEXT(context, OutShape);
+    OP_CHECK_IF(OutShape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "OutShape is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
 
     if (Ops::Base::IsUnknownShape(*inputShape1) || !IsConstTensor(inputShape0)) {
         SetAllUnknownDim(inputDimNum, OutShape);

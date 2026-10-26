@@ -42,7 +42,7 @@ const aclTensor* AdaptiveMaxPool3DGrad(const aclTensor* gradOutput, const aclTen
 {
     auto gradInput = executor->AllocTensor(self->GetViewShape(), self->GetDataType(), op::Format::FORMAT_NCDHW);
     if (gradInput == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "gradInput is nullptr.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "gradInput is nullptr.");
         return nullptr;
     }
     return AdaptiveMaxPool3DGradAiCore(gradOutput, self, indices, gradInput, executor);

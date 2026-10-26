@@ -29,17 +29,33 @@ static ge::graphStatus InferShape4AdaptiveAvgPool2d(gert::InferShapeContext* con
     const char* opName_ = "AdaptiveAvgPool2d";
     OP_LOGD(context->GetNodeName(), "runtime2.0 AdaptiveAvgPool2d infershape running");
     const gert::Shape* in_shape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, in_shape);
+    OP_CHECK_IF(
+        in_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     gert::Shape* y_shape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    OP_CHECK_IF(y_shape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "y_shape is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
     if (Ops::Base::IsUnknownRank(*in_shape)) {
         Ops::Base::SetUnknownRank(*y_shape);
         return ge::GRAPH_SUCCESS;
     }
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     const gert::ContinuousVector* output_size_ptr = attrs->GetAttrPointer<gert::ContinuousVector>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_size_ptr);
+    OP_CHECK_IF(
+        output_size_ptr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "output_size",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     int64_t output_size_num = output_size_ptr->GetSize();
     if (output_size_num != LENS_TWO) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of output_size", std::to_string(output_size_num).c_str(), "2");

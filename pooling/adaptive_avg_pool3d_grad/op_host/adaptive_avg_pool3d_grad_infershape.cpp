@@ -36,23 +36,43 @@ static ge::graphStatus InferShape4AdaptiveAvgPool3dGrad(gert::InferShapeContext*
 {
     // input 1: y_grad shape
     const gert::Shape* gradShape = context->GetInputShape(Y_GRAD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
+    OP_CHECK_IF(
+        gradShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "y_grad",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     // input 2: x shape
     const gert::Shape* xShape = context->GetInputShape(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     // output shape
     gert::Shape* xGradShape = context->GetOutputShape(X_GRAD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xGradShape);
+    OP_CHECK_IF(xGradShape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "xGradShape is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
 
     // attributes ptr
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     // 获取数据格式属性
     const char* dataFormat = attrs->GetAttrPointer<char>(INDEX_DATAFORMAT);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dataFormat);
+    OP_CHECK_IF(
+        dataFormat == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "data_format",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     std::string dataFormatStr = dataFormat;
     size_t xDimNum = xShape->GetDimNum();
 
@@ -68,9 +88,12 @@ static ge::graphStatus InferShape4AdaptiveAvgPool3dGrad(gert::InferShapeContext*
 
     fe::PlatformInfo platform_info;
     fe::OptionalInfo optional_info;
-    OP_CHECK_IF((fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) !=
-                 ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "Cannot get platform info!"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) !=
+         ge::GRAPH_SUCCESS),
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(), "Cannot get platform info!"})),
+        return ge::GRAPH_FAILED);
 
     // 输出shape赋值+0维度校验
     for (size_t i = 0; i < xDimNum; ++i) {

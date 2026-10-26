@@ -93,7 +93,10 @@ ge::graphStatus AdaptiveMaxPool3dSmallPoolTiling::DoOpTiling()
     auto kernelH = calInfo_.kernelHMax;
     auto kernelW = calInfo_.kernelWMax;
     OP_CHECK_IF((kernelW <= 0 || kernelH <= 0 || kernelD <= 0),
-                OP_LOGE(context_->GetNodeName(), "Kernel size <= 0, not support"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "x, output_size",
+                    "derived pooling kernel size must be positive; check input shape and output_size"),
+                return ge::GRAPH_FAILED);
 
     calInfo_.ncFactor = BLOCK_LEN / sizeof(float);
 
@@ -116,7 +119,10 @@ ge::graphStatus AdaptiveMaxPool3dSmallPoolTiling::DoOpTiling()
     OP_LOGD(context_->GetNodeName(), "Tiling result: ub factor %lu, %lu, %lu, %lu", calInfo_.ncFactor,
             calInfo_.doFactor, calInfo_.hoFactor, calInfo_.woFactor);
     OP_CHECK_IF((calInfo_.doFactor <= 0 || calInfo_.hoFactor <= 0 || calInfo_.woFactor <= 0),
-                OP_LOGE(context_->GetNodeName(), "Kernel multiply <= 0, not support"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "x, output_size",
+                    "derived pooling kernel size must be positive; check input shape and output_size"),
+                return ge::GRAPH_FAILED);
 
     calInfo_.doOuter = (input_.Do + calInfo_.doFactor - 1) / calInfo_.doFactor;
     calInfo_.doTail = input_.Do - (calInfo_.doOuter - 1) * calInfo_.doFactor;
@@ -157,10 +163,16 @@ ge::graphStatus AdaptiveMaxPool3dSmallPoolTiling::PostTiling()
 {
     OP_LOGD(context_->GetNodeName(), "AdaptiveMaxPool3dSmallPoolTiling PostTiling start.");
     context_->SetBlockDim(tilingdata_.get_useCoreNum());
-    OP_CHECK_IF(tilingdata_.GetDataSize() > context_->GetRawTilingData()->GetCapacity(),
-                OP_LOGE(context_->GetNodeName(), "actual tiling data size %zu > context tiling data size %zu",
-                        tilingdata_.GetDataSize(), context_->GetRawTilingData()->GetCapacity()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        tilingdata_.GetDataSize() > context_->GetRawTilingData()->GetCapacity(),
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "actual tiling data size %zu > context tiling data size %zu",
+                               tilingdata_.GetDataSize(), context_->GetRawTilingData()->GetCapacity());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{
+                context_->GetNodeName(),
+                "actual tiling data size (see diagnostic) > context tiling data size (see diagnostic)"})),
+        return ge::GRAPH_FAILED);
     tilingdata_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingdata_.GetDataSize());
 

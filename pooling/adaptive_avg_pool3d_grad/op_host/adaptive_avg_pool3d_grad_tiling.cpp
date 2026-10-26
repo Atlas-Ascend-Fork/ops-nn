@@ -13,6 +13,7 @@
  * \brief
  */
 
+#include "log/log.h"
 #include "adaptive_avg_pool3d_grad_tiling.h"
 #include <iostream>
 #include "op_host/tiling_util.h"
@@ -106,7 +107,11 @@ ge::graphStatus AdaptiveAvgPool3dGradTiling::Init()
     auto nodeName = context->GetNodeName();
 
     auto compileInfo = static_cast<const AdaptiveAvgPool3dGradCompileInfo*>(context->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "compileInfo is null; Tiling cannot continue"})),
+                return ge::GRAPH_FAILED);
     uint32_t totalUBSize = static_cast<uint32_t>(compileInfo->ubSizePlatForm);
     uint32_t ubSize = totalUBSize - static_cast<uint32_t>(RESERVED_UB) - static_cast<uint32_t>(INDEX_USE_UB);
     sysWorkspaceSize = compileInfo->sysWorkspaceSize;
@@ -117,17 +122,18 @@ ge::graphStatus AdaptiveAvgPool3dGradTiling::Init()
     }
     auto const yGradShape = context->GetInputShape(0)->GetStorageShape();
     OP_CHECK_IF(yGradShape.GetDimNum() != Y_GRAD_DIMS,
-                OP_LOGE(nodeName, "Check yGrad shape failed, the dims of yGrad not equal to 4."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "y_grad", std::to_string(yGradShape.GetDimNum()).c_str(), "4"),
                 return ge::GRAPH_FAILED);
 
     auto const xShapeVal = context->GetInputShape(1)->GetStorageShape();
     OP_CHECK_IF((xShapeVal.GetDimNum() != X_DIMS_4 && xShapeVal.GetDimNum() != X_DIMS_5),
-                OP_LOGE(nodeName, "Check yGrad shape failed, the dims of yGrad not equal to 4 or 5."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "x", std::to_string(xShapeVal.GetDimNum()).c_str(), "4 or 5"),
                 return ge::GRAPH_FAILED);
 
     auto const yGradDtype = context->GetInputDesc(0)->GetDataType();
     OP_CHECK_IF(GetDataTypeKey(yGradDtype) == false,
-                OP_LOGE(nodeName, "The dtype of input must be in [float32, float16, bfloat16]."),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(nodeName, "y_grad", Ops::Base::ToString(yGradDtype).c_str(),
+                                                      "supported dtypes are float32, float16 and bfloat16"),
                 return ge::GRAPH_FAILED);
 
     dOut = yGradShape.GetDim(DIM0);
@@ -144,10 +150,12 @@ ge::graphStatus AdaptiveAvgPool3dGradTiling::Init()
         wIn = xShapeVal.GetDim(DIM4);
     }
     OP_CHECK_IF(dOut <= 0 || hOut <= 0 || wOut <= 0 || ncNum <= 0,
-                OP_LOGE(nodeName, "Check yGradShape failed, the value of yGradShape should be greater than 0."),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(nodeName, "y_grad", Ops::Base::ToString(yGradShape).c_str(),
+                                                      "all dimensions must be greater than 0"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(dIn <= 0 || hIn <= 0 || wIn <= 0,
-                OP_LOGE(nodeName, "Check xShape failed, the value of xShape should be greater than 0."),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(nodeName, "x", Ops::Base::ToString(xShapeVal).c_str(),
+                                                      "D, H and W must be greater than 0"),
                 return ge::GRAPH_FAILED);
     ncAlign = (ncNum + dataAlign - 1) / dataAlign * dataAlign;
     CalTilingKey(ubSize);
@@ -180,7 +188,11 @@ void AdaptiveAvgPool3dGradTiling::CalTilingKey(uint32_t ubSize)
         ncSliceNum = 1;
     } else {
         tilingKey = tilingKey * DTYPE_KEY_WEIGHT + NC_LARGE_KEY;
-        OP_CHECK_IF(ubSize == 0, OP_LOGE(context, "ubSize is 0."), return);
+        OP_CHECK_IF(ubSize == 0,
+                    REPORT_PREDEFINED_ERR_MSG(
+                        "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                        (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(), "ubSize is 0."})),
+                    return);
         ncSliceNum = (perCalcSize - 1 + static_cast<int64_t>(ubSize)) / static_cast<int64_t>(ubSize);
         ncAlignSliceLength = ncAlign / ncSliceNum / ALIGN_NUM * ALIGN_NUM;
         ncSliceNum = (ncNum - 1 + ncAlignSliceLength) / ncAlignSliceLength;
@@ -217,7 +229,11 @@ ge::graphStatus AdaptiveAvgPool3dGradTiling::RunKernelTiling()
     TilingData.set_isAtomicAdd(isAtomicAdd);
     TilingData.set_deterministicFlag(deterministicFlag);
     size_t* workspaces = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "workspaces is null; Tiling cannot continue"})),
+                return ge::GRAPH_FAILED);
     workspaces[0] = static_cast<size_t>(useWorkspaceSize) + static_cast<size_t>(sysWorkspaceSize) +
                     static_cast<size_t>(sysWorkspaceSize);
     TilingData.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
@@ -277,21 +293,34 @@ ge::graphStatus TilingPrepare4AdaptiveAvgPool3dGrad(gert::TilingParseContext* co
     OP_LOGD(nodeName, "TilingPrepare4AdaptiveAvgPool3dGrad start.");
 
     auto compileInfo = context->GetCompiledInfo<AdaptiveAvgPool3dGradCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "compileInfo is null; Tiling cannot continue"})),
+                return ge::GRAPH_FAILED);
 
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "platformInfo is null; Tiling cannot continue"})),
+                return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0), OP_LOGE(nodeName, "Failed to get core num."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((compileInfo->coreNum <= 0),
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{nodeName, "Failed to get core num."})),
+                return ge::GRAPH_FAILED);
 
     compileInfo->sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
     uint64_t ubSizePlatForm = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = ubSizePlatForm;
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(nodeName, "Failed to get ub size."),
+    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0),
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{nodeName, "Failed to get ub size."})),
                 return ge::GRAPH_FAILED);
 
     OP_LOGD(nodeName, "TilingPrepare4AdaptiveAvgPool3dGrad end.");
@@ -303,7 +332,7 @@ static ge::graphStatus TilingFunc4AdaptiveAvgPool3dGrad(gert::TilingContext* con
     if (!Ops::NN::OpTiling::IsRegbaseSocVersion(context)) {
         AdaptiveAvgPool3dGradTiling tilingObject(context);
         if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-            OP_LOGE(context, "Init failed!");
+            OP_LOGE_WITHOUT_REPORT(context, "Init failed!");
             return ge::GRAPH_FAILED;
         }
         return tilingObject.RunKernelTiling();

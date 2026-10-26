@@ -12,6 +12,7 @@
  * \file max_pool3d_grad_with_argmax_cutk_tiling.cpp
  * \brief
  */
+#include "log/log.h"
 #include <iostream>
 #include "max_pool3d_grad_with_argmax_tiling.h"
 
@@ -281,7 +282,11 @@ void MaxPool3DGradWithArgmaxCutKTiling::SetOtherTilingParams()
 ge::graphStatus MaxPool3DGradWithArgmaxCutKTiling::DoOpTiling()
 {
     bool res = SetCutKTilingParams();
-    OP_CHECK_IF(!res, OP_LOGE(context_->GetNodeName(), "CutK cal tiling params failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!res,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(), "CutK cal tiling params failed."})),
+                return ge::GRAPH_FAILED);
     maxPoolGradParams.tilingType = TILING_TYPE_CUTK;
     SetOtherTilingParams();
     SetBaseTilingData();

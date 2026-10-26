@@ -27,10 +27,22 @@ ge::graphStatus Tiling4MaxPoolWithArgmax(gert::TilingContext* context)
 ge::graphStatus TilingPrepare4MaxPoolWithArgmax(gert::TilingParseContext* context)
 {
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_LOGE_IF(platformInfoPtr == nullptr, ge::GRAPH_FAILED, context->GetNodeName(), "platformInfoPtr is null");
+    OP_CHECK_IF(
+        platformInfoPtr == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "platformInfoPtr is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     auto compileInfoPtr = context->GetCompiledInfo<MaxPoolWithArgmaxCompileInfo>();
-    OP_LOGE_IF(compileInfoPtr == nullptr, ge::GRAPH_FAILED, context->GetNodeName(), "compileInfoPtr is null");
+    OP_CHECK_IF(
+        compileInfoPtr == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "compileInfoPtr is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     compileInfoPtr->coreNum = ascendcPlatform.GetCoreNumAiv();

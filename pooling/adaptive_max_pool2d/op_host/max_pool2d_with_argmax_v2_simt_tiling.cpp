@@ -52,9 +52,19 @@ bool AdaMaxPool2dTilingSIMT::IsCapable() { return true; }
 ge::graphStatus AdaMaxPool2dTilingSIMT::GetPlatformInfo()
 {
     auto compileInfo = reinterpret_cast<const AdaptiveMaxPool2dCompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "compileInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     coreNum_ = compileInfo->coreNum;
-    OP_CHECK_IF(coreNum_ <= 0, OP_LOGE(context_, "GetPlatformInfo get corenum <= 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(coreNum_ <= 0,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(), "GetPlatformInfo get corenum <= 0"})),
+                return ge::GRAPH_FAILED);
     sysWorkspaceSize_ = compileInfo->sysWorkspaceSize;
     return ge::GRAPH_SUCCESS;
 }
@@ -62,21 +72,38 @@ ge::graphStatus AdaMaxPool2dTilingSIMT::GetPlatformInfo()
 ge::graphStatus AdaMaxPool2dTilingSIMT::CheckPlatformAndGetShapes()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "platformInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto inputX = context_->GetInputShape(FIRPOS);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, inputX);
+    OP_CHECK_IF(
+        inputX == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     auto inputShape = EnsureNotScalar(inputX->GetStorageShape());
     auto outX = context_->GetOutputShape(FIRPOS);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, outX);
+    OP_CHECK_IF(outX == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "outX is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto outShape = EnsureNotScalar(outX->GetStorageShape());
     auto indicesX = context_->GetOutputShape(SECPOS);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, indicesX);
-    if (inputShape.GetDimNum() != NCHW_DIMS) {
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                        "AdaptiveMaxPool2d: input shape dim = %zu, should be equal 4",
-                                        inputShape.GetDimNum());
-        return ge::GRAPH_FAILED;
-    }
+    OP_CHECK_IF(indicesX == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "indicesX is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        inputShape.GetDimNum() != NCHW_DIMS,
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), "x", std::to_string(inputShape.GetDimNum()).c_str(), "4"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         inputShape.GetDim(N_IDX) < 1 || inputShape.GetDim(C_IDX) < 1 || inputShape.GetDim(H_IDX) < 1 ||
             inputShape.GetDim(W_IDX) < 1,
@@ -97,17 +124,24 @@ ge::graphStatus AdaMaxPool2dTilingSIMT::CheckPlatformAndGetShapes()
 ge::graphStatus AdaMaxPool2dTilingSIMT::CheckDataTypeAndAttrs()
 {
     auto inputDesc = context_->GetInputDesc(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+    OP_CHECK_IF(inputDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "required input x descriptor is missing"),
+                return ge::GRAPH_FAILED);
     dtype = inputDesc->GetDataType();
-    if (dtype != ge::DataType::DT_BF16 && dtype != ge::DataType::DT_FLOAT16 && dtype != ge::DataType::DT_FLOAT) {
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                        "AdaptiveMaxPool2d: invalid dtype %s, should be BFloat16, Float16 or Float32",
-                                        Ops::Base::ToString(dtype).c_str());
-        return ge::GRAPH_FAILED;
-    }
+    OP_CHECK_IF(
+        (dtype != ge::DT_FLOAT && dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16),
+        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "x", ge::TypeUtils::DataTypeToSerialString(dtype).c_str(),
+                                  "float, float16, bfloat16"),
+        return ge::GRAPH_FAILED);
 
     auto indicesX = context_->GetOutputShape(SECPOS);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, indicesX);
+    OP_CHECK_IF(indicesX == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "indicesX is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto indicesShape = EnsureNotScalar(indicesX->GetStorageShape());
     if (indicesShape.GetDimNum() != NCHW_DIMS) {
         VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
@@ -125,9 +159,17 @@ ge::graphStatus AdaMaxPool2dTilingSIMT::CheckDataTypeAndAttrs()
     }
 
     auto attrPtr = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrPtr);
+    OP_CHECK_IF(attrPtr == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "attrPtr is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto outputSizePtr = attrPtr->GetAttrPointer<gert::ContinuousVector>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputSizePtr);
+    OP_CHECK_IF(outputSizePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "output_size",
+                                                         "required parameter output_size is missing"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(outputSizePtr->GetSize() != DOUB,
                 OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "output_size",
                                              std::to_string(outputSizePtr->GetSize()).c_str(), "2"),
@@ -191,7 +233,13 @@ uint64_t AdaMaxPool2dTilingSIMT::GetTilingKey() const { return 0; }
 ge::graphStatus AdaMaxPool2dTilingSIMT::GetWorkspaceSize()
 {
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(
+        currentWorkspace == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "currentWorkspace is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     currentWorkspace[0] = sysWorkspaceSize_;
     return ge::GRAPH_SUCCESS;
 }

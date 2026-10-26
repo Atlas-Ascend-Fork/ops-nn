@@ -68,9 +68,17 @@ static ge::graphStatus InferShapeAvgPool1D(gert::InferShapeContext* context)
     OP_LOGD(context->GetNodeName(), "Begin to do InferShapeAvgPool1D");
 
     const gert::Shape* xShape = context->GetInputShape(IDX_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     gert::Shape* yShape = context->GetOutputShape(IDX_Y);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    OP_CHECK_IF(yShape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "yShape is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
 
     // Unknown rank: 输出也为 unknown rank
     if (Ops::Base::IsUnknownRank(*xShape)) {
@@ -92,22 +100,42 @@ static ge::graphStatus InferShapeAvgPool1D(gert::InferShapeContext* context)
 
     // 获取属性
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     const auto* ksizePtr = attrs->GetAttrPointer<int64_t>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, ksizePtr);
+    OP_CHECK_IF(
+        ksizePtr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ksize",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     int64_t ksize = *ksizePtr;
     const auto* stridesPtr = attrs->GetAttrPointer<int64_t>(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, stridesPtr);
+    OP_CHECK_IF(
+        stridesPtr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "strides",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     int64_t strides = *stridesPtr;
     const auto* padsVec = attrs->GetAttrPointer<gert::ContinuousVector>(2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, padsVec);
+    OP_CHECK_IF(
+        padsVec == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "pads",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     // SE §2.4: pads 长度必须为 2
     OP_CHECK_IF(
         padsVec->GetSize() != PAD_LIST_SIZE,
         OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "pads", std::to_string(padsVec->GetSize()).c_str(), "2"),
         return ge::GRAPH_FAILED);
     const int64_t* pads = static_cast<const int64_t*>(padsVec->GetData());
-    OP_CHECK_NULL_WITH_CONTEXT(context, pads);
+    OP_CHECK_IF(
+        pads == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "pads",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     int64_t padLeft = pads[0];
     int64_t padRight = pads[1];
 

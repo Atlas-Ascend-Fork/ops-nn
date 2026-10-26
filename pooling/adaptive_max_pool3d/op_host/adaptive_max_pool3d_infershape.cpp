@@ -1,12 +1,11 @@
 /**
- * This program is free software, you can redistribute it and/or modify.
  * Copyright (c) 2025 Huawei Technologies Co., Ltd.
- * This file is a part of the CANN Open Software.
- * Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING
- * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
- * the software repository for the full text of the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
  */
 
 /*!
@@ -42,18 +41,42 @@ namespace ops {
 static ge::graphStatus InferShape4AdaptiveMaxPool3d(gert::InferShapeContext* context)
 {
     const gert::Shape* x_shape = context->GetInputShape(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     gert::Shape* y_shape = context->GetOutputShape(Y_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    OP_CHECK_IF(
+        y_shape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "y_shape is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     gert::Shape* indices_shape = context->GetOutputShape(INDEX_OUT_INDICES);
-    OP_CHECK_NULL_WITH_CONTEXT(context, indices_shape);
+    OP_CHECK_IF(indices_shape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context->GetNodeName(),
+                                              "indices_shape is null; shape/type inference cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto attr_ptr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attr_ptr);
+    OP_CHECK_IF(
+        attr_ptr == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "attr_ptr is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto output_size_ptr = attr_ptr->GetAttrPointer<gert::ContinuousVector>(INDEX_OUTPUT_SIZE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_size_ptr);
+    OP_CHECK_IF(output_size_ptr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "output_size",
+                                                         "required parameter output_size is missing"),
+                return ge::GRAPH_FAILED);
     auto output_size = static_cast<const int64_t*>(output_size_ptr->GetData());
     const int* index_dtype_ptr = attr_ptr->GetAttrPointer<int>(INDEX_DTYPE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, index_dtype_ptr);
+    OP_CHECK_IF(index_dtype_ptr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "indices_dtype",
+                                                         "required parameter indices_dtype is missing"),
+                return ge::GRAPH_FAILED);
     if (Ops::Base::IsUnknownRank(*x_shape)) {
         Ops::Base::SetUnknownRank(*y_shape);
         Ops::Base::SetUnknownRank(*indices_shape);
@@ -114,15 +137,24 @@ static ge::graphStatus InferShape4AdaptiveMaxPool3d(gert::InferShapeContext* con
 static graphStatus InferDtype4AdaptiveMaxPool3d(gert::InferDataTypeContext* context)
 {
     if (context == nullptr) {
-        return GRAPH_FAILED;
+        OP_LOGE_WITHOUT_REPORT("AdaptiveMaxPool3d", "context is null");
+        return ge::GRAPH_FAILED;
     }
     const ge::DataType x = context->GetInputDataType(0);
     context->SetOutputDataType(INDEX_OUT_MAX, x);
 
     auto attrsPtr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrsPtr);
+    OP_CHECK_IF(
+        attrsPtr == nullptr,
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(),
+                                                            "attrsPtr is null; shape/type inference cannot continue"})),
+        return ge::GRAPH_FAILED);
     const int64_t* dstDtype = attrsPtr->GetAttrPointer<int64_t>(INDEX_DTYPE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dstDtype);
+    OP_CHECK_IF(dstDtype == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "indices_dtype",
+                                                         "required parameter indices_dtype is missing"),
+                return ge::GRAPH_FAILED);
     ge::DataType indicesDtype = *dstDtype == INT32_DTYPE ? ge::DT_INT32 : ge::DT_INT64;
 
     context->SetOutputDataType(INDEX_OUT_INDICES, indicesDtype);

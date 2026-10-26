@@ -55,7 +55,11 @@ ge::graphStatus InferShapeForMaxPoolGradWithArgmax(gert::InferShapeContext* cont
 
     OP_LOGD(context->GetNodeName(), "runtime2.0 MaxPoolGradWithArgmax infershape running");
     auto xDesc = context->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
+    OP_CHECK_IF(
+        xDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     auto xOriFormat = xDesc->GetOriginFormat();
     if (xOriFormat != FORMAT_ND && xOriFormat != FORMAT_NCHW && xOriFormat != FORMAT_NHWC) {
         OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(opName_, "x", ge::TypeUtils::FormatToSerialString(xOriFormat).c_str(),
@@ -63,17 +67,29 @@ ge::graphStatus InferShapeForMaxPoolGradWithArgmax(gert::InferShapeContext* cont
         return GRAPH_FAILED;
     }
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     auto ksize = attrs->GetAttrPointer<gert::ContinuousVector>(ATTR_INDEX_KSIZE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, ksize);
+    OP_CHECK_IF(
+        ksize == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ksize",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (ksize->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "ksize", std::to_string(ksize->GetSize()).c_str(), "4");
         return GRAPH_FAILED;
     }
 
     auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(ATTR_INDEX_STRIDES);
-    OP_CHECK_NULL_WITH_CONTEXT(context, strides);
+    OP_CHECK_IF(
+        strides == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "strides",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     if (strides->GetSize() != ATTR_LIST_SHAPE_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "strides", std::to_string(strides->GetSize()).c_str(), "4");
         return GRAPH_FAILED;
@@ -88,7 +104,11 @@ ge::graphStatus InferShapeForMaxPoolGradWithArgmax(gert::InferShapeContext* cont
         return GRAPH_FAILED;
     }
     auto padsPtr = attrs->GetAttrPointer<char>(ATTR_INDEX_PADS);
-    OP_CHECK_NULL_WITH_CONTEXT(context, padsPtr);
+    OP_CHECK_IF(
+        padsPtr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "padding",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     std::string padding(padsPtr);
     if (padding != "SAME" && padding != "VALID") {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "pads", padding.c_str(), "Pads attribute must be SAME or VALID");
@@ -96,7 +116,11 @@ ge::graphStatus InferShapeForMaxPoolGradWithArgmax(gert::InferShapeContext* cont
     }
 
     auto include_batch_in_index = attrs->GetAttrPointer<bool>(ATTR_INDEX_INCLUDE_BATCH_IN_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, include_batch_in_index);
+    OP_CHECK_IF(
+        include_batch_in_index == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "include_batch_in_index",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
 
     const char* dataFormatPtr = attrs->GetAttrPointer<char>(ATTR_INDEX_DATA_FORMAT);
     OP_LOGE_IF(dataFormatPtr == nullptr, GRAPH_FAILED, context->GetNodeName(), "Get dataFormat failed.");
@@ -121,13 +145,29 @@ ge::graphStatus InferShapeForMaxPoolGradWithArgmax(gert::InferShapeContext* cont
         }
     }
     const gert::Shape* xShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     const gert::Shape* gradShape = context->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
+    OP_CHECK_IF(
+        gradShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "grad",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     const gert::Shape* argmaxShape = context->GetInputShape(2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, argmaxShape);
+    OP_CHECK_IF(
+        argmaxShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "argmax",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
     gert::Shape* yShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    OP_CHECK_IF(yShape == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "yShape is null; InferShape cannot continue"})),
+                return ge::GRAPH_FAILED);
     size_t xDimNum = xShape->GetDimNum();
     if (Ops::Base::IsUnknownShape(*xShape) || Ops::Base::IsUnknownShape(*gradShape) ||
         Ops::Base::IsUnknownShape(*argmaxShape)) {

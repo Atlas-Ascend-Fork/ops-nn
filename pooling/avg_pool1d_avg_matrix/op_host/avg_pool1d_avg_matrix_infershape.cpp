@@ -30,40 +30,46 @@ ge::graphStatus CalculateOutputWidth(Context* context, int64_t inputWidth, int64
 {
     auto* attrs = context->GetAttrs();
     if (attrs == nullptr) {
-        OP_LOGE(context->GetNodeName(), "GetOpAttr ksize failed");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(), "inference attribute container is null"}));
         return ge::GRAPH_FAILED;
     }
     const auto* ksize = attrs->template GetAttrPointer<int64_t>(kAttrKsize);
     if (ksize == nullptr) {
-        OP_LOGE(context->GetNodeName(), "GetOpAttr ksize failed");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "ksize",
+                                                 "required parameter ksize is missing");
         return ge::GRAPH_FAILED;
     }
     const auto* strides = attrs->template GetAttrPointer<int64_t>(kAttrStrides);
     if (strides == nullptr) {
-        OP_LOGE(context->GetNodeName(), "GetOpAttr strides failed");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "strides",
+                                                 "required parameter strides is missing");
         return ge::GRAPH_FAILED;
     }
     if (*strides == 0) {
-        OP_LOGE(context->GetNodeName(), "Value of strides should not be 0");
+        OP_LOGE_FOR_INVALID_STRIDE(context->GetNodeName(), "strides", std::to_string(*strides).c_str(), "not 0");
         return ge::GRAPH_FAILED;
     }
     const auto* pads = attrs->template GetAttrPointer<gert::ContinuousVector>(kAttrPads);
     if (pads == nullptr) {
-        OP_LOGE(context->GetNodeName(), "GetOpAttr pads_list failed!");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "pads", "required parameter pads is missing");
         return ge::GRAPH_FAILED;
     }
     const auto* ceilMode = attrs->template GetAttrPointer<bool>(kAttrCeilMode);
     if (ceilMode == nullptr) {
-        OP_LOGE(context->GetNodeName(), "GetOpAttr ceil_mode failed");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "ceil_mode",
+                                                 "required parameter ceil_mode is missing");
         return ge::GRAPH_FAILED;
     }
     if (pads->GetSize() < kPadsMinSize) {
-        OP_LOGE(context->GetNodeName(), "Size of pads_list must greater than 1!");
+        OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "pads", std::to_string(pads->GetSize()).c_str(),
+                                     "greater than 1");
         return ge::GRAPH_FAILED;
     }
     const auto* padsData = static_cast<const int64_t*>(pads->GetData());
     if (padsData == nullptr) {
-        OP_LOGE(context->GetNodeName(), "GetOpAttr pads_list failed!");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "pads", "required parameter pads is missing");
         return ge::GRAPH_FAILED;
     }
 
@@ -83,6 +89,7 @@ ge::graphStatus CalculateOutputWidth(Context* context, int64_t inputWidth, int64
 ge::graphStatus GetWidthIndex(const gert::CompileTimeTensorDesc* inputDesc, const char* opName, size_t& widthIndex)
 {
     if (inputDesc == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "x", "required input descriptor is missing");
         return ge::GRAPH_FAILED;
     }
     const auto format = static_cast<ge::Format>(ge::GetPrimaryFormat(inputDesc->GetOriginFormat()));
@@ -94,7 +101,7 @@ ge::graphStatus GetWidthIndex(const gert::CompileTimeTensorDesc* inputDesc, cons
         widthIndex = kNhwcWidth;
         return ge::GRAPH_SUCCESS;
     }
-    OP_LOGE(opName, "Input format only support NCHW or NHWC");
+    OP_LOGE_FOR_INVALID_FORMAT(opName, "x", Ops::Base::ToString(format).c_str(), "NCHW or NHWC");
     return ge::GRAPH_FAILED;
 }
 
@@ -123,13 +130,18 @@ int64_t GetDimWithLegacyDefault(const gert::Shape& shape, size_t index)
 static ge::graphStatus InferShapeForAvgPool1DAvgMatrix(gert::InferShapeContext* context)
 {
     if (context == nullptr) {
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{"AvgPool1DAvgMatrix", "inference context is null"}));
         return ge::GRAPH_FAILED;
     }
     const auto* inputShape = context->GetInputShape(kInputX);
     auto* outputShape = context->GetOutputShape(kOutputY);
     const auto* inputDesc = context->GetInputDesc(kInputX);
     if (inputShape == nullptr || outputShape == nullptr || inputDesc == nullptr) {
-        OP_LOGE(context->GetNodeName(), "Get input shape, output shape or input desc failed");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "input/output shape or descriptor is missing; cannot continue"}));
         return ge::GRAPH_FAILED;
     }
 
@@ -149,6 +161,8 @@ static ge::graphStatus InferShapeForAvgPool1DAvgMatrix(gert::InferShapeContext* 
 static ge::graphStatus InferShapeRangeForAvgPool1DAvgMatrix(gert::InferShapeRangeContext* context)
 {
     if (context == nullptr) {
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{"AvgPool1DAvgMatrix", "inference context is null"}));
         return ge::GRAPH_FAILED;
     }
     const auto* inputRange = context->GetInputShapeRange(kInputX);
@@ -156,7 +170,9 @@ static ge::graphStatus InferShapeRangeForAvgPool1DAvgMatrix(gert::InferShapeRang
     const auto* inputDesc = context->GetInputDesc(kInputX);
     if (inputRange == nullptr || inputRange->GetMin() == nullptr || inputRange->GetMax() == nullptr ||
         outputRange == nullptr || outputRange->GetMin() == nullptr || outputRange->GetMax() == nullptr) {
-        OP_LOGE(context->GetNodeName(), "Get input or output shape range failed");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(), "Get input or output shape range failed"}));
         return ge::GRAPH_FAILED;
     }
 

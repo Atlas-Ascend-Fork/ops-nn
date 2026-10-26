@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "base/err_msg.h"
 #include "adaptive_avg_pool2d.h"
 #include "opdev/common_types.h"
 #include "opdev/make_op_executor.h"
@@ -42,11 +43,15 @@ const aclTensor* AdaptiveAvgPool2d(const aclTensor* self, const aclIntArray* out
         outShape.SetDim(size + SUB_H, (*outputSize)[0]);
         outShape.SetDim(size + SUB_W, (*outputSize)[1]);
     } else {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "AdaptiveAvgPool2dAiCore only support ascend950/ascend960dt.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1009", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{
+                "AdaptiveAvgPool2d",
+                "AdaptiveAvgPool2dAiCore only supports ascend950/ascend960dt; current SoC is not regbase"}));
     }
     auto out = executor->AllocTensor(outShape, self->GetDataType(), self->GetStorageFormat());
     if (out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "out is nullptr.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "out is nullptr.");
         return nullptr;
     }
     return AdaptiveAvgPool2dAiCore(self, outputSize, out, executor);

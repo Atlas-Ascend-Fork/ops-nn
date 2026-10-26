@@ -48,10 +48,20 @@ uint64_t AdaptiveMaxPool3dTilingBase::GetTilingKey() const { return 0; }
 ge::graphStatus AdaptiveMaxPool3dTilingBase::GetPlatformInfo()
 {
     auto compileInfo = context_->GetCompileInfo<AdaptiveMaxPool3dCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context_->GetNodeName(),
+                                      "compileInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     input_.coreNum = compileInfo->coreNum;
     input_.ubSizePlatForm = compileInfo->ubSizePlatForm;
-    OP_CHECK_IF(input_.coreNum <= 0, OP_LOGE(context_, "GetPlatformInfo get corenum <= 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(input_.coreNum <= 0,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(), "GetPlatformInfo get corenum <= 0"})),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -61,12 +71,20 @@ ge::graphStatus AdaptiveMaxPool3dTilingBase::GetShapeAttrsInfo()
     OP_LOGD(nodeName, "GetShapeAttrsInfo begin.");
 
     auto inputX = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputX);
+    OP_CHECK_IF(
+        inputX == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x", "required input x shape is missing"),
+        return ge::GRAPH_FAILED);
     auto inputXDesc = context_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputXDesc);
+    OP_CHECK_IF(inputXDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "required input x descriptor is missing"),
+                return ge::GRAPH_FAILED);
     auto xDtype = inputXDesc->GetDataType();
     OP_CHECK_IF((xDtype != ge::DT_FLOAT && xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16),
-                OP_LOGE(nodeName, "x datatype only support float, float16, bfloat16"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPE(nodeName, "x", ge::TypeUtils::DataTypeToSerialString(xDtype).c_str(),
+                                          "float, float16, bfloat16"),
+                return ge::GRAPH_FAILED);
     input_.xDtype = xDtype;
     gert::Shape xShape = EnsureNotScalar(inputX->GetStorageShape());
     if (xShape.GetDimNum() == DIM_NUM_FIVE) {
@@ -76,24 +94,43 @@ ge::graphStatus AdaptiveMaxPool3dTilingBase::GetShapeAttrsInfo()
         input_.Hi = xShape.GetDim(NCDHW_DIM_H);
         input_.Wi = xShape.GetDim(NCDHW_DIM_W);
     } else {
-        OP_LOGE(nodeName, "xShape dim number should be 5");
+        OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "x", std::to_string(xShape.GetDimNum()).c_str(), "5");
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(input_.N < 1 || input_.C < 1 || input_.Di < 1 || input_.Hi < 1 || input_.Wi < 1,
-                OP_LOGE(nodeName, "Invalid shape. Maybe empty tensor."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(nodeName, "x", Ops::Base::ToString(xShape).c_str(),
+                                                      "The dimensions N, C, D, H, W must be at least 1"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(input_.Di * input_.Hi * input_.Wi > static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
-                OP_LOGE(nodeName, "no support for D*H*W of input greater than int32 max value"),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(nodeName, "x", Ops::Base::ToString(xShape).c_str(),
+                                                      "The product D*H*W must not exceed int32 max value"),
                 return ge::GRAPH_FAILED);
 
     auto attrPtr = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrPtr);
+    OP_CHECK_IF(attrPtr == nullptr,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{context_->GetNodeName(),
+                                              "attrPtr is null; tiling preparation or calculation cannot continue"})),
+                return ge::GRAPH_FAILED);
     auto outputSizePtr = attrPtr->GetAttrPointer<gert::ContinuousVector>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputSizePtr);
-    OP_CHECK_IF(outputSizePtr->GetSize() != OUTPUTSIZE_DIM_MAX,
-                OP_LOGE(nodeName, "the size of outputsize only support 3"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(outputSizePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "output_size",
+                                                         "required parameter output_size is missing"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        outputSizePtr->GetSize() != OUTPUTSIZE_DIM_MAX,
+        OP_LOGE_FOR_INVALID_LISTSIZE(nodeName, "output_size", std::to_string(outputSizePtr->GetSize()).c_str(), "3"),
+        return ge::GRAPH_FAILED);
     const int64_t* outputSize = static_cast<const int64_t*>(outputSizePtr->GetData());
-    OP_CHECK_IF(outputSize[0] <= 0 || outputSize[1] <= 0 || outputSize[OUTPUTSIZE_DIMW] <= 0,
-                OP_LOGE(nodeName, "the value of outputsize should > 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        outputSize[0] <= 0 || outputSize[1] <= 0 || outputSize[OUTPUTSIZE_DIMW] <= 0,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(nodeName, "output_size",
+                                              (std::to_string(outputSize[0]) + ", " + std::to_string(outputSize[1]) +
+                                               ", " + std::to_string(outputSize[OUTPUTSIZE_DIMW]))
+                                                  .c_str(),
+                                              "each element of output_size must be greater than 0"),
+        return ge::GRAPH_FAILED);
     input_.Do = outputSize[0];
     input_.Ho = outputSize[1];
     input_.Wo = outputSize[OUTPUTSIZE_DIMW];
@@ -121,9 +158,21 @@ static ge::graphStatus TilingPrepare4AdaptiveMaxPool3d(gert::TilingParseContext*
     OP_LOGD(context, "TilingPrepare4AdaptiveMaxPool3d enter.");
 
     auto compileInfo = context->GetCompiledInfo<AdaptiveMaxPool3dCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "compileInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{context->GetNodeName(),
+                                      "platformInfo is null; tiling preparation or calculation cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
@@ -131,9 +180,16 @@ static ge::graphStatus TilingPrepare4AdaptiveMaxPool3d(gert::TilingParseContext*
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = ubSizePlatForm;
 
-    OP_CHECK_IF((compileInfo->coreNum <= 0), OP_LOGE(context, "Failed to get corenum size"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->coreNum <= 0),
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{context->GetNodeName(), "Failed to get corenum size"})),
+        return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context, "Failed to get ub size"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0),
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{context->GetNodeName(), "Failed to get ub size"})),
+                return ge::GRAPH_FAILED);
     OP_LOGD(context, "ub_size_platform is %lu", compileInfo->ubSizePlatForm);
     OP_LOGD(context, "TilingPrepare4AdaptiveMaxPool3d end");
     return ge::GRAPH_SUCCESS;

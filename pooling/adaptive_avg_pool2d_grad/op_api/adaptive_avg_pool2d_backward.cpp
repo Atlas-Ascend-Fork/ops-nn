@@ -62,7 +62,7 @@ const aclTensor* AdaptiveAvgPool2dGrad(const aclTensor* gradOutput, const aclTen
     }
     auto out = executor->AllocTensor(selfShape, self->GetDataType(), self->GetStorageFormat());
     if (out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "out is nullptr.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "out is nullptr.");
         return nullptr;
     }
     return AdaptiveAvgPool2dGradAiCore(gradOutput, inputShape, out, executor);

@@ -55,7 +55,7 @@ const aclTensor* AdaptiveAvgPool3d(const aclTensor* self, const aclIntArray* out
     }
     auto out = executor->AllocTensor(outShape, self->GetDataType(), self->GetStorageFormat());
     if (out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "out is nullptr.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "out is nullptr.");
         return nullptr;
     }
     return AdaptiveAvgPool3dAiCore(self, outputSize, out, executor);

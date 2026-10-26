@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "log/log.h"
 #include "adaptive_max_pool3d.h"
 #include "opdev/aicpu/aicpu_task.h"
 #include "opdev/common_types.h"
@@ -61,7 +62,7 @@ const std::tuple<const aclTensor*, const aclTensor*> AdaptiveMaxPool3d(const acl
     op::Shape outShape = self->GetViewShape();
     size_t dimNum = outShape.GetDimNum();
     if (dimNum != NCDHW_DIM_NUM) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Input dim num is not supported.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM("AdaptiveMaxPool3d", "self", std::to_string(dimNum).c_str(), "5");
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
 
@@ -72,7 +73,7 @@ const std::tuple<const aclTensor*, const aclTensor*> AdaptiveMaxPool3d(const acl
     auto outputOut = executor->AllocTensor(outShape, self->GetDataType(), self->GetStorageFormat());
     auto indicesOut = executor->AllocTensor(outShape, indicesDtype, self->GetStorageFormat());
     if (outputOut == nullptr || indicesOut == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "outputOut or indicesOut is nullptr.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "outputOut or indicesOut is nullptr.");
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
     return AdaptiveMaxPool3dAiCore(self, outputSize, outputOut, indicesOut, executor);

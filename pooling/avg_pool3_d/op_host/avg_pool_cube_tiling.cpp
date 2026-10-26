@@ -14,6 +14,7 @@
  */
 #include "avg_pool_cube_tiling.h"
 #include "error_util.h"
+#include "op_common/log/log.h"
 
 #include "graph/utils/type_utils.h"
 
@@ -124,24 +125,37 @@ static void GetVarFlagsFromCompileInfo(const nlohmann::json& compile_info, uint3
 
 bool CubeCompileInfo::AnalyzeCompileInfo(const char* op_name, const char* compile_info_str)
 {
-    OP_CHECK_IF(compile_info_str == nullptr, OP_LOGE(op_name, "null compile info"), return false);
+    OP_CHECK_IF(compile_info_str == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{op_name, "null compile info"})),
+                return false);
     OP_LOGD(op_name, "compile info: %s", compile_info_str);
     try {
         auto compile_info = json::parse(compile_info_str);
         if (compile_info.type() == json::value_t::object) {
             OP_CHECK_IF(!(AnalyzeExtendInfo(compile_info) && AnalyzeCommonCompileInfo(compile_info)),
-                        OP_LOGE(op_name, "Parse compile value fail"), return false);
+                        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                                  (std::vector<const char*>{op_name, "Parse compile value fail"})),
+                        return false);
         } else {
             for (size_t idx = 0; idx < compile_info.size(); ++idx) {
                 OP_CHECK_IF(!(AnalyzeExtendInfo(compile_info[idx]) && AnalyzeCommonCompileInfo(compile_info[idx])),
-                            OP_LOGE(op_name, "Parse compile value fail"), return false);
+                            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                                      (std::vector<const char*>{op_name, "Parse compile value fail"})),
+                            return false);
             }
         }
     } catch (const std::exception& e) {
-        OP_LOGE(op_name, "get json exception: %s, please check compile info json.", e.what());
+        OP_LOGE_WITHOUT_REPORT(op_name, "get json exception: %s, please check compile info json.", e.what());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{op_name,
+                                      "get json exception: (see diagnostic), please check compile info json."}));
         return false;
     } catch (...) {
-        OP_LOGE(op_name, "get unknown exception, please check compile info json.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{op_name, "get unknown exception, please check compile info json."}));
         return false;
     }
 
@@ -472,11 +486,16 @@ ge::graphStatus CubeTiling(const int64_t* input_shape, size_t intput_shape_dim_n
 
     if (tiling_id == kInvalidTilingId) {
         if (compile_info.correct_range_flag) {
-            OP_LOGE(op_name, "The original range does not meet requirements, "
-                             "new range is generated during op compile, but the shape is not covered by new range");
+            OP_LOGE_WITHOUT_REPORT(
+                op_name, "The original range does not meet requirements, "
+                         "new range is generated during op compile, but the shape is not covered by new range");
         }
 
-        OP_LOGE(op_name, "This shape is not covered by any tiling, please modify range and recompile");
+        OP_LOGE_WITHOUT_REPORT(op_name, "This shape is not covered by any tiling, please modify range and recompile");
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {
+            op_name, "input shape is not covered by any compiled tiling range; modify the range and recompile"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
         return ge::GRAPH_FAILED;
     }
 
@@ -598,12 +617,19 @@ ge::graphStatus Tiling4AvgPool3DCube(gert::TilingContext* context, const gert::S
 {
     const auto op_name = context->GetNodeName();
     const auto compile_info = reinterpret_cast<const AvgPool3DCubeCompileInfo*>(context->GetCompileInfo());
-    OP_CHECK_IF(compile_info == nullptr, OP_LOGE(op_name, "compile_info is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compile_info == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{op_name, "compile_info is null"})),
+                return ge::GRAPH_FAILED);
 
     OP_LOGD(op_name, "%s", DebugTilingContext(context).c_str());
 
-    OP_CHECK_IF(fmap_shape == nullptr || out_shape == nullptr, OP_LOGE(op_name, "failed to get fmap/out shape"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        fmap_shape == nullptr || out_shape == nullptr,
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{op_name, "input/output shape or descriptor is missing; cannot continue"})),
+        return ge::GRAPH_FAILED);
 
     const auto& fmap_storage_shape = fmap_shape->GetStorageShape();
     const auto& out_storage_shape = out_shape->GetStorageShape();
