@@ -49,22 +49,22 @@ protected:
                                           uint32_t offset);
     __aicore__ inline void Compute(LocalTensor<T>& xATensor, LocalTensor<T>& xBTensor, LocalTensor<T>& gradTensor,
                                    LocalTensor<T>& outATensor, LocalTensor<T>& outBTensor, int64_t dataCount);
+    __aicore__ inline void ComputeInterleaved(__ubuf__ T* xAddr, __ubuf__ T* gradAddr, __ubuf__ T* outAddr,
+                                              uint32_t rowLen, uint32_t colLen, uint32_t colTotal);
 
 protected:
-    // tiling Data
-    int64_t rowTotalA_{0}; // A部分的总行宽
-    int64_t colTotalA_{0}; // A部分的总列宽
-    int64_t colTotal_{0};  // A + B总列宽
-    int64_t rowBase_{0};   // 正常核处理行大小
+    int64_t rowTotalA_{0};
+    int64_t colTotalA_{0};
+    int64_t colTotal_{0};
+    int64_t rowBase_{0};
     int64_t colBase_{0};
-    int64_t rowTail_{0}; // 尾核处理行大小
+    int64_t rowTail_{0};
     int64_t colTail_{0};
     uint64_t ubSize_{0};
-    uint32_t rowTileNum_{0}; // A部分行方向切分后个数
-    uint32_t colTileNum_{0}; // A部分列方向切分后个数
+    uint32_t rowTileNum_{0};
+    uint32_t colTileNum_{0};
     uint32_t usedCoreNum_{0};
 
-    // vars
     int64_t rowProcess_{0};
     int64_t colProcess_{0};
     int64_t partAStart_{0};
@@ -98,11 +98,9 @@ __aicore__ inline bool SwiGluGradBaseKernel<T>::InitBase(const GluBaseTilingData
 
     colTotal_ = colTotalA_ * SPLIT_HALF;
 
-    // 本核实际处理数据量
     colProcess_ = (blockIdx_ + 1) % colTileNum_ != 0 ? colBase_ : colTail_;
     rowProcess_ = (blockIdx_ + 1) / colTileNum_ < (rowTileNum_ - 1) ? rowBase_ : rowTail_;
 
-    // 本核所处位置，优先列方向分核
     int64_t colOffset = blockIdx_ % colTileNum_;
     int64_t rowOffset = blockIdx_ / colTileNum_;
 
@@ -171,9 +169,12 @@ __aicore__ inline void SwiGluGradBaseKernel<T>::Compute(LocalTensor<T>& xATensor
         Reg::RegTensor<float> grad;
         Reg::RegTensor<float> dstA;
         Reg::RegTensor<float> dstB;
-        Reg::RegTensor<float> tempReg;
+        Reg::RegTensor<float> sigReg;
+        Reg::RegTensor<float> tmpReg;
+        Reg::RegTensor<float> oneReg;
 
         Reg::MaskReg preg = Reg::UpdateMask<float>(calcCount);
+        Duplicate(oneReg, -beta, preg);
 
         for (uint16_t i = 0; i < repeatTimes; i++) {
             uint32_t offset = i * vfFp32Block_;
@@ -181,28 +182,106 @@ __aicore__ inline void SwiGluGradBaseKernel<T>::Compute(LocalTensor<T>& xATensor
             LoadOneTensor(ubSrcAddrB, srcB, preg, offset);
             LoadOneTensor(ubGradAddr, grad, preg, offset);
 
-            // sigmoid
-            Muls(dstB, srcA, beta, preg);
-            Exp(dstB, dstB, preg);
-            Adds(dstB, dstB, -beta, preg);
-            Duplicate(dstA, -beta, preg);
-            Div(dstB, dstA, dstB, preg);
+            Muls(tmpReg, srcA, beta, preg);
+            Exp(tmpReg, tmpReg, preg);
+            Adds(tmpReg, tmpReg, -beta, preg);
+            Div(sigReg, oneReg, tmpReg, preg);
 
-            // outA part
-            Muls(dstA, dstB, beta, preg);   // -sigmoid
-            Adds(dstA, dstA, -beta, preg);  // 1 - sigmoid
-            Mul(dstA, dstA, srcA, preg);    // (1 - sigmoid) * A
-            Adds(dstA, dstA, -beta, preg);  // 1 + (1 - sigmoid) * A
-            Mul(tempReg, grad, dstB, preg); // grad * sigmoid
-            Mul(dstA, dstA, tempReg, preg); // grad * sigmoid * (1 + (1 - sigmoid) * A)
-            Mul(dstA, dstA, srcB, preg);    // grad * sigmoid * (1 + (1 - sigmoid) * A) * B
+            Muls(dstA, sigReg, beta, preg);
+            Adds(dstA, dstA, -beta, preg);
+            Mul(dstA, dstA, srcA, preg);
+            Adds(dstA, dstA, -beta, preg);
+            Mul(tmpReg, grad, sigReg, preg);
+            Mul(dstA, dstA, tmpReg, preg);
+            Mul(dstA, dstA, srcB, preg);
 
-            // outB part
-            Mul(dstB, dstB, grad, preg); // grad * sigmoid
-            Mul(dstB, dstB, srcA, preg); // grad * sigmoid * A
+            Mul(dstB, tmpReg, srcA, preg);
 
             StoreOneTensor(ubDstAddrA, dstA, preg, offset);
             StoreOneTensor(ubDstAddrB, dstB, preg, offset);
+        }
+    }
+}
+
+template <typename T>
+__aicore__ inline void SwiGluGradBaseKernel<T>::ComputeInterleaved(__ubuf__ T* xAddr, __ubuf__ T* gradAddr,
+                                                                   __ubuf__ T* outAddr, uint32_t rowLen,
+                                                                   uint32_t colLen, uint32_t colTotal)
+{
+    uint16_t mainBlocks = colLen / vfFp32Block_;
+    uint32_t tailCount = colLen - mainBlocks * vfFp32Block_;
+    float beta = beta_;
+    uint16_t tailRows = tailCount > 0 ? rowLen : 0;
+
+    __VEC_SCOPE__
+    {
+        Reg::RegTensor<float> srcA;
+        Reg::RegTensor<float> srcB;
+        Reg::RegTensor<float> grad;
+        Reg::RegTensor<float> dstA;
+        Reg::RegTensor<float> dstB;
+        Reg::RegTensor<float> sigReg;
+        Reg::RegTensor<float> tmpReg;
+        Reg::RegTensor<float> oneReg;
+
+        Reg::MaskReg pAll = Reg::CreateMask<float, Reg::MaskPattern::ALL>();
+        Reg::MaskReg pTail = Reg::UpdateMask<float>(tailCount);
+        Duplicate(oneReg, -beta, pAll);
+
+        for (uint16_t row = 0; row < rowLen; ++row) {
+            uint32_t rowOffsetX = row * colTotal;
+            uint32_t rowOffsetG = row * colLen;
+            for (uint16_t b = 0; b < mainBlocks; ++b) {
+                uint32_t off = b * vfFp32Block_;
+                LoadOneTensor(xAddr, srcA, pAll, rowOffsetX + off);
+                LoadOneTensor(xAddr, srcB, pAll, rowOffsetX + colLen + off);
+                LoadOneTensor(gradAddr, grad, pAll, rowOffsetG + off);
+
+                Muls(tmpReg, srcA, beta, pAll);
+                Exp(tmpReg, tmpReg, pAll);
+                Adds(tmpReg, tmpReg, -beta, pAll);
+                Div(sigReg, oneReg, tmpReg, pAll);
+
+                Muls(dstA, sigReg, beta, pAll);
+                Adds(dstA, dstA, -beta, pAll);
+                Mul(dstA, dstA, srcA, pAll);
+                Adds(dstA, dstA, -beta, pAll);
+                Mul(tmpReg, grad, sigReg, pAll);
+                Mul(dstA, dstA, tmpReg, pAll);
+                Mul(dstA, dstA, srcB, pAll);
+
+                Mul(dstB, tmpReg, srcA, pAll);
+
+                StoreOneTensor(outAddr, dstA, pAll, rowOffsetX + off);
+                StoreOneTensor(outAddr, dstB, pAll, rowOffsetX + colLen + off);
+            }
+        }
+
+        for (uint16_t row = 0; row < tailRows; ++row) {
+            uint32_t rowOffsetX = row * colTotal;
+            uint32_t rowOffsetG = row * colLen;
+            uint32_t off = mainBlocks * vfFp32Block_;
+            LoadOneTensor(xAddr, srcA, pTail, rowOffsetX + off);
+            LoadOneTensor(xAddr, srcB, pTail, rowOffsetX + colLen + off);
+            LoadOneTensor(gradAddr, grad, pTail, rowOffsetG + off);
+
+            Muls(tmpReg, srcA, beta, pTail);
+            Exp(tmpReg, tmpReg, pTail);
+            Adds(tmpReg, tmpReg, -beta, pTail);
+            Div(sigReg, oneReg, tmpReg, pTail);
+
+            Muls(dstA, sigReg, beta, pTail);
+            Adds(dstA, dstA, -beta, pTail);
+            Mul(dstA, dstA, srcA, pTail);
+            Adds(dstA, dstA, -beta, pTail);
+            Mul(tmpReg, grad, sigReg, pTail);
+            Mul(dstA, dstA, tmpReg, pTail);
+            Mul(dstA, dstA, srcB, pTail);
+
+            Mul(dstB, tmpReg, srcA, pTail);
+
+            StoreOneTensor(outAddr, dstA, pTail, rowOffsetX + off);
+            StoreOneTensor(outAddr, dstB, pTail, rowOffsetX + colLen + off);
         }
     }
 }

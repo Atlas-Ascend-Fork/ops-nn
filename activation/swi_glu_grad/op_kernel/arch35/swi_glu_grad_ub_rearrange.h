@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file swi_glu_grad_move_align.h
+ * \file swi_glu_grad_ub_rearrange.h
  * \brief
  */
 
@@ -52,6 +52,7 @@ protected:
     __aicore__ inline void ProcessNotGather();
     __aicore__ inline void ProcessWithGather();
     __aicore__ inline void ComputePerLoop(uint32_t dataCount);
+    __aicore__ inline void ComputeFusedAligned(uint32_t rowLen, uint32_t colLen);
 
 protected:
     TPipe& pipe_;
@@ -69,10 +70,9 @@ protected:
     GlobalTensor<T> gradYGm_;
     GlobalTensor<T> outGm_;
 
-    // mode
     bool needGather_{false};
+    bool fusedAligned_{false};
 
-    // ub内循环处理大小
     uint32_t rowUbNorm_{0};
     uint32_t rowUbTail_{0};
     int64_t rowLoopByUb_{0};
@@ -80,8 +80,6 @@ protected:
     uint32_t vfLen_ = platform::GetVRegSize() / sizeof(T);
     const uint32_t EXTRA_BUFFER_SIZE{256};
     static constexpr int32_t BLOCK_NUM = BLOCK / sizeof(T);
-
-    // gather var
     uint32_t perVfColNum_{0};
     uint32_t gatherNormNum_{0};
 };
@@ -98,14 +96,13 @@ __aicore__ inline void SwiGluGradUbRearrangeKernel<T, U>::Init(GM_ADDR grad, GM_
     uint64_t tBufferSize = RoundDownToVL(existNodeSize / SPLIT_HALF);
     existNodeSize = tBufferSize * SPLIT_HALF;
 
-    rowUbNorm_ = existNodeSize / (this->colTotal_ * sizeof(T)); // 单次搬入的数据量，向下取整，正常块大小
+    rowUbNorm_ = existNodeSize / (this->colTotal_ * sizeof(T));
     if (rowUbNorm_ > this->rowProcess_) {
         rowUbNorm_ = this->rowProcess_;
     }
 
-    rowLoopByUb_ = (this->rowProcess_ + rowUbNorm_ - 1) / rowUbNorm_; // 总行数 / 单次处理行数 = 循环次数。 向上取整
-    rowUbTail_ = this->rowProcess_ -
-                 rowUbNorm_ * (rowLoopByUb_ - 1); // 最后一次的尾块，总行数 - 单次处理行数 * (总次数 - 1) < 单次处理行数
+    rowLoopByUb_ = (this->rowProcess_ + rowUbNorm_ - 1) / rowUbNorm_;
+    rowUbTail_ = this->rowProcess_ - rowUbNorm_ * (rowLoopByUb_ - 1);
 
     if (this->colProcess_ * sizeof(T) < BLOCK) {
         needGather_ = true;
@@ -113,7 +110,19 @@ __aicore__ inline void SwiGluGradUbRearrangeKernel<T, U>::Init(GM_ADDR grad, GM_
         gatherNormNum_ = vfLen_ / this->colProcess_ * this->colProcess_;
     }
 
-    // init params
+    fusedAligned_ = !needGather_ && (static_cast<uint64_t>(this->colProcess_) * sizeof(T)) % ONE_BLK_SIZE == 0;
+    bool useLegacyBuf = needGather_ || !fusedAligned_;
+    if (fusedAligned_) {
+        tBufferSize = RoundDownToVL((tilingData.ubSize - EXTRA_BUFFER_SIZE) / (BUFFER_NUMBER * DOUBLE_BUFFER));
+        rowUbNorm_ = (tBufferSize * SPLIT_HALF) / (this->colTotal_ * sizeof(T));
+        if (rowUbNorm_ > this->rowProcess_) {
+            rowUbNorm_ = this->rowProcess_;
+        }
+        rowLoopByUb_ = (this->rowProcess_ + rowUbNorm_ - 1) / rowUbNorm_;
+        rowUbTail_ = this->rowProcess_ - rowUbNorm_ * (rowLoopByUb_ - 1);
+    }
+    existNodeSize = tBufferSize * SPLIT_HALF;
+
     xGm_.SetGlobalBuffer((__gm__ T*)x);
     gradYGm_.SetGlobalBuffer((__gm__ T*)grad);
     outGm_.SetGlobalBuffer((__gm__ T*)out);
@@ -122,10 +131,12 @@ __aicore__ inline void SwiGluGradUbRearrangeKernel<T, U>::Init(GM_ADDR grad, GM_
     pipe_.InitBuffer(inQueGrad_, DOUBLE_BUFFER, tBufferSize);
     pipe_.InitBuffer(outQueXGrad_, DOUBLE_BUFFER, existNodeSize);
 
-    pipe_.InitBuffer(Apart_, tBufferSize);
-    pipe_.InitBuffer(Bpart_, tBufferSize);
-    pipe_.InitBuffer(OutApart_, tBufferSize);
-    pipe_.InitBuffer(OutBpart_, tBufferSize);
+    if (useLegacyBuf) {
+        pipe_.InitBuffer(Apart_, tBufferSize);
+        pipe_.InitBuffer(Bpart_, tBufferSize);
+        pipe_.InitBuffer(OutApart_, tBufferSize);
+        pipe_.InitBuffer(OutBpart_, tBufferSize);
+    }
     pipe_.InitBuffer(indexBuf_, EXTRA_BUFFER_SIZE);
 }
 
@@ -308,21 +319,20 @@ __aicore__ inline void SwiGluGradUbRearrangeKernel<T, U>::GenerateGatherIndex(ui
 
         Reg::MaskReg pIndex = Reg::CreateMask<U, Reg::MaskPattern::ALL>();
 
-        Reg::Arange(index, 0); // a = 0 ~ 254/sizeof(T)
+        Reg::Arange(index, 0);
         if constexpr (sizeof(U) == sizeof(uint32_t) || sizeof(U) == sizeof(uint16_t)) {
             indexCast = (Reg::RegTensor<U>&)index;
         }
         Duplicate(v0, (U)colLen, pIndex);
 
-        Div(v1, indexCast, v0, pIndex);       // b = a / (cut / SPLIT_HALF)
-        Muls(v1, v1, (U)colTotalLen, pIndex); // c = b * cut
+        Div(v1, indexCast, v0, pIndex);
+        Muls(v1, v1, (U)colTotalLen, pIndex);
 
-        Div(v2, indexCast, v0,
-            pIndex); // d = a % (cut/2) = index % (cut / SPLIT_HALF) = index - index / (cut/2) * (cut/2)
+        Div(v2, indexCast, v0, pIndex);
         Mul(v2, v2, v0, pIndex);
         Sub(v2, indexCast, v2, pIndex);
 
-        Add(indexCast, v1, v2, pIndex); // e = c + d
+        Add(indexCast, v1, v2, pIndex);
 
         Reg::StoreAlign(indexAddr, indexCast, pIndex);
     }
@@ -456,12 +466,42 @@ __aicore__ inline void SwiGluGradUbRearrangeKernel<T, U>::RearrangeUbOutByScatte
 }
 
 template <typename T, typename U>
+__aicore__ inline void SwiGluGradUbRearrangeKernel<T, U>::ComputeFusedAligned(uint32_t rowLen, uint32_t colLen)
+{
+    LocalTensor<T> xLocal = inQueX_.DeQue<T>();
+    LocalTensor<T> gradLocal = inQueGrad_.DeQue<T>();
+    LocalTensor<T> outLocal = outQueXGrad_.AllocTensor<T>();
+
+    this->ComputeInterleaved((__ubuf__ T*)xLocal.GetPhyAddr(), (__ubuf__ T*)gradLocal.GetPhyAddr(),
+                             (__ubuf__ T*)outLocal.GetPhyAddr(), rowLen, colLen, this->colTotal_);
+
+    inQueX_.FreeTensor(xLocal);
+    inQueGrad_.FreeTensor(gradLocal);
+    outQueXGrad_.EnQue<T>(outLocal);
+}
+
+template <typename T, typename U>
 __aicore__ inline void SwiGluGradUbRearrangeKernel<T, U>::ProcessNotGather()
 {
     int64_t offset = 0;
 
     uint32_t dataCount = this->colProcess_ * rowUbNorm_;
     uint32_t loopStride = dataCount * SPLIT_HALF;
+
+    if (fusedAligned_) {
+        for (int64_t i = 0; i < rowLoopByUb_ - 1; i++) {
+            CopyIn(offset, rowUbNorm_, this->colProcess_);
+            ComputeFusedAligned(rowUbNorm_, this->colProcess_);
+            CopyOut(offset, rowUbNorm_, this->colTotal_);
+            offset = offset + loopStride;
+        }
+
+        dataCount = this->colProcess_ * rowUbTail_;
+        CopyIn(offset, rowUbTail_, this->colProcess_);
+        ComputeFusedAligned(rowUbTail_, this->colProcess_);
+        CopyOut(offset, rowUbTail_, this->colTotal_);
+        return;
+    }
 
     for (int64_t i = 0; i < rowLoopByUb_ - 1; i++) {
         CopyIn(offset, rowUbNorm_, this->colProcess_);
