@@ -13,6 +13,7 @@
  * \brief
  */
 #include "dynamic_rnn_tiling.h"
+#include <string>
 
 using namespace AscendC;
 namespace {
@@ -22,13 +23,24 @@ bool AddWorkspace(gert::TilingContext* context, const size_t workspace)
     *workspace_size = workspace;
     return true;
 }
+
+// 合法输入下 tiling 内部失败统一上报正式码 EZ1008，携带 opName 与 reason。
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
 } // namespace
 namespace optiling {
 static int32_t GetRnnLibItem(const DynamicRnnCompileInfo* compileInfo, const gert::Shape xStorageShape)
 {
     for (const auto& tuneShape : compileInfo->tuneShapeList) {
         if (tuneShape.size() < DEFAULT_SHAPE_LIST_SIZE) {
-            OP_LOGE("DynamicRnn", "tune_shape_list's size is illegal. it's %lu.", tuneShape.size());
+            ReportTilingFailure("DynamicRnn",
+                                "tune_shape_list's size is illegal. it's " + std::to_string(tuneShape.size()) + ".");
             return DEFAULT_RETURN;
         }
         if ((tuneShape[0] == -1) && (tuneShape[1] == -1)) {
@@ -45,16 +57,18 @@ static int32_t GetRnnLibItem(const DynamicRnnCompileInfo* compileInfo, const ger
 ge::graphStatus DynamicRNNTiling::GetOpInfo(const gert::TilingContext* context, DynamicRnnTiling& dynamicRnnParams)
 {
     OP_CHECK_IF(context->GetComputeNodeInputNum() < DEFAULT_PARAS_INPUT_SIZE,
-                OP_LOGE(context->GetNodeName(), "input shape error."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "input"), return ge::GRAPH_FAILED);
 
     // get x shape
     auto xTensor = context->GetInputShape(0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, xTensor);
+    OP_CHECK_IF(xTensor == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "input x"),
+                return ge::GRAPH_FAILED);
     auto xShape = xTensor->GetStorageShape();
 
     // get w shape
     auto weightTensor = context->GetInputShape(1);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, weightTensor);
+    OP_CHECK_IF(weightTensor == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "input weight"),
+                return ge::GRAPH_FAILED);
     auto weightShape = weightTensor->GetStorageShape();
 
     // get seq_length, init_h, init_C
@@ -69,11 +83,19 @@ ge::graphStatus DynamicRNNTiling::GetOpInfo(const gert::TilingContext* context, 
 
     int32_t dim = 2;
     OP_CHECK_IF(xShape.GetDimNum() != 3,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get x shape dim is not 3, please check."), return false);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input x",
+                                                         std::to_string(xShape.GetDimNum()) + "D",
+                                                         "the shape dim of input x must be 3"),
+                return false);
     OP_CHECK_IF(xShape.GetDim(CONST_TWO) == 0,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn input_size not support 0, please check."), return false);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "input x",
+                                                      std::to_string(xShape.GetDim(CONST_TWO)),
+                                                      "the input_size of input x must not be 0"),
+                return false);
     OP_CHECK_IF(weightShape.GetDimNum() != 2,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get weight shape dim is not 2, please check."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input weight",
+                                                         std::to_string(weightShape.GetDimNum()) + "D",
+                                                         "the shape dim of input weight must be 2"),
                 return false);
     dynamicRnnParams.timeStep = static_cast<int64_t>(xShape.GetDim(0));
     dynamicRnnParams.batch = static_cast<int64_t>(xShape.GetDim(1));
@@ -148,30 +170,56 @@ bool DynamicRNNTiling::CheckParamsShape(gert::TilingContext* context)
 
     // check dim num
     OP_CHECK_IF(xShape.GetDimNum() != 3,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get x shape dim is not 3, please check."), return false);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input x",
+                                                         std::to_string(xShape.GetDimNum()) + "D",
+                                                         "the shape dim of input x must be 3"),
+                return false);
     OP_CHECK_IF(wShape.GetDimNum() != 2,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get w shape dim is not 2, please check."), return false);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input w",
+                                                         std::to_string(wShape.GetDimNum()) + "D",
+                                                         "the shape dim of input w must be 2"),
+                return false);
     OP_CHECK_IF(bShape.GetDimNum() != 1,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get b shape dim is not 1, please check."), return false);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input b",
+                                                         std::to_string(bShape.GetDimNum()) + "D",
+                                                         "the shape dim of input b must be 1"),
+                return false);
 
     OP_CHECK_IF(outputShape.GetDimNum() != 3,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get output shape dim is not 3, please check."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "output y",
+                                                         std::to_string(outputShape.GetDimNum()) + "D",
+                                                         "the shape dim of output y must be 3"),
                 return false);
 
     // check batch dim
     OP_CHECK_IF(xShape.GetDim(1) != outputShape.GetDim(1),
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get x, output batch is not equal, please check."),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input x, output y",
+                                                       Shape2String(xShape) + " and " + Shape2String(outputShape),
+                                                       "the batch dim of input x must equal that of output y"),
                 return false);
 
     // check x/w input_size dim
     OP_CHECK_IF(wShape.GetDim(0) != xShape.GetDim(2) + outputShape.GetDim(2),
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get w shape dim0 is wrong, please check."), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "input w, input x, output y",
+                    Shape2String(wShape) + ", " + Shape2String(xShape) + " and " + Shape2String(outputShape),
+                    "the 1st dim of input w must equal the last dim of input x plus "
+                    "the last dim of output y"),
+                return false);
 
     // check hidden dim
-    OP_CHECK_IF(wShape.GetDim(1) != 4 * outputShape.GetDim(2),
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get w shape dim1 is wrong, please check."), return false);
-    OP_CHECK_IF(bShape.GetDim(0) != 4 * outputShape.GetDim(2),
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get b shape dim0 is wrong, please check."), return false);
+    OP_CHECK_IF(
+        wShape.GetDim(1) != 4 * outputShape.GetDim(2),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input w, output y",
+                                               Shape2String(wShape) + " and " + Shape2String(outputShape),
+                                               "the 2nd dim of input w must equal 4 times the last dim of output y"),
+        return false);
+    OP_CHECK_IF(
+        bShape.GetDim(0) != 4 * outputShape.GetDim(2),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input b, output y",
+                                               Shape2String(bShape) + " and " + Shape2String(outputShape),
+                                               "the 1st dim of input b must equal 4 times the last dim of output y"),
+        return false);
     bool ret = CheckInitParamsShape(context);
 
     return ret;
@@ -189,46 +237,75 @@ bool DynamicRNNTiling::CheckInitParamsShape(gert::TilingContext* context)
     auto outputShape = outputY->GetStorageShape();
 
     OP_CHECK_IF(outputShape.GetDimNum() != 3,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn get output shape dim is not 3, please check."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "output y",
+                                                         std::to_string(outputShape.GetDimNum()) + "D",
+                                                         "the shape dim of output y must be 3"),
                 return false);
 
     if (inithInput != nullptr && initcInput != nullptr) {
         auto inithShape = inithInput->GetStorageShape();
         auto initcShape = initcInput->GetStorageShape();
         OP_CHECK_IF(inithShape.GetDimNum() != 3,
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn get init_h shape dim is not 3, please check."),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input init_h",
+                                                             std::to_string(inithShape.GetDimNum()) + "D",
+                                                             "the shape dim of input init_h must be 3"),
                     return false);
         OP_CHECK_IF(initcShape.GetDimNum() != 3,
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn get init_c shape dim is not 3, please check."),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input init_c",
+                                                             std::to_string(initcShape.GetDimNum()) + "D",
+                                                             "the shape dim of input init_c must be 3"),
                     return false);
-        OP_CHECK_IF(inithShape.GetDim(1) != outputShape.GetDim(1),
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn init_h output batch is not equal, please check."),
-                    return false);
-        OP_CHECK_IF(initcShape.GetDim(1) != outputShape.GetDim(1),
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn init_c output batch is not equal, please check."),
-                    return false);
-        OP_CHECK_IF(inithShape.GetDim(2) != outputShape.GetDim(2),
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn init_h output hidden is not equal, please check."),
-                    return false);
-        OP_CHECK_IF(initcShape.GetDim(2) != outputShape.GetDim(2),
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn init_c output hidden is not equal, please check."),
-                    return false);
+        OP_CHECK_IF(
+            inithShape.GetDim(1) != outputShape.GetDim(1),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input init_h, output y",
+                                                   Shape2String(inithShape) + " and " + Shape2String(outputShape),
+                                                   "the batch dim of input init_h must equal that of output y"),
+            return false);
+        OP_CHECK_IF(
+            initcShape.GetDim(1) != outputShape.GetDim(1),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input init_c, output y",
+                                                   Shape2String(initcShape) + " and " + Shape2String(outputShape),
+                                                   "the batch dim of input init_c must equal that of output y"),
+            return false);
+        OP_CHECK_IF(
+            inithShape.GetDim(2) != outputShape.GetDim(2),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input init_h, output y",
+                                                   Shape2String(inithShape) + " and " + Shape2String(outputShape),
+                                                   "the hidden dim of input init_h must equal that of output y"),
+            return false);
+        OP_CHECK_IF(
+            initcShape.GetDim(2) != outputShape.GetDim(2),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input init_c, output y",
+                                                   Shape2String(initcShape) + " and " + Shape2String(outputShape),
+                                                   "the hidden dim of input init_c must equal that of output y"),
+            return false);
     }
 
     if (seqInput != nullptr) {
         auto seqShape = seqInput->GetStorageShape();
         OP_CHECK_IF(seqShape.GetDimNum() != 3,
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn get seq shape dim is not 3, please check."),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input seq_length",
+                                                             std::to_string(seqShape.GetDimNum()) + "D",
+                                                             "the shape dim of input seq_length must be 3"),
                     return false);
-        OP_CHECK_IF(seqShape.GetDim(0) != outputShape.GetDim(0),
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn seq and x T is not equal, please check."),
-                    return false);
-        OP_CHECK_IF(seqShape.GetDim(1) != outputShape.GetDim(1),
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn seq output batch is not equal, please check."),
-                    return false);
-        OP_CHECK_IF(seqShape.GetDim(2) != outputShape.GetDim(2),
-                    OP_LOGE(context->GetNodeName(), "Dynamicrnn seq output hidden is not equal, please check."),
-                    return false);
+        OP_CHECK_IF(
+            seqShape.GetDim(0) != outputShape.GetDim(0),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input seq_length, output y",
+                                                   Shape2String(seqShape) + " and " + Shape2String(outputShape),
+                                                   "the time step of input seq_length must equal that of output y"),
+            return false);
+        OP_CHECK_IF(
+            seqShape.GetDim(1) != outputShape.GetDim(1),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input seq_length, output y",
+                                                   Shape2String(seqShape) + " and " + Shape2String(outputShape),
+                                                   "the batch dim of input seq_length must equal that of output y"),
+            return false);
+        OP_CHECK_IF(
+            seqShape.GetDim(2) != outputShape.GetDim(2),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input seq_length, output y",
+                                                   Shape2String(seqShape) + " and " + Shape2String(outputShape),
+                                                   "the hidden dim of input seq_length must equal that of output y"),
+            return false);
     }
 
     return true;
@@ -253,19 +330,23 @@ bool DynamicRNNTiling::CheckAttrTiling(gert::TilingContext* context)
     OP_CHECK_IF(isTraining == nullptr, ReportNullPtrWithContext(context, "isTraining"), return false);
 
     OP_CHECK_IF(*numProj != 0,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn attr num_proj only support 0, please check."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "attr num_proj", std::to_string(*numProj),
+                                                      "num_proj only supports 0"),
                 return false);
     OP_CHECK_IF(!(*timeMajor),
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn attr time_major only support true, please check."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "attr time_major",
+                                                      std::to_string(*timeMajor), "time_major only supports true"),
                 return false);
 
     std::vector<std::string> supportGateOrder = {"ifjo", "ijfo"};
     OP_CHECK_IF(std::find(supportGateOrder.begin(), supportGateOrder.end(), gateOrder) == supportGateOrder.end(),
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn attr gate_order is not support, please check."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "attr gate_order", gateOrder,
+                                                      "gate_order only supports ijfo or ifjo"),
                 return false);
 
     OP_CHECK_IF(strcmp(activation, "tanh") != 0,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn attr activation is not support, please check."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "attr activation", activation,
+                                                      "activation only supports tanh"),
                 return false);
 
     return true;
@@ -290,17 +371,21 @@ bool DynamicRNNTiling::CheckAttrOps(gert::TilingContext* context)
     OP_CHECK_IF(cellClip == nullptr, ReportNullPtrWithContext(context, "cellClip"), return false);
 
     OP_CHECK_IF(*cellDepth != 1,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn attr cell_depth only support 1, please check."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "attr cell_depth",
+                                                      std::to_string(*cellDepth), "cell_depth only supports 1"),
                 return false);
     OP_CHECK_IF(*usePeephole,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn attr use_peephole only support false, please check."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "attr use_peephole",
+                                                      std::to_string(*usePeephole), "use_peephole only supports false"),
                 return false);
     std::vector<std::string> supportDirection = {"UNIDIRECTIONAL", "REDIRECTIONAL"};
     OP_CHECK_IF(std::find(supportDirection.begin(), supportDirection.end(), direction) == supportDirection.end(),
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn attr direction is not support, please check."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "attr direction", direction,
+                                                      "direction only supports UNIDIRECTIONAL or REDIRECTIONAL"),
                 return false);
     OP_CHECK_IF(strcmp(cellType, "LSTM") != 0,
-                OP_LOGE(context->GetNodeName(), "Dynamicrnn attr cell_type is not support, please check."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "attr cell_type", cellType,
+                                                      "cell_type only supports LSTM"),
                 return false);
 
     return true;
@@ -318,19 +403,25 @@ ge::graphStatus TilingForDynamicRNN(gert::TilingContext* context)
     rnnTiling.GetAICoreIntrinsicDtype(*platformInfo, "Intrinsic_fix_pipe_l0c2out", supportL0c2out);
     if (supportL0c2out) {
         OP_CHECK_IF(rnnTiling.TilingWithAscendC(context) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context->GetNodeName(), "tiling with ascendc have error."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                           "tiling with ascendc failed; propagate the lower-layer first error."),
+                    return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
 
     OP_CHECK_IF(context->GetComputeNodeInputNum() < DEFAULT_PARAS_INPUT_SIZE,
-                OP_LOGE(context->GetNodeName(), "input shape error."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "input"), return ge::GRAPH_FAILED);
 
     auto xShape = context->GetInputShape(0);
-    OP_CHECK_IF(xShape == nullptr, OP_LOGE(context->GetNodeName(), "input_x is null."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(xShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "input x"),
+                return ge::GRAPH_FAILED);
 
     const auto& xStorageShape = optiling::EnsureNotScalar(xShape->GetStorageShape());
     OP_CHECK_IF(xStorageShape.GetDimNum() < DEFAULT_XSHAPE_SIZE,
-                OP_LOGE(context->GetNodeName(), "xStorageShape error."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input x",
+                                                         std::to_string(xStorageShape.GetDimNum()) + "D",
+                                                         "the shape dim of input x must be at least 3"),
+                return ge::GRAPH_FAILED);
 
     auto compileInfo = context->GetCompileInfo<DynamicRnnCompileInfo>();
     OP_CHECK_IF(compileInfo == nullptr, OP_LOGE(context->GetNodeName(), "compileInfo is null."),
@@ -343,9 +434,10 @@ ge::graphStatus TilingForDynamicRNN(gert::TilingContext* context)
     runParams->dynamicRnnBatch = static_cast<int32_t>(xStorageShape.GetDim(DEFAULT_INDEX_TWO));
     runParams->chequeIndex = GetRnnLibItem(compileInfo, xStorageShape);
     OP_CHECK_IF(runParams->chequeIndex == DEFAULT_RETURN,
-                OP_LOGE(context->GetNodeName(), "DynamicRnnTiling has no matched schedule."), return ge::GRAPH_FAILED);
+                ReportTilingFailure(context->GetNodeName(), "no matched schedule for the given input shape"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->SetTilingKey(runParams->chequeIndex) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "DynamicRnnTiling set tiling fail."), return ge::GRAPH_FAILED);
+                ReportTilingFailure(context->GetNodeName(), "failed to set tiling key"), return ge::GRAPH_FAILED);
 
     context->SetBlockDim(BLOCK_DIM);
     AddWorkspace(context, WORKSPACE_SIZE);
@@ -371,14 +463,16 @@ ge::graphStatus TilingPrepareForDynamicRNN(gert::TilingParseContext* context)
     std::unique_ptr<nlohmann::json> parsedObjectCinfo = GetCompileInfoJson(context);
     OPS_CHECK_NULL_WITH_CONTEXT(context, parsedObjectCinfo);
     const nlohmann::json& vars = (*parsedObjectCinfo)["vars"];
-    OP_CHECK_IF(vars.empty(), OP_LOGE(context->GetNodeName(), "Failed to get vars in parsedObjectCinfo."),
+    OP_CHECK_IF(vars.empty(), ReportTilingFailure(context->GetNodeName(), "failed to get vars in parsedObjectCinfo."),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(!ReadCompileItem(vars, "tune_shape_list", compileInfo->tuneShapeList),
-                OP_LOGE(context->GetNodeName(), "DynamicRNN, get tune_shape_list failed."), return ge::GRAPH_FAILED);
+                ReportTilingFailure(context->GetNodeName(), "failed to get tune_shape_list from compile info."),
+                return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(compileInfo->tuneShapeList.empty(),
-                OP_LOGE(context->GetNodeName(), "DynamicRNN, tune_shape_list is empty."), return ge::GRAPH_FAILED);
+                ReportTilingFailure(context->GetNodeName(), "tune_shape_list is empty in compile info."),
+                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }

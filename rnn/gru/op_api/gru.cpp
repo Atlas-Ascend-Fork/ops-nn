@@ -45,7 +45,9 @@ Gru(const aclTensor* input, const aclTensor* weightInput, const aclTensor* weigh
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         Gru, OP_INPUT(input, weightInput, weightHidden, biasInput, biasHidden, seqLengthOptional, initHOptional),
         OP_OUTPUT(yOut, outputHOut, rOut, zOut, nOut, nHOut), OP_ATTR(direction, train));
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Gru ADD_TO_LAUNCHER_LIST_AICORE failed."),
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Gru ADD_TO_LAUNCHER_LIST_AICORE failed; propagate the lower-layer first error."),
              return gruNullptrInner);
 
     return std::tuple<aclTensor*, aclTensor*, aclTensor*, aclTensor*, aclTensor*, aclTensor*>(yOut, outputHOut, rOut,

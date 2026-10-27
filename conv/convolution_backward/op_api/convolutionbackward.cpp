@@ -73,6 +73,21 @@ constexpr int64_t C_IN_TRANSPOSE_LIMIT_MAX = 256;
 constexpr float MAX_CIN_MULTIPLIER = 1.5f;
 static constexpr const char* ACLNN_CONV_TBC_BACKWARD_NAME = "aclnnConvTbcBackward";
 
+namespace {
+// 合法输入下 InferShape 执行失败：使用正式语义码 EZ1014 (Execution_Error) 在根因层首报。
+// Arglist 与 opbase OP_LOGE_FOR_EXECUTION_INFERSHAPE_ERROR 保持一致：{opName, reason}。
+void ReportInferShapeFailure(const char* inferShapeName)
+{
+    std::string opName = op::internal::GetLogApiInfo();
+    std::string reason = std::string(inferShapeName) + " InferShape failed.";
+    std::string msg = "Failed to execute operator " + opName + ". Reason: " + reason + ".";
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName.c_str(), reason.c_str()};
+    OP_LOGE_WITHOUT_REPORT("EZ1014", "%s", msg.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
+} // namespace
+
 static void AddAclIntArrayToCaseInfo(const aclIntArray& seg, vector<int64_t>& caseInfo)
 {
     size_t len = seg.Size();
@@ -438,7 +453,7 @@ static aclnnStatus Conv2DBackpropInputWithFlag(const aclTensor* input, const acl
     auto ret = INFER_SHAPE(Conv2DBackpropInput, OP_INPUT(inputSize, weight, outBackprop), OP_OUTPUT(output),
                            OP_ATTR(stride4, pad4, dilation4, groups, dataFormat, paddingString, useHf32Flag));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "Conv2DBackpropInput InferShape failed.");
+        ReportInferShapeFailure("Conv2DBackpropInput");
         return ACLNN_ERR_INNER_INFERSHAPE_ERROR;
     }
     // useHf32Flag的值为0x40 : 表示HF32
@@ -461,8 +476,8 @@ const aclTensor* Conv2DBackpropInputFp162Fp16(const aclTensor* input, const aclT
     int64_t useHf32Flag = 0x0;
     aclnnStatus ret = Conv2DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups,
                                                   useHf32Flag, output, executor);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Conv2DBackpropInputFp162Fp16 get aclTensor* output failed."),
-             return nullptr);
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ret, "Conv2DBackpropInputFp162Fp16 get aclTensor* output failed."), return nullptr);
     return output;
 }
 
@@ -477,8 +492,8 @@ const aclTensor* Conv2DBackpropInputFp322Fp32(const aclTensor* input, const aclT
     int64_t useHf32Flag = 0x0;
     aclnnStatus ret = Conv2DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups,
                                                   useHf32Flag, output, executor);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Conv2DBackpropInputFp322Fp32 get aclTensor* output failed."),
-             return nullptr);
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ret, "Conv2DBackpropInputFp322Fp32 get aclTensor* output failed."), return nullptr);
     return output;
 }
 
@@ -492,7 +507,7 @@ const aclTensor* Conv2DBackpropInputHf32(const aclTensor* input, const aclTensor
     int64_t useHf32Flag = 0x40;
     aclnnStatus ret = Conv2DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups,
                                                   useHf32Flag, output, executor);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Conv2DBackpropInputHf32 get aclTensor* output failed."),
+    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE_WITHOUT_REPORT(ret, "Conv2DBackpropInputHf32 get aclTensor* output failed."),
              return nullptr);
     return output;
 }
@@ -507,8 +522,8 @@ const aclTensor* Conv2DBackpropInputBf162Bf16(const aclTensor* input, const aclT
     int64_t useHf32Flag = 0x0;
     aclnnStatus ret = Conv2DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups,
                                                   useHf32Flag, output, executor);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Conv2DBackpropInputBf162Bf16 get aclTensor* output failed."),
-             return nullptr);
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ret, "Conv2DBackpropInputBf162Bf16 get aclTensor* output failed."), return nullptr);
     return output;
 }
 const aclTensor* Conv2DBackpropInput(const aclTensor* input, const aclTensor* weight, const aclTensor* outBackprop,
@@ -521,7 +536,8 @@ const aclTensor* Conv2DBackpropInput(const aclTensor* input, const aclTensor* we
     int64_t useHf32 = useHf32Flag == true ? 0x40 : 0;
     aclnnStatus ret = Conv2DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups,
                                                   useHf32, output, executor);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Conv2DBackpropInput get aclTensor output failed."), return nullptr);
+    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE_WITHOUT_REPORT(ret, "Conv2DBackpropInput get aclTensor output failed."),
+             return nullptr);
     return output;
 }
 OP_TYPE_REGISTER(Conv2DBackpropFilter);
@@ -552,7 +568,7 @@ static aclnnStatus Conv2DBackpropFilterWithFlag(const aclTensor* input, const ac
         Conv2DBackpropFilter, OP_INPUT(input, weightSize, outBackprop), OP_OUTPUT(output),
         OP_ATTR(stride4, pad4, dilation4, groups, dataFormat, paddingString, fromDepthwise, useHf32Flag));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "Conv2DBackpropFilter InferShape failed.");
+        ReportInferShapeFailure("Conv2DBackpropFilter");
         return ACLNN_ERR_INNER_INFERSHAPE_ERROR;
     }
     // useHf32Flag的值为0x40 : 表示HF32
@@ -577,7 +593,8 @@ const aclTensor* Conv2DBackpropFilterFp162Fp32(const aclTensor* input, const acl
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, weight->GetStorageFormat(), op::Format::FORMAT_NCHW);
     aclnnStatus ret = Conv2DBackpropFilterWithFlag(input, weight, outBackprop, stride, padding, dilation, groups,
                                                    useHf32Flag, output, executor);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Conv2DBackpropFilterFp162Fp32 get aclTensor* output failed."),
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ret, "Conv2DBackpropFilterFp162Fp32 get aclTensor* output failed."),
              return nullptr);
     return output;
 }
@@ -593,7 +610,8 @@ const aclTensor* Conv2DBackpropFilterFp322Fp32(const aclTensor* input, const acl
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, weight->GetStorageFormat(), op::Format::FORMAT_NCHW);
     aclnnStatus ret = Conv2DBackpropFilterWithFlag(input, weight, outBackprop, stride, padding, dilation, groups,
                                                    useHf32Flag, output, executor);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Conv2DBackpropFilterFp322Fp32 get aclTensor* output failed."),
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ret, "Conv2DBackpropFilterFp322Fp32 get aclTensor* output failed."),
              return nullptr);
     return output;
 }
@@ -608,8 +626,8 @@ const aclTensor* Conv2DBackpropFilterHf32(const aclTensor* input, const aclTenso
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, weight->GetStorageFormat(), op::Format::FORMAT_NCHW);
     aclnnStatus ret = Conv2DBackpropFilterWithFlag(input, weight, outBackprop, stride, padding, dilation, groups,
                                                    useHf32Flag, output, executor);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Conv2DBackpropFilterHf32 get aclTensor* output failed."),
-             return nullptr);
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ret, "Conv2DBackpropFilterHf32 get aclTensor* output failed."), return nullptr);
     return output;
 }
 
@@ -624,7 +642,8 @@ const aclTensor* Conv2DBackpropFilterBf162Fp32(const aclTensor* input, const acl
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, weight->GetStorageFormat(), op::Format::FORMAT_NCHW);
     aclnnStatus ret = Conv2DBackpropFilterWithFlag(input, weight, outBackprop, stride, padding, dilation, groups,
                                                    useHf32Flag, output, executor);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "Conv2DBackpropFilterBf162Fp32 get aclTensor* output failed."),
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ret, "Conv2DBackpropFilterBf162Fp32 get aclTensor* output failed."),
              return nullptr);
     return output;
 }
@@ -986,7 +1005,7 @@ static aclnnStatus Conv3DBackpropFilterWithFlag(const aclTensor* input, const ac
     auto ret = INFER_SHAPE(Conv3DBackpropFilter, OP_INPUT(input, weightSize, outBackprop), OP_OUTPUT(output),
                            OP_ATTR(stride5, pad6, dilation5, groups, dataFormat, paddingString, useHf32));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "Conv3DBackpropFilter InferShape failed.");
+        ReportInferShapeFailure("Conv3DBackpropFilter");
         output = nullptr;
         return ACLNN_ERR_INNER_INFERSHAPE_ERROR;
     }
@@ -1033,8 +1052,8 @@ const aclTensor* Conv3DBackpropFilterFp162Fp32(const aclTensor* input, const acl
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, weight->GetStorageFormat(), op::Format::FORMAT_NCDHW);
     OP_CHECK(Conv3DBackpropFilterWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, outputPadding,
                                           useHf32, output, executor) == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "Conv3DBackpropFilterFp162Fp32 fail due to Conv3DBackpropFilterWithFlag error."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Conv3DBackpropFilterFp162Fp32 fail due to Conv3DBackpropFilterWithFlag error."),
              return nullptr);
     return output;
 }
@@ -1050,7 +1069,7 @@ const aclTensor* Conv3DBackpropFilterFp322Fp32(const aclTensor* input, const acl
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, weight->GetStorageFormat(), op::Format::FORMAT_NCDHW);
     OP_CHECK(Conv3DBackpropFilterWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, outputPadding,
                                           useHf32, output, executor) == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropFilterWithFlag failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropFilterWithFlag failed."), return nullptr);
     return output;
 }
 
@@ -1063,11 +1082,11 @@ const aclTensor* Conv3DBackpropFilterHf32(const aclTensor* input, const aclTenso
     L0_DFX(Conv3DBackpropFilterHf32, input, weight, outBackprop, stride, padding, dilation, groups);
     int64_t useHf32 = 0x40;
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, weight->GetStorageFormat(), op::Format::FORMAT_NCDHW);
-    OP_CHECK(
-        Conv3DBackpropFilterWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, outputPadding,
-                                     useHf32, output, executor) == ACLNN_SUCCESS,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropFilterHf32 fail due to Conv3DBackpropFilterWithFlag error."),
-        return nullptr);
+    OP_CHECK(Conv3DBackpropFilterWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, outputPadding,
+                                          useHf32, output, executor) == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Conv3DBackpropFilterHf32 fail due to Conv3DBackpropFilterWithFlag error."),
+             return nullptr);
     return output;
 }
 
@@ -1082,8 +1101,8 @@ const aclTensor* Conv3DBackpropFilterBf162Fp32(const aclTensor* input, const acl
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, weight->GetStorageFormat(), op::Format::FORMAT_NCDHW);
     OP_CHECK(Conv3DBackpropFilterWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, outputPadding,
                                           useHf32, output, executor) == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "Conv3DBackpropFilterBf162Fp32 fail due to Conv3DBackpropFilterWithFlag error."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Conv3DBackpropFilterBf162Fp32 fail due to Conv3DBackpropFilterWithFlag error."),
              return nullptr);
     return output;
 }
@@ -1101,8 +1120,8 @@ const aclTensor* Conv3DBackpropFilter(ConvolutionBackwardInputTensor& inputTenso
     OP_CHECK(Conv3DBackpropFilterWithFlag(inputTensor.input, inputTensor.weight, inputTensor.gradOutput, params.stride,
                                           params.padding, params.dilation, params.groups, params.outputPadding, useHf32,
                                           output, executor) == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "Conv3DBackpropFilterBf162Fp32 fail due to Conv3DBackpropFilterWithFlag error."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Conv3DBackpropFilterBf162Fp32 fail due to Conv3DBackpropFilterWithFlag error."),
              return nullptr);
     return output;
 }
@@ -1342,7 +1361,7 @@ static aclnnStatus Conv3DBackpropInputWithFlag(const aclTensor* input, const acl
     auto ret = INFER_SHAPE(Conv3DBackpropInput, OP_INPUT(inputSize, weight, outBackprop), OP_OUTPUT(output),
                            OP_ATTR(stride5, pad6, dilation5, groups, dataFormat, paddingString, useHf32Flag));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "Conv3DBackpropInput InferShape failed.");
+        ReportInferShapeFailure("Conv3DBackpropInput");
         output = nullptr;
         return ACLNN_ERR_INNER_INFERSHAPE_ERROR;
     }
@@ -1382,11 +1401,11 @@ const aclTensor* Conv3DBackpropInputFp162Fp16(const aclTensor* input, const aclT
     L0_DFX(Conv3DBackpropInputFp162Fp16, input, weight, outBackprop, stride, padding, dilation, groups);
     int64_t useHf32Flag = 0x0;
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT16, input->GetStorageFormat(), op::Format::FORMAT_NCDHW);
-    OP_CHECK(
-        Conv3DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, useHf32Flag, output,
-                                    executor, adptParams) == ACLNN_SUCCESS,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropInputFp162Fp16 fail due to Conv3DBackpropInputWithFlag error."),
-        return nullptr);
+    OP_CHECK(Conv3DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, useHf32Flag,
+                                         output, executor, adptParams) == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Conv3DBackpropInputFp162Fp16 fail due to Conv3DBackpropInputWithFlag error."),
+             return nullptr);
     return output;
 }
 // 1971 6HD->FZ with Fp32
@@ -1400,7 +1419,8 @@ const aclTensor* Conv3DBackpropInputFp322Fp32(const aclTensor* input, const aclT
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, input->GetStorageFormat(), op::Format::FORMAT_NCDHW);
     OP_CHECK(Conv3DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, useHf32Flag,
                                          output, executor, adptParams) == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropInputFp322Fp32 due to Conv3DBackpropInputWithFlag error."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Conv3DBackpropInputFp322Fp32 due to Conv3DBackpropInputWithFlag error."),
              return nullptr);
     return output;
 }
@@ -1415,7 +1435,8 @@ const aclTensor* Conv3DBackpropInputHf32(const aclTensor* input, const aclTensor
     auto output = executor->AllocTensor(op::DataType::DT_FLOAT, input->GetStorageFormat(), op::Format::FORMAT_NCDHW);
     OP_CHECK(Conv3DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, useHf32Flag,
                                          output, executor, adptParams) == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropInputHf32 fail due to Conv3DBackpropInputWithFlag error."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Conv3DBackpropInputHf32 fail due to Conv3DBackpropInputWithFlag error."),
              return nullptr);
     return output;
 }
@@ -1428,11 +1449,11 @@ const aclTensor* Conv3DBackpropInputBf162Bf16(const aclTensor* input, const aclT
     L0_DFX(Conv3DBackpropInputBf162Bf16, input, weight, outBackprop, stride, padding, dilation, groups);
     int64_t useHf32Flag = 0x0;
     auto output = executor->AllocTensor(op::DataType::DT_BF16, input->GetStorageFormat(), op::Format::FORMAT_NCDHW);
-    OP_CHECK(
-        Conv3DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, useHf32Flag, output,
-                                    executor, adptParams) == ACLNN_SUCCESS,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropInputBf162Bf16 fail due to Conv3DBackpropInputWithFlag error."),
-        return nullptr);
+    OP_CHECK(Conv3DBackpropInputWithFlag(input, weight, outBackprop, stride, padding, dilation, groups, useHf32Flag,
+                                         output, executor, adptParams) == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Conv3DBackpropInputBf162Bf16 fail due to Conv3DBackpropInputWithFlag error."),
+             return nullptr);
     return output;
 }
 
@@ -1449,7 +1470,8 @@ const aclTensor* Conv3DBackpropInput(ConvolutionBackwardInputTensor& inputTensor
     OP_CHECK(Conv3DBackpropInputWithFlag(inputTensor.input, inputTensor.weight, inputTensor.gradOutput, params.stride,
                                          params.padding, params.dilation, params.groups, useHf32, output, executor,
                                          adptParams) == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropInput fail due to Conv3DBackpropInputWithFlag error."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "Conv3DBackpropInput fail due to Conv3DBackpropInputWithFlag error."),
              return nullptr);
     return output;
 }

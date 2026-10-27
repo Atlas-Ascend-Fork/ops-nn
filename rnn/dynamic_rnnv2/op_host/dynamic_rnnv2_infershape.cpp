@@ -14,9 +14,23 @@
  */
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include "error_util.h"
+#include <string>
+#include <vector>
 
 using namespace ge;
 namespace ops {
+namespace {
+// 合法输入下，InferDataType 内部失败统一上报正式码 EZ1008（Execution_Error），携带 opName 与 reason。
+ge::graphStatus ReportInferDataTypeFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"op_name", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 constexpr int X_SHAPE_SIZE_LIMIT = 3;
 constexpr int WEIGHT_INPUT_SIZE_LIMIT = 2;
 constexpr int RNN_OUTPUT_INDEX_TANHC = 7;
@@ -41,21 +55,29 @@ static ge::graphStatus InferDataType4DynamicRNNV2(gert::InferDataTypeContext* co
     }
 
     OP_CHECK_IF(context->SetOutputDataType(0, output_y_dtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetOutputDataType y Fail"), return ge::GRAPH_FAILED);
+                ReportInferDataTypeFailure(context->GetNodeName(), "failed to set the data type of output y."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->SetOutputDataType(1, input_x_dtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetOutputDataType output_h Fail"), return ge::GRAPH_FAILED);
+                ReportInferDataTypeFailure(context->GetNodeName(), "failed to set the data type of output output_h."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->SetOutputDataType(RNN_OUTPUT_INDEX_C, output_y_dtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetOutputDataType output_c Fail"), return ge::GRAPH_FAILED);
+                ReportInferDataTypeFailure(context->GetNodeName(), "failed to set the data type of output output_c."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->SetOutputDataType(RNN_OUTPUT_INDEX_I, output_y_dtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetOutputDataType i Fail"), return ge::GRAPH_FAILED);
+                ReportInferDataTypeFailure(context->GetNodeName(), "failed to set the data type of output i."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->SetOutputDataType(RNN_OUTPUT_INDEX_J, output_y_dtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetOutputDataType j Fail"), return ge::GRAPH_FAILED);
+                ReportInferDataTypeFailure(context->GetNodeName(), "failed to set the data type of output j."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->SetOutputDataType(RNN_OUTPUT_INDEX_F, output_y_dtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetOutputDataType f Fail"), return ge::GRAPH_FAILED);
+                ReportInferDataTypeFailure(context->GetNodeName(), "failed to set the data type of output f."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->SetOutputDataType(RNN_OUTPUT_INDEX_O, output_y_dtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetOutputDataType o Fail"), return ge::GRAPH_FAILED);
+                ReportInferDataTypeFailure(context->GetNodeName(), "failed to set the data type of output o."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->SetOutputDataType(RNN_OUTPUT_INDEX_TANHC, output_y_dtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetOutputDataType tanhc Fail"), return ge::GRAPH_FAILED);
+                ReportInferDataTypeFailure(context->GetNodeName(), "failed to set the data type of output tanhc."),
+                return ge::GRAPH_FAILED);
 
     OP_LOGD(context->GetNodeName(), "InferDataType4DynamicRNNV2 end");
     return ge::GRAPH_SUCCESS;
@@ -68,16 +90,19 @@ static ge::graphStatus InferShape4DynamicRNNV2(gert::InferShapeContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
 
     OP_CHECK_IF(x_shape->GetDimNum() != X_SHAPE_SIZE_LIMIT,
-                OP_LOGE(context->GetNodeName(), "The dimension count of x should be 3, please check!"),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input x",
+                                                         std::to_string(x_shape->GetDimNum()) + "D",
+                                                         "the shape dim of input x must be 3"),
                 return ge::GRAPH_FAILED);
 
     auto weight_hidden_shape = context->GetInputShape(2);
     OP_CHECK_NULL_WITH_CONTEXT(context, weight_hidden_shape);
 
-    OP_CHECK_IF(
-        weight_hidden_shape->GetDimNum() != WEIGHT_INPUT_SIZE_LIMIT,
-        OP_LOGE(context->GetNodeName(), "The dimension count of weight hidden should be equal to 2, please check!"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(weight_hidden_shape->GetDimNum() != WEIGHT_INPUT_SIZE_LIMIT,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input weight_hidden",
+                                                         std::to_string(weight_hidden_shape->GetDimNum()) + "D",
+                                                         "the shape dim of input weight_hidden must be 2"),
+                return ge::GRAPH_FAILED);
 
     auto y_shape = context->GetOutputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);

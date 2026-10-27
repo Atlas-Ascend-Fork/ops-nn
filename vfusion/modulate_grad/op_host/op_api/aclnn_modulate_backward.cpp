@@ -216,7 +216,7 @@ aclnnStatus aclnnModulateBackwardGetWorkspaceSize(const aclTensor* grad_output, 
     L2_DFX_PHASE_1(aclnnModulateBackward, DFX_IN(grad_output, input, scale, shift),
                    DFX_OUT(grad_input, grad_scale, grad_shift));
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // CREATE_EXECUTOR() 内部使用普通 new，分配失败会抛 bad_alloc，此处 null 检查不可达，故删除。
     auto ret = CheckParams(grad_output, input, scale, shift, grad_input, grad_scale, grad_shift);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
     if (grad_output->IsEmpty() || input->IsEmpty() || grad_input->IsEmpty()) {

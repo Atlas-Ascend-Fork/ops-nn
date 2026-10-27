@@ -26,6 +26,8 @@
 #include "single_layer_lstm_grad_tiling_arch35.h"
 #include "../op_kernel/arch35/single_layer_lstm_grad_wide_workspace.h"
 #include <limits>
+#include <string>
+#include <vector>
 
 namespace optiling {
 const std::string OP_NAME = "SingleLayerLstmGrad";
@@ -94,6 +96,31 @@ constexpr int64_t ORIGINAL_BIAS_COMPONENTS = 2;
 constexpr int32_t MATMUL_TILING_FAILURE = -1;
 const std::vector<std::string> SUPPORT_DIRECTION = {"UNIDIRECTIONAL", "REDIRECTIONAL"};
 
+namespace {
+// 合法输入下 tiling 内部失败统一上报正式码 EZ1008，携带 opName 与 reason。
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+
+std::string Shape2String(const gert::Shape& shape)
+{
+    std::string s = "[";
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        if (i != 0) {
+            s += ", ";
+        }
+        s += std::to_string(shape.GetDim(i));
+    }
+    s += "]";
+    return s;
+}
+} // namespace
+
 class SingleLayerLstmGradTiling {
 public:
     explicit SingleLayerLstmGradTiling(gert::TilingContext* context) : context_(context) {};
@@ -156,34 +183,34 @@ ge::graphStatus SingleLayerLstmGradTiling::GetMMDgateTiling()
     rnnParams_.usedCoreNum = rnnParams_.sysAivCoreNum;
     auto ret = rnnMatmul1.SetAType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
                                    matmul_tiling::DataType::DT_FLOAT);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm1 SetAType fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm1 SetAType fail."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetBType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
                               matmul_tiling::DataType::DT_FLOAT);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm1 SetBType fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm1 SetBType fail."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetCType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
                               matmul_tiling::DataType::DT_FLOAT);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm1 SetCType fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm1 SetCType fail."),
                     return ge::GRAPH_FAILED);
 
     ret = rnnMatmul1.SetDim(rnnParams_.sysAivCoreNum);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm1 SetDim fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm1 SetDim fail."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetOrgShape(rnnParams_.batch, rnnParams_.inputSize + rnnParams_.hiddenSize,
                                  rnnParams_.hiddenSize * GATES_NUM);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm1 SetOrgShape fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm1 SetOrgShape fail."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetShape(rnnParams_.batch, rnnParams_.inputSize + rnnParams_.hiddenSize,
                               rnnParams_.hiddenSize * GATES_NUM);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE,
-                    VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm1 Set single shape fail."), return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm1 Set single shape fail."),
+                    return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetBufferSpace(DEFAULT_BUFFER_SPACE, DEFAULT_BUFFER_SPACE, DEFAULT_BUFFER_SPACE);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE,
-                    VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm1 SetBufferSpace fail."), return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm1 SetBufferSpace fail."),
+                    return ge::GRAPH_FAILED);
 
     ret = rnnMatmul1.GetTiling(tilingData_.dgateMMParam);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm1 GetTiling fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm1 GetTiling fail."),
                     return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -194,33 +221,33 @@ ge::graphStatus SingleLayerLstmGradTiling::GetMMDwTiling()
     matmul_tiling::MultiCoreMatmulTiling rnnMatmul2;
     auto ret = rnnMatmul2.SetAType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
                                    matmul_tiling::DataType::DT_FLOAT, true);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm2 SetAType fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm2 SetAType fail."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetBType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
                               matmul_tiling::DataType::DT_FLOAT);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm2 SetBType fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm2 SetBType fail."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetCType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
                               matmul_tiling::DataType::DT_FLOAT);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm2 SetCType fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm2 SetCType fail."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetDim(rnnParams_.sysAivCoreNum);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm2 SetDim fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm2 SetDim fail."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetOrgShape(rnnParams_.hiddenSize * GATES_NUM, rnnParams_.hiddenSize + rnnParams_.inputSize,
                                  rnnParams_.batch * rnnParams_.timeStep);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm2 SetOrgShape fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm2 SetOrgShape fail."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetShape(rnnParams_.hiddenSize * GATES_NUM, rnnParams_.hiddenSize + rnnParams_.inputSize,
                               rnnParams_.batch * rnnParams_.timeStep);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE,
-                    VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm2 Set single shape fail."), return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm2 Set single shape fail."),
+                    return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetBufferSpace(DEFAULT_BUFFER_SPACE, DEFAULT_BUFFER_SPACE, DEFAULT_BUFFER_SPACE);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE,
-                    VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm2 SetBufferSpace fail."), return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm2 SetBufferSpace fail."),
+                    return ge::GRAPH_FAILED);
 
     ret = rnnMatmul2.GetTiling(tilingData_.dwMMParam);
-    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm2 GetTiling fail."),
+    OP_TILING_CHECK(ret == MATMUL_TILING_FAILURE, ReportTilingFailure(nodeName_, "mm2 GetTiling fail."),
                     return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -229,9 +256,11 @@ ge::graphStatus SingleLayerLstmGradTiling::GetMMDwTiling()
 ge::graphStatus SingleLayerLstmGradTiling::GetMMTilingDataSplit()
 {
     OP_TILING_CHECK(GetMMDgateTiling() != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm1 get tiling fail."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(nodeName_, "mm1 get tiling fail; propagate the lower-layer first error."),
+                    return ge::GRAPH_FAILED);
     OP_TILING_CHECK(GetMMDwTiling() != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "mm2 get tiling fail."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(nodeName_, "mm2 get tiling fail; propagate the lower-layer first error."),
+                    return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -254,11 +283,16 @@ bool SingleLayerLstmGradTiling::CheckParamsDtype()
         }
         auto dtype = context_->GetInputDesc(inputIdx)->GetDataType();
         if (std::find(supportDtype.begin(), supportDtype.end(), dtype) == supportDtype.end()) {
-            VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Input dtype not supported at index %ld.", inputIdx);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(nodeName_, "input " + std::to_string(inputIdx),
+                                                  ge::TypeUtils::DataTypeToSerialString(dtype),
+                                                  "supported dtypes are FLOAT, FLOAT16 and BF16 on Ascend950");
             return false;
         }
         if (dtype != baseDtype) {
-            VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Input dtype inconsistent at index %ld.", inputIdx);
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                nodeName_, "input 0, input " + std::to_string(inputIdx),
+                ge::TypeUtils::DataTypeToSerialString(baseDtype) + ", " + ge::TypeUtils::DataTypeToSerialString(dtype),
+                "all inputs and outputs must share the dtype of input x");
             return false;
         }
     }
@@ -271,11 +305,16 @@ bool SingleLayerLstmGradTiling::CheckParamsDtype()
         }
         auto dtype = context_->GetOutputDesc(outputIdx)->GetDataType();
         if (std::find(supportDtype.begin(), supportDtype.end(), dtype) == supportDtype.end()) {
-            VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Output dtype not supported at index %ld.", outputIdx);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(nodeName_, "output " + std::to_string(outputIdx),
+                                                  ge::TypeUtils::DataTypeToSerialString(dtype),
+                                                  "supported dtypes are FLOAT, FLOAT16 and BF16 on Ascend950");
             return false;
         }
         if (dtype != baseDtype) {
-            VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Output dtype inconsistent at index %ld \n", outputIdx);
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                nodeName_, "output 0, output " + std::to_string(outputIdx),
+                ge::TypeUtils::DataTypeToSerialString(baseDtype) + ", " + ge::TypeUtils::DataTypeToSerialString(dtype),
+                "all inputs and outputs must share the dtype of input x");
             return false;
         }
     }
@@ -285,17 +324,21 @@ bool SingleLayerLstmGradTiling::CheckParamsDtype()
 
 bool SingleLayerLstmGradTiling::ValidateInputShape(int index, const std::vector<int64_t>& expected_dims)
 {
+    const std::string paramName = "input " + std::to_string(index);
     auto input = context_->GetInputShape(index);
-    OP_CHECK_IF(input == nullptr, OP_LOGE(nodeName_, "input %d is nullptr", index), return false);
+    OP_CHECK_IF(input == nullptr, OP_LOGE_WITH_INVALID_INPUT(nodeName_, paramName.c_str()), return false);
     auto shape = input->GetStorageShape();
     if (shape.GetDimNum() != expected_dims.size()) {
-        OP_LOGE(nodeName_, "Input %d has wrong dimension count", index);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName_, paramName.c_str(), std::to_string(shape.GetDimNum()),
+                                                 "input rank must be " + std::to_string(expected_dims.size()));
         return false;
     }
 
     for (size_t i = 0; i < expected_dims.size(); ++i) {
         if (expected_dims[i] != shape.GetDim(i)) {
-            OP_LOGE(nodeName_, "Input %d dim %zu mismatch", index, i);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                nodeName_, paramName.c_str(), Shape2String(shape),
+                "dimension " + std::to_string(i) + " must be " + std::to_string(expected_dims[i]));
             return false;
         }
     }
@@ -304,17 +347,21 @@ bool SingleLayerLstmGradTiling::ValidateInputShape(int index, const std::vector<
 
 bool SingleLayerLstmGradTiling::ValidateOutputShape(int index, const std::vector<int64_t>& expected_dims)
 {
+    const std::string paramName = "output " + std::to_string(index);
     auto output = context_->GetOutputShape(index);
-    OP_CHECK_IF(output == nullptr, OP_LOGE(nodeName_, "output %d is nullptr", index), return false);
+    OP_CHECK_IF(output == nullptr, OP_LOGE_WITH_INVALID_INPUT(nodeName_, paramName.c_str()), return false);
     auto shape = output->GetStorageShape();
     if (shape.GetDimNum() != expected_dims.size()) {
-        OP_LOGE(nodeName_, "Output %d has wrong dimension count", index);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName_, paramName.c_str(), std::to_string(shape.GetDimNum()),
+                                                 "output rank must be " + std::to_string(expected_dims.size()));
         return false;
     }
 
     for (size_t i = 0; i < expected_dims.size(); ++i) {
         if (expected_dims[i] != shape.GetDim(i)) {
-            OP_LOGE(nodeName_, "Output %d dim %zu mismatch", index, i);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                nodeName_, paramName.c_str(), Shape2String(shape),
+                "dimension " + std::to_string(i) + " must be " + std::to_string(expected_dims[i]));
             return false;
         }
     }
@@ -325,18 +372,20 @@ bool SingleLayerLstmGradTiling::CheckXAndInitHShape()
 {
     // get input shape
     auto xInput = context_->GetInputShape(INPUT_X_INDEX);
-    OP_CHECK_IF(xInput == nullptr, OP_LOGE(nodeName_, "input 0 is nullptr"), return false);
+    OP_CHECK_IF(xInput == nullptr, OP_LOGE_WITH_INVALID_INPUT(nodeName_, "x"), return false);
     auto xShape = xInput->GetStorageShape();
     if (xShape.GetDimNum() != INPUT_DIM_NUM) {
-        OP_LOGE(nodeName_, "Input x must be 3D tensor");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName_, "x", std::to_string(xShape.GetDimNum()),
+                                                 "x must be 3D for the LSTM backward contract");
         return false;
     }
     // get wight shape
     auto initHInput = context_->GetInputShape(INPUT_INIT_H_INDEX);
-    OP_CHECK_IF(initHInput == nullptr, OP_LOGE(nodeName_, "input 4 is nullptr"), return false);
+    OP_CHECK_IF(initHInput == nullptr, OP_LOGE_WITH_INVALID_INPUT(nodeName_, "init_h"), return false);
     auto initHShape = initHInput->GetStorageShape();
     if (initHShape.GetDimNum() != INPUT_DIM_NUM) {
-        OP_LOGE(nodeName_, "Input initH must be 3D tensor");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName_, "init_h", std::to_string(initHShape.GetDimNum()),
+                                                 "init_h must be 3D for the LSTM backward contract");
         return false;
     }
 
@@ -346,8 +395,9 @@ bool SingleLayerLstmGradTiling::CheckXAndInitHShape()
     rnnParams_.hiddenSize = initHShape.GetDim(SIZE_INDEX);
     OP_TILING_CHECK(
         rnnParams_.inputSize <= 0 || rnnParams_.hiddenSize <= 0 || rnnParams_.timeStep <= 0 || rnnParams_.batch <= 0,
-        VECTOR_INNER_ERR_REPORT_TILIING(nodeName_,
-                                        "SingleLayerLstmGrad tensor shape not support 0 or negtive, please check."),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(nodeName_, "x, init_h",
+                                               Shape2String(xShape) + ", " + Shape2String(initHShape),
+                                               "all dimensions of x and init_h must be positive"),
         return false);
     return true;
 }
@@ -436,7 +486,7 @@ ge::graphStatus SingleLayerLstmGradTiling::CheckAttrTiling()
     const char* gateOrder = attrs->GetAttrPointer<char>(ATTR_GATE_ORDER_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, gateOrder);
     if (strcmp(gateOrder, "ifjo") != 0 && strcmp(gateOrder, "ijfo") != 0) {
-        OP_LOGE(nodeName_, "SingleLayerLstmGrad attr gate_order [%s] is not support, please check.", gateOrder);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(nodeName_, "gate_order", gateOrder, "supported values are ijfo and ifjo");
         return ge::GRAPH_FAILED;
     }
     rnnParams_.gateOrder = strcmp(gateOrder, "ijfo") == 0 ? static_cast<int64_t>(GateOrder::IJFO) :
@@ -450,9 +500,11 @@ ge::graphStatus SingleLayerLstmGradTiling::CheckAttrOps()
     auto attrs = context_->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
     const char* direction = attrs->GetAttrPointer<char>(ATTR_DIRECTION_INDEX);
-    OP_CHECK_IF(std::find(SUPPORT_DIRECTION.begin(), SUPPORT_DIRECTION.end(), direction) == SUPPORT_DIRECTION.end(),
-                OP_LOGE(nodeName_, "SingleLayerLstmGrad attr direction is not support, please check."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        std::find(SUPPORT_DIRECTION.begin(), SUPPORT_DIRECTION.end(), direction) == SUPPORT_DIRECTION.end(),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(nodeName_, "direction", direction == nullptr ? "nullptr" : direction,
+                                              "supported values are UNIDIRECTIONAL and REDIRECTIONAL"),
+        return ge::GRAPH_FAILED);
     rnnParams_.direction = strcmp(direction, "UNIDIRECTIONAL") == 0 ? 0 : 1;
     return ge::GRAPH_SUCCESS;
 }
@@ -607,11 +659,16 @@ ge::graphStatus SingleLayerLstmGradTiling::Init()
     OP_TILING_CHECK(isRegbase_ && ubSizePlatForm <= REGBASE_DCACHE_SIZE + DEFAULT_UB_RESERVE_SIZE,
                     VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Ascend950 UB size is insufficient."),
                     return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(!CheckParamsShape(), VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "check shape fail."),
-                    return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(!CheckParamsDtype(), VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "check dtype fail."),
-                    return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(!CheckAttr(), VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "check attr fail."),
+    OP_TILING_CHECK(
+        !CheckParamsShape(),
+        OP_LOGE_WITHOUT_REPORT(nodeName_, "CheckParamsShape failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        !CheckParamsDtype(),
+        OP_LOGE_WITHOUT_REPORT(nodeName_, "CheckParamsDtype failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(!CheckAttr(),
+                    OP_LOGE_WITHOUT_REPORT(nodeName_, "CheckAttr failed; propagate the lower-layer first error."),
                     return ge::GRAPH_FAILED);
 
     // get UB L1 size
@@ -623,15 +680,15 @@ ge::graphStatus SingleLayerLstmGradTiling::Init()
     auto dataType = context_->GetInputDesc(INPUT_X_INDEX)->GetDataType();
     const bool privateReplay = isRegbase_ && dataType != ge::DT_FLOAT;
     LstmGradWide::Workspace replay;
-    OP_TILING_CHECK(privateReplay && (rnnParams_.isSeqLength ||
-                                      !replay.Fill(rnnParams_.timeStep, rnnParams_.batch, rnnParams_.inputSize,
-                                                   rnnParams_.hiddenSize, biasComponents_)),
-                    VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Invalid private replay shape or sequence input."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        privateReplay &&
+            (rnnParams_.isSeqLength || !replay.Fill(rnnParams_.timeStep, rnnParams_.batch, rnnParams_.inputSize,
+                                                    rnnParams_.hiddenSize, biasComponents_)),
+        ReportTilingFailure(nodeName_, "Invalid private replay shape or sequence input."), return ge::GRAPH_FAILED);
     inputDSize_ = dataType == ge::DT_FLOAT || privateReplay ? FP32_BYTES : FP32_BYTES / AIV_DOUBLE;
     alignedPara_ = inputDSize_ == FP32_BYTES ? DEFAULT_ALIGNED_FP32 : DEFAULT_ALIGNED_FP16;
     OP_TILING_CHECK(ComputePlan() != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "get matmul tiling data fail."),
+                    OP_LOGE_WITHOUT_REPORT(nodeName_, "ComputePlan failed; propagate the lower-layer first error."),
                     return ge::GRAPH_FAILED);
 
     if (privateReplay) {
@@ -639,7 +696,7 @@ ge::graphStatus SingleLayerLstmGradTiling::Init()
         tilingData_.set_privateBiasComponents(biasComponents_);
     }
     OP_TILING_CHECK(static_cast<uint64_t>(workspaceSize_) > std::numeric_limits<size_t>::max() - sysWorkspaceSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Workspace size overflow."), return ge::GRAPH_FAILED);
+                    ReportTilingFailure(nodeName_, "Workspace size overflow."), return ge::GRAPH_FAILED);
     SetTilingData();
     context_->SetBlockDim(rnnParams_.sysAicCoreNum);
     context_->SetTilingKey(tilingKey_);
@@ -883,7 +940,7 @@ static ge::graphStatus TilingFunc4SingleLayerLstmGrad(gert::TilingContext* conte
     }
     SingleLayerLstmGradTiling tilingObject(context);
     if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Tiling Init failed!");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Tiling Init failed; propagate the lower-layer first error.");
         return ge::GRAPH_FAILED;
     }
 

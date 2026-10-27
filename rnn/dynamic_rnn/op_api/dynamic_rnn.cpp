@@ -44,7 +44,9 @@ DynamicRNN(const aclTensor* input, const aclTensor* weight, const aclTensor* bia
                  nullptr),
         OP_OUTPUT(yOutDirec, hOutDirec, cOutDirec, iOutDirec, jOutDirec, fOutDirec, oOutDirec, tanhCOutDirec),
         OP_ATTR("LSTM", direction, 1, false, 1.0, -1.0, 0, true, "tanh", 0.0, "ifjo", train));
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "DynamicRNN ADD_TO_LAUNCHER_LIST_AICORE failed."),
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "DynamicRNN ADD_TO_LAUNCHER_LIST_AICORE failed; propagate the first error."),
              return nullptrInner);
 
     return std::tuple<aclTensor*, aclTensor*, aclTensor*, aclTensor*, aclTensor*, aclTensor*, aclTensor*, aclTensor*>(

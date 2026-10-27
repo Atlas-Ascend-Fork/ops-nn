@@ -664,7 +664,7 @@ aclnnStatus aclnnGRUBackwardGetWorkspaceSize(const aclTensor* input, const aclTe
         DFX_OUT(dxOut, dhPrevOut, dparamsOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // REMOVED(unreachable): CREATE_EXECUTOR 使用普通 new，失败抛 bad_alloc，该 null 检查不可达
 
     auto ret = CheckParams(input, hx, params, dy, dh, r, z, n, hn, h, batchSizes, hasBias, numLayers, bidirection,
                            batchFirst, dxOut, dhPrevOut, dparamsOut);

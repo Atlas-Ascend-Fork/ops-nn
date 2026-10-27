@@ -22,6 +22,8 @@
 #include "tiling/tiling_api.h"
 #include "error_util.h"
 #include "platform/platform_infos_def.h"
+#include <string>
+#include <vector>
 using namespace AscendC;
 
 namespace optiling {
@@ -49,9 +51,24 @@ const int64_t BATCH_INDEX = 0;
 const int64_t SIZE_INDEX = 1;
 const int64_t MIN_BASE_SHAPE = 2048;
 
+namespace {
+std::string Shape2String(const gert::Shape& shape)
+{
+    std::string s = "[";
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        if (i != 0) {
+            s += ", ";
+        }
+        s += std::to_string(shape.GetDim(i));
+    }
+    s += "]";
+    return s;
+}
+} // namespace
+
 class ThnnFusedLstmCellGradTiling {
 public:
-    explicit ThnnFusedLstmCellGradTiling(gert::TilingContext* context) : context_(context){};
+    explicit ThnnFusedLstmCellGradTiling(gert::TilingContext* context) : context_(context) {};
     ge::graphStatus Init();
     void SetTilingData();
     bool CheckParamsDtype();
@@ -87,11 +104,16 @@ bool ThnnFusedLstmCellGradTiling::CheckParamsDtype()
     for (int64_t inputIdx = 1; inputIdx < INPUT_NUM; inputIdx++) {
         auto dtype = context_->GetInputDesc(inputIdx)->GetDataType();
         if (std::find(supportDtype.begin(), supportDtype.end(), dtype) == supportDtype.end()) {
-            VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Input dtype not supported at index %ld.", inputIdx);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(nodeName_, "input " + std::to_string(inputIdx),
+                                                  ge::TypeUtils::DataTypeToSerialString(dtype),
+                                                  "supported dtypes are FLOAT and FLOAT16");
             return false;
         }
         if (dtype != baseDtype) {
-            VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Input dtype inconsistent at index %ld.", inputIdx);
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                nodeName_, "input 0, input " + std::to_string(inputIdx),
+                ge::TypeUtils::DataTypeToSerialString(baseDtype) + ", " + ge::TypeUtils::DataTypeToSerialString(dtype),
+                "all inputs and outputs must share the dtype of input 0");
             return false;
         }
     }
@@ -100,11 +122,16 @@ bool ThnnFusedLstmCellGradTiling::CheckParamsDtype()
     for (int64_t outputIdx = 0; outputIdx < OUTPUT_NUM; outputIdx++) {
         auto dtype = context_->GetOutputDesc(outputIdx)->GetDataType();
         if (std::find(supportDtype.begin(), supportDtype.end(), dtype) == supportDtype.end()) {
-            VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Output dtype not supported at index %ld.", outputIdx);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(nodeName_, "output " + std::to_string(outputIdx),
+                                                  ge::TypeUtils::DataTypeToSerialString(dtype),
+                                                  "supported dtypes are FLOAT and FLOAT16");
             return false;
         }
         if (dtype != baseDtype) {
-            VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "Output dtype inconsistent at index %ld \n", outputIdx);
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                nodeName_, "output 0, output " + std::to_string(outputIdx),
+                ge::TypeUtils::DataTypeToSerialString(baseDtype) + ", " + ge::TypeUtils::DataTypeToSerialString(dtype),
+                "all inputs and outputs must share the dtype of input 0");
             return false;
         }
     }
@@ -113,17 +140,21 @@ bool ThnnFusedLstmCellGradTiling::CheckParamsDtype()
 
 bool ThnnFusedLstmCellGradTiling::ValidateInputShape(int index, const std::vector<int64_t>& expected_dims)
 {
+    const std::string paramName = "input " + std::to_string(index);
     auto input = context_->GetInputShape(index);
-    OP_CHECK_IF(input == nullptr, OP_LOGE(nodeName_, "input %d is nullptr", index), return false);
+    OP_CHECK_IF(input == nullptr, OP_LOGE_WITH_INVALID_INPUT(nodeName_, paramName.c_str()), return false);
     auto shape = input->GetStorageShape();
     if (shape.GetDimNum() != expected_dims.size()) {
-        OP_LOGE(nodeName_, "Input %d has wrong dimension count", index);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName_, paramName.c_str(), std::to_string(shape.GetDimNum()),
+                                                 "input rank must be " + std::to_string(expected_dims.size()));
         return false;
     }
 
     for (size_t i = 0; i < expected_dims.size(); ++i) {
         if (expected_dims[i] != shape.GetDim(i)) {
-            OP_LOGE(nodeName_, "Input %d dim %zu mismatch", index, i);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                nodeName_, paramName.c_str(), Shape2String(shape),
+                "dimension " + std::to_string(i) + " must be " + std::to_string(expected_dims[i]));
             return false;
         }
     }
@@ -132,17 +163,21 @@ bool ThnnFusedLstmCellGradTiling::ValidateInputShape(int index, const std::vecto
 
 bool ThnnFusedLstmCellGradTiling::ValidateOutputShape(int index, const std::vector<int64_t>& expected_dims)
 {
+    const std::string paramName = "output " + std::to_string(index);
     auto output = context_->GetOutputShape(index);
-    OP_CHECK_IF(output == nullptr, OP_LOGE(nodeName_, "output %d is nullptr", index), return false);
+    OP_CHECK_IF(output == nullptr, OP_LOGE_WITH_INVALID_INPUT(nodeName_, paramName.c_str()), return false);
     auto shape = output->GetStorageShape();
     if (shape.GetDimNum() != expected_dims.size()) {
-        OP_LOGE(nodeName_, "Output %d has wrong dimension count", index);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName_, paramName.c_str(), std::to_string(shape.GetDimNum()),
+                                                 "output rank must be " + std::to_string(expected_dims.size()));
         return false;
     }
 
     for (size_t i = 0; i < expected_dims.size(); ++i) {
         if (expected_dims[i] != shape.GetDim(i)) {
-            OP_LOGE(nodeName_, "Output %d dim %zu mismatch", index, i);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                nodeName_, paramName.c_str(), Shape2String(shape),
+                "dimension " + std::to_string(i) + " must be " + std::to_string(expected_dims[i]));
             return false;
         }
     }
@@ -153,17 +188,18 @@ bool ThnnFusedLstmCellGradTiling::CheckParamsShape()
 {
     // get input shape
     auto dhyInput = context_->GetInputShape(0);
-    OP_CHECK_IF(dhyInput == nullptr, OP_LOGE(nodeName_, "input grad_hy is nullptr"), return false);
+    OP_CHECK_IF(dhyInput == nullptr, OP_LOGE_WITH_INVALID_INPUT(nodeName_, "grad_hy"), return false);
     auto dhyShape = dhyInput->GetStorageShape();
     if (dhyShape.GetDimNum() != INPUT_DIM_NUM) {
-        OP_LOGE(nodeName_, "Input grad_hy must be 2D tensor");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName_, "grad_hy", std::to_string(dhyShape.GetDimNum()),
+                                                 "rank of grad_hy must be 2");
         return false;
     }
     rnnParams_.batch = dhyShape.GetDim(BATCH_INDEX);
     rnnParams_.hiddenSize = dhyShape.GetDim(SIZE_INDEX);
     OP_TILING_CHECK(rnnParams_.hiddenSize <= 0 || rnnParams_.batch <= 0,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        nodeName_, "ThnnFusedLstmCellGrad tensor shape not support 0 or negtive, please check."),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(nodeName_, "grad_hy", Shape2String(dhyShape),
+                                                          "batch and hidden size of grad_hy must be greater than 0"),
                     return false);
 
     std::vector<int64_t> hDim = {rnnParams_.batch, rnnParams_.hiddenSize};
@@ -241,12 +277,17 @@ ge::graphStatus ThnnFusedLstmCellGradTiling::Init()
     size_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
-    OP_TILING_CHECK(CheckAttr() != ge::GRAPH_SUCCESS, VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "check attr fail."),
+    OP_TILING_CHECK(CheckAttr() != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(nodeName_, "CheckAttr failed; propagate the lower-layer first error."),
                     return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(!CheckParamsShape(), VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "check shape fail."),
-                    return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(!CheckParamsDtype(), VECTOR_INNER_ERR_REPORT_TILIING(nodeName_, "check dtype fail."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        !CheckParamsShape(),
+        OP_LOGE_WITHOUT_REPORT(nodeName_, "CheckParamsShape failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        !CheckParamsDtype(),
+        OP_LOGE_WITHOUT_REPORT(nodeName_, "CheckParamsDtype failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
     vector<int64_t> dims = {MIN_BASE_SHAPE};
     uint32_t minSize = 0;
     uint32_t maxSize = 0;
@@ -331,7 +372,7 @@ static ge::graphStatus TilingFunc4ThnnFusedLstmCellGrad(gert::TilingContext* con
 {
     ThnnFusedLstmCellGradTiling tilingObject(context);
     if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Tiling Init failed!");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Tiling Init failed; propagate the lower-layer first error.");
         return ge::GRAPH_FAILED;
     }
 

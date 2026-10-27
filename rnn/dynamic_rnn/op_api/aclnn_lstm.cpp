@@ -1074,12 +1074,14 @@ static aclnnStatus CheckParamsValid(const LstmDataParamsIn& inputs, const LstmDa
 
     // 空指针校验
     ret = CheckParamsNullptr(inputs, outputs);
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ret, "CheckParamsNullptr failed, certain incoming nullptrs may be invalid."),
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ret, "CheckParamsNullptr failed; propagate the lower-layer first error."),
              return ret);
 
     // 属性值校验
     OP_CHECK(inputs.numLayers >= INDEX_1,
-             OP_LOGE(ret, "numLayers should be a positive integer, but %lld was obtained.", inputs.numLayers),
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "numLayers should be a positive integer, but %lld was obtained.",
+                     inputs.numLayers),
              return ACLNN_ERR_PARAM_INVALID);
 
     if (inputs.input->IsEmpty())
@@ -1431,7 +1433,7 @@ static aclnnStatus LstmDataGetWorkspaceSize(LstmDataParamsIn& inputs, LstmDataPa
 {
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // REMOVED(unreachable): CREATE_EXECUTOR 使用普通 new，失败抛 bad_alloc，该 null 检查不可达
 
     aclnnStatus ret;
     LstmDataInfo info;
@@ -1460,11 +1462,15 @@ static aclnnStatus LstmDataGetWorkspaceSize(LstmDataParamsIn& inputs, LstmDataPa
     // 共性处理
     op::Shape data3dShape = {info.T, info.B, info.I};
     auto data = l0op::Reshape(inputs.input, data3dShape, uniqueExecutor.get());
-    OP_CHECK(data != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "reshape input to 3D failed."),
+    OP_CHECK(data != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "reshape input to 3D failed; propagate the lower-layer first error."),
              return ACLNN_ERR_INNER_NULLPTR);
     inputs.input = data;
     info.mask = GetMask(inputs, info, uniqueExecutor.get());
-    OP_CHECK(info.mask != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "GetMask failed."), return ACLNN_ERR_INNER_NULLPTR);
+    OP_CHECK(info.mask != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "GetMask failed; propagate the lower-layer first error."),
+             return ACLNN_ERR_INNER_NULLPTR);
 
     // 运行并完成输出
     ret = LstmDataRun(inputs, info, outputs, uniqueExecutor.get());
@@ -1773,7 +1779,7 @@ aclnnStatus aclnnLSTMGetWorkspaceSize(const aclTensor* input, const aclTensorLis
 
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // REMOVED(unreachable): CREATE_EXECUTOR 使用普通 new，失败抛 bad_alloc，该 null 检查不可达
 
     // 固定写法，参数检查
     auto ret = CheckParams(input, params, hx, hasBias, numLayers, train, bidirectional, batchFirst, output, hy, cy,

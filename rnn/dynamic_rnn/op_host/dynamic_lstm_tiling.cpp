@@ -13,6 +13,7 @@
  * \brief
  */
 #include "dynamic_lstm_tiling.h"
+#include <string>
 #include "tiling/platform/platform_ascendc.h"
 
 using namespace AscendC;
@@ -23,6 +24,16 @@ bool AddWorkspace(gert::TilingContext* context, const size_t workspace)
     size_t* workspace_size = context->GetWorkspaceSizes(1);
     *workspace_size = workspace;
     return true;
+}
+
+// 合法输入下 tiling 内部失败统一上报正式码 EZ1008，携带 opName 与 reason。
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
 }
 } // namespace
 namespace optiling {
@@ -46,22 +57,29 @@ void LstmBaseTiling::GetAICoreIntrinsicDtype(fe::PlatFormInfos& platform_info, c
 
 ge::graphStatus LstmBaseTiling::TilingWithAscendC(gert::TilingContext* context)
 {
-    OP_TILING_CHECK(!CheckParamsShape(context),
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "check shape fail."),
-                    return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(!CheckParamsDtype(context),
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "check dtype fail."),
-                    return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(!CheckAttr(context), VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "check attr fail."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        !CheckParamsShape(context),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "check shape failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        !CheckParamsDtype(context),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "check dtype failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        !CheckAttr(context),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "check attr failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
 
     // get op info
-    OP_TILING_CHECK(GetOpInfo(context, rnnParams) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "get opinfo fail."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        GetOpInfo(context, rnnParams) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "get opinfo failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
     // get attr
-    OP_TILING_CHECK(GetAttr(context, rnnParams) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "get attr fail."), return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        GetAttr(context, rnnParams) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "get attr failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
 
     // get UB L1 size
     auto platformInfo = context->GetPlatformInfo();
@@ -74,15 +92,17 @@ ge::graphStatus LstmBaseTiling::TilingWithAscendC(gert::TilingContext* context)
 
     // get matmul tiling data
     OP_TILING_CHECK(GetMMTilingData(context, tilingData, rnnParams) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "get matmul tiling data fail."),
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                           "get matmul tiling data failed; propagate the lower-layer first error."),
                     return ge::GRAPH_FAILED);
 
     OP_TILING_CHECK(CalcTilingKey(rnnParams) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "get tiling key fail."),
+                    ReportTilingFailure(context->GetNodeName(), "failed to calculate tiling key"),
                     return ge::GRAPH_FAILED);
 
     OP_TILING_CHECK(SetTilingData(context, tilingData, rnnParams) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "set tiling data fail."),
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                           "set tiling data failed; propagate the lower-layer first error."),
                     return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
@@ -117,7 +137,9 @@ bool LstmBaseTiling::CheckParamsDtype(const gert::TilingContext* context)
 
     for (auto dtype : paramsDtype) {
         OP_TILING_CHECK(std::find(supportDtype.begin(), supportDtype.end(), dtype) == supportDtype.end(),
-                        VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "input dtype error, please check."),
+                        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "input",
+                                                              ge::TypeUtils::DataTypeToSerialString(dtype).c_str(),
+                                                              "supported dtypes are FLOAT and FLOAT16"),
                         return false);
     }
 
@@ -172,40 +194,40 @@ ge::graphStatus LstmBaseTiling::GetMMInputTiling(const gert::TilingContext* cont
     int32_t hiddenBlock = 4;
     matmul_tiling::MultiCoreMatmulTiling rnnMatmul1;
     auto ret = rnnMatmul1.SetAType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, dataType);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 SetAType fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm1 SetAType failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetBType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, dataType);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 SetBType fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm1 SetBType failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetCType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
                               matmul_tiling::DataType::DT_FLOAT);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 SetCType fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm1 SetCType failed."),
                     return ge::GRAPH_FAILED);
 
     if (dynamicRnnParams.isBias) {
         rnnMatmul1.SetBiasType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, dataType);
         ret = rnnMatmul1.SetBias(true);
-        OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 SetBias fail."),
+        OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm1 SetBias failed."),
                         return ge::GRAPH_FAILED);
     }
 
     ret = rnnMatmul1.SetDim(dynamicRnnParams.sysAivCoreNum);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 SetDim fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm1 SetDim failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetOrgShape(dynamicRnnParams.timeStep * dynamicRnnParams.batch,
                                  dynamicRnnParams.hiddenSize * hiddenBlock, dynamicRnnParams.inputSize);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 SetOrgShape fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm1 SetOrgShape failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetShape(dynamicRnnParams.timeStep * dynamicRnnParams.batch,
                               dynamicRnnParams.hiddenSize * hiddenBlock, dynamicRnnParams.inputSize);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 Set single shape fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm1 Set single shape failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul1.SetBufferSpace(-1, -1, -1);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 SetBufferSpace fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm1 SetBufferSpace failed."),
                     return ge::GRAPH_FAILED);
 
     ret = rnnMatmul1.GetTiling(dynamicTilingData.inputMMParam);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 GetTiling fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm1 GetTiling failed."),
                     return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -218,32 +240,32 @@ ge::graphStatus LstmBaseTiling::GetMMHiddenTiling(const gert::TilingContext* con
     int32_t hiddenBlock = 4;
     matmul_tiling::MultiCoreMatmulTiling rnnMatmul2;
     auto ret = rnnMatmul2.SetAType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, dataType);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm2 SetAType fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm2 SetAType failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetBType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, dataType);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm2 SetBType fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm2 SetBType failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetCType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
                               matmul_tiling::DataType::DT_FLOAT);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm2 SetCType fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm2 SetCType failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetDim(dynamicRnnParams.sysAivCoreNum);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm2 SetDim fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm2 SetDim failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetOrgShape(dynamicRnnParams.batch, dynamicRnnParams.hiddenSize * hiddenBlock,
                                  dynamicRnnParams.hiddenSize);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm2 SetOrgShape fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm2 SetOrgShape failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetShape(dynamicRnnParams.batch, dynamicRnnParams.hiddenSize * hiddenBlock,
                               dynamicRnnParams.hiddenSize);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm2 Set single shape fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm2 Set single shape failed."),
                     return ge::GRAPH_FAILED);
     ret = rnnMatmul2.SetBufferSpace(-1, -1, -1);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm2 SetBufferSpace fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm2 SetBufferSpace failed."),
                     return ge::GRAPH_FAILED);
 
     ret = rnnMatmul2.GetTiling(dynamicTilingData.hiddenMMParam);
-    OP_TILING_CHECK(ret == -1, VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm2 GetTiling fail."),
+    OP_TILING_CHECK(ret == -1, ReportTilingFailure(context->GetNodeName(), "mm2 GetTiling failed."),
                     return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -256,12 +278,14 @@ ge::graphStatus LstmBaseTiling::GetMMTilingDataSplit(const gert::TilingContext* 
 {
     int64_t aivDouble = 2;
     dynamicRnnParams.usedCoreNum = context->GetPlatformInfo()->GetCoreNumByType("AiCore") * aivDouble;
-    OP_TILING_CHECK(GetMMInputTiling(context, dynamicTilingData, dynamicRnnParams, dataType) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm1 get tiling fail."),
-                    return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(GetMMHiddenTiling(context, dynamicTilingData, dynamicRnnParams, dataType) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "mm2 get tiling fail."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        GetMMInputTiling(context, dynamicTilingData, dynamicRnnParams, dataType) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "mm1 get tiling failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        GetMMHiddenTiling(context, dynamicTilingData, dynamicRnnParams, dataType) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "mm2 get tiling failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -314,8 +338,9 @@ ge::graphStatus LstmBaseTiling::SetTilingData(gert::TilingContext* context, Dyna
     OP_LOGE_IF(rnnRawTilingData == nullptr, ge::GRAPH_FAILED, context->GetNodeType(), "GetRawTilingData failed.");
     OP_TILING_CHECK(
         dynamicTilingData.GetDataSize() > rnnRawTilingData->GetCapacity(),
-        VECTOR_INNER_ERR_REPORT_TILIING(context, "actual tiling data size %zu > context tiling data size %zu",
-                                        dynamicTilingData.GetDataSize(), rnnRawTilingData->GetCapacity()),
+        ReportTilingFailure(context->GetNodeName(),
+                            "actual tiling data size " + std::to_string(dynamicTilingData.GetDataSize()) +
+                                " > context tiling data size " + std::to_string(rnnRawTilingData->GetCapacity())),
         return ge::GRAPH_FAILED);
     dynamicTilingData.SaveToBuffer(rnnRawTilingData->GetData(), rnnRawTilingData->GetCapacity());
     rnnRawTilingData->SetDataSize(dynamicTilingData.GetDataSize());

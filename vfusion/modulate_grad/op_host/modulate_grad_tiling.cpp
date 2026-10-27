@@ -14,6 +14,9 @@
  */
 #include "modulate_grad_tiling.h"
 #include <cassert>
+#include <string>
+#include <vector>
+#include "error_util.h"
 #include "log/log.h"
 #include "platform/platform_infos_def.h"
 #include "platform/platform_info.h"
@@ -47,6 +50,16 @@ constexpr uint32_t BLOCK_SIZE = 32;
 constexpr uint32_t BUFFER_NUM = 2;
 constexpr uint32_t UB_BLOCK_NUM = 384;
 constexpr uint32_t MAX_AVAILABLE_UB_BLOCK_NUM = UB_BLOCK_NUM / BUFFER_NUM * BUFFER_NUM;
+
+// 合法输入下 tiling 内部/环境失败统一上报正式码 EZ1008（Execution_Error），携带 opName 与 reason。
+static ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
 
 void PrintTilingData(gert::TilingContext* context, ModulateGradTilingData& tiling)
 {
@@ -168,8 +181,7 @@ ge::graphStatus TilingPrepareForModulateGrad(gert::TilingParseContext* context)
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     if (compileInfo->totalCoreNum == 0) {
-        OP_LOGE(context, "coreNum %u", compileInfo->totalCoreNum);
-        return ge::GRAPH_FAILED;
+        return ReportTilingFailure(context->GetNodeName(), "the platform reports 0 available AIV cores (coreNum is 0)");
     }
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);

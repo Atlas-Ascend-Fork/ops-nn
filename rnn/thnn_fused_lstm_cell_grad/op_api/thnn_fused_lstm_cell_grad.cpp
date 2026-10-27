@@ -49,7 +49,9 @@ const std::array<const aclTensor*, 3> ThnnFusedLstmCellGrad(const aclTensor* gra
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ThnnFusedLstmCellGrad, OP_INPUT(gradHy, gradC, cx, cy, storage),
                                            OP_OUTPUT(gradInGates, gradCPrev, gradB), OP_ATTR(hasBias));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "ThnnFusedLstmCellGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                               "ThnnFusedLstmCellGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed; propagate the "
+                               "lower-layer first error.");
         return {nullptr, nullptr, nullptr};
     }
     return {gradInGates, gradCPrev, gradB};

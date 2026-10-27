@@ -33,7 +33,7 @@ aclnnStatus ThnnFusedLstmCell(const aclTensor* inputGates, const aclTensor* hidd
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ThnnFusedLstmCell, OP_INPUT(inputGates, hiddenGates, cx, inputBias, hiddenBias), OP_OUTPUT(hy, cy, storage));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "ThnnFusedLstmCell ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ThnnFusedLstmCell ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;

@@ -674,10 +674,12 @@ static aclnnStatus CheckDataParamsValid(const GruDataParamsIn& inputs, const Gru
 {
     aclnnStatus ret = CheckDataParamsNullptr(inputs, outputs);
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ret, "CheckDataParamsNullptr failed, certain incoming nullptrs may be invalid."), return ret);
+             OP_LOGE_WITHOUT_REPORT(ret, "CheckDataParamsNullptr failed; propagate the lower-layer first error."),
+             return ret);
 
     OP_CHECK(inputs.numLayers >= INDEX_1,
-             OP_LOGE(ret, "numLayers should be a positive integer, but %lld was obtained.", inputs.numLayers),
+             OP_LOGE(ACLNN_ERR_PARAM_NULLPTR, "numLayers should be a positive integer, but %lld was obtained.",
+                     inputs.numLayers),
              return ACLNN_ERR_PARAM_NULLPTR);
 
     if (inputs.input->IsEmpty())
@@ -874,7 +876,7 @@ static aclnnStatus GruDataRun(const GruDataParamsIn& inputs, GruDataInfo& info, 
 {
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // REMOVED(unreachable): CREATE_EXECUTOR 使用普通 new，失败抛 bad_alloc，该 null 检查不可达
 
     aclnnStatus ret;
     GruDataInfo info;
@@ -1055,7 +1057,7 @@ aclnnStatus aclnnGRUGetWorkspaceSize(const aclTensor* input, const aclTensorList
     //  定长模式
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // REMOVED(unreachable): CREATE_EXECUTOR 使用普通 new，失败抛 bad_alloc，该 null 检查不可达
 
     // 固定写法，参数检查
     auto ret = CheckParams(input, params, hx, hasBias, numLayers, train, bidirection, batchFirst, output, hy, rOut,

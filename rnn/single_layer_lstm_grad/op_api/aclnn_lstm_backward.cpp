@@ -1715,7 +1715,7 @@ aclnnStatus aclnnLstmBackwardGetWorkspaceSize(
                           numLayers, dropout, train, bidirectional, batchFirst, outputMask),
                    DFX_OUT(dxOut, dhPrevOut, dcPrevOut, dparamsOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // REMOVED(unreachable): CREATE_EXECUTOR 使用普通 new，失败抛 bad_alloc，该 null 检查不可达
     auto ret = CheckParams(input, hx, params, dy, dh, dc, i, g, f, o, h, c, tanhc, dxOut, dhPrevOut, dcPrevOut,
                            dparamsOut, hasBias, numLayers, bidirectional, batchFirst, batchSizesOptional);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);

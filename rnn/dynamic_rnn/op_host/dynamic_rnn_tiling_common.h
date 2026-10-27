@@ -33,7 +33,7 @@ template <typename ContextType>
 void ReportNullPtrWithContext(const ContextType* context, const char* ptrName)
 {
     const char* name = (context->GetNodeName() == nullptr) ? "nil" : context->GetNodeName();
-    std::printf("EZ9999 op[%s], %s is nullptr!", name, ptrName);
+    OP_LOGE_WITH_INVALID_INPUT(name, ptrName);
 }
 const gert::Shape g_vec_1_shape = {1};
 

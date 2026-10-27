@@ -18,6 +18,8 @@
 #include "register/op_def_registry.h"
 #include "tiling/tiling_api.h"
 #include "tiling/platform/platform_ascendc.h"
+#include "error_util.h"
+#include <string>
 
 namespace optiling {
 namespace {
@@ -60,12 +62,13 @@ ge::graphStatus GetInfo(gert::TilingContext* context, ThnnFusedLstmCellTilingInf
     info->sysWorkspaceByteSize = static_cast<size_t>(ascendcPlatform.GetLibApiWorkSpaceSize());
     auto cxShape = context->GetInputShape(INDEX_2);
     if (cxShape == nullptr) {
-        OP_LOGE(context->GetNodeName(), "Failed to get input shape at index %zu.", INDEX_2);
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "cx");
         return ge::GRAPH_FAILED;
     }
     auto cxOriginShape = cxShape->GetOriginShape();
     if (cxOriginShape.GetDimNum() < 2) {
-        OP_LOGE(context->GetNodeName(), "cx shape rank %zu is less than 2.", cxOriginShape.GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "cx",
+                                                 std::to_string(cxOriginShape.GetDimNum()), "rank of cx must be 2");
         return ge::GRAPH_FAILED;
     }
     info->cxShape = cxOriginShape;

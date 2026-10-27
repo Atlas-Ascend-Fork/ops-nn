@@ -709,11 +709,14 @@ static aclnnStatus AttrPreProcess(ConvolutionBackwardParams& params, aclOpExecut
     } else if (params.padding->Size() == CONV2DINPUTDIM) {
         params.padding = ViewPad4dAs6d(params.padding, 0, executor);
     }
-    OP_CHECK(params.stride != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "stride preprocess failed, get nullptr."),
+    OP_CHECK(params.stride != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "stride preprocess failed, get nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
-    OP_CHECK(params.padding != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "padding preprocess failed, get nullptr."),
+    OP_CHECK(params.padding != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "padding preprocess failed, get nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
-    OP_CHECK(params.dilation != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "dilation preprocess failed, get nullptr."),
+    OP_CHECK(params.dilation != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "dilation preprocess failed, get nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
     return ACLNN_SUCCESS;
 }
@@ -733,17 +736,19 @@ static aclnnStatus CastInputByCubeMathType(const aclTensor*& inputTensor, const 
         } else {
             OP_LOGD("According to the configuration of cubeMathType, use Fp16 to calculation.");
             inputTensor = l0op::Cast(inputTensor, DataType::DT_FLOAT16, executor);
-            OP_CHECK(inputTensor != nullptr,
-                     OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input preprocess failed, %s with Cast return nullptr.",
-                             tensorName.c_str()),
-                     return ACLNN_ERR_INNER_NULLPTR);
+            OP_CHECK(
+                inputTensor != nullptr,
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                       "The input preprocess failed, %s with Cast return nullptr.", tensorName.c_str()),
+                return ACLNN_ERR_INNER_NULLPTR);
         }
     } else if (!vecMode) {
         inputTensor = l0op::Cast(inputTensor, promoteDtype, executor);
-        OP_CHECK(inputTensor != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input preprocess failed, %s with Cast return nullptr.",
-                         tensorName.c_str()),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            inputTensor != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The input preprocess failed, %s with Cast return nullptr.",
+                                   tensorName.c_str()),
+            return ACLNN_ERR_INNER_NULLPTR);
     }
     return ACLNN_SUCCESS;
 }
@@ -773,10 +778,10 @@ static aclnnStatus TransDataInputForBackward(const aclTensor*& inputTensor, cons
         }
     }
     OP_CHECK(inputTensor != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "The input preprocess failed, %s with TransData"
-                     " return nullptr.",
-                     tensorName.c_str()),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The input preprocess failed, %s with TransData"
+                                    " return nullptr.",
+                                    tensorName.c_str()),
              return ACLNN_ERR_INNER_NULLPTR);
     return ACLNN_SUCCESS;
 }
@@ -788,10 +793,11 @@ static aclnnStatus InputPreProcess(const aclTensor*& inputTensor, const string& 
 {
     // API输入预处理 l0ResultTensor -> l0op::Contiguous -> l0op::Cast -> l0op::TransData -> inputTensor
     inputTensor = l0op::Contiguous(inputTensor, executor);
-    OP_CHECK(inputTensor != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input preprocess failed, %s with Contiguous return nullptr.",
-                     tensorName.c_str()),
-             return ACLNN_ERR_INNER_NULLPTR);
+    OP_CHECK(
+        inputTensor != nullptr,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                               "The input preprocess failed, %s with Contiguous return nullptr.", tensorName.c_str()),
+        return ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(
         CastInputByCubeMathType(inputTensor, tensorName, params, promoteDtype, executor, vecMode) == ACLNN_SUCCESS,
         ACLNN_ERR_INNER_NULLPTR);
@@ -811,7 +817,8 @@ static aclnnStatus OutputPostProcessTransposed(const aclTensor*& outputTensor, c
     l0ResultTensor = l0op::Cast(l0ResultTensor, outputTensor->GetDataType(), executor);
     OP_LOGD("%s's l0func result after cast: %s", tensorName.c_str(), l0ResultTensor->ToString().GetString());
     OP_CHECK(l0ResultTensor != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "cast %s's l0func result failed, return nullptr.", tensorName.c_str()),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "cast %s's l0func result failed, return nullptr.",
+                                    tensorName.c_str()),
              return ACLNN_ERR_INNER_NULLPTR);
     outputTensor = l0ResultTensor;
 
@@ -832,32 +839,35 @@ static aclnnStatus OutputPostProcess(const aclTensor*& outputTensor, const aclTe
         if (outputTensor->GetDataType() == op::DataType::DT_FLOAT) {
             l0ResultTensor = l0op::CastOnlyForConvBackward(l0ResultTensor, op::DataType::DT_FLOAT16, executor);
             OP_CHECK(l0ResultTensor != nullptr,
-                     OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                             "The output postprocess fail, l0ResultTensor with cast return nullptr."),
+                     OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                            "The output postprocess fail, l0ResultTensor with cast return nullptr."),
                      return ACLNN_ERR_INNER_NULLPTR);
             const aclTensor* transTensor = nullptr;
             transTensor = l0op::TransData(l0ResultTensor, GetPrimaryFormat(outputTensor->GetOriginalFormat()), groups,
                                           executor);
             OP_CHECK(transTensor != nullptr,
-                     OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                             "The output postprocess failed, %s with TransData return nullptr.", tensorName.c_str()),
+                     OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                            "The output postprocess failed, %s with TransData return nullptr.",
+                                            tensorName.c_str()),
                      return ACLNN_ERR_INNER_NULLPTR);
             outputTensor = l0op::Cast(transTensor, outputTensor->GetDataType(), executor);
             OP_CHECK(outputTensor != nullptr,
-                     OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output postprocess failed, %s with Cast return nullptr.",
-                             tensorName.c_str()),
+                     OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                            "The output postprocess failed, %s with Cast return nullptr.",
+                                            tensorName.c_str()),
                      return ACLNN_ERR_INNER_NULLPTR);
         } else {
             l0ResultTensor = l0op::CastOnlyForConvBackward(l0ResultTensor, outputTensor->GetDataType(), executor);
             OP_CHECK(l0ResultTensor != nullptr,
-                     OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                             "The output postprocess fail, l0ResultTensor with cast return nullptr."),
+                     OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                            "The output postprocess fail, l0ResultTensor with cast return nullptr."),
                      return ACLNN_ERR_INNER_NULLPTR);
             outputTensor = l0op::TransData(l0ResultTensor, GetPrimaryFormat(outputTensor->GetOriginalFormat()), groups,
                                            executor);
             OP_CHECK(outputTensor != nullptr,
-                     OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                             "The output postprocess failed, %s with transdata return nullptr.", tensorName.c_str()),
+                     OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                            "The output postprocess failed, %s with transdata return nullptr.",
+                                            tensorName.c_str()),
                      return ACLNN_ERR_INNER_NULLPTR);
         }
     } else {
@@ -865,15 +875,17 @@ static aclnnStatus OutputPostProcess(const aclTensor*& outputTensor, const aclTe
         transTensor = l0op::TransData(l0ResultTensor, GetPrimaryFormat(outputTensor->GetOriginalFormat()), groups,
                                       executor);
         OP_CHECK(transTensor != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output postprocess failed, %s with TransData return nullptr.",
-                         tensorName.c_str()),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                        "The output postprocess failed, %s with TransData return nullptr.",
+                                        tensorName.c_str()),
                  return ACLNN_ERR_INNER_NULLPTR);
         OP_LOGD("%s outputTensor dtype: %s", tensorName.c_str(), op::ToString(outputTensor->GetDataType()).GetString());
         outputTensor = l0op::Cast(transTensor, outputTensor->GetDataType(), executor);
-        OP_CHECK(outputTensor != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output postprocess failed, %s with Cast return nullptr.",
-                         tensorName.c_str()),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            outputTensor != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "The output postprocess failed, %s with Cast return nullptr.", tensorName.c_str()),
+            return ACLNN_ERR_INNER_NULLPTR);
         OP_LOGD("%s outputTensor is: %s", tensorName.c_str(), outputTensor->ToString().GetString());
     }
     return ACLNN_SUCCESS;
@@ -902,8 +914,8 @@ static aclnnStatus OutputPostProcessWithoutTransdata(const aclTensor*& outputTen
     OP_LOGD("%s l0ResultTensor is: %s", tensorName.c_str(), l0ResultTensor->ToString().GetString());
     outputTensor = l0op::Cast(l0ResultTensor, outputTensor->GetDataType(), executor);
     OP_CHECK(outputTensor != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output postprocess failed, %s with Cast return nullptr.",
-                     tensorName.c_str()),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The output postprocess failed, %s with Cast return nullptr.", tensorName.c_str()),
              return ACLNN_ERR_INNER_NULLPTR);
     OP_LOGD("%s outputTensor is: %s", tensorName.c_str(), outputTensor->ToString().GetString());
     return ACLNN_SUCCESS;
@@ -916,26 +928,26 @@ static aclnnStatus OutputViewProcess(ConvolutionBackwardResult& ResultTensor, Co
     // Index 为 0：ViewCopy gradInput
     if ((*outputMask)[0]) {
         auto result = l0op::ViewCopy(ResultTensor.gradInput, outputTensor.gradInput, executor);
-        OP_CHECK(
-            result != nullptr,
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output viewprocess failed, gradInput with ViewCopy return nullptr."),
-            return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(result != nullptr,
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                        "The output viewprocess failed, gradInput with ViewCopy return nullptr."),
+                 return ACLNN_ERR_INNER_NULLPTR);
     }
     // Index 为 1：ViewCopy gradWeight
     if ((*outputMask)[1]) {
         auto result = l0op::ViewCopy(ResultTensor.gradWeight, outputTensor.gradWeight, executor);
-        OP_CHECK(
-            result != nullptr,
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output viewprocess failed, gradWeight with ViewCopy return nullptr."),
-            return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(result != nullptr,
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                        "The output viewprocess failed, gradWeight with ViewCopy return nullptr."),
+                 return ACLNN_ERR_INNER_NULLPTR);
     }
     // Index 为 2：ViewCopy gradBias
     if ((*outputMask)[2]) {
         auto result = l0op::ViewCopy(ResultTensor.gradBias, outputTensor.gradBias, executor);
-        OP_CHECK(
-            result != nullptr,
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output viewprocess failed, gradBias with ViewCopy return nullptr."),
-            return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(result != nullptr,
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                        "The output viewprocess failed, gradBias with ViewCopy return nullptr."),
+                 return ACLNN_ERR_INNER_NULLPTR);
     }
     return ACLNN_SUCCESS;
 }
@@ -975,17 +987,17 @@ static const aclTensor* View4d(const aclTensor* input, aclOpExecutor* executor, 
     aclIntArray* dim = executor->AllocIntArray(append_dim, expendedDim - inputDim);
     CHECK_RET(dim != nullptr, nullptr);
     auto unsqueezedInput = l0op::UnsqueezeNd(contiguousInput, dim, executor);
-    OP_CHECK(
-        unsqueezedInput != nullptr,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The view4d failed, %s with UnsqueezeNd return nullptr.", tensorName.c_str()),
-        return nullptr);
+    OP_CHECK(unsqueezedInput != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The view4d failed, %s with UnsqueezeNd return nullptr.",
+                                    tensorName.c_str()),
+             return nullptr);
 
     // reformat
     auto reformatInput = l0op::ReFormat(unsqueezedInput, op::Format::FORMAT_NCHW);
-    OP_CHECK(
-        reformatInput != nullptr,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The view4d failed, %s with ReFormat return nullptr.", tensorName.c_str()),
-        return nullptr);
+    OP_CHECK(reformatInput != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The view4d failed, %s with ReFormat return nullptr.",
+                                    tensorName.c_str()),
+             return nullptr);
 
     return reformatInput;
 }
@@ -1001,17 +1013,17 @@ static const aclTensor* View3d(const aclTensor* input, aclOpExecutor* executor, 
     aclIntArray* dim = executor->AllocIntArray(append_dim, 1);
     CHECK_RET(dim != nullptr, nullptr);
     auto squeezedInput = l0op::SqueezeNd(contiguousInput, dim, executor);
-    OP_CHECK(
-        squeezedInput != nullptr,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The view3d failed, %s with SqueezeNd return nullptr.", tensorName.c_str()),
-        return nullptr);
+    OP_CHECK(squeezedInput != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The view3d failed, %s with SqueezeNd return nullptr.",
+                                    tensorName.c_str()),
+             return nullptr);
 
     // reformat
     auto reformatInput = l0op::ReFormat(squeezedInput, op::Format::FORMAT_NCL);
-    OP_CHECK(
-        reformatInput != nullptr,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The view3d failed, %s with ReFormat return nullptr.", tensorName.c_str()),
-        return nullptr);
+    OP_CHECK(reformatInput != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The view3d failed, %s with ReFormat return nullptr.",
+                                    tensorName.c_str()),
+             return nullptr);
 
     return reformatInput;
 }
@@ -1051,13 +1063,15 @@ static const aclTensor* View3dWithGroups(const int64_t& groups, const aclTensor*
     CHECK_RET(contiguousInput != nullptr, nullptr);
     auto squeezedInput = l0op::SqueezeNd(contiguousInput, squeezeDim, executor);
     OP_CHECK(squeezedInput != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "View3dWithGroups failed: %s return nullptr after SqueezeNd operation.",
-                     tensorName.c_str()),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "View3dWithGroups failed: %s return nullptr after SqueezeNd operation.",
+                                    tensorName.c_str()),
              return nullptr);
     auto reformatedInput = l0op::ReFormat(squeezedInput, op::Format::FORMAT_NCL);
     OP_CHECK(reformatedInput != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "View3dWithGroups failed: %s return nullptr after ReFormat operation.",
-                     tensorName.c_str()),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "View3dWithGroups failed: %s return nullptr after ReFormat operation.",
+                                    tensorName.c_str()),
              return nullptr);
     return reformatedInput;
 }
@@ -1075,13 +1089,15 @@ static const aclTensor* View4dWithGroups(const int64_t& groups, const aclTensor*
     CHECK_RET(contiguousInput != nullptr, nullptr);
     auto unsqueezedInput = l0op::UnsqueezeNd(contiguousInput, unSqueezeDim, executor);
     OP_CHECK(unsqueezedInput != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "View4dWithGroups failed: %s return nullptr after UnsqueezeNd operation.",
-                     tensorName.c_str()),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "View4dWithGroups failed: %s return nullptr after UnsqueezeNd operation.",
+                                    tensorName.c_str()),
              return nullptr);
     auto reformatedInput = l0op::ReFormat(unsqueezedInput, op::Format::FORMAT_NCHW);
     OP_CHECK(reformatedInput != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "View4dWithGroups failed: %s return nullptr after ReFormat operation.",
-                     tensorName.c_str()),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "View4dWithGroups failed: %s return nullptr after ReFormat operation.",
+                                    tensorName.c_str()),
              return nullptr);
     return reformatedInput;
 }
@@ -1271,8 +1287,9 @@ static const aclTensor* CalcConv2DBpInputByPostDilation(ConvolutionBackwardInput
                                            params.groups,    params.outputMask, params.cubeMathType};
     auto dxGradInputNC1HWC0 = PerformConv2DBackpropInput(newInputTensor, newparams, executor);
     OP_CHECK(dxGradInputNC1HWC0 != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "The calculation with PerformConv2DBackpropInput failed, Conv2dBackpropInput return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(
+                 ACLNN_ERR_INNER_NULLPTR,
+                 "The calculation with PerformConv2DBackpropInput failed, Conv2dBackpropInput return nullptr."),
              return nullptr);
     return PostDilation(dxGradInputNC1HWC0, inputTensor, params, executor);
 }
@@ -1301,7 +1318,8 @@ static const aclTensor* CalculateConv2DBackpropInput(ConvolutionBackwardInputTen
         dxGradInputNC1HWC0Res = PerformConv2DBackpropInput(inputTensor, params, executor);
     }
     OP_CHECK(dxGradInputNC1HWC0Res != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The calculation with dxGradInputNC1HWC0Res failed, return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The calculation with dxGradInputNC1HWC0Res failed, return nullptr."),
              return nullptr);
     return dxGradInputNC1HWC0Res;
 }
@@ -1339,10 +1357,12 @@ static aclnnStatus CalcGradBiasByReduceSum(ConvolutionBackwardInputTensor& input
     aclIntArray* preshapeList = executor->AllocIntArray(reshapeList, 3);
     CHECK_RET(preshapeList != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto gradReshape = l0op::Reshape(gradContiguous, preshapeList, executor);
-    OP_CHECK(gradReshape != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The Reshape with gradOutput failed."),
+    OP_CHECK(gradReshape != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The Reshape with gradOutput failed."),
              return ACLNN_ERR_INNER_NULLPTR);
     auto gradReshapeND = l0op::ReFormat(gradReshape, op::Format::FORMAT_ND);
-    OP_CHECK(gradReshapeND != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The ReFormat with gradOutput failed."),
+    OP_CHECK(gradReshapeND != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The ReFormat with gradOutput failed."),
              return ACLNN_ERR_INNER_NULLPTR);
     OP_LOGD("gradReshapeND: %s", gradReshapeND->ToString().GetString());
     int64_t reduceAxis = 2; // 2 : reduce_sum的axis参数， 表示在第2维进行reduce求和
@@ -1355,7 +1375,8 @@ static aclnnStatus CalcGradBiasByReduceSum(ConvolutionBackwardInputTensor& input
     aclIntArray* pdim = executor->AllocIntArray(dim, 2);
     CHECK_RET(pdim != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto gradBiasResult = l0op::ReduceSumOp(gradReshapeND, pdim, false, executor);
-    OP_CHECK(gradBiasResult != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The ReduceSumOp with gradOutput failed."),
+    OP_CHECK(gradBiasResult != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The ReduceSumOp with gradOutput failed."),
              return ACLNN_ERR_INNER_NULLPTR);
     OP_LOGD("gradBiasResult: %s", gradBiasResult->ToString().GetString());
     CHECK_RET(
@@ -1599,8 +1620,9 @@ static aclnnStatus CalculateConv2DBackward(ConvolutionBackwardInputTensor& input
         if (transTo1x1DwFlag) {
             gradWeightFZ = Conv2DBackpropFilterBy1x1Dw(inputTensor, params, executor, conv2DBp2MatmulMask);
             OP_CHECK(gradWeightFZ != nullptr,
-                     OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                             "The calculation with empty tensor failed, Conv2dBackpropFilter return nullptr."),
+                     OP_LOGE_WITHOUT_REPORT(
+                         ACLNN_ERR_INNER_NULLPTR,
+                         "The calculation with empty tensor failed, Conv2dBackpropFilter return nullptr."),
                      return ACLNN_ERR_INNER_NULLPTR);
             CHECK_RET(OutputPostProcess(outputTensor.gradWeight, gradWeightFZ, "gradWeight", params.groups, executor) ==
                           ACLNN_SUCCESS,
@@ -1639,10 +1661,11 @@ static aclnnStatus CalculateConv2DBackward(ConvolutionBackwardInputTensor& input
         OP_LOGD("Enter dx Calculate");
         const aclTensor* gradInputNC1HWC0 = nullptr;
         gradInputNC1HWC0 = CalculateConv2DBackpropInput(inputTensor, params, executor);
-        OP_CHECK(gradInputNC1HWC0 != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                         "The calculation with empty tensor failed, Conv2dBackpropInput return nullptr."),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            gradInputNC1HWC0 != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "The calculation with empty tensor failed, Conv2dBackpropInput return nullptr."),
+            return ACLNN_ERR_INNER_NULLPTR);
         auto status = OutputPostProcess(outputTensor.gradInput, gradInputNC1HWC0, "gradInput", params.groups, executor);
         CHECK_RET(status == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     }
@@ -1695,10 +1718,11 @@ static aclnnStatus CalculateConv2DBackward(ConvolutionBackwardInputTensor& input
                                                     params.stride, params.padding, params.dilation, params.groups,
                                                     useHf32, inputDtype, executor);
         }
-        OP_CHECK(gradWeightFZ != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                         "The calculation with empty tensor failed, Conv2dBackpropFilter return nullptr."),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            gradWeightFZ != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "The calculation with empty tensor failed, Conv2dBackpropFilter return nullptr."),
+            return ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(OutputPostProcess(outputTensor.gradWeight, gradWeightFZ, "gradWeight", params.groups, executor) ==
                       ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
@@ -1751,7 +1775,8 @@ static aclnnStatus SliceGradInputByOutputPadding(const aclTensor*& gradInputTmp,
             auto sizesArr = executor->AllocIntArray(sizes.data(), sizes.size());
             gradInputTmp = l0op::Slice(gradInputTmp, offsetsArr, sizesArr, executor);
             OP_CHECK(gradInputTmp != nullptr,
-                     OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Slice gradInputTmp for output_padding failed, return nullptr."),
+                     OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                            "Slice gradInputTmp for output_padding failed, return nullptr."),
                      return ACLNN_ERR_INNER_NULLPTR);
         }
     }
@@ -1769,7 +1794,8 @@ static aclnnStatus CalcConv2DBackTransposeInputGrad(ConvolutionBackwardInputTens
     OP_LOGD("Enter dx Calculate");
     const aclTensor* gradInputTmp = CalcDxByConv2d5Hd(inputTensor, params, executor, useHf32);
     OP_CHECK(gradInputTmp != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The calculation with empty tensor failed, Conv2d5Hd return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The calculation with empty tensor failed, Conv2d5Hd return nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(SliceGradInputByOutputPadding(gradInputTmp, outputTensor, params, executor) == ACLNN_SUCCESS,
               ACLNN_ERR_INNER_NULLPTR);
@@ -1863,10 +1889,11 @@ static aclnnStatus CalculateConv2DTransposeBackward(ConvolutionBackwardInputTens
                                                     useHf32, inputTensor.input->GetDataType(), executor);
         }
 
-        OP_CHECK(gradWeightFZ != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                         "The calculation with empty tensor failed, Conv2dBackpropFilter return nullptr."),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            gradWeightFZ != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "The calculation with empty tensor failed, Conv2dBackpropFilter return nullptr."),
+            return ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(OutputPostProcess(outputTensor.gradWeight, gradWeightFZ, "gradWeight", params.groups, executor) ==
                       ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
@@ -1930,15 +1957,17 @@ static aclnnStatus CalculateConv1DBackwardByMatmulImpl(ConvolutionBackwardInputT
         auto mmGradInput = ExecBatchMatmulOp(gradOutputND, weightND, gradInputND, false, false, params.cubeMathType,
                                              executor);
         OP_CHECK(mmGradInput != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The result of matmul is nullptr in Conv1DBackward prop input"),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                        "The result of matmul is nullptr in Conv1DBackward prop input"),
                  return ACLNN_ERR_INNER_NULLPTR);
         auto gradInput = ViewWithShape(mmGradInput, outputTensor.gradInput->GetViewShape(), executor);
         CHECK_RET(gradInput != nullptr, ACLNN_ERR_INNER_NULLPTR);
         auto result = l0op::ViewCopy(gradInput, outputTensor.gradInput, executor);
-        OP_CHECK(result != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                         "The output view process failed, gradInput with ViewCopy in matmul return nullptr"),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            result != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "The output view process failed, gradInput with ViewCopy in matmul return nullptr"),
+            return ACLNN_ERR_INNER_NULLPTR);
     }
 
     // 用 matmul 实现 Convolution1DBackward dw
@@ -1953,14 +1982,16 @@ static aclnnStatus CalculateConv1DBackwardByMatmulImpl(ConvolutionBackwardInputT
         auto mmGradWeight = ExecBatchMatmulOp(gradOutputND, inputND, gradWeightND, true, false, params.cubeMathType,
                                               executor);
         OP_CHECK(mmGradWeight != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The result of matmul is nullptr in Conv1DBackward prop weight."),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                        "The result of matmul is nullptr in Conv1DBackward prop weight."),
                  return ACLNN_ERR_INNER_NULLPTR);
         auto gradWeight = ViewWithShape(mmGradWeight, outputTensor.gradWeight->GetViewShape(), executor);
         CHECK_RET(gradWeight != nullptr, ACLNN_ERR_INNER_NULLPTR);
         auto result = l0op::ViewCopy(gradWeight, outputTensor.gradWeight, executor);
         OP_CHECK(result != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                         "The output view process failed, gradWeight with ViewCopy in matmul return nullptr."),
+                 OP_LOGE_WITHOUT_REPORT(
+                     ACLNN_ERR_INNER_NULLPTR,
+                     "The output view process failed, gradWeight with ViewCopy in matmul return nullptr."),
                  return ACLNN_ERR_INNER_NULLPTR);
     }
     return ACLNN_SUCCESS;
@@ -2461,7 +2492,7 @@ static aclnnStatus CalculateConv3DBackwardDwByMmMode(ConvolutionBackwardInputTen
                                            batchMmInput.isLeftTranspose, batchMmInput.isRightTranspose,
                                            params.cubeMathType, executor);
     OP_CHECK(gradWeightNND != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The ExecBatchMatmulOp for 3ddw return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The ExecBatchMatmulOp for 3ddw return nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
 
     if (dw1x1Mode == Dw1x1TransToMmMode::BATCH_N) {
@@ -2813,7 +2844,8 @@ static aclnnStatus CalculateConv3DBackwardByMatmulImpl(ConvolutionBackwardInputT
                                                      batchMmInput.outputData, batchMmInput.isLeftTranspose,
                                                      batchMmInput.isRightTranspose, params.cubeMathType, executor);
                 OP_CHECK(gradInputND != nullptr,
-                         OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The Matmul In Conv3DBackpropInput Return Nullptr."),
+                         OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                                "The Matmul In Conv3DBackpropInput Return Nullptr."),
                          return ACLNN_ERR_INNER_NULLPTR);
                 auto gradInputNCDHW = DoPostMatmulForConv3dBpInput(gradInputND, inputTensor, outputTensor, executor,
                                                                    conv2MmMode);
@@ -3112,7 +3144,7 @@ static aclnnStatus PrepareConv3DBackpropInputParams(ConvolutionBackwardInputTens
         CheckN2HEnable(tempTensor.weight, tempTensor.input, stride5, dilation5, pad6, params.groups)) {
         auto ret = N2HOptimize(tempTensor.weight, tempTensor.gradOutput, &adptParams, executor);
         if (ret != ACLNN_SUCCESS) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropInput N2HOptimize failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Conv3DBackpropInput N2HOptimize failed.");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -3172,8 +3204,8 @@ static aclnnStatus CalculateConv3DBackwardDx(ConvolutionBackwardInputTensor& inp
         outputTransdataFlag = false;
     }
     OP_CHECK(gradInputNDC1HWC0 != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "The calculation with empty tensor failed, Conv3DBackpropInput return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The calculation with empty tensor failed, Conv3DBackpropInput return nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
     aclnnStatus status = outputTransdataFlag ? OutputPostProcess(outputTensor.gradInput, gradInputNDC1HWC0, "gradInput",
                                                                  params.groups, executor) :
@@ -3209,9 +3241,10 @@ static aclnnStatus RunConv3DBackwardDx(ConvolutionBackwardInputTensor& inputTens
     aclnnStatus dxStatus = CalculateConv3DBackwardDx(inputTensor, outputTensor, params, executor, useHf32, vecModeFlag,
                                                      useV2Flag, curArch);
     if (dxStatus != ACLNN_SUCCESS && !vecModeFlag) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                "Conv3dBackpropInput cube path failed while the L1 estimate passed, the shape may be out of the "
-                "cube capability circle, please check the input shape and filter size.");
+        OP_LOGE_WITHOUT_REPORT(
+            ACLNN_ERR_INNER_NULLPTR,
+            "Conv3dBackpropInput cube path failed while the L1 estimate passed, the shape may be out of the "
+            "cube capability circle, please check the input shape and filter size.");
     }
     return dxStatus;
 }
@@ -3230,19 +3263,21 @@ static aclnnStatus CalculateConv3DBackwardDwOnMask(ConvolutionBackwardInputTenso
             gradWeightND = l0op::Conv3DBackpropFilter(inputTensor, params, executor, useHf32);
         }
 
-        OP_CHECK(gradWeightND != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                         "The calculation with empty tensor failed, Conv3dBackpropFilter return nullptr."),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            gradWeightND != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "The calculation with empty tensor failed, Conv3dBackpropFilter return nullptr."),
+            return ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(OutputPostProcessWithoutTransdata(outputTensor.gradWeight, gradWeightND, "gradWeight", executor) ==
                       ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
     } else {
         const aclTensor* gradWeightFZ3D = GetGradWeightFZ3D(inputTensor, params, executor, useHf32);
-        OP_CHECK(gradWeightFZ3D != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                         "The calculation with empty tensor failed, Conv2dBackpropInput return nullptr."),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            gradWeightFZ3D != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "The calculation with empty tensor failed, Conv2dBackpropInput return nullptr."),
+            return ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(OutputPostProcess(outputTensor.gradWeight, gradWeightFZ3D, "gradWeight", params.groups, executor) ==
                       ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
@@ -3341,7 +3376,7 @@ static aclnnStatus CalcConv3DBackTransposeInputGrad(ConvolutionBackwardInputTens
                                                    params.padding, params.dilation, params.groups, executor);
         }
         OP_CHECK(gradInputTmp != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "l0function result of Conv3dv2NCDHW return nullptr."),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "l0function result of Conv3dv2NCDHW return nullptr."),
                  return ACLNN_ERR_INNER_NULLPTR);
         if (params.transposed && params.outputPadding != nullptr) {
             bool hasNonZeroOutputPadding = false;
@@ -3362,10 +3397,10 @@ static aclnnStatus CalcConv3DBackTransposeInputGrad(ConvolutionBackwardInputTens
                 auto offsetsArr = executor->AllocIntArray(offsets.data(), offsets.size());
                 auto sizesArr = executor->AllocIntArray(sizes.data(), sizes.size());
                 gradInputTmp = l0op::Slice(gradInputTmp, offsetsArr, sizesArr, executor);
-                OP_CHECK(
-                    gradInputTmp != nullptr,
-                    OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Slice gradInputTmp for output_padding failed, return nullptr."),
-                    return ACLNN_ERR_INNER_NULLPTR);
+                OP_CHECK(gradInputTmp != nullptr,
+                         OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                                "Slice gradInputTmp for output_padding failed, return nullptr."),
+                         return ACLNN_ERR_INNER_NULLPTR);
             }
         }
         outputPostProcessRet = OutputPostProcessTransposed(outputTensor.gradInput, gradInputTmp, "gradInput", executor);
@@ -3384,7 +3419,7 @@ static aclnnStatus CalcConv3DBackTransposeInputGrad(ConvolutionBackwardInputTens
                                                params.padding, params.dilation, params.groups, executor);
         }
         OP_CHECK(gradInputTmp != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "l0function result of Conv3d6Hd return nullptr."),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "l0function result of Conv3d6Hd return nullptr."),
                  return ACLNN_ERR_INNER_NULLPTR);
         outputPostProcessRet = OutputPostProcess(outputTensor.gradInput, gradInputTmp, "gradInput", params.groups,
                                                  executor);
@@ -3452,8 +3487,8 @@ static aclnnStatus CalcConv3DTransposeGradWeight(ConvolutionBackwardInputTensor&
     }
 
     OP_CHECK(gradWeightFZ3D != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "The calculation with empty tensor failed, Conv2dBackpropFilter return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The calculation with empty tensor failed, Conv2dBackpropFilter return nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
     if (Ops::NN::AclnnUtil::IsRegbase()) {
         CHECK_RET(OutputPostProcessWithoutTransdata(outputTensor.gradWeight, gradWeightFZ3D, "gradWeight", executor) ==
@@ -3636,44 +3671,51 @@ static aclnnStatus ApplySwapDHBeforeCalculation(ConvolutionBackwardInputTensor& 
 
     // Swap D and H for input tensors
     inputTensor.input = SwapDHDimensions(inputTensor.input, executor);
-    OP_CHECK(inputTensor.input != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Swap D and H for input failed."),
+    OP_CHECK(inputTensor.input != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Swap D and H for input failed."),
              return ACLNN_ERR_INNER_NULLPTR);
 
     inputTensor.gradOutput = SwapDHDimensions(inputTensor.gradOutput, executor);
-    OP_CHECK(inputTensor.gradOutput != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Swap D and H for gradOutput failed."),
+    OP_CHECK(inputTensor.gradOutput != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Swap D and H for gradOutput failed."),
              return ACLNN_ERR_INNER_NULLPTR);
 
     inputTensor.weight = SwapDHDimensions(inputTensor.weight, executor);
-    OP_CHECK(inputTensor.weight != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Swap D and H for weight failed."),
+    OP_CHECK(inputTensor.weight != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Swap D and H for weight failed."),
              return ACLNN_ERR_INNER_NULLPTR);
 
     // Adjust stride, padding, dilation parameters by swapping D and H indices
     if (params.stride->Size() == CONV3D_ATTR_DIM) {
         params.stride = SwapDHInArray3(params.stride, executor);
-        OP_CHECK(params.stride != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for stride failed."),
+        OP_CHECK(params.stride != nullptr,
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for stride failed."),
                  return ACLNN_ERR_INNER_NULLPTR);
     }
 
     if (params.dilation->Size() == CONV3D_ATTR_DIM) {
         params.dilation = SwapDHInArray3(params.dilation, executor);
-        OP_CHECK(params.dilation != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for dilation failed."),
+        OP_CHECK(params.dilation != nullptr,
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for dilation failed."),
                  return ACLNN_ERR_INNER_NULLPTR);
     }
 
     if (params.padding->Size() == CONV3D_PAD_DIM) {
         params.padding = SwapDHInPaddingArray6(params.padding, executor);
-        OP_CHECK(params.padding != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for padding failed."),
+        OP_CHECK(params.padding != nullptr,
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for padding failed."),
                  return ACLNN_ERR_INNER_NULLPTR);
     } else if (params.padding->Size() == CONV3D_ATTR_DIM) {
         params.padding = SwapDHInArray3(params.padding, executor);
-        OP_CHECK(params.padding != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for padding failed."),
+        OP_CHECK(params.padding != nullptr,
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for padding failed."),
                  return ACLNN_ERR_INNER_NULLPTR);
     }
 
     if (params.outputPadding->Size() == CONV3D_ATTR_DIM) {
         params.outputPadding = SwapDHInArray3(params.outputPadding, executor);
         OP_CHECK(params.outputPadding != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for outputPadding failed."),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "AllocIntArray for outputPadding failed."),
                  return ACLNN_ERR_INNER_NULLPTR);
     }
 
@@ -3690,14 +3732,14 @@ static aclnnStatus RestoreDHAfterCalculation(ConvolutionBackwardResult& outputTe
     if ((*params.outputMask)[0] && outputTensor.gradInput != nullptr) {
         outputTensor.gradInput = SwapDHDimensions(outputTensor.gradInput, executor);
         OP_CHECK(outputTensor.gradInput != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Restore D and H for gradInput failed."),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Restore D and H for gradInput failed."),
                  return ACLNN_ERR_INNER_NULLPTR);
     }
 
     if ((*params.outputMask)[1] && outputTensor.gradWeight != nullptr) {
         outputTensor.gradWeight = SwapDHDimensions(outputTensor.gradWeight, executor);
         OP_CHECK(outputTensor.gradWeight != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Restore D and H for gradWeight failed."),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Restore D and H for gradWeight failed."),
                  return ACLNN_ERR_INNER_NULLPTR);
     }
 
@@ -3967,7 +4009,7 @@ aclnnStatus aclnnConvolutionBackwardGetWorkspaceSize(
                    DFX_OUT(gradInput, gradWeight, gradBias));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // REMOVED(unreachable): CREATE_EXECUTOR 使用普通 new，失败抛 bad_alloc，该 null 检查不可达
 
     ConvolutionBackwardInputTensor inputTensor = {gradOutput, input, weight};
     ConvolutionBackwardOutput outputTensor = {gradInput, gradWeight, gradBias};
@@ -4039,10 +4081,12 @@ static const aclTensor* ReshapeTensor(const aclTensor* input, aclOpExecutor* exe
     CHECK_RET(dimsArray != nullptr, nullptr);
     auto reshapeInput = l0op::Reshape(contiguousInput, dimsArray, executor);
     OP_CHECK(reshapeInput != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The Reshape with %s failed.", conf.tensorName.c_str()), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The Reshape with %s failed.", conf.tensorName.c_str()),
+             return nullptr);
     auto finalInput = l0op::ReFormat(reshapeInput, conf.targetFormat);
     OP_CHECK(finalInput != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The ReFormat with %s failed.", conf.tensorName.c_str()), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The ReFormat with %s failed.", conf.tensorName.c_str()),
+             return nullptr);
     return finalInput;
 }
 
@@ -4106,18 +4150,21 @@ static aclnnStatus ViewCopyTbcBackwardResults(ConvolutionBackwardResult& resultT
 {
     auto gradInputResult = l0op::ViewCopy(resultTensor.gradInput, finalTensor.gradInput, executor);
     OP_CHECK(gradInputResult != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "The aclnnConvTbcBackward output viewprocess failed, gradInput with ViewCopy return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(
+                 ACLNN_ERR_INNER_NULLPTR,
+                 "The aclnnConvTbcBackward output viewprocess failed, gradInput with ViewCopy return nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
     auto gradWeightResult = l0op::ViewCopy(resultTensor.gradWeight, finalTensor.gradWeight, executor);
     OP_CHECK(gradWeightResult != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "The aclnnConvTbcBackward output viewprocess failed, gradWeight with ViewCopy return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(
+                 ACLNN_ERR_INNER_NULLPTR,
+                 "The aclnnConvTbcBackward output viewprocess failed, gradWeight with ViewCopy return nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
     auto gradBiasResult = l0op::ViewCopy(resultTensor.gradBias, finalTensor.gradBias, executor);
     OP_CHECK(gradBiasResult != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                     "The aclnnConvTbcBackward output viewprocess failed, gradBias with ViewCopy return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(
+                 ACLNN_ERR_INNER_NULLPTR,
+                 "The aclnnConvTbcBackward output viewprocess failed, gradBias with ViewCopy return nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
     return ACLNN_SUCCESS;
 }
@@ -4210,7 +4257,7 @@ aclnnStatus aclnnConvTbcBackwardGetWorkspaceSize(const aclTensor* self, const ac
                    DFX_OUT(gradInput, gradWeight, gradBias));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // REMOVED(unreachable): CREATE_EXECUTOR 使用普通 new，失败抛 bad_alloc，该 null 检查不可达
     Ops::NN::Conv::ConvTbcBackwardInput inputTensor = {self, input, weight, bias};
     Ops::NN::Conv::ConvTbcBackwardOutput outputTensor = {gradInput, gradWeight, gradBias};
     Ops::NN::Conv::ConvTbcBackwardParams tbcparams = {pad, cubeMathType};
@@ -4265,24 +4312,26 @@ static aclnnStatus ResultViewProcess(Ops::NN::Conv::ConvolutionBackwardResult& R
     // Index  0ViewCopy gradInput
     auto resultinput = l0op::ViewCopy(ResultTensor.gradInput, outputTensor.gradInput, executor);
     OP_CHECK(resultinput != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output viewprocess failed, gradInput with ViewCopy return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The output viewprocess failed, gradInput with ViewCopy return nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
     // Index  1ViewCopy gradWeight
     auto resultweight = l0op::ViewCopy(ResultTensor.gradWeight, outputTensor.gradWeight, executor);
-    OP_CHECK(
-        resultweight != nullptr,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output viewprocess failed, gradWeight with ViewCopy return nullptr."),
-        return ACLNN_ERR_INNER_NULLPTR);
+    OP_CHECK(resultweight != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The output viewprocess failed, gradWeight with ViewCopy return nullptr."),
+             return ACLNN_ERR_INNER_NULLPTR);
     // Index  2ViewCopy gradBias
     auto resultbias = l0op::ViewCopy(ResultTensor.gradBias, outputTensor.gradBias, executor);
     OP_CHECK(resultbias != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output viewprocess failed, gradBias with ViewCopy return nullptr."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The output viewprocess failed, gradBias with ViewCopy return nullptr."),
              return ACLNN_ERR_INNER_NULLPTR);
     auto resultoffset = l0op::ViewCopy(ResultTensor.gradOffset, outputTensor.gradOffset, executor);
-    OP_CHECK(
-        resultoffset != nullptr,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The output viewprocess failed, gradOffset with ViewCopy return nullptr."),
-        return ACLNN_ERR_INNER_NULLPTR);
+    OP_CHECK(resultoffset != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "The output viewprocess failed, gradOffset with ViewCopy return nullptr."),
+             return ACLNN_ERR_INNER_NULLPTR);
     return ACLNN_SUCCESS;
 }
 
@@ -4302,10 +4351,11 @@ static aclnnStatus TransProcess(const aclTensor*& inputTensor, const string& ten
 {
     // API l0 InputTensor -> l0op::Contiguous -> l0op::Transpose -> inputTensor
     inputTensor = l0op::Contiguous(inputTensor, executor);
-    OP_CHECK(inputTensor != nullptr,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input preprocess failed, %s with Contiguous return nullptr.",
-                     tensorName.c_str()),
-             return ACLNN_ERR_INNER_NULLPTR);
+    OP_CHECK(
+        inputTensor != nullptr,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                               "The input preprocess failed, %s with Contiguous return nullptr.", tensorName.c_str()),
+        return ACLNN_ERR_INNER_NULLPTR);
 
     if (!Ops::NN::AclnnUtil::IsRegbase() || tensorName != "weight") {
         std::vector<int64_t> valuePerm;
@@ -4318,8 +4368,9 @@ static aclnnStatus TransProcess(const aclTensor*& inputTensor, const string& ten
         CHECK_RET(perm != nullptr, ACLNN_ERR_INNER_NULLPTR);
         inputTensor = l0op::Transpose(inputTensor, perm, executor);
         OP_CHECK(inputTensor != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input preprocess failed, %s with Transpose return nullptr.",
-                         tensorName.c_str()),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                        "The input preprocess failed, %s with Transpose return nullptr.",
+                                        tensorName.c_str()),
                  return ACLNN_ERR_INNER_NULLPTR);
     }
 
@@ -4439,7 +4490,7 @@ aclnnStatus aclnnDeformableConv2dBackwardGetWorkspaceSize(
                    DFX_OUT(gradInput, gradWeight, gradOffset, gradBias));
     // OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // REMOVED(unreachable): CREATE_EXECUTOR 使用普通 new，失败抛 bad_alloc，该 null 检查不可达
 
     Ops::NN::Conv::DeformableConv2dBackwardInputTensor inputTensor = {gradOutput, input, weight, offset, offsetOut};
     Ops::NN::Conv::ConvolutionBackwardOutput outputTensor = {gradInput, gradWeight, gradBias, gradOffset};

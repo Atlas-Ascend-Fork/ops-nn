@@ -61,7 +61,8 @@ const std::array<const aclTensor*, GRU_GRAD_OUT_NUM> GruGrad(
                                            OP_OUTPUT(dx, dhPrev, dweightInput, dweightHidden, dbInput, dbHidden),
                                            OP_ATTR(direction, hasBias, batchFirst));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "GruGrad ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                               "GruGrad ADD_TO_LAUNCHER_LIST_AICORE failed; propagate the lower-layer first error.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     return {dx, dhPrev, dweightInput, dweightHidden, dbInput, dbHidden};
