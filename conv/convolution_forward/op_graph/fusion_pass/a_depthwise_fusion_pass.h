@@ -30,6 +30,7 @@ const ge::AscendString SHAPE_ATTR = "shape";
 const std::string FUSION_NAME = "ADepthwiseFusionPass";
 
 constexpr int32_t FILTER_INPUT_INDEX = 1;
+constexpr int32_t WEIGHT_INPUT_INDEX = 0;
 constexpr int32_t RESHAPE_INPUT_INDEX = 0;
 constexpr int32_t RESHAPE_OUTPUT_INDEX = 0;
 constexpr int32_t FILTER_SHAPE_SIZE = 4;
