@@ -26,9 +26,7 @@
 #include "soft_margin_loss_grad_tiling_data.h"
 #include "soft_margin_loss_grad_tiling_key.h"
 
-// ============================================================
-// Kernel 侧辅助函数（int64_t* 版本, 无 std::vector）
-// ============================================================
+// Kernel 侧辅助函数（int64_t* 版本，无 std::vector）
 
 __aicore__ inline void GetCoreRange(int64_t core_id, int64_t tiles_main, int64_t cores_tail, int64_t& start,
                                     int64_t& end)
@@ -119,7 +117,7 @@ public:
         for (int i = 0; i < kPhysNodes; i++)
             pipe_.InitBuffer(buf_[i], td_->per_buf_bytes);
 
-        cof_ = (td_->cof_is_mean && td_->total_num > 0) ? (kPosOne / static_cast<float>(td_->total_num)) : kPosOne;
+        cof_ = td_->normalization;
 
         const int64_t* dstShape = td_->max_bro_shape;
         int64_t k = td_->split.axis;
@@ -217,16 +215,15 @@ private:
             AscendC::Cast(g, buf_[BG].Get<T>(), AscendC::RoundMode::CAST_NONE, count);
             AscendC::Cast(x, buf_[BX].Get<T>(), AscendC::RoundMode::CAST_NONE, count);
             AscendC::Cast(y, buf_[BY].Get<T>(), AscendC::RoundMode::CAST_NONE, count);
-            // 字面形：(-y*exp(-xy))/(1+exp(-xy))，对齐 golden 溢出语义（exp 上溢→inf/inf=NaN）
-            AscendC::Mul(xy, x, y, count);                   // xy
-            AscendC::Muls(xy, xy, kNegOne, count);           // -xy
-            AscendC::Exp(e, xy, count);                      // exp(-xy)
-            AscendC::Muls(y, y, kNegOne, count);             // -y
-            AscendC::Mul(x, y, e, count);                    // -y*exp(-xy)
-            AscendC::Adds(e, e, kPosOne, count);             // 1+exp(-xy)
-            AscendC::Div<float, kDivConfig>(x, x, e, count); // (-y*exp(-xy))/(1+exp(-xy))
-            AscendC::Muls(g, g, cof_, count);                // scale grad first to avoid mean overflow
-            AscendC::Mul(x, x, g, count);                    // * scaled grad
+            // Match ATen statement order: exp((-y)*x), (y*e)*(-norm), divide, then grad.
+            AscendC::Muls(xy, y, kNegOne, count);
+            AscendC::Mul(xy, xy, x, count);
+            AscendC::Exp(e, xy, count);
+            AscendC::Mul(x, y, e, count);
+            AscendC::Muls(x, x, -cof_, count);
+            AscendC::Adds(e, e, kPosOne, count);
+            AscendC::Div<float, kDivConfig>(x, x, e, count);
+            AscendC::Mul(x, x, g, count);
             AscendC::Cast(buf_[BG].Get<T>(), x, AscendC::RoundMode::CAST_RINT, count);
         } else {
             AscendC::LocalTensor<float> g = buf_[BG].Get<float>();
@@ -234,16 +231,15 @@ private:
             AscendC::LocalTensor<float> y = buf_[BY].Get<float>();
             AscendC::LocalTensor<float> xy = buf_[BXY].Get<float>();
             AscendC::LocalTensor<float> e = buf_[BTMP].Get<float>();
-            // 字面形：(-y*exp(-xy))/(1+exp(-xy))，对齐 golden 溢出语义（exp 上溢→inf/inf=NaN）
-            AscendC::Mul(xy, x, y, count);
-            AscendC::Muls(xy, xy, kNegOne, count);
+            // Match ATen statement order: exp((-y)*x), (y*e)*(-norm), divide, then grad.
+            AscendC::Muls(xy, y, kNegOne, count);
+            AscendC::Mul(xy, xy, x, count);
             AscendC::Exp(e, xy, count);
-            AscendC::Muls(y, y, kNegOne, count);
             AscendC::Mul(x, y, e, count);
+            AscendC::Muls(x, x, -cof_, count);
             AscendC::Adds(e, e, kPosOne, count);
             AscendC::Div<float, kDivConfig>(x, x, e, count);
-            AscendC::Muls(g, g, cof_, count); // mean: scale grad before multiplying the derivative
-            AscendC::Mul(g, x, g, count);     // 结果写回 BG
+            AscendC::Mul(g, x, g, count); // result to BG
         }
     }
 

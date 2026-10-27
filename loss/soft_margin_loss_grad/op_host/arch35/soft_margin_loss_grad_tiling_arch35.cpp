@@ -15,6 +15,8 @@
  * \brief SoftMarginLossGrad Tiling — arch35 实现（Broadcast 范式，单次归一化 → 映射 rank → 模板填充）
  */
 #include <algorithm>
+#include "exe_graph/runtime/shape.h"
+#include <limits>
 #include <vector>
 #include <string>
 #include "graph/utils/type_utils.h"
@@ -25,6 +27,8 @@
 #include "../../op_kernel/arch35/soft_margin_loss_grad_tiling_key.h"
 
 namespace optiling {
+static_assert(gert::Shape::kMaxDimNum == SMLG_RANK_MAX,
+              "Update rank metadata/template to match this SDK Shape capacity");
 
 // per_buf_elems 按 fp32 计算：fp16/bf16 中间提升 fp32，最大元素 4B
 constexpr int64_t kBufElemSize = 4;
@@ -52,13 +56,13 @@ static void PadAndSqueeze(const std::vector<std::vector<int64_t>>& input_shapes,
                           std::vector<std::vector<int64_t>>& normal_input_shapes,
                           std::vector<int64_t>& normal_output_shape)
 {
-    int64_t num_inputs = (int64_t)input_shapes.size();
+    int64_t num_inputs = static_cast<int64_t>(input_shapes.size());
     int64_t max_rank = 1;
     for (auto& s : input_shapes)
-        max_rank = std::max(max_rank, (int64_t)s.size());
+        max_rank = std::max(max_rank, static_cast<int64_t>(s.size()));
     auto pad = [&](const std::vector<int64_t>& s) {
         std::vector<int64_t> p;
-        p.assign(max_rank - (int64_t)s.size(), 1);
+        p.assign(max_rank - static_cast<int64_t>(s.size()), 1);
         p.insert(p.end(), s.begin(), s.end());
         return p;
     };
@@ -98,7 +102,7 @@ static void FindSplitAxis(const std::vector<int64_t>& s, int64_t ub_per_core, Sp
     constexpr int64_t kMinBufElems = 1;
     if (per_buf_elems < kMinBufElems)
         per_buf_elems = kMinBufElems;
-    int64_t rank = (int64_t)s.size();
+    int64_t rank = static_cast<int64_t>(s.size());
     int64_t inner = 1;
     for (int64_t k = rank - 1; k >= 0; k--) {
         if (s[k] * inner > per_buf_elems) {
@@ -138,7 +142,7 @@ static void MultiCoreSplit(const std::vector<int64_t>& s, const SplitResult& ub,
 
 static void PrecomputeStrides(const std::vector<int64_t>& s, std::vector<int64_t>& strides)
 {
-    int64_t rank = (int64_t)s.size();
+    int64_t rank = static_cast<int64_t>(s.size());
     strides.assign(rank, 0);
     for (int64_t d = rank - 1; d >= 0; d--) {
         if (s[d] == 1) {
@@ -164,11 +168,11 @@ static ge::graphStatus DoTilingAndSet(gert::TilingContext* ctx, const std::vecto
     FindSplitAxis(max_bro, ub, t->split);
     MultiCoreSplit(max_bro, t->split, cores, t->multicore);
     t->per_buf_bytes = per_buf_bytes;
-    int64_t rank = (int64_t)max_bro.size();
-    t->rank = rank;
+    int64_t rank = static_cast<int64_t>(max_bro.size());
     t->cof_is_mean = cof_is_mean;
     t->total_num = total_num;
-    int64_t num_in = (int64_t)nin.size();
+    t->normalization = (cof_is_mean && total_num > 0) ? static_cast<float>(1.0 / static_cast<double>(total_num)) : 1.0f;
+    int64_t num_in = static_cast<int64_t>(nin.size());
     std::vector<std::vector<int64_t>> ins(num_in);
     std::vector<int64_t> os;
     for (int64_t i = 0; i < num_in; i++)
@@ -180,8 +184,6 @@ static ge::graphStatus DoTilingAndSet(gert::TilingContext* ctx, const std::vecto
     for (int64_t d = 0; d < rank; d++)
         t->max_bro_shape[d + delta] = max_bro[d];
     t->split.axis += delta;
-    t->num_inputs = num_in;
-    t->num_outputs = kMaxOutputSlots;
     for (int64_t i = 0; i < num_in; i++) {
         for (int64_t d = 0; d < delta; d++) {
             t->input_shapes[i][d] = 1;
@@ -249,13 +251,23 @@ static ge::graphStatus SoftMarginLossGradTiling(gert::TilingContext* context)
             d.push_back(s.GetDim(k));
         ins.push_back(d);
     }
+    // ACLNN has already broadcast predict before this entry; direct kernel/GEIR has not.
+    int64_t predict_numel = 1;
+    for (int64_t dim : ins[0]) {
+        if (dim < 0 || (dim != 0 && predict_numel > std::numeric_limits<int64_t>::max() / dim)) {
+            OP_LOGE(context, "predict element count is not representable");
+            return ge::GRAPH_FAILED;
+        }
+        predict_numel *= dim;
+    }
     std::vector<int64_t> maxb, nout;
     std::vector<std::vector<int64_t>> nin;
     PadAndSqueeze(ins, maxb, nin, nout);
-    int64_t rank = (int64_t)maxb.size();
-    OP_CHECK_IF(rank > SMLG_RANK_8, OP_LOGE(context, "rank %ld exceeds %d", rank, SMLG_RANK_8),
+    int64_t rank = static_cast<int64_t>(maxb.size());
+    OP_CHECK_IF(!CheckBroadcastShape(nin, rank),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "predict, label, dout", "incompatible",
+                                                       "shapes must satisfy broadcast"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckBroadcastShape(nin, rank), OP_LOGE(context, "broadcast incompatible"), return ge::GRAPH_FAILED);
 
     int64_t total_num = 1;
     bool empty = false;
@@ -291,19 +303,27 @@ static ge::graphStatus SoftMarginLossGradTiling(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, t);
         *t = {};
         t->total_num = 0;
+        t->normalization = 1.0f;
         context->SetBlockDim(1);
         context->SetTilingKey(GET_TPL_TILING_KEY(SMLG_RANK_4));
         return ge::GRAPH_SUCCESS;
     }
 
-    int64_t mapped = (rank <= SMLG_RANK_4) ? SMLG_RANK_4 : SMLG_RANK_8;
-    ge::graphStatus ret;
+    int64_t mapped = (rank <= SMLG_RANK_4) ? SMLG_RANK_4 : ((rank <= SMLG_RANK_8) ? SMLG_RANK_8 : SMLG_RANK_MAX);
+    ge::graphStatus ret = ge::GRAPH_FAILED;
     if (mapped == SMLG_RANK_4) {
-        ret = DoTilingAndSet<SMLG_RANK_4>(context, maxb, nin, nout, cof_is_mean, total_num, (int64_t)ubSize, cores);
+        ret = DoTilingAndSet<SMLG_RANK_4>(context, maxb, nin, nout, cof_is_mean, predict_numel,
+                                          static_cast<int64_t>(ubSize), cores);
         context->SetTilingKey(GET_TPL_TILING_KEY(SMLG_RANK_4));
-    } else {
-        ret = DoTilingAndSet<SMLG_RANK_8>(context, maxb, nin, nout, cof_is_mean, total_num, (int64_t)ubSize, cores);
+    } else if (mapped == SMLG_RANK_8) {
+        ret = DoTilingAndSet<SMLG_RANK_8>(context, maxb, nin, nout, cof_is_mean, predict_numel,
+                                          static_cast<int64_t>(ubSize), cores);
         context->SetTilingKey(GET_TPL_TILING_KEY(SMLG_RANK_8));
+    }
+    if (mapped == SMLG_RANK_MAX) {
+        ret = DoTilingAndSet<SMLG_RANK_MAX>(context, maxb, nin, nout, cof_is_mean, predict_numel,
+                                            static_cast<int64_t>(ubSize), cores);
+        context->SetTilingKey(GET_TPL_TILING_KEY(SMLG_RANK_MAX));
     }
     return ret;
 }

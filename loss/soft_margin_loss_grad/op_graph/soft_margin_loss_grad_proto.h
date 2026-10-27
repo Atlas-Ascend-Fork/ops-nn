@@ -22,15 +22,15 @@ namespace ge {
 
 /**
  *@brief SoftMarginLoss backward gradient.
- *  out = cof * (-target*exp(-self*target)) / (1+exp(-self*target)) * grad_output
+ *  gradient = cof * (-label*exp(-predict*label)) / (1+exp(-predict*label)) * dout
  *@par Inputs:
- * @li self: predicted x, float16/float32/bfloat16, ND.
- * @li target: label y, float16/float32/bfloat16, ND.
- * @li grad_output: upstream gradient, float16/float32/bfloat16, ND.
+ * @li predict: predicted x, float16/float32/bfloat16, ND.
+ * @li label: label y, float16/float32/bfloat16, ND.
+ * @li dout: upstream gradient, float16/float32/bfloat16, ND.
  *@par Attributes:
  * reduction: "none"/"mean"/"sum"; mean → cof=1/N else 1.0.
  *@par Outputs:
- * out: broadcast(self, target, grad_output), same dtype.
+ * gradient: broadcast(predict, label, dout), same dtype.
  */
 #ifndef OPS_PROTO_DEF_SOFTMARGINLOSSGRAD
 #define OPS_PROTO_DEF_SOFTMARGINLOSSGRAD

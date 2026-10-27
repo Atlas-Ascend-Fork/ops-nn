@@ -9,6 +9,7 @@
  */
 
 #include "soft_margin_loss_grad.h"
+#include "log/log.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_def.h"
 #include "opdev/op_dfx.h"
@@ -20,6 +21,8 @@ using namespace op;
 namespace l0op {
 OP_TYPE_REGISTER(SoftMarginLossGrad);
 
+static constexpr const char* kOpName = "SoftMarginLossGrad";
+
 const aclTensor* SoftMarginLossGrad(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* target,
                                     const std::string& reduction, aclOpExecutor* executor)
 {
@@ -27,15 +30,20 @@ const aclTensor* SoftMarginLossGrad(const aclTensor* gradOutput, const aclTensor
     op::Shape broadcastShape1;
     op::Shape broadcastShape;
     if (!BroadcastInferShape(gradOutput->GetViewShape(), self->GetViewShape(), broadcastShape1)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "GradOutput tensor shape:%s and self tensor shape:%s can't broadcast.",
-                ToString(gradOutput->GetViewShape()).GetString(), ToString(self->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(kOpName, "gradOutput, self",
+                                               (op::ToString(gradOutput->GetViewShape()).GetString() +
+                                                std::string(", ") + op::ToString(self->GetViewShape()).GetString())
+                                                   .c_str(),
+                                               "The shapes must satisfy broadcast");
         return nullptr;
     }
     if (!BroadcastInferShape(target->GetViewShape(), broadcastShape1, broadcastShape)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "GradOutput tensor shape:%s self tensor shape:%s target tensor shape:%s can't broadcast.",
-                op::ToString(gradOutput->GetViewShape()).GetString(), op::ToString(self->GetViewShape()).GetString(),
-                op::ToString(target->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(kOpName, "gradOutput, self, target",
+                                               (op::ToString(gradOutput->GetViewShape()).GetString() +
+                                                std::string(", ") + op::ToString(self->GetViewShape()).GetString() +
+                                                std::string(", ") + op::ToString(target->GetViewShape()).GetString())
+                                                   .c_str(),
+                                               "The shapes must satisfy broadcast");
         return nullptr;
     }
     auto out = executor->AllocTensor(broadcastShape, self->GetDataType());

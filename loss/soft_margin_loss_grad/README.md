@@ -46,21 +46,21 @@
     <tr>
       <td>predict</td>
       <td>输入</td>
-      <td>网络正向前一层的预测值。数据类型需要与label、dout一致；shape与label、dout相互broadcast。</td>
+      <td>网络正向前一层的预测值。shape与label、dout相互broadcast。</td>
       <td>FLOAT16、FLOAT32、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>label</td>
       <td>输入</td>
-      <td>样本的标签值。数据类型需要与predict、dout一致；shape与predict、dout相互broadcast。</td>
+      <td>样本的标签值。shape与predict、dout相互broadcast。</td>
       <td>FLOAT16、FLOAT32、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>dout</td>
       <td>输入</td>
-      <td>网络反向传播前一步的梯度值。数据类型需要与predict、label一致；shape与predict、label相互broadcast。</td>
+      <td>网络反向传播前一步的梯度值。shape与predict、label相互broadcast。</td>
       <td>FLOAT16、FLOAT32、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -82,12 +82,17 @@
 
 ## 约束说明
 
-- predict、label、dout三个输入的数据类型必须相同。三者需同为FLOAT16、FLOAT32或BFLOAT16。
+- 图模式支持0D~25D输入，aclnn接口支持0D~8D输入。
+
+- 数据类型约束：通过GE图模式调用时，predict、label、dout与gradient的数据类型必须相同（同为FLOAT16、FLOAT32或BFLOAT16之一）；通过aclnn API调用时，输入数据类型需满足互转换关系，计算时自动提升为FP32，输出gradient的数据类型与out一致。
 - 支持shape broadcast：predict、label、dout三者的shape相互broadcast（低维在前补1，各维非1值需一致，否则不支持），输出shape为三者broadcast的结果。
-- 输出gradient的数据类型与输入保持一致。
+- 图模式支持动态shape与动态rank。
+- 空tensor：仍需满足参数校验和broadcast规则；self为空时接口直接返回成功。其他输入为空时不保证在ACLNN层直接短路，输出shape仍须符合broadcast结果。
+- reduction为"mean"时，图模式的N取输入predict的元素数；aclnn接口的N取广播后的元素数。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| aclnn接口  | [test_aclnn_soft_margin_loss_grad.cpp](examples/arch35/test_aclnn_soft_margin_loss_grad.cpp) | 通过[aclnnSoftMarginLossBackward](docs/aclnnSoftMarginLossBackward.md)接口方式调用SoftMarginLossGrad算子。 |
+| aclnn API  | [test_aclnn_soft_margin_loss_grad.cpp](examples/arch35/test_aclnn_soft_margin_loss_grad.cpp) | 通过[aclnnSoftMarginLossBackward](docs/aclnnSoftMarginLossBackward.md)接口方式调用SoftMarginLossGrad算子。 |
+| GE图模式  | [test_geir_soft_margin_loss_grad.cpp](examples/arch35/test_geir_soft_margin_loss_grad.cpp) | 编译与运行见[快速算子调用（GE图模式）](../../docs/zh/invocation/quick_op_invocation.md#ge图模式)。通过GE图模式调用算子，算子IR原型定义见[soft_margin_loss_grad_proto.h](op_graph/soft_margin_loss_grad_proto.h)。 |

@@ -237,3 +237,17 @@ TEST_F(l2_soft_margin_loss_backward_test, ascend910B2_soft_margin_loss_backward_
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACL_SUCCESS);
 }
+
+TEST_F(l2_soft_margin_loss_backward_test, reduction_out_of_range)
+{
+    for (int64_t reduction : {-1, 3}) {
+        auto gradOutputDesc = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+        auto selfDesc = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+        auto targetDesc = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+        auto outDesc = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnSoftMarginLossBackward, INPUT(gradOutputDesc, selfDesc, targetDesc, reduction),
+                            OUTPUT(outDesc));
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    }
+}

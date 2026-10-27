@@ -19,7 +19,6 @@
 
 #include <cstdint>
 
-// === 算子特定常量 ===
 constexpr int64_t kMaxInputSlots = 3;  // gradOutput, self, target -> kernel x=self, y=target, grad=gradOutput
 constexpr int64_t kMaxOutputSlots = 1; // out
 constexpr int64_t kPhysNodes = 8; // 物理存活节点 P（= TBuf 槽位数）；fp16/bf16 需 3 bf16 输入槽 + 5 fp32 计算槽，禁止
@@ -48,13 +47,12 @@ template <int64_t kRank>
 struct SoftMarginLossGradTilingData {
     SplitResult split;
     MultiCoreResult multicore;
-    int64_t rank;          // 实际有效 rank
     int64_t per_buf_bytes; // (ub_per_core/kPhysNodes)&kAlignMask，kAlignBytes 字节对齐
     int64_t cof_is_mean;   // reduction==1(mean) → 1，否则 0
     int64_t total_num;     // broadcast 后元素总数 N（mean 求 cof=1/N）
+    float normalization;   // host double reciprocal rounded once to FP32
+    int32_t normalization_padding = 0;
     int64_t max_bro_shape[kRank];
-    int64_t num_inputs;
-    int64_t num_outputs;
     int64_t input_shapes[kMaxInputSlots][kRank];
     int64_t input_strides[kMaxInputSlots][kRank]; // broadcast 轴 stride=0
     int64_t output_shapes[kMaxOutputSlots][kRank];

@@ -31,7 +31,7 @@
 #include "array_ops.h"
 #include "ge_ir_build.h"
 
-#include "../op_graph/soft_margin_loss_grad_proto.h"
+#include "../../op_graph/soft_margin_loss_grad_proto.h"
 
 #define FAILED -1
 #define SUCCESS 0

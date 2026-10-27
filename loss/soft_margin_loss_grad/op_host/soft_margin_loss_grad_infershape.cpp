@@ -21,13 +21,25 @@ using namespace ge;
 
 namespace ops {
 
-static int64_t BroadcastDim(int64_t a, int64_t b)
+static bool BroadcastDim(int64_t a, int64_t b, int64_t& out)
 {
-    if (a == 1)
-        return b;
-    if (b == 1)
-        return a;
-    return a; // a==b 时取任一；冲突由 tiling CheckBroadcastShape 拦截
+    if (a == 1) {
+        out = b;
+        return true;
+    }
+    if (b == 1) {
+        out = a;
+        return true;
+    }
+    if (a < 0 || b < 0) {
+        out = a; // 动态/未知维：按原语义传递，由动态 shape 阶段解析
+        return true;
+    }
+    if (a == b) {
+        out = a;
+        return true;
+    }
+    return false; // 广播不兼容（a!=b 且均非 1）
 }
 
 static ge::graphStatus InferShape4SoftMarginLossGrad(gert::InferShapeContext* context)
@@ -50,21 +62,17 @@ static ge::graphStatus InferShape4SoftMarginLossGrad(gert::InferShapeContext* co
         return (i + sr < r) ? 1 : s->GetDim(i + sr - r);
     };
     for (size_t i = 0; i < r; i++) {
-        int64_t d = BroadcastDim(BroadcastDim(dimAt(s0, i, r), dimAt(s1, i, r)), dimAt(s2, i, r));
+        int64_t d = 0;
+        if (!BroadcastDim(dimAt(s0, i, r), dimAt(s1, i, r), d) || !BroadcastDim(d, dimAt(s2, i, r), d)) {
+            OP_LOGE(context->GetNodeName(), "broadcast incompatible for predict, label, dout");
+            return ge::GRAPH_FAILED;
+        }
         out->SetDim(i, d);
     }
     OP_LOGI(context->GetNodeName(), "[InferShape] output shape=%s", Ops::Base::ToString(*out).c_str());
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus InferDtype4SoftMarginLossGrad(gert::InferDataTypeContext* context)
-{
-    context->SetOutputDataType(0, context->GetInputDataType(0));
-    return ge::GRAPH_SUCCESS;
-}
-
-IMPL_OP_INFERSHAPE(SoftMarginLossGrad)
-    .InferShape(InferShape4SoftMarginLossGrad)
-    .InferDataType(InferDtype4SoftMarginLossGrad);
+IMPL_OP_INFERSHAPE(SoftMarginLossGrad).InferShape(InferShape4SoftMarginLossGrad);
 
 } // namespace ops

@@ -21,6 +21,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include "op_common/log/log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "op_api/level2_base_nn.h"
@@ -84,9 +85,10 @@ static const aclTensor* BroadcastTensor(const aclTensor* self, const op::Shape b
     // self的shape与broadcast的不一致，进行BroadcastTo
     if (self->GetViewShape() != broadcastShape) {
         auto broadcastShapeIntArray = GetShape(broadcastShape, executor);
-        if (broadcastShapeIntArray != nullptr) {
-            return l0op::BroadcastTo(self, broadcastShapeIntArray, executor);
+        if (broadcastShapeIntArray == nullptr) {
+            return nullptr;
         }
+        return l0op::BroadcastTo(self, broadcastShapeIntArray, executor);
     }
     return self;
 }
@@ -100,16 +102,29 @@ static void CheckFormat(const aclTensor* gradOutput)
     }
 }
 
-static inline aclnnStatus CheckParams(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* target,
-                                      const aclTensor* out)
+static bool CheckReduction(int64_t reduction)
 {
-    // 1. 检查参数是否为空指针
+    if (reduction < REDUCTION_NONE_NUM || reduction > REDUCTION_SUM_NUM) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnSoftMarginLossBackwardGetWorkspaceSize", "reduction",
+                                  std::to_string(reduction).c_str(), "0, 1 or 2");
+        return false;
+    }
+    return true;
+}
+
+static inline aclnnStatus CheckParams(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* target,
+                                      int64_t reduction, const aclTensor* out)
+{
+    // 参数空指针校验
     CHECK_RET(CheckNotNull4Tensor(gradOutput, self, target, out), ACLNN_ERR_PARAM_NULLPTR);
 
-    // 2. 检查输入的数据类型是否在API支持的数据类型范围之内，需要根据api定义校验
+    // reduction 取值范围校验
+    CHECK_RET(CheckReduction(reduction), ACLNN_ERR_PARAM_INVALID);
+
+    // 输入数据类型校验
     CHECK_RET(CheckDtypeValid(gradOutput, self, target, out), ACLNN_ERR_PARAM_INVALID);
 
-    // 3. 检查输出shape
+    // 输出 shape 校验
     CHECK_RET(CheckShape(gradOutput, self, target, out), ACLNN_ERR_PARAM_INVALID);
 
     // 检查format，若是NZ格式，则添加警告
@@ -130,7 +145,7 @@ aclnnStatus aclnnSoftMarginLossBackwardGetWorkspaceSize(const aclTensor* gradOut
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 固定写法，参数检查
-    auto ret = CheckParams(gradOutput, self, target, out);
+    auto ret = CheckParams(gradOutput, self, target, reduction, out);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     if (self->IsEmpty()) {
