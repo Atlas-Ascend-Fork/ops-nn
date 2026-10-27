@@ -67,8 +67,6 @@ static constexpr uint64_t BNG_V3_RA_ALL_LOAD_TK_BASE = 20000000;
 static constexpr uint64_t BNG_V3_RA_PACKED_ALL_LOAD_TK_BASE = 21000000;
 static constexpr int64_t RA_FULL_LOAD_UNROLLED_ROWS = 4;
 static constexpr int64_t RA_PACKED_MAX_CHANNELS = 32;
-static constexpr int64_t RA_PACKED_MIN_REDUCE = 256;
-static constexpr int64_t RA_PACKED_MAX_GROUPS = 192;
 static constexpr uint64_t BNG_V3_RAR_RECOMPUTE_TK_BASE = 30000000;
 static constexpr uint64_t BNG_V3_RA_RECOMPUTE_TK_BASE = 40000000;
 static constexpr uint64_t BNG_V3_RAR_RECOMPUTE_SPLIT_R1 = 1000000;
@@ -83,6 +81,7 @@ static constexpr int64_t DOUBLE_BUFFER = 2;
 static constexpr int64_t TWO = 2;
 static constexpr int64_t THREE = 3;
 static constexpr int64_t BASIC_FACTOR = 64;
+static constexpr int64_t RA_PACKED_MIN_REDUCE = TWO * BASIC_FACTOR;
 
 // File-local capacity calculations used by the RA tiling implementations.
 namespace {
@@ -902,10 +901,40 @@ ge::graphStatus BatchNormGradV3RARRecomputeTilingBase::PostTiling()
     return ge::GRAPH_SUCCESS;
 }
 
-bool BatchNormGradV3RAFullLoadTilingBase::CanUsePacked(int64_t& groups) const
+int64_t BatchNormGradV3TilingBase::CalcRAFullLoadLoopFactor(int64_t blockFactor) const
+{
+    if (blockFactor <= 0 || r1Dim <= 0 || blockSize == 0 || vlFp32 == 0) {
+        return 0;
+    }
+    // Even the smallest tile needs three double-buffered R-by-block queues.
+    // Reject huge R before multiplying it in the detailed capacity formula.
+    if (static_cast<uint64_t>(r1Dim) > ubSize / blockSize / (DOUBLE_BUFFER * THREE)) {
+        return 0;
+    }
+    int64_t power2k = r1Dim <= 1 ? 1 : (1L << (ULONG_BIT_LEN - 1 - __builtin_clzl(r1Dim - 1)));
+    int64_t binaryRows = r1Dim > RA_FULL_LOAD_UNROLLED_ROWS ? power2k / TWO : 0;
+    int64_t aligned = 0;
+    return CalcRAFullLoadALoopFactor(blockFactor, r1Dim, binaryRows, ge::GetSizeByDataType(dyDtype),
+                                     ge::GetSizeByDataType(weightDtype), blockSize, ubSize, aligned, vlFp32);
+}
+
+bool BatchNormGradV3TilingBase::PreferVectorRAFullLoad() const
+{
+    // Wider aligned half-precision rows can use the resident vector layout
+    // directly, without the packed channel fold.
+    constexpr int64_t quarterVectorDivisor = 4;
+    int64_t dtypeSize = ge::GetSizeByDataType(dyDtype);
+    if (r0Dim != 1 || aDim <= static_cast<int64_t>(vlFp32) / quarterVectorDivisor || aDim > RA_PACKED_MAX_CHANNELS ||
+        dtypeSize != FLOAT16_BYTE_NUMBER || blockSize == 0 || vlFp32 == 0 ||
+        static_cast<uint64_t>(aDim * dtypeSize) % blockSize != 0) {
+        return false;
+    }
+    return CalcRAFullLoadLoopFactor(vlFp32) == static_cast<int64_t>(vlFp32);
+}
+
+bool BatchNormGradV3TilingBase::CanUsePackedRAFullLoad(int64_t& groups) const
 {
     groups = 0;
-    // Keep small reductions on the existing paths and bound single-core work.
     if (r0Dim != 1 || aDim < 1 || aDim > RA_PACKED_MAX_CHANNELS || r1Dim < RA_PACKED_MIN_REDUCE ||
         vlFp32 != BASIC_FACTOR || blockSize == 0) {
         return false;
@@ -914,10 +943,14 @@ bool BatchNormGradV3RAFullLoadTilingBase::CanUsePacked(int64_t& groups) const
     while (rowsPerGroup * TWO * aDim <= static_cast<int64_t>(vlFp32)) {
         rowsPerGroup *= TWO;
     }
-    if (r1Dim > rowsPerGroup * RA_PACKED_MAX_GROUPS) {
+    int64_t packedGroups = Ops::Base::CeilDiv(r1Dim, rowsPerGroup);
+    int64_t dtypeSize = ge::GetSizeByDataType(dyDtype);
+    // Feature queues alone bound the group count before scratch arithmetic.
+    // The exact UB budget below decides the upper limit for every row width.
+    if (dtypeSize <= 0 || static_cast<uint64_t>(packedGroups) >
+                              ubSize / vlFp32 / static_cast<uint64_t>(dtypeSize) / (DOUBLE_BUFFER * THREE)) {
         return false;
     }
-    int64_t packedGroups = Ops::Base::CeilDiv(r1Dim, rowsPerGroup);
     int64_t power2k = packedGroups <= 1 ? 1 : (1L << (ULONG_BIT_LEN - 1 - __builtin_clzl(packedGroups - 1)));
     int64_t binaryRows = packedGroups > RA_FULL_LOAD_UNROLLED_ROWS ? power2k / TWO : 0;
     int64_t aligned = 0;
@@ -934,22 +967,29 @@ bool BatchNormGradV3RAFullLoadTilingBase::CanUsePacked(int64_t& groups) const
 
 bool BatchNormGradV3RAFullLoadTilingBase::IsCapable()
 {
-    int64_t dtypeSize = dyDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
-    int64_t weightDtypeSize = weightDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
-    constexpr static int64_t B32_B32_MODE_THRESHOLD = 958;
-    constexpr static int64_t B16_B16_MODE_THRESHOLD = 766;
-    constexpr static int64_t B16_B32_MODE_THRESHOLD = 766;
-    if (r0Dim == 1) {
-        if (dtypeSize == FLOAT16_BYTE_NUMBER && weightDtypeSize == FLOAT16_BYTE_NUMBER) {
-            return r1Dim < B16_B16_MODE_THRESHOLD;
-        }
-        if (dtypeSize == FLOAT16_BYTE_NUMBER && weightDtypeSize == FLOAT_BYTE_NUMBER) {
-            return r1Dim < B16_B32_MODE_THRESHOLD;
-        }
-        if (dtypeSize == FLOAT_BYTE_NUMBER && weightDtypeSize == FLOAT_BYTE_NUMBER) {
-            return r1Dim < B32_B32_MODE_THRESHOLD;
-        }
+    if (r0Dim != 1 || aDim <= 0 || r1Dim <= 0 || coreNum == 0 || blockSize == 0 || vlFp32 == 0) {
         return false;
+    }
+    packed_ = CanUsePackedRAFullLoad(packedGroups_) && !PreferVectorRAFullLoad();
+    if (packed_) {
+        return true;
+    }
+    int64_t dtypeSize = dyDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
+    int64_t aBlockFactor = std::max(Ops::Base::CeilDiv(aDim, static_cast<int64_t>(coreNum)),
+                                    static_cast<int64_t>(blockSize) / dtypeSize);
+    int64_t numBlocks = Ops::Base::CeilDiv(aDim, aBlockFactor);
+    aBlockFactor = Ops::Base::CeilDiv(aDim, numBlocks);
+    int64_t aLoopFactor = CalcRAFullLoadLoopFactor(aBlockFactor);
+    if (aLoopFactor <= 0) {
+        return false; // Even the smallest aligned C tile cannot keep all R rows in UB.
+    }
+    if (aLoopFactor >= aBlockFactor) {
+        return true; // The entire per-core C block fits in one FullLoad iteration.
+    }
+    // Use a coarse vector-width threshold when the core's C block is not resident.
+    // Recompute can trade shorter R tiles for wider C tiles below this threshold.
+    if (aLoopFactor >= static_cast<int64_t>(vlFp32)) {
+        return true;
     }
     return false;
 }
@@ -964,8 +1004,7 @@ ge::graphStatus BatchNormGradV3RAFullLoadTilingBase::DoOpTiling()
 
     int64_t dtypeSize = dyDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
     int64_t weightDtypeSize = weightDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
-    // Select the implementation only after the original full-load admission succeeds.
-    packed_ = CanUsePacked(packedGroups_);
+    // IsCapable already selected the implementation and its packed group count.
     if (packed_) {
         tilingData.baseTilingData.set_blockNum(1);
         tilingData.baseTilingData.set_formerBlockDim(aDim);
@@ -1125,7 +1164,9 @@ ge::graphStatus BatchNormGradV3RAFullLoadTilingBase::PostTiling()
 
 bool BatchNormGradV3RARecomputeTilingBase::IsCapable()
 {
-    if (r0Dim == 1) {
+    // The recompute cache requires more than one R tile. Short reductions
+    // stay on FullLoad, whose in-register path also avoids the cache overhead.
+    if (r0Dim == 1 && r1Dim > BASIC_FACTOR) {
         return true;
     }
     return false;

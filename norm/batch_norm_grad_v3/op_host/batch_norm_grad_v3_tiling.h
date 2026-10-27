@@ -374,6 +374,10 @@ protected:
     ge::graphStatus CheckBigShapesValid();
     ge::graphStatus GetShapesAndCheckValid();
     ge::graphStatus GetDtypesAndCheckValid();
+    // Shared admission: Split-R yields when a packed FullLoad tile fits.
+    bool CanUsePackedRAFullLoad(int64_t& groups) const;
+    int64_t CalcRAFullLoadLoopFactor(int64_t blockFactor) const;
+    bool PreferVectorRAFullLoad() const;
     const gert::Shape& EnsureNotScalar(const gert::Shape& in_shape);
 
     int64_t outputMask_{BNG_V3_OUTPUT_MASK_ALL};
@@ -474,7 +478,6 @@ protected:
     ge::graphStatus PostTiling() override;
 
 private:
-    bool CanUsePacked(int64_t& groups) const;
     bool CalculateBlockFactors(int64_t dtypeSize, int64_t weightDtypeSize, int64_t power2k);
     void CalculateLoopFactors(int64_t dtypeSize, int64_t weightDtypeSize, int64_t rDim_, int64_t power2k);
     void SetReduceLoopTimes(int64_t power2k, int64_t rDim_);

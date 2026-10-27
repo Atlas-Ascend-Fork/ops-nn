@@ -2644,6 +2644,20 @@ TEST_P(BatchNormGradV3LegacyTiling, batch_norm_grad_v3_legacy_train_split_load_c
 
 // ra_split_r fused 路径 tilingKey 派发与合计 UB 兜底用例(NCHW (N,C,1,1) HW=1×1)
 // 50000000 generic / 51000000 fused-single / 52000000 fused-pair
+namespace {
+constexpr uint32_t TEST_UB_BYTES_248_KIB = 253952;
+constexpr uint32_t TEST_UB_BYTES_240_KIB = 245760;
+constexpr uint32_t TEST_AIV_CORE_NUM_56 = 56;
+constexpr uint32_t TEST_AIV_CORE_NUM_64 = 64;
+constexpr uint64_t RA_FULL_LOAD_KEY = 20000000;
+constexpr uint64_t RA_PACKED_FULL_LOAD_KEY = 21000000;
+constexpr uint64_t RA_RECOMPUTE_KEY = 40000000;
+constexpr uint64_t RA_SPLIT_R_GENERIC_KEY = 50000000;
+constexpr uint64_t RA_SPLIT_R_FUSED_SINGLE_KEY = 51000000;
+constexpr uint64_t RA_SPLIT_R_FUSED_PAIR_KEY = 52000000;
+constexpr uint64_t RA_SPLIT_R_PACKED_KEY = 53000000;
+} // namespace
+
 static void RunSplitRTilingKeyCase(int64_t n, int64_t c, ge::DataType dyDtype, uint32_t ubSize, uint32_t coreNum,
                                    uint64_t expectedKey, bool expectNotSplitR = false,
                                    const std::vector<bool>* outputMask = nullptr,
@@ -2651,6 +2665,11 @@ static void RunSplitRTilingKeyCase(int64_t n, int64_t c, ge::DataType dyDtype, u
                                    ge::DataType weightDtype = ge::DT_FLOAT,
                                    const std::vector<int64_t>* expectedFullLoadReduction = nullptr)
 {
+    const std::string trace = "R=" + std::to_string(n) + ", C=" + std::to_string(c) +
+                              ", dtype=" + std::to_string(static_cast<int>(dyDtype)) +
+                              ", weight=" + std::to_string(static_cast<int>(weightDtype)) +
+                              ", UB=" + std::to_string(ubSize) + ", cores=" + std::to_string(coreNum);
+    SCOPED_TRACE(trace);
     gert::StorageShape dy_shape = {{n, c, 1, 1}, {n, c, 1, 1}};
     gert::StorageShape x_shape = {{n, c, 1, 1}, {n, c, 1, 1}};
     gert::StorageShape weight_shape = {{c}, {c}};
@@ -2821,21 +2840,25 @@ TEST_F(BatchNormGradV3Tiling, ra_full_load_vector_core_partition)
             int64_t tail = channels % mainFactor;
             std::vector<int64_t> split{(channels + mainFactor - 1) / mainFactor, mainFactor, tail,
                                        channels / mainFactor, tail > 0 ? 1 : 0};
-            RunSplitRTilingKeyCase(128, channels, dtype, 253952, 56, 20000000, false, nullptr, &split);
+            RunSplitRTilingKeyCase(128, channels, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_FULL_LOAD_KEY,
+                                   false, nullptr, &split);
         }
         // Existing wider per-core blocks keep the original partition.
         std::vector<int64_t> wideSplit{56, 128, 0, 56, 0};
-        RunSplitRTilingKeyCase(128, 7168, dtype, 253952, 56, 20000000, false, nullptr, &wideSplit);
+        RunSplitRTilingKeyCase(128, 7168, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_FULL_LOAD_KEY, false,
+                               nullptr, &wideSplit);
     }
 }
 
 TEST_F(BatchNormGradV3Tiling, ra_full_load_unaligned_rows_keep_core_partition)
 {
     std::vector<int64_t> fp32Split{17, 8, 1, 16, 1};
-    RunSplitRTilingKeyCase(128, 129, ge::DT_FLOAT, 253952, 56, 20000000, false, nullptr, &fp32Split);
+    RunSplitRTilingKeyCase(128, 129, ge::DT_FLOAT, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_FULL_LOAD_KEY, false,
+                           nullptr, &fp32Split);
     std::vector<int64_t> fp16Split{9, 15, 9, 8, 1};
     for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
-        RunSplitRTilingKeyCase(128, 129, dtype, 253952, 56, 20000000, false, nullptr, &fp16Split);
+        RunSplitRTilingKeyCase(128, 129, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_FULL_LOAD_KEY, false,
+                               nullptr, &fp16Split);
     }
 }
 
@@ -2843,9 +2866,11 @@ TEST_F(BatchNormGradV3Tiling, ra_full_load_vector_core_partition_ub_fallback)
 {
     // 64 FP32 channels at R=128 need 215552B; retain the original 8-core split below that budget.
     std::vector<int64_t> originalSplit{8, 8, 0, 8, 0};
-    RunSplitRTilingKeyCase(128, 64, ge::DT_FLOAT, 215551, 56, 20000000, false, nullptr, &originalSplit);
+    RunSplitRTilingKeyCase(128, 64, ge::DT_FLOAT, 215551, TEST_AIV_CORE_NUM_56, RA_FULL_LOAD_KEY, false, nullptr,
+                           &originalSplit);
     std::vector<int64_t> vectorSplit{1, 64, 0, 1, 0};
-    RunSplitRTilingKeyCase(128, 64, ge::DT_FLOAT, 215552, 56, 20000000, false, nullptr, &vectorSplit);
+    RunSplitRTilingKeyCase(128, 64, ge::DT_FLOAT, 215552, TEST_AIV_CORE_NUM_56, RA_FULL_LOAD_KEY, false, nullptr,
+                           &vectorSplit);
 }
 
 TEST_F(BatchNormGradV3Tiling, ra_full_load_small_r_partition_and_reduction)
@@ -2863,17 +2888,17 @@ TEST_F(BatchNormGradV3Tiling, ra_full_load_small_r_partition_and_reduction)
     for (const auto& dtype : dtypePairs) {
         for (const auto& testCase : reductionCases) {
             const auto* expectedSplit = testCase.first <= 4 ? &smallSplit : nullptr;
-            RunSplitRTilingKeyCase(testCase.first, 129, dtype.first, 253952, 56, 20000000, false, nullptr,
-                                   expectedSplit, dtype.second, &testCase.second);
+            RunSplitRTilingKeyCase(testCase.first, 129, dtype.first, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56,
+                                   RA_FULL_LOAD_KEY, false, nullptr, expectedSplit, dtype.second, &testCase.second);
         }
     }
 }
 
 TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_channel_boundary)
 {
-    RunSplitRTilingKeyCase(256, 31, ge::DT_FLOAT, 245760, 64, 21000000);
-    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 245760, 64, 21000000);
-    RunSplitRTilingKeyCase(256, 33, ge::DT_FLOAT, 245760, 64, 20000000);
+    RunSplitRTilingKeyCase(256, 31, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+    RunSplitRTilingKeyCase(256, 33, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_FULL_LOAD_KEY);
 }
 
 TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_weight_types_and_tail_groups)
@@ -2888,56 +2913,67 @@ TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_weight_types_and_tail_groups)
     const std::vector<int64_t> seventeenGroups{0, 16, 1, 0, 7, 2, 2, 8};
     const std::vector<int64_t> eighteenGroups{1, 16, 0, 2, 7, 2, 2, 8};
     for (const auto& dtype : dtypePairs) {
-        RunSplitRTilingKeyCase(257, 1, dtype.first, 245760, 64, 21000000, false, nullptr, nullptr, dtype.second,
-                               &fiveGroups);
-        RunSplitRTilingKeyCase(321, 1, dtype.first, 245760, 64, 21000000, false, nullptr, nullptr, dtype.second,
-                               &sixGroups);
-        RunSplitRTilingKeyCase(257, 3, dtype.first, 245760, 64, 21000000, false, nullptr, nullptr, dtype.second,
-                               &seventeenGroups);
-        RunSplitRTilingKeyCase(273, 3, dtype.first, 245760, 64, 21000000, false, nullptr, nullptr, dtype.second,
-                               &eighteenGroups);
+        RunSplitRTilingKeyCase(257, 1, dtype.first, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                               RA_PACKED_FULL_LOAD_KEY, false, nullptr, nullptr, dtype.second, &fiveGroups);
+        RunSplitRTilingKeyCase(321, 1, dtype.first, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                               RA_PACKED_FULL_LOAD_KEY, false, nullptr, nullptr, dtype.second, &sixGroups);
+        RunSplitRTilingKeyCase(257, 3, dtype.first, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                               RA_PACKED_FULL_LOAD_KEY, false, nullptr, nullptr, dtype.second, &seventeenGroups);
+        RunSplitRTilingKeyCase(273, 3, dtype.first, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                               RA_PACKED_FULL_LOAD_KEY, false, nullptr, nullptr, dtype.second, &eighteenGroups);
     }
 }
 
 TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_exact_ub_boundary_by_weight_type)
 {
     for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
-        RunSplitRTilingKeyCase(256, 16, dtype, 59136, 64, 21000000, false, nullptr, nullptr, dtype);
-        RunSplitRTilingKeyCase(256, 16, dtype, 59135, 64, 20000000, false, nullptr, nullptr, dtype);
-        RunSplitRTilingKeyCase(256, 16, dtype, 59904, 64, 21000000, false, nullptr, nullptr, ge::DT_FLOAT);
-        RunSplitRTilingKeyCase(256, 16, dtype, 59903, 64, 20000000, false, nullptr, nullptr, ge::DT_FLOAT);
+        RunSplitRTilingKeyCase(256, 16, dtype, 59136, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY, false, nullptr,
+                               nullptr, dtype);
+        RunSplitRTilingKeyCase(256, 16, dtype, 59135, TEST_AIV_CORE_NUM_64, RA_FULL_LOAD_KEY, false, nullptr, nullptr,
+                               dtype);
+        RunSplitRTilingKeyCase(256, 16, dtype, 59904, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY, false, nullptr,
+                               nullptr, ge::DT_FLOAT);
+        RunSplitRTilingKeyCase(256, 16, dtype, 59903, TEST_AIV_CORE_NUM_64, RA_FULL_LOAD_KEY, false, nullptr, nullptr,
+                               ge::DT_FLOAT);
     }
 }
 
 // fp32: C≤64 → fused-single(51); C=128/96(部分尾块) → fused-pair(52); C≥192 → generic(50)
 TEST_F(BatchNormGradV3Tiling, ra_split_r_fused_single_fp32_c64)
 {
-    RunSplitRTilingKeyCase(8192, 64, ge::DT_FLOAT, 245760, 64, 51000000);
+    RunSplitRTilingKeyCase(8192, 64, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                           RA_SPLIT_R_FUSED_SINGLE_KEY);
 }
 TEST_F(BatchNormGradV3Tiling, ra_split_r_fused_pair_fp32_c128)
 {
-    RunSplitRTilingKeyCase(8192, 128, ge::DT_FLOAT, 245760, 64, 52000000);
+    RunSplitRTilingKeyCase(8192, 128, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                           RA_SPLIT_R_FUSED_PAIR_KEY);
 }
 TEST_F(BatchNormGradV3Tiling, ra_split_r_fused_pair_fp32_c96_partial_tail)
 {
-    RunSplitRTilingKeyCase(8192, 96, ge::DT_FLOAT, 245760, 64, 52000000);
+    RunSplitRTilingKeyCase(8192, 96, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                           RA_SPLIT_R_FUSED_PAIR_KEY);
 }
 TEST_F(BatchNormGradV3Tiling, ra_split_r_generic_fp32_c256)
 {
-    RunSplitRTilingKeyCase(8192, 256, ge::DT_FLOAT, 245760, 64, 50000000);
+    RunSplitRTilingKeyCase(8192, 256, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                           RA_SPLIT_R_GENERIC_KEY);
 }
 // fp16/bf16: single 扩到 C≤128(51);C>128 因 pair 仅 fp32 退 generic(50)
 TEST_F(BatchNormGradV3Tiling, ra_split_r_fused_single_fp16_c64)
 {
-    RunSplitRTilingKeyCase(8192, 64, ge::DT_FLOAT16, 245760, 64, 51000000);
+    RunSplitRTilingKeyCase(8192, 64, ge::DT_FLOAT16, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                           RA_SPLIT_R_FUSED_SINGLE_KEY);
 }
 TEST_F(BatchNormGradV3Tiling, ra_split_r_fused_single_bf16_c128)
 {
-    RunSplitRTilingKeyCase(8192, 128, ge::DT_BF16, 245760, 64, 51000000);
+    RunSplitRTilingKeyCase(8192, 128, ge::DT_BF16, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                           RA_SPLIT_R_FUSED_SINGLE_KEY);
 }
 TEST_F(BatchNormGradV3Tiling, ra_split_r_generic_fp16_c256)
 {
-    RunSplitRTilingKeyCase(8192, 256, ge::DT_FLOAT16, 245760, 64, 50000000);
+    RunSplitRTilingKeyCase(8192, 256, ge::DT_FLOAT16, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                           RA_SPLIT_R_GENERIC_KEY);
 }
 // IsCapable 核利用率判据边界:只有"自己能用的核比对手多"才该抢，否则核数不升反降
 // (对手 RA_ALL_LOAD/RA_RECOMPUTE 只切A;切R 的 blockFactor 有 R_LOOP_FACTOR=64 下限,
@@ -2945,68 +2981,283 @@ TEST_F(BatchNormGradV3Tiling, ra_split_r_generic_fp16_c256)
 TEST_F(BatchNormGradV3Tiling, ra_split_r_not_capable_own_cores_less_than_rival)
 {
     // (256,256,1,1) fp32: 对手可用 32 核，切R 仅 4 核 → 不得调度到切R
-    RunSplitRTilingKeyCase(256, 256, ge::DT_FLOAT, 245760, 64, 0, true);
+    RunSplitRTilingKeyCase(256, 256, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, 0, true);
 }
 TEST_F(BatchNormGradV3Tiling, ra_split_r_not_capable_single_core)
 {
     // (64,64,1,1) fp32: 对手可用 8 核，切R 仅 1 核 → 不得调度到切R
-    RunSplitRTilingKeyCase(64, 64, ge::DT_FLOAT, 245760, 64, 0, true);
+    RunSplitRTilingKeyCase(64, 64, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, 0, true);
 }
 TEST_F(BatchNormGradV3Tiling, ra_split_r_capable_own_cores_more_than_rival)
 {
     // (320,32,1,1) fp32: 对手可用 4 核，切R 可用 5 核，且对手>=2核 → 应调度到切R(generic 50)
-    RunSplitRTilingKeyCase(320, 32, ge::DT_FLOAT, 245760, 64, 50000000);
+    RunSplitRTilingKeyCase(320, 32, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_SPLIT_R_GENERIC_KEY);
 }
 TEST_F(BatchNormGradV3Tiling, ra_split_r_not_capable_single_rival_core)
 {
     // (320,1,1,1) fp32: 对手仅 1 核(窄通道单核全载),中 R 下切R 反而更慢 → 交还全载,不调度到切R。
     // rivalCores==1 时第一分支被 rivalCores>=2 门槛挡下,r1=320 又不够第二分支(>16*coreNum) → 不进切R。
-    RunSplitRTilingKeyCase(320, 1, ge::DT_FLOAT, 245760, 64, 0, true);
+    RunSplitRTilingKeyCase(320, 1, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, 0, true);
 }
 // 合计 UB 兜底:40 核/196608B 下 fp32 C128 的 fused-pair 占用超 UB，应退回 generic(50)
 TEST_F(BatchNormGradV3Tiling, ra_split_r_fused_pair_ub_fallback_generic)
 {
-    RunSplitRTilingKeyCase(5120, 128, ge::DT_FLOAT, 196608, 40, 50000000);
+    RunSplitRTilingKeyCase(5120, 128, ge::DT_FLOAT, 196608, 40, RA_SPLIT_R_GENERIC_KEY);
 }
 
 TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_dispatch)
 {
     for (auto dtype : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
         for (int64_t channels : {1, 3, 8}) {
-            RunSplitRTilingKeyCase(257, channels, dtype, 245760, 64, 21000000);
+            RunSplitRTilingKeyCase(257, channels, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                                   RA_PACKED_FULL_LOAD_KEY);
         }
-        // Packed must not steal long-R inputs from Split-R.
-        RunSplitRTilingKeyCase(8192, 1, dtype, 245760, 64, 51000000);
-        RunSplitRTilingKeyCase(320, 32, dtype, 245760, 64, 50000000);
+        // Split-R yields when a packed FullLoad tile fits, regardless of the old R threshold.
+        RunSplitRTilingKeyCase(8192, 1, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+        const uint64_t boundaryKey = dtype == ge::DT_FLOAT ? RA_SPLIT_R_GENERIC_KEY : RA_PACKED_FULL_LOAD_KEY;
+        RunSplitRTilingKeyCase(320, 32, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, boundaryKey);
     }
-    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 245760, 64, 21000000);
-    RunSplitRTilingKeyCase(257, 16, ge::DT_FLOAT16, 245760, 64, 21000000);
-    RunSplitRTilingKeyCase(257, 16, ge::DT_BF16, 245760, 64, 21000000);
+    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+    RunSplitRTilingKeyCase(257, 16, ge::DT_FLOAT16, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                           RA_PACKED_FULL_LOAD_KEY);
+    RunSplitRTilingKeyCase(257, 16, ge::DT_BF16, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
 }
 
 TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_admission_boundaries)
 {
     for (auto dtype : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
-        RunSplitRTilingKeyCase(255, 1, dtype, 245760, 64, 20000000);
-        RunSplitRTilingKeyCase(256, 1, dtype, 245760, 64, 21000000);
+        RunSplitRTilingKeyCase(127, 1, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(128, 1, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(255, 1, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(256, 1, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
     }
-    // Keep the original R thresholds, including inputs not selected by Split-R.
-    RunSplitRTilingKeyCase(957, 1, ge::DT_FLOAT, 245760, 64, 21000000);
-    RunSplitRTilingKeyCase(958, 1, ge::DT_FLOAT, 245760, 64, 40000000);
+    // Packed capacity replaces the original ordinary FullLoad R thresholds.
+    RunSplitRTilingKeyCase(957, 1, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+    RunSplitRTilingKeyCase(958, 1, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
     for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
-        RunSplitRTilingKeyCase(765, 1, dtype, 245760, 64, 21000000);
-        RunSplitRTilingKeyCase(766, 1, dtype, 245760, 64, 40000000);
+        RunSplitRTilingKeyCase(765, 1, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(766, 1, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
     }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_narrow_rows_amortize_copy_width)
+{
+    for (auto dtype : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
+        // Use the same coarse six-core threshold for all input dtypes.
+        RunSplitRTilingKeyCase(256, 256, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(320, 256, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(384, 256, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_SPLIT_R_GENERIC_KEY);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_rejects_narrow_full_load_tiles)
+{
+    // A minimal aligned tile fits, but it is too narrow to prefer FullLoad.
+    RunSplitRTilingKeyCase(900, 7168, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_RECOMPUTE_KEY);
+    for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+        RunSplitRTilingKeyCase(765, 7168, dtype, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64, RA_RECOMPUTE_KEY);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_keeps_short_reductions_on_full_load)
+{
+    // A single R64 recompute tile has no reduction-cache entry. Keep these
+    // reductions on FullLoad across both supported platform core counts.
+    for (auto dtype : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
+        for (int64_t cores : {TEST_AIV_CORE_NUM_56, TEST_AIV_CORE_NUM_64}) {
+            for (int64_t rows : {63, 64, 65}) {
+                for (int64_t channels : {2048, 4096, 11515}) {
+                    RunSplitRTilingKeyCase(rows, channels, dtype, TEST_UB_BYTES_240_KIB, cores, RA_FULL_LOAD_KEY);
+                }
+            }
+        }
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_resident_vector_and_packed_layouts)
+{
+    for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+        for (int64_t rows : {128, 192, 255, 256}) {
+            RunSplitRTilingKeyCase(rows, 32, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_FULL_LOAD_KEY);
+        }
+        RunSplitRTilingKeyCase(257, 32, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(12352, 1, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(16384, 1, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(16448, 1, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_SPLIT_R_PACKED_KEY);
+        RunSplitRTilingKeyCase(772, 16, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(896, 16, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(1024, 16, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(1025, 16, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_SPLIT_R_GENERIC_KEY);
+        RunSplitRTilingKeyCase(512, 32, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(513, 32, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_SPLIT_R_GENERIC_KEY);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_full_load_exact_ub_boundary)
+{
+    // R552/C16 packs into 138 groups and requires exactly 247296 bytes.
+    RunSplitRTilingKeyCase(552, 16, ge::DT_FLOAT, 247295, TEST_AIV_CORE_NUM_56, RA_SPLIT_R_GENERIC_KEY);
+    RunSplitRTilingKeyCase(552, 16, ge::DT_FLOAT, 247296, TEST_AIV_CORE_NUM_56, RA_PACKED_FULL_LOAD_KEY);
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_r_less_than_c)
+{
+    RunSplitRTilingKeyCase(1280, 2048, ge::DT_FLOAT, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56,
+                           RA_SPLIT_R_GENERIC_KEY);
+    RunSplitRTilingKeyCase(1024, 2048, ge::DT_FLOAT, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56,
+                           RA_SPLIT_R_GENERIC_KEY);
+    for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+        RunSplitRTilingKeyCase(979, 1024, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_SPLIT_R_GENERIC_KEY);
+        RunSplitRTilingKeyCase(896, 2048, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_SPLIT_R_GENERIC_KEY);
+        RunSplitRTilingKeyCase(768, 2048, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_RECOMPUTE_KEY);
+        RunSplitRTilingKeyCase(1280, 4096, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_SPLIT_R_GENERIC_KEY);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_r_less_than_c_work_boundaries)
+{
+    for (uint32_t cores : {TEST_AIV_CORE_NUM_56, TEST_AIV_CORE_NUM_64}) {
+        // Both sides have enough R cores; only the R/C work threshold changes.
+        RunSplitRTilingKeyCase(1023, 2048, ge::DT_FLOAT, TEST_UB_BYTES_248_KIB, cores, RA_RECOMPUTE_KEY);
+        RunSplitRTilingKeyCase(1024, 2048, ge::DT_FLOAT, TEST_UB_BYTES_248_KIB, cores, RA_SPLIT_R_GENERIC_KEY);
+        for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+            // Aligned half rows require R>=C/4; unaligned rows require R>=ceil(C/2).
+            RunSplitRTilingKeyCase(1023, 4096, dtype, TEST_UB_BYTES_248_KIB, cores, RA_RECOMPUTE_KEY);
+            RunSplitRTilingKeyCase(1024, 4096, dtype, TEST_UB_BYTES_248_KIB, cores, RA_SPLIT_R_GENERIC_KEY);
+            RunSplitRTilingKeyCase(2048, 4097, dtype, TEST_UB_BYTES_248_KIB, cores, RA_RECOMPUTE_KEY);
+            RunSplitRTilingKeyCase(2049, 4097, dtype, TEST_UB_BYTES_248_KIB, cores, RA_SPLIT_R_GENERIC_KEY);
+        }
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_r_less_than_c_core_boundaries)
+{
+    const std::vector<std::tuple<uint32_t, int64_t, int64_t>> cases{{TEST_AIV_CORE_NUM_56, 832, 833},
+                                                                    {TEST_AIV_CORE_NUM_64, 960, 961}};
+    for (const auto testCase : cases) {
+        // R/C work and nonresident FullLoad already qualify. One additional R
+        // row raises occupancy from 13 to 14 cores, or from 15 to 16 cores.
+        for (auto dtype : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
+            RunSplitRTilingKeyCase(std::get<1>(testCase), 1536, dtype, TEST_UB_BYTES_248_KIB, std::get<0>(testCase),
+                                   RA_RECOMPUTE_KEY);
+            RunSplitRTilingKeyCase(std::get<2>(testCase), 1536, dtype, TEST_UB_BYTES_248_KIB, std::get<0>(testCase),
+                                   RA_SPLIT_R_GENERIC_KEY);
+        }
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_r_less_than_c_resident_blocks)
+{
+    const std::vector<std::tuple<uint32_t, int64_t, int64_t>> cases{{TEST_AIV_CORE_NUM_56, 833, 896},
+                                                                    {TEST_AIV_CORE_NUM_64, 961, 1024}};
+    for (const auto testCase : cases) {
+        for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+            // Both points pass the work and occupancy gates. A per-core C16
+            // block is resident; the neighboring C17 block needs a C loop.
+            RunSplitRTilingKeyCase(std::get<1>(testCase), std::get<2>(testCase), dtype, TEST_UB_BYTES_248_KIB,
+                                   std::get<0>(testCase), RA_FULL_LOAD_KEY);
+            RunSplitRTilingKeyCase(std::get<1>(testCase), std::get<2>(testCase) + 1, dtype, TEST_UB_BYTES_248_KIB,
+                                   std::get<0>(testCase), RA_SPLIT_R_GENERIC_KEY);
+        }
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_r_less_than_c_channel_vector_boundaries)
+{
+    const std::vector<std::tuple<uint32_t, ge::DataType, int64_t, int64_t>> cases{
+        {TEST_AIV_CORE_NUM_56, ge::DT_FLOAT, 2048, 3528},   {TEST_AIV_CORE_NUM_64, ge::DT_FLOAT, 2048, 4032},
+        {TEST_AIV_CORE_NUM_56, ge::DT_FLOAT16, 4096, 7112}, {TEST_AIV_CORE_NUM_64, ge::DT_FLOAT16, 4096, 8128},
+        {TEST_AIV_CORE_NUM_56, ge::DT_BF16, 4096, 7112},    {TEST_AIV_CORE_NUM_64, ge::DT_BF16, 4096, 8128}};
+    for (const auto testCase : cases) {
+        // The initial C block changes from vector-width-minus-one to exactly
+        // one input vector. R/C work, occupancy, and FullLoad capacity qualify.
+        RunSplitRTilingKeyCase(std::get<2>(testCase), std::get<3>(testCase), std::get<1>(testCase),
+                               TEST_UB_BYTES_248_KIB, std::get<0>(testCase), RA_SPLIT_R_GENERIC_KEY);
+        RunSplitRTilingKeyCase(std::get<2>(testCase), std::get<3>(testCase) + 1, std::get<1>(testCase),
+                               TEST_UB_BYTES_248_KIB, std::get<0>(testCase), RA_RECOMPUTE_KEY);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_full_load_vector_capacity_boundary)
+{
+    const std::vector<std::tuple<ge::DataType, ge::DataType, int64_t, uint32_t>> cases{
+        {ge::DT_FLOAT, ge::DT_FLOAT, 128, 215552},
+        {ge::DT_FLOAT16, ge::DT_FLOAT16, 256, 231168},
+        {ge::DT_FLOAT16, ge::DT_FLOAT, 256, 231936},
+        {ge::DT_BF16, ge::DT_BF16, 256, 231168},
+        {ge::DT_BF16, ge::DT_FLOAT, 256, 231936}};
+    for (uint32_t cores : {TEST_AIV_CORE_NUM_56, TEST_AIV_CORE_NUM_64}) {
+        for (const auto testCase : cases) {
+            // Each core owns C128, so no resident-block shortcut applies.
+            // Exactly one vector fits at this UB budget; one byte less cannot.
+            RunSplitRTilingKeyCase(std::get<2>(testCase), cores * 128, std::get<0>(testCase), std::get<3>(testCase) - 1,
+                                   cores, RA_RECOMPUTE_KEY, false, nullptr, nullptr, std::get<1>(testCase));
+            RunSplitRTilingKeyCase(std::get<2>(testCase), cores * 128, std::get<0>(testCase), std::get<3>(testCase),
+                                   cores, RA_FULL_LOAD_KEY, false, nullptr, nullptr, std::get<1>(testCase));
+        }
+    }
+}
+
+class RARecomputeCapabilityProbe : public optiling::BatchNormGradV3RARecomputeTilingBase {
+public:
+    RARecomputeCapabilityProbe() : optiling::BatchNormGradV3RARecomputeTilingBase(nullptr) {}
+
+    bool SupportsReduction(int64_t outerReduction, int64_t innerReduction)
+    {
+        r0Dim = innerReduction;
+        r1Dim = outerReduction;
+        return IsCapable();
+    }
+};
+
+TEST_F(BatchNormGradV3Tiling, ra_recompute_rejects_single_r_tile)
+{
+    // Test capability directly: registry tests would select FullLoad first
+    // and could pass even if Recompute incorrectly admitted a single R tile.
+    RARecomputeCapabilityProbe probe;
+    EXPECT_FALSE(probe.SupportsReduction(63, 1));
+    EXPECT_FALSE(probe.SupportsReduction(64, 1));
+    EXPECT_TRUE(probe.SupportsReduction(65, 1));
+    EXPECT_FALSE(probe.SupportsReduction(65, 2));
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_coarse_regions)
+{
+    for (auto dtype : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
+        // Short R stays resident, including unaligned rows.
+        RunSplitRTilingKeyCase(64, 31, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(128, 17, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_PACKED_FULL_LOAD_KEY);
+        // Wide per-core C is left to Recompute when FullLoad cannot fill a vector.
+        RunSplitRTilingKeyCase(2048, 16384, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_RECOMPUTE_KEY);
+        // R<C with resident C blocks stays on FullLoad.
+        RunSplitRTilingKeyCase(128, 2048, dtype, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56, RA_FULL_LOAD_KEY);
+    }
+}
+
+TEST_F(BatchNormGradV3Tiling, ra_dispatch_packed_split_r_preserves_fused_boundary)
+{
+    for (int64_t cores : {TEST_AIV_CORE_NUM_56, TEST_AIV_CORE_NUM_64}) {
+        for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+            RunSplitRTilingKeyCase(cores * 128 - 1, 32, dtype, TEST_UB_BYTES_248_KIB, cores, RA_SPLIT_R_GENERIC_KEY);
+            RunSplitRTilingKeyCase(cores * 128, 32, dtype, TEST_UB_BYTES_248_KIB, cores, RA_SPLIT_R_FUSED_SINGLE_KEY);
+            RunSplitRTilingKeyCase(cores * 128 + 1, 32, dtype, TEST_UB_BYTES_248_KIB, cores, RA_SPLIT_R_PACKED_KEY);
+        }
+        RunSplitRTilingKeyCase(cores * 256, 32, ge::DT_FLOAT, TEST_UB_BYTES_248_KIB, cores, RA_SPLIT_R_GENERIC_KEY);
+        RunSplitRTilingKeyCase(cores * 256 + 1, 32, ge::DT_FLOAT, TEST_UB_BYTES_248_KIB, cores, RA_SPLIT_R_PACKED_KEY);
+    }
+    RunSplitRTilingKeyCase(int64_t{1} << 25, 32, ge::DT_FLOAT16, TEST_UB_BYTES_248_KIB, TEST_AIV_CORE_NUM_56,
+                           RA_SPLIT_R_PACKED_KEY);
 }
 
 TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_ub_fallback)
 {
-    // Ordinary full-load fits both budgets; only the packed implementation needs the larger UB.
-    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 220000, 64, 21000000);
-    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 200000, 64, 20000000);
+    // Packed fits only the larger budget. The small R partition does not
+    // reach six cores, so ordinary FullLoad handles the smaller budget.
+    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 220000, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+    RunSplitRTilingKeyCase(256, 32, ge::DT_FLOAT, 200000, TEST_AIV_CORE_NUM_64, RA_FULL_LOAD_KEY);
     for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
-        RunSplitRTilingKeyCase(256, 16, dtype, 62000, 64, 21000000);
-        RunSplitRTilingKeyCase(256, 16, dtype, 59000, 64, 20000000);
+        RunSplitRTilingKeyCase(256, 16, dtype, 62000, TEST_AIV_CORE_NUM_64, RA_PACKED_FULL_LOAD_KEY);
+        RunSplitRTilingKeyCase(256, 16, dtype, 59000, TEST_AIV_CORE_NUM_64, RA_FULL_LOAD_KEY);
     }
 }
 
@@ -3014,7 +3265,8 @@ TEST_F(BatchNormGradV3Tiling, ra_packed_full_load_output_masks)
 {
     for (uint64_t bits = 0; bits < 8; ++bits) {
         std::vector<bool> mask{bool(bits & 1), bool(bits & 2), bool(bits & 4)};
-        RunSplitRTilingKeyCase(321, 1, ge::DT_FLOAT, 245760, 64, 21000000, false, &mask);
+        RunSplitRTilingKeyCase(321, 1, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                               RA_PACKED_FULL_LOAD_KEY, false, &mask);
     }
 }
 
@@ -3022,9 +3274,12 @@ TEST_F(BatchNormGradV3Tiling, output_mask_all_combinations)
 {
     for (uint64_t bits = 0; bits < 8; ++bits) {
         std::vector<bool> mask{bool(bits & 1), bool(bits & 2), bool(bits & 4)};
-        RunSplitRTilingKeyCase(8192, 64, ge::DT_FLOAT, 245760, 64, 51000000, false, &mask);
-        RunSplitRTilingKeyCase(8192, 128, ge::DT_FLOAT, 245760, 64, 52000000, false, &mask);
-        RunSplitRTilingKeyCase(8192, 256, ge::DT_FLOAT, 245760, 64, 50000000, false, &mask);
+        RunSplitRTilingKeyCase(8192, 64, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                               RA_SPLIT_R_FUSED_SINGLE_KEY, false, &mask);
+        RunSplitRTilingKeyCase(8192, 128, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                               RA_SPLIT_R_FUSED_PAIR_KEY, false, &mask);
+        RunSplitRTilingKeyCase(8192, 256, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                               RA_SPLIT_R_GENERIC_KEY, false, &mask);
     }
 }
 
@@ -3032,6 +3287,7 @@ TEST_F(BatchNormGradV3Tiling, output_mask_invalid_length)
 {
     for (size_t length : {0, 1, 2, 4}) {
         std::vector<bool> mask(length, true);
-        RunSplitRTilingKeyCase(8192, 64, ge::DT_FLOAT, 245760, 64, 51000000, false, &mask);
+        RunSplitRTilingKeyCase(8192, 64, ge::DT_FLOAT, TEST_UB_BYTES_240_KIB, TEST_AIV_CORE_NUM_64,
+                               RA_SPLIT_R_FUSED_SINGLE_KEY, false, &mask);
     }
 }

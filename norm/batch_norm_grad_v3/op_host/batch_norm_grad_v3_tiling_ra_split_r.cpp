@@ -27,6 +27,7 @@ constexpr uint64_t DOUBLE_BUFF = 2;
 constexpr uint64_t WORKSPACE_NUM = 2;
 constexpr uint64_t ULONG_BIT_LEN = 64;
 constexpr int64_t R_LOOP_FACTOR = 64;
+constexpr int64_t MIN_OWN_CORES_FINE_GRAIN = 6;
 constexpr int64_t WIDE_C_MIN_CHANNEL_VECTORS = 4;
 constexpr int64_t WIDE_C_MIN_R_LOOPS = 2;
 constexpr int64_t WIDE_C_TILE_VECTOR_COUNT = 2;
@@ -43,8 +44,6 @@ constexpr uint64_t BNG_V3_RA_SPLIT_R_PACKED_TILING_KEY = 53000000;
 constexpr int64_t RC_PACKED_MAX_CHANNELS = 32;
 constexpr int64_t RC_PACKED_VECTOR_ELEMENTS = 64;
 constexpr int64_t RC_PACKED_MIN_GROUPS_PER_CORE = 4;
-// Ascend950 paired measurements: small R cannot amortize the cross-core stages.
-constexpr int64_t RC_PACKED_MIN_R = 32768;
 constexpr size_t BNG_WORKSPACE_RESERVED = 16 * 1024 * 1024;
 constexpr int64_t CONST_ONE = 1;
 // fused kernel InitBuffer 的 input queue 深度(与 kernel 内 BUFFER_NUM / C128_FUSED_INPUT_BUFFER 一致):
@@ -56,6 +55,22 @@ constexpr int64_t UNIFORM_BINARY_BLOCK_CNT = 2; // uniformFold 判据:二分归�
 constexpr int64_t A_LOOP_TIMES_PAIR = 2;        // fused-pair:A 轴两次循环(双 tile)
 constexpr uint64_t PAIRED_BUFFER_NUM = 2;       // 成对张量各占一份缓冲(dy/x、dbeta/dgamma、mean/rstd 段)
 constexpr uint64_t MERGED_ADIM_QUEUE_NUM = 5; // fused aDim 队列合计:meanInQue(×2)+gammaInQue(×1)+dbetaWsOutQue(×2)
+
+namespace {
+// Packing must amortize its wrapper work without stealing the normal fused
+// single-tile path. The comparison uses the normal per-core R partition.
+bool CanUsePackedRASplitR(int64_t rows, int64_t channels, uint32_t cores, ge::DataType dtype)
+{
+    if (rows <= 0 || channels < 1 || channels > RC_PACKED_MAX_CHANNELS || cores == 0) {
+        return false;
+    }
+    constexpr int64_t fp32MinRTiles = 4;
+    constexpr int64_t halfMinRTiles = 2;
+    int64_t normalRows = std::max(R_LOOP_FACTOR, Ops::Base::CeilDiv(rows, static_cast<int64_t>(cores)));
+    int64_t minTiles = dtype == ge::DT_FLOAT ? fp32MinRTiles : halfMinRTiles;
+    return normalRows > minTiles * R_LOOP_FACTOR;
+}
+} // namespace
 
 int64_t BatchNormGradV3TilingRASplitR::CalcBlockFactor() const
 {
@@ -70,38 +85,59 @@ int64_t BatchNormGradV3TilingRASplitR::CalcUsedCoreNum() const { return Ops::Bas
 
 bool BatchNormGradV3TilingRASplitR::IsCapable()
 {
-    if (r0Dim != 1 || r1Dim < R_LOOP_FACTOR || r1Dim < aDim) {
+    if (r0Dim != 1 || r1Dim < R_LOOP_FACTOR || aDim <= 0 || coreNum == 0 || blockSize == 0 || vlFp32 == 0) {
         return false;
     }
-    // 估一下:若本切R模板不接管,会按调度优先级接手同一 shape 的另一路模板(RA_RECOMPUTE / RA_ALL_LOAD)
-    // 能用多少核 —— 它们只沿 A(通道)轴切核。下面用与它们相同的公式算出其可用核数 rivalCores,
-    // 再与切R自己能用的核数比较,据此决定该不该把这个 shape 调度到切R模板。
-    int64_t dtypeSize = (dyDtype == ge::DataType::DT_FLOAT) ? static_cast<int64_t>(FLOAT_BYTE_SIZE) :
-                                                              static_cast<int64_t>(sizeof(uint16_t));
-    // aFactor恒>=blockSize/dtypeSize>=1，无需再判零
+    int64_t packedGroups = 0;
+    if (CanUsePackedRAFullLoad(packedGroups) || PreferVectorRAFullLoad()) {
+        return false;
+    }
+    if (CanUsePackedRASplitR(r1Dim, aDim, coreNum, dyDtype)) {
+        return true;
+    }
+
+    int64_t dtypeSize = ge::GetSizeByDataType(dyDtype);
     int64_t aFactor = std::max(Ops::Base::CeilDiv(aDim, static_cast<int64_t>(coreNum)),
                                static_cast<int64_t>(blockSize) / dtypeSize);
     int64_t rivalCores = Ops::Base::CeilDiv(aDim, aFactor);
-    // 【重要】必须同时比自己能用几个核:blockFactor 有 R_LOOP_FACTOR 下限,r1Dim < R_LOOP_FACTOR*coreNum 时
-    // 切R自己也填不满核。只判"切A那路填不满(rivalCores<coreNum)"会把 ownCores < rivalCores 的存量 shape
-    // 抢过来反而更慢(如 NCHW(256,256,1,1):切A 32 核、切R 仅 4 核)。
     int64_t ownCores = CalcUsedCoreNum();
-    // 自己比切A那路能用更多核 且 rivalCores 至少 2 → 调度到切R模板; 或 R足够长(只切A不切R必慢)。
-    // rivalCores>=2 这条是上板标定加的:rivalCores 仅 1 时是单核全载,小/中 R 下它反而更快
-    // (切R 的 workspace 往返 + 2×SyncAll 固定开销吃光多核收益;实测 C=1/C=8 小 R +15~52% 回退),
-    // 此时只靠第二分支(R 足够长)接管,不在第一分支抢。
-    if ((rivalCores >= MIN_RIVAL_CORES && rivalCores < static_cast<int64_t>(coreNum) && ownCores > rivalCores) ||
-        r1Dim > LONG_R_FACTOR * static_cast<int64_t>(coreNum)) {
-        return true;
+    int64_t inputVectorElements = static_cast<int64_t>(Ops::Base::GetVRegSize(context_)) / dtypeSize;
+    bool narrowRows = aFactor < inputVectorElements;
+    if (r1Dim >= aDim) {
+        // Preserve the existing core-utilization and long-R selections.
+        if ((rivalCores >= MIN_RIVAL_CORES && rivalCores < static_cast<int64_t>(coreNum) && ownCores > rivalCores) ||
+            r1Dim > LONG_R_FACTOR * static_cast<int64_t>(coreNum)) {
+            return true;
+        }
+        return narrowRows && ownCores >= MIN_OWN_CORES_FINE_GRAIN;
     }
-    return false;
+
+    // R<C can still benefit from wider copies. Keep resident FullLoad blocks:
+    // their one-pass reuse beats the cross-core stages on short reductions.
+    constexpr int64_t minCoreOccupancyDivisor = 4;
+    constexpr int64_t alignedHalfMinRDivisor = 4;
+    constexpr int64_t defaultMinRDivisor = 2;
+    if (!narrowRows || ownCores < MIN_OWN_CORES_FINE_GRAIN ||
+        ownCores < Ops::Base::CeilDiv(static_cast<int64_t>(coreNum), minCoreOccupancyDivisor)) {
+        return false;
+    }
+    // Aligned half-precision rows retain more of the wider-copy benefit.
+    bool alignedHalfRow = dtypeSize == static_cast<int64_t>(sizeof(uint16_t)) &&
+                          blockSize >= static_cast<uint64_t>(dtypeSize) &&
+                          static_cast<uint64_t>(aDim) % (blockSize / dtypeSize) == 0;
+    int64_t minR = Ops::Base::CeilDiv(aDim, alignedHalfRow ? alignedHalfMinRDivisor : defaultMinRDivisor);
+    if (r1Dim < minR) {
+        return false;
+    }
+    int64_t rivalBlockFactor = Ops::Base::CeilDiv(aDim, rivalCores);
+    return CalcRAFullLoadLoopFactor(rivalBlockFactor) < rivalBlockFactor;
 }
 
 ge::graphStatus BatchNormGradV3TilingRASplitR::DoOpTiling()
 {
     dyTypeSize_ = ge::GetSizeByDataType(dyDtype);
-    // Select an internal layout only after the unchanged IsCapable admitted Split-R.
-    packed_ = aDim >= 1 && aDim <= RC_PACKED_MAX_CHANNELS && r1Dim >= RC_PACKED_MIN_R;
+    // Select the existing internal layout after Split-R admission succeeds.
+    packed_ = CanUsePackedRASplitR(r1Dim, aDim, coreNum, dyDtype);
     rowsPerGroup_ = 1;
     if (packed_) {
         while (rowsPerGroup_ * 2 * aDim <= RC_PACKED_VECTOR_ELEMENTS) {
