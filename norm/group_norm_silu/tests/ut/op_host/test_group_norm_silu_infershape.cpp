@@ -23,6 +23,7 @@
 #include "ut_op_common.h"
 // #include "util/util.h"
 #include "platform/platform_info.h"
+#include "platform/soc_spec.h"
 
 class GroupNormSiluProto : public testing::Test {
 protected:
@@ -53,6 +54,7 @@ TEST_F(GroupNormSiluProto, group_norm_silu_inferdtype_test)
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optiCompilationInfo;
     platformInfo.soc_info.ai_core_cnt = 64;
+    platformInfo.soc_info.arch_type = static_cast<int32_t>(NpuArch::DAV_3510);
     platformInfo.str_info.short_soc_version = "Ascend950";
     optiCompilationInfo.soc_version = "Ascend950PR_9589";
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950PR_9589"] = platformInfo;
@@ -86,6 +88,7 @@ TEST_F(GroupNormSiluProto, group_norm_silu_inferdtype_david_test1)
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optiCompilationInfo;
     platformInfo.soc_info.ai_core_cnt = 64;
+    platformInfo.soc_info.arch_type = static_cast<int32_t>(NpuArch::DAV_3510);
     platformInfo.str_info.short_soc_version = "Ascend950";
     optiCompilationInfo.soc_version = "Ascend950PR_9589";
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950PR_9589"] = platformInfo;
@@ -113,6 +116,7 @@ TEST_F(GroupNormSiluProto, group_norm_silu_inferdtype_david_test2)
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optiCompilationInfo;
     platformInfo.soc_info.ai_core_cnt = 64;
+    platformInfo.soc_info.arch_type = static_cast<int32_t>(NpuArch::DAV_3510);
     platformInfo.str_info.short_soc_version = "Ascend950";
     optiCompilationInfo.soc_version = "Ascend950PR_9589";
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950PR_9589"] = platformInfo;
@@ -140,6 +144,7 @@ TEST_F(GroupNormSiluProto, group_norm_silu_inferdtype_david_test3)
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optiCompilationInfo;
     platformInfo.soc_info.ai_core_cnt = 64;
+    platformInfo.soc_info.arch_type = static_cast<int32_t>(NpuArch::DAV_3510);
     platformInfo.str_info.short_soc_version = "Ascend950";
     optiCompilationInfo.soc_version = "Ascend950PR_9589";
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950PR_9589"] = platformInfo;
@@ -159,4 +164,32 @@ TEST_F(GroupNormSiluProto, group_norm_silu_inferdtype_david_test3)
     EXPECT_EQ(output_dtype, ge::DT_FLOAT16);
     EXPECT_EQ(mean_dtype, ge::DT_FLOAT16);
     EXPECT_EQ(rstd_dtype, ge::DT_FLOAT16);
+}
+
+TEST_F(GroupNormSiluProto, group_norm_silu_inferdtype_960dt_test)
+{
+    // set version
+    fe::PlatformInfo platformInfo;
+    fe::OptionalInfo optiCompilationInfo;
+    platformInfo.soc_info.ai_core_cnt = 64;
+    platformInfo.soc_info.arch_type = static_cast<int32_t>(NpuArch::DAV_9201);
+    platformInfo.str_info.short_soc_version = "Ascend960DT";
+    optiCompilationInfo.soc_version = "Ascend960DT_9599";
+    fe::PlatformInfoManager::Instance().platform_info_map_["Ascend960DT_9599"] = platformInfo;
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
+    ge::op::GroupNormSilu op;
+    op.UpdateInputDesc("x", create_desc({1, 1152, 64, 64}, ge::DT_FLOAT16));
+    op.UpdateInputDesc("gamma", create_desc({1152}, ge::DT_FLOAT));
+    op.UpdateInputDesc("beta", create_desc({1152}, ge::DT_FLOAT));
+
+    auto ret = InferDataTypeTest(op);
+    EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
+
+    auto output_dtype = op.GetOutputDesc("y").GetDataType();
+    auto mean_dtype = op.GetOutputDesc("mean").GetDataType();
+    auto rstd_dtype = op.GetOutputDesc("rstd").GetDataType();
+
+    EXPECT_EQ(output_dtype, ge::DT_FLOAT16);
+    EXPECT_EQ(mean_dtype, ge::DT_FLOAT);
+    EXPECT_EQ(rstd_dtype, ge::DT_FLOAT);
 }

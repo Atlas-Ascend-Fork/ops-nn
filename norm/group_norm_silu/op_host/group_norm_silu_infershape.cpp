@@ -17,6 +17,9 @@
 #include "util/shape_util.h"
 #include "platform/platform_infos_def.h"
 #include "platform/platform_info.h"
+#include "platform/soc_spec.h"
+
+#include <set>
 
 using namespace ge;
 namespace ops {
@@ -78,7 +81,11 @@ static graphStatus GroupNormSiluInferDtype(gert::InferDataTypeContext* context)
                  ge::GRAPH_SUCCESS),
                 OP_LOGE(context, "Cannot get platform info!"), return ge::GRAPH_FAILED);
     OP_LOGD(context, "soc version is %s", platform_info.str_info.short_soc_version.c_str());
-    if (platform_info.str_info.short_soc_version == "Ascend950") {
+    const int32_t npuArch = platform_info.soc_info.arch_type;
+    const std::set<int32_t> supportNpuArchList = {
+        static_cast<int32_t>(NpuArch::DAV_3510), static_cast<int32_t>(NpuArch::DAV_5102),
+        static_cast<int32_t>(NpuArch::DAV_9201), static_cast<int32_t>(NpuArch::DAV_9202)};
+    if (supportNpuArchList.count(npuArch) != 0) {
         auto gammaDtype = context->GetOptionalInputDataType(GROUPNORMSILU_IDX_OUT_MEAN);
         auto betaDtype = context->GetOptionalInputDataType(GROUPNORMSILU_IDX_OUT_VAR);
         bool validGammaDtype = ((gammaDtype != ge::DT_UNDEFINED) && (gammaDtype != ge::DT_MAX));
