@@ -389,7 +389,7 @@ static bool CheckConvBiasDimLegal(const InferShapeContext* context, const gert::
     }
     // Get bias channel index
     auto biasDesc = context->GetOptionalInputDesc(opInfo.paramIdx.biasIdx);
-    OPS_CHECK_NULL_WITH_CONTEXT_BOOL(context, biasDesc);
+    OPS_CHECK_NULL_WITH_CONTEXT(context, biasDesc);
     ge::Format biasFormat = biasDesc->GetOriginFormat();
     GetConvShapeIdx(biasFormat, opInfo.biasFormatIdx);
     auto filterShape = context->GetInputShape(opInfo.paramIdx.weightIdx);
@@ -494,7 +494,6 @@ static bool GetConvDilations(const T* context, ConvOpInfo& opInfo)
     OPS_CHECK_NULL_WITH_CONTEXT_BOOL(context, attrs);
     const gert::ContinuousVector* dilationsList = attrs->GetAttrPointer<gert::ContinuousVector>(
         opInfo.paramIdx.dilationIdx);
-    OPS_CHECK_NULL_WITH_CONTEXT_BOOL(context, dilationsList);
     if (opInfo.isConv3DLike) {
         OP_LOGE_IF(dilationsList->GetSize() != CONV3DV2_SUPPORTED_DIM_NUM, false, context->GetNodeName(),
                    "The shape of the dilations should be %zu, actual dim num: %zu", CONV3DV2_SUPPORTED_DIM_NUM,
@@ -753,7 +752,7 @@ static bool CheckConvGroups(const InferShapeContext* context, ConvOpInfo& opInfo
     OPS_CHECK_NULL_WITH_CONTEXT_BOOL(context, groupPtr);
     int64_t groups = *groupPtr;
     bool unknownShape = opInfo.unknownShapeX || opInfo.unknownShapeW;
-    OP_CHECK((groups == 0 || (!unknownShape && groups <= 0)),
+    OP_CHECK((!unknownShape && groups <= 0),
              CUBE_INNER_ERR_REPORT(context->GetNodeName(), "groups %ld is illegal", groups), return false);
 
     bool icUpdateFlag = opInfo.ic < 0 && opInfo.kc > 0 && groups > 0;
@@ -777,7 +776,6 @@ static bool ReportInputWithPadError(const InferShapeContext* context, const Conv
     OPS_CHECK_NULL_WITH_CONTEXT_BOOL(context, attrs);
     const gert::ContinuousVector* dilationsList = attrs->GetAttrPointer<gert::ContinuousVector>(
         opInfo.paramIdx.dilationIdx);
-    OPS_CHECK_NULL_WITH_CONTEXT_BOOL(context, dilationsList);
     const int64_t* dilationsPtr = static_cast<const int64_t*>(dilationsList->GetData());
     OPS_CHECK_NULL_WITH_CONTEXT_BOOL(context, dilationsPtr);
     const gert::Shape* xShapePtr = context->GetInputShape(opInfo.paramIdx.fMapIdx);
