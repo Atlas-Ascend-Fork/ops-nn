@@ -8,4 +8,6 @@
 
 if(UT_TEST_ALL OR OP_GRAPH_UT)
     add_modules_ut_sources(HOSTNAME ${OP_GRAPH_MODULE_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR})
+    target_sources(${OP_GRAPH_MODULE_NAME}_cases_obj PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_inplace_sub_infer_dtype.cpp)
 endif()

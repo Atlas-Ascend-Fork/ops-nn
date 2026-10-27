@@ -20,13 +20,10 @@ __spec__ = {
 }
 __golden__ = {
     "kernel": {"inplace_sub": "inplace_sub_golden"},
-    "e2e": {"tf.raw_ops.InplaceSub": "inplace_sub_tf_golden"},
 }
 __input__ = {
     "kernel": {"inplace_sub": "inplace_sub_input"},
-    "e2e": {"tf.raw_ops.InplaceSub": "inplace_sub_tf_input"},
 }
-_E2E_ORIGINAL_X = {}
 
 _TOL = {
     "float32": {"standard": "cross_check", "level": "L1"},
@@ -40,6 +37,8 @@ _TOL = {
     "uint16": {"standard": "binary_equal"},
     "uint32": {"standard": "binary_equal"},
     "uint64": {"standard": "binary_equal"},
+    "complex32": {"standard": "binary_equal"},
+    "complex64": {"standard": "binary_equal"},
 }
 
 
@@ -60,6 +59,16 @@ def _supports_special_values(array):
 
 def inplace_sub_input(x, indices, v, **kwargs):
     testcase_name = kwargs.get("testcase_name", "")
+    # Invalid-shape cases must reach the operator unchanged.
+    if (
+        x.ndim == 0
+        or indices.ndim != 1
+        or v.ndim != x.ndim
+        or v.shape[0] != indices.size
+        or v.shape[1:] != x.shape[1:]
+        or indices.size > x.shape[0]
+    ):
+        return [x, indices, v]
     if "dfx_signed_overflow" in testcase_name:
         x = np.array(x, copy=True)
         indices = np.zeros_like(indices)
@@ -102,10 +111,6 @@ def inplace_sub_input(x, indices, v, **kwargs):
         )
         indices = np.resize(values, indices.size).astype(indices.dtype)
         return [x, indices.reshape(indices_shape), v]
-    if indices.size > x.shape[0]:
-        raise ValueError(
-            "InplaceSub positive cases require indices length not greater than x.shape[0]."
-        )
     rng = _rng_for_case(testcase_name)
     indices = rng.choice(x.shape[0], indices.size, replace=False).astype(indices.dtype)
     return [x, indices.reshape(indices_shape), v]
@@ -180,34 +185,17 @@ def _restore_inplace_sub_output(y, result_dtype, return_torch):
 
 
 def _inplace_sub_golden_compute(x, indices, v):
-    import torch
+    """Use TensorFlow for both CPU paths without overriding TTK Promote."""
+    import tensorflow as tf
 
-    y, idx, updates, result_dtype, return_torch = _prepare_inplace_sub_inputs(
-        x, indices, v
-    )
-    updates = _prepare_updates(updates, idx, y.dim())
-    update_shape = (idx.numel(),) + tuple(y.shape[1:])
-    updates = updates.expand(update_shape)
-    y = torch.index_add(y, 0, idx.reshape(-1), -updates.reshape(update_shape))
-    return _restore_inplace_sub_output(y, result_dtype, return_torch)
-
-
-class _InplaceSubTfCompose:
-    def __call__(self, x, indices, v, **kwargs):
-        import tensorflow as tf
-
-        y = tf.convert_to_tensor(x)
-        idx = tf.reshape(tf.cast(tf.convert_to_tensor(indices), tf.int32), [-1])
-        updates = tf.cast(tf.convert_to_tensor(v), y.dtype)
-
-        def no_op():
-            return tf.identity(y)
-
-        def subtract():
-            wrapped = tf.math.floormod(idx, tf.shape(y, out_type=tf.int32)[0])
-            return tf.tensor_scatter_nd_sub(y, tf.reshape(wrapped, [-1, 1]), updates)
-
-        return [tf.cond(tf.equal(tf.size(idx), 0), no_op, subtract)]
+    y = tf.convert_to_tensor(x)
+    updates = tf.convert_to_tensor(v)
+    idx = tf.reshape(tf.convert_to_tensor(indices), [-1])
+    if int(tf.size(y)) == 0 or int(tf.size(idx)) == 0:
+        return y.numpy()
+    idx = tf.math.floormod(idx, tf.shape(y, out_type=idx.dtype)[0])
+    updates = tf.reshape(updates, (int(tf.size(idx)),) + tuple(y.shape[1:]))
+    return tf.tensor_scatter_nd_sub(y, tf.reshape(idx, [-1, 1]), updates).numpy()
 
 
 class _InplaceSubTorchCompose:
@@ -223,8 +211,8 @@ class _InplaceSubTorchCompose:
         updates = _prepare_updates(updates, idx, y.dim())
         update_shape = (idx.numel(),) + tuple(y.shape[1:])
         updates = updates.expand(update_shape)
-        # index_put_ with accumulate=True is independent of the kernel golden
-        # (which uses index_add) while preserving duplicate-index behavior.
+        # Accumulation preserves duplicate-index behavior independently of the
+        # TensorFlow scatter used by the CPU golden.
         y.index_put_((idx.reshape(-1),), -updates, accumulate=True)
         return [_restore_inplace_sub_output(y, result_dtype, return_torch)]
 
@@ -234,51 +222,8 @@ class _InplaceSubTfTorchCompose:
         return _InplaceSubTorchCompose.__call__(self, x, i, v, **kwargs)
 
 
-def _promote_tf_golden_dtype(tensor):
-    import tensorflow as tf
-
-    promote = {
-        tf.float16: tf.float32,
-        tf.bfloat16: tf.float32,
-        tf.float32: tf.float64,
-        tf.complex64: tf.complex128,
-    }
-    return tf.cast(tensor, promote.get(tensor.dtype, tensor.dtype))
-
-
 def _inplace_sub_tf_api_golden(x, i, v):
-    import tensorflow as tf
-
-    input_tensor = tf.convert_to_tensor(x)
-    input_dtype = input_tensor.dtype
-    work = _promote_tf_golden_dtype(input_tensor)
-    indices = tf.reshape(tf.cast(tf.convert_to_tensor(i), tf.int32), [-1])
-    updates = tf.cast(tf.convert_to_tensor(v), work.dtype)
-
-    def no_op():
-        return tf.identity(work)
-
-    def subtract():
-        wrapped = tf.math.floormod(indices, tf.shape(work, out_type=tf.int32)[0])
-        return tf.tensor_scatter_nd_sub(work, tf.reshape(wrapped, [-1, 1]), updates)
-
-    is_no_op = tf.logical_or(tf.equal(tf.size(indices), 0), tf.equal(tf.size(work), 0))
-    result = tf.cond(is_no_op, no_op, subtract)
-    return tf.cast(result, input_dtype)
-
-
-def inplace_sub_tf_input(x, i, v, testcase_name=None, **kwargs):
-    """Preserve x before TF raw-op execution for the custom E2E golden.
-
-    TTK currently tracks explicit inplace indexes only in positional args,
-    while TensorFlow raw ops are dispatched through keyword args. Keeping the
-    pre-execution value here prevents golden generation from observing the
-    already-mutated Variable.
-    """
-    del i, v, kwargs
-    if testcase_name:
-        value = x.numpy() if hasattr(x, "numpy") else x
-        _E2E_ORIGINAL_X[testcase_name] = np.array(value, copy=True)
+    return _inplace_sub_golden_compute(x, i, v)
 
 
 class InplaceSubKernelSpec:
@@ -286,25 +231,16 @@ class InplaceSubKernelSpec:
     def golden(x, indices, v, **kwargs):
         return [_inplace_sub_golden_compute(x, indices, v)]
 
-    third_party: ClassVar[dict] = {
-        "torch": _InplaceSubTorchCompose,
-        "tf": _InplaceSubTfCompose,
-    }
+    third_party: ClassVar[dict] = {"torch": _InplaceSubTorchCompose}
     customize_inputs = staticmethod(inplace_sub_input)
     tolerance = _TOL
 
 
 class InplaceSubTfSpec:
-    @staticmethod
-    def golden(x, i, v, testcase_name=None, **kwargs):
-        original_x = _E2E_ORIGINAL_X.pop(testcase_name, None)
-        return [
-            _inplace_sub_tf_api_golden(
-                original_x if original_x is not None else x, i, v
-            )
-        ]
-
-    customize_inputs = staticmethod(inplace_sub_tf_input)
+    # The native TF CPU fallback applies Promote to fresh raw inputs.
+    # TF InplaceSub also changes ordinary Tensor storage: repeated E2E calls
+    # require a fresh x; use one call without warmup for functional validation.
+    golden = None
     third_party: ClassVar[dict] = {"torch": _InplaceSubTfTorchCompose}
     tolerance = _TOL
 
@@ -314,4 +250,4 @@ def inplace_sub_golden(x, indices, v, **kwargs):
 
 
 def inplace_sub_tf_golden(x, i, v, **kwargs):
-    return InplaceSubTfSpec.golden(x, i, v, **kwargs)
+    return [_inplace_sub_tf_api_golden(x, i, v)]

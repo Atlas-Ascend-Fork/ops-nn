@@ -34,7 +34,7 @@ using namespace ge;
 static constexpr int64_t INPUT_X_INDEX = 0;
 static constexpr int64_t OUTPUT_Y_INDEX = 0;
 
-static ge::graphStatus InferDataTypeInplaceSub(gert::InferDataTypeContext* context)
+ge::graphStatus InferDataTypeInplaceSub(gert::InferDataTypeContext* context)
 {
     ge::DataType xDtype = context->GetInputDataType(INPUT_X_INDEX);
     context->SetOutputDataType(OUTPUT_Y_INDEX, xDtype);

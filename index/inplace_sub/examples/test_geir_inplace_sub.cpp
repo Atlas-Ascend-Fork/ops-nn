@@ -138,13 +138,34 @@ int32_t GenInt32Indices(const vector<int64_t>& shape, Tensor& tensor, TensorDesc
 
 int32_t WriteDataToFile(const string& binFile, uint64_t dataSize, uint8_t* inputData)
 {
-    FILE* fp = fopen(binFile.c_str(), "w");
+    FILE* fp = fopen(binFile.c_str(), "wb");
     if (fp == nullptr) {
         return RET_FAILED;
     }
-    fwrite(inputData, sizeof(uint8_t), dataSize, fp);
-    fclose(fp);
-    return RET_SUCCESS;
+    const size_t written = fwrite(inputData, sizeof(uint8_t), dataSize, fp);
+    const int closeStatus = fclose(fp);
+    return written == dataSize && closeStatus == 0 ? RET_SUCCESS : RET_FAILED;
+}
+
+bool CheckOutput(const vector<Tensor>& output)
+{
+    const vector<int64_t> expectedShape = {4, 6};
+    if (output.size() != 1 || output[0].GetTensorDesc().GetDataType() != DT_FLOAT ||
+        output[0].GetTensorDesc().GetShape().GetDims() != expectedShape || output[0].GetSize() != 24 * sizeof(float) ||
+        output[0].GetData() == nullptr) {
+        printf("InplaceSub output must be one FLOAT tensor of shape [4, 6]\n");
+        return false;
+    }
+    const auto* values = reinterpret_cast<const float*>(output[0].GetData());
+    for (size_t i = 0; i < 24; ++i) {
+        const float expected = i < 12 ? 0.0f : 2.0f;
+        if (values[i] != expected) {
+            printf("InplaceSub output[%zu]=%f, expected %f\n", i, values[i], expected);
+            return false;
+        }
+    }
+    printf("InplaceSub output metadata and all 24 values matched\n");
+    return true;
 }
 
 template <typename DataOp>
@@ -259,6 +280,12 @@ int main(int argc, char* argv[])
     }
     printf("%s - INFO - [XIR]: Session run ir compute graph success\n", GetTime().c_str());
 
+    if (!CheckOutput(output)) {
+        delete session;
+        ge::GEFinalize();
+        return RET_FAILED;
+    }
+
     for (size_t i = 0; i < output.size(); ++i) {
         string outputFile = "./tc_ge_irrun_test_0008_npu_output_" + std::to_string(i) + ".bin";
         size_t outputShapeSize = 0;
@@ -274,10 +301,14 @@ int main(int argc, char* argv[])
             return RET_FAILED;
         }
         uint64_t dataSize = static_cast<uint64_t>(outputShapeSize) * dtypeSize;
-        WriteDataToFile(outputFile, dataSize, output[i].GetData());
+        if (WriteDataToFile(outputFile, dataSize, output[i].GetData()) != RET_SUCCESS) {
+            printf("%s - ERROR - [XIR]: Write output file failed\n", GetTime().c_str());
+            delete session;
+            ge::GEFinalize();
+            return RET_FAILED;
+        }
     }
 
     delete session;
-    ge::GEFinalize();
-    return RET_SUCCESS;
+    return ge::GEFinalize() == ge::SUCCESS ? RET_SUCCESS : RET_FAILED;
 }

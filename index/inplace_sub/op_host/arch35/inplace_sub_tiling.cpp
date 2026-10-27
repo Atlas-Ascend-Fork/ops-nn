@@ -63,20 +63,26 @@ static ge::graphStatus CheckInputShape(gert::TilingContext* context, const gert:
                     (std::to_string(xShape.GetDimNum()) + ", " + std::to_string(vShape.GetDimNum())).c_str(),
                     "v rank must equal x rank"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(
-        vShape.GetDim(0) != indicesShape.GetDim(0),
-        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "indices, v", "mismatched first dimension",
-                                               "v.shape[0] must equal indices length"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(vShape.GetDim(0) != indicesShape.GetDim(0),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "indices, v",
+                    (std::to_string(indicesShape.GetDim(0)) + ", " + std::to_string(vShape.GetDim(0))).c_str(),
+                    "v.shape[0] must equal indices length"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(xShape.GetDim(0) == 0 && indicesShape.GetDim(0) != 0,
-                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "x, indices",
-                                                       "x.shape[0] is 0 while indices is non-empty",
-                                                       "indices must be empty when x.shape[0] is 0"),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "x, indices",
+                    (std::to_string(xShape.GetDim(0)) + ", " + std::to_string(indicesShape.GetDim(0))).c_str(),
+                    "indices must be empty when x.shape[0] is 0"),
                 return ge::GRAPH_FAILED);
     for (size_t i = 1; i < xShape.GetDimNum(); ++i) {
         OP_CHECK_IF(vShape.GetDim(i) != xShape.GetDim(i),
-                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "x, v", "mismatched tail dimensions",
-                                                           "v.shape[1:] must equal x.shape[1:]"),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), "x, v",
+                        ("axis " + std::to_string(i) + ": " + std::to_string(xShape.GetDim(i)) + ", " +
+                         std::to_string(vShape.GetDim(i)))
+                            .c_str(),
+                        "v.shape[1:] must equal x.shape[1:]"),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;

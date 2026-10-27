@@ -30,11 +30,6 @@ ge::graphStatus InplaceSubInferShape(gert::InferShapeContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus InplaceSubInferDataType(gert::InferDataTypeContext* context)
-{
-    context->SetOutputDataType(0, context->GetInputDataType(0));
-    return ge::GRAPH_SUCCESS;
-}
 } // namespace
 
-IMPL_OP_INFERSHAPE(InplaceSub).InferShape(InplaceSubInferShape).InferDataType(InplaceSubInferDataType);
+IMPL_OP_INFERSHAPE(InplaceSub).InferShape(InplaceSubInferShape);

@@ -13,13 +13,13 @@
 
 ## 功能说明
 
-- 算子功能：根据indices指定的第0维位置，将v中的值从x的对应切片中减去，返回更新后的y。
+- 算子功能：根据indices指定的第0维位置，将v中的值从x的对应切片中减去，通过输出y返回结果。
 
 - 计算逻辑：
 
   y的初始值与x一致。对于indices中的每个位置i，执行如下更新：
 
-  ```bash
+  ```text
   y[indices[i], ...] = y[indices[i], ...] - v[i, ...]
   ```
 
@@ -100,12 +100,16 @@
 - x、v、y的数据类型必须一致。
 - x的维度数需大于0，indices必须为一维张量。
 - v.shape[0]必须等于indices的长度，v.shape[1:]必须等于x.shape[1:]。
-- 当x.shape[0]为0时，indices长度必须为0。
+- 当x.shape[0]为0时，indices长度必须为0；任一尾维为0时，输出为空Tensor。
 - indices按x的第0维大小进行取模归一。
 - 当indices中存在重复值时，输出结果未定义。
+- <term>Ascend 950PR&950DT系列产品</term>：
+  - `x.shape[0]`与`indices.shape[0]`不得超过INT32最大值（2147483647），尾维元素数及张量元素数须在INT64可表示范围内；COMPLEX32、COMPLEX64按实部和虚部展开后的元素数计算。
+  - 图编译期用`-1`表示未知维度、`[-2]`表示未知rank，输出`y`继承`x`的shape；执行期以具体非负维度进行tiling校验。
+  - 整数减法按对应位宽回绕，不执行饱和截断。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| 图模式调用 | [test_geir_inplace_sub](./examples/test_geir_inplace_sub.cpp) | 通过[算子IR](./op_graph/inplace_sub_proto.h)构图方式调用InplaceSub算子。 |
+| GE图模式 | [test_geir_inplace_sub](./examples/test_geir_inplace_sub.cpp) | 通过[算子IR](./op_graph/inplace_sub_proto.h)构图方式调用InplaceSub算子。 |

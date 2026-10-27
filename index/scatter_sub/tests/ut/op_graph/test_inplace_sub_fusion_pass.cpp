@@ -141,9 +141,9 @@ static void SetPlatform(const std::string& socVersion)
 // ===========================================================================
 class AInplaceSubFusionPassTest : public testing::Test {
 protected:
-    static void SetUpTestCase() { SetPlatform("Ascend950"); }
+    static void SetUpTestCase() { SetPlatform("Ascend910_93"); }
 
-    void SetUp() override { SetPlatform("Ascend950"); }
+    void SetUp() override { SetPlatform("Ascend910_93"); }
 };
 
 // ===========================================================================
@@ -226,6 +226,18 @@ TEST_F(AInplaceSubFusionPassTest, inplaceSubAscend910_93Success)
     EXPECT_TRUE(FindNodeByType(graph, "ScatterSub"));
 }
 
+TEST_F(AInplaceSubFusionPassTest, inplaceSubAscend910BSuccess)
+{
+    SetPlatform("Ascend910B");
+    auto graph = BuildTestGraph(DT_FLOAT, {4, 8}, {2}, {2, 8});
+    CustomPassContext passContext;
+    OPS::NN::AInplaceSubFusionPass pass;
+    ASSERT_EQ(pass.Run(graph, passContext), SUCCESS);
+    EXPECT_TRUE(FindNodeByType(graph, "TensorMove"));
+    EXPECT_TRUE(FindNodeByType(graph, "ScatterSub"));
+    EXPECT_FALSE(FindNodeByType(graph, "InplaceSub"));
+}
+
 // 不支持平台:Ascend310 不融合,InplaceSub 保留
 TEST_F(AInplaceSubFusionPassTest, unsupportedPlatformFail)
 {
@@ -243,7 +255,7 @@ TEST_F(AInplaceSubFusionPassTest, unsupportedPlatformFail)
 // 不支持的 data dtype(如 DT_DOUBLE):ScatterSub 不支持,不融合
 TEST_F(AInplaceSubFusionPassTest, unsupportedDtypeFail)
 {
-    SetPlatform("Ascend950");
+    SetPlatform("Ascend910_93");
     auto graph = BuildTestGraph(DT_DOUBLE, {4, 8}, {2}, {2, 8});
     CustomPassContext passContext;
     OPS::NN::AInplaceSubFusionPass pass;
@@ -257,7 +269,7 @@ TEST_F(AInplaceSubFusionPassTest, unsupportedDtypeFail)
 // 不支持的 indices dtype(非 int32/int64,如 DT_INT16):不融合
 TEST_F(AInplaceSubFusionPassTest, unsupportedIndicesDtypeFail)
 {
-    SetPlatform("Ascend950");
+    SetPlatform("Ascend910_93");
     auto graph = BuildTestGraph(DT_FLOAT, {4, 8}, {2}, {2, 8}, DT_INT16);
     CustomPassContext passContext;
     OPS::NN::AInplaceSubFusionPass pass;
@@ -281,4 +293,42 @@ TEST_F(AInplaceSubFusionPassTest, inplaceSubFusionBf16Ascend910_93UnsupportedFai
     EXPECT_FALSE(FindNodeByType(graph, "TensorMove"));
     EXPECT_FALSE(FindNodeByType(graph, "ScatterSub"));
     EXPECT_TRUE(FindNodeByType(graph, "InplaceSub"));
+}
+
+TEST_F(AInplaceSubFusionPassTest, native950PreservesAllDataDtypes)
+{
+    SetPlatform("Ascend950");
+    const std::vector<DataType> dtypes = {
+        DT_FLOAT16, DT_FLOAT,  DT_BF16,   DT_INT8,   DT_INT16,     DT_INT32,     DT_INT64,
+        DT_UINT8,   DT_UINT16, DT_UINT32, DT_UINT64, DT_COMPLEX32, DT_COMPLEX64,
+    };
+    for (const auto dtype : dtypes) {
+        SCOPED_TRACE(static_cast<int32_t>(dtype));
+        auto graph = BuildTestGraph(dtype, {4, 8}, {2}, {2, 8});
+        CustomPassContext passContext;
+        OPS::NN::AInplaceSubFusionPass pass;
+        EXPECT_EQ(pass.Run(graph, passContext), GRAPH_NOT_CHANGED);
+        EXPECT_TRUE(FindNodeByType(graph, "InplaceSub"));
+        EXPECT_FALSE(FindNodeByType(graph, "TensorMove"));
+        EXPECT_FALSE(FindNodeByType(graph, "ScatterSub"));
+    }
+}
+
+TEST_F(AInplaceSubFusionPassTest, native950PreservesDynamicAndEmptyShapes)
+{
+    SetPlatform("Ascend950");
+    const std::vector<std::vector<int64_t>> shapes = {{-2}, {-1, 8}, {0, 8}, {4, 0, 3}};
+    for (const auto& shape : shapes) {
+        SCOPED_TRACE(testing::PrintToString(shape));
+        auto updatesShape = shape;
+        if (shape != std::vector<int64_t>{-2}) {
+            updatesShape[0] = 0;
+        }
+        auto graph = BuildTestGraph(DT_FLOAT, shape, {0}, updatesShape);
+        CustomPassContext passContext;
+        OPS::NN::AInplaceSubFusionPass pass;
+        EXPECT_EQ(pass.Run(graph, passContext), GRAPH_NOT_CHANGED);
+        EXPECT_TRUE(FindNodeByType(graph, "InplaceSub"));
+        EXPECT_FALSE(FindNodeByType(graph, "ScatterSub"));
+    }
 }

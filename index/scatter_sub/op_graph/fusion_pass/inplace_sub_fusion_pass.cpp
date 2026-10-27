@@ -45,6 +45,7 @@ const std::string PASS_NAME = "AInplaceSubFusionPass";
 const int64_t CAPTURE_IDX_OUTPUT = 0l;
 const std::string MATCHED_OP_TYPE = "InplaceSub";
 const std::string NOT_SUPPORT_SOC = "Ascend310";
+const std::string NATIVE_INPLACE_SUB_SOC = "Ascend950";
 
 // kCompatibleInherited 出于 9.0.0(GE_COMPILER_VERSION_NUM = 90000000)。
 // 本 pass 内部全部使用 8.5.0 已有 API,唯一的新接口是注册 stage kCompatibleInherited,
@@ -144,7 +145,9 @@ static std::string GetCurrentSocVersion()
     return platformInfo.str_info.short_soc_version;
 }
 
-// 平台校验:原融合规则只排除 Ascend310,其余平台均融合。
+// Ascend950 uses the native kernel, which normalizes indices modulo x.shape[0].
+// ScatterSub drops out-of-range indices, so the legacy lowering is not equivalent.
+// Use the compilation target, not the architecture reported by the local runtime.
 static bool IsSupportedPlatform()
 {
     const std::string curSoc = GetCurrentSocVersion();
@@ -152,8 +155,8 @@ static bool IsSupportedPlatform()
         OPS_LOG_W(PASS_NAME.c_str(), "Get platform_info failed, skip.");
         return false;
     }
-    if (curSoc == NOT_SUPPORT_SOC) {
-        OPS_LOG_D(PASS_NAME.c_str(), "Platform %s is not supported, skip.", curSoc.c_str());
+    if (curSoc == NOT_SUPPORT_SOC || curSoc == NATIVE_INPLACE_SUB_SOC) {
+        OPS_LOG_D(PASS_NAME.c_str(), "Platform %s does not use the legacy fusion, skip.", curSoc.c_str());
         return false;
     }
     return true;
