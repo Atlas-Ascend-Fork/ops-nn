@@ -35,7 +35,7 @@ inline void runTest(gert::StorageShape& input_shape, gert::StorageShape& input1_
                     gert::StorageShape& input3_shape, gert::StorageShape& input4_shape,
                     gert::StorageShape& input5_shape, gert::StorageShape& out_shape, gert::StorageShape& out1_shape,
                     gert::StorageShape& out2_shape, gert::StorageShape& out3_shape, ge::DataType data_type,
-                    uint32_t tiling_key_expect)
+                    uint32_t tiling_key_expect, ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS)
 {
     // dlog_setlevel(0, 0, 0);
 
@@ -117,11 +117,13 @@ inline void runTest(gert::StorageShape& input_shape, gert::StorageShape& input1_
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
     // workspaces nullptr return failed
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tiling_func(tiling_context), expectedStatus);
 
-    // check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
-    ASSERT_EQ(tiling_key, tiling_key_expect);
+    // check tiling result only when tiling success
+    if (expectedStatus == ge::GRAPH_SUCCESS) {
+        auto tiling_key = tiling_context->GetTilingKey();
+        ASSERT_EQ(tiling_key, tiling_key_expect);
+    }
     // dlog_setlevel(0, 3, 0);
 }
 
@@ -276,4 +278,378 @@ TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_22)
 
     runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
             out2_shape, out3_shape, ge::DT_BF16, 22);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_dy_dimnum_too_large)
+{ // dy dim num > 8, invalid
+    gert::StorageShape input_shape = {{2, 1, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1, 1, 1, 1, 1, 1, 1}, {2, 1, 1, 1, 1, 1, 1, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1, 1, 1, 1, 1, 1, 1}, {2, 1, 1, 1, 1, 1, 1, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_dy_dimnum_too_small)
+{ // dy dim num < 2, invalid
+    gert::StorageShape input_shape = {{1024}, {1024}};
+    gert::StorageShape input1_shape = {{1024}, {1024}};
+    gert::StorageShape input2_shape = {{1024}, {1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{1}, {1}};
+    gert::StorageShape input5_shape = {{1}, {1}};
+    gert::StorageShape out_shape = {{1024}, {1024}};
+    gert::StorageShape out1_shape = {{1024}, {1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_gamma_dimnum_too_large)
+{ // gamma dim num > 7, invalid
+    gert::StorageShape input_shape = {{2, 3, 4, 5, 6, 7, 1024}, {2, 3, 4, 5, 6, 7, 1024}};
+    gert::StorageShape input1_shape = {{2, 3, 4, 5, 6, 7, 1024}, {2, 3, 4, 5, 6, 7, 1024}};
+    gert::StorageShape input2_shape = {{2, 3, 4, 5, 6, 7, 1024}, {2, 3, 4, 5, 6, 7, 1024}};
+    gert::StorageShape input3_shape = {{1, 1, 1, 1, 1, 1, 1, 1024}, {1, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape input4_shape = {{2, 3, 4, 5, 6, 7, 1}, {2, 3, 4, 5, 6, 7, 1}};
+    gert::StorageShape input5_shape = {{2, 3, 4, 5, 6, 7, 1}, {2, 3, 4, 5, 6, 7, 1}};
+    gert::StorageShape out_shape = {{2, 3, 4, 5, 6, 7, 1024}, {2, 3, 4, 5, 6, 7, 1024}};
+    gert::StorageShape out1_shape = {{2, 3, 4, 5, 6, 7, 1024}, {2, 3, 4, 5, 6, 7, 1024}};
+    gert::StorageShape out2_shape = {{1, 1, 1, 1, 1, 1, 1, 1024}, {1, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape out3_shape = {{1, 1, 1, 1, 1, 1, 1, 1024}, {1, 1, 1, 1, 1, 1, 1, 1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_x_dimnum_not_equal)
+{ // x dim num != dy dim num, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1024}, {2, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_mean_dimnum_not_equal)
+{ // mean dim num != dy dim num, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1}, {2, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_dgamma_dimnum_not_equal)
+{ // dgamma dim num != gamma dim num, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1, 1024}, {1, 1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_dy_dimnum_leq_gamma)
+{ // dy dim num <= gamma dim num, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out3_shape = {{2, 1, 1024}, {2, 1, 1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_dy_shape_zero)
+{ // dy shape dim value is 0, invalid
+    gert::StorageShape input_shape = {{2, 0, 1024}, {2, 0, 1024}};
+    gert::StorageShape input1_shape = {{2, 0, 1024}, {2, 0, 1024}};
+    gert::StorageShape input2_shape = {{2, 0, 1024}, {2, 0, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 0, 1}, {2, 0, 1}};
+    gert::StorageShape input5_shape = {{2, 0, 1}, {2, 0, 1}};
+    gert::StorageShape out_shape = {{2, 0, 1024}, {2, 0, 1024}};
+    gert::StorageShape out1_shape = {{2, 0, 1024}, {2, 0, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_x_shape_not_equal_dy)
+{ // x shape != dy shape, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 2, 1024}, {2, 2, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_dx_shape_not_equal_x)
+{ // dx shape != x shape, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 512}, {2, 1, 512}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_mean_shape_not_equal_dy)
+{ // mean leading shape != dy leading shape, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{3, 1, 1}, {3, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_gamma_shape_not_equal_dy)
+{ // gamma shape != dy last dim, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{512}, {512}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{512}, {512}};
+    gert::StorageShape out3_shape = {{512}, {512}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_dgamma_shape_not_equal_gamma)
+{ // dgamma shape != gamma shape, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{512}, {512}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_dbeta_shape_not_equal_dy)
+{ // dbeta shape != dy last dim, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{512}, {512}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_failed_dtype_not_support)
+{ // input dtype not support, invalid
+    gert::StorageShape input_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1024}, {2, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_INT32, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_d500_boundary)
+{ // fp32 D = 500, not less than SMALL_D_STAGE(500), tiling key 0
+    gert::StorageShape input_shape = {{2, 1, 500}, {2, 1, 500}};
+    gert::StorageShape input1_shape = {{2, 1, 500}, {2, 1, 500}};
+    gert::StorageShape input2_shape = {{2, 1, 500}, {2, 1, 500}};
+    gert::StorageShape input3_shape = {{500}, {500}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 500}, {2, 1, 500}};
+    gert::StorageShape out1_shape = {{2, 1, 500}, {2, 1, 500}};
+    gert::StorageShape out2_shape = {{500}, {500}};
+    gert::StorageShape out3_shape = {{500}, {500}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_d499_boundary)
+{ // fp32 D = 499, less than SMALL_D_STAGE(500), tiling key 2
+    gert::StorageShape input_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape input1_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape input2_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape input3_shape = {{499}, {499}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape out1_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape out2_shape = {{499}, {499}};
+    gert::StorageShape out3_shape = {{499}, {499}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 2);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_d499_fp16_boundary)
+{ // fp16 D = 499, less than SMALL_D_STAGE(500), tiling key 12
+    gert::StorageShape input_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape input1_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape input2_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape input3_shape = {{499}, {499}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape out1_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape out2_shape = {{499}, {499}};
+    gert::StorageShape out3_shape = {{499}, {499}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT16, 12);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_d499_bf16_boundary)
+{ // bf16 D = 499, less than SMALL_D_STAGE(500), tiling key 22
+    gert::StorageShape input_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape input1_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape input2_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape input3_shape = {{499}, {499}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape out1_shape = {{2, 1, 499}, {2, 1, 499}};
+    gert::StorageShape out2_shape = {{499}, {499}};
+    gert::StorageShape out3_shape = {{499}, {499}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_BF16, 22);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_n_over_core_num)
+{ // N = 100 > core num 40, nDealPerCore > 1, tiling key 0
+    gert::StorageShape input_shape = {{100, 1, 1024}, {100, 1, 1024}};
+    gert::StorageShape input1_shape = {{100, 1, 1024}, {100, 1, 1024}};
+    gert::StorageShape input2_shape = {{100, 1, 1024}, {100, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{100, 1, 1}, {100, 1, 1}};
+    gert::StorageShape input5_shape = {{100, 1, 1}, {100, 1, 1}};
+    gert::StorageShape out_shape = {{100, 1, 1024}, {100, 1, 1024}};
+    gert::StorageShape out1_shape = {{100, 1, 1024}, {100, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_8d_input)
+{ // dy 8 dim (max dim num), gamma 1 dim, tiling key 0
+    gert::StorageShape input_shape = {{2, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape input1_shape = {{2, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape input2_shape = {{2, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape input3_shape = {{1024}, {1024}};
+    gert::StorageShape input4_shape = {{2, 1, 1, 1, 1, 1, 1, 1}, {2, 1, 1, 1, 1, 1, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1, 1, 1, 1, 1, 1}, {2, 1, 1, 1, 1, 1, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape out1_shape = {{2, 1, 1, 1, 1, 1, 1, 1024}, {2, 1, 1, 1, 1, 1, 1, 1024}};
+    gert::StorageShape out2_shape = {{1024}, {1024}};
+    gert::StorageShape out3_shape = {{1024}, {1024}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0);
+}
+
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_gamma_2d)
+{ // gamma 2 dim, dDimNum = 4 * 512 = 2048, tiling key 0
+    gert::StorageShape input_shape = {{2, 4, 512}, {2, 4, 512}};
+    gert::StorageShape input1_shape = {{2, 4, 512}, {2, 4, 512}};
+    gert::StorageShape input2_shape = {{2, 4, 512}, {2, 4, 512}};
+    gert::StorageShape input3_shape = {{4, 512}, {4, 512}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 4, 512}, {2, 4, 512}};
+    gert::StorageShape out1_shape = {{2, 4, 512}, {2, 4, 512}};
+    gert::StorageShape out2_shape = {{4, 512}, {4, 512}};
+    gert::StorageShape out3_shape = {{4, 512}, {4, 512}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 0);
 }
