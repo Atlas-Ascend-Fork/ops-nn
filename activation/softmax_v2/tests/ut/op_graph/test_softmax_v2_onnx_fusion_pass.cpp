@@ -34,18 +34,20 @@ using namespace ops;
 
 class ASoftmaxFusionPassTest : public testing::Test {
 protected:
-    void SetUp() override
+    static void SetPlatform(const std::string& npuArch, const std::string& soc)
     {
         PlatFormInfos platform_infos;
         (void)platform_infos.Init();
-        std::map<std::string, std::string> version_res{{"NpuArch", "3510"}, {"Short_SoC_version", "Ascend950"}};
+        std::map<std::string, std::string> version_res{{"NpuArch", npuArch}, {"Short_SoC_version", soc}};
         platform_infos.SetPlatformRes("version", version_res);
         OptionalInfos optional_infos;
         (void)optional_infos.Init();
-        optional_infos.SetSocVersion("Ascend950");
-        PlatformInfoManager::Instance().platform_infos_map_["Ascend950"] = platform_infos;
+        optional_infos.SetSocVersion(soc);
+        PlatformInfoManager::Instance().platform_infos_map_[soc] = platform_infos;
         PlatformInfoManager::Instance().SetOptionalCompilationInfo(optional_infos);
     }
+
+    void SetUp() override { SetPlatform("3510", "Ascend950"); }
 
     std::shared_ptr<Graph> BuildSoftmaxV2Graph(DataType dtype, const vector<int64_t>& dims, int64_t axis,
                                                int32_t need_fusion, bool has_need_fusion = true)
@@ -194,6 +196,60 @@ TEST_F(ASoftmaxFusionPassTest, asoftmax_fusion_negative_axis_success)
 TEST_F(ASoftmaxFusionPassTest, asoftmax_fusion_zero_need_fusion_skip)
 {
     auto graph = BuildSoftmaxV2Graph(DT_FLOAT, {2, 3, 4}, 1, 0);
+    CustomPassContext ctx;
+    ASoftmaxFusionPass pass;
+    EXPECT_EQ(pass.Run(graph, ctx), GRAPH_NOT_CHANGED);
+    EXPECT_FALSE(HasReshapeNode(graph));
+}
+
+// 9201/9202 平台同样启用本规则，正常融合
+TEST_F(ASoftmaxFusionPassTest, asoftmax_fusion_npu_arch_9201_success)
+{
+    SetPlatform("9201", "Ascend960PR");
+    auto graph = BuildSoftmaxV2Graph(DT_FLOAT, {2, 3, 4}, 1, 1);
+    CustomPassContext ctx;
+    ASoftmaxFusionPass pass;
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(HasReshapeNode(graph));
+}
+
+TEST_F(ASoftmaxFusionPassTest, asoftmax_fusion_npu_arch_9202_success)
+{
+    SetPlatform("9202", "Ascend960DT");
+    auto graph = BuildSoftmaxV2Graph(DT_FLOAT, {2, 3, 4}, 1, 1);
+    CustomPassContext ctx;
+    ASoftmaxFusionPass pass;
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(HasReshapeNode(graph));
+}
+
+// Ascend350（Atlas A3）与 Ascend950 同为 NpuArch 3510，正常融合
+TEST_F(ASoftmaxFusionPassTest, asoftmax_fusion_soc_ascend350_success)
+{
+    SetPlatform("3510", "Ascend350");
+    auto graph = BuildSoftmaxV2Graph(DT_FLOAT, {2, 3, 4}, 1, 1);
+    CustomPassContext ctx;
+    ASoftmaxFusionPass pass;
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(HasReshapeNode(graph));
+}
+
+// MC62 为 NpuArch 5102，正常融合
+TEST_F(ASoftmaxFusionPassTest, asoftmax_fusion_soc_mc62_success)
+{
+    SetPlatform("5102", "MC62");
+    auto graph = BuildSoftmaxV2Graph(DT_FLOAT, {2, 3, 4}, 1, 1);
+    CustomPassContext ctx;
+    ASoftmaxFusionPass pass;
+    EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_TRUE(HasReshapeNode(graph));
+}
+
+// 非目标平台（Ascend910B），不融合
+TEST_F(ASoftmaxFusionPassTest, asoftmax_fusion_unsupported_platform_skip)
+{
+    SetPlatform("910", "Ascend910B");
+    auto graph = BuildSoftmaxV2Graph(DT_FLOAT, {2, 3, 4}, 1, 1);
     CustomPassContext ctx;
     ASoftmaxFusionPass pass;
     EXPECT_EQ(pass.Run(graph, ctx), GRAPH_NOT_CHANGED);

@@ -12,10 +12,10 @@
 
 #include "common/inc/error_util.h"
 #include "softmax_v2_onnx_fusion_pass.h"
+#include "arch_utils.h"
 #include "es_nn_ops.h"
 #include "ge/compliant_node_builder.h"
 #include "ge/ge_utils.h"
-#include "platform/platform_info.h"
 
 using namespace ge;
 using namespace fusion;
@@ -25,30 +25,8 @@ namespace {
 const std::string kPassName = "ASoftmaxFusionPass";
 const int64_t kCaptureSoftmaxIdx = 0;
 
-// 平台判定：与 layer_norm 融合规则一致，用 NpuArch（跨版本稳定）判断是否 regbase 架构。
-const std::set<std::string> kSupportedNpuArch = {"3510", "5102"};
-
-bool IsRegbase()
-{
-    fe::PlatFormInfos platform_infos;
-    fe::OptionalInfos optional_infos;
-    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_infos, optional_infos) !=
-        SUCCESS) {
-        OPS_LOG_D(kPassName.c_str(), "Get platform info failed, not regbase.");
-        return false;
-    }
-    std::string arch_str;
-    if (!platform_infos.GetPlatformRes("version", "NpuArch", arch_str)) {
-        OPS_LOG_D(kPassName.c_str(), "NpuArch not found, not regbase.");
-        return false;
-    }
-    OPS_LOG_D(kPassName.c_str(), "Platform NpuArch: %s", arch_str.c_str());
-    if (kSupportedNpuArch.count(arch_str) == 0U) {
-        OPS_LOG_D(kPassName.c_str(), "NpuArch=%s is not regbase, skip.", arch_str.c_str());
-        return false;
-    }
-    return true;
-}
+// 平台判定：用 NpuArch（跨版本稳定）判断平台。
+const std::set<std::string> kSupportedNpuArchs = {"3510", "5102", "9201", "9202"};
 
 struct SoftmaxInfo {
     std::vector<int64_t> dims;
@@ -184,8 +162,8 @@ std::vector<PatternUniqPtr> ASoftmaxFusionPass::Patterns()
 {
     OPS_LOG_D(kPassName.c_str(), "Enter Patterns for ASoftmaxFusionPass.");
     std::vector<PatternUniqPtr> patterns;
-    if (!IsRegbase()) {
-        OPS_LOG_D(kPassName.c_str(), "Not regbase platform, skip ASoftmaxFusionPass.");
+    if (!CheckNpuArch(kPassName, kSupportedNpuArchs)) {
+        OPS_LOG_D(kPassName.c_str(), "Unsupported platform, skip ASoftmaxFusionPass.");
         return patterns;
     }
     auto graph_builder = es::EsGraphBuilder(kPassName.c_str());

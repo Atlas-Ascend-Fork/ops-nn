@@ -13,14 +13,13 @@
 #include "securec.h"
 #include "common/inc/error_util.h"
 #include "confusion_softmax_grad_fusion_pass.h"
+#include "arch_utils.h"
 #include "es_nn_ops.h"
 #include "ge/compliant_node_builder.h"
 #include "ge/ge_utils.h"
 #include "graph/utils/type_utils.h"
-#include "platform/platform_info.h"
 
 using namespace ge;
-using namespace fe;
 using namespace fusion;
 
 namespace ops {
@@ -38,8 +37,8 @@ const int32_t kBinaryInputX1Idx = 0;
 const int32_t kBinaryInputX2Idx = 1;
 const int32_t kReduceSumInputXIdx = 0;
 const int32_t kNodeOutputIdx = 0;
-// 平台判定：用 NpuArch（跨版本稳定）判断平台，当前仅在 3510（Ascend950）上启用。
-const std::set<std::string> kSupportedNpuArch = {"3510"};
+// 平台判定：用 NpuArch（跨版本稳定）判断平台。
+const std::set<std::string> kSupportedNpuArchs = {"3510", "9201", "9202"};
 // 输入最后一维超过 30000 时，kernel 需要使用 workspace 且无法开启多核，不融合
 constexpr int64_t kMaxLength = 30000;
 
@@ -51,27 +50,6 @@ bool IsUnknownShape(const std::vector<int64_t>& dims)
         }
     }
     return false;
-}
-
-bool IsSupportedPlatform()
-{
-    PlatFormInfos platform_infos;
-    OptionalInfos optional_infos;
-    if (PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_infos, optional_infos) != SUCCESS) {
-        OPS_LOG_D(kPassName.c_str(), "Get platform info failed, skip.");
-        return false;
-    }
-    std::string arch_str;
-    if (!platform_infos.GetPlatformRes("version", "NpuArch", arch_str)) {
-        OPS_LOG_D(kPassName.c_str(), "NpuArch not found, skip.");
-        return false;
-    }
-    OPS_LOG_D(kPassName.c_str(), "Platform NpuArch: %s", arch_str.c_str());
-    if (kSupportedNpuArch.count(arch_str) == 0U) {
-        OPS_LOG_D(kPassName.c_str(), "NpuArch=%s is not supported, skip.", arch_str.c_str());
-        return false;
-    }
-    return true;
 }
 
 bool CheckMulShapeValid(const std::unique_ptr<MatchResult>& match_result)
@@ -359,8 +337,8 @@ std::vector<PatternUniqPtr> ZConfusionSoftmaxGradFusionPass::Patterns()
 {
     OPS_LOG_D(kPassName.c_str(), "Enter Patterns for ZConfusionSoftmaxGradFusionPass.");
     std::vector<PatternUniqPtr> patterns;
-    if (!IsSupportedPlatform()) {
-        OPS_LOG_D(kPassName.c_str(), "Platform not supported, skip ZConfusionSoftmaxGradFusionPass.");
+    if (!CheckNpuArch(kPassName, kSupportedNpuArchs)) {
+        OPS_LOG_D(kPassName.c_str(), "Unsupported platform, skip ZConfusionSoftmaxGradFusionPass.");
         return patterns;
     }
     // Consume an unshared Const with the original pattern; use a boundary input

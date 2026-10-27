@@ -383,7 +383,7 @@ TEST_F(ConfusionSoftmaxGradFusionPassTest, unsupported_platform_not_changed)
     ExpectNotFused(built.graph);
 }
 
-// 5102 同为 regbase 但本规则当前仅在 3510 上启用，不融合
+// 5102 不在本规则启用范围内，不融合
 TEST_F(ConfusionSoftmaxGradFusionPassTest, npu_arch_5102_not_changed)
 {
     SetPlatform("Ascend950", 5102);
@@ -393,6 +393,41 @@ TEST_F(ConfusionSoftmaxGradFusionPassTest, npu_arch_5102_not_changed)
     ZConfusionSoftmaxGradFusionPass pass;
     EXPECT_EQ(pass.Run(built.graph, ctx), GRAPH_NOT_CHANGED);
     ExpectNotFused(built.graph);
+}
+
+// 9201/9202 平台启用本规则，正常融合
+TEST_F(ConfusionSoftmaxGradFusionPassTest, npu_arch_9201_success)
+{
+    SetPlatform("Ascend960PR", 9201);
+    vector<int64_t> dims{1, 8, 900, 3};
+    auto built = BuildConfusionSoftmaxGradGraph(DT_FLOAT16, dims, dims, 3, true, false);
+    CustomPassContext ctx;
+    ZConfusionSoftmaxGradFusionPass pass;
+    EXPECT_EQ(pass.Run(built.graph, ctx), SUCCESS);
+    ExpectFused(built.graph, DT_FLOAT16, dims);
+}
+
+TEST_F(ConfusionSoftmaxGradFusionPassTest, npu_arch_9202_success)
+{
+    SetPlatform("Ascend960DT", 9202);
+    vector<int64_t> dims{1, 8, 900, 3};
+    auto built = BuildConfusionSoftmaxGradGraph(DT_FLOAT16, dims, dims, 3, true, false);
+    CustomPassContext ctx;
+    ZConfusionSoftmaxGradFusionPass pass;
+    EXPECT_EQ(pass.Run(built.graph, ctx), SUCCESS);
+    ExpectFused(built.graph, DT_FLOAT16, dims);
+}
+
+// Ascend350（Atlas A3）与 Ascend950 同为 NpuArch 3510，正常融合
+TEST_F(ConfusionSoftmaxGradFusionPassTest, soc_ascend350_success)
+{
+    SetPlatform("Ascend350", 3510);
+    vector<int64_t> dims{1, 8, 900, 3};
+    auto built = BuildConfusionSoftmaxGradGraph(DT_FLOAT16, dims, dims, 3, true, false);
+    CustomPassContext ctx;
+    ZConfusionSoftmaxGradFusionPass pass;
+    EXPECT_EQ(pass.Run(built.graph, ctx), SUCCESS);
+    ExpectFused(built.graph, DT_FLOAT16, dims);
 }
 
 // Mul 与 Sub 的 input0 不共享同一节点（Sub.x1 来自 x），结构不匹配，不融合
