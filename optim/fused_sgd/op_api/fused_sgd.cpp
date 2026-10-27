@@ -72,7 +72,7 @@ std::tuple<const aclTensorList*, const aclTensorList*, const aclTensorList*> Fus
         OP_OUTPUT(paramsRef, gradsRef, momentumBufferListOptionalRefOut),
         OP_ATTR(weightDecay, momentum, lr, dampening, nesterov, maximize, isFirstStep));
     if (retAicore != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "FusedSgd ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR, "FusedSgd ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return std::tuple<const aclTensorList*, const aclTensorList*, const aclTensorList*>(nullptr, nullptr, nullptr);
     }
     if (momentumBufferListOptionalRef == nullptr) {

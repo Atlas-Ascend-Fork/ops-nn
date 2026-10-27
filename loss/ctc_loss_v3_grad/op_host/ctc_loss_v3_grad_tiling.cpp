@@ -23,6 +23,16 @@ using namespace ge;
 using namespace std;
 
 namespace optiling {
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 constexpr uint64_t RESERVE_SAPCE = 1.5 * 1024;
 constexpr int64_t SELECT_SPACE = 8 * 1024;
 constexpr uint32_t FLOAT_DTYPE_BYTES = 4;
@@ -66,7 +76,7 @@ const std::string OP_NAME = "CTCLossV3Grad";
 
 class CTCLossV3GradTiling {
 public:
-    explicit CTCLossV3GradTiling(gert::TilingContext* ctx) : context(ctx){};
+    explicit CTCLossV3GradTiling(gert::TilingContext* ctx) : context(ctx) {};
     ge::graphStatus Init();
     ge::graphStatus RunKernelTiling();
     bool CheckShapeInfo();
@@ -117,33 +127,53 @@ bool CTCLossV3GradTiling::CheckShapeInfoForN()
     // Check the shape info for some inputs, focusing mainly on batchSize.
     auto nodeName = context->GetNodeName();
     auto const gradOutShape = context->GetInputShape(INPUT_GRAD_OUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradOutShape);
+    OP_CHECK_IF(gradOutShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "gradOutShape",
+                                                         "failed to get the input shape of grad_out from the context"),
+                return false);
     auto const gradOutShapeVal = gradOutShape->GetStorageShape();
     OP_CHECK_IF(gradOutShapeVal.GetDimNum() != LOSS_DIM_NUM,
-                OP_LOGE(nodeName, "Check grad_out shape failed, the dims of grad_out not equal 1."), return false);
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "grad_out",
+                                             (std::to_string(gradOutShapeVal.GetDimNum()) + "D").c_str(), "1D"),
+                return false);
     gradOutN = gradOutShapeVal.GetDim(BATCH_DIM);
 
     auto const inputLengthsShape = context->GetInputShape(INPUT_INPUT_LENGTHS_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputLengthsShape);
+    OP_CHECK_IF(inputLengthsShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "inputLengthsShape",
+                                                         "failed to get the input shape of input_lengths from the "
+                                                         "context"),
+                return false);
     auto const inputLengthsShapeVal = inputLengthsShape->GetStorageShape();
     OP_CHECK_IF(inputLengthsShapeVal.GetDimNum() != LOSS_DIM_NUM,
-                OP_LOGE(nodeName, "Check input_lengths shape failed, the dims of input_lengths not equal 1."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "input_lengths",
+                                             (std::to_string(inputLengthsShapeVal.GetDimNum()) + "D").c_str(), "1D"),
                 return false);
     inputLengthsN = inputLengthsShapeVal.GetDim(BATCH_DIM);
 
     auto const targetLengthsShape = context->GetInputShape(INPUT_TARGET_LENGTHS_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, targetLengthsShape);
+    OP_CHECK_IF(targetLengthsShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "targetLengthsShape",
+                                                         "failed to get the input shape of target_lengths from the "
+                                                         "context"),
+                return false);
     auto const targetLengthsShapeVal = targetLengthsShape->GetStorageShape();
     OP_CHECK_IF(targetLengthsShapeVal.GetDimNum() != LOSS_DIM_NUM,
-                OP_LOGE(nodeName, "Check target_lengths shape failed, the dims of target_lengths not equal 1."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "target_lengths",
+                                             (std::to_string(targetLengthsShapeVal.GetDimNum()) + "D").c_str(), "1D"),
                 return false);
     targetLengthsN = targetLengthsShapeVal.GetDim(BATCH_DIM);
 
     auto const lossShape = context->GetInputShape(INPUT_LOSS_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, targetLengthsShape);
+    OP_CHECK_IF(lossShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "lossShape",
+                                                         "failed to get the input shape of target_lengths from the "
+                                                         "context"),
+                return false);
     auto const lossShapeVal = lossShape->GetStorageShape();
     OP_CHECK_IF(lossShapeVal.GetDimNum() != LOSS_DIM_NUM,
-                OP_LOGE(nodeName, "Check neg_log_likelihood shape failed, the dims of neg_log_likelihood not equal 1."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "neg_log_likelihood",
+                                             (std::to_string(lossShapeVal.GetDimNum()) + "D").c_str(), "1D"),
                 return false);
     lossN = lossShapeVal.GetDim(BATCH_DIM);
     return true;
@@ -154,20 +184,31 @@ bool CTCLossV3GradTiling::CheckShapeInfoForCT()
     // Check the shape information for some inputs and outputs, focusing mainly on symbolset and time.
     auto nodeName = context->GetNodeName();
     auto const logProbsShape = context->GetInputShape(INPUT_LOG_PROB_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, logProbsShape);
+    OP_CHECK_IF(logProbsShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "logProbsShape",
+                                                         "failed to get the input shape of log_probs from the "
+                                                         "context"),
+                return false);
     auto const logProbsShapeVal = logProbsShape->GetStorageShape();
     OP_CHECK_IF(logProbsShapeVal.GetDimNum() != GRAD_DIM_NUM,
-                OP_LOGE(nodeName, "Check log_probs shape failed, the dims of log_probs not equal 3."), return false);
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "log_probs",
+                                             (std::to_string(logProbsShapeVal.GetDimNum()) + "D").c_str(), "3D"),
+                return false);
     maxInputLength = logProbsShapeVal.GetDim(T_DIM);
     batchSize = logProbsShapeVal.GetDim(N_DIM);
     symbolSet = logProbsShapeVal.GetDim(C_DIM);
 
     auto const targetsShape = context->GetInputShape(INPUT_TRAGETS_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, targetsShape);
+    OP_CHECK_IF(targetsShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "targetsShape",
+                                                         "failed to get the input shape of targets from the context"),
+                return false);
     auto const targetsShapeVal = targetsShape->GetStorageShape();
     targetsDimNum = targetsShapeVal.GetDimNum();
-    OP_CHECK_IF(targetsDimNum != LOSS_DIM_NUM && targetsDimNum != TARGETS_DIM_NUM,
-                OP_LOGE(nodeName, "Check targets shape failed, the dims of targets not equal 1 or 2."), return false);
+    OP_CHECK_IF(
+        targetsDimNum != LOSS_DIM_NUM && targetsDimNum != TARGETS_DIM_NUM,
+        OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "targets", (std::to_string(targetsDimNum) + "D").c_str(), "1D or 2D"),
+        return false);
 
     targetsN = targetsNum = targetsShapeVal.GetDim(BATCH_DIM);
     if (targetsDimNum > LOSS_DIM_NUM) {
@@ -176,20 +217,31 @@ bool CTCLossV3GradTiling::CheckShapeInfoForCT()
     }
 
     auto const logAlphaShape = context->GetInputShape(INPUT_LOG_ALPHA_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, logAlphaShape);
+    OP_CHECK_IF(logAlphaShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "logAlphaShape",
+                                                         "failed to get the input shape of log_alpha from the "
+                                                         "context"),
+                return false);
     auto const logAlphaShapeVal = logAlphaShape->GetStorageShape();
     OP_CHECK_IF(logAlphaShapeVal.GetDimNum() != GRAD_DIM_NUM,
-                OP_LOGE(nodeName, "Check log_alpha shape failed, the dims of log_alpha not equal 3."), return false);
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "log_alpha",
+                                             (std::to_string(logAlphaShapeVal.GetDimNum()) + "D").c_str(), "3D"),
+                return false);
     logAlphaN = logAlphaShapeVal.GetDim(BATCH_DIM);
     logAlphaT = logAlphaShapeVal.GetDim(ALPHA_T_DIM);
     alphaLength = logAlphaShapeVal.GetDim(ALPHA_DIM);
     maxTargetLength = (alphaLength - 1) / S_COE;
 
     auto const gradShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
+    OP_CHECK_IF(gradShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "gradShape",
+                                                         "failed to get the output shape of grad from the context"),
+                return false);
     auto const gradShapeVal = gradShape->GetStorageShape();
-    OP_CHECK_IF(gradShapeVal.GetDimNum() != GRAD_DIM_NUM,
-                OP_LOGE(nodeName, "Check grad shape failed, the dims of grad not equal 3."), return false);
+    OP_CHECK_IF(
+        gradShapeVal.GetDimNum() != GRAD_DIM_NUM,
+        OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName, "grad", (std::to_string(gradShapeVal.GetDimNum()) + "D").c_str(), "3D"),
+        return false);
     gradN = gradShapeVal.GetDim(N_DIM);
     gradT = gradShapeVal.GetDim(T_DIM);
     gradC = gradShapeVal.GetDim(C_DIM);
@@ -207,18 +259,52 @@ bool CTCLossV3GradTiling::CheckShapeInfo()
     bool NCheck = gradOutN == batchSize && batchSize == inputLengthsN && inputLengthsN == targetLengthsN &&
                   targetLengthsN == lossN && lossN == logAlphaN && logAlphaN == gradN;
     NCheck = targetsDimNum > 1 ? (NCheck && (batchSize == targetsN)) : NCheck;
-    OP_CHECK_IF(!NCheck, OP_LOGE(nodeName, "Check batchSize failed."), return false);
+    OP_CHECK_IF(
+        !NCheck,
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            nodeName,
+            "n-dim of grad_out, log_probs, targets, input_lengths, target_lengths, neg_log_likelihood, "
+            "log_alpha and grad",
+            "grad_out:" + std::to_string(gradOutN) + ", log_probs:" + std::to_string(batchSize) +
+                ", targets:" + std::to_string(targetsN) + ", input_lengths:" + std::to_string(inputLengthsN) +
+                ", target_lengths:" + std::to_string(targetLengthsN) + ", neg_log_likelihood:" + std::to_string(lossN) +
+                ", log_alpha:" + std::to_string(logAlphaN) + ", grad:" + std::to_string(gradN),
+            "the n-dim of grad_out, log_probs, targets, input_lengths, target_lengths, neg_log_likelihood, "
+            "log_alpha and grad should be the same"),
+        return false);
 
-    OP_CHECK_IF(batchSize > MAX_BATCH, OP_LOGE(nodeName, "BatchSize is too large, AICPU recommended."), return false);
+    OP_CHECK_IF(batchSize > MAX_BATCH,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(nodeName, "log_probs", std::to_string(batchSize),
+                                                      "the n-dim of log_probs should be less than or equal to " +
+                                                          std::to_string(MAX_BATCH) +
+                                                          ", AICPU is recommended for larger batch size"),
+                return false);
 
     bool TCheck = maxInputLength == gradT && gradT == logAlphaT;
-    OP_CHECK_IF(!TCheck, OP_LOGE(nodeName, "Check max time failed."), return false);
+    OP_CHECK_IF(!TCheck,
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(nodeName, "t-dim of log_probs, grad and log_alpha",
+                                                       "log_probs:" + std::to_string(maxInputLength) +
+                                                           ", grad:" + std::to_string(gradT) +
+                                                           ", log_alpha:" + std::to_string(logAlphaT),
+                                                       "the t-dim of log_probs, grad and log_alpha should be the same"),
+                return false);
 
     bool CCheck = symbolSet == gradC;
-    OP_CHECK_IF(!CCheck, OP_LOGE(nodeName, "Check symbolSet failed."), return false);
+    OP_CHECK_IF(!CCheck,
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    nodeName, "c-dim of log_probs and grad",
+                    "log_probs:" + std::to_string(symbolSet) + ", grad:" + std::to_string(gradC),
+                    "the c-dim of log_probs and grad should be the same"),
+                return false);
 
     OP_CHECK_IF(symbolSet > MAX_SYMBOL_SET || maxTargetLength > MAX_LABEL_LEN,
-                OP_LOGE(nodeName, "SymbolSet or max targetLength is too large, AICPU recommended."), return false);
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    nodeName, "c-dim of log_probs and max target length of log_alpha",
+                    std::to_string(symbolSet) + ", " + std::to_string(maxTargetLength),
+                    "the c-dim of log_probs should be less than or equal to " + std::to_string(MAX_SYMBOL_SET) +
+                        " and the max target length of log_alpha should be less than or equal to " +
+                        std::to_string(MAX_LABEL_LEN) + ", AICPU is recommended for larger values"),
+                return false);
     return true;
 }
 
@@ -239,14 +325,26 @@ ge::graphStatus CTCLossV3GradTiling::Init()
     gradDsize = GetSizeByDataType(gradDtype);
 
     auto* attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(attrs == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "attrs", "failed to get the attrs from the context"),
+                return ge::GRAPH_FAILED);
     const auto* blankPtr = attrs->GetAttrPointer<int64_t>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, blankPtr);
+    OP_CHECK_IF(blankPtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "blankPtr",
+                                                         "failed to get the attr pointer of blank from the attrs"),
+                return ge::GRAPH_FAILED);
     BLANK = *blankPtr;
-    OP_CHECK_IF(BLANK < 0 || BLANK >= symbolSet,
-                OP_LOGE(nodeName, "BLANK is out of the range, please input the right value."), return false);
+    OP_CHECK_IF(
+        BLANK < 0 || BLANK >= symbolSet,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(nodeName, "blank", std::to_string(BLANK),
+                                              "blank should be in the range [0, " + std::to_string(symbolSet) + ")"),
+        return false);
     const auto* zeroInfinityPtr = attrs->GetAttrPointer<int64_t>(2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, zeroInfinityPtr);
+    OP_CHECK_IF(zeroInfinityPtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "zeroInfinityPtr",
+                                                         "failed to get the attr pointer of zero_infinity from the "
+                                                         "attrs"),
+                return ge::GRAPH_FAILED);
     zeroInfinity = *zeroInfinityPtr;
     coreUsed = batchSize > coreNum ? coreNum : batchSize;
     taskPerCore = batchSize / coreNum;
@@ -326,7 +424,6 @@ static ge::graphStatus TilingFunc4CTCLossV3Grad(gert::TilingContext* context)
 {
     CTCLossV3GradTiling tilingObject(context);
     if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Init failed!");
         return ge::GRAPH_FAILED;
     }
 
@@ -336,25 +433,31 @@ static ge::graphStatus TilingFunc4CTCLossV3Grad(gert::TilingContext* context)
 ge::graphStatus TilingPrepare4CTCLossV3Grad(gert::TilingParseContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("CtcLossV3Grad", "context is nullptr.");
-        return ge::GRAPH_FAILED;
+        return ReportTilingFailure("CtcLossV3Grad", "context is nullptr.");
     }
     auto nodeName = context->GetNodeName();
     OP_LOGD(context, "TilingPrepare4CTCLossV3Grad start.");
     auto compileInfo = context->GetCompiledInfo<CTCLossV3GradCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "compileInfo",
+                                                         "failed to get the compiled info from the context"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName, "platformInfo",
+                                                         "failed to get the platform info from the context"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0), OP_LOGE(nodeName, "Failed to get core num."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((compileInfo->coreNum <= 0), ReportTilingFailure(nodeName, "Failed to get core num."),
+                return ge::GRAPH_FAILED);
     compileInfo->sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     OP_CHECK_IF((compileInfo->sysWorkspaceSize <= 0U),
-                OP_LOGE(nodeName, "sysWorkspaceSize should be greater than or equal to zero"), return ge::GRAPH_FAILED);
+                ReportTilingFailure(nodeName, "sysWorkspaceSize should be greater than zero"), return ge::GRAPH_FAILED);
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(nodeName, "Failed to get ub size."),
+    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), ReportTilingFailure(nodeName, "Failed to get ub size."),
                 return ge::GRAPH_FAILED);
     OP_LOGD(context, "TilingPrepare4CTCLossV3Grad end.");
 

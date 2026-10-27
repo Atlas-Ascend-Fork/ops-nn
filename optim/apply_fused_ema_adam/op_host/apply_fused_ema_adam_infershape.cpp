@@ -33,27 +33,57 @@ static ge::graphStatus InferShapeForApplyFusedEmaAdam(gert::InferShapeContext* c
     // input shape
     OP_LOGD(context, "Begin to do InferShapeForApplyFusedEmaAdam.");
     const gert::Shape* gradShape = context->GetInputShape(INPUT_GRAD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
+    OP_CHECK_IF(gradShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "gradShape",
+                                                         "failed to get the input shape of grad from the context"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* varShape = context->GetInputShape(INPUT_VAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
+    OP_CHECK_IF(varShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "varShape",
+                                                         "failed to get the input shape of var from the context"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* mShape = context->GetInputShape(INPUT_M_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mShape);
+    OP_CHECK_IF(mShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "mShape",
+                                                         "failed to get the input shape of m from the context"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* vShape = context->GetInputShape(INPUT_V_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vShape);
+    OP_CHECK_IF(vShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "vShape",
+                                                         "failed to get the input shape of v from the context"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* sShape = context->GetInputShape(INPUT_S_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, sShape);
+    OP_CHECK_IF(sShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "sShape",
+                                                         "failed to get the input shape of s from the context"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* stepShape = context->GetInputShape(INPUT_STEP_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, stepShape);
+    OP_CHECK_IF(stepShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "stepShape",
+                                                         "failed to get the input shape of step from the context"),
+                return ge::GRAPH_FAILED);
 
     // output shape
     gert::Shape* varRefShape = context->GetOutputShape(OUTPUT_VAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varRefShape);
+    OP_CHECK_IF(varRefShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "varRefShape",
+                                                         "failed to get the output shape of var from the context"),
+                return ge::GRAPH_FAILED);
     gert::Shape* mRefShape = context->GetOutputShape(OUTPUT_M_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mRefShape);
+    OP_CHECK_IF(mRefShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "mRefShape",
+                                                         "failed to get the output shape of m from the context"),
+                return ge::GRAPH_FAILED);
     gert::Shape* vRefShape = context->GetOutputShape(OUTPUT_V_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vRefShape);
+    OP_CHECK_IF(vRefShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "vRefShape",
+                                                         "failed to get the output shape of v from the context"),
+                return ge::GRAPH_FAILED);
     gert::Shape* sRefShape = context->GetOutputShape(OUTPUT_S_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, sRefShape);
+    OP_CHECK_IF(sRefShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "sRefShape",
+                                                         "failed to get the output shape of s from the context"),
+                return ge::GRAPH_FAILED);
 
     *varRefShape = *varShape;
     *mRefShape = *mShape;

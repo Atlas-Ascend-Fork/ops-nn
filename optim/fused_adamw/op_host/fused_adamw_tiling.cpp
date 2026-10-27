@@ -24,6 +24,16 @@
 
 using namespace std;
 namespace optiling {
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 constexpr uint32_t INPUT_PARAMS_IDX = 0;
 constexpr uint32_t INPUT_GRADS_IDX = 1;
 constexpr uint32_t INPUT_EXP_AVGS_IDX = 2;
@@ -67,12 +77,15 @@ std::string FusedAdamWTiling::TilingDataToString() const
 ge::graphStatus FusedAdamWTiling::GetPlatformInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "platformInfo",
+                                                         "failed to get platform info from the tiling context"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     coreNum_ = static_cast<uint32_t>(ascendcPlatform.GetCoreNumAiv());
-    OP_CHECK_IF(coreNum_ == 0, OP_LOGE(context_, "coreNum is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(coreNum_ == 0, ReportTilingFailure(context_->GetNodeName(), "coreNum is 0"), return ge::GRAPH_FAILED);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize_);
-    OP_CHECK_IF(ubSize_ == 0, OP_LOGE(context_, "ubSize is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ubSize_ == 0, ReportTilingFailure(context_->GetNodeName(), "ubSize is 0"), return ge::GRAPH_FAILED);
     sysWorkspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
     return ge::GRAPH_SUCCESS;
 }
@@ -80,34 +93,60 @@ ge::graphStatus FusedAdamWTiling::GetPlatformInfo()
 ge::graphStatus FusedAdamWTiling::GetAttrInfo()
 {
     auto* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(attrs == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrs",
+                                                         "failed to get attrs from the tiling context"),
+                return ge::GRAPH_FAILED);
 
     const float* attrLr = attrs->GetAttrPointer<float>(ATTR_LR_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrLr);
+    OP_CHECK_IF(attrLr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrLr",
+                                                         "failed to get the lr attribute from the tiling context"),
+                return ge::GRAPH_FAILED);
     lr_ = static_cast<float>(*attrLr);
 
     const float* attrBeta1 = attrs->GetAttrPointer<float>(ATTR_BETA1_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrBeta1);
+    OP_CHECK_IF(attrBeta1 == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrBeta1",
+                                                         "failed to get the beta1 attribute from the tiling context"),
+                return ge::GRAPH_FAILED);
     beta1_ = static_cast<float>(*attrBeta1);
 
     const float* attrBeta2 = attrs->GetAttrPointer<float>(ATTR_BETA2_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrBeta2);
+    OP_CHECK_IF(attrBeta2 == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrBeta2",
+                                                         "failed to get the beta2 attribute from the tiling context"),
+                return ge::GRAPH_FAILED);
     beta2_ = static_cast<float>(*attrBeta2);
 
     const float* attrWeightDecay = attrs->GetAttrPointer<float>(ATTR_WEIGHT_DECAY_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrWeightDecay);
+    OP_CHECK_IF(
+        attrWeightDecay == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrWeightDecay",
+                                                 "failed to get the weight_decay attribute from the tiling context"),
+        return ge::GRAPH_FAILED);
     weightDecay_ = static_cast<float>(*attrWeightDecay);
 
     const float* attrEps = attrs->GetAttrPointer<float>(ATTR_EPS_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrEps);
+    OP_CHECK_IF(attrEps == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrEps",
+                                                         "failed to get the eps attribute from the tiling context"),
+                return ge::GRAPH_FAILED);
     eps_ = static_cast<float>(*attrEps);
 
     const bool* attrAmsgrad = attrs->GetAttrPointer<bool>(ATTR_AMSGRAD_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrAmsgrad);
+    OP_CHECK_IF(attrAmsgrad == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrAmsgrad",
+                                                         "failed to get the amsgrad attribute from the tiling context"),
+                return ge::GRAPH_FAILED);
     amsgrad_ = static_cast<uint32_t>(*attrAmsgrad ? 1 : 0);
 
     const bool* attrMaximize = attrs->GetAttrPointer<bool>(ATTR_MAXIMIZE_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrMaximize);
+    OP_CHECK_IF(
+        attrMaximize == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrMaximize",
+                                                 "failed to get the maximize attribute from the tiling context"),
+        return ge::GRAPH_FAILED);
     maximize_ = static_cast<uint32_t>(*attrMaximize ? 1 : 0);
 
     return ge::GRAPH_SUCCESS;
@@ -167,12 +206,18 @@ void FusedAdamWTiling::CheckOptionalInputs()
 static ge::graphStatus CheckInputDtype(gert::TilingContext* context, uint32_t amsgrad_)
 {
     auto dtypeInput = context->GetDynamicInputDesc(INPUT_PARAMS_IDX, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dtypeInput);
+    OP_CHECK_IF(dtypeInput == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "dtypeInput",
+                                                         "failed to get the input desc from the tiling context"),
+                return ge::GRAPH_FAILED);
     auto paramsDtype = dtypeInput->GetDataType();
 
     auto checkDtype = [&](uint32_t idx, const char* nameOfOps) -> ge::graphStatus {
         auto dtypeInputInner = context->GetDynamicInputDesc(idx, 0);
-        OP_CHECK_NULL_WITH_CONTEXT(context, dtypeInputInner);
+        OP_CHECK_IF(dtypeInputInner == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "dtypeInputInner",
+                                                             "failed to get the input desc from the tiling context"),
+                    return ge::GRAPH_FAILED);
         auto dtype = dtypeInputInner->GetDataType();
         if (dtype != paramsDtype) {
             OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), nameOfOps,
@@ -212,13 +257,21 @@ static ge::graphStatus CheckInputDtype(gert::TilingContext* context, uint32_t am
 ge::graphStatus FusedAdamWTiling::GetInputTensorInfo()
 {
     auto computeNodeInfo = context_->GetComputeNodeInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, computeNodeInfo);
+    OP_CHECK_IF(computeNodeInfo == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "computeNodeInfo",
+                                                         "failed to get compute node info from the tiling context"),
+                return ge::GRAPH_FAILED);
 
     auto anchorInstanceInfo = computeNodeInfo->GetInputInstanceInfo(INPUT_PARAMS_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, anchorInstanceInfo);
+    OP_CHECK_IF(anchorInstanceInfo == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "anchorInstanceInfo",
+                    "failed to get the input instance info of params from the tiling context"),
+                return ge::GRAPH_FAILED);
     tensorNum_ = static_cast<uint64_t>(anchorInstanceInfo->GetInstanceNum());
     if (tensorNum_ == 0) {
-        OP_LOGE(context_, "tensor num can not be 0");
+        OP_LOGE_FOR_INVALID_TENSORNUM(context_->GetNodeName(), "params", static_cast<int64_t>(tensorNum_),
+                                      "greater than 0");
         return ge::GRAPH_FAILED;
     }
 
@@ -226,12 +279,19 @@ ge::graphStatus FusedAdamWTiling::GetInputTensorInfo()
 
     for (uint64_t i = 0; i < tensorNum_; i++) {
         auto paramsShapePtr = context_->GetDynamicInputShape(INPUT_PARAMS_IDX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, paramsShapePtr);
+        OP_CHECK_IF(paramsShapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "paramsShapePtr",
+                                                             "failed to get the input shape from the tiling context"),
+                    return ge::GRAPH_FAILED);
         gert::Shape paramsShape = paramsShapePtr->GetStorageShape();
 
         auto checkShape = [&](uint32_t idx, const char* shapeNameOfOps) -> ge::graphStatus {
             auto shapePtr = context_->GetDynamicInputShape(idx, i);
-            OP_CHECK_NULL_WITH_CONTEXT(context_, shapePtr);
+            OP_CHECK_IF(
+                shapePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "shapePtr",
+                                                         "failed to get the input shape from the tiling context"),
+                return ge::GRAPH_FAILED);
             if (shapePtr->GetStorageShape() != paramsShape) {
                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context_->GetNodeName(), shapeNameOfOps,
                                                        Ops::Base::ToString(shapePtr->GetStorageShape()).c_str(),
@@ -322,19 +382,22 @@ ge::graphStatus Tiling4FusedAdamW(gert::TilingContext* context)
 {
     OP_LOGD(context, "Tiling4FusedAdamW");
     FusedAdamWTiling tiling(context);
-    OP_CHECK_IF(tiling.GetPlatformInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetPlatformInfo error"),
+    OP_CHECK_IF(tiling.GetPlatformInfo() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.GetAttrInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetAttrInfo error"),
+    OP_CHECK_IF(tiling.GetAttrInfo() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context, "GetAttrInfo error"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.GetInputTensorInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetInputTensorInfo error"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.CalculateOutputInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context, "CalculateOutputInfo error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tiling.GetInputTensorInfo() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetInputTensorInfo error"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tiling.CalculateOutputInfo() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "CalculateOutputInfo error"), return ge::GRAPH_FAILED);
 
     FusedAdamWTilingData* tilingData = context->GetTilingData<FusedAdamWTilingData>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, tilingData);
+    OP_CHECK_IF(tilingData == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "tilingData",
+                                                         "failed to get tiling data from the tiling context"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(memset_s(tilingData, sizeof(FusedAdamWTilingData), 0, sizeof(FusedAdamWTilingData)) != EOK,
-                OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
+                ReportTilingFailure(context->GetNodeName(), "set tiling data error"), return ge::GRAPH_FAILED);
     tiling.SetTilingData(tilingData);
     OP_LOGD(context, "tiling data: %s", tiling.TilingDataToString().c_str());
     return ge::GRAPH_SUCCESS;

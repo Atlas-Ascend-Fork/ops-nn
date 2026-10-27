@@ -44,7 +44,7 @@ std::tuple<const aclTensorList*, const aclTensorList*, const aclTensorList*, con
                                                  OP_OUTPUT(paramsRef, expAvgsRef, expAvgSqsRef, maxExpAvgSqsRef),
                                                  OP_ATTR(lr, beta1, beta2, weightDecay, eps, amsgrad, maximize));
     if (retAicore != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "FusedAdamw ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR, "FusedAdamw ADD_TO_LAUNCHER_LIST_AICORE failed, retAicore = %d.", retAicore);
     }
     return std::tuple<const aclTensorList*, const aclTensorList*, const aclTensorList*, const aclTensorList*>(
         paramsRef, expAvgsRef, expAvgSqsRef, maxExpAvgSqsRef);

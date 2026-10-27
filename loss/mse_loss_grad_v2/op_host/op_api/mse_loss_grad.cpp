@@ -36,7 +36,7 @@ const aclTensor* MseLossGradV1(const aclTensor* gradOutput, const aclTensor* sel
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(MseLossGrad, OP_INPUT(self, target, gradOutput), OP_OUTPUT(out),
                                            OP_ATTR(reduction));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "MseLossGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
+             OP_LOGE(ACLNN_ERR_PARAM_NULLPTR, "MseLossGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
     return out;
 }
 
@@ -48,7 +48,7 @@ const aclTensor* MseLossGradV2(const aclTensor* gradOutput, const aclTensor* sel
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(MseLossGradV2, OP_INPUT(self, target, gradOutput), OP_OUTPUT(out),
                                            OP_ATTR(reduction));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "MseLossGradV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE(ACLNN_ERR_PARAM_NULLPTR, "MseLossGradV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return nullptr);
     return out;
 }

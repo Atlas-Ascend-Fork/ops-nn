@@ -82,14 +82,26 @@ namespace ops {
 static ge::graphStatus InferShapeForMseLossGradRegbase(gert::InferShapeContext* context)
 {
     const gert::Shape* predictShape = context->GetInputShape(INPUT_PREDICT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, predictShape);
+    OP_CHECK_IF(predictShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "predictShape",
+                                                         "failed to get input shape of predict"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* labelShape = context->GetInputShape(INPUT_LABEL_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, labelShape);
+    OP_CHECK_IF(labelShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "labelShape",
+                                                         "failed to get input shape of label"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* doutShape = context->GetInputShape(INPUT_DOUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, doutShape);
+    OP_CHECK_IF(doutShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "doutShape",
+                                                         "failed to get input shape of dout"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape* lossGradShape = context->GetOutputShape(OUTPUT_LOSS_GRAD_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, lossGradShape);
+    OP_CHECK_IF(lossGradShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "lossGradShape",
+                                                         "failed to get output shape of y"),
+                return ge::GRAPH_FAILED);
 
     // 覆盖前快照调用方声明的输出 desc, 供具体 shape 冲突校验。
     const gert::Shape declaredShape = *lossGradShape;
@@ -101,7 +113,10 @@ static ge::graphStatus InferShapeForMseLossGradRegbase(gert::InferShapeContext* 
 
     const auto* attrs = context->GetAttrs();
     if (attrs != nullptr) {
-        if (!IsLegalReduction(attrs->GetAttrPointer<char>(ATTR_REDUCTION_IDX))) {
+        const char* reduction = attrs->GetAttrPointer<char>(ATTR_REDUCTION_IDX);
+        if (!IsLegalReduction(reduction)) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "reduction", reduction,
+                                                  "reduction must be one of none/mean/sum");
             return ge::GRAPH_FAILED;
         }
     }
@@ -109,6 +124,12 @@ static ge::graphStatus InferShapeForMseLossGradRegbase(gert::InferShapeContext* 
     gert::Shape broadcastShape;
     if (!BroadcastShapes(*predictShape, *labelShape, broadcastShape) ||
         !BroadcastShapes(broadcastShape, *doutShape, broadcastShape)) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "predict/label/dout",
+            (Ops::Base::ToString(*predictShape) + "/" + Ops::Base::ToString(*labelShape) + "/" +
+             Ops::Base::ToString(*doutShape))
+                .c_str(),
+            "shapes of predict, label and dout must be broadcast-compatible");
         return ge::GRAPH_FAILED;
     }
     *lossGradShape = broadcastShape;
@@ -124,12 +145,21 @@ static ge::graphStatus InferShapeForMseLossGradRegbase(gert::InferShapeContext* 
         }
         if (declaredAllConcrete) {
             if (lossGradShape->GetDimNum() != declaredRank) {
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "y",
+                    ("declared " + std::to_string(declaredRank) + "D shape but computed " +
+                     std::to_string(lossGradShape->GetDimNum()) + "D shape")
+                        .c_str(),
+                    "the declared shape of y conflicts with the shape broadcast from predict/label/dout");
                 return ge::GRAPH_FAILED;
             }
             for (size_t i = 0; i < declaredRank; ++i) {
                 const int64_t computed = lossGradShape->GetDim(i);
                 const int64_t declared = declaredShape.GetDim(i);
                 if (computed >= 0 && declared >= 0 && computed != declared) {
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "y", Ops::Base::ToString(declaredShape).c_str(),
+                        "the declared shape of y conflicts with the shape broadcast from predict/label/dout");
                     return ge::GRAPH_FAILED;
                 }
             }
@@ -147,15 +177,27 @@ static ge::graphStatus InferShapeForMseLossGrad(gert::InferShapeContext* context
     // input shape
     OP_LOGD(context->GetNodeName(), "MseLossGrad Begin.");
     const gert::Shape* predictShape = context->GetInputShape(INPUT_PREDICT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, predictShape);
+    OP_CHECK_IF(predictShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "predictShape",
+                                                         "failed to get input shape of predict"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* labelShape = context->GetInputShape(INPUT_LABEL_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, labelShape);
+    OP_CHECK_IF(labelShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "labelShape",
+                                                         "failed to get input shape of label"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* doutShape = context->GetInputShape(INPUT_DOUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, doutShape);
+    OP_CHECK_IF(doutShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "doutShape",
+                                                         "failed to get input shape of dout"),
+                return ge::GRAPH_FAILED);
 
     // output shape
     gert::Shape* lossGradShape = context->GetOutputShape(OUTPUT_LOSS_GRAD_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, lossGradShape);
+    OP_CHECK_IF(lossGradShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "lossGradShape",
+                                                         "failed to get output shape of y"),
+                return ge::GRAPH_FAILED);
     if (Ops::Base::IsUnknownRank(*predictShape)) {
         OP_LOGD(context->GetNodeName(), "Input shape is -2, set output shape to (-2,)");
         lossGradShape->SetDim(DIM_0, UNKNOWN_RANK_DIM_VALUE_);

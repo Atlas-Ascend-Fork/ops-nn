@@ -19,6 +19,16 @@
 #include "platform/platform_infos_def.h"
 
 namespace optiling {
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 struct CrossV2CompileInfo {};
 const uint32_t X1_IDX = 0;
 const uint32_t X2_IDX = 1;
@@ -182,15 +192,20 @@ ge::graphStatus TilingFuncForCrossV2(gert::TilingContext* context)
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     uint32_t coreNum = ascendcPlatform.GetCoreNumAiv();
     if (coreNum == static_cast<uint32_t>(0)) {
-        OP_LOGE(context, "coreNum should not be 0!");
-        return ge::GRAPH_FAILED;
+        return ReportTilingFailure(context->GetNodeName(), "coreNum should not be 0!");
     }
     const gert::StorageShape* x1StorageShape = context->GetInputShape(X1_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x1StorageShape);
-    auto x1Shape = x1StorageShape->GetStorageShape();
-    OP_CHECK_IF(x1Shape.GetShapeSize() == 0,
-                OP_LOGE(context->GetNodeName(), "the x1Shape of input should not be empty tensor"),
+    OP_CHECK_IF(x1StorageShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x1StorageShape",
+                                                         "failed to get the storage shape of input x1 from the tiling "
+                                                         "context"),
                 return ge::GRAPH_FAILED);
+    auto x1Shape = x1StorageShape->GetStorageShape();
+    OP_CHECK_IF(
+        x1Shape.GetShapeSize() == 0,
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "x1", std::to_string(x1Shape.GetShapeSize()),
+                                                  "x1 cannot be an empty tensor"),
+        return ge::GRAPH_FAILED);
     int64_t dimNum = x1Shape.GetDimNum();
     int64_t shape[MAX_SHAPE_DIM];
     TilingData tilingData;
@@ -199,23 +214,38 @@ ge::graphStatus TilingFuncForCrossV2(gert::TilingContext* context)
         ss[i] = x1Shape.GetDim(i);
     }
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(attrs == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "attrs",
+                                                         "failed to get the attrs from the tiling context"),
+                return ge::GRAPH_FAILED);
     int64_t dim = DimProcess(shape, dimNum, *attrs->GetInt(DIM_IDX));
     if (dim < 0 || dim >= dimNum) {
-        OP_LOGE(context, "dim is invalid!");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "dim", std::to_string(*attrs->GetInt(DIM_IDX)),
+            "the value of dim must be in the range [-dimNum, dimNum), or the shape of x1 must contain a dimension "
+            "of size 3 when dim is not specified");
         return ge::GRAPH_FAILED;
     }
     GetBatchAndStepSize(shape, dimNum, dim, tilingData.batchSize, tilingData.stepSize);
     OP_CHECK_IF(tilingData.batchSize < 1 || tilingData.stepSize < 1,
-                OP_LOGE(context->GetNodeName(), "batchSize and stepSize should not less than 1!"),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "x1", Ops::Base::ToString(x1Shape),
+                    "the shape of x1 should not contain zero or negative dimensions as batchSize and stepSize "
+                    "derived from it must not be less than 1"),
                 return ge::GRAPH_FAILED);
     uint32_t typeLength = 0;
     auto x1Desc = context->GetInputDesc(X1_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x1Desc);
+    OP_CHECK_IF(x1Desc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x1Desc",
+                                                         "failed to get the tensor desc of input x1 from the tiling "
+                                                         "context"),
+                return ge::GRAPH_FAILED);
     ge::DataType dtype = x1Desc->GetDataType();
     ge::TypeUtils::GetDataTypeLength(dtype, typeLength);
     int64_t inputBytes = static_cast<int64_t>(typeLength);
-    OP_CHECK_IF(inputBytes == 0, OP_LOGE(context->GetNodeName(), "inputBytes should not be 0!"),
+    OP_CHECK_IF(inputBytes == 0,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x1", Ops::Base::ToString(dtype),
+                                                      "the dtype of x1 must have a byte length greater than 0"),
                 return ge::GRAPH_FAILED);
     if (tilingData.stepSize > THRESHOLD_STEP_SIZE) {
         GetTilingData(dtype, inputBytes, ubSize, tilingData, coreNum);
@@ -232,8 +262,7 @@ ge::graphStatus TilingFuncForCrossV2(gert::TilingContext* context)
 ge::graphStatus TilingPrepareForCrossV2(gert::TilingParseContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("TilingPrepareForCrossV2", "Tiling context is nullptr");
-        return ge::GRAPH_FAILED;
+        return ReportTilingFailure("TilingPrepareForCrossV2", "Tiling context is nullptr");
     }
     return ge::GRAPH_SUCCESS;
 }

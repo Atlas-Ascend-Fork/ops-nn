@@ -29,13 +29,22 @@ static ge::graphStatus InferShapeForFusedSgd(gert::InferShapeContext* context)
     OP_LOGD(context, "Begin to do InferShapeForFusedSgd.");
 
     auto computeNodeInfo = context->GetComputeNodeInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfo);
+    OP_CHECK_IF(
+        computeNodeInfo == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "computeNodeInfo",
+                                                 "failed to get compute node info from the infer shape context"),
+        return ge::GRAPH_FAILED);
 
     auto paramsInstanceInfo = computeNodeInfo->GetInputInstanceInfo(INPUT_PARAMS_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, paramsInstanceInfo);
+    OP_CHECK_IF(paramsInstanceInfo == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "paramsInstanceInfo",
+                    "failed to get the input instance info of params from the infer shape context"),
+                return ge::GRAPH_FAILED);
     auto inputNum = paramsInstanceInfo->GetInstanceNum();
     if (inputNum == 0) {
-        OP_LOGE(context, "input num must be greater than 0");
+        OP_LOGE_FOR_INVALID_TENSORNUM(context->GetNodeName(), "params", static_cast<int64_t>(inputNum),
+                                      "greater than 0");
         return ge::GRAPH_FAILED;
     }
 
@@ -67,28 +76,61 @@ static ge::graphStatus InferShapeForFusedSgd(gert::InferShapeContext* context)
 
     for (uint32_t i = 0; i < inputNum; i++) {
         const gert::Shape* paramsShape = context->GetDynamicInputShape(INPUT_PARAMS_INDEX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, paramsShape);
+        OP_CHECK_IF(paramsShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "paramsShape",
+                                                             "failed to get the input shape of params from the "
+                                                             "infer shape context"),
+                    return ge::GRAPH_FAILED);
         const gert::Shape* gradsShape = context->GetDynamicInputShape(INPUT_GRADS_INDEX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, gradsShape);
+        OP_CHECK_IF(gradsShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "gradsShape",
+                                                             "failed to get the input shape of grads from the "
+                                                             "infer shape context"),
+                    return ge::GRAPH_FAILED);
         const gert::Shape* momentumShape = nullptr;
         if (momentumBufferListInput != nullptr) {
             momentumShape = context->GetDynamicInputShape(INPUT_MOMENTUM_BUFFER_INDEX, i);
-            OP_CHECK_NULL_WITH_CONTEXT(context, momentumShape);
+            OP_CHECK_IF(momentumShape == nullptr,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            context->GetNodeName(), "momentumShape",
+                            "failed to get the input shape of momentum_buffer_list from the infer shape context"),
+                        return ge::GRAPH_FAILED);
         }
 
         if (*paramsShape != *gradsShape || (momentumShape != nullptr && *paramsShape != *momentumShape)) {
-            OP_LOGE(context, "params, grads and momentum_buffer_list should have the same shape");
+            std::string shapesMsg = Ops::Base::ToString(*paramsShape) + ", " + Ops::Base::ToString(*gradsShape);
+            if (momentumShape != nullptr) {
+                shapesMsg = shapesMsg + " and " + Ops::Base::ToString(*momentumShape);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "params, grads and momentum_buffer_list", shapesMsg.c_str(),
+                    "params, grads and momentum_buffer_list should have the same shape");
+            } else {
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "params, grads", shapesMsg.c_str(),
+                                                       "params, grads should have the same shape");
+            }
             return ge::GRAPH_FAILED;
         }
 
         gert::Shape* paramsRefShape = context->GetOutputShape(paramsOutInstanceInfo->GetInstanceStart() + i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, paramsRefShape);
+        OP_CHECK_IF(paramsRefShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "paramsRefShape",
+                                                             "failed to get the output shape of params from the "
+                                                             "infer shape context"),
+                    return ge::GRAPH_FAILED);
         gert::Shape* gradsRefShape = context->GetOutputShape(gradsOutInstanceInfo->GetInstanceStart() + i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, gradsRefShape);
+        OP_CHECK_IF(gradsRefShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "gradsRefShape",
+                                                             "failed to get the output shape of grads from the "
+                                                             "infer shape context"),
+                    return ge::GRAPH_FAILED);
         gert::Shape* momentumRefShape = nullptr;
         if (momentumBufferListInput != nullptr) {
             momentumRefShape = context->GetOutputShape(momentumOutInstanceInfo->GetInstanceStart() + i);
-            OP_CHECK_NULL_WITH_CONTEXT(context, momentumRefShape);
+            OP_CHECK_IF(momentumRefShape == nullptr,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            context->GetNodeName(), "momentumRefShape",
+                            "failed to get the output shape of momentum_buffer_list from the infer shape context"),
+                        return ge::GRAPH_FAILED);
         }
 
         *paramsRefShape = *paramsShape;
@@ -105,10 +147,18 @@ static ge::graphStatus InferShapeForFusedSgd(gert::InferShapeContext* context)
 static graphStatus InferDataTypeForFusedSgd(gert::InferDataTypeContext* context)
 {
     auto computeNodeInfo = context->GetComputeNodeInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfo);
+    OP_CHECK_IF(
+        computeNodeInfo == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "computeNodeInfo",
+                                                 "failed to get compute node info from the infer dtype context"),
+        return ge::GRAPH_FAILED);
 
     auto paramsInstanceInfo = computeNodeInfo->GetInputInstanceInfo(INPUT_PARAMS_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, paramsInstanceInfo);
+    OP_CHECK_IF(paramsInstanceInfo == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "paramsInstanceInfo",
+                    "failed to get the input instance info of params from the infer dtype context"),
+                return ge::GRAPH_FAILED);
     auto inputNum = paramsInstanceInfo->GetInstanceNum();
 
     auto paramsOutInstanceInfo = context->GetIrOutputInstanceInfo(OUTPUT_PARAMS_INDEX);

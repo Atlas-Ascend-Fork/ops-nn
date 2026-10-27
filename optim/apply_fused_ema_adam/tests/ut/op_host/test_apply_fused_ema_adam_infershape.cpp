@@ -125,3 +125,90 @@ TEST_F(ApplyFusedEmaAdam, apply_fused_ema_dam_infershape_bf16_case0)
         EXPECT_EQ(context->GetOutputDataType(3), output_ref);
     }
 }
+
+// 负向场景1：必选输入 step 的实例数置 0（IrInstanceNum 第 6 个输入实例数为 0），
+// context 的 input_size（输入实例数之和）变为 5，GetInputShape(INPUT_STEP_INDEX) 按下标越界
+// 规则返回空指针，首个触达的整改检查点为 InferShapeForApplyFusedEmaAdam 中 param_name="stepShape"
+// （EZ0037 首报），前序 gradShape/varShape/mShape/vShape/sShape 检查点因实例数保留而正常通过
+// （见断言），其后序 varRefShape 等输出判空检查点因前置检查已返回而一并覆盖。
+// 注意：InferShapeContextFaker 的单参数 IrInstanceNum 是空操作，且 NodeIoNum(IonNum) 与
+// IrInstanceNum(IOInstanceNum) 互斥，必须仅用双参数 IrInstanceNum 控制实例数
+TEST_F(ApplyFusedEmaAdam, apply_fused_ema_adam_infershape_null_input_shape_001)
+{
+    gert::StorageShape gradShape = {{42, 6480}, {42, 6480}};
+    gert::StorageShape varShape = {{42, 6480}, {42, 6480}};
+    gert::StorageShape mShape = {{42, 6480}, {42, 6480}};
+    gert::StorageShape vShape = {{42, 6480}, {42, 6480}};
+    gert::StorageShape sShape = {{42, 6480}, {42, 6480}};
+
+    // 第 6 个输入 step 实例数置 0（InputShapes 第 6 位 nullptr 占位，faker 不创建该输入链），
+    // 保留 4 个输出实例，使输出链存在
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType("ApplyFusedEmaAdam")
+                      .IrInstanceNum({1, 1, 1, 1, 1, 0}, {1, 1, 1, 1})
+                      .InputShapes({&gradShape, &varShape, &mShape, &vShape, &sShape, nullptr})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"lr", Ops::NN::AnyValue::CreateFrom(1e-3f)},
+                                  {"ema_decay", Ops::NN::AnyValue::CreateFrom(0.9999f)},
+                                  {"beta1", Ops::NN::AnyValue::CreateFrom(0.9f)},
+                                  {"beta2", Ops::NN::AnyValue::CreateFrom(0.999f)},
+                                  {"eps", Ops::NN::AnyValue::CreateFrom(1e-8f)},
+                                  {"mode", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"bias_correction", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"weight_decay", Ops::NN::AnyValue::CreateFrom(0.0001f)}})
+                      .Build();
+
+    gert::InferShapeContext* context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(context->GetInputShape(0), nullptr);
+    ASSERT_NE(context->GetInputShape(4), nullptr);
+    ASSERT_EQ(context->GetInputShape(5), nullptr);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyFusedEmaAdam")->infer_shape;
+    EXPECT_EQ(infer_shape_func(context), ge::GRAPH_FAILED);
+}
+
+// 负向场景2：输出 var_ref 的实例数置 0（IrInstanceNum 输出实例数全 0），
+// context 的 output_size 变为 0，GetOutputShape(OUTPUT_VAR_INDEX) 按下标越界规则返回空指针，
+// 对应整改检查点 param_name="varRefShape"（InferShapeForApplyFusedEmaAdam 首个输出检查点，
+// 其后序 mRefShape/vRefShape/sRefShape 因前置检查已返回而一并覆盖），前序输入 shape 检查点
+// 因实例数保留而正常通过（见断言），整改后应上报 EZ0037 首错并返回 ge::GRAPH_FAILED
+TEST_F(ApplyFusedEmaAdam, apply_fused_ema_adam_infershape_null_output_shape_002)
+{
+    gert::StorageShape gradShape = {{42, 6480}, {42, 6480}};
+    gert::StorageShape varShape = {{42, 6480}, {42, 6480}};
+    gert::StorageShape mShape = {{42, 6480}, {42, 6480}};
+    gert::StorageShape vShape = {{42, 6480}, {42, 6480}};
+    gert::StorageShape sShape = {{42, 6480}, {42, 6480}};
+    gert::StorageShape stepShape = {{2, 8}, {2, 8}};
+
+    // 输出实例数全 0 使 output_size 为 0（不调用 NodeOutputTd，避免为输出创建链），
+    // 输入实例数保持 6 个且 shape 全部合法
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType("ApplyFusedEmaAdam")
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1}, {0, 0, 0, 0})
+                      .InputShapes({&gradShape, &varShape, &mShape, &vShape, &sShape, &stepShape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"lr", Ops::NN::AnyValue::CreateFrom(1e-3f)},
+                                  {"ema_decay", Ops::NN::AnyValue::CreateFrom(0.9999f)},
+                                  {"beta1", Ops::NN::AnyValue::CreateFrom(0.9f)},
+                                  {"beta2", Ops::NN::AnyValue::CreateFrom(0.999f)},
+                                  {"eps", Ops::NN::AnyValue::CreateFrom(1e-8f)},
+                                  {"mode", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"bias_correction", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"weight_decay", Ops::NN::AnyValue::CreateFrom(0.0001f)}})
+                      .Build();
+
+    gert::InferShapeContext* context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(context->GetInputShape(5), nullptr);
+    ASSERT_EQ(context->GetOutputShape(0), nullptr);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyFusedEmaAdam")->infer_shape;
+    EXPECT_EQ(infer_shape_func(context), ge::GRAPH_FAILED);
+}
