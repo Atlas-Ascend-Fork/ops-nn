@@ -1757,11 +1757,10 @@ static bool CheckAttrSizes(const char* op_name, const gert::ContinuousVector* st
     // dilationsDim == 5
     OP_CHECK_IF(dilations == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "dilations"), return false);
     OP_CHECK_IF(dilations->GetSize() != kDilationsDim,
-                OP_LOGE_FOR_INVALID_SHAPESIZE(op_name, "dilations", std::to_string(dilations->GetSize()),
-                                              std::to_string(kDilationsDim)),
+                OP_LOGE_FOR_INVALID_LISTSIZE(op_name, "dilations", std::to_string(dilations->GetSize()),
+                                             std::to_string(kDilationsDim)),
                 return false);
-    OP_CHECK_IF(groups == nullptr, OP_LOGE_FOR_INVALID_VALUE(op_name, "groups", "null", "non_empty_value"),
-                return false);
+    OP_CHECK_IF(groups == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "groups"), return false);
     return true;
 }
 

@@ -18,6 +18,7 @@
 #include "kernel_run_context_facker.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include "base/err_mgr.h"
 
 using ge::FORMAT_DHWCN;
 using ge::FORMAT_NCDHW;
@@ -121,6 +122,165 @@ TEST_P(Conv3DTransposeV2ProtoTest, general_cases)
     } else {
         ASSERT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
     }
+}
+
+// 负向用例：属性校验失败时断言 InferShape 返回 GRAPH_FAILED，且 ErrorManager 上报预期预置错误码与字段。
+static void TestTransposeNegativeCase(const std::string& case_name,
+                                      const std::vector<std::pair<std::string, Ops::NN::AnyValue>>& attrs,
+                                      const std::string& expect_code, const std::string& expect_field,
+                                      ge::Format x_format = FORMAT_NCDHW, ge::Format filter_format = FORMAT_NCDHW)
+{
+    std::cout << "run negative case " << case_name << std::endl;
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage(); // 读取一次以清空容器，避免其它用例遗留的首错干扰
+
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv3DTransposeV2");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+
+    // input_size 置 0，使输出全 0，从而进入 zero output 分支的属性校验路径
+    std::initializer_list<int64_t> zero_input_size = {0, 0, 0, 0, 0};
+    gert::StorageShape input_size_shape = {zero_input_size, zero_input_size};
+    gert::StorageShape x_shape = {{32, 6, 3, 8, 224}, {32, 6, 3, 8, 224}};
+    gert::StorageShape filter_shape = {{5, 7, 1, 24, 224}, {5, 7, 1, 24, 224}};
+    gert::StorageShape y_shape = {{}, {}};
+
+    size_t total_size = 0;
+    std::vector<int64_t> input_size(zero_input_size);
+    auto tensor_holder = gert::Tensor::CreateFollowing(input_size.size(), ge::DT_INT64, total_size);
+    auto tensor = reinterpret_cast<gert::Tensor*>(tensor_holder.get());
+    tensor->MutableStorageShape().AppendDim(input_size_shape.MutableStorageShape().GetDimNum());
+    tensor->MutableOriginShape().AppendDim(input_size_shape.MutableOriginShape().GetDimNum());
+    tensor->SetOriginFormat(FORMAT_NCDHW);
+    tensor->SetStorageFormat(FORMAT_NCDHW);
+    (void)memcpy_s(tensor->GetData<uint8_t>(), total_size - sizeof(gert::Tensor), input_size.data(),
+                   input_size.size() * sizeof(int64_t));
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .NodeInputTd(0, ge::DT_FLOAT16, FORMAT_NCDHW, ge::Format::FORMAT_RESERVED)
+                      .NodeInputTd(1, ge::DT_FLOAT16, x_format, ge::Format::FORMAT_RESERVED)
+                      .NodeInputTd(2, ge::DT_FLOAT16, filter_format, ge::Format::FORMAT_RESERVED)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, FORMAT_NCDHW, ge::Format::FORMAT_RESERVED)
+                      .NodeAttrs(attrs)
+                      .InputShapes({tensor, &x_shape, &filter_shape})
+                      .OutputShapes({&y_shape})
+                      .Build();
+
+    ASSERT_EQ(impl->infer_shape(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED) << case_name;
+
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr) << case_name;
+    std::string msg = errMsg.get();
+    std::cout << "[" << case_name << "] error msg: " << msg << std::endl;
+    EXPECT_TRUE(msg.find(expect_code) != std::string::npos)
+        << "[" << case_name << "] expect code " << expect_code << " in: " << msg;
+    EXPECT_TRUE(msg.find(expect_field) != std::string::npos)
+        << "[" << case_name << "] expect field " << expect_field << " in: " << msg;
+}
+
+TEST_F(Conv3DTransposeV2ProtoTest, negative_attr_error_codes)
+{
+    std::vector<int64_t> validStrides = {1, 1, 1, 1, 1};
+    std::vector<int64_t> validPads = {0, 0, 0};
+    std::vector<int64_t> validDilations = {1, 1, 1, 1, 1};
+    std::vector<int64_t> validOutputPadding = {0, 0, 0, 0, 0};
+
+    // EZ0025: strides 元素个数不为 5
+    TestTransposeNegativeCase(
+        "err_EZ0025_strides_listsize",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(std::vector<int64_t>{1, 1, 1, 1})},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+         {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCDHW")},
+         {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validOutputPadding)}},
+        "EZ0025", "strides");
+
+    // EZ0025: dilations 元素个数不为 5
+    TestTransposeNegativeCase(
+        "err_EZ0025_dilations_listsize",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(std::vector<int64_t>{1, 1, 1})},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+         {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCDHW")},
+         {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validOutputPadding)}},
+        "EZ0025", "dilations");
+
+    // EZ0025: pads 元素个数不在 {1, 3, 6}
+    TestTransposeNegativeCase(
+        "err_EZ0025_pads_listsize",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(std::vector<int64_t>{0, 0})},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+         {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCDHW")},
+         {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validOutputPadding)}},
+        "EZ0025", "pads");
+
+    // EZ0025: output_padding 元素个数不为 5
+    TestTransposeNegativeCase(
+        "err_EZ0025_output_padding_listsize",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+         {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCDHW")},
+         {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(std::vector<int64_t>{0, 0, 0, 0})}},
+        "EZ0025", "output_padding");
+
+    // EZ0004: 必选属性 groups 未下发（attr 索引越界）
+    TestTransposeNegativeCase("err_EZ0004_groups_null",
+                              {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+                               {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+                               {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)}},
+                              "EZ0004", "groups");
+
+    // EZ0004: 必选属性 output_padding 未下发（attr 索引越界）
+    TestTransposeNegativeCase("err_EZ0004_output_padding_null",
+                              {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+                               {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+                               {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+                               {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)}},
+                              "EZ0004", "output_padding");
+
+    // EZ0004: 必选属性 dilations 未下发（attr 索引越界）
+    TestTransposeNegativeCase("err_EZ0004_dilations_null",
+                              {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+                               {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)}},
+                              "EZ0004", "dilations");
+
+    // EZ0017: x 的 format 不在支持范围（仅支持 NCDHW / NDHWC）
+    TestTransposeNegativeCase(
+        "err_EZ0017_x_format",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+         {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validOutputPadding)}},
+        "EZ0017", "x", ge::FORMAT_ND, FORMAT_NCDHW);
+
+    // EZ0017: filter 的 format 不在支持范围（仅支持 NCDHW / NDHWC / DHWCN）
+    TestTransposeNegativeCase(
+        "err_EZ0017_filter_format",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+         {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validOutputPadding)}},
+        "EZ0017", "filter", FORMAT_NCDHW, ge::FORMAT_ND);
+
+    // EZ0026: pads 含负值（非 SAME 场景）
+    TestTransposeNegativeCase(
+        "err_EZ0026_pads_negative",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(std::vector<int64_t>{-1, 0, 0})},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+         {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validOutputPadding)}},
+        "EZ0026", "pads");
 }
 
 static Conv3DTransposeProtoTestParam general_cases_params[] = {

@@ -320,11 +320,27 @@ TEST_F(Conv3DBackpropInputV2TilingRunTime2, negative_attr_error_codes)
          {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)}},
         "EZ0024", "stride_n");
 
+    // EZ0025: dilations element num != 5 (kDilationsDim)
+    TestInputNegativeCase(
+        "err_EZ0025_dilations_listsize",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(std::vector<int64_t>{1, 1, 1})},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)}},
+        "EZ0025", "dilations");
+
     // EZ0004: required attr pointer is empty (dilations index beyond provided attr num)
     TestInputNegativeCase("err_EZ0004_dilations_null",
                           {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
                            {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)}},
                           "EZ0004", "dilations");
+
+    // EZ0004: required attr groups is empty (groups index beyond provided attr num)
+    TestInputNegativeCase("err_EZ0004_groups_null",
+                          {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+                           {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+                           {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)}},
+                          "EZ0004", "groups");
 }
 
 Conv3DBpInputV2TilingTestParam general_20_core_num_cases_params[] = {
