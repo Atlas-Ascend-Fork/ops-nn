@@ -49,6 +49,16 @@ constexpr uint64_t A_L1_MAX_SIZE = 256UL * 1024UL;
 constexpr uint64_t A_L1_MAX_SIZE_WITH_BIAS_QUANT = 240UL * 1024UL;
 constexpr uint64_t L1_MAX_SIZE = 512UL * 1024UL;
 constexpr uint64_t L1_MAX_SIZE_WITH_BIAS_QUANT = 496UL * 1024UL;
+constexpr uint64_t BIAS_L1_SIZE = 4UL * KILOBYTE; // bias单块L1占用，与kernel侧BT_SIZE(BT硬件容量)一致
+constexpr uint64_t A_PRELOAD_ALIGN = 64UL;        // A预载对齐粒度：128B cacheline对应的f16/bf16元素数
+
+// kernel L1 布局中双缓冲的 WeightL1 与 Bias(单块固定4KB) 从两端夹住 AL1，此处按 kernel 布局计算二者总占用，
+// 全载准入与 A 预载封顶共用同一份预算，避免两处公式漂移
+constexpr uint64_t GetWeightL1AndBiasBytes(uint64_t baseN, uint64_t baseK, uint64_t stepKb, uint64_t elemSize,
+                                           bool hasBias)
+{
+    return NUM_TWO * (baseN * baseK * stepKb * elemSize + (hasBias ? BIAS_L1_SIZE : 0UL));
+}
 constexpr int32_t ADAPTIVE_SPLIT_PRIORITY = 7;
 constexpr std::array<int64_t, 4> SUPPORTED_GROUP_SIZE{32L, 64L, 128L, 256L};
 constexpr uint64_t SUPPORT_C0_SIZE = 16;
@@ -472,7 +482,14 @@ void WeightQuantBatchMatmulV2TilingAS::OptimizeMatmulTiling()
                               A_L1_MAX_SIZE_WITH_BIAS_QUANT :
                               A_L1_MAX_SIZE;
     uint64_t kAlign = ops::CeilAlign(matmulInfoPtr_->kSize, static_cast<uint64_t>(BLOCK_CUBE));
-    if (tilingData_->matmulTiling.baseM * kAlign * GetSizeByDataType(matmulInfoPtr_->aDtype) <= aL1MaxSize) {
+    // 补充真实占用校验：kernel按baseK粒度分配AL1；WeightL1与Bias均为双缓冲，与AL1之和不得超过L1容量
+    uint64_t elemSize = GetSizeByDataType(matmulInfoPtr_->aDtype);
+    uint64_t al1RealSize = tilingData_->matmulTiling.baseM *
+                           ops::CeilAlign(kAlign, static_cast<uint64_t>(tilingData_->matmulTiling.baseK)) * elemSize;
+    uint64_t usedL1Bytes = GetWeightL1AndBiasBytes(tilingData_->matmulTiling.baseN, tilingData_->matmulTiling.baseK,
+                                                   tilingData_->matmulTiling.stepKb, elemSize, matmulInfoPtr_->hasBias);
+    if (tilingData_->matmulTiling.baseM * kAlign * elemSize <= aL1MaxSize &&
+        al1RealSize + usedL1Bytes <= compileInfoPtr_->l1Size) {
         tilingData_->matmulTiling.stepKa = ops::CeilDiv(kAlign, static_cast<uint64_t>(tilingData_->matmulTiling.baseK));
         tilingData_->matmulTiling.depthA1 = tilingData_->matmulTiling.stepKa;
     }
@@ -746,7 +763,8 @@ bool WeightQuantBatchMatmulV2TilingAS::CheckL1SizeAfterExtending(uint64_t extend
     uint64_t aL1MaxSize = (matmulInfoPtr_->hasBias || matmulInfoPtr_->cDtype == ge::DT_INT8) ?
                               A_L1_MAX_SIZE_WITH_BIAS_QUANT :
                               A_L1_MAX_SIZE;
-    if (aL1MaxSize - al1Size < extendedBl1Size - (compileInfoPtr_->l1Size >> 1)) {
+    // 加法式等价改写，避免无符号减法下溢误判放行
+    if (al1Size + extendedBl1Size > aL1MaxSize + (compileInfoPtr_->l1Size >> 1)) {
         return false;
     }
     return true;
@@ -792,6 +810,15 @@ void WeightQuantBatchMatmulV2TilingAS::SetPreLoad()
             ops::CeilDiv(static_cast<uint64_t>(matmulInfoPtr_->mSize * matmulInfoPtr_->kSize),
                          static_cast<uint64_t>(tilingData_->cubeNumBlocksN * tilingData_->cubeNumBlocksM)),
             static_cast<uint64_t>(64)); // 64 表示128B的cacheline对齐
+        // kernel侧AL1被双缓冲WeightL1与Bias(单块固定4KB)夹住，aPreloadSize须按真实剩余空间封顶，否则越界踩踏
+        uint64_t elemSize = GetSizeByDataType(matmulInfoPtr_->aDtype);
+        uint64_t usedL1Bytes = GetWeightL1AndBiasBytes(tilingData_->matmulTiling.baseN, tilingData_->matmulTiling.baseK,
+                                                       tilingData_->matmulTiling.stepKb, elemSize,
+                                                       matmulInfoPtr_->hasBias);
+        // 剩余字节换算成元素个数（aPreloadSize单位为元素），向下对齐到预载粒度
+        uint64_t availElems = L1_MAX_SIZE > usedL1Bytes ? (L1_MAX_SIZE - usedL1Bytes) / elemSize : 0UL;
+        tilingData_->aPreloadSize = std::min(tilingData_->aPreloadSize,
+                                             static_cast<uint32_t>(ops::FloorAlign(availElems, A_PRELOAD_ALIGN)));
     }
 }
 
