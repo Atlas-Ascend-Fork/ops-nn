@@ -11,10 +11,10 @@
 # ascendc_config.json 对应配置:
 #   {"name":"MaxPoolV3Grad", "compute_units": ["ascend950"], "auto_sync": false}
 
-# arch35: ascend950/ascend350 kernel 入口
+# arch35: ascend950/ascend350/ascend960dt kernel 入口
 add_kernel_sources(
     KERNEL_SRC arch35/max_pool_v3_grad.cpp
-    COMPUTE_UNITS ascend950 ascend350
+    COMPUTE_UNITS ascend950 ascend350 ascend960dt
     AUTO_SYNC false
     OPTIONS "--cce-no-dcache-flush"
 )
