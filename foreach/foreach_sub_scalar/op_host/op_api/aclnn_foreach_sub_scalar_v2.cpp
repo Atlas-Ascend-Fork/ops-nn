@@ -24,6 +24,9 @@
 #include "opdev/platform.h"
 #include "opdev/make_op_executor.h"
 #include "../../foreach_utils/op_host/foreach_null_check_helper.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -55,15 +58,27 @@ static inline bool CheckFormat(const aclTensorList* self, const aclTensorList* o
     for (uint64_t i = 0; i < self->Size(); i++) {
         // 输入输出的格式需要一致
         if ((*self)[i]->GetStorageFormat() != (*out)[i]->GetStorageFormat()) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format of input and output should be equal. self [%s], out [%s].",
-                    ToString((*self)[i]->GetStorageShape()).GetString(),
-                    ToString((*out)[i]->GetStorageShape()).GetString());
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
+                                   "Input self and output out must have identical storage formats.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0018", (std::vector<const char*>{"param_names", "op_name", "incorrect_formats", "reason"}),
+                (std::vector<const char*>{"x,out", "aclnnForeachSubScalarV2",
+                                          (std::to_string(static_cast<int>((*self)[i]->GetStorageFormat())) + "," +
+                                           std::to_string(static_cast<int>((*out)[i]->GetStorageFormat())))
+                                              .c_str(),
+                                          "Input self and output out must have identical storage formats."}));
             return false;
         }
 
         // self格式不能是私有格式
         if (IsPrivateFormat((*self)[i]->GetStorageFormat())) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
+                                   "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0035", (std::vector<const char*>{"param_name", "op_name", "incorrect_format", "reason"}),
+                (std::vector<const char*>{"x", "aclnnForeachSubScalarV2",
+                                          (std::to_string(static_cast<int>((*self)[i]->GetStorageFormat()))).c_str(),
+                                          "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW."}));
             return false;
         }
     }
@@ -76,8 +91,12 @@ static const std::initializer_list<ge::DataType>& GetDtypeSupportList()
     if (curArch == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(curArch)) {
         return ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPPORT_LIST;
     } else {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
+        const std::string reason = (("support for " +
+                                     std::string(op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString()) +
+                                     " is not implemented"));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", (std::vector<const char*>{"optype", "opskernel", "reason"}),
+                                  (std::vector<const char*>{"ForeachSubScalar", "AiCore", reason.c_str()}));
         return EMPTY_LIST;
     }
 }
@@ -86,8 +105,8 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclScalar* s
 {
     const auto& dtypeSupportList = GetDtypeSupportList();
     if (dtypeSupportList.size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
+                               op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
         return false;
     }
     if (self->Size() == 0) {

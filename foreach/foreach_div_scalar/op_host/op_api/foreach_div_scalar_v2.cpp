@@ -25,7 +25,7 @@ const aclTensorList* ForeachDivScalarV2(const aclTensorList* x, const aclTensor*
     L0_DFX(ForeachDivScalarV2, x, scalar);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ForeachDivScalar, OP_INPUT(x, scalar), OP_OUTPUT(out));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;
     }
     return out;

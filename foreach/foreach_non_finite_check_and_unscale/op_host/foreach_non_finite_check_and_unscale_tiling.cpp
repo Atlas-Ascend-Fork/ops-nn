@@ -15,6 +15,9 @@
 #include "foreach_non_finite_check_and_unscale_tiling.h"
 #include "op_host/tiling_util.h"
 #include "op_host/tiling_templates_registry.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace optiling {
 using namespace Ops::NN::OpTiling;
@@ -92,7 +95,18 @@ ge::graphStatus ForeachNonFiniteCheckAndUnscaleTiling::Init()
     // Get shape, dtype information, and the total number of data.
     for (int16_t i = 0; i < totalTensorCount; i++) {
         auto descPtr = tilingContext->GetDynamicInputDesc(SCALE_GRADS_INDEX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(tilingContext, descPtr);
+        if (descPtr == nullptr) {
+            const std::string msgOpName = std::string((tilingContext->GetNodeName() == nullptr ?
+                                                           "foreach_non_finite_check_and_unscale" :
+                                                           tilingContext->GetNodeName()));
+            const std::string msgReason = std::string(
+                "Dynamic scaled_grads metadata is unavailable at the current instance index; check the "
+                "constructed tensor-list context.");
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            return ge::GRAPH_FAILED;
+        };
         auto tempDtype = descPtr->GetDataType();
         // Determine whether all data types are consistent.
         if (i == 0) {
@@ -114,7 +128,18 @@ ge::graphStatus ForeachNonFiniteCheckAndUnscaleTiling::Init()
             return ge::GRAPH_FAILED;
         }
         auto shapePtr = tilingContext->GetDynamicInputShape(SCALE_GRADS_INDEX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(tilingContext, shapePtr);
+        if (shapePtr == nullptr) {
+            const std::string msgOpName = std::string((tilingContext->GetNodeName() == nullptr ?
+                                                           "foreach_non_finite_check_and_unscale" :
+                                                           tilingContext->GetNodeName()));
+            const std::string msgReason = std::string(
+                "Dynamic scaled_grads metadata is unavailable at the current instance index; check the "
+                "constructed tensor-list context.");
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            return ge::GRAPH_FAILED;
+        };
         tensorDataCountList[i] = shapePtr->GetStorageShape().GetShapeSize();
         OP_CHECK_IF(tensorDataCountList[i] == 0,
                     OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(nodeName.c_str(),
@@ -132,7 +157,19 @@ ge::graphStatus ForeachNonFiniteCheckAndUnscaleTiling::RunBigKernelTiling()
 {
     OP_LOGD(nodeName, "Start.");
     auto platformInfo = tilingContext->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(
+            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ?
+                 "foreach_non_finite_check_and_unscale" :
+                 (tilingContext)->GetNodeName()));
+        const std::string msgReason = std::string(
+            "Tiling framework object platformInfo is unavailable; check the operator registration and context "
+            "construction.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     uint64_t ubSizePlatForm = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, ubSizePlatForm);
@@ -140,11 +177,26 @@ ge::graphStatus ForeachNonFiniteCheckAndUnscaleTiling::RunBigKernelTiling()
 
     uint32_t needCoreNum = GetNeedCoreNum(platformInfo->GetCoreNum());
     OP_LOGD(nodeName, "ubSizePlatForm:%lu, needCoreNum:%u", ubSizePlatForm, needCoreNum);
-    OP_CHECK_IF(needCoreNum == 0 || ubSizePlatForm == 0,
-                OP_LOGE(nodeName, "Param needCoreNum or ubSizePlatForm is zero."), return ge::GRAPH_FAILED);
+    if (needCoreNum == 0 || ubSizePlatForm == 0) {
+        const std::string msgOpName = std::string(nodeName);
+        const std::string msgReason = (std::string(__func__) + ": " + "Param needCoreNum or ubSizePlatForm is zero.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
     AssignDataToEachCore(needCoreNum);
-    OP_CHECK_IF(DivideUbMemory(ubSizePlatForm) == false, OP_LOGE(nodeName, "DivideUbMemory failed."),
-                return ge::GRAPH_FAILED);
+    if (DivideUbMemory(ubSizePlatForm) == false) {
+        const std::string msgOpName = std::string(nodeName);
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("UB partitioning cannot fit the reduction scratch and scaled_grads "
+                                                   "buffers: platformUBBytes=") +
+                                       std::to_string(ubSizePlatForm));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
     FillTilingData();
     tilingContext->SetBlockDim(needCoreNum);
     size_t* workspaces = tilingContext->GetWorkspaceSizes(1);
@@ -172,9 +224,19 @@ ge::graphStatus ForeachNonFiniteCheckAndUnscaleTiling::CheckParams() const
                                           "float16, bfloat16 or float"),
                 return ge::GRAPH_FAILED);
     auto flagDescPtr = tilingContext->GetInputDesc(totalTensorCount);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, flagDescPtr);
+    OP_CHECK_IF(
+        flagDescPtr == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT((tilingContext->GetNodeName() == nullptr ? "foreach_non_finite_check_and_unscale" :
+                                                                              tilingContext->GetNodeName()),
+                                   "found_inf"),
+        return ge::GRAPH_FAILED);
     auto scaleDescPtr = tilingContext->GetInputDesc(totalTensorCount + INV_SCALE_INDEX_OFFSET);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, scaleDescPtr);
+    OP_CHECK_IF(
+        scaleDescPtr == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT((tilingContext->GetNodeName() == nullptr ? "foreach_non_finite_check_and_unscale" :
+                                                                              tilingContext->GetNodeName()),
+                                   "inv_scale"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(flagDescPtr->GetDataType() != ge::DT_FLOAT || scaleDescPtr->GetDataType() != ge::DT_FLOAT,
                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
                     nodeName.c_str(), "found_inf and inv_scale",
@@ -342,11 +404,11 @@ protected:
     {
         ForeachNonFiniteCheckAndUnscaleTiling tilingObject(context_);
         if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-            OP_LOGE(context_->GetNodeName(), "Init tiling object returned failed.");
+            OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Init tiling object returned failed.");
             return ge::GRAPH_FAILED;
         }
         if (tilingObject.RunBigKernelTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE(context_->GetNodeName(), "Run big kernel tiling returned failed.");
+            OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Run big kernel tiling returned failed.");
             return ge::GRAPH_FAILED;
         }
 

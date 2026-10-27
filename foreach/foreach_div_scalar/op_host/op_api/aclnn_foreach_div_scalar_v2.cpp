@@ -20,6 +20,9 @@
 #include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
 #include "../../foreach_utils/op_host/foreach_null_check_helper.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -51,7 +54,18 @@ static inline bool CheckFormat(const aclTensorList* self, const aclTensorList* o
     for (uint64_t i = 0; i < self->Size(); i++) {
         // self格式不能是私有格式
         if (IsPrivateFormat((*self)[i]->GetStorageFormat()) || IsPrivateFormat((*out)[i]->GetStorageFormat())) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
+                                   "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0035", (std::vector<const char*>{"param_name", "op_name", "incorrect_format", "reason"}),
+                (std::vector<const char*>{
+                    std::string((IsPrivateFormat((*self)[i]->GetStorageFormat()) ? "x" : "out")).c_str(),
+                    "aclnnForeachDivScalarV2",
+                    (std::to_string(static_cast<int>((IsPrivateFormat((*self)[i]->GetStorageFormat()) ?
+                                                          (*self)[i]->GetStorageFormat() :
+                                                          (*out)[i]->GetStorageFormat()))))
+                        .c_str(),
+                    "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW."}));
             return false;
         }
     }
@@ -72,8 +86,12 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclScalar* s
 {
     const auto& dtypeSupportList = GetDtypeSupportList();
     if (dtypeSupportList.size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
+        const std::string reason = (("support for " +
+                                     std::string(op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString()) +
+                                     " is not implemented"));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", (std::vector<const char*>{"optype", "opskernel", "reason"}),
+                                  (std::vector<const char*>{"ForeachDivScalar", "AiCore", reason.c_str()}));
         return false;
     }
 
@@ -119,7 +137,16 @@ static inline aclnnStatus CheckParams(const aclTensorList* self, const aclScalar
 {
     // 1. 检查参数是否为空指针
     CHECK_RET(CheckNotNull(self, scalar, out), ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(self->Size() == out->Size(), ACLNN_ERR_PARAM_INVALID);
+    if (self->Size() != out->Size()) {
+        const std::string reason = std::string("out must have the same number of tensors as self; self=" +
+                                               std::to_string(self->Size()) + ", out=" + std::to_string(out->Size()));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0038",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+                                  (std::vector<const char*>{"out", "aclnnForeachDivScalarV2",
+                                                            (std::to_string(out->Size())).c_str(), reason.c_str()}));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // Check every entry in tensor lists is not null, to avoid null pointer
     // dereference in CheckDtypeValid/CheckShape/CheckFormat.

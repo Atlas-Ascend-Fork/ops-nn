@@ -20,6 +20,9 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/platform.h"
 #include "../../foreach_utils/op_host/foreach_null_check_helper.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -55,7 +58,18 @@ static inline bool CheckFormat(const aclTensorList* self, const aclTensorList* o
     for (uint64_t j = 0; j < self->Size(); j++) {
         // self格式不能是私有格式
         if (IsPrivateFormat((*self)[j]->GetStorageFormat()) || IsPrivateFormat((*out)[j]->GetStorageFormat())) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
+                                   "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0035", (std::vector<const char*>{"param_name", "op_name", "incorrect_format", "reason"}),
+                (std::vector<const char*>{
+                    std::string((IsPrivateFormat((*self)[j]->GetStorageFormat()) ? "x" : "out")).c_str(),
+                    "aclnnForeachMulScalarV2",
+                    (std::to_string(static_cast<int>((IsPrivateFormat((*self)[j]->GetStorageFormat()) ?
+                                                          (*self)[j]->GetStorageFormat() :
+                                                          (*out)[j]->GetStorageFormat()))))
+                        .c_str(),
+                    "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW."}));
             return false;
         }
     }
@@ -67,8 +81,12 @@ static const std::initializer_list<DataType>& GetDtypeSupportList()
     if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase()) {
         return TENSOR_DTYPE_DTYPE_SUPPORT_LIST;
     } else {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "support for arch %u is not implemented",
-                static_cast<uint32_t>(GetCurrentPlatformInfo().GetCurNpuArch()));
+        const std::string reason = (("support for arch " +
+                                     std::to_string(static_cast<uint32_t>(GetCurrentPlatformInfo().GetCurNpuArch())) +
+                                     " is not implemented"));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", (std::vector<const char*>{"optype", "opskernel", "reason"}),
+                                  (std::vector<const char*>{"ForeachMulScalar", "AiCore", reason.c_str()}));
         return EMPTY_LIST;
     }
 }
@@ -77,8 +95,8 @@ static inline bool CheckDtype(const aclTensorList* self, const aclScalar* scalar
 {
     const auto& dtypeSupportList = GetDtypeSupportList();
     if (dtypeSupportList.size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "support for arch %u is not implemented",
-                static_cast<uint32_t>(GetCurrentPlatformInfo().GetCurNpuArch()));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "support for arch %u is not implemented",
+                               static_cast<uint32_t>(GetCurrentPlatformInfo().GetCurNpuArch()));
         return false;
     }
     if (self->Size() == 0) {

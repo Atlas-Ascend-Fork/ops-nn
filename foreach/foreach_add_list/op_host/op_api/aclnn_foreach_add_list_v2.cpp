@@ -25,6 +25,9 @@
 #include "opdev/tensor_view_utils.h"
 #include "op_api/aclnn_util.h"
 #include "../../foreach_utils/op_host/foreach_null_check_helper.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -64,7 +67,23 @@ static inline bool ForeachAddListV2CheckFormat(const aclTensorList* self, const 
         // self格式不能是私有格式
         if (IsPrivateFormat((*self)[i]->GetStorageFormat()) || IsPrivateFormat((*x2)[i]->GetStorageFormat()) ||
             IsPrivateFormat((*out)[i]->GetStorageFormat())) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
+                                   "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0035", (std::vector<const char*>{"param_name", "op_name", "incorrect_format", "reason"}),
+                (std::vector<const char*>{
+                    std::string((IsPrivateFormat((*self)[i]->GetStorageFormat()) ?
+                                     "x1" :
+                                     (IsPrivateFormat((*x2)[i]->GetStorageFormat()) ? "x2" : "out")))
+                        .c_str(),
+                    "aclnnForeachAddListV2",
+                    (std::to_string(static_cast<int>(
+                         (IsPrivateFormat((*self)[i]->GetStorageFormat()) ?
+                              (*self)[i]->GetStorageFormat() :
+                              (IsPrivateFormat((*x2)[i]->GetStorageFormat()) ? (*x2)[i]->GetStorageFormat() :
+                                                                               (*out)[i]->GetStorageFormat())))))
+                        .c_str(),
+                    "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW."}));
             return false;
         }
     }
@@ -77,8 +96,12 @@ static const std::initializer_list<DataType>& ForeachAddListV2GetDtypeSupportLis
     if (curArch == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(curArch)) {
         return FOREACH_ADD_LIST_V2_ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPPORT_LIST;
     } else {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
+        const std::string reason = (("support for " +
+                                     std::string(op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString()) +
+                                     " is not implemented"));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", (std::vector<const char*>{"optype", "opskernel", "reason"}),
+                                  (std::vector<const char*>{"ForeachAddList", "AiCore", reason.c_str()}));
         return EMPTY_LIST;
     }
 }
@@ -88,8 +111,8 @@ static inline bool ForeachAddListV2CheckDtypeValid(const aclTensorList* self, co
 {
     const auto& dtypeSupportList = ForeachAddListV2GetDtypeSupportList();
     if (dtypeSupportList.size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
+                               op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
         return false;
     }
 
@@ -130,8 +153,13 @@ static inline bool ForeachAddListV2CheckShape(const aclTensorList* self, const a
 {
     // tensorlist size检查
     if (self->Size() != x2->Size()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor lists must have the same number of tensors, got %lu and %lu",
-                self->Size(), x2->Size());
+        const std::string reason = (("Tensor lists must have the same number of tensors, got " +
+                                     std::to_string(self->Size()) + " and " + std::to_string(x2->Size())));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0038",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+                                  (std::vector<const char*>{"x1", "aclnnForeachAddListV2",
+                                                            (std::to_string(self->Size())).c_str(), reason.c_str()}));
         return false;
     }
 
@@ -157,8 +185,26 @@ static inline aclnnStatus ForeachAddListV2CheckParams(const aclTensorList* self,
 {
     // 1. 检查参数是否为空指针
     CHECK_RET(ForeachAddListV2CheckNotNull(self, x2, scalar, out), ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(self->Size() == x2->Size(), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(self->Size() == out->Size(), ACLNN_ERR_PARAM_INVALID);
+    if (self->Size() != x2->Size()) {
+        const std::string reason = (std::string("Tensor lists must have equal lengths; x1=") +
+                                    std::to_string(self->Size()) + ", x2=" + std::to_string(x2->Size()));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0038",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+                                  (std::vector<const char*>{"x2", "aclnnForeachAddListV2",
+                                                            (std::to_string(x2->Size())).c_str(), reason.c_str()}));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (self->Size() != out->Size()) {
+        const std::string reason = (std::string("Tensor lists must have equal lengths; x1=") +
+                                    std::to_string(self->Size()) + ", out=" + std::to_string(out->Size()));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0038",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+                                  (std::vector<const char*>{"out", "aclnnForeachAddListV2",
+                                                            (std::to_string(out->Size())).c_str(), reason.c_str()}));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // Check every entry in tensor lists is not null, to avoid null pointer
     // dereference in CheckDtypeValid/CheckShape/CheckFormat.

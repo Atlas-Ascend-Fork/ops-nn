@@ -12,15 +12,30 @@
 
 #include "register/op_def_registry.h"
 #include "foreach_tiling_class.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace optiling {
 
 static ge::graphStatus TilingPrepare4ForeachScalarTiling(gert::TilingParseContext* context)
 {
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfoPtr == nullptr, OP_LOGE(context, "platformInfoPtr is null"), return ge::GRAPH_FAILED);
+    if (platformInfoPtr == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "platformInfoPtr is null");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "platformInfoPtr is null"}));
+        return ge::GRAPH_FAILED;
+    };
     auto compileInfoPtr = context->GetCompiledInfo<ForeachCompileInfo>();
-    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context, "compileInfoPtr is null"), return ge::GRAPH_FAILED);
+    if (compileInfoPtr == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "compileInfoPtr is null");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "compileInfoPtr is null"}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     compileInfoPtr->coreNum = ascendcPlatform.GetCoreNum();
     compileInfoPtr->aivCoreNum = ascendcPlatform.GetCoreNumAiv();

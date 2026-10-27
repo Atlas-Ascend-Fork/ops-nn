@@ -20,6 +20,9 @@
 #include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
 #include "../../foreach_utils/op_host/foreach_null_check_helper.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -56,7 +59,23 @@ static inline bool CheckFormat(const aclTensorList* x1, const aclTensorList* x2,
         // self格式不能是私有格式
         if (IsPrivateFormat((*x2)[i]->GetStorageFormat()) || IsPrivateFormat((*x1)[i]->GetStorageFormat()) ||
             IsPrivateFormat((*out)[i]->GetStorageFormat())) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
+                                   "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0035", (std::vector<const char*>{"param_name", "op_name", "incorrect_format", "reason"}),
+                (std::vector<const char*>{
+                    std::string((IsPrivateFormat((*x2)[i]->GetStorageFormat()) ?
+                                     "x2" :
+                                     (IsPrivateFormat((*x1)[i]->GetStorageFormat()) ? "x1" : "out")))
+                        .c_str(),
+                    "aclnnForeachDivList",
+                    (std::to_string(static_cast<int>(
+                         (IsPrivateFormat((*x2)[i]->GetStorageFormat()) ?
+                              (*x2)[i]->GetStorageFormat() :
+                              (IsPrivateFormat((*x1)[i]->GetStorageFormat()) ? (*x1)[i]->GetStorageFormat() :
+                                                                               (*out)[i]->GetStorageFormat())))))
+                        .c_str(),
+                    "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW."}));
             return false;
         }
     }
@@ -67,8 +86,12 @@ static inline bool CheckDtypeValid(const aclTensorList* x1, const aclTensorList*
 {
     const auto& dtypeSupportList = GetDtypeSupportList();
     if (dtypeSupportList.size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
+        const std::string reason = (("support for " +
+                                     std::string(op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString()) +
+                                     " is not implemented"));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", (std::vector<const char*>{"optype", "opskernel", "reason"}),
+                                  (std::vector<const char*>{"ForeachDivList", "AiCore", reason.c_str()}));
         return false;
     }
 
@@ -98,8 +121,17 @@ static inline bool CheckShape(const aclTensorList* x1, const aclTensorList* x2, 
 {
     // tensorlist size检查
     if (x1->Size() != x2->Size() || x1->Size() != out->Size()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor lists must have the same number of tensors, got %lu and %lu",
-                x1->Size(), x2->Size());
+        const bool x2Mismatch = x1->Size() != x2->Size();
+        const char* parameter = x2Mismatch ? "x2" : "out";
+        const auto actualSize = x2Mismatch ? x2->Size() : out->Size();
+        const std::string reason = ((
+            "Tensor lists must have the same number of tensors, x1=" + std::to_string(x1->Size()) +
+            ", x2=" + std::to_string(x2->Size()) + ", out=" + std::to_string(out->Size())));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0038",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+                                  (std::vector<const char*>{std::string(parameter).c_str(), "aclnnForeachDivList",
+                                                            (std::to_string(actualSize)).c_str(), reason.c_str()}));
         return false;
     }
 

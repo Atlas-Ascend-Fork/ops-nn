@@ -30,7 +30,7 @@ const aclTensorList* ForeachRoundOffNumberV2(const aclTensorList* x, const aclTe
     L0_DFX(ForeachRoundOffNumberV2, x, roundMode);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ForeachRoundOffNumber, OP_INPUT(x, roundMode), OP_OUTPUT(out));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;
     }
     return out;

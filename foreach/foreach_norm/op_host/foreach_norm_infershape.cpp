@@ -18,6 +18,9 @@
 #include "runtime/infer_shape_context.h"
 #include "runtime/storage_shape.h"
 #include "../../foreach_utils/op_host/common_dtype.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 namespace ops {
@@ -31,7 +34,19 @@ static ge::graphStatus InferShape4ForeachNorm(gert::InferShapeContext* context)
 
     std::string errMsg = optiling::ConcatString("num of dynamic input0 ", inputInfo->GetInstanceNum(),
                                                 "not equal num of dynamic output0 ", outputNum);
-    OP_CHECK_IF(inputInfo->GetInstanceNum() != outputNum, OP_LOGE(context->GetNodeName(), "%s", errMsg.c_str()),
+    OP_CHECK_IF(inputInfo->GetInstanceNum() != outputNum, ([&]() {
+                    const char* e9NodeName = context->GetNodeName();
+                    const std::string e9Op = (e9NodeName == nullptr ? "ForeachNorm" : e9NodeName);
+                    const std::string e9Parameter = "x";
+                    const std::string e9Size = std::to_string(inputInfo->GetInstanceNum());
+                    const std::string e9Reason = (std::string(errMsg.c_str()));
+                    OP_LOGE_WITHOUT_REPORT(e9Op.c_str(), "Parameter %s has invalid list size %s: %s.",
+                                           e9Parameter.c_str(), e9Size.c_str(), e9Reason.c_str());
+                    const std::vector<const char*> e9Keys = {"param_name", "op_name", "incorrect_size", "reason"};
+                    const std::vector<const char*> e9Values = {e9Parameter.c_str(), e9Op.c_str(), e9Size.c_str(),
+                                                               e9Reason.c_str()};
+                    REPORT_PREDEFINED_ERR_MSG("EZ0038", e9Keys, e9Values);
+                }()),
                 return ge::GRAPH_FAILED);
 
     for (uint32_t i = 0; i < inputInfo->GetInstanceNum(); i++) {
@@ -56,7 +71,19 @@ static ge::graphStatus InferDataType4ForeachNorm(gert::InferDataTypeContext* con
 
     std::string errMsg = optiling::ConcatString("num of dynamic input0 ", inputInfo->GetInstanceNum(),
                                                 "not equal num of dynamic output0 ", outputNum);
-    OP_CHECK_IF(inputInfo->GetInstanceNum() != outputNum, OP_LOGE(context->GetNodeName(), "%s", errMsg.c_str()),
+    OP_CHECK_IF(inputInfo->GetInstanceNum() != outputNum, ([&]() {
+                    const char* e9NodeName = context->GetNodeName();
+                    const std::string e9Op = (e9NodeName == nullptr ? "ForeachNorm" : e9NodeName);
+                    const std::string e9Parameter = "x";
+                    const std::string e9Size = std::to_string(inputInfo->GetInstanceNum());
+                    const std::string e9Reason = (std::string(errMsg.c_str()));
+                    OP_LOGE_WITHOUT_REPORT(e9Op.c_str(), "Parameter %s has invalid list size %s: %s.",
+                                           e9Parameter.c_str(), e9Size.c_str(), e9Reason.c_str());
+                    const std::vector<const char*> e9Keys = {"param_name", "op_name", "incorrect_size", "reason"};
+                    const std::vector<const char*> e9Values = {e9Parameter.c_str(), e9Op.c_str(), e9Size.c_str(),
+                                                               e9Reason.c_str()};
+                    REPORT_PREDEFINED_ERR_MSG("EZ0038", e9Keys, e9Values);
+                }()),
                 return ge::GRAPH_FAILED);
 
     for (uint32_t i = 0; i < inputInfo->GetInstanceNum(); i++) {

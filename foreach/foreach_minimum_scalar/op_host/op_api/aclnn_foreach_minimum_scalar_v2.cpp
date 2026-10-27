@@ -19,6 +19,9 @@
 #include "opdev/platform.h"
 #include "opdev/make_op_executor.h"
 #include "../../foreach_utils/op_host/foreach_null_check_helper.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -63,7 +66,18 @@ static inline bool CheckFormat(const aclTensorList* self, const aclTensorList* o
     for (uint64_t m = 0; m < self->Size(); m++) {
         // self格式不能是私有格式
         if (IsPrivateFormat((*self)[m]->GetStorageFormat()) || IsPrivateFormat((*out)[m]->GetStorageFormat())) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
+                                   "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0035", (std::vector<const char*>{"param_name", "op_name", "incorrect_format", "reason"}),
+                (std::vector<const char*>{
+                    std::string((IsPrivateFormat((*self)[m]->GetStorageFormat()) ? "x" : "out")).c_str(),
+                    "aclnnForeachMinimumScalarV2",
+                    (std::to_string(static_cast<int>((IsPrivateFormat((*self)[m]->GetStorageFormat()) ?
+                                                          (*self)[m]->GetStorageFormat() :
+                                                          (*out)[m]->GetStorageFormat()))))
+                        .c_str(),
+                    "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW."}));
             return false;
         }
     }
@@ -76,8 +90,12 @@ static const std::initializer_list<DataType>& GetDtypeSupportList()
     if (Ops::NN::AclnnUtil::IsRegbase(curArch_2) || curArch_2 == NpuArch::DAV_2201) {
         return ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPPORT_LIST;
     } else {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
+        const std::string reason = (("support for " +
+                                     std::string(op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString()) +
+                                     " is not implemented"));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", (std::vector<const char*>{"optype", "opskernel", "reason"}),
+                                  (std::vector<const char*>{"ForeachMinimumScalar", "AiCore", reason.c_str()}));
         return EMPTY_LIST;
     }
 }
@@ -86,8 +104,8 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclScalar* s
 {
     const auto& dtypeSupportList_2 = GetDtypeSupportList();
     if (dtypeSupportList_2.size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
+                               op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
         return false;
     }
     auto selfDtyte = (*self)[0]->GetDataType();
@@ -159,30 +177,52 @@ static inline aclnnStatus CheckScalarValueValid(const aclScalar* scalar, const D
     switch (tensorDtype) {
         case DataType::DT_INT32:
             if (val > static_cast<double>(INT32_MAX_VAL) || val < static_cast<double>(INT32_MIN_VAL)) {
-                OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Scalar value exceeds int32 range.");
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", "Scalar value exceeds int32 range.");
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                    (std::vector<const char*>{"scalar", "aclnnForeachMinimumScalarV2", (std::to_string(val)).c_str(),
+                                              "Scalar value exceeds int32 range."}));
                 return ACLNN_ERR_PARAM_INVALID;
             }
             return ACLNN_SUCCESS;
         case DataType::DT_FLOAT:
             if (val < static_cast<double>(FLOAT32_MIN_VALUE) || val > static_cast<double>(FLOAT32_MAX_VALUE)) {
-                OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Scalar value exceeds float32 range.");
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", "Scalar value exceeds float32 range.");
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                    (std::vector<const char*>{"scalar", "aclnnForeachMinimumScalarV2", (std::to_string(val)).c_str(),
+                                              "Scalar value exceeds float32 range."}));
                 return ACLNN_ERR_PARAM_INVALID;
             }
             return ACLNN_SUCCESS;
         case DataType::DT_FLOAT16:
             if (val > static_cast<double>(FLOAT16_MAX_VALUE) || val < static_cast<double>(FLOAT16_MIN_VALUE)) {
-                OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Scalar value exceeds float16 range.");
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", "Scalar value exceeds float16 range.");
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                    (std::vector<const char*>{"scalar", "aclnnForeachMinimumScalarV2", (std::to_string(val)).c_str(),
+                                              "Scalar value exceeds float16 range."}));
                 return ACLNN_ERR_PARAM_INVALID;
             }
             return ACLNN_SUCCESS;
         case DataType::DT_BF16:
             if (val > static_cast<double>(BFLOAT16_MAX_VALUE) || val < static_cast<double>(BFLOAT16_MIN_VALUE)) {
-                OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Scalar value exceeds bfloat16 range.");
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", "Scalar value exceeds bfloat16 range.");
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                    (std::vector<const char*>{"scalar", "aclnnForeachMinimumScalarV2", (std::to_string(val)).c_str(),
+                                              "Scalar value exceeds bfloat16 range."}));
                 return ACLNN_ERR_PARAM_INVALID;
             }
             return ACLNN_SUCCESS;
         default:
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Unsupported tensor data type for scalar value check");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
+                                   "Unsupported tensor data type for scalar value check");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0020", (std::vector<const char*>{"param_name", "op_name", "incorrect_dtype", "reason"}),
+                (std::vector<const char*>{"x", "aclnnForeachMinimumScalarV2",
+                                          (std::to_string(static_cast<int>(tensorDtype))).c_str(),
+                                          "Unsupported tensor data type for scalar value check"}));
             return ACLNN_ERR_PARAM_INVALID;
     }
 }

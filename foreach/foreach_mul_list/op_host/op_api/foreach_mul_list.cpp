@@ -25,7 +25,7 @@ const aclTensorList* ForeachMulList(const aclTensorList* x1, const aclTensorList
     L0_DFX(ForeachMulList, x1, x2);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ForeachMulList, OP_INPUT(x1, x2), OP_OUTPUT(out));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;
     }
     return out;
