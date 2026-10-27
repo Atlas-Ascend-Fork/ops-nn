@@ -25,6 +25,7 @@ using AscendC::MicroAPI::StoreDist;
 constexpr int64_t BUFFER_NUM = 2;
 constexpr int64_t UB_BLOCK_BYTES = Ops::Base::GetUbBlockSize();
 constexpr uint16_t VL_FP32 = Ops::Base::GetVRegSize() / sizeof(float);
+constexpr float FP32_MAX_FINITE = 0x1.fffffep127f;
 
 constexpr AscendC::MicroAPI::CastTrait CAST_B16_TO_FP32 = {
     AscendC::MicroAPI::RegLayout::ZERO,
@@ -200,12 +201,15 @@ __aicore__ inline void NormalizeOneSided(RegTensor<float>& x, RegTensor<float>& 
 
 template <typename T_MEAN, typename T_VARIANCE>
 __aicore__ inline void FoldWithoutAffine(RegTensor<float>& mean, RegTensor<float>& variance, RegTensor<float>& alpha,
-                                         RegTensor<float>& beta, MaskReg& mask, float epsilon, float factor)
+                                         RegTensor<float>& beta, RegTensor<float>& correction, MaskReg& mask,
+                                         float epsilon, float factor)
 {
     RegTensor<float> factorReg;
     RegTensor<float> negFactorReg;
     RegTensor<float> epsilonReg;
     RegTensor<float> oneReg;
+    RegTensor<float> originalVariance;
+    AscendC::Reg::Adds(originalVariance, variance, 0.0f, mask);
     AscendC::Reg::Duplicate(factorReg, factor, mask);
     AscendC::Reg::Duplicate(negFactorReg, -factor, mask);
     AscendC::Reg::Mul(alpha, negFactorReg, mean, mask);
@@ -215,8 +219,52 @@ __aicore__ inline void FoldWithoutAffine(RegTensor<float>& mean, RegTensor<float
     AscendC::Reg::Sqrt(beta, variance, mask);
     AscendC::Reg::Duplicate(oneReg, 1.0f, mask);
     AscendC::Reg::Div(beta, oneReg, beta, mask);
+    if constexpr (IsSameType<T_MEAN, float>::value && IsSameType<T_VARIANCE, float>::value) {
+        if (factor > 1.0f && factor <= FP32_MAX_FINITE) {
+            // factor * variance can overflow although its reciprocal square
+            // root is representable. Scale epsilon before the square root.
+            RegTensor<float> scaledEpsilon;
+            RegTensor<float> root;
+            RegTensor<float> factorRoot;
+            RegTensor<float> stableBeta;
+            MaskReg overflow;
+            MaskReg finiteVariance;
+            MaskReg recover;
+            AscendC::Reg::Compares<float, CMPMODE::GT>(overflow, variance, FP32_MAX_FINITE, mask);
+            AscendC::Reg::Compares<float, CMPMODE::LE>(finiteVariance, originalVariance, FP32_MAX_FINITE, mask);
+            AscendC::Reg::And(recover, overflow, finiteVariance, mask);
+            AscendC::Reg::Div(scaledEpsilon, epsilonReg, factorReg, mask);
+            AscendC::Reg::Add(root, originalVariance, scaledEpsilon, mask);
+            AscendC::Reg::Sqrt(root, root, mask);
+            AscendC::Reg::Sqrt(factorRoot, factorReg, mask);
+            AscendC::Reg::Div(stableBeta, oneReg, factorRoot, mask);
+            AscendC::Reg::Div(stableBeta, stableBeta, root, mask);
+            AscendC::Reg::Select(beta, stableBeta, beta, recover);
+        }
+    }
     RoundTripFp32<T_MEAN>(alpha, mask);
     RoundTripFp32<T_VARIANCE>(beta, mask);
+    AscendC::Reg::Duplicate(correction, 0.0f, mask);
+    if constexpr (IsSameType<T_MEAN, float>::value && IsSameType<T_VARIANCE, float>::value) {
+        // For an overflowing shift, apply its finite contribution after the
+        // multiply: x * beta - mean * (factor * beta).
+        RegTensor<float> magnitude;
+        RegTensor<float> stableCorrection;
+        RegTensor<float> zero;
+        MaskReg overflow;
+        MaskReg finiteCorrection;
+        MaskReg recover;
+        AscendC::Reg::Abs(magnitude, alpha, mask);
+        AscendC::Reg::Compares<float, CMPMODE::GT>(overflow, magnitude, FP32_MAX_FINITE, mask);
+        AscendC::Reg::Mul(stableCorrection, negFactorReg, beta, mask);
+        AscendC::Reg::Mul(stableCorrection, mean, stableCorrection, mask);
+        AscendC::Reg::Abs(magnitude, stableCorrection, mask);
+        AscendC::Reg::Compares<float, CMPMODE::LE>(finiteCorrection, magnitude, FP32_MAX_FINITE, mask);
+        AscendC::Reg::And(recover, overflow, finiteCorrection, mask);
+        AscendC::Reg::Duplicate(zero, 0.0f, mask);
+        AscendC::Reg::Select(alpha, zero, alpha, recover);
+        AscendC::Reg::Select(correction, stableCorrection, zero, recover);
+    }
 }
 
 template <typename T_MEAN, typename T_VARIANCE>
@@ -237,6 +285,41 @@ __aicore__ inline void FoldWithAffine(RegTensor<float>& mean, RegTensor<float>& 
     AscendC::Reg::Sub(alpha, alpha, mean, mask);
     RoundTripFp32<T_MEAN>(alpha, mask);
     RoundTripFp32<T_VARIANCE>(beta, mask);
+    RegTensor<float> zero;
+    AscendC::Reg::Duplicate(zero, 0.0f, mask);
+    if constexpr (IsSameType<T_MEAN, float>::value && IsSameType<T_VARIANCE, float>::value) {
+        // Keep the usual folded path. Only when its shift overflows, retain
+        // the original offset for (x - mean) * beta + offset instead.
+        RegTensor<float> magnitude;
+        RegTensor<float> centeredShift;
+        MaskReg overflow;
+        MaskReg valid;
+        MaskReg recover;
+        AscendC::Reg::Abs(magnitude, alpha, mask);
+        AscendC::Reg::Compares<float, CMPMODE::GT>(overflow, magnitude, FP32_MAX_FINITE, mask);
+        AscendC::Reg::Abs(magnitude, beta, mask);
+        AscendC::Reg::Compares<float, CMPMODE::LE>(valid, magnitude, FP32_MAX_FINITE, overflow);
+        AscendC::Reg::Compares<float, CMPMODE::GT>(recover, magnitude, 0.0f, valid);
+        AscendC::Reg::Abs(magnitude, mean, mask);
+        AscendC::Reg::Compares<float, CMPMODE::LE>(valid, magnitude, FP32_MAX_FINITE, recover);
+        AscendC::Reg::Abs(magnitude, offset, mask);
+        AscendC::Reg::Compares<float, CMPMODE::LE>(recover, magnitude, FP32_MAX_FINITE, valid);
+        AscendC::Reg::Sub(centeredShift, zero, mean, mask);
+        AscendC::Reg::Select(alpha, centeredShift, alpha, recover);
+        AscendC::Reg::Select(offset, offset, zero, recover);
+    } else {
+        AscendC::Reg::Duplicate(offset, 0.0f, mask);
+    }
+}
+
+template <typename T_X>
+__aicore__ inline void ApplyCorrectedFoldedAffine(RegTensor<float>& x, RegTensor<float>& alpha, RegTensor<float>& beta,
+                                                  RegTensor<float>& correction, RegTensor<float>& y, MaskReg& mask)
+{
+    AscendC::Reg::Add(y, x, alpha, mask);
+    RoundTripFp32<T_X>(y, mask);
+    AscendC::Reg::Mul(y, y, beta, mask);
+    AscendC::Reg::Add(y, y, correction, mask);
 }
 
 template <typename T_X>

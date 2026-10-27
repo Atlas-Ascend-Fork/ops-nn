@@ -96,6 +96,19 @@ def generate(output_dir):
         append(f"bn3_recover_{name}", array)
     append("bn3_recover_fp16_control", np.full((2, 64, 2), 65504, dtype=np.float16))
     append("bn3_recover_empty_channels", np.empty((2, 0, 2), dtype=np.float32))
+
+    # A promoted FP64 parallel sum can lose the small term before the large
+    # terms cancel. Keep this reference regression independent of random data.
+    reference_terms = np.asarray(
+        [maximum, maximum, 2.0**-24, -maximum, -maximum, 0, 0, 0],
+        dtype=np.float32,
+    )
+    append("bn3_reference_small_residual", reference_terms.reshape(1, 1, 8))
+    packed_reference = np.broadcast_to(
+        reference_terms.reshape(1, 1, 1, 1, 8, 1), (1, 1, 1, 1, 8, 16)
+    ).copy()
+    packed_reference[..., 1::2] *= -1
+    append("bn3_reference_small_residual_packed", packed_reference, "NDC1HWC0")
     with (output_dir / "cases.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()

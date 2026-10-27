@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -114,6 +115,36 @@ bool ParseOptionalMask(const std::string& value, bool& hasScale, bool& hasOffset
     hasOffset = value == "offset" || value == "both";
     return value == "none" || value == "scale" || value == "offset" || value == "both";
 }
+
+bool CheckOutput(const ge::Tensor& output, const FormatConfig& config, bool hasScale, bool hasOffset)
+{
+    const int64_t count = ElementCount(config.shape);
+    if (output.GetTensorDesc().GetDataType() != ge::DT_FLOAT ||
+        output.GetTensorDesc().GetShape().GetDims() != config.shape ||
+        output.GetSize() != static_cast<size_t>(count) * sizeof(float) || output.GetData() == nullptr) {
+        std::cerr << "Unexpected output descriptor or size" << std::endl;
+        return false;
+    }
+    const bool channelLast = config.format == ge::FORMAT_NHWC || config.format == ge::FORMAT_NDHWC;
+    const int64_t inner = count / config.shape[0] / config.channels;
+    for (int64_t i = 0; i < count; ++i) {
+        const int64_t channel = channelLast ? i % config.channels : (i / inner) % config.channels;
+        const double x = -0.5F + static_cast<float>(i % 17) * 0.01F;
+        const double mean = 0.1F + static_cast<float>(channel) * 0.01F;
+        const double variance = 1.0F + static_cast<float>(channel) * 0.01F;
+        const double factor = !hasScale && !hasOffset ? 1.0 / static_cast<double>(0.9F) : 1.0;
+        const double scale = hasScale ? 1.0F + static_cast<float>(channel) * 0.01F : 1.0;
+        const double offset = hasOffset ? 0.2F + static_cast<float>(channel) * 0.01F : 0.0;
+        const double expected = (x - factor * mean) * scale / std::sqrt(factor * variance + 1e-5F) + offset;
+        float actual = 0.0F;
+        std::memcpy(&actual, output.GetData() + static_cast<size_t>(i) * sizeof(float), sizeof(float));
+        if (!std::isfinite(actual) || std::abs(actual - expected) > 1e-5 + 1e-5 * std::abs(expected)) {
+            std::cerr << "Output mismatch at " << i << ": actual=" << actual << ", expected=" << expected << std::endl;
+            return false;
+        }
+    }
+    return true;
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -146,6 +177,10 @@ int main(int argc, char* argv[])
     auto momentum = AddInput(graph, graphInputs, inputTensors, "momentum", 3, {}, ge::FORMAT_ND, 0.9F);
 
     auto bn = ge::op::BNInference("bn_inference");
+    bn.update_input_desc_x(x.get_output_desc_y());
+    bn.update_input_desc_mean(mean.get_output_desc_y());
+    bn.update_input_desc_variance(variance.get_output_desc_y());
+    bn.update_input_desc_momentum(momentum.get_output_desc_y());
     bn.set_input_x(x);
     bn.set_input_mean(mean);
     bn.set_input_variance(variance);
@@ -153,12 +188,14 @@ int main(int argc, char* argv[])
 
     if (hasScale) {
         auto scale = AddInput(graph, graphInputs, inputTensors, "scale", 4, {config.channels}, ge::FORMAT_ND, 1.0F);
+        bn.update_input_desc_scale(scale.get_output_desc_y());
         bn.set_input_scale(scale);
     }
     if (hasOffset) {
         const int64_t offsetIndex = hasScale ? 5 : 4;
         auto offset = AddInput(graph, graphInputs, inputTensors, "offset", offsetIndex, {config.channels},
                                ge::FORMAT_ND, 0.2F);
+        bn.update_input_desc_offset(offset.get_output_desc_y());
         bn.set_input_offset(offset);
     }
     bn.set_attr_epsilon(1e-5F);
@@ -175,6 +212,7 @@ int main(int argc, char* argv[])
     std::unique_ptr<ge::Session> session(new (std::nothrow) ge::Session(sessionOptions));
     if (session == nullptr || session->AddGraph(0, graph, graphOptions) != ge::SUCCESS) {
         std::cerr << "AddGraph failed: " << ge::GEGetErrorMsgV2().GetString() << std::endl;
+        session.reset();
         (void)ge::GEFinalize();
         return kFailed;
     }
@@ -183,6 +221,12 @@ int main(int argc, char* argv[])
     const ge::Status status = session->RunGraph(0, inputTensors, outputs);
     if (status != ge::SUCCESS || outputs.size() != 1U) {
         std::cerr << "RunGraph failed: " << ge::GEGetErrorMsgV2().GetString() << std::endl;
+        session.reset();
+        (void)ge::GEFinalize();
+        return kFailed;
+    }
+
+    if (!CheckOutput(outputs[0], config, hasScale, hasOffset)) {
         session.reset();
         (void)ge::GEFinalize();
         return kFailed;

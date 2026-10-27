@@ -45,12 +45,13 @@ Python 私有改写（`__x` → `_Cls__x`），故实现单列为 `_golden_impl`
 
 ## R3 说明（golden 只能竞品接口/拼接）
 
-`_compute` 用 `torch.sum` / `torch.square` 竞品接口实现，不写 numpy 纯公式。
+`_compute` 用 Torch 原生归约、排序、累积和与平方接口实现，不写 numpy 纯公式。
 
 ## 精度由 TTK 判据决定
 
 三方 Promote 使用 TTK 下发的输入精度，入口、计算和出口均不额外 cast。
-两方使用内核的 FP32 累加精度。CPU 归约不复制内核的分块或补偿算法。
+两方使用内核的 FP32 累加精度。Promote 参考按绝对值降序累积，减少大数
+相消时对小量的吞噬；不复制内核的分块或补偿算法。
 
 ## 随机三方回归与近零定向用例必须并存
 
@@ -128,16 +129,35 @@ def _is_ndhwc(kwargs):
     return _input_format(kwargs) == "NDHWC"
 
 
+def _promoted_sum(work, dims, keepdim):
+    """Accumulate larger magnitudes first using native Torch operations.
+
+    A parallel sum can discard a small term before opposing large terms
+    cancel. Ordering the terms makes that cancellation precede the small
+    terms. The CPU cumulative-sum implementation also avoids the intermediate
+    FP32 overflow seen in a parallel reduction of finite BF16 inputs. Neither
+    the input nor output dtype is changed here; TTK owns promotion.
+    """
+    if work.numel() == 0:
+        return torch.sum(work, dim=dims, keepdim=keepdim)
+    kept = [axis for axis in range(work.ndim) if axis not in dims]
+    terms = work.permute(kept + dims).flatten(start_dim=len(kept))
+    order = torch.argsort(torch.abs(terms), dim=-1, descending=True, stable=True)
+    result = torch.gather(terms, -1, order).cumsum(dim=-1)[..., -1]
+    if keepdim:
+        result = result.reshape(
+            [1 if axis in dims else extent for axis, extent in enumerate(work.shape)]
+        )
+    return result
+
+
 def _compute(x, **kwargs):
     """返回 [sum, square_sum]，顺序照 bn3d_training_reduce_def.cpp 的输出序。
 
     三方保留 TTK Promote 精度；两方与内核一样使用 FP32 累加。
     """
-    work = (
-        x
-        if str(kwargs.get("golden_mode", "")).lower() == "promote"
-        else x.to(torch.float32)
-    )
+    promoted = str(kwargs.get("golden_mode", "")).lower() == "promote"
+    work = x if promoted else x.to(torch.float32)
 
     if _is_ndc1hwc0(x, kwargs):
         dims = list(_NDC1HWC0_REDUCE_DIMS)
@@ -149,7 +169,11 @@ def _compute(x, **kwargs):
         dims = [d for d in range(work.ndim) if d != _CHANNEL_DIM]
         keepdim = False  # channel-first 输出压成一维 [C]
 
-    s = torch.sum(work, dim=dims, keepdim=keepdim)
+    s = (
+        _promoted_sum(work, dims, keepdim)
+        if promoted
+        else torch.sum(work, dim=dims, keepdim=keepdim)
+    )
     sq = torch.sum(torch.square(work), dim=dims, keepdim=keepdim)
     return [s, sq]
 

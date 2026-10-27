@@ -19,6 +19,8 @@ template <typename T_X, typename T_MEAN, typename T_VARIANCE, typename T_MOMENTU
           bool HAS_SCALE, bool HAS_OFFSET, bool CHANNEL_LAST, bool PRE_FOLDED>
 class BNInferencePacked {
 public:
+    static constexpr bool CACHE_CORRECTION = !PRE_FOLDED && !HAS_SCALE && !HAS_OFFSET;
+
     __aicore__ inline void Init(GM_ADDR x, GM_ADDR mean, GM_ADDR variance, GM_ADDR momentum, GM_ADDR scale,
                                 GM_ADDR offset, GM_ADDR y, const BNInferenceTilingData* tilingData, TPipe* pipe)
     {
@@ -52,6 +54,8 @@ public:
         }
         if constexpr (HAS_OFFSET) {
             pipe_->InitBuffer(offsetQueue_, BUFFER_NUM, AlignUpBlock(tilingData_->paramTileLen * sizeof(T_OFFSET)));
+        }
+        if constexpr (HAS_OFFSET || CACHE_CORRECTION) {
             pipe_->InitBuffer(offsetCache_, AlignUpBlock(tilingData_->paramCacheLen * sizeof(float)));
         }
         pipe_->InitBuffer(gatherOffset_, AlignUpBlock(tilingData_->paramCacheLen * sizeof(uint32_t)));
@@ -147,13 +151,14 @@ private:
             offsetAddr = (__ubuf__ T_OFFSET*)offset.GetPhyAddr();
         }
 
-        VFPrepareParameters((__ubuf__ T_MEAN*)mean.GetPhyAddr(), (__ubuf__ T_VARIANCE*)variance.GetPhyAddr(), scaleAddr,
-                            offsetAddr, (__ubuf__ uint32_t*)gatherOffset_.Get<uint32_t>().GetPhyAddr(),
-                            (__ubuf__ float*)meanCache_.Get<float>().GetPhyAddr(),
-                            (__ubuf__ float*)rstdCache_.Get<float>().GetPhyAddr(),
-                            HAS_SCALE ? (__ubuf__ float*)scaleCache_.Get<float>().GetPhyAddr() : nullptr,
-                            HAS_OFFSET ? (__ubuf__ float*)offsetCache_.Get<float>().GetPhyAddr() : nullptr,
-                            static_cast<uint16_t>(tilingData_->paramCacheLen));
+        VFPrepareParameters(
+            (__ubuf__ T_MEAN*)mean.GetPhyAddr(), (__ubuf__ T_VARIANCE*)variance.GetPhyAddr(), scaleAddr, offsetAddr,
+            (__ubuf__ uint32_t*)gatherOffset_.Get<uint32_t>().GetPhyAddr(),
+            (__ubuf__ float*)meanCache_.Get<float>().GetPhyAddr(),
+            (__ubuf__ float*)rstdCache_.Get<float>().GetPhyAddr(),
+            HAS_SCALE ? (__ubuf__ float*)scaleCache_.Get<float>().GetPhyAddr() : nullptr,
+            (HAS_OFFSET || CACHE_CORRECTION) ? (__ubuf__ float*)offsetCache_.Get<float>().GetPhyAddr() : nullptr,
+            static_cast<uint16_t>(tilingData_->paramCacheLen));
 
         meanQueue_.FreeTensor(mean);
         varianceQueue_.FreeTensor(variance);
@@ -197,7 +202,7 @@ private:
                 StoreFromFp32(meanCache, meanReg, mask, 0);
                 StoreFromFp32(rstdCache, varianceReg, mask, 0);
             } else if constexpr (!HAS_SCALE && !HAS_OFFSET) {
-                FoldWithoutAffine<T_MEAN, T_VARIANCE>(meanReg, varianceReg, alphaReg, betaReg, mask,
+                FoldWithoutAffine<T_MEAN, T_VARIANCE>(meanReg, varianceReg, alphaReg, betaReg, offsetReg, mask,
                                                       tilingData_->epsilon, factor_);
                 StoreFromFp32(meanCache, alphaReg, mask, 0);
                 StoreFromFp32(rstdCache, betaReg, mask, 0);
@@ -214,7 +219,7 @@ private:
             if constexpr (HAS_SCALE) {
                 StoreFromFp32(scaleCache, scaleReg, mask, 0);
             }
-            if constexpr (HAS_OFFSET) {
+            if constexpr (HAS_OFFSET || CACHE_CORRECTION) {
                 StoreFromFp32(offsetCache, offsetReg, mask, 0);
             }
         }
@@ -237,8 +242,8 @@ private:
                   (__ubuf__ float*)meanCache_.Get<float>().GetPhyAddr(),
                   (__ubuf__ float*)rstdCache_.Get<float>().GetPhyAddr(),
                   HAS_SCALE ? (__ubuf__ float*)scaleCache_.Get<float>().GetPhyAddr() : nullptr,
-                  HAS_OFFSET ? (__ubuf__ float*)offsetCache_.Get<float>().GetPhyAddr() : nullptr, count,
-                  static_cast<uint16_t>(tilingData_->paramCacheLen));
+                  (HAS_OFFSET || CACHE_CORRECTION) ? (__ubuf__ float*)offsetCache_.Get<float>().GetPhyAddr() : nullptr,
+                  count, static_cast<uint16_t>(tilingData_->paramCacheLen));
         yQueue_.EnQue(y);
         xQueue_.FreeTensor(x);
     }
@@ -263,7 +268,7 @@ private:
             } else {
                 AscendC::Reg::Duplicate(scaleReg, 1.0f, cacheMask);
             }
-            if constexpr (HAS_OFFSET) {
+            if constexpr (HAS_OFFSET || CACHE_CORRECTION) {
                 LoadUnalignedOnce(offset, offsetReg, cacheMask, cacheLen);
             } else {
                 AscendC::Reg::Duplicate(offsetReg, 0.0f, cacheMask);
@@ -285,7 +290,7 @@ private:
                     ApplyPreFoldedAffine<T_X, HAS_SCALE, HAS_OFFSET>(xReg, meanReg, rstdReg, scaleReg, offsetReg, yReg,
                                                                      mask);
                 } else if constexpr (HAS_SCALE == HAS_OFFSET) {
-                    ApplyFoldedAffine<T_X>(xReg, meanReg, rstdReg, yReg, mask);
+                    ApplyCorrectedFoldedAffine<T_X>(xReg, meanReg, rstdReg, offsetReg, yReg, mask);
                 } else {
                     NormalizeOneSided<HAS_SCALE, HAS_OFFSET>(xReg, meanReg, rstdReg, scaleReg, offsetReg, yReg, mask);
                 }
