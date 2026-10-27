@@ -205,7 +205,7 @@ uint64_t Conv2dBaseTiling::GetSmallKernelVal()
         al1Fullload = kAL1FullloadFlag && hoL1FullloadFlag && woL1FullloadFlag;
     }
 
-    // FmPartload: FM not fullload L1, Weight fullload L1, NZ format, FP16*FP16 or INT8*INT8.
+    // FmPartload: FM not fullload L1, Weight fullload L1, NZ format, FP16*FP16, INT8*INT8 or FP16*INT8.
     // Multiple batches per core use four FM buffers when L1 permits, otherwise the kernel serializes them.
     bool fmPartloadCond = !al1Fullload && bl1Fullload && groupOk;
     bool dtypeFmPartloadOk = (descInfo_.fMapDtype == ge::DataType::DT_FLOAT16 &&
@@ -259,12 +259,6 @@ bool Conv2dBaseTiling::IsSmallKernelBlocked()
         tilingData_.get_padRight() > tilingData_.get_kernelW() ||
         tilingData_.get_padTop() > tilingData_.get_kernelH() ||
         tilingData_.get_padBottom() > tilingData_.get_kernelH()) {
-        return true;
-    }
-
-    // The A16W8 small-kernel path does not support multiple batches per core.
-    if (static_cast<uint64_t>(tilingData_.get_singleCoreBatch()) > 1 &&
-        descInfo_.fMapDtype == ge::DataType::DT_FLOAT16 && descInfo_.weightDtype == ge::DataType::DT_INT8) {
         return true;
     }
 

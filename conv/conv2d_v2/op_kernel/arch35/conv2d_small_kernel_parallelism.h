@@ -703,14 +703,20 @@ Conv2dSmallKernelParallelism<FmapType, weightType, biasType, out0Type, out1Type,
         }
         SetFlag<HardEvent::MTE2_MTE1>(kl1Ev);
     }
+    const bool fixParamPending = needLoadBias;
     if (needLoadBias) {
         if (!isLoadGroupMode) {
             this->LoadBiasScaleL1(bias, extendParams);
         } else {
             this->LoadBiasScaleL1ForGroup(bias, extendParams, groupIter);
         }
+        // The Fixpipe reads scale from L1 and does not sync on MTE2 by itself, so
+        // scale readiness must be enforced on the scalar side before any Fixpipe
+        // can be issued. Only the notification is raised here; the wait is drained
+        // at the end of this function (after the full cin-block K loops, right
+        // before the caller's CopyOutResult), so neither the chunk prefetch nor
+        // the MMAD pipeline is gated by the bias/scale copy.
         SetFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
-        WaitFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
     }
 
     // Cin blocks [0, N-1): preload the next cin block into the alternate buffer while
@@ -732,7 +738,6 @@ Conv2dSmallKernelParallelism<FmapType, weightType, biasType, out0Type, out1Type,
         RunKL0Loop(al1, bl1Full, cl0, mp, kOff, curKL1Fmap, kl1, kL0, kL0Iters, kl1Ev, needLoadBias, nOff, curN);
         this->l1Pingpong_++;
     }
-
     // Last cin block: the next N tile precedes the next spatial chunk or batch.
     uint32_t kl1 = cinL1Blocks_ - 1;
     PrepareCinBlock(kl1, kernelHxW, cinOff, curCin, curCinOri, kOff, curKL1, kl1Buf, kl1Ev);
@@ -753,6 +758,14 @@ Conv2dSmallKernelParallelism<FmapType, weightType, biasType, out0Type, out1Type,
     uint32_t curKL1Fmap = curCinOriFmap * kernelHxW;
     RunKL0Loop(al1, bl1Full, cl0, mp, kOff, curKL1Fmap, kl1, kL0, kL0Iters, kl1Ev, needLoadBias, nOff, curN);
     this->l1Pingpong_++;
+
+    // Drain the MTE2_FIX notification of this bias load after the full cin-block
+    // K loops: the MMAD iterations overlap the bias/scale copy on MTE2 so the
+    // wait is normally free, and every Fixpipe issued by the caller right after
+    // this function still sees a landed scale copy.
+    if (fixParamPending) {
+        WaitFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
+    }
 }
 
 template <typename FmapType, typename weightType, typename biasType, typename out0Type, typename out1Type,

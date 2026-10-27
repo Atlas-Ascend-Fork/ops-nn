@@ -100,11 +100,12 @@ protected:
     __aicore__ inline uint32_t CalcActualCoForGroupIter(uint32_t groupIter);
     __aicore__ inline void ProcessHwMode(LocalTensor<FmapT>& al1, LocalTensor<WeightT>& bl1, uint32_t mmadN,
                                          uint32_t kL0MaxIter, uint64_t hwOut, GM_ADDR y,
-                                         const ExtendParams* extendParams, GM_ADDR bias, bool& needLoadBias);
+                                         const ExtendParams* extendParams, GM_ADDR bias, bool& needLoadBias,
+                                         bool biasPrefetched = false);
     __aicore__ inline void ProcessMModeBatch(LocalTensor<FmapT>& al1, LocalTensor<WeightT>& bl1, uint32_t curMmadN,
                                              uint32_t kL0MaxIter, uint64_t hwOut, GM_ADDR y,
                                              const ExtendParams* extendParams, GM_ADDR bias, uint32_t groupIter,
-                                             bool& needLoadBias);
+                                             bool& needLoadBias, bool biasPrefetched = false);
     __aicore__ inline void ProcessMMode(LocalTensor<FmapT>& al1, LocalTensor<WeightT>& bl1, uint32_t mmadN,
                                         uint32_t kL0MaxIter, uint64_t hwOut, GM_ADDR y,
                                         const ExtendParams* extendParams, GM_ADDR x, GM_ADDR filter, GM_ADDR bias);
@@ -411,6 +412,7 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
     InitMmadParams(mp, curMAlign, mmadN);
 
     const bool isNSplit = tiling_->nL0 < tiling_->nBL1;
+    const bool fixParamPending = needLoadBias;
     for (uint32_t kl0Iter = 0; kl0Iter < kL0MaxIter; kl0Iter++) {
         uint32_t kOff = kl0Iter * tiling_->kL0;
         uint32_t curK = tiling_->kL0;
@@ -456,6 +458,14 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
         mp.cmatrixSource = false;
         SetFlag<HardEvent::M_MTE1>(ev);
         l0Pingpong_++;
+    }
+    // The Fixpipe reads scale from L1 and does not sync on MTE2 by itself. Drain
+    // MTE2_FIX after the K loop, right before the caller issues the first Fixpipe
+    // of this bias load: the whole chunk of MMAD iterations overlaps the
+    // bias/scale copy on MTE2, so this wait is normally free, while every
+    // Fixpipe still sees a landed scale copy.
+    if (fixParamPending) {
+        WaitFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
     }
 }
 
@@ -1311,7 +1321,8 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
                                                                              uint32_t kL0MaxIter, uint64_t hwOut,
                                                                              GM_ADDR y,
                                                                              const ExtendParams* extendParams,
-                                                                             GM_ADDR bias, bool& needLoadBias)
+                                                                             GM_ADDR bias, bool& needLoadBias,
+                                                                             bool biasPrefetched)
 {
     // Stage 3 (HW-mode): Ho/Wo-chunk loop -> K-loop -> Fixpipe.
     bool needRowSplit = (actualWo_ < static_cast<uint32_t>(tiling_->wout));
@@ -1336,10 +1347,9 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
 #else
             SetLoadDataRepeat(LoadDataRepeatParam(0, 1, 0, static_cast<uint16_t>(curMAlign / GM0)));
 #endif
-            if (needLoadBias) {
+            if (needLoadBias && !biasPrefetched) {
                 LoadBiasScaleL1(bias, extendParams);
                 SetFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
-                WaitFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
             }
             uint32_t outOff = (hoIdxStart_ + hoOff) * static_cast<uint32_t>(tiling_->wout) + woIdxStart_ + woOff;
             uint32_t fpMSize = needRowSplit ? curWo : curM;
@@ -1368,7 +1378,8 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
                                                                                  uint64_t hwOut, GM_ADDR y,
                                                                                  const ExtendParams* extendParams,
                                                                                  GM_ADDR bias, uint32_t groupIter,
-                                                                                 bool& needLoadBias)
+                                                                                 bool& needLoadBias,
+                                                                                 bool biasPrefetched)
 {
     for (uint32_t mOff = 0; mOff < actualM_; mOff += hoL0_) {
         uint32_t curM = hoL0_;
@@ -1386,10 +1397,9 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
         SetLoadDataRepeat(LoadDataRepeatParam(0, 1, 0, static_cast<uint16_t>(curMAlign / GM0)));
 #endif
 
-        if (needLoadBias) {
+        if (needLoadBias && !biasPrefetched) {
             LoadBiasScaleL1ForGroup(bias, extendParams, groupIter);
             SetFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
-            WaitFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
         }
         for (uint32_t nOff = 0; nOff < actualCo_; nOff += tiling_->nL0) {
             uint32_t curN = tiling_->nL0;
@@ -1475,6 +1485,16 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
                 LoadFmapL1MModeForGroup(al1Buf0, x, groupIter);
             }
             SetFlag<HardEvent::MTE2_MTE1>(EVT_BATCH_BUF0);
+            // Issue bias/scale/relu L1 loads after fmap0 and before the batch-1
+            // prefetch: fmap0's MTE2 issue is not delayed, and bias no longer queues
+            // behind two fmap transfers stalling the first MMAD on mov_bias_bt. The
+            // Fixpipe reads scale from L1 and does not sync on MTE2 by itself, so
+            // MmadAccumulateTile drains the MTE2_FIX wait after the K loop, right
+            // before the first Fixpipe issue (MMAD stays independent of the copy).
+            if (needLoadBias) {
+                LoadBiasScaleL1ForGroup(bias, extendParams, groupIter);
+                SetFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
+            }
             // M-loop -> K-loop -> Fixpipe.
             for (innerBatchIter_ = 0; innerBatchIter_ < singleCoreBatch_; innerBatchIter_++) {
                 uint32_t curBuf = innerBatchIter_ % 2;
@@ -1493,7 +1513,7 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
 
                 LocalTensor<FmapT> al1Cur(TPosition::A1, curBuf * al1BufBytes_, al1ElemPerBuf_);
                 ProcessMModeBatch(al1Cur, bl1, curMmadN, kL0MaxIter, hwOut, y, extendParams, bias, groupIter,
-                                  needLoadBias);
+                                  needLoadBias, true);
                 if (innerBatchIter_ + 2 < singleCoreBatch_) {
                     SetFlag<HardEvent::MTE1_MTE2>(curBuf ? EVT_BATCH_BUF1 : EVT_BATCH_BUF0);
                 }
@@ -1562,12 +1582,23 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
             LoadWeightL1(filter);
             SetFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_DONE);
             WaitFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_DONE);
+
             SetupLoad3DBase();
 
             innerBatchIter_ = 0;
             curBatchIdx_ = batchStart_;
             LoadFmapL1(x, 0);
             SetFlag<HardEvent::MTE2_MTE1>(EVT_BATCH_BUF0);
+            // Issue bias/scale/relu L1 loads after fmap0 and before the batch-1
+            // prefetch: fmap0's MTE2 issue is not delayed, and bias no longer queues
+            // behind two fmap transfers stalling the first MMAD on mov_bias_bt. The
+            // Fixpipe reads scale from L1 and does not sync on MTE2 by itself, so
+            // MmadAccumulateTile drains the MTE2_FIX wait after the K loop, right
+            // before the first Fixpipe issue (MMAD stays independent of the copy).
+            if (needLoadBias) {
+                LoadBiasScaleL1(bias, extendParams);
+                SetFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
+            }
 
             for (innerBatchIter_ = 0; innerBatchIter_ < singleCoreBatch_; innerBatchIter_++) {
                 uint32_t curBuf = innerBatchIter_ % 2;
@@ -1584,7 +1615,7 @@ __aicore__ inline void Conv2dSmallKernel<FmapType, weightType, biasType, out0Typ
                 curBatchIdx_ = batchStart_ + innerBatchIter_;
 
                 LocalTensor<FmapT> al1Cur(TPosition::A1, curBuf * al1BufBytes_, al1ElemPerBuf_);
-                ProcessHwMode(al1Cur, bl1, mmadN, kL0MaxIter, hwOut, y, extendParams, bias, needLoadBias);
+                ProcessHwMode(al1Cur, bl1, mmadN, kL0MaxIter, hwOut, y, extendParams, bias, needLoadBias, true);
                 if (innerBatchIter_ + 2 < singleCoreBatch_) {
                     SetFlag<HardEvent::MTE1_MTE2>(curBuf ? EVT_BATCH_BUF1 : EVT_BATCH_BUF0);
                 }

@@ -22,7 +22,7 @@ constexpr uint32_t FMP_BLOCK_BYTES = 32; // DataCopy block size in bytes
 //   1. FM not fullload L1 (FM is chunked over Cin), Weight fullload L1 (one-shot)
 //   2. N axis may be split across L0B when nL0 < nBL1
 //   3. pad <= kernel (no pad larger than kernel supported)
-//   4. dtype: FP16*FP16 and INT8*INT8 only (FP16*INT8 not supported)
+//   4. dtype: FP16*FP16, INT8*INT8 and FP16*INT8 (A16W8)
 // Requirements:
 //   - tiling supports M mode and HW mode
 //   - multi-batch reuses the two FM ping-pong buffers after the current batch releases A1
