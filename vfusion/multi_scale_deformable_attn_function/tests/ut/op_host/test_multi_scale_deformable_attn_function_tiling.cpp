@@ -140,10 +140,11 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
+    EXPECT_EQ(tiling_key, 2002UL);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+    std::string expectStr = "1 24 8 32 1 100 2 48 1 1 ";
+    EXPECT_EQ(tiling_data_result, expectStr);
 }
 
 TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_high_perf)
@@ -244,10 +245,11 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
+    EXPECT_EQ(tiling_key, 2002UL);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+    std::string expectStr = "1 24 8 32 1 100 2 48 1 1 ";
+    EXPECT_EQ(tiling_data_result, expectStr);
 }
 
 TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_generic_numHeads)
@@ -348,10 +350,6 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
-    // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
 }
 
 TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_generic_numLevels)
@@ -452,10 +450,6 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
-    // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
 }
 
 TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_generic_numPoint)
@@ -556,10 +550,6 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
-    // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
 }
 
 TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_trans)
@@ -660,10 +650,11 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
+    EXPECT_EQ(tiling_key, 2002UL);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+    std::string expectStr = "1 24 8 32 1 100 2 48 1 1 ";
+    EXPECT_EQ(tiling_data_result, expectStr);
 }
 
 TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_generic_numQueries)
@@ -764,10 +755,6 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
-    // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
 }
 
 TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_generic_embedDims)
@@ -868,10 +855,6 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
-    // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
 }
 
 TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_key_0)
@@ -972,8 +955,9 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
+    EXPECT_EQ(tiling_key, 0UL);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+    std::string expectStr = "1 24 8 32 1 100 3 48 0 1 ";
+    EXPECT_EQ(tiling_data_result, expectStr);
 }

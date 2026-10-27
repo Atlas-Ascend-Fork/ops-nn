@@ -13,6 +13,7 @@
  * \brief
  */
 #include <iostream>
+#include <sstream>
 #include <fstream>
 #include <vector>
 #include <gtest/gtest.h>
@@ -128,10 +129,28 @@ TEST_F(ScaledMaskedSoftmaxV2Tiling, test_scaled_masked_softmax_v2_tiling_aligned
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+    EXPECT_EQ(tiling_key, 0UL);
+    auto raw_tiling_data = tiling_context->GetRawTilingData();
+    ASSERT_NE(raw_tiling_data, nullptr);
+    EXPECT_GT(raw_tiling_data->GetDataSize(), 0U);
+    auto tiling_data_result = TilingData2Str(raw_tiling_data);
+    // Structural invariants from shape (coreNum may vary by platform fake; skip exact golden string)
+    {
+        std::istringstream iss(tiling_data_result);
+        uint64_t coreNum = 0, batch = 0, channel = 0, height = 0, width = 0;
+        uint64_t maskBatch = 0, maskChannel = 0, maskHeight = 0, maskWidth = 0;
+        iss >> coreNum >> batch >> channel >> height >> width >> maskBatch >> maskChannel >> maskHeight >> maskWidth;
+        EXPECT_GT(coreNum, 0UL);
+        EXPECT_EQ(batch, 1UL);
+        EXPECT_EQ(channel, 32UL);
+        EXPECT_EQ(height, 32UL);
+        EXPECT_EQ(width, 128UL);
+        EXPECT_EQ(maskBatch, 1UL);
+        EXPECT_EQ(maskChannel, 32UL);
+        EXPECT_EQ(maskHeight, 32UL);
+        EXPECT_EQ(maskWidth, 128UL);
+    }
 }
 
 TEST_F(ScaledMaskedSoftmaxV2Tiling, test_scaled_masked_softmax_v2_tiling_unaligned)
@@ -216,10 +235,28 @@ TEST_F(ScaledMaskedSoftmaxV2Tiling, test_scaled_masked_softmax_v2_tiling_unalign
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+    EXPECT_EQ(tiling_key, 0UL);
+    auto raw_tiling_data = tiling_context->GetRawTilingData();
+    ASSERT_NE(raw_tiling_data, nullptr);
+    EXPECT_GT(raw_tiling_data->GetDataSize(), 0U);
+    auto tiling_data_result = TilingData2Str(raw_tiling_data);
+    // Structural invariants from shape (coreNum may vary by platform fake; skip exact golden string)
+    {
+        std::istringstream iss(tiling_data_result);
+        uint64_t coreNum = 0, batch = 0, channel = 0, height = 0, width = 0;
+        uint64_t maskBatch = 0, maskChannel = 0, maskHeight = 0, maskWidth = 0;
+        iss >> coreNum >> batch >> channel >> height >> width >> maskBatch >> maskChannel >> maskHeight >> maskWidth;
+        EXPECT_GT(coreNum, 0UL);
+        EXPECT_EQ(batch, 1UL);
+        EXPECT_EQ(channel, 32UL);
+        EXPECT_EQ(height, 32UL);
+        EXPECT_EQ(width, 135UL);
+        EXPECT_EQ(maskBatch, 1UL);
+        EXPECT_EQ(maskChannel, 32UL);
+        EXPECT_EQ(maskHeight, 32UL);
+        EXPECT_EQ(maskWidth, 135UL);
+    }
 }
 
 TEST_F(ScaledMaskedSoftmaxV2Tiling, test_scaled_masked_softmax_tiling_broadcastC)
@@ -304,10 +341,28 @@ TEST_F(ScaledMaskedSoftmaxV2Tiling, test_scaled_masked_softmax_tiling_broadcastC
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+    EXPECT_EQ(tiling_key, 1UL);
+    auto raw_tiling_data = tiling_context->GetRawTilingData();
+    ASSERT_NE(raw_tiling_data, nullptr);
+    EXPECT_GT(raw_tiling_data->GetDataSize(), 0U);
+    auto tiling_data_result = TilingData2Str(raw_tiling_data);
+    // Structural invariants from shape (coreNum may vary by platform fake; skip exact golden string)
+    {
+        std::istringstream iss(tiling_data_result);
+        uint64_t coreNum = 0, batch = 0, channel = 0, height = 0, width = 0;
+        uint64_t maskBatch = 0, maskChannel = 0, maskHeight = 0, maskWidth = 0;
+        iss >> coreNum >> batch >> channel >> height >> width >> maskBatch >> maskChannel >> maskHeight >> maskWidth;
+        EXPECT_GT(coreNum, 0UL);
+        EXPECT_EQ(batch, 1UL);
+        EXPECT_EQ(channel, 32UL);
+        EXPECT_EQ(height, 32UL);
+        EXPECT_EQ(width, 135UL);
+        EXPECT_EQ(maskBatch, 1UL);
+        EXPECT_EQ(maskChannel, 1UL);
+        EXPECT_EQ(maskHeight, 32UL);
+        EXPECT_EQ(maskWidth, 135UL);
+    }
 }
 
 TEST_F(ScaledMaskedSoftmaxV2Tiling, test_scaled_masked_softmax_tiling_broadcastN)
@@ -392,10 +447,28 @@ TEST_F(ScaledMaskedSoftmaxV2Tiling, test_scaled_masked_softmax_tiling_broadcastN
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+    EXPECT_EQ(tiling_key, 1UL);
+    auto raw_tiling_data = tiling_context->GetRawTilingData();
+    ASSERT_NE(raw_tiling_data, nullptr);
+    EXPECT_GT(raw_tiling_data->GetDataSize(), 0U);
+    auto tiling_data_result = TilingData2Str(raw_tiling_data);
+    // Structural invariants from shape (coreNum may vary by platform fake; skip exact golden string)
+    {
+        std::istringstream iss(tiling_data_result);
+        uint64_t coreNum = 0, batch = 0, channel = 0, height = 0, width = 0;
+        uint64_t maskBatch = 0, maskChannel = 0, maskHeight = 0, maskWidth = 0;
+        iss >> coreNum >> batch >> channel >> height >> width >> maskBatch >> maskChannel >> maskHeight >> maskWidth;
+        EXPECT_GT(coreNum, 0UL);
+        EXPECT_EQ(batch, 32UL);
+        EXPECT_EQ(channel, 1UL);
+        EXPECT_EQ(height, 32UL);
+        EXPECT_EQ(width, 135UL);
+        EXPECT_EQ(maskBatch, 1UL);
+        EXPECT_EQ(maskChannel, 1UL);
+        EXPECT_EQ(maskHeight, 32UL);
+        EXPECT_EQ(maskWidth, 135UL);
+    }
 }
 
 TEST_F(ScaledMaskedSoftmaxV2Tiling, invalid_mask_batch_must_fail_tiling)
@@ -539,8 +612,26 @@ TEST_F(ScaledMaskedSoftmaxV2Tiling, test_scaled_masked_softmax_tiling_broadcastN
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+    EXPECT_EQ(tiling_key, 2UL);
+    auto raw_tiling_data = tiling_context->GetRawTilingData();
+    ASSERT_NE(raw_tiling_data, nullptr);
+    EXPECT_GT(raw_tiling_data->GetDataSize(), 0U);
+    auto tiling_data_result = TilingData2Str(raw_tiling_data);
+    // Structural invariants from shape (coreNum may vary by platform fake; skip exact golden string)
+    {
+        std::istringstream iss(tiling_data_result);
+        uint64_t coreNum = 0, batch = 0, channel = 0, height = 0, width = 0;
+        uint64_t maskBatch = 0, maskChannel = 0, maskHeight = 0, maskWidth = 0;
+        iss >> coreNum >> batch >> channel >> height >> width >> maskBatch >> maskChannel >> maskHeight >> maskWidth;
+        EXPECT_GT(coreNum, 0UL);
+        EXPECT_EQ(batch, 4UL);
+        EXPECT_EQ(channel, 4UL);
+        EXPECT_EQ(height, 32UL);
+        EXPECT_EQ(width, 128UL);
+        EXPECT_EQ(maskBatch, 1UL);
+        EXPECT_EQ(maskChannel, 1UL);
+        EXPECT_EQ(maskHeight, 32UL);
+        EXPECT_EQ(maskWidth, 128UL);
+    }
 }
