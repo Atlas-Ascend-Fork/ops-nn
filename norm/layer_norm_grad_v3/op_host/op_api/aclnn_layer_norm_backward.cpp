@@ -369,10 +369,15 @@ aclnnStatus aclnnLayerNormBackwardGetWorkspaceSize(const aclTensor* gradOut, con
             gradOutContiguous, lnInput, rstdContiguousFp32, meanContiguousFp32, weightContiguous, outputMask,
             gradWeightType, uniqueExecutor.get());
         // 根据mask处理输出
-        GenOutWithMask(gradRes[GRAD_INPUT_INDEX], gradInputOut, (*outputMask)[GRAD_INPUT_INDEX], uniqueExecutor.get());
-        GenOutWithMask(gradRes[GRAD_WEIGHT_INDEX], gradWeightOut, (*outputMask)[GRAD_WEIGHT_INDEX],
-                       uniqueExecutor.get());
-        GenOutWithMask(gradRes[GRAD_BIAS_INDEX], gradBiasOut, (*outputMask)[GRAD_BIAS_INDEX], uniqueExecutor.get());
+        ret = GenOutWithMask(gradRes[GRAD_INPUT_INDEX], gradInputOut, (*outputMask)[GRAD_INPUT_INDEX],
+                             uniqueExecutor.get());
+        CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        ret = GenOutWithMask(gradRes[GRAD_WEIGHT_INDEX], gradWeightOut, (*outputMask)[GRAD_WEIGHT_INDEX],
+                             uniqueExecutor.get());
+        CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        ret = GenOutWithMask(gradRes[GRAD_BIAS_INDEX], gradBiasOut, (*outputMask)[GRAD_BIAS_INDEX],
+                             uniqueExecutor.get());
+        CHECK_RET(ret == ACLNN_SUCCESS, ret);
     } else {
         OP_LOGD("Entering into layer_norm_backward split ops Func.");
         // 进行layer_norm反向的首个输出计算，调用LayerNormXBackpropV3算子
@@ -423,9 +428,12 @@ aclnnStatus aclnnLayerNormBackwardGetWorkspaceSize(const aclTensor* gradOut, con
                                           betaGammaBackpropV2Res[1];
 
         // 根据mask处理输出
-        GenOutWithMask(xBackpropV3Res[0], gradInputOut, (*outputMask)[GRAD_INPUT_INDEX], uniqueExecutor.get());
-        GenOutWithMask(dWeightTemp, gradWeightOut, (*outputMask)[GRAD_WEIGHT_INDEX], uniqueExecutor.get());
-        GenOutWithMask(dBiasTemp, gradBiasOut, (*outputMask)[GRAD_BIAS_INDEX], uniqueExecutor.get());
+        ret = GenOutWithMask(xBackpropV3Res[0], gradInputOut, (*outputMask)[GRAD_INPUT_INDEX], uniqueExecutor.get());
+        CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        ret = GenOutWithMask(dWeightTemp, gradWeightOut, (*outputMask)[GRAD_WEIGHT_INDEX], uniqueExecutor.get());
+        CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        ret = GenOutWithMask(dBiasTemp, gradBiasOut, (*outputMask)[GRAD_BIAS_INDEX], uniqueExecutor.get());
+        CHECK_RET(ret == ACLNN_SUCCESS, ret);
     }
 
     // 固定写法，获取计算过程中需要使用的workspace大小
