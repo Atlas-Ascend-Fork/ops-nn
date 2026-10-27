@@ -198,11 +198,11 @@ static bool ValidateScaleShiftShapes(const aclTensor* input, const aclTensor* sc
     auto isShapeValid = [&](const op::Shape& shape) { return shape == expectShape1 || shape == expectShape2; };
 
     if (!isShapeValid(scaleShape) || !isShapeValid(shiftShape)) {
-        auto msg = ToString(scale->GetViewShape()).GetString();
-        auto expect1 = ToString(expectShape1).GetString();
-        auto expect2 = ToString(expectShape2).GetString();
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected scale/shape shape %s to be %s or %s, but failed.", msg, expect1,
-                expect2);
+        const auto msg = ToString(scale->GetViewShape());
+        const auto expect1 = ToString(expectShape1);
+        const auto expect2 = ToString(expectShape2);
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected scale/shape shape %s to be %s or %s, but failed.", msg.GetString(),
+                expect1.GetString(), expect2.GetString());
         return false;
     }
     return true;
@@ -304,11 +304,11 @@ static bool CheckShape(const aclTensor* gradOut, const aclTensor* input, const a
     // 检查weight和bias
     if (!CheckShapeCompatibility(weightOptional, biasOptional, normalizedShape))
         return false;
-    if (weightOptional != nullptr) {
-        CheckShapeEqual(weightOptional, normalizedShape);
+    if (weightOptional != nullptr && !CheckShapeEqual(weightOptional, normalizedShape)) {
+        return false;
     }
-    if (biasOptional != nullptr) {
-        CheckShapeEqual(biasOptional, normalizedShape);
+    if (biasOptional != nullptr && !CheckShapeEqual(biasOptional, normalizedShape)) {
+        return false;
     }
 
     // 检查scale/shift
