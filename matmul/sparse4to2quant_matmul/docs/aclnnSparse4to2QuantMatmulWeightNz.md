@@ -2,63 +2,80 @@
 
 ## 产品支持情况
 
-<!-- npu="A3" id1 -->
-- <term>Atlas A3系列产品</term>：支持
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR&950DT系列产品</term>：不支持
 <!-- end id1 -->
-<!-- npu="910b" id2 -->
-- <term>Atlas A2系列产品</term>：支持
+
+<!-- npu="A3" id2 -->
+- <term>Atlas A3系列产品</term>：支持
 <!-- end id2 -->
+
+<!-- npu="910b" id3 -->
+- <term>Atlas A2系列产品</term>：支持
+<!-- end id3 -->
+
+<!-- npu="310b" id4 -->
+- <term>Atlas 200I/500 A2推理产品</term>：不支持
+<!-- end id4 -->
+
+<!-- npu="310p" id5 -->
+- <term>Atlas推理系列产品</term>：不支持
+<!-- end id5 -->
+
+<!-- npu="910" id6 -->
+- <term>Atlas训练系列产品</term>：不支持
+<!-- end id6 -->
 
 ## 功能说明
 
-- 算子功能：
-
-  完成稀疏4:2量化的矩阵乘计算。
+- 接口功能：完成4选2稀疏量化矩阵乘计算。sparseWeight和index由[aclnnTransSparse4to2Para](aclnnTransSparse4to2Para.md)生成。
 
 - 计算公式：
 
-    $$
-    out = x@sparseWeight * sparseWeightScale * xScale + bias
-    $$
+  $$
+  out = (x @ sparseWeight) * sparseWeightScale * xScale + bias
+  $$
+
+  其中，`@`表示根据index执行的稀疏矩阵乘法，结果的shape为（m，n）。sparseWeightScale按列缩放，xScale按行缩放。bias对应biasOptional，未传入时按0处理。
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnSparse4to2QuantMatmulWeightNzGetWorkspaceSize”接口获取入参并根据计算流程计算所需workspace大小，再调用“aclnnSparse4to2QuantMatmulWeightNz”接口执行计算。
+本算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用aclnnSparse4to2QuantMatmulWeightNzGetWorkspaceSize接口获取计算所需workspace大小以及包含算子计算流程的执行器，再调用aclnnSparse4to2QuantMatmulWeightNz接口执行计算。
 
-```Cpp
+```cpp
 aclnnStatus aclnnSparse4to2QuantMatmulWeightNzGetWorkspaceSize(
-    const aclTensor *x,
-    const aclTensor *sparseWeight,
-    const aclTensor *index,
-    const aclTensor *xScale,
-    const aclTensor *sparseWeightScale,
-    const aclTensor *biasOptional,
-    aclTensor       *out,
-    uint64_t        *workspaceSize,
-    aclOpExecutor   **executor)
+    const aclTensor* x,
+    const aclTensor* sparseWeight,
+    const aclTensor* index,
+    const aclTensor* xScale,
+    const aclTensor* sparseWeightScale,
+    const aclTensor* biasOptional,
+    aclTensor*       out,
+    uint64_t*        workspaceSize,
+    aclOpExecutor**  executor)
 ```
 
-```Cpp
+```cpp
 aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
-    void          *workspace,
-    uint64_t      workspaceSize,
-    aclOpExecutor *executor,
-    aclrtStream   stream)
+    void*          workspace,
+    uint64_t       workspaceSize,
+    aclOpExecutor* executor,
+    aclrtStream    stream)
 ```
 
 ## aclnnSparse4to2QuantMatmulWeightNzGetWorkspaceSize
 
-- **参数说明：**
+- **参数说明**
 
-  <table style="undefined;table-layout: fixed; width: 1465px"><colgroup>
-  <col style="width: 101px">
+  <table style="table-layout: fixed; width: 1500px"><colgroup>
+  <col style="width: 340px">
+  <col style="width: 100px">
+  <col style="width: 230px">
+  <col style="width: 390px">
   <col style="width: 120px">
-  <col style="width: 260px">
-  <col style="width: 400px">
-  <col style="width: 177px">
-  <col style="width: 124px">
-  <col style="width: 138px">
-  <col style="width: 145px">
+  <col style="width: 120px">
+  <col style="width: 100px">
+  <col style="width: 100px">
   </colgroup>
   <thead>
     <tr>
@@ -73,79 +90,79 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
     </tr></thead>
    <tbody>
       <tr>
-        <td>x</td>
+        <td>x（const aclTensor*）</td>
         <td>输入</td>
         <td>矩阵乘运算中的左矩阵。</td>
-        <td><ul><li>仅支持2维输入，shape可表达为（m，k）。</li></ul></td>
+        <td><ul><li>仅支持2维输入，shape为（m，k），不支持空Tensor。</li><li>k不超过65535。</li><li>不支持通过转置stride表示的输入。</li></ul></td>
         <td>INT8</td>
         <td>ND</td>
         <td>2</td>
         <td>×</td>
       </tr>
       <tr>
-        <td>sparseWeight</td>
+        <td>sparseWeight（const aclTensor*）</td>
         <td>输入</td>
-        <td>矩阵乘运算中的右矩阵，经过aclnnTransSparse4to2Para接口处理后的稀疏矩阵。</td>
-        <td><ul><li>仅支持2维输入，ViewShape可表达为（n，k_half），其中k_half=ceil（k / 8）* 8 / 2。</li><li>StorageShape从aclnnTransSparse4to2Para接口出参sparseWeightDims和sparseWeightDimsNum获取，获取的值为4维，与ViewShape的关系为（ceil（k_half / 32），ceil（n / 16），16，32）。</li></ul></td>
+        <td>aclnnTransSparse4to2Para返回的压缩权重。</td>
+        <td><ul><li>不支持空Tensor。ViewShape为（n，k_half），其中k_half=ceil（k / 8）* 8 / 2。</li><li>StorageShape为（ceil（k_half / 32），ceil（n / 16），16，32），由aclnnTransSparse4to2Para的sparseWeightDims和sparseWeightDimsNum返回。</li><li>数据须按FRACTAL_NZ布局存储。可按示例使用ND格式创建aclTensor，并设置上述ViewShape和StorageShape。接口不进行数据重排。</li></ul></td>
         <td>INT8</td>
         <td>FRACTAL_NZ</td>
         <td>2</td>
         <td>×</td>
       </tr>
       <tr>
-        <td>index</td>
+        <td>index（const aclTensor*）</td>
         <td>输入</td>
-        <td>经过aclnnTransSparse4to2Para接口压缩后计算得到的索引矩阵。</td>
-        <td><ul><li>仅支持2维输入，ViewShape可表达为（n，ceil（k / 8））。</li><li>StorageShape从aclnnTransSparse4to2Para接口出参indexDims和indexDimsNum获取，获取的值为4维，可表达为（ceil（k_half / 32），ceil（n / 16），16，8）。</li></ul></td>
+        <td>aclnnTransSparse4to2Para返回的稀疏权重索引。</td>
+        <td><ul><li>不支持空Tensor。ViewShape为（n，ceil（k / 8））。</li><li>StorageShape为（ceil（k_half / 32），ceil（n / 16），16，8），由aclnnTransSparse4to2Para的indexDims和indexDimsNum返回。</li><li>保持预处理接口返回的数据排列，Tensor须连续。</li></ul></td>
         <td>UINT8</td>
         <td>ND</td>
         <td>2</td>
         <td>×</td>
       </tr>
       <tr>
-        <td>xScale</td>
+        <td>xScale（const aclTensor*）</td>
         <td>输入</td>
-        <td>量化参数，缩放因子。</td>
-        <td><ul><li>shape可表达为（m，）。</li></ul></td>
+        <td>x的逐行反量化缩放因子。</td>
+        <td><ul><li>不支持空指针或空Tensor。</li><li>shape为（m，）。</li></ul></td>
         <td>FLOAT32</td>
         <td>ND</td>
         <td>1</td>
         <td>×</td>
       </tr>
       <tr>
-        <td>sparseWeightScale</td>
+        <td>sparseWeightScale（const aclTensor*）</td>
         <td>输入</td>
-        <td>量化参数，缩放因子。</td>
-        <td><ul><li>shape可表达为（n，）。</li></ul></td>
+        <td>sparseWeight的反量化缩放因子，对应输出的每一列。</td>
+        <td><ul><li>不支持空指针或空Tensor。</li><li>shape为（n，）。</li></ul></td>
         <td>FLOAT32</td>
         <td>ND</td>
         <td>1</td>
         <td>×</td>
       </tr>
       <tr>
-        <td>biasOptional</td>
-        <td>输入</td>
-        <td>可选偏置。</td>
-        <td><ul><li>shape可表达为（n，）。</li></ul></td>
+        <td>biasOptional（const aclTensor*）</td>
+        <td>可选输入</td>
+        <td>偏置，对应公式中的bias。</td>
+        <td><ul><li>传入空指针时不添加偏置。</li><li>非空时shape为（n，），不支持空Tensor。</li></ul></td>
         <td>BFLOAT16</td>
         <td>ND</td>
         <td>1</td>
         <td>×</td>
       </tr>
       <tr>
-        <td>out</td>
+        <td>out（aclTensor*）</td>
         <td>输出</td>
-        <td>输出的张量，公式中的out。</td>
-        <td><ul><li>shape可表达为（m，n）。</li></ul></td>
+        <td>计算结果，对应公式中的out。</td>
+        <td><ul><li>shape为（m，n），不支持空Tensor。</li></ul></td>
         <td>BFLOAT16</td>
         <td>ND</td>
         <td>2</td>
         <td>×</td>
       </tr>
       <tr>
-        <td>workspaceSize</td>
+        <td>workspaceSize（uint64_t*）</td>
         <td>输出</td>
-        <td>返回需要在Device侧申请的workspace大小。</td>
+        <td>返回需要在Device侧申请的workspace大小，单位为字节。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -153,7 +170,7 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
         <td>-</td>
       </tr>
       <tr>
-        <td>executor</td>
+        <td>executor（aclOpExecutor**）</td>
         <td>输出</td>
         <td>返回op执行器，包含了算子计算流程。</td>
         <td>-</td>
@@ -165,19 +182,20 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
   </tbody>
   </table>
 
-- **返回值：**
+- **返回值**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
   第一段接口会完成入参校验，出现以下场景时报错：
-  <table style="undefined;table-layout: fixed; width: 1149px"><colgroup>
-  <col style="width: 291px">
-  <col style="width: 135px">
-  <col style="width: 723px">
+
+  <table style="table-layout: fixed; width: 1000px"><colgroup>
+  <col style="width: 300px">
+  <col style="width: 150px">
+  <col style="width: 550px">
   </colgroup>
   <thead>
     <tr>
-      <th>返回码</th>
+      <th>返回值</th>
       <th>错误码</th>
       <th>描述</th>
     </tr>
@@ -189,12 +207,12 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
       <td>传入的x、sparseWeight、index、xScale、sparseWeightScale或out任一为空指针。</td>
     </tr>
     <tr>
-      <td rowspan="8">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="8">161002</td>
-      <td>输入输出的数据类型不在支持范围内：x和sparseWeight须为INT8，index须为UINT8，xScale和sparseWeightScale须为FLOAT32，out及非空的biasOptional须为BFLOAT16。</td>
+      <td rowspan="10">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="10">161002</td>
+      <td>输入或输出的数据类型不符合参数说明。</td>
     </tr>
     <tr>
-      <td>输入输出的数据格式不在支持范围内：sparseWeight须使用FRACTAL_NZ布局，其余tensor须为ND。</td>
+      <td>x、index、xScale、sparseWeightScale、out或非空的biasOptional的数据格式不是ND。</td>
     </tr>
     <tr>
       <td>x、sparseWeight、index或out的ViewShape不是2维，或xScale、sparseWeightScale及非空的biasOptional不是1维。</td>
@@ -203,27 +221,33 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
       <td>x的k维超过65535。</td>
     </tr>
     <tr>
-      <td>x和sparseWeight的k维不满足ceil（k / 8）* 8 = 2 * k_half，或xScale、sparseWeightScale、biasOptional及out的shape不满足参数说明中的维度关系。</td>
+      <td>x和sparseWeight的k维不匹配，或xScale、sparseWeightScale、biasOptional及out的shape不符合参数说明。</td>
     </tr>
     <tr>
-      <td>sparseWeight的StorageShape不等于（ceil（k_half / 32），ceil（n / 16），16，32）。</td>
+      <td>sparseWeight的StorageShape不符合参数说明。</td>
     </tr>
     <tr>
-      <td>index的ViewShape不等于（n，ceil（k / 8）），StorageShape不等于（ceil（k_half / 32），ceil（n / 16），16，8），或index为非连续tensor。</td>
+      <td>index的ViewShape或StorageShape不符合参数说明，或index为非连续Tensor。</td>
     </tr>
     <tr>
-      <td>输入为空tensor，即m、n、k任一为0。</td>
+      <td>输入为空Tensor，即m、n、k任一为0。</td>
+    </tr>
+    <tr>
+      <td>x通过转置stride表示。</td>
+    </tr>
+    <tr>
+      <td>当前运行平台不在支持范围内。</td>
     </tr>
   </tbody></table>
 
 ## aclnnSparse4to2QuantMatmulWeightNz
 
-- **参数说明：**
+- **参数说明**
 
-  <table style="undefined;table-layout: fixed; width: 1151px"><colgroup>
-  <col style="width: 184px">
-  <col style="width: 134px">
-  <col style="width: 833px">
+  <table style="table-layout: fixed; width: 1000px"><colgroup>
+  <col style="width: 300px">
+  <col style="width: 100px">
+  <col style="width: 600px">
   </colgroup>
   <thead>
     <tr>
@@ -233,53 +257,52 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
     </tr></thead>
   <tbody>
     <tr>
-      <td>workspace</td>
+      <td>workspace（void*）</td>
       <td>输入</td>
       <td>在Device侧申请的workspace内存地址。</td>
     </tr>
     <tr>
-      <td>workspaceSize</td>
+      <td>workspaceSize（uint64_t）</td>
       <td>输入</td>
       <td>在Device侧申请的workspace大小，由第一段接口aclnnSparse4to2QuantMatmulWeightNzGetWorkspaceSize获取。</td>
     </tr>
     <tr>
-      <td>executor</td>
+      <td>executor（aclOpExecutor*）</td>
       <td>输入</td>
       <td>op执行器，包含了算子计算流程。</td>
     </tr>
     <tr>
-      <td>stream</td>
+      <td>stream（aclrtStream）</td>
       <td>输入</td>
       <td>指定执行任务的Stream。</td>
     </tr>
   </tbody>
   </table>
 
-- **返回值：**
+- **返回值**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 
-- 确定性说明：
+- sparseWeight和index须对应同一份权重。按各自的StorageShape申请内存，并拷贝完整数据。
+- 输入与输出的shape须满足参数表中的m、n、k对应关系，不支持batch维度。
+- 确定性计算：
 
-  <!-- npu="A3,910b" id3 -->
+  <!-- npu="A3,910b" id7 -->
   - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：aclnnSparse4to2QuantMatmulWeightNz默认确定性实现。
-  <!-- end id3 -->
-
-- 其他约束：
-  - x的最后一维即shape的描述中k的值不能超过65535。
-  - 不支持空tensor，m、n、k任一为0时返回ACLNN_ERR_PARAM_INVALID（161002）。
-  - xScale和sparseWeightScale均为必选输入，任一为nullptr时返回ACLNN_ERR_PARAM_NULLPTR（161001）。
+  <!-- end id7 -->
 
 ## 调用示例
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-<!-- npu="A3,910b" id4 -->
-- <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
+对应工程样例：[test_aclnn_sparse4to2quant_matmul.cpp](../examples/test_aclnn_sparse4to2quant_matmul.cpp)。
 
-  ```Cpp
+<!-- npu="A3,910b" id8 -->
+- <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：
+
+  ```cpp
   #include <iostream>
   #include <memory>
   #include <vector>
@@ -478,9 +501,11 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
       int64_t* indexDims = nullptr;
       uint64_t indexDimsNum = 0UL;
       aclIntArray* weightShapeArray = aclCreateIntArray(weightShape.data(), weightShape.size());
+      CHECK_RET(weightShapeArray != nullptr, LOG_PRINT("aclCreateIntArray failed.\n"); return 1);
       ret = aclnnTransSparse4to2Para(
           weightHostData.data(), weightShapeArray, &sparseWeightHostData, &sparseWeightDims, &sparseWeightDimsNum,
           &indexHostData, &indexDims, &indexDimsNum);
+      aclDestroyIntArray(weightShapeArray);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransSparse4to2Para failed. ERROR: %d\n", ret); return ret);
       std::unique_ptr<int8_t, decltype(&free)> sparseWeightHostDataPtr(sparseWeightHostData, free);
       std::unique_ptr<uint8_t, decltype(&free)> indexHostDataPtr(indexHostData, free);
@@ -556,4 +581,6 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
       return 0;
   }
 
-<!-- end id4 -->
+  ```
+
+<!-- end id8 -->

@@ -2,23 +2,42 @@
 
 ## 产品支持情况
 
-<!-- npu="A3" id1 -->
-- <term>Atlas A3系列产品</term>：支持
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR&950DT系列产品</term>：不支持
 <!-- end id1 -->
-<!-- npu="910b" id2 -->
-- <term>Atlas A2系列产品</term>：支持
+
+<!-- npu="A3" id2 -->
+- <term>Atlas A3系列产品</term>：支持
 <!-- end id2 -->
+
+<!-- npu="910b" id3 -->
+- <term>Atlas A2系列产品</term>：支持
+<!-- end id3 -->
+
+<!-- npu="310b" id4 -->
+- <term>Atlas 200I/500 A2推理产品</term>：不支持
+<!-- end id4 -->
+
+<!-- npu="310p" id5 -->
+- <term>Atlas推理系列产品</term>：不支持
+<!-- end id5 -->
+
+<!-- npu="910" id6 -->
+- <term>Atlas训练系列产品</term>：不支持
+<!-- end id6 -->
+
+以上为配套接口[aclnnSparse4to2QuantMatmulWeightNz](aclnnSparse4to2QuantMatmulWeightNz.md)的产品支持范围。本接口在Host侧执行。
 
 ## 功能说明
 
-- 算子功能：
-
-  对结构化稀疏的weight矩阵进行压缩预处理，输出压缩后的稀疏矩阵以及对应的索引矩阵。
-  假设原始稀疏矩阵的每4个元素中至少有2个零，压缩后的稀疏矩阵是一个在每4个元素中过滤掉2个零的矩阵。矩阵压缩过程中生成索引矩阵，原始矩阵中的每4个元素，将在index矩阵中生成2个2位索引，并按照规则进行编码。
+- 接口功能：压缩4选2稀疏权重weight，生成FRACTAL_NZ布局的sparseWeight和索引index，供[aclnnSparse4to2QuantMatmulWeightNz](aclnnSparse4to2QuantMatmulWeightNz.md)使用。
+- 处理过程：weight沿k轴每4个元素至少有2个零，压缩后每组保留2个元素。每8个元素生成4个INT8权重和1个UINT8索引，尾部不足8个时补零。输出按StorageShape补齐并存储。
 
 ## 函数原型
 
-```Cpp
+本接口同步执行，返回成功后即可读取压缩结果。
+
+```cpp
 aclnnStatus aclnnTransSparse4to2Para(
     const int8_t* weight,
     aclIntArray*  shape,
@@ -32,17 +51,19 @@ aclnnStatus aclnnTransSparse4to2Para(
 
 ## aclnnTransSparse4to2Para
 
-- **参数说明：**
+- **参数说明**
 
-  <table style="undefined;table-layout: fixed; width: 1505px"><colgroup>
-  <col style="width: 150px">
+  所有参数均不可为空指针。
+
+  <table style="table-layout: fixed; width: 1500px"><colgroup>
+  <col style="width: 340px">
+  <col style="width: 100px">
+  <col style="width: 230px">
+  <col style="width: 390px">
   <col style="width: 120px">
-  <col style="width: 350px">
-  <col style="width: 360px">
-  <col style="width: 130px">
   <col style="width: 120px">
-  <col style="width: 130px">
-  <col style="width: 145px">
+  <col style="width: 100px">
+  <col style="width: 100px">
   </colgroup>
   <thead>
     <tr>
@@ -57,80 +78,80 @@ aclnnStatus aclnnTransSparse4to2Para(
     </tr></thead>
    <tbody>
       <tr>
-        <td>weight</td>
+        <td>weight（const int8_t*）</td>
         <td>输入</td>
-        <td>矩阵乘运算中未压缩的稀疏右矩阵。</td>
-        <td><ul><li>shape可表达为（n，k）。</li><li>满足每4个元素至少2个零。</li></ul></td>
-        <td>INT8</td>
-        <td>ND</td>
-        <td>2</td>
-        <td>×</td>
+        <td>Host侧INT8稀疏权重的首地址。</td>
+        <td>按（n，k）行优先连续存储，至少包含n*k个int8_t元素。每行沿k轴每4个元素至少有2个零，不足一组时补零后判断。</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
       </tr>
       <tr>
-        <td>shape</td>
+        <td>shape（aclIntArray*）</td>
         <td>输入</td>
-        <td>矩阵乘运算中未压缩的稀疏右矩阵shape。</td>
-        <td><ul><li>通过aclCreateIntArray接口创建，包含n和k两个维度，且n和k均必须大于0，不支持空tensor。</li></ul></td>
+        <td>Host侧未压缩权重的shape。</td>
+        <td>通过aclCreateIntArray创建，包含n、k两个正整数。使用完后调用aclDestroyIntArray释放。</td>
+        <td>INT64</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+      </tr>
+      <tr>
+        <td>sparseWeight（int8_t**）</td>
+        <td>输出</td>
+        <td>返回压缩权重的Host侧地址。</td>
+        <td>输出为INT8数据，元素个数为sparseWeightDims各元素的乘积。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
       </tr>
       <tr>
-        <td>sparseWeight</td>
+        <td>sparseWeightDims（int64_t**）</td>
         <td>输出</td>
-        <td>矩阵乘运算中压缩后的右矩阵。</td>
-        <td><ul><li>内存由调用者通过free()释放。</li></ul></td>
+        <td>返回压缩权重的StorageShape数组。</td>
+        <td>数组内容为（ceil（k / 64），ceil（n / 16），16，32）。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
       </tr>
       <tr>
-        <td>sparseWeightDims</td>
+        <td>sparseWeightDimsNum（uint64_t*）</td>
         <td>输出</td>
-        <td>矩阵乘运算中压缩后右矩阵StorageShape数组指针首地址。</td>
-        <td><ul><li>内存由调用者通过free()释放。</li><li>StorageShape可表达为（ceil（k_half / 32），ceil（n / 16），16，32），其中k_half=ceil（k / 8）* 8 / 2。</li></ul></td>
+        <td>返回压缩权重StorageShape数组的元素个数。</td>
+        <td>成功时返回4。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
       </tr>
       <tr>
-        <td>sparseWeightDimsNum</td>
+        <td>index（uint8_t**）</td>
         <td>输出</td>
-        <td>矩阵乘运算中压缩后右矩阵StorageShape数组维度。</td>
-        <td>-</td>
+        <td>返回索引数据的Host侧地址。</td>
+        <td>输出为UINT8数据，元素个数为indexDims各元素的乘积。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
       </tr>
       <tr>
-        <td>index</td>
+        <td>indexDims（int64_t**）</td>
         <td>输出</td>
-        <td>矩阵乘运算中的压缩后右矩阵对应的索引矩阵。</td>
-        <td><ul><li>内存由调用者通过free()释放。</li></ul></td>
+        <td>返回索引数据的StorageShape数组。</td>
+        <td>数组内容为（ceil（k / 64），ceil（n / 16），16，8）。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
       </tr>
       <tr>
-        <td>indexDims</td>
+        <td>indexDimsNum（uint64_t*）</td>
         <td>输出</td>
-        <td>矩阵乘运算中的压缩后右矩阵对应的索引矩阵StorageShape数组指针首地址。</td>
-        <td><ul><li>内存由调用者通过free()释放。</li><li>StorageShape可表达为（ceil（k_half / 32），ceil（n / 16），16，8），其中k_half=ceil（k / 8）* 8 / 2。</li></ul></td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>indexDimsNum</td>
-        <td>输出</td>
-        <td>矩阵乘运算中的压缩后右矩阵对应的索引矩阵StorageShape数组维度。</td>
-        <td>-</td>
+        <td>返回索引数据StorageShape数组的元素个数。</td>
+        <td>成功时返回4。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -139,19 +160,22 @@ aclnnStatus aclnnTransSparse4to2Para(
   </tbody>
   </table>
 
-- **返回值：**
+  调用前，将`*sparseWeight`、`*sparseWeightDims`、`*index`和`*indexDims`初始化为nullptr。调用成功后，这四个指针指向接口分配的Host内存，使用完后分别调用free释放。
+
+- **返回值**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
-  第一段接口会完成入参校验，出现以下场景时报错：
-    <table style="undefined;table-layout: fixed; width: 1149px"><colgroup>
-    <col style="width: 291px">
-    <col style="width: 135px">
-    <col style="width: 723px">
+  本接口会完成入参校验，出现以下场景时报错：
+
+  <table style="table-layout: fixed; width: 1000px"><colgroup>
+  <col style="width: 300px">
+  <col style="width: 150px">
+  <col style="width: 550px">
   </colgroup>
   <thead>
     <tr>
-      <th>返回码</th>
+      <th>返回值</th>
       <th>错误码</th>
       <th>描述</th>
     </tr>
@@ -165,15 +189,27 @@ aclnnStatus aclnnTransSparse4to2Para(
     <tr>
       <td>ACLNN_ERR_PARAM_INVALID</td>
       <td>161002</td>
-      <td>shape不包含两个维度、n或k不大于0、原始或压缩后的元素总数超出int64范围；或weight数据不满足每4个元素至少2个为零。</td>
+      <td>shape的size不为2、n或k不大于0、原始或压缩后的元素总数超出int64_t范围；或weight沿k轴的分组数据不满足每4个元素至少2个为零。</td>
     </tr>
   </tbody></table>
+
+## 约束说明
+
+- 原始权重和压缩后权重的元素总数均不能超过int64_t的最大值。
+- 将压缩结果用于aclnnSparse4to2QuantMatmulWeightNz时，k不能超过65535，压缩权重和索引须配套使用。
+- 确定性计算：
+
+  <!-- npu="A3,910b" id7 -->
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：aclnnTransSparse4to2Para默认确定性实现。
+  <!-- end id7 -->
 
 ## 调用示例
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-  ```Cpp
+示例先在Host侧压缩权重，再调用aclnnSparse4to2QuantMatmulWeightNz计算。对应工程样例：[test_aclnn_sparse4to2quant_matmul.cpp](../examples/test_aclnn_sparse4to2quant_matmul.cpp)。
+
+  ```cpp
   #include <iostream>
   #include <memory>
   #include <vector>
@@ -372,9 +408,11 @@ aclnnStatus aclnnTransSparse4to2Para(
       int64_t* indexDims = nullptr;
       uint64_t indexDimsNum = 0UL;
       aclIntArray* weightShapeArray = aclCreateIntArray(weightShape.data(), weightShape.size());
+      CHECK_RET(weightShapeArray != nullptr, LOG_PRINT("aclCreateIntArray failed.\n"); return 1);
       ret = aclnnTransSparse4to2Para(
           weightHostData.data(), weightShapeArray, &sparseWeightHostData, &sparseWeightDims, &sparseWeightDimsNum,
           &indexHostData, &indexDims, &indexDimsNum);
+      aclDestroyIntArray(weightShapeArray);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransSparse4to2Para failed. ERROR: %d\n", ret); return ret);
       std::unique_ptr<int8_t, decltype(&free)> sparseWeightHostDataPtr(sparseWeightHostData, free);
       std::unique_ptr<uint8_t, decltype(&free)> indexHostDataPtr(indexHostData, free);
@@ -400,7 +438,7 @@ aclnnStatus aclnnTransSparse4to2Para(
       aclOpExecutor* executor;
       void* workspaceAddr = nullptr;
 
-      // 调用aclnnSparse4to2QuantMatmul第一段接口
+      // 调用aclnnSparse4to2QuantMatmulWeightNz第一段接口
       ret = aclnnSparse4to2QuantMatmulWeightNzGetWorkspaceSize(
           x, sparseWeight, index, xScale, weightScale, bias, out, &workspaceSize, &executor);
 
@@ -414,7 +452,7 @@ aclnnStatus aclnnTransSparse4to2Para(
           CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
           workspaceAddrPtrTrans.reset(workspaceAddr);
       }
-      // 调用aclnnSparse4to2QuantMatmul第二段接口
+      // 调用aclnnSparse4to2QuantMatmulWeightNz第二段接口
       ret = aclnnSparse4to2QuantMatmulWeightNz(workspaceAddr, workspaceSize, executor, stream);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSparse4to2QuantMatmulWeightNz failed. ERROR: %d\n", ret); return ret);
 
