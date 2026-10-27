@@ -234,8 +234,12 @@ public:
 
                 Adds(x, x, mean, pregLoop);
                 Muls(y, x, rstd, pregLoop);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                MulDstAdd(y, gamma, beta, pregLoop);
+#else
                 Mul(y, y, gamma, pregLoop);
                 Add(y, y, beta, pregLoop); // LayerNorm result
+#endif
 
                 // Do Quant1
                 if constexpr (IS_DIV_SCALE) {

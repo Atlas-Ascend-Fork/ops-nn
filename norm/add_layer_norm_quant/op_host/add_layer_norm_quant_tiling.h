@@ -309,6 +309,7 @@ private:
     uint32_t tilingKey_{0};
     int64_t bufferNum_{2};
     uint64_t sysWorkspaceSize_{1};
+    NpuArch arch = NpuArch::DAV_3510;
 
     bool scale1Exist_{false};
     bool scale2Exist_{false};

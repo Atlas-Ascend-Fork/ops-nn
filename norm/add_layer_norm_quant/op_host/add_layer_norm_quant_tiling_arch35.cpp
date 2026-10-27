@@ -210,6 +210,9 @@ bool AddLayerNormQuantRegbaseTiling::DoBlockTiling()
 
 bool AddLayerNormQuantRegbaseTiling::GetPlatformInfo()
 {
+    auto platformInfo = this->context_->GetPlatformInfo();
+    OP_CHECK_IF(nullptr == platformInfo, OP_LOGE(context_->GetNodeName(), "platform info is null"), return false);
+    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     auto compileInfo = reinterpret_cast<const AddLayerNormQuantCompileInfo*>(context_->GetCompileInfo());
     if (compileInfo != nullptr) {
         this->ubSize_ = compileInfo->ubSize_;
@@ -218,15 +221,13 @@ bool AddLayerNormQuantRegbaseTiling::GetPlatformInfo()
         this->vecRegSize_ = compileInfo->vecRegSize_;
         this->sysWorkspaceSize_ = compileInfo->sysWorkspaceSize_;
     } else {
-        auto platformInfo = this->context_->GetPlatformInfo();
-        OP_CHECK_IF(nullptr == platformInfo, OP_LOGE(context_->GetNodeName(), "platform info is null"), return false);
-        auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, this->ubSize_);
         this->aivCoreNum_ = ascendcPlatform.GetCoreNumAiv();
         this->blockSize_ = Ops::Base::GetUbBlockSize(this->context_);
         this->vecRegSize_ = Ops::Base::GetVRegSize(this->context_);
         this->sysWorkspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
     }
+    this->arch = ascendcPlatform.GetCurNpuArch();
     this->vlFp32_ = this->vecRegSize_ / sizeof(float);
 
     OP_CHECK_IF((this->ubSize_ <= 0),
@@ -422,8 +423,7 @@ bool AddLayerNormQuantRegbaseTiling::CheckDynQuantFullLoadTiling()
     int64_t quantBufSize = this->colsAligned_ * this->quantTensorNums_ * this->dtSizeScale_;
     int64_t weightBufSize = this->colsAligned_ * this->weightTensorNums_ * this->dtSizeX1_;
 
-    int64_t ubAvaliable = static_cast<int64_t>(this->ubSize_) -
-                          (binaryAddUbSize + quantBufSize + weightBufSize + UB_RESERVED_BYTE);
+    int64_t ubAvaliable = static_cast<int64_t>(this->ubSize_);
 
     // ele queues
     int64_t x1x2InCols = this->dtSizeX1_ * 1 + this->dtSizeX1_ * 1;
@@ -436,9 +436,16 @@ bool AddLayerNormQuantRegbaseTiling::CheckDynQuantFullLoadTiling()
     // Tbufs
     int64_t tmpXBufCols = sizeof(float) * this->colsAligned_ * this->outQuantNums_;
     int64_t tmpMeanRstdPoints = sizeof(float) * 1 + sizeof(float) * 1;
+    int64_t rowFactor = inOutCols + outScalePoints + tmpXBufCols + tmpMeanRstdPoints;
+
+    if (arch == NpuArch::DAV_9201 || arch == NpuArch::DAV_9202) {
+        ubAvaliable -= (quantBufSize + weightBufSize + UB_RESERVED_BYTE);
+        rowFactor += binaryAddUbSize;
+    } else {
+        ubAvaliable -= (binaryAddUbSize + quantBufSize + weightBufSize + UB_RESERVED_BYTE);
+    }
 
     // meanBuf and rstdBuf
-    int64_t rowFactor = inOutCols + outScalePoints + tmpXBufCols + tmpMeanRstdPoints;
     int64_t rowStep = ubAvaliable / rowFactor;
 
     bool ret = (rowStep >= 1);
@@ -505,8 +512,7 @@ bool AddLayerNormQuantRegbaseTiling::CheckStcQuantFullLoadTiling()
     int64_t quantBufSize = this->colsAligned_ * this->quantTensorNums_ * this->dtSizeScale_;
     int64_t weightBufSize = this->colsAligned_ * this->weightTensorNums_ * this->dtSizeX1_;
 
-    int64_t ubAvaliable = static_cast<int64_t>(this->ubSize_) -
-                          (binaryAddUbSize + quantBufSize + weightBufSize + UB_RESERVED_BYTE);
+    int64_t ubAvaliable = static_cast<int64_t>(this->ubSize_);
     // COUNT(x1,x2) = 2, COUNT(y1,y2) = 2, COUNT(x,) = 1
     int64_t inOutCols = (this->dtSizeX1_ * 2 + sizeof(int8_t) * 2 + this->dtSizeX1_ * 1) * this->bufferNum_ *
                         this->colsAligned_;
@@ -515,6 +521,13 @@ bool AddLayerNormQuantRegbaseTiling::CheckStcQuantFullLoadTiling()
                      0;
     int64_t tmpBufsCols = sizeof(float) * this->colsAligned_ + sizeof(float) * 1 + sizeof(float) * 1;
     int64_t rowFactor = inOutCols + tmpBufsCols;
+
+    if (arch == NpuArch::DAV_9201 || arch == NpuArch::DAV_9202) {
+        ubAvaliable -= (quantBufSize + weightBufSize + UB_RESERVED_BYTE);
+        rowFactor += binaryAddUbSize;
+    } else {
+        ubAvaliable -= (binaryAddUbSize + quantBufSize + weightBufSize + UB_RESERVED_BYTE);
+    }
     int64_t rowStep = ubAvaliable / rowFactor;
 
     bool ret = (rowStep >= 1);

@@ -363,8 +363,12 @@ private:
             for (uint16_t i = 0; i < curRows; ++i) {
                 LoadTensorForDtypeTIn<T_X>(xInUb, x, pregFull, i * numColAlign);
                 LoadTensorForDtypeTIn<T_X>(xInUb + VL_FP32, xFold, pregTail, i * numColAlign);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::MicroAPI::MaskMergeMode::MERGING>(x, x, xFold, pregTail);
+#else
                 ShiftLefts((RegTensor<uint32_t>&)xFold, (RegTensor<uint32_t>&)xFold, static_cast<int16_t>(0), pregTail);
                 Add(x, x, xFold, pregFull);
+#endif
                 Reduce<AscendC::Reg::ReduceType::SUM>(mean, x, pregFull);
                 Muls(mean, mean, avgFactor, pregOne);
                 StoreOneElementForDtypeTOut<T_MEAN>(meanUb, mean, pregOne, i);
@@ -453,9 +457,13 @@ private:
                     LoadTensorForDtypeTIn<T_X>(xInUb + binaryAddRemainderFloorLoop * VL_FP32, x, pregFull, offset);
                     LoadTensorForDtypeTIn<T_X>(xInUb + binaryAddRemainderFloorLoop * VL_FP32 + binaryAddQuotient, xFold,
                                                pregLoop, offset);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                    Add<float, AscendC::MicroAPI::MaskMergeMode::MERGING>(x, x, xFold, pregLoop);
+#else
                     ShiftLefts((RegTensor<uint32_t>&)xFold, (RegTensor<uint32_t>&)xFold, static_cast<int16_t>(0),
                                pregLoop);
                     Add(x, x, xFold, pregFull);
+#endif
                     Reduce<AscendC::Reg::ReduceType::SUM>(mean, x, pregFull);
                     StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                         tmpUb + static_cast<uint32_t>(i * lastBinaryAddNumAlign + binaryAddRemainderFloorLoop), mean,
@@ -487,10 +495,15 @@ private:
                 for (uint16_t i = 0; i < curRows; ++i) {
                     LoadAlign(x, tmpUb + static_cast<uint32_t>(i * lastBinaryAddNumAlign));
                     LoadAlign(xFold, tmpUb + static_cast<uint32_t>(i * lastBinaryAddNumAlign + VL_FP32));
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                    Add<float, AscendC::MicroAPI::MaskMergeMode::MERGING>(x, x, xFold, pregLast);
+                    Reduce<AscendC::Reg::ReduceType::SUM>(vMean, x, pregFull);
+#else
                     ShiftLefts((RegTensor<uint32_t>&)xFold, (RegTensor<uint32_t>&)xFold, static_cast<int16_t>(0),
                                pregLast);
                     Add(sumReg, x, xFold, pregFull);
                     Reduce<AscendC::Reg::ReduceType::SUM>(vMean, sumReg, pregFull);
+#endif
                     Muls(vMean, vMean, avgFactor, pregOne);
                     StoreOneElementForDtypeTOut<T_MEAN>(meanUb, vMean, pregOne, i);
                     StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(meanFp32Ub + i, vMean, pregOne);
@@ -554,10 +567,15 @@ private:
                     Sub(xFold, xFold, mean, pregLoop);
                     Mul(x, x, x, pregFull);
                     Mul(xFold, xFold, xFold, pregLoop);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                    Add<float, AscendC::MicroAPI::MaskMergeMode::MERGING>(x, x, xFold, pregLoop);
+                    Reduce<AscendC::Reg::ReduceType::SUM>(vMean, x, pregFull);
+#else
                     ShiftLefts((RegTensor<uint32_t>&)xFold, (RegTensor<uint32_t>&)xFold, static_cast<int16_t>(0),
                                pregLoop);
                     Add(sumReg, x, xFold, pregFull);
                     Reduce<AscendC::Reg::ReduceType::SUM>(vMean, sumReg, pregFull);
+#endif
                     StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                         tmpUb + static_cast<uint32_t>(i * lastBinaryAddNumAlign + binaryAddRemainderFloorLoop), vMean,
                         pregOne);
@@ -590,10 +608,15 @@ private:
                 for (uint16_t i = 0; i < curRows; ++i) {
                     LoadAlign(x, tmpUb + static_cast<uint32_t>(i * lastBinaryAddNumAlign));
                     LoadAlign(xFold, tmpUb + static_cast<uint32_t>(i * lastBinaryAddNumAlign + VL_FP32));
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                    Add<float, AscendC::MicroAPI::MaskMergeMode::MERGING>(x, x, xFold, pregLast);
+                    Reduce<AscendC::Reg::ReduceType::SUM>(vMean, x, pregFull);
+#else
                     ShiftLefts((RegTensor<uint32_t>&)xFold, (RegTensor<uint32_t>&)xFold, static_cast<int16_t>(0),
                                pregLast);
                     Add(sumReg, x, xFold, pregFull);
                     Reduce<AscendC::Reg::ReduceType::SUM>(vMean, sumReg, pregFull);
+#endif
                     Muls(vMean, vMean, avgFactor, pregOne);
                     StoreOneElementForDtypeTOut<T_MEAN>(varUb, vMean, pregOne, i);
                     StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varFp32Ub + i, vMean, pregOne);

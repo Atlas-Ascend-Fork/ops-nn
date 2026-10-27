@@ -167,8 +167,12 @@ __aicore__ inline void VectorAdd(const LocalTensor<float>& dstTensor, const Loca
             pMask = AscendC::Reg::UpdateMask<float>(sreg);
             LoadAlign(aReg, (__ubuf__ float*)src0 + i * VL_FP32);
             LoadAlign(bReg, (__ubuf__ float*)src1 + i * VL_FP32);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            Add<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, aReg, bReg, pMask);
+#else
             Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(cReg, aReg, bReg, pMask);
             Move<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, cReg, pMask);
+#endif
             StoreAlign((__ubuf__ float*)dst + i * VL_FP32, aReg, pMask);
         }
     }

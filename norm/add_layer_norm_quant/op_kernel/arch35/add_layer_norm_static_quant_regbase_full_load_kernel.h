@@ -110,6 +110,9 @@ public:
                                pipe_->InitBuffer(zeroOffset2Queue_, 1, (colsPerLoopAlign_ * sizeof(SCALE_TYPE))));
 
         int64_t binaryAddBufSize = BLOCK_ALIGN((binaryAddNum_ / vlFp32_) * sizeof(float), blockSize_);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+        binaryAddBufSize *= rowsPerLoop_;
+#endif
         if (binaryAddBufSize > 0) {
             pipe_->InitBuffer(binaryAddBuf_, binaryAddBufSize);
         }
@@ -255,8 +258,12 @@ public:
                     LoadAlign<float, LoadDist::DIST_BRC_B32>(rstd, ((__ubuf__ float*)rstdAddr + k));
                     Sub(x, x, mean, pregLoop);
                     Mul(y, x, rstd, pregLoop);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                    MulDstAdd(y, gamma, beta, pregLoop);
+#else
                     Mul(y, y, gamma, pregLoop);
                     Add(y, y, beta, pregLoop); // LayerNorm result
+#endif
 
                     // Do Quant1
                     if constexpr (IS_DIV_SCALE) {

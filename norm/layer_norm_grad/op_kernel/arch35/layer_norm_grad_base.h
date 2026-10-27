@@ -347,8 +347,12 @@ __aicore__ inline void LayerNormGradBase::VectorAdd(const LocalTensor<float>& ds
             pMask = AscendC::Reg::UpdateMask<float>(sreg);
             LoadAlign(aReg, (__ubuf__ float*)src0 + i * VL_FP32);
             LoadAlign(bReg, (__ubuf__ float*)src1 + i * VL_FP32);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            Add<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, aReg, bReg, pMask);
+#else
             Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(cReg, aReg, bReg, pMask);
             Move<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, cReg, pMask);
+#endif
             StoreAlign((__ubuf__ float*)dst + i * VL_FP32, aReg, pMask);
         }
     }
@@ -377,8 +381,12 @@ __aicore__ inline void LayerNormGradBase::VectorAdd(const LocalTensor<float>& ds
                 pMask = AscendC::Reg::UpdateMask<float>(count);
                 LoadAlign(aReg, (__ubuf__ float*)src0 + i * outerLoopStride + 0 * innerLoopStride);
                 LoadAlign(bReg, (__ubuf__ float*)src1 + i * outerLoopStride + 0 * innerLoopStride);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, aReg, bReg, pMask);
+#else
                 Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(cReg, aReg, bReg, pMask);
                 Move<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, cReg, pMask);
+#endif
                 StoreAlign((__ubuf__ float*)dst + i * outerLoopStride + 0 * innerLoopStride, aReg, pMask);
             }
         }
@@ -396,8 +404,12 @@ __aicore__ inline void LayerNormGradBase::VectorAdd(const LocalTensor<float>& ds
                 for (uint16_t j = 0; j < innerLoopTimes; ++j) {
                     LoadAlign(aReg, (__ubuf__ float*)src0 + i * outerLoopStride + j * innerLoopStride);
                     LoadAlign(bReg, (__ubuf__ float*)src1 + i * outerLoopStride + j * innerLoopStride);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                    Add<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, aReg, bReg, pMask);
+#else
                     Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(cReg, aReg, bReg, pMask);
                     Move<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, cReg, pMask);
+#endif
                     StoreAlign((__ubuf__ float*)dst + i * outerLoopStride + j * innerLoopStride, aReg, pMask);
                 }
             }
@@ -534,8 +546,12 @@ __aicore__ inline void LayerNormGradBase::LastReduceSumSmallR(const LocalTensor<
             for (uint16_t i = 0; i < loopTimes; ++i) {
                 LoadAlign(aReg, (__ubuf__ float*)src0 + i * stride);
                 LoadAlign(bReg, (__ubuf__ float*)src1 + i * stride);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, aReg, bReg, pMask);
+#else
                 Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(cReg, aReg, bReg, pMask);
                 Move<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, cReg, pMask);
+#endif
                 Reduce<AscendC::Reg::ReduceType::SUM>(bReg, aReg, pFull);
                 AscendC::Reg::StoreUnAlign((__ubuf__ float*&)dst, bReg, UReg, 1);
             }
@@ -607,8 +623,12 @@ __aicore__ inline void LayerNormGradBase::LastReduceSum(const LocalTensor<float>
                 AscendC::Reg::MaskReg pMask = AscendC::Reg::UpdateMask<float>(count);
                 LoadAlign(aReg, (__ubuf__ float*)tailSrcA + i * outerLoopStride + j * innerLoopStride);
                 LoadAlign(bReg, (__ubuf__ float*)tailSrcB + i * outerLoopStride + j * innerLoopStride);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, aReg, bReg, pMask);
+#else
                 Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(cReg, aReg, bReg, pMask);
                 Move<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, cReg, pMask);
+#endif
                 Reduce<AscendC::Reg::ReduceType::SUM>(bReg, aReg, pFull);
                 AscendC::Reg::StoreUnAlign((__ubuf__ float*&)dst, bReg, UReg, 1);
             }
