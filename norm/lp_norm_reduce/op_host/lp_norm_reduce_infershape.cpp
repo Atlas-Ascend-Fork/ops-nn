@@ -8,38 +8,6 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-// =============================================================================
-// LpNormReduce_package/op_host/lp_norm_reduce_infershape.cpp
-// =============================================================================
-//
-// ROLE: Shape inference for the LpNormReduce operator (GEIR graph mode).
-//   本文件为 GEIR 图模式 shape 推导实现：
-//   - 注册链 IMPL_OP_INFERSHAPE(LpNormReduce).InferShape(InferShape4LpNormReduce)
-//     原样保留（签名不变：gert::InferShapeContext* → ge::graphStatus）；
-//   - 推导规则按 docs/LpNormReduce/design/InferShapeDtype.md「InferShape」节：
-//     y.shape = reduce_shape(x.shape, axis = axes 非空 ? tuple(axes) : None,
-//     keepdims = keepdim)——keepdim=false 时被归约维删除（axes 为空 → 标量
-//     输出 []），keepdim=true 时被归约维以 size=1 保留；推导主体与 canndev
-//     `op_proto/runtime/lp_norm.cc` InferShape4LpNorm 同构（REQUIREMENTS.md §5.8）。
-//   - 前置校验（design/InferShapeDtype.md「按以下顺序落地」+ spec.yaml
-//     machine_constraint，与 op_host/arch35 tiling 校验链同口径）：
-//     - rank(x) ∈ [0, 8]；
-//     - p 值域 [0, 2147483647] ∪ {-2147483648}（±inf 整型哨兵特例）；
-//     - axes 归一：空列表 → 全部维度参与归约；负轴按 +rank(x) 归一；
-//        每个轴 ∈ [-rank(x), rank(x))，越界 → 推导失败，重复轴按首次出现去重；
-//     - p=±inf 哨兵且归约轴长度为 0 → 推导失败（空集上 max/min 无定义，
-//        canndev 约束 2）。动态编译期未知维（-1）跳过该校验，交由运行时
-//        tiling 的同口径校验（lp_norm_reduce_tiling_arch35.cpp
-//        RejectInfSentinelOnEmptyReduceAxis）拒绝。
-//   - 动态 shape（ND [-2] 口径）：非归约维照常透传（含 -1 未知维），归约维
-//     keepdim=true 时折叠为 1——与 canndev 同构，不做 shape range 处理。
-//
-// CONTENTS:
-//   - InferShape4LpNormReduce() — shape inference function（真实实现）
-//   - IMPL_OP_INFERSHAPE(LpNormReduce).InferShape(...) — registration macro
-//
-// =============================================================================
-
 #include <set>
 #include <string>
 #include <vector>
@@ -47,7 +15,8 @@
 #include "register/op_impl_registry.h"             // IMPL_OP_INFERSHAPE macro
 #include "exe_graph/runtime/infer_shape_context.h" // InferShapeContext, gert::Shape
 #include "exe_graph/runtime/runtime_attrs.h"       // gert::RuntimeAttrs
-#include "op_common/log/log.h"                     // OP_CHECK_* / OP_LOGE_FOR_INVALID_* macros
+#include "util/shape_util.h"
+#include "op_common/log/log.h" // OP_CHECK_* / OP_LOGE_FOR_INVALID_* macros
 
 using namespace ge;
 
@@ -75,21 +44,16 @@ constexpr int64_t DEFAULT_P = 2;
 // ---------------------------------------------------------------------------
 static ge::graphStatus InferShape4LpNormReduce(gert::InferShapeContext* context)
 {
+    if (context == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    OP_LOGD(context->GetNodeName(), "Begin InferShape4LpNormReduce.");
     const gert::Shape* xShape = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
     gert::Shape* yShape = context->GetOutputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
     const gert::RuntimeAttrs* attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
-
-    // ── unknown rank 透传（批 b-3，对齐 changwei infershape:71-75 与 canndev
-    //    runtime_util.h IsUnknownRank/SetUnknownRank 通行写法）：x 为 [-2] 标记时
-    //    归约轴无法确定，输出同样标记 unknown rank；落图后由运行时 tiling 校验。
-    if (xShape->GetDimNum() == 1 && xShape->GetDim(0) == -2) {
-        yShape->SetDimNum(0);
-        yShape->AppendDim(-2);
-        return ge::GRAPH_SUCCESS;
-    }
 
     // ── 校验 rank(x) ∈ [0, 8]（批 b-5 对齐 canndev/changwei：rank-0 标量放行，
     //    空 axes = 单元素全归约 → y 同为标量；rank-0 + 非空 axes 由 axes 值域拒绝）──
@@ -108,6 +72,13 @@ static ge::graphStatus InferShape4LpNormReduce(gert::InferShapeContext* context)
                                               "p must be non-negative (full int64) or -2147483648 (-inf sentinel); "
                                               "2147483647 is reserved as the +inf sentinel"),
         return ge::GRAPH_FAILED);
+
+    // Unknown rank is a marker, not a scalar or a one-dimensional tensor.
+    // Validate shape-independent attributes first; defer axes until rank is known.
+    if (Ops::Base::IsUnknownRank(*xShape)) {
+        Ops::Base::SetUnknownRank(*yShape);
+        return ge::GRAPH_SUCCESS;
+    }
 
     // ── attr keepdim（idx 2，默认 false）──
     const bool* attrKeepDim = attrs->GetAttrPointer<bool>(ATTR_KEEP_DIM_IDX);

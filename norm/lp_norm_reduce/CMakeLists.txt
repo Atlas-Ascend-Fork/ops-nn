@@ -22,9 +22,25 @@ add_modules_sources(
     DISABLE_IN_OPP TRUE
 )
 
-# The V1 infer implementation uses the repository-wide merged prototype to
-# avoid registering a second LpNormReduce definition.
+# The verifier uses the repository-wide merged prototype to avoid registering
+# a second LpNormReduce definition.
 target_include_directories(${GRAPH_PLUGIN_NAME}_obj PRIVATE ${ASCEND_GRAPH_CONF_DST})
+
+if(UT_TEST_ALL OR OP_HOST_UT)
+    add_modules_ut_sources(
+        HOSTNAME ${OP_INFERSHAPE_MODULE_NAME}
+        MODE PRIVATE
+        DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/ut/op_host
+    )
+endif()
+
+if(UT_TEST_ALL OR OP_GRAPH_UT)
+    add_modules_ut_sources(
+        HOSTNAME ${OP_GRAPH_MODULE_NAME}
+        MODE PRIVATE
+        DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/ut/op_graph
+    )
+endif()
 
 add_kernel_sources(
     KERNEL_SRC lp_norm_reduce.cpp

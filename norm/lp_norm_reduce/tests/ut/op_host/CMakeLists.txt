@@ -8,11 +8,8 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-# InferShape UT：独立编译，不依赖 CANN faker 框架
-add_executable(test_lp_norm_reduce_infershape test_lp_norm_reduce_infershape.cpp)
-target_compile_features(test_lp_norm_reduce_infershape PRIVATE cxx_std_17)
-target_compile_options(test_lp_norm_reduce_infershape PRIVATE -Wall -Wextra)
-add_test(NAME test_lp_norm_reduce_infershape COMMAND test_lp_norm_reduce_infershape)
+# InferShape cases use the shared Host UT runner and are registered by the
+# operator's top-level CMakeLists.txt. They do not define a standalone main().
 
 # 递归包含 arch35 子目录
 file(GLOB CURRENT_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/*)

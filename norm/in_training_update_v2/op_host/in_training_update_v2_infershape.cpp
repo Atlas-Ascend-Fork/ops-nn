@@ -10,7 +10,7 @@
 
 /*!
  * \file in_training_update_v2_infershape.cpp
- * \brief Shape and dtype inference for INTrainingUpdateV2.
+ * \brief Shape inference for INTrainingUpdateV2.
  */
 
 #include "log/log.h"
@@ -55,25 +55,7 @@ ge::graphStatus InferShapeForINTrainingUpdateV2(gert::InferShapeContext* context
     *batchVarianceShape = *sumShape;
     return ge::GRAPH_SUCCESS;
 }
-
-ge::graphStatus InferDataTypeForINTrainingUpdateV2(gert::InferDataTypeContext* context)
-{
-    if (context == nullptr) {
-        OP_LOGE("INTrainingUpdateV2", "infer data type context is null");
-        return ge::GRAPH_FAILED;
-    }
-    if (context->SetOutputDataType(OUTPUT_Y, context->GetRequiredInputDataType(INPUT_X)) != ge::GRAPH_SUCCESS ||
-        context->SetOutputDataType(OUTPUT_BATCH_MEAN, ge::DT_FLOAT) != ge::GRAPH_SUCCESS ||
-        context->SetOutputDataType(OUTPUT_BATCH_VARIANCE, ge::DT_FLOAT) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "output dtype", "setter returned failure",
-                                              "all inferred output dtypes must be writable");
-        return ge::GRAPH_FAILED;
-    }
-    return ge::GRAPH_SUCCESS;
-}
 } // namespace
 
-IMPL_OP_INFERSHAPE(INTrainingUpdateV2)
-    .InferShape(InferShapeForINTrainingUpdateV2)
-    .InferDataType(InferDataTypeForINTrainingUpdateV2);
+IMPL_OP_INFERSHAPE(INTrainingUpdateV2).InferShape(InferShapeForINTrainingUpdateV2);
 } // namespace ops

@@ -46,16 +46,18 @@ namespace ops {
 // fp16 输出、fp32 输入必 fp32 输出、bf16 输入必 bf16 输出）。输入 dtype 不在
 // 950 交付的三档（DT_FLOAT16 / DT_FLOAT / DT_BF16）内 → 推导失败。
 // ---------------------------------------------------------------------------
-static ge::graphStatus InferDataTypeForLpNormReduce(gert::InferDataTypeContext* context)
+ge::graphStatus InferDataTypeForLpNormReduce(gert::InferDataTypeContext* context)
 {
+    if (context == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
     const ge::DataType xDtype = context->GetInputDataType(0);
     OP_CHECK_IF(xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_FLOAT && xDtype != ge::DT_BF16,
                 OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x",
                                                       ge::TypeUtils::DataTypeToSerialString(xDtype),
                                                       "only DT_FLOAT16/DT_FLOAT/DT_BF16 are supported on ascend950"),
                 return ge::GRAPH_FAILED);
-    context->SetOutputDataType(0, xDtype);
-    return ge::GRAPH_SUCCESS;
+    return context->SetOutputDataType(0, xDtype);
 }
 
 // IMPL_OP(LpNormReduce).InferDataType(func):

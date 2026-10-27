@@ -8,8 +8,8 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-# UT 构建配置：独立编译逻辑测试方案（不依赖 CANN faker 框架）
-# 从源文件复制 static 函数逻辑进行测试
+# Collect the standalone tiling test subdirectories. InferShape cases are
+# registered with the shared Host UT runner by the operator's CMakeLists.txt.
 file(GLOB CURRENT_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/*)
 message(STATUS "=== Debug: CURRENT_DIRS =${CURRENT_DIRS} ")
 foreach(SUB_DIR ${CURRENT_DIRS})

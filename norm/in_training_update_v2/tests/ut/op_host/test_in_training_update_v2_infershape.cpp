@@ -89,33 +89,4 @@ TEST(INTrainingUpdateV2InferShape, RejectsNonFourDimensionalSum)
     EXPECT_EQ(RunInferShape({2, 3, 4, 5}, {2, 3}, ge::DT_FLOAT, ge::FORMAT_NCHW).status, ge::GRAPH_FAILED);
 }
 
-TEST(INTrainingUpdateV2InferDataType, YFollowsXAndStatisticsStayFloat)
-{
-    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingUpdateV2");
-    ASSERT_NE(impl, nullptr);
-    ASSERT_NE(impl->infer_datatype, nullptr);
-
-    ge::DataType xType = ge::DT_FLOAT16;
-    ge::DataType statType = ge::DT_FLOAT;
-    ge::DataType undefinedType = ge::DT_UNDEFINED;
-    auto holder = gert::InferDataTypeContextFaker()
-                      .IrInputNum(7)
-                      .NodeIoNum(3, 3)
-                      .IrInstanceNum({1, 1, 1, 0, 0, 0, 0}, {1, 1, 1})
-                      .NodeInputTd(0, xType, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
-                      .NodeInputTd(1, statType, ge::FORMAT_NCHW, ge::FORMAT_ND)
-                      .NodeInputTd(2, statType, ge::FORMAT_NCHW, ge::FORMAT_ND)
-                      .NodeOutputTd(0, undefinedType, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
-                      .NodeOutputTd(1, undefinedType, ge::FORMAT_NCHW, ge::FORMAT_ND)
-                      .NodeOutputTd(2, undefinedType, ge::FORMAT_NCHW, ge::FORMAT_ND)
-                      .InputDataTypes({&xType, &statType, &statType})
-                      .OutputDataTypes({&undefinedType, &undefinedType, &undefinedType})
-                      .Build();
-    auto* context = holder.GetContext<gert::InferDataTypeContext>();
-    ASSERT_EQ(impl->infer_datatype(context), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(context->GetOutputDataType(0), ge::DT_FLOAT16);
-    EXPECT_EQ(context->GetOutputDataType(1), ge::DT_FLOAT);
-    EXPECT_EQ(context->GetOutputDataType(2), ge::DT_FLOAT);
-}
-
 } // namespace

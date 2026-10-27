@@ -240,6 +240,13 @@ static ge::graphStatus GetShapeAndDtype(gert::TilingContext* context, LpNormRedu
 
     auto xDesc = context->GetInputDesc(INPUT_X_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
+    // Check the selected storage format after graph format conversion.
+    OP_CHECK_IF(xDesc->GetFormat().GetStorageFormat() != ge::FORMAT_ND,
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                    context->GetNodeName(), "x",
+                    ge::TypeUtils::FormatToSerialString(xDesc->GetFormat().GetStorageFormat()).c_str(),
+                    "the storage format of x must be ND"),
+                return ge::GRAPH_FAILED);
     ctx.xDtype = xDesc->GetDataType();
     // dtype 三档（批 b-6 对齐 canndev：fp16/fp32/bf16；bf16 与 fp16 同为 2 字节，
     // 走同一 B16 搬运/对齐路径，kernel 侧 fp32 累加）
