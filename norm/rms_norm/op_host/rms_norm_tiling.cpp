@@ -13,6 +13,7 @@
  * \brief RmsNorm tiling file
  */
 #include <iostream>
+#include <limits>
 #include "op_host/tiling_util.h"
 #include "rms_norm_tiling.h"
 
@@ -113,6 +114,11 @@ void OnceReduceMaxColsAlign64(uint64_t& onceReduceMaxCols, uint32_t& mask, uint3
 
 static bool CheckInputShape4RmsNorm(const gert::TilingContext* context)
 {
+    auto* platformInfo = context->GetPlatformInfo();
+    const bool allowEmpty = std::string(context->GetNodeType()) == "RmsNorm" &&
+                            Ops::NN::OpTiling::IsRegbaseSocVersion(context) && platformInfo != nullptr &&
+                            platform_ascendc::PlatformAscendC(platformInfo).GetSocVersion() ==
+                                platform_ascendc::SocVersion::ASCEND950;
     const gert::StorageShape* xShape = context->GetInputShape(0);
     const gert::StorageShape* gammaShape = context->GetInputShape(1);
     const gert::StorageShape* yShape = context->GetOutputShape(0);
@@ -145,7 +151,8 @@ static bool CheckInputShape4RmsNorm(const gert::TilingContext* context)
         return false;
     }
     for (uint32_t i = 0; i < gammaDimNum; i++) {
-        OP_TILING_CHECK(gammaShape->GetStorageShape().GetDim(i) == 0,
+        OP_TILING_CHECK((allowEmpty && gammaShape->GetStorageShape().GetDim(i) < 0) ||
+                            (!allowEmpty && gammaShape->GetStorageShape().GetDim(i) == 0),
                         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "gamma",
                                                               ToString(gammaShape->GetStorageShape()).c_str(),
                                                               "Input gamma cannot be an empty tensor"),
@@ -160,13 +167,17 @@ static bool CheckInputShape4RmsNorm(const gert::TilingContext* context)
             return false;
         }
     }
+    bool hasEmptyDim = false;
     for (uint32_t i = 0; i < xDimNum; i++) {
-        OP_TILING_CHECK(xShape->GetStorageShape().GetDim(i) == 0,
+        hasEmptyDim = hasEmptyDim || xShape->GetStorageShape().GetDim(i) == 0;
+        OP_TILING_CHECK((allowEmpty && xShape->GetStorageShape().GetDim(i) < 0) ||
+                            (!allowEmpty && xShape->GetStorageShape().GetDim(i) == 0),
                         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x",
                                                               ToString(xShape->GetStorageShape()).c_str(),
                                                               "Input x cannot be an empty tensor"),
                         return false);
-        OP_TILING_CHECK(yShape->GetStorageShape().GetDim(i) == 0,
+        OP_TILING_CHECK((allowEmpty && yShape->GetStorageShape().GetDim(i) < 0) ||
+                            (!allowEmpty && yShape->GetStorageShape().GetDim(i) == 0),
                         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "y",
                                                               ToString(yShape->GetStorageShape()).c_str(),
                                                               "Output y cannot be an empty tensor"),
@@ -178,8 +189,24 @@ static bool CheckInputShape4RmsNorm(const gert::TilingContext* context)
             return false;
         }
     }
+    if (allowEmpty && hasEmptyDim) {
+        // 空归约按非归约维写 rstd，必须保证声明的输出恰好覆盖这些元素。
+        // 同时保留省略归约后缀中各个 1 的输出表示。
+        const size_t outerDimNum = xDimNum - gammaDimNum;
+        OP_TILING_CHECK(rstdDimNum != xDimNum && rstdDimNum != outerDimNum,
+                        OP_LOGE(context, "Empty-input rstd rank must equal x rank or the non-reduced rank."),
+                        return false);
+        for (size_t i = 0; i < rstdDimNum; ++i) {
+            const int64_t expectedDim = i < outerDimNum ? xShape->GetStorageShape().GetDim(i) : 1;
+            OP_TILING_CHECK(rstdShape->GetStorageShape().GetDim(i) != expectedDim,
+                            OP_LOGE(context, "Empty-input rstd shape must match the non-reduced dimensions."),
+                            return false);
+        }
+        return true;
+    }
     for (uint32_t i = 0; i < rstdDimNum; i++) {
-        OP_TILING_CHECK(rstdShape->GetStorageShape().GetDim(i) == 0,
+        OP_TILING_CHECK((allowEmpty && rstdShape->GetStorageShape().GetDim(i) < 0) ||
+                            (!allowEmpty && rstdShape->GetStorageShape().GetDim(i) == 0),
                         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "rstd",
                                                               ToString(rstdShape->GetStorageShape()).c_str(),
                                                               "Output rstd cannot be an empty tensor"),
@@ -268,6 +295,7 @@ static ge::graphStatus Tiling4RmsNorm(gert::TilingContext* context)
 {
     OP_TILING_CHECK(!CheckInputShape4RmsNorm(context), OP_LOGE(context, "Input shape invalid."),
                     return ge::GRAPH_FAILED);
+    const bool isRegbase = Ops::NN::OpTiling::IsRegbaseSocVersion(context);
     RMSNormTilingData tiling;
     OP_LOGD(context, " Tiling4RmsNorm");
     auto ptrCompileInfo = reinterpret_cast<const Tiling4RmsNormCompileInfo*>(context->GetCompileInfo());
@@ -295,12 +323,19 @@ static ge::graphStatus Tiling4RmsNorm(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, epsilon);
     OP_TILING_CHECK(*epsilon < 0, OPS_REPORT_VECTOR_INNER_ERR(context, "Epsilon less than zero, please check."),
                     return ge::GRAPH_FAILED);
-    uint64_t numCol = gamma_shape.GetShapeSize();
+    const int64_t gammaSize = gamma_shape.GetShapeSize();
+    OP_TILING_CHECK(isRegbase && (gammaSize < 0 || x_shape.GetShapeSize() < 0),
+                    OP_LOGE(context, "Input shape size exceeds the int64_t range."), return ge::GRAPH_FAILED);
+    uint64_t numCol = static_cast<uint64_t>(gammaSize);
     float avgFactor = (numCol == 0ULL) ? 0.0f : 1.0f / static_cast<float>(numCol);
     size_t xDimNum = x_shape.GetDimNum();
     size_t gammaDimNum = gamma_shape.GetDimNum();
     uint64_t numRow = 1;
     for (size_t i = 0; i < xDimNum - gammaDimNum; i++) {
+        OP_TILING_CHECK(isRegbase && x_shape.GetDim(i) != 0 &&
+                            numRow > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / x_shape.GetDim(i),
+                        OP_LOGE(context, "Outer dimension product exceeds the int64_t range."),
+                        return ge::GRAPH_FAILED);
         numRow *= x_shape.GetDim(i);
     }
 
@@ -344,6 +379,8 @@ static ge::graphStatus Tiling4RmsNorm(gert::TilingContext* context)
     uint32_t isNddma = 1;
     uint8_t isPerformance = 0;
 
+    OP_TILING_CHECK(isRegbase && ubSize <= UB_USED, OP_LOGE(context, "The UB size is smaller than the reserved space."),
+                    return ge::GRAPH_FAILED);
     ubSize = ubSize - UB_USED;
 
     uint32_t dataPerBlock;
@@ -354,7 +391,7 @@ static ge::graphStatus Tiling4RmsNorm(gert::TilingContext* context)
     }
 
     numColAlign = CeilDiv(numCol, static_cast<uint64_t>(dataPerBlock)) * dataPerBlock;
-    if (Ops::NN::OpTiling::IsRegbaseSocVersion(context)) {
+    if (isRegbase) {
         RMSNormArch35TilingData arch35TilingData;
         return TilingArch354RmsNorm(context, numRow, numCol, numCore, ubSize, xDataType, gammaDataType, *epsilon,
                                     tiling, arch35TilingData);

@@ -14,11 +14,17 @@
  */
 #include "arch35/rms_norm_regbase_perf.h"
 #include "arch35/rms_norm_regbase_split_d.h"
+#include "arch35/rms_norm_regbase_split_ar.h"
+#include "arch35/rms_norm_regbase_trans.h"
+#include "arch35/rms_norm_regbase_reduce_empty.h"
 using namespace AscendC;
 using namespace RmsNorm;
 
 #define RMSNORM_REGBASE_NORMAL 5000
 #define RMSNORM_REGBASE_SPLIT 2001
+#define RMSNORM_REGBASE_SPLIT_AR 3000
+#define RMSNORM_REGBASE_TRANSPOSE 4000
+#define RMSNORM_REGBASE_REDUCE_EMPTY 6000
 
 #define GENERAL_OP_IMPL(templateClass, ...)      \
     do {                                         \
@@ -36,6 +42,25 @@ extern "C" __global__ __aicore__ void rms_norm(GM_ADDR x, GM_ADDR gamma, GM_ADDR
         const RMSNormArch35TilingData* __restrict tilingData = &tiling_data_in;
         KernelRmsNormRegBasePerf<DTYPE_X, DTYPE_GAMMA, false> op;
         op.Init(x, gamma, y, rstd, tilingData);
+        op.Process();
+    } else if (TILING_KEY_IS(RMSNORM_REGBASE_SPLIT_AR)) {
+        KERNEL_TASK_TYPE(RMSNORM_REGBASE_SPLIT_AR, KERNEL_TYPE_MIX_AIV_1_0);
+        GET_TILING_DATA_WITH_STRUCT(RMSNormRegbaseSplitARTilingData, tilingData, tiling);
+        TPipe pipe;
+        KernelRmsNormRegBaseSplitAR<DTYPE_X, DTYPE_GAMMA> op(&pipe);
+        op.Init(x, gamma, y, rstd, GetUserWorkspace(workspace), &tilingData);
+        op.Process();
+    } else if (TILING_KEY_IS(RMSNORM_REGBASE_TRANSPOSE)) {
+        GET_TILING_DATA_WITH_STRUCT(RMSNormRegbaseTransTilingData, tilingData, tiling);
+        TPipe pipe;
+        KernelRmsNormRegBaseTrans<DTYPE_X, DTYPE_GAMMA> op(&pipe);
+        op.Init(x, gamma, y, rstd, &tilingData);
+        op.Process();
+    } else if (TILING_KEY_IS(RMSNORM_REGBASE_REDUCE_EMPTY)) {
+        GET_TILING_DATA_WITH_STRUCT(RMSNormRegbaseReduceEmptyTilingData, tilingData, tiling);
+        TPipe pipe;
+        KernelRmsNormRegBaseReduceEmpty op(&pipe);
+        op.Init(rstd, &tilingData);
         op.Process();
     } else if (TILING_KEY_IS(RMSNORM_REGBASE_SPLIT)) {
         GET_TILING_DATA_WITH_STRUCT(RMSNormTilingData, tiling_data_in, tiling);

@@ -75,6 +75,41 @@ END_TILING_DATA_DEF;
 REGISTER_TILING_DATA_CLASS(RmsNorm_5000, RMSNormArch35TilingData)
 REGISTER_TILING_DATA_CLASS(GemmaRmsNorm_5000, RMSNormArch35TilingData)
 
+BEGIN_TILING_DATA_DEF(RMSNormRegbaseSplitARTilingData)
+TILING_DATA_FIELD_DEF(uint64_t, numRow);
+TILING_DATA_FIELD_DEF(uint64_t, numCol);
+TILING_DATA_FIELD_DEF(uint64_t, rBlockFactor);
+TILING_DATA_FIELD_DEF(uint64_t, rBlockNum);
+TILING_DATA_FIELD_DEF(uint64_t, tailR);
+TILING_DATA_FIELD_DEF(uint64_t, ubFactor);
+TILING_DATA_FIELD_DEF(uint64_t, numRowAlign);
+TILING_DATA_FIELD_DEF(float, epsilon);
+TILING_DATA_FIELD_DEF(float, avgFactor);
+END_TILING_DATA_DEF;
+REGISTER_TILING_DATA_CLASS(RmsNorm_3000, RMSNormRegbaseSplitARTilingData)
+
+BEGIN_TILING_DATA_DEF(RMSNormRegbaseTransTilingData)
+TILING_DATA_FIELD_DEF(uint64_t, numRow);
+TILING_DATA_FIELD_DEF(uint64_t, numCol);
+TILING_DATA_FIELD_DEF(uint64_t, rAligned);
+TILING_DATA_FIELD_DEF(uint64_t, rTileBase);
+TILING_DATA_FIELD_DEF(uint64_t, tileALen);
+TILING_DATA_FIELD_DEF(float, epsilon);
+TILING_DATA_FIELD_DEF(float, avgFactor);
+END_TILING_DATA_DEF;
+REGISTER_TILING_DATA_CLASS(RmsNorm_4000, RMSNormRegbaseTransTilingData)
+
+BEGIN_TILING_DATA_DEF(RMSNormRegbaseReduceEmptyTilingData)
+TILING_DATA_FIELD_DEF(uint64_t, numRow);
+TILING_DATA_FIELD_DEF(uint64_t, usedCoreNum);
+TILING_DATA_FIELD_DEF(uint64_t, rowsPerCore);
+TILING_DATA_FIELD_DEF(uint64_t, rowsPerTailCore);
+TILING_DATA_FIELD_DEF(uint64_t, tailCoreStartIndex);
+TILING_DATA_FIELD_DEF(uint64_t, rowsPerLoop);
+END_TILING_DATA_DEF;
+// 5000 is already the RmsNorm full-load key.
+REGISTER_TILING_DATA_CLASS(RmsNorm_6000, RMSNormRegbaseReduceEmptyTilingData)
+
 constexpr uint32_t FLOAT_PER_REAPEAT = 64;
 constexpr uint32_t ALING_FACTOR_512 = 512;
 constexpr uint32_t DOUBLE_BUFFER_NUM = 2;
@@ -90,6 +125,9 @@ constexpr int32_t RETAINED_SIZE_MULTI_N = 256 * 3 * 4;
 constexpr int32_t RETAINED_SIZE_1K = 2 * 1024;
 constexpr uint32_t RMSNORM_REGBASE_NORMAL = 5000;
 constexpr uint32_t RMSNORM_REGBASE_SPLIT = 2001;
+constexpr uint32_t RMSNORM_REGBASE_SPLIT_AR = 3000;
+constexpr uint32_t RMSNORM_REGBASE_TRANSPOSE = 4000;
+constexpr uint32_t RMSNORM_REGBASE_REDUCE_EMPTY = 6000;
 
 struct Tiling4RmsNormCompileInfo {
     uint32_t totalCoreNum = 0;

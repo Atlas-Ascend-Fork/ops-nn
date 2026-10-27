@@ -93,7 +93,7 @@ aclnnStatus aclnnRmsNorm(
       <td>gamma（aclTensor*）</td>
       <td>输入</td>
       <td>表示进行归一化计算的缩放因子（权重），对应公式中的`gamma`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape需要满足gamma_shape = x_shape[n:], n < x_shape.dims()。</li></ul></td>
+      <td>shape需要满足gamma_shape = x_shape[n:], n < x_shape.dims()。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
@@ -151,10 +151,6 @@ aclnnStatus aclnnRmsNorm(
     </tr>
   </tbody>
   </table>
-
-  <!-- npu="310p" id7 -->
-  - <term>Atlas推理系列产品</term>：参数`x`、`gamma`、`yOut`的数据类型不支持BFLOAT16。
-  <!-- end id7 -->
 
 - **返回值**
 
@@ -237,43 +233,67 @@ aclnnStatus aclnnRmsNorm(
 
 ## 约束说明
 
-<!-- npu="310p" id8 -->
-- <term>Atlas推理系列产品</term>：归一化维的总数据量（即`gamma`各维度大小之积×单个元素字节数）必须大于等于32 Bytes。
-<!-- end id8 -->
-- 边界值场景说明：
+- 空Tensor说明：
 
-  <!-- npu="310p" id9 -->
-  - <term>Atlas推理系列产品</term>：输入不支持包含Inf和NaN。
-  <!-- end id9 -->
-  <!-- npu="950,A3,910b" id10 -->
-  - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>、<term>Ascend 950PR&950DT系列产品</term>：当输入是Inf时，输出为Inf。当输入是NaN时，输出为NaN。
-  <!-- end id10 -->
+  在满足对应产品输入约束的前提下，非归一化维各维大小之积为0时，`yOut`和`rstdOut`均为空Tensor。不存在非归一化维时，其维度大小之积按1计算。
+
+- 确定性计算：
+  - aclnnRmsNorm默认确定性实现。
+
+<!-- npu="950" id7 -->
+- <term>Ascend 950PR&950DT系列产品</term>：
+
+  - `gamma`支持空Tensor。
+  - 归一化后缀各维大小之积为0、非归一化维各维大小之积大于0时，`x`、`gamma`、`yOut`为空Tensor，`rstdOut`非空且各元素为NaN。
+  - `x`为空Tensor时，`rstdOut`的shape允许省略全部归一化维，仅保留非归一化维。例如，`x`的shape为`(2, 3, 0, 4)`、`gamma`的shape为`(0, 4)`时，`rstdOut`的shape可为`(2, 3, 1, 1)`或`(2, 3)`。
+  - `x`为空Tensor且归一化覆盖其全部维度时，省略后的`rstdOut`为含1个FLOAT32元素的0维标量，shape为`()`，不是空Tensor。例如，`x`和`gamma`的shape均为`(0,)`时，`rstdOut`的shape可为`(1,)`或`()`。
+  - 省略归一化维后的`rstdOut`等价于将保留归一化维的结果reshape为省略后的shape，元素值（含NaN）保持不变。
+  - 当输入是Inf时，输出为Inf。当输入是NaN时，输出为NaN。
+<!-- end id7 -->
+
+<!-- npu="A3" id8 -->
+- <term>Atlas A3系列产品</term>：
+
+  - `gamma`不支持空Tensor。
+  - 当输入是Inf时，输出为Inf。当输入是NaN时，输出为NaN。
+<!-- end id8 -->
+
+<!-- npu="910b" id9 -->
+- <term>Atlas A2系列产品</term>：
+
+  - `gamma`不支持空Tensor。
+  - 当输入是Inf时，输出为Inf。当输入是NaN时，输出为NaN。
+<!-- end id9 -->
+
+<!-- npu="310p" id10 -->
+- <term>Atlas推理系列产品</term>：
+
+  - `gamma`不支持空Tensor。
+  - 参数`x`、`gamma`、`yOut`的数据类型不支持BFLOAT16。
+  - 归一化维的总数据量（即`gamma`各维度大小之积×单个元素字节数）必须大于等于32Bytes。
+  - 输入不支持包含Inf和NaN。
+<!-- end id10 -->
 
 - 各平台支持数据类型说明：
+
+  以下组合依次对应`x`、`gamma`、`yOut`、`rstdOut`的数据类型。
 
   <!-- npu="950,A3,910b" id11 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>、<term>Ascend 950PR&950DT系列产品</term>：
 
-    | `x`数据类型 | `gamma`数据类型 | `yOut`数据类型 | `rstdOut`数据类型 |
-    | -------- | -------- | -------- | -------- |
-    | FLOAT16 | FLOAT32  | FLOAT16 | FLOAT32 |
-    | BFLOAT16 | FLOAT32 | BFLOAT16 | FLOAT32 |
-    | FLOAT16 | FLOAT16 | FLOAT16 | FLOAT32 |
-    | BFLOAT16 | BFLOAT16 | BFLOAT16 | FLOAT32 |
-    | FLOAT32 | FLOAT32  | FLOAT32 | FLOAT32  |
+    - FLOAT16、FLOAT32、FLOAT16、FLOAT32。
+    - BFLOAT16、FLOAT32、BFLOAT16、FLOAT32。
+    - FLOAT16、FLOAT16、FLOAT16、FLOAT32。
+    - BFLOAT16、BFLOAT16、BFLOAT16、FLOAT32。
+    - FLOAT32、FLOAT32、FLOAT32、FLOAT32。
   <!-- end id11 -->
 
   <!-- npu="310p" id12 -->
   - <term>Atlas推理系列产品</term>：
 
-    | `x`数据类型 | `gamma`数据类型 | `yOut`数据类型 | `rstdOut`数据类型 |
-    | -------- | -------- | -------- | -------- |
-    | FLOAT16 | FLOAT16 | FLOAT16 | FLOAT32 |
-    | FLOAT32 | FLOAT32  | FLOAT32 | FLOAT32  |
+    - FLOAT16、FLOAT16、FLOAT16、FLOAT32。
+    - FLOAT32、FLOAT32、FLOAT32、FLOAT32。
   <!-- end id12 -->
-
-- 确定性计算：
-  - aclnnRmsNorm默认确定性实现。
 
 ## 调用示例
 

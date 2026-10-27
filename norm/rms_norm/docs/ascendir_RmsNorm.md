@@ -63,13 +63,19 @@ REG_OP(RmsNorm)
 
 | 参数名 | 输入/属性/输出 | 描述 | 使用说明 | 数据类型 | 数据格式 | 维度(shape) |
 | --- | --- | --- | --- | --- | --- | --- |
-| x (Tensor) | 必选输入 | 待归一化的输入张量，对应公式中的$x$。 | 各维大小必须大于0，不支持空Tensor；有效数据类型组合见“约束说明”。 | float32、float16、bfloat16 | ND | 1-8维，形状为[A1,...,Ai,R1,...,Rj] |
-| gamma (Tensor) | 必选输入 | 归一化计算的缩放因子，对应公式中的$\gamma$。 | 各维大小必须大于0；与`x`的shape关系见“约束说明”；有效数据类型组合见“约束说明”。 | float32、float16、bfloat16 | ND | 1-8维，形状为[R1,...,Rj] |
+| x (Tensor) | 必选输入 | 待归一化的输入张量，对应公式中的$x$。 | 有效数据类型组合见“约束说明”。 | float32、float16、bfloat16 | ND | 1-8维，形状为[A1,...,Ai,R1,...,Rj] |
+| gamma (Tensor) | 必选输入 | 归一化计算的缩放因子，对应公式中的$\gamma$。 | 与`x`的shape关系见“约束说明”；有效数据类型组合见“约束说明”。 | float32、float16、bfloat16 | ND | 1-8维，形状为[R1,...,Rj] |
 | epsilon (float) | 可选属性 | 添加到均方值中的数，对应公式中的$\epsilon$。 | 取值不能小于0，默认值为1e-6。 | - | - | - |
 | y (Tensor) | 必选输出 | 归一化并缩放后的结果，对应公式中的$y$。 | shape和数据类型与`x`相同。 | float32、float16、bfloat16 | ND | 与`x`一致 |
 | rstd (Tensor) | 必选输出 | 均方根的倒数，对应公式中的$rstd$。 | 数据类型固定为float32；与`gamma`对应的末尾各维大小均为1，其余维度与`x`相同。 | float32 | ND | 与`x`同维，形状为[A1,...,Ai,1,...,1]，末尾共`j`个1 |
 
+不同产品的参数差异说明如下：
+
+- <term>Ascend 950PR&950DT系列产品</term>：`x`和`gamma`允许维度大小为0。归一化后缀各维大小之积为0、非归一化维各维大小之积大于0时，`y`为空Tensor，`rstd`非空且各元素为NaN；非归一化维各维大小之积为0时，`y`和`rstd`均为空Tensor。不存在非归一化维时，其维度大小之积按1计算。空维不会改变`gamma`与`x`的后缀匹配要求。
+- 除上述<term>Ascend 950PR&950DT系列产品</term>外，`x`和`gamma`的各维大小必须大于0，不支持空Tensor。
 - <term>Atlas推理系列产品</term>、<term>Kirin X90处理器系列产品</term>、<term>Kirin 9030处理器系列产品</term>：`x`、`gamma`和`y`不支持bfloat16。
+
+以上约束适用于Ascend IR接口；aclnn接口的参数约束请参见[aclnnRmsNorm](aclnnRmsNorm.md)。
 
 ## 约束说明
 

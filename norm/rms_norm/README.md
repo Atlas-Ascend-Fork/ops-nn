@@ -83,9 +83,11 @@
 
 <term>Atlas推理系列产品</term>：归一化维[R1,...,Rj]的数据量（R1×...×Rj×单个元素字节数）必须大于等于32 Bytes。
 
+<term>Ascend 950PR&950DT系列产品</term>：归一化后缀的元素数为0、非归一化维的元素数大于0时，`x`、`gamma`、`y`为空Tensor，`rstd`非空且各元素为NaN；非归一化维的元素数为0时，`y`和`rstd`均为空Tensor。`gamma`的shape仍须与`x`的归一化后缀一致。
+
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
 | aclnn接口  | [test_aclnn_rms_norm](examples/test_aclnn_rms_norm.cpp) | 通过[aclnnRmsNorm](docs/aclnnRmsNorm.md)接口方式调用RmsNorm算子。 |
-| 图模式 | [test_geir_rms_norm](examples/test_geir_rms_norm.cpp) | 通过[Ascend IR](docs/ascendirRmsNorm.md)构图方式调用RmsNorm算子。 |
+| 图模式 | [test_geir_rms_norm](examples/test_geir_rms_norm.cpp) | 通过[Ascend IR](docs/ascendir_RmsNorm.md)构图方式调用RmsNorm算子。 |
