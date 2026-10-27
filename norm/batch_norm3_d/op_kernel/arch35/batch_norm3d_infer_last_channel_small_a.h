@@ -89,7 +89,7 @@ public:
         pipe_->InitBuffer(betaFp32Buf_, paramCacheLen * sizeof(float));
         pipe_->InitBuffer(gammaFp32Buf_, paramCacheLen * sizeof(float));
         pipe_->InitBuffer(meanFp32Buf_, paramCacheLen * sizeof(float));
-        pipe_->InitBuffer(rstdFp32Buf_, paramCacheLen * sizeof(float));
+        pipe_->InitBuffer(rstdFp32Buf_, paramCacheLen * sizeof(float) * (IsSameType<T, float>::value ? 2 : 1));
     }
 
     __aicore__ inline void Process()
@@ -284,6 +284,7 @@ private:
             RegTensor<float> mean;
             RegTensor<float> var;
             RegTensor<float> rstd;
+            RegTensor<float> rstdLow;
             RegTensor<uint32_t> paramOffset;
             uint32_t paramCacheElemLen = GetSmallLastChannelParamCacheElemLen();
             uint32_t maskLen = paramCacheElemLen;
@@ -293,13 +294,17 @@ private:
             GatherParamForDtypeT(gammaLocal, gamma, paramOffset, pregMaskFp32, paramCacheElemLen);
             GatherParamForDtypeT(betaLocal, beta, paramOffset, pregMaskFp32, paramCacheElemLen);
             GatherRunningParamForDtypeT(varLocal, var, paramOffset, pregMaskFp32, paramCacheElemLen);
-            NormCommon::ComputeRstdNewtonRaphsonReg(var, rstd, pregMaskFp32, tilingData_->epsilon);
+            ComputeInferenceRstd<T>(var, rstd, rstdLow, pregMaskFp32, tilingData_->epsilon);
             GatherRunningParamForDtypeT(meanLocal, mean, paramOffset, pregMaskFp32, paramCacheElemLen);
 
             DataCopy(gammaFp32Local, gamma, pregMaskFp32);
             DataCopy(betaFp32Local, beta, pregMaskFp32);
             DataCopy(meanFp32Local, mean, pregMaskFp32);
             DataCopy(rstdFp32Local, rstd, pregMaskFp32);
+            if constexpr (IsSameType<T, float>::value) {
+                DataCopy(rstdFp32Local + AlignUp(GetSmallLastChannelParamCacheElemLen(), BLOCK_SIZE / sizeof(float)),
+                         rstdLow, pregMaskFp32);
+            }
         }
     }
 
@@ -314,6 +319,7 @@ private:
             RegTensor<float> beta;
             RegTensor<float> mean;
             RegTensor<float> rstd;
+            RegTensor<float> rstdLow;
             RegTensor<float> y;
 
             uint32_t paramCacheElemLen = GetSmallLastChannelParamCacheElemLen();
@@ -327,6 +333,11 @@ private:
             DataCopy<float, LoadDist::DIST_NORM>(beta, betaFp32Local);
             DataCopy<float, LoadDist::DIST_NORM>(mean, meanFp32Local);
             DataCopy<float, LoadDist::DIST_NORM>(rstd, rstdFp32Local);
+            if constexpr (IsSameType<T, float>::value) {
+                DataCopy<float, LoadDist::DIST_NORM>(
+                    rstdLow,
+                    rstdFp32Local + AlignUp(GetSmallLastChannelParamCacheElemLen(), BLOCK_SIZE / sizeof(float)));
+            }
             for (uint16_t i = 0; i < loopNum; i++) {
                 uint32_t elemOffset = i * paramCacheElemLen;
                 uint32_t activeLen = curElemLen - elemOffset > paramCacheElemLen ? paramCacheElemLen :
@@ -335,7 +346,7 @@ private:
                 MaskReg pregMaskFp32 = AscendC::MicroAPI::UpdateMask<float>(maskLen);
 
                 NormCommon::LoadTensorUnAlignForDtypeT(xLocalTmp, x, uX, pregMaskFp32, activeLen);
-                NormCommon::NormalizeWithScaleBiasReg(x, gamma, beta, mean, rstd, y, pregMaskFp32);
+                NormalizeInference<T>(x, gamma, beta, mean, rstd, rstdLow, y, pregMaskFp32);
                 NormCommon::StoreTensorUnAlignForDtypeT(yLocalTmp, y, uY, pregMaskFp32, activeLen);
             }
             AscendC::MicroAPI::DataCopyUnAlignPost(yLocalTmp, uY, 0);

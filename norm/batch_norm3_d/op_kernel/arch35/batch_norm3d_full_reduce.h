@@ -77,11 +77,10 @@ public:
         runningMeanOutGm.SetGlobalBuffer((__gm__ T2*)mean_out + aGmOffset);
         runningVarOutGm.SetGlobalBuffer((__gm__ T2*)var_out + aGmOffset);
 
-        int64_t aFactorAlign = (((this->aFactor * sizeof(T2) + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE) / sizeof(T2);
+        int64_t aFactorAlign = ((this->aFactor + VL_FP32 - 1) / VL_FP32) * VL_FP32;
         pipe->InitBuffer(betaQueue, DOUBLE_BUFFER, aFactorAlign * sizeof(T2));
         pipe->InitBuffer(gammaQueue, DOUBLE_BUFFER, aFactorAlign * sizeof(T2));
-        int64_t aFactorAlignF32 = (((this->aFactor * FLOAT_BYTES + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE) /
-                                  FLOAT_BYTES;
+        int64_t aFactorAlignF32 = ((this->aFactor + VL_FP32 - 1) / VL_FP32) * VL_FP32;
         pipe->InitBuffer(batchMeanQueue, DOUBLE_BUFFER, aFactorAlignF32 * sizeof(float));
         pipe->InitBuffer(batchRstdQueue, DOUBLE_BUFFER, aFactorAlignF32 * sizeof(float));
 
@@ -92,12 +91,12 @@ public:
         pipe->InitBuffer(runningMeanOutQueue, DOUBLE_BUFFER, aFactorAlignF32 * sizeof(float));
         pipe->InitBuffer(runningVarOutQueue, DOUBLE_BUFFER, aFactorAlignF32 * sizeof(float));
 
-        int64_t xBufferSize = this->aFactor * this->r1r0Align;
+        // Arithmetic masks do not mask the preceding full-vector loads.
+        int64_t xBufferSize = this->aFactor * this->r1r0Align + VL_FP32;
         pipe->InitBuffer(xQueue, DOUBLE_BUFFER, xBufferSize * sizeof(T1));
         pipe->InitBuffer(yQueue, DOUBLE_BUFFER, xBufferSize * sizeof(T1));
 
-        int64_t binaryAddBufSize = (((binaryAddQuotient / VL_FP32) * FLOAT_BYTES + BLOCK_SIZE - 1) / BLOCK_SIZE) *
-                                   BLOCK_SIZE;
+        int64_t binaryAddBufSize = ((binaryAddQuotient / VL_FP32 + VL_FP32 - 1) / VL_FP32) * VL_FP32 * FLOAT_BYTES;
         if (binaryAddBufSize > 0) {
             pipe->InitBuffer(binaryAddBuf, binaryAddBufSize);
         }

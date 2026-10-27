@@ -133,6 +133,7 @@ protected:
 
     ge::DataType xDtype_{ge::DT_UNDEFINED};
     ge::Format xFormat_{ge::FORMAT_RESERVED};
+    ge::Format dataFormat_{ge::FORMAT_NCDHW};
 };
 
 class BatchNorm3DTilingInferBase : public BatchNorm3DTilingBase {

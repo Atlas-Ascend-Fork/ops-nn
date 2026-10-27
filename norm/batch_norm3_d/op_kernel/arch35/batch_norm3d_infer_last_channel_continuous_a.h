@@ -79,7 +79,7 @@ public:
         pipe_->InitBuffer(betaFp32Buf_, paramAlignLen * sizeof(float));
         pipe_->InitBuffer(gammaFp32Buf_, paramAlignLen * sizeof(float));
         pipe_->InitBuffer(meanFp32Buf_, paramAlignLen * sizeof(float));
-        pipe_->InitBuffer(rstdFp32Buf_, paramAlignLen * sizeof(float));
+        pipe_->InitBuffer(rstdFp32Buf_, paramAlignLen * sizeof(float) * (IsSameType<T, float>::value ? 2 : 1));
 
         int64_t xShapeLen = tilingData_->tileBlockBLen * tilingData_->tileBlockALen;
         pipe_->InitBuffer(xQueue_, BUFFER_NUM, xShapeLen * sizeof(T));
@@ -262,6 +262,7 @@ private:
             RegTensor<float> mean;
             RegTensor<float> var;
             RegTensor<float> rstd;
+            RegTensor<float> rstdLow;
 
             uint32_t totalALen = static_cast<uint32_t>(tilingData_->tileBlockALen);
             uint16_t aLoopNum = ops::CeilDiv(static_cast<uint16_t>(totalALen), VL_FP32);
@@ -273,13 +274,16 @@ private:
                 LoadParamForDtypeT(gammaLocal, gamma, preg, aOffset);
                 LoadParamForDtypeT(betaLocal, beta, preg, aOffset);
                 LoadRunningParamForDtypeT(varLocal, var, preg, aOffset);
-                NormCommon::ComputeRstdNewtonRaphsonReg(var, rstd, preg, tilingData_->epsilon);
+                ComputeInferenceRstd<T>(var, rstd, rstdLow, preg, tilingData_->epsilon);
                 LoadRunningParamForDtypeT(meanLocal, mean, preg, aOffset);
 
                 DataCopy(gammaFp32Local + aOffset, gamma, preg);
                 DataCopy(betaFp32Local + aOffset, beta, preg);
                 DataCopy(meanFp32Local + aOffset, mean, preg);
                 DataCopy(rstdFp32Local + aOffset, rstd, preg);
+                if constexpr (IsSameType<T, float>::value) {
+                    DataCopy(rstdFp32Local + AlignUp(tilingData_->tileBlockALen, VL_FP32) + aOffset, rstdLow, preg);
+                }
             }
         }
     }
@@ -295,6 +299,7 @@ private:
             RegTensor<float> beta;
             RegTensor<float> mean;
             RegTensor<float> rstd;
+            RegTensor<float> rstdLow;
             RegTensor<float> y;
 
             uint32_t totalALen = static_cast<uint32_t>(tilingData_->tileBlockALen);
@@ -310,11 +315,15 @@ private:
                 DataCopy<float, LoadDist::DIST_NORM>(beta, betaFp32Local + aOffset);
                 DataCopy<float, LoadDist::DIST_NORM>(mean, meanFp32Local + aOffset);
                 DataCopy<float, LoadDist::DIST_NORM>(rstd, rstdFp32Local + aOffset);
+                if constexpr (IsSameType<T, float>::value) {
+                    DataCopy<float, LoadDist::DIST_NORM>(
+                        rstdLow, rstdFp32Local + AlignUp(tilingData_->tileBlockALen, VL_FP32) + aOffset);
+                }
 
                 for (uint16_t bIdx = 0; bIdx < curTileBLoop; bIdx++) {
                     uint32_t elemOffset = static_cast<uint32_t>(bIdx) * totalALen + aOffset;
                     NormCommon::LoadTensorUnAlignForDtypeT(xLocal + elemOffset, x, preg, activeLen);
-                    NormCommon::NormalizeWithScaleBiasReg(x, gamma, beta, mean, rstd, y, preg);
+                    NormalizeInference<T>(x, gamma, beta, mean, rstd, rstdLow, y, preg);
                     NormCommon::StoreTensorUnAlignForDtypeT(yLocal + elemOffset, y, preg, activeLen);
                 }
             }

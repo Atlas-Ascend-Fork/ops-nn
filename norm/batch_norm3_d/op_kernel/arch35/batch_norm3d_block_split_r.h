@@ -416,7 +416,7 @@ private:
                 // delta2 = delta1 * scale
                 Muls(delta2, delta1, scale, mask0);
                 // mean = mean + delta2
-                Add(tmpMean, tmpMean, delta2, mask0);
+                UpdateWelfordMean(tmpMean, x1, delta2, mask0);
                 DataCopy(meanTensorAddr + i * VL_F32, tmpMean, mask0);
                 // delta3 = x1 - mean
                 Sub(delta3, x1, tmpMean, mask0);
@@ -444,6 +444,39 @@ private:
         WelfordFinalizeMeanVF(tmpMeanLocal, tmpVarLocal, tmpCountLocal, batchMeanInUbAddr, batchRstdInUbAddr,
                               tmpUbAddr);
         WelfordFinalizeVarVF(tmpMeanLocal, tmpVarLocal, tmpCountLocal, batchMeanInUbAddr, batchRstdInUbAddr, tmpUbAddr);
+    }
+
+    __aicore__ inline void RestoreUniformRowMean(RegTensor<float>& mean, __local_mem__ float* partialMeans,
+                                                 __local_mem__ float* counts, uint16_t rows, uint32_t stride,
+                                                 uint32_t offset, MaskReg& mask)
+    {
+        RegTensor<float> minMean;
+        RegTensor<float> maxMean;
+        RegTensor<float> values;
+        RegTensor<float> rowCount;
+        RegTensor<float> absMean;
+        MaskReg activeRows;
+        MaskReg uniformMask;
+        MaskReg finiteMask;
+        MaskReg validMeanMask;
+        Duplicate(minMean, POS_INF, mask);
+        Duplicate(maxMean, -POS_INF, mask);
+        for (uint16_t row = 0; row < rows; row++) {
+            DataCopy<float, LoadDist::DIST_BRC_B32>(rowCount, counts + row);
+            CompareScalar<float, CMPMODE::GT>(activeRows, rowCount, 0.0f, mask);
+            DataCopy(values, partialMeans + row * stride + offset);
+            Min<float, AscendC::MicroAPI::MaskMergeMode::MERGING>(minMean, minMean, values, activeRows);
+            Max<float, AscendC::MicroAPI::MaskMergeMode::MERGING>(maxMean, maxMean, values, activeRows);
+        }
+        Compare<float, CMPMODE::EQ>(uniformMask, minMean, maxMean, mask);
+        Abs(absMean, minMean, mask);
+        CompareScalar<float, CMPMODE::LT>(finiteMask, absMean, POS_INF, mask);
+        Compare<float, CMPMODE::EQ>(validMeanMask, mean, mean, mask);
+        AscendC::MicroAPI::And(uniformMask, uniformMask, finiteMask, mask);
+        AscendC::MicroAPI::And(uniformMask, uniformMask, validMeanMask, mask);
+        // Both the per-core merge and the cross-core merge must preserve a
+        // constant finite mean before using it in the variance correction.
+        Select(mean, minMean, mean, uniformMask);
     }
 
     __aicore__ inline void WelfordFinalizeMeanVF(__local_mem__ float* tmpMeanLocal, __local_mem__ float* tmpVarLocal,
@@ -533,6 +566,7 @@ private:
                             pregLoop, aLoopOffset, x1, x2, x3, x4);
                 DataCopy(x1, ((__local_mem__ float*)binaryAddTmpAddr + aLoopOffset));
                 Muls(x1, x1, scaleCorrection, pregLoop);
+                RestoreUniformRowMean(x1, tmpMeanLocal, tmpCountLocal, rLoopCount, rLoopStride, aLoopOffset, pregLoop);
                 DataCopy(((__local_mem__ float*)batchMeanInUbAddr + aLoopOffset), x1, pregLoop);
             }
         }
@@ -864,6 +898,8 @@ private:
                             aLoopOffset, quot, rem, quotCount, remCount);
                 DataCopy(resMean, ((__local_mem__ float*)tmpUbAddr + aLoopOffset));
                 Muls(resMean, resMean, scaleCorrection, pregLoop);
+                RestoreUniformRowMean(resMean, tmpMeanLocal, tmpCountLocal, usedCoreNum, rLoopStride, aLoopOffset,
+                                      pregLoop);
                 DataCopy(((__local_mem__ float*)batchMeanTensorAddr + aLoopOffset), resMean, pregLoop);
                 for (uint16_t i = 0; i < remainderLoopCount; i++) {
                     uint32_t quotOffset = i * baseLineOffset + aLoopOffset;

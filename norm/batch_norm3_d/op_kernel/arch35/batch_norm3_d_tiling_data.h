@@ -18,6 +18,20 @@
 
 #include <cstdint>
 
+struct BatchNorm3DCompensatedTilingData {
+    int64_t r1 = 0;
+    int64_t r0 = 0;
+    int64_t a = 0;
+    int64_t blockNum = 0;
+    int64_t reduceBlocks = 1;
+    float invCount = 0.0f;
+    float invCountLow = 0.0f;
+    float varianceCorrection = 0.0f;
+    float epsilon = 0.0f;
+    float momentum = 0.0f;
+    int32_t useRunningMeanVar = 0;
+};
+
 struct BatchNorm3DFullReduceRegbaseTilingData {
     int64_t r1 = 0;
     int64_t r0 = 0;

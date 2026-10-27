@@ -56,18 +56,20 @@ protected:
         }
         binaryAddQuotient /= BINARY_ADD_COEF;
         int64_t quotientVcaddNum = binaryAddQuotient / vlFp32_;
-        int64_t quotientVcaddSizeAlign = ((quotientVcaddNum * FLOAT32_BYTES + blockSize_ - 1) / blockSize_) *
-                                         blockSize_;
+        int64_t vectorBytes = vlFp32_ * FLOAT32_BYTES;
+        int64_t quotientVcaddSizeAlign = Ops::Base::CeilAlign(quotientVcaddNum * FLOAT32_BYTES, vectorBytes);
         if (static_cast<uint64_t>(quotientVcaddSizeAlign) >= aicoreParams_.ubSize) {
             return false;
         }
-        // reserve 8 block for 8 A tensor alignment
+        // Unmasked vector loads need vector-aligned small buffers and a tail
+        // vector after each x/y buffer, including the last A row.
         int64_t ubCanUseSize = ((((aicoreParams_.ubSize - quotientVcaddSizeAlign) / DOUBLE_BUFFER) / blockSize_) *
                                 blockSize_);
-        if (static_cast<int64_t>(SMALL_BUFFER_NUM * blockSize_) >= ubCanUseSize) {
+        int64_t paddingSize = SMALL_BUFFER_NUM * vectorBytes + LARGE_BUFFER_NUM * vlFp32_ * elemSize;
+        if (paddingSize >= ubCanUseSize) {
             return false;
         }
-        ubCanUseSize -= SMALL_BUFFER_NUM * blockSize_;
+        ubCanUseSize -= paddingSize;
         int64_t r1r0Align = (((r1r0 * elemSize + blockSize_ - 1) / blockSize_) * blockSize_) / elemSize;
         // two AR tensor, two A tensor, six fp32 A tensor
         int64_t ubSizePerA = LARGE_BUFFER_NUM * r1r0Align * elemSize + SMALL_BUFFER_NUM_T * elemSize +

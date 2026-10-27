@@ -92,7 +92,8 @@ ge::graphStatus BatchNorm3DInferTiling::DoOpTiling()
         int64_t abLen = fusedALen_ * fusedB1Len_;
         int64_t paramCacheElemLen = (vlFp32_ / abLen) * abLen;
         int64_t alignedParamCacheLen = CeilDiv(paramCacheElemLen, vlFp32_) * vlFp32_;
-        int64_t smallAB1CacheBytes = SMALL_AB1_CACHE_BUFFER_NUM * alignedParamCacheLen * FLOAT32_BYTES;
+        int64_t cacheBufferCount = SMALL_AB1_CACHE_BUFFER_NUM + (xDtype_ == ge::DT_FLOAT ? 1 : 0);
+        int64_t smallAB1CacheBytes = cacheBufferCount * alignedParamCacheLen * FLOAT32_BYTES;
         int64_t meanVarOutBytes = MEAN_VAR_OUTPUT_COUNT *
                                   AlignUp(FLOAT32_BYTES * aInner, static_cast<int64_t>(blockSize_));
         int64_t ubCanUseBytes = static_cast<int64_t>(aicoreParams_.ubSize) - DOUBLE_BUFFER * paramBytes -

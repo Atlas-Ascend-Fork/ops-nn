@@ -20,48 +20,50 @@
 namespace ge {
 
 /**
-*@brief Performs batch normalization .
+*@brief Performs batch normalization on a 5D tensor.
+
+* The shape, format and saved-statistics descriptions below apply to
+* Ascend 950PR&950DT系列产品. See the operator README for other supported products.
 
 *@par Inputs:
-* Five inputs, including: (NDHWC, NCDHW)
-*@li x: A 5D Tensor of type float16 or float32, with format NDHWC or NCDHW.
-*@li scale: A Tensor of type float32. Must be 1D if input "x" is with format NDHWC or NCDHW.
-Specifies the scaling factor.
-*@li offset: A Tensor of type float32. Must be 3D if input "x" is with format NDHWC or NCDHW.
-Specifies the offset.
-*@li mean: A Tensor of type float32. Must be 3D if input "x" is with format NDHWC or NCDHW.
-Specifies the mean used for inference. Must be "None" if the
-operation is used for training.
-*@li variance: A Tensor of type float32. Must be 3D if input "x" is with format NHWC or NCHW.
-Specifies the variance used for inference. Must be "None"
-if the operation is used for training . \n
+*@li x: A 5D float16 or float32 tensor in NCDHW or NDHWC format.
+*@li scale: A 1D float32 tensor in ND format, with one scaling factor per channel.
+*@li offset: A 1D float32 tensor in ND format, with one offset per channel.
+*@li mean: An optional 1D float32 tensor in ND format, with one mean per channel.
+Required for inference. May be omitted in training; supplied values are not used in training.
+*@li variance: An optional 1D float32 tensor in ND format, with one variance per channel.
+Required for inference. May be omitted in training; supplied values are not used in training.
 
 *@par Attributes:
-*@li epsilon: An optional float32, specifying the small value added to variance to avoid dividing by zero. Defaults to
-"0.0001".
-*@li data_format: An optional string, specifying the format of "x". Defaults to "NCDHW".
-*@li is_training: An optional bool, specifying if the operation is used for training or inference. Defaults to "True" .
-\n
+*@li epsilon: An optional float32 added to the variance before taking the square root.
+Defaults to 0.0001. A finite positive value is recommended for numerical stability.
+*@li data_format: An optional string, NCDHW or NDHWC, matching the format of x.
+Defaults to NCDHW.
+*@li is_training: An optional bool selecting training or inference. Defaults to true.
 
 *@par Outputs:
-* Five outputs, including: (NDHWC, NCDHW)
-*@li y: A 5D Tensor of type float16 or float32 for the normalized "x", with format NDHWC or NCDHW.
-*@li batch_mean: A Tensor of type float32. Must be 3D if input "x" is with format NDHWC or NCDHW.
-Specifies the mean of "x".
-*@li batch_variance: A Tensor of type float32. Must be 1D if input "x" is with format NDHWC or NCDHW.
-Specifies the variance of "x".
-*@li reserve_space_1: An optional Tensor of type float32. Must be 1D if input "x" is with format NDHWC or NCDHW.
-Specifies the mean of "x" for gradient computation. Pass "None" to skip this output.
-*@li reserve_space_2: An optional Tensor of type float32. Must be 1D if input "x" is with format NHWC or NCHW.
-Specifies the variance of "x" for gradient computation. Pass "None" to skip this output . \n
+* All five outputs are required. The four statistics tensors are 1D float32 tensors
+* in ND format, with one value per channel.
+*@li y: Normalized x, with the same shape, data type and format as x.
+*@li batch_mean: The per-channel batch mean in training; the input mean in inference.
+*@li batch_variance: The unbiased batch variance in training (biased variance multiplied
+by M/(M-1), where M=N*D*H*W); the input variance in inference. NaN when M=1 in training.
+*@li reserve_space_1: The batch mean saved for gradient computation in training;
+the input mean in inference.
+*@li reserve_space_2: The reciprocal standard deviation 1/sqrt(biased variance+epsilon)
+saved for gradient computation in training; the input variance in inference.
 
 *@attention Constraints:
-*@li If the operation is used for inference and outputs "reserve_space_1" and "reserve_space_2" are available,
-then "reserve_space_1" has the same value as "mean" and "reserve_space_2" has the same value as "variance".
+*@li Runtime dimensions of x must be positive. All channel tensors must have length C.
+*@li In training, normalization uses the biased batch variance, not batch_variance.
+*@li Invalid shapes and attributes are rejected during graph validation or tiling;
+shape/type inference alone is not a validation interface.
 
-*@par Third-party framework compatibility
-*@li Compatible with the TensorFlow operator fused_batch_norm.
-*@li Compatible with the TensorFlow operator fused_batch_norm_v2.
+*@par Third-party framework reference
+*@li For TensorFlow, the corresponding 5D normalization interface is
+tf.compat.v1.nn.fused_batch_norm. Its default epsilon and returned tensors
+differ from this GEIR interface; follow the input, output and attribute
+contracts above.
 */
 #ifndef OPS_PROTO_DEF_BATCHNORM3D
 #define OPS_PROTO_DEF_BATCHNORM3D

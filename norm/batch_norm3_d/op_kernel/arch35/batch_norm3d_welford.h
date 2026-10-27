@@ -412,7 +412,16 @@ private:
         if (nBurst != 1) {
             dataCopyParams.dstStride = (a0 - 1) * r0 * sizeof(T1);
         }
-        DataCopyPad<T1, PaddingMode::Compact>(yGm[index], yOutUb, dataCopyParams);
+        if (nBurst == 1 || (a0 == 1 && burstLen == r0)) {
+            // Adjacent GM rows are also packed in UB. A single transfer avoids
+            // redundant row descriptors and has the same exact byte extent.
+            dataCopyParams.blockCount = 1;
+            dataCopyParams.blockLen = nBurst * burstLen * sizeof(T1);
+            dataCopyParams.dstStride = 0;
+            DataCopyPad(yGm[index], yOutUb, dataCopyParams);
+        } else {
+            DataCopyPad<T1, PaddingMode::Compact>(yGm[index], yOutUb, dataCopyParams);
+        }
         yQueue.FreeTensor(yOutUb);
     }
 
@@ -561,7 +570,7 @@ private:
                 // delta2 = delta1 * scale
                 Muls(delta2, delta1, scale, pregLoop);
                 // mean = mean + delta2
-                Add(tmpMean, tmpMean, delta2, pregLoop);
+                UpdateWelfordMean(tmpMean, x1, delta2, pregLoop);
                 DataCopy(tmpMeanLocal + i * VL_FP32, tmpMean, pregLoop);
 
                 DataCopy(tmpVar, tmpVarLocal + i * VL_FP32);
@@ -574,6 +583,50 @@ private:
                 DataCopy(tmpVarLocal + i * VL_FP32, tmpVar, pregLoop);
             }
         }
+    }
+
+    __aicore__ inline void RestoreUniformFiniteMean(RegTensor<float>& mean, __local_mem__ float* partialMeans,
+                                                    uint32_t count, MaskReg& scalarMask)
+    {
+        RegTensor<float> minMean;
+        RegTensor<float> maxMean;
+        RegTensor<float> values;
+        RegTensor<float> chunkMin;
+        RegTensor<float> chunkMax;
+        RegTensor<float> absMean;
+        MaskReg loopMask;
+        MaskReg uniformMask;
+        MaskReg finiteMask;
+        MaskReg validMeanMask;
+        Duplicate(minMean, POS_INF, scalarMask);
+        Duplicate(maxMean, -POS_INF, scalarMask);
+        loopMask = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
+        uint16_t loops = count / VL_FP32;
+        for (uint16_t i = 0; i < loops; i++) {
+            DataCopy(values, partialMeans + i * VL_FP32);
+            AscendC::MicroAPI::Reduce<AscendC::MicroAPI::ReduceType::MIN>(chunkMin, values, loopMask);
+            AscendC::MicroAPI::Reduce<AscendC::MicroAPI::ReduceType::MAX>(chunkMax, values, loopMask);
+            Min(minMean, minMean, chunkMin, scalarMask);
+            Max(maxMean, maxMean, chunkMax, scalarMask);
+        }
+        // The partial-mean buffer is only block aligned. Broadcast single
+        // elements in its tail rather than reading a vector past its end.
+        uint16_t tail = count % VL_FP32;
+        for (uint16_t i = 0; i < tail; i++) {
+            DataCopy<float, LoadDist::DIST_BRC_B32>(values, partialMeans + loops * VL_FP32 + i);
+            Min(minMean, minMean, values, scalarMask);
+            Max(maxMean, maxMean, values, scalarMask);
+        }
+        Compare<float, CMPMODE::EQ>(uniformMask, minMean, maxMean, scalarMask);
+        Abs(absMean, minMean, scalarMask);
+        CompareScalar<float, CMPMODE::LT>(finiteMask, absMean, POS_INF, scalarMask);
+        Compare<float, CMPMODE::EQ>(validMeanMask, mean, mean, scalarMask);
+        AscendC::MicroAPI::And(uniformMask, uniformMask, finiteMask, scalarMask);
+        AscendC::MicroAPI::And(uniformMask, uniformMask, validMeanMask, scalarMask);
+        // A weighted average of identical finite partial means is that value.
+        // Preserve that identity when normalization weights round, including
+        // overflow near FLT_MAX. Keep nonuniform and NaN results unchanged.
+        Select(mean, minMean, mean, uniformMask);
     }
 
     /*
@@ -637,6 +690,7 @@ private:
 
             NormCommon::DichotomyAdd(mean, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(mean, mean, scale1, pregMerge);
+            RestoreUniformFiniteMean(mean, tmpMeanLocal, reduceCount, pregMerge);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(meanLocal + offset, mean, pregMerge);
 
             Duplicate(one, float(1.0), pregMain);
@@ -684,7 +738,7 @@ private:
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(var, var, reduceScale1, pregMerge);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
-            NormCommon::ComputeRstdNewtonRaphsonReg<false>(var, rstd, pregMerge, eps);
+            ComputeRstd<false>(var, rstd, pregMerge, eps);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdLocal + offset, rstd, pregMerge);
         }
     }
@@ -814,6 +868,7 @@ private:
             }
             NormCommon::DichotomyAdd(mean, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(mean, mean, reduceScale1, pregMerge);
+            RestoreUniformFiniteMean(mean, tmpMeanLocal, reduceCount, pregMerge);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(meanLocal + offset, mean, pregMerge);
 
             // 计算rstd
@@ -911,7 +966,7 @@ private:
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(var, var, reduceScale1, pregMerge);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
-            NormCommon::ComputeRstdNewtonRaphsonReg<false>(var, rstd, pregMerge, eps);
+            ComputeRstd<false>(var, rstd, pregMerge, eps);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdLocal + offset, rstd, pregMerge);
         }
     }
@@ -1019,6 +1074,7 @@ private:
             }
             NormCommon::DichotomyAdd(mean, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(mean, mean, reduceScale1, pregMerge);
+            RestoreUniformFiniteMean(mean, tmpMeanLocal, reduceCount, pregMerge);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(meanLocal + offset, mean, pregMerge);
 
             // 计算rstd
@@ -1117,7 +1173,7 @@ private:
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(var, var, reduceScale1, pregMerge);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
-            NormCommon::ComputeRstdNewtonRaphsonReg<false>(var, rstd, pregMerge, eps);
+            ComputeRstd<false>(var, rstd, pregMerge, eps);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdLocal + offset, rstd, pregMerge);
         }
     }
@@ -1218,6 +1274,7 @@ private:
 
             NormCommon::DichotomyAdd(mean, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(mean, mean, reduceScale1, pregMerge);
+            RestoreUniformFiniteMean(mean, tmpMeanLocal, reduceCount, pregMerge);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(meanLocal + offset, mean, pregMerge);
 
             // 计算rstd
@@ -1299,7 +1356,7 @@ private:
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
             Muls(var, var, reduceScale1, pregMerge);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
-            NormCommon::ComputeRstdNewtonRaphsonReg<false>(var, rstd, pregMerge, eps);
+            ComputeRstd<false>(var, rstd, pregMerge, eps);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdLocal + offset, rstd, pregMerge);
         }
     }

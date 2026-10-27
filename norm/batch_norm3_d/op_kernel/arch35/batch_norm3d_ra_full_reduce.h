@@ -619,7 +619,10 @@ private:
                 uint32_t aLoopOffset = k * VL_FP32;
                 DataCopy(((__local_mem__ float*)xInUb + validNumInXUb + aLoopOffset), zero, pregLoop);
                 LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-                // 前半部分与后半部分中，都为8行的部分
+// 前半部分与后半部分中，都为8行的部分
+// Const tiling can otherwise expand this reduction beyond
+// the scalar conditional-branch range (for example R=118).
+#pragma unroll 1
                 for (uint16_t i = 0; i < static_cast<uint16_t>(remainderLoopCount - 1); i++) {
                     uint32_t quotOffset = i * baseLineOffset + aLoopOffset;
                     uint32_t remOffset = i * baseLineOffset + remainderOffset + aLoopOffset;

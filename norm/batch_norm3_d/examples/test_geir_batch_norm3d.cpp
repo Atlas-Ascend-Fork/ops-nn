@@ -13,8 +13,10 @@
  * \brief
  */
 
+#include <algorithm>
 #include <iostream>
 #include <fstream>
+#include <cmath>
 #include <string.h>
 #include <stdint.h>
 #include <vector>
@@ -46,6 +48,8 @@ using std::vector;
                                                            inputDtype);                                             \
     placeholder##inputIndex##_desc.SetPlacement(ge::kPlacementHost);                                                \
     placeholder##inputIndex##_desc.SetFormat(inputFormat);                                                          \
+    placeholder##inputIndex##_desc.SetOriginFormat(inputFormat);                                                    \
+    placeholder##inputIndex##_desc.SetOriginShape(ge::Shape(placeholder##inputIndex##_shape));                      \
     Tensor tensor_placeholder##inputIndex;                                                                          \
     ret = GenOnesDataFloat32(placeholder##inputIndex##_shape, tensor_placeholder##inputIndex,                       \
                              placeholder##inputIndex##_desc, 2);                                                    \
@@ -57,34 +61,16 @@ using std::vector;
     placeholder##inputIndex.update_output_desc_y(placeholder##inputIndex##_desc);                                   \
     input.push_back(tensor_placeholder##inputIndex);                                                                \
     graph.AddOp(placeholder##inputIndex);                                                                           \
+    batchNorm_1.update_input_desc_##inputName(placeholder##inputIndex##_desc);                                      \
     batchNorm_1.set_input_##inputName(placeholder##inputIndex);                                                     \
     inputs.push_back(placeholder##inputIndex);
 
 #define ADD_INPUT_ATTR(attrName, attrValue) batchNorm_1.set_attr_##attrName(attrValue);
 
-#define ADD_CONST_INPUT(inputIndex, inputName, inputDtype, inputShape)                                                 \
-    vector<int64_t> placeholder##inputIndex##_shape = inputShape;                                                      \
-    auto placeholder##inputIndex = op::Const("placeholder" + inputIndex);                                              \
-    TensorDesc placeholder##inputIndex##_desc = TensorDesc(ge::Shape(placeholder##inputIndex##_shape), FORMAT_ND,      \
-                                                           inputDtype);                                                \
-    placeholder##inputIndex##_desc.SetPlacement(ge::kPlacementHost);                                                   \
-    placeholder##inputIndex##_desc.SetFormat(FORMAT_ND);                                                               \
-    Tensor tensor_placeholder##inputIndex;                                                                             \
-    ret = GenOnesData(placeholder##inputIndex##_shape, tensor_placeholder##inputIndex, placeholder##inputIndex##_desc, \
-                      inputDtype, 2);                                                                                  \
-    if (ret != SUCCESS) {                                                                                              \
-        printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                                 \
-        return FAILED;                                                                                                 \
-    }                                                                                                                  \
-    placeholder##inputIndex.SetAttr("value", tensor_placeholder##inputIndex);                                          \
-    placeholder##inputIndex.update_output_desc_y(placeholder##inputIndex##_desc);                                      \
-    graph.AddOp(placeholder##inputIndex);                                                                              \
-    batchNorm_1.set_input_##inputName(placeholder##inputIndex);                                                        \
-    batchNorm_1.update_input_desc_##inputName(placeholder##inputIndex##_desc);                                         \
-    inputs.push_back(placeholder##inputIndex);
-
 #define ADD_OUTPUT(outputIndex, outputName, outputDtype, outputShape, outputFormat)                             \
     TensorDesc outputName##outputIndex##_desc_ = TensorDesc(ge::Shape(outputShape), outputFormat, outputDtype); \
+    outputName##outputIndex##_desc_.SetOriginFormat(outputFormat);                                              \
+    outputName##outputIndex##_desc_.SetOriginShape(ge::Shape(outputShape));                                     \
     batchNorm_1.update_output_desc_##outputName(outputName##outputIndex##_desc_);
 
 #define LOG_PRINT(message, ...)         \
@@ -138,40 +124,67 @@ int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorD
     for (uint32_t i = 0; i < shapes.size(); i++) {
         size *= shapes[i];
     }
-    uint32_t byteSizeFloat32 = 4;
-    uint32_t data_len = size * byteSizeFloat32;
-    float* pData = new (std::nothrow) float[size];
-
-    for (size_t i = 0; i < size; ++i) {
-        *(pData + i) = value;
-    }
-    input_tensor = Tensor(input_tensor_desc, (uint8_t*)pData, data_len);
-    return SUCCESS;
-}
-
-int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, DataType data_type,
-                    int value)
-{
-    input_tensor_desc.SetRealDimCnt(shapes.size());
-    size_t size = 1;
-    for (uint32_t i = 0; i < shapes.size(); i++) {
-        size *= shapes[i];
-    }
-    uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[data_len];
-    for (uint32_t i = 0; i < size; ++i) {
-        *(pData + i) = value;
-    }
-    input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
-    return SUCCESS;
+    const std::vector<float> data(size, value);
+    input_tensor = Tensor(input_tensor_desc);
+    return input_tensor.SetData(reinterpret_cast<const uint8_t*>(data.data()), data.size() * sizeof(float)) ==
+                   GRAPH_SUCCESS ?
+               SUCCESS :
+               FAILED;
 }
 
 int32_t WriteDataToFile(string bin_file, uint64_t data_size, uint8_t* inputData)
 {
-    FILE* fp;
-    fp = fopen(bin_file.c_str(), "w");
-    fwrite(inputData, sizeof(uint8_t), data_size, fp);
-    fclose(fp);
+    FILE* fp = fopen(bin_file.c_str(), "wb");
+    if (fp == nullptr) {
+        std::cerr << "Cannot open " << bin_file << std::endl;
+        return FAILED;
+    }
+    const bool written = fwrite(inputData, sizeof(uint8_t), data_size, fp) == data_size;
+    const int closeStatus = fclose(fp);
+    return written && closeStatus == 0 ? SUCCESS : FAILED;
+}
+
+int32_t VerifyOutputs(std::vector<ge::Tensor>& output)
+{
+    const std::vector<std::vector<int64_t>> shapes = {{2, 3, 4, 5, 6}, {3}, {3}, {3}, {3}};
+    // Every input element is 2: y=offset, mean=2, variance=0 and reciprocal stddev=100.
+    const std::vector<double> expected = {2.0, 2.0, 0.0, 2.0, 100.0};
+    constexpr double threshold = 1.0 / 8192.0;
+    if (output.size() != shapes.size()) {
+        std::cerr << "Unexpected output count: " << output.size() << std::endl;
+        return FAILED;
+    }
+    for (size_t i = 0; i < output.size(); ++i) {
+        const auto desc = output[i].GetTensorDesc();
+        if (desc.GetDataType() != DT_FLOAT || desc.GetShape().GetDims() != shapes[i]) {
+            std::cerr << "Unexpected shape or dtype for output " << i << std::endl;
+            return FAILED;
+        }
+        const size_t count = static_cast<size_t>(desc.GetShape().GetShapeSize());
+        const uint8_t* data = output[i].GetData();
+        if (data == nullptr || output[i].GetSize() < count * sizeof(float)) {
+            std::cerr << "Invalid data buffer for output " << i << std::endl;
+            return FAILED;
+        }
+        double errorSum = 0.0;
+        double maxError = 0.0;
+        for (size_t j = 0; j < count; ++j) {
+            float value;
+            memcpy(&value, data + j * sizeof(float), sizeof(float));
+            if (!std::isfinite(value)) {
+                std::cerr << "Non-finite value in output " << i << " at " << j << std::endl;
+                return FAILED;
+            }
+            const double error = std::abs(static_cast<double>(value) - expected[i]) / (std::abs(expected[i]) + 1e-7);
+            errorSum += error;
+            maxError = std::max(maxError, error);
+        }
+        if (errorSum / count >= threshold || maxError >= 10.0 * threshold) {
+            std::cerr << "Output " << i << " exceeds the float32 precision threshold" << std::endl;
+            return FAILED;
+        }
+    }
+    std::cout << "All five output shapes, dtypes and values verified" << std::endl;
     return SUCCESS;
 }
 
@@ -201,7 +214,7 @@ int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vect
     return SUCCESS;
 }
 
-int main(int argc, char* argv[])
+int main()
 {
     const char* graph_name = "tc_ge_irrun_test";
     Graph graph(graph_name);
@@ -219,9 +232,6 @@ int main(int argc, char* argv[])
     std::vector<Operator> inputs{};
     std::vector<Operator> outputs{};
 
-    std::cout << argv[1] << std::endl;
-    char* endptr;
-
     DataType inDtype = DT_FLOAT;
 
     std::cout << inDtype << std::endl;
@@ -229,6 +239,7 @@ int main(int argc, char* argv[])
     ret = CreateOppInGraph(inDtype, input, inputs, outputs, graph);
     if (ret != SUCCESS) {
         printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
+        GEFinalize();
         return FAILED;
     }
 
@@ -244,6 +255,7 @@ int main(int argc, char* argv[])
 
     if (session == nullptr) {
         printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
+        GEFinalize();
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Create ir session using build options success\n", GetTime().c_str());
@@ -254,6 +266,12 @@ int main(int argc, char* argv[])
     };
     uint32_t graph_id = 0;
     ret = session->AddGraph(graph_id, graph, graph_options);
+    if (ret != SUCCESS) {
+        std::cerr << "AddGraph failed: " << ge::GEGetErrorMsgV2().GetString() << std::endl;
+        delete session;
+        GEFinalize();
+        return FAILED;
+    }
 
     printf("%s - INFO - [XIR]: Session add ir compute graph to ir session success\n", GetTime().c_str());
     printf("%s - INFO - [XIR]: dump graph to txt\n", GetTime().c_str());
@@ -271,6 +289,11 @@ int main(int argc, char* argv[])
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Session run ir compute graph success\n", GetTime().c_str());
+    if (VerifyOutputs(output) != SUCCESS) {
+        delete session;
+        GEFinalize();
+        return FAILED;
+    }
 
     int input_num = input.size();
     for (int i = 0; i < input_num; i++) {
@@ -280,7 +303,11 @@ int main(int argc, char* argv[])
         int64_t input_shape = input[i].GetTensorDesc().GetShape().GetShapeSize();
         std::cout << "this is " << i << "th input, input shape size =" << input_shape << std::endl;
         uint32_t data_size = input_shape * GetDataTypeSize(input[i].GetTensorDesc().GetDataType());
-        WriteDataToFile((const char*)input_file.c_str(), data_size, input_data_i);
+        if (WriteDataToFile(input_file, data_size, input_data_i) != SUCCESS) {
+            delete session;
+            GEFinalize();
+            return FAILED;
+        }
     }
 
     int output_num = output.size();
@@ -291,7 +318,11 @@ int main(int argc, char* argv[])
         int64_t output_shape = output[i].GetTensorDesc().GetShape().GetShapeSize();
         std::cout << "this is " << i << "th output, output shape size =" << output_shape << std::endl;
         uint32_t data_size = output_shape * GetDataTypeSize(output[i].GetTensorDesc().GetDataType());
-        WriteDataToFile((const char*)output_file.c_str(), data_size, output_data_i);
+        if (WriteDataToFile(output_file, data_size, output_data_i) != SUCCESS) {
+            delete session;
+            GEFinalize();
+            return FAILED;
+        }
         float* resultData = (float*)output_data_i;
         for (int64_t j = 0; j < output_shape; j++) {
             LOG_PRINT("result[%ld] is: %f\n", j, resultData[j]);

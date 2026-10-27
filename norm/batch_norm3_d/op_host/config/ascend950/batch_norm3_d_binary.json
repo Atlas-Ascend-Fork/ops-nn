@@ -394,7 +394,7 @@
         {
           "name": "data_format",
           "dtype": "string",
-          "value": "NCDHW"
+          "value": "NDHWC"
         },
         {
           "name": "is_training",
@@ -528,7 +528,7 @@
         {
           "name": "data_format",
           "dtype": "string",
-          "value": "NCDHW"
+          "value": "NDHWC"
         },
         {
           "name": "is_training",

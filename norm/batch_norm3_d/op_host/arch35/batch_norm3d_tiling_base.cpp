@@ -83,6 +83,18 @@ ge::graphStatus BatchNorm3DTilingBase::GetAttrsAndCheckValid()
     const float* epsilonPtr = attrs->GetFloat(0);
     epsilon_ = (epsilonPtr == nullptr) ? DEFAULT_EPSILON : *epsilonPtr;
 
+    const char* dataFormatPtr = attrs->GetStr(1);
+    std::string dataFormat = dataFormatPtr == nullptr ? "NCDHW" : dataFormatPtr;
+    if (dataFormat == "NCDHW") {
+        dataFormat_ = FORMAT_NCDHW;
+    } else if (dataFormat == "NDHWC") {
+        dataFormat_ = FORMAT_NDHWC;
+    } else {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "data_format", dataFormat.c_str(),
+                                              "only NCDHW and NDHWC are supported");
+        return ge::GRAPH_FAILED;
+    }
+
     exponentialAvgFactor_ = DEFAULT_EXPONENTIAL_AVG_FACTOR;
 
     OP_LOGD(context_->GetNodeName(), "GetAttrsAndCheckValid success, isTraining: %d, eps: %f.", isTraining_, epsilon_);
@@ -106,23 +118,29 @@ ge::graphStatus BatchNorm3DTilingBase::GetXYShapesAndCheckValid()
     OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
     xFormat_ = xDesc->GetFormat().GetStorageFormat();
 
-    if (xFormat_ != FORMAT_NCHW && xFormat_ != FORMAT_NHWC && xFormat_ != FORMAT_NCDHW && xFormat_ != FORMAT_NDHWC &&
-        xFormat_ != FORMAT_ND) {
+    if (xFormat_ != FORMAT_NCDHW && xFormat_ != FORMAT_NDHWC) {
         std::string formatStr = Ops::Base::ToString(xFormat_);
-        OP_LOGE_FOR_INVALID_FORMAT(context_->GetNodeName(), "x", formatStr.c_str(), "NCHW, NHWC, NCDHW, NDHWC or ND");
+        OP_LOGE_FOR_INVALID_FORMAT(context_->GetNodeName(), "x", formatStr.c_str(), "NCDHW or NDHWC");
         return ge::GRAPH_FAILED;
     }
+    if (xFormat_ != dataFormat_) {
+        std::string formatStr = Ops::Base::ToString(xFormat_);
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context_->GetNodeName(), "x", formatStr.c_str(),
+                                               "input format must match attr data_format");
+        return ge::GRAPH_FAILED;
+    }
+    auto yDesc = context_->GetOutputDesc(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, yDesc);
+    OP_CHECK_IF(yDesc->GetStorageFormat() != xFormat_,
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context_->GetNodeName(), "y",
+                                                       Ops::Base::ToString(yDesc->GetStorageFormat()).c_str(),
+                                                       "y and x must have the same format"),
+                return ge::GRAPH_FAILED);
 
-    bool validShapeSize = (xShapeSize == yShapeSize) &&
-                          ((xFormat_ == FORMAT_NHWC && xShapeSize == DIM_NUM_4) ||
-                           ((xFormat_ == FORMAT_NCDHW || xFormat_ == FORMAT_NDHWC) && xShapeSize == DIM_NUM_5) ||
-                           (xFormat_ == FORMAT_ND && xShapeSize >= DIM_NUM_2) ||
-                           (xFormat_ == FORMAT_NCHW && xShapeSize >= DIM_NUM_2));
+    bool validShapeSize = (xShapeSize == yShapeSize) && (xShapeSize == DIM_NUM_5);
     if (!validShapeSize) {
         std::string sizeMsg = std::to_string(xShapeSize) + " and " + std::to_string(yShapeSize);
-        std::string reason = "The shape sizes of x and y should be the same. NHWC requires 4, NCDHW and NDHWC require "
-                             "5, NCHW and ND "
-                             "require at least 2";
+        std::string reason = "The shape sizes of x and y should both equal 5";
         OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(context_->GetNodeName(), "x and y", sizeMsg.c_str(), reason.c_str());
         return ge::GRAPH_FAILED;
     }
@@ -237,6 +255,10 @@ ge::graphStatus BatchNorm3DTilingBase::GetDtypesAndCheckValid()
     for (int64_t i = CONST_ONE; i < CONST_THREE; i++) {
         auto desc = context_->GetInputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context_, desc);
+        OP_CHECK_IF(desc->GetStorageFormat() != FORMAT_ND,
+                    OP_LOGE_FOR_INVALID_FORMAT(context_->GetNodeName(), inputParamNames[i],
+                                               Ops::Base::ToString(desc->GetStorageFormat()).c_str(), "ND"),
+                    return ge::GRAPH_FAILED);
         ge::DataType subDataType = desc->GetDataType();
         OP_CHECK_IF(subDataType != ge::DataType::DT_FLOAT,
                     OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), inputParamNames[i],
@@ -250,6 +272,10 @@ ge::graphStatus BatchNorm3DTilingBase::GetDtypesAndCheckValid()
         if (desc == nullptr) {
             continue;
         }
+        OP_CHECK_IF(desc->GetStorageFormat() != FORMAT_ND,
+                    OP_LOGE_FOR_INVALID_FORMAT(context_->GetNodeName(), inputParamNames[i],
+                                               Ops::Base::ToString(desc->GetStorageFormat()).c_str(), "ND"),
+                    return ge::GRAPH_FAILED);
         ge::DataType subDataType = desc->GetDataType();
         OP_CHECK_IF(subDataType != ge::DataType::DT_FLOAT,
                     OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), inputParamNames[i],
@@ -261,6 +287,10 @@ ge::graphStatus BatchNorm3DTilingBase::GetDtypesAndCheckValid()
     for (int64_t i = CONST_ONE; i < CONST_FIVE; i++) {
         auto desc = context_->GetOutputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context_, desc);
+        OP_CHECK_IF(desc->GetStorageFormat() != FORMAT_ND,
+                    OP_LOGE_FOR_INVALID_FORMAT(context_->GetNodeName(), outputParamNames[i],
+                                               Ops::Base::ToString(desc->GetStorageFormat()).c_str(), "ND"),
+                    return ge::GRAPH_FAILED);
         ge::DataType subDataType = desc->GetDataType();
         OP_CHECK_IF(subDataType != ge::DataType::DT_FLOAT,
                     OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), outputParamNames[i],

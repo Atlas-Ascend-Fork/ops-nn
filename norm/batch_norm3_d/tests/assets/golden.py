@@ -154,6 +154,9 @@ def batch_norm3d_golden(
     BatchNorm3DGrad/BatchNormGradExt2 reserve_space_2 in training mode.
     """
     x_in = torch.from_numpy(np.ascontiguousarray(x))
+    # GE Float attributes are binary32. Promote that value for reference
+    # arithmetic, rather than using a different binary64 decimal epsilon.
+    epsilon = float(np.float32(epsilon))
     x_n = _to_ncdhw_torch(x_in, data_format).to(torch.float64)
     scale_f = torch.from_numpy(np.ascontiguousarray(scale)).to(torch.float64)
     offset_f = torch.from_numpy(np.ascontiguousarray(offset)).to(torch.float64)

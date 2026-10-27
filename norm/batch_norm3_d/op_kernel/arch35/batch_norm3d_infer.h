@@ -257,6 +257,7 @@ private:
             RegTensor<float> y;
 
             RegTensor<float> rstd;
+            RegTensor<float> rstdLow;
 
             MaskReg pregMask = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
 
@@ -266,7 +267,7 @@ private:
                 LoadTwoTensorForDtypeTBrc<T2>(var, mean, varLocal, meanLocal, pregMask, pregMask, i, i);
                 AscendC::MicroAPI::MaskReg
                     pregRstdAll1 = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
-                NormCommon::ComputeRstdNewtonRaphsonReg(var, rstd, pregRstdAll1, tilingData_->epsilon);
+                ComputeInferenceRstd<T1>(var, rstd, rstdLow, pregRstdAll1, tilingData_->epsilon);
 
                 // load gamma、beta  1->64
                 LoadTwoTensorForDtypeTBrc<T2>(gamma, beta, gammaLocal, betaLocal, pregMask, pregMask, i, i);
@@ -281,10 +282,7 @@ private:
                         LoadTensorForDtypeT<T1>(x, xLocal, pregMask, xOffset);
 
                         // compute
-                        Sub(x, x, mean, pregMask);
-                        Mul(x, x, gamma, pregMask);
-                        Mul(x, x, rstd, pregMask);
-                        Add(y, x, beta, pregMask);
+                        NormalizeInference<T1>(x, gamma, beta, mean, rstd, rstdLow, y, pregMask);
 
                         // store y
                         StoreTensorForDtypeT<T1>(yLocal, y, pregMask, xOffset);

@@ -317,7 +317,7 @@ private:
                 // delta2 = delta1 * scale
                 Muls(delta2, delta1, scale, pregLoop);
                 // mean = mean + delta2
-                Add(tmpMean, tmpMean, delta2, pregLoop);
+                UpdateWelfordMean(tmpMean, x1, delta2, pregLoop);
                 DataCopy(tmpMeanLocal + i * VL_FP32, tmpMean, pregLoop);
 
                 DataCopy(tmpVar, tmpVarLocal + i * VL_FP32);

@@ -123,7 +123,7 @@ ge::graphStatus BatchNorm3DBlockSplitRTiling::DoOpTiling()
     int64_t inOutNodeNum = X_IN_OUT_NODE_NUM * DOUBLE_BUFFER_NUM;
     if (xDtype_ == ge::DT_FLOAT16) {
         elemSize = FLOAT16_BYTES;
-        gammaBetaNodeNum = gammaBetaNodeNum / (FLOAT32_BYTES / FLOAT16_BYTES);
+        // scale and offset remain float32 even when x/y are float16.
         inOutNodeNum = inOutNodeNum / (FLOAT32_BYTES / FLOAT16_BYTES);
     }
 
@@ -161,6 +161,8 @@ ge::graphStatus BatchNorm3DBlockSplitRTiling::DoOpTiling()
         rUbFactor -= RA_BINARY_ADD_THRESHOLD;
         rUbFactor = std::min(rUbFactor, batchNormTilingData.patternR);
         rUbFactor = Ops::Base::FloorAlign(rUbFactor, RA_BINARY_ADD_THRESHOLD);
+        OP_CHECK_IF(rUbFactor <= 0, OP_LOGI(context_->GetNodeName(), "BatchNorm3DBlockSplitRTiling rUbFactor == 0"),
+                    return ge::GRAPH_PARAM_INVALID);
         rGroups = Ops::Base::FloorDiv(batchNormTilingData.patternR, rUbFactor);
         usedCoreNums_ = std::min(rGroups, static_cast<int64_t>(aicoreParams_.blockDim));
         tBufUbFactor = std::max(rUbFactor, usedCoreNums_);

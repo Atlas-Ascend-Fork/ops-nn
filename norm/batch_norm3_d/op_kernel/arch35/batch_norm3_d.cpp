@@ -14,6 +14,7 @@
  */
 
 #include "kernel_operator.h"
+#include "batch_norm3d_compensated.h"
 #include "batch_norm3d_full_reduce.h"
 #include "batch_norm3d_ra_full_reduce.h"
 #include "batch_norm3d_block_split_r.h"
@@ -56,7 +57,14 @@ extern "C" __global__ __aicore__ void batch_norm3_d(GM_ADDR x, GM_ADDR scale, GM
     REGISTER_TILING_DEFAULT(BatchNorm3DFullReduceRegbaseTilingData);
     TPipe pipe;
 
-    if (TILING_KEY_IS(TILINGKEY_FULL_REDUCE)) {
+    if (TILING_KEY_IS(700000)) {
+        REGISTER_TILING_FOR_TILINGKEY("TILING_KEY_VAR == 700000", BatchNorm3DCompensatedTilingData);
+        GET_TILING_DATA_WITH_STRUCT(BatchNorm3DCompensatedTilingData, tiling_data_in, tiling);
+        BatchNorm3DCompensated<DTYPE_X> op(&tiling_data_in, &pipe);
+        op.Init(x, scale, offset, mean, variance, y, batch_mean, batch_variance, reserve_space_1, reserve_space_2,
+                workspace);
+        op.Process();
+    } else if (TILING_KEY_IS(TILINGKEY_FULL_REDUCE)) {
         REGISTER_TILING_FOR_TILINGKEY("TILING_KEY_VAR == 200000", BatchNorm3DFullReduceRegbaseTilingData);
         GET_TILING_DATA_WITH_STRUCT(BatchNorm3DFullReduceRegbaseTilingData, tiling_data_in, tiling);
         const BatchNorm3DFullReduceRegbaseTilingData* __restrict tilingData = &tiling_data_in;
