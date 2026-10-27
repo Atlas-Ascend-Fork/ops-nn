@@ -37,6 +37,7 @@ constexpr uint32_t B16_VEC_ROW_BYTES = 24;
 constexpr uint32_t B16_STRIDED_CLASS_BYTES = 12;
 constexpr uint32_t B16_STRIDED_ROW_BYTES = 12;
 constexpr uint32_t SHORT_ROW_ELEMS = 512;
+constexpr uint32_t B16_STRIDED_SHORT_ROW_BYTES = sizeof(float) + sizeof(uint16_t);
 constexpr uint64_t DATACOPY_PAD_MAX_COPY_BYTES = 65535;
 constexpr uint32_t DATACOPY_PAD_MAX_ELEMS = 255; // DataCopyPad 单侧填充元素上限（uint8_t）
 const size_t FILTER_INDEX = 1;
@@ -226,7 +227,7 @@ void Conv3DDXV2VecTiling::CalcB16UbBudget(uint64_t ubSize)
             uint64_t stridedUbNeed = static_cast<uint64_t>(classAlignedWi) * B16_STRIDED_CLASS_BYTES +
                                      static_cast<uint64_t>(alignedWi) * B16_STRIDED_ROW_BYTES;
             if (alignedWi < SHORT_ROW_ELEMS) {
-                stridedUbNeed += static_cast<uint64_t>(alignedWi) * 6;
+                stridedUbNeed += static_cast<uint64_t>(alignedWi) * B16_STRIDED_SHORT_ROW_BYTES;
             }
             rowUbNeed = (stridedUbNeed > rowUbNeed) ? stridedUbNeed : rowUbNeed;
         }
