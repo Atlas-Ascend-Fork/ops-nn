@@ -19,6 +19,7 @@
 #include <nlohmann/json.hpp>
 #include <gtest/gtest.h>
 #include "graph/graph.h"
+#include "base/err_mgr.h"
 #define private public
 #define protected public
 #include "exe_graph/runtime/storage_format.h"
@@ -197,6 +198,133 @@ static void TestOneParamCase(const Conv3DBpInputV2TilingTestParam& param)
     ASSERT_EQ(*tiling_key, param.tiling_key);
     ASSERT_EQ(*block_dim, param.block_dim);
     ASSERT_EQ(tiling_data_result, param.tiling_data);
+}
+
+// Negative cases for the invalid-attribute failure exits: assert the tiling returns GRAPH_FAILED and that
+// the ErrorManager reported the expected predefined error code (EZ00xx) together with the offending field.
+static void TestInputNegativeCase(const string& case_name,
+                                  const std::vector<std::pair<string, Ops::NN::AnyValue>>& attrs,
+                                  const string& expect_code, const string& expect_field)
+{
+    std::cout << "run negative case " << case_name << std::endl;
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage(); // clear cached error message
+
+    static const char* kCompileInfo =
+        R"({"_pattern": "Conv3d_backprop_input_v2", "tiling_type": "binary", "hardware_info": {"BT_SIZE": 1024, "load3d_constraints": "unknown", "Intrinsic_fix_pipe_l0c2out": true, "Intrinsic_data_move_l12ub": false, "Intrinsic_data_move_l0c2ub": false, "Intrinsic_data_move_out2l1_nd2nz": true, "UB_SIZE": 196608, "L2_SIZE": 201326592, "L1_SIZE": 524288, "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072, "CORE_NUM": 20}, "block_dim": {"CORE_NUM": 20}, "aub_num": 0, "bub_num": 0, "cub_num": 0, "ub_size": 196608, "binary_mode": 1, "fusion_mode": 0})";
+
+    gert::StorageShape input_size = {{5}, {5}};
+    gert::StorageShape filter_shape = {{256, 512, 1, 1, 1}, {32, 16, 16, 16}};
+    gert::StorageShape out_backprop_shape = {{1, 256, 17, 128, 128}, {1, 17, 16, 128, 128, 16}};
+    std::vector<gert::StorageShape> output_shapes(1, {{1, 512, 17, 128, 128}, {1, 17, 32, 128, 128, 16}});
+    std::vector<void*> output_shapes_ref(1);
+    for (size_t i = 0; i < output_shapes.size(); ++i) {
+        output_shapes_ref[i] = &output_shapes[i];
+    }
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    Ops::NN::Conv::Conv3DBackpropV2CompileInfo compile_info;
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(kCompileInfo), reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    map<string, string> soc_version;
+    GetPlatFormInfos(kCompileInfo, soc_infos, aicore_spec, intrinsics, soc_version);
+    map<string, string> soc_version_infos = {{"SoC_version", "Ascend910B3"}, {"Short_SoC_version", "Ascend910B"}};
+
+    const char* op_type = "Conv3DBackpropInputV2";
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type)->tiling;
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type)->tiling_parse;
+    ASSERT_NE(tiling_func, nullptr);
+    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version",
+                                                                                            soc_version_infos);
+    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::TilingParseContext>()), ge::GRAPH_SUCCESS);
+
+    auto workspaceHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto workspace = reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get());
+    auto tiling_data = gert::TilingData::CreateCap(2048);
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&input_size, &filter_shape, &out_backprop_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .PlatformInfo(reinterpret_cast<void*>(&platform_info))
+                      .NodeAttrs(attrs)
+                      .NodeInputTd(0, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_BF16, ge::FORMAT_NCDHW, ge::FORMAT_FRACTAL_Z_3D)
+                      .NodeInputTd(2, ge::DT_BF16, ge::FORMAT_NCDHW, ge::FORMAT_NDC1HWC0)
+                      .NodeOutputTd(0, ge::DT_BF16, ge::FORMAT_NCDHW, ge::FORMAT_NDC1HWC0)
+                      .CompileInfo(&compile_info)
+                      .Workspace(workspace)
+                      .TilingData(tiling_data.get())
+                      .Build();
+
+    auto tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED) << case_name;
+
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr) << case_name;
+    std::string msg = errMsg.get();
+    std::cout << "[" << case_name << "] error msg: " << msg << std::endl;
+    EXPECT_TRUE(msg.find(expect_code) != std::string::npos)
+        << "[" << case_name << "] expect code " << expect_code << " in: " << msg;
+    EXPECT_TRUE(msg.find(expect_field) != std::string::npos)
+        << "[" << case_name << "] expect field " << expect_field << " in: " << msg;
+}
+
+TEST_F(Conv3DBackpropInputV2TilingRunTime2, negative_attr_error_codes)
+{
+    std::vector<int64_t> validStrides = {1, 1, 1, 1, 1};
+    std::vector<int64_t> validPads = {0, 0, 0, 0, 0, 0};
+    std::vector<int64_t> validDilations = {1, 1, 1, 1, 1};
+
+    // EZ0025: strides element num != 5 (kStridesDim)
+    TestInputNegativeCase(
+        "err_EZ0025_strides_listsize",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(std::vector<int64_t>{1, 1, 1, 1})},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)}},
+        "EZ0025", "strides");
+
+    // EZ0025: pads element num != 6 (kPadsDim)
+    TestInputNegativeCase(
+        "err_EZ0025_pads_listsize",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(std::vector<int64_t>{0, 0, 0, 0, 0})},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)}},
+        "EZ0025", "pads");
+
+    // EZ0024: stride_n (normalized) != 1
+    TestInputNegativeCase(
+        "err_EZ0024_stride_n",
+        {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(std::vector<int64_t>{2, 1, 1, 1, 1})},
+         {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)},
+         {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validDilations)},
+         {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)}},
+        "EZ0024", "stride_n");
+
+    // EZ0004: required attr pointer is empty (dilations index beyond provided attr num)
+    TestInputNegativeCase("err_EZ0004_dilations_null",
+                          {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validStrides)},
+                           {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(validPads)}},
+                          "EZ0004", "dilations");
 }
 
 Conv3DBpInputV2TilingTestParam general_20_core_num_cases_params[] = {

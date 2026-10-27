@@ -1154,12 +1154,11 @@ bool ConvolutionBackwardChecker::CheckEmptyTensor()
     // 空tensor场景check
     // 空tensor场景且需要计算gradBias, biasSizes不能为nullptr
     if ((*params_.outputMask)[2]) {
-        OP_CHECK(params_.biasSizes != nullptr,
-                 OP_LOGE_FOR_INVALID_VALUE(ACLNN_CONVOLUTION_BACKWARD_NAME, "biasSizes", "nullptr", "not nullptr"),
+        OP_CHECK(params_.biasSizes != nullptr, OP_LOGE_WITH_INVALID_INPUT(ACLNN_CONVOLUTION_BACKWARD_NAME, "biasSizes"),
                  return false);
         OP_CHECK(params_.biasSizes->Size() == 1,
-                 OP_LOGE_FOR_INVALID_SHAPESIZE(ACLNN_CONVOLUTION_BACKWARD_NAME, "biasSizes",
-                                               std::to_string(params_.biasSizes->Size()).c_str(), "1"),
+                 OP_LOGE_FOR_INVALID_LISTSIZE(ACLNN_CONVOLUTION_BACKWARD_NAME, "biasSizes",
+                                              std::to_string(params_.biasSizes->Size()).c_str(), "1"),
                  return false);
         int64_t channelOutDim = 1; // NCHW
         int64_t Cout = inputTensor_.gradOutput->GetViewShape().GetDim(channelOutDim);
