@@ -4273,7 +4273,7 @@ aclnnStatus aclnnConvTbcBackwardGetWorkspaceSize(const aclTensor* self, const ac
     ConvolutionBackwardParams params = InitConvTbcBackwardParams(bias, pad, cubeMathType, uniqueExecutor.get());
     ConvolutionBackwardOutput finalTensor = {gradInput, gradWeight, gradBias};
 
-    if (input->Size() == 0 || weight->Size() == 0 || bias->Size() == 0) {
+    if (self->Size() == 0 || input->Size() == 0 || weight->Size() == 0 || bias->Size() == 0) {
         OP_LOGD("Entering CalculateConvolutionTbcBackwardWithEmpty");
         ret = CalculateConvolutionTbcBackwardWithEmpty(gradInput, gradWeight, gradBias, pad, uniqueExecutor.get());
         CHECK_RET(ret == ACLNN_SUCCESS, ret);

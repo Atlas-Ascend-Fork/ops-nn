@@ -165,6 +165,41 @@ bool ConvTbcBackwardChecker::CheckTbcCubeMathType()
     return false;
 }
 
+static bool CheckTbcDtypeConsistency(const ConvTbcBackwardInput& inputTensor, const ConvTbcBackwardOutput& outputTensor)
+{
+    if (inputTensor.self->Size() == 0 || inputTensor.input->Size() == 0 || inputTensor.weight->Size() == 0 ||
+        inputTensor.bias->Size() == 0) {
+        return true;
+    }
+
+    OP_CHECK(outputTensor.gradInput->GetDataType() == inputTensor.input->GetDataType(),
+             OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                 ACLNN_CONV_TBC_BACKWARD_NAME, "gradInput, input",
+                 FormatString("%s,%s", op::ToString(outputTensor.gradInput->GetDataType()).GetString(),
+                              op::ToString(inputTensor.input->GetDataType()).GetString()),
+                 "the dtypes of [gradInput, input] must be the same"),
+             return false);
+
+    OP_CHECK(outputTensor.gradWeight->GetDataType() == inputTensor.weight->GetDataType(),
+             OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                 ACLNN_CONV_TBC_BACKWARD_NAME, "gradWeight, weight",
+                 FormatString("%s,%s", op::ToString(outputTensor.gradWeight->GetDataType()).GetString(),
+                              op::ToString(inputTensor.weight->GetDataType()).GetString()),
+                 "the dtypes of [gradWeight, weight] must be the same"),
+             return false);
+
+    if (Ops::NN::AclnnUtil::IsRegbase()) {
+        OP_CHECK(outputTensor.gradBias->GetDataType() == inputTensor.self->GetDataType(),
+                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                     ACLNN_CONV_TBC_BACKWARD_NAME, "gradBias, self",
+                     FormatString("%s,%s", op::ToString(outputTensor.gradBias->GetDataType()).GetString(),
+                                  op::ToString(inputTensor.self->GetDataType()).GetString()),
+                     "the dtypes of [gradBias, self] must be the same"),
+                 return false);
+    }
+    return true;
+}
+
 aclnnStatus ConvTbcBackwardChecker::CheckTbcParams()
 {
     // 检查ConvolutionTbcBackward的输入aclTensor是否符合规范
@@ -189,44 +224,14 @@ aclnnStatus ConvTbcBackwardChecker::CheckTbcParams()
     CHECK_RET(CheckTbcFormat(outputTensor_.gradWeight, "gradWeight"), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckTbcBiasFormat(outputTensor_.gradBias, "gradBias"), ACLNN_ERR_PARAM_INVALID);
 
-    // 4. 检查self不能为空
-    OP_CHECK(inputTensor_.self->Size() != 0,
-             OP_LOGE_FOR_INVALID_SHAPESIZE(ACLNN_CONV_TBC_BACKWARD_NAME, "self",
-                                           std::to_string(inputTensor_.self->Size()).c_str(), "greater than 0"),
-             return ACLNN_ERR_PARAM_INVALID);
-
-    // 5. 检查输入aclTensor的shape是否符合约束
+    // 4. 检查输入aclTensor的shape是否符合约束
     CHECK_RET(CheckTbcShape(), ACLNN_ERR_PARAM_INVALID);
+
+    // 5. 检查输入输出数据类型是否一致
+    CHECK_RET(CheckTbcDtypeConsistency(inputTensor_, outputTensor_), ACLNN_ERR_PARAM_INVALID);
 
     // 6. 检查cubeMathType
     CHECK_RET(CheckTbcCubeMathType(), ACLNN_ERR_PARAM_INVALID);
-
-    if (Ops::NN::AclnnUtil::IsRegbase()) {
-        // 检查输入输出是否类型一致
-        OP_CHECK(outputTensor_.gradInput->GetDataType() == inputTensor_.input->GetDataType(),
-                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-                     ACLNN_CONV_TBC_BACKWARD_NAME, "gradInput, input",
-                     FormatString("%s,%s", op::ToString(outputTensor_.gradInput->GetDataType()).GetString(),
-                                  op::ToString(inputTensor_.input->GetDataType()).GetString()),
-                     "the dtypes of [gradInput, input] must be the same"),
-                 return ACLNN_ERR_PARAM_INVALID);
-
-        OP_CHECK(outputTensor_.gradWeight->GetDataType() == inputTensor_.weight->GetDataType(),
-                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-                     ACLNN_CONV_TBC_BACKWARD_NAME, "gradWeight, weight",
-                     FormatString("%s,%s", op::ToString(outputTensor_.gradWeight->GetDataType()).GetString(),
-                                  op::ToString(inputTensor_.weight->GetDataType()).GetString()),
-                     "the dtypes of [gradWeight, weight] must be the same"),
-                 return ACLNN_ERR_PARAM_INVALID);
-
-        OP_CHECK(outputTensor_.gradBias->GetDataType() == inputTensor_.bias->GetDataType(),
-                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-                     ACLNN_CONV_TBC_BACKWARD_NAME, "gradBias, bias",
-                     FormatString("%s,%s", op::ToString(outputTensor_.gradBias->GetDataType()).GetString(),
-                                  op::ToString(inputTensor_.bias->GetDataType()).GetString()),
-                     "the dtypes of [gradBias, bias] must be the same"),
-                 return ACLNN_ERR_PARAM_INVALID);
-    }
     return ACLNN_SUCCESS;
 }
 

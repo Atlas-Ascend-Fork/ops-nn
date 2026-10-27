@@ -16,6 +16,7 @@ from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 from atk.tasks.backends.lib_interface.acl_wrapper import AclFormat
 
+
 @register("golden_convtbc_backward")
 class AscendConvTbcBackwardApi(BaseApi):
     def __init__(self, task_result: TaskResult):
@@ -27,23 +28,23 @@ class AscendConvTbcBackwardApi(BaseApi):
             input_data.kwargs["input"].to(torch.float32),
             input_data.kwargs["weight"].to(torch.float32),
             input_data.kwargs["bias"].to(torch.float32),
-            input_data.kwargs["pad"]
+            input_data.kwargs["pad"],
         )
 
         if gradInput is not None:
-            gradInput = gradInput.to(input_data.kwargs["self"].dtype)
+            gradInput = gradInput.to(input_data.kwargs["input"].dtype)
         if gradWeight is not None:
-            gradWeight = gradWeight.to(input_data.kwargs["self"].dtype)
+            gradWeight = gradWeight.to(input_data.kwargs["weight"].dtype)
         if gradBias is not None:
             gradBias = gradBias.to(input_data.kwargs["self"].dtype)
         return gradInput, gradWeight, gradBias
 
     def get_format(self, input_data: InputDataset, index=None, name=None):
-            """
-            :param input_data: 参数列表
-            :param index: 参数位置
-            :param name: 参数名字
-            :return:
-            format at this index or name
-            """
-            return AclFormat.ACL_FORMAT_ND
+        """
+        :param input_data: 参数列表
+        :param index: 参数位置
+        :param name: 参数名字
+        :return:
+        format at this index or name
+        """
+        return AclFormat.ACL_FORMAT_ND

@@ -162,7 +162,7 @@ aclnnStatus aclnnConvTbcBackward(
        <ul>
         <li>shape为(C<sub>out</sub>)。</li>
         <li>一维且与weight第一维相等，不允许传入空指针。</li>
-        <li>数据类型与self、weight一致。</li></ul>
+        <li>数据类型需在支持范围内，其数值不参与梯度计算。</li></ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16</td>
      <td>ND</td>
@@ -206,7 +206,7 @@ aclnnStatus aclnnConvTbcBackward(
      <td>
        <ul>
         <li>支持空Tensor。</li>
-        <li>数据类型与input类型一致。</li>
+        <li>数据类型需在支持范围内；非空Tensor时与input类型一致。</li>
         <li>shape为(N,C<sub>in</sub>,H<sub>in</sub>)。</li></ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16</td>
@@ -220,7 +220,7 @@ aclnnStatus aclnnConvTbcBackward(
      <td>卷积核权重张量w对L的梯度。</td>
      <td>
        <ul><li>支持空Tensor。</li>
-       <li>数据类型与weight类型一致。</li>
+       <li>数据类型需在支持范围内；非空Tensor时与weight类型一致。</li>
        <li>shape为(C<sub>out</sub>,C<sub>in</sub>,K)。</li></ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16、HIFLOAT8、FLOAT8_E4M3FN</td>
@@ -234,7 +234,7 @@ aclnnStatus aclnnConvTbcBackward(
      <td>偏置b对L的梯度。</td>
      <td>
       <ul><li>支持空Tensor。</li>
-      <li>数据类型与bias类型一致。</li>
+      <li>数据类型需在支持范围内，具体约束参见下文。</li>
       <li>shape为(C<sub>out</sub>)。</li></ul>
     </td>
      <td>FLOAT、FLOAT16、BFLOAT16</td>
@@ -265,7 +265,17 @@ aclnnStatus aclnnConvTbcBackward(
     </tbody>
   </table>
 
+  <!-- npu="950" id12 -->
+  - <term>Ascend 950PR&950DT系列产品</term>：
+    - 非空Tensor时，gradBias数据类型需与self一致。
+  <!-- end id12 -->
+  <!-- npu="A3,910b,910" id13 -->
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>：
+    - 非空Tensor时，gradBias数据类型需在支持范围内，允许与self不同。
+  <!-- end id13 -->
+
 - **返回值：**
+
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
@@ -295,7 +305,7 @@ aclnnStatus aclnnConvTbcBackward(
       <td>self，input，weight，bias，gradInput，gradWeight，gradBias的数据类型和数据格式不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>self，input，weight，bias数据类型不一致。</td>
+      <td>非空Tensor场景下，gradInput或gradWeight与对应输入的数据类型不一致，或gradBias的数据类型不满足约束。</td>
     </tr>
     <tr>
       <td>gradInput，gradWeight，gradBias的shape不满足infershape结果。</td>
