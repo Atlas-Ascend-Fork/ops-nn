@@ -84,6 +84,8 @@ constexpr uint64_t N2H_HO_MARGIN = 2;
 constexpr int64_t C_IN_TRANSPOSE_LIMIT_MIN = 16;
 constexpr int64_t C_IN_TRANSPOSE_LIMIT_MAX = 32;
 constexpr float MAX_CIN_MULTIPLIER = 1.5f;
+constexpr uint64_t PRE_TRANSPOSE_MAX_CIN_RATIO = 2;
+constexpr uint64_t PRE_TRANSPOSE_MIN_FILTER_BYTES = 1UL << 20; // filter字节数小于1M,前置transpose无收益
 constexpr float MAX_WI_MULTIPLIER_FOR_LOW = 2.0f;
 constexpr float MIN_WI_MULTIPLIER_FOR_HIGH = 3.5f;
 
@@ -1270,6 +1272,12 @@ bool CheckTransposeN2HEnable(const aclTensor* input, const aclTensor* weight, ac
     return CheckN2HNoHkWkL1Probe(input, weight, stride5, outputPadding5);
 }
 
+static bool IsSocVersion960()
+{
+    NpuArch npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    return npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
+}
+
 bool CheckPreTransposeEnable(const aclTensor* weight, int groups)
 {
     OP_LOGD("enter CheckPreTransposeEnable.");
@@ -1307,6 +1315,13 @@ bool CheckPreTransposeEnable(const aclTensor* weight, int groups)
     // 经验值，超出范围计算获得的收益小于引入transpose算子的损耗
     if ((cin != C_IN_TRANSPOSE_LIMIT_MIN && cin < C_IN_TRANSPOSE_LIMIT_MAX) || cin <= hk * wk) {
         return false;
+    }
+    if (IsSocVersion960()) {
+        const uint64_t dtypeSize = (dataType == op::DataType::DT_FLOAT) ? sizeof(float) : sizeof(uint16_t);
+        if (cout * cin * dk * hk * wk * dtypeSize < PRE_TRANSPOSE_MIN_FILTER_BYTES) {
+            return false;
+        }
+        return (cout > cin) ? (cout <= PRE_TRANSPOSE_MAX_CIN_RATIO * cin) : (cin <= PRE_TRANSPOSE_MAX_CIN_RATIO * cout);
     }
     return (cout > cin) ? (cout < MAX_CIN_MULTIPLIER * cin) : (cin < MAX_CIN_MULTIPLIER * cout);
 }

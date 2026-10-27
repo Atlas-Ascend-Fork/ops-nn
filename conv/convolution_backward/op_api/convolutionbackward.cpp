@@ -71,6 +71,8 @@ constexpr int64_t BATCH_TRANSPOSE_LIMIT = 2;
 constexpr int64_t C_IN_TRANSPOSE_LIMIT_MIN = 16;
 constexpr int64_t C_IN_TRANSPOSE_LIMIT_MAX = 256;
 constexpr float MAX_CIN_MULTIPLIER = 1.5f;
+constexpr uint64_t PRE_TRANSPOSE_MAX_CIN_RATIO = 2;
+constexpr uint64_t PRE_TRANSPOSE_MIN_FILTER_BYTES = 1UL << 20; // filter字节数小于1M,前置transpose无收益
 static constexpr const char* ACLNN_CONV_TBC_BACKWARD_NAME = "aclnnConvTbcBackward";
 
 namespace {
@@ -1220,6 +1222,12 @@ bool CheckN2HEnable(const aclTensor* weight, const aclTensor*& output, aclIntArr
     return CheckN2HNativeAttrAvailable(weight, output);
 }
 
+static bool IsSocVersion960()
+{
+    NpuArch npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    return npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
+}
+
 bool CheckWeightPreTransposeEnable(const aclTensor* weight, const aclTensor* input, const aclIntArray* stride5,
                                    int groups)
 {
@@ -1272,6 +1280,13 @@ bool CheckWeightPreTransposeEnable(const aclTensor* weight, const aclTensor* inp
     }
     if ((cin != C_IN_TRANSPOSE_LIMIT_MIN && cin < C_IN_TRANSPOSE_LIMIT_MAX) || cin <= hk * wk) {
         return false;
+    }
+    if (IsSocVersion960()) {
+        const uint64_t dtypeSize = (dataType == op::DataType::DT_FLOAT) ? sizeof(float) : sizeof(uint16_t);
+        if (cout * cin * dk * hk * wk * dtypeSize < PRE_TRANSPOSE_MIN_FILTER_BYTES) {
+            return false;
+        }
+        return (cout > cin) ? (cout <= PRE_TRANSPOSE_MAX_CIN_RATIO * cin) : (cin <= PRE_TRANSPOSE_MAX_CIN_RATIO * cout);
     }
     return (cout > cin) ? (cout < MAX_CIN_MULTIPLIER * cin) : (cin < MAX_CIN_MULTIPLIER * cout);
 }
