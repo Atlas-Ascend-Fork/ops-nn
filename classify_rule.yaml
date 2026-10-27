@@ -178,6 +178,7 @@ index-c@ops-nn:
         - ops/ops-nn/index/scatter_add_with_sorted/op_kernel/scatter_add_int_with_sorted.h
         - ops/ops-nn/index/scatter_add_with_sorted/op_kernel/scatter_add_with_sorted.cpp
         - ops/ops-nn/index/scatter_add_with_sorted/op_kernel/scatter_with_sorted.h
+        - ops/ops-nn/index/scatter_div/op_host/scatter_div_infershape.cpp
         - ops/ops-nn/index/scatter_elements/op_api/
         - ops/ops-nn/index/scatter_elements_v2/op_api/
         - ops/ops-nn/index/scatter_elements_v2/op_host/arch22/
