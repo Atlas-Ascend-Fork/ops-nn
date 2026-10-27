@@ -7,6 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """MXFP8/MXFP4 reference and TTK kernel / ACLNN / PyTorch TestSpecs."""
 
+import hashlib
 import math
 from functools import lru_cache
 
@@ -49,9 +50,6 @@ def mx_dtype(dtype):
 
 
 _FP32_TINY = np.float32(np.finfo(np.float32).tiny)
-# BF16 min normal (2**-126): a group whose amax falls below this is all-subnormal and
-# gets a zero reciprocal in the OCP kernel lineage (zeroScaleOnZeroExp=true).
-_MX_BF16_NORMAL_MIN = np.float64(2.0) ** -126
 _QUANTIZE_CHUNK_ELEMENTS = 1 << 20
 _MX_GROUP_SIZE = 32
 
@@ -114,6 +112,16 @@ def encode_fp8(values, dtype):
     saturation mode. RNE is used for values inside the finite range.
     """
     dtype = fp8_dtype(dtype)
+    values = np.asarray(values)
+    if values.dtype == np.float32:
+        # Native casts implement RNE; clip first to reproduce the SAT overflow
+        # behavior and explicitly preserve the kernel's NaN -> zero rule.
+        is_e5m2 = dtype == "float8_e5m2"
+        native_dtype = ml_dtypes.float8_e5m2 if is_e5m2 else ml_dtypes.float8_e4m3fn
+        maximum = np.float32(57344.0 if is_e5m2 else 448.0)
+        raw = np.clip(values, -maximum, maximum).astype(native_dtype).view(np.uint8)
+        return np.where(np.isnan(values), np.uint8(0), raw)
+    # Keep FP64 inputs wide: narrowing values next to a midpoint can change RNE.
     values = np.asarray(values, dtype=np.float64)
     table = _fp8_positive_table(dtype)
     max_code = len(table) - 1
@@ -140,6 +148,17 @@ _FP4_E2M1_POSITIVE = np.array(
 )
 
 
+@lru_cache(maxsize=2)
+def _fp4_rounding_boundaries(round_mode):
+    boundaries = (_FP4_E2M1_POSITIVE[:-1] + _FP4_E2M1_POSITIVE[1:]) * 0.5
+    if round_mode == "rint":
+        # searchsorted(side="left") keeps ties below a boundary. Move odd
+        # lower-code boundaries down one FP64 step so those ties round up.
+        boundaries[1::2] = np.nextafter(boundaries[1::2], -np.inf)
+    boundaries.setflags(write=False)
+    return boundaries
+
+
 def decode_fp4(raw):
     """Decode unpacked FLOAT4_E2M1 nibbles to FP32."""
     raw = np.asarray(raw, dtype=np.uint8) & np.uint8(0x0F)
@@ -151,29 +170,26 @@ def encode_fp4(values, round_mode="rint"):
     """Cast FP32 values to unpacked FLOAT4_E2M1 nibbles."""
     if round_mode not in ("rint", "floor", "round"):
         raise ValueError("MXFP4 supports rint, floor or round")
+    values = np.asarray(values)
+    if values.dtype == np.float32 and round_mode == "rint":
+        raw = values.astype(ml_dtypes.float4_e2m1fn).view(np.uint8)
+        return np.where(np.isnan(values), np.uint8(0), raw)
     values = np.asarray(values, dtype=np.float64)
-    magnitude = np.minimum(np.abs(values), _FP4_E2M1_POSITIVE[-1])
-    upper = np.minimum(
-        np.searchsorted(_FP4_E2M1_POSITIVE, magnitude),
-        len(_FP4_E2M1_POSITIVE) - 1,
-    )
-    lower = np.maximum(upper - 1, 0)
-    exact = _FP4_E2M1_POSITIVE[upper] == magnitude
+    negative = np.signbit(values)
     if round_mode == "floor":
-        index = np.where(np.signbit(values), upper, np.where(exact, upper, lower))
+        magnitude = np.minimum(np.abs(values), _FP4_E2M1_POSITIVE[-1])
+        upper = np.minimum(
+            np.searchsorted(_FP4_E2M1_POSITIVE, magnitude),
+            len(_FP4_E2M1_POSITIVE) - 1,
+        )
+        index = upper - (~negative & (_FP4_E2M1_POSITIVE[upper] != magnitude))
     else:
-        lower_distance = magnitude - _FP4_E2M1_POSITIVE[lower]
-        upper_distance = _FP4_E2M1_POSITIVE[upper] - magnitude
-        if round_mode == "round":
-            use_upper = upper_distance <= lower_distance
-        else:
-            use_upper = (upper_distance < lower_distance) | (
-                (upper_distance == lower_distance) & ((upper & 1) == 0)
-            )
-        index = np.where(use_upper, upper, lower)
-    raw = index.astype(np.uint8) | np.where(np.signbit(values), 0x08, 0).astype(
-        np.uint8
-    )
+        index = np.searchsorted(
+            _fp4_rounding_boundaries(round_mode),
+            np.abs(values),
+            side="left" if round_mode == "rint" else "right",
+        )
+    raw = index.astype(np.uint8) | (negative.astype(np.uint8) << np.uint8(3))
     return np.where(np.isnan(values), np.uint8(0), raw).astype(np.uint8)
 
 
@@ -186,6 +202,8 @@ def decode_e8m0(raw):
 
 def _quantize_mx_fp4(values, scale_alg, round_mode, dst_type_max):
     """Quantize BF16-rounded values to MXFP4, matching the GELU epilogue."""
+    # ACLNN/Torch accepts a double, but the tiling attribute and kernel use FP32.
+    dst_type_max = float(np.float32(dst_type_max))
     if scale_alg not in (0, 2):
         raise ValueError("MXFP4 supports scale_alg 0 or 2")
     if round_mode not in ("rint", "floor", "round"):
@@ -220,15 +238,13 @@ def _quantize_mx_fp4(values, scale_alg, round_mode, dst_type_max):
             _, exponent = np.frexp(amax)
             scale_codes = np.clip(exponent - 1 - 2 + 127, 0, 254).astype(np.uint8)
             scale_codes[amax == 0.0] = 0
-            # OCP reduces BF16 exponent fields. An all-zero/subnormal group has
-            # maxExp==0 and the GELU path explicitly writes a zero reciprocal.
-            max_exp_bits = amax.view(np.uint32) & np.uint32(0x7F800000)
-            zero_reciprocal = max_exp_bits == 0
+            # Match DynamicMxQuant: sharedExp==0 also clears tiny normal groups.
+            zero_reciprocal = scale_codes == 0
         else:
             effective_max = 6.0 if dst_type_max == 0.0 else dst_type_max
             if effective_max in (6.0, 7.0):
                 # The dedicated dynamic-range path uses a zero reciprocal when
-                # sharedExp is zero. OCP/cuBLAS instead use 2**127 here, so an
+                # sharedExp is zero, as OCP does. cuBLAS can use 2**127 here, so an
                 # E8M0 byte of zero must not generally force the data to zero.
                 bf16_bits = (amax.view(np.uint32) >> np.uint32(16)).astype(np.uint16)
                 exp_bits = bf16_bits & np.uint16(0x7F80)
@@ -283,8 +299,6 @@ def quantize_mx(
     scale_alg=0,
     round_mode="rint",
     dst_type_max=0.0,
-    *,
-    zero_scale_on_zero_exp=True,
 ):
     """Quantize FP32 values in 32-element groups, stored as ceil(N/64),2."""
     output_dtype = mx_dtype(output_dtype)
@@ -320,15 +334,6 @@ def quantize_mx(
         finite = np.isfinite(blocks).all(axis=-1)
         amax = np.max(np.abs(blocks), axis=-1).astype(np.float64)
         amax[~finite] = 0.0
-        # A finite group whose members are all BF16 subnormals or zeros has a zero raw
-        # BF16 exponent field. The OCP kernel lineage (zeroScaleOnZeroExp=true, used by
-        # the SwiGLU/GELU MX epilogues) writes a zero reciprocal for such groups, so the
-        # whole group quantizes to zero. cuBLAS (scale_alg=1) keeps the computed scale.
-        subnormal_group = np.logical_and(finite, amax < _MX_BF16_NORMAL_MIN)
-        if scale_alg == 0:
-            zero_reciprocal = subnormal_group
-        else:
-            zero_reciprocal = np.zeros_like(subnormal_group)
         mantissa, exponent = np.frexp(amax)
         exponent -= 1 + emax
         # qmax is exactly 1.75 * 2**emax for both FP8 formats.
@@ -339,17 +344,16 @@ def quantize_mx(
         codes[~finite] = 255
         scales[row_start:row_end, :block_count] = codes
 
-        normalized = np.ldexp(
-            blocks.astype(np.float64),
-            (127 - codes.astype(np.int32))[..., None],
-        )
-        if scale_alg == 0 and not zero_scale_on_zero_exp:
-            # SiLU follows DynamicMxQuant: zero reciprocal when sharedExp == 0.
+        # Scaling FP32 by a power of two is exact in the FP8 rounding range.
+        # Any FP32 overflow saturates at the FP8 cast; FP32 underflow is already
+        # below the smallest FP8 rounding boundary. This enables native casts.
+        with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+            normalized = np.ldexp(blocks, (127 - codes.astype(np.int32))[..., None])
+        if scale_alg == 0:
+            # All activation epilogues follow DynamicMxQuant's sharedExp == 0 rule.
             normalized = np.where(
-                codes[..., None] == 0, np.copysign(0.0, blocks), normalized
+                codes[..., None] == 0, np.copysign(np.float32(0.0), blocks), normalized
             )
-        else:
-            normalized = np.where(zero_reciprocal[..., None], 0.0, normalized)
         # GenScale emits a NaN reciprocal for any group containing Inf/NaN.
         # E8M0 code 0xFF is NaN, not the finite exponent used by ldexp above:
         # all members of that group become NaN before the FP8 SAT cast, which
@@ -368,7 +372,7 @@ def quantize_mx(
 def _dequantize_operand(values, scales, k_axis):
     # Finite FP8 * E8M0 can exceed FP32 even when the scaled dot product is finite.
     # Keep reference operands wide; round the accumulator at each MX group below.
-    values = np.asarray(values, dtype=np.float64)
+    values = np.asarray(values)
     scales = np.asarray(scales, dtype=np.float64)
     k = values.shape[k_axis]
     groups = (k + 63) // 64
@@ -377,17 +381,48 @@ def _dequantize_operand(values, scales, k_axis):
     )
     if scales.shape != expected:
         raise ValueError(f"MX scale shape must be {expected}, got {scales.shape}")
+    # Broadcast one scale per group without materializing a K-wide repeat or
+    # an FP64 input copy. Keep N contiguous for the right-hand operand.
+    result = np.empty(values.shape, dtype=np.float64)
+    full_groups, tail = divmod(k, _MX_GROUP_SIZE)
+    full = full_groups * _MX_GROUP_SIZE
     if k_axis == -1:
-        expanded = np.repeat(scales.reshape(scales.shape[:-2] + (-1,)), 32, axis=-1)[
-            ..., :k
-        ]
+        scales = scales.reshape(scales.shape[:-2] + (-1,))
+        if full_groups:
+            shape = values.shape[:-1] + (full_groups, _MX_GROUP_SIZE)
+            np.multiply(
+                values[..., :full].reshape(shape),
+                scales[..., :full_groups, None],
+                out=result[..., :full].reshape(shape),
+                dtype=np.float64,
+            )
+        if tail:
+            np.multiply(
+                values[..., full:],
+                scales[..., full_groups, None],
+                out=result[..., full:],
+                dtype=np.float64,
+            )
     else:
-        paired = np.swapaxes(scales, -1, -2)
-        expanded = np.repeat(
-            paired.reshape(paired.shape[:-3] + (-1, values.shape[-1])), 32, axis=-2
+        scales = np.swapaxes(scales, -1, -2).reshape(
+            values.shape[:-2] + (-1, values.shape[-1])
         )
-        expanded = expanded[..., :k, :]
-    return values * expanded
+        if full_groups:
+            shape = values.shape[:-2] + (full_groups, _MX_GROUP_SIZE, values.shape[-1])
+            np.multiply(
+                values[..., :full, :].reshape(shape),
+                scales[..., :full_groups, None, :],
+                out=result[..., :full, :].reshape(shape),
+                dtype=np.float64,
+            )
+        if tail:
+            np.multiply(
+                values[..., full:, :],
+                scales[..., full_groups, None, :],
+                out=result[..., full:, :],
+                dtype=np.float64,
+            )
+    return result
 
 
 def matmul_mx(
@@ -427,12 +462,13 @@ def matmul_mx(
         result = np.broadcast_to(bias, output_shape).copy()
     else:
         result = np.zeros(output_shape, dtype=np.float32)
+    partial = np.empty(output_shape, dtype=np.float64)
     with np.errstate(over="ignore", invalid="ignore"):
         for start in range(0, a.shape[-1], _MX_GROUP_SIZE):
             end = min(start + _MX_GROUP_SIZE, a.shape[-1])
-            partial = np.matmul(a[..., start:end], b[..., start:end, :])
+            np.matmul(a[..., start:end], b[..., start:end, :], out=partial)
             partial += result
-            result = partial.astype(np.float32)
+            np.copyto(result, partial, casting="unsafe")
     return result
 
 
@@ -518,11 +554,12 @@ def activate(values, activation_type, *, kernel_erf=True):
             denom = np.float32(1.0) + exp_neg
             return _div_ftz_float32(values, denom)
         if activation_type == "gelu_tanh":
-            # The equivalent sigmoid form avoids cancellation in 1 + tanh(x)
-            # for negative inputs; MX quantization can amplify that lost tail.
-            exponent = -np.float32(math.sqrt(8 / math.pi)) * (
-                values + np.float32(0.044715) * values**3
-            )
+            # Match GeluV2's constants and Mul -> Mul -> Axpy -> Muls order.
+            tanh_approx_factor = np.float32(1.0 / 0.044715)
+            neg_sqrt_eight_over_pi = np.float32(-1.595769121 * 0.044715)
+            squared = values * values
+            cubed = squared * values
+            exponent = (cubed + values * tanh_approx_factor) * neg_sqrt_eight_over_pi
             exp_neg = _ftz_float32(np.exp(_ftz_float32(exponent)))
             return _div_ftz_float32(values, np.float32(1.0) + exp_neg)
         if activation_type == "gelu_erf":
@@ -539,12 +576,14 @@ def activate(values, activation_type, *, kernel_erf=True):
 def round_bfloat16(values):
     """RNE BF16 boundary used by the activation epilogues, in an FP32 array."""
     values = np.ascontiguousarray(values, dtype=np.float32)
-    bits = values.view(np.uint32)
-    rounded = (bits + np.uint32(0x7FFF) + ((bits >> 16) & 1)) & np.uint32(0xFFFF0000)
-    rounded = np.where(np.isnan(values), bits | np.uint32(0x00400000), rounded).astype(
-        np.uint32
-    )
-    return rounded.view(np.float32)
+    rounded = values.astype(ml_dtypes.bfloat16).astype(np.float32)
+    nan = np.isnan(values)
+    if nan.any():
+        # Retain the reference's quieted FP32 NaN payload, not a BF16 payload.
+        rounded.view(np.uint32)[nan] = values.view(np.uint32)[nan] | np.uint32(
+            0x00400000
+        )
+    return rounded
 
 
 def reference(
@@ -575,7 +614,6 @@ def reference(
         scale_alg,
         round_mode=round_mode,
         dst_type_max=dst_type_max,
-        zero_scale_on_zero_exp=activation_type != "silu",
     )
 
 
@@ -700,16 +738,43 @@ def _pack_fp4(raw):
 
 def _unpack_fp4(value):
     """Decode the packed uint8 representation used by the PyTorch API."""
-    if "float4_e2m1" in str(value.dtype).lower():
+    if isinstance(value, np.ndarray) and "float4_e2m1" in str(value.dtype).lower():
         return _numpy(value)
     if isinstance(value, np.ndarray):
+        strides = tuple(stride // value.itemsize for stride in value.strides)
         packed = np.asarray(value, dtype=np.uint8)
     else:
-        packed = value.detach().cpu().numpy().astype(np.uint8, copy=False)
+        import torch
+
+        strides = value.stride()
+        packed = value.detach().cpu().view(torch.uint8).numpy()
+    # Match the Torch bridge's IsTransposeLastTwoDims before any copy can
+    # erase the view strides. Unpack in storage order, then restore the view.
+    shape = value.shape
+    transposed = (
+        2 <= len(shape) <= 6
+        and strides[-2:] == (1, shape[-2])
+        and tuple(shape[-2:]) != (1, 1)
+        and strides[:-2] == _contiguous_strides(shape)[:-2]
+    )
+    if transposed:
+        packed = packed.swapaxes(-1, -2)
     nibbles = np.empty(packed.shape[:-1] + (packed.shape[-1] * 2,), dtype=np.uint8)
     nibbles[..., 0::2] = packed & np.uint8(0x0F)
     nibbles[..., 1::2] = packed >> np.uint8(4)
-    return decode_fp4(nibbles)
+    decoded = decode_fp4(nibbles)
+    return decoded.swapaxes(-1, -2) if transposed else decoded
+
+
+def _numpy_mx(value, dtype):
+    """Decode byte carriers whose MX type is supplied by a Torch dtype attribute."""
+    if value is None:
+        return None
+    if str(value.dtype).removeprefix("torch.") in ("uint8", "int8"):
+        raw = value if isinstance(value, np.ndarray) else value.detach().cpu().numpy()
+        raw = raw.view(np.uint8)
+        return decode_e8m0(raw) if dtype == "float8_e8m0" else decode_fp8(raw, dtype)
+    return _numpy(value)
 
 
 def _raw_outputs(raw_y, raw_scale, dtype, torch_output=False, pack_fp4_output=False):
@@ -746,6 +811,212 @@ def _raw_outputs(raw_y, raw_scale, dtype, torch_output=False, pack_fp4_output=Fa
         raw_y.view(ml_dtypes.float8_e5m2 if is_e5m2 else ml_dtypes.float8_e4m3fn),
         raw_scale.view(np_float8_e8m0),
     ]
+
+
+def _npu_golden_device(device):
+    # Only TTK's explicit NPU request selects the device baseline. Legacy
+    # callers may supply device tensors while still requesting a CPU reference.
+    target = str(device if device is not None else "cpu")
+    return target if target.split(":", 1)[0] == "npu" else None
+
+
+def _to_npu_tensor(value, dtype, device):
+    """Preserve MX encodings, packing NumPy FP4 into Torch's uint8 carrier."""
+    import torch
+
+    if value is None:
+        return None
+    if dtype == "float4_e2m1":
+        if isinstance(value, np.ndarray):
+            if value.dtype != np.uint8:
+                raw = np.ascontiguousarray(value, dtype=np_float4_e2m1).view(np.uint8)
+                value = _pack_fp4(raw)
+            value = torch.from_numpy(value)
+        elif "float4_e2m1fn_x2" in str(value.dtype):
+            value = value.view(torch.uint8)
+        if value.dtype != torch.uint8:
+            raise ValueError("MXFP4 Torch inputs require packed uint8 storage")
+        return value.to(device=device)
+    torch_dtype = {
+        "float8_e4m3fn": torch.float8_e4m3fn,
+        "float8_e5m2": torch.float8_e5m2,
+        "float8_e8m0": torch.float8_e8m0fnu,
+        "float32": torch.float32,
+    }[dtype]
+    if isinstance(value, np.ndarray):
+        if dtype == "float32":
+            value = torch.from_numpy(np.ascontiguousarray(value, dtype=np.float32))
+        else:
+            numpy_dtype = {
+                "float8_e4m3fn": ml_dtypes.float8_e4m3fn,
+                "float8_e5m2": ml_dtypes.float8_e5m2,
+                "float8_e8m0": np_float8_e8m0,
+            }[dtype]
+            # uint8 carriers already contain MX encodings, not numeric integers.
+            array = np.ascontiguousarray(
+                value, dtype=np.uint8 if value.dtype == np.uint8 else numpy_dtype
+            )
+            value = torch.from_numpy(array.view(np.uint8)).view(torch_dtype)
+    elif value.dtype == torch.uint8 and dtype != "float32":
+        value = value.view(torch_dtype)
+    return value.to(device=device, dtype=torch_dtype)
+
+
+# One prepared weight per worker. Key by content as well as geometry so another
+# case/seed cannot reuse stale data. TTK's default warmup prepares NZ outside the
+# measured invocation; cold runs intentionally include that preparation.
+_NPU_NZ_WEIGHT_CACHE = None
+
+
+def _npu_nz_weight(value, logical_shape, dtype, device):
+    import torch_npu
+
+    global _NPU_NZ_WEIGHT_CACHE
+    nd = np.ascontiguousarray(weight_nz_to_nd(value, logical_shape, dtype))
+    key = (
+        device,
+        dtype,
+        tuple(logical_shape),
+        hashlib.sha256(memoryview(nd).cast("B")).digest(),
+    )
+    if _NPU_NZ_WEIGHT_CACHE is None or _NPU_NZ_WEIGHT_CACHE[0] != key:
+        weight = _to_npu_tensor(nd, dtype, device)
+        weight = torch_npu.npu_format_cast(weight, 29)
+        if torch_npu.get_npu_format(weight) != 29:
+            raise RuntimeError("NPU Golden requires an actual FRACTAL_NZ weight")
+        _NPU_NZ_WEIGHT_CACHE = (key, weight)
+    return _NPU_NZ_WEIGHT_CACHE[1]
+
+
+def _npu_activation_golden(
+    x1,
+    x2,
+    bias,
+    x1_scale,
+    x2_scale,
+    *,
+    device,
+    output_dtype,
+    activation_type="silu",
+    quant_mode="mx",
+    round_mode="rint",
+    scale_alg=0,
+    dst_type_max=0.0,
+    transpose_x1=False,
+    transpose_x2=False,
+    x1_dtype=None,
+    x2_dtype=None,
+    weight_nz_shape=None,
+    pack_fp4_output=False,
+):
+    """MX concatenation baseline shared by kernel, ACLNN and E2E tests."""
+    if (
+        activation_type not in ("silu", "swiglu", "gelu_tanh", "gelu_erf")
+        or quant_mode != "mx"
+    ):
+        raise NotImplementedError(
+            "NPU concatenation Golden supports SiLU/SwiGLU/GELU MX quantization"
+        )
+    dtype = mx_dtype(output_dtype)
+    is_fp4 = dtype == "float4_e2m1"
+    if is_fp4:
+        if activation_type in ("silu", "swiglu"):
+            raise ValueError("SwiGLU and SiLU require MXFP8")
+        if round_mode not in ("rint", "floor", "round") or scale_alg not in (0, 2):
+            raise ValueError(
+                "MXFP4 requires round_mode=rint/floor/round and scale_alg=0/2"
+            )
+    elif round_mode != "rint" or scale_alg not in (0, 1):
+        raise ValueError("MXFP8 requires round_mode=rint and scale_alg=0/1")
+    if x1_scale is None or x2_scale is None:
+        raise ValueError("MX inputs require explicit x1_scale and x2_scale")
+    if (
+        weight_nz_shape is not None
+        and transpose_x1
+        and activation_type in ("silu", "swiglu")
+    ):
+        raise ValueError("SiLU/SwiGLU WeightNZ requires transpose_x1=false")
+
+    import torch
+    import torch.nn.functional as functional
+    import torch_npu
+
+    a_dtype = mx_dtype(x1.dtype if x1_dtype is None else x1_dtype)
+    b_dtype = mx_dtype(x2.dtype if x2_dtype is None else x2_dtype)
+    if dtype != a_dtype:
+        raise ValueError("MX output dtype must match x1")
+    if is_fp4 and b_dtype != dtype:
+        raise ValueError("MXFP4 requires both inputs to be FP4")
+    a = _to_npu_tensor(x1, a_dtype, device)
+    b = (
+        _to_npu_tensor(x2, b_dtype, device)
+        if weight_nz_shape is None
+        else _npu_nz_weight(x2, weight_nz_shape, b_dtype, device)
+    )
+    a_scale = _to_npu_tensor(x1_scale, "float8_e8m0", device)
+    b_scale = _to_npu_tensor(x2_scale, "float8_e8m0", device)
+    if transpose_x1:
+        a = a.transpose(-1, -2)
+        a_scale = a_scale.transpose(-3, -2)
+    if transpose_x2:
+        b = b.transpose(-1, -2)
+        b_scale = b_scale.transpose(-3, -2)
+    matrix = torch_npu.npu_quant_matmul(
+        a,
+        b,
+        b_scale,
+        pertoken_scale=a_scale,
+        bias=_to_npu_tensor(bias, "float32", device),
+        output_dtype=torch.bfloat16 if activation_type == "swiglu" else torch.float32,
+        group_sizes=[1, 1, 32],
+        **({"x1_dtype": 296, "x2_dtype": 296} if is_fp4 else {}),
+    )
+    if activation_type == "swiglu":
+        # SwigluMxQuant takes BF16/FP16 input; use BF16 QBMM output for this
+        # performance baseline. Use golden-mode Enable for accuracy checks.
+        y, y_scale = torch_npu.npu_swiglu_mx_quant(
+            matrix,
+            activate_dim=-1,
+            activate_left=True,
+            swiglu_mode=0,
+            axis=-1,
+            dst_type={"float8_e4m3fn": 292, "float8_e5m2": 291}[dtype],
+            round_mode=round_mode,
+            scale_alg=scale_alg,
+        )
+    else:
+        # The fused epilogue rounds AFTER FP32 activation. Keep the Cast in
+        # the measured chain instead of rounding the QBMM output prematurely.
+        if activation_type == "silu":
+            activated = functional.silu(matrix)
+        else:
+            activated = functional.gelu(
+                matrix, approximate="tanh" if activation_type == "gelu_tanh" else "none"
+            )
+        y, y_scale = torch_npu.npu_dynamic_mx_quant(
+            activated.to(torch.bfloat16),
+            axis=-1,
+            block_size=32,
+            round_mode=round_mode,
+            dst_type=296 if is_fp4 else a.dtype,
+            scale_alg=scale_alg,
+            # The fused OCP path ignores dst_type_max. DynamicMxQuant validates
+            # it unconditionally, so pass its default when that attribute is unused.
+            **(
+                {"dst_type_max": dst_type_max if scale_alg == 2 else 0.0}
+                if is_fp4
+                else {}
+            ),
+        )
+    # ACLNN's plugin return converter calls Tensor.numpy() directly, which
+    # cannot represent Torch FP8/E8M0. Return native NumPy MX arrays instead.
+    raw_y = y.detach().cpu().contiguous().view(torch.uint8).numpy()
+    raw_scale = y_scale.detach().cpu().contiguous().view(torch.uint8).numpy()
+    if is_fp4:
+        raw_y = np.stack((raw_y & 0x0F, raw_y >> 4), axis=-1).reshape(
+            raw_y.shape[:-1] + (raw_y.shape[-1] * 2,)
+        )
+    return _raw_outputs(raw_y, raw_scale, dtype, pack_fp4_output=pack_fp4_output)
 
 
 _MX_ULP_DTYPES = {
@@ -887,11 +1158,14 @@ class QuantMatmulActivationQuantTestSpec:
         quant_mode="mx",
         round_mode="rint",
         dst_type_max=0.0,
+        device=None,
         **kwargs,
     ):
         dtype = mx_dtype(y_dtype)
         if quant_mode != "mx":
             raise ValueError("This TestSpec covers MX quantization")
+        npu_device = _npu_golden_device(device)
+        weight_nz_shape = None
         input_formats = kwargs.get("input_formats", ())
         if _is_fractal_nz(input_formats):
             if activation_type in ("swiglu", "silu") and transpose_x1:
@@ -899,7 +1173,30 @@ class QuantMatmulActivationQuantTestSpec:
             input_ori_shapes = kwargs.get("input_ori_shapes", ())
             if len(input_ori_shapes) <= 1 or input_ori_shapes[1] is None:
                 raise ValueError("WeightNZ kernel golden requires input_ori_shapes[1]")
-            x2 = weight_nz_to_nd(x2, input_ori_shapes[1], dtype)
+            weight_nz_shape = input_ori_shapes[1]
+            if npu_device is None:
+                x2 = weight_nz_to_nd(x2, weight_nz_shape, dtype)
+        if npu_device is not None:
+            input_dtypes = kwargs.get("input_dtypes", ())
+            return _npu_activation_golden(
+                x1,
+                x2,
+                bias,
+                x1_scale,
+                x2_scale,
+                device=npu_device,
+                output_dtype=dtype,
+                activation_type=activation_type,
+                quant_mode=quant_mode,
+                round_mode=round_mode,
+                scale_alg=scale_alg,
+                dst_type_max=dst_type_max,
+                transpose_x1=transpose_x1,
+                transpose_x2=transpose_x2,
+                x1_dtype=input_dtypes[0] if input_dtypes else None,
+                x2_dtype=input_dtypes[1] if input_dtypes else None,
+                weight_nz_shape=weight_nz_shape,
+            )
         # TTK kernel path normalizes the first output dtype to float32, so the
         # MX kind must come from the y_dtype attribute (GE code 35/36/40 or name).
         result = reference(
@@ -935,6 +1232,7 @@ class QuantMatmulActivationQuantAclnnTestSpec:
         dstTypeMax=0.0,
         yOut=None,
         yScaleOut=None,
+        device=None,
         **kwargs,
     ):
         del yScaleOut
@@ -953,12 +1251,37 @@ class QuantMatmulActivationQuantAclnnTestSpec:
         if dtype is None:
             dtype = str(yOut.dtype) if yOut is not None else str(x1.dtype)
         dtype = mx_dtype(dtype)
+        npu_device = _npu_golden_device(device)
+        weight_nz_shape = None
         if _is_fractal_nz(kwargs.get("tensor_formats", ())):
             if activationType in ("swiglu", "silu") and transposeX1:
                 raise ValueError("SwiGLU and SiLU WeightNZ require transpose_x1=false")
             # TTK passes a logical x2 view backed by the physical NZ storage.
             # Recover and decode that storage before _numpy() copies the view.
-            x2 = weight_nz_to_nd(x2, tuple(x2.shape), dtype)
+            weight_nz_shape = tuple(x2.shape)
+            if npu_device is None:
+                x2 = weight_nz_to_nd(x2, weight_nz_shape, dtype)
+        if npu_device is not None:
+            tensor_dtypes = kwargs.get("tensor_dtypes", ())
+            return _npu_activation_golden(
+                x1,
+                x2,
+                biasOptional,
+                x1ScaleOptional,
+                x2Scale,
+                device=npu_device,
+                output_dtype=dtype,
+                activation_type=activationType,
+                quant_mode=quantMode,
+                round_mode=roundMode,
+                scale_alg=scaleAlg,
+                dst_type_max=dstTypeMax,
+                transpose_x1=transposeX1,
+                transpose_x2=transposeX2,
+                x1_dtype=tensor_dtypes[0] if tensor_dtypes else None,
+                x2_dtype=tensor_dtypes[1] if tensor_dtypes else None,
+                weight_nz_shape=weight_nz_shape,
+            )
         result = reference(
             *map(_numpy, (x1, x2, biasOptional, x1ScaleOptional, x2Scale)),
             activation_type=activationType,
@@ -990,6 +1313,7 @@ class QuantMatmulActivationQuantE2ETestSpec:
         dst_type_max=0.0,
         x1_dtype=None,
         x2_dtype=None,
+        device=None,
         **kwargs,
     ):
         # PyTorch views already express the logical matrix: no second transpose.
@@ -997,6 +1321,31 @@ class QuantMatmulActivationQuantE2ETestSpec:
         if dtype is None:
             dtype = x1_dtype if x1_dtype is not None else str(x1.dtype)
         dtype = mx_dtype(dtype)
+        npu_device = _npu_golden_device(device)
+        if npu_device is not None:
+            group_sizes = kwargs.get("group_sizes")
+            if group_sizes is not None and tuple(group_sizes) not in (
+                (0, 0, 0),
+                (1, 1, 32),
+            ):
+                raise ValueError("Invalid MX group_sizes")
+            return _npu_activation_golden(
+                x1,
+                x2,
+                bias,
+                x1_scale,
+                x2_scale,
+                device=npu_device,
+                output_dtype=dtype,
+                activation_type=activation_type,
+                quant_mode=kwargs.get("quant_mode", "mx"),
+                round_mode=round_mode,
+                scale_alg=scale_alg,
+                dst_type_max=dst_type_max,
+                x1_dtype=x1_dtype,
+                x2_dtype=x2_dtype,
+                pack_fp4_output=dtype == "float4_e2m1",
+            )
         is_fp4 = dtype == "float4_e2m1"
         if is_fp4:
             if mx_dtype(x1_dtype) != dtype or mx_dtype(x2_dtype) != dtype:
@@ -1004,12 +1353,14 @@ class QuantMatmulActivationQuantE2ETestSpec:
             x1_value = _unpack_fp4(x1)
             x2_value = _unpack_fp4(x2)
         else:
-            x1_value = _numpy(x1)
-            x2_value = _numpy(x2)
+            x1_value = _numpy_mx(x1, x1.dtype if x1_dtype is None else x1_dtype)
+            x2_value = _numpy_mx(x2, x2.dtype if x2_dtype is None else x2_dtype)
         result = reference(
             x1_value,
             x2_value,
-            *map(_numpy, (bias, x1_scale, x2_scale)),
+            _numpy(bias),
+            _numpy_mx(x1_scale, "float8_e8m0"),
+            _numpy_mx(x2_scale, "float8_e8m0"),
             activation_type=activation_type,
             output_dtype=dtype,
             scale_alg=scale_alg,

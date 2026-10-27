@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -335,15 +336,16 @@ private:
         const uint64_t width = param.activation == 2 ? param.n / 2 : param.n;
         if (param.dataPattern != "batch_constant" && param.dataPattern != "coordinate" &&
             param.dataPattern != "subnormal_bias" && param.dataPattern != "gate_subnormal" &&
-            param.dataPattern != "activation_bias") {
+            param.dataPattern != "ocp_boundary_bias" && param.dataPattern != "activation_bias") {
             throw std::runtime_error("invalid dataPattern");
         }
         if ((param.dataPattern == "subnormal_bias" || param.dataPattern == "gate_subnormal") &&
             (param.activation != 2 || param.biasMode == 0)) {
             throw std::runtime_error("subnormal_bias/gate_subnormal requires SwiGLU with bias");
         }
-        if (param.dataPattern == "activation_bias" && param.biasMode == 0) {
-            throw std::runtime_error("activation_bias requires bias");
+        if ((param.dataPattern == "activation_bias" || param.dataPattern == "ocp_boundary_bias") &&
+            param.biasMode == 0) {
+            throw std::runtime_error("activation_bias/ocp_boundary_bias requires bias");
         }
         const uint64_t expectedRows = batches * (param.dataPattern == "coordinate" ? param.m : 1);
         if (param.expectedY.size() != expectedRows * width ||
@@ -549,12 +551,13 @@ public:
         const bool varied = item.dataPattern == "coordinate";
         const bool subnormal = item.dataPattern == "subnormal_bias";
         const bool gateSubnormal = item.dataPattern == "gate_subnormal";
+        const bool ocpBoundary = item.dataPattern == "ocp_boundary_bias";
         const bool activationBias = item.dataPattern == "activation_bias";
         for (uint32_t batch = 0; batch < batchA; ++batch) {
             for (uint32_t row = 0; row < item.m; ++row) {
                 const size_t rowIndex = static_cast<size_t>(batch) * item.m + row;
                 for (uint32_t k = 0; k < item.k; ++k) {
-                    x1.Data()[rowIndex * item.k + k] = (subnormal || gateSubnormal || activationBias) ?
+                    x1.Data()[rowIndex * item.k + k] = (subnormal || gateSubnormal || ocpBoundary || activationBias) ?
                                                            0 :
                                                            (varied ? variedA[(batch + row + 2 * k) % 3] :
                                                                      aValues[batch % 3]);
@@ -589,6 +592,31 @@ public:
         auto* biasData = reinterpret_cast<float*>(bias.Data());
         for (uint32_t batch = 0; batch < biasBatches; ++batch) {
             for (uint32_t n = 0; n < item.n; ++n) {
+                if (ocpBoundary) {
+                    // Tiny GELU inputs round to x/2 (tanh Div flushes subnormals).
+                    // SiLU(2^-60) rounds to 2^-61.
+                    // Normal FP32 bias inputs produce BF16 exponent-boundary values.
+                    constexpr int gateExponent = -60;
+                    const int emax = item.outputDtype == 35 ? 15 : 8;
+                    const int subnormalExponent = item.activation == 2 ? -133 : -127;
+                    const std::array<int, 7> exponents = {0,          subnormalExponent, -126,      -120,
+                                                          emax - 128, emax - 127,        emax - 126};
+                    if (item.activation != 2) {
+                        const size_t group = (n / 32) % exponents.size();
+                        biasData[static_cast<size_t>(batch) * item.n + n] = group == 0 ?
+                                                                                0.0F :
+                                                                                std::ldexp(1.0F, exponents[group] + 1);
+                        continue;
+                    }
+                    const uint32_t group = n < item.n / 2 ? 0 : (n - item.n / 2) / 32;
+                    biasData[static_cast<size_t>(batch) * item.n +
+                             n] = n < item.n / 2 ?
+                                      std::ldexp(1.0F, gateExponent) :
+                                      (group % exponents.size() == 0 ?
+                                           0.0F :
+                                           std::ldexp(1.0F, exponents[group % exponents.size()] - gateExponent + 1));
+                    continue;
+                }
                 if (activationBias) {
                     // Zero matmul isolates activation behavior, including negative and saturated sigmoid inputs.
                     constexpr std::array<float, 8> values = {0.0F, -1.0F, 1.0F, -20.0F, 20.0F, -90.0F, 90.0F, -0.0F};
