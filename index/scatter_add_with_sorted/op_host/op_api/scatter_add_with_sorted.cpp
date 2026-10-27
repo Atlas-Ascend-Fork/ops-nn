@@ -39,7 +39,10 @@ const aclTensor* ScatterAddWithSorted(const aclTensor* self, const aclTensor* va
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ScatterAddWithSorted, OP_INPUT(selfOut, value, sorted_index, pos),
                                            OP_OUTPUT(selfOut), OP_ATTR(reduction));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "ScatterAddWithSortedAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(ret,
+                                    "ScatterAddWithSorted ADD_TO_LAUNCHER_LIST_AICORE failed, rc=%d; "
+                                    "propagate the lower-layer error.",
+                                    ret),
              return nullptr);
     return selfOut;
 }

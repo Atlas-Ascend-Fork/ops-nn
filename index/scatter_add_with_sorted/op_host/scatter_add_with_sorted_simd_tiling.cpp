@@ -592,7 +592,14 @@ ge::graphStatus ScatterAddWithSortedSimdTiling::GetWorkspaceSize()
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    if (currentWorkspace == nullptr) {
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {
+            context_->GetNodeName(), "ScatterAddWithSortedSimdTiling::GetWorkspaceSize: workspace-size storage is "
+                                     "null; expected one size slot; check tiling context construction"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     currentWorkspace[0] = useWorkspace + sysWorkspaceSize;
 
     return ge::GRAPH_SUCCESS;

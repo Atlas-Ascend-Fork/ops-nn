@@ -91,7 +91,14 @@ ge::graphStatus ScatterAddWithSortedSimtTiling::PostTiling()
 {
     OP_LOGD(context_->GetNodeName(), "ScatterAddWithSortedSimtTiling simt PostTiling enter.");
     auto workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    if (workspaces == nullptr) {
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {context_->GetNodeName(),
+                                                 "ScatterAddWithSortedSimtTiling::PostTiling: workspace-size storage "
+                                                 "is null; expected one size slot; check tiling context construction"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     workspaces[0] = workspacesSize_;
 
     context_->SetBlockDim(usedCoreNum_);

@@ -22,9 +22,17 @@ static constexpr size_t SC_OUT_VAR_IDX = 0;
 static ge::graphStatus InferShape4ScatterDiv(gert::InferShapeContext* context)
 {
     const gert::Shape* varShape = context->GetInputShape(SC_IN_VAR_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
+    OP_CHECK_IF(varShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     gert::Shape* outputShape = context->GetOutputShape(SC_OUT_VAR_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outputShape);
+    if (outputShape == nullptr) {
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {
+            context->GetNodeName(),
+            "InferShape4ScatterDiv: output var shape storage is null; check graph output allocation"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     *outputShape = *varShape;
     return ge::GRAPH_SUCCESS;
 }

@@ -92,15 +92,30 @@ private:
 ge::graphStatus ScatterAddWithSortedTiling::Init()
 {
     if (tilingContext == nullptr) {
-        OP_LOGE("ScatterAddWithSorted", "tilingContext is nullptr.");
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {
+            "ScatterAddWithSorted",
+            "ScatterAddWithSortedTiling::Init: tiling context is null; check the registered tiling caller"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
         return ge::GRAPH_FAILED;
     }
 
     auto compileInfo = tilingContext->GetCompileInfo<ScatterAddWithSortedCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, compileInfo);
-    static uint32_t coreNum = static_cast<uint32_t>(compileInfo->totalCoreNum);
+    if (compileInfo == nullptr) {
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {
+            tilingContext->GetNodeName(),
+            "ScatterAddWithSortedTiling::Init: compile info is null; check TilingParse registration and execution"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
+    const uint32_t coreNum = static_cast<uint32_t>(compileInfo->totalCoreNum);
     if (coreNum == 0) {
-        OP_LOGE(tilingContext, "coreNum must greater than 0.");
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {
+            tilingContext->GetNodeName(),
+            "ScatterAddWithSortedTiling::Init: platform coreNum is 0; check platform information and TilingParse"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
         return ge::GRAPH_FAILED;
     }
     workspaceSize = compileInfo->workspaceSize;
@@ -109,14 +124,23 @@ ge::graphStatus ScatterAddWithSortedTiling::Init()
     OP_LOGD(tilingContext, "ubSizePlatForm: %lu.", ubSizePlatForm);
 
     auto attrs = tilingContext->GetAttrs();
-    if (attrs == nullptr || tilingContext->GetInputShape(INPUT_0) == nullptr ||
-        tilingContext->GetInputShape(INPUT_1) == nullptr || tilingContext->GetInputShape(INPUT_2) == nullptr ||
-        tilingContext->GetInputDesc(INPUT_0) == nullptr || tilingContext->GetRawTilingData() == nullptr) {
-        OP_LOGE(tilingContext, "tilingContext inputshape or outputshape is nullptr.");
+    if (attrs == nullptr || tilingContext->GetRawTilingData() == nullptr) {
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {tilingContext->GetNodeName(),
+                                                 "ScatterAddWithSortedTiling::Init: attributes or raw tiling storage "
+                                                 "is null; check tiling context construction"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
         return ge::GRAPH_FAILED;
+    }
+    const char* inputNames[] = {"var", "value", "sorted_index"};
+    for (size_t i = 0; i < sizeof(inputNames) / sizeof(inputNames[0]); ++i) {
+        OP_CHECK_IF(tilingContext->GetInputShape(i) == nullptr || tilingContext->GetInputDesc(i) == nullptr,
+                    OP_LOGE_WITH_INVALID_INPUT(tilingContext->GetNodeName(), inputNames[i]), return ge::GRAPH_FAILED);
     }
 
     const char* reduce = attrs->GetAttrPointer<char>(0);
+    OP_CHECK_IF(reduce == nullptr, OP_LOGE_WITH_INVALID_INPUT(tilingContext->GetNodeName(), "reduction"),
+                return ge::GRAPH_FAILED);
     auto inputDtype = tilingContext->GetInputDesc(INPUT_0)->GetDataType();
     auto valueDtype = tilingContext->GetInputDesc(INPUT_1)->GetDataType();
     uint32_t inputSize = 0;
@@ -147,17 +171,24 @@ ge::graphStatus ScatterAddWithSortedTiling::Init()
         inputSize = SIZE_OF_BF16 + SIZE_OF_BF16 + SIZE_OF_FP16;
         dataAlign = dataAlign / SIZE_OF_BF16;
     } else {
-        OP_LOGE(tilingContext, "var only support float, float16, int32, uint8, int8, bf16.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            tilingContext->GetNodeName(), "var", Ops::Base::ToString(inputDtype).c_str(),
+            "supported dtypes on this tiling path are FLOAT, FLOAT16, INT32, UINT8, INT8 and BF16");
         return ge::GRAPH_FAILED;
     }
 
     if (inputDtype != valueDtype) {
-        OP_LOGE(tilingContext, "value dtype must be same as var.");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            tilingContext->GetNodeName(), "var, value",
+            (Ops::Base::ToString(inputDtype) + ", " + Ops::Base::ToString(valueDtype)).c_str(),
+            "var and value must have the same dtype");
         return ge::GRAPH_FAILED;
     }
 
     if (ge::DT_INT32 != tilingContext->GetInputDesc(INPUT_2)->GetDataType()) {
-        OP_LOGE(tilingContext, "sorted_index only support int32.");
+        OP_LOGE_FOR_INVALID_DTYPE(tilingContext->GetNodeName(), "sorted_index",
+                                  Ops::Base::ToString(tilingContext->GetInputDesc(INPUT_2)->GetDataType()).c_str(),
+                                  "INT32");
         return ge::GRAPH_FAILED;
     }
 
@@ -167,7 +198,10 @@ ge::graphStatus ScatterAddWithSortedTiling::Init()
 
     auto inputDimNum = inputShape.GetDimNum();
     if (inputDimNum != updatesShape.GetDimNum()) {
-        OP_LOGE(tilingContext, "the dimNum of input must equal the dimNum of updates.");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            tilingContext->GetNodeName(), "var, value",
+            (std::to_string(inputDimNum) + ", " + std::to_string(updatesShape.GetDimNum())).c_str(),
+            "var and value must have the same number of dimensions on this tiling path");
         return ge::GRAPH_FAILED;
     }
 
@@ -183,7 +217,12 @@ ge::graphStatus ScatterAddWithSortedTiling::Init()
     }
     indicesCount = indicesShape.GetDim(0);
     if (inputOneTime == 0 || updatesOneTime == 0 || inputCount == 0 || updatesCount == 0 || indicesCount == 0) {
-        OP_LOGE(tilingContext, "shape cannot equal 0.");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            tilingContext->GetNodeName(), "var, value, sorted_index",
+            (Ops::Base::ToString(inputShape) + ", " + Ops::Base::ToString(updatesShape) + ", " +
+             Ops::Base::ToString(indicesShape))
+                .c_str(),
+            "var, value and sorted_index must be nonempty on this tiling path");
         return ge::GRAPH_FAILED;
     }
 
@@ -210,7 +249,9 @@ ge::graphStatus ScatterAddWithSortedTiling::Init()
     }
 
     if (ge::DT_INT32 != tilingContext->GetInputDesc(INPUT_3)->GetDataType()) {
-        OP_LOGE(tilingContext, "pos only support int32.");
+        OP_LOGE_FOR_INVALID_DTYPE(tilingContext->GetNodeName(), "pos",
+                                  Ops::Base::ToString(tilingContext->GetInputDesc(INPUT_3)->GetDataType()).c_str(),
+                                  "INT32");
         return ge::GRAPH_FAILED;
     }
 
@@ -287,6 +328,14 @@ ge::graphStatus ScatterAddWithSortedTiling::RunKernelTiling()
     tilingContext->SetTilingKey(tilingKey);
     tilingContext->SetBlockDim(usedCoreNum);
     size_t* workspaces = tilingContext->GetWorkspaceSizes(1);
+    if (workspaces == nullptr) {
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {
+            tilingContext->GetNodeName(), "ScatterAddWithSortedTiling::RunKernelTiling: workspace-size storage is "
+                                          "null; expected one size slot; check tiling context construction"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     workspaces[0] = workspaceSize;
     TilingDataPrint();
     OP_LOGD(tilingContext, "Tiling end.");
@@ -332,8 +381,11 @@ ge::graphStatus TilingScatterAddWithSorted(gert::TilingContext* context)
     }
 
     ScatterAddWithSortedTiling tilingObject(context);
-    if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        return ge::GRAPH_FAILED;
+    const auto ret = tilingObject.Init();
+    if (ret != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context, "ScatterAddWithSortedTiling::Init failed, rc=%u; propagate the first error.",
+                               ret);
+        return ret;
     }
     return tilingObject.RunKernelTiling();
 }
@@ -342,17 +394,38 @@ ge::graphStatus TilingPrepareForScatterAddWithSorted(gert::TilingParseContext* c
 {
     OP_LOGD(context, "TilingPrepareForScatterAddWithSorted start.");
     auto compileInfo = context->GetCompiledInfo<ScatterAddWithSortedCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {context->GetNodeName(),
+                                                 "TilingPrepareForScatterAddWithSorted: compile info storage is null; "
+                                                 "check TilingParse context construction"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {
+            context->GetNodeName(),
+            "TilingPrepareForScatterAddWithSorted: platform info is null; check platform initialization"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo->workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context, "Failed to get ub size."),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatForm <= 0) {
+        const std::string reason = "TilingPrepareForScatterAddWithSorted: UB size is " +
+                                   std::to_string(compileInfo->ubSizePlatForm) +
+                                   "; expected > 0 bytes; check platform initialization";
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {context->GetNodeName(), reason.c_str()};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGD(context, "ub_size_platform is %lu.", compileInfo->ubSizePlatForm);
     uint64_t totalUbSize = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, totalUbSize);
