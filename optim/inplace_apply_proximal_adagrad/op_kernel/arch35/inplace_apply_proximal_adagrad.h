@@ -476,8 +476,11 @@ __aicore__ inline void InplaceApplyProximalAdagradKernel<T>::Process()
         Compute(currentNum);
 
         // Prefetch next tile: MTE2 overlaps with MTE3 of CopyOut below
+        // Tail tile must prefetch only the remaining elements: a full-length
+        // prefetch reads past blockLen_ (past the tensor end on the last core).
         if (i < loopCount - 1) {
-            CopyInTile((i + 1) * ubFactor_, ubFactor_);
+            int64_t nextNum = ((i + 1) == (loopCount - 1)) ? (blockLen_ - (i + 1) * ubFactor_) : ubFactor_;
+            CopyInTile((i + 1) * ubFactor_, nextNum);
         }
 
         // CopyOut current tile (MTE3)
