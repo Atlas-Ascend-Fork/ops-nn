@@ -5,11 +5,11 @@
 | 产品 | 是否支持 |
 | :----------------------------------------- | :------: |
 | <term>Ascend 950PR&950DT系列产品</term> | √ |
-| <term>Atlas A3系列产品</term>| √ |
-| <term>Atlas A2系列产品</term> | √ |
-| <term>Atlas 200I/500 A2推理产品</term> | √ |
-| <term>Atlas推理系列产品</term> | √ |
-| <term>Atlas训练系列产品</term> | √ |
+| <term>Atlas A3系列产品</term>| × |
+| <term>Atlas A2系列产品</term> | × |
+| <term>Atlas 200I/500 A2推理产品</term> | × |
+| <term>Atlas推理系列产品</term> | × |
+| <term>Atlas训练系列产品</term> | × |
 
 ## 功能说明
 
@@ -36,6 +36,12 @@
 | shape_hw | 输入 | 每个batch的图像尺寸，shape为`[batch, 3]`；前两个元素依次为高度和宽度，第3个元素为保留位。 | INT32 | ND |
 | y | 输出 | 换算后的相对坐标，shape和数据类型与`boxes`一致。 | FLOAT、FLOAT16 | ND |
 | reversed_box | 可选属性 | 指定`boxes`的坐标轴位置，默认值为false。 | BOOL | - |
+
+### 产品差异说明
+
+| 产品 | 静态shape能力 | 动态shape能力 | shape/rank及空Tensor限制 |
+| --- | --- | --- | --- |
+| <term>Ascend 950PR&950DT系列产品</term> | 输入、输出均为ND | 支持动态shape和动态rank，输入、输出均为ND | `boxes`的rank为2～8；支持batch或非坐标维为0的空Tensor，坐标维必须为4 |
 
 ## 约束说明
 
