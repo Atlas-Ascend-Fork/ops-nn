@@ -22,12 +22,12 @@ extern "C" {
  * @domain aclnn_ops_infer
  * 算子功能：将原稀疏的weight压缩为sparseWeight以及相应的index, 用作后续Sparse4to2QuantMatmul的输入
  * @param [in] weight: 矩阵乘对应的右矩阵。
- * @param [in] shape: 矩阵乘的右矩阵对应的shape。
- * @param [out] sparseWeight: 压缩后的weight矩阵。
- * @param [out] sparseWeightDims: 压缩后的weight矩阵shape数组首地址。
+ * @param [in] shape: 矩阵乘的右矩阵对应的shape，n和k必须为正。
+ * @param [out] sparseWeight: 压缩后的weight矩阵，由调用者通过free释放。
+ * @param [out] sparseWeightDims: 压缩后的weight矩阵shape数组首地址，由调用者通过free释放。
  * @param [out] sparseWeightDimsNum: 压缩后的weight矩阵shape数组长度（元素数）。
- * @param [out] index: 压缩后的weight对应的index。
- * @param [out] indexDims: 压缩后的index矩阵shape数组首地址。
+ * @param [out] index: 压缩后的weight对应的index，由调用者通过free释放。
+ * @param [out] indexDims: 压缩后的index矩阵shape数组首地址，由调用者通过free释放。
  * @param [out] indexDimsNum: 压缩后的index矩阵shape数组长度（元素数）。
  * @return aclnnStatus: 返回状态码
  */

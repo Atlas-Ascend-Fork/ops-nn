@@ -14,6 +14,7 @@
 #include <vector>
 #include <array>
 #include <cstdlib>
+#include <limits>
 #include "gtest/gtest.h"
 
 #include "../../../op_api/aclnn_sparse4to2quant_matmul_weight_nz.h"
@@ -42,6 +43,19 @@ protected:
             weight[i + 3] = 1;
         }
     }
+
+    static void CheckIndexDescriptor(const TensorDesc& indexDesc, aclnnStatus expected)
+    {
+        TensorDesc xDesc({64, 512}, ACL_INT8, ACL_FORMAT_ND);
+        TensorDesc weightDesc({256, 256}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {8, 16, 16, 32});
+        TensorDesc xScaleDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+        TensorDesc weightScaleDesc({256}, ACL_FLOAT, ACL_FORMAT_ND);
+        TensorDesc outDesc({64, 256}, ACL_BF16, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnSparse4to2QuantMatmulWeightNz,
+                            INPUT(xDesc, weightDesc, indexDesc, xScaleDesc, weightScaleDesc, nullptr), OUTPUT(outDesc));
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), expected);
+    }
 };
 
 TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_test_normal_case_01)
@@ -49,7 +63,7 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_test_normal_case_01)
     SocVersionManager versionManager(SocVersion::ASCEND910B);
     TensorDesc x_desc = TensorDesc({64, 512}, ACL_INT8, ACL_FORMAT_ND);
     TensorDesc sparse_weight_desc = TensorDesc({256, 256}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {8, 16, 16, 32});
-    TensorDesc index_desc = TensorDesc({256, 32}, ACL_UINT8, ACL_FORMAT_ND);
+    TensorDesc index_desc = TensorDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {8, 16, 16, 8});
     TensorDesc x_scale_desc = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc sparse_weight_scale_desc = TensorDesc({256}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc bias_desc = TensorDesc({256}, ACL_BF16, ACL_FORMAT_ND);
@@ -67,7 +81,7 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_test_normal_no_bias)
     SocVersionManager versionManager(SocVersion::ASCEND910B);
     TensorDesc x_desc = TensorDesc({64, 512}, ACL_INT8, ACL_FORMAT_ND);
     TensorDesc sparse_weight_desc = TensorDesc({256, 256}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {8, 16, 16, 32});
-    TensorDesc index_desc = TensorDesc({256, 32}, ACL_UINT8, ACL_FORMAT_ND);
+    TensorDesc index_desc = TensorDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {8, 16, 16, 8});
     TensorDesc x_scale_desc = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc sparse_weight_scale_desc = TensorDesc({256}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc out_desc = TensorDesc({64, 256}, ACL_BF16, ACL_FORMAT_ND);
@@ -83,7 +97,7 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_invalid_dtype_x)
     SocVersionManager versionManager(SocVersion::ASCEND910B);
     TensorDesc x_desc = TensorDesc({64, 512}, ACL_FLOAT16, ACL_FORMAT_ND);
     TensorDesc sparse_weight_desc = TensorDesc({256, 256}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {8, 16, 16, 32});
-    TensorDesc index_desc = TensorDesc({256, 32}, ACL_UINT8, ACL_FORMAT_ND);
+    TensorDesc index_desc = TensorDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {8, 16, 16, 8});
     TensorDesc x_scale_desc = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc sparse_weight_scale_desc = TensorDesc({256}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc out_desc = TensorDesc({64, 256}, ACL_BF16, ACL_FORMAT_ND);
@@ -99,8 +113,8 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_invalid_empty_x)
     SocVersionManager versionManager(SocVersion::ASCEND910B);
     TensorDesc x_desc = TensorDesc({0, 512}, ACL_INT8, ACL_FORMAT_ND);
     TensorDesc sparse_weight_desc = TensorDesc({256, 256}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {8, 16, 16, 32});
-    TensorDesc index_desc = TensorDesc({256, 32}, ACL_UINT8, ACL_FORMAT_ND);
-    TensorDesc x_scale_desc = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    TensorDesc index_desc = TensorDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {8, 16, 16, 8});
+    TensorDesc x_scale_desc = TensorDesc({0}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc sparse_weight_scale_desc = TensorDesc({256}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc out_desc = TensorDesc({0, 256}, ACL_BF16, ACL_FORMAT_ND);
     auto ut = OP_API_UT(aclnnSparse4to2QuantMatmulWeightNz,
@@ -115,7 +129,7 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_invalid_bias_dtype)
     SocVersionManager versionManager(SocVersion::ASCEND910B);
     TensorDesc x_desc = TensorDesc({64, 512}, ACL_INT8, ACL_FORMAT_ND);
     TensorDesc sparse_weight_desc = TensorDesc({256, 256}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {8, 16, 16, 32});
-    TensorDesc index_desc = TensorDesc({256, 32}, ACL_UINT8, ACL_FORMAT_ND);
+    TensorDesc index_desc = TensorDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {8, 16, 16, 8});
     TensorDesc x_scale_desc = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc sparse_weight_scale_desc = TensorDesc({256}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc bias_desc = TensorDesc({256}, ACL_FLOAT16, ACL_FORMAT_ND);
@@ -133,7 +147,7 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_invalid_sparse_weight_nd)
     SocVersionManager versionManager(SocVersion::ASCEND910B);
     TensorDesc x_desc = TensorDesc({64, 512}, ACL_INT8, ACL_FORMAT_ND);
     TensorDesc sparse_weight_desc = TensorDesc({256, 256}, ACL_INT8, ACL_FORMAT_ND);
-    TensorDesc index_desc = TensorDesc({256, 32}, ACL_UINT8, ACL_FORMAT_ND);
+    TensorDesc index_desc = TensorDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {8, 16, 16, 8});
     TensorDesc x_scale_desc = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc sparse_weight_scale_desc = TensorDesc({256}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc out_desc = TensorDesc({64, 256}, ACL_BF16, ACL_FORMAT_ND);
@@ -149,7 +163,7 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, unsupported_soc)
     SocVersionManager versionManager(SocVersion::ASCEND310P);
     TensorDesc x_desc = TensorDesc({64, 512}, ACL_INT8, ACL_FORMAT_ND);
     TensorDesc sparse_weight_desc = TensorDesc({256, 256}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {8, 16, 16, 32});
-    TensorDesc index_desc = TensorDesc({256, 32}, ACL_UINT8, ACL_FORMAT_ND);
+    TensorDesc index_desc = TensorDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {8, 16, 16, 8});
     TensorDesc x_scale_desc = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc sparse_weight_scale_desc = TensorDesc({256}, ACL_FLOAT, ACL_FORMAT_ND);
     TensorDesc out_desc = TensorDesc({64, 256}, ACL_BF16, ACL_FORMAT_ND);
@@ -232,7 +246,7 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, trans_sparse4to2_para_invalid_null_shape)
     uint8_t* idx = nullptr;
     int64_t* id = nullptr;
     uint64_t idn = 0;
-    EXPECT_EQ(aclnnTransSparse4to2Para(w, nullptr, &sw, &swd, &swdn, &idx, &id, &idn), ACLNN_ERR_INNER_NULLPTR);
+    EXPECT_EQ(aclnnTransSparse4to2Para(w, nullptr, &sw, &swd, &swdn, &idx, &id, &idn), ACLNN_ERR_PARAM_NULLPTR);
 }
 
 TEST_F(l2_Sparse4to2QuantMatmul_test, trans_sparse4to2_para_invalid_null_weight)
@@ -245,7 +259,7 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, trans_sparse4to2_para_invalid_null_weight)
     uint8_t* idx = nullptr;
     int64_t* id = nullptr;
     uint64_t idn = 0;
-    EXPECT_EQ(aclnnTransSparse4to2Para(nullptr, shape, &sw, &swd, &swdn, &idx, &id, &idn), ACLNN_ERR_INNER_NULLPTR);
+    EXPECT_EQ(aclnnTransSparse4to2Para(nullptr, shape, &sw, &swd, &swdn, &idx, &id, &idn), ACLNN_ERR_PARAM_NULLPTR);
     aclDestroyIntArray(shape);
 }
 
@@ -282,4 +296,171 @@ TEST_F(l2_Sparse4to2QuantMatmul_test, trans_sparse4to2_para_invalid_sparsity)
     EXPECT_EQ(aclnnTransSparse4to2Para(weight.data(), shape, &sw, &swd, &swdn, &idx, &id, &idn),
               ACLNN_ERR_PARAM_INVALID);
     aclDestroyIntArray(shape);
+}
+
+TEST_F(l2_Sparse4to2QuantMatmul_test, trans_sparse4to2_para_invalid_nonpositive_shape)
+{
+    const std::vector<std::array<int64_t, 2>> invalidShapes = {{-1, 4},
+                                                               {-15, 4},
+                                                               {-16, 64},
+                                                               {16, -1},
+                                                               {16, -32},
+                                                               {16, -64},
+                                                               {0, 8},
+                                                               {8, 0},
+                                                               {std::numeric_limits<int64_t>::min(), 64},
+                                                               {16, std::numeric_limits<int64_t>::min()}};
+    for (const auto& dims : invalidShapes) {
+        SCOPED_TRACE(::testing::PrintToString(dims));
+        aclIntArray* shape = aclCreateIntArray(dims.data(), dims.size());
+        ASSERT_NE(shape, nullptr);
+        int8_t weight[64] = {0};
+        int8_t* sparseWeight = nullptr;
+        uint8_t* index = nullptr;
+        int64_t* sparseWeightDims = nullptr;
+        int64_t* indexDims = nullptr;
+        uint64_t sparseWeightDimsNum = 0;
+        uint64_t indexDimsNum = 0;
+        EXPECT_EQ(aclnnTransSparse4to2Para(weight, shape, &sparseWeight, &sparseWeightDims, &sparseWeightDimsNum,
+                                           &index, &indexDims, &indexDimsNum),
+                  ACLNN_ERR_PARAM_INVALID);
+        EXPECT_EQ(sparseWeight, nullptr);
+        EXPECT_EQ(index, nullptr);
+        free(sparseWeight);
+        free(sparseWeightDims);
+        free(index);
+        free(indexDims);
+        aclDestroyIntArray(shape);
+    }
+}
+
+TEST_F(l2_Sparse4to2QuantMatmul_test, trans_sparse4to2_para_invalid_shape_overflow)
+{
+    const auto maxDim = std::numeric_limits<int64_t>::max();
+    const std::vector<std::array<int64_t, 2>> invalidShapes = {{maxDim, 1}, {1, maxDim}, {1LL << 32, 1LL << 32}};
+    for (const auto& dims : invalidShapes) {
+        SCOPED_TRACE(::testing::PrintToString(dims));
+        aclIntArray* shape = aclCreateIntArray(dims.data(), dims.size());
+        ASSERT_NE(shape, nullptr);
+        int8_t weight[8] = {0};
+        int8_t* sparseWeight = nullptr;
+        uint8_t* index = nullptr;
+        int64_t* sparseWeightDims = nullptr;
+        int64_t* indexDims = nullptr;
+        uint64_t sparseWeightDimsNum = 0;
+        uint64_t indexDimsNum = 0;
+        EXPECT_EQ(aclnnTransSparse4to2Para(weight, shape, &sparseWeight, &sparseWeightDims, &sparseWeightDimsNum,
+                                           &index, &indexDims, &indexDimsNum),
+                  ACLNN_ERR_PARAM_INVALID);
+        EXPECT_EQ(sparseWeight, nullptr);
+        EXPECT_EQ(index, nullptr);
+        aclDestroyIntArray(shape);
+    }
+}
+
+TEST_F(l2_Sparse4to2QuantMatmul_test, trans_sparse4to2_para_invalid_null_outputs)
+{
+    const std::array<int64_t, 2> dims = {16, 64};
+    aclIntArray* shape = aclCreateIntArray(dims.data(), dims.size());
+    ASSERT_NE(shape, nullptr);
+    int8_t weight[8] = {0};
+    for (size_t nullArg = 0; nullArg < 6; ++nullArg) {
+        SCOPED_TRACE(nullArg);
+        int8_t* sparseWeight = nullptr;
+        uint8_t* index = nullptr;
+        int64_t* sparseWeightDims = nullptr;
+        int64_t* indexDims = nullptr;
+        uint64_t sparseWeightDimsNum = 0;
+        uint64_t indexDimsNum = 0;
+        EXPECT_EQ(aclnnTransSparse4to2Para(
+                      weight, shape, nullArg == 0 ? nullptr : &sparseWeight, nullArg == 1 ? nullptr : &sparseWeightDims,
+                      nullArg == 2 ? nullptr : &sparseWeightDimsNum, nullArg == 3 ? nullptr : &index,
+                      nullArg == 4 ? nullptr : &indexDims, nullArg == 5 ? nullptr : &indexDimsNum),
+                  ACLNN_ERR_PARAM_NULLPTR);
+    }
+    aclDestroyIntArray(shape);
+}
+
+TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_invalid_index_view_shape)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND910B);
+    const std::vector<std::vector<int64_t>> invalidShapes = {{256, 32}, {256, 512}, {256, 0},    {256, 1},
+                                                             {128, 64}, {64},       {1, 256, 64}};
+    for (const auto& dims : invalidShapes) {
+        SCOPED_TRACE(::testing::PrintToString(dims));
+        CheckIndexDescriptor(TensorDesc(dims, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {8, 16, 16, 8}),
+                             ACLNN_ERR_PARAM_INVALID);
+    }
+}
+
+TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_invalid_index_storage_shape)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND910B);
+    const std::vector<std::vector<int64_t>> invalidShapes = {
+        {256, 64}, {8, 16, 16}, {8, 16, 16, 8, 1}, {7, 16, 16, 8}, {8, 15, 16, 8}, {8, 16, 15, 8}, {8, 16, 16, 7}};
+    for (const auto& dims : invalidShapes) {
+        SCOPED_TRACE(::testing::PrintToString(dims));
+        CheckIndexDescriptor(TensorDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, dims), ACLNN_ERR_PARAM_INVALID);
+    }
+}
+
+TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_invalid_noncontiguous_index)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND910B);
+    CheckIndexDescriptor(TensorDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {128, 2}, 0, {8, 16, 16, 8}),
+                         ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_valid_padded_index)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND910B);
+    TensorDesc xDesc({64, 65}, ACL_INT8, ACL_FORMAT_ND);
+    TensorDesc weightDesc({17, 36}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {2, 2, 16, 32});
+    TensorDesc indexDesc({17, 9}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {2, 2, 16, 8});
+    TensorDesc xScaleDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    TensorDesc weightScaleDesc({17}, ACL_FLOAT, ACL_FORMAT_ND);
+    TensorDesc outDesc({64, 17}, ACL_BF16, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnSparse4to2QuantMatmulWeightNz,
+                        INPUT(xDesc, weightDesc, indexDesc, xScaleDesc, weightScaleDesc, nullptr), OUTPUT(outDesc));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+}
+
+TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_invalid_null_scales)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND910B);
+    TensorDesc xDesc({64, 512}, ACL_INT8, ACL_FORMAT_ND);
+    TensorDesc weightDesc({256, 256}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {8, 16, 16, 32});
+    TensorDesc indexDesc({256, 64}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {8, 16, 16, 8});
+    TensorDesc xScaleDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    TensorDesc weightScaleDesc({256}, ACL_FLOAT, ACL_FORMAT_ND);
+    TensorDesc outDesc({64, 256}, ACL_BF16, ACL_FORMAT_ND);
+    auto noXScale = OP_API_UT(aclnnSparse4to2QuantMatmulWeightNz,
+                              INPUT(xDesc, weightDesc, indexDesc, nullptr, weightScaleDesc, nullptr), OUTPUT(outDesc));
+    auto noWeightScale = OP_API_UT(aclnnSparse4to2QuantMatmulWeightNz,
+                                   INPUT(xDesc, weightDesc, indexDesc, xScaleDesc, nullptr, nullptr), OUTPUT(outDesc));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(noXScale.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_NULLPTR);
+    EXPECT_EQ(noWeightScale.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_NULLPTR);
+}
+
+TEST_F(l2_Sparse4to2QuantMatmul_test, ascend910B2_invalid_empty_weight)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND910B);
+    const std::vector<std::array<int64_t, 2>> emptyShapes = {{0, 512}, {256, 0}};
+    for (const auto& dims : emptyShapes) {
+        SCOPED_TRACE(::testing::PrintToString(dims));
+        const int64_t n = dims[0];
+        const int64_t k = dims[1];
+        TensorDesc xDesc({64, k}, ACL_INT8, ACL_FORMAT_ND);
+        TensorDesc weightDesc({n, k / 2}, ACL_INT8, ACL_FORMAT_FRACTAL_NZ, {}, 0, {k / 64, n / 16, 16, 32});
+        TensorDesc indexDesc({n, k / 8}, ACL_UINT8, ACL_FORMAT_ND, {}, 0, {k / 64, n / 16, 16, 8});
+        TensorDesc xScaleDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+        TensorDesc weightScaleDesc({n}, ACL_FLOAT, ACL_FORMAT_ND);
+        TensorDesc outDesc({64, n}, ACL_BF16, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnSparse4to2QuantMatmulWeightNz,
+                            INPUT(xDesc, weightDesc, indexDesc, xScaleDesc, weightScaleDesc, nullptr), OUTPUT(outDesc));
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    }
 }

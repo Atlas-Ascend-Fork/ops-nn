@@ -186,12 +186,33 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的必选输入x，sparseWeight，index或out是空指针。</td>
+      <td>传入的x、sparseWeight、index、xScale、sparseWeightScale或out任一为空指针。</td>
     </tr>
     <tr>
       <td rowspan="8">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="8">161002</td>
-      <td>输入输出的数据类型，shape，format, dtype不在支持的范围之内。</td>
+      <td>输入输出的数据类型不在支持范围内：x和sparseWeight须为INT8，index须为UINT8，xScale和sparseWeightScale须为FLOAT32，out及非空的biasOptional须为BFLOAT16。</td>
+    </tr>
+    <tr>
+      <td>输入输出的数据格式不在支持范围内：sparseWeight须使用FRACTAL_NZ布局，其余tensor须为ND。</td>
+    </tr>
+    <tr>
+      <td>x、sparseWeight、index或out的ViewShape不是2维，或xScale、sparseWeightScale及非空的biasOptional不是1维。</td>
+    </tr>
+    <tr>
+      <td>x的k维超过65535。</td>
+    </tr>
+    <tr>
+      <td>x和sparseWeight的k维不满足ceil（k / 8）* 8 = 2 * k_half，或xScale、sparseWeightScale、biasOptional及out的shape不满足参数说明中的维度关系。</td>
+    </tr>
+    <tr>
+      <td>sparseWeight的StorageShape不等于（ceil（k_half / 32），ceil（n / 16），16，32）。</td>
+    </tr>
+    <tr>
+      <td>index的ViewShape不等于（n，ceil（k / 8）），StorageShape不等于（ceil（k_half / 32），ceil（n / 16），16，8），或index为非连续tensor。</td>
+    </tr>
+    <tr>
+      <td>输入为空tensor，即m、n、k任一为0。</td>
     </tr>
   </tbody></table>
 
@@ -248,7 +269,8 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
 
 - 其他约束：
   - x的最后一维即shape的描述中k的值不能超过65535。
-  - 当前只支持sparseWeightScale，xScale均不是nullptr的场景。
+  - 不支持空tensor，m、n、k任一为0时返回ACLNN_ERR_PARAM_INVALID（161002）。
+  - xScale和sparseWeightScale均为必选输入，任一为nullptr时返回ACLNN_ERR_PARAM_NULLPTR（161001）。
 
 ## 调用示例
 
@@ -460,10 +482,10 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
           weightHostData.data(), weightShapeArray, &sparseWeightHostData, &sparseWeightDims, &sparseWeightDimsNum,
           &indexHostData, &indexDims, &indexDimsNum);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransSparse4to2Para failed. ERROR: %d\n", ret); return ret);
-      std::unique_ptr<int8_t[]> sparseWeightHostDataPtr(sparseWeightHostData);
-      std::unique_ptr<uint8_t[]> indexHostDataPtr(indexHostData);
-      std::unique_ptr<int64_t[]> sparseWeightDimsPtr(sparseWeightDims);
-      std::unique_ptr<int64_t[]> indexDimsPtr(indexDims);
+      std::unique_ptr<int8_t, decltype(&free)> sparseWeightHostDataPtr(sparseWeightHostData, free);
+      std::unique_ptr<uint8_t, decltype(&free)> indexHostDataPtr(indexHostData, free);
+      std::unique_ptr<int64_t, decltype(&free)> sparseWeightDimsPtr(sparseWeightDims, free);
+      std::unique_ptr<int64_t, decltype(&free)> indexDimsPtr(indexDims, free);
 
       CREATE_TENSOR(xHostData, xShape, xDeviceAddr, aclDataType::ACL_INT8, x);
 

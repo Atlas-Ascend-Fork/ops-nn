@@ -14,6 +14,7 @@
 #include "aclnn_sparse4to2quant_matmul_weight_nz.h"
 #include "matmul/common/op_host/op_api/matmul_util.h"
 #include "sparse4to2quant_matmul.h"
+#include "opdev/tensor_view_utils.h"
 #include "util/math_util.h"
 
 using namespace op;
@@ -30,6 +31,7 @@ static const int NZ_K1_INDEX = 3;
 static const int NZ_K1_INDEX_TRANS = 4;
 static const int NZ_STORAGE_PENULTIMATE_DIM = 16;
 static const int NZ_STORAGE_LAST_DIM = 32;
+static const int INDEX_STORAGE_LAST_DIM = 8;
 static const int64_t NZ_K0_VALUE_INT8 = 16L;
 static const int64_t NZ_K0_VALUE_INT8_TRANS = 32L;
 static const int64_t LAST_AXIS_LIMIT = 65535L;
@@ -243,6 +245,26 @@ static inline bool MaxDimCheck(int64_t xDimNum, int64_t weightKDim, const op::Sh
     return true;
 }
 
+static inline bool CheckIndexShape(const Sparse4to2QuantMatmulParams& params, int64_t nDim, uint64_t kDimAlign)
+{
+    const auto& indexShape = params.index->GetViewShape();
+    const int64_t indexKDim = static_cast<int64_t>(kDimAlign / SPARSE_ATOMIC_SIZE);
+    OP_CHECK(indexShape.GetDim(0) == nDim && indexShape.GetDim(1) == indexKDim,
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "View shape of index must be [%ld, %ld], but actual is %s.", nDim,
+                     indexKDim, op::ToString(indexShape).GetString()),
+             return false);
+
+    auto indexNzShape = params.sparseWeight->GetStorageShape();
+    indexNzShape.SetDim(MIN_DIM_NUM_NZ - 1, INDEX_STORAGE_LAST_DIM);
+    OP_CHECK(params.index->GetStorageShape() == indexNzShape,
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Storage shape of index must be %s, but actual is %s.",
+                     op::ToString(indexNzShape).GetString(), op::ToString(params.index->GetStorageShape()).GetString()),
+             return false);
+    OP_CHECK(IsContiguous(params.index), OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Input index must be contiguous."),
+             return false);
+    return true;
+}
+
 static inline bool CheckShape(const Sparse4to2QuantMatmulParams& params)
 {
     auto& xShape = params.x->GetViewShape();
@@ -263,6 +285,8 @@ static inline bool CheckShape(const Sparse4to2QuantMatmulParams& params)
              return false);
 
     CHECK_RET(MaxDimCheck(xDimNum, weightDimNum, xShape, weightShape), false);
+
+    CHECK_RET(CheckIndexShape(params, weightNDim, xKDimAlign), false);
 
     CHECK_RET(CheckDimValue(params.bias, params.xScale, params.sparseWeightScale, xMDim, weightNDim), false);
 

@@ -11,6 +11,7 @@
 #include "aclnn_sparse4to2quant_matmul_weight_nz.h"
 
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <vector>
 #include "aclnn_kernels/common/op_error_check.h"
@@ -60,16 +61,28 @@ static aclnnStatus CalcSparse4to2ParaSize(const aclIntArray* shape, uint64_t& sp
              return ACLNN_ERR_PARAM_INVALID);
     const int64_t shapeN = weightShape[0];
     const int64_t shapeK = weightShape[1];
-    sparseWeightShape.push_back(CeilDiv(CeilDiv(shapeK, NZ_K0_INT8_SIZE), SPARSE_MULTI)); // ceil(K1 / 2)
-    sparseWeightShape.push_back(CeilDiv(shapeN, NZ_C0_SIZE));                             // n1
-    sparseWeightShape.push_back(NZ_C0_SIZE);                                              // n0
-    sparseWeightShape.push_back(NZ_K0_INT8_SIZE);                                         // k0
+    OP_CHECK(shapeN > 0 && shapeK > 0,
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Dimensions of shape must be positive, but n is %ld, k is %ld.", shapeN,
+                     shapeK),
+             return ACLNN_ERR_PARAM_INVALID);
+    const uint64_t maxSize = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+    OP_CHECK(static_cast<uint64_t>(shapeN) <= maxSize / static_cast<uint64_t>(shapeK),
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The number of weight elements exceeds the int64 range."),
+             return ACLNN_ERR_PARAM_INVALID);
+    sparseWeightShape.push_back(CeilDiv(static_cast<uint64_t>(shapeK),
+                                        static_cast<uint64_t>(NZ_K0_INT8_SIZE * SPARSE_MULTI))); // ceil(K / 64)
+    sparseWeightShape.push_back(CeilDiv(static_cast<uint64_t>(shapeN), static_cast<uint64_t>(NZ_C0_SIZE))); // n1
+    sparseWeightShape.push_back(NZ_C0_SIZE);                                                                // n0
+    sparseWeightShape.push_back(NZ_K0_INT8_SIZE);                                                           // k0
     indexShape.push_back(sparseWeightShape[0]);
     indexShape.push_back(sparseWeightShape[1]);
     indexShape.push_back(NZ_C0_SIZE);
     indexShape.push_back(NZ_K0_INT8_SIZE / SPARSE_INDEX_MULTI); // k0 // 4
     sparseWeightSize = 1;
     for (auto value : sparseWeightShape) {
+        OP_CHECK(sparseWeightSize <= maxSize / static_cast<uint64_t>(value),
+                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The number of sparseWeight elements exceeds the int64 range."),
+                 return ACLNN_ERR_PARAM_INVALID);
         sparseWeightSize *= value;
     }
     indexSize = sparseWeightSize / SPARSE_INDEX_MULTI;
@@ -207,14 +220,14 @@ aclnnStatus aclnnTransSparse4to2Para(const int8_t* weight, aclIntArray* shape, i
                                      int64_t** sparseWeightDims, uint64_t* sparseWeightDimsNum, uint8_t** index,
                                      int64_t** indexDims, uint64_t* indexDimsNum)
 {
-    CHECK_RET(shape != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(weight != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(sparseWeight != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(sparseWeightDims != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(sparseWeightDimsNum != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(index != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(indexDims != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(indexDimsNum != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    CHECK_RET(shape != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(weight != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(sparseWeight != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(sparseWeightDims != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(sparseWeightDimsNum != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(index != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(indexDims != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(indexDimsNum != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     uint64_t sparseWeightSize = 0;
     uint64_t indexSize = 0;
     vector<int64_t> sparseWShape;

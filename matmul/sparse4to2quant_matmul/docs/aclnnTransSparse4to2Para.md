@@ -70,7 +70,7 @@ aclnnStatus aclnnTransSparse4to2Para(
         <td>shape</td>
         <td>输入</td>
         <td>矩阵乘运算中未压缩的稀疏右矩阵shape。</td>
-        <td><ul><li>通过aclCreateIntArray接口创建。</li></ul></td>
+        <td><ul><li>通过aclCreateIntArray接口创建，包含n和k两个维度，且n和k均必须大于0，不支持空tensor。</li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -80,7 +80,7 @@ aclnnStatus aclnnTransSparse4to2Para(
         <td>sparseWeight</td>
         <td>输出</td>
         <td>矩阵乘运算中压缩后的右矩阵。</td>
-        <td><ul><li>内存由调用者释放。</li></ul></td>
+        <td><ul><li>内存由调用者通过free()释放。</li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -90,7 +90,7 @@ aclnnStatus aclnnTransSparse4to2Para(
         <td>sparseWeightDims</td>
         <td>输出</td>
         <td>矩阵乘运算中压缩后右矩阵StorageShape数组指针首地址。</td>
-        <td><ul><li>内存由调用者释放。</li><li>StorageShape可表达为（ceil（k_half / 32），ceil（n / 16），16，32），其中k_half=ceil（k / 8）* 8 / 2。</li></ul></td>
+        <td><ul><li>内存由调用者通过free()释放。</li><li>StorageShape可表达为（ceil（k_half / 32），ceil（n / 16），16，32），其中k_half=ceil（k / 8）* 8 / 2。</li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -110,7 +110,7 @@ aclnnStatus aclnnTransSparse4to2Para(
         <td>index</td>
         <td>输出</td>
         <td>矩阵乘运算中的压缩后右矩阵对应的索引矩阵。</td>
-        <td><ul><li>内存由调用者释放。</li></ul></td>
+        <td><ul><li>内存由调用者通过free()释放。</li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -120,7 +120,7 @@ aclnnStatus aclnnTransSparse4to2Para(
         <td>indexDims</td>
         <td>输出</td>
         <td>矩阵乘运算中的压缩后右矩阵对应的索引矩阵StorageShape数组指针首地址。</td>
-        <td><ul><li>内存由调用者释放。</li><li>StorageShape可表达为（ceil（k_half / 32），ceil（n / 16），16，8），其中k_half=ceil（k / 8）* 8 / 2。</li></ul></td>
+        <td><ul><li>内存由调用者通过free()释放。</li><li>StorageShape可表达为（ceil（k_half / 32），ceil（n / 16），16，8），其中k_half=ceil（k / 8）* 8 / 2。</li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -160,12 +160,12 @@ aclnnStatus aclnnTransSparse4to2Para(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的weight是空指针。</td>
+      <td>传入的weight、shape、sparseWeight、sparseWeightDims、sparseWeightDimsNum、index、indexDims或indexDimsNum任一为空指针。</td>
     </tr>
     <tr>
-      <td rowspan="8">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="8">161002</td>
-      <td>weight的shape、format和数据类型不满足要求；数据不满足每4个元素至少2个为零。</td>
+      <td>ACLNN_ERR_PARAM_INVALID</td>
+      <td>161002</td>
+      <td>shape不包含两个维度、n或k不大于0、原始或压缩后的元素总数超出int64范围；或weight数据不满足每4个元素至少2个为零。</td>
     </tr>
   </tbody></table>
 
@@ -376,10 +376,10 @@ aclnnStatus aclnnTransSparse4to2Para(
           weightHostData.data(), weightShapeArray, &sparseWeightHostData, &sparseWeightDims, &sparseWeightDimsNum,
           &indexHostData, &indexDims, &indexDimsNum);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransSparse4to2Para failed. ERROR: %d\n", ret); return ret);
-      std::unique_ptr<int8_t[]> sparseWeightHostDataPtr(sparseWeightHostData);
-      std::unique_ptr<uint8_t[]> indexHostDataPtr(indexHostData);
-      std::unique_ptr<int64_t[]> sparseWeightDimsPtr(sparseWeightDims);
-      std::unique_ptr<int64_t[]> indexDimsPtr(indexDims);
+      std::unique_ptr<int8_t, decltype(&free)> sparseWeightHostDataPtr(sparseWeightHostData, free);
+      std::unique_ptr<uint8_t, decltype(&free)> indexHostDataPtr(indexHostData, free);
+      std::unique_ptr<int64_t, decltype(&free)> sparseWeightDimsPtr(sparseWeightDims, free);
+      std::unique_ptr<int64_t, decltype(&free)> indexDimsPtr(indexDims, free);
 
       CREATE_TENSOR(xHostData, xShape, xDeviceAddr, aclDataType::ACL_INT8, x);
 
