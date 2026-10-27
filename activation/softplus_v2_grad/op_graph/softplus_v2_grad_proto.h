@@ -27,9 +27,10 @@ namespace ge {
 
 * @par Inputs:
 * Two inputs, including:
-* @li input_gradients: A mutable tensor, which supports 1D-8D defaultly. Format support ND.
+* @li input_gradients: A mutable tensor, which supports 0D-8D defaultly. Format support ND.
 * Must be one of the following types: float16, float32, bfloat16.
-* @li input_features: A mutable tensor of the same type, shape and format as "input_gradients".
+* @li input_features: A mutable tensor of the same type and format as "input_gradients", with
+ * a shape broadcast-compatible with "input_gradients".
 
 * @par Attributes:
 * @li beta: An optional float. Defaults to "1.0".
@@ -39,7 +40,8 @@ namespace ge {
 * Define a function to switch the threshold from nonlinear to linear.
 
 * @par Outputs:
-* output_backprops: A mutable tensor of the same type, shape and format as "input_gradients".
+* output_backprops: A mutable tensor of the same type and format as "input_gradients", with
+ * the shape being the broadcast result of "input_gradients" and "input_features".
 
 * @par Third-party framework compatibility
 * Compatible with the Pytorch operator SoftplusGrad.

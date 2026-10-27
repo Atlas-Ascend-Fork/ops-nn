@@ -379,7 +379,8 @@ static void VerifyTilingDataValid(const gert::TilingData* tiling_data)
 // 通用 tiling 全链路测试模板
 static void RunTilingIntegrationTest(const gert::StorageShape& in_a, const gert::StorageShape& in_b,
                                      const gert::StorageShape& out, ge::DataType dtype, ge::DataType out_dtype,
-                                     ge::graphStatus expect_status)
+                                     ge::graphStatus expect_status, bool allow_zero_cores = false,
+                                     uint64_t expected_tiling_key = 0)
 {
     gert::StorageShape in_copy_a = in_a;
     gert::StorageShape in_copy_b = in_b;
@@ -449,7 +450,17 @@ static void RunTilingIntegrationTest(const gert::StorageShape& in_a, const gert:
 
     EXPECT_EQ(tiling_func(ctx), expect_status);
     if (expect_status == ge::GRAPH_SUCCESS) {
-        VerifyTilingDataValid(ctx->GetRawTilingData());
+        if (expected_tiling_key != 0) {
+            EXPECT_EQ(ctx->GetTilingKey(), expected_tiling_key);
+        }
+        if (allow_zero_cores) {
+            // 空 Tensor 短路: 布局 raw[4] = multicore.num_cores，须为 0；per_buf 仍有效
+            auto* raw = reinterpret_cast<const int64_t*>(ctx->GetRawTilingData()->GetData());
+            EXPECT_EQ(raw[4], 0);
+            EXPECT_GT(raw[9], 0);
+        } else {
+            VerifyTilingDataValid(ctx->GetRawTilingData());
+        }
     }
 }
 
@@ -487,4 +498,18 @@ TEST_F(SoftplusV2GradTilingIntegrationTest, tiling_unsupported_dtype_failed)
 {
     gert::StorageShape shape = {{2, 3}, {2, 3}};
     RunTilingIntegrationTest(shape, shape, shape, ge::DT_INT32, ge::DT_INT32, ge::GRAPH_FAILED);
+}
+
+TEST_F(SoftplusV2GradTilingIntegrationTest, tiling_fp32_rank9_uses_framework_template)
+{
+    gert::StorageShape shape = {{2, 2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2, 2}};
+    RunTilingIntegrationTest(shape, shape, shape, ge::DT_FLOAT, ge::DT_FLOAT, ge::GRAPH_SUCCESS, false,
+                             GET_TPL_TILING_KEY(SOFTPLUS_V2_GRAD_FRAMEWORK_RANK));
+}
+
+TEST_F(SoftplusV2GradTilingIntegrationTest, tiling_fp32_empty_tensor_shortcut)
+{
+    // 空 Tensor（numel==0）：tiling 短路成功，num_cores=0 且 SetBlockDim(1)，Kernel 侧早退
+    gert::StorageShape shape = {{0, 3}, {0, 3}};
+    RunTilingIntegrationTest(shape, shape, shape, ge::DT_FLOAT, ge::DT_FLOAT, ge::GRAPH_SUCCESS, true);
 }

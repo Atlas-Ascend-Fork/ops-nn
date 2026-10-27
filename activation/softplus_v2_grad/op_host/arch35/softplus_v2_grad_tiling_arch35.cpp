@@ -14,14 +14,19 @@
 #include "softplus_v2_grad_tiling_arch35.h"
 #include "../../op_kernel/arch35/softplus_v2_grad_struct.h"
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <sstream>
 #include <graph/utils/type_utils.h>
+#include <exe_graph/runtime/shape.h>
 #include "register/op_impl_registry.h"
 #include "op_common/log/log.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "platform/soc_spec.h"
 
 using namespace ge;
+static_assert(kFrameworkMaxRank == gert::Shape::kMaxDimNum,
+              "SoftplusV2Grad fallback metadata must match the SDK Shape capacity");
 
 // ============================================================
 // Tiling 函数模块 — namespace softplus_v2_grad
@@ -29,7 +34,23 @@ using namespace ge;
 
 namespace softplus_v2_grad {
 
+// Validate every suffix product before stride/tile arithmetic, including empty shapes.
+static bool ShapeProductsFitInt64(const std::vector<int64_t>& shape)
+{
+    int64_t product = 1;
+    for (auto it = shape.rbegin(); it != shape.rend(); ++it) {
+        const int64_t dim = *it;
+        if (dim < 0 || (dim != 0 && product > std::numeric_limits<int64_t>::max() / dim)) {
+            return false;
+        }
+        product *= dim;
+    }
+    return true;
+}
+
 // CheckBroadcastShape — 逐维验证 broadcast 兼容性
+// 失败时仅返回 false：结构化错误上报由调用方（GetShapeInfo）经
+// OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON 完成
 bool CheckBroadcastShape(const std::vector<std::vector<int64_t>>& padded_in,
                          const std::vector<std::vector<int64_t>>& padded_out, int64_t max_rank)
 {
@@ -39,22 +60,16 @@ bool CheckBroadcastShape(const std::vector<std::vector<int64_t>>& padded_in,
             if (padded_in[i][d] != 1) {
                 if (ref == -1)
                     ref = padded_in[i][d];
-                else if (padded_in[i][d] != ref) {
-                    OP_LOGE("CheckBroadcastShape", "dim %d broadcast incompatible: input[%d] size %d != %d", (int)d,
-                            (int)i, (int)padded_in[i][d], (int)ref);
+                else if (padded_in[i][d] != ref)
                     return false;
-                }
             }
         }
         for (size_t i = 0; i < padded_out.size(); i++) {
             if (padded_out[i][d] != 1) {
                 if (ref == -1)
                     ref = padded_out[i][d];
-                else if (padded_out[i][d] != ref) {
-                    OP_LOGE("CheckBroadcastShape", "dim %d broadcast incompatible: output[%d] size %d != %d", (int)d,
-                            (int)i, (int)padded_out[i][d], (int)ref);
+                else if (padded_out[i][d] != ref)
                     return false;
-                }
             }
         }
     }
@@ -103,16 +118,16 @@ bool PadAndSqueeze(const std::vector<std::vector<int64_t>>& input_shapes,
                    std::vector<std::vector<int64_t>>& normal_input_shapes,
                    std::vector<std::vector<int64_t>>& normal_output_shapes)
 {
-    int64_t num_inputs = (int64_t)input_shapes.size();
-    int64_t num_outputs = (int64_t)output_shapes.size();
+    int64_t num_inputs = static_cast<int64_t>(input_shapes.size());
+    int64_t num_outputs = static_cast<int64_t>(output_shapes.size());
     int64_t max_rank = 0;
     for (auto& s : input_shapes)
-        max_rank = std::max(max_rank, (int64_t)s.size());
+        max_rank = std::max(max_rank, static_cast<int64_t>(s.size()));
     for (auto& s : output_shapes)
-        max_rank = std::max(max_rank, (int64_t)s.size());
+        max_rank = std::max(max_rank, static_cast<int64_t>(s.size()));
     auto pad = [&](const std::vector<int64_t>& s) {
         std::vector<int64_t> p;
-        p.assign(max_rank - (int64_t)s.size(), 1);
+        p.assign(max_rank - static_cast<int64_t>(s.size()), 1);
         p.insert(p.end(), s.begin(), s.end());
         return p;
     };
@@ -134,18 +149,20 @@ bool FindSplitAxis(const std::vector<int64_t>& max_bro_shape, int64_t dtype_size
 {
     // 除零保护: phys_nodes / dtype_size 为除数，必须 > 0
     if (phys_nodes <= 0 || dtype_size <= 0) {
-        OP_LOGE("FindSplitAxis", "invalid divisor: phys_nodes=%d dtype_size=%d", (int)phys_nodes, (int)dtype_size);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("SoftplusV2Grad", "phys_nodes/dtype_size",
+                                              std::to_string(phys_nodes) + "/" + std::to_string(dtype_size),
+                                              "invalid divisor, must be positive");
         return false;
     }
     int64_t per_buf_bytes = (ub_per_core / phys_nodes) & ~(kUbAlignBytes - 1); // UB 对齐, TBuf 硬件要求
     int64_t per_buf_elems = per_buf_bytes / dtype_size;
     // 单 buffer 至少能容纳 1 个元素，否则后续 per_buf_elems/inner、%a_i 会除零
     if (per_buf_elems <= 0) {
-        OP_LOGE("FindSplitAxis", "per_buf_elems=%d invalid (ub_per_core=%d phys_nodes=%d dtype_size=%d)",
-                (int)per_buf_elems, (int)ub_per_core, (int)phys_nodes, (int)dtype_size);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("SoftplusV2Grad", "per_buf_elems", std::to_string(per_buf_elems),
+                                              "invalid, must be positive (check ub_per_core/phys_nodes/dtype_size)");
         return false;
     }
-    int64_t rank = (int64_t)max_bro_shape.size();
+    int64_t rank = static_cast<int64_t>(max_bro_shape.size());
     int64_t inner = 1;
     for (int64_t k = rank - 1; k >= 0; k--) {
         if (max_bro_shape[k] * inner > per_buf_elems) {
@@ -153,13 +170,11 @@ bool FindSplitAxis(const std::vector<int64_t>& max_bro_shape, int64_t dtype_size
             // 除零保护: 单行内层维度乘积超过单 buffer 容量时 a_i 会被整除成 0，
             // 导致下方 /a_i、%a_i 除零。此 shape 当前不支持，返回失败。
             if (out.a_i <= 0) {
-                OP_LOGE("FindSplitAxis",
-                        "inner dims product exceeds per-buffer capacity (per_buf_elems=%d, inner=%d) at axis %d; shape "
-                        "unsupported",
-                        (int)per_buf_elems, (int)inner, (int)k);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("SoftplusV2Grad", "inner dims product", std::to_string(inner),
+                                                      "exceeds per-buffer capacity, shape unsupported");
                 return false;
             }
-            out.a_o = (max_bro_shape[k] + out.a_i - 1) / out.a_i;
+            out.a_o = max_bro_shape[k] / out.a_i + (max_bro_shape[k] % out.a_i != 0);
             int64_t rem = max_bro_shape[k] % out.a_i;
             out.a_i_tail = (rem == 0) ? out.a_i : rem;
             out.axis = k;
@@ -189,8 +204,8 @@ bool MultiCoreSplit(const std::vector<int64_t>& max_bro_shape, const SplitResult
     // 除零保护: num_cores 为除数。total_tiles==0（空 tensor / 0 维）或 max_cores<=0
     // 都会使 num_cores<=0，导致下方 /num_cores、%num_cores 除零。
     if (out.num_cores <= 0) {
-        OP_LOGE("MultiCoreSplit", "num_cores=%d invalid (total_tiles=%d max_cores=%d)", (int)out.num_cores,
-                (int)out.total_tiles, (int)max_cores);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("SoftplusV2Grad", "num_cores", std::to_string(out.num_cores),
+                                              "invalid, must be positive (check total_tiles/max_cores)");
         return false;
     }
     out.tiles_main = out.total_tiles / out.num_cores;
@@ -201,7 +216,7 @@ bool MultiCoreSplit(const std::vector<int64_t>& max_bro_shape, const SplitResult
 // 地址偏移计算 — input/output 的 stride 计算逻辑一致，合并为一个函数
 bool PrecomputeStrides(const std::vector<int64_t>& s, std::vector<int64_t>& strides)
 {
-    int64_t rank = (int64_t)s.size();
+    int64_t rank = static_cast<int64_t>(s.size());
     strides.assign(rank, 0);
     for (int64_t d = rank - 1; d >= 0; d--) {
         if (s[d] == 1) {
@@ -270,12 +285,26 @@ ge::graphStatus SoftplusV2GradTiling::GetShapeInfo()
     OP_CHECK_NULL_WITH_CONTEXT(ctx_, inputDesc);
     ge::DataType dtype = inputDesc->GetDataType();
     if (dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT) {
-        OP_LOGE(ctx_->GetNodeName(), "Unsupported dtype");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_->GetNodeName(), "input_gradients",
+                                              ge::TypeUtils::DataTypeToSerialString(dtype).c_str(),
+                                              "dtype must be fp16/fp32/bf16");
+        return GRAPH_FAILED;
+    }
+    // CODE.03: 文档约束 input_gradients 与 input_features dtype 必须一致（不支持混合精度），
+    // aclnn 通路已由 CheckDtypeValid 拦截，图模式必须在 Tiling 侧等价拦截
+    auto inputDesc1 = ctx_->GetInputDesc(1);
+    OP_CHECK_NULL_WITH_CONTEXT(ctx_, inputDesc1);
+    if (inputDesc1->GetDataType() != dtype) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            ctx_->GetNodeName(), "input_features",
+            ge::TypeUtils::DataTypeToSerialString(inputDesc1->GetDataType()).c_str(),
+            "dtype must be the same as input_gradients (mixed precision not supported)");
         return GRAPH_FAILED;
     }
     dtype_size_ = ge::GetSizeByDataType(dtype);
 
-    // 标量属性：默认值由成员初始化器（kDefaultBeta/kDefaultThreshold）设定，此处仅按 GetAttrs() 覆盖
+    // 标量属性：默认值由成员初始化器（kDefaultBeta/kDefaultThreshold）设定，
+    // 此处仅按 GetAttrs() 覆盖
     {
         auto runtimeAttrs = ctx_->GetAttrs();
         if (runtimeAttrs != nullptr) {
@@ -288,15 +317,27 @@ ge::graphStatus SoftplusV2GradTiling::GetShapeInfo()
         }
     }
 
+    // Match legacy attribute semantics: IEEE Inf/NaN values reach the compute path.
     PadAndSqueeze(raw_input_shapes_, raw_output_shapes_, max_bro_shape_, normal_input_shapes_, normal_output_shapes_);
-    rank_ = (int64_t)max_bro_shape_.size();
+    rank_ = static_cast<int64_t>(max_bro_shape_.size());
+
+    // All framework-legal shapes fit the fallback metadata. This is an ABI
+    // capacity check, not an operator-specific rank-8 policy restriction.
+    if (rank_ > kFrameworkMaxRank) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_->GetNodeName(), "input/output", std::to_string(rank_) + "D",
+                                                 "rank exceeds SDK Shape capacity");
+        return GRAPH_FAILED;
+    }
 
     // 维测: 输入预处理结果
     OP_LOGI(ctx_->GetNodeName(), "GetShapeInfo done rank %lld dtype %lld ub %llu core %llu", rank_, dtype_size_,
             compileInfo->ubSize, compileInfo->coreNum);
 
-    OP_CHECK_IF(!CheckBroadcastShape(normal_input_shapes_, normal_output_shapes_, rank_),
-                OP_LOGE(ctx_->GetNodeName(), "check broadcast shape failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !CheckBroadcastShape(normal_input_shapes_, normal_output_shapes_, rank_),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(ctx_->GetNodeName(), "input/output", "incompatible",
+                                               "check broadcast shape failed, shapes must be broadcast-compatible"),
+        return ge::GRAPH_FAILED);
 
     return GRAPH_SUCCESS;
 }
@@ -340,8 +381,8 @@ static void FillShapesAndStrides(SoftplusV2GradTilingData<R>* tiling,
                                  const std::vector<std::vector<int64_t>>& normal_output_shapes,
                                  const std::vector<int64_t>& max_bro_shape, int64_t rank)
 {
-    int64_t num_in = (int64_t)normal_input_shapes.size();
-    int64_t num_out = (int64_t)normal_output_shapes.size();
+    int64_t num_in = static_cast<int64_t>(normal_input_shapes.size());
+    int64_t num_out = static_cast<int64_t>(normal_output_shapes.size());
     std::vector<std::vector<int64_t>> in_strides(num_in), out_strides(num_out);
     for (int64_t i = 0; i < num_in; i++)
         PrecomputeStrides(normal_input_shapes[i], in_strides[i]);
@@ -378,10 +419,11 @@ static void LogTilingData(const char* nodeName, int64_t rank, const SoftplusV2Gr
             "split(axis=%lld a_i=%lld a_o=%lld a_i_tail=%lld) "
             "multi(cores=%lld tiles=%lld main=%lld core_tail=%lld) num_in=%lld num_out=%lld "
             "beta=%f threshold=%f",
-            tiling->per_buf_bytes, rank, (int)R, Arr2String(tiling->max_bro_shape, R).c_str(), tiling->split.axis,
-            tiling->split.a_i, tiling->split.a_o, tiling->split.a_i_tail, tiling->multicore.num_cores,
-            tiling->multicore.total_tiles, tiling->multicore.tiles_main, tiling->multicore.cores_tail, num_in, num_out,
-            (double)tiling->beta, (double)tiling->threshold);
+            tiling->per_buf_bytes, rank, static_cast<int>(R), Arr2String(tiling->max_bro_shape, R).c_str(),
+            tiling->split.axis, tiling->split.a_i, tiling->split.a_o, tiling->split.a_i_tail,
+            tiling->multicore.num_cores, tiling->multicore.total_tiles, tiling->multicore.tiles_main,
+            tiling->multicore.cores_tail, num_in, num_out, static_cast<double>(tiling->beta),
+            static_cast<double>(tiling->threshold));
 
     for (int64_t i = 0; i < num_in; i++)
         OP_LOGI(nodeName, "TilingData input[%lld]: shape=%s stride=%s", i,
@@ -394,22 +436,82 @@ static void LogTilingData(const char* nodeName, int64_t rank, const SoftplusV2Gr
 template <int64_t R>
 ge::graphStatus SoftplusV2GradTiling::DoTilingAndSet()
 {
+    // Reject unrepresentable dimensions/products before any stride, tile or offset multiplication.
+    bool productsFit = ShapeProductsFitInt64(max_bro_shape_);
+    for (const auto& shape : normal_input_shapes_) {
+        productsFit = productsFit && ShapeProductsFitInt64(shape);
+    }
+    for (const auto& shape : normal_output_shapes_) {
+        productsFit = productsFit && ShapeProductsFitInt64(shape);
+    }
+    if (!productsFit) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(ctx_->GetNodeName(), "input/output",
+                                               Arr2String(max_bro_shape_.data(), rank_),
+                                               "negative dimension or shape/stride product exceeds INT64_MAX");
+        return ge::GRAPH_FAILED;
+    }
+
     auto* tiling = ctx_->GetTilingData<SoftplusV2GradTilingData<R>>();
     OP_CHECK_NULL_WITH_CONTEXT(ctx_, tiling);
 
     auto* compileInfo = reinterpret_cast<const SoftplusV2GradCompileInfo*>(ctx_->GetCompileInfo());
     OP_CHECK_NULL_WITH_CONTEXT(ctx_, compileInfo);
-    int64_t ub_per_core = (int64_t)compileInfo->ubSize;
+    int64_t ub_per_core = static_cast<int64_t>(compileInfo->ubSize);
     int64_t per_buf_bytes = (ub_per_core / kPhysNodes) & ~(kUbAlignBytes - 1);
 
-    // dtype_size 始终为 4 (sizeof(float))，per_buf_elems 以 fp32 元素数为准
-    if (!FindSplitAxis(max_bro_shape_, sizeof(float), ub_per_core, kPhysNodes, tiling->split)) {
-        OP_LOGE(ctx_->GetNodeName(), "FindSplitAxis failed");
-        return ge::GRAPH_FAILED;
+    // 空 Tensor 短路: numel==0 时跳过切分，num_cores=0 + SetBlockDim(1)，Kernel 侧 num_cores==0 早退
+    // 注意: 含 0 维的 shape（如输入 (0,3)）经广播归一化后 max_bro 可能被输出侧的 1 维吞掉
+    // （(0,3) 与 (1,3) 广播得 (1,3)），因此不能只看 max_bro numel，必须显式检查各输入/输出 numel
+    bool hasEmptyShape = false;
+    for (const auto& shape : normal_input_shapes_) {
+        int64_t numel = 1;
+        for (int64_t d : shape)
+            numel *= d;
+        if (numel == 0) {
+            hasEmptyShape = true;
+            break;
+        }
     }
-    if (!MultiCoreSplit(max_bro_shape_, tiling->split, (int64_t)compileInfo->coreNum, tiling->multicore)) {
-        OP_LOGE(ctx_->GetNodeName(), "MultiCoreSplit failed");
-        return ge::GRAPH_FAILED;
+    if (!hasEmptyShape) {
+        for (const auto& shape : normal_output_shapes_) {
+            int64_t numel = 1;
+            for (int64_t d : shape)
+                numel *= d;
+            if (numel == 0) {
+                hasEmptyShape = true;
+                break;
+            }
+        }
+    }
+
+    int64_t total_numel = 1;
+    for (int64_t d = 0; d < rank_; d++)
+        total_numel *= max_bro_shape_[d];
+
+    if (hasEmptyShape || total_numel == 0) {
+        tiling->split.axis = 0;
+        tiling->split.a_i = 0;
+        tiling->split.a_o = 1;
+        tiling->split.a_i_tail = 0;
+        tiling->multicore.num_cores = 0;
+        tiling->multicore.total_tiles = 0;
+        tiling->multicore.tiles_main = 0;
+        tiling->multicore.cores_tail = 0;
+    } else {
+        // dtype_size 始终为 4 (sizeof(float))，per_buf_elems 以 fp32 元素数为准
+        if (!FindSplitAxis(max_bro_shape_, sizeof(float), ub_per_core, kPhysNodes, tiling->split)) {
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(ctx_->GetNodeName(), "input/output",
+                                                   Arr2String(max_bro_shape_.data(), rank_),
+                                                   "FindSplitAxis failed: shape cannot fit per-buffer capacity");
+            return ge::GRAPH_FAILED;
+        }
+        if (!MultiCoreSplit(max_bro_shape_, tiling->split, static_cast<int64_t>(compileInfo->coreNum),
+                            tiling->multicore)) {
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(ctx_->GetNodeName(), "input/output",
+                                                   Arr2String(max_bro_shape_.data(), rank_),
+                                                   "MultiCoreSplit failed: invalid tile/core split");
+            return ge::GRAPH_FAILED;
+        }
     }
     tiling->per_buf_bytes = per_buf_bytes;
     tiling->beta = beta_;
@@ -418,7 +520,7 @@ ge::graphStatus SoftplusV2GradTiling::DoTilingAndSet()
     // 归一化 shape/stride 补齐并写入各槽位（含 rank/delta、split.axis 右移、槽位数量）
     FillShapesAndStrides<R>(tiling, normal_input_shapes_, normal_output_shapes_, max_bro_shape_, rank_);
 
-    ctx_->SetBlockDim(tiling->multicore.num_cores);
+    ctx_->SetBlockDim((tiling->multicore.num_cores == 0) ? 1 : tiling->multicore.num_cores);
 
     // 维测: TilingData 全部字段
     LogTilingData<R>(ctx_->GetNodeName(), rank_, tiling, tiling->num_inputs, tiling->num_outputs);
@@ -432,18 +534,25 @@ ge::graphStatus SoftplusV2GradTiling::RunTiling()
     if (ret != GRAPH_SUCCESS)
         return ret;
 
-    int64_t mapped = (rank_ <= SOFTPLUS_V2_GRAD_RANK_4) ? SOFTPLUS_V2_GRAD_RANK_4 : SOFTPLUS_V2_GRAD_RANK_8;
+    int64_t mapped = (rank_ <= SOFTPLUS_V2_GRAD_RANK_4) ?
+                         SOFTPLUS_V2_GRAD_RANK_4 :
+                         ((rank_ <= SOFTPLUS_V2_GRAD_RANK_8) ? SOFTPLUS_V2_GRAD_RANK_8 : kFrameworkMaxRank);
     // TilingKey 仅在 DoTilingAndSet 成功后设置，避免失败时把有效 key 与未填充的 TilingData 绑定
     if (mapped == SOFTPLUS_V2_GRAD_RANK_4) {
         ret = DoTilingAndSet<SOFTPLUS_V2_GRAD_RANK_4>();
         if (ret != GRAPH_SUCCESS)
             return ret;
         ctx_->SetTilingKey(GET_TPL_TILING_KEY(SOFTPLUS_V2_GRAD_RANK_4));
-    } else {
+    } else if (mapped == SOFTPLUS_V2_GRAD_RANK_8) {
         ret = DoTilingAndSet<SOFTPLUS_V2_GRAD_RANK_8>();
         if (ret != GRAPH_SUCCESS)
             return ret;
         ctx_->SetTilingKey(GET_TPL_TILING_KEY(SOFTPLUS_V2_GRAD_RANK_8));
+    } else {
+        ret = DoTilingAndSet<kFrameworkMaxRank>();
+        if (ret != GRAPH_SUCCESS)
+            return ret;
+        ctx_->SetTilingKey(GET_TPL_TILING_KEY(SOFTPLUS_V2_GRAD_FRAMEWORK_RANK));
     }
     return ret;
 }

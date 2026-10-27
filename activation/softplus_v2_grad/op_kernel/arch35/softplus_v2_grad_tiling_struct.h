@@ -14,6 +14,11 @@
 #pragma once
 #include <cstdint>
 
+// CANN gert::Shape storage capacity. Host static_assert detects SDK changes.
+// Keep the template selector and host/device metadata on the same capacity.
+#define SOFTPLUS_V2_GRAD_FRAMEWORK_RANK 25
+constexpr int64_t kFrameworkMaxRank = SOFTPLUS_V2_GRAD_FRAMEWORK_RANK;
+
 // === 算子特定常量 ===
 // 2 输入 (input_gradients, input_features), 1 输出 (output_backprops)
 constexpr int64_t kMaxInputSlots = 2;
@@ -28,6 +33,8 @@ constexpr int64_t kMaxNdDmaDims = 5;
 // 默认标量属性: 必须与 op_host/softplus_v2_grad_def.cpp 中 Attr 注册的默认值保持一致
 constexpr float kDefaultBeta = 1.0f;
 constexpr float kDefaultThreshold = 20.0f;
+// exp 输入 clamp 上界: min(-beta*self, clamp) 防 exp 上溢（对应 DESIGN §3.5 S5 eArg = min(nege, CLAMP)）
+constexpr float kExpInputClamp = 50.0f;
 // attr 索引: 与 def.cpp 中 Attr 注册顺序一致 (0=beta, 1=threshold)
 constexpr int64_t kAttrIdxBeta = 0;
 constexpr int64_t kAttrIdxThreshold = 1;
@@ -50,7 +57,7 @@ template <int64_t kRank>
 struct SoftplusV2GradTilingData {
     SplitResult split;
     MultiCoreResult multicore;
-    int64_t rank;          // 实际 rank (0~8)，Kernel 运行期读取
+    int64_t rank;          // 实际 rank (0~framework capacity)，Kernel 运行期读取
     int64_t per_buf_bytes; // UB/P 向下对齐 32B，Kernel 用此初始化 TBuf
     int64_t max_bro_shape[kRank];
     int64_t num_inputs;

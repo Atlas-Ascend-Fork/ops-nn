@@ -12,6 +12,7 @@
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "opdev/common_types.h"
+#include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
@@ -72,10 +73,13 @@ static const std::initializer_list<DataType>& GetSelfDtypeSupportList()
     }
 }
 
-static bool CheckNotNull(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* gradInput)
+static bool CheckNotNull(const aclTensor* gradOutput, const aclTensor* self, const aclScalar* beta,
+                         const aclScalar* threshold, const aclTensor* gradInput)
 {
     OP_CHECK_NULL(gradOutput, return false);
     OP_CHECK_NULL(self, return false);
+    OP_CHECK_NULL(beta, return false);
+    OP_CHECK_NULL(threshold, return false);
     OP_CHECK_NULL(gradInput, return false);
     return true;
 }
@@ -110,10 +114,11 @@ static bool CheckShape(const aclTensor* gradOutput, const aclTensor* self, const
     return true;
 }
 
-static aclnnStatus CheckParams(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* gradInput)
+static aclnnStatus CheckParams(const aclTensor* gradOutput, const aclTensor* self, const aclScalar* beta,
+                               const aclScalar* threshold, const aclTensor* gradInput)
 {
     // 1. 检查参数是否为空指针
-    CHECK_RET(CheckNotNull(gradOutput, self, gradInput), ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(CheckNotNull(gradOutput, self, beta, threshold, gradInput), ACLNN_ERR_PARAM_NULLPTR);
 
     // 2. 检查数据类型是否合法
     CHECK_RET(CheckDtypeValid(gradOutput, self, gradInput), ACLNN_ERR_PARAM_INVALID);
@@ -138,7 +143,7 @@ aclnnStatus aclnnSoftplusBackwardGetWorkspaceSize(const aclTensor* gradOutput, c
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 固定写法，参数检查
-    auto ret = CheckParams(gradOutput, self, gradInput);
+    auto ret = CheckParams(gradOutput, self, beta, threshold, gradInput);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     // 支持空tensor

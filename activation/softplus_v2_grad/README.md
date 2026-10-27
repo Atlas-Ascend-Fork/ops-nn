@@ -24,7 +24,7 @@
   \end{cases}
   $$
 
-  当 $\beta \cdot self > threshold$ 时梯度退化为1.0（即 $gradInput = gradOutput$），避免 $exp$ 溢出，保证数值稳定性。
+  当 $\beta \cdot self > threshold$ 时梯度退化为1.0（即 $gradInput = gradOutput$）。
 
 ## 参数说明
 
@@ -47,35 +47,35 @@
     <tr>
       <td>input_gradients</td>
       <td>输入</td>
-      <td>上游梯度张量，公式中的gradOutput，支持0D~8D，与input_features同dtype、满足broadcast关系。</td>
+      <td>上游梯度张量，公式中的gradOutput，支持0D~25D（kernel/GEIR；ACLNN原始rank≤8），与input_features同dtype、满足broadcast关系。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>input_features</td>
       <td>输入</td>
-      <td>前向传播的原始输入张量，公式中的self，支持0D~8D，与input_gradients同dtype、满足broadcast关系。</td>
+      <td>前向传播的原始输入张量，公式中的self，支持0D~25D（kernel/GEIR；ACLNN原始rank≤8），与input_gradients同dtype、满足broadcast关系。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>beta</td>
       <td>可选属性</td>
-      <td><ul><li>公式中的beta，控制softplus陡峭程度，beta越大越接近ReLU。</li><li>默认值为1.0。</li></ul></td>
+      <td>支持FLOAT值，包括±Inf和NaN。</td>
       <td>FLOAT</td>
       <td>-</td>
     </tr>
     <tr>
       <td>threshold</td>
       <td>可选属性</td>
-      <td><ul><li>公式中的threshold，数值稳定性阈值，超过后梯度退化为1.0。</li><li>默认值为20.0。</li></ul></td>
+      <td>支持FLOAT值，包括±Inf和NaN。</td>
       <td>FLOAT</td>
       <td>-</td>
     </tr>
     <tr>
       <td>output_backprops</td>
       <td>输出</td>
-      <td>对前向输入的梯度，公式中的gradInput，shape与dtype与input_features相同。</td>
+      <td>对前向输入的梯度，公式中的gradInput，shape为input_gradients与input_features的broadcast结果，dtype与两输入相同。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -83,9 +83,10 @@
 
 ## 约束说明
 
-- input_gradients和input_features的dtype必须一致，不支持混合精度。
-- input_gradients和input_features满足broadcast关系，broadcast后shape与input_features相同；output_backprops的shape与input_features相同。
-- beta和threshold为Host侧标量属性，非Tensor。
+- 图模式下，input_gradients和input_features的dtype必须一致。aclnn接口按平台校验dtype，支持范围见接口文档；输入按需转换后计算，输出转换为gradInput的数据类型。
+- input_gradients和input_features满足broadcast关系，output_backprops的shape为两者的broadcast结果（aclnn接口要求gradOutput、self、gradInput三者shape相同，不支持广播）。
+- beta和threshold为Host侧标量属性，允许±Inf和NaN；结果可能包含Inf或NaN。
+- 图模式支持0D~25D输入，aclnn接口支持0D~8D输入。
 - 默认确定性实现。
 
 ## 调用说明

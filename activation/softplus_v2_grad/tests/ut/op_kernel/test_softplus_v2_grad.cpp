@@ -435,4 +435,76 @@ TEST_F(softplus_v2_grad_test, case11_fp16_ubsplit_multitile)
     AscendC::GmFree(tiling);
 }
 
+// ---- Case 12: fp32 尾块非 VL 整除（a_i_tail=15871，rep=248，末轮 rem=63）
+// VF 掩码逐 repeat 收敛回归：修复前掩码不收敛会把 (rep*VL-count) 垃圾 lane 写出 buffer 边界
+TEST_F(softplus_v2_grad_test, case12_fp32_tail_unaligned_mask)
+{
+    std::vector<int64_t> g{2, 31743}, f{2, 31743}, o{2, 31743};
+    uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(sizeof(SoftplusV2GradTilingData<SOFTPLUS_V2_GRAD_RANK_4>));
+    ASSERT_TRUE((svg_ut::BuildTiling<SOFTPLUS_V2_GRAD_RANK_4>(tiling, o, {g, f}, o, 1.0f, 20.0f, 1)));
+    auto inv = [](GM_ADDR grad, GM_ADDR feat, GM_ADDR out, GM_ADDR ws, GM_ADDR t) {
+        RunSoftplusKernel<float, SOFTPLUS_V2_GRAD_RANK_4>(grad, feat, out, ws, t);
+    };
+    RunAndVerify("case12", g, f, o, kFp32, 1.0f, 20.0f, 1, tiling, inv);
+    AscendC::GmFree(tiling);
+}
+
+// ---- Case 13: fp16 尾块非 VL 整除（同 Case 12 的 FP16BF16 路径）
+TEST_F(softplus_v2_grad_test, case13_fp16_tail_unaligned_mask)
+{
+    std::vector<int64_t> g{2, 31743}, f{2, 31743}, o{2, 31743};
+    uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(sizeof(SoftplusV2GradTilingData<SOFTPLUS_V2_GRAD_RANK_4>));
+    ASSERT_TRUE((svg_ut::BuildTiling<SOFTPLUS_V2_GRAD_RANK_4>(tiling, o, {g, f}, o, 1.0f, 20.0f, 1)));
+    auto inv = [](GM_ADDR grad, GM_ADDR feat, GM_ADDR out, GM_ADDR ws, GM_ADDR t) {
+        RunSoftplusKernel<half, SOFTPLUS_V2_GRAD_RANK_4>(grad, feat, out, ws, t);
+    };
+    RunAndVerify("case13", g, f, o, kFp16, 1.0f, 20.0f, 1, tiling, inv);
+    AscendC::GmFree(tiling);
+}
+
 } // namespace
+
+// Exercise the real VF directly: copy the complete padded result back so writes
+// beyond count remain observable, even when production CopyOut omits them.
+static void RunSoftplusTailMaskSentinel(GM_ADDR result, uint32_t count)
+{
+    constexpr uint32_t paddedCount = 192;
+    constexpr uint32_t vectorLength = 64;
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> featureBuffer, gradBuffer, resultBuffer;
+    pipe.InitBuffer(featureBuffer, paddedCount * sizeof(float));
+    pipe.InitBuffer(gradBuffer, paddedCount * sizeof(float));
+    pipe.InitBuffer(resultBuffer, paddedCount * sizeof(float));
+    auto feature = featureBuffer.Get<float>();
+    auto grad = gradBuffer.Get<float>();
+    auto output = resultBuffer.Get<float>();
+    for (uint32_t i = 0; i < paddedCount; ++i) {
+        feature.SetValue(i, 0.0f);
+        grad.SetValue(i, 2.0f);
+        output.SetValue(i, -12345.0f);
+    }
+    AscendC::PipeBarrier<PIPE_ALL>();
+    uint16_t repeats = (count + vectorLength - 1) / vectorLength;
+    asc_vf_call<SoftplusV2GradVF<float>>((__ubuf__ float*)output.GetPhyAddr(), (__ubuf__ float*)feature.GetPhyAddr(),
+                                         (__ubuf__ float*)grad.GetPhyAddr(), count, vectorLength, repeats, 1.0f, 20.0f,
+                                         0.0f);
+    AscendC::PipeBarrier<PIPE_ALL>();
+    AscendC::GlobalTensor<float> globalOutput;
+    globalOutput.SetGlobalBuffer((__gm__ float*)result, paddedCount);
+    AscendC::DataCopy(globalOutput, output, paddedCount);
+    AscendC::PipeBarrier<PIPE_ALL>();
+}
+
+TEST_F(softplus_v2_grad_test, tail_mask_preserves_padded_sentinel)
+{
+    constexpr uint32_t paddedCount = 192;
+    auto* result = reinterpret_cast<float*>(AscendC::GmAlloc(paddedCount * sizeof(float)));
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    for (uint32_t count : {1U, 63U, 65U, 127U}) {
+        ICPU_RUN_KF(RunSoftplusTailMaskSentinel, 1, reinterpret_cast<GM_ADDR>(result), count);
+        for (uint32_t i = 0; i < paddedCount; ++i) {
+            EXPECT_FLOAT_EQ(result[i], i < count ? 1.0f : -12345.0f) << "count=" << count << ", lane=" << i;
+        }
+    }
+    AscendC::GmFree(result);
+}

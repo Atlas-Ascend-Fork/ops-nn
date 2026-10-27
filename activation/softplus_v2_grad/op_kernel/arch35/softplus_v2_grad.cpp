@@ -19,6 +19,7 @@
 
 using TilingData4 = SoftplusV2GradTilingData<SOFTPLUS_V2_GRAD_RANK_4>;
 using TilingData8 = SoftplusV2GradTilingData<SOFTPLUS_V2_GRAD_RANK_8>;
+using TilingDataFramework = SoftplusV2GradTilingData<kFrameworkMaxRank>;
 
 template <int RANK>
 __global__ __aicore__ void softplus_v2_grad(GM_ADDR input_gradients, GM_ADDR input_features, GM_ADDR output_backprops,
@@ -35,9 +36,15 @@ __global__ __aicore__ void softplus_v2_grad(GM_ADDR input_gradients, GM_ADDR inp
         SoftplusV2GradKernel<DTYPE_INPUT_GRADIENTS, SOFTPLUS_V2_GRAD_RANK_4> kernel;
         kernel.Init(ins, outs, &td);
         kernel.Process();
-    } else {
+    } else if constexpr (RANK == SOFTPLUS_V2_GRAD_RANK_8) {
         GET_TILING_DATA_WITH_STRUCT(TilingData8, td, tiling);
         SoftplusV2GradKernel<DTYPE_INPUT_GRADIENTS, SOFTPLUS_V2_GRAD_RANK_8> kernel;
+        kernel.Init(ins, outs, &td);
+        kernel.Process();
+    } else {
+        static_assert(RANK == kFrameworkMaxRank, "Unexpected SoftplusV2Grad template rank");
+        GET_TILING_DATA_WITH_STRUCT(TilingDataFramework, td, tiling);
+        SoftplusV2GradKernel<DTYPE_INPUT_GRADIENTS, kFrameworkMaxRank> kernel;
         kernel.Init(ins, outs, &td);
         kernel.Process();
     }

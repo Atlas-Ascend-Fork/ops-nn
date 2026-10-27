@@ -87,7 +87,7 @@ aclnnStatus aclnnSoftplusBackward(
       <td>gradOutput（aclTensor*）</td>
       <td>输入</td>
       <td>输入的梯度。公式中的gradOutput。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape需要与self、gradInput相同。</li><li>shape需要与self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>，且Broadcast后shape与self的shape相等。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape需要与self、gradInput相同。</li></ul></td>
       <td>FLOAT、FLOAT16、DOUBLE、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -127,7 +127,7 @@ aclnnStatus aclnnSoftplusBackward(
       <td>gradInput（aclTensor*）</td>
       <td>输出</td>
       <td>公式中的gradInput。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape需要与gradOutput、self相同。</li><li>gradInput的shape和数据类型与self的相同。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape需要与gradOutput、self相同。</li><li>gradInput的shape与self相同，数据类型需在当前平台支持范围内。</li></ul></td>
       <td>FLOAT、FLOAT16、DOUBLE、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>

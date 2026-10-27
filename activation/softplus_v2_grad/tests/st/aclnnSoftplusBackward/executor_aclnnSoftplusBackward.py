@@ -9,24 +9,22 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
-import os
-import random
-
-import numpy as np
 import torch
 
 from atk.configs.dataset_config import InputDataset
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 
+
 @register("function_softplus_backward")
 class FunctionApi(BaseApi):
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        x_dtype = input_data.kwargs['x'].dtype
-        input_gradOutput = input_data.kwargs['gradOutput']
-        input_x = input_data.kwargs['x']
-        input_beta = input_data.kwargs['beta']
-        input_threshold = input_data.kwargs['threshold']
+        input_gradOutput = input_data.kwargs["gradOutput"]
+        input_x = input_data.kwargs["x"]
+        input_beta = input_data.kwargs["beta"]
+        input_threshold = input_data.kwargs["threshold"]
 
-        output_tensor = torch.ops.aten.softplus_backward(input_gradOutput, input_x , beta=input_beta,threshold=input_threshold)
+        output_tensor = torch.ops.aten.softplus_backward(
+            input_gradOutput, input_x, beta=input_beta, threshold=input_threshold
+        )
         return output_tensor

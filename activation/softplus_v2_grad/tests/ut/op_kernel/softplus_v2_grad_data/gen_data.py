@@ -24,6 +24,8 @@
 #   <tag>_grad.bin, <tag>_features.bin, <tag>_golden.bin
 
 import sys
+import zlib
+
 import numpy as np
 
 
@@ -34,10 +36,17 @@ def parse_shape(shape_str):
 
 
 def fp32_to_bf16_u16(arr_fp32):
-    # Truncate fp32 to bf16 by taking the high 16 bits (little-endian: bytes 2..4).
+    # Round fp32 to bf16 with round-to-nearest-even, aligned with the kernel's
+    # output Cast(CAST_RINT) on bf16 (truncation would deviate by 1 ULP on ties).
     arr_fp32 = np.ascontiguousarray(arr_fp32.astype(np.float32))
     u32 = arr_fp32.view(np.uint32)
-    return (u32 >> 16).astype(np.uint16)
+    high = u32 >> 16
+    lsb = high & np.uint32(1)
+    remainder = u32 & np.uint32(0xFFFF)
+    round_up = (remainder > np.uint32(0x8000)) | (
+        (remainder == np.uint32(0x8000)) & (lsb == np.uint32(1))
+    )
+    return ((high + round_up) & np.uint32(0xFFFF)).astype(np.uint16)
 
 
 def bf16_u16_to_fp32(arr_u16):
@@ -54,7 +63,8 @@ def softplus_v2_grad_golden(grad_f32, feat_f32, beta, threshold):
 
 
 def gen(tag, grad_shape, feat_shape, out_shape, dtype, beta, threshold):
-    np.random.seed(1234 + (abs(hash(tag)) % 100000))
+    # GOLDEN.10: crc32 对同一 tag 字符串跨进程确定，替代受 PYTHONHASHSEED 影响的 hash(tag)
+    np.random.seed(1234 + (zlib.crc32(tag.encode("utf-8")) % 100000))
 
     # features spread wide enough (with beta) to straddle the threshold on both sides.
     feat_fp32 = np.random.uniform(-6.0, 6.0, feat_shape).astype(np.float32)

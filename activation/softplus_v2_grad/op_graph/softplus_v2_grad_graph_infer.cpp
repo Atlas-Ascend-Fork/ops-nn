@@ -22,11 +22,21 @@ using namespace ge;
 
 namespace ops {
 static constexpr int64_t IDX_0 = 0;
+static constexpr int64_t IDX_1 = 1;
 
 static ge::graphStatus InferDataType4SoftplusV2Grad(gert::InferDataTypeContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferDataType4SoftplusV2Grad");
-    context->SetOutputDataType(IDX_0, context->GetInputDataType(IDX_0));
+
+    ge::DataType gradDtype = context->GetInputDataType(IDX_0);
+    ge::DataType featDtype = context->GetInputDataType(IDX_1);
+    OP_CHECK_IF(
+        gradDtype != featDtype,
+        OP_LOGE(context, "SoftplusV2Grad: input_features dtype must be the same as input_gradients, got %d vs %d",
+                static_cast<int>(featDtype), static_cast<int>(gradDtype)),
+        return ge::GRAPH_FAILED);
+
+    context->SetOutputDataType(IDX_0, gradDtype);
     OP_LOGD(context->GetNodeName(), "End to do InferDataType4SoftplusV2Grad");
     return ge::GRAPH_SUCCESS;
 }

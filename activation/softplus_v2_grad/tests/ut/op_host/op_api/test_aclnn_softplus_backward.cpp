@@ -231,7 +231,7 @@ TEST_F(l2_softplus_backward_test, Ascend910B2_normal_bf16_nd)
     EXPECT_EQ(aclRet, ACL_SUCCESS);
 }
 
-TEST_F(l2_softplus_backward_test, normal_gradOut_float_self_int32_nd)
+TEST_F(l2_softplus_backward_test, gradOut_float_self_int32_cast_supported)
 {
     auto gradOutputDesc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
     auto selfDesc = TensorDesc({2, 3}, ACL_INT32, ACL_FORMAT_ND);
@@ -243,7 +243,7 @@ TEST_F(l2_softplus_backward_test, normal_gradOut_float_self_int32_nd)
 
     uint64_t workspaceSize = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
-    EXPECT_EQ(aclRet, ACL_SUCCESS);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
 }
 
 TEST_F(l2_softplus_backward_test, normal_self_discontiguous)
@@ -259,4 +259,30 @@ TEST_F(l2_softplus_backward_test, normal_self_discontiguous)
     uint64_t workspaceSize = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACL_SUCCESS);
+}
+
+TEST_F(l2_softplus_backward_test, beta_nullptr)
+{
+    auto gradOutputDesc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto selfDesc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto outDesc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto betaDesc = ScalarDesc(1.0f);
+    auto thresholdDesc = ScalarDesc(20.0f);
+    auto ut = OP_API_UT(aclnnSoftplusBackward, INPUT(gradOutputDesc, selfDesc, (aclScalar*)nullptr, thresholdDesc),
+                        OUTPUT(outDesc));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_NULLPTR);
+}
+
+TEST_F(l2_softplus_backward_test, threshold_nullptr)
+{
+    auto gradOutputDesc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto selfDesc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto outDesc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto betaDesc = ScalarDesc(1.0f);
+    auto thresholdDesc = ScalarDesc(20.0f);
+    auto ut = OP_API_UT(aclnnSoftplusBackward, INPUT(gradOutputDesc, selfDesc, betaDesc, (aclScalar*)nullptr),
+                        OUTPUT(outDesc));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_NULLPTR);
 }

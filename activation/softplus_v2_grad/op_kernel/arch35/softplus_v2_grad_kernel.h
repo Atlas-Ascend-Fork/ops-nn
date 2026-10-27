@@ -74,11 +74,18 @@ __aicore__ inline int64_t CalcTransferCount(const int64_t* normal_shape, int64_t
 
 template <typename T>
 __simd_vf__ inline void SoftplusV2GradVF(__ubuf__ T* dst, __ubuf__ T* src0, __ubuf__ T* src1, uint32_t count,
-                                         uint32_t VL, uint16_t rep, float beta, float threshold)
+                                         uint32_t VL, uint16_t rep, float beta, float threshold, float clamp)
 {
+    (void)clamp; // Unused in this isolated experiment.
     // 寄存器声明
-    AscendC::Reg::RegTensor<T> src0Reg, src1Reg;
-    AscendC::Reg::RegTensor<T> regT1, regT2, regT3, regT4, regT5, dstReg;
+    AscendC::Reg::RegTensor<T> src0Reg;
+    AscendC::Reg::RegTensor<T> src1Reg;
+    AscendC::Reg::RegTensor<T> regT1;
+    AscendC::Reg::RegTensor<T> regT2;
+    AscendC::Reg::RegTensor<T> regT3;
+    AscendC::Reg::RegTensor<T> regT4;
+    AscendC::Reg::RegTensor<T> regT5;
+    AscendC::Reg::RegTensor<T> dstReg;
     AscendC::Reg::RegTensor<T> regThresh;
     AscendC::Reg::MaskReg padMask;
     AscendC::Reg::MaskReg cmpMask;
@@ -86,7 +93,10 @@ __simd_vf__ inline void SoftplusV2GradVF(__ubuf__ T* dst, __ubuf__ T* src0, __ub
 
     for (uint16_t i = 0; i < rep; i++) {
         aReg = AscendC::Reg::CreateAddrReg<T>(i, VL);
-        padMask = AscendC::Reg::UpdateMask<T>(count);
+        // 尾块掩码逐 repeat 收敛: rem = count - i*VL，最后一轮仅覆盖剩余 lane
+        // （参照 relu6_d.h canonical 写法）
+        uint32_t rem = count - static_cast<uint32_t>(i) * VL;
+        padMask = AscendC::Reg::UpdateMask<T>(rem);
 
         // --- Load: UB → Reg ---
         AscendC::Reg::LoadAlign(src0Reg, src0, aReg); // 读 input_features
@@ -96,23 +106,15 @@ __simd_vf__ inline void SoftplusV2GradVF(__ubuf__ T* dst, __ubuf__ T* src0, __ub
         //     T1 = beta * input_features
         AscendC::Reg::Muls<T>(regT1, src0Reg, beta, padMask);
 
-        // S2: Neg(T1) → T2
-        AscendC::Reg::Neg<T>(regT2, regT1, padMask);
-
-        // S3: Exp(T2) → T3
-        AscendC::Reg::Exp<T>(regT3, regT2, padMask);
-
-        // S4: Adds(T3, 1.0f) → T4
+        // Experimental literal formula: grad * exp(beta*self) / (1 + exp(beta*self)).
+        // No exponent clamp; preserve the original multiplication before division.
+        AscendC::Reg::Exp<T>(regT3, regT1, padMask);
         AscendC::Reg::Adds<T>(regT4, regT3, static_cast<T>(1.0f), padMask);
+        AscendC::Reg::Mul<T>(regT2, src1Reg, regT3, padMask);
+        AscendC::Reg::Div<T>(regT5, regT2, regT4, padMask);
 
-        // S5: Div(input_gradients, T4) → T5
-        AscendC::Reg::Div<T>(regT5, src1Reg, regT4, padMask);
-
-        // S6: Sub(T1, T1) → regZero（零寄存器）
-        AscendC::Reg::Sub<T>(regT2, regT1, regT1, padMask);
-
-        // S7: Adds(regZero, threshold) → regThresh（阈值寄存器）
-        AscendC::Reg::Adds<T>(regThresh, regT2, threshold, padMask);
+        // Compare against the literal threshold even when beta*self is infinite.
+        AscendC::Reg::Duplicate<T>(regThresh, static_cast<T>(threshold));
 
         // S8: Compare(T1, regThresh, GT) → cmpMask
         AscendC::Reg::Compare<T, AscendC::CMPMODE::GT>(cmpMask, regT1, regThresh, padMask);
@@ -193,6 +195,10 @@ public:
 
     __aicore__ inline void Process()
     {
+        // 空 Tensor 短路: Host 侧 numel==0 时 num_cores=0 且 SetBlockDim(1)，直接返回不发起 GM 读写
+        if (td_->multicore.num_cores == 0) {
+            return;
+        }
         int32_t evMTE2toV = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_V));
         int32_t evVtoMTE2 = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_MTE2));
         int32_t evVtoMTE3 = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_MTE3));
@@ -248,7 +254,7 @@ private:
             asc_vf_call<SoftplusV2GradVF<float>>((__ubuf__ float*)buf_[UB_RESULT].Get<float>().GetPhyAddr(),
                                                  (__ubuf__ float*)buf_[UB_SELF].Get<float>().GetPhyAddr(),
                                                  (__ubuf__ float*)buf_[UB_GRAD_O].Get<float>().GetPhyAddr(), count,
-                                                 VL_F, rep, beta_, threshold_);
+                                                 VL_F, rep, beta_, threshold_, kExpInputClamp);
 
             // V→MTE3 sync
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
@@ -311,7 +317,7 @@ private:
             asc_vf_call<SoftplusV2GradVF<float>>((__ubuf__ float*)buf_[UB_RESULT].Get<float>().GetPhyAddr(),
                                                  (__ubuf__ float*)buf_[UB_SELF_FP32].Get<float>().GetPhyAddr(),
                                                  (__ubuf__ float*)buf_[UB_GRAD_O_FP32].Get<float>().GetPhyAddr(), count,
-                                                 VL_F, rep, beta_, threshold_);
+                                                 VL_F, rep, beta_, threshold_, kExpInputClamp);
 
             // S4: Cast UB_RESULT(fp32)→UB_TEMP(fp16), CAST_RINT（缩精度）
             AscendC::Cast(buf_[UB_TEMP].template Get<T>(), buf_[UB_RESULT].template Get<float>(),
