@@ -16,6 +16,7 @@
  */
 
 #include "register/op_impl_registry.h"
+#include "log/log.h"
 #include "exe_graph/runtime/infer_datatype_context.h"
 
 using namespace ge;
@@ -25,6 +26,7 @@ namespace ops {
 static ge::graphStatus InferDataTypeForIndexCheck(gert::InferDataTypeContext* context)
 {
     if (context == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "context");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

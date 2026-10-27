@@ -99,18 +99,27 @@ ge::graphStatus LinearIndexV2Tiling::Init()
 {
     OP_LOGD(tilingContext_, "Tiling start.");
     if (tilingContext_ == nullptr) {
-        OP_LOGE(tilingContext_, "tilingContext is nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "tilingContext");
         return ge::GRAPH_FAILED;
     }
     auto compileInfo = static_cast<const LinearIndexV2CompileInfo*>(tilingContext_->GetCompileInfo());
     auto computeNodeInfoPtr = tilingContext_->GetComputeNodeInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, compileInfo);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, computeNodeInfoPtr);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "compileInfo"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(computeNodeInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "computeNodeInfoPtr"),
+                return ge::GRAPH_FAILED);
     auto idxInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, idxInstanceInfoPtr);
+    OP_CHECK_IF(idxInstanceInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "idxInstanceInfoPtr"),
+                return ge::GRAPH_FAILED);
     tensorId_ = idxInstanceInfoPtr->GetInstanceNum();
     if (tensorId_ == 0) {
-        OP_LOGE_FOR_INVALID_TENSORNUM(opName_, "Number of indices tensors in indices_list", 0, ">=1");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName_, "indices_list", "tensor count=0; expected >=1");
+        return ge::GRAPH_FAILED;
+    }
+    if (tensorId_ > MAX_DIM_NUM) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            opName_, "indices_list",
+            "tensor count=" + std::to_string(tensorId_) + "; expected [1, " + std::to_string(MAX_DIM_NUM) + "]");
         return ge::GRAPH_FAILED;
     }
     // for ascend950, indices can be [0], which means support non-continuous indices
@@ -118,6 +127,8 @@ ge::graphStatus LinearIndexV2Tiling::Init()
     if (compileInfo->isAscend950) {
         for (uint64_t i = 0; i < tensorId_; i++) {
             auto idxTensorShapePtr = tilingContext_->GetDynamicInputShape(0, i);
+            OP_CHECK_IF(idxTensorShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName_, "indices_list"),
+                        return ge::GRAPH_FAILED);
             auto idxTensorShape = idxTensorShapePtr->GetStorageShape();
             auto idxShape = 1;
             for (uint32_t j = 0; j < idxTensorShape.GetDimNum(); j++) {
@@ -131,13 +142,15 @@ ge::graphStatus LinearIndexV2Tiling::Init()
     // shape)
     auto idxTensorShapePtr = compileInfo->isAscend950 ? tilingContext_->GetDynamicInputShape(0, validIdx) :
                                                         tilingContext_->GetDynamicInputShape(0, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, idxTensorShapePtr);
+    OP_CHECK_IF(idxTensorShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "indices_list"),
+                return ge::GRAPH_FAILED);
     auto idxTensorDtypePtr = compileInfo->isAscend950 ? tilingContext_->GetDynamicInputDesc(0, validIdx) :
                                                         tilingContext_->GetDynamicInputDesc(0, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, idxTensorDtypePtr);
+    OP_CHECK_IF(idxTensorDtypePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "indices_list"),
+                return ge::GRAPH_FAILED);
     auto idxDtype = idxTensorDtypePtr->GetDataType();
     if (idxDtype != ge::DT_INT32 && idxDtype != ge::DT_INT64) {
-        OP_LOGE_FOR_INVALID_DTYPE(opName_, "indices",
+        OP_LOGE_FOR_INVALID_DTYPE(opName_, "indices_list",
                                   (ge::TypeUtils::DataTypeToSerialString(idxDtype) + "(" +
                                    std::to_string(static_cast<int32_t>(idxDtype)) + ")")
                                       .c_str(),
@@ -152,13 +165,32 @@ ge::graphStatus LinearIndexV2Tiling::Init()
     }
 
     usedCoreNum_ = std::min(static_cast<uint64_t>(compileInfo->totalCoreNum), idxNum);
-    OP_CHECK_IF((usedCoreNum_ == 0), OP_LOGE(tilingContext_, "coreNum in common must greater than 0."),
-                return ge::GRAPH_FAILED);
+    if (usedCoreNum_ == 0) {
+        if (idxNum == 0) {
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON("LinearIndexV2", "indices_list", "0",
+                                                      "at least one indices tensor must contain elements");
+        } else {
+            const std::string reason = "Tiling requires a positive AIV core count; actual=" +
+                                       std::to_string(compileInfo->totalCoreNum);
+            const std::vector<const char*> keys = {"opName", "reason"};
+            const std::vector<const char*> values = {"LinearIndexV2", reason.c_str()};
+            OP_LOGE_WITHOUT_REPORT("LinearIndexV2", "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        }
+        return ge::GRAPH_FAILED;
+    }
 
     // 2. 计算ub内一次最多能存放的数据量
+    if (compileInfo->ubSizePlatForm < static_cast<uint64_t>(SCALE_SPACE + MIN_UB_SIZE)) {
+        const std::string reason = "Tiling requires platform UB bytes >= " + std::to_string(SCALE_SPACE + MIN_UB_SIZE) +
+                                   "; actual=" + std::to_string(compileInfo->ubSizePlatForm);
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"LinearIndexV2", reason.c_str()};
+        OP_LOGE_WITHOUT_REPORT("LinearIndexV2", "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     ubSize_ = compileInfo->ubSizePlatForm - SCALE_SPACE;
-    OP_CHECK_IF((ubSize_ < MIN_UB_SIZE), OP_LOGE(tilingContext_, "ub size %lu is less than 1024", ubSize_),
-                return ge::GRAPH_FAILED);
     // 计算连续场景下的参数
     TilingCompute(idxNum, usedCoreNum_);
     OP_LOGD(tilingContext_, "Tiling end.");
@@ -228,7 +260,7 @@ ge::graphStatus TilingLinearIndexV2(gert::TilingContext* context)
 {
     LinearIndexV2Tiling tilingObject(context);
     if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "tiling init fail");
+        OP_LOGE_WITHOUT_REPORT(context, "LinearIndexV2 tiling init failed; propagate the root cause.");
         return ge::GRAPH_FAILED;
     }
     return tilingObject.RunKernelTiling();
@@ -238,17 +270,25 @@ ge::graphStatus TilingPrepareForLinearIndexV2(gert::TilingParseContext* context)
 {
     OP_LOGD(context, "TilingPrepareForLinearIndexV2 start");
     auto compileInfo = context->GetCompiledInfo<LinearIndexV2CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "compileInfo"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "platformInfo"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo->isAscend950 = Ops::NN::OpTiling::IsRegbaseSocVersion(context);
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = ubSizePlatForm;
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context, "Failed to get ub size."),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatForm == 0) {
+        const std::string reason = "TilingPrepareForLinearIndexV2 could not obtain platform UB size; actual=0 bytes";
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"LinearIndexV2", reason.c_str()};
+        OP_LOGE_WITHOUT_REPORT("LinearIndexV2", "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGD(context, "ub_size_platform is %lu", compileInfo->ubSizePlatForm);
     uint64_t totalUbSize = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, totalUbSize);

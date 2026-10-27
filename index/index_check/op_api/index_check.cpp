@@ -103,7 +103,9 @@ void IndexCheck(const aclTensor* bounds, const aclTensorList* indices, aclOpExec
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(IndexCheck, OP_INPUT(bounds, indices));
 
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "IndexCheckAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "IndexCheckAiCore ADD_TO_LAUNCHER_LIST_AICORE failed. ret: %d.", ret),
+             return);
 }
 
 } // namespace l0op

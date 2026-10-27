@@ -38,8 +38,10 @@ const aclTensor* IndexPut(const aclTensor* selfRef, const aclTensorList* indices
     auto ret = ADD_TO_LAUNCHER_LIST_AICPU(IndexPut, OP_ATTR_NAMES({"accumulate"}),
                                           OP_INPUT(selfRef, values, masks, indices), OP_OUTPUT(out),
                                           OP_ATTR(accumulate));
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "IndexPut ADD_TO_LAUNCHER_LIST_AICPU failed."),
-             return nullptr);
+    OP_CHECK(
+        ret == ACLNN_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "IndexPut ADD_TO_LAUNCHER_LIST_AICPU failed. ret: %d.", ret),
+        return nullptr);
     return out;
 }
 } // namespace l0op

@@ -49,7 +49,9 @@ const aclTensor* LinearIndex(const aclTensor* indices, const aclTensor* var, int
         outShape.SetDim(0, combineShape);
     }
     auto index = executor->AllocTensor(outShape, op::DataType::DT_INT32, indices->GetViewFormat());
-    CHECK_RET(index != nullptr, nullptr);
+    OP_CHECK(index != nullptr,
+             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LinearIndex: aclOpExecutor::AllocTensor returned nullptr for index."),
+             return nullptr);
 
     FVector<int64_t> shapeVector;
     op::Shape varShape = var->GetViewShape();
@@ -57,14 +59,22 @@ const aclTensor* LinearIndex(const aclTensor* indices, const aclTensor* var, int
         shapeVector.emplace_back(varShape.GetDim(i));
     }
     aclIntArray* shapeArray = executor->AllocIntArray(shapeVector.data(), shapeVector.size());
-    CHECK_RET(shapeArray != nullptr, nullptr);
+    OP_CHECK(
+        shapeArray != nullptr,
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LinearIndex: aclOpExecutor::AllocIntArray returned nullptr for shapeArray."),
+        return nullptr);
     auto shapeTensor = executor->ConvertToTensor(shapeArray, ToOpDataType(ACL_INT32));
-    CHECK_RET(shapeTensor != nullptr, nullptr);
+    OP_CHECK(shapeTensor != nullptr,
+             OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
+                     "LinearIndex: aclOpExecutor::ConvertToTensor returned nullptr for shapeTensor."),
+             return nullptr);
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(LinearIndex, OP_INPUT(indices, shapeTensor), OP_OUTPUT(index),
                                            OP_ATTR(axis, combine));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LinearIndexAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "LinearIndexAiCore ADD_TO_LAUNCHER_LIST_AICORE failed. ret: %d.", ret),
+             return nullptr);
     return index;
 }
 } // namespace l0op

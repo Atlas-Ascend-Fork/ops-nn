@@ -39,14 +39,16 @@ namespace ops {
 static ge::graphStatus InferShapeForLinearIndexV2(gert::InferShapeContext* context)
 {
     if (context == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "context");
         return GRAPH_FAILED;
     }
     // Get output shape
     auto outShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
+    OP_CHECK_IF(outShape == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "index"), return ge::GRAPH_FAILED);
     // Get the first indices tensor shape (indices_list is dynamic input, index 0)
     auto indicesShape = context->GetDynamicInputShape(0, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, indicesShape);
+    OP_CHECK_IF(indicesShape == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "indices_list"),
+                return ge::GRAPH_FAILED);
 
     if (IsUnknownRank(*indicesShape)) {
         SetUnknownRank(*outShape);
@@ -68,6 +70,7 @@ static ge::graphStatus InferShapeForLinearIndexV2(gert::InferShapeContext* conte
 static graphStatus InferDataTypeForLinearIndexV2(gert::InferDataTypeContext* context)
 {
     if (context == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "context");
         return GRAPH_FAILED;
     }
 

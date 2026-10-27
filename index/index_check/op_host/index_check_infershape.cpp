@@ -29,12 +29,13 @@ constexpr size_t INPUT_BOUNDS_INDEX = 0;
 static ge::graphStatus InferShapeForIndexCheck(gert::InferShapeContext* context)
 {
     if (context == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "context");
         return ge::GRAPH_FAILED;
     }
     OP_LOGD(context->GetNodeName(), "Begin to do InferShapeForIndexCheck");
 
     const gert::Shape* boundsShape = context->GetInputShape(INPUT_BOUNDS_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, boundsShape);
+    OP_CHECK_IF(boundsShape == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "bounds"), return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }

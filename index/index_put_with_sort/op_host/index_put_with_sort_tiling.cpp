@@ -202,7 +202,7 @@ ge::graphStatus IndexPutWithSortTilingOp::Init()
 
     tilingData.coreNums = coreNum;
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexPutWithSort", "attrs"), return ge::GRAPH_FAILED);
     tilingData.sliceSize = *(attrs->GetAttrPointer<uint32_t>)(0);
     tilingData.sliceSizeAligned = ((tilingData.sliceSize + HALF_ALIGNED - 1) / HALF_ALIGNED) * HALF_ALIGNED;
     bool accumulate = *(attrs->GetAttrPointer<bool>)(1); // false为替换, true为累加
@@ -249,9 +249,11 @@ ge::graphStatus TilingPrepareForIndexPutWithSort(gert::TilingParseContext* conte
 {
     OP_LOGD(context->GetNodeName(), "Tiling Prepare For IndexPutWithSort start");
     auto compileInfo = context->GetCompiledInfo<IndexPutWithSortCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexPutWithSort", "compileInfo"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexPutWithSort", "platformInfo"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();

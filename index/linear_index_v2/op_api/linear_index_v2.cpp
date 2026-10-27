@@ -14,6 +14,8 @@
  */
 
 #include "linear_index_v2.h"
+#include <vector>
+#include "base/err_msg.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/platform.h"
@@ -35,17 +37,23 @@ const aclTensor* LinearIndexV2(const aclTensorList* indicesList, const aclTensor
     auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
     if (socVersion != SocVersion::ASCEND910B && socVersion != SocVersion::ASCEND910_93 &&
         !Ops::NN::AclnnUtil::IsRegbase()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "[LinearIndexV2] only support ASCEND910B and ASCEND950");
+        const std::string reason = "Unsupported SoC=" + std::to_string(static_cast<int32_t>(socVersion)) +
+                                   "; supported: ASCEND910B, ASCEND910_93 and Regbase; kernel=LinearIndexV2";
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"LinearIndexV2", reason.c_str()};
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "LinearIndexV2: %s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1009", keys, values);
         return nullptr;
     }
 
     if (indicesList->Size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "[LinearIndexV2] indicesList size must larger than 0");
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "[LinearIndexV2] indices_list contains 0 tensors; expected at least 1 tensor");
         return nullptr;
     }
 
     if (!CheckType((*indicesList)[0]->GetDataType(), AICORE_DTYPE_SUPPORT_LIST)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "[LinearIndexV2] indices must be in int32, int64");
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "[LinearIndexV2] indices_list dtype is %s; expected int32 or int64.",
+                op::ToString((*indicesList)[0]->GetDataType()).GetString());
         return nullptr;
     }
     // need find first unEmpty tensor's shape
@@ -71,7 +79,8 @@ const aclTensor* LinearIndexV2(const aclTensorList* indicesList, const aclTensor
         auto ret = ADD_TO_LAUNCHER_LIST_AICORE(LinearIndexV2, OP_INPUT(indicesList, stride, valueSize),
                                                OP_OUTPUT(index));
         OP_CHECK(ret == ACLNN_SUCCESS,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LinearIndexV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                        "LinearIndexV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed. ret: %d.", ret),
                  return nullptr);
         return index;
     } else {
@@ -79,7 +88,8 @@ const aclTensor* LinearIndexV2(const aclTensorList* indicesList, const aclTensor
         auto ret = ADD_TO_LAUNCHER_LIST_AICORE(LinearIndexV2, OP_INPUT(indicesList, stride, valueSize),
                                                OP_OUTPUT(index));
         OP_CHECK(ret == ACLNN_SUCCESS,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LinearIndexV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                        "LinearIndexV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed. ret: %d.", ret),
                  return nullptr);
         return index;
     }

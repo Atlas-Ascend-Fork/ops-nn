@@ -18,6 +18,7 @@
 #include "platform/platform_info.h"
 #include "index_check_tiling.h"
 #include <algorithm>
+#include "graph/utils/type_utils.h"
 
 constexpr int64_t SCALE_SPACE = 20480;
 constexpr int64_t MIN_UB_SIZE = 1024;
@@ -50,57 +51,73 @@ ge::graphStatus IndexCheckTiling::Init()
 {
     OP_LOGD(tilingContext_, "Tiling start.");
     if (tilingContext_ == nullptr) {
-        OP_LOGE(tilingContext_, "tilingContext is nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "tilingContext");
         return ge::GRAPH_FAILED;
     }
 
     auto compileInfo = tilingContext_->GetCompileInfo<IndexCheckCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "compileInfo"),
+                return ge::GRAPH_FAILED);
     totalCoreNum_ = compileInfo->totalCoreNum;
     workspaceSize_ = compileInfo->workspaceSize;
-    OP_CHECK_IF(compileInfo->ubSizePlatform < static_cast<uint64_t>(SCALE_SPACE + MIN_UB_SIZE),
-                OP_LOGE(tilingContext_, "platform ub size %lu is less than the minimum %ld",
-                        compileInfo->ubSizePlatform, SCALE_SPACE + MIN_UB_SIZE),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatform < static_cast<uint64_t>(SCALE_SPACE + MIN_UB_SIZE)) {
+        const std::string reason = "Tiling requires platform UB bytes >= " + std::to_string(SCALE_SPACE + MIN_UB_SIZE) +
+                                   "; actual=" + std::to_string(compileInfo->ubSizePlatform);
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"IndexCheck", reason.c_str()};
+        OP_LOGE_WITHOUT_REPORT("IndexCheck", "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     ubSize_ = compileInfo->ubSizePlatform - static_cast<uint64_t>(SCALE_SPACE);
     OP_LOGD(tilingContext_, "totalCoreNum: %lu, ubSize: %lu, workspaceSize: %lu", totalCoreNum_, ubSize_,
             workspaceSize_);
 
     auto computeNodeInfoPtr = tilingContext_->GetComputeNodeInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, computeNodeInfoPtr);
+    OP_CHECK_IF(computeNodeInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "computeNodeInfoPtr"),
+                return ge::GRAPH_FAILED);
 
     auto idxInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(1);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, idxInstanceInfoPtr);
-    tensorId_ = idxInstanceInfoPtr->GetInstanceNum();
-    OP_CHECK_IF(tensorId_ == 0, OP_LOGE(tilingContext_, "indices can not be a empty tensor list"),
+    OP_CHECK_IF(idxInstanceInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "idxInstanceInfoPtr"),
                 return ge::GRAPH_FAILED);
+    tensorId_ = idxInstanceInfoPtr->GetInstanceNum();
+    OP_CHECK_IF(
+        tensorId_ == 0,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("IndexCheck", "indices_list", "tensor count=0; expected [1, 8]"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(tensorId_ > MAX_TENSOR_NUM,
-                OP_LOGE(tilingContext_, "indices tensor num %lu exceeds max %lu", tensorId_, MAX_TENSOR_NUM),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    "IndexCheck", "indices_list", "tensor count=" + std::to_string(tensorId_) + "; expected [1, 8]"),
                 return ge::GRAPH_FAILED);
 
     auto idxTensorDtypePtr = tilingContext_->GetDynamicInputDesc(1, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, idxTensorDtypePtr);
+    OP_CHECK_IF(idxTensorDtypePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "indices_list"),
+                return ge::GRAPH_FAILED);
     indicesDtype_ = idxTensorDtypePtr->GetDataType();
     if (indicesDtype_ != ge::DT_INT32 && indicesDtype_ != ge::DT_INT64) {
-        OP_LOGE(tilingContext_, "indices only support int32 or int64");
+        OP_LOGE_FOR_INVALID_DTYPE("IndexCheck", "indices_list", ge::TypeUtils::DataTypeToSerialString(indicesDtype_),
+                                  "[DT_INT32, DT_INT64]");
         return ge::GRAPH_FAILED;
     }
 
     auto boundsShapePtr = tilingContext_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, boundsShapePtr);
+    OP_CHECK_IF(boundsShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "bounds"), return ge::GRAPH_FAILED);
     auto boundsShape = boundsShapePtr->GetStorageShape();
-    OP_CHECK_IF(boundsShape.GetDimNum() != 1 || boundsShape.GetDim(0) != static_cast<int64_t>(tensorId_),
-                OP_LOGE(tilingContext_, "bounds must be a 1-D tensor with %lu elements", tensorId_),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        boundsShape.GetDimNum() != 1 || boundsShape.GetDim(0) != static_cast<int64_t>(tensorId_),
+        OP_LOGE_FOR_INVALID_SHAPE("IndexCheck", "bounds", Ops::Base::ToString(boundsShape), std::to_string(tensorId_)),
+        return ge::GRAPH_FAILED);
 
     tensorLens_.resize(MAX_TENSOR_NUM, 0);
     for (uint64_t i = 0; i < tensorId_; i++) {
         auto idxTensorShapePtr = tilingContext_->GetDynamicInputShape(1, i);
-        OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, idxTensorShapePtr);
+        OP_CHECK_IF(idxTensorShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "indices_list"),
+                    return ge::GRAPH_FAILED);
         auto idxTensorShape = idxTensorShapePtr->GetStorageShape();
         OP_CHECK_IF(idxTensorShape.GetDimNum() > MAX_DIM_NUM,
-                    OP_LOGE(tilingContext_, "indices tensor[%lu] dim num %zu exceeds max %lu", i,
-                            idxTensorShape.GetDimNum(), MAX_DIM_NUM),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("IndexCheck", "indices_list[" + std::to_string(i) + "]",
+                                                             std::to_string(idxTensorShape.GetDimNum()),
+                                                             "rank must not exceed " + std::to_string(MAX_DIM_NUM)),
                     return ge::GRAPH_FAILED);
         uint64_t tensorLen = 1;
         for (uint32_t d = 0; d < idxTensorShape.GetDimNum(); d++) {
@@ -155,13 +172,22 @@ ge::graphStatus IndexCheckTiling::RunKernelTiling()
     tilingData_.params.set_tensorLens(tensorLens_.data());
 
     auto rawTilingData = tilingContext_->GetRawTilingData();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, rawTilingData);
+    OP_CHECK_IF(rawTilingData == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "rawTilingData"),
+                return ge::GRAPH_FAILED);
     tilingData_.SaveToBuffer(rawTilingData->GetData(), rawTilingData->GetCapacity());
     rawTilingData->SetDataSize(tilingData_.GetDataSize());
-    OP_CHECK_IF(tilingContext_->SetBlockDim(usedCoreNum_) != ge::GRAPH_SUCCESS,
-                OP_LOGE(tilingContext_, "SetBlockDim failed."), return ge::GRAPH_FAILED);
+    const auto blockDimRet = tilingContext_->SetBlockDim(usedCoreNum_);
+    if (blockDimRet != ge::GRAPH_SUCCESS) {
+        const std::string reason = "SetBlockDim failed during tiling; blockDim=" + std::to_string(usedCoreNum_) +
+                                   "; rc=" + std::to_string(blockDimRet);
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"IndexCheck", reason.c_str()};
+        OP_LOGE_WITHOUT_REPORT("IndexCheck", "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     size_t* workspaces = tilingContext_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "workspaces"), return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     TilingDataPrint();
     OP_LOGD(tilingContext_, "set tiling data end.");
@@ -182,12 +208,13 @@ void IndexCheckTiling::TilingDataPrint() const
 ge::graphStatus TilingIndexCheck(gert::TilingContext* context)
 {
     if (context == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "context");
         return ge::GRAPH_FAILED;
     }
     OP_LOGD(context->GetNodeName(), "IndexCheck tiling begin");
     IndexCheckTiling tilingObject(context);
     if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "tiling init failed");
+        OP_LOGE_WITHOUT_REPORT(context, "IndexCheck tiling init failed; propagate the root cause.");
         return ge::GRAPH_FAILED;
     }
     return tilingObject.RunKernelTiling();
@@ -196,21 +223,30 @@ ge::graphStatus TilingIndexCheck(gert::TilingContext* context)
 ge::graphStatus TilingPrepareForIndexCheck(gert::TilingParseContext* context)
 {
     if (context == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "context");
         return ge::GRAPH_FAILED;
     }
     OP_LOGD(context, "TilingPrepareForIndexCheck start");
     auto compileInfo = context->GetCompiledInfo<IndexCheckCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "compileInfo"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "platformInfo"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo->workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     uint64_t ubSizePlatform = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatform);
     compileInfo->ubSizePlatform = ubSizePlatform;
-    OP_CHECK_IF((compileInfo->ubSizePlatform == 0), OP_LOGE(context, "Failed to get ub size."),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatform == 0) {
+        const std::string reason = "TilingPrepareForIndexCheck could not obtain platform UB size; actual=0 bytes";
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"IndexCheck", reason.c_str()};
+        OP_LOGE_WITHOUT_REPORT("IndexCheck", "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGD(context, "ub_size_platform: %lu", compileInfo->ubSizePlatform);
     uint64_t totalUbSize = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, totalUbSize);

@@ -15,6 +15,7 @@
 #include "register/op_impl_registry.h"
 #include "util/math_util.h"
 #include "log/log.h"
+#include "graph/utils/type_utils.h"
 #include "platform/platform_info.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "linear_index_tiling.h"
@@ -76,15 +77,20 @@ private:
 ge::graphStatus LinearIndexTiling::Init()
 {
     if (tilingContext == nullptr) {
-        OP_LOGE("LinearIndex", "tilingContext is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "tilingContext");
         return ge::GRAPH_FAILED;
     }
 
     auto compileInfo = static_cast<const LinearIndexCompileInfo*>(tilingContext->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "compileInfo"),
+                return ge::GRAPH_FAILED);
     static uint32_t coreNum = static_cast<uint32_t>(compileInfo->totalCoreNum);
     if (coreNum == 0) {
-        OP_LOGE(tilingContext, "coreNum must be greater than 0.");
+        const std::string reason = "Tiling requires a positive AIV core count; actual=" + std::to_string(coreNum);
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"LinearIndex", reason.c_str()};
+        OP_LOGE_WITHOUT_REPORT("LinearIndex", "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
         return ge::GRAPH_FAILED;
     }
     workspaceSize = compileInfo->workspaceSize;
@@ -93,12 +99,15 @@ ge::graphStatus LinearIndexTiling::Init()
     OP_LOGD(tilingContext, "ubSizePlatForm: %lu.", ubSizePlatForm);
 
     auto attrs = tilingContext->GetAttrs();
-    if (attrs == nullptr || tilingContext->GetInputShape(INPUT_0) == nullptr ||
-        tilingContext->GetInputShape(INPUT_1) == nullptr || tilingContext->GetInputDesc(INPUT_0) == nullptr ||
-        tilingContext->GetRawTilingData() == nullptr) {
-        OP_LOGE(tilingContext, "tilingContext inputshape or outputshape is nullptr.");
-        return ge::GRAPH_FAILED;
-    }
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "attrs"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingContext->GetInputShape(INPUT_0) == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "indices"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingContext->GetInputShape(INPUT_1) == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "shape"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingContext->GetInputDesc(INPUT_0) == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "indices"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingContext->GetRawTilingData() == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "rawTilingData"), return ge::GRAPH_FAILED);
 
     auto indicesShape = tilingContext->GetInputShape(INPUT_0)->GetStorageShape();
     auto varShapeTensor = tilingContext->GetInputTensor(INPUT_1);
@@ -140,7 +149,8 @@ ge::graphStatus LinearIndexTiling::Init()
         tilingKey += DT_INT64_TYPE;
         indicesSize += SIZE_OF_INT64;
     } else {
-        OP_LOGE(tilingContext, "indices only support int32, int64.");
+        OP_LOGE_FOR_INVALID_DTYPE("LinearIndex", "indices", ge::TypeUtils::DataTypeToSerialString(indicesDtype),
+                                  "[DT_INT32, DT_INT64]");
         return ge::GRAPH_FAILED;
     }
 
@@ -150,7 +160,7 @@ ge::graphStatus LinearIndexTiling::Init()
     }
 
     if (indicesCount == 0) {
-        OP_LOGE(tilingContext, "shape cannot equal 0.");
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON("LinearIndex", "indices", "0", "must contain at least one element");
         return ge::GRAPH_FAILED;
     }
 
@@ -255,17 +265,25 @@ ge::graphStatus TilingPrepareForLinearIndex(gert::TilingParseContext* context)
 {
     OP_LOGD(context, "TilingPrepareForLinearIndex start.");
     auto compileInfo = context->GetCompiledInfo<LinearIndexCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "compileInfo"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "platformInfo"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo->workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context, "Failed to get ub size."),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatForm == 0) {
+        const std::string reason = "TilingPrepareForLinearIndex could not obtain platform UB size; actual=0 bytes";
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"LinearIndex", reason.c_str()};
+        OP_LOGE_WITHOUT_REPORT("LinearIndex", "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGD(context, "ub_size_platform is %lu.", compileInfo->ubSizePlatForm);
     uint64_t totalUbSize = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, totalUbSize);
