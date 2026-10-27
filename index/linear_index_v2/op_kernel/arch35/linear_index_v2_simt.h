@@ -48,7 +48,7 @@ class LinearIndexSimtKernelV2 {
 public:
     __aicore__ inline LinearIndexSimtKernelV2() = delete;
     __aicore__ inline LinearIndexSimtKernelV2(GM_ADDR indexList, GM_ADDR stride, GM_ADDR valueSize, GM_ADDR output,
-                                              GM_ADDR workSpace, const LinearIndexV2TilingData& tiling, TPipe& pipe)
+                                              const LinearIndexV2TilingData& tiling, TPipe& pipe)
     {
         InitParams(tiling, indexList);
         SetGmAddr(stride, valueSize, output, tiling);

@@ -9,32 +9,23 @@
  */
 
 /*!
- * \file linear_index_v2_apt.cpp
+ * \file linear_index_v2.cpp
  * \brief
  */
-#include "arch35/linear_index_v2_simt.h"
+#include "linear_index_v2_simt.h"
 
 namespace AscendC {
 extern "C" __global__ __aicore__ void linear_index_v2(GM_ADDR indexList, GM_ADDR stride, GM_ADDR valueSize,
                                                       GM_ADDR output, GM_ADDR workSpace, GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
-    if (workSpace == nullptr) {
-        return;
-    }
-    GM_ADDR user = AscendC::GetUserWorkspace(workSpace);
-    if (user == nullptr) {
-        return;
-    }
     GET_TILING_DATA(tilingData, tiling);
     AscendC::TPipe pipe;
     if (TILING_KEY_IS(0)) {
-        LinearIndexSimtKernelV2<int64_t, DTYPE_STRIDE> op(indexList, stride, valueSize, output, workSpace, tilingData,
-                                                          pipe);
+        LinearIndexSimtKernelV2<int64_t, DTYPE_STRIDE> op(indexList, stride, valueSize, output, tilingData, pipe);
         op.Process();
     } else if (TILING_KEY_IS(1)) {
-        LinearIndexSimtKernelV2<int32_t, DTYPE_STRIDE> op(indexList, stride, valueSize, output, workSpace, tilingData,
-                                                          pipe);
+        LinearIndexSimtKernelV2<int32_t, DTYPE_STRIDE> op(indexList, stride, valueSize, output, tilingData, pipe);
         op.Process();
     }
 }

@@ -31,6 +31,7 @@ constexpr uint64_t VALID_INDICES = 1;
 constexpr uint64_t INVALID_INDICES = 0;
 constexpr uint32_t DCACHE_SIZE = 32 * 1024;
 constexpr uint32_t REGBASE_CCEC_CACHE_SIZE = 8 * 1024;
+constexpr uint64_t WORKSPACE_SIZE = 0;
 
 namespace optiling {
 struct computeParam {
@@ -53,7 +54,6 @@ private:
     void ComputeParam(computeParam& param, uint64_t dataNum) const;
     gert::TilingContext* tilingContext_ = nullptr;
     LinearIndexV2TilingData tilingData_;
-    uint64_t workspaceSize_ = 0;
     uint64_t tilingKey_ = 0;
     uint64_t ubSize_ = 0;
     uint64_t dataMaxInUb_ = 0;
@@ -155,7 +155,6 @@ ge::graphStatus LinearIndexV2Tiling::Init()
     OP_CHECK_IF((usedCoreNum_ == 0), OP_LOGE(tilingContext_, "coreNum in common must greater than 0."),
                 return ge::GRAPH_FAILED);
 
-    workspaceSize_ = compileInfo->workspaceSize;
     // 2. 计算ub内一次最多能存放的数据量
     ubSize_ = compileInfo->ubSizePlatForm - SCALE_SPACE;
     OP_CHECK_IF((ubSize_ < MIN_UB_SIZE), OP_LOGE(tilingContext_, "ub size %lu is less than 1024", ubSize_),
@@ -197,7 +196,7 @@ ge::graphStatus LinearIndexV2Tiling::RunKernelTiling()
         tilingContext_->SetLocalMemorySize(compileInfo->ubSizePlatForm - DCACHE_SIZE - REGBASE_CCEC_CACHE_SIZE);
     }
     size_t* workspaces = tilingContext_->GetWorkspaceSizes(1);
-    workspaces[0] = workspaceSize_;
+    workspaces[0] = WORKSPACE_SIZE;
     TilingDataPrint();
     OP_LOGD(tilingContext_, "set tiling data end.");
     return ge::GRAPH_SUCCESS;
@@ -244,7 +243,6 @@ ge::graphStatus TilingPrepareForLinearIndexV2(gert::TilingParseContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    compileInfo->workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     compileInfo->isAscend950 = Ops::NN::OpTiling::IsRegbaseSocVersion(context);
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);

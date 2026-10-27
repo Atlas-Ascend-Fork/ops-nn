@@ -87,7 +87,6 @@ TEST_F(LinearIndexV2Tiling, test_linear_index_continous)
     struct LinearIndexV2CompileInfo {
         int32_t totalCoreNum = 30;
         uint64_t ubSizePlatForm = 0;
-        uint64_t workspaceSize = 0;
         uint64_t isAscend950 = false;
     } compile_info;
     // tilingParseFunc simulate
@@ -159,6 +158,8 @@ TEST_F(LinearIndexV2Tiling, test_linear_index_continous)
     // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 1);
+    auto ws_data = reinterpret_cast<const size_t*>(ws_size->GetData());
+    EXPECT_EQ(ws_data[0], 0UL);
 }
 
 TEST_F(LinearIndexV2Tiling, test_linear_index_david)
@@ -190,7 +191,6 @@ TEST_F(LinearIndexV2Tiling, test_linear_index_david)
     struct LinearIndexV2CompileInfo {
         int32_t totalCoreNum = 30;
         uint64_t ubSizePlatForm = 0;
-        uint64_t workspaceSize = 0;
         uint64_t isAscend950 = false;
     } compile_info;
     // tilingParseFunc simulate
@@ -264,6 +264,8 @@ TEST_F(LinearIndexV2Tiling, test_linear_index_david)
     // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 1);
+    auto ws_data = reinterpret_cast<const size_t*>(ws_size->GetData());
+    EXPECT_EQ(ws_data[0], 0UL);
 }
 
 TEST_F(LinearIndexV2Tiling, test_linear_index_int64)
@@ -294,7 +296,6 @@ TEST_F(LinearIndexV2Tiling, test_linear_index_int64)
     struct LinearIndexV2CompileInfo {
         int32_t totalCoreNum = 30;
         uint64_t ubSizePlatForm = 0;
-        uint64_t workspaceSize = 0;
         uint64_t isAscend950 = false;
     } compile_info;
     // tilingParseFunc simulate
@@ -364,6 +365,8 @@ TEST_F(LinearIndexV2Tiling, test_linear_index_int64)
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
+    auto ws_data = reinterpret_cast<const size_t*>(ws_size->GetData());
+    EXPECT_EQ(ws_data[0], 0UL);
 }
 
 TEST_F(LinearIndexV2Tiling, test_linear_index_invalid_dtype)
@@ -394,7 +397,6 @@ TEST_F(LinearIndexV2Tiling, test_linear_index_invalid_dtype)
     struct LinearIndexV2CompileInfo {
         int32_t totalCoreNum = 30;
         uint64_t ubSizePlatForm = 0;
-        uint64_t workspaceSize = 0;
         uint64_t isAscend950 = false;
     } compile_info;
     // tilingParseFunc simulate
@@ -492,7 +494,6 @@ TEST_F(LinearIndexV2Tiling, test_linear_index_zero_indices)
     struct LinearIndexV2CompileInfo {
         int32_t totalCoreNum = 30;
         uint64_t ubSizePlatForm = 0;
-        uint64_t workspaceSize = 0;
         uint64_t isAscend950 = false;
     } compile_info;
     // tilingParseFunc simulate
@@ -571,10 +572,9 @@ TEST_F(LinearIndexV2Tiling, test_linear_index_null_context)
 
 TEST_F(LinearIndexV2Tiling, test_linear_index_tiling_data_instance)
 {
-    auto &factory = optiling::CTilingDataClassFactory::GetInstance();
+    auto& factory = optiling::CTilingDataClassFactory::GetInstance();
     auto tilingParam = factory.CreateTilingDataInstance("LinearIndexV2TilingParamOp");
     EXPECT_NE(tilingParam, nullptr);
     auto tilingData = factory.CreateTilingDataInstance("LinearIndexV2");
     EXPECT_NE(tilingData, nullptr);
 }
-

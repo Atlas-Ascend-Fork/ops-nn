@@ -64,9 +64,7 @@ TEST_F(linear_index_v2_test, test_case_0)
     uint8_t* value = (uint8_t*)AscendC::GmAlloc(value_size);
     uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(tiling_size);
     uint8_t* output = (uint8_t*)AscendC::GmAlloc(output_size);
-    uint8_t* workspace = (uint8_t*)AscendC::GmAlloc(16 * 1024 * 1024);
 
-    memset(workspace, 0, 16 * 1024 * 1024);
     uint32_t blockDim = 3;
 
     string path = kernel_ut::GetTestWorkDir();
@@ -76,13 +74,12 @@ TEST_F(linear_index_v2_test, test_case_0)
 
     ICPU_SET_TILING_KEY(0);
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
-    ICPU_RUN_KF(linear_index_v2, blockDim, idx_list, stride, value, output, workspace, tiling);
+    ICPU_RUN_KF(linear_index_v2, blockDim, idx_list, stride, value, output, nullptr, tiling);
 
     FreeTensorList<int32_t>(idx_list, idx_shape);
     AscendC::GmFree(stride);
     AscendC::GmFree(value);
     AscendC::GmFree(output);
-    AscendC::GmFree(workspace);
     AscendC::GmFree(tiling);
 }
 
@@ -129,7 +126,6 @@ void RunLinearIndexV2Precision(const std::vector<std::vector<int32_t>>& patterns
     auto* outputBuffer = alloc(outputSize + 2 * guardSize);
     auto* output = outputBuffer + guardSize;
     std::memset(outputBuffer, guardValue, outputSize + 2 * guardSize);
-    auto* workspace = alloc(1024);
     auto* tiling = alloc(sizeof(LinearIndexV2TilingData));
     LinearIndexV2TilingData data{};
     auto& params = data.params;
@@ -154,7 +150,7 @@ void RunLinearIndexV2Precision(const std::vector<std::vector<int32_t>>& patterns
 
     ICPU_SET_TILING_KEY((std::is_same<T, int64_t>::value ? 0 : 1));
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
-    ICPU_RUN_KF(linear_index_v2, cores, list, stride, valueSize, output, workspace, tiling);
+    ICPU_RUN_KF(linear_index_v2, cores, list, stride, valueSize, output, nullptr, tiling);
     const auto* actual = reinterpret_cast<int32_t*>(output);
     std::vector<int32_t> result(actual, actual + count);
     std::array<uint8_t, guardSize> prefixGuard;
