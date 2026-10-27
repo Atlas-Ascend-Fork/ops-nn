@@ -167,6 +167,7 @@ private:
     __aicore__ inline void InitNddmaParams(AscendC::MultiCopyParams<T, ND>& params, int64_t& outerIters,
                                            const int64_t* dstShape, int64_t k)
     {
+        params.constantValue = (T)0;
         int64_t inner = 1;
         int64_t nd = 0;
         for (int64_t d = RANK - 1; d >= k && nd < ND; d--) {
