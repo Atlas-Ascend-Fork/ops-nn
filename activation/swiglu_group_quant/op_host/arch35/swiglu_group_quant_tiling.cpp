@@ -113,7 +113,7 @@ int64_t ShapeElementNum(const gert::Shape& shape)
 
 bool CheckedMul(int64_t lhs, int64_t rhs, int64_t& out)
 {
-    if (lhs <= 0 || rhs <= 0 || lhs > std::numeric_limits<int64_t>::max() / rhs) {
+    if (lhs < 0 || rhs < 0 || (rhs != 0 && lhs > std::numeric_limits<int64_t>::max() / rhs)) {
         return false;
     }
     out = lhs * rhs;

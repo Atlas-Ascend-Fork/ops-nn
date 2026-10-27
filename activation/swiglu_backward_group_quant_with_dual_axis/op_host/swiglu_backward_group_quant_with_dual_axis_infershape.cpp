@@ -79,7 +79,7 @@ static ge::graphStatus InferShape(gert::InferShapeContext* context)
     if (groupIndex != nullptr) {
         int64_t rows = 1;
         for (int64_t i = 0; i < rank - 1; ++i) {
-            if (x->GetDim(i) <= 0) {
+            if (x->GetDim(i) < 0) {
                 rows = UNKNOWN_DIM;
                 break;
             }
@@ -98,7 +98,7 @@ static ge::graphStatus InferShape(gert::InferShapeContext* context)
             scale2->SetDim(i, x->GetDim(i));
         }
         const int64_t dimM = x->GetDim(rank - 2);
-        scale2->SetDim(rank - 2, dimM > 0 ? Ops::Base::CeilDiv(dimM, SCALE_PACK) : UNKNOWN_DIM);
+        scale2->SetDim(rank - 2, dimM >= 0 ? Ops::Base::CeilDiv(dimM, SCALE_PACK) : UNKNOWN_DIM);
         scale2->SetDim(rank - 1, width);
         scale2->SetDim(rank, SCALE_PAIR);
     }

@@ -167,7 +167,7 @@ aclnnStatus aclnnSwigluGroupQuantWithDualAxis(
       <td>x（aclTensor*）</td>
       <td>输入</td>
       <td>SwiGLU输入。</td>
-      <td><ul><li>shape为[T, D]（D = 2H）。</li><li>D须为偶数、<b>64元素对齐</b>且H ≥ 32（即D ≥ 64）。</li><li>不支持空Tensor。</li></ul></td>
+      <td><ul><li>shape为[T, D]（D = 2H）。</li><li>D须为偶数、<b>64元素对齐</b>且H ≥ 32（即D ≥ 64）。</li></ul></td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -177,7 +177,7 @@ aclnnStatus aclnnSwigluGroupQuantWithDualAxis(
       <td>weightOptional（aclTensor*）</td>
       <td>输入（可选）</td>
       <td>逐token权重，用于Clipped-SwiGLU输出的加权计算。</td>
-      <td><ul><li>可选参数，不支持空Tensor。</li><li><b>仅当提供groupIndexOptional时允许</b>，non-group场景传非空将被拒绝。</li><li>元素个数需等于合轴行数T。</li></ul></td>
+      <td><ul><li>可选参数。</li><li><b>仅当提供groupIndexOptional时允许</b>，non-group场景传非空将被拒绝。</li><li>元素个数需等于合轴行数T。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-8</td>

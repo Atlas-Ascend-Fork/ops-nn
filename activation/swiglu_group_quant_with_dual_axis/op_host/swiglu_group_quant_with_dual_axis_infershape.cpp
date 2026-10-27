@@ -117,8 +117,8 @@ ge::graphStatus InferShape4SwigluGroupQuantWithDualAxis(gert::InferShapeContext*
             unknownT = true;
             continue;
         }
-        OP_CHECK_IF(extent <= 0,
-                    OP_LOGE(context->GetNodeName(), "input x dim[%ld] should be greater than 0, got %ld.", i, extent),
+        OP_CHECK_IF(extent < 0,
+                    OP_LOGE(context->GetNodeName(), "input x dim[%ld] should be non-negative, got %ld.", i, extent),
                     return ge::GRAPH_FAILED);
         int64_t next = 0;
         OP_CHECK_IF(

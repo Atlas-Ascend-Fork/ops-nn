@@ -93,11 +93,11 @@ cann_ops_nn.swiglu_backward_group_quant_with_dual_axis(
 - 该接口支持单算子模式和ACLGraph图模式调用。
 - `grad_y` 和 `x` 必须为 NPU Tensor，且分别为二维 `[T, H]` 和 `[T, 2H]`；`x` 的最后一维必须为 64 的整数倍。
 - 非 group 场景不传入 `group_index`、`weight` 和 `y_origin`；group 场景必须传入 `group_index`。
-- `group_index` 采用 cumsum 模式，必须严格递增且最后一个值等于 `T`。
+- `group_index` 采用 cumsum 模式；`T>0`时必须严格递增且末元素等于`T`。
 - `weight` 仅支持 group 场景；`weight` 和 `y_origin` 必须同时传入或同时不传入。
 - `quant_mode` 仅支持 `1`；`dst_type` 仅支持 `35` 和 `36`。
 - `clamp_limit` 仅支持 `-1.0` 或大于 0 的值，`alpha` 必须大于 0。
-- 支持非连续 Tensor，算子原型会将输入转换为连续布局；不支持空 Tensor。
+- 支持非连续 Tensor，算子原型会将输入转换为连续布局。
 - 不支持 `interleaved`、`dim` 等未定义参数，也不支持 Batch 一致性配置。
 
 ## 确定性计算

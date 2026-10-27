@@ -174,7 +174,7 @@ aclnnStatus aclnnSwigluBackwardGroupQuantWithDualAxis(
       <td>gradY（aclTensor*）</td>
       <td>输入</td>
       <td>SwiGLU输出的反向梯度。</td>
-      <td><ul><li>shape为[T, H]。</li><li>数据类型必须与x一致。</li><li>不支持空Tensor。</li></ul></td>
+      <td><ul><li>shape为[T, H]。</li><li>数据类型必须与x一致。</li></ul></td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -214,7 +214,7 @@ aclnnStatus aclnnSwigluBackwardGroupQuantWithDualAxis(
       <td>groupIndexOptional（aclTensor*）</td>
       <td>输入（可选）</td>
       <td>分组量化边界。</td>
-      <td><ul><li>shape为[G]，dtype为INT64。</li><li>采用cumsum模式，必须满足严格递增且最后一个值为T。</li><li>传空指针时表示非group场景。</li></ul></td>
+      <td><ul><li>shape为[G]，dtype为INT64。</li><li>采用cumsum模式；T&gt;0时严格递增且末元素为T。</li><li>传空指针时表示非group场景。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>1</td>

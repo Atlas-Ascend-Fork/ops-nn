@@ -25,8 +25,11 @@ using namespace SwigluBackwardGroupQuantWithDualAxisOp;
 
 #define INVOKE_SWIGLU_BACKWARD_GROUP_QUANT_WITH_DUAL_AXIS(mode, hasGroupIndex, hasWeight, weightType, hasClampLimit) \
     do {                                                                                                             \
-        SAVE_MX_OVERFLOW_MODE();                                                                                     \
         GET_TILING_DATA_WITH_STRUCT(SwigluBackwardGroupQuantWithDualAxisMxTilingData, tilingData, tiling);           \
+        if (tilingData.totalRows == 0) {                                                                             \
+            break;                                                                                                   \
+        }                                                                                                            \
+        SAVE_MX_OVERFLOW_MODE();                                                                                     \
         AscendC::TPipe pipe;                                                                                         \
         SwigluBackwardGroupQuantWithDualAxisMx::SwigluBackwardGroupQuantWithDualAxisMxBase<                          \
             DTYPE_X, DTYPE_Y1, weightType, mode, hasGroupIndex == TPL_GROUP_INDEX, hasWeight == TPL_WEIGHT,          \
