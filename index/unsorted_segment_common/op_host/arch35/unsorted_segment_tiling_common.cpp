@@ -23,7 +23,6 @@ static constexpr uint32_t INPUT_DATA_INDEX = 0;
 static constexpr uint32_t INPUT_SEGMENT_IDS_INDEX = 1;
 static constexpr uint32_t INPUT_NUM_SEGMENTS_INDEX = 2;
 static constexpr uint32_t OUTPUT_DATA_INDEX = 0;
-constexpr uint64_t ASCENDC_WORKSPACE = static_cast<uint64_t>(16) * 1024 * 1024;
 static constexpr uint64_t CAST_INT32_TO_INT16 = 1; // int32 Cast int16
 static constexpr uint64_t CAST_INT64_TO_INT32 = 2; // int64 Cast int32
 static constexpr uint64_t CAST_INT64_TO_INT16 = 3; // int64 Cast int16
@@ -338,7 +337,7 @@ ge::graphStatus UnsortedSegmentBaseTiling::GetWorkspaceSize()
 {
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
-    workspaces[0] = ASCENDC_WORKSPACE;
+    workspaces[0] = 0; // 模板均不读写 workspace，显式置 0
 
     return ge::GRAPH_SUCCESS;
 }
