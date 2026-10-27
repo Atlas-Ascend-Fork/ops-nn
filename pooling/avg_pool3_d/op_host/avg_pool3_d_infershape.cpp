@@ -18,6 +18,7 @@
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include "util/shape_util.h"
 #include <algorithm>
 
 namespace {
@@ -54,6 +55,8 @@ constexpr size_t kWDimDHWCNIdx = 2;
 constexpr size_t kDDimNCDHWIdx = 2;
 constexpr size_t kHDimNCDHWIdx = 3;
 constexpr size_t kWDimNCDHWIdx = 4;
+
+constexpr int64_t kUnknownDim = -1;
 
 using gert::InferShapeContext;
 } // namespace
@@ -287,6 +290,12 @@ static bool GetKSize(const InferShapeContext* context, ge::Format x_format, Conv
                 OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "ksize",
                                                          "required parameter ksize is missing"),
                 return false);
+    if (ksize_list->GetSize() != LEN_1 && ksize_list->GetSize() != kDHWSizeLimit &&
+        ksize_list->GetSize() != kConv3dInputSizeLimit) {
+        OP_LOGE_FOR_INVALID_LISTSIZE("AvgPool3D", "Size of ksize", std::to_string(ksize_list->GetSize()).c_str(),
+                                     "[1, 3, 5]");
+        return false;
+    }
     const auto ksize_list_data = static_cast<const int64_t*>(ksize_list->GetData());
 
     if (ksize_list->GetSize() == 1) {
@@ -315,33 +324,41 @@ static bool GetKSize(const InferShapeContext* context, ge::Format x_format, Conv
         }
     }
 
+    if (shapes.kd == 0 || shapes.kh == 0 || shapes.kw == 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            "AvgPool3D", "kd, kh, kw",
+            (std::to_string(shapes.kd) + ", " + std::to_string(shapes.kh) + ", " + std::to_string(shapes.kw)).c_str(),
+            "kd, kh, kw must be > 0, cannot be 0");
+        return false;
+    }
+
     return true;
+}
+
+static int64_t CalcAvgPool3DOutDim(int64_t inDim, int64_t padFront, int64_t padBack, int64_t kernel, int64_t stride,
+                                   bool ceilMode)
+{
+    if (inDim == kUnknownDim) {
+        return kUnknownDim;
+    }
+    int64_t outDim = 0;
+    if (ceilMode) {
+        outDim = (inDim + padFront + padBack - kernel + stride - 1) / stride + 1;
+        if ((outDim - 1) * stride >= inDim + padFront) {
+            outDim--;
+        }
+    } else {
+        outDim = (inDim + padFront + padBack - kernel) / stride + 1;
+    }
+    return outDim;
 }
 
 static bool CalcAvgPool3DOutputShape(const char* op_name, const Conv3DInputShapesForAvgPool3d& shapes,
                                      const Conv3DAttrsForAvgPool3d& attrs, ge::Format y_format, gert::Shape* y_shape)
 {
-    int64_t outd = 0;
-    int64_t outh = 0;
-    int64_t outw = 0;
-    if (attrs.ceil_mode) {
-        outd = (shapes.id + attrs.padf + attrs.padb - shapes.kd + attrs.strd - 1) / attrs.strd + 1;
-        outh = (shapes.ih + attrs.padu + attrs.padd - shapes.kh + attrs.strh - 1) / attrs.strh + 1;
-        outw = (shapes.iw + attrs.padl + attrs.padr - shapes.kw + attrs.strw - 1) / attrs.strw + 1;
-        if ((outd - 1) * attrs.strd >= shapes.id + attrs.padf) {
-            outd--;
-        }
-        if ((outh - 1) * attrs.strh >= shapes.ih + attrs.padu) {
-            outh--;
-        }
-        if ((outw - 1) * attrs.strw >= shapes.iw + attrs.padl) {
-            outw--;
-        }
-    } else {
-        outd = (shapes.id + attrs.padf + attrs.padb - shapes.kd) / attrs.strd + 1;
-        outh = (shapes.ih + attrs.padu + attrs.padd - shapes.kh) / attrs.strh + 1;
-        outw = (shapes.iw + attrs.padl + attrs.padr - shapes.kw) / attrs.strw + 1;
-    }
+    int64_t outd = CalcAvgPool3DOutDim(shapes.id, attrs.padf, attrs.padb, shapes.kd, attrs.strd, attrs.ceil_mode);
+    int64_t outh = CalcAvgPool3DOutDim(shapes.ih, attrs.padu, attrs.padd, shapes.kh, attrs.strh, attrs.ceil_mode);
+    int64_t outw = CalcAvgPool3DOutDim(shapes.iw, attrs.padl, attrs.padr, shapes.kw, attrs.strw, attrs.ceil_mode);
 
     y_shape->SetDimNum(0);
     if (y_format == ge::FORMAT_NCDHW) {
@@ -408,6 +425,13 @@ static ge::graphStatus InferShapeForAvgPool3D(InferShapeContext* context)
                                   (std::vector<const char*>{context->GetNodeName(),
                                                             "y_shape is null; shape/type inference cannot continue"})),
         return ge::GRAPH_FAILED);
+
+    const auto x_shape = context->GetInputShape(0);
+    OPS_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    if (Ops::Base::IsUnknownRank(*x_shape)) {
+        Ops::Base::SetUnknownRank(*y_shape);
+        return ge::GRAPH_SUCCESS;
+    }
 
     const auto y_desc = context->GetOutputDesc(0);
     OP_CHECK_IF(

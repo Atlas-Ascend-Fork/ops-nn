@@ -84,6 +84,26 @@ static std::string RunInferShape(gert::Tensor* constTensor, gert::StorageShape& 
     return avgpool3dgrad_infershape_ut::Shape2String(*output);
 }
 
+static void RunInferShapeExpectFailed(gert::Tensor* constTensor, gert::StorageShape& inputShape)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("AvgPool3DGrad")->infer_shape;
+    gert::StorageShape outputShape = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({constTensor, &inputShape})
+                      .OutputShapes({&outputShape})
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({2, 2, 2})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({2, 2, 2})},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NDHWC")}})
+                      .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+    ASSERT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
 // ============================ Success cases ============================
 
 TEST_F(AvgPool3DGradInferShape, int32_orig_shape)
@@ -106,6 +126,188 @@ TEST_F(AvgPool3DGradInferShape, int64_orig_shape)
     gert::StorageShape outputShape = {{}, {}};
     auto outStr = RunInferShape(constTensor, inputShape, outputShape, ge::DT_FLOAT16);
     ASSERT_EQ(outStr, "[1, 32, 16, 16, 16]");
+}
+
+// 4-value const orig_input_shape is intercepted (canndev requires exactly 5 const values).
+TEST_F(AvgPool3DGradInferShape, int32_orig_shape_cdhw)
+{
+    std::vector<int32_t> shape_data = {16, 8, 8, 8};
+    std::unique_ptr<uint8_t[]> holder;
+    auto constTensor = MakeConstShapeTensor<int32_t>(shape_data, ge::DT_INT32, holder);
+    gert::StorageShape inputShape = {{2, 16, 4, 4, 4}, {2, 16, 4, 4, 4}};
+    RunInferShapeExpectFailed(constTensor, inputShape);
+}
+
+// 4-dim grads is intercepted (canndev requires grads rank 5 or unknown rank).
+TEST_F(AvgPool3DGradInferShape, cdhw_orig_with_4d_grads)
+{
+    std::vector<int32_t> shape_data = {16, 8, 8, 8};
+    std::unique_ptr<uint8_t[]> holder;
+    auto constTensor = MakeConstShapeTensor<int32_t>(shape_data, ge::DT_INT32, holder);
+    gert::StorageShape inputShape = {{16, 4, 4, 4}, {16, 4, 4, 4}};
+    RunInferShapeExpectFailed(constTensor, inputShape);
+}
+
+// orig_input_shape itself has an unknown dim ([-1]): value can not be resolved at compile time,
+// output must be 5 dims of -1 instead of failing.
+TEST_F(AvgPool3DGradInferShape, orig_shape_unknown_dim)
+{
+    size_t totalSize = 0;
+    std::unique_ptr<uint8_t[]> holder(gert::Tensor::CreateFollowing(1, ge::DT_INT32, totalSize));
+    auto constTensor = reinterpret_cast<gert::Tensor*>(holder.get());
+    constTensor->MutableStorageShape().AppendDim(-1);
+    constTensor->MutableOriginShape().AppendDim(-1);
+    constTensor->SetOriginFormat(ge::FORMAT_ND);
+    constTensor->SetStorageFormat(ge::FORMAT_ND);
+    gert::StorageShape inputShape = {{2, 16, 4, 4, 4}, {2, 16, 4, 4, 4}};
+    gert::StorageShape outputShape = {{}, {}};
+    auto outStr = RunInferShape(constTensor, inputShape, outputShape, ge::DT_FLOAT);
+    ASSERT_EQ(outStr, "[-1, -1, -1, -1, -1]");
+}
+
+// orig_input_shape itself has an unknown rank ([-2]): same as above, output must be 5 dims of -1.
+TEST_F(AvgPool3DGradInferShape, orig_shape_unknown_rank)
+{
+    size_t totalSize = 0;
+    std::unique_ptr<uint8_t[]> holder(gert::Tensor::CreateFollowing(1, ge::DT_INT32, totalSize));
+    auto constTensor = reinterpret_cast<gert::Tensor*>(holder.get());
+    constTensor->MutableStorageShape().AppendDim(-2);
+    constTensor->MutableOriginShape().AppendDim(-2);
+    constTensor->SetOriginFormat(ge::FORMAT_ND);
+    constTensor->SetStorageFormat(ge::FORMAT_ND);
+    gert::StorageShape inputShape = {{2, 16, 4, 4, 4}, {2, 16, 4, 4, 4}};
+    gert::StorageShape outputShape = {{}, {}};
+    auto outStr = RunInferShape(constTensor, inputShape, outputShape, ge::DT_FLOAT);
+    ASSERT_EQ(outStr, "[-1, -1, -1, -1, -1]");
+}
+
+// Const orig_input_shape wins over dynamic grads: output takes the const values,
+// grads with unknown dims must not degrade the output (aligned with canndev).
+TEST_F(AvgPool3DGradInferShape, const_orig_with_dynamic_grads)
+{
+    std::vector<int32_t> shape_data = {2, 16, 8, 8, 8};
+    std::unique_ptr<uint8_t[]> holder;
+    auto constTensor = MakeConstShapeTensor<int32_t>(shape_data, ge::DT_INT32, holder);
+    gert::StorageShape inputShape = {{-1, 16, 4, 4, 4}, {-1, 16, 4, 4, 4}};
+    gert::StorageShape outputShape = {{}, {}};
+    auto outStr = RunInferShape(constTensor, inputShape, outputShape, ge::DT_FLOAT);
+    ASSERT_EQ(outStr, "[2, 16, 8, 8, 8]");
+}
+
+// Const orig_input_shape wins over unknown-rank grads: output takes the const values.
+TEST_F(AvgPool3DGradInferShape, const_orig_with_unknown_rank_grads)
+{
+    std::vector<int32_t> shape_data = {2, 16, 8, 8, 8};
+    std::unique_ptr<uint8_t[]> holder;
+    auto constTensor = MakeConstShapeTensor<int32_t>(shape_data, ge::DT_INT32, holder);
+    gert::StorageShape inputShape = {{-2}, {-2}};
+    gert::StorageShape outputShape = {{}, {}};
+    auto outStr = RunInferShape(constTensor, inputShape, outputShape, ge::DT_FLOAT);
+    ASSERT_EQ(outStr, "[2, 16, 8, 8, 8]");
+}
+
+// Non-const orig_input_shape with 5-dim grads: output is 5 dims of -1.
+TEST_F(AvgPool3DGradInferShape, nonconst_orig_all_unknown)
+{
+    std::unique_ptr<uint8_t[]> holder(new uint8_t[sizeof(gert::Tensor)]{});
+    auto constTensor = reinterpret_cast<gert::Tensor*>(holder.get());
+    constTensor->MutableStorageShape().AppendDim(5);
+    constTensor->MutableOriginShape().AppendDim(5);
+    constTensor->SetOriginFormat(ge::FORMAT_ND);
+    constTensor->SetStorageFormat(ge::FORMAT_ND);
+    gert::StorageShape inputShape = {{2, 16, 4, 4, 4}, {2, 16, 4, 4, 4}};
+    gert::StorageShape outputShape = {{}, {}};
+    auto outStr = RunInferShape(constTensor, inputShape, outputShape, ge::DT_FLOAT);
+    ASSERT_EQ(outStr, "[-1, -1, -1, -1, -1]");
+}
+
+// Non-const 4-value orig_input_shape (rank-1 desc): output is 5 dims of -1 (canndev else branch).
+TEST_F(AvgPool3DGradInferShape, nonconst_orig_cdhw_all_unknown)
+{
+    std::unique_ptr<uint8_t[]> holder(new uint8_t[sizeof(gert::Tensor)]{});
+    auto constTensor = reinterpret_cast<gert::Tensor*>(holder.get());
+    constTensor->MutableStorageShape().AppendDim(4);
+    constTensor->MutableOriginShape().AppendDim(4);
+    constTensor->SetOriginFormat(ge::FORMAT_ND);
+    constTensor->SetStorageFormat(ge::FORMAT_ND);
+    gert::StorageShape inputShape = {{2, 16, 4, 4, 4}, {2, 16, 4, 4, 4}};
+    gert::StorageShape outputShape = {{}, {}};
+    auto outStr = RunInferShape(constTensor, inputShape, outputShape, ge::DT_FLOAT);
+    ASSERT_EQ(outStr, "[-1, -1, -1, -1, -1]");
+}
+
+// orig_input_shape desc with rank 2 is intercepted (canndev requires desc rank 1 or 5).
+TEST_F(AvgPool3DGradInferShape, invalid_orig_desc_rank)
+{
+    std::unique_ptr<uint8_t[]> holder(new uint8_t[sizeof(gert::Tensor)]{});
+    auto constTensor = reinterpret_cast<gert::Tensor*>(holder.get());
+    constTensor->MutableStorageShape().AppendDim(1);
+    constTensor->MutableStorageShape().AppendDim(5);
+    constTensor->MutableOriginShape().AppendDim(1);
+    constTensor->MutableOriginShape().AppendDim(5);
+    constTensor->SetOriginFormat(ge::FORMAT_ND);
+    constTensor->SetStorageFormat(ge::FORMAT_ND);
+    gert::StorageShape inputShape = {{2, 16, 4, 4, 4}, {2, 16, 4, 4, 4}};
+    RunInferShapeExpectFailed(constTensor, inputShape);
+}
+
+// Non-const rank-5 desc: output takes the desc dims (canndev legacy branch).
+TEST_F(AvgPool3DGradInferShape, nonconst_rank5_orig_uses_desc_dims)
+{
+    std::unique_ptr<uint8_t[]> holder(new uint8_t[sizeof(gert::Tensor)]{});
+    auto constTensor = reinterpret_cast<gert::Tensor*>(holder.get());
+    for (int64_t dim : {2, 16, 8, 8, 8}) {
+        constTensor->MutableStorageShape().AppendDim(dim);
+        constTensor->MutableOriginShape().AppendDim(dim);
+    }
+    constTensor->SetOriginFormat(ge::FORMAT_ND);
+    constTensor->SetStorageFormat(ge::FORMAT_ND);
+    gert::StorageShape inputShape = {{2, 16, 4, 4, 4}, {2, 16, 4, 4, 4}};
+    gert::StorageShape outputShape = {{}, {}};
+    auto outStr = RunInferShape(constTensor, inputShape, outputShape, ge::DT_FLOAT);
+    ASSERT_EQ(outStr, "[2, 16, 8, 8, 8]");
+}
+
+// Non-const fully-known rank-5 desc with unknown-rank grads: canndev is_dynamic is false here,
+// no interception, output takes the desc dims.
+TEST_F(AvgPool3DGradInferShape, nonconst_rank5_orig_with_unknown_rank_grads)
+{
+    std::unique_ptr<uint8_t[]> holder(new uint8_t[sizeof(gert::Tensor)]{});
+    auto constTensor = reinterpret_cast<gert::Tensor*>(holder.get());
+    for (int64_t dim : {2, 16, 8, 8, 8}) {
+        constTensor->MutableStorageShape().AppendDim(dim);
+        constTensor->MutableOriginShape().AppendDim(dim);
+    }
+    constTensor->SetOriginFormat(ge::FORMAT_ND);
+    constTensor->SetStorageFormat(ge::FORMAT_ND);
+    gert::StorageShape inputShape = {{-2}, {-2}};
+    gert::StorageShape outputShape = {{}, {}};
+    auto outStr = RunInferShape(constTensor, inputShape, outputShape, ge::DT_FLOAT);
+    ASSERT_EQ(outStr, "[2, 16, 8, 8, 8]");
+}
+
+// grads must be 5-dim (or unknown rank): rank-2 grads is intercepted, aligned with canndev Verify.
+TEST_F(AvgPool3DGradInferShape, invalid_grads_dim_num)
+{
+    std::vector<int32_t> shape_data = {2, 16, 8, 8, 8};
+    std::unique_ptr<uint8_t[]> holder;
+    auto constTensor = MakeConstShapeTensor<int32_t>(shape_data, ge::DT_INT32, holder);
+    gert::StorageShape inputShape = {{3, 4}, {3, 4}};
+    RunInferShapeExpectFailed(constTensor, inputShape);
+}
+
+// Non-const orig_input_shape with unknown-rank grads is intercepted, aligned with canndev
+// dynamic-branch range check (grads_range size != 5).
+TEST_F(AvgPool3DGradInferShape, nonconst_orig_with_unknown_rank_grads)
+{
+    std::unique_ptr<uint8_t[]> holder(new uint8_t[sizeof(gert::Tensor)]{});
+    auto constTensor = reinterpret_cast<gert::Tensor*>(holder.get());
+    constTensor->MutableStorageShape().AppendDim(5);
+    constTensor->MutableOriginShape().AppendDim(5);
+    constTensor->SetOriginFormat(ge::FORMAT_ND);
+    constTensor->SetStorageFormat(ge::FORMAT_ND);
+    gert::StorageShape inputShape = {{-2}, {-2}};
+    RunInferShapeExpectFailed(constTensor, inputShape);
 }
 
 // ============================ Failure cases ============================
