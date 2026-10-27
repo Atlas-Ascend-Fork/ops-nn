@@ -30,7 +30,7 @@ static const std::tuple<aclTensor*, aclTensor*> MedianDimAiCore(const aclTensor*
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(MedianDim, OP_INPUT(self), OP_OUTPUT(valuesOut, indicesOut),
                                            OP_ATTR(dim, keepDim));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "MedianDimAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ret, "MedianDim ADD_TO_LAUNCHER_LIST_AICORE failed, ret: %d.", ret);
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
     return std::tuple<aclTensor*, aclTensor*>(valuesOut, indicesOut);
@@ -61,7 +61,15 @@ const std::tuple<aclTensor*, aclTensor*> MedianDim(const aclTensor* self, int64_
     op::Shape reduceShape;
     MedianDimInferShape(self->GetViewShape(), dim, keepDim, reduceShape);
     auto values = executor->AllocTensor(reduceShape, self->GetDataType());
+    if (values == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "MedianDim AllocTensor for values failed.");
+        return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
+    }
     auto indices = executor->AllocTensor(reduceShape, DataType::DT_INT32);
+    if (indices == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "MedianDim AllocTensor for indices failed.");
+        return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
+    }
     return MedianDimAiCore(self, dim, keepDim, values, indices, executor);
 }
 } // namespace l0op

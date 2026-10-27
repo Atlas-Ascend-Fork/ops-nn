@@ -104,7 +104,10 @@ ge::graphStatus GatherElementsV2LastDimTiling::Init()
     totalCoreNum_ = static_cast<int64_t>(compileInfo->totalCoreNum);
     ubSizePlatForm_ = static_cast<int64_t>(compileInfo->ubSizePlatForm - RESERVED_UB);
 
-    MergeAxis(xShape, indexShape);
+    auto ret = MergeAxis(xShape, indexShape);
+    if (ret != ge::GRAPH_SUCCESS) {
+        return ret;
+    }
     DoOpTiling();
 
     size_t sysWorkspaceSize = compileInfo->sysWorkspaceSize;
@@ -123,7 +126,9 @@ ge::graphStatus GatherElementsV2LastDimTiling::MergeAxis(const gert::StorageShap
     auto indexDimNum = static_cast<int>(indexOriginShape.GetDimNum());
 
     OP_CHECK_IF(xDimNum != indexDimNum,
-                OP_LOGE(context_, "The dim %d of x and the dim %d of index are not equal.", xDimNum, indexDimNum),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(context_->GetNodeName(), "x, index",
+                                                          std::to_string(xDimNum) + ", " + std::to_string(indexDimNum),
+                                                          "x and index must have the same number of dimensions"),
                 return ge::GRAPH_FAILED);
 
     int i = 0;

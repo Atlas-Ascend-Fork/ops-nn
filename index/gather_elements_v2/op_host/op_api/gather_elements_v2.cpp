@@ -16,6 +16,8 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/platform.h"
+#include "opdev/format_utils.h"
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -29,12 +31,25 @@ const aclTensor* GatherElementsV2(const aclTensor* self, const aclTensor* index,
                                   aclOpExecutor* executor)
 {
     L0_DFX(GatherElementsV2, self, index, dim);
-    CHECK_RET(self != nullptr, nullptr);
-    CHECK_RET(index != nullptr, nullptr);
+    if (self == nullptr || index == nullptr) {
+        const std::vector<const char*> keys = {"functionName", "paraName"};
+        const std::vector<const char*> values = {"GatherElementsV2", self == nullptr ? "self" : "index"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1011", keys, values);
+        return nullptr;
+    }
 
     auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
     if (socVersion != SocVersion::ASCEND910B && socVersion != SocVersion::ASCEND910_93) {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "[GatherElementsV2] only support ASCEND910B and ASCEND910_93");
+        const std::string reason = "kernel=GatherElementsV2, actual SoC=" +
+                                   std::to_string(static_cast<int32_t>(socVersion)) +
+                                   ", supported SoCs=[ASCEND910B, ASCEND910_93], self dtype=" +
+                                   op::ToString(self->GetDataType()).GetString() +
+                                   ", format=" + op::ToString(self->GetStorageFormat()).GetString() +
+                                   "; no kernel selection is available on this SoC; use a supported SoC";
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "%s", reason.c_str());
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"GatherElementsV2", reason.c_str()};
+        REPORT_PREDEFINED_ERR_MSG("EZ1009", keys, values);
         return nullptr;
     }
 
@@ -49,11 +64,15 @@ const aclTensor* GatherElementsV2(const aclTensor* self, const aclTensor* index,
     }
 
     auto out = executor->AllocTensor(index->GetViewShape(), self->GetDataType());
+    if (out == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "GatherElementsV2 AllocTensor returned nullptr");
+        return nullptr;
+    }
     auto ret = ACL_SUCCESS;
 
     ret = ADD_TO_LAUNCHER_LIST_AICORE(GatherElementsV2, OP_INPUT(self, index), OP_OUTPUT(out), OP_ATTR(dim));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "GatherElementsV2 AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(ret, "GatherElementsV2 ADD_TO_LAUNCHER_LIST_AICORE failed, ret=%d", ret),
              return nullptr);
 
     return out;

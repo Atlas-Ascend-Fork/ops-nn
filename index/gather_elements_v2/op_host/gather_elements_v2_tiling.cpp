@@ -246,7 +246,14 @@ ge::graphStatus GatherElementsV2Tiling::Init()
     }
     xDtype_ = tilingContext_->GetInputDesc(X_IDX)->GetDataType();
     idxDtype_ = tilingContext_->GetInputDesc(INDEX_IDX)->GetDataType();
-    xDtypeSize_ = GetSizeByDataType(xDtype_);
+    auto xDtypeSize = GetSizeByDataType(xDtype_);
+    if (xDtypeSize <= 0) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            tilingContext_->GetNodeName(), "x", Ops::Base::ToString(xDtype_),
+            "x must have a fixed nonzero dtype size; supported dtypes are int32, float32, float16 and bfloat16");
+        return ge::GRAPH_FAILED;
+    }
+    xDtypeSize_ = static_cast<uint64_t>(xDtypeSize);
 
     coreNum_ = compileInfo->totalCoreNum;
     ubSize_ = compileInfo->ubSizePlatForm;
@@ -254,10 +261,6 @@ ge::graphStatus GatherElementsV2Tiling::Init()
     size_t transWorkspaceSize = 0;
     if (CalcMaxBufferSize()) {
         needTrans_ = true;
-        if (xDtypeSize_ == 0UL) {
-            OP_LOGE("GatherElementsV2", "xDtypeSize is 0.");
-            return ge::GRAPH_FAILED;
-        }
         uint64_t xGatherDimAlign = Ops::Base::CeilAlign(xGatherDim_ * xDtypeSize_, sizeof(int32_t)) / xDtypeSize_;
         uint64_t usedWorkspaceLen = std::min(carryNumAlign_,
                                              std::max(formerGroupFormerPostDim_, tailGroupFormerPostDim_));
@@ -375,50 +378,91 @@ void GatherElementsV2Tiling::TilingDataPrint() const
     OP_LOGD(tilingContext_, "maxIdxDataAlign:            %lu", maxIdxDataAlign_);
 }
 
+static void ReportGatherElementsV2TilingError(const char* opName, const std::string& reason)
+{
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+}
+
 ge::graphStatus TilingGatherElementsV2(gert::TilingContext* context)
 {
-    OP_LOGD(context->GetNodeName(), "TilingGatherElementsV2 enter.");
     if (context == nullptr) {
-        OP_LOGE("GatherElementsV2", "The context is nullptr.");
+        ReportGatherElementsV2TilingError(
+            "GatherElementsV2",
+            "TilingGatherElementsV2 received a null context; check the tiling context construction");
         return ge::GRAPH_FAILED;
     }
+    OP_LOGD(context->GetNodeName(), "TilingGatherElementsV2 enter.");
     auto attr = context->GetAttrs();
-    OP_CHECK_IF(attr == nullptr, OP_LOGE(context->GetNodeName(), "attr is nullptr"), return ge::GRAPH_FAILED);
-    auto dim = *(attr->GetAttrPointer<uint64_t>)(0);
+    if (attr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "dim");
+        return ge::GRAPH_FAILED;
+    }
+    auto dimPtr = attr->GetAttrPointer<uint64_t>(0);
+    if (dimPtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "dim");
+        return ge::GRAPH_FAILED;
+    }
+    auto dim = *dimPtr;
     auto dimNum = context->GetInputShape(X_IDX)->GetStorageShape().GetDimNum();
     if (dimNum == 0UL) {
-        OP_LOGE("GatherElementsV2", "x's dim num is 0.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "x", "0", "greater than 0");
         return ge::GRAPH_FAILED;
     }
     if ((dim + dimNum) % dimNum != dimNum - 1) {
         GatherElementsV2Tiling tilingObject(context);
-        OP_CHECK_IF(tilingObject.Init() != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "tiling init fail"),
-                    return ge::GRAPH_FAILED);
+        auto ret = tilingObject.Init();
+        if (ret != ge::GRAPH_SUCCESS) {
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GatherElementsV2Tiling::Init failed, ret=%u", ret);
+            return ret;
+        }
         return tilingObject.SetKernelTiling();
     } else {
         OP_LOGD(context->GetNodeName(), "TilingGatherElementsV2 last dim enter.");
         GatherElementsV2LastDimTiling tilingObject(context);
-        OP_CHECK_IF(tilingObject.Init() != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "tiling init fail"),
-                    return ge::GRAPH_FAILED);
+        auto ret = tilingObject.Init();
+        if (ret != ge::GRAPH_SUCCESS) {
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GatherElementsV2LastDimTiling::Init failed, ret=%u", ret);
+            return ret;
+        }
         return ge::GRAPH_SUCCESS;
     }
-    return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus TilingPrepareForGatherElementsV2(gert::TilingParseContext* context)
 {
+    if (context == nullptr) {
+        ReportGatherElementsV2TilingError(
+            "GatherElementsV2", "TilingPrepareForGatherElementsV2 received a null context; check tiling parse setup");
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGD(context->GetNodeName(), "Tiling Prepare For GatherElementsV2 start");
     auto compileInfo = context->GetCompiledInfo<GatherElementsV2CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        ReportGatherElementsV2TilingError(
+            context->GetNodeName(), "TilingPrepareForGatherElementsV2 has no compileInfo; check tiling parse setup");
+        return ge::GRAPH_FAILED;
+    }
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        ReportGatherElementsV2TilingError(
+            context->GetNodeName(),
+            "TilingPrepareForGatherElementsV2 has no platformInfo; check platform initialization");
+        return ge::GRAPH_FAILED;
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    uint64_t ubSizePlatForm;
+    uint64_t ubSizePlatForm = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context->GetNodeName(), "Failed to get ub size"),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatForm <= 0) {
+        ReportGatherElementsV2TilingError(
+            context->GetNodeName(), "TilingPrepareForGatherElementsV2 got UB size=" + std::to_string(ubSizePlatForm) +
+                                        "; expected a positive UB size; check the platform resource configuration");
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGD(context->GetNodeName(), "ub_size_platform is %lu", compileInfo->ubSizePlatForm);
     uint64_t totalUbSize = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, totalUbSize);
