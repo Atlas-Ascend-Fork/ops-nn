@@ -167,7 +167,6 @@ __aicore__ inline void FakeQuantWithMinMaxArgsRegbase<SchMode>::Compute(int64_t 
     const float scaleInv = tilingData_->scaleInv;
     const float scale = tilingData_->scale;
     const float negNudgedMin = -nudgedMin;
-    const float roundBias = 0.5f - tilingData_->quantZero;
 
     __VEC_SCOPE__
     {
@@ -175,18 +174,28 @@ __aicore__ inline void FakeQuantWithMinMaxArgsRegbase<SchMode>::Compute(int64_t 
         AscendC::Reg::RegTensor<float> vClamped;
         AscendC::Reg::RegTensor<float> vNMin;
         AscendC::Reg::RegTensor<float> vNMax;
-        AscendC::Reg::RegTensor<float> vScaled;
-        AscendC::Reg::RegTensor<float> vQOffsetF;
-        AscendC::Reg::RegTensor<int32_t> vQOffsetI;
+        AscendC::Reg::RegTensor<float> vAhi;
+        AscendC::Reg::RegTensor<float> vWh;
+        AscendC::Reg::RegTensor<float> vCorr;
+        AscendC::Reg::RegTensor<float> vP;
+        AscendC::Reg::RegTensor<int32_t> vPInt;
+        AscendC::Reg::RegTensor<float> vF;
+        AscendC::Reg::RegTensor<float> vDec;
+        AscendC::Reg::RegTensor<float> vPm;
+        AscendC::Reg::RegTensor<float> vOne;
+        AscendC::Reg::RegTensor<float> vZero;
         AscendC::Reg::RegTensor<float> vY;
         AscendC::Reg::MaskReg mask;
         AscendC::Reg::MaskReg gtMask;
         AscendC::Reg::MaskReg ltMask;
+        AscendC::Reg::MaskReg geMask;
         AscendC::Reg::MaskReg nanMask;
 
-        // Broadcast nudged constants into reg tensors (for Select after compare).
+        // Broadcast nudged constants into reg tensors
         AscendC::Reg::Duplicate(vNMin, nudgedMin);
         AscendC::Reg::Duplicate(vNMax, nudgedMax);
+        AscendC::Reg::Duplicate(vOne, 1.0f);
+        AscendC::Reg::Duplicate(vZero, 0.0f);
 
         uint32_t count = static_cast<uint32_t>(dataCount);
         for (uint16_t i = 0; i < vfLoopNum; ++i) {
@@ -206,22 +215,27 @@ __aicore__ inline void FakeQuantWithMinMaxArgsRegbase<SchMode>::Compute(int64_t 
             AscendC::Reg::CompareScalar<float, AscendC::CMPMODE::LT>(ltMask, vClamped, nudgedMin, mask);
             AscendC::Reg::Select<float>(vClamped, vNMin, vClamped, ltMask);
 
-            // Step 3: scheme A -- shifted = clamped + (-nudgedMin); scaled = shifted * scaleInv.
-            AscendC::Reg::Adds(vScaled, vClamped, negNudgedMin, mask);
-            AscendC::Reg::Muls(vScaled, vScaled, scaleInv, mask);
+            // Step 3: determination of product FMA compensation.
+            AscendC::Reg::Adds(vAhi, vClamped, negNudgedMin, mask);
+            AscendC::Reg::Muls(vWh, vAhi, scaleInv, mask);
+            AscendC::Reg::Muls(vCorr, vWh, -1.0f, mask);
+            AscendC::Reg::Axpy(vCorr, vAhi, scaleInv, mask);
+            AscendC::Reg::Cast<int32_t, float, CAST_TRAIT_FP32_TO_S32_FLOOR>(vPInt, vWh, mask);
+            AscendC::Reg::Cast<float, int32_t, CAST_TRAIT_S32_TO_FP32>(vP, vPInt, mask);
+            AscendC::Reg::Sub(vF, vWh, vP, mask);
+            AscendC::Reg::Add(vF, vF, vCorr, mask);
+            AscendC::Reg::CompareScalar<float, AscendC::CMPMODE::GE>(geMask, vF, 0.5f, mask);
+            AscendC::Reg::Select<float>(vDec, vOne, vZero, geMask);
+            AscendC::Reg::Add(vPm, vP, vDec, mask);
 
-            // Step 4: round = floor(scaled + roundBias) via fp32->int32 FLOOR cast.
-            AscendC::Reg::Adds(vScaled, vScaled, roundBias, mask);
-            AscendC::Reg::Cast<int32_t, float, CAST_TRAIT_FP32_TO_S32_FLOOR>(vQOffsetI, vScaled, mask);
-            AscendC::Reg::Cast<float, int32_t, CAST_TRAIT_S32_TO_FP32>(vQOffsetF, vQOffsetI, mask);
+            // Step 4: q = Pm - quantZero; dequant y = q * scale.
+            AscendC::Reg::Adds(vPm, vPm, -tilingData_->quantZero, mask);
+            AscendC::Reg::Muls(vY, vPm, scale, mask);
 
-            // Step 5: dequant y = q_offset * scale.
-            AscendC::Reg::Muls(vY, vQOffsetF, scale, mask);
-
-            // Step 6: NaN passthrough -- nanMask=1 -> vX, else vY.
+            // Step 5: NaN passthrough -- nanMask=1 -> vX, else vY.
             AscendC::Reg::Select<float>(vY, vX, vY, nanMask);
 
-            // Step 7: store y.
+            // Step 6: store y.
             AscendC::Reg::DataCopy<float, AscendC::Reg::StoreDist::DIST_NORM_B32>(yLocalAddr + i * VL, vY, mask);
         }
     }
