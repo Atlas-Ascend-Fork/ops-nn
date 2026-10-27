@@ -96,7 +96,7 @@ static ge::graphStatus ForeachMulListTilingFunc(gert::TilingContext* context)
         tiling->lastCoreElements = 0;
         context->SetBlockDim(1);
     } else {
-        tiling->perCoreElements = std::min(static_cast<int64_t>(65536), Ops::Base::CeilDiv(totalElements, coreNum));
+        tiling->perCoreElements = std::max(static_cast<int64_t>(65536), Ops::Base::CeilDiv(totalElements, coreNum));
         // Align to 32 (warp size)
         tiling->perCoreElements = Ops::Base::CeilAlign(tiling->perCoreElements, ALIGN_SIZE);
         tiling->needCoreNum = Ops::Base::CeilDiv(totalElements, tiling->perCoreElements);
