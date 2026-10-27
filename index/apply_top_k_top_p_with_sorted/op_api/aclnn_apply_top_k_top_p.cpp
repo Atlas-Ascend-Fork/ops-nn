@@ -123,16 +123,24 @@ static aclnnStatus CheckParams(const aclTensor* logits, const aclTensor* p, cons
 {
     // 错误码等DFX方案细化后刷新，错误日志在check接口内打印
     // 1. 检查参数是否为空指针
-    CHECK_RET(CheckNotNull(logits, p, k, out), ACLNN_ERR_PARAM_NULLPTR);
+    if (!CheckNotNull(logits, p, k, out)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     // 2. 检查输入的数据类型是否在API支持的数据类型范围之内，需要根据api定义校验
-    CHECK_RET(CheckDtypeValid(logits, p, k, out), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckDtypeValid(logits, p, k, out)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // 3. 检查shape是否满足约束
-    CHECK_RET(CheckShapeValid(logits, p, k, out), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckShapeValid(logits, p, k, out)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // 4. 检查format是否满足约束
-    CHECK_RET(CheckFormatValid(logits, p, k, out), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckFormatValid(logits, p, k, out)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -145,11 +153,12 @@ aclnnStatus aclnnApplyTopKTopPGetWorkspaceSize(const aclTensor* logits, const ac
     L2_DFX_PHASE_1(aclnnApplyTopKTopP, DFX_IN(logits, p, k), DFX_OUT(out));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 固定写法，参数检查
     auto ret = CheckParams(logits, p, k, out);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
     bool pIsEmpty = false;
     bool kIsEmpty = false;
     if (p != nullptr) {
@@ -166,16 +175,25 @@ aclnnStatus aclnnApplyTopKTopPGetWorkspaceSize(const aclTensor* logits, const ac
     }
     // 固定写法，将输入selfRef转换成连续的tensor
     auto logitsContiguous = l0op::Contiguous(logits, uniqueExecutor.get());
-    CHECK_RET(logitsContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (logitsContiguous == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Contiguous of logits failed.");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     const aclTensor* pContiguous = nullptr;
     const aclTensor* kContiguous = nullptr;
     if (p != nullptr) {
         pContiguous = l0op::Contiguous(p, uniqueExecutor.get());
-        CHECK_RET(pContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (pContiguous == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Contiguous of p failed.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     if (k != nullptr) {
         kContiguous = l0op::Contiguous(k, uniqueExecutor.get());
-        CHECK_RET(kContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (kContiguous == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Contiguous of k failed.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     bool isLastDimSizeOne = logits->GetViewShape()[DIM_ONE] == 1;
     auto viewCopyResult = logitsContiguous;
@@ -184,16 +202,28 @@ aclnnStatus aclnnApplyTopKTopPGetWorkspaceSize(const aclTensor* logits, const ac
     } else {
         auto sortResult = l0op::Sort(logitsContiguous, -1, false, true, op::DataType::DT_INT32, uniqueExecutor.get());
         const aclTensor* sortedValue = std::get<0>(sortResult);
-        CHECK_RET(sortedValue != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (sortedValue == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Sort of logits returned null sorted value.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         const aclTensor* sortedIndices = std::get<1>(sortResult);
-        CHECK_RET(sortedIndices != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (sortedIndices == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Sort of logits returned null sorted indices.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         auto res = l0op::ApplyTopKTopPWithSorted(sortedValue, sortedIndices, pContiguous, kContiguous, logitsContiguous,
                                                  uniqueExecutor.get());
-        CHECK_RET(res != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (res == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ApplyTopKTopPWithSorted returned null result.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         // 固定写法，将计算结果拷贝到输出out上，out可能是非连续的tensor
         viewCopyResult = l0op::ViewCopy(res, out, uniqueExecutor.get());
     }
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ViewCopy of result failed.");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     // 固定写法，获取计算过程中需要使用的workspace大小
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor); // 需要把 uniqueExecutor持有executor转移给executor

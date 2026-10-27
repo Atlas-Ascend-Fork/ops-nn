@@ -9,9 +9,9 @@
  */
 
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "register/op_impl_registry.h"
-#include "register/op_impl_registry_base.h"
-#include "runtime/infer_shape_range_context.h"
+#include "exe_graph/runtime/infer_shape_range_context.h"
 #include "kernel_run_context_facker.h"
 
 class WhereUT : public testing::Test {
@@ -54,4 +54,28 @@ TEST_F(WhereUT, infershape_range_test)
     EXPECT_EQ(context->GetOutputShapeRange(0)->GetMin()->GetDim(1), 4);
     EXPECT_EQ(context->GetOutputShapeRange(0)->GetMax()->GetDim(0), -1);
     EXPECT_EQ(context->GetOutputShapeRange(0)->GetMax()->GetDim(1), 4);
+}
+
+TEST_F(WhereUT, invalid_rank_reports_one_formal_error)
+{
+    auto inferShape = gert::OpImplRegistry::GetInstance().GetOpImpl("Where")->infer_shape;
+    ASSERT_NE(inferShape, nullptr);
+    for (const auto& shape : std::vector<gert::Shape>{{}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}) {
+        auto input = shape;
+        gert::Shape output;
+        auto holder = gert::InferShapeContextFaker()
+                          .NodeIoNum(1, 1)
+                          .IrInputNum(1)
+                          .InputShapes({&input})
+                          .OutputShapes({&output})
+                          .Build();
+        (void)ErrorManager::GetInstance().GetRawErrorMessages();
+        EXPECT_EQ(inferShape(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+        const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, "EZ0012");
+        EXPECT_NE(errors[0].error_message.find("x"), std::string::npos);
+        EXPECT_NE(errors[0].error_message.find(std::to_string(input.GetDimNum())), std::string::npos);
+        EXPECT_NE(errors[0].error_message.find("rank"), std::string::npos);
+    }
 }

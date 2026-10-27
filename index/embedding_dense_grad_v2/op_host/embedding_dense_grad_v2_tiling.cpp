@@ -19,11 +19,24 @@
 #include "log/log.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "op_host/tiling_util.h"
+#include <vector>
 #include "embedding_dense_grad_v2_regbase_tiling.h"
 #include "embedding_dense_grad_v2_tiling.h"
 
 namespace optiling {
 using namespace Ops::NN::OpTiling;
+
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
+
 constexpr uint64_t VEC_PROCESS_SIZE = 256;
 constexpr uint64_t SIZE_OF_FP32 = 4;
 constexpr uint64_t BLOCK_SIZE = 32;
@@ -299,14 +312,22 @@ ge::graphStatus EmbeddingDenseGradV2Tiling::Init()
                                      std::min(static_cast<uint64_t>(numWeights_), static_cast<uint64_t>(gradRow))) :
                             std::min(compileInfo->totalCoreNum, static_cast<uint64_t>(gradRow));
     ubSize_ = compileInfo->ubSizePlatForm;
-    if (coreNum_ == 0UL || embeddingDim_ == 0UL) {
-        OP_LOGE(tilingContext_,
-                "coreNum or embeddingDim is zero, coreNum=%lu, embeddingDim=%lu, both must be greater than 0", coreNum_,
-                embeddingDim_);
+    if (embeddingDim_ == 0UL) {
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext_->GetNodeName(), "grad", "0",
+                                                  "the last dimension of grad must be greater than 0");
+        return ge::GRAPH_FAILED;
+    }
+    if (coreNum_ == 0UL) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(tilingContext_->GetNodeName(), "grad, num_weights", "0",
+                                               "the grad row count and num_weights must yield a non-zero core number");
         return ge::GRAPH_FAILED;
     }
     CalMaxFormerNum(ubSize_);
-    OP_CHECK_IF((maxFormerNum == 0), OP_LOGE(tilingContext_, "Do not have enough ub size."), return ge::GRAPH_FAILED);
+    if (maxFormerNum == 0) {
+        return ReportTilingFailure(tilingContext_->GetNodeName(),
+                                   "no available UB space for grad rows, ubSize=" + std::to_string(ubSize_) +
+                                       ", embeddingDim=" + std::to_string(embeddingDim_));
+    }
     SetTilingKeyMode();
     tilingContext_->SetNeedAtomic(true);
     if (isDeterministMode_) {
@@ -481,8 +502,7 @@ void EmbeddingDenseGradV2Tiling::TilingDataPrint() const
 ge::graphStatus TilingEmbeddingDenseGradV2(gert::TilingContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("EmbeddingDenseGradV2", "The context is nullptr.");
-        return ge::GRAPH_FAILED;
+        return ReportTilingFailure("EmbeddingDenseGradV2", "tiling context is null");
     }
     OP_LOGD(context->GetNodeName(), "Tiling4EmbeddingDenseGradV2 enter.");
 
@@ -497,7 +517,7 @@ ge::graphStatus TilingEmbeddingDenseGradV2(gert::TilingContext* context)
 
     EmbeddingDenseGradV2Tiling tilingObject(context);
     if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "tiling init fail");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "tiling init failed");
         return ge::GRAPH_FAILED;
     }
     return tilingObject.SetKernelTiling();
@@ -507,17 +527,22 @@ ge::graphStatus TilingPrepareForEmbeddingDenseGradV2(gert::TilingParseContext* c
 {
     OP_LOGD(context->GetNodeName(), "Tiling Prepare For EmbeddingDenseGradV2 start");
     auto compileInfo = context->GetCompiledInfo<EmbeddingDenseGradV2CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "compiled info is null");
+    }
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "platform info is null");
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo->isRegBase = Ops::NN::OpTiling::IsRegbaseSocVersion(context);
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context->GetNodeName(), "Failed to get ub size"),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatForm <= 0) {
+        return ReportTilingFailure(context->GetNodeName(), "UB size must be positive");
+    }
     OP_LOGD(context->GetNodeName(), "ub_size_platform is %lu", compileInfo->ubSizePlatForm);
     uint64_t totalUbSize = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, totalUbSize);

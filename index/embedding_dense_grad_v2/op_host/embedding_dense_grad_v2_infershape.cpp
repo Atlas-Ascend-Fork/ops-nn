@@ -11,6 +11,7 @@
  * \file embedding_dense_grad_v2_infershape.cpp
  * \brief
  */
+#include <vector>
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 
@@ -27,25 +28,46 @@ constexpr size_t EMBEDDING_DENSE_GRAD_ATTR_SCALE_GRAD_BY_FREQ = 2;
 } // namespace
 
 namespace ops {
+static ge::graphStatus ReportInferShapeFailure(const char* opName, const char* reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason);
+    return ge::GRAPH_FAILED;
+}
+
 static ge::graphStatus InferShapeForEmbeddingDenseGradV2(gert::InferShapeContext* context)
 {
     auto grad_shape = context->GetInputShape(EMBEDDING_DENSE_GRAD_IN_GRAD);
-    OP_CHECK_NULL_WITH_CONTEXT(context, grad_shape);
+    OP_CHECK_IF(grad_shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "grad"), return GRAPH_FAILED);
     auto indices_shape = context->GetInputShape(EMBEDDING_DENSE_GRAD_IN_INDICES);
-    OP_CHECK_NULL_WITH_CONTEXT(context, indices_shape);
+    OP_CHECK_IF(indices_shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "sort_indices"),
+                return GRAPH_FAILED);
     auto pos_shape = context->GetInputShape(EMBEDDING_DENSE_GRAD_IN_POSIDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, pos_shape);
+    OP_CHECK_IF(pos_shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "pos_idx"),
+                return GRAPH_FAILED);
     auto out_shape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, out_shape);
+    if (out_shape == nullptr) {
+        return ReportInferShapeFailure(context->GetNodeName(), "output y shape is null");
+    }
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        return ReportInferShapeFailure(context->GetNodeName(), "attributes are null");
+    }
 
     auto num_weights = attrs->GetAttrPointer<int64_t>(EMBEDDING_DENSE_GRAD_ATTR_NUM_WEIGHTS);
-    OP_CHECK_NULL_WITH_CONTEXT(context, num_weights);
+    if (num_weights == nullptr) {
+        return ReportInferShapeFailure(context->GetNodeName(), "num_weights attribute is null");
+    }
     auto padding_idx = attrs->GetAttrPointer<int64_t>(EMBEDDING_DENSE_GRAD_ATTR_PADDING_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, padding_idx);
+    if (padding_idx == nullptr) {
+        return ReportInferShapeFailure(context->GetNodeName(), "padding_idx attribute is null");
+    }
     auto scale_grad_by_freq = attrs->GetAttrPointer<bool>(EMBEDDING_DENSE_GRAD_ATTR_SCALE_GRAD_BY_FREQ);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scale_grad_by_freq);
+    if (scale_grad_by_freq == nullptr) {
+        return ReportInferShapeFailure(context->GetNodeName(), "scale_grad_by_freq attribute is null");
+    }
 
     int64_t output_shape_len = 2;
     int64_t input_shape_len = grad_shape->GetDimNum();

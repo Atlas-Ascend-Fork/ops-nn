@@ -138,7 +138,7 @@ const std::tuple<aclTensor*, aclTensor*, aclTensor*, aclTensor*> EmbeddingBag(
                                            OP_OUTPUT(outputTensor, offset2bag, bagSize, maxIndices),
                                            OP_ATTR(modeStr, scaleGradByFreq, sparse, includeLastOffset, paddingIdx));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "EmbeddingBagAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "EmbeddingBagAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return MakeNullEmbeddingBagResult();
     }
     return std::tuple<aclTensor*, aclTensor*, aclTensor*, aclTensor*>(outputTensor, offset2bag, bagSize, maxIndices);

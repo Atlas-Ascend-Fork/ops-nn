@@ -16,6 +16,7 @@
 #include <iostream>
 #include <vector>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 
 #include "apply_top_k_top_p_with_sorted_compile_info.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -141,7 +142,15 @@ TEST_P(ApplyTopKTopPWithSortedTilingTest, test_case_apply_top_k_top_p_with_sorte
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
     // workspaces nullptr return failed
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     EXPECT_EQ(tiling_func(tiling_context), param.status);
+    if (param.status != ge::GRAPH_SUCCESS) {
+        const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id.substr(0, 4), "EZ00");
+        EXPECT_NE(errors[0].error_message.find("Parameter"), std::string::npos);
+    }
+
     if (param.status == ge::GRAPH_SUCCESS) {
         // check tiling result
         auto tiling_key = tiling_context->GetTilingKey();

@@ -12,6 +12,7 @@
  * \brief
  */
 
+#include <vector>
 #include "register/op_impl_registry.h"
 #include "util/math_util.h"
 #include "platform/platform_infos_def.h"
@@ -21,6 +22,17 @@
 #include "embedding_bag_regbase_tiling.h"
 
 namespace optiling {
+
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 
 constexpr int64_t WEIGHT_IDX = 0;
 constexpr int64_t INDICES_IDX = 1;
@@ -79,7 +91,9 @@ ge::graphStatus EmbeddingBagRegBaseTiling::GetPlatformInfo()
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     auto aivNum = ascendcPlatform.GetCoreNumAiv();
     ubSize_ -= DCACHE_SIZE;
-    OP_CHECK_IF((aivNum <= 0), OP_LOGE(opName, "fail to get coreNum."), return ge::GRAPH_FAILED);
+    if (aivNum <= 0) {
+        return ReportTilingFailure(opName, "fail to get coreNum, aivNum is " + std::to_string(aivNum));
+    }
     totalCoreNum_ = aivNum;
     auto npuArch = ascendcPlatform.GetCurNpuArch();
     isSupportGatterDMA_ = (npuArch == NpuArch::DAV_9201);
@@ -90,7 +104,10 @@ ge::graphStatus EmbeddingBagRegBaseTiling::GetPlatformInfo()
 ge::graphStatus EmbeddingBagRegBaseTiling::GetShapeAttrsInfo()
 {
     auto weight = context_->GetInputShape(WEIGHT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weight);
+    if (weight == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(opName, "weight");
+        return ge::GRAPH_FAILED;
+    }
     auto weightShape = weight->GetStorageShape();
 
     OP_CHECK_IF(weightShape.GetDimNum() != DIM_TWO,
@@ -101,17 +118,26 @@ ge::graphStatus EmbeddingBagRegBaseTiling::GetShapeAttrsInfo()
     embeddingDim_ = weightShape.GetDim(1);
     weightShapeSize_ = static_cast<uint64_t>(embeddingDim_ * numEmbeddings_);
     auto weightDesc = context_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weightDesc);
+    if (weightDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(opName, "weight");
+        return ge::GRAPH_FAILED;
+    }
     auto weightType = weightDesc->GetDataType();
     weightTypeSize_ = ge::GetSizeByDataType(weightType);
 
     auto indices = context_->GetInputShape(INDICES_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, indices);
+    if (indices == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(opName, "indices");
+        return ge::GRAPH_FAILED;
+    }
     auto indiceShape = indices->GetStorageShape();
     indicesNumel_ = indiceShape.GetShapeSize();
 
     auto indicesDesc = context_->GetInputDesc(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, indicesDesc);
+    if (indicesDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(opName, "indices");
+        return ge::GRAPH_FAILED;
+    }
     indicesType_ = indicesDesc->GetDataType();
     indicesTypeSize_ = ge::GetSizeByDataType(indicesType_);
 
@@ -121,7 +147,10 @@ ge::graphStatus EmbeddingBagRegBaseTiling::GetShapeAttrsInfo()
         offsetsNum_ = offsetsShape.GetDim(0);
 
         auto offsetsDesc = context_->GetInputDesc(OFFSETS_IDX);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, offsetsDesc);
+        if (offsetsDesc == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(opName, "offsets");
+            return ge::GRAPH_FAILED;
+        }
         offsetsType_ = offsetsDesc->GetDataType();
         offsetsTypeSize_ = ge::GetSizeByDataType(offsetsType_);
         if (indicesType_ != offsetsType_) {
@@ -139,7 +168,9 @@ ge::graphStatus EmbeddingBagRegBaseTiling::GetShapeAttrsInfo()
     }
 
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        return ReportTilingFailure(opName, "attrs is null");
+    }
     const std::string modeStr = std::string(attrs->GetAttrPointer<char>(MODE_INDEX));
     std::map<std::string, int64_t> modeMap = {{"sum", MDOE_SUM}, {"mean", MDOE_MEAN}, {"max", MDOE_MAX}};
     mode_ = modeMap[modeStr];
@@ -148,11 +179,15 @@ ge::graphStatus EmbeddingBagRegBaseTiling::GetShapeAttrsInfo()
     }
 
     auto inclueLastOfstPtr = attrs->GetAttrPointer<bool>(ATTR_INCLUDE_LAST_OFFSET);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inclueLastOfstPtr);
+    if (inclueLastOfstPtr == nullptr) {
+        return ReportTilingFailure(opName, "attr include_last_offset is null");
+    }
     inclueLastOfst_ = *inclueLastOfstPtr;
 
     auto paddingIdxPtr = attrs->GetAttrPointer<int64_t>(ATTR_PADD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, paddingIdxPtr);
+    if (paddingIdxPtr == nullptr) {
+        return ReportTilingFailure(opName, "attr padding_idx is null");
+    }
     paddingIdx_ = *paddingIdxPtr;
 
     if (embeddingDim_ * weightTypeSize_ <= MAX_SIMT_EMBDDING_BYTES) {
@@ -551,15 +586,18 @@ ge::graphStatus EmbeddingBagRegBaseTiling::GetWorkspaceSize()
 ge::graphStatus EmbeddingBagRegBaseTiling::PostTiling()
 {
     auto workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    if (workspaces == nullptr) {
+        return ReportTilingFailure(opName, "workspace size array is null");
+    }
     workspaces[0] = workspaceSize_;
     tilingKey_ = GetTilingKey();
     context_->SetTilingKey(tilingKey_);
     context_->SetBlockDim(usedCoreNum_);
     context_->SetScheduleMode(1);
     auto res = context_->SetLocalMemorySize(ubSize_);
-    OP_CHECK_IF((res != ge::GRAPH_SUCCESS), OP_LOGE(opName, "SetLocalMemorySize ubSize = %lu failed.", ubSize_),
-                return ge::GRAPH_FAILED);
+    if (res != ge::GRAPH_SUCCESS) {
+        return ReportTilingFailure(opName, "SetLocalMemorySize ubSize = " + std::to_string(ubSize_) + " failed");
+    }
     tilingData_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData_.GetDataSize());
     return ge::GRAPH_SUCCESS;

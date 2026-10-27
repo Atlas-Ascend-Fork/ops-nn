@@ -1,18 +1,18 @@
 /**
- * This program is free software, you can redistribute it and/or modify.
  * Copyright (c) 2025 Huawei Technologies Co., Ltd.
- * This file is a part of the CANN Open Software.
- * Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING
- * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
- * the software repository for the full text of the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include <iostream>
 #include <fstream>
 #include <vector>
 #include <thread>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include <nlohmann/json.hpp>
 #include "log/log.h"
 #include "graph/graph.h"
@@ -161,6 +161,26 @@ TEST_F(TopKTopPSampleV2Tiling, TOP_K_TOP_P_SAMPLE_V2_001_FLOAT16)
     // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 1001);
+
+    // The shape validator owns the first error; RunKernelTiling only propagates it.
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(0)) = {{8}, {8}};
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0012");
+    EXPECT_NE(errors[0].error_message.find("logits"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("1D"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("greater than or equal to 2"), std::string::npos);
+
+    *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(0)) = {{8, 64}, {8, 64}};
+    *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(1)) = {{7}, {7}};
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+    errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0010");
+    EXPECT_NE(errors[0].error_message.find("top_k"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("batch"), std::string::npos);
 }
 
 TEST_F(TopKTopPSampleV2Tiling, TOP_K_TOP_P_SAMPLE_V2_002_BFLOAT16)

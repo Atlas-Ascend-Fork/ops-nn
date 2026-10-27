@@ -15,6 +15,8 @@
 
 #include <iostream>
 #include <map>
+#include <string>
+#include <vector>
 #include "log/log.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "platform/platform_infos_def.h"
@@ -25,6 +27,15 @@
 #include "platform/soc_spec.h"
 
 namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+
 constexpr uint32_t SYS_RESERVED_UB = uint32_t(16 * 1024);
 constexpr uint32_t SELECT_RESERVED_UB = uint32_t(8 * 1024);
 constexpr uint32_t DIM_ONE = 1;
@@ -105,53 +116,73 @@ private:
 ge::graphStatus ApplyTopKTopPWithSortedTiling::CheckShape()
 {
     auto sortedValueShapePtr = tilingcontext->GetInputShape(SORTED_VALUE_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingcontext, sortedValueShapePtr);
+    OP_CHECK_IF(sortedValueShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(tilingcontext->GetNodeName(), "sorted_value"), return ge::GRAPH_FAILED);
     auto sortedValueShape = sortedValueShapePtr->GetStorageShape();
     if (sortedValueShape.GetDimNum() != DIM_TWO) {
-        OP_LOGE(opName_, "the dimNum of sorted_value should be 2, but got %u.", sortedValueShape.GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM(tilingcontext->GetNodeName(), "sorted_value",
+                                     (std::to_string(sortedValueShape.GetDimNum()) + "D").c_str(), "2D");
         return ge::GRAPH_FAILED;
     }
     auto sortedIndicesShapePtr = tilingcontext->GetInputShape(SORTED_INDICES_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingcontext, sortedIndicesShapePtr);
+    OP_CHECK_IF(sortedIndicesShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(tilingcontext->GetNodeName(), "sorted_indices"), return ge::GRAPH_FAILED);
     auto sortedIndicesShape = sortedIndicesShapePtr->GetStorageShape();
     if (sortedIndicesShape.GetDimNum() != DIM_TWO) {
-        OP_LOGE(opName_, "the dimNum of sorted_indices should be 2, but got %u.", sortedIndicesShape.GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM(tilingcontext->GetNodeName(), "sorted_indices",
+                                     (std::to_string(sortedIndicesShape.GetDimNum()) + "D").c_str(), "2D");
         return ge::GRAPH_FAILED;
     }
     batchSize_ = sortedValueShape.GetDim(DIM_INDEX0);
     vocabSize_ = sortedValueShape.GetDim(DIM_ONE);
     if (sortedIndicesShape.GetDim(DIM_INDEX0) != batchSize_ || sortedIndicesShape.GetDim(DIM_ONE) != vocabSize_) {
-        OP_LOGE(opName_, "the shape of sorted_indices should be equal to sorted_value.");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            tilingcontext->GetNodeName(), "sorted_indices, sorted_value",
+            (Ops::Base::ToString(sortedIndicesShape) + ", " + Ops::Base::ToString(sortedValueShape)).c_str(),
+            "the shape of sorted_indices must be equal to sorted_value");
         return ge::GRAPH_FAILED;
     }
 
     auto pShapePtr = tilingcontext->GetOptionalInputShape(P_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingcontext, pShapePtr);
+    if (pShapePtr == nullptr) {
+        return ReportTilingFailure(tilingcontext->GetNodeName(), "p shape is null");
+    }
     auto pShape = pShapePtr->GetStorageShape();
     auto pDimNum = pShape.GetDimNum();
     if (pDimNum != DIM_ONE && pDimNum != 0) {
-        OP_LOGE(opName_, "the dimNum of p should be 1 or 0, but got %u.", pDimNum);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(tilingcontext->GetNodeName(), "p",
+                                                 (std::to_string(pDimNum) + "D").c_str(),
+                                                 "the dimension of p must be 1 or 0");
         return ge::GRAPH_FAILED;
     }
     if (pDimNum != 0 && batchSize_ != pShape.GetDim(DIM_INDEX0)) {
-        OP_LOGE(opName_, "p.shape[0] should be equal to logits.shape[0].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingcontext->GetNodeName(), "p", Ops::Base::ToString(pShape).c_str(),
+                                              "p.shape[0] must be equal to logits.shape[0]");
         return ge::GRAPH_FAILED;
     }
 
     auto kShapePtr = tilingcontext->GetOptionalInputShape(K_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingcontext, kShapePtr);
+    if (kShapePtr == nullptr) {
+        return ReportTilingFailure(tilingcontext->GetNodeName(), "k shape is null");
+    }
     auto kShape = kShapePtr->GetStorageShape();
     auto kDimNum = kShape.GetDimNum();
     if (kDimNum != DIM_ONE && kDimNum != 0) {
-        OP_LOGE(opName_, "the dimNum of k should be 1 or 0, but got %u.", kShape.GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(tilingcontext->GetNodeName(), "k",
+                                                 (std::to_string(kDimNum) + "D").c_str(),
+                                                 "the dimension of k must be 1 or 0");
         return ge::GRAPH_FAILED;
     }
     if (kDimNum != 0 && batchSize_ != kShape.GetDim(DIM_INDEX0)) {
-        OP_LOGE(opName_, "k.shape[0] should be equal to logits.shape[0].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingcontext->GetNodeName(), "k", Ops::Base::ToString(kShape).c_str(),
+                                              "k.shape[0] must be equal to logits.shape[0]");
         return ge::GRAPH_FAILED;
     }
     if (kDimNum == 0 && pDimNum == 0) {
-        OP_LOGE(opName_, "the dimNum of q and k should be 0 at the same time.");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            tilingcontext->GetNodeName(), "p, k",
+            (Ops::Base::ToString(pShape) + ", " + Ops::Base::ToString(kShape)).c_str(),
+            "p and k cannot be empty at the same time");
         return ge::GRAPH_FAILED;
     }
     onlyTopK_ = (kDimNum != 0 && pDimNum == 0) ? ONLY_TOP_K_KEY : 0;
@@ -181,7 +212,7 @@ ge::graphStatus ApplyTopKTopPWithSortedTiling::Init()
     uint32_t avaliableUb = static_cast<uint32_t>(platformUbSize_) - SYS_RESERVED_UB - SELECT_RESERVED_UB;
     calUbSize_ = FloorAlign(avaliableUb, BLOCK_BYTES);
     if (CheckShape() == ge::GRAPH_FAILED) {
-        OP_LOGE(opName_, "check shape failed.");
+        OP_LOGE_WITHOUT_REPORT(opName_, "check shape failed");
         return ge::GRAPH_FAILED;
     }
     uint32_t tempValue = 1;
@@ -316,7 +347,7 @@ static ge::graphStatus TilingForApplyTopKTopPWithSorted(gert::TilingContext* con
     ApplyTopKTopPWithSortedTiling tilingObject(context);
     auto ret = tilingObject.Init();
     if (ret != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "tiling Init failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "tiling Init failed.");
         return ge::GRAPH_FAILED;
     }
     ret = tilingObject.RunKernelTiling();
@@ -328,16 +359,21 @@ static ge::graphStatus TilingPrepareForApplyTopKTopPWithSorted(gert::TilingParse
 {
     OP_LOGD(context->GetNodeName(), "TilingPrepareForApplyTopKTopPWithSorted start");
     auto compileInfo = context->GetCompiledInfo<TilingForApplyTopKTopPWithSortedCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "compile info is null");
+    }
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "platform info is null");
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF(compileInfo->ubSizePlatForm <= 0, OP_LOGE(context->GetNodeName(), "Failed to get ub size"),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatForm <= 0) {
+        return ReportTilingFailure(context->GetNodeName(), "failed to get ub size");
+    }
     OP_LOGD(context->GetNodeName(), "ub_size_platform is %lu", compileInfo->ubSizePlatForm);
     uint64_t totalUbSize = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, totalUbSize);

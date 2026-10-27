@@ -8,6 +8,9 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+// op_common semantic error-code macros must be included before opdev/op_log.h so that the
+// errno based OP_LOGE/OP_LOGE_WITHOUT_REPORT definitions of opdev keep precedence.
+#include "log/log.h"
 #include <opdev/platform.h>
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
@@ -64,9 +67,18 @@ static const std::initializer_list<DataType> OUT_DTYPE_SUPPORT_LIST_WITH_BF16 = 
 
 static bool CheckNotNull(const aclTensor* grad, const aclTensor* indices, const aclTensor* out)
 {
-    OP_CHECK_NULL(grad, return false);
-    OP_CHECK_NULL(indices, return false);
-    OP_CHECK_NULL(out, return false);
+    if (grad == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnEmbeddingDenseBackward", "grad");
+        return false;
+    }
+    if (indices == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnEmbeddingDenseBackward", "indices");
+        return false;
+    }
+    if (out == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnEmbeddingDenseBackward", "out");
+        return false;
+    }
     return true;
 }
 
@@ -155,22 +167,34 @@ static aclnnStatus CheckParams(const aclTensor* grad, const aclTensor* indices, 
                                const uint64_t numWeights)
 {
     // 1. 检查参数是否为空指针
-    CHECK_RET(CheckNotNull(grad, indices, out), ACLNN_ERR_PARAM_NULLPTR);
+    if (!CheckNotNull(grad, indices, out)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     // 2. 检查输入的数据类型是否在API支持的数据类型范围之内，需要根据api定义校验
-    CHECK_RET(CheckDtypeValid(grad, indices, out), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckDtypeValid(grad, indices, out)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // 3. 检查最大维度是否超过8
-    CHECK_RET(CheckMaxDimension(grad) && CheckMaxDimension(indices) && CheckMaxDimension(out), ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckMaxDimension(grad) && CheckMaxDimension(indices) && CheckMaxDimension(out))) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // 4. 检查grad和indices的维度匹配关系
-    CHECK_RET(CheckDimension(grad, indices), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckDimension(grad, indices)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // 5. 检查out的shape是否符合推导规则
-    CHECK_RET(CheckOutShape(out, grad, numWeights), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckOutShape(out, grad, numWeights)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // 6. 检查参数数据格式是否合法
-    CHECK_RET(CheckFormat(grad, indices, out), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckFormat(grad, indices, out)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -236,10 +260,6 @@ static bool IsNeedCast(const aclTensor* grad, const aclTensor* out, bool scaleGr
 
 static void ViewDataType(const aclTensor* input, const op::DataType dtype)
 {
-    if (input == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "view data type error!!");
-        return;
-    }
     auto tmpTensor = const_cast<aclTensor*>(input);
     tmpTensor->SetDataType(dtype);
     input = tmpTensor;
@@ -302,23 +322,36 @@ aclnnStatus aclnnEmbeddingDenseBackwardGetWorkspaceSize(const aclTensor* grad, c
                    DFX_OUT(out));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 固定写法，参数检查
     auto ret = CheckParams(grad, indices, out, numWeights);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
 
     // 空Tensor处理
     if (grad->IsEmpty() || indices->IsEmpty()) {
         auto outContiguous = l0op::Contiguous(out, uniqueExecutor.get());
-        CHECK_RET(outContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (outContiguous == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "Contiguous(out) returned null; propagate lower-layer error.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
 
         // 调用ZerosLike算子kernel
         auto zeroOut = l0op::ZerosLike(outContiguous, uniqueExecutor.get());
-        CHECK_RET(zeroOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (zeroOut == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "ZerosLike(out) returned null; propagate lower-layer error.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
 
         auto viewCopyOut = l0op::ViewCopy(zeroOut, out, uniqueExecutor.get());
-        CHECK_RET(viewCopyOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (viewCopyOut == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "ViewCopy(out) returned null; propagate lower-layer error.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
 
         *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
@@ -327,7 +360,10 @@ aclnnStatus aclnnEmbeddingDenseBackwardGetWorkspaceSize(const aclTensor* grad, c
 
     // grad如果非连续，需要转连续
     auto gradContiguous = l0op::Contiguous(grad, uniqueExecutor.get());
-    CHECK_RET(gradContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (gradContiguous == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Contiguous(grad) returned null; propagate lower-layer error.");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     auto gradCasted = gradContiguous;
     bool is950 = Ops::NN::AclnnUtil::IsRegbase();
@@ -337,12 +373,19 @@ aclnnStatus aclnnEmbeddingDenseBackwardGetWorkspaceSize(const aclTensor* grad, c
     if (!is950 && needCast) {
         // grad如果是float16/bfloat16，需要cast为float32
         gradCasted = l0op::Cast(gradContiguous, op::DataType::DT_FLOAT, uniqueExecutor.get());
-        CHECK_RET(gradCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (gradCasted == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Cast(grad) returned null; propagate lower-layer error.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     // indices如果非连续，需要转连续
     auto indicesContiguous = l0op::Contiguous(indices, uniqueExecutor.get());
-    CHECK_RET(indicesContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (indicesContiguous == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                               "Contiguous(indices) returned null; propagate lower-layer error.");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     if (is950) {
         // indices如果非int32,int64类型，需要强转
@@ -352,7 +395,11 @@ aclnnStatus aclnnEmbeddingDenseBackwardGetWorkspaceSize(const aclTensor* grad, c
         } else if (castDtype != op::DataType::DT_INT32 && castDtype != op::DataType::DT_INT64) {
             indicesContiguous = l0op::Cast(indicesContiguous, op::DataType::DT_INT32, uniqueExecutor.get());
         }
-        CHECK_RET(indicesContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (indicesContiguous == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "Cast(indices) returned null; propagate lower-layer error.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     const aclTensor* embeddingDenseBackwardResult = nullptr;
@@ -363,7 +410,11 @@ aclnnStatus aclnnEmbeddingDenseBackwardGetWorkspaceSize(const aclTensor* grad, c
             // v2只支持int32的数据类型
             indicesContiguous = l0op::Cast(indicesContiguous, op::DataType::DT_INT32, uniqueExecutor.get());
         }
-        CHECK_RET(indicesContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (indicesContiguous == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "Cast(indices) returned null; propagate lower-layer error.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         auto gradShape = gradCasted->GetViewShape();
         auto embeddingDim = gradShape.GetDim(gradShape.GetDimNum() - 1);
 
@@ -376,17 +427,29 @@ aclnnStatus aclnnEmbeddingDenseBackwardGetWorkspaceSize(const aclTensor* grad, c
 
         // 创建输出Tensor
         auto outs = uniqueExecutor->AllocTensor(outShape, gradCasted->GetDataType());
-        CHECK_RET(outs != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (outs == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                   "AllocTensor(out) returned null; propagate lower-layer error.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
 
         if (is950 || !CheckIsSmallDimMode(grad, embeddingDim, numWeights)) {
             auto result = PorcessIndices(indicesContiguous, gradCasted, uniqueExecutor.get());
             auto sortIndice = result.first;
             auto posIdx = result.second;
-            CHECK_RET(sortIndice != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (sortIndice == nullptr) {
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                       "PorcessIndices(sort_indice) returned null; propagate lower-layer error.");
+                return ACLNN_ERR_INNER_NULLPTR;
+            }
             auto outZero = (is950 && reinterpret_cast<void*>(l0op::InplaceZerosLike) != nullptr) ?
                                l0op::InplaceZerosLike(outs, uniqueExecutor.get()) :
                                l0op::ZerosLike(outs, uniqueExecutor.get());
-            CHECK_RET(outZero != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (outZero == nullptr) {
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                       "ZerosLike(out) returned null; propagate lower-layer error.");
+                return ACLNN_ERR_INNER_NULLPTR;
+            }
             embeddingDenseBackwardResult = l0op::EmbeddingDenseGradV2(
                 gradCasted, sortIndice, posIdx, outZero, numWeights, paddingIdx, scaleGradByFreq, uniqueExecutor.get());
         } else {
@@ -398,20 +461,34 @@ aclnnStatus aclnnEmbeddingDenseBackwardGetWorkspaceSize(const aclTensor* grad, c
         if (castDtype != op::DataType::DT_INT32 && castDtype != op::DataType::DT_INT64) {
             // 非arch3510, indices如果非int32,int64类型，需要强转
             indicesContiguous = l0op::Cast(indicesContiguous, op::DataType::DT_INT32, uniqueExecutor.get());
-            CHECK_RET(indicesContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (indicesContiguous == nullptr) {
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                       "Cast(indices) returned null; propagate lower-layer error.");
+                return ACLNN_ERR_INNER_NULLPTR;
+            }
         }
         embeddingDenseBackwardResult = l0op::EmbeddingDenseGrad(gradCasted, indicesContiguous, numWeights, paddingIdx,
                                                                 scaleGradByFreq, uniqueExecutor.get());
     }
-    CHECK_RET(embeddingDenseBackwardResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (embeddingDenseBackwardResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                               "EmbeddingDenseGrad result is null; propagate lower-layer error.");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     // 固定写法，将计算结果转换成输出out的数据类型
     auto castOut = l0op::Cast(embeddingDenseBackwardResult, out->GetDataType(), uniqueExecutor.get());
-    CHECK_RET(castOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (castOut == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Cast(out) returned null; propagate lower-layer error.");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     // 如果出参out是非连续Tensor，需要把计算完的连续Tensor转非连续
     auto viewCopyResult = l0op::ViewCopy(castOut, out, uniqueExecutor.get());
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ViewCopy(out) returned null; propagate lower-layer error.");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     // 固定写法，获取计算过程中需要使用的workspace大小
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

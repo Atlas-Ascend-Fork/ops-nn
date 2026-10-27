@@ -12,6 +12,7 @@
 #include <vector>
 #include <thread>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include <nlohmann/json.hpp>
 #include "log/log.h"
 #include "graph/graph.h"
@@ -149,6 +150,26 @@ TEST_F(TopKTopPSampleTiling, TOP_K_TOP_P_SAMPLE_001_FLOAT16)
     // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 1001);
+
+    // The shape validator owns the first error; RunKernelTiling only propagates it.
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(0)) = {{8}, {8}};
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0012");
+    EXPECT_NE(errors[0].error_message.find("logits"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("1D"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("greater than or equal to 2"), std::string::npos);
+
+    *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(0)) = {{8, 64}, {8, 64}};
+    *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(1)) = {{7}, {7}};
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+    errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0010");
+    EXPECT_NE(errors[0].error_message.find("top_k"), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find("batch"), std::string::npos);
 }
 
 TEST_F(TopKTopPSampleTiling, TOP_K_TOP_P_SAMPLE_002_BFLOAT16)

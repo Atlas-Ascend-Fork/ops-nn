@@ -17,10 +17,22 @@
 #include "platform/platform_infos_def.h"
 #include "log/log.h"
 #include "op_common/op_host/util/platform_util.h"
+#include <vector>
 #include "embedding_dense_grad_v2_tiling.h"
 #include "embedding_dense_grad_v2_regbase_tiling.h"
 
 namespace optiling {
+
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 
 const static size_t EMBEDDING_DENSE_GRAD_IN_GRAD = 0;
 const static size_t EMBEDDING_DENSE_GRAD_IN_INDICES = 1;
@@ -58,11 +70,15 @@ ge::graphStatus EmbeddingDenseGradV2ForRegBase::GetPlatformInfo()
 {
     OP_LOGD(opName_, "EmbeddingDenseGradV2ForRegBase GetPlatformInfo.");
     auto compileInfo = static_cast<const EmbeddingDenseGradV2CompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    if (compileInfo == nullptr) {
+        return ReportTilingFailure(opName_.c_str(), "compiled info is null");
+    }
 
     totalCoreNum_ = static_cast<int64_t>(compileInfo->totalCoreNum);
     ubSize_ = compileInfo->ubSizePlatForm;
-    OP_CHECK_IF((ubSize_ <= 0), OP_LOGE(opName_, "ub size is invalid."), return ge::GRAPH_FAILED);
+    if (ubSize_ <= 0) {
+        return ReportTilingFailure(opName_.c_str(), "UB size must be positive");
+    }
 
     return ge::GRAPH_SUCCESS;
 }
@@ -70,10 +86,10 @@ ge::graphStatus EmbeddingDenseGradV2ForRegBase::GetPlatformInfo()
 ge::graphStatus EmbeddingDenseGradV2ForRegBase::VerifyIndicesAndPosIdx()
 {
     auto indicesDesc = context_->GetInputDesc(EMBEDDING_DENSE_GRAD_IN_INDICES);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, indicesDesc);
+    OP_CHECK_IF(indicesDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName_, "sort_indices"), return ge::GRAPH_FAILED);
 
     auto posIdxDesc = context_->GetInputDesc(EMBEDDING_DENSE_GRAD_IN_POSIDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, posIdxDesc);
+    OP_CHECK_IF(posIdxDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName_, "pos_idx"), return ge::GRAPH_FAILED);
     auto posIdxDtype = posIdxDesc->GetDataType();
 
     indicesDtype_ = indicesDesc->GetDataType();
@@ -92,11 +108,11 @@ ge::graphStatus EmbeddingDenseGradV2ForRegBase::VerifyIndicesAndPosIdx()
                 return ge::GRAPH_FAILED);
 
     auto indicesTensor = context_->GetInputShape(EMBEDDING_DENSE_GRAD_IN_INDICES);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, indicesTensor);
+    OP_CHECK_IF(indicesTensor == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName_, "sort_indices"), return ge::GRAPH_FAILED);
     const gert::Shape& indicesShape = indicesTensor->GetStorageShape();
 
     auto posIdxTensor = context_->GetInputShape(EMBEDDING_DENSE_GRAD_IN_POSIDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, posIdxTensor);
+    OP_CHECK_IF(posIdxTensor == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName_, "pos_idx"), return ge::GRAPH_FAILED);
     const gert::Shape& posIdxShape = posIdxTensor->GetStorageShape();
     if (indicesShape.GetShapeSize() != posIdxShape.GetShapeSize()) {
         std::string sizeMsg = std::to_string(indicesShape.GetShapeSize()) + " and " +
@@ -117,7 +133,7 @@ ge::graphStatus EmbeddingDenseGradV2ForRegBase::GetShapeAttrsInfo()
     OP_LOGD(opName_, "EmbeddingDenseGradV2ForRegBase GetShapeAttrsInfo.");
     // 获取grad_out的shape和datatype，获取scatter轴大小和A轴大小
     auto gradOutTensor = context_->GetInputShape(EMBEDDING_DENSE_GRAD_IN_GRAD);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, gradOutTensor);
+    OP_CHECK_IF(gradOutTensor == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName_, "grad"), return ge::GRAPH_FAILED);
 
     const gert::Shape& gradOutShape = gradOutTensor->GetStorageShape();
     int64_t gradOutDimNum = gradOutShape.GetDimNum();
@@ -129,7 +145,7 @@ ge::graphStatus EmbeddingDenseGradV2ForRegBase::GetShapeAttrsInfo()
     elewiseAxis_ = gradOutShape.GetDim(gradOutDimNum - 1);
 
     auto gradOutDesc = context_->GetInputDesc(EMBEDDING_DENSE_GRAD_IN_GRAD);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, gradOutDesc);
+    OP_CHECK_IF(gradOutDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName_, "grad"), return ge::GRAPH_FAILED);
     gradDType_ = gradOutDesc->GetDataType();
     gradDtypeSize_ = ge::GetSizeByDataType(gradDType_);
     OP_CHECK_IF(gradDtypeSize_ <= 0,
@@ -154,13 +170,17 @@ ge::graphStatus EmbeddingDenseGradV2ForRegBase::GetShapeAttrsInfo()
     }
 
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        return ReportTilingFailure(opName_.c_str(), "attributes are null");
+    }
     numWeights_ = *(attrs->GetAttrPointer<int64_t>)(EMBEDDING_DENSE_GRAD_ATTR_NUM_WEIGHTS);
     paddingIdx_ = *(attrs->GetAttrPointer<int64_t>)(EMBEDDING_DENSE_GRAD_ATTR_PADDING_IDX);
     scaleGrad_ = *(attrs->GetAttrPointer<bool>)(EMBEDDING_DENSE_GRAD_ATTR_SCALE_GRAD_BY_FREQ);
 
     auto gradWeightTensor = context_->GetOutputShape(EMBEDDING_DENSE_GRAD_IN_GRAD);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, gradWeightTensor);
+    if (gradWeightTensor == nullptr) {
+        return ReportTilingFailure(opName_.c_str(), "output grad_weight shape is null");
+    }
     const gert::Shape& gradWeightShape = gradWeightTensor->GetStorageShape();
     int64_t gradWeightDimNum = gradWeightShape.GetDimNum();
     if (gradWeightDimNum != DOUBLE || static_cast<int64_t>(gradWeightShape.GetDim(0)) != numWeights_) {
@@ -339,15 +359,21 @@ ge::graphStatus EmbeddingDenseGradV2ForRegBase::PostTiling()
 
     // 设置workspace大小
     auto workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    if (workspaces == nullptr) {
+        return ReportTilingFailure(opName_.c_str(), "GetWorkspaceSizes(1) returned null");
+    }
     workspaces[0] = workspaceSize_;
 
     auto res = context_->SetBlockDim(static_cast<uint32_t>(blockDim_));
-    OP_CHECK_IF((res != ge::GRAPH_SUCCESS), OP_LOGE(opName_, "SetBlockDim failed."), return ge::GRAPH_FAILED);
+    if (res != ge::GRAPH_SUCCESS) {
+        return ReportTilingFailure(opName_.c_str(), "SetBlockDim failed");
+    }
 
     context_->SetScheduleMode(1);
     res = context_->SetLocalMemorySize(ubSize_);
-    OP_CHECK_IF((res != ge::GRAPH_SUCCESS), OP_LOGE(opName_, "SetLocalMemorySize failed."), return ge::GRAPH_FAILED);
+    if (res != ge::GRAPH_SUCCESS) {
+        return ReportTilingFailure(opName_.c_str(), "SetLocalMemorySize failed");
+    }
 
     return ge::GRAPH_SUCCESS;
 }

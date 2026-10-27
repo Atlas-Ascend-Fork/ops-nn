@@ -33,7 +33,8 @@ const aclTensor* EmbeddingDenseGradV2AiCore4David(const aclTensor* grad, const a
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(EmbeddingDenseGradV2, OP_INPUT(grad, sortIndices, posIdx), OP_OUTPUT(out),
                                            OP_ATTR(numWeights, paddingIdx, scaleGradByFreq));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "EmbeddingDenseGradV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "EmbeddingDenseGradV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return nullptr);
     return out;
 }
@@ -48,7 +49,8 @@ const aclTensor* EmbeddingDenseGradV2AiCore(const aclTensor* grad, const aclTens
                                            OP_ATTR(numWeights, paddingIdx, scaleGradByFreq));
 
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "EmbeddingDenseGradV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "EmbeddingDenseGradV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return nullptr);
     return out;
 }
@@ -84,15 +86,16 @@ const aclTensor* EmbeddingDenseGrad(const aclTensor* grad, const aclTensor* indi
     // 创建输出Tensor
     auto out = executor->AllocTensor(outShape, grad->GetDataType());
     if (out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
         return nullptr;
     }
     // 调用device的EmbeddingDenseGrad算子
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(EmbeddingDenseGrad, OP_INPUT(grad, indices), OP_OUTPUT(out),
                                            OP_ATTR(numWeights, paddingIdx, scaleGradByFreq));
-    OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "EmbeddingDenseGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
-             return nullptr);
+    OP_CHECK(
+        ret == ACLNN_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "EmbeddingDenseGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+        return nullptr);
     return out;
 }
 } // namespace l0op

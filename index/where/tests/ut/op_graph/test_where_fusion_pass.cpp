@@ -11,6 +11,7 @@
 #include <fstream>
 #include <vector>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "platform/platform_infos_def.h"
 #include "ut_op_util.h"
 #include "platform/platform_info.h"
@@ -318,4 +319,44 @@ TEST_F(WhereFusionPassTest, where_fusion_high_dim_success)
     Status status = pass.Run(graph, pass_context);
     EXPECT_EQ(status, SUCCESS);
     EXPECT_EQ(CheckNonZeroNode(graph), true);
+}
+
+TEST_F(WhereFusionPassTest, missing_platform_skips_without_operator_error)
+{
+    auto& manager = fe::PlatformInfoManager::Instance();
+    const auto savedPlatforms = manager.platform_info_map_;
+    manager.platform_info_map_.clear();
+    fe::OptionalInfo optionalInfo;
+    optionalInfo.soc_version = "MissingSocForErrorCodeTest";
+    manager.SetOptionalCompilationInfo(optionalInfo);
+    ops::WhereFusionPass pass;
+    std::unique_ptr<fusion::MatchResult> matchResult;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    const bool matched = pass.MeetRequirements(matchResult);
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    manager.platform_info_map_ = savedPlatforms;
+    SetPlatform("Ascend950");
+    EXPECT_FALSE(matched);
+    EXPECT_TRUE(errors.empty());
+}
+
+TEST_F(WhereFusionPassTest, missing_capture_preserves_lower_error)
+{
+    ops::WhereFusionPass pass;
+    auto patterns = pass.Patterns();
+    ASSERT_FALSE(patterns.empty());
+    auto matchResult = std::make_unique<fusion::MatchResult>(patterns.front().get());
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    fusion::NodeIo input;
+    EXPECT_NE(matchResult->GetCapturedTensor(0, input), SUCCESS);
+    const auto lowerErrors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(lowerErrors.empty());
+
+    EXPECT_FALSE(pass.MeetRequirements(matchResult));
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), lowerErrors.size());
+    for (size_t i = 0; i < errors.size(); ++i) {
+        EXPECT_EQ(errors[i].error_id, lowerErrors[i].error_id);
+        EXPECT_EQ(errors[i].error_message, lowerErrors[i].error_message);
+    }
 }

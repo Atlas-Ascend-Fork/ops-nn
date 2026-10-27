@@ -15,6 +15,7 @@
 
 #include "register/op_impl_registry.h"
 #include <string>
+#include <vector>
 #include "util/math_util.h"
 #include "log/log.h"
 #include "platform/platform_info.h"
@@ -24,6 +25,17 @@
 #include "embedding_bag_regbase_tiling.h"
 #include "tiling/platform/platform_ascendc.h"
 namespace optiling {
+
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 
 constexpr uint32_t WEIGHT_INPUT_INDEX = 0;
 constexpr uint32_t INDICES_INPUT_INDEX = 1;
@@ -116,19 +128,33 @@ ge::graphStatus EmbeddingBagTiling::Init()
     indicesMaxMoveLength_ = INDICES_MAX_MOVE_LENGTH;
 
     const gert::StorageShape* weightShape = tilingContext_->GetInputShape(WEIGHT_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, weightShape);
+    if (weightShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), "weight");
+        return ge::GRAPH_FAILED;
+    }
     const gert::StorageShape* indicesShape = tilingContext_->GetInputShape(INDICES_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, indicesShape);
+    if (indicesShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), "indices");
+        return ge::GRAPH_FAILED;
+    }
     const gert::StorageShape* offsetsShape = tilingContext_->GetInputShape(OFFSETS_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, offsetsShape);
+    if (offsetsShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), "offsets");
+        return ge::GRAPH_FAILED;
+    }
     auto perSampleWeights = tilingContext_->GetOptionalInputTensor(PER_SAMPLER_WEIGHTS_INPUT_INDEX);
     if (weightShape->GetStorageShape().GetDimNum() != CHECK_TWO_DIM) {
-        OP_LOGD(tilingContext_, "weight dim is not 2, please check input");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(tilingContext_->GetNodeName(), "weight",
+                                                 std::to_string(weightShape->GetStorageShape().GetDimNum()).c_str(),
+                                                 "weight must be 2D");
         return ge::GRAPH_FAILED;
     }
     if (indicesShape->GetStorageShape().GetDimNum() != CHECK_ONE_DIM ||
         offsetsShape->GetStorageShape().GetDimNum() != CHECK_ONE_DIM) {
-        OP_LOGD(tilingContext_, "indices or offsets dim is not 1, please check input");
+        std::string dims = std::to_string(indicesShape->GetStorageShape().GetDimNum()) + ", " +
+                           std::to_string(offsetsShape->GetStorageShape().GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(tilingContext_->GetNodeName(), "indices, offsets", dims.c_str(),
+                                                  "indices and offsets must be 1D");
         return ge::GRAPH_FAILED;
     }
     if (perSampleWeights != nullptr && perSampleWeights->GetShapeSize() != 0) {
@@ -141,7 +167,9 @@ ge::graphStatus EmbeddingBagTiling::Init()
     ubSizePlatForm_ = compileInfo->ubSizePlatForm;
 
     auto attrs = tilingContext_->GetAttrs();
-    OP_CHECK_IF((attrs == nullptr), OP_LOGE(tilingContext_, "Get attrs Failed."), return ge::GRAPH_FAILED);
+    if (attrs == nullptr) {
+        return ReportTilingFailure(tilingContext_->GetNodeName(), "Get attrs failed");
+    }
     const std::string mode = std::string(attrs->GetAttrPointer<char>(MODE_INDEX));
     OP_LOGW(tilingContext_, "%s mode is not supported", mode.c_str());
     if (mode == MEAN) {
@@ -151,6 +179,8 @@ ge::graphStatus EmbeddingBagTiling::Init()
     } else if (mode == MAX) {
         mode_ = MODE_MAX;
     } else {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext_->GetNodeName(), "mode", mode.c_str(),
+                                              "mode should be one of [sum, mean, max]");
         return ge::GRAPH_FAILED;
     }
     bool includeLastOffset = *attrs->GetAttrPointer<bool>(INCLUDE_LAST_OFFSET_INDEX);
@@ -158,7 +188,7 @@ ge::graphStatus EmbeddingBagTiling::Init()
         numOffset_ -= 1;
     }
     OP_CHECK_IF((numOffset_ == 0),
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext_->GetNodeName(), "numOffset_",
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext_->GetNodeName(), "offsets",
                                                       std::to_string(numOffset_).c_str(),
                                                       "offset size must be >=2 when include_last_offset is true"),
                 return ge::GRAPH_FAILED);
@@ -169,9 +199,10 @@ ge::graphStatus EmbeddingBagTiling::Init()
 
     getTilingKeyAndComputeRepTime(weightDatatype, mode);
 
-    OP_CHECK_IF((computeRepTime_ <= 0),
-                OP_LOGE(tilingContext_, "computeRepTime [%ld] should be greater than 0", computeRepTime_),
-                return ge::GRAPH_FAILED);
+    if (computeRepTime_ <= 0) {
+        return ReportTilingFailure(tilingContext_->GetNodeName(),
+                                   "computeRepTime " + std::to_string(computeRepTime_) + " should be greater than 0");
+    }
 
     size_t sysWorkspaceSize = compileInfo->sysWorkspaceSize;
     size_t* currentWorkSpace = tilingContext_->GetWorkspaceSizes(1);
@@ -259,7 +290,7 @@ ge::graphStatus TilingEmbeddingBag(gert::TilingContext* context)
     }
     EmbeddingBagTiling tilingObject(context);
     if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "tiling init fail");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "tiling init fail");
         return ge::GRAPH_FAILED;
     }
     return tilingObject.SetKernelTiling();
@@ -269,21 +300,26 @@ ge::graphStatus TilingPrepareForEmbeddingBag(gert::TilingParseContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Tiling Prepare For EmbeddingBag start");
     auto compileInfo = context->GetCompiledInfo<EmbeddingBagCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "compileInfo is null");
+    }
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "platformInfo is null");
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context->GetNodeName(), "Failed to get ub size"),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatForm <= 0) {
+        return ReportTilingFailure(context->GetNodeName(), "Failed to get ub size");
+    }
     OP_LOGD(context->GetNodeName(), "ub_size_platform is %lu", compileInfo->ubSizePlatForm);
     compileInfo->sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    OP_CHECK_IF((compileInfo->sysWorkspaceSize < 0),
-                OP_LOGE(context->GetNodeName(), "sysWorkspaceSize should be greater than or equal to zero"),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->sysWorkspaceSize < 0) {
+        return ReportTilingFailure(context->GetNodeName(), "sysWorkspaceSize should be greater than or equal to zero");
+    }
     uint64_t totalUbSize = 0;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, totalUbSize);
     OP_LOGD(context->GetNodeName(), "total ub size is %lu", totalUbSize);

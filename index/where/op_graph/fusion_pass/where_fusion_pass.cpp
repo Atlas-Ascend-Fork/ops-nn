@@ -61,9 +61,10 @@ bool WhereFusionPass::MeetRequirements(const std::unique_ptr<MatchResult>& match
 
     PlatformInfo platform_info;
     OptionalInfo optional_info;
-    OP_LOGE_IF(
-        PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) != SUCCESS,
-        false, FUSION_PASS_NAME.c_str(), "Get platform_info failed.");
+    if (PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) != SUCCESS) {
+        OPS_LOG_E(FUSION_PASS_NAME.c_str(), "Skip Where fusion because platform information is unavailable.");
+        return false;
+    }
     const std::string soc = platform_info.str_info.short_soc_version;
     bool is_platform5102 = (soc == "MC62CM12A");
     bool is_platform950 = (soc == "Ascend950");
@@ -76,8 +77,10 @@ bool WhereFusionPass::MeetRequirements(const std::unique_ptr<MatchResult>& match
     }
 
     NodeIo input;
-    OP_LOGE_IF(match_result->GetCapturedTensor(CAPTURE_TENSOR_IDX_INPUT, input) != SUCCESS, false, FUSION_PASS_NAME,
-               "Failed to GetCaptrue tensor");
+    if (match_result->GetCapturedTensor(CAPTURE_TENSOR_IDX_INPUT, input) != SUCCESS) {
+        OPS_LOG_E(FUSION_PASS_NAME.c_str(), "Skip Where fusion because the captured input tensor is unavailable.");
+        return false;
+    }
 
     auto inputNode = input.node;
     AscendString nodeName;
