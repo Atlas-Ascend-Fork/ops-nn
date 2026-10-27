@@ -8,28 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-// =============================================================================
-// LpNormReduce_package/op_host/lp_norm_reduce_def.cpp
-// =============================================================================
-//
-// ROLE: Operator definition (OpDef) for LpNormReduce.
-//   OpDef 算子定义，原型与
-//   docs/LpNormReduce/develop/proto.md 的「OpDef 类定义」逐项一致——
-//   - Input "x"（REQUIRED，fp16/fp32/bf16，ND）
-//   - Output "y"（REQUIRED，fp16/fp32/bf16，ND）
-//   - Attr "p"（OPTIONAL，Int，默认 2）/ "axes"（OPTIONAL，ListInt，默认 {}）/
-//     "keepdim"（OPTIONAL，Bool，默认 false）/ "epsilon"（OPTIONAL，Float，默认 1e-12）
-//   - AICore 仅 ascend950（不动 A2/A3），PrecisionReduceFlag(false) 禁止降精度
-//   注册名 LpNormReduce 与 canndev 参考源 REG_OP(LpNormReduce)（math_ops.h:1215）
-//   字面一致；dtype 列与公共原型保持一致，为 fp16/fp32/bf16 三档。
-//
-// CONTENTS:
-//   - class LpNormReduce : public OpDef — operator definition（与 proto.md §1 一致）
-//   - OP_ADD(LpNormReduce) — registration macro
-//
-// =============================================================================
-
-#include "register/op_def_registry.h" // OpDef base class, OP_ADD macro
+#include "register/op_def_registry.h"
 
 namespace ops {
 
@@ -92,9 +71,5 @@ public:
         this->AICore().AddConfig("ascend950", aicoreConfig);
     }
 };
-
-// OP_ADD(LpNormReduce):
-//   Registers the LpNormReduce OpDef class with the CANN operator definition registry.
-//   注册名与 canndev 参考源 REG_OP(LpNormReduce) 字面一致（proto.md「参考源接口裁定」）。
 OP_ADD(LpNormReduce);
 } // namespace ops

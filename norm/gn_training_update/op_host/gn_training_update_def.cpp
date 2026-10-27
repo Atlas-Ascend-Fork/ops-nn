@@ -8,38 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-// =============================================================================
-// gn_training_update_package/op_host/gn_training_update_def.cpp
-// =============================================================================
-//
-// ROLE: Operator definition (OpDef) for GnTrainingUpdate.
-//   This file defines the operator's complete interface to the CANN AICore
-//   compilation pipeline. It specifies:
-//   - Input/output tensor names, dtypes, formats, and whether they are REQUIRED or OPTIONAL
-//   - Operator attributes (num_groups, epsilon) with default values
-//   - AICore configuration: dynamic shape/rank support, precision reduction, kernel file link
-//
-//   The OpDef class is used by op_build to generate stubs and by the tiling
-//   infrastructure to understand the operator interface at compile time.
-//
-// CONTENTS:
-//   - class GNTrainingUpdate : public OpDef — operator definition
-//   - OP_ADD(GNTrainingUpdate) — registration macro
-//
-// OPERATOR NAME VARIANTS:
-//   PascalCase   : GnTrainingUpdate   — class name, OP_ADD argument
-//   snake_case   : gn_training_update  — filename
-//   UPPER_SNAKE  : GN_TRAINING_UPDATE  — (not directly used)
-//
-// NAME REPLACEMENT RULES (to create FooBar operator):
-//   GnTrainingUpdate → FooBar                           (class name, OP_ADD)
-//   gn_training_update_def → foo_bar_def                 (filename)
-//   gn_training_update → foo_bar                       (kernel file reference)
-//   ascend950 → appropriate compute unit for target hardware
-//
-// =============================================================================
-
-#include "register/op_def_registry.h" // OpDef base class, OP_ADD macro
+#include "register/op_def_registry.h"
 
 namespace ops {
 
