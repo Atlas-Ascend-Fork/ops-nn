@@ -11,11 +11,20 @@
 
 ## 功能说明
 
-- 接口功能：将输入的数据x先进行scale缩放和mask，然后执行softmax的输出。
+- 接口功能：将输入x先乘以scale，再把mask为true的位置置为-inf，最后沿最后一维做softmax。mask为false的位置保留缩放后的值。
+- 实现说明：公式中mask为true时置为$-\infty$，实际实现填充的是对应计算精度下的数据类型最小值（dtype min），而非IEEE $-inf$。具体取值与计算路径一致：FLOAT16路径使用`float16`最小值（对应位型`0xFBFF`），FLOAT与BFLOAT16路径在float32上计算时使用`float32`最小值（对应位型`0xFF7FFFFF`）。该取值经softmax的`exp`后同样趋近于0，与置为$-\infty$在数值效果上等价。
 - 计算公式：
 
   $$
-  y = Softmax((scale * x) * mask, dim = -1)
+  x_i' = -\infty, \quad mask_i = true
+  $$
+
+  $$
+  x_i' = scale \times x_i, \quad mask_i = false
+  $$
+
+  $$
+  y = Softmax(x', dim = -1)
   $$
 
   $$
@@ -83,7 +92,7 @@ aclnnStatus aclnnScaledMaskedSoftmax(
     <tr>
       <td>mask</td>
       <td>输入</td>
-      <td>需要对x执行的掩码，公式中的mask。</td>
+      <td>bool掩码，公式中的mask。true的位置在softmax前置为-inf（实际为dtype最小值，见功能说明中的实现说明），false的位置保留scale * x。</td>
       <td>shape需要与x满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</td>
       <td>BOOL</td>
       <td>ND</td>
@@ -114,7 +123,7 @@ aclnnStatus aclnnScaledMaskedSoftmax(
       <td>y</td>
       <td>输出</td>
       <td>scaledMaskedX的Softmax结果，公式中的y</td>
-      <td>数据类型与shape需要和x一致。</td>
+      <td>数据类型与shape需要和x一致，且仅支持连续tensor。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>[B,N,S1,S2]</td>
@@ -168,8 +177,8 @@ aclnnStatus aclnnScaledMaskedSoftmax(
       <td>fixedTriuMask为false时，mask为空指针。</td>
     </tr>
     <tr>
-      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="5">161002</td>
+      <td rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="6">161002</td>
       <td>x、mask、y数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
@@ -180,6 +189,9 @@ aclnnStatus aclnnScaledMaskedSoftmax(
     </tr>
     <tr>
       <td>x和y的shape不同。</td>
+    </tr>
+    <tr>
+      <td>y为非连续tensor。</td>
     </tr>
     <tr>
       <td>mask不能broadcast成x的shape。</td>

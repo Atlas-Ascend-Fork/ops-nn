@@ -19,7 +19,21 @@
 #include "kernel_operator.h"
 
 namespace AscendC {
-constexpr float MASK_VAL = -10000.0f;
+
+constexpr uint32_t NEGATIVE_MIN_VALUE_FP32 = 0xFF7FFFFF;
+constexpr uint16_t NEGATIVE_MIN_VALUE_FP16 = 0xFBFF;
+
+template <typename U>
+__aicore__ inline U GetNegativeMinValue()
+{
+    if constexpr (std::is_same<U, float>::value) {
+        uint32_t tmp = NEGATIVE_MIN_VALUE_FP32;
+        return *((float*)&tmp);
+    } else {
+        uint16_t tmp = NEGATIVE_MIN_VALUE_FP16;
+        return *((half*)&tmp);
+    }
+}
 
 template <typename T>
 class ScaledMaskedSoftmaxV2 {
@@ -231,17 +245,17 @@ private:
         if constexpr (std::is_same<T, bfloat16_t>::value) {
             Cast(scaledMaskedX, xTensor, RoundMode::CAST_NONE, this->elePerIter);
             Muls(scaledMaskedX, scaledMaskedX, static_cast<float>(scale), this->elePerIter);
-            AscendC::SelectWithBytesMask(scaledMaskedX, scaledMaskedX, MASK_VAL, maskTensor, sharedBuffer,
-                                         selectShapeInfo);
+            AscendC::SelectWithBytesMask(scaledMaskedX, scaledMaskedX, GetNegativeMinValue<float>(), maskTensor,
+                                         sharedBuffer, selectShapeInfo);
         } else {
             Muls(xTensor, xTensor, static_cast<T>(scale), this->elePerIter);
             if constexpr (std::is_same<T, half>::value) {
-                AscendC::SelectWithBytesMask(xTensor, xTensor, static_cast<T>(MASK_VAL), maskTensor, sharedBuffer,
+                AscendC::SelectWithBytesMask(xTensor, xTensor, GetNegativeMinValue<half>(), maskTensor, sharedBuffer,
                                              selectShapeInfo);
                 Cast(scaledMaskedX, xTensor, RoundMode::CAST_NONE, this->elePerIter);
             } else {
-                AscendC::SelectWithBytesMask(scaledMaskedX, xTensor, MASK_VAL, maskTensor, sharedBuffer,
-                                             selectShapeInfo);
+                AscendC::SelectWithBytesMask(scaledMaskedX, xTensor, GetNegativeMinValue<float>(), maskTensor,
+                                             sharedBuffer, selectShapeInfo);
             }
         }
 

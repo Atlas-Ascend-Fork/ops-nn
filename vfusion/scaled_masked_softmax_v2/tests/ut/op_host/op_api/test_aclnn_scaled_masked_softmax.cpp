@@ -38,6 +38,15 @@ protected:
     }
 };
 
+static aclnnStatus RunGetWorkspace(const TensorDesc& xTensor, const TensorDesc& maskTensor, const TensorDesc& outTensor,
+                                   double scale = 1.0, bool fixTriu = false)
+{
+    auto ut = OP_API_UT(aclnnScaledMaskedSoftmax, INPUT(xTensor, maskTensor, scale, fixTriu), OUTPUT(outTensor));
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor = nullptr;
+    return ut.TestGetWorkspaceSizeWithNNopbaseInner(&workspaceSize, executor);
+}
+
 TEST_F(l2_scaled_masked_softmax_test, Ascend910B_aclnnScaledMaskedSoftmax_dimNum_not_4)
 {
     auto xTensor = TensorDesc({1, 2, 2, 128, 128}, ACL_BF16, ACL_FORMAT_ND);
@@ -140,4 +149,44 @@ TEST_F(l2_scaled_masked_softmax_test, Ascend910B_aclnnScaledMaskedSoftmax_null_w
     aclOpExecutor* executor = nullptr;
     aclnnStatus aclRet = ut.TestGetWorkspaceSizeWithNNopbaseInner(nullptr, executor);
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_NULLPTR);
+}
+
+TEST_F(l2_scaled_masked_softmax_test, issue7123_y_last_dim_shorter_than_x)
+{
+    auto xTensor = TensorDesc({1, 1, 1, 8}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto maskTensor = TensorDesc({1, 1, 1, 8}, ACL_BOOL, ACL_FORMAT_ND);
+    auto outTensor = TensorDesc({1, 1, 1, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    EXPECT_EQ(RunGetWorkspace(xTensor, maskTensor, outTensor), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_scaled_masked_softmax_test, issue7123_y_last_dim_longer_than_x)
+{
+    auto xTensor = TensorDesc({1, 1, 1, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto maskTensor = TensorDesc({1, 1, 1, 4}, ACL_BOOL, ACL_FORMAT_ND);
+    auto outTensor = TensorDesc({1, 1, 1, 8}, ACL_FLOAT, ACL_FORMAT_ND);
+    EXPECT_EQ(RunGetWorkspace(xTensor, maskTensor, outTensor), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_scaled_masked_softmax_test, issue7123_y_batch_mismatch)
+{
+    auto xTensor = TensorDesc({2, 2, 2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto maskTensor = TensorDesc({2, 2, 2, 2}, ACL_BOOL, ACL_FORMAT_ND);
+    auto outTensor = TensorDesc({1, 2, 2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    EXPECT_EQ(RunGetWorkspace(xTensor, maskTensor, outTensor), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_scaled_masked_softmax_test, issue7123_y_not_contiguous)
+{
+    auto xTensor = TensorDesc({1, 1, 1, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto maskTensor = TensorDesc({1, 1, 1, 4}, ACL_BOOL, ACL_FORMAT_ND);
+    auto outTensor = TensorDesc({1, 1, 1, 4}, ACL_FLOAT, ACL_FORMAT_ND, {4, 4, 4, 2}, 0, {1, 1, 1, 8});
+    EXPECT_EQ(RunGetWorkspace(xTensor, maskTensor, outTensor), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_scaled_masked_softmax_test, issue7123_y_transposed_stride)
+{
+    auto xTensor = TensorDesc({2, 2, 2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto maskTensor = TensorDesc({2, 2, 2, 2}, ACL_BOOL, ACL_FORMAT_ND);
+    auto outTensor = TensorDesc({2, 2, 2, 2}, ACL_FLOAT, ACL_FORMAT_ND, {1, 2, 4, 8}, 0, {2, 2, 2, 2});
+    EXPECT_EQ(RunGetWorkspace(xTensor, maskTensor, outTensor), ACLNN_ERR_PARAM_INVALID);
 }

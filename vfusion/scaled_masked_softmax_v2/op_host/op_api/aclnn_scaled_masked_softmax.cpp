@@ -20,6 +20,7 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 #include "opdev/platform.h"
+#include "opdev/tensor_view_utils.h"
 #include "op_api/aclnn_util.h"
 
 using namespace op;
@@ -73,8 +74,14 @@ static bool CheckTensorDim(const aclTensor* x, const aclTensor* mask, const aclT
     return true;
 }
 
-static bool CheckShape(const aclTensor* x, const aclTensor* mask)
+static bool CheckShape(const aclTensor* x, const aclTensor* mask, const aclTensor* y)
 {
+    OP_CHECK_SHAPE_NOT_EQUAL(x, y, return false);
+    if (!IsContiguous(y)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected y to be a contiguous tensor.");
+        return false;
+    }
+
     if ((x->GetViewShape().GetDim(DIM_0) != mask->GetViewShape().GetDim(DIM_0)) &&
         (mask->GetViewShape().GetDim(DIM_0) != 1)) {
         OP_LOGE(
@@ -119,7 +126,7 @@ static aclnnStatus CheckParams(const aclTensor* x, const aclTensor* mask, aclTen
 
     CHECK_RET(CheckTensorDim(x, mask, y), ACLNN_ERR_PARAM_INVALID);
 
-    CHECK_RET(CheckShape(x, mask), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(x, mask, y), ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 } // namespace

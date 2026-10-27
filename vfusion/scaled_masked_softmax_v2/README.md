@@ -11,11 +11,20 @@
 
 ## 功能说明
 
-- 算子功能：将输入的数据x先进行scale缩放和mask，然后执行softmax的输出。
+- 算子功能：将输入x先乘以scale，再把mask为true的位置置为-inf，最后沿最后一维做softmax。mask为false的位置保留缩放后的值。
+- 实现说明：公式中mask为true时置为$-\infty$，实际实现填充的是对应计算精度下的数据类型最小值（dtype min），而非IEEE $-inf$。具体取值与计算路径一致：FLOAT16路径使用`float16`最小值（对应位型`0xFBFF`），FLOAT与BFLOAT16路径在float32上计算时使用`float32`最小值（对应位型`0xFF7FFFFF`）。该取值经softmax的`exp`后同样趋近于0，与置为$-\infty$在数值效果上等价。
 - 计算公式：
 
   $$
-  y = Softmax((scale * x) * mask, dim = -1)
+  x_i' = -\infty, \quad mask_i = true
+  $$
+
+  $$
+  x_i' = scale \times x_i, \quad mask_i = false
+  $$
+
+  $$
+  y = Softmax(x', dim = -1)
   $$
 
   $$
@@ -50,7 +59,7 @@
     <tr>
       <td>mask</td>
       <td>输入</td>
-      <td>公式中的输入mask。</td>
+      <td>bool掩码。true的位置在softmax前置为-inf（实际为dtype最小值，见功能说明中的实现说明），false的位置保留scale * x。</td>
       <td>BOOL</td>
       <td>ND</td>
     </tr>

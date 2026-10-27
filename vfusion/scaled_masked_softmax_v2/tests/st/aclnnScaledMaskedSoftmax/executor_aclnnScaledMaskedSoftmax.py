@@ -28,11 +28,16 @@ class MethodTorchScaledMaskedSoftmaxApi(BaseApi):
         x = input_data.kwargs["x"]
         mask = input_data.kwargs["mask"]
         scale = input_data.kwargs["scale"]
-        fixed_triu_mask = False
-        
-        scaledX = x * scale
-        maskedX = scaledX.masked_fill(mask, value = -10000)
-        func = torch.nn.Softmax(dim = -1)
-        softmaxOut = func(maskedX)
+
+        if x.dtype == torch.float16:
+            scaledX = x * scale
+            fill = torch.finfo(torch.float16).min
+        else:
+            scaledX = x.to(torch.float32) * scale
+            fill = torch.finfo(torch.float32).min
+        maskedX = scaledX.masked_fill(mask, fill)
+        softmaxOut = torch.nn.Softmax(dim=-1)(maskedX)
+        if softmaxOut.dtype != x.dtype:
+            softmaxOut = softmaxOut.to(x.dtype)
 
         return softmaxOut
