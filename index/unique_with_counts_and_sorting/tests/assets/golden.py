@@ -176,10 +176,14 @@ class UniqueGeirSpec:
     def golden(x, *, sorted=True, return_inverse=False, return_counts=False, **kwargs):
         values, inverse, counts = _unique(x, sorted)
         dtypes = kwargs.get("output_dtypes", (np.asarray(x).dtype, "int64", "int64"))
-        placeholder = np.ones((1,), dtype=np.int64)
+        # GE materializes input-shaped indices whenever counts are requested,
+        # even with return_inverse=False. Other disabled GE outputs are empty.
+        placeholder = np.empty((0,), dtype=np.int64)
         return [
             values.astype(dtypes[0]),
-            inverse.astype(dtypes[1]) if return_inverse else placeholder.copy(),
+            inverse.astype(dtypes[1])
+            if return_inverse or return_counts
+            else placeholder.copy(),
             counts.astype(dtypes[2]) if return_counts else placeholder.copy(),
         ]
 
