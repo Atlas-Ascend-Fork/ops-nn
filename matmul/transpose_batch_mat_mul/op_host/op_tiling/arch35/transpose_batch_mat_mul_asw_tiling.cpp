@@ -96,6 +96,13 @@ void TransposeBatchMatMulAswTiling::BaseLoadBalance()
 void TransposeBatchMatMulAswTiling::CheckApiLevelAndModel()
 {
     bool isNoSupportNpuArch = compileInfo_.npuArch == NpuArch::DAV_RESV;
+    bool isSplitK = MatMulV3TilingHelper::IsSplitSingleCoreK(compileInfo_, args_, !isNoSupportNpuArch);
+    if (isSplitK) {
+        runInfo_.splitKBase = MatMulV3TilingHelper::SelectSplitKBase(context_, args_.mValue, args_.nValue, args_.kValue,
+                                                                     runInfo_.baseK);
+        model_ = TBMMModel::TBMM_BASIC_SPLIT_K;
+    }
+
     apiLevel_ = (!isNoSupportNpuArch) ? TBMMApiLevel::TBMM_TENSOR_LEVEL : TBMMApiLevel::TBMM_HIGH_LEVEL;
 }
 
@@ -141,6 +148,7 @@ void TransposeBatchMatMulAswTiling::GetTransposeBatchMatMulInfo()
 uint64_t TransposeBatchMatMulAswTiling::GetTilingKey() const
 {
     uint64_t tilingKey = TBMMTilingKey()
+                             .SetModel(model_)
                              .SetApiLevel(apiLevel_)
                              .SetPermX1(permX1_)
                              .SetPermX2(permX2_)

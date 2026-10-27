@@ -18,6 +18,7 @@
 #include "transpose_batch_mat_mul_tiling_key_public.h"
 #include "transpose_batch_mat_mul_asw_block_advanced.h"
 #include "transpose_batch_mat_mul_asw_kernel.h"
+#include "transpose_batch_mat_mul_asw_split_k_kernel.h"
 using namespace TransposeBatchMatMulAdvanced;
 
 using namespace AscendC;
@@ -52,7 +53,7 @@ constexpr CubeFormat format_x2 = CubeFormat::ND;
         op.Process();                                                                    \
     } while (0)
 
-template <int8_t PERM_X1, int8_t PERM_X2, int8_t BATCH_SPLIT, int8_t API_LEVEL>
+template <int8_t PERM_X1, int8_t PERM_X2, int8_t BATCH_SPLIT, int8_t API_LEVEL, int8_t TBMODEL>
 __global__ __aicore__ void transpose_batch_mat_mul(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR biasGM, GM_ADDR scalesGM,
                                                    GM_ADDR cGM, GM_ADDR workspaceGM, GM_ADDR tilingGM)
 {
@@ -103,29 +104,61 @@ __global__ __aicore__ void transpose_batch_mat_mul(GM_ADDR aGM, GM_ADDR bGM, GM_
                                      TransposeBatchMatMulAdvanced::TransposeBatchMatMulAswBlock, MM_CFG_NO_PRELOAD);
 #if !__FIXED_POINT_ONLY_CUBE_TO_L0C__
     } else if constexpr (API_LEVEL == TRANSPOSE_BATCH_MAT_MUL_TENSOR_LEVEL &&
+                         TBMODEL == TRANSPOSE_BATCH_MAT_MUL_BASIC &&
                          BATCH_SPLIT == TRANSPOSE_BATCH_MAT_MUL_BATCH_SPLIT_FALSE &&
                          PERM_X1 == TRANSPOSE_BATCH_MAT_MUL_PERM_X1_0_1_2) {
         TransposeBatchMatMulAdvanced::TBMMTensorKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, layoutA, layoutB,
                                                        layoutC, PERM_X1>(aGM, bGM, biasGM, scalesGM, cGM, nullptr,
                                                                          tilingData);
     } else if constexpr (API_LEVEL == TRANSPOSE_BATCH_MAT_MUL_TENSOR_LEVEL &&
+                         TBMODEL == TRANSPOSE_BATCH_MAT_MUL_BASIC &&
                          BATCH_SPLIT == TRANSPOSE_BATCH_MAT_MUL_BATCH_SPLIT_FALSE &&
                          PERM_X1 == TRANSPOSE_BATCH_MAT_MUL_PERM_X1_1_0_2) {
         TransposeBatchMatMulAdvanced::TBMMTensorKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, layoutA, layoutB,
                                                        layoutC, PERM_X1>(aGM, bGM, biasGM, scalesGM, cGM, nullptr,
                                                                          tilingData);
     } else if constexpr (API_LEVEL == TRANSPOSE_BATCH_MAT_MUL_TENSOR_LEVEL &&
+                         TBMODEL == TRANSPOSE_BATCH_MAT_MUL_BASIC &&
                          BATCH_SPLIT == TRANSPOSE_BATCH_MAT_MUL_BATCH_SPLIT_TRUE &&
                          PERM_X1 == TRANSPOSE_BATCH_MAT_MUL_PERM_X1_0_1_2) {
         TransposeBatchMatMulAdvanced::TBMMTensorKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, layoutA, layoutB,
                                                        layoutC, PERM_X1>(aGM, bGM, biasGM, scalesGM, cGM, nullptr,
                                                                          tilingData);
     } else if constexpr (API_LEVEL == TRANSPOSE_BATCH_MAT_MUL_TENSOR_LEVEL &&
+                         TBMODEL == TRANSPOSE_BATCH_MAT_MUL_BASIC &&
                          BATCH_SPLIT == TRANSPOSE_BATCH_MAT_MUL_BATCH_SPLIT_TRUE &&
                          PERM_X1 == TRANSPOSE_BATCH_MAT_MUL_PERM_X1_1_0_2) {
         TransposeBatchMatMulAdvanced::TBMMTensorKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, layoutA, layoutB,
                                                        layoutC, PERM_X1>(aGM, bGM, biasGM, scalesGM, cGM, nullptr,
                                                                          tilingData);
+    } else if constexpr (API_LEVEL == TRANSPOSE_BATCH_MAT_MUL_TENSOR_LEVEL &&
+                         TBMODEL == TRANSPOSE_BATCH_MAT_MUL_BASIC_SPLIT_K && !IS_INT_8_OUTPUT &&
+                         BATCH_SPLIT == TRANSPOSE_BATCH_MAT_MUL_BATCH_SPLIT_FALSE &&
+                         PERM_X1 == TRANSPOSE_BATCH_MAT_MUL_PERM_X1_0_1_2) {
+        TransposeBatchMatMulAdvanced::TBMMSplitKTensorKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, layoutA, layoutB,
+                                                             layoutC, PERM_X1>(aGM, bGM, biasGM, scalesGM, cGM, nullptr,
+                                                                               tilingData);
+    } else if constexpr (API_LEVEL == TRANSPOSE_BATCH_MAT_MUL_TENSOR_LEVEL &&
+                         TBMODEL == TRANSPOSE_BATCH_MAT_MUL_BASIC_SPLIT_K && !IS_INT_8_OUTPUT &&
+                         BATCH_SPLIT == TRANSPOSE_BATCH_MAT_MUL_BATCH_SPLIT_FALSE &&
+                         PERM_X1 == TRANSPOSE_BATCH_MAT_MUL_PERM_X1_1_0_2) {
+        TransposeBatchMatMulAdvanced::TBMMSplitKTensorKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, layoutA, layoutB,
+                                                             layoutC, PERM_X1>(aGM, bGM, biasGM, scalesGM, cGM, nullptr,
+                                                                               tilingData);
+    } else if constexpr (API_LEVEL == TRANSPOSE_BATCH_MAT_MUL_TENSOR_LEVEL &&
+                         TBMODEL == TRANSPOSE_BATCH_MAT_MUL_BASIC_SPLIT_K && !IS_INT_8_OUTPUT &&
+                         BATCH_SPLIT == TRANSPOSE_BATCH_MAT_MUL_BATCH_SPLIT_TRUE &&
+                         PERM_X1 == TRANSPOSE_BATCH_MAT_MUL_PERM_X1_0_1_2) {
+        TransposeBatchMatMulAdvanced::TBMMSplitKTensorKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, layoutA, layoutB,
+                                                             layoutC, PERM_X1>(aGM, bGM, biasGM, scalesGM, cGM, nullptr,
+                                                                               tilingData);
+    } else if constexpr (API_LEVEL == TRANSPOSE_BATCH_MAT_MUL_TENSOR_LEVEL &&
+                         TBMODEL == TRANSPOSE_BATCH_MAT_MUL_BASIC_SPLIT_K && !IS_INT_8_OUTPUT &&
+                         BATCH_SPLIT == TRANSPOSE_BATCH_MAT_MUL_BATCH_SPLIT_TRUE &&
+                         PERM_X1 == TRANSPOSE_BATCH_MAT_MUL_PERM_X1_1_0_2) {
+        TransposeBatchMatMulAdvanced::TBMMSplitKTensorKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, layoutA, layoutB,
+                                                             layoutC, PERM_X1>(aGM, bGM, biasGM, scalesGM, cGM, nullptr,
+                                                                               tilingData);
 #endif
     }
 }

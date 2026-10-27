@@ -21,12 +21,19 @@ using namespace optiling::transpose_batch_mat_mul_advanced;
 uint64_t TBMMTilingKey::GetTilingKey() const
 {
     return GET_TPL_TILING_KEY(static_cast<uint64_t>(permX1_), static_cast<uint64_t>(permX2_),
-                              static_cast<uint64_t>(batchSplitMode_), static_cast<uint64_t>(apiLevel_));
+                              static_cast<uint64_t>(batchSplitMode_), static_cast<uint64_t>(apiLevel_),
+                              static_cast<uint64_t>(model_));
 }
 
 TBMMTilingKey& TBMMTilingKey::SetApiLevel(TBMMApiLevel apiLevel)
 {
     apiLevel_ = apiLevel;
+    return *this;
+}
+
+TBMMTilingKey& TBMMTilingKey::SetModel(TBMMModel model)
+{
+    model_ = model;
     return *this;
 }
 
