@@ -159,7 +159,7 @@ aclnnStatus aclnnNLLLoss(
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>-</td>
-      <td>-</td>
+      <td>√</td>
     </tr>
     <tr>
       <td>totalWeightOut（aclTensor*）</td>

@@ -101,20 +101,58 @@ aclnnStatus aclnnUniqueConsecutiveGetWorkspaceSize(const aclTensor* self, bool r
     auto selfContiguous = l0op::Contiguous(self, uniqueExecutor.get());
     CHECK_RET(selfContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    if (dim != NoneN) {
-        auto valueViewShape = valueOut->GetViewShape();
-        valueOut->SetStorageShape(valueViewShape);
-        valueOut->SetOriginalShape(valueViewShape);
+    // 输出为非连续tensor时，通过AllocTensor申请只写的连续临时tensor承接计算结果（不拷贝输出旧内容），
+    // 计算完成后通过ViewCopy拷贝回输出；returnInverse/returnCounts为false时，inverseOut/countsOut为哑元输出，
+    // 算子不会向其写入数据，直接透传给算子即可，无需申请临时tensor及ViewCopy
+    auto valueOutContiguous = valueOut;
+    if (!IsContiguous(valueOut)) {
+        valueOutContiguous = uniqueExecutor->AllocTensor(valueOut->GetViewShape(), valueOut->GetDataType(),
+                                                         Format::FORMAT_ND);
+        CHECK_RET(valueOutContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    auto inverseOutContiguous = inverseOut;
+    if (returnInverse && !IsContiguous(inverseOut)) {
+        inverseOutContiguous = uniqueExecutor->AllocTensor(inverseOut->GetViewShape(), inverseOut->GetDataType(),
+                                                           Format::FORMAT_ND);
+        CHECK_RET(inverseOutContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    auto countsOutContiguous = countsOut;
+    if (returnCounts && !IsContiguous(countsOut)) {
+        countsOutContiguous = uniqueExecutor->AllocTensor(countsOut->GetViewShape(), countsOut->GetDataType(),
+                                                          Format::FORMAT_ND);
+        CHECK_RET(countsOutContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 
-    auto inverseViewShape = inverseOut->GetViewShape();
-    inverseOut->SetStorageShape(inverseViewShape);
-    inverseOut->SetOriginalShape(inverseViewShape);
+    if (dim != NoneN) {
+        auto valueViewShape = valueOutContiguous->GetViewShape();
+        valueOutContiguous->SetStorageShape(valueViewShape);
+        valueOutContiguous->SetOriginalShape(valueViewShape);
+    }
+
+    auto inverseViewShape = inverseOutContiguous->GetViewShape();
+    inverseOutContiguous->SetStorageShape(inverseViewShape);
+    inverseOutContiguous->SetOriginalShape(inverseViewShape);
 
     // 调用UniqueConsecutive算子
-    auto opRet = l0op::UniqueConsecutive(selfContiguous, returnInverse, returnCounts, dim, valueOut, inverseOut,
-                                         countsOut, uniqueExecutor.get());
+    auto opRet = l0op::UniqueConsecutive(selfContiguous, returnInverse, returnCounts, dim, valueOutContiguous,
+                                         inverseOutContiguous, countsOutContiguous, uniqueExecutor.get());
     CHECK_RET(opRet == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+
+    // 固定写法，将计算结果拷贝到输出out上，out可能是非连续的tensor
+    if (valueOutContiguous != valueOut) {
+        auto viewCopyResult = l0op::ViewCopy(valueOutContiguous, valueOut, uniqueExecutor.get());
+        CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    if (inverseOutContiguous != inverseOut) {
+        auto viewCopyResult = l0op::ViewCopy(inverseOutContiguous, inverseOut, uniqueExecutor.get());
+        CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    if (countsOutContiguous != countsOut) {
+        auto viewCopyResult = l0op::ViewCopy(countsOutContiguous, countsOut, uniqueExecutor.get());
+        CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor); // 需要把 uniqueExecutor持有executor转移给executor

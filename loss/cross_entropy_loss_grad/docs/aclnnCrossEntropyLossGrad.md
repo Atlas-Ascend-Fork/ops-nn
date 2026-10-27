@@ -180,7 +180,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
         <td>FLOAT16、FLOAT、BFLOAT16</td>
         <td>ND</td>
         <td>(N,)<br>N为批处理大小</td>
-        <td>-</td>
+        <td>√</td>
       </tr>
       <tr>
         <td>logProb（aclTensor*）</td>
@@ -190,7 +190,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
         <td>FLOAT16、FLOAT、BFLOAT16</td>
         <td>ND</td>
         <td>(N, C)<br>C为标签数，必须大于0</td>
-        <td>-</td>
+        <td>√</td>
       </tr>
       <tr>
         <td>target（aclTensor*）</td>
@@ -200,7 +200,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
         <td>INT64</td>
         <td>ND</td>
         <td>(N,)</td>
-        <td>-</td>
+        <td>√</td>
       </tr>
       <tr>
         <td>weightOptional（aclTensor*）</td>
@@ -210,7 +210,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
         <td>FLOAT</td>
         <td>-</td>
         <td>(C,)</td>
-        <td>-</td>
+        <td>√</td>
       </tr>
       <tr>
         <td>gradZlossOptional（aclTensor*）</td>
@@ -220,7 +220,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
         <td>FLOAT16、FLOAT、BFLOAT16</td>
         <td>ND</td>
         <td>(N,)</td>
-        <td>-</td>
+        <td>√</td>
       </tr>
       <tr>
         <td>lseForZlossOptional（aclTensor*）</td>
@@ -230,7 +230,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
         <td>FLOAT16、FLOAT、BFLOAT16</td>
         <td>ND</td>
         <td>(N,)</td>
-        <td>-</td>
+        <td>√</td>
       </tr>
       <tr>
         <td>reductionOptional（char*）</td>

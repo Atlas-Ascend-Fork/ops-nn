@@ -156,7 +156,7 @@ aclnnStatus aclnnNLLLoss2d(
         <td>数据类型和self保持一致。</td>
         <td>ND</td>
         <td>-</td>
-        <td>-</td>
+        <td>√</td>
       </tr>
       <tr>
         <td>totalWeightOut（aclTensor*）</td>

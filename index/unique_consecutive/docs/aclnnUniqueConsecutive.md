@@ -124,7 +124,7 @@ aclnnStatus aclnnUniqueConsecutive(
       <td>FLOAT、FLOAT16、DOUBLE、INT8、INT16、INT32、INT64、UINT8、UINT16、UINT32、UINT64、COMPLEX64、COMPLEX128、BOOL、BFLOAT16。</td>
       <td>ND</td>
       <td>与 self 保持一致</td>
-      <td>-</td>
+      <td>√</td>
     </tr>
     <tr>
       <td>inverseOut（aclTensor*）</td>
@@ -134,7 +134,7 @@ aclnnStatus aclnnUniqueConsecutive(
       <td>INT32、INT64</td>
       <td>ND</td>
       <td>与 valueOut 保持一致</td>
-      <td>-</td>
+      <td>√</td>
     </tr>
     <tr>
       <td>countsOut（aclTensor*）</td>
@@ -144,7 +144,7 @@ aclnnStatus aclnnUniqueConsecutive(
       <td>INT32、INT64</td>
       <td>ND</td>
       <td>与 valueOut 保持一致</td>
-      <td>-</td>
+      <td>√</td>
     </tr>
     <tr>
       <td>workspaceSize（uint64_t*）</td>
