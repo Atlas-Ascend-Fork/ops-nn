@@ -54,14 +54,14 @@
       <td>输入</td>
       <td><ul><li>表示上游梯度（损失函数对批归一化输出y的梯度），对应公式中的<code>grads</code>。</li><li>Ascend 950PR&950DT系列产品：ND布局shape为[N, C, R...]（支持≥2维，dim0为N、dim1为C、后导维展平为归一化轴R；NCDHW为5D标签，内存布局与ND相同）；NHWC布局C为最后一维（shape任意rank≥2，前导维展平为归一化轴）。其余产品rank由输入格式固定（4D/5D/6D），通道轴随格式。</li><li>不支持空tensor（各维必须为正数）。</li><li>fp16/bf16输入在算子内升fp32计算。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
-      <td>ND、NCDHW、NHWC</td>
+      <td>ND、NCHW、NCDHW、NHWC</td>
     </tr>
     <tr>
       <td>x</td>
       <td>输入</td>
       <td><ul><li>表示前向传播的输入张量，对应公式中的<code>x</code>。</li><li>shape、数据类型与布局格式均与<code>grads</code>一致。</li><li>fp16/bf16输入在算子内升fp32计算。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
-      <td>ND、NCDHW、NHWC</td>
+      <td>ND、NCHW、NCDHW、NHWC</td>
     </tr>
     <tr>
       <td>batch_mean</td>
@@ -102,7 +102,7 @@
 
 ## 约束说明
 
-- <term>Ascend 950PR&950DT系列产品</term>：支持ND（dim0=N、dim1=C、后导维为归一化轴R；图模式下NCHW/NCDHW标签会被框架归一化下发或直接透传，NCDHW为5D标签、内存布局与ND相同，布局一致）与NHWC（C=最后一维，前导维N·H·W展平为归一化轴，任意rank≥2、C无上限）两类布局。
+- <term>Ascend 950PR&950DT系列产品</term>：支持ND（dim0=N、dim1=C、后导维为归一化轴R；图模式下NCHW/NCDHW标签会被框架归一化下发或直接透传，NCDHW为5D标签、内存布局与ND相同，布局一致）与NHWC（C=最后一维，前导维N·H·W展平为归一化轴，任意rank≥2、C无上限）两类布局。OpDef虽声明动态shape/rank支持（infershape对未知rank早退），但tiling要求shape全为确定正值：任一维为负（含未知动态维）报“dynamic shape dim is not supported in tiling”拒绝，须在入图前具体化为静态shape。
 - **其余产品（<term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>等）：grads/x支持NCHW/NHWC/NC1HWC0/NCDHW（5D场景NDC1HWC0），rank由格式固定（4D/5D/6D），通道轴随格式；统计量与输出和grads同format。其中<term>Atlas A2系列产品</term>及<term>Atlas A3系列产品</term>支持BFLOAT16；<term>Atlas 200I/500 A2推理产品</term>仅支持NC1HWC0/NCHW（4D，不支持NHWC/NCDHW/NDC1HWC0与BFLOAT16），Atlas推理系列产品不支持BFLOAT16。
 - x的shape、数据类型与布局格式必须与grads一致。
 - batch_mean/batch_variance恒为FLOAT32，元素数必须等于grads的通道数C（ND为dim1，NHWC为最后一维）。
@@ -113,4 +113,4 @@
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| 图模式调用 | [test_geir_bn_training_update_grad](./examples/arch35/test_geir_bn_training_update_grad.cpp) | 通过[算子IR](op_graph/bn_training_update_grad_proto.h)构图方式调用BNTrainingUpdateGrad算子（含两组shape/epsilon用例）。 |
+| GE图模式 | [test_geir_bn_training_update_grad](./examples/arch35/test_geir_bn_training_update_grad.cpp) | 通过[算子IR](op_graph/bn_training_update_grad_proto.h)构图方式调用BNTrainingUpdateGrad算子（含两组shape/epsilon用例）。 |
