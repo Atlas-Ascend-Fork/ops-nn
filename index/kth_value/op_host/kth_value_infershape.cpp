@@ -42,7 +42,7 @@ static ge::graphStatus KthValueInferShapeFunc(gert::InferShapeContext* context)
     if (normDim < 0 || normDim >= rank) {
         std::string dimValue = std::to_string(dim);
         std::string dimRange = "[" + std::to_string(-rank) + ", " + std::to_string(rank - 1) + "]";
-        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "dim", dimValue.c_str(), dimRange.c_str());
+        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "dim", dimValue.c_str(), dimRange.c_str());
         return ge::GRAPH_FAILED;
     }
     *valuesShape = *xShape;

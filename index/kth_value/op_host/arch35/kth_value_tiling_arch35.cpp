@@ -95,7 +95,7 @@ static ge::graphStatus ParseKthValueShapeInfo(gert::TilingContext* context, cons
     if (info.sortAxis < 0 || info.sortAxis >= info.rank) {
         std::string dimValue = std::to_string(originSortAxis);
         std::string dimRange = "[" + std::to_string(-info.rank) + ", " + std::to_string(info.rank - 1) + "]";
-        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "dim", dimValue.c_str(), dimRange.c_str());
+        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "dim", dimValue.c_str(), dimRange.c_str());
         return ge::GRAPH_FAILED;
     }
     info.lastAxis = xStorageShape->GetDim(info.sortAxis);
@@ -107,7 +107,7 @@ static ge::graphStatus ParseKthValueShapeInfo(gert::TilingContext* context, cons
     if (*kAttr < 1 || *kAttr > info.lastAxis) {
         std::string kValue = std::to_string(*kAttr);
         std::string kRange = "[1, " + std::to_string(info.lastAxis) + "]";
-        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "k", kValue.c_str(), kRange.c_str());
+        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "k", kValue.c_str(), kRange.c_str());
         return ge::GRAPH_FAILED;
     }
     ComputeAxisDimProducts(*xStorageShape, info.sortAxis, info);
@@ -1382,7 +1382,7 @@ static ge::graphStatus TilingMedianLike(gert::TilingContext* context, bool ignor
     int64_t normDim = dim < 0 ? dim + rank : dim;
     OP_CHECK_IF(
         normDim < 0 || normDim >= rank,
-        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "dim", std::to_string(dim).c_str(), "a valid dimension"),
+        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "dim", std::to_string(dim).c_str(), "a valid dimension"),
         return ge::GRAPH_FAILED);
     int64_t axisLen = shape.GetDim(normDim);
     OP_CHECK_IF(axisLen <= 0,
