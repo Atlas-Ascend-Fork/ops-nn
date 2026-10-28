@@ -88,8 +88,8 @@
     </tr>
     <tr>
       <td>epsilon</td>
-      <td>必选属性</td>
-      <td><ul><li>表示添加到batch_variance上的小量，以确保数值稳定，对应公式中的<code>ε</code>。</li><li>取值应大于0；传入0或负值且batch_variance为负时，host不校验、将静默输出NaN。</li></ul></td>
+      <td>属性</td>
+      <td><ul><li>表示添加到batch_variance上的小量，以确保数值稳定，对应公式中的<code>ε</code>。必选属性。</li><li>取值应大于0；传入0或负值且batch_variance为负时，host不校验、将静默输出NaN。</li></ul></td>
       <td>FLOAT32</td>
       <td>-</td>
     </tr>
@@ -138,4 +138,4 @@
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| 图模式调用 | [test_geir_bn_training_update_v2](./examples/arch35/test_geir_bn_training_update_v2.cpp) | 通过[算子IR](op_graph/bn_training_update_v2_proto.h)构图方式调用BNTrainingUpdateV2算子（含两组shape/epsilon用例）。 |
+| GE图模式 | [test_geir_bn_training_update_v2](./examples/arch35/test_geir_bn_training_update_v2.cpp) | 通过[算子IR](op_graph/bn_training_update_v2_proto.h)构图方式调用BNTrainingUpdateV2算子（含两组shape/epsilon用例）。 |
