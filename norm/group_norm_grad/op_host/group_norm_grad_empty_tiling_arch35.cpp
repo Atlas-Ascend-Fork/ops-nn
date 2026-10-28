@@ -18,7 +18,7 @@
 #include <unordered_map>
 
 namespace optiling {
-constexpr uint32_t MIN_WORKSPACE_SIZE = 16 * 1024 * 1024;
+constexpr uint32_t MIN_WORKSPACE_SIZE = 0;
 constexpr int64_t MAX_CORE_COLS = 8000;
 constexpr uint32_t EMPTY_TENSOR_KEY = 500;
 constexpr uint32_t CONST_TWO = 2;

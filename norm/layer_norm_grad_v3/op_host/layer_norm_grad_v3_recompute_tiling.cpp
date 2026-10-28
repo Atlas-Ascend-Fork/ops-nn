@@ -222,7 +222,7 @@ ge::graphStatus LayerNormGradV3RecomputeTiling::DoOpTiling()
 
 ge::graphStatus LayerNormGradV3RecomputeTiling::GetWorkspaceSize()
 {
-    constexpr int64_t DEFAULT_WORKSPACE_SIZE = 16 * 1024 * 1024;
+    constexpr int64_t DEFAULT_WORKSPACE_SIZE = 0;
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     if (workspaces == nullptr) {
         return ge::GRAPH_FAILED;

@@ -42,8 +42,8 @@ constexpr int64_t DIM_2 = 2;
 constexpr int64_t DIM_3 = 3;
 constexpr int64_t DIM_4 = 4;
 
-// 框架侧占位可以只预留32B（ttk正常），debugTool执行时需要预留16M
-constexpr uint32_t MINIMAL_WORKSPACE = 16 * 1024 * 1024;
+// 推理路径不使用 workspace。
+constexpr uint32_t MINIMAL_WORKSPACE = 0;
 
 class BatchNormGradInferBase : public Ops::NN::Optiling::TilingBaseClass {
 public:

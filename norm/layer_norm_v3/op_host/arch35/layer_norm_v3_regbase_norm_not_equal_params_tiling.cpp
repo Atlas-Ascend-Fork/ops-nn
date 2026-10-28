@@ -18,7 +18,7 @@
 
 namespace optiling {
 static constexpr int64_t LNV3_DOUBLE_BUFFER = 2;
-static constexpr uint32_t LNV3_MINIMAL_WORKSPACE = 32;
+static constexpr uint32_t LNV3_MINIMAL_WORKSPACE = 0;
 static constexpr int64_t LNV3_NUM_TWO = 2;
 
 int64_t LayerNormV3RegBaseNormNotEqualParamsTiling::GetUBCanUseSize()

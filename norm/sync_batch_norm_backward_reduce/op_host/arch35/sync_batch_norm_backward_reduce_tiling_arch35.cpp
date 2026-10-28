@@ -49,7 +49,7 @@ ge::graphStatus SyncBatchNormBackwardReduceTiling::SetTilingData()
     size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext, currentWorkspace);
 
-    currentWorkspace[0] = ascendPlatform.GetLibApiWorkSpaceSize();
+    currentWorkspace[0] = 0;
     tilingContext->SetTilingKey(SYNC_BATCH_NORM_BACKWARD_REDUCE_TILING_KEY_ELEMENTWISE);
     tilingContext->SetBlockDim(tiling->baseTiling.blockNum);
     return ge::GRAPH_SUCCESS;

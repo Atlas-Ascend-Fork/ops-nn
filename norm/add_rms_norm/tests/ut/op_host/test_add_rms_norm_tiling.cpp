@@ -2398,6 +2398,12 @@ TEST_F(AddRmsNormTiling, add_rms_norm_tiling_performance_template_boundaries)
                                                     std::get<1>(testCase));
         EXPECT_EQ(result.status, ge::GRAPH_SUCCESS);
         EXPECT_EQ(result.tilingKey, std::get<4>(testCase));
+        if (result.tilingKey == 3000) {
+            EXPECT_EQ(result.workspaceSize, result.systemWorkspaceSize +
+                                                result.splitAR.rBlockNum * result.splitAR.numRowAlign * sizeof(float));
+        } else {
+            EXPECT_EQ(result.workspaceSize, 0U);
+        }
     }
 }
 

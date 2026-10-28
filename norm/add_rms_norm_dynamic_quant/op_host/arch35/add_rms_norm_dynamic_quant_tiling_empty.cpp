@@ -22,7 +22,7 @@ using namespace NormCheck;
 static constexpr uint32_t TWO = 2;
 static constexpr uint64_t BUFFER_NUM = 2;
 static constexpr uint64_t FLOATBYTESIZE = 4;
-static constexpr uint32_t MIN_WORKSPACE_SIZE = 16 * 1024 * 1024;
+static constexpr uint32_t MIN_WORKSPACE_SIZE = 0;
 
 static constexpr uint64_t PER_CORE_MAX_SIZE = 4096;
 

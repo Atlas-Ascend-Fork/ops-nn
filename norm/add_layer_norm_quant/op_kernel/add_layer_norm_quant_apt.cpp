@@ -103,7 +103,7 @@ extern "C" __global__ __aicore__ void add_layer_norm_quant(GM_ADDR x1, GM_ADDR x
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
     AscendC::TPipe pipe;
-    GM_ADDR usrWorkspace = AscendC::GetUserWorkspace(workspace);
+    GM_ADDR usrWorkspace = workspace;
     GET_TILING_DATA_WITH_STRUCT(AddLayerNormQuantRegbaseTilingData, tilingDataIn, tiling);
     const AddLayerNormQuantRegbaseTilingData* __restrict tilingData = &tilingDataIn;
 

@@ -79,15 +79,6 @@ __aicore__ inline void RegbaseTwoPassPerfImpl(GM_ADDR x, GM_ADDR gamma, GM_ADDR 
 static __aicore__ inline void layer_norm_impl(GM_ADDR x, GM_ADDR gamma, GM_ADDR beta, GM_ADDR y, GM_ADDR mean,
                                               GM_ADDR rstd, GM_ADDR workspace, GM_ADDR tiling)
 {
-    if (workspace == nullptr) {
-        return;
-    }
-
-    GM_ADDR userWS = GetUserWorkspace(workspace);
-    if (userWS == nullptr) {
-        return;
-    }
-
     if (g_coreType == AIC) {
         return;
     }

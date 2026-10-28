@@ -49,10 +49,16 @@ extern "C" __global__ __aicore__ void group_norm_grad(GM_ADDR dy, GM_ADDR mean, 
                                                       GM_ADDR dx, GM_ADDR dgamma, GM_ADDR dbeta, GM_ADDR workspace,
                                                       GM_ADDR tilingdata)
 {
-    if (workspace == nullptr) {
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
+    if (TILING_KEY_IS(GROUP_NORM_GRAD_EMPTY_TENSOR_KEY)) {
+        GET_TILING_DATA_WITH_STRUCT(GroupNormGradEmptyTilingData, tiling_data_in, tilingdata);
+        const GroupNormGradEmptyTilingData* __restrict tiling_data = &tiling_data_in;
+        TPipe pipe;
+        EmptyDgamma<DTYPE_DY, 2> opDG(&pipe, tiling_data);
+        opDG.Init(dgamma, dbeta);
+        opDG.Process();
         return;
     }
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
     GM_ADDR usrWorkspace = AscendC::GetUserWorkspace(workspace);
     GET_TILING_DATA_WITH_STRUCT(GroupNormGradRegBaseTilingData, tiling_data_in, tilingdata);
     const GroupNormGradRegBaseTilingData* __restrict tiling_data = &tiling_data_in;
@@ -137,13 +143,5 @@ extern "C" __global__ __aicore__ void group_norm_grad(GM_ADDR dy, GM_ADDR mean, 
         GroupNormGradReCompute<bfloat16_t, float> opBF16FP32Det;
         opBF16FP32Det.Init(dy, mean, rstd, x, gamma, dx, dgamma, dbeta, usrWorkspace, tiling_data, &pipe);
         opBF16FP32Det.Process();
-    } else if (TILING_KEY_IS(GROUP_NORM_GRAD_EMPTY_TENSOR_KEY)) {
-        GM_ADDR usrWorkspace = AscendC::GetUserWorkspace(workspace);
-        GET_TILING_DATA_WITH_STRUCT(GroupNormGradEmptyTilingData, tiling_data_in, tilingdata);
-        const GroupNormGradEmptyTilingData* __restrict tiling_data = &tiling_data_in;
-        TPipe pipe;
-        EmptyDgamma<DTYPE_DY, 2> opDG(&pipe, tiling_data);
-        opDG.Init(dgamma, dbeta);
-        opDG.Process();
     }
 }

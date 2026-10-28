@@ -53,7 +53,7 @@ ge::graphStatus RmsNormDynamicMxQuantTilingBase::GetPlatformInfo()
         uint64_t ubSize = 0;
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
         ubSize_ = static_cast<int64_t>(ubSize);
-        workspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
+        workspaceSize_ = 0;
     }
 
     ubBlockSize_ = Ops::Base::GetUbBlockSize(context_);

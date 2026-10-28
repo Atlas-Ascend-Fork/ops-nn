@@ -20,7 +20,7 @@
 using namespace AscendC;
 
 namespace optiling {
-static constexpr size_t BNG_WORKSPACE_RESERVED = 16 * 1024 * 1024;
+static constexpr size_t BNG_WORKSPACE_RESERVED = 0;
 
 static constexpr int64_t FLOAT_BYTE_NUMBER = 4;
 static constexpr int64_t FLOAT16_BYTE_NUMBER = 2;

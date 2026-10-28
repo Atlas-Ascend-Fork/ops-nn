@@ -54,7 +54,7 @@ extern "C" __global__ __aicore__ void batch_norm_grad_v3(GM_ADDR dy, GM_ADDR x, 
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
     TPipe pipe;
-    GM_ADDR usrWorkspace = AscendC::GetUserWorkspace(workspace);
+    GM_ADDR usrWorkspace = workspace;
     if (TILING_KEY_IS(BATCH_NORM_GRAD_V3_RAR_FULL_LOAD)) {
         GET_TILING_DATA_WITH_STRUCT(BatchNormGradV3RARFullLoadTilingData, tilingDataIn, tiling);
         const BatchNormGradV3RARFullLoadTilingData* __restrict tilingData = &tilingDataIn;

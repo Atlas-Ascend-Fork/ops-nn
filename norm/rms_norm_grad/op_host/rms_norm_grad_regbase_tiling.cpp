@@ -22,7 +22,7 @@ namespace optiling {
 using namespace Ops::Base;
 constexpr int64_t MIN_DATANUM_PER_CORE = 1024;
 constexpr int64_t UB_RESERVED_SIZE = 256;
-constexpr uint32_t MIN_WORKSPACE_SIZE = 16 * 1024 * 1024;
+constexpr uint32_t MIN_WORKSPACE_SIZE = 0;
 constexpr int64_t INPUT_NUM = 4;
 constexpr int64_t OUTPUT_NUM = 2;
 constexpr int64_t BUFFER_NUM = 2;

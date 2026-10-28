@@ -27,7 +27,7 @@ constexpr int64_t SMALL_BUFFER_NUM = 2;
 constexpr int64_t LARGE_BUFFER_NUM = 2;
 constexpr int64_t FP32_BYTE = 4;
 constexpr int64_t FP16_BYTE = 2;
-constexpr uint32_t MINIMAL_WORKSPACE = 32;
+constexpr uint32_t MINIMAL_WORKSPACE = 0;
 
 bool LayerNormV3RegBaseTwoPassTiling::CanFitInBuffer(int64_t curA, int64_t largeBufferMemPerA, int64_t baseMemSize,
                                                      int64_t& tmpBufferUse, int64_t xElemSize)

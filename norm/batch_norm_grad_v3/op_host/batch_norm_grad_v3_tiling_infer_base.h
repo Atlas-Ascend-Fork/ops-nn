@@ -66,8 +66,8 @@ constexpr int64_t PARAM_ATTRS_EPSILON_INDEX = 1;
 
 constexpr float DEFAULT_EPSILON_VAL = 1e-5;
 
-// 框架侧占位可以只预留32B（ttk正常），debugTool执行时需要预留16M
-constexpr uint32_t MINIMAL_WORKSPACE = 16 * 1024 * 1024;
+// 推理路径不使用 workspace。
+constexpr uint32_t MINIMAL_WORKSPACE = 0;
 
 class BatchNormGradV3InferBase : public Ops::NN::Optiling::TilingBaseClass {
 public:

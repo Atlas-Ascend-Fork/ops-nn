@@ -51,7 +51,7 @@ static constexpr int16_t TILING_KEY_N_NOT_FULL_LOAD = 20001;
 static constexpr int16_t HALF_CORE_NUM = 2;
 static constexpr int16_t UB_MIN_SIZE = 32;
 static constexpr int64_t PER_CORE_MIN_UB_BYTE = 8 * 1024;
-static constexpr uint64_t DEFAULT_WORKSPACE_SIZE = 16 * 1024 * 1024;
+static constexpr uint64_t DEFAULT_WORKSPACE_SIZE = 0;
 static const uint64_t ALIGN_DIM_LEN_LINE = 32;
 
 static constexpr int16_t BLOCK_SIZE = 32;

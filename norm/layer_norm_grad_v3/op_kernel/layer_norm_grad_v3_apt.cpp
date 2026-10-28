@@ -155,7 +155,7 @@ extern "C" __global__ __aicore__ void layer_norm_grad_v3(GM_ADDR dy, GM_ADDR x, 
                                                          GM_ADDR workspace, GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
-    GM_ADDR usrWorkspace = AscendC::GetUserWorkspace(workspace);
+    GM_ADDR usrWorkspace = workspace;
     if (TILING_KEY_IS(RECOMPUTE_KEY)) {
         InvokeLayerNormGradV3RecomputeImpl<DTYPE_DY, DTYPE_GAMMA, DTYPE_PD_GAMMA>(
             dy, x, rstd, mean, gamma, pd_x, pd_gamma, pd_beta, usrWorkspace, tiling);

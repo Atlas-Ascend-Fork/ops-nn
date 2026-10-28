@@ -22,7 +22,7 @@
 
 namespace optiling {
 static constexpr int64_t LNV3_DOUBLE_BUFFER = 2;
-static constexpr uint32_t LNV3_MINIMAL_WORKSPACE = 32;
+static constexpr uint32_t LNV3_MINIMAL_WORKSPACE = 0;
 static constexpr int64_t LNV3_NUM_TWO = 2;
 static constexpr int64_t MIN_TILING_BITS_SIZE_PER_CORE = 32768; // 4KB
 static constexpr int64_t CACHE_LINE_BYTE_LENGTH = 512;

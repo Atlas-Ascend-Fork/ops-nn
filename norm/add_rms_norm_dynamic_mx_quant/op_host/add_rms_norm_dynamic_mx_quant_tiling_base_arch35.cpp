@@ -548,15 +548,7 @@ ge::graphStatus AddRmsNormDynamicMxQuantRegbaseTilingBase::GetPlatformInfo()
 
 ge::graphStatus AddRmsNormDynamicMxQuantRegbaseTilingBase::GetWorkspaceSize()
 {
-    auto compileInfoPtr = static_cast<const AddRmsNormDynamicMxQuantCompileInfo*>(context_->GetCompileInfo());
-    if (compileInfoPtr != nullptr && compileInfoPtr->sysWorkspaceSize > 0) {
-        workspaceSize_ = compileInfoPtr->sysWorkspaceSize;
-        return ge::GRAPH_SUCCESS;
-    }
-    fe::PlatFormInfos* platformInfoPtr = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfoPtr);
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
-    workspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
+    workspaceSize_ = 0;
     return ge::GRAPH_SUCCESS;
 }
 

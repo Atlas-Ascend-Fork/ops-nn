@@ -47,7 +47,7 @@ ge::graphStatus SyncBatchNormBackwardElemtTiling::SetTilingData()
     fe::PlatFormInfos* platformInfoPtr = tilingContext->GetPlatformInfo();
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext, platformInfoPtr);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
-    currentWorkspace[0] = ascendcPlatform.GetLibApiWorkSpaceSize();
+    currentWorkspace[0] = 0;
     tilingContext->SetTilingKey(SYNC_BATCH_NORM_BACKWARD_ELEMT_TILING_KEY_ELEMENTWISE);
     tilingContext->SetBlockDim(tiling->baseTiling.blockNum);
     return ge::GRAPH_SUCCESS;

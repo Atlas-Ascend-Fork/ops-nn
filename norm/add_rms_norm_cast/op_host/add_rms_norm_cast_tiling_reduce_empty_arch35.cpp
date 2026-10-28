@@ -131,10 +131,8 @@ ge::graphStatus AddRmsNormCastReduceEmptyTiling::PostTiling()
                                        context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(reduceEmptyTilingData.GetDataSize());
 
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
-    size_t sysWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    currentWorkspace[0] = sysWorkSpaceSize;
+    currentWorkspace[0] = 0;
     return ge::GRAPH_SUCCESS;
 }
 

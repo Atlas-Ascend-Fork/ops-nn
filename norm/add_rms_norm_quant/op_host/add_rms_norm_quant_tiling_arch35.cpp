@@ -809,7 +809,7 @@ ge::graphStatus AddRmsNormQuantRegbaseTiling::PostTiling()
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
 
     size_t usrWorkspaceSize = tilingParams.workspaceSize;
-    size_t sysWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+    size_t sysWorkSpaceSize = 0;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     currentWorkspace[0] = usrWorkspaceSize + sysWorkSpaceSize;
     return ge::GRAPH_SUCCESS;

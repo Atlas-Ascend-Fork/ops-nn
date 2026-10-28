@@ -420,7 +420,7 @@ ge::graphStatus InstanceNormRegbaseTilingBase::GetWorkspaceSize()
 {
     // 计算workspace大小
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
-    workspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
+    workspaceSize_ = 0;
     return ge::GRAPH_SUCCESS;
 }
 } // namespace optiling

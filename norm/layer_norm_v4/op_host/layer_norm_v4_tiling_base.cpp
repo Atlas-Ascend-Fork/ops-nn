@@ -25,7 +25,7 @@ constexpr size_t K_INPUT_IDX_GAMMA = 2;
 constexpr size_t K_INPUT_IDX_BETA = 3;
 constexpr uint64_t SIZE_OF_FLOAT = 4;
 constexpr uint64_t SIZE_OF_HALF = 2;
-constexpr uint64_t BASE_WSP_SIZE = 32;
+constexpr uint64_t BASE_WSP_SIZE = 0;
 
 static const std::unordered_map<ge::DataType, uint64_t> DTYPE_SIZE_MAP{
     {ge::DataType::DT_FLOAT, 4}, {ge::DataType::DT_FLOAT16, 2}, {ge::DataType::DT_BF16, 2}};

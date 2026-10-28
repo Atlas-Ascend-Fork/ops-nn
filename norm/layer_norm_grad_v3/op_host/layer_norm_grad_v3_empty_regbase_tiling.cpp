@@ -262,7 +262,7 @@ ge::graphStatus LayerNormGradV3EmptyRegBaseTiling::GetWorkspaceSize()
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
     // 用户workspace: 空tensor场景无核间归约, 不需要额外空间
     size_t usrWorkspaceSize = 0;
-    size_t sysWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+    size_t sysWorkSpaceSize = 0;
     currentWorkspace[0] = usrWorkspaceSize + sysWorkSpaceSize;
     return ge::GRAPH_SUCCESS;
 }

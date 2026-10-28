@@ -136,7 +136,7 @@ ge::graphStatus RmsNormQuantV2RegbaseTilingFullLoad::PostTiling()
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
     size_t usrWorkspaceSize = tilingParams.workspaceSize;
-    size_t sysWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+    size_t sysWorkSpaceSize = 0;
     currentWorkspace[0] = usrWorkspaceSize + sysWorkSpaceSize;
 
     auto rawTilingData = context_->GetRawTilingData();

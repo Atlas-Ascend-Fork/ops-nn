@@ -38,7 +38,7 @@ constexpr uint32_t TILING_DYN_MODE = 20;
 
 constexpr int64_t QUANT_OUT_NUMS_SOLE = 1;
 constexpr int64_t QUANT_OUT_NUMS_DUAL = 2;
-constexpr size_t DEFAULT_WORKSPACE_SIZE = 32;
+constexpr size_t DEFAULT_WORKSPACE_SIZE = 0;
 
 static int64_t inline FindFloorPowerTwo(int64_t num)
 {
@@ -139,6 +139,7 @@ void AddLayerNormQuantRegbaseTiling::SetTilingDataAndTilingKeyAndWorkSpace(AddLa
 
     size_t usrWorkspaceSize = DEFAULT_WORKSPACE_SIZE;
     if (isDynamicQuant_) {
+        usrWorkspaceSize = this->sysWorkspaceSize_;
         tilingKey += TILING_DYN_MODE;
         if (this->ubTilingPolicy_ == UB_TILING_POLICY::WELFORD) {
             usrWorkspaceSize = this->sysWorkspaceSize_ + this->usedCoreNum_ * this->bufferNum_ * this->outQuantNums_ *
@@ -152,9 +153,6 @@ void AddLayerNormQuantRegbaseTiling::SetTilingDataAndTilingKeyAndWorkSpace(AddLa
     if (1 == rowsPerCore_ && isDynamicQuant_) {
         // every core need 128 Bytes
         usrWorkspaceSize += static_cast<size_t>(usedCoreNum_ * 128U * 2U);
-        if (this->ubTilingPolicy_ != UB_TILING_POLICY::WELFORD) {
-            usrWorkspaceSize += this->sysWorkspaceSize_;
-        }
     }
 
     context_->SetTilingKey(tilingKey);

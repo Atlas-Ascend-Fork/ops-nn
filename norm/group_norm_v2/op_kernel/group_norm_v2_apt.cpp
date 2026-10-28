@@ -33,14 +33,7 @@ namespace {
 extern "C" __global__ __aicore__ void group_norm_v2(GM_ADDR x, GM_ADDR gamma, GM_ADDR beta, GM_ADDR y, GM_ADDR mean,
                                                     GM_ADDR rstd, GM_ADDR workspace, GM_ADDR tiling)
 {
-    if (workspace == nullptr) {
-        return;
-    }
-
-    GM_ADDR userWS = GetUserWorkspace(workspace);
-    if (userWS == nullptr) {
-        return;
-    }
+    GM_ADDR userWS = workspace;
 
     GET_TILING_DATA(tilingData, tiling);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);

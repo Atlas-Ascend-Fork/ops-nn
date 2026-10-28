@@ -17,7 +17,7 @@
 
 namespace optiling {
 static constexpr int64_t LN_DOUBLE_BUFFER = 2;
-static constexpr uint32_t LN_MINIMAL_WORKSPACE = 32;
+static constexpr uint32_t LN_MINIMAL_WORKSPACE = 0;
 static constexpr int64_t LN_NUM_TWO = 2;
 static constexpr int64_t LN_ROW_THRESHOLD = 4096;
 static constexpr int64_t LN_COL_THRESHOLD = 8192;

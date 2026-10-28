@@ -54,7 +54,7 @@ constexpr uint32_t SPLIT_AR_MIN_PARALLEL_R_BLOCKS = 2;
 // 静态双缓冲的性能准入：每核跨 A 累计至少 8 次 UB tile 迭代。
 constexpr uint32_t SPLIT_AR_MIN_DB_TILES_PER_CORE = 8;
 constexpr uint32_t AR_CACHE_LEVEL_COUNT = std::numeric_limits<uint64_t>::digits;
-constexpr uint64_t DEFAULT_USER_WORKSPACE_SIZE = 256;
+constexpr uint64_t DEFAULT_USER_WORKSPACE_SIZE = 0;
 
 const std::map<ge::DataType, uint32_t> dTypeByteMap = {
     {ge::DT_FLOAT16, sizeof(uint16_t)},
@@ -526,8 +526,9 @@ ge::graphStatus TilingAddRmsNormRegbase(gert::TilingContext* context)
     }
     auto dataType = context->GetInputDesc(0)->GetDataType();
     uint32_t dtypeKey = DTYPE_KEY_FP16;
-    OP_CHECK_IF(SetRegbaseWorkspaceSize(context, DEFAULT_USER_WORKSPACE_SIZE) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "Failed to set the default workspace size."), return ge::GRAPH_FAILED);
+    size_t* currentWorkspace = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
+    currentWorkspace[0] = DEFAULT_USER_WORKSPACE_SIZE;
     uint64_t numColAlign = 0;
     uint64_t ubBlockSize = Ops::Base::GetUbBlockSize(context);
     uint64_t ubfp32 = ubBlockSize / sizeof(float);

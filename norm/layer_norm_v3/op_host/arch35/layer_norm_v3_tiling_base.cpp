@@ -28,7 +28,7 @@ constexpr size_t OUTPUT_IDX_Y = 0;
 constexpr size_t OUTPUT_IDX_MEAN = 1;
 constexpr size_t OUTPUT_IDX_RSTD = 2;
 constexpr float DEFAULT_EPSILON_V3 = 1e-5;
-constexpr uint64_t BASE_WSP_SIZE = 32;
+constexpr uint64_t BASE_WSP_SIZE = 0;
 constexpr float DEFAULT_EPSILON_V1 = 1e-7;
 const gert::Shape g_vec_1_shape = {1};
 

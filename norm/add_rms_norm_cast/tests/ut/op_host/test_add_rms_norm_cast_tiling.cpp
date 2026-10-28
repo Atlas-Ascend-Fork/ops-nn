@@ -134,6 +134,8 @@ TEST_P(AddRmsNormCastEmptyReductionTiling, verifies_serialized_partition)
     ASSERT_NE(opImpl->tiling, nullptr);
     ASSERT_EQ(opImpl->tiling(context), ge::GRAPH_SUCCESS);
     EXPECT_EQ(context->GetTilingKey(), 8200);
+    ASSERT_NE(context->GetWorkspaceSizes(1), nullptr);
+    EXPECT_EQ(context->GetWorkspaceSizes(1)[0], 0U);
     EXPECT_EQ(context->GetBlockDim(), testCase.expectedCores);
     auto* rawTilingData = context->GetRawTilingData();
     ASSERT_NE(rawTilingData, nullptr);

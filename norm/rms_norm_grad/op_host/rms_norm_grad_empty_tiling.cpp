@@ -20,7 +20,7 @@
 
 namespace optiling {
 using namespace Ops::Base;
-static constexpr uint32_t MIN_WORKSPACE_SIZE = 16 * 1024 * 1024;
+static constexpr uint32_t MIN_WORKSPACE_SIZE = 0;
 static constexpr int64_t INPUT_NUM = 4;
 
 static constexpr int64_t INPUT_INDEX_0 = 0;

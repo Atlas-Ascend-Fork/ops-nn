@@ -46,7 +46,7 @@ ge::graphStatus ParseBatchNormGradV3OutputMask(gert::TilingContext* context, int
     return ge::GRAPH_SUCCESS;
 }
 
-static constexpr size_t BNG_WORKSPACE_RESERVED = 16 * 1024 * 1024;
+static constexpr size_t BNG_WORKSPACE_RESERVED = 0;
 static constexpr int64_t DIM_NUM_4 = 4;
 static constexpr int64_t DIM_NUM_5 = 5;
 static constexpr int64_t INPUT_NUM = 7;

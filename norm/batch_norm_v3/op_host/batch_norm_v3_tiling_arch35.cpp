@@ -430,7 +430,7 @@ ge::graphStatus BatchNormV3RegbaseTilingBase::GetWorkspaceSize()
     auto platformInfo = context_->GetPlatformInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
-    workspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
+    workspaceSize_ = 0;
     return ge::GRAPH_SUCCESS;
 }
 

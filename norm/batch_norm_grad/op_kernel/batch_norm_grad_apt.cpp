@@ -51,7 +51,7 @@ extern "C" __global__ __aicore__ void batch_norm_grad(GM_ADDR y_backprop, GM_ADD
                                                       GM_ADDR workspace, GM_ADDR tiling)
 {
     TPipe pipe;
-    GM_ADDR usrWorkspace = AscendC::GetUserWorkspace(workspace);
+    GM_ADDR usrWorkspace = workspace;
 
     if (TILING_KEY_IS(BATCH_NORM_GRAD_RAR_FULL_LOAD)) {
         GET_TILING_DATA_WITH_STRUCT(BatchNormGradRARFullLoadTilingData, tilingDataIn, tiling);
