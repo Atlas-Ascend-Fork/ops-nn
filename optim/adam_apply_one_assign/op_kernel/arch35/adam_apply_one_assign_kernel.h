@@ -130,6 +130,7 @@ public:
         int64_t k = td_->split.axis;
         nddma_dims_ = (RANK - k <= ND) ? (RANK - k) : ND;
         for (int inp = 0; inp < kMaxInputSlots; inp++) {
+            nddmaParams_[inp].constantValue = static_cast<T>(0);
             int64_t inner = 1;
             int64_t nd = 0;
             for (int64_t d = RANK - 1; d >= k && nd < ND; d--) {
