@@ -23,6 +23,14 @@
 #include "rms_norm_quant_common_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 // const defination
 static constexpr uint32_t BYTE_32 = 32;
 
@@ -65,16 +73,27 @@ uint32_t CalcNormTilingKey(NormCommonTilingData1* tilingDataPtr, ge::DataType dt
 static ge::graphStatus PrepareForRmsNormCommonTiling(gert::TilingParseContext* context)
 {
     auto compileInfo = context->GetCompiledInfo<NormCommonCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "TilingPrepare: compile info is null; check the SoC-specific OPP package and the tiling parse context"),
+        return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNumAiv = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNumAiv <= 0), OP_LOGE(context, "Failed to get core num."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((compileInfo->coreNumAiv <= 0), OP_LOGE_WITHOUT_REPORT(context, "Failed to get core num."),
+                return ge::GRAPH_FAILED);
 
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
-    OP_CHECK_IF(ubSizePlatForm <= 0, OP_LOGE(context, "Failed to get ub size."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ubSizePlatForm <= 0, OP_LOGE_WITHOUT_REPORT(context, "Failed to get ub size."),
+                return ge::GRAPH_FAILED);
 
     compileInfo->ubSize = ubSizePlatForm;
 
@@ -189,8 +208,8 @@ static ge::graphStatus NormCommonTiling(gert::TilingContext* context, PrePostTyp
 
     auto yDtype = context->GetOutputDesc(static_cast<int>(NormOutputIndex::Y))->GetDataType();
     if (yDtype == ge::DT_INT4 && numCol % static_cast<int32_t>(CONST_ROUR) != 0) {
-        OP_LOGE(context->GetNodeName(), "if y datatype is int4, the last dim(%u) of x should be divisible by 8.",
-                numCol);
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                               "if y datatype is int4, the last dim(%u) of x should be divisible by 8.", numCol);
         return ge::GRAPH_FAILED;
     }
 
@@ -199,7 +218,8 @@ static ge::graphStatus NormCommonTiling(gert::TilingContext* context, PrePostTyp
     OP_CHECK_IF(tilingData.get_numCol() > std::numeric_limits<uint32_t>::max() - tilingData.get_sliceSize(),
                 OP_LOGD(opName, "numCol + sliceSize is overflowed"), return ge::GRAPH_PARAM_OUT_OF_RANGE);
     // calculate avgFactor
-    OP_CHECK_IF(numCol <= 0, OP_LOGE(opName, "The numCol size is neg: %ud.", numCol), return ge::GRAPH_PARAM_INVALID);
+    OP_CHECK_IF(numCol <= 0, OP_LOGE_WITHOUT_REPORT(opName, "The numCol size is neg: %ud.", numCol),
+                return ge::GRAPH_PARAM_INVALID);
     float avgFactor = static_cast<float>(1.0 / numCol);
     tilingData.set_avgFactor(avgFactor);
     // get attrs
@@ -222,8 +242,8 @@ static ge::graphStatus NormCommonTiling(gert::TilingContext* context, PrePostTyp
     if (dstTypePtr != nullptr) {
         dstType = static_cast<int64_t>(*dstTypePtr);
     }
-    OP_CHECK_IF((dstType != ge::DT_INT8 && dstType != ge::DT_INT4), OP_LOGE(opName, "dstType can only be 2 or 29."),
-                return ge::GRAPH_PARAM_INVALID);
+    OP_CHECK_IF((dstType != ge::DT_INT8 && dstType != ge::DT_INT4),
+                OP_LOGE_WITHOUT_REPORT(opName, "dstType can only be 2 or 29."), return ge::GRAPH_PARAM_INVALID);
     tilingData.set_dstType(dstType);
 
     if (EN_QUANT) { // if constexpr (EN_QUANT) 会有编译错误
@@ -239,7 +259,11 @@ static ge::graphStatus NormCommonTiling(gert::TilingContext* context, PrePostTyp
 
     uint32_t tilingKey = CalcNormTilingKey(&tilingData, dtype, enableBeta);
     size_t* workspaces = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = WORKAPCE_RESERVE;
 
     OP_LOGD(opName, "tiling key is %d", tilingKey);

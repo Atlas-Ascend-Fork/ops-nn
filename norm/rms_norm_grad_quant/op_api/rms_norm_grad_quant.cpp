@@ -42,7 +42,11 @@ const std::array<aclTensor*, RMS_NORM_GRAD_QUANT_OUT_NUM> RmsNormGradQuant(
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(RmsNormGradQuant, OP_INPUT(dy, x, rstd, gamma, scalesX, offsetXOptional),
                                            OP_OUTPUT(dxOut, dgammaOut), OP_ATTR(quantModeStr, divMode, dstType));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "RmsNormGradQuant ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        // 下层(tiling/kernel选择等)已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+        OP_LOGE_WITHOUT_REPORT(ret,
+                               "RmsNormGradQuant: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                               "construction, ret=%d. See the first error reported by the failing stage.",
+                               static_cast<int32_t>(ret));
         return std::array<aclTensor*, RMS_NORM_GRAD_QUANT_OUT_NUM>{nullptr, nullptr};
     }
     return {dxOut, dgammaOut};

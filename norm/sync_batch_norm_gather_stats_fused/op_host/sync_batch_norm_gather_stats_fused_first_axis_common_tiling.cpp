@@ -17,6 +17,15 @@
 
 namespace optiling {
 
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "SyncBatchNormGatherStatsFused",
+                                               reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static const int64_t FIRST_AXIS_COMMON_BLOCK_BYTES = 32;
 static const int64_t FIRST_AXIS_COMMON_B32_DTYPE_SIZE = 4;
 static const int64_t FIRST_AXIS_COMMON_B16_DTYPE_SIZE = 2;
@@ -101,8 +110,9 @@ ge::graphStatus SyncBatchNormGatherStatsFusedFirstAxisCommonTiling::DoOpTiling()
     td_.set_cBufferByteSize(cAlignM_ * FIRST_AXIS_FLOAT_DTYPE_SIZE);
     int64_t ubFormer = CalculateubFormer();
     if (ubFormer <= 0) {
-        OP_LOGE(context_, "SyncBatchNormGatherStatsFusedFirstAxisCommonTiling: Calculate ubFormer failed, ubFormer=%ld",
-                ubFormer);
+        ReportTilingStageError(context_->GetNodeName(),
+                               "the UB tiling search found no feasible ubFormer for the given shapes and "
+                               "platform UB size; check the SoC and the input shapes");
         return ge::GRAPH_FAILED;
     }
 
@@ -128,7 +138,7 @@ ge::graphStatus SyncBatchNormGatherStatsFusedFirstAxisCommonTiling::DoOpTiling()
 ge::graphStatus SyncBatchNormGatherStatsFusedFirstAxisCommonTiling::PostTiling()
 {
     context_->SetBlockDim(commonParams.coreNum);
-    context_->SetScheduleMode(1);  // kernel 使用 SyncAll 全核同步，需设置为 BatchMode
+    context_->SetScheduleMode(1); // kernel 使用 SyncAll 全核同步，需设置为 BatchMode
     td_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(td_.GetDataSize());
 

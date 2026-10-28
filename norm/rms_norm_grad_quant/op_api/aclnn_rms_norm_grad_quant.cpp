@@ -25,8 +25,25 @@
 
 #include "rms_norm_grad_quant.h"
 #include "aclnn_rms_norm_grad_quant.h"
+#include "log/log.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,13 +55,13 @@ constexpr int32_t IDX_DGAMMA = 1;
 static bool CheckNotNull(const aclTensor* dy, const aclTensor* x, const aclTensor* rstd, const aclTensor* gamma,
                          const aclTensor* scalesX, const aclTensor* dxOut, const aclTensor* dgammaOut)
 {
-    OP_CHECK_NULL(dy, return false);
-    OP_CHECK_NULL(x, return false);
-    OP_CHECK_NULL(rstd, return false);
-    OP_CHECK_NULL(gamma, return false);
-    OP_CHECK_NULL(scalesX, return false);
-    OP_CHECK_NULL(dxOut, return false);
-    OP_CHECK_NULL(dgammaOut, return false);
+    OP_CHECK(dy != nullptr, ReportNullPointerError(__func__, "dy"), return false);
+    OP_CHECK(x != nullptr, ReportNullPointerError(__func__, "x"), return false);
+    OP_CHECK(rstd != nullptr, ReportNullPointerError(__func__, "rstd"), return false);
+    OP_CHECK(gamma != nullptr, ReportNullPointerError(__func__, "gamma"), return false);
+    OP_CHECK(scalesX != nullptr, ReportNullPointerError(__func__, "scalesX"), return false);
+    OP_CHECK(dxOut != nullptr, ReportNullPointerError(__func__, "dxOut"), return false);
+    OP_CHECK(dgammaOut != nullptr, ReportNullPointerError(__func__, "dgammaOut"), return false);
     return true;
 }
 

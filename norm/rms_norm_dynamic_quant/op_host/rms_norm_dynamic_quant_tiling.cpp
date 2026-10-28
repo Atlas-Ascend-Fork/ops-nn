@@ -15,6 +15,13 @@
 #include "rms_norm_dynamic_quant_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormDynamicQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
 
 constexpr int X_IDX = 0;
 constexpr int GAMMA_IDX = 1;
@@ -141,14 +148,21 @@ void RmsNormDynamicQuantTilingHelper::SetTilingDataAndTilingKeyAndWorkSpace(RmsN
 bool RmsNormDynamicQuantTilingHelper::DoTiling()
 {
     OP_CHECK_IF((nullptr == context_),
-                OP_LOGE("RmsNormDynamicQuantTiling", "Helper context_ get nullptr, return failed."), return false);
+                ReportTilingStageError(
+                    "RmsNormDynamicQuant",
+                    "the TilingContext passed to the tiling helper is null; check the tiling framework invocation"),
+                return false);
     // 1. platform + attrs
-    OP_CHECK_IF(!GetBaseInfo(), OP_LOGE(context_->GetNodeName(), "GetBaseInfo failed, return false"), return false);
+    OP_CHECK_IF(!GetBaseInfo(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetBaseInfo failed, return false"),
+                return false);
     // 2. validate dtypes + shapes + compute shape parameters
-    OP_CHECK_IF(!GetShapeInfo(), OP_LOGE(context_->GetNodeName(), "GetShapeInfo failed, return false"), return false);
+    OP_CHECK_IF(!GetShapeInfo(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetShapeInfo failed, return false"),
+                return false);
     // 3. compute tiling
-    OP_CHECK_IF(!DoBlockTiling(), OP_LOGE(context_->GetNodeName(), "DoBlockTiling failed, return false"), return false);
-    OP_CHECK_IF(!DoUbTiling(), OP_LOGE(context_->GetNodeName(), "DoUbTiling failed, return false"), return false);
+    OP_CHECK_IF(!DoBlockTiling(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoBlockTiling failed, return false"),
+                return false);
+    OP_CHECK_IF(!DoUbTiling(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoUbTiling failed, return false"),
+                return false);
     return true;
 }
 
@@ -167,7 +181,12 @@ bool RmsNormDynamicQuantTilingHelper::DoBlockTiling()
 bool RmsNormDynamicQuantTilingHelper::InitializePlatformInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "GetPlatformInfo returned null; check the TilingContext construction and the platform registration"),
+        return false);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     this->socCoreNums_ = ascendcPlatform.GetCoreNumAiv();
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, this->ubSize_);
@@ -182,7 +201,11 @@ bool RmsNormDynamicQuantTilingHelper::GetBaseInfo()
     }
 
     auto attrs = context_->GetAttrs();
-    OP_CHECK_IF(nullptr == attrs, OP_LOGE(context_->GetNodeName(), "Get attrs nullptr, return false."), return false);
+    OP_CHECK_IF(
+        nullptr == attrs,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return false);
 
     const float* epsPtr = attrs->GetFloat(EPS_IDX);
     if (epsPtr != nullptr) {
@@ -215,10 +238,16 @@ bool RmsNormDynamicQuantTilingHelper::ValidateBaseParameters()
                 OP_LOGE_FOR_INVALID_VALUE(context_->GetNodeName(), "epsilon", std::to_string(this->eps_).c_str(),
                                           "greater than 0"),
                 return false);
-    OP_CHECK_IF((this->ubSize_ <= 0), OP_LOGE(context_->GetNodeName(), "ubSize less or equal than zero, please check."),
-                return false);
-    OP_CHECK_IF((this->socCoreNums_ <= 0),
-                OP_LOGE(context_->GetNodeName(), "socCoreNums_ less or equal than zero, please check."), return false);
+    OP_CHECK_IF(
+        (this->ubSize_ <= 0),
+        ReportTilingStageError(context_->GetNodeName(), "GetCoreMemSize(UB) returned " + std::to_string(this->ubSize_) +
+                                                            "; check the platform info, SoC and OPP installation"),
+        return false);
+    OP_CHECK_IF(
+        (this->socCoreNums_ <= 0),
+        ReportTilingStageError(context_->GetNodeName(), "GetCoreNumAiv returned " + std::to_string(this->socCoreNums_) +
+                                                            "; check the platform info and SoC"),
+        return false);
 
     return true;
 }
@@ -292,8 +321,16 @@ bool RmsNormDynamicQuantTilingHelper::CheckInputShapes()
 {
     const gert::StorageShape* xShape = this->context_->GetInputShape(X_IDX);
     const gert::StorageShape* gammaShape = this->context_->GetInputShape(GAMMA_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, xShape);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, gammaShape);
+    OP_CHECK_IF(xShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the input shape of x is missing in the tiling context; check "
+                                                         "that the graph node provides all required inputs"),
+                return false);
+    OP_CHECK_IF(gammaShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gamma",
+                                                         "the input shape of gamma is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
 
     auto xStorage = xShape->GetStorageShape();
     auto gammaStorage = gammaShape->GetStorageShape();
@@ -350,8 +387,16 @@ bool RmsNormDynamicQuantTilingHelper::CheckOutputShapes()
 {
     const gert::StorageShape* yShape = this->context_->GetOutputShape(Y_IDX);
     const gert::StorageShape* scaleShape = this->context_->GetOutputShape(SCALE_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, yShape);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, scaleShape);
+    OP_CHECK_IF(yShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y",
+                                                         "the output shape of y is missing in the tiling context; "
+                                                         "check that the graph node provides all required outputs"),
+                return false);
+    OP_CHECK_IF(scaleShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale",
+                                                         "the output shape of scale is missing in the tiling context; "
+                                                         "check that the graph node provides all required outputs"),
+                return false);
 
     auto xStorage = this->context_->GetInputShape(X_IDX)->GetStorageShape();
     auto yStorage = yShape->GetStorageShape();
@@ -526,7 +571,10 @@ bool RmsNormDynamicQuantTilingHelper::CheckUbSliceDTiling()
 
 ge::graphStatus Tiling4RmsNormDynamicQuant(gert::TilingContext* context)
 {
-    OP_CHECK_IF(nullptr == context, OP_LOGE("RmsNormDynamicQuant", "Context is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(nullptr == context,
+                ReportTilingStageError("RmsNormDynamicQuant",
+                                       "the TilingContext is null; check the tiling framework invocation"),
+                return ge::GRAPH_FAILED);
     OP_LOGI(context->GetNodeName(), "Enter Tiling4RmsNormDynamicQuant");
     auto ptrCompileInfo = reinterpret_cast<const RmsNormDynamicQuantCompileInfo*>(context->GetCompileInfo());
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
@@ -535,7 +583,8 @@ ge::graphStatus Tiling4RmsNormDynamicQuant(gert::TilingContext* context)
     RmsNormDynamicQuantTilingData tiling;
     RmsNormDynamicQuantTilingHelper instanceNormV3TilingHelper(context);
     bool status = instanceNormV3TilingHelper.DoTiling();
-    OP_CHECK_IF(!status, OP_LOGE(context->GetNodeName(), "DoTiling Failed, return Failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!status, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "DoTiling Failed, return Failed."),
+                return ge::GRAPH_FAILED);
     instanceNormV3TilingHelper.SetTilingDataAndTilingKeyAndWorkSpace(&tiling);
 
     return ge::GRAPH_SUCCESS;
@@ -543,13 +592,25 @@ ge::graphStatus Tiling4RmsNormDynamicQuant(gert::TilingContext* context)
 
 ge::graphStatus TilingPrepare4RmsNormDynamicQuant(gert::TilingParseContext* context)
 {
-    OP_CHECK_IF(nullptr == context, OP_LOGE("RmsNormDynamicQuant", "Context is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(nullptr == context,
+                ReportTilingStageError("RmsNormDynamicQuant",
+                                       "the TilingContext is null; check the tiling framework invocation"),
+                return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "Enter TilingPrepare4RmsNormDynamicQuant.");
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
+    OP_CHECK_IF(
+        platformInfoPtr == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "GetPlatformInfo returned null; check the TilingParseContext construction and the platform registration"),
+        return ge::GRAPH_FAILED);
 
     auto compileInfoPtr = context->GetCompiledInfo<RmsNormDynamicQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfoPtr);
+    OP_CHECK_IF(compileInfoPtr == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "GetCompiledInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     compileInfoPtr->curSocVersion = ascendcPlatform.GetSocVersion();

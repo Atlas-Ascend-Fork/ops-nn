@@ -18,6 +18,14 @@
 
 namespace optiling {
 
+// TilingParse阶段框架契约类失败统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const std::string& opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName.c_str(), reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static ge::graphStatus Tiling4QuantizedBatchNorm(gert::TilingContext* context)
 {
     return TilingRegistry::GetInstance().DoTilingImpl(context);
@@ -28,23 +36,40 @@ static ge::graphStatus TilingPrepare4QuantizedBatchNorm(gert::TilingParseContext
     OP_LOGD(context->GetNodeName(), "TilingPrepare4QuantizedBatchNorm enter.");
 
     auto compileInfo = context->GetCompiledInfo<QuantizedBatchNormCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: compile info is null; check the SoC-specific OPP package and the "
+                               "tiling parse context");
+        return ge::GRAPH_FAILED;
+    }
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: platform info is null; check the platform info query and the "
+                               "OPP/SoC installation");
+        return ge::GRAPH_FAILED;
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0),
-                OP_LOGD(context->GetNodeName(), "Get core num failed, core num: %u",
-                        static_cast<uint32_t>(compileInfo->coreNum)),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->coreNum <= 0) {
+        OP_LOGD(context->GetNodeName(), "Get core num failed, core num: %u",
+                static_cast<uint32_t>(compileInfo->coreNum));
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid core num from the platform info; check the SoC "
+                               "platform query and the OPP installation");
+        return ge::GRAPH_FAILED;
+    }
 
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSize = ubSizePlatForm;
-    OP_CHECK_IF(
-        (compileInfo->ubSize <= 0),
-        OP_LOGD(context->GetNodeName(), "Get ub size failed, ub size: %u", static_cast<uint32_t>(compileInfo->ubSize)),
-        return ge::GRAPH_FAILED);
+    if (compileInfo->ubSize <= 0) {
+        OP_LOGD(context->GetNodeName(), "Get ub size failed, ub size: %u", static_cast<uint32_t>(compileInfo->ubSize));
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid UB size from the platform info; check the SoC "
+                               "platform query and the OPP installation");
+        return ge::GRAPH_FAILED;
+    }
 
     OP_LOGD(context, "TilingPrepare4QuantizedBatchNorm exit.");
     return ge::GRAPH_SUCCESS;

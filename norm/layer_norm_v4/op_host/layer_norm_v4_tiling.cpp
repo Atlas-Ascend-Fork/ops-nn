@@ -17,6 +17,14 @@
 #include "layer_norm_v4_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "LayerNormV4", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 using namespace Ops::NN::OpTiling;
 
 static ge::graphStatus Tiling4LayerNormV4(gert::TilingContext* context)
@@ -27,21 +35,30 @@ static ge::graphStatus Tiling4LayerNormV4(gert::TilingContext* context)
 ge::graphStatus TilingPrepare4CompileInfo(gert::TilingParseContext* context, LayerNormV4CompileInfo* compileInfo)
 {
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
     auto npuArch = ascendcPlatform.GetCurNpuArch();
     compileInfo->isAscend310P = npuArch == NpuArch::DAV_2002;
-    OP_CHECK_IF((compileInfo->coreNum <= 0),
-                OP_LOGE(context, "Get core num failed, core num: %u", static_cast<uint32_t>(compileInfo->coreNum)),
-                return ge::GRAPH_FAILED);
-
+    OP_CHECK_IF(
+        (compileInfo->coreNum <= 0),
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid core num " + std::to_string(compileInfo->coreNum) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
     uint64_t ubSizePlatForm = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = ubSizePlatForm;
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0),
-                OP_LOGE(context, "Get ub size failed, ub size: %u", static_cast<uint32_t>(compileInfo->ubSizePlatForm)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->ubSizePlatForm <= 0),
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid UB size " + std::to_string(compileInfo->ubSizePlatForm) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
     compileInfo->isRegBase = (IsRegbaseSocVersion(context) || npuArch == NpuArch::DAV_5102) ? true : false;
     compileInfo->blockSize = Ops::Base::GetUbBlockSize(context);
     compileInfo->vectorLength = Ops::Base::GetVRegSize(context);
@@ -53,7 +70,12 @@ static ge::graphStatus TilingPrepare4LayerNormV4(gert::TilingParseContext* conte
 {
     OP_LOGD(context, "TilingPrepare4LayerNormV4 enter.");
     auto compileInfo = context->GetCompiledInfo<LayerNormV4CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "TilingPrepare: compile info is null; check the SoC-specific OPP package and the tiling parse context"),
+        return ge::GRAPH_FAILED);
     return TilingPrepare4CompileInfo(context, compileInfo);
 }
 

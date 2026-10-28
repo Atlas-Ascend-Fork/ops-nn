@@ -32,6 +32,7 @@
 #include "opdev/data_type_utils.h"
 #include "opdev/format_utils.h"
 #include "aclnn_batch_norm_gather_stats_with_counts.h"
+#include "log/log.h"
 
 namespace op {
 aclTensor* FillVector(const aclIntArray* shapes, int value, op::DataType dtype, aclOpExecutor* executor)
@@ -59,6 +60,22 @@ aclTensor* BroadCastTensor(const op::Shape dstShape, const aclTensor* src, aclOp
 } // namespace op
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 static const std::initializer_list<op::DataType> DTYPE_SUPPORT_910_LIST = {op::DataType::DT_FLOAT,
                                                                            op::DataType::DT_FLOAT16};
 static const std::initializer_list<op::DataType> DTYPE_SUPPORT_910B_LIST = {
@@ -78,12 +95,12 @@ static inline bool IsSocVersion950(void) { return GetCurrentPlatformInfo().GetSo
 static bool CheckNotNull(const aclTensor* input, const aclTensor* mean, const aclTensor* invstd,
                          const aclTensor* counts, const aclTensor* meanAll, const aclTensor* invstdAll)
 {
-    OP_CHECK_NULL(input, return false);
-    OP_CHECK_NULL(mean, return false);
-    OP_CHECK_NULL(invstd, return false);
-    OP_CHECK_NULL(counts, return false);
-    OP_CHECK_NULL(meanAll, return false);
-    OP_CHECK_NULL(invstdAll, return false);
+    OP_CHECK(input != nullptr, ReportNullPointerError(__func__, "input"), return false);
+    OP_CHECK(mean != nullptr, ReportNullPointerError(__func__, "mean"), return false);
+    OP_CHECK(invstd != nullptr, ReportNullPointerError(__func__, "invstd"), return false);
+    OP_CHECK(counts != nullptr, ReportNullPointerError(__func__, "counts"), return false);
+    OP_CHECK(meanAll != nullptr, ReportNullPointerError(__func__, "meanAll"), return false);
+    OP_CHECK(invstdAll != nullptr, ReportNullPointerError(__func__, "invstdAll"), return false);
     return true;
 }
 
@@ -116,7 +133,8 @@ static bool CheckFormat(const aclTensor* input, const aclTensor* mean, const acl
 {
     if (op::IsPrivateFormat(input->GetStorageFormat()) || op::IsPrivateFormat(mean->GetStorageFormat()) ||
         op::IsPrivateFormat(invstd->GetStorageFormat()) || op::IsPrivateFormat(counts->GetStorageFormat())) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND,NCHW,NCL,NCDHW.");
+        OP_LOGE_FOR_INVALID_FORMAT("aclnnBatchNormGatherStatsWithCounts", "input",
+                                   op::ToString(input->GetStorageFormat()).GetString(), "ND, NCHW, NCL or NCDHW");
         return false;
     }
     return true;
@@ -131,35 +149,57 @@ static bool CheckShape(const aclTensor* input, const aclTensor* mean, const aclT
     OP_CHECK_WRONG_DIMENSION(mean, BN_MIN_SUPPORT_DIMS_NUMS, return false);
     OP_CHECK_WRONG_DIMENSION(invstd, BN_MIN_SUPPORT_DIMS_NUMS, return false);
     if (mean->GetViewShape()[0] != invstd->GetViewShape()[0] || counts->GetViewShape()[0] != mean->GetViewShape()[0]) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "first dimension of mean, invstd and count should be the same, but got "
-                "mean: %s, invstd: %s, counts: %s.",
-                op::ToString(mean->GetViewShape()).GetString(), op::ToString(invstd->GetViewShape()).GetString(),
-                op::ToString(counts->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnBatchNormGatherStatsWithCounts", "mean,invstd,counts",
+            (std::string(op::ToString(mean->GetViewShape()).GetString()) + ", " +
+             op::ToString(invstd->GetViewShape()).GetString() + ", " + op::ToString(counts->GetViewShape()).GetString())
+                .c_str(),
+            "the first dimensions of mean, invstd and counts should be the same");
         return false;
     }
     int64_t dimC = input->GetViewShape()[1];
     if (mean->GetViewShape()[1] != dimC || invstd->GetViewShape()[1] != dimC) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "second dimension of mean/invstd should be the channel size of input %ld, but got"
-                "mean: %s, invstd: %s.",
-                dimC, op::ToString(mean->GetViewShape()).GetString(), op::ToString(invstd->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnBatchNormGatherStatsWithCounts", "mean,invstd",
+            (std::string(op::ToString(mean->GetViewShape()).GetString()) + ", " +
+             op::ToString(invstd->GetViewShape()).GetString())
+                .c_str(),
+            (std::string("the second dimension of mean/invstd should be the channel size of input (") +
+             std::to_string(dimC) + ")")
+                .c_str());
         return false;
     }
     op::Shape expectShape = {dimC};
     if (runningMean != nullptr) {
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(runningMean, expectShape, return false);
+        OP_CHECK(runningMean->GetViewShape() == expectShape,
+                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnBatchNormGatherStatsWithCounts", "runningMean",
+                                                       op::ToString(runningMean->GetViewShape()).GetString(),
+                                                       "shape of runningMean should be the same as expectShape"),
+                 return false);
     }
     if (runningVar != nullptr) {
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(runningVar, expectShape, return false);
+        OP_CHECK(runningVar->GetViewShape() == expectShape,
+                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnBatchNormGatherStatsWithCounts", "runningVar",
+                                                       op::ToString(runningVar->GetViewShape()).GetString(),
+                                                       "shape of runningVar should be the same as expectShape"),
+                 return false);
     }
 
     if (counts->GetViewShape().GetDimNum() != 1) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dim of counts should be one.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnBatchNormGatherStatsWithCounts", "counts",
+                                     std::to_string(counts->GetViewShape().GetDimNum()).c_str(), "1");
         return false;
     }
-    OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(meanAll, expectShape, return false);
-    OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(invstdAll, expectShape, return false);
+    OP_CHECK(meanAll->GetViewShape() == expectShape,
+             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnBatchNormGatherStatsWithCounts", "meanAll",
+                                                   op::ToString(meanAll->GetViewShape()).GetString(),
+                                                   "shape of meanAll should be the same as expectShape"),
+             return false);
+    OP_CHECK(invstdAll->GetViewShape() == expectShape,
+             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnBatchNormGatherStatsWithCounts", "invstdAll",
+                                                   op::ToString(invstdAll->GetViewShape()).GetString(),
+                                                   "shape of invstdAll should be the same as expectShape"),
+             return false);
     return true;
 }
 

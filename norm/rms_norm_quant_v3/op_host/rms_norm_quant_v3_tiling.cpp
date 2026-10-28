@@ -26,6 +26,14 @@
 using namespace Ops::Base;
 using namespace AscendC;
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormQuantV3", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 constexpr size_t DEST_MAX_V3 = 100;
 constexpr size_t MAX_LEN_SIMPLIFIED_KEY_V3 = 256;
 
@@ -34,20 +42,35 @@ ge::graphStatus Tiling4RmsNormQuantV3(gert::TilingContext* context)
     if (Ops::NN::OpTiling::IsRegbaseSocVersion(context)) {
         return Ops::NN::Optiling::TilingRegistry::GetInstance().DoTilingImpl(context);
     }
-    OP_LOGE(context, "RmsNormQuantV3 is not supported on the current chip!");
+    {
+        const std::vector<const char*> msgKey = {"optype", "opskernel", "reason"};
+        const std::vector<const char*> msgValue = {
+            "RmsNormQuantV3", "AiCore", "the current SoC is not a Regbase-platform SoC; use a supported SoC"};
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", msgKey, msgValue);
+    }
     return ge::GRAPH_FAILED;
 }
 
 ge::graphStatus TilingPrepare4RmsNormQuantV3(gert::TilingParseContext* context)
 {
-    OP_CHECK_IF(nullptr == context, OP_LOGE("RmsNormQuantV3", "Context is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        nullptr == context,
+        ReportTilingStageError("RmsNormQuantV3",
+                               "TilingPrepare: TilingParseContext is null; the tiling framework contract is broken"),
+        return ge::GRAPH_FAILED);
     OP_LOGD(context, "Enter TilingPrepare4RmsNormQuantV3.");
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfoPtr == nullptr, OP_LOGE("RmsNormQuantV3", "PlatformInfoPtr is null"),
+    OP_CHECK_IF(platformInfoPtr == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
                 return ge::GRAPH_FAILED);
 
     auto compileInfoPtr = context->GetCompiledInfo<RmsNormQuantV2CompileInfo>();
-    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE("RmsNormQuantV3", "CompileInfoPtr is null"),
+    OP_CHECK_IF(compileInfoPtr == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "GetCompiledInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
                 return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
@@ -59,13 +82,36 @@ ge::graphStatus TilingPrepare4RmsNormQuantV3(gert::TilingParseContext* context)
 
 inline ge::graphStatus GenSimplifiedKey4RmsNormQuantV3(gert::TilingContext* context, ge::char_t* simplifiedKey)
 {
-    OP_CHECK_IF(nullptr == context, OP_LOGE("RmsNormQuantV3", "Context is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        nullptr == context,
+        ReportTilingStageError("RmsNormQuantV3",
+                               "GenSimplifiedKey: TilingContext is null; the tiling framework contract is broken"),
+        return ge::GRAPH_FAILED);
     OP_LOGD(context, "Enter RmsNormQuantV3 genSimplifiedKey.");
 
-    OP_CHECK_IF(nullptr == simplifiedKey, OP_LOGE(context, "SimplifiedKey is null"), return ge::GRAPH_FAILED);
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputDesc(X_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputDesc(GAMMA_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputDesc(SCALES1_INDEX));
+    OP_CHECK_IF(nullptr == simplifiedKey,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "GenSimplifiedKey: the simplified key buffer is null; check the tiling framework invocation"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        context->GetInputDesc(X_INDEX) == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input desc of required input x is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        context->GetInputDesc(GAMMA_INDEX) == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "gamma",
+                                                 "the input desc of required input gamma is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        context->GetInputDesc(SCALES1_INDEX) == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "scales1",
+                                                 "the input desc of required input scales1 is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     int32_t xDtype = static_cast<int32_t>(context->GetInputDesc(X_INDEX)->GetDataType());
     int32_t gammaDtype = static_cast<int32_t>(context->GetInputDesc(GAMMA_INDEX)->GetDataType());
@@ -111,10 +157,15 @@ inline ge::graphStatus GenSimplifiedKey4RmsNormQuantV3(gert::TilingContext* cont
         .append(std::to_string(y1Dtype));
     OP_LOGD(context, "SimpleKeyTemp: %s", simpleKeyTemp.c_str());
     errno_t err = strcat_s(simplifiedKey, DEST_MAX_V3, simpleKeyTemp.c_str());
-    OP_CHECK_IF((err != 0), OP_LOGE(context, "Error: strcat_s failed with error code %d.", err),
+    OP_CHECK_IF((err != 0),
+                ReportTilingStageError(context->GetNodeName(),
+                                       "GenSimplifiedKey: strcat_s failed with error code " + std::to_string(err)),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(strlen(simplifiedKey) > MAX_LEN_SIMPLIFIED_KEY_V3,
-                OP_LOGE(context, "Len of simplifiedKey exceeds max length."), return ge::GRAPH_FAILED);
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "GenSimplifiedKey: the simplified key exceeds the maximum length; check the op registration"),
+                return ge::GRAPH_FAILED);
     OP_LOGD(context, "Finish RmsNormQuantV3 genSimplifiedKey.");
     return ge::GRAPH_SUCCESS;
 }

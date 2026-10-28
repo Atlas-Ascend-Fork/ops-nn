@@ -19,6 +19,14 @@
 #include "rms_norm_grad_quant_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormGradQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 using namespace Ops::Base;
 static constexpr int64_t INPUT_NUM = 4;
 static constexpr int64_t INPUT_INDEX_0 = 0;
@@ -57,8 +65,8 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckShapeAllPositive(gert::Shape& 
 {
     for (size_t i = 0; i < shape.GetDimNum(); i++) {
         OP_CHECK_IF(shape.GetDim(i) < 0,
-                    OP_LOGE(context_->GetNodeName(), "Dim %lu of input should be positive, but actual %ld.", i,
-                            shape.GetDim(i)),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                           "Dim %lu of input should be positive, but actual %ld.", i, shape.GetDim(i)),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -67,14 +75,14 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckShapeAllPositive(gert::Shape& 
 ge::graphStatus RmsNormGradQuantEmptyTiling::CheckShapesEqual(gert::Shape& shape0, gert::Shape& shape1)
 {
     OP_CHECK_IF(shape0.GetDimNum() != shape1.GetDimNum(),
-                OP_LOGE(context_->GetNodeName(), "DimNum of shapes are not equal: %lu vs %lu", shape0.GetDimNum(),
-                        shape1.GetDimNum()),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DimNum of shapes are not equal: %lu vs %lu",
+                                       shape0.GetDimNum(), shape1.GetDimNum()),
                 return ge::GRAPH_FAILED);
 
     for (size_t i = 0; i < shape0.GetDimNum(); i++) {
         OP_CHECK_IF(shape0.GetDim(i) != shape1.GetDim(i),
-                    OP_LOGE(context_->GetNodeName(), "Dim %lu of shapes are not equal: %ld vs %ld", i, shape0.GetDim(i),
-                            shape1.GetDim(i)),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Dim %lu of shapes are not equal: %ld vs %ld", i,
+                                           shape0.GetDim(i), shape1.GetDim(i)),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -101,7 +109,12 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckDyAndXShapes()
 {
     // check dy
     auto inputShape = context_->GetInputShape(INPUT_INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
+    OP_CHECK_IF(
+        inputShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input shape/desc of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto storageShape0 = EnsureNotScalar(inputShape->GetStorageShape());
     if (CheckShapeAllPositive(storageShape0) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "dy", ToString(storageShape0).c_str(),
@@ -111,7 +124,12 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckDyAndXShapes()
 
     // check x
     inputShape = context_->GetInputShape(INPUT_INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
+    OP_CHECK_IF(
+        inputShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input shape/desc of required input x is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto storageShape1 = EnsureNotScalar(inputShape->GetStorageShape());
     if (CheckShapeAllPositive(storageShape1) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x", ToString(storageShape1).c_str(),
@@ -133,7 +151,12 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckRstdGammaShapes(gert::Shape& g
 {
     // check rstd
     auto inputShape = context_->GetInputShape(INPUT_INDEX_2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
+    OP_CHECK_IF(
+        inputShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "rstd",
+                                                 "the input shape/desc of required input rstd is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto storageShape2 = EnsureNotScalar(inputShape->GetStorageShape());
     if (CheckShapeAllPositive(storageShape2) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
@@ -144,7 +167,12 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckRstdGammaShapes(gert::Shape& g
 
     // check gamma
     inputShape = context_->GetInputShape(INPUT_INDEX_3);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
+    OP_CHECK_IF(inputShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "gamma",
+                    "the input shape/desc of required input gamma is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     gammaStorage = EnsureNotScalar(inputShape->GetStorageShape());
     if (CheckShapeAllPositive(gammaStorage) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
@@ -158,12 +186,19 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckRstdGammaShapes(gert::Shape& g
 ge::graphStatus RmsNormGradQuantEmptyTiling::CheckScalesOffsetXShapes(gert::Shape& gammaStorage)
 {
     CalcRowsAndCols(gammaStorage);
-    OP_CHECK_IF(cols_ == 0, OP_LOGE(context_->GetNodeName(), "The shape of input gamma should not be zero."),
+    OP_CHECK_IF(cols_ == 0,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "gamma", ToString(gammaStorage).c_str(),
+                                                      "the product of the dims of gamma must not be zero"),
                 return ge::GRAPH_FAILED);
 
     // check scalesX (required input)
     auto inputShape = context_->GetInputShape(INPUT_INDEX_4);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
+    OP_CHECK_IF(inputShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "scales_x",
+                    "the input shape/desc of required input scales_x is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     {
         auto storageShape4 = inputShape->GetStorageShape();
         if (storageShape4.GetDimNum() != 1 || storageShape4.GetDim(0) != 1) {
@@ -208,7 +243,12 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckInputsDtype()
 {
     for (int i = 0; i < INPUT_NUM; i++) {
         auto inputDesc = context_->GetInputDesc(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+        OP_CHECK_IF(
+            inputDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), inputNames[i].c_str(),
+                                                     "the input desc of a required input is missing in the tiling "
+                                                     "context; check that the graph node provides all required inputs"),
+            return ge::GRAPH_FAILED);
         // check dtype
         auto dtype = inputDesc->GetDataType();
         if (dtype != ge::DataType::DT_FLOAT16 && dtype != ge::DataType::DT_BF16 && dtype != ge::DataType::DT_FLOAT) {
@@ -220,7 +260,12 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckInputsDtype()
 
     // check scalesX (required input)
     auto scaleXDesc = context_->GetInputDesc(INPUT_INDEX_4);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, scaleXDesc);
+    OP_CHECK_IF(scaleXDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "scales_x",
+                    "the input shape/desc of required input scales_x is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     {
         auto scaleXDtype = scaleXDesc->GetDataType();
         if (scaleXDtype != ge::DataType::DT_FLOAT && scaleXDtype != ge::DataType::DT_BF16 &&
@@ -246,7 +291,12 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckInputsDtype()
 
     // check dx dtype (scales_x is required, always quant mode)
     auto emptyDxDesc = context_->GetOutputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, emptyDxDesc);
+    OP_CHECK_IF(
+        emptyDxDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dx",
+                                                 "the output desc of required output dx is missing in the tiling "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     auto edxType = emptyDxDesc->GetDataType();
     OP_CHECK_IF((edxType != ge::DataType::DT_HIFLOAT8 && edxType != ge::DataType::DT_INT8),
                 OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "dx", ToString(edxType).c_str(), "HIFLOAT8 or INT8"),
@@ -254,7 +304,12 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckInputsDtype()
 
     // check dgamma dtype
     auto emptyDgammaDesc = context_->GetOutputDesc(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, emptyDgammaDesc);
+    OP_CHECK_IF(
+        emptyDgammaDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dgamma",
+                                                 "the output desc of required output dgamma is missing in the tiling "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     auto eDgammaType = emptyDgammaDesc->GetDataType();
     OP_CHECK_IF((eDgammaType != ge::DataType::DT_FLOAT),
                 OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "dgamma", ToString(eDgammaType).c_str(), "FLOAT"),
@@ -266,36 +321,53 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckInputsDtype()
 ge::graphStatus RmsNormGradQuantEmptyTiling::GetShapeAttrsInfo()
 {
     if (context_ == nullptr) {
-        OP_LOGE(OP_NAME, "Tiling context is null");
+        ReportTilingStageError("RmsNormGradQuant",
+                               "GetShapeAttrsInfo: TilingContext is null; the tiling framework contract is broken");
         return ge::GRAPH_FAILED;
     }
 
     // check inputs shape
     if (CheckInputsShape() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Inputs shape invalid.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Inputs shape invalid.");
         return ge::GRAPH_FAILED;
     }
     // check inputs dtype
     if (CheckInputsDtype() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Inputs dtype invalid.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Inputs dtype invalid.");
         return ge::GRAPH_FAILED;
     }
 
     // set Attrs
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     // check quant
     const char* quantMode = attrs->GetAttrPointer<char>(ATTR_INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, quantMode);
+    OP_CHECK_IF(
+        quantMode == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "the required attr quant_mode is missing in the tiling context; set the quant_mode attribute on the node"),
+        return ge::GRAPH_FAILED);
     if (strcmp(quantMode, "static") == 0) {
         quantMode_ = STATIC_QUANT_MODE;
     } else {
-        OP_CHECK_IF((true), OP_LOGE(context_->GetNodeName(), "the attr of quant mode should be static."),
+        OP_CHECK_IF((true),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "quant_mode", quantMode,
+                                                          "the value of attr quant_mode must be \"static\""),
                     return ge::GRAPH_FAILED);
     }
     // set divMode
     const bool* divModePtr = attrs->GetBool(ATTR_INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, divModePtr);
+    OP_CHECK_IF(
+        divModePtr == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "the required attr div_mode is missing in the tiling context; set the div_mode attribute on the node"),
+        return ge::GRAPH_FAILED);
     divMode_ = *divModePtr ? rms_norm_grad_quant::ComputeModeDivMode::DIV_MODE :
                              rms_norm_grad_quant::ComputeModeDivMode::NOT_DIV_MODE;
     return ge::GRAPH_SUCCESS;
@@ -332,20 +404,36 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::PostTiling()
     context_->SetBlockDim(aivCoreNum_);
     auto emptyRawData = context_->GetRawTilingData();
     OP_CHECK_IF(sizeof(tilingData_) > emptyRawData->GetCapacity(),
-                OP_LOGE(context_->GetNodeName(), "actual tiling data size %zu > context tiling data size %zu",
-                        sizeof(tilingData_), emptyRawData->GetCapacity()),
+                ReportTilingStageError(context_->GetNodeName(), "PostTiling: tiling data size " +
+                                                                    std::to_string(sizeof(tilingData_)) +
+                                                                    " exceeds the tiling buffer capacity " +
+                                                                    std::to_string(emptyRawData->GetCapacity())),
                 return ge::GRAPH_FAILED);
     auto emptyCapacity = emptyRawData->GetCapacity();
     void* emptyDataPtr = emptyRawData->GetData();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, emptyDataPtr);
+    OP_CHECK_IF(
+        emptyDataPtr == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "PostTiling: the data pointer of the raw tiling buffer is null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     void* emptyStructPtr = static_cast<void*>(&tilingData_);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, emptyStructPtr);
+    OP_CHECK_IF(emptyStructPtr == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "PostTiling: emptyStructPtr is null."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(memcpy_s(emptyDataPtr, emptyCapacity, emptyStructPtr, sizeof(tilingData_)) != 0,
-                OP_LOGE(context_->GetNodeName(), "Set tiling data is failed!"), return ge::GRAPH_FAILED);
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "PostTiling: memcpy_s to the tiling buffer failed, dest capacity=" + std::to_string(emptyCapacity)),
+                return ge::GRAPH_FAILED);
     emptyRawData->SetDataSize(sizeof(tilingData_));
 
     size_t* emptyWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, emptyWorkspace);
+    OP_CHECK_IF(emptyWorkspace == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     emptyWorkspace[0] = workspaceSize_;
     return ge::GRAPH_SUCCESS;
 }
@@ -355,7 +443,12 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::DoLibApiTiling() { return ge::GRAPH
 ge::graphStatus RmsNormGradQuantEmptyTiling::GetWorkspaceSize()
 {
     fe::PlatFormInfos* platformInfoPtr = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfoPtr);
+    OP_CHECK_IF(
+        platformInfoPtr == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "GetPlatformInfo: platform info is null; check the platform info query and the OPP/SoC installation"),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     workspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
     return ge::GRAPH_SUCCESS;
@@ -409,12 +502,16 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CalcTilingDataDgamma()
         // UB最多存放多少列
         int maxRowsNumDG_ = ubSize_ / (BUFFER_NUM * FLOATBYTESIZE);
         OP_CHECK_IF(maxRowsNumDG_ <= 0,
-                    OP_LOGE(context_->GetNodeName(), "The maxRowsNumDG_ size is neg: %d.", maxRowsNumDG_),
+                    ReportTilingStageError(context_->GetNodeName(),
+                                           "CalcTilingDataDgamma: maxRowsNumDG_ is " + std::to_string(maxRowsNumDG_) +
+                                               "; the UB cannot fit the minimum dgamma row buffer"),
                     return ge::GRAPH_FAILED);
         colsPerUBDG_ = std::pow(TWO, NearestLowerPowerOfTwo(maxRowsNumDG_));
-        OP_CHECK_IF(colsPerUBDG_ <= 0,
-                    OP_LOGE(context_->GetNodeName(), "The colsPerUBDG_ size is invalid: %d.", colsPerUBDG_),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            colsPerUBDG_ <= 0,
+            ReportTilingStageError(context_->GetNodeName(), "CalcTilingDataDgamma: colsPerUBDG_ is " +
+                                                                std::to_string(colsPerUBDG_) + "; invalid UB split"),
+            return ge::GRAPH_FAILED);
         coreUbBlockCount_ = (colsPerCoreDG_ + colsPerUBDG_ - 1) / colsPerUBDG_ - 1;
         tailUbCols_ = colsPerCoreDG_ - colsPerUBDG_ * coreUbBlockCount_;
         if (colsPerUBDG_ > colsLastCoreDG_) {

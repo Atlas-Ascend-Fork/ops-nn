@@ -19,6 +19,7 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
+#include "log/log.h"
 #include "norm/norm_common/op_host/op_api/norm_tensor_util.h"
 #include "quantized_batch_norm.h"
 #include "aclnn_kernels/cast.h"
@@ -34,6 +35,22 @@
 #include "aclnn_quantized_batch_norm.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,20 +63,20 @@ static const std::initializer_list<op::DataType> DTYPE_SUPPORT_LIST_CURRENT = {
 
 static bool CheckNotNull(const aclTensor* input, const aclTensor* out, const aclTensor* mean, const aclTensor* var)
 {
-    OP_CHECK_NULL(input, return false);
-    OP_CHECK_NULL(out, return false);
-    OP_CHECK_NULL(mean, return false);
-    OP_CHECK_NULL(var, return false);
+    OP_CHECK(input != nullptr, ReportNullPointerError(__func__, "input"), return false);
+    OP_CHECK(out != nullptr, ReportNullPointerError(__func__, "out"), return false);
+    OP_CHECK(mean != nullptr, ReportNullPointerError(__func__, "mean"), return false);
+    OP_CHECK(var != nullptr, ReportNullPointerError(__func__, "var"), return false);
     return true;
 }
 
 static bool CheckScalarNotNull(const aclScalar* inputScale, const aclScalar* inputZeroPoint,
                                const aclScalar* outputScale, const aclScalar* outputZeroPoint)
 {
-    OP_CHECK_NULL(inputScale, return false);
-    OP_CHECK_NULL(inputZeroPoint, return false);
-    OP_CHECK_NULL(outputScale, return false);
-    OP_CHECK_NULL(outputZeroPoint, return false);
+    OP_CHECK(inputScale != nullptr, ReportNullPointerError(__func__, "inputScale"), return false);
+    OP_CHECK(inputZeroPoint != nullptr, ReportNullPointerError(__func__, "inputZeroPoint"), return false);
+    OP_CHECK(outputScale != nullptr, ReportNullPointerError(__func__, "outputScale"), return false);
+    OP_CHECK(outputZeroPoint != nullptr, ReportNullPointerError(__func__, "outputZeroPoint"), return false);
     return true;
 }
 
@@ -85,11 +102,6 @@ static aclnnStatus CheckOthersNotEmpty(const aclTensor* weight, const aclTensor*
 
 static bool CheckDtypeValid(const aclTensor* input, const aclTensor* out)
 {
-    auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
-    if (DTYPE_SUPPORT_LIST_CURRENT.size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented", op::ToString(socVersion).GetString());
-        return false;
-    }
     OP_CHECK_DTYPE_NOT_SUPPORT(input, DTYPE_SUPPORT_LIST_CURRENT, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(out, DTYPE_SUPPORT_LIST_CURRENT, return false);
 
@@ -135,13 +147,17 @@ static bool CheckScalarDtypeValid(const aclScalar* inputScale, const aclScalar* 
 static bool CheckFormat(const aclTensor* input, const aclTensor* out)
 {
     if (input->GetStorageFormat() != out->GetStorageFormat()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format of input and output should be equal, input [%s], output [%s].",
-                op::ToString(input->GetStorageFormat()).GetString(), op::ToString(out->GetStorageFormat()).GetString());
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON("aclnnQuantizedBatchNorm", "input, output",
+                                                (op::ToString(input->GetStorageFormat()).GetString() +
+                                                 std::string(", ") + op::ToString(out->GetStorageFormat()).GetString())
+                                                    .c_str(),
+                                                "The storage formats of input and output must be the same");
         return false;
     }
 
     if (op::IsPrivateFormat(input->GetStorageFormat())) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support NCHW.");
+        OP_LOGE_FOR_INVALID_FORMAT("aclnnQuantizedBatchNorm", "input",
+                                   op::ToString(input->GetStorageFormat()).GetString(), "NCHW");
         return false;
     }
     return true;
@@ -151,19 +167,27 @@ static bool CheckOtherShape(int dimC, const aclTensor* weight, const aclTensor* 
                             const aclTensor* var)
 {
     if (weight != nullptr && (weight->GetViewShape().GetDimNum() != 1 || weight->GetViewShape()[0] != dimC)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Dim of weight should be one and shape is channel num of input.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnQuantizedBatchNorm", "weight",
+                                              op::ToString(weight->GetViewShape()).GetString(),
+                                              "weight must be a 1-D tensor whose length equals dim 1 (C) of input");
         return false;
     }
     if (bias != nullptr && (bias->GetViewShape().GetDimNum() != 1 || bias->GetViewShape()[0] != dimC)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Dim of bias should be one and shape is channel num of input.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnQuantizedBatchNorm", "bias",
+                                              op::ToString(bias->GetViewShape()).GetString(),
+                                              "bias must be a 1-D tensor whose length equals dim 1 (C) of input");
         return false;
     }
     if (mean != nullptr && (mean->GetViewShape().GetDimNum() != 1 || mean->GetViewShape()[0] != dimC)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Dim of mean should be one and shape is channel num of input.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnQuantizedBatchNorm", "mean",
+                                              op::ToString(mean->GetViewShape()).GetString(),
+                                              "mean must be a 1-D tensor whose length equals dim 1 (C) of input");
         return false;
     }
     if (var != nullptr && (var->GetViewShape().GetDimNum() != 1 || var->GetViewShape()[0] != dimC)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Dim of var should be one and shape is channel num of input.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnQuantizedBatchNorm", "var",
+                                              op::ToString(var->GetViewShape()).GetString(),
+                                              "var must be a 1-D tensor whose length equals dim 1 (C) of input");
         return false;
     }
 
@@ -172,7 +196,13 @@ static bool CheckOtherShape(int dimC, const aclTensor* weight, const aclTensor* 
 
 static bool CheckShape(const aclTensor* input, const aclTensor* out)
 {
-    OP_CHECK_SHAPE_NOT_EQUAL(out, input, return false);
+    OP_CHECK(out->GetViewShape() == input->GetViewShape(),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnQuantizedBatchNorm", "out,input",
+                                                    (std::string(op::ToString(out->GetViewShape()).GetString()) + ", " +
+                                                     op::ToString(input->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shapes of out and input should be the same"),
+             return false);
     return true;
 }
 

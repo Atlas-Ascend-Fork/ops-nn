@@ -41,7 +41,12 @@ const aclTensor* RmsNormQuant(const aclTensor* x, const aclTensor* gamma, const 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(RmsNormQuant, OP_INPUT(x, gamma, beta, scale, offset), OP_OUTPUT(y),
                                            OP_ATTR(static_cast<float>(epsilon), false, false, dstType));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "RmsNormQuant ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        // 下层已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+        OP_LOGE_WITHOUT_REPORT(ret,
+                               "RmsNormQuant: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                               "construction, ret=%d. See the first error reported by the failing "
+                               "stage.",
+                               static_cast<int32_t>(ret));
         return nullptr;
     }
     return y;
@@ -65,7 +70,12 @@ const std::array<aclTensor*, 2> RmsNormQuantV2(const aclTensor* x, const aclTens
         OP_INPUT(x, gamma, scales1, scales2Optional, zeroPoints1Optional, zeroPoints2Optional, betaOptional),
         OP_OUTPUT(y1, y2), OP_ATTR(static_cast<float>(epsilon), divMode, dstType));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "RmsNormQuantV2 ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        // 下层已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+        OP_LOGE_WITHOUT_REPORT(ret,
+                               "RmsNormQuantV2: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                               "construction, ret=%d. See the first error reported by the failing "
+                               "stage.",
+                               static_cast<int32_t>(ret));
         return std::array<aclTensor*, 2>{nullptr, nullptr};
     }
     return {y1, y2};

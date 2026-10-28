@@ -330,16 +330,16 @@ static bool CheckInputShape4RmsNormGrad(const gert::TilingContext* context)
     size_t dxDimNum = dxShape->GetStorageShape().GetDimNum();
     size_t dgammaDimNum = dgammaShape->GetStorageShape().GetDimNum();
 
-    OP_CHECK_IF(!CheckInputDim(context, dyDimNum, xDimNum, gammaDimNum), OP_LOGE(context, "Input dim invalid."),
-                return false);
+    OP_CHECK_IF(!CheckInputDim(context, dyDimNum, xDimNum, gammaDimNum),
+                OP_LOGE_WITHOUT_REPORT(context, "Input dim invalid."), return false);
     OP_CHECK_IF(!CheckOutputDim(context, dyDimNum, dxDimNum, gammaDimNum, dgammaDimNum),
-                OP_LOGE(context, "Output dim invalid."), return false);
+                OP_LOGE_WITHOUT_REPORT(context, "Output dim invalid."), return false);
     OP_CHECK_IF(!CheckInputAndOutputShape(context, dyShape, xShape, dxShape),
-                OP_LOGE(context, "Input/Output shape invalid."), return false);
-    OP_CHECK_IF(!CheckRstdShape(context, xShape, rstdShape, gammaDimNum), OP_LOGE(context, "Rstd shape invalid."),
-                return false);
+                OP_LOGE_WITHOUT_REPORT(context, "Input/Output shape invalid."), return false);
+    OP_CHECK_IF(!CheckRstdShape(context, xShape, rstdShape, gammaDimNum),
+                OP_LOGE_WITHOUT_REPORT(context, "Rstd shape invalid."), return false);
     OP_CHECK_IF(!CheckGammaAndDgammaShape(context, gammaShape, dgammaShape, dyShape),
-                OP_LOGE(context, "Gamma/dGamma shape invalid."), return false);
+                OP_LOGE_WITHOUT_REPORT(context, "Gamma/dGamma shape invalid."), return false);
     return true;
 }
 
@@ -455,7 +455,7 @@ static void UpdateShapeInfo(gert::TilingContext* context, uint32_t& col_val, uin
 
 static ge::graphStatus Tiling4RmsNormGrad(gert::TilingContext* context)
 {
-    OP_CHECK_IF(!CheckInputShape4RmsNormGrad(context), OP_LOGE(context, "Input shape invalid."),
+    OP_CHECK_IF(!CheckInputShape4RmsNormGrad(context), OP_LOGE_WITHOUT_REPORT(context, "Input shape invalid."),
                 return ge::GRAPH_FAILED);
     context->SetScheduleMode(SCHEDULE_MODE);
     RmsNormGradTilingData tiling;

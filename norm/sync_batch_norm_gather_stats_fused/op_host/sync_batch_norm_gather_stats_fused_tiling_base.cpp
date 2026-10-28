@@ -18,6 +18,15 @@
 using namespace Ops::Base;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "SyncBatchNormGatherStatsFused",
+                                               reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static const size_t INPUT_IDX_ZERO = 0;
 static const size_t INPUT_IDX_ONE = 1;
 static const size_t INPUT_IDX_TWO = 2;
@@ -36,23 +45,48 @@ static const std::vector<std::string> outputIdx = {"mean_all_out", "invstd_all_o
 ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::ValidateInputDtypes()
 {
     auto meanDesc = context_->GetInputDesc(INPUT_IDX_ZERO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, meanDesc);
+    OP_CHECK_IF(
+        meanDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "mean",
+                                                 "the input desc of required input mean is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.dtype = meanDesc->GetDataType();
 
     auto invstdDesc = context_->GetInputDesc(INPUT_IDX_ONE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, invstdDesc);
+    OP_CHECK_IF(
+        invstdDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "invstd",
+                                                 "the input desc of required input invstd is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     ge::DataType invstdDtype = invstdDesc->GetDataType();
 
     auto countsDesc = context_->GetInputDesc(INPUT_IDX_TWO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, countsDesc);
+    OP_CHECK_IF(
+        countsDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "counts",
+                                                 "the input desc of required input counts is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     ge::DataType countsDtype = countsDesc->GetDataType();
 
     auto runningMeanDesc = context_->GetInputDesc(INPUT_IDX_THREE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runningMeanDesc);
+    OP_CHECK_IF(runningMeanDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "running_mean",
+                    "the input desc of required input running_mean is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     ge::DataType runningMeanDtype = runningMeanDesc->GetDataType();
 
     auto runningVarDesc = context_->GetInputDesc(INPUT_IDX_FOUR);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runningVarDesc);
+    OP_CHECK_IF(runningVarDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "running_var",
+                    "the input desc of required input running_var is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     ge::DataType runningVarDtype = runningVarDesc->GetDataType();
 
     OP_CHECK_IF((commonParams.dtype != ge::DataType::DT_FLOAT) && (commonParams.dtype != ge::DataType::DT_FLOAT16) &&
@@ -87,7 +121,12 @@ ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::ValidateInputDtypes()
 ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::ValidateInputShapes()
 {
     auto mean = context_->GetInputShape(INPUT_IDX_ZERO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, mean);
+    OP_CHECK_IF(
+        mean == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "mean",
+                                                 "the input shape of required input mean is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto meanShape = mean->GetStorageShape();
     int64_t meanDimNum = meanShape.GetDimNum();
 
@@ -112,23 +151,40 @@ ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::ValidateInputShapes()
 ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::GetAndValidateAttrs()
 {
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
 
     const float* momentumPtr = attrs->GetAttrPointer<float>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, momentumPtr);
+    OP_CHECK_IF(
+        momentumPtr == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "the required attr momentum is missing in the tiling context; check the attr registration on the node"),
+        return ge::GRAPH_FAILED);
     commonParams.momentum = *momentumPtr;
 
     const float* epsPtr = attrs->GetAttrPointer<float>(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, epsPtr);
+    OP_CHECK_IF(epsPtr == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "the required attr eps is missing in the tiling context; check the attr registration on the node"),
+                return ge::GRAPH_FAILED);
     commonParams.eps = *epsPtr;
 
     OP_CHECK_IF((commonParams.momentum < 0.0f) || (commonParams.momentum > 1.0f),
-                OP_LOGE(context_->GetNodeName(), "momentum must be in range [0, 1], got %f", commonParams.momentum),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "momentum",
+                                                      std::to_string(commonParams.momentum).c_str(),
+                                                      "the value of attr momentum must be in range [0, 1]"),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(commonParams.eps <= 0.0f,
-                OP_LOGE(context_->GetNodeName(), "eps must be positive, got %f", commonParams.eps),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        commonParams.eps <= 0.0f,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "eps", std::to_string(commonParams.eps).c_str(),
+                                              "the value of attr eps must be greater than 0"),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -166,7 +222,11 @@ ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::GetShapeAttrsInfo()
 ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::GetPlatformInfo()
 {
     auto compileInfo = context_->GetCompileInfo<SyncBatchNormGatherStatsFusedCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
 
     commonParams.coreNum = compileInfo->coreNum;
     commonParams.ubSizePlatForm = compileInfo->ubSizePlatForm;
@@ -174,13 +234,16 @@ ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::GetPlatformInfo()
     commonParams.vlFp32 = compileInfo->vlFp32;
 
     OP_CHECK_IF(commonParams.coreNum <= 0,
-                OP_LOGE(context_->GetNodeName(), "coreNum must be positive, got %u", commonParams.coreNum),
+                ReportTilingStageError(context_->GetNodeName(), "GetCoreNumAiv returned " +
+                                                                    std::to_string(commonParams.coreNum) +
+                                                                    "; check the platform info and SoC"),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(
-        commonParams.ubSizePlatForm <= 0,
-        OP_LOGE(context_->GetNodeName(), "ubSizePlatForm must be positive, got %lu", commonParams.ubSizePlatForm),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(commonParams.ubSizePlatForm <= 0,
+                ReportTilingStageError(context_->GetNodeName(), "GetCoreMemSize(UB) returned " +
+                                                                    std::to_string(commonParams.ubSizePlatForm) +
+                                                                    "; check the platform info and SoC"),
+                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -194,7 +257,10 @@ ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::DoLibApiTiling() { retu
 ge::graphStatus SyncBatchNormGatherStatsFusedTilingBase::GetWorkspaceSize()
 {
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "GetWorkspaceSizes returned null; check the TilingContext construction"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = BASE_WSP_SIZE;
 
     return ge::GRAPH_SUCCESS;

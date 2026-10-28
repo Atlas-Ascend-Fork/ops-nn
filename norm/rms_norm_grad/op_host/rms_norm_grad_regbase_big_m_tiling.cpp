@@ -19,6 +19,13 @@
 #include "rms_norm_grad_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
 
 constexpr static int64_t CONST_ZERO = 0;
 constexpr static int64_t CONST_ONE = 1;
@@ -210,12 +217,22 @@ uint64_t RmsNormGradBigMTiling::GetTilingKey() const { return tilingKey_; }
 ge::graphStatus RmsNormGradBigMTiling::GetWorkspaceSize()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "GetWorkspaceSize: platform info is null; check the platform info query and the OPP/SoC installation"),
+        return ge::GRAPH_FAILED);
 
     constexpr int64_t DEFAULT_WORKSPACE_SIZE = 16 * 1024 * 1024;
     int64_t wsSize = usedCoreNumDgamma_ * cols_ * sizeof(float) + DEFAULT_WORKSPACE_SIZE;
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(
+        workspaces == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetWorkspaceSize: GetWorkspaceSizes(1) returned null; required output-slot count is 1. "
+                               "Check the TilingContext construction, not the user device allocation"),
+        return ge::GRAPH_FAILED);
     workspaces[0] = static_cast<size_t>(wsSize);
     return ge::GRAPH_SUCCESS;
 }

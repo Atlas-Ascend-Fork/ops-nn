@@ -1396,3 +1396,262 @@ TEST_F(RmsNormQuantV3TilingTest, rms_norm_quant_v3_tiling_015)
 
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
 }
+
+// ============================================================================
+// Error code verification UT for E*9*** remediation (2026-10-22)
+// Captures ErrorManager output via weak-symbol override; asserts no EZ9999.
+// ============================================================================
+#include "infer_datatype_context_faker.h"
+
+namespace error_message {
+struct CapturedError {
+    std::string code;
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+};
+static thread_local CapturedError g_last_error;
+static thread_local int g_report_count = 0;
+static thread_local std::vector<std::string> g_all_codes; // 记录用例全程上报过的全部错误码
+__attribute__((weak)) void ResetCapture()
+{
+    g_last_error.code.clear();
+    g_last_error.keys.clear();
+    g_last_error.values.clear();
+    g_report_count = 0;
+    g_all_codes.clear();
+}
+__attribute__((weak)) std::string GetLastError() { return g_last_error.code; }
+__attribute__((weak)) int GetReportCount() { return g_report_count; }
+__attribute__((weak)) bool HasCode(const std::string& c)
+{
+    for (const auto& code : g_all_codes) {
+        if (code == c) {
+            return true;
+        }
+    }
+    return false;
+}
+__attribute__((weak)) int32_t ReportPredefinedErrMsg(const char* error_code, const std::vector<const char*>& key,
+                                                     const std::vector<const char*>& value)
+{
+    g_last_error.code = error_code ? error_code : "";
+    if (error_code != nullptr) {
+        g_all_codes.push_back(error_code);
+    }
+    g_last_error.keys.clear();
+    g_last_error.values.clear();
+    for (const auto& k : key)
+        g_last_error.keys.push_back(k ? k : "");
+    for (const auto& v : value)
+        g_last_error.values.push_back(v ? v : "");
+    g_report_count++;
+    return 0;
+}
+__attribute__((weak)) int32_t ReportPredefinedErrMsg(const char* error_code)
+{
+    g_last_error.code = error_code ? error_code : "";
+    if (error_code != nullptr) {
+        g_all_codes.push_back(error_code);
+    }
+    g_report_count++;
+    return 0;
+}
+__attribute__((weak)) int32_t ReportInnerErrMsg(const char* f, const char* fn, uint32_t l, const char* ec,
+                                                const char* fmt, ...)
+{
+    g_last_error.code = ec ? ec : "";
+    if (ec != nullptr) {
+        g_all_codes.push_back(ec);
+    }
+    g_report_count++;
+    return 0;
+}
+} // namespace error_message
+
+// 验证弱符号截获通道在本二进制内生效: 若链接格局变化导致强定义压制弱定义, 该用例显式失败,
+// 避免EZ9999守护用例静默失效
+TEST_F(RmsNormQuantV3TilingTest, error_capture_channel_self_check)
+{
+    error_message::ResetCapture();
+    const std::vector<const char*> selfKey = {"self_check"};
+    const std::vector<const char*> selfValue = {"capture channel liveness"};
+    error_message::ReportPredefinedErrMsg("EZ0000", selfKey, selfValue);
+    EXPECT_TRUE(error_message::HasCode("EZ0000")) << "capture channel is dead: weak override suppressed";
+    EXPECT_EQ(error_message::GetReportCount(), 1);
+    error_message::ResetCapture();
+}
+#define EXPECT_ERROR_CODE(expected)                    \
+    EXPECT_EQ(error_message::GetLastError(), expected) \
+        << "Expected " << expected << " got [" << error_message::GetLastError() << "]"
+
+// After each test, verify no EZ9999 internal code was captured
+class Rnq3NoEz9999Check : public testing::EmptyTestEventListener {
+public:
+    void OnTestStart(const testing::TestInfo& test_info) override
+    {
+        error_message::ResetCapture(); // 清除上一用例残留捕获, 避免多算子联合UT下跨套件级联误判
+    }
+    void OnTestEnd(const testing::TestInfo& test_info) override
+    {
+        // 只守护本文件的测试套件, 框架层或其他算子用例的EZ9999不跨套件追责
+        static const char* const guardedSuites[] = {"RmsNormQuantV3TilingTest"};
+        bool guarded = false;
+        for (const char* s : guardedSuites) {
+            if (std::string(test_info.test_suite_name()) == s) {
+                guarded = true;
+                break;
+            }
+        }
+        if (!guarded) {
+            return;
+        }
+        if (error_message::HasCode("EZ9999")) {
+            ADD_FAILURE() << "EZ9999 captured during test [" << test_info.name() << "] in " << test_info.file();
+        }
+    }
+};
+static const auto _inst_rnq3 = []() {
+    testing::UnitTest::GetInstance()->listeners().Append(new Rnq3NoEz9999Check());
+    return 0;
+}();
+
+TEST_F(RmsNormQuantV3TilingTest, err_non_regbase_soc_ez3002)
+{
+    gert::StorageShape input_shape_x = {{24, 1, 2560}, {24, 1, 2560}};
+    gert::StorageShape gamma_shape = {{2560}, {2560}};
+    gert::StorageShape scales_shape = {{2560}, {2560}};
+    gert::StorageShape out_shape_y = {{24, 1, 2560}, {24, 1, 2560}};
+    gert::StorageShape out_shape_rstd = {{24, 1, 1}, {24, 1, 1}};
+
+    std::string op_type("RmsNormQuantV3");
+    auto* op_impl = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str());
+    ASSERT_NE(op_impl, nullptr);
+    ASSERT_NE(op_impl->tiling, nullptr);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    static optiling::RmsNormQuantV3CompileInfo compile_info_err;
+    compile_info_err.totalCoreNum = 64;
+    compile_info_err.maxUbSize = 245760;
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(7, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&input_shape_x, &gamma_shape, &scales_shape, &scales_shape, &scales_shape,
+                                    &scales_shape, &gamma_shape})
+                      .OutputShapes({&out_shape_y, &out_shape_y, &out_shape_rstd})
+                      .CompileInfo(&compile_info_err)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)},
+                                  {"div_mode", Ops::NN::AnyValue::CreateFrom<bool>(true)},
+                                  {"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(2)},
+                                  {"output_rstd", Ops::NN::AnyValue::CreateFrom<bool>(true)}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    // NpuArch 2201 (Ascend910B) is not a Regbase-platform SoC -> EZ3002
+    std::map<std::string, std::string> non_regbase_version = {{"Short_SoC_version", "Ascend910B"}, {"NpuArch", "2201"}};
+    tiling_context->GetPlatformInfo()->SetPlatformRes("version", non_regbase_version);
+
+    error_message::ResetCapture();
+    EXPECT_EQ(op_impl->tiling(tiling_context), ge::GRAPH_FAILED);
+    EXPECT_ERROR_CODE("EZ3002");
+}
+
+TEST_F(RmsNormQuantV3TilingTest, err_simplified_key_null_ez1008)
+{
+    gert::StorageShape input_shape_x = {{24, 1, 2560}, {24, 1, 2560}};
+    gert::StorageShape gamma_shape = {{2560}, {2560}};
+    gert::StorageShape scales_shape = {{2560}, {2560}};
+    gert::StorageShape out_shape_y = {{24, 1, 2560}, {24, 1, 2560}};
+    gert::StorageShape out_shape_rstd = {{24, 1, 1}, {24, 1, 1}};
+
+    std::string op_type("RmsNormQuantV3");
+    auto* op_impl = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str());
+    ASSERT_NE(op_impl, nullptr);
+    ASSERT_NE(op_impl->gen_simplifiedkey, nullptr);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    static optiling::RmsNormQuantV3CompileInfo compile_info_key;
+    compile_info_key.totalCoreNum = 64;
+    compile_info_key.maxUbSize = 245760;
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(7, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&input_shape_x, &gamma_shape, &scales_shape, &scales_shape, &scales_shape,
+                                    &scales_shape, &gamma_shape})
+                      .OutputShapes({&out_shape_y, &out_shape_y, &out_shape_rstd})
+                      .CompileInfo(&compile_info_key)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)},
+                                  {"div_mode", Ops::NN::AnyValue::CreateFrom<bool>(true)},
+                                  {"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(2)},
+                                  {"output_rstd", Ops::NN::AnyValue::CreateFrom<bool>(true)}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    error_message::ResetCapture();
+    EXPECT_EQ(op_impl->gen_simplifiedkey(tiling_context, nullptr), ge::GRAPH_FAILED);
+    EXPECT_ERROR_CODE("EZ1008");
+}
+
+TEST_F(RmsNormQuantV3TilingTest, err_dst_type_unsupported_ez0026)
+{
+    const auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("RmsNormQuantV3");
+    ASSERT_NE(opImpl, nullptr);
+    ASSERT_NE(opImpl->infer_datatype, nullptr);
+
+    gert::InferDataTypeContextFaker faker;
+    faker.IrInputNum(3)
+        .NodeIoNum(3, 3)
+        .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(0, ge::DT_UNDEFINED, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(1, ge::DT_UNDEFINED, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(2, ge::DT_UNDEFINED, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-6F)},
+                    {"div_mode", Ops::NN::AnyValue::CreateFrom<bool>(true)},
+                    {"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(static_cast<int64_t>(ge::DT_DOUBLE))},
+                    {"output_rstd", Ops::NN::AnyValue::CreateFrom<bool>(false)}});
+    auto contextHolder = faker.Build();
+    auto* context = contextHolder.GetContext<gert::InferDataTypeContext>();
+
+    error_message::ResetCapture();
+    EXPECT_EQ(opImpl->infer_datatype(context), ge::GRAPH_FAILED);
+    EXPECT_ERROR_CODE("EZ0026");
+}

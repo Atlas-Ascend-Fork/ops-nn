@@ -93,7 +93,9 @@ static ge::graphStatus InferShape4RmsNormQuant(gert::InferShapeContext* context)
     bool EN_QUANT = true;
     bool EN_PRE_POST = false;
     if (context == nullptr) {
-        OP_LOGE("InferShape4RmsNormQuant", "Context is nullptr, check failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "RmsNormQuant", "context",
+            "InferShape: InferShapeContext is null; the infer-shape framework contract is broken");
         return ge::GRAPH_FAILED;
     }
 
@@ -109,13 +111,13 @@ static ge::graphStatus InferShape4RmsNormQuant(gert::InferShapeContext* context)
 
     if (GetInputDimNum(INPUT_BETA, context) != 0) {
         if (GetInputDimNum(INPUT_GAMMA, context) != GetInputDimNum(INPUT_BETA, context)) {
-            OP_LOGE(OP_NAME, "gamma_shape are not equal to beta_shape");
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "gamma_shape are not equal to beta_shape");
             return ge::GRAPH_FAILED;
         }
 
         for (size_t i = 0; i < GetInputDimNum(INPUT_GAMMA, context); i++) {
             if (GetInputDim(INPUT_GAMMA, i, context) != GetInputDim(INPUT_BETA, i, context)) {
-                OP_LOGE(OP_NAME, "gamma_shape dim are not equal to beta_shape dim.");
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "gamma_shape dim are not equal to beta_shape dim.");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -123,19 +125,19 @@ static ge::graphStatus InferShape4RmsNormQuant(gert::InferShapeContext* context)
 
     if (GetInputDim(INPUT_GAMMA, GetInputDimNum(INPUT_GAMMA, context) - 1, context) !=
         GetInputDim(INPUT_X, GetInputDimNum(INPUT_X, context) - 1, context)) {
-        OP_LOGE(OP_NAME, "gamma_shape last dim are not equal to x_shape last dim.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "gamma_shape last dim are not equal to x_shape last dim.");
         return ge::GRAPH_FAILED;
     }
 
     if (EN_PRE_POST) {
         constexpr uint32_t INPUT_RES_IN = 3;
         if (GetInputDimNum(INPUT_X, context) != GetInputDimNum(INPUT_RES_IN, context)) {
-            OP_LOGE(OP_NAME, "x shape are not equal to resIn shape");
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "x shape are not equal to resIn shape");
             return ge::GRAPH_FAILED;
         }
         for (size_t i = 0; i < GetInputDimNum(INPUT_X, context); i++) {
             if (GetInputDim(INPUT_X, i, context) != GetInputDim(INPUT_RES_IN, i, context)) {
-                OP_LOGE(OP_NAME, "x dimension are not equal to resIn dimension.");
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "x dimension are not equal to resIn dimension.");
                 return ge::GRAPH_FAILED;
             }
         }

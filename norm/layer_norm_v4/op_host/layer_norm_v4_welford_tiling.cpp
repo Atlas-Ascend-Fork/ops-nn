@@ -16,6 +16,14 @@
 #include "layer_norm_v4_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "LayerNormV4", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 constexpr static int64_t WELFORD_CONSTANT_TWO = 2;
 constexpr static int64_t WELFORD_TILELENGTH_STEP_SIZE = 64;
 constexpr static int64_t WELFORD_DOUBLE_BUFFER = 2;
@@ -135,8 +143,19 @@ ge::graphStatus LayerNormV4WelfordTiling::PostTiling()
     context_->GetRawTilingData()->SetDataSize(td_.GetDataSize());
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "PostTiling: platform info is null; check the platform info query and the OPP/SoC installation"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+    OP_CHECK_IF(
+        currentWorkspace == nullptr,
+        ReportTilingStageError(context_->GetNodeName(), "PostTiling: GetWorkspaceSizes(1) "
+                                                        "returned null; required output-slot count is 1. Check the "
+                                                        "TilingContext construction, not the user device allocation"),
+        return ge::GRAPH_FAILED);
+
     currentWorkspace[0] = 0;
 
     return ge::GRAPH_SUCCESS;

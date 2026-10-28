@@ -37,15 +37,40 @@ static ge::graphStatus InferShape4QuantizeAddLayerNorm(gert::InferShapeContext* 
     // get input shapes
     const gert::Shape* x1Shape = context->GetInputShape(X1_IDX);
     const gert::Shape* x2Shape = context->GetInputShape(X2_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x1Shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x2Shape);
+    OP_CHECK_IF(
+        x1Shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x1",
+                                                 "the input shape of required input x1 is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        x2Shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x2",
+                                                 "the input shape of required input x2 is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     const gert::Shape* gammaShape = context->GetInputShape(GAMMA_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gammaShape);
+    OP_CHECK_IF(gammaShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "gamma",
+                    "the input shape of required input gamma is missing in the infer-shape context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     // get output shapes
     gert::Shape* yShape = context->GetOutputShape(Y_IDX);
     gert::Shape* xShape = context->GetOutputShape(X_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        yShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
+                                                 "the output shape of required output y is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the output shape of required output x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     *yShape = *x1Shape;
     *xShape = *x1Shape;
 

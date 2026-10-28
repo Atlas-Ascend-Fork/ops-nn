@@ -44,9 +44,19 @@ static ge::graphStatus InferShape4RmsNormQuantV3(gert::InferShapeContext* contex
     OP_LOGD(context, "Begin to do InferShape4RmsNormQuantV3");
 
     const gert::Shape* xShape = context->GetInputShape(INPUT_X_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     const gert::Shape* gammaShape = context->GetInputShape(INPUT_GAMMA_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gammaShape);
+    OP_CHECK_IF(gammaShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "gamma",
+                    "the input shape of required input gamma is missing in the infer-shape context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     const bool isEmpty = rms_norm_quant::HasEmptyDim(*xShape);
     if (isEmpty && !rms_norm_quant::CheckEmptyInputShapes(context)) {
         return GRAPH_FAILED;
@@ -54,8 +64,18 @@ static ge::graphStatus InferShape4RmsNormQuantV3(gert::InferShapeContext* contex
 
     gert::Shape* y1Shape = context->GetOutputShape(OUTPUT_Y1_IDX);
     gert::Shape* y2Shape = context->GetOutputShape(OUTPUT_Y2_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y1Shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y2Shape);
+    OP_CHECK_IF(
+        y1Shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y1",
+                                                 "the output shape of required output y1 is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        y2Shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y2",
+                                                 "the output shape of required output y2 is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
 
     const bool hasSecondQuantParam = HasSecondQuantParam(context);
     *y1Shape = *xShape;
@@ -68,7 +88,12 @@ static ge::graphStatus InferShape4RmsNormQuantV3(gert::InferShapeContext* contex
 
     gert::Shape* rstdShape = context->GetOutputShape(OUTPUT_RSTD_IDX);
     if (rstdEnable) {
-        OP_CHECK_NULL_WITH_CONTEXT(context, rstdShape);
+        OP_CHECK_IF(rstdShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "rstd",
+                        "the output shape of required output rstd is missing in the infer-shape context; check that "
+                        "the graph node provides all required outputs"),
+                    return ge::GRAPH_FAILED);
     } else if (isEmpty && rstdShape != nullptr) {
         // A disabled output must not prevent GE from recognizing an all-empty graph.
         *rstdShape = gert::Shape({0});
@@ -113,9 +138,12 @@ static graphStatus InferDataType4RmsNormQuantV3(gert::InferDataTypeContext* cont
         if (pDstDtype != nullptr) {
             int32_t dstDtype = *pDstDtype;
             yDtype = static_cast<ge::DataType>(dstDtype);
-            OP_CHECK_IF(std::find(OUT_TYPE_LIST.begin(), OUT_TYPE_LIST.end(), yDtype) == OUT_TYPE_LIST.end(),
-                        OP_LOGE(context, "attr dst_type only support int8, int4, hifloat8, float8_e5m2, float8_e4m3fn"),
-                        return ge::GRAPH_FAILED);
+            OP_CHECK_IF(
+                std::find(OUT_TYPE_LIST.begin(), OUT_TYPE_LIST.end(), yDtype) == OUT_TYPE_LIST.end(),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dst_type", ToString(yDtype).c_str(),
+                                                      "the value of attr dst_type only supports int8, int4, "
+                                                      "hifloat8, float8_e5m2 and float8_e4m3fn"),
+                return ge::GRAPH_FAILED);
         }
     }
     context->SetOutputDataType(OUTPUT_Y1_IDX, yDtype);

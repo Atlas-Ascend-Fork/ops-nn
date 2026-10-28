@@ -23,8 +23,25 @@
 #include "level0/fill.h"
 #include "layer_norm_v4.h"
 #include "aclnn_layer_norm.h"
+#include "log/log.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -102,9 +119,9 @@ static bool CheckFastOutputDtype(const aclTensor* input, const aclTensor* out, c
 inline static bool CheckArrayLen(const aclIntArray* normalizedShape)
 {
     if (normalizedShape->Size() > MAX_DIM_LEN) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnFastLayerNorm normalizedShape dim [%zu] to not be greater than [%zu] but check failed.",
-                normalizedShape->Size(), MAX_DIM_LEN);
+        OP_LOGE_FOR_INVALID_LISTSIZE("aclnnFastLayerNorm", "normalizedShape",
+                                     std::to_string(normalizedShape->Size()).c_str(),
+                                     std::to_string(MAX_DIM_LEN).c_str());
         return false;
     }
     return true;
@@ -112,9 +129,9 @@ inline static bool CheckArrayLen(const aclIntArray* normalizedShape)
 
 inline static bool CheckFastNotNull(const aclTensor* input, const aclIntArray* normalizedShape, const aclTensor* out)
 {
-    OP_CHECK_NULL(input, return false);
-    OP_CHECK_NULL(normalizedShape, return false);
-    OP_CHECK_NULL(out, return false);
+    OP_CHECK(input != nullptr, ReportNullPointerError(__func__, "input"), return false);
+    OP_CHECK(normalizedShape != nullptr, ReportNullPointerError(__func__, "normalizedShape"), return false);
+    OP_CHECK(out != nullptr, ReportNullPointerError(__func__, "out"), return false);
     return true;
 }
 
@@ -160,10 +177,9 @@ static bool CheckNormalizeShape(const aclTensor* input, const aclIntArray* fastN
         if (weightOptional) {
             int64_t weightDim = weightOptional->GetViewShape().GetDim(index);
             if (fastNormDim != weightDim) {
-                OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                        "Expected normalized index [%zu] shape [%ld] be equal to weight index [%zu] shape [%ld], but "
-                        "failed.",
-                        index, fastNormDim, index, weightDim);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnFastLayerNorm", "weightOptional",
+                                                         std::to_string(weightDim).c_str(),
+                                                         "dims of weight should match normalizedShape");
                 return false;
             }
         }
@@ -192,10 +208,18 @@ static bool CheckMeanRstdOutputShape(const aclTensor* input, const aclIntArray* 
     }
 
     if (meanOutOptional) {
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(meanOutOptional, expectedShape, return false);
+        OP_CHECK(meanOutOptional->GetViewShape() == expectedShape,
+                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnFastLayerNorm", "meanOutOptional",
+                                                       op::ToString(meanOutOptional->GetViewShape()).GetString(),
+                                                       "shape of meanOutOptional should be the same as expectedShape"),
+                 return false);
     }
     if (rstdOutOptional) {
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(rstdOutOptional, expectedShape, return false);
+        OP_CHECK(rstdOutOptional->GetViewShape() == expectedShape,
+                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnFastLayerNorm", "rstdOutOptional",
+                                                       op::ToString(rstdOutOptional->GetViewShape()).GetString(),
+                                                       "shape of rstdOutOptional should be the same as expectedShape"),
+                 return false);
     }
     return true;
 }
@@ -206,9 +230,9 @@ static bool CheckShape(const aclTensor* input, const aclIntArray* normalizedShap
 {
     // 1.检查normalizedShape的长度是否大于等于1
     if (normalizedShape->Size() < LEAST_NORMALIZED_SHAPE_LEN) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnFastLayerNorm normalizedShape len [%zu] to be greater than [%zu] but check failed.",
-                normalizedShape->Size(), LEAST_NORMALIZED_SHAPE_LEN);
+        OP_LOGE_FOR_INVALID_LISTSIZE("aclnnFastLayerNorm", "normalizedShape",
+                                     std::to_string(normalizedShape->Size()).c_str(),
+                                     std::to_string(LEAST_NORMALIZED_SHAPE_LEN).c_str());
         return false;
     }
     // 2.检查入参维度是否小于8维
@@ -221,8 +245,9 @@ static bool CheckShape(const aclTensor* input, const aclIntArray* normalizedShap
     }
     // 4.检查input维度是否不小于normalizedShape的长度
     if (input->GetViewShape().GetDimNum() < static_cast<size_t>(normalizedShape->Size())) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "The input tensor's dimensions must not be smaller than normalizedShape's size.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnFastLayerNorm", "input",
+                                     std::to_string(input->GetViewShape().GetDimNum()).c_str(),
+                                     (std::string("at least ") + std::to_string(normalizedShape->Size())).c_str());
         return false;
     }
     // 5.校验bias存在时与normalizedShape长度是否相同
@@ -235,7 +260,13 @@ static bool CheckShape(const aclTensor* input, const aclIntArray* normalizedShap
     }
 
     // 7.校验三个输出的shape
-    OP_CHECK_SHAPE_NOT_EQUAL(input, out, return false);
+    OP_CHECK(input->GetViewShape() == out->GetViewShape(),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnFastLayerNorm", "input,out",
+                                                    (std::string(op::ToString(input->GetViewShape()).GetString()) +
+                                                     ", " + op::ToString(out->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shapes of input and out should be the same"),
+             return false);
     if (!CheckMeanRstdOutputShape(input, normalizedShape, meanOutOptional, rstdOutOptional)) {
         return false;
     }

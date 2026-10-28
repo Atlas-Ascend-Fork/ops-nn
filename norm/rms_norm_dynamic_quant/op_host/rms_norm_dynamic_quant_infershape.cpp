@@ -51,14 +51,34 @@ static ge::graphStatus InferShape4RmsNormDynamicQuant(gert::InferShapeContext* c
 
     // get input shapes
     const gert::Shape* xShape = context->GetInputShape(X_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     const gert::Shape* gammaShape = context->GetInputShape(GAMMA_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gammaShape);
+    OP_CHECK_IF(gammaShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "gamma",
+                    "the input shape of required input gamma is missing in the infer-shape context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     // get output shapes
     gert::Shape* yShape = context->GetOutputShape(Y_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    OP_CHECK_IF(
+        yShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
+                                                 "the output shape of required output y is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     gert::Shape* outScaleShape = context->GetOutputShape(OUT_SCALE_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outScaleShape);
+    OP_CHECK_IF(outScaleShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "scale",
+                    "the output shape of required output scale is missing in the infer-shape context; check that the "
+                    "graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
 
     *yShape = *xShape;
 

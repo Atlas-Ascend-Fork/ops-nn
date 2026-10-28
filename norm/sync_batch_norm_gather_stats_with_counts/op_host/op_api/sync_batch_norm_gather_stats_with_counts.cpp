@@ -42,8 +42,7 @@ const std::array<const aclTensor*, 2> SyncBatchNormGatherStatsWithCounts(
                                            OP_INPUT(meanAll, invstdAll, countAll, meanBroadcast, countSum, runningVar),
                                            OP_OUTPUT(invstdOut, runningVarOut), OP_ATTR(momentum, epsilon));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                "SyncBatchNormGatherStatsWithCountsAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ret, "SyncBatchNormGatherStatsWithCountsAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr};
     }
     return {invstdOut, runningVarOut};

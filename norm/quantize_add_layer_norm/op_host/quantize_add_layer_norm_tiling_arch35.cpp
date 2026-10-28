@@ -17,6 +17,14 @@
 #include "quantize_add_layer_norm_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "QuantizeAddLayerNorm", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 constexpr int32_t CONST_2 = 2;
 constexpr int32_t CONST_4 = 4;
 constexpr int32_t CONST_8 = 8;
@@ -157,13 +165,20 @@ void QuantizeAddLayerNormRegbaseTiling::SetTilingDataAndTilingKeyAndWorkSpace(
 bool QuantizeAddLayerNormRegbaseTiling::DoTiling()
 {
     OP_CHECK_IF((nullptr == context_),
-                OP_LOGE("QuantizeAddLayerNormRegbaseTiling", "Helper context_ get nullptr, return failed."),
+                ReportTilingStageError(
+                    "QuantizeAddLayerNorm",
+                    "the TilingContext passed to the tiling helper is null; check the tiling framework invocation"),
                 return false);
-    OP_CHECK_IF(!GetBaseInfo(), OP_LOGE(context_->GetNodeName(), "GetBaseInfo failed, return false"), return false);
-    OP_CHECK_IF(!GetShapeInfo(), OP_LOGE(context_->GetNodeName(), "GetShapeInfo failed, return false"), return false);
-    OP_CHECK_IF(!CheckDtype(), OP_LOGE(context_->GetNodeName(), "CheckDtype failed, return false"), return false);
-    OP_CHECK_IF(!DoBlockTiling(), OP_LOGE(context_->GetNodeName(), "DoBlockTiling failed, return false"), return false);
-    OP_CHECK_IF(!DoUbTiling(), OP_LOGE(context_->GetNodeName(), "DoUbTiling failed, return false"), return false);
+    OP_CHECK_IF(!GetBaseInfo(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetBaseInfo failed, return false"),
+                return false);
+    OP_CHECK_IF(!GetShapeInfo(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetShapeInfo failed, return false"),
+                return false);
+    OP_CHECK_IF(!CheckDtype(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "CheckDtype failed, return false"),
+                return false);
+    OP_CHECK_IF(!DoBlockTiling(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoBlockTiling failed, return false"),
+                return false);
+    OP_CHECK_IF(!DoUbTiling(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoUbTiling failed, return false"),
+                return false);
 
     QuantizeAddLayerNormRegbaseTilingData tiling;
     SetTilingDataAndTilingKeyAndWorkSpace(&tiling);
@@ -194,7 +209,12 @@ bool QuantizeAddLayerNormRegbaseTiling::GetPlatformInfo()
         this->sysWorkspaceSize_ = compileInfo->sysWorkspaceSize_;
     } else {
         auto platformInfo = this->context_->GetPlatformInfo();
-        OP_CHECK_IF(nullptr == platformInfo, OP_LOGE(context_->GetNodeName(), "platform info is null"), return false);
+        OP_CHECK_IF(
+            nullptr == platformInfo,
+            ReportTilingStageError(
+                context_->GetNodeName(),
+                "GetPlatformInfo returned null; check the TilingContext construction and the platform registration"),
+            return false);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, this->ubSize_);
         this->aivCoreNum_ = ascendcPlatform.GetCoreNumAiv();
@@ -204,10 +224,16 @@ bool QuantizeAddLayerNormRegbaseTiling::GetPlatformInfo()
     }
     this->vlFp32_ = this->vecRegSize_ / sizeof(float);
 
-    OP_CHECK_IF((this->ubSize_ <= 0),
-                OP_LOGE(context_->GetNodeName(), "ubSize_ less or equal than zero, please check."), return false);
-    OP_CHECK_IF((this->aivCoreNum_ <= 0),
-                OP_LOGE(context_->GetNodeName(), "socCoreNums_ less or equal than zero, please check."), return false);
+    OP_CHECK_IF(
+        (this->ubSize_ <= 0),
+        ReportTilingStageError(context_->GetNodeName(), "GetCoreMemSize(UB) returned " + std::to_string(this->ubSize_) +
+                                                            "; check the platform info, SoC and OPP installation"),
+        return false);
+    OP_CHECK_IF(
+        (this->aivCoreNum_ <= 0),
+        ReportTilingStageError(context_->GetNodeName(), "GetCoreNumAiv returned " + std::to_string(this->aivCoreNum_) +
+                                                            "; check the platform info and SoC"),
+        return false);
 
     OP_LOGW("GetPlatformInfo", "aivCoreNum: %u, ubSize: %lu, blockSize: %u, vecRegSize: %u", this->aivCoreNum_,
             this->ubSize_, this->blockSize_, this->vecRegSize_);
@@ -217,7 +243,11 @@ bool QuantizeAddLayerNormRegbaseTiling::GetPlatformInfo()
 bool QuantizeAddLayerNormRegbaseTiling::GetAttrs()
 {
     auto attrs = context_->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE(context_->GetNodeName(), "Get attrs nullptr, return false."), return false);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return false);
 
     // attr[1] = axis (magic: 65535 -> per_tensor, -65535 -> mul_mode, else -> per_channel div)
     int64_t axis = GetOptionalAttr<int64_t>(attrs, AXIS_IDX, -1);
@@ -244,18 +274,19 @@ bool QuantizeAddLayerNormRegbaseTiling::GetAttrs()
 
 bool QuantizeAddLayerNormRegbaseTiling::GetBaseInfo()
 {
-    OP_CHECK_IF(!GetPlatformInfo(), OP_LOGE(context_->GetNodeName(), "GetPlatformInfo failed, return false"),
+    OP_CHECK_IF(!GetPlatformInfo(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetPlatformInfo failed, return false"), return false);
+    OP_CHECK_IF(!GetAttrs(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetAttrs failed, return false"),
                 return false);
-    OP_CHECK_IF(!GetAttrs(), OP_LOGE(context_->GetNodeName(), "GetAttrs failed, return false"), return false);
     return true;
 }
 
 bool QuantizeAddLayerNormRegbaseTiling::GetShapeInfo()
 {
-    OP_CHECK_IF((!CheckTensorAndAttr()), OP_LOGE(context_->GetNodeName(), "Check tensor shape and attr failed."),
-                return false);
-    OP_CHECK_IF((!CheckOptionalTensor()), OP_LOGE(context_->GetNodeName(), "Check optional tensor shape failed."),
-                return false);
+    OP_CHECK_IF((!CheckTensorAndAttr()),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check tensor shape and attr failed."), return false);
+    OP_CHECK_IF((!CheckOptionalTensor()),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check optional tensor shape failed."), return false);
     this->dataTypeX1_ = context_->GetInputTensor(X1_IDX)->GetDataType();
     this->dtSizeX1_ = GetSizeByDataType(this->dataTypeX1_);
     auto xShape = context_->GetInputShape(X1_IDX)->GetStorageShape();
@@ -350,7 +381,10 @@ bool QuantizeAddLayerNormRegbaseTiling::CheckStcQuantWelfordTiling()
 
     this->colsPerLoop_ = ubAvaliable / (quantSliceNums + weightSliceNums + elewiseSliceNums + tmpSliceNums);
     this->colsPerLoop_ = this->colsPerLoop_ / this->vlFp32_ * this->vlFp32_;
-    OP_CHECK_IF((this->colsPerLoop_ <= 0), OP_LOGE(context_->GetNodeName(), "Welford colsPerLoop <= 0, unsupported."),
+    OP_CHECK_IF((this->colsPerLoop_ <= 0),
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "the Welford tiling strategy found no feasible colsPerLoop for the given "
+                                       "shapes and platform UB size; check the SoC and the input shapes"),
                 return false);
     this->colsLoopCount_ = Ops::Base::CeilDiv(this->cols_, this->colsPerLoop_);
 
@@ -370,20 +404,48 @@ bool QuantizeAddLayerNormRegbaseTiling::CheckStcQuantWelfordTiling()
 bool QuantizeAddLayerNormRegbaseTiling::CheckTensorAndAttr()
 {
     const gert::StorageShape* x1Shape = this->context_->GetInputShape(X1_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, x1Shape);
+    OP_CHECK_IF(x1Shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x1",
+                                                         "the input shape of x1 is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
     const gert::StorageShape* x2Shape = this->context_->GetInputShape(X2_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, x2Shape);
+    OP_CHECK_IF(x2Shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x2",
+                                                         "the input shape of x2 is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
     const gert::StorageShape* gammaShape = this->context_->GetInputShape(GAMMA_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, gammaShape);
+    OP_CHECK_IF(gammaShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gamma",
+                                                         "the input shape of gamma is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
     const gert::StorageShape* betaShape = this->context_->GetInputShape(BETA_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, betaShape);
+    OP_CHECK_IF(betaShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "beta",
+                                                         "the input shape of beta is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
     const gert::StorageShape* biasShape = this->context_->GetInputShape(BIAS_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, biasShape);
+    OP_CHECK_IF(biasShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "bias",
+                                                         "the input shape of bias is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
 
     const gert::StorageShape* yShape = this->context_->GetOutputShape(Y_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, yShape);
+    OP_CHECK_IF(yShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y",
+                                                         "the output shape of y is missing in the tiling context; "
+                                                         "check that the graph node provides all required outputs"),
+                return false);
     const gert::StorageShape* xShape = this->context_->GetOutputShape(X_OUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(this->context_, xShape);
+    OP_CHECK_IF(xShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the output shape of x is missing in the tiling context; "
+                                                         "check that the graph node provides all required outputs"),
+                return false);
 
     size_t elewiseDimNum = x1Shape->GetStorageShape().GetDimNum();
     size_t weightDimNum = gammaShape->GetStorageShape().GetDimNum();
@@ -491,15 +553,23 @@ bool QuantizeAddLayerNormRegbaseTiling::CheckOptionalInputDtype(ge::DataType x1D
     };
     // scales is a required input
     auto scaleDesc = context_->GetInputDesc(SCALE_IDX);
-    OP_CHECK_IF(scaleDesc == nullptr, OP_LOGE(context_->GetNodeName(), "scales desc is nullptr"), return false);
+    OP_CHECK_IF(scaleDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scales",
+                                                         "the input desc of scales is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
     if (!checkDt(scaleDesc->GetDataType(), "scales", context_)) {
         return false;
     }
     // zero_points is optional
     if (this->offsetExist_) {
         auto offsetDesc = context_->GetOptionalInputDesc(ZERO_POINT_IDX);
-        OP_CHECK_IF(offsetDesc == nullptr, OP_LOGE(context_->GetNodeName(), "zero_points desc is nullptr"),
-                    return false);
+        OP_CHECK_IF(
+            offsetDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "zero_points",
+                                                     "the input desc of zero_points is missing in the tiling context; "
+                                                     "check that the graph node provides all required inputs"),
+            return false);
         if (!checkDt(offsetDesc->GetDataType(), "zero_points", context_)) {
             return false;
         }
@@ -511,20 +581,37 @@ bool QuantizeAddLayerNormRegbaseTiling::CheckDtype()
 {
     OP_LOGD(context_->GetNodeName(), "Enter CheckDtype.");
     auto x1Desc = context_->GetInputDesc(X1_IDX);
-    OP_CHECK_IF(x1Desc == nullptr, OP_LOGE(context_->GetNodeName(), "x1 desc is nullptr"), return false);
+    OP_CHECK_IF(x1Desc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x1",
+                                                         "the input desc of x1 is missing in the tiling context; check "
+                                                         "that the graph node provides all required inputs"),
+                return false);
     ge::DataType x1Dtype = x1Desc->GetDataType();
     auto x2Desc = context_->GetInputDesc(X2_IDX);
-    OP_CHECK_IF(x2Desc == nullptr, OP_LOGE(context_->GetNodeName(), "x2 desc is nullptr"), return false);
+    OP_CHECK_IF(x2Desc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x2",
+                                                         "the input desc of x2 is missing in the tiling context; check "
+                                                         "that the graph node provides all required inputs"),
+                return false);
     ge::DataType x2Dtype = x2Desc->GetDataType();
     auto gammaDesc = context_->GetInputDesc(GAMMA_IDX);
-    OP_CHECK_IF(gammaDesc == nullptr, OP_LOGE(context_->GetNodeName(), "gamma desc is nullptr"), return false);
+    OP_CHECK_IF(gammaDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gamma",
+                                                         "the input desc of gamma is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
     ge::DataType gammaDtype = gammaDesc->GetDataType();
     auto betaDesc = context_->GetInputDesc(BETA_IDX);
-    OP_CHECK_IF(betaDesc == nullptr, OP_LOGE(context_->GetNodeName(), "beta desc is nullptr"), return false);
+    OP_CHECK_IF(betaDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "beta",
+                                                         "the input desc of beta is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
     ge::DataType betaDtype = betaDesc->GetDataType();
 
     if (x1Dtype != ge::DT_FLOAT16 && x1Dtype != ge::DT_BF16 && x1Dtype != ge::DT_FLOAT) {
-        OP_LOGE(context_->GetNodeName(), "Unsupported x1 dtype: %s", Ops::Base::ToString(x1Dtype).c_str());
+        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "x1", Ops::Base::ToString(x1Dtype).c_str(),
+                                  "FLOAT16, BF16 or FLOAT");
         return false;
     }
     if (x1Dtype != x2Dtype || x1Dtype != gammaDtype || x1Dtype != betaDtype) {
@@ -539,7 +626,11 @@ bool QuantizeAddLayerNormRegbaseTiling::CheckDtype()
 
     // bias is required, must match x1
     auto biasDesc = context_->GetInputDesc(BIAS_IDX);
-    OP_CHECK_IF(biasDesc == nullptr, OP_LOGE(context_->GetNodeName(), "bias desc is nullptr"), return false);
+    OP_CHECK_IF(biasDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "bias",
+                                                         "the input desc of bias is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return false);
     ge::DataType biasDtype = biasDesc->GetDataType();
     if (biasDtype != x1Dtype) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
@@ -561,14 +652,22 @@ bool QuantizeAddLayerNormRegbaseTiling::CheckDtype()
 bool QuantizeAddLayerNormRegbaseTiling::CheckOutputDtype(ge::DataType x1Dtype)
 {
     auto yDesc = context_->GetOutputDesc(Y_IDX);
-    OP_CHECK_IF(yDesc == nullptr, OP_LOGE(context_->GetNodeName(), "y desc is nullptr"), return false);
+    OP_CHECK_IF(yDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y",
+                                                         "the output desc of y is missing in the tiling context; check "
+                                                         "that the graph node provides all required outputs"),
+                return false);
     if (yDesc->GetDataType() != ge::DT_INT8) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
             context_->GetNodeName(), "y", Ops::Base::ToString(yDesc->GetDataType()).c_str(), "y dtype must be int8");
         return false;
     }
     auto xDesc = context_->GetOutputDesc(X_OUT_IDX);
-    OP_CHECK_IF(xDesc == nullptr, OP_LOGE(context_->GetNodeName(), "x desc is nullptr"), return false);
+    OP_CHECK_IF(xDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the output desc of x is missing in the tiling context; check "
+                                                         "that the graph node provides all required outputs"),
+                return false);
     if (xDesc->GetDataType() != x1Dtype) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x",
                                               Ops::Base::ToString(xDesc->GetDataType()).c_str(),

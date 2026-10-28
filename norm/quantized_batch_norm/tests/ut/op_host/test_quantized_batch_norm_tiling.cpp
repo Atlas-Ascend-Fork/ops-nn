@@ -779,3 +779,231 @@ TEST_F(QuantizedBatchNormTiling, quantized_batch_norm_1002_full_reduce_not_suppo
     //           ");
     // dlog_setlevel(0, 3, 0);
 }
+// ============================================================================
+// Error code verification UT for E*9*** remediation (2026-10-21)
+// Captures ErrorManager output via weak-symbol override, asserts formal codes.
+// ============================================================================
+
+namespace error_message {
+struct CapturedError {
+    std::string code;
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+};
+static thread_local CapturedError g_last_error;
+static thread_local int g_report_count = 0;
+static thread_local std::vector<std::string> g_all_codes; // 记录用例全程上报过的全部错误码
+
+__attribute__((weak)) void ResetCapture()
+{
+    g_last_error.code.clear();
+    g_last_error.keys.clear();
+    g_last_error.values.clear();
+    g_report_count = 0;
+    g_all_codes.clear();
+}
+__attribute__((weak)) std::string GetLastError() { return g_last_error.code; }
+__attribute__((weak)) int GetReportCount() { return g_report_count; }
+__attribute__((weak)) bool HasCode(const std::string& c)
+{
+    for (const auto& code : g_all_codes) {
+        if (code == c) {
+            return true;
+        }
+    }
+    return false;
+}
+
+__attribute__((weak)) int32_t ReportPredefinedErrMsg(const char* error_code, const std::vector<const char*>& key,
+                                                     const std::vector<const char*>& value)
+{
+    g_last_error.code = error_code ? error_code : "";
+    if (error_code != nullptr) {
+        g_all_codes.push_back(error_code);
+    }
+    g_last_error.keys.clear();
+    g_last_error.values.clear();
+    for (const auto& k : key)
+        g_last_error.keys.push_back(k ? k : "");
+    for (const auto& v : value)
+        g_last_error.values.push_back(v ? v : "");
+    g_report_count++;
+    return 0;
+}
+__attribute__((weak)) int32_t ReportPredefinedErrMsg(const char* error_code)
+{
+    g_last_error.code = error_code ? error_code : "";
+    if (error_code != nullptr) {
+        g_all_codes.push_back(error_code);
+    }
+    g_report_count++;
+    return 0;
+}
+__attribute__((weak)) int32_t ReportInnerErrMsg(const char* file_name, const char* func, uint32_t line,
+                                                const char* error_code, const char* format, ...)
+{
+    g_last_error.code = error_code ? error_code : "";
+    if (error_code != nullptr) {
+        g_all_codes.push_back(error_code);
+    }
+    g_report_count++;
+    return 0;
+}
+} // namespace error_message
+
+// 验证弱符号截获通道在本二进制内生效: 若链接格局变化导致强定义压制弱定义, 该用例显式失败,
+// 避免EZ9999守护用例静默失效
+TEST_F(QuantizedBatchNormTiling, error_capture_channel_self_check)
+{
+    error_message::ResetCapture();
+    const std::vector<const char*> selfKey = {"self_check"};
+    const std::vector<const char*> selfValue = {"capture channel liveness"};
+    error_message::ReportPredefinedErrMsg("EZ0000", selfKey, selfValue);
+    EXPECT_TRUE(error_message::HasCode("EZ0000")) << "capture channel is dead: weak override suppressed";
+    EXPECT_EQ(error_message::GetReportCount(), 1);
+    error_message::ResetCapture();
+}
+#define EXPECT_ERROR_CODE(expected)                                                 \
+    EXPECT_EQ(error_message::GetLastError(), expected)                              \
+        << "Expected " << expected << " but got [" << error_message::GetLastError() \
+        << "] count=" << error_message::GetReportCount()
+#define EXPECT_NO_EZ9999()                             \
+    EXPECT_NE(error_message::GetLastError(), "EZ9999") \
+        << "EZ9999 still generated! Got [" << error_message::GetLastError() << "]"
+#define EXPECT_ERROR_REPORTED() EXPECT_GT(error_message::GetReportCount(), 0) << "No error reported"
+
+class QuantizedBatchNormErrorTest : public testing::Test {
+protected:
+    void SetUp() override { error_message::ResetCapture(); }
+};
+
+static ge::graphStatus RunTilingWithErr(ge::DataType xDtype, ge::Format xFormat, gert::StorageShape& xShape,
+                                        gert::StorageShape& weightShape, gert::StorageShape& inScaleShape,
+                                        ge::DataType weightDtype, ge::DataType biasDtype)
+{
+    gert::StorageShape bias_shape = {{256}, {256}};
+    gert::StorageShape in_zero_point_shape = {{1}, {1}};
+    gert::StorageShape out_scale_shape = {{1}, {1}};
+    gert::StorageShape out_zero_point_shape = {{1}, {1}};
+    gert::StorageShape mean_shape = {{256}, {256}};
+    gert::StorageShape variance_shape = {{256}, {256}};
+    gert::StorageShape y_shape = xShape;
+    QuantizedBatchNormCompileInfo compile_info = {48, 196608};
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    std::string op_type("QuantizedBatchNorm");
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    if (tiling_func == nullptr)
+        return ge::GRAPH_FAILED;
+    auto param = gert::TilingData::CreateCap(4096);
+    auto ws_size = gert::ContinuousVector::Create<size_t>(4096);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(9, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&xShape, &mean_shape, &variance_shape, &inScaleShape, &in_zero_point_shape,
+                                    &out_scale_shape, &out_zero_point_shape, &weightShape, &bias_shape})
+                      .OutputShapes({&y_shape})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, xDtype, xFormat, xFormat)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(7, weightDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(8, biasDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT32, xFormat, xFormat)
+                      .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-5)}})
+                      .TilingData(param.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(ws_size.get()))
+                      .Build();
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    return tiling_func(tiling_context);
+}
+
+TEST_F(QuantizedBatchNormErrorTest, err_dtype_x_ez0020)
+{
+    gert::StorageShape x = {{1, 256, 13, 982}, {1, 256, 13, 982}};
+    gert::StorageShape w = {{256}, {256}};
+    gert::StorageShape s = {{1}, {1}};
+    auto ret = RunTilingWithErr(ge::DT_BOOL, ge::FORMAT_NCHW, x, w, s, ge::DT_FLOAT, ge::DT_FLOAT);
+    EXPECT_NE(ret, ge::GRAPH_SUCCESS);
+    EXPECT_ERROR_REPORTED();
+    EXPECT_ERROR_CODE("EZ0020");
+    EXPECT_NO_EZ9999();
+}
+
+TEST_F(QuantizedBatchNormErrorTest, err_format_x_ez0017)
+{
+    gert::StorageShape x = {{1, 256, 13, 982}, {1, 256, 13, 982}};
+    gert::StorageShape w = {{256}, {256}};
+    gert::StorageShape s = {{1}, {1}};
+    auto ret = RunTilingWithErr(ge::DT_INT32, ge::FORMAT_NC1HWC0, x, w, s, ge::DT_FLOAT, ge::DT_FLOAT);
+    EXPECT_NE(ret, ge::GRAPH_SUCCESS);
+    EXPECT_ERROR_REPORTED();
+    EXPECT_ERROR_CODE("EZ0017");
+    EXPECT_NO_EZ9999();
+}
+
+TEST_F(QuantizedBatchNormErrorTest, err_rank_x_ez0011)
+{
+    gert::StorageShape x = {{1, 256, 982}, {1, 256, 982}};
+    gert::StorageShape w = {{256}, {256}};
+    gert::StorageShape s = {{1}, {1}};
+    auto ret = RunTilingWithErr(ge::DT_INT32, ge::FORMAT_NCHW, x, w, s, ge::DT_FLOAT, ge::DT_FLOAT);
+    EXPECT_NE(ret, ge::GRAPH_SUCCESS);
+    EXPECT_ERROR_REPORTED();
+    EXPECT_ERROR_CODE("EZ0011");
+    EXPECT_NO_EZ9999();
+}
+
+TEST_F(QuantizedBatchNormErrorTest, err_weight_shape_ez0010)
+{
+    gert::StorageShape x = {{1, 256, 13, 982}, {1, 256, 13, 982}};
+    gert::StorageShape w = {{128}, {128}};
+    gert::StorageShape s = {{1}, {1}};
+    auto ret = RunTilingWithErr(ge::DT_INT32, ge::FORMAT_NCHW, x, w, s, ge::DT_FLOAT, ge::DT_FLOAT);
+    EXPECT_NE(ret, ge::GRAPH_SUCCESS);
+    EXPECT_ERROR_REPORTED();
+    EXPECT_ERROR_CODE("EZ0010");
+    EXPECT_NO_EZ9999();
+}
+
+TEST_F(QuantizedBatchNormErrorTest, err_scale_size_ez0014)
+{
+    gert::StorageShape x = {{1, 256, 13, 982}, {1, 256, 13, 982}};
+    gert::StorageShape w = {{256}, {256}};
+    gert::StorageShape s = {{2}, {2}};
+    auto ret = RunTilingWithErr(ge::DT_INT32, ge::FORMAT_NCHW, x, w, s, ge::DT_FLOAT, ge::DT_FLOAT);
+    EXPECT_NE(ret, ge::GRAPH_SUCCESS);
+    EXPECT_ERROR_REPORTED();
+    EXPECT_ERROR_CODE("EZ0014");
+    EXPECT_NO_EZ9999();
+}
+
+TEST_F(QuantizedBatchNormErrorTest, err_dim_zero_ez0009)
+{
+    gert::StorageShape x = {{1, 256, 0, 982}, {1, 256, 0, 982}};
+    gert::StorageShape w = {{256}, {256}};
+    gert::StorageShape s = {{1}, {1}};
+    auto ret = RunTilingWithErr(ge::DT_INT32, ge::FORMAT_NCHW, x, w, s, ge::DT_FLOAT, ge::DT_FLOAT);
+    EXPECT_NE(ret, ge::GRAPH_SUCCESS);
+    EXPECT_ERROR_REPORTED();
+    EXPECT_ERROR_CODE("EZ0009");
+    EXPECT_NO_EZ9999();
+}
+
+TEST_F(QuantizedBatchNormErrorTest, err_bias_dtype_ez0021)
+{
+    gert::StorageShape x = {{1, 256, 13, 982}, {1, 256, 13, 982}};
+    gert::StorageShape w = {{256}, {256}};
+    gert::StorageShape s = {{1}, {1}};
+    auto ret = RunTilingWithErr(ge::DT_INT32, ge::FORMAT_NCHW, x, w, s, ge::DT_FLOAT, ge::DT_FLOAT16);
+    EXPECT_NE(ret, ge::GRAPH_SUCCESS);
+    EXPECT_ERROR_REPORTED();
+    EXPECT_ERROR_CODE("EZ0021");
+    EXPECT_NO_EZ9999();
+}

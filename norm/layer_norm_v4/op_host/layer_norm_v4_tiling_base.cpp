@@ -19,6 +19,14 @@
 using namespace Ops::Base;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "LayerNormV4", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 constexpr size_t K_INPUT_IDX_X = 0;
 constexpr size_t K_INPUT_IDX_NORM_SHAPE = 1;
 constexpr size_t K_INPUT_IDX_GAMMA = 2;
@@ -64,7 +72,11 @@ uint64_t LayerNormV4TilingBase::GetTilingKey() const { return 0; }
 ge::graphStatus GetCommonPlatformInfo(gert::TilingContext* context, const LayerNormV4CompileInfo* compileInfo,
                                       ParamsLayerNomrV4& commonParams)
 {
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE(context, "compile info is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     commonParams.coreNum = compileInfo->coreNum;
     commonParams.ubSizePlatForm = compileInfo->ubSizePlatForm;
     commonParams.blockSize = compileInfo->blockSize;
@@ -83,12 +95,16 @@ ge::graphStatus LayerNormV4TilingBase::GetPlatformInfo()
 ge::graphStatus GetCommonShapeAttrsInfo(gert::TilingContext* context, uint64_t colSize, uint64_t rowSize,
                                         ParamsLayerNomrV4& commonParams)
 {
-    OP_CHECK_IF(colSize <= 0,
-                OP_LOGE(context, "colSize must be greater than 0, colSize: %u", static_cast<uint32_t>(colSize)),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(rowSize <= 0,
-                OP_LOGE(context, "rowSize must be greater than 0, rowSize: %u", static_cast<uint32_t>(rowSize)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        colSize <= 0,
+        ReportTilingStageError(context->GetNodeName(), "GetShapeAttrsInfo: colSize is " + std::to_string(colSize) +
+                                                           "; the size of the normalized shape is invalid"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        rowSize <= 0,
+        ReportTilingStageError(context->GetNodeName(), "GetShapeAttrsInfo: rowSize is " + std::to_string(rowSize) +
+                                                           "; the size of the non-normalized shape is invalid"),
+        return ge::GRAPH_FAILED);
 
     commonParams.colSize = colSize;
     commonParams.rowSize = rowSize;
@@ -123,11 +139,17 @@ ge::graphStatus LayerNormV4TilingBase::GetShapeAttrsInfo()
     commonParams.dtypeKey = GetDTypeKey(commonParams.tensorDtype, commonParams.paramDtype);
 
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     if (attrs->GetFloat(0) != nullptr) {
         commonParams.eps = *(attrs->GetFloat(0));
     } else {
-        OP_LOGE(context_->GetNodeName(), "eps is nullptr");
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: the epsilon attr is missing in the tiling context despite having a "
+                               "registered default; check the TilingContext construction");
         return ge::GRAPH_FAILED;
     }
 

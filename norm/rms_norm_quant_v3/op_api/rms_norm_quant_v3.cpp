@@ -49,7 +49,7 @@ const std::array<aclTensor*, RMS_NORM_QUANT_V3_OUT_NUM> RmsNormQuantV3(
         OP_INPUT(x, gamma, scales1, scales2Optional, zeroPoints1Optional, zeroPoints2Optional, betaOptional),
         OP_OUTPUT(y1, y2, rstdOut), OP_ATTR(static_cast<float>(epsilon), divMode, dstType, outputRstd));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "RmsNormQuantV3 ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ret, "RmsNormQuantV3 ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return std::array<aclTensor*, RMS_NORM_QUANT_V3_OUT_NUM>{nullptr, nullptr};
     }
     return {y1, rstdOut};

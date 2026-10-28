@@ -20,6 +20,14 @@
 using namespace Ops::Base;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormGradQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 using namespace Ops::NN::OpTiling;
 
 struct RmsNormGradQuantCompileInfo {
@@ -32,30 +40,52 @@ static ge::graphStatus Tiling4RmsNormGradQuant(gert::TilingContext* context)
     if (Ops::NN::OpTiling::IsRegbaseSocVersion(context)) {
         return Ops::NN::Optiling::TilingRegistry::GetInstance().DoTilingImpl(context);
     }
-    OP_LOGE(context, "RmsNormGradQuant is not supported on the current chip!");
-    return ge::GRAPH_SUCCESS;
+    {
+        const std::vector<const char*> msgKey = {"optype", "opskernel", "reason"};
+        const std::vector<const char*> msgValue = {
+            "RmsNormGradQuant", "AiCore", "the current SoC is not a Regbase-platform SoC; use a supported SoC"};
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", msgKey, msgValue);
+    }
+    return ge::GRAPH_FAILED;
 }
 
 static ge::graphStatus TilingPrepare4RmsNormGradQuant(gert::TilingParseContext* context)
 {
-    OP_CHECK_IF(nullptr == context, OP_LOGE("RmsNormGradQuant", "Context is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        nullptr == context,
+        ReportTilingStageError("RmsNormGradQuant",
+                               "TilingPrepare: TilingParseContext is null; the tiling framework contract is broken"),
+        return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "Enter TilingPrepare4RmsNormGradQuant.");
 
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
+    OP_CHECK_IF(platformInfoPtr == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
+                return ge::GRAPH_FAILED);
     auto compileInfoPtr = context->GetCompiledInfo<RmsNormGradQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfoPtr);
+    OP_CHECK_IF(
+        compileInfoPtr == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "TilingPrepare: compile info is null; check the SoC-specific OPP package and the tiling parse context"),
+        return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     compileInfoPtr->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF(
-        (compileInfoPtr->totalCoreNum <= 0),
-        OP_LOGE(context, "Get core num failed, core num: %u", static_cast<uint32_t>(compileInfoPtr->totalCoreNum)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((compileInfoPtr->totalCoreNum <= 0),
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: got an invalid core num " + std::to_string(compileInfoPtr->totalCoreNum) +
+                        " from the platform info; check the SoC platform query and the OPP installation"),
+                return ge::GRAPH_FAILED);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfoPtr->totalUbSize);
     OP_CHECK_IF(
         (compileInfoPtr->totalUbSize <= 0),
-        OP_LOGE(context, "Get block Size failed, block size: %u", static_cast<uint32_t>(compileInfoPtr->totalUbSize)),
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid UB size " + std::to_string(compileInfoPtr->totalUbSize) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
         return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

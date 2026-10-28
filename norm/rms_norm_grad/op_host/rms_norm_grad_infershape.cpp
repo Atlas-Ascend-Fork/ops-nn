@@ -19,19 +19,45 @@
 using namespace ge;
 
 namespace ops {
+// InferShape阶段框架契约类失败(输出shape容器为空)统一上报EZ1014, 不再生成EZ9999内部码
+static void ReportInferShapeStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
+
 static ge::graphStatus InferShape4RmsNormGrad(gert::InferShapeContext* context)
 {
     OP_LOGD(context, "Begin to do InferShape4RmsNormGrad.");
     const gert::Shape* x_shape = context->GetInputShape(1);
     const gert::Shape* gamma_shape = context->GetInputShape(3);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gamma_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(gamma_shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "gamma",
+                    "the input shape of required input gamma is missing in the infer-shape context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
 
     // get output shapes
     gert::Shape* dx_shape = context->GetOutputShape(0);
     gert::Shape* dgamma_shape = context->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dx_shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dgamma_shape);
+    OP_CHECK_IF(dx_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of dx (output index 0) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(dgamma_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of dgamma (output index 1) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
     *dx_shape = *x_shape;
     *dgamma_shape = *gamma_shape;
 

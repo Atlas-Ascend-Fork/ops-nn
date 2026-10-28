@@ -25,6 +25,14 @@
 using namespace ge;
 
 namespace ops {
+// InferShape阶段框架契约类失败(输出shape容器为空)统一上报EZ1014, 不再生成EZ9999内部码
+static void ReportInferShapeStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormGradQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
+
 static constexpr int RMS_NORM_GRAD_QUANT_IDX_DY = 0;
 static constexpr int RMS_NORM_GRAD_QUANT_IDX_GAMMA = 3;
 static constexpr int RMS_NORM_GRAD_QUANT_IDX_SCALE_X = 4;
@@ -40,14 +48,32 @@ static ge::graphStatus InferShape4RmsNormGradQuant(gert::InferShapeContext* cont
     OP_LOGD(context, "Begin to do InferShape4RmsNormGradQuant.");
     const gert::Shape* dy_shape = context->GetInputShape(RMS_NORM_GRAD_QUANT_IDX_DY);
     const gert::Shape* gamma_shape = context->GetInputShape(RMS_NORM_GRAD_QUANT_IDX_GAMMA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dy_shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gamma_shape);
+    OP_CHECK_IF(
+        dy_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "dy",
+                                                 "the input shape of required input dy is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(gamma_shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "gamma",
+                    "the input shape of required input gamma is missing in the infer-shape context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
 
     // get output shapes
     gert::Shape* dx_shape = context->GetOutputShape(RMS_NORM_GRAD_QUANT_OUTPUT_IDX_DX);
     gert::Shape* dgamma_shape = context->GetOutputShape(RMS_NORM_GRAD_QUANT_OUTPUT_IDX_DGAMMA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dx_shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dgamma_shape);
+    OP_CHECK_IF(dx_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of dx (output index 0) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(dgamma_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of dgamma (output index 1) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
     *dx_shape = *dy_shape;
     *dgamma_shape = *gamma_shape;
 
@@ -69,7 +95,10 @@ static graphStatus InferDataType4RmsNormGradQuant(gert::InferDataTypeContext* co
             dxDtype = static_cast<ge::DataType>(*dstTypePtr);
             OP_CHECK_IF(std::find(RMS_NORM_GRAD_QUANT_OUT_TYPE_LIST.begin(), RMS_NORM_GRAD_QUANT_OUT_TYPE_LIST.end(),
                                   dxDtype) == RMS_NORM_GRAD_QUANT_OUT_TYPE_LIST.end(),
-                        OP_LOGE(context, "attr dst_type only support 2(int8), 34(hifloat8)"), return ge::GRAPH_FAILED);
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            context->GetNodeName(), "dst_type", std::to_string(*dstTypePtr).c_str(),
+                            "the value of attr dst_type only supports DT_INT8 (2) and DT_HIFLOAT8 (34)"),
+                        return ge::GRAPH_FAILED);
         }
     }
     context->SetOutputDataType(RMS_NORM_GRAD_QUANT_OUTPUT_IDX_DX, dxDtype);

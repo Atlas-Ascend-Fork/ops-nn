@@ -19,6 +19,13 @@
 #include "rms_norm_grad_quant_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormGradQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
 
 constexpr static int64_t CONST_ZERO = 0;
 constexpr static int64_t CONST_ONE = 1;
@@ -221,13 +228,23 @@ uint64_t RmsNormGradQuantBigMTiling::GetTilingKey() const
 ge::graphStatus RmsNormGradQuantBigMTiling::GetWorkspaceSize()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "GetWorkspaceSize: platform info is null; check the platform info query and the OPP/SoC installation"),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     workspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
 
     int64_t wsSize = usedCoreNumDgamma_ * cols_ * sizeof(float) + workspaceSize_;
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(
+        workspaces == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetWorkspaceSize: GetWorkspaceSizes(1) returned null; required output-slot count is 1. "
+                               "Check the TilingContext construction, not the user device allocation"),
+        return ge::GRAPH_FAILED);
     workspaces[0] = static_cast<size_t>(wsSize);
     return ge::GRAPH_SUCCESS;
 }
@@ -241,16 +258,27 @@ ge::graphStatus RmsNormGradQuantBigMTiling::PostTiling()
     OP_LOGD(context_->GetNodeName(), "Tiling usedCoreNum is %lu.", aivCoreNum_);
     auto rawTilingData = context_->GetRawTilingData();
     OP_CHECK_IF(sizeof(tilingData_) > rawTilingData->GetCapacity(),
-                OP_LOGE(context_->GetNodeName(), "actual tiling data size %zu > context tiling data size %zu",
-                        sizeof(tilingData_), rawTilingData->GetCapacity()),
+                ReportTilingStageError(context_->GetNodeName(), "PostTiling: tiling data size " +
+                                                                    std::to_string(sizeof(tilingData_)) +
+                                                                    " exceeds the tiling buffer capacity " +
+                                                                    std::to_string(rawTilingData->GetCapacity())),
                 return ge::GRAPH_FAILED);
     auto capSize = rawTilingData->GetCapacity();
     void* ptrData = rawTilingData->GetData();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, ptrData);
+    OP_CHECK_IF(
+        ptrData == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "PostTiling: the data pointer of the raw tiling buffer is null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     void* ptrStruct = static_cast<void*>(&tilingData_);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, ptrStruct);
+    OP_CHECK_IF(ptrStruct == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "PostTiling: ptrStruct is null."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(memcpy_s(ptrData, capSize, ptrStruct, sizeof(tilingData_)) != 0,
-                OP_LOGE(context_->GetNodeName(), "Set tiling data is failed!"), return ge::GRAPH_FAILED);
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "PostTiling: memcpy_s to the tiling buffer failed, dest capacity=" + std::to_string(capSize)),
+                return ge::GRAPH_FAILED);
     rawTilingData->SetDataSize(sizeof(tilingData_));
     return ge::GRAPH_SUCCESS;
 }

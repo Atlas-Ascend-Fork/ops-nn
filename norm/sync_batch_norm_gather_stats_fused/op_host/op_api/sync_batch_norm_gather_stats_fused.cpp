@@ -49,7 +49,7 @@ const std::array<const aclTensor*, 4> SyncBatchNormGatherStatsFused(const aclTen
         OP_OUTPUT(meanAllOut, invstdAllOut, runningMeanOut, runningVarOut), OP_ATTR(momentum, eps));
 
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "SyncBatchNormGatherStatsFused kernel launch failed.");
+        OP_LOGE_WITHOUT_REPORT(ret, "SyncBatchNormGatherStatsFused kernel launch failed.");
     }
 
     return {meanAllOut, invstdAllOut, runningMeanOut, runningVarOut};

@@ -17,6 +17,13 @@
 
 namespace optiling {
 using namespace Ops::NN::OpTiling;
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "QuantizeAddLayerNorm", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
 
 static constexpr int64_t UB_RESERVED_BYTE = 256;
 static constexpr int64_t BLOCK_SIZE = 32;
@@ -54,7 +61,10 @@ inline uint32_t CEIL_DIV(uint32_t x, uint32_t y)
 bool CheckUbLimit(uint64_t ubSize, int32_t numCol, int64_t axis, int32_t dtSize)
 {
     uint32_t ubRequired = 0;
-    OP_CHECK_IF(dtSize == 0, OP_LOGE("QuantizeAddLayerNorm", "dtSize is zero."), return false);
+    OP_CHECK_IF(dtSize == 0,
+                ReportTilingStageError("QuantizeAddLayerNorm",
+                                       "the element size of the input dtype is 0; check the input dtype"),
+                return false);
     int32_t blockNum = BLOCK_SIZE / dtSize;
     int32_t numColAligned = CEIL_DIV(numCol, blockNum) * blockNum;
     if (axis == AXIS_VALUE_FOR_PER_TENSOR) {
@@ -100,23 +110,44 @@ static bool GetAndSetAttrs(gert::TilingContext* context, int64_t& qdtype, int64_
                            bool& enableAdditionalOutput)
 {
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(nullptr == attrs, OP_LOGE(context, "GetAttrs failed. "), return false);
+    OP_CHECK_IF(
+        nullptr == attrs,
+        ReportTilingStageError(context->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return false);
 
     const int64_t* qdtypePtr = attrs->GetInt(0);
-    OP_CHECK_IF(nullptr == qdtypePtr, OP_LOGE(context, "Get required attr qdtypePtr failed. "), return false);
+    OP_CHECK_IF(
+        nullptr == qdtypePtr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "the required attr dtype is missing in the tiling context; check the attr registration on the node"),
+        return false);
     qdtype = *qdtypePtr;
 
     const int64_t* axisPtr = attrs->GetInt(1);
-    OP_CHECK_IF(nullptr == axisPtr, OP_LOGE(context, "Get required attr axisPtr failed. "), return false);
+    OP_CHECK_IF(nullptr == axisPtr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "the required attr axis is missing in the tiling context; check the attr registration on the node"),
+                return false);
     axis = *axisPtr;
 
     const float* epsPtr = attrs->GetFloat(2);
-    OP_CHECK_IF(nullptr == epsPtr, OP_LOGE(context, "Get required attr epsPtr failed. "), return false);
+    OP_CHECK_IF(
+        nullptr == epsPtr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "the required attr epsilon is missing in the tiling context; check the attr registration on the node"),
+        return false);
     eps = *epsPtr;
 
     const bool* enableAdditionalOutputPtr = attrs->GetBool(3);
-    OP_CHECK_IF(nullptr == enableAdditionalOutputPtr,
-                OP_LOGE(context, "Get required attr enableAdditionalOutputPtr failed. "), return false);
+    OP_CHECK_IF(
+        nullptr == enableAdditionalOutputPtr,
+        ReportTilingStageError(context->GetNodeName(), "the required attr additional_output is missing in the tiling "
+                                                       "context; check the attr registration on the node"),
+        return false);
     enableAdditionalOutput = *enableAdditionalOutputPtr;
 
     OP_LOGD("QuantizeAddLayerNorm", "eps: %f, x_out: %d, qdtype: %ld, axis: %ld", eps, enableAdditionalOutput, qdtype,
@@ -133,7 +164,12 @@ static ge::graphStatus CanUseRegbase(gert::TilingContext* context, bool& useRegb
         useRegbase = (IsRegbaseSocVersion(context) || npuArchType == NpuArch::DAV_5102);
     } else {
         auto compileInfo = context->GetCompileInfo<QuantizeAddLayerNormCompileInfo>();
-        OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+        OP_CHECK_IF(
+            compileInfo == nullptr,
+            ReportTilingStageError(
+                context->GetNodeName(),
+                "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+            return ge::GRAPH_FAILED);
         useRegbase = compileInfo->isRegbase;
     }
     return ge::GRAPH_SUCCESS;
@@ -143,15 +179,18 @@ static ge::graphStatus Tiling4QuantizeAddLayerNormMembase(gert::TilingContext* c
 
 static ge::graphStatus Tiling4QuantizeAddLayerNorm(gert::TilingContext* context)
 {
-    OP_CHECK_IF(nullptr == context, OP_LOGE("QuantizeAddLayerNorm", "TilingContext is NULL, failed"),
+    OP_CHECK_IF(nullptr == context,
+                ReportTilingStageError("QuantizeAddLayerNorm",
+                                       "the TilingContext is null; check the tiling framework invocation"),
                 return ge::GRAPH_FAILED);
     bool useRegbase = false;
-    OP_CHECK_IF(CanUseRegbase(context, useRegbase) != ge::GRAPH_SUCCESS, OP_LOGE(context, "Check SocInfo Failed"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CanUseRegbase(context, useRegbase) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "Check SocInfo Failed"), return ge::GRAPH_FAILED);
     if (useRegbase) {
         OP_LOGW(context, "QuantizeAddLayerNorm Regbase tiling start");
         QuantizeAddLayerNormRegbaseTiling regTiling(context);
-        OP_CHECK_IF(!(regTiling.DoTiling()), OP_LOGE(context, "Regbase tiling failed."), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(!(regTiling.DoTiling()), OP_LOGE_WITHOUT_REPORT(context, "Regbase tiling failed."),
+                    return ge::GRAPH_FAILED);
         OP_LOGW(context, "QuantizeAddLayerNorm Regbase tiling success");
         return ge::GRAPH_SUCCESS;
     }
@@ -173,7 +212,7 @@ static ge::graphStatus Tiling4QuantizeAddLayerNormMembase(gert::TilingContext* c
     float eps = 0.00001;
     bool enableAdditionalOutput = false;
     bool res = GetAndSetAttrs(context, qdtype, axis, eps, enableAdditionalOutput);
-    OP_CHECK_IF(!res, OP_LOGE("QuantizeAddLayerNorm", "GetAndSetAttrs Failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!res, OP_LOGE_WITHOUT_REPORT("QuantizeAddLayerNorm", "GetAndSetAttrs Failed"), return ge::GRAPH_FAILED);
 
     auto maxCoreNum = ascendcPlatform.GetCoreNumAiv();
     int32_t numRow = 1;
@@ -186,7 +225,7 @@ static ge::graphStatus Tiling4QuantizeAddLayerNormMembase(gert::TilingContext* c
     uint64_t ubSize = -1;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     OP_CHECK_IF(!(CheckUbLimit(ubSize, numCol, axis, dataTypeSize)),
-                OP_LOGE("QuantizeAddLayerNorm", "CheckUbLimit Failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT("QuantizeAddLayerNorm", "CheckUbLimit Failed"), return ge::GRAPH_FAILED);
 
     auto firstdimPerCore = CEIL_DIV(numRow, maxCoreNum);
     uint32_t numCore = CEIL_DIV(numRow, firstdimPerCore);
@@ -233,9 +272,18 @@ static ge::graphStatus TilingPrepare4QuantizeAddLayerNorm(gert::TilingParseConte
 {
     OP_LOGW(context, "TilingPrepare4QuantizeAddLayerNorm start");
     auto compileInfo = context->GetCompiledInfo<QuantizeAddLayerNormCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "GetCompiledInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "GetPlatformInfo returned null; check the TilingParseContext construction and the platform registration"),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->aivCoreNum_ = ascendcPlatform.GetCoreNumAiv();
     compileInfo->sysWorkspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();

@@ -25,8 +25,25 @@
 #include "layer_norm_v3.h"
 #include "layer_norm_v4.h"
 #include "aclnn_layer_norm.h"
+#include "log/log.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -68,9 +85,9 @@ static const std::initializer_list<DataType>& GetDtypeSupportList()
 
 inline static bool CheckNotNull(const aclTensor* input, const aclIntArray* normalizedShape, const aclTensor* out)
 {
-    OP_CHECK_NULL(input, return false);
-    OP_CHECK_NULL(normalizedShape, return false);
-    OP_CHECK_NULL(out, return false);
+    OP_CHECK(input != nullptr, ReportNullPointerError(__func__, "input"), return false);
+    OP_CHECK(normalizedShape != nullptr, ReportNullPointerError(__func__, "normalizedShape"), return false);
+    OP_CHECK(out != nullptr, ReportNullPointerError(__func__, "out"), return false);
     return true;
 }
 
@@ -89,9 +106,8 @@ static bool CheckMeanRstdOutputShape(const aclTensor* input, const aclIntArray* 
     const size_t i = inputDimNum - j;
 
     if (meanRstdDimNum != inputDimNum) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected %s dimNum [%zu] to be equal to input dimNum [%zu], but check failed.", tensorName,
-                meanRstdDimNum, inputDimNum);
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnLayerNorm", tensorName, std::to_string(meanRstdDimNum).c_str(),
+                                     std::to_string(inputDimNum).c_str());
         return false;
     }
 
@@ -99,9 +115,8 @@ static bool CheckMeanRstdOutputShape(const aclTensor* input, const aclIntArray* 
         int64_t meanRstdDim = meanRstdShape.GetDim(index);
         int64_t inputDim = inputShape.GetDim(index);
         if (meanRstdDim != inputDim) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "Expected %s dim [%zu] shape [%ld] to be equal to input dim [%zu] shape [%ld], but check failed.",
-                    tensorName, index, meanRstdDim, index, inputDim);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnLayerNorm", tensorName, std::to_string(meanRstdDim).c_str(),
+                                                     "dims of mean/rstd should match the corresponding dims of input");
             return false;
         }
     }
@@ -109,10 +124,8 @@ static bool CheckMeanRstdOutputShape(const aclTensor* input, const aclIntArray* 
     for (size_t index = i; index < meanRstdDimNum; index++) {
         int64_t meanRstdDim = meanRstdShape.GetDim(index);
         if (meanRstdDim != 1) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "Expected %s trailing dim [%zu] to be 1 (normalizedShape axis), but got [%ld]. "
-                    "The trailing %zu dimensions should all be 1.",
-                    tensorName, index, meanRstdDim, j);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnLayerNorm", tensorName, std::to_string(meanRstdDim).c_str(),
+                                                     "trailing dims on normalizedShape axes should all be 1");
             return false;
         }
     }
@@ -160,9 +173,9 @@ static bool CheckOutputDtype(const aclTensor* out, const aclTensor* meanOutOptio
 inline static bool CheckArrayLen(const aclIntArray* normalizedShape)
 {
     if (normalizedShape->Size() > MAX_DIM_LEN) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnLayerNorm normalizedShape dim [%zu] to not be greater than [%zu] but check failed.",
-                normalizedShape->Size(), MAX_DIM_LEN);
+        OP_LOGE_FOR_INVALID_LISTSIZE("aclnnLayerNorm", "normalizedShape",
+                                     std::to_string(normalizedShape->Size()).c_str(),
+                                     std::to_string(MAX_DIM_LEN).c_str());
         return false;
     }
     return true;
@@ -209,10 +222,9 @@ static bool CheckNormalizedShapeMatch(const aclTensor* input, const aclIntArray*
         if (weightOptional) {
             int64_t weightDim = weightOptional->GetViewShape().GetDim(index);
             if (normDim != weightDim) {
-                OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                        "Expected normalized index [%zu] shape [%ld] be equal to weight index [%zu] shape [%ld], but "
-                        "failed.",
-                        index, normDim, index, weightDim);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnLayerNorm", "weightOptional",
+                                                         std::to_string(weightDim).c_str(),
+                                                         "dims of weight should match normalizedShape");
                 return false;
             }
         }
@@ -241,9 +253,9 @@ static bool CheckShape(const aclTensor* input, const aclIntArray* normalizedShap
     }
     // 2.检查normalizedShape的长度是否大于等于1
     if (normalizedShape->Size() < LEAST_NORMALIZED_SHAPE_LEN) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnLayerNorm normalizedShape len [%zu] to be greater than [%zu] but check failed.",
-                normalizedShape->Size(), LEAST_NORMALIZED_SHAPE_LEN);
+        OP_LOGE_FOR_INVALID_LISTSIZE("aclnnLayerNorm", "normalizedShape",
+                                     std::to_string(normalizedShape->Size()).c_str(),
+                                     std::to_string(LEAST_NORMALIZED_SHAPE_LEN).c_str());
         return false;
     }
     // 3.检查input维度是否不小于normalizedShape的长度
@@ -263,7 +275,13 @@ static bool CheckShape(const aclTensor* input, const aclIntArray* normalizedShap
     }
 
     // 7.校验三个输出的shape
-    OP_CHECK_SHAPE_NOT_EQUAL(input, out, return false);
+    OP_CHECK(input->GetViewShape() == out->GetViewShape(),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnLayerNorm", "input,out",
+                                                    (std::string(op::ToString(input->GetViewShape()).GetString()) +
+                                                     ", " + op::ToString(out->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shapes of input and out should be the same"),
+             return false);
     return true;
 }
 
@@ -271,14 +289,16 @@ static bool CheckImplMode(const aclTensor* input, const aclTensor* weightOptiona
                           int32_t implMode)
 {
     if (implMode != HIGH_PRECISION && implMode != HIGH_PERFORMANCE && implMode != KEEP_FP16) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected implMode to be in [0, 1, 2], but now got [%d].", implMode);
+        OP_LOGE_FOR_INVALID_VALUE("aclnnLayerNorm", "implMode", std::to_string(implMode).c_str(), "0, 1 or 2");
         return false;
     }
     if (implMode == KEEP_FP16) {
         if (input->GetDataType() != DataType::DT_FLOAT16 ||
             (weightOptional && weightOptional->GetDataType() != DataType::DT_FLOAT16) ||
             (biasOptional && biasOptional->GetDataType() != DataType::DT_FLOAT16)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "KEEP_FP16 only support all input dtype float16!");
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON("aclnnLayerNorm", "input/weight/bias",
+                                                   op::ToString(input->GetDataType()).GetString(),
+                                                   "KEEP_FP16 only supports float16 for all inputs");
             return false;
         }
     }
@@ -327,8 +347,12 @@ static aclnnStatus CheckParamsWithImplMode(const aclTensor* input, const aclIntA
         }
         if (meanOutOptional != nullptr && rstdOutOptional != nullptr &&
             meanOutOptional->GetViewShape() != rstdOutOptional->GetViewShape()) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "Expected meanOutOptional shape to be equal to rstdOutOptional shape, but check failed.");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                "aclnnLayerNorm", "meanOutOptional,rstdOutOptional",
+                (std::string(op::ToString(meanOutOptional->GetViewShape()).GetString()) + ", " +
+                 op::ToString(rstdOutOptional->GetViewShape()).GetString())
+                    .c_str(),
+                "shapes of meanOutOptional and rstdOutOptional should be the same");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }

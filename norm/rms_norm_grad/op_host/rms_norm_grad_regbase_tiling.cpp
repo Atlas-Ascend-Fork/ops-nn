@@ -19,6 +19,14 @@
 #include "rms_norm_grad_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "RmsNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 using namespace Ops::Base;
 constexpr int64_t MIN_DATANUM_PER_CORE = 1024;
 constexpr int64_t UB_RESERVED_SIZE = 256;
@@ -62,8 +70,8 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckShapeAllPositive(gert::Shape& sha
 {
     for (size_t i = 0; i < shape.GetDimNum(); i++) {
         OP_CHECK_IF(shape.GetDim(i) <= 0,
-                    OP_LOGE(context_->GetNodeName(), "Dim %lu of input should be positive, but actual %ld.", i,
-                            shape.GetDim(i)),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                           "Dim %lu of input should be positive, but actual %ld.", i, shape.GetDim(i)),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -72,14 +80,14 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckShapeAllPositive(gert::Shape& sha
 ge::graphStatus RmsNormGradRegbaseTiling::CheckShapesEqual(gert::Shape& lhsShape, gert::Shape& rhsShape)
 {
     OP_CHECK_IF(lhsShape.GetDimNum() != rhsShape.GetDimNum(),
-                OP_LOGE(context_->GetNodeName(), "DimNum of shapes are not equal: %zu vs %zu", lhsShape.GetDimNum(),
-                        rhsShape.GetDimNum()),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DimNum of shapes are not equal: %zu vs %zu",
+                                       lhsShape.GetDimNum(), rhsShape.GetDimNum()),
                 return ge::GRAPH_FAILED);
 
     for (size_t i = 0; i < lhsShape.GetDimNum(); i++) {
         OP_CHECK_IF(lhsShape.GetDim(i) != rhsShape.GetDim(i),
-                    OP_LOGE(context_->GetNodeName(), "Dim %lu of shapes are not equal: %ld vs %ld", i,
-                            lhsShape.GetDim(i), rhsShape.GetDim(i)),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Dim %lu of shapes are not equal: %ld vs %ld", i,
+                                           lhsShape.GetDim(i), rhsShape.GetDim(i)),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -101,7 +109,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsShape()
 {
     // check dy
     auto inputShape = context_->GetInputShape(INPUT_INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
+    OP_CHECK_IF(
+        inputShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input desc of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto storageShape0 = inputShape->GetStorageShape();
     if (CheckShapeAllPositive(storageShape0) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "dy", ToString(storageShape0).c_str(),
@@ -111,7 +124,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsShape()
 
     // check x
     inputShape = context_->GetInputShape(INPUT_INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
+    OP_CHECK_IF(
+        inputShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input desc of required input x is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto storageShape1 = inputShape->GetStorageShape();
     if (CheckShapeAllPositive(storageShape1) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x", ToString(storageShape1).c_str(),
@@ -129,7 +147,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsShape()
 
     // check rstd
     inputShape = context_->GetInputShape(INPUT_INDEX_2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
+    OP_CHECK_IF(
+        inputShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "rstd",
+                                                 "the input desc of required input rstd is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto storageShape2 = inputShape->GetStorageShape();
     if (CheckShapeAllPositive(storageShape2) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "rstd", ToString(storageShape2).c_str(),
@@ -139,7 +162,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsShape()
 
     // check gamma
     inputShape = context_->GetInputShape(INPUT_INDEX_3);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
+    OP_CHECK_IF(
+        inputShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gamma",
+                                                 "the input desc of required input gamma is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto storageShape3 = inputShape->GetStorageShape();
     if (CheckShapeAllPositive(storageShape3) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "gamma", ToString(storageShape3).c_str(),
@@ -157,7 +185,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsDtypeAndFormat()
     const std::vector<std::string> inputNames = {"dy", "x", "rstd", "gamma"};
     for (int i = 0; i < INPUT_NUM; i++) {
         auto inputDesc = context_->GetInputDesc(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+        OP_CHECK_IF(
+            inputDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), inputNames[i].c_str(),
+                                                     "the input desc of a required input is missing in the tiling "
+                                                     "context; check that the graph node provides all required inputs"),
+            return ge::GRAPH_FAILED);
         // check format
         auto format = inputDesc->GetFormat().GetStorageFormat();
         if (format != ge::FORMAT_ND) {
@@ -167,7 +200,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsDtypeAndFormat()
     }
 
     auto dyDesc = context_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input desc of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     dyDtype_ = dyDesc->GetDataType();
     OP_CHECK_IF(
         (dyDtype_ != ge::DataType::DT_FLOAT16 && dyDtype_ != ge::DataType::DT_BF16 &&
@@ -176,7 +214,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsDtypeAndFormat()
         return ge::GRAPH_FAILED);
 
     auto xDesc = context_->GetInputDesc(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
+    OP_CHECK_IF(
+        xDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input desc of required input x is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto xDtype = xDesc->GetDataType();
     if (dyDtype_ != xDtype) {
         std::string dtypeMsg = ToString(xDtype) + " and " + ToString(dyDtype_);
@@ -186,14 +229,24 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsDtypeAndFormat()
     }
 
     auto rstdDesc = context_->GetInputDesc(2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, rstdDesc);
+    OP_CHECK_IF(
+        rstdDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "rstd",
+                                                 "the input desc of required input rstd is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto rstdDtype = rstdDesc->GetDataType();
     OP_CHECK_IF((rstdDtype != ge::DataType::DT_FLOAT),
                 OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "rstd", ToString(rstdDtype).c_str(), "FLOAT"),
                 return ge::GRAPH_FAILED);
 
     auto gammaDesc = context_->GetInputDesc(3);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, gammaDesc);
+    OP_CHECK_IF(
+        gammaDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gamma",
+                                                 "the input desc of required input gamma is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto gammaDtype = gammaDesc->GetDataType();
     if (gammaDtype != ge::DataType::DT_FLOAT && gammaDtype != dyDtype_) {
         std::string dtypeMsg = ToString(gammaDtype);
@@ -204,7 +257,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsDtypeAndFormat()
     }
 
     auto dxDesc = context_->GetOutputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxDesc);
+    OP_CHECK_IF(
+        dxDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dx",
+                                                 "the output desc of required output dx is missing in the tiling "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     auto dxDtype = dxDesc->GetDataType();
     if (dyDtype_ != dxDtype) {
         std::string dtypeMsg = ToString(dxDtype) + " and " + ToString(dyDtype_);
@@ -214,7 +272,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsDtypeAndFormat()
     }
 
     auto dgammaDesc = context_->GetOutputDesc(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dgammaDesc);
+    OP_CHECK_IF(
+        dgammaDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dgamma",
+                                                 "the output desc of required output dgamma is missing in the tiling "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     auto dgammaDtype = dgammaDesc->GetDataType();
     OP_CHECK_IF((dgammaDtype != ge::DataType::DT_FLOAT),
                 OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "dgamma", ToString(dgammaDtype).c_str(), "FLOAT"),
@@ -226,18 +289,19 @@ ge::graphStatus RmsNormGradRegbaseTiling::CheckInputsDtypeAndFormat()
 ge::graphStatus RmsNormGradRegbaseTiling::GetShapeAttrsInfo()
 {
     if (context_ == nullptr) {
-        OP_LOGE(OP_NAME, "Tiling context is null");
+        ReportTilingStageError("RmsNormGrad",
+                               "GetShapeAttrsInfo: TilingContext is null; the tiling framework contract is broken");
         return ge::GRAPH_FAILED;
     }
 
     // check inputs shape
     if (CheckInputsShape() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Inputs shape invalid.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Inputs shape invalid.");
         return ge::GRAPH_FAILED;
     }
     // check inputs dtype and format
     if (CheckInputsDtypeAndFormat() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Inputs dtype/format invalid.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Inputs dtype/format invalid.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -251,7 +315,11 @@ ge::graphStatus RmsNormGradRegbaseTiling::PostTiling()
 {
     context_->SetBlockDim(aivCoreNum_);
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(currentWorkspace == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     currentWorkspace[0] = workspaceSize_;
     tilingData_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData_.GetDataSize());
@@ -347,7 +415,9 @@ ge::graphStatus RmsNormGradRegbaseTiling::CalcTilingDataDgamma()
         maxRowsNumDG_ = ubSize_ / BUFFER_NUM / ((vlFp32_ * 4 + TWO) * FLOATBYTESIZE);
         rowsPerUBDG_ = std::pow(TWO, NearestLowerPowerOfTwo(maxRowsNumDG_));
         OP_CHECK_IF(maxRowsNumDG_ <= 0,
-                    OP_LOGE(context_->GetNodeName(), "The maxRowsNumDG_ size is neg: %d.", maxRowsNumDG_),
+                    ReportTilingStageError(context_->GetNodeName(),
+                                           "CalcTilingDataDgamma: maxRowsNumDG_ is " + std::to_string(maxRowsNumDG_) +
+                                               "; the UB cannot fit the minimum dgamma row buffer"),
                     return ge::GRAPH_FAILED);
         totalBlockCountDG_ = (rows_ + rowsPerUBDG_ - 1) / rowsPerUBDG_;
         mainBlockCountDG_ = totalBlockCountDG_;
@@ -376,12 +446,12 @@ ge::graphStatus RmsNormGradRegbaseTiling::DoOpTiling()
 
     // choose template and calc ub buffer size
     result = CalcTilingDataDgamma();
-    OP_CHECK_IF(result != ge::GRAPH_SUCCESS, OP_LOGE(OP_NAME, "Regbase template do op tiling dgamma failed."),
-                return result);
+    OP_CHECK_IF(result != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(OP_NAME.c_str(), "Regbase template do op tiling dgamma failed."), return result);
 
     result = CalcTilingDataDx();
-    OP_CHECK_IF(result != ge::GRAPH_SUCCESS, OP_LOGE(OP_NAME, "Regbase template do op tiling dx failed."),
-                return result);
+    OP_CHECK_IF(result != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(OP_NAME.c_str(), "Regbase template do op tiling dx failed."), return result);
 
     tilingData_.dxTilingData.set_cols(cols_);
     tilingData_.dxTilingData.set_rows(rows_);

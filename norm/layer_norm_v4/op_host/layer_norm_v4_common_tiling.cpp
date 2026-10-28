@@ -78,7 +78,14 @@ ge::graphStatus LayerNormV4CommonTiling::DoOpTiling()
                                      BLOCK_SIZE_OF_FLOAT16;
     uint32_t maxtileCount = maxtileLength_ - tileLengthFp16Aligned;
     if (maxtileCount < tileCount_) {
-        OP_LOGE(context_->GetNodeName(), "The size of normalized shape is too big.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context_->GetNodeName(), "normalized_shape", std::to_string(commonParams.colSize).c_str(),
+            ("the size of the normalized shape exceeds the maximum tile count supported by the UB capacity "
+             "(tileCount " +
+             std::to_string(tileCount_) + " > max " + std::to_string(maxtileCount) +
+             "); "
+             "reduce the normalized shape size")
+                .c_str());
         return ge::GRAPH_FAILED;
     }
     td_.set_numBlocks(selfBlockDim_);

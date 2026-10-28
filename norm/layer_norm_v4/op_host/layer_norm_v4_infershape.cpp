@@ -19,6 +19,14 @@
 
 using namespace ge;
 namespace ops {
+// InferShape阶段框架契约类失败(输出shape容器/属性/shape range为空)统一上报EZ1014, 不再生成EZ9999内部码
+static void ReportInferShapeStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "LayerNormV4", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
+
 constexpr size_t INPUT_IDX_X = 0;
 constexpr size_t INPUT_IDX_NORM_SHAPE = 1;
 constexpr size_t OUTPUT_IDX_Y = 0;
@@ -50,13 +58,30 @@ static graphStatus InferShape4LayerNormV4(gert::InferShapeContext* context)
     OP_LOGI(context, "Begin to do InferShape4LayerNormV4.");
 
     const gert::Shape* x_shape = context->GetInputShape(INPUT_IDX_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     gert::Shape* y_shape = context->GetOutputShape(OUTPUT_IDX_Y);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    OP_CHECK_IF(y_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of y (output index 0) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
     gert::Shape* mean_shape = context->GetOutputShape(OUTPUT_IDX_MEAN);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mean_shape);
+    OP_CHECK_IF(mean_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of mean (output index 1) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
     gert::Shape* rstd_shape = context->GetOutputShape(OUTPUT_IDX_RSTD);
-    OP_CHECK_NULL_WITH_CONTEXT(context, rstd_shape);
+    OP_CHECK_IF(rstd_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of rstd (output index 2) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     *y_shape = *x_shape;
     *mean_shape = *x_shape;
@@ -65,20 +90,33 @@ static graphStatus InferShape4LayerNormV4(gert::InferShapeContext* context)
                 return GRAPH_SUCCESS);
 
     const gert::Shape* norm_shape = context->GetInputShape(INPUT_IDX_NORM_SHAPE);
-    OP_CHECK_IF(norm_shape->GetDimNum() > 1, OP_LOGE(context, "Shape of norm_shape should be 1 dimensions!"),
-                return GRAPH_FAILED);
+    OP_CHECK_IF(
+        norm_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "normalized_shape",
+                                                 "the input shape of required input normalized_shape is missing "
+                                                 "in the infer-shape context; check that the graph node "
+                                                 "provides all required inputs"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(norm_shape->GetDimNum() > 1,
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "normalized_shape",
+                                             std::to_string(norm_shape->GetDimNum()).c_str(), "1"),
+                return ge::GRAPH_FAILED);
 
     int64_t norm_shape_len = norm_shape->IsScalar() ? 1 : norm_shape->GetDim(0);
     if (norm_shape_len < 0) {
-        OP_CHECK_IF(SetAllUnknownDim(x_shape->GetDimNum(), mean_shape) != GRAPH_SUCCESS,
-                    OP_LOGE(context, "do InferShape4LayerNormV4 failed!"), return GRAPH_FAILED);
+        OP_CHECK_IF(SetAllUnknownDim(x_shape->GetDimNum(), mean_shape) != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(context, "SetAllUnknownDim failed."), return ge::GRAPH_FAILED);
         *rstd_shape = *mean_shape;
         OP_LOGI(context, "End to do InferShape4LayerNormV4, norm_shape is unknown.");
         return GRAPH_SUCCESS;
     }
 
     OP_CHECK_IF(static_cast<int64_t>(x_shape->GetDimNum()) < norm_shape_len,
-                OP_LOGE(context, "norm_shape_len must be <= xshape rank!"), return GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "normalized_shape, x",
+                    (std::to_string(norm_shape_len) + ", " + std::to_string(x_shape->GetDimNum())).c_str(),
+                    "the length of normalized_shape must not exceed the rank of x"),
+                return ge::GRAPH_FAILED);
 
     int64_t begin_norm_axis_val = x_shape->GetDimNum() - norm_shape_len;
     for (size_t i = 0; i < x_shape->GetDimNum(); ++i) {
@@ -100,7 +138,11 @@ static graphStatus InferDtype4LayerNormV4(gert::InferDataTypeContext* context)
     OP_LOGD(context, "InferDtype4LayerNormV4 enter");
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(attrs == nullptr,
+                ReportInferShapeStageError(
+                    context->GetNodeName(),
+                    "InferDataType: GetAttrs() returned null; check the InferDataTypeContext construction"),
+                return ge::GRAPH_FAILED);
     auto input_dtype = context->GetInputDataType(INPUT_IDX_X);
 
     context->SetOutputDataType(OUTPUT_IDX_Y, input_dtype);
@@ -117,15 +159,33 @@ static ge::graphStatus InferShapeRange4LayerNormV4(gert::InferShapeRangeContext*
 {
     OP_LOGD(context, "InferShapeRange4LayerNormV4 enter");
     auto x_shape_range = context->GetInputShapeRange(INPUT_IDX_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape_range);
+    OP_CHECK_IF(x_shape_range == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the input shape range of x is missing in the infer-shape-range context"),
+                return ge::GRAPH_FAILED);
     auto norm_shape_range = context->GetInputShapeRange(INPUT_IDX_NORM_SHAPE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, norm_shape_range);
+    OP_CHECK_IF(norm_shape_range == nullptr,
+                ReportInferShapeStageError(
+                    context->GetNodeName(),
+                    "the input shape range of normalized_shape is missing in the infer-shape-range context"),
+                return ge::GRAPH_FAILED);
     auto y_shape_range = context->GetOutputShapeRange(OUTPUT_IDX_Y);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape_range);
+    OP_CHECK_IF(y_shape_range == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape range of y is missing in the infer-shape-range context"),
+                return ge::GRAPH_FAILED);
     auto mean_shape_range = context->GetOutputShapeRange(OUTPUT_IDX_MEAN);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mean_shape_range);
+    OP_CHECK_IF(
+        mean_shape_range == nullptr,
+        ReportInferShapeStageError(context->GetNodeName(),
+                                   "the output shape range of mean is missing in the infer-shape-range context"),
+        return ge::GRAPH_FAILED);
     auto rstd_shape_range = context->GetOutputShapeRange(OUTPUT_IDX_RSTD);
-    OP_CHECK_NULL_WITH_CONTEXT(context, rstd_shape_range);
+    OP_CHECK_IF(
+        rstd_shape_range == nullptr,
+        ReportInferShapeStageError(context->GetNodeName(),
+                                   "the output shape range of rstd is missing in the infer-shape-range context"),
+        return ge::GRAPH_FAILED);
 
     OP_LOGD(context, "InferShapeRange4LayerNormV4 x_shape_range->GetMin() = %s",
             Ops::Base::ToString(*x_shape_range->GetMin()).c_str());
@@ -149,9 +209,17 @@ static ge::graphStatus InferShapeRange4LayerNormV4(gert::InferShapeRangeContext*
     norm_shape_max_len = norm_shape_max_len == -1 ? output_shape_dim_num : norm_shape_max_len;
     norm_shape_min_len = norm_shape_min_len == -1 ? 0 : norm_shape_min_len;
     OP_CHECK_IF(static_cast<int64_t>(norm_shape_max_len) > static_cast<int64_t>(output_shape_dim_num),
-                OP_LOGE(context, "norm_shape_len must be <= xshape rank!"), return GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "normalized_shape, x",
+                    (std::to_string(norm_shape_max_len) + ", " + std::to_string(output_shape_dim_num)).c_str(),
+                    "the length of normalized_shape must not exceed the rank of x"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(static_cast<int64_t>(norm_shape_min_len) > static_cast<int64_t>(output_shape_dim_num),
-                OP_LOGE(context, "norm_shape_len must be <= xshape rank!"), return GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "normalized_shape, x",
+                    (std::to_string(norm_shape_min_len) + ", " + std::to_string(output_shape_dim_num)).c_str(),
+                    "the length of normalized_shape must not exceed the rank of x"),
+                return ge::GRAPH_FAILED);
     if (is_need_update_y_range) {
         y_shape_range->GetMax()->SetDimNum(output_shape_dim_num);
         y_shape_range->GetMin()->SetDimNum(output_shape_dim_num);

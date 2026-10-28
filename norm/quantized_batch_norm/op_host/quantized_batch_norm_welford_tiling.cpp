@@ -127,10 +127,24 @@ ge::graphStatus QuantizedBatchNormWelfordTiling::PostTiling()
 
     // Save tiling data for quantized batch norm
     auto quantRawTilingData = context_->GetRawTilingData();
-    OP_CHECK_IF(td_.GetDataSize() > quantRawTilingData->GetCapacity(),
-                OP_LOGE(commonParams.nodeName, "actual tiling data size %zu > context tiling data size %zu",
-                        td_.GetDataSize(), quantRawTilingData->GetCapacity()),
-                return ge::GRAPH_FAILED);
+    if (quantRawTilingData == nullptr) {
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {
+            commonParams.nodeName.c_str(),
+            "PostTiling: GetRawTilingData() returned null; check the TilingContext construction"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+        return ge::GRAPH_FAILED;
+    }
+    if (td_.GetDataSize() > quantRawTilingData->GetCapacity()) {
+        const std::string reason = "PostTiling: tiling data size " + std::to_string(td_.GetDataSize()) +
+                                   " exceeds the tiling buffer capacity " +
+                                   std::to_string(quantRawTilingData->GetCapacity()) +
+                                   "; check the tiling data definition and the buffer provided by the framework";
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {commonParams.nodeName.c_str(), reason.c_str()};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+        return ge::GRAPH_FAILED;
+    }
     td_.SaveToBuffer(quantRawTilingData->GetData(), quantRawTilingData->GetCapacity());
     quantRawTilingData->SetDataSize(td_.GetDataSize());
 

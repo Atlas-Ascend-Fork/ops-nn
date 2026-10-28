@@ -43,7 +43,11 @@ const aclTensor* QuantizedBatchNorm(const l0op::QuantizedBatchNormParams& params
                  params.outputZeroPoint, params.weight, params.bias),
         OP_OUTPUT(y), OP_ATTR(epsilon));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "QuantizedBatchNorm ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        // 下层(tiling/kernel选择等)已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+        OP_LOGE_WITHOUT_REPORT(ret,
+                               "QuantizedBatchNorm: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                               "construction, ret=%d. See the first error reported by the failing stage.",
+                               static_cast<int32_t>(ret));
         return nullptr;
     }
     return y;
