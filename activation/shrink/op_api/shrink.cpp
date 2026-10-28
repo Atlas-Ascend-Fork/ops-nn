@@ -22,10 +22,10 @@ OP_TYPE_REGISTER(Shrink);
 
 static const std::initializer_list<DataType> AICORE_DTYPE_SUPPORT_LIST = {DataType::DT_FLOAT, DataType::DT_FLOAT16};
 
-//根据芯片类型、dtype判断算子是否支持走aicore
+// 根据芯片类型、dtype判断算子是否支持走aicore
 static inline bool IsAiCoreSupport(DataType inputDtype)
 {
-    //只需要判断dtype
+    // 只需要判断dtype
     return CheckType(inputDtype, AICORE_DTYPE_SUPPORT_LIST);
 }
 
@@ -36,7 +36,8 @@ static inline const aclTensor* ShrinkAiCore(const aclTensor* input, float lambd,
     L0_DFX(ShrinkAiCore, input, lambd, bias, output);
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(Shrink, OP_INPUT(input), OP_OUTPUT(output), OP_ATTR(lambd, bias));
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "ShrinkAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ShrinkAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return nullptr);
     return output;
 }

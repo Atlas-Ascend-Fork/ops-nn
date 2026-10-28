@@ -39,7 +39,8 @@ static inline const aclTensor* HardShrinkAiCore(const aclTensor* input, float la
     // 使用框架宏ADD_TO_LAUNCHER_LIST_AICORE，将AiCore HardShrink算子加入任务队列
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(HardShrink, OP_INPUT(input), OP_OUTPUT(output), OP_ATTR(lambd));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "HardShrinkAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "HardShrinkAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             return nullptr);
     return output;
 }
 

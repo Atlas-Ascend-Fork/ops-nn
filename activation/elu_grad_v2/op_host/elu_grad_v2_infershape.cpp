@@ -14,6 +14,9 @@
  */
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 
@@ -21,9 +24,27 @@ inline ge::graphStatus CopyShapeInputToOutputWithIdx(gert::InferShapeContext* co
                                                      int64_t output_idx)
 {
     auto in_shape = context->GetInputShape(input_idx);
-    OP_CHECK_NULL_WITH_CONTEXT(context, in_shape);
+    OP_CHECK_IF(
+        in_shape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "elu_grad_v2" : (context)->GetNodeName()),
+            (input_idx == 0 ?
+                 std::string("grads") :
+                 (input_idx == 1 ? std::string("activations") : "input[" + std::to_string(input_idx) + "]"))),
+        return ge::GRAPH_FAILED);
     auto out_shape = context->GetOutputShape(output_idx);
-    OP_CHECK_NULL_WITH_CONTEXT(context, out_shape);
+    if (out_shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "elu_grad_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object out_shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object out_shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     *out_shape = *in_shape;
     return ge::GRAPH_SUCCESS;
 }

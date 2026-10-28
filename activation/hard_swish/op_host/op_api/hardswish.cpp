@@ -33,7 +33,8 @@ const aclTensor* HardSwish(const aclTensor* self, aclOpExecutor* executor)
     CHECK_RET(hardswish_out != nullptr, nullptr);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(HardSwish, OP_INPUT(self), OP_OUTPUT(hardswish_out));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "HardSwishAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "HardSwishAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             return nullptr);
     return hardswish_out;
 }
 

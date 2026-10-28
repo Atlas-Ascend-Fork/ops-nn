@@ -18,6 +18,8 @@
 #include "tiling/tiling_api.h"
 #include "hard_swish_grad_v2_tiling_def.h"
 #include "log/log.h"
+#include <string>
+#include "base/err_msg.h"
 
 namespace optiling {
 constexpr int64_t UB_DIVIDE_NUM_EACH_CORE = 10;
@@ -66,14 +68,16 @@ ge::graphStatus HardSwishGradV2Tiling::RunBigKernelTiling()
     // 获取输入矩阵
     auto srcTensor = tilingContext->GetInputTensor(0);
     if (srcTensor == nullptr) {
-        OP_LOGE(tilingContext, "HardSwishGradV2Tiling srcTensor nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(
+            (tilingContext->GetNodeName() == nullptr ? "HardSwishGradV2" : tilingContext->GetNodeName()), "gradOutput");
         return ge::GRAPH_FAILED;
     }
 
     // 获取数据类型
     auto temp = tilingContext->GetInputDesc(0);
     if (temp == nullptr) {
-        OP_LOGE(tilingContext, "HardSwishGradV2Tiling temp nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(
+            (tilingContext->GetNodeName() == nullptr ? "HardSwishGradV2" : tilingContext->GetNodeName()), "gradOutput");
         return ge::GRAPH_FAILED;
     }
 
@@ -93,7 +97,13 @@ ge::graphStatus HardSwishGradV2Tiling::RunBigKernelTiling()
     OP_LOGD(tilingContext, "HardSwishGradV2Tiling GetCoreMemSize ubSize = %d, elementNumEachCore = %d", ubSize,
             elementNumEachCore);
     if (ubSize <= 0 || elementNumEachCore <= 0) {
-        OP_LOGE(tilingContext, "HardSwishGradV2Tiling GetCoreMemSize ubSize error");
+        const char* nodeName = tilingContext->GetNodeName();
+        const std::string msgOpName = (nodeName == nullptr ? "HardSwishGradV2" : nodeName);
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       "HardSwishGradV2Tiling GetCoreMemSize ubSize error");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
         return ge::GRAPH_FAILED;
     }
     uint32_t needCoreNum = GetNeedCoreNum(platformInfo.GetCoreNumAiv());

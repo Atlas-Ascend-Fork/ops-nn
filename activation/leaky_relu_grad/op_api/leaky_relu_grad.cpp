@@ -46,7 +46,8 @@ static const aclTensor* LeakyReluGradAICpu(const aclTensor* gradOutput, const ac
     auto ret = ADD_TO_LAUNCHER_LIST_AICPU(LeakyReluGrad, OP_ATTR_NAMES({"alpha"}), OP_INPUT(gradOutput, self),
                                           OP_OUTPUT(out), OP_ATTR(negativeSlope));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LeakyReluGradAICpu ADD_TO_LAUNCHER_LIST_AICPU failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "LeakyReluGradAICpu ADD_TO_LAUNCHER_LIST_AICPU failed."),
+             return nullptr);
     return out;
 }
 
@@ -58,7 +59,7 @@ static const aclTensor* LeakyReluGradAICore(const aclTensor* gradOutput, const a
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(LeakyReluGrad, OP_INPUT(gradOutput, self), OP_OUTPUT(out),
                                            OP_ATTR(negativeSlope));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LeakyReluGradAICore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "LeakyReluGradAICore ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return nullptr);
     return out;
 }

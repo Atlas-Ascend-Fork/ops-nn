@@ -25,7 +25,8 @@ static const aclTensor* SiluAiCore(const aclTensor* self, aclTensor* out, float 
 {
     L0_DFX(SiluAiCore, self, out);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(Swish, OP_INPUT(self), OP_OUTPUT(out), OP_ATTR(scale));
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "SwishAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "SwishAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return nullptr);
     return out;
 }

@@ -25,7 +25,7 @@ const aclTensor* FastGelu(const aclTensor* self, aclOpExecutor* executor)
     auto out = executor->AllocTensor(self->GetViewShape(), self->GetDataType());
     auto retAicore = ADD_TO_LAUNCHER_LIST_AICORE(FastGelu, OP_INPUT(self), OP_OUTPUT(out));
     if (retAicore != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "FastGelu ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "FastGelu ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;
     }
     OP_CHECK_ADD_TO_LAUNCHER_LIST_AICORE(retAicore != ACLNN_SUCCESS, return nullptr,

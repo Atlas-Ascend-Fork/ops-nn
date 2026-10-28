@@ -48,7 +48,8 @@ static inline const aclTensor* EluAiCore(const aclTensor* self, float alpha, flo
     // 使用框架宏ADD_TO_LAUNCHER_LIST_AICORE，将AiCore Elu算子加入任务队列
     // Elu是算子的OpType，self是算子的输入，alpha是算子的属性, out是算子的输出
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(Elu, OP_INPUT(self), OP_OUTPUT(out), OP_ATTR(alpha, scale, inputScale));
-    OP_CHECK(ret == ACL_SUCCESS, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "EluAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+    OP_CHECK(ret == ACL_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "EluAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return nullptr);
     return out;
 }
@@ -65,7 +66,8 @@ static inline const aclTensor* EluAiCpu(const aclTensor* self, float alpha, floa
     // Elu是算子的OpType，self是算子的输入，out是算子的输出
     auto ret = ADD_TO_LAUNCHER_LIST_AICPU(Elu, OP_ATTR_NAMES({"alpha", "scale", "input_scale"}), OP_INPUT(self),
                                           OP_OUTPUT(out), OP_ATTR(alpha, scale, inputScale));
-    OP_CHECK(ret == ACL_SUCCESS, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "EluAiCpu ADD_TO_LAUNCHER_LIST_AICPU failed."),
+    OP_CHECK(ret == ACL_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "EluAiCpu ADD_TO_LAUNCHER_LIST_AICPU failed."),
              return nullptr);
     return out;
 }
@@ -75,7 +77,7 @@ const aclTensor* Elu(const aclTensor* self, float alpha, float scale, float inpu
     // 根据输入shape申请输出tensor
     auto out = executor->AllocTensor(self->GetViewShape(), self->GetDataType(), Format::FORMAT_ND);
     if (out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
         return nullptr;
     }
 

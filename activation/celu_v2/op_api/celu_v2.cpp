@@ -38,14 +38,15 @@ const aclTensor* CeluV2(const aclTensor* self, float alpha, aclOpExecutor* execu
     // 根据输入shape申请输出tensor
     auto out = executor->AllocTensor(self->GetViewShape(), self->GetDataType(), Format::FORMAT_ND);
     if (out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
         return nullptr;
     }
 
     // 使用框架宏ADD_TO_LAUNCHER_LIST_AICORE，将AiCore CeluV2算子加入任务队列
     // CeluV2是算子的OpType，self是算子的输入, out是算子的输出, alpha是算子的属性
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(CeluV2, OP_INPUT(self), OP_OUTPUT(out), OP_ATTR(alpha));
-    OP_CHECK(ret == ACLNN_SUCCESS, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "CeluV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+    OP_CHECK(ret == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "CeluV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return nullptr);
     return out;
 }

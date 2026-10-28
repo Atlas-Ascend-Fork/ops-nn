@@ -31,9 +31,10 @@ const aclTensor* SoftplusV2Grad(const aclTensor* grad_output, const aclTensor* s
     // 使用框架宏ADD_TO_LAUNCHER_LIST_AICORE，将AiCore SoftplusV2Grad算子加入任务队列
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(SoftplusV2Grad, OP_INPUT(grad_output, self), OP_OUTPUT(grad_input),
                                            OP_ATTR(beta, threshold));
-    OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "SoftplusV2GradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
-             return nullptr);
+    OP_CHECK(
+        ret == ACLNN_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "SoftplusV2GradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+        return nullptr);
     return grad_input;
 }
 } // namespace l0op

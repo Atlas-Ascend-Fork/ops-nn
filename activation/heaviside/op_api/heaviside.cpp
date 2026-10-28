@@ -41,7 +41,8 @@ static const aclTensor* HeavisideAiCore(const aclTensor* input, const aclTensor*
     L0_DFX(HeavisideAiCore, input, values, output);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(Heaviside, OP_INPUT(input, values), OP_OUTPUT(output));
     OP_CHECK(ret == ACL_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "HeavisideAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "HeavisideAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             return nullptr);
     return output;
 }
 

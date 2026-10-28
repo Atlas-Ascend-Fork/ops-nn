@@ -12,16 +12,35 @@
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/shape_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace ops {
 static constexpr size_t MAX_DIM_NUM = 8;
 static ge::graphStatus InferShape4HardSigmoid(gert::InferShapeContext* context)
 {
     const gert::Shape* inputShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputShape);
+    OP_CHECK_IF(
+        inputShape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "hard_sigmoid" : (context)->GetNodeName()),
+            "input_x"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* outputShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outputShape);
+    if (outputShape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "hard_sigmoid" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object outputShape is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object outputShape is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     if (Ops::Base::IsUnknownRank(*inputShape)) {
         Ops::Base::SetUnknownRank(*outputShape);

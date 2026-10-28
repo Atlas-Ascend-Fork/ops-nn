@@ -11,6 +11,9 @@
 #include "op_host/infershape_broadcast_util.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 namespace ops {
@@ -28,11 +31,33 @@ static std::string ShapeCannotBroadcastMsg(const gert::Shape& shape1, const gert
 static ge::graphStatus InferShape4FastGeluGrad(gert::InferShapeContext* context)
 {
     auto fast_gelu_grad_in_shape1 = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, fast_gelu_grad_in_shape1);
+    OP_CHECK_IF(
+        fast_gelu_grad_in_shape1 == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "fast_gelu_grad" : (context)->GetNodeName()),
+            "dy"),
+        return ge::GRAPH_FAILED);
     auto fast_gelu_grad_in_shape2 = context->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, fast_gelu_grad_in_shape2);
+    OP_CHECK_IF(
+        fast_gelu_grad_in_shape2 == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "fast_gelu_grad" : (context)->GetNodeName()),
+            "x"),
+        return ge::GRAPH_FAILED);
     auto fast_gelu_grad_out_shape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, fast_gelu_grad_out_shape);
+    if (fast_gelu_grad_out_shape == nullptr) {
+        const std::string msgOpName = std::string((
+            (context) == nullptr || (context)->GetNodeName() == nullptr ? "fast_gelu_grad" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object fast_gelu_grad_out_shape is unavailable; check the "
+                               "operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "InferShape framework object fast_gelu_grad_out_shape is unavailable; check the "
+                                      "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     OP_CHECK_IF(
         !Ops::Base::BroadcastShape(fast_gelu_grad_in_shape1, fast_gelu_grad_in_shape2, fast_gelu_grad_out_shape),

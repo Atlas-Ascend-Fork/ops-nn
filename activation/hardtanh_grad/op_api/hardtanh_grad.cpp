@@ -29,7 +29,7 @@ const aclTensor* HardtanhGrad(const aclTensor* gradOutput, const aclTensor* self
     L0_DFX(HardtanhGrad, gradOutput, self, min, max, out);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(HardtanhGrad, OP_INPUT(self, gradOutput), OP_OUTPUT(out), OP_ATTR(min, max));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "HardtanhGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "HardtanhGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return nullptr);
     return out;
 }

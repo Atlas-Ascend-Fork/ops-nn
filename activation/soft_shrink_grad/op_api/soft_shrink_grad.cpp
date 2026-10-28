@@ -32,9 +32,10 @@ const aclTensor* SoftShrinkGrad(const aclTensor* gradOutput, const aclTensor* se
     L0_DFX(SoftShrinkGrad, gradOutput, self, lambd, gradInput);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(SoftShrinkGrad, OP_INPUT(gradOutput, self), OP_OUTPUT(gradInput),
                                            OP_ATTR(lambd));
-    OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "SoftShrinkGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
-             return nullptr);
+    OP_CHECK(
+        ret == ACLNN_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "SoftShrinkGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+        return nullptr);
     return gradInput;
 }
 } // namespace l0op

@@ -50,16 +50,17 @@ static bool IsAiCoreSupport(const aclTensor* gradOutput, const aclTensor* self)
 }
 
 // AiCore逻辑
-static void GeluGradV2AiCore(const aclTensor* gradOutput, const aclTensor* self, const char* approximate,
-                             aclTensor* gradInput, aclOpExecutor* executor)
+static aclnnStatus GeluGradV2AiCore(const aclTensor* gradOutput, const aclTensor* self, const char* approximate,
+                                    aclTensor* gradInput, aclOpExecutor* executor)
 {
     L0_DFX(GeluGradV2AiCore, gradOutput, self, approximate, gradInput);
 
     auto retAicore = ADD_TO_LAUNCHER_LIST_AICORE(GeluGradV2, OP_INPUT(gradOutput, self), OP_OUTPUT(gradInput),
                                                  OP_ATTR(approximate));
     if (retAicore != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "GeluGradV2 ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "GeluGradV2 ADD_TO_LAUNCHER_LIST_AICORE failed.");
     }
+    return retAicore;
 }
 
 const aclTensor* GeluGradV2(const aclTensor* gradOutput, const aclTensor* self, const char* approximate,
@@ -94,11 +95,13 @@ const aclTensor* GeluGradV2(const aclTensor* gradOutput, const aclTensor* self, 
     auto gradInput = isMixDataType ? executor->AllocTensor(broadcastShape, DataType::DT_FLOAT) :
                                      executor->AllocTensor(broadcastShape, self->GetDataType());
     if (gradInput == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc gradInput tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc gradInput tensor failed.");
         return nullptr;
     }
 
-    GeluGradV2AiCore(gradOutput, self, approximate, gradInput, executor);
+    if (GeluGradV2AiCore(gradOutput, self, approximate, gradInput, executor) != ACLNN_SUCCESS) {
+        return nullptr;
+    }
     return gradInput;
 }
 } // namespace l0op

@@ -17,6 +17,9 @@
 #include "util/shape_util.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 
@@ -28,10 +31,25 @@ static ge::graphStatus InferShapeCeluV2(gert::InferShapeContext* context)
     OP_LOGD(context->GetNodeName(), "Begin to do InferShapeCeluV2");
 
     const gert::Shape* xShape = context->GetInputShape(IDX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "celu_v2" : (context)->GetNodeName()), "x"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* yShape = context->GetOutputShape(IDX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    if (yShape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "celu_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object yShape is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object yShape is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto xShapeSize = xShape->GetDimNum();
     yShape->SetDimNum(xShapeSize);

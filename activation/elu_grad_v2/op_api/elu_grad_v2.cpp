@@ -33,7 +33,7 @@ const aclTensor* EluGradV2(const aclTensor* gradOutput, float alpha, float scale
     // 根据输入shape申请输出tensor
     auto gradIntput = executor->AllocTensor(gradOutput->GetViewShape(), gradOutput->GetDataType(), Format::FORMAT_ND);
     if (gradIntput == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc gradIntput tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc gradIntput tensor failed.");
         return nullptr;
     }
 

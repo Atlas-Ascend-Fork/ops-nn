@@ -20,6 +20,9 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 #include "opdev/shape_utils.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -48,7 +51,10 @@ const aclTensor* LogSigmoidGrad(const aclTensor* gradOutput, const aclTensor* se
     if (IsAiCoreSupport(self)) {
         return LogSigmoidGradAiCore(gradOutput, self, gradInput, executor);
     } else {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LogSigmoidGrad do not have AiCpu kernel.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s", "LogSigmoidGrad do not have AiCpu kernel.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ3002", (std::vector<const char*>{"optype", "opskernel", "reason"}),
+            (std::vector<const char*>{"LogSigmoidGrad", "AiCpu", "LogSigmoidGrad do not have AiCpu kernel."}));
         return nullptr;
     }
 }

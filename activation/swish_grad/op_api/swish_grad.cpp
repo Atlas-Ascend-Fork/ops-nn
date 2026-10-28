@@ -30,7 +30,8 @@ static const aclTensor* SwishGradAiCore(const aclTensor* gradOutput, const aclTe
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(SwishGrad, OP_INPUT(gradOutput, self, noNeed), OP_OUTPUT(gradInput),
                                            OP_ATTR(betaOptional));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "SwishGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "SwishGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             return nullptr);
     return gradInput;
 }
 

@@ -20,6 +20,9 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 #include "opdev/shape_utils.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -38,7 +41,8 @@ static const aclTensor* LogSigmoidAiCore(const aclTensor* x, aclTensor* LogSigmo
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(LogSigmoid, OP_INPUT(x), OP_OUTPUT(LogSigmoidOut));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LogSigmoidAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "LogSigmoidAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             return nullptr);
     return LogSigmoidOut;
 }
 
@@ -49,7 +53,10 @@ const aclTensor* LogSigmoid(const aclTensor* x, aclOpExecutor* executor)
     if (IsAiCoreSupport(x)) {
         return LogSigmoidAiCore(x, LogSigmoidOut, executor);
     } else {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LogSigmoid do not have AiCpu kernel.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s", "LogSigmoid do not have AiCpu kernel.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ3002", (std::vector<const char*>{"optype", "opskernel", "reason"}),
+            (std::vector<const char*>{"LogSigmoid", "AiCpu", "LogSigmoid do not have AiCpu kernel."}));
         return nullptr;
     }
 }

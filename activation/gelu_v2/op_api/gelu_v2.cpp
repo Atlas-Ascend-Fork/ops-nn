@@ -26,7 +26,7 @@ const aclTensor* GeluV2(const aclTensor* x, const std::string& approximate, aclO
     auto out = executor->AllocTensor(x->GetViewShape(), x->GetDataType());
     auto retAicore = ADD_TO_LAUNCHER_LIST_AICORE(GeluV2, OP_INPUT(x), OP_OUTPUT(out), OP_ATTR(approximate));
     if (retAicore != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "GeluV2 ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "GeluV2 ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;
     }
     OP_CHECK_ADD_TO_LAUNCHER_LIST_AICORE(retAicore != ACLNN_SUCCESS, return nullptr,
