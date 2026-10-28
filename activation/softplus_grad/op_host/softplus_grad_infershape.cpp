@@ -12,91 +12,36 @@
 
 #include "util/shape_util.h"
 #include "register/op_impl_registry.h"
+#include "op_common/op_host/infershape_broadcast_util.h"
 #include "op_common/log/log.h"
 
-using namespace ge;
-
+using namespace Ops::Base;
 namespace ops {
-namespace {
 
-static bool BroadcastDim(int64_t& dim1, const int64_t dim2)
-{
-    if (dim1 == dim2) {
-        return true;
-    }
-    if ((dim1 != 1) && (dim2 != 1)) {
-        if ((dim1 == -1) || (dim2 == -1)) {
-            dim1 = (dim1 == -1) ? dim2 : dim1;
-            return true;
-        }
-        return false;
-    }
-    dim1 = (dim1 == 1) ? dim2 : dim1;
-    return true;
-}
+constexpr size_t MAX_TENSOR_RANK = 8;
 
-static bool BroadcastShapeToOutShape(const gert::Shape* shape, gert::Shape* shapeOutput)
-{
-    size_t shapeLen = shape->GetDimNum();
-    size_t shapeYLen = shapeOutput->GetDimNum();
-    if (shapeLen > shapeYLen) {
-        shapeOutput->SetDimNum(shapeLen);
-        size_t lenSub = shapeLen - shapeYLen;
-        for (size_t i = shapeYLen; i > 0; i--) {
-            int64_t dim1 = shape->GetDim(lenSub + i - 1);
-            int64_t dim2 = shapeOutput->GetDim(i - 1);
-            if (!BroadcastDim(dim1, dim2)) {
-                return false;
-            }
-            shapeOutput->SetDim(lenSub + i - 1, dim1);
-        }
-        for (size_t i = 0; i < lenSub; i++) {
-            shapeOutput->SetDim(i, shape->GetDim(i));
-        }
-    } else {
-        auto lenSub = shapeYLen - shapeLen;
-        for (size_t i = 0; i < shapeLen; i++) {
-            int64_t dim1 = shapeOutput->GetDim(lenSub + i);
-            int64_t dim2 = shape->GetDim(i);
-            if (!BroadcastDim(dim1, dim2)) {
-                return false;
-            }
-            shapeOutput->SetDim(lenSub + i, dim1);
-        }
-    }
-    return true;
-}
-
+// 复用公共广播推导助手 InferShape4Broadcast，与 softplus_v2_grad 等同类算子保持一致：
+// 保留未知秩（shape=[-2]）分支——任一输入为未知秩时输出保守置为 [-2]，不因复制推导逻辑而丢失该分支
 static ge::graphStatus InferShapeSoftplusGrad(gert::InferShapeContext* context)
 {
-    auto inShape1 = context->GetInputShape(0);
-    if (inShape1 == nullptr) {
-        return ge::GRAPH_FAILED;
+    // Broadcast: input gradients + input features → output backprops
+    constexpr size_t kBroadcastInputNum = 2; // gradients, features
+    for (size_t i = 0; i < kBroadcastInputNum; i++) {
+        const auto inputShape = context->GetInputShape(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, inputShape);
+        if (inputShape->GetDimNum() > MAX_TENSOR_RANK) {
+            OP_LOGE(context->GetNodeName(), "SoftplusGrad input %zu rank %zu exceeds the maximum supported rank %zu.",
+                    i, inputShape->GetDimNum(), MAX_TENSOR_RANK);
+            return ge::GRAPH_FAILED;
+        }
     }
-    auto inShape2 = context->GetInputShape(1);
-    if (inShape2 == nullptr) {
-        return ge::GRAPH_FAILED;
+    const ge::graphStatus ret = InferShape4Broadcast(context, kBroadcastInputNum);
+    if (ret == ge::GRAPH_SUCCESS) {
+        OP_LOGI(context->GetNodeName(), "[InferShape] output shape=%s",
+                Ops::Base::ToString(*context->GetOutputShape(0)).c_str());
     }
-    auto outShape = context->GetOutputShape(0);
-    if (outShape == nullptr) {
-        return ge::GRAPH_FAILED;
-    }
-
-    if (Ops::Base::IsUnknownRank(*inShape1) || Ops::Base::IsUnknownRank(*inShape2)) {
-        Ops::Base::SetUnknownRank(*outShape);
-        return ge::GRAPH_SUCCESS;
-    }
-
-    *outShape = *inShape1;
-    if (!BroadcastShapeToOutShape(inShape2, outShape)) {
-        return ge::GRAPH_FAILED;
-    }
-
-    OP_LOGI(context->GetNodeName(), "[InferShape] output shape=%s", Ops::Base::ToString(*outShape).c_str());
-    return ge::GRAPH_SUCCESS;
+    return ret;
 }
-
-} // namespace
 
 IMPL_OP_INFERSHAPE(SoftplusGrad).InferShape(InferShapeSoftplusGrad);
 

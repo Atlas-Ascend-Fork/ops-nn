@@ -15,7 +15,6 @@
 #include "infershape_test_util.h"
 #include "kernel_run_context_facker.h"
 #include "log/log.h"
-#include "array_ops.h"
 #include "ut_op_common.h"
 #include "ut_op_util.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -333,4 +332,28 @@ TEST_F(SoftplusGradInfershapeTest, infershape_unknown_rank_broadcast_test)
     auto output0 = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
     ASSERT_EQ(output0->GetDimNum(), 1U);
     ASSERT_EQ(output0->GetDim(0), -2);
+}
+
+TEST_F(SoftplusGradInfershapeTest, infershape_failed_collapsible_rank9_test)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("SoftplusGrad")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    // The Broadcast framework can collapse this to one effective dimension, but the public contract limits raw rank
+    // to 8.
+    gert::Shape grad_shape = {2, 1, 2, 1, 2, 1, 2, 1, 2};
+    gert::Shape feat_shape = {2, 1, 2, 1, 2, 1, 2, 1, 2};
+    gert::Shape y_shape = {};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1}, {1})
+                      .InputShapes({&grad_shape, &feat_shape})
+                      .OutputShapes({&y_shape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    EXPECT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }

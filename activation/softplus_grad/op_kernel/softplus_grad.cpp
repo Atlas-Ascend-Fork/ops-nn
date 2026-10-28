@@ -17,9 +17,9 @@
  * 模板参数说明（与 softplus_grad_struct.h 中 ASCENDC_TPL_ARGS_DECL 定义对应）：
  *   - schMode: Broadcast 框架调度模式，由 BRC_TEMP_SCH_MODE_KEY_DECL 声明
  *
- * DTYPE_GRADIENTS 由编译系统根据 binary.json 中每个变体的输入 dtype 自动生成
- * 编译选项 -DDTYPE_GRADIENTS=<cpp_type>（见 ascendc_impl_build.py），对应 spec.yaml
- * dtype_policy: same_as_first_input。无需在 TilingKey 中区分 dtype。
+ * DTYPE_GRADIENTS 由编译系统根据算子注册（softplus_grad_def.cpp）的输入 dtype 集合自动生成
+ * 编译选项 -DDTYPE_GRADIENTS=<cpp_type>（见 scripts/util/ascendc_impl_build.py）。
+ * 无需在 TilingKey 中区分 dtype。
  */
 
 #include "kernel_operator.h"
@@ -31,9 +31,8 @@ using namespace AscendC;
 using namespace SoftplusGradOp;
 
 template <uint64_t schMode>
-__global__ __aicore__ void softplus_grad(
-    GM_ADDR gradients, GM_ADDR features, GM_ADDR backprops,
-    GM_ADDR workspace, GM_ADDR tiling)
+__global__ __aicore__ void softplus_grad(GM_ADDR gradients, GM_ADDR features, GM_ADDR backprops, GM_ADDR workspace,
+                                         GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     using OpDag = SoftplusGradDag<DTYPE_GRADIENTS>::OpDag;

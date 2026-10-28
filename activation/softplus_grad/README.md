@@ -65,14 +65,20 @@ $$
   </tbody>
   </table>
 
+  - <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16。
+
 ## 约束说明
 
 - gradients、features、backprops的数据类型必须相同。
+- 本交付数据类型仅支持FLOAT、FLOAT16、BFLOAT16，不支持DOUBLE（DOUBLE输入会在算子编译Tiling阶段报错；IR类型声明为对齐CANN内置注册的跨后端全集，含DOUBLE）。
 - gradients和features支持NumPy风格广播。
 - 支持0-8维输入。
+- 支持动态shape：输入shape可含-1未知维度，推导时与另一输入的具体维度合并，双输入均为-1时输出保持-1。
+- 支持未知秩[-2]：任一输入为未知秩时，输出shape保守推导为[-2]。
+- sigmoid使用正负分支计算以避免大负features导致中间指数溢出，不额外叠加数值下限；NaN和Inf遵循IEEE浮点运算规则，例如Inf与计算结果0相乘得到NaN。
 
 ## 调用说明
 
 | 调用方式   | 样例代码 | 说明 |
 | ---------------- | -------- | ---- |
-| 图模式  | [test_geir_softplus_grad.cpp](examples/arch35/test_geir_softplus_grad.cpp) | 通过GE IR构建图方式调用SoftplusGrad算子。 |
+| GE图模式  | [test_geir_softplus_grad.cpp](examples/arch35/test_geir_softplus_grad.cpp) | 通过GE IR构建图方式调用SoftplusGrad算子，算子IR定义见[softplus_grad_proto.h](op_graph/softplus_grad_proto.h)。 |

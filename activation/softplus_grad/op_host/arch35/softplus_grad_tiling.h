@@ -20,6 +20,38 @@
 #ifndef OPS_BUILD_IN_OP_TILING_RUNTIME_SOFTPLUS_GRAD_TILING_H_
 #define OPS_BUILD_IN_OP_TILING_RUNTIME_SOFTPLUS_GRAD_TILING_H_
 
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include "atvoss/broadcast/broadcast_tiling.h"
 
-#endif  // OPS_BUILD_IN_OP_TILING_RUNTIME_SOFTPLUS_GRAD_TILING_H_
+namespace optiling {
+
+constexpr size_t MAX_SOFTPLUS_GRAD_RANK = 8;
+
+inline bool IsSoftplusGradRankSupported(const gert::Shape& shape)
+{
+    return shape.GetDimNum() <= MAX_SOFTPLUS_GRAD_RANK;
+}
+
+inline bool IsSoftplusGradKnownElementCountSupported(const gert::Shape& shape)
+{
+    uint64_t totalElements = 1;
+    constexpr uint64_t maxElements = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+    for (size_t i = 0; i < shape.GetDimNum(); i++) {
+        const int64_t dim = shape.GetDim(i);
+        if (dim <= 0) {
+            continue;
+        }
+        const uint64_t knownDim = static_cast<uint64_t>(dim);
+        if (totalElements > maxElements / knownDim) {
+            return false;
+        }
+        totalElements *= knownDim;
+    }
+    return true;
+}
+
+} // namespace optiling
+
+#endif // OPS_BUILD_IN_OP_TILING_RUNTIME_SOFTPLUS_GRAD_TILING_H_

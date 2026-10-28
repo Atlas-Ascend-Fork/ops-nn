@@ -17,12 +17,15 @@
  * 使用 BroadcastBaseTiling<DAG> 框架自动完成：
  *   - PadAndSqueeze / FindSplitAxis / MultiCoreSplit
  *   - TilingData 填充（shape、stride、tile 大小、多核分配）
- *   - TilingKey 计算（schMode only，dtype 由 binary.json 变体驱动）
+ *   - TilingKey 计算（schMode only，dtype 变体由算子注册的 dtype 集合经
+ *     scripts/util/ascendc_impl_build.py 生成 -DDTYPE_GRADIENTS 编译选项）
  */
 
+#include <cstdint>
 #include <graph/utils/type_utils.h>
+#include <securec.h>
 #include "op_common/log/log.h"
-#include "atvoss/broadcast/broadcast_tiling.h"
+#include "softplus_grad_tiling.h"
 #include "../../op_kernel/arch35/softplus_grad_struct.h"
 #include "../../op_kernel/arch35/softplus_grad_dag.h"
 #include "register/op_impl_registry.h"
@@ -36,11 +39,99 @@ using namespace Ops::Base;
 
 namespace optiling {
 
+// 广播逐维合法性校验，规则对齐共享框架 DimensionCollapse：
+// 补维后每个输入维必须为 1（广播维）或与输出维相等，且各维非负；
+// 含 -1/-2 等负值维时返回 false，交由共享框架保持原有拒绝行为
+static bool IsBroadcastCompatible(const gert::Shape& inShape, const gert::Shape& outShape)
+{
+    const int64_t outDimNum = static_cast<int64_t>(outShape.GetDimNum());
+    const int64_t inDimNum = static_cast<int64_t>(inShape.GetDimNum());
+    if (inDimNum > outDimNum) {
+        return false;
+    }
+    const int64_t pad = outDimNum - inDimNum;
+    for (int64_t i = 0; i < outDimNum; i++) {
+        const int64_t inDim = (i < pad) ? 1 : inShape.GetDim(i - pad);
+        const int64_t outDim = outShape.GetDim(i);
+        if ((inDim < 0) || (outDim < 0) || ((inDim != 1) && (inDim != outDim))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 空 Tensor 对齐竞品（TensorFlow）语义：可广播的空输入返回空输出，不做拦截。
+// 共享框架对维数 <= 0 一律报错，因此输出元素数为 0 且广播合法时在此下发零工作量 tiling：
+// blockNum=1、blockFormer/blockTail=0，kernel 主循环不执行，不产生任何读写。
+// 广播不合法的组合仍落入共享框架，保留其逐维报错行为。
+template <typename T>
+static ge::graphStatus DoEmptyBroadcastTiling(gert::TilingContext* context)
+{
+    auto tilingData = context->GetTilingData<BroadcastBaseTilingData<typename SoftplusGradDag<T>::OpDag>>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tilingData);
+    OP_CHECK_IF(memset_s(tilingData, sizeof(*tilingData), 0, sizeof(*tilingData)) != EOK,
+                OP_LOGE(context->GetNodeName(), "SoftplusGrad: initialize empty tiling data failed"),
+                return ge::GRAPH_FAILED);
+    // elemNum 为 kernel InitBuffer 的元素容量，置 1 避免零长度分配；主循环不执行，不消费该空间
+    tilingData->ubFormer = 1;
+    tilingData->dimProductBeforeUbInner = 1;
+    tilingData->elemNum = 1;
+    tilingData->blockNum = 1;
+    context->SetBlockDim(1);
+    context->SetTilingKey(GET_TPL_TILING_KEY(static_cast<uint64_t>(SCH_MODE_NDDMA_WITHOUT_LOOP_CACHE_BRC)));
+    size_t* workspaces = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
+    workspaces[0] = 0;
+    OP_LOGI(context->GetNodeName(), "SoftplusGrad: empty broadcast output, dispatch zero-work tiling");
+    return ge::GRAPH_SUCCESS;
+}
+
 // 辅助模板函数：执行 BroadcastBaseTiling 并设置 TilingKey
-// dtype 不再编码进 TilingKey，由 binary.json 变体驱动 DTYPE_GRADIENTS 编译选项
+// dtype 不编码进 TilingKey，由算子注册的 dtype 集合经 -DDTYPE_GRADIENTS 编译选项区分
 template <typename T>
 static ge::graphStatus DoBroadcastTiling(gert::TilingContext* context)
 {
+    // 空 Tensor 早退：输出元素数为 0 且广播合法时零工作量下发，不进入共享框架
+    auto outShapePtr = context->GetOutputShape(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outShapePtr);
+    const gert::Shape& outShape = outShapePtr->GetStorageShape();
+    if (!IsSoftplusGradRankSupported(outShape)) {
+        OP_LOGE(context->GetNodeName(), "SoftplusGrad output rank %zu exceeds the maximum supported rank %zu.",
+                outShape.GetDimNum(), MAX_SOFTPLUS_GRAD_RANK);
+        return ge::GRAPH_FAILED;
+    }
+    for (uint32_t i = 0; i < context->GetComputeNodeInputNum(); i++) {
+        auto inShapePtr = context->GetInputShape(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, inShapePtr);
+        const gert::Shape& inShape = context->InputIsView(i) ? inShapePtr->GetShape() : inShapePtr->GetStorageShape();
+        if (!IsSoftplusGradRankSupported(inShape)) {
+            OP_LOGE(context->GetNodeName(), "SoftplusGrad input %u rank %zu exceeds the maximum supported rank %zu.", i,
+                    inShape.GetDimNum(), MAX_SOFTPLUS_GRAD_RANK);
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (outShape.GetShapeSize() == 0) {
+        bool broadcastable = true;
+        for (uint32_t i = 0; i < context->GetComputeNodeInputNum(); i++) {
+            auto inShapePtr = context->GetInputShape(i);
+            OP_CHECK_NULL_WITH_CONTEXT(context, inShapePtr);
+            const gert::Shape& inShape = context->InputIsView(i) ? inShapePtr->GetShape() :
+                                                                   inShapePtr->GetStorageShape();
+            if (!IsBroadcastCompatible(inShape, outShape)) {
+                broadcastable = false;
+                break;
+            }
+        }
+        if (broadcastable) {
+            return DoEmptyBroadcastTiling<T>(context);
+        }
+    }
+    // Only known positive dimensions participate in the int64 capacity check. Dynamic -1/-2 dimensions remain for
+    // the shared dynamic-shape path instead of being converted to large unsigned values.
+    if (!IsSoftplusGradKnownElementCountSupported(outShape)) {
+        OP_LOGE(context->GetNodeName(), "SoftplusGrad: known output element count exceeds int64 range.");
+        return ge::GRAPH_FAILED;
+    }
     Ops::Base::BroadcastBaseTiling<typename SoftplusGradDag<T>::OpDag> brcBaseTiling(context);
     OP_CHECK_IF(brcBaseTiling.DoTiling() == ge::GRAPH_FAILED,
                 OP_LOGE(context->GetNodeName(), "BroadcastBaseTiling DoTiling failed"), return ge::GRAPH_FAILED);
@@ -62,7 +153,7 @@ static ge::graphStatus DoOpTiling(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
     ge::DataType outputDtype = outputDesc->GetDataType();
 
-    // spec.yaml 约束：gradients 和 features dtype 必须相同，backprops 与输入一致
+    // README 约束说明：gradients 和 features dtype 必须相同，backprops 与输入一致
     if ((input0DType != input1DType) || (outputDtype != input1DType)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "gradients, features, backprops",
                                                ge::TypeUtils::DataTypeToSerialString(input0DType) + ", " +

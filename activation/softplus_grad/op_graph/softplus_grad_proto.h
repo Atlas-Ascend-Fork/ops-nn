@@ -26,7 +26,10 @@ namespace ge {
  * backprops = gradients * sigmoid(features)
  *
  * @par Inputs:
- * @li gradients: A tensor. Must be one of: bfloat16, float16, float32.
+ * @li gradients: A tensor. Must be one of: bfloat16, double, float16, float32.
+ *                (IR-level cross-backend superset aligned with the canndev
+ *                registration; this delivery supports bfloat16, float16 and
+ *                float32 only — double inputs are rejected at the tiling stage.)
  * @li features: A tensor. Has the same type as "gradients".
  *
  * @par Outputs:
@@ -41,6 +44,6 @@ REG_OP(SoftplusGrad)
     .OUTPUT(backprops, TensorType({FloatingDataType, DT_BF16}))
     .OP_END_FACTORY_REG(SoftplusGrad)
 
-}  // namespace ge
+} // namespace ge
 
-#endif  // SOFTPLUS_GRAD_PROTO_H_
+#endif // SOFTPLUS_GRAD_PROTO_H_

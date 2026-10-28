@@ -22,13 +22,13 @@
 namespace SoftplusGradOp {
 
 // 算子自定义的 tiling key 字段：schMode only
-// dtype 维度由 binary.json 驱动 DTYPE_GRADIENTS 编译选项（ascendc_impl_build.py 自动生成），
-// 无需在 TilingKey 中区分，编译系统会为 binary.json 中每个 dtype 变体生成独立 kernel 实例
+// dtype 维度由算子注册（softplus_grad_def.cpp 的 dtype 配置）驱动 -DDTYPE_GRADIENTS 编译选项
+// （scripts/util/ascendc_impl_build.py 自动生成），无需在 TilingKey 中区分，
+// 编译系统会为每个 dtype 变体生成独立 kernel 实例
 ASCENDC_TPL_ARGS_DECL(SoftplusGrad, BRC_TEMP_SCH_MODE_KEY_DECL(schMode));
 
-ASCENDC_TPL_SEL(
-    ASCENDC_TPL_ARGS_SEL(BRC_TEMP_SCH_MODE_KEY_SEL(schMode)));
+ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(BRC_TEMP_SCH_MODE_KEY_SEL(schMode)));
 
-}  // namespace SoftplusGradOp
+} // namespace SoftplusGradOp
 
-#endif  // SOFTPLUS_GRAD_STRUCT_H_
+#endif // SOFTPLUS_GRAD_STRUCT_H_
