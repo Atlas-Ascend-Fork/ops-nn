@@ -37,6 +37,7 @@ namespace {
 #define TILINGKEY_WELFORD_REDUCE 300000
 #define TILINGKEY_RA_WELFORD 500000
 #define TILINGKEY_RA_BLOCK_SPLIT_R 600000
+#define TILINGKEY_COMPENSATED 700000
 #define TILINGKEY_INFER_LAST_CHANNEL 900000
 #define TILINGKEY_INFER_LAST_CHANNEL_SMALL_A 902000
 #define TILINGKEY_INFER_LAST_CHANNEL_CONTINUOUS_A 901000
@@ -57,7 +58,7 @@ extern "C" __global__ __aicore__ void batch_norm3_d(GM_ADDR x, GM_ADDR scale, GM
     REGISTER_TILING_DEFAULT(BatchNorm3DFullReduceRegbaseTilingData);
     TPipe pipe;
 
-    if (TILING_KEY_IS(700000)) {
+    if (TILING_KEY_IS(TILINGKEY_COMPENSATED)) {
         REGISTER_TILING_FOR_TILINGKEY("TILING_KEY_VAR == 700000", BatchNorm3DCompensatedTilingData);
         GET_TILING_DATA_WITH_STRUCT(BatchNorm3DCompensatedTilingData, tiling_data_in, tiling);
         BatchNorm3DCompensated<DTYPE_X> op(&tiling_data_in, &pipe);
