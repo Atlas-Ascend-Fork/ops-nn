@@ -41,11 +41,12 @@ struct ThnnFusedLstmCellTilingInfo {
 const uint32_t bufCnt = 17;
 const uint32_t BUFFER_NUM = 2;
 const size_t INDEX_2 = 2;
+const size_t CX_DIM_NUM = 2;
 const uint32_t SIZE_UNIT_BYTE = 256;
 const uint32_t FP32CNT_UNIT = SIZE_UNIT_BYTE / sizeof(float);
 const uint32_t UB_RSV_SIZE = 8 * 1024;
 
-ge::graphStatus GetInfo(gert::TilingContext* context, ThnnFusedLstmCellTilingInfo* info)
+ge::graphStatus GetInfo(const gert::TilingContext* context, ThnnFusedLstmCellTilingInfo* info)
 {
     auto platformInfo = context->GetPlatformInfo();
     if (platformInfo == nullptr) {
@@ -66,7 +67,7 @@ ge::graphStatus GetInfo(gert::TilingContext* context, ThnnFusedLstmCellTilingInf
         return ge::GRAPH_FAILED;
     }
     auto cxOriginShape = cxShape->GetOriginShape();
-    if (cxOriginShape.GetDimNum() < 2) {
+    if (cxOriginShape.GetDimNum() < CX_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "cx",
                                                  std::to_string(cxOriginShape.GetDimNum()), "rank of cx must be 2");
         return ge::GRAPH_FAILED;
@@ -75,7 +76,7 @@ ge::graphStatus GetInfo(gert::TilingContext* context, ThnnFusedLstmCellTilingInf
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus FillTilingInfo(gert::TilingContext* context, ThnnFusedLstmCellTilingInfo* info)
+ge::graphStatus FillTilingInfo(const gert::TilingContext* context, ThnnFusedLstmCellTilingInfo* info)
 {
     info->B = static_cast<uint64_t>(info->cxShape[0]);
     info->H = static_cast<uint64_t>(info->cxShape[1]);
@@ -99,7 +100,7 @@ ge::graphStatus FillTilingInfo(gert::TilingContext* context, ThnnFusedLstmCellTi
     return ge::GRAPH_SUCCESS;
 }
 
-void PrintTilingData(gert::TilingContext* context, const ThnnFusedLstmCellTilingInfo& info)
+void PrintTilingData(const gert::TilingContext* context, const ThnnFusedLstmCellTilingInfo& info)
 {
     OP_LOGD(context->GetNodeName(), "Start PrintTilingData()");
     OP_LOGD(context->GetNodeName(), "B = %llu.", info.B);
