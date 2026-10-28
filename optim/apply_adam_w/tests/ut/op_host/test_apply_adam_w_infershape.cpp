@@ -26,6 +26,20 @@ protected:
     static void TearDownTestCase() { std::cout << "ApplyAdamWProtoTest TearDown" << std::endl; }
 };
 
+// 输出 var/m/v 为 ref 输出，分别跟随同名输入；用例中 var/m/v 输入同 shape（inputShape1）
+static void CheckApplyAdamWOutputShapes(gert::InferShapeContext* context, const gert::Shape& varShape)
+{
+    const gert::Shape* outputShapes[3] = {context->GetOutputShape(0), context->GetOutputShape(1),
+                                          context->GetOutputShape(2)};
+    for (size_t i = 0; i < 3; ++i) {
+        ASSERT_NE(outputShapes[i], nullptr);
+        ASSERT_EQ(outputShapes[i]->GetDimNum(), varShape.GetDimNum());
+        for (size_t d = 0; d < varShape.GetDimNum(); ++d) {
+            EXPECT_EQ(outputShapes[i]->GetDim(d), varShape.GetDim(d));
+        }
+    }
+}
+
 TEST_F(ApplyAdamWProtoTest, apply_adam_w_infershape_verify_test_01)
 {
     fe::PlatformInfo platformInfo;
@@ -36,19 +50,22 @@ TEST_F(ApplyAdamWProtoTest, apply_adam_w_infershape_verify_test_01)
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
     fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
 
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW"), nullptr);
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW")->infer_shape;
     gert::Shape inputShape1 = {16, 48, 16, 32};
     gert::Shape inputShape2 = {
         1,
     };
-    gert::Shape output_shape = {16, 48, 16, 32};
+    gert::Shape outputVarShape = {};
+    gert::Shape outputMShape = {};
+    gert::Shape outputVShape = {};
 
     auto holder = gert::InferShapeContextFaker()
                       .NodeIoNum(12, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
                       .InputShapes({&inputShape1, &inputShape1, &inputShape1, &inputShape2, &inputShape2, &inputShape2,
                                     &inputShape2, &inputShape2, &inputShape2, &inputShape2, &inputShape1, &inputShape1})
-                      .OutputShapes({&output_shape, &output_shape, &output_shape})
+                      .OutputShapes({&outputVarShape, &outputMShape, &outputVShape})
                       .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -67,7 +84,9 @@ TEST_F(ApplyAdamWProtoTest, apply_adam_w_infershape_verify_test_01)
                       .NodeAttrs({{"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(true)}})
                       .Build();
 
-    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    CheckApplyAdamWOutputShapes(context, inputShape1);
 }
 
 TEST_F(ApplyAdamWProtoTest, apply_adam_w_infershape_test_01)
@@ -80,17 +99,20 @@ TEST_F(ApplyAdamWProtoTest, apply_adam_w_infershape_test_01)
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
     fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
 
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW"), nullptr);
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW")->infer_shape;
     gert::Shape inputShape1 = {-1, -1, -1};
     gert::Shape inputShape2 = {1};
-    gert::Shape output_shape = {};
+    gert::Shape outputVarShape = {};
+    gert::Shape outputMShape = {};
+    gert::Shape outputVShape = {};
 
     auto holder = gert::InferShapeContextFaker()
                       .NodeIoNum(12, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
                       .InputShapes({&inputShape1, &inputShape1, &inputShape1, &inputShape2, &inputShape2, &inputShape2,
                                     &inputShape2, &inputShape2, &inputShape2, &inputShape2, &inputShape1, &inputShape1})
-                      .OutputShapes({&output_shape, &output_shape, &output_shape})
+                      .OutputShapes({&outputVarShape, &outputMShape, &outputVShape})
                       .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -109,7 +131,9 @@ TEST_F(ApplyAdamWProtoTest, apply_adam_w_infershape_test_01)
                       .NodeAttrs({{"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(true)}})
                       .Build();
 
-    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    CheckApplyAdamWOutputShapes(context, inputShape1);
 }
 
 TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_is_scalar)
@@ -122,17 +146,20 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_is_scalar)
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
     fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
 
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW"), nullptr);
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW")->infer_shape;
     gert::Shape inputShape1 = {};
     gert::Shape inputShape2 = {1};
-    gert::Shape output_shape = {};
+    gert::Shape outputVarShape = {};
+    gert::Shape outputMShape = {};
+    gert::Shape outputVShape = {};
 
     auto holder = gert::InferShapeContextFaker()
                       .NodeIoNum(12, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
                       .InputShapes({&inputShape1, &inputShape1, &inputShape1, &inputShape2, &inputShape2, &inputShape2,
                                     &inputShape2, &inputShape2, &inputShape2, &inputShape2, &inputShape1, &inputShape1})
-                      .OutputShapes({&output_shape, &output_shape, &output_shape})
+                      .OutputShapes({&outputVarShape, &outputMShape, &outputVShape})
                       .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -151,7 +178,9 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_is_scalar)
                       .NodeAttrs({{"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
                       .Build();
 
-    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    CheckApplyAdamWOutputShapes(context, inputShape1);
 }
 
 TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_has_unknown_rank)
@@ -164,17 +193,20 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_has_unknown_rank)
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
     fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
 
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW"), nullptr);
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW")->infer_shape;
     gert::Shape inputShape1 = {-2};
     gert::Shape inputShape2 = {1};
-    gert::Shape output_shape = {};
+    gert::Shape outputVarShape = {};
+    gert::Shape outputMShape = {};
+    gert::Shape outputVShape = {};
 
     auto holder = gert::InferShapeContextFaker()
                       .NodeIoNum(12, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
                       .InputShapes({&inputShape1, &inputShape1, &inputShape1, &inputShape2, &inputShape2, &inputShape2,
                                     &inputShape2, &inputShape2, &inputShape2, &inputShape2, &inputShape1, &inputShape1})
-                      .OutputShapes({&output_shape, &output_shape, &output_shape})
+                      .OutputShapes({&outputVarShape, &outputMShape, &outputVShape})
                       .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -193,7 +225,9 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_has_unknown_rank)
                       .NodeAttrs({{"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
                       .Build();
 
-    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    CheckApplyAdamWOutputShapes(context, inputShape1);
 }
 
 TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_1)
@@ -206,17 +240,20 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_1)
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
     fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
 
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW"), nullptr);
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW")->infer_shape;
     gert::Shape inputShape1 = {16};
     gert::Shape inputShape2 = {1};
-    gert::Shape output_shape = {};
+    gert::Shape outputVarShape = {};
+    gert::Shape outputMShape = {};
+    gert::Shape outputVShape = {};
 
     auto holder = gert::InferShapeContextFaker()
                       .NodeIoNum(12, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
                       .InputShapes({&inputShape1, &inputShape1, &inputShape1, &inputShape2, &inputShape2, &inputShape2,
                                     &inputShape2, &inputShape2, &inputShape2, &inputShape2, &inputShape1, &inputShape1})
-                      .OutputShapes({&output_shape, &output_shape, &output_shape})
+                      .OutputShapes({&outputVarShape, &outputMShape, &outputVShape})
                       .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -235,7 +272,9 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_1)
                       .NodeAttrs({{"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
                       .Build();
 
-    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    CheckApplyAdamWOutputShapes(context, inputShape1);
 }
 
 TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_1_and_amsgrad_true)
@@ -248,17 +287,20 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_1_and_amsg
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
     fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
 
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW"), nullptr);
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW")->infer_shape;
     gert::Shape inputShape1 = {-1};
     gert::Shape inputShape2 = {1};
-    gert::Shape output_shape = {};
+    gert::Shape outputVarShape = {};
+    gert::Shape outputMShape = {};
+    gert::Shape outputVShape = {};
 
     auto holder = gert::InferShapeContextFaker()
                       .NodeIoNum(12, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
                       .InputShapes({&inputShape1, &inputShape1, &inputShape1, &inputShape2, &inputShape2, &inputShape2,
                                     &inputShape2, &inputShape2, &inputShape2, &inputShape2, &inputShape1, &inputShape1})
-                      .OutputShapes({&output_shape, &output_shape, &output_shape})
+                      .OutputShapes({&outputVarShape, &outputMShape, &outputVShape})
                       .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -277,7 +319,9 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_1_and_amsg
                       .NodeAttrs({{"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(true)}})
                       .Build();
 
-    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    CheckApplyAdamWOutputShapes(context, inputShape1);
 }
 
 TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_2)
@@ -290,17 +334,20 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_2)
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
     fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
 
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW"), nullptr);
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW")->infer_shape;
     gert::Shape inputShape1 = {16, 8};
     gert::Shape inputShape2 = {1};
-    gert::Shape output_shape = {};
+    gert::Shape outputVarShape = {};
+    gert::Shape outputMShape = {};
+    gert::Shape outputVShape = {};
 
     auto holder = gert::InferShapeContextFaker()
                       .NodeIoNum(12, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
                       .InputShapes({&inputShape1, &inputShape1, &inputShape1, &inputShape2, &inputShape2, &inputShape2,
                                     &inputShape2, &inputShape2, &inputShape2, &inputShape2, &inputShape1, &inputShape1})
-                      .OutputShapes({&output_shape, &output_shape, &output_shape})
+                      .OutputShapes({&outputVarShape, &outputMShape, &outputVShape})
                       .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -319,7 +366,9 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_2)
                       .NodeAttrs({{"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
                       .Build();
 
-    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    CheckApplyAdamWOutputShapes(context, inputShape1);
 }
 
 TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_3)
@@ -332,17 +381,20 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_3)
     fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
     fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
 
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW"), nullptr);
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW")->infer_shape;
     gert::Shape inputShape1 = {16, 8, 7};
     gert::Shape inputShape2 = {1};
-    gert::Shape output_shape = {};
+    gert::Shape outputVarShape = {};
+    gert::Shape outputMShape = {};
+    gert::Shape outputVShape = {};
 
     auto holder = gert::InferShapeContextFaker()
                       .NodeIoNum(12, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
                       .InputShapes({&inputShape1, &inputShape1, &inputShape1, &inputShape2, &inputShape2, &inputShape2,
                                     &inputShape2, &inputShape2, &inputShape2, &inputShape2, &inputShape1, &inputShape1})
-                      .OutputShapes({&output_shape, &output_shape, &output_shape})
+                      .OutputShapes({&outputVarShape, &outputMShape, &outputVShape})
                       .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -361,5 +413,7 @@ TEST_F(ApplyAdamWProtoTest, infer_axis_type_with_input_dim_num_equals_3)
                       .NodeAttrs({{"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
                       .Build();
 
-    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    CheckApplyAdamWOutputShapes(context, inputShape1);
 }
