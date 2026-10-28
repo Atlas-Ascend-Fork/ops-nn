@@ -35,6 +35,8 @@ private:
     ge::graphStatus GetShapeInfo();
     template <int64_t R>
     ge::graphStatus DoTilingAndSet();
+    template <int64_t R>
+    ge::graphStatus DoEmptyTilingAndSet();
 
     gert::TilingContext* ctx_;
     std::vector<std::vector<int64_t>> raw_input_shapes_;
@@ -48,6 +50,7 @@ private:
     float clip_coeff_ = 1.0f;        // host-precomputed gradient clipping coefficient
     bool has_max_grad_norm_ = false; // whether max_grad_norm optional input is provided
     bool has_step_size_ = false;     // whether step_size optional input is provided
+    bool has_empty_tensor_ = false;  // validated state/grad shape contains zero
     uint64_t core_num_ = 0;
     uint64_t ub_size_ = 0;
 };

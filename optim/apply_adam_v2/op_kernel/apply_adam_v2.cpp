@@ -30,6 +30,9 @@ __global__ __aicore__ void apply_adam_v2(GM_ADDR var, GM_ADDR m, GM_ADDR v, GM_A
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
 
     GET_TILING_DATA_WITH_STRUCT(TilingData8, td, tiling);
+    if (td.multicore.totalTiles == 0) {
+        return;
+    }
     ApplyAdamV2Kernel<DTYPE_VAR, 8> kernel;
     kernel.Init(ins, outs, &td);
     kernel.Process<KEY>();

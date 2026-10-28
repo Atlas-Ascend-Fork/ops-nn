@@ -74,7 +74,7 @@ __aicore__ inline int64_t CalcOutputTransferCount(const int64_t* normal_shape, i
 
 /**
  * VF_AdamMoments: Gradient clipping + 1st moment + 2nd moment update
- * Covers S1+S2+S3 (6 vector instructions, chain length ≤ 7)
+ * Covers gradient clipping and both moment updates.
  *
  * S1: g_t = grad * clip_coeff
  * S2: m_t = beta1 * m + (1-beta1) * g_t
@@ -82,13 +82,12 @@ __aicore__ inline int64_t CalcOutputTransferCount(const int64_t* normal_shape, i
  *
  * Buffer mapping:
  *   grad(B0, input), m(B1, input), v(B2, input→output v_t),
- *   var(B3, unused placeholder), mt_out(B4, output m_t)
+ *   mt_out(B4, output m_t)
  */
 template <typename T>
-__simd_vf__ inline void AdamMomentsVF(__ubuf__ T* gradAddr, __ubuf__ T* mAddr, __ubuf__ T* vAddr,
-                                      __ubuf__ T* varAddr /* unused */, __ubuf__ T* mtAddr, uint32_t count,
-                                      uint32_t oneRepeatSize, uint16_t repeatTimes, float clipCoeff, float beta1,
-                                      float beta2)
+__simd_vf__ inline void AdamMomentsVF(__ubuf__ T* gradAddr, __ubuf__ T* mAddr, __ubuf__ T* vAddr, __ubuf__ T* mtAddr,
+                                      uint32_t count, uint32_t oneRepeatSize, uint16_t repeatTimes, float clipCoeff,
+                                      float beta1, float beta2)
 {
     AscendC::Reg::RegTensor<T> regG, regM, regMt, regV, regVt, regTmp;
     AscendC::Reg::MaskReg mask;
@@ -111,8 +110,9 @@ __simd_vf__ inline void AdamMomentsVF(__ubuf__ T* gradAddr, __ubuf__ T* mAddr, _
         // S3: v_t = beta2 * v + (1-beta2) * g_t^2
         AscendC::Reg::LoadAlign(regV, vAddr, aReg);
         AscendC::Reg::Muls(regVt, regV, T(beta2), mask);
-        AscendC::Reg::Mul(regG, regG, regG, mask); // g_t^2 (overwrites regG)
+        // Match FusedAdam: apply (1-beta2) before the second gradient factor.
         AscendC::Reg::Muls(regTmp, regG, T(1.0f - beta2), mask);
+        AscendC::Reg::Mul(regTmp, regTmp, regG, mask);
         AscendC::Reg::Add(regVt, regVt, regTmp, mask);
         AscendC::Reg::StoreAlign(vAddr, regVt, aReg, mask); // v_t overwrites B2
     }
@@ -156,11 +156,10 @@ __simd_vf__ inline void AdamDivVF(__ubuf__ T* uAddr, __ubuf__ T* vAddr, __ubuf__
  * S6: var_out = var - lr * u_final
  *
  * Buffer mapping:
- *   u(B0, input→output var_out), v(B2, unused), var(B3, input), mt(B4, unused)
+ *   u(B0, input→output var_out), var(B3, input)
  */
-template <typename T>
-__simd_vf__ inline void AdamUpdateVF(__ubuf__ T* uAddr, __ubuf__ T* vAddr /* unused */, __ubuf__ T* varAddr,
-                                     __ubuf__ T* mtAddr /* unused */, uint32_t count, uint32_t oneRepeatSize,
+template <typename T, bool APPLY_WEIGHT_DECAY>
+__simd_vf__ inline void AdamUpdateVF(__ubuf__ T* uAddr, __ubuf__ T* varAddr, uint32_t count, uint32_t oneRepeatSize,
                                      uint16_t repeatTimes, float weightDecay, float lr)
 {
     AscendC::Reg::RegTensor<T> regU, regVar, regWdVar, regLrU, regVarOut;
@@ -174,7 +173,7 @@ __simd_vf__ inline void AdamUpdateVF(__ubuf__ T* uAddr, __ubuf__ T* vAddr /* unu
         AscendC::Reg::LoadAlign(regVar, varAddr, aReg);
 
         // S5: weight decay (conditional on weight_decay > 0)
-        if (weightDecay > 0.0f) {
+        if constexpr (APPLY_WEIGHT_DECAY) {
             AscendC::Reg::Muls(regWdVar, regVar, T(weightDecay), mask);
             AscendC::Reg::Add(regU, regU, regWdVar, mask); // u_final = u + wd * var
         }
@@ -188,19 +187,19 @@ __simd_vf__ inline void AdamUpdateVF(__ubuf__ T* uAddr, __ubuf__ T* vAddr /* unu
 
 /**
  * VF_MbartMoments: 1st moment + 2nd moment update (NO gradient clipping)
- * Covers S2+S3 (5 vector instructions, chain length ≤ 7)
+ * Covers both moment updates.
  *
  * S2: m_t = beta1 * m + (1-beta1) * g
  * S3: v_t = beta2 * v + (1-beta2) * g^2  (v_t overwrites B2)
  *
  * Buffer mapping:
  *   grad(B0, input), m(B1, input), v(B2, input→output v_t),
- *   var(B3, unused placeholder), mt_out(B4, output m_t)
+ *   mt_out(B4, output m_t)
  */
 template <typename T>
-__simd_vf__ inline void MbartMomentsVF(__ubuf__ T* gradAddr, __ubuf__ T* mAddr, __ubuf__ T* vAddr,
-                                       __ubuf__ T* varAddr /* unused */, __ubuf__ T* mtAddr, uint32_t count,
-                                       uint32_t oneRepeatSize, uint16_t repeatTimes, float beta1, float beta2)
+__simd_vf__ inline void MbartMomentsVF(__ubuf__ T* gradAddr, __ubuf__ T* mAddr, __ubuf__ T* vAddr, __ubuf__ T* mtAddr,
+                                       uint32_t count, uint32_t oneRepeatSize, uint16_t repeatTimes, float beta1,
+                                       float beta2)
 {
     AscendC::Reg::RegTensor<T> regG, regM, regMt, regV, regVt, regTmp;
     AscendC::Reg::MaskReg mask;
@@ -222,8 +221,9 @@ __simd_vf__ inline void MbartMomentsVF(__ubuf__ T* gradAddr, __ubuf__ T* mAddr, 
         // S3: v_t = beta2 * v + (1-beta2) * g^2
         AscendC::Reg::LoadAlign(regV, vAddr, aReg);
         AscendC::Reg::Muls(regVt, regV, T(beta2), mask);
-        AscendC::Reg::Mul(regG, regG, regG, mask); // g^2 (overwrites regG)
+        // Match FusedAdam: apply (1-beta2) before the second gradient factor.
         AscendC::Reg::Muls(regTmp, regG, T(1.0f - beta2), mask);
+        AscendC::Reg::Mul(regTmp, regTmp, regG, mask);
         AscendC::Reg::Add(regVt, regVt, regTmp, mask);
         AscendC::Reg::StoreAlign(vAddr, regVt, aReg, mask); // v_t overwrites B2
     }
@@ -231,18 +231,17 @@ __simd_vf__ inline void MbartMomentsVF(__ubuf__ T* gradAddr, __ubuf__ T* mAddr, 
 
 /**
  * VF_MbartUpdate: Step size scaling + weight decay + parameter update (mbart_adam mode)
- * Covers S5+S6+S7 (2~4 vector instructions, chain length ≤ 7)
+ * Covers S5+S6+S7 (2~5 vector instructions, chain length ≤ 7)
  *
  * S5: u_st = step_size * u  (step_size already includes lr factor from external computation)
  * S6: u_st += weight_decay * lr * var  [conditional: weight_decay > 0]
  * S7: var_out = var - u_st
  *
  * Buffer mapping:
- *   u(B0, input→output var_out), v(B2, unused), var(B3, input), mt(B4, unused)
+ *   u(B0, input→output var_out), var(B3, input)
  */
-template <typename T>
-__simd_vf__ inline void MbartUpdateVF(__ubuf__ T* uAddr, __ubuf__ T* vAddr /* unused */, __ubuf__ T* varAddr,
-                                      __ubuf__ T* mtAddr /* unused */, uint32_t count, uint32_t oneRepeatSize,
+template <typename T, bool APPLY_WEIGHT_DECAY>
+__simd_vf__ inline void MbartUpdateVF(__ubuf__ T* uAddr, __ubuf__ T* varAddr, uint32_t count, uint32_t oneRepeatSize,
                                       uint16_t repeatTimes, float weightDecay, float stepSize, float lr)
 {
     AscendC::Reg::RegTensor<T> regU, regVar, regUst, regWdLrVar, regVarOut;
@@ -259,8 +258,10 @@ __simd_vf__ inline void MbartUpdateVF(__ubuf__ T* uAddr, __ubuf__ T* vAddr /* un
         AscendC::Reg::Muls(regUst, regU, T(stepSize), mask);
 
         // S6: weight decay (conditional, with lr factor)
-        if (weightDecay > 0.0f) {
-            AscendC::Reg::Muls(regWdLrVar, regVar, T(weightDecay * lr), mask);
+        if constexpr (APPLY_WEIGHT_DECAY) {
+            // Preserve the mBART decay order: weightDecay * (lr * var).
+            AscendC::Reg::Muls(regWdLrVar, regVar, T(lr), mask);
+            AscendC::Reg::Muls(regWdLrVar, regWdLrVar, T(weightDecay), mask);
             AscendC::Reg::Add(regUst, regUst, regWdLrVar, mask); // u_st += wd * lr * var
         }
 
@@ -342,7 +343,6 @@ public:
     {
         constexpr bool IS_MBART = (KEY == APPLY_ADAM_V2_FP32_MBART || KEY == APPLY_ADAM_V2_FP16_MBART);
         constexpr bool IS_ADAM = !IS_MBART;
-        constexpr bool IS_FP16 = (KEY == APPLY_ADAM_V2_FP16_ADAM || KEY == APPLY_ADAM_V2_FP16_MBART);
 
         int32_t evMTE2toV = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_V));
         int32_t evVtoMTE3 = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_MTE3));
@@ -372,7 +372,8 @@ public:
                 float maxGradNorm = static_cast<float>(*(gmInPtr_[IN_MAX_GRAD_NORM]));
                 float globalGradNorm = static_cast<float>(*(gmInPtr_[IN_GLOBAL_GRAD_NORM]));
                 bool isNaN = (globalGradNorm != globalGradNorm);
-                bool isInf = (globalGradNorm > 1e30f || globalGradNorm < -1e30f);
+                constexpr float MAX_FINITE = 0x1.fffffep127f;
+                bool isInf = (globalGradNorm > MAX_FINITE || globalGradNorm < -MAX_FINITE);
                 if (isNaN || isInf) {
                     clipCoeff = 1.0f;
                 } else {
@@ -443,17 +444,22 @@ private:
 
         asc_vf_call<AdamMomentsVF<T>>(
             (__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B1].template Get<T>().GetPhyAddr(),
-            (__ubuf__ T*)buf_[B2].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B3].template Get<T>().GetPhyAddr(),
-            (__ubuf__ T*)buf_[B4].template Get<T>().GetPhyAddr(), count, VL_FP32, repCount, clipCoeff, beta1, beta2);
+            (__ubuf__ T*)buf_[B2].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B4].template Get<T>().GetPhyAddr(),
+            count, VL_FP32, repCount, clipCoeff, beta1, beta2);
 
         asc_vf_call<AdamDivVF<T>>(
             (__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B2].template Get<T>().GetPhyAddr(),
             (__ubuf__ T*)buf_[B4].template Get<T>().GetPhyAddr(), count, VL_FP32, repCount, epsilon);
 
-        asc_vf_call<AdamUpdateVF<T>>(
-            (__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B2].template Get<T>().GetPhyAddr(),
-            (__ubuf__ T*)buf_[B3].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B4].template Get<T>().GetPhyAddr(),
-            count, VL_FP32, repCount, weightDecay, lr);
+        if (weightDecay > 0.0f) {
+            asc_vf_call<AdamUpdateVF<T, true>>((__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(),
+                                               (__ubuf__ T*)buf_[B3].template Get<T>().GetPhyAddr(), count, VL_FP32,
+                                               repCount, weightDecay, lr);
+        } else {
+            asc_vf_call<AdamUpdateVF<T, false>>((__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(),
+                                                (__ubuf__ T*)buf_[B3].template Get<T>().GetPhyAddr(), count, VL_FP32,
+                                                repCount, weightDecay, lr);
+        }
 
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
@@ -482,17 +488,22 @@ private:
 
         asc_vf_call<MbartMomentsVF<T>>(
             (__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B1].template Get<T>().GetPhyAddr(),
-            (__ubuf__ T*)buf_[B2].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B3].template Get<T>().GetPhyAddr(),
-            (__ubuf__ T*)buf_[B4].template Get<T>().GetPhyAddr(), count, VL_FP32, repCount, beta1, beta2);
+            (__ubuf__ T*)buf_[B2].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B4].template Get<T>().GetPhyAddr(),
+            count, VL_FP32, repCount, beta1, beta2);
 
         asc_vf_call<AdamDivVF<T>>(
             (__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B2].template Get<T>().GetPhyAddr(),
             (__ubuf__ T*)buf_[B4].template Get<T>().GetPhyAddr(), count, VL_FP32, repCount, epsilon);
 
-        asc_vf_call<MbartUpdateVF<T>>(
-            (__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B2].template Get<T>().GetPhyAddr(),
-            (__ubuf__ T*)buf_[B3].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[B4].template Get<T>().GetPhyAddr(),
-            count, VL_FP32, repCount, weightDecay, stepSize, lr);
+        if (weightDecay > 0.0f) {
+            asc_vf_call<MbartUpdateVF<T, true>>((__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(),
+                                                (__ubuf__ T*)buf_[B3].template Get<T>().GetPhyAddr(), count, VL_FP32,
+                                                repCount, weightDecay, stepSize, lr);
+        } else {
+            asc_vf_call<MbartUpdateVF<T, false>>((__ubuf__ T*)buf_[B0].template Get<T>().GetPhyAddr(),
+                                                 (__ubuf__ T*)buf_[B3].template Get<T>().GetPhyAddr(), count, VL_FP32,
+                                                 repCount, weightDecay, stepSize, lr);
+        }
 
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
@@ -542,7 +553,6 @@ private:
         asc_vf_call<AdamMomentsVF<FT>>((__ubuf__ FT*)buf_[B0].template Get<FT>().GetPhyAddr(),
                                        (__ubuf__ FT*)buf_[B1].template Get<FT>().GetPhyAddr(),
                                        (__ubuf__ FT*)buf_[B2].template Get<FT>().GetPhyAddr(),
-                                       (__ubuf__ FT*)buf_[B3].template Get<FT>().GetPhyAddr(),
                                        (__ubuf__ FT*)buf_[B4].template Get<FT>().GetPhyAddr(), count, VL_FP32, repCount,
                                        clipCoeff, beta1, beta2);
 
@@ -551,11 +561,15 @@ private:
                                    (__ubuf__ FT*)buf_[B4].template Get<FT>().GetPhyAddr(), count, VL_FP32, repCount,
                                    epsilon);
 
-        asc_vf_call<AdamUpdateVF<FT>>((__ubuf__ FT*)buf_[B0].template Get<FT>().GetPhyAddr(),
-                                      (__ubuf__ FT*)buf_[B2].template Get<FT>().GetPhyAddr(),
-                                      (__ubuf__ FT*)buf_[B3].template Get<FT>().GetPhyAddr(),
-                                      (__ubuf__ FT*)buf_[B4].template Get<FT>().GetPhyAddr(), count, VL_FP32, repCount,
-                                      weightDecay, lr);
+        if (weightDecay > 0.0f) {
+            asc_vf_call<AdamUpdateVF<FT, true>>((__ubuf__ FT*)buf_[B0].template Get<FT>().GetPhyAddr(),
+                                                (__ubuf__ FT*)buf_[B3].template Get<FT>().GetPhyAddr(), count, VL_FP32,
+                                                repCount, weightDecay, lr);
+        } else {
+            asc_vf_call<AdamUpdateVF<FT, false>>((__ubuf__ FT*)buf_[B0].template Get<FT>().GetPhyAddr(),
+                                                 (__ubuf__ FT*)buf_[B3].template Get<FT>().GetPhyAddr(), count, VL_FP32,
+                                                 repCount, weightDecay, lr);
+        }
 
         AscendC::Cast(buf_[B0].template Get<T>(), buf_[B0].template Get<FT>(), AscendC::RoundMode::CAST_RINT, count);
         AscendC::Cast(buf_[B4].template Get<T>(), buf_[B4].template Get<FT>(), AscendC::RoundMode::CAST_RINT, count);
@@ -609,7 +623,6 @@ private:
         asc_vf_call<MbartMomentsVF<FT>>((__ubuf__ FT*)buf_[B0].template Get<FT>().GetPhyAddr(),
                                         (__ubuf__ FT*)buf_[B1].template Get<FT>().GetPhyAddr(),
                                         (__ubuf__ FT*)buf_[B2].template Get<FT>().GetPhyAddr(),
-                                        (__ubuf__ FT*)buf_[B3].template Get<FT>().GetPhyAddr(),
                                         (__ubuf__ FT*)buf_[B4].template Get<FT>().GetPhyAddr(), count, VL_FP32,
                                         repCount, beta1, beta2);
 
@@ -618,11 +631,15 @@ private:
                                    (__ubuf__ FT*)buf_[B4].template Get<FT>().GetPhyAddr(), count, VL_FP32, repCount,
                                    epsilon);
 
-        asc_vf_call<MbartUpdateVF<FT>>((__ubuf__ FT*)buf_[B0].template Get<FT>().GetPhyAddr(),
-                                       (__ubuf__ FT*)buf_[B2].template Get<FT>().GetPhyAddr(),
-                                       (__ubuf__ FT*)buf_[B3].template Get<FT>().GetPhyAddr(),
-                                       (__ubuf__ FT*)buf_[B4].template Get<FT>().GetPhyAddr(), count, VL_FP32, repCount,
-                                       weightDecay, stepSize, lr);
+        if (weightDecay > 0.0f) {
+            asc_vf_call<MbartUpdateVF<FT, true>>((__ubuf__ FT*)buf_[B0].template Get<FT>().GetPhyAddr(),
+                                                 (__ubuf__ FT*)buf_[B3].template Get<FT>().GetPhyAddr(), count, VL_FP32,
+                                                 repCount, weightDecay, stepSize, lr);
+        } else {
+            asc_vf_call<MbartUpdateVF<FT, false>>((__ubuf__ FT*)buf_[B0].template Get<FT>().GetPhyAddr(),
+                                                  (__ubuf__ FT*)buf_[B3].template Get<FT>().GetPhyAddr(), count,
+                                                  VL_FP32, repCount, weightDecay, stepSize, lr);
+        }
 
         AscendC::Cast(buf_[B0].template Get<T>(), buf_[B0].template Get<FT>(), AscendC::RoundMode::CAST_RINT, count);
         AscendC::Cast(buf_[B4].template Get<T>(), buf_[B4].template Get<FT>(), AscendC::RoundMode::CAST_RINT, count);
@@ -646,10 +663,9 @@ private:
             inner_count *= td_->maxBroShape[d];
         int64_t count = a_i_seg * inner_count;
 
-        // Simple 1D DataCopyPad (same pattern as working probe)
         AscendC::LocalTensor<T> bufLocal = buf_[slot].template Get<T>();
-        AscendC::DataCopyPad(bufLocal, gmIn_[inputIdx][off], {1, static_cast<uint16_t>(count * sizeof(T)), 0, 0},
-                             {false, 0, 0, 0});
+        AscendC::DataCopyExtParams params{1, static_cast<uint32_t>(count * sizeof(T)), 0, 0, 0};
+        AscendC::DataCopyPad(bufLocal, gmIn_[inputIdx][off], params, {false, 0, 0, 0});
     }
 
     __aicore__ inline void CopyOutOne(const int64_t* coord, int outputIdx, int slot, int64_t a_i_seg)

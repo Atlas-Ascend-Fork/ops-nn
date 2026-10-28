@@ -98,6 +98,11 @@ int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorD
 int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vector<Operator>& inputs,
                      std::vector<Operator>& outputs, Graph& graph)
 {
+    // This example generates float32 payloads with GenOnesDataFloat32.
+    if (inDtype != DT_FLOAT) {
+        printf("This example requires DT_FLOAT input data\n");
+        return FAILED;
+    }
     Status ret = SUCCESS;
     auto adam1 = op::ApplyAdamV2("adam1");
     std::vector<int64_t> xShape = {8, 16};
@@ -135,7 +140,7 @@ int main()
     printf("%s - INFO - [XIR]: GEInit success\n", GetTime().c_str());
 
     std::vector<Operator> inputs{}, outputs{};
-    ret = CreateOppInGraph(DT_FLOAT16, input, inputs, outputs, graph);
+    ret = CreateOppInGraph(DT_FLOAT, input, inputs, outputs, graph);
     if (ret != SUCCESS) {
         printf("CreateOppInGraph failed\n");
         return FAILED;

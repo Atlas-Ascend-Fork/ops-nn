@@ -1,14 +1,19 @@
-
-# InferShape UT：独立编译，不依赖 CANN faker 框架
-add_executable(test_apply_adam_v2_infershape test_apply_adam_v2_infershape.cpp)
-target_compile_features(test_apply_adam_v2_infershape PRIVATE cxx_std_17)
-target_compile_options(test_apply_adam_v2_infershape PRIVATE -Wall -Wextra)
-add_test(NAME test_apply_adam_v2_infershape COMMAND test_apply_adam_v2_infershape)
-
-# 递归包含 arch35 子目录
-file(GLOB CURRENT_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/*)
-foreach(SUB_DIR ${CURRENT_DIRS})
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIR}/CMakeLists.txt")
-        add_subdirectory(${SUB_DIR})
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
+if(UT_TEST_ALL OR OP_HOST_UT)
+    add_modules_ut_sources(HOSTNAME ${OP_TILING_MODULE_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR})
+    add_modules_ut_sources(HOSTNAME ${OP_INFERSHAPE_MODULE_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR})
+    # Platforms without tiling test sources do not create this target.
+    if(TARGET ${OP_TILING_MODULE_NAME}_static_lib)
+        # Load the operator error templates used by the real ErrorManager checks.
+        target_link_libraries(${OP_TILING_MODULE_NAME}_static_lib PUBLIC
+            -Wl,--push-state,--no-as-needed nnopbase -Wl,--pop-state)
     endif()
-endforeach()
+endif()

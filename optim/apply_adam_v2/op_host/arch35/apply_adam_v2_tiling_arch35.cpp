@@ -15,7 +15,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <set>
+#include <limits>
+#include <sstream>
 #include <graph/utils/type_utils.h>
 #include "register/op_impl_registry.h"
 #include "log/log.h"
@@ -43,8 +44,6 @@ bool CheckBroadcastShape(const std::vector<std::vector<int64_t>>& padded_in,
                 if (ref == -1)
                     ref = padded_in[i][d];
                 else if (padded_in[i][d] != ref) {
-                    OP_LOGE("CheckBroadcastShape", "dim %d broadcast incompatible: input[%d] size %d != %d", (int)d,
-                            (int)i, (int)padded_in[i][d], (int)ref);
                     return false;
                 }
             }
@@ -54,8 +53,6 @@ bool CheckBroadcastShape(const std::vector<std::vector<int64_t>>& padded_in,
                 if (ref == -1)
                     ref = padded_out[i][d];
                 else if (padded_out[i][d] != ref) {
-                    OP_LOGE("CheckBroadcastShape", "dim %d broadcast incompatible: output[%d] size %d != %d", (int)d,
-                            (int)i, (int)padded_out[i][d], (int)ref);
                     return false;
                 }
             }
@@ -131,9 +128,9 @@ bool FindSplitAxis(const std::vector<int64_t>& max_bro_shape, int64_t dtype_size
     int64_t rank = (int64_t)max_bro_shape.size();
     int64_t inner = 1;
     for (int64_t k = rank - 1; k >= 0; k--) {
-        if (max_bro_shape[k] * inner > per_buf_elems) {
+        if (max_bro_shape[k] > per_buf_elems / inner) {
             out.aI = per_buf_elems / inner;
-            out.aO = (max_bro_shape[k] + out.aI - 1) / out.aI;
+            out.aO = (max_bro_shape[k] - 1) / out.aI + 1;
             int64_t rem = max_bro_shape[k] % out.aI;
             out.aITail = (rem == 0) ? out.aI : rem;
             out.axis = k;
@@ -224,6 +221,19 @@ static std::string Arr2String(const int64_t* arr, int64_t n)
 
 ApplyAdamV2Tiling::ApplyAdamV2Tiling(gert::TilingContext* ctx) : ctx_(ctx) {}
 
+static constexpr const char* INPUT_NAMES[] = {
+    "var",          "m",        "v", "lr", "beta1", "beta2", "epsilon", "grad", "max_grad_norm", "global_grad_norm",
+    "weight_decay", "step_size"};
+
+static ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+
 void ApplyAdamV2Tiling::SetCompileInfo(uint64_t coreNum, uint64_t ubSize, int64_t adamModeFlag)
 {
     core_num_ = coreNum;
@@ -233,134 +243,130 @@ void ApplyAdamV2Tiling::SetCompileInfo(uint64_t coreNum, uint64_t ubSize, int64_
 
 ge::graphStatus ApplyAdamV2Tiling::GetShapeInfo()
 {
-    const char* opName = ctx_->GetNodeName();
-    size_t numInputs = ctx_->GetComputeNodeInfo()->GetInputsNum();
-    size_t numOutputs = ctx_->GetComputeNodeInfo()->GetOutputsNum();
-
-    // ===== 1. Read input shapes =====
-    // 12 inputs: var,m,v,lr,beta1,beta2,epsilon,grad,max_grad_norm,global_grad_norm,weight_decay,step_size
-    for (size_t i = 0; i < numInputs; ++i) {
-        auto shape = ctx_->GetInputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(ctx_, shape);
-        std::vector<int64_t> dims;
-        gert::Shape s = shape->GetStorageShape();
-        for (size_t d = 0; d < s.GetDimNum(); ++d)
-            dims.push_back(s.GetDim(d));
-        raw_input_shapes_.push_back(dims);
+    if (ctx_ == nullptr) {
+        return ReportTilingFailure("ApplyAdamV2", "TilingContext is nullptr");
     }
+    const char* opName = ctx_->GetNodeName();
+    if (ctx_->GetComputeNodeInfo() == nullptr) {
+        return ReportTilingFailure(opName, "ComputeNodeInfo is nullptr");
+    }
+    if (ctx_->GetComputeNodeInfo()->GetOutputsNum() != kMaxOutputSlots) {
+        OP_LOGE_FOR_INVALID_TENSORNUM(opName, "outputs", ctx_->GetComputeNodeInfo()->GetOutputsNum(), "3");
+        return ge::GRAPH_FAILED;
+    }
+    auto varDesc = ctx_->GetRequiredInputDesc(0);
+    OP_CHECK_IF(varDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "var"), return ge::GRAPH_FAILED);
+    const auto dtype = varDesc->GetDataType();
+    if (dtype != ge::DT_FLOAT && dtype != ge::DT_FLOAT16) {
+        OP_LOGE_FOR_INVALID_DTYPE(opName, "var", Ops::Base::ToString(dtype).c_str(), "FLOAT or FLOAT16");
+        return ge::GRAPH_FAILED;
+    }
+    dtype_size_ = dtype == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
+    raw_input_shapes_.assign(kMaxInputSlots, {1});
+    raw_output_shapes_.clear();
+    has_empty_tensor_ = false;
+    has_max_grad_norm_ = ctx_->GetOptionalInputShape(8) != nullptr;
+    has_step_size_ = ctx_->GetOptionalInputShape(11) != nullptr;
 
-    // ===== 2. Dim check: all inputs must be <= 8 dimensions =====
-    for (size_t i = 0; i < numInputs; ++i) {
-        auto shape = ctx_->GetInputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(ctx_, shape);
-        auto storageShape = shape->GetStorageShape();
-        if (storageShape.GetDimNum() > MAX_DIM_NUM) {
-            OP_LOGE(opName, "input[%zu] dim_num=%zu exceeds maximum %zu", i, storageShape.GetDimNum(), MAX_DIM_NUM);
+    // IR indices stay fixed when optional inputs are absent; physical indices do not.
+    for (size_t i = 0; i < kMaxInputSlots; ++i) {
+        const bool optional = i == 8 || i == 11;
+        const auto* shape = optional ? ctx_->GetOptionalInputShape(i) : ctx_->GetRequiredInputShape(i);
+        const auto* desc = optional ? ctx_->GetOptionalInputDesc(i) : ctx_->GetRequiredInputDesc(i);
+        if (optional && shape == nullptr && desc == nullptr) {
+            continue;
+        }
+        OP_CHECK_IF(shape == nullptr || desc == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, INPUT_NAMES[i]),
+                    return ge::GRAPH_FAILED);
+        if (desc->GetDataType() != dtype) {
+            OP_LOGE_FOR_INVALID_DTYPE(opName, INPUT_NAMES[i], Ops::Base::ToString(desc->GetDataType()).c_str(),
+                                      Ops::Base::ToString(dtype).c_str());
+            return ge::GRAPH_FAILED;
+        }
+        if (desc->GetStorageFormat() != ge::FORMAT_ND) {
+            OP_LOGE_FOR_INVALID_FORMAT(opName, INPUT_NAMES[i], Ops::Base::ToString(desc->GetStorageFormat()).c_str(),
+                                       "ND");
+            return ge::GRAPH_FAILED;
+        }
+        const auto& storage = shape->GetStorageShape();
+        if (storage.GetDimNum() > MAX_DIM_NUM) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                opName, INPUT_NAMES[i], std::to_string(storage.GetDimNum()).c_str(), "Rank must not exceed 8");
+            return ge::GRAPH_FAILED;
+        }
+        const bool tensor = i < 3 || i == 7;
+        if (!tensor && !storage.IsScalar() && !(storage.GetDimNum() == 1 && storage.GetDim(0) == SCALAR_ELEM_SIZE)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(opName, INPUT_NAMES[i], Ops::Base::ToString(storage).c_str(),
+                                                  "Parameter must be scalar or shape [1]");
+            return ge::GRAPH_FAILED;
+        }
+        std::vector<int64_t> dims;
+        int64_t elements = 1;
+        for (size_t d = 0; d < storage.GetDimNum(); ++d) {
+            const int64_t dim = storage.GetDim(d);
+            // Validate every dimension, including dimensions after a zero.
+            // Bound the product of positive dimensions independently of zero
+            // position, retaining the existing byte-offset overflow protection.
+            if (dim < 0 || (!tensor && dim == 0) ||
+                (dim > 0 && elements > std::numeric_limits<int64_t>::max() / sizeof(float) / dim)) {
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(opName, INPUT_NAMES[i], Ops::Base::ToString(storage).c_str(),
+                                                      "Shape must have resolved nonnegative dimensions, valid scalar "
+                                                      "size and representable FP32 byte size");
+                return ge::GRAPH_FAILED;
+            }
+            if (dim == 0) {
+                has_empty_tensor_ = true;
+            } else {
+                elements *= dim;
+            }
+            dims.push_back(dim);
+        }
+        raw_input_shapes_[i] = dims;
+        if (tensor && i != 0 && dims != raw_input_shapes_[0]) {
+            OP_LOGE_FOR_INVALID_SHAPE(opName, INPUT_NAMES[i], Ops::Base::ToString(storage).c_str(),
+                                      Ops::Base::ToString(ctx_->GetRequiredInputShape(0)->GetStorageShape()).c_str());
             return ge::GRAPH_FAILED;
         }
     }
-
-    // ===== 3. Tensor shape equality: var, m, v, grad must have identical shapes =====
-    {
-        auto varShape = ctx_->GetInputShape(0)->GetStorageShape();
-        const size_t tensorIdx[] = {1, 2, 7};
-        const char* tensorNames[] = {"m", "v", "grad"};
-        for (size_t k = 0; k < 3; ++k) {
-            if (tensorIdx[k] >= numInputs)
-                continue;
-            auto curShape = ctx_->GetInputShape(tensorIdx[k])->GetStorageShape();
-            if (varShape != curShape) {
-                OP_LOGE(opName, "var and %s shapes must be identical", tensorNames[k]);
-                return ge::GRAPH_FAILED;
-            }
+    for (size_t i = 0; i < kMaxOutputSlots; ++i) {
+        const auto* shape = ctx_->GetOutputShape(i);
+        const auto* desc = ctx_->GetOutputDesc(i);
+        if (shape == nullptr || desc == nullptr) {
+            return ReportTilingFailure(opName, "Output shape or descriptor is nullptr for output " + std::to_string(i));
         }
-    }
-
-    // ===== 4. Read output shapes (inplace: output[i] = input[i]) =====
-    for (size_t i = 0; i < numOutputs && i < 3; ++i) {
+        const auto outputName = "output " + std::to_string(i) + " (" + INPUT_NAMES[i] + ")";
+        if (shape->GetStorageShape() != ctx_->GetRequiredInputShape(i)->GetStorageShape()) {
+            OP_LOGE_FOR_INVALID_SHAPE(opName, outputName.c_str(), Ops::Base::ToString(shape->GetStorageShape()).c_str(),
+                                      Ops::Base::ToString(ctx_->GetRequiredInputShape(i)->GetStorageShape()).c_str());
+            return ge::GRAPH_FAILED;
+        }
+        if (desc->GetDataType() != dtype) {
+            OP_LOGE_FOR_INVALID_DTYPE(opName, outputName.c_str(), Ops::Base::ToString(desc->GetDataType()).c_str(),
+                                      Ops::Base::ToString(dtype).c_str());
+            return ge::GRAPH_FAILED;
+        }
+        if (desc->GetStorageFormat() != ge::FORMAT_ND) {
+            OP_LOGE_FOR_INVALID_FORMAT(opName, outputName.c_str(),
+                                       Ops::Base::ToString(desc->GetStorageFormat()).c_str(), "ND");
+            return ge::GRAPH_FAILED;
+        }
         raw_output_shapes_.push_back(raw_input_shapes_[i]);
     }
-
-    // ===== 5. Dtype check: var dtype must be supported (fp16/fp32) =====
-    auto inputDesc = ctx_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(ctx_, inputDesc);
-    ge::DataType dtype = inputDesc->GetDataType();
-
-    const std::set<ge::DataType> supportedDtypes = {ge::DT_FLOAT16, ge::DT_FLOAT};
-    if (supportedDtypes.count(dtype) == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "var.dtype", ge::TypeUtils::DataTypeToSerialString(dtype).c_str(),
-                                              "expected DT_FLOAT16, DT_FLOAT");
-        return ge::GRAPH_FAILED;
-    }
-
-    // ===== 6. Dtype consistency: all inputs must have same dtype as var =====
-    for (size_t i = 1; i < numInputs; ++i) {
-        auto desc = ctx_->GetInputDesc(i);
-        OP_CHECK_NULL_WITH_CONTEXT(ctx_, desc);
-        if (desc->GetDataType() != dtype) {
-            OP_LOGE(opName, "input[%zu] dtype=%s does not match var dtype=%s, all inputs must have the same dtype", i,
-                    ge::TypeUtils::DataTypeToSerialString(desc->GetDataType()).c_str(),
-                    ge::TypeUtils::DataTypeToSerialString(dtype).c_str());
-            return ge::GRAPH_FAILED;
-        }
-    }
-
-    uint32_t dtypeSize = 0;
-    if (!ge::TypeUtils::GetDataTypeLength(dtype, dtypeSize) || dtypeSize == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "var.dtype", ge::TypeUtils::DataTypeToSerialString(dtype).c_str(),
-                                              "failed to get dtype length");
-        return ge::GRAPH_FAILED;
-    }
-    dtype_size_ = static_cast<int64_t>(dtypeSize);
-
-    // ===== 7. Scalar constraint: lr, beta1, beta2, epsilon, global_grad_norm, weight_decay =====
-    {
-        const size_t scalarIdx[] = {3, 4, 5, 6, 9, 10};
-        const char* scalarNames[] = {"lr", "beta1", "beta2", "epsilon", "global_grad_norm", "weight_decay"};
-        for (size_t k = 0; k < 6; ++k) {
-            if (scalarIdx[k] >= numInputs)
-                continue;
-            auto shape = ctx_->GetInputShape(scalarIdx[k]);
-            OP_CHECK_NULL_WITH_CONTEXT(ctx_, shape);
-            auto storageShape = shape->GetStorageShape();
-            if (!storageShape.IsScalar() && storageShape.GetShapeSize() != SCALAR_ELEM_SIZE) {
-                OP_LOGE(opName, "%s must be scalar or size=1, got shape_size=%ld", scalarNames[k],
-                        storageShape.GetShapeSize());
-                return ge::GRAPH_FAILED;
-            }
-        }
-    }
-
-    // ===== 8. Optional input presence =====
-    has_max_grad_norm_ = (ctx_->GetOptionalInputShape(8) != nullptr);
-    has_step_size_ = (ctx_->GetOptionalInputShape(11) != nullptr);
-
-    // Optional scalar check: max_grad_norm, step_size
-    if (has_max_grad_norm_) {
-        auto shape = ctx_->GetOptionalInputShape(8);
-        auto storageShape = shape->GetStorageShape();
-        if (!storageShape.IsScalar() && storageShape.GetShapeSize() != SCALAR_ELEM_SIZE) {
-            OP_LOGE(opName, "max_grad_norm must be scalar or size=1");
-            return ge::GRAPH_FAILED;
-        }
-    }
-    if (has_step_size_) {
-        auto shape = ctx_->GetOptionalInputShape(11);
-        auto storageShape = shape->GetStorageShape();
-        if (!storageShape.IsScalar() && storageShape.GetShapeSize() != SCALAR_ELEM_SIZE) {
-            OP_LOGE(opName, "step_size must be scalar or size=1");
-            return ge::GRAPH_FAILED;
-        }
-    }
-
     clip_coeff_ = 1.0f;
+
+    // All descriptors, scalar slots, state shapes and outputs are validated.
+    // Do not let scalar [1] padding turn a zero tensor dimension into one.
+    if (has_empty_tensor_) {
+        rank_ = static_cast<int64_t>(raw_input_shapes_[0].size());
+        return GRAPH_SUCCESS;
+    }
 
     PadAndSqueeze(raw_input_shapes_, raw_output_shapes_, max_bro_shape_, normal_input_shapes_, normal_output_shapes_);
     rank_ = (int64_t)max_bro_shape_.size();
 
     if (rank_ > kMaxRank) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "rank", std::to_string(rank_).c_str(),
-                                              "rank exceeds maximum supported rank 8");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(opName, "normalized inputs", std::to_string(rank_).c_str(),
+                                                 "Rank must not exceed 8");
         return ge::GRAPH_FAILED;
     }
 
@@ -368,8 +374,10 @@ ge::graphStatus ApplyAdamV2Tiling::GetShapeInfo()
             core_num_, adam_mode_flag_);
 
     if (!CheckBroadcastShape(normal_input_shapes_, normal_output_shapes_, rank_)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "broadcast_shape", "incompatible",
-                                              "input and output shapes are not broadcast compatible");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            opName, "inputs and outputs",
+            Ops::Base::ToString(ctx_->GetRequiredInputShape(0)->GetStorageShape()).c_str(),
+            "All input and output shapes must be broadcast compatible");
         return ge::GRAPH_FAILED;
     }
 
@@ -377,10 +385,51 @@ ge::graphStatus ApplyAdamV2Tiling::GetShapeInfo()
 }
 
 template <int64_t R>
+ge::graphStatus ApplyAdamV2Tiling::DoEmptyTilingAndSet()
+{
+    auto* tiling = ctx_->GetTilingData<ApplyAdamV2TilingData<R>>();
+    if (tiling == nullptr) {
+        return ReportTilingFailure(ctx_->GetNodeName(), "Tiling data buffer is nullptr");
+    }
+    // Fully initialize the existing ABI, including unused shapes and strides.
+    // No stride products, UB split or multicore division are needed for empty IO.
+    std::memset(tiling, 0, sizeof(*tiling));
+    tiling->rank = rank_;
+    tiling->numInputs = kMaxInputSlots;
+    tiling->numOutputs = kMaxOutputSlots;
+    tiling->multicore.numCores = 1;
+    tiling->adamModeFlag = adam_mode_flag_;
+    tiling->clipCoeff = clip_coeff_;
+    tiling->hasMaxGradNorm = has_max_grad_norm_ ? 1 : 0;
+    tiling->hasStepSize = has_step_size_ ? 1 : 0;
+    for (int64_t d = 0; d < R; ++d) {
+        tiling->maxBroShape[d] = d < R - rank_ ? 1 : raw_input_shapes_[0][d - (R - rank_)];
+    }
+    for (int64_t i = 0; i < kMaxInputSlots; ++i) {
+        const auto& shape = raw_input_shapes_[i];
+        int64_t delta = R - static_cast<int64_t>(shape.size());
+        for (int64_t d = 0; d < R; ++d) {
+            tiling->inputShapes[i][d] = d < delta ? 1 : shape[d - delta];
+        }
+    }
+    for (int64_t i = 0; i < kMaxOutputSlots; ++i) {
+        const auto& shape = raw_output_shapes_[i];
+        int64_t delta = R - static_cast<int64_t>(shape.size());
+        for (int64_t d = 0; d < R; ++d) {
+            tiling->outputShapes[i][d] = d < delta ? 1 : shape[d - delta];
+        }
+    }
+    ctx_->SetBlockDim(1);
+    return GRAPH_SUCCESS;
+}
+
+template <int64_t R>
 ge::graphStatus ApplyAdamV2Tiling::DoTilingAndSet()
 {
     auto* tiling = ctx_->GetTilingData<ApplyAdamV2TilingData<R>>();
-    OP_CHECK_NULL_WITH_CONTEXT(ctx_, tiling);
+    if (tiling == nullptr) {
+        return ReportTilingFailure(ctx_->GetNodeName(), "Tiling data buffer is nullptr");
+    }
 
     int64_t ub_per_core = (int64_t)ub_size_;
     int64_t per_buf_bytes = (ub_per_core / kPhysNodes) & ~31LL;
@@ -485,6 +534,16 @@ ge::graphStatus ApplyAdamV2Tiling::DoTilingAndSet()
 
 ge::graphStatus ApplyAdamV2Tiling::RunTiling()
 {
+    if (ctx_ == nullptr) {
+        return ReportTilingFailure("ApplyAdamV2", "TilingContext is nullptr");
+    }
+    // Five aligned buffers must each hold at least one FP32 value.
+    if (core_num_ == 0 || core_num_ > std::numeric_limits<uint32_t>::max() || ub_size_ < kPhysNodes * 32 ||
+        ub_size_ > std::numeric_limits<uint32_t>::max() || (adam_mode_flag_ != 0 && adam_mode_flag_ != 1)) {
+        return ReportTilingFailure(ctx_->GetNodeName(),
+                                   "Invalid tiling configuration: coreNum=" + std::to_string(core_num_) + ", ubSize=" +
+                                       std::to_string(ub_size_) + ", adamModeFlag=" + std::to_string(adam_mode_flag_));
+    }
     ge::graphStatus ret = GetShapeInfo();
     if (ret != GRAPH_SUCCESS) {
         return ret;
@@ -497,7 +556,7 @@ ge::graphStatus ApplyAdamV2Tiling::RunTiling()
         tilingKeyValue = (adam_mode_flag_ == 0) ? APPLY_ADAM_V2_FP16_ADAM : APPLY_ADAM_V2_FP16_MBART;
     }
 
-    ret = DoTilingAndSet<8>();
+    ret = has_empty_tensor_ ? DoEmptyTilingAndSet<8>() : DoTilingAndSet<8>();
     ctx_->SetTilingKey(GET_TPL_TILING_KEY(tilingKeyValue));
 
     return ret;
@@ -505,12 +564,17 @@ ge::graphStatus ApplyAdamV2Tiling::RunTiling()
 
 static ge::graphStatus TilingFuncApplyAdamV2(gert::TilingContext* context)
 {
+    if (context == nullptr) {
+        return ReportTilingFailure("ApplyAdamV2", "TilingContext is nullptr");
+    }
     OP_LOGD(context->GetNodeName(), "Begin the tiling process for Arch35 architecture");
     OP_LOGI(context->GetNodeName(), "Enter ApplyAdamV2TilingFunc");
 
     // Read platform info
     fe::PlatFormInfos* platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "PlatformInfo is nullptr");
+    }
     auto ap = platform_ascendc::PlatformAscendC(platformInfo);
     uint64_t coreNum = ap.GetCoreNumAiv();
     uint64_t ubSize = 0;
@@ -539,6 +603,9 @@ static ge::graphStatus TilingFuncApplyAdamV2(gert::TilingContext* context)
         return ret;
     }
     size_t* workspaces = context->GetWorkspaceSizes(1);
+    if (workspaces == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "Workspace output container has no capacity for one slot");
+    }
     workspaces[0] = 0;
 
     return GRAPH_SUCCESS;

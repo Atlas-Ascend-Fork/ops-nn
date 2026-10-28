@@ -19,6 +19,7 @@
 #include <string>
 #include <map>
 #include <cmath>
+#include <cstring>
 #include "assert.h"
 
 #include "graph.h"
@@ -139,6 +140,34 @@ int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vect
     return SUCCESS;
 }
 
+static bool VerifyOutputs(const std::vector<ge::Tensor>& output, const float expected[3])
+{
+    if (output.size() != 3) {
+        printf("Expected 3 outputs, got %zu\n", output.size());
+        return false;
+    }
+    bool pass = true;
+    for (size_t i = 0; i < 3; ++i) {
+        // This example constructs three FP32 outputs with shape [4].
+        if (output[i].GetTensorDesc().GetDataType() != DT_FLOAT || output[i].GetSize() != 4 * sizeof(float) ||
+            output[i].GetData() == nullptr) {
+            printf("input%zu_out has invalid dtype, data length or data pointer\n", i + 1);
+            pass = false;
+            continue;
+        }
+        for (size_t j = 0; j < 4; ++j) {
+            float actual;
+            std::memcpy(&actual, output[i].GetData() + j * sizeof(actual), sizeof(actual));
+            // All elements in this fixed example have the same finite CPU expectation.
+            if (!std::isfinite(actual) || !std::isfinite(expected[i]) || std::abs(actual - expected[i]) > 1e-4f) {
+                printf("input%zu_out[%zu] mismatch: NPU=%f CPU=%f\n", i + 1, j, actual, expected[i]);
+                pass = false;
+            }
+        }
+    }
+    return pass;
+}
+
 int main(int argc, char* argv[])
 {
     const char* graph_name = "tc_ge_adam";
@@ -194,17 +223,6 @@ int main(int argc, char* argv[])
     }
     printf("%s - INFO - [GEIR]: RunGraph success\n", GetTime().c_str());
 
-    // Print results
-    for (int i = 0; i < (int)output.size(); i++) {
-        auto& t = output[i];
-        int64_t sz = t.GetTensorDesc().GetShape().GetShapeSize();
-        float* data = (float*)(t.GetData());
-        printf("output[%d] (size=%ld): ", i, sz);
-        for (int64_t j = 0; j < sz && j < 8; j++)
-            printf("%f ", data[j]);
-        printf("\n");
-    }
-
     // CPU verification (same logic as aclnn test)
     float input0 = 2.0f, input1 = 3.0f, input2 = 4.0f, input3 = 10.0f, input4 = 0.1f, mul0_x = 0.9f, mul1_x = 0.999f,
           mul2_x = 0.999f, mul3_x = 0.999f, add2_y = 1e-8f;
@@ -213,22 +231,19 @@ int main(int argc, char* argv[])
     float cpu_o2 = input3 - cpu_o1 / (std::sqrt(cpu_o0) + add2_y) * input4;
     printf("CPU expected: input1_out=%f input2_out=%f input3_out=%f\n", cpu_o0, cpu_o1, cpu_o2);
 
-    bool pass = true;
-    if (output.size() >= 3) {
-        float* d0 = (float*)(output[0].GetData());
-        float* d1 = (float*)(output[1].GetData());
-        float* d2 = (float*)(output[2].GetData());
-        if (std::abs(d0[0] - cpu_o0) > 1e-4f) {
-            printf("input1_out mismatch: NPU=%f CPU=%f\n", d0[0], cpu_o0);
-            pass = false;
-        }
-        if (std::abs(d1[0] - cpu_o1) > 1e-4f) {
-            printf("input2_out mismatch: NPU=%f CPU=%f\n", d1[0], cpu_o1);
-            pass = false;
-        }
-        if (std::abs(d2[0] - cpu_o2) > 1e-4f) {
-            printf("input3_out mismatch: NPU=%f CPU=%f\n", d2[0], cpu_o2);
-            pass = false;
+    const float expected[3] = {cpu_o0, cpu_o1, cpu_o2};
+    const bool pass = VerifyOutputs(output, expected);
+
+    // Print only after validating output count, data pointers and byte lengths.
+    if (pass) {
+        for (size_t i = 0; i < output.size(); ++i) {
+            printf("output[%zu] (size=4): ", i);
+            for (size_t j = 0; j < 4; ++j) {
+                float value;
+                std::memcpy(&value, output[i].GetData() + j * sizeof(float), sizeof(value));
+                printf("%f ", value);
+            }
+            printf("\n");
         }
     }
 

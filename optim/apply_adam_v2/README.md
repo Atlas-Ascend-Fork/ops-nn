@@ -70,7 +70,7 @@
 | beta2 | 输入 | 二阶矩衰减率，对应公式中 β<sub>2</sub>，标量，典型值 0.999。 | FLOAT、FLOAT16 | ND |
 | epsilon | 输入 | 数值稳定性常数，对应公式中 ε，标量，典型值 1e-8。 | FLOAT、FLOAT16 | ND |
 | grad | 输入 | 梯度张量。shape 与 var 一致。 | FLOAT、FLOAT16 | ND |
-| max_grad_norm | 输入（可选） | 梯度裁剪阈值，标量。仅 adam 模式使用。 | FLOAT、FLOAT16 | ND |
+| max_grad_norm | 输入（可选） | 梯度裁剪控制标量，值大于 0 时启用。仅 adam 模式使用。 | FLOAT、FLOAT16 | ND |
 | global_grad_norm | 输入 | 全局梯度范数，标量。仅 adam 模式使用。 | FLOAT、FLOAT16 | ND |
 | weight_decay | 输入 | 权重衰减系数，标量，典型值 0.01。 | FLOAT、FLOAT16 | ND |
 | step_size | 输入（可选） | 步长缩放因子，标量。仅 mbart_adam 模式使用。 | FLOAT、FLOAT16 | ND |
@@ -84,12 +84,26 @@
 - var、m、v、grad 四个 Tensor 的 shape 和数据类型必须完全一致。
 - lr、beta1、beta2、epsilon、max_grad_norm、global_grad_norm、weight_decay、step_size 为标量（shape [1]），数据类型必须与 Tensor 的数据类型一致。
 - FP16 输入时，内部计算提升到 FP32 进行，输出再转回 FP16，以保证长期训练中矩估计的精度。
-- adam 模式下，若提供 max_grad_norm 和 global_grad_norm，则进行梯度裁剪：clip_coeff = min(1.0, max_grad_norm / global_grad_norm)。
+- adam 模式下，仅当提供 max_grad_norm 且其值大于 0 时启用梯度裁剪。global_grad_norm 为 NaN、Inf 或小于 1e-10 时按 1 处理；处理后若大于 1，则 clip_coeff = 1 / global_grad_norm，否则 clip_coeff = 1。未启用裁剪时 clip_coeff = 1。
 - mbart_adam 模式下，若未提供 step_size，则使用 lr 作为 step_size。
 - 算子默认确定性实现，相同输入产生相同输出。
-- 不支持空 Tensor（0 元素）。
+- 合法元数据的空 Tensor（任意维度长度为 0）返回与输入 shape、dtype 一致的三个空输出，不进行数值计算。
 - Tensor rank 范围 0~8。
 - 动态 shape 支持情况：Kernel 模式支持 -1/-2（未知维度）；GEIR 模式不支持 -1/-2，因为 canndev 内置 infershape 无法将未知维度正确传播到 inplace 输出。
+
+### 数值范围
+
+本算子支持符合 Adam 参数更新语义的输入，调用方应保证以下数值范围：
+
+| 参数 | 支持范围 |
+|:-----|:---------|
+| var、m、grad | 有限实数，允许正值、负值和 0，不额外限制梯度或一阶矩的幅值。 |
+| v | 有限且非负，表示梯度平方的二阶矩估计。 |
+| beta1、beta2 | 配置值满足 `0 <= beta < 1`。FP16 输入允许该配置转换时舍入为 `1` 的边界情况。 |
+| lr | 有限且非负。 |
+| epsilon | 有限且非负，通常使用正值。 |
+| weight_decay | 有限且非负。 |
+| step_size | mbart_adam 模式下有限且非负；adam 模式下不参与计算，不要求其数值满足此范围。 |
 
 ## 调用说明
 

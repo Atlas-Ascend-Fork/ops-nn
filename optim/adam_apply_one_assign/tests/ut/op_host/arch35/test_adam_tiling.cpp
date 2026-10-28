@@ -13,7 +13,9 @@
  */
 #include "optim/adam_apply_one_assign/op_host/arch35/adam_apply_one_assign_tiling_arch35.h"
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "tiling_context_faker.h"
+#include "register/op_impl_registry.h"
 #include "tiling_case_executor.h"
 
 using namespace std;
@@ -236,4 +238,83 @@ TEST_F(AdamTilingTest, case0_uniform_shape)
                     "8192 64 1 0 8192 64 1 0 8192 64 1 0 8192 64 1 0 8192 64 1 0 8192 64 1 0 8192 64 1 0 8192 64 1 0 "
                     "8192 64 1 1 256 128 64 1 256 128 64 1 256 128 64 0 8192 64 1 0 8192 64 1 0 8192 64 1 ";
     ExecuteTestCase(ctx, GRAPH_SUCCESS, 0, expect, {{16777216}});
+}
+
+TEST_F(AdamTilingTest, validation_reports_specific_error_once)
+{
+    auto implementation = gert::OpImplRegistry::GetInstance().GetOpImpl("AdamApplyOneAssign");
+    ASSERT_NE(implementation, nullptr);
+    ASSERT_NE(implementation->tiling, nullptr);
+    auto& errors = ErrorManager::GetInstance();
+    ASSERT_EQ(errors.Init(), 0);
+    const char* expectedCodes[] = {"EZ0019", "EZ0018", "EZ0012", "EZ0010", "EZ0004"};
+    for (size_t scenario = 0; scenario < 5; ++scenario) {
+        SCOPED_TRACE(scenario);
+        gert::StorageShape tensor = {{2, 3}, {2, 3}};
+        gert::StorageShape state = {{1, 3}, {1, 3}};
+        gert::StorageShape rankNine = {{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}};
+        std::vector<gert::StorageShape*> inputs(10, &tensor);
+        if (scenario == 2) {
+            inputs[4] = &rankNine;
+        } else if (scenario == 3) {
+            inputs[1] = &state;
+        }
+        optiling::AdamCompileInfo compileInfo{64, 256 * 1024};
+        auto data = gert::TilingData::CreateCap(4096);
+        auto workspace = gert::ContinuousVector::Create<size_t>(1);
+        fe::PlatFormInfos platform;
+        ASSERT_TRUE(platform.Init());
+        gert::TilingContextFaker builder;
+        builder.SetOpType("AdamApplyOneAssign")
+            .NodeIoNum(10, 3)
+            .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+            .CompileInfo(&compileInfo)
+            .InputShapes(inputs)
+            .OutputShapes({&tensor, &tensor, &tensor})
+            .PlatformInfo(&platform)
+            .TilingData(data.get())
+            .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()));
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            auto dtype = scenario == 0 && i == 0 ? ge::DT_INT32 : ge::DT_FLOAT;
+            auto format = scenario == 1 && i == 4 ? ge::FORMAT_NCHW : ge::FORMAT_ND;
+            builder.NodeInputTd(i, dtype, format, format);
+        }
+        for (size_t i = 0; i < 3; ++i) {
+            builder.NodeOutputTd(i, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+        auto holder = builder.Build();
+        auto context = holder.GetContext<gert::TilingContext>();
+        ASSERT_NE(context, nullptr);
+        if (scenario == 4) {
+            auto input = holder.GetContext<gert::KernelContext>()->MutableInput(5);
+            ASSERT_NE(input, nullptr);
+            input->Set(nullptr, nullptr);
+            ASSERT_EQ(context->GetInputShape(5), nullptr);
+        }
+        errors.GetRawErrorMessages();
+        EXPECT_EQ(implementation->tiling(context), ge::GRAPH_FAILED);
+        auto reports = errors.GetRawErrorMessages();
+        ASSERT_EQ(reports.size(), 1U);
+        EXPECT_EQ(reports[0].error_id, expectedCodes[scenario]);
+        EXPECT_NE(reports[0].error_message.find("AdamApplyOneAssign"), std::string::npos);
+    }
+}
+
+TEST_F(AdamTilingTest, null_context_reports_stage_error_once)
+{
+    auto implementation = gert::OpImplRegistry::GetInstance().GetOpImpl("AdamApplyOneAssign");
+    ASSERT_NE(implementation, nullptr);
+    ASSERT_NE(implementation->tiling, nullptr);
+    ASSERT_NE(implementation->infer_shape, nullptr);
+    auto& errors = ErrorManager::GetInstance();
+    ASSERT_EQ(errors.Init(), 0);
+    errors.GetRawErrorMessages();
+    EXPECT_EQ(implementation->tiling(nullptr), ge::GRAPH_FAILED);
+    auto reports = errors.GetRawErrorMessages();
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].error_id, "EZ1008");
+    EXPECT_EQ(implementation->infer_shape(nullptr), ge::GRAPH_FAILED);
+    reports = errors.GetRawErrorMessages();
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].error_id, "EZ1014");
 }
