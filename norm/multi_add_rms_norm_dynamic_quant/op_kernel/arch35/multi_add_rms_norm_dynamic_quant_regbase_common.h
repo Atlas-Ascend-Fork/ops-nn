@@ -63,6 +63,9 @@ __aicore__ inline __gm__ T* GetTensorAddr(uint16_t index, GM_ADDR tensorPtr)
 
 constexpr int32_t VL_SIZE = GetVRegSize();
 constexpr int32_t V_LENGTH = (VL_SIZE / static_cast<int32_t>(sizeof(float)));
+constexpr uint32_t NUM_TWO_DF = 2;  // 两段式(hi/lo)用
+constexpr uint32_t NUM_FOUR_DF = 4; // 两段式累加缓冲: 每段留 2*V_LENGTH 地址空间(整 VL 载入余量)
+constexpr float MAX_FINITE_FP32 = 3.402823466e+38F;
 constexpr float DIV_FACTOR_INT8 = (static_cast<float>(1.0) / 127);
 constexpr float DIV_FACTOR_FP8E4M3FN = (static_cast<float>(1.0) / 448);
 constexpr float DIV_FACTOR_FP8E5M2 = (static_cast<float>(1.0) / 57344);
@@ -331,10 +334,16 @@ __aicore__ inline void ComputeReduceMax(LocalTensor<float>& scaleLocal, LocalTen
                 Add(xRegFp32, xRegFp32, betaRegFp32, maskReg);
             }
             if constexpr (HAS_SMOOTH_SCALE) {
+                // 物化 inp = y*smooth_scale(与 A2 的 ScaleTensor 及 add_rms_norm_dynamic_quant 同形态)。
+                // 不走"只存 y、由 ComputeY 以 k=(smooth_scale*quantMax)/row_max 合成"的尺度不变写法:
+                // k 是该写法自造的中间量, row_max 落次正规区且 smooth_scale 为正常量级时
+                // k = smooth_scale*quantMax/row_max 会越过 fp32 上限变 inf, 使输出整体饱和
+                // (实测 smooth_scale~0.5、row_max~2e-38 时 k~3.2e39 > 3.4e38)。
+                // 而 inp/scale 恒不溢出(|inp| <= row_max), 次正规分母的 DAZ 由 ComputeY 的 pre 同乘化解。
                 Mul(yRegFp32, xRegFp32, smoothScaleRegFp32, maskReg);
-                DataCopy<float>(yTmpAddr + idx * V_LENGTH, yRegFp32, maskReg);
-                Abs(yRegFp32, yRegFp32, maskReg);               // VF abs is zeroing mode
-                Max(scaleReg, scaleReg, yRegFp32, maskRegFull); // Using full mask
+                DataCopy<float>(yTmpAddr + idx * V_LENGTH, yRegFp32, maskReg); // 存 inp = y*smooth
+                Abs(yRegFp32, yRegFp32, maskReg);                              // VF abs is zeroing mode
+                Max(scaleReg, scaleReg, yRegFp32, maskRegFull);                // row_max = max|y*smooth|
             } else {
                 DataCopy<float>(yTmpAddr + idx * V_LENGTH, xRegFp32, maskReg);
                 Abs(yRegFp32, xRegFp32, maskReg);               // VF abs is zeroing mode
@@ -347,6 +356,54 @@ __aicore__ inline void ComputeReduceMax(LocalTensor<float>& scaleLocal, LocalTen
     }
 }
 
+// ======================= 两段式(double-float)基元 =======================
+// 适用面只有 Sigma x^2 与由它得出的 rstd: 长链累加每级一次 fp32 舍入, 残差会被 rstd 乘回
+// 每个元素, 故这两级用两段式(hi+lo)补偿。
+// **不用于 row_max**: max 不做算术、不产生舍入误差, 补偿它没有收益; 而补偿式
+// r = hi - s0*qmax 在 hi 非有限时退化为 inf-inf = NaN, 会把本该为 inf 的 scale 变成 NaN。
+// 基元只用加/减/乘与单次舍入 FMA(FusedMulDstAdd) 表达, 不依赖 fp64。
+// 注意: MulAddDst 不保证单次舍入, 不能用来取残差。
+
+// 残差非有限即置 0。高位段溢出成 inf 时残差退化为 inf-inf=NaN(TwoProd 侧为 -inf),
+// 把它加回去会把本该是 inf 的和污染成 NaN, 进而让 rstd/normed/scale 整列变 NaN。
+// 补偿求和的意义只在有限域, 非有限值按 IEEE 自然传播即可 —— 与 l2_normalize_grad 的
+// TwoSumVec、in_training_update_grad_gamma_beta 的 AddWithResidual 同一处理。
+__simd_callee__ inline void DfClampResidual(RegTensor<float>& e, MaskReg& mask)
+{
+    RegTensor<float> absE, zeroReg;
+    MaskReg finiteMask;
+    Abs(absE, e, mask);
+    Compares<float, CMPMODE::LE>(finiteMask, absE, MAX_FINITE_FP32, mask);
+    Duplicate(zeroReg, 0.0F, mask);
+    Select(e, e, zeroReg, finiteMask);
+}
+
+// TwoProd: p = fl(a*b), e = a*b - p(精确)。依赖 FMA 单次舍入。
+__simd_callee__ inline void DfTwoProd(RegTensor<float>& p, RegTensor<float>& e, RegTensor<float>& a,
+                                      RegTensor<float>& b, MaskReg& mask)
+{
+    RegTensor<float> negP;
+    Mul(p, a, b, mask);
+    Muls(negP, p, static_cast<float>(-1.0), mask);
+    Muls(e, a, static_cast<float>(1.0), mask); // e = a(拷贝, 乘 1 精确)
+    FusedMulDstAdd(e, b, negP, mask);          // e = a*b - p
+    DfClampResidual(e, mask);
+}
+
+// TwoSum(Knuth): s = fl(a+b), e = (a+b) - s(精确), 不要求 |a|>=|b|。
+__simd_callee__ inline void DfTwoSum(RegTensor<float>& s, RegTensor<float>& e, RegTensor<float>& a, RegTensor<float>& b,
+                                     MaskReg& mask)
+{
+    RegTensor<float> bb, aa, da, db;
+    Add(s, a, b, mask);
+    Sub(bb, s, a, mask);
+    Sub(aa, s, bb, mask);
+    Sub(da, a, aa, mask);
+    Sub(db, b, bb, mask);
+    Add(e, da, db, mask);
+    DfClampResidual(e, mask);
+}
+
 template <typename T_Y>
 __aicore__ inline void ComputeScale(LocalTensor<float>& scaleLocal, uint32_t rstdScaleOffset)
 {
@@ -354,23 +411,31 @@ __aicore__ inline void ComputeScale(LocalTensor<float>& scaleLocal, uint32_t rst
 
     __VEC_SCOPE__
     {
-        RegTensor<float> scaleReg;
+        RegTensor<float> scaleReg, qmaxReg;
         MaskReg maskRegOne = CreateMask<float, MaskPattern::VL1>();
 
-        DataCopy<float, LoadDist::DIST_BRC_B32>(scaleReg, scaleAddr + rstdScaleOffset);
-        if constexpr (IsSameType<T_Y, int8_t>::value) {
-            Muls(scaleReg, scaleReg, DIV_FACTOR_INT8, maskRegOne);
-        } else if constexpr (IsSameType<T_Y, fp8_e4m3fn_t>::value) {
-            Muls(scaleReg, scaleReg, DIV_FACTOR_FP8E4M3FN, maskRegOne);
+        // scale = row_max/quantMax 取 Div 形态: 与 ComputeY 的分母是同一个值, 也与算法公式
+        // scale = row_max(abs(inp))/127 字面一致。乘 1/quantMax 会与分母差 1 ULP(1/127 非 2 的幂),
+        // 使输出的 scale 不再等于实际用于量化的分母。
+        float quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_INT8;
+        if constexpr (IsSameType<T_Y, fp8_e4m3fn_t>::value) {
+            quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_FP8E4M3FN;
         } else if constexpr (IsSameType<T_Y, fp8_e5m2_t>::value) {
-            Muls(scaleReg, scaleReg, DIV_FACTOR_FP8E5M2, maskRegOne);
+            quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_FP8E5M2;
         } else if constexpr (IsSameType<T_Y, hifloat8_t>::value) {
-            Muls(scaleReg, scaleReg, DIV_FACTOR_HIFP8, maskRegOne);
+            quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_HIFP8;
         }
+        DataCopy<float, LoadDist::DIST_BRC_B32>(scaleReg, scaleAddr + rstdScaleOffset);
+        Duplicate(qmaxReg, quantMaxV, maskRegOne);
+        Div(scaleReg, scaleReg, qmaxReg, maskRegOne);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(scaleAddr + rstdScaleOffset, scaleReg, maskRegOne);
     }
 }
 
+// xLocal 存量化前的 inp(无 smooth 时即归一化后的 y, 有 smooth 时为 y*smooth, 均由
+// ComputeReduceMax 落盘), scaleLocal[offset] 存 row_max(非 scale)。
+// 算 out = inp/(row_max/quantMax), 即算法公式的 round(inp/scale)。
+// 调用方须在本函数之后再调 ComputeScale 把 row_max 换算成真实 scale。
 template <typename T_Y>
 __aicore__ inline void ComputeY(LocalTensor<T_Y>& yLocal, LocalTensor<float>& scaleLocal, LocalTensor<float>& xLocal,
                                 uint32_t rstdScaleOffset, uint32_t calCount)
@@ -387,12 +452,43 @@ __aicore__ inline void ComputeY(LocalTensor<T_Y>& yLocal, LocalTensor<float>& sc
         RegTensor<half> yRegFp16;
         RegTensor<T_Y> yReg;
         MaskReg maskReg;
+        MaskReg maskRegAll = CreateMask<float, MaskPattern::ALL>();
+        RegTensor<float> preReg, rmScaled, denReg, bigReg, oneReg, qmaxReg;
 
-        DataCopy<float, LoadDist::DIST_BRC_B32>(scaleReg, scaleAddr + rstdScaleOffset);
+        // row_max 落 fp32 次正规区时, 矢量 Div 的分母会被 DAZ 当 0 -> 商 inf -> 输出整体饱和。
+        // 用 PRE_SCALE(2 的幂, 精确)把分子分母**同时**搬正: (inp*PRE)/((row_max*PRE)/qmax)。
+        // 分子恒不溢出 —— |inp| <= row_max, 故 |inp*PRE| <= row_max*PRE, 与分母同界;
+        // 这是不先合成 k=(ss*qmax)/row_max 的理由: 那个中间量在 row_max 次正规而 ss 为
+        // 正常量级时会越过 fp32 上限变 inf(实测 ss~0.5、row_max~2e-38 -> k~3.2e39)。
+        constexpr float SUBNORM_GUARD = 1.0e-30f;
+        constexpr float PRE_SCALE = 1208925819614629174706176.0f; // 2^80
+        float quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_INT8;
+        if constexpr (IsSameType<T_Y, fp8_e4m3fn_t>::value) {
+            quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_FP8E4M3FN;
+        } else if constexpr (IsSameType<T_Y, fp8_e5m2_t>::value) {
+            quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_FP8E5M2;
+        } else if constexpr (IsSameType<T_Y, hifloat8_t>::value) {
+            quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_HIFP8;
+        }
+        DataCopy<float, LoadDist::DIST_BRC_B32>(scaleReg, scaleAddr + rstdScaleOffset); // row_max
+        Duplicate(bigReg, PRE_SCALE, maskRegAll);
+        Duplicate(oneReg, static_cast<float>(1.0), maskRegAll);
+        Duplicate(qmaxReg, quantMaxV, maskRegAll);
+        MaskReg isSmall;
+        CompareScalar<float, CMPMODE::LT>(isSmall, scaleReg, SUBNORM_GUARD, maskRegAll);
+        Select(preReg, bigReg, oneReg, isSmall);
+        Mul(rmScaled, scaleReg, preReg, maskRegAll);
+        // 分母 = (row_max*PRE)/qmax = scale*PRE(与 ComputeScale 输出的 scale 同为 Div 形态)
+        Div(rmScaled, rmScaled, qmaxReg, maskRegAll);
+        MaskReg isZero;
+        CompareScalar<float, CMPMODE::EQ>(isZero, rmScaled, static_cast<float>(0.0), maskRegAll);
+        // 零行(整行 inp 恒为 0): 分母换 1 -> out = 0/1 = 0, 规避 0/0; 与算法公式一致
+        Select(denReg, oneReg, rmScaled, isZero);
         for (uint16_t idx = 0; idx < (uint16_t)repeatTimes; idx++) {
             maskReg = UpdateMask<float>(calCount);
             DataCopy<float>(yRegFp32, xAddr + idx * V_LENGTH);
-            Div(yRegFp32, yRegFp32, scaleReg, maskReg);
+            Mul(yRegFp32, yRegFp32, preReg, maskReg);
+            Div(yRegFp32, yRegFp32, denReg, maskReg);
             if constexpr (IsSameType<T_Y, int8_t>::value) {
                 Truncate<float, RoundMode::CAST_RINT>(yRegFp32Tmp, yRegFp32, maskReg);
                 Cast<half, float, castTraitFp322Fp16>(yRegFp16, yRegFp32Tmp, maskReg);

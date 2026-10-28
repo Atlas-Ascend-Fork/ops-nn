@@ -34,6 +34,7 @@ constexpr uint64_t SCALE2_INDEX = 4;
 constexpr uint64_t EPS_ATTR_INDEX = 0;
 constexpr uint32_t LOG_2 = 2;
 constexpr uint32_t NUM_TWO = 2;
+constexpr uint32_t NUM_FOUR = 4; // 两段式累加缓冲: hi/lo 各留 2*vecLength 地址空间
 constexpr uint32_t CONST_TWO = 2;
 constexpr uint32_t CONST_FOUR = 4;
 constexpr uint32_t CONST_EIGHT = 8;
@@ -480,6 +481,8 @@ uint64_t MultiAddRmsNormDynamicQuantRegbaseTiling::CalUBTotalSize(uint64_t baseM
     if (tilingParams.hasY2Scale2) {
         totalSize += 1 * B32_BLOCK_NUM * sizeof(float); // scale2
     }
+    totalSize += NUM_FOUR * tilingParams.vecLength * sizeof(float);   // msAccBuf(Σx²: hi/lo 各留 2*VL 余量)
+    totalSize += 1 * B32_BLOCK_NUM * sizeof(float);                   // rstdLo(两段式 rstd 低位段)
     totalSize += LEVEL_BUFFER_CNT * ONCE_VECTOR_SIZE * sizeof(float); // levelbuf
     totalSize += 1 * tilingParams.vecLength * sizeof(float);          // tempBuf
 

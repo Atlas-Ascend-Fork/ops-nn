@@ -141,14 +141,12 @@ public:
             if (hasY2Scale2_) {
                 scale2Local = outQueueScale2_.AllocTensor<float>();
             }
-            // 1.Σx1 + x2(multi-add:xLocal1 已由 CopyInXMutiMoveAlign 累加成 Σx1[0..x1Num_))
+            // 1.multi-add:CopyInXMutiMoveAlign 已按 A2 顺序累加出 x=(x1[0]+x2)+x1[1..](fp32)
             CopyInXMutiMoveAlign(gmOffset, realM);
-            LocalTensor<float> xLocal1 = x1AccBuf_.Get<float>(); // Σx1(fp32)
-            LocalTensor<T_X> xLocal2 = inQueueX2_.DeQue<T_X>();
+            LocalTensor<float> xLocal1 = x1AccBuf_.Get<float>(); // x(fp32)
             LocalTensor<T_X> xOutLocal = outQueueX_.AllocTensor<T_X>();
             LocalTensor<float> xOutTmpLocal = xOutTmpBuf_.Get<float>();
-            CalculateXAdd(xLocal1, xLocal2, xOutLocal, xOutTmpLocal, realM);
-            inQueueX2_.FreeTensor(xLocal2);
+            CalculateXAdd(xLocal1, xOutLocal, xOutTmpLocal, realM);
             outQueueX_.EnQue<T_X>(xOutLocal);
             CopyOutX(gmOffset, realM);
 
@@ -235,9 +233,15 @@ private:
         };
         // 对齐 ascend910b(canndev normal/single_row_kernel):Σx1 全程 fp32 累加(逐个 Cast fp32 再 Add),
         // 避免 fp16 累加丢精度。acc=fp32(x1AccBuf_ 改 sizeof(float));cast 临时复用 CopyIn 期空闲的 xOutTmpBuf_(fp32)。
+        // 累加次序必须与 ascend910b 一致:先 x1[0]+x2, 再逐个加 x1[1..]
+        // (canndev normal_kernel CopyInX1X2AndAddX1X2「1.将x1的第一个tensor和x2相加 2.将x1剩余的相加」)。
+        // fp32 加法不满足结合律, 写成 (Σx1)+x2 会在相消点产生 1~2 个 ULP 的偏差。
         LocalTensor<float> acc = x1AccBuf_.Get<float>();
         LocalTensor<float> accTmp = xOutTmpBuf_.Get<float>();
         uint32_t accCount = realM * baseNDtypeAlign_;
+        LocalTensor<T_X> xLocal2 = inQueueX2_.AllocTensor<T_X>();
+        DataCopyPad(xLocal2, x2Gm_[gmOffset], extParams, padParams);
+        inQueueX2_.EnQue(xLocal2);
         for (uint32_t i = 0; i < x1Num_; ++i) {
             LocalTensor<T_X> x1Local = inQueueX1_.AllocTensor<T_X>();
             DataCopyPad(x1Local, x1GmList_[i][gmOffset], extParams, padParams);
@@ -245,17 +249,22 @@ private:
             LocalTensor<T_X> x1In = inQueueX1_.DeQue<T_X>();
             if (i == 0) {
                 Cast(acc, x1In, RoundMode::CAST_NONE, accCount); // acc = x1[0] (fp32)
-            } else {
-                Cast(accTmp, x1In, RoundMode::CAST_NONE, accCount);
                 PipeBarrier<PIPE_V>();
-                Add(acc, acc, accTmp, accCount); // acc += x1[i] (fp32)
+                inQueueX1_.FreeTensor(x1In);
+                LocalTensor<T_X> x2In = inQueueX2_.DeQue<T_X>();
+                Cast(accTmp, x2In, RoundMode::CAST_NONE, accCount);
+                PipeBarrier<PIPE_V>();
+                Add(acc, acc, accTmp, accCount); // acc = x1[0] + x2
+                PipeBarrier<PIPE_V>();
+                inQueueX2_.FreeTensor(x2In);
+                continue;
             }
+            Cast(accTmp, x1In, RoundMode::CAST_NONE, accCount);
+            PipeBarrier<PIPE_V>();
+            Add(acc, acc, accTmp, accCount); // acc += x1[i] (fp32)
             PipeBarrier<PIPE_V>();
             inQueueX1_.FreeTensor(x1In);
         }
-        LocalTensor<T_X> xLocal2 = inQueueX2_.AllocTensor<T_X>();
-        DataCopyPad(xLocal2, x2Gm_[gmOffset], extParams, padParams);
-        inQueueX2_.EnQue(xLocal2);
     }
 
     __aicore__ inline void CopyOutX(uint64_t offset, uint32_t realM)
@@ -318,11 +327,11 @@ private:
         }
     }
 
-    __aicore__ inline void CalculateXAdd(LocalTensor<float>& xLocal1, LocalTensor<T_X>& xLocal2,
-                                         LocalTensor<T_X>& xOutLocal, LocalTensor<float>& xOutTmpLocal, uint32_t realM)
+    // x 已在 CopyInXMutiMoveAlign 内按 A2 顺序累加完成(fp32), 此处只做窄化输出与 fp32 留存。
+    __aicore__ inline void CalculateXAdd(LocalTensor<float>& xLocal1, LocalTensor<T_X>& xOutLocal,
+                                         LocalTensor<float>& xOutTmpLocal, uint32_t realM)
     {
-        __local_mem__ float* x1InUb = (__local_mem__ float*)xLocal1.GetPhyAddr(); // Σx1 已是 fp32
-        __local_mem__ T_X* x2InUb = (__local_mem__ T_X*)xLocal2.GetPhyAddr();
+        __local_mem__ float* x1InUb = (__local_mem__ float*)xLocal1.GetPhyAddr(); // x 已是 fp32
         __local_mem__ T_X* xOutInUb = (__local_mem__ T_X*)xOutLocal.GetPhyAddr();
         __local_mem__ float* xOutTmp = (__local_mem__ float*)xOutTmpLocal.GetPhyAddr();
 
@@ -331,16 +340,12 @@ private:
 
         __VEC_SCOPE__
         {
-            RegTensor<float> x1;
             RegTensor<float> xSum;
-            RegTensor<float> x2;
             MaskReg pregLoop;
             for (uint16_t i = 0; i < loopCount; ++i) {
                 uint32_t offset = i * V_LENGTH;
                 pregLoop = UpdateMask<float>(sreg);
-                LoadRegForDtype<float>(x1InUb, x1, pregLoop, offset); // Σx1 fp32 直接 load
-                LoadRegForDtype<T_X>(x2InUb, x2, pregLoop, offset);
-                Add(xSum, x1, x2, pregLoop);
+                LoadRegForDtype<float>(x1InUb, xSum, pregLoop, offset); // x fp32 直接 load
                 StoreRegForDtype<T_X>(xOutInUb, xSum, pregLoop, offset);
                 DataCopy<float, StoreDist::DIST_NORM_B32>(xOutTmp + offset, xSum, pregLoop);
             }
@@ -400,6 +405,11 @@ private:
                         Add(xRegFp32, xRegFp32, betaRegFp32, maskReg);
                     }
                     if constexpr (HAS_SMOOTH_SCALE) {
+                        // 物化 inp = y*smooth_scale(与 A2 的 ScaleTensor 同形态)。不走"只存 y、
+                        // 由 ComputeMutlY 合成 k=(ss*qmax)/row_max"的尺度不变写法: k 是该写法
+                        // 自造的中间量, row_max 落次正规区而 ss 为正常量级时会越过 fp32 上限
+                        // 变 inf, 输出整体饱和(实测 ss~0.5、row_max~2e-38 -> k~3.2e39)。
+                        // inp/scale 恒不溢出(|inp| <= row_max), 次正规分母的 DAZ 由 pre 同乘化解。
                         Mul(yRegFp32, xRegFp32, smoothScaleRegFp32, maskReg);
                         DataCopy<float>(yTmpAddr + curA * baseNB32Align_ + idx * V_LENGTH, yRegFp32, maskReg);
                         Abs(yRegFp32, yRegFp32, maskReg);               // VF abs is zeroing mode
@@ -411,15 +421,10 @@ private:
                     }
                 }
                 ReduceMax(scaleReg, scaleReg, maskRegFull);
-                if constexpr (IsSameType<T_YB8, int8_t>::value) {
-                    Muls(scaleReg, scaleReg, DIV_FACTOR_INT8, maskRegOne);
-                } else if constexpr (IsSameType<T_YB8, fp8_e4m3fn_t>::value) {
-                    Muls(scaleReg, scaleReg, DIV_FACTOR_FP8E4M3FN, maskRegOne);
-                } else if constexpr (IsSameType<T_YB8, fp8_e5m2_t>::value) {
-                    Muls(scaleReg, scaleReg, DIV_FACTOR_FP8E5M2, maskRegOne);
-                } else if constexpr (IsSameType<T_YB8, hifloat8_t>::value) {
-                    Muls(scaleReg, scaleReg, DIV_FACTOR_HIFP8, maskRegOne);
-                }
+                // 存入 UB 的是 row_max(正规数)而非 row_max/127(可能次正规)。
+                // 矢量单元对次正规做 DAZ, 次正规值一旦落 UB, 重新加载时即被刷成 0,
+                // 导致后续 Div 退化为除零、量化输出饱和。量化真实除数 scale=max/127
+                // 在 ComputeMutlY 内由 max 还原后写回, GM 输出语义不变。
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(scaleAddr + curA, scaleReg, maskRegOne);
             }
         }
@@ -443,13 +448,43 @@ private:
             RegTensor<half> yRegFp16;
             RegTensor<T_YB8> yReg;
             MaskReg maskReg;
+            // row_max 落 fp32 次正规区时, 矢量 Div 的分母会被 DAZ 当 0 -> 商 inf -> 输出整体饱和。
+            // 用 PRE_SCALE(2 的幂, 精确)把分子分母**同时**搬正: (inp*PRE)/((row_max*PRE)/qmax)。
+            // 分子恒不溢出 —— |inp| <= row_max, 故与分母同界。
+            constexpr float SUBNORM_GUARD = 1.0e-30f;
+            constexpr float PRE_SCALE = 1208925819614629174706176.0f; // 2^80
+            float quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_INT8;
+            if constexpr (IsSameType<T_YB8, fp8_e4m3fn_t>::value) {
+                quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_FP8E4M3FN;
+            } else if constexpr (IsSameType<T_YB8, fp8_e5m2_t>::value) {
+                quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_FP8E5M2;
+            } else if constexpr (IsSameType<T_YB8, hifloat8_t>::value) {
+                quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_HIFP8;
+            }
+            RegTensor<float> preReg, rmScaled, denReg, bigReg, oneReg, qmaxReg;
+            MaskReg maskRegAll = CreateMask<float, MaskPattern::ALL>();
+            MaskReg maskRegOneY = CreateMask<float, MaskPattern::VL1>();
+            Duplicate(bigReg, PRE_SCALE, maskRegAll);
+            Duplicate(oneReg, static_cast<float>(1.0), maskRegAll);
+            Duplicate(qmaxReg, quantMaxV, maskRegAll);
             for (uint16_t curA = 0; curA < curAloops; curA++) {
                 uint32_t sregElewiseNum = calCount;
-                DataCopy<float, LoadDist::DIST_BRC_B32>(scaleReg, scaleAddr + curA);
+                DataCopy<float, LoadDist::DIST_BRC_B32>(scaleReg, scaleAddr + curA); // 此处为 row_max
+                MaskReg isSmall;
+                CompareScalar<float, CMPMODE::LT>(isSmall, scaleReg, SUBNORM_GUARD, maskRegAll);
+                Select(preReg, bigReg, oneReg, isSmall); // isSmall 真取 PRE_SCALE, 否则 1.0
+                Mul(rmScaled, scaleReg, preReg, maskRegAll);
+                // 分母 = (row_max*PRE)/qmax = scale*PRE
+                Div(rmScaled, rmScaled, qmaxReg, maskRegAll);
+                // row_max==0(整行 inp 恒为 0): 分母换 1, out = 0/1 = 0, 规避 0/0; 与算法公式一致
+                MaskReg isZero;
+                CompareScalar<float, CMPMODE::EQ>(isZero, rmScaled, static_cast<float>(0.0), maskRegAll);
+                Select(denReg, oneReg, rmScaled, isZero);
                 for (uint16_t idx = 0; idx < (uint16_t)repeatTimes; idx++) {
                     maskReg = UpdateMask<float>(sregElewiseNum);
                     DataCopy<float>(yRegFp32, yTmpAddr + curA * baseNB32Align_ + idx * V_LENGTH);
-                    Div(yRegFp32, yRegFp32, scaleReg, maskReg);
+                    Mul(yRegFp32, yRegFp32, preReg, maskReg);
+                    Div(yRegFp32, yRegFp32, denReg, maskReg);
                     if constexpr (IsSameType<T_YB8, int8_t>::value) {
                         Truncate<float, RoundMode::CAST_RINT>(yRegFp32Tmp, yRegFp32, maskReg);
                         Cast<half, float, castTraitFp322Fp16>(yRegFp16, yRegFp32Tmp, maskReg);
@@ -463,6 +498,10 @@ private:
                     DataCopy<T_YB8, StoreDist::DIST_PACK4_B32>(yAddr + curA * baseNB8Align_ + idx * V_LENGTH, yReg,
                                                                maskReg);
                 }
+                // 还原真实 scale = row_max/quantMax 写回 UB。取 Div 形态 —— 与上面的分母同一个值,
+                // 也与算法公式 scale = row_max(abs(inp))/127 字面一致。
+                Div(scaleReg, scaleReg, qmaxReg, maskRegOneY);
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(scaleAddr + curA, scaleReg, maskRegOneY);
             }
         }
     }

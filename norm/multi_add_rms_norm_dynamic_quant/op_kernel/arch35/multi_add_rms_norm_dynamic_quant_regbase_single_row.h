@@ -197,12 +197,35 @@ private:
         SetFlag<HardEvent::V_S>(eventVS);
         WaitFlag<HardEvent::V_S>(eventVS);
         float maxTemp = tmpTensor1.GetValue(0);
-        float scaleTemp = ((maxTemp == 0) ? (1.0f) : (this->quantMax / maxTemp));
-        scaleTensor.SetValue(idx, 1 / scaleTemp);
+        // quantMax / maxTemp 在 maxTemp 极小时(如 smooth_scale 取 FLT_MIN 量级)会冲破 fp32
+        // 上界变成 inf, 乘到数据上使量化输出整体饱和成 ±127/-128。量化是尺度不变的,
+        // 改为先除以 maxTemp(商落在 [-1,1])再乘 quantMax, 两步均不溢出, 结果与数学定义一致。
+        // 零行(row_max==0,如 gamma 全 0)的 scale 取 0,与 regbase_perf / regbase_split_reduce
+        // 以及交付 golden 一致: 原码此处写 1.0,使同一输入换个 D 走到本模板就得到不同的 scale。
+        // 零行的 y1 恒为 0,与 scale 取值无关。
+        // A2 此处因 SafeDiv 的 epsilon 钳位给出 1e-12/127≈7.87e-15,属其实现副产物,不跟随。
+        bool maxIsZero = (maxTemp == 0);
+        scaleTensor.SetValue(idx, maxTemp / this->quantMax);
         event_t eventSV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_V));
         SetFlag<HardEvent::S_V>(eventSV);
         WaitFlag<HardEvent::S_V>(eventSV);
-        Muls(srcTensor, srcTensor, scaleTemp, this->numLastDim);
+        if (!maxIsZero) {
+            // 1/maxTemp 在 maxTemp 低于约 3e-39 时仍会溢出, 先用 2 的幂把量级搬正(精确运算)
+            // 搬正系数必须取 2 的幂: 乘 2 的幂只改指数、不动尾数, 故 preScale 与 mNorm 里的
+            // 同一因子能精确约掉; 用 1e30 这类非幂次会各自引入一次舍入, 约不干净。
+            constexpr float PRE_SCALE = 1267650600228229401496703205376.0f; // 2^100
+            float mNorm = maxTemp;
+            float preScale = 1.0f;
+            if (mNorm < 1.0e-30f) {
+                mNorm *= PRE_SCALE;
+                preScale = PRE_SCALE;
+            }
+            Muls(srcTensor, srcTensor, preScale, this->numLastDim);
+            PipeBarrier<PIPE_V>();
+            Muls(srcTensor, srcTensor, 1.0f / mNorm, this->numLastDim);
+            PipeBarrier<PIPE_V>();
+            Muls(srcTensor, srcTensor, this->quantMax, this->numLastDim);
+        }
         PipeBarrier<PIPE_V>();
     }
 
@@ -312,7 +335,10 @@ private:
         inRowsQue.EnQue(gammaCopyIn1);
     }
 
-    // multi-add:逐个 CopyIn x1[i](经 inRowsQue 完成 MTE2→V 同步)并累加到 xBufFp32(fp32),得 Σx1。
+    // multi-add:按 ascend910b 的次序在 fp32 累加出 x = (x1[0]+x2)+x1[1]+..+x1[n-1],存于 xBufFp32。
+    // 次序必须与 ascend910b 一致(canndev normal_kernel CopyInX1X2AndAddX1X2
+    // 「1.将x1的第一个tensor和x2相加 2.将x1剩余的相加」):fp32 加法不满足结合律,
+    // 写成 (Σx1)+x2 会在相消点产生 1~2 个 ULP 的偏差。
     __aicore__ inline void AccumulateX1(uint64_t gmOffset1)
     {
         auto xBufLocal = xBufFp32.Get<float>();
@@ -326,32 +352,40 @@ private:
             // never have fp32 input here. All fp16/bf16 should cast to fp32 before Add
             if (i == 0) {
                 AscendC::Cast(xBufLocal, x1Local, RoundMode::CAST_NONE, this->numLastDim);
-            } else {
-                AscendC::Cast(yBufLocal, x1Local, RoundMode::CAST_NONE, this->numLastDim);
                 PipeBarrier<PIPE_V>();
-                AscendC::Add(xBufLocal, xBufLocal, yBufLocal, this->numLastDim);
+                inRowsQue.FreeTensor(x1Local);
+                AddX2Fp32(gmOffset1); // x1[0] + x2,紧随其后
+                continue;
             }
+            AscendC::Cast(yBufLocal, x1Local, RoundMode::CAST_NONE, this->numLastDim);
+            PipeBarrier<PIPE_V>();
+            AscendC::Add(xBufLocal, xBufLocal, yBufLocal, this->numLastDim);
             PipeBarrier<PIPE_V>();
             inRowsQue.FreeTensor(x1Local);
         }
     }
 
-    // x2 单独 CopyIn 并累加:xBufFp32 <- Σx1 + x2;并把 x = Σx1 + x2 写回 xGm。
-    __aicore__ inline void AddX2(uint64_t gmOffset1)
+    // x2 CopyIn 并累加到 xBufFp32(fp32)。由 AccumulateX1 在 x1[0] 之后立即调用。
+    __aicore__ inline void AddX2Fp32(uint64_t gmOffset1)
     {
         AscendC::LocalTensor<T_X> x2LocalIn = inRowsQue.template AllocTensor<T_X>();
         AscendC::DataCopyPad(x2LocalIn[0], this->x2Gm[gmOffset1],
                              {1, static_cast<uint16_t>(this->numLastDim * sizeof(T_X)), 0, 0}, {});
         inRowsQue.EnQue(x2LocalIn);
         AscendC::LocalTensor<T_X> x2Local = inRowsQue.template DeQue<T_X>();
-
         auto xBufLocal = xBufFp32.Get<float>();
-        auto yBufLocal1 = yBufFp32.Get<float>();
-        Cast(yBufLocal1, x2Local, RoundMode::CAST_NONE, this->numLastDim);
+        auto yBufLocal = yBufFp32.Get<float>();
+        AscendC::Cast(yBufLocal, x2Local, RoundMode::CAST_NONE, this->numLastDim);
+        PipeBarrier<PIPE_V>();
         inRowsQue.FreeTensor(x2Local);
+        AscendC::Add(xBufLocal, xBufLocal, yBufLocal, this->numLastDim);
         PipeBarrier<PIPE_V>();
-        AscendC::Add(xBufLocal, yBufLocal1, xBufLocal, this->numLastDim);
-        PipeBarrier<PIPE_V>();
+    }
+
+    // x 已由 AccumulateX1 按 A2 次序在 fp32 累加完成,此处只做窄化写回 xGm。
+    __aicore__ inline void AddX2(uint64_t gmOffset1)
+    {
+        auto xBufLocal = xBufFp32.Get<float>();
         auto xLocal = yQue.template AllocTensor<T_X>();
         AscendC::Cast(xLocal, xBufLocal, RoundMode::CAST_RINT, this->numLastDim);
         yQue.template EnQue<T_X>(xLocal);

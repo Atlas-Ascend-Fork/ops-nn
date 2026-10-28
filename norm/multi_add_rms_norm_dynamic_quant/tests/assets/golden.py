@@ -88,6 +88,81 @@ def _work_dtype(*tensors):
     return torch.float32
 
 
+# ---- mean(x^2) 的规范归约 -------------------------------------------------
+# 拓扑是「两两配对 + 奇数进位」的平衡二叉树 —— 与任何实现无关的规范形态, 不含内核的
+# lane 宽度 / 链长 / 分核切分。照抄被测切分会让「规约拓扑不当」这类缺陷在比对里恒等
+# 消失。仓内既有规范实现: norm/group_norm_silu_quant/tests/assets/golden.py。
+# 不是抬档: TwoSum / TwoProd 在原 dtype 下精确, 全程仍是 _work_dtype 决定的精度。
+# 换掉 torch.mean 的理由: 它内部是分块 pairwise, 既非内核拓扑也非规范拓扑。
+
+
+def _clamp_err(e):
+    """残差非有限即置 0。和溢出成 inf 时残差为 inf-inf=NaN, 加回去会把本该是 inf 的
+    和污染成 NaN, 使 rstd 由 0 变 NaN。内核侧 DfClampResidual 同一处理, 两侧须一致。"""
+    return torch.where(torch.isfinite(e), e, torch.zeros_like(e))
+
+
+def _two_sum(a, b):
+    """Knuth TwoSum: a + b = s + err, 在 a/b 的 dtype 下精确。"""
+    s = a + b
+    bb = s - a
+    return s, _clamp_err((a - (s - bb)) + (b - bb))
+
+
+def _split(a):
+    """Dekker 拆分, 常量 = 2^ceil(p/2) + 1(fp32: 4097, fp64: 134217729)。"""
+    p = 24 if a.dtype == torch.float32 else 53
+    c = a * float((1 << ((p + 1) // 2)) + 1)
+    hi = c - (c - a)
+    return hi, a - hi
+
+
+def _two_prod(a, b):
+    """精确乘积 a*b = p + err。"""
+    p = a * b
+    ah, al = _split(a)
+    bh, bl = _split(b)
+    return p, _clamp_err((((ah * bh - p) + ah * bl) + al * bh) + al * bl)
+
+
+def _df_add(ah, al, bh, bl):
+    s, e = _two_sum(ah, bh)
+    return _two_sum(s, e + (al + bl))
+
+
+def _df_tree_sum(hi, lo):
+    """沿末轴做双浮点两两树求和, 每层一次张量运算, 共 ceil(log2(n)) 层。"""
+    while hi.shape[-1] > 1:
+        n = hi.shape[-1]
+        half = n // 2
+        sh, sl = _df_add(
+            hi[..., 0 : 2 * half : 2],
+            lo[..., 0 : 2 * half : 2],
+            hi[..., 1 : 2 * half : 2],
+            lo[..., 1 : 2 * half : 2],
+        )
+        if n % 2:  # 节点数为奇: 落单的一条原样进下一层
+            sh = torch.cat([sh, hi[..., -1:]], dim=-1)
+            sl = torch.cat([sl, lo[..., -1:]], dim=-1)
+        hi, lo = sh, sl
+    return hi[..., 0], lo[..., 0]
+
+
+def _mean_square(x):
+    """mean(x^2)(末轴): 精确平方 -> 双浮点平衡树求和 -> 双浮点除以 n。
+    除法先取商再用余项修正, 避免 (hi+lo) 先折回再除的双重舍入。"""
+    ph, pl = _two_prod(x, x)
+    sh, sl = _df_tree_sum(ph, pl)
+    n = torch.tensor(float(x.shape[-1]), dtype=x.dtype)
+    q = sh / n
+    qh, ql = _two_prod(q, n)
+    rh, rl = _df_add(sh, sl, -qh, -ql)
+    # 修正项非有限即丢弃: sh 溢出成 inf 时 sh-q*n = inf-inf = NaN(这次 NaN 落在和上,
+    # 不是残差上, _clamp_err 在 _two_sum 内部拦不住), 加回去会把本该是 inf 的 var 变 NaN。
+    # var=inf -> rstd=0 才与内核一致(内核 1/sqrt(inf)=0)。
+    return (q + _clamp_err((rh + rl) / n)).unsqueeze(-1)
+
+
 def _to_np(t, dtype_name):
     """torch -> numpy 的目标 dtype。
 
@@ -135,7 +210,7 @@ def _compute(x1, x2, gamma, smooth_scale1=None, smooth_scale2=None, **kwargs):
     for t in x1_list[1:]:
         xw = xw + t.to(w)
 
-    var = (xw * xw).mean(dim=-1, keepdim=True)
+    var = _mean_square(xw)
     rstd = torch.rsqrt(var + epsilon)
     normed = xw * rstd * gamma.to(w)
 
@@ -143,10 +218,16 @@ def _compute(x1, x2, gamma, smooth_scale1=None, smooth_scale2=None, **kwargs):
         q = normed if smooth is None else normed * smooth.to(w)
         amax = q.abs().amax(dim=-1, keepdim=True)
         scale = amax / 127.0
-        # amax 为 0(整行全 0)时量化无动态范围: 内核取倒数标度 1 得 y=0、scale 输出 0
-        # (arch35 maxTemp==0 -> 1.0f; ascend910b SafeDiv 把分母钳到 EPSINON, 结果同为 0)。
-        # golden 若直接 q/scale 会得 0/0=nan, 故分母取 1 保持与两代内核一致, scale 仍按定义输出 0。
+        # amax == 0 <=> 整行 q 恒为 0(amax 是 |q| 的最大值), 此时 scale = 0, 公式的
+        # round(q/scale) 退化为 0/0 无定义。而 q 恒为 0 意味着任何非零分母都给出同一个
+        # 结果 0, 故分母取 1 是该退化点唯一自洽的定义; scale 仍按定义式输出 0。
         yq = torch.round(q / torch.where(amax == 0, torch.ones_like(scale), scale))
+        # int8 无法表示 NaN/inf, 而量化输出的 dtype 契约是 int8, 故必须定义落位:
+        # NaN 取 0(对称量化的零点); ±inf 经 nan_to_num 换成 ±FLT_MAX, 再由下面的
+        # clamp 落到 +127/-128。显式写出, 不依赖 torch `.to(torch.int8)` 对 NaN 的
+        # 实现定义行为(实测给 0, 但文档未作保证)。两种写法在
+        # {nan, ±inf, ±200, ±0, 63.5} 上逐位相等, 本改动不改变任何已有判据结果。
+        yq = torch.nan_to_num(yq, nan=0.0)
         yq = torch.clamp(yq, -128, 127).to(torch.int8)
         return yq, scale.squeeze(-1)
 
@@ -196,7 +277,10 @@ class _MarndqCompose:
             amax = q.abs().amax(dim=-1, keepdim=True)
             scale = amax / 127.0
             denom = torch.where(amax == 0, torch.ones_like(scale), scale)
-            yq = torch.clamp(torch.round(q / denom), -128, 127).to(torch.int8)
+            # NaN 落位显式化, 理由同 _compute.quant —— 这一腿跑在 GPU 上, CUDA 的
+            # `.to(torch.int8)` 对 NaN 未必与 CPU 同值, 不能依赖实现定义行为。
+            yq = torch.nan_to_num(torch.round(q / denom), nan=0.0)
+            yq = torch.clamp(yq, -128, 127).to(torch.int8)
             return yq, scale.squeeze(-1).to(torch.float32)
 
         y1, scale1 = quant(smooth_scale1)

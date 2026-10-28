@@ -137,6 +137,9 @@ public:
             pipe_->InitBuffer(y2TmpBuf_, baseNB32Align_ * sizeof(float));
         }
         pipe_->InitBuffer(rstdBuf_, ubFactorRstd * sizeof(float));
+        // 横向规约用 accAddr+stride 做整 VL 载入(无掩码, 固定读 V_LENGTH 个), 故每段必须留
+        // 2*V_LENGTH 的地址空间, 否则 lo 段尾部越界读 UB。
+        pipe_->InitBuffer(msAccBuf_, NUM_FOUR_DF * V_LENGTH * sizeof(float)); // Σx²: hi[0,2V) lo[2V,4V)
         pipe_->InitBuffer(reduceSumBuf_, reduceSumBufAlign_ * sizeof(float));
         pipe_->InitBuffer(level1Buf_, RmsNorm::ONCE_VECTOR_SIZE * sizeof(float));
         pipe_->InitBuffer(level2Buf_, RmsNorm::ONCE_VECTOR_SIZE * sizeof(float));
@@ -153,6 +156,7 @@ public:
         uint64_t masterLoop = powerTailTail != 0 ? 1 : 0;
         masterLoop = powerLoop_ - powerTailLoop - masterLoop;
         LocalTensor<float> rstdLocal = rstdBuf_.Get<float>();
+        LocalTensor<float> msAccLocal = msAccBuf_.Get<float>();
 
         for (uint64_t mIdx = 0; mIdx < mCore_; mIdx++) {
             uint64_t xGmOffset = mIdx * numN_;
@@ -167,16 +171,26 @@ public:
                 Duplicate(scale2Local, 0.0f, B32_BLOCK_NUM);
             }
             // Process rstd & Copy out xOut(x1+x2)
-            SubProcessRstd<true>(rstdLocal, 0, xGmOffset, masterLoop, powerTailLoop, powerTailTail, avgFactor_,
-                                 epsilon_);
-            // Process reducemax & Store (rmsout*smooth) to workSpace
-            SubProcessReduceMax(scale1Local, scale2Local, rstdLocal, mIdx);
-            // Process scale
+            // IS_RSTD=false: 共享规约的单段 fp32 Σx² 不再用于 rstd —— 它的舍入(~1 ULP)会经 rstd
+            // 乘进每个元素, 把 scale 推过 0.5 ULP; 补偿链缺这一级则后两级的补偿也失效。
+            // 改为: ComputeFormerHandle 里逐 slice 做补偿累加, 这里再出两段式 rstd。
+            Duplicate(msAccLocal, 0.0f, NUM_FOUR_DF * V_LENGTH); // 每行清零(含越界余量区)
             PipeBarrier<PIPE_V>();
-            SubProcessScale(scale1Local, scale2Local);
-            // Copy out y
+            SubProcessRstd<false>(rstdLocal, 0, xGmOffset, masterLoop, powerTailLoop, powerTailTail, avgFactor_,
+                                  epsilon_);
+            PipeBarrier<PIPE_V>();
+            FinalizeRstd(rstdLocal, avgFactor_, epsilon_);
+            PipeBarrier<PIPE_V>();
+            // Process reducemax & Store (rmsout*smooth) to workSpace
+            // row_max 走单段 fp32: max 本身不产生舍入误差, 对它做两段式补偿无收益, 而补偿式
+            // r = hi - s0*qmax 在 hi 非有限时退化为 inf-inf = NaN, 使 scale 输出 NaN(公式应得 inf)。
+            SubProcessReduceMax(scale1Local, scale2Local, rstdLocal, mIdx);
+            // Copy out y(ComputeY 要用 row_max,故必须在 SubProcessScale 之前)
             PipeBarrier<PIPE_V>();
             SubProcessY(scale1Local, scale2Local, mIdx);
+            // Process scale:row_max -> 真实 scale(GM 语义不变)
+            PipeBarrier<PIPE_V>();
+            SubProcessScale(scale1Local, scale2Local);
             // Copy out scale
             outQueueScale1_.EnQue<float>(scale1Local);
             if (hasY2Scale2_) {
@@ -226,28 +240,49 @@ private:
     {
         LocalTensor<float> xOutTmpLocal = xOutTmpBuf_.Get<float>();
         uint32_t calCount = Aligned((uint64_t)(count * sizeof(T_X)), ALIGN_32_FACTOR) / sizeof(T_X);
-        // multi-add:逐个 CopyIn x1[i] 并在 fp32 累加(对齐 ascend910b 全 fp32 语义),得 Σx1[srcGmOffset:+count]。
-        // Σx1、x2 均以 fp32 喂入 ReduceSumRstd<float>,规避 fp16 累加偏差(与已验证正确的 single_row 一致)。
+        // multi-add:按 ascend910b 的次序在 fp32 累加(canndev normal_kernel CopyInX1X2AndAddX1X2
+        // 「1.将x1的第一个tensor和x2相加 2.将x1剩余的相加」),即 x = (x1[0]+x2)+x1[1]+..+x1[n-1]。
+        // fp32 加法不满足结合律,写成 (Σx1)+x2 会在相消点产生 1~2 个 ULP 的偏差。
+        // ReduceSumRstd 内部会做 x1Local+x2Local,故把 A2 次序的「末项」留给它:
+        //   n==1: x1Local = x1[0],                        x2Local = x2
+        //   n>=2: x1Local = (x1[0]+x2)+x1[1]+..+x1[n-2],  x2Local = x1[n-1]
+        // 两种情形下 ReduceSumRstd 的那次加法都恰好是 A2 的最后一步。
         LocalTensor<float> x1Local = x1AccBuf_.Get<float>();
-        LocalTensor<float> x2Local = x2Fp32Buf_.Get<float>(); // 循环内先借作 Σx1 的 cast 暂存,循环后再装 x2
+        LocalTensor<float> x2Local = x2Fp32Buf_.Get<float>(); // 中间项的 cast 暂存,末项落定后即为第二操作数
         for (uint32_t i = 0; i < x1Num_; ++i) {
             CopyInX(inQueueX1_, x1GmList_[i], srcGmOffset, count, 0, calCount - count);
             LocalTensor<T_X> x1In = inQueueX1_.DeQue<T_X>();
             if (i == 0) {
-                Cast(x1Local, x1In, RoundMode::CAST_NONE, calCount); // Σx1 = x1[0].to(fp32)
-            } else {
-                Cast(x2Local, x1In, RoundMode::CAST_NONE, calCount); // 暂存 x1[i].to(fp32)
+                Cast(x1Local, x1In, RoundMode::CAST_NONE, calCount); // x = x1[0].to(fp32)
                 PipeBarrier<PIPE_V>();
-                Add(x1Local, x1Local, x2Local, calCount); // Σx1 += x1[i]
+                inQueueX1_.FreeTensor(x1In);
+                if (x1Num_ > 1) { // x1[0] + x2 紧随其后
+                    CopyInX(inQueueX2_, x2Gm_, srcGmOffset, count, 0, calCount - count);
+                    LocalTensor<T_X> x2First = inQueueX2_.DeQue<T_X>();
+                    Cast(x2Local, x2First, RoundMode::CAST_NONE, calCount);
+                    PipeBarrier<PIPE_V>();
+                    inQueueX2_.FreeTensor(x2First);
+                    Add(x1Local, x1Local, x2Local, calCount);
+                    PipeBarrier<PIPE_V>();
+                }
+                continue;
             }
+            Cast(x2Local, x1In, RoundMode::CAST_NONE, calCount); // x1[i].to(fp32)
             PipeBarrier<PIPE_V>();
             inQueueX1_.FreeTensor(x1In);
+            if (i + 1 == x1Num_) {
+                break; // 末项 x1[n-1] 留在 x2Local,交给 ReduceSumRstd 完成最后一次加法
+            }
+            Add(x1Local, x1Local, x2Local, calCount); // x += x1[i]
+            PipeBarrier<PIPE_V>();
         }
-        CopyInX(inQueueX2_, x2Gm_, srcGmOffset, count, 0, calCount - count);
-        LocalTensor<T_X> x2In = inQueueX2_.DeQue<T_X>();
-        Cast(x2Local, x2In, RoundMode::CAST_NONE, calCount); // x2.to(fp32)(覆盖暂存)
-        PipeBarrier<PIPE_V>();
-        inQueueX2_.FreeTensor(x2In);
+        if (x1Num_ == 1) { // 只有一个 x1 时,第二操作数就是 x2
+            CopyInX(inQueueX2_, x2Gm_, srcGmOffset, count, 0, calCount - count);
+            LocalTensor<T_X> x2In = inQueueX2_.DeQue<T_X>();
+            Cast(x2Local, x2In, RoundMode::CAST_NONE, calCount);
+            PipeBarrier<PIPE_V>();
+            inQueueX2_.FreeTensor(x2In);
+        }
 
         LocalTensor<float> workLocal = reduceSumBuf_.Get<float>();
         uint32_t calNum = Aligned((uint64_t)(count * sizeof(T_X)), ALIGN_512_FACTOR) / sizeof(T_X);
@@ -263,6 +298,11 @@ private:
         NormCommon::ReduceSumRstd<float, false, true, false>(dstLocal, x1Local, xOutTmpLocal, x1Local, x2Local,
                                                              workLocal, dstOffset, calNum, powerSplit);
 
+        // Σx² 补偿累加(用共享规约已算好的 fp32 x, 不重复搬运)
+        PipeBarrier<PIPE_V>();
+        AccumSqCompensated(xOutTmpLocal, count);
+        PipeBarrier<PIPE_V>();
+
         LocalTensor<T_X> xOutLocal = outQueueX_.AllocTensor<T_X>();
         Cast(xOutLocal, xOutTmpLocal, RoundMode::CAST_RINT,
              calCount); // x 输出 = fp32 x.to(T_X)(round-nearest-even 对齐 ascend910b)
@@ -277,6 +317,102 @@ private:
         RmsNorm::DataCopyImpl<float>(xOutTmpGm_[workSpaceOffset], xOutTmpLocal, 1, count);
         SetFlag<HardEvent::MTE3_V>(eventMTE3V);
         WaitFlag<HardEvent::MTE3_V>(eventMTE3V);
+    }
+
+    // 把本 slice 的 x(fp32) 的平方以补偿求和累加进 msAccBuf_。掩码外 zeroing, 尾块不污染。
+    __aicore__ inline void AccumSqCompensated(LocalTensor<float>& xFp32Local, uint32_t count)
+    {
+        __local_mem__ float* xAddr = (__ubuf__ float*)xFp32Local.GetPhyAddr();
+        __local_mem__ float* accAddr = (__ubuf__ float*)msAccBuf_.Get<float>().GetPhyAddr();
+        uint16_t repeatTimes = (uint16_t)CeilDivision(count, (uint32_t)V_LENGTH);
+        uint32_t calCount = count;
+        __VEC_SCOPE__
+        {
+            RegTensor<float> accHi, accLo, xReg, sqHi, sqLo, tHi, eReg;
+            MaskReg maskFull = CreateMask<float, MaskPattern::ALL>();
+            MaskReg maskReg;
+            DataCopy<float>(accHi, accAddr);
+            DataCopy<float>(accLo, accAddr + NUM_TWO_DF * V_LENGTH);
+            for (uint16_t i = 0; i < repeatTimes; i++) {
+                maskReg = UpdateMask<float>(calCount);
+                DataCopy<float>(xReg, xAddr + i * V_LENGTH);
+                DfTwoProd(sqHi, sqLo, xReg, xReg, maskReg); // x^2 = sqHi + sqLo(精确)
+                DfTwoSum(tHi, eReg, accHi, sqHi, maskFull);
+                Add(eReg, eReg, accLo, maskFull);
+                Add(eReg, eReg, sqLo, maskFull);
+                DfTwoSum(accHi, accLo, tHi, eReg, maskFull);
+            }
+            DataCopy<float>(accAddr, accHi, maskFull);
+            DataCopy<float>(accAddr + NUM_TWO_DF * V_LENGTH, accLo, maskFull);
+        }
+    }
+
+    // 横向补偿规约(V_LENGTH lane -> 1) + t = ms*avg+eps + rstd = 1/sqrt(t)。
+    // 横向合并保留补偿: 普通树形求和会把逐 slice 累加积累的低位段丢掉, 而合并过程中的
+    // 残差会回灌 hi, 所以那部分是活的; 只有最终的低位段无下游消费者。
+    __aicore__ inline void FinalizeRstd(LocalTensor<float>& rstdLocal, float avgFactor, float epsilon)
+    {
+        __local_mem__ float* accAddr = (__ubuf__ float*)msAccBuf_.Get<float>().GetPhyAddr();
+        // 成对规约只做到 stride=B32_BLOCK_NUM(8): 整 VL 载入要求 32B 对齐(=8 个 float),
+        // stride=4/2/1 会产生非对齐载入, 触发 aivec 报错。
+        for (uint32_t stride = V_LENGTH / NUM_TWO_DF; stride >= B32_BLOCK_NUM; stride >>= 1) {
+            uint32_t cnt = stride;
+            __VEC_SCOPE__
+            {
+                RegTensor<float> aHi, aLo, bHi, bLo, sHi, sLo, tHi, eReg;
+                MaskReg m = UpdateMask<float>(cnt);
+                DataCopy<float>(aHi, accAddr);
+                DataCopy<float>(bHi, accAddr + stride);
+                DataCopy<float>(aLo, accAddr + NUM_TWO_DF * V_LENGTH);
+                DataCopy<float>(bLo, accAddr + NUM_TWO_DF * V_LENGTH + stride);
+                DfTwoSum(tHi, eReg, aHi, bHi, m);
+                Add(eReg, eReg, aLo, m);
+                Add(eReg, eReg, bLo, m);
+                DfTwoSum(sHi, sLo, tHi, eReg, m);
+                DataCopy<float>(accAddr, sHi, m);
+                DataCopy<float>(accAddr + NUM_TWO_DF * V_LENGTH, sLo, m);
+            }
+        }
+        // 末 8 个 lane: 广播载入(允许元素粒度偏移, 不受 32B 对齐限制)逐个两段式合并
+        __VEC_SCOPE__
+        {
+            RegTensor<float> sHi, sLo, aHi, aLo, tHi, eReg, s2, e2;
+            MaskReg m1 = CreateMask<float, MaskPattern::VL1>();
+            DataCopy<float, LoadDist::DIST_BRC_B32>(sHi, accAddr);
+            DataCopy<float, LoadDist::DIST_BRC_B32>(sLo, accAddr + NUM_TWO_DF * V_LENGTH);
+            for (uint16_t k = 1; k < (uint16_t)B32_BLOCK_NUM; k++) {
+                DataCopy<float, LoadDist::DIST_BRC_B32>(aHi, accAddr + k);
+                DataCopy<float, LoadDist::DIST_BRC_B32>(aLo, accAddr + NUM_TWO_DF * V_LENGTH + k);
+                DfTwoSum(tHi, eReg, sHi, aHi, m1);
+                Add(eReg, eReg, sLo, m1);
+                Add(eReg, eReg, aLo, m1);
+                DfTwoSum(s2, e2, tHi, eReg, m1);
+                Muls(sHi, s2, static_cast<float>(1.0), m1);
+                Muls(sLo, e2, static_cast<float>(1.0), m1);
+            }
+            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(accAddr, sHi, m1);
+            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(accAddr + NUM_TWO_DF * V_LENGTH, sLo, m1);
+        }
+
+        __local_mem__ float* rAddr = (__ubuf__ float*)rstdLocal.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            RegTensor<float> msHi, avgReg, tHi, epsReg, oneReg, r0, tmp;
+            MaskReg m1 = CreateMask<float, MaskPattern::VL1>();
+            DataCopy<float, LoadDist::DIST_BRC_B32>(msHi, accAddr);
+            Duplicate(avgReg, avgFactor, m1);
+            Duplicate(epsReg, epsilon, m1);
+            Duplicate(oneReg, static_cast<float>(1.0), m1);
+            // rstd 只出高位段: 下游 ComputeYOut/ComputeReduceMax 的接口只吃单值 rstd,
+            // 低位段无处落脚。实测 rstd_lo/rstd_hi ≈ 0.29 ULP, 即便加回 fp32 也被舍掉,
+            // 所以这里不做两段式 t —— fl(ms_hi*avg) 与 fl(t+eps) 同原两段式的高位段逐位相同。
+            // 注意: 逐 slice 累加与横向合并的补偿仍然保留, 那两处的残差会回灌 hi, 是活的。
+            Mul(tHi, msHi, avgReg, m1);
+            Add(tHi, tHi, epsReg, m1);
+            Sqrt(tmp, tHi, m1);
+            Div(r0, oneReg, tmp, m1); // r0 = 1/sqrt(t)
+            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rAddr, r0, m1);
+        }
     }
 
     template <bool IS_RSTD>
@@ -486,9 +622,11 @@ private:
             SetFlag<HardEvent::MTE2_V>(eventMTE2V);
             WaitFlag<HardEvent::MTE2_V>(eventMTE2V);
 
-            ComputeY(y1Local, scale1Local, y1TmpLocal, 0, baseNDtypeAlign_);
+            // y1Tmp/y2Tmp 里已是量化前的 inp(含 smooth), ComputeY 只需 inp 与 row_max,
+            // 不再按 slice 重取 smooth_scale。
+            ComputeY<T_Y>(y1Local, scale1Local, y1TmpLocal, 0, baseNDtypeAlign_);
             if (hasY2Scale2_) {
-                ComputeY(y2Local, scale2Local, y2TmpLocal, 0, baseNDtypeAlign_);
+                ComputeY<T_Y>(y2Local, scale2Local, y2TmpLocal, 0, baseNDtypeAlign_);
             }
 
             outQueueY1_.EnQue<T_Y>(y1Local);
@@ -576,6 +714,7 @@ private:
     TBuf<TPosition::VECCALC> xOutTmpBuf_;
     TBuf<TPosition::VECCALC> x1AccBuf_;  // 增:multi-add Σx1 fp32 累加缓冲
     TBuf<TPosition::VECCALC> x2Fp32Buf_; // 增:x2 fp32 缓冲(与 Σx1 同以 fp32 喂 reduce)
+    TBuf<TPosition::VECCALC> msAccBuf_;  // 增:Σx² 补偿累加(前 V_LENGTH lane=hi, 后 V_LENGTH=lo)
 
     // Tiling data
     uint64_t numN_{0};
