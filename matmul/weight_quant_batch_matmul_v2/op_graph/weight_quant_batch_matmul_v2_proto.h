@@ -16,7 +16,7 @@
 #define OPS_MATMUL_WEIGHT_QUANT_BATCH_MATMUL_V2_PROTO_H_
 
 #include "graph/operator_reg.h"
-#include "common/inc/op_host/op_const_def_nn.h"
+#include "../../../common/inc/op_host/op_const_def_nn.h"
 
 namespace ge {
 /**
