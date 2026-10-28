@@ -18,6 +18,8 @@
 #include "graph/types.h"                           // ge::UNKNOWN_DIM_NUM
 #include "op_common/log/log.h"                     // OP_CHECK_NULL_WITH_CONTEXT macro
 
+#include <string>
+
 using namespace ge;
 
 namespace ops {
@@ -27,6 +29,9 @@ constexpr size_t kGradsIndex = 0U;
 constexpr size_t kXIndex = 1U;
 constexpr size_t kParamBegin = 2U; // diff_scale / diff_offset / scale / batch_mean / batch_variance
 constexpr size_t kParamNum = 5U;
+
+// 参数张量名，顺序与输入一致：diff_scale / diff_offset / scale / batch_mean / batch_variance。
+const std::string kParamNames[kParamNum] = {"diff_scale", "diff_offset", "scale", "batch_mean", "batch_variance"};
 constexpr size_t kRank5 = 5U;
 constexpr size_t kChannelAxisNchw = 1U;  // NCDHW 通道轴 = dim1
 constexpr size_t kChannelAxisNdhwc = 4U; // NDHWC 通道轴 = dim4
@@ -105,11 +110,28 @@ static ge::graphStatus InferShape4BN3DTrainingReduceGrad(gert::InferShapeContext
         }
     }
 
-    // 校验 4: 参数长度 = C（通道轴 NCDHW dim1 / NDHWC dim4，见函数头说明）。
-    const int64_t channel_nchw = grads_shape->GetDim(kChannelAxisNchw);
-    const int64_t channel_ndhwc = grads_shape->GetDim(kChannelAxisNdhwc);
-    const bool has_known_channel = IsKnownDim(channel_nchw) || IsKnownDim(channel_ndhwc);
-    if (has_known_channel) {
+    // 校验 4: 参数长度 = C。通道轴由 grads 的 origin format 决定：
+    //   NCDHW → dim1；NDHWC → dim4（与 tiling 的 format 判定保持一致）。
+    //   format 可靠（GE 图执行时恒为上述两者之一），且 tiling 已强制
+    //   “format must be NCDHW/NDHWC”，故 infershape 只需按单轴判定，无需
+    //   “dim1 || dim4” 的或兜底；未知 format 直接拒绝，tiling 侧仍保留
+    //   format 校验作为第二道防线。
+    const gert::CompileTimeTensorDesc* grads_desc = context->GetInputDesc(kGradsIndex);
+    const ge::Format grads_format = (grads_desc == nullptr) ?
+                                        ge::FORMAT_ND :
+                                        static_cast<ge::Format>(ge::GetPrimaryFormat(grads_desc->GetOriginFormat()));
+    int64_t channel = -1;
+    if (grads_format == ge::FORMAT_NCDHW) {
+        channel = grads_shape->GetDim(kChannelAxisNchw);
+    } else if (grads_format == ge::FORMAT_NDHWC) {
+        channel = grads_shape->GetDim(kChannelAxisNdhwc);
+    } else {
+        // 未知/ND format：infershape 直接拒绝。描述缺失时 format 已默认 ND，日志如实反映。
+        const std::string actualFormat = Ops::Base::ToString(grads_format);
+        OP_LOGE_FOR_INVALID_FORMAT(context->GetNodeName(), "grads", actualFormat.c_str(), "NCDHW or NDHWC");
+        return ge::GRAPH_FAILED;
+    }
+    if (IsKnownDim(channel)) {
         for (size_t i = 0; i < kParamNum; ++i) {
             const gert::Shape* param_shape = context->GetInputShape(kParamBegin + i);
             OP_CHECK_NULL_WITH_CONTEXT(context, param_shape);
@@ -120,9 +142,12 @@ static ge::graphStatus InferShape4BN3DTrainingReduceGrad(gert::InferShapeContext
             if (!IsKnownDim(param_len)) {
                 continue;
             }
-            const bool matches_channel = (IsKnownDim(channel_nchw) && param_len == channel_nchw) ||
-                                         (IsKnownDim(channel_ndhwc) && param_len == channel_ndhwc);
-            if (!matches_channel) {
+            if (param_len != channel) {
+                const std::string actualShape = std::to_string(param_len);
+                const std::string reason = "The 0th axis of input " + kParamNames[i] +
+                                           " must be equal to the C axis of input grads";
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), kParamNames[i].c_str(),
+                                                       actualShape.c_str(), reason.c_str());
                 return ge::GRAPH_FAILED;
             }
         }

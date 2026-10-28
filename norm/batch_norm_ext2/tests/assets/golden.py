@@ -15,7 +15,7 @@ TTK golden plugin for batch_norm_ext2 in the TestSpec multi-path format.
 **Implemented with torch tensor ops** (torch.mean / torch.rsqrt / torch.mul + torch.add two-step),
 not hand-written numpy formulas — the semantics were validated against tf.raw_ops.FusedBatchNormV2 on GPU:
   training : output_mean = batch mean (biased), output_variance = unbiased var (Bessel),
-             reserve_space_1 = batch mean, reserve_space_2 = rstd = 1/sqrt(var+eps)
+             reserve_space_1 = batch mean, reserve_space_2 = biased var E[(x-mean)^2]
   inference: y = scale*(x-mean)*rsqrt(var+eps)+offset; the 4 stats outputs equal the
              input mean/variance (CANN compatibility behavior).
 
@@ -190,7 +190,6 @@ def _golden_batch_norm_ext2(
         y_t = torch.add(torch.mul(xt - mean_t, k_t), bias_t)
         batch_mean = mean_t.reshape(-1).numpy()
         batch_var = var_t.reshape(-1).numpy()
-        rstd = rstd_t.reshape(-1).numpy()
         # output_variance is unbiased (Bessel correction) — same as TF FusedBatchNormV2
         unbiased_var = (
             batch_var * (num / (num - 1)) if num > 1 else batch_var * float("inf")
@@ -198,7 +197,9 @@ def _golden_batch_norm_ext2(
         out_mean = batch_mean
         out_variance = unbiased_var
         out_rs1 = batch_mean
-        out_rs2 = rstd
+        # reserve_space_2 是**有偏方差** E[(x-mean)^2]（= batch_var，已经是无贝塞尔校正的 M2/n），
+        # 与 output_variance（无偏）不同；不能用 rstd。
+        out_rs2 = batch_var
     else:
         mt = torch.from_numpy(mean_in.astype(compute_dtype))
         vt = torch.from_numpy(var_in.astype(compute_dtype))
@@ -299,7 +300,8 @@ class _BatchNormExt2Compose:
             else:
                 out_var = var_flat.reshape(-1) * float("inf")
             out_rs1 = mean_flat.reshape(-1)
-            out_rs2 = rstd_t.reshape(-1)
+            # reserve_space_2 = 有偏方差 E[(x-mean)^2]（var_flat 本身即 M2/n），不是 rstd。
+            out_rs2 = var_flat.reshape(-1)
         else:
             m_f32 = input_mean.to(dtype=torch.float32).reshape(-1)
             v_f32 = input_variance.to(dtype=torch.float32).reshape(-1)

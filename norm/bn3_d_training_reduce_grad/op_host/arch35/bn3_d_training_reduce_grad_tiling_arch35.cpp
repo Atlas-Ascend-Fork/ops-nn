@@ -209,7 +209,7 @@ bool PrecomputeStrides(const std::vector<int64_t>& s, std::vector<int64_t>& stri
 
 // ComputePublicTiling — 公共 Tiling 纯公式
 
-// 与 tests/tiling/test_tiling_public.cpp 的独立 oracle 逐字段交叉验证。
+// 由 tiling UT 逐字段断言覆盖。
 // 顺序：校验（dtype → format → 维度 → attr → shape）→ 通道轴重塑
 // （ParamBroShape 按 format 置 C 于 dim1/dim4）→ num = N·D·H·W（int64）→
 // PadAndSqueeze → CheckBroadcastShape → 路由（有效 rank ≤ 4 → mapped=4 /
@@ -262,7 +262,7 @@ PublicTilingError ComputePublicTiling(const PublicTilingInputs& in, PublicTiling
         return PublicTilingError::kAttrError;
     }
 
-    // ===== 5. shape 校验：空 tensor → null_input（T14）先于 grads == x（T13） =====
+    // ===== 5. shape 校验：空 tensor → null_input（T14）先于逐维一致性（T13） =====
     // grads/x/y 任一维为 0 均拒收——输出 y 的 shape 虽由 InferShape 强制等于 grads，
     // tiling 侧独立复检，避免绕 shape 推导时防线退化。
     for (int32_t d = 0; d < 5; d++) {
@@ -270,8 +270,11 @@ PublicTilingError ComputePublicTiling(const PublicTilingInputs& in, PublicTiling
             return PublicTilingError::kNullInput;
         }
     }
+    // grads == x == y 逐维一致（CODE.04/1）：不能只靠 CheckBroadcastShape 的广播
+    // 语义——它对 size-1 轴跳过比较，y 某维为 1 而 grads>1 会被放行，随后 output
+    // stride=0 导致多通道写同一地址（静默覆盖）；y 某维大于 grads 亦会被放行。
     for (int32_t d = 0; d < 5; d++) {
-        if (in.shapes[kGrads][d] != in.shapes[kX][d]) {
+        if (in.shapes[kGrads][d] != in.shapes[kX][d] || in.shapes[kGrads][d] != in.shapes[kY][d]) {
             return PublicTilingError::kShapeMismatch;
         }
     }

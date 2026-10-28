@@ -77,7 +77,7 @@ public:
     }
 
     __aicore__ inline void Init(GM_ADDR x, GM_ADDR gamma, GM_ADDR beta, GM_ADDR mean, GM_ADDR var, GM_ADDR y,
-                                GM_ADDR mean_out, GM_ADDR var_out, GM_ADDR batch_mean, GM_ADDR batch_rstd)
+                                GM_ADDR mean_out, GM_ADDR var_out, GM_ADDR batch_mean, GM_ADDR batch_var)
     {
         auto blockIdx = GetBlockIdx();
 
@@ -105,7 +105,8 @@ public:
 
         yGm.SetGlobalBuffer((__gm__ T1*)y + arGmOffset);
         batchMeanGm.SetGlobalBuffer((__gm__ float*)batch_mean + aGmOffset);
-        batchRstdGm.SetGlobalBuffer((__gm__ float*)batch_rstd + aGmOffset);
+        // batch_var 即第 5 个输出 output_reserve_space_2：训练模式下保存**有偏方差** E[(x-mean)^2]
+        batchVarGm.SetGlobalBuffer((__gm__ float*)batch_var + aGmOffset);
         outMeanGm.SetGlobalBuffer((__gm__ T2*)mean_out + aGmOffset);
         outVarGm.SetGlobalBuffer((__gm__ T2*)var_out + aGmOffset);
 
@@ -119,7 +120,7 @@ public:
             pipe->InitBuffer(varQueue, DOUBLE_BUFFER, aGatherLimitAlign * sizeof(float));
         }
         pipe->InitBuffer(batchMeanQueue, DOUBLE_BUFFER, aGatherLimitAlign * sizeof(float));
-        pipe->InitBuffer(batchRstdQueue, DOUBLE_BUFFER, aGatherLimitAlign * sizeof(float));
+        pipe->InitBuffer(batchVarQueue, DOUBLE_BUFFER, aGatherLimitAlign * sizeof(float));
         pipe->InitBuffer(outMeanQueue, DOUBLE_BUFFER, aGatherLimitAlign * sizeof(float));
         pipe->InitBuffer(outVarQueue, DOUBLE_BUFFER, aGatherLimitAlign * sizeof(float));
 
@@ -127,7 +128,8 @@ public:
         pipe->InitBuffer(yQueue, DOUBLE_BUFFER, ubSize * sizeof(T1));
         pipe->InitBuffer(tMeanBuff, ubSize * sizeof(float));
         pipe->InitBuffer(tVarBuff, ubSize * sizeof(float));
-        pipe->InitBuffer(batchVarBuff, aGatherLimitAlign * sizeof(float));
+        // rstd 暂存(只参与归一化，不进 GM)；原 batchVarBuff 改作此用，UB 预算不变。
+        pipe->InitBuffer(rstdBuff, aGatherLimitAlign * sizeof(float));
         int64_t vcaddNum = RoundUp32(binaryAddQuotient / VL_FP32, sizeof(float));
         pipe->InitBuffer(dichotomyAddBuf, vcaddNum * sizeof(float));
     }
@@ -265,14 +267,15 @@ public:
         // process core
         LocalTensor<float> tMeanTensor = tMeanBuff.Get<float>();
         LocalTensor<float> tVarTensor = tVarBuff.Get<float>();
-        LocalTensor<float> batchVarTensor = batchVarBuff.Get<float>();
+        LocalTensor<float> rstdTensor = rstdBuff.Get<float>();
         LocalTensor<float> dichotomyAddTensor = dichotomyAddBuf.Get<float>();
         LocalTensor<float> batchMeanTensor = batchMeanQueue.AllocTensor<float>();
-        LocalTensor<float> batchRstdTensor = batchRstdQueue.AllocTensor<float>();
+        // batchVarQueue 的 tensor 承载第 5 个输出 output_reserve_space_2：**有偏方差** M2/n。
+        LocalTensor<float> batchVarTensor = batchVarQueue.AllocTensor<float>();
 
         __ubuf__ float* batchMeanLocal = (__ubuf__ float*)batchMeanTensor.GetPhyAddr();
         __ubuf__ float* batchVarLocal = (__ubuf__ float*)batchVarTensor.GetPhyAddr();
-        __ubuf__ float* batchRstdLocal = (__ubuf__ float*)batchRstdTensor.GetPhyAddr();
+        __ubuf__ float* rstdLocal = (__ubuf__ float*)rstdTensor.GetPhyAddr();
         __ubuf__ float* tmpMeanLocal = (__ubuf__ float*)tMeanTensor.GetPhyAddr();
         __ubuf__ float* tmpVarLocal = (__ubuf__ float*)tVarTensor.GetPhyAddr();
         __ubuf__ float* dichotomyAddLocal = (__ubuf__ float*)dichotomyAddTensor.GetPhyAddr();
@@ -283,11 +286,12 @@ public:
         CopySmallTensor2UB(index_a, copyLen);
 
         // process A loop
+        // 最终化时：varLocal <- 有偏方差(直接进 output_reserve_space_2)，rstdLocal <- rstd(仅归一化用)
         if (cutR1OrR0 == 0) {
-            ProcessCutR0(tmpMeanLocal, tmpVarLocal, batchMeanLocal, batchRstdLocal, batchVarLocal, dichotomyAddLocal,
+            ProcessCutR0(tmpMeanLocal, tmpVarLocal, batchMeanLocal, rstdLocal, batchVarLocal, dichotomyAddLocal,
                          aParallelIndex, aParallelLength);
         } else if (cutR1OrR0 == 1) {
-            ProcessCutR1(tmpMeanLocal, tmpVarLocal, batchMeanLocal, batchRstdLocal, batchVarLocal, dichotomyAddLocal,
+            ProcessCutR1(tmpMeanLocal, tmpVarLocal, batchMeanLocal, rstdLocal, batchVarLocal, dichotomyAddLocal,
                          aParallelIndex, aParallelLength);
         }
 
@@ -322,12 +326,12 @@ public:
         }
 
         batchMeanQueue.EnQue(batchMeanTensor);
-        batchRstdQueue.EnQue(batchRstdTensor);
+        batchVarQueue.EnQue(batchVarTensor);
         outMeanQueue.EnQue(outMeanTensor);
         outVarQueue.EnQue(outVarTensor);
 
         CopyOutMeanAndVar2GM(index_a, aParallelLength);
-        ProcessNormalize(index_a, aParallelIndex, aParallelLength);
+        ProcessNormalize(index_a, aParallelIndex, aParallelLength, rstdLocal);
     }
 
 private:
@@ -437,8 +441,9 @@ private:
         outVarQueue.FreeTensor(outVarTensor);
     }
 
-    __aicore__ inline void CopyBatchMeanAndRstd2GM(int64_t index, int64_t copyLen, LocalTensor<float> batchMeanTensor,
-                                                   LocalTensor<float> batchRstdTensor)
+    // 拷出 batch_mean(output_reserve_space_1) 与**有偏方差**(output_reserve_space_2)。
+    __aicore__ inline void CopyBatchMeanAndVar2GM(int64_t index, int64_t copyLen, LocalTensor<float> batchMeanTensor,
+                                                  LocalTensor<float> batchVarTensor)
     {
         DataCopyExtParams dataCopyParams;
         dataCopyParams.blockCount = 1;
@@ -447,10 +452,10 @@ private:
         dataCopyParams.dstStride = 0;
 
         DataCopyPad(batchMeanGm[index], batchMeanTensor, dataCopyParams);
-        DataCopyPad(batchRstdGm[index], batchRstdTensor, dataCopyParams);
+        DataCopyPad(batchVarGm[index], batchVarTensor, dataCopyParams);
 
         batchMeanQueue.FreeTensor(batchMeanTensor);
-        batchRstdQueue.FreeTensor(batchRstdTensor);
+        batchVarQueue.FreeTensor(batchVarTensor);
     }
 
     __aicore__ inline void CalculateRunningMeanAndVar(__ubuf__ float* batchMeanLocal, __ubuf__ float* batchVarLocal,
@@ -511,8 +516,16 @@ private:
             RegTensor<float> delta2;
             RegTensor<float> delta3;
             RegTensor<float> delat4;
+            RegTensor<float> zero;
+            RegTensor<float> absMean;
+            RegTensor<float> sumX1Mean;
+            MaskReg infMeanMask;
+            MaskReg nanSumMask;
+            MaskReg notNanSumMask;
+            MaskReg zeroDeltaMask;
             vector_bool pregMain = pset_b8(PAT_ALL);
             vector_bool pregLoop;
+            Duplicate(zero, 0.0f, pregMain);
             uint32_t sreg0 = calLen;
             for (uint16_t i = 0; i < loopCount; i++) {
                 pregLoop = plt_b32(sreg0, POST_UPDATE);
@@ -520,6 +533,17 @@ private:
                 Duplicate(tmpMean, 0.0, pregLoop);
                 // delata1 = x1 - mean
                 Sub(delta1, x1, tmpMean, pregLoop);
+                // mean 为 ±inf 且 x1 + mean 不是 NaN 时，delta1 置 0，使 mean 保持 ±inf 不变；
+                // 异号 inf（x1 = ∓inf、mean = ±inf）时 x1 + mean 未定义（NaN），必须保留 delta1 = ±inf，
+                // 让 mean = mean + delta1 * scale 得到 NaN，与 golden 一致；
+                // 同号 inf 与有限值 x1 的 x1 + mean = ±inf，仍走清零分支（有限值 - (±inf) = ∓inf 会污染均值）
+                AscendC::Reg::Abs(absMean, tmpMean, pregLoop);
+                Compares(infMeanMask, absMean, POS_INF, pregLoop);
+                AscendC::Reg::Add(sumX1Mean, x1, tmpMean, pregLoop);
+                AscendC::Reg::Compare<float, AscendC::CMPMODE::NE>(nanSumMask, sumX1Mean, sumX1Mean, pregLoop);
+                AscendC::Reg::Not(notNanSumMask, nanSumMask, pregLoop);
+                AscendC::Reg::And(zeroDeltaMask, infMeanMask, notNanSumMask, pregLoop);
+                Select(delta1, zero, delta1, zeroDeltaMask);
                 // delta2 = delta1 * scale
                 Muls(delta2, delta1, scale, pregLoop);
                 // mean = mean + delta2
@@ -552,7 +576,12 @@ private:
             RegTensor<float> delta3;
             RegTensor<float> delat4;
             RegTensor<float> zero;
-            MaskReg eqMask;
+            RegTensor<float> absMean;
+            RegTensor<float> sumX1Mean;
+            MaskReg infMeanMask;
+            MaskReg nanSumMask;
+            MaskReg notNanSumMask;
+            MaskReg zeroDeltaMask;
             MaskReg pregLoop;
             MaskReg pregAll = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
             Duplicate(zero, 0.0f, pregAll);
@@ -564,9 +593,17 @@ private:
                 LoadAlign(tmpMean, tmpMeanLocal + i * VL_FP32);
                 // delata1 = x1 - mean
                 Sub(delta1, x1, tmpMean, pregLoop);
-                // x1 与 mean 相等时（含同为 ±inf），delta 应为 0；否则 -inf-(-inf)=NaN 会持续污染均值
-                Compare(eqMask, x1, tmpMean, pregLoop);
-                Select(delta1, zero, delta1, eqMask);
+                // mean 为 ±inf 且 x1 + mean 不是 NaN 时，delta1 置 0，使 mean 保持 ±inf 不变；
+                // 异号 inf（x1 = ∓inf、mean = ±inf）时 x1 + mean 未定义（NaN），必须保留 delta1 = ±inf，
+                // 让 mean = mean + delta1 * scale 得到 NaN，与 golden 一致；
+                // 同号 inf 与有限值 x1 的 x1 + mean = ±inf，仍走清零分支（有限值 - (±inf) = ∓inf 会污染均值）
+                AscendC::Reg::Abs(absMean, tmpMean, pregLoop);
+                Compares(infMeanMask, absMean, POS_INF, pregLoop);
+                AscendC::Reg::Add(sumX1Mean, x1, tmpMean, pregLoop);
+                AscendC::Reg::Compare<float, AscendC::CMPMODE::NE>(nanSumMask, sumX1Mean, sumX1Mean, pregLoop);
+                AscendC::Reg::Not(notNanSumMask, nanSumMask, pregLoop);
+                AscendC::Reg::And(zeroDeltaMask, infMeanMask, notNanSumMask, pregLoop);
+                Select(delta1, zero, delta1, zeroDeltaMask);
                 // delta2 = delta1 * scale
                 Muls(delta2, delta1, scale, pregLoop);
                 // mean = mean + delta2
@@ -691,6 +728,10 @@ private:
             }
 
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
+            // 累加时每项已乘 reduceScale0，这里再乘 reduceScale1，
+            // 二者之积 = (1/cofFactor0) * (cofFactor0/elemNum) = 1/n，
+            // 因此 varLocal 得到的是**有偏方差** M2/n，即第 5 个输出 output_reserve_space_2 的契约值；
+            // rstd 单独写 rstdLocal，两者不能混用。
             Muls(var, var, reduceScale1, pregMerge);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
             ComputeRstdNewtonRaphsonRegExt2<false>(var, rstd, pregMerge, eps);
@@ -918,6 +959,10 @@ private:
                     dichotomyAddLocal + dichotomyAddReminderRealLoopCount + i, var, pregMerge);
             }
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
+            // 累加时每项已乘 reduceScale0，这里再乘 reduceScale1，
+            // 二者之积 = (1/cofFactor0) * (cofFactor0/elemNum) = 1/n，
+            // 因此 varLocal 得到的是**有偏方差** M2/n，即第 5 个输出 output_reserve_space_2 的契约值；
+            // rstd 单独写 rstdLocal，两者不能混用。
             Muls(var, var, reduceScale1, pregMerge);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
             ComputeRstdNewtonRaphsonRegExt2<false>(var, rstd, pregMerge, eps);
@@ -1124,6 +1169,10 @@ private:
                     dichotomyAddLocal + dichotomyAddReminderRealLoopCount + i, var, pregMerge);
             }
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
+            // 累加时每项已乘 reduceScale0，这里再乘 reduceScale1，
+            // 二者之积 = (1/cofFactor0) * (cofFactor0/elemNum) = 1/n，
+            // 因此 varLocal 得到的是**有偏方差** M2/n，即第 5 个输出 output_reserve_space_2 的契约值；
+            // rstd 单独写 rstdLocal，两者不能混用。
             Muls(var, var, reduceScale1, pregMerge);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
             ComputeRstdNewtonRaphsonRegExt2<false>(var, rstd, pregMerge, eps);
@@ -1306,6 +1355,10 @@ private:
             }
 
             NormCommon::DichotomyAdd(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin, dichotomyAddLastNum);
+            // 累加时每项已乘 reduceScale0，这里再乘 reduceScale1，
+            // 二者之积 = (1/cofFactor0) * (cofFactor0/elemNum) = 1/n，
+            // 因此 varLocal 得到的是**有偏方差** M2/n，即第 5 个输出 output_reserve_space_2 的契约值；
+            // rstd 单独写 rstdLocal，两者不能混用。
             Muls(var, var, reduceScale1, pregMerge);
             StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(varLocal + offset, var, pregMerge);
             ComputeRstdNewtonRaphsonRegExt2<false>(var, rstd, pregMerge, eps);
@@ -1343,16 +1396,17 @@ private:
                                                     cnt, tailCnt, eps);
     }
 
-    __aicore__ inline void ProcessNormalize(int32_t index_a, int32_t aParallelIndex, int32_t aParallelLength)
+    __aicore__ inline void ProcessNormalize(int32_t index_a, int32_t aParallelIndex, int32_t aParallelLength,
+                                            __ubuf__ float* rstdLocal)
     {
         LocalTensor<T2> betaTensor = betaQueue.DeQue<T2>();
         LocalTensor<T2> gammaTensor = gammaQueue.DeQue<T2>();
         LocalTensor<float> batchMeanTensor = batchMeanQueue.DeQue<float>();
-        LocalTensor<float> batchRstdTensor = batchRstdQueue.DeQue<float>();
+        // 该 tensor 承载**有偏方差**(输出)，归一化用的 rstd 来自 rstdBuff 暂存。
+        LocalTensor<float> batchVarTensor = batchVarQueue.DeQue<float>();
         __ubuf__ T2* gammaLocal = (__ubuf__ T2*)gammaTensor.GetPhyAddr();
         __ubuf__ T2* betaLocal = (__ubuf__ T2*)betaTensor.GetPhyAddr();
         __ubuf__ float* meanLocal = (__ubuf__ float*)batchMeanTensor.GetPhyAddr();
-        __ubuf__ float* rstdLocal = (__ubuf__ float*)batchRstdTensor.GetPhyAddr();
 
         int64_t actualProcessSize = 0;
         int64_t r0FactorTail = r0 % r0Factor;
@@ -1392,7 +1446,7 @@ private:
             }
         }
 
-        CopyBatchMeanAndRstd2GM(index_a, aParallelLength, batchMeanTensor, batchRstdTensor);
+        CopyBatchMeanAndVar2GM(index_a, aParallelLength, batchMeanTensor, batchVarTensor);
         betaQueue.FreeTensor(betaTensor);
         gammaQueue.FreeTensor(gammaTensor);
     }
@@ -1450,7 +1504,7 @@ private:
 
     GlobalTensor<T1> yGm;
     GlobalTensor<float> batchMeanGm;
-    GlobalTensor<float> batchRstdGm;
+    GlobalTensor<float> batchVarGm;
     GlobalTensor<T2> outMeanGm;
     GlobalTensor<T2> outVarGm;
 
@@ -1502,13 +1556,13 @@ private:
 
     TQue<QuePosition::VECOUT, 1> yQueue;
     TQue<QuePosition::VECOUT, 1> batchMeanQueue;
-    TQue<QuePosition::VECOUT, 1> batchRstdQueue;
+    TQue<QuePosition::VECOUT, 1> batchVarQueue;
     TQue<QuePosition::VECOUT, 1> outMeanQueue;
     TQue<QuePosition::VECOUT, 1> outVarQueue;
 
     TBuf<TPosition::VECCALC> tMeanBuff;
     TBuf<TPosition::VECCALC> tVarBuff;
-    TBuf<TPosition::VECCALC> batchVarBuff;
+    TBuf<TPosition::VECCALC> rstdBuff;
     TBuf<TPosition::VECCALC> dichotomyAddBuf;
 };
 } // namespace BatchNormExt2Ops

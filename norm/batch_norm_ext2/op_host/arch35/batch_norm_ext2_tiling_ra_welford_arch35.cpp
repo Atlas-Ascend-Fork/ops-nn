@@ -75,14 +75,14 @@ ge::graphStatus BatchNormExt2RAWelfordTilingBase::BinaryAddTiling(int64_t elemSi
 {
     // rFactor
     int64_t runningMeanVarSize = aFactor * static_cast<int64_t>(sizeof(float)) * RUNNING_MEAN_VAR_BUFFER_NUM;
-    int64_t saveMeanRstdSize = aFactor * static_cast<int64_t>(sizeof(float)) * MEAN_VAR_BUFFER_NUM;
+    int64_t saveMeanVarSize = aFactor * static_cast<int64_t>(sizeof(float)) * MEAN_VAR_BUFFER_NUM;
     int64_t betaGammaSize = aFactor * static_cast<int64_t>(sizeof(float)) * BETA_GAMMA_BUFFER_NUM;
     int64_t xSizePerR = aFactor * elemSize * DOUBLE_BUFFER_NUM;
     int64_t ySizePerR = aFactor * elemSize * DOUBLE_BUFFER_NUM;
     int64_t tmpMeanM2PerR = aFactor * static_cast<int64_t>(sizeof(float)) * MEAN_VAR_BUFFER_NUM;
     int64_t tmpCountPerR = sizeof(float);
 
-    int64_t ubSizeCanUse = aicoreParams_.ubSize - runningMeanVarSize - saveMeanRstdSize - betaGammaSize;
+    int64_t ubSizeCanUse = aicoreParams_.ubSize - runningMeanVarSize - saveMeanVarSize - betaGammaSize;
     int64_t rFactor = ubSizeCanUse / (xSizePerR + ySizePerR + tmpMeanM2PerR + tmpCountPerR);
     rFactor = Ops::Base::FloorAlign(rFactor, RA_BINARY_ADD_THRESHOLD);
     OP_CHECK_IF(rFactor == 0, OP_LOGE(context_->GetNodeName(), "rfactor is 0."), return ge::GRAPH_FAILED);

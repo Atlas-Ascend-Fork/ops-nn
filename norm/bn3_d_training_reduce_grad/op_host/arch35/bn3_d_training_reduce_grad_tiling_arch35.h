@@ -48,8 +48,8 @@ struct BN3DTrainingReduceGradCompileInfo {
 // =============================================================================
 //
 // 与 TilingContext 解耦的纯计算接口：TilingFunc 胶水把 gert 上下文读成
-// PublicTilingInputs 后调用 ComputePublicTiling；公共 TilingUT
-// （tests/tiling/test_tiling_public.cpp）直接调同一函数、以独立 oracle 交叉验证。
+// PublicTilingInputs 后调用 ComputePublicTiling；该纯公式由 tiling UT 直接
+// 调用覆盖。
 //
 // 覆盖口径：
 //   - 前置校验顺序：dtype → format → 维度 → attr → shape
@@ -106,8 +106,7 @@ PublicTilingError ComputePublicTiling(const PublicTilingInputs& in, PublicTiling
 // 与 TilingContext 解耦的纯计算接口：TilingFunc 胶水（DoTilingAndSet<4>）把公共
 // Tiling 的预处理结果（归一化 shape / maxBroShape / rank / epsilon / num）与平台量
 // （perBufBytes / coreNum）读成 Branch0TilingInputs 后调用 ComputeBranch0Tiling；
-// 分支 TilingUT（tests/tiling/test_tiling_branch0.cpp）直接调同一函数、以独立
-// oracle 交叉验证。
+// 该分支纯公式由 tiling UT 直接调用覆盖。
 //
 // 覆盖口径：
 //   - UB 切分（FindSplitAxis，perBufElems 按 f32 口径 = perBufBytes / 4）
@@ -139,8 +138,7 @@ void ComputeBranch0Tiling(const Branch0TilingInputs& in, BN3DTrainingReduceGradT
 // 与 TilingContext 解耦的纯计算接口：TilingFunc 胶水（DoTilingAndSet<8>）把公共
 // Tiling 的预处理结果（归一化 shape / maxBroShape / rank / epsilon / num）与平台量
 // （perBufBytes / coreNum）读成 Branch1TilingInputs 后调用 ComputeBranch1Tiling；
-// 分支 TilingUT（tests/tiling/test_tiling_branch1.cpp）直接调同一函数、以独立
-// oracle 交叉验证。
+// 该分支纯公式由 tiling UT 直接调用覆盖。
 //
 // 覆盖口径：
 //   - UB 切分（FindSplitAxis，perBufElems 按 f32 口径 = perBufBytes / 4）

@@ -189,8 +189,8 @@ class GnTrainingUpdateKernel {
     AscendC::GlobalTensor<float> gmBatchVar_;                    // out 2: batch_variance
     AscendC::TBuf<AscendC::TPosition::VECCALC> buf_[PHYS_NODES]; // B0/B1/B2, perBufBytes each
     const __gm__ T* xRaw_ = nullptr;                             // x 标量兜底直读指针（CopyInXSmallL）
-    AscendC::MultiCopyParams<T, ND> nddmaX_;                     // NDDMA params: x (dtype T)
-    AscendC::MultiCopyParams<float, ND> nddmaStats_[4];          // NDDMA params: slots 1..4 (fp32)
+    AscendC::MultiCopyParams<T, ND> nddmaX_ = {};                // NDDMA params: x (dtype T)
+    AscendC::MultiCopyParams<float, ND> nddmaStats_[4] = {};     // NDDMA params: slots 1..4 (fp32)
     int64_t nddmaOuterIters_[kMaxNddmaDims];                     // per consumed slot (RANK > 5 only)
     int64_t nddmaDims_;                                          // min(RANK - axis, ND)
 

@@ -169,16 +169,16 @@ class MseLossGradV2Kernel {
     static constexpr int64_t IN_DOUT = 2;
     static constexpr int64_t OUT_Y = 0;
 
-    AscendC::TPipe pipe_;                                          // UB allocation + events
-    const MseLossGradV2TilingData<RANK>* td_;                      // host tiling data (read-only)
-    AscendC::GlobalTensor<T> gmIn_[MAX_INPUT_SLOTS];               // predict / label / dout
-    AscendC::GlobalTensor<T> gmOut_[MAX_OUTPUT_SLOTS];             // y
-    AscendC::TBuf<AscendC::TPosition::VECCALC> buf_[PHYS_NODES];   // 4-slot TBuf pool (no TQue)
-    AscendC::MultiCopyParams<T, ND> nddmaParams_[MAX_INPUT_SLOTS]; // per-input NDDMA descriptor
-    int64_t nddmaDims_;                                            // dims actually described by NDDMA
-    int64_t delta_;                                                // RANK - rank (front padding width)
-    int64_t splitAxisR_;                                           // split axis in the R frame (+delta)
-    int64_t innerCount_;                                           // prod of dims after splitAxisR_
+    AscendC::TPipe pipe_;                                               // UB allocation + events
+    const MseLossGradV2TilingData<RANK>* td_;                           // host tiling data (read-only)
+    AscendC::GlobalTensor<T> gmIn_[MAX_INPUT_SLOTS];                    // predict / label / dout
+    AscendC::GlobalTensor<T> gmOut_[MAX_OUTPUT_SLOTS];                  // y
+    AscendC::TBuf<AscendC::TPosition::VECCALC> buf_[PHYS_NODES];        // 4-slot TBuf pool (no TQue)
+    AscendC::MultiCopyParams<T, ND> nddmaParams_[MAX_INPUT_SLOTS] = {}; // per-input NDDMA descriptor
+    int64_t nddmaDims_;                                                 // dims actually described by NDDMA
+    int64_t delta_;                                                     // RANK - rank (front padding width)
+    int64_t splitAxisR_;                                                // split axis in the R frame (+delta)
+    int64_t innerCount_;                                                // prod of dims after splitAxisR_
 
 public:
     __aicore__ inline void Init(GM_ADDR inputs[MAX_INPUT_SLOTS], GM_ADDR outputs[MAX_OUTPUT_SLOTS],

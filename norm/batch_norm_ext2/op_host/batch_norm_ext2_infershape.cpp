@@ -33,7 +33,6 @@ static constexpr int64_t IS_TRAINING_ATTR_IDX = 2;
 
 static ge::graphStatus BatchNormExt2InferShape(gert::InferShapeContext* context)
 {
-    // 对标 A2 TBE _shape_check(canndev batch_norm_ext2.py:176-180):
     // 训练模式下 input_mean/input_variance 必须为空,传入即报错。
     // 校验放 infershape(形状/参数校验层),tiling 不重复拦截。
     const gert::Shape* meanInShape = context->GetOptionalInputShape(MEAN_INPUT_IDX);

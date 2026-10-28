@@ -48,6 +48,8 @@ TEST_F(BN3DTrainingReduceGradInfershapeTest, y_shape_equals_grads)
                       .InputShapes(
                           {&gradsShape, &xShape, &paramShape, &paramShape, &paramShape, &paramShape, &paramShape})
                       .OutputShapes({&yShape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW)
                       .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
@@ -107,6 +109,55 @@ TEST_F(BN3DTrainingReduceGradInfershapeTest, param_len_not_equal_channel)
                       .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+// ============================================================================
+// InferShape — 通道轴按 origin format 判定（A4 参数长度歧义）
+//   NCDHW: C=dim1=3，param_len=6（恰为 dim4）必须拒绝；param_len=3 通过。
+//   NDHWC: C=dim4=6，param_len=3（恰为 dim1）必须拒绝；param_len=6 通过。
+// ============================================================================
+namespace {
+void RunParamLenCase(ge::Format format, int64_t paramLen, ge::graphStatus expect)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("BN3DTrainingReduceGrad")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape gradsShape = {{2, 3, 4, 5, 6}, {2, 3, 4, 5, 6}};
+    gert::StorageShape xShape = {{2, 3, 4, 5, 6}, {2, 3, 4, 5, 6}};
+    gert::StorageShape paramShape = {{paramLen}, {paramLen}};
+    gert::StorageShape yShape = {{}, {}};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(7, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes(
+                          {&gradsShape, &xShape, &paramShape, &paramShape, &paramShape, &paramShape, &paramShape})
+                      .OutputShapes({&yShape})
+                      .NodeInputTd(0, ge::DT_FLOAT, format, format)
+                      .NodeInputTd(1, ge::DT_FLOAT, format, format)
+                      .Build();
+    EXPECT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), expect);
+}
+} // namespace
+
+TEST_F(BN3DTrainingReduceGradInfershapeTest, param_len_uses_other_axis_ncdhw_rejected)
+{
+    RunParamLenCase(ge::FORMAT_NCDHW, 6, ge::GRAPH_FAILED); // dim4 值，非通道轴
+}
+
+TEST_F(BN3DTrainingReduceGradInfershapeTest, param_len_uses_other_axis_ndhwc_rejected)
+{
+    RunParamLenCase(ge::FORMAT_NDHWC, 3, ge::GRAPH_FAILED); // dim1 值，非通道轴
+}
+
+TEST_F(BN3DTrainingReduceGradInfershapeTest, param_len_channel_ncdhw_ok)
+{
+    RunParamLenCase(ge::FORMAT_NCDHW, 3, ge::GRAPH_SUCCESS);
+}
+
+TEST_F(BN3DTrainingReduceGradInfershapeTest, param_len_channel_ndhwc_ok)
+{
+    RunParamLenCase(ge::FORMAT_NDHWC, 6, ge::GRAPH_SUCCESS);
 }
 
 // ============================================================================
@@ -253,6 +304,8 @@ TEST_F(BN3DTrainingReduceGradInfershapeTest, unknown_rank_propagate)
                       .InputShapes(
                           {&gradsShape, &xShape, &paramShape, &paramShape, &paramShape, &paramShape, &paramShape})
                       .OutputShapes({&yShape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW)
                       .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);

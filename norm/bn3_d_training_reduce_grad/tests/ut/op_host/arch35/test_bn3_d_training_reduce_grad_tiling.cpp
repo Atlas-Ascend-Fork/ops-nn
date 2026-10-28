@@ -228,6 +228,35 @@ TEST_F(Bn3DTrainingReduceGradTilingTest, error_null_input_output_y)
 }
 
 // ============================================================================
+// 公共 Tiling：输出 y 与 grads 逐维一致（CODE.04/1）→ kShapeMismatch
+//   InferShape 会强制 y=grads，但绕过 shape 推导直接调 tiling 时必须独立拒绝；
+//   CheckBroadcastShape 对 size-1 轴跳过比较，不能作为防线。
+// ============================================================================
+TEST_F(Bn3DTrainingReduceGradTilingTest, error_output_y_dim_smaller)
+{
+    auto in = MakePublicInputs(ge::DT_FLOAT, ge::FORMAT_NCDHW, {2, 3, 4, 5, 6}, 3, 0.0001f);
+    in.shapes[7][1] = 1; // y dim1=1 vs grads 3（广播语义会放行）
+    optiling::PublicTilingOutput out{};
+    EXPECT_EQ(optiling::ComputePublicTiling(in, out), optiling::PublicTilingError::kShapeMismatch);
+}
+
+TEST_F(Bn3DTrainingReduceGradTilingTest, error_output_y_dim_larger)
+{
+    auto in = MakePublicInputs(ge::DT_FLOAT, ge::FORMAT_NCDHW, {2, 3, 4, 5, 6}, 3, 0.0001f);
+    in.shapes[7][4] = 7; // y dim4=7 vs grads 6
+    optiling::PublicTilingOutput out{};
+    EXPECT_EQ(optiling::ComputePublicTiling(in, out), optiling::PublicTilingError::kShapeMismatch);
+}
+
+TEST_F(Bn3DTrainingReduceGradTilingTest, error_output_y_dim_smaller_ndhwc)
+{
+    auto in = MakePublicInputs(ge::DT_FLOAT, ge::FORMAT_NDHWC, {2, 3, 4, 5, 6}, 6, 0.0001f);
+    in.shapes[7][4] = 1; // NDHWC 通道轴 dim4：y=1 vs grads 6
+    optiling::PublicTilingOutput out{};
+    EXPECT_EQ(optiling::ComputePublicTiling(in, out), optiling::PublicTilingError::kShapeMismatch);
+}
+
+// ============================================================================
 // 公共 Tiling：参数长度 != 通道数 C（format-aware）→ kShapeMismatch
 //   NDHWC 通道轴为 dim4=6，paramLen=3 不匹配；不依赖 CheckBroadcastShape 的
 //   size-1 广播宽松语义（paramLen=1 而 C>1 也必须拒绝）。

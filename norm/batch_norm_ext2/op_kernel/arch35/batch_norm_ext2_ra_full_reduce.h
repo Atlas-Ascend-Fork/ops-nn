@@ -66,7 +66,7 @@ public:
     }
 
     __aicore__ inline void Init(GM_ADDR x, GM_ADDR beta, GM_ADDR gamma, GM_ADDR mean, GM_ADDR var, GM_ADDR y,
-                                GM_ADDR mean_out, GM_ADDR var_out, GM_ADDR batch_mean, GM_ADDR batch_rstd)
+                                GM_ADDR mean_out, GM_ADDR var_out, GM_ADDR batch_mean, GM_ADDR batch_var)
     {
         auto blockIdx = GetBlockIdx();
 
@@ -83,7 +83,8 @@ public:
 
         yGm.SetGlobalBuffer((__gm__ T1*)y + aGmOffset);
         batchMeanGm.SetGlobalBuffer((__gm__ float*)batch_mean + aGmOffset);
-        batchRstdGm.SetGlobalBuffer((__gm__ float*)batch_rstd + aGmOffset);
+        // batch_var 即第 5 个输出 output_reserve_space_2：训练模式下保存**有偏方差** E[(x-mean)^2]
+        batchVarGm.SetGlobalBuffer((__gm__ float*)batch_var + aGmOffset);
         runningMeanOutGm.SetGlobalBuffer((__gm__ T2*)mean_out + aGmOffset);
         runningVarOutGm.SetGlobalBuffer((__gm__ T2*)var_out + aGmOffset);
 
@@ -103,7 +104,7 @@ public:
         pipe->InitBuffer(gammaQueue, DOUBLE_BUFFER, aFactorAlignF32 * sizeof(T2));
 
         pipe->InitBuffer(batchMeanQueue, DOUBLE_BUFFER, aFactorAlignF32 * sizeof(float));
-        pipe->InitBuffer(batchRstdQueue, DOUBLE_BUFFER, aFactorAlignF32 * sizeof(float));
+        pipe->InitBuffer(batchVarQueue, DOUBLE_BUFFER, aFactorAlignF32 * sizeof(float));
 
         if (this->useRunningMeanVar) {
             pipe->InitBuffer(runningMeanInQueue, DOUBLE_BUFFER, aFactorAlignF32 * sizeof(float));
@@ -132,23 +133,23 @@ private:
         LocalTensor<T1> xInUb = xQueue.template DeQue<T1>();
         LocalTensor<T1> yInUb = yQueue.AllocTensor<T1>();
         LocalTensor<float> batchMeanOutUb = batchMeanQueue.AllocTensor<float>();
-        LocalTensor<float> batchRstdOutUb = batchRstdQueue.AllocTensor<float>();
+        LocalTensor<float> batchVarOutUb = batchVarQueue.AllocTensor<float>();
         __ubuf__ T1* xInUbAddr = (__ubuf__ T1*)xInUb.GetPhyAddr();
         __ubuf__ float* xFp32InUbAddr = (__ubuf__ float*)xInUbAddr;
 
         __ubuf__ T1* yInUbAddr = (__ubuf__ T1*)yInUb.GetPhyAddr();
         __ubuf__ float* batchMeanOutUbAddr = (__ubuf__ float*)batchMeanOutUb.GetPhyAddr();
-        __ubuf__ float* batchRstdOutUbAddr = (__ubuf__ float*)batchRstdOutUb.GetPhyAddr();
+        __ubuf__ float* batchVarOutUbAddr = (__ubuf__ float*)batchVarOutUb.GetPhyAddr();
 
         if constexpr (IsSameType<T1, half>::value || IsSameType<T1, bfloat16_t>::value) {
             LocalTensor<float> castInUb = castBuf.Get<float>();
             xFp32InUbAddr = (__ubuf__ float*)castInUb.GetPhyAddr();
             CastToFp32(xInUbAddr, xFp32InUbAddr, currentANum);
             CalculateMean(xFp32InUbAddr, yInUbAddr, batchMeanOutUbAddr, currentANum);
-            CalculateVar(xFp32InUbAddr, yInUbAddr, batchMeanOutUbAddr, batchRstdOutUbAddr, currentANum);
+            CalculateVar(xFp32InUbAddr, yInUbAddr, batchMeanOutUbAddr, batchVarOutUbAddr, currentANum);
         } else {
             CalculateMean(xFp32InUbAddr, yInUbAddr, batchMeanOutUbAddr, currentANum);
-            CalculateVar(xFp32InUbAddr, yInUbAddr, batchMeanOutUbAddr, batchRstdOutUbAddr, currentANum);
+            CalculateVar(xFp32InUbAddr, yInUbAddr, batchMeanOutUbAddr, batchVarOutUbAddr, currentANum);
         }
         CopyInGammaBeta(aOffset, currentANum);
         if (this->useRunningMeanVar) {
@@ -176,22 +177,22 @@ private:
             runningVarInUbAddr = (__ubuf__ T2*)runningVarInUb.GetPhyAddr();
         }
 
-        CalculateRuningMeanVarVF(batchMeanOutUbAddr, batchRstdOutUbAddr, runningMeanInUbAddr, runningVarInUbAddr,
+        CalculateRuningMeanVarVF(batchMeanOutUbAddr, batchVarOutUbAddr, runningMeanInUbAddr, runningVarInUbAddr,
                                  runningMeanOutUbAddr, runningVarOutUbAddr, currentANum);
-        QueueOperateAfterMeanVar(runningMeanInUb, runningVarInUb, batchMeanOutUb, batchRstdOutUb, runningMeanOutUb,
+        QueueOperateAfterMeanVar(runningMeanInUb, runningVarInUb, batchMeanOutUb, batchVarOutUb, runningMeanOutUb,
                                  runningVarOutUb);
 
         CopyOutRunningMeanVar(aOffset, currentANum);
         CalculateNormalizeVF(xFp32InUbAddr, yInUbAddr, betaInUbAddr, gammaInUbAddr, batchMeanOutUbAddr,
-                             batchRstdOutUbAddr, currentANum);
+                             batchVarOutUbAddr, currentANum);
         QueueOperateAfterNormalize(xInUb, betaInUb, gammaInUb, yInUb);
         CopyOutY(aOffset, currentANum);
-        CopyOutBatchMeanRstd(aOffset, currentANum);
+        CopyOutBatchMeanVar(aOffset, currentANum);
     }
 
     __aicore__ inline void QueueOperateAfterMeanVar(LocalTensor<T2>& runningMeanInUb, LocalTensor<T2>& runningVarInUb,
                                                     LocalTensor<float>& batchMeanOutUb,
-                                                    LocalTensor<float>& batchRstdOutUb,
+                                                    LocalTensor<float>& batchVarOutUb,
                                                     LocalTensor<T2>& runningMeanOutUb, LocalTensor<T2>& runningVarOutUb)
     {
         if (this->useRunningMeanVar) {
@@ -199,7 +200,7 @@ private:
             runningVarInQueue.FreeTensor(runningVarInUb);
         }
         batchMeanQueue.EnQue(batchMeanOutUb);
-        batchRstdQueue.EnQue(batchRstdOutUb);
+        batchVarQueue.EnQue(batchVarOutUb);
         runningMeanOutQueue.EnQue(runningMeanOutUb);
         runningVarOutQueue.EnQue(runningVarOutUb);
     }
@@ -304,19 +305,20 @@ private:
         yQueue.FreeTensor(yOutUb);
     }
 
-    __aicore__ inline void CopyOutBatchMeanRstd(int64_t offset, int64_t currentANum)
+    // 拷出 batch_mean(output_reserve_space_1) 与**有偏方差**(output_reserve_space_2)。
+    __aicore__ inline void CopyOutBatchMeanVar(int64_t offset, int64_t currentANum)
     {
         LocalTensor<float> batchMeanInUb = batchMeanQueue.template DeQue<float>();
-        LocalTensor<float> batchRstdInUb = batchRstdQueue.template DeQue<float>();
+        LocalTensor<float> batchVarInUb = batchVarQueue.template DeQue<float>();
         DataCopyExtParams copyInParams;
         copyInParams.blockCount = 1;
         copyInParams.blockLen = currentANum * sizeof(float);
         copyInParams.srcStride = 0;
         copyInParams.dstStride = 0;
         DataCopyPad(batchMeanGm[offset], batchMeanInUb, copyInParams);
-        DataCopyPad(batchRstdGm[offset], batchRstdInUb, copyInParams);
+        DataCopyPad(batchVarGm[offset], batchVarInUb, copyInParams);
         batchMeanQueue.FreeTensor(batchMeanInUb);
-        batchRstdQueue.FreeTensor(batchRstdInUb);
+        batchVarQueue.FreeTensor(batchVarInUb);
     }
 
     __aicore__ inline void CopyOutRunningMeanVar(int64_t offset, int64_t currentANum)
@@ -698,21 +700,21 @@ private:
     }
 
     __aicore__ inline void CalculateVar(__ubuf__ float* xInUb, __ubuf__ T1* yInUb, __ubuf__ float* batchMeanInUbAddr,
-                                        __ubuf__ float* batchRstdInUbAddr, int64_t currentA)
+                                        __ubuf__ float* batchVarInUbAddr, int64_t currentA)
     {
         if (this->r1 <= SCALE_COEF_TWO) {
-            CalculateVarRLessThan2(xInUb, batchMeanInUbAddr, batchRstdInUbAddr, currentA);
+            CalculateVarRLessThan2(xInUb, batchMeanInUbAddr, batchVarInUbAddr, currentA);
         } else if (this->r1 <= SCALE_COEF_FOUR) {
-            CalculateVarRLessThan4(xInUb, batchMeanInUbAddr, batchRstdInUbAddr, currentA);
+            CalculateVarRLessThan4(xInUb, batchMeanInUbAddr, batchVarInUbAddr, currentA);
         } else if (this->r1 <= SCALE_COEF_EIGHT) {
-            CalculateVarRLessThan8(xInUb, batchMeanInUbAddr, batchRstdInUbAddr, currentA);
+            CalculateVarRLessThan8(xInUb, batchMeanInUbAddr, batchVarInUbAddr, currentA);
         } else {
-            CalculateVarRMoreThan8(xInUb, yInUb, batchMeanInUbAddr, batchRstdInUbAddr, currentA);
+            CalculateVarRMoreThan8(xInUb, yInUb, batchMeanInUbAddr, batchVarInUbAddr, currentA);
         }
     }
 
     __aicore__ inline void CalculateVarRLessThan2(__ubuf__ float* xInUb, __ubuf__ float* batchMeanInUbAddr,
-                                                  __ubuf__ float* batchRstdOutUbAddr, int64_t currentA)
+                                                  __ubuf__ float* batchVarOutUbAddr, int64_t currentA)
     {
         uint32_t rStride = (((currentA * sizeof(T1) + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE) / sizeof(T1);
         uint16_t rLoopCount = this->r1;
@@ -741,13 +743,13 @@ private:
                     Muls(xmuls, xpow, n, pregLoop);
                     Add(sum, sum, xmuls, pregLoop);
                 }
-                StoreAlign(((__ubuf__ float*)batchRstdOutUbAddr + k * VL_FP32), sum, pregLoop);
+                StoreAlign(((__ubuf__ float*)batchVarOutUbAddr + k * VL_FP32), sum, pregLoop);
             }
         }
     }
 
     __aicore__ inline void CalculateVarRLessThan4(__ubuf__ float* xInUb, __ubuf__ float* batchMeanInUbAddr,
-                                                  __ubuf__ float* batchRstdOutUbAddr, int64_t currentA)
+                                                  __ubuf__ float* batchVarOutUbAddr, int64_t currentA)
     {
         uint32_t remainderOffset = SCALE_COEF_TWO * currentANumAlign;
         uint32_t aLength = currentANumAlign;
@@ -781,13 +783,13 @@ private:
                                         aLength + aLoopOffset, remainderTailOffset1 + aLoopOffset, mean, rem, nextRow,
                                         remNextRow, n);
                 Muls(x1, x1, nCorrection, pregLoop);
-                StoreAlign(((__ubuf__ float*)batchRstdOutUbAddr + aLoopOffset), x1, pregLoop);
+                StoreAlign(((__ubuf__ float*)batchVarOutUbAddr + aLoopOffset), x1, pregLoop);
             }
         }
     }
 
     __aicore__ inline void CalculateVarRLessThan8(__ubuf__ float* xInUb, __ubuf__ float* batchMeanInUbAddr,
-                                                  __ubuf__ float* batchRstdOutUbAddr, int64_t currentA)
+                                                  __ubuf__ float* batchVarOutUbAddr, int64_t currentA)
     {
         uint32_t remainderOffset = SCALE_COEF_FOUR * currentANumAlign;
         uint32_t aLength = currentANumAlign;
@@ -830,13 +832,13 @@ private:
                                         remainderTailOffset3 + aLoopOffset, mean, rem, nextRow, remNextRow, n);
                 Add(x1, x1, x2, pregLoop);
                 Muls(x1, x1, nCorrection, pregLoop);
-                StoreAlign(((__ubuf__ float*)batchRstdOutUbAddr + aLoopOffset), x1, pregLoop);
+                StoreAlign(((__ubuf__ float*)batchVarOutUbAddr + aLoopOffset), x1, pregLoop);
             }
         }
     }
 
     __aicore__ inline void CalculateVarRMoreThan8(__ubuf__ float* xInUb, __ubuf__ T1* yInUb,
-                                                  __ubuf__ float* batchMeanInUbAddr, __ubuf__ float* batchRstdOutUbAddr,
+                                                  __ubuf__ float* batchMeanInUbAddr, __ubuf__ float* batchVarOutUbAddr,
                                                   int64_t currentA)
     {
         uint16_t remainderLoopCount = (this->r1 - this->r1Quotient + SCALE_COEF_EIGHT - 1) / SCALE_COEF_EIGHT;
@@ -969,7 +971,7 @@ private:
                             binaryAddLastLoop, pregLoop, x1, x2, x3, x4);
                 LoadAlign(x1, ((__ubuf__ float*)yInUb + aLoopOffset));
                 Muls(x1, x1, nCorrection, pregLoop);
-                StoreAlign(((__ubuf__ float*)batchRstdOutUbAddr + aLoopOffset), x1, pregLoop);
+                StoreAlign(((__ubuf__ float*)batchVarOutUbAddr + aLoopOffset), x1, pregLoop);
             }
         }
     }
@@ -1005,7 +1007,7 @@ private:
         }
     }
 
-    __aicore__ inline void CalculateRuningMeanVarVF(__ubuf__ float* batchMeanInUb, __ubuf__ float* batchRstdInUb,
+    __aicore__ inline void CalculateRuningMeanVarVF(__ubuf__ float* batchMeanInUb, __ubuf__ float* batchVarInUb,
                                                     __ubuf__ T2* runningMeanInUbAddr, __ubuf__ T2* runningVarInUbAddr,
                                                     __ubuf__ T2* runningMeanOutUbAddr, __ubuf__ T2* runningVarOutUbAddr,
                                                     uint16_t currentANum)
@@ -1025,15 +1027,13 @@ private:
             RegTensor<float> runningVar;
             RegTensor<float> saveVar;
 
-            RegTensor<float> rstd;
-
             MaskReg pregLoop;
 
             uint32_t sreg2 = currentANum;
             for (uint16_t k = 0; k < aLoop; k++) {
                 pregLoop = UpdateMask<float>(sreg2);
                 // running var
-                LoadAlign(var, ((__ubuf__ float*)batchRstdInUb + k * VL_FP32));
+                LoadAlign(var, ((__ubuf__ float*)batchVarInUb + k * VL_FP32));
                 Muls(saveVar, var, besselCorrection, pregLoop);
                 Muls(saveVar, saveVar, m, pregLoop);
                 if (vfUseRunningMeanVar) {
@@ -1043,9 +1043,9 @@ private:
                 }
                 StoreTensorForDtypeT<T2>(runningVarOutUbAddr, saveVar, pregLoop, k * VL_FP32);
 
-                // rstd:统一走 base.h 的本地副本 ComputeRstdNewtonRaphsonRegExt2。
-                ComputeRstdNewtonRaphsonRegExt2<false>(var, rstd, pregLoop, epsilon);
-                StoreAlign(((__ubuf__ float*)batchRstdInUb + k * VL_FP32), rstd, pregLoop);
+                // 注意：此处不再把 rstd 写回 batchVarInUb。batchVarInUb 承载的是第 5 个输出
+                // output_reserve_space_2 的**有偏方差**，必须原样拷出；rstd 由 CalculateNormalizeVF
+                // 在寄存器内就地计算（见该函数注释）。
 
                 // running mean
                 LoadAlign(mean, ((__ubuf__ float*)batchMeanInUb + k * VL_FP32));
@@ -1063,7 +1063,7 @@ private:
 
     __aicore__ inline void CalculateNormalizeVF(__ubuf__ float* xInUb, __ubuf__ T1* yInUb, __ubuf__ T2* betaInUb,
                                                 __ubuf__ T2* gammaInUb, __ubuf__ float* batchMeanInUb,
-                                                __ubuf__ float* batchRstdInUb, uint16_t currentANum)
+                                                __ubuf__ float* batchVarInUb, uint16_t currentANum)
     {
         uint16_t rLoopCount = this->r1;
         uint16_t aLoopCount = ops::CeilDiv(currentANum, VL_FP32);
@@ -1075,6 +1075,7 @@ private:
             RegTensor<float> x2;
             RegTensor<float> y2;
             RegTensor<float> rsqrtVar;
+            RegTensor<float> var;
 
             RegTensor<float> beta;
             RegTensor<float> gamma;
@@ -1086,7 +1087,10 @@ private:
                 LoadTwoTensorForDtypeT<T2>(beta, gamma, betaInUb, gammaInUb, pregLoop, pregLoop, k * VL_FP32,
                                            k * VL_FP32);
                 LoadAlign(mean, ((__ubuf__ float*)batchMeanInUb + k * VL_FP32));
-                LoadAlign(rsqrtVar, ((__ubuf__ float*)batchRstdInUb + k * VL_FP32));
+                // batchVarInUb 里是第 5 个输出要保存的有偏方差，不能被 rstd 覆盖；
+                // 这里直接由方差在寄存器内算出 rstd，避免消耗额外的 UB 槽。
+                LoadAlign(var, ((__ubuf__ float*)batchVarInUb + k * VL_FP32));
+                ComputeRstdNewtonRaphsonRegExt2<false>(var, rsqrtVar, pregLoop, epsilon);
                 for (uint16_t r = 0; r < rLoopCount; r++) {
                     LoadAlign(x2, ((__ubuf__ float*)xInUb + r * rStride + k * VL_FP32));
                     Sub(x2, x2, mean, pregLoop);
@@ -1120,7 +1124,7 @@ private:
 
     GlobalTensor<T1> yGm;
     GlobalTensor<float> batchMeanGm;
-    GlobalTensor<float> batchRstdGm;
+    GlobalTensor<float> batchVarGm;
     GlobalTensor<T2> runningMeanOutGm;
     GlobalTensor<T2> runningVarOutGm;
 
@@ -1180,7 +1184,7 @@ private:
 
     TQue<QuePosition::VECOUT, 1> yQueue;
     TQue<QuePosition::VECOUT, 1> batchMeanQueue;
-    TQue<QuePosition::VECOUT, 1> batchRstdQueue;
+    TQue<QuePosition::VECOUT, 1> batchVarQueue;
     TQue<QuePosition::VECOUT, 1> runningMeanOutQueue;
     TQue<QuePosition::VECOUT, 1> runningVarOutQueue;
 

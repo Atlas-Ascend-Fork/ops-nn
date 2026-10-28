@@ -239,7 +239,7 @@ ge::graphStatus BatchNormExt2RARBlockSplitRTiling::DoOpTiling()
     if (useRunningMeanVar_) {
         runningMeanVarSize *= NUM_TWO;
     }
-    int64_t saveMeanRstdSize = patternAAlign * static_cast<int64_t>(sizeof(float)) * MEAN_VAR_BUFFER_NUM;
+    int64_t saveMeanVarSize = patternAAlign * static_cast<int64_t>(sizeof(float)) * MEAN_VAR_BUFFER_NUM;
     int64_t betaGammaSize = Ops::Base::CeilAlign(a_, blockSize_ / T2ElemSize) * T2ElemSize * BETA_GAMMA_BUFFER_NUM;
 
     int64_t blockDimAlignSize = Ops::Base::CeilAlign(static_cast<int64_t>(aicoreParams_.blockDim), fp32EleNumPerBlock) *
@@ -251,8 +251,8 @@ ge::graphStatus BatchNormExt2RARBlockSplitRTiling::DoOpTiling()
 
     OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling DoOpTiling: runningMeanVarSize is %lu !",
             runningMeanVarSize);
-    OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling DoOpTiling: saveMeanRstdSize is %lu !",
-            saveMeanRstdSize);
+    OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling DoOpTiling: saveMeanVarSize is %lu !",
+            saveMeanVarSize);
     OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling DoOpTiling: betaGammaSize is %lu !",
             betaGammaSize);
     OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling DoOpTiling: blockDimAlignSize is %lu !",
@@ -274,7 +274,7 @@ ge::graphStatus BatchNormExt2RARBlockSplitRTiling::DoOpTiling()
     OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling DoOpTiling: countBuffer1PerUbFactor is %lu !",
             countBuffer1PerUbFactor);
 
-    int64_t ubSizeCanUse = static_cast<int64_t>(aicoreParams_.ubSize) - runningMeanVarSize - saveMeanRstdSize -
+    int64_t ubSizeCanUse = static_cast<int64_t>(aicoreParams_.ubSize) - runningMeanVarSize - saveMeanVarSize -
                            betaGammaSize - blockDimAlignSize - tmpbuffer3AlignSize;
     OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling DoOpTiling: ubSizeCanUse is %lu !",
             ubSizeCanUse);

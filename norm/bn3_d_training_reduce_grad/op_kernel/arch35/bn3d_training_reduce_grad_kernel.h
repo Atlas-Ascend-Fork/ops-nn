@@ -593,6 +593,10 @@ __simd_vf__ inline void SuspectCheckVF(__ubuf__ T* g, __ubuf__ T* s, __ubuf__ T*
 {
     AscendC::Reg::RegTensor<T> rG, rS, rDo, rT, rRed, rAcc;
     AscendC::Reg::MaskReg mask;
+    // 累积合并一律用全掩码: 尾块 mask 的 ZEROING 会把 lane≥tail 清 0，若用尾块
+    // mask 合并会丢掉此前块在这些 lane 上的上界（漏检）；所有累积量均 ≥0，
+    // 全掩码 Max 对非活跃 lane 等价于 max(prev, 0)=prev，不会抬高或丢失上界。
+    AscendC::Reg::MaskReg mAll = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
     constexpr uint32_t VL = 256 / sizeof(T);
     uint32_t remaining = static_cast<uint32_t>(count);
     AscendC::Reg::Duplicate(rAcc, T(0));
@@ -606,9 +610,8 @@ __simd_vf__ inline void SuspectCheckVF(__ubuf__ T* g, __ubuf__ T* s, __ubuf__ T*
         AscendC::Reg::Abs(rDo, rDo, mask); // |do|（≥0）
         AscendC::Reg::Max(rT, rG, rDo, mask);
         AscendC::Reg::Max(rT, rT, rS, mask);     // s ≥ 0 无需 Abs
-        AscendC::Reg::Max(rAcc, rAcc, rT, mask); // 跨块逐 lane 累积（普通寄存器间 Max）
+        AscendC::Reg::Max(rAcc, rAcc, rT, mAll); // 跨块逐 lane 累积（全掩码, 见上）
     }
-    AscendC::Reg::MaskReg mAll = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
     // 单次 reduce 作用在普通累积寄存器上（Reduce→FIRST_ELEMENT 存储同 nll_loss 范式）
     AscendC::Reg::Reduce<AscendC::Reg::ReduceType::MAX, float>(rRed, rAcc, mAll);
     AscendC::Reg::StoreAlign<float, AscendC::Reg::StoreDist::DIST_FIRST_ELEMENT_B32>(
@@ -646,11 +649,17 @@ __simd_vf__ inline void Pass1VF(__ubuf__ T* g, __ubuf__ T* x, __ubuf__ T* y, __u
     AscendC::Reg::RegTensor<float> rAcc, rRed;
     AscendC::Reg::MaskReg mask;
     // 跨 tile 幅值累积: lane0 持有当前最大值（首 tile 置 0，其余从 scratch 续）
+    // scratch 写侧仅写 lane0（DIST_FIRST_ELEMENT_B32, 4B），读侧必须只消费 4B：
+    // DIST_NORM 默认读满 256B，会读入 lane1..63 的未初始化 UB → 改用 DIST_BRC_B32
+    // 把已初始化的 lane0 广播到全寄存器。
     if (firstTile) {
         AscendC::Reg::Duplicate(rAcc, 0.0f);
     } else {
-        AscendC::Reg::LoadAlign(rAcc, scratch);
+        AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(rAcc, scratch);
     }
+    // 累积合并用全掩码: 末尾 c-block 的尾 mask 若参与合并会把 lane≥tail 清 0，
+    // 丢掉此前 c-block 在这些 lane 上的上界（漏检）；累积量均 ≥0，全掩码安全。
+    AscendC::Reg::MaskReg mAll = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
     for (int64_t cb = 0; cb < CB; cb++) {
         uint32_t lanes = static_cast<uint32_t>((C - cb * 64 >= 64) ? 64 : (C - cb * 64));
         mask = AscendC::Reg::UpdateMask<float>(lanes);
@@ -670,7 +679,7 @@ __simd_vf__ inline void Pass1VF(__ubuf__ T* g, __ubuf__ T* x, __ubuf__ T* y, __u
         AscendC::Reg::Abs(rP2, rSc, mask);
         AscendC::Reg::Max(rP1, rP1, rP2, mask);
         AscendC::Reg::Max(rP1, rP1, rS, mask); // s ≥ 0 无需 Abs
-        AscendC::Reg::Max(rAcc, rAcc, rP1, mask);
+        AscendC::Reg::Max(rAcc, rAcc, rP1, mAll);
         int32_t cBase = static_cast<int32_t>(cb * 64);
         for (int32_t w = 0; w < static_cast<int32_t>(wCnt); w++) {
             int32_t off = w * static_cast<int32_t>(C) + cBase; // tile 内局部元素偏移
@@ -693,7 +702,7 @@ __simd_vf__ inline void Pass1VF(__ubuf__ T* g, __ubuf__ T* x, __ubuf__ T* y, __u
             AscendC::Reg::Mul(rTmp, rT2, rSc, mask);     // t2 * sc
             AscendC::Reg::Div(rYf, rTmp, rS, mask);      // y_f32 = (t2*sc)/s
             AscendC::Reg::Abs(rTmp, rGf, mask);          // |g| 累积
-            AscendC::Reg::Max(rAcc, rAcc, rTmp, mask);
+            AscendC::Reg::Max(rAcc, rAcc, rTmp, mAll);
             if constexpr (kIsB16) {
                 AscendC::Reg::Cast<T, float, kCastTraitF32ToB16>(rYB16, rYf, mask);
                 AscendC::Reg::StoreAlign<T, AscendC::Reg::StoreDist::DIST_PACK_B32>(y + off, rYB16, mask);
@@ -702,7 +711,6 @@ __simd_vf__ inline void Pass1VF(__ubuf__ T* g, __ubuf__ T* x, __ubuf__ T* y, __u
             }
         }
     }
-    AscendC::Reg::MaskReg mAll = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
     AscendC::Reg::Reduce<AscendC::Reg::ReduceType::MAX, float>(rRed, rAcc, mAll);
     AscendC::Reg::StoreAlign<float, AscendC::Reg::StoreDist::DIST_FIRST_ELEMENT_B32>(scratch, rRed, mAll);
 }
@@ -739,8 +747,11 @@ class BN3DTrainingReduceGradKernel {
     AscendC::GlobalTensor<T> gmOut_[MAX_OUTPUT_SLOTS];           // y
     AscendC::TBuf<AscendC::TPosition::VECCALC> buf_[PHYS_NODES]; // P=8 个槽位 S0..S7
     AscendC::TBuf<AscendC::TPosition::VECCALC> scratchBuf_; // suspect 标量（4B，独占避免与 VF 链竞争）
-    AscendC::MultiCopyParams<T, ND> nddmaParams_[NUM_DATA_INPUTS];
-    AscendC::MultiCopyParams<float, ND> nddmaParamParams_[NUM_PARAM_INPUTS];
+    // MultiCopyParams 为纯聚合（loopInfo + constantValue），Init/Setup 只写 loopInfo；
+    // 三参 DataCopy 无条件按值消费 params.constantValue → 必须聚合初始化清零，
+    // 否则 mssanitizer initcheck 报 constantValue 未初始化读（issues/02）。
+    AscendC::MultiCopyParams<T, ND> nddmaParams_[NUM_DATA_INPUTS] = {};
+    AscendC::MultiCopyParams<float, ND> nddmaParamParams_[NUM_PARAM_INPUTS] = {};
     int64_t nddmaOuterIters_[NUM_DATA_INPUTS]; // RANK>5 逐段搬运计数（本算子恒 1）
     int64_t nddmaParamOuterIters_[NUM_PARAM_INPUTS];
     int64_t nddmaDims_;
