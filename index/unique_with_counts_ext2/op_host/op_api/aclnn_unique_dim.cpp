@@ -12,6 +12,8 @@
  * \brief
  */
 
+#include <string>
+
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "op_api/op_api_def_nn.h"
@@ -21,6 +23,7 @@
 #include "opdev/format_utils.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
+#include "log/log.h"
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 #include "op_api/aclnn_util.h"
@@ -34,6 +37,8 @@ using namespace op;
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+static constexpr const char* kOpName = "aclnnUniqueDim";
 
 // 根据API定义，需要列出所能支持的所有dtype
 static const std::initializer_list<op::DataType> ASCEND910_DTYPE_SUPPORT_LIST = {
@@ -58,14 +63,22 @@ static const std::initializer_list<DataType>& GetDtypeSupportList()
 }
 static bool CheckNotNull(const aclTensor* self, aclTensor* valueOut, aclTensor* inverseOut, aclTensor* countsOut)
 {
-    // 检查输入张量self不为nullptr
-    OP_CHECK_NULL(self, return false);
-    // 检查输出张量valueOut不为nullptr
-    OP_CHECK_NULL(valueOut, return false);
-    // 检查输出张量inverseOut不为nullptr
-    OP_CHECK_NULL(inverseOut, return false);
-    // 检查输出张量countsOut不为nullptr
-    OP_CHECK_NULL(countsOut, return false);
+    if (self == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(kOpName, "self");
+        return false;
+    }
+    if (valueOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(kOpName, "valueOut");
+        return false;
+    }
+    if (inverseOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(kOpName, "inverseOut");
+        return false;
+    }
+    if (countsOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(kOpName, "countsOut");
+        return false;
+    }
     return true;
 }
 
@@ -73,27 +86,38 @@ static bool CheckDtypeValid(const aclTensor* self, const aclTensor* valueOut, co
                             const aclTensor* countsOut)
 {
     auto DTYPE_SUPPORT_LIST = GetDtypeSupportList();
-    // 检查self的数据类型是否在UniqueDim算子的支持列表内
-    OP_CHECK_DTYPE_NOT_SUPPORT(self, DTYPE_SUPPORT_LIST, return false);
-
-    // 检查inverseOut数据类型
-    OP_CHECK_DTYPE_NOT_MATCH(inverseOut, op::DataType::DT_INT64, return false);
-
-    // 检查countsOut数据类型
-    OP_CHECK_DTYPE_NOT_MATCH(countsOut, op::DataType::DT_INT64, return false);
-
-    // 检查self与valueOut数据类型一致
-    OP_CHECK_DTYPE_NOT_MATCH(valueOut, self->GetDataType(), return false);
-
-    // 检查inverseOut与countsOut数据类型一致
-    OP_CHECK_DTYPE_NOT_MATCH(inverseOut, countsOut->GetDataType(), return false);
+    if (!CheckType(self->GetDataType(), DTYPE_SUPPORT_LIST)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            kOpName, "self", op::ToString(self->GetDataType()).GetString(),
+            (std::string("self dtype must be one of ") + op::ToString(DTYPE_SUPPORT_LIST).GetString()).c_str());
+        return false;
+    }
+    if (inverseOut->GetDataType() != op::DataType::DT_INT64) {
+        OP_LOGE_FOR_INVALID_DTYPE(kOpName, "inverseOut", op::ToString(inverseOut->GetDataType()).GetString(), "int64");
+        return false;
+    }
+    if (countsOut->GetDataType() != op::DataType::DT_INT64) {
+        OP_LOGE_FOR_INVALID_DTYPE(kOpName, "countsOut", op::ToString(countsOut->GetDataType()).GetString(), "int64");
+        return false;
+    }
+    if (valueOut->GetDataType() != self->GetDataType()) {
+        const std::string dtypes = std::string(op::ToString(self->GetDataType()).GetString()) + ", " +
+                                   op::ToString(valueOut->GetDataType()).GetString();
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(kOpName, "self, valueOut", dtypes.c_str(),
+                                               "valueOut dtype must be the same as self dtype");
+        return false;
+    }
     return true;
 }
 
 static bool CheckShapeValid(const aclTensor* self)
 {
-    // self的数据维度不能超过8
-    OP_CHECK_MAX_DIM(self, MAX_SUPPORT_DIMS_NUMS, return false);
+    const auto dimNum = self->GetViewShape().GetDimNum();
+    if (dimNum > MAX_SUPPORT_DIMS_NUMS) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(kOpName, "self", std::to_string(dimNum).c_str(),
+                                                 "self rank must not exceed 8");
+        return false;
+    }
     return true;
 }
 
@@ -103,8 +127,8 @@ static bool CheckDimValue(const aclTensor* self, int64_t dim)
     int64_t dimMin = std::min(-1 * dimSize, dimSize - 1);
     int64_t dimMax = std::max(-1 * dimSize, dimSize - 1);
     if (dim > dimMax || dim < dimMin) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The param of dim must be in the range of [%ld, %ld], but got %ld.", dimMin,
-                dimMax, dim);
+        const std::string expected = "[" + std::to_string(dimMin) + ", " + std::to_string(dimMax) + "]";
+        OP_LOGE_FOR_INVALID_VALUE(kOpName, "dim", std::to_string(dim).c_str(), expected.c_str());
         return false;
     }
     return true;
@@ -114,16 +138,24 @@ static aclnnStatus CheckParams(const aclTensor* self, aclTensor* valueOut, aclTe
                                int64_t dim)
 {
     // 1. 检查输入输出是否为nullptr
-    CHECK_RET(CheckNotNull(self, valueOut, inverseOut, countsOut), ACLNN_ERR_PARAM_NULLPTR);
+    if (!CheckNotNull(self, valueOut, inverseOut, countsOut)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     // 2. 检查数据类型
-    CHECK_RET(CheckDtypeValid(self, valueOut, inverseOut, countsOut), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckDtypeValid(self, valueOut, inverseOut, countsOut)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // 3. 检查数据Shape
-    CHECK_RET(CheckShapeValid(self), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckShapeValid(self)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // 4. 检查参数dim
-    CHECK_RET(CheckDimValue(self, dim), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckDimValue(self, dim)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -132,17 +164,29 @@ aclnnStatus aclnnUniqueDimGetWorkspaceSize(const aclTensor* self, bool sorted, b
                                            aclTensor* valueOut, aclTensor* inverseOut, aclTensor* countsOut,
                                            uint64_t* workspaceSize, aclOpExecutor** executor)
 {
-    OP_CHECK_COMM_INPUT(workspaceSize, executor);
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(kOpName, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(kOpName, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     L2_DFX_PHASE_1(aclnnUniqueDim, DFX_IN(self, sorted, returnInverse, dim), DFX_OUT(valueOut, inverseOut, countsOut));
 
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Create op executor failed.");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
 
     // 固定写法，参数检查
     auto ret = CheckParams(self, valueOut, inverseOut, countsOut, dim);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
 
     // 空tensor在kernel中支持，对标竞品根据算子实际情况补充
     if (self->IsEmpty()) {
@@ -154,7 +198,10 @@ aclnnStatus aclnnUniqueDimGetWorkspaceSize(const aclTensor* self, bool sorted, b
 
     // 固定写法，将输入self转换成连续的tensor
     auto selfContiguous = l0op::Contiguous(self, uniqueExecutor.get());
-    CHECK_RET(selfContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (selfContiguous == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Contiguous of self failed; propagate lower-layer error.");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     auto valueViewShape = valueOut->GetViewShape();
     valueOut->SetStorageShape(valueViewShape);
@@ -167,7 +214,10 @@ aclnnStatus aclnnUniqueDimGetWorkspaceSize(const aclTensor* self, bool sorted, b
     // 调用UniqueDim算子
     auto opRet = l0op::UniqueDim(selfContiguous, sorted, returnInverse, dim, valueOut, inverseOut, countsOut,
                                  uniqueExecutor.get());
-    CHECK_RET(opRet == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    if (opRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(opRet, "UniqueDim failed, ret=%d; propagate lower-layer error.", opRet);
+        return opRet;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor); // 需要把 uniqueExecutor持有executor转移给executor
