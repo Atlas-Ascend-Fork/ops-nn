@@ -66,7 +66,13 @@ static ge::graphStatus InferShapeForSparseToDense(gert::InferShapeContext* conte
         return ge::GRAPH_SUCCESS;
     }
     gert::Shape outputShape;
-    bool canGetOutputShape = Ops::Base::GetConstIntToShape<gert::InferShapeContext>(context, kInputIndex1, outputShape);
+    const gert::Tensor* outputShapeTensor = context->GetInputTensor(kInputIndex1);
+    bool canGetOutputShape = false;
+    if ((outputShapeTensor == nullptr) || (outputShapeTensor->GetAddr() == nullptr)) {
+        OP_LOGD(context->GetNodeName(), "output_shape is not a const tensor, infer y as unknown shape");
+    } else {
+        canGetOutputShape = Ops::Base::GetConstIntToShape<gert::InferShapeContext>(context, kInputIndex1, outputShape);
+    }
     if (!canGetOutputShape) {
         const int64_t outputRank = outputShapeDims[kInputIndex0];
         if (outputRank == ge::UNKNOWN_DIM) {
