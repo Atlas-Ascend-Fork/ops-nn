@@ -21,7 +21,6 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
-#include <limits>
 #include <vector>
 
 #include "data_utils.h"
@@ -62,7 +61,7 @@ static void ExpectOutputSizes(const KernelOutputs& outputs, size_t totalNum)
 }
 
 template <typename T, int BUFFER_MODE>
-static KernelOutputs RunKernel(size_t totalNum)
+static KernelOutputs RunKernel(size_t totalNum, float rhoValue = 0.9f)
 {
     const size_t backingElements = totalNum == 0 ? 1 : totalNum;
     const size_t mainBytes = backingElements * sizeof(T);
@@ -86,7 +85,7 @@ static KernelOutputs RunKernel(size_t totalNum)
     FillTensor<T>(accumUpdate, backingElements, totalNum == 0 ? 13.0f : 0.05f);
     FillTensor<T>(grad, backingElements, 0.2f);
     FillScalar<T>(lr, 0.01f);
-    FillScalar<T>(rho, 0.9f);
+    FillScalar<T>(rho, rhoValue);
     FillScalar<T>(epsilon, 1e-4f);
 
     auto* tilingData = reinterpret_cast<InplaceApplyAdadeltaTilingData*>(tiling);
@@ -154,18 +153,16 @@ TEST_F(InplaceApplyAdadeltaKernelTest, fp16_scalar_gm_load)
     ExpectOutputSizes<half>(outputs, kTotalNum);
 }
 
-TEST_F(InplaceApplyAdadeltaKernelTest, rho_range_boundaries)
+TEST_F(InplaceApplyAdadeltaKernelTest, rho_values_are_not_rejected)
 {
-    EXPECT_FALSE(NsInplaceApplyAdadelta::IsRhoInValidRange(-1.0f));
-    EXPECT_TRUE(NsInplaceApplyAdadelta::IsRhoInValidRange(0.0f));
-    EXPECT_TRUE(NsInplaceApplyAdadelta::IsRhoInValidRange(0.99999994f));
-    EXPECT_FALSE(NsInplaceApplyAdadelta::IsRhoInValidRange(1.0f));
-    EXPECT_FALSE(NsInplaceApplyAdadelta::IsRhoInValidRange(std::numeric_limits<float>::quiet_NaN()));
+    ExpectOutputSizes<float>(RunKernel<float, 0>(256, -0.1f), 256);
+    ExpectOutputSizes<float>(RunKernel<float, 0>(256, 1.0f), 256);
+    ExpectOutputSizes<float>(RunKernel<float, 0>(256, 1.1f), 256);
 }
 
 TEST_F(InplaceApplyAdadeltaKernelTest, empty_tensor_is_no_op)
 {
-    const auto outputs = RunKernel<float, 0>(0);
+    const auto outputs = RunKernel<float, 0>(0, 1.1f);
     ASSERT_EQ(outputs.var.size(), sizeof(float));
     ASSERT_EQ(outputs.accum.size(), sizeof(float));
     ASSERT_EQ(outputs.accumUpdate.size(), sizeof(float));

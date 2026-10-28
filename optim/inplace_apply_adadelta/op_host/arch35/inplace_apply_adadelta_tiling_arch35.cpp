@@ -34,6 +34,8 @@
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/math_util.h"
 #include "op_common/op_host/util/platform_util.h"
+
+#include <array>
 #include "../../op_kernel/arch35/inplace_apply_adadelta_tiling_data.h"
 #include "../../op_kernel/arch35/inplace_apply_adadelta_tiling_key.h"
 
@@ -52,26 +54,15 @@ constexpr int32_t USE_LOCKING_DISABLED = 0;
 constexpr int32_t USE_LOCKING_ENABLED = 1;
 constexpr size_t USE_LOCKING_ATTR_INDEX = 0;
 
-// ubFactor element alignment. FTZ uses CompareScalar, which requires the
-// element count to span a 256B-aligned region (64 fp32 elements). Aligning
-// ubFactor to 64 guarantees the kernel's round-up (CeilAlign(current_num, 64))
-// never exceeds the allocated UB buffers. 64 elems is also a multiple of the
-// 32B UB block, so DataCopyPad tiling stays valid.
-constexpr int64_t UB_FACTOR_ALIGN = 64;
 constexpr int64_t INTERNAL_COMPUTE_ELEMENT_BYTES = sizeof(float);
 
-// UB reserved for the AscendC Select tensor-tensor/tensor-scalar modes, which
-// need an 8KB internal scratch region on this architecture (see Select API
-// "预留8K的Unified Buffer空间"). We subtract it from the usable UB so the FTZ
-// Select never collides with the tensor buffers.
-constexpr int64_t FTZ_SELECT_RESERVE_BYTES = 8192;
 constexpr int64_t SCALAR_INPUT_COUNT = 3;
 constexpr int64_t SCALAR_SLOT_BYTES = 32;
 constexpr int64_t SCALAR_UB_RESERVE_BYTES = SCALAR_INPUT_COUNT * SCALAR_SLOT_BYTES;
-constexpr int64_t FP32_SINGLE_BUFFER_TENSOR_SLOTS = 11;
-constexpr int64_t FP32_DOUBLE_BUFFER_TENSOR_SLOTS = 18;
-constexpr int64_t FP16_SINGLE_BUFFER_TENSOR_SLOTS = 12;
-constexpr int64_t FP16_DOUBLE_BUFFER_TENSOR_SLOTS = 15;
+constexpr int64_t FP32_SINGLE_BUFFER_TENSOR_SLOTS = 9;
+constexpr int64_t FP32_DOUBLE_BUFFER_TENSOR_SLOTS = 16;
+constexpr int64_t FP16_SINGLE_BUFFER_TENSOR_SLOTS = 10;
+constexpr int64_t FP16_DOUBLE_BUFFER_TENSOR_SLOTS = 13;
 constexpr int64_t SCALAR_ELEMENT_COUNT = 1;
 constexpr size_t WORKSPACE_COUNT = 1;
 constexpr size_t SYSTEM_WORKSPACE_INDEX = 0;
@@ -80,14 +71,10 @@ constexpr uint32_t EMPTY_TENSOR_BLOCK_DIM = 1;
 // UB tensor slot count per TilingKey (see DESIGN.md 3.9/3.10).
 //
 // Per-element UB byte cost (in fp32-equivalent slots; 1 slot == 4 B == sizeof(float)):
-//   FP32 single buffer: 7 TQue (fp32, 4B) x 1 + 3 TBuf (fp32, 4B) = 40 B/elem = 10 slots
-//   FP32 double buffer: 7 TQue (fp32, 4B) x 2 + 3 TBuf (fp32, 4B) = 68 B/elem = 17 slots
-//   FP16 single buffer: 7 TQue (half, 2B) x 1 + 7 TBuf (fp32, 4B) = 42 B/elem => ceil(42/4)=11 slots
-//   FP16 double buffer: 7 TQue (half, 2B) x 2 + 7 TBuf (fp32, 4B) = 56 B/elem = 14 slots
-//
-// The three/seven fp32 TBuf counts above include the dedicated FTZ value
-// scratch. The uint8 mask TBuf adds 1 B/elem (0.25 slot); add one full slot
-// per TilingKey as a conservative allowance.
+//   FP32 single buffer: 7 TQue (fp32, 4B) x 1 + 2 TBuf (fp32, 4B) = 36 B/elem = 9 slots
+//   FP32 double buffer: 7 TQue (fp32, 4B) x 2 + 2 TBuf (fp32, 4B) = 64 B/elem = 16 slots
+//   FP16 single buffer: 7 TQue (half, 2B) x 1 + 6 TBuf (fp32, 4B) = 38 B/elem => ceil(38/4)=10 slots
+//   FP16 double buffer: 7 TQue (half, 2B) x 2 + 6 TBuf (fp32, 4B) = 52 B/elem = 13 slots
 //
 // Note: this slot estimate is conservative (includes 4 input + 3 output queues).
 // The 3 rank-0 scalar Tensor inputs (lr/rho/eps) each have one physical element, so their UB footprint
@@ -136,13 +123,9 @@ static int64_t ComputeSplit(InplaceApplyAdadeltaTilingData* tiling, ge::DataType
     int64_t usedCoreNum = CeilDiv(tiling->totalNum, tiling->blockFactor);
     bufferMode = (tiling->totalNum > MIN_SPLIT_THRESHOLD) ? DOUBLE_BUFFER_MODE : SINGLE_BUFFER_MODE;
     int64_t slots = GetTensorSlots(dataType, bufferMode);
-    // Reserve Select's architecture scratch and the three scalar-load blocks
-    // before splitting the per-element UB budget.
-    int64_t usableUb = static_cast<int64_t>(ubSize) - FTZ_SELECT_RESERVE_BYTES - SCALAR_UB_RESERVE_BYTES;
-    // ubFactor aligned to 64 elems (>= ubBlockSize) so the FTZ 256B-aligned
-    // round-up never exceeds the allocated buffers.
-    int64_t align = (ubBlockSize > UB_FACTOR_ALIGN) ? ubBlockSize : UB_FACTOR_ALIGN;
-    tiling->ubFactor = FloorAlign(FloorDiv(usableUb / INTERNAL_COMPUTE_ELEMENT_BYTES, slots), align);
+    // Reserve the three scalar-load blocks before splitting the per-element UB budget.
+    int64_t usableUb = static_cast<int64_t>(ubSize) - SCALAR_UB_RESERVE_BYTES;
+    tiling->ubFactor = FloorAlign(FloorDiv(usableUb / INTERNAL_COMPUTE_ELEMENT_BYTES, slots), ubBlockSize);
     return usedCoreNum;
 }
 
@@ -176,6 +159,31 @@ constexpr size_t kIdxLr = 3;
 constexpr size_t kIdxRho = 4;
 constexpr size_t kIdxEps = 5;
 constexpr size_t kIdxGrad = 6;
+constexpr size_t kInputCount = 7;
+constexpr size_t kOutputCount = 3;
+
+// All inputs and outputs are registered as ND-only. Check both the logical
+// origin format and the physical storage format because GE may normalize a
+// contiguous NCHW tensor to ND storage before invoking tiling.
+static ge::graphStatus CheckFormat(gert::TilingContext* context)
+{
+    for (size_t inputIndex = 0; inputIndex < kInputCount; ++inputIndex) {
+        auto inputDesc = context->GetInputDesc(inputIndex);
+        OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+        OP_CHECK_IF(
+            inputDesc->GetOriginFormat() != ge::FORMAT_ND || inputDesc->GetFormat().GetStorageFormat() != ge::FORMAT_ND,
+            OP_LOGE(context->GetNodeName(), "input %zu only supports ND format", inputIndex), return ge::GRAPH_FAILED);
+    }
+    for (size_t outputIndex = 0; outputIndex < kOutputCount; ++outputIndex) {
+        auto outputDesc = context->GetOutputDesc(outputIndex);
+        OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
+        OP_CHECK_IF(outputDesc->GetOriginFormat() != ge::FORMAT_ND ||
+                        outputDesc->GetFormat().GetStorageFormat() != ge::FORMAT_ND,
+                    OP_LOGE(context->GetNodeName(), "output %zu only supports ND format", outputIndex),
+                    return ge::GRAPH_FAILED);
+    }
+    return ge::GRAPH_SUCCESS;
+}
 
 // C1: shape(var) == shape(accum) == shape(accum_update) == shape(grad).
 static ge::graphStatus CheckShapeC1(gert::TilingContext* context, const gert::StorageShape* varShape)
@@ -220,23 +228,36 @@ static ge::graphStatus CheckScalarsC3(gert::TilingContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
+// C2: all inputs use the same dtype as var. The Kernel specialization is
+// selected from var dtype and therefore cannot safely consume mixed types.
+static ge::graphStatus CheckDataTypeC2(gert::TilingContext* context)
+{
+    auto varDesc = context->GetInputDesc(kIdxVar);
+    OP_CHECK_NULL_WITH_CONTEXT(context, varDesc);
+    const ge::DataType varType = varDesc->GetDataType();
+    constexpr std::array<size_t, 6> INPUTS_TO_MATCH = {kIdxAccum, kIdxAccumUpdate, kIdxLr, kIdxRho, kIdxEps, kIdxGrad};
+    for (const size_t inputIndex : INPUTS_TO_MATCH) {
+        auto inputDesc = context->GetInputDesc(inputIndex);
+        OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+        OP_CHECK_IF(inputDesc->GetDataType() != varType,
+                    OP_LOGE(context->GetNodeName(), "C2 dtype mismatch: input %zu must match var", inputIndex),
+                    return ge::GRAPH_FAILED);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus GetShapeAndDataType(gert::TilingContext* context, int64_t& totalNum, ge::DataType& dataType)
 {
     auto varShape = context->GetInputShape(kIdxVar);
     OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
 
-    // Keep the legacy ApplyAdadeltaD eight-dimensional upper bound; scalar
-    // main tensors are valid in TensorFlow ApplyAdadelta.
-    constexpr size_t kMaxRank = 8;
-    // GE may normalize a rank-0 origin shape to storage shape [1]. The
-    // contract applies to the origin rank, not the normalized storage rank.
-    const size_t varRank = varShape->GetOriginShape().GetDimNum();
-    OP_CHECK_IF(varRank > kMaxRank, OP_LOGE(context->GetNodeName(), "var rank must be in [0, 8], got %zu", varRank),
-                return ge::GRAPH_FAILED);
-
     OP_CHECK_IF(CheckShapeC1(context, varShape) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "CheckShapeC1 failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(CheckScalarsC3(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "CheckScalarsC3 failed"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckDataTypeC2(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "CheckDataTypeC2 failed"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckFormat(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "CheckFormat failed"),
                 return ge::GRAPH_FAILED);
 
     totalNum = varShape->GetStorageShape().GetShapeSize();

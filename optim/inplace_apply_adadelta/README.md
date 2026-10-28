@@ -13,7 +13,7 @@
 
 ## 功能说明
 
-- 算子功能：执行Adadelta优化器的单步参数更新（三显式inplace输出）。根据当前梯度、梯度平方累积accum和更新量平方累积accum_update，计算参数更新量并**原地**更新权重参数var以及accum、accum_update。相对V1（ApplyAdadelta，单输出algorithmic inplace），本算子将输出端口升级为3个（var/accum/accum_update，均与同名输入构成inplace关系），完整反映Adadelta算法的inplace更新语义。
+- 算子功能：执行Adadelta优化器的单步参数更新。根据当前梯度、梯度平方累积状态accum和更新量平方累积状态accum_update计算参数更新量。三个输出var、accum和accum_update分别与同名输入共享Device内存（inplace），实现原地更新。
 
 - 计算公式：
 
@@ -26,7 +26,7 @@
       \end{aligned}
   $$
 
-  其中 `rho` 为衰减系数（取值范围 [0, 1)），`epsilon` 为数值稳定常数（通常取正值），`lr` 为学习率。
+  其中 `rho` 为衰减系数（数值直接参与计算，典型取值为 0.9），`epsilon` 为数值稳定常数（通常取正值），`lr` 为学习率。
 
 ## 参数说明
 
@@ -50,22 +50,22 @@
   <tbody>
     <tr>
       <td>var</td>
-      <td>输入/输出(inplace)</td>
-      <td>待更新的权重参数，对应公式中的var。输出var与输入var构成inplace关系。</td>
+      <td>输入</td>
+      <td>权重参数，对应公式中的var。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>accum</td>
-      <td>输入/输出(inplace)</td>
-      <td>梯度平方累积，对应公式中的accum。shape/dtype必须与var一致；输出accum与输入accum构成inplace关系。</td>
+      <td>输入</td>
+      <td>梯度平方累积状态，对应公式中的accum。shape/dtype必须与var一致。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>accum_update</td>
-      <td>输入/输出(inplace)</td>
-      <td>更新量平方累积，对应公式中的accum_update。shape/dtype 必须与var一致；输出accum_update与输入accum_update构成inplace关系。</td>
+      <td>输入</td>
+      <td>更新量平方累积状态，对应公式中的accum_update。shape/dtype必须与var一致。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
@@ -79,7 +79,7 @@
     <tr>
       <td>rho</td>
       <td>输入</td>
-      <td>衰减系数，对应公式中的rho。Rank 0 scalar Tensor（shape={}），取值范围[0, 1)。</td>
+      <td>衰减系数，对应公式中的rho。Rank 0 scalar Tensor（shape={}），数值直接参与计算。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
@@ -107,21 +107,21 @@
     <tr>
       <td>var(output)</td>
       <td>输出</td>
-      <td>更新后的var Tensor，与输入var构成inplace关系。</td>
+      <td>更新后的权重参数，与输入var共享Device内存（inplace）。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>accum(output)</td>
       <td>输出</td>
-      <td>更新后的accum Tensor，与输入accum构成inplace关系。</td>
+      <td>更新后的梯度平方累积状态，与输入accum共享Device内存（inplace）。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>accum_update (output)</td>
       <td>输出</td>
-      <td>更新后的accum_update Tensor，与输入accum_update构成inplace关系。</td>
+      <td>更新后的更新量平方累积状态，与输入accum_update共享Device内存（inplace）。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
@@ -130,8 +130,9 @@
 
 ## 约束说明
 
-- var/accum/accum_update/grad四者shape必须完全一致；var rank∈[0, 8]（ND 格式）。
-- GE图模式支持静态shape、未知维度（`-1`）和未知Rank（`-2`）构图；运行时四个主张量的具体shape须一致，具体rank为0～8，三个输出采用对应输入的具体shape。
+- var/accum/accum_update/grad四者shape必须完全一致（ND 格式）。
+- 输出var、accum和accum_update分别与同名输入共享Device内存（inplace）。
+- GE图模式支持静态shape、未知维度（`-1`）和未知Rank（`-2`）构图；运行时四个主张量的具体shape须一致，三个输出采用对应输入的具体shape。
 - lr/rho/epsilon必须为Rank 0 scalar Tensor（shape `{}`，物理存储为1个元素），dtype与var一致。
 - 仅支持FLOAT/FLOAT16；FP16中间结果保存为half，accum和var更新中的乘加使用Fma并在加法后舍入为half；开方和倒数开方使用FP32暂存，结果转回half。
 - FP32路径采用DAZ/FTZ数值语义：var、accum、accum_update、grad以及lr、rho、epsilon中的有限次正规数在参与计算前转为同符号的零；各FP32算术步骤产生的有限次正规结果在进入下一步前同样转为同符号的零。判定条件为`|x| < 1.17549435e-38`，恰好等于该阈值的最小正规数保留。NaN和Inf不由DAZ/FTZ处理改写，后续结果按具体浮点运算传播。

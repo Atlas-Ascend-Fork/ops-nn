@@ -127,9 +127,9 @@ TEST_F(InplaceApplyAdadelta, infershape_rank_0_normalized_storage)
     ExpectAllOutputShapes(RunInferShape(inputs), {});
 }
 
-TEST_F(InplaceApplyAdadelta, infershape_rank_9_rejected)
+TEST_F(InplaceApplyAdadelta, infershape_rank_9)
 {
-    EXPECT_EQ(RunInferShape({1, 1, 1, 1, 1, 1, 1, 1, 1}).status, ge::GRAPH_FAILED);
+    ExpectAllOutputShapes(RunInferShape({1, 1, 1, 1, 1, 1, 1, 1, 1}), {1, 1, 1, 1, 1, 1, 1, 1, 1});
 }
 
 TEST_F(InplaceApplyAdadelta, infershape_main_shapes_must_match)

@@ -36,7 +36,7 @@
  * count, dims, buffer threshold and slot count are identical to the single
  * output V1 baseline.
  *
- * Test coverage (20 cases):
+ * Test coverage (27 cases):
  *   T01 FP32 single buffer (small shape)
  *   T02 FP32 double buffer (large shape)
  *   T03 FP16 single buffer (small shape)
@@ -50,17 +50,20 @@
  *   T11 C3 scalar form: lr.shape == {2} -> FAILED
  *   T12 use_locking == true  -> TilingData.useLocking == 1
  *   T13 use_locking == false -> TilingData.useLocking == 0
- *   T14 rank == 9 (out of [0, 8]) -> FAILED
- *   T15 8D shape (rank == 8 boundary) -> SUCCESS
+ *   T14 rank == 9 -> SUCCESS
+ *   T15 8D shape -> SUCCESS
  *   T16 rank == 0 (0-dim scalar var) -> SUCCESS
  *   T17 rank == 0 with storage shape normalized to {1} -> SUCCESS
  *   T18 lr/rho/epsilon rank == 0 with storage shape normalized to {1} -> SUCCESS
  *   T19 C3 scalar form: rho.shape == {1} -> FAILED
  *   T20 C3 scalar form: epsilon.shape == {1, 1} -> FAILED
+ *   T21-T26 C2: each non-var input dtype differs from var -> FAILED
+ *   T27 grad origin format is NCHW (storage normalized to ND) -> FAILED
  */
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <vector>
@@ -112,8 +115,8 @@ struct InplaceApplyAdadeltaUtCompileInfo {};
 // schema and run the registered tiling function. Returns the resulting tiling
 // status, tiling key and (when status == SUCCESS) the parsed TilingData fields.
 //
-// scalar inputs lr/rho/epsilon dtype is fixed to the same as `tensorDtype`
-// (matches README: "lr/rho/epsilon dtype must match var").
+// All input dtypes default to tensorDtype. inputDtypes supports C2 negative
+// tests where exactly one non-var input differs from var.
 struct InplaceApplyAdadeltaTilingResult {
     ge::graphStatus status;
     uint64_t tilingKey;
@@ -126,7 +129,9 @@ static InplaceApplyAdadeltaTilingResult DoInplaceApplyAdadeltaTilingCase(
     const std::initializer_list<int64_t>& accumUpdateShape, const std::initializer_list<int64_t>& lrShape,
     const std::initializer_list<int64_t>& rhoShape, const std::initializer_list<int64_t>& epsilonShape,
     const std::initializer_list<int64_t>& gradShape, ge::DataType tensorDtype, ge::Format inputFormat, bool useLocking,
-    bool normalizeVarRankZeroStorage = false)
+    bool normalizeVarRankZeroStorage = false, const std::array<ge::DataType, 7>* inputDtypes = nullptr,
+    const std::array<ge::Format, 7>* inputOriginFormats = nullptr,
+    const std::array<ge::Format, 7>* inputStorageFormats = nullptr)
 {
     InplaceApplyAdadeltaTilingResult result{ge::GRAPH_FAILED, 0, 0, 0};
 
@@ -181,6 +186,13 @@ static InplaceApplyAdadeltaTilingResult DoInplaceApplyAdadeltaTilingCase(
 
     InplaceApplyAdadeltaUtCompileInfo compileInfo;
 
+    auto inputOriginFormat = [&](size_t index) {
+        return inputOriginFormats == nullptr ? inputFormat : (*inputOriginFormats)[index];
+    };
+    auto inputStorageFormat = [&](size_t index) {
+        return inputStorageFormats == nullptr ? inputFormat : (*inputStorageFormats)[index];
+    };
+
     auto holder = gert::TilingContextFaker()
                       .SetOpType(opType)
                       .NodeIoNum(7, 3)
@@ -190,13 +202,20 @@ static InplaceApplyAdadeltaTilingResult DoInplaceApplyAdadeltaTilingCase(
                       .OutputShapes({&varStorage, &accumStorage, &accumUpdateStorage})
                       .CompileInfo(&compileInfo)
                       .PlatformInfo(reinterpret_cast<char*>(&platFormInfo))
-                      .NodeInputTd(0, tensorDtype, inputFormat, inputFormat)  // var
-                      .NodeInputTd(1, tensorDtype, inputFormat, inputFormat)  // accum
-                      .NodeInputTd(2, tensorDtype, inputFormat, inputFormat)  // accum_update
-                      .NodeInputTd(3, tensorDtype, inputFormat, inputFormat)  // lr
-                      .NodeInputTd(4, tensorDtype, inputFormat, inputFormat)  // rho
-                      .NodeInputTd(5, tensorDtype, inputFormat, inputFormat)  // epsilon
-                      .NodeInputTd(6, tensorDtype, inputFormat, inputFormat)  // grad
+                      .NodeInputTd(0, inputDtypes == nullptr ? tensorDtype : (*inputDtypes)[0], inputOriginFormat(0),
+                                   inputStorageFormat(0))
+                      .NodeInputTd(1, inputDtypes == nullptr ? tensorDtype : (*inputDtypes)[1], inputOriginFormat(1),
+                                   inputStorageFormat(1))
+                      .NodeInputTd(2, inputDtypes == nullptr ? tensorDtype : (*inputDtypes)[2], inputOriginFormat(2),
+                                   inputStorageFormat(2))
+                      .NodeInputTd(3, inputDtypes == nullptr ? tensorDtype : (*inputDtypes)[3], inputOriginFormat(3),
+                                   inputStorageFormat(3))
+                      .NodeInputTd(4, inputDtypes == nullptr ? tensorDtype : (*inputDtypes)[4], inputOriginFormat(4),
+                                   inputStorageFormat(4))
+                      .NodeInputTd(5, inputDtypes == nullptr ? tensorDtype : (*inputDtypes)[5], inputOriginFormat(5),
+                                   inputStorageFormat(5))
+                      .NodeInputTd(6, inputDtypes == nullptr ? tensorDtype : (*inputDtypes)[6], inputOriginFormat(6),
+                                   inputStorageFormat(6))
                       .NodeOutputTd(0, tensorDtype, inputFormat, inputFormat) // var
                       .NodeOutputTd(1, tensorDtype, inputFormat, inputFormat) // accum
                       .NodeOutputTd(2, tensorDtype, inputFormat, inputFormat) // accum_update
@@ -235,6 +254,17 @@ static InplaceApplyAdadeltaTilingResult DoInplaceApplyAdadeltaValidCase(
 {
     return DoInplaceApplyAdadeltaTilingCase(tensorShape, tensorShape, tensorShape, {}, {}, {}, tensorShape, tensorDtype,
                                             ge::FORMAT_ND, useLocking);
+}
+
+static InplaceApplyAdadeltaTilingResult DoInplaceApplyAdadeltaDtypeMismatchCase(size_t mismatchIndex)
+{
+    std::array<ge::DataType, 7> inputDtypes = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                                               ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    inputDtypes[mismatchIndex] = ge::DT_FLOAT16;
+    return DoInplaceApplyAdadeltaTilingCase(
+        /*var=*/{16}, /*accum=*/{16}, /*accum_update=*/{16},
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{16}, ge::DT_FLOAT, ge::FORMAT_ND,
+        /*useLocking=*/false, /*normalizeVarRankZeroStorage=*/false, &inputDtypes);
 }
 
 // =====================================================================
@@ -380,9 +410,9 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_use_locking_false)
 }
 
 // =====================================================================
-// T14 var rank == 9 (out of valid range [0, 8]) -> FAILED
+// T14 var rank == 9 -> SUCCESS
 // =====================================================================
-TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_9_invalid)
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_9)
 {
     auto result = DoInplaceApplyAdadeltaTilingCase(
         /*var=*/{2, 1, 1, 1, 1, 1, 1, 1, 2},
@@ -390,13 +420,13 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_9_invalid)
         /*accum_update=*/{2, 1, 1, 1, 1, 1, 1, 1, 2},
         /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{},
         /*grad=*/{2, 1, 1, 1, 1, 1, 1, 1, 2}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
-    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_EQ(result.status, ge::GRAPH_SUCCESS);
 }
 
 // =====================================================================
-// T15 8D shape (rank == 8 boundary) -> SUCCESS
+// T15 8D shape -> SUCCESS
 // =====================================================================
-TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_8_boundary)
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_rank_8)
 {
     auto result = DoInplaceApplyAdadeltaValidCase({2, 2, 2, 2, 2, 2, 2, 2}, ge::DT_FLOAT, /*useLocking=*/false);
     ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
@@ -466,5 +496,55 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_epsilon_rank_2_sha
         /*var=*/{2048}, /*accum=*/{2048}, /*accum_update=*/{2048},
         /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{1, 1}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND,
         /*useLocking=*/false);
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+}
+
+// =====================================================================
+// T21-T26 C2: every input must have the same dtype as var.
+// =====================================================================
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c2_accum_dtype_mismatch)
+{
+    EXPECT_EQ(DoInplaceApplyAdadeltaDtypeMismatchCase(1).status, ge::GRAPH_FAILED);
+}
+
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c2_accum_update_dtype_mismatch)
+{
+    EXPECT_EQ(DoInplaceApplyAdadeltaDtypeMismatchCase(2).status, ge::GRAPH_FAILED);
+}
+
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c2_lr_dtype_mismatch)
+{
+    EXPECT_EQ(DoInplaceApplyAdadeltaDtypeMismatchCase(3).status, ge::GRAPH_FAILED);
+}
+
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c2_rho_dtype_mismatch)
+{
+    EXPECT_EQ(DoInplaceApplyAdadeltaDtypeMismatchCase(4).status, ge::GRAPH_FAILED);
+}
+
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c2_epsilon_dtype_mismatch)
+{
+    EXPECT_EQ(DoInplaceApplyAdadeltaDtypeMismatchCase(5).status, ge::GRAPH_FAILED);
+}
+
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c2_grad_dtype_mismatch)
+{
+    EXPECT_EQ(DoInplaceApplyAdadeltaDtypeMismatchCase(6).status, ge::GRAPH_FAILED);
+}
+
+// =====================================================================
+// T27 only ND is supported; reject NCHW even if GE normalized storage to ND.
+// =====================================================================
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_grad_origin_format_nchw)
+{
+    std::array<ge::Format, 7> originFormats = {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,  ge::FORMAT_ND,
+                                               ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_NCHW};
+    std::array<ge::Format, 7> storageFormats = {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                                                ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+    auto result = DoInplaceApplyAdadeltaTilingCase(
+        /*var=*/{1, 1, 1, 4}, /*accum=*/{1, 1, 1, 4}, /*accum_update=*/{1, 1, 1, 4},
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{1, 1, 1, 4}, ge::DT_FLOAT, ge::FORMAT_ND,
+        /*useLocking=*/false, /*normalizeVarRankZeroStorage=*/false, /*inputDtypes=*/nullptr, &originFormats,
+        &storageFormats);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }

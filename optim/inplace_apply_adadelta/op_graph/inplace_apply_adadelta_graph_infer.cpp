@@ -18,6 +18,8 @@
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 
+#include <array>
+
 using namespace ge;
 
 namespace ops {
@@ -25,15 +27,29 @@ namespace ops {
 static constexpr int64_t INPUT_VAR_INDEX = 0;
 static constexpr int64_t INPUT_ACCUM_INDEX = 1;
 static constexpr int64_t INPUT_ACCUM_UPDATE_INDEX = 2;
+static constexpr int64_t INPUT_LR_INDEX = 3;
+static constexpr int64_t INPUT_RHO_INDEX = 4;
+static constexpr int64_t INPUT_EPSILON_INDEX = 5;
+static constexpr int64_t INPUT_GRAD_INDEX = 6;
 static constexpr int64_t OUTPUT_VAR_INDEX = 0;
 static constexpr int64_t OUTPUT_ACCUM_INDEX = 1;
 static constexpr int64_t OUTPUT_ACCUM_UPDATE_INDEX = 2;
 
 static ge::graphStatus InferDataType4InplaceApplyAdadelta(gert::InferDataTypeContext* context)
 {
-    context->SetOutputDataType(OUTPUT_VAR_INDEX, context->GetInputDataType(INPUT_VAR_INDEX));
-    context->SetOutputDataType(OUTPUT_ACCUM_INDEX, context->GetInputDataType(INPUT_ACCUM_INDEX));
-    context->SetOutputDataType(OUTPUT_ACCUM_UPDATE_INDEX, context->GetInputDataType(INPUT_ACCUM_UPDATE_INDEX));
+    const ge::DataType varType = context->GetInputDataType(INPUT_VAR_INDEX);
+    constexpr std::array<int64_t, 6> INPUTS_TO_MATCH = {INPUT_ACCUM_INDEX, INPUT_ACCUM_UPDATE_INDEX, INPUT_LR_INDEX,
+                                                        INPUT_RHO_INDEX,   INPUT_EPSILON_INDEX,      INPUT_GRAD_INDEX};
+    for (const int64_t inputIndex : INPUTS_TO_MATCH) {
+        if (context->GetInputDataType(inputIndex) != varType) {
+            OP_LOGE(context->GetNodeName(), "all inputs must have the same dtype as var");
+            return ge::GRAPH_FAILED;
+        }
+    }
+
+    context->SetOutputDataType(OUTPUT_VAR_INDEX, varType);
+    context->SetOutputDataType(OUTPUT_ACCUM_INDEX, varType);
+    context->SetOutputDataType(OUTPUT_ACCUM_UPDATE_INDEX, varType);
     return ge::GRAPH_SUCCESS;
 }
 

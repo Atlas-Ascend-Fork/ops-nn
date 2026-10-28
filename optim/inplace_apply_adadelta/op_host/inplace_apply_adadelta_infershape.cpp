@@ -67,14 +67,6 @@ static ge::graphStatus InferShape4InplaceApplyAdadelta(gert::InferShapeContext* 
         return ge::GRAPH_FAILED;
     }
 
-    // The legacy ApplyAdadeltaD verifier accepts at most eight dimensions.
-    constexpr size_t MAX_VAR_RANK = 8;
-    const size_t varRank = var->GetOriginShape().GetDimNum();
-    if (varRank > MAX_VAR_RANK) {
-        OP_LOGE(context->GetNodeName(), "var rank must be in [0, 8], got %zu", varRank);
-        return ge::GRAPH_FAILED;
-    }
-
     constexpr std::array<size_t, 3> MAIN_INPUTS = {INPUT_ACCUM_INDEX, INPUT_ACCUM_UPDATE_INDEX, INPUT_GRAD_INDEX};
     constexpr std::array<const char*, 3> MAIN_NAMES = {"accum", "accum_update", "grad"};
     for (size_t i = 0; i < MAIN_INPUTS.size(); ++i) {

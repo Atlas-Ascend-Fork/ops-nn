@@ -40,19 +40,10 @@
  *   Step3: var_new          = var - lr * update
  *   Step4: accum_update_new = rho * accum_update + (1-rho) * update^2
  *
- * FTZ (flush-to-zero) 对齐参考 CPU 实现：
- *   参考 CPU 环境同时启用 DAZ（输入次正规视为带符号 0）和
- *   FTZ（每条 fp32 算术指令产生的次正规结果立即变为带符号 0）。NPU 默认按
- *   IEEE 保留次正规数，因此仅在最终输出处刷零并不等价。这里在输入进入 fp32
- *   计算域后以及每个算术步骤后执行：
- *       |x| < FLT_MIN  ->  copysign(0, x)
- *   从而避免次正规中间值参与后续的乘、除、开方和 Inf/NaN 传播。
- *   FTZ 保证 NaN / Inf 不被误刷：使用 CMPMODE::LT 检测次正规，NaN/Inf 与 FLT_MIN
- *   比较结果均为 false（mask 位=0），走「保留」分支，原值（含 NaN/Inf 位模式）透传。
- *   Step2 保持 sqrt * reciprocal_sqrt * grad 的运算顺序，避免把整个
- *   表达式改写为一次除法而改变 FLT_MAX 附近 update^2 的溢出边界。
- *   FP32 reciprocal_sqrt 使用 0-ULP sqrt + reciprocal，避免近似初值的
- *   单边误差在极值学习率下被放大。参考 CPU 的 FP16 向量主体
+ * FP32 Step1/3/4 使用 FMA 对齐 GPU 表达式的单次舍入；Step2 保持
+ * TensorFlow CUDA 路径的 sqrt * rsqrt * grad 求值顺序。Rsqrt 使用
+ * AscendC 提供的 0-ULP、非 FTZ 配置，避免额外的手工数值补偿或按值分支。
+ * 参考实现的 FP16 向量主体
  *   使用 8-element packet reciprocal_sqrt；不足一个 packet 的全局尾部
  *   则按标量顺序先将 sqrt 舍入到 half，再执行 reciprocal。Kernel 对这两种
  *   路径分别复现，避免尾元素跨越 half 舍入格点。
@@ -69,7 +60,7 @@ namespace NsInplaceApplyAdadelta {
 
 using namespace AscendC;
 
-__aicore__ inline bool IsRhoInValidRange(float rho) { return rho >= 0.0f && rho < 1.0f; }
+constexpr RsqrtConfig FP32_RSQRT_CONFIG = {RsqrtAlgo::PRECISION_0ULP_FTZ_FALSE};
 
 template <typename T, int BUFFER_MODE>
 class InplaceApplyAdadelta {
@@ -79,15 +70,6 @@ class InplaceApplyAdadelta {
     static constexpr bool IS_FP16 = std::is_same_v<T, half>;
     static constexpr int64_t UB_BLOCK_BYTES = 32;
     static constexpr int64_t FP16_UB_BLOCK_ELEMENTS = UB_BLOCK_BYTES / sizeof(half);
-    // FTZ threshold: smallest positive fp32 NORMAL number (FLT_MIN). Any finite
-    // value with |x| < FLT_MIN is a subnormal and is flushed to signed zero.
-    static constexpr float FTZ_FLT_MIN = 1.17549435e-38f;
-    // CompareScalar requires the element count to occupy a 256B-aligned span.
-    // For fp32 that is 64 elements (256 / 4). We round the per-loop element
-    // count up to this granularity before running the FTZ vector ops; the
-    // padded lanes stay within the UB buffer (ubFactor is aligned to 64 in
-    // Tiling) and are never copied out to GM.
-    static constexpr int32_t FTZ_ALIGN_ELEMS = 64;
     static constexpr int32_t SCALAR_SLOT_BYTES = 32;
     static constexpr int32_t SCALAR_COUNT = 3;
     static constexpr int32_t SCALAR_ELEMENT_COUNT = 1;
@@ -117,19 +99,15 @@ public:
     __aicore__ inline void Process();
 
 private:
-    __aicore__ inline float FlushScalar(float x);
     __aicore__ inline void LoadScalarsFromGm(GM_ADDR lrAddr, GM_ADDR rhoAddr, GM_ADDR epsAddr);
     __aicore__ inline void CopyIn(int64_t progress, int64_t current_num);
     __aicore__ inline void Compute(int64_t current_num, int64_t global_offset);
     __aicore__ inline void CopyOut(int64_t progress, int64_t current_num);
-    // In-place DAZ/FTZ on a fp32 tensor. A dedicated scratch buffer is used so
-    // this helper is safe even when x is one of the arithmetic temporaries.
-    __aicore__ inline void ApplyFtz(const LocalTensor<float>& x, int64_t current_num);
     // Reciprocal square root aligned with the reference CPU evaluation:
     // native approximate seed followed by one non-fused Newton step.
     __aicore__ inline void RefinedRsqrt(const LocalTensor<float>& dst, const LocalTensor<float>& src,
                                         int64_t current_num);
-    // 0-ULP primitives used by the FP32 path and the FP16 scalar-tail path.
+    // 0-ULP primitives used by the FP16 scalar-tail path.
     // The FP16 scalar-tail evaluation order is half(1 / half(sqrt(x))), so its
     // sqrt and reciprocal are separated by an explicit fp32 -> half -> fp32
     // rounding boundary at the call site.
@@ -170,12 +148,6 @@ private:
     TBuf<QuePosition::VECCALC> fp32_accum_buf;
     TBuf<QuePosition::VECCALC> fp32_accum_update_buf;
     TBuf<QuePosition::VECCALC> fp32_grad_buf;
-
-    // FTZ mask buffer: holds the uint8 bit-mask produced by CompareScalar
-    // (1 bit per fp32 element, so ubFactor/8 bytes, rounded to a UB block).
-    TBuf<QuePosition::VECCALC> ftz_mask_buf;
-    // Dedicated fp32 scratch for Abs and signed-zero construction in ApplyFtz.
-    TBuf<QuePosition::VECCALC> ftz_value_buf;
     // Three independent 32B slots for scalar GM -> UB reads.
     TBuf<QuePosition::VECCALC> scalar_buf;
 
@@ -193,18 +165,6 @@ private:
     float one_minus_rho_ = FP32_ONE;
     float eps_ = DEFAULT_EPSILON;
 };
-
-// Scalar counterpart of ApplyFtz. The multiplication by +0 preserves the sign
-// of zero/subnormal values, matching x86 DAZ/FTZ signed-zero semantics. NaN and
-// Inf fail the ordered range test and pass through unchanged.
-template <typename T, int BUFFER_MODE>
-__aicore__ inline float InplaceApplyAdadelta<T, BUFFER_MODE>::FlushScalar(float x)
-{
-    if (x > -FTZ_FLT_MIN && x < FTZ_FLT_MIN) {
-        return x * FP32_ZERO;
-    }
-    return x;
-}
 
 // Read the three rank-0 scalar tensors (one physical element each) through UB. GlobalTensor::GetValue
 // is not permitted in production kernels; a dedicated 32B slot per scalar
@@ -238,10 +198,10 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::LoadScalarsFromGm(G
     SetFlag<HardEvent::MTE2_S>(eventId);
     WaitFlag<HardEvent::MTE2_S>(eventId);
 
-    lr_ = FlushScalar(static_cast<float>(lrLocal.GetValue(SCALAR_VALUE_INDEX)));
-    rho_ = FlushScalar(static_cast<float>(rhoLocal.GetValue(SCALAR_VALUE_INDEX)));
-    eps_ = FlushScalar(static_cast<float>(epsilonLocal.GetValue(SCALAR_VALUE_INDEX)));
-    one_minus_rho_ = FlushScalar(FP32_ONE - rho_);
+    lr_ = static_cast<float>(lrLocal.GetValue(SCALAR_VALUE_INDEX));
+    rho_ = static_cast<float>(rhoLocal.GetValue(SCALAR_VALUE_INDEX));
+    eps_ = static_cast<float>(epsilonLocal.GetValue(SCALAR_VALUE_INDEX));
+    one_minus_rho_ = FP32_ONE - rho_;
 }
 
 template <typename T, int BUFFER_MODE>
@@ -296,18 +256,12 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::Init(GM_ADDR var, G
         pipe.InitBuffer(tmp_buf2, ub_length_ * sizeof(float));
     }
 
-    // FTZ mask scratch: 1 bit per fp32 element. ub_length_ is aligned to 64 in
-    // Tiling, so ub_length_/8 bytes is a whole number of 32B blocks. Allocate
-    // ub_length_ bytes as a safe over-estimate (still tiny vs the fp32 buffers).
-    pipe.InitBuffer(ftz_mask_buf, ub_length_ * sizeof(uint8_t));
-    pipe.InitBuffer(ftz_value_buf, ub_length_ * sizeof(float));
     pipe.InitBuffer(scalar_buf, SCALAR_COUNT * SCALAR_SLOT_BYTES);
 
     // Read lr/rho/epsilon from their rank-0 GM Tensors into fp32 scalars.
     // Every core executes this (not just block 0) so each core has its own
     // local copies of the three values for the per-core Process() loop.
     LoadScalarsFromGm(lrAddr, rhoAddr, epsilonAddr);
-    ASSERT_MSG(IsRhoInValidRange(rho_), "rho must be in [0, 1).\n");
 }
 
 template <typename T, int BUFFER_MODE>
@@ -334,45 +288,6 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::CopyIn(int64_t prog
     in_que_accum.EnQue(a);
     in_que_accum_update.EnQue(au);
     in_que_grad.EnQue(g);
-}
-
-// In-place DAZ/FTZ on a fp32 tensor `x`, matching the reference CPU behavior.
-// For each element: if it is zero or a finite subnormal (|x| < FLT_MIN), set
-// it to a zero with the same sign; otherwise keep the original value unchanged.
-//
-// Algorithm (NaN/Inf-safe):
-//   1. scratch = |x|                                  (Abs)
-//   2. mask   = (|x| < FLT_MIN) ? 1 : 0  per element  (CompareScalar, CMPMODE::LT)
-//        - subnormal  -> |x| < FLT_MIN == true  -> bit 1
-//        - normal     -> false                  -> bit 0
-//        - NaN / Inf  -> comparison is false     -> bit 0   (NOT flushed)
-//   3. scratch = x * +0.0                             (signed-zero construction)
-//   4. x = Select(mask ? scratch : x)                 (Select mode2, tensor-tensor)
-//        bit 1 -> src0 (signed zero), bit 0 -> src1 (original x)
-//
-// CompareScalar requires the element count to span a 256B-aligned region, so
-// we round up to FTZ_ALIGN_ELEMS (64 fp32). ubFactor is aligned to 64 in
-// Tiling, so the padded lanes are inside the UB buffers and never reach GM.
-template <typename T, int BUFFER_MODE>
-__aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::ApplyFtz(const LocalTensor<float>& x, int64_t current_num)
-{
-    int64_t aligned_num = ((current_num + FTZ_ALIGN_ELEMS - 1) / FTZ_ALIGN_ELEMS) * FTZ_ALIGN_ELEMS;
-    LocalTensor<uint8_t> mask = ftz_mask_buf.Get<uint8_t>();
-    LocalTensor<float> scratch = ftz_value_buf.Get<float>();
-
-    // ApplyFtz is called immediately after a vector producer; the barriers
-    // make every producer -> compare -> select dependency explicit.
-    PipeBarrier<PIPE_V>();
-    Abs(scratch, x, static_cast<int32_t>(aligned_num));
-    PipeBarrier<PIPE_V>();
-    CompareScalar(mask, scratch, FTZ_FLT_MIN, CMPMODE::LT, static_cast<uint32_t>(aligned_num));
-    PipeBarrier<PIPE_V>();
-    Muls(scratch, x, FP32_ZERO, static_cast<int32_t>(aligned_num));
-    PipeBarrier<PIPE_V>();
-    // Select mode2 (VSEL_TENSOR_TENSOR_MODE): bit 1 -> src0 (zeros) for
-    // subnormals, bit 0 -> src1 (original x) for normal / NaN / Inf.
-    Select(x, mask, scratch, x, SELMODE::VSEL_TENSOR_TENSOR_MODE, static_cast<uint32_t>(aligned_num));
-    PipeBarrier<PIPE_V>();
 }
 
 template <typename T, int BUFFER_MODE>
@@ -437,7 +352,7 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::RefinedRsqrt(const 
         }
     }
 #else
-    LocalTensor<float> one = ftz_value_buf.Get<float>();
+    LocalTensor<float> one = fp32_var_buf.Get<float>();
     Sqrt(dst, src, static_cast<int32_t>(current_num));
     PipeBarrier<PIPE_V>();
     Duplicate(one, FP32_ONE, static_cast<int32_t>(current_num));
@@ -511,7 +426,7 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::ExactReciprocal(con
         }
     }
 #else
-    LocalTensor<float> one = ftz_value_buf.Get<float>();
+    LocalTensor<float> one = fp32_var_buf.Get<float>();
     PipeBarrier<PIPE_V>();
     Duplicate(one, FP32_ONE, static_cast<int32_t>(current_num));
     PipeBarrier<PIPE_V>();
@@ -650,67 +565,46 @@ __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::ComputeStepsFp16(
     // Step4: accum_update_new = au_old * rho + update^2 * (1 - rho)
     Mul(tmp2H, tmp1H, tmp1H, current_num);
     Muls(tmp2H, tmp2H, oneMinusRhoH, current_num);
-    Muls(au_out, au, rhoH, current_num);
-    Add(au_out, au_out, tmp2H, current_num);
+    Duplicate(tmp1H, rhoH, current_num);
+    Fma(au_out, au, tmp1H, tmp2H, current_num);
 }
 
-// FP32 path: T == float; operate directly on input/output tensors.
+// FP32 path: T == float; keep TensorFlow CUDA's elementwise expression
+// structure and use the public high-precision Rsqrt mode for the denominator.
 template <typename T, int BUFFER_MODE>
 __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::ComputeStepsFp32(
     LocalTensor<T>& v, LocalTensor<T>& a, LocalTensor<T>& au, LocalTensor<T>& g, LocalTensor<T>& v_out,
     LocalTensor<T>& a_out, LocalTensor<T>& au_out, LocalTensor<float>& tmp1, LocalTensor<float>& tmp2,
     int64_t current_num)
 {
-    // DAZ on the four tensor operands before the first arithmetic operation.
-    ApplyFtz(v, current_num);
-    ApplyFtz(a, current_num);
-    ApplyFtz(au, current_num);
-    ApplyFtz(g, current_num);
-
-    // Step1: accum_new = rho * accum + (1-rho) * grad^2
+    // TensorFlow:
+    // accum = accum * rho + grad.square() * (1 - rho)
     Mul(tmp1, g, g, current_num);
-    ApplyFtz(tmp1, current_num);
     Muls(tmp1, tmp1, one_minus_rho_, current_num);
-    ApplyFtz(tmp1, current_num);
-    Muls(a_out, a, rho_, current_num);
-    ApplyFtz(a_out, current_num);
-    Add(a_out, a_out, tmp1, current_num);
-    ApplyFtz(a_out, current_num);
+    Duplicate(tmp2, rho_, current_num);
+    Fma(a_out, a, tmp2, tmp1, current_num);
 
-    // Step2: keep the sqrt * reciprocal-sqrt * grad evaluation order.
+    // TensorFlow CUDA/Eigen:
+    // update = sqrt(accum_update + epsilon) *
+    //          rsqrt(accum + epsilon) * grad
     Adds(tmp1, au, eps_, current_num);
-    ApplyFtz(tmp1, current_num);
     Sqrt(tmp1, tmp1, current_num);
-    ApplyFtz(tmp1, current_num);
     Adds(tmp2, a_out, eps_, current_num);
-    ApplyFtz(tmp2, current_num);
-    ExactSqrt(tmp2, tmp2, current_num);
-    PipeBarrier<PIPE_V>();
-    ExactReciprocal(tmp2, tmp2, current_num);
-    ApplyFtz(tmp2, current_num);
+    Rsqrt<float, FP32_RSQRT_CONFIG>(tmp2, tmp2, current_num);
     Mul(tmp1, tmp1, tmp2, current_num);
-    ApplyFtz(tmp1, current_num);
     Mul(tmp1, tmp1, g, current_num);
-    ApplyFtz(tmp1, current_num);
 
-    // Step3: var_new = var - lr * update. Keep the multiply and subtraction
-    // fused, matching the TensorFlow GPU expression and avoiding a premature
-    // fp32 overflow before the subtraction.
+    // TensorFlow: var -= update * lr
     Duplicate(tmp2, -lr_, current_num);
     Fma(v_out, tmp1, tmp2, v, current_num);
-    ApplyFtz(v_out, current_num);
 
-    // Step4: accum_update_new = rho * accum_update + (1-rho) * update^2
+    // TensorFlow:
+    // accum_update = accum_update * rho + update.square() * (1 - rho)
     Mul(tmp2, tmp1, tmp1, current_num);
-    ApplyFtz(tmp2, current_num);
     Muls(tmp2, tmp2, one_minus_rho_, current_num);
-    ApplyFtz(tmp2, current_num);
-    Muls(au_out, au, rho_, current_num);
-    ApplyFtz(au_out, current_num);
-    Add(au_out, au_out, tmp2, current_num);
-    ApplyFtz(au_out, current_num);
+    Duplicate(tmp1, rho_, current_num);
+    Fma(au_out, au, tmp1, tmp2, current_num);
 }
-
 template <typename T, int BUFFER_MODE>
 __aicore__ inline void InplaceApplyAdadelta<T, BUFFER_MODE>::CopyOut(int64_t progress, int64_t current_num)
 {
