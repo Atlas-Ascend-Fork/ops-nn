@@ -118,7 +118,7 @@ aclnnStatus aclnnNonzero(
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：数据类型不支持BFLOAT16、UINT16、UINT32、UINT64。
   <!-- end id7 -->
   <!-- npu="A3,910b" id8 -->
-  - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：数据类型不支持UINT16、UINT32、UINT64。
+  - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：数据类型不支持UINT16、UINT32、UINT64。当输入为BOOL、FLOAT16、BFLOAT16、FLOAT、INT8、UINT8等6种类型时，支持按实际非零元素个数N传入`out`的实际大小，对应shape为`[N, D]`，无需按最大输出size申请。
   <!-- end id8 -->
   <!-- npu="A3,910b,910,310p" id9 -->
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：由于硬件资源限制，输出索引要求在int32精度范围内，所以输入的某一维度不能超过int32的表示范围。
