@@ -33,18 +33,48 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientInferShape(gert:
     const gert::Shape* gradShape = context->GetInputShape(INPUT_IDX_GRADIENTS);
     OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
     const gert::Shape* xShape = context->GetInputShape(INPUT_IDX_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     const gert::Shape* minShape = context->GetInputShape(INPUT_IDX_MIN);
-    OP_CHECK_NULL_WITH_CONTEXT(context, minShape);
+    OP_CHECK_IF(
+        minShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "min",
+                                                 "the input shape of required input min is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     const gert::Shape* maxShape = context->GetInputShape(INPUT_IDX_MAX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, maxShape);
+    OP_CHECK_IF(
+        maxShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "max",
+                                                 "the input shape of required input max is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* bpxShape = context->GetOutputShape(OUTPUT_IDX_BPX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, bpxShape);
+    OP_CHECK_IF(bpxShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "backprops_wrt_x",
+                    "the output shape of required output backprops_wrt_x is missing in the infer-shape context; check "
+                    "that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     gert::Shape* bpMinShape = context->GetOutputShape(OUTPUT_IDX_BPMIN);
-    OP_CHECK_NULL_WITH_CONTEXT(context, bpMinShape);
+    OP_CHECK_IF(bpMinShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "backprops_wrt_min",
+                    "the output shape of required output backprops_wrt_min is missing in the infer-shape context; "
+                    "check that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     gert::Shape* bpMaxShape = context->GetOutputShape(OUTPUT_IDX_BPMAX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, bpMaxShape);
+    OP_CHECK_IF(bpMaxShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "backprops_wrt_max",
+                    "the output shape of required output backprops_wrt_max is missing in the infer-shape context; "
+                    "check that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
 
     // Cross-input constraints (README): x rank in [1, 8]; gradients shape == x shape;
     // min/max are 1-D with length == x last dim C and equal lengths. The kernel indexes

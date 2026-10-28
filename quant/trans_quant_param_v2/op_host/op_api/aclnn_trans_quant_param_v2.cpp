@@ -22,9 +22,25 @@
 #include "aclnn_trans_quant_param_v3.h"
 #include "aclnn_trans_quant_param_v2.h"
 #include "aclnnInner_trans_quant_param_v2.h"
+#include "log/log.h"
 
 using namespace op;
 
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,8 +52,8 @@ static const std::initializer_list<op::DataType> OUT_TYPE_SUPPORT_LIST = {op::Da
 namespace {
 static inline bool CheckNotNull(const aclTensor* scale, const aclTensor* out)
 {
-    OP_CHECK_NULL(scale, return false);
-    OP_CHECK_NULL(out, return false);
+    OP_CHECK(scale != nullptr, ReportNullPointerError(__func__, "scale"), return false);
+    OP_CHECK(out != nullptr, ReportNullPointerError(__func__, "out"), return false);
     return true;
 }
 
@@ -67,16 +83,18 @@ static inline bool CheckShape(const aclTensor* scale, const aclTensor* offset, i
         // 2是scale的shape维度，此时shape为(g, n), (1, n), g为gmm的分组数，n为matmul的右矩阵的n
         if (!(isScaleVaild || (scale->GetViewShape().GetDimNum() == 2 && scale->GetViewShape().GetDim(0) > 0 &&
                                scale->GetViewShape().GetDim(1) > 0))) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Dim value of scale should be greater than 0, but current is %s",
-                    op::ToString(scale->GetViewShape()).GetString());
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnTransQuantParamV2", "scale",
+                                                  op::ToString(scale->GetViewShape()).GetString(),
+                                                  "dim values of scale should be greater than 0");
             return false;
         }
     } else {
         // 2是scale的shape维度，此时shape为(1, n)，n为matmul的右矩阵的n
         if (!(isScaleVaild || (scale->GetViewShape().GetDimNum() == 2 && scale->GetViewShape().GetDim(0) == 1 &&
                                scale->GetViewShape().GetDim(1) > 0))) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "shape of scale only support (n, ) and (1, n), but current is %s",
-                    op::ToString(scale->GetViewShape()).GetString());
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnTransQuantParamV2", "scale",
+                                                  op::ToString(scale->GetViewShape()).GetString(),
+                                                  "shape of scale only supports (n,) and (1,n)");
             return false;
         }
     }
@@ -85,23 +103,25 @@ static inline bool CheckShape(const aclTensor* scale, const aclTensor* offset, i
                              (offset->GetViewShape().GetDimNum() == 2 && offset->GetViewShape().GetDim(0) == 1 &&
                               offset->GetViewShape().GetDim(1) > 0);
         if (isOffsetVaild == false) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "shape of offset only support (n, ) and (1, n), but current is %s",
-                    op::ToString(offset->GetViewShape()).GetString());
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnTransQuantParamV2", "offset",
+                                                  op::ToString(offset->GetViewShape()).GetString(),
+                                                  "shape of offset only supports (n,) and (1,n)");
             return false;
         }
         if (offset->GetViewShape().GetDimNum() == 1) {
             int64_t scaleDimValue = scale->GetViewShape().GetDim(0);
             int64_t offsetDimValue = offset->GetViewShape().GetDim(0);
             if (scaleDimValue > 1 && offsetDimValue > 1 && scaleDimValue != offsetDimValue) {
-                OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                        "scale and offset should be same when both greater than 1, but scale is %ld, offset is %ld",
-                        scaleDimValue, offsetDimValue);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    "aclnnTransQuantParamV2", "scale", std::to_string(scaleDimValue).c_str(),
+                    "scale and offset should be the same when both are greater than 1");
                 return false;
             }
         }
     }
     if (roundMode != 0 && roundMode != 1) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "roundMode only support 0 and 1, but current is %ld", roundMode);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnTransQuantParamV2", "roundMode", std::to_string(roundMode).c_str(),
+                                              "roundMode only supports 0 and 1");
         return false;
     }
     return true;

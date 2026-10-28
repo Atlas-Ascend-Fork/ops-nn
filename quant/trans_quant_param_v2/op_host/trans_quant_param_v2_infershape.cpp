@@ -25,6 +25,14 @@ static constexpr int GRID_SAMPLER2D_GRAD_SHAPE_LIMIT = 4;
 using namespace ge;
 namespace ops {
 
+// InferShape阶段框架契约类失败统一上报EZ1014, 不再生成EZ9999内部码
+static void ReportInferShapeStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "TransQuantParamV2", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
+
 static std::set<std::string> QbmmDavidSupportSoc = {"Ascend950", "Ascend350", "Ascend960DT"};
 
 static bool IsDavidSupported()
@@ -45,17 +53,29 @@ static bool IsDavidSupported()
 static ge::graphStatus InferShape4TransQuantParamV2(gert::InferShapeContext* context)
 {
     // infer shape
-    OP_CHECK_IF(context == nullptr, OP_LOGE("TransQuantParamV2", "InferShapeContext is nullptr"),
+    OP_CHECK_IF(context == nullptr,
+                ReportInferShapeStageError(
+                    "TransQuantParamV2", "the InferShapeContext is null; the infer-shape framework contract is broken"),
                 return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "Begin to do InferShape4TransQuantParamV2.");
 
     const gert::Shape* scaleShape = context->GetInputShape(INPUT_SCALE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scaleShape);
+    OP_CHECK_IF(scaleShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "scale",
+                    "the input shape of required input scale is missing in the infer-shape context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
 
     const gert::Shape* offsetShape = context->GetOptionalInputShape(INPUT_OFFSET_INDEX);
 
     gert::Shape* outYShape = context->GetOutputShape(OUTPUT_Y_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outYShape);
+    OP_CHECK_IF(
+        outYShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
+                                                 "the output shape of required output y is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
 
     OP_LOGD(context->GetNodeName(), "scaleShape: %s", Ops::Base::ToString(*scaleShape).c_str());
     OP_LOGD(context->GetNodeName(), "outYShape: %s", Ops::Base::ToString(*outYShape).c_str());

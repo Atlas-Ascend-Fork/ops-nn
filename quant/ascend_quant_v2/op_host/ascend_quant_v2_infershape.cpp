@@ -17,13 +17,26 @@
 
 using namespace ge;
 namespace ops {
+// InferShape阶段框架契约类失败统一上报EZ1014, 不再生成EZ9999内部码
+static void ReportInferShapeStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "AscendQuantV2", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
+
 constexpr size_t g_AttrDstType = 2;
 
 static graphStatus InferShapeForAscendQuantV2(gert::InferShapeContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferShapeForAscendQuantV2");
     const gert::Shape* inputXShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputXShape);
+    OP_CHECK_IF(
+        inputXShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* outputShape = context->GetOutputShape(0);
 
@@ -36,7 +49,11 @@ static ge::graphStatus InferDataTypeForAscendQuantV2(gert::InferDataTypeContext*
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferDataTypeForAscendQuantV2");
     const int32_t* dstDtype = context->GetAttrs()->GetAttrPointer<int32_t>(g_AttrDstType);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dstDtype);
+    OP_CHECK_IF(
+        dstDtype == nullptr,
+        ReportInferShapeStageError(context->GetNodeName(), "the required attr dst_dtype is missing in the infer-shape "
+                                                           "context; set the dst_dtype attribute on the node"),
+        return ge::GRAPH_FAILED);
     ge::DataType outDtype = static_cast<ge::DataType>(*dstDtype);
     context->SetOutputDataType(0, outDtype);
     OP_LOGD(context->GetNodeName(), "End to do InferDataTypeForAscendQuantV2");

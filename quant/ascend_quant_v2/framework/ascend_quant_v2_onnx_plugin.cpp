@@ -17,7 +17,9 @@ static Status ParseParamsNPUAscendQuantV2(const Message* opSrc, ge::Operator& op
 {
     const NodeProto* node = dynamic_cast<const NodeProto*>(opSrc);
     if (node == nullptr) {
-        OP_LOGE(GetOpName(opDest).c_str(), "Dynamic cast opSrc to NodeProto failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(GetOpName(opDest).c_str(), "op_src",
+                                                 "the parser received a message that is not a NodeProto; check the "
+                                                 "model format and the parser registration for this node");
         return FAILED;
     }
 

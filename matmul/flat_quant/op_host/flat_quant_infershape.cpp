@@ -76,7 +76,9 @@ static ge::graphStatus InferShape4FlatQuant(gert::InferShapeContext* context)
         if (dstTypeMax != nullptr) {
             OP_CHECK_IF(
                 (!IsFloatEqual(*dstTypeMax, ZERO_FLOAT)) && (*dstTypeMax < SIX_FLOAT || *dstTypeMax > TWELVE_FLOAT),
-                OP_LOGE(context, "The dst_type_max[%f] must be 0 or in range [6, 12].", *dstTypeMax),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "dst_type_max", std::to_string(*dstTypeMax).c_str(),
+                    "the value of attr dst_type_max must be 0 or in the range [6, 12]"),
                 return GRAPH_FAILED);
         }
 
@@ -84,10 +86,12 @@ static ge::graphStatus InferShape4FlatQuant(gert::InferShapeContext* context)
         if (attrs->GetAttrNum() >= FLATQUANT_ATTRS_NUM_TWO) {
             outxDtype = attrs->GetAttrPointer<int32_t>(ATTR_INDEX_OF_DST_DTYPE);
         }
-        OP_CHECK_IF(xShape->GetDim(FLATQUANT_N_IDX) % FLATQUANT_N_IS_EVEN != 0 &&
-                        xShape->GetDim(FLATQUANT_N_IDX) != UNKNOWN_DIM, // 动态shape未知维度，放行
-                    OP_LOGE(context, "dim N must be even number, got %ld.", xShape->GetDim(FLATQUANT_N_IDX)),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            xShape->GetDim(FLATQUANT_N_IDX) % FLATQUANT_N_IS_EVEN != 0 &&
+                xShape->GetDim(FLATQUANT_N_IDX) != UNKNOWN_DIM, // 动态shape未知维度，放行
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(*xShape).c_str(),
+                                                  "the N dim of x must be an even number"),
+            return ge::GRAPH_FAILED);
 
         if (outxDtype != nullptr) {
             int32_t dstDtype = *outxDtype;

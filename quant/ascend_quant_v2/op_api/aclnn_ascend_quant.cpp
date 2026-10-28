@@ -14,6 +14,8 @@
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/op_log.h"
+#include "opdev/op_log.h"
+#include "log/log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
@@ -22,6 +24,22 @@
 #include "aclnn_util.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 
 static constexpr size_t MAX_DIM_LEN = 8;
 static constexpr uint64_t INT4_NUMS_IN_INT32_SPACE = 8;
@@ -56,7 +74,13 @@ static const std::initializer_list<DataType>& GetInDtypeSupportList()
         case NpuArch::DAV_2002:
             return X_DTYPE_SUPPORT_LIST;
         default: {
-            OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "support for %u is not implemented", static_cast<uint32_t>(npuArch));
+            const std::vector<const char*> ez3002Key = {"optype", "opskernel", "reason"};
+            // 临时std::string生命周期止于声明语句, .c_str()存入vector后下一句读取即悬垂;
+            // 先落具名局部变量, 生命周期覆盖上报调用
+            const std::string ez3002Reason = "the current NPU arch " + std::to_string(static_cast<uint32_t>(npuArch)) +
+                                             " is not supported by this implementation; use a supported SoC";
+            const std::vector<const char*> ez3002Value = {"AscendQuantV2", "AiCore", ez3002Reason.c_str()};
+            REPORT_PREDEFINED_ERR_MSG("EZ3002", ez3002Key, ez3002Value);
             return EMPTY_LIST;
         }
     }
@@ -82,7 +106,13 @@ static const std::initializer_list<DataType>& GetScaleOffsetDtypeSupportList()
         case NpuArch::DAV_2002:
             return SCALE_OFFSET_DTYPE_SUPPORT_LIST;
         default: {
-            OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "support for %u is not implemented", static_cast<uint32_t>(npuArch));
+            const std::vector<const char*> ez3002Key = {"optype", "opskernel", "reason"};
+            // 临时std::string生命周期止于声明语句, .c_str()存入vector后下一句读取即悬垂;
+            // 先落具名局部变量, 生命周期覆盖上报调用
+            const std::string ez3002Reason = "the current NPU arch " + std::to_string(static_cast<uint32_t>(npuArch)) +
+                                             " is not supported by this implementation; use a supported SoC";
+            const std::vector<const char*> ez3002Value = {"AscendQuantV2", "AiCore", ez3002Reason.c_str()};
+            REPORT_PREDEFINED_ERR_MSG("EZ3002", ez3002Key, ez3002Value);
             return EMPTY_LIST;
         }
     }
@@ -91,11 +121,11 @@ static const std::initializer_list<DataType>& GetScaleOffsetDtypeSupportList()
 static inline bool CheckNotNull(const aclTensor* self, const aclTensor* scale, const char* roundMode,
                                 const aclTensor* out)
 {
-    OP_CHECK_NULL(self, return false);
-    OP_CHECK_NULL(scale, return false);
-    OP_CHECK_NULL(out, return false);
+    OP_CHECK(self != nullptr, ReportNullPointerError(__func__, "self"), return false);
+    OP_CHECK(scale != nullptr, ReportNullPointerError(__func__, "scale"), return false);
+    OP_CHECK(out != nullptr, ReportNullPointerError(__func__, "out"), return false);
     if (roundMode == nullptr) {
-        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR, "roundMode cannot be nullptr");
+        ReportNullPointerError(__func__, "roundMode");
         return false;
     }
     return true;
@@ -128,15 +158,18 @@ static bool CheckDtypeValid(const aclTensor* self, const aclTensor* scale, const
         OP_CHECK_DTYPE_NOT_SAME(scale, offset, return false);
     }
     if (!CheckDtypeCompatible(self, scale)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "input x:%s not compatible with scale:%s.",
-                op::ToString(self->GetDataType()).GetString(), op::ToString(scale->GetDataType()).GetString());
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON("aclnnAscendQuant", "x,scale",
+                                               (std::string(op::ToString(self->GetDataType()).GetString()) + ", " +
+                                                op::ToString(scale->GetDataType()).GetString())
+                                                   .c_str(),
+                                               "dtype of x is not compatible with scale");
         return false;
     }
 
     if (static_cast<int32_t>(out->GetDataType()) != dstType) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dstType:%d(%s) must be able to represent the y dtype[%s].", dstType,
-                op::ToString(static_cast<op::DataType>(dstType)).GetString(),
-                op::ToString(out->GetDataType()).GetString());
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnAscendQuant", "dstType",
+                                              op::ToString(static_cast<op::DataType>(dstType)).GetString(),
+                                              "dstType must be able to represent the dtype of y");
         return false;
     }
 
@@ -151,7 +184,9 @@ static bool CheckDim(const aclTensor* self, const aclTensor* scale, const aclTen
         int64_t offsetDimNum = static_cast<int64_t>(offset->GetViewShape().GetDimNum());
         int64_t offsetDim = offset->GetViewShape().GetDim(offsetDimNum - 1);
         if (scaleDim != offsetDim) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dim of scale must be the same as dim of offset");
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                "aclnnAscendQuant", "scale", std::to_string(scaleDim).c_str(),
+                "the last dim of scale must be the same as the last dim of offset");
             return false;
         }
     }
@@ -159,8 +194,8 @@ static bool CheckDim(const aclTensor* self, const aclTensor* scale, const aclTen
     int64_t dimNum = static_cast<int64_t>(self->GetViewShape().GetDimNum());
     int64_t lastDim = self->GetViewShape().GetDim(dimNum - 1);
     if (scaleDim != lastDim && scaleDim != 1) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "the last dim size(%ld) of x must be same as scale and offset(%ld).", lastDim,
-                scaleDim);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "x", std::to_string(lastDim).c_str(),
+                                                 "the last dim of x must be the same as scale and offset, or 1");
         return false;
     }
     return true;
@@ -172,7 +207,8 @@ static bool CheckDimOne(const aclTensor* tensor)
     for (int64_t i = 0; i < dimNum - 1; ++i) {
         int64_t dim = tensor->GetViewShape().GetDim(i);
         if (dim != 1) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "the dim(%ld) of scale or offset must be 1, but it is(%ld).", i, dim);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "scale/offset", std::to_string(dim).c_str(),
+                                                     "all dims except the last must be 1");
             return false;
         }
     }
@@ -183,7 +219,8 @@ static bool CheckInt32OutputShape(const aclTensor* self, const aclTensor* out)
 {
     int64_t dimNum = static_cast<int64_t>(self->GetViewShape().GetDimNum());
     if (dimNum == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dtype int32 does not support scalar.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAscendQuant", "self", std::to_string(dimNum).c_str(),
+                                     "at least 1 (scalar not supported for int32)");
         return false;
     }
     int64_t dimInput = self->GetViewShape().GetDim(dimNum - 1);
@@ -194,9 +231,8 @@ static bool CheckInt32OutputShape(const aclTensor* self, const aclTensor* out)
                                   true :
                                   false;
     if (inputIsNot8xOutput) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "the y last dim must be 1/8 of input last dim, input last dim is (%ld), output last dim is (%ld).",
-                dimInput, dimOutput);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "out", std::to_string(dimOutput).c_str(),
+                                                 "the last dim of y must be 1/8 of the last dim of input for int32");
         return false;
     }
     // check others dim
@@ -204,9 +240,8 @@ static bool CheckInt32OutputShape(const aclTensor* self, const aclTensor* out)
         dimInput = self->GetViewShape().GetDim(i);
         dimOutput = out->GetViewShape().GetDim(i);
         if (dimInput != dimOutput) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "the dim(%ld) of input must be same with output, input is (%ld), output is (%ld).", i, dimInput,
-                    dimOutput);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "self", std::to_string(dimInput).c_str(),
+                                                     "dims of input must match the corresponding dims of output");
             return false;
         }
     }
@@ -218,13 +253,15 @@ static bool CheckInt4LastDim(const aclTensor* self)
 {
     int64_t dimNum = static_cast<int64_t>(self->GetViewShape().GetDimNum());
     if (dimNum == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dtype int4 does not support scalar.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAscendQuant", "self", std::to_string(dimNum).c_str(),
+                                     "at least 1 (scalar not supported for int4)");
         return false;
     }
     int64_t lastDimInput = self->GetViewShape().GetDim(dimNum - 1);
     bool lastDimOdd = ((static_cast<uint64_t>(lastDimInput) % INT4_NUMS_IN_INT8_SPACE) > 0) ? true : false;
     if (lastDimOdd) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x last dim must be divisible by 2, last dim is (%ld).", lastDimInput);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "self", std::to_string(lastDimInput).c_str(),
+                                                 "x last dim must be divisible by 2 for int4");
         return false;
     }
     return true;
@@ -234,18 +271,24 @@ static bool CheckShape(const aclTensor* x, const aclTensor* y, const aclTensor* 
 {
     // self和out的shape必须一致
     if (y->GetDataType() != op::DataType::DT_INT32) {
-        OP_CHECK_SHAPE_NOT_EQUAL(y, x, return false);
+        OP_CHECK(y->GetViewShape() == x->GetViewShape(),
+                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnAscendQuant", "y,x",
+                                                        (std::string(op::ToString(y->GetViewShape()).GetString()) +
+                                                         ", " + op::ToString(x->GetViewShape()).GetString())
+                                                            .c_str(),
+                                                        "shapes of y and x should be the same"),
+                 return false);
     }
 
     // check input int32
     if (y->GetDataType() == op::DataType::DT_INT32 && !CheckInt32OutputShape(x, y)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "check output shape failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check output shape failed; propagate lower-layer first error");
         return false;
     }
 
     // check input int4
     if (y->GetDataType() == op::DataType::DT_INT4 && !CheckInt4LastDim(x)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "check input shape failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check input shape failed; propagate lower-layer first error");
         return false;
     }
 
@@ -257,15 +300,16 @@ static bool CheckShape(const aclTensor* x, const aclTensor* y, const aclTensor* 
     CHECK_RET(CheckDim(x, scale, offset), false);
 
     if (!CheckDimOne(scale)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "scale dim num must be 1. scale:%zu", scale->GetViewShape().GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAscendQuant", "scale",
+                                     std::to_string(scale->GetViewShape().GetDimNum()).c_str(), "1");
         return false;
     }
     OP_CHECK_BROADCAST_WITH_SHAPE(scale, x->GetViewShape(), return false);
 
     if (offset != nullptr) {
         if (!CheckDimOne(offset)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "offset dim num must be 1. offset:%zu",
-                    offset->GetViewShape().GetDimNum());
+            OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAscendQuant", "offset",
+                                         std::to_string(offset->GetViewShape().GetDimNum()).c_str(), "1");
             return false;
         }
         OP_CHECK_BROADCAST_WITH_SHAPE(offset, x->GetViewShape(), return false);
@@ -278,8 +322,8 @@ static bool CheckRoundMode(const char* roundMode)
 {
     const std::string mode = std::string(roundMode);
     if (mode != "round" && mode != "floor" && mode != "ceil" && mode != "trunc") {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "check roundMode failed, roundMode[%s] not in ['round','floor','ceil','trunc'].", mode.c_str());
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnAscendQuant", "roundMode", mode.c_str(),
+                                              "roundMode must be one of [round, floor, ceil, trunc]");
         return false;
     }
     return true;

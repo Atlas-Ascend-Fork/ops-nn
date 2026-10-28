@@ -23,6 +23,8 @@
 #include "opdev/op_def.h"
 #include "opdev/op_dfx.h"
 #include "aclnn_kernels/common/op_error_check.h"
+#include "log/log.h"
+#include "flat_quant_op_util.h"
 
 using namespace op;
 
@@ -54,11 +56,23 @@ const std::tuple<aclTensor*, aclTensor*> FlatQuant(const aclTensor* x, const acl
 {
     if (dst_dtype != DataType::DT_FLOAT4_E2M1 && dst_dtype != Ops::NN::DT_HIFLOAT4) {
         out = executor->AllocTensor(x->GetViewShape(), DataType::DT_INT4, x->GetViewFormat());
-        OP_CHECK_NULL(out, return std::tuple(nullptr, nullptr));
+        if (out == nullptr) {
+            // AllocTensor失败属内部资源错误, 不复用EZ1011入参语义; 上报EZ1009(执行失败)
+            const std::vector<const char*> ez1009Key = {"opName", "reason"};
+            const std::vector<const char*> ez1009Value = {"FlatQuant", "memory allocation for output tensor failed"};
+            REPORT_PREDEFINED_ERR_MSG("EZ1009", ez1009Key, ez1009Value);
+            return std::tuple(nullptr, nullptr);
+        }
         int64_t K = x->GetViewShape().GetDim(0);
         dst_dtype = DataType::DT_INT32;
         quantScale = executor->AllocTensor(op::Shape({K}), op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
-        OP_CHECK_NULL(quantScale, return std::tuple(nullptr, nullptr));
+        if (quantScale == nullptr) {
+            // AllocTensor失败属内部资源错误, 不复用EZ1011入参语义; 上报EZ1009(执行失败)
+            const std::vector<const char*> ez1009Key = {"opName", "reason"};
+            const std::vector<const char*> ez1009Value = {"FlatQuant", "memory allocation for quantScale failed"};
+            REPORT_PREDEFINED_ERR_MSG("EZ1009", ez1009Key, ez1009Value);
+            return std::tuple(nullptr, nullptr);
+        }
     }
     return FlatQuantAICore(x, kroneckerP1, kroneckerP2, groupListOptional, clipRatio, dst_dtype, dstTypeMax,
                            groupListType, out, quantScale, executor);

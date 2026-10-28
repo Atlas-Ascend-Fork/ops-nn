@@ -18,6 +18,14 @@
 #include "op_host/tiling_util.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "AscendQuantV2", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 using namespace Ops::NN::OpTiling;
 namespace ascendquantv2 {
 constexpr size_t g_XInputIndex = 0;
@@ -45,12 +53,15 @@ static const gert::Shape g_vec_1_shape = {1};
 ge::graphStatus AscendQuantV2::DoAscendQuantV2Tiling()
 {
     OP_CHECK_IF((GetCompileInfo() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoAscendQuantV2Tiling GetCompileInfo Failed."),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoAscendQuantV2Tiling GetCompileInfo Failed."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF((GetOpParam() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoAscendQuantV2Tiling GetOpParam Failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoAscendQuantV2Tiling GetOpParam Failed."),
+                return ge::GRAPH_FAILED);
 
-    CalcTiling();
+    if (CalcTiling() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     CalcTilingKey();
     WriteTilingData();
     return ge::GRAPH_SUCCESS;
@@ -59,13 +70,15 @@ ge::graphStatus AscendQuantV2::DoAscendQuantV2Tiling()
 ge::graphStatus AscendQuantV2::DoAscendQuantV2NZTiling()
 {
     OP_CHECK_IF((GetCompileInfo() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoAscendQuantV2NZTiling GetCompileInfo Failed."),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoAscendQuantV2NZTiling GetCompileInfo Failed."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF((GetOpParam() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoAscendQuantV2NZTiling GetOpParam Failed."),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoAscendQuantV2NZTiling GetOpParam Failed."),
                 return ge::GRAPH_FAILED);
 
-    CalcTilingNz();
+    if (CalcTilingNz() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     CalcTilingKey();
     WriteTilingDataNz();
     return ge::GRAPH_SUCCESS;
@@ -74,14 +87,20 @@ ge::graphStatus AscendQuantV2::DoAscendQuantV2NZTiling()
 ge::graphStatus AscendQuantV2::GetCompileInfo()
 {
     auto compileInfo = context_->GetCompileInfo<AscendQuantV2CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     coreNum_ = compileInfo->vectorCoreNum;
     ubSize_ = compileInfo->ubSize;
     isAscend910B_ = compileInfo->isAscend910B;
-    OP_CHECK_IF((coreNum_ <= 0 || ubSize_ <= 0),
-                OP_LOGE(context_->GetNodeName(), "AscendQuantV2 GetCompileInfo Failed, coreNum:%u, ubSize:%lu.",
-                        coreNum_, ubSize_),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (coreNum_ <= 0 || ubSize_ <= 0),
+        ReportTilingStageError(context_->GetNodeName(), "GetPlatformInfo: coreNum is " + std::to_string(coreNum_) +
+                                                            " and ubSize is " + std::to_string(ubSize_) +
+                                                            "; check the platform info, SoC and OPP installation"),
+        return ge::GRAPH_FAILED);
 
     if (compileInfo->isAscend910B) {
         cacheLine_ = g_CacheLineV220;
@@ -173,12 +192,26 @@ ge::graphStatus AscendQuantV2::CheckShapeEqual(const gert::Shape& shape1, const 
 ge::graphStatus AscendQuantV2::CheckAttrs(const gert::Shape& xShape)
 {
     auto* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     const auto* sqrtMode = attrs->GetAttrPointer<bool>(g_AttrSqrtMode);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, sqrtMode);
+    OP_CHECK_IF(
+        sqrtMode == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "the required attr sqrt_mode is missing in the tiling context; set the sqrt_mode attribute on the node"),
+        return ge::GRAPH_FAILED);
     sqrtMode_ = static_cast<int16_t>(*sqrtMode);
     const char* roundMode = attrs->GetAttrPointer<char>(g_AttrRoundMode);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, roundMode);
+    OP_CHECK_IF(
+        roundMode == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "the required attr round_mode is missing in the tiling context; set the round_mode attribute on the node"),
+        return ge::GRAPH_FAILED);
     std::string roundModeStr = roundMode;
     roundMode_ = GetRoundMode(roundModeStr);
     OP_CHECK_IF((roundMode_ == RoundMode::MODE_UNDEFINED),
@@ -187,18 +220,28 @@ ge::graphStatus AscendQuantV2::CheckAttrs(const gert::Shape& xShape)
                 return ge::GRAPH_FAILED);
     // get dstType
     const int32_t* dstType = attrs->GetAttrPointer<int32_t>(g_AttrDstType);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dstType);
+    OP_CHECK_IF(
+        dstType == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "the required attr dst_dtype is missing in the tiling context; set the dst_dtype attribute on the node"),
+        return ge::GRAPH_FAILED);
     dstType_ = *dstType;
     // get axis
     const int32_t* axis = attrs->GetAttrPointer<int32_t>(g_AttrAxis);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, axis);
+    OP_CHECK_IF(axis == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "the required attr axis is missing in the tiling context; set the axis attribute on the node"),
+                return ge::GRAPH_FAILED);
     axis_ = *axis;
     // get x dim num
     int32_t xDimNum = static_cast<int32_t>(xShape.GetDimNum());
     // check 310P support dstType
     if (!isAscend910B_) {
         OP_CHECK_IF(CheckSupport310P() != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context_->GetNodeName(), "check 310P support failed."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check 310P support failed."),
+                    return ge::GRAPH_FAILED);
     }
     // check dstType and output dtype, must be same
     if (dstType_ != ge::DT_INT8 && dstType_ != ge::DT_INT4) {
@@ -290,37 +333,56 @@ const gert::Shape& AscendQuantV2::EnsureNotScalar(const gert::Shape& inShape)
 ge::graphStatus AscendQuantV2::GetOpParam()
 {
     auto xInput = context_->GetInputShape(g_XInputIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xInput);
+    OP_CHECK_IF(xInput == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the input shape/desc of x is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto scaleInput = context_->GetInputShape(g_ScaleIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, scaleInput);
+    OP_CHECK_IF(
+        scaleInput == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale",
+                                                 "the input shape/desc of scale is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto offsetInput = context_->GetOptionalInputShape(g_OffsetIndex);
     if (offsetInput == nullptr) {
         hasOffset_ = false;
     }
     auto xInputDesc = context_->GetInputDesc(g_XInputIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xInputDesc);
+    OP_CHECK_IF(xInputDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the input shape/desc of x is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     xDtype_ = xInputDesc->GetDataType();
     auto yInputDesc = context_->GetOutputDesc(0);
     auto xFormat = xInputDesc->GetFormat().GetStorageFormat();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yInputDesc);
+    OP_CHECK_IF(yInputDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y",
+                                                         "the output desc of y is missing in the tiling context; check "
+                                                         "that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     yDtype_ = yInputDesc->GetDataType();
 
     const gert::Shape& xInputShape = EnsureNotScalar(xInput->GetStorageShape());
     const gert::Shape& scaleInputShape = EnsureNotScalar(scaleInput->GetStorageShape());
     OP_CHECK_IF((CheckAttrs(xInputShape) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "op attrs is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "op attrs is invalid."), return ge::GRAPH_FAILED);
     // check the shape of the scale is valid
     OP_CHECK_IF((CheckInputValid(xInputShape, scaleInputShape, axis_) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "x and scale is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "x and scale is invalid."), return ge::GRAPH_FAILED);
     // if offset is not null, check the shape of the offset
     if (hasOffset_) {
         const gert::Shape& offsetInputShape = EnsureNotScalar(offsetInput->GetStorageShape());
         // check scale and offset is same
         OP_CHECK_IF((CheckShapeEqual(scaleInputShape, offsetInputShape) != ge::GRAPH_SUCCESS),
-                    OP_LOGE(context_->GetNodeName(), "scale and offset is invalid."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "scale and offset is invalid."),
+                    return ge::GRAPH_FAILED);
         // check the shape of the offset is valid
         OP_CHECK_IF((CheckInputValid(xInputShape, offsetInputShape, axis_) != ge::GRAPH_SUCCESS),
-                    OP_LOGE(context_->GetNodeName(), "x and offset is invalid."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "x and offset is invalid."),
+                    return ge::GRAPH_FAILED);
     }
     // check excute mode
     int32_t xDimNum = static_cast<int32_t>(xInputShape.GetDimNum());
@@ -489,19 +551,23 @@ int64_t AscendQuantV2::GetNewShape0(int64_t shape0, int64_t shape1)
     return std::max(Ops::Base::CeilDiv(shape0, blockBind_), static_cast<int64_t>(1));
 }
 
-void AscendQuantV2::CalcTiling()
+ge::graphStatus AscendQuantV2::CalcTiling()
 {
     if (isPerHead_) {
-        CalcPerHeadTiling();
-        return;
+        return CalcPerHeadTiling();
     }
     int64_t shape0 = xInputShape_.GetDim(0);
     int64_t shape1 = xInputShape_.GetDim(1);
     shape0 = GetNewShape0(shape0, shape1);
     int64_t dtypeSize = ge::GetSizeByDataType(xDtype_);
-    OP_CHECK_IF(dtypeSize == 0, OP_LOGE(context_->GetNodeName(), "dtypeSize should not be zero."), return);
-    if (cacheLine_ == 0 || dtypeSize == 0) {
-        return;
+    if (dtypeSize == 0) {
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "DoOpTiling: dtypeSize is 0 after the dtype size lookup; internal tiling strategy error");
+        return ge::GRAPH_FAILED;
+    }
+    if (cacheLine_ == 0) {
+        return ge::GRAPH_SUCCESS;
     }
     int64_t cacheLineNum = Ops::Base::CeilDiv(shape1, cacheLine_ / dtypeSize);
     uint32_t actCoreNum0 = GetCoreNum(shape0, static_cast<int64_t>(coreNum_));
@@ -526,30 +592,42 @@ void AscendQuantV2::CalcTiling()
         CalcBlockFactor(size);
         CalcUBFactor(cacheLine_ / dtypeSize);
     }
+    return ge::GRAPH_SUCCESS;
 }
 
-void AscendQuantV2::CalcTilingNz()
+ge::graphStatus AscendQuantV2::CalcTilingNz()
 {
     E_ = xInputShape_.GetDim(0);
     K_ = xInputShape_.GetDim(1);
     N_ = xInputShape_.GetDim(dim_2);
     int64_t dtypeSize = ge::GetSizeByDataType(xDtype_);
-    OP_CHECK_IF(dtypeSize == 0, OP_LOGE(context_->GetNodeName(), "dtypeSize should not be zero."), return);
+    if (dtypeSize == 0) {
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "DoOpTiling: dtypeSize is 0 after the dtype size lookup; internal tiling strategy error");
+        return ge::GRAPH_FAILED;
+    }
     needCoreNum_ = K_ / length;
     if (needCoreNum_ >= static_cast<int64_t>(coreNum_)) {
         needCoreNum_ = static_cast<int64_t>(coreNum_);
     }
+    return ge::GRAPH_SUCCESS;
 }
 
-void AscendQuantV2::CalcPerHeadTiling()
+ge::graphStatus AscendQuantV2::CalcPerHeadTiling()
 {
     int64_t shape0 = xInputShape_.GetDim(g_FirstShapeDim);
     int64_t shape1 = xInputShape_.GetDim(g_SecondShapeDim);
     int64_t shape2 = xInputShape_.GetDim(g_ThirdShapeDim);
     int64_t dtypeSize = ge::GetSizeByDataType(xDtype_);
-    OP_CHECK_IF(dtypeSize == 0, OP_LOGE(context_->GetNodeName(), "dtypeSize should not be zero."), return);
-    if (cacheLine_ == 0 || dtypeSize == 0) {
-        return;
+    if (dtypeSize == 0) {
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "DoOpTiling: dtypeSize is 0 after the dtype size lookup; internal tiling strategy error");
+        return ge::GRAPH_FAILED;
+    }
+    if (cacheLine_ == 0) {
+        return ge::GRAPH_SUCCESS;
     }
     int64_t cacheLineNum = Ops::Base::CeilDiv(shape2, cacheLine_ / dtypeSize);
     // split core in S, N, D
@@ -571,6 +649,7 @@ void AscendQuantV2::CalcPerHeadTiling()
 
     CalcPerHeadBlockFactor();
     CalcPerHeadUBFactor(cacheLine_ / dtypeSize);
+    return ge::GRAPH_SUCCESS;
 }
 
 void AscendQuantV2::CalcPerHeadBlockFactor()
@@ -731,16 +810,27 @@ void AscendQuantV2::WriteTilingDataNz()
 static ge::graphStatus TilingPrepare4AscendQuantV2(gert::TilingParseContext* context)
 {
     auto compileInfo = context->GetCompiledInfo<AscendQuantV2CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "TilingPrepare: compile info is null; check the SoC-specific OPP package and the tiling parse context"),
+        return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->vectorCoreNum = ascendcPlatform.GetCoreNumAiv();
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo->ubSize);
 
     OP_CHECK_IF((compileInfo->vectorCoreNum <= 0 || compileInfo->ubSize <= 0),
-                OP_LOGE(context->GetNodeName(), "AscendQuantV2 GetHardwareInfo Failed, vectorCoreNum:%d, ubSize:%lu.",
-                        compileInfo->vectorCoreNum, compileInfo->ubSize),
+                ReportTilingStageError(context->GetNodeName(),
+                                       "TilingPrepare: vectorCoreNum is " + std::to_string(compileInfo->vectorCoreNum) +
+                                           " and ubSize is " + std::to_string(compileInfo->ubSize) +
+                                           "; check the SoC platform query and the OPP installation"),
                 return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "GetCoreNum:%d, ubSize:%lu", compileInfo->vectorCoreNum, compileInfo->ubSize);
 

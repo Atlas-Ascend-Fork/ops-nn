@@ -24,6 +24,14 @@
 #include "common/inc/op_host/op_const_def_nn.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "FlatQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 using namespace Ops::NN::OpTiling;
 
 constexpr uint8_t INPUT_TENSOR_NUM = 3;
@@ -139,7 +147,12 @@ ge::graphStatus FlatQuantTiling::InitializeInputsAndAttributes()
     // 获取输入的数据类型，输入Tensor的数据类型保持一致
     for (uint64_t i = 0; i < INPUT_TENSOR_NUM; i++) {
         auto temp = tilingContext_->GetInputDesc(i);
-        OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, temp);
+        OP_CHECK_IF(temp == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        tilingContext_->GetNodeName(), ("input[" + std::to_string(i) + "]").c_str(),
+                        "the input desc of a required input is missing in the tiling context; check that the graph "
+                        "node provides all required inputs"),
+                    return ge::GRAPH_FAILED);
         if (dataType_ == ge::DT_UNDEFINED) {
             dataType_ = temp->GetDataType();
         } else if (dataType_ != temp->GetDataType()) {
@@ -150,16 +163,32 @@ ge::graphStatus FlatQuantTiling::InitializeInputsAndAttributes()
     auto xShape = tilingContext_->GetInputShape(INDEX_ZERO);
     auto p1Shape = tilingContext_->GetInputShape(INDEX_ONE);
     auto p2Shape = tilingContext_->GetInputShape(INDEX_TWO);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, xShape);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, p1Shape);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, p2Shape);
+    OP_CHECK_IF(xShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext_->GetNodeName(), "x",
+                                                         "the input shape/desc is missing in the tiling context; check "
+                                                         "that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(p1Shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext_->GetNodeName(), "kronecker_p1",
+                                                         "the input shape/desc is missing in the tiling context; check "
+                                                         "that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(p2Shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext_->GetNodeName(), "kronecker_p2",
+                                                         "the input shape/desc is missing in the tiling context; check "
+                                                         "that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     xShape_ = xShape->GetOriginShape();
     p1Shape_ = p1Shape->GetOriginShape();
     p2Shape_ = p2Shape->GetOriginShape();
     hasP2_ = (p2Shape_.GetDim(INDEX_ZERO) > 0 && p2Shape_.GetDim(INDEX_ONE) > 0);
     if (hasGroupList_) {
         auto groupListShape = tilingContext_->GetInputShape(INDEX_THREE);
-        OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, groupListShape);
+        OP_CHECK_IF(groupListShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext_->GetNodeName(), "group_list",
+                                                             "the input shape/desc is missing in the tiling context; "
+                                                             "check that the graph node provides all required inputs"),
+                    return ge::GRAPH_FAILED);
         groupListShape_ = groupListShape->GetOriginShape();
     }
     clipRatio_ = attrs->GetAttrPointer<float>(INDEX_ZERO);
@@ -200,7 +229,11 @@ ge::graphStatus FlatQuantTiling::SetBasicTilingData()
 ge::graphStatus FlatQuantTiling::CalculateIterBatch()
 {
     auto compileInfo = tilingContext_->GetCompileInfo<FlatQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    tilingContext_->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     int64_t aicNum = compileInfo->aicNum;
     int64_t aivNum = compileInfo->aivNum;
     if (GetKernelMode(aivNum) != ge::GRAPH_SUCCESS) {
@@ -232,7 +265,11 @@ ge::graphStatus FlatQuantTiling::CalculateIterBatch()
 ge::graphStatus FlatQuantTiling::SetTilingContextAndSaveData()
 {
     auto compileInfo = tilingContext_->GetCompileInfo<FlatQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    tilingContext_->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     tilingContext_->SetBlockDim(compileInfo->aicNum);
     tilingContext_->SetTilingKey(mmMode_);
     // 保存tiling数据
@@ -313,7 +350,11 @@ ge::graphStatus FlatQuantTiling::CalculateWorkspace(int64_t aivNum, ge::DataType
     int64_t k = xShape_.GetDim(INDEX_ZERO);
 
     size_t* workspaces = tilingContext_->GetWorkspaceSizes(WORKSPACE_NUM);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(tilingContext_->GetNodeName(),
+                                       "GetWorkspaceSize: GetWorkspaceSizes returned null; check the TilingContext "
+                                       "construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
 
     if (outDtype == ge::DT_FLOAT4_E2M1 || outDtype == Ops::NN::DT_HIFLOAT4) {
         auto compileInfo = tilingContext_->GetCompileInfo<FlatQuantCompileInfo>();
@@ -348,7 +389,12 @@ ge::graphStatus FlatQuantTiling::CalculateWorkspace(int64_t aivNum, ge::DataType
 ge::graphStatus FlatQuantTiling::GetKernelMode(int64_t aivNum)
 {
     auto outDesc = tilingContext_->GetOutputDesc(INDEX_ZERO);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, outDesc);
+    OP_CHECK_IF(
+        outDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext_->GetNodeName(), "out",
+                                                 "the output desc of required output out is missing in the tiling "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     auto outDtype = outDesc->GetDataType();
 
     mmMode_ = DetermineMmMode(outDtype);
@@ -387,34 +433,47 @@ ge::graphStatus FlatQuantTiling::GetTCubeTiling()
 bool FlatQuantTiling::CheckShapes() const
 {
     OP_CHECK_IF(xShape_.GetDimNum() != DIM_THREE,
-                OP_LOGE(tilingContext_->GetNodeName(), "x shape dims must be 3, got %zu.", xShape_.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(tilingContext_->GetNodeName(), "x",
+                                             std::to_string(xShape_.GetDimNum()).c_str(), "3"),
                 return false);
     OP_CHECK_IF(p1Shape_.GetDimNum() != DIM_TWO,
-                OP_LOGE(tilingContext_->GetNodeName(), "p1 shape dims must be 2, got %zu.", p1Shape_.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(tilingContext_->GetNodeName(), "kronecker_p1",
+                                             std::to_string(p1Shape_.GetDimNum()).c_str(), "2"),
                 return false);
     OP_CHECK_IF(hasP2_ && p2Shape_.GetDimNum() != DIM_TWO,
-                OP_LOGE(tilingContext_->GetNodeName(), "p2 shape dims must be 2, got %zu.", p2Shape_.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(tilingContext_->GetNodeName(), "kronecker_p2",
+                                             std::to_string(p2Shape_.GetDimNum()).c_str(), "2"),
                 return false);
 
     int64_t K = xShape_.GetDim(INDEX_ZERO);
     int64_t M = xShape_.GetDim(INDEX_ONE);
     int64_t N = xShape_.GetDim(INDEX_TWO);
-    OP_CHECK_IF(K <= 0 || M <= 0 || N <= 0,
-                OP_LOGE(tilingContext_->GetNodeName(), "K[%ld]/M[%ld]/N[%ld] must be positive.", K, M, N),
-                return false);
-    OP_CHECK_IF(K > MAX_K_SIZE || M > MAX_MN_SIZE || N > MAX_MN_SIZE,
-                OP_LOGE(tilingContext_->GetNodeName(), "K[%ld]/M[%ld]/N[%ld] exceeds limit %d/%d/%d.", K, M, N,
-                        MAX_K_SIZE, MAX_MN_SIZE, MAX_MN_SIZE),
-                return false);
-    OP_CHECK_IF(p1Shape_.GetDim(INDEX_ZERO) != M || p1Shape_.GetDim(INDEX_ONE) != M,
-                OP_LOGE(tilingContext_->GetNodeName(), "p1 shape must be [%ld,%ld], got [%ld,%ld].", M, M,
-                        p1Shape_.GetDim(INDEX_ZERO), p1Shape_.GetDim(INDEX_ONE)),
-                return false);
+    OP_CHECK_IF(
+        K <= 0 || M <= 0 || N <= 0,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingContext_->GetNodeName(), "x", Ops::Base::ToString(xShape_).c_str(),
+                                              "all dims (K, M, N) of x must be positive numbers"),
+        return false);
+    OP_CHECK_IF(
+        K > MAX_K_SIZE || M > MAX_MN_SIZE || N > MAX_MN_SIZE,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingContext_->GetNodeName(), "x", Ops::Base::ToString(xShape_).c_str(),
+                                              ("K, M, N exceed the supported limits " + std::to_string(MAX_K_SIZE) +
+                                               ", " + std::to_string(MAX_MN_SIZE) + ", " + std::to_string(MAX_MN_SIZE))
+                                                  .c_str()),
+        return false);
+    OP_CHECK_IF(
+        p1Shape_.GetDim(INDEX_ZERO) != M || p1Shape_.GetDim(INDEX_ONE) != M,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            tilingContext_->GetNodeName(), "kronecker_p1", Ops::Base::ToString(p1Shape_).c_str(),
+            ("the shape of kronecker_p1 must be [" + std::to_string(M) + "," + std::to_string(M) + "]").c_str()),
+        return false);
     bool isP2ZeroShape = (p2Shape_.GetDim(INDEX_ZERO) == 0 && p2Shape_.GetDim(INDEX_ONE) == 0);
     bool isP2NormalShape = (p2Shape_.GetDim(INDEX_ZERO) == N && p2Shape_.GetDim(INDEX_ONE) == N);
     OP_CHECK_IF(!isP2ZeroShape && !isP2NormalShape,
-                OP_LOGE(tilingContext_->GetNodeName(), "p2 shape must be [0,0] or [%ld,%ld], got [%ld,%ld].", N, N,
-                        p2Shape_.GetDim(INDEX_ZERO), p2Shape_.GetDim(INDEX_ONE)),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    tilingContext_->GetNodeName(), "kronecker_p2, x",
+                    (Ops::Base::ToString(p2Shape_) + ", " + Ops::Base::ToString(xShape_)).c_str(),
+                    ("the shape of kronecker_p2 must be [0,0] or [" + std::to_string(N) + "," + std::to_string(N) + "]")
+                        .c_str()),
                 return false);
 
     return true;
@@ -422,10 +481,15 @@ bool FlatQuantTiling::CheckShapes() const
 
 bool FlatQuantTiling::CheckClipRatio() const
 {
-    OP_CHECK_IF(clipRatio_ == nullptr, OP_LOGE(tilingContext_->GetNodeName(), "clip_ratio attribute is null."),
+    OP_CHECK_IF(clipRatio_ == nullptr,
+                ReportTilingStageError(tilingContext_->GetNodeName(),
+                                       "the clip_ratio attr is missing in the tiling context despite having a "
+                                       "registered default; check the TilingContext construction"),
                 return false);
     OP_CHECK_IF(*clipRatio_ <= ZERO_FLOAT || *clipRatio_ > ONE_FLOAT,
-                OP_LOGE(tilingContext_->GetNodeName(), "clip_ratio must be in (0, 1], got %f.", *clipRatio_),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext_->GetNodeName(), "clip_ratio",
+                                                      std::to_string(*clipRatio_).c_str(),
+                                                      "the value of attr clip_ratio must be in the range (0, 1]"),
                 return false);
     return true;
 }
@@ -436,29 +500,40 @@ bool FlatQuantTiling::CheckGroupList()
     auto compileInfo = tilingContext_->GetCompileInfo<FlatQuantCompileInfo>();
     if (compileInfo != nullptr && IsDavidFamilyArch(compileInfo->npuArch)) {
         OP_CHECK_IF(hasGroupList_ == true,
-                    OP_LOGE(tilingContext_->GetNodeName(), "For david family soc, group_list only support nullptr.."),
+                    ReportTilingStageError(
+                        tilingContext_->GetNodeName(),
+                        "group_list is not supported on ascend950; remove the group_list input or use a supported SoC"),
                     return false);
     }
     if (compileInfo != nullptr && compileInfo->npuArch == NpuArch::DAV_2201 && hasGroupList_) {
-        OP_CHECK_IF(groupListType_ == nullptr,
-                    OP_LOGE(tilingContext_->GetNodeName(), "group_list_type attribute is null."), return false);
+        OP_CHECK_IF(
+            groupListType_ == nullptr,
+            ReportTilingStageError(
+                tilingContext_->GetNodeName(),
+                "the group_list_type attr is missing in the tiling context; check the TilingContext construction"),
+            return false);
         OP_CHECK_IF(*groupListType_ < 0 || *groupListType_ > GROUP_LIST_SPARSE_TYPE,
-                    OP_LOGE(tilingContext_->GetNodeName(), "group_list_type must be one of [0, 1, 2], got %ld.",
-                            *groupListType_),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext_->GetNodeName(), "group_list_type",
+                                                          std::to_string(*groupListType_).c_str(),
+                                                          "the value of attr group_list_type must be one of [0, 1, 2]"),
                     return false);
         OP_CHECK_IF(
             *groupListType_ == GROUP_LIST_SPARSE_TYPE && (groupListShape_.GetDimNum() != GROUP_LIST_SPARSE_DIM ||
                                                           groupListShape_.GetDim(INDEX_ONE) != GROUP_LIST_SPARSE_DIM),
-            OP_LOGE(tilingContext_->GetNodeName(), "group_list shape must be [G, 2] when group_list_type is 2."),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingContext_->GetNodeName(), "group_list",
+                                                  Ops::Base::ToString(groupListShape_).c_str(),
+                                                  "the shape of group_list must be [G, 2] when group_list_type is 2"),
             return false);
-        OP_CHECK_IF(
-            *groupListType_ != GROUP_LIST_SPARSE_TYPE && groupListShape_.GetDimNum() != GROUP_LIST_DENSE_DIM,
-            OP_LOGE(tilingContext_->GetNodeName(), "group_list shape must be [G] when group_list_type is 0 or 1."),
-            return false);
+        OP_CHECK_IF(*groupListType_ != GROUP_LIST_SPARSE_TYPE && groupListShape_.GetDimNum() != GROUP_LIST_DENSE_DIM,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        tilingContext_->GetNodeName(), "group_list", Ops::Base::ToString(groupListShape_).c_str(),
+                        "the shape of group_list must be [G] when group_list_type is 0 or 1"),
+                    return false);
         groupNum_ = groupListShape_.GetDim(INDEX_ZERO);
         OP_CHECK_IF(groupNum_ > MAX_GROUP_LIST_SIZE,
-                    OP_LOGE(tilingContext_->GetNodeName(), "group_list dim0[%ld] should be less than or equal to 1024.",
-                            groupNum_),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        tilingContext_->GetNodeName(), "group_list", Ops::Base::ToString(groupListShape_).c_str(),
+                        ("dim 0 of group_list must not exceed " + std::to_string(MAX_GROUP_LIST_SIZE)).c_str()),
                     return false);
     }
     return true;
@@ -468,7 +543,9 @@ bool FlatQuantTiling::CheckDstDtype(ge::DataType outDtype) const
 {
     if (dstDtype_ != nullptr && outDtype == ge::DT_FLOAT4_E2M1) {
         OP_CHECK_IF(*dstDtype_ != ge::DT_FLOAT4_E2M1,
-                    OP_LOGE(tilingContext_->GetNodeName(), "dst_dtype mismatch for FLOAT4 output."), return false);
+                    OP_LOGE_FOR_INVALID_DTYPE(tilingContext_->GetNodeName(), "dst_dtype",
+                                              std::to_string(*dstDtype_).c_str(), "FLOAT4_E2M1"),
+                    return false);
     }
     return true;
 }
@@ -477,10 +554,11 @@ bool FlatQuantTiling::CheckDstTypeMax(ge::DataType outDtype) const
 {
     if (dstTypeMax_ != nullptr && outDtype == ge::DT_FLOAT4_E2M1) {
         float localDstTypeMax = *dstTypeMax_;
-        OP_CHECK_IF(
-            localDstTypeMax != ZERO_FLOAT && (localDstTypeMax < SIX_FLOAT || localDstTypeMax > TWELVE_FLOAT),
-            OP_LOGE(tilingContext_->GetNodeName(), "dst_type_max[%f] must be 0 or in range [6, 12].", localDstTypeMax),
-            return false);
+        OP_CHECK_IF(localDstTypeMax != ZERO_FLOAT && (localDstTypeMax < SIX_FLOAT || localDstTypeMax > TWELVE_FLOAT),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        tilingContext_->GetNodeName(), "dst_type_max", std::to_string(localDstTypeMax).c_str(),
+                        "the value of attr dst_type_max must be 0 or in the range [6, 12]"),
+                    return false);
     }
     return true;
 }
@@ -490,15 +568,17 @@ bool FlatQuantTiling::CheckNAlignment(ge::DataType outDtype) const
     int64_t n = xShape_.GetDim(INDEX_TWO);
     if (outDtype == ge::DT_FLOAT4_E2M1 || outDtype == ge::DT_INT4) {
         OP_CHECK_IF(n % FACTOR_TWO != 0,
-                    OP_LOGE(tilingContext_->GetNodeName(),
-                            "When out dtype is FLOAT4_E2M1 or INT4, N2 must be even, got %ld.", n),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        tilingContext_->GetNodeName(), "x", Ops::Base::ToString(xShape_).c_str(),
+                        "when the out dtype is FLOAT4_E2M1 or INT4, the N dim of x must be an even number"),
                     return false);
     }
     if (outDtype == ge::DT_INT32) {
-        OP_CHECK_IF(
-            n % NUM_EIGHT != 0,
-            OP_LOGE(tilingContext_->GetNodeName(), "When out dtype is INT32, N2 must be multiple of 8, got %ld.", n),
-            return false);
+        OP_CHECK_IF(n % NUM_EIGHT != 0,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        tilingContext_->GetNodeName(), "x", Ops::Base::ToString(xShape_).c_str(),
+                        "when the out dtype is INT32, the N dim of x must be a multiple of 8"),
+                    return false);
     }
     return true;
 }
@@ -515,10 +595,18 @@ bool FlatQuantTiling::ValidateAll()
         return false;
     }
     auto outDesc = tilingContext_->GetOutputDesc(INDEX_ZERO);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, outDesc);
+    OP_CHECK_IF(
+        outDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext_->GetNodeName(), "out",
+                                                 "the output desc of required output out is missing in the tiling "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     auto outDtype = outDesc->GetDataType();
     if (outDtype != ge::DT_FLOAT4_E2M1 && outDtype != Ops::NN::DT_HIFLOAT4 && !hasP2_) {
-        OP_LOGE(tilingContext_->GetNodeName(), "p2 shape must be [N,N] when out dtype is not FLOAT4_E2M1, got [0,0].");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            tilingContext_->GetNodeName(), "kronecker_p2, x",
+            (Ops::Base::ToString(p2Shape_) + ", " + Ops::Base::ToString(xShape_)).c_str(),
+            "when the out dtype is not FLOAT4_E2M1, the kronecker_p2 input is required with shape [N, N]");
         return false;
     }
     if (!CheckDstDtype(outDtype)) {
@@ -569,20 +657,36 @@ inline auto FlatQuantTiling::CeilA2B(T1 a, T2 b) const -> T1
 
 static ge::graphStatus Tiling4FlatQuantTiling(gert::TilingContext* context)
 {
-    OP_TILING_CHECK(context == nullptr, "FlatQuant context is null", return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        context == nullptr,
+        ReportTilingStageError("FlatQuant", "Tiling: TilingContext is null; the tiling framework contract is broken"),
+        return ge::GRAPH_FAILED);
     FlatQuantTiling tilingObject(context);
     return tilingObject.RunBigKernelTiling();
 }
 
 static ge::graphStatus TilingPrepareTiling(gert::TilingParseContext* context)
 {
-    OP_TILING_CHECK(context == nullptr, "FlatQuant context is null", return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        context == nullptr,
+        ReportTilingStageError("FlatQuant", "Tiling: TilingContext is null; the tiling framework contract is broken"),
+        return ge::GRAPH_FAILED);
     fe::PlatFormInfos* platformInfo = context->GetPlatformInfo();
-    OP_TILING_CHECK(platformInfo == nullptr, "FlatQuant platformInfoPtr is null", return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        platformInfo == nullptr,
+        ReportTilingStageError(
+            "FlatQuant",
+            "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
 
     auto compileInfo = context->GetCompiledInfo<FlatQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "TilingPrepare: compile info is null; check the SoC-specific OPP package and the tiling parse context"),
+        return ge::GRAPH_FAILED);
 
     compileInfo->aicNum = ascendcPlatform.GetCoreNumAic();
     compileInfo->aivNum = ascendcPlatform.GetCoreNumAiv();
@@ -590,11 +694,18 @@ static ge::graphStatus TilingPrepareTiling(gert::TilingParseContext* context)
 
     OP_LOGI("FlatQuant", "parse compile info success soc:%d, aicNum:%ld, aivNum:%ld",
             static_cast<int>(ascendcPlatform.GetSocVersion()), compileInfo->aicNum, compileInfo->aivNum);
-    OP_CHECK_IF(compileInfo->aicNum <= 0, OP_LOGE(context->GetNodeName(), "FlatQuant is not supported for aicNum <=0 "),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        compileInfo->aicNum <= 0,
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid aicNum " + std::to_string(compileInfo->aicNum) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
     if (compileInfo->npuArch == NpuArch::DAV_3510) {
         OP_CHECK_IF(compileInfo->aivNum != (compileInfo->aicNum * 2), // aivNum must == aicNum*2
-                    OP_LOGE(context->GetNodeName(), "FlatQuantTiling is only supported for aivNum == aicNum*2 "),
+                    ReportTilingStageError(context->GetNodeName(),
+                                           "TilingPrepare: aivNum " + std::to_string(compileInfo->aivNum) +
+                                               " does not equal aicNum*2 (" + std::to_string(compileInfo->aicNum * 2) +
+                                               ") on this architecture"),
                     return ge::GRAPH_FAILED);
     }
     if (compileInfo->npuArch == NpuArch::DAV_9201 || compileInfo->npuArch == NpuArch::DAV_9202) {

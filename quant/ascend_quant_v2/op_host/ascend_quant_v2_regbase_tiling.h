@@ -44,7 +44,7 @@ enum class RoundMode {
 
 class AscendQuantV2Regbase {
 public:
-    explicit AscendQuantV2Regbase(gert::TilingContext* context) : context_(context){};
+    explicit AscendQuantV2Regbase(gert::TilingContext* context) : context_(context) {};
     ge::graphStatus DoAscendQuantV2Tiling();
 
 protected:
@@ -58,12 +58,12 @@ protected:
     uint32_t GetCoreNum(int64_t factor, int64_t coreNum) const;
     uint32_t GetCoreNumDoubleCut(int64_t shape0, int64_t shape1, int64_t coreNum) const;
     int64_t GetNewShape0(int64_t shape0, int64_t shape1);
-    void CalcTiling();
+    ge::graphStatus CalcTiling();
     void CalcTilingKey();
     int64_t CalcMaxBaseLen(int64_t ubSize) const;
     int64_t CalcMaxN(int64_t ubSize, int64_t base) const;
     void WriteTilingData();
-    void CalcPerHeadTiling();
+    ge::graphStatus CalcPerHeadTiling();
     void CalcPerHeadBlockFactor();
     void CalcPerHeadUBFactor(int64_t cacheLineNum);
     void CalcPerTensorBlockFactor(int64_t size);

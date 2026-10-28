@@ -49,7 +49,7 @@ static Status ParseParamsFakeQuantWithMinMaxVarsPerChannelGradient(const google:
                                                                    ge::Operator& op)
 {
     if (AutoMappingFn(op_src, op) != SUCCESS) {
-        OP_LOGE(GetOpName(op).c_str(), "auto mapping failed.");
+        OP_LOGE_WITHOUT_REPORT(GetOpName(op).c_str(), "auto mapping failed.");
         return FAILED;
     }
     for (size_t i = 0; i < op.GetInputsSize(); i++) {

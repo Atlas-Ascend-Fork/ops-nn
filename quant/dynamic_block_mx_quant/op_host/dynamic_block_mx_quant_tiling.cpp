@@ -25,6 +25,14 @@ using namespace AscendC;
 using namespace DynamicBlockMxQuantOp;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "DynamicBlockMxQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 constexpr int64_t INDEX_ATTR_ROUND_MODE = 0;
 constexpr int64_t INDEX_ATTR_DST_DTYPE = 1;
 constexpr int64_t INDEX_ATTR_SCALE_ALG = 2;
@@ -83,13 +91,25 @@ RoundModeList DynamicBlockMxQuantTiling::GetRoundMode(const std::string& roundMo
 ge::graphStatus DynamicBlockMxQuantTiling::GetAttr()
 {
     auto* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
 
     auto outputYPtr = context_->GetOutputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputYPtr);
+    OP_CHECK_IF(outputYPtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y",
+                                                         "the output desc of y is missing in the tiling context; check "
+                                                         "that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto yDtype = outputYPtr->GetDataType();
     auto* attrRoundMode = attrs->GetAttrPointer<char>(INDEX_ATTR_ROUND_MODE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrRoundMode);
+    OP_CHECK_IF(attrRoundMode == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "the optional attr round_mode is missing in the tiling context; set the "
+                                       "round_mode attribute or rely on its registered default"),
+                return ge::GRAPH_FAILED);
     std::string roundModeStr = attrRoundMode;
     RoundModeList roundMode = GetRoundMode(roundModeStr);
     OP_CHECK_IF((roundMode == RoundModeList::MODE_UNDEFINED),
@@ -104,7 +124,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::GetAttr()
     tilingParams.roundMode = static_cast<int64_t>(roundMode);
 
     auto* attrDstType = attrs->GetAttrPointer<int64_t>(INDEX_ATTR_DST_DTYPE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrDstType);
+    OP_CHECK_IF(
+        attrDstType == nullptr,
+        ReportTilingStageError(context_->GetNodeName(), "the optional attr dst_type is missing in the tiling context; "
+                                                        "set the dst_type attribute or rely on its registered default"),
+        return ge::GRAPH_FAILED);
     tilingParams.dstType = static_cast<int64_t>(*attrDstType);
     int checkDstType = static_cast<int>(*attrDstType);
     OP_CHECK_IF((yDtype == ge::DT_FLOAT4_E2M1 && checkDstType != 40) ||
@@ -118,7 +142,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::GetAttr()
                 return ge::GRAPH_FAILED);
 
     auto* attrScaleAlg = attrs->GetAttrPointer<int64_t>(INDEX_ATTR_SCALE_ALG);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrScaleAlg);
+    OP_CHECK_IF(attrScaleAlg == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "the optional attr scale_algo is missing in the tiling context; set the "
+                                       "scale_algo attribute or rely on its registered default"),
+                return ge::GRAPH_FAILED);
     tilingParams.scaleAlg = static_cast<int64_t>(*attrScaleAlg);
     OP_CHECK_IF(tilingParams.scaleAlg != DIGIT_ZERO && tilingParams.scaleAlg != DIGIT_TWO,
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "scale_alg",
@@ -139,7 +167,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::GetAttr()
         return ge::GRAPH_FAILED);
 
     auto* attrDstTypeMax = attrs->GetAttrPointer<float>(INDEX_ATTR_DST_TYPE_MAX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrDstTypeMax);
+    OP_CHECK_IF(attrDstTypeMax == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "the optional attr dst_type_max is missing in the tiling context; set the "
+                                       "dst_type_max attribute or rely on its registered default"),
+                return ge::GRAPH_FAILED);
     tilingParams.dstTypeMax = static_cast<float>(*attrDstTypeMax);
     OP_CHECK_IF((tilingParams.dstTypeMax != DIGIT_ZERO_FLOAT &&
                  (tilingParams.scaleAlg != DIGIT_TWO || yDtype != ge::DT_FLOAT4_E2M1)),
@@ -162,7 +194,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::GetAttr()
 ge::graphStatus DynamicBlockMxQuantTiling::CheckDtype() const
 {
     auto inputXPtr = context_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputXPtr);
+    OP_CHECK_IF(inputXPtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the input desc/shape of x is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto xDtype = inputXPtr->GetDataType();
     OP_CHECK_IF(INPUT_SUPPORT_DTYPE_SET.count(xDtype) == 0,
                 OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", Ops::Base::ToString(xDtype),
@@ -170,7 +206,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::CheckDtype() const
                 return ge::GRAPH_FAILED);
 
     auto outputYPtr = context_->GetOutputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputYPtr);
+    OP_CHECK_IF(outputYPtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y",
+                                                         "the output desc of y is missing in the tiling context; check "
+                                                         "that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto yDtype = outputYPtr->GetDataType();
     OP_CHECK_IF(Y_SUPPORT_DTYPE_SET.count(yDtype) == 0,
                 OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
@@ -179,7 +219,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::CheckDtype() const
                 return ge::GRAPH_FAILED);
 
     auto outputScale1Ptr = context_->GetOutputDesc(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputScale1Ptr);
+    OP_CHECK_IF(outputScale1Ptr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale1",
+                                                         "the output desc of scale1 is missing in the tiling context; "
+                                                         "check that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto scale1Dtype = outputScale1Ptr->GetDataType();
     OP_CHECK_IF(MX_SCALE_SUPPORT_DTYPE_SET.count(scale1Dtype) == 0,
                 OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "scale1", Ops::Base::ToString(scale1Dtype),
@@ -187,7 +231,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::CheckDtype() const
                 return ge::GRAPH_FAILED);
 
     auto outputScale2Ptr = context_->GetOutputDesc(2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputScale2Ptr);
+    OP_CHECK_IF(outputScale2Ptr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale2",
+                                                         "the output desc of scale2 is missing in the tiling context; "
+                                                         "check that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto scale2Dtype = outputScale2Ptr->GetDataType();
     OP_CHECK_IF(MX_SCALE_SUPPORT_DTYPE_SET.count(scale2Dtype) == 0,
                 OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "scale2", Ops::Base::ToString(scale2Dtype),
@@ -200,7 +248,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::CheckDtype() const
 ge::graphStatus DynamicBlockMxQuantTiling::CheckShape() const
 {
     auto xShapePtr = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the input desc/shape of x is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto xShape = xShapePtr->GetStorageShape();
     size_t xSizeNum = xShape.GetShapeSize();
     if (xSizeNum == 0ULL) {
@@ -216,7 +268,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::CheckShape() const
                 return ge::GRAPH_FAILED);
 
     auto outputYPtr = context_->GetOutputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputYPtr);
+    OP_CHECK_IF(outputYPtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y",
+                                                         "the output desc of y is missing in the tiling context; check "
+                                                         "that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto yDtype = outputYPtr->GetDataType();
 
     OP_CHECK_IF(xShape.GetDim(xShape.GetDimNum() - 1) % DIGIT_TWO != 0 && Y_SUPPORT_DTYPE_FP4_SET.count(yDtype) != 0,
@@ -226,7 +282,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::CheckShape() const
                 return ge::GRAPH_FAILED);
 
     auto yShapePtr = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yShapePtr);
+    OP_CHECK_IF(yShapePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y",
+                                                         "the output desc of y is missing in the tiling context; check "
+                                                         "that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto yShape = yShapePtr->GetStorageShape();
 
     OP_CHECK_IF(xShape != yShape,
@@ -236,11 +296,19 @@ ge::graphStatus DynamicBlockMxQuantTiling::CheckShape() const
                 return ge::GRAPH_FAILED);
 
     auto scale1ShapePtr = context_->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, scale1ShapePtr);
+    OP_CHECK_IF(scale1ShapePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale1",
+                                                         "the output desc of scale1 is missing in the tiling context; "
+                                                         "check that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto scale1Shape = scale1ShapePtr->GetStorageShape();
 
     auto scale2ShapePtr = context_->GetOutputShape(2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, scale2ShapePtr);
+    OP_CHECK_IF(scale2ShapePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale2",
+                                                         "the output desc of scale2 is missing in the tiling context; "
+                                                         "check that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto scale2Shape = scale2ShapePtr->GetStorageShape();
 
     auto newScale1Shape = xShape;
@@ -276,15 +344,20 @@ ge::graphStatus DynamicBlockMxQuantTiling::GetPlatformInfo()
     OP_LOGD(context_->GetNodeName(), "Enter DynamicBlockMxQuantTiling GetPlatformInfo.");
 
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "GetPlatformInfo: platform info is null; check the platform info query and the OPP/SoC installation"),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     tilingParams.totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((tilingParams.totalCoreNum <= 0), OP_LOGE(context_->GetNodeName(), "Failed to core num."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((tilingParams.totalCoreNum <= 0),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Failed to core num."), return ge::GRAPH_FAILED);
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     tilingParams.ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((tilingParams.ubSize <= 0), OP_LOGE(context_->GetNodeName(), "Failed to get ub size."),
+    OP_CHECK_IF((tilingParams.ubSize <= 0), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Failed to get ub size."),
                 return ge::GRAPH_FAILED);
     tilingParams.workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
@@ -294,7 +367,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::GetPlatformInfo()
 ge::graphStatus DynamicBlockMxQuantTiling::CalcAxisSize()
 {
     auto xShapePtr = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the input desc/shape of x is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto xShape = xShapePtr->GetStorageShape();
     if (xShape.GetDimNum() == 2) {
         tilingParams.batchNum = 1;
@@ -428,25 +505,30 @@ ge::graphStatus DynamicBlockMxQuantTiling::DoTiling()
 {
     OP_LOGD(context_->GetNodeName(), "Enter DynamicBlockMxQuantTiling DoTiling.");
 
-    OP_CHECK_IF(GetPlatformInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The platforminfo get failed"),
+    OP_CHECK_IF(GetPlatformInfo() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The platforminfo get failed"),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckDtype() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The data type check failed."),
+    OP_CHECK_IF(CheckDtype() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The data type check failed."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The attr get failed."),
+    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The attr get failed."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The shape check failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The shape check failed."), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(SetTilingParams() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "DynamicBlockMxQuantTiling SetTilingParams failed"),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DynamicBlockMxQuantTiling SetTilingParams failed"),
                 return ge::GRAPH_FAILED);
 
     SetTilingKey();
     tilingData_ = context_->GetTilingData<DynamicBlockMxQuantTilingData>();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, tilingData_);
+    OP_CHECK_IF(tilingData_ == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "GetRawTilingData() returned null; check the TilingContext construction"),
+                return ge::GRAPH_FAILED);
     SetTilingData();
     PrintTilingData();
 
@@ -455,7 +537,11 @@ ge::graphStatus DynamicBlockMxQuantTiling::DoTiling()
     context_->SetTilingKey(tilingParams.tilingKey);
 
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = tilingParams.workspaceSize;
 
     return ge::GRAPH_SUCCESS;
@@ -569,21 +655,24 @@ void DynamicBlockMxQuantTiling::PrintTilingData()
         "tailCoreRowTileNum: %ld, tailCoreColTileNum: %ld, rowNormalCoreNum: %ld, colNormalCoreNum: %ld, "
         "rowTailCoreNum: %ld, colTailCoreNum: %ld, blockH: %ld, blockW: %ld, rowScaleNum: %ld, colScaleNum: %ld, "
         "dstTypeMax: %f ",
-        tilingData_->tilingKey, tilingData_->totalCoreNum, tilingData_->usedCoreNum, tilingData_->ubSize, tilingData_->roundMode,
-        tilingData_->dstType, tilingData_->scaleAlg, tilingData_->batchNum, tilingData_->rowNum, tilingData_->colNum,
-        tilingData_->singleBatchRowBlockLoopNum, tilingData_->rowBlockLoopNum, tilingData_->colBlockLoopNum,
-        tilingData_->rowUbBlockLoopNum, tilingData_->colUbBlockLoopNum, tilingData_->rowUbFactor, tilingData_->colUbFactor,
-        tilingData_->rowTileNum, tilingData_->colTileNum, tilingData_->normalCoreRowTileNum, tilingData_->normalCoreColTileNum,
-        tilingData_->tailCoreRowTileNum, tilingData_->tailCoreColTileNum, tilingData_->rowNormalCoreNum,
-        tilingData_->colNormalCoreNum, tilingData_->rowTailCoreNum, tilingData_->colTailCoreNum, tilingData_->blockH,
-        tilingData_->blockW, tilingData_->rowScaleNum, tilingData_->colScaleNum, tilingData_->dstTypeMax);
+        tilingData_->tilingKey, tilingData_->totalCoreNum, tilingData_->usedCoreNum, tilingData_->ubSize,
+        tilingData_->roundMode, tilingData_->dstType, tilingData_->scaleAlg, tilingData_->batchNum, tilingData_->rowNum,
+        tilingData_->colNum, tilingData_->singleBatchRowBlockLoopNum, tilingData_->rowBlockLoopNum,
+        tilingData_->colBlockLoopNum, tilingData_->rowUbBlockLoopNum, tilingData_->colUbBlockLoopNum,
+        tilingData_->rowUbFactor, tilingData_->colUbFactor, tilingData_->rowTileNum, tilingData_->colTileNum,
+        tilingData_->normalCoreRowTileNum, tilingData_->normalCoreColTileNum, tilingData_->tailCoreRowTileNum,
+        tilingData_->tailCoreColTileNum, tilingData_->rowNormalCoreNum, tilingData_->colNormalCoreNum,
+        tilingData_->rowTailCoreNum, tilingData_->colTailCoreNum, tilingData_->blockH, tilingData_->blockW,
+        tilingData_->rowScaleNum, tilingData_->colScaleNum, tilingData_->dstTypeMax);
 }
 
 static ge::graphStatus TilingForDynamicBlockMxQuant(gert::TilingContext* context)
 {
     OP_LOGD("DynamicBlockMxQuantTiling", "Enter TilingForDynamicBlockMxQuantTiling");
 
-    OP_CHECK_IF(context == nullptr, OP_LOGE("DynamicBlockMxQuantTiling", "Tiling context is null."),
+    OP_CHECK_IF(context == nullptr,
+                ReportTilingStageError("DynamicBlockMxQuant",
+                                       "Tiling: TilingContext is null; the tiling framework contract is broken"),
                 return ge::GRAPH_FAILED);
 
     DynamicBlockMxQuantTiling blockMxQuantTiling(context);
@@ -594,8 +683,11 @@ static ge::graphStatus TilingPrepareForDynamicBlockMxQuant(gert::TilingParseCont
 {
     OP_LOGD("DynamicBlockMxQuantTiling", "Enter TilingPrepareForDynamicBlockMxQuantTiling");
 
-    OP_CHECK_IF(context == nullptr, OP_LOGE("DynamicBlockMxQuantTiling", "TilingParse context is null."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        context == nullptr,
+        ReportTilingStageError("DynamicBlockMxQuant",
+                               "TilingPrepare: TilingParseContext is null; the tiling framework contract is broken"),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }

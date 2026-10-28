@@ -23,6 +23,14 @@
 using namespace gert;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "GroupQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 using Ops::NN::Optiling::TilingBaseClass;
 static const uint64_t TILING_OFFSET = 1000000000000UL;
 static const size_t INPUT_INDEX_OF_X = 0;
@@ -58,7 +66,11 @@ ge::graphStatus GroupQuantTiling::GetPlatformInfo()
     OP_LOGD(context_->GetNodeName(), "GetPlatformInfo begin.");
 
     auto compileInfo = context_->GetCompileInfo<GroupQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     auto platformInfoPtr = context_->GetPlatformInfo();
     if (platformInfoPtr == nullptr) {
         coreNumVar = compileInfo->coreNum;
@@ -79,67 +91,100 @@ ge::graphStatus GroupQuantTiling::GetShapeAttrsInfo()
 
     // check for input x
     auto inputX = context_->GetInputShape(INPUT_INDEX_OF_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputX);
+    OP_CHECK_IF(inputX == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the input shape/desc of x is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto inputXDesc = context_->GetInputDesc(INPUT_INDEX_OF_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputXDesc);
+    OP_CHECK_IF(inputXDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the input shape/desc of x is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto xDtype = inputXDesc->GetDataType();
     OP_CHECK_IF((xDtype != ge::DT_FLOAT && xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16),
-                OP_LOGE(context_->GetNodeName(), "x datatype only support FLOAT32, FLOAT16 or BFLOAT16, but is %s",
-                        Ops::Base::ToString(xDtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", Ops::Base::ToString(xDtype).c_str(),
+                                                      "The dtype of x must be FLOAT, FLOAT16 or BF16."),
                 return ge::GRAPH_FAILED);
     auto xShape = EnsureNotScalar(inputX->GetStorageShape());
-    OP_CHECK_IF(xShape.GetDimNum() != DIM_NUM_OF_X,
-                OP_LOGE(context_->GetNodeName(), "x shape length should be 2, but shape is %s",
-                        Ops::Base::ToString(xShape).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        xShape.GetDimNum() != DIM_NUM_OF_X,
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), "x", std::to_string(xShape.GetDimNum()).c_str(), "2"),
+        return ge::GRAPH_FAILED);
     dimS = xShape.GetDim(DIM_INDEX_0);
     dimH = xShape.GetDim(DIM_INDEX_1);
 
     // check for input scale
     auto inputScale = context_->GetInputShape(INPUT_INDEX_OF_SCALE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputScale);
+    OP_CHECK_IF(
+        inputScale == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale",
+                                                 "the input shape/desc of scale is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto inputScaleDesc = context_->GetInputDesc(INPUT_INDEX_OF_SCALE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputScaleDesc);
+    OP_CHECK_IF(
+        inputScaleDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale",
+                                                 "the input shape/desc of scale is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto scaleDtype = inputScaleDesc->GetDataType();
-    OP_CHECK_IF((scaleDtype != ge::DT_FLOAT && scaleDtype != ge::DT_FLOAT16 && scaleDtype != ge::DT_BF16),
-                OP_LOGE(context_->GetNodeName(), "scale datatype only support FLOAT32, FLOAT16 or BFLOAT16, but is %s",
-                        Ops::Base::ToString(scaleDtype).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (scaleDtype != ge::DT_FLOAT && scaleDtype != ge::DT_FLOAT16 && scaleDtype != ge::DT_BF16),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "scale", Ops::Base::ToString(scaleDtype).c_str(),
+                                              "The dtype of scale must be FLOAT, FLOAT16 or BF16."),
+        return ge::GRAPH_FAILED);
     auto scaleShape = EnsureNotScalar(inputScale->GetStorageShape());
     OP_CHECK_IF(scaleShape.GetDimNum() != DIM_NUM_OF_SCALE,
-                OP_LOGE(context_->GetNodeName(), "scale shape length should be 2, but shape is %s",
-                        Ops::Base::ToString(scaleShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), "scale",
+                                             std::to_string(scaleShape.GetDimNum()).c_str(), "2"),
                 return ge::GRAPH_FAILED);
     dimE = scaleShape.GetDim(DIM_INDEX_0);
-    OP_CHECK_IF(dimE < 1,
-                OP_LOGE(context_->GetNodeName(), "no support for the first dim of scale shape(%s) is less than 1",
-                        Ops::Base::ToString(scaleShape).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        dimE < 1,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "scale", Ops::Base::ToString(scaleShape).c_str(),
+                                              "the first dim of the scale shape must not be less than 1"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(scaleShape.GetDim(DIM_INDEX_1) != dimH,
-                OP_LOGE(context_->GetNodeName(),
-                        "the second dim of scale shape(%s) should be same as the second dim of x shape(%s)",
-                        Ops::Base::ToString(scaleShape).c_str(), Ops::Base::ToString(xShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context_->GetNodeName(), "scale, x",
+                    (Ops::Base::ToString(scaleShape) + ", " + Ops::Base::ToString(xShape)).c_str(),
+                    "the second dim of the scale shape must be the same as the second dim of the x shape"),
                 return ge::GRAPH_FAILED);
 
     // check for input group_index
     auto inputGrpIdx = context_->GetInputShape(INPUT_INDEX_OF_GROUP_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputGrpIdx);
+    OP_CHECK_IF(
+        inputGrpIdx == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "group_index",
+                                                 "the input shape/desc of group_index is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto inputGrpIdxDesc = context_->GetInputDesc(INPUT_INDEX_OF_GROUP_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputGrpIdxDesc);
+    OP_CHECK_IF(
+        inputGrpIdxDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "group_index",
+                                                 "the input shape/desc of group_index is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto grpIdxDtype = inputGrpIdxDesc->GetDataType();
     OP_CHECK_IF((grpIdxDtype != ge::DT_INT32 && grpIdxDtype != ge::DT_INT64),
-                OP_LOGE(context_->GetNodeName(), "group_index datatype only support INT32 or INT64, but is %s",
-                        Ops::Base::ToString(grpIdxDtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "group_index",
+                                                      Ops::Base::ToString(grpIdxDtype).c_str(),
+                                                      "The dtype of group_index must be INT32 or INT64."),
                 return ge::GRAPH_FAILED);
     auto grpIdxShape = EnsureNotScalar(inputGrpIdx->GetStorageShape());
     OP_CHECK_IF(grpIdxShape.GetDimNum() != DIM_NUM_OF_GROUP_INDEX,
-                OP_LOGE(context_->GetNodeName(), "group_index shape length should be 1, but shape is %s",
-                        Ops::Base::ToString(grpIdxShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), "group_index",
+                                             std::to_string(grpIdxShape.GetDimNum()).c_str(), "1"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(grpIdxShape.GetDim(DIM_INDEX_0) != dimE,
-                OP_LOGE(context_->GetNodeName(),
-                        "The first dim of group_index shape(%s) should be same as the first dim of scale shape(%s)",
-                        Ops::Base::ToString(grpIdxShape).c_str(), Ops::Base::ToString(scaleShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context_->GetNodeName(), "group_index, scale",
+                    (Ops::Base::ToString(grpIdxShape) + ", " + Ops::Base::ToString(scaleShape)).c_str(),
+                    "the first dim of the group_index shape must be the same as the first dim of the scale shape"),
                 return ge::GRAPH_FAILED);
 
     // check for input offset which is an optional input
@@ -150,54 +195,75 @@ ge::graphStatus GroupQuantTiling::GetShapeAttrsInfo()
     } else {
         hasOffset = 1;
         auto inputOffsetDesc = context_->GetInputDesc(INPUT_INDEX_OF_OFFSET);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, inputOffsetDesc);
+        OP_CHECK_IF(
+            inputOffsetDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "offset",
+                                                     "the input shape/desc of offset is missing in the tiling context; "
+                                                     "check that the graph node provides all required inputs"),
+            return ge::GRAPH_FAILED);
         auto offsetDtype = inputOffsetDesc->GetDataType();
         OP_CHECK_IF(offsetDtype != scaleDtype,
-                    OP_LOGE(context_->GetNodeName(), "offset datatype(%s) should be same as scale datatype(%s)",
-                            Ops::Base::ToString(offsetDtype).c_str(), Ops::Base::ToString(scaleDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context_->GetNodeName(), "offset, scale",
+                        (Ops::Base::ToString(offsetDtype) + ", " + Ops::Base::ToString(scaleDtype)).c_str(),
+                        "The dtypes of offset and scale must be the same."),
                     return ge::GRAPH_FAILED);
         auto offsetShape = EnsureNotScalar(inputOffset->GetStorageShape());
-        OP_CHECK_IF(
-            offsetShape.GetDimNum() != DIM_NUM_OF_OFFSET || offsetShape.GetDim(DIM_INDEX_0) != 1,
-            OP_LOGE(context_->GetNodeName(), "offset should be scalar or vector with shape is [1, ], but shape is %s",
-                    Ops::Base::ToString(offsetShape).c_str()),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(offsetShape.GetDimNum() != DIM_NUM_OF_OFFSET || offsetShape.GetDim(DIM_INDEX_0) != 1,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "offset",
+                                                          Ops::Base::ToString(offsetShape).c_str(),
+                                                          "offset must be a scalar or a vector with shape [1]"),
+                    return ge::GRAPH_FAILED);
     }
 
     // check attr dst_type
     auto* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     const int32_t* pDstType = attrs->GetAttrPointer<int32_t>(ATTR_INDEX_OF_DST_TYPE);
     if (pDstType != nullptr) {
         int32_t dstType = *pDstType;
         OP_CHECK_IF(dstType != DTYPE_INT8 && dstType != DTYPE_INT4,
-                    OP_LOGE(context_->GetNodeName(), "dst_type should be DT_INT4 or DT_INT8, but is %s",
-                            Ops::Base::ToString(static_cast<ge::DataType>(dstType)).c_str()),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context_->GetNodeName(), "dst_type", std::to_string(dstType).c_str(),
+                        "the value of attr dst_type only supports 2 (DT_INT8) or 29 (DT_INT4)"),
                     return ge::GRAPH_FAILED);
     }
 
     // check for output y
     auto outputY = context_->GetOutputShape(OUTPUT_INDEX_OF_Y);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputY);
+    OP_CHECK_IF(outputY == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "the output shape of y is missing in the tiling context; check that InferShape "
+                                       "executed and the framework propagated the output shapes"),
+                return ge::GRAPH_FAILED);
     auto outputYDesc = context_->GetOutputDesc(OUTPUT_INDEX_OF_Y);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputYDesc);
+    OP_CHECK_IF(outputYDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y",
+                                                         "the output desc of y is missing in the tiling context; check "
+                                                         "that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto yDtype = outputYDesc->GetDataType();
     OP_CHECK_IF(yDtype != ge::DT_INT4 && yDtype != ge::DT_INT8,
-                OP_LOGE(context_->GetNodeName(), "y datatype only support INT4 or INT8, but is %s",
-                        Ops::Base::ToString(yDtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yDtype).c_str(),
+                                                      "The dtype of y must be INT4 or INT8."),
                 return ge::GRAPH_FAILED);
     auto yShape = EnsureNotScalar(outputY->GetStorageShape());
     OP_CHECK_IF(
         yShape.GetDimNum() != DIM_NUM_OF_Y || yShape.GetDim(DIM_INDEX_0) != dimS || yShape.GetDim(DIM_INDEX_1) != dimH,
-        OP_LOGE(context_->GetNodeName(), "y shape(%s) should be same as x shape(%s)",
-                Ops::Base::ToString(yShape).c_str(), Ops::Base::ToString(xShape).c_str()),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context_->GetNodeName(), "y, x", (Ops::Base::ToString(yShape) + ", " + Ops::Base::ToString(xShape)).c_str(),
+            "the shape of y must be the same as the shape of x"),
         return ge::GRAPH_FAILED);
     if (yDtype == ge::DT_INT4) {
-        OP_CHECK_IF(
-            dimH % EVEN_FACTOR != 0,
-            OP_LOGE(context_->GetNodeName(), "y datatype is int4, the second dim of shape(%s) should be an even number",
-                    Ops::Base::ToString(yShape).c_str()),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(dimH % EVEN_FACTOR != 0,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context_->GetNodeName(), "y", Ops::Base::ToString(yShape).c_str(),
+                        "when the dtype of y is INT4, the second dim of the y shape must be an even number"),
+                    return ge::GRAPH_FAILED);
     }
 
     OP_LOGD(context_->GetNodeName(), "GetShapeAttrsInfo end.");
@@ -216,8 +282,11 @@ ge::graphStatus GroupQuantTiling::DoOpTiling()
     } else {
         needCoreNum = coreNumVar;
     }
-    OP_CHECK_IF(needCoreNum < 1, OP_LOGE(context_->GetNodeName(), "need core num should be greater than 0"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        needCoreNum < 1,
+        ReportTilingStageError(context_->GetNodeName(), "DoOpTiling: needCoreNum is " + std::to_string(needCoreNum) +
+                                                            "; the computed core count is invalid"),
+        return ge::GRAPH_FAILED);
     if (dimS % needCoreNum == 0) {
         preCoreNum = needCoreNum;
     } else {
@@ -263,14 +332,25 @@ ge::graphStatus GroupQuantTiling::PostTiling()
 
     context_->SetBlockDim(tilingData.get_needCoreNum());
     size_t* workspaces = context_->GetWorkspaceSizes(1);
+    OP_CHECK_IF(
+        workspaces == nullptr,
+        ReportTilingStageError(context_->GetNodeName(), "PostTiling: GetWorkspaceSizes(1) "
+                                                        "returned null; required output-slot count is 1. Check the "
+                                                        "TilingContext construction, not the user device allocation"),
+        return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
 
     gert::TilingData* rawTilingData = context_->GetRawTilingData();
-    OP_CHECK_IF(rawTilingData == nullptr, OP_LOGE(context_->GetNodeType(), "GetRawTilingData failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        rawTilingData == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "PostTiling: GetRawTilingData() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(tilingData.GetDataSize() > rawTilingData->GetCapacity(),
-                OP_LOGE(context_, "actual tiling data size %zu > context tiling data size %zu",
-                        tilingData.GetDataSize(), rawTilingData->GetCapacity()),
+                ReportTilingStageError(context_->GetNodeName(), "PostTiling: tiling data size " +
+                                                                    std::to_string(tilingData.GetDataSize()) +
+                                                                    " exceeds the tiling buffer capacity " +
+                                                                    std::to_string(rawTilingData->GetCapacity())),
                 return ge::GRAPH_FAILED);
     tilingData.SaveToBuffer(rawTilingData->GetData(), rawTilingData->GetCapacity());
     rawTilingData->SetDataSize(tilingData.GetDataSize());
@@ -293,23 +373,36 @@ static ge::graphStatus TilingPrepare4GroupQuant(gert::TilingParseContext* contex
     OP_LOGD(context, "TilingPrepare4GroupQuant begin.");
 
     auto compileInfo = context->GetCompiledInfo<GroupQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "TilingPrepare: compile info is null; check the SoC-specific OPP package and the tiling parse context"),
+        return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0),
-                OP_LOGE(context->GetNodeName(), "Get core num failed, core num: %u",
-                        static_cast<uint32_t>(compileInfo->coreNum)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->coreNum <= 0),
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid core num " + std::to_string(compileInfo->coreNum) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
 
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = ubSizePlatForm;
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0),
-                OP_LOGE(context->GetNodeName(), "Get ub size failed, ub size: %u",
-                        static_cast<uint32_t>(compileInfo->ubSizePlatForm)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->ubSizePlatForm <= 0),
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid UB size " + std::to_string(compileInfo->ubSizePlatForm) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
 
     OP_LOGD(context, "TilingPrepare4GroupQuant end.");
     return ge::GRAPH_SUCCESS;

@@ -25,6 +25,15 @@ using namespace ge;
 using namespace AscendC;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "DynamicQuantUpdateScatterV2",
+                                               reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 constexpr uint32_t X_INDEX = 0;
 constexpr uint32_t INDICES_INDEX = 1;
 constexpr uint32_t VAR_INDEX = 2;
@@ -135,7 +144,11 @@ ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckOpDim(const gert::Storag
 ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckOpInputShape(gert::TilingContext* context) const
 {
     auto xShape = context->GetInputShape(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(xShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                         "the input shape of x is missing in the tiling context; check "
+                                                         "that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     size_t xDimNum = xShape->GetStorageShape().GetDimNum();
     if (xDimNum != INPUT_X_DIM_NUM) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "parameter", "invalid",
@@ -162,10 +175,19 @@ ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckOpInputShape(gert::Tilin
     }
 
     auto varShape = context->GetInputShape(VAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
+    OP_CHECK_IF(varShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "var",
+                                                         "the input shape of var is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
 
     auto scaleShape = context->GetInputShape(VAR_SCALE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scaleShape);
+    OP_CHECK_IF(
+        scaleShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "var_scale",
+                                                 "the input shape of var_scale is missing in the tiling context; check "
+                                                 "that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     size_t scaleDimNum = scaleShape->GetStorageShape().GetDimNum();
     OP_CHECK_IF((CheckOpDim(varShape, scaleShape, scaleDimNum) != ge::GRAPH_SUCCESS),
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "parameter", "invalid",
@@ -173,7 +195,12 @@ ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckOpInputShape(gert::Tilin
                 return ge::GRAPH_FAILED);
 
     auto offsetShape = context->GetInputShape(VAR_OFFSET_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, offsetShape);
+    OP_CHECK_IF(
+        offsetShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "var_offset",
+                                                 "the input shape of var_offset is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     size_t offsetDimNum = offsetShape->GetStorageShape().GetDimNum();
     OP_CHECK_IF((CheckOpDim(varShape, offsetShape, offsetDimNum) != ge::GRAPH_SUCCESS),
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "parameter", "invalid",
@@ -196,7 +223,11 @@ ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckOpShape(gert::TilingCont
 ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckOutputDtype(gert::TilingContext* context)
 {
     auto varDesc = context->GetOutputDesc(VAR_OUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varDesc);
+    OP_CHECK_IF(varDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "var",
+                                                         "the output desc of var is missing in the tiling context; "
+                                                         "check that the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     varDtype = varDesc->GetDataType();
     if (varDtype != ge::DataType::DT_INT4) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "parameter", "invalid",
@@ -205,7 +236,12 @@ ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckOutputDtype(gert::Tiling
     }
 
     auto scaleDesc = context->GetOutputDesc(VAR_SCALE_OUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scaleDesc);
+    OP_CHECK_IF(
+        scaleDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "var_scale",
+                                                 "the output desc of var_scale is missing in the tiling context; check "
+                                                 "that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     auto scaleDtype = scaleDesc->GetDataType();
     if (scaleDtype != ge::DataType::DT_FLOAT) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "parameter", "invalid",
@@ -214,7 +250,12 @@ ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckOutputDtype(gert::Tiling
     }
 
     auto offsetDesc = context->GetOutputDesc(VAR_OFFSET_OUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, offsetDesc);
+    OP_CHECK_IF(
+        offsetDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "var_offset",
+                                                 "the output desc of var_offset is missing in the tiling context; "
+                                                 "check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     auto offsetDtype = offsetDesc->GetDataType();
     if (offsetDtype != ge::DataType::DT_FLOAT) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "parameter", "invalid",
@@ -228,7 +269,11 @@ ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckOutputDtype(gert::Tiling
 ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckInputDtype(gert::TilingContext* context) const
 {
     auto xDesc = context->GetInputDesc(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
+    OP_CHECK_IF(xDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                         "the input desc of x is missing in the tiling context; check "
+                                                         "that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto xDtype = xDesc->GetDataType();
     if (xDtype != ge::DataType::DT_FLOAT16 && xDtype != ge::DataType::DT_BF16) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "parameter", "invalid",
@@ -237,7 +282,11 @@ ge::graphStatus DynamicQuantUpdateScatterV2Tiling::CheckInputDtype(gert::TilingC
     }
 
     auto indicesDesc = context->GetInputDesc(INDICES_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, indicesDesc);
+    OP_CHECK_IF(indicesDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "indices",
+                                                         "the input desc of indices is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto indicesDtype = indicesDesc->GetDataType();
     if (indicesDtype != ge::DataType::DT_INT32) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "parameter", "invalid",
@@ -322,7 +371,11 @@ void DynamicQuantUpdateScatterV2Tiling::CalculateMaxUbSizePerRow(ge::DataType xD
 ge::graphStatus DynamicQuantUpdateScatterV2Tiling::GetCompileInfo(gert::TilingContext* context)
 {
     auto compileInfo = context->GetCompileInfo<DynamicQuantUpdateScatterV2CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     vectorCoreNum = compileInfo->vectorCoreNum;
     ubSize = compileInfo->ubSize;
     OP_CHECK_IF(
@@ -399,9 +452,18 @@ static ge::graphStatus TilingForDynamicQuantUpdateScatterV2(gert::TilingContext*
 static ge::graphStatus TilingPrepareForDynamicQuantUpdateScatterV2(gert::TilingParseContext* context)
 {
     auto compileInfo = context->GetCompiledInfo<DynamicQuantUpdateScatterV2CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "GetCompiledInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "GetPlatformInfo returned null; check the TilingParseContext construction and the platform registration"),
+        return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->vectorCoreNum = ascendcPlatform.GetCoreNumAiv();
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo->ubSize);

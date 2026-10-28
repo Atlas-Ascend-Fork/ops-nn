@@ -16,6 +16,14 @@
 
 namespace optiling {
 
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "TransQuantParamV2", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 void GetChipFeature(fe::PlatFormInfos& platform_info, const string& lable, const string& platform_info_key,
                     const string& true_value, bool& value)
 {
@@ -32,42 +40,74 @@ void GetChipFeature(fe::PlatFormInfos& platform_info, const string& lable, const
 static ge::graphStatus TilingFunc(gert::TilingContext* context)
 {
     TransQuantParamV2TilingData tiling;
-    OP_TILING_CHECK(tiling.GetDataSize() > context->GetRawTilingData()->GetCapacity(),
-                    OP_LOGE(context->GetNodeName(), "actual tiling data size %zu > actual tiling data size %zu",
-                            tiling.GetDataSize(), context->GetRawTilingData()->GetCapacity()),
-                    return ge::GRAPH_FAILED);
+    // 框架对象判空前移: context与rawTilingData任一为空时受控上报EZ1008, 避免解引用崩溃
+    OP_CHECK_IF(context == nullptr || context->GetRawTilingData() == nullptr,
+                ReportTilingStageError(context != nullptr ? context->GetNodeName() : "TransQuantParamV2",
+                                       "TilingFunc: the tiling context or raw tiling data container is null; check "
+                                       "the TilingContext construction"),
+                return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        tiling.GetDataSize() > context->GetRawTilingData()->GetCapacity(),
+        ReportTilingStageError(context->GetNodeName(), "the tiling data size " + std::to_string(tiling.GetDataSize()) +
+                                                           " exceeds the raw tiling data capacity " +
+                                                           std::to_string(context->GetRawTilingData()->GetCapacity())),
+        return ge::GRAPH_FAILED);
     tiling.SetDataPtr(context->GetRawTilingData()->GetData());
     const gert::StorageShape* scaleShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scaleShape);
+    OP_CHECK_IF(scaleShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "scale",
+                                                         "the input shape of scale is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     uint32_t scaleLength = scaleShape->GetStorageShape().GetShapeSize();
     auto offsetShape = context->GetOptionalInputShape(1);
     uint32_t offsetLength = (offsetShape == nullptr) ? 0 : offsetShape->GetStorageShape().GetShapeSize();
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     uint32_t roundMode = (attrs->GetInt(0) == nullptr) ? 0 : static_cast<uint32_t>(*(attrs->GetInt(0)));
-    OP_TILING_CHECK(roundMode != 0 && roundMode != 1,
-                    OP_LOGE(context->GetNodeName(), "round mode only support 0 or 1, actual mode is %u", roundMode),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        roundMode != 0 && roundMode != 1,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "round_mode", std::to_string(roundMode).c_str(),
+                                              "the value of attr round_mode only supports 0 or 1"),
+        return ge::GRAPH_FAILED);
     tiling.set_scaleLength(scaleLength);
     tiling.set_offsetLength(offsetLength);
     tiling.set_roundMode(roundMode);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "GetPlatformInfo returned null; check the TilingContext construction and the platform registration"),
+        return ge::GRAPH_FAILED);
     bool supportL12btBf16 = false;
     GetChipFeature(*platformInfo, "AICoreintrinsicDtypeMap", "Intrinsic_data_move_l12bt", "bf16", supportL12btBf16);
     auto scaleInputShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scaleInputShape);
+    OP_CHECK_IF(scaleInputShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "scale",
+                                                         "the input shape of scale is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto scaleOriShape = scaleInputShape->GetOriginShape();
     bool isScaleValid = (scaleOriShape.GetDimNum() == 1 && scaleOriShape.GetDim(0) > 0) ||
                         // 2 is the dimension of scale dim, shape is (1, n) at this time
                         (scaleOriShape.GetDimNum() == 2 && scaleOriShape.GetDim(0) == 1 && scaleOriShape.GetDim(1) > 0);
     OP_TILING_CHECK(!supportL12btBf16 && !isScaleValid,
-                    OP_LOGE(context->GetNodeName(), "shape of scale only support (n, ) and (1, n), but current is %s",
-                            Ops::Base::ToString(scaleOriShape).c_str()),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "scale",
+                                                          Ops::Base::ToString(scaleOriShape).c_str(),
+                                                          "the shape of scale only supports (n,) and (1,n) when the "
+                                                          "SoC does not support l12bt bf16; check the input layout"),
                     return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     size_t* workspace = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, workspace);
+    OP_CHECK_IF(workspace == nullptr,
+                ReportTilingStageError(context->GetNodeName(),
+                                       "GetWorkspaceSizes returned null; check the TilingContext construction"),
+                return ge::GRAPH_FAILED);
     workspace[0] = ascendcPlatform.GetLibApiWorkSpaceSize();
     context->SetBlockDim(1);
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());

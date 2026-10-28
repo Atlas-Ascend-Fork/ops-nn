@@ -16,9 +16,18 @@
 #include "log/log.h"
 #include "util/math_util.h"
 #include "util/shape_util.h"
+#include "error_util.h"
 
 using namespace ge;
 namespace ops {
+// InferShape阶段框架契约类失败(输出shape容器为空)统一上报EZ1014, 不再生成EZ9999内部码
+static void ReportInferShapeStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "DynamicBlockQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
+
 constexpr size_t INDEX_ATTR_DST_TYPE = 2;
 constexpr size_t INDEX_ATTR_ROW_BLOCK_SIZE = 3;
 constexpr size_t INDEX_ATTR_COL_BLOCK_SIZE = 4;
@@ -92,17 +101,34 @@ graphStatus InferShapeForDynamicBlockQuant(gert::InferShapeContext* context)
 {
     OP_LOGD(context, "Begin to do InferShapeForDynamicBlockQuant");
     const gert::Shape* inputXShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputXShape);
+    OP_CHECK_IF(
+        inputXShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportInferShapeStageError(context->GetNodeName(),
+                                   "InferShape: GetAttrs() returned null; check the InferShapeContext construction"),
+        return ge::GRAPH_FAILED);
     const int32_t* rowBlockSize = attrs->GetAttrPointer<int32_t>(INDEX_ATTR_ROW_BLOCK_SIZE);
     const int32_t* colBlockSize = attrs->GetAttrPointer<int32_t>(INDEX_ATTR_COL_BLOCK_SIZE);
 
     gert::Shape* outputShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outputShape);
+    OP_CHECK_IF(outputShape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of y (output index 0) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
     gert::Shape* scaleShape = context->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scaleShape);
+    OP_CHECK_IF(scaleShape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of scale (output index 1) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     if (rowBlockSize == nullptr || colBlockSize == nullptr) {
         OP_LOGD(context, "rowBlockSize or colBlockSize is nullptr, please check!");

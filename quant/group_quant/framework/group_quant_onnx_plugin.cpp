@@ -18,7 +18,9 @@ static Status ParseParamsNpuGroupQuant(const Message* op_src, ge::Operator& op_d
 {
     const ge::onnx::NodeProto* node = dynamic_cast<const ge::onnx::NodeProto*>(op_src);
     if (node == nullptr) {
-        OP_LOGE(GetOpName(op_dest).c_str(), "Dynamic cast op_src to NodeProto failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(GetOpName(op_dest).c_str(), "op_src",
+                                                 "the parser received a message that is not a NodeProto; check the "
+                                                 "model format and the parser registration for this node");
         return FAILED;
     }
 
@@ -27,7 +29,9 @@ static Status ParseParamsNpuGroupQuant(const Message* op_src, ge::Operator& op_d
         if (attr.name() == "dst_type") {
             int32_t iDstType = attr.i();
             if (iDstType != DTYPE_INT8) {
-                OP_LOGE(GetOpName(op_dest).c_str(), "attr dst_type only support 2(int8)");
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    GetOpName(op_dest).c_str(), "dst_type", std::to_string(iDstType).c_str(),
+                    "the value of attr dst_type only supports 2 (DT_INT8) in this parser");
                 return FAILED;
             }
             attrDstType = static_cast<ge::DataType>(iDstType);

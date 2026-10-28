@@ -80,7 +80,7 @@ enum class QuantKey {
 
 class AscendQuantV2 {
 public:
-    explicit AscendQuantV2(gert::TilingContext* context) : context_(context){};
+    explicit AscendQuantV2(gert::TilingContext* context) : context_(context) {};
     ge::graphStatus DoAscendQuantV2Tiling();
     ge::graphStatus DoAscendQuantV2NZTiling();
 
@@ -99,14 +99,14 @@ protected:
     void CalcUBFactor(int64_t cacheLineNum);
     void CalcUBFactorDoubleCut(int64_t cacheLineNum);
     int64_t GetNewShape0(int64_t shape0, int64_t shape1);
-    void CalcTiling();
+    ge::graphStatus CalcTiling();
     void CalcTilingKey();
-    void CalcTilingNz();
+    ge::graphStatus CalcTilingNz();
     int64_t CalcMaxBaseLen(int64_t ubSize) const;
     int64_t CalcMaxN(int64_t ubSize, int64_t base) const;
     void WriteTilingData();
     void WriteTilingDataNz();
-    void CalcPerHeadTiling();
+    ge::graphStatus CalcPerHeadTiling();
     void CalcPerHeadBlockFactor();
     void CalcPerHeadUBFactor(int64_t cacheLineNum);
     ge::graphStatus CheckSupport310P();

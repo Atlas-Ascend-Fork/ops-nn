@@ -112,13 +112,13 @@ static ge::graphStatus DynamicQuantV2InferDataType(gert::InferDataTypeContext* c
         if (pDstDtype != nullptr) {
             int32_t dstDtype = *pDstDtype;
             yDtype = static_cast<ge::DataType>(dstDtype);
-            OP_CHECK_IF(
-                std::find(DYNAMIC_QUANT_V2_OUT_TYPE_LIST.begin(), DYNAMIC_QUANT_V2_OUT_TYPE_LIST.end(), yDtype) ==
-                    DYNAMIC_QUANT_V2_OUT_TYPE_LIST.end(),
-                OP_LOGE(
-                    context,
-                    "attr dst_type only support 2(int8), 29(int4), 34(hifloat8), 35(float8_e5m2), 36(float8_e4m3fn)"),
-                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(std::find(DYNAMIC_QUANT_V2_OUT_TYPE_LIST.begin(), DYNAMIC_QUANT_V2_OUT_TYPE_LIST.end(),
+                                  yDtype) == DYNAMIC_QUANT_V2_OUT_TYPE_LIST.end(),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            context->GetNodeName(), "dst_type", std::to_string(dstDtype).c_str(),
+                            "the value of attr dst_type only supports 2 (int8), 29 (int4), 34 (hifloat8), "
+                            "35 (float8_e5m2) and 36 (float8_e4m3fn)"),
+                        return ge::GRAPH_FAILED);
         }
     }
     context->SetOutputDataType(0, yDtype);

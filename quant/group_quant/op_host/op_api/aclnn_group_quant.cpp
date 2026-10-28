@@ -14,6 +14,8 @@
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/op_log.h"
+#include "opdev/op_log.h"
+#include "log/log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
@@ -22,6 +24,22 @@
 #include "op_api/aclnn_util.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 
 static constexpr size_t MAX_DIM_LEN = 8;
 static constexpr int64_t INT4_NUMS_IN_INT32_SPACE = 8;
@@ -57,7 +75,13 @@ static inline const std::initializer_list<op::DataType>& GetDtypeSupportList(
         return *(found->second);
     }
     auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
-    OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "support for %s is not implemented", op::ToString(socVersion).GetString());
+    std::string socVersionStr(op::ToString(socVersion).GetString());
+    const std::vector<const char*> ez3002Key = {"optype", "opskernel", "reason"};
+    // 先落具名局部变量, 避免临时std::string析构后.c_str()悬垂
+    const std::string ez3002Reason = "the current SoC " + socVersionStr +
+                                     " is not supported by this implementation; use a supported SoC";
+    const std::vector<const char*> ez3002Value = {"GroupQuant", "AiCore", ez3002Reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ3002", ez3002Key, ez3002Value);
     return EMPTY_LIST;
 }
 
@@ -85,16 +109,23 @@ static bool CheckSpecialIOShape(const aclTensor* x, const aclTensor* y, const op
 {
     // output with data type int4/int32
     auto dimNum = static_cast<int64_t>(x->GetViewShape().GetDimNum());
-    OP_CHECK(dimNum != 0, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "input x not support scalar."), return false);
+    OP_CHECK(dimNum != 0,
+             OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnGroupQuant", "x", std::to_string(dimNum).c_str(),
+                                          "at least 1 (scalar not supported)"),
+             return false);
 
     OP_CHECK(static_cast<int64_t>(y->GetViewShape().GetDimNum()) == dimNum,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "input x dim num should be same with output y dim num."), return false);
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnGroupQuant", "y",
+                                                      std::to_string(y->GetViewShape().GetDimNum()).c_str(),
+                                                      "dim num of y must be the same as x"),
+             return false);
 
     // other dims should be same
     for (int64_t i = 0; i < dimNum - 1; ++i) {
         OP_CHECK(x->GetViewShape().GetDim(i) == y->GetViewShape().GetDim(i),
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "the dim(%ld) of x must be same with y, x is (%ld), y is (%ld).", i,
-                         x->GetViewShape().GetDim(i), y->GetViewShape().GetDim(i)),
+                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnGroupQuant", "x",
+                                                          std::to_string(x->GetViewShape().GetDim(i)).c_str(),
+                                                          "dim of x must be the same as the corresponding dim of y"),
                  return false);
     }
 
@@ -102,24 +133,21 @@ static bool CheckSpecialIOShape(const aclTensor* x, const aclTensor* y, const op
     auto xLastDim = x->GetViewShape().GetDim(dimNum - 1);
     auto yLastDim = y->GetViewShape().GetDim(dimNum - 1);
     if (yDtype == op::DataType::DT_INT32) {
-        OP_CHECK(xLastDim == yLastDim * INT4_NUMS_IN_INT32_SPACE,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                         "if dstType is int32, the y last dim must be 1/8 of x last dim,"
-                         " x last dim is (%ld), y last dim is (%ld)",
-                         xLastDim, yLastDim),
-                 return false);
+        OP_CHECK(
+            xLastDim == yLastDim * INT4_NUMS_IN_INT32_SPACE,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnGroupQuant", "y", std::to_string(yLastDim).c_str(),
+                                                     "if dstType is int32, the y last dim must be 1/8 of x last dim"),
+            return false);
     } else {
         if (yDtype == op::DataType::DT_INT4) {
             OP_CHECK(xLastDim % INT4_NUMS_IN_INT8_SPACE == 0,
-                     OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                             "if dstType is int4, x last dim must be divisible by 2, last dim is (%ld).", xLastDim),
+                     OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnGroupQuant", "x", std::to_string(xLastDim).c_str(),
+                                                              "if dstType is int4, x last dim must be divisible by 2"),
                      return false);
         }
         OP_CHECK(xLastDim == yLastDim,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                         "x last dim must be equal with y last dim. "
-                         "x last dim is (%ld), y last dim is (%ld)",
-                         xLastDim, yLastDim),
+                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnGroupQuant", "x", std::to_string(xLastDim).c_str(),
+                                                          "x last dim must be equal to y last dim"),
                  return false);
     }
     return true;
@@ -134,33 +162,43 @@ static bool CheckDim(const aclTensor* x, const aclTensor* scale, const aclTensor
     //  groupIndex(E)
     //  offset(1)
     if (offsetOptional != nullptr) {
-        OP_CHECK(offsetOptional->GetViewShape().GetShapeSize() == 1,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                         "offsetOptional tensor should be scalar or tensor with shape is [1, ], but shape is %s.",
-                         op::ToString(offsetOptional->GetViewShape()).GetString()),
-                 return false);
+        OP_CHECK(
+            offsetOptional->GetViewShape().GetShapeSize() == 1,
+            OP_LOGE_FOR_INVALID_SHAPESIZE("aclnnGroupQuant", "offsetOptional",
+                                          std::to_string(offsetOptional->GetViewShape().GetShapeSize()).c_str(), "1"),
+            return false);
     }
 
     auto xShape = x->GetViewShape();
     auto scaleShape = scale->GetViewShape();
     auto groupShape = groupIndex->GetViewShape();
-    OP_CHECK(xShape.GetDimNum() == X_DIM_NUM, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x tensor should be 2D."), return false);
-    OP_CHECK(scaleShape.GetDimNum() == X_DIM_NUM, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "scale tensor should be 2D."),
+    OP_CHECK(xShape.GetDimNum() == X_DIM_NUM,
+             OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnGroupQuant", "x", std::to_string(xShape.GetDimNum()).c_str(), "2"),
              return false);
-    OP_CHECK(groupShape.GetDimNum() == 1, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "groupIndex tensor should be 1D."),
+    OP_CHECK(
+        scaleShape.GetDimNum() == X_DIM_NUM,
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnGroupQuant", "scale", std::to_string(scaleShape.GetDimNum()).c_str(), "2"),
+        return false);
+    OP_CHECK(groupShape.GetDimNum() == 1,
+             OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnGroupQuant", "groupIndex",
+                                          std::to_string(groupShape.GetDimNum()).c_str(), "1"),
              return false);
 
     int64_t xDim1 = xShape.GetDim(1);
     int64_t scaleDim0 = scaleShape.GetDim(0);
     int64_t scaleDim1 = scaleShape.GetDim(1);
     int64_t groupDim = groupShape.GetDim(0);
-    OP_CHECK(xDim1 == scaleDim1, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x dim1 should be same with scale dim1."),
+    OP_CHECK(xDim1 == scaleDim1,
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnGroupQuant", "x", std::to_string(xDim1).c_str(),
+                                                      "x dim1 should be the same as scale dim1"),
              return false);
-    OP_CHECK(scaleDim0 == groupDim, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "scale dim0 should be same with groupIndex dim0."),
+    OP_CHECK(scaleDim0 == groupDim,
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnGroupQuant", "scale", std::to_string(scaleDim0).c_str(),
+                                                      "scale dim0 should be the same as groupIndex dim0"),
              return false);
     OP_CHECK(scaleDim0 > 0,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "the first dim of scale should not be 0, but scale shape is %s.",
-                     op::ToString(scaleShape).GetString()),
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnGroupQuant", "scale", std::to_string(scaleDim0).c_str(),
+                                                      "the first dim of scale should not be 0"),
              return false);
 
     return true;
@@ -170,15 +208,25 @@ static bool CheckShape(const aclTensor* x, const aclTensor* scale, const aclTens
                        const aclTensor* offsetOptional, const aclTensor* y)
 {
     // 维度限制校验
-    OP_CHECK(CheckDim(x, scale, groupIndex, offsetOptional),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "check output shape failed."), return false);
+    OP_CHECK(
+        CheckDim(x, scale, groupIndex, offsetOptional),
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check output shape failed; propagate lower-layer first error"),
+        return false);
 
     auto outputDtype = y->GetDataType();
     if (outputDtype == op::DataType::DT_INT32 || outputDtype == op::DataType::DT_INT4) {
-        OP_CHECK(CheckSpecialIOShape(x, y, outputDtype), OP_LOGE(ACLNN_ERR_PARAM_INVALID, "check output shape failed."),
+        OP_CHECK(CheckSpecialIOShape(x, y, outputDtype),
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID,
+                                        "check output shape failed; propagate lower-layer first error"),
                  return false);
     } else {
-        OP_CHECK_SHAPE_NOT_EQUAL(y, x, return false);
+        OP_CHECK(y->GetViewShape() == x->GetViewShape(),
+                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnGroupQuant", "y,x",
+                                                        (std::string(op::ToString(y->GetViewShape()).GetString()) +
+                                                         ", " + op::ToString(x->GetViewShape()).GetString())
+                                                            .c_str(),
+                                                        "shapes of y and x should be the same"),
+                 return false);
     }
     return true;
 }
@@ -186,10 +234,10 @@ static bool CheckShape(const aclTensor* x, const aclTensor* scale, const aclTens
 static inline bool CheckNotNull(const aclTensor* x, const aclTensor* scale, const aclTensor* groupIndex,
                                 const aclTensor* y)
 {
-    OP_CHECK_NULL(x, return false);
-    OP_CHECK_NULL(scale, return false);
-    OP_CHECK_NULL(groupIndex, return false);
-    OP_CHECK_NULL(y, return false);
+    OP_CHECK(x != nullptr, ReportNullPointerError(__func__, "x"), return false);
+    OP_CHECK(scale != nullptr, ReportNullPointerError(__func__, "scale"), return false);
+    OP_CHECK(groupIndex != nullptr, ReportNullPointerError(__func__, "groupIndex"), return false);
+    OP_CHECK(y != nullptr, ReportNullPointerError(__func__, "y"), return false);
     return true;
 }
 
@@ -206,7 +254,9 @@ static bool CheckDtypeValid(const aclTensor* x, const aclTensor* scale, const ac
     }
 
     OP_CHECK(static_cast<int32_t>(y->GetDataType()) == dstType,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "y dtype must be the same as dstType."), return false);
+             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnGroupQuant", "y", op::ToString(y->GetDataType()).GetString(),
+                                                   "y dtype must be the same as dstType"),
+             return false);
 
     return true;
 }

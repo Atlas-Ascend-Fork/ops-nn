@@ -23,6 +23,14 @@
 
 using namespace ge;
 namespace ops {
+// InferShape阶段框架契约类失败(输出shape容器/属性指针为空)统一上报EZ1014, 不再生成EZ9999内部码
+static void ReportInferShapeStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "DynamicBlockMxQuant", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
+
 constexpr size_t INDEX_ATTR_DST_TYPE = 1;
 constexpr size_t MIN_DIM_NUM = 2;
 constexpr size_t MAX_DIM_NUM = 3;
@@ -40,16 +48,33 @@ graphStatus InferShapeForDynamicBlockMxQuant(gert::InferShapeContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferShapeForDynamicBlockMxQuant");
     const gert::Shape* xShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* yShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    OP_CHECK_IF(yShape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of y (output index 0) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape* scaleShape1 = context->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scaleShape1);
+    OP_CHECK_IF(scaleShape1 == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of scale1 (output index 1) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape* scaleShape2 = context->GetOutputShape(2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scaleShape2);
+    OP_CHECK_IF(scaleShape2 == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of scale2 (output index 2) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     if (Ops::Base::IsUnknownRank(*xShape)) {
         OP_LOGD(context->GetNodeName(), "x shape is UnknownRank, set y, scale shape to (-2, )");
@@ -67,7 +92,11 @@ graphStatus InferShapeForDynamicBlockMxQuant(gert::InferShapeContext* context)
     *yShape = *xShape;
 
     auto attrsPtr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrsPtr);
+    OP_CHECK_IF(
+        attrsPtr == nullptr,
+        ReportInferShapeStageError(context->GetNodeName(),
+                                   "InferShape: GetAttrs() returned null; check the InferShapeContext construction"),
+        return ge::GRAPH_FAILED);
     size_t dim1 = static_cast<size_t>(xShape->GetDimNum() - 1);
 
     int64_t dimSize1 = 0;
@@ -109,9 +138,17 @@ ge::graphStatus InferDataTypeForDynamicBlockMxQuant(gert::InferDataTypeContext* 
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferDataTypeForDynamicBlockMxQuant");
     auto attrsPtr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrsPtr);
+    OP_CHECK_IF(attrsPtr == nullptr,
+                ReportInferShapeStageError(
+                    context->GetNodeName(),
+                    "InferDataType: GetAttrs() returned null; check the InferDataTypeContext construction"),
+                return ge::GRAPH_FAILED);
     const int32_t* dstDtype = attrsPtr->GetAttrPointer<int32_t>(INDEX_ATTR_DST_TYPE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dstDtype);
+    OP_CHECK_IF(dstDtype == nullptr,
+                ReportInferShapeStageError(
+                    context->GetNodeName(),
+                    "the optional attr dst_type is missing in the infer-shape context; set the dst_type attribute"),
+                return ge::GRAPH_FAILED);
     ge::DataType outDtype = static_cast<ge::DataType>(*dstDtype);
 
     OP_CHECK_IF(
