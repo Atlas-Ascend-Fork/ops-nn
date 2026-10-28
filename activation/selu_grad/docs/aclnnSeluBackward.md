@@ -30,7 +30,7 @@
   计算激活函数的导数：
 
   $$
-  \frac{\partial selu(x)}{\partial x}=\begin{cases} \alpha e^x,x<0 \\1,x\geq 0\end{cases}
+  \frac{\partial selu(x)}{\partial x}=\begin{cases} scale \cdot\alpha e^x,x<0 \\scale,x\geq 0\end{cases}
   $$
 
   计算误差对输入的导数：
@@ -39,8 +39,8 @@
   \frac{\partial E}{\partial x}=\frac{\partial E}{\partial y}\frac{\partial selu(x)}{\partial x}
   $$
 
-  其中$y$为输出，$E$为损失函数
-  $\alpha$=1.6732632423543772848170429916717
+  其中$y$为输出，$E$为损失函数。\
+  $\alpha$=1.6732632423543772848170429916717，scale = 1.0507009873554804934193349852946
 
 ## 函数原型
 
@@ -92,7 +92,7 @@ aclnnStatus aclnnSeluBackward(
      <tr>
       <td>gradOutput（aclTensor*）</td>
       <td>输入</td>
-      <td>表示Selu计算输出的梯度，公式中的∂E/∂X。</td>
+      <td>表示Selu计算输出的梯度，公式中的∂E/∂y。</td>
       <td><ul><li>支持空Tensor。</li><li>数据类型、shape需要与result，gradInput一致。</li></ul></td>
       <td>FLOAT、FLOAT16、INT32、INT8、BFLOAT16</td>
       <td>ND</td>
@@ -103,7 +103,7 @@ aclnnStatus aclnnSeluBackward(
       <td>result（aclTensor*）</td>
       <td>输入</td>
       <td>表示Selu计算的正向输出，公式中的y。</td>
-      <td><ul><li>支持空Tensor。</li><li>数据类型、shape需要与gradOutput，gradInput一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>数据类型、shape需要与gradOutput，gradInput一致。</li><li>result&lt0：gradInput=gradOutput*(result +scale*alpha)</li><li> result>=0：gradInput=gradOutput * scale</li></ul></td>
       <td>FLOAT、FLOAT16、INT32、INT8、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>

@@ -19,8 +19,8 @@
   $$
   grad\_self_{i} =
   \begin{cases}
-    0,\ \ \ \ \ \ \ if \ \ self_{i}>max \\
-    0,\ \ \ \ \ \ \  if\ \ self_{i}<min \\
+    0,\ \ \ \ \ \ \ if \ \ self_{i}>=max \\
+    0,\ \ \ \ \ \ \  if\ \ self_{i}<=min \\
     1,\ \ \ \ \ \ \ \ \ \ \ \ otherwise \\
   \end{cases}
   $$
