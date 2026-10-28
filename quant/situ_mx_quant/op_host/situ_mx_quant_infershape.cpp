@@ -19,6 +19,9 @@
 #include "log/log.h"
 #include "util/shape_util.h"
 #include "util/math_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 
@@ -48,16 +51,45 @@ graphStatus InferShapeForSituMxQuant(gert::InferShapeContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferShapeForSituMxQuant");
     const gert::Shape* xShape = context->GetInputShape(INDEX_INPUT_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_mx_quant" : (context)->GetNodeName()),
+            "x"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* yShape = context->GetOutputShape(INDEX_OUTPUT_Y);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    if (yShape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_mx_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object yShape is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object yShape is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     gert::Shape* yScaleShape = context->GetOutputShape(INDEX_OUTPUT_Y_SCALE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yScaleShape);
+    if (yScaleShape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_mx_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object yScaleShape is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object yScaleShape is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     OP_CHECK_IF(xShape->GetDimNum() < 1 || xShape->GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(context->GetNodeName(), "Input x rank[%lu] should be in [1, 8].", xShape->GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "x", std::to_string(xShape->GetDimNum()),
+                    ("Input x rank[" + std::to_string(xShape->GetDimNum()) + "] should be in [1, 8].")),
                 return ge::GRAPH_FAILED);
 
     if (Ops::Base::IsUnknownRank(*xShape)) {
@@ -68,23 +100,49 @@ graphStatus InferShapeForSituMxQuant(gert::InferShapeContext* context)
     }
 
     auto attrsPtr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrsPtr);
+    if (attrsPtr == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_mx_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrsPtr is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrsPtr is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     const int64_t* axis = attrsPtr->GetAttrPointer<int64_t>(INDEX_ATTR_AXIS);
-    OP_CHECK_NULL_WITH_CONTEXT(context, axis);
+    if (axis == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_mx_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object axis is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object axis is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     int64_t xRank = xShape->GetDimNum();
     int64_t lastDimIdx = xRank - 1;
     int64_t axisNorm = (*axis >= 0) ? static_cast<int64_t>(*axis) : static_cast<int64_t>(*axis + xRank);
-    OP_CHECK_IF(axisNorm != lastDimIdx,
-                OP_LOGE(context->GetNodeName(), "axis must be -1 (last axis), but got axis=%ld (normalized=%ld)", *axis,
-                        axisNorm),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        axisNorm != lastDimIdx,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "axis", std::to_string(*axis),
+                                              ("axis must be -1 (last axis), but got axis=" + std::to_string(*axis) +
+                                               " (normalized=" + std::to_string(axisNorm) + ")")),
+        return ge::GRAPH_FAILED);
 
     // Validate last dimension is divisible by 2
     if (xShape->GetDim(lastDimIdx) != UNKNOWN_DIM_VALUE_ && xShape->GetDim(lastDimIdx) % SPLIT_NUM != 0) {
-        OP_LOGE(context->GetNodeName(), "The last dimension must be divisible by 2, but got [%ld].",
-                xShape->GetDim(lastDimIdx));
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "x",
+                                                  std::to_string(xShape->GetDim(lastDimIdx)),
+                                                  ("The last dimension must be divisible by 2, but got [" +
+                                                   std::to_string(xShape->GetDim(lastDimIdx)) + "]."));
         return ge::GRAPH_FAILED;
     }
 
@@ -118,16 +176,40 @@ ge::graphStatus InferDataTypeForSituMxQuant(gert::InferDataTypeContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferDataTypeForSituMxQuant");
     auto attrsPtr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrsPtr);
+    if (attrsPtr == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_mx_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrsPtr is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrsPtr is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const int64_t* dstDtype = attrsPtr->GetAttrPointer<int64_t>(INDEX_ATTR_DST_TYPE);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dstDtype);
+    if (dstDtype == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_mx_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object dstDtype is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object dstDtype is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     ge::DataType outDtype = static_cast<ge::DataType>(*dstDtype);
     OP_CHECK_IF(
         std::find(Y_SUPPORT_DTYPE_SET.begin(), Y_SUPPORT_DTYPE_SET.end(), outDtype) == Y_SUPPORT_DTYPE_SET.end(),
-        OP_LOGE(context->GetNodeName(),
-                "dst_type is illegal, only supports 40(FLOAT4_E2M1), 41(FLOAT4_E1M2), "
-                "36(FLOAT8_E4M3FN) or 35(FLOAT8_E5M2). but got %d(%s) please check.",
-                *dstDtype, ge::TypeUtils::DataTypeToAscendString(outDtype).GetString()),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "dst_type", std::to_string(*dstDtype),
+            ("dst_type is illegal, only supports 40(FLOAT4_E2M1), 41(FLOAT4_E1M2), 36(FLOAT8_E4M3FN) or "
+             "35(FLOAT8_E5M2). but got " +
+             std::to_string(*dstDtype) + "(" +
+             std::string(ge::TypeUtils::DataTypeToAscendString(outDtype).GetString()) + ") please check.")),
         return ge::GRAPH_FAILED);
     context->SetOutputDataType(INDEX_OUTPUT_Y, outDtype);
     context->SetOutputDataType(INDEX_OUTPUT_Y_SCALE, ge::DT_FLOAT8_E8M0);

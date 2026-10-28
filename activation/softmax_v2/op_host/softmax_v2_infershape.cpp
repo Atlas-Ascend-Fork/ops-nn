@@ -15,6 +15,10 @@
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "infershape_elewise_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
+
 using namespace Ops::Base;
 
 namespace {
@@ -28,7 +32,18 @@ static graphStatus InferDtype4SoftmaxV2(gert::InferDataTypeContext* context)
     OP_LOGD(context->GetNodeName(), "InferDtype4SoftmaxV2 enter");
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "softmax_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrs is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto input_dtype = context->GetInputDataType(0);
     bool need_half_to_float = false;
     if (attrs->GetAttrNum() == IR_ATTR_NUM_TWO) {

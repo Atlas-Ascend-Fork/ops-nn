@@ -15,6 +15,9 @@
 #include "util/shape_util.h"
 #include "log/log.h"
 #include "register/op_impl_registry.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 
@@ -35,17 +38,66 @@ static ge::graphStatus InferShape4AdvanceStep(gert::InferShapeContext* context)
 
     // get input shapes
     auto x1Shape = context->GetInputShape(IDX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x1Shape);
+    OP_CHECK_IF(
+        x1Shape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "advance_step" : (context)->GetNodeName()),
+            "input_tokens"),
+        return ge::GRAPH_FAILED);
 
     // get output shapes
     auto y1Shape = context->GetOutputShape(IDX_0);
     auto y2Shape = context->GetOutputShape(IDX_1);
     auto y3Shape = context->GetOutputShape(IDX_2);
     auto y4Shape = context->GetOutputShape(IDX_3);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y1Shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y2Shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y3Shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y4Shape);
+    if (y1Shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "advance_step" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object y1Shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object y1Shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
+    if (y2Shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "advance_step" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object y2Shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object y2Shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
+    if (y3Shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "advance_step" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object y3Shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object y3Shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
+    if (y4Shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "advance_step" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object y4Shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object y4Shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     *y1Shape = *x1Shape;
     *y2Shape = *x1Shape;

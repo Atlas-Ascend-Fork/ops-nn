@@ -20,6 +20,9 @@
 #include "op_host/tiling_util.h"
 #include "dequant_swiglu_quant_tiling.h"
 #include "op_host/tiling_templates_registry.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 #define CHECK_FAIL(cont, cond, ...)                      \
     do {                                                 \
@@ -189,7 +192,14 @@ void DequantSwigluQuantTiling::Reset()
 ge::graphStatus DequantSwigluQuantTiling::GetPlatformInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE(opName, "fail to get platform info"), return ge::GRAPH_FAILED);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+        const std::string msgReason = (std::string(__func__) + ": " + "fail to get platform info");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     curShortSocName_ = ascendcPlatform.GetSocVersion();
     totalCore = ascendcPlatform.GetCoreNumAiv();
@@ -228,7 +238,19 @@ ge::graphStatus DequantSwigluQuantTiling::checkWeightBiasActivate(gert::TilingCo
     auto biasShapeShapePtr = context->GetOptionalInputShape(3);
     if (biasShapeShapePtr != nullptr) {
         auto biasInputDesc = context->GetOptionalInputDesc(3);
-        OP_CHECK_NULL_WITH_CONTEXT(context, biasInputDesc);
+        if (biasInputDesc == nullptr) {
+            const std::string msgOpName = std::string(
+                (context->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context->GetNodeName()));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                                   "The optional input presence/shape was validated; the corresponding metadata must "
+                                   "exist in the Tiling context.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(),
+                                          "The optional input presence/shape was validated; the corresponding metadata "
+                                          "must exist in the Tiling context."}));
+            return ge::GRAPH_FAILED;
+        };
         biasDataType = biasInputDesc->GetDataType();
 
         bool checkBiasRes = biasDataType != ge::DT_INT32 && biasDataType != ge::DT_FLOAT &&
@@ -248,10 +270,18 @@ ge::graphStatus DequantSwigluQuantTiling::checkWeightBiasActivate(gert::TilingCo
     tilingData.set_biasIsEmpty(biasShapeShapePtr == nullptr);
     // int32时 weight_scale为必选项
     auto weightScaleShapePtr = context->GetOptionalInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, weightScaleShapePtr);
+    OP_CHECK_IF(
+        weightScaleShapePtr == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            (context->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context->GetNodeName()), "weight_scale"),
+        return ge::GRAPH_FAILED);
 
     auto weightScaleInputDesc = context->GetOptionalInputDesc(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, weightScaleInputDesc);
+    OP_CHECK_IF(
+        weightScaleInputDesc == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            (context->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context->GetNodeName()), "weight_scale"),
+        return ge::GRAPH_FAILED);
     ge::DataType weightScaleDataType = weightScaleInputDesc->GetDataType();
     OP_CHECK_IF(
         weightScaleDataType != ge::DT_FLOAT,
@@ -272,7 +302,19 @@ ge::graphStatus DequantSwigluQuantTiling::checkWeightBiasActivate(gert::TilingCo
     auto activateScaleShapePtr = context->GetOptionalInputShape(2);
     if (activateScaleShapePtr != nullptr) {
         auto activateScaleInputDesc = context->GetOptionalInputDesc(2);
-        OP_CHECK_NULL_WITH_CONTEXT(context, activateScaleInputDesc);
+        if (activateScaleInputDesc == nullptr) {
+            const std::string msgOpName = std::string(
+                (context->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context->GetNodeName()));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                                   "The optional input presence/shape was validated; the corresponding metadata must "
+                                   "exist in the Tiling context.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(),
+                                          "The optional input presence/shape was validated; the corresponding metadata "
+                                          "must exist in the Tiling context."}));
+            return ge::GRAPH_FAILED;
+        };
         ge::DataType activateScaleDataType = activateScaleInputDesc->GetDataType();
         OP_CHECK_IF(
             activateScaleDataType != ge::DT_FLOAT,
@@ -305,7 +347,18 @@ ge::graphStatus DequantSwigluQuantTiling::checkInputShape(gert::TilingContext* c
         return ge::GRAPH_SUCCESS;
     }
     auto quantScaleInputDesc = context->GetOptionalInputDesc(4);
-    OP_CHECK_NULL_WITH_CONTEXT(context, quantScaleInputDesc);
+    if (quantScaleInputDesc == nullptr) {
+        const std::string msgOpName = std::string(
+            (context->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "The optional input presence/shape was validated; the corresponding metadata must exist "
+                               "in the Tiling context.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "The optional input presence/shape was validated; the "
+                                                         "corresponding metadata must exist in the Tiling context."}));
+        return ge::GRAPH_FAILED;
+    };
     ge::DataType quantScaleDataType = quantScaleInputDesc->GetDataType();
     OP_CHECK_IF(quantScaleDataType != ge::DT_FLOAT,
                 OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "quant_scale",
@@ -321,7 +374,11 @@ ge::graphStatus DequantSwigluQuantTiling::checkInputShape(gert::TilingContext* c
     if (quantMode == 0) {
         auto quantOffsetShapePtr = context->GetOptionalInputShape(5);
         auto quantOffsetInputDesc = context->GetOptionalInputDesc(5);
-        OP_CHECK_NULL_WITH_CONTEXT(context, quantOffsetInputDesc);
+        OP_CHECK_IF(
+            quantOffsetInputDesc == nullptr,
+            OP_LOGE_WITH_INVALID_INPUT(
+                (context->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context->GetNodeName()), "quant_offset"),
+            return ge::GRAPH_FAILED);
         ge::DataType quantOffsetDataType = quantOffsetInputDesc->GetDataType();
         OP_CHECK_IF(
             quantOffsetDataType != ge::DT_FLOAT,
@@ -399,7 +456,7 @@ bool DequantSwigluQuantTiling::CalcUbMaxTileLen(uint64_t ubSize, int32_t dtype, 
     // get buffernum and maxTileLen
     uint64_t maxTileLenPerUB = 1;
     if (!GetBufferNumAndDataLenPerUB(ubSize, dtype, maxTileLenPerUB)) {
-        OP_LOGE("DequantSwigluQuant", "CalcTiling Get maxTileLenPerUB %lu failed", maxTileLenPerUB);
+        OP_LOGE_WITHOUT_REPORT("DequantSwigluQuant", "CalcTiling Get maxTileLenPerUB %lu failed", maxTileLenPerUB);
         return false;
     }
     optTiling.maxTileLen = AlignDown<uint64_t>(maxTileLenPerUB, ALIGN_UINT_IN_CACHE_32B); // 32个元素对齐
@@ -522,10 +579,20 @@ ge::graphStatus DequantSwigluQuantTiling::GetShapeAttrsInfoInner()
     opName = context_->GetNodeName();
     // 获取输入shape
     auto xShapePtr = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_swiglu_quant" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     const gert::Shape xShape = xShapePtr->GetStorageShape();
     auto inputDesc = context_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+    OP_CHECK_IF(inputDesc == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_swiglu_quant" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     xInputDataType = inputDesc->GetDataType();
     if (SetTotalShape(context_, xShape) == ge::GRAPH_FAILED) {
         return ge::GRAPH_FAILED;
@@ -533,7 +600,19 @@ ge::graphStatus DequantSwigluQuantTiling::GetShapeAttrsInfoInner()
 
     // 获取输入属性
     const gert::RuntimeAttrs* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_swiglu_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     if (!SetAttr(attrs)) {
         return ge::GRAPH_FAILED;
@@ -556,7 +635,19 @@ ge::graphStatus DequantSwigluQuantTiling::GetShapeAttrsInfoInner()
     }
 
     auto yShapePtr = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yShapePtr);
+    if (yShapePtr == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_swiglu_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object yShapePtr is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yShapePtr is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape yShape = yShapePtr->GetStorageShape();
 
     int32_t dimNum = xShape.GetDimNum();
@@ -573,7 +664,19 @@ ge::graphStatus DequantSwigluQuantTiling::GetShapeAttrsInfoInner()
     }
 
     auto scaleShapePtr = context_->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, scaleShapePtr);
+    if (scaleShapePtr == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_swiglu_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object scaleShapePtr is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object scaleShapePtr is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape scaleShape = scaleShapePtr->GetStorageShape();
 
     if (static_cast<uint64_t>(scaleShape.GetShapeSize()) != tilingData.get_rowLen()) {
@@ -718,7 +821,20 @@ ge::graphStatus DequantSwigluQuantTiling::PostTiling()
     context_->SetBlockDim(totalCore);
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     currentWorkspace[0] = workspaceSize_;
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetRawTilingData());
+    if (context_->GetRawTilingData() == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_swiglu_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object context_->GetRawTilingData() is unavailable; check the "
+                               "operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "Tiling framework object context_->GetRawTilingData() is unavailable; check the "
+                                      "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());

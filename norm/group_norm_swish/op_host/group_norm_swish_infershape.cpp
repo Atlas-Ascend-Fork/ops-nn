@@ -16,6 +16,9 @@
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 #include "util/shape_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 namespace ops {
@@ -33,24 +36,80 @@ static ge::graphStatus GroupNormSwishInferShape(gert::InferShapeContext* context
 
     // get input shapes
     const gert::Shape* x_shape = context->GetInputShape(GROUPNORMSWISH_IDX_IN_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(x_shape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_swish" :
+                                                                                   (context)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
 
     // get output shapes
     gert::Shape* y_shape = context->GetOutputShape(GROUPNORMSWISH_IDX_OUT_Y);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    if (y_shape == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object y_shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object y_shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     gert::Shape* mean_shape = context->GetOutputShape(GROUPNORMSWISH_IDX_OUT_MEAN);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mean_shape);
+    if (mean_shape == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object mean_shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object mean_shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     gert::Shape* var_shape = context->GetOutputShape(GROUPNORMSWISH_IDX_OUT_VAR);
-    OP_CHECK_NULL_WITH_CONTEXT(context, var_shape);
+    if (var_shape == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object var_shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object var_shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     *y_shape = *x_shape;
     mean_shape->SetDimNum(0);
 
     // process attr
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrs is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const int64_t* num_groups = attrs->GetAttrPointer<int64_t>(NUMGROUPS_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, num_groups);
+    OP_CHECK_IF(num_groups == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "num_groups",
+                                                         "Required num_groups attribute is absent."),
+                return ge::GRAPH_FAILED);
 
     // update mean and var shape
     const int64_t n_dim = x_shape->GetDim(N_IDX);
@@ -68,7 +127,19 @@ static graphStatus GroupNormSwishInferDtype(gert::InferDataTypeContext* context)
 
     // Get input tout
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrs is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto inputXDtype = context->GetInputDataType(GROUPNORMSWISH_IDX_IN_X);
     auto inputGammaDtype = context->GetInputDataType(GROUPNORMSWISH_IDX_IN_GAMMA);
     context->SetOutputDataType(GROUPNORMSWISH_IDX_OUT_Y, inputXDtype);

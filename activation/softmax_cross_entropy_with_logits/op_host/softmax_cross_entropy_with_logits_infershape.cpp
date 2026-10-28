@@ -14,6 +14,9 @@
  */
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 namespace ops {
@@ -57,7 +60,10 @@ static bool GetInputsDimsForScewl(const size_t& input_features_dim_num, const si
         inputs_dims.labels_dim_2 = input_labels_shape->GetDim(2); // 2 is dim_index
         inputs_dims.labels_dim_3 = input_labels_shape->GetDim(3); // 3 is dim_index
     } else {
-        OP_LOGE("SoftmaxCrossEntropyWithLogits", "[TBE Compiler] Get invalid shape");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            "SoftmaxCrossEntropyWithLogits", "features,labels",
+            std::to_string(input_features_dim_num) + "," + std::to_string(input_labels_dim_num),
+            "Supported rank pairs are (2,2), (2,1), (1,2), and (4,4).");
         return false;
     }
     return true;
@@ -75,12 +81,18 @@ static bool ScewlCheckInputsDims(const size_t& input_features_dim_num, const siz
 
         if (inputs_dims.features_dim_2 != inputs_dims.labels_dim_2 && inputs_dims.features_dim_2 != 1 &&
             inputs_dims.labels_dim_2 != 1) {
-            OP_LOGE(context->GetNodeName(), "[TBE Compiler] not supported shape for dim2");
+            OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+                context->GetNodeName(), "features,labels",
+                std::to_string(inputs_dims.features_dim_2) + "," + std::to_string(inputs_dims.labels_dim_2),
+                "Corresponding dimensions must match or one dimension must be 1 for broadcasting.");
             return false;
         }
         if (inputs_dims.features_dim_3 != inputs_dims.labels_dim_3 && inputs_dims.features_dim_3 != 1 &&
             inputs_dims.labels_dim_3 != 1) {
-            OP_LOGE(context->GetNodeName(), "[TBE Compiler] not supported shape for dim3");
+            OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+                context->GetNodeName(), "features,labels",
+                std::to_string(inputs_dims.features_dim_3) + "," + std::to_string(inputs_dims.labels_dim_3),
+                "Corresponding dimensions must match or one dimension must be 1 for broadcasting.");
             return false;
         }
     } else {
@@ -92,12 +104,18 @@ static bool ScewlCheckInputsDims(const size_t& input_features_dim_num, const siz
 
     if (inputs_dims.features_dim_0 != inputs_dims.labels_dim_0 && inputs_dims.features_dim_0 != 1 &&
         inputs_dims.labels_dim_0 != 1) {
-        OP_LOGE(context->GetNodeName(), "[TBE Compiler] not supported shape for dim0");
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context->GetNodeName(), "features,labels",
+            std::to_string(inputs_dims.features_dim_0) + "," + std::to_string(inputs_dims.labels_dim_0),
+            "Corresponding dimensions must match or one dimension must be 1 for broadcasting.");
         return false;
     }
     if (inputs_dims.features_dim_1 != inputs_dims.labels_dim_1 && inputs_dims.features_dim_1 != 1 &&
         inputs_dims.labels_dim_1 != 1) {
-        OP_LOGE(context->GetNodeName(), "[TBE Compiler] not supported shape for dim1");
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context->GetNodeName(), "features,labels",
+            std::to_string(inputs_dims.features_dim_1) + "," + std::to_string(inputs_dims.labels_dim_1),
+            "Corresponding dimensions must match or one dimension must be 1 for broadcasting.");
         return false;
     }
     return true;
@@ -107,10 +125,20 @@ static graphStatus InferShapeForSoftmaxCrossEntropyWithLogits(gert::InferShapeCo
 {
     OP_LOGD(context->GetNodeName(), "Begin to do SoftmaxCrossEntropyWithLogitsInferShape");
     const gert::Shape* input_features_shape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, input_features_shape);
+    OP_CHECK_IF(input_features_shape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "softmax_cross_entropy_with_logits" :
+                                                                                   (context)->GetNodeName()),
+                    "features"),
+                return ge::GRAPH_FAILED);
     size_t input_features_dim_num = input_features_shape->GetDimNum();
     const gert::Shape* input_labels_shape = context->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, input_labels_shape);
+    OP_CHECK_IF(input_labels_shape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "softmax_cross_entropy_with_logits" :
+                                                                                   (context)->GetNodeName()),
+                    "labels"),
+                return ge::GRAPH_FAILED);
     size_t input_labels_dim_num = input_labels_shape->GetDimNum();
     OP_LOGD(context->GetNodeName(), "input_features_dim_num is %zu, input_labels_dim_num is %zu",
             input_features_dim_num, input_labels_dim_num);
@@ -131,7 +159,20 @@ static graphStatus InferShapeForSoftmaxCrossEntropyWithLogits(gert::InferShapeCo
                                                                              inputs_dims.labels_dim_1;
 
     gert::Shape* output_loss_shape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_loss_shape);
+    if (output_loss_shape == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "softmax_cross_entropy_with_logits" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object output_loss_shape is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "InferShape framework object output_loss_shape is unavailable; check the "
+                                      "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     output_loss_shape->SetDimNum(0);
     output_loss_shape->AppendDim(dim_0);
     if (input_features_dim_num == 4 && input_labels_dim_num == 4) { // 4 dims inputs
@@ -139,7 +180,20 @@ static graphStatus InferShapeForSoftmaxCrossEntropyWithLogits(gert::InferShapeCo
     }
 
     gert::Shape* output_backprop_shape = context->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_backprop_shape);
+    if (output_backprop_shape == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "softmax_cross_entropy_with_logits" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object output_backprop_shape is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "InferShape framework object output_backprop_shape is unavailable; check the "
+                                      "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     output_backprop_shape->SetDimNum(0);
     output_backprop_shape->AppendDim(dim_0);
     output_backprop_shape->AppendDim(dim_1);

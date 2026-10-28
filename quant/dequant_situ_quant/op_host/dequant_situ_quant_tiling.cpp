@@ -22,6 +22,9 @@
 #include "dequant_situ_quant_tiling.h"
 #include "op_host/tiling_util.h"
 #include "op_host/tiling_templates_registry.h"
+#include <vector>
+#include "util/shape_util.h"
+#include "base/err_msg.h"
 
 #define CHECK_FAIL(cont, cond, ...)                      \
     do {                                                 \
@@ -106,7 +109,14 @@ bool DequantSituQuantTiling::IsCapable()
 ge::graphStatus DequantSituQuantTiling::GetPlatformInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE(opName, "fail to get platform info"), return ge::GRAPH_FAILED);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+        const std::string msgReason = (std::string(__func__) + ": " + "fail to get platform info");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     totalCore = ascendcPlatform.GetCoreNumAiv();
     aicoreParams_.numBlocks = totalCore;
@@ -121,7 +131,10 @@ bool DequantSituQuantTiling::SetAttrs(const gert::RuntimeAttrs* attrs)
 {
     auto betaPtr = attrs->GetAttrPointer<float>(0);
     beta = (betaPtr == nullptr) ? 4.0f : *betaPtr;
-    OP_CHECK_IF(beta == 0.0f, OP_LOGE(context_->GetNodeName(), "beta must not be 0"), return false);
+    OP_CHECK_IF(beta == 0.0f,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "beta", std::to_string(beta),
+                                                      "beta must not be 0"),
+                return false);
 
     auto linearBetaPtr = attrs->GetAttrPointer<float>(1);
     linearBeta = (linearBetaPtr == nullptr) ? 25.0f : *linearBetaPtr;
@@ -131,7 +144,18 @@ bool DequantSituQuantTiling::SetAttrs(const gert::RuntimeAttrs* attrs)
     activateLeft = (isActivateLeft ? 1 : 0);
 
     auto str = attrs->GetStr(3);
-    OP_CHECK_IF(str == nullptr, OP_LOGE(context_->GetNodeName(), "quant_type attr is null"), return false);
+    if (str == nullptr) {
+        const std::string msgOpName = (context_ == nullptr || context_->GetNodeName() == nullptr ?
+                                           "dequant_situ_quant" :
+                                           context_->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       "The default quant_type attribute is unavailable in the Tiling context; check "
+                                       "attribute registration.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return false;
+    };
     std::string quantTypeAttr{str};
     std::transform(quantTypeAttr.begin(), quantTypeAttr.end(), quantTypeAttr.begin(), ::tolower);
     OP_CHECK_IF((quantTypeAttr != "static") && (quantTypeAttr != "dynamic"),
@@ -153,7 +177,7 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int
 
     // weight_scale: required, shape [inDimy] or [1]
     auto weightScaleShapePtr = context_->GetOptionalInputShape(INDEX_IN_WEIGHT_SCALE);
-    OP_CHECK_IF(weightScaleShapePtr == nullptr, OP_LOGE(context_->GetNodeName(), "weight_scale is required for int8 x"),
+    OP_CHECK_IF(weightScaleShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "weight_scale"),
                 return ge::GRAPH_FAILED);
     uint64_t weightScaleSize = weightScaleShapePtr->GetStorageShape().GetShapeSize();
     OP_CHECK_IF(
@@ -167,7 +191,8 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int
 
     // activation_scale: must be absent for int8
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_ACTIVATION_SCALE) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "activation_scale must be absent for int8 x"),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "activation_scale",
+                                                         "activation_scale must be absent for int8 x"),
                 return ge::GRAPH_FAILED);
 
     // bias: optional, shape [inDimy] or [1]
@@ -207,8 +232,7 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int
     tilingData.set_quantOffsetIsEmpty(!hasQuantOffset);
     bool quantOffsetIsOne = false;
     if (quantType == QUANT_TYPE_STATIC) {
-        OP_CHECK_IF(!hasQuantScale,
-                    OP_LOGE(context_->GetNodeName(), "quant_scale must be provided when quant_type is static"),
+        OP_CHECK_IF(!hasQuantScale, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "quant_scale"),
                     return ge::GRAPH_FAILED);
         if (hasQuantOffset) {
             uint64_t quantOffsetSize = quantOffsetShapePtr->GetStorageShape().GetShapeSize();
@@ -224,22 +248,55 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int
 
     // group_index: must be absent for int8
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_GROUP_INDEX) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "group_index must be absent for int8 x"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "group_index",
+                                                         "group_index must be absent for int8 x"),
+                return ge::GRAPH_FAILED);
 
     // check output shapes
     auto yShapePtr = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yShapePtr);
+    if (yShapePtr == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object yShapePtr is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yShapePtr is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape yShape = yShapePtr->GetStorageShape();
     OP_CHECK_IF(yShape.GetDimNum() != static_cast<size_t>(dimNum),
-                OP_LOGE(context_->GetNodeName(), "y shape dim must equal to x shape dim"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yShape),
+                                                      "y shape dim must equal to x shape dim"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(yShape.GetDim(dimNum - 1) != outDimy,
-                OP_LOGE(context_->GetNodeName(), "y last dim must be x last dim / 2"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yShape),
+                                                      "y last dim must be x last dim / 2"),
+                return ge::GRAPH_FAILED);
 
     auto yScaleShapePtr = context_->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yScaleShapePtr);
+    if (yScaleShapePtr == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object yScaleShapePtr is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yScaleShapePtr is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape yScaleShape = yScaleShapePtr->GetStorageShape();
-    OP_CHECK_IF(static_cast<uint64_t>(yScaleShape.GetShapeSize()) != static_cast<uint64_t>(inDimx),
-                OP_LOGE(context_->GetNodeName(), "y_scale shape size must equal to rowLen"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        static_cast<uint64_t>(yScaleShape.GetShapeSize()) != static_cast<uint64_t>(inDimx),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y_scale", Ops::Base::ToString(yScaleShape),
+                                              "y_scale shape size must equal to rowLen"),
+        return ge::GRAPH_FAILED);
 
     tilingData.set_expertNum(1);
     tilingData.set_hasGroupIndex(0);
@@ -256,21 +313,27 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
 {
     // quant_scale/quant_offset must be absent
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_QUANT_SCALE) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "quant_scale is not supported for int32 x"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "quant_scale",
+                                                         "quant_scale is not supported for int32 x"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_QUANT_OFFSET) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "quant_offset is not supported for int32 x"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "quant_offset",
+                                                         "quant_offset is not supported for int32 x"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(quantType != QUANT_TYPE_DYNAMIC,
-                OP_LOGE(context_->GetNodeName(), "quant_type must be dynamic for int32 x"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "quant_type", std::to_string(quantType),
+                                                      "quant_type must be dynamic for int32 x"),
+                return ge::GRAPH_FAILED);
 
     // weight_scale: required
     auto weightScaleShapePtr = context_->GetOptionalInputShape(INDEX_IN_WEIGHT_SCALE);
-    OP_CHECK_IF(weightScaleShapePtr == nullptr,
-                OP_LOGE(context_->GetNodeName(), "weight_scale is required for int32 x"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(weightScaleShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "weight_scale"),
+                return ge::GRAPH_FAILED);
 
     // activation_scale: required
     auto activationScaleShapePtr = context_->GetOptionalInputShape(INDEX_IN_ACTIVATION_SCALE);
     OP_CHECK_IF(activationScaleShapePtr == nullptr,
-                OP_LOGE(context_->GetNodeName(), "activation_scale is required for int32 x"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "activation_scale"), return ge::GRAPH_FAILED);
 
     // group_index: optional
     auto groupIndexShapePtr = context_->GetOptionalInputShape(INDEX_IN_GROUP_INDEX);
@@ -280,7 +343,9 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
     if (hasGroupIndex_) {
         const gert::Shape groupIndexShape = groupIndexShapePtr->GetStorageShape();
         OP_CHECK_IF(groupIndexShape.GetDimNum() != 1 || groupIndexShape.GetDim(0) <= 0,
-                    OP_LOGE(context_->GetNodeName(), "group_index must be a non-empty 1-D tensor"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "group_index",
+                                                          Ops::Base::ToString(groupIndexShape),
+                                                          "group_index must be a non-empty 1-D tensor"),
                     return ge::GRAPH_FAILED);
         expertNum_ = static_cast<uint32_t>(groupIndexShape.GetDim(0));
     }
@@ -295,7 +360,11 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
                                        (weightScaleShape.GetDimNum() == 2 && weightScaleShape.GetDim(0) == 1 &&
                                         weightScaleShape.GetDim(1) == inDimy));
     OP_CHECK_IF(!weightShapeValid,
-                OP_LOGE(context_->GetNodeName(), "weight_scale shape does not match the group contract"),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context_->GetNodeName(), "weight_scale", Ops::Base::ToString(weightScaleShape),
+                    std::string("weight_scale must have shape [expert_count,input_width] when group_index is present, "
+                                "otherwise [input_width] or [1,input_width]; expert_count=") +
+                        std::to_string(expertNum_) + ", input_width=" + std::to_string(inDimy)),
                 return ge::GRAPH_FAILED);
 
     // activation_scale shape: [rows] or [rows, 1]
@@ -304,7 +373,9 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
                                 (activationScaleShape.GetDimNum() == 2 && activationScaleShape.GetDim(1) == 1)) &&
                                activationScaleShape.GetShapeSize() == inDimx;
     OP_CHECK_IF(!actScaleValid,
-                OP_LOGE(context_->GetNodeName(), "activation_scale must contain one FP32 value per row"),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "activation_scale",
+                                                      Ops::Base::ToString(activationScaleShape),
+                                                      "activation_scale must contain one FP32 value per row"),
                 return ge::GRAPH_FAILED);
 
     // bias: optional, same shape as weight_scale
@@ -319,22 +390,53 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
                                                      ((biasShape.GetDimNum() == 1 && biasShape.GetDim(0) == inDimy) ||
                                                       (biasShape.GetDimNum() == 2 && biasShape.GetDim(0) == 1 &&
                                                        biasShape.GetDim(1) == inDimy));
-        OP_CHECK_IF(!biasShapeValid, OP_LOGE(context_->GetNodeName(), "bias shape must match weight_scale"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            !biasShapeValid,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "bias", Ops::Base::ToString(biasShape),
+                                                  "bias shape must match weight_scale"),
+            return ge::GRAPH_FAILED);
     }
 
     // check output shapes
     auto yShapePtr = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yShapePtr);
+    if (yShapePtr == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object yShapePtr is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yShapePtr is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape yShape = yShapePtr->GetStorageShape();
     OP_CHECK_IF(yShape.GetDimNum() != 2 || yShape.GetDim(0) != inDimx || yShape.GetDim(1) != outDimy,
-                OP_LOGE(context_->GetNodeName(), "y shape must be [rows, input_width / 2]"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yShape),
+                                                      "y shape must be [rows, input_width / 2]"),
+                return ge::GRAPH_FAILED);
 
     auto yScaleShapePtr = context_->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yScaleShapePtr);
+    if (yScaleShapePtr == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object yScaleShapePtr is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yScaleShapePtr is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape yScaleShape = yScaleShapePtr->GetStorageShape();
     OP_CHECK_IF(yScaleShape.GetDimNum() != 1 || yScaleShape.GetDim(0) != inDimx,
-                OP_LOGE(context_->GetNodeName(), "y_scale shape must be [rows]"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y_scale",
+                                                      Ops::Base::ToString(yScaleShape), "y_scale shape must be [rows]"),
+                return ge::GRAPH_FAILED);
 
     // UB capacity check (xQueue and outQueue are double-buffered)
     const uint64_t inputBytes = static_cast<uint64_t>(inDimy) * sizeof(int32_t) * 2; // double buffer
@@ -344,8 +446,10 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
     const uint64_t requiredUb = inputBytes + paramBytes + (hasDequantBias ? paramBytes : 0) + tempBytes + outputBytes +
                                 UB_RESERVED_BUFF;
     OP_CHECK_IF(aicoreParams_.ubSize < requiredUb,
-                OP_LOGE(context_->GetNodeName(), "UB size %lu is smaller than required %lu bytes", aicoreParams_.ubSize,
-                        requiredUb),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context_->GetNodeName(), "x", std::to_string(inDimy),
+                    ("UB size " + std::to_string(aicoreParams_.ubSize) + " is smaller than required " +
+                     std::to_string(requiredUb) + " bytes")),
                 return ge::GRAPH_FAILED);
 
     tilingData.set_expertNum(expertNum_);
@@ -364,23 +468,29 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
 ge::graphStatus DequantSituQuantTiling::CheckInputShapesBF16()
 {
     OP_CHECK_IF(quantType != QUANT_TYPE_DYNAMIC,
-                OP_LOGE(context_->GetNodeName(), "quant_type must be dynamic for bfloat16/float16 x"),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "quant_type", std::to_string(quantType),
+                                                      "quant_type must be dynamic for bfloat16/float16 x"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_WEIGHT_SCALE) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "weight_scale must be absent for bfloat16/float16 x"),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "weight_scale",
+                                                         "weight_scale must be absent for bfloat16/float16 x"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_ACTIVATION_SCALE) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "activation_scale must be absent for bfloat16/float16 x"),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "activation_scale",
+                                                         "activation_scale must be absent for bfloat16/float16 x"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_BIAS) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "bias must be absent for bfloat16/float16 x"),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "bias",
+                                                         "bias must be absent for bfloat16/float16 x"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_QUANT_SCALE) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "quant_scale must be absent for bfloat16/float16 x"),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "quant_scale",
+                                                         "quant_scale must be absent for bfloat16/float16 x"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_QUANT_OFFSET) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "quant_offset must be absent for bfloat16/float16 x"),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "quant_offset",
+                                                         "quant_offset must be absent for bfloat16/float16 x"),
                 return ge::GRAPH_FAILED);
 
     // group_index is optional for bfloat16/float16 x: routed GMM1 outputs may
@@ -399,16 +509,44 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesBF16()
 
     // check output shapes
     auto yShapePtr = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yShapePtr);
+    if (yShapePtr == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object yShapePtr is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yShapePtr is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape yShape = yShapePtr->GetStorageShape();
     OP_CHECK_IF(yShape.GetDimNum() != 2 || yShape.GetDim(0) != inDimx || yShape.GetDim(1) != outDimy,
-                OP_LOGE(context_->GetNodeName(), "y shape must be [rows, input_width / 2]"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yShape),
+                                                      "y shape must be [rows, input_width / 2]"),
+                return ge::GRAPH_FAILED);
 
     auto yScaleShapePtr = context_->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yScaleShapePtr);
+    if (yScaleShapePtr == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object yScaleShapePtr is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yScaleShapePtr is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape yScaleShape = yScaleShapePtr->GetStorageShape();
     OP_CHECK_IF(yScaleShape.GetDimNum() != 1 || yScaleShape.GetDim(0) != inDimx,
-                OP_LOGE(context_->GetNodeName(), "y_scale shape must be [rows]"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y_scale",
+                                                      Ops::Base::ToString(yScaleShape), "y_scale shape must be [rows]"),
+                return ge::GRAPH_FAILED);
 
     // UB capacity check (xQueue and outQueue are double-buffered)
     const uint64_t inputBytes = static_cast<uint64_t>(inDimy) * 2 * 2; // BF16 = 2 bytes, double buffer
@@ -417,8 +555,10 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesBF16()
     const uint64_t outputBytes = (static_cast<uint64_t>(outDimy) * sizeof(int8_t) + BLOCK_BYTES) * 2; // double buffer
     const uint64_t requiredUb = inputBytes + tempBytes + dequantBytes + outputBytes + UB_RESERVED_BUFF;
     OP_CHECK_IF(aicoreParams_.ubSize < requiredUb,
-                OP_LOGE(context_->GetNodeName(), "UB size %lu is smaller than required %lu bytes", aicoreParams_.ubSize,
-                        requiredUb),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context_->GetNodeName(), "x", std::to_string(inDimy),
+                    ("UB size " + std::to_string(aicoreParams_.ubSize) + " is smaller than required " +
+                     std::to_string(requiredUb) + " bytes")),
                 return ge::GRAPH_FAILED);
 
     hasDequantBias = false;
@@ -439,7 +579,12 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesBF16()
 ge::graphStatus DequantSituQuantTiling::CheckInputShapes()
 {
     auto xShapePtr = context_->GetInputShape(INDEX_IN_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_situ_quant" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     const gert::Shape xShape = xShapePtr->GetStorageShape();
     int64_t dimNum = xShape.GetDimNum();
 
@@ -475,7 +620,12 @@ ge::graphStatus DequantSituQuantTiling::GetShapeAttrsInfoInner()
     opName = context_->GetNodeName();
 
     auto inputDesc = context_->GetInputDesc(INDEX_IN_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+    OP_CHECK_IF(inputDesc == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_situ_quant" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     xDtype_ = inputDesc->GetDataType();
     OP_CHECK_IF(
         xDtype_ != ge::DT_INT8 && xDtype_ != ge::DT_INT32 && xDtype_ != ge::DT_BF16 && xDtype_ != ge::DT_FLOAT16,
@@ -494,7 +644,19 @@ ge::graphStatus DequantSituQuantTiling::GetShapeAttrsInfoInner()
     }
 
     const gert::RuntimeAttrs* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     if (!SetAttrs(attrs)) {
         return ge::GRAPH_FAILED;
     }
@@ -647,7 +809,20 @@ ge::graphStatus DequantSituQuantTiling::PostTiling()
     }
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     workspaces[0] = workspaceSize_;
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetRawTilingData());
+    if (context_->GetRawTilingData() == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object context_->GetRawTilingData() is unavailable; check the "
+                               "operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "Tiling framework object context_->GetRawTilingData() is unavailable; check the "
+                                      "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
     return ge::GRAPH_SUCCESS;
@@ -687,23 +862,61 @@ ge::graphStatus TilingPrepareForDequantSituQuant(gert::TilingParseContext* conte
 {
     OP_LOGD(context, "TilingPrepare4DequantSituQuant enter.");
     auto compileInfo = context->GetCompiledInfo<DequantSituQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object compileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "dequant_situ_quant" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object platformInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0),
-                OP_LOGE(context->GetNodeName(), "Get core num failed, core num: %u",
-                        static_cast<uint32_t>(compileInfo->coreNum)),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo->coreNum <= 0)) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "dequant_situ_quant" :
+                                           context->GetNodeName());
+        const std::string msgReason = std::string(
+            ("Get core num failed, core num: " + std::to_string(static_cast<uint32_t>(compileInfo->coreNum))));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = ubSize;
-    OP_CHECK_IF(
-        (compileInfo->ubSize <= 0),
-        OP_LOGE(context->GetNodeName(), "Get ub size failed, ub size: %u", static_cast<uint32_t>(compileInfo->ubSize)),
-        return ge::GRAPH_FAILED);
+    if ((compileInfo->ubSize <= 0)) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "dequant_situ_quant" :
+                                           context->GetNodeName());
+        const std::string msgReason = std::string(
+            ("Get ub size failed, ub size: " + std::to_string(static_cast<uint32_t>(compileInfo->ubSize))));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     OP_LOGD(context, "TilingPrepare4DequantSituQuant exit.");
     return ge::GRAPH_SUCCESS;

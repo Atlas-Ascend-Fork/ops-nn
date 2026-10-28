@@ -30,6 +30,9 @@
 #include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 #ifdef __cplusplus
@@ -86,7 +89,15 @@ static bool CheckDtypeValid(const aclTensor* self, const aclTensor* gamma, const
     if (gamma != nullptr && beta != nullptr) {
         OP_CHECK_DTYPE_NOT_MATCH(gamma, beta->GetDataType(), return false);
         if (self->GetDataType() != gamma->GetDataType() && gamma->GetDataType() != op::DataType::DT_FLOAT) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The dtype of gamma must be the same as self or FLOAT");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
+                                   "The dtype of gamma must be the same as self or FLOAT");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0021", (std::vector<const char*>{"param_names", "op_name", "incorrect_dtypes", "reason"}),
+                (std::vector<const char*>{"self,gamma", "aclnnGroupNormSilu",
+                                          (std::string(op::ToString(self->GetDataType()).GetString()) + "," +
+                                           op::ToString(gamma->GetDataType()).GetString())
+                                              .c_str(),
+                                          "The dtype of gamma must be the same as self or FLOAT"}));
             return false;
         }
     }
@@ -123,26 +134,58 @@ static bool CheckDtypeValid(const aclTensor* self, const aclTensor* gamma, const
 static bool CheckAttr(const aclTensor* self, int64_t group, double eps, const NpuArch& npuArch)
 {
     // 检查group是否大于0
-    OP_CHECK(group > 0, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected group to be greater than 0, got %ld.", group),
-             return false);
+    if (!(group > 0)) {
+        const std::string reason = (("Expected group to be greater than 0, got " + std::to_string(group) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+            (std::vector<const char*>{"group", "aclnnGroupNormSilu", (std::to_string(group)).c_str(), reason.c_str()}));
+        return false;
+    };
     if (!Ops::NN::AclnnUtil::IsRegbase(npuArch)) {
-        OP_CHECK(self->GetViewShape()[0] > 0,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected N to be greater than 0, got %ld.", self->GetViewShape()[0]),
-                 return false);
-        OP_CHECK(self->GetViewShape()[1] > 0,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected C to be greater than 0, got %ld.", self->GetViewShape()[1]),
-                 return false);
+        if (!(self->GetViewShape()[0] > 0)) {
+            const std::string reason = (("Expected N to be greater than 0, got " +
+                                         std::to_string(self->GetViewShape()[0]) + "."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0015", (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+                (std::vector<const char*>{"self", "aclnnGroupNormSilu",
+                                          (std::to_string(self->GetViewShape()[0])).c_str(), reason.c_str()}));
+            return false;
+        };
+        if (!(self->GetViewShape()[1] > 0)) {
+            const std::string reason = (("Expected C to be greater than 0, got " +
+                                         std::to_string(self->GetViewShape()[1]) + "."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0015", (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+                (std::vector<const char*>{"self", "aclnnGroupNormSilu",
+                                          (std::to_string(self->GetViewShape()[1])).c_str(), reason.c_str()}));
+            return false;
+        };
     }
     // 检查eps是否大于0
-    OP_CHECK(eps > 0.0, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected eps to be greater than 0, got %lf.", eps),
-             return false);
+    if (!(eps > 0.0)) {
+        const std::string reason = (("Expected eps to be greater than 0, got " + std::to_string(eps) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+            (std::vector<const char*>{"eps", "aclnnGroupNormSilu", (std::to_string(eps)).c_str(), reason.c_str()}));
+        return false;
+    };
     // 检查C是否能被group整除
-    OP_CHECK(self->GetViewShape()[1] % group == 0,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                     "Expected number of channels in input to be divisible by group, "
-                     "but got input of shape %s and group=%ld.",
-                     op::ToString(self->GetViewShape()).GetString(), group),
-             return false);
+    if (!(self->GetViewShape()[1] % group == 0)) {
+        const std::string reason = ((
+            "Expected number of channels in input to be divisible by group, but got input of shape " +
+            std::string(op::ToString(self->GetViewShape()).GetString()) + " and group=" + std::to_string(group) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0009", (std::vector<const char*>{"param_name", "op_name", "incorrect_shape", "reason"}),
+            (std::vector<const char*>{"self", "aclnnGroupNormSilu",
+                                      (std::string(op::ToString(self->GetViewShape()).GetString())).c_str(),
+                                      reason.c_str()}));
+        return false;
+    };
     return true;
 }
 
@@ -165,20 +208,37 @@ static bool CheckShape(const aclTensor* self, const aclTensor* gamma, const aclT
     // 检查(gamma是否为空指针)或者(gamma维度是否为1且元素数量是否等于C)
     if (gamma != nullptr &&
         (gamma->GetViewShape().GetDimNum() != 1 || gamma->GetViewShape()[0] != self->GetViewShape()[1])) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected weight to be a vector of size equal to the number of channels in "
-                "input, but got weight of shape %s and input of shape %s.",
-                op::ToString(gamma->GetViewShape()).GetString(), op::ToString(self->GetViewShape()).GetString());
+        const std::string reason = (("Expected weight to be a vector of size equal to the number of channels in input, "
+                                     "but got weight of shape " +
+                                     std::string(op::ToString(gamma->GetViewShape()).GetString()) +
+                                     " and input of shape " +
+                                     std::string(op::ToString(self->GetViewShape()).GetString()) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+            (std::vector<const char*>{"self,gamma", "aclnnGroupNormSilu",
+                                      (std::string(op::ToString(self->GetViewShape()).GetString()) + "," +
+                                       op::ToString(gamma->GetViewShape()).GetString())
+                                          .c_str(),
+                                      reason.c_str()}));
         return false;
     }
 
     // 检查(beta是否为空指针)或者(beta维度是否为1且元素数量是否等于C)
     if (beta != nullptr &&
         (beta->GetViewShape().GetDimNum() != 1 || beta->GetViewShape()[0] != self->GetViewShape()[1])) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected bias to be a vector of size equal to the number of channels in "
-                "input, but got weight of shape %s and input of shape %s.",
-                op::ToString(beta->GetViewShape()).GetString(), op::ToString(self->GetViewShape()).GetString());
+        const std::string reason = ((
+            "Expected bias to be a vector of size equal to the number of channels in input, but got weight of shape " +
+            std::string(op::ToString(beta->GetViewShape()).GetString()) + " and input of shape " +
+            std::string(op::ToString(self->GetViewShape()).GetString()) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+            (std::vector<const char*>{"self,beta", "aclnnGroupNormSilu",
+                                      (std::string(op::ToString(self->GetViewShape()).GetString()) + "," +
+                                       op::ToString(beta->GetViewShape()).GetString())
+                                          .c_str(),
+                                      reason.c_str()}));
         return false;
     }
 

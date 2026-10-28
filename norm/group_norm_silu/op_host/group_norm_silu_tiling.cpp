@@ -15,6 +15,10 @@
 #include "group_norm_silu_tiling.h"
 #include "op_host/tiling_util.h"
 #include "op_host/tiling_templates_registry.h"
+#include <string>
+#include <vector>
+#include "util/shape_util.h"
+#include "base/err_msg.h"
 
 namespace optiling {
 using namespace Ops::NN::OpTiling;
@@ -77,7 +81,12 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
 {
     // check x
     auto inputX = context->GetInputDesc(INPUT_IDX_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputX);
+    OP_CHECK_IF(inputX == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_silu" :
+                                                                                   (context)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     auto xDtype = inputX->GetDataType();
     uint64_t xDtypeSize = ge::GetSizeByDataType(xDtype);
     OP_CHECK_IF((xDtypeSize <= 0),
@@ -86,7 +95,12 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
                     ("xDtypeSize must be greater than 0, but got " + std::to_string(xDtypeSize)).c_str()),
                 return ge::GRAPH_FAILED);
     auto xShapePtr = context->GetInputShape(INPUT_IDX_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_silu" :
+                                                                                   (context)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     auto xShape = xShapePtr->GetStorageShape();
     uint64_t xDims = xShape.GetDimNum();
     OP_CHECK_IF((xDims < X_SHAPE_MIN_LEN),
@@ -96,7 +110,19 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
     uint64_t channel = xShape.GetDim(DIM_1);
     // check gamma and beta
     auto gammaShapePtr = context->GetInputShape(INPUT_IDX_GAMMA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gammaShapePtr);
+    if (gammaShapePtr == nullptr) {
+        const std::string msgOpName = std::string(
+            (context->GetNodeName() == nullptr ? "group_norm_silu" : context->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "The optional gamma/beta metadata is unavailable in this Tiling path; check the context "
+                               "and selected implementation for this optional-input combination.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "The optional gamma/beta metadata is unavailable in this Tiling path; check the "
+                                      "context and selected implementation for this optional-input combination."}));
+        return ge::GRAPH_FAILED;
+    };
     auto gammaShape = gammaShapePtr->GetStorageShape();
     uint64_t gammaSizes = gammaShape.GetDim(DIM_0);
     OP_CHECK_IF(gammaShape.GetDimNum() != 1,
@@ -113,7 +139,19 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
                         .c_str()),
                 return ge::GRAPH_FAILED);
     auto betaShapePtr = context->GetInputShape(INPUT_IDX_BETA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, betaShapePtr);
+    if (betaShapePtr == nullptr) {
+        const std::string msgOpName = std::string(
+            (context->GetNodeName() == nullptr ? "group_norm_silu" : context->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "The optional gamma/beta metadata is unavailable in this Tiling path; check the context "
+                               "and selected implementation for this optional-input combination.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "The optional gamma/beta metadata is unavailable in this Tiling path; check the "
+                                      "context and selected implementation for this optional-input combination."}));
+        return ge::GRAPH_FAILED;
+    };
     auto betaShape = betaShapePtr->GetStorageShape();
     uint64_t betaSizes = betaShape.GetDim(DIM_0);
     OP_CHECK_IF(betaShape.GetDimNum() != 1,
@@ -130,11 +168,35 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
                                                       .c_str()),
         return ge::GRAPH_FAILED);
     auto gammaDtypePtr = context->GetInputDesc(INPUT_IDX_GAMMA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gammaDtypePtr);
+    if (gammaDtypePtr == nullptr) {
+        const std::string msgOpName = std::string(
+            (context->GetNodeName() == nullptr ? "group_norm_silu" : context->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "The optional gamma/beta metadata is unavailable in this Tiling path; check the context "
+                               "and selected implementation for this optional-input combination.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "The optional gamma/beta metadata is unavailable in this Tiling path; check the "
+                                      "context and selected implementation for this optional-input combination."}));
+        return ge::GRAPH_FAILED;
+    };
     auto gammaDtype = gammaDtypePtr->GetDataType();
     uint64_t gammaDtypeSize = ge::GetSizeByDataType(gammaDtype);
     auto betaDtypePtr = context->GetInputDesc(INPUT_IDX_BETA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, betaDtypePtr);
+    if (betaDtypePtr == nullptr) {
+        const std::string msgOpName = std::string(
+            (context->GetNodeName() == nullptr ? "group_norm_silu" : context->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "The optional gamma/beta metadata is unavailable in this Tiling path; check the context "
+                               "and selected implementation for this optional-input combination.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "The optional gamma/beta metadata is unavailable in this Tiling path; check the "
+                                      "context and selected implementation for this optional-input combination."}));
+        return ge::GRAPH_FAILED;
+    };
     auto betaDtype = betaDtypePtr->GetDataType();
     uint64_t betaDtypeSize = ge::GetSizeByDataType(betaDtype);
     OP_CHECK_IF((gammaDtypeSize != betaDtypeSize),
@@ -163,7 +225,19 @@ static ge::graphStatus CheckAttrParams(const gert::TilingContext* tilingContext)
     uint64_t channel = xShape.GetDim(DIM_1);
     // check num_groups
     auto attrs = tilingContext->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ? "group_norm_silu" :
+                                                                                       (tilingContext)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const int64_t* numGroups = attrs->GetAttrPointer<int64_t>(INDEX_NUM_GROUPS);
     OP_CHECK_IF(
         (*numGroups <= 0),
@@ -184,9 +258,33 @@ static ge::graphStatus TilingPrepare4GroupNormSilu(gert::TilingParseContext* con
 {
     OP_LOGD(context, "Start running TilingPrepare4GroupNormSilu.");
     auto compileInfo = context->GetCompiledInfo<GroupNormSiluCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_silu" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object compileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_silu" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object platformInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     OP_LOGD(context, "Get core num for ai_core:%d", compileInfo->totalCoreNum);
@@ -197,25 +295,55 @@ static ge::graphStatus TilingPrepare4GroupNormSilu(gert::TilingParseContext* con
     if (IsRegbaseSocVersion(context)) {
         compileInfo->isRegbase = 1;
         uint32_t vectorLength = Ops::Base::GetVRegSize(context);
-        OP_CHECK_IF((vectorLength <= FLOAT32_BYTES), OP_LOGE(context->GetNodeName(), "vector length is invalid."),
-                    return ge::GRAPH_FAILED);
+        if ((vectorLength <= FLOAT32_BYTES)) {
+            const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                               "group_norm_silu" :
+                                               context->GetNodeName());
+            const std::string msgReason = (std::string(__func__) + ": " + "vector length is invalid.");
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            return ge::GRAPH_FAILED;
+        };
         compileInfo->vectorLength = vectorLength;
 
         int32_t blockSize = Ops::Base::GetUbBlockSize(context);
-        OP_CHECK_IF((blockSize <= 0), OP_LOGE(context->GetNodeName(), "block size is invalid."),
-                    return ge::GRAPH_FAILED);
+        if ((blockSize <= 0)) {
+            const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                               "group_norm_silu" :
+                                               context->GetNodeName());
+            const std::string msgReason = (std::string(__func__) + ": " + "block size is invalid.");
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            return ge::GRAPH_FAILED;
+        };
         compileInfo->blockSizePlatform = blockSize;
     }
     OP_LOGD(context, "Get total core num:%d", compileInfo->totalCoreNum);
-    OP_CHECK_IF((compileInfo->totalCoreNum <= 0), OP_LOGE(context->GetNodeName(), "Failed to get core num."),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo->totalCoreNum <= 0)) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "group_norm_silu" :
+                                           context->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Failed to get core num.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "Failed to get core num."}));
+        return ge::GRAPH_FAILED;
+    };
 
     uint64_t ubSizePlatForm = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
     OP_LOGD(context, "Get total ub size:%lu", compileInfo->ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context->GetNodeName(), "Failed to get ub size."),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo->ubSizePlatForm <= 0)) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "group_norm_silu" :
+                                           context->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Failed to get ub size.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "Failed to get ub size."}));
+        return ge::GRAPH_FAILED;
+    };
 
     OP_LOGD(context, "TilingPrepare4GroupNormSilu ends.");
     return ge::GRAPH_SUCCESS;
@@ -353,16 +481,17 @@ static void SetTiling(const gert::TilingContext* context, GroupNormSiluTilingDat
                tilingData.get_hwNum() <= HW_CAP &&
                tilingData.get_shapeC() + tilingData.get_numPerCore() <= UPPER_LIMIT_ONE) {
         tilingData.set_tilingKey(SelectMixOrB16Key(gammaDtypeSize,
-            GroupNormSiluTilingKey::TILINGKEY_SMALL_SHAPE_MIXTYPE, GroupNormSiluTilingKey::TILINGKEY_SMALL_SHAPE_B16));
+                                                   GroupNormSiluTilingKey::TILINGKEY_SMALL_SHAPE_MIXTYPE,
+                                                   GroupNormSiluTilingKey::TILINGKEY_SMALL_SHAPE_B16));
     } else if (xDtypeSize == FLOAT16_BYTES &&
                tilingData.get_shapeC() + tilingData.get_numPerCore() <= UPPER_LIMIT_ONE) {
-        tilingData.set_tilingKey(SelectMixOrB16Key(gammaDtypeSize,
-            GroupNormSiluTilingKey::TILINGKEY_HIGH_PERF_MIXTYPE, GroupNormSiluTilingKey::TILINGKEY_HIGH_PERF_B16));
+        tilingData.set_tilingKey(SelectMixOrB16Key(gammaDtypeSize, GroupNormSiluTilingKey::TILINGKEY_HIGH_PERF_MIXTYPE,
+                                                   GroupNormSiluTilingKey::TILINGKEY_HIGH_PERF_B16));
     } else if (xDtypeSize == FLOAT32_BYTES) {
         tilingData.set_tilingKey(static_cast<int64_t>(GroupNormSiluTilingKey::TILINGKEY_BASIC_TEM_B32));
     } else {
-        tilingData.set_tilingKey(SelectMixOrB16Key(gammaDtypeSize,
-            GroupNormSiluTilingKey::TILINGKEY_BASIC_TEM_MIXTYPE, GroupNormSiluTilingKey::TILINGKEY_BASIC_TEM_B16));
+        tilingData.set_tilingKey(SelectMixOrB16Key(gammaDtypeSize, GroupNormSiluTilingKey::TILINGKEY_BASIC_TEM_MIXTYPE,
+                                                   GroupNormSiluTilingKey::TILINGKEY_BASIC_TEM_B16));
     }
 }
 
@@ -371,19 +500,34 @@ static ge::graphStatus SetProcessSize(const gert::TilingContext* context, GroupN
     auto gammaDtype = context->GetInputDesc(INPUT_IDX_GAMMA)->GetDataType();
     uint64_t gammaDtypeSize = ge::GetSizeByDataType(gammaDtype);
     uint64_t gammaPerCore = (tilingData.get_numPerCore() + 1) * tilingData.get_shapeD();
-    OP_CHECK_IF((gammaDtypeSize == 0), OP_LOGE(context->GetNodeName(), "Division by zero, gammaDtypeSize is 0!"),
+    OP_CHECK_IF((gammaDtypeSize == 0),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "gamma",
+                                                      std::to_string(static_cast<int>(gammaDtype)),
+                                                      "Division by zero, gammaDtypeSize is 0!"),
                 return ge::GRAPH_FAILED);
     uint64_t gammaPerCoreRoundUp = CeilDiv(gammaPerCore, (BLOCK_SIZE / gammaDtypeSize)) * (BLOCK_SIZE / gammaDtypeSize);
     auto compileInfo = context->GetCompileInfo<GroupNormSiluCompileInfo>();
     uint64_t remainUbSize = compileInfo->ubSizePlatForm - gammaPerCoreRoundUp * gammaDtypeSize * GAMMA_BETA_UB_NUM -
                             BLOCK_SIZE * RESERVED_BLOCK_NUM;
-    OP_CHECK_IF((remainUbSize == 0), OP_LOGE(context->GetNodeName(), "RemainUbSize is 0!"), return ge::GRAPH_FAILED);
+    if ((remainUbSize == 0)) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "group_norm_silu" :
+                                           context->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "RemainUbSize is 0!");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "RemainUbSize is 0!"}));
+        return ge::GRAPH_FAILED;
+    };
     int64_t maxProcessSize = remainUbSize / INPUT_OUTPUT_UB_NUM;
     if (maxProcessSize < tilingData.get_hwNum()) {
         maxProcessSize = maxProcessSize / BLOCK_SIZE * BLOCK_SIZE;
     } else {
         int64_t lcmNum = Lcm(tilingData.get_hwNum(), (BLOCK_SIZE / gammaDtypeSize));
-        OP_CHECK_IF((lcmNum == 0), OP_LOGE(context->GetNodeName(), "Division by zero, lcmNum is 0!"),
+        OP_CHECK_IF((lcmNum == 0),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "x",
+                        Ops::Base::ToString(context->GetInputShape(INPUT_IDX_X)->GetStorageShape()),
+                        "The spatial dimensions must permit a nonzero aligned processing tile."),
                     return ge::GRAPH_FAILED);
         maxProcessSize = maxProcessSize / lcmNum * lcmNum;
     }
@@ -407,7 +551,7 @@ static ge::graphStatus SetTilingSD(const gert::TilingContext* context, GroupNorm
         tilingData.set_numLastCore(tilingData.get_numGroups() -
                                    tilingData.get_numPerCore() * tilingData.get_realCoreNum());
         OP_CHECK_IF((SetProcessSize(context, tilingData) != ge::GRAPH_SUCCESS),
-                    OP_LOGE(context->GetNodeName(), "SetProcessSize failed."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SetProcessSize failed."), return ge::GRAPH_FAILED);
         tilingData.set_loopNum(tilingData.get_elemNum() / tilingData.get_processSize());
         tilingData.set_loopTail(tilingData.get_elemNum() - tilingData.get_processSize() * tilingData.get_loopNum());
         if (tilingData.get_processSize() > tilingData.get_hwNum()) {
@@ -433,9 +577,9 @@ static ge::graphStatus Tiling4GroupNormSilu(gert::TilingContext* context)
     }
     // check input && attrs params
     OP_CHECK_IF((CheckInputParams(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "InputParams is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InputParams is invalid."), return ge::GRAPH_FAILED);
     OP_CHECK_IF((CheckAttrParams(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "AttrParams is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "AttrParams is invalid."), return ge::GRAPH_FAILED);
     GroupNormSiluTilingData tilingData;
     SetAttrParams(context, tilingData);
     SetTilingParams(context, tilingData);
@@ -450,10 +594,10 @@ static ge::graphStatus Tiling4GroupNormSilu(gert::TilingContext* context)
         OP_LOGD(context, "Current chip type is 310P.");
         sysWorkspaceSize = RESERVED_WORKSPACE_SIZE_310P;
         OP_CHECK_IF((SetTilingSD(context, tilingData) != ge::GRAPH_SUCCESS),
-                    OP_LOGE(context->GetNodeName(), "SetTilingSD failed."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SetTilingSD failed."), return ge::GRAPH_FAILED);
     }
     OP_CHECK_IF(GroupNormSiluSetTilingData(context, tilingData) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "GroupNormSiluSetTilingData set tiling data fail."),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GroupNormSiluSetTilingData set tiling data fail."),
                 return ge::GRAPH_FAILED);
     OP_LOGD(context, "tilingData is numGroups:%ld, hwNum:%ld, elemNum:%ld, shapeC:%ld, shapeD:%ld, realCoreNum:%ld, \
                 numPerCore:%ld, numLastCore:%ld, processSize:%ld, loopNum:%ld, loopTail:%ld, innerLoopNum:%ld, \

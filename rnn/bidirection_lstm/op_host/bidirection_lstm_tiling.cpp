@@ -16,13 +16,29 @@
 #include <vector>
 #include "tiling/tiling_api.h"
 #include "bidirection_lstm.h"
+#include <string>
+#include "base/err_msg.h"
+#include "util/shape_util.h"
+#include "base/err_msg.h"
 
 namespace optiling {
 
 bool AddWorkspace_lstm(gert::TilingContext* context, const size_t workspace)
 {
     size_t* workspace_size = context->GetWorkspaceSizes(1);
-    OP_CHECK_IF(workspace_size == nullptr, ReportNullPtrWithContext(context, "workspace_size"), return false);
+    if (workspace_size == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "bidirection_lstm" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object workspace_size is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object workspace_size is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return false;
+    };
     *workspace_size = workspace;
     return true;
 }
@@ -30,16 +46,16 @@ bool AddWorkspace_lstm(gert::TilingContext* context, const size_t workspace)
 bool BidirectionLSTMTiling::CheckTensorShape(gert::TilingContext* context, gert::Shape& shape, uint64_t ndim,
                                              std::vector<uint64_t> dims)
 {
-    OP_CHECK_IF(
-        shape.GetDimNum() != ndim,
-        OP_LOGE(context->GetNodeName(), "BidirectionLSTM tensor shape ndim:%lu wrong expected %lu, please check.",
-                static_cast<uint64_t>(shape.GetDimNum()), ndim),
-        return false);
+    OP_CHECK_IF(shape.GetDimNum() != ndim,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                       "BidirectionLSTM tensor shape ndim:%lu wrong expected %lu, please check.",
+                                       static_cast<uint64_t>(shape.GetDimNum()), ndim),
+                return false);
     for (uint32_t i = 0; i < ndim; i++) {
         OP_CHECK_IF(static_cast<uint64_t>(shape.GetDim(i)) != dims[i],
-                    OP_LOGE(context->GetNodeName(),
-                            "BidirectionLSTM tensor shape dim[%d]:%lu wrong expected %lu, please check.", i,
-                            static_cast<uint64_t>(shape.GetDim(i)), dims[i]),
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                           "BidirectionLSTM tensor shape dim[%d]:%lu wrong expected %lu, please check.",
+                                           i, static_cast<uint64_t>(shape.GetDim(i)), dims[i]),
                     return false);
     }
     return true;
@@ -48,41 +64,86 @@ bool BidirectionLSTMTiling::CheckTensorShape(gert::TilingContext* context, gert:
 bool BidirectionLSTMTiling::CheckInputShapes(gert::TilingContext* context)
 {
     auto x = context->GetInputShape(0);
-    OP_CHECK_IF(x == nullptr, ReportNullPtrWithContext(context, "x"), return false);
+    OP_CHECK_IF(x == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "bidirection_lstm" :
+                                                                                   (context)->GetNodeName()),
+                    "x"),
+                return false);
     auto shape = x->GetStorageShape();
     if (!_Params.packed) {
         OP_CHECK_IF(
             !CheckTensorShape(context, shape, 3, {_Params.sequenceLength, _Params.batchSize, _Params.inputSize}),
-            OP_LOGE(context->GetNodeName(), "BidirectionLSTM get x shape wrong, please check."), return false);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                context->GetNodeName(), "x", Ops::Base::ToString(shape),
+                std::string("Expected shape=[") + std::to_string(_Params.sequenceLength) + "," +
+                    std::to_string(_Params.batchSize) + "," + std::to_string(_Params.inputSize) + "]."),
+            return false);
     }
 
     auto init_h = context->GetInputShape(1);
-    OP_CHECK_IF(init_h == nullptr, ReportNullPtrWithContext(context, "init_h"), return false);
+    OP_CHECK_IF(init_h == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "bidirection_lstm" :
+                                                                                   (context)->GetNodeName()),
+                    "init_h"),
+                return false);
     shape = init_h->GetStorageShape();
     OP_CHECK_IF(
         !CheckTensorShape(context, shape, 3,
                           {(_Params.bidirection ? 2 : 1) * _Params.numLayers, _Params.batchSize, _Params.hiddenSize}),
-        OP_LOGE(context->GetNodeName(), "BidirectionLSTM get init_h shape wrong, please check."), return false);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "init_h", Ops::Base::ToString(shape),
+            std::string("Expected shape=[") + std::to_string((_Params.bidirection ? 2 : 1) * _Params.numLayers) + "," +
+                std::to_string(_Params.batchSize) + "," + std::to_string(_Params.hiddenSize) + "]."),
+        return false);
 
     auto init_c = context->GetInputShape(2);
-    OP_CHECK_IF(init_c == nullptr, ReportNullPtrWithContext(context, "init_c"), return false);
+    OP_CHECK_IF(init_c == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "bidirection_lstm" :
+                                                                                   (context)->GetNodeName()),
+                    "init_c"),
+                return false);
     shape = init_c->GetStorageShape();
     OP_CHECK_IF(
         !CheckTensorShape(context, shape, 3,
                           {(_Params.bidirection ? 2 : 1) * _Params.numLayers, _Params.batchSize, _Params.hiddenSize}),
-        OP_LOGE(context->GetNodeName(), "BidirectionLSTM get init_h shape wrong, please check."), return false);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "init_c", Ops::Base::ToString(shape),
+            std::string("Expected shape=[") + std::to_string((_Params.bidirection ? 2 : 1) * _Params.numLayers) + "," +
+                std::to_string(_Params.batchSize) + "," + std::to_string(_Params.hiddenSize) + "]."),
+        return false);
 
     auto w_ih = context->GetInputShape(3);
-    OP_CHECK_IF(w_ih == nullptr, ReportNullPtrWithContext(context, "w_ih"), return false);
+    OP_CHECK_IF(w_ih == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "bidirection_lstm" :
+                                                                                   (context)->GetNodeName()),
+                    "w_ih"),
+                return false);
     shape = w_ih->GetStorageShape();
     OP_CHECK_IF(!CheckTensorShape(context, shape, 2, {NUM_OF_GATE * _Params.hiddenSize, _Params.inputSize}),
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM get w_ih shape wrong, please check."), return false);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "w_ih", Ops::Base::ToString(shape),
+                                                      std::string("Expected shape=[") +
+                                                          std::to_string(NUM_OF_GATE * _Params.hiddenSize) + "," +
+                                                          std::to_string(_Params.inputSize) + "]."),
+                return false);
 
     auto w_hh = context->GetInputShape(4);
-    OP_CHECK_IF(w_hh == nullptr, ReportNullPtrWithContext(context, "w_hh"), return false);
+    OP_CHECK_IF(w_hh == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "bidirection_lstm" :
+                                                                                   (context)->GetNodeName()),
+                    "w_hh"),
+                return false);
     shape = w_hh->GetStorageShape();
     OP_CHECK_IF(!CheckTensorShape(context, shape, 2, {NUM_OF_GATE * _Params.hiddenSize, _Params.hiddenSize}),
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM get w_hh shape wrong, please check."), return false);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "w_hh", Ops::Base::ToString(shape),
+                                                      std::string("Expected shape=[") +
+                                                          std::to_string(NUM_OF_GATE * _Params.hiddenSize) + "," +
+                                                          std::to_string(_Params.hiddenSize) + "]."),
+                return false);
 
     return true;
 }
@@ -91,48 +152,84 @@ bool BidirectionLSTMTiling::CheckOptionalInputShapes(gert::TilingContext* contex
 {
     if (_Params.isBias) {
         auto b_ih = context->GetOptionalInputShape(5);
-        OP_CHECK_IF(b_ih == nullptr, ReportNullPtrWithContext(context, "b_ih"), return false);
+        OP_CHECK_IF(b_ih == nullptr,
+                    OP_LOGE_WITH_INVALID_INPUT(
+                        (context->GetNodeName() == nullptr ? "bidirection_lstm" : context->GetNodeName()), "b_ih"),
+                    return false);
         auto shape = b_ih->GetStorageShape();
         OP_CHECK_IF(!CheckTensorShape(context, shape, 1, {NUM_OF_GATE * _Params.hiddenSize}),
-                    OP_LOGE(context->GetNodeName(), "BidirectionLSTM get b_ih shape wrong, please check."),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "b_ih", Ops::Base::ToString(shape),
+                        std::string("Expected shape=[") + std::to_string(NUM_OF_GATE * _Params.hiddenSize) + "]."),
                     return false);
 
         auto b_hh = context->GetOptionalInputShape(6);
-        OP_CHECK_IF(b_hh == nullptr, ReportNullPtrWithContext(context, "b_hh"), return false);
+        OP_CHECK_IF(b_hh == nullptr,
+                    OP_LOGE_WITH_INVALID_INPUT(
+                        (context->GetNodeName() == nullptr ? "bidirection_lstm" : context->GetNodeName()), "b_hh"),
+                    return false);
         shape = b_hh->GetStorageShape();
         OP_CHECK_IF(!CheckTensorShape(context, shape, 1, {NUM_OF_GATE * _Params.hiddenSize}),
-                    OP_LOGE(context->GetNodeName(), "BidirectionLSTM get b_hh shape wrong, please check."),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "b_hh", Ops::Base::ToString(shape),
+                        std::string("Expected shape=[") + std::to_string(NUM_OF_GATE * _Params.hiddenSize) + "]."),
                     return false);
     }
 
     if (_Params.bidirection) {
         auto w_ih_reverse = context->GetOptionalInputShape(7);
-        OP_CHECK_IF(w_ih_reverse == nullptr, ReportNullPtrWithContext(context, "w_ih_reverse"), return false);
+        OP_CHECK_IF(
+            w_ih_reverse == nullptr,
+            OP_LOGE_WITH_INVALID_INPUT(
+                (context->GetNodeName() == nullptr ? "bidirection_lstm" : context->GetNodeName()), "w_ih_reverse"),
+            return false);
         auto shape = w_ih_reverse->GetStorageShape();
         OP_CHECK_IF(!CheckTensorShape(context, shape, 2, {NUM_OF_GATE * _Params.hiddenSize, _Params.inputSize}),
-                    OP_LOGE(context->GetNodeName(), "BidirectionLSTM get w_ih_reverse shape wrong, please check."),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "w_ih_reverse", Ops::Base::ToString(shape),
+                        std::string("Expected shape=[") + std::to_string(NUM_OF_GATE * _Params.hiddenSize) + "," +
+                            std::to_string(_Params.inputSize) + "]."),
                     return false);
 
         auto w_hh_reverse = context->GetOptionalInputShape(8);
-        OP_CHECK_IF(w_hh_reverse == nullptr, ReportNullPtrWithContext(context, "w_hh_reverse"), return false);
+        OP_CHECK_IF(
+            w_hh_reverse == nullptr,
+            OP_LOGE_WITH_INVALID_INPUT(
+                (context->GetNodeName() == nullptr ? "bidirection_lstm" : context->GetNodeName()), "w_hh_reverse"),
+            return false);
         shape = w_hh_reverse->GetStorageShape();
         OP_CHECK_IF(!CheckTensorShape(context, shape, 2, {NUM_OF_GATE * _Params.hiddenSize, _Params.hiddenSize}),
-                    OP_LOGE(context->GetNodeName(), "BidirectionLSTM get w_hh_reverse shape wrong, please check."),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "w_hh_reverse", Ops::Base::ToString(shape),
+                        std::string("Expected shape=[") + std::to_string(NUM_OF_GATE * _Params.hiddenSize) + "," +
+                            std::to_string(_Params.hiddenSize) + "]."),
                     return false);
 
         if (_Params.isBias) {
             auto b_ih_reverse = context->GetOptionalInputShape(9);
-            OP_CHECK_IF(b_ih_reverse == nullptr, ReportNullPtrWithContext(context, "b_ih_reverse"), return false);
+            OP_CHECK_IF(
+                b_ih_reverse == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    (context->GetNodeName() == nullptr ? "bidirection_lstm" : context->GetNodeName()), "b_ih_reverse"),
+                return false);
             shape = b_ih_reverse->GetStorageShape();
             OP_CHECK_IF(!CheckTensorShape(context, shape, 1, {NUM_OF_GATE * _Params.hiddenSize}),
-                        OP_LOGE(context->GetNodeName(), "BidirectionLSTM get b_ih_reverse shape wrong, please check."),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context->GetNodeName(), "b_ih_reverse", Ops::Base::ToString(shape),
+                            std::string("Expected shape=[") + std::to_string(NUM_OF_GATE * _Params.hiddenSize) + "]."),
                         return false);
 
             auto b_hh_reverse = context->GetOptionalInputShape(10);
-            OP_CHECK_IF(b_hh_reverse == nullptr, ReportNullPtrWithContext(context, "b_hh_reverse"), return false);
+            OP_CHECK_IF(
+                b_hh_reverse == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    (context->GetNodeName() == nullptr ? "bidirection_lstm" : context->GetNodeName()), "b_hh_reverse"),
+                return false);
             shape = b_hh_reverse->GetStorageShape();
             OP_CHECK_IF(!CheckTensorShape(context, shape, 1, {NUM_OF_GATE * _Params.hiddenSize}),
-                        OP_LOGE(context->GetNodeName(), "BidirectionLSTM get b_hh_reverse shape wrong, please check."),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context->GetNodeName(), "b_hh_reverse", Ops::Base::ToString(shape),
+                            std::string("Expected shape=[") + std::to_string(NUM_OF_GATE * _Params.hiddenSize) + "]."),
                         return false);
         }
     }
@@ -142,36 +239,87 @@ bool BidirectionLSTMTiling::CheckOptionalInputShapes(gert::TilingContext* contex
 bool BidirectionLSTMTiling::CheckOutputShapes(gert::TilingContext* context)
 {
     auto output = context->GetOutputShape(0);
-    OP_CHECK_IF(output == nullptr, ReportNullPtrWithContext(context, "output"), return false);
+    if (output == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "bidirection_lstm" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object output is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object output is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return false;
+    };
     auto shape = output->GetStorageShape();
     if (!_Params.packed) {
-        OP_CHECK_IF(
-            !CheckTensorShape(
-                context, shape, 3,
-                {_Params.sequenceLength, _Params.batchSize, (_Params.bidirection ? 2 : 1) * _Params.hiddenSize}),
-            OP_LOGE(context->GetNodeName(), "BidirectionLSTM get output shape wrong, please check."), return false);
+        OP_CHECK_IF(!CheckTensorShape(context, shape, 3,
+                                      {_Params.sequenceLength, _Params.batchSize,
+                                       (_Params.bidirection ? 2 : 1) * _Params.hiddenSize}),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "y", Ops::Base::ToString(shape),
+                        std::string("Expected shape=[") + std::to_string(_Params.sequenceLength) + "," +
+                            std::to_string(_Params.batchSize) + "," +
+                            std::to_string((_Params.bidirection ? 2 : 1) * _Params.hiddenSize) + "]."),
+                    return false);
     } else {
         OP_CHECK_IF(!CheckTensorShape(context, shape, 2,
                                       {_Params.totalBatchSizes, (_Params.bidirection ? 2 : 1) * _Params.hiddenSize}),
-                    OP_LOGE(context->GetNodeName(), "BidirectionLSTM get output shape wrong, please check."),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "y", Ops::Base::ToString(shape),
+                        std::string("Expected shape=[") + std::to_string(_Params.totalBatchSizes) + "," +
+                            std::to_string((_Params.bidirection ? 2 : 1) * _Params.hiddenSize) + "]."),
                     return false);
     }
 
     auto output_h = context->GetOutputShape(1);
-    OP_CHECK_IF(output_h == nullptr, ReportNullPtrWithContext(context, "output_h"), return false);
+    if (output_h == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "bidirection_lstm" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object output_h is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object output_h is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return false;
+    };
     shape = output_h->GetStorageShape();
     OP_CHECK_IF(
         !CheckTensorShape(context, shape, 3,
                           {(_Params.bidirection ? 2 : 1) * _Params.numLayers, _Params.batchSize, _Params.hiddenSize}),
-        OP_LOGE(context->GetNodeName(), "BidirectionLSTM get output_h shape wrong, please check."), return false);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "output_h", Ops::Base::ToString(shape),
+            std::string("Expected shape=[") + std::to_string((_Params.bidirection ? 2 : 1) * _Params.numLayers) + "," +
+                std::to_string(_Params.batchSize) + "," + std::to_string(_Params.hiddenSize) + "]."),
+        return false);
 
     auto output_c = context->GetOutputShape(2);
-    OP_CHECK_IF(output_c == nullptr, ReportNullPtrWithContext(context, "output_c"), return false);
+    if (output_c == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "bidirection_lstm" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object output_c is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object output_c is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return false;
+    };
     shape = output_c->GetStorageShape();
     OP_CHECK_IF(
         !CheckTensorShape(context, shape, 3,
                           {(_Params.bidirection ? 2 : 1) * _Params.numLayers, _Params.batchSize, _Params.hiddenSize}),
-        OP_LOGE(context->GetNodeName(), "BidirectionLSTM get output_c shape wrong, please check."), return false);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "output_c", Ops::Base::ToString(shape),
+            std::string("Expected shape=[") + std::to_string((_Params.bidirection ? 2 : 1) * _Params.numLayers) + "," +
+                std::to_string(_Params.batchSize) + "," + std::to_string(_Params.hiddenSize) + "]."),
+        return false);
 
     return true;
 }
@@ -186,13 +334,16 @@ bool BidirectionLSTMTiling::CheckBatchSizeShape(gert::TilingContext* context)
     }
     auto shape = batch_size->GetStorageShape();
     OP_CHECK_IF(shape.GetDimNum() != 1,
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM get batch_size shape ndim is not 1, please check."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "batch_sizes", std::to_string(shape.GetDimNum()),
+                    "BidirectionLSTM get batch_size shape ndim is not 1, please check."),
                 return false);
-    OP_CHECK_IF(
-        shape.GetDim(0) > MAX_SEQ,
-        OP_LOGE(context->GetNodeName(), "BidirectionLSTM get batch_size length %lu exceed limit %u, please check.",
-                static_cast<uint64_t>(shape.GetDim(0)), MAX_SEQ),
-        return false);
+    OP_CHECK_IF(shape.GetDim(0) > MAX_SEQ,
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "batch_sizes", std::to_string(shape.GetDim(0)),
+                    ("BidirectionLSTM get batch_size length " + std::to_string(static_cast<uint64_t>(shape.GetDim(0))) +
+                     " exceed limit " + std::to_string(MAX_SEQ) + ", please check.")),
+                return false);
     _Params.isSeq = true;
     _Params.sequenceLength = shape.GetDim(0);
     return true;
@@ -201,17 +352,26 @@ bool BidirectionLSTMTiling::CheckBatchSizeShape(gert::TilingContext* context)
 bool BidirectionLSTMTiling::CheckXInputShape(gert::TilingContext* context)
 {
     auto x = context->GetInputShape(0);
-    OP_CHECK_IF(x == nullptr, ReportNullPtrWithContext(context, "x"), return false);
+    OP_CHECK_IF(x == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "bidirection_lstm" :
+                                                                                   (context)->GetNodeName()),
+                    "x"),
+                return false);
     auto shape = x->GetStorageShape();
     if (!_Params.packed) {
-        OP_CHECK_IF(shape.GetDimNum() != NUMBER_THREE,
-                    OP_LOGE(context->GetNodeName(), "BidirectionLSTM get x shape ndim is not 3, please check."),
-                    return false);
+        OP_CHECK_IF(
+            shape.GetDimNum() != NUMBER_THREE,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(shape.GetDimNum()),
+                                                     "BidirectionLSTM get x shape ndim is not 3, please check."),
+            return false);
         _Params.inputSize = shape.GetDim(NUMBER_TWO);
     } else {
-        OP_CHECK_IF(shape.GetDimNum() != NUMBER_TWO,
-                    OP_LOGE(context->GetNodeName(), "BidirectionLSTM get x shape ndim is not 2, please check."),
-                    return false);
+        OP_CHECK_IF(
+            shape.GetDimNum() != NUMBER_TWO,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(shape.GetDimNum()),
+                                                     "BidirectionLSTM get x shape ndim is not 2, please check."),
+            return false);
         _Params.totalBatchSizes = shape.GetDim(0);
         _Params.inputSize = shape.GetDim(1);
     }
@@ -224,11 +384,18 @@ bool BidirectionLSTMTiling::CheckXInputShape(gert::TilingContext* context)
 bool BidirectionLSTMTiling::CheckInitHInputShape(gert::TilingContext* context)
 {
     auto init_h = context->GetInputShape(1);
-    OP_CHECK_IF(init_h == nullptr, ReportNullPtrWithContext(context, "init_h"), return false);
-    auto shape = init_h->GetStorageShape();
-    OP_CHECK_IF(shape.GetDimNum() != NUMBER_THREE,
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM get init_h shape ndim is not 3, please check."),
+    OP_CHECK_IF(init_h == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "bidirection_lstm" :
+                                                                                   (context)->GetNodeName()),
+                    "init_h"),
                 return false);
+    auto shape = init_h->GetStorageShape();
+    OP_CHECK_IF(
+        shape.GetDimNum() != NUMBER_THREE,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "init_h", std::to_string(shape.GetDimNum()),
+                                                 "BidirectionLSTM get init_h shape ndim is not 3, please check."),
+        return false);
     _Params.batchSize = shape.GetDim(1);
     _Params.hiddenSize = shape.GetDim(NUMBER_TWO);
     return true;
@@ -236,34 +403,52 @@ bool BidirectionLSTMTiling::CheckInitHInputShape(gert::TilingContext* context)
 
 bool BidirectionLSTMTiling::CheckInOutShapes(gert::TilingContext* context)
 {
-    OP_CHECK_IF(!CheckBatchSizeShape(context),
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM CheckBatchSizeShape failed, please check."),
-                return false);
+    OP_CHECK_IF(
+        !CheckBatchSizeShape(context),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "BidirectionLSTM CheckBatchSizeShape failed, please check."),
+        return false);
 
-    OP_CHECK_IF(!CheckXInputShape(context),
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM CheckXInputShape failed, please check."),
-                return false);
+    OP_CHECK_IF(
+        !CheckXInputShape(context),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "BidirectionLSTM CheckXInputShape failed, please check."),
+        return false);
 
-    OP_CHECK_IF(!CheckInitHInputShape(context),
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM CheckInitHInputShape failed, please check."),
-                return false);
+    OP_CHECK_IF(
+        !CheckInitHInputShape(context),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "BidirectionLSTM CheckInitHInputShape failed, please check."),
+        return false);
 
-    OP_CHECK_IF(!CheckInputShapes(context),
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM CheckInputShapes failed, please check."),
-                return false);
+    OP_CHECK_IF(
+        !CheckInputShapes(context),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "BidirectionLSTM CheckInputShapes failed, please check."),
+        return false);
     OP_CHECK_IF(!CheckOptionalInputShapes(context),
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM CheckOptionalInputShapes failed, please check."),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                       "BidirectionLSTM CheckOptionalInputShapes failed, please check."),
                 return false);
-    OP_CHECK_IF(!CheckOutputShapes(context),
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM CheckOutputShapes failed, please check."),
-                return false);
+    OP_CHECK_IF(
+        !CheckOutputShapes(context),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "BidirectionLSTM CheckOutputShapes failed, please check."),
+        return false);
     return true;
 }
 
 bool BidirectionLSTMTiling::GetCheckAttr(gert::TilingContext* context)
 {
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, ReportNullPtrWithContext(context, "attrs"), return false);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "bidirection_lstm" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return false;
+    };
     //  optional
     const int64_t* num_layers = attrs->GetAttrPointer<int64_t>(0);
     const bool* isbias = attrs->GetAttrPointer<bool>(1);
@@ -272,11 +457,14 @@ bool BidirectionLSTMTiling::GetCheckAttr(gert::TilingContext* context)
     const bool* packed = attrs->GetAttrPointer<bool>(4);
 
     OP_CHECK_IF(*num_layers != 1,
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM attr num_layers only support 1, please check."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "num_layers", std::to_string(*num_layers),
+                                                      "BidirectionLSTM attr num_layers only support 1, please check."),
                 return false);
-    OP_CHECK_IF(*batch_first,
-                OP_LOGE(context->GetNodeName(), "BidirectionLSTM attr batch_first only support false, please check."),
-                return false);
+    OP_CHECK_IF(
+        *batch_first,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "batch_first", std::to_string(*batch_first),
+                                              "BidirectionLSTM attr batch_first only support false, please check."),
+        return false);
 
     _Params.numLayers = *num_layers;
     _Params.isBias = *isbias;
@@ -293,10 +481,28 @@ bool BidirectionLSTMTiling::GetCheckAttr(gert::TilingContext* context)
 bool BidirectionLSTMTiling::GetPlatformInfo(gert::TilingContext* context)
 {
     fe::PlatFormInfos* platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "bidirection_lstm" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object platformInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     std::string val;
     platformInfo->GetPlatformRes("AICoreintrinsicDtypeMap", "Intrinsic_fix_pipe_l0c2out", val);
-    OP_CHECK_IF(!val.empty(), OP_LOGE(context->GetNodeName(), "BidirectionLSTM support only ASCEND310P for now"),
+    OP_CHECK_IF(!val.empty(), ([&]() {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "BidirectionLSTM support only ASCEND310P for now");
+        const std::string detail = "BidirectionLSTM support only ASCEND310P for now";
+        const std::vector<const char*> keys = {"optype", "opskernel", "reason"};
+        const std::vector<const char*> values = {"BidirectionLSTM", "AiCore", detail.c_str()};
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", keys, values);
+    }()),
                 return false);
     _Params.CoreNum = NUM_OF_AICORE;
     platformInfo->GetLocalMemSize(fe::LocalMemType::UB, _Params.UBSize);
@@ -776,20 +982,29 @@ bool BidirectionLSTMTiling::SetTilingData(gert::TilingContext* context)
 ge::graphStatus BidirectionLSTMTiling::runTiling(gert::TilingContext* context)
 {
     // 310P AscendC platformINFO
-    OP_CHECK_IF(!GetPlatformInfo(context), OP_LOGE(context->GetNodeName(), "get platforminfo fail."),
+    OP_CHECK_IF(!GetPlatformInfo(context), OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "get platforminfo fail."),
                 return ge::GRAPH_FAILED);
     // attr
-    OP_CHECK_IF(!GetCheckAttr(context), OP_LOGE(context->GetNodeName(), "check attr fail."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!GetCheckAttr(context), OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "check attr fail."),
+                return ge::GRAPH_FAILED);
     // shape
-    OP_CHECK_IF(!CheckInOutShapes(context), OP_LOGE(context->GetNodeName(), "check shape fail."),
+    OP_CHECK_IF(!CheckInOutShapes(context), OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "check shape fail."),
                 return ge::GRAPH_FAILED);
 
     // datatype;
     auto inputDesc = context->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
-    _Params.dataType = inputDesc->GetDataType();
-    OP_CHECK_IF(_Params.dataType != ge::DataType::DT_FLOAT16, OP_LOGE(context->GetNodeName(), "check dtype fail."),
+    OP_CHECK_IF(inputDesc == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "bidirection_lstm" :
+                                                                                   (context)->GetNodeName()),
+                    "x"),
                 return ge::GRAPH_FAILED);
+    _Params.dataType = inputDesc->GetDataType();
+    OP_CHECK_IF(
+        _Params.dataType != ge::DataType::DT_FLOAT16,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x",
+                                              std::to_string(static_cast<int>(_Params.dataType)), "check dtype fail."),
+        return ge::GRAPH_FAILED);
 
     // calculate tilingdata
     GetPadAndTransdataTilingData();
@@ -797,11 +1012,11 @@ ge::graphStatus BidirectionLSTMTiling::runTiling(gert::TilingContext* context)
     GetVecTilingData();
 
     // tilingdata
-    OP_CHECK_IF(!SetTilingData(context), OP_LOGE(context->GetNodeName(), "set tiling data fail."),
+    OP_CHECK_IF(!SetTilingData(context), OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "set tiling data fail."),
                 return ge::GRAPH_FAILED);
 
     // launchinfo: tilingkey, workspace, blockdim
-    OP_CHECK_IF(!SetLaunchInfo(context), OP_LOGE(context->GetNodeName(), "set launchinfo fail."),
+    OP_CHECK_IF(!SetLaunchInfo(context), OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "set launchinfo fail."),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;

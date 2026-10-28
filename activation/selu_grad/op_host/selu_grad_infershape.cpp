@@ -20,6 +20,9 @@
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "op_common/log/log.h"
 #include "util/shape_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 
@@ -49,27 +52,55 @@ static bool AreShapesCompatibleWithoutBroadcast(const gert::Shape& gradientsShap
 static ge::graphStatus InferShape4SeluGrad(gert::InferShapeContext* context)
 {
     const gert::Shape* gradShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
+    OP_CHECK_IF(
+        gradShape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "selu_grad" : (context)->GetNodeName()),
+            "gradients"),
+        return ge::GRAPH_FAILED);
 
     const gert::Shape* outShape = context->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
+    OP_CHECK_IF(
+        outShape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "selu_grad" : (context)->GetNodeName()),
+            "outputs"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* yShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    if (yShape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "selu_grad" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object yShape is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object yShape is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     OP_CHECK_IF(!Ops::Base::IsUnknownRank(*gradShape) && gradShape->GetDimNum() == 0,
                 OP_LOGE(context, "The rank of gradients must be at least 1"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(!Ops::Base::IsUnknownRank(*outShape) && outShape->GetDimNum() == 0,
                 OP_LOGE(context, "The rank of outputs must be at least 1"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(!Ops::Base::IsUnknownRank(*gradShape) && gradShape->GetDimNum() > MAX_SUPPORTED_RANK,
-                OP_LOGE(context, "The rank of gradients must not exceed %zu", MAX_SUPPORTED_RANK),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "gradients", std::to_string(gradShape->GetDimNum()),
+                    ("The rank of gradients must not exceed " + std::to_string(MAX_SUPPORTED_RANK))),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!Ops::Base::IsUnknownRank(*outShape) && outShape->GetDimNum() > MAX_SUPPORTED_RANK,
-                OP_LOGE(context, "The rank of outputs must not exceed %zu", MAX_SUPPORTED_RANK),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "outputs", std::to_string(outShape->GetDimNum()),
+                    ("The rank of outputs must not exceed " + std::to_string(MAX_SUPPORTED_RANK))),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!AreShapesCompatibleWithoutBroadcast(*gradShape, *outShape),
-                OP_LOGE(context, "gradients and outputs must have the same shape without broadcasting"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !AreShapesCompatibleWithoutBroadcast(*gradShape, *outShape),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "gradients,outputs",
+                                               Ops::Base::ToString(*gradShape) + "," + Ops::Base::ToString(*outShape),
+                                               "gradients and outputs must have the same shape without broadcasting"),
+        return ge::GRAPH_FAILED);
 
     *yShape = *gradShape;
 

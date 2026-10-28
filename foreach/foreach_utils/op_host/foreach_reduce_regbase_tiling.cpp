@@ -22,6 +22,9 @@
 #include "platform/platform_info_def.h"
 #include "common_dtype.h"
 #include "foreach_reduce_regbase_tiling.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace optiling {
 static constexpr uint64_t WORK_SPACE_SIZE = 16 * 1024 * 1024;
@@ -37,10 +40,21 @@ static constexpr int32_t MAX_SUPPORT_DIM_NUMS = 8;
 ge::graphStatus ForeachReduceRegbaseTiling::GetShapeAttrsInfo()
 {
     auto computeNodeInfo = context_->GetComputeNodeInfo();
-    OP_CHECK_IF(computeNodeInfo == nullptr, OP_LOGE(context_, "GetComputeNodeInfo failed."), return ge::GRAPH_FAILED);
+    if (computeNodeInfo == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "GetComputeNodeInfo failed.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "GetComputeNodeInfo failed."}));
+        return ge::GRAPH_FAILED;
+    };
     auto anchorInstanceInfo = computeNodeInfo->GetInputInstanceInfo(FIRST_INPUT_IDX);
-    OP_CHECK_IF(anchorInstanceInfo == nullptr, OP_LOGE(context_, "GetInputInstanceInfo failed."),
-                return ge::GRAPH_FAILED);
+    if (anchorInstanceInfo == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "GetInputInstanceInfo failed.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "GetInputInstanceInfo failed."}));
+        return ge::GRAPH_FAILED;
+    };
     totalTensorCount_ = anchorInstanceInfo->GetInstanceNum();
     OP_CHECK_IF(
         totalTensorCount_ > MAX_TENSOR_CONT_950 || totalTensorCount_ <= 0,
@@ -52,7 +66,14 @@ ge::graphStatus ForeachReduceRegbaseTiling::GetShapeAttrsInfo()
     maxTensorNumPerCore_ = 0;
     for (uint32_t i = 0; i < totalTensorCount_; i++) {
         auto tempDesc = context_->GetDynamicInputDesc(0, i);
-        OP_CHECK_IF(tempDesc == nullptr, OP_LOGE(context_, "The input %u desc is null.", i), return ge::GRAPH_FAILED);
+        if (tempDesc == nullptr) {
+            const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+            const std::string msgReason = std::string(("The input " + std::to_string(i) + " desc is null."));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            return ge::GRAPH_FAILED;
+        };
         auto srcDtype = tempDesc->GetDataType();
         // Determine whether all data types are consistent.
         if (dataType_ == ge::DT_UNDEFINED) {
@@ -68,7 +89,14 @@ ge::graphStatus ForeachReduceRegbaseTiling::GetShapeAttrsInfo()
             return ge::GRAPH_FAILED;
         }
         auto tempShape = context_->GetDynamicInputShape(0, i);
-        OP_CHECK_IF(tempShape == nullptr, OP_LOGE(context_, "The input %u shape is null.", i), return ge::GRAPH_FAILED);
+        if (tempShape == nullptr) {
+            const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+            const std::string msgReason = std::string(("The input " + std::to_string(i) + " shape is null."));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            return ge::GRAPH_FAILED;
+        };
         // check max dim
         OP_CHECK_IF(tempShape->GetStorageShape().GetDimNum() > MAX_SUPPORT_DIM_NUMS,
                     OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), "x",
@@ -85,7 +113,7 @@ ge::graphStatus ForeachReduceRegbaseTiling::GetShapeAttrsInfo()
     }
 
     // check scalar shape and dtype
-    OP_CHECK_IF(CheckScalar() != ge::GRAPH_SUCCESS, OP_LOGE(context_, "Tiling context check failed."),
+    OP_CHECK_IF(CheckScalar() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_, "Tiling context check failed."),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -93,14 +121,26 @@ ge::graphStatus ForeachReduceRegbaseTiling::GetShapeAttrsInfo()
 ge::graphStatus ForeachReduceRegbaseTiling::CheckScalar()
 {
     auto scalarDesc = context_->GetRequiredInputDesc(SECOND_INPUT_IDX);
-    OP_CHECK_IF(scalarDesc == nullptr, OP_LOGE(context_, "The scalar desc is null."), return ge::GRAPH_FAILED);
+    if (scalarDesc == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "The scalar desc is null.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "The scalar desc is null."}));
+        return ge::GRAPH_FAILED;
+    };
     scalarDtype_ = scalarDesc->GetDataType();
     OP_CHECK_IF(scalarDtype_ != ge::DT_FLOAT && scalarDtype_ != ge::DT_INT64,
                 OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "scalar",
                                           ge::TypeUtils::DataTypeToSerialString(scalarDtype_).c_str(), "FP32 or INT64"),
                 return ge::GRAPH_FAILED);
     auto scalarShape = context_->GetRequiredInputShape(SECOND_INPUT_IDX);
-    OP_CHECK_IF(scalarShape == nullptr, OP_LOGE(context_, "The scalar shape is null."), return ge::GRAPH_FAILED);
+    if (scalarShape == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "The scalar shape is null.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "The scalar shape is null."}));
+        return ge::GRAPH_FAILED;
+    };
     OP_CHECK_IF(scalarShape->GetStorageShape().GetDimNum() > MAX_SUPPORT_DIM_NUMS,
                 OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), "scalar",
                                              std::to_string(scalarShape->GetStorageShape().GetDimNum()).c_str(),
@@ -223,7 +263,14 @@ ge::graphStatus ForeachReduceRegbaseTiling::CheckOutput()
                 return ge::GRAPH_FAILED);
     for (uint32_t i = 0; i < totalTensorCount_; i++) {
         auto tempDesc = context_->GetOutputDesc(i);
-        OP_CHECK_IF(tempDesc == nullptr, OP_LOGE(context_, "The output %u desc is null.", i), return ge::GRAPH_FAILED);
+        if (tempDesc == nullptr) {
+            const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+            const std::string msgReason = std::string(("The output " + std::to_string(i) + " desc is null."));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            return ge::GRAPH_FAILED;
+        };
         auto dstDtype = tempDesc->GetDataType();
         OP_CHECK_IF(dstDtype != dataType_,
                     OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "y",
@@ -231,7 +278,14 @@ ge::graphStatus ForeachReduceRegbaseTiling::CheckOutput()
                                                           "The dtype of y must be the same as x"),
                     return ge::GRAPH_FAILED);
         auto dstShape = context_->GetOutputShape(i);
-        OP_CHECK_IF(dstShape == nullptr, OP_LOGE(context_, "The output %u shape is null.", i), return ge::GRAPH_FAILED);
+        if (dstShape == nullptr) {
+            const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+            const std::string msgReason = std::string(("The output " + std::to_string(i) + " shape is null."));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            return ge::GRAPH_FAILED;
+        };
         // check max dim
         OP_CHECK_IF(
             dstShape->GetStorageShape().GetDimNum() > MAX_SUPPORT_DIM_NUMS,
@@ -254,10 +308,13 @@ ge::graphStatus ForeachReduceRegbaseTiling::CheckOutput()
 ge::graphStatus ForeachReduceRegbaseTiling::DoOpTiling()
 {
     OP_CHECK_IF(ForeachReduceRegbaseTiling::CheckOutput() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_, "check output info failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_, "check output info failed."), return ge::GRAPH_FAILED);
     int64_t sizePerElem = ge::GetSizeByDataType(dataType_);
-    OP_CHECK_IF(sizePerElem <= 0, OP_LOGE(context_, "The datatype size is neg: %ld.", sizePerElem),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        sizePerElem <= 0,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", std::to_string(static_cast<int>(dataType_)),
+                                              ("The datatype size is neg: " + std::to_string(sizePerElem) + ".")),
+        return ge::GRAPH_FAILED);
     int64_t elementsPerBlock = SINGLE_CORE_PROCESS_DATA / sizePerElem;
 
     numBlocks_ = std::min<uint64_t>(aicoreParams_.numBlocks, MAX_CORE_CONT_950);
@@ -323,7 +380,19 @@ ge::graphStatus ForeachReduceRegbaseTiling::PostTiling()
     }
     currentWorkspace[0] = usrSize + sysWorkspaceSize;
     auto tilingData = context_->GetRawTilingData();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, tilingData);
+    if (tilingData == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "foreach_utils" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object tilingData is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object tilingData is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     foreachSoloTilingData_.SaveToBuffer(tilingData->GetData(), tilingData->GetCapacity());
     tilingData->SetDataSize(foreachSoloTilingData_.GetDataSize());
 

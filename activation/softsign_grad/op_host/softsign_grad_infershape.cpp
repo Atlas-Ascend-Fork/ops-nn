@@ -14,6 +14,9 @@
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "op_common/log/log.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 
@@ -23,13 +26,18 @@ static ge::graphStatus InferShape4SoftsignGrad(gert::InferShapeContext* context)
 {
     const gert::Shape* gradients_shape = context->GetInputShape(0);
     if (gradients_shape == nullptr) {
-        OP_LOGE("SoftsignGrad", "GetInputShape(0) returns nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("SoftsignGrad", "gradients");
         return ge::GRAPH_FAILED;
     }
 
     gert::Shape* output_shape = context->GetOutputShape(0);
     if (output_shape == nullptr) {
-        OP_LOGE("SoftsignGrad", "GetOutputShape(0) returns nullptr");
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       "InferShape output shape container is unavailable; check output registration "
+                                       "and context construction.");
+        OP_LOGE_WITHOUT_REPORT("SoftsignGrad", "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{"SoftsignGrad", msgReason.c_str()}));
         return ge::GRAPH_FAILED;
     }
 

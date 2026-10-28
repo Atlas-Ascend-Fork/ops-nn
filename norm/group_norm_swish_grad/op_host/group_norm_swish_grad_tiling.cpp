@@ -19,6 +19,11 @@
 #include "platform/platform_infos_def.h"
 #include "platform/soc_spec.h"
 #include "group_norm_swish_grad_tiling.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
+#include "util/shape_util.h"
+#include "base/err_msg.h"
 
 using namespace std;
 
@@ -77,7 +82,7 @@ static bool IsArch3510(gert::TilingContext* tilingContext)
 
 class GroupNormSwishGradTiling {
 public:
-    explicit GroupNormSwishGradTiling(gert::TilingContext* context) : tilingContext(context){};
+    explicit GroupNormSwishGradTiling(gert::TilingContext* context) : tilingContext(context) {};
     ge::graphStatus Init();
     ge::graphStatus SetKernelTiling();
     void TilingDataPrint() const;
@@ -111,17 +116,20 @@ private:
 
 bool GroupNormSwishGradTiling::CheckInputDtype()
 {
-    OP_CHECK_IF((tilingContext->GetInputDesc(INPUT_0) == nullptr || tilingContext->GetInputDesc(INPUT_1) == nullptr ||
-                 tilingContext->GetInputDesc(INPUT_2) == nullptr || tilingContext->GetInputDesc(INPUT_3) == nullptr ||
-                 tilingContext->GetInputDesc(INPUT_4) == nullptr || tilingContext->GetInputDesc(INPUT_5) == nullptr),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "tilingContext->GetInputDesc(INPUT_0) is nullptr   \
-    or tilingContext->GetInputDesc(INPUT_1) is nullptr \
-    or tilingContext->GetInputDesc(INPUT_2) is nullptr \
-    or tilingContext->GetInputDesc(INPUT_3) is nullptr \
-    or tilingContext->GetInputDesc(INPUT_4) is nullptr \
-    or tilingContext->GetInputDesc(INPUT_5) is nullptr "),
-                return false);
+    if ((tilingContext->GetInputDesc(INPUT_0) == nullptr || tilingContext->GetInputDesc(INPUT_1) == nullptr ||
+         tilingContext->GetInputDesc(INPUT_2) == nullptr || tilingContext->GetInputDesc(INPUT_3) == nullptr ||
+         tilingContext->GetInputDesc(INPUT_4) == nullptr || tilingContext->GetInputDesc(INPUT_5) == nullptr)) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       "Required input descriptors are unavailable in the Tiling context; check input "
+                                       "registration and context construction.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return false;
+    };
     auto inputDesc = tilingContext->GetInputDesc(INPUT_0);
     OP_CHECK_IF(inputDesc == nullptr, std::printf("nullptr error!"), return false);
     this->dtypeStr = inputDesc->GetDataType();
@@ -130,16 +138,33 @@ bool GroupNormSwishGradTiling::CheckInputDtype()
                   this->dtypeStr == tilingContext->GetInputDesc(INPUT_3)->GetDataType() &&
                   this->dtypeStr == tilingContext->GetInputDesc(INPUT_4)->GetDataType() &&
                   this->dtypeStr == tilingContext->GetInputDesc(INPUT_5)->GetDataType()),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Input dtypeBytes is not same"),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    tilingContext->GetNodeName(), "dy,mean,rstd,x,gamma,beta",
+                    std::to_string(static_cast<int>(tilingContext->GetInputDesc(INPUT_0)->GetDataType())) + "," +
+                        std::to_string(static_cast<int>(tilingContext->GetInputDesc(INPUT_1)->GetDataType())) + "," +
+                        std::to_string(static_cast<int>(tilingContext->GetInputDesc(INPUT_2)->GetDataType())) + "," +
+                        std::to_string(static_cast<int>(tilingContext->GetInputDesc(INPUT_3)->GetDataType())) + "," +
+                        std::to_string(static_cast<int>(tilingContext->GetInputDesc(INPUT_4)->GetDataType())) + "," +
+                        std::to_string(static_cast<int>(tilingContext->GetInputDesc(INPUT_5)->GetDataType())),
+                    "Input dtypeBytes is not same"),
                 return false);
     this->dtypeBytes = GetDataTypeSize(this->dtypeStr);
-    OP_CHECK_IF((this->dtypeBytes == 0),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "dtypeBytes is zero"), return false);
+    OP_CHECK_IF((this->dtypeBytes == 0), OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "dtypeBytes is zero"),
+                return false);
     // Calculate elePerBlock based on the value of dtypeBytes
     this->elePerBlock = GetElePerBlock(this->dtypeBytes);
-    OP_CHECK_IF((this->elePerBlock == 0),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Calculated elePerBlock is zero"),
-                return false);
+    if ((this->elePerBlock == 0)) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("The validated dtype produced no elements per block; dtypeBytes=") +
+                                       std::to_string(dtypeBytes));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return false;
+    };
     return true;
 }
 
@@ -164,49 +189,74 @@ bool GroupNormSwishGradTiling::CheckInputShape()
     const gert::Shape gammaShape = tilingContext->GetInputShape(INPUT_4)->GetStorageShape();
     const gert::Shape betaShape = tilingContext->GetInputShape(INPUT_5)->GetStorageShape();
     auto dimNum = dyShape.GetDimNum();
-    OP_CHECK_IF(dyShape != xShape,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "Input shape check Failed, dy shape should be same with x shape"),
-                return false);
+    OP_CHECK_IF(
+        dyShape != xShape,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(tilingContext->GetNodeName(), "dy,x",
+                                               Ops::Base::ToString(dyShape) + "," + Ops::Base::ToString(xShape),
+                                               "Input shape check Failed, dy shape should be same with x shape"),
+        return false);
     attrs = tilingContext->GetAttrs();
-    OP_CHECK_IF((attrs == nullptr), VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Get attrs Failed."),
-                return false);
+    if ((attrs == nullptr)) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       "The Tiling runtime attribute container is unavailable; check operator "
+                                       "registration and context construction.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return false;
+    };
     tilingParams->g = *(attrs->GetAttrPointer<int32_t>(NUM_GROUPS_IDX));
-    OP_CHECK_IF(static_cast<uint64_t>(meanShape.GetDim(DIM1)) != tilingParams->g,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "Check shape failed, group_num shuold be same with mean.shape[1]"),
-                return false);
+    OP_CHECK_IF(
+        static_cast<uint64_t>(meanShape.GetDim(DIM1)) != tilingParams->g,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            tilingContext->GetNodeName(), "num_groups", std::to_string(tilingParams->g),
+            std::string("num_groups must equal mean.shape[1], expected=") + std::to_string(meanShape.GetDim(DIM1))),
+        return false);
     tilingParams->n = dyShape.GetDim(DIM0);
     tilingParams->c = dyShape.GetDim(DIM1);
     OP_CHECK_IF(static_cast<uint64_t>(meanShape.GetDim(DIM0)) != tilingParams->n,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "Check shape failed, mean.shape[0] should be same with N(x.shape[0])"),
+                OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+                    tilingContext->GetNodeName(), "mean,dy",
+                    std::to_string(meanShape.GetDim(DIM0)) + "," + std::to_string(tilingParams->n),
+                    "Check shape failed, mean.shape[0] should be same with N(x.shape[0])"),
                 return false);
-    OP_CHECK_IF(meanShape != rstdShape,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "Check shape failed, Shape of mean and rstd not same."),
-                return false);
-    OP_CHECK_IF((meanShape.GetDimNum() != 2 || rstdShape.GetDimNum() != 2),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "Check shape failed, Dim of mean and rstd should be 2."),
-                return false);
-    OP_CHECK_IF((gammaShape.GetDimNum() != 1 || static_cast<uint64_t>(gammaShape.GetDim(DIM0)) != tilingParams->c),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "Check shape failed, Shape of gamma should be (C,)."),
-                return false);
-    OP_CHECK_IF((betaShape.GetDimNum() != 1 || static_cast<uint64_t>(betaShape.GetDim(DIM0)) != tilingParams->c),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "Check shape failed, Shape of beta should be (C,)."),
-                return false);
-    tilingParams->nxg = tilingParams->n * tilingParams->g;
     OP_CHECK_IF(
-        tilingParams->nxg == 0,
-        VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Check shape failed, N x G should not be 0."),
+        meanShape != rstdShape,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(tilingContext->GetNodeName(), "mean,rstd",
+                                               Ops::Base::ToString(meanShape) + "," + Ops::Base::ToString(rstdShape),
+                                               "Check shape failed, Shape of mean and rstd not same."),
         return false);
+    OP_CHECK_IF((meanShape.GetDimNum() != 2 || rstdShape.GetDimNum() != 2),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    tilingContext->GetNodeName(), "mean,rstd",
+                    std::to_string(meanShape.GetDimNum()) + "," + std::to_string(rstdShape.GetDimNum()),
+                    "Check shape failed, Dim of mean and rstd should be 2."),
+                return false);
+    OP_CHECK_IF(
+        (gammaShape.GetDimNum() != 1 || static_cast<uint64_t>(gammaShape.GetDim(DIM0)) != tilingParams->c),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingContext->GetNodeName(), "gamma", Ops::Base::ToString(gammaShape),
+                                              "Check shape failed, Shape of gamma should be (C,)."),
+        return false);
+    OP_CHECK_IF(
+        (betaShape.GetDimNum() != 1 || static_cast<uint64_t>(betaShape.GetDim(DIM0)) != tilingParams->c),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingContext->GetNodeName(), "beta", Ops::Base::ToString(betaShape),
+                                              "Check shape failed, Shape of beta should be (C,)."),
+        return false);
+    tilingParams->nxg = tilingParams->n * tilingParams->g;
+    OP_CHECK_IF(tilingParams->nxg == 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    tilingContext->GetNodeName(), "num_groups", std::to_string(tilingParams->g),
+                    "N and num_groups must have a nonzero product; check the input batch dimension and num_groups."),
+                return false);
     tilingParams->channelPerGroup = tilingParams->c / tilingParams->g;
     // C / G must not be zero, and C must be an integer multiple of G
     OP_CHECK_IF((tilingParams->channelPerGroup == 0 || tilingParams->c % tilingParams->g != 0),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Group_num or Channel num is invalid"),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    tilingContext->GetNodeName(), "num_groups", std::to_string(tilingParams->g),
+                    "num_groups must divide the input channel dimension and cannot exceed it."),
                 return false);
     tilingParams->hxw = 1;
     for (uint64_t dimIdx = 2; dimIdx < dimNum; dimIdx++) {
@@ -214,24 +264,42 @@ bool GroupNormSwishGradTiling::CheckInputShape()
     }
     OP_CHECK_IF(
         tilingParams->hxw == 0,
-        VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Check shape failed, HxW should not be 0."),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "dy", std::to_string(tilingParams->hxw),
+                                                  "Check shape failed, HxW should not be 0."),
         return false);
     return true;
 }
 
 ge::graphStatus GroupNormSwishGradTiling::ComputeAllocUBStage2(uint64_t coreBatchCounts, uint64_t availableSpace)
 {
-    OP_CHECK_IF(tilingParams->castEleNum == 0,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "Error:[ComputeAllocUBStage2] castEleNum is zero!"),
-                return ge::GRAPH_FAILED);
+    if (tilingParams->castEleNum == 0) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("Stage2 computed a zero cast tile; castEleNum=") +
+                                       std::to_string(tilingParams->castEleNum));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
     uint64_t coreBatchCapacity = availableSpace / (tilingParams->castEleNum * FLOAT_DTYPE_BYTES);
     coreBatchCapacity = std::min(coreBatchCapacity, DATA_COPY_MAX_BLOCK_COUNT);
     tilingParams->coreBatchParts = std::min(coreBatchCapacity, coreBatchCounts);
-    OP_CHECK_IF(tilingParams->coreBatchParts == 0,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "Error:[ComputeAllocUBStage2] coreBatchCounts is zero!"),
-                return ge::GRAPH_FAILED);
+    if (tilingParams->coreBatchParts == 0) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("Stage2 cannot assign a batch tile; availableBytes=") +
+                                       std::to_string(availableSpace) +
+                                       ", batchCount=" + std::to_string(coreBatchCounts));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
     tilingParams->coreBatchPartsTailRepeat = (coreBatchCounts % tilingParams->coreBatchParts == 0) ?
                                                  tilingParams->coreBatchParts :
                                                  coreBatchCounts % tilingParams->coreBatchParts;
@@ -255,15 +323,25 @@ ge::graphStatus GroupNormSwishGradTiling::CalDeterministicFp32Stage2(uint64_t av
     // FP32 deterministic stage2 only needs reduce buffers plus row input space.
     uint64_t preferredCastEleNum = Ceil(DivCeil(tilingParams->c, tilingParams->coreNumUsed / SPLIT_COUNT), STEP_SIZE);
     uint64_t maxCastEleNumByUb = Floor(availableSpace / ((stage2ReduceBufferCount + 1) * FLOAT_DTYPE_BYTES), STEP_SIZE);
-    OP_CHECK_IF(maxCastEleNumByUb == 0,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "UB space is not enough for Stage2"),
-                return ge::GRAPH_FAILED);
+    if (maxCastEleNumByUb == 0) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("No Stage2 cast tile fits the available UB; availableBytes=") +
+                                       std::to_string(availableSpace) +
+                                       ", reduceBuffers=" + std::to_string(stage2ReduceBufferCount));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     SetStage2CastInfo(std::min(preferredCastEleNum, maxCastEleNumByUb));
     uint64_t stage2ReduceSpace = tilingParams->castEleNum * stage2ReduceBufferCount * FLOAT_DTYPE_BYTES;
     uint64_t coreBatchCounts = DivCeil(DivCeil(tilingParams->n, SPLIT_COUNT), SPLIT_COUNT);
     OP_CHECK_IF(ComputeAllocUBStage2(coreBatchCounts, availableSpace - stage2ReduceSpace) != ge::GRAPH_SUCCESS,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "fail to Alloc UB for Stage2"),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "fail to Alloc UB for Stage2"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -276,16 +354,26 @@ ge::graphStatus GroupNormSwishGradTiling::CalDeterministicCastStage2(uint64_t av
     uint64_t maxCastEleNumByUb = Floor(
         availableSpace / (stage2ReduceBufferCount * FLOAT_DTYPE_BYTES + FLOAT16_DTYPE_BYTES + FLOAT_DTYPE_BYTES),
         STEP_SIZE);
-    OP_CHECK_IF(maxCastEleNumByUb == 0,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "UB space is not enough for Stage2"),
-                return ge::GRAPH_FAILED);
+    if (maxCastEleNumByUb == 0) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("No Stage2 cast tile fits the available UB; availableBytes=") +
+                                       std::to_string(availableSpace) +
+                                       ", reduceBuffers=" + std::to_string(stage2ReduceBufferCount));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     SetStage2CastInfo(std::min(preferredCastEleNum, maxCastEleNumByUb));
     uint64_t stage2ReduceCastSpace = tilingParams->castEleNum *
                                      (stage2ReduceBufferCount * FLOAT_DTYPE_BYTES + FLOAT16_DTYPE_BYTES);
     uint64_t coreBatchCounts = DivCeil(tilingParams->n, SPLIT_COUNT);
     OP_CHECK_IF(ComputeAllocUBStage2(coreBatchCounts, availableSpace - stage2ReduceCastSpace) != ge::GRAPH_SUCCESS,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "fail to Alloc UB for Stage2"),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "fail to Alloc UB for Stage2"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -306,9 +394,18 @@ ge::graphStatus GroupNormSwishGradTiling::CalStage2TilingInfo(ge::DataType dtype
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(tilingContext->GetPlatformInfo());
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     size_t availableSpace = (ubSizePlatForm - RESERVE_SAPCE) / SPLIT_COUNT;
-    OP_CHECK_IF((currentWorkSpace == nullptr),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "currentWorkSpace is nullptr."),
-                return ge::GRAPH_FAILED);
+    if ((currentWorkSpace == nullptr)) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       "TilingContext workspace output container is unavailable; check the Tiling "
+                                       "output contract, not device memory allocation.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
     size_t usrWorkspaceSize = 0;
     if (isDeterministicKey == 1) {
         // Kahan compensation increases per-output reduce buffers, so castEleNum must be capped by UB here.
@@ -317,15 +414,13 @@ ge::graphStatus GroupNormSwishGradTiling::CalStage2TilingInfo(ge::DataType dtype
         tilingParams->workSpaceSize = DivCeil(tilingParams->n, SPLIT_COUNT) * tilingParams->c;
         usrWorkspaceSize = WORKSPACE_COPIES * tilingParams->workSpaceSize * FLOAT_DTYPE_BYTES;
         if (dtypeStrLocal == ge::DT_FLOAT) {
-            OP_CHECK_IF(
-                CalDeterministicFp32Stage2(availableSpace, stage2ReduceBufferCount) != ge::GRAPH_SUCCESS,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "fail to calculate fp32 Stage2 tiling"),
-                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(CalDeterministicFp32Stage2(availableSpace, stage2ReduceBufferCount) != ge::GRAPH_SUCCESS,
+                        OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "fail to calculate fp32 Stage2 tiling"),
+                        return ge::GRAPH_FAILED);
         } else {
-            OP_CHECK_IF(
-                CalDeterministicCastStage2(availableSpace, stage2ReduceBufferCount) != ge::GRAPH_SUCCESS,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "fail to calculate cast Stage2 tiling"),
-                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(CalDeterministicCastStage2(availableSpace, stage2ReduceBufferCount) != ge::GRAPH_SUCCESS,
+                        OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "fail to calculate cast Stage2 tiling"),
+                        return ge::GRAPH_FAILED);
         }
     } else {
         if (dtypeStrLocal == ge::DT_FLOAT) {
@@ -352,8 +447,12 @@ ge::graphStatus GroupNormSwishGradTiling::CalStage1TilingInfo(uint64_t reserveSp
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(tilingContext->GetPlatformInfo());
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     OP_CHECK_IF(ubSizePlatForm < reserveSpace,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                "UB space is not enough, input shape is too large!"),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    tilingContext->GetNodeName(), "x",
+                    Ops::Base::ToString(tilingContext->GetInputShape(INPUT_3)->GetStorageShape()),
+                    std::string("The per-group workload exceeds UB capacity: required reservedBytes=") +
+                        std::to_string(reserveSpace) + ", availableBytes=" + std::to_string(ubSizePlatForm) +
+                        "; reduce the per-group workload."),
                 return ge::GRAPH_FAILED);
     tilingParams->mode0UbCapGNum = (ubSizePlatForm < reserveSpace + unalignedExtraSpace) ?
                                        0 :
@@ -380,10 +479,19 @@ ge::graphStatus GroupNormSwishGradTiling::CalStage1TilingInfo(uint64_t reserveSp
         tilingParams->tilingKey = MODE_3;
         tilingParams->mode2UbCapacityEle = Floor((ubSizePlatForm - reserveSpace) / (dtypeBytes * UB_COPIES_1),
                                                  elePerBlock * EIGHT_BLOCK);
-        OP_CHECK_IF(tilingParams->mode2UbCapacityEle == 0,
-                    VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                                    "tilingParams->mode2UbCapacityEle should not be zero!"),
-                    return ge::GRAPH_FAILED);
+        if (tilingParams->mode2UbCapacityEle == 0) {
+            const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                               "group_norm_swish_grad" :
+                                               tilingContext->GetNodeName());
+            const std::string msgReason = (std::string(__func__) + ": " +
+                                           std::string("Stage1 mode2 computed zero UB capacity; availableBytes=") +
+                                           std::to_string(ubSizePlatForm) +
+                                           ", reservedBytes=" + std::to_string(reserveSpace));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            return ge::GRAPH_FAILED;
+        };
         tilingParams->mode2UbIterationNum = Ceil(tilingParams->hxw, tilingParams->mode2UbCapacityEle) /
                                             tilingParams->mode2UbCapacityEle;
         tilingParams->mode2UbTailNum = (tilingParams->hxw -
@@ -410,7 +518,9 @@ ge::graphStatus GroupNormSwishGradTiling::SetTilingKeyMode(ge::DataType dtypeStr
             tilingContext->SetTilingKey(FP32_MODE + isDeterministicKey * TEN);
             return ge::GRAPH_SUCCESS;
         default:
-            OP_LOGE(tilingContext->GetNodeName(), "inputdtype must be in [float32, float16, bfloat16]");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(tilingContext->GetNodeName(), "dy",
+                                                  std::to_string(static_cast<int>(dtypeStrLocal)),
+                                                  "inputdtype must be in [float32, float16, bfloat16]");
             return ge::GRAPH_FAILED;
     }
 }
@@ -425,7 +535,9 @@ uint64_t GroupNormSwishGradTiling::GetDataTypeSize(ge::DataType dtypeStrLocal) c
         case ge::DT_FLOAT16:
             return FLOAT16_DTYPE_BYTES + FLOAT_DTYPE_BYTES;
         default:
-            OP_LOGE(tilingContext->GetNodeName(), "inputdtype must be in [float32, float16, bfloat16]");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(tilingContext->GetNodeName(), "dy",
+                                                  std::to_string(static_cast<int>(dtypeStrLocal)),
+                                                  "inputdtype must be in [float32, float16, bfloat16]");
             return 0;
     }
 }
@@ -444,24 +556,52 @@ uint64_t GroupNormSwishGradTiling::GetElePerBlock(uint64_t dtypeBytesLocal) cons
 
 uint64_t GroupNormSwishGradTiling::Ceil(uint64_t a, uint64_t b) const
 {
-    OP_CHECK_IF(b == 0, VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Error:[Ceil] Division by zero!"),
-                return 0);
+    if (b == 0) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("Tiling arithmetic denominator is zero; numerator=") +
+                                       std::to_string(a) + ", denominator=" + std::to_string(b));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return 0;
+    };
     return ((a - 1) / b + 1) * b;
 }
 
 uint64_t GroupNormSwishGradTiling::DivCeil(uint64_t a, uint64_t b) const
 {
-    OP_CHECK_IF(b == 0,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Error:[DivCeil] Division by zero!"),
-                return 0);
+    if (b == 0) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("Tiling arithmetic denominator is zero; numerator=") +
+                                       std::to_string(a) + ", denominator=" + std::to_string(b));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return 0;
+    };
     return (a - 1) / b + 1;
 }
 
 uint64_t GroupNormSwishGradTiling::Floor(uint64_t a, uint64_t b) const
 {
-    OP_CHECK_IF(b == 0,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Error:[Floor] Division by zero!"),
-                return 0);
+    if (b == 0) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("Tiling arithmetic denominator is zero; numerator=") +
+                                       std::to_string(a) + ", denominator=" + std::to_string(b));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return 0;
+    };
     return a / b * b;
 }
 
@@ -471,9 +611,18 @@ bool GroupNormSwishGradTiling::PlanStepCoreUsage()
     uint64_t totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     tilingParams->taskNumPerCore = Ceil(tilingParams->nxg, totalCoreNum) / totalCoreNum;
     tilingParams->coreNumUsed = (tilingParams->nxg - 1) / tilingParams->taskNumPerCore + 1;
-    OP_CHECK_IF(tilingParams->coreNumUsed == 0,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "coreNumUsed cannot be 0."),
-                return false);
+    if (tilingParams->coreNumUsed == 0) {
+        const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                           "group_norm_swish_grad" :
+                                           tilingContext->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       std::string("Core scheduling produced no usable cores; platformCores=") +
+                                       std::to_string(totalCoreNum) + ", tasks=" + std::to_string(tilingParams->nxg));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return false;
+    };
     tilingParams->taskNumPerTailCore = tilingParams->taskNumPerCore;
     tilingParams->tailCore = tilingParams->coreNumUsed;
     if (tilingParams->nxg % tilingParams->coreNumUsed != 0) {
@@ -489,36 +638,63 @@ ge::graphStatus GroupNormSwishGradTiling::Init()
     try {
         tilingParams = std::make_unique<GroupNormSwishGradTilingCalculationParameters>();
     } catch (const std::bad_alloc& e) {
-        OP_LOGE(tilingContext->GetNodeName(), "tilingParams memory allocation failed.");
+        do {
+            const std::string requestedBytes = std::to_string(sizeof(GroupNormSwishGradTilingCalculationParameters));
+            OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(),
+                                   "Host allocation of Tiling parameters failed: requestedBytes=%s, "
+                                   "allocator=std::make_unique, reason=%s.",
+                                   requestedBytes.c_str(), e.what());
+            const std::vector<const char*> keys = {"buf_size", "alloc_interface"};
+            const std::vector<const char*> values = {requestedBytes.c_str(),
+                                                     "std::make_unique<GroupNormSwishGradTilingCalculationParameters>"};
+            REPORT_PREDEFINED_ERR_MSG("EH0010", keys, values);
+        } while (0);
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(tilingParams == nullptr,
                 VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "failed to instantiate tilingParams"),
                 return ge::GRAPH_FAILED);
     // Get Inputs dtype
-    OP_CHECK_IF(!CheckInputDtype(),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "InputDtype Check Failed."),
+    OP_CHECK_IF(!CheckInputDtype(), OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "InputDtype Check Failed."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputShape(),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "InputShape Check Failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !CheckInputShape(),
+        do {
+            if (tilingContext->GetInputShape(INPUT_0) == nullptr || tilingContext->GetInputShape(INPUT_1) == nullptr ||
+                tilingContext->GetInputShape(INPUT_2) == nullptr || tilingContext->GetInputShape(INPUT_3) == nullptr ||
+                tilingContext->GetInputShape(INPUT_4) == nullptr || tilingContext->GetInputShape(INPUT_5) == nullptr) {
+                const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                                   "group_norm_swish_grad" :
+                                                   tilingContext->GetNodeName());
+                OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                                       "Input shape metadata is unavailable during Tiling context validation.");
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{
+                        msgOpName.c_str(), "Input shape metadata is unavailable during Tiling context validation."}));
+            } else {
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "InputShape Check Failed.");
+            }
+        } while (0),
+        return ge::GRAPH_FAILED);
     // Allocate computing core
     uint64_t channelPerGroupOnceProcess = Ceil(tilingParams->channelPerGroup, elePerBlock);
     // Check channelPerGroup not exceeding the operator's current carrying capacity.
     OP_CHECK_IF(
         (channelPerGroupOnceProcess > UPPER_CARRYING_LIMIT),
-        VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(),
-                                        "channelPerGroup is %lu over the operator's current carrying capacity %ld.",
-                                        tilingParams->channelPerGroup, UPPER_CARRYING_LIMIT),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            tilingContext->GetNodeName(), "x",
+            Ops::Base::ToString(tilingContext->GetInputShape(INPUT_3)->GetStorageShape()),
+            std::string("Aligned channels per group exceed the implementation limit: actual=") +
+                std::to_string(channelPerGroupOnceProcess) + ", maximum=" + std::to_string(UPPER_CARRYING_LIMIT)),
         return ge::GRAPH_FAILED);
     uint64_t reserveSpace = RESERVE_SAPCE + channelPerGroupOnceProcess * this->dtypeBytes * UB_COPIES_1;
     // The function PlanStepCoreUsage is to plan the usage of cores for each step.
-    OP_CHECK_IF(!PlanStepCoreUsage(),
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "PlanStepCoreUsage failed."),
+    OP_CHECK_IF(!PlanStepCoreUsage(), OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "PlanStepCoreUsage failed."),
                 return ge::GRAPH_FAILED);
     // Select UB allocation mode for stage_1
     OP_CHECK_IF(CalStage1TilingInfo(reserveSpace) != ge::GRAPH_SUCCESS,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "fail to calculate Stage1 TilingInfo"),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "fail to calculate Stage1 TilingInfo"),
                 return ge::GRAPH_FAILED);
     // Because the accumulation axis is the N axis, there is no deterministic problem when N<=2.
     // On A5, use deterministic accumulation by default; A2/A3 still depend on the deterministic attribute.
@@ -539,11 +715,10 @@ ge::graphStatus GroupNormSwishGradTiling::Init()
     }
     // Set TilingKey mode
     OP_CHECK_IF(SetTilingKeyMode(this->dtypeStr, isDeterministicKey) != ge::GRAPH_SUCCESS,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "fail to Set TilingKey"),
-                return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "fail to Set TilingKey"), return ge::GRAPH_FAILED);
     // Calculate workspace space
     OP_CHECK_IF(CalStage2TilingInfo(this->dtypeStr, isDeterministicKey, isArch3510) != ge::GRAPH_SUCCESS,
-                VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "fail to calculate Stage2 TilingInfo"),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "fail to calculate Stage2 TilingInfo"),
                 return ge::GRAPH_FAILED);
     // Get ATTR
     tilingParams->dgammaIsRequire = static_cast<uint64_t>(*(attrs->GetAttrPointer<bool>(DGAMMA_IS_REQUIRE_IDX)));
@@ -623,6 +798,7 @@ void GroupNormSwishGradTiling::TilingDataPrint() const
 static ge::graphStatus TilingGroupNormSwishGrad(gert::TilingContext* context)
 {
     GroupNormSwishGradTiling tilingObject(context);
+    // Upstream behavior: Init() result is intentionally not checked here; tiling_3/4/5 rely on this.
     tilingObject.Init();
     return tilingObject.SetKernelTiling();
 }

@@ -17,6 +17,10 @@
 #include "log/log.h"
 #include "group_norm_swish_tiling.h"
 #include "register/op_impl_registry.h"
+#include <string>
+#include <vector>
+#include "util/shape_util.h"
+#include "base/err_msg.h"
 
 namespace optiling {
 static const uint64_t INPUT_IDX_X = 0;
@@ -85,52 +89,92 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
 {
     // check x
     auto inputX = context->GetInputDesc(INPUT_IDX_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputX);
+    OP_CHECK_IF(inputX == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_swish" :
+                                                                                   (context)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     auto xDtype = inputX->GetDataType();
-    OP_CHECK_IF((xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_FLOAT && xDtype != ge::DT_BF16),
-                OP_LOGE(context, "xDtype should be FP16/BF16/FP32, please check."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_FLOAT && xDtype != ge::DT_BF16),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", std::to_string(static_cast<int>(xDtype)),
+                                              "xDtype should be FP16/BF16/FP32, please check."),
+        return ge::GRAPH_FAILED);
     auto xShapePtr = context->GetInputShape(INPUT_IDX_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_swish" :
+                                                                                   (context)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     auto xShape = xShapePtr->GetStorageShape();
     uint64_t xDims = xShape.GetDimNum();
-    OP_CHECK_IF((xDims < X_SHAPE_MIN_LEN), OP_LOGE(context, "inputDims can't be smaller than 2."),
+    OP_CHECK_IF((xDims < X_SHAPE_MIN_LEN),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xDims),
+                                                         "inputDims can't be smaller than 2."),
                 return ge::GRAPH_FAILED);
     uint64_t channel = xShape.GetDim(DIM_1);
     // check gamma and beta
     auto gammaShapePtr = context->GetInputShape(INPUT_IDX_GAMMA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gammaShapePtr);
+    OP_CHECK_IF(gammaShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_swish" :
+                                                                                   (context)->GetNodeName()),
+                    "gamma"),
+                return ge::GRAPH_FAILED);
     auto gammaShape = gammaShapePtr->GetStorageShape();
     uint64_t gammaSizes = gammaShape.GetDim(DIM_0);
     OP_CHECK_IF((gammaShape.GetDimNum() != 1 || gammaSizes != channel),
-                OP_LOGE(context,
-                        "The shape of gamma must be"
-                        " the same as channel, currently is %lu.",
-                        gammaSizes),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "gamma", Ops::Base::ToString(gammaShape),
+                                                      ("The shape of gamma must be the same as channel, currently is " +
+                                                       std::to_string(gammaSizes) + ".")),
                 return ge::GRAPH_FAILED);
     auto betaShapePtr = context->GetInputShape(INPUT_IDX_BETA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, betaShapePtr);
+    OP_CHECK_IF(betaShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_swish" :
+                                                                                   (context)->GetNodeName()),
+                    "beta"),
+                return ge::GRAPH_FAILED);
     auto betaShape = betaShapePtr->GetStorageShape();
     uint64_t betaSizes = betaShape.GetDim(DIM_0);
     OP_CHECK_IF((betaShape.GetDimNum() != 1 || betaSizes != channel),
-                OP_LOGE(context,
-                        "The shape of beta must be"
-                        " the same as channel, currently is %lu.",
-                        betaSizes),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "beta", Ops::Base::ToString(betaShape),
+                    ("The shape of beta must be the same as channel, currently is " + std::to_string(betaSizes) + ".")),
                 return ge::GRAPH_FAILED);
     auto gammaDtypePtr = context->GetInputDesc(INPUT_IDX_GAMMA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gammaDtypePtr);
+    OP_CHECK_IF(gammaDtypePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_swish" :
+                                                                                   (context)->GetNodeName()),
+                    "gamma"),
+                return ge::GRAPH_FAILED);
     auto gammaDtype = gammaDtypePtr->GetDataType();
     auto betaDtypePtr = context->GetInputDesc(INPUT_IDX_BETA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, betaDtypePtr);
+    OP_CHECK_IF(betaDtypePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_swish" :
+                                                                                   (context)->GetNodeName()),
+                    "beta"),
+                return ge::GRAPH_FAILED);
     auto betaDtype = betaDtypePtr->GetDataType();
     OP_CHECK_IF((gammaDtype != betaDtype),
-                OP_LOGE(context, "The dtype of gamma and beta must"
-                                 " be consistent."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "gamma,beta",
+                    std::to_string(static_cast<int>(gammaDtype)) + "," + std::to_string(static_cast<int>(betaDtype)),
+                    "The dtype of gamma and beta must"
+                    " be consistent."),
                 return ge::GRAPH_FAILED);
     if (xDtype == ge::DT_FLOAT) {
         OP_CHECK_IF((gammaDtype != xDtype),
-                    OP_LOGE(context, "The dtype of x is float32, gamma and beta must"
-                                     " be consistent."),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "x,gamma,beta",
+                                                           std::to_string(static_cast<int>(xDtype)) + "," +
+                                                               std::to_string(static_cast<int>(gammaDtype)) + "," +
+                                                               std::to_string(static_cast<int>(betaDtype)),
+                                                           "The dtype of x is float32, gamma and beta must"
+                                                           " be consistent."),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -142,10 +186,27 @@ static ge::graphStatus CheckAttrParams(const gert::TilingContext* context)
     uint64_t channel = xShape.GetDim(DIM_1);
     // check num_groups
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const int64_t* numGroups = attrs->GetAttrPointer<int64_t>(ATTR_IDX_NUM_GROUPS);
-    OP_CHECK_IF((*numGroups <= 0), OP_LOGE(context, "numGroups must be bigger than 0."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF((channel % *numGroups != 0), OP_LOGE(context, "channel must be integer multiples of numGroups."),
+    OP_CHECK_IF((*numGroups <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "num_groups", std::to_string(*numGroups),
+                                                      "numGroups must be bigger than 0."),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((channel % *numGroups != 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "num_groups", std::to_string(*numGroups),
+                                                      "channel must be integer multiples of numGroups."),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -255,8 +316,13 @@ static ge::graphStatus Tiling4GroupNormSwish(gert::TilingContext* context)
     GroupNormSwishTilingData tilingData;
     tilingData.set_totalCoreNum(ascendcPlatform.GetCoreNumAiv());
     OP_LOGD(context, "Get total core num:%d", tilingData.get_totalCoreNum());
-    OP_CHECK_IF((tilingData.get_totalCoreNum() <= 0), OP_LOGE(context, "Failed to get core num."),
-                return ge::GRAPH_FAILED);
+    if ((tilingData.get_totalCoreNum() <= 0)) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Failed to get core num.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "Failed to get core num."}));
+        return ge::GRAPH_FAILED;
+    };
     uint64_t ubSizePlatForm = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     OP_LOGD(context, "Get total ub size:%lu", static_cast<int64_t>(ubSizePlatForm));
@@ -264,10 +330,10 @@ static ge::graphStatus Tiling4GroupNormSwish(gert::TilingContext* context)
 
     OP_LOGD(context, "Start running Tiling4GroupNormSwish.");
     // check input && attrs params
-    OP_CHECK_IF((CheckInputParams(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "InputParams is invalid."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF((CheckAttrParams(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "AttrParams is invalid."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckInputParams(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "InputParams is invalid."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckAttrParams(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "AttrParams is invalid."), return ge::GRAPH_FAILED);
     // set TilingData
 
     SetAttrParams(context, tilingData);

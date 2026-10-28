@@ -22,6 +22,9 @@
 #include "opdev/platform.h"
 #include "op_api/aclnn_util.h"
 #include "aclnnInner_situ_mx_quant.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 #ifdef __cplusplus
@@ -67,22 +70,40 @@ static bool CheckDtypeValid(const aclTensor* x, int64_t dstType, const aclTensor
 static bool CheckScalarParams(int64_t axis, int64_t dstType, double beta, const char* roundModeOptional)
 {
     if (axis != AXIS_LAST_DIM) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "axis only supports -1 currently, but got %ld.", axis);
+        const std::string reason = (("axis only supports -1 currently, but got " + std::to_string(axis) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+            (std::vector<const char*>{"axis", "aclnnSituMxQuant", (std::to_string(axis)).c_str(), reason.c_str()}));
         return false;
     }
     if (dstType != DTYPE_FLOAT8_E5M2 && dstType != DTYPE_FLOAT8_E4M3FN) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dstType only supports 35(FLOAT8_E5M2) or 36(FLOAT8_E4M3FN), but got %ld.",
-                dstType);
+        const std::string reason = (("dstType only supports 35(FLOAT8_E5M2) or 36(FLOAT8_E4M3FN), but got " +
+                                     std::to_string(dstType) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0026",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                                  (std::vector<const char*>{"dstType", "aclnnSituMxQuant",
+                                                            (std::to_string(dstType)).c_str(), reason.c_str()}));
         return false;
     }
     if (beta <= 0.0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "beta must be greater than 0, but got %f.", beta);
+        const std::string reason = (("beta must be greater than 0, but got " + std::to_string(beta) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+            (std::vector<const char*>{"beta", "aclnnSituMxQuant", (std::to_string(beta)).c_str(), reason.c_str()}));
         return false;
     }
     // nullptr按默认值"rint"处理
     if (roundModeOptional != nullptr && std::string(roundModeOptional) != "rint") {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "roundModeOptional only supports \"rint\" for FP8 output, but got %s.",
-                roundModeOptional);
+        const std::string reason = (("roundModeOptional only supports \"rint\" for FP8 output, but got " +
+                                     std::string(roundModeOptional) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0026",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                                  (std::vector<const char*>{"roundModeOptional", "aclnnSituMxQuant",
+                                                            (std::string(roundModeOptional)).c_str(), reason.c_str()}));
         return false;
     }
     return true;
@@ -98,11 +119,20 @@ static bool CheckFormat(const aclTensor* x, const aclTensor* yOut, const aclTens
     };
     if (!isLinearFormat(x->GetStorageFormat()) || !isLinearFormat(yOut->GetStorageFormat()) ||
         !isLinearFormat(yScaleOut->GetStorageFormat())) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "x, yOut and yScaleOut only support linear formats (ND/NCL/NCHW/NCDHW), but got x: %s, yOut: %s, "
-                "yScaleOut: %s.",
-                op::ToString(x->GetStorageFormat()).GetString(), op::ToString(yOut->GetStorageFormat()).GetString(),
-                op::ToString(yScaleOut->GetStorageFormat()).GetString());
+        const std::string reason = ((
+            "x, yOut and yScaleOut only support linear formats (ND/NCL/NCHW/NCDHW), but got x: " +
+            std::string(op::ToString(x->GetStorageFormat()).GetString()) +
+            ", yOut: " + std::string(op::ToString(yOut->GetStorageFormat()).GetString()) +
+            ", yScaleOut: " + std::string(op::ToString(yScaleOut->GetStorageFormat()).GetString()) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0018", (std::vector<const char*>{"param_names", "op_name", "incorrect_formats", "reason"}),
+            (std::vector<const char*>{"x,yOut,yScaleOut", "aclnnSituMxQuant",
+                                      (std::string(op::ToString(x->GetStorageFormat()).GetString()) + "," +
+                                       op::ToString(yOut->GetStorageFormat()).GetString() + "," +
+                                       op::ToString(yScaleOut->GetStorageFormat()).GetString())
+                                          .c_str(),
+                                      reason.c_str()}));
         return false;
     }
     return true;
@@ -121,11 +151,19 @@ static bool HasUnknownDim(const op::Shape& shape)
 static bool CheckShape(const aclTensor* x, const aclTensor* yOut, const aclTensor* yScaleOut)
 {
     if (x->IsEmpty() || yOut->IsEmpty() || yScaleOut->IsEmpty()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "x, yOut and yScaleOut do not support empty tensor, x: %s, yOut: %s, "
-                "yScaleOut: %s.",
-                op::ToString(x->GetViewShape()).GetString(), op::ToString(yOut->GetViewShape()).GetString(),
-                op::ToString(yScaleOut->GetViewShape()).GetString());
+        const std::string reason = (("x, yOut and yScaleOut do not support empty tensor, x: " +
+                                     std::string(op::ToString(x->GetViewShape()).GetString()) + ", yOut: " +
+                                     std::string(op::ToString(yOut->GetViewShape()).GetString()) + ", yScaleOut: " +
+                                     std::string(op::ToString(yScaleOut->GetViewShape()).GetString()) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0010",
+                                  (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+                                  (std::vector<const char*>{"x,yOut,yScaleOut", "aclnnSituMxQuant",
+                                                            (std::string(op::ToString(x->GetViewShape()).GetString()) +
+                                                             "," + op::ToString(yOut->GetViewShape()).GetString() +
+                                                             "," + op::ToString(yScaleOut->GetViewShape()).GetString())
+                                                                .c_str(),
+                                                            reason.c_str()}));
         return false;
     }
 
@@ -135,7 +173,12 @@ static bool CheckShape(const aclTensor* x, const aclTensor* yOut, const aclTenso
     const op::Shape& xShape = x->GetViewShape();
     const int64_t lastDim = xShape.GetDim(xShape.GetDimNum() - 1);
     if (lastDim % SPLIT_NUM != 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The last dimension of x must be divisible by 2, but got %ld.", lastDim);
+        const std::string reason = (("The last dimension of x must be divisible by 2, but got " +
+                                     std::to_string(lastDim) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0015", (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+            (std::vector<const char*>{"x", "aclnnSituMxQuant", (std::to_string(lastDim)).c_str(), reason.c_str()}));
         return false;
     }
 

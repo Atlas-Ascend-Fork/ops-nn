@@ -15,6 +15,9 @@
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 #include "util/shape_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 namespace ops {
@@ -30,16 +33,62 @@ static ge::graphStatus GroupNormSwishGradInferShape(gert::InferShapeContext* con
 
     // get input shapes
     const gert::Shape* dy_shape = context->GetInputShape(GROUPNORMSWISHGRAD_IDX_IN_DY);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dy_shape);
+    OP_CHECK_IF(dy_shape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_swish_grad" :
+                                                                                   (context)->GetNodeName()),
+                    "dy"),
+                return ge::GRAPH_FAILED);
     const gert::Shape* gamma_shape = context->GetInputShape(GROUPNORMSWISHGRAD_IDX_IN_GAMMA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gamma_shape);
+    OP_CHECK_IF(gamma_shape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "group_norm_swish_grad" :
+                                                                                   (context)->GetNodeName()),
+                    "gamma"),
+                return ge::GRAPH_FAILED);
     // get output shapes
     gert::Shape* dx_shape = context->GetOutputShape(GROUPNORMSWISHGRAD_IDX_OUT_DX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dx_shape);
+    if (dx_shape == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish_grad" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object dx_shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object dx_shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     gert::Shape* dgamma_shape = context->GetOutputShape(GROUPNORMSWISHGRAD_IDX_OUT_DGAMMA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dgamma_shape);
+    if (dgamma_shape == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish_grad" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object dgamma_shape is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object dgamma_shape is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     gert::Shape* dbeta_shape = context->GetOutputShape(GROUPNORMSWISHGRAD_IDX_OUT_DBETA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dbeta_shape);
+    if (dbeta_shape == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish_grad" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object dbeta_shape is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object dbeta_shape is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     *dx_shape = *dy_shape;
     *dgamma_shape = *gamma_shape;
@@ -54,7 +103,19 @@ static graphStatus GroupNormSwishGradInferDtype(gert::InferDataTypeContext* cont
     OP_LOGD(context, "GroupNormSwishGradInferDtype enter");
     // Get input tout
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "group_norm_swish_grad" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrs is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto inputDtype = context->GetInputDataType(GROUPNORMSWISHGRAD_IDX_IN_DY);
     context->SetOutputDataType(GROUPNORMSWISHGRAD_IDX_OUT_DX, inputDtype);
     context->SetOutputDataType(GROUPNORMSWISHGRAD_IDX_OUT_DGAMMA, inputDtype);

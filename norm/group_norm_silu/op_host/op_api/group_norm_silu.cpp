@@ -43,7 +43,7 @@ const std::tuple<aclTensor*, aclTensor*, aclTensor*> GroupNormSilu(const aclTens
     auto mean = executor->AllocTensor(op::Shape({nNum, numGroups}), dtypeOut1, op::Format::FORMAT_ND);
     auto rstd = executor->AllocTensor(op::Shape({nNum, numGroups}), dtypeOut1, op::Format::FORMAT_ND);
     if (y == nullptr || mean == nullptr || rstd == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc output tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc output tensor failed.");
         return std::tie(y, mean, rstd);
     }
     auto retAicore = ADD_TO_LAUNCHER_LIST_AICORE(GroupNormSilu, OP_INPUT(x, gamma, beta), OP_OUTPUT(y, mean, rstd),

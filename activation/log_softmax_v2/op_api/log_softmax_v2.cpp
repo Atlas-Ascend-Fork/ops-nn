@@ -35,7 +35,8 @@ static const aclTensor* LogSoftmaxAiCore(const aclTensor* x, aclIntArray* dimLis
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(LogSoftmaxV2, OP_INPUT(x), OP_OUTPUT(logSoftmaxOut), OP_ATTR(dimList));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LogSoftmaxAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "LogSoftmaxAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             return nullptr);
     return logSoftmaxOut;
 }
 
@@ -49,7 +50,8 @@ static const aclTensor* LogSoftmaxAiCpu(const aclTensor* x, aclIntArray* dimList
     auto ret = ADD_TO_LAUNCHER_LIST_AICPU(LogSoftmaxV2, OP_ATTR_NAMES({"axes"}), OP_INPUT(x), OP_OUTPUT(logSoftmaxOut),
                                           OP_ATTR(dimList));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LogSoftmaxAiCpu ADD_TO_LAUNCHER_LIST_AICPU failed."), return nullptr);
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "LogSoftmaxAiCpu ADD_TO_LAUNCHER_LIST_AICPU failed."),
+             return nullptr);
     return logSoftmaxOut;
 }
 

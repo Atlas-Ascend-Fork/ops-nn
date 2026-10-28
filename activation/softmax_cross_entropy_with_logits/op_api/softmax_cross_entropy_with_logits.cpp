@@ -36,7 +36,7 @@ std::tuple<aclTensor*, aclTensor*> SoftmaxCrossEntropyWithLogits(const aclTensor
     auto loss = executor->AllocTensor(lossShape, features->GetDataType());
     auto backprop = executor->AllocTensor(featShape, features->GetDataType()); // backprop 仍保持原 shape
     if (loss == nullptr || backprop == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc loss or backprop tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc loss or backprop tensor failed.");
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
     // 注册 AICORE 执行任务

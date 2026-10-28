@@ -26,6 +26,9 @@
 #include "platform/platform_info_def.h"
 #include "common_dtype.h"
 #include "foreach_reduce_tiling_def.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace optiling {
 constexpr uint32_t DEFAULT_SYNCALL_NEED_SIZE = 8;
@@ -246,12 +249,26 @@ private:
     ge::graphStatus CheckShapeInfo()
     {
         auto computeNodeInfo = tilingContext->GetComputeNodeInfo();
-        OP_CHECK_IF(computeNodeInfo == nullptr, OP_LOGE(tilingContext->GetNodeName(), "GetComputeNodeInfo failed."),
-                    return ge::GRAPH_FAILED);
+        if (computeNodeInfo == nullptr) {
+            const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                               "Foreach" :
+                                               tilingContext->GetNodeName());
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "GetComputeNodeInfo failed.");
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), "GetComputeNodeInfo failed."}));
+            return ge::GRAPH_FAILED;
+        };
         auto inputTensorsNum = computeNodeInfo->GetIrInputsNum() - 1;
         auto anchorInstanceInfo = computeNodeInfo->GetInputInstanceInfo(0);
-        OP_CHECK_IF(anchorInstanceInfo == nullptr,
-                    OP_LOGE(tilingContext->GetNodeName(), "GetInputInstanceInfo failed."), return ge::GRAPH_FAILED);
+        if (anchorInstanceInfo == nullptr) {
+            const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                               "Foreach" :
+                                               tilingContext->GetNodeName());
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "GetInputInstanceInfo failed.");
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), "GetInputInstanceInfo failed."}));
+            return ge::GRAPH_FAILED;
+        };
 
         // check tensorlist size
         size_t xSize = anchorInstanceInfo->GetInstanceNum();
@@ -262,10 +279,11 @@ private:
             return ge::GRAPH_FAILED);
 
         OP_CHECK_IF(CheckInputTensorlistShape(static_cast<size_t>(inputTensorsNum)) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext->GetNodeName(), "CheckInputTensorlistShape failed."),
+                    OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "CheckInputTensorlistShape failed."),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(CheckOutputShapeAndDtype() != ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext->GetNodeName(), "CheckOutputShapeAndDtype failed."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "CheckOutputShapeAndDtype failed."),
+                    return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
 
@@ -278,9 +296,17 @@ private:
 
         for (size_t tensorId = 0; tensorId < totalTensorCount; tensorId++) {
             auto x1Shape = tilingContext->GetDynamicInputShape(startListIndex, tensorId);
-            OP_CHECK_IF(x1Shape == nullptr,
-                        OP_LOGE(tilingContext->GetNodeName(), "The input %lu shape is null.", startListIndex),
-                        return ge::GRAPH_FAILED);
+            if (x1Shape == nullptr) {
+                const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                                   "Foreach" :
+                                                   tilingContext->GetNodeName());
+                const std::string msgReason = std::string(
+                    ("The input " + std::to_string(startListIndex) + " shape is null."));
+                OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+                return ge::GRAPH_FAILED;
+            };
 
             // check max dim
             if (x1Shape->GetStorageShape().GetDimNum() > MAX_SUPPORT_DIMS_NUMS) {
@@ -323,8 +349,16 @@ private:
         }
         for (uint32_t i = 0; i < totalTensorCount; i++) {
             auto tempDesc = tilingContext->GetOutputDesc(i);
-            OP_CHECK_IF(tempDesc == nullptr, OP_LOGE(tilingContext->GetNodeName(), "The output %u desc is null.", i),
-                        return ge::GRAPH_FAILED);
+            if (tempDesc == nullptr) {
+                const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                                   "Foreach" :
+                                                   tilingContext->GetNodeName());
+                const std::string msgReason = std::string(("The output " + std::to_string(i) + " desc is null."));
+                OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+                return ge::GRAPH_FAILED;
+            };
             auto dstDtype = tempDesc->GetDataType();
             OP_CHECK_IF(dstDtype != dataType,
                         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(tilingContext->GetNodeName(), "y",
@@ -332,8 +366,16 @@ private:
                                                               "The dtype of y must be the same as x"),
                         return ge::GRAPH_FAILED);
             auto dstShape = tilingContext->GetOutputShape(i);
-            OP_CHECK_IF(dstShape == nullptr, OP_LOGE(tilingContext->GetNodeName(), "The output %u shape is null.", i),
-                        return ge::GRAPH_FAILED);
+            if (dstShape == nullptr) {
+                const std::string msgOpName = (tilingContext == nullptr || tilingContext->GetNodeName() == nullptr ?
+                                                   "Foreach" :
+                                                   tilingContext->GetNodeName());
+                const std::string msgReason = std::string(("The output " + std::to_string(i) + " shape is null."));
+                OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+                return ge::GRAPH_FAILED;
+            };
             OP_CHECK_IF(dstShape->GetStorageShape().GetShapeSize() != 1,
                         OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
                             tilingContext->GetNodeName(), "y",
@@ -400,10 +442,22 @@ static ge::graphStatus Tiling4ForeachNormTiling(gert::TilingContext* context)
 static ge::graphStatus TilingPrepare4ForeachTiling(gert::TilingParseContext* context)
 {
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfoPtr == nullptr, OP_LOGE(context, "platformInfoPtr is null"), return ge::GRAPH_FAILED);
+    if (platformInfoPtr == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "platformInfoPtr is null");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "platformInfoPtr is null"}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto compileInfoPtr = context->GetCompiledInfo<ForeachCompileInfo>();
-    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context, "compileInfoPtr is null"), return ge::GRAPH_FAILED);
+    if (compileInfoPtr == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "compileInfoPtr is null");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "compileInfoPtr is null"}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     compileInfoPtr->coreNum = ascendcPlatform.GetCoreNum();

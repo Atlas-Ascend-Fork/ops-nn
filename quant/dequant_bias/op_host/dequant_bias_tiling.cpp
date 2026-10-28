@@ -21,6 +21,9 @@
 #include "op_host/tiling_templates_registry.h"
 #include "op_host/tiling_util.h"
 #include "util/math_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace optiling {
 using Ops::NN::OpTiling::IsRegbaseSocVersion;
@@ -125,7 +128,14 @@ void DequantBiasTiling::Reset()
 ge::graphStatus DequantBiasTiling::GetPlatformInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE(opName, "fail to get platform info"), return ge::GRAPH_FAILED);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+        const std::string msgReason = (std::string(__func__) + ": " + "fail to get platform info");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     aivNum = ascendcPlatform.GetCoreNumAiv();
     aicoreParams_.numBlocks = aivNum;
@@ -141,36 +151,45 @@ ge::graphStatus DequantBiasTiling::CheckParamsValidity1(const gert::Shape& xShap
 {
     // attr属性校验
     if (outputDtype != SIZE_1 && outputDtype != SIZE_27) {
-        OP_LOGE(context_->GetNodeName(), "Attr outputDtype should be 1 or 27.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "output_dtype", std::to_string(outputDtype),
+                                              "Attr outputDtype should be 1 or 27.");
         return ge::GRAPH_FAILED;
     }
 
     // shape校验
     size_t xDimNum = xShape.GetDimNum();
     if (xDimNum != DIM_TWO) {
-        OP_LOGE(context_->GetNodeName(), "The dim number of x should be 2.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "x", std::to_string(xDimNum),
+                                                 "The dim number of x should be 2.");
         return ge::GRAPH_FAILED;
     }
 
     size_t weightScaleDimNum = weightScaleShape.GetDimNum();
     if (weightScaleDimNum != DIM_ONE) {
-        OP_LOGE(context_->GetNodeName(), "The dim number of weightScale should be 1.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "weight_scale",
+                                                 std::to_string(weightScaleDimNum),
+                                                 "The dim number of weightScale should be 1.");
         return ge::GRAPH_FAILED;
     }
 
     if (activateScaleShape != nullptr && activateScaleShape->GetStorageShape().GetDimNum() != DIM_ONE) {
-        OP_LOGE(context_->GetNodeName(), "The dim number of activateScale should be 1.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "activate_scale",
+                                                 std::to_string(activateScaleShape->GetStorageShape().GetDimNum()),
+                                                 "The dim number of activateScale should be 1.");
         return ge::GRAPH_FAILED;
     }
 
     if (biasShape != nullptr && biasShape->GetStorageShape().GetDimNum() != DIM_ONE) {
-        OP_LOGE(context_->GetNodeName(), "The dim number of bias should be 1.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "bias",
+                                                 std::to_string(biasShape->GetStorageShape().GetDimNum()),
+                                                 "The dim number of bias should be 1.");
         return ge::GRAPH_FAILED;
     }
 
     size_t outDimNum = yShape.GetDimNum();
     if (outDimNum != DIM_TWO) {
-        OP_LOGE(context_->GetNodeName(), "The dim number of y should be 2.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "y", std::to_string(outDimNum),
+                                                 "The dim number of y should be 2.");
         return ge::GRAPH_FAILED;
     }
 
@@ -183,31 +202,44 @@ ge::graphStatus DequantBiasTiling::CheckParamsValidity2(const gert::Shape& xShap
 {
     // shape 约束
     if (weightScaleShape.GetDim(0) != xShape.GetDim(1)) {
-        OP_LOGE(context_->GetNodeName(), "dim 1 of x and weightScale should be same.");
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context_->GetNodeName(), "x,weight_scale",
+            std::to_string(xShape.GetDim(1)) + "," + std::to_string(weightScaleShape.GetDim(0)),
+            "dim 1 of x and weightScale should be same.");
         return ge::GRAPH_FAILED;
     }
 
     if (activateScaleShape != nullptr && activateScaleShape->GetStorageShape().GetShapeSize() > 0 &&
         activateScaleShape->GetStorageShape().GetDim(0) != xShape.GetDim(0)) {
-        OP_LOGE(context_->GetNodeName(), "dim 0 of x and activateScale %ld and %ld should be same.",
-                activateScaleShape->GetStorageShape().GetDim(0), xShape.GetDim(0));
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context_->GetNodeName(), "x,activate_scale",
+            std::to_string(xShape.GetDim(0)) + "," + std::to_string(activateScaleShape->GetStorageShape().GetDim(0)),
+            ("dim 0 of x and activateScale " + std::to_string(activateScaleShape->GetStorageShape().GetDim(0)) +
+             " and " + std::to_string(xShape.GetDim(0)) + " should be same."));
         return ge::GRAPH_FAILED;
     }
 
     if (biasShape != nullptr && biasShape->GetStorageShape().GetShapeSize() > 0 &&
         biasShape->GetStorageShape().GetDim(0) != xShape.GetDim(1)) {
-        OP_LOGE(context_->GetNodeName(), "dim 1 of x %ld and dim 0 of bias %ld should be same.",
-                biasShape->GetStorageShape().GetDim(0), xShape.GetDim(1));
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context_->GetNodeName(), "x,bias",
+            std::to_string(xShape.GetDim(1)) + "," + std::to_string(biasShape->GetStorageShape().GetDim(0)),
+            ("dim 1 of x " + std::to_string(biasShape->GetStorageShape().GetDim(0)) + " and dim 0 of bias " +
+             std::to_string(xShape.GetDim(1)) + " should be same."));
         return ge::GRAPH_FAILED;
     }
 
     if (xShape.GetDim(0) != yShape.GetDim(0)) {
-        OP_LOGE(context_->GetNodeName(), "dim 0 of input and output should be same.");
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context_->GetNodeName(), "x,y", std::to_string(xShape.GetDim(0)) + "," + std::to_string(yShape.GetDim(0)),
+            "dim 0 of input and output should be same.");
         return ge::GRAPH_FAILED;
     }
 
     if (xShape.GetDim(1) != yShape.GetDim(1)) {
-        OP_LOGE(context_->GetNodeName(), "dim 1 of input and output should be same.");
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context_->GetNodeName(), "x,y", std::to_string(xShape.GetDim(1)) + "," + std::to_string(yShape.GetDim(1)),
+            "dim 1 of input and output should be same.");
         return ge::GRAPH_FAILED;
     }
 
@@ -218,10 +250,24 @@ ge::graphStatus DequantBiasTiling::CheckParamsValidity3()
 {
     if (asExist == 1) {
         auto asDesc = context_->GetOptionalInputDesc(2); // x idx
-        OP_CHECK_NULL_WITH_CONTEXT(context_, asDesc);
+        if (asDesc == nullptr) {
+            const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                           "dequant_bias" :
+                                                           (context_)->GetNodeName()));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                                   "Tiling framework object asDesc is unavailable; check the operator registration and "
+                                   "context construction.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object asDesc is unavailable; check the "
+                                                             "operator registration and context construction."}));
+            return ge::GRAPH_FAILED;
+        };
         asDtype = asDesc->GetDataType();
         if (asDtype != ge::DT_FLOAT) {
-            OP_LOGE(context_->GetNodeName(), "activate_scale's dtype should be float");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "activate_scale",
+                                                  std::to_string(static_cast<int>(asDtype)),
+                                                  "activate_scale's dtype should be float");
             return ge::GRAPH_FAILED;
         }
     }
@@ -229,7 +275,9 @@ ge::graphStatus DequantBiasTiling::CheckParamsValidity3()
     if (biasExist == 1) {
         if ((biasDtype != ge::DT_BF16) && (biasDtype != ge::DT_FLOAT) && (biasDtype != ge::DT_FLOAT16) &&
             (biasDtype != ge::DT_INT32)) {
-            OP_LOGE(context_->GetNodeName(), "bias's dtype should be bf16 or float or fp16 or int32");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "bias",
+                                                  std::to_string(static_cast<int>(biasDtype)),
+                                                  "bias's dtype should be bf16 or float or fp16 or int32");
             return ge::GRAPH_FAILED;
         }
     }
@@ -243,24 +291,63 @@ ge::graphStatus DequantBiasTiling::GetShapeAttrsInfo()
 
     // 获取输入shape
     auto xShapePtr = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_bias" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     const gert::Shape xShape = xShapePtr->GetStorageShape();
     auto weightScaleShapePtr = context_->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weightScaleShapePtr);
+    OP_CHECK_IF(weightScaleShapePtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_bias" :
+                                                                                     (context_)->GetNodeName()),
+                    "weight_scale"),
+                return ge::GRAPH_FAILED);
     const gert::Shape weightScaleShape = weightScaleShapePtr->GetStorageShape();
 
     auto activateScaleShape = context_->GetOptionalInputShape(2); // 2: activate_scale idx
     auto biasShape = context_->GetOptionalInputShape(3);          // 3: bias idx
 
     auto yShapePtr = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yShapePtr);
+    if (yShapePtr == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_bias" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object yShapePtr is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yShapePtr is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape yShape = yShapePtr->GetStorageShape();
 
     // 获取输入属性
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_bias" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const int64_t* outpurDtypePtr = attrs->GetAttrPointer<int64_t>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outpurDtypePtr);
+    OP_CHECK_IF(outpurDtypePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_bias" :
+                                                                                     (context_)->GetNodeName()),
+                    "output_dtype", "Required attribute is unavailable; provide the registered attribute."),
+                return ge::GRAPH_FAILED);
     outputDtype = *outpurDtypePtr;
 
     // 参数校验
@@ -283,7 +370,19 @@ ge::graphStatus DequantBiasTiling::GetShapeAttrsInfo()
     biasExist = (biasShape == nullptr || biasShape->GetStorageShape().GetShapeSize() == 0) ? 0 : 1;
     if (biasExist == 1) {
         auto biasDesc = context_->GetOptionalInputDesc(3); // 3: bias idx
-        OP_CHECK_NULL_WITH_CONTEXT(context_, biasDesc);
+        if (biasDesc == nullptr) {
+            const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                           "dequant_bias" :
+                                                           (context_)->GetNodeName()));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                                   "Tiling framework object biasDesc is unavailable; check the operator registration "
+                                   "and context construction.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object biasDesc is unavailable; check "
+                                                             "the operator registration and context construction."}));
+            return ge::GRAPH_FAILED;
+        };
         biasDtype = biasDesc->GetDataType();
     }
 
@@ -366,7 +465,19 @@ ge::graphStatus DequantBiasTiling::PostTiling()
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     currentWorkspace[0] = workspaceSize_;
     auto tilingData = context_->GetRawTilingData();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, tilingData);
+    if (tilingData == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_bias" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object tilingData is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object tilingData is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     dequantBiasTilingData.SaveToBuffer(tilingData->GetData(), tilingData->GetCapacity());
     tilingData->SetDataSize(dequantBiasTilingData.GetDataSize());
     return ge::GRAPH_SUCCESS;
@@ -421,7 +532,12 @@ ge::graphStatus DequantBiasTiling::TilingGradCompute()
 
     uint32_t totalBuffSize = inBuffSize + weightScaleBuffSize + asBuffSize + biasBuffSize;
     if (totalBuffSize >= aicoreParams_.ubSize || M > SIZE_25000) {
-        OP_LOGE(context_->GetNodeName(), "input x size is too large.");
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context_->GetNodeName(), "x", std::to_string(M) + "," + std::to_string(N),
+            std::string("x exceeds implementation limits: M must be <=25000 and required buffer bytes must be below UB "
+                        "capacity; M=") +
+                std::to_string(M) + ", requiredBytes=" + std::to_string(totalBuffSize) +
+                ", UBBytes=" + std::to_string(aicoreParams_.ubSize));
         return ge::GRAPH_FAILED;
     }
 

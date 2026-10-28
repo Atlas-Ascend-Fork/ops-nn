@@ -17,6 +17,9 @@
 #include "op_host/tiling_util.h"
 #include "swi_glu_tiling.h"
 #include "op_host/tiling_templates_registry.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using Ops::NN::Optiling::TilingRegistry;
 // using namespace AscendC;
@@ -98,7 +101,13 @@ ge::graphStatus DequantSwigluQuantDskTiling::GetPlatformInfo()
     auto platformInfo = context_->GetPlatformInfo();
     if (platformInfo == nullptr) {
         auto compileInfoPtr = context_->GetCompileInfo<DequantSwigluQuantCompileInfo>();
-        OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context_, "compile info is null"), return ge::GRAPH_FAILED);
+        if (compileInfoPtr == nullptr) {
+            const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "compile info is null");
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), "compile info is null"}));
+            return ge::GRAPH_FAILED;
+        };
         coreNum_ = compileInfoPtr->coreNum;
         ubSize_ = compileInfoPtr->ubSize;
     } else {
@@ -117,7 +126,12 @@ ge::graphStatus DequantSwigluQuantDskTiling::GetPlatformInfo()
 ge::graphStatus DequantSwigluQuantDskTiling::CheckXAndGroupIndexDtype()
 {
     auto xPtr = context_->GetInputDesc(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xPtr);
+    OP_CHECK_IF(xPtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_swiglu_quant" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     auto xDtype = xPtr->GetDataType();
     OP_CHECK_IF((SUPPORT_DTYPE.find(xDtype) == SUPPORT_DTYPE.end()),
                 OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "x",
@@ -126,7 +140,19 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckXAndGroupIndexDtype()
     tilingData_.set_groupIndexDtype(-1);
     if (hasGroupIndex_) {
         auto groupIndexPtr = context_->GetOptionalInputDesc(INPUT_GROUP_INDEX);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, groupIndexPtr);
+        if (groupIndexPtr == nullptr) {
+            const std::string msgOpName = std::string(
+                (context_->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context_->GetNodeName()));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                                   "The optional input presence/shape was validated; the corresponding metadata must "
+                                   "exist in the Tiling context.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(),
+                                          "The optional input presence/shape was validated; the corresponding metadata "
+                                          "must exist in the Tiling context."}));
+            return ge::GRAPH_FAILED;
+        };
         auto groupIndexDtype = groupIndexPtr->GetDataType();
         bool dtypeInValid = groupIndexDtype != ge::DT_INT64;
         OP_CHECK_IF(dtypeInValid,
@@ -144,7 +170,8 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckBias()
     if (biasShapePtr != nullptr) {
         hasBias_ = true;
         OP_CHECK_IF(CheckScaleShapeWithDim(BIAS_INDEX, inDimy_, "bias") != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context_->GetNodeName(), "bias shape check failed."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "bias shape check failed."),
+                    return ge::GRAPH_FAILED);
     } else {
         hasBias_ = false;
     }
@@ -178,7 +205,11 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckBias()
 ge::graphStatus DequantSwigluQuantDskTiling::CheckWeightScale()
 {
     auto weightScalePtr = context_->GetOptionalInputDesc(WEIGHT_SCALE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weightScalePtr);
+    OP_CHECK_IF(
+        weightScalePtr == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            (context_->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context_->GetNodeName()), "weight_scale"),
+        return ge::GRAPH_FAILED);
     auto weightScaleDtype = weightScalePtr->GetDataType();
     bool dtypeInValid = weightScaleDtype != ge::DT_FLOAT;
     OP_CHECK_IF(dtypeInValid,
@@ -186,7 +217,8 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckWeightScale()
                                           ge::TypeUtils::DataTypeToSerialString(weightScaleDtype).c_str(), "float32"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(CheckScaleShapeWithDim(WEIGHT_SCALE_INDEX, inDimy_, "weight_scale") != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "weight scale shape check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "weight scale shape check failed."),
+                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -196,7 +228,19 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckActivationScale()
     auto activationScaleShapePtr = context_->GetOptionalInputShape(ACTIVATION_SCALE_INDEX);
     if (CheckOptionalShapeExisting(activationScaleShapePtr)) {
         auto activationScalePtr = context_->GetOptionalInputDesc(ACTIVATION_SCALE_INDEX);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, activationScalePtr);
+        if (activationScalePtr == nullptr) {
+            const std::string msgOpName = std::string(
+                (context_->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context_->GetNodeName()));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                                   "The optional input presence/shape was validated; the corresponding metadata must "
+                                   "exist in the Tiling context.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(),
+                                          "The optional input presence/shape was validated; the corresponding metadata "
+                                          "must exist in the Tiling context."}));
+            return ge::GRAPH_FAILED;
+        };
         auto activationScaleDtype = activationScalePtr->GetDataType();
         bool dtypeInValid = activationScaleDtype != ge::DT_FLOAT;
 
@@ -205,14 +249,27 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckActivationScale()
             OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "activation_scale",
                                       ge::TypeUtils::DataTypeToSerialString(activationScaleDtype).c_str(), "float32"),
             return ge::GRAPH_FAILED);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, activationScaleShapePtr);
+        if (activationScaleShapePtr == nullptr) {
+            const std::string msgOpName = std::string(
+                (context_->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context_->GetNodeName()));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                                   "The optional input presence/shape was validated; the corresponding metadata must "
+                                   "exist in the Tiling context.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(),
+                                          "The optional input presence/shape was validated; the corresponding metadata "
+                                          "must exist in the Tiling context."}));
+            return ge::GRAPH_FAILED;
+        };
         auto activationScaleShape = activationScaleShapePtr->GetStorageShape();
         int64_t activationScaleNum = activationScaleShape.GetShapeSize();
 
         OP_CHECK_IF(activationScaleNum != inDimx_,
-                    OP_LOGE(context_->GetNodeName(),
-                            "activation_scale num(%ld) must be equal to the tokens num(%ld), please check.",
-                            activationScaleNum, inDimx_),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        context_->GetNodeName(), "activation_scale", std::to_string(activationScaleNum),
+                        ("activation_scale num(" + std::to_string(activationScaleNum) +
+                         ") must be equal to the tokens num(" + std::to_string(inDimx_) + "), please check.")),
                     return ge::GRAPH_FAILED);
         tilingData_.set_activationScaleIsEmpty(0);
     } else {
@@ -226,15 +283,22 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckForDequant()
 {
     // check weight scale, activation scale and bias
     auto xPtr = context_->GetInputDesc(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xPtr);
+    OP_CHECK_IF(xPtr == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_swiglu_quant" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     auto xDtype = xPtr->GetDataType();
     if (xDtype == ge::DT_INT32) {
         OP_CHECK_IF(CheckWeightScale() != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context_->GetNodeName(), "weight scale check failed."), return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CheckActivationScale() != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context_->GetNodeName(), "activation scale check failed."), return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CheckBias() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "bias check failed."),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "weight scale check failed."),
                     return ge::GRAPH_FAILED);
+        OP_CHECK_IF(CheckActivationScale() != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "activation scale check failed."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(CheckBias() != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "bias check failed."), return ge::GRAPH_FAILED);
     }
 
     if (xDtype == ge::DT_BF16 && hasGroupIndex_) {
@@ -257,7 +321,8 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckForDynamicQuant()
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(CheckScaleShapeWithDim(QUANT_SCALE_INDEX, outDimy_, "quant_scale") != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "quant scale shape check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "quant scale shape check failed."),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -265,9 +330,17 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckForStaticQuant()
 {
     // check quantOffset dtype
     auto quantOffsetDescPtr = context_->GetOptionalInputDesc(QUANT_OFFSET_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, quantOffsetDescPtr);
+    OP_CHECK_IF(
+        quantOffsetDescPtr == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            (context_->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context_->GetNodeName()), "quant_offset"),
+        return ge::GRAPH_FAILED);
     auto quantScaleDescPtr = context_->GetOptionalInputDesc(QUANT_SCALE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, quantScaleDescPtr);
+    OP_CHECK_IF(
+        quantScaleDescPtr == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            (context_->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context_->GetNodeName()), "quant_scale"),
+        return ge::GRAPH_FAILED);
     auto quantOffsetDtype = quantOffsetDescPtr->GetDataType();
     auto quantScaleDtype = quantScaleDescPtr->GetDataType();
     OP_CHECK_IF(
@@ -282,12 +355,17 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckForStaticQuant()
     int64_t quantScaleColLen = 0;
     int64_t quantOffsetColLen = 0;
     OP_CHECK_IF(CheckStaticQuantShape(QUANT_SCALE_INDEX, quantScaleColLen, "quant_scale") != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "quant scale shape check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "quant scale shape check failed."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(CheckStaticQuantShape(QUANT_OFFSET_INDEX, quantOffsetColLen, "quant_offset") != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "quant offset shape check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "quant offset shape check failed."),
+                return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(quantScaleColLen != quantOffsetColLen,
-                OP_LOGE(context_->GetNodeName(), "quant offset shape is different from quant scale."),
+                OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+                    context_->GetNodeName(), "quant_scale,quant_offset",
+                    std::to_string(quantScaleColLen) + "," + std::to_string(quantOffsetColLen),
+                    "quant offset shape is different from quant scale."),
                 return ge::GRAPH_FAILED);
     if (quantScaleColLen == 1) {
         tilingData_.set_quantIsOne(1);
@@ -302,17 +380,20 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckForQuant()
 {
     // check and set quant scale dtype
     OP_CHECK_IF(CheckQuantScaleDtype() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "Check QuantScale Dtype failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check QuantScale Dtype failed."),
+                return ge::GRAPH_FAILED);
 
     // check quant offset and quant scale shape in dynamic scenario
     if (quantMode_ == QUANT_MODE_DYNAMIC) {
         OP_CHECK_IF(CheckForDynamicQuant() != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context_->GetNodeName(), "Check For Dynamic Quant failed."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check For Dynamic Quant failed."),
+                    return ge::GRAPH_FAILED);
     }
     // // check quant offset and quant scale shape in static scenario
     else {
         OP_CHECK_IF(CheckForStaticQuant() != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context_->GetNodeName(), "Check For Static Quant failed."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check For Static Quant failed."),
+                    return ge::GRAPH_FAILED);
     }
 
     return ge::GRAPH_SUCCESS;
@@ -328,7 +409,19 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckQuantScaleDtype()
         tilingData_.set_needSmoothScale(0);
     } else {
         auto quantScalePtr = context_->GetOptionalInputDesc(QUANT_SCALE_INDEX);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, quantScalePtr);
+        if (quantScalePtr == nullptr) {
+            const std::string msgOpName = std::string(
+                (context_->GetNodeName() == nullptr ? "dequant_swiglu_quant" : context_->GetNodeName()));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                                   "The optional input presence/shape was validated; the corresponding metadata must "
+                                   "exist in the Tiling context.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(),
+                                          "The optional input presence/shape was validated; the corresponding metadata "
+                                          "must exist in the Tiling context."}));
+            return ge::GRAPH_FAILED;
+        };
         tilingData_.set_needSmoothScale(1);
         auto quantScaleDtype = quantScalePtr->GetDataType();
         dtypeInValid = quantScaleDtype != ge::DT_FLOAT && quantScaleDtype != ge::DT_FLOAT16 &&
@@ -352,7 +445,19 @@ ge::graphStatus DequantSwigluQuantDskTiling::CheckQuantScaleDtype()
 ge::graphStatus DequantSwigluQuantDskTiling::GetAttr()
 {
     auto* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_swiglu_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto* attrActivateLeft = attrs->GetAttrPointer<bool>(ATTR_ACTIVATE_LEFT_INDEX);
     actRight_ = (attrActivateLeft == nullptr || *attrActivateLeft == false) ? 1 : 0;
@@ -510,7 +615,12 @@ ge::graphStatus DequantSwigluQuantDskTiling::GetShapeAttrsInfoInner()
     // 提前返回会使inDimx_/inDimy_/outDimy_未初始化，blockDim算出0
     // get 2H from x, get H from y, check if 2H can be divided by 64
     auto shapeX = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, shapeX);
+    OP_CHECK_IF(shapeX == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_swiglu_quant" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     const gert::Shape& inputShapeX = shapeX->GetStorageShape();
     int64_t inputShapeXTotalNum = inputShapeX.GetShapeSize();
     int64_t inputShapeXRank = inputShapeX.GetDimNum();
@@ -526,7 +636,19 @@ ge::graphStatus DequantSwigluQuantDskTiling::GetShapeAttrsInfoInner()
                                           "shape size greater than 0"),
                 return ge::GRAPH_FAILED);
     auto shapeY = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, shapeY);
+    if (shapeY == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "dequant_swiglu_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object shapeY is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object shapeY is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape& outputShapeY = shapeY->GetStorageShape();
     outDimy_ = outputShapeY.GetDim(inputShapeXRank - 1);
     OP_CHECK_IF(inDimy_ % (BLOCK_SIZE * SWI_FACTOR) != 0,
@@ -546,19 +668,20 @@ ge::graphStatus DequantSwigluQuantDskTiling::GetShapeAttrsInfoInner()
     }
 
     OP_CHECK_IF(CheckXAndGroupIndexDtype() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "dtype check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "dtype check failed."), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "get attr failed."),
+    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "get attr failed."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckForDequant() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "check for dequant failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckForDequant() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check for dequant failed."), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckForQuant() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "check for quant failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckForQuant() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check for quant failed."), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(CheckIllegalParam() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "check illegal param failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check illegal param failed."),
+                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -691,11 +814,16 @@ ge::graphStatus DequantSwigluQuantDskTiling::DoOpTiling()
         return ge::GRAPH_FAILED;
     }
     auto inputShapeX = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputShapeX);
+    OP_CHECK_IF(inputShapeX == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "dequant_swiglu_quant" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
 
     int64_t ubFactorDimx = 0;
     OP_CHECK_IF(CountMaxDim(ubFactorDimx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "Count MaxDim failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Count MaxDim failed."), return ge::GRAPH_FAILED);
 
     maxPreCore_ = (inDimx_ + ubFactorDimx - 1) / ubFactorDimx;
     maxPreCore_ = std::min(maxPreCore_, static_cast<int64_t>(PERFORMANCE_CORE_NUM));
@@ -778,23 +906,61 @@ ge::graphStatus TilingPrepareForDequantSwigluQuant(gert::TilingParseContext* con
 {
     OP_LOGD(context, "TilingPrepare4DequantSwigluQuant enter.");
     auto compileInfo = context->GetCompiledInfo<DequantSwigluQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "dequant_swiglu_quant" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object compileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "dequant_swiglu_quant" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object platformInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0),
-                OP_LOGE(context->GetNodeName(), "Get core num failed, core num: %u",
-                        static_cast<uint32_t>(compileInfo->coreNum)),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo->coreNum <= 0)) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "dequant_swiglu_quant" :
+                                           context->GetNodeName());
+        const std::string msgReason = std::string(
+            ("Get core num failed, core num: " + std::to_string(static_cast<uint32_t>(compileInfo->coreNum))));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = ubSize;
-    OP_CHECK_IF(
-        (compileInfo->ubSize <= 0),
-        OP_LOGE(context->GetNodeName(), "Get ub size failed, ub size: %u", static_cast<uint32_t>(compileInfo->ubSize)),
-        return ge::GRAPH_FAILED);
+    if ((compileInfo->ubSize <= 0)) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "dequant_swiglu_quant" :
+                                           context->GetNodeName());
+        const std::string msgReason = std::string(
+            ("Get ub size failed, ub size: " + std::to_string(static_cast<uint32_t>(compileInfo->ubSize))));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     OP_LOGD(context, "TilingPrepare4DequantSwigluQuant exit.");
     return ge::GRAPH_SUCCESS;

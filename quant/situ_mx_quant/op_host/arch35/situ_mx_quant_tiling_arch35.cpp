@@ -22,6 +22,9 @@
 #include "platform/platform_info.h"
 #include "op_host/tiling_util.h"
 #include "util/math_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace std;
 using namespace ge;
@@ -90,16 +93,42 @@ ge::graphStatus SituMxQuantRegbaseTiling::GetNpuInfo()
 {
     OP_LOGD(context_->GetNodeName(), "GetNpuInfo begin.");
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "situ_mx_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object platformInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo_.totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo_.totalCoreNum <= 0), OP_LOGE(context_->GetNodeName(), "Failed to get core num."),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo_.totalCoreNum <= 0)) {
+        const std::string msgOpName = (context_ == nullptr || context_->GetNodeName() == nullptr ?
+                                           "situ_mx_quant" :
+                                           context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Failed to get core num.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "Failed to get core num."}));
+        return ge::GRAPH_FAILED;
+    };
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo_.ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((compileInfo_.ubSize <= 0), OP_LOGE(context_->GetNodeName(), "Failed to get UB size."),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo_.ubSize <= 0)) {
+        const std::string msgOpName = (context_ == nullptr || context_->GetNodeName() == nullptr ?
+                                           "situ_mx_quant" :
+                                           context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Failed to get UB size.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "Failed to get UB size."}));
+        return ge::GRAPH_FAILED;
+    };
     OP_LOGI(context_->GetNodeName(), "CompileInfo: totalCoreNum=%ld, ubSize=%ld", compileInfo_.totalCoreNum,
             compileInfo_.ubSize);
     return ge::GRAPH_SUCCESS;
@@ -108,12 +137,26 @@ ge::graphStatus SituMxQuantRegbaseTiling::GetNpuInfo()
 ge::graphStatus SituMxQuantRegbaseTiling::ParseAttrs()
 {
     auto* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "situ_mx_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto* attrBeta = attrs->GetAttrPointer<float>(INDEX_ATTR_BETA);
     attrParam_.beta = (attrBeta != nullptr) ? *attrBeta : 1.0f;
     OP_CHECK_IF((attrParam_.beta <= 0.0f),
-                OP_LOGE(context_->GetNodeName(), "beta must be greater than 0, but got %f.", attrParam_.beta),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "beta", std::to_string(attrParam_.beta),
+                    ("beta must be greater than 0, but got " + std::to_string(attrParam_.beta) + ".")),
                 return ge::GRAPH_FAILED);
 
     auto* attrLinearBeta = attrs->GetAttrPointer<float>(INDEX_ATTR_LINEAR_BETA);
@@ -126,25 +169,28 @@ ge::graphStatus SituMxQuantRegbaseTiling::ParseAttrs()
     auto* attrAxis = attrs->GetAttrPointer<int64_t>(INDEX_ATTR_AXIS);
     attrParam_.axis = (attrAxis != nullptr) ? static_cast<int64_t>(*attrAxis) : -1;
     OP_CHECK_IF((attrParam_.axis != -1),
-                OP_LOGE(context_->GetNodeName(), "Only axis=-1 is supported currently, but got %ld.", attrParam_.axis),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "axis", std::to_string(attrParam_.axis),
+                    ("Only axis=-1 is supported currently, but got " + std::to_string(attrParam_.axis) + ".")),
                 return ge::GRAPH_FAILED);
 
     auto* attrDstType = attrs->GetAttrPointer<int64_t>(INDEX_ATTR_DST_TYPE);
     attrParam_.dstType = (attrDstType != nullptr) ? static_cast<int64_t>(*attrDstType) : DTYPE_40;
-    OP_CHECK_IF((attrParam_.dstType != DTYPE_35) && (attrParam_.dstType != DTYPE_36) &&
-                    (attrParam_.dstType != DTYPE_40) && (attrParam_.dstType != DTYPE_41),
-                OP_LOGE(context_->GetNodeName(),
-                        "Invalid dstType: %ld, only 35(E5M2), 36(E4M3FN), "
-                        "40(E2M1), 41(E1M2) supported.",
-                        attrParam_.dstType),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (attrParam_.dstType != DTYPE_35) && (attrParam_.dstType != DTYPE_36) && (attrParam_.dstType != DTYPE_40) &&
+            (attrParam_.dstType != DTYPE_41),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "dst_type", std::to_string(attrParam_.dstType),
+                                              ("Invalid dstType: " + std::to_string(attrParam_.dstType) +
+                                               ", only 35(E5M2), 36(E4M3FN), 40(E2M1), 41(E1M2) supported.")),
+        return ge::GRAPH_FAILED);
 
     // Parse round_mode
     const char* attrRoundMode = attrs->GetAttrPointer<char>(INDEX_ATTR_ROUND_MODE);
     string roundModeStr = (attrRoundMode != nullptr) ? attrRoundMode : "rint";
     auto roundModeEnum = GetRoundModeEnum(roundModeStr);
     OP_CHECK_IF((roundModeEnum == RoundModeList::MODE_UNDEFINED),
-                OP_LOGE(context_->GetNodeName(), "Invalid round_mode: %s", roundModeStr.c_str()),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "round_mode", roundModeStr,
+                                                      ("Invalid round_mode: " + std::string(roundModeStr.c_str()))),
                 return ge::GRAPH_FAILED);
     attrParam_.roundMode = roundModeStr;
     if (roundModeEnum == RoundModeList::MODE_FLOOR) {
@@ -156,11 +202,12 @@ ge::graphStatus SituMxQuantRegbaseTiling::ParseAttrs()
     }
 
     // FP8 output only supports rint
-    OP_CHECK_IF(
-        (attrParam_.dstType == DTYPE_35 || attrParam_.dstType == DTYPE_36) &&
-            (roundModeEnum != RoundModeList::MODE_RINT),
-        OP_LOGE(context_->GetNodeName(), "FP8 output requires round_mode=rint, but got %s.", roundModeStr.c_str()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((attrParam_.dstType == DTYPE_35 || attrParam_.dstType == DTYPE_36) &&
+                    (roundModeEnum != RoundModeList::MODE_RINT),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "round_mode", roundModeStr,
+                    ("FP8 output requires round_mode=rint, but got " + std::string(roundModeStr.c_str()) + ".")),
+                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -170,26 +217,34 @@ ge::graphStatus SituMxQuantRegbaseTiling::ValidateInput()
     auto xDtype = context_->GetInputDesc(0)->GetDataType();
     OP_CHECK_IF(
         (INPUT_SUPPORT_DTYPE_SET.find(xDtype) == INPUT_SUPPORT_DTYPE_SET.end()),
-        OP_LOGE(context_->GetNodeName(), "Input x dtype %d is not supported. Only FLOAT16 and BF16 are supported.",
-                static_cast<int>(xDtype)),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", std::to_string(static_cast<int>(xDtype)),
+                                              ("Input x dtype " + std::to_string(static_cast<int>(xDtype)) +
+                                               " is not supported. Only FLOAT16 and BF16 are supported.")),
         return ge::GRAPH_FAILED);
     inputInfo_.xDtype = xDtype;
 
     auto xShape = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShape);
+    OP_CHECK_IF(xShape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "situ_mx_quant" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     int64_t dimNum = static_cast<int64_t>(xShape->GetStorageShape().GetDimNum());
     OP_LOGI(context_->GetNodeName(), "Input x shape = %s", Shape2String(xShape->GetStorageShape()).c_str());
     int64_t xSize = xShape->GetStorageShape().GetShapeSize();
-    OP_CHECK_IF(
-        (dimNum < 1 || xSize == 0),
-        OP_LOGE(context_->GetNodeName(), "rank of x must >= 1, but is %ld, and not support empty tensor", dimNum),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((dimNum < 1 || xSize == 0),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context_->GetNodeName(), "x", std::to_string(dimNum),
+                    ("rank of x must >= 1, but is " + std::to_string(dimNum) + ", and not support empty tensor")),
+                return ge::GRAPH_FAILED);
     inputInfo_.dimNum = dimNum;
     inputInfo_.inputDim2 = xShape->GetStorageShape().GetDim(dimNum - 1);
-    OP_CHECK_IF(
-        (inputInfo_.inputDim2 % CONST_TWO != 0),
-        OP_LOGE(context_->GetNodeName(), "Last dimension must be divisible by 2, but got %ld.", inputInfo_.inputDim2),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((inputInfo_.inputDim2 % CONST_TWO != 0),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context_->GetNodeName(), "x", std::to_string(inputInfo_.inputDim2),
+                    ("Last dimension must be divisible by 2, but got " + std::to_string(inputInfo_.inputDim2) + ".")),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -197,19 +252,24 @@ ge::graphStatus SituMxQuantRegbaseTiling::ValidateOutput()
 {
     auto yDtype = context_->GetOutputDesc(0)->GetDataType();
     OP_CHECK_IF((Y_SUPPORT_DTYPE_SET.find(yDtype) == Y_SUPPORT_DTYPE_SET.end()),
-                OP_LOGE(context_->GetNodeName(), "Output y dtype %d is not supported.", static_cast<int>(yDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context_->GetNodeName(), "y", std::to_string(static_cast<int>(yDtype)),
+                    ("Output y dtype " + std::to_string(static_cast<int>(yDtype)) + " is not supported.")),
                 return ge::GRAPH_FAILED);
     outputInfo_.yDtype = yDtype;
     OP_CHECK_IF((static_cast<int64_t>(outputInfo_.yDtype) != attrParam_.dstType),
-                OP_LOGE(context_->GetNodeName(), "attr dst_type(%ld) does not match output y dtype(%ld)",
-                        attrParam_.dstType, static_cast<int64_t>(outputInfo_.yDtype)),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "dst_type", std::to_string(attrParam_.dstType),
+                    ("attr dst_type(" + std::to_string(attrParam_.dstType) + ") does not match output y dtype(" +
+                     std::to_string(static_cast<int64_t>(outputInfo_.yDtype)) + ")")),
                 return ge::GRAPH_FAILED);
 
     auto yScaleDtype = context_->GetOutputDesc(1)->GetDataType();
-    OP_CHECK_IF(
-        (SCALE_SUPPORT_DTYPE_SET.find(yScaleDtype) == SCALE_SUPPORT_DTYPE_SET.end()),
-        OP_LOGE(context_->GetNodeName(), "Output y_scale dtype %d is not supported.", static_cast<int>(yScaleDtype)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((SCALE_SUPPORT_DTYPE_SET.find(yScaleDtype) == SCALE_SUPPORT_DTYPE_SET.end()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context_->GetNodeName(), "y_scale", std::to_string(static_cast<int>(yScaleDtype)),
+                    ("Output y_scale dtype " + std::to_string(static_cast<int>(yScaleDtype)) + " is not supported.")),
+                return ge::GRAPH_FAILED);
     outputInfo_.yScaleDtype = yScaleDtype;
     return ge::GRAPH_SUCCESS;
 }
@@ -219,10 +279,25 @@ ge::graphStatus SituMxQuantRegbaseTiling::PreProcess()
     const gert::StorageShape* xShape = context_->GetInputShape(0);
     int64_t dimNum = inputInfo_.dimNum;
     const gert::StorageShape* yShape = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yShape);
+    if (yShape == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "situ_mx_quant" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object yShape is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yShape is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     int64_t yDimNum = static_cast<int64_t>(yShape->GetStorageShape().GetDimNum());
     OP_CHECK_IF((yDimNum != dimNum),
-                OP_LOGE(context_->GetNodeName(), "rank of yShape(%ld) must equal rank of xShape(%ld)", yDimNum, dimNum),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context_->GetNodeName(), "x,y", std::to_string(dimNum) + "," + std::to_string(yDimNum),
+                    ("rank of yShape(" + std::to_string(yDimNum) + ") must equal rank of xShape(" +
+                     std::to_string(dimNum) + ")")),
                 return ge::GRAPH_FAILED);
 
     outputInfo_.outputDim2 = yShape->GetStorageShape().GetDim(yDimNum - 1);
@@ -230,8 +305,10 @@ ge::graphStatus SituMxQuantRegbaseTiling::PreProcess()
     // FP4 output requires even last dim
     if (attrParam_.dstType == DTYPE_40 || attrParam_.dstType == DTYPE_41) {
         OP_CHECK_IF((outputInfo_.outputDim2 % CONST_TWO != 0),
-                    OP_LOGE(context_->GetNodeName(), "When dst_type is FP4, output last dim must be even, but got %ld.",
-                            outputInfo_.outputDim2),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        context_->GetNodeName(), "y", std::to_string(outputInfo_.outputDim2),
+                        ("When dst_type is FP4, output last dim must be even, but got " +
+                         std::to_string(outputInfo_.outputDim2) + ".")),
                     return ge::GRAPH_FAILED);
     }
 
@@ -307,10 +384,24 @@ ge::graphStatus SituMxQuantRegbaseTiling::CalculateTiling()
 ge::graphStatus SituMxQuantRegbaseTiling::FillTilingData()
 {
     tilingData_ = context_->GetTilingData<SituMxQuantTilingData>();
-    OP_CHECK_IF(tilingData_ == nullptr, OP_LOGE(context_->GetNodeName(), "get tilingdata ptr failed"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF((memset_s(tilingData_, sizeof(SituMxQuantTilingData), 0, sizeof(SituMxQuantTilingData)) != EOK),
-                OP_LOGE(context_->GetNodeName(), "memset tilingData failed"), return ge::GRAPH_FAILED);
+    if (tilingData_ == nullptr) {
+        const std::string msgOpName = (context_ == nullptr || context_->GetNodeName() == nullptr ?
+                                           "situ_mx_quant" :
+                                           context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "get tilingdata ptr failed");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "get tilingdata ptr failed"}));
+        return ge::GRAPH_FAILED;
+    };
+    if ((memset_s(tilingData_, sizeof(SituMxQuantTilingData), 0, sizeof(SituMxQuantTilingData)) != EOK)) {
+        const std::string msgOpName = (context_ == nullptr || context_->GetNodeName() == nullptr ?
+                                           "situ_mx_quant" :
+                                           context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "memset tilingData failed");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "memset tilingData failed"}));
+        return ge::GRAPH_FAILED;
+    };
 
     tilingData_->usedCoreNum = tilingResult_.usedCoreNum;
     tilingData_->inputDim0 = 1;
@@ -358,20 +449,20 @@ ge::graphStatus Tiling4SituMxQuant(gert::TilingContext* context)
     OP_LOGD(context->GetNodeName(), "Begin to do Tiling4SituMxQuant");
     SituMxQuantRegbaseTiling tiling(context);
 
-    OP_CHECK_IF(tiling.GetNpuInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "GetNpuInfo failed"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.ParseAttrs() != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "ParseAttrs failed"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.ValidateInput() != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "ValidateInput failed"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.ValidateOutput() != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "ValidateOutput failed"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.PreProcess() != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "PreProcess failed"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tiling.GetNpuInfo() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetNpuInfo failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tiling.ParseAttrs() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "ParseAttrs failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tiling.ValidateInput() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "ValidateInput failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tiling.ValidateOutput() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "ValidateOutput failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tiling.PreProcess() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "PreProcess failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(tiling.CalculateTiling() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CalculateTiling failed"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.FillTilingData() != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "FillTilingData failed"),
-                return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CalculateTiling failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tiling.FillTilingData() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "FillTilingData failed"), return ge::GRAPH_FAILED);
     tiling.SetTilingKeyAndCore();
     tiling.PrintTilingData();
 
@@ -380,7 +471,18 @@ ge::graphStatus Tiling4SituMxQuant(gert::TilingContext* context)
     size_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t usrWorkspaceSize = 0;
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
+    if (currentWorkspace == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_mx_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object currentWorkspace is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object currentWorkspace is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     *currentWorkspace = usrWorkspaceSize + sysWorkspaceSize;
 
     OP_LOGI(context->GetNodeName(), "End to do Tiling4SituMxQuant");

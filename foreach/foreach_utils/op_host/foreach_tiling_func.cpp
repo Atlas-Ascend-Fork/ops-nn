@@ -19,6 +19,10 @@
 #define AIR_CXX_RUNTIME_V2_OP_IMPL_FOREACH_COMMON_FUNC_H_
 
 #include "foreach_tiling_class.h"
+#include <string>
+#include <vector>
+#include "util/shape_util.h"
+#include "base/err_msg.h"
 
 namespace optiling {
 
@@ -42,7 +46,12 @@ static ge::graphStatus CheckAddcPointwiseListExactShape(gert::TilingContext* con
         const auto& shapeX1 = context->GetDynamicInputShape(0, i)->GetStorageShape();
         OP_CHECK_IF(shapeX1 != context->GetDynamicInputShape(1, i)->GetStorageShape() ||
                         shapeX1 != context->GetDynamicInputShape(2, i)->GetStorageShape(),
-                    OP_LOGE(context, "The shapes of the %u-th tensor in x1, x2 and x3 must be the same.", i),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), "x1,x2,x3",
+                        Ops::Base::ToString(shapeX1) + "," +
+                            Ops::Base::ToString(context->GetDynamicInputShape(1, i)->GetStorageShape()) + "," +
+                            Ops::Base::ToString(context->GetDynamicInputShape(2, i)->GetStorageShape()),
+                        ("The shapes of the " + std::to_string(i) + "-th tensor in x1, x2 and x3 must be the same.")),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -54,7 +63,7 @@ static ge::graphStatus Tiling4ForeachAddcPointwiseList(gert::TilingContext* cont
 {
     if (Ops::NN::OpTiling::IsRegbaseSocVersion(context)) {
         auto ret = Ops::NN::Optiling::TilingRegistry::GetInstance().DoTilingImpl(context);
-        OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE(context, "DoTilingImpl failed."), return ret);
+        OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context, "DoTilingImpl failed."), return ret);
         // 通用校验仅比元素数，补齐缺失的 x1/x2/x3 精确 shape 一致校验（对齐 A2）
         return CheckAddcPointwiseListExactShape(context);
     }
@@ -134,7 +143,13 @@ ge::graphStatus ForeachBaseClass::GetPlatformInfo()
                        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9202);
     } else {
         auto compileInfoPtr = context_->GetCompileInfo<ForeachSoloCompileInfo>();
-        OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context_, "compile info is null"), return ge::GRAPH_FAILED);
+        if (compileInfoPtr == nullptr) {
+            const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "compile info is null");
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), "compile info is null"}));
+            return ge::GRAPH_FAILED;
+        };
         socVersion = compileInfoPtr->socVersion;
         aicoreParams_.numBlocks = compileInfoPtr->numBlocks;
         aicoreParams_.ubSize = compileInfoPtr->ubSize;
@@ -179,10 +194,22 @@ static ge::graphStatus TilingPrepare4ForeachTiling([[maybe_unused]] gert::Tiling
 static ge::graphStatus TilingPrepare4ForeachScalarTiling(gert::TilingParseContext* context)
 {
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfoPtr == nullptr, OP_LOGE(context, "platformInfoPtr is null"), return ge::GRAPH_FAILED);
+    if (platformInfoPtr == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "platformInfoPtr is null");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "platformInfoPtr is null"}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto compileInfoPtr = context->GetCompiledInfo<ForeachCompileInfo>();
-    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context, "compileInfoPtr is null"), return ge::GRAPH_FAILED);
+    if (compileInfoPtr == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "compileInfoPtr is null");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "compileInfoPtr is null"}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     compileInfoPtr->coreNum = ascendcPlatform.GetCoreNum();

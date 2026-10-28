@@ -13,6 +13,9 @@
 #include "register/op_impl_registry.h"
 #include <list>
 #include <algorithm>
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 namespace ops {
@@ -124,26 +127,68 @@ static std::string ConcatString(const T& arg, const Ts&... arg_left)
 static ge::graphStatus InferShape4ReluV2(gert::InferShapeContext* context)
 {
     auto src_td = context->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, src_td);
+    OP_CHECK_IF(
+        src_td == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "relu_v2" : (context)->GetNodeName()), "x"),
+        return ge::GRAPH_FAILED);
     auto origin_format = src_td->GetOriginFormat();
     auto dtype = src_td->GetDataType();
     bool bint8 = (dtype == ge::DT_UINT8 || dtype == ge::DT_INT8);
     auto origin_shape = context->GetOptionalInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, origin_shape);
+    OP_CHECK_IF(
+        origin_shape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT((context->GetNodeName() == nullptr ? "relu_v2" : context->GetNodeName()), "x"),
+        return ge::GRAPH_FAILED);
     auto x_shape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "relu_v2" : (context)->GetNodeName()), "x"),
+        return ge::GRAPH_FAILED);
     auto y_shape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    if (y_shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "relu_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object y_shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object y_shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     OP_CHECK_IF(CheckShape(context, origin_shape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "Check shape failed!"), return ge::GRAPH_FAILED;);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Check shape failed!"), return ge::GRAPH_FAILED;);
     *y_shape = *x_shape;
     auto mask_shape = context->GetOutputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mask_shape);
+    if (mask_shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "relu_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object mask_shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object mask_shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optionalInfo;
-    OP_CHECK_IF(fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfo, optionalInfo) !=
-                    ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "Cannot get platform info!"), return ge::GRAPH_FAILED;);
+    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfo, optionalInfo) !=
+        ge::GRAPH_SUCCESS) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "relu_v2" :
+                                           context->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " + "Cannot get platform info!");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+        ;
+    };
     if (platformInfo.str_info.short_soc_version == "Ascend950" ||
         platformInfo.str_info.short_soc_version == "Ascend350" ||
         platformInfo.str_info.short_soc_version == "Ascend960DT") {
@@ -178,9 +223,18 @@ static ge::graphStatus InferDataType4ReluV2(gert::InferDataTypeContext* context)
     OP_LOGD(context->GetNodeName(), "ReluV2InferDataType begin");
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optionalInfo;
-    OP_CHECK_IF(fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfo, optionalInfo) !=
-                    ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "Cannot get platform info!"), return ge::GRAPH_FAILED;);
+    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfo, optionalInfo) !=
+        ge::GRAPH_SUCCESS) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "relu_v2" :
+                                           context->GetNodeName());
+        const std::string msgReason = (std::string(__func__) + ": " + "Cannot get platform info!");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+        ;
+    };
     auto inputDtype = context->GetInputDataType(0);
     context->SetOutputDataType(0, inputDtype);
     if (std::find(gUint1List.begin(), gUint1List.end(), platformInfo.str_info.short_soc_version) != gUint1List.end()) {

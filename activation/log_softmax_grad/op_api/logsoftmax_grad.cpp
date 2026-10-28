@@ -27,9 +27,10 @@ aclTensor* LogSoftmaxGrad(const aclTensor* grad_output, const aclTensor* output,
     auto dims = executor->AllocIntArray(newdim.data(), 1);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(LogSoftmaxGrad, OP_INPUT(grad_output, output), OP_OUTPUT(out),
                                            OP_ATTR(dims));
-    OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "LogSoftmaxGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
-             return nullptr);
+    OP_CHECK(
+        ret == ACLNN_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "LogSoftmaxGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+        return nullptr);
     return out;
 }
 
