@@ -16,6 +16,14 @@
 #include "layer_norm_grad_v3_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "LayerNormGradV3", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static const int64_t LNG_TMP_BUFFER_SIZE_0 = 64;
 static const int64_t LNG_TMP_BUFFER_SIZE_1 = 512;
 static const int64_t LNG_B32_DTYPE_SIZE = 4;
@@ -72,10 +80,11 @@ ge::graphStatus LayerNormGradV3SingleReadTiling::DoOpTiling()
                              LNG_TMP_BUFFER_SIZE_1 * LNG_CONSTANT_TWO) /
                             LNG_B32_DTYPE_SIZE / LNG_MAX_BUFFER_NUM;
     if (maxBufferSize < colAlignM) {
-        OP_LOGE(context_->GetNodeName(),
-                "LayerNormGradV3SingleReadTiling: ubSize (=%lu) and maxBufferSize (=%ld) is less than colAlignM(=%ld) "
-                "please check.",
-                commonParams.ubSizePlatForm, maxBufferSize, colAlignM);
+        OP_LOGE_WITHOUT_REPORT(
+            context_->GetNodeName(),
+            "LayerNormGradV3SingleReadTiling: ubSize (=%lu) and maxBufferSize (=%ld) is less than colAlignM(=%ld) "
+            "please check.",
+            commonParams.ubSizePlatForm, maxBufferSize, colAlignM);
         return ge::GRAPH_FAILED;
     }
     int64_t ubFormer = maxBufferSize / colAlignM;

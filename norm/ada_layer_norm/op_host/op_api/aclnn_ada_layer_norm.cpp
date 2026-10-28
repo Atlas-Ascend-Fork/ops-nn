@@ -17,8 +17,25 @@
 #include "opdev/make_op_executor.h"
 #include "ada_layer_norm.h"
 #include "aclnn_ada_layer_norm.h"
+#include "log/log.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,10 +49,10 @@ static const std::initializer_list<op::DataType> DTYPE_SUPPORT_LIST = {op::DataT
 
 static bool CheckNotNull(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLayerNormOutputTensor& outputTensor)
 {
-    OP_CHECK_NULL(inputTensor.x, return false);
-    OP_CHECK_NULL(inputTensor.scale, return false);
-    OP_CHECK_NULL(inputTensor.shift, return false);
-    OP_CHECK_NULL(outputTensor.out, return false);
+    OP_CHECK(inputTensor.x != nullptr, ReportNullPointerError(__func__, "inputTensor.x"), return false);
+    OP_CHECK(inputTensor.scale != nullptr, ReportNullPointerError(__func__, "inputTensor.scale"), return false);
+    OP_CHECK(inputTensor.shift != nullptr, ReportNullPointerError(__func__, "inputTensor.shift"), return false);
+    OP_CHECK(outputTensor.out != nullptr, ReportNullPointerError(__func__, "outputTensor.out"), return false);
     return true;
 }
 
@@ -72,7 +89,8 @@ static bool CheckShape(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLaye
 {
     int64_t xDim = inputTensor.x->GetViewShape().GetDimNum();
     OP_CHECK(xDim >= MIN_X_DIM && xDim <= MAX_X_DIM,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "input x dim num should be between 2 and 8."), return false);
+             OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAdaLayerNorm", "x", std::to_string(xDim).c_str(), "between 2 and 8"),
+             return false);
 
     op::Shape xShape = inputTensor.x->GetViewShape();
     int64_t B = 1;
@@ -88,7 +106,11 @@ static bool CheckShape(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLaye
     expectShape1.AppendDim(1);
     expectShape1.AppendDim(H);
     expectShape2.AppendDim(H);
-    OP_CHECK(B > 0 && S > 0 && H > 0, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x sizes should greater than 0."), return false);
+    OP_CHECK(B > 0 && S > 0 && H > 0,
+             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnAdaLayerNorm", "x",
+                                                   op::ToString(inputTensor.x->GetViewShape()).GetString(),
+                                                   "x sizes should be greater than 0"),
+             return false);
 
     op::Shape scaleShape = inputTensor.scale->GetViewShape();
     op::Shape shiftShape = inputTensor.shift->GetViewShape();
@@ -100,19 +122,43 @@ static bool CheckShape(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLaye
     }
     if (inputTensor.weightOptional != nullptr) {
         op::Shape weightExpectShape = {H};
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(inputTensor.weightOptional, weightExpectShape, return false);
+        OP_CHECK(inputTensor.weightOptional->GetViewShape() == weightExpectShape,
+                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                     "aclnnAdaLayerNorm", "inputTensor.weightOptional",
+                     op::ToString(inputTensor.weightOptional->GetViewShape()).GetString(),
+                     "shape of inputTensor.weightOptional should be the same as weightExpectShape"),
+                 return false);
     }
     if (inputTensor.biasOptional != nullptr) {
         op::Shape biasExpectShape = {H};
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(inputTensor.biasOptional, biasExpectShape, return false);
+        OP_CHECK(inputTensor.biasOptional->GetViewShape() == biasExpectShape,
+                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                     "aclnnAdaLayerNorm", "inputTensor.biasOptional",
+                     op::ToString(inputTensor.biasOptional->GetViewShape()).GetString(),
+                     "shape of inputTensor.biasOptional should be the same as biasExpectShape"),
+                 return false);
     }
-    OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(outputTensor.out, xShape, return false);
+    OP_CHECK(outputTensor.out->GetViewShape() == xShape,
+             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnAdaLayerNorm", "outputTensor.out",
+                                                   op::ToString(outputTensor.out->GetViewShape()).GetString(),
+                                                   "shape of outputTensor.out should be the same as xShape"),
+             return false);
     xShape[xDim - 1] = 1;
     if (outputTensor.meanOutOptional != nullptr) {
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(outputTensor.meanOutOptional, xShape, return false);
+        OP_CHECK(outputTensor.meanOutOptional->GetViewShape() == xShape,
+                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                     "aclnnAdaLayerNorm", "outputTensor.meanOutOptional",
+                     op::ToString(outputTensor.meanOutOptional->GetViewShape()).GetString(),
+                     "shape of outputTensor.meanOutOptional should be the same as xShape"),
+                 return false);
     }
     if (outputTensor.rstdOutOptional != nullptr) {
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(outputTensor.rstdOutOptional, xShape, return false);
+        OP_CHECK(outputTensor.rstdOutOptional->GetViewShape() == xShape,
+                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                     "aclnnAdaLayerNorm", "outputTensor.rstdOutOptional",
+                     op::ToString(outputTensor.rstdOutOptional->GetViewShape()).GetString(),
+                     "shape of outputTensor.rstdOutOptional should be the same as xShape"),
+                 return false);
     }
     return true;
 }

@@ -28,8 +28,25 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "op_api/aclnn_util.h"
+#include "log/log.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -54,12 +71,12 @@ inline static bool CheckNotNull(const aclTensor* gradOut, const aclTensor* input
                                 const aclTensor* mean, const aclTensor* rstd, const aclBoolArray* outputMask)
 {
     // 校验输入是否为空指针
-    OP_CHECK_NULL(gradOut, return false);
-    OP_CHECK_NULL(input, return false);
-    OP_CHECK_NULL(normalizedShape, return false);
-    OP_CHECK_NULL(mean, return false);
-    OP_CHECK_NULL(rstd, return false);
-    OP_CHECK_NULL(outputMask, return false);
+    OP_CHECK(gradOut != nullptr, ReportNullPointerError(__func__, "gradOut"), return false);
+    OP_CHECK(input != nullptr, ReportNullPointerError(__func__, "input"), return false);
+    OP_CHECK(normalizedShape != nullptr, ReportNullPointerError(__func__, "normalizedShape"), return false);
+    OP_CHECK(mean != nullptr, ReportNullPointerError(__func__, "mean"), return false);
+    OP_CHECK(rstd != nullptr, ReportNullPointerError(__func__, "rstd"), return false);
+    OP_CHECK(outputMask != nullptr, ReportNullPointerError(__func__, "outputMask"), return false);
     return true;
 }
 
@@ -154,9 +171,9 @@ static bool CheckDimLimitsAndNormalizedRange(const aclTensor* gradOut, const acl
 
     // 2.检查normalizedShape的长度是否大于等于1
     if (normalizedShape->Size() < LEAST_NORMALIZED_SHAPE_LEN) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnLayerNormBackward normalizedShape len [%zu] to be greater than [%zu] but check failed.",
-                normalizedShape->Size(), LEAST_NORMALIZED_SHAPE_LEN);
+        OP_LOGE_FOR_INVALID_LISTSIZE("aclnnLayerNormBackward", "normalizedShape",
+                                     std::to_string(normalizedShape->Size()).c_str(),
+                                     std::to_string(LEAST_NORMALIZED_SHAPE_LEN).c_str());
         return false;
     }
     // 3.检查input维度是否不小于normalizedShape的长度
@@ -199,29 +216,45 @@ static bool CheckShape(const aclTensor* gradOut, const aclTensor* input, const a
         return false;
     }
 
-    OP_CHECK_SHAPE_NOT_EQUAL(gradOut, input, return false);
+    OP_CHECK(gradOut->GetViewShape() == input->GetViewShape(),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnLayerNormBackward", "gradOut,input",
+                                                    (std::string(op::ToString(gradOut->GetViewShape()).GetString()) +
+                                                     ", " + op::ToString(input->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shapes of gradOut and input should be the same"),
+             return false);
     // 8.校验mean和rstd的shape是否相等
-    OP_CHECK_SHAPE_NOT_EQUAL(mean, rstd, return false);
+    OP_CHECK(mean->GetViewShape() == rstd->GetViewShape(),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnLayerNormBackward", "mean,rstd",
+                                                    (std::string(op::ToString(mean->GetViewShape()).GetString()) +
+                                                     ", " + op::ToString(rstd->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shapes of mean and rstd should be the same"),
+             return false);
     if (mean->GetViewShape().GetShapeSize() != M) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnLayerNormBackward mean shape size %s to be equal to %ld but check failed.",
-                ToString(mean->GetViewShape()).GetString(), M);
+        OP_LOGE_FOR_INVALID_SHAPESIZE("aclnnLayerNormBackward", "mean", ToString(mean->GetViewShape()).GetString(),
+                                      std::to_string(M).c_str());
         return false;
     }
     // 9.校验输出shape间的关系
     if ((*outputMask)[GRAD_INPUT_INDEX]) {
-        OP_CHECK_SHAPE_NOT_EQUAL(gradInputOut, input, return false);
+        OP_CHECK(gradInputOut->GetViewShape() == input->GetViewShape(),
+                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                     "aclnnLayerNormBackward", "gradInputOut,input",
+                     (std::string(op::ToString(gradInputOut->GetViewShape()).GetString()) + ", " +
+                      op::ToString(input->GetViewShape()).GetString())
+                         .c_str(),
+                     "shapes of gradInputOut and input should be the same"),
+                 return false);
     }
     if ((*outputMask)[GRAD_WEIGHT_INDEX] && gradWeightOut->GetViewShape().GetShapeSize() != N) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnLayerNormBackward gradWeightOut shape size [%s] to be equal to [%ld] but check failed.",
-                ToString(gradWeightOut->GetViewShape()).GetString(), N);
+        OP_LOGE_FOR_INVALID_SHAPESIZE("aclnnLayerNormBackward", "gradWeightOut",
+                                      ToString(gradWeightOut->GetViewShape()).GetString(), std::to_string(N).c_str());
         return false;
     }
     if ((*outputMask)[GRAD_BIAS_INDEX] && gradBiasOut->GetViewShape().GetShapeSize() != N) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnLayerNormBackward gradBiasOut shape size [%s] to be equal to [%ld] but check failed.",
-                ToString(gradBiasOut->GetViewShape()).GetString(), N);
+        OP_LOGE_FOR_INVALID_SHAPESIZE("aclnnLayerNormBackward", "gradBiasOut",
+                                      ToString(gradBiasOut->GetViewShape()).GetString(), std::to_string(N).c_str());
         return false;
     }
     return true;
@@ -275,18 +308,21 @@ aclnnStatus aclnnLayerNormBackwardGetWorkspaceSize(const aclTensor* gradOut, con
     CHECK_RET(CheckNotNull(gradOut, input, normalizedShape, mean, rstd, outputMask), ACLNN_ERR_PARAM_NULLPTR);
     // outputMask长度只能为3
     if (outputMask->Size() != NORMALIZE_LEN) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected aclnnLayerNormBackward outputMask len to be 3, but got %zu.",
-                outputMask->Size());
+        OP_LOGE_FOR_INVALID_LISTSIZE("aclnnLayerNormBackward", "outputMask", std::to_string(outputMask->Size()).c_str(),
+                                     "3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((*outputMask)[GRAD_INPUT_INDEX]) {
-        OP_CHECK_NULL(gradInputOut, return ACLNN_ERR_PARAM_NULLPTR);
+        OP_CHECK(gradInputOut != nullptr, ReportNullPointerError(__func__, "gradInputOut"),
+                 return ACLNN_ERR_PARAM_NULLPTR);
     }
     if ((*outputMask)[GRAD_WEIGHT_INDEX]) {
-        OP_CHECK_NULL(gradWeightOut, return ACLNN_ERR_PARAM_NULLPTR);
+        OP_CHECK(gradWeightOut != nullptr, ReportNullPointerError(__func__, "gradWeightOut"),
+                 return ACLNN_ERR_PARAM_NULLPTR);
     }
     if ((*outputMask)[GRAD_BIAS_INDEX]) {
-        OP_CHECK_NULL(gradBiasOut, return ACLNN_ERR_PARAM_NULLPTR);
+        OP_CHECK(gradBiasOut != nullptr, ReportNullPointerError(__func__, "gradBiasOut"),
+                 return ACLNN_ERR_PARAM_NULLPTR);
     }
     // 根据input_shape和normalizedShape的关系进行校验和后处理
     auto inputShape = input->GetViewShape();

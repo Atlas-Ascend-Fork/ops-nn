@@ -19,6 +19,14 @@
 
 using namespace ge;
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "BatchNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 constexpr int64_t VL_DOUBLE = 2;
 
 static std::vector<std::array<ge::DataType, INPUT_NUM>> validInferInputDtype = {
@@ -78,7 +86,11 @@ void BatchNormGradInferBase::CalcBasicInfo()
 ge::graphStatus BatchNormGradInferBase::GetPlatformInfo()
 {
     auto compileInfo = static_cast<const BatchNormGradCompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     blockSize_ = compileInfo->blockSize;
     vlFp32_ = compileInfo->vlFp32;
     vlFp16_ = vlFp32_ * VL_DOUBLE;
@@ -111,26 +123,55 @@ const gert::Shape& BatchNormGradInferBase::EnsureNotScalar(const gert::Shape& in
 ge::graphStatus BatchNormGradInferBase::CheckBigShapesFormatValid()
 {
     auto dyDesc = context_->GetInputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y_backprop",
+                                                 "the input desc of required input y_backprop is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto dyFormat = dyDesc->GetFormat().GetStorageFormat();
     auto dyShape = context_->GetInputShape(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyShape);
+    OP_CHECK_IF(dyShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "y_backprop",
+                    "the input shape of required input y_backprop is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto dyStorageShape = EnsureNotScalar(dyShape->GetStorageShape());
     int64_t dyDimNum = dyStorageShape.GetDimNum();
 
     auto xDesc = context_->GetInputDesc(INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
+    OP_CHECK_IF(
+        xDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input desc of required input x is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto xFormat = xDesc->GetFormat().GetStorageFormat();
     auto xShape = context_->GetInputShape(INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto xStorageShape = EnsureNotScalar(xShape->GetStorageShape());
     int64_t xDimNum = xStorageShape.GetDimNum();
 
     auto dxDesc = context_->GetOutputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxDesc);
+    OP_CHECK_IF(dxDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "x_backprop",
+                    "the output desc of required output x_backprop is missing in the tiling context; check that the "
+                    "graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto dxFormat = dxDesc->GetFormat().GetStorageFormat();
     auto dxShape = context_->GetOutputShape(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxShape);
+    OP_CHECK_IF(dxShape == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "the output shape of x_backprop is missing in the tiling context; check that "
+                                       "InferShape executed and the framework propagated the output shapes"),
+                return ge::GRAPH_FAILED);
     auto dxStorageShape = EnsureNotScalar(dxShape->GetStorageShape());
     int64_t dxDimNum = dxStorageShape.GetDimNum();
 
@@ -201,15 +242,30 @@ ge::graphStatus BatchNormGradInferBase::CheckBigShapesFormatValid()
 ge::graphStatus BatchNormGradInferBase::CheckSmallShapesValid()
 {
     auto weightDesc = context_->GetInputDesc(INDEX_2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weightDesc);
+    OP_CHECK_IF(
+        weightDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale",
+                                                 "the input desc of required input scale is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     weightDtype_ = weightDesc->GetDataType();
     auto dyDesc = context_->GetInputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y_backprop",
+                                                 "the input desc of required input y_backprop is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     dyDtype_ = dyDesc->GetDataType();
 
     for (int i = INDEX_2; i <= INDEX_4; i++) {
         auto shape = context_->GetInputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, shape);
+        OP_CHECK_IF(
+            shape == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), inputParamNames[i],
+                                                     "the input shape of a required input is missing in the tiling "
+                                                     "context; check that the graph node provides all required inputs"),
+            return ge::GRAPH_FAILED);
         auto storageShape = shape->GetStorageShape();
         if (storageShape.GetDimNum() != 1) {
             OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), inputParamNames[i],
@@ -229,7 +285,12 @@ ge::graphStatus BatchNormGradInferBase::CheckSmallShapesValid()
 
     for (int i = INDEX_1; i <= INDEX_2; i++) {
         auto shape = context_->GetOutputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, shape);
+        OP_CHECK_IF(
+            shape == nullptr,
+            ReportTilingStageError(context_->GetNodeName(),
+                                   "the output shape of a required output is missing in the tiling context; check that "
+                                   "InferShape executed and the framework propagated the output shapes"),
+            return ge::GRAPH_FAILED);
         auto storageShape = shape->GetStorageShape();
 
         if (storageShape.GetDimNum() != 1) {
@@ -259,7 +320,12 @@ ge::graphStatus BatchNormGradInferBase::CheckDtypeValid()
             if (i == INPUT_NUM - 1 && inputDesc == nullptr) {
                 continue;
             }
-            OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+            OP_CHECK_IF(inputDesc == nullptr,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            context_->GetNodeName(), inputParamNames[i],
+                            "the input desc of a required input is missing in the tiling context; check that the graph "
+                            "node provides all required inputs"),
+                        return ge::GRAPH_FAILED);
             auto dtype = inputDesc->GetDataType();
             if (dtype != dtypeList[i]) {
                 invalid = true;
@@ -301,21 +367,46 @@ ge::graphStatus BatchNormGradInferBase::CheckDtypeValid()
                 return ge::GRAPH_FAILED);
 
     auto weightDesc = context_->GetInputDesc(PARAM_INPUT_WEIGHT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weightDesc);
+    OP_CHECK_IF(
+        weightDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale",
+                                                 "the input desc of required input scale is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     weightDtype_ = weightDesc->GetDataType();
 
     auto runningVarDesc = context_->GetInputDesc(PARAM_INPUT_RUNNINGVAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runningVarDesc);
+    OP_CHECK_IF(runningVarDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "reserve_space_2",
+                    "the input desc of required input reserve_space_2 is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     runningVarDtype_ = runningVarDesc->GetDataType();
 
     auto dxDesc = context_->GetOutputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxDesc);
+    OP_CHECK_IF(dxDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "x_backprop",
+                    "the output desc of required output x_backprop is missing in the tiling context; check that the "
+                    "graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     ge::DataType dxDtype = dxDesc->GetDataType();
     auto dweightDesc = context_->GetOutputDesc(INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dweightDesc);
+    OP_CHECK_IF(dweightDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "scale_backprop",
+                    "the output desc of required output scale_backprop is missing in the tiling context; check that "
+                    "the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     ge::DataType dweightDtype = dweightDesc->GetDataType();
     auto dbiasDesc = context_->GetOutputDesc(INDEX_2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dbiasDesc);
+    OP_CHECK_IF(dbiasDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "offset_backprop",
+                    "the output desc of required output offset_backprop is missing in the tiling context; check that "
+                    "the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     ge::DataType dbiasDtype = dbiasDesc->GetDataType();
     if (dxDtype != dyDtype_) {
         std::string dtypesStr = ge::TypeUtils::DataTypeToSerialString(dxDtype) + " and " +
@@ -344,12 +435,17 @@ ge::graphStatus BatchNormGradInferBase::CheckDtypeValid()
 ge::graphStatus BatchNormGradInferBase::GetShapeAttrsInfo()
 {
     if (context_ == nullptr) {
-        OP_LOGE("BatchNormGradInferBase", "TilingContext is nullptr.");
+        ReportTilingStageError("BatchNormGrad",
+                               "GetShapeAttrsInfo: TilingContext is null; the tiling framework contract is broken");
         return ge::GRAPH_FAILED;
     }
 
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
 
     const bool* isTrainingPtr = attrs->GetBool(PARAM_ATTRS_ISTRAING_INDEX);
     bool isTraining = (isTrainingPtr == nullptr) ? true : *isTrainingPtr;
@@ -376,17 +472,17 @@ ge::graphStatus BatchNormGradInferBase::GetShapeAttrsInfo()
     }
 
     // 大shape shape和format检查
-    OP_CHECK_IF(CheckBigShapesFormatValid() != ge::GRAPH_SUCCESS, OP_LOGE(context_, "Check shape or format error."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckBigShapesFormatValid() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_, "Check shape or format error."), return ge::GRAPH_FAILED);
 
     auto ret = GetDyInfo();
-    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE(context_, "GetShapeAttrsInfo failed."), return ret);
+    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_, "GetDyInfo failed."), return ret);
 
     // 小shape 校验
-    OP_CHECK_IF(CheckSmallShapesValid() != ge::GRAPH_SUCCESS, OP_LOGE(context_, "Input small shapes are invalid."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckSmallShapesValid() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_, "Input small shapes are invalid."), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckDtypeValid() != ge::GRAPH_SUCCESS, OP_LOGE(context_, "Input dtypes are invalid."),
+    OP_CHECK_IF(CheckDtypeValid() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_, "Input dtypes are invalid."),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -394,10 +490,20 @@ ge::graphStatus BatchNormGradInferBase::GetShapeAttrsInfo()
 ge::graphStatus BatchNormGradInferBase::GetDyInfo()
 {
     auto dyDesc = context_->GetInputDesc(PARAM_INPUT_DY);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y_backprop",
+                                                 "the input desc of required input y_backprop is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     dyDtype_ = dyDesc->GetDataType();
     auto dyShape = context_->GetInputShape(PARAM_INPUT_DY);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyShape);
+    OP_CHECK_IF(dyShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "y_backprop",
+                    "the input shape of required input y_backprop is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto dyStorageShape = dyShape->GetStorageShape();
     dyDimNum_ = dyStorageShape.GetDimNum();
 

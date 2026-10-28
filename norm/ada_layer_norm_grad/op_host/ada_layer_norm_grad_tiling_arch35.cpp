@@ -80,7 +80,12 @@ static inline int64_t FloorAlign(int64_t value, int64_t factor)
 static bool AdaLayerNormGradArch35CheckScaleShape(const gert::TilingContext* context, const gert::Shape& dyShape)
 {
     auto scaleShapePtr = context->GetInputShape(4);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scaleShapePtr);
+    OP_CHECK_IF(
+        scaleShapePtr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "scale",
+                                                 "the input shape of required input scale is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     const gert::Shape& scaleShape = scaleShapePtr->GetStorageShape();
     const int64_t dyDim = dyShape.GetDimNum();
     if (dyDim < 2) {
@@ -119,7 +124,12 @@ static bool AdaLayerNormGradArch35CheckReduceShape(const gert::TilingContext* co
                                                    size_t inputIndex, const char* inputName)
 {
     auto shapePtr = context->GetInputShape(inputIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
+    OP_CHECK_IF(
+        shapePtr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), inputName,
+                                                 "the input shape of a required input is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     const gert::Shape& shape = shapePtr->GetStorageShape();
     const int64_t dyDim = dyShape.GetDimNum();
     bool ok = (shape.GetDimNum() == dyDim) && (shape.GetDim(dyDim - 1) == 1);
@@ -149,7 +159,12 @@ ge::graphStatus AdaLayerNormGradArch35Tiling::DoOpTiling()
     const int64_t coreNum = static_cast<int64_t>(commonParams.coreNum);
 
     auto dyShapePtr = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyShapePtr);
+    OP_CHECK_IF(
+        dyShapePtr == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input shape of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     const gert::Shape& dyShape = dyShapePtr->GetStorageShape();
     if (!AdaLayerNormGradArch35CheckScaleShape(context_, dyShape) ||
         !AdaLayerNormGradArch35CheckReduceShape(context_, dyShape, 2, "rstd") ||

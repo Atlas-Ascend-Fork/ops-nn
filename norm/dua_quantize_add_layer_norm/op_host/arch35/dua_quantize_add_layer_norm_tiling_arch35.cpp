@@ -26,8 +26,14 @@
 #include "graph/utils/type_utils.h"               // ge::TypeUtils::DataTypeToSerialString
 
 namespace optiling {
-
 namespace {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "DuaQuantizeAddLayerNorm", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
 // 固定 cacheBuf 字节数：与 kernel 侧 base.h/group.h 的 InitBuffer(cacheBuf_, td->cacheBufUbSize) 消费点
 // 必须严格一致，只改一处会让 UB 预算（ubAvail）与 kernel 实际申请量静默失配。
 constexpr int64_t kCacheBufBytes = 16 * 1024;
@@ -247,7 +253,10 @@ static ge::graphStatus CheckSupported(gert::TilingContext* context)
     // with that defined in the operator prototype OpDef"），到不了本函数。保留作防御，勿当主校验。
     // Dtype/Format 一律取 desc：GetInputTensor 在某些场景下可能返回无效数据
     const auto* x1Desc = context->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x1Desc); // 防御：框架未下发必选输入，非用户可触发
+    // 防御：框架未下发必选输入/输出，非用户可触发（保持仅记日志, 不再隐式生成E9内部码）
+    OP_CHECK_IF(x1Desc == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "x1 desc is null (defensive, framework contract)"),
+                return ge::GRAPH_FAILED);
     const ge::DataType refDt = x1Desc->GetDataType();
     if (refDt != ge::DT_FLOAT16 && refDt != ge::DT_BF16 && refDt != ge::DT_FLOAT) {
         OP_LOGE_FOR_INVALID_DTYPE(opName, "x1", ge::TypeUtils::DataTypeToSerialString(refDt).c_str(),
@@ -280,7 +289,10 @@ static ge::graphStatus CheckSupported(gert::TilingContext* context)
 
     // —— 2. 维度校验：rank ∉ [1,8] → FAIL；rank=0 标量按 {1} 处理（EnsureNotScalar）——
     const gert::StorageShape* s1 = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, s1); // 防御：框架未下发必选输入，非用户可触发
+    // 防御：框架未下发必选输入，非用户可触发（保持仅记日志, 不再隐式生成E9内部码）
+    OP_CHECK_IF(s1 == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "x1 shape is null (defensive, framework contract)"),
+                return ge::GRAPH_FAILED);
     const gert::Shape& x1Shape = EnsureNotScalar(s1->GetStorageShape());
     const size_t rank = x1Shape.GetDimNum();
     if (rank > 8) {
@@ -301,7 +313,10 @@ static ge::graphStatus CheckSupported(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
     const gert::StorageShape* s2 = context->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, s2); // 防御：框架未下发必选输入，非用户可触发
+    // 防御：框架未下发必选输入，非用户可触发（保持仅记日志, 不再隐式生成E9内部码）
+    OP_CHECK_IF(s2 == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "x2 shape is null (defensive, framework contract)"),
+                return ge::GRAPH_FAILED);
     if (EnsureNotScalar(s2->GetStorageShape()) != x1Shape) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(opName, "x2", ShapeToStr(s2->GetStorageShape()).c_str(),
                                                "x2.shape must equal x1.shape");
@@ -331,14 +346,22 @@ static ge::graphStatus CheckSupported(gert::TilingContext* context)
     //         **dtype 分支为防御性**——OpDef 已声明输出 dtype，违规在框架层先被拦。
     for (int32_t i = 0; i < 3; ++i) {
         const gert::StorageShape* os = context->GetOutputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, os); // 防御：框架未下发必选输出，非用户可触发
+        // 防御：框架未下发必选输出，非用户可触发（保持仅记日志, 不再隐式生成E9内部码）
+        OP_CHECK_IF(
+            os == nullptr,
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "output shape is null (defensive, framework contract)"),
+            return ge::GRAPH_FAILED);
         if (EnsureNotScalar(os->GetStorageShape()) != x1Shape) {
             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(opName, kOutNames[i], ShapeToStr(os->GetStorageShape()).c_str(),
                                                    "output shape must equal x1.shape");
             return ge::GRAPH_FAILED;
         }
-        const auto* od = context->GetOutputDesc(i);              // const gert::CompileTimeTensorDesc*
-        OP_CHECK_NULL_WITH_CONTEXT(context, od);                 // 防御，同上
+        const auto* od = context->GetOutputDesc(i); // const gert::CompileTimeTensorDesc*
+        // 防御，同上（保持仅记日志, 不再隐式生成E9内部码）
+        OP_CHECK_IF(
+            od == nullptr,
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "output desc is null (defensive, framework contract)"),
+            return ge::GRAPH_FAILED);
         const ge::DataType want = (i < 2) ? ge::DT_INT8 : refDt; // y1/y2 固定 INT8；x 随 x1
         const ge::DataType got = od->GetDataType();
         if (got != want) {
@@ -358,7 +381,10 @@ static ge::graphStatus CheckSupported(gert::TilingContext* context)
 static ge::graphStatus PreProcessFuseAxis(gert::TilingContext* context, PreInfo& pp, bool& isEmpty)
 {
     const gert::StorageShape* ss = context->GetInputShape(0); // x1
-    OP_CHECK_NULL_WITH_CONTEXT(context, ss);
+    // 防御：框架未下发必选输入，非用户可触发（保持仅记日志, 不再隐式生成E9内部码）
+    OP_CHECK_IF(ss == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "x1 shape is null (defensive, framework contract)"),
+                return ge::GRAPH_FAILED);
     // rank=0 标量按 {1} 处理（与 CheckSupported 同口径），故 rank 恒 >= 1
     const gert::Shape& s = EnsureNotScalar(ss->GetStorageShape());
     const size_t rank = s.GetDimNum();
@@ -611,7 +637,9 @@ static bool DuaQuantizeAddLayerNormGroupTiling(gert::TilingContext* context,
     auto* td = context->GetTilingData<DuaQuantizeAddLayerNormTilingData>();
     if (td == nullptr) {
         // 本函数返回 bool，失败必须返回 false：ge::GRAPH_FAILED 非 0，转 bool 会被当作「命中」
-        OP_LOGE(context, "DuaQuantizeAddLayerNorm: group branch tiling data buffer is null or too small");
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "the group branch tiling data buffer is null or too small; check the TilingContext construction");
         return false;
     }
     FillTilingData(td, pp, v, epsilon, hasZp1, hasZp2);
@@ -642,7 +670,9 @@ static bool DuaQuantizeAddLayerNormBaseTiling(gert::TilingContext* context,
     auto* td = context->GetTilingData<DuaQuantizeAddLayerNormTilingData>();
     if (td == nullptr) {
         // 本函数返回 bool，失败必须返回 false：ge::GRAPH_FAILED 非 0，转 bool 会被当作「命中」
-        OP_LOGE(context, "DuaQuantizeAddLayerNorm: base branch tiling data buffer is null or too small");
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "the base branch tiling data buffer is null or too small; check the TilingContext construction");
         return false;
     }
     FillTilingData(td, pp, v, epsilon, hasZp1, hasZp2);
@@ -709,7 +739,9 @@ ge::graphStatus TilingFuncDuaQuantizeAddLayerNorm(gert::TilingContext* context)
     if (isEmpty) {
         auto* emptyTd = context->GetTilingData<DuaQuantizeAddLayerNormEmptyTilingData>();
         if (emptyTd == nullptr) {
-            OP_LOGE(context, "DuaQuantizeAddLayerNorm: empty branch tiling data buffer is null or too small");
+            ReportTilingStageError(
+                context->GetNodeName(),
+                "the empty branch tiling data buffer is null or too small; check the TilingContext construction");
             return ge::GRAPH_FAILED;
         }
         emptyTd->usedCoreNum = 0;
@@ -758,7 +790,10 @@ ge::graphStatus TilingFuncDuaQuantizeAddLayerNorm(gert::TilingContext* context)
         return ge::GRAPH_SUCCESS;
     }
     // 兜底：无人命中（group 准入与 base 让位精确互补，正常不应发生；照 merge.example 形态防御）
-    OP_LOGE(context, "DuaQuantizeAddLayerNorm: no branch tiling matched (group/base complement broken)");
+    ReportTilingStageError(
+        context->GetNodeName(),
+        "no tiling branch matched (group/base complement broken); this is an internal routing error, "
+        "check the tiling implementation");
     return ge::GRAPH_FAILED;
 }
 

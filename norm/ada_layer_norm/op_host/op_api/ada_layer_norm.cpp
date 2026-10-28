@@ -36,7 +36,7 @@ const aclTensor* AdaLayerNorm(AdaLayerNormInputTensor inputTensor, float epsilon
                                                     inputTensor.weightOptional, inputTensor.biasOptional),
                                            OP_OUTPUT(out), OP_ATTR(epsilon));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "AdaLayerNormAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ret, "AdaLayerNormAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;
     }
     return out;

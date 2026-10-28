@@ -43,7 +43,7 @@ const std::tuple<aclTensor*, aclTensor*, aclTensor*> AdaLayerNormV2(AdaLayerNorm
                                                     inputTensor.weightOptional, inputTensor.biasOptional),
                                            OP_OUTPUT(out, mean, rstd), OP_ATTR(epsilon));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "AdaLayerNormV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ret, "AdaLayerNormV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return std::tuple(nullptr, nullptr, nullptr);
     }
     return std::tie(out, mean, rstd);

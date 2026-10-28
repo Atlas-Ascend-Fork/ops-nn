@@ -21,6 +21,14 @@
 using namespace ge;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "BatchNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static constexpr int ULONG_BIT_LEN = 64;
 constexpr int64_t DEFAULT_BIN_ADD_R_FACTOR = 128;
 constexpr int64_t FP32_BLOCK_ALIGN_NUM = 8;
@@ -165,10 +173,11 @@ ge::graphStatus BatchNormGradInferChannelLastTiling::DoOpTilingForStage1()
     }
 
     OP_CHECK_IF(factorMax <= 0,
-                OP_LOGE(context_,
-                        "RA recompute template is not capable. merged shape is (%ld, %ld), ub size: %luB, "
-                        "tileBase: %ld, ub factor: %ld.",
-                        r1Dim, aDim, aicoreParams_.ubSize, aBase, factorMax),
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "DoOpTilingForStage0: the RA recompute template cannot fit the merged shape (" +
+                                           std::to_string(r1Dim) + ", " + std::to_string(aDim) + ") into UB size " +
+                                           std::to_string(aicoreParams_.ubSize) + "B, factorMax=" +
+                                           std::to_string(factorMax) + "; tiling strategy failed for a valid input"),
                 return ge::GRAPH_PARAM_INVALID);
 
     // 尽量占多核
@@ -210,7 +219,11 @@ ge::graphStatus BatchNormGradInferChannelLastTiling::PostTiling()
     context_->SetBlockDim(static_cast<uint32_t>(
         std::max(tilingData_.get_usedCoreNumsStg1(), tilingData_.dxTilingData.get_usedCoreNums())));
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(currentWorkspace == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     currentWorkspace[0] = workspaceSize_;
     tilingData_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData_.GetDataSize());

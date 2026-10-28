@@ -20,6 +20,13 @@
 
 namespace optiling {
 using namespace Ops::NN::OpTiling;
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "AdaLayerNorm", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
 
 constexpr int32_t INPUT_TENSOR_NUM = 3;
 constexpr int32_t INDEX_ZERO = 0;
@@ -127,7 +134,11 @@ ge::graphStatus AdaLayerNormTiling::RunBigKernelTiling()
     epsilon = *tilingContext->GetAttrs()->GetAttrPointer<float>(0);
 
     auto compileInfo = reinterpret_cast<const AdaLayerNormCompileInfo*>(tilingContext->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    tilingContext->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     int32_t coreNumPlatform = compileInfo->coreNum;
     int32_t needCoreNum = SplitCore(coreNumPlatform, compileInfo->isRegBase);
     if (compileInfo->isRegBase) {
@@ -258,7 +269,11 @@ static ge::graphStatus Tiling4AdaLayerNormQuantTiling(gert::TilingContext* conte
 static ge::graphStatus TilingPrepareTiling(gert::TilingParseContext* context)
 {
     auto compileInfo = context->GetCompiledInfo<AdaLayerNormCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "GetCompiledInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
     uint64_t ubSizePlatForm = 0;
@@ -267,7 +282,9 @@ static ge::graphStatus TilingPrepareTiling(gert::TilingParseContext* context)
     compileInfo->isRegBase = IsRegbaseSocVersion(context);
 
     OP_TILING_CHECK(compileInfo->coreNum <= 0,
-                    OP_LOGE(context->GetNodeName(), "AdaLayerNormTiling GetHardwareInfo Failed"),
+                    ReportTilingStageError(context->GetNodeName(), "GetCoreNumAiv returned " +
+                                                                       std::to_string(compileInfo->coreNum) +
+                                                                       "; check the platform info and SoC"),
                     return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

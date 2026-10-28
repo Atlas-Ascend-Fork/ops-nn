@@ -18,6 +18,14 @@
 #include "op_host/tiling_util.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "AdaLayerNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static ge::graphStatus Tiling4AdaLayerNormGrad(gert::TilingContext* context)
 {
     return Ops::NN::Optiling::TilingRegistry::GetInstance().DoTilingImpl(context);
@@ -28,27 +36,40 @@ static ge::graphStatus TilingPrepare4AdaLayerNormGrad(gert::TilingParseContext* 
     OP_LOGD(context, "TilingPrepare4AdaLayerNormGrad enter.");
 
     auto compileInfo = context->GetCompiledInfo<AdaLayerNormGradCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "TilingPrepare: compile info is null; check the SoC-specific OPP package and the tiling parse context"),
+        return ge::GRAPH_FAILED);
 
     compileInfo->blockSize = Ops::Base::GetUbBlockSize(context);
     compileInfo->vlFp32 = Ops::Base::GetVRegSize(context) / FLOAT_SIZE;
 
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0),
-                OP_LOGE(context->GetNodeName(), "Get core num failed, core num: %u",
-                        static_cast<uint32_t>(compileInfo->coreNum)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->coreNum <= 0),
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid core num " + std::to_string(compileInfo->coreNum) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
 
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = ubSizePlatForm;
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0),
-                OP_LOGE(context->GetNodeName(), "Get ub size failed, ub size: %u",
-                        static_cast<uint32_t>(compileInfo->ubSizePlatForm)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->ubSizePlatForm <= 0),
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid UB size " + std::to_string(compileInfo->ubSizePlatForm) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
     compileInfo->isRegBase = Ops::NN::OpTiling::IsRegbaseSocVersion(context);
 
     OP_LOGD(context->GetNodeName(),

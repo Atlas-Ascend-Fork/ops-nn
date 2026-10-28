@@ -20,6 +20,14 @@
 using namespace AscendC;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "BatchNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static constexpr uint64_t BATCH_NORM_GRAD_RAR_SPLIT_CORE_R0_TILING_KEY = 1100;
 static constexpr int64_t DOUBLE_BUFFER = 2;
 static constexpr int64_t CONST_TWO = 2;
@@ -143,10 +151,11 @@ ge::graphStatus BatchNormGradRARSplitCoreR0::DoOpTilingStage0()
                         dyBaseLen_ / (DOUBLE_BUFFER * dyDtypeSize_ * BIG_SHAPES_STG0 + reduceTmpBufNum * FLOAT32_BYTES);
 
     OP_CHECK_IF(factorMax <= 0,
-                OP_LOGE(context_,
-                        "BatchNormGrad RAR R0 split core template is not capable. Shape (%ld, %ld, %ld), "
-                        "factorMax in stage0 is %ld .",
-                        r1Dim, aDim, r0Dim, factorMax),
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "DoOpTiling: the R0 split-core template cannot fit the shape (" +
+                                           std::to_string(r1Dim) + ", " + std::to_string(aDim) + ", " +
+                                           std::to_string(r0Dim) + ") into UB, factorMax in stage0 is " +
+                                           std::to_string(factorMax) + "; tiling strategy failed for a valid input"),
                 return ge::GRAPH_PARAM_INVALID);
 
     int64_t r0FactorMax = Ops::Base::CeilDiv(r0Inner_, dyBaseLen_);
@@ -250,10 +259,11 @@ ge::graphStatus BatchNormGradRARSplitCoreR0::DoOpTilingStage1()
                                   (FLOAT32_BYTES * usedCoreNums_ + (FLOAT32_BYTES + weightDtypeSize)));
 
     OP_CHECK_IF(factorMax <= 0,
-                OP_LOGE(context_,
-                        "BatchNormGrad RAR R0 split core template is not capable. Shape (%ld, %ld, %ld), "
-                        "factorMax in stage1 is %ld .",
-                        r1Dim, aDim, r0Dim, factorMax),
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "DoOpTiling: the R0 split-core template cannot fit the shape (" +
+                                           std::to_string(r1Dim) + ", " + std::to_string(aDim) + ", " +
+                                           std::to_string(r0Dim) + ") into UB, factorMax in stage1 is " +
+                                           std::to_string(factorMax) + "; tiling strategy failed for a valid input"),
                 return ge::GRAPH_PARAM_INVALID);
 
     int64_t aFactorMax = Ops::Base::CeilDiv(aDim, weightBaseLen);
@@ -283,10 +293,11 @@ ge::graphStatus BatchNormGradRARSplitCoreR0::DoOpTilingStage2()
                         (DOUBLE_BUFFER * FLOAT32_BYTES * BIG_SHAPES_STG2);
 
     OP_CHECK_IF(factorMax <= 0,
-                OP_LOGE(context_,
-                        "BatchNormGrad RAR R0 split core template is not capable. Shape (%ld, %ld, %ld), "
-                        "factorMax in stage2 is %ld .",
-                        r1Dim, aDim, r0Dim, factorMax),
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "DoOpTiling: the R0 split-core template cannot fit the shape (" +
+                                           std::to_string(r1Dim) + ", " + std::to_string(aDim) + ", " +
+                                           std::to_string(r0Dim) + ") into UB, factorMax in stage2 is " +
+                                           std::to_string(factorMax) + "; tiling strategy failed for a valid input"),
                 return ge::GRAPH_PARAM_INVALID);
 
     int64_t r0FactorMax = Ops::Base::CeilDiv(r0Inner_, dyBaseLen_);
@@ -340,7 +351,11 @@ ge::graphStatus BatchNormGradRARSplitCoreR0::GetWorkspaceSize()
     OP_LOGI(context_, "Workspace size: %ld", workspaceSize_);
 
     size_t* workspaces = context_->GetWorkspaceSizes(CONST_ONE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     return ge::GRAPH_SUCCESS;
 }

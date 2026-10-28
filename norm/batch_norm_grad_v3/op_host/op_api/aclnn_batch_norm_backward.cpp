@@ -35,8 +35,25 @@
 #include "op_api/aclnn_util.h"
 #include "norm/common/op_api/batch_norm_backward.h"
 #include "aclnn_batch_norm_backward.h"
+#include "log/log.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -67,8 +84,8 @@ static inline bool isBatchNormSupportNcdhw(void)
 
 static bool CheckInputNotNull(const aclTensor* gradOut, const aclTensor* input)
 {
-    OP_CHECK_NULL(gradOut, return false);
-    OP_CHECK_NULL(input, return false);
+    OP_CHECK(gradOut != nullptr, ReportNullPointerError(__func__, "gradOut"), return false);
+    OP_CHECK(input != nullptr, ReportNullPointerError(__func__, "input"), return false);
 
     return true;
 }
@@ -76,26 +93,28 @@ static bool CheckInputNotNull(const aclTensor* gradOut, const aclTensor* input)
 static aclnnStatus CheckMask(const aclTensor* gradInput, const aclTensor* gradWeight, const aclTensor* gradBias,
                              const aclBoolArray* outputMask)
 {
-    OP_CHECK_NULL(outputMask, return ACLNN_ERR_PARAM_NULLPTR);
+    OP_CHECK(outputMask != nullptr, ReportNullPointerError(__func__, "outputMask"), return ACLNN_ERR_PARAM_NULLPTR);
     if (outputMask->Size() < GRAD_WEIGHT_INDEX) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "outputMask size should not be less than 1.");
+        OP_LOGE_FOR_INVALID_LISTSIZE("aclnnBatchNormBackward", "outputMask", std::to_string(outputMask->Size()).c_str(),
+                                     "at least 1");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (Ops::NN::AclnnUtil::IsRegbase()) {
         if (outputMask->Size() != BN_GRAD_V3_RESULT_CNT) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "outputMask size should be %zu, but got %zu.", BN_GRAD_V3_RESULT_CNT,
-                    outputMask->Size());
+            OP_LOGE_FOR_INVALID_LISTSIZE("aclnnBatchNormBackward", "outputMask",
+                                         std::to_string(outputMask->Size()).c_str(),
+                                         std::to_string(BN_GRAD_V3_RESULT_CNT).c_str());
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if ((*outputMask)[0]) {
-        OP_CHECK_NULL(gradInput, return ACLNN_ERR_PARAM_NULLPTR);
+        OP_CHECK(gradInput != nullptr, ReportNullPointerError(__func__, "gradInput"), return ACLNN_ERR_PARAM_NULLPTR);
     }
     if ((*outputMask)[GRAD_WEIGHT_INDEX]) {
-        OP_CHECK_NULL(gradWeight, return ACLNN_ERR_PARAM_NULLPTR);
+        OP_CHECK(gradWeight != nullptr, ReportNullPointerError(__func__, "gradWeight"), return ACLNN_ERR_PARAM_NULLPTR);
     }
     if ((*outputMask)[GRAD_BIAS_INDEX]) {
-        OP_CHECK_NULL(gradBias, return ACLNN_ERR_PARAM_NULLPTR);
+        OP_CHECK(gradBias != nullptr, ReportNullPointerError(__func__, "gradBias"), return ACLNN_ERR_PARAM_NULLPTR);
     }
     return ACLNN_SUCCESS;
 }
@@ -163,36 +182,42 @@ static bool CheckFormat(const aclTensor* gradOut, const aclTensor* input, const 
                         const aclBoolArray* outputMask)
 {
     if (gradOut->GetStorageFormat() != input->GetStorageFormat()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format of gradOut and input should be equal, gradOut [%s], input [%s].",
-                op::ToString(gradOut->GetStorageFormat()).GetString(),
-                op::ToString(input->GetStorageFormat()).GetString());
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON("aclnnBatchNormBackward", "gradOut,input",
+                                                (std::string(op::ToString(gradOut->GetStorageFormat()).GetString()) +
+                                                 ", " + op::ToString(input->GetStorageFormat()).GetString())
+                                                    .c_str(),
+                                                "format of gradOut and input should be equal");
         return false;
     }
     if ((*outputMask)[0] && gradOut->GetStorageFormat() != gradInput->GetStorageFormat()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Format of gradOut and gradInput should be equal, gradOut [%s], gradInput [%s].",
-                op::ToString(gradOut->GetStorageFormat()).GetString(),
-                op::ToString(gradInput->GetStorageFormat()).GetString());
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON("aclnnBatchNormBackward", "gradOut,gradInput",
+                                                (std::string(op::ToString(gradOut->GetStorageFormat()).GetString()) +
+                                                 ", " + op::ToString(gradInput->GetStorageFormat()).GetString())
+                                                    .c_str(),
+                                                "format of gradOut and gradInput should be equal");
         return false;
     }
     if (Ops::NN::AclnnUtil::IsRegbase()) {
         if ((input->GetViewShape().GetDimNum() == MAX_BN_DIMS) &&
             ((input->GetStorageFormat() != Format::FORMAT_NCDHW) &&
              (input->GetStorageFormat() != Format::FORMAT_NDHWC))) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format of input should be NCDHW or NDHWC, when input dim is 5.");
+            OP_LOGE_FOR_INVALID_FORMAT("aclnnBatchNormBackward", "input",
+                                       op::ToString(input->GetStorageFormat()).GetString(), "NCDHW or NDHWC");
             return false;
         }
 
         if (((*outputMask)[0] && gradInput->GetViewShape().GetDimNum() == MAX_BN_DIMS) &&
             ((gradInput->GetStorageFormat() != Format::FORMAT_NCDHW) &&
              (gradInput->GetStorageFormat() != Format::FORMAT_NDHWC))) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format of output should be NCDHW or NDHWC, when input dim is 5.");
+            OP_LOGE_FOR_INVALID_FORMAT("aclnnBatchNormBackward", "gradInput",
+                                       op::ToString(gradInput->GetStorageFormat()).GetString(), "NCDHW or NDHWC");
             return false;
         }
     }
     // 如果输入格式是私有格式，记录日志，直接报错
     if (op::IsPrivateFormat(gradOut->GetStorageFormat()) || op::IsPrivateFormat(input->GetStorageFormat())) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support NC, NCL, NCHW, NCDHW.");
+        OP_LOGE_FOR_INVALID_FORMAT("aclnnBatchNormBackward", "gradOut",
+                                   op::ToString(gradOut->GetStorageFormat()).GetString(), "NC, NCL, NCHW or NCDHW");
         return false;
     }
     return true;
@@ -206,12 +231,25 @@ static bool CheckShape(const aclTensor* gradOut, const aclTensor* input, const a
     OP_CHECK_MIN_DIM(input, MIN_BN_DIMS, return false);
     OP_CHECK_MAX_DIM(gradOut, max_dim_check, return false);
     OP_CHECK_MIN_DIM(gradOut, MIN_BN_DIMS, return false);
-    OP_CHECK_SHAPE_NOT_EQUAL(gradOut, input, return false);
+    OP_CHECK(gradOut->GetViewShape() == input->GetViewShape(),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnBatchNormBackward", "gradOut,input",
+                                                    (std::string(op::ToString(gradOut->GetViewShape()).GetString()) +
+                                                     ", " + op::ToString(input->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shapes of gradOut and input should be the same"),
+             return false);
 
     if ((*outputMask)[0]) {
         OP_CHECK_MAX_DIM(gradInput, max_dim_check, return false);
         OP_CHECK_MIN_DIM(gradInput, MIN_BN_DIMS, return false);
-        OP_CHECK_SHAPE_NOT_EQUAL(gradInput, gradOut, return false);
+        OP_CHECK(
+            gradInput->GetViewShape() == gradOut->GetViewShape(),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnBatchNormBackward", "gradInput,gradOut",
+                                                   (std::string(op::ToString(gradInput->GetViewShape()).GetString()) +
+                                                    ", " + op::ToString(gradOut->GetViewShape()).GetString())
+                                                       .c_str(),
+                                                   "shapes of gradInput and gradOut should be the same"),
+            return false);
     }
     return true;
 }
@@ -220,23 +258,23 @@ static bool CheckOtherShape(int64_t dimC, const aclTensor* weight, const aclTens
                             const aclTensor* runningVar)
 {
     if (weight != nullptr && (weight->GetViewShape().GetDimNum() != 1 || weight->GetViewShape()[0] != dimC)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Dim of weight should be one and shape is channel num of input[%ld], but got [%s].", dimC,
-                op::ToString(weight->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnBatchNormBackward", "weight",
+                                              op::ToString(weight->GetViewShape()).GetString(),
+                                              (std::string("shape should be [") + std::to_string(dimC) + "]").c_str());
         return false;
     }
     if (runningMean != nullptr &&
         (runningMean->GetViewShape().GetDimNum() != 1 || runningMean->GetViewShape()[0] != dimC)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Dim of runningMean should be one and shape is channel num of input[%ld], but got [%s].", dimC,
-                op::ToString(runningMean->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnBatchNormBackward", "runningMean",
+                                              op::ToString(runningMean->GetViewShape()).GetString(),
+                                              (std::string("shape should be [") + std::to_string(dimC) + "]").c_str());
         return false;
     }
     if (runningVar != nullptr &&
         (runningVar->GetViewShape().GetDimNum() != 1 || runningVar->GetViewShape()[0] != dimC)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Dim of runningVar should be one and shape is channel num of input[%ld], but got [%s].", dimC,
-                op::ToString(runningVar->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnBatchNormBackward", "runningVar",
+                                              op::ToString(runningVar->GetViewShape()).GetString(),
+                                              (std::string("shape should be [") + std::to_string(dimC) + "]").c_str());
         return false;
     }
     return true;
@@ -248,17 +286,17 @@ static bool CheckSaveMeanSaveInvstdShape(int64_t dimC, const aclTensor* saveMean
     if (saveMean != nullptr &&
         (saveMean->GetViewShape().GetDimNum() != 1 ||
          (saveMean->GetViewShape()[0] != dimC && (training || saveMean->GetViewShape()[0] != 0)))) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Dim of saveMean should be one and shape is channel num of input[%ld], but got [%s].", dimC,
-                op::ToString(saveMean->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnBatchNormBackward", "saveMean",
+                                              op::ToString(saveMean->GetViewShape()).GetString(),
+                                              (std::string("shape should be [") + std::to_string(dimC) + "]").c_str());
         return false;
     }
     if (saveInvstd != nullptr &&
         (saveInvstd->GetViewShape().GetDimNum() != 1 ||
          (saveInvstd->GetViewShape()[0] != dimC && (training || saveInvstd->GetViewShape()[0] != 0)))) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Dim of saveInvstd should be one and shape is channel num of input[%ld], but got [%s].", dimC,
-                op::ToString(saveInvstd->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnBatchNormBackward", "saveInvstd",
+                                              op::ToString(saveInvstd->GetViewShape()).GetString(),
+                                              (std::string("shape should be [") + std::to_string(dimC) + "]").c_str());
         return false;
     }
     return true;
@@ -270,17 +308,17 @@ static bool CheckGradWeightGradBiasShape(int64_t dimC, const aclTensor* gradWeig
     if ((*outputMask)[GRAD_WEIGHT_INDEX]) {
         if (gradWeight != nullptr &&
             (gradWeight->GetViewShape().GetDimNum() != 1 || gradWeight->GetViewShape()[0] != dimC)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "Dim of gradWeight should be one and shape is channel num of input[%ld], but got [%s].", dimC,
-                    op::ToString(gradWeight->GetViewShape()).GetString());
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                "aclnnBatchNormBackward", "gradWeight", op::ToString(gradWeight->GetViewShape()).GetString(),
+                (std::string("shape should be [") + std::to_string(dimC) + "]").c_str());
             return false;
         }
     }
     if ((*outputMask)[GRAD_BIAS_INDEX]) {
         if (gradBias != nullptr && (gradBias->GetViewShape().GetDimNum() != 1 || gradBias->GetViewShape()[0] != dimC)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "Dim of gradBias should be one and shape is channel num of input[%ld], but got [%s].", dimC,
-                    op::ToString(gradBias->GetViewShape()).GetString());
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                "aclnnBatchNormBackward", "gradBias", op::ToString(gradBias->GetViewShape()).GetString(),
+                (std::string("shape should be [") + std::to_string(dimC) + "]").c_str());
             return false;
         }
     }
@@ -307,9 +345,9 @@ static bool CheckDtypeMatchReferenceOrFloat(const aclTensor* tensor, const aclTe
     }
 
     if (tensor->GetDataType() != reference->GetDataType() && tensor->GetDataType() != op::DataType::DT_FLOAT) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Dtype of %s:[%s] should be float or same as %s, %s dtype: [%s].", tensorName,
-                op::ToString(tensor->GetDataType()).GetString(), referenceName, referenceName,
-                op::ToString(reference->GetDataType()).GetString());
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnBatchNormBackward", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            (std::string("dtype should be float or the same as ") + referenceName).c_str());
         return false;
     }
 

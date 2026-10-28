@@ -17,7 +17,9 @@ static Status ParseParamsInstanceNormalization(const Message* op_src, ge::Operat
 {
     const ge::onnx::NodeProto* node = dynamic_cast<const ge::onnx::NodeProto*>(op_src);
     if (node == nullptr) {
-        OP_LOGE(GetOpName(op_dest).c_str(), "Dynamic cast op_src to NodeProto failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(GetOpName(op_dest).c_str(), "op_src",
+                                                 "the parser received a message that is not a NodeProto; check the "
+                                                 "model format and the parser registration for this node");
         return FAILED;
     }
 

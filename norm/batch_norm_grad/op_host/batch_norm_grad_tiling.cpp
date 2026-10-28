@@ -20,6 +20,14 @@
 using namespace AscendC;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "BatchNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static constexpr size_t BNG_WORKSPACE_RESERVED = 0;
 
 static constexpr int64_t FLOAT_BYTE_NUMBER = 4;
@@ -47,7 +55,11 @@ static std::vector<std::array<ge::DataType, INPUT_NUM>> validInputDtype = {
 ge::graphStatus BatchNormGradTilingBase::GetPlatformInfo()
 {
     auto compileInfo = reinterpret_cast<const BatchNormGradCompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     blockSize = static_cast<uint64_t>(compileInfo->blockSize);
     vlFp32 = static_cast<uint64_t>(compileInfo->vlFp32);
     auto platformInfoPtr = context_->GetPlatformInfo();
@@ -100,7 +112,12 @@ ge::graphStatus BatchNormGradTilingBase::CheckInputDtypeValid()
             if (i == INPUT_NUM - 1 && inputDesc == nullptr) {
                 continue;
             }
-            OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+            OP_CHECK_IF(inputDesc == nullptr,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            context_->GetNodeName(), inputParamNames[i],
+                            "the input desc of a required input is missing in the tiling context; check that the graph "
+                            "node provides all required inputs"),
+                        return ge::GRAPH_FAILED);
             auto dtype = inputDesc->GetDataType();
             if (dtype != dtypeList[i]) {
                 invalid = true;
@@ -123,13 +140,28 @@ ge::graphStatus BatchNormGradTilingBase::CheckInputDtypeValid()
                 return ge::GRAPH_FAILED);
 
     auto dxDesc = context_->GetOutputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxDesc);
+    OP_CHECK_IF(dxDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "x_backprop",
+                    "the output desc of required output x_backprop is missing in the tiling context; check that the "
+                    "graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     ge::DataType dxDtype = dxDesc->GetDataType();
     auto dweightDesc = context_->GetOutputDesc(INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dweightDesc);
+    OP_CHECK_IF(dweightDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "scale_backprop",
+                    "the output desc of required output scale_backprop is missing in the tiling context; check that "
+                    "the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     ge::DataType dweightDtype = dweightDesc->GetDataType();
     auto dbiasDesc = context_->GetOutputDesc(INDEX_2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dbiasDesc);
+    OP_CHECK_IF(dbiasDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "offset_backprop",
+                    "the output desc of required output offset_backprop is missing in the tiling context; check that "
+                    "the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     ge::DataType dbiasDtype = dbiasDesc->GetDataType();
     if (dxDtype != dyDtype) {
         std::string dtypesStr = ge::TypeUtils::DataTypeToSerialString(dxDtype) + " and " +
@@ -159,7 +191,12 @@ ge::graphStatus BatchNormGradTilingBase::CheckSmallShapesValid()
 {
     for (int i = INDEX_2; i <= INDEX_4; i++) {
         auto shape = context_->GetInputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, shape);
+        OP_CHECK_IF(
+            shape == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), inputParamNames[i],
+                                                     "the input shape of a required input is missing in the tiling "
+                                                     "context; check that the graph node provides all required inputs"),
+            return ge::GRAPH_FAILED);
         auto storageShape = shape->GetStorageShape();
         if (storageShape.GetDimNum() != 1) {
             OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), inputParamNames[i],
@@ -177,7 +214,12 @@ ge::graphStatus BatchNormGradTilingBase::CheckSmallShapesValid()
 
     for (int i = INDEX_1; i <= INDEX_2; i++) {
         auto shape = context_->GetOutputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, shape);
+        OP_CHECK_IF(
+            shape == nullptr,
+            ReportTilingStageError(context_->GetNodeName(),
+                                   "the output shape of a required output is missing in the tiling context; check that "
+                                   "InferShape executed and the framework propagated the output shapes"),
+            return ge::GRAPH_FAILED);
         auto storageShape = shape->GetStorageShape();
         if (storageShape.GetDimNum() != 1) {
             OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), outputParamNames[i],
@@ -207,26 +249,55 @@ const gert::Shape& BatchNormGradTilingBase::EnsureNotScalar(const gert::Shape& i
 ge::graphStatus BatchNormGradTilingBase::CheckBigShapesValid()
 {
     auto dyDesc = context_->GetInputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y_backprop",
+                                                 "the input desc of required input y_backprop is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     dyFormat = dyDesc->GetFormat().GetStorageFormat();
     auto dyShape = context_->GetInputShape(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyShape);
+    OP_CHECK_IF(dyShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "y_backprop",
+                    "the input shape of required input y_backprop is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto dyStorageShape = EnsureNotScalar(dyShape->GetStorageShape());
     int64_t dyDimNum = dyStorageShape.GetDimNum();
 
     auto xDesc = context_->GetInputDesc(INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
+    OP_CHECK_IF(
+        xDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input desc of required input x is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto xFormat = xDesc->GetFormat().GetStorageFormat();
     auto xShape = context_->GetInputShape(INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto xStorageShape = EnsureNotScalar(xShape->GetStorageShape());
     int64_t xDimNum = xStorageShape.GetDimNum();
 
     auto dxDesc = context_->GetOutputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxDesc);
+    OP_CHECK_IF(dxDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "x_backprop",
+                    "the output desc of required output x_backprop is missing in the tiling context; check that the "
+                    "graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     auto dxFormat = dxDesc->GetFormat().GetStorageFormat();
     auto dxShape = context_->GetOutputShape(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxShape);
+    OP_CHECK_IF(dxShape == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "the output shape of x_backprop is missing in the tiling context; check that "
+                                       "InferShape executed and the framework propagated the output shapes"),
+                return ge::GRAPH_FAILED);
     auto dxStorageShape = EnsureNotScalar(dxShape->GetStorageShape());
     int64_t dxDimNum = dxStorageShape.GetDimNum();
 
@@ -300,10 +371,20 @@ ge::graphStatus BatchNormGradTilingBase::CheckBigShapesValid()
 ge::graphStatus BatchNormGradTilingBase::GetDtypesAndCheckValid()
 {
     auto weightDesc = context_->GetInputDesc(INDEX_2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weightDesc);
+    OP_CHECK_IF(
+        weightDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale",
+                                                 "the input desc of required input scale is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     weightDtype = weightDesc->GetDataType();
     auto dyDesc = context_->GetInputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "y_backprop",
+                                                 "the input desc of required input y_backprop is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     dyDtype = dyDesc->GetDataType();
 
     OP_CHECK_IF(CheckInputDtypeValid() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
@@ -343,26 +424,30 @@ ge::graphStatus BatchNormGradTilingBase::GetShapesAndCheckValid()
         r1Dim = 1;
     }
     // 小shape 校验
-    OP_CHECK_IF(CheckSmallShapesValid() != ge::GRAPH_SUCCESS, OP_LOGE(context_, "Input small shapes are invalid."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckSmallShapesValid() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_, "Input small shapes are invalid."), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus BatchNormGradTilingBase::GetShapeAttrsInfo()
 {
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
 
     const bool* isTrainingPtr = attrs->GetBool(PARAM_ATTRS_ISTRAING_INDEX);
     bool isTraining = (isTrainingPtr == nullptr) ? true : *isTrainingPtr;
     OP_CHECK_IF(isTraining == false, OP_LOGD(context_, "This node only support training."),
                 return ge::GRAPH_PARAM_INVALID);
 
-    OP_CHECK_IF(GetShapesAndCheckValid() != ge::GRAPH_SUCCESS, OP_LOGE(context_, "Input shapes are invalid."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetShapesAndCheckValid() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_, "Input shapes are invalid."), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(GetDtypesAndCheckValid() != ge::GRAPH_SUCCESS, OP_LOGE(context_, "Input dtypes are invalid."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetDtypesAndCheckValid() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_, "Input dtypes are invalid."), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -391,7 +476,11 @@ ge::graphStatus BatchNormGradTilingBase::DoOpTiling()
             blockNum = 1;
         }
     }
-    OP_CHECK_IF(blockNum == 0, OP_LOGE(context_, "block num is 0, failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        blockNum == 0,
+        ReportTilingStageError(context_->GetNodeName(), "DoOpTiling: block num is 0 after the platform query (core num "
+                                                        "is 0); check the platform info, SoC and OPP installation"),
+        return ge::GRAPH_FAILED);
     int64_t tailBlockNum = aDim % blockNum;
     int64_t formerBlockDim = aDim / blockNum;
     int64_t tailBlockDim = formerBlockDim + 1;
@@ -453,18 +542,31 @@ bool BatchNormGradRARFullLoadTilingBase::IsCapable()
 
 ge::graphStatus BatchNormGradRARFullLoadTilingBase::DoOpTiling()
 {
-    OP_CHECK_IF(onceProcUbNeed == 0, OP_LOGE(context_, "onceProcUbNeed is 0, failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(onceProcUbNeed == 0,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "DoOpTiling: onceProcUbNeed is 0 after the capability computation; internal tiling strategy error"),
+                return ge::GRAPH_FAILED);
     auto ret = BatchNormGradTilingBase::DoOpTiling();
-    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE(context_, "failed to do base tiling."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_, "failed to do base tiling."),
+                return ge::GRAPH_FAILED);
 
     // 考虑开DB，ubsize要减半
     OP_CHECK_IF(static_cast<int64_t>((ubSize - binaryAddUbNeed) / DOUBLE_BUFFER) < reservUbSizeForAlign,
-                OP_LOGE(context_, "ubsize: %lu reserve: %ld binaryAdd: %ld ub is too small, failed.", ubSize,
-                        reservUbSizeForAlign, binaryAddUbNeed),
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "DoOpTiling: the remaining UB size " + std::to_string((ubSize - binaryAddUbNeed) / DOUBLE_BUFFER) +
+                        " bytes is smaller than the required reserve " + std::to_string(reservUbSizeForAlign) +
+                        " bytes (ubSize=" + std::to_string(ubSize) +
+                        ", binaryAddUbNeed=" + std::to_string(binaryAddUbNeed) + ")"),
                 return ge::GRAPH_FAILED);
 
     int64_t formerUbDim = ((ubSize - binaryAddUbNeed) / DOUBLE_BUFFER - reservUbSizeForAlign) / onceProcUbNeed;
-    OP_CHECK_IF(formerUbDim <= 0, OP_LOGE(context_, "formerUbDim is 0, failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        formerUbDim <= 0,
+        ReportTilingStageError(context_->GetNodeName(), "DoOpTiling: formerUbDim is " + std::to_string(formerUbDim) +
+                                                            "; the remaining UB cannot fit one processing tile"),
+        return ge::GRAPH_FAILED);
 
     int64_t formerBlockDim = baseTilingData.get_formerBlockDim();
     int64_t ubLoopOfFormerBlock = Ops::Base::CeilDiv(formerBlockDim, formerUbDim);
@@ -510,11 +612,19 @@ ge::graphStatus BatchNormGradRARFullLoadTilingBase::GetWorkspaceSize()
 ge::graphStatus BatchNormGradRARFullLoadTilingBase::PostTiling()
 {
     uint64_t tilingKey = GetTilingKey();
-    OP_CHECK_IF(tilingKey == BNG_TK_DEFAULT, OP_LOGE(context_, "failed to get tiling key."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingKey == BNG_TK_DEFAULT,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "PostTiling: tiling key is 0 (BNG_TK_DEFAULT); the template failed to produce a valid tiling key"),
+                return ge::GRAPH_FAILED);
     context_->SetTilingKey(tilingKey);
     context_->SetBlockDim(baseTilingData.get_blockNum());
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "GetWorkspaceSizes(1) returned null; required output-slot count is 1. Check the "
+                                       "TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
@@ -626,7 +736,8 @@ ge::graphStatus BatchNormGradRARRecomputeTilingBase::DoOpTiling()
 {
     onceProcUbNeed = INT64_MAX;
     auto ret = BatchNormGradTilingBase::DoOpTiling();
-    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE(context_, "failed to do base tiling."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_, "failed to do base tiling."),
+                return ge::GRAPH_FAILED);
 
     if (subTilingKey == BNG_RAR_RECOMPUTE_SPLIT_R1) {
         DoRecomputeTilingSplitR1();
@@ -669,11 +780,19 @@ ge::graphStatus BatchNormGradRARRecomputeTilingBase::GetWorkspaceSize()
 ge::graphStatus BatchNormGradRARRecomputeTilingBase::PostTiling()
 {
     uint64_t tilingKey = GetTilingKey();
-    OP_CHECK_IF(tilingKey == BNG_TK_DEFAULT, OP_LOGE(context_, "failed to get tiling key."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingKey == BNG_TK_DEFAULT,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "PostTiling: tiling key is 0 (BNG_TK_DEFAULT); the template failed to produce a valid tiling key"),
+                return ge::GRAPH_FAILED);
     context_->SetTilingKey(tilingKey);
     context_->SetBlockDim(baseTilingData.get_blockNum());
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "GetWorkspaceSizes(1) returned null; required output-slot count is 1. Check the "
+                                       "TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
@@ -706,7 +825,8 @@ ge::graphStatus BatchNormGradRAFullLoadTilingBase::DoOpTiling()
 {
     onceProcUbNeed = INT64_MAX;
     auto ret = BatchNormGradTilingBase::DoOpTiling();
-    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE(context_, "failed to do base tiling."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_, "failed to do base tiling."),
+                return ge::GRAPH_FAILED);
 
     int64_t dtypeSize = dyDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
     int64_t weightDtypeSize = weightDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
@@ -809,7 +929,11 @@ ge::graphStatus BatchNormGradRAFullLoadTilingBase::PostTiling()
     context_->SetTilingKey(tilingKey);
     context_->SetBlockDim(tilingData.get_numBlocks());
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "GetWorkspaceSizes(1) returned null; required output-slot count is 1. Check the "
+                                       "TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
@@ -828,7 +952,8 @@ ge::graphStatus BatchNormGradRARecomputeTilingBase::DoOpTiling()
 {
     onceProcUbNeed = INT64_MAX;
     auto ret = BatchNormGradTilingBase::DoOpTiling();
-    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE(context_, "failed to do base tiling."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_, "failed to do base tiling."),
+                return ge::GRAPH_FAILED);
     int64_t aLoopFactor = BASIC_FACTOR;
     int64_t rLoopFactor = BASIC_FACTOR;
     int64_t aLoopFactorAligned = BASIC_FACTOR;
@@ -901,7 +1026,11 @@ ge::graphStatus BatchNormGradRARecomputeTilingBase::PostTiling()
     context_->SetTilingKey(tilingKey);
     context_->SetBlockDim(tilingData.get_numBlocks());
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "GetWorkspaceSizes(1) returned null; required output-slot count is 1. Check the "
+                                       "TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
     context_->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
@@ -915,29 +1044,48 @@ ge::graphStatus TilingForBatchNormGrad(gert::TilingContext* context)
 
 ge::graphStatus TilingPrepareForBatchNormGrad(gert::TilingParseContext* context)
 {
-    OP_CHECK_IF(context == nullptr, OP_LOGE("BatchNormGrad", "TilingParseContext is nullptr."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        context == nullptr,
+        ReportTilingStageError("BatchNormGrad",
+                               "TilingPrepare: TilingParseContext is null; the tiling framework contract is broken"),
+        return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "TilingPrepareForBatchNormGrad enter.");
 
     auto compileInfo = context->GetCompiledInfo<BatchNormGradCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "TilingPrepare: compile info is null; check the SoC-specific OPP package and the tiling parse context"),
+        return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
+                return ge::GRAPH_FAILED);
 
     compileInfo->blockSize = Ops::Base::GetUbBlockSize(context);
     compileInfo->vlFp32 = Ops::Base::GetVRegSize(context) / sizeof(float);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF(compileInfo->coreNum <= 0,
-                OP_LOGE(context, "Get core num failed, core num: %u", static_cast<uint32_t>(compileInfo->coreNum)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        compileInfo->coreNum <= 0,
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid core num " + std::to_string(compileInfo->coreNum) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
 
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = ubSize;
-    OP_CHECK_IF(compileInfo->ubSize <= 0, OP_LOGE(context, "Get ub size failed, ub size: %ld", compileInfo->ubSize),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        compileInfo->ubSize <= 0,
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid UB size " + std::to_string(compileInfo->ubSize) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
 
     OP_LOGD(context->GetNodeName(), "TilingPrepareForBatchNormGrad exit, ubSize: %lu.", ubSize);
     return ge::GRAPH_SUCCESS;

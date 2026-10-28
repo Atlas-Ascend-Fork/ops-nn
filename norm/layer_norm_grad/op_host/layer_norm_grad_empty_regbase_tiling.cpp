@@ -21,6 +21,14 @@
 using namespace Ops::Base;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "LayerNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static const size_t INPUT_IDX_ZERO = 0;
 static const size_t INPUT_IDX_ONE = 1;
 static const size_t INPUT_IDX_TWO = 2;
@@ -48,33 +56,65 @@ ge::graphStatus LayerNormGradEmptyRegBaseTiling::GetShapeAttrsInfo()
 
     // get input
     auto dyDesc = context_->GetInputDesc(INPUT_IDX_ZERO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(dyDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                         "the input desc/shape of dy is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     commonParams.dyDtype = dyDesc->GetDataType();
 
     auto xDesc = context_->GetInputDesc(INPUT_IDX_ONE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
+    OP_CHECK_IF(xDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                         "the input desc/shape of x is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     commonParams.xDtype = xDesc->GetDataType();
 
     auto varianceDesc = context_->GetInputDesc(INPUT_IDX_TWO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, varianceDesc);
+    OP_CHECK_IF(
+        varianceDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "variance",
+                                                 "the input desc/shape of variance is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.varianceDtype = varianceDesc->GetDataType();
 
     auto meanDesc = context_->GetInputDesc(INPUT_IDX_THREE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, meanDesc);
+    OP_CHECK_IF(
+        meanDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "mean",
+                                                 "the input desc/shape of mean is missing in the tiling context; check "
+                                                 "that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.meanDtype = meanDesc->GetDataType();
 
     auto gammaDesc = context_->GetInputDesc(INPUT_IDX_FOUR);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, gammaDesc);
+    OP_CHECK_IF(
+        gammaDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gamma",
+                                                 "the input desc/shape of gamma is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.gammaDtype = gammaDesc->GetDataType();
 
     // get shape
     auto dy = context_->GetInputShape(INPUT_IDX_ZERO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dy);
+    OP_CHECK_IF(dy == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                         "the input desc/shape of dy is missing in the tiling context; "
+                                                         "check that the graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto dyShape = dy->GetStorageShape();
     int64_t dyDimNum = dyShape.GetDimNum();
 
     auto gamma = context_->GetInputShape(INPUT_IDX_FOUR);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, gamma);
+    OP_CHECK_IF(
+        gamma == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gamma",
+                                                 "the input desc/shape of gamma is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto gammaShape = gamma->GetStorageShape();
     int64_t gammaDimNum = gammaShape.GetDimNum();
     if (dyDimNum < gammaDimNum) {
@@ -111,12 +151,17 @@ ge::graphStatus LayerNormGradEmptyRegBaseTiling::GetShapeAttrsInfo()
     // check input dtype
     OP_CHECK_IF(InputDtypeCheck(commonParams.dyDtype, commonParams.xDtype, commonParams.varianceDtype,
                                 commonParams.meanDtype, commonParams.gammaDtype) == ge::GRAPH_FAILED,
-                OP_LOGE(context_->GetNodeName(), "input dtype check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "input dtype check failed."), return ge::GRAPH_FAILED);
 
     // check output dtype
     if (commonParams.pdxIsRequire) {
         auto dxDesc = context_->GetOutputDesc(OUTPUT_IDX_ZERO);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, dxDesc);
+        OP_CHECK_IF(
+            dxDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "pd_x",
+                                                     "the output desc of pd_x is missing in the tiling context; check "
+                                                     "that the graph node provides all required outputs"),
+            return ge::GRAPH_FAILED);
         commonParams.dxDtype = dxDesc->GetDataType();
         if (commonParams.dxDtype != commonParams.dyDtype) {
             std::string dtypeMsg = ToString(commonParams.dxDtype) + " and " + ToString(commonParams.dyDtype);
@@ -127,7 +172,12 @@ ge::graphStatus LayerNormGradEmptyRegBaseTiling::GetShapeAttrsInfo()
     }
     if (commonParams.pdgammaIsRequire) {
         auto dgammaDesc = context_->GetOutputDesc(OUTPUT_IDX_ONE);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, dgammaDesc);
+        OP_CHECK_IF(
+            dgammaDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "pd_gamma",
+                                                     "the output desc of pd_gamma is missing in the tiling context; "
+                                                     "check that the graph node provides all required outputs"),
+            return ge::GRAPH_FAILED);
         commonParams.dgammaDtype = dgammaDesc->GetDataType();
         if ((commonParams.dgammaDtype != commonParams.gammaDtype) &&
             (commonParams.dgammaDtype != ge::DataType::DT_FLOAT)) {
@@ -141,7 +191,12 @@ ge::graphStatus LayerNormGradEmptyRegBaseTiling::GetShapeAttrsInfo()
     }
     if (commonParams.pdbetaIsRequire) {
         auto dbetaDesc = context_->GetOutputDesc(OUTPUT_IDX_TWO);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, dbetaDesc);
+        OP_CHECK_IF(
+            dbetaDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "pd_beta",
+                                                     "the output desc of pd_beta is missing in the tiling context; "
+                                                     "check that the graph node provides all required outputs"),
+            return ge::GRAPH_FAILED);
         commonParams.dbetaDtype = dbetaDesc->GetDataType();
         if ((commonParams.dbetaDtype != commonParams.gammaDtype) &&
             (commonParams.dbetaDtype != ge::DataType::DT_FLOAT)) {
@@ -241,7 +296,11 @@ ge::graphStatus LayerNormGradEmptyRegBaseTiling::DoOpTiling()
 ge::graphStatus LayerNormGradEmptyRegBaseTiling::GetWorkspaceSize()
 {
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(currentWorkspace == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
     // 用户workspace: 空tensor场景无核间归约, 不需要额外空间
     size_t usrWorkspaceSize = 0;

@@ -20,6 +20,13 @@
 using namespace AscendC;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "BatchNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
 
 constexpr uint64_t STAGE0_R_ELEM_NUM = 4; // mainX, foldX, mainDy, foldDy
 constexpr uint64_t STAGE0_A_ELEM_NUM = 4; // mean, rstd, dbeta, dgamma
@@ -64,9 +71,9 @@ ge::graphStatus BatchNormGradTilingRASplitR::DoOpTiling()
     aLoopTimes_ = Ops::Base::CeilDiv(aDim, aFactorAlign_);
     aFactorTail_ = (aDim % aFactorAlign_ == 0) ? aFactorAlign_ : aDim % aFactorAlign_;
 
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != Stage0Stage1UbTiling(), OP_LOGE(context_, "failed Stage0Stage1UbTiling."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != Stage2UbTiling(), OP_LOGE(context_, "failed Stage2UbTiling."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != Stage0Stage1UbTiling(),
+                OP_LOGE_WITHOUT_REPORT(context_, "failed Stage0Stage1UbTiling."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != Stage2UbTiling(), OP_LOGE_WITHOUT_REPORT(context_, "failed Stage2UbTiling."),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -92,9 +99,12 @@ ge::graphStatus BatchNormGradTilingRASplitR::Stage0Stage1UbTiling()
     uint64_t aElemUbSize = Ops::Base::CeilAlign(aFactorAlign_ * STAGE0_A_ELEM_NUM * DOUBLE_BUFF * FLOAT_BYTE_SIZE,
                                                 blockSize / FLOAT_BYTE_SIZE);
     uint64_t oneStepUbSize = rElemUbSize + cacheBuffSize + aElemUbSize;
-    OP_CHECK_IF(ubSize < oneStepUbSize,
-                OP_LOGE(context_, "ubSize %lu less than oneStepUbSize: %lu.", ubSize, oneStepUbSize),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        ubSize < oneStepUbSize,
+        ReportTilingStageError(context_->GetNodeName(), "Stage0Stage1UbTiling: ubSize " + std::to_string(ubSize) +
+                                                            " bytes is less than oneStepUbSize " +
+                                                            std::to_string(oneStepUbSize) + " bytes"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -104,9 +114,12 @@ ge::graphStatus BatchNormGradTilingRASplitR::Stage2UbTiling()
                                                 blockSize / FLOAT_BYTE_SIZE);
     uint64_t rElemUbSize = Ops::Base::CeilAlign(aFactorAlign_ * STAGE2_R_ELEM_NUM * dyTypeSize_ * DOUBLE_BUFF,
                                                 blockSize / dyTypeSize_);
-    OP_CHECK_IF(ubSize < aElemUbSize + rElemUbSize,
-                OP_LOGE(context_, "ubSize %lu less than oneTileUbSize: %lu.", ubSize, aElemUbSize + rElemUbSize),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        ubSize < aElemUbSize + rElemUbSize,
+        ReportTilingStageError(context_->GetNodeName(), "Stage2UbTiling: ubSize " + std::to_string(ubSize) +
+                                                            " bytes is less than oneTileUbSize " +
+                                                            std::to_string(aElemUbSize + rElemUbSize) + " bytes"),
+        return ge::GRAPH_FAILED);
     int64_t dxLoopFactor = Ops::Base::FloorDiv(ubSize - aElemUbSize, rElemUbSize);
     dxLoopFactor_ = std::min(blockFactor_, dxLoopFactor);
     dxLoopTimes_ = Ops::Base::CeilDiv(blockFactor_, dxLoopFactor_),
@@ -125,7 +138,11 @@ ge::graphStatus BatchNormGradTilingRASplitR::GetWorkspaceSize()
     workspaceSize_ = BNG_WORKSPACE_RESERVED + usedCoreNum_ * aDim * FLOAT_BYTE_SIZE * WORKSPACE_NUM;
     OP_LOGI(context_->GetNodeName(), "Workspace size: %ld", workspaceSize_);
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     return ge::GRAPH_SUCCESS;
 }

@@ -14,6 +14,13 @@
 
 using namespace ge;
 namespace ops {
+// InferShape阶段框架契约类失败(输出shape容器/上下文为空)统一上报EZ1014, 不再生成EZ9999内部码
+static void ReportInferShapeStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "AdaLayerNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
 
 static const int64_t INPUT_DY_INDEX = 0;
 static const int64_t INPUT_X_INDEX = 1;
@@ -31,45 +38,101 @@ static constexpr int OUTPUT_PD_BETA_INDEX = 4;
 static ge::graphStatus InferShapeAdaLayerNormGrad(gert::InferShapeContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("AdaLayerNormGrad", "InferShapeContext is nullptr");
+        ReportInferShapeStageError(
+            "AdaLayerNormGrad", "InferShape: InferShapeContext is null; the infer-shape framework contract is broken");
         return ge::GRAPH_FAILED;
     }
 
     const gert::Shape* dy_shape = context->GetInputShape(INPUT_DY_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dy_shape);
+    OP_CHECK_IF(
+        dy_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "dy",
+                                                 "the input shape of required input dy is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     const gert::Shape* x_shape = context->GetInputShape(INPUT_X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     const gert::Shape* rstd_shape = context->GetInputShape(INPUT_RSTD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, rstd_shape);
+    OP_CHECK_IF(
+        rstd_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "rstd",
+                                                 "the input shape of required input rstd is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     const gert::Shape* mean_shape = context->GetInputShape(INPUT_MEAN_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mean_shape);
+    OP_CHECK_IF(
+        mean_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "mean",
+                                                 "the input shape of required input mean is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     const gert::Shape* scale_shape = context->GetInputShape(INPUT_SCALE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scale_shape);
+    OP_CHECK_IF(scale_shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "scale",
+                    "the input shape of required input scale is missing in the infer-shape context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
 
     const gert::Shape* gamma_shape = context->GetInputShape(INPUT_GAMMA_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gamma_shape);
+    OP_CHECK_IF(gamma_shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "gamma",
+                    "the input shape of required input gamma is missing in the infer-shape context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
 
     const gert::Shape* beta_shape = context->GetInputShape(INPUT_BETA_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, beta_shape);
+    OP_CHECK_IF(
+        beta_shape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "beta",
+                                                 "the input shape of required input beta is missing in the infer-shape "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* output_pd_x_shape = context->GetOutputShape(OUTPUT_PD_X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_pd_x_shape);
+    OP_CHECK_IF(output_pd_x_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of pd_x (output index 0) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape* output_pd_scale_shape = context->GetOutputShape(OUTPUT_PD_SCALE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_pd_scale_shape);
+    OP_CHECK_IF(output_pd_scale_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of pd_scale (output index 1) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape* output_pd_shift_shape = context->GetOutputShape(OUTPUT_PD_SHIFT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_pd_shift_shape);
+    OP_CHECK_IF(output_pd_shift_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of pd_shift (output index 2) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape* output_pd_gamma_shape = context->GetOutputShape(OUTPUT_PD_GAMMA_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_pd_gamma_shape);
+    OP_CHECK_IF(output_pd_gamma_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of pd_gamma (output index 3) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape* output_pd_beta_shape = context->GetOutputShape(OUTPUT_PD_BETA_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, output_pd_beta_shape);
+    OP_CHECK_IF(output_pd_beta_shape == nullptr,
+                ReportInferShapeStageError(context->GetNodeName(),
+                                           "the output shape container of pd_beta (output index 4) is missing in the "
+                                           "infer-shape context; check the InferShapeContext construction"),
+                return ge::GRAPH_FAILED);
 
     if (Ops::Base::IsUnknownRank(*dy_shape)) {
         Ops::Base::SetUnknownRank(*output_pd_x_shape);

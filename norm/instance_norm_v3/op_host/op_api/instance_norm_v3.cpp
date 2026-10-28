@@ -16,6 +16,7 @@
 #include "opdev/shape_utils.h"
 #include "opdev/platform.h"
 #include "instance_norm_v3.h"
+#include "log/log.h"
 
 using namespace op;
 
@@ -39,17 +40,29 @@ std::tuple<aclTensor*, aclTensor*, aclTensor*> InstanceNormV3(const aclTensor* x
 
     auto y = executor->AllocTensor(x->GetViewShape(), x->GetDataType(), Format::FORMAT_ND);
     if (y == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor y failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor y failed.");
+        // AllocTensor失败属内部资源错误, 不复用EZ1011入参语义; 上报EZ1009(执行失败)
+        const std::vector<const char*> ez1009Key = {"opName", "reason"};
+        const std::vector<const char*> ez1009Value = {"InstanceNormV3", "memory allocation for output y failed"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1009", ez1009Key, ez1009Value);
         return std::make_tuple(nullptr, nullptr, nullptr);
     }
     auto mean = executor->AllocTensor(reduceShape, x->GetDataType(), Format::FORMAT_ND);
     if (mean == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor mean failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor mean failed.");
+        // AllocTensor失败属内部资源错误, 不复用EZ1011入参语义; 上报EZ1009(执行失败)
+        const std::vector<const char*> ez1009Key = {"opName", "reason"};
+        const std::vector<const char*> ez1009Value = {"InstanceNormV3", "memory allocation for output mean failed"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1009", ez1009Key, ez1009Value);
         return std::make_tuple(nullptr, nullptr, nullptr);
     }
     auto variance = executor->AllocTensor(reduceShape, x->GetDataType(), Format::FORMAT_ND);
     if (variance == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor variance failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor variance failed.");
+        // AllocTensor失败属内部资源错误, 不复用EZ1011入参语义; 上报EZ1009(执行失败)
+        const std::vector<const char*> ez1009Key = {"opName", "reason"};
+        const std::vector<const char*> ez1009Value = {"InstanceNormV3", "memory allocation for output variance failed"};
+        REPORT_PREDEFINED_ERR_MSG("EZ1009", ez1009Key, ez1009Value);
         return std::make_tuple(nullptr, nullptr, nullptr);
     }
 

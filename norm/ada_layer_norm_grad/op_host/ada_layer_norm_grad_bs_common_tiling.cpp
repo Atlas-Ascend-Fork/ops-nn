@@ -16,6 +16,14 @@
 #include "ada_layer_norm_grad_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "AdaLayerNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static const int64_t MERGE_BS_COMMON_LNG_BLOCK_BYTES = 32;
 static const int64_t MERGE_BS_COMMON_LNG_B32_DTYPE_SIZE = 4;
 static const int64_t MERGE_BS_COMMON_LNG_B16_ALIGN_FACTOR = 16;
@@ -84,10 +92,8 @@ ge::graphStatus AdaLayerNormGradMergeBSCommonTiling::DoOpTiling()
     // calculate ub tiling, row split ub
     int64_t ubFormer = CalculateUbFormer();
     OP_CHECK_IF((ubFormer <= 0),
-                OP_LOGE(context_,
-                        "TilingForAdaLayerNormGrad: ub former(=%ld) is not greater than 0 "
-                        "in common tiling, please check",
-                        ubFormer),
+                ReportTilingStageError(context_->GetNodeName(), "DoOpTiling: ubFormer is " + std::to_string(ubFormer) +
+                                                                    "; the remaining UB cannot fit one row of data"),
                 return ge::GRAPH_FAILED);
     int64_t ubLoopOfFormerBlock = Ops::Base::CeilDiv(blockFormer, ubFormer);
     int64_t ubLoopOfTailBlock = Ops::Base::CeilDiv(blockTail, ubFormer);

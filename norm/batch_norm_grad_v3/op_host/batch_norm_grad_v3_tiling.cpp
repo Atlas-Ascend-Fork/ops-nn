@@ -21,12 +21,23 @@
 using namespace AscendC;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成E89999/EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "BatchNormGradV3", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 ge::graphStatus ParseBatchNormGradV3OutputMask(gert::TilingContext* context, int64_t& outputMask)
 {
     constexpr size_t OUTPUT_MASK_ATTR_INDEX = 2;
     outputMask = BNG_V3_OUTPUT_MASK_ALL;
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(attrs == nullptr,
+                ReportTilingStageError(context->GetNodeName(),
+                                       "GetAttrs() returned null; check the TilingContext construction"),
+                return ge::GRAPH_FAILED);
     auto mask = attrs->GetAttrPointer<gert::ContinuousVector>(OUTPUT_MASK_ATTR_INDEX);
     if (mask == nullptr) {
         return ge::GRAPH_SUCCESS;
@@ -303,7 +314,11 @@ string BNGDebugTilingContext(gert::TilingContext* context)
 ge::graphStatus BatchNormGradV3TilingBase::GetPlatformInfo()
 {
     auto compileInfo = reinterpret_cast<const BatchNormGradV3CompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     blockSize = static_cast<uint64_t>(compileInfo->blockSize);
     vlFp32 = static_cast<uint64_t>(compileInfo->vlFp32);
     auto platformInfoPtr = context_->GetPlatformInfo();
@@ -329,7 +344,12 @@ ge::graphStatus BatchNormGradV3TilingBase::CheckInputDtypeValid()
         invalid = false;
         for (int i = 0; i < INPUT_NUM; i++) {
             auto inputDesc = context_->GetInputDesc(i);
-            OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
+            OP_CHECK_IF(inputDesc == nullptr,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            context_->GetNodeName(), ("input[" + std::to_string(i) + "]").c_str(),
+                            "the input desc of a required input is missing in the tiling context; check that the graph "
+                            "node provides all required inputs"),
+                        return ge::GRAPH_FAILED);
             auto dtype = inputDesc->GetDataType();
             if (dtype != dtypeList[i]) {
                 invalid = true;
@@ -340,33 +360,54 @@ ge::graphStatus BatchNormGradV3TilingBase::CheckInputDtypeValid()
             break;
         }
     }
-    OP_TILING_CHECK(invalid == true,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "dtype of inputs are invalid, pls check."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        invalid == true,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "inputs",
+                                                 "the dtype combination of the inputs is not supported; check the "
+                                                 "supported dtype combinations of BatchNormGradV3"),
+        return ge::GRAPH_FAILED);
 
     auto dxDesc = context_->GetOutputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxDesc);
+    OP_CHECK_IF(
+        dxDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dx",
+                                                 "the input desc of required input dx is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     ge::DataType dxDtype = dxDesc->GetDataType();
     auto dweightDesc = context_->GetOutputDesc(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dweightDesc);
+    OP_CHECK_IF(
+        dweightDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dweight",
+                                                 "the input desc of required input dweight is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     ge::DataType dweightDtype = dweightDesc->GetDataType();
     auto dbiasDesc = context_->GetOutputDesc(TWO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dbiasDesc);
-    ge::DataType dbiasDtype = dbiasDesc->GetDataType();
-    OP_TILING_CHECK(
-        dxDtype != dyDtype,
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "dtype of dx should be same as dy, but got %s and %s.",
-                                        Ops::Base::ToString(dxDtype).c_str(), Ops::Base::ToString(dyDtype).c_str()),
+    OP_CHECK_IF(
+        dbiasDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dbias",
+                                                 "the input desc of required input dbias is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
         return ge::GRAPH_FAILED);
+    ge::DataType dbiasDtype = dbiasDesc->GetDataType();
+    OP_TILING_CHECK(dxDtype != dyDtype,
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context_->GetNodeName(), "dx, dy",
+                        (Ops::Base::ToString(dxDtype) + ", " + Ops::Base::ToString(dyDtype)).c_str(),
+                        "The dtypes of dx and dy must be the same."),
+                    return ge::GRAPH_FAILED);
     OP_TILING_CHECK(dweightDtype != weightDtype,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        context_->GetNodeName(), "dtype of dweight should be same as weight, but got %s and %s.",
-                        Ops::Base::ToString(dweightDtype).c_str(), Ops::Base::ToString(weightDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context_->GetNodeName(), "dweight, weight",
+                        (Ops::Base::ToString(dweightDtype) + ", " + Ops::Base::ToString(weightDtype)).c_str(),
+                        "The dtypes of dweight and weight must be the same."),
                     return ge::GRAPH_FAILED);
     OP_TILING_CHECK(dbiasDtype != weightDtype,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        context_->GetNodeName(), "dtype of dbias should be same as weight, but got %s and %s.",
-                        Ops::Base::ToString(dbiasDtype).c_str(), Ops::Base::ToString(weightDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context_->GetNodeName(), "dbias, weight",
+                        (Ops::Base::ToString(dbiasDtype) + ", " + Ops::Base::ToString(weightDtype)).c_str(),
+                        "The dtypes of dbias and weight must be the same."),
                     return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -375,29 +416,46 @@ ge::graphStatus BatchNormGradV3TilingBase::CheckSmallShapesValid()
 {
     for (int i = INDEX_2; i <= INDEX_6; i++) {
         auto shape = context_->GetInputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, shape);
+        OP_CHECK_IF(shape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context_->GetNodeName(), ("input[" + std::to_string(i) + "]").c_str(),
+                        "the input shape of a required input is missing in the tiling context; check that the graph "
+                        "node provides all required inputs"),
+                    return ge::GRAPH_FAILED);
         auto storageShape = shape->GetStorageShape();
-        OP_TILING_CHECK(storageShape.GetDimNum() != 1,
-                        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Dims of input %d should be one.", i),
-                        return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(
+            storageShape.GetDimNum() != 1,
+            OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), ("input[" + std::to_string(i) + "]").c_str(),
+                                         std::to_string(storageShape.GetDimNum()).c_str(), "1"),
+            return ge::GRAPH_FAILED);
         int64_t a = storageShape.GetDim(INDEX_0);
         OP_TILING_CHECK(a != aDim,
-                        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                                        "Shape of input %d should be %ld, actual %ld.", i, aDim, a),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context_->GetNodeName(), ("input[" + std::to_string(i) + "]").c_str(),
+                            Ops::Base::ToString(storageShape).c_str(),
+                            ("the shape of the input must have " + std::to_string(aDim) + " elements").c_str()),
                         return ge::GRAPH_FAILED);
     }
 
     for (int i = INDEX_1; i <= INDEX_2; i++) {
         auto shape = context_->GetOutputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, shape);
+        OP_CHECK_IF(shape == nullptr,
+                    ReportTilingStageError(context_->GetNodeName(),
+                                           "the output shape is missing in the tiling context; check that InferShape "
+                                           "executed and the framework propagated the output shapes"),
+                    return ge::GRAPH_FAILED);
         auto storageShape = shape->GetStorageShape();
-        OP_TILING_CHECK(storageShape.GetDimNum() != 1,
-                        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Dims of output %d should be one.", i),
-                        return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(
+            storageShape.GetDimNum() != 1,
+            OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), ("output[" + std::to_string(i) + "]").c_str(),
+                                         std::to_string(storageShape.GetDimNum()).c_str(), "1"),
+            return ge::GRAPH_FAILED);
         int64_t a = storageShape.GetDim(INDEX_0);
         OP_TILING_CHECK(a != aDim,
-                        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                                        "Shape of output %d should be %ld, actual %ld.", i, aDim, a),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context_->GetNodeName(), ("output[" + std::to_string(i) + "]").c_str(),
+                            Ops::Base::ToString(storageShape).c_str(),
+                            ("the shape of the output must have " + std::to_string(aDim) + " elements").c_str()),
                         return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -416,74 +474,109 @@ const gert::Shape& BatchNormGradV3TilingBase::EnsureNotScalar(const gert::Shape&
 ge::graphStatus BatchNormGradV3TilingBase::CheckBigShapesValid()
 {
     auto dyDesc = context_->GetInputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input desc of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto dyFormat = dyDesc->GetFormat().GetStorageFormat();
     auto dyShape = context_->GetInputShape(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyShape);
+    OP_CHECK_IF(
+        dyShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input shape of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto dyStorageShape = EnsureNotScalar(dyShape->GetStorageShape());
     int64_t dyDimNum = dyStorageShape.GetDimNum();
 
     auto xDesc = context_->GetInputDesc(INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
+    OP_CHECK_IF(
+        xDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input desc of required input x is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto xFormat = xDesc->GetFormat().GetStorageFormat();
     auto xShape = context_->GetInputShape(INDEX_1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input shape of required input x is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto xStorageShape = EnsureNotScalar(xShape->GetStorageShape());
     int64_t xDimNum = xStorageShape.GetDimNum();
 
     auto dxDesc = context_->GetOutputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxDesc);
+    OP_CHECK_IF(
+        dxDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dx",
+                                                 "the output desc of required output dx is missing in the tiling "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     auto dxFormat = dxDesc->GetFormat().GetStorageFormat();
     auto dxShape = context_->GetOutputShape(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxShape);
+    OP_CHECK_IF(dxShape == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "the output shape of dx is missing in the tiling context; check that InferShape "
+                                       "executed and the framework propagated the output shapes"),
+                return ge::GRAPH_FAILED);
     auto dxStorageShape = EnsureNotScalar(dxShape->GetStorageShape());
     int64_t dxDimNum = dxStorageShape.GetDimNum();
 
     // 校验dim相等
-    OP_TILING_CHECK(dyDimNum != xDimNum || dyDimNum != dxDimNum,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        context_->GetNodeName(),
-                        "Input Dy dim size [%ld], x dim size [%ld] and Output dx dim size [%ld] should be same",
-                        dyDimNum, xDimNum, dxDimNum),
-                    return ge::GRAPH_FAILED);
-
-    // 校验format
     OP_TILING_CHECK(
-        dyFormat != xFormat || dyFormat != dxFormat,
-        VECTOR_INNER_ERR_REPORT_TILIING(
-            context_->GetNodeName(), "Input Dy format [%s], x format [%s] and Output dx format [%s] should be same",
-            ge::TypeUtils::FormatToSerialString(dyFormat).c_str(), ge::TypeUtils::FormatToSerialString(xFormat).c_str(),
-            ge::TypeUtils::FormatToSerialString(dxFormat).c_str()),
+        dyDimNum != xDimNum || dyDimNum != dxDimNum,
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context_->GetNodeName(), "dy, x, dx",
+            (std::to_string(dyDimNum) + ", " + std::to_string(xDimNum) + ", " + std::to_string(dxDimNum)).c_str(),
+            "The dim nums of dy, x and dx must be the same"),
         return ge::GRAPH_FAILED);
 
+    // 校验format
+    OP_TILING_CHECK(dyFormat != xFormat || dyFormat != dxFormat,
+                    OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(context_->GetNodeName(), "dy, x, dx",
+                                                            (ge::TypeUtils::FormatToSerialString(dyFormat) + ", " +
+                                                             ge::TypeUtils::FormatToSerialString(xFormat) + ", " +
+                                                             ge::TypeUtils::FormatToSerialString(dxFormat))
+                                                                .c_str(),
+                                                            "The formats of dy, x and dx must be the same"),
+                    return ge::GRAPH_FAILED);
+
     if (dyFormat == ge::FORMAT_NCHW || dyFormat == ge::FORMAT_NHWC) {
-        OP_TILING_CHECK(dyDimNum != DIM_NUM_4,
-                        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Dims should be 4 with format [%s].",
-                                                        ge::TypeUtils::FormatToSerialString(dyFormat).c_str()),
-                        return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(
+            dyDimNum != DIM_NUM_4,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "dy", std::to_string(dyDimNum).c_str(),
+                                                     "the dim num of dy must be 4 with NCHW or NHWC format"),
+            return ge::GRAPH_FAILED);
     } else if (dyFormat == ge::FORMAT_NCDHW || dyFormat == ge::FORMAT_NDHWC) {
-        OP_TILING_CHECK(dyDimNum != DIM_NUM_5,
-                        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Dims should be 5 with format [%s].",
-                                                        ge::TypeUtils::FormatToSerialString(dyFormat).c_str()),
-                        return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(
+            dyDimNum != DIM_NUM_5,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "dy", std::to_string(dyDimNum).c_str(),
+                                                     "the dim num of dy must be 5 with NCDHW or NDHWC format"),
+            return ge::GRAPH_FAILED);
     } else {
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Not supported format [%s].",
-                                        ge::TypeUtils::FormatToSerialString(dyFormat).c_str());
-        return ge::GRAPH_FAILED;
+        OP_LOGE_FOR_INVALID_FORMAT(context_->GetNodeName(), "dy", ge::TypeUtils::FormatToSerialString(dyFormat).c_str(),
+                                   "NCHW, NHWC, NCDHW or NDHWC");
     }
 
     // 校验shape的dims相同
     for (int64_t i = 0; i < dyDimNum; i++) {
         OP_TILING_CHECK(
             xStorageShape.GetDim(i) != dyStorageShape.GetDim(i) || dxStorageShape.GetDim(i) != dyStorageShape.GetDim(i),
-            VECTOR_INNER_ERR_REPORT_TILIING(
-                context_->GetNodeName(),
-                "Input Dy dim[%ld]: %ld, X dim[%ld]: %ld and Output Dx dim[%ld]: %ld should be same.", i,
-                dyStorageShape.GetDim(i), i, xStorageShape.GetDim(i), i, dxStorageShape.GetDim(i)),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context_->GetNodeName(), "dy, x, dx",
+                (Ops::Base::ToString(dyStorageShape) + ", " + Ops::Base::ToString(xStorageShape) + ", " +
+                 Ops::Base::ToString(dxStorageShape))
+                    .c_str(),
+                "The shapes of dy, x and dx must be the same"),
             return ge::GRAPH_FAILED);
         OP_TILING_CHECK(dyStorageShape.GetDim(i) <= 0,
-                        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Not support dim[%ld]: %ld.", i,
-                                                        dyStorageShape.GetDim(i)),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "dy",
+                                                              Ops::Base::ToString(dyStorageShape).c_str(),
+                                                              "All axes of dy must be positive numbers"),
                         return ge::GRAPH_FAILED);
     }
 
@@ -493,10 +586,20 @@ ge::graphStatus BatchNormGradV3TilingBase::CheckBigShapesValid()
 ge::graphStatus BatchNormGradV3TilingBase::GetDtypesAndCheckValid()
 {
     auto weightDesc = context_->GetInputDesc(INDEX_2);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weightDesc);
+    OP_CHECK_IF(
+        weightDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "weight",
+                                                 "the input desc of required input weight is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     weightDtype = weightDesc->GetDataType();
     auto dyDesc = context_->GetInputDesc(INDEX_0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input desc of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     dyDtype = dyDesc->GetDataType();
 
     OP_TILING_CHECK(CheckInputDtypeValid() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
@@ -539,7 +642,7 @@ ge::graphStatus BatchNormGradV3TilingBase::GetShapesAndCheckValid()
 
     // 小shape 校验
     OP_TILING_CHECK(CheckSmallShapesValid() != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Input small shapes are invalid."),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Input small shapes are invalid."),
                     return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -553,7 +656,11 @@ ge::graphStatus BatchNormGradV3TilingBase::GetShapeAttrsInfo()
                     return ge::GRAPH_FAILED);
 
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
 
     const bool* isTrainingPtr = attrs->GetBool(0);
     bool isTraining = (isTrainingPtr == nullptr) ? true : *isTrainingPtr;
@@ -561,11 +668,11 @@ ge::graphStatus BatchNormGradV3TilingBase::GetShapeAttrsInfo()
                     return ge::GRAPH_PARAM_INVALID);
 
     OP_TILING_CHECK(GetShapesAndCheckValid() != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Input shapes are invalid."),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Input shapes are invalid."),
                     return ge::GRAPH_FAILED);
 
     OP_TILING_CHECK(GetDtypesAndCheckValid() != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Input dtypes are invalid."),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Input dtypes are invalid."),
                     return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -596,8 +703,11 @@ ge::graphStatus BatchNormGradV3TilingBase::DoOpTiling()
             blockNum = 1;
         }
     }
-    OP_TILING_CHECK(blockNum == 0, VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "block num is 0, failed."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        blockNum == 0,
+        ReportTilingStageError(context_->GetNodeName(), "DoOpTiling: block num is 0 after the platform query (core num "
+                                                        "is 0); check the platform info, SoC and OPP installation"),
+        return ge::GRAPH_FAILED);
     int64_t tailBlockNum = aDim % blockNum;
     int64_t formerBlockDim = aDim / blockNum;
     int64_t tailBlockDim = formerBlockDim + 1;
@@ -659,24 +769,31 @@ bool BatchNormGradV3RARFullLoadTilingBase::IsCapable()
 
 ge::graphStatus BatchNormGradV3RARFullLoadTilingBase::DoOpTiling()
 {
-    OP_TILING_CHECK(onceProcUbNeed == 0,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "onceProcUbNeed is 0, failed."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        onceProcUbNeed == 0,
+        ReportTilingStageError(
+            context_->GetNodeName(),
+            "DoOpTiling: onceProcUbNeed is 0 after the capability computation; internal tiling strategy error"),
+        return ge::GRAPH_FAILED);
     auto ret = BatchNormGradV3TilingBase::DoOpTiling();
     OP_TILING_CHECK(ret != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to do base tiling."),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "failed to do base tiling."),
                     return ge::GRAPH_FAILED);
 
     // 考虑开DB，ubsize要减半
-    OP_TILING_CHECK(static_cast<int64_t>((ubSize - binaryAddUbNeed) / DOUBLE_BUFFER) < reservUbSizeForAlign,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                                    "ubsize: %ld reserve: %ld binaryAdd: %ld ub is too small, failed.",
-                                                    ubSize, reservUbSizeForAlign, binaryAddUbNeed),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        static_cast<int64_t>((ubSize - binaryAddUbNeed) / DOUBLE_BUFFER) < reservUbSizeForAlign,
+        ReportTilingStageError(context_->GetNodeName(), "DoOpTiling: the remaining UB size " +
+                                                            std::to_string((ubSize - binaryAddUbNeed) / DOUBLE_BUFFER) +
+                                                            " bytes is smaller than the required reserve " +
+                                                            std::to_string(reservUbSizeForAlign) + " bytes"),
+        return ge::GRAPH_FAILED);
     int64_t formerUbDim = ((ubSize - binaryAddUbNeed) / DOUBLE_BUFFER - reservUbSizeForAlign) / onceProcUbNeed;
-    OP_TILING_CHECK(formerUbDim <= 0,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "formerUbDim is 0, failed."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        formerUbDim <= 0,
+        ReportTilingStageError(context_->GetNodeName(), "DoOpTiling: formerUbDim is " + std::to_string(formerUbDim) +
+                                                            "; the remaining UB cannot fit one processing tile"),
+        return ge::GRAPH_FAILED);
 
     int64_t formerBlockDim = baseTilingData.get_formerBlockDim();
     int64_t ubLoopOfFormerBlock = Ops::Base::CeilDiv(formerBlockDim, formerUbDim);
@@ -708,7 +825,8 @@ ge::graphStatus BatchNormGradV3RARFullLoadTilingBase::DoOpTiling()
 uint64_t BatchNormGradV3RARFullLoadTilingBase::GetTilingKey() const
 {
     if (dyDtype != ge::DataType::DT_FLOAT && dyDtype != ge::DataType::DT_FLOAT16 && dyDtype != ge::DataType::DT_BF16) {
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "DoLibApiTiling Not supported datatype.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "dy", Ops::Base::ToString(dyDtype).c_str(),
+                                              "The dtype of dy must be FLOAT, FLOAT16 or BF16.");
         return BNG_V3_TK_DEFAULT;
     }
     uint64_t tilingKeyValue = BNG_V3_RAR_ALL_LOAD_TK_BASE;
@@ -727,12 +845,18 @@ ge::graphStatus BatchNormGradV3RARFullLoadTilingBase::PostTiling()
 {
     uint64_t tilingKey = GetTilingKey();
     OP_TILING_CHECK(tilingKey == BNG_V3_TK_DEFAULT,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to get tiling key."),
+                    ReportTilingStageError(
+                        context_->GetNodeName(),
+                        "PostTiling: tiling key is 0 (default); the template failed to produce a valid tiling key"),
                     return ge::GRAPH_FAILED);
     context_->SetTilingKey(tilingKey);
     context_->SetBlockDim(baseTilingData.get_blockNum());
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     tilingData.set_outputMask(outputMask_);
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
@@ -838,7 +962,7 @@ ge::graphStatus BatchNormGradV3RARRecomputeTilingBase::DoOpTiling()
     onceProcUbNeed = INT64_MAX;
     auto ret = BatchNormGradV3TilingBase::DoOpTiling();
     OP_TILING_CHECK(ret != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to do base tiling."),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "failed to do base tiling."),
                     return ge::GRAPH_FAILED);
 
     if (subTilingKey == BNG_V3_RAR_RECOMPUTE_SPLIT_R1) {
@@ -869,7 +993,8 @@ ge::graphStatus BatchNormGradV3RARRecomputeTilingBase::DoOpTiling()
 uint64_t BatchNormGradV3RARRecomputeTilingBase::GetTilingKey() const
 {
     if (dyDtype != ge::DataType::DT_FLOAT && dyDtype != ge::DataType::DT_FLOAT16 && dyDtype != ge::DataType::DT_BF16) {
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "DoLibApiTiling Not supported datatype.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "dy", Ops::Base::ToString(dyDtype).c_str(),
+                                              "The dtype of dy must be FLOAT, FLOAT16 or BF16.");
         return BNG_V3_TK_DEFAULT;
     }
     uint64_t tilingKeyValue = BNG_V3_RAR_RECOMPUTE_TK_BASE;
@@ -888,12 +1013,18 @@ ge::graphStatus BatchNormGradV3RARRecomputeTilingBase::PostTiling()
 {
     uint64_t curTilingKey = GetTilingKey();
     OP_TILING_CHECK(curTilingKey == BNG_V3_TK_DEFAULT,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to get tiling key."),
+                    ReportTilingStageError(
+                        context_->GetNodeName(),
+                        "PostTiling: tiling key is 0 (default); the template failed to produce a valid tiling key"),
                     return ge::GRAPH_FAILED);
     context_->SetTilingKey(curTilingKey);
     context_->SetBlockDim(baseTilingData.get_blockNum());
     size_t* curWorkspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, curWorkspaces);
+    OP_CHECK_IF(curWorkspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     curWorkspaces[0] = workspaceSize_;
     tilingData.set_outputMask(outputMask_);
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
@@ -999,7 +1130,7 @@ ge::graphStatus BatchNormGradV3RAFullLoadTilingBase::DoOpTiling()
     onceProcUbNeed = INT64_MAX;
     auto ret = BatchNormGradV3TilingBase::DoOpTiling();
     OP_TILING_CHECK(ret != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to do base tiling."),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "failed to do base tiling."),
                     return ge::GRAPH_FAILED);
 
     int64_t dtypeSize = dyDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
@@ -1028,7 +1159,9 @@ ge::graphStatus BatchNormGradV3RAFullLoadTilingBase::DoOpTiling()
     int64_t power2k = (rDim_ <= 1) ? 1 : (1L << (ULONG_BIT_LEN - 1 - __builtin_clzl(rDim_ - 1)));
 
     OP_TILING_CHECK(!CalculateBlockFactors(dtypeSize, weightDtypeSize, power2k),
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to set RA block factors."),
+                    ReportTilingStageError(context_->GetNodeName(),
+                                           "DoOpTiling: CalculateBlockFactors failed to set RA block factors for the "
+                                           "current shape and platform; tiling strategy failed for a valid input"),
                     return ge::GRAPH_FAILED);
     CalculateLoopFactors(dtypeSize, weightDtypeSize, rDim_, power2k);
     SetReduceLoopTimes(power2k, rDim_);
@@ -1134,7 +1267,8 @@ void BatchNormGradV3RAFullLoadTilingBase::SetReduceLoopTimes(int64_t power2k, in
 uint64_t BatchNormGradV3RAFullLoadTilingBase::GetTilingKey() const
 {
     if (dyDtype != ge::DataType::DT_FLOAT && dyDtype != ge::DataType::DT_FLOAT16 && dyDtype != ge::DataType::DT_BF16) {
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "DoLibApiTiling Not supported datatype.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "dy", Ops::Base::ToString(dyDtype).c_str(),
+                                              "The dtype of dy must be FLOAT, FLOAT16 or BF16.");
         return BNG_V3_TK_DEFAULT;
     }
     uint64_t tilingKeyValue = packed_ ? BNG_V3_RA_PACKED_ALL_LOAD_TK_BASE : BNG_V3_RA_ALL_LOAD_TK_BASE;
@@ -1154,7 +1288,11 @@ ge::graphStatus BatchNormGradV3RAFullLoadTilingBase::PostTiling()
     context_->SetTilingKey(tilingKey);
     context_->SetBlockDim(tilingData.get_numBlocks());
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     tilingData.set_outputMask(outputMask_);
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
@@ -1177,7 +1315,7 @@ ge::graphStatus BatchNormGradV3RARecomputeTilingBase::DoOpTiling()
     onceProcUbNeed = INT64_MAX;
     auto ret = BatchNormGradV3TilingBase::DoOpTiling();
     OP_TILING_CHECK(ret != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to do base tiling."),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "failed to do base tiling."),
                     return ge::GRAPH_FAILED);
     int64_t aLoopFactor = BASIC_FACTOR;
     int64_t rLoopFactor = BASIC_FACTOR;
@@ -1187,9 +1325,11 @@ ge::graphStatus BatchNormGradV3RARecomputeTilingBase::DoOpTiling()
     int64_t dtypeSize = dyDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
     int64_t rDim_ = tilingData.baseTilingData.get_r1Dim();
     int64_t aDim_ = tilingData.baseTilingData.get_aDim();
-    OP_TILING_CHECK(!SetRABlockFactorsCommon(tilingData, aDim_, dtypeSize, coreNum, blockSize),
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "failed to set RA block factors."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        !SetRABlockFactorsCommon(tilingData, aDim_, dtypeSize, coreNum, blockSize),
+        ReportTilingStageError(context_->GetNodeName(), "DoOpTiling: SetRABlockFactorsCommon failed for the current "
+                                                        "shape and platform; tiling strategy failed for a valid input"),
+        return ge::GRAPH_FAILED);
 
     // Start with the UB-selected tile, then refine it if shared-L2 capacity is known.
     CalcRARecomputeLoopFactors(tilingData.get_mainBlockFactor(), rDim_, ubSize, aLoopFactor, aLoopFactorAligned,
@@ -1205,7 +1345,7 @@ ge::graphStatus BatchNormGradV3RARecomputeTilingBase::DoOpTiling()
     }
     // UB capacity remains a hard constraint after the cache-based refinement.
     OP_TILING_CHECK(aLoopFactorAligned * RARecomputeBytesPerChannel(rDim_, rLoopFactor) > static_cast<int64_t>(ubSize),
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "RA recompute UB budget exceeded."),
+                    ReportTilingStageError(context_->GetNodeName(), "RA recompute UB budget exceeded"),
                     return ge::GRAPH_FAILED);
 
     // ub tiling
@@ -1238,7 +1378,8 @@ ge::graphStatus BatchNormGradV3RARecomputeTilingBase::DoOpTiling()
 uint64_t BatchNormGradV3RARecomputeTilingBase::GetTilingKey() const
 {
     if (dyDtype != ge::DataType::DT_FLOAT && dyDtype != ge::DataType::DT_FLOAT16 && dyDtype != ge::DataType::DT_BF16) {
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "DoLibApiTiling Not supported datatype.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "dy", Ops::Base::ToString(dyDtype).c_str(),
+                                              "The dtype of dy must be FLOAT, FLOAT16 or BF16.");
         return BNG_V3_TK_DEFAULT;
     }
     uint64_t tilingKeyValue = BNG_V3_RA_RECOMPUTE_TK_BASE;
@@ -1258,7 +1399,11 @@ ge::graphStatus BatchNormGradV3RARecomputeTilingBase::PostTiling()
     context_->SetTilingKey(raTilingKey);
     context_->SetBlockDim(tilingData.get_numBlocks());
     size_t* raWorkspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, raWorkspaces);
+    OP_CHECK_IF(raWorkspaces == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     raWorkspaces[0] = workspaceSize_;
     tilingData.set_outputMask(outputMask_);
     tilingData.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
@@ -1273,32 +1418,48 @@ ge::graphStatus TilingForBatchNormGradV3(gert::TilingContext* context)
 
 ge::graphStatus TilingPrepareForBatchNormGradV3(gert::TilingParseContext* context)
 {
-    OP_TILING_CHECK(context == nullptr, OP_LOGE("BatchNormGradV3", "TilingParseContext is nullptr."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        context == nullptr,
+        ReportTilingStageError("BatchNormGradV3",
+                               "TilingPrepare: TilingParseContext is null; the tiling framework contract is broken"),
+        return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "TilingPrepareForBatchNormGradV3 enter.");
 
     auto compileInfo = context->GetCompiledInfo<BatchNormGradV3CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "TilingPrepare: compile info is null; check the SoC-specific OPP package and the tiling parse context"),
+        return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "TilingPrepare: platform info is null; check the platform info query and the OPP/SoC installation"),
+                return ge::GRAPH_FAILED);
 
     compileInfo->blockSize = Ops::Base::GetUbBlockSize(context);
     compileInfo->vlFp32 = Ops::Base::GetVRegSize(context) / sizeof(float);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_TILING_CHECK((compileInfo->coreNum <= 0),
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "Get core num failed, core num: %u",
-                                                    static_cast<uint32_t>(compileInfo->coreNum)),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        (compileInfo->coreNum <= 0),
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid core num " + std::to_string(compileInfo->coreNum) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
 
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = ubSize;
-    OP_TILING_CHECK((compileInfo->ubSize <= 0),
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "Get ub size failed, ub size: %lu",
-                                                    compileInfo->ubSize),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        (compileInfo->ubSize <= 0),
+        ReportTilingStageError(context->GetNodeName(),
+                               "TilingPrepare: got an invalid UB size " + std::to_string(compileInfo->ubSize) +
+                                   " from the platform info; check the SoC platform query and the OPP installation"),
+        return ge::GRAPH_FAILED);
 
     OP_LOGD(context->GetNodeName(), "TilingPrepareForBatchNormGradV3 exit, ubSize: %ld.", ubSize);
     return ge::GRAPH_SUCCESS;

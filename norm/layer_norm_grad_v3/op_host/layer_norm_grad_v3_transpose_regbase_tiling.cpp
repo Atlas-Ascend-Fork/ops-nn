@@ -19,6 +19,14 @@
 #include "tiling/tiling_api.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "LayerNormGradV3", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 constexpr static int64_t M_TILE_MIN_SIZE = 16;           // M最小块大小
 constexpr static int64_t TRANSPOSE_COL_BYTES_LIMIT = 32; // 模板路由字节数上限
 constexpr static int64_t TRANSPOSE_M_THRESHOLD = 256;    // 模板路由行数下限
@@ -246,7 +254,11 @@ ge::graphStatus LayerNormGradV3TransposeRegBaseTiling::DoOpTiling()
 ge::graphStatus LayerNormGradV3TransposeRegBaseTiling::GetWorkspaceSize()
 {
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(currentWorkspace == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
     // 用户workspace: dbeta/dgamma两段, 每核各占NAlign个float
     int64_t gammaBetaUsedCoreNum = td_.get_gammaBetaUsedCoreNum();

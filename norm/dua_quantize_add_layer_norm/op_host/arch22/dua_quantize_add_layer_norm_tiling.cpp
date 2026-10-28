@@ -18,6 +18,14 @@
 
 namespace optiling {
 
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "DuaQuantizeAddLayerNorm", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static constexpr uint64_t TILING_BASE = 1000;
 static constexpr uint64_t TILING_MUL_MODE = 1;
 static constexpr int64_t AXIS_VALUE_FOR_MUL_MODE = static_cast<int64_t>(-65535LL);
@@ -76,14 +84,27 @@ static inline void GetSocInfos(gert::TilingContext* context, uint64_t& ubSize, u
 static bool GetAndSetAttrs(gert::TilingContext* context, DuaQuantizeAddLayerNormTilingData* tiling, uint64_t& tilingKey)
 {
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(nullptr == attrs, OP_LOGE(context, "GetAttrs failed. "), return false);
+    OP_CHECK_IF(
+        nullptr == attrs,
+        ReportTilingStageError(context->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return false);
 
     const float* epsPtr = attrs->GetFloat(EPS_IDX);
-    OP_CHECK_IF(nullptr == epsPtr, OP_LOGE(context, "Get required attr epsPtr failed. "), return false);
+    OP_CHECK_IF(
+        nullptr == epsPtr,
+        ReportTilingStageError(
+            context->GetNodeName(),
+            "the required attr epsilon is missing in the tiling context; check the attr registration on the node"),
+        return false);
     float eps = *epsPtr;
 
     const int64_t* axisPtr = attrs->GetInt(AXIS_IDX);
-    OP_CHECK_IF(nullptr == axisPtr, OP_LOGE(context, "Get required attr axisPtr failed. "), return false);
+    OP_CHECK_IF(nullptr == axisPtr,
+                ReportTilingStageError(
+                    context->GetNodeName(),
+                    "the required attr axis is missing in the tiling context; check the attr registration on the node"),
+                return false);
     int64_t axis = *axisPtr;
 
     OP_LOGD("DuaQuantizeAddLayerNorm", "eps: %f, axis: %ld", eps, axis);
@@ -159,14 +180,17 @@ static ge::graphStatus Tiling4DuaQuantizeAddLayerNorm(gert::TilingContext* conte
 
     uint64_t tilingKey = TILING_BASE;
     bool res = GetAndSetAttrs(context, &tiling, tilingKey);
-    OP_CHECK_IF(!res, OP_LOGE("DuaQuantizeAddLayerNorm", "GetAndSetAttrs Failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!res, OP_LOGE_WITHOUT_REPORT("DuaQuantizeAddLayerNorm", "GetAndSetAttrs Failed"),
+                return ge::GRAPH_FAILED);
 
     int64_t numRow = 1;
     int32_t numLastDim = 1;
     GetRowCols(context, numRow, numLastDim);
 
     OP_CHECK_IF(numRow > static_cast<int64_t>(UINT32_MAX),
-                OP_LOGE("DuaQuantizeAddLayerNorm", "numRow(%ld) exceeds uint32_t limit, not supported.", numRow),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("DuaQuantizeAddLayerNorm", "x1", std::to_string(numRow).c_str(),
+                                                      "the product of the leading dims of x1 (numRow) exceeds "
+                                                      "the uint32_t limit; reduce the input size"),
                 return ge::GRAPH_FAILED);
 
     int64_t nlFirstDimPerCore = CEIL_DIV(numRow, static_cast<int64_t>(maxCoreNum));
@@ -174,7 +198,10 @@ static ge::graphStatus Tiling4DuaQuantizeAddLayerNorm(gert::TilingContext* conte
 
     int32_t dataTypeSize = GetSizeByDataType(context->GetInputDesc(0)->GetDataType());
     OP_CHECK_IF(!(CheckUbLimit(ubSize, numLastDim, dataTypeSize)),
-                OP_LOGE("DuaQuantizeAddLayerNorm", "CheckUbLimit Failed"), return ge::GRAPH_FAILED);
+                ReportTilingStageError(context->GetNodeName(),
+                                       "the tiling requires more UB than the platform provides for the given "
+                                       "input; check the input size and the SoC"),
+                return ge::GRAPH_FAILED);
 
     SetTilingData(&tiling, numRow, numLastDim, numCore, nlFirstDimPerCore);
     SetOptInputs(context, &tiling);

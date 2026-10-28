@@ -26,8 +26,25 @@
 #include "opdev/platform.h"
 #include "instance_norm_v3.h"
 #include "aclnn_instance_norm.h"
+#include "log/log.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,12 +63,12 @@ static const std::initializer_list<op::DataType> ASCEND310P_DTYPE_SUPPORT_LIST =
 static bool CheckNotNull(const aclTensor* x, const aclTensor* gamma, const aclTensor* beta, const aclTensor* y,
                          const aclTensor* mean, const aclTensor* variance, const char* dataFormat)
 {
-    OP_CHECK_NULL(x, return false);
-    OP_CHECK_NULL(gamma, return false);
-    OP_CHECK_NULL(beta, return false);
-    OP_CHECK_NULL(y, return false);
-    OP_CHECK_NULL(mean, return false);
-    OP_CHECK_NULL(variance, return false);
+    OP_CHECK(x != nullptr, ReportNullPointerError(__func__, "x"), return false);
+    OP_CHECK(gamma != nullptr, ReportNullPointerError(__func__, "gamma"), return false);
+    OP_CHECK(beta != nullptr, ReportNullPointerError(__func__, "beta"), return false);
+    OP_CHECK(y != nullptr, ReportNullPointerError(__func__, "y"), return false);
+    OP_CHECK(mean != nullptr, ReportNullPointerError(__func__, "mean"), return false);
+    OP_CHECK(variance != nullptr, ReportNullPointerError(__func__, "variance"), return false);
     CHECK_RET(dataFormat != nullptr, false);
     return true;
 }
@@ -69,9 +86,14 @@ static bool CheckParamValid(const char* dataFormat)
 
 static aclnnStatus CheckPlatform()
 {
-    OP_CHECK(GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND310P,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "aclnnInstanceNorm only supports Ascend310p"),
-             return ACLNN_ERR_PARAM_INVALID);
+    if (GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND310P) {
+        // SoC不支持统一上报EZ3002(已注册, Arglist=optype,opskernel,reason), 返回值保持不变
+        const std::vector<const char*> ez3002Key = {"optype", "opskernel", "reason"};
+        const std::vector<const char*> ez3002Value = {"aclnnInstanceNorm", "AiCore", "only Ascend310P is supported"};
+        OP_LOGE_WITHOUT_REPORT("EZ3002", "%s", "aclnnInstanceNorm only supports Ascend310p");
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", ez3002Key, ez3002Value);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -101,14 +123,20 @@ static aclnnStatus CheckInputAndWeightShape(const aclTensor* x, const aclTensor*
     int64_t gammaDimNums = gamma->GetViewShape().GetDimNum();
     int64_t betaDimNums = beta->GetViewShape().GetDimNum();
     OP_CHECK((xDimNums == DIM_NUM) && (gammaDimNums == DIM_NUM_GAMMA) && (betaDimNums == DIM_NUM_GAMMA),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x dim should be 4, gamma dim should be 1, beta dim should be 1"),
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                 "aclnnInstanceNorm", "x/gamma/beta",
+                 (std::to_string(xDimNums) + ", " + std::to_string(gammaDimNums) + ", " + std::to_string(betaDimNums))
+                     .c_str(),
+                 "x dim should be 4, gamma dim should be 1, beta dim should be 1"),
              return ACLNN_ERR_PARAM_INVALID);
     int64_t gammaDimValue = gamma->GetViewShape().GetDim(IDX_0);
     int64_t xCAxisValue = (needTranspose) ? x->GetViewShape().GetDim(IDX_3) : x->GetViewShape().GetDim(IDX_1);
     OP_LOGD("aclnnInstanceNormGetWorkspaceSize xCAxisValue: %ld, gammaDimValue: %ld", xCAxisValue, gammaDimValue);
-    OP_CHECK(xCAxisValue == gammaDimValue,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "gamma.shape[0] must be equal to x's C axis"),
-             return ACLNN_ERR_PARAM_INVALID);
+    OP_CHECK(
+        xCAxisValue == gammaDimValue,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnInstanceNorm", "gamma", std::to_string(gammaDimValue).c_str(),
+                                                 "gamma.shape[0] must be equal to the C axis of x"),
+        return ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 

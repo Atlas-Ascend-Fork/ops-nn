@@ -45,7 +45,7 @@ const std::tuple<aclTensor*, aclTensor*> AdaLayerNormQuant(const aclTensor* x, c
         AdaLayerNormQuant, OP_INPUT(x, scale, shift, weightOptional, biasOptional, smoothScalesOptional),
         OP_OUTPUT(out, quantScale), OP_ATTR(epsilon));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "AdaLayerNormQuantAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ret, "AdaLayerNormQuantAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return std::tuple(nullptr, nullptr);
     }
     return std::tie(out, quantScale);

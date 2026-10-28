@@ -16,6 +16,14 @@
 #include "ada_layer_norm_grad_tiling.h"
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "AdaLayerNormGrad", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static const size_t INPUT_IDX_ZERO = 0;
 static const size_t INPUT_IDX_ONE = 1;
 static const size_t INPUT_IDX_TWO = 2;
@@ -38,17 +46,35 @@ static bool CheckShapeSame(const gert::TilingContext* context_, const size_t lef
     const gert::StorageShape* rightShape = nullptr;
     if (isLeftInput) {
         leftShape = context_->GetInputShape(leftIndex);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, leftShape);
+        OP_CHECK_IF(leftShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(),
+                                                             ("input[" + std::to_string(leftIndex) + "]").c_str(),
+                                                             "the input shape is missing in the tiling context; check "
+                                                             "that the graph node provides all required inputs"),
+                    return ge::GRAPH_FAILED);
     } else {
         leftShape = context_->GetOutputShape(leftIndex);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, leftShape);
+        OP_CHECK_IF(leftShape == nullptr,
+                    ReportTilingStageError(context_->GetNodeName(),
+                                           "the output shape is missing in the tiling context; check that InferShape "
+                                           "executed and the framework propagated the output shapes"),
+                    return ge::GRAPH_FAILED);
     }
     if (isRightInput) {
         rightShape = context_->GetInputShape(rightIndex);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, rightShape);
+        OP_CHECK_IF(rightShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(),
+                                                             ("input[" + std::to_string(rightIndex) + "]").c_str(),
+                                                             "the input shape is missing in the tiling context; check "
+                                                             "that the graph node provides all required inputs"),
+                    return ge::GRAPH_FAILED);
     } else {
         rightShape = context_->GetOutputShape(rightIndex);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, rightShape);
+        OP_CHECK_IF(rightShape == nullptr,
+                    ReportTilingStageError(context_->GetNodeName(),
+                                           "the output shape is missing in the tiling context; check that InferShape "
+                                           "executed and the framework propagated the output shapes"),
+                    return ge::GRAPH_FAILED);
     }
 
     // get storage shape
@@ -57,11 +83,13 @@ static bool CheckShapeSame(const gert::TilingContext* context_, const size_t lef
 
     // check the leftIndex shape and rightIndex shape are the same
     OP_CHECK_IF((leftShapeVal != rightShapeVal),
-                OP_LOGE(context_->GetNodeName(),
-                        "The shape of leftIndex(%zu) is not equal to"
-                        "the shape of rightIndex(%zu), please check.",
-                        leftIndex, rightIndex),
-                return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context_->GetNodeName(), "left, right",
+                    (Ops::Base::ToString(leftShapeVal) + ", " + Ops::Base::ToString(rightShapeVal)).c_str(),
+                    ("the shape at leftIndex " + std::to_string(leftIndex) +
+                     " must be the same as the shape at rightIndex " + std::to_string(rightIndex))
+                        .c_str()),
+                return ge::GRAPH_FAILED);
     return true;
 }
 
@@ -74,25 +102,38 @@ static ge::graphStatus InputDtypeCheck(gert::TilingContext* context_, ge::DataTy
             rstdDtype, meanDtype, gammaDtype, betaDtype, scaleDtype);
 
     // input check
-    OP_CHECK_IF((dyDtype != ge::DataType::DT_FLOAT) && (dyDtype != ge::DataType::DT_FLOAT16) &&
-                    (dyDtype != ge::DataType::DT_BF16),
-                OP_LOGE(context_->GetNodeName(), "dy dtype must be in float32, float16, bfloat16."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(xDtype != dyDtype, OP_LOGE(context_->GetNodeName(), "x dtype must be the same as dy."),
+    OP_CHECK_IF(
+        (dyDtype != ge::DataType::DT_FLOAT) && (dyDtype != ge::DataType::DT_FLOAT16) &&
+            (dyDtype != ge::DataType::DT_BF16),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "dy", Ops::Base::ToString(dyDtype).c_str(),
+                                              "The dtype of dy must be FLOAT, FLOAT16 or BF16."),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(xDtype != dyDtype,
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context_->GetNodeName(), "x, dy",
+                    (Ops::Base::ToString(xDtype) + ", " + Ops::Base::ToString(dyDtype)).c_str(),
+                    "The dtypes of x and dy must be the same."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF((rstdDtype != ge::DataType::DT_FLOAT) || (meanDtype != ge::DataType::DT_FLOAT),
-                OP_LOGE(context_->GetNodeName(), "rstd and mean dtype must be the float32."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context_->GetNodeName(), "rstd, mean",
+                    (Ops::Base::ToString(rstdDtype) + ", " + Ops::Base::ToString(meanDtype)).c_str(),
+                    "The dtypes of rstd and mean must be FLOAT."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         (gammaDtype != dyDtype) && (gammaDtype != ge::DataType::DT_FLOAT),
-        OP_LOGE(context_->GetNodeName(), "when gamma dtype is not same as dy dtype, gamma dtype must be float32."),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "gamma", Ops::Base::ToString(gammaDtype).c_str(),
+                                              "The dtype of gamma must be the same as dy or FLOAT."),
         return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         (betaDtype != dyDtype) && (betaDtype != ge::DataType::DT_FLOAT),
-        OP_LOGE(context_->GetNodeName(), "when beta dtype is not same as dy dtype, beta dtype must be float32."),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "beta", Ops::Base::ToString(betaDtype).c_str(),
+                                              "The dtype of beta must be the same as dy or FLOAT."),
         return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         (scaleDtype != dyDtype) && (scaleDtype != ge::DataType::DT_FLOAT),
-        OP_LOGE(context_->GetNodeName(), "when scale dtype is not same as dy dtype, scale dtype must be float32."),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "scale", Ops::Base::ToString(scaleDtype).c_str(),
+                                              "The dtype of scale must be the same as dy or FLOAT."),
         return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -109,31 +150,66 @@ static void CheckInputShapes(gert::TilingContext* context_)
 static bool GetAllInputDtypes(gert::TilingContext* context_, ParamsAdaLayerNormGrad& commonParams)
 {
     auto dyDesc = context_->GetInputDesc(INPUT_IDX_ZERO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input desc of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.dyDtype = dyDesc->GetDataType();
 
     auto xDesc = context_->GetInputDesc(INPUT_IDX_ONE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
+    OP_CHECK_IF(
+        xDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "x",
+                                                 "the input desc of required input x is missing in the tiling context; "
+                                                 "check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.xDtype = xDesc->GetDataType();
 
     auto rstdDesc = context_->GetInputDesc(INPUT_IDX_TWO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, rstdDesc);
+    OP_CHECK_IF(
+        rstdDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "rstd",
+                                                 "the input desc of required input rstd is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.rstdDtype = rstdDesc->GetDataType();
 
     auto meanDesc = context_->GetInputDesc(INPUT_IDX_THREE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, meanDesc);
+    OP_CHECK_IF(
+        meanDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "mean",
+                                                 "the input desc of required input mean is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.meanDtype = meanDesc->GetDataType();
 
     auto scaleDesc = context_->GetInputDesc(INPUT_IDX_FOUR);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, scaleDesc);
+    OP_CHECK_IF(
+        scaleDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "scale",
+                                                 "the input desc of required input scale is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.scaleDtype = scaleDesc->GetDataType();
 
     auto gammaDesc = context_->GetInputDesc(INPUT_IDX_FIVE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, gammaDesc);
+    OP_CHECK_IF(
+        gammaDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gamma",
+                                                 "the input desc of required input gamma is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.gammaDtype = gammaDesc->GetDataType();
 
     auto betaDesc = context_->GetInputDesc(INPUT_IDX_SIX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, betaDesc);
+    OP_CHECK_IF(
+        betaDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "beta",
+                                                 "the input desc of required input beta is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     commonParams.betaDtype = betaDesc->GetDataType();
     return true;
 }
@@ -142,20 +218,30 @@ static ge::graphStatus ExtraShape(const gert::TilingContext* context_, ParamsAda
 {
     // get shape
     auto dy = context_->GetInputShape(INPUT_IDX_ZERO);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dy);
+    OP_CHECK_IF(
+        dy == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input shape of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto dyShape = dy->GetStorageShape();
     int64_t dyDimNum = dyShape.GetDimNum();
 
     auto gamma = context_->GetInputShape(INPUT_IDX_FIVE);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, gamma);
+    OP_CHECK_IF(
+        gamma == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gamma",
+                                                 "the input shape of required input gamma is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto gammaShape = gamma->GetStorageShape();
     int64_t gammaDimNum = gammaShape.GetDimNum();
 
     OP_CHECK_IF((dyDimNum < gammaDimNum),
-                OP_LOGE(context_->GetNodeName(),
-                        "TilingForAdaLayerNormGrad: dy dim num(=%ld) is less than"
-                        "gamma dim num(=%ld), please check.",
-                        static_cast<long>(dyDimNum), static_cast<long>(gammaDimNum)),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context_->GetNodeName(), "dy, gamma",
+                    (std::to_string(dyDimNum) + ", " + std::to_string(gammaDimNum)).c_str(),
+                    "the dim num of dy must not be less than the dim num of gamma"),
                 return ge::GRAPH_FAILED);
     // fuse dims
     int64_t row = 1;
@@ -165,7 +251,8 @@ static ge::graphStatus ExtraShape(const gert::TilingContext* context_, ParamsAda
     for (int64_t i = 0; i < dyDimNum; i++) {
         OP_CHECK_IF(
             (dyShape.GetDim(i) <= 0),
-            OP_LOGE(context_->GetNodeName(), "Tiling4AdaLayerNormGrad: dy shape contains zero or negative num."),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "dy", Ops::Base::ToString(dyShape).c_str(),
+                                                  "All axes of dy must be positive numbers"),
             return ge::GRAPH_FAILED);
 
         if (i < dyDimNum - gammaDimNum - 1) {
@@ -175,11 +262,10 @@ static ge::graphStatus ExtraShape(const gert::TilingContext* context_, ParamsAda
             row *= dyShape.GetDim(i);
         } else {
             OP_CHECK_IF((dyShape.GetDim(i) != gammaShape.GetDim(i - dyDimNum + gammaDimNum)),
-                        OP_LOGE(context_->GetNodeName(),
-                                "TilingForAdaLayerNormGrad: dy dim value(=%ld) is not equal to"
-                                "gamma dim value(=%ld), please check.",
-                                static_cast<long>(dyShape.GetDim(i)),
-                                static_cast<long>(gammaShape.GetDim(i - dyDimNum + gammaDimNum))),
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            context_->GetNodeName(), "dy, gamma",
+                            (Ops::Base::ToString(dyShape) + ", " + Ops::Base::ToString(gammaShape)).c_str(),
+                            "the last dims of dy must be the same as the dims of gamma"),
                         return ge::GRAPH_FAILED);
             col *= dyShape.GetDim(i);
         }
@@ -194,7 +280,12 @@ static ge::graphStatus ExtraShape(const gert::TilingContext* context_, ParamsAda
 static ge::graphStatus GetOutputDtype(const gert::TilingContext* context_, int idx, ge::DataType& dtype)
 {
     auto desc = context_->GetOutputDesc(idx);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, desc);
+    OP_CHECK_IF(desc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(),
+                                                         ("output[" + std::to_string(idx) + "]").c_str(),
+                                                         "the output desc is missing in the tiling context; check that "
+                                                         "the graph node provides all required outputs"),
+                return ge::GRAPH_FAILED);
     dtype = desc->GetDataType();
     return desc ? ge::GRAPH_SUCCESS : ge::GRAPH_FAILED;
 }
@@ -205,36 +296,56 @@ ge::graphStatus CheckOutputDtype(const gert::TilingContext* context_, ParamsAdaL
 
     // 检查dx/dscale/dshift（与dy类型一致）
     if (params.pdxIsRequire && GetOutputDtype(context_, OUTPUT_IDX_ZERO, params.dxDtype) == ge::GRAPH_SUCCESS) {
-        OP_CHECK_IF(params.dxDtype != params.dyDtype, OP_LOGE(nodeName, "dx dtype must match dy when required."),
+        OP_CHECK_IF(params.dxDtype != params.dyDtype,
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        nodeName, "pd_x, dy",
+                        (Ops::Base::ToString(params.dxDtype) + ", " + Ops::Base::ToString(params.dyDtype)).c_str(),
+                        "The dtypes of pd_x and dy must be the same when pd_x is required."),
                     return ge::GRAPH_FAILED);
     }
     if (params.pdscaleIsRequire && GetOutputDtype(context_, OUTPUT_IDX_ONE, params.dscaleDtype) == ge::GRAPH_SUCCESS) {
         OP_CHECK_IF(params.dscaleDtype != params.dyDtype,
-                    OP_LOGE(nodeName, "dscale dtype must match dy when required."), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        nodeName, "pd_scale, dy",
+                        (Ops::Base::ToString(params.dscaleDtype) + ", " + Ops::Base::ToString(params.dyDtype)).c_str(),
+                        "The dtypes of pd_scale and dy must be the same when pd_scale is required."),
+                    return ge::GRAPH_FAILED);
     }
     if (params.pdshiftIsRequire && GetOutputDtype(context_, OUTPUT_IDX_TWO, params.dshiftDtype) == ge::GRAPH_SUCCESS) {
         OP_CHECK_IF(params.dshiftDtype != params.dyDtype,
-                    OP_LOGE(nodeName, "dshift dtype must match dy when required."), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        nodeName, "pd_shift, dy",
+                        (Ops::Base::ToString(params.dshiftDtype) + ", " + Ops::Base::ToString(params.dyDtype)).c_str(),
+                        "The dtypes of pd_shift and dy must be the same when pd_shift is required."),
+                    return ge::GRAPH_FAILED);
     }
 
     // 检查dgamma/dbeta（与gamma一致或为float32）
     if (params.pdgammaIsRequire &&
         GetOutputDtype(context_, OUTPUT_IDX_THREE, params.dgammaDtype) == ge::GRAPH_SUCCESS) {
         OP_CHECK_IF((params.dgammaDtype != params.gammaDtype) && (params.dgammaDtype != ge::DataType::DT_FLOAT),
-                    OP_LOGE(nodeName, "dgamma dtype must match gamma or be float32 when required."),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        nodeName, "pd_gamma", Ops::Base::ToString(params.dgammaDtype).c_str(),
+                        "The dtype of pd_gamma must be the same as gamma or FLOAT when pd_gamma is required."),
                     return ge::GRAPH_FAILED);
     }
     if (params.pdbetaIsRequire && GetOutputDtype(context_, OUTPUT_IDX_FOUR, params.dbetaDtype) == ge::GRAPH_SUCCESS) {
         OP_CHECK_IF((params.dbetaDtype != params.gammaDtype) && (params.dbetaDtype != ge::DataType::DT_FLOAT),
-                    OP_LOGE(nodeName, "dbeta dtype must match gamma or be float32 when required."),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        nodeName, "pd_beta", Ops::Base::ToString(params.dbetaDtype).c_str(),
+                        "The dtype of pd_beta must be the same as gamma or FLOAT when pd_beta is required."),
                     return ge::GRAPH_FAILED);
     }
 
     // 检查dgamma和dbeta类型一致性
     if (params.pdgammaIsRequire && params.pdbetaIsRequire) {
-        OP_CHECK_IF(params.dgammaDtype != params.dbetaDtype,
-                    OP_LOGE(nodeName, "dgamma and dbeta dtype must match when both required."),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            params.dgammaDtype != params.dbetaDtype,
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                nodeName, "pd_gamma, pd_beta",
+                (Ops::Base::ToString(params.dgammaDtype) + ", " + Ops::Base::ToString(params.dbetaDtype)).c_str(),
+                "The dtypes of pd_gamma and pd_beta must be the same when both are required."),
+            return ge::GRAPH_FAILED);
     }
 
     return ge::GRAPH_SUCCESS;
@@ -247,7 +358,7 @@ ge::graphStatus AdaLayerNormGradTilingBase::GetShapeAttrsInfo()
     GetAllInputDtypes(context_, commonParams);
     // clac shpape
     OP_CHECK_IF(ExtraShape(context_, commonParams) == ge::GRAPH_FAILED,
-                OP_LOGE(context_->GetNodeName(), "get shape failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "get shape failed."), return ge::GRAPH_FAILED);
 
     commonParams.pdxIsRequire = true;
     commonParams.pdgammaIsRequire = true;
@@ -259,11 +370,11 @@ ge::graphStatus AdaLayerNormGradTilingBase::GetShapeAttrsInfo()
     OP_CHECK_IF(InputDtypeCheck(context_, commonParams.dyDtype, commonParams.xDtype, commonParams.rstdDtype,
                                 commonParams.meanDtype, commonParams.scaleDtype, commonParams.gammaDtype,
                                 commonParams.betaDtype) == ge::GRAPH_FAILED,
-                OP_LOGE(context_->GetNodeName(), "input dtype check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "input dtype check failed."), return ge::GRAPH_FAILED);
 
     // check output dtype
     OP_CHECK_IF(CheckOutputDtype(context_, commonParams) == ge::GRAPH_FAILED,
-                OP_LOGE(context_->GetNodeName(), "output dtype check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "output dtype check failed."), return ge::GRAPH_FAILED);
 
     commonParams.colAlign = (commonParams.colSize + B16_BLOCK_ALIGN_NUM - 1) / B16_BLOCK_ALIGN_NUM *
                             B16_BLOCK_ALIGN_NUM;

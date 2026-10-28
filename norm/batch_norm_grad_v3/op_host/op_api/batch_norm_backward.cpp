@@ -33,7 +33,11 @@ const std::array<aclTensor*, 2> BNTrainingUpdateGrad(const aclTensor* gradOut, c
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(BNTrainingUpdateGrad, OP_INPUT(gradOut, x, saveMean, saveInvstd),
                                            OP_OUTPUT(gradWeight, gradBias), OP_ATTR(eps));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "BNTrainingUpdateGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        // 下层已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+        OP_LOGE_WITHOUT_REPORT(ret,
+                               "BNTrainingUpdateGradAiCore: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                               "construction, ret=%d. See the first error reported by the failing stage.",
+                               static_cast<int32_t>(ret));
         return {nullptr, nullptr};
     }
     return {gradWeight, gradBias};
@@ -55,7 +59,11 @@ const std::array<aclTensor*, 2> BN3DTrainingUpdateGrad(const aclTensor* gradOut,
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(BN3DTrainingUpdateGrad, OP_INPUT(gradOut, x, saveMean, saveInvstd),
                                            OP_OUTPUT(gradWeight, gradBias), OP_ATTR(eps));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "BN3DTrainingUpdateGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        // 下层已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+        OP_LOGE_WITHOUT_REPORT(ret,
+                               "BN3DTrainingUpdateGradAiCore: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                               "construction, ret=%d. See the first error reported by the failing stage.",
+                               static_cast<int32_t>(ret));
         return {nullptr, nullptr};
     }
     return {gradWeight, gradBias};
@@ -74,7 +82,11 @@ const aclTensor* BNTrainingReduceGrad(const aclTensor* gradOut, const aclTensor*
                                            OP_INPUT(gradOut, x, gradWeight, gradBias, weight, saveMean, saveInvstd),
                                            OP_OUTPUT(gradInput), OP_ATTR(eps));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "BNTrainingReduceGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             // 下层已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+             OP_LOGE_WITHOUT_REPORT(ret,
+                                    "BNTrainingReduceGradAiCore: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                                    "construction, ret=%d. See the first error reported by the failing stage.",
+                                    static_cast<int32_t>(ret)),
              return nullptr);
     return gradInput;
 }
@@ -93,7 +105,11 @@ const aclTensor* BN3DTrainingReduceGrad(const aclTensor* gradOut, const aclTenso
                                            OP_INPUT(gradOut, x, gradWeight, gradBias, weight, saveMean, saveInvstd),
                                            OP_OUTPUT(gradInput), OP_ATTR(eps));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "BN3DTrainingReduceGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             // 下层已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+             OP_LOGE_WITHOUT_REPORT(ret,
+                                    "BN3DTrainingReduceGradAiCore: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                                    "construction, ret=%d. See the first error reported by the failing stage.",
+                                    static_cast<int32_t>(ret)),
              return nullptr);
     return gradInput;
 }
@@ -110,7 +126,12 @@ const aclTensor* BNInferGrad(const aclTensor* gradOut, const aclTensor* weight, 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(BNInferGrad, OP_INPUT(gradOut, weight, runningVar), OP_OUTPUT(gradInput),
                                            OP_ATTR(eps));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "BNInferGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."), return nullptr);
+             // 下层已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+             OP_LOGE_WITHOUT_REPORT(ret,
+                                    "BNInferGradAiCore: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                                    "construction, ret=%d. See the first error reported by the failing stage.",
+                                    static_cast<int32_t>(ret)),
+             return nullptr);
     return gradInput;
 }
 
@@ -130,7 +151,11 @@ const std::array<aclTensor*, BN_GRAD_V3_OUTPUT_NUM> BatchNormGradV3(
         BatchNormGradV3, OP_INPUT(gradOut, input, weight, runningMean, runningVar, saveMean, saveInvstd),
         OP_OUTPUT(gradInput, gradWeight, gradBias), OP_ATTR(training, eps));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "BatchNormGradV3 ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        // 下层已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+        OP_LOGE_WITHOUT_REPORT(ret,
+                               "BatchNormGradV3: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                               "construction, ret=%d. See the first error reported by the failing stage.",
+                               static_cast<int32_t>(ret));
         return {nullptr, nullptr, nullptr};
     }
 
@@ -153,7 +178,11 @@ const std::array<aclTensor*, BN_GRAD_V3_OUTPUT_NUM> BatchNormGradV3(
         BatchNormGradV3, OP_INPUT(gradOut, input, weight, runningMean, runningVar, saveMean, saveInvstd),
         OP_OUTPUT(gradInput, gradWeight, gradBias), OP_ATTR(training, eps, outputMask));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "BatchNormGradV3 ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        // 下层已在根因点首报, 此处只记录日志并透传状态, 不再追加EZ9999
+        OP_LOGE_WITHOUT_REPORT(ret,
+                               "BatchNormGradV3: ADD_TO_LAUNCHER_LIST_AICORE failed during task-list "
+                               "construction, ret=%d. See the first error reported by the failing stage.",
+                               static_cast<int32_t>(ret));
         return {nullptr, nullptr, nullptr};
     }
 

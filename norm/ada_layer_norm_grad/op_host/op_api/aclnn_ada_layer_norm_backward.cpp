@@ -25,8 +25,25 @@
 #include "opdev/op_log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include "log/log.h"
 
 using namespace op;
+
+namespace {
+// aclnn op_api层空指针失败出口统一上报EZ1011(nnopbase注册码, Arglist={functionName,paraName})。
+// op_api编译单元带-DOP_LOG_LIBOPAPI_ONLY, log/log.h内OP_LOGE_WITHOUT_REPORT(opName版)不可见,
+// 日志走始终可见的OP_LOGE_LIBOPAPI_REPORT。
+void ReportNullPointerError(const char* functionName, const char* paraName)
+{
+    std::string funcName = functionName;
+    std::string paramName = paraName;
+    std::string msg = funcName + " failed because " + paramName + " cannot be a NULL pointer.";
+    OP_LOGE_LIBOPAPI_REPORT(funcName.c_str(), "%s", msg.c_str());
+    const std::vector<const char*> msgKey = {"functionName", "paraName"};
+    const std::vector<const char*> msgValue = {funcName.c_str(), paramName.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1011", msgKey, msgValue);
+}
+} // namespace
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -53,13 +70,13 @@ inline static bool CheckNotNull(const aclTensor* gradOut, const aclTensor* input
                                 const aclTensor* shift)
 {
     // 校验输入是否为空指针
-    OP_CHECK_NULL(gradOut, return false);
-    OP_CHECK_NULL(input, return false);
-    OP_CHECK_NULL(normalizedShape, return false);
-    OP_CHECK_NULL(mean, return false);
-    OP_CHECK_NULL(rstd, return false);
-    OP_CHECK_NULL(scale, return false);
-    OP_CHECK_NULL(shift, return false);
+    OP_CHECK(gradOut != nullptr, ReportNullPointerError(__func__, "gradOut"), return false);
+    OP_CHECK(input != nullptr, ReportNullPointerError(__func__, "input"), return false);
+    OP_CHECK(normalizedShape != nullptr, ReportNullPointerError(__func__, "normalizedShape"), return false);
+    OP_CHECK(mean != nullptr, ReportNullPointerError(__func__, "mean"), return false);
+    OP_CHECK(rstd != nullptr, ReportNullPointerError(__func__, "rstd"), return false);
+    OP_CHECK(scale != nullptr, ReportNullPointerError(__func__, "scale"), return false);
+    OP_CHECK(shift != nullptr, ReportNullPointerError(__func__, "shift"), return false);
     return true;
 }
 
@@ -150,9 +167,9 @@ static bool CheckShapeEqual(const aclTensor* input, const aclIntArray* normalize
         if (normDim == inputDim)
             continue;
 
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected normalized index [%zu] shape [%ld] be equal to tensor index [%zu] shape [%ld], but failed.",
-                i, normDim, i + axis, inputDim);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAdaLayerNormBackward", "normalizedShape",
+                                                 std::to_string(normDim).c_str(),
+                                                 "dims of normalizedShape must match the trailing dims of input");
         return false;
     }
     return true;
@@ -188,7 +205,9 @@ static bool ValidateScaleShiftShapes(const aclTensor* input, const aclTensor* sc
     expectShape2.AppendDim(H);
 
     if (B <= 0 || S <= 0 || H <= 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "input sizes should greater than 0.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnAdaLayerNormBackward", "input",
+                                              op::ToString(input->GetViewShape()).GetString(),
+                                              "input sizes should be greater than 0");
         return false;
     }
 
@@ -198,11 +217,11 @@ static bool ValidateScaleShiftShapes(const aclTensor* input, const aclTensor* sc
     auto isShapeValid = [&](const op::Shape& shape) { return shape == expectShape1 || shape == expectShape2; };
 
     if (!isShapeValid(scaleShape) || !isShapeValid(shiftShape)) {
-        const auto msg = ToString(scale->GetViewShape());
-        const auto expect1 = ToString(expectShape1);
-        const auto expect2 = ToString(expectShape2);
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected scale/shape shape %s to be %s or %s, but failed.", msg.GetString(),
-                expect1.GetString(), expect2.GetString());
+        auto msg = ToString(scale->GetViewShape()).GetString();
+        auto expect1 = ToString(expectShape1).GetString();
+        auto expect2 = ToString(expectShape2).GetString();
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnAdaLayerNormBackward", "scale/shift", msg,
+                                              (std::string("shape should be ") + expect1 + " or " + expect2).c_str());
         return false;
     }
     return true;
@@ -262,10 +281,18 @@ static bool CheckOutputShapes(const aclTensor* gradInputOut, const aclTensor* in
             continue;
 
         if (check.ref != nullptr) {
-            OP_CHECK_SHAPE_NOT_EQUAL(check.out, check.ref, return false);
+            OP_CHECK(check.out->GetViewShape() == check.ref->GetViewShape(),
+                     OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                         "aclnnAdaLayerNormBackward", "check.out,check.ref",
+                         (std::string(op::ToString(check.out->GetViewShape()).GetString()) + ", " +
+                          op::ToString(check.ref->GetViewShape()).GetString())
+                             .c_str(),
+                         "shapes of check.out and check.ref should be the same"),
+                     return false);
         } else if (check.out->GetViewShape().GetShapeSize() != check.expectedSize) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected %s shape size [%s] to be [%ld], but failed.", check.name,
-                    ToString(check.out->GetViewShape()).GetString(), check.expectedSize);
+            OP_LOGE_FOR_INVALID_SHAPESIZE("aclnnAdaLayerNormBackward", check.name,
+                                          ToString(check.out->GetViewShape()).GetString(),
+                                          std::to_string(check.expectedSize).c_str());
             return false;
         }
     }
@@ -284,13 +311,26 @@ static bool CheckShape(const aclTensor* gradOut, const aclTensor* input, const a
                                gradWeightOut, gradBiasOut))
         return false;
 
-    OP_CHECK_SHAPE_NOT_EQUAL(gradOut, input, return false);
-    OP_CHECK_SHAPE_NOT_EQUAL(mean, rstd, return false);
+    OP_CHECK(gradOut->GetViewShape() == input->GetViewShape(),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnAdaLayerNormBackward", "gradOut,input",
+                                                    (std::string(op::ToString(gradOut->GetViewShape()).GetString()) +
+                                                     ", " + op::ToString(input->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shapes of gradOut and input should be the same"),
+             return false);
+    OP_CHECK(mean->GetViewShape() == rstd->GetViewShape(),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnAdaLayerNormBackward", "mean,rstd",
+                                                    (std::string(op::ToString(mean->GetViewShape()).GetString()) +
+                                                     ", " + op::ToString(rstd->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shapes of mean and rstd should be the same"),
+             return false);
 
     // 检查normalizedShape
     if (normalizedShape->Size() != NORMALIZED_SHAPE_LEN) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected normalizedShape len %zu, but got %zu.", NORMALIZED_SHAPE_LEN,
-                normalizedShape->Size());
+        OP_LOGE_FOR_INVALID_LISTSIZE("aclnnAdaLayerNormBackward", "normalizedShape",
+                                     std::to_string(normalizedShape->Size()).c_str(),
+                                     std::to_string(NORMALIZED_SHAPE_LEN).c_str());
         return false;
     }
 
@@ -304,11 +344,11 @@ static bool CheckShape(const aclTensor* gradOut, const aclTensor* input, const a
     // 检查weight和bias
     if (!CheckShapeCompatibility(weightOptional, biasOptional, normalizedShape))
         return false;
-    if (weightOptional != nullptr && !CheckShapeEqual(weightOptional, normalizedShape)) {
-        return false;
+    if (weightOptional != nullptr) {
+        CheckShapeEqual(weightOptional, normalizedShape);
     }
-    if (biasOptional != nullptr && !CheckShapeEqual(biasOptional, normalizedShape)) {
-        return false;
+    if (biasOptional != nullptr) {
+        CheckShapeEqual(biasOptional, normalizedShape);
     }
 
     // 检查scale/shift
@@ -321,8 +361,9 @@ static bool CheckShape(const aclTensor* gradOut, const aclTensor* input, const a
     int64_t inputDim = inputShape.GetDimNum();
     inputShape[inputDim - 1] = 1;
     if (mean->GetViewShape() != inputShape) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected mean shape %s to be %s, but failed.",
-                ToString(mean->GetViewShape()).GetString(), ToString(inputShape).GetString());
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "aclnnAdaLayerNormBackward", "mean", ToString(mean->GetViewShape()).GetString(),
+            (std::string("shape of mean should be ") + ToString(inputShape).GetString()).c_str());
         return false;
     }
 

@@ -22,6 +22,14 @@
 using namespace ge;
 
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成E89999/EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "BatchNormGradV3", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 using namespace Ops::NN::OpTiling;
 
 class BatchNormGradV3SplitLoadCrossCoreTiling : public BatchNormGradV3Base {
@@ -285,7 +293,11 @@ ge::graphStatus BatchNormGradV3SplitLoadCrossCoreTiling::PostTiling()
     context_->SetBlockDim(coreNum);
     context_->SetScheduleMode(CONST_ONE);
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(currentWorkspace == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "PostTiling: GetWorkspaceSizes(1) returned null; required output-slot count is "
+                                       "1. Check the TilingContext construction, not the user device allocation"),
+                return ge::GRAPH_FAILED);
     auto tmpWsSize = coreNum * 8 * sizeof(float) * 2;
     auto needWSSize = workspaceSize_ + tmpWsSize;
     currentWorkspace[0] = needWSSize;

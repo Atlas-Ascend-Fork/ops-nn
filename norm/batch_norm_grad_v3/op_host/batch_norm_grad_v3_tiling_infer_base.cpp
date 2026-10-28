@@ -20,6 +20,14 @@
 
 using namespace ge;
 namespace optiling {
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成E89999/EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "BatchNormGradV3", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 constexpr int64_t VL_DOUBLE = 2;
 
 void BatchNormGradV3InferBase::Reset()
@@ -79,7 +87,11 @@ void BatchNormGradV3InferBase::CalcBasicInfo()
 ge::graphStatus BatchNormGradV3InferBase::GetPlatformInfo()
 {
     auto compileInfo = static_cast<const BatchNormGradV3CompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                ReportTilingStageError(
+                    context_->GetNodeName(),
+                    "GetPlatformInfo: compile info is null; check the SoC-specific OPP package and its loading logs"),
+                return ge::GRAPH_FAILED);
     blockSize_ = compileInfo->blockSize;
     vlFp32_ = compileInfo->vlFp32;
     vlFp16_ = vlFp32_ * VL_DOUBLE;
@@ -103,7 +115,8 @@ ge::graphStatus BatchNormGradV3InferBase::GetPlatformInfo()
 ge::graphStatus BatchNormGradV3InferBase::GetShapeAttrsInfo()
 {
     if (context_ == nullptr) {
-        OP_LOGE("BatchNormGradV3InferBase", "TilingContext is nullptr.");
+        ReportTilingStageError("BatchNormGradV3",
+                               "GetShapeAttrsInfo: TilingContext is null; the tiling framework contract is broken");
         return ge::GRAPH_FAILED;
     }
 
@@ -111,7 +124,11 @@ ge::graphStatus BatchNormGradV3InferBase::GetShapeAttrsInfo()
                     return ge::GRAPH_FAILED);
 
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(
+        attrs == nullptr,
+        ReportTilingStageError(context_->GetNodeName(),
+                               "GetShapeAttrsInfo: GetAttrs() returned null; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
 
     const bool* isTrainingPtr = attrs->GetBool(0);
     bool isTraining = (isTrainingPtr == nullptr) ? true : *isTrainingPtr;
@@ -126,22 +143,30 @@ ge::graphStatus BatchNormGradV3InferBase::GetShapeAttrsInfo()
                     return ret);
 
     OP_TILING_CHECK(GetWeightRunningVarDxInfo() != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Inputs are invalid."),
-                    return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Inputs are invalid."), return ge::GRAPH_FAILED);
 
     OP_TILING_CHECK(CheckInputValid() != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Inputs are invalid."),
-                    return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Inputs are invalid."), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus BatchNormGradV3InferBase::GetDyInfo()
 {
     auto dyDesc = context_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyDesc);
+    OP_CHECK_IF(
+        dyDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input desc of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     dyDtype_ = dyDesc->GetDataType();
     auto dyShape = context_->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dyShape);
+    OP_CHECK_IF(
+        dyShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dy",
+                                                 "the input shape of required input dy is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto dyStorageShape = dyShape->GetStorageShape();
     dyDimNum_ = dyStorageShape.GetDimNum();
 
@@ -200,28 +225,57 @@ ge::graphStatus BatchNormGradV3InferBase::GetDyInfo()
 ge::graphStatus BatchNormGradV3InferBase::GetWeightRunningVarDxInfo()
 {
     auto weightTensorDesc = context_->GetInputDesc(PARAM_INPUT_WEIGHT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weightTensorDesc);
+    OP_CHECK_IF(
+        weightTensorDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "weight",
+                                                 "the input desc of required input weight is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     weightDtype_ = weightTensorDesc->GetDataType();
     auto weightTensorShape = context_->GetInputShape(PARAM_INPUT_WEIGHT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, weightTensorShape);
+    OP_CHECK_IF(
+        weightTensorShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "weight",
+                                                 "the input shape of required input weight is missing in the tiling "
+                                                 "context; check that the graph node provides all required inputs"),
+        return ge::GRAPH_FAILED);
     auto weightTensorStorageShape = weightTensorShape->GetStorageShape();
     weightDimNum_ = weightTensorStorageShape.GetDimNum();
     weightDimLen_ = weightTensorStorageShape.GetDim(0);
 
     auto runningVarTensorDesc = context_->GetInputDesc(PARAM_INPUT_RUNNINGVAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runningVarTensorDesc);
+    OP_CHECK_IF(runningVarTensorDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "running_var",
+                    "the input desc of required input running_var is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     runningVarDtype_ = runningVarTensorDesc->GetDataType();
     auto runningVarTensorShape = context_->GetInputShape(PARAM_INPUT_RUNNINGVAR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runningVarTensorShape);
+    OP_CHECK_IF(runningVarTensorShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "running_var",
+                    "the input shape of required input running_var is missing in the tiling context; check that the "
+                    "graph node provides all required inputs"),
+                return ge::GRAPH_FAILED);
     auto runningVarTensorStorageShape = runningVarTensorShape->GetStorageShape();
     runningVarDimNum_ = runningVarTensorStorageShape.GetDimNum();
     runningVarDimLen_ = runningVarTensorStorageShape.GetDim(0);
 
     auto dxTensorDesc = context_->GetOutputDesc(PARAM_OUTPUT_DX_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxTensorDesc);
+    OP_CHECK_IF(
+        dxTensorDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dx",
+                                                 "the output desc of required output dx is missing in the tiling "
+                                                 "context; check that the graph node provides all required outputs"),
+        return ge::GRAPH_FAILED);
     dxDtype_ = dxTensorDesc->GetDataType();
     auto dxTensorShape = context_->GetOutputShape(PARAM_OUTPUT_DX_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, dxTensorShape);
+    OP_CHECK_IF(dxTensorShape == nullptr,
+                ReportTilingStageError(context_->GetNodeName(),
+                                       "the output shape of dx is missing in the tiling context; check that InferShape "
+                                       "executed and the framework propagated the output shapes"),
+                return ge::GRAPH_FAILED);
     auto dxTensorStorageShape = dxTensorShape->GetStorageShape();
     dxDimNum_ = dxTensorStorageShape.GetDimNum();
 
