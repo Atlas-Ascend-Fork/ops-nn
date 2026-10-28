@@ -315,6 +315,11 @@ aclnnStatus aclnnAddLayerNormGrad(
       <td rowspan="1">161002</td>
       <td>必选输入或必选输出的数据类型不在支持的范围之内。</td>
     </tr>
+    <tr>
+      <td rowspan="1">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="1">561002</td>
+      <td>tiling计算失败，包括输入或输出的shape不满足上述约束。</td>
+    </tr>
   </tbody></table>
 
 ## aclnnAddLayerNormGrad
