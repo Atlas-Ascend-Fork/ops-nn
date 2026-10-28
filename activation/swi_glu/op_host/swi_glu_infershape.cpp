@@ -17,6 +17,9 @@
 #include "register/op_impl_registry.h"
 #include "error_util.h"
 #include "util/shape_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 
@@ -31,14 +34,51 @@ namespace ops {
 static ge::graphStatus InferShapeForSwiGlu(gert::InferShapeContext* context)
 {
     auto x_shape = context->GetInputShape(GLU_IN_X);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu" : (context)->GetNodeName()), "x"),
+        return ge::GRAPH_FAILED);
     auto y_shape = context->GetOutputShape(GLU_OUT_Y);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    if (y_shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object y_shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object y_shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto attrs = context->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrs is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto split_dim_ptr = attrs->GetAttrPointer<int64_t>(GLU_ATTR_DIM);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, split_dim_ptr);
+    if (split_dim_ptr == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object split_dim_ptr is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object split_dim_ptr is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto split_dim = *split_dim_ptr;
     if (split_dim < 0) {
@@ -52,8 +92,10 @@ static ge::graphStatus InferShapeForSwiGlu(gert::InferShapeContext* context)
     }
 
     if (split_dim < 0 || split_dim >= static_cast<int64_t>(x_shape->GetDimNum())) {
-        OP_LOGE("SwiGlu", "The value of attr [dim] must be in the range [-%zu, %zu], but got [%ld].",
-                x_shape->GetDimNum(), x_shape->GetDimNum() - 1, split_dim);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            "SwiGlu", "dim", std::to_string(*split_dim_ptr),
+            ("The value of attr [dim] must be in the range [-" + std::to_string(x_shape->GetDimNum()) + ", " +
+             std::to_string(x_shape->GetDimNum() - 1) + "], but got [" + std::to_string(split_dim) + "]."));
         return GRAPH_FAILED;
     }
 
@@ -63,7 +105,9 @@ static ge::graphStatus InferShapeForSwiGlu(gert::InferShapeContext* context)
         return ge::GRAPH_SUCCESS;
     }
     if (x_shape->GetDim(split_dim) < 0 || x_shape->GetDim(split_dim) % SPLIT_NUM != 0) {
-        OP_LOGE("SwiGlu", "The shape %s is not divisible by 2.", Ops::Base::ToString(*x_shape).c_str());
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "SwiGlu", "x", Ops::Base::ToString(*x_shape),
+            ("The shape [" + std::string(Ops::Base::ToString(*x_shape).c_str()) + "] is not divisible by 2."));
         return ge::GRAPH_FAILED;
     }
 

@@ -17,6 +17,10 @@
 #include "register/op_impl_registry.h"
 #include "error_util.h"
 #include "util/shape_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
+
 using namespace ge;
 
 namespace {
@@ -32,11 +36,38 @@ static ge::graphStatus InferShapeForSituGluGrad(gert::InferShapeContext* context
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferShapeForSituGluGrad");
     auto xShape = context->GetInputShape(X_INDEX);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(
+        xShape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_glu_grad" : (context)->GetNodeName()),
+            "x"),
+        return ge::GRAPH_FAILED);
     auto gradXShape = context->GetOutputShape(GRADX_INDEX);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, gradXShape);
+    if (gradXShape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_glu_grad" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object gradXShape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object gradXShape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto attrs = context->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "situ_glu_grad" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrs is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     // grad_x shape is the same as x shape
     *gradXShape = *xShape;

@@ -24,6 +24,10 @@
 #include "tiling/platform/platform_ascendc.h"
 #include "platform/platform_infos_def.h"
 #include "swiglu_group_quant_grad_tiling.h"
+#include <string>
+#include <vector>
+#include "util/shape_util.h"
+#include "base/err_msg.h"
 
 namespace optiling {
 
@@ -76,7 +80,9 @@ inline ge::graphStatus CheckWeightDtype(const gert::TilingContext* context)
     if (weightDesc != nullptr) {
         auto weightDtype = weightDesc->GetDataType();
         if (weightDtype != ge::DataType::DT_FLOAT) {
-            OP_LOGE(context->GetNodeName(), "input weight dtype is only support fp32.");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "weight",
+                                                  std::to_string(static_cast<int>(weightDtype)),
+                                                  "input weight dtype is only support fp32.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -89,11 +95,16 @@ inline ge::graphStatus CheckYOriginDtype(const gert::TilingContext* context, ge:
     if (yOriginDesc != nullptr) {
         auto yOriginDtype = yOriginDesc->GetDataType();
         if (yOriginDtype != ge::DT_FLOAT16 && yOriginDtype != ge::DT_BF16 && yOriginDtype != ge::DT_FLOAT) {
-            OP_LOGE(context->GetNodeName(), "input y_origin dtype is only support fp16/bf16/fp32.");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "y_origin",
+                                                  std::to_string(static_cast<int>(yOriginDtype)),
+                                                  "input y_origin dtype is only support fp16/bf16/fp32.");
             return ge::GRAPH_FAILED;
         }
         if (yOriginDtype != xDtype) {
-            OP_LOGE(context->GetNodeName(), "input y_origin and x dtype must be same.");
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), "y_origin,x",
+                std::to_string(static_cast<int>(yOriginDtype)) + "," + std::to_string(static_cast<int>(xDtype)),
+                "input y_origin and x dtype must be same.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -106,7 +117,9 @@ inline ge::graphStatus CheckGroupIndexDtype(const gert::TilingContext* context)
     if (groupIndexDesc != nullptr) {
         auto groupIndexDtype = groupIndexDesc->GetDataType();
         if (groupIndexDtype != ge::DataType::DT_INT64) {
-            OP_LOGE(context->GetNodeName(), "input group_index dtype is only support int64.");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "group_index",
+                                                  std::to_string(static_cast<int>(groupIndexDtype)),
+                                                  "input group_index dtype is only support int64.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -118,24 +131,30 @@ inline ge::graphStatus CheckAllInputDtype(const gert::TilingContext* context)
     auto gradYDesc = context->GetInputDesc(INPUT_GRAD_Y_INDEX);
     auto xDesc = context->GetInputDesc(INPUT_OP_X_INDEX);
     if (gradYDesc == nullptr || xDesc == nullptr) {
-        OP_LOGE(context->GetNodeName(), "input grad_y or x desc is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), (gradYDesc == nullptr ? "grad_y" : "x"));
         return ge::GRAPH_FAILED;
     }
     auto gradYDtype = gradYDesc->GetDataType();
     auto xDtype = xDesc->GetDataType();
 
     if (gradYDtype != ge::DT_FLOAT16 && gradYDtype != ge::DT_BF16 && gradYDtype != ge::DT_FLOAT) {
-        OP_LOGE(context->GetNodeName(), "input grad_y dtype is only support fp16/bf16/fp32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "grad_y",
+                                              std::to_string(static_cast<int>(gradYDtype)),
+                                              "input grad_y dtype is only support fp16/bf16/fp32.");
         return ge::GRAPH_FAILED;
     }
 
     if (xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16 && xDtype != ge::DT_FLOAT) {
-        OP_LOGE(context->GetNodeName(), "input x dtype is only support fp16/bf16/fp32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", std::to_string(static_cast<int>(xDtype)),
+                                              "input x dtype is only support fp16/bf16/fp32.");
         return ge::GRAPH_FAILED;
     }
 
     if (gradYDtype != xDtype) {
-        OP_LOGE(context->GetNodeName(), "input grad_y and x dtype must be same.");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "grad_y,x",
+            std::to_string(static_cast<int>(gradYDtype)) + "," + std::to_string(static_cast<int>(xDtype)),
+            "input grad_y and x dtype must be same.");
         return ge::GRAPH_FAILED;
     }
 
@@ -159,14 +178,30 @@ inline ge::graphStatus CheckAllOutputDtype(const gert::TilingContext* context)
     auto gradXDesc = context->GetOutputDesc(OUTPUT_GRAD_X_INDEX);
     auto xDesc = context->GetInputDesc(INPUT_OP_X_INDEX);
     if (gradXDesc == nullptr || xDesc == nullptr) {
-        OP_LOGE(context->GetNodeName(), "output grad_x or input x desc is nullptr.");
+        do {
+            if (xDesc == nullptr) {
+                OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "x");
+            } else {
+                const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                                   "SwigluGroupQuantGrad" :
+                                                   context->GetNodeName());
+                const std::string msgReason = (std::string(__func__) + ": " +
+                                               "Required output metadata is unavailable in the Tiling context.");
+                OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            }
+        } while (0);
         return ge::GRAPH_FAILED;
     }
     auto gradXDtype = gradXDesc->GetDataType();
     auto xDtype = xDesc->GetDataType();
 
     if (gradXDtype != xDtype) {
-        OP_LOGE(context->GetNodeName(), "output grad_x dtype must be same as input x.");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "grad_x,x",
+            std::to_string(static_cast<int>(gradXDtype)) + "," + std::to_string(static_cast<int>(xDtype)),
+            "output grad_x dtype must be same as input x.");
         return ge::GRAPH_FAILED;
     }
 
@@ -174,7 +209,9 @@ inline ge::graphStatus CheckAllOutputDtype(const gert::TilingContext* context)
     if (gradWeightDesc != nullptr) {
         auto gradWeightDtype = gradWeightDesc->GetDataType();
         if (gradWeightDtype != ge::DataType::DT_FLOAT) {
-            OP_LOGE(context->GetNodeName(), "output grad_weight dtype is only support fp32.");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "grad_weight",
+                                                  std::to_string(static_cast<int>(gradWeightDtype)),
+                                                  "output grad_weight dtype is only support fp32.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -191,8 +228,9 @@ inline ge::graphStatus CheckAllAttrs(const gert::TilingContext* context, SwigluG
             compileInfo.clampLimit = *clampLimitPtr;
             if (std::fabs(compileInfo.clampLimit + 1.0f) > 1e-6f) {
                 if (!(compileInfo.clampLimit > 0.0f)) {
-                    OP_LOGE(context->GetNodeName(), "attr clamp_limit must be -1 or > 0.0, got %f.",
-                            compileInfo.clampLimit);
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "clamp_limit", std::to_string(compileInfo.clampLimit),
+                        ("attr clamp_limit must be -1 or > 0.0, got " + std::to_string(compileInfo.clampLimit) + "."));
                     return ge::GRAPH_FAILED;
                 }
                 compileInfo.hasClampLimit = 1;
@@ -207,7 +245,7 @@ inline ge::graphStatus CheckGradYAndXShapeDim(const gert::TilingContext* context
     auto gradYShape = context->GetInputShape(INPUT_GRAD_Y_INDEX);
     auto xShape = context->GetInputShape(INPUT_OP_X_INDEX);
     if (gradYShape == nullptr || xShape == nullptr) {
-        OP_LOGE(context->GetNodeName(), "input grad_y or x shape is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), (gradYShape == nullptr ? "grad_y" : "x"));
         return ge::GRAPH_FAILED;
     }
 
@@ -215,19 +253,26 @@ inline ge::graphStatus CheckGradYAndXShapeDim(const gert::TilingContext* context
     size_t xDimNum = xShape->GetStorageShape().GetDimNum();
 
     if (gradYDimNum < ONE || xDimNum < ONE) {
-        OP_LOGE(context->GetNodeName(), "Input shape dimension must >= 1.");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(context->GetNodeName(), "grad_y,x",
+                                                  std::to_string(gradYDimNum) + "," + std::to_string(xDimNum),
+                                                  "Input shape dimension must >= 1.");
         return ge::GRAPH_FAILED;
     }
 
     if (gradYDimNum != xDimNum) {
-        OP_LOGE(context->GetNodeName(), "grad_y and x shape dimension must be same.");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(context->GetNodeName(), "grad_y,x",
+                                                  std::to_string(gradYDimNum) + "," + std::to_string(xDimNum),
+                                                  "grad_y and x shape dimension must be same.");
         return ge::GRAPH_FAILED;
     }
 
     for (size_t i = 0; i < xDimNum; i++) {
         if (i < xDimNum - 1) {
             if (gradYShape->GetStorageShape().GetDim(i) != xShape->GetStorageShape().GetDim(i)) {
-                OP_LOGE(context->GetNodeName(), "grad_y and x shape must be same except last dim.");
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "grad_y,x",
+                                                       Ops::Base::ToString(gradYShape->GetStorageShape()) + "," +
+                                                           Ops::Base::ToString(xShape->GetStorageShape()),
+                                                       "grad_y and x shape must be same except last dim.");
                 return ge::GRAPH_FAILED;
             }
         } else {
@@ -235,12 +280,15 @@ inline ge::graphStatus CheckGradYAndXShapeDim(const gert::TilingContext* context
             int64_t xDimLast = xShape->GetStorageShape().GetDim(i);
 
             if (xDimLast % TWO != 0) {
-                OP_LOGE(context->GetNodeName(), "Input x last dim must be divisible by 2.");
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "x", std::to_string(xDimLast),
+                                                          "Input x last dim must be divisible by 2.");
                 return ge::GRAPH_FAILED;
             }
 
             if (gradYDimLast != xDimLast / TWO) {
-                OP_LOGE(context->GetNodeName(), "Input grad_y last dim must be half of x last dim.");
+                OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+                    context->GetNodeName(), "grad_y,x", std::to_string(gradYDimLast) + "," + std::to_string(xDimLast),
+                    "Input grad_y last dim must be half of x last dim.");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -261,7 +309,7 @@ inline ge::graphStatus CheckWeightShapeDim(const gert::TilingContext* context,
     auto gradYShape = context->GetInputShape(INPUT_GRAD_Y_INDEX);
     auto xShape = context->GetInputShape(INPUT_OP_X_INDEX);
     if (gradYShape == nullptr || xShape == nullptr) {
-        OP_LOGE(context->GetNodeName(), "input grad_y or x shape is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), (gradYShape == nullptr ? "grad_y" : "x"));
         return ge::GRAPH_FAILED;
     }
     size_t gradYDimNum = gradYShape->GetStorageShape().GetDimNum();
@@ -284,8 +332,9 @@ inline ge::graphStatus CheckWeightShapeDim(const gert::TilingContext* context,
     }
 
     if (weightElementCount != gradYElementCount && weightElementCount != xElementCount) {
-        OP_LOGE(context->GetNodeName(),
-                "weight element count must equal the product of grad_y or x dimensions excluding the last dimension.");
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            context->GetNodeName(), "weight", std::to_string(weightElementCount),
+            "weight element count must equal the product of grad_y or x dimensions excluding the last dimension.");
         return ge::GRAPH_FAILED;
     }
 
@@ -303,20 +352,25 @@ inline ge::graphStatus CheckYOriginShapeDim(const gert::TilingContext* context,
     compileInfo.hasYOrigin = 1;
     auto gradYShape = context->GetInputShape(INPUT_GRAD_Y_INDEX);
     if (gradYShape == nullptr) {
-        OP_LOGE(context->GetNodeName(), "input grad_y shape is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "grad_y");
         return ge::GRAPH_FAILED;
     }
     size_t gradYDimNum = gradYShape->GetStorageShape().GetDimNum();
     size_t yOriginDimNum = yOriginShape->GetStorageShape().GetDimNum();
 
     if (yOriginDimNum != gradYDimNum) {
-        OP_LOGE(context->GetNodeName(), "y_origin and grad_y shape dimension must be same.");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(context->GetNodeName(), "y_origin,grad_y",
+                                                  std::to_string(yOriginDimNum) + "," + std::to_string(gradYDimNum),
+                                                  "y_origin and grad_y shape dimension must be same.");
         return ge::GRAPH_FAILED;
     }
 
     for (size_t i = 0; i < gradYDimNum; i++) {
         if (yOriginShape->GetStorageShape().GetDim(i) != gradYShape->GetStorageShape().GetDim(i)) {
-            OP_LOGE(context->GetNodeName(), "y_origin shape must be same as grad_y.");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "y_origin,grad_y",
+                                                   Ops::Base::ToString(yOriginShape->GetStorageShape()) + "," +
+                                                       Ops::Base::ToString(gradYShape->GetStorageShape()),
+                                                   "y_origin shape must be same as grad_y.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -335,7 +389,8 @@ inline ge::graphStatus CheckGroupIndexShapeDim(const gert::TilingContext* contex
     compileInfo.hasGroupIndex = 1;
     size_t groupIndexDimNum = groupIndexShape->GetStorageShape().GetDimNum();
     if (groupIndexDimNum != ONE) {
-        OP_LOGE(context->GetNodeName(), "group_index must be 1D tensor.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "group_index",
+                                                 std::to_string(groupIndexDimNum), "group_index must be 1D tensor.");
         return ge::GRAPH_FAILED;
     }
 
@@ -357,7 +412,7 @@ inline ge::graphStatus CheckInputShape(const gert::TilingContext* context, Swigl
     }
 
     if (compileInfo.hasWeight != ZERO && compileInfo.hasYOrigin == ZERO) {
-        OP_LOGE(context->GetNodeName(), "When weight exists, y_origin must also exist.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "y_origin");
         return ge::GRAPH_FAILED;
     }
 
@@ -373,7 +428,20 @@ inline ge::graphStatus CheckOutputShape(const gert::TilingContext* context)
     auto xShape = context->GetInputShape(INPUT_OP_X_INDEX);
     auto gradXShape = context->GetOutputShape(OUTPUT_GRAD_X_INDEX);
     if (xShape == nullptr || gradXShape == nullptr) {
-        OP_LOGE(context->GetNodeName(), "input x or output grad_x shape is nullptr.");
+        do {
+            if (xShape == nullptr) {
+                OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "x");
+            } else {
+                const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                                   "SwigluGroupQuantGrad" :
+                                                   context->GetNodeName());
+                const std::string msgReason = (std::string(__func__) + ": " +
+                                               "Required output metadata is unavailable in the Tiling context.");
+                OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+            }
+        } while (0);
         return ge::GRAPH_FAILED;
     }
 
@@ -381,13 +449,18 @@ inline ge::graphStatus CheckOutputShape(const gert::TilingContext* context)
     size_t gradXDimNum = gradXShape->GetStorageShape().GetDimNum();
 
     if (xDimNum != gradXDimNum) {
-        OP_LOGE(context->GetNodeName(), "x and grad_x shape dimension must be same.");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(context->GetNodeName(), "x,grad_x",
+                                                  std::to_string(xDimNum) + "," + std::to_string(gradXDimNum),
+                                                  "x and grad_x shape dimension must be same.");
         return ge::GRAPH_FAILED;
     }
 
     for (size_t i = 0; i < xDimNum; i++) {
         if (xShape->GetStorageShape().GetDim(i) != gradXShape->GetStorageShape().GetDim(i)) {
-            OP_LOGE(context->GetNodeName(), "x and grad_x shape must be same.");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "x,grad_x",
+                                                   Ops::Base::ToString(xShape->GetStorageShape()) + "," +
+                                                       Ops::Base::ToString(gradXShape->GetStorageShape()),
+                                                   "x and grad_x shape must be same.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -396,7 +469,15 @@ inline ge::graphStatus CheckOutputShape(const gert::TilingContext* context)
     if (weightShape != nullptr) {
         auto gradWeightShape = context->GetOutputShape(OUTPUT_GRAD_WEIGHT_INDEX);
         if (gradWeightShape == nullptr) {
-            OP_LOGE(context->GetNodeName(), "output grad_weight shape is nullptr.");
+            const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                               "SwigluGroupQuantGrad" :
+                                               context->GetNodeName());
+            const std::string msgReason = (std::string(__func__) + ": " +
+                                           "The grad_weight output shape container is unavailable; check the "
+                                           "registered Tiling output context.");
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
             return ge::GRAPH_FAILED;
         }
 
@@ -404,13 +485,19 @@ inline ge::graphStatus CheckOutputShape(const gert::TilingContext* context)
         size_t weightDimNum = weightShape->GetStorageShape().GetDimNum();
 
         if (gradWeightDimNum != weightDimNum) {
-            OP_LOGE(context->GetNodeName(), "grad_weight and weight shape dimension must be same.");
+            OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                context->GetNodeName(), "grad_weight,weight",
+                std::to_string(gradWeightDimNum) + "," + std::to_string(weightDimNum),
+                "grad_weight and weight shape dimension must be same.");
             return ge::GRAPH_FAILED;
         }
 
         for (size_t i = 0; i < weightDimNum; i++) {
             if (gradWeightShape->GetStorageShape().GetDim(i) != weightShape->GetStorageShape().GetDim(i)) {
-                OP_LOGE(context->GetNodeName(), "grad_weight shape must be same as weight.");
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "grad_weight,weight",
+                                                       Ops::Base::ToString(gradWeightShape->GetStorageShape()) + "," +
+                                                           Ops::Base::ToString(weightShape->GetStorageShape()),
+                                                       "grad_weight shape must be same as weight.");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -422,23 +509,23 @@ inline ge::graphStatus CheckOutputShape(const gert::TilingContext* context)
 inline ge::graphStatus CheckOpAllParams(gert::TilingContext* context, SwigluGroupQuantGradCompileInfo& compileInfo)
 {
     if (CheckAllInputDtype(context) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Check input dtype failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Check input dtype failed.");
         return ge::GRAPH_FAILED;
     }
     if (CheckAllOutputDtype(context) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Check output dtype failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Check output dtype failed.");
         return ge::GRAPH_FAILED;
     }
     if (CheckAllAttrs(context, compileInfo) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Check attrs failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Check attrs failed.");
         return ge::GRAPH_FAILED;
     }
     if (CheckInputShape(context, compileInfo) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Check input shape failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Check input shape failed.");
         return ge::GRAPH_FAILED;
     }
     if (CheckOutputShape(context) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Check output shape failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Check output shape failed.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -483,7 +570,7 @@ inline ge::graphStatus CalculateTilingParams(const gert::TilingContext* context,
 
     auto gradYDesc = context->GetInputDesc(INPUT_GRAD_Y_INDEX);
     if (gradYDesc == nullptr) {
-        OP_LOGE(context->GetNodeName(), "input grad_y desc is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "grad_y");
         return ge::GRAPH_FAILED;
     }
     auto gradYDtype = gradYDesc->GetDataType();
@@ -545,7 +632,14 @@ inline ge::graphStatus GetCompileInfo(const gert::TilingContext* context, Swiglu
     uint32_t ubSize = static_cast<uint32_t>(ubSizePlatform);
 
     if (totalCoreNum == 0 || ubSize <= 0) {
-        OP_LOGE(context->GetNodeName(), "GetCompileInfo failed, coreNum:%u, ubSize:%u.", totalCoreNum, ubSize);
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "SwigluGroupQuantGrad" :
+                                           context->GetNodeName());
+        const std::string msgReason = std::string(("GetCompileInfo failed, coreNum:" + std::to_string(totalCoreNum) +
+                                                   ", ubSize:" + std::to_string(ubSize) + "."));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
         return ge::GRAPH_FAILED;
     }
 
@@ -563,7 +657,7 @@ inline ge::graphStatus SetBasicTilingData(const gert::TilingContext* context,
     auto gradYShape = context->GetInputShape(INPUT_GRAD_Y_INDEX);
     auto xShape = context->GetInputShape(INPUT_OP_X_INDEX);
     if (gradYShape == nullptr || xShape == nullptr) {
-        OP_LOGE(context->GetNodeName(), "input grad_y or x shape is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), (gradYShape == nullptr ? "grad_y" : "x"));
         return ge::GRAPH_FAILED;
     }
     uint32_t totalTokens = 0;

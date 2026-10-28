@@ -38,7 +38,7 @@ std::tuple<aclTensor*, aclTensor*> GeGluV2(const aclTensor* self, int64_t dim, i
     auto out = executor->AllocTensor(outShape, self->GetDataType(), Format::FORMAT_ND);
     auto outGelu = executor->AllocTensor(outShape, self->GetDataType(), Format::FORMAT_ND);
     if (out == nullptr || outGelu == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out or outGelu tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out or outGelu tensor failed.");
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
 

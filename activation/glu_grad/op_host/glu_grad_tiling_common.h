@@ -16,6 +16,10 @@
 #include "util/math_util.h"
 #include "glu_grad_tiling.h"
 #include "../op_kernel/arch35/glu_grad_tiling_key.h"
+#include <string>
+#include <vector>
+#include "util/shape_util.h"
+#include "base/err_msg.h"
 
 namespace optiling {
 namespace glu_grad_common {
@@ -90,9 +94,8 @@ inline void GetTilingDataBig(GluGradTilingData& tilingData, GluGradTilingParam& 
     }
 }
 
-inline uint64_t GetTilingData(
-    ge::DataType dtype, GluGradTilingData& tilingData, GluGradTilingParam& tilingParam, int64_t commonBufSize,
-    int64_t singleBufSize)
+inline uint64_t GetTilingData(ge::DataType dtype, GluGradTilingData& tilingData, GluGradTilingParam& tilingParam,
+                              int64_t commonBufSize, int64_t singleBufSize)
 {
     if (dtype == ge::DT_FLOAT) {
         tilingParam.blockSize = FP32_BLOCK_SIZE;
@@ -125,20 +128,31 @@ inline uint64_t GetTilingData(
 inline ge::graphStatus CheckInputParams(gert::TilingContext* context)
 {
     auto inputShape = context->GetInputShape(SELF_INPUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputShape);
+    OP_CHECK_IF(
+        inputShape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu_grad" : (context)->GetNodeName()),
+            "self"),
+        return ge::GRAPH_FAILED);
 
     auto inputDesc = context->GetInputDesc(SELF_INPUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+    OP_CHECK_IF(
+        inputDesc == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu_grad" : (context)->GetNodeName()),
+            "self"),
+        return ge::GRAPH_FAILED);
     auto dtype = inputDesc->GetDataType();
     int32_t typeSize = ge::GetSizeByDataType(dtype);
 
     OP_CHECK_IF(
         dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT,
-        OP_LOGE(context, "input dtype only support fp16, fp32, bf16 currently, please check."),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "self", std::to_string(static_cast<int>(dtype)),
+                                              "input dtype only support fp16, fp32, bf16 currently, please check."),
         return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(
-        (typeSize <= 0), OP_LOGE(context, "typeSize is invalid %d, please check.", typeSize), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((typeSize <= 0), OP_LOGE(context, "typeSize is invalid %d, please check.", typeSize),
+                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -146,34 +160,61 @@ inline ge::graphStatus CheckInputParams(gert::TilingContext* context)
 inline size_t GetAttrSplitDim(const gert::TilingContext* context)
 {
     auto inputStorageShape = context->GetInputShape(SELF_INPUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputStorageShape);
+    OP_CHECK_IF(
+        inputStorageShape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu_grad" : (context)->GetNodeName()),
+            "self"),
+        return SPLIT_ERROR_STATUS);
     auto inputShape = inputStorageShape->GetStorageShape();
     size_t inputShapeSize = static_cast<size_t>(inputShape.GetDimNum());
 
     auto* attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu_grad" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return SPLIT_ERROR_STATUS;
+    };
     auto* attrDim = attrs->GetAttrPointer<int64_t>(ATTR_DIM_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrDim);
+    if (attrDim == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu_grad" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object attrDim is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrDim is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return SPLIT_ERROR_STATUS;
+    };
     auto splitDim = static_cast<int64_t>(*attrDim);
     OP_LOGD(context, "splitDim is %ld, inputShapeSize is %zu", splitDim, inputShapeSize);
 
     int64_t splitDimI = splitDim < 0 ? splitDim + static_cast<int64_t>(inputShapeSize) : splitDim;
 
-    OP_CHECK_IF(
-        (splitDimI < 0 || splitDimI >= static_cast<int64_t>(inputShapeSize)),
-        OP_LOGE(
-            context, "The value of attr [dim] must be in the range [-%zu, %zu], but got [%ld].", inputShapeSize,
-            inputShapeSize - 1, splitDim),
-        return SPLIT_ERROR_STATUS);
+    OP_CHECK_IF((splitDimI < 0 || splitDimI >= static_cast<int64_t>(inputShapeSize)),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "dim", std::to_string(splitDim),
+                    ("The value of attr [dim] must be in the range [-" + std::to_string(inputShapeSize) + ", " +
+                     std::to_string(inputShapeSize - 1) + "], but got [" + std::to_string(splitDim) + "].")),
+                return SPLIT_ERROR_STATUS);
 
     size_t splitDimU = static_cast<size_t>(splitDimI);
 
-    OP_CHECK_IF(
-        (inputShape.GetDim(splitDimU) % SPLIT_FACTOR != 0),
-        OP_LOGE(
-            context, "The dim of: %zu can not be split with factor: %u on value %ld.", splitDimU, SPLIT_FACTOR,
-            inputShape.GetDim(splitDimU)),
-        return SPLIT_ERROR_STATUS);
+    OP_CHECK_IF((inputShape.GetDim(splitDimU) % SPLIT_FACTOR != 0),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "self", std::to_string(inputShape.GetDim(splitDimU)),
+                    ("The dim of: " + std::to_string(splitDimU) + " can not be split with factor: " +
+                     std::to_string(SPLIT_FACTOR) + " on value " + std::to_string(inputShape.GetDim(splitDimU)) + ".")),
+                return SPLIT_ERROR_STATUS);
 
     return splitDimU;
 }
@@ -181,10 +222,16 @@ inline size_t GetAttrSplitDim(const gert::TilingContext* context)
 inline ge::graphStatus GetTilingParam(const gert::TilingContext* context, GluGradTilingParam& tilingParam)
 {
     size_t splitDim = GetAttrSplitDim(context);
-    OP_CHECK_IF((splitDim == SPLIT_ERROR_STATUS), OP_LOGE(context, "Get Split Dim Failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((splitDim == SPLIT_ERROR_STATUS), OP_LOGE_WITHOUT_REPORT(context, "Get Split Dim Failed."),
+                return ge::GRAPH_FAILED);
 
     auto inputStorageShape = context->GetInputShape(SELF_INPUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputStorageShape);
+    OP_CHECK_IF(
+        inputStorageShape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu_grad" : (context)->GetNodeName()),
+            "self"),
+        return ge::GRAPH_FAILED);
     auto inputShape = inputStorageShape->GetStorageShape();
     int64_t x{1}, y{1}, n{1};
     for (size_t i = 0; i < inputShape.GetDimNum(); i++) {
@@ -197,39 +244,56 @@ inline ge::graphStatus GetTilingParam(const gert::TilingContext* context, GluGra
         }
     }
     int64_t ny = n * y;
-    OP_CHECK_IF((x == 0 || ny == 0), OP_LOGE(context, "Get input tensor is empty."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((x == 0 || ny == 0),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "self", Ops::Base::ToString(inputShape),
+                    "Empty input dimensions are unsupported by this GLU Tiling implementation."),
+                return ge::GRAPH_FAILED);
 
     auto compileInfo = context->GetCompileInfo<GluGradCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu_grad" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object compileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     tilingParam.x = x;
     tilingParam.ny = ny;
     tilingParam.coreNum = compileInfo->totalCoreNum;
     tilingParam.ubSize = compileInfo->ubSizePlatForm;
 
-    OP_LOGI(
-        context, "tilingParam is x:%ld, coreNum: %ld, ubSize: %lu splitDim: %zu", tilingParam.x, tilingParam.coreNum,
-        tilingParam.ubSize, splitDim);
+    OP_LOGI(context, "tilingParam is x:%ld, coreNum: %ld, ubSize: %lu splitDim: %zu", tilingParam.x,
+            tilingParam.coreNum, tilingParam.ubSize, splitDim);
 
     return ge::GRAPH_SUCCESS;
 }
 
-inline ge::graphStatus RunCommonTiling(
-    gert::TilingContext* context, int64_t commonBufSize, int64_t singleBufSize, size_t workspaceSize)
+inline ge::graphStatus RunCommonTiling(gert::TilingContext* context, int64_t commonBufSize, int64_t singleBufSize,
+                                       size_t workspaceSize)
 {
     OP_LOGD(context, "RunCommonTiling enter.");
     context->SetScheduleMode(BATCH_MODE);
 
-    OP_CHECK_IF(
-        CheckInputParams(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "InputParams not valid."),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckInputParams(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "InputParams not valid."), return ge::GRAPH_FAILED);
 
     GluGradTilingParam tilingParam;
-    OP_CHECK_IF(
-        GetTilingParam(context, tilingParam) != ge::GRAPH_SUCCESS, OP_LOGE(context, "Get Tiling Param Failed."),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetTilingParam(context, tilingParam) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "Get Tiling Param Failed."), return ge::GRAPH_FAILED);
 
     auto dtypeDesc = context->GetInputDesc(SELF_INPUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dtypeDesc);
+    OP_CHECK_IF(
+        dtypeDesc == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu_grad" : (context)->GetNodeName()),
+            "self"),
+        return ge::GRAPH_FAILED);
     auto dtype = dtypeDesc->GetDataType();
     GluGradTilingData tilingData;
 
@@ -237,26 +301,33 @@ inline ge::graphStatus RunCommonTiling(
 
     tilingData.set_ny(tilingParam.ny);
 
-    OP_CHECK_IF(
-        SetTilingDataForGluGrad(context, tilingData) != ge::GRAPH_SUCCESS,
-        OP_LOGE(context, "GluGradSetTilingData set tiling data fail."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(SetTilingDataForGluGrad(context, tilingData) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GluGradSetTilingData set tiling data fail."), return ge::GRAPH_FAILED);
 
     context->SetBlockDim(tilingData.get_realCoreNum());
     uint32_t dTypeX = static_cast<uint32_t>(dtype);
     ASCENDC_TPL_SEL_PARAM(context, dTypeX, shapeMode);
     size_t* workspaces = context->GetWorkspaceSizes(1);
-    OP_CHECK_IF(workspaces == nullptr, OP_LOGE(context, "workspaces is null."), return ge::GRAPH_FAILED);
+    if (workspaces == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       "Workspace size output container is unavailable; this is Tiling metadata, not a "
+                                       "device allocation failure.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     workspaces[0] = workspaceSize;
 
-    OP_LOGD(
-        context,
-        "tilingData is splitSize:%ld, group:%ld, realCoreNum:%ld, numPerCore:%ld, loopNum:%ld, \
+    OP_LOGD(context, "tilingData is splitSize:%ld, group:%ld, realCoreNum:%ld, numPerCore:%ld, loopNum:%ld, \
            tailLoopNum:%ld,nLastTailGroup:%ld, lastTailGroup:%ld, shapeMode:%lu, blockSize:%ld, \
            ny: %ld",
-        tilingData.get_splitSize(), tilingData.get_group(), tilingData.get_realCoreNum(), tilingData.get_numPerCore(),
-        tilingData.get_loopNum(), tilingData.get_tailLoopNum(), tilingData.get_nLastTailGroup(),
-        tilingData.get_lastTailGroup(), shapeMode, tilingData.get_blockSize(), tilingData.get_ny());
+            tilingData.get_splitSize(), tilingData.get_group(), tilingData.get_realCoreNum(),
+            tilingData.get_numPerCore(), tilingData.get_loopNum(), tilingData.get_tailLoopNum(),
+            tilingData.get_nLastTailGroup(), tilingData.get_lastTailGroup(), shapeMode, tilingData.get_blockSize(),
+            tilingData.get_ny());
 
     OP_LOGD(context, "RunCommonTiling exit.");
     return ge::GRAPH_SUCCESS;

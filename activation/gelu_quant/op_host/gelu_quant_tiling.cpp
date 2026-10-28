@@ -23,6 +23,9 @@
 #include "op_host/tiling_util.h"
 #include "op_host/tiling_templates_registry.h"
 #include "gelu_quant_tiling.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace optiling {
 using namespace Ops::NN::OpTiling;
@@ -30,7 +33,18 @@ using namespace Ops::NN::OpTiling;
 ge::graphStatus GeluQuantTiling::GetPlatformInfo()
 {
     auto compileInfo = reinterpret_cast<const GeluQuantCompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object compileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     baseInfoOp.vectorCoreNum = compileInfo->vectorCoreNum;
     OP_CHECK_IF(
         (baseInfoOp.vectorCoreNum <= 0),
@@ -52,10 +66,32 @@ ge::graphStatus GeluQuantTiling::GetPlatformInfo()
 ge::graphStatus GeluQuantTiling::ProcessAttrsInfo()
 {
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     const char* approximate = attrs->GetAttrPointer<char>(APPROXIMATE_ATTR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, approximate);
+    if (approximate == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object approximate is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object approximate is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     if (strcmp(approximate, "none") == 0) {
         baseInfoOp.approximate = APPROXIMATE_NONE;
     } else if (strcmp(approximate, "tanh") == 0) {
@@ -68,7 +104,18 @@ ge::graphStatus GeluQuantTiling::ProcessAttrsInfo()
     }
 
     const char* quantMode = attrs->GetAttrPointer<char>(QUANT_MODE_ATTR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, quantMode);
+    if (quantMode == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object quantMode is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object quantMode is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     if (strcmp(quantMode, "static") == 0) {
         baseInfoOp.quantMode = STATIC_QUANT_MODE;
     } else if (strcmp(quantMode, "dynamic") == 0) {
@@ -87,7 +134,12 @@ ge::graphStatus GeluQuantTiling::ProcessRequiredInfo()
 {
     // x
     auto xInputDesc = context_->GetInputDesc(X_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xInputDesc);
+    OP_CHECK_IF(
+        xInputDesc == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()),
+            "x"),
+        return ge::GRAPH_FAILED);
     baseInfoOp.xInputDtype = xInputDesc->GetDataType();
     OP_CHECK_IF((baseInfoOp.xInputDtype != ge::DT_FLOAT && baseInfoOp.xInputDtype != ge::DT_FLOAT16 &&
                  baseInfoOp.xInputDtype != ge::DT_BF16),
@@ -96,7 +148,12 @@ ge::graphStatus GeluQuantTiling::ProcessRequiredInfo()
                 return ge::GRAPH_FAILED);
 
     auto xInputShapePtr = context_->GetInputShape(X_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xInputShapePtr);
+    OP_CHECK_IF(
+        xInputShapePtr == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()),
+            "x"),
+        return ge::GRAPH_FAILED);
     auto xInputShape = xInputShapePtr->GetStorageShape();
     baseInfoOp.xDimNum = xInputShape.GetDimNum();
     OP_CHECK_IF((baseInfoOp.xDimNum > INPUT_MAX_DIMENSIONS),
@@ -119,7 +176,18 @@ ge::graphStatus GeluQuantTiling::ProcessRequiredInfo()
 
     // y
     auto yOutputShapePtr = context_->GetOutputShape(Y_OUTPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yOutputShapePtr);
+    if (yOutputShapePtr == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object yOutputShapePtr is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yOutputShapePtr is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto yOutputShape = yOutputShapePtr->GetStorageShape();
     OP_CHECK_IF((xInputShape != yOutputShape),
                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
@@ -143,7 +211,18 @@ ge::graphStatus GeluQuantTiling::ProcessOptionalOffsetInfo()
     }
 
     auto offsetInputDesc = context_->GetOptionalInputDesc(OFFSET_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, offsetInputDesc);
+    if (offsetInputDesc == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object offsetInputDesc is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object offsetInputDesc is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     baseInfoOp.offsetInputDtype = offsetInputDesc->GetDataType();
     OP_CHECK_IF((baseInfoOp.scaleInputDtype != baseInfoOp.offsetInputDtype),
                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
@@ -197,7 +276,18 @@ ge::graphStatus GeluQuantTiling::ProcessOptionalScaleInfo()
     }
 
     auto scaleInputDesc = context_->GetOptionalInputDesc(SCALE_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, scaleInputDesc);
+    if (scaleInputDesc == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object scaleInputDesc is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object scaleInputDesc is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     baseInfoOp.scaleInputDtype = scaleInputDesc->GetDataType();
     OP_CHECK_IF((baseInfoOp.xInputDtype == ge::DT_FLOAT && baseInfoOp.scaleInputDtype != ge::DT_FLOAT),
                 OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
@@ -442,7 +532,18 @@ void GeluQuantTiling::SaveToTilingData()
 ge::graphStatus GeluQuantTiling::PostTiling()
 {
     size_t* userWorkspaceSize = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, userWorkspaceSize);
+    if (userWorkspaceSize == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object userWorkspaceSize is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object userWorkspaceSize is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     size_t workspaceSize = WORKSPACE_BUFFER;
     if (splitCoreOp.templateMode == DYNAMIC_WORKSPACE_TEMPLATE) {
         workspaceSize += baseInfoOp.endAxisLen * sizeof(float) * splitCoreOp.usedCoreNum;
@@ -571,7 +672,12 @@ ge::graphStatus GeluQuantTiling::RunGeluQuantTiling()
 
 static ge::graphStatus TilingForGeluQuant(gert::TilingContext* context)
 {
-    OP_CHECK_IF(context == nullptr, OP_LOGE("GeluQuant", "context should not be nullptr."), return ge::GRAPH_FAILED);
+    if (context == nullptr) {
+        OP_LOGE_WITHOUT_REPORT("GeluQuant", "%s", "context should not be nullptr.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{"GeluQuant", "context should not be nullptr."}));
+        return ge::GRAPH_FAILED;
+    };
 
     if (IsRegbaseSocVersion(context)) {
         geluquantregbase::GeluQuantRegbaseTiling tiling(context);
@@ -587,9 +693,31 @@ static ge::graphStatus TilingForGeluQuant(gert::TilingContext* context)
 ge::graphStatus TilingPrepareForGeluQuant(gert::TilingParseContext* context)
 {
     auto compileInfo = context->GetCompiledInfo<GeluQuantCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "gelu_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object compileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "gelu_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object platformInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->vectorCoreNum = ascendcPlatform.GetCoreNumAiv();
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo->ubSize);

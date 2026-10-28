@@ -14,6 +14,9 @@
  */
 #include "clipped_swiglu_grad_tiling.h"
 #include "../op_kernel/clipped_swiglu_grad_tiling_key.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using Ops::NN::Optiling::TilingRegistry;
 using namespace ge;
@@ -47,11 +50,12 @@ static const std::set<ge::DataType> SUPPORT_DTYPE = {ge::DT_FLOAT, ge::DT_FLOAT1
 ge::graphStatus ClippedSwigluGradTiling::GetShapeAttrsInfo()
 {
     OP_CHECK_IF(CheckAndGetXAndAttrs() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "check x and attrs failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check x and attrs failed."), return ge::GRAPH_FAILED);
     OP_CHECK_IF(CheckAndGetGroupIndex() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "check group_index param failed."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckGradX() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "check grad_x param failed."),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check group_index param failed."),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckGradX() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check grad_x param failed."), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -60,7 +64,13 @@ ge::graphStatus ClippedSwigluGradTiling::GetPlatformInfo()
     auto platformInfo = context_->GetPlatformInfo();
     if (platformInfo == nullptr) {
         auto compileInfoPtr = context_->GetCompileInfo<ClippedSwigluGradCompileInfo>();
-        OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context_, "compile info is null"), return ge::GRAPH_FAILED);
+        if (compileInfoPtr == nullptr) {
+            const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "compile info is null");
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                      (std::vector<const char*>{msgOpName.c_str(), "compile info is null"}));
+            return ge::GRAPH_FAILED;
+        };
         coreNumAll_ = compileInfoPtr->coreNum;
         ubSize_ = compileInfoPtr->ubSize;
     } else {
@@ -81,7 +91,9 @@ bool ClippedSwigluGradTiling::IsCapable()
 
 ge::graphStatus ClippedSwigluGradTiling::DoOpTiling()
 {
-    CountMaxPair();
+    if (CountMaxPair() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     SetTilingData();
     return ge::GRAPH_SUCCESS;
 }
@@ -149,7 +161,19 @@ void ClippedSwigluGradTiling::DumpTilingInfo()
 ge::graphStatus ClippedSwigluGradTiling::ParseAndCheckAttrs()
 {
     auto* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "clipped_swiglu_grad" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto* attrDim = attrs->GetAttrPointer<int>(DIM_INDEX);
     cutDim_ = attrDim == nullptr ? -1 : *attrDim;
     auto* attrAlpha = attrs->GetAttrPointer<float>(ALPHA_INDEX);
@@ -161,7 +185,9 @@ ge::graphStatus ClippedSwigluGradTiling::ParseAndCheckAttrs()
     auto* attrInterleaved = attrs->GetAttrPointer<bool>(INTERLEAVED_INDEX);
     bool interleaved = attrInterleaved == nullptr ? true : *attrInterleaved;
     isInterleaved_ = interleaved ? 1 : 0;
-    OP_CHECK_IF((limit_ <= 0.0f), OP_LOGE(context_->GetNodeName(), "limit must be > 0, but got %f.", limit_),
+    OP_CHECK_IF((limit_ <= 0.0f),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "limit", std::to_string(limit_),
+                                                      ("limit must be > 0, but got " + std::to_string(limit_) + ".")),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -169,13 +195,20 @@ ge::graphStatus ClippedSwigluGradTiling::ParseAndCheckAttrs()
 ge::graphStatus ClippedSwigluGradTiling::ParseXShapeInfo()
 {
     auto shapeX = context_->GetInputShape(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, shapeX);
+    OP_CHECK_IF(shapeX == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "clipped_swiglu_grad" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     const gert::Shape& inputShapeX = shapeX->GetStorageShape();
     xDims_ = inputShapeX.GetDimNum();
-    OP_CHECK_IF(
-        (cutDim_ > (xDims_ - 1) || cutDim_ < -1 * xDims_),
-        OP_LOGE(context_->GetNodeName(), "dim should in [-%ld, %ld], but get %ld,", xDims_, xDims_ - 1, cutDim_),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((cutDim_ > (xDims_ - 1) || cutDim_ < -1 * xDims_),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "dim", std::to_string(cutDim_),
+                    ("dim should in [-" + std::to_string(xDims_) + ", " + std::to_string(xDims_ - 1) + "], but get " +
+                     std::to_string(cutDim_) + ",")),
+                return ge::GRAPH_FAILED);
     cutDim_ = cutDim_ < 0 ? (cutDim_ + xDims_) : cutDim_;
     xCutDimNum_ = inputShapeX.GetDim(cutDim_);
     if (xDims_ == 1) {
@@ -189,15 +222,23 @@ ge::graphStatus ClippedSwigluGradTiling::ParseXShapeInfo()
             dim2H_ *= inputShapeX.GetDim(j);
         }
     }
-    OP_CHECK_IF(
-        (inputShapeX.GetDim(cutDim_) % 2 == 1),
-        OP_LOGE(context_->GetNodeName(), "x[dim] should be divisible by 2, but get %ld", inputShapeX.GetDim(cutDim_)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((inputShapeX.GetDim(cutDim_) % 2 == 1),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context_->GetNodeName(), "x", std::to_string(inputShapeX.GetDim(cutDim_)),
+                    ("x[dim] should be divisible by 2, but get " + std::to_string(inputShapeX.GetDim(cutDim_)))),
+                return ge::GRAPH_FAILED);
     auto descX = context_->GetInputDesc(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, descX);
+    OP_CHECK_IF(descX == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "clipped_swiglu_grad" :
+                                                                                     (context_)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     xDtype_ = descX->GetDataType();
     OP_CHECK_IF((SUPPORT_DTYPE.find(xDtype_) == SUPPORT_DTYPE.end()),
-                OP_LOGE(context_->GetNodeName(), "x dtype only support float, half or bfloat16, please check."),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x",
+                                                      std::to_string(static_cast<int>(descX->GetDataType())),
+                                                      "x dtype only support float, half or bfloat16, please check."),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -208,29 +249,51 @@ ge::graphStatus ClippedSwigluGradTiling::CheckGradYInfo()
     OP_CHECK_NULL_WITH_CONTEXT(context_, shapeX);
     const gert::Shape& inputShapeX = shapeX->GetStorageShape();
     auto shapeGradY = context_->GetInputShape(Y_GRAD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, shapeGradY);
+    OP_CHECK_IF(shapeGradY == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "clipped_swiglu_grad" :
+                                                                                     (context_)->GetNodeName()),
+                    "grad_y"),
+                return ge::GRAPH_FAILED);
     const gert::Shape& inputShapeGradY = shapeGradY->GetStorageShape();
     OP_CHECK_IF((inputShapeGradY.GetDimNum() != xDims_),
-                OP_LOGE(context_->GetNodeName(), "grad_y rank (%ld) should be equal to x rank (%ld).",
-                        inputShapeGradY.GetDimNum(), xDims_),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context_->GetNodeName(), "x,grad_y",
+                    std::to_string(xDims_) + "," + std::to_string(inputShapeGradY.GetDimNum()),
+                    ("grad_y rank (" + std::to_string(inputShapeGradY.GetDimNum()) + ") should be equal to x rank (" +
+                     std::to_string(xDims_) + ").")),
                 return ge::GRAPH_FAILED);
     for (int64_t i = 0; i < xDims_; i++) {
         if (i == cutDim_) {
             OP_CHECK_IF((inputShapeGradY.GetDim(i) != inputShapeX.GetDim(i) / 2),
-                        OP_LOGE(context_->GetNodeName(), "grad_y dim %ld (%ld) should be half of x dim %ld (%ld).", i,
-                                inputShapeGradY.GetDim(i), i, inputShapeX.GetDim(i)),
+                        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                            context_->GetNodeName(), "grad_y", std::to_string(inputShapeGradY.GetDim(i)),
+                            ("grad_y dim " + std::to_string(i) + " (" + std::to_string(inputShapeGradY.GetDim(i)) +
+                             ") should be half of x dim " + std::to_string(i) + " (" +
+                             std::to_string(inputShapeX.GetDim(i)) + ").")),
                         return ge::GRAPH_FAILED);
         } else {
             OP_CHECK_IF((inputShapeGradY.GetDim(i) != inputShapeX.GetDim(i)),
-                        OP_LOGE(context_->GetNodeName(), "grad_y dim %ld (%ld) should be equal to x dim %ld (%ld).", i,
-                                inputShapeGradY.GetDim(i), i, inputShapeX.GetDim(i)),
+                        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                            context_->GetNodeName(), "grad_y", std::to_string(inputShapeGradY.GetDim(i)),
+                            ("grad_y dim " + std::to_string(i) + " (" + std::to_string(inputShapeGradY.GetDim(i)) +
+                             ") should be equal to x dim " + std::to_string(i) + " (" +
+                             std::to_string(inputShapeX.GetDim(i)) + ").")),
                         return ge::GRAPH_FAILED);
         }
     }
     auto descGradY = context_->GetInputDesc(Y_GRAD_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, descGradY);
+    OP_CHECK_IF(descGradY == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "clipped_swiglu_grad" :
+                                                                                     (context_)->GetNodeName()),
+                    "grad_y"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF((descGradY->GetDataType() != xDtype_),
-                OP_LOGE(context_->GetNodeName(), "grad_y dtype should be the same as x, please check."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "x,grad_y",
+                                                       std::to_string(static_cast<int>(xDtype_)) + "," +
+                                                           std::to_string(static_cast<int>(descGradY->GetDataType())),
+                                                       "grad_y dtype should be the same as x, please check."),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -238,11 +301,12 @@ ge::graphStatus ClippedSwigluGradTiling::CheckGradYInfo()
 ge::graphStatus ClippedSwigluGradTiling::CheckAndGetXAndAttrs()
 {
     OP_CHECK_IF(ParseAndCheckAttrs() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "parse and check attrs failed."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ParseXShapeInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "parse x shape info failed."),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "parse and check attrs failed."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckGradYInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "check grad_y info failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ParseXShapeInfo() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "parse x shape info failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckGradYInfo() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check grad_y info failed."), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -255,18 +319,34 @@ ge::graphStatus ClippedSwigluGradTiling::CheckAndGetGroupIndex()
         const gert::Shape& inputShapeGroupIndex = shapeGroupIndex->GetStorageShape();
         int64_t groupIndexDim = inputShapeGroupIndex.GetDimNum();
         auto descGroupIndex = context_->GetInputDesc(GROUP_INDEX_INDEX);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, descGroupIndex);
+        if (descGroupIndex == nullptr) {
+            const std::string msgOpName = std::string(
+                (context_->GetNodeName() == nullptr ? "clipped_swiglu_grad" : context_->GetNodeName()));
+            OP_LOGE_WITHOUT_REPORT(
+                msgOpName.c_str(), "%s",
+                "group_index shape is already present; its missing descriptor violates the Tiling context contract.");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(), "group_index shape is already present; its missing "
+                                                             "descriptor violates the Tiling context contract."}));
+            return ge::GRAPH_FAILED;
+        };
         auto groupIndexDtype = descGroupIndex->GetDataType();
         groupNum_ = inputShapeGroupIndex.GetDim(0);
         OP_LOGI(context_->GetNodeName(), "group_index: dim=%ld, groupNum=%ld, isNull=%d", groupIndexDim, groupNum_,
                 shapeGroupIndex == nullptr);
         OP_CHECK_IF((groupIndexDim != 1),
-                    OP_LOGE(context_->GetNodeName(),
-                            "the number of dimensions of group_index should be 1, but get %ld.", groupIndexDim),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        context_->GetNodeName(), "group_index", std::to_string(groupIndexDim),
+                        ("the number of dimensions of group_index should be 1, but get " +
+                         std::to_string(groupIndexDim) + ".")),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF((groupIndexDtype != ge::DT_INT64),
-                    OP_LOGE(context_->GetNodeName(), "groupIndex dtype only support int64, please check."),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            (groupIndexDtype != ge::DT_INT64),
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "group_index",
+                                                  std::to_string(static_cast<int>(descGroupIndex->GetDataType())),
+                                                  "groupIndex dtype only support int64, please check."),
+            return ge::GRAPH_FAILED);
         if (groupNum_ == 0) {
             isGroup_ = 0;
         } else {
@@ -279,19 +359,45 @@ ge::graphStatus ClippedSwigluGradTiling::CheckAndGetGroupIndex()
 ge::graphStatus ClippedSwigluGradTiling::CheckGradX()
 {
     auto shapeGradX = context_->GetOutputShape(GRAD_X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, shapeGradX);
+    if (shapeGradX == nullptr) {
+        const std::string msgOpName = std::string(((context_) == nullptr || (context_)->GetNodeName() == nullptr ?
+                                                       "clipped_swiglu_grad" :
+                                                       (context_)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object shapeGradX is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object shapeGradX is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const gert::Shape& outputShapeGradX = shapeGradX->GetStorageShape();
     int64_t gradXDims = outputShapeGradX.GetDimNum();
-    auto descGradX = context_->GetInputDesc(GRAD_X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, descGradX);
+    auto descGradX = context_->GetOutputDesc(GRAD_X_INDEX);
+    if (descGradX == nullptr) {
+        const std::string msgOpName = (context_->GetNodeName() == nullptr ? "clipped_swiglu_grad" :
+                                                                            context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Output descriptor grad_x is unavailable; check the registered Tiling context.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{
+                msgOpName.c_str(), "Output descriptor grad_x is unavailable; check the registered Tiling context."}));
+        return ge::GRAPH_FAILED;
+    }
     auto gradXDtype = descGradX->GetDataType();
-    OP_CHECK_IF(
-        (gradXDims != xDims_),
-        OP_LOGE(context_->GetNodeName(),
-                "the number of dimensions of grad_x should be equal to dimensions of x, but get %ld.", gradXDims),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((gradXDims != xDims_),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context_->GetNodeName(), "x,grad_x", std::to_string(xDims_) + "," + std::to_string(gradXDims),
+                    ("the number of dimensions of grad_x should be equal to dimensions of x, but get " +
+                     std::to_string(gradXDims) + ".")),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF((gradXDtype != xDtype_),
-                OP_LOGE(context_->GetNodeName(), "grad_x dtype should be the same as x, please cheack."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "x,grad_x",
+                                                       std::to_string(static_cast<int>(xDtype_)) + "," +
+                                                           std::to_string(static_cast<int>(descGradX->GetDataType())),
+                                                       "grad_x dtype should be the same as x, please cheack."),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -331,9 +437,13 @@ ge::graphStatus ClippedSwigluGradTiling::CountMaxPair()
     // 对齐 ubMaxPair_ 到 64（CompareScalar 的 CMP_ALIGN），避免 alignedCount 越界
     ubMaxPair_ = ubMaxPair_ / 64 * 64;
 
-    OP_CHECK_IF((numerator <= 0 || ubMaxPair_ <= 0),
-                OP_LOGE(context_->GetNodeName(), "Input not supported, groupNum is too large."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (numerator <= 0 || ubMaxPair_ <= 0),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            context_->GetNodeName(), "group_index", std::to_string(groupNum_),
+            std::string("The group_index buffer leaves no usable UB tile: group_count=") + std::to_string(groupNum_) +
+                ", availableUB=" + std::to_string(ubSize_) + ", remainingBytes=" + std::to_string(numerator)),
+        return ge::GRAPH_FAILED);
     isLongH_ = ubMaxPair_ * SWI_FACTOR < dim2H_ ? 1 : 0;
     if (isInterleaved_ == 0 && isLongH_ == 0) {
         int64_t sizeofT = (xDtype_ == ge::DT_FLOAT) ? 4 : 2;
@@ -357,23 +467,61 @@ ge::graphStatus TilingPrepareForClippedSwigluGrad(gert::TilingParseContext* cont
 {
     OP_LOGD(context, "TilingPrepareForClippedSwigluGrad enter.");
     auto compileInfo = context->GetCompiledInfo<ClippedSwigluGradCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "clipped_swiglu_grad" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object compileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "clipped_swiglu_grad" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object platformInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0),
-                OP_LOGE(context->GetNodeName(), "Get core num failed, core num: %u",
-                        static_cast<uint32_t>(compileInfo->coreNum)),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo->coreNum <= 0)) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "clipped_swiglu_grad" :
+                                           context->GetNodeName());
+        const std::string msgReason = std::string(
+            ("Get core num failed, core num: " + std::to_string(static_cast<uint32_t>(compileInfo->coreNum))));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = ubSize;
-    OP_CHECK_IF(
-        (compileInfo->ubSize <= 0),
-        OP_LOGE(context->GetNodeName(), "Get ub size failed, ub size: %u", static_cast<uint32_t>(compileInfo->ubSize)),
-        return ge::GRAPH_FAILED);
+    if ((compileInfo->ubSize <= 0)) {
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "clipped_swiglu_grad" :
+                                           context->GetNodeName());
+        const std::string msgReason = std::string(
+            ("Get ub size failed, ub size: " + std::to_string(static_cast<uint32_t>(compileInfo->ubSize))));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     OP_LOGD(context, "TilingPrepareForClippedSwigluGrad exit.");
     return ge::GRAPH_SUCCESS;

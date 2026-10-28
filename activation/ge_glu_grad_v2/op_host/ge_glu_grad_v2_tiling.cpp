@@ -19,6 +19,9 @@
 #include "util/math_util.h"
 #include "ge_glu_grad_v2_tiling.h"
 #include "op_host/tiling_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace optiling {
 using namespace Ops::NN::OpTiling;
@@ -135,16 +138,30 @@ private:
 ge::graphStatus GeGluGradV2Tiling::RunTiling4GeGluGradV2()
 {
     ptrCompileInfo = tilingContext->GetCompileInfo<GeGluGradV2CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, ptrCompileInfo);
+    if (ptrCompileInfo == nullptr) {
+        const std::string msgOpName = std::string(
+            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ? "ge_glu_grad_v2" :
+                                                                                       (tilingContext)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object ptrCompileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object ptrCompileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     ubSizePlatForm_ = ptrCompileInfo->ubSizePlatForm;
 
-    OP_CHECK_IF(Init() != ge::GRAPH_SUCCESS, OP_LOGE(NODE_NAME, "Init failed."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckParams() != ge::GRAPH_SUCCESS, OP_LOGE(NODE_NAME, "CheckParams failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(Init() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(NODE_NAME, "Init failed."),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckParams() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(NODE_NAME, "CheckParams failed."),
+                return ge::GRAPH_FAILED);
     CalcValueNM();
     OP_LOGD(NODE_NAME, "Platform info, ubSizePlatForm:%lu, totalCoreNum:%d, curSocVersion:%u.", ubSizePlatForm_,
             ptrCompileInfo->totalCoreNum, static_cast<int32_t>(ptrCompileInfo->curSocVersion));
-    OP_CHECK_IF(CaclMaxProcessCount() != ge::GRAPH_SUCCESS, OP_LOGE(NODE_NAME, "CaclMaxProcessCount failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CaclMaxProcessCount() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(NODE_NAME, "CaclMaxProcessCount failed."), return ge::GRAPH_FAILED);
 
     ProcessTilingCore();
 
@@ -152,7 +169,19 @@ ge::graphStatus GeGluGradV2Tiling::RunTiling4GeGluGradV2()
     tilingContext->SetTilingKey(static_cast<uint64_t>(tilingKey));
     FillTilingData();
     size_t* workspaces = tilingContext->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, workspaces);
+    if (workspaces == nullptr) {
+        const std::string msgOpName = std::string(
+            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ? "ge_glu_grad_v2" :
+                                                                                       (tilingContext)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object workspaces is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object workspaces is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     workspaces[0] = static_cast<size_t>(WORK_SPACE_SIZE + ptrCompileInfo->totalCoreNum * BLOCK_SIZE);
     return ge::GRAPH_SUCCESS;
 }
@@ -160,31 +189,94 @@ ge::graphStatus GeGluGradV2Tiling::RunTiling4GeGluGradV2()
 ge::graphStatus GeGluGradV2Tiling::Init()
 {
     auto inputDy = tilingContext->GetInputTensor(DY_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, inputDy);
+    OP_CHECK_IF(inputDy == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ?
+                                                "ge_glu_grad_v2" :
+                                                (tilingContext)->GetNodeName()),
+                                           "dy"),
+                return ge::GRAPH_FAILED);
     dyShape = inputDy->GetStorageShape();
     dyDtype = tilingContext->GetInputDesc(DY_INDEX)->GetDataType();
 
     auto inputX = tilingContext->GetInputTensor(X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, inputX);
+    OP_CHECK_IF(inputX == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ?
+                                                "ge_glu_grad_v2" :
+                                                (tilingContext)->GetNodeName()),
+                                           "x"),
+                return ge::GRAPH_FAILED);
     xShape = inputX->GetStorageShape();
 
     auto inputYgelu = tilingContext->GetInputTensor(GELU_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, inputYgelu);
+    OP_CHECK_IF(inputYgelu == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ?
+                                                "ge_glu_grad_v2" :
+                                                (tilingContext)->GetNodeName()),
+                                           "gelu"),
+                return ge::GRAPH_FAILED);
     geluShape = inputYgelu->GetStorageShape();
 
     auto outputDx = tilingContext->GetOutputShape(DX_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, outputDx);
+    if (outputDx == nullptr) {
+        const std::string msgOpName = std::string(
+            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ? "ge_glu_grad_v2" :
+                                                                                       (tilingContext)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object outputDx is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object outputDx is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     dxShape = outputDx->GetStorageShape();
 
     auto attrs = tilingContext->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ? "ge_glu_grad_v2" :
+                                                                                       (tilingContext)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const int64_t* ptrDim = attrs->GetAttrPointer<int64_t>(DIM_ATTR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, ptrDim);
+    if (ptrDim == nullptr) {
+        const std::string msgOpName = std::string(
+            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ? "ge_glu_grad_v2" :
+                                                                                       (tilingContext)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object ptrDim is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object ptrDim is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     dimAttr = *ptrDim;
     const int64_t* ptrApproximate = attrs->GetAttrPointer<int64_t>(APPROXIMATE_ATTR_INDEX);
     // 310P donot support bfloat16 and erf mode
     const bool is310p = ptrCompileInfo->curSocVersion == NpuArch::DAV_2002;
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, ptrApproximate);
+    if (ptrApproximate == nullptr) {
+        const std::string msgOpName = std::string(
+            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ? "ge_glu_grad_v2" :
+                                                                                       (tilingContext)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object ptrApproximate is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object ptrApproximate is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     approximateAttr = *ptrApproximate;
     OP_CHECK_IF(approximateAttr == 0 && is310p,
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext->GetNodeName(), "approximate",
@@ -192,7 +284,19 @@ ge::graphStatus GeGluGradV2Tiling::Init()
                                                       "If the platform is 310P, parameter approximate must be 1(Tanh)"),
                 return ge::GRAPH_FAILED);
     const bool* ptrActivateLeft = attrs->GetAttrPointer<bool>(ACTIVATE_LEFT_ATTR_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, ptrActivateLeft);
+    if (ptrActivateLeft == nullptr) {
+        const std::string msgOpName = std::string(
+            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ? "ge_glu_grad_v2" :
+                                                                                       (tilingContext)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object ptrActivateLeft is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object ptrActivateLeft is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     activateLeftAttr = *ptrActivateLeft;
 
     OP_LOGD(NODE_NAME, "Attr info: dimAttr: %ld, approximateAttr: %ld, activateLeftAttr: %s, dyDtype: %d.", dimAttr,
@@ -374,26 +478,61 @@ ge::graphStatus Tiling4GeGluGradV2(gert::TilingContext* context)
     context->SetScheduleMode(BATCH_MODE);
     GeGluGradV2Tiling tilingObject(context);
     OP_CHECK_IF(tilingObject.RunTiling4GeGluGradV2() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "RunTiling4GeGluGradV2 failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "RunTiling4GeGluGradV2 failed."),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus TilingPrepare4GeGluGradV2(gert::TilingParseContext* context)
 {
     auto compileInfo = context->GetCompiledInfo<GeGluGradV2CompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::string msgOpName = std::string((
+            (context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_grad_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object compileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string((
+            (context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_grad_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object platformInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->totalCoreNum <= 0), OP_LOGE(NODE_NAME, "TilingPrepare4GeGluGradV2 get core num failed."),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo->totalCoreNum <= 0)) {
+        const std::string msgOpName = std::string(NODE_NAME);
+        const std::string msgReason = (std::string(__func__) + ": " + "TilingPrepare4GeGluGradV2 get core num failed.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(NODE_NAME, "TilingPrepare4GeGluGradV2 get ub size failed."),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo->ubSizePlatForm <= 0)) {
+        const std::string msgOpName = std::string(NODE_NAME);
+        const std::string msgReason = (std::string(__func__) + ": " + "TilingPrepare4GeGluGradV2 get ub size failed.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     compileInfo->curSocVersion = ascendcPlatform.GetCurNpuArch();
     compileInfo->isRegbase = IsRegbaseSocVersion(context);

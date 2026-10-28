@@ -23,6 +23,9 @@
 #include "opdev/platform.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 #ifdef __cplusplus
@@ -95,21 +98,37 @@ static bool CheckShape(const aclTensor* self, int64_t dim, const aclTensor* out,
     auto outSliceDimSize = out->GetViewShape().GetDim(sliceDim);
     auto outGeluSliceDimSize = outGelu->GetViewShape().GetDim(sliceDim);
     const int64_t SLICE_NUM = 2;
-    OP_CHECK(selfSliceDimSize % SLICE_NUM == 0,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "selfSliceDimSize[%ld] must be even number.", selfSliceDimSize),
-             return false);
+    if (!(selfSliceDimSize % SLICE_NUM == 0)) {
+        const std::string reason = (("selfSliceDimSize[" + std::to_string(selfSliceDimSize) +
+                                     "] must be even number."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0015", (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+            (std::vector<const char*>{"self", "aclnnGeGlu", (std::to_string(selfSliceDimSize)).c_str(),
+                                      reason.c_str()}));
+        return false;
+    };
 
     if (outSliceDimSize != selfSliceDimSize / SLICE_NUM) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnGeGlu out slice dim size %ld to be equal to %ld but check failed.", outSliceDimSize,
-                selfSliceDimSize / SLICE_NUM);
+        const std::string reason = (("Expected aclnnGeGlu out slice dim size " + std::to_string(outSliceDimSize) +
+                                     " to be equal to " + std::to_string(selfSliceDimSize / SLICE_NUM) +
+                                     " but check failed."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0015", (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+            (std::vector<const char*>{"out", "aclnnGeGlu", (std::to_string(outSliceDimSize)).c_str(), reason.c_str()}));
         return false;
     }
 
     if (outGeluSliceDimSize != selfSliceDimSize / SLICE_NUM) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Expected aclnnGeGlu outGelu slice dim size %ld to be equal to %ld but check failed.",
-                outGeluSliceDimSize, selfSliceDimSize / SLICE_NUM);
+        const std::string reason = (("Expected aclnnGeGlu outGelu slice dim size " +
+                                     std::to_string(outGeluSliceDimSize) + " to be equal to " +
+                                     std::to_string(selfSliceDimSize / SLICE_NUM) + " but check failed."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0015", (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+            (std::vector<const char*>{"outGelu", "aclnnGeGlu", (std::to_string(outGeluSliceDimSize)).c_str(),
+                                      reason.c_str()}));
         return false;
     }
 
@@ -126,15 +145,25 @@ static bool CheckShape(const aclTensor* self, int64_t dim, const aclTensor* out,
         if (idx == sliceDim) {
             continue;
         }
-        OP_CHECK(
-            self->GetViewShape().GetDim(idx) == out->GetViewShape().GetDim(idx) &&
-                out->GetViewShape().GetDim(idx) == outGelu->GetViewShape().GetDim(idx),
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "Except the slice dim[%ld], all other shape dim must be the same, but got input shape: %s, "
-                    "out shape: %s, out gelu shape: %s",
-                    dim, op::ToString(self->GetViewShape()).GetString(), op::ToString(out->GetViewShape()).GetString(),
-                    op::ToString(outGelu->GetViewShape()).GetString()),
-            return false);
+        if (!(self->GetViewShape().GetDim(idx) == out->GetViewShape().GetDim(idx) &&
+              out->GetViewShape().GetDim(idx) == outGelu->GetViewShape().GetDim(idx))) {
+            const std::string reason = ((
+                "Except the slice dim[" + std::to_string(dim) +
+                "], all other shape dim must be the same, but got input shape: " +
+                std::string(op::ToString(self->GetViewShape()).GetString()) +
+                ", out shape: " + std::string(op::ToString(out->GetViewShape()).GetString()) +
+                ", out gelu shape: " + std::string(op::ToString(outGelu->GetViewShape()).GetString())));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+                (std::vector<const char*>{"self,out,outGelu", "aclnnGeGlu",
+                                          (std::string(op::ToString(self->GetViewShape()).GetString()) + "," +
+                                           op::ToString(out->GetViewShape()).GetString() + "," +
+                                           op::ToString(outGelu->GetViewShape()).GetString())
+                                              .c_str(),
+                                          reason.c_str()}));
+            return false;
+        };
     }
     return true;
 }
@@ -143,7 +172,12 @@ static bool checkApproximate(int64_t approximate)
 {
     const int64_t APPROXIMATE_NUM = 1;
     if (approximate < 0 || approximate > APPROXIMATE_NUM) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Approximate should be 0 or 1, but current is %ld", approximate);
+        const std::string reason = (("Approximate should be 0 or 1, but current is " + std::to_string(approximate)));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0026",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                                  (std::vector<const char*>{"approximate", "aclnnGeGlu",
+                                                            (std::to_string(approximate)).c_str(), reason.c_str()}));
         return false;
     }
     return true;

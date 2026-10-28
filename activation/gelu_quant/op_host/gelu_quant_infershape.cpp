@@ -14,6 +14,9 @@
  */
 #include "log/log.h"
 #include "register/op_impl_registry.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 namespace ops {
@@ -44,7 +47,18 @@ static ge::graphStatus InferShapeCheck(gert::InferShapeContext* context)
 static ge::graphStatus GeluQuantInferShape(gert::InferShapeContext* context)
 {
     if (InferShapeCheck(context) == GRAPH_FAILED) {
-        OP_LOGE("GeluQuant", "[GeluQuant] InferShapeCheck failed.");
+        do {
+            if (context != nullptr && context->GetInputShape(0) == nullptr) {
+                OP_LOGE_WITH_INVALID_INPUT("GeluQuant", "x");
+            } else {
+                const std::string msgReason = (std::string(__func__) + ": " +
+                                               "InferShape context or output shape metadata is unavailable; check "
+                                               "operator registration and context construction.");
+                OP_LOGE_WITHOUT_REPORT("GeluQuant", "%s", msgReason.c_str());
+                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{"GeluQuant", msgReason.c_str()}));
+            }
+        } while (0);
         return GRAPH_FAILED;
     }
 
@@ -62,7 +76,10 @@ static ge::graphStatus GeluQuantInferShape(gert::InferShapeContext* context)
 static ge::graphStatus GeluQuantInferDataType(gert::InferDataTypeContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("GeluQuant", "[GeluQuant] GeluQuantInferDataType got context is nullptr.");
+        OP_LOGE_WITHOUT_REPORT("GeluQuant", "%s", "[GeluQuant] GeluQuantInferDataType got context is nullptr.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{"GeluQuant", "[GeluQuant] GeluQuantInferDataType got context is nullptr."}));
         return GRAPH_FAILED;
     }
     OP_LOGD(context, "GeluQuantInferDataType begin");

@@ -17,6 +17,10 @@
 #include "register/op_impl_registry.h"
 #include "error_util.h"
 #include "util/shape_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
+
 using namespace ge;
 
 namespace {
@@ -31,14 +35,55 @@ static ge::graphStatus InferShapeForClippedSwigluGrad(gert::InferShapeContext* c
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferShapeForClippedSwigluGrad");
     auto xShape = context->GetInputShape(GRAD_IN_X);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(xShape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(
+                    ((context) == nullptr || (context)->GetNodeName() == nullptr ? "clipped_swiglu_grad" :
+                                                                                   (context)->GetNodeName()),
+                    "x"),
+                return ge::GRAPH_FAILED);
     auto gradXOutShape = context->GetOutputShape(GRAD_OUT_GRAD_X);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, gradXOutShape);
+    if (gradXOutShape == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "clipped_swiglu_grad" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object gradXOutShape is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object gradXOutShape is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto attrs = context->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "clipped_swiglu_grad" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrs is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto splitDimPtr = attrs->GetAttrPointer<int64_t>(GRAD_ATTR_DIM);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, splitDimPtr);
+    if (splitDimPtr == nullptr) {
+        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
+                                                       "clipped_swiglu_grad" :
+                                                       (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object splitDimPtr is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object splitDimPtr is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     if (Ops::Base::IsUnknownRank(*xShape)) {
         Ops::Base::SetUnknownRank(*gradXOutShape);
         return ge::GRAPH_SUCCESS;
@@ -48,14 +93,18 @@ static ge::graphStatus InferShapeForClippedSwigluGrad(gert::InferShapeContext* c
         splitDim += xShape->GetDimNum();
     }
     if (splitDim < 0 || splitDim >= static_cast<int64_t>(xShape->GetDimNum())) {
-        OP_LOGE("ClippedSwigluGrad", "The value of attr [dim] must be in the range [-%zu, %zu], but got [%ld].",
-                xShape->GetDimNum(), xShape->GetDimNum() - 1, splitDim);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            "ClippedSwigluGrad", "dim", std::to_string(*splitDimPtr),
+            ("The value of attr [dim] must be in the range [-" + std::to_string(xShape->GetDimNum()) + ", " +
+             std::to_string(xShape->GetDimNum() - 1) + "], but got [" + std::to_string(splitDim) + "]."));
         return GRAPH_FAILED;
     }
     int64_t splitDimSize = xShape->GetDim(splitDim);
     if (splitDimSize >= 0 && splitDimSize % static_cast<int64_t>(SPLIT_NUM) != 0) {
-        OP_LOGE("ClippedSwigluGrad", "The size of x[dim] must be divisible by %zu, but got [%ld].", SPLIT_NUM,
-                splitDimSize);
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            "ClippedSwigluGrad", "x", std::to_string(splitDimSize),
+            ("The size of x[dim] must be divisible by " + std::to_string(SPLIT_NUM) + ", but got [" +
+             std::to_string(splitDimSize) + "]."));
         return GRAPH_FAILED;
     }
     OP_LOGD(context->GetNodeName(), "Begin to generate gradXOutShape");

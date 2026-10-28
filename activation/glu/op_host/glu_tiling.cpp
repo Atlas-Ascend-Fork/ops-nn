@@ -21,6 +21,9 @@
 #include "op_host/tiling_util.h"
 #include "glu_tiling_arch35.h"
 #include "glu_tiling_common.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace optiling {
 
@@ -35,20 +38,54 @@ static ge::graphStatus TilingPrepare4Glu(gert::TilingParseContext* context)
     OP_LOGD(context, "TilingPrepare4Glu enter.");
 
     auto compileInfo = context->GetCompiledInfo<GluCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    if (compileInfo == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object compileInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    if (platformInfo == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object platformInfo is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     OP_LOGD(context, "Tiling totalCoreNum: %d", compileInfo->totalCoreNum);
-    OP_CHECK_IF((compileInfo->totalCoreNum <= 0), OP_LOGE(context, "TilingPrepare4Glu Failed to get core num."),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo->totalCoreNum <= 0)) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "TilingPrepare4Glu Failed to get core num.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "TilingPrepare4Glu Failed to get core num."}));
+        return ge::GRAPH_FAILED;
+    };
 
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context, "TilingPrepare4Glu Failed to get ub size."),
-                return ge::GRAPH_FAILED);
+    if ((compileInfo->ubSizePlatForm <= 0)) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "TilingPrepare4Glu Failed to get ub size.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "TilingPrepare4Glu Failed to get ub size."}));
+        return ge::GRAPH_FAILED;
+    };
 
     OP_LOGD(context, "TilingPrepare4Glu exit. coreNum: %d ubSize: %lu", compileInfo->totalCoreNum,
             compileInfo->ubSizePlatForm);
@@ -67,7 +104,7 @@ static ge::graphStatus Tiling4Glu(gert::TilingContext* context)
 
     TilingParam tilingParam;
     if (GetTilingParam(context, tilingParam) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "Get Tiling Param Failed.");
+        OP_LOGE_WITHOUT_REPORT(context, "Get Tiling Param Failed.");
         return ge::GRAPH_FAILED;
     }
 

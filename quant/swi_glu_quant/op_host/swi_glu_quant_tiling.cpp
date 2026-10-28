@@ -98,7 +98,9 @@ static ge::graphStatus Tiling4SwiGluQuant(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
     // 读取属性和dtype来计算tilingKey
-    GetTillingData(context, compileInfo, tilingParam, tilingData);
+    if (GetTillingData(context, compileInfo, tilingParam, tilingData) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     SetTilingDataForSwiGluQuant(context, tilingData);
     context->SetBlockDim(tilingData.get_realCoreNum());
     context->SetTilingKey(tilingData.get_tilingKey());

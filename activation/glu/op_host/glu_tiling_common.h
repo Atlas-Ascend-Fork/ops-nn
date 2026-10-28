@@ -20,6 +20,10 @@
 #include "log/log.h"
 #include "util/math_util.h"
 #include "glu_tiling.h"
+#include <string>
+#include <vector>
+#include "util/shape_util.h"
+#include "base/err_msg.h"
 
 namespace optiling {
 namespace glu_common {
@@ -132,14 +136,20 @@ inline void GetTilingData(ge::DataType dtype, GluTilingData& tilingData, TilingP
 inline ge::graphStatus CheckInputParams(gert::TilingContext* context)
 {
     auto input = context->GetInputTensor(INPUT_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, input);
+    OP_CHECK_IF(
+        input == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()), "x"),
+        return ge::GRAPH_FAILED);
 
     auto dtype = context->GetInputDesc(INPUT_IDX)->GetDataType();
     int32_t typeSize = ge::GetSizeByDataType(dtype);
 
-    OP_CHECK_IF(dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT,
-                OP_LOGE(context, "input dtype only supports fp16, fp32, bf16 currently, please check."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", std::to_string(static_cast<int>(dtype)),
+                                              "input dtype only supports fp16, fp32, bf16 currently, please check."),
+        return ge::GRAPH_FAILED);
 
     OP_CHECK_IF((typeSize <= 0), OP_LOGE(context, "typeSize is invalid %d, please check.", typeSize),
                 return ge::GRAPH_FAILED);
@@ -154,22 +164,48 @@ inline size_t GetAttrSplitDim(const gert::TilingContext* context)
     size_t inputShapeSize = static_cast<int64_t>(inputShape.GetDimNum());
 
     auto* attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return SPLIT_ERROR_STATUS;
+    };
     auto* attrDim = attrs->GetAttrPointer<int64_t>(ATTR_DIM_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrDim);
+    if (attrDim == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object attrDim is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrDim is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return SPLIT_ERROR_STATUS;
+    };
     auto splitDim = static_cast<int64_t>(*attrDim);
     OP_LOGD(context, "splitDim is %ld, inputShapeSize is %zu", splitDim, inputShapeSize);
 
     size_t splitDimU = splitDim < 0 ? splitDim + inputShapeSize : splitDim;
 
     OP_CHECK_IF((splitDimU >= inputShapeSize),
-                OP_LOGE(context, "The value of attr [dim] must be in the range [-%zu, %zu], but got [%zu].",
-                        inputShapeSize, inputShapeSize, splitDimU),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "dim", std::to_string(splitDim),
+                    ("The value of attr [dim] must be in the range [-" + std::to_string(inputShapeSize) + ", " +
+                     std::to_string(inputShapeSize) + "], but got [" + std::to_string(splitDimU) + "].")),
                 return SPLIT_ERROR_STATUS);
 
     OP_CHECK_IF((inputShape.GetDim(splitDimU) % SPLIT_FACTOR != 0),
-                OP_LOGE(context, "The dim of: %zu can not be split with factor: %u on value %ld.", splitDimU,
-                        SPLIT_FACTOR, inputShape.GetDim(splitDimU)),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "x", std::to_string(inputShape.GetDim(splitDimU)),
+                    ("The dim of: " + std::to_string(splitDimU) + " can not be split with factor: " +
+                     std::to_string(SPLIT_FACTOR) + " on value " + std::to_string(inputShape.GetDim(splitDimU)) + ".")),
                 return SPLIT_ERROR_STATUS);
 
     return splitDimU;
@@ -178,7 +214,8 @@ inline size_t GetAttrSplitDim(const gert::TilingContext* context)
 inline ge::graphStatus GetTilingParam(const gert::TilingContext* context, TilingParam& tilingParam)
 {
     size_t splitDim = GetAttrSplitDim(context);
-    OP_CHECK_IF((splitDim == SPLIT_ERROR_STATUS), OP_LOGE(context, "Get Split Dim Failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((splitDim == SPLIT_ERROR_STATUS), OP_LOGE_WITHOUT_REPORT(context, "Get Split Dim Failed."),
+                return ge::GRAPH_FAILED);
 
     auto inputShape = context->GetInputTensor(INPUT_IDX)->GetStorageShape();
     int64_t x{1}, y{1}, n{1};
@@ -192,7 +229,11 @@ inline ge::graphStatus GetTilingParam(const gert::TilingContext* context, Tiling
         }
     }
     int64_t ny = n * y;
-    OP_CHECK_IF((x == 0 || ny == 0), OP_LOGE(context, "Get input tensor is empty."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((x == 0 || ny == 0),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "x", Ops::Base::ToString(inputShape),
+                    "Empty input dimensions are unsupported by this GLU Tiling implementation."),
+                return ge::GRAPH_FAILED);
 
     auto compileInfo = context->GetCompileInfo<GluCompileInfo>();
     tilingParam.x = x;
@@ -212,12 +253,12 @@ inline ge::graphStatus RunCommonTiling(gert::TilingContext* context, int64_t com
     OP_LOGD(context, "RunCommonTiling enter.");
     context->SetScheduleMode(BATCH_MODE);
 
-    OP_CHECK_IF(CheckInputParams(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "InputParams not valid."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckInputParams(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "InputParams not valid."), return ge::GRAPH_FAILED);
 
     TilingParam tilingParam;
-    OP_CHECK_IF(GetTilingParam(context, tilingParam) != ge::GRAPH_SUCCESS, OP_LOGE(context, "Get Tiling Param Failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetTilingParam(context, tilingParam) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "Get Tiling Param Failed."), return ge::GRAPH_FAILED);
 
     auto dtype = context->GetInputDesc(INPUT_IDX)->GetDataType();
     GluTilingData tilingData;
@@ -227,12 +268,22 @@ inline ge::graphStatus RunCommonTiling(gert::TilingContext* context, int64_t com
     tilingData.set_ny(tilingParam.ny);
 
     OP_CHECK_IF(SetTilingDataForGlu(context, tilingData) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GluSetTilingData failed to set tiling data."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GluSetTilingData failed to set tiling data."),
+                return ge::GRAPH_FAILED);
 
     context->SetBlockDim(tilingData.get_realCoreNum());
     context->SetTilingKey(tilingData.get_tilingKey());
     size_t* workspaces = context->GetWorkspaceSizes(1);
-    OP_CHECK_IF(workspaces == nullptr, OP_LOGE(context, "workspaces is null."), return ge::GRAPH_FAILED);
+    if (workspaces == nullptr) {
+        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       "Workspace size output container is unavailable; this is Tiling metadata, not a "
+                                       "device allocation failure.");
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    };
 
     workspaces[0] = workspaceSize;
 

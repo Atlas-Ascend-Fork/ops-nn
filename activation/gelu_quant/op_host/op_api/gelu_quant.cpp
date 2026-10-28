@@ -48,7 +48,7 @@ std::tuple<aclTensor*, aclTensor*> GeluQuant(const aclTensor* self, const aclTen
     auto output = (isDyn) ? executor->AllocTensor(outputShape, DataType::DT_FLOAT, op::Format::FORMAT_ND) :
                             executor->AllocTensor(dummyShape, DataType::DT_FLOAT, op::Format::FORMAT_ND);
     if (yOut == nullptr || output == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc y or output tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc y or output tensor failed.");
         return std::tie(yOut, output);
     }
 
@@ -59,7 +59,7 @@ std::tuple<aclTensor*, aclTensor*> GeluQuant(const aclTensor* self, const aclTen
                                            OP_OUTPUT(yOut, output),
                                            OP_ATTR(approximate, quantMode, dstType, roundMode));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "GeluQuant launch kernel failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "GeluQuant launch kernel failed.");
         return std::tuple<aclTensor*, aclTensor*>(nullptr, nullptr);
     }
     return std::tuple<aclTensor*, aclTensor*>(yOut, output);

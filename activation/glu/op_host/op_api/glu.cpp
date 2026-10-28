@@ -36,7 +36,7 @@ const aclTensor* Glu(const aclTensor* self, int64_t dim, aclOpExecutor* executor
 
     auto out = executor->AllocTensor(outShape, self->GetDataType(), Format::FORMAT_ND);
     if (out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
         return nullptr;
     }
 

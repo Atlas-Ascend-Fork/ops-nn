@@ -14,6 +14,9 @@
  */
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 
@@ -30,11 +33,38 @@ namespace ops {
 static ge::graphStatus InferShapeForSwiGluQuant(gert::InferShapeContext* context)
 {
     auto x_shape = context->GetInputShape(GLU_IN_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu_quant" : (context)->GetNodeName()),
+            "x"),
+        return ge::GRAPH_FAILED);
     auto y_shape = context->GetOutputShape(GLU_OUT_Y);
-    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+    if (y_shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object y_shape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object y_shape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto scale_shape = context->GetOutputShape(GLU_OUT_Y2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scale_shape);
+    if (scale_shape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu_quant" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object scale_shape is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object scale_shape is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     int64_t in_dim = x_shape->GetDimNum();
     int64_t split_dim = (static_cast<int64_t>(in_dim) - 1);
     if (split_dim < 0 || split_dim >= static_cast<int64_t>(x_shape->GetDimNum())) {

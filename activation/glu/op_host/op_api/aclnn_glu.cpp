@@ -31,6 +31,9 @@
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/platform.h"
 #include "op_api/aclnn_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 #ifdef __cplusplus
@@ -107,9 +110,13 @@ static bool CheckParamsDataAndShape(const aclTensor* self, int64_t dim, const ac
     // 入参dim超出了self的shape可选维度范围[-self.dim，self.dim-1]
     int64_t selfDim = static_cast<int64_t>(self->GetViewShape().GetDimNum());
     if (dim < -selfDim || dim >= selfDim) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Input dimension out of range (expected to be in range of [%ld, %ld], but got %ld).", -selfDim,
-                (selfDim - 1), dim);
+        const std::string reason = (("Input dimension out of range (expected to be in range of [" +
+                                     std::to_string(-selfDim) + ", " + std::to_string((selfDim - 1)) + "], but got " +
+                                     std::to_string(dim) + ")."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+            (std::vector<const char*>{"dim", "aclnnGlu", (std::to_string(dim)).c_str(), reason.c_str()}));
         return false;
     }
 
@@ -122,8 +129,12 @@ static bool CheckParamsDataAndShape(const aclTensor* self, int64_t dim, const ac
     // 入参self根据指定的dim所对应的维度不能整除2
     int64_t splitShape = self->GetViewShape().GetDim(positiveDim);
     if (splitShape % SPLIT_NUM != 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Split dimension must be even, but dimension %ld is size %ld.", dim,
-                splitShape);
+        const std::string reason = (("Split dimension must be even, but dimension " + std::to_string(dim) +
+                                     " is size " + std::to_string(splitShape) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0015", (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+            (std::vector<const char*>{"self", "aclnnGlu", (std::to_string(splitShape)).c_str(), reason.c_str()}));
         return false;
     }
 
@@ -132,8 +143,15 @@ static bool CheckParamsDataAndShape(const aclTensor* self, int64_t dim, const ac
     int64_t outShapeExpectForDim = outShapeExpect.GetDim(static_cast<size_t>(positiveDim)) / SPLIT_NUM;
     outShapeExpect.SetDim(static_cast<size_t>(positiveDim), outShapeExpectForDim);
     if (outShapeExpect != out->GetViewShape()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The shape of out must be %s, but get %s.",
-                op::ToString(outShapeExpect).GetString(), op::ToString(out->GetViewShape()).GetString());
+        const std::string reason = (("The shape of out must be " +
+                                     std::string(op::ToString(outShapeExpect).GetString()) + ", but get " +
+                                     std::string(op::ToString(out->GetViewShape()).GetString()) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0009", (std::vector<const char*>{"param_name", "op_name", "incorrect_shape", "reason"}),
+            (std::vector<const char*>{"out", "aclnnGlu",
+                                      (std::string(op::ToString(out->GetViewShape()).GetString())).c_str(),
+                                      reason.c_str()}));
         return false;
     }
 

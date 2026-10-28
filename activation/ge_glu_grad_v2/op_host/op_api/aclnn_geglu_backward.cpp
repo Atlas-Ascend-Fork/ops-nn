@@ -23,6 +23,9 @@
 #include "opdev/tensor_view_utils.h"
 #include "opdev/platform.h"
 #include "op_api/aclnn_util.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 #ifdef __cplusplus
@@ -78,8 +81,12 @@ static inline bool CheckDtypeValid(const aclTensor* gradOutput, const aclTensor*
 static inline bool CheckDimInRange(int64_t dim, int64_t selfDimNum)
 {
     if (dim >= selfDimNum || dim < -selfDimNum) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "expected dim to be in range of [%ld, %ld], but got %ld.", -selfDimNum,
-                selfDimNum - 1, dim);
+        const std::string reason = (("expected dim to be in range of [" + std::to_string(-selfDimNum) + ", " +
+                                     std::to_string(selfDimNum - 1) + "], but got " + std::to_string(dim) + "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+            (std::vector<const char*>{"dim", "aclnnGeGluBackward", (std::to_string(dim)).c_str(), reason.c_str()}));
         return false;
     }
     return true;
@@ -90,27 +97,52 @@ static inline bool CheckGradOutputDims(const aclTensor* gradOutput, const aclTen
 {
     for (size_t i = 0; i < splitDim; ++i) {
         if (gradOutput->GetViewShape().GetDim(i) != self->GetViewShape().GetDim(i)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "except for the last dimension, all other dimensions of gradOutput: %s and self: %s must equal",
-                    op::ToString(gradOutput->GetViewShape()).GetString(),
-                    op::ToString(self->GetViewShape()).GetString());
+            const std::string reason = (("except for the last dimension, all other dimensions of gradOutput: " +
+                                         std::string(op::ToString(gradOutput->GetViewShape()).GetString()) +
+                                         " and self: " + std::string(op::ToString(self->GetViewShape()).GetString()) +
+                                         " must equal"));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+                (std::vector<const char*>{"gradOutput,self", "aclnnGeGluBackward",
+                                          (std::string(op::ToString(gradOutput->GetViewShape()).GetString()) + "," +
+                                           op::ToString(self->GetViewShape()).GetString())
+                                              .c_str(),
+                                          reason.c_str()}));
             return false;
         }
     }
 
     if (gradOutput->GetViewShape().GetDim(splitDim) * SPLIT_FACTOR != self->GetViewShape().GetDim(splitDim)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "the last dimension of gradOutput: %s must be the half of the last dimension of self: %s",
-                op::ToString(gradOutput->GetViewShape()).GetString(), op::ToString(self->GetViewShape()).GetString());
+        const std::string reason = ((
+            "the last dimension of gradOutput: " + std::string(op::ToString(gradOutput->GetViewShape()).GetString()) +
+            " must be the half of the last dimension of self: " +
+            std::string(op::ToString(self->GetViewShape()).GetString())));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+            (std::vector<const char*>{"gradOutput,self", "aclnnGeGluBackward",
+                                      (std::string(op::ToString(gradOutput->GetViewShape()).GetString()) + "," +
+                                       op::ToString(self->GetViewShape()).GetString())
+                                          .c_str(),
+                                      reason.c_str()}));
         return false;
     }
 
     for (size_t i = splitDim + 1; i < selfDimNum; ++i) {
         if (gradOutput->GetViewShape().GetDim(i) != self->GetViewShape().GetDim(i)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "except for the last dimension, all other dimensions of gradOutput: %s and self: %s must equal",
-                    op::ToString(gradOutput->GetViewShape()).GetString(),
-                    op::ToString(self->GetViewShape()).GetString());
+            const std::string reason = (("except for the last dimension, all other dimensions of gradOutput: " +
+                                         std::string(op::ToString(gradOutput->GetViewShape()).GetString()) +
+                                         " and self: " + std::string(op::ToString(self->GetViewShape()).GetString()) +
+                                         " must equal"));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+                (std::vector<const char*>{"gradOutput,self", "aclnnGeGluBackward",
+                                          (std::string(op::ToString(gradOutput->GetViewShape()).GetString()) + "," +
+                                           op::ToString(self->GetViewShape()).GetString())
+                                              .c_str(),
+                                          reason.c_str()}));
             return false;
         }
     }
@@ -138,8 +170,17 @@ static inline bool CheckShape(const aclTensor* gradOutput, const aclTensor* self
 
     auto gradOutputDimNum = gradOutput->GetViewShape().GetDimNum();
     if (gradOutputDimNum != selfDimNum) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "gradOutput: %s and self: %s must have same dimensions",
-                op::ToString(gradOutput->GetViewShape()).GetString(), op::ToString(self->GetViewShape()).GetString());
+        const std::string reason = ((
+            "gradOutput: " + std::string(op::ToString(gradOutput->GetViewShape()).GetString()) + " and self: " +
+            std::string(op::ToString(self->GetViewShape()).GetString()) + " must have same dimensions"));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+            (std::vector<const char*>{"gradOutput,self", "aclnnGeGluBackward",
+                                      (std::string(op::ToString(gradOutput->GetViewShape()).GetString()) + "," +
+                                       op::ToString(self->GetViewShape()).GetString())
+                                          .c_str(),
+                                      reason.c_str()}));
         return false;
     }
 
@@ -150,7 +191,13 @@ static inline bool CheckAttributeValue(int64_t approximate)
 {
     // check approximate value
     if (approximate < APPROXIMATE_NONE_NUM || approximate > APPROXIMATE_TANH_NUM) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "expected approximate to be 0 or 1, but got %ld.", approximate);
+        const std::string reason = (("expected approximate to be 0 or 1, but got " + std::to_string(approximate) +
+                                     "."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0026",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                                  (std::vector<const char*>{"approximate", "aclnnGeGluBackward",
+                                                            (std::to_string(approximate)).c_str(), reason.c_str()}));
         return false;
     }
 

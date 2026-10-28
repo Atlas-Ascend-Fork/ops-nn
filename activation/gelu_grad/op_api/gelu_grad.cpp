@@ -31,16 +31,17 @@ static bool IsAiCoreSupport(const aclTensor* gradOutput, const aclTensor* self, 
 }
 
 // AiCore逻辑
-static void GeluGradAiCore(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* unused,
-                           const aclTensor* gradInput, aclOpExecutor* executor)
+static aclnnStatus GeluGradAiCore(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* unused,
+                                  const aclTensor* gradInput, aclOpExecutor* executor)
 {
     L0_DFX(GeluGradAiCore, gradOutput, self, unused, gradInput);
 
     // GeluGrad的input的第三个参数unused，默认传gradOutput
     auto retAicore = ADD_TO_LAUNCHER_LIST_AICORE(GeluGrad, OP_INPUT(gradOutput, self, unused), OP_OUTPUT(gradInput));
     if (retAicore != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "GeluGrad ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "GeluGrad ADD_TO_LAUNCHER_LIST_AICORE failed.");
     }
+    return retAicore;
 }
 
 const aclTensor* GeluGrad(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* unused,
@@ -51,7 +52,9 @@ const aclTensor* GeluGrad(const aclTensor* gradOutput, const aclTensor* self, co
     if (!IsAiCoreSupport(gradOutput, self, unused, gradInput)) {
         return nullptr;
     }
-    GeluGradAiCore(gradOutput, self, unused, gradInput, executor);
+    if (GeluGradAiCore(gradOutput, self, unused, gradInput, executor) != ACLNN_SUCCESS) {
+        return nullptr;
+    }
     return gradInput;
 }
 } // namespace l0op

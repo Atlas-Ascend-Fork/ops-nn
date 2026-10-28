@@ -32,6 +32,9 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 
@@ -74,8 +77,14 @@ static bool GetQuantMode(const char* quantMode, bool& isDynQuant)
     OP_LOGD("Get GeluQuant QuantMode: quantMode: %s", quantMode);
     bool isValidquantMode = strncmp(quantMode, "dynamic", strlen("dynamic")) == 0 ||
                             strncmp(quantMode, "static", strlen("static")) == 0;
-    OP_CHECK(isValidquantMode, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Got quantMode neither \"dynamic\" nor \"static\"."),
-             return false);
+    if (!(isValidquantMode)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", "Got quantMode neither \"dynamic\" nor \"static\".");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+            (std::vector<const char*>{"quantMode", "aclnnGeluQuant", (std::string(quantMode)).c_str(),
+                                      "Got quantMode neither \"dynamic\" nor \"static\"."}));
+        return false;
+    };
     isDynQuant = IsDynamicQuant(quantMode);
     return true;
 }
@@ -86,15 +95,22 @@ static bool CheckRoundMode(const char* roundMode, int64_t dstType)
     const std::string mode = std::string(roundMode);
     if (dstType == op::DataType::DT_HIFLOAT8) {
         if (mode != "round" && mode != "hybrid") {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "check roundMode failed, roundMode[%s] not in ['round','hybrid'] for hifloat8.", mode.c_str());
+            const std::string reason = (("check roundMode failed, roundMode[" + std::string(mode.c_str()) +
+                                         "] not in ['round','hybrid'] for hifloat8."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                (std::vector<const char*>{"roundMode", "aclnnGeluQuant", std::string(mode).c_str(), reason.c_str()}));
             return false;
         }
     } else {
         if (mode != "rint") {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "check roundMode failed, roundMode[%s] not in ['rint'] for float8_e5m2/float8_e4m3fn/int8.",
-                    mode.c_str());
+            const std::string reason = (("check roundMode failed, roundMode[" + std::string(mode.c_str()) +
+                                         "] not in ['rint'] for float8_e5m2/float8_e4m3fn/int8."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                (std::vector<const char*>{"roundMode", "aclnnGeluQuant", std::string(mode).c_str(), reason.c_str()}));
             return false;
         }
     }
@@ -104,9 +120,14 @@ static bool CheckRoundMode(const char* roundMode, int64_t dstType)
 static inline bool CheckPlatform()
 {
     auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    OP_CHECK(Ops::NN::AclnnUtil::IsRegbase(npuArch),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Support for %u is not implemented.", static_cast<uint32_t>(npuArch)),
-             return false);
+    if (!(Ops::NN::AclnnUtil::IsRegbase(npuArch))) {
+        const std::string reason = (("Support for " + std::to_string(static_cast<uint32_t>(npuArch)) +
+                                     " is not implemented."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ3002", (std::vector<const char*>{"optype", "opskernel", "reason"}),
+                                  (std::vector<const char*>{"GeluQuant", "AiCore", reason.c_str()}));
+        return false;
+    };
     return true;
 }
 
@@ -118,21 +139,40 @@ static bool CheckShape(const aclTensor* self, const aclTensor* inputScaleOptiona
         auto outScaleShape = outScaleOptional->GetViewShape();
         size_t selfDimNums = selfShape.GetDimNum();
         size_t outScaleDimNums = outScaleShape.GetDimNum();
-        OP_CHECK(selfDimNums >= DIM_NUM_TWO && selfDimNums <= DIM_NUM_EIGHT,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "input self Dims is %zu, should be 2-8D.", selfDimNums),
-                 return false);
-        OP_CHECK(
-            outScaleDimNums >= 1 && outScaleDimNums <= DIM_NUM_SEVEN,
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "output outScaleOptional Dims is %zu, should be 1-7D.", outScaleDimNums),
-            return false);
+        if (!(selfDimNums >= DIM_NUM_TWO && selfDimNums <= DIM_NUM_EIGHT)) {
+            const std::string reason = (("input self Dims is " + std::to_string(selfDimNums) + ", should be 2-8D."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0012", (std::vector<const char*>{"param_name", "op_name", "incorrect_dim", "reason"}),
+                (std::vector<const char*>{"self", "aclnnGeluQuant", (std::to_string(selfDimNums)).c_str(),
+                                          reason.c_str()}));
+            return false;
+        };
+        if (!(outScaleDimNums >= 1 && outScaleDimNums <= DIM_NUM_SEVEN)) {
+            const std::string reason = (("output outScaleOptional Dims is " + std::to_string(outScaleDimNums) +
+                                         ", should be 1-7D."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0012", (std::vector<const char*>{"param_name", "op_name", "incorrect_dim", "reason"}),
+                (std::vector<const char*>{"outScaleOptional", "aclnnGeluQuant",
+                                          (std::to_string(outScaleDimNums)).c_str(), reason.c_str()}));
+            return false;
+        };
         for (size_t i = 0; i < selfDimNums - static_cast<size_t>(1); i++) {
-            OP_CHECK(
-                (selfShape.GetDim(i) == outScaleShape.GetDim(i)),
-                OP_LOGE(
-                    ACLNN_ERR_PARAM_INVALID,
+            if (!((selfShape.GetDim(i) == outScaleShape.GetDim(i)))) {
+                const std::string reason = std::string(
                     "The shape of outScaleOptional matches the shape of self across all dimensions except for the last "
-                    "dimension."),
-                return false);
+                    "dimension.");
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+                    (std::vector<const char*>{"self,outScaleOptional", "aclnnGeluQuant",
+                                              (std::string(op::ToString(selfShape).GetString()) + "," +
+                                               op::ToString(outScaleShape).GetString())
+                                                  .c_str(),
+                                              reason.c_str()}));
+                return false;
+            };
         }
     } else {
         OP_CHECK_MAX_DIM(self, MAX_SUPPORT_DIMS_NUMS, return false);
@@ -140,23 +180,42 @@ static bool CheckShape(const aclTensor* self, const aclTensor* inputScaleOptiona
     if (inputScaleOptional != nullptr) {
         auto scaleShape = inputScaleOptional->GetViewShape();
         if (scaleShape.GetDimNum() != 1) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "InputScaleOptional Dims is %zu, only supported 1D.",
-                    scaleShape.GetDimNum());
+            const std::string reason = (("InputScaleOptional Dims is " + std::to_string(scaleShape.GetDimNum()) +
+                                         ", only supported 1D."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0012", (std::vector<const char*>{"param_name", "op_name", "incorrect_dim", "reason"}),
+                (std::vector<const char*>{"inputScaleOptional", "aclnnGeluQuant",
+                                          (std::to_string(scaleShape.GetDimNum())).c_str(), reason.c_str()}));
             return false;
         }
     }
     if (inputOffsetOptional != nullptr) {
         auto offsetShape = inputOffsetOptional->GetViewShape();
         if (offsetShape.GetDimNum() != 1) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "inputOffsetOptional Dims is %zu, only supported 1D.",
-                    offsetShape.GetDimNum());
+            const std::string reason = (("inputOffsetOptional Dims is " + std::to_string(offsetShape.GetDimNum()) +
+                                         ", only supported 1D."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0012", (std::vector<const char*>{"param_name", "op_name", "incorrect_dim", "reason"}),
+                (std::vector<const char*>{"inputOffsetOptional", "aclnnGeluQuant",
+                                          (std::to_string(offsetShape.GetDimNum())).c_str(), reason.c_str()}));
             return false;
         }
         if (inputScaleOptional != nullptr) {
             auto scaleShape = inputScaleOptional->GetViewShape();
             if (scaleShape.GetDim(0) != offsetShape.GetDim(0)) {
-                OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                        "The shape of inputOffsetOptional does not matches the shape of inputScaleOptional.");
+                OP_LOGE_WITHOUT_REPORT(
+                    ACLNN_ERR_PARAM_INVALID, "%s",
+                    "The shape of inputOffsetOptional does not matches the shape of inputScaleOptional.");
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+                    (std::vector<const char*>{
+                        "inputScaleOptional,inputOffsetOptional", "aclnnGeluQuant",
+                        (std::string(op::ToString(scaleShape).GetString()) + "," +
+                         op::ToString(offsetShape).GetString())
+                            .c_str(),
+                        "The shape of inputOffsetOptional does not matches the shape of inputScaleOptional."}));
                 return false;
             }
         }
@@ -187,9 +246,18 @@ static bool CheckDtypeValid(const aclTensor* self, const aclTensor* inputScaleOp
     if (inputScaleOptional != nullptr) {
         OP_CHECK_DTYPE_NOT_SUPPORT(inputScaleOptional, SELF_DTYPE_SUPPORT_LIST, return false);
         if (!CheckDtypeCompatible(self, inputScaleOptional)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dtype of input self:%s is not compatible with inputScaleOptional:%s.",
-                    op::ToString(self->GetDataType()).GetString(),
-                    op::ToString(inputScaleOptional->GetDataType()).GetString());
+            const std::string reason = ((
+                "dtype of input self:" + std::string(op::ToString(self->GetDataType()).GetString()) +
+                " is not compatible with inputScaleOptional:" +
+                std::string(op::ToString(inputScaleOptional->GetDataType()).GetString()) + "."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0021", (std::vector<const char*>{"param_names", "op_name", "incorrect_dtypes", "reason"}),
+                (std::vector<const char*>{"self,inputScaleOptional", "aclnnGeluQuant",
+                                          (std::string(op::ToString(self->GetDataType()).GetString()) + "," +
+                                           op::ToString(inputScaleOptional->GetDataType()).GetString())
+                                              .c_str(),
+                                          reason.c_str()}));
             return false;
         }
     }
@@ -204,16 +272,28 @@ static bool CheckDtypeValid(const aclTensor* self, const aclTensor* inputScaleOp
     }
 
     const std::string approximateGelu = std::string(approximate);
-    OP_CHECK(approximateGelu == "none" || approximateGelu == "tanh",
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "expected approximate equals 'none' or 'tanh', get: %s",
-                     approximateGelu.c_str()),
-             return false);
+    if (!(approximateGelu == "none" || approximateGelu == "tanh")) {
+        const std::string reason = (("expected approximate equals 'none' or 'tanh', get: " +
+                                     std::string(approximateGelu.c_str())));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0026",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+                                  (std::vector<const char*>{"approximate", "aclnnGeluQuant",
+                                                            std::string(approximateGelu).c_str(), reason.c_str()}));
+        return false;
+    };
 
-    OP_CHECK(static_cast<int64_t>(y->GetDataType()) == dstType,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dstType:%ld(%s) must be the same as y dtype[%s].", dstType,
-                     op::ToString(static_cast<op::DataType>(dstType)).GetString(),
-                     op::ToString(y->GetDataType()).GetString()),
-             return false);
+    if (!(static_cast<int64_t>(y->GetDataType()) == dstType)) {
+        const std::string reason = (("dstType:" + std::to_string(dstType) + "(" +
+                                     std::string(op::ToString(static_cast<op::DataType>(dstType)).GetString()) +
+                                     ") must be the same as y dtype[" +
+                                     std::string(op::ToString(y->GetDataType()).GetString()) + "]."));
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ0026", (std::vector<const char*>{"param_name", "op_name", "incorrect_value", "reason"}),
+            (std::vector<const char*>{"dstType", "aclnnGeluQuant", (std::to_string(dstType)).c_str(), reason.c_str()}));
+        return false;
+    };
 
     return true;
 }
@@ -230,15 +310,39 @@ static bool CheckOptCombValid(const aclTensor* inputScaleOptional, const aclTens
     if (isDynQuant) {
         bool validDynQuantComb = (s1Exist && s2Exist && outscaleExist) || (s1Exist && (!s2Exist) && outscaleExist) ||
                                  ((!s1Exist) && (!s2Exist) && outscaleExist);
-        OP_CHECK((validDynQuantComb),
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Invalid Optional input, output combination in dynamic quant mode"),
-                 return false);
+        if (!((validDynQuantComb))) {
+            const std::string reason =
+                (std::string("Optional presence: inputScaleOptional=") + std::to_string(s1Exist) +
+                 ", inputOffsetOptional=" + std::to_string(s2Exist) +
+                 ", outScaleOptional=" + std::to_string(outscaleExist) +
+                 (isDynQuant ?
+                      "; dynamic mode requires outScaleOptional and inputOffsetOptional requires inputScaleOptional." :
+                      "; static mode requires inputScaleOptional and forbids outScaleOptional."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0037", (std::vector<const char*>{"param_name", "op_name", "reason"}),
+                (std::vector<const char*>{"inputScaleOptional,inputOffsetOptional,outScaleOptional", "aclnnGeluQuant",
+                                          reason.c_str()}));
+            return false;
+        };
     } else {
         bool validStcQuantComb = (s1Exist && s2Exist && (!outscaleExist)) ||
                                  (s1Exist && (!s2Exist) && (!outscaleExist));
-        OP_CHECK((validStcQuantComb),
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Invalid Optional input, output combination in static quant mode"),
-                 return false);
+        if (!((validStcQuantComb))) {
+            const std::string reason =
+                (std::string("Optional presence: inputScaleOptional=") + std::to_string(s1Exist) +
+                 ", inputOffsetOptional=" + std::to_string(s2Exist) +
+                 ", outScaleOptional=" + std::to_string(outscaleExist) +
+                 (isDynQuant ?
+                      "; dynamic mode requires outScaleOptional and inputOffsetOptional requires inputScaleOptional." :
+                      "; static mode requires inputScaleOptional and forbids outScaleOptional."));
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0037", (std::vector<const char*>{"param_name", "op_name", "reason"}),
+                (std::vector<const char*>{"inputScaleOptional,inputOffsetOptional,outScaleOptional", "aclnnGeluQuant",
+                                          reason.c_str()}));
+            return false;
+        };
     }
     return true;
 }
@@ -307,7 +411,19 @@ aclnnStatus aclnnGeluQuantGetWorkspaceSize(const aclTensor* self, const aclTenso
                           (inputOffsetOptional != nullptr && inputOffsetOptional->IsEmpty()) || y->IsEmpty() ||
                           (outScaleOptional != nullptr && outScaleOptional->IsEmpty());
     if (hasEmptyTensor) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Geluquant does not support empty tensor.");
+        const aclTensor* tensors[] = {self, inputScaleOptional, inputOffsetOptional, y, outScaleOptional};
+        const char* names[] = {"self", "inputScaleOptional", "inputOffsetOptional", "y", "outScaleOptional"};
+        for (size_t i = 0; i < sizeof(tensors) / sizeof(tensors[0]); ++i) {
+            if (tensors[i] != nullptr && tensors[i]->IsEmpty()) {
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", "Geluquant does not support empty tensor.");
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ0015", (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+                    (std::vector<const char*>{std::string(names[i]).c_str(), "aclnnGeluQuant",
+                                              (std::to_string(tensors[i]->GetViewShape().GetShapeSize())).c_str(),
+                                              "Geluquant does not support empty tensor."}));
+                break;
+            }
+        }
         return ACLNN_ERR_PARAM_INVALID;
     }
 

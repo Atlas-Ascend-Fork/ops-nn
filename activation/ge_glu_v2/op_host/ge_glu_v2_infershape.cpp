@@ -15,6 +15,9 @@
 #include "log/log.h"
 #include "util/shape_util.h"
 #include "register/op_impl_registry.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace ge;
 
@@ -30,23 +33,75 @@ namespace ops {
 static ge::graphStatus InferShapeForGeGluV2(gert::InferShapeContext* context)
 {
     auto x_shape = context->GetInputShape(GLU_IN_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    OP_CHECK_IF(
+        x_shape == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_v2" : (context)->GetNodeName()),
+            "x"),
+        return ge::GRAPH_FAILED);
     auto out_shape_y = context->GetOutputShape(GLU_ATTR_DIM);
-    OP_CHECK_NULL_WITH_CONTEXT(context, out_shape_y);
+    if (out_shape_y == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object out_shape_y is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object out_shape_y is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto out_shape_y_glu = context->GetOutputShape(GLU_OUT_Y_GLU);
-    OP_CHECK_NULL_WITH_CONTEXT(context, out_shape_y_glu);
+    if (out_shape_y_glu == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object out_shape_y_glu is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object out_shape_y_glu is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object attrs is unavailable; check the operator registration and "
+                               "context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto split_dim_ptr = attrs->GetAttrPointer<int64_t>(GLU_ATTR_DIM);
-    OP_CHECK_NULL_WITH_CONTEXT(context, split_dim_ptr);
+    if (split_dim_ptr == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_v2" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "InferShape framework object split_dim_ptr is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object split_dim_ptr is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     auto split_dim = *split_dim_ptr;
     *out_shape_y = *x_shape;
     *out_shape_y_glu = *x_shape;
     size_t x_dim_num = x_shape->GetDimNum();
 
-    OP_CHECK_IF(x_dim_num == 0, OP_LOGE("GEGLUV2", "input x dim num is %zu, not support input x is scalar", x_dim_num),
+    OP_CHECK_IF(x_dim_num == 0,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    "GEGLUV2", "x", std::to_string(x_dim_num),
+                    ("input x dim num is " + std::to_string(x_dim_num) + ", not support input x is scalar")),
                 return GRAPH_FAILED);
 
     OP_CHECK_IF(Ops::Base::IsUnknownRank(*x_shape), OP_LOGD("GEGLUV2", "input x is unknown rank, no need check."),
@@ -57,8 +112,10 @@ static ge::graphStatus InferShapeForGeGluV2(gert::InferShapeContext* context)
     }
 
     OP_CHECK_IF((split_dim < 0 || split_dim >= static_cast<int64_t>(x_dim_num)),
-                OP_LOGE("GEGLUV2", "The value of attr [dim] must be in the range [-%zu, %zu], but got [%ld].",
-                        x_dim_num, x_dim_num - 1, split_dim),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    "GEGLUV2", "dim", std::to_string(*split_dim_ptr),
+                    ("The value of attr [dim] must be in the range [-" + std::to_string(x_dim_num) + ", " +
+                     std::to_string(x_dim_num - 1) + "], but got [" + std::to_string(split_dim) + "].")),
                 return GRAPH_FAILED);
 
     // 动态shape场景split_dim_value传入-1不做处理

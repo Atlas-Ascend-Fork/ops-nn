@@ -18,6 +18,9 @@
 #include <chrono>
 #include "../../swi_glu_grad/op_host/swi_glu_grad_tiling_regbase.h"
 #include "register/op_impl_registry.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 
 namespace optiling {
 using namespace Ops::NN::OpTiling;
@@ -252,7 +255,13 @@ inline bool GluSingleTilingCalculator::CalcUbMaxTileLen(uint64_t ubSize, int32_t
     // get buffernum and maxTileLen
     uint64_t maxTileLenPerUB = 1;
     if (!GetBufferNumAndDataLenPerUB<Glu_Flag, bufferNum>(ubSize, dtype, maxTileLenPerUB)) {
-        OP_LOGE(opName_, "CalcTiling Get bufferNum %d and maxTileLenPerUB %lu failed", bufferNum, maxTileLenPerUB);
+        const std::string msgOpName = std::string(opName_);
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       ("CalcTiling Get bufferNum " + std::to_string(bufferNum) +
+                                        " and maxTileLenPerUB " + std::to_string(maxTileLenPerUB) + " failed"));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
         return false;
     }
     optTiling.maxTileLen = AlignDown<uint64_t>(maxTileLenPerUB, ubMinBlockLen);
@@ -268,7 +277,13 @@ inline void GluSingleTilingCalculator::SaveOptBaseShape(uint32_t baseRowLen_, ui
                             DivCeil<uint64_t>(tilingData->get_colLen(), (baseColLen_));
     uint64_t baseSize = static_cast<uint64_t>(baseRowLen_) * baseColLen_;
     if (baseRowLen_ == static_cast<uint32_t>(0) || baseColLen_ == static_cast<uint32_t>(0)) {
-        OP_LOGE(opName_, "SaveOptBaseShape divide by 0 baseRowLen_:%u baseColLen_:%u", baseRowLen_, baseColLen_);
+        const std::string msgOpName = std::string(opName_);
+        const std::string msgReason = (std::string(__func__) + ": " +
+                                       ("SaveOptBaseShape divide by 0 baseRowLen_:" + std::to_string(baseRowLen_) +
+                                        " baseColLen_:" + std::to_string(baseColLen_)));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
         return;
     }
     uint64_t baseTileNum = (tilingData->get_rowLen() / baseRowLen_) * (tilingData->get_colLen() / baseColLen_);
@@ -417,7 +432,9 @@ bool GluSingleTilingCalculator::CalcTiling(uint32_t totalCore, uint64_t ubSize, 
 {
     totalAvailableCore = totalCore;
     if (!GetLengthByType(dtype, inputDTypeLen)) {
-        OP_LOGE(opName_, "CalcTiling Unsupported input data type %d", dtype);
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(opName_, (Glu_Flag == GLU_FLAG::SWIGLU_GRAD_SINGLE ? "y_grad" : "x"),
+                                              std::to_string(dtype),
+                                              ("CalcTiling Unsupported input data type " + std::to_string(dtype)));
         return false;
     }
     ubMinBlockLen = UB_MIN_BLOCK_SIZE / inputDTypeLen; // min block size
@@ -430,7 +447,10 @@ bool GluSingleTilingCalculator::CalcTiling(uint32_t totalCore, uint64_t ubSize, 
     // 310p not support Non-64B
     uint32_t blockSizeOf64B = BLOCK_SIZE_OF_64B / inputDTypeLen;
     if (((npuArch == NpuArch::DAV_2002)) && (tilingData->get_colLen() % blockSizeOf64B != 0)) {
-        OP_LOGE(opName_, "input shape does not support Non-64B alignment");
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            opName_, "x", std::to_string(tilingData->get_colLen()),
+            std::string("On ASCEND310P the last split dimension must be 64-byte aligned: required element multiple=") +
+                std::to_string(blockSizeOf64B));
         return false;
     }
     // 先计算开启double buffer的tiling参数
@@ -481,7 +501,18 @@ inline ge::graphStatus processEmptyTensor(gert::TilingContext* context, const ui
 {
     SwiGluTilingData tilingData;
     auto outputShape = context->GetOutputShape(INPUT_OUTPUT_IDX);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, outputShape);
+    if (outputShape == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object outputShape is unavailable; check the operator registration "
+                               "and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object outputShape is unavailable; check "
+                                                         "the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     auto yTotalLength = outputShape->GetStorageShape().GetShapeSize();
     OP_TILING_CHECK(yTotalLength != 0,
                     OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
@@ -513,12 +544,22 @@ ge::graphStatus Tiling4SwiGlu(gert::TilingContext* context)
     platformInfo.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     OP_TILING_CHECK(
         (static_cast<int>(totalCore) < 0 || ubSize <= UB_RESERVED_BUFF),
-        OP_LOGE(context->GetNodeName(), "Compile Info is invalid, coreNum:%u, ubSize:%lu", totalCore, ubSize),
-        return ge::GRAPH_PARAM_INVALID);
+        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
+                                           "swi_glu" :
+                                           context->GetNodeName());
+        const std::string msgReason = std::string(
+            ("Compile Info is invalid, coreNum:" + std::to_string(totalCore) + ", ubSize:" + std::to_string(ubSize)));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        , return ge::GRAPH_PARAM_INVALID);
     ubSize -= UB_RESERVED_BUFF;
 
     auto inputShape = context->GetInputShape(INPUT_OUTPUT_IDX);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, inputShape);
+    OP_CHECK_IF(inputShape == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT((context->GetNodeName() == nullptr ? "swi_glu" : context->GetNodeName()),
+                                           (Glu_Flag == GLU_FLAG::SWIGLU_GRAD_SINGLE ? "y_grad" : "x")),
+                return ge::GRAPH_FAILED);
     auto xTotalLength = inputShape->GetStorageShape().GetShapeSize();
     if (xTotalLength == 0 && IsRegbaseSocVersion(context) && Glu_Flag == GLU_FLAG::SWIGLU_SINGLE) {
         return processEmptyTensor(context, totalCore);
@@ -529,10 +570,24 @@ ge::graphStatus Tiling4SwiGlu(gert::TilingContext* context)
     ge::DataType dataType = inputDesc->GetDataType();
 
     auto inTensor = context->GetInputTensor(GetSelfIdx<Glu_Flag>());
-    OPS_CHECK_NULL_WITH_CONTEXT(context, inTensor);
+    OP_CHECK_IF(
+        inTensor == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT((context->GetNodeName() == nullptr ? "swi_glu" : context->GetNodeName()), "x"),
+        return ge::GRAPH_FAILED);
     auto inShape = inTensor->GetOriginShape();
     const gert::RuntimeAttrs* attrs = context->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    if (attrs == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(
+            msgOpName.c_str(), "%s",
+            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
+                                                         "operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
 
     OP_LOGE_IF(attrs == nullptr, false, context->GetNodeName(), "Get op attrs failed.");
 
@@ -554,7 +609,18 @@ ge::graphStatus Tiling4SwiGlu(gert::TilingContext* context)
     context->SetTilingKey(dataType);
 
     size_t* userWorkspaceSize = context->GetWorkspaceSizes(1);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, userWorkspaceSize);
+    if (userWorkspaceSize == nullptr) {
+        const std::string msgOpName = std::string(
+            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "swi_glu" : (context)->GetNodeName()));
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Tiling framework object userWorkspaceSize is unavailable; check the operator "
+                               "registration and context construction.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object userWorkspaceSize is unavailable; "
+                                                         "check the operator registration and context construction."}));
+        return ge::GRAPH_FAILED;
+    };
     const bool noWorkspace = Glu_Flag == GLU_FLAG::SWIGLU_SINGLE;
     userWorkspaceSize[0] = noWorkspace ? DEFAULT_WORKSPACE_SIZE : WORKSPACE_BUFFER;
     return ge::GRAPH_SUCCESS;

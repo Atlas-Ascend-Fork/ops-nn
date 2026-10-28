@@ -4,7 +4,7 @@
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. 
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
@@ -24,20 +24,18 @@ namespace l0op {
 
 OP_TYPE_REGISTER(GLUGrad);
 
-const aclTensor* GluGrad(
-    const aclTensor* gradOut, const aclTensor* self, int64_t dim, aclOpExecutor* executor)
+const aclTensor* GluGrad(const aclTensor* gradOut, const aclTensor* self, int64_t dim, aclOpExecutor* executor)
 {
     L0_DFX(GluGrad, gradOut, self, dim);
 
     auto out = executor->AllocTensor(self->GetViewShape(), self->GetDataType(), Format::FORMAT_ND);
     if (out == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "alloc out tensor failed.");
         return nullptr;
     }
 
-    ADD_TO_LAUNCHER_LIST_AICORE(
-        GLUGrad, OP_INPUT(gradOut), OP_INPUT(self), OP_OUTPUT(out), OP_ATTR(dim));
+    ADD_TO_LAUNCHER_LIST_AICORE(GLUGrad, OP_INPUT(gradOut), OP_INPUT(self), OP_OUTPUT(out), OP_ATTR(dim));
     return out;
 }
 
-}
+} // namespace l0op
