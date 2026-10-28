@@ -99,7 +99,7 @@
     <tr>
       <td>argmax</td>
       <td>输出</td>
-      <td>输出的损失tensor</td>
+      <td>每个池化窗口内最大值的位置索引，shape与y相同</td>
       <td>INT32、INT64</td>
       <td>ND</td>
     </tr>
