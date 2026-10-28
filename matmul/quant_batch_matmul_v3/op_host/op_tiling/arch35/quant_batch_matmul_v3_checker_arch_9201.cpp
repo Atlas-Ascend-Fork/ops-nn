@@ -110,24 +110,6 @@ bool QuantBatchMatmulV3CheckerArch9201::CheckExtraOutputDtype() const
     return true;
 }
 
-bool QuantBatchMatmulV3CheckerArch9201::CheckExtraBiasConstraint(const gert::Shape& scaleShape,
-                                                                 const gert::StorageShape* pertokenShape) const
-{
-    OP_TILING_CHECK(
-        (inputParams_.aDtype == ge::DT_FLOAT8_E4M3FN || inputParams_.aDtype == ge::DT_FLOAT8_E5M2 ||
-         inputParams_.aDtype == ge::DT_HIFLOAT8) &&
-            inputParams_.scaleDtype == ge::DT_FLOAT &&
-            static_cast<uint64_t>(scaleShape.GetDim(0)) == inputParams_.nSize && inputParams_.nSize != 1UL &&
-            pertokenShape != nullptr && inputParams_.perTokenScaleDtype == ge::DT_FLOAT &&
-            pertokenShape->GetStorageShape().GetDim(0) == 1L && inputParams_.mSize != 1UL,
-        CUBE_INNER_ERR_REPORT(
-            inputParams_.opName,
-            "When input dtype is FLOAT8_E4M3FN/FLOAT8_E5M2/HIFLOAT8 with per-channel FLOAT scale (dim 0 equals n) "
-            "and per-tensor FLOAT pertokenScale (dim 0 equals 1), bias is not supported."),
-        return false);
-    return true;
-}
-
 bool QuantBatchMatmulV3CheckerArch9201::CheckExtraShapeValid(const gert::Shape& scaleShape,
                                                              const gert::StorageShape* pertokenShape,
                                                              const std::vector<int64_t>& dimValueOfMKN) const

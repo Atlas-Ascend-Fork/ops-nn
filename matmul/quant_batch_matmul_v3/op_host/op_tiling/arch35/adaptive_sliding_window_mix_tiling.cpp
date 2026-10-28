@@ -100,7 +100,7 @@ ge::graphStatus AdaptiveSlidingWindowMixTiling::GetWorkspaceSize()
 
 bool AdaptiveSlidingWindowMixTiling::CalcBasicBlock()
 {
-    // DAV_9201/9202(960DT/960PR)使用负载均衡基块搜索（参照 ops-nn-dev CalcBasicBlock91096），其余架构沿用DEFAULT。
+    // DAV_9201/9202(960DT/960PR)使用负载均衡基块搜索，其余架构沿用DEFAULT。
     BaseBlockMode mode = (compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202) ?
                              BaseBlockMode::LOAD_BALANCE :
                              BaseBlockMode::DEFAULT;

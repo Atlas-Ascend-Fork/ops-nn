@@ -82,7 +82,6 @@ protected:
     virtual bool CheckExtraABDtypePairs() const;
     virtual bool CheckHif4ScaleDtypeWithPertoken() const;
     virtual bool CheckExtraOutputDtype() const;
-    virtual bool CheckExtraBiasConstraint(const gert::Shape& scaleShape, const gert::StorageShape* pertokenShape) const;
     virtual bool CheckExtraShapeValid(const gert::Shape& scaleShape, const gert::StorageShape* pertokenShape,
                                       const std::vector<int64_t>& dimValueOfMKN) const;
 };

@@ -10,8 +10,7 @@
 
 /*!
  * \file base_block_load_balance_calculator.cpp
- * \brief DAV_9201/9202(960DT/960PR) 负载均衡基块搜索，自 base_block_calculator.cpp 拆分，
- *        实现逻辑对齐 ops-nn-dev BaseBlockCalculator（SocVersion 版改为 NpuArch 版）。
+ * \brief
  */
 #include "base_block_calculator.h"
 
@@ -25,7 +24,7 @@
 #include "util/math_util.h"
 
 namespace {
-// ---- DAV_9201/9202(960DT/960PR) load-balance base-block search constants (ported from ops-nn-dev) ----
+// ---- DAV_9201/9202(960DT/960PR) load-balance base-block search constants ----
 // Pertoken results are produced by one AIV on 9201/9202: cap the base tile area for a single vector pass.
 constexpr uint32_t LB_BASIC_BLOCK_LIMIT_ONE_VECTOR = 32768; // 128 * 256
 constexpr uint64_t LB_MAX_BASEM_ONE_VECTOR = 128UL;
@@ -47,7 +46,7 @@ constexpr uint64_t LB_KB_SIZE = 1024UL;
 // 9202(960PR) doubles the mmad N-direction fragmentation for hif4/mxfp4 inputs
 constexpr uint64_t LB_COMPUTE_POWER_DOUBLE = 2UL;
 
-// 平台规格字符串转数值，非法/负值/未完全解析时回退默认值（与 ops-nn-dev StrToIntWithDefault 语义一致）。
+// 平台规格字符串转数值，非法/负值/未完全解析时回退默认值
 int64_t LbStrToIntWithDefault(const std::string& str, int64_t defaultValue)
 {
     if (str.empty()) {
@@ -95,7 +94,7 @@ bool BaseBlockCalculator::IsDoubleEqual(double a, double b) const
 
 bool BaseBlockCalculator::IsBaseK64Aligned(ge::DataType dtype) const
 {
-    if (inputParams_.scaleDtype == ge::DT_FLOAT8_E8M0 || dtype == ge::DT_INT4 || dtype == ge::DT_HIFLOAT4) {
+    if (inputParams_.scaleDtype == ge::DT_FLOAT8_E8M0 || dtype == ge::DT_INT4 || dtype == Ops::NN::DT_HIFLOAT4) {
         return true;
     }
     return false;
@@ -106,7 +105,7 @@ BaseBlockRes BaseBlockCalculator::ComputeBaseBlockPlain()
     BaseBlockRes curBaseBlock;
     // baseM/baseN/baseK对齐原则与3510一致：L1内轴32B/外轴16对齐，L0上baseM/baseN 16对齐、baseK 32B对齐。
     // baseM/baseN 能取的最大值：一个固定为256，另一个由l0c size确定（l0c为512KB时最大512）。
-    // 与 dev 一致：mSize == nSize 时 baseM 取 256、baseN 取 baseMax。
+    // mSize == nSize 时 baseM 取 256、baseN 取 baseMax。
     uint64_t baseMax = ops::FloorDiv(compileInfo_.l0cSize,
                                      qmmv3_tiling_const::BASIC_BLOCK_SIZE_256 * qmmv3_tiling_const::DATA_SIZE_L0C);
 
@@ -169,7 +168,7 @@ bool BaseBlockCalculator::IsBalanceAFullLoad(uint64_t baseM, uint64_t baseN) con
         return false;
     }
     uint64_t singleCoreASize = GetSizeWithDataType(baseM * inputParams_.kSize, inputParams_.aDtype);
-    // 与 dev CalShortWinLen 一致：DAV_9201/9202 取不超过sqrt(aicNum)的最大核数因子。
+    // DAV_9201/9202 取不超过sqrt(aicNum)的最大核数因子。
     uint64_t winShortEdge = GetAswWindowLen(compileInfo_.npuArch, static_cast<uint64_t>(compileInfo_.aicNum));
     uint64_t mBlockCnt = ops::CeilDiv(inputParams_.mSize, baseM);
     uint64_t nBlockCnt = ops::CeilDiv(inputParams_.nSize, baseN);
@@ -287,13 +286,11 @@ bool BaseBlockCalculator::GetSocSpecAdjustBalanceInfo(SocSpecifyParams& outInfo)
     outInfo.l2Bw = outInfo.freq * static_cast<double>(coreCnt) * static_cast<double>(l2Rate) / LB_KB_SIZE;
 
     // ops-nn 无 isHif4PerGroup 标志，hif4 逐组量化以 scaleDtype == DT_HIFLOAT4_SCALE 等价识别。
-#if defined(METADEF_VERSION_NUM) && METADEF_VERSION_NUM >= 90300000
     if (compileInfo_.npuArch == NpuArch::DAV_9202 &&
-        (inputParams_.scaleDtype == ge::DT_HIFLOAT4_SCALE ||
+        (inputParams_.scaleDtype == Ops::NN::DT_HIFLOAT4_SCALE ||
          (inputParams_.isMxPerGroup && inputParams_.aDtype == ge::DT_FLOAT4_E2M1))) {
         outInfo.mmadFracN *= LB_COMPUTE_POWER_DOUBLE;
     }
-#endif
     outInfo.CalSingleCoreComputePower();
     return true;
 }
@@ -326,11 +323,8 @@ bool BaseBlockCalculator::ComputeBaseBlockLoadBalance()
     }
     uint64_t baseMAlign = GetBaseMAlignSize();
     uint64_t baseNAlign = GetBaseNAlignSize(qmmv3_tiling_const::L1_ALIGN_SIZE);
-    bool isMxOrHif4PerGroup = inputParams_.isMxPerGroup;
     // hif4 逐组量化（scaleDtype == DT_HIFLOAT4_SCALE）与 mx 逐组量化同样参与 M/N 拆分。
-#if defined(METADEF_VERSION_NUM) && METADEF_VERSION_NUM >= 90300000
-    isMxOrHif4PerGroup = inputParams_.isMxPerGroup || inputParams_.scaleDtype == ge::DT_HIFLOAT4_SCALE;
-#endif
+    bool isMxOrHif4PerGroup = inputParams_.isMxPerGroup || inputParams_.scaleDtype == Ops::NN::DT_HIFLOAT4_SCALE;
     bool mIsSplite = inputParams_.mSize >= inputParams_.nSize && isMxOrHif4PerGroup;
     bool nIsSplite = inputParams_.mSize < inputParams_.nSize && isMxOrHif4PerGroup;
 

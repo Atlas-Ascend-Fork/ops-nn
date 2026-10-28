@@ -35,8 +35,6 @@ protected:
     bool CheckExtraABDtypePairs() const override;
     bool CheckHif4ScaleDtypeWithPertoken() const override;
     bool CheckExtraOutputDtype() const override;
-    bool CheckExtraBiasConstraint(const gert::Shape& scaleShape,
-                                  const gert::StorageShape* pertokenShape) const override;
     bool CheckExtraShapeValid(const gert::Shape& scaleShape, const gert::StorageShape* pertokenShape,
                               const std::vector<int64_t>& dimValueOfMKN) const override;
 

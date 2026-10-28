@@ -103,7 +103,7 @@ uint64_t AdaptiveSlidingWindowPerblockBasicAPITiling::GetKernelType() const
 bool AdaptiveSlidingWindowPerblockBasicAPITiling::CalcBasicBlock()
 {
     if (compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202) {
-        // DAV_9201/9202(960DT/960PR)固定128x128x128基块，不做核利用率调整（参照 ops-nn-dev CalcBasicBlock91096）。
+        // DAV_9201/9202(960DT/960PR)固定128x128x128基块，不做核利用率调整。
         adaptiveWin_.baseM = qmmv3_tiling_const::PER_BLOCK_SIZE;
         adaptiveWin_.baseN = qmmv3_tiling_const::PER_BLOCK_SIZE;
         adaptiveWin_.baseK = qmmv3_tiling_const::PER_BLOCK_SIZE;

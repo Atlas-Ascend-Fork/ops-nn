@@ -1118,9 +1118,6 @@ bool QuantBatchMatmulV3Checker::CheckDimValue(const gert::Shape& scaleShape, con
     if (biasShape != nullptr && !BiasShapeCheck(biasShape->GetStorageShape())) {
         return false;
     }
-    if (biasShape != nullptr && !CheckExtraBiasConstraint(scaleShape, pertokenShape)) {
-        return false;
-    }
     if (offsetShape != nullptr) {
         OP_TILING_CHECK(
             inputParams_.cDtype == ge::DT_INT8 &&
@@ -1221,11 +1218,6 @@ bool QuantBatchMatmulV3Checker::CheckExtraABDtypePairs() const { return true; }
 bool QuantBatchMatmulV3Checker::CheckHif4ScaleDtypeWithPertoken() const { return true; }
 
 bool QuantBatchMatmulV3Checker::CheckExtraOutputDtype() const { return true; }
-
-bool QuantBatchMatmulV3Checker::CheckExtraBiasConstraint(const gert::Shape&, const gert::StorageShape*) const
-{
-    return true;
-}
 
 bool QuantBatchMatmulV3Checker::CheckExtraShapeValid(const gert::Shape&, const gert::StorageShape*,
                                                      const std::vector<int64_t>&) const
