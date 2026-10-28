@@ -129,6 +129,7 @@ private:
     int32_t axis = 1;
     int32_t indicesDim = 0;
     int32_t dtypeSize = 0;
+    int32_t originalDtypeSize = 0;
     int64_t normBlockColNum_ = 0;
     int64_t tailBlockColNum_ = 0;
     int64_t indicesUbFactor_ = 0;

@@ -450,8 +450,10 @@ public:
                 LocalTensor<T1> updatesUb = updates.template AllocTensor<T1>();
 
                 DataCopyExtParams copyParams{1, (uint32_t)(ubCount * sizeof(T1)), 0, 0, 0};
-                DataCopyPadExtParams<T1> padParams{false, 0, 0, 0};
-                DataCopyPad(updatesUb, updatesGm[startOffset], copyParams, padParams);
+                DataCopyPadExtParams<int8_t> padParams{false, 0, 0, 0};
+                DataCopyPad(updatesUb.template ReinterpretCast<int8_t>(),
+                            updatesGm.template ReinterpretCast<int8_t>()[startOffset * sizeof(T1)], copyParams,
+                            padParams);
                 updates.EnQue(updatesUb);
                 updates.DeQue<T1>();
 

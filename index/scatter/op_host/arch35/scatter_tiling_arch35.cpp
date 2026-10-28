@@ -64,6 +64,10 @@ constexpr int32_t TILING_KEY_UINT64_INT64_FLOAT = 24;
 constexpr int32_t TILING_KEY_UINT64_INT64_INT32 = 25;
 constexpr int32_t TILING_KEY_UINT64_INT32_INT2 = 26;
 constexpr int32_t TILING_KEY_UINT64_INT64_INT2 = 27;
+constexpr int32_t TILING_KEY_INT32_B128 = 28;
+constexpr int32_t TILING_KEY_INT64_B128 = 29;
+constexpr int32_t TILING_KEY_UINT64_INT32_B128 = 30;
+constexpr int32_t TILING_KEY_UINT64_INT64_B128 = 31;
 constexpr int32_t DIM3 = 3;
 constexpr int32_t DIM2 = 2;
 constexpr int32_t DIM1 = 1;
@@ -72,7 +76,10 @@ constexpr int32_t SECOND_LAST_DIM = -2;
 constexpr int32_t SIMT_RESERVED_SIZE = 32 * 1024;
 constexpr int32_t SIMT_PARAM_SIZE = 1024;
 constexpr int32_t SIMD_RESERVED_SIZE = 8 * 1024;
-constexpr int32_t PROMOTE_DTYPE_SIZE = 8;
+constexpr int32_t DTYPE_SIZE_B128 = 16;
+constexpr int32_t DTYPE_SIZE_B64 = 8;
+constexpr int32_t DTYPE_SIZE_B32 = 4;
+constexpr int32_t DTYPE_SIZE_B16 = 2;
 constexpr int32_t MIN_FACTOR = 1024; // if < MIN_FACTOR, use one core only
 constexpr int64_t MAX_INT32_NUM = 2147483647;
 constexpr int64_t DB_BUFFER = 2;
@@ -367,18 +374,22 @@ ge::graphStatus ScatterTiling::CheckShapes()
     return ge::GRAPH_SUCCESS;
 }
 
-static map<const int32_t, const std::vector<int32_t>> g_factors = {{8, {8, 4, 2, 1}}, {4, {4, 2, 1}}, {2, {2, 1}}};
-
 ge::graphStatus ScatterTiling::PromoteDtype()
 {
     if (simdTemp > 0) {
         return ge::GRAPH_SUCCESS;
     }
-    int32_t factor = PROMOTE_DTYPE_SIZE / dtypeSize;
-    if (axis == SECOND_LAST_DIM && updatesNewShape[DIM3] % factor == 0) {
-        updatesNewShape[DIM3] /= factor;
-        inputNewShape[DIM3] /= factor;
-        dtypeSize = PROMOTE_DTYPE_SIZE;
+    originalDtypeSize = dtypeSize;
+    // 128b promotion is only supported on DAV_9201 (ascend960dt); 64b/32b/16b levels are common
+    int32_t maxPromoteSize = isDav9201_ ? DTYPE_SIZE_B128 : DTYPE_SIZE_B64;
+    for (int32_t promoteSize = maxPromoteSize; promoteSize > originalDtypeSize; promoteSize >>= 1) {
+        int32_t factor = promoteSize / originalDtypeSize;
+        if (axis == SECOND_LAST_DIM && updatesNewShape[DIM3] % factor == 0) {
+            updatesNewShape[DIM3] /= factor;
+            inputNewShape[DIM3] /= factor;
+            dtypeSize = promoteSize;
+            return ge::GRAPH_SUCCESS;
+        }
     }
 
     return ge::GRAPH_SUCCESS;
@@ -707,30 +718,70 @@ uint64_t ScatterTiling::GetTilingKey() const
     }
     uint64_t tilingKey = 0xFF;
 
-    if (isUint64) {
-        if (indicesDtype == ge::DataType::DT_INT32) {
-            if (dtypeSize == PROMOTE_DTYPE_SIZE) {
-                tilingKey = static_cast<uint64_t>(TILING_KEY_UINT64_INT32_INT2);
-                return tilingKey;
+    if (originalDtypeSize > 0 && dtypeSize > originalDtypeSize) {
+        if (isUint64) {
+            if (indicesDtype == ge::DataType::DT_INT32) {
+                if (dtypeSize == DTYPE_SIZE_B128) {
+                    return static_cast<uint64_t>(TILING_KEY_UINT64_INT32_B128);
+                }
+                if (dtypeSize == DTYPE_SIZE_B64) {
+                    return static_cast<uint64_t>(TILING_KEY_UINT64_INT32_INT2);
+                }
+                if (dtypeSize == DTYPE_SIZE_B32) {
+                    return static_cast<uint64_t>(TILING_KEY_UINT64_INT32_INT32);
+                }
+                if (dtypeSize == DTYPE_SIZE_B16) {
+                    return static_cast<uint64_t>(TILING_KEY_UINT64_INT32_FLOAT16);
+                }
+            } else {
+                if (dtypeSize == DTYPE_SIZE_B128) {
+                    return static_cast<uint64_t>(TILING_KEY_UINT64_INT64_B128);
+                }
+                if (dtypeSize == DTYPE_SIZE_B64) {
+                    return static_cast<uint64_t>(TILING_KEY_UINT64_INT64_INT2);
+                }
+                if (dtypeSize == DTYPE_SIZE_B32) {
+                    return static_cast<uint64_t>(TILING_KEY_UINT64_INT64_INT32);
+                }
+                if (dtypeSize == DTYPE_SIZE_B16) {
+                    return static_cast<uint64_t>(TILING_KEY_UINT64_INT64_FLOAT16);
+                }
             }
         } else {
-            if (dtypeSize == PROMOTE_DTYPE_SIZE) {
-                tilingKey = static_cast<uint64_t>(TILING_KEY_UINT64_INT64_INT2);
-                return tilingKey;
-            }
-        }
-    } else {
-        if (indicesDtype == ge::DataType::DT_INT32) {
-            if (dtypeSize == PROMOTE_DTYPE_SIZE) {
-                tilingKey = static_cast<uint64_t>(TILING_KEY_INT32_INT2);
-                tilingKey = setSimtTilingKey(tilingKey);
-                return tilingKey;
-            }
-        } else {
-            if (dtypeSize == PROMOTE_DTYPE_SIZE) {
-                tilingKey = static_cast<uint64_t>(TILING_KEY_INT64_INT2);
-                tilingKey = setSimtTilingKey(tilingKey);
-                return tilingKey;
+            if (indicesDtype == ge::DataType::DT_INT32) {
+                if (dtypeSize == DTYPE_SIZE_B128) {
+                    tilingKey = static_cast<uint64_t>(TILING_KEY_INT32_B128);
+                    return setSimtTilingKey(tilingKey);
+                }
+                if (dtypeSize == DTYPE_SIZE_B64) {
+                    tilingKey = static_cast<uint64_t>(TILING_KEY_INT32_INT2);
+                    return setSimtTilingKey(tilingKey);
+                }
+                if (dtypeSize == DTYPE_SIZE_B32) {
+                    tilingKey = static_cast<uint64_t>(TILING_KEY_INT32_INT32);
+                    return setSimtTilingKey(tilingKey);
+                }
+                if (dtypeSize == DTYPE_SIZE_B16) {
+                    tilingKey = static_cast<uint64_t>(TILING_KEY_INT32_FLOAT16);
+                    return setSimtTilingKey(tilingKey);
+                }
+            } else {
+                if (dtypeSize == DTYPE_SIZE_B128) {
+                    tilingKey = static_cast<uint64_t>(TILING_KEY_INT64_B128);
+                    return setSimtTilingKey(tilingKey);
+                }
+                if (dtypeSize == DTYPE_SIZE_B64) {
+                    tilingKey = static_cast<uint64_t>(TILING_KEY_INT64_INT2);
+                    return setSimtTilingKey(tilingKey);
+                }
+                if (dtypeSize == DTYPE_SIZE_B32) {
+                    tilingKey = static_cast<uint64_t>(TILING_KEY_INT64_INT32);
+                    return setSimtTilingKey(tilingKey);
+                }
+                if (dtypeSize == DTYPE_SIZE_B16) {
+                    tilingKey = static_cast<uint64_t>(TILING_KEY_INT64_FLOAT16);
+                    return setSimtTilingKey(tilingKey);
+                }
             }
         }
     }
