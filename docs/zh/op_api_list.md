@@ -101,6 +101,7 @@
 | [aclnnClippedSwiglu](../../activation/clipped_swiglu/docs/aclnnClippedSwiglu.md) | 带截断的Swish门控线性单元激活函数，实现x的SwiGlu计算。 | 默认确定性实现 | 默认确定性实现 |
 | [aclnnClippedSwigluV2](../../activation/clipped_swiglu/docs/aclnnClippedSwigluV2.md) | 带截断的Swish门控线性单元激活函数，实现x的SwiGlu计算，新增clamp_mode用于控制clamp和silu计算的顺序。 | - | 默认确定性实现 |
 | [aclnnClippedSwigluGrad](../../activation/clipped_swiglu_grad/docs/aclnnClippedSwigluGrad.md) | aclnnClippedSwiglu的反向算子，计算输入x的梯度gradXOut。 | 默认确定性实现 | 默认确定性实现 |
+| [aclnnConfidenceHeadFused](../../matmul/confidence_head_fused/docs/aclnnConfidenceHeadFused.md) | 融合特征投影、可选 Markov 特征与 bias、温度缩放、截断和 Sigmoid，输出每行置信度。 | - | 默认确定性实现 |
 | [aclnnConvolution](../../conv/convolution_forward/docs/aclnnConvolution.md) | 实现卷积功能，支持1D/2D/3D、转置卷积、空洞卷积、分组卷积。 | 默认确定性实现 | 默认确定性实现 |
 | [aclnnConvolutionBackward](../../conv/convolution_backward/docs/aclnnConvolutionBackward.md) | 实现卷积的反向传播。 | 默认非确定性实现，支持配置开启 | 默认确定性实现 |
 | [aclnnConvDepthwise2d](../../conv/convolution_forward/docs/aclnnConvDepthwise2d.md) | 实现二维深度卷积（DepthwiseConv2D）计算。 | 默认确定性实现 | 默认确定性实现 |

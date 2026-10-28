@@ -24,5 +24,6 @@
 - [dequant_situ_quant](../../quant/dequant_situ_quant/docs/torchapi_dequant_situ_quant.md)
 - [situ_mx_quant](../../quant/situ_mx_quant/docs/torchapi_situ_mx_quant.md)
 - [fused_matmul](../../matmul/fused_mat_mul/docs/torchapi_fused_matmul.md)
+- [confidence_head_fused](../../matmul/confidence_head_fused/docs/torchapi_confidence_head_fused.md)
 - [transpose_quant_batch_mat_mul](../../matmul/transpose_quant_batch_mat_mul/docs/torchapi_transpose_quant_batch_mat_mul.md)
 - [gemm_syrk](../../matmul/gemm_syrk/docs/torchapi_gemm_syrk.md)

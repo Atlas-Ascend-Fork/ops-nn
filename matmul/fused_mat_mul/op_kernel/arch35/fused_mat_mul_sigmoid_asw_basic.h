@@ -42,7 +42,7 @@ __aicore__ inline void FusedMatMulSigmoidAswBasicKernel(GM_ADDR x1Gm, GM_ADDR x2
                                                                          false, true>;
     using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, ElementType, LayoutA, ElementType, LayoutB, AccType,
                                                     LayoutC, BiasType, LayoutC>;
-    using BlockEpilogue = Blaze::Epilogue::Block::BlockEpilogueMatmulWithSigmoid<DispatchPolicy, ElementType>;
+    using BlockEpilogue = Blaze::Epilogue::Block::BlockEpilogueMatmulWithSigmoid<ElementType>;
     using MatmulKernel = Blaze::Gemm::Kernel::GemmUniversal<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
     using KernelParams = typename MatmulKernel::Params;
 
