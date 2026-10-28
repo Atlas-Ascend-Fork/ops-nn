@@ -113,5 +113,6 @@ ge::graphStatus InferDataType4NonZero(gert::InferDataTypeContext* context)
 IMPL_OP(NonZero)
     .InferShape(InferShape4NonZero)
     .InferShapeRange(InferShapeRange4NonZero)
-    .InferDataType(InferDataType4NonZero);
+    .InferDataType(InferDataType4NonZero)
+    .OutputShapeDependOnCompute({0});
 } // namespace ops
