@@ -18,15 +18,19 @@
 
 #include <vector>
 #include <utility>
-#include <unordered_set>
 #include <chrono>
 #include "op_host/tiling_base.h"
+#include "tiling/platform/platform_ascendc.h"
 #include "../../../../common/op_host/op_tiling/arch35/conv_base_utils.h"
 #include "../conv2d_v2_tiling.h"
 #include "conv2d_v2_tuning_tiling.h"
 #include "conv2d_v2_tiling_utils.h"
+#include "conv2d_v2_base_tiling_aswt.h"
 #include "conv/common/op_host/op_tiling/arch35/conv_cache_tiling.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_basic_block.h"
+#include "conv/common/op_host/op_tiling/arch35/conv2d_basic_block_strategy.h"
 #include "error_util.h"
+#include "../../../op_kernel/conv2d_v2_tiling_data.h"
 
 namespace optiling {
 namespace conv_ops_tiling {
@@ -71,27 +75,6 @@ protected:
     void GetTilingInputArgs(shared_ptr<void>& inputArgs, size_t& size);
     uint32_t CalcAL1SpaceSize(shared_ptr<tuningtiling::Conv2DV2TunnerTiling> convRepoTiling);
 
-    void BasicBlock();
-    void BasicBlockL0Init();
-    void BasicBlockBoundMode();
-    void BasicBlockGroupDecision();
-    void BasicBlockFWDimDecision();
-    void BasicBlockBatchMDimDecision();
-    unordered_set<pair<uint32_t, uint32_t>, pair_hash> BasicBlockGroupDimCandidates();
-    unordered_set<pair<uint32_t, uint32_t>, pair_hash> BasicBlockFWDimCandidates();
-    unordered_set<pair<uint32_t, uint32_t>, pair_hash> BasicBlockBatchMDimCandidates();
-    unordered_set<pair<uint32_t, uint32_t>, pair_hash> GenerateCandidates(const uint32_t cores, const uint64_t cut1,
-                                                                          const uint32_t cut2, const uint32_t calCut1,
-                                                                          const uint32_t calCut2) const;
-    void SetConv2dBasicBlockInfo(
-        const vector<pair<uint32_t, uint32_t>>& ordered_candidates,
-        const vector<tuple<IterateMNOrder, bool, bool, bool, bool, bool, bool, float>>& strategies,
-        const vector<tuple<uint32_t, uint32_t, uint32_t, uint32_t, uint64_t>>& tileInfo, const int32_t& index);
-    void GenerateSingleCandidateCaseCommon(const uint32_t cores, const uint32_t dim, const uint32_t cut2,
-                                           unordered_set<pair<uint32_t, uint32_t>, pair_hash>& candidates) const;
-    void GenerateSingleCandidateCase(const uint32_t cores, const float candidateCut, const uint64_t cut1,
-                                     const uint32_t cut2,
-                                     unordered_set<pair<uint32_t, uint32_t>, pair_hash>& candidates) const;
     bool CheckSupportCacheTiling();
     void GetCacheTilingInputArgs();
     bool GetTilingFromCache();
@@ -102,15 +85,28 @@ protected:
     bool AddTilingToCache();
     void GetCachedTilingData();
     void GetCachedTilingDataAux();
+    void DoBasicBlock();
     ge::graphStatus GetTilingFromFastTiling();
+
+    // ASWT
+    void PrintASWTTilingInfo();
+    void FindMinAdaptTile(vector<tailRegion>& tailRegions, int64_t adaptBaseM, int64_t adaptBaseN);
+    void GetTailRegions(vector<tailRegion>& tailRegions, uint64_t oriM, uint64_t baseM, uint64_t baseN,
+                        uint64_t mWindow);
+    void SetAWSTTilingdata(vector<tailRegion>& tailRegions, uint64_t mWindow);
+    void ASWTDecision();
+    uint64_t ASWTDecisionMWindow(uint64_t mCuts);
+    void FillMNFullLoadKPartialTiling(Ops::NN::Conv2dV2::Conv2DMNFullLoadKPartialTiling& tiling);
+    bool IsMNFullLoadKPartia();
 
 private:
     conv_tiling::Conv2dTiling conv2dApiTiling_;
     optiling::conv_ops_tiling::ConvOriGroupInfo oriGroupInfo_;
     optiling::conv_ops_tiling::ConvOptGroupInfo optGroupInfo_;
     conv_tiling::ConvC04Info c04Info_;
-    conv_tiling::Conv2DBasicBlockInfo conv2dBasicBlockInfo_;
+    conv_tiling::BasicBlockInfo conv2dBasicBlockInfo_;
     optiling::conv_ops_tiling::FixpipeInfo fixpipeInfo_;
+    Ops::NN::Conv2dV2::Conv2DMNFullLoadKPartialTiling Conv2DMNFullLoadKPartialTiling_;
 
     ConvTilingParseInfo* opInfo_ = nullptr;
     ConvAscendcShapesInfo shapeInfo_;
@@ -167,11 +163,6 @@ private:
     ge::graphStatus CheckNHWCDataCopyLimits();
     ge::graphStatus CheckExtendDualOutputSpecial();
     ge::graphStatus GetFeatureFlag();
-    void SelectMModeAlgorithm();
-    bool CmpFirstAdjustMnTile(int64_t availableL1Size, int64_t& mTile, int64_t& nTile, uint64_t basicBlockM,
-                              uint64_t basicBlockN);
-    void EnableInnerBatchBasicBlock(int64_t availableL1Size);
-    void GetInitBasicBlockMN(uint64_t& basicBlockM, uint64_t& basicBlockN);
     void SetQuantFlag();
     void SetHasBias();
     void GetOriPadFromPadMode(const string& padMode);
@@ -213,7 +204,6 @@ private:
     uint64_t GetSmallKernelVal();
     bool IsSmallKernelBlocked();
 
-    int32_t BasicBlockSortFWDimScores(vector<tuple<uint64_t, float, uint32_t, double>>& scores);
     ge::graphStatus GetConv2DAxisPosInfo();
     bool GetPosByFormat(const ge::Format format, const std::string& pos, const std::string& inputStr,
                         size_t& posIdx) const;

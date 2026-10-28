@@ -15,13 +15,23 @@
 
 #define K_MAX_SHAPE_DIM 0
 
+#include "../inc/macro.h"
+#if !defined(__DAV_35_FAMILY__) && !defined(KERNELUT)
+#include "conv2d_v2_common_tilingdata.h"
+using Conv2DTilingData = Ops::NN::Conv2dV2::Conv2DTilingData;
+#endif
 #include "arch35/conv2d_v2.h"
 #include "arch35/conv2d_v2_group.h"
 #include "arch35/conv2d_v2_tilingkey.h"
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+#include "arch35/conv2d_v2_aswt.h"
+#endif
 #include "arch35/conv2d_small_kernel.h"
 #include "arch35/conv2d_small_kernel_parallelism.h"
 #include "arch35/conv2d_small_kernel_fm_partload.h"
 #include "arch35/conv2d_v2_depthwise_simplify.h"
+#include "conv2d_v2_tiling_data.h"
+#include "arch35/full_mn_kernel/full_mn_kernel_pipeline.h"
 
 using namespace AscendC;
 using namespace Conv2DV2Key;
@@ -56,6 +66,11 @@ constexpr ConvFormat outputFormat = ConvFormat::NCHW;
 constexpr ConvFormat fmapFormat = ConvFormat::NHWC;
 constexpr ConvFormat weightFormat = ConvFormat::FRACTAL_Z_C04;
 constexpr ConvFormat outputFormat = ConvFormat::NHWC;
+#elif defined(FORMAT_X) && FORMAT_X == FORMAT_NCHW && defined(FORMAT_FILTER) && FORMAT_FILTER == FORMAT_NHWC && \
+    defined(FORMAT_Y) && FORMAT_Y == FORMAT_NCHW
+constexpr ConvFormat fmapFormat = ConvFormat::NCHW;
+constexpr ConvFormat weightFormat = ConvFormat::NHWC;
+constexpr ConvFormat outputFormat = ConvFormat::NCHW;
 #elif defined(FORMAT_X) && FORMAT_X == FORMAT_NCHW && defined(FORMAT_FILTER) && FORMAT_FILTER == FORMAT_FRACTAL_Z && \
     defined(FORMAT_Y) && FORMAT_Y == FORMAT_NHWC
 constexpr ConvFormat fmapFormat = ConvFormat::NCHW;
@@ -85,13 +100,64 @@ constexpr ConvFormat outputFormat = ConvFormat::NCHW;
 constexpr ConvFormat biasFormat = ConvFormat::ND;
 constexpr ConvFormat scaleFormat = ConvFormat::ND;
 
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+#define CONV2D_V2_ASWT_FULL_MN_DISPATCH()                                                                              \
+    do {                                                                                                               \
+        if constexpr (IsASWT == CONV_ASWT_ENABLE) {                                                                    \
+            using aswtConvCfg = Conv2DV1Param<FmapTiling, WeightTiling, L1PingPong, L0PingPong, OutputOrder,           \
+                                              IterOrder, GroupType, EnableSmallChannel, WeightUbTrans, FmapCopyMode,   \
+                                              InnerBatch, DisContinuous, BatchOne, NoPad, SmallWeight>;                \
+            ConvAWST::ASWTRunConv2dKernelByRegion<fmapType, weightType, outputType, biasType, scaleType, aswtConvCfg>( \
+                x, filter, bias, y, tilingData);                                                                       \
+            return;                                                                                                    \
+        } else if constexpr (SmallKernel == CONV_NOT_SMALL_KERNEL &&                                                   \
+                             FmapTiling == CONV_FMAP_TILING_ONLY_M_FULLLOAD_AL1_AL0 &&                                 \
+                             WeightTiling == CONV_WEIGHT_TILING_ONLY_N_FULLLOAD_BL1_BL0 &&                             \
+                             L1PingPong == CONV_L1_PINGPONG_ALL_OPEN && L0PingPong == CONV_L0_PINGPONG_ALL_OPEN &&     \
+                             OutputOrder == CONV_OUTPUT_ORDER_M_MODE && IterOrder == CONV_ITER_ORDER_MITER_FIRST &&    \
+                             GroupType == CONV_GROUP_TYPE_NORMAL_CONV &&                                               \
+                             EnableSmallChannel == CONV_ENABLE_SMALL_CHANNEL_CLOSE &&                                  \
+                             WeightUbTrans == CONV_WEIGHT_UB_TRANS_CLOSE && FmapCopyMode == CONV_FMAP_LOAD3D_MODE &&   \
+                             InnerBatch == CONV_INNER_BATCH_SINGLE && DisContinuous == CONV_DIS_CONTINUOUS_CLOSE &&    \
+                             fmapFormat == ConvFormat::NCHW && outputFormat == ConvFormat::NCHW &&                     \
+                             weightFormat == ConvFormat::NHWC) {                                                       \
+            REGISTER_TILING_FOR_TILINGKEY("FmapTiling == CONV_FMAP_TILING_ONLY_M_FULLLOAD_AL1_AL0 && "                 \
+                                          "WeightTiling == CONV_WEIGHT_TILING_ONLY_N_FULLLOAD_BL1_BL0 && "             \
+                                          "L1PingPong == CONV_L1_PINGPONG_ALL_OPEN &&"                                 \
+                                          "L0PingPong == CONV_L0_PINGPONG_ALL_OPEN &&"                                 \
+                                          "OutputOrder == CONV_OUTPUT_ORDER_M_MODE &&"                                 \
+                                          "IterOrder == CONV_ITER_ORDER_MITER_FIRST &&"                                \
+                                          "GroupType == CONV_GROUP_TYPE_NORMAL_CONV &&"                                \
+                                          "EnableSmallChannel == CONV_ENABLE_SMALL_CHANNEL_CLOSE &&"                   \
+                                          "WeightUbTrans == CONV_WEIGHT_UB_TRANS_CLOSE &&"                             \
+                                          "FmapCopyMode == CONV_FMAP_LOAD3D_MODE &&"                                   \
+                                          "InnerBatch == CONV_INNER_BATCH_SINGLE &&"                                   \
+                                          "DisContinuous == CONV_DIS_CONTINUOUS_CLOSE",                                \
+                                          Ops::NN::Conv2dV2::Conv2DMNFullLoadKPartialTiling);                          \
+            GET_TILING_DATA_WITH_STRUCT(Ops::NN::Conv2dV2::Conv2DMNFullLoadKPartialTiling, tilingData, tiling);        \
+            if ASCEND_IS_AIC_CONV {                                                                                    \
+                full_mn::Conv2dFullMNKernelPipeline<DTYPE_X, DTYPE_FILTER, DTYPE_Y, biasType::T,                       \
+                                                    Ops::NN::Conv2dV2::Conv2DMNFullLoadKPartialTiling>                 \
+                    pipeline;                                                                                          \
+                pipeline(tilingData, x, filter, bias, y);                                                              \
+            }                                                                                                          \
+            return;                                                                                                    \
+        }                                                                                                              \
+    } while (0)
+#else
+#define CONV2D_V2_ASWT_FULL_MN_DISPATCH() ((void)0)
+#endif
+
 template <int8_t FmapTiling, int8_t WeightTiling, int8_t L1PingPong, int8_t L0PingPong, int8_t OutputOrder,
           int8_t IterOrder, int8_t GroupType, int8_t EnableSmallChannel, int8_t WeightUbTrans, int8_t FmapCopyMode,
           int8_t InnerBatch, int8_t DisContinuous, int8_t BatchOne, int8_t NoPad, int8_t SmallWeight,
-          int8_t SmallKernel>
+          int8_t SmallKernel, int8_t IsASWT>
 __global__ __aicore__ void conv2dv2(GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_ADDR offset_w, GM_ADDR y,
                                     GM_ADDR workspace, GM_ADDR tiling)
 {
+#if !defined(__DAV_35_FAMILY__) && !defined(KERNELUT)
+    REGISTER_TILING_DEFAULT(Ops::NN::Conv2dV2::Conv2DTilingData);
+#endif
     GET_TILING_DATA(tilingData, tiling);
 
 #if defined(DTYPE_X) && defined(DTYPE_FILTER) && defined(DTYPE_Y)
@@ -104,6 +170,8 @@ __global__ __aicore__ void conv2dv2(GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_
     using biasType = ConvType<TPosition::GM, biasFormat, half>; // only for compile
 #endif
     using scaleType = ConvType<TPosition::GM, scaleFormat, uint64_t>;
+
+    CONV2D_V2_ASWT_FULL_MN_DISPATCH();
 
     if constexpr (SmallKernel == CONV_SMALL_KERNEL_FM_PARTLOAD) {
         constexpr bool isNHWCin = (fmapFormat == ConvFormat::NHWC);

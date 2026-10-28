@@ -212,6 +212,13 @@ struct Conv2DTilingData {
     uint32_t cinOpt = 0;
     uint32_t coutOpt = 0;
     uint32_t groupOpt = 0;
+    uint32_t mWindows = 0;
+    uint32_t adaptBaseM = 0;
+    uint32_t adaptBaseN = 0;
+    uint32_t tailRegionCuts[3] = {0, 0, 0};
+    uint32_t tailRegionOrgM[3] = {0, 0, 0};
+    uint32_t tailRegionOrgN[3] = {0, 0, 0};
+    uint32_t tailRegionBatchTailNs[2] = {0, 0};
 
     uint8_t iterateMNOrder = 0;
     uint8_t biasFullLoadFlag = 0;
@@ -227,9 +234,9 @@ struct Conv2DTilingData {
     uint8_t quantMode1 = 0;
     uint8_t reluMode1 = 0;
     uint8_t clipMode1 = 0;
+    uint8_t fixedShiftValue = 0;
     int8_t offsetx = 0;
     int8_t roundMode = 0;
-    uint32_t mWindows = 0;
 
     uint64_t total_shape_cout = 0;
     uint64_t strideWriteDstStride = 0;

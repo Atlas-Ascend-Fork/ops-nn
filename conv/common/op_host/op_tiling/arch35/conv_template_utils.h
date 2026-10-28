@@ -119,6 +119,11 @@ constexpr uint32_t NUMBLOCKS_HWSPLIT_N_IDX = 3;
 constexpr uint32_t NUMBLOCKS_HWSPLIT_DO_IDX = 4;
 constexpr uint32_t NUMBLOCKS_HWSPLIT_GROUP_IDX = 5;
 
+inline bool IsDAV920Arch(const NpuArch& npuArch)
+{
+    return npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
+}
+
 constexpr uint32_t INPUT_FMAP_INDEX = 0;
 constexpr uint32_t INPUT_WEIGHT_INDEX = 1;
 constexpr uint32_t INPUT_BIAS_INDEX = 2;
@@ -132,6 +137,8 @@ constexpr size_t UINT32_BIT_COUNT = 32;
 constexpr size_t BITS_PER_BYTE = 8;
 
 constexpr uint32_t SWEET_POINT_AI_FP16 = 144;
+constexpr uint32_t SWEET_POINT_AI_FP16_137 = 137;
+constexpr uint32_t SWEET_POINT_AI_FP16_89 = 89;
 
 constexpr int8_t ROUND_MODE_RINT = 1;
 constexpr int8_t ROUND_MODE_ROUND = 2;
@@ -211,6 +218,7 @@ constexpr uint64_t WEIGHT_OTHER = 2;
 constexpr uint64_t L1_PB_ALL_CLOSE = 0;
 constexpr uint64_t L1_PB_BL1_OPEN = 2;
 constexpr uint64_t L1_PB_ALL_OPEN = 3;
+constexpr uint64_t L0_PB_ALL_OPEN = 3;
 // load3dv2 win max value
 constexpr uint64_t LOAD3DV2_WIN_LIMIT_VALUE = 32767;
 constexpr uint64_t ADDR_ALIGN_SIZE = 32;
@@ -440,6 +448,7 @@ struct ConvTilingKeyPara {
     uint64_t fmapCppyMode = 0;
     uint64_t innerBatch = 0;
     uint64_t disContinuous = 0;
+    uint64_t isAswt = 0;
     uint64_t batchOne = 0;
     uint64_t noPad = 0;
     uint64_t smallWeight = 0;

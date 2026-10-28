@@ -560,14 +560,14 @@ ge::graphStatus Conv2dBaseTiling::SetStrideWriteParams()
                                                                 ATTR_TOTAL_SHAPE_INDEX;
     const auto totalShapeAttr = context_->GetAttrs()->GetListInt(totalShapeAttrIdx);
     if (totalShapeAttr == nullptr || totalShapeAttr->GetSize() != CONV2D_DIM_SIZE_LIMIT) {
-        OP_LOGW(context_->GetNodeName(), "%s AscendC: strideWrite total_shape attr not found, idx: %zu, attrNum: %zu.",
+        OP_LOGW(context_->GetNodeType(), "%s AscendC: strideWrite total_shape attr not found, idx: %zu, attrNum: %zu.",
                 paramInfo_.nodeType.c_str(), totalShapeAttrIdx, context_->GetAttrs()->GetAttrNum());
         return ge::GRAPH_SUCCESS;
     }
     std::vector<int64_t> totalShape(totalShapeAttr->GetData(), totalShapeAttr->GetData() + totalShapeAttr->GetSize());
     const auto outShape = GetOutputShapeVec(context_, OUTPUT_INDEX);
     if (outShape.size() != CONV2D_DIM_SIZE_LIMIT) {
-        OP_LOGW(context_->GetNodeName(), "%s AscendC: strideWrite output shape dim not 4, dimNum: %zu.",
+        OP_LOGW(context_->GetNodeType(), "%s AscendC: strideWrite output shape dim not 4, dimNum: %zu.",
                 paramInfo_.nodeType.c_str(), outShape.size());
         return ge::GRAPH_SUCCESS;
     }
@@ -581,7 +581,7 @@ ge::graphStatus Conv2dBaseTiling::SetStrideWriteParams()
         }
     }
     if (!onlyCDiff) {
-        OP_LOGE(context_->GetNodeName(),
+        OP_LOGE(context_->GetNodeType(),
                 "%s AscendC: strideWrite total_shape must differ from output shape only on C dim and be larger, "
                 "total_shape: [%ld, %ld, %ld, %ld], output shape: [%ld, %ld, %ld, %ld].",
                 paramInfo_.nodeType.c_str(), totalShape[0], totalShape[1], totalShape[2], totalShape[3], outShape[0],
@@ -594,7 +594,7 @@ ge::graphStatus Conv2dBaseTiling::SetStrideWriteParams()
     const uint64_t curCout = static_cast<uint64_t>(outShape[cIdx]);
     if (dtypeSize == 0 || totalShapeCout * dtypeSize % strideWriteAlignBytes != 0 ||
         curCout * dtypeSize % strideWriteAlignBytes != 0) {
-        OP_LOGE(context_->GetNodeName(),
+        OP_LOGE(context_->GetNodeType(),
                 "%s AscendC: strideWrite shape C must be 32B aligned, dtypeSize: %u, total_shape_cout: %lu, "
                 "current cout: %lu.",
                 paramInfo_.nodeType.c_str(), dtypeSize, totalShapeCout, curCout);
@@ -611,7 +611,7 @@ ge::graphStatus Conv2dBaseTiling::SetStrideWriteParams()
     tilingData_.set_total_shape_cout(totalShapeCout);
     tilingData_.set_strideWriteDstStride(dstStride);
 
-    OP_LOGD(context_->GetNodeName(),
+    OP_LOGD(context_->GetNodeType(),
             "%s AscendC: strideWrite enabled, total_shape: [%ld, %ld, %ld, %ld], total_shape_cout: %lu, "
             "strideWriteDstStride: %lu.",
             paramInfo_.nodeType.c_str(), totalShape[0], totalShape[1], totalShape[2], totalShape[3], totalShapeCout,
@@ -619,16 +619,93 @@ ge::graphStatus Conv2dBaseTiling::SetStrideWriteParams()
     return ge::GRAPH_SUCCESS;
 }
 
+bool Conv2dBaseTiling::IsMNFullLoadKPartia()
+{
+    return (opInfo_->npuArch == NpuArch::DAV_9201 || opInfo_->npuArch == NpuArch::DAV_9202) &&
+           descInfo_.fMapFormat == ge::Format::FORMAT_NCHW && descInfo_.weightFormat == ge::Format::FORMAT_NHWC &&
+           descInfo_.outFormat == ge::Format::FORMAT_NCHW && tilingKeyPara_.fmpTiling == ONLY_M_FULLLOAD_AL1_AL0 &&
+           tilingKeyPara_.weightTiling == ONLY_N_FULLLOAD_BL1_BL0 && tilingKeyPara_.l1PingPong == L1_PB_ALL_OPEN &&
+           tilingKeyPara_.l0PingPong == L0_PB_ALL_OPEN && flagInfo_.mSplitModeFlag && // OutputOrder
+           tilingKeyPara_.iterOrder == static_cast<uint64_t>(IterateMNOrder::ITER_M_FST) &&
+           tilingKeyPara_.groupType == static_cast<uint64_t>(ConvGroupType::NORMAL_CONV) &&
+           !flagInfo_.enableC04Flag && // enableSmallChannel
+           tilingKeyPara_.weightUbTrans == WEIGHT_UB_TRANS_CLOSE && tilingKeyPara_.fmapCppyMode == FMAP_LOAD3D_MODE &&
+           tilingKeyPara_.innerBatch == CONV_INNER_BATCH_SINGLE && !flagInfo_.disContinuousFlag && !flagInfo_.isASWT;
+}
+
+void Conv2dBaseTiling::FillMNFullLoadKPartialTiling(Ops::NN::Conv2dV2::Conv2DMNFullLoadKPartialTiling& tiling)
+{
+    tiling.cout = tilingData_.get_cout();
+    tiling.hout = tilingData_.get_hout();
+    tiling.wout = tilingData_.get_wout();
+    tiling.cin = tilingData_.get_cin();
+    tiling.hin = tilingData_.get_hin();
+    tiling.win = tilingData_.get_win();
+    tiling.kh = tilingData_.get_kh();
+    tiling.kw = tilingData_.get_kw();
+    tiling.batchDim = tilingData_.get_batchDim();
+    tiling.nDim = tilingData_.get_nDim();
+    tiling.hoDim = tilingData_.get_hoDim();
+    tiling.batch = tilingData_.get_batch();
+    tiling.singleCoreBatch = static_cast<uint32_t>(tilingData_.get_singleCoreBatch());
+    tiling.singleCoreCi = tilingData_.get_singleCoreCi();
+    tiling.singleCoreCo = tilingData_.get_singleCoreCo();
+    tiling.singleCoreHo = tilingData_.get_singleCoreHo();
+    tiling.strideH = tilingData_.get_strideH();
+    tiling.strideW = tilingData_.get_strideW();
+    tiling.dilationH = tilingData_.get_dilationH();
+    tiling.dilationW = tilingData_.get_dilationW();
+    tiling.padTop = tilingData_.get_padTop();
+    tiling.padBottom = tilingData_.get_padBottom();
+    tiling.padLeft = tilingData_.get_padLeft();
+    tiling.padRight = tilingData_.get_padRight();
+    tiling.kAL1 = tilingData_.get_kAL1();
+    tiling.kBL1 = tilingData_.get_kBL1();
+    tiling.kL0 = tilingData_.get_kL0();
+    tiling.nBL1 = tilingData_.get_nBL1();
+    tiling.cinAInCore = tilingData_.get_cinAInCore();
+    tiling.cinATailInCore = tilingData_.get_cinATailInCore();
+    tiling.cinBInCore = tilingData_.get_cinBInCore();
+    tiling.cinBTailInCore = tilingData_.get_cinBTailInCore();
+    tiling.hf32Enable = tilingData_.get_hf32Enable();
+    tiling.hf32TransMode = tilingData_.get_hf32TransMode();
+    tiling.hasBias = tilingData_.get_hasBias();
+    tiling.offsetx = tilingData_.get_offsetx();
+}
+
 ge::graphStatus Conv2dBaseTiling::PostTiling()
 {
-    tilingData_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
-    context_->GetRawTilingData()->SetDataSize(tilingData_.GetDataSize());
+    if (IsMNFullLoadKPartia()) {
+        FillMNFullLoadKPartialTiling(Conv2DMNFullLoadKPartialTiling_);
+        void* tilingBuf = context_->GetRawTilingData()->GetData();
+        size_t tilingBufCap = context_->GetRawTilingData()->GetCapacity();
+        size_t tilingDataSize = sizeof(Ops::NN::Conv2dV2::Conv2DMNFullLoadKPartialTiling);
+        if (tilingBuf == nullptr || tilingBufCap < tilingDataSize) {
+            OP_LOGE(context_->GetNodeType(),
+                    "Conv2D AscendC: tiling buffer null or capacity too small, cap=%zu need=%zu.", tilingBufCap,
+                    tilingDataSize);
+            return ge::GRAPH_FAILED;
+        }
+        errno_t cpyRet = memcpy_s(tilingBuf, tilingBufCap, &Conv2DMNFullLoadKPartialTiling_, tilingDataSize);
+        if (cpyRet != EOK) {
+            OP_LOGE(context_->GetNodeType(), "Conv2D AscendC: memcpy_s tiling data failed, ret=%d.", cpyRet);
+            return ge::GRAPH_FAILED;
+        }
+        context_->GetRawTilingData()->SetDataSize(tilingDataSize);
+    } else {
+        tilingData_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
+        context_->GetRawTilingData()->SetDataSize(tilingData_.GetDataSize());
+    }
     if (flagInfo_.isASWT) {
-        uint64_t totalM = shapeInfo_.ho * shapeInfo_.wo;
-        uint64_t mBlocks = tilingData_.get_innerBatch() > 1 ? 1 : ConvCeilDiv(totalM, tilingData_.get_hoL1());
-        uint64_t nBlocks = ConvCeilDiv(shapeInfo_.co, tilingData_.get_nBL1());
-        uint64_t batchBlocks = ConvCeilDiv(shapeInfo_.batch, tilingData_.get_innerBatch());
-        context_->SetBlockDim(std::min<uint64_t>(batchBlocks * mBlocks * nBlocks, opInfo_->aicoreNum));
+        if (opInfo_->npuArch == NpuArch::DAV_9201 || opInfo_->npuArch == NpuArch::DAV_9202) {
+            context_->SetBlockDim(opInfo_->aicoreNum);
+        } else {
+            uint64_t totalM = shapeInfo_.ho * shapeInfo_.wo;
+            uint64_t mBlocks = tilingData_.get_innerBatch() > 1 ? 1 : ConvCeilDiv(totalM, tilingData_.get_hoL1());
+            uint64_t nBlocks = ConvCeilDiv(shapeInfo_.co, tilingData_.get_nBL1());
+            uint64_t batchBlocks = ConvCeilDiv(shapeInfo_.batch, tilingData_.get_innerBatch());
+            context_->SetBlockDim(std::min<uint64_t>(batchBlocks * mBlocks * nBlocks, opInfo_->aicoreNum));
+        }
     } else if (flagInfo_.mSplitModeFlag) {
         context_->SetBlockDim(numBlocksRes.batchDim * numBlocksRes.mDim * numBlocksRes.nDim * numBlocksRes.groupDim);
     } else {
@@ -640,6 +717,11 @@ ge::graphStatus Conv2dBaseTiling::PostTiling()
 
 void Conv2dBaseTiling::CalcASWTStrategy()
 {
+    // ASWT re-deciding the core allocation policy first.
+    ASWTDecision();
+    if (flagInfo_.isASWT) {
+        return;
+    }
     tilingData_.set_mWindows(0);
     flagInfo_.isASWT = false;
     // Keep L1 pingpong on the original schedule until ASWT supports preloading across tasks.

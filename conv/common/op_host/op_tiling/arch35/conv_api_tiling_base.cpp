@@ -17,8 +17,10 @@
 #include <cstdint>
 #include <unordered_set>
 #include <sstream>
+#include "conv_api_tiling_algorithm_BBmode.h"
 
 using namespace std;
+using namespace conv_tiling_algo_bb;
 
 namespace conv_tiling {
 ConvTilingBase::ConvTilingBase(const PlatformInfo& platform)
@@ -289,5 +291,220 @@ bool ConvTilingBase::CheckLoad3DAllPadLimits()
 bool ConvTilingBase::CheckLoad3DLimits()
 {
     return CheckLoad3DAttrLimits() && CheckLoad3DWeightLimits() && CheckLoad3DAllPadLimits();
+}
+
+bool ConvTilingBase::CheckTilingAlgorithmType(BasicBlockInfo& basicBlockInfo, int8_t phase)
+{
+    if (phase == BB_PHASE_1) {
+        if (!CheckParamsBBModePhase1()) {
+            OP_LOGE(nodeType, "conv api tiling general params check failed in phase 1.");
+            return false;
+        }
+    } else {
+        if (!CheckParams()) {
+            OP_LOGE(nodeType, "conv api tiling general params check failed in phase 2.");
+            return false;
+        }
+    }
+    InferCubeInfo();
+    if (!CheckL1SizeLimit()) {
+        OP_LOGE(nodeType, "conv api tiling L1size check failed.");
+        return false;
+    }
+
+    if (phase == BB_PHASE_1) {
+        if (!CheckBasicBlockInfoPhase1(basicBlockInfo)) {
+            OP_LOGE(nodeType, "conv basic block info check failed in phase 1.");
+            return false;
+        }
+    } else {
+        if (!CheckBasicBlockInfoPhase2(basicBlockInfo)) {
+            OP_LOGE(nodeType, "conv basic block info check failed in phase 2.");
+            return false;
+        }
+    }
+    if (CheckBBmodeLimits(basicBlockInfo)) {
+        tilingAlgorithmType = static_cast<int8_t>(TilingAlgorithmType::BASIC_BLOCK);
+    }
+    switch (tilingAlgorithmType) {
+        case static_cast<int8_t>(TilingAlgorithmType::BASIC_BLOCK):
+            return true;
+        case static_cast<int8_t>(TilingAlgorithmType::FORMULAS):
+        default:
+            OP_LOGE(nodeType, "Unsupported tiling algorithm type %d, only support BASIC_BLOCK(%d).",
+                    tilingAlgorithmType, static_cast<int8_t>(TilingAlgorithmType::BASIC_BLOCK));
+            return false;
+    }
+}
+
+bool ConvTilingBase::CheckL1SizeLimit()
+{
+    uint32_t fMapDtypeSize = DTYPE_SIZE_TAB.at(descInfo.fMapType.dtype);
+    uint32_t weightDtypeSize = DTYPE_SIZE_TAB.at(descInfo.weightType.dtype);
+    // ensure 32-byte alignment
+    uint64_t minBiasSize = hasBias ? AlignB(cubeInfo.n0 * DTYPE_SIZE_TAB.at(descInfo.biasType.dtype), C0_SIZE) : 0;
+    uint64_t minScaleSize = 0;
+    if (hasScale) {
+        minScaleSize = static_cast<uint64_t>(shapeInfo.channelWiseCoeff * cubeInfo.n0 *
+                                             DTYPE_SIZE_TAB.at(descInfo.scaleType.dtype));
+    }
+    uint64_t minBL1Size = static_cast<uint64_t>(shapeInfo.orgkH) * static_cast<uint64_t>(shapeInfo.orgkW) *
+                          cubeInfo.n0 * cubeInfo.k0 * weightDtypeSize;
+    uint64_t minAL1Size = 0;
+    uint64_t minHoAL1 = min(MIN_M_L1_SIZE / static_cast<uint64_t>(shapeInfo.orgWo) + CONST_VALUE_2,
+                            static_cast<uint64_t>(shapeInfo.orgHo));
+    uint64_t khd = static_cast<uint64_t>(attrInfo.dilationH) * (static_cast<uint64_t>(shapeInfo.orgkH) - 1) + 1;
+    uint64_t minHiAL1 = (minHoAL1 - 1) * static_cast<uint64_t>(attrInfo.strideH) + khd;
+    minHiAL1 = (minHiAL1 < static_cast<uint64_t>(shapeInfo.orgHi)) ? minHiAL1 : static_cast<uint64_t>(shapeInfo.orgHi);
+    minAL1Size = minHiAL1 * static_cast<uint64_t>(shapeInfo.orgWi) * cubeInfo.k0 * fMapDtypeSize * innerBatch;
+    uint64_t minL1LoadSize = minAL1Size + minBL1Size + minBiasSize + minScaleSize;
+    if (minL1LoadSize > platformInfo.l1Size) {
+        OP_LOGD(nodeType, "CheckL1SizeLimit, minimum L1 size: %lu, maxL1Size: %lu", minL1LoadSize, platformInfo.l1Size);
+        return false;
+    }
+    return true;
+}
+
+bool ConvTilingBase::CheckBasicBlockInfoPhase1(BasicBlockInfo& basicBlockInfo) const
+{
+    if (basicBlockInfo.fDim == 0) {
+        OP_LOGE(nodeType, "fDim is illegal which is: %u", basicBlockInfo.fDim);
+        return false;
+    }
+    if (basicBlockInfo.nDim == 0) {
+        OP_LOGE(nodeType, "nDim is illegal which is: %u", basicBlockInfo.nDim);
+        return false;
+    }
+    if (basicBlockInfo.groupDim == 0) {
+        OP_LOGE(nodeType, "groupDim is illegal which is: %u", basicBlockInfo.groupDim);
+        return false;
+    }
+    if (basicBlockInfo.aicoreNum == 0) {
+        OP_LOGE(nodeType, "aicoreNum is illegal which is: %u", basicBlockInfo.aicoreNum);
+        return false;
+    }
+    if (basicBlockInfo.mIn == 0) {
+        OP_LOGE(nodeType, "mIn is illegal which is: %lu", basicBlockInfo.mIn);
+        return false;
+    }
+    if (basicBlockInfo.mTile == 0) {
+        OP_LOGE(nodeType, "mTile is illegal which is: %u", basicBlockInfo.mTile);
+        return false;
+    }
+    if (basicBlockInfo.nTile == 0) {
+        OP_LOGE(nodeType, "nTile is illegal which is: %u", basicBlockInfo.nTile);
+        return false;
+    }
+    if (basicBlockInfo.mCut == 0) {
+        OP_LOGE(nodeType, "mCut is illegal which is: %u", basicBlockInfo.mCut);
+        return false;
+    }
+    if (basicBlockInfo.nCut == 0) {
+        OP_LOGE(nodeType, "nCut is illegal which is: %u", basicBlockInfo.nCut);
+        return false;
+    }
+    if (basicBlockInfo.batch == 0) {
+        OP_LOGE(nodeType, "batch is illegal which is: %u", basicBlockInfo.batch);
+        return false;
+    }
+    if (basicBlockInfo.doCut == 0) {
+        OP_LOGE(nodeType, "doCut is illegal which is: %u", basicBlockInfo.doCut);
+        return false;
+    }
+    return true;
+}
+
+bool ConvTilingBase::CheckBasicBlockInfoPhase2(BasicBlockInfo& basicBlockInfo)
+{
+    if (basicBlockInfo.batchDim == 0) {
+        OP_LOGE(nodeType, "batchDim is illegal which is: %u", basicBlockInfo.batchDim);
+        return false;
+    }
+    if (basicBlockInfo.mDim == 0) {
+        OP_LOGE(nodeType, "mDim is illegal which is: %u", basicBlockInfo.mDim);
+        return false;
+    }
+    if (basicBlockInfo.nDim == 0) {
+        OP_LOGE(nodeType, "nDim is illegal which is: %u", basicBlockInfo.nDim);
+        return false;
+    }
+    if (basicBlockInfo.mTile == 0) {
+        OP_LOGE(nodeType, "mTile is illegal which is: %u", basicBlockInfo.mTile);
+        return false;
+    }
+    if (basicBlockInfo.nTile == 0) {
+        OP_LOGE(nodeType, "nTile is illegal which is: %u", basicBlockInfo.nTile);
+        return false;
+    }
+    if (basicBlockInfo.mIn == 0) {
+        OP_LOGE(nodeType, "mIn is illegal which is: %lu", basicBlockInfo.mIn);
+        return false;
+    }
+    if (static_cast<uint8_t>(basicBlockInfo.iterateMNOrder) == static_cast<uint8_t>(IterateMNOrder::INVALID)) {
+        OP_LOGE(nodeType, "iterateMNOrder is illegal which is: %u (INVALID)",
+                static_cast<uint8_t>(basicBlockInfo.iterateMNOrder));
+        return false;
+    }
+    return true;
+}
+
+bool ConvTilingBase::CheckParams()
+{
+    if (!CheckAlgorithmLimit()) {
+        return false;
+    }
+    if (!CheckAttr()) {
+        return false;
+    }
+    if (!CheckShape()) {
+        return false;
+    }
+    if (!CheckFormat()) {
+        return false;
+    }
+    if (!CheckDtype()) {
+        return false;
+    }
+    if (!CheckInstructionLimits()) {
+        return false;
+    }
+    return true;
+}
+
+bool ConvTilingBase::CheckParamsBBModePhase1()
+{
+    if (!CheckAlgorithmLimit()) {
+        return false;
+    }
+    if (!CheckAttrBBModePhase1()) {
+        return false;
+    }
+    if (!CheckShapeBBModePhase1()) {
+        return false;
+    }
+    if (!CheckFormat()) {
+        return false;
+    }
+    if (!CheckDtype()) {
+        return false;
+    }
+    if (!CheckInstructionLimits()) {
+        return false;
+    }
+    return true;
+}
+
+bool ConvTilingBase::EvalCandidateCoreBinding(BasicBlockInfo& basicBlockInfo)
+{
+    if (!CheckTilingAlgorithmType(basicBlockInfo, BB_PHASE_1)) {
+        return false;
+    }
+    Infer5hdShape();
+    ConvTilingAlgorithmBBmode algoBB(this, basicBlockInfo);
+    algoBB.AdjustM();
+    algoBB.AdjustN();
+    algoBB.CalcBestL1LoadStratgy();
+    algoBB.CalcCoreUtilization();
+    return true;
 }
 } // namespace conv_tiling

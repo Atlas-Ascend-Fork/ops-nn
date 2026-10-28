@@ -22,15 +22,17 @@
 #include "../../../../conv3d_v2/op_kernel/conv3d_v2_tiling_data.h"
 #include "conv/common/op_host/op_tiling/arch35/conv_template_utils.h"
 #include "conv/conv3d_v2/op_kernel/conv3d_v2_tiling_data.h"
-#include "conv3d_v2_tiling.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_api_strategy.h"
 namespace conv_tiling {
 class __attribute__((visibility("default"))) Conv3dTiling : public ConvTilingBase {
 public:
-    Conv3dTiling(){};
-    explicit Conv3dTiling(const PlatformInfo& platform) : ConvTilingBase(platform){};
-    ~Conv3dTiling() override{};
+    Conv3dTiling() {};
+    explicit Conv3dTiling(const PlatformInfo& platform) : ConvTilingBase(platform) {};
+    ~Conv3dTiling() override {};
     int64_t GetTiling(Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tiling);
     int64_t Compute() override;
+    bool GetTiling(conv_tiling::BasicBlockInfo& basicBlockInfo, Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tiling,
+                   std::shared_ptr<conv_tiling::ConvAPIStrategy> apiStrategy);
     int64_t GetTilingData(optiling::conv_ops_tiling::ConvAscendcAttrInfo convAttrInfo,
                           optiling::conv_ops_tiling::ConvAscendcDescInfo convDescInfo,
                           optiling::conv_ops_tiling::ConvAscendcTilingFlag flagInfo,
@@ -70,6 +72,9 @@ public:
     void SetRoundMode(int8_t roundMode);
     void InitFlag();
     void SetKernelSplit(bool isKernelSplitIn);
+    bool CheckBBmodeLimits(BasicBlockInfo& basicBlockInfo) override;
+    bool CheckShapeBBModePhase1() override;
+    void Infer5hdShape() override;
 
 private:
     std::shared_ptr<ConvTilingAlgorithmBase> algoPtr;
@@ -77,17 +82,22 @@ private:
     void SetAttrsTilingData(Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tiling);
     void SetUnionDataXt(Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tiling);
     uint32_t CalcAL1SpaceSize(Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tiling);
-    void Infer5hdShape();
     bool CheckInputParam();
-    bool CheckAlgorithmLimit() const;
-    bool CheckAttr();
-    bool CheckPadStrideDilation();
+    bool CheckShape() override;
+    bool CheckFormat() override;
+    bool CheckAlgorithmLimit() override;
+    bool CheckAttr() override;
+    bool CheckAttrBBModePhase1() override;
+    bool CheckAttrBeforeCoreBind();
+    bool CheckGroupsBBModePhase1();
     bool CheckDataCopyLimits();
     bool CheckFixpipeLimits();
-    bool CheckInstructionLimits();
+    bool CheckInstructionLimits() override;
     bool CheckInputShape();
     bool CheckFeaMapShape();
     bool CheckWeightShape();
+    bool CheckFmapShapeBeforeCoreBind();
+    bool CheckWeightShapeBeforeCoreBind();
     bool CheckInputFormat();
     bool CheckSoc();
 };

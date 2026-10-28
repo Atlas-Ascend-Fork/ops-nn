@@ -13,6 +13,11 @@
  * \brief
  */
 
+#include "../inc/macro.h"
+#if !defined(__DAV_35_FAMILY__) && !defined(KERNELUT)
+#include "../conv2d_v2/conv2d_v2_common_tilingdata.h"
+using Conv2DTilingData = Ops::NN::Conv2dV2::Conv2DTilingData;
+#endif
 #include "../conv2d_v2/arch35/conv2d_v2.h"
 #include "../conv2d_v2/arch35/conv2d_v2_group.h"
 #include "../conv2d_v2/arch35/conv2d_v2_tilingkey.h"
@@ -28,7 +33,7 @@ constexpr ConvFormat scaleFormat = ConvFormat::ND;
 template <int8_t FmapTiling, int8_t WeightTiling, int8_t L1PingPong, int8_t L0PingPong, int8_t OutputOrder,
           int8_t IterOrder, int8_t GroupType, int8_t EnableSmallChannel, int8_t WeightUbTrans, int8_t FmapCopyMode,
           int8_t InnerBatch, int8_t DisContinuous, int8_t BatchOne, int8_t NoPad, int8_t SmallWeight,
-          int8_t SmallKernel>
+          int8_t SmallKernel, int8_t IsASWT>
 __global__ __aicore__ void quant_conv2d(GM_ADDR x, GM_ADDR filter, GM_ADDR scale, GM_ADDR bias, GM_ADDR offset,
                                         GM_ADDR y, GM_ADDR workspace, GM_ADDR tiling)
 {
@@ -39,6 +44,9 @@ __global__ __aicore__ void quant_conv2d(GM_ADDR x, GM_ADDR filter, GM_ADDR scale
     SetSysWorkspace(workspace);
     __gm__ uint8_t* user = GetUserWorkspace(workspace);
 
+#if !defined(__DAV_35_FAMILY__) && !defined(KERNELUT)
+    REGISTER_TILING_DEFAULT(Ops::NN::Conv2dV2::Conv2DTilingData);
+#endif
     GET_TILING_DATA(tilingData, tiling);
 
 #if defined(DTYPE_X) && defined(DTYPE_FILTER) && defined(DTYPE_Y)

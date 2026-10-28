@@ -397,6 +397,10 @@ ge::graphStatus Conv2dBaseTiling::SetTilingKey()
     tilingKeyPara_.fmapCppyMode = GetFmapCopyMode();
     tilingKeyPara_.innerBatch = GetEnableInnerBatch();
     tilingKeyPara_.disContinuous = static_cast<uint64_t>(flagInfo_.disContinuousFlag);
+    tilingKeyPara_.isAswt = (opInfo_->npuArch == NpuArch::DAV_9201 || opInfo_->npuArch == NpuArch::DAV_9202) &&
+                                    flagInfo_.isASWT ?
+                                CONV_ASWT_ENABLE :
+                                CONV_ASWT_DISABLE;
     if (IsWeightNZFormat(descInfo_.weightFormat)) {
         tilingKeyPara_.batchOne = static_cast<uint64_t>(tilingData_.get_singleCoreBatch() == 1);
         tilingKeyPara_.noPad = GetNoPad();
@@ -410,13 +414,14 @@ ge::graphStatus Conv2dBaseTiling::SetTilingKey()
             tilingKeyPara_.outputOrder, tilingKeyPara_.iterOrder, tilingKeyPara_.groupType,
             tilingKeyPara_.enableSmallChannel, tilingKeyPara_.weightUbTrans, tilingKeyPara_.fmapCppyMode,
             tilingKeyPara_.innerBatch, tilingKeyPara_.disContinuous, tilingKeyPara_.batchOne, tilingKeyPara_.noPad,
-            tilingKeyPara_.smallWeight, tilingKeyPara_.smallKernel);
+            tilingKeyPara_.smallWeight, tilingKeyPara_.smallKernel, tilingKeyPara_.isAswt);
     } else {
         tilingKey_ = GET_TPL_TILING_KEY(
             tilingKeyPara_.fmpTiling, tilingKeyPara_.weightTiling, tilingKeyPara_.l1PingPong, tilingKeyPara_.l0PingPong,
             tilingKeyPara_.outputOrder, tilingKeyPara_.iterOrder, tilingKeyPara_.groupType,
             tilingKeyPara_.enableSmallChannel, tilingKeyPara_.weightUbTrans, tilingKeyPara_.fmapCppyMode,
-            tilingKeyPara_.innerBatch, tilingKeyPara_.disContinuous, 0, 0, 0, tilingKeyPara_.smallKernel);
+            tilingKeyPara_.innerBatch, tilingKeyPara_.disContinuous, 0, 0, 0, tilingKeyPara_.smallKernel,
+            tilingKeyPara_.isAswt);
     }
 
     OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: c04 mode status is: %d.", flagInfo_.enableC04Flag);
@@ -429,7 +434,7 @@ ge::graphStatus Conv2dBaseTiling::SetTilingKey()
        << tilingKeyPara_.fmapCppyMode << "], innerBatch[" << tilingKeyPara_.innerBatch << "], disContinuous["
        << tilingKeyPara_.disContinuous << "], batchOne[" << tilingKeyPara_.batchOne << "], noPad["
        << tilingKeyPara_.noPad << "], smallWeight[" << tilingKeyPara_.smallWeight << "], smallKernel["
-       << tilingKeyPara_.smallKernel << "].";
+       << tilingKeyPara_.smallKernel << "], isAswt[" << tilingKeyPara_.isAswt << "].";
     OP_LOGD(paramInfo_.nodeType.c_str(), "%s", ss.str().c_str());
     return ge::GRAPH_SUCCESS;
 }

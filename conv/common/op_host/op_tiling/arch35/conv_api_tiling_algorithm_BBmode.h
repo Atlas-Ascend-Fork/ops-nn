@@ -21,7 +21,7 @@
 #include <memory>
 #include "conv_api_tiling_algorithm_base.h"
 #include "conv_api_tiling_base.h"
-#include "conv/conv2d_v2/op_host/op_tiling/arch35/conv2d_v2_api_tiling.h"
+#include "conv_api_strategy.h"
 
 namespace conv_tiling_algo_bb {
 using namespace conv_tiling;
@@ -38,6 +38,11 @@ struct PreSetFullLoadFlag {
     bool kBl1FullLoad = false;
     bool biasFullLoad = false;
     bool fixpFullLoad = false;
+};
+
+struct L0MNTileEvalResult {
+    uint8_t pbAL0 = 0;
+    uint8_t pbBL0 = 0;
 };
 
 enum class L1LoadStrategyType : int8_t {
@@ -58,19 +63,34 @@ enum class Kl1MultiAxis : int8_t { KAL1 = 0, KBL1, INVALID };
 
 class ConvTilingAlgorithmBBmode : public ConvTilingAlgorithmBase {
 public:
-    Conv2DBasicBlockInfo* conv2DBasicBlockInfoPtr = nullptr;
+    BasicBlockInfo* basicBlockInfoPtr = nullptr;
 
-    explicit ConvTilingAlgorithmBBmode(ConvTilingBase* tilingIns, Conv2DBasicBlockInfo& conv2DBasicBlockInfo)
-        : ConvTilingAlgorithmBase(tilingIns), conv2DBasicBlockInfoPtr(&conv2DBasicBlockInfo)
+    explicit ConvTilingAlgorithmBBmode(ConvTilingBase* tilingIns, BasicBlockInfo& basicBlockInfo)
+        : ConvTilingAlgorithmBase(tilingIns),
+          basicBlockInfoPtr(&basicBlockInfo),
+          apiStrategy_(std::make_shared<ConvAPIStrategy>())
     {
         singleCi1xC0 = AlignB(tilingIns_->shapeInfo.singleCi, tilingIns_->cubeInfo.k0);
         groupOpt = tilingIns_->optGroupFlag ? tilingIns_->attrInfo.groups * tilingIns_->shapeInfo.enlarge :
                                               tilingIns_->attrInfo.groups;
     };
-    ~ConvTilingAlgorithmBBmode() override{};
+    ConvTilingAlgorithmBBmode(ConvTilingBase* tilingIns, BasicBlockInfo& basicBlockInfo,
+                              std::shared_ptr<ConvAPIStrategy> apiStrategy)
+        : ConvTilingAlgorithmBase(tilingIns), basicBlockInfoPtr(&basicBlockInfo), apiStrategy_(apiStrategy)
+    {
+        singleCi1xC0 = AlignB(tilingIns_->shapeInfo.singleCi, tilingIns_->cubeInfo.k0);
+        groupOpt = tilingIns_->optGroupFlag ? tilingIns_->attrInfo.groups * tilingIns_->shapeInfo.enlarge :
+                                              tilingIns_->attrInfo.groups;
+        if (apiStrategy_ != nullptr) {
+            apiStrategy_->Bind(this);
+        }
+    };
+    ~ConvTilingAlgorithmBBmode() override {};
     int64_t Process() override;
     void SetL1TilingRes() override;
     void SetL0TilingRes() override;
+
+    ConvTilingBase* GetTilingIns() const { return tilingIns_; }
 
     // abstract stragety base class
     class L1LoadStrategyBase {
@@ -113,6 +133,7 @@ public:
     class KAllSplit : public L1LoadStrategyBase {
     public:
         bool GetL1LoadStrategy(ConvTilingAlgorithmBBmode* bbPtr) override;
+        bool AdjustKL1(ConvTilingAlgorithmBBmode* bbPtr);
         bool GetL1LoadTilingParams(ConvTilingAlgorithmBBmode* bbPtr) override;
         bool MultiLoadKAllSplit(ConvTilingAlgorithmBBmode* bbPtr) const;
         bool MultiLoadKAllSplit(ConvTilingAlgorithmBBmode* bbPtr, const Kl1MultiAxis& kL1MultiAxis) const;
@@ -164,6 +185,7 @@ public:
     L1TilingParams l1TilingParams;
     L1TilingParams tmpL1TilingParams;
     PreSetFullLoadFlag preSetFullLoadFlag;
+    std::shared_ptr<ConvAPIStrategy> apiStrategy_;
 
     void AdjustM();
     void AdjustN();
@@ -179,6 +201,7 @@ private:
     uint32_t l1ScoreBase = 0;
     int64_t fmapL1FullLoadSize = 0;
     int64_t weightL1FullLoadSize = 0;
+    uint64_t fullLoadFactor = 1;
     uint64_t minL1Load = 0;
     uint64_t singleCi1xC0 = 0;
     int64_t availableL1Size = 0;
@@ -210,6 +233,10 @@ private:
     void GetL0Tiling();
     void GetKL0() const;
     void CheckL0CDoubleBuffer();
+    void TryOptimizeL0MNTile();
+    bool EvalL0MNTileCandidate(uint64_t tryMTile, uint64_t tryNTile, L0MNTileEvalResult& result) const;
+    void ScaleBiasUbTilingDecision();
+    void GetUbTiling();
 
     void CalcMNFullLoadFlag() const;
     void CalcAvalibleL1Size();

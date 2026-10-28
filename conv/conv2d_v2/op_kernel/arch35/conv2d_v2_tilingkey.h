@@ -57,7 +57,8 @@ ASCENDC_TPL_ARGS_DECL(
     ASCENDC_TPL_UINT_DECL(SmallWeight, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, CONV_NOT_SMALL_WEIGHT,
                           CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0),
     ASCENDC_TPL_UINT_DECL(SmallKernel, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, CONV_NOT_SMALL_KERNEL, CONV_SMALL_KERNEL,
-                          CONV_SMALL_KERNEL_FM_PARTLOAD));
+                          CONV_SMALL_KERNEL_FM_PARTLOAD),
+    ASCENDC_TPL_UINT_DECL(IsASWT, ASCENDC_TPL_1_BW, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE, CONV_ASWT_ENABLE));
 
 #if defined(FORMAT_FILTER) && (FORMAT_FILTER == FORMAT_FRACTAL_Z || FORMAT_FILTER == FORMAT_FRACTAL_Z_C04)
 #define CONV2D_SMALL_KERNEL_NCHW_SEL()
@@ -77,7 +78,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),                              \
         ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
-        ASCENDC_TPL_UINT_SEL(BatchOne, ASCENDC_TPL_UI_LIST, 0), ASCENDC_TPL_UINT_SEL(NoPad, ASCENDC_TPL_UI_LIST, 0), \
+        CONV_ASWT_SEL() ASCENDC_TPL_UINT_SEL(BatchOne, ASCENDC_TPL_UI_LIST, 0),                                      \
+        ASCENDC_TPL_UINT_SEL(NoPad, ASCENDC_TPL_UI_LIST, 0),                                                         \
         ASCENDC_TPL_UINT_SEL(SmallWeight, ASCENDC_TPL_UI_LIST, 0),                                                   \
         ASCENDC_TPL_UINT_SEL(SmallKernel, ASCENDC_TPL_UI_LIST, CONV_SMALL_KERNEL)
 #endif
@@ -87,7 +89,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),       \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),             \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),             \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)         \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),        \
+        CONV_ASWT_SEL()                                                                             \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 #define CONV2D_COMMON_C04_MIXCORE_TPL_UINT_SEL()                                                   \
@@ -96,7 +99,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),            \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),            \
         ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE,        \
-                             CONV_DIS_CONTINUOUS_INPUT_HWNC)                                       \
+                             CONV_DIS_CONTINUOUS_INPUT_HWNC),                                      \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                       \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 #define CONV2D_ONLY_MN_FULLLOAD_SEL()                                                      \
@@ -182,7 +186,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),           \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                 \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),                 \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)             \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),            \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                            \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 // simplified depthwise conv2d tilingKey SEL
@@ -203,7 +208,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                               \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),                               \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                           \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                          \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                          \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #else
@@ -215,7 +221,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),           \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                 \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),                 \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)             \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),            \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                            \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV2D_OPT_GROUP_PRELOAD_SEL()                                                                                \
@@ -232,7 +239,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                               \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),                               \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                           \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                          \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                          \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 // Weight Ub Trans Mode TilingKey SEL
@@ -247,7 +255,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                 \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),                 \
         ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE,             \
-                             CONV_DIS_CONTINUOUS_INPUT_HWNC)
+                             CONV_DIS_CONTINUOUS_INPUT_HWNC),                                           \
+        CONV_ASWT_SEL()
 
 #define CONV2D_WEIGHT_UB_ONLY_MN_FULLLOAD_SEL()                                                                      \
     ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_AUTO),                                                           \
@@ -317,7 +326,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                          \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_DMA_MODE),                                   \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                           \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)
 
 #define CONV2D_DMA_L1_FULLLOAD_L0B_CLOSE_SEL()                                                                        \
     ASCENDC_TPL_UINT_SEL(FmapTiling, ASCENDC_TPL_UI_LIST, CONV_FMAP_TILING_FULLLOAD_AL1),                             \
@@ -384,7 +394,8 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),           \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                 \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),                 \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)             \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),            \
+        CONV_ASWT_SEL()                                                                                 \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 ASCENDC_TPL_SEL(

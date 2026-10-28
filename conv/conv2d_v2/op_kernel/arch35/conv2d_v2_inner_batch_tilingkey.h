@@ -35,7 +35,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                 \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_MULTI),                  \
         ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE,             \
-                             CONV_DIS_CONTINUOUS_INPUT_HWNC)
+                             CONV_DIS_CONTINUOUS_INPUT_HWNC),                                           \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)
 
 #define CONV2D_INNER_BATCH_WEIGHT_UB_ONLY_MN_FULLLOAD_SEL()                                                          \
     ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_AUTO),                                                           \
@@ -104,7 +105,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                 \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,        \
                              CONV_INNER_BATCH_MULTI),                                                   \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),            \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)
 
 #define CONV_INNER_BATCH_ONLY_MN_FULLLOAD_SEL()                                                                      \
     ASCENDC_TPL_UINT_SEL(FmapTiling, ASCENDC_TPL_UI_LIST, CONV_FMAP_TILING_ONLY_M_FULLLOAD_AL1_AL0),                 \
@@ -209,7 +211,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                               \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                      \
                              CONV_INNER_BATCH_MULTI),                                                                 \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                           \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                          \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                          \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 #define CONV_INNER_BATCH_ONLY_MN_FULLLOAD_ENABLE_C04_SEL()                                                           \
@@ -228,7 +231,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                          \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 #define CONV_INNER_BATCH_NO_FULLLOAD_AL0_OPEN_ENABLE_C04_SEL()                                                       \
@@ -246,7 +250,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                          \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV_INNER_BATCH_NO_FULLLOAD_BL0_OPEN_ENABLE_C04_SEL()                                                       \
@@ -264,7 +269,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                          \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV_INNER_BATCH_NO_FULLLOAD_ALL_OPEN_ENABLE_C04_SEL()                                                       \
@@ -283,7 +289,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                          \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV_INNER_BATCH_ONLY_AL1_FULLLOAD_ENABLE_C04_SEL()                                                           \
@@ -300,7 +307,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                               \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                      \
                              CONV_INNER_BATCH_MULTI),                                                                 \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                           \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                          \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                          \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 #define CONV_INNER_BATCH_ONLY_BL1_FULLLOAD_ENABLE_C04_SEL()                                                           \
@@ -317,7 +325,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                               \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                      \
                              CONV_INNER_BATCH_MULTI),                                                                 \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                           \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                          \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                          \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 #define CONV_INNER_BATCH_ABL1_FULLLOAD_M_FIRST_ENABLE_C04_SEL()                                                      \
@@ -335,7 +344,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                          \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 #define CONV_INNER_BATCH_ABL1_FULLLOAD_N_FIRST_ENABLE_C04_SEL()                                                      \
@@ -352,7 +362,8 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE)                          \
+        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
 #else

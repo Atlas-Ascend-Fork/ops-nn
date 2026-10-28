@@ -13,6 +13,10 @@
  * \brief
  */
 #include "conv3d_v2_base_tiling.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_basic_block.h"
+#include "conv/common/op_host/op_tiling/arch35/conv3d_basic_block_strategy.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_api_tiling_algorithm_BBmode.h"
+#include "conv/common/op_host/op_tiling/arch35/conv3d_dimension_strategy.h"
 
 namespace optiling {
 namespace conv_ops_tiling {
@@ -126,10 +130,91 @@ ge::graphStatus Conv3dBaseTilingV2::GetConv3dOpsTiling()
     return ge::GRAPH_SUCCESS;
 }
 
+void Conv3dBaseTilingV2::InitApiTilingCommon()
+{
+    conv3dApiTiling_.SetOrgFmapShape(static_cast<int64_t>(shapeInfo_.ci), static_cast<int64_t>(shapeInfo_.di),
+                                     static_cast<int64_t>(shapeInfo_.hi), static_cast<int64_t>(shapeInfo_.wi));
+    conv3dApiTiling_.SetOrgWeightShape(static_cast<int64_t>(shapeInfo_.co), static_cast<int64_t>(shapeInfo_.kd),
+                                       static_cast<int64_t>(shapeInfo_.kh), static_cast<int64_t>(shapeInfo_.kw));
+    uint64_t singleCoreCi = flagInfo_.convGroupType != ConvGroupType::NORMAL_CONV ?
+                                (flagInfo_.convGroupType == ConvGroupType::ORI_GROUP_CONV ? oriGroupInfo_.ciPerGroup :
+                                                                                            optGroupInfo_.cinOpt) :
+                                shapeInfo_.ci;
+    conv3dApiTiling_.SetSingleWeightShape(static_cast<int64_t>(singleCoreCi), static_cast<int64_t>(shapeInfo_.kd),
+                                          static_cast<int64_t>(shapeInfo_.kh), static_cast<int64_t>(shapeInfo_.kw));
+    conv3dApiTiling_.SetPadding(static_cast<int64_t>(attrInfo_.padHead), static_cast<int64_t>(attrInfo_.padTail),
+                                static_cast<int64_t>(attrInfo_.padTop), static_cast<int64_t>(attrInfo_.padBottom),
+                                static_cast<int64_t>(attrInfo_.padLeft), static_cast<int64_t>(attrInfo_.padRight));
+    conv3dApiTiling_.SetDilation(static_cast<int64_t>(attrInfo_.dilationH), static_cast<int64_t>(attrInfo_.dilationW),
+                                 static_cast<int64_t>(attrInfo_.dilationD));
+    conv3dApiTiling_.SetStride(static_cast<int64_t>(attrInfo_.strideH), static_cast<int64_t>(attrInfo_.strideW),
+                               static_cast<int64_t>(attrInfo_.strideD));
+    conv3dApiTiling_.SetGroups(static_cast<int32_t>(attrInfo_.groups));
+    int8_t outputOrder = flagInfo_.mSplitModeFlag ? 1 : 0;
+    conv3dApiTiling_.SetOutputOrder(outputOrder);
+    conv3dApiTiling_.SetKernelSplit(flagInfo_.isKernelSplit);
+    conv3dApiTiling_.SetQuantConvFlag(flagInfo_.quantFlag);
+    conv3dApiTiling_.SetWeightType(TPosition::GM, formatMap[descInfo_.weightFormat], dtypeMap[descInfo_.weightDtype]);
+    conv3dApiTiling_.SetFmapType(TPosition::GM, formatMap[descInfo_.fMapFormat], dtypeMap[descInfo_.fMapDtype]);
+    conv3dApiTiling_.SetOutputType(TPosition::CO1, formatMap[descInfo_.outFormat], dtypeMap[descInfo_.outDtype]);
+    if (flagInfo_.quantFlag || flagInfo_.isConv3dDequant) {
+        conv3dApiTiling_.SetScaleType(TPosition::GM, formatMap[descInfo_.scaleFormat], dtypeMap[descInfo_.scaleDtype]);
+    }
+    conv3dApiTiling_.SetFixpipeParams(fixpipeInfo_);
+    conv3dApiTiling_.SetOffsetx(static_cast<int8_t>(attrInfo_.offsetx));
+    conv3dApiTiling_.SetRoundMode(static_cast<int8_t>(attrInfo_.roundMode));
+    conv3dApiTiling_.SetNodeType(paramInfo_.nodeType);
+    if (flagInfo_.convGroupType == ConvGroupType::OPT_GROUP_CONV) {
+        // set enlarge for BasicBlock
+        conv3dApiTiling_.SetOptGroupParams(static_cast<int32_t>(optGroupInfo_.enlarge), attrInfo_.groups,
+                                           optGroupInfo_.groupOpt);
+    }
+    if (flagInfo_.hasBias) {
+        conv3dApiTiling_.SetBiasType(TPosition::GM, formatMap[descInfo_.biasFormat], dtypeMap[descInfo_.biasDtype]);
+    }
+}
+
 void Conv3dBaseTilingV2::NumBlocksDecision()
 {
+    InitApiTilingCommon();
     convBase_.UpdateFlagInfo(flagInfo_);
     if (flagInfo_.mSplitModeFlag) { // M split mode
+        auto strategy = std::make_shared<conv_tiling::Conv3DBasicBlockStrategy>();
+        conv_tiling::BBCommonParams params = {shapeInfo_,
+                                              descInfo_,
+                                              attrInfo_,
+                                              convOpsConstParams_,
+                                              flagInfo_,
+                                              ConvAscendcFeatureFlag::IS_LOAD3D_FLAG,
+                                              apiInputPlatformInfo_,
+                                              opInfo_->aicoreNum,
+                                              opInfo_->l1Size,
+                                              opInfo_->l0cSize,
+                                              oriGroupInfo_,
+                                              optGroupInfo_,
+                                              fixpipeInfo_,
+                                              &conv3dApiTiling_,
+                                              false,
+                                              1};
+        conv_tiling::ConvBasicBlock flow(params, conv3dBasicBlockInfo_, strategy);
+        flagInfo_.mBasicBlockFlag = flow.SelectMModeAlgorithm();
+        if (flagInfo_.mBasicBlockFlag) {
+            flow.BasicBlock();
+            numBlocksRes.batchDim = conv3dBasicBlockInfo_.batchDim;
+            numBlocksRes.mDim = conv3dBasicBlockInfo_.mDim;
+            numBlocksRes.nDim = conv3dBasicBlockInfo_.nDim;
+            numBlocksRes.doDim = conv3dBasicBlockInfo_.doDim;
+            numBlocksRes.groupDim = conv3dBasicBlockInfo_.groupDim;
+            numBlocksRes.minCost = 0;
+            OP_LOGD(context_->GetNodeType(),
+                    "%s AscendC: get tiling from Mmode basic block algorithm, belongs to fast_tiling.",
+                    paramInfo_.nodeType.c_str());
+            OP_LOGD(context_->GetNodeType(),
+                    "%s AscendC: batchDim / mDim / nDim / doDim / groupDim: %u, %u, %u, %u, %u.",
+                    paramInfo_.nodeType.c_str(), numBlocksRes.batchDim, numBlocksRes.mDim, numBlocksRes.nDim,
+                    numBlocksRes.doDim, numBlocksRes.groupDim);
+            return;
+        }
         numBlocksRes = convBase_.NumBlocksDecisionMsplitMode();
         OP_LOGD(paramInfo_.nodeType.c_str(),
                 "AscendC: get tiling from Mmode formulaic algorithm, belongs to fast_tiling.");
@@ -151,36 +236,24 @@ void Conv3dBaseTilingV2::NumBlocksDecision()
 ge::graphStatus Conv3dBaseTilingV2::GetConv3dApiTiling()
 {
     Conv3dOpTilingSetShape();
-    int8_t outputOrder = flagInfo_.mSplitModeFlag ? 1 : 0;
-    conv3dApiTiling_.SetOutputOrder(outputOrder);
-    conv3dApiTiling_.SetKernelSplit(flagInfo_.isKernelSplit);
-    conv3dApiTiling_.SetQuantConvFlag(flagInfo_.quantFlag);
-    conv3dApiTiling_.SetPadding(static_cast<int64_t>(attrInfo_.padHead), static_cast<int64_t>(attrInfo_.padTail),
-                                static_cast<int64_t>(attrInfo_.padTop), static_cast<int64_t>(attrInfo_.padBottom),
-                                static_cast<int64_t>(attrInfo_.padLeft), static_cast<int64_t>(attrInfo_.padRight));
-    conv3dApiTiling_.SetDilation(static_cast<int64_t>(attrInfo_.dilationH), static_cast<int64_t>(attrInfo_.dilationW),
-                                 static_cast<int64_t>(attrInfo_.dilationD));
-    conv3dApiTiling_.SetStride(static_cast<int64_t>(attrInfo_.strideH), static_cast<int64_t>(attrInfo_.strideW),
-                               static_cast<int64_t>(attrInfo_.strideD));
-    conv3dApiTiling_.SetGroups(static_cast<int32_t>(attrInfo_.groups));
-
-    conv3dApiTiling_.SetWeightType(TPosition::GM, formatMap[descInfo_.weightFormat], dtypeMap[descInfo_.weightDtype]);
-    conv3dApiTiling_.SetFmapType(TPosition::GM, formatMap[descInfo_.fMapFormat], dtypeMap[descInfo_.fMapDtype]);
-    conv3dApiTiling_.SetOutputType(TPosition::CO1, formatMap[descInfo_.outFormat], dtypeMap[descInfo_.outDtype]);
-    if (flagInfo_.quantFlag || flagInfo_.isConv3dDequant) {
-        conv3dApiTiling_.SetScaleType(TPosition::GM, formatMap[descInfo_.scaleFormat], dtypeMap[descInfo_.scaleDtype]);
-    }
-    conv3dApiTiling_.SetFixpipeParams(fixpipeInfo_);
-    conv3dApiTiling_.SetOffsetx(static_cast<int8_t>(attrInfo_.offsetx));
-    conv3dApiTiling_.SetRoundMode(static_cast<int8_t>(attrInfo_.roundMode));
-    conv3dApiTiling_.SetNodeType(paramInfo_.nodeType);
-    if (flagInfo_.hasBias) {
-        conv3dApiTiling_.SetBiasType(TPosition::GM, formatMap[descInfo_.biasFormat], dtypeMap[descInfo_.biasDtype]);
-    }
-
-    if (conv3dApiTiling_.GetTiling(tilingData_) == -1) {
-        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: get api tiling wrong.");
-        return ge::GRAPH_FAILED;
+    if (flagInfo_.mBasicBlockFlag) {
+        OP_LOGD(context_->GetNodeType(),
+                "%s AscendC: [Phase2] batchDim[%u], mDim[%u], nDim[%u], groupDim[%u], doDim[%u], mCut[%u], nCut[%u], "
+                "doCut[%u], mTile[%u], nTile[%u], mIn[%u].",
+                paramInfo_.nodeType.c_str(), numBlocksRes.batchDim, numBlocksRes.mDim, numBlocksRes.nDim,
+                numBlocksRes.groupDim, numBlocksRes.doDim, conv3dBasicBlockInfo_.mCut, conv3dBasicBlockInfo_.nCut,
+                conv3dBasicBlockInfo_.doCut, conv3dBasicBlockInfo_.mTile, conv3dBasicBlockInfo_.nTile,
+                conv3dBasicBlockInfo_.mIn);
+        auto apiStrategy = std::make_shared<conv_tiling::Conv3DAPIStrategy>();
+        if (!conv3dApiTiling_.GetTiling(conv3dBasicBlockInfo_, tilingData_, apiStrategy)) {
+            OP_LOGE(context_->GetNodeType(), "%s AscendC: get BBmode api tiling wrong.", paramInfo_.nodeType.c_str());
+            return ge::GRAPH_FAILED;
+        }
+    } else {
+        if (conv3dApiTiling_.GetTiling(tilingData_) == -1) {
+            OP_LOGE(context_->GetNodeType(), "%s AscendC: get api tiling wrong.", paramInfo_.nodeType.c_str());
+            return ge::GRAPH_FAILED;
+        }
     }
 
     return ge::GRAPH_SUCCESS;
@@ -188,18 +261,6 @@ ge::graphStatus Conv3dBaseTilingV2::GetConv3dApiTiling()
 
 void Conv3dBaseTilingV2::Conv3dOpTilingSetShape()
 {
-    conv3dApiTiling_.SetOrgWeightShape(static_cast<int64_t>(shapeInfo_.co), static_cast<int64_t>(shapeInfo_.kd),
-                                       static_cast<int64_t>(shapeInfo_.kh), static_cast<int64_t>(shapeInfo_.kw));
-    conv3dApiTiling_.SetOrgFmapShape(static_cast<int64_t>(shapeInfo_.ci), static_cast<int64_t>(shapeInfo_.di),
-                                     static_cast<int64_t>(shapeInfo_.hi), static_cast<int64_t>(shapeInfo_.wi));
-
-    uint64_t singleCoreCi = flagInfo_.convGroupType != ConvGroupType::NORMAL_CONV ?
-                                (flagInfo_.convGroupType == ConvGroupType::ORI_GROUP_CONV ? oriGroupInfo_.ciPerGroup :
-                                                                                            optGroupInfo_.cinOpt) :
-                                shapeInfo_.ci;
-    conv3dApiTiling_.SetSingleWeightShape(static_cast<int64_t>(singleCoreCi), static_cast<int64_t>(shapeInfo_.kd),
-                                          static_cast<int64_t>(shapeInfo_.kh), static_cast<int64_t>(shapeInfo_.kw));
-
     uint64_t curCo = flagInfo_.convGroupType != ConvGroupType::NORMAL_CONV ?
                          (flagInfo_.convGroupType == ConvGroupType::ORI_GROUP_CONV ? oriGroupInfo_.coPerGroup :
                                                                                      optGroupInfo_.coutOpt) :

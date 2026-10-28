@@ -1951,26 +1951,26 @@ TEST_F(TestConv2dTiling, test_algo_BB_GetTiling)
 
     bool ret = false;
     optiling::Conv2DTilingData tilingData;
-    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData);
+    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData, std::make_shared<conv_tiling::ConvAPIStrategy>());
     EXPECT_EQ(ret, false);
 
     testTiling.shapeInfo.singleM = 256 * 256 / 4;
-    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData);
+    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData, std::make_shared<conv_tiling::ConvAPIStrategy>());
     EXPECT_EQ(ret, false);
 
     testTiling.shapeInfo.singleCo = 64;
-    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData);
+    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData, std::make_shared<conv_tiling::ConvAPIStrategy>());
     EXPECT_EQ(ret, true);
 
     conv2DBasicBlockInfo.nBl1FullLoad = true;
     testTiling.shapeInfo.singleM = 256;
-    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData);
+    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData, std::make_shared<conv_tiling::ConvAPIStrategy>());
     EXPECT_EQ(ret, true);
 
     conv2DBasicBlockInfo.mAl1FullLoad = true;
     testTiling.shapeInfo.singleCo = 256;
     conv2DBasicBlockInfo.iterateMNOrder = conv_tiling::IterateMNOrder::ITER_N_FST;
-    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData);
+    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData, std::make_shared<conv_tiling::ConvAPIStrategy>());
     EXPECT_EQ(ret, true);
 
     delete algo;
@@ -2030,7 +2030,7 @@ TEST_F(TestConv2dTiling, test_algo_BB_GetTilingPartTwo)
     conv2DBasicBlockInfo.kBl1FullLoad = true;
     conv2DBasicBlockInfo.kAl1FullLoad = false;
     conv2DBasicBlockInfo.nBl1FullLoad = true;
-    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData);
+    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData, std::make_shared<conv_tiling::ConvAPIStrategy>());
     EXPECT_EQ(ret, false);
 }
 
@@ -2085,7 +2085,7 @@ TEST_F(TestConv2dTiling, test_algo_BB_GetTilingPartThree)
     conv2DBasicBlockInfo.kAl1FullLoad = true;
     conv2DBasicBlockInfo.mAl1FullLoad = true;
     conv2DBasicBlockInfo.nBl1FullLoad = false;
-    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData);
+    ret = testTiling.GetTiling(conv2DBasicBlockInfo, tilingData, std::make_shared<conv_tiling::ConvAPIStrategy>());
     EXPECT_EQ(ret, false);
 }
 
@@ -2127,7 +2127,7 @@ TEST_F(TestConv2dTiling, test_algo_BB_GetCoreBindingDecisionFactor)
     conv2DBasicBlockInfo.iterateMNOrder = conv_tiling::IterateMNOrder::ITER_M_FST;
 
     optiling::Conv2DTilingData tilingData;
-    bool ret = testTiling.GetCoreBindingDecisionFactor(conv2DBasicBlockInfo);
+    bool ret = testTiling.EvalCandidateCoreBinding(conv2DBasicBlockInfo);
     EXPECT_EQ(ret, true);
 
     delete algo;

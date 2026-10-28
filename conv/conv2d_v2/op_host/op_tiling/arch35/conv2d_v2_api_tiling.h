@@ -16,7 +16,9 @@
 #ifndef ASCENDC_TILING_CONV2D_V2_API_TILING_H
 #define ASCENDC_TILING_CONV2D_V2_API_TILING_H
 
+#include "../../../../common/op_host/op_tiling/arch35/conv_api_tiling_base.h"
 #include "../../../../common/op_host/op_tiling/arch35/conv_api_tiling_algorithm_base.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_api_strategy.h"
 
 namespace optiling {
 class Conv2DTilingData;
@@ -27,55 +29,20 @@ using optiling::conv_ops_tiling::ConvOptGroupInfo;
 using optiling::conv_ops_tiling::ConvOriGroupInfo;
 using optiling::conv_ops_tiling::FixpipeInfo;
 
-struct Conv2DBasicBlockTilingParams {
-    uint32_t mTile = 0; // Tile is the size of the block in singleCore
-    uint32_t nTile = 0;
-    uint32_t kTile = 0;
-    uint32_t fCut = 0; // Cut is the number of the block in singleCore
-    uint32_t mCut = 0;
-    uint32_t nCut = 0;
-    uint64_t mIn = 0; // mIn is the size of ML1 inferred back on L1
-    uint32_t nKernelHKernelW = 0;
-    uint32_t cinL1 = 0;
-    uint32_t batch = 0;
-    BoundType boundType = BoundType::INVALID;
-};
+using Conv2DBasicBlockTilingParams = BasicBlockTilingParams;
 
-struct Conv2DBasicNumBlocks {
-    uint32_t fDim = 0;
-    uint32_t nDim = 0;
-    uint32_t batchDim = 0;
-    uint32_t mDim = 0;
-    uint32_t fwDim = 0;
-    uint32_t groupDim = 0;
-    uint32_t aicoreNum = 0;
-    bool optGroupFlag = false;
-    float coreUtilization = 0;
-};
+using Conv2DBasicBlockMinLoadStrategy = BasicBlockMinLoadStrategy;
 
-struct Conv2DBasicBlockMinLoadStrategy {
-    IterateMNOrder iterateMNOrder = IterateMNOrder::INVALID;
-    bool kAl1FullLoad = false;
-    bool kBl1FullLoad = false;
-    bool mAl1FullLoad = false;
-    bool nBl1FullLoad = false;
-    bool biasFullLoad = false;
-    bool fixpFullLoad = false;
-    double l1LoadScore = -1.0;
-};
-
-// multiple inheritance
-struct Conv2DBasicBlockInfo : public Conv2DBasicBlockTilingParams,
-                              public Conv2DBasicNumBlocks,
-                              public Conv2DBasicBlockMinLoadStrategy {};
+using Conv2DBasicBlockInfo = BasicBlockInfo;
 
 class Conv2dTiling : public ConvTilingBase {
 public:
-    Conv2dTiling(){};
-    explicit Conv2dTiling(const PlatformInfo& platform) : ConvTilingBase(platform){};
-    ~Conv2dTiling() override{};
+    Conv2dTiling() {};
+    explicit Conv2dTiling(const PlatformInfo& platform) : ConvTilingBase(platform) {};
+    ~Conv2dTiling() override {};
     int64_t GetTiling(optiling::Conv2DTilingData& tiling);
-    bool GetTiling(Conv2DBasicBlockInfo& conv2DBasicBlockInfo, optiling::Conv2DTilingData& tiling);
+    bool GetTiling(Conv2DBasicBlockInfo& conv2DBasicBlockInfo, optiling::Conv2DTilingData& tiling,
+                   std::shared_ptr<conv_tiling::ConvAPIStrategy> apiStrategy);
     int64_t Compute() override;
 
     void SetOrgWeightShape(int64_t orgCo, int64_t orgkH, int64_t orgkW);
@@ -101,7 +68,6 @@ public:
     void SetDisContinuousFlag(bool disContinuous);
     void SetOutputOrder(int8_t outOrder);
     void SetTilingAlgorithmType(int8_t tilingAlgorithmType);
-    bool GetCoreBindingDecisionFactor(Conv2DBasicBlockInfo& conv2DBasicBlockInfo);
     void SetGroups(int32_t groups);
     void SetOptGroupParams(int32_t enlarge, int64_t singleGroups, int64_t singleGroupOpt);
     void CalcOptGroupParams(const ConvOriGroupInfo& oriGroupInfo, ConvOptGroupInfo& optGroupInfo) const;
@@ -121,33 +87,27 @@ private:
     uint64_t CalcDmaUBSize(ConvDmaParams& params, uint64_t khUb, uint64_t kwUb) const;
     uint32_t CalcAL1SpaceSize(optiling::Conv2DTilingData& tiling);
     void SetDefaultDdim();
-    void Infer5hdShape();
-    bool CheckParams();
-    bool CheckAttr();
-    bool CheckShape();
-    bool CheckFormat();
-    bool CheckAlgorithmLimit();
+    void Infer5hdShape() override;
+    bool CheckBBmodeLimits(BasicBlockInfo& basicBlockInfo) override;
+    bool CheckShapeBBModePhase1() override;
+    bool CheckAlgorithmLimit() override;
+    bool CheckAttr() override;
+    bool CheckAttrBBModePhase1() override;
+    bool CheckShape() override;
+    bool CheckFormat() override;
+    bool CheckInstructionLimits() override;
     bool CheckDataCopyLimits();
     bool CheckFixpipeLimits();
-    bool CheckInstructionLimits();
     bool CheckFeaMapShape();
     bool CheckWeightShape();
-    bool CheckParamsBBModePhase1();
-    bool CheckShapeBBModePhase1();
     bool CheckFmapShapeBeforeCoreBind();
-    bool CheckFmapShapeBBModePhase1();
     bool CheckWeightShapeBeforeCoreBind();
-    bool CheckWeightShapeBBModePhase1();
     bool CheckAttrBeforeCoreBind();
-    bool CheckAttrBBModePhase1();
     bool CheckGroupsBBModePhase1();
-    bool CheckTilingAlgorithmType(Conv2DBasicBlockInfo& conv2DBasicBlockInfo, int8_t phase);
-    bool CheckL1SizeLimit();
-    bool CheckConv2DBasicBlockInfoPhase1(Conv2DBasicBlockInfo& conv2DBasicBlockInfo) const;
-    bool CheckConv2DBasicBlockInfoPhase2(Conv2DBasicBlockInfo& conv2DBasicBlockInfo) const;
-    bool CheckBBmodeLimits(Conv2DBasicBlockInfo& conv2DBasicBlockInfo);
     void PrintConv2DBasicBlockInfoPhase1(const Conv2DBasicBlockInfo& conv2DBasicBlockInfo) const;
     void PrintConv2DBasicBlockInfoPhase2(const Conv2DBasicBlockInfo& conv2DBasicBlockInfo) const;
+    bool CheckBasicBlockInfoPhase1(Conv2DBasicBlockInfo& conv2DBasicBlockInfo) const override;
+    bool CheckBasicBlockInfoPhase2(Conv2DBasicBlockInfo& conv2DBasicBlockInfo) override;
     bool CheckL1SizeLimitsKernelFullLoad(bool isC04);
 };
 } // namespace conv_tiling

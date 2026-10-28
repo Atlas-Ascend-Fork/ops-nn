@@ -230,8 +230,10 @@ ge::graphStatus Conv2dBaseTiling::CheckGroupsLegal()
     // weight format groups != 1 case not supported yet
     if (oriShapeAttrInfo_.oriGroups != 1 && descInfo_.weightFormat == ge::FORMAT_NHWC &&
         (apiInputPlatformInfo.npuArch == NpuArch::DAV_9201 || apiInputPlatformInfo.npuArch == NpuArch::DAV_9202)) {
-        OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: weight NHWC format unsupport groups (%ld) != 1.",
-                oriShapeAttrInfo_.oriGroups);
+        std::string reasonMsg = "If the format of input filter is " + Ops::Base::ToString(descInfo_.weightFormat) +
+                                ", parameter groups must be 1";
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeType(), "groups",
+                                              std::to_string(oriShapeAttrInfo_.oriGroups).c_str(), reasonMsg.c_str());
         return ge::GRAPH_FAILED;
     }
 

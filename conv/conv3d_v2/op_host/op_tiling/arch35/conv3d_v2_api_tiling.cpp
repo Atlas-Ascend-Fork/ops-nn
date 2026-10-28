@@ -19,6 +19,7 @@
 #include <unordered_map>
 #include "common/op_host/op_tiling/arch35/conv_api_tiling_algorithm_HWmode.h"
 #include "common/op_host/op_tiling/arch35/conv_api_tiling_algorithm_Mmode.h"
+#include "common/op_host/op_tiling/arch35/conv_api_tiling_algorithm_BBmode.h"
 #include "conv3d_v2_tiling.h"
 #include "conv3d_v2_api_tiling.h"
 #include "conv3d_v2/op_kernel/conv3d_v2_tiling_data.h"
@@ -27,6 +28,7 @@
 
 using namespace conv_tiling_algo_m;
 using namespace conv_tiling_algo_hw;
+using namespace conv_tiling_algo_bb;
 using namespace std;
 
 using optiling::conv_ops_tiling::ConvAlignB;
@@ -319,9 +321,37 @@ void Conv3dTiling::SetTilingData(Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tiling
 
 bool Conv3dTiling::CheckFeaMapShape()
 {
+    if (outputOrder == static_cast<int8_t>(OutputOrder::HW) && (shapeInfo.singleHo <= 0 || shapeInfo.singleWo <= 0)) {
+        OP_LOGE(nodeType, "Input illegal singleHo: %ld, singleWo: %ld, which must > 0.", shapeInfo.singleHo,
+                shapeInfo.singleWo);
+        return false;
+    }
+    if (outputOrder == static_cast<int8_t>(OutputOrder::M) && shapeInfo.singleM <= 0) {
+        OP_LOGE(nodeType, "Input illegal singleM: %ld, which must > 0.", shapeInfo.singleM);
+        return false;
+    }
+    if (shapeInfo.singleDo <= 0) {
+        OP_LOGE(nodeType, "Input illegal singleDo: %ld, which must > 0.", shapeInfo.singleDo);
+        return false;
+    }
+    return CheckFmapShapeBeforeCoreBind();
+}
+
+bool Conv3dTiling::CheckFmapShapeBeforeCoreBind()
+{
     if (shapeInfo.orgHi <= 0 || shapeInfo.orgWi <= 0 || shapeInfo.orgDi <= 0) {
         OP_LOGE(nodeType, "Input illegal orgHi: %ld, orgWi: %ld, orgDi: %ld, which must > 0.", shapeInfo.orgHi,
                 shapeInfo.orgWi, shapeInfo.orgDi);
+        return false;
+    }
+    if (shapeInfo.orgCi <= 0 || static_cast<uint64_t>(shapeInfo.orgCi) > MAX_31_BIT_NUM) {
+        OP_LOGE(nodeType, "Input illegal orgCi: %ld, which must in range [1, %lu].", shapeInfo.orgCi, MAX_31_BIT_NUM);
+        return false;
+    }
+    int64_t ciPerg = this->optGroupFlag ? shapeInfo.singleCi / shapeInfo.enlarge : shapeInfo.singleCi;
+    if (ciPerg * attrInfo.groups != shapeInfo.orgCi) {
+        OP_LOGE(nodeType, "only support groups * singleCi = orgCi, current groups: %d, singleCi: %ld, orgCi: %ld",
+                attrInfo.groups, ciPerg, shapeInfo.orgCi);
         return false;
     }
     if (attrInfo.strideH == 0 || attrInfo.strideW == 0 || attrInfo.strideD == 0) {
@@ -347,27 +377,6 @@ bool Conv3dTiling::CheckFeaMapShape()
                 shapeInfo.orgWo, shapeInfo.orgDo);
         return false;
     }
-
-    if ((outputOrder == static_cast<int8_t>(OutputOrder::M)) && (shapeInfo.singleM <= 0)) {
-        OP_LOGE(nodeType, "Input illegal singleM: %ld, which must > 0.", shapeInfo.singleM);
-        return false;
-    }
-
-    int64_t ciPerg = this->optGroupFlag ? shapeInfo.singleCi / shapeInfo.enlarge : shapeInfo.singleCi;
-    if (ciPerg * attrInfo.groups != shapeInfo.orgCi) {
-        OP_LOGE(nodeType, "only support groups * singleCi = orgCi, current groups: %d, singleCi: %ld, orgCi: %ld",
-                attrInfo.groups, ciPerg, shapeInfo.orgCi);
-        return false;
-    }
-    if (shapeInfo.singleDo <= 0) {
-        OP_LOGE(nodeType, "Input illegal singleDo: %ld, which must > 0.", shapeInfo.singleDo);
-        return false;
-    }
-    if (shapeInfo.orgCi <= 0 || static_cast<uint64_t>(shapeInfo.orgCi) > MAX_31_BIT_NUM) {
-        OP_LOGE(nodeType, "Input illegal orgCi: %ld, which must in range [1, %lu].", shapeInfo.orgCi, MAX_31_BIT_NUM);
-        return false;
-    }
-
     return true;
 }
 
@@ -414,6 +423,50 @@ bool Conv3dTiling::CheckWeightShape()
     return true;
 }
 
+bool Conv3dTiling::CheckWeightShapeBeforeCoreBind()
+{
+    if (shapeInfo.orgkW <= 0 || static_cast<uint64_t>(shapeInfo.orgkW) > MAX_31_BIT_NUM) {
+        OP_LOGE(nodeType, "Input illegal kW: %ld, which must in range [1, %lu].", shapeInfo.orgkW, MAX_31_BIT_NUM);
+        return false;
+    }
+    if (shapeInfo.orgkH <= 0 || static_cast<uint64_t>(shapeInfo.orgkH) > MAX_31_BIT_NUM) {
+        OP_LOGE(nodeType, "Input illegal kH: %ld, which must in range [1, %lu].", shapeInfo.orgkH, MAX_31_BIT_NUM);
+        return false;
+    }
+    if (shapeInfo.orgkD <= 0 || static_cast<uint64_t>(shapeInfo.orgkD) > MAX_31_BIT_NUM) {
+        OP_LOGE(nodeType, "Input illegal kD: %ld, which must in range [1, %lu].", shapeInfo.orgkD, MAX_31_BIT_NUM);
+        return false;
+    }
+    if (shapeInfo.orgCo <= 0 || static_cast<uint64_t>(shapeInfo.orgCo) > MAX_31_BIT_NUM) {
+        OP_LOGE(nodeType, "Input illegal orgCo: %ld, which must in range [1, %lu].", shapeInfo.orgCo, MAX_31_BIT_NUM);
+        return false;
+    }
+    return true;
+}
+
+bool Conv3dTiling::CheckShape() { return CheckInputShape(); }
+
+bool Conv3dTiling::CheckFormat()
+{
+    std::set<std::pair<ConvFormat, ConvFormat>> conv3dSupportFormatSet;
+    if (platformInfo.npuArch == NpuArch::DAV_9201) {
+        conv3dSupportFormatSet = {{ConvFormat::NCDHW, ConvFormat::NCDHW},
+                                  {ConvFormat::NCDHW, ConvFormat::NDHWC},
+                                  {ConvFormat::NDHWC, ConvFormat::DHWCN},
+                                  {ConvFormat::NCDHW, ConvFormat::FRACTAL_Z_3D}};
+    }
+
+    if (conv3dSupportFormatSet.find({descInfo.fMapType.format, descInfo.weightType.format}) ==
+        conv3dSupportFormatSet.end()) {
+        OP_LOGE(nodeType, "unSupported format combo: fmap format: %s, weight format: %s.",
+                FORMAT_TO_STR.at(descInfo.fMapType.format).c_str(),
+                FORMAT_TO_STR.at(descInfo.weightType.format).c_str());
+        return false;
+    }
+
+    return true;
+}
+
 bool Conv3dTiling::CheckInputShape()
 {
     if (!CheckFeaMapShape()) {
@@ -423,6 +476,17 @@ bool Conv3dTiling::CheckInputShape()
         return false;
     }
 
+    return true;
+}
+
+bool Conv3dTiling::CheckShapeBBModePhase1()
+{
+    if (!CheckFmapShapeBeforeCoreBind()) {
+        return false;
+    }
+    if (!CheckWeightShapeBeforeCoreBind()) {
+        return false;
+    }
     return true;
 }
 
@@ -462,7 +526,7 @@ bool Conv3dTiling::CheckInputParam()
     return true;
 }
 
-bool Conv3dTiling::CheckAlgorithmLimit() const
+bool Conv3dTiling::CheckAlgorithmLimit()
 {
     if (isC04Flag) {
         OP_LOGE(nodeType, "conv3d temporarily unSupport C04 format.");
@@ -473,7 +537,7 @@ bool Conv3dTiling::CheckAlgorithmLimit() const
 
 bool Conv3dTiling::CheckAttr()
 {
-    if (!CheckPadStrideDilation()) {
+    if (!CheckAttrBeforeCoreBind()) {
         return false;
     }
     if (!CheckQuantUniqueAttr()) {
@@ -485,7 +549,18 @@ bool Conv3dTiling::CheckAttr()
     return true;
 }
 
-bool Conv3dTiling::CheckPadStrideDilation()
+bool Conv3dTiling::CheckAttrBBModePhase1()
+{
+    if (!CheckAttrBeforeCoreBind()) {
+        return false;
+    }
+    if (!CheckGroupsBBModePhase1()) {
+        return false;
+    }
+    return true;
+}
+
+bool Conv3dTiling::CheckAttrBeforeCoreBind()
 {
     bool padInvalidFlag = (this->attrInfo.padLeft < 0 || this->attrInfo.padRight < 0 || this->attrInfo.padTop < 0 ||
                            this->attrInfo.padBottom < 0 || this->attrInfo.padHead < 0 || this->attrInfo.padTail < 0);
@@ -510,24 +585,19 @@ bool Conv3dTiling::CheckPadStrideDilation()
         return false;
     }
 
+    return true;
+}
+
+bool Conv3dTiling::CheckGroupsBBModePhase1()
+{
     if (attrInfo.groups <= 0) {
         OP_LOGE(nodeType, "Illegal attrs have set: groups=%d which must > 0.", attrInfo.groups);
         return false;
     }
 
     if (this->optGroupFlag) {
-        if (shapeInfo.singleGroups <= 0) {
-            OP_LOGE(nodeType, "Illegal attrs have set: singleGroups=%ld which must > 0.", shapeInfo.singleGroups);
-            return false;
-        }
-
         if (shapeInfo.enlarge <= 0) {
             OP_LOGE(nodeType, "Illegal attrs have set: enlarge=%d which must > 0.", shapeInfo.enlarge);
-            return false;
-        }
-
-        if (shapeInfo.singleGroupOpt <= 0) {
-            OP_LOGE(nodeType, "Input illegal singleGroupOpt: %ld, which must > 0.", shapeInfo.singleGroupOpt);
             return false;
         }
     }
@@ -848,6 +918,71 @@ int64_t Conv3dTiling::GetTilingData(optiling::conv_ops_tiling::ConvAscendcAttrIn
     }
 
     return 0;
+}
+
+bool Conv3dTiling::GetTiling(conv_tiling::BasicBlockInfo& basicBlockInfo,
+                             Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tiling,
+                             std::shared_ptr<conv_tiling::ConvAPIStrategy> apiStrategy)
+{
+    if (!CheckTilingAlgorithmType(basicBlockInfo, BB_PHASE_2)) {
+        OP_LOGE(nodeType, "conv3d api tiling check params failed.");
+        return false;
+    }
+    InitFlag();
+    Infer5hdShape();
+
+    platformInfo.abL1mte2BandWidthCof = GetBandWidthCof();
+
+    conv_tiling_algo_bb::ConvTilingAlgorithmBBmode bbAlgo(this, basicBlockInfo, apiStrategy);
+    int64_t ret = bbAlgo.Process();
+    if (ret == -1) {
+        OP_LOGE(nodeType, "conv3d BBmode api tiling compute failed.");
+        return false;
+    }
+    ret = CheckTilingRes();
+    if (ret == -1) {
+        OP_LOGE(nodeType, "conv3d BBmode api tiling check tiling result failed.");
+        return false;
+    }
+    SetTilingData(tiling);
+    return true;
+}
+
+bool Conv3dTiling::CheckBBmodeLimits(BasicBlockInfo& basicBlockInfo)
+{
+    int64_t groups = attrInfo.groups;
+    if (optGroupFlag) {
+        groups = shapeInfo.singleGroupOpt;
+    }
+    if (shapeInfo.orgDo * CeilDiv(shapeInfo.orgWo * shapeInfo.orgHo, basicBlockInfo.mTile) *
+            CeilDiv(shapeInfo.orgCo, basicBlockInfo.nTile) * basicBlockInfo.batch * groups <=
+        basicBlockInfo.aicoreNum) {
+        return false;
+    }
+    int64_t biasSize = 0;
+    int64_t scaleSize = 0;
+    if (hasBias) {
+        biasSize = DTYPE_SIZE_TAB.at(descInfo.biasType.dtype) * basicBlockInfo.nTile;
+    }
+    if (hasScale) {
+        scaleSize = static_cast<int64_t>(shapeInfo.channelWiseCoeff * DTYPE_SIZE_TAB.at(descInfo.scaleType.dtype) *
+                                         basicBlockInfo.nTile);
+    }
+    int64_t availableL1Size = platformInfo.l1Size - biasSize - scaleSize;
+    int64_t fMapDtypeSize = static_cast<int64_t>(DTYPE_SIZE_TAB.at(descInfo.fMapType.dtype));
+    int64_t maxHiWiL1 = availableL1Size / fMapDtypeSize / static_cast<int64_t>(CONST_VALUE_2) /
+                        static_cast<int64_t>(cubeInfo.k0);
+    if (maxHiWiL1 <= 0) {
+        return false;
+    }
+    int64_t maxhiL1 = maxHiWiL1 / shapeInfo.orgWi;
+    if (maxhiL1 <= static_cast<int64_t>(CONST_VALUE_2)) {
+        return false;
+    }
+    if (basicBlockInfo.mTile < cubeInfo.m0 || basicBlockInfo.nTile < cubeInfo.n0) {
+        return false;
+    }
+    return true;
 }
 
 } // namespace conv_tiling

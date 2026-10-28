@@ -103,6 +103,49 @@ struct UbTilingRes {
     uint64_t nUb = 0;
 };
 
+struct BasicBlockTilingParams {
+    uint32_t mTile = 0;
+    uint32_t nTile = 0;
+    uint32_t kTile = 0;
+    uint32_t fCut = 0;
+    uint32_t mCut = 0;
+    uint32_t nCut = 0;
+    uint64_t mIn = 0;
+    uint32_t nKernelHKernelW = 0;
+    uint32_t cinL1 = 0;
+    uint32_t batch = 0;
+    BoundType boundType = BoundType::INVALID;
+    uint32_t doCut = 1;
+};
+
+struct BasicBlockNumBlocks {
+    uint32_t fDim = 0;
+    uint32_t nDim = 0;
+    uint32_t batchDim = 0;
+    uint32_t mDim = 0;
+    uint32_t fwDim = 0;
+    uint32_t groupDim = 0;
+    uint32_t aicoreNum = 0;
+    bool optGroupFlag = false;
+    float coreUtilization = 0;
+    uint32_t doDim = 1;
+};
+
+struct BasicBlockMinLoadStrategy {
+    IterateMNOrder iterateMNOrder = IterateMNOrder::INVALID;
+    bool kAl1FullLoad = false;
+    bool kBl1FullLoad = false;
+    bool mAl1FullLoad = false;
+    bool nBl1FullLoad = false;
+    bool biasFullLoad = false;
+    bool fixpFullLoad = false;
+    double l1LoadScore = -1.0;
+};
+
+struct BasicBlockInfo : public BasicBlockTilingParams, public BasicBlockNumBlocks, public BasicBlockMinLoadStrategy {
+    bool useStrictAdjustM = false;
+};
+
 struct DoubleBufferRes {
     uint8_t pbAL1 = 1;
     uint8_t pbBL1 = 1;
@@ -258,6 +301,21 @@ public:
 protected:
     virtual int64_t Compute() = 0;
     void InferCubeInfo();
+    bool CheckTilingAlgorithmType(BasicBlockInfo& basicBlockInfo, int8_t phase);
+    virtual void Infer5hdShape() {}
+    virtual bool CheckParamsBBModePhase1();
+    virtual bool CheckParams();
+    virtual bool CheckAlgorithmLimit() = 0;
+    virtual bool CheckAttr() = 0;
+    virtual bool CheckAttrBBModePhase1() = 0;
+    virtual bool CheckShape() = 0;
+    virtual bool CheckFormat() = 0;
+    virtual bool CheckInstructionLimits() = 0;
+    virtual bool CheckBBmodeLimits(BasicBlockInfo& basicBlockInfo) = 0;
+    virtual bool CheckShapeBBModePhase1() = 0;
+    virtual bool CheckBasicBlockInfoPhase1(BasicBlockInfo& basicBlockInfo) const;
+    virtual bool CheckBasicBlockInfoPhase2(BasicBlockInfo& basicBlockInfo);
+    bool CheckL1SizeLimit();
     int64_t CheckTilingRes();
     bool CheckQuantUniqueAttr();
     bool CheckGroups();
@@ -272,6 +330,22 @@ private:
     bool CheckLoad3DAttrLimits();
     bool CheckLoad3DWeightLimits();
     bool CheckLoad3DAllPadLimits();
+
+public:
+    bool EvalCandidateCoreBinding(BasicBlockInfo& basicBlockInfo);
+    void SetSingleOutputShapeCoMBatch(int64_t singleCo, int64_t singleM, int64_t singleBatch)
+    {
+        shapeInfo.singleCo = singleCo;
+        shapeInfo.singleM = singleM;
+        shapeInfo.singleBatch = singleBatch;
+    }
+    void SetSingleOutputShapeCoDoMBatch(int64_t singleCo, int64_t singleDo, int64_t singleM, int64_t singleBatch)
+    {
+        shapeInfo.singleCo = singleCo;
+        shapeInfo.singleDo = singleDo;
+        shapeInfo.singleM = singleM;
+        shapeInfo.singleBatch = singleBatch;
+    }
 };
 } // namespace conv_tiling
 

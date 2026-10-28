@@ -28,8 +28,20 @@
 #include "conv_template_utils.h"
 
 namespace conv_tiling {
+using namespace std;
+using optiling::conv_ops_tiling::ConvAscendcAttrInfo;
+using optiling::conv_ops_tiling::ConvAscendcDescInfo;
+using optiling::conv_ops_tiling::ConvAscendcShapesInfo;
+using optiling::conv_ops_tiling::ConvAscendcTilingFlag;
 using optiling::conv_ops_tiling::ConvDtype;
 using optiling::conv_ops_tiling::ConvFormat;
+using optiling::conv_ops_tiling::ConvGroupType;
+using optiling::conv_ops_tiling::ConvOpsConstParams;
+using optiling::conv_ops_tiling::ConvOptGroupInfo;
+using optiling::conv_ops_tiling::ConvOriGroupInfo;
+using optiling::conv_ops_tiling::CUBE_MKN_MAP;
+using optiling::conv_ops_tiling::dtypeMap;
+using optiling::conv_ops_tiling::dtypeSizeTab;
 
 enum class TPosition {
     GM = 0,

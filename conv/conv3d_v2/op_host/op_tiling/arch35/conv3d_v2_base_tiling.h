@@ -19,6 +19,7 @@
 #include "log/log.h"
 #include "error_util.h"
 #include "op_host/tiling_base.h"
+#include "tiling/platform/platform_ascendc.h"
 #include "conv3d_v2_tiling.h"
 #include "conv3d_v2_api_tiling.h"
 #include "conv3d_v2_tiling_utils.h"
@@ -26,6 +27,8 @@
 #include "conv/common/op_host/op_tiling/arch35/conv_cache_tiling.h"
 #include "conv/conv3d_v2/op_kernel/conv3d_v2_tiling_data.h"
 #include "conv/common/op_host/op_tiling/arch35/conv_template_utils.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_basic_block.h"
+#include "conv/common/op_host/op_tiling/arch35/conv3d_basic_block_strategy.h"
 
 namespace optiling {
 namespace conv_ops_tiling {
@@ -87,6 +90,7 @@ private:
     ConvAscendcTilingFlag flagInfo_;
     ConvBase convBase_;
     ConvParamInfo paramInfo_;
+    conv_tiling::BasicBlockInfo conv3dBasicBlockInfo_;
     // numBlocks decision
     NumBlocksRange numBlocksRanges;
     std::vector<uint32_t> numBlocksInit;
@@ -144,6 +148,7 @@ private:
     ge::graphStatus CheckNullPtr();
     void InitNumBlocksConstParas();
     // numBlocks decision
+    void InitApiTilingCommon();
     void NumBlocksDecision();
     void SetConvBase();
     ge::graphStatus GetOriPadFromAttrPad();

@@ -13,6 +13,10 @@
  * \brief
  */
 #include "conv2d_v2_base_tiling.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_basic_block.h"
+#include "conv/common/op_host/op_tiling/arch35/conv2d_basic_block_strategy.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_api_tiling_algorithm_BBmode.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_api_strategy.h"
 
 namespace optiling {
 namespace conv_ops_tiling {
@@ -46,6 +50,36 @@ ge::graphStatus Conv2dBaseTiling::PrepareTiling()
     return ge::GRAPH_SUCCESS;
 }
 
+void Conv2dBaseTiling::DoBasicBlock()
+{
+    auto strategy = std::make_shared<conv_tiling::Conv2DBasicBlockStrategy>();
+    conv_tiling::BBCommonParams params = {shapeInfo_,
+                                          descInfo_,
+                                          attrInfo_,
+                                          convOpsConstParams_,
+                                          flagInfo_,
+                                          featureFlagInfo_,
+                                          apiInputPlatformInfo,
+                                          opInfo_->aicoreNum,
+                                          opInfo_->l1Size,
+                                          opInfo_->l0cSize,
+                                          oriGroupInfo_,
+                                          optGroupInfo_,
+                                          fixpipeInfo_,
+                                          &conv2dApiTiling_,
+                                          conv2dApiTiling_.enableInnerBatch,
+                                          conv2dApiTiling_.innerBatch};
+    conv_tiling::ConvBasicBlock flow(params, conv2dBasicBlockInfo_, strategy);
+    flow.BasicBlock();
+    numBlocksRes.batchDim = conv2dBasicBlockInfo_.batchDim;
+    numBlocksRes.mDim = conv2dBasicBlockInfo_.mDim;
+    numBlocksRes.nDim = conv2dBasicBlockInfo_.nDim;
+    numBlocksRes.groupDim = conv2dBasicBlockInfo_.groupDim;
+    numBlocksRes.doDim = 1;
+    conv2dApiTiling_.enableInnerBatch = params.enableInnerBatch;
+    conv2dApiTiling_.innerBatch = params.innerBatch;
+}
+
 ge::graphStatus Conv2dBaseTiling::GetTilingFromFastTiling()
 {
     Conv2dOpTilingSetShape();
@@ -53,11 +87,13 @@ ge::graphStatus Conv2dBaseTiling::GetTilingFromFastTiling()
     OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: get tiling from fast_tiling.");
     if (flagInfo_.mSplitModeFlag) { // M split mode
         if (flagInfo_.mBasicBlockFlag) {
-            BasicBlock();
-            OP_LOGD(paramInfo_.nodeType.c_str(),
-                    "AscendC: get tiling from Mmode basic block algorithm, belongs to fast_tiling.");
-            OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: batchDim / mDim / nDim / groupDim: %u, %u, %u, %u.",
-                    numBlocksRes.batchDim, numBlocksRes.mDim, numBlocksRes.nDim, numBlocksRes.groupDim);
+            DoBasicBlock();
+            OP_LOGD(context_->GetNodeType(),
+                    "%s AscendC: get tiling from Mmode basic block algorithm, belongs to fast_tiling.",
+                    paramInfo_.nodeType.c_str());
+            OP_LOGD(context_->GetNodeType(), "%s AscendC: batchDim / mDim / nDim / groupDim: %u, %u, %u, %u.",
+                    paramInfo_.nodeType.c_str(), numBlocksRes.batchDim, numBlocksRes.mDim, numBlocksRes.nDim,
+                    numBlocksRes.groupDim);
         } else {
             numBlocksRes = convBase_.NumBlocksDecisionMsplitMode();
             OP_LOGD(paramInfo_.nodeType.c_str(),
@@ -134,7 +170,17 @@ ge::graphStatus Conv2dBaseTiling::GetTilingSplitMode()
                       attrInfo_.dilationW * (shapeInfo_.kw - 1) - 1) /
                          attrInfo_.strideW +
                      1;
-    GetInitBasicBlockMN(basicBlockM, basicBlockN);
+    uint64_t curCo = flagInfo_.convGroupType != ConvGroupType::NORMAL_CONV ?
+                         (flagInfo_.convGroupType == ConvGroupType::ORI_GROUP_CONV ? oriGroupInfo_.coPerGroup :
+                                                                                     optGroupInfo_.coutOpt) :
+                         shapeInfo_.co;
+    // Legacy archs keep the original init-MN table keyed by total co; DAV_9201/DAV_9202 use the group-aware co.
+    uint64_t initCo = IsDAV920Arch(opInfo_->npuArch) ? curCo : shapeInfo_.co;
+    if (opInfo_->l0cSize > L0C_SIZE) {
+        conv_tiling::Get512InitBasicBlockMN(shapeInfo_, attrInfo_, basicBlockM, basicBlockN);
+    } else {
+        conv_tiling::GetInitBasicBlockMN(shapeInfo_, descInfo_, initCo, basicBlockM, basicBlockN);
+    }
     if ((orgWo > BASICBLOCK_INIT_VALUE_1024) ||
         ((orgWo > CONST_VALUE_2 * basicBlockM) && ((orgWo % basicBlockM) * CONST_VALUE_2 > basicBlockM))) {
         flagHWCheckFirst = true;
@@ -151,7 +197,27 @@ ge::graphStatus Conv2dBaseTiling::GetTilingSplitMode()
     if (!flagHWCheckFirst && (tryMmodeCondition1 || tryMmodeCondition2) &&
         convBase_.CheckL1SizeLimitsInMSplitMode() == ge::GRAPH_SUCCESS) { // M split mode check, conv1d/dma skip M split
         flagInfo_.mSplitModeFlag = true;
-        SelectMModeAlgorithm();
+        auto strategy = std::make_shared<conv_tiling::Conv2DBasicBlockStrategy>();
+        conv_tiling::BBCommonParams params = {shapeInfo_,
+                                              descInfo_,
+                                              attrInfo_,
+                                              convOpsConstParams_,
+                                              flagInfo_,
+                                              featureFlagInfo_,
+                                              apiInputPlatformInfo,
+                                              opInfo_->aicoreNum,
+                                              opInfo_->l1Size,
+                                              opInfo_->l0cSize,
+                                              oriGroupInfo_,
+                                              optGroupInfo_,
+                                              fixpipeInfo_,
+                                              &conv2dApiTiling_,
+                                              conv2dApiTiling_.enableInnerBatch,
+                                              conv2dApiTiling_.innerBatch};
+        conv_tiling::ConvBasicBlock flow(params, conv2dBasicBlockInfo_, strategy);
+        flagInfo_.mBasicBlockFlag = flow.SelectMModeAlgorithm();
+        conv2dApiTiling_.enableInnerBatch = params.enableInnerBatch;
+        conv2dApiTiling_.innerBatch = params.innerBatch;
         return ge::GRAPH_SUCCESS;
     }
     if (CheckNHWCDataCopyLimits() == ge::GRAPH_SUCCESS &&
@@ -159,50 +225,6 @@ ge::graphStatus Conv2dBaseTiling::GetTilingSplitMode()
         return ge::GRAPH_SUCCESS;
     }
     return ge::GRAPH_FAILED;
-}
-
-void Conv2dBaseTiling::SelectMModeAlgorithm()
-{
-    if (shapeInfo_.hi <= CONST_VALUE_2) {
-        return;
-    }
-    flagInfo_.mBasicBlockFlag = false;
-    uint64_t basicBlockM = 0;
-    uint64_t basicBlockN = 0;
-    GetInitBasicBlockMN(basicBlockM, basicBlockN);
-
-    uint64_t orgCo = flagInfo_.convGroupType != ConvGroupType::NORMAL_CONV ?
-                         (flagInfo_.convGroupType == ConvGroupType::ORI_GROUP_CONV ? oriGroupInfo_.coPerGroup :
-                                                                                     optGroupInfo_.coutOpt) :
-                         shapeInfo_.co;
-    uint64_t mCut = ConvCeilDiv(shapeInfo_.wo * shapeInfo_.ho, basicBlockM);
-    uint64_t nCut = ConvCeilDiv(orgCo, basicBlockN);
-    uint64_t group = attrInfo_.groups;
-    if (flagInfo_.convGroupType == ConvGroupType::OPT_GROUP_CONV) {
-        group = optGroupInfo_.groupOpt;
-    }
-    if (mCut * nCut * shapeInfo_.batch * group <= opInfo_->aicoreNum) {
-        return;
-    }
-    int64_t biasSize = 0;
-    int64_t scaleSize = 0;
-    if (flagInfo_.hasBias) {
-        biasSize = dtypeSizeTab.at(descInfo_.biasDtype) * shapeInfo_.co;
-    }
-    scaleSize = static_cast<int64_t>(fixpipeInfo_.channelWiseCoeff * FP16_DTYPE_SIZE * shapeInfo_.co);
-    int64_t availableL1Size = L1_SIZE - biasSize - scaleSize;
-    int64_t mTile = 0;
-    int64_t nTile = 0;
-    if (availableL1Size <= 0 || !CmpFirstAdjustMnTile(availableL1Size, mTile, nTile, basicBlockM, basicBlockN)) {
-        return;
-    }
-    flagInfo_.mBasicBlockFlag = true;
-    conv2dBasicBlockInfo_.mTile = static_cast<uint32_t>(mTile);
-    conv2dBasicBlockInfo_.nTile = static_cast<uint32_t>(nTile);
-    OP_LOGD(paramInfo_.nodeType.c_str(), "mTile %u, nTile %u", conv2dBasicBlockInfo_.mTile,
-            conv2dBasicBlockInfo_.nTile);
-    EnableInnerBatchBasicBlock(availableL1Size);
-    return;
 }
 
 void Conv2dBaseTiling::Conv2dApiTilingSetShape()
@@ -252,8 +274,16 @@ ge::graphStatus Conv2dBaseTiling::GetConv2dApiTiling()
     Conv2dApiTilingSetShape();
 
     if (flagInfo_.mBasicBlockFlag) {
-        if (!conv2dApiTiling_.GetTiling(conv2dBasicBlockInfo_, tilingData_)) {
-            OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: get api tiling wrong.");
+        OP_LOGD(context_->GetNodeType(),
+                "%s AscendC: [BasicBlock Phase2] batchDim[%u], mDim[%u], nDim[%u], groupDim[%u], doDim[%u], mCut[%u], "
+                "nCut[%u], doCut[%u], mTile[%u], nTile[%u], mIn[%u].",
+                paramInfo_.nodeType.c_str(), numBlocksRes.batchDim, numBlocksRes.mDim, numBlocksRes.nDim,
+                numBlocksRes.groupDim, numBlocksRes.doDim, conv2dBasicBlockInfo_.mCut, conv2dBasicBlockInfo_.nCut,
+                conv2dBasicBlockInfo_.doCut, conv2dBasicBlockInfo_.mTile, conv2dBasicBlockInfo_.nTile,
+                conv2dBasicBlockInfo_.mIn);
+        auto apiStrategy = std::make_shared<conv_tiling::ConvAPIStrategy>();
+        if (!conv2dApiTiling_.GetTiling(conv2dBasicBlockInfo_, tilingData_, apiStrategy)) {
+            OP_LOGE(context_->GetNodeType(), "%s AscendC: get BBmode api tiling wrong", paramInfo_.nodeType.c_str());
             return ge::GRAPH_FAILED;
         }
     } else {
