@@ -38,10 +38,12 @@ static gert::StorageShape MakeStorageShape(const std::vector<int64_t>& dims)
 }
 
 static bool RunOneCase(const std::vector<int64_t>& tensorShape, const std::vector<int64_t>& channelShape,
-                       ge::DataType dyDtype, ge::Format inputFormat, ge::graphStatus expectStatus, TilingInfo& info)
+                       const std::vector<int64_t>& outputShape, ge::DataType dyDtype, ge::Format inputFormat,
+                       ge::graphStatus expectStatus, TilingInfo& info)
 {
     gert::StorageShape tShape = MakeStorageShape(tensorShape);
     gert::StorageShape cShape = MakeStorageShape(channelShape);
+    gert::StorageShape oShape = MakeStorageShape(outputShape);
 
     std::vector<gert::TilingContextPara::TensorDescription> inputs = {
         {tShape, dyDtype, inputFormat, false, nullptr, inputFormat},      // dy
@@ -53,7 +55,7 @@ static bool RunOneCase(const std::vector<int64_t>& tensorShape, const std::vecto
         {cShape, ge::DT_FLOAT, inputFormat, false, nullptr, inputFormat}, // gamma
     };
     std::vector<gert::TilingContextPara::TensorDescription> outputs = {
-        {tShape, dyDtype, inputFormat, false, nullptr, inputFormat}, // pd_x
+        {oShape, dyDtype, inputFormat, false, nullptr, inputFormat}, // pd_x
     };
     std::vector<gert::TilingContextPara::OpAttr> attrs = {};
 
@@ -68,6 +70,12 @@ static bool RunOneCase(const std::vector<int64_t>& tensorShape, const std::vecto
         EXPECT_FALSE(ok) << "tiling should fail for the given case";
     }
     return ok;
+}
+
+static bool RunOneCase(const std::vector<int64_t>& tensorShape, const std::vector<int64_t>& channelShape,
+                       ge::DataType dyDtype, ge::Format inputFormat, ge::graphStatus expectStatus, TilingInfo& info)
+{
+    return RunOneCase(tensorShape, channelShape, tensorShape, dyDtype, inputFormat, expectStatus, info);
 }
 
 class INTrainingReduceGradTilingTest : public testing::Test {
@@ -118,6 +126,32 @@ TEST_F(INTrainingReduceGradTilingTest, Reject_EmptyTensor_HW0)
     ASSERT_FALSE(RunOneCase({2, 4, 0, 0}, {2, 4, 1, 1}, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::GRAPH_FAILED, info));
 }
 
+TEST_F(INTrainingReduceGradTilingTest, Reject_EmptyTensor_N0)
+{
+    TilingInfo info;
+    ASSERT_FALSE(RunOneCase({0, 4, 8, 8}, {0, 4, 1, 1}, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::GRAPH_FAILED, info));
+}
+
+TEST_F(INTrainingReduceGradTilingTest, Reject_EmptyTensor_C0)
+{
+    TilingInfo info;
+    ASSERT_FALSE(RunOneCase({2, 0, 8, 8}, {2, 0, 1, 1}, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::GRAPH_FAILED, info));
+}
+
+TEST_F(INTrainingReduceGradTilingTest, Reject_OutputShapeBroadcastCompatibleMismatch)
+{
+    TilingInfo info;
+    ASSERT_FALSE(
+        RunOneCase({4, 2, 4, 6}, {4, 2, 1, 1}, {4, 2, 4, 1}, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::GRAPH_FAILED, info));
+}
+
+TEST_F(INTrainingReduceGradTilingTest, Reject_OutputShapeRankMismatch)
+{
+    TilingInfo info;
+    ASSERT_FALSE(
+        RunOneCase({2, 4, 8, 8}, {2, 4, 1, 1}, {2, 4, 8}, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::GRAPH_FAILED, info));
+}
+
 TEST_F(INTrainingReduceGradTilingTest, Reject_DyDtypeUnsupported)
 {
     TilingInfo info;
@@ -128,6 +162,15 @@ TEST_F(INTrainingReduceGradTilingTest, Reject_RankNot4)
 {
     TilingInfo info;
     ASSERT_FALSE(RunOneCase({2, 4, 8}, {2, 4, 1}, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::GRAPH_FAILED, info));
+}
+
+// README 承诺：Tiling 收到未知秩描述符（rank-1 的 [-2]）以 rank≠4 受控拒绝。
+// TTK kernel CSV 的 shape 契约为具体非负维度、GEIR 运行时以具体 shape 执行，
+// 该通路仅可经直调 Tiling 构造（FR-COVERAGE-01 的可测载体）。
+TEST_F(INTrainingReduceGradTilingTest, Reject_UnknownRankNeg2)
+{
+    TilingInfo info;
+    ASSERT_FALSE(RunOneCase({-2}, {-2}, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::GRAPH_FAILED, info));
 }
 
 TEST_F(INTrainingReduceGradTilingTest, Reject_FormatUnsupported)

@@ -20,11 +20,17 @@
  *
  * 计算公式（对齐 TBE canndev in_training_reduce_grad.py）：
  *   data_sqrt = sqrt(variance + eps)
- *   multiplier = -res_gamma / (num * data_sqrt)
  *   diff = x - mean
+ *   tds = (res_gamma * diff) / data_sqrt * (-1/num)
  *   neg_res_beta_num = -res_beta / num
- *   coef = dy + multiplier * diff + neg_res_beta_num
+ *   coef = dy + tds + neg_res_beta_num
  *   pd_x = (coef * gamma) / data_sqrt
+ *
+ * 结合次序说明：res_gamma*diff 先行再除以 data_sqrt、最后乘 -1/num，不预生成
+ * 逐通道 multiplier（= -res_gamma/num/data_sqrt）——后者在 res_gamma 极小时为
+ * 次正规数，FTZ 下被冲零，使 multiplier * (±inf diff) 得 NaN（数学应
+ * ±inf）；先乘 -1/num 的次序同样会使 res_gamma=FLT_MIN 时 t 落入次正规区
+ * 被冲零（L0_030）。乘法先行 + 先除后缩放使中间量保持正规数（或 ±inf）。
  *
  * dtype 升精度策略：
  *   - FP32: 原生计算，无需 Cast
@@ -36,30 +42,49 @@
 #include "in_training_reduce_grad_tiling_data.h"
 #include "in_training_reduce_grad_tiling_key.h"
 
+// data_sqrt 采用正确舍入（0 ULP）开方：默认 INTRINSIC 开方在非精确平方根输入上有
+// ~2 ULP 近似误差，经 coef 与出口两次除法传播后，在极值场景（大值域 rmse、小值域
+// mare、max-float 灾难性消融 inf-vs-0）相对正确舍入参考（golden fp64 真值链）
+// 放大为 cross_check 比值超限——实测 ds 精确时全链 1 ULP、非平凡 ds 时 3 ULP，误差
+// 全部来自开方。FTZ_FALSE 保留次正规开方结果（variance+eps 极小时为次正规），
+// 避免 golden fp64→工作精度窄回的次正规值被冲零而产生新分歧。
+constexpr AscendC::SqrtConfig kPreciseSqrtConfig = {AscendC::SqrtAlgo::PRECISION_0ULP_FTZ_FALSE};
+
+// 除法保持默认 INTRINSIC：实测其在本算子值域内与正确舍入一致（ATTR-G 隔离实验
+// ds 精确、除法非平凡时全链 1 ULP 为纯乘加舍入），而 PRECISION_0ULP 补偿除法的
+// 牛顿序列在极大商（~e35）下内部溢出，且 Const 特化编译会重排其补偿算术，
+// 在灾难性消融位产生大量 ±inf 符号翻转。
+
 // ---------------------------------------------------------------------------
-// CoefVF: coef = dy + multiplier * diff + negResBetaNum
-//   where diff = x - mean, negResBetaNum = -res_beta / num
-//   Mathematically equivalent to dy + multiplier*x + addend but avoids
-//   catastrophic cancellation when x ≈ mean (multiplier*x and addend cancel).
-// VF chain length 3 <= 7, non-Cast, fusible
+// CoefVF: coef = ((prod / data_sqrt) * scale) + dy + negResBetaNum
+//   where prod = res_gamma * diff (S11c), scale = -1/num, negResBetaNum = -res_beta / num
+//   除法在缩放前（先除后缩放）：res_gamma=FLT_MIN 且 num 较大时先乘 -1/num 会落入
+//   次正规区被 FTZ 冲零（L0_030）；res_gamma*diff 先行（S11c）避免逐通道 multiplier
+//   的次正规冲零（0×(±inf)=NaN）。Div 为 Reg 级 INTRINSIC（实测与正确舍入一致，
+//   见 kPreciseSqrtConfig 下方除法说明）。0ULP 除法实验回退后 Div 曾独立于 VF 之外
+//   （无剩余收益，多一次 B0 全量往返），现合回 VF 链；dst 与 prodAddr 同缓冲（B1）
+//   逐 repeat 原位读写安全。
+//   VF chain length 4 <= 7, non-Cast, fusible
 // ---------------------------------------------------------------------------
 template <typename T>
-__simd_vf__ inline void CoefVF(__ubuf__ T* dstAddr, __ubuf__ T* mulAddr, __ubuf__ T* xAddr, __ubuf__ T* dyAddr,
-                               __ubuf__ T* addendAddr, uint32_t count, uint32_t oneRepeatSize, uint16_t repeatTimes)
+__simd_vf__ inline void CoefVF(__ubuf__ T* dstAddr, __ubuf__ T* prodAddr, __ubuf__ T* sqrtAddr, __ubuf__ T* dyAddr,
+                               __ubuf__ T* addendAddr, T scale, uint32_t count, uint32_t oneRepeatSize,
+                               uint16_t repeatTimes)
 {
-    AscendC::Reg::RegTensor<T> mulReg, xReg, dyReg, addReg, tmpReg, dstReg;
+    AscendC::Reg::RegTensor<T> prodReg, sqrtReg, dyReg, addReg, tdsReg, tmpReg, dstReg;
     AscendC::Reg::MaskReg mask;
     AscendC::Reg::AddrReg aReg;
     for (uint16_t i = 0; i < repeatTimes; ++i) {
         aReg = AscendC::Reg::CreateAddrReg<T>(i, oneRepeatSize);
         uint32_t remain = count - (uint32_t)i * oneRepeatSize;
         mask = AscendC::Reg::UpdateMask<T>(remain);
-        AscendC::Reg::LoadAlign(mulReg, mulAddr, aReg);
-        AscendC::Reg::LoadAlign(xReg, xAddr, aReg);
+        AscendC::Reg::LoadAlign(prodReg, prodAddr, aReg);
+        AscendC::Reg::LoadAlign(sqrtReg, sqrtAddr, aReg);
         AscendC::Reg::LoadAlign(dyReg, dyAddr, aReg);
         AscendC::Reg::LoadAlign(addReg, addendAddr, aReg);
-        AscendC::Reg::Mul(tmpReg, mulReg, xReg, mask);
-        AscendC::Reg::Add(tmpReg, tmpReg, dyReg, mask);
+        AscendC::Reg::Div(tdsReg, prodReg, sqrtReg, mask);
+        AscendC::Reg::Muls(tdsReg, tdsReg, scale, mask);
+        AscendC::Reg::Add(tmpReg, tdsReg, dyReg, mask);
         AscendC::Reg::Add(dstReg, tmpReg, addReg, mask);
         AscendC::Reg::StoreAlign(dstAddr, dstReg, aReg, mask);
     }
@@ -137,8 +162,11 @@ class INTrainingReduceGradKernel {
     AscendC::TBuf<AscendC::TPosition::VECCALC> buf_[PHYS_NODES];
 
     // Two NDDMA param sets: one for T-typed (dy/x), one for float-typed (aux inputs)
-    AscendC::MultiCopyParams<T, ND> nddmaParamsT_[2];     // dy, x
-    AscendC::MultiCopyParams<float, ND> nddmaParamsF_[5]; // variance, mean, res_gamma, res_beta, gamma
+    // 值初始化消除未初始化读：MultiCopyParams 为纯聚合（constantValue 无 NSDMI），
+    // 三参 DataCopy 重载无条件读取 params.constantValue；本算子 pad 关闭时该值
+    // 不参与搬运语义，置零仅消除 UB（mSan initcheck）。
+    AscendC::MultiCopyParams<T, ND> nddmaParamsT_[2]{};     // dy, x
+    AscendC::MultiCopyParams<float, ND> nddmaParamsF_[5]{}; // variance, mean, res_gamma, res_beta, gamma
     int64_t nddmaOuterIters_[MAX_INPUT_SLOTS];
     int64_t nddmaDims_;
 
@@ -231,8 +259,6 @@ public:
 
         int64_t coord[8] = {};
         float eps = 1e-6f;
-        float negOne = -1.0f;
-        float numRec = 1.0f / static_cast<float>(td_->numElements);
         float negNumRec = -1.0f / static_cast<float>(td_->numElements);
 
         for (int64_t flat = start; flat < end; flat++) {
@@ -244,38 +270,21 @@ public:
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(evMTE3toMTE2);
 
             // ===== Phase A: Scalar computation per channel =====
+            // （variance 的 data_sqrt 由 S11d 计算（B5），此处不再预取——multiplier 删除后 S1 的 B0 输出在 S10
+            // 被覆盖，成为死代码）
 
-            // S1: variance -> B0, data_sqrt = sqrt(variance + eps)
-            CopyInBrc(coord, IN_VAR, B0, aISeg);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
-            AscendC::Adds(buf_[B0].Get<float>(), buf_[B0].Get<float>(), eps, count);
-            AscendC::Sqrt(buf_[B0].Get<float>(), buf_[B0].Get<float>(), count);
-
-            // S2: res_gamma -> B5 (temp), scale_inv = res_gamma / num -> B2
-            CopyInBrc(coord, IN_RES_GAMMA, B5, aISeg);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
-            AscendC::Muls(buf_[B2].Get<float>(), buf_[B5].Get<float>(), numRec, count);
-
-            // S3: multiplier = -scale_inv / data_sqrt -> B1
-            AscendC::Div(buf_[B1].Get<float>(), buf_[B2].Get<float>(), buf_[B0].Get<float>(), count);
-            AscendC::Muls(buf_[B1].Get<float>(), buf_[B1].Get<float>(), negOne, count);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
-
-            // S4: mean -> B3 (KEEP for coef: diff = x - mean)
+            // S2: mean -> B3 (KEEP for coef: diff = x - mean)
             CopyInBrc(coord, IN_MEAN, B3, aISeg);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
 
-            // S5: res_beta -> B5, neg_res_beta_num = -res_beta / num -> B4
+            // S3: res_beta -> B5, neg_res_beta_num = -res_beta / num -> B4
             CopyInBrc(coord, IN_RES_BETA, B5, aISeg);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
             AscendC::Muls(buf_[B4].Get<float>(), buf_[B5].Get<float>(), negNumRec, count);
 
-            // S6: gamma -> B5 (reuse), save to B2 (overwrite scale_inv)
+            // S4: gamma -> B5 (reuse), save to B2
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
             CopyInBrc(coord, IN_GAMMA, B5, aISeg);
@@ -285,7 +294,7 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
 
-            // ===== Phase B: Full-size inputs + coef =====
+            // ===== Phase B: Full-size inputs + t = -numRec * res_gamma * diff =====
 
             // S10: x -> B0 (fp32 direct or fp16 via B5 temp then Cast)
             if constexpr (NEED_CAST) {
@@ -316,34 +325,49 @@ public:
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
             }
 
-            // S12: coef = dy + multiplier * diff + neg_res_beta_num -> B5 (VF)
-            //     CoefVF computes: dst = dy + mul * diff + negResBetaNum
-            //     diff = x - mean avoids catastrophic cancellation when x ≈ mean
-            uint16_t rep12 = AscendC::CeilDivision(count, VL_F32);
-            asc_vf_call<CoefVF<float>>((__ubuf__ float*)buf_[B5].Get<float>().GetPhyAddr(),
-                                       (__ubuf__ float*)buf_[B1].Get<float>().GetPhyAddr(),
-                                       (__ubuf__ float*)buf_[B0].Get<float>().GetPhyAddr(),
-                                       (__ubuf__ float*)buf_[B3].Get<float>().GetPhyAddr(),
-                                       (__ubuf__ float*)buf_[B4].Get<float>().GetPhyAddr(), count, VL_F32, rep12);
-
-            // ===== Phase C: pd_x = coef * gamma / data_sqrt + CopyOut =====
-
-            // S13a: pd_x = coef * gamma -> B0 (V: B0 = B5 * B2)
-            AscendC::Mul(buf_[B0].Get<float>(), buf_[B5].Get<float>(), buf_[B2].Get<float>(), count);
-
-            // S13b: Reload variance -> B3 (MTE2)
+            // S11b: res_gamma -> B5 (per-channel broadcast, moved from Phase A).
+            // Barrier is required in the NEED_CAST path: the dy Cast above reads
+            // B5 on the V pipe while this load writes B5 on MTE2.
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
-            CopyInBrc(coord, IN_VAR, B3, aISeg);
+            CopyInBrc(coord, IN_RES_GAMMA, B5, aISeg);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
 
-            // S13c: data_sqrt = sqrt(variance + eps) -> B3
-            AscendC::Adds(buf_[B3].Get<float>(), buf_[B3].Get<float>(), eps, count);
-            AscendC::Sqrt(buf_[B3].Get<float>(), buf_[B3].Get<float>(), count);
+            // S11c: prod = res_gamma * diff -> B1
+            AscendC::Mul(buf_[B1].Get<float>(), buf_[B5].Get<float>(), buf_[B0].Get<float>(), count);
 
-            // S13d: pd_x = pd_x / data_sqrt -> B0
-            AscendC::Div(buf_[B0].Get<float>(), buf_[B0].Get<float>(), buf_[B3].Get<float>(), count);
+            // S11d: variance -> B5 (reload, B5 free after S11c), data_sqrt = sqrt(variance + eps)
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(evVtoMTE2);
+            CopyInBrc(coord, IN_VAR, B5, aISeg);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
+            AscendC::Adds(buf_[B5].Get<float>(), buf_[B5].Get<float>(), eps, count);
+            AscendC::Sqrt<float, kPreciseSqrtConfig>(buf_[B5].Get<float>(), buf_[B5].Get<float>(), count);
+
+            // S12: coef = (prod / data_sqrt) × (−numRec) + dy + neg_res_beta_num -> B1（VF 链内完成）
+            //     先除后缩放：prod*margin 正常区先除以 data_sqrt 再乘 -1/num，中间量
+            //     全程避开次正规区。若先乘 -1/num（旧序），res_gamma=FLT_MIN 且 num 较大时
+            //     t 落入次正规区被设备 FTZ 冲零，输出偏离真值达 6 个数量级（L0_030）。
+            //     先除以小 data_sqrt 还能把商抬回正常区，与 torch CPU 渐变下溢结果对齐。
+            //     Div 曾为 0ULP 除法实验移出 VF，实验回退后合回（省一次 B0 全量往返）；
+            //     Reg 级 INTRINSIC 除法与独立 AscendC::Div 同算法逐位一致。
+            uint16_t rep12 = AscendC::CeilDivision(count, VL_F32);
+            asc_vf_call<CoefVF<float>>((__ubuf__ float*)buf_[B1].Get<float>().GetPhyAddr(),
+                                       (__ubuf__ float*)buf_[B1].Get<float>().GetPhyAddr(),
+                                       (__ubuf__ float*)buf_[B5].Get<float>().GetPhyAddr(),
+                                       (__ubuf__ float*)buf_[B3].Get<float>().GetPhyAddr(),
+                                       (__ubuf__ float*)buf_[B4].Get<float>().GetPhyAddr(), negNumRec, count, VL_F32,
+                                       rep12);
+
+            // ===== Phase C: pd_x = coef * gamma / data_sqrt + CopyOut =====
+
+            // S13a: pd_x = coef * gamma -> B0 (V: B0 = B1 * B2; B0's tds dead)
+            AscendC::Mul(buf_[B0].Get<float>(), buf_[B1].Get<float>(), buf_[B2].Get<float>(), count);
+
+            // S13d: pd_x = pd_x / data_sqrt(B5, kept from S11d) -> B0 (INTRINSIC div)
+            AscendC::Div(buf_[B0].Get<float>(), buf_[B0].Get<float>(), buf_[B5].Get<float>(), count);
 
             if constexpr (NEED_CAST) {
                 AscendC::Cast(buf_[B0].Get<T>(), buf_[B0].Get<float>(), AscendC::RoundMode::CAST_RINT, count);

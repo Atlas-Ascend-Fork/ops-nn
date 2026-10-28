@@ -14,35 +14,49 @@
  * \file in_training_reduce_grad_graph_infer.cpp
  * \brief INTrainingReduceGrad 算子图层数据类型推导
  *
- * 对齐 canndev reduce_ops.cc INTrainingReduceGradInferShape：
- *   pd_x.dtype = x.dtype（input index 1）
+ * 推导前按公开约束独立校验（InferDataType 与 Tiling 双关口）：
+ *   dy dtype ∈ {FLOAT16, FLOAT}、x 与 dy 同 dtype、通道张量
+ *   （variance/mean/res_gamma/res_beta/gamma）为 FLOAT、声明输出 dtype 一致；
+ *   pd_x.dtype = dy.dtype。
  */
 
 #include "register/op_impl_registry.h"
+#include "op_common/log/log.h"
 
 using namespace ge;
 
 namespace ops {
 
-// ---------------------------------------------------------------------------
-// InferDataTypeForINTrainingReduceGrad(context) — data type inference callback
-//
-// Aligned with canndev reduce_ops.cc INTrainingReduceGradInferShape:
-//   pd_x.dtype = x.dtype (input index 1).
-//
-// ---------------------------------------------------------------------------
-// [REF_SAMPLE]
 static ge::graphStatus InferDataTypeForINTrainingReduceGrad(gert::InferDataTypeContext* context)
 {
-    const ge::DataType xDataType = context->GetInputDataType(1);
-    context->SetOutputDataType(0, xDataType);
+    const char* node = (context->GetNodeName() == nullptr) ? "INTrainingReduceGrad" : context->GetNodeName();
+    const ge::DataType dyDataType = context->GetInputDataType(0);
+    OP_CHECK_IF(dyDataType != ge::DT_FLOAT16 && dyDataType != ge::DT_FLOAT,
+                OP_LOGE(node, "Unsupported dy dtype: %d. Only DT_FLOAT16(%d) and DT_FLOAT(%d) are supported.",
+                        static_cast<int32_t>(dyDataType), static_cast<int32_t>(ge::DT_FLOAT16),
+                        static_cast<int32_t>(ge::DT_FLOAT)),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context->GetInputDataType(1) != dyDataType,
+                OP_LOGE(node, "x dtype (%d) != dy dtype (%d).", static_cast<int32_t>(context->GetInputDataType(1)),
+                        static_cast<int32_t>(dyDataType)),
+                return ge::GRAPH_FAILED);
+    for (size_t i = 2; i < 7; ++i) {
+        OP_CHECK_IF(context->GetInputDataType(i) != ge::DT_FLOAT,
+                    OP_LOGE(node, "Input %zu dtype (%d) must be DT_FLOAT(%d).", i,
+                            static_cast<int32_t>(context->GetInputDataType(i)), static_cast<int32_t>(ge::DT_FLOAT)),
+                    return ge::GRAPH_FAILED);
+    }
+    const ge::DataType declaredOutDataType = context->GetOutputDataType(0);
+    OP_CHECK_IF(declaredOutDataType != ge::DT_UNDEFINED && declaredOutDataType != dyDataType,
+                OP_LOGE(node, "Declared pd_x dtype (%d) != dy dtype (%d).", static_cast<int32_t>(declaredOutDataType),
+                        static_cast<int32_t>(dyDataType)),
+                return ge::GRAPH_FAILED);
+    if (context->SetOutputDataType(0, dyDataType) != ge::GRAPH_SUCCESS) {
+        OP_LOGE(node, "SetOutputDataType for pd_x failed.");
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
-// IMPL_OP(INTrainingReduceGrad).InferDataType(func):
-//   Registers InferDataTypeForINTrainingReduceGrad as the type inference function
-//   for the INTrainingReduceGrad operator type.
-//   To create FooBar: change INTrainingReduceGrad → FooBar.
-// [REF_SAMPLE]
 IMPL_OP(INTrainingReduceGrad).InferDataType(InferDataTypeForINTrainingReduceGrad);
 } // namespace ops

@@ -14,7 +14,11 @@
  * \file in_training_reduce_grad_infershape.cpp
  * \brief INTrainingReduceGrad 算子形状推导实现
  *
- * pd_x.shape = x.shape（直接拷贝，对齐 canndev runtime CopyShapeInput2OutputWithIdx）
+ * pd_x.shape = x.shape（对齐 canndev runtime CopyShapeInput2OutputWithIdx），
+ * 推导前按公开约束独立校验（InferShape 与 Tiling 双关口）：
+ *   dy/x rank=4（NCHW/NHWC）、x 与 dy 同 shape、无零长维（含 H*W=0 空 Tensor）、
+ *   通道张量（variance/mean/res_gamma/res_beta/gamma）符合 [N,C,1,1]/[N,1,1,C]、
+ *   声明输出 shape 与推导结果一致；未知维（-1）与未知秩（-2）跳过对应比较。
  */
 
 #include "register/op_impl_registry.h"
@@ -24,16 +28,153 @@
 using namespace ge;
 
 namespace ops {
+namespace {
+
+constexpr size_t INPUT_INDEX_DY = 0;
+constexpr size_t INPUT_INDEX_X = 1;
+constexpr size_t PARAM_INDEX_BEGIN = 2;
+constexpr size_t PARAM_NUM = 5;
+constexpr size_t OUTPUT_INDEX_PD_X = 0;
+constexpr size_t RANK_4D = 4;
+constexpr size_t AXIS_N = 0;
+constexpr size_t AXIS_C_NCHW = 1;
+constexpr size_t AXIS_C_NHWC = 3;
+
+bool IsUnknownRank(const gert::Shape* shape)
+{
+    return shape->GetDimNum() == 1 && shape->GetDim(0) == ge::UNKNOWN_DIM_NUM;
+}
+
+bool IsKnownDim(const int64_t dim) { return dim >= 0; }
+
+bool HasZeroDim(const gert::Shape* shape)
+{
+    for (size_t i = 0; i < shape->GetDimNum(); ++i) {
+        if (shape->GetDim(i) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool KnownDimsEqual(const gert::Shape* lhs, const gert::Shape* rhs)
+{
+    if (lhs->GetDimNum() != rhs->GetDimNum()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs->GetDimNum(); ++i) {
+        const int64_t l = lhs->GetDim(i);
+        const int64_t r = rhs->GetDim(i);
+        if (IsKnownDim(l) && IsKnownDim(r) && l != r) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool MatchesChannelPattern(const gert::Shape* param, const gert::Shape* dy)
+{
+    const int64_t dyDim[RANK_4D] = {dy->GetDim(0), dy->GetDim(1), dy->GetDim(2), dy->GetDim(3)};
+    for (size_t channelAxis = 0; channelAxis < RANK_4D; ++channelAxis) {
+        if (channelAxis != AXIS_C_NCHW && channelAxis != AXIS_C_NHWC) {
+            continue;
+        }
+        bool matched = true;
+        for (size_t i = 0; i < RANK_4D; ++i) {
+            const int64_t expected = (i == AXIS_N) ? dyDim[AXIS_N] : (i == channelAxis) ? dyDim[channelAxis] : 1;
+            const int64_t actual = param->GetDim(i);
+            if (IsKnownDim(expected) && IsKnownDim(actual) && expected != actual) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsFullyKnown(const gert::Shape* shape)
+{
+    if (shape->GetDimNum() == 0) {
+        return false;
+    }
+    for (size_t i = 0; i < shape->GetDimNum(); ++i) {
+        if (!IsKnownDim(shape->GetDim(i))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
 
 static ge::graphStatus InferShape4INTrainingReduceGrad(gert::InferShapeContext* context)
 {
-    constexpr size_t INPUT_INDEX_X = 1;
-    constexpr size_t OUTPUT_INDEX_PD_X = 0;
-    auto inShape = context->GetInputShape(INPUT_INDEX_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inShape);
-    auto outShape = context->GetOutputShape(OUTPUT_INDEX_PD_X);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
-    *outShape = *inShape;
+    const gert::Shape* dyShape = context->GetInputShape(INPUT_INDEX_DY);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dyShape);
+    const gert::Shape* xShape = context->GetInputShape(INPUT_INDEX_X);
+    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    gert::Shape* pdXShape = context->GetOutputShape(OUTPUT_INDEX_PD_X);
+    OP_CHECK_NULL_WITH_CONTEXT(context, pdXShape);
+
+    if (IsUnknownRank(dyShape)) {
+        *pdXShape = *dyShape;
+        return ge::GRAPH_SUCCESS;
+    }
+
+    if (dyShape->GetDimNum() != RANK_4D || (!IsUnknownRank(xShape) && xShape->GetDimNum() != RANK_4D)) {
+        OP_LOGE(context->GetNodeName(),
+                "INTrainingReduceGrad only supports 4D (NCHW/NHWC) inputs, dy rank=%zu, x rank=%zu.",
+                dyShape->GetDimNum(), xShape->GetDimNum());
+        return ge::GRAPH_FAILED;
+    }
+
+    if (HasZeroDim(dyShape) || (!IsUnknownRank(xShape) && HasZeroDim(xShape))) {
+        OP_LOGE(context->GetNodeName(), "INTrainingReduceGrad does not support empty tensor (dim value 0).");
+        return ge::GRAPH_FAILED;
+    }
+
+    if (!IsUnknownRank(xShape) && !KnownDimsEqual(xShape, dyShape)) {
+        OP_LOGE(context->GetNodeName(), "x shape must be the same as dy shape.");
+        return ge::GRAPH_FAILED;
+    }
+
+    const gert::Shape* channelRefShape = nullptr;
+    for (size_t i = 0; i < PARAM_NUM; ++i) {
+        const gert::Shape* paramShape = context->GetInputShape(PARAM_INDEX_BEGIN + i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, paramShape);
+        if (IsUnknownRank(paramShape)) {
+            continue;
+        }
+        if (paramShape->GetDimNum() != RANK_4D || !MatchesChannelPattern(paramShape, dyShape) ||
+            HasZeroDim(paramShape)) {
+            OP_LOGE(context->GetNodeName(),
+                    "Input %zu must be a 4D channel tensor of [N,C,1,1] (NCHW) or [N,1,1,C] (NHWC) matching dy.",
+                    PARAM_INDEX_BEGIN + i);
+            return ge::GRAPH_FAILED;
+        }
+        // 通道张量互一致性（README 约束五者 shape 必须一致）：逐张量各自匹配
+        // 某一模式但模式互不相同的输入（如 mean 为 NHWC 形态、其余为 NCHW 形态）
+        // 不存在使全部通道合法的单一张量形态，须在 Host 关口拒绝
+        if (channelRefShape == nullptr) {
+            channelRefShape = paramShape;
+        } else if (!KnownDimsEqual(paramShape, channelRefShape)) {
+            OP_LOGE(context->GetNodeName(),
+                    "Channel tensors (variance/mean/res_gamma/res_beta/gamma) must share the same shape: input %zu "
+                    "differs from input %zu.",
+                    PARAM_INDEX_BEGIN + i, PARAM_INDEX_BEGIN);
+            return ge::GRAPH_FAILED;
+        }
+    }
+
+    if (!IsUnknownRank(xShape) && IsFullyKnown(pdXShape) && !KnownDimsEqual(pdXShape, xShape)) {
+        OP_LOGE(context->GetNodeName(), "Declared pd_x shape must be the same as x shape.");
+        return ge::GRAPH_FAILED;
+    }
+
+    *pdXShape = *xShape;
     return ge::GRAPH_SUCCESS;
 }
 

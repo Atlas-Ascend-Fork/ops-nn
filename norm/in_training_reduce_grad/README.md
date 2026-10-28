@@ -66,6 +66,6 @@
 
 ## 调用说明
 
-| 调用方式 | 调用样例 | 说明 |
+| 调用方式 | 样例代码 | 说明 |
 |:--------|:--------|:-----|
-| 图模式调用 | [test_geir_in_training_reduce_grad](examples/test_geir_in_training_reduce_grad.cpp) | 通过[算子IR](op_graph/in_training_reduce_grad_proto.h)构图方式调用INTrainingReduceGrad算子。 |
+| GE图模式 | [test_geir_in_training_reduce_grad](examples/test_geir_in_training_reduce_grad.cpp) | 通过[算子IR](op_graph/in_training_reduce_grad_proto.h)构图方式调用INTrainingReduceGrad算子。 |

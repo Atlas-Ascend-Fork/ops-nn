@@ -277,7 +277,9 @@ private:
             OP_CHECK_NULL_WITH_CONTEXT(ctx_, shape);
             readInto(shape, rawInputShapes_);
         }
-        for (size_t i = 0; i < ctx_->GetComputeNodeInfo()->GetOutputsNum(); ++i) {
+        auto computeNodeInfo = ctx_->GetComputeNodeInfo();
+        OP_CHECK_NULL_WITH_CONTEXT(ctx_, computeNodeInfo);
+        for (size_t i = 0; i < computeNodeInfo->GetOutputsNum(); ++i) {
             auto shape = ctx_->GetOutputShape(i);
             OP_CHECK_NULL_WITH_CONTEXT(ctx_, shape);
             readInto(shape, rawOutputShapes_);
@@ -368,6 +370,13 @@ private:
             return ge::GRAPH_FAILED;
         }
 
+        for (int64_t d = 0; d < dyRank; d++) {
+            if (dy[d] == 0) {
+                OP_LOGE(ctx_->GetNodeName(), "invalid dim value 0: dy dim[%ld]=0 (empty tensor is not supported)", d);
+                return ge::GRAPH_FAILED;
+            }
+        }
+
         if (dy != x) {
             OP_LOGE(ctx_->GetNodeName(), "dy shape != x shape");
             return ge::GRAPH_FAILED;
@@ -409,6 +418,19 @@ private:
                 OP_LOGE(ctx_->GetNodeName(),
                         "NHWC: variance N,C must match dy, got var[N,C]=[%ld,%ld] dy[N,C]=[%ld,%ld]", varShape[0],
                         varShape[3], dy[0], dy[3]);
+                return ge::GRAPH_FAILED;
+            }
+        }
+
+        auto& pdxShape = rawOutputShapes_[0];
+        if ((int64_t)pdxShape.size() != dyRank) {
+            OP_LOGE(ctx_->GetNodeName(), "pd_x rank (%d) != dy rank (%ld)", (int)pdxShape.size(), dyRank);
+            return ge::GRAPH_FAILED;
+        }
+        for (int64_t d = 0; d < dyRank; d++) {
+            if (pdxShape[d] >= 0 && dy[d] >= 0 && pdxShape[d] != dy[d]) {
+                OP_LOGE(ctx_->GetNodeName(), "pd_x shape must be the same as dy shape: pd_x[%ld]=%ld != dy[%ld]=%ld", d,
+                        pdxShape[d], d, dy[d]);
                 return ge::GRAPH_FAILED;
             }
         }

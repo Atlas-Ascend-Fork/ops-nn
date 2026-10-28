@@ -87,9 +87,21 @@ int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorD
     uint32_t byteSizeFloat32 = 4;
     uint32_t data_len = size * byteSizeFloat32;
     float* pData = new (std::nothrow) float[size];
+    if (pData == nullptr) {
+        printf("%s - ERROR - [XIR]: Allocate input data failed\n", GetTime().c_str());
+        return FAILED;
+    }
     for (size_t i = 0; i < size; ++i)
         *(pData + i) = value;
-    input_tensor = Tensor(input_tensor_desc, (uint8_t*)pData, data_len);
+    // Hand the buffer to the Tensor with a deleter: ownership transfers and the memory is
+    // released by the Tensor itself, so the lifetime never depends on constructor copy semantics.
+    input_tensor.SetTensorDesc(input_tensor_desc);
+    if (input_tensor.SetData(reinterpret_cast<uint8_t*>(pData), data_len,
+                             [](uint8_t* p) { delete[] reinterpret_cast<float*>(p); }) != ge::GRAPH_SUCCESS) {
+        delete[] pData;
+        printf("%s - ERROR - [XIR]: Set tensor data failed\n", GetTime().c_str());
+        return FAILED;
+    }
     return SUCCESS;
 }
 
@@ -130,6 +142,7 @@ int main()
     ret = CreateOppInGraph(DT_FLOAT, input, inputs, outputs, graph);
     if (ret != SUCCESS) {
         printf("CreateOppInGraph failed\n");
+        GEFinalize();
         return FAILED;
     }
 
@@ -139,6 +152,12 @@ int main()
     std::map<AscendString, AscendString> graph_opts;
     uint32_t graph_id = 0;
     ret = session->AddGraph(graph_id, graph, graph_opts);
+    if (ret != SUCCESS) {
+        printf("%s - ERROR - [XIR]: AddGraph failed\n", GetTime().c_str());
+        delete session;
+        GEFinalize();
+        return FAILED;
+    }
     printf("%s - INFO - [XIR]: AddGraph success\n", GetTime().c_str());
 
     printf("%s - INFO - [XIR]: RunGraph start\n", GetTime().c_str());

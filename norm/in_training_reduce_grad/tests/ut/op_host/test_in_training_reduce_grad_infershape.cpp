@@ -14,6 +14,10 @@
 #include "infershape_test_util.h"
 #include "ut_op_common.h"
 #include "../../../op_graph/in_training_reduce_grad_proto.h"
+// ophost UT 只链接 tiling/infershape 静态库，不含 op_graph 编译产物；
+// InferDataType 注册（IMPL_OP）需随本用例 TU 编入，否则
+// GetOpImpl(...)->infer_datatype 为空、inferdatatype 断言空转
+#include "../../../op_graph/in_training_reduce_grad_graph_infer.cpp"
 
 class INTrainingReduceGradInferShape : public testing::Test {
 protected:
@@ -58,4 +62,215 @@ TEST_F(INTrainingReduceGradInferShape, infershape_rank_4_nhwc)
                       .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+}
+
+TEST_F(INTrainingReduceGradInferShape, infershape_unknown_rank_propagate)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape unknownRankShape = {{ge::UNKNOWN_DIM_NUM}, {ge::UNKNOWN_DIM_NUM}};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(7, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&unknownRankShape, &unknownRankShape, &unknownRankShape, &unknownRankShape,
+                                    &unknownRankShape, &unknownRankShape, &unknownRankShape})
+                      .OutputShapes({&unknownRankShape})
+                      .Build();
+
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+}
+
+static ge::graphStatus RunInferShape(gert::StorageShape& dyShape, gert::StorageShape& xShape,
+                                     gert::StorageShape& channelShape, gert::StorageShape& outShape)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    if (inferShapeFunc == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(7, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&dyShape, &xShape, &channelShape, &channelShape, &channelShape, &channelShape,
+                                    &channelShape})
+                      .OutputShapes({&outShape})
+                      .Build();
+    return inferShapeFunc(holder.GetContext<gert::InferShapeContext>());
+}
+
+TEST_F(INTrainingReduceGradInferShape, infershape_reject_rank_not_4)
+{
+    gert::StorageShape tensorShape = {{2, 4, 8}, {2, 4, 8}};
+    gert::StorageShape channelShape = {{2, 4, 1, 1}, {2, 4, 1, 1}};
+    gert::StorageShape outShape = {{2, 4, 8}, {2, 4, 8}};
+    ASSERT_EQ(RunInferShape(tensorShape, tensorShape, channelShape, outShape), ge::GRAPH_FAILED);
+
+    gert::StorageShape tensorShape5d = {{2, 4, 8, 8, 1}, {2, 4, 8, 8, 1}};
+    gert::StorageShape outShape5d = {{2, 4, 8, 8, 1}, {2, 4, 8, 8, 1}};
+    ASSERT_EQ(RunInferShape(tensorShape5d, tensorShape5d, channelShape, outShape5d), ge::GRAPH_FAILED);
+}
+
+TEST_F(INTrainingReduceGradInferShape, infershape_reject_x_not_equal_dy)
+{
+    gert::StorageShape dyShape = {{2, 4, 8, 8}, {2, 4, 8, 8}};
+    gert::StorageShape xShape = {{2, 3, 8, 8}, {2, 3, 8, 8}};
+    gert::StorageShape channelShape = {{2, 4, 1, 1}, {2, 4, 1, 1}};
+    gert::StorageShape outShape = {{2, 4, 8, 8}, {2, 4, 8, 8}};
+    ASSERT_EQ(RunInferShape(dyShape, xShape, channelShape, outShape), ge::GRAPH_FAILED);
+}
+
+TEST_F(INTrainingReduceGradInferShape, infershape_reject_zero_dim)
+{
+    gert::StorageShape dyShape = {{2, 4, 0, 8}, {2, 4, 0, 8}};
+    gert::StorageShape channelShape = {{2, 4, 1, 1}, {2, 4, 1, 1}};
+    gert::StorageShape outShape = {{2, 4, 0, 8}, {2, 4, 0, 8}};
+    ASSERT_EQ(RunInferShape(dyShape, dyShape, channelShape, outShape), ge::GRAPH_FAILED);
+
+    gert::StorageShape emptyChannel = {{0, 4, 1, 1}, {0, 4, 1, 1}};
+    gert::StorageShape tensorShape = {{2, 4, 8, 8}, {2, 4, 8, 8}};
+    ASSERT_EQ(RunInferShape(tensorShape, tensorShape, emptyChannel, tensorShape), ge::GRAPH_FAILED);
+}
+
+TEST_F(INTrainingReduceGradInferShape, infershape_reject_channel_mismatch)
+{
+    gert::StorageShape tensorShape = {{2, 4, 8, 8}, {2, 4, 8, 8}};
+    gert::StorageShape wrongChannel = {{1, 4, 1, 1}, {1, 4, 1, 1}};
+    ASSERT_EQ(RunInferShape(tensorShape, tensorShape, wrongChannel, tensorShape), ge::GRAPH_FAILED);
+
+    gert::StorageShape rank3Channel = {{2, 4, 1}, {2, 4, 1}};
+    ASSERT_EQ(RunInferShape(tensorShape, tensorShape, rank3Channel, tensorShape), ge::GRAPH_FAILED);
+
+    gert::StorageShape rank5Channel = {{2, 4, 1, 1, 1}, {2, 4, 1, 1, 1}};
+    ASSERT_EQ(RunInferShape(tensorShape, tensorShape, rank5Channel, tensorShape), ge::GRAPH_FAILED);
+}
+
+TEST_F(INTrainingReduceGradInferShape, infershape_reject_channel_crossmode_inconsistent)
+{
+    // 五通道张量各自匹配某一模式（mean 为 NHWC 形态、其余为 NCHW 形态），
+    // 但不存在使全部通道合法的单一张量形态，Host 关口必须拒绝
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape tensorShape = {{2, 4, 8, 8}, {2, 4, 8, 8}};
+    gert::StorageShape nchwChannel = {{2, 4, 1, 1}, {2, 4, 1, 1}};
+    gert::StorageShape nhwcChannel = {{2, 1, 1, 8}, {2, 1, 1, 8}};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(7, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&tensorShape, &tensorShape, &nchwChannel, &nhwcChannel, &nchwChannel, &nchwChannel,
+                                    &nchwChannel})
+                      .OutputShapes({&tensorShape})
+                      .Build();
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+
+    auto holder2 = gert::InferShapeContextFaker()
+                       .NodeIoNum(7, 1)
+                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                       .InputShapes({&tensorShape, &tensorShape, &nhwcChannel, &nhwcChannel, &nhwcChannel, &nchwChannel,
+                                     &nhwcChannel})
+                       .OutputShapes({&tensorShape})
+                       .Build();
+    ASSERT_EQ(inferShapeFunc(holder2.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(INTrainingReduceGradInferShape, infershape_reject_declared_output_mismatch)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape tensorShape = {{2, 4, 8, 8}, {2, 4, 8, 8}};
+    gert::StorageShape channelShape = {{2, 4, 1, 1}, {2, 4, 1, 1}};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(7, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&tensorShape, &tensorShape, &channelShape, &channelShape, &channelShape,
+                                    &channelShape, &channelShape})
+                      .OutputShapes({&tensorShape})
+                      .Build();
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    gert::Shape* outShape = context->GetOutputShape(0);
+    ASSERT_NE(outShape, nullptr);
+    *outShape = gert::Shape({9, 9, 9, 9});
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_FAILED);
+
+    auto holder2 = gert::InferShapeContextFaker()
+                       .NodeIoNum(7, 1)
+                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                       .InputShapes({&tensorShape, &tensorShape, &channelShape, &channelShape, &channelShape,
+                                     &channelShape, &channelShape})
+                       .OutputShapes({&tensorShape})
+                       .Build();
+    auto context2 = holder2.GetContext<gert::InferShapeContext>();
+    gert::Shape* outShape2 = context2->GetOutputShape(0);
+    ASSERT_NE(outShape2, nullptr);
+    *outShape2 = gert::Shape({2, 4, 8});
+    ASSERT_EQ(inferShapeFunc(context2), ge::GRAPH_FAILED);
+}
+
+TEST_F(INTrainingReduceGradInferShape, inferdatatype_case_0)
+{
+    auto inferDataTypeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_datatype;
+    ASSERT_NE(inferDataTypeFunc, nullptr);
+
+    if (inferDataTypeFunc != nullptr) {
+        gert::InferDataTypeContextFaker faker;
+        faker.IrInputNum(7)
+            .NodeIoNum(7, 1)
+            .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+            .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+            .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+            .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+            .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+            .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+            .NodeInputTd(6, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+        auto holder = faker.Build();
+        // faker 的 NodeOutputTd 丢弃 dtype 参数，输出槽未初始化；显式种子化声明输出 dtype
+        holder.GetContext<gert::InferDataTypeContext>()->SetOutputDataType(0, ge::DT_FLOAT16);
+
+        ASSERT_EQ(inferDataTypeFunc(holder.GetContext<gert::InferDataTypeContext>()), ge::GRAPH_SUCCESS);
+    }
+}
+
+static ge::graphStatus RunInferDataType(const std::vector<ge::DataType>& inputDtypes, ge::DataType outDtype)
+{
+    auto inferDataTypeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_datatype;
+    if (inferDataTypeFunc == nullptr) {
+        return ge::GRAPH_SUCCESS;
+    }
+    gert::InferDataTypeContextFaker faker;
+    faker.IrInputNum(7).NodeIoNum(7, 1);
+    for (size_t i = 0; i < inputDtypes.size(); ++i) {
+        faker.NodeInputTd(static_cast<int32_t>(i), inputDtypes[i], ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto holder = faker.Build();
+    // faker 的 NodeOutputTd 丢弃 dtype 参数（builder 接口无输出 dtype 入参），
+    // InferDataType 输出槽保持未初始化；此处显式种子化声明输出 dtype 作为断言 oracle
+    holder.GetContext<gert::InferDataTypeContext>()->SetOutputDataType(0, outDtype);
+    return inferDataTypeFunc(holder.GetContext<gert::InferDataTypeContext>());
+}
+
+TEST_F(INTrainingReduceGradInferShape, inferdatatype_reject_invalid_dtype)
+{
+    auto inferDataTypeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_datatype;
+
+    if (inferDataTypeFunc != nullptr) {
+        const std::vector<ge::DataType> valid = {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT,
+                                                 ge::DT_FLOAT,   ge::DT_FLOAT,   ge::DT_FLOAT};
+        ASSERT_EQ(RunInferDataType(
+                      {ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT},
+                      ge::DT_BF16),
+                  ge::GRAPH_FAILED);
+        ASSERT_EQ(RunInferDataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                                    ge::DT_FLOAT},
+                                   ge::DT_FLOAT16),
+                  ge::GRAPH_FAILED);
+        ASSERT_EQ(RunInferDataType({ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
+                                    ge::DT_FLOAT, ge::DT_FLOAT},
+                                   ge::DT_FLOAT16),
+                  ge::GRAPH_FAILED);
+        ASSERT_EQ(RunInferDataType(valid, ge::DT_FLOAT), ge::GRAPH_FAILED);
+    }
 }
