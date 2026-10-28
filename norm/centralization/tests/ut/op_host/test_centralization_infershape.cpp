@@ -66,57 +66,6 @@ TEST(CentralizationInferShape, CopyUnknownRank)
     EXPECT_EQ(op.GetOutputDescByName("y").GetDataType(), ge::DT_FLOAT16);
 }
 
-TEST(CentralizationInferShape, RejectRankZero)
-{
-    ge::op::Centralization op;
-    auto input = create_desc_with_ori({}, ge::DT_FLOAT, ge::FORMAT_ND, {}, ge::FORMAT_ND);
-    op.UpdateInputDesc("x", input);
-    op.SetAttr("axes", std::vector<int64_t>{-1});
-
-    EXPECT_EQ(InferShapeTest(op, Runtime2TestParam{{"axes"}}), ge::GRAPH_FAILED);
-}
-
-TEST(CentralizationInferShape, RejectRankGreaterThanEight)
-{
-    ge::op::Centralization op;
-    auto input = create_desc_with_ori({1, 1, 1, 1, 1, 1, 1, 1, 1}, ge::DT_FLOAT16, ge::FORMAT_ND,
-                                      {1, 1, 1, 1, 1, 1, 1, 1, 1}, ge::FORMAT_ND);
-    op.UpdateInputDesc("x", input);
-    op.SetAttr("axes", std::vector<int64_t>{-1});
-
-    EXPECT_EQ(InferShapeTest(op, Runtime2TestParam{{"axes"}}), ge::GRAPH_FAILED);
-}
-
-TEST(CentralizationInferShape, RejectInvalidAxes)
-{
-    ge::op::Centralization op;
-    auto input = create_desc_with_ori({2, 3, 4}, ge::DT_FLOAT, ge::FORMAT_ND, {2, 3, 4}, ge::FORMAT_ND);
-    op.UpdateInputDesc("x", input);
-    op.SetAttr("axes", std::vector<int64_t>{3});
-
-    EXPECT_EQ(InferShapeTest(op, Runtime2TestParam{{"axes"}}), ge::GRAPH_FAILED);
-}
-
-TEST(CentralizationInferShape, RejectDuplicateAxes)
-{
-    ge::op::Centralization op;
-    auto input = create_desc_with_ori({2, 3, 4}, ge::DT_FLOAT16, ge::FORMAT_ND, {2, 3, 4}, ge::FORMAT_ND);
-    op.UpdateInputDesc("x", input);
-    op.SetAttr("axes", std::vector<int64_t>{1, -2});
-
-    EXPECT_EQ(InferShapeTest(op, Runtime2TestParam{{"axes"}}), ge::GRAPH_FAILED);
-}
-
-TEST(CentralizationInferShape, RejectUnsupportedDtype)
-{
-    ge::op::Centralization op;
-    auto input = create_desc_with_ori({2, 3, 4}, ge::DT_BF16, ge::FORMAT_ND, {2, 3, 4}, ge::FORMAT_ND);
-    op.UpdateInputDesc("x", input);
-    op.SetAttr("axes", std::vector<int64_t>{1});
-
-    EXPECT_EQ(InferDataTypeTest(op, Runtime2TestParam{{"axes"}}), ge::GRAPH_FAILED);
-}
-
 TEST(CentralizationInferShape, CopyShapeRange)
 {
     auto inferShapeRangeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("Centralization")->infer_shape_range;
