@@ -16,6 +16,7 @@
 #define OPS_MATMUL_WEIGHT_QUANT_BATCH_MATMUL_V2_PROTO_H_
 
 #include "graph/operator_reg.h"
+#include "common/inc/op_host/op_const_def_nn.h"
 
 namespace ge {
 /**
@@ -102,8 +103,10 @@ namespace ge {
 */
 REG_OP(WeightQuantBatchMatmulV2)
     .INPUT(x, TensorType({DT_FLOAT16, DT_BF16}))
-    .INPUT(weight, TensorType({DT_INT8, DT_INT4, DT_INT32, DT_FLOAT8_E4M3FN, DT_HIFLOAT8, DT_FLOAT4_E2M1}))
-    .INPUT(antiquant_scale, TensorType({DT_FLOAT16, DT_BF16, DT_UINT64, DT_INT64, DT_FLOAT8_E8M0}))
+    .INPUT(weight, TensorType({DT_INT8, DT_INT4, DT_INT32, DT_FLOAT8_E4M3FN, DT_HIFLOAT8, DT_FLOAT4_E2M1,
+                               Ops::NN::DT_HIFLOAT4}))
+    .INPUT(antiquant_scale,
+           TensorType({DT_FLOAT16, DT_BF16, DT_UINT64, DT_INT64, DT_FLOAT8_E8M0, Ops::NN::DT_HIFLOAT4_SCALE}))
     .OPTIONAL_INPUT(antiquant_offset, TensorType({DT_FLOAT16, DT_BF16, DT_INT32}))
     .OPTIONAL_INPUT(quant_scale, TensorType({DT_FLOAT, DT_UINT64}))
     .OPTIONAL_INPUT(quant_offset, TensorType({DT_FLOAT}))

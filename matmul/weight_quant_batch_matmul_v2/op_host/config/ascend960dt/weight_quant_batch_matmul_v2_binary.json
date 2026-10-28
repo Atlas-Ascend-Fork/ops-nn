@@ -47,7 +47,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -57,7 +57,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -161,7 +161,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -171,7 +171,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -275,7 +275,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -285,7 +285,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -389,7 +389,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -399,7 +399,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -503,7 +503,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -513,7 +513,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -617,7 +617,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -627,7 +627,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -731,7 +731,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -741,7 +741,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -845,7 +845,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -855,7 +855,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -959,7 +959,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "bfloat16",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -969,7 +969,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "bfloat16",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -1073,7 +1073,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "bfloat16",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -1083,7 +1083,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "bfloat16",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -3011,7 +3011,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -3021,7 +3021,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -3125,7 +3125,7 @@
                 {
                     "name": "quant_scale",
                     "index": 4,
-                    "dtype": "int8",
+                    "dtype": "uint64",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
@@ -3135,7 +3135,7 @@
                 {
                     "name": "quant_offset",
                     "index": 5,
-                    "dtype": "int8",
+                    "dtype": "float32",
                     "format": "ND",
                     "paramType": "optional",
                     "shape": [
