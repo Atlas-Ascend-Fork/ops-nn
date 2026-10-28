@@ -16,12 +16,47 @@
 #include "log/log.h"
 #include "util/shape_util.h"
 
+#include <cmath>
+
 using namespace ge;
 
 namespace ops {
 static constexpr size_t INPUT_IDX_GRAD = 0;
 static constexpr size_t INPUT_IDX_X = 1;
 static constexpr size_t OUTPUT_IDX_Y = 0;
+static constexpr size_t ATTR_MIN_INDEX = 0;
+static constexpr size_t ATTR_MAX_INDEX = 1;
+static constexpr size_t ATTR_NUM_BITS_INDEX = 2;
+// spec.yaml rank_range [0,8]：Host 门禁独立拒绝超秩输入（kMaxDimNum 可表达 rank 9+）
+static constexpr size_t MAX_RANK = 8;
+
+// 属性语义校验（与 tiling 门禁同规则，满足两门禁独立拦截契约）：min/max 有限、min<max、num_bits∈[2,16]
+static graphStatus ValidateAttrsForFakeQuantWithMinMaxArgsGradient(gert::InferShapeContext* context)
+{
+    auto* attrs = context->GetAttrs();
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    const float* attrMin = attrs->GetAttrPointer<float>(ATTR_MIN_INDEX);
+    const float* attrMax = attrs->GetAttrPointer<float>(ATTR_MAX_INDEX);
+    const int64_t* attrNumBits = attrs->GetAttrPointer<int64_t>(ATTR_NUM_BITS_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrMin);
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrMax);
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrNumBits);
+
+    OP_CHECK_IF(
+        (std::isnan(*attrMin) || std::isnan(*attrMax) || std::isinf(*attrMin) || std::isinf(*attrMax)),
+        OP_LOGE(context->GetNodeName(), "FakeQuantWithMinMaxArgsGradient requires finite min/max, got min=%f max=%f.",
+                *attrMin, *attrMax),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((*attrMin >= *attrMax),
+                OP_LOGE(context->GetNodeName(),
+                        "FakeQuantWithMinMaxArgsGradient requires min < max, got min=%f max=%f.", *attrMin, *attrMax),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((*attrNumBits < 2 || *attrNumBits > 16),
+                OP_LOGE(context->GetNodeName(), "FakeQuantWithMinMaxArgsGradient num_bits must be in [2,16], got %ld.",
+                        *attrNumBits),
+                return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
 
 static graphStatus InferShapeForFakeQuantWithMinMaxArgsGradient(gert::InferShapeContext* context)
 {
@@ -35,10 +70,16 @@ static graphStatus InferShapeForFakeQuantWithMinMaxArgsGradient(gert::InferShape
 
     OP_CHECK_IF(gradShape->GetDimNum() != xShape->GetDimNum(),
                 OP_LOGE(context, "gradients and x must have identical shape."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        xShape->GetDimNum() > MAX_RANK,
+        OP_LOGE(context, "FakeQuantWithMinMaxArgsGradient supports rank in [0,8], got %zu.", xShape->GetDimNum()),
+        return ge::GRAPH_FAILED);
     for (size_t i = 0; i < xShape->GetDimNum(); ++i) {
         OP_CHECK_IF(gradShape->GetDim(i) != xShape->GetDim(i),
                     OP_LOGE(context, "gradients and x must have identical shape."), return ge::GRAPH_FAILED);
     }
+    OP_CHECK_IF((ValidateAttrsForFakeQuantWithMinMaxArgsGradient(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE(context->GetNodeName(), "attribute validation failed."), return ge::GRAPH_FAILED);
 
     // y has same shape as x.
     *yShape = *xShape;
@@ -52,6 +93,14 @@ static graphStatus InferShapeForFakeQuantWithMinMaxArgsGradient(gert::InferShape
 static ge::graphStatus InferDataTypeForFakeQuantWithMinMaxArgsGradient(gert::InferDataTypeContext* context)
 {
     OP_LOGD(context, "Begin to do InferDataTypeForFakeQuantWithMinMaxArgsGradient");
+    // 两门禁独立拦截契约：Host 门禁独立拒绝非 float32 输入，而非仅由 tiling 兜底
+    OP_CHECK_IF((context->GetInputDataType(INPUT_IDX_GRAD) != ge::DT_FLOAT ||
+                 context->GetInputDataType(INPUT_IDX_X) != ge::DT_FLOAT),
+                OP_LOGE(context->GetNodeName(),
+                        "FakeQuantWithMinMaxArgsGradient only supports float32 inputs, got gradients=%d x=%d.",
+                        static_cast<int>(context->GetInputDataType(INPUT_IDX_GRAD)),
+                        static_cast<int>(context->GetInputDataType(INPUT_IDX_X))),
+                return ge::GRAPH_FAILED);
     context->SetOutputDataType(OUTPUT_IDX_Y, ge::DT_FLOAT);
     return ge::GRAPH_SUCCESS;
 }

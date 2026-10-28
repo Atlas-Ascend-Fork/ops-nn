@@ -23,6 +23,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #include "../../op_kernel/arch35/fake_quant_with_min_max_args_gradient_struct.h"
 
@@ -58,16 +59,38 @@ ge::graphStatus FakeQuantWithMinMaxArgsGradientTiling::GetCompileInfo()
 
 ge::graphStatus FakeQuantWithMinMaxArgsGradientTiling::GetOpParam()
 {
+    // 跨输入一致性：gradients 与 x 必须 rank 与逐维完全一致（README 约束/spec boundary_conditions），
+    // 独立 Tiling 调用入口不经过 InferShape，须在此拦截
+    auto gShape = context_->GetInputShape(INPUT_GRAD_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, gShape);
     auto xShape = context_->GetInputShape(INPUT_X_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, xShape);
-    const gert::Shape& shape = xShape->GetStorageShape();
-    totalLen_ = 1;
-    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
-        totalLen_ *= shape.GetDim(i);
+    const gert::Shape& gS = gShape->GetStorageShape();
+    const gert::Shape& xS = xShape->GetStorageShape();
+    OP_CHECK_IF((gS.GetDimNum() != xS.GetDimNum()),
+                OP_LOGE(context_->GetNodeName(), "gradients and x must have identical shape, got rank %zu vs %zu.",
+                        gS.GetDimNum(), xS.GetDimNum()),
+                return ge::GRAPH_FAILED);
+    for (size_t i = 0; i < xS.GetDimNum(); ++i) {
+        OP_CHECK_IF((gS.GetDim(i) != xS.GetDim(i)),
+                    OP_LOGE(context_->GetNodeName(), "gradients and x must have identical shape, dim %zu: %ld vs %ld.",
+                            i, gS.GetDim(i), xS.GetDim(i)),
+                    return ge::GRAPH_FAILED);
     }
-    if (totalLen_ < 0) {
-        OP_LOGE(context_->GetNodeName(), "Invalid input shape, total len %ld.", totalLen_);
-        return ge::GRAPH_FAILED;
+    // spec.yaml rank_range [0,8]：tiling 门禁独立拒绝超秩输入
+    OP_CHECK_IF((xS.GetDimNum() > 8),
+                OP_LOGE(context_->GetNodeName(), "FakeQuantWithMinMaxArgsGradient supports rank in [0,8], got %zu.",
+                        xS.GetDimNum()),
+                return ge::GRAPH_FAILED);
+
+    // 逐维累乘防溢出：各维 ≤ int64 极限时朴素累乘有符号溢出为 UB，先乘后查不可靠
+    totalLen_ = 1;
+    for (size_t i = 0; i < xS.GetDimNum(); ++i) {
+        if (xS.GetDim(i) != 0 && totalLen_ > std::numeric_limits<int64_t>::max() / xS.GetDim(i)) {
+            OP_LOGE(context_->GetNodeName(), "Input shape product overflows int64 at dim %zu (%ld).", i, xS.GetDim(i));
+            return ge::GRAPH_FAILED;
+        }
+        totalLen_ *= xS.GetDim(i);
     }
 
     auto gDesc = context_->GetInputDesc(INPUT_GRAD_INDEX);
@@ -128,6 +151,15 @@ ge::graphStatus FakeQuantWithMinMaxArgsGradientTiling::CalcNudge()
     const float nudgedMin = (qMinF - nudgedZeroPoint) * scale;
     const float nudgedMax = (qMaxF - nudgedZeroPoint) * scale;
 
+    // DESIGN §1.1 声明 scale 有限、nudged 边界有界；对满足声明约束但算术退化（scale 下溢为 0、
+    // max-min 上溢为 Inf）的合法极端属性，显式拒绝而非产出 NaN 边界导致梯度整体清零
+    OP_CHECK_IF((!std::isfinite(nudgedMin) || !std::isfinite(nudgedMax) || !std::isfinite(scale)),
+                OP_LOGE(context_->GetNodeName(),
+                        "FakeQuantWithMinMaxArgsGradient nudge arithmetic degenerated for min=%f max=%f "
+                        "num_bits=%ld (scale=%f, nudgedMin=%f, nudgedMax=%f).",
+                        fMin_, fMax_, numBits_, scale, nudgedMin, nudgedMax),
+                return ge::GRAPH_FAILED);
+
     tilingData_.nudgedMin = nudgedMin;
     tilingData_.nudgedMax = nudgedMax;
     return ge::GRAPH_SUCCESS;
@@ -135,29 +167,34 @@ ge::graphStatus FakeQuantWithMinMaxArgsGradientTiling::CalcNudge()
 
 ge::graphStatus FakeQuantWithMinMaxArgsGradientTiling::CalcTiling()
 {
-    if (totalLen_ == 0) {
-        numCore_ = 0;
-        blockFactor_ = 0;
-        blockTailFactor_ = 0;
-        baseLen_ = DEFAULT_BASE_LEN;
-        return ge::GRAPH_SUCCESS;
-    }
+    // Reg Tensor 满向量加载宽度（float）：VECTOR_REG_WIDTH/sizeof(float) = 64。
+    // baseLen 必须按 64 对齐——Compute 的无掩码 Reg::DataCopy 以 VL 为粒度读取，
+    // baseLen 仅 8 对齐时（如 6944%64=32）整循环/尾块都会越界读本地缓冲。
+    constexpr int64_t VL_FLOAT = 64;
 
-    // UB budget: gradient holds 2 inputs (g, x) + 1 output (y) buffers; sign-bit handling is
-    // done in registers, no UB scratch. 3 queues * BUFF_NUM = 6 fp32 slots; divisor 7 keeps a
-    // 1-slot safety margin.
+    // UB 预算：3 队列 × BUFF_NUM=2 × fp32；divisor 7 保留 1 槽安全余量（与非空路径同规则）
     int64_t ubAvail = static_cast<int64_t>(ubSize_) - 2048;
     int64_t maxBaseLen = ubAvail / (7 * static_cast<int64_t>(sizeof(float)));
-    maxBaseLen = (maxBaseLen / BLOCK_ALIGN_FP32) * BLOCK_ALIGN_FP32;
+    maxBaseLen = (maxBaseLen / VL_FLOAT) * VL_FLOAT; // 64 对齐向下取，保证不越预算
     if (maxBaseLen <= 0) {
         OP_LOGE(context_->GetNodeName(), "UB size %lu too small for fake_quant_with_min_max_args_gradient.", ubSize_);
         return ge::GRAPH_FAILED;
     }
+
+    if (totalLen_ == 0) {
+        // 空张量路径同样执行 UB 预算（原固定 8192 在 196608 平台恰超预算，FQR-F-04）
+        numCore_ = 0;
+        blockFactor_ = 0;
+        blockTailFactor_ = 0;
+        baseLen_ = (DEFAULT_BASE_LEN < maxBaseLen) ? DEFAULT_BASE_LEN : maxBaseLen;
+        return ge::GRAPH_SUCCESS;
+    }
+
     baseLen_ = (DEFAULT_BASE_LEN < maxBaseLen) ? DEFAULT_BASE_LEN : maxBaseLen;
     if (baseLen_ > totalLen_) {
-        baseLen_ = ((totalLen_ + BLOCK_ALIGN_FP32 - 1) / BLOCK_ALIGN_FP32) * BLOCK_ALIGN_FP32;
-        if (baseLen_ == 0) {
-            baseLen_ = BLOCK_ALIGN_FP32;
+        baseLen_ = ((totalLen_ + VL_FLOAT - 1) / VL_FLOAT) * VL_FLOAT;
+        if (baseLen_ > maxBaseLen) {
+            baseLen_ = maxBaseLen;
         }
     }
 
