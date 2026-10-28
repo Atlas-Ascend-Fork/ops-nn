@@ -123,6 +123,7 @@ public:
         aicConfig.ExtendCfgInfo("opFile.value", "transpose_batch_mat_mul");
         this->AICore().AddConfig("ascend950", aicConfig);
         this->AICore().AddConfig("ascend960dt", aicConfig);
+        this->AICore().AddConfig("ascend960pr", aicConfig);
         this->AICore().AddConfig("ascend350", aicConfig);
 
         OpAICoreConfig config_kirin = GetKirinCoreConfig();

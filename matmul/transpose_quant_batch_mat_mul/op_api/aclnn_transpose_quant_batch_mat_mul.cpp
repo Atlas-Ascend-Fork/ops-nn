@@ -557,12 +557,13 @@ inline static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, 
                                       const aclIntArray* permX1, const aclIntArray* permX2, const aclIntArray* permY,
                                       int32_t batch_split_factor, int64_t groupSize)
 {
-    // Only support DAV_3510 or DAV_9201
+    // Only support DAV_3510 or DAV_9201 or DAV_9202
     if (!IsNpuArch3510Series()) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "platform",
             Ops::NN::FormatString("%d", static_cast<int>(GetCurrentPlatformInfo().GetCurNpuArch())).c_str(),
-            Ops::NN::FormatString("The value of %s can only be %s", "platform", "DAV_3510 or DAV_9201").c_str());
+            Ops::NN::FormatString("The value of %s can only be %s", "platform", "DAV_3510 or DAV_9201 or DAV_9202")
+                .c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
     // Check null

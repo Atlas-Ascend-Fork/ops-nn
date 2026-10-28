@@ -285,8 +285,8 @@ inline static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, 
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             "aclnnTransposeBatchMatMulGetWorkspaceSize", "cubeMathType",
             Ops::NN::FormatString("%d", cubeMathType).c_str(),
-            Ops::NN::FormatString("In %s case, the value of %s cannot be %s", "DAV_3510 or DAV_9201 architecture",
-                                  "cubeMathType", "-1")
+            Ops::NN::FormatString("In %s case, the value of %s cannot be %s",
+                                  "DAV_3510 or DAV_9201 or DAV_9202 architecture", "cubeMathType", "-1")
                 .c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }

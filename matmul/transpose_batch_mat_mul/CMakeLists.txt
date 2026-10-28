@@ -20,7 +20,7 @@ add_kernel_sources(
 
 add_kernel_sources(
     KERNEL_SRC arch35/transpose_batch_mat_mul.cpp
-    COMPUTE_UNITS ascend950 ascend960dt ascend350
+    COMPUTE_UNITS ascend950 ascend960dt ascend960pr ascend350
     AUTO_SYNC false
     OPTIONS "--cce-no-dcache-flush"
 )
