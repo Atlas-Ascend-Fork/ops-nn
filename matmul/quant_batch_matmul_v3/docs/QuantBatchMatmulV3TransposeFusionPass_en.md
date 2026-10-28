@@ -105,7 +105,7 @@ Let `outer` denote the penultimate dimension of the original `shape` of the data
 | Product | General Rule | Limit Supplementary Rule |
 | ---- | ---- | ---- |
 | <term>Ascend 950PR&950DT products</term>  | `x1` and `x2` are not subject to the 65535 dimension threshold in this section. Transpose fusion is performed when other usage constraints are met. | This supplementary rule is skipped, and transpose fusion is handled by the general rule. |
-| Atlas A2 products and Atlas A3 products | `x1` requires `outer` ≤ 65535; `x2` requires `outer` ≤ 65535 or the `FRACTAL_NZ` format. | Checks `x1` and `x2` respectively; processes only branches that meet 0 < `outer` ≤ 65535 and `inner` > 65535. |
+| <term>Atlas A2 products</term> and <term>Atlas A3 products</term> | `x1` requires `outer` ≤ 65535; `x2` requires `outer` ≤ 65535 or the `FRACTAL_NZ` format. | Checks `x1` and `x2` respectively; processes only branches that meet 0 < `outer` ≤ 65535 and `inner` > 65535. |
 
 The dimension conditions of the Limit rule also apply to the `FRACTAL_NZ` format; they are not relaxed due to the format. If the `outer` or `inner` value involved in the check is the unknown value `-1`, the branch does not satisfy the dimension conditions of the Limit rule.
 
@@ -119,11 +119,11 @@ The dimension conditions of the Limit rule also apply to the `FRACTAL_NZ` format
 See [QuantBatchMatmulV3 Operator Description](../README.md) for the data types and formats supported by the product. This rule determines fusion conditions based on platform instruction capabilities. Operator support for a product does not mean that the product supports all fusion modes of this rule.
 
 <!-- npu="910b" id1 -->
-Atlas A2 products
+<term>Atlas A2 products</term>
 <!-- end id1 -->
 
 <!-- npu="A3" id2 -->
-Atlas A3 products
+<term>Atlas A3 products</term>
 <!-- end id2 -->
 
 <!-- npu="950" id3 -->

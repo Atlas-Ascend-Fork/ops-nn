@@ -21,6 +21,6 @@ Fuses the MatMul/MatMulV2/BatchMatMul/BatchMatMulV2 operators with the BiasAdd/A
 
 <!-- npu="950" id1 -->
 
-<term>Ascend 950PR/Ascend 950DT products</term>
+<term>Ascend 950PR&950DT products</term>
 
 <!-- end id1 -->

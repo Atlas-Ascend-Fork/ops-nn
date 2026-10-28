@@ -16,11 +16,11 @@ Fusion pattern 2: Delete the Transpose/TransposeD node before the weight input o
 This fusion mode is supported on the following products.
 
 <!-- npu="910b" id2 -->
-Atlas A2 products
+<term>Atlas A2 products</term>
 <!-- end id2 -->
 
 <!-- npu="A3" id3 -->
-Atlas A3 products
+<term>Atlas A3 products</term>
 <!-- end id3 -->
 
 <!-- npu="950" id4 -->

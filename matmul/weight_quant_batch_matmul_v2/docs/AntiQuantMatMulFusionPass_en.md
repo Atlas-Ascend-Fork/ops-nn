@@ -25,7 +25,7 @@ Fusion pattern 3: AscendAntiQuant + MatMul scenario. The output of AscendAntiQua
 The products supported by this fusion are as follows.
 
 <!-- npu="910b" id2 -->
-Atlas A2 products
+<term>Atlas A2 products</term>
 <!-- end id2 -->
 
 <!-- npu="950" id3 -->
@@ -44,7 +44,7 @@ Atlas A2 products
 - The constant scale of Mul supports only 1 or N elements (the N dimension of weight), and the constant offset of Add supports only 1 or N elements.
 - The shapes of the Add and Mul nodes must be the same: (1,n), (n,), or (1,). In the scenario where Add does not exist but Mul exists, the shape of the Mul node must be (1,).
 <!-- npu="910b" -->
-- For Atlas A2 products, the shape admission criteria must be met: M<=64, K>=5120, N>=5120, and (K,N) cannot be (5120,10240) or (10240,5120).
+- For <term>Atlas A2 products</term>, the shape admission criteria must be met: M<=64, K>=5120, N>=5120, and (K,N) cannot be (5120,10240) or (10240,5120).
 <!-- end -->
 <!-- npu="950" -->
 - For <term>Ascend 950PR&950DT products</term>, there is no shape admission restriction.

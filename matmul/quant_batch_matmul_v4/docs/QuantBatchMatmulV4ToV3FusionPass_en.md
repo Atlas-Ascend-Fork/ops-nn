@@ -52,11 +52,11 @@ The A8W8 G-B use case in the preceding table compares the number of dimensions o
 The applicable products must satisfy the constraints in both the [QuantBatchMatmulV4 operator description](../README.md) and the [QuantBatchMatmulV3 operator description](../../quant_batch_matmul_v3/README.md). This pass does not perform chip model-specific branching. Whether the conversion is performed is determined by the preceding input conditions.
 
 <!-- npu="910b" id1 -->
-Atlas A2 products
+<term>Atlas A2 products</term>
 <!-- end id1 -->
 
 <!-- npu="A3" id2 -->
-Atlas A3 products
+<term>Atlas A3 products</term>
 <!-- end id2 -->
 
 <!-- npu="950" id3 -->

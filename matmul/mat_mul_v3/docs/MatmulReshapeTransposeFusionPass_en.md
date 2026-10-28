@@ -23,15 +23,15 @@ The structure in the dashed box can appear once or multiple times.
 ## Applicable Products
 
 <!-- npu="310b" id1 -->
-Atlas 200I/500 A2 inference products
+<term>Atlas 200I/500 A2 inference products</term>
 <!-- end id1 -->
 
 <!-- npu="910b" id2 -->
-Atlas A2 products
+<term>Atlas A2 products</term>
 <!-- end id2 -->
 
 <!-- npu="A3" id3 -->
-Atlas A3 products
+<term>Atlas A3 products</term>
 <!-- end id3 -->
 
 <!-- npu="950" id4 -->

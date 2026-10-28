@@ -43,11 +43,11 @@
 ## Applicable Products
 
 <!-- npu="910b" id9 -->
-Atlas A2 products
+<term>Atlas A2 products</term>
 <!-- end id9 -->
 
 <!-- npu="A3" id10 -->
-Atlas A3 products
+<term>Atlas A3 products</term>
 <!-- end id10 -->
 
 <!-- npu="950" id11 -->

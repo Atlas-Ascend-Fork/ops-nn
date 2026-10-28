@@ -18,7 +18,7 @@ Fusion mode 3: Delete the Transpose/TransposeD node before the x2 input of the Q
 ![](../../../docs/en/figures/QuantBatchMatmulV4TransposeFusionPass_3.png)
 
 >[!NOTE]
->This graph fusion is supported only on the <term>Ascend 950PR/Ascend 950DT products</term> and not on other chip models.
+>This graph fusion is supported only on the <term>Ascend 950PR&950DT products</term> and not on other chip models.
 <!-- end id1 -->
 
 ## Constraints

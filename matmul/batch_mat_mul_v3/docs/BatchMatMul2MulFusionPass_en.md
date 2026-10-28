@@ -25,11 +25,11 @@ If the corresponding adj of an input is true, insert a reshape operator before t
 ## Applicable Products
 
 <!-- npu="910b" id1 -->
-Atlas A2 products
+<term>Atlas A2 products</term>
 <!-- end id1 -->
 
 <!-- npu="A3" id2 -->
-Atlas A3 products
+<term>Atlas A3 products</term>
 <!-- end id2 -->
 
 <!-- npu="950" id3 -->

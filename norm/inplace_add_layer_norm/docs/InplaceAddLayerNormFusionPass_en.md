@@ -10,15 +10,15 @@ Fusion Mode 1: Replace the AddLayerNorm operator in the graph with the InplaceAd
 The products supported by this fusion mode are as follows.
 
 <!-- npu="910b" id2 -->
-Atlas A2 products
+<term>Atlas A2 products</term>
 <!-- end id2 -->
 
 <!-- npu="A3" id3 -->
-Atlas A3 products
+<term>Atlas A3 products</term>
 <!-- end id3 -->
 
 <!-- npu="950" id4 -->
-Ascend 950PR&950DT products
+<term>Ascend 950PR&950DT products</term>
 <!-- end id4 -->
 
 ![](../../../docs/en/figures/InplaceAddLayerNormFusionPass_1.png)

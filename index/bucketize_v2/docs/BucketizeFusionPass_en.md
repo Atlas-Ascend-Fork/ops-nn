@@ -15,5 +15,5 @@ None.
 ## Applicable Products
 
 <!-- npu="950" id1 -->
-Ascend 950PR/950DT products
+<term>Ascend 950PR&950DT products</term>
 <!-- end id1 -->

@@ -5,7 +5,7 @@
 ## Fusion Patterns
 
 <!-- npu="950" id1 -->
-Fusion mode 1: On Ascend 950PR/950DT products, the BroadcastTo before the gamma and beta inputs of the LayerNorm operator is removed from the graph. gamma and beta are directly used as inputs of the LayerNorm operator, and begin_norm_axis and begin_params_axis are both set to the start axis of the normalization dimension. The following figure shows an example.
+Fusion mode 1: On <term>Ascend 950PR&950DT products</term>, the BroadcastTo before the gamma and beta inputs of the LayerNorm operator is removed from the graph. gamma and beta are directly used as inputs of the LayerNorm operator, and begin_norm_axis and begin_params_axis are both set to the start axis of the normalization dimension. The following figure shows an example.
 
 ![](../../../docs/en/figures/LayerNormRemoveBroadcastFusionPass_1.png)
 

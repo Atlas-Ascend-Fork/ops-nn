@@ -18,5 +18,5 @@ Since the Gemm API has no single-operator implementation, this fusion splits Gem
 ## Applicable Products
 
 <!-- npu="950" id1 -->
-<term>Ascend 950PR/Ascend 950DT products</term>
+<term>Ascend 950PR&950DT products</term>
 <!-- end id1 -->

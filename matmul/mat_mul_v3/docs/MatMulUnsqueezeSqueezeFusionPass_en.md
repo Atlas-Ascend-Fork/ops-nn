@@ -31,13 +31,13 @@ MatMul/MatMulV2/BatchMatMul/BatchMatMulV2 support the AscendDequant use case. Th
 
 <!-- npu="910b" id1 -->
 
-Atlas A2 products
+<term>Atlas A2 products</term>
 
 <!-- end id1 -->
 
 <!-- npu="A3" id2 -->
 
-Atlas A3 products
+<term>Atlas A3 products</term>
 
 <!-- end id2 -->
 

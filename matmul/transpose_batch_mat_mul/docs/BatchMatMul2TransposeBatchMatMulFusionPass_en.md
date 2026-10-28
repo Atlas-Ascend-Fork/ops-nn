@@ -88,11 +88,11 @@ When the Transpose (optional), Transpose (optional), BatchMatMul, Transpose, Res
 ## Applicable Products
 
 <!-- npu="910b" id13 -->
-Atlas A2 products
+<term>Atlas A2 products</term>
 <!-- end id13 -->
 
 <!-- npu="A3" id14 -->
-Atlas A3 products
+<term>Atlas A3 products</term>
 <!-- end id14 -->
 
 <!-- npu="950" id15 -->
