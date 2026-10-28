@@ -31,11 +31,15 @@ extern "C" {
 #endif
 
 static const std::initializer_list<DataType> ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPPORT_LIST = {
-    DataType::DT_FLOAT, DataType::DT_FLOAT16, DataType::DT_INT32, DataType::DT_BF16};
+    DataType::DT_FLOAT, DataType::DT_FLOAT16, DataType::DT_INT32, DataType::DT_BF16,
+    DataType::DT_INT16, DataType::DT_INT8,    DataType::DT_UINT8};
 
-static const std::initializer_list<DataType> SCALAR_FLOAT_SUPPORT_LIST = {DataType::DT_FLOAT, DataType::DT_DOUBLE};
-static const std::initializer_list<DataType> SCALAR_FLOAT16_SUPPORT_LIST = {DataType::DT_FLOAT16, DataType::DT_DOUBLE};
-static const std::initializer_list<DataType> SCALAR_INT_SUPPORT_LIST = {DataType::DT_INT32, DataType::DT_INT64};
+// alpha为aclTensor直接透传给kernel（无dtype转换通道），其合法dtype须与OpDef注册的
+// scalar_tensor_dtype_list及文档口径一致（F16->F16 / F32->F32 / BF16->F32 / 整型->INT32）。
+// 注：aclScalar语义的{DOUBLE,INT64}宽放行不适用于本接口，透传后会被OpDef原型校验拒绝。
+static const std::initializer_list<DataType> ALPHA_TENSOR_FLOAT_SUPPORT_LIST = {DataType::DT_FLOAT};
+static const std::initializer_list<DataType> ALPHA_TENSOR_FLOAT16_SUPPORT_LIST = {DataType::DT_FLOAT16};
+static const std::initializer_list<DataType> ALPHA_TENSOR_INT32_SUPPORT_LIST = {DataType::DT_INT32};
 
 static const std::initializer_list<DataType> EMPTY_LIST = {};
 
@@ -108,11 +112,12 @@ static inline bool CheckDtypeValid(const aclTensorList* x1, const aclTensorList*
     OP_CHECK_DTYPE_NOT_SUPPORT((*x1)[0], dtypeList, return false);
 
     if (inputDtype == DataType::DT_BF16 || inputDtype == DataType::DT_FLOAT) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(alpha, SCALAR_FLOAT_SUPPORT_LIST, return false);
+        OP_CHECK_DTYPE_NOT_SUPPORT(alpha, ALPHA_TENSOR_FLOAT_SUPPORT_LIST, return false);
     } else if (inputDtype == DataType::DT_FLOAT16) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(alpha, SCALAR_FLOAT16_SUPPORT_LIST, return false);
-    } else if (inputDtype == DataType::DT_INT32) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(alpha, SCALAR_INT_SUPPORT_LIST, return false);
+        OP_CHECK_DTYPE_NOT_SUPPORT(alpha, ALPHA_TENSOR_FLOAT16_SUPPORT_LIST, return false);
+    } else if (inputDtype == DataType::DT_INT32 || inputDtype == DataType::DT_INT16 ||
+               inputDtype == DataType::DT_INT8 || inputDtype == DataType::DT_UINT8) {
+        OP_CHECK_DTYPE_NOT_SUPPORT(alpha, ALPHA_TENSOR_INT32_SUPPORT_LIST, return false);
     }
 
     for (uint64_t i = 0; i < x2->Size(); i++) {
@@ -201,8 +206,20 @@ static aclnnStatus ExecForeachAddListGetWorkspaceSize(const aclTensorList* x1, c
     auto contiguousTensorsX1 = ForeachMakeContiguousTensorList(x1, uniqueExecutor.get());
     CHECK_RET(contiguousTensorsX1 != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
+    // alpha为1元素aclTensor透传给kernel。tiling层要求alpha的storage_shape恰为1个元素
+    // （foreach_add_list_tiling_arch35.cpp校验storageShape.GetShapeSize()==1），若alpha为
+    // 共享storage的切片（storage_shape != view_shape，如带view offset的切片），透传会被
+    // tiling拒绝且报错深层不友好。故与x1/x2/out一致做Contiguous规整（对storage_shape !=
+    // view_shape的view生成独立规范tensor）。V2为aclScalar经ConvertToTensor生成规范tensor，
+    // 无此问题。
+    const aclTensor* contiguousAlpha = alpha;
+    if (!(op::IsContiguous(alpha) && alpha->GetStorageShape() == alpha->GetViewShape())) {
+        contiguousAlpha = l0op::Contiguous(alpha, uniqueExecutor.get());
+        CHECK_RET(contiguousAlpha != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
     // 复用V2桥接，alpha(aclTensor*)直接透传，输出到连续buffer
-    auto result = l0op::ForeachAddListV2(contiguousTensorsX1, contiguousTensorsX2, alpha, contiguousOut,
+    auto result = l0op::ForeachAddListV2(contiguousTensorsX1, contiguousTensorsX2, contiguousAlpha, contiguousOut,
                                          uniqueExecutor.get());
     CHECK_RET(result != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
