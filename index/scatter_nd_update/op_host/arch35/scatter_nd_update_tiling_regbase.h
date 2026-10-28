@@ -63,6 +63,7 @@ protected:
     void CalcDeterministicUpdateSplit(int64_t ubBlock);
     void CalcDeterministicIndicesSplit(int64_t ubBlock);
     void CalculateMask();
+    void UpdateSimdSortDecision();
     void DoOpTilingForDeterministicSplitCol();
     void CalcSplitColCoreSplit();
     void CalcSplitColUbFactor();

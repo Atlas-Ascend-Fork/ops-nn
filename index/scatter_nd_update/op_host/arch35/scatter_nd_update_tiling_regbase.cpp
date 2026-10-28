@@ -278,16 +278,6 @@ ge::graphStatus ScatterNdUpdateTiling::CalculateDerivedParams(const gert::Shape&
         isSimdNonDeterminstic_ = 1;
     }
 
-    // SIMD 排序条件
-    // 1. indicesAxis_ > varInAxis_：索引数量大于原始索引数量，表示高重复度
-    // 2. 单核 indices 数量 > MIN_INDICES_PER_CORE_FOR_SIMD_SORT(64)：批次足够大
-    int64_t estimatedIndicesPerCore = Ops::Base::CeilDiv(indicesAxis_, totalCoreNum_);
-    bool highDuplication = (indicesAxis_ > varInAxis_);
-    bool enoughBatchPerCore = (estimatedIndicesPerCore > MIN_INDICES_PER_CORE_FOR_SIMD_SORT);
-    if (isSimdNonDeterminstic_ == 1 && highDuplication && enoughBatchPerCore) {
-        isSimdWithSort_ = 1;
-    }
-
     if (indicesAxis_ / varInAxis_ >= SIMT_SORT_LIMIT) {
         isSimtWithSort_ = 1;
     }
@@ -973,6 +963,20 @@ void ScatterNdUpdateTiling::CalculateMask()
         isMask_ = 1;
     }
 }
+
+// 1. isSimdNonDeterminstic_ == 1：走 SIMD 非确定模板
+// 2. indicesAxis_ > varInAxis_：索引数量大于目标行数，表示高重复度
+// 3. 单核 indices 数量 > MIN_INDICES_PER_CORE_FOR_SIMD_SORT(64)：批次足够大
+void ScatterNdUpdateTiling::UpdateSimdSortDecision()
+{
+    int64_t estimatedIndicesPerCore = Ops::Base::CeilDiv(indicesAxis_, totalCoreNum_);
+    bool highDuplication = (indicesAxis_ > varInAxis_);
+    bool enoughBatchPerCore = (estimatedIndicesPerCore > MIN_INDICES_PER_CORE_FOR_SIMD_SORT);
+    if (isSimdNonDeterminstic_ == 1 && highDuplication && enoughBatchPerCore) {
+        isSimdWithSort_ = 1;
+    }
+}
+
 ge::graphStatus ScatterNdUpdateTiling::DoOpTiling()
 {
     if (outputStorageShapeSize_ < INT32_MAX) {
@@ -990,6 +994,8 @@ ge::graphStatus ScatterNdUpdateTiling::DoOpTiling()
             isSimtWithSort_ = 0;
         }
     }
+
+    UpdateSimdSortDecision();
 
     if (isSimdNonDeterminstic_ == 1) {
         CalculateMask();
