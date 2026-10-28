@@ -55,6 +55,7 @@ struct TilingCase {
     bool hasGroupIndex = false;
     bool hasScale = false;
     ge::graphStatus status = ge::GRAPH_SUCCESS;
+    uint32_t expectedBlockDim = 0;
 };
 
 void SetMxV2Shapes(TilingCase& tc)
@@ -179,6 +180,9 @@ void ExecuteTilingCase(const TilingCase& tc)
 
     auto status = tilingFunc(tilingContext);
     EXPECT_EQ(status, tc.status);
+    if (status == ge::GRAPH_SUCCESS && tc.expectedBlockDim != 0) {
+        EXPECT_EQ(tilingContext->GetBlockDim(), tc.expectedBlockDim);
+    }
     if (status == ge::GRAPH_SUCCESS) {
         auto* workspace = tilingContext->GetWorkspaceSizes(1);
         ASSERT_NE(workspace, nullptr);
@@ -342,6 +346,24 @@ TEST_F(SwigluGroupQuantTilingTest, tiling_mx_v2_fp8)
     tc.alpha = 1.702f;
     tc.bias = 1.0f;
     tc.tilingKey = 5000;
+    ExecuteTilingCase(tc);
+}
+
+TEST_F(SwigluGroupQuantTilingTest, tiling_mx_v2_zero_token_with_weight)
+{
+    TilingCase tc;
+    tc.xShape = {{0, 512}, {0, 512}};
+    tc.weightShape = {{0}, {0}};
+    tc.yShape = {{0, 256}, {0, 256}};
+    tc.scaleShape = {{0, 4, 2}, {0, 4, 2}};
+    tc.yOriginShape = tc.yShape;
+    tc.scaleDtype = ge::DT_FLOAT8_E8M0;
+    tc.quantMode = 5;
+    tc.roundScale = true;
+    tc.hasWeight = true;
+    tc.outputOrigin = true;
+    tc.tilingKey = 5100;
+    tc.expectedBlockDim = 1;
     ExecuteTilingCase(tc);
 }
 

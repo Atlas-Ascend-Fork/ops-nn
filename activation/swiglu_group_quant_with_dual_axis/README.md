@@ -226,7 +226,7 @@ $$
     <tr>
       <td>x</td>
       <td>输入</td>
-      <td>SWIGLU输入，最后一维前后均分为A、B两部分。shape为[T, 2H]，非空，2H大于等于64且能被64整除。支持非连续Tensor。</td>
+      <td>SWIGLU输入，最后一维前后均分为A、B两部分。shape为[T, 2H]，2H大于等于64且能被64整除。支持非连续Tensor。</td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -325,7 +325,7 @@ $$
 
 ## 约束说明
 
-- `x`仅支持二维`[T, 2H]`、FLOAT16或BFLOAT16，非空，`2H >= 64`且能被64整除。
+- `x`仅支持二维`[T, 2H]`、FLOAT16或BFLOAT16，`2H >= 64`且能被64整除。
 - `quant_mode`仅支持`1`；`dst_type`仅支持FLOAT8_E4M3FN（默认）与FLOAT8_E5M2。
 - `weight`仅在提供`group_index`时允许，元素数必须等于`T`；non-group场景传`weight`将被拒绝。
 - `group_index`为累积组端索引，元素值在**设备侧**执行时校验：非法值（负值、递减、越界、末元素不等于`T`）
