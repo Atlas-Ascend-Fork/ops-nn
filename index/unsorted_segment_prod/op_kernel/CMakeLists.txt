@@ -10,6 +10,6 @@
 
 
 add_kernel_sources(
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend960dt
     IMPL_MODE high_performance,high_precision,support_out_of_bound_index
 )
