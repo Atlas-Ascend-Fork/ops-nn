@@ -1,0 +1,368 @@
+# aclnnRepeatInterleaveInt
+
+<!-- md-trans-meta sourceCommit=unknown translatedAt=2026-09-22T16:35:46.243Z -->
+
+## Applicable Products
+
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR&950DT products</term>: Supported
+<!-- end id1 -->
+<!-- npu="A3" id2 -->
+- <term>Atlas A3 products</term>: Supported
+<!-- end id2 -->
+<!-- npu="910b" id3 -->
+- <term>Atlas A2 products</term>: Supported
+<!-- end id3 -->
+<!-- npu="310b" id4 -->
+- <term>Atlas 200I/500 A2 inference products</term>: Not supported
+<!-- end id4 -->
+<!-- npu="310p" id5 -->
+- <term>Atlas inference products</term>: Not supported
+<!-- end id5 -->
+<!-- npu="910" id6 -->
+- <term>Atlas training products</term>: Not supported
+<!-- end id6 -->
+
+## Function
+
+- Description: After tensor self is flattened, each element is copied the corresponding number of repeats.
+
+- Example:
+  Suppose the input tensor is ([[a, b], [c, d], [e, f]]) and repeats is 2.
+  Then the generated tensor is tensor([a, a, b, b, c, c, d, d, e, e, f, f]).
+  After the tensor is flattened, input becomes ([a, b, c, d, e, f]). Each element in this tensor is copied repeats times, that is, each element is copied twice.
+
+## Function Prototype
+
+Each operator uses a [two-phase API](../../../docs/en/context/two_phase_api.md). Call `aclnnRepeatInterleaveIntGetWorkspaceSize` first to obtain the workspace size required for computation and the executor that contains the computation process of the operator, and then call `aclnnRepeatInterleaveInt` to perform computation.
+
+```Cpp
+aclnnStatus aclnnRepeatInterleaveIntGetWorkspaceSize(
+  const aclTensor* self,
+  int64_t          repeats,
+  int64_t          outputSize,
+  aclTensor*       out,
+  uint64_t*        workspaceSize,
+  aclOpExecutor**  executor)
+```
+
+```Cpp
+aclnnStatus aclnnRepeatInterleaveInt(
+  void*          workspace,
+  uint64_t       workspaceSize,
+  aclOpExecutor* executor,
+  aclrtStream    stream)
+```
+
+## aclnnRepeatInterleaveIntGetWorkspaceSize
+
+- **Parameters:**
+
+  <table style="undefined;table-layout: fixed; width: 1550px"><colgroup>
+    <col style="width: 180px">
+    <col style="width: 120px">
+    <col style="width: 280px">
+    <col style="width: 320px">
+    <col style="width: 250px">
+    <col style="width: 120px">
+    <col style="width: 140px">
+    <col style="width: 140px">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Parameter</th>
+        <th>Input/Output</th>
+        <th>Description</th>
+        <th>Instruction</th>
+        <th>Data Type</th>
+        <th>Data Format</th>
+        <th>Shape</th>
+        <th>Non-contiguous Tensor</th>
+      </tr></thead>
+    <tbody>
+      <tr>
+        <td>self (aclTensor*)</td>
+        <td>Input</td>
+        <td>Input tensor whose data is to be replicated, as described in Function.</td>
+        <td>Empty tensors are supported.</td>
+        <td>UINT8, UINT16, UINT32, UINT64, INT8, INT16, INT32, INT64, BOOL, FLOAT16, BFLOAT16, FLOAT</td>
+        <td>ND</td>
+        <td>0-8</td>
+        <td>√</td>
+      </tr>
+      <tr>
+        <td>repeats (int64_t)</td>
+        <td>Input</td>
+        <td>Number of replications.</td>
+        <td>The value of repeats must be non-negative.</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+      </tr>
+      <tr>
+        <td>outputSize (int64_t)</td>
+        <td>Input</td>
+        <td>Final size of the tensor after replication.</td>
+        <td>outputSize must equal the number of elements in self * the value of repeats.</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+      </tr>
+      <tr>
+        <td>out (aclTensor*)</td>
+        <td>Output</td>
+        <td>Output tensor after data replication, as described in Function.</td>
+        <td>Empty tensors are supported.<br>The data type must be the same as that of self.<br>The shape is a 1D tensor, and its size is the same as outputSize.</td>
+        <td>UINT8, UINT16, UINT32, UINT64, INT8, INT16, INT32, INT64, BOOL, FLOAT16, BFLOAT16, FLOAT</td>
+        <td>ND</td>
+        <td>1</td>
+        <td>√</td>
+      </tr>
+      <tr>
+        <td>workspaceSize (uint64_t*)</td>
+        <td>Output</td>
+        <td>Returns the workspace size to be requested on the Device side.</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+      </tr>
+      <tr>
+        <td>executor (aclOpExecutor**)</td>
+        <td>Output</td>
+        <td>Returns the op executor containing the operator computation flow.</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+      </tr>
+    </tbody></table>
+
+- **Return value**
+
+  aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../docs/en/context/aclnn_return_code.md).
+
+  The first-phase API performs input parameter validation and returns an error in the following scenarios:
+
+  <table style="undefined;table-layout: fixed; width: 1150px"><colgroup>
+    <col style="width: 300px">
+    <col style="width: 134px">
+    <col style="width: 716px">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Return Value</th>
+        <th>Error Code</th>
+        <th>Description</th>
+      </tr></thead>
+    <tbody>
+      <tr>
+        <td>ACLNN_ERR_PARAM_NULLPTR</td>
+        <td>161001</td>
+        <td>self or out contains a null pointer.</td>
+      </tr>
+      <tr>
+        <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
+        <td rowspan="4">161002</td>
+        <td>The data type of self is not in the supported range.</td>
+      </tr>
+      <tr>
+        <td>The data types of self and out are inconsistent.</td>
+      </tr>
+      <tr>
+        <td>repeats is not a natural number.</td>
+      </tr>
+      <tr>
+        <td>The number of dimensions of self exceeds 8.</td>
+      </tr>
+    </tbody></table>
+
+## aclnnRepeatInterleaveInt
+
+- **Parameters:**
+
+  <table style="undefined;table-layout: fixed; width: 1100px"><colgroup>
+    <col style="width: 200px">
+    <col style="width: 130px">
+    <col style="width: 770px">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Parameter</th>
+        <th>Input/Output</th>
+        <th>Description</th>
+      </tr></thead>
+    <tbody>
+      <tr>
+        <td>workspace</td>
+        <td>Input</td>
+        <td>Pointer to the workspace memory allocated on the Device.</td>
+      </tr>
+      <tr>
+        <td>workspaceSize</td>
+        <td>Input</td>
+        <td>Size of the workspace memory allocated on the Device, obtained by calling the first-phase API aclnnRepeatInterleaveIntGetWorkspaceSize.</td>
+      </tr>
+      <tr>
+        <td>executor</td>
+        <td>Input</td>
+        <td>The op executor that contains the operator computation flow.</td>
+      </tr>
+      <tr>
+        <td>stream</td>
+        <td>Input</td>
+        <td>Stream used to execute tasks.</td>
+      </tr>
+    </tbody></table>
+
+- **Return value**
+
+  aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../docs/en/context/aclnn_return_code.md).
+
+## Constraints
+
+- Deterministic computation:
+  - aclnnRepeatInterleaveInt defaults to a deterministic implementation.
+- Other constraints: The value of outputSize must be equal to the value of repeats * the number of elements.
+
+## Example
+
+The sample code is for reference only. For details about compilation and execution, see [Compile and Run Samples](../../../docs/en/context/compile_and_run_sample.md).
+
+```Cpp
+#include <iostream>
+#include <vector>
+#include "acl/acl.h"
+#include "aclnnop/aclnn_repeat_interleave.h"
+
+#define CHECK_RET(cond, return_expr) \
+  do {                               \
+    if (!(cond)) {                   \
+      return_expr;                   \
+    }                                \
+  } while (0)
+
+#define LOG_PRINT(message, ...)     \
+  do {                              \
+    printf(message, ##__VA_ARGS__); \
+  } while (0)
+
+int64_t GetShapeSize(const std::vector<int64_t>& shape) {
+  int64_t shapeSize = 1;
+  for (auto i : shape) {
+    shapeSize *= i;
+  }
+  return shapeSize;
+}
+
+int Init(int32_t deviceId, aclrtStream* stream) {
+  // Boilerplate: resource initialization
+  auto ret = aclInit(nullptr);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclInit failed. ERROR: %d\n", ret); return ret);
+  ret = aclrtSetDevice(deviceId);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); return ret);
+  ret = aclrtCreateStream(stream);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); return ret);
+  return 0;
+}
+
+template <typename T>
+int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
+                    aclDataType dataType, aclTensor** tensor) {
+  auto size = GetShapeSize(shape) * sizeof(T);
+  // Call aclrtMalloc to allocate device-side memory.
+  auto ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
+  // Call aclrtMemcpy to copy host-side data to device-side memory.
+  ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
+
+  // Calculate the strides of the contiguous tensor.
+  std::vector<int64_t> strides(shape.size(), 1);
+  for (int64_t i = shape.size() - 2; i >= 0; i--) {
+    strides[i] = shape[i + 1] * strides[i + 1];
+  }
+
+  // Call the aclCreateTensor API to create an aclTensor.
+  *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
+                            shape.data(), shape.size(), *deviceAddr);
+  return 0;
+}
+
+int main() {
+  // 1. (Boilerplate) device/stream initialization. For details, see the acl API manual.
+  // Set deviceId based on the actual device.
+  int32_t deviceId = 0;
+  aclrtStream stream;
+  auto ret = Init(deviceId, &stream);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
+
+  // 2. Construct inputs and outputs. Custom construction is required based on the API.
+  std::vector<int64_t> selfShape = {2, 3};
+  std::vector<int64_t> outShape = {12};
+  void* selfDeviceAddr = nullptr;
+  void* outDeviceAddr = nullptr;
+  aclTensor* self = nullptr;
+  aclTensor* out = nullptr;
+  int64_t repeats = 2;
+  int64_t output_size = 12;
+  std::vector<float> selfHostData = {3, 4, 5, -3, -4, -5};
+  std::vector<float> outHostData = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+  // Create the self aclTensor.
+  ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
+  CHECK_RET(ret == ACL_SUCCESS, return ret);
+  // Create the out aclTensor.
+  ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
+  CHECK_RET(ret == ACL_SUCCESS, return ret);
+
+  // 3. Call the CANN operator library API. Replace it with the specific API name.
+  uint64_t workspaceSize = 0;
+  aclOpExecutor* executor;
+  // Call the aclnnRepeatInterleaveInt first-phase API.
+  ret = aclnnRepeatInterleaveIntGetWorkspaceSize(self, repeats, output_size, out, &workspaceSize, &executor);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnRepeatInterleaveIntGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
+  // Allocate device memory based on the workspaceSize calculated by the first-phase API.
+  void* workspaceAddr = nullptr;
+  if (workspaceSize > 0) {
+    ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
+  }
+  // Call the aclnnRepeatInterleaveInt second-phase API.
+  ret = aclnnRepeatInterleaveInt(workspaceAddr, workspaceSize, executor, stream);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnRepeatInterleaveInt failed. ERROR: %d\n", ret); return ret);
+
+  // 4. (Boilerplate) Synchronize and wait for task execution to complete.
+  ret = aclrtSynchronizeStream(stream);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+
+  // 5. Obtain the output value and copy the result on the device to the host. Modify it according to the specific API definition.
+  auto size = GetShapeSize(outShape);
+  std::vector<float> resultData(size, 0);
+  ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), outDeviceAddr,
+                    size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
+  for (int64_t i = 0; i < size; i++) {
+    LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
+  }
+
+  // 6. Destroy the aclTensor and aclScalar. Modify it according to the specific API definition.
+  aclDestroyTensor(self);
+  aclDestroyTensor(out);
+
+  // 7. Release device resources. Modify it according to the specific API definition.
+  aclrtFree(selfDeviceAddr);
+  aclrtFree(outDeviceAddr);
+  if (workspaceSize > 0) {
+    aclrtFree(workspaceAddr);
+  }
+  aclrtDestroyStream(stream);
+  aclrtResetDevice(deviceId);
+  aclFinalize();
+  return 0;
+}
+```
