@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file gru_grad.h
+ * \file gru_grad_arch22.h
  * \brief
  */
 
@@ -18,8 +18,8 @@
 
 #include "kernel_operator.h"
 #include "lib/matmul_intf.h"
-#include "gru_grad_tiling_data.h"
-#include "matmul_config.h"
+#include "../gru_grad_tiling_data.h"
+#include "../matmul_config.h"
 using namespace AscendC;
 
 constexpr int64_t GRU_GATE_SIZE = 3;

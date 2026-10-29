@@ -21,7 +21,7 @@
 #include <gtest/gtest.h>
 #include "tiling_context_faker.h"
 #include "tiling_case_executor.h"
-#include "op_host/gru_grad_tiling.h"
+#include "op_host/arch22/gru_grad_tiling.h"
 
 namespace {
 using TensorDesc = gert::TilingContextPara::TensorDescription;

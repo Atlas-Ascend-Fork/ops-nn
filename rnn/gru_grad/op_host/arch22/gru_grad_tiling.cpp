@@ -562,25 +562,7 @@ static ge::graphStatus TilingFunc4GruGrad(gert::TilingContext* ctx)
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus TilingPrepareForGruGrad(gert::TilingParseContext* context)
-{
-    OP_LOGD(context->GetNodeName(), "TilingPrepareForGruGrad start.");
-    auto ci = context->GetCompiledInfo<GruGradCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, ci);
-    fe::PlatFormInfos* pi = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, pi);
-    auto plat = platform_ascendc::PlatformAscendC(pi);
-    ci->aicCoreNum = plat.GetCoreNumAic();
-    OP_CHECK_IF(ci->aicCoreNum <= 0, OP_LOGE(context->GetNodeName(), "aicCore<=0"), return ge::GRAPH_FAILED);
-    ci->aivCoreNum = ci->aicCoreNum * AIV_DOUBLE;
-    OP_CHECK_IF(ci->aivCoreNum <= 0, OP_LOGE(context->GetNodeName(), "aivCore<=0"), return ge::GRAPH_FAILED);
-    uint64_t ub = 0;
-    plat.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ub);
-    ci->ubSizePlatForm = static_cast<int64_t>(ub);
-    ci->sysWorkspaceSize = static_cast<int64_t>(plat.GetLibApiWorkSpaceSize());
-    return ge::GRAPH_SUCCESS;
-}
-
+// TilingPrepareForGruGrad 由 gru_grad_tiling.h inline 提供（arch22/arch35 共用）
 IMPL_OP_OPTILING(GruGrad).Tiling(TilingFunc4GruGrad).TilingParse<GruGradCompileInfo>(TilingPrepareForGruGrad);
 
 } // namespace optiling

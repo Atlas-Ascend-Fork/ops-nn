@@ -16,10 +16,13 @@
 #define _GRU_GRAD_TILING_H_
 
 #include "register/tilingdata_base.h"
+#include "register/op_impl_registry.h"
 #include "tiling/tiling_api.h"
 #include "op_host/tiling_base.h"
+#include "error_util.h"
+#include "platform/platform_infos_def.h"
 #include "rnn/gru_grad/op_kernel/gru_grad_tiling_data.h"
-#include "rnn/gru_grad/op_kernel/gru_grad_tiling_key.h"
+#include "rnn/gru_grad/op_kernel/arch22/gru_grad_tiling_key.h"
 
 namespace optiling {
 
@@ -29,6 +32,27 @@ struct GruGradCompileInfo {
     int64_t sysWorkspaceSize{0};
     int64_t ubSizePlatForm{0};
 };
+
+// CompileInfo 解析（平台核数/UB/系统 workspace）——arch22 与 arch35 两套 tiling 共用，
+// 经本头文件 inline 提供（两 arch 目录互不链接，仅头文件共享）。
+inline ge::graphStatus TilingPrepareForGruGrad(gert::TilingParseContext* context)
+{
+    OP_LOGD(context->GetNodeName(), "TilingPrepareForGruGrad start.");
+    auto ci = context->GetCompiledInfo<GruGradCompileInfo>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, ci);
+    fe::PlatFormInfos* pi = context->GetPlatformInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, pi);
+    auto plat = platform_ascendc::PlatformAscendC(pi);
+    ci->aicCoreNum = plat.GetCoreNumAic();
+    OP_CHECK_IF(ci->aicCoreNum <= 0, OP_LOGE(context->GetNodeName(), "aicCore<=0"), return ge::GRAPH_FAILED);
+    ci->aivCoreNum = ci->aicCoreNum * 2;
+    OP_CHECK_IF(ci->aivCoreNum <= 0, OP_LOGE(context->GetNodeName(), "aivCore<=0"), return ge::GRAPH_FAILED);
+    uint64_t ub = 0;
+    plat.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ub);
+    ci->ubSizePlatForm = static_cast<int64_t>(ub);
+    ci->sysWorkspaceSize = static_cast<int64_t>(plat.GetLibApiWorkSpaceSize());
+    return ge::GRAPH_SUCCESS;
+}
 
 class GruGradTiling : public Ops::NN::Optiling::TilingBaseClass {
 public:
