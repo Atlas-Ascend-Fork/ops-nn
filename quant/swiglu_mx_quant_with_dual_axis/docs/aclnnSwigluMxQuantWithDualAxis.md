@@ -221,7 +221,7 @@ aclnnStatus aclnnSwigluMxQuantWithDualAxis(
       <td>FLOAT8_E5M2, FLOAT8_E4M3FN, FLOAT4_E2M1, FLOAT4_E1M2</td>
       <td>ND</td>
       <td>2</td>
-      <td>√</td>
+      <td>×</td>
     </tr>
     <tr>
       <td>mxscale1Out (aclTensor*)</td>
@@ -231,7 +231,7 @@ aclnnStatus aclnnSwigluMxQuantWithDualAxis(
       <td>FLOAT8_E8M0</td>
       <td>ND</td>
       <td>3</td>
-      <td>√</td>
+      <td>×</td>
     </tr>
     <tr>
       <td>y2Out (aclTensor*)</td>
@@ -241,7 +241,7 @@ aclnnStatus aclnnSwigluMxQuantWithDualAxis(
       <td>FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2</td>
       <td>ND</td>
       <td>2</td>
-      <td>√</td>
+      <td>×</td>
     </tr>
     <tr>
       <td>mxscale2Out (aclTensor*)</td>
@@ -251,7 +251,7 @@ aclnnStatus aclnnSwigluMxQuantWithDualAxis(
       <td>FLOAT8_E8M0</td>
       <td>ND</td>
       <td>3</td>
-      <td>√</td>
+      <td>×</td>
     </tr>
     <tr>
       <td>workspaceSize (uint64_t*)</td>

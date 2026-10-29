@@ -47,6 +47,8 @@ constexpr int64_t DIGIT_FOUR = 4;
 constexpr int64_t DIGIT_256 = 256;
 constexpr int64_t BLOCK_SIZE = 32;
 constexpr int64_t SPLIT_BLOCK_H = 64;
+// 与 kernel 侧 CUBLAS_SCALE2_BUFFER_BYTES 保持一致（kernel 侧 static_assert 校验为 896 字节）
+constexpr int64_t CUBLAS_SCALE2_BUFFER_BYTES = 896;
 
 const std::set<ge::DataType> INPUT_SUPPORT_DTYPE_SET = {ge::DT_FLOAT16, ge::DT_BF16};
 const std::set<ge::DataType> Y_SUPPORT_DTYPE_SET = {ge::DT_FLOAT4_E2M1, ge::DT_FLOAT4_E1M2, ge::DT_FLOAT8_E4M3FN,
@@ -379,6 +381,10 @@ ge::graphStatus SwigluMxQuantWithDualAxisTiling::ComputeTilingParams()
     int64_t y2Ub = y1Ub;
     int64_t scale1Ub = tilingParams_.splitBlockH * BLOCK_SIZE * DB;
     int64_t scale2Ub = tilingParams_.blockW * DIGIT_THREE * DB;
+    if (tilingParams_.scaleAlg != TPL_SCALE_ALG_0) {
+        // 与 kernel 侧一致：cuBLAS 路径 mxScaleQueue2_ 单 buffer 为 CUBLAS_SCALE2_BUFFER_BYTES
+        scale2Ub = CUBLAS_SCALE2_BUFFER_BYTES * DB;
+    }
     int64_t tmpScale1Ub = tilingParams_.splitBlockH * BLOCK_SIZE;
     int64_t tmpScale2Ub = tilingParams_.blockW * DIGIT_TWO * tilingParams_.dtypeSize;
     int64_t allNeedUb = xUb + swigluUb + y1Ub + y2Ub + scale1Ub + scale2Ub + tmpScale1Ub + tmpScale2Ub;
