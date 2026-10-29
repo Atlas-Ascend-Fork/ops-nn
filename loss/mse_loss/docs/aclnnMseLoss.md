@@ -95,7 +95,7 @@ aclnnStatus aclnnMseLoss(
       <td class="tg-0pky">self（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">公式中的输入`x`。</td>
-      <td class="tg-0pky">shape需要与target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与target的数据类型满足数据类型推导规则（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
+      <td class="tg-0pky">shape需要与target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与target的数据类型满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">1-8</td>
@@ -105,7 +105,7 @@ aclnnStatus aclnnMseLoss(
       <td class="tg-0pky">target（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">公式中的输入`y`。</td>
-      <td class="tg-0pky">shape需要与self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与self满足数据类型推导规则（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
+      <td class="tg-0pky">shape需要与self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与self满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">1-8</td>
@@ -128,7 +128,7 @@ aclnnStatus aclnnMseLoss(
       <td class="tg-0pky">数据类型需要是self与target推导之后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。<br>当reduction的值为0时，out的shape与self和target<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape一致；当reduction的值不为0时，out的shape支持0维。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">-</td>
-      <td class="tg-0pky">1-8</td>
+      <td class="tg-0pky">0-8</td>
       <td class="tg-0pky">√</td>
     </tr>
     <tr>
