@@ -655,8 +655,8 @@ bool TryMakeGeneralCandidate(const GNode& layerNorm, const bool isTrain, const b
     TensorDesc raw1;
     const bool input0IsCast = NodeType(*inputProducer0) == "Cast";
     const bool input1IsCast = NodeType(*inputProducer1) == "Cast";
-    const bool hasRaw0 = GetInputDesc(*inputProducer0, 0, raw0);
-    const bool hasRaw1 = GetInputDesc(*inputProducer1, 0, raw1);
+    const bool hasRaw0 = inputProducer0->GetInputsSize() > 0U && GetInputDesc(*inputProducer0, 0, raw0);
+    const bool hasRaw1 = inputProducer1->GetInputsSize() > 0U && GetInputDesc(*inputProducer1, 0, raw1);
     if (input0IsCast && !hasRaw0)
         return false;
     if (input1IsCast && !hasRaw1)

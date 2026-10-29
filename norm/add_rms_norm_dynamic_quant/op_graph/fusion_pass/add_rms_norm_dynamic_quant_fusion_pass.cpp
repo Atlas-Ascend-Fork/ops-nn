@@ -192,10 +192,15 @@ bool CheckNorm(const GNode& norm)
 bool CheckRequirements(const Candidate& nodes)
 {
     if (HasInput(nodes.quant[0], 1)) {
+        if (nodes.quant.size() == 2 && !HasInput(nodes.quant[1], 1)) {
+            OPS_LOG_D(kPass.c_str(), "guard_rejected : second smooth input is absent.");
+            return false;
+        }
         const auto dtype = InputDesc(nodes.norm, 0).GetDataType();
         for (const auto& quant : nodes.quant) {
-            if (InputDesc(quant, 1).GetDataType() != dtype) {
-                OPS_LOG_D(kPass.c_str(), "guard_rejected : smooth dtype differs from x1.");
+            TensorDesc smooth_desc;
+            if (quant.GetInputDesc(1, smooth_desc) != ge::GRAPH_SUCCESS || smooth_desc.GetDataType() != dtype) {
+                OPS_LOG_D(kPass.c_str(), "guard_rejected : smooth descriptor unavailable or dtype differs from x1.");
                 return false;
             }
         }

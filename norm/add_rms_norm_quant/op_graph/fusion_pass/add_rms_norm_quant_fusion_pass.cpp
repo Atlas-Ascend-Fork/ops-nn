@@ -165,11 +165,20 @@ bool CheckQuant(const GNode& norm, const GNode& quant)
         return false;
     }
     const auto gamma_size = Elements(InputDesc(norm, 2));
-    const auto zero_points = InputDesc(quant, 2);
-    if (Elements(InputDesc(quant, 1)) != gamma_size ||
-        (!zero_points.GetShape().GetDims().empty() && Elements(zero_points) != gamma_size)) {
-        OPS_LOG_D(kPass.c_str(), "guard_rejected : scales/zero_points size differs from gamma.");
+    if (Elements(InputDesc(quant, 1)) != gamma_size) {
+        OPS_LOG_D(kPass.c_str(), "guard_rejected : scales size differs from gamma.");
         return false;
+    }
+    if (quant.GetInDataNodesAndPortIndexs(2).first != nullptr) {
+        TensorDesc zero_points;
+        if (quant.GetInputDesc(2, zero_points) != ge::GRAPH_SUCCESS) {
+            OPS_LOG_D(kPass.c_str(), "guard_rejected : cannot read zero_points descriptor.");
+            return false;
+        }
+        if (!zero_points.GetShape().GetDims().empty() && Elements(zero_points) != gamma_size) {
+            OPS_LOG_D(kPass.c_str(), "guard_rejected : zero_points size differs from gamma.");
+            return false;
+        }
     }
     return true;
 }
