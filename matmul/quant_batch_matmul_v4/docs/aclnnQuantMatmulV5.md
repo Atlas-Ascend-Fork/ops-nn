@@ -778,6 +778,7 @@ aclnnStatus aclnnQuantMatmulV5(
 - **公共约束：**
   <a id="公共约束2"></a>
 
+  - 本接口不支持NZ格式的x2Scale（ScaleNZ）。使用WeightNZ与ScaleNZ的MX全量化场景，请调用[aclnnQuantMatmulWeightNz](../../quant_batch_matmul_v3/docs/aclnnQuantMatmulWeightNz.md)，并满足其ScaleNZ约束。
   - int4输入只支持transposeX1为false。
   - transposeX1为false时x1的shape：(batch, m, k)。transposeX1为true时x1的shape：(batch, k, m)。其中batch代表前0~4维，0维表示batch不存在。
   - transposeX2为false时x2的shape：(batch, k, n)。transposeX2为true时x2的shape：(batch, n, k)。其中batch代表前0~4维，0维表示batch不存在。k与x1的shape中的k一致。

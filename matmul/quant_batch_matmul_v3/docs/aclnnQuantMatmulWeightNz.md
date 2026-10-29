@@ -224,15 +224,16 @@ aclnnStatus aclnnQuantMatmulWeightNz(
         <td>表示量化参数，公式中的输入x2Scale。</td>
         <td>
           <ul>
-              <li>x2Scale是FLOAT8_E8M0时，各个维度表示：transposeX2为false时为(batch, ceil(k / 64), n, 2)，transposeX2为true时为(batch, n, ceil(k / 64), 2)，batch与x2的batch维度保持一致。</li>
+              <li>x2Scale是FLOAT8_E8M0且为ND格式时，各个维度表示：transposeX2为false时为(batch, ceil(k / 64), n, 2)，transposeX2为true时为(batch, n, ceil(k / 64), 2)，batch与x2的batch维度保持一致。</li>
+              <li>x2Scale是FLOAT8_E8M0且为NZ格式时（ScaleNZ），逻辑shape固定为(batch, ceil(k / 64), n, 2)，存储shape为(batch, ceil(n / 16), ceil(k / 64), 16, 2)，不随transposeX2改变。仅<term>Ascend 950PR&950DT系列产品</term>的MX全量化场景支持，具体见<a href="#scalenz约束">ScaleNZ约束</a>。</li>
               <li>x2Scale是其他dtype时，shape是1维(t, )，t = 1或n，其中n与x2的n一致。</li>
               <li>当x1、x2的数据类型为HIFLOAT8且x2为NZ格式时，静态量化场景下x2Scale支持UINT64、INT64；动态量化场景下x1Scale和x2Scale均支持FLOAT32。</li>
               <li>当原始输入类型不满足<a href="#约束说明">约束说明</a>中组合时，需提前调用TransQuantParamV2算子的aclnn接口来将scale转成INT64、UINT64数据类型。</li>
           </ul>
         </td>
         <td>UINT64、INT64、FLOAT32<sup>1</sup>、BFLOAT16<sup>1</sup>、FLOAT8_E8M0<sup>1、2</sup>、FLOAT16<sup>1、2</sup></td>
-        <td>ND</td>
-        <td>1、3~7</td>
+        <td>ND、NZ</td>
+        <td>1、3~7（ND）<br>3~7（NZ逻辑shape）<br>4~8（NZ存储shape）</td>
         <td>-</td>
     </tr>
     <tr>
@@ -612,9 +613,10 @@ aclnnStatus aclnnQuantMatmulWeightNz(
     - Batch一致性说明：B-B量化场景不支持Batch一致性。即使开启Batch一致性开关，也不能保证输出满足Batch一致性要求。
 
   - **MX量化场景约束：**
-  <a id="MX量化"></a>
+    <a id="MX量化"></a>
+
     - 输入和输出支持以下数据类型组合：
-  <a id="输入和输出支持以下数据类型组合MX"></a>
+      <a id="输入和输出支持以下数据类型组合MX"></a>
 
       | x1            | x2            | x1Scale     | x2Scale     | x2Offset | yScale | bias         | out                         |
       |---------------| ------------- | ----------- | ----------- | -------- | ------ | -------------| --------------------------- |
@@ -625,15 +627,26 @@ aclnnStatus aclnnQuantMatmulWeightNz(
 
       |量化类型|x1数据类型|x2数据类型|x1 shape|x2 shape|x1Scale shape|x2Scale shape|bias shape|yScale shape|[groupSizeM, groupSizeN, groupSizeK]|groupSize|
       |-------|--------|--------|--------|--------|-------------|-------------|------------|---------------------------------------|--|--|
-      |MX全量化|FLOAT8_E4M3FN|FLOAT8_E4M3FN|<li>非转置：(batch, m, k)</li>|<li>非转置：(batch, k, n)</li><li>转置：(batch, n, k)</li>|<li>非转置：(batch, m, ceil(k / 64), 2)</li>|<li>非转置：(batch, ceil(k / 64), n, 2)</li><li>转置：(batch, n, ceil(k / 64), 2)</li>|(n,)或(batch, 1, n)|null|[1, 1, 32]|4295032864|
+      |MX全量化|FLOAT8_E4M3FN|FLOAT8_E4M3FN|<li>非转置：(batch, m, k)</li><li>转置：(batch, k, m)</li>|<li>非转置：(batch, k, n)</li><li>转置：(batch, n, k)</li>|<li>非转置：(batch, m, ceil(k / 64), 2)</li><li>转置：(batch, ceil(k / 64), m, 2)</li>|<li>非转置：(batch, ceil(k / 64), n, 2)</li><li>转置：(batch, n, ceil(k / 64), 2)</li>|(n,)或(batch, 1, n)|null|[1, 1, 32]|4295032864|
       |MX全量化|FLOAT4_E2M1|FLOAT4_E2M1|<li>非转置：(batch, m, k)</li>|<li>非转置：(batch, k, n)</li><li>转置：(batch, n, k)</li>|<li>非转置：(batch, m, ceil(k / 64), 2)</li>|<li>非转置：(batch, ceil(k / 64), n, 2)</li><li>转置：(batch, n, ceil(k / 64), 2)</li>|(n,)或(batch, 1, n)|null|[1, 1, 32]|4295032864|
 
-    - MX全量化场景下，当x1与x2数据类型为FLOAT8_E4M3FN/FLOAT4_E2M1时，x1和x1Scale的转置属性需要保持一致，x2和x2Scale的转置属性需要保持一致。
+    - 上表中x2Scale的shape适用于ND格式。MX全量化场景下，当x1与x2数据类型为FLOAT8_E4M3FN/FLOAT4_E2M1时，x1和x1Scale的转置属性需要保持一致；当x2Scale为ND格式时，x2和x2Scale的转置属性需要保持一致。ScaleNZ采用下述固定的shape约束。
     - MX全量化场景下，当x1与x2数据类型为FLOAT4_E2M1时，需满足以下条件：
       - x1和x2的内轴必须为偶数，且k必须大于2。
       - transposeX1必须为false。
       - 当transposeX2为false时，n必须大于2。
       - 当transposeX2为true时，n必须大于1。
+
+    - **ScaleNZ约束：**
+      <a id="scalenz约束"></a>
+
+      - 支持在调用本接口前，通过[aclnnNpuFormatCast](https://gitcode.com/cann/ops-math/blob/master/conversion/npu_format_cast/docs/aclnnNpuFormatCast.md)将ND格式的x2Scale转换为NZ格式（ScaleNZ），用于减少矩阵乘计算中的scale格式转换。x2必须为NZ格式（WeightNZ），不支持ND格式的x2搭配ScaleNZ。
+      - 仅支持x1、x2均为FLOAT8_E4M3FN或均为FLOAT4_E2M1的MX全量化。x1Scale和x2Scale均为FLOAT8_E8M0，x1Scale保持ND格式；其余参数沿用上述MX全量化约束。
+      - 格式转换前，须将x2Scale的数据按(batch, ceil(k / 64), n, 2)排列并连续存储，其中k、n为矩阵乘的逻辑维度，FLOAT4_E2M1的k按元素个数计算。若原scale按(batch, n, ceil(k / 64), 2)排列，须先交换n轴与ceil(k / 64)轴并完成数据重排，不能仅修改shape。转换为ScaleNZ后，不再随transposeX2转置scale。
+      - ScaleNZ的逻辑shape为(batch, ceil(k / 64), n, 2)，存储shape为(batch, ceil(n / 16), ceil(k / 64), 16, 2)。batch代表前0~4维，维数和各维大小均须与x2的batch一致。aclnnNpuFormatCast当前仅支持3维或4维FLOAT8_E8M0输入，使用该接口进行格式转换时还须满足其约束。
+      - 使用aclCreateTensor构造x2Scale时，viewDims填写上述逻辑shape，storageDims填写上述存储shape，format填写ACL_FORMAT_FRACTAL_NZ，offset为0，stride按逻辑shape从末轴开始依次累乘。例如，无batch时stride为(2 * n, 2, 1)。data必须指向已完成NZ格式转换的数据，不能仅将ND数据的format改为NZ。
+      - 接口校验ScaleNZ的逻辑shape、存储shape、batch、stride和offset，不根据格式转换前的转置操作判断数据含义。调用者须保证scale的k、n轴及数据与x2对应。
+      - ACLNN直调按本接口的两段式流程执行；使用ACLNN Graph时，在捕获前完成WeightNZ和ScaleNZ转换，再捕获本接口的计算。两种调用方式均须满足上述输入约束。
 
   - **伪量化场景下dtype和shape要求如下：**
 
