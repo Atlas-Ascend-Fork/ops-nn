@@ -63,6 +63,83 @@ static bool CheckDtypeValid(const aclTensor* xyz1, const aclTensor* xyz2, const 
     OP_CHECK_DTYPE_NOT_SUPPORT(gradXyz1, DTYPE_SUPPORT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(gradXyz2, DTYPE_SUPPORT_LIST, return false);
 
+    // 计算在FP32下进行、输出统一Cast到xyz1的dtype，参与计算的tensor必须为相同数据类型
+    OP_CHECK_DTYPE_NOT_SAME(xyz1, xyz2, return false);
+    OP_CHECK_DTYPE_NOT_SAME(xyz1, gradDist1, return false);
+    OP_CHECK_DTYPE_NOT_SAME(xyz1, gradDist2, return false);
+    OP_CHECK_DTYPE_NOT_SAME(xyz1, gradXyz1, return false);
+    OP_CHECK_DTYPE_NOT_SAME(xyz1, gradXyz2, return false);
+
+    return true;
+}
+
+constexpr int64_t XYZ_RANK = 3;
+constexpr int64_t POINTWISE_RANK = 2;
+constexpr int64_t BATCH_AXIS = 0;
+constexpr int64_t POINT_AXIS = 1;
+constexpr int64_t COORD_AXIS = 2;
+constexpr int64_t COORD_DIM = 2;
+
+// idx/gradDist的shape必须与对应xyz的前两维一致
+static bool IsPointwiseShapeMatch(const aclTensor* pointwise, const aclTensor* xyz)
+{
+    return pointwise->GetViewShape().GetDim(BATCH_AXIS) == xyz->GetViewShape().GetDim(BATCH_AXIS) &&
+           pointwise->GetViewShape().GetDim(POINT_AXIS) == xyz->GetViewShape().GetDim(POINT_AXIS);
+}
+
+// 与图模式InferShape(chamfer_distance_grad_infershape.cpp)等价的shape校验
+static bool CheckShape(const aclTensor* xyz1, const aclTensor* xyz2, const aclTensor* idx1, const aclTensor* idx2,
+                       const aclTensor* gradDist1, const aclTensor* gradDist2, const aclTensor* gradXyz1,
+                       const aclTensor* gradXyz2)
+{
+    // 空输入由主流程提前返回成功，无需shape校验
+    if (xyz1->IsEmpty() || xyz2->IsEmpty() || idx1->IsEmpty() || idx2->IsEmpty() || gradDist1->IsEmpty() ||
+        gradDist2->IsEmpty()) {
+        return true;
+    }
+    OP_CHECK_WRONG_DIMENSION(xyz1, XYZ_RANK, return false);
+    OP_CHECK_WRONG_DIMENSION(xyz2, XYZ_RANK, return false);
+    OP_CHECK_WRONG_DIMENSION(idx1, POINTWISE_RANK, return false);
+    OP_CHECK_WRONG_DIMENSION(idx2, POINTWISE_RANK, return false);
+    OP_CHECK_WRONG_DIMENSION(gradDist1, POINTWISE_RANK, return false);
+    OP_CHECK_WRONG_DIMENSION(gradDist2, POINTWISE_RANK, return false);
+
+    // xyz1/xyz2的最后一维固定为2
+    if (xyz1->GetViewShape().GetDim(COORD_AXIS) != COORD_DIM || xyz2->GetViewShape().GetDim(COORD_AXIS) != COORD_DIM) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The last dimensions of xyz1 and xyz2 must both be 2, but got %ld and %ld.",
+                xyz1->GetViewShape().GetDim(COORD_AXIS), xyz2->GetViewShape().GetDim(COORD_AXIS));
+        return false;
+    }
+    // kernel仅有一份batch_size/num，xyz1与xyz2的batch维、点数维必须一致
+    if (xyz1->GetViewShape().GetDim(BATCH_AXIS) != xyz2->GetViewShape().GetDim(BATCH_AXIS)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "xyz1 and xyz2 must have the same batch dimension, but got %ld and %ld.",
+                xyz1->GetViewShape().GetDim(BATCH_AXIS), xyz2->GetViewShape().GetDim(BATCH_AXIS));
+        return false;
+    }
+    if (xyz1->GetViewShape().GetDim(POINT_AXIS) != xyz2->GetViewShape().GetDim(POINT_AXIS)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "xyz1 and xyz2 must have the same point dimension, but got %ld and %ld.",
+                xyz1->GetViewShape().GetDim(POINT_AXIS), xyz2->GetViewShape().GetDim(POINT_AXIS));
+        return false;
+    }
+    if (!IsPointwiseShapeMatch(idx1, xyz1)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "idx1 shape must match the first two dimensions of xyz1.");
+        return false;
+    }
+    if (!IsPointwiseShapeMatch(idx2, xyz2)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "idx2 shape must match the first two dimensions of xyz2.");
+        return false;
+    }
+    if (!IsPointwiseShapeMatch(gradDist1, xyz1)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "gradDist1 shape must match the first two dimensions of xyz1.");
+        return false;
+    }
+    if (!IsPointwiseShapeMatch(gradDist2, xyz2)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "gradDist2 shape must match the first two dimensions of xyz2.");
+        return false;
+    }
+    // 输出shape必须与对应输入一致
+    OP_CHECK_SHAPE_NOT_EQUAL(gradXyz1, xyz1, return false);
+    OP_CHECK_SHAPE_NOT_EQUAL(gradXyz2, xyz2, return false);
     return true;
 }
 
@@ -76,6 +153,9 @@ static aclnnStatus CheckParams(const aclTensor* xyz1, const aclTensor* xyz2, con
     // 2. 检查数据类型是否正确
     CHECK_RET(CheckDtypeValid(xyz1, xyz2, idx1, idx2, gradDist1, gradDist2, gradXyz1, gradXyz2),
               ACLNN_ERR_PARAM_INVALID);
+
+    // 3. 检查输入输出的shape是否满足要求
+    CHECK_RET(CheckShape(xyz1, xyz2, idx1, idx2, gradDist1, gradDist2, gradXyz1, gradXyz2), ACLNN_ERR_PARAM_INVALID);
 
     return ACLNN_SUCCESS;
 }

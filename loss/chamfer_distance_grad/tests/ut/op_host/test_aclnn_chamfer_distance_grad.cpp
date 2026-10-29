@@ -115,3 +115,169 @@ TEST_F(l2_chamfer_distance_backward_test, Ascend910B_case_invalid_normal)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
+
+// issue#7042: 混合dtype(xyz1=fp32、xyz2=fp16等)应在第一段入口返回161002，而非内部错误码561103
+TEST_F(l2_chamfer_distance_backward_test, Ascend910B_case_mix_dtype_invalid)
+{
+    const int64_t batch = 2;
+    const int64_t num = 1000;
+    auto xyz1 = TensorDesc({batch, num, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto xyz2 = TensorDesc({batch, num, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto idx1 = TensorDesc({batch, num}, ACL_INT32, ACL_FORMAT_ND);
+    auto idx2 = TensorDesc({batch, num}, ACL_INT32, ACL_FORMAT_ND);
+    auto grad_dist1 = TensorDesc({batch, num}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_dist2 = TensorDesc({batch, num}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto grad_xyz1 = TensorDesc({batch, num, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz2 = TensorDesc({batch, num, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnChamferDistanceBackward, INPUT(xyz1, xyz2, idx1, idx2, grad_dist1, grad_dist2),
+                        OUTPUT(grad_xyz1, grad_xyz2));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue#7042: 输出dtype与输入不一致时应返回161002
+TEST_F(l2_chamfer_distance_backward_test, Ascend910B_case_output_dtype_mismatch_invalid)
+{
+    const int64_t batch = 2;
+    const int64_t num = 1000;
+    auto xyz1 = TensorDesc({batch, num, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto xyz2 = TensorDesc({batch, num, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto idx1 = TensorDesc({batch, num}, ACL_INT32, ACL_FORMAT_ND);
+    auto idx2 = TensorDesc({batch, num}, ACL_INT32, ACL_FORMAT_ND);
+    auto grad_dist1 = TensorDesc({batch, num}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto grad_dist2 = TensorDesc({batch, num}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto grad_xyz1 = TensorDesc({batch, num, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz2 = TensorDesc({batch, num, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnChamferDistanceBackward, INPUT(xyz1, xyz2, idx1, idx2, grad_dist1, grad_dist2),
+                        OUTPUT(grad_xyz1, grad_xyz2));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue#7041: xyz1与xyz2点数不一致(N=32、M=16)时应返回161002，不应放行到执行段
+TEST_F(l2_chamfer_distance_backward_test, Ascend910B_case_point_dim_mismatch_invalid)
+{
+    const int64_t num1 = 32;
+    const int64_t num2 = 16;
+    auto xyz1 = TensorDesc({1, num1, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto xyz2 = TensorDesc({1, num2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto idx1 = TensorDesc({1, num1}, ACL_INT32, ACL_FORMAT_ND);
+    auto idx2 = TensorDesc({1, num2}, ACL_INT32, ACL_FORMAT_ND);
+    auto grad_dist1 = TensorDesc({1, num1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_dist2 = TensorDesc({1, num2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz1 = TensorDesc({1, num1, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz2 = TensorDesc({1, num2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnChamferDistanceBackward, INPUT(xyz1, xyz2, idx1, idx2, grad_dist1, grad_dist2),
+                        OUTPUT(grad_xyz1, grad_xyz2));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue#7041: xyz1与xyz2的batch维不一致时应返回161002
+TEST_F(l2_chamfer_distance_backward_test, Ascend910B_case_batch_dim_mismatch_invalid)
+{
+    auto xyz1 = TensorDesc({2, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto idx1 = TensorDesc({2, 16}, ACL_INT32, ACL_FORMAT_ND);
+    auto idx2 = TensorDesc({1, 16}, ACL_INT32, ACL_FORMAT_ND);
+    auto grad_dist1 = TensorDesc({2, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_dist2 = TensorDesc({1, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz1 = TensorDesc({2, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnChamferDistanceBackward, INPUT(xyz1, xyz2, idx1, idx2, grad_dist1, grad_dist2),
+                        OUTPUT(grad_xyz1, grad_xyz2));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue#7041: idx的shape与xyz前两维不一致时应返回161002
+TEST_F(l2_chamfer_distance_backward_test, Ascend910B_case_idx_shape_mismatch_invalid)
+{
+    auto xyz1 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto idx1 = TensorDesc({1, 8}, ACL_INT32, ACL_FORMAT_ND);
+    auto idx2 = TensorDesc({1, 16}, ACL_INT32, ACL_FORMAT_ND);
+    auto grad_dist1 = TensorDesc({1, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_dist2 = TensorDesc({1, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz1 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnChamferDistanceBackward, INPUT(xyz1, xyz2, idx1, idx2, grad_dist1, grad_dist2),
+                        OUTPUT(grad_xyz1, grad_xyz2));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue#7041: xyz最后一维非2时应返回161002
+TEST_F(l2_chamfer_distance_backward_test, Ascend910B_case_coord_dim_invalid)
+{
+    auto xyz1 = TensorDesc({1, 16, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto idx1 = TensorDesc({1, 16}, ACL_INT32, ACL_FORMAT_ND);
+    auto idx2 = TensorDesc({1, 16}, ACL_INT32, ACL_FORMAT_ND);
+    auto grad_dist1 = TensorDesc({1, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_dist2 = TensorDesc({1, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz1 = TensorDesc({1, 16, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnChamferDistanceBackward, INPUT(xyz1, xyz2, idx1, idx2, grad_dist1, grad_dist2),
+                        OUTPUT(grad_xyz1, grad_xyz2));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue#7041: xyz的秩非3时应返回161002
+TEST_F(l2_chamfer_distance_backward_test, Ascend910B_case_rank_invalid)
+{
+    auto xyz1 = TensorDesc({16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto idx1 = TensorDesc({1, 16}, ACL_INT32, ACL_FORMAT_ND);
+    auto idx2 = TensorDesc({1, 16}, ACL_INT32, ACL_FORMAT_ND);
+    auto grad_dist1 = TensorDesc({1, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_dist2 = TensorDesc({1, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz1 = TensorDesc({16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnChamferDistanceBackward, INPUT(xyz1, xyz2, idx1, idx2, grad_dist1, grad_dist2),
+                        OUTPUT(grad_xyz1, grad_xyz2));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue#7041: 输出shape与对应输入不一致时应返回161002
+TEST_F(l2_chamfer_distance_backward_test, Ascend910B_case_output_shape_mismatch_invalid)
+{
+    auto xyz1 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto idx1 = TensorDesc({1, 16}, ACL_INT32, ACL_FORMAT_ND);
+    auto idx2 = TensorDesc({1, 16}, ACL_INT32, ACL_FORMAT_ND);
+    auto grad_dist1 = TensorDesc({1, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_dist2 = TensorDesc({1, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz1 = TensorDesc({1, 8, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto grad_xyz2 = TensorDesc({1, 16, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnChamferDistanceBackward, INPUT(xyz1, xyz2, idx1, idx2, grad_dist1, grad_dist2),
+                        OUTPUT(grad_xyz1, grad_xyz2));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}

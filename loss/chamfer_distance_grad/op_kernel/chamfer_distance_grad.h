@@ -141,7 +141,7 @@ private:
         uint64_t cur_task_batch, uint64_t cur_task_num)
     {
         uint32_t doub = 2;
-        if (this->cur_core_task_num > this->per_ub_size) {
+        if (this->cur_core_task_num >= this->per_ub_size) {
             uint64_t loop = this->cur_core_task_num / this->per_ub_size;
             for (uint64_t loop_ind = 0; loop_ind < loop; loop_ind++) {
                 cur_task_idx = task_idx + loop_ind * this->per_ub_size;
@@ -209,6 +209,12 @@ private:
         for (uint64_t ind = 0; ind < num; ind++) {
             uint64_t cur_batch = (cur_task_idx + ind) / this->num;
             int32_t cur_ind = id_local.GetValue(ind);
+            // idx取值域钳制: 非法idx的元素梯度贡献置0并跳过, 避免越界访问GM
+            if (cur_ind < 0 || static_cast<uint64_t>(cur_ind) >= this->num) {
+                d_local.SetValue(doub * ind, (T)0.0);
+                d_local.SetValue(doub * ind + 1, (T)0.0);
+                continue;
+            }
             PipeSync<AscendC::HardEvent::V_MTE2>();
             DataCopyPad(block_local, xyz1_gm[cur_batch * this->num * doub + cur_ind * doub],
                         {1, static_cast<uint32_t>(doub * sizeof(T)), 0, 0, 0}, {false, 0, 0, 0});
@@ -267,7 +273,7 @@ private:
         uint64_t cur_task_idx = 0;
         uint64_t cur_task_batch = 0;
         uint64_t cur_task_num = 0;
-        if (this->cur_core_task_num > this->per_ub_size) {
+        if (this->cur_core_task_num >= this->per_ub_size) {
             uint64_t loop = this->cur_core_task_num / this->per_ub_size;
             for (uint64_t loop_ind = 0; loop_ind < loop; loop_ind++) {
                 cur_task_idx = task_idx + loop_ind * this->per_ub_size;
@@ -347,6 +353,12 @@ private:
         for (uint64_t ind = 0; ind < num; ind++) {
             uint64_t cur_batch = (cur_task_idx + ind) / this->num;
             int32_t cur_ind = id_local.GetValue(ind);
+            // idx取值域钳制: 非法idx的元素梯度贡献置0并跳过, 避免越界访问GM
+            if (cur_ind < 0 || static_cast<uint64_t>(cur_ind) >= this->num) {
+                d_local.SetValue(doubD1 * ind, (T)0.0);
+                d_local.SetValue(doubD1 * ind + 1, (T)0.0);
+                continue;
+            }
             PipeSync<AscendC::HardEvent::V_MTE2>();
             PipeSync<AscendC::HardEvent::MTE3_MTE2>();
             DataCopyPad(block_local, xyz2_gm[cur_batch * this->num * doubD1 + cur_ind * doubD1],
