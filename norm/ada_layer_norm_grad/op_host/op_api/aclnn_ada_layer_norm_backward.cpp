@@ -493,9 +493,9 @@ static aclnnStatus CreateContiguousTensorsAndComputeGrad(
             gradOutContiguous, inputContiguous, rstdContiguousFp32, meanContiguousFp32, scaleContiguous,
             shiftContiguous, weightContiguous, biasContiguous, executor);
 
-        GenOutWithMask(gradRes[GRAD_INPUT_INDEX], gradInputOut, true, executor);
-        GenOutWithMask(gradRes[GRAD_SCALE_INDEX], gradScaleOut, true, executor);
-        GenOutWithMask(gradRes[GRAD_SHIFT_INDEX], gradShiftOut, true, executor);
+        GenOutWithMask(gradRes[GRAD_INPUT_INDEX], gradInputOut, gradInputOut != nullptr, executor);
+        GenOutWithMask(gradRes[GRAD_SCALE_INDEX], gradScaleOut, gradScaleOut != nullptr, executor);
+        GenOutWithMask(gradRes[GRAD_SHIFT_INDEX], gradShiftOut, gradShiftOut != nullptr, executor);
         GenOutWithMask(gradRes[GRAD_WEIGHT_INDEX], gradWeightOut, gradWeightOut != nullptr, executor);
         GenOutWithMask(gradRes[GRAD_BIAS_INDEX], gradBiasOut, gradBiasOut != nullptr, executor);
     }
