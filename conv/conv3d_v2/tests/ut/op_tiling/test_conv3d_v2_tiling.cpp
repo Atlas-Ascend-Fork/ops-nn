@@ -19,6 +19,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #define private public
 #define protected public
 #include "exe_graph/runtime/storage_shape.h"
@@ -808,7 +809,14 @@ TEST_F(Conv3DV2TilingRuntime, TestBaseTilingExtractPadList_InvalidDimension)
 
     optiling::Conv3dOpsTiling::Conv3dBaseTiling base(holder.GetContext<gert::TilingContext>());
     std::vector<int64_t> padList;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     EXPECT_FALSE(base.ExtractPadList(padList));
+    const auto reports = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].error_id, "EZ0025");
+    EXPECT_EQ(reports[0].args_map.at("param_name"), "pads");
+    EXPECT_EQ(reports[0].args_map.at("incorrect_size"), "3");
+    EXPECT_EQ(reports[0].args_map.at("correct_size"), "6");
 }
 
 TEST_F(Conv3DV2TilingRuntime, TestBaseTilingExtractStrideList_NCDHW)
@@ -915,7 +923,14 @@ TEST_F(Conv3DV2TilingRuntime, TestBaseTilingExtractStrideList_InvalidDimension)
     base.originalFormat_.FORMAT_DATA_W_INDEX = 4;
 
     std::vector<int64_t> strideList;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     EXPECT_FALSE(base.ExtractStrideList(strideList));
+    const auto reports = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].error_id, "EZ0025");
+    EXPECT_EQ(reports[0].args_map.at("param_name"), "strides");
+    EXPECT_EQ(reports[0].args_map.at("incorrect_size"), "3");
+    EXPECT_EQ(reports[0].args_map.at("correct_size"), "5");
 }
 
 TEST_F(Conv3DV2TilingRuntime, TestBaseTilingExtractDilationList_DefaultValue)
@@ -1028,7 +1043,14 @@ TEST_F(Conv3DV2TilingRuntime, TestBaseTilingExtractDilationList_InvalidDimension
     base.originalFormat_.FORMAT_DATA_W_INDEX = 4;
 
     std::vector<int64_t> dilationList;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     EXPECT_FALSE(base.ExtractDilationList(dilationList));
+    const auto reports = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].error_id, "EZ0025");
+    EXPECT_EQ(reports[0].args_map.at("param_name"), "dilations");
+    EXPECT_EQ(reports[0].args_map.at("incorrect_size"), "3");
+    EXPECT_EQ(reports[0].args_map.at("correct_size"), "5");
 }
 
 TEST_F(Conv3DV2TilingRuntime, TestBaseTilingExtractGroups_DefaultAndPresent)

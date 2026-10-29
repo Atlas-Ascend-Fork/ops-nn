@@ -190,8 +190,8 @@ bool Conv3dBaseTiling::ExtractPadList(std::vector<int64_t>& padList) const
         return false;
     }
     if (padPtr->GetSize() != FORMAT_PAD_DIM) {
-        OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: input attr pad dim: %zu != %u.", padPtr->GetSize(),
-                FORMAT_PAD_DIM);
+        OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "pads", std::to_string(padPtr->GetSize()),
+                                     std::to_string(FORMAT_PAD_DIM));
         return false;
     }
 
@@ -209,12 +209,12 @@ bool Conv3dBaseTiling::ExtractStrideList(std::vector<int64_t>& strideList)
 {
     auto stridePtr = context_->GetAttrs()->GetListInt(ATTR_STRIDE_INDEX);
     if (stridePtr == nullptr) {
-        OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: attr stride is null.");
+        OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "strides");
         return false;
     }
     if (stridePtr->GetSize() != FORMAT_NCDHW_DIM) {
-        OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: input attr stride dim: %zu != %u.", stridePtr->GetSize(),
-                FORMAT_NCDHW_DIM);
+        OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "strides", std::to_string(stridePtr->GetSize()),
+                                     std::to_string(FORMAT_NCDHW_DIM));
         return false;
     }
 
@@ -235,8 +235,8 @@ bool Conv3dBaseTiling::ExtractDilationList(std::vector<int64_t>& dilationList)
         return true;
     }
     if (dilationPtr->GetSize() != FORMAT_NCDHW_DIM) {
-        OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: input attr dilation dim: %zu != %u.", dilationPtr->GetSize(),
-                FORMAT_NCDHW_DIM);
+        OP_LOGE_FOR_INVALID_LISTSIZE(context_->GetNodeName(), "dilations", std::to_string(dilationPtr->GetSize()),
+                                     std::to_string(FORMAT_NCDHW_DIM));
         return false;
     }
 
@@ -403,7 +403,8 @@ ge::graphStatus Conv3dBaseTiling::DoOpTiling()
 
         // Align output order decision with master behavior
         if (!engine_->InitOutputOrder()) {
-            OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: InitOutputOrder failed for knowledge_tiling path.");
+            OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                   "Conv3D AscendC: InitOutputOrder failed for knowledge_tiling path.");
             return ge::GRAPH_FAILED;
         }
         outputOrder_ = static_cast<int8_t>(engine_->GetOutputOrder());
@@ -429,7 +430,7 @@ ge::graphStatus Conv3dBaseTiling::DoOpTiling()
 
     // Engine performs: CheckAllParams() + ComputeNumBlocks() + GetConv3dApiTiling()
     if (!engine_->GetConv3DV2TilingData(tilingData_)) {
-        OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: Engine GetConv3DV2TilingData failed.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Conv3D AscendC: Engine GetConv3DV2TilingData failed.");
         return ge::GRAPH_FAILED;
     }
 
@@ -500,7 +501,7 @@ ge::graphStatus Conv3dBaseTiling::GetShapeAttrsInfo()
         engine_ = std::make_unique<Ops::NN::Conv3dTilingEngineApi::Conv3dTilingEngine>();
     }
     if (!engine_->Init()) {
-        OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: Failed to initialize Conv3dTilingEngine");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Conv3D AscendC: Failed to initialize Conv3dTilingEngine");
         return ge::GRAPH_FAILED;
     }
 
@@ -521,7 +522,8 @@ ge::graphStatus Conv3dBaseTiling::GetShapeAttrsInfo()
 
     // Step 5: Run Engine parameter validation (includes format, shape, dtype checks via CheckInputFormat())
     if (!engine_->CheckAllParams()) {
-        OP_LOGE(context_->GetNodeName(), "Conv3D AscendC: Engine parameter check failed in GetShapeAttrsInfo.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                               "Conv3D AscendC: Engine parameter check failed in GetShapeAttrsInfo.");
         return ge::GRAPH_FAILED;
     }
 

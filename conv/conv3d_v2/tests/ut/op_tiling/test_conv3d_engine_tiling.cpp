@@ -17,6 +17,7 @@
 #include <vector>
 #include <cstdint>
 #include <limits>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "kernel_run_context_facker.h"
 #include "../../../op_host/op_tiling/conv3d_base_tiling.h"
 #include "../../../op_host/op_tiling/conv3d_tiling_engine.h"
@@ -1959,3 +1960,124 @@ using optiling::Conv3dOpsTiling::Conv3dBaseTiling;
 // }
 
 // } // namespace
+
+namespace {
+class Conv3dErrorCodeTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        using Conv3dApiTiling::ConvDtype;
+        using Conv3dApiTiling::ConvFormat;
+        engine.SetOrgWeightShape({16, 16, 3, 3, 3});
+        engine.SetOrgFmapShape({1, 16, 5, 5, 5});
+        engine.SetOrgOutputShape({1, 16, 3, 3, 3});
+        engine.SetPadding({0, 0, 0, 0, 0, 0});
+        engine.SetStride({1, 1, 1});
+        engine.SetDilation({1, 1, 1});
+        engine.SetGroups(1);
+        engine.SetDataType(ConvDtype::BF16, ConvDtype::BF16, ConvDtype::BF16);
+        engine.SetFormat(ConvFormat::NDC1HWC0, ConvFormat::FRACTAL_Z_3D, ConvFormat::NDC1HWC0);
+        engine.SetBias(false, ConvDtype::FLOAT32);
+        engine.SetScale(false, ConvDtype::FLOAT32);
+        engine.SetInitialized(true);
+        (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    }
+
+    void TearDown() override { (void)ErrorManager::GetInstance().GetRawErrorMessages(); }
+
+    void ExpectSingleReport(const char* code, const char* parameterKey, const char* parameter, const char* actualKey,
+                            const char* actual, const char* constraintKey)
+    {
+        const auto reports = ErrorManager::GetInstance().GetRawErrorMessages();
+        ASSERT_EQ(reports.size(), 1U);
+        EXPECT_EQ(reports[0].error_id, code);
+        const auto& fields = reports[0].args_map;
+        ASSERT_EQ(fields.count("op_name"), 1U);
+        EXPECT_EQ(fields.at("op_name"), "Conv3DV2");
+        ASSERT_EQ(fields.count(parameterKey), 1U);
+        EXPECT_EQ(fields.at(parameterKey), parameter);
+        ASSERT_EQ(fields.count(actualKey), 1U);
+        EXPECT_EQ(fields.at(actualKey), actual);
+        ASSERT_EQ(fields.count(constraintKey), 1U);
+        EXPECT_FALSE(fields.at(constraintKey).empty());
+    }
+
+    Conv3dTilingEngine engine;
+};
+
+TEST_F(Conv3dErrorCodeTest, ValidParametersDoNotReport)
+{
+    EXPECT_TRUE(engine.CheckAllParams());
+    EXPECT_TRUE(ErrorManager::GetInstance().GetRawErrorMessages().empty());
+}
+
+TEST_F(Conv3dErrorCodeTest, InvalidStrideKeepsOneReportThroughTilingWrapper)
+{
+    engine.SetStride({1, 0, 1});
+    Ops::NN::Conv3dV2::Conv3DV2TilingData tilingData;
+    EXPECT_FALSE(engine.GetConv3DV2TilingData(tilingData));
+    ExpectSingleReport("EZ0026", "param_name", "strides", "incorrect_value", "[1, 0, 1]", "reason");
+}
+
+TEST_F(Conv3dErrorCodeTest, InvalidDilationReportsActualValues)
+{
+    engine.SetDilation({1, -1, 1});
+    EXPECT_FALSE(engine.CheckAllParams());
+    ExpectSingleReport("EZ0026", "param_name", "dilations", "incorrect_value", "[1, -1, 1]", "reason");
+}
+
+TEST_F(Conv3dErrorCodeTest, NegativePaddingReportsActualValues)
+{
+    engine.SetPadding({0, 0, -1, 0, 0, 0});
+    EXPECT_FALSE(engine.CheckAllParams());
+    ExpectSingleReport("EZ0026", "param_name", "pads", "incorrect_value", "[0, 0, -1, 0, 0, 0]", "reason");
+}
+
+TEST_F(Conv3dErrorCodeTest, DtypeCombinationReportsParameterNames)
+{
+    using Conv3dApiTiling::ConvDtype;
+    engine.SetDataType(ConvDtype::BF16, ConvDtype::INT8, ConvDtype::BF16);
+    EXPECT_FALSE(engine.CheckAllParams());
+    ExpectSingleReport("EZ0021", "param_names", "x, filter, y", "incorrect_dtypes", "[bfloat16, int8, bfloat16]",
+                       "reason");
+}
+
+TEST_F(Conv3dErrorCodeTest, FormatCombinationReportsExpectedFormats)
+{
+    using Conv3dApiTiling::ConvFormat;
+    engine.SetFormat(ConvFormat::NCDHW, ConvFormat::NCDHW, ConvFormat::NCDHW);
+    EXPECT_FALSE(engine.CheckAllParams());
+    ExpectSingleReport("EZ0018", "param_names", "x, filter, y", "incorrect_formats", "NCDHW, NCDHW, NCDHW", "reason");
+}
+
+TEST_F(Conv3dErrorCodeTest, OutputShapeReportsActualAndExpected)
+{
+    engine.SetOrgOutputShape({1, 16, 2, 3, 3});
+    EXPECT_FALSE(engine.CheckAllParams());
+    ExpectSingleReport("EZ0008", "param_name", "y", "incorrect_shape", "[1, 16, 2, 3, 3]", "correct_shape");
+}
+
+TEST_F(Conv3dErrorCodeTest, ScalarBiasReportsRank)
+{
+    engine.SetBias(true, Conv3dApiTiling::ConvDtype::FLOAT32);
+    engine.SetBiasShape({});
+    EXPECT_FALSE(engine.CheckAllParams());
+    ExpectSingleReport("EZ0011", "param_name", "bias", "incorrect_dim", "0", "correct_dim");
+}
+
+TEST_F(Conv3dErrorCodeTest, BiasLengthReportsOutputChannelConstraint)
+{
+    engine.SetBias(true, Conv3dApiTiling::ConvDtype::FLOAT32);
+    engine.SetBiasShape({15});
+    EXPECT_FALSE(engine.CheckAllParams());
+    ExpectSingleReport("EZ0008", "param_name", "bias", "incorrect_shape", "[15]", "correct_shape");
+}
+
+TEST_F(Conv3dErrorCodeTest, Load3dStrideLimitReportsAtRoot)
+{
+    engine.SetStride({1, 64, 1});
+    engine.SetOrgOutputShape({1, 16, 3, 1, 3});
+    EXPECT_FALSE(engine.CheckAllParams());
+    ExpectSingleReport("EZ0026", "param_name", "strides", "incorrect_value", "[64, 1]", "reason");
+}
+} // namespace
