@@ -1798,8 +1798,8 @@ __aicore__ inline void DynamicMxQuantWithDualAxisBase<xDtype, y1Dtype, y2Dtype, 
     uint32_t dstStride = 0;
     int64_t YOffset = yOffset;
     // -2轴两行交织搬，考虑32对齐,计算偏移
-    uint32_t scaleSrcStride = DIGIT_TWO * ops::CeilDiv(dataLen, UBBlockSize_) -
-                              ops::CeilDiv(DIGIT_TWO * dataLen, UBBlockSize_);
+    uint32_t scaleSrcStride = (DIGIT_TWO * ubRowLen_ - ops::CeilAlign(DIGIT_TWO * dataLen, UBBlockSize_)) /
+                              UBBlockSize_;
 
     if constexpr (IsSameType<y1Dtype, fp4x2_e2m1_t>::value || IsSameType<y1Dtype, fp4x2_e1m2_t>::value) {
         outBurst = blockCount;
@@ -1855,7 +1855,7 @@ template <typename xDtype, typename y1Dtype, typename y2Dtype, AscendC::RoundMod
 __aicore__ inline void DynamicMxQuantWithDualAxisBase<xDtype, y1Dtype, y2Dtype, roundMode, scaleAlg>::Init(
     GM_ADDR x, GM_ADDR y1, GM_ADDR mxScale1, GM_ADDR y2, GM_ADDR mxScale2)
 {
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
     AscendC::SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(0);
 #endif
     // init block params

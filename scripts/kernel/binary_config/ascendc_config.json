@@ -252,7 +252,7 @@
     {"name":"Segsum", "compute_units": ["ascend910b", "ascend910_93"], "auto_sync" : false},
     {"name":"ExpSegsumGrad", "compute_units": ["ascend910b", "ascend910_93"], "auto_sync" : false},
     {"name":"DynamicMxQuant", "compute_units": ["ascend950", "ascend350"], "auto_sync" : false, "impl_mode" : "", "compile_options": {"ascend950": ["--cce-no-dcache-flush"], "ascend350": ["--cce-no-dcache-flush"]}},
-    {"name":"DynamicMxQuantWithDualAxis", "compute_units": ["ascend950", "ascend350"], "auto_sync" : false, "impl_mode" : ""},
+    {"name":"DynamicMxQuantWithDualAxis", "compute_units": ["ascend950", "ascend350", "ascend960dt"], "auto_sync" : false, "impl_mode" : ""},
     {"name":"DynamicDualLevelMxQuant", "compute_units": ["ascend950"], "auto_sync" : false, "impl_mode" : ""},
 
     {"name":"SwigluMxQuant", "compute_units": ["ascend950", "ascend350", "ascend960dt"], "auto_sync" : false, "impl_mode" : "", "compile_options": {"ascend950": ["--cce-no-dcache-flush"], "ascend350": ["--cce-no-dcache-flush"], "ascend960dt": ["--cce-no-dcache-flush"]}},
