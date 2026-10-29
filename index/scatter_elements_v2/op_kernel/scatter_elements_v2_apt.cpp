@@ -15,6 +15,7 @@
 #include "arch35/scatter_elements_v2_multi.h"
 #include "arch35/scatter_elements_v2_deterministic.h"
 #include "arch35/scatter_elements_with_sorted.h"
+#include "arch35/scatter_elements_v2_small_shape.h"
 
 using namespace ScatterElements;
 
@@ -187,6 +188,38 @@ __aicore__ inline void LaunchDeterministicAdd(const ScatterElementsV2AscTilingDa
 extern "C" __global__ __aicore__ void scatter_elements_v2(GM_ADDR var, GM_ADDR indices, GM_ADDR updates, GM_ADDR output,
                                                           GM_ADDR workspace, GM_ADDR tiling)
 {
+    // Small non-deterministic none updates do not need queues, UB staging or cross-core synchronization.
+#if ORIG_DTYPE_INDICES == DT_INT32
+#if ORIG_DTYPE_VAR == DT_BOOL || ORIG_DTYPE_VAR == DT_INT8 || ORIG_DTYPE_VAR == DT_UINT8
+    TILING_KEY_IS(3000001);
+#elif ORIG_DTYPE_VAR == DT_INT16 || ORIG_DTYPE_VAR == DT_FLOAT16 || ORIG_DTYPE_VAR == DT_BF16
+    TILING_KEY_IS(3000002);
+#elif ORIG_DTYPE_VAR == DT_INT32 || ORIG_DTYPE_VAR == DT_FLOAT
+    TILING_KEY_IS(3000004);
+#elif ORIG_DTYPE_VAR == DT_INT64 || ORIG_DTYPE_VAR == DT_DOUBLE
+    TILING_KEY_IS(3000008);
+#endif
+#else
+#if ORIG_DTYPE_VAR == DT_BOOL || ORIG_DTYPE_VAR == DT_INT8 || ORIG_DTYPE_VAR == DT_UINT8
+    TILING_KEY_IS(3001001);
+#elif ORIG_DTYPE_VAR == DT_INT16 || ORIG_DTYPE_VAR == DT_FLOAT16 || ORIG_DTYPE_VAR == DT_BF16
+    TILING_KEY_IS(3001002);
+#elif ORIG_DTYPE_VAR == DT_INT32 || ORIG_DTYPE_VAR == DT_FLOAT
+    TILING_KEY_IS(3001004);
+#elif ORIG_DTYPE_VAR == DT_INT64 || ORIG_DTYPE_VAR == DT_DOUBLE
+    TILING_KEY_IS(3001008);
+#endif
+#endif
+#if TILING_KEY_VAR >= 3000000 && TILING_KEY_VAR < 3010000
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
+    using FastDataT = typename std::conditional<
+        sizeof(DTYPE_VAR) == 1, uint8_t,
+        typename std::conditional<sizeof(DTYPE_VAR) == 2, uint16_t,
+                                  typename std::conditional<sizeof(DTYPE_VAR) == 4, uint32_t, uint64_t>::type>::type>::
+        type;
+    LaunchScatterSmallShapeNone<FastDataT, DTYPE_INDICES>(var, indices, updates, tiling);
+    return;
+#endif
     if (workspace == nullptr) {
         return;
     }

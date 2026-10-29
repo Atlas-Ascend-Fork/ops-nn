@@ -113,6 +113,8 @@ protected:
     bool IsSortTemplateAdmitted(int64_t aAxisCoreNum) const;
     bool IsSortAdmittedInt() const;
     bool IsSortAdmittedFloat(int64_t aAxisCoreNum) const;
+    bool CanUseSmallShapeFast() const;
+    void ComputeSmallShapeLaunch();
 
 private:
     int16_t dim_ = 0;
@@ -122,6 +124,7 @@ private:
     int64_t globalSortLocalMemorySize_ = 0;
     int64_t totalCoreNum_ = 0;
     int64_t usedCoreNum_ = 0;
+    int64_t smallShapeThreadNum_ = 0;
     int64_t loopLength_ = 0;
     int64_t allAxis_ = 1;
     int64_t dataAxis_ = 1;

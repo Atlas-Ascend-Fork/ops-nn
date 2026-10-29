@@ -20,6 +20,8 @@
 #include "platform/platform_info.h"
 #include "error_util.h"
 #include "scatter_elements_v2_base_tiling.h"
+#include "../../op_kernel/arch35/scatter_elements_v2_small_shape_tiling.h"
+#include <cstring>
 
 using namespace AscendC;
 namespace optiling {
@@ -51,6 +53,8 @@ constexpr uint64_t ADAPTIVE_REDUCE_REPEAT_RATIO = 4;
 constexpr int64_t MIN_DATA_ELEMENTS_PER_CORE = 1024;
 constexpr int64_t MIN_SORT_ELEMENTS_PER_CORE = 1024;
 constexpr int64_t MIN_INDEX_BYTES_PER_CORE = 1024;
+constexpr int64_t SMALL_SHAPE_SIMT_LANES = 64;
+constexpr int64_t SMALL_SHAPE_MAX_THREAD_NUM = 1024;
 constexpr int64_t SIMT_UB_RES_SIZE = 640;
 constexpr uint32_t MAX_SORT_SPACE = 10240;
 constexpr int64_t PHASE_THREAD_NUM = 1024; // Phase1/Phase3 每核 stride-loop 粒度（按索引总数切核）
@@ -546,6 +550,29 @@ bool ScatterElementsV2AscTiling::IsSortTemplateAdmitted(int64_t aAxisCoreNum) co
     return idxNumCoreNum > aAxisCoreNum;
 }
 
+void ScatterElementsV2AscTiling::ComputeSmallShapeLaunch()
+{
+    const int64_t warpCount = Ops::Base::CeilDiv(allAxis_, SMALL_SHAPE_SIMT_LANES);
+    int64_t coreNum = 1;
+    // Balance cores and 64-lane groups per core instead of fixing updates per
+    // core. Spreading every group across cores amplifies duplicate-index writes.
+    while (coreNum * coreNum < warpCount) {
+        ++coreNum;
+    }
+    // With one index row and axis 0, distinct columns cannot write the same
+    // element. More cores help random row accesses without duplicate writers.
+    if (rank_ == 2 && dim_ == 0 && allAxis_ == static_cast<int64_t>(indicesStride_[0])) {
+        coreNum = warpCount;
+    }
+    coreNum = std::min(coreNum, totalCoreNum_);
+    smallShapeThreadNum_ = std::min(
+        SMALL_SHAPE_MAX_THREAD_NUM,
+        Ops::Base::CeilAlign(Ops::Base::CeilDiv(allAxis_, coreNum), SMALL_SHAPE_SIMT_LANES));
+    // Thread alignment can leave whole cores idle, especially at the hardware
+    // core limit. Keep only cores that receive at least one update.
+    usedCoreNum_ = std::min(coreNum, Ops::Base::CeilDiv(allAxis_, smallShapeThreadNum_));
+}
+
 ge::graphStatus ScatterElementsV2AscTiling::DoOpTiling()
 {
     int64_t usedCoreNumAlignTotal = Ops::Base::CeilDiv(allAxis_, MAX_THREAD_NUM);
@@ -556,6 +583,9 @@ ge::graphStatus ScatterElementsV2AscTiling::DoOpTiling()
     usedCoreNumAlignData = Ops::Base::CeilDiv(dataAxis_, usedCoreNumAlignData);
 
     usedCoreNum_ = usedCoreNumAlignTotal > usedCoreNumAlignData ? usedCoreNumAlignTotal : usedCoreNumAlignData;
+    if (CanUseSmallShapeFast()) {
+        ComputeSmallShapeLaunch();
+    }
 
     const int64_t localDcacheSize = isDeterministic_ ? DETERM_DCACHE_SIZE : NON_DETERM_DCACHE_SIZE;
     const int64_t localReservedSize = localDcacheSize + SIMT_UB_RES_SIZE;
@@ -731,6 +761,13 @@ ge::graphStatus ScatterElementsV2AscTiling::DoOpTiling()
 
 ge::graphStatus ScatterElementsV2AscTiling::DoLibApiTiling() { return ge::GRAPH_SUCCESS; }
 
+bool ScatterElementsV2AscTiling::CanUseSmallShapeFast() const
+{
+    return !isScalarUpdates_ && !context_->GetDeterministic() && reduction_ == REDUCTION_NONE && rank_ >= 1 &&
+           rank_ <= 2 && allAxis_ > 0 && allAxis_ <= 4096 && dataAxis_ > 0 && dataAxis_ <= MAX_INT32_NUM &&
+           updatesAxis_ > 0 && updatesAxis_ <= MAX_INT32_NUM;
+}
+
 uint64_t ScatterElementsV2AscTiling::GetTilingKey() const
 {
     uint64_t tilingKey = SCAC_ELE_DETERM_KEY_BASE;
@@ -757,6 +794,9 @@ uint64_t ScatterElementsV2AscTiling::GetTilingKey() const
     // 排序模板前缀提升：1xxxxxx → 2xxxxxx，触发 KernelScatterElementsWithSorted 模板路径。
     if (isSortDeterm_) {
         tilingKey += SCAC_ELE_SORT_KEY_PREFIX;
+    }
+    if (CanUseSmallShapeFast()) {
+        tilingKey += 2000000;
     }
     return tilingKey;
 }
@@ -797,6 +837,22 @@ ge::graphStatus ScatterElementsV2AscTiling::PostTiling()
         context_->SetBlockDim(usedCoreNum_);
     }
     context_->SetScheduleMode(1);
+    if (CanUseSmallShapeFast()) {
+        const ScatterElements::ScatterElementsV2SmallShapeTiling fastTiling{static_cast<uint32_t>(allAxis_),
+                                                                            static_cast<uint32_t>(rank_),
+                                                                            static_cast<uint32_t>(dim_),
+                                                                            static_cast<uint32_t>(dataStride_[0]),
+                                                                            static_cast<uint32_t>(indicesStride_[0]),
+                                                                            static_cast<uint32_t>(updatesStride_[0]),
+                                                                            static_cast<uint32_t>(smallShapeThreadNum_),
+                                                                            0};
+        if (context_->GetRawTilingData()->GetCapacity() < sizeof(fastTiling)) {
+            return ge::GRAPH_FAILED;
+        }
+        std::memcpy(context_->GetRawTilingData()->GetData(), &fastTiling, sizeof(fastTiling));
+        context_->GetRawTilingData()->SetDataSize(sizeof(fastTiling));
+        return context_->SetLocalMemorySize(ubSize_ + SIMT_UB_RES_SIZE);
+    }
     int64_t localMemorySize = isSortDeterm_ ? globalSortLocalMemorySize_ : ubSize_ + SIMT_UB_RES_SIZE;
     auto res = context_->SetLocalMemorySize(localMemorySize);
     if (res != ge::GRAPH_SUCCESS) {

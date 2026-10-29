@@ -167,6 +167,13 @@ static void ExecuteTestCase(ge::DataType data_dtype, ge::DataType indices_dtype,
     auto raw_tiling_data = tiling_context->GetRawTilingData();
     auto tiling_data_result = to_string<int64_t>(raw_tiling_data->GetData(), raw_tiling_data->GetDataSize());
     ASSERT_EQ(tiling_key, tilingKeyValue);
+    if (tiling_key / 1000000 == 3) {
+        ASSERT_EQ(raw_tiling_data->GetDataSize(), 8 * sizeof(uint32_t));
+        const auto* fields = reinterpret_cast<const uint32_t*>(raw_tiling_data->GetData());
+        std::vector<int64_t> actual(fields, fields + 8);
+        EXPECT_EQ(actual, ParseTilingData(expectTilingData));
+        return;
+    }
     // The new field is appended; preserve the existing expectations for all
     // preceding fields, and check the shape flag independently.
     const auto& indexStorageShape = indices_shape.GetStorageShape();
@@ -198,9 +205,8 @@ TEST_F(ScatterElementsV2Tiling, test_tiling_ascendc_int8_int64_dim1)
     gert::StorageShape shape1 = {{10}, {10}};
     gert::StorageShape shape2 = {{10}, {10}};
     gert::StorageShape shape3 = {{10}, {10}};
-    string expectTilingData = "1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 65536 10 10 10 1 1 1 0 0 0 1 1 0 1 0 0 0 0 0 "
-                              "0 0 0 0 0 0 0 ";
-    uint64_t tilingKeyValue = 1001001;
+    string expectTilingData = "10 1 0 1 1 1 64 0";
+    uint64_t tilingKeyValue = 3001001;
 
     ExecuteTestCase(ge::DT_INT8, ge::DT_INT64, ge::DT_INT8, shape1, shape2, shape3, 0, "none", tilingKeyValue,
                     expectTilingData, 0);
@@ -225,9 +231,8 @@ TEST_F(ScatterElementsV2Tiling, test_tiling_ascendc_int32_int64_dim2)
     gert::StorageShape shape1 = {{3, 5}, {3, 5}};
     gert::StorageShape shape2 = {{2, 3}, {2, 3}};
     gert::StorageShape shape3 = {{2, 5}, {2, 5}};
-    string expectTilingData = "5 1 1 1 1 1 1 3 1 1 1 1 1 1 5 1 1 1 1 1 1 16384 6 15 10 1 1 1 0 0 0 1 1 0 65538 0 0 0 0 "
-                              "0 0 0 0 0 0 0 0 ";
-    uint64_t tilingKeyValue = 1001004;
+    string expectTilingData = "6 2 1 5 3 5 64 0";
+    uint64_t tilingKeyValue = 3001004;
 
     ExecuteTestCase(ge::DT_INT32, ge::DT_INT64, ge::DT_INT32, shape1, shape2, shape3, 1, "none", tilingKeyValue,
                     expectTilingData, 0);
