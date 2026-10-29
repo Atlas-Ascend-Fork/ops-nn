@@ -153,11 +153,11 @@ for category_dir in "$EXPERIMENTAL_TMP_DIR"/*/; do
     if [ -n "$py_files" ]; then
       category_name=$(basename "$category_dir")
       mkdir -p "$ASCEND_OPS_NN_DIR/$category_name/$op_name"
-      if [ ! -e "$ASCEND_OPS_NN_DIR/$category_name/__init.py" ]; then
+      if [ ! -e "$ASCEND_OPS_NN_DIR/$category_name/__init__.py" ]; then
         cp "$SCRIPT_DIR/pe_init.py" "$ASCEND_OPS_NN_DIR/$category_name/__init__.py"
       fi
       cp -r "$op_dir"*.py "$ASCEND_OPS_NN_DIR/$category_name/$op_name/"
-      if [ ! -e "$ASCEND_OPS_NN_DIR/$category_name/$op_name/__init.py" ]; then
+      if [ ! -e "$ASCEND_OPS_NN_DIR/$category_name/$op_name/__init__.py" ]; then
         cp "$SCRIPT_DIR/pe_init.py" "$ASCEND_OPS_NN_DIR/$category_name/$op_name/__init__.py"
       fi
     fi
