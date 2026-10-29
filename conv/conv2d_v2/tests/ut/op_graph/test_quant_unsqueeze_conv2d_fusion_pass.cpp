@@ -70,6 +70,7 @@ NodeConfig MakeSqueeze(const std::string& name, const std::vector<int64_t>& inSh
 
 void SetupSoc(bool supportUb2Ub, bool supportDn2Nz = false)
 {
+    SocConfig::Ascend950().Apply();
     PlatformInfo platformInfo;
     OptionalInfo optiInfo;
     optiInfo.soc_version = "Ascend950";

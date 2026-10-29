@@ -50,6 +50,18 @@ bool ConvFusionUtilsPass::AddSubgraphOutput(std::unique_ptr<SubgraphBoundary>& b
     return true;
 }
 
+bool ConvFusionUtilsPass::IsFuseSoc()
+{
+    fe::PlatFormInfos platFormInfos;
+    fe::OptionalInfos optionalInfos;
+    if (PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platFormInfos, optionalInfos) !=
+        GRAPH_SUCCESS) {
+        OP_LOGW(UTIL_NAME, "Get PlatFormInfos failed.");
+        return false;
+    }
+    return conv_arch::IsCubeVectorFuseSoc(platFormInfos);
+}
+
 bool ConvFusionUtilsPass::CheckSocList(const std::map<std::string, NpuArch>& socList, NpuArch& npuArch,
                                        bool supportFuse)
 {
@@ -67,18 +79,9 @@ bool ConvFusionUtilsPass::CheckSocList(const std::map<std::string, NpuArch>& soc
         return true;
     }
 
-    if (supportFuse) {
-        fe::PlatFormInfos platFormInfos;
-        fe::OptionalInfos optionalInfos;
-        if (PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platFormInfos, optionalInfos) !=
-            GRAPH_SUCCESS) {
-            OP_LOGW(UTIL_NAME, "Get PlatFormInfos failed.");
-            return false;
-        }
-        if (IsCubeVectorFuseSoc(platFormInfos)) {
-            OP_LOGD(UTIL_NAME, "Current platform is cube_vector_combine=fuse.");
-            return true;
-        }
+    if (supportFuse && IsFuseSoc()) {
+        OP_LOGD(UTIL_NAME, "Current platform is cube_vector_combine=fuse.");
+        return true;
     }
 
     OP_LOGD(UTIL_NAME, "Current soc %s not in check list %s.", soc.c_str(), SocListToString(socList).c_str());
@@ -139,7 +142,7 @@ bool ConvFusionUtilsPass::GetConvBaseAttr(const GNode& convNode, ConvBaseAttrs& 
         [&opImplModeEnum](const int64_t& targetPrecisionModeInt) { return opImplModeEnum == targetPrecisionModeInt; });
     baseAttrs.enableHf32 = (convDescInfo.fmapDtype == DataType::DT_FLOAT && isHf32OpImplMode);
 
-    // Set Node's implMode to default
+    // Reset impl mode to default for V2-family fused nodes (canndev SetImplMode semantics).
     baseAttrs.opImplModeEnum = 0x1;
 
     return true;
@@ -383,6 +386,192 @@ std::string GeFormatToString(const ge::Format& geFormat)
 std::string GeDtypeToString(const ge::DataType& geDtype)
 {
     return std::string(ge::TypeUtils::DataTypeToAscendString(geDtype).GetString());
+}
+
+bool ConvFusionUtilsPass::CheckTransposeValid(const GNode& transposeNode, bool isPreFusion)
+{
+    AscendString nodeType;
+    FUSION_PASS_CHECK(transposeNode.GetType(nodeType) != GRAPH_SUCCESS,
+                      OP_LOGD(UTIL_NAME.c_str(), "Get node type failed."), return false);
+    if (nodeType != TRANSPOSE_OP) {
+        return false;
+    }
+
+    if (isPreFusion) {
+        auto outNodes = transposeNode.GetOutDataNodesAndPortIndexs(OUTPUT_INDEX);
+        FUSION_PASS_CHECK(outNodes.size() != 1, OP_LOGD(UTIL_NAME.c_str(), "Pre-fusion transpose output size != 1."),
+                          return false);
+    }
+
+    TensorDesc inDesc;
+    TensorDesc outDesc;
+    FUSION_PASS_CHECK(transposeNode.GetInputDesc(INPUT_INDEX_0, inDesc) != GRAPH_SUCCESS,
+                      OP_LOGD(UTIL_NAME.c_str(), "Get transpose input desc failed."), return false);
+    FUSION_PASS_CHECK(transposeNode.GetOutputDesc(OUTPUT_INDEX, outDesc) != GRAPH_SUCCESS,
+                      OP_LOGD(UTIL_NAME.c_str(), "Get transpose output desc failed."), return false);
+
+    auto inFormat = static_cast<Format>(ge::GetPrimaryFormat(static_cast<int32_t>(inDesc.GetFormat())));
+    auto outFormat = static_cast<Format>(ge::GetPrimaryFormat(static_cast<int32_t>(outDesc.GetFormat())));
+    bool formatMatch = (inFormat == FORMAT_NCHW && outFormat == FORMAT_NHWC) ||
+                       (inFormat == FORMAT_NHWC && outFormat == FORMAT_NCHW);
+    DataType inDtype = inDesc.GetDataType();
+    DataType outDtype = outDesc.GetDataType();
+    bool dtypeValid = (inDtype == DT_FLOAT16 || inDtype == DT_FLOAT) &&
+                      (outDtype == DT_FLOAT16 || outDtype == DT_FLOAT);
+    if (!dtypeValid || !formatMatch) {
+        OP_LOGD(UTIL_NAME.c_str(), "Transpose node dtype or format not valid, keep transpose.");
+        return false;
+    }
+    return true;
+}
+
+bool ConvFusionUtilsPass::RemoveTransposeNode(const GraphPtr& graph, GNode& transposeNode)
+{
+    auto inPair = transposeNode.GetInDataNodesAndPortIndexs(INPUT_INDEX_0);
+    FUSION_PASS_CHECK(inPair.first == nullptr, OP_LOGE(UTIL_NAME.c_str(), "Get transpose input producer failed."),
+                      return false);
+    auto producer = inPair.first;
+    int32_t producerPort = inPair.second;
+
+    auto outNodes = transposeNode.GetOutDataNodesAndPortIndexs(OUTPUT_INDEX);
+
+    FUSION_PASS_CHECK(graph->RemoveEdge(*producer, producerPort, transposeNode, INPUT_INDEX_0) != GRAPH_SUCCESS,
+                      OP_LOGE(UTIL_NAME.c_str(), "Remove transpose input edge failed."), return false);
+
+    for (auto& outPair : outNodes) {
+        if (outPair.first == nullptr) {
+            continue;
+        }
+        FUSION_PASS_CHECK(
+            graph->RemoveEdge(transposeNode, OUTPUT_INDEX, *outPair.first, outPair.second) != GRAPH_SUCCESS,
+            OP_LOGE(UTIL_NAME.c_str(), "Remove transpose output edge failed."), return false);
+        FUSION_PASS_CHECK(graph->AddDataEdge(*producer, producerPort, *outPair.first, outPair.second) != GRAPH_SUCCESS,
+                          OP_LOGE(UTIL_NAME.c_str(), "Add bypass edge failed."), return false);
+    }
+
+    FUSION_PASS_CHECK(graph->RemoveNode(transposeNode) != GRAPH_SUCCESS,
+                      OP_LOGE(UTIL_NAME.c_str(), "Remove transpose node failed."), return false);
+    return true;
+}
+
+bool ConvFusionUtilsPass::AdjustConvInputLayout(const GraphPtr& graph, GNode& convNode)
+{
+    auto inPair = convNode.GetInDataNodesAndPortIndexs(INPUT_FMAP_INDEX);
+    FUSION_PASS_CHECK(inPair.first == nullptr, OP_LOGD(UTIL_NAME.c_str(), "Get conv input producer failed."),
+                      return true);
+
+    GNode preNode = *inPair.first;
+    if (!CheckTransposeValid(preNode, true)) {
+        return true;
+    }
+
+    TensorDesc transInDesc;
+    TensorDesc transOutDesc;
+    (void)preNode.GetInputDesc(INPUT_INDEX_0, transInDesc);
+    (void)preNode.GetOutputDesc(OUTPUT_INDEX, transOutDesc);
+    auto transInFormat = static_cast<Format>(ge::GetPrimaryFormat(static_cast<int32_t>(transInDesc.GetFormat())));
+    auto transOutFormat = static_cast<Format>(ge::GetPrimaryFormat(static_cast<int32_t>(transOutDesc.GetFormat())));
+
+    FUSION_PASS_CHECK_NOLOG(!RemoveTransposeNode(graph, preNode), return false);
+
+    FUSION_PASS_CHECK(convNode.UpdateInputDesc(INPUT_FMAP_INDEX, transInDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(UTIL_NAME.c_str(), "Update conv input desc failed."), return false);
+
+    std::vector<int64_t> strides;
+    std::vector<int64_t> dilations;
+    bool hasStrides = convNode.GetAttr(STRIDES, strides) == GRAPH_SUCCESS && strides.size() == 4;
+    bool hasDilations = convNode.GetAttr(DILATIONS, dilations) == GRAPH_SUCCESS && dilations.size() == 4;
+    if (transInFormat == FORMAT_NCHW && transOutFormat == FORMAT_NHWC) {
+        if (hasStrides) {
+            strides = ReorderNhwcToNchw(strides);
+            FUSION_PASS_CHECK(convNode.SetAttr(STRIDES, strides) != GRAPH_SUCCESS,
+                              OP_LOGE(UTIL_NAME.c_str(), "Set strides after reorder failed."), return false);
+        }
+        if (hasDilations) {
+            dilations = ReorderNhwcToNchw(dilations);
+            FUSION_PASS_CHECK(convNode.SetAttr(DILATIONS, dilations) != GRAPH_SUCCESS,
+                              OP_LOGE(UTIL_NAME.c_str(), "Set dilations after reorder failed."), return false);
+        }
+    } else if (transInFormat == FORMAT_NHWC && transOutFormat == FORMAT_NCHW) {
+        if (hasStrides) {
+            strides = ReorderNchwToNhwc(strides);
+            FUSION_PASS_CHECK(convNode.SetAttr(STRIDES, strides) != GRAPH_SUCCESS,
+                              OP_LOGE(UTIL_NAME.c_str(), "Set strides after reorder failed."), return false);
+        }
+        if (hasDilations) {
+            dilations = ReorderNchwToNhwc(dilations);
+            FUSION_PASS_CHECK(convNode.SetAttr(DILATIONS, dilations) != GRAPH_SUCCESS,
+                              OP_LOGE(UTIL_NAME.c_str(), "Set dilations after reorder failed."), return false);
+        }
+    }
+    OP_LOGD(UTIL_NAME.c_str(), "AdjustConvInputLayout pre transpose success.");
+    return true;
+}
+
+std::vector<int64_t> ConvFusionUtilsPass::ReorderNchwToNhwc(const std::vector<int64_t>& attr)
+{
+    return {attr[0], attr[2], attr[3], attr[1]};
+}
+
+std::vector<int64_t> ConvFusionUtilsPass::ReorderNhwcToNchw(const std::vector<int64_t>& attr)
+{
+    return {attr[0], attr[3], attr[1], attr[2]};
+}
+
+bool ConvFusionUtilsPass::CopyConvOtherAttrs(const GNode& srcNode, GNode& dstNode)
+{
+    const std::vector<AscendString> strAttrNames = {"_user_stream_label",  "_user_stream_priority",
+                                                    "_super_kernel_scope", "_super_kernel_options",
+                                                    "_op_aicore_num",      "_op_vectorcore_num"};
+    for (const auto& attrName : strAttrNames) {
+        AscendString attrValue;
+        if (srcNode.GetAttr(attrName, attrValue) == GRAPH_SUCCESS) {
+            (void)dstNode.SetAttr(attrName, attrValue);
+        }
+    }
+
+    int64_t enableUncache = 0;
+    if (srcNode.GetAttr("enable_uncache", enableUncache) == GRAPH_SUCCESS) {
+        (void)dstNode.SetAttr("enable_uncache", enableUncache);
+    }
+
+    return true;
+}
+
+std::set<std::string> ConvFusionUtilsPass::CollectNodeTypeNames(const GraphPtr& graph, const AscendString& nodeType)
+{
+    std::set<std::string> names;
+    for (auto& node : graph->GetDirectNode()) {
+        AscendString curType;
+        if (node.GetType(curType) != GRAPH_SUCCESS || curType != nodeType) {
+            continue;
+        }
+        AscendString curName;
+        if (node.GetName(curName) == GRAPH_SUCCESS) {
+            names.insert(curName.GetString());
+        }
+    }
+    return names;
+}
+
+bool ConvFusionUtilsPass::FindNewNodeOfType(const GraphPtr& graph, const AscendString& nodeType,
+                                            const std::set<std::string>& namesBefore, GNode& newNode)
+{
+    for (auto& node : graph->GetDirectNode()) {
+        AscendString curType;
+        if (node.GetType(curType) != GRAPH_SUCCESS || curType != nodeType) {
+            continue;
+        }
+        AscendString curName;
+        if (node.GetName(curName) != GRAPH_SUCCESS) {
+            continue;
+        }
+        if (namesBefore.find(curName.GetString()) == namesBefore.end()) {
+            newNode = node;
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace ConvFusionUtils

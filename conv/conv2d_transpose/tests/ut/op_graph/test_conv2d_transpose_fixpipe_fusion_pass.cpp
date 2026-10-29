@@ -433,8 +433,7 @@ TEST_F(Conv2DTransposeFixpipeFusionPassTest, postCubeWithOtherConsumerSkip)
 TEST_F(Conv2DTransposeFixpipeFusionPassTest, fp32DequantOutputFusionSuccess)
 {
     TestGraph builder("fp32DequantOutputFusionSuccess");
-    SetCubeVectorCombine("fuse");
-    auto graph = builder.SetSocMC62()
+    auto graph = builder.SetSoc(SocConfig("MC62", "Ascend950PR_9589", "fuse"))
                      .AddNode(Conv2DTransposeConfig::Basic("Conv2DTranspose", DT_INT8, DT_INT8, DT_INT32), {0, 1, 2})
                      .AddAscendDequant(AscendDequantConfig::Basic("AscendDequant", DT_FLOAT))
                      .Connect("Conv2DTranspose", 0, "AscendDequant", 0)
@@ -879,8 +878,7 @@ TEST_F(Conv2DTransposeFixpipeFusionPassTest, fp32OutputTransposeUsesFp16ExtendOu
 TEST_F(Conv2DTransposeFixpipeFusionPassTest, dualFixpipeFusionSuccess)
 {
     TestGraph builder("dualFixpipeFusionSuccess");
-    SetCubeVectorCombine("fuse");
-    auto graph = builder.SetSocMC62()
+    auto graph = builder.SetSoc(SocConfig("MC62", "Ascend950PR_9589", "fuse"))
                      .AddNode(Conv2DTransposeConfig::Basic("Conv2DTranspose", DT_INT8, DT_INT8, DT_INT32), {0, 1, 2})
                      .AddAscendDequant(AscendDequantConfig::Basic("AscendDequant"))
                      .AddAscendDequant(AscendDequantConfig::Basic("AscendDequant2"))
@@ -919,8 +917,7 @@ TEST_F(Conv2DTransposeFixpipeFusionPassTest, dualFixpipeFusionSuccess)
 TEST_F(Conv2DTransposeFixpipeFusionPassTest, dualFixpipeEquivalentKeepDualSuccess)
 {
     TestGraph builder("dualFixpipeEquivalentKeepDualSuccess");
-    SetCubeVectorCombine("fuse");
-    auto graph = builder.SetSocMC62()
+    auto graph = builder.SetSoc(SocConfig("MC62", "Ascend950PR_9589", "fuse"))
                      .AddNode(Conv2DTransposeConfig::Basic("Conv2DTranspose", DT_INT8, DT_INT8, DT_INT32), {0, 1, 2})
                      .AddAscendDequant(AscendDequantConfig::Basic("AscendDequant"))
                      .AddAscendRequant(AscendRequantConfig::Basic("AscendRequant"))
@@ -941,9 +938,8 @@ TEST_F(Conv2DTransposeFixpipeFusionPassTest, dualFixpipeEquivalentKeepDualSucces
 TEST_F(Conv2DTransposeFixpipeFusionPassTest, dualOutputPassthroughSuccess)
 {
     TestGraph builder("dualOutputPassthroughSuccess");
-    SetCubeVectorCombine("fuse");
     Conv2DTransposeConfig convConfig = Conv2DTransposeConfig::Basic("Conv2DTranspose", DT_INT8, DT_INT8, DT_INT32);
-    auto graph = builder.SetSocMC62()
+    auto graph = builder.SetSoc(SocConfig("MC62", "Ascend950PR_9589", "fuse"))
                      .AddNode(convConfig, {0, 1, 2})
                      .AddAscendDequant(AscendDequantConfig::Basic("AscendDequant"))
                      .AddNode(DataConfig::Basic("PassthroughData", DT_INT32, FORMAT_NCHW, {1, 32, 32, 32}), {})
@@ -963,8 +959,7 @@ TEST_F(Conv2DTransposeFixpipeFusionPassTest, dualOutputPassthroughSuccess)
 TEST_F(Conv2DTransposeFixpipeFusionPassTest, dualQuantAndFp16PassthroughQuantPrimary)
 {
     TestGraph builder("dualQuantAndFp16PassthroughQuantPrimary");
-    SetCubeVectorCombine("fuse");
-    auto graph = builder.SetSocMC62()
+    auto graph = builder.SetSoc(SocConfig("MC62", "Ascend950PR_9589", "fuse"))
                      .AddNode(Conv2DTransposeConfig::Basic("Conv2DTranspose", DT_FLOAT16, DT_FLOAT16, DT_FLOAT16),
                               {0, 1, 2})
                      .AddNode(DataConfig::Basic("PassthroughData", DT_FLOAT16, FORMAT_NCHW, {1, 32, 32, 32}), {})
@@ -990,8 +985,7 @@ TEST_F(Conv2DTransposeFixpipeFusionPassTest, dualQuantAndFp16PassthroughQuantPri
 TEST_F(Conv2DTransposeFixpipeFusionPassTest, dualPassthroughPrimaryUsesScale1)
 {
     TestGraph builder("dualPassthroughPrimaryUsesScale1");
-    SetCubeVectorCombine("fuse");
-    auto graph = builder.SetSocMC62()
+    auto graph = builder.SetSoc(SocConfig("MC62", "Ascend950PR_9589", "fuse"))
                      .AddNode(Conv2DTransposeConfig::Basic("Conv2DTranspose", DT_INT8, DT_INT8, DT_INT32), {0, 1, 2})
                      .AddNode(DataConfig::Basic("PassthroughData", DT_INT32, FORMAT_NCHW, {1, 32, 32, 32}), {})
                      .AddAscendDequant(AscendDequantConfig::Basic("AscendDequant"))

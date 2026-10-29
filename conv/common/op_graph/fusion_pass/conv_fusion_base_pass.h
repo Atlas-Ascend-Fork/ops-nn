@@ -63,6 +63,9 @@ protected:
     // ConstructBoundary -> Replacement -> SubgraphRewriter::Replace.
     bool DefaultConvFusionReplaceImpl(const ge::GNode& convNode, ge::CustomPassContext& passContext);
 
+    bool ReplaceSubgraphWithFallback(const std::unique_ptr<ge::fusion::SubgraphBoundary>& boundary,
+                                     const ge::fusion::GraphUniqPtr& replacement, ge::CustomPassContext& passContext);
+
     // Weak-symbol guarded graph fuse inspector entries: no-op (return true) when the GE runtime does
     bool CanFuseNodes(const std::vector<ge::GNode>& nodesBeforeFuse);
     bool ReportFuseNodes(const std::vector<ge::GNode>& nodesBeforeFuse, const std::vector<ge::GNode>& nodesAfterFuse,

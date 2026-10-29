@@ -756,7 +756,7 @@ bool PostCubeAddInputBase::GetShapeByFormat(const ge::Format old_format, const g
 
     if (static_cast<ge::Format>(GetPrimaryFormat(static_cast<int32_t>(old_format))) ==
         static_cast<ge::Format>(GetPrimaryFormat(static_cast<int32_t>(new_format)))) {
-        OPS_LOG_D("PostCube", "Origin formt and formt is same, no need to transfer shape.");
+        OPS_LOG_D("PostCube", "Origin format and format is same, no need to transfer shape.");
         return true;
     }
     if (old_shape.GetDimNum() == 0U) {
@@ -792,7 +792,7 @@ ge::Shape PostCubeAddInputBase::GetBroadcastShape(const ge::Shape& shape1, const
         } else if (dim2 == 1) {
             broadcastShape[rank - 1 - i] = dim1;
         } else {
-            return ge::Shape(); // return empty means cant broadcast
+            return ge::Shape(); // return empty means cannot broadcast
         }
     }
     OPS_LOG_D("PostCube", "Get broadcastShape successfully.");
@@ -810,7 +810,7 @@ uint32_t PostCubeAddInputBase::IsSameShape(const ge::TensorDesc& tensor_desc1, c
             OPS_LOG_D("PostCube", "canbrocastshape with originshape size is same");
             return kCanUseBrocastMuls;
         }
-        OPS_LOG_W("PostCube", "cant continue vectormuls with originshape is same");
+        OPS_LOG_W("PostCube", "cannot continue vectormuls with originshape is same");
         return kCantMuls;
     } else if (IsScalar(tensor_desc1.GetOriginShape()) || IsScalar(tensor_desc2.GetOriginShape())) {
         if (IsScalar(tensor_desc1.GetShape()) || IsScalar(tensor_desc2.GetShape())) {
@@ -820,13 +820,13 @@ uint32_t PostCubeAddInputBase::IsSameShape(const ge::TensorDesc& tensor_desc1, c
             OPS_LOG_D("PostCube", "canbrocastshape with one shape is scalar");
             return kCanUseBrocastMuls;
         }
-        OPS_LOG_W("PostCube", "cant continue vectormuls with one shape is scalar");
+        OPS_LOG_W("PostCube", "cannot continue vectormuls with one shape is scalar");
         return kCantMuls;
     } else if (CanBroadcast(tensor_desc1, tensor_desc2)) {
         OPS_LOG_D("PostCube", "just canbrocastshape");
         return kCanUseBrocastMuls;
     }
-    OPS_LOG_W("PostCube", "cant continue vectormuls");
+    OPS_LOG_W("PostCube", "cannot continue vectormuls");
     return kCantMuls;
 }
 
@@ -883,12 +883,16 @@ ge::graphStatus PostCubeAddInputStrategy22::DoAddInput(ge::Graph& graph, const P
     bool tmp_bool = true;
     newopnode.SetAttr(kAscendSingleOpAsc, tmp_bool);
     float offset = 0.0;
-    if (GNodeGetAttr(pre_fuzed_node, ATTR_OFFSET, offset)) {
+    if (GNodeGetAttr(pre_fuzed_node, ATTR_OFFSET, offset) == ge::GRAPH_SUCCESS) {
         float tmp_offset = offset;
         newopnode.SetAttr(kAscendOffsetAsc, tmp_offset);
         OPS_LOG_D("PostCube", "offset value = %f", offset);
     }
     int64_t tmp_dtype = static_cast<int>(prenode_outdesc.GetDataType());
+    if (tmp_dtype == static_cast<int>(ge::DT_FLOAT)) {
+        OPS_LOG_D("PostCube", "Force set dtype to fp16.");
+        tmp_dtype = static_cast<int>(ge::DT_FLOAT16);
+    }
     newopnode.SetAttr(kAscendOutDtypeAsc, tmp_dtype);
 
     ge::TensorDesc pre_tensor_desc = prenode_inputdesc;

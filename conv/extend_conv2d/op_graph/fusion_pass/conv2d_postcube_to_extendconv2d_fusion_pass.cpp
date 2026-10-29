@@ -10,9 +10,14 @@
 
 #include "conv2d_postcube_to_extendconv2d_fusion_pass.h"
 
+#include <algorithm>
+#include <sstream>
+
 #include "conv/common/op_graph/fusion_pass/conv_fusion_utils_pass.h"
 #include "es_nn_ops.h"
+#include "ge/compliant_node_builder.h"
 #include "ge/es_graph_builder.h"
+#include "version/ge-compiler_version.h"
 
 namespace Ops {
 using namespace NN;
@@ -21,6 +26,22 @@ using namespace ConvFusionUtils;
 using namespace Conv2DPostCubeToExtendConv2DFusion;
 using namespace ge;
 using namespace fusion;
+
+namespace {
+constexpr uint32_t FILTER_DIM_NUM = 4;
+constexpr uint32_t NCHW_N_IDX = 0;
+constexpr uint32_t NCHW_C_IDX = 1;
+constexpr uint32_t NCHW_H_IDX = 2;
+constexpr uint32_t NCHW_W_IDX = 3;
+constexpr uint32_t NHWC_N_IDX = 0;
+constexpr uint32_t NHWC_H_IDX = 1;
+constexpr uint32_t NHWC_W_IDX = 2;
+constexpr uint32_t NHWC_C_IDX = 3;
+constexpr int64_t FRACTAL_Z_C0_INT8 = 32;
+constexpr int64_t FRACTAL_Z_C0_FP16 = 16;
+constexpr int64_t FRACTAL_Z_N0 = 16;
+const ge::AscendString VECTOR_MUL_SCALAR_OP = "VectorMulScalar";
+} // namespace
 
 void Conv2DPostCubeToExtendConv2DFusionPass::InitMember()
 {
@@ -40,32 +61,63 @@ void Conv2DPostCubeToExtendConv2DFusionPass::InitMember()
 bool Conv2DPostCubeToExtendConv2DFusionPass::MeetRequirements(const GNode& convNode)
 {
     FUSION_PASS_CHECK(!ConvFusionUtilsPass::CheckSocList(SUPPORT_SOC_LIST, npuArch, true),
-                      OP_LOGD(FUSION_NAME, "Current soc not supported, no fusion."), return false);
+                      OP_LOGD(convDescInfo.nodeNameStr, "Current soc not supported, no fusion."), return false);
 
     OP_LOGD(convDescInfo.nodeNameStr, "Begin to do Conv2DPostCubeToExtendConv2DFusionPass.");
 
     FUSION_PASS_CHECK(convNode.GetOutDataNodesAndPortIndexs(OUTPUT_INDEX).empty(),
-                      OP_LOGD(convDescInfo.nodeNameStr, "Conv2D out nodes is empty, don't need fusion process."),
-                      return false);
-
-    // Check cur node's dtypes whether it is supported.
-    std::vector<DataType> convDtypes = {convDescInfo.fmapDtype, convDescInfo.filterDtype, convDescInfo.outputDtype};
-    if (convDescInfo.hasBias) {
-        convDtypes.emplace_back(convDescInfo.biasDtype);
-    }
-    FUSION_PASS_CHECK(!ConvFusionUtilsPass::CheckSupportList<DataType>(CONV_SUPPORT_DTYPES, convDtypes),
-                      OP_LOGD(convDescInfo.nodeNameStr, "Conv2D dtype not supported, no fusion."), return false);
-
-    // Check cur node's formats whether it is supported.
-    std::vector<Format> convFormats = {convDescInfo.fmapFormat, convDescInfo.filterFormat, convDescInfo.outputFormat};
-    auto convSupportFormats = CONV_SUPPORT_FORMATS_MAP.at(ConvFusionUtilsPass::GetArchKey());
-    FUSION_PASS_CHECK(!ConvFusionUtilsPass::CheckSupportList<Format>(convSupportFormats, convFormats),
-                      OP_LOGD(convDescInfo.nodeNameStr, "Conv2D format not supported, no fusion."), return false);
+                      OP_LOGD(convDescInfo.nodeNameStr, "Conv2D out nodes are empty, no fusion needed."), return false);
 
     return true;
 }
 
 std::set<AscendString> Conv2DPostCubeToExtendConv2DFusionPass::GetNodeTypes() const { return {CONV2D}; }
+
+void Conv2DPostCubeToExtendConv2DFusionPass::ScanLeakyReluSlope(const std::vector<ops::PostCubePassInfo>& matchLists,
+                                                                float& slope, bool& hasLeakyRelu) const
+{
+    for (const auto& matchPass : matchLists) {
+        for (const auto& nodeInfo : matchPass.m_opnodes) {
+            FUSION_PASS_CHECK_NOLOG(nodeInfo.GetNode() == nullptr, continue);
+            AscendString nodeType;
+            FUSION_PASS_CHECK_NOLOG(nodeInfo.GetNode()->GetType(nodeType) != GRAPH_SUCCESS, continue);
+            if (nodeType == Conv2DPostCubeToExtendConv2DFusion::LEAKY_RELU) {
+                (void)ops::GNodeGetAttr(nodeInfo.GetNode(), ops::ATTR_NEGATIVE_SLOPE, slope);
+                hasLeakyRelu = true;
+            }
+        }
+    }
+}
+
+void Conv2DPostCubeToExtendConv2DFusionPass::PatchVectorMulScalarAttr(const GNode& convNode, float slope) const
+{
+    auto convOutputNodes = convNode.GetOutDataNodesAndPortIndexs(OUTPUT_INDEX);
+    for (auto& outputNode : convOutputNodes) {
+        FUSION_PASS_CHECK_NOLOG(outputNode.first == nullptr, continue);
+        AscendString outputType;
+        FUSION_PASS_CHECK_NOLOG(outputNode.first->GetType(outputType) != GRAPH_SUCCESS, continue);
+        if (outputType != POST_CUBE_OP) {
+            continue;
+        }
+        GNode postCubeNode = *outputNode.first;
+        auto producer = postCubeNode.GetInDataNodesAndPortIndexs(POST_CUBE_INPUT_RELU_WEIGHT_0_INDEX).first;
+        FUSION_PASS_CHECK_NOLOG(producer == nullptr, continue);
+        AscendString producerType;
+        FUSION_PASS_CHECK_NOLOG(producer->GetType(producerType) != GRAPH_SUCCESS, continue);
+        if (producerType != VECTOR_MUL_SCALAR_OP) {
+            continue;
+        }
+        GNode vectorMulScalarNode = *producer;
+        FUSION_PASS_CHECK(
+            vectorMulScalarNode.SetAttr(ge::AscendString(ops::kAttrScale.c_str()), slope) != GRAPH_SUCCESS,
+            OP_LOGE(convDescInfo.nodeNameStr, "Set scalar attr for VectorMulScalar failed."), return);
+        TensorDesc outputDesc;
+        if (vectorMulScalarNode.GetOutputDesc(OUTPUT_INDEX, outputDesc) == GRAPH_SUCCESS) {
+            (void)postCubeNode.UpdateInputDesc(POST_CUBE_INPUT_RELU_WEIGHT_0_INDEX, outputDesc);
+        }
+        OP_LOGD(convDescInfo.nodeNameStr, "Fix VectorMulScalar scalar attr with leakyrelu slope [%f].", slope);
+    }
+}
 
 void Conv2DPostCubeToExtendConv2DFusionPass::PrintGraphStructure() const
 {
@@ -119,10 +171,18 @@ Status Conv2DPostCubeToExtendConv2DFusionPass::ConvFusionPreImpl(GraphPtr& graph
                       OP_LOGD(convDescInfo.nodeNameStr, "SelectPostCubeNodeList failed, no fusion."),
                       return CONV_NOT_CHANGED);
 
+    float leakySlope = 0.0f;
+    bool hasLeakyRelu = false;
+    ScanLeakyReluSlope(postCubeUtils.m_matchpasses_, leakySlope, hasLeakyRelu);
+
     std::vector<GNodePtr> newNodes;
     FUSION_PASS_CHECK(postCubeUtils.CreatePostCubeNode(convDescInfo.nodeNameStr, *graph, newNodes) != GRAPH_SUCCESS,
                       OP_LOGD(convDescInfo.nodeNameStr, "CreatePostCubeNode failed, no fusion."),
                       return CONV_NOT_CHANGED);
+
+    if (hasLeakyRelu) {
+        PatchVectorMulScalarAttr(convNode, leakySlope);
+    }
 
     return SUCCESS;
 }
@@ -130,7 +190,31 @@ Status Conv2DPostCubeToExtendConv2DFusionPass::ConvFusionPreImpl(GraphPtr& graph
 bool Conv2DPostCubeToExtendConv2DFusionPass::ConvFusionReplaceImpl(GraphPtr& graph, GNode& convNode,
                                                                    CustomPassContext& passContext)
 {
-    return DefaultConvFusionReplaceImpl(convNode, passContext);
+    FUSION_PASS_CHECK(graph == nullptr, OP_LOGE(convDescInfo.nodeNameStr, "Graph is nullptr."), return false);
+
+    auto boundary = ConstructBoundary(convNode);
+    FUSION_PASS_CHECK(boundary == nullptr, OP_LOGE(convDescInfo.nodeNameStr, "Construct boundary failed."),
+                      return false);
+
+    auto replacement = Replacement(convNode);
+    FUSION_PASS_CHECK(replacement == nullptr, OP_LOGE(convDescInfo.nodeNameStr, "Construct replacement failed."),
+                      return false);
+
+    auto extendConv2DNamesBefore = ConvFusionUtilsPass::CollectNodeTypeNames(graph, EXTENDCONV2D);
+
+    FUSION_PASS_CHECK(!ReplaceSubgraphWithFallback(boundary, replacement, passContext),
+                      OP_LOGE(convDescInfo.nodeNameStr, "SubgraphRewriter::Replace failed."), return false);
+
+    GNode extendConv2DNode;
+    FUSION_PASS_CHECK(
+        !ConvFusionUtilsPass::FindNewNodeOfType(graph, EXTENDCONV2D, extendConv2DNamesBefore, extendConv2DNode),
+        OP_LOGE(convDescInfo.nodeNameStr, "Find new ExtendConv2D node after replace failed."), return false);
+
+    FUSION_PASS_CHECK_NOLOG(!AdjustLayout(graph, extendConv2DNode), return false);
+    FUSION_PASS_CHECK_NOLOG(!InsertA16W8WeightRearrange(graph, extendConv2DNode), return false);
+
+    OP_LOGD(convDescInfo.nodeNameStr, "Conv2DPostCubeToExtendConv2DFusionPass replace success.");
+    return true;
 }
 
 std::unique_ptr<SubgraphBoundary> Conv2DPostCubeToExtendConv2DFusionPass::ConstructBoundary(const GNode& convNode)
@@ -150,14 +234,14 @@ std::unique_ptr<SubgraphBoundary> Conv2DPostCubeToExtendConv2DFusionPass::Constr
     if (outputCase == OutputCase::DUAL_POST_CUBE || outputCase == OutputCase::SINGLE) {
         for (size_t index = 0; index < postCubeNodes.size(); index++) {
             GNodePtr postCubeNode = postCubeNodes[index];
-            FUSION_PASS_CHECK_NOLOG(!ConvFusionUtilsPass::AddSubgraphOutput(boundary, *postCubeNode, OUTPUT_0_INDEX,
+            FUSION_PASS_CHECK_NOLOG(!ConvFusionUtilsPass::AddSubgraphOutput(boundary, *postCubeNode, OUTPUT_INDEX,
                                                                             static_cast<int64_t>(index)),
                                     return nullptr);
         }
     } else if (outputCase == OutputCase::OTHER_POST_CUBE || outputCase == OutputCase::POST_CUBE_OTHER) {
         // Add PostCube node to boundary
-        int64_t postCubeIndex = outputCase != OutputCase::OTHER_POST_CUBE ? OUTPUT_0_INDEX : OUTPUT_1_INDEX;
-        int64_t otherIndex = outputCase != OutputCase::OTHER_POST_CUBE ? OUTPUT_1_INDEX : OUTPUT_0_INDEX;
+        int64_t postCubeIndex = outputCase != OutputCase::OTHER_POST_CUBE ? OUTPUT_INDEX : OUTPUT_1_INDEX;
+        int64_t otherIndex = outputCase != OutputCase::OTHER_POST_CUBE ? OUTPUT_1_INDEX : OUTPUT_INDEX;
 
         GNodePtr postCubeNode = postCubeNodes[0];
         FUSION_PASS_CHECK_NOLOG(!ConvFusionUtilsPass::AddSubgraphOutput(
@@ -177,6 +261,11 @@ GraphUniqPtr Conv2DPostCubeToExtendConv2DFusionPass::Replacement(const GNode& co
 
     ConvBaseAttrs baseAttrs;
     FUSION_PASS_CHECK_NOLOG(!ConvFusionUtilsPass::GetConvBaseAttr(convNode, baseAttrs, convDescInfo), return nullptr);
+    int64_t opImplModeEnum = 0;
+    (void)convNode.GetAttr(OP_IMPL_MODE_ENUM, opImplModeEnum);
+    baseAttrs.enableHf32 = std::any_of(
+        HF32_PRECISION_MODES_INT.begin(), HF32_PRECISION_MODES_INT.end(),
+        [&opImplModeEnum](const int64_t& targetPrecisionModeInt) { return opImplModeEnum == targetPrecisionModeInt; });
 
     auto [fmap, filter] = graphBuilder.CreateInputs<REQUIRED_INPUT_NUMS>();
     auto bias = convDescInfo.hasBias ? graphBuilder.CreateInput(graphIndex++) : nullptr;
@@ -200,9 +289,18 @@ GraphUniqPtr Conv2DPostCubeToExtendConv2DFusionPass::Replacement(const GNode& co
     // Multi TensorHolder get from es::Op, it's GetProducer() point to one node.
     auto output0 = extendConv2D.y0.GetProducer();
     FUSION_PASS_CHECK_NOLOG(!UpdateExtendConv2DDesc(output0), return nullptr);
-    FUSION_PASS_CHECK(output0->SetAttr(OP_IMPL_MODE_ENUM, baseAttrs.opImplModeEnum) != GRAPH_SUCCESS,
-                      OP_LOGE(convDescInfo.nodeNameStr, "Set _op_impl_mode_enum for ExtendConv2D failed."),
+
+    int64_t fixedShiftValue = 0;
+    (void)convNode.GetAttr(FIXED_SHIFT_VALUE.GetString(), fixedShiftValue);
+    if (fixedShiftValue == 0 && convDescInfo.fmapDtype != DT_INT8) {
+        fixedShiftValue = (convDescInfo.filterDtype == DT_INT8) ? FIXED_SHIFT_VALUE_DEFAULT_A16W8 :
+                                                                  FIXED_SHIFT_VALUE_DEFAULT_A16W16;
+    }
+    FUSION_PASS_CHECK(output0->SetAttr(FIXED_SHIFT_VALUE.GetString(), fixedShiftValue) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Set fixed_shift_value for ExtendConv2D failed."),
                       return nullptr);
+
+    (void)ConvFusionUtilsPass::CopyConvOtherAttrs(convNode, *output0);
 
     std::vector<es::EsTensorHolder> replaceOutput = {extendConv2D.y0};
     if (dualOutput) {
@@ -222,7 +320,8 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::AddScaleReluToBoundAry(std::unique_
                                                        EXTENDCONV2D_QUANT_SCALE_0_INDEX),
                 return false);
             hasScale0 = true;
-        } else if (IsReluEnable(postCubeFusionOps.front(), Conv2DPostCubeToExtendConv2DFusion::LEAKY_RELU)) {
+        }
+        if (IsReluEnable(postCubeFusionOps.front(), Conv2DPostCubeToExtendConv2DFusion::LEAKY_RELU)) {
             GNodePtr postCubeNode = postCubeNodes.front();
             FUSION_PASS_CHECK_NOLOG(
                 !ConvFusionUtilsPass::AddSubgraphInput(boundary, *postCubeNode, POST_CUBE_INPUT_RELU_WEIGHT_0_INDEX,
@@ -241,7 +340,8 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::AddScaleReluToBoundAry(std::unique_
                                                        EXTENDCONV2D_QUANT_SCALE_1_INDEX),
                 return false);
             hasScale1 = true;
-        } else if (IsReluEnable(postCubeFusionOps.back(), Conv2DPostCubeToExtendConv2DFusion::LEAKY_RELU)) {
+        }
+        if (IsReluEnable(postCubeFusionOps.back(), Conv2DPostCubeToExtendConv2DFusion::LEAKY_RELU)) {
             GNodePtr postCubeNode = postCubeNodes.back();
             FUSION_PASS_CHECK_NOLOG(
                 !ConvFusionUtilsPass::AddSubgraphInput(boundary, *postCubeNode, POST_CUBE_INPUT_RELU_WEIGHT_0_INDEX,
@@ -254,43 +354,9 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::AddScaleReluToBoundAry(std::unique_
     return true;
 }
 
-bool Conv2DPostCubeToExtendConv2DFusionPass::CheckConvPostCubeDtype(const GNodePtr postCubeNode) const
-{
-    TensorDesc postCubeInDesc;
-    FUSION_PASS_CHECK(postCubeNode->GetInputDesc(0, postCubeInDesc) != GRAPH_SUCCESS,
-                      OP_LOGE(convDescInfo.nodeNameStr, "Get PostCube in tensor desc failed."), return false);
-    DataType postCubeInDtype = postCubeInDesc.GetDataType();
-
-    TensorDesc postCubeOutDesc;
-    FUSION_PASS_CHECK(postCubeNode->GetOutputDesc(OUTPUT_INDEX, postCubeOutDesc) != GRAPH_SUCCESS,
-                      OP_LOGE(convDescInfo.nodeNameStr, "Get PostCube out tensor desc failed."), return false);
-    DataType postCubeOutDtype = postCubeOutDesc.GetDataType();
-
-    std::vector<DataType> checkDtypes = {convDescInfo.fmapDtype, convDescInfo.filterDtype, postCubeInDtype,
-                                         postCubeOutDtype};
-    OP_LOGD(convDescInfo.nodeNameStr, "Current dtypes: fmap is %s weight is %s postCubeIn is %s postCubeOut is %s.",
-            TypeUtils::DataTypeToSerialString(convDescInfo.fmapDtype).c_str(),
-            TypeUtils::DataTypeToSerialString(convDescInfo.filterDtype).c_str(),
-            TypeUtils::DataTypeToSerialString(postCubeInDtype).c_str(),
-            TypeUtils::DataTypeToSerialString(postCubeOutDtype).c_str());
-
-    auto supportedDtypes = SUPPORTED_DTYPES_WITH_POST_CUBE_MAP.at(ConvFusionUtilsPass::GetArchKey());
-    if (!ConvFusionUtilsPass::CheckSupportList<DataType>(supportedDtypes, checkDtypes)) {
-        std::string incorrectDtypes = VectorToString(checkDtypes);
-        std::string reason = "The dtypes of these parameters support only the following combinations: " +
-                             VectorsToString(supportedDtypes);
-        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(convDescInfo.nodeNameStr.c_str(), "x, filter, postCubeIn, postCubeOut",
-                                               incorrectDtypes.c_str(), reason.c_str());
-        return false;
-    }
-
-    return true;
-}
-
 bool Conv2DPostCubeToExtendConv2DFusionPass::CheckDescInfo()
 {
     for (auto postCubeNode : postCubeNodes) {
-        FUSION_PASS_CHECK_NOLOG(!CheckConvPostCubeDtype(postCubeNode), return false);
         // Check PostCube not supported case.
         FUSION_PASS_CHECK_NOLOG(!CheckSupportPostCubeCase(postCubeNode), return false);
     }
@@ -340,10 +406,9 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::CheckSupportPostCubeCase(const GNod
         // check PostCube unit input dtype: quant_scale_0
         DataType quantScale0dtype = quantScale0Desc.GetDataType();
         if (quantScale0dtype != ge::DT_UINT64 && quantScale0dtype != ge::DT_INT64) {
-            std::string correctDtype = GeDtypeToString(ge::DT_UINT64) + ", " + GeDtypeToString(ge::DT_INT64);
-            OP_LOGE_FOR_INVALID_DTYPE(convDescInfo.nodeNameStr.c_str(), "scale0",
-                                      GeDtypeToString(quantScale0dtype).c_str(), correctDtype.c_str());
-            return false;
+            OP_LOGD(convDescInfo.nodeNameStr,
+                    "PostCube node quant scale 0 dtype %s not supported, should be in [uint64, int64].",
+                    GeDtypeToString(quantScale0dtype).c_str());
         }
     }
 
@@ -354,13 +419,13 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::GetPostCubeNodes(const GNode& convN
 {
     auto convOutputNodes = convNode.GetOutDataNodesAndPortIndexs(OUTPUT_INDEX);
     FUSION_PASS_CHECK(convOutputNodes.empty(),
-                      OP_LOGE(convDescInfo.nodeNameStr, "Conv2D out nodes is empty after PostCube fusion."),
+                      OP_LOGE(convDescInfo.nodeNameStr, "Conv2D out nodes are empty after PostCube fusion."),
                       return false);
 
     for (auto& outputNode : convOutputNodes) {
         GNodePtr nodePtr = outputNode.first;
         FUSION_PASS_CHECK(nodePtr == nullptr,
-                          OP_LOGE(convDescInfo.nodeNameStr, "After create PostCube, Conv2D out nodes is nullptr."),
+                          OP_LOGE(convDescInfo.nodeNameStr, "After PostCube creation, Conv2D out node is nullptr."),
                           return false);
 
         AscendString curNodeType;
@@ -443,6 +508,7 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::IsScaleEnable(const std::vector<Asc
 void Conv2DPostCubeToExtendConv2DFusionPass::SelectPostCubePassByWhiteList(
     std::vector<ops::PostCubePassInfo>& matchLists) const
 {
+    const bool isDn2NzSoc = ConvFusionUtilsPass::GetArchKey() == ConvFusionUtils::NPU_ARCH_KEY_3510;
     std::vector<ops::PostCubePassInfo> tmpLists(matchLists);
     matchLists.clear();
     for (auto& postCubePass : tmpLists) {
@@ -461,19 +527,18 @@ void Conv2DPostCubeToExtendConv2DFusionPass::SelectPostCubePassByWhiteList(
                 break;
             }
 
-            if (index == postCubePass.m_opnodes.size() - 1) {
-                AscendString nodeTypeListStr = ConvFusionUtilsPass::ListToAscendString(nodeTypeList);
-                if (std::find(nodeTypeList.begin(), nodeTypeList.end(),
-                              Conv2DPostCubeToExtendConv2DFusion::LEAKY_RELU) != nodeTypeList.end() &&
-                    std::find(nodeTypeList.begin(), nodeTypeList.end(), ConvFusionUtils::ASCEND_DEQUANT) !=
-                        nodeTypeList.end()) {
-                    OP_LOGD(convDescInfo.nodeNameStr, "List[%s] is not supported, removing.",
-                            nodeTypeListStr.GetString());
-                    break;
-                }
+            if (isDn2NzSoc && nodeType == Conv2DPostCubeToExtendConv2DFusion::RELU && index == 1 &&
+                postCubePass.m_opnodes.size() == 2) {
+                OP_LOGD(convDescInfo.nodeNameStr,
+                        "Conv2D + node[%s] fusion path is not supported on dn2nz soc, removing cur list.",
+                        nodeType.GetString());
+                break;
+            }
 
+            if (index == postCubePass.m_opnodes.size() - 1) {
                 matchLists.push_back(postCubePass);
-                OP_LOGD(convDescInfo.nodeNameStr, "PostCubePass after selected by Valid list is %s",
+                AscendString nodeTypeListStr = ConvFusionUtilsPass::ListToAscendString(nodeTypeList);
+                OP_LOGD(convDescInfo.nodeNameStr, "PostCubePass selected by valid list is %s",
                         nodeTypeListStr.GetString());
             }
         }
@@ -486,9 +551,9 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::UpdateExtendConv2DDesc(GNode* exten
 
     if (outputCase != OutputCase::OTHER_POST_CUBE) {
         TensorDesc output0Desc;
-        FUSION_PASS_CHECK(postCubeNodes.front()->GetOutputDesc(OUTPUT_0_INDEX, output0Desc) != GRAPH_SUCCESS,
+        FUSION_PASS_CHECK(postCubeNodes.front()->GetOutputDesc(OUTPUT_INDEX, output0Desc) != GRAPH_SUCCESS,
                           OP_LOGE(convDescInfo.nodeNameStr, "Get PostCube0 output tensor desc failed."), return false);
-        FUSION_PASS_CHECK(extendConv2D->UpdateOutputDesc(OUTPUT_0_INDEX, output0Desc) != GRAPH_SUCCESS,
+        FUSION_PASS_CHECK(extendConv2D->UpdateOutputDesc(OUTPUT_INDEX, output0Desc) != GRAPH_SUCCESS,
                           OP_LOGE(convDescInfo.nodeNameStr, "Update ExtendConv2D output0 tensor desc failed."),
                           return false);
 
@@ -507,14 +572,14 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::UpdateExtendConv2DDesc(GNode* exten
 
         if (outputCase == OutputCase::SINGLE) {
             FUSION_PASS_CHECK(extendConv2D->UpdateOutputDesc(OUTPUT_1_INDEX, output0Desc) != GRAPH_SUCCESS,
-                              OP_LOGE(convDescInfo.nodeNameStr, "Update ExtendConv2D output0 tensor desc failed."),
+                              OP_LOGE(convDescInfo.nodeNameStr, "Update ExtendConv2D output1 tensor desc failed."),
                               return false);
         }
     }
 
     if (outputCase == OutputCase::DUAL_POST_CUBE || outputCase == OutputCase::OTHER_POST_CUBE) {
         TensorDesc output1Desc;
-        FUSION_PASS_CHECK(postCubeNodes.back()->GetOutputDesc(OUTPUT_0_INDEX, output1Desc) != GRAPH_SUCCESS,
+        FUSION_PASS_CHECK(postCubeNodes.back()->GetOutputDesc(OUTPUT_INDEX, output1Desc) != GRAPH_SUCCESS,
                           OP_LOGE(convDescInfo.nodeNameStr, "Get PostCube1 output tensor desc failed."), return false);
         FUSION_PASS_CHECK(extendConv2D->UpdateOutputDesc(OUTPUT_1_INDEX, output1Desc) != GRAPH_SUCCESS,
                           OP_LOGE(convDescInfo.nodeNameStr, "Update ExtendConv2D output1 tensor desc failed."),
@@ -535,7 +600,7 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::UpdateExtendConv2DDesc(GNode* exten
     }
 
     if (outputCase == OutputCase::POST_CUBE_OTHER || outputCase == OutputCase::OTHER_POST_CUBE) {
-        int32_t index = outputCase == OutputCase::OTHER_POST_CUBE ? OUTPUT_0_INDEX : OUTPUT_1_INDEX;
+        int32_t index = outputCase == OutputCase::OTHER_POST_CUBE ? OUTPUT_INDEX : OUTPUT_1_INDEX;
         FUSION_PASS_CHECK(extendConv2D->UpdateOutputDesc(index, convDescInfo.outputDesc) != GRAPH_SUCCESS,
                           OP_LOGE(convDescInfo.nodeNameStr, "Update ExtendConv2D output%d tensor desc failed.", index),
                           return false);
@@ -549,9 +614,10 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::UpdateScaleReluDesc(GNodePtr postCu
                                                                  const AscendString& name) const
 {
     TensorDesc tensorDesc;
-    FUSION_PASS_CHECK(postCube->GetInputDesc(getIndex, tensorDesc) != GRAPH_SUCCESS,
-                      OP_LOGE(convDescInfo.nodeNameStr, "Get %s tensor desc failed.", name.GetString()), return false);
-    // Currently, conv only supports per-tensor quantization scenarios, but onnx plugin set format to NCHW
+    if (postCube->GetInputDesc(getIndex, tensorDesc) != GRAPH_SUCCESS) {
+        Shape shape;
+        tensorDesc.Update(shape, FORMAT_ND, DT_FLOAT);
+    }
     tensorDesc.SetFormat(ge::FORMAT_ND);
     tensorDesc.SetOriginFormat(ge::FORMAT_ND);
     FUSION_PASS_CHECK(extendConv2D->UpdateInputDesc(updateIndex, tensorDesc) != GRAPH_SUCCESS,
@@ -561,4 +627,216 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::UpdateScaleReluDesc(GNodePtr postCu
     return true;
 }
 
+bool Conv2DPostCubeToExtendConv2DFusionPass::AdjustLayout(const GraphPtr& graph, GNode& fusedNode)
+{
+    if (!ConvFusionUtilsPass::IsFuseSoc()) {
+        OP_LOGD(convDescInfo.nodeNameStr, "Current soc not support adjust layout, skip.");
+        return true;
+    }
+    FUSION_PASS_CHECK_NOLOG(!ConvFusionUtilsPass::AdjustConvInputLayout(graph, fusedNode), return false);
+
+    FUSION_PASS_CHECK(outputCase != OutputCase::SINGLE,
+                      OP_LOGD(convDescInfo.nodeNameStr, "Multi output, skip post transpose."), return true);
+
+    auto outNodes = fusedNode.GetOutDataNodesAndPortIndexs(OUTPUT_INDEX);
+    FUSION_PASS_CHECK(outNodes.size() != 1, OP_LOGD(convDescInfo.nodeNameStr, "Output consumers != 1, skip transpose."),
+                      return true);
+    auto postNode = outNodes[0].first;
+    FUSION_PASS_CHECK(postNode == nullptr, OP_LOGD(convDescInfo.nodeNameStr, "Output node is nullptr, skip transpose."),
+                      return true);
+    FUSION_PASS_CHECK_NOLOG(!ConvFusionUtilsPass::CheckTransposeValid(*postNode), return true);
+
+    GNode transposeNode = *postNode;
+    TensorDesc transOutDesc;
+    FUSION_PASS_CHECK(transposeNode.GetOutputDesc(OUTPUT_INDEX, transOutDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Get Transpose output desc failed."), return false);
+    FUSION_PASS_CHECK_NOLOG(!ConvFusionUtilsPass::RemoveTransposeNode(graph, transposeNode), return false);
+    FUSION_PASS_CHECK(fusedNode.UpdateOutputDesc(OUTPUT_INDEX, transOutDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Update ExtendConv2D output0 desc failed."), return false);
+    if (fusedNode.GetOutputsSize() > 1) {
+        FUSION_PASS_CHECK(fusedNode.UpdateOutputDesc(OUTPUT_1_INDEX, transOutDesc) != GRAPH_SUCCESS,
+                          OP_LOGE(convDescInfo.nodeNameStr, "Update ExtendConv2D output1 desc failed."), return false);
+    }
+    OP_LOGD(convDescInfo.nodeNameStr, "AdjustLayout post transpose success.");
+    return true;
+}
+
+bool Conv2DPostCubeToExtendConv2DFusionPass::SetWeightFractalZDesc(TensorDesc& weightDesc) const
+{
+    auto oriDims = weightDesc.GetOriginShape().GetDims();
+    FUSION_PASS_CHECK(
+        oriDims.size() != FILTER_DIM_NUM,
+        OP_LOGE(convDescInfo.nodeNameStr, "Filter origin shape size %zu is not %u.", oriDims.size(), FILTER_DIM_NUM),
+        return false);
+
+    Format oriFormat = weightDesc.GetOriginFormat();
+    uint32_t nIdx = 0;
+    uint32_t cIdx = 0;
+    uint32_t hIdx = 0;
+    uint32_t wIdx = 0;
+    if (oriFormat == FORMAT_NCHW) {
+        nIdx = NCHW_N_IDX;
+        cIdx = NCHW_C_IDX;
+        hIdx = NCHW_H_IDX;
+        wIdx = NCHW_W_IDX;
+        weightDesc.SetOriginFormat(FORMAT_NCHW);
+    } else if (oriFormat == FORMAT_NHWC) {
+        nIdx = NHWC_N_IDX;
+        cIdx = NHWC_C_IDX;
+        hIdx = NHWC_H_IDX;
+        wIdx = NHWC_W_IDX;
+        weightDesc.SetOriginFormat(FORMAT_NHWC);
+    } else {
+        OP_LOGE(convDescInfo.nodeNameStr, "Filter origin format is not supported, only support NCHW/NHWC.");
+        return false;
+    }
+
+    weightDesc.SetFormat(FORMAT_FRACTAL_Z);
+    int64_t c0 = (weightDesc.GetDataType() == DT_INT8 || weightDesc.GetDataType() == DT_UINT8) ? FRACTAL_Z_C0_INT8 :
+                                                                                                 FRACTAL_Z_C0_FP16;
+    std::vector<int64_t> fzShape(FILTER_DIM_NUM);
+    fzShape[0] = oriDims[hIdx] * oriDims[wIdx] * ((oriDims[cIdx] + c0 - 1) / c0);
+    fzShape[1] = (oriDims[nIdx] + FRACTAL_Z_N0 - 1) / FRACTAL_Z_N0;
+    fzShape[2] = FRACTAL_Z_N0;
+    fzShape[3] = c0;
+    weightDesc.SetShape(Shape(fzShape));
+
+    return true;
+}
+
+bool Conv2DPostCubeToExtendConv2DFusionPass::InsertWeightReFormatOp(const GraphPtr& graph, GNode& extendConv2DNode,
+                                                                    int64_t groups)
+{
+    auto weightPair = extendConv2DNode.GetInDataNodesAndPortIndexs(INPUT_FILTER_INDEX);
+    FUSION_PASS_CHECK(weightPair.first == nullptr, OP_LOGE(convDescInfo.nodeNameStr, "Get weight producer failed."),
+                      return false);
+    GNode weightNode = *weightPair.first;
+    int32_t weightPort = weightPair.second;
+
+    AscendString weightType;
+    FUSION_PASS_CHECK(weightNode.GetType(weightType) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Get weight node type failed."), return false);
+    if (weightType == REFORMAT_OP) {
+        OP_LOGD(convDescInfo.nodeNameStr, "Weight has already been reformatted, no need to insert again.");
+        return true;
+    }
+
+    TensorDesc reformatInDesc;
+    FUSION_PASS_CHECK(weightNode.GetOutputDesc(weightPort, reformatInDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Get weight output desc failed."), return false);
+    TensorDesc reformatOutDesc = reformatInDesc;
+    FUSION_PASS_CHECK_NOLOG(!SetWeightFractalZDesc(reformatInDesc), return false);
+    reformatInDesc.SetFormat(static_cast<Format>(
+        ge::GetFormatFromSub(static_cast<int32_t>(FORMAT_FRACTAL_Z), static_cast<int32_t>(groups))));
+    FUSION_PASS_CHECK_NOLOG(!SetWeightFractalZDesc(reformatOutDesc), return false);
+
+    std::string reformatName = convDescInfo.nodeNameStr + "_const_fold_reformat";
+    GNode reformatNode = es::CompliantNodeBuilder(graph.get())
+                             .OpType(REFORMAT_OP.GetString())
+                             .Name(reformatName.c_str())
+                             .IrDefInputs({{"x", es::CompliantNodeBuilder::kEsIrInputRequired, ""}})
+                             .IrDefOutputs({{"y", es::CompliantNodeBuilder::kEsIrOutputRequired, ""}})
+                             .Build();
+
+    FUSION_PASS_CHECK(reformatNode.UpdateInputDesc(INPUT_INDEX_0, reformatInDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Update reformat input desc failed."), return false);
+    FUSION_PASS_CHECK(reformatNode.UpdateOutputDesc(OUTPUT_INDEX, reformatOutDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Update reformat output desc failed."), return false);
+    FUSION_PASS_CHECK(reformatNode.SetAttr(GROUPS, groups) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Set groups for reformat node failed."), return false);
+
+    FUSION_PASS_CHECK(graph->RemoveEdge(weightNode, weightPort, extendConv2DNode, INPUT_FILTER_INDEX) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Remove edge between weight node and extendconv2d failed."),
+                      return false);
+    FUSION_PASS_CHECK(graph->AddDataEdge(weightNode, weightPort, reformatNode, INPUT_INDEX_0) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Add edge between weight node and reformat node failed."),
+                      return false);
+    FUSION_PASS_CHECK(
+        graph->AddDataEdge(reformatNode, OUTPUT_INDEX, extendConv2DNode, INPUT_FILTER_INDEX) != GRAPH_SUCCESS,
+        OP_LOGE(convDescInfo.nodeNameStr, "Add edge between reformat node and extendconv2d failed."), return false);
+    FUSION_PASS_CHECK(extendConv2DNode.UpdateInputDesc(INPUT_FILTER_INDEX, reformatOutDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Update extendconv2d weight input desc failed."), return false);
+
+    OP_LOGI(convDescInfo.nodeNameStr,
+            "Insert ReFormat node between weight node and ExtendConv2D, physical NCHW/NHWC to FRACTAL_Z "
+            "conversion is delegated to ReFormat.");
+
+    return true;
+}
+
+bool Conv2DPostCubeToExtendConv2DFusionPass::InsertA16W8WeightRearrange(const GraphPtr& graph, GNode& extendConv2DNode)
+{
+    if (convDescInfo.fmapDtype == DT_INT8 || convDescInfo.filterDtype != DT_INT8) {
+        OP_LOGD(convDescInfo.nodeNameStr, "No need to insert a16w8 weight rearrange op.");
+        return true;
+    }
+
+    auto weightPreNode = extendConv2DNode.GetInDataNodesAndPortIndexs(INPUT_FILTER_INDEX).first;
+    FUSION_PASS_CHECK(weightPreNode == nullptr, OP_LOGE(convDescInfo.nodeNameStr, "Get weight producer failed."),
+                      return false);
+    AscendString weightPreType;
+    FUSION_PASS_CHECK(weightPreNode->GetType(weightPreType) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Get weight producer type failed."), return false);
+    if (weightPreType == REARRANGE_A16W8_WEIGHT_FZ_OP) {
+        OP_LOGD(convDescInfo.nodeNameStr, "Weight has already been rearranged, no need to insert again.");
+        return true;
+    }
+
+    int64_t groups = 1;
+    (void)extendConv2DNode.GetAttr(GROUPS, groups);
+
+    if (ConvFusionUtilsPass::IsFuseSoc()) {
+        FUSION_PASS_CHECK_NOLOG(!InsertWeightReFormatOp(graph, extendConv2DNode, groups), return false);
+    }
+
+    TensorDesc weightDesc;
+    FUSION_PASS_CHECK(extendConv2DNode.GetInputDesc(INPUT_FILTER_INDEX, weightDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Get weight desc failed."), return false);
+
+    std::string rearrangeName = convDescInfo.nodeNameStr + "_rearrange_a16w8_weight";
+    GNode rearrangeNode = es::CompliantNodeBuilder(graph.get())
+                              .OpType(REARRANGE_A16W8_WEIGHT_FZ_OP.GetString())
+                              .Name(rearrangeName.c_str())
+                              .IrDefInputs({{"x", es::CompliantNodeBuilder::kEsIrInputRequired, ""}})
+                              .IrDefOutputs({{"y", es::CompliantNodeBuilder::kEsIrOutputRequired, ""}})
+                              .Build();
+
+    TensorDesc rearrangeInDesc = weightDesc;
+    FUSION_PASS_CHECK(rearrangeNode.UpdateInputDesc(INPUT_INDEX_0, rearrangeInDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Update rearrange input desc failed."), return false);
+
+    TensorDesc rearrangeOutDesc = weightDesc;
+    rearrangeOutDesc.SetDataType(DT_INT8);
+    FUSION_PASS_CHECK(rearrangeNode.UpdateOutputDesc(OUTPUT_INDEX, rearrangeOutDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Update rearrange output desc failed."), return false);
+
+    FUSION_PASS_CHECK(rearrangeNode.SetAttr(GROUPS, groups) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Set groups for rearrange node failed."), return false);
+
+    auto weightPair = extendConv2DNode.GetInDataNodesAndPortIndexs(INPUT_FILTER_INDEX);
+    FUSION_PASS_CHECK(weightPair.first == nullptr, OP_LOGE(convDescInfo.nodeNameStr, "Get weight producer failed."),
+                      return false);
+    auto weightProducer = weightPair.first;
+    int32_t weightPort = weightPair.second;
+
+    FUSION_PASS_CHECK(
+        graph->RemoveEdge(*weightProducer, weightPort, extendConv2DNode, INPUT_FILTER_INDEX) != GRAPH_SUCCESS,
+        OP_LOGE(convDescInfo.nodeNameStr, "Remove old weight edge failed."), return false);
+    FUSION_PASS_CHECK(graph->AddDataEdge(*weightProducer, weightPort, rearrangeNode, INPUT_INDEX_0) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Add weight->rearrange edge failed."), return false);
+    FUSION_PASS_CHECK(
+        graph->AddDataEdge(rearrangeNode, OUTPUT_INDEX, extendConv2DNode, INPUT_FILTER_INDEX) != GRAPH_SUCCESS,
+        OP_LOGE(convDescInfo.nodeNameStr, "Add rearrange->extendconv2d edge failed."), return false);
+
+    FUSION_PASS_CHECK(extendConv2DNode.UpdateInputDesc(INPUT_FILTER_INDEX, rearrangeOutDesc) != GRAPH_SUCCESS,
+                      OP_LOGE(convDescInfo.nodeNameStr, "Update weight input desc failed."), return false);
+
+    OP_LOGD(convDescInfo.nodeNameStr, "Insert a16w8 weight rearrange node success.");
+    return true;
+}
+
+using Conv2DFixPipeToExtendConv2DFusionPass = Conv2DPostCubeToExtendConv2DFusionPass;
+#if GE_COMPILER_VERSION_NUM >= 90100000U
+REG_FUSION_PASS(Conv2DFixPipeToExtendConv2DFusionPass).Stage(CustomPassStage::kCompatibleInherited);
+#endif
 } // namespace Ops

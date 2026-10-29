@@ -18,6 +18,7 @@
 #define private public
 
 #include "cube_utils/cube_addinputstrategy.h"
+#include "cube_utils/cube_utils.h"
 #include "cube_utils/cube_common.h"
 
 #undef protected
@@ -212,7 +213,7 @@ protected:
         return std::make_shared<ge::GNode>(node);
     }
 
-    static ge::GNodePtr CreateAntiQuantNode(ge::Graph& graph, const std::string& opname)
+    static ge::GNodePtr CreateAntiQuantNode(ge::Graph& graph, const std::string& opname, bool setAttrs = true)
     {
         ge::Shape shape({3, 4, 5, 6});
         ge::TensorDesc desc(shape, ge::FORMAT_NCHW, ge::DT_FLOAT16);
@@ -227,10 +228,12 @@ protected:
         node.UpdateInputDesc(0, desc);
         node.UpdateOutputDesc(0, desc);
 
-        float offset = 8.0f;
-        float scale_val = 4.0f;
-        node.SetAttr(kAscendOffsetAsc, offset);
-        node.SetAttr(kAscendScaleAsc, scale_val);
+        if (setAttrs) {
+            float offset = 8.0f;
+            float scale_val = 4.0f;
+            node.SetAttr(kAscendOffsetAsc, offset);
+            node.SetAttr(kAscendScaleAsc, scale_val);
+        }
 
         auto const_node_ptr = CreateConstNode(graph, opname + "_inputconstnode");
         CreateEdge(graph, const_node_ptr, 0, std::make_shared<ge::GNode>(node), 0);
@@ -238,7 +241,18 @@ protected:
         return std::make_shared<ge::GNode>(node);
     }
 
-    static ge::GNodePtr CreateAddNode(ge::Graph& graph, const std::string& opname)
+    static ge::GNodePtr FindNodeByType(ge::Graph& graph, const std::string& type)
+    {
+        for (auto& node : graph.GetAllNodes()) {
+            AscendString nodeType;
+            if (node.GetType(nodeType) == GRAPH_SUCCESS && std::string(nodeType.GetString()) == type) {
+                return std::make_shared<ge::GNode>(node);
+            }
+        }
+        return nullptr;
+    }
+
+    static ge::GNodePtr CreateAddNode(ge::Graph& graph, const std::string& opname, bool antiHasAttrs = true)
     {
         ge::Shape shape({3, 4, 5, 6});
         ge::TensorDesc desc(shape, ge::FORMAT_NCHW, ge::DT_FLOAT16);
@@ -255,7 +269,7 @@ protected:
         node.UpdateInputDesc(1, desc);
         node.UpdateOutputDesc(0, desc);
 
-        auto inputnode_ptr = CreateAntiQuantNode(graph, opname + "_inputantinode");
+        auto inputnode_ptr = CreateAntiQuantNode(graph, opname + "_inputantinode", antiHasAttrs);
         CreateEdge(graph, inputnode_ptr, 0, std::make_shared<ge::GNode>(node), 1);
 
         return std::make_shared<ge::GNode>(node);
@@ -769,6 +783,107 @@ TEST_F(cube_addinputstrategy_ut, DoAddInput22)
     std::vector<ge::GNodePtr> new_nodes;
     auto ret = m_testpass.DoAddInput(graph, match_pass, funtcparam, new_nodes);
     EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
+    auto setM1Node = FindNodeByType(graph, "SetM1Dequant");
+    ASSERT_NE(setM1Node, nullptr);
+    int64_t outDtype = -1;
+    ASSERT_EQ(setM1Node->GetAttr(AscendString("dequantouttype"), outDtype), GRAPH_SUCCESS);
+    EXPECT_EQ(outDtype, static_cast<int64_t>(ge::DT_FLOAT16));
+}
+
+// dequant output fp32 -> dequantouttype forced to fp16 (canndev aligned)
+TEST_F(cube_addinputstrategy_ut, DoAddInput22Fp32OutDtypeForcedToFp16)
+{
+    PostCubeAddInputStrategy22 m_testpass{};
+    ge::Graph graph(GRAPH_NAME.c_str());
+
+    auto dequant_node = CreateDequantNode(graph, "dequant_fp32");
+    dequant_node->UpdateOutputDesc(0, ge::TensorDesc(ge::Shape({3, 4, 5, 6}), ge::FORMAT_NCHW, ge::DT_FLOAT));
+    PostCubeNodeInfo dequant_node_info(dequant_node);
+
+    PostCubePassInfo match_pass;
+    match_pass.pass_index = 2;
+    match_pass.m_flag = 1;
+    match_pass.unit_index = 2;
+    match_pass.m_opnodes.push_back(dequant_node_info);
+
+    auto post_cube_node = CreatePostCubeNode(graph, "post_cube");
+    uint32_t index = 0;
+    auto funtcparam = std::make_shared<PostCubeFunctionParam>("Dummy", post_cube_node, index);
+    funtcparam->SetDataType(ge::DT_FLOAT);
+    funtcparam->SetFirstIndex(0);
+    funtcparam->SetSecondIndex(1);
+
+    std::vector<ge::GNodePtr> new_nodes;
+    auto ret = m_testpass.DoAddInput(graph, match_pass, funtcparam, new_nodes);
+    EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
+    auto setM1Node = FindNodeByType(graph, "SetM1Dequant");
+    ASSERT_NE(setM1Node, nullptr);
+    int64_t outDtype = -1;
+    ASSERT_EQ(setM1Node->GetAttr(AscendString("dequantouttype"), outDtype), GRAPH_SUCCESS);
+    EXPECT_EQ(outDtype, static_cast<int64_t>(ge::DT_FLOAT16));
+}
+
+// dequant with offset attr -> SetM1Dequant carries the same offset (int8 requant saturation gate)
+TEST_F(cube_addinputstrategy_ut, DoAddInput22OffsetPropagation)
+{
+    PostCubeAddInputStrategy22 m_testpass{};
+    ge::Graph graph(GRAPH_NAME.c_str());
+
+    auto dequant_node = CreateDequantNode(graph, "dequant_with_offset", true, 4.0f, 8.0f);
+    PostCubeNodeInfo dequant_node_info(dequant_node);
+
+    PostCubePassInfo match_pass;
+    match_pass.pass_index = 2;
+    match_pass.m_flag = 1;
+    match_pass.unit_index = 2;
+    match_pass.m_opnodes.push_back(dequant_node_info);
+
+    auto post_cube_node = CreatePostCubeNode(graph, "post_cube");
+    uint32_t index = 0;
+    auto funtcparam = std::make_shared<PostCubeFunctionParam>("Dummy", post_cube_node, index);
+    funtcparam->SetDataType(ge::DT_FLOAT);
+    funtcparam->SetFirstIndex(0);
+    funtcparam->SetSecondIndex(1);
+
+    std::vector<ge::GNodePtr> new_nodes;
+    auto ret = m_testpass.DoAddInput(graph, match_pass, funtcparam, new_nodes);
+    EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
+    auto setM1Node = FindNodeByType(graph, "SetM1Dequant");
+    ASSERT_NE(setM1Node, nullptr);
+    float offsetVal = -1.0f;
+    ASSERT_EQ(setM1Node->GetAttr(AscendString(ATTR_OFFSET.c_str()), offsetVal), GRAPH_SUCCESS);
+    EXPECT_FLOAT_EQ(offsetVal, 8.0f);
+}
+
+// dequant without offset attr -> SetM1Dequant must NOT carry a bogus offset
+TEST_F(cube_addinputstrategy_ut, DoAddInput22NoOffsetNoBogusAttr)
+{
+    PostCubeAddInputStrategy22 m_testpass{};
+    ge::Graph graph(GRAPH_NAME.c_str());
+
+    auto dequant_node = CreateDequantNode(graph, "dequant_no_offset", false);
+    PostCubeNodeInfo dequant_node_info(dequant_node);
+
+    PostCubePassInfo match_pass;
+    match_pass.pass_index = 2;
+    match_pass.m_flag = 1;
+    match_pass.unit_index = 2;
+    match_pass.m_opnodes.push_back(dequant_node_info);
+
+    auto post_cube_node = CreatePostCubeNode(graph, "post_cube");
+    uint32_t index = 0;
+    auto funtcparam = std::make_shared<PostCubeFunctionParam>("Dummy", post_cube_node, index);
+    funtcparam->SetDataType(ge::DT_FLOAT);
+    funtcparam->SetFirstIndex(0);
+    funtcparam->SetSecondIndex(1);
+
+    std::vector<ge::GNodePtr> new_nodes;
+    auto ret = m_testpass.DoAddInput(graph, match_pass, funtcparam, new_nodes);
+    EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
+    auto setM1Node = FindNodeByType(graph, "SetM1Dequant");
+    ASSERT_NE(setM1Node, nullptr);
+    float offsetVal = -1.0f;
+    EXPECT_NE(setM1Node->GetAttr(AscendString(ATTR_OFFSET.c_str()), offsetVal), GRAPH_SUCCESS);
 }
 
 // dequant + relu + quant
@@ -1486,6 +1601,81 @@ TEST_F(cube_addinputstrategy_ut, DoAddInput43_1)
     dequant_node->UpdateOutputDesc(0, ge::TensorDesc(ge::Shape({3, 4, 5, 6}), ge::FORMAT_NCHW, ge::DT_FLOAT));
     auto ret = m_testpass.DoAddInput(graph, match_pass, funtcparam, new_nodes);
     EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
+}
+
+// anti-quant with scale attr -> anti_quant_scale strategy dispatched and attrs propagated
+TEST_F(cube_addinputstrategy_ut, AddInputAntiStrategyScaleAttrDispatch)
+{
+    PostCubeUtils postCubeUtils;
+    ASSERT_EQ(postCubeUtils.InitInput8(), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(postCubeUtils.InitInput9(), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(postCubeUtils.InitInputDefault(), ge::GRAPH_SUCCESS);
+
+    ge::Graph graph(GRAPH_NAME.c_str());
+    auto add_node = CreateAddNode(graph, "add");
+    auto antiNodeInGraph = FindNodeByType(graph, "AscendAntiQuant");
+    ASSERT_NE(antiNodeInGraph, nullptr);
+    float scaleIn = 4.0f;
+    float offsetIn = 8.0f;
+    ASSERT_EQ(antiNodeInGraph->SetAttr(AscendString(ATTR_SCALE.c_str()), scaleIn), GRAPH_SUCCESS);
+    ASSERT_EQ(antiNodeInGraph->SetAttr(AscendString(ATTR_OFFSET.c_str()), offsetIn), GRAPH_SUCCESS);
+    PostCubeNodeInfo head_info;
+    PostCubeNodeInfo add_node_info(add_node);
+    add_node_info.SetBelongUnitType(kPostEltwise);
+
+    PostCubePassInfo match_pass;
+    match_pass.pass_index = 2;
+    match_pass.m_flag = 1;
+    match_pass.unit_index = 2;
+    match_pass.m_opnodes.push_back(head_info);
+    match_pass.m_opnodes.push_back(add_node_info);
+
+    auto post_cube_node = CreatePostCubeNode(graph, "post_cube");
+    auto funtcparam = std::make_shared<PostCubeFunctionParam>("anti_quant_scale", post_cube_node, 8);
+    funtcparam->SetFirstIndex(1);
+    funtcparam->SetSecondIndex(1);
+
+    auto strategy = postCubeUtils.AddInputAntiStrategy(match_pass, funtcparam, kPostEltwise);
+    ASSERT_NE(strategy, nullptr);
+    EXPECT_NE(dynamic_cast<PostCubeAddInputStrategy81*>(strategy.get()), nullptr);
+    auto addNodeInGraph = FindNodeByType(graph, "Add");
+    ASSERT_NE(addNodeInGraph, nullptr);
+    float scaleVal = 0.0f;
+    float offsetVal = 0.0f;
+    ASSERT_EQ(addNodeInGraph->GetAttr(AscendString(ATTR_SCALE.c_str()), scaleVal), GRAPH_SUCCESS);
+    ASSERT_EQ(addNodeInGraph->GetAttr(AscendString(ATTR_OFFSET.c_str()), offsetVal), GRAPH_SUCCESS);
+    EXPECT_FLOAT_EQ(scaleVal, 4.0f);
+    EXPECT_FLOAT_EQ(offsetVal, 8.0f);
+}
+
+// anti-quant without scale attr -> fall back to DEFAULT strategy
+TEST_F(cube_addinputstrategy_ut, AddInputAntiStrategyNoScaleFallsBackDefault)
+{
+    PostCubeUtils postCubeUtils;
+    ASSERT_EQ(postCubeUtils.InitInput8(), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(postCubeUtils.InitInput9(), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(postCubeUtils.InitInputDefault(), ge::GRAPH_SUCCESS);
+
+    ge::Graph graph(GRAPH_NAME.c_str());
+    auto add_node = CreateAddNode(graph, "add", false);
+    PostCubeNodeInfo head_info;
+    PostCubeNodeInfo add_node_info(add_node);
+    add_node_info.SetBelongUnitType(kPostEltwise);
+
+    PostCubePassInfo match_pass;
+    match_pass.pass_index = 2;
+    match_pass.m_flag = 1;
+    match_pass.unit_index = 2;
+    match_pass.m_opnodes.push_back(head_info);
+    match_pass.m_opnodes.push_back(add_node_info);
+
+    auto post_cube_node = CreatePostCubeNode(graph, "post_cube");
+    auto funtcparam = std::make_shared<PostCubeFunctionParam>("anti_quant_scale", post_cube_node, 8);
+
+    auto strategy = postCubeUtils.AddInputAntiStrategy(match_pass, funtcparam, kPostEltwise);
+    ASSERT_NE(strategy, nullptr);
+    EXPECT_EQ(dynamic_cast<PostCubeAddInputStrategy81*>(strategy.get()), nullptr);
+    EXPECT_EQ(dynamic_cast<PostCubeAddInputStrategy91*>(strategy.get()), nullptr);
 }
 
 } // namespace ops

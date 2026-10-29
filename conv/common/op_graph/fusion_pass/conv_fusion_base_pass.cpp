@@ -107,6 +107,27 @@ bool ConvFusionBasePass::DefaultConvFusionReplaceImpl(const GNode& convNode, Cus
     return true;
 }
 
+bool ConvFusionBasePass::ReplaceSubgraphWithFallback(const std::unique_ptr<SubgraphBoundary>& boundary,
+                                                     const GraphUniqPtr& replacement, CustomPassContext& passContext)
+{
+#if GE_COMPILER_VERSION_NUM >= 90100000U
+    using ReplaceWithCtxFn = Status (*)(const SubgraphBoundary&, const Graph&, CustomPassContext&);
+    auto replaceWithCtx = static_cast<ReplaceWithCtxFn>(&ge::fusion::SubgraphRewriter::Replace);
+    if (replaceWithCtx != nullptr) {
+        FUSION_PASS_CHECK(replaceWithCtx(*boundary, *replacement, passContext) != SUCCESS,
+                          OP_LOGE("ConvFusionBasePass", "Replace for %s failed.", convDescInfo.nodeNameStr.c_str()),
+                          return false);
+        return true;
+    }
+#endif
+
+    FUSION_PASS_CHECK(SubgraphRewriter::Replace(*boundary, *replacement) != SUCCESS,
+                      OP_LOGE("ConvFusionBasePass", "Replace for %s failed.", convDescInfo.nodeNameStr.c_str()),
+                      return false);
+
+    return true;
+}
+
 Status ConvFusionBasePass::Run(GraphPtr& graph, CustomPassContext& pass_context)
 {
     std::string fusionName = "ConvFusionBasePass";

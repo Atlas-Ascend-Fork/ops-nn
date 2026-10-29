@@ -408,7 +408,7 @@ bool PostCubeUtils::NeedToCutPass(PostCubePassInfo& m_pass) const
 std::string PostCubeUtils::GetEltWiseType(const PostCubeNodeInfo& node) const
 {
     uint32_t real_eltwisetype = 0;
-    if (GNodeGetAttr(node.GetNode(), kAttrEltwiseMode, real_eltwisetype)) {
+    if (GNodeGetAttr(node.GetNode(), kAttrEltwiseMode, real_eltwisetype) == ge::GRAPH_SUCCESS) {
         if (real_eltwisetype == ELTWISE_ADD_TYPE) {
             return kAdd;
         }
@@ -2020,7 +2020,7 @@ PostCubeAddInputPtr PostCubeUtils::AddInputAntiStrategy(const PostCubePassInfo& 
                 continue;
             }
             float scale_tmp = 0.0;
-            if (!GNodeGetAttr(inputfather_node, ATTR_SCALE, scale_tmp)) {
+            if (GNodeGetAttr(inputfather_node, ATTR_SCALE, scale_tmp) != ge::GRAPH_SUCCESS) {
                 OPS_LOG_W("PostCube", "Get scale attr of quant node[%s] failed!",
                           GNodeGetName(inputfather_node).GetString());
                 return m_opmaps_["DEFAULT"];

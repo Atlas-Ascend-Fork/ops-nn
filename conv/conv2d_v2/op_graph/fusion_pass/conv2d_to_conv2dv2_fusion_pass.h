@@ -13,52 +13,35 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 
-#include "../../conv/common/op_graph/fusion_pass/conv_fusion_utils_pass.h"
-#include "ge/fusion/pass/decompose_pass.h"
+#include "../../conv/common/op_graph/fusion_pass/conv_fusion_base_pass.h"
+#include "ge/fusion/subgraph_boundary.h"
 #include "platform/soc_spec.h"
 
 namespace Ops {
 namespace NN {
 namespace Conv {
 namespace Conv2dToConv2dV2Fusion {
-const std::string FUSION_NAME = "Conv2dToConv2dV2FusionPass";
 
 const std::map<std::string, NpuArch> SUPPORT_SOC_LIST = {{"Ascend950", NpuArch::DAV_3510},
                                                          {"Ascend350", NpuArch::DAV_3510}};
 
-// Fmap Filter Output Bias
-const std::vector<std::vector<ge::DataType>> CONV_SUPPORT_DTYPES_DAV_3510 = {
-    {ge::DataType::DT_FLOAT, ge::DataType::DT_FLOAT, ge::DataType::DT_FLOAT, ge::DataType::DT_FLOAT},
-    {ge::DataType::DT_BF16, ge::DataType::DT_BF16, ge::DataType::DT_BF16, ge::DataType::DT_BF16},
-    {ge::DataType::DT_FLOAT16, ge::DataType::DT_FLOAT16, ge::DataType::DT_FLOAT16, ge::DataType::DT_FLOAT16},
-    {ge::DataType::DT_HIFLOAT8, ge::DataType::DT_HIFLOAT8, ge::DataType::DT_HIFLOAT8, ge::DataType::DT_FLOAT}};
-
-// Fmap Filter Output Bias
-const std::vector<std::vector<ge::DataType>> CONV_SUPPORT_DTYPES_FUSE = {
-    {ge::DataType::DT_FLOAT16, ge::DataType::DT_FLOAT16, ge::DataType::DT_FLOAT16, ge::DataType::DT_FLOAT16},
-    {ge::DataType::DT_INT8, ge::DataType::DT_INT8, ge::DataType::DT_INT32, ge::DataType::DT_INT32}};
-
-// arch-keyed dtype support list map (extend by adding new arch keys)
-const std::map<std::string, std::vector<std::vector<ge::DataType>>> CONV_SUPPORT_DTYPES_MAP = {
-    {ConvFusionUtils::NPU_ARCH_KEY_3510, CONV_SUPPORT_DTYPES_DAV_3510},
-    {ConvFusionUtils::NPU_ARCH_KEY_FUSE, CONV_SUPPORT_DTYPES_FUSE}};
 } // namespace Conv2dToConv2dV2Fusion
 
-class __attribute__((visibility("default"))) Conv2dToConv2dV2FusionPass : public ge::fusion::DecomposePass {
-public:
-    explicit Conv2dToConv2dV2FusionPass(const std::vector<ge::AscendString>& opTypes) : DecomposePass(opTypes) {}
-
+class __attribute__((visibility("default"))) Conv2dToConv2dV2FusionPass : public ConvFusionBasePass {
 protected:
+    void InitMember() override;
     bool MeetRequirements(const ge::GNode& convNode) override;
-    ge::fusion::GraphUniqPtr Replacement(const ge::GNode& convNode) override;
+    std::set<ge::AscendString> GetNodeTypes() const override;
+    void PrintGraphStructure() const override;
+    bool ConvFusionReplaceImpl(ge::GraphPtr& graph, ge::GNode& convNode, ge::CustomPassContext& passContext) override;
 
 private:
-    void InitMember();
-
-    NpuArch npuArch = NpuArch::DAV_RESV;
-    ConvFusionUtils::ConvDescInfo convDescInfo = {};
+    bool AdjustLayout(const ge::GraphPtr& graph, ge::GNode& fusedNode);
+    ge::fusion::GraphUniqPtr Replacement(const ge::GNode& convNode);
+    std::unique_ptr<ge::fusion::SubgraphBoundary> ConstructBoundary(const ge::GNode& convNode);
 };
 
 } // namespace Conv

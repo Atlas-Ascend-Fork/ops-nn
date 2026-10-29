@@ -106,10 +106,13 @@ struct TensorInfo {
 
 struct SocConfig {
     SocConfig() = default;
-    SocConfig(const std::string& shortSoc, const std::string& soc) : shortSocVersion(shortSoc), socVersion(soc) {}
+    SocConfig(const std::string& shortSoc, const std::string& soc, const std::string& cubeVectorCombine = "split")
+        : shortSocVersion(shortSoc), socVersion(soc), cubeVectorCombine(cubeVectorCombine)
+    {}
 
     static SocConfig Ascend950() { return SocConfig("Ascend950", "Ascend950PR_9589"); }
     static SocConfig MC62() { return SocConfig("MC62", "Ascend950PR_9589"); }
+    static SocConfig FuseSoc() { return SocConfig("Ascend950", "Ascend950PR_9589", "fuse"); }
 
     void Apply() const
     {
@@ -122,10 +125,20 @@ struct SocConfig {
 
         PlatformInfoManager::Instance().InitializePlatformInfo();
         PlatformInfoManager::Instance().opti_compilation_infos_.SetSocVersion(socVersion);
+
+        fe::PlatFormInfos platFormInfos;
+        fe::OptionalInfos optionalInfos;
+        if (PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platFormInfos, optionalInfos) ==
+            GRAPH_SUCCESS) {
+            std::map<std::string, std::string> socInfoRes = {{"cube_vector_combine", cubeVectorCombine}};
+            platFormInfos.SetPlatformRes("SoCInfo", socInfoRes);
+            PlatformInfoManager::Instance().UpdatePlatformInfos(socVersion, platFormInfos);
+        }
     }
 
     std::string shortSocVersion = "Ascend950";
     std::string socVersion = "Ascend950PR_9589";
+    std::string cubeVectorCombine = "split";
 };
 
 // ============================================================================
@@ -699,6 +712,97 @@ struct TransDataConfig : public NodeConfig {
     TensorDesc dstDesc;
 };
 
+struct TransposeNodeConfig : public NodeConfig {
+    TransposeNodeConfig()
+    {
+        name = "Transpose";
+        opType = "Transpose";
+        inputDefs = {{"x", CompliantNodeBuilder::kEsIrInputRequired, ""},
+                     {"perm", CompliantNodeBuilder::kEsIrInputOptional, ""}};
+        outputDefs = {{"y", CompliantNodeBuilder::kEsIrOutputRequired, ""}};
+    }
+
+    static TransposeNodeConfig NchwToNhwc(const std::string& nodeName, DataType dataType = DT_FLOAT16,
+                                          const std::vector<int64_t>& shape = {1, 3, 244, 244})
+    {
+        TransposeNodeConfig config;
+        config.SetName(nodeName)
+            .AddInput(dataType, FORMAT_NCHW, shape, nodeName + "_x")
+            .AddOutput(dataType, FORMAT_NHWC, {shape[0], shape[2], shape[3], shape[1]}, nodeName + "_y");
+        return config;
+    }
+
+    static TransposeNodeConfig NhwcToNchw(const std::string& nodeName, DataType dataType = DT_FLOAT16,
+                                          const std::vector<int64_t>& shape = {1, 244, 244, 3})
+    {
+        TransposeNodeConfig config;
+        config.SetName(nodeName)
+            .AddInput(dataType, FORMAT_NHWC, shape, nodeName + "_x")
+            .AddOutput(dataType, FORMAT_NCHW, {shape[0], shape[3], shape[1], shape[2]}, nodeName + "_y");
+        return config;
+    }
+};
+
+struct Conv2DV2Config : public NodeConfig {
+    Conv2DV2Config()
+    {
+        name = "Conv2DV2";
+        opType = "Conv2DV2";
+        inputDefs = {{"x", CompliantNodeBuilder::kEsIrInputRequired, ""},
+                     {"filter", CompliantNodeBuilder::kEsIrInputRequired, ""},
+                     {"bias", CompliantNodeBuilder::kEsIrInputOptional, ""},
+                     {"offset_w", CompliantNodeBuilder::kEsIrInputOptional, ""}};
+        outputDefs = {{"y", CompliantNodeBuilder::kEsIrOutputRequired, ""}};
+    }
+
+    static Conv2DV2Config Basic(const std::string& nodeName, DataType dataType = DT_FLOAT16,
+                                DataType outDataType = DT_FLOAT16, Format format = FORMAT_NCHW,
+                                const std::vector<int64_t>& inputShape = {1, 16, 244, 244},
+                                const std::vector<int64_t>& filterShape = {3, 16, 3, 3},
+                                const std::vector<int64_t>& shape = {1, 3, 244, 244})
+    {
+        Conv2DV2Config config;
+        config.SetName(nodeName)
+            .AddInput(dataType, format, inputShape, nodeName + "_x")
+            .AddInput(dataType, format == FORMAT_NHWC ? FORMAT_HWCN : format, filterShape, nodeName + "_filter")
+            .AddOutput(outDataType, format, shape, nodeName + "_y");
+        return config;
+    }
+};
+
+struct ExtendConv2DConfig : public NodeConfig {
+    ExtendConv2DConfig()
+    {
+        name = "ExtendConv2D";
+        opType = "ExtendConv2D";
+        inputDefs = {{"x", CompliantNodeBuilder::kEsIrInputRequired, ""},
+                     {"filter", CompliantNodeBuilder::kEsIrInputRequired, ""},
+                     {"bias", CompliantNodeBuilder::kEsIrInputOptional, ""},
+                     {"offset_w", CompliantNodeBuilder::kEsIrInputOptional, ""},
+                     {"scale0", CompliantNodeBuilder::kEsIrInputOptional, ""},
+                     {"relu_weight0", CompliantNodeBuilder::kEsIrInputOptional, ""},
+                     {"clip_value0", CompliantNodeBuilder::kEsIrInputOptional, ""},
+                     {"scale1", CompliantNodeBuilder::kEsIrInputOptional, ""},
+                     {"relu_weight1", CompliantNodeBuilder::kEsIrInputOptional, ""},
+                     {"clip_value1", CompliantNodeBuilder::kEsIrInputOptional, ""}};
+        outputDefs = {{"y0", CompliantNodeBuilder::kEsIrOutputRequired, ""}};
+    }
+
+    static ExtendConv2DConfig Basic(const std::string& nodeName, DataType dataType = DT_FLOAT16,
+                                    DataType outDataType = DT_FLOAT16, Format format = FORMAT_NCHW,
+                                    const std::vector<int64_t>& inputShape = {1, 16, 244, 244},
+                                    const std::vector<int64_t>& filterShape = {3, 16, 3, 3},
+                                    const std::vector<int64_t>& shape = {1, 3, 244, 244})
+    {
+        ExtendConv2DConfig config;
+        config.SetName(nodeName)
+            .AddInput(dataType, format, inputShape, nodeName + "_x")
+            .AddInput(dataType, format == FORMAT_NHWC ? FORMAT_HWCN : format, filterShape, nodeName + "_filter")
+            .AddOutput(outDataType, format, shape, nodeName + "_y0");
+        return config;
+    }
+};
+
 struct IFMRConfig : public NodeConfig {
     IFMRConfig()
     {
@@ -796,6 +900,12 @@ public:
     TestGraph& SetSocMC62()
     {
         SetSoc(SocConfig::MC62());
+        return *this;
+    }
+
+    TestGraph& SetSocFuse()
+    {
+        SetSoc(SocConfig::FuseSoc());
         return *this;
     }
 
@@ -1060,6 +1170,11 @@ public:
     TestGraph& AddTransData(const TransDataConfig& transDataConfig, bool autoSrc = true)
     {
         return AddNodeImpl(transDataConfig, autoSrc ? std::vector<int>{0} : std::vector<int>{});
+    }
+
+    TestGraph& AddTranspose(const TransposeNodeConfig& transposeConfig, bool autoInputs = true)
+    {
+        return AddNodeImpl(transposeConfig, autoInputs ? std::vector<int>{0} : std::vector<int>{});
     }
 
     TestGraph& AddIFMR(const IFMRConfig& ifmrConfig, bool autoInputs = true)

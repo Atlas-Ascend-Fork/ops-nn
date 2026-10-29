@@ -40,9 +40,14 @@ const ge::AscendString CONV2DV2 = "Conv2DV2";
 const ge::AscendString CONV3DV2 = "Conv3DV2";
 const ge::AscendString CONST = "Const";
 const ge::AscendString DEPTHWISE_CONV2D = "DepthwiseConv2D";
+const ge::AscendString EXTENDCONV2D = "ExtendConv2D";
 const ge::AscendString POST_CUBE_OP = "FixPipe";
+const ge::AscendString TRANSPOSE_OP = "Transpose";
 const ge::AscendString TRANS_DATA_OP = "TransData";
 const ge::AscendString IFMR_OP = "IFMR";
+const ge::AscendString FIXED_SHIFT_VALUE = "fixed_shift_value";
+constexpr int64_t FIXED_SHIFT_VALUE_DEFAULT_A16W16 = 42;
+constexpr int64_t FIXED_SHIFT_VALUE_DEFAULT_A16W8 = 13;
 const ge::AscendString STRIDES = "strides";
 const ge::AscendString PADS = "pads";
 const ge::AscendString DILATIONS = "dilations";
@@ -179,6 +184,7 @@ public:
     template <typename T>
     static bool CheckSupportList(const std::vector<std::vector<T>>& supportLists, const std::vector<T>& curList);
     static bool CheckSocList(const std::map<std::string, NpuArch>& socList, NpuArch& npuArch, bool supportFuse = false);
+    static bool IsFuseSoc();
     static const std::string& GetArchKey();
     static bool GetConvBaseAttr(const ge::GNode& convNode, ConvBaseAttrs& baseAttrs, const ConvDescInfo& convDescInfo);
     static bool GetConvDescInfo(const ge::GNode& convNode, ConvDescInfo& convDescInfo);
@@ -191,6 +197,15 @@ public:
     static bool UpdateInputDesc(ge::GNode* convNode, const ConvDescInfo& convDescInfo);
     static bool BuildConv2dNode(ge::Graph* graph, const std::string& nodeName,
                                 const std::vector<ge::es::EsTensorHolder>& inputs, ge::GNode& conv2dNode);
+    static bool CheckTransposeValid(const ge::GNode& transposeNode, bool isPreFusion = false);
+    static bool RemoveTransposeNode(const ge::GraphPtr& graph, ge::GNode& transposeNode);
+    static bool AdjustConvInputLayout(const ge::GraphPtr& graph, ge::GNode& convNode);
+    static std::vector<int64_t> ReorderNchwToNhwc(const std::vector<int64_t>& attr);
+    static std::vector<int64_t> ReorderNhwcToNchw(const std::vector<int64_t>& attr);
+    static bool CopyConvOtherAttrs(const ge::GNode& srcNode, ge::GNode& dstNode);
+    static std::set<std::string> CollectNodeTypeNames(const ge::GraphPtr& graph, const ge::AscendString& nodeType);
+    static bool FindNewNodeOfType(const ge::GraphPtr& graph, const ge::AscendString& nodeType,
+                                  const std::set<std::string>& namesBefore, ge::GNode& newNode);
 };
 
 template <typename T>
