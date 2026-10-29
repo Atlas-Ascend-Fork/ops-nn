@@ -194,6 +194,9 @@ aclnnStatus aclnnMseLossOut(
       <tr>
         <td class="tg-0pky">当reduction的值为0时，self和target做<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape与out的shape不一致。</td>
       </tr>
+      <tr>
+        <td class="tg-0pky">当reduction的值为1或2时，self和target做<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape去除第0轴，与out的shape不一致。</td>
+      </tr>
     </tbody>
     </table>
 
