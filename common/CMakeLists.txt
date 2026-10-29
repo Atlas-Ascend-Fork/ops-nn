@@ -16,3 +16,4 @@ endforeach()
 
 add_subdirectory(src/framework)
 add_subdirectory(src/op_graph/cube_utils)
+add_subdirectory(src/op_graph/fusion_pass)
