@@ -133,9 +133,9 @@ ge::graphStatus SwigluBackwardGroupQuantWithDualAxisMxTiling::ParseAttrs()
         const int64_t dim = shape.GetDim(i);
         const std::string dimName = "x.shape[" + std::to_string(i) + "]";
         OP_CHECK_IF(
-            dim <= 0,
+            dim < 0,
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), dimName.c_str(), std::to_string(dim).c_str(),
-                                                  "the dimension value must be greater than 0"),
+                                                  "the dimension value must be non-negative"),
             return ge::GRAPH_FAILED);
         param_.totalRows *= dim;
         if (i < rank - 2) {
@@ -403,7 +403,8 @@ ge::graphStatus SwigluBackwardGroupQuantWithDualAxisMxTiling::ComputeTiling()
                                                           param_.dimBatch * Ops::Base::CeilDiv(param_.dimM, TILE_M);
     const int64_t workBlocks = rowBlocks * nTiles;
     param_.usedCoreNum = std::min(param_.totalCoreNum, std::max<int64_t>(1, workBlocks));
-    if (param_.hasGroupIndex != 0) {
+    // Grouped non-empty work uses all cores; zero rows need only one no-op core.
+    if (param_.hasGroupIndex != 0 && param_.totalRows != 0) {
         param_.usedCoreNum = param_.totalCoreNum;
     }
     param_.mode = TPL_MODE_ROTATE;

@@ -110,7 +110,7 @@ cann_ops_nn.swiglu_group_quant_with_dual_axis(
 
 - 该接口支持单算子模式和TorchAir图模式调用。
 - `x`、`weight`、`group_index`需为NPU Tensor；可选Tensor可以传`None`。
-- `x`仅支持二维`[T, 2H]`，`T > 0`，`2H >= 64`且能被64整除。
+- `x`仅支持二维`[T, 2H]`，`2H >= 64`且能被64整除。
 - `quant_mode`仅支持`1`；`dst_type`支持Torch编码`291`（`float8_e5m2`）、`292`（`float8_e4m3fn`），并兼容ACLNN/GE编码`35`、`36`。
 - `weight`仅在提供`group_index`时允许，元素数必须等于`T`；non-group场景传`weight`将被拒绝。
 - `group_index`的元素值在设备执行时校验：非法值（负值、递减、越界、末元素不等于`T`）

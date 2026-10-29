@@ -45,6 +45,7 @@ struct TilingCase {
     float alpha = 1.702f;
     float bias = 1.0f;
     ge::graphStatus expected = ge::GRAPH_SUCCESS;
+    uint32_t expectedBlockDim = 0;
 };
 
 void RunCase(const TilingCase& tc)
@@ -136,9 +137,13 @@ void RunCase(const TilingCase& tc)
     platform->SetPlatformRes("version", versions);
 
     ASSERT_EQ(impl->tiling(context), tc.expected);
+    if (tc.expected == ge::GRAPH_SUCCESS && tc.expectedBlockDim != 0) {
+        EXPECT_EQ(context->GetBlockDim(), tc.expectedBlockDim);
+    }
     if (tc.expected == ge::GRAPH_SUCCESS) {
         const int64_t h = tc.x.GetStorageShape().GetDim(tc.x.GetStorageShape().GetDimNum() - 1) / 2;
-        const uint64_t mode = (h + 255) / 256 < 64 ? TPL_MODE_ROTATE : TPL_MODE_BLOCK;
+        const bool useBlock = tc.x.GetStorageShape().GetDim(0) == 0 || (h + 255) / 256 >= 64;
+        const uint64_t mode = useBlock ? TPL_MODE_BLOCK : TPL_MODE_ROTATE;
         const uint64_t hasClamp = tc.clampLimit > 0.0f;
         const uint64_t hasAttrs = hasClamp || tc.alpha != 1.0f || tc.bias != 0.0f;
         EXPECT_EQ(context->GetTilingKey(), GET_TPL_TILING_KEY(mode, tc.hasGroup, hasAttrs, hasClamp));
@@ -157,6 +162,23 @@ TEST(SwigluGroupQuantWithDualAxisTiling, GroupWeightOrigin)
     tc.scale2 = {{4, 384, 2}, {4, 384, 2}};
     tc.origin = {{65, 384}, {65, 384}};
     tc.outputOrigin = true;
+    RunCase(tc);
+}
+
+TEST(SwigluGroupQuantWithDualAxisTiling, ZeroTokenGroupWeightOrigin)
+{
+    TilingCase tc;
+    tc.x = {{0, 512}, {0, 512}};
+    tc.weight = {{0}, {0}};
+    tc.y1 = {{0, 256}, {0, 256}};
+    tc.scale1 = {{0, 4, 2}, {0, 4, 2}};
+    tc.y2 = tc.y1;
+    tc.scale2 = {{3, 256, 2}, {3, 256, 2}};
+    tc.origin = {{0, 256}, {0, 256}};
+    tc.hasWeight = true;
+    tc.hasGroup = true;
+    tc.outputOrigin = true;
+    tc.expectedBlockDim = 1;
     RunCase(tc);
 }
 

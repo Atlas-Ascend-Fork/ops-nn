@@ -75,10 +75,14 @@ extern "C" __global__ __aicore__ void swiglu_group_quant(GM_ADDR x, GM_ADDR weig
         op.Process();
     } else if (TILING_KEY_IS(MX_QUANT_EXTEND_TILING_KEY)) {
         GET_TILING_DATA_WITH_STRUCT(SwigluGroupQuantMxExtendTilingData, tilingData, tiling);
-        RunMxQuantExtend<DTYPE_X, DTYPE_Y>(x, weight, groupIndex, y, yScale, yOrigin, tilingData, &pipe);
+        if (tilingData.dimM != 0) {
+            RunMxQuantExtend<DTYPE_X, DTYPE_Y>(x, weight, groupIndex, y, yScale, yOrigin, tilingData, &pipe);
+        }
     } else if (TILING_KEY_IS(MX_QUANT_EXTEND_YORIGIN_TILING_KEY)) {
         GET_TILING_DATA_WITH_STRUCT(SwigluGroupQuantMxExtendTilingData, tilingData, tiling);
-        RunMxQuantExtend<DTYPE_X, DTYPE_Y>(x, weight, groupIndex, y, yScale, yOrigin, tilingData, &pipe);
+        if (tilingData.dimM != 0) {
+            RunMxQuantExtend<DTYPE_X, DTYPE_Y>(x, weight, groupIndex, y, yScale, yOrigin, tilingData, &pipe);
+        }
     } else if (TILING_KEY_IS(DYNAMIC_HIFP8_QUANT_TILING_KEY)) {
         GET_TILING_DATA_WITH_STRUCT(SwigluGroupQuantHifp8TilingData, hifp8TilingData, tiling);
         SwigluGroupQuantDynamicHifp8Ops::SwigluGroupQuantDynamicHifp8Kernel<DTYPE_X> op;

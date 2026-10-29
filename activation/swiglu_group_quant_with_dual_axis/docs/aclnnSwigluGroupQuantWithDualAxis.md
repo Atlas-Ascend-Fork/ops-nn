@@ -169,7 +169,7 @@ aclnnStatus aclnnSwigluGroupQuantWithDualAxis(
       <td>x（aclTensor*）</td>
       <td>输入</td>
       <td>SwiGLU输入。</td>
-      <td><ul><li>shape为[T, D]（D = 2H）。</li><li>D须为偶数、<b>64元素对齐</b>且H ≥ 32（即D ≥ 64）。</li><li>不支持空Tensor。</li></ul></td>
+      <td><ul><li>shape为[T, D]（D = 2H）。</li><li>D须为偶数、<b>64元素对齐</b>且H ≥ 32（即D ≥ 64）。</li></ul></td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -179,7 +179,7 @@ aclnnStatus aclnnSwigluGroupQuantWithDualAxis(
       <td>weightOptional（aclTensor*）</td>
       <td>输入（可选）</td>
       <td>逐token权重，用于Clipped-SwiGLU输出的加权计算。</td>
-      <td><ul><li>可选参数，不支持空Tensor。</li><li><b>仅当提供groupIndexOptional时允许</b>，non-group场景传非空将被拒绝。</li><li>元素个数需等于合轴行数T。</li></ul></td>
+      <td><ul><li>可选参数。</li><li><b>仅当提供groupIndexOptional时允许</b>，non-group场景传非空将被拒绝。</li><li>元素个数需等于合轴行数T。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
@@ -419,7 +419,7 @@ aclnnStatus aclnnSwigluGroupQuantWithDualAxis(
 
 ## 约束说明
 
-- `x`仅支持二维`[T, 2H]`、FLOAT16或BFLOAT16，非空，`2H >= 64`且能被64整除。
+- `x`仅支持二维`[T, 2H]`、FLOAT16或BFLOAT16，`2H >= 64`且能被64整除。
 - `quantMode`仅支持`1`；`dstType`仅支持FLOAT8_E4M3FN（默认）与FLOAT8_E5M2。
 - `weightOptional`仅在提供`groupIndexOptional`时允许，元素数必须等于`T`；non-group场景传`weight`将被拒绝。
 - `groupIndexOptional`的元素值在**设备执行时**校验：非法值（负值、递减、越界、末元素不等于`T`）

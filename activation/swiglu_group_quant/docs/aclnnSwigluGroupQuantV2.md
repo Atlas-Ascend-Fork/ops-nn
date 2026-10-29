@@ -279,7 +279,7 @@ aclnnStatus aclnnSwigluGroupQuantV2(
       <td>x（aclTensor*）</td>
       <td>输入</td>
       <td>SwiGLU输入。</td>
-      <td><ul><li><b>必须为二维</b>，shape为[T, D]。</li><li>D须<b>大于等于64且能被64整除</b>。</li><li>不支持空Tensor（T须大于0）。</li><li>数据类型为FLOAT16、BFLOAT16。</li></ul></td>
+      <td><ul><li><b>必须为二维</b>，shape为[T, D]。</li><li>D须<b>大于等于64且能被64整除</b>。</li><li>数据类型为FLOAT16、BFLOAT16。</li></ul></td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -551,7 +551,7 @@ aclnnStatus aclnnSwigluGroupQuantV2(
 
 - 确定性计算：aclnnSwigluGroupQuantV2默认确定性实现。
 - **量化模式**：支持`quantMode=0/1/2/3/5`；`dstType`支持35（FLOAT8_E5M2）与36（FLOAT8_E4M3FN）。
-- **输入形状**：`x`必须为二维`[T, D]`，`T > 0`，`D >= 64`且`D % 64 == 0`。
+- **输入形状**：`x`必须为二维`[T, D]`，`D >= 64`且`D % 64 == 0`。
 - **blockSize**支持0或32；**roundScale**必须为true。
 - **不支持** `groupIndexOptional`（分组截断）与`scaleOptional`（静态量化），二者必须传`nullptr`。
 - **weightOptional**支持FLOAT16、BFLOAT16、FLOAT32，元素数为`T`。

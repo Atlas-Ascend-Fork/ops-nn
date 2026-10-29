@@ -523,14 +523,14 @@ $$
     <tr>
       <td>x</td>
       <td>输入</td>
-      <td>SwiGLU输入。quantMode为5时shape仅支持[T,D]二维；其他模式shape为[...,D]，维度为2-8维（quantMode为1时为2-7维）。quantMode为5时D必须大于等于64且能被64整除；其他模式的非空输入D必须大于等于256且能被256整除。quantMode为0或1时支持空Tensor；quantMode为2、3或5时不支持空Tensor。quantMode为0、1或5时仅支持FLOAT16、BFLOAT16；quantMode为2或3时支持FLOAT、FLOAT16、BFLOAT16。</td>
+      <td>SwiGLU输入。quantMode为5时shape仅支持[T,D]二维；其他模式shape为[...,D]，维度为2-8维（quantMode为1时为2-7维）。quantMode为5时D必须大于等于64且能被64整除；其他模式的非空输入D必须大于等于256且能被256整除。quantMode为0或1时支持空Tensor；quantMode为2或3时不支持空Tensor。quantMode为0、1或5时仅支持FLOAT16、BFLOAT16；quantMode为2或3时支持FLOAT、FLOAT16、BFLOAT16。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>weight</td>
       <td>输入（可选）</td>
-      <td>MOE权重张量，用于SwiGLU输出的加权计算。quantMode为0或1时支持空Tensor；quantMode为2、3或5时不支持空Tensor。不为空时，quantMode=5支持FLOAT16、BFLOAT16、FLOAT32，其他模式仅支持FLOAT32；维度为1-8维，元素个数需等于x除最后一维外的元素个数之积。</td>
+      <td>MOE权重张量，用于SwiGLU输出的加权计算。quantMode为0或1时支持空Tensor；quantMode为2或3时不支持空Tensor。不为空时，quantMode=5支持FLOAT16、BFLOAT16、FLOAT32，其他模式仅支持FLOAT32；维度为1-8维，元素个数需等于x除最后一维外的元素个数之积。</td>
       <td>quantMode=5：FLOAT16、BFLOAT16、FLOAT32；其他模式：FLOAT32</td>
       <td>ND</td>
     </tr>
@@ -600,14 +600,14 @@ $$
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>量化输出。quantMode为0、1或5时数据类型与dstType一致；quantMode为2或3时数据类型为HIFLOAT8。shape均为[...,D/2]。quantMode为0或1时支持空Tensor；quantMode为2、3或5时不支持空Tensor。</td>
+      <td>量化输出。quantMode为0、1或5时数据类型与dstType一致；quantMode为2或3时数据类型为HIFLOAT8。shape均为[...,D/2]。quantMode为0或1时支持空Tensor；quantMode为2或3时不支持空Tensor。</td>
       <td>HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>y_scale</td>
       <td>输出</td>
-      <td>量化scale输出。quantMode为0时shape为[...,ceil((D/2)/128)]，数据类型为FLOAT32。quantMode为1或5时shape为[...,ceil(ceil((D/2)/32)/2),2]，数据类型为FLOAT8_E8M0。quantMode为2或3时，无groupIndex时shape为[1]，有groupIndex时shape为[G]，数据类型为FLOAT32。quantMode为0或1时支持空Tensor；quantMode为2、3或5时不支持空Tensor。</td>
+      <td>量化scale输出。quantMode为0时shape为[...,ceil((D/2)/128)]，数据类型为FLOAT32。quantMode为1或5时shape为[...,ceil(ceil((D/2)/32)/2),2]，数据类型为FLOAT8_E8M0。quantMode为2或3时，无groupIndex时shape为[1]，有groupIndex时shape为[G]，数据类型为FLOAT32。quantMode为0或1时支持空Tensor；quantMode为2或3时不支持空Tensor。</td>
       <td>FLOAT32、FLOAT8_E8M0</td>
       <td>ND</td>
     </tr>

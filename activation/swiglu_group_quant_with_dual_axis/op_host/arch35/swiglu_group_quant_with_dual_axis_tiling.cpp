@@ -64,7 +64,7 @@ int64_t CeilDiv(int64_t x, int64_t y)
 
 bool CheckedMul(int64_t lhs, int64_t rhs, int64_t& out)
 {
-    if (lhs <= 0 || rhs <= 0 || lhs > std::numeric_limits<int64_t>::max() / rhs) {
+    if (lhs < 0 || rhs < 0 || (rhs != 0 && lhs > std::numeric_limits<int64_t>::max() / rhs)) {
         return false;
     }
     out = lhs * rhs;
@@ -379,8 +379,8 @@ ge::graphStatus SwigluGroupQuantWithDualAxisTiling::GetShapeAttrsInfoInner()
     bs_ = 1;
     for (int64_t i = 0; i + 1 < xDimNum; ++i) {
         const int64_t extent = xStorageShape.GetDim(i);
-        OP_CHECK_IF((extent <= 0),
-                    OP_LOGE(context_->GetNodeName(), "input x dim[%ld] should be greater than 0, got %ld.", i, extent),
+        OP_CHECK_IF((extent < 0),
+                    OP_LOGE(context_->GetNodeName(), "input x dim[%ld] should be non-negative, got %ld.", i, extent),
                     return ge::GRAPH_FAILED);
         int64_t next = 0;
         OP_CHECK_IF(!CheckedMul(bs_, extent, next),
@@ -425,10 +425,9 @@ ge::graphStatus SwigluGroupQuantWithDualAxisTiling::GetShapeAttrsInfoInner()
 
 void SwigluGroupQuantWithDualAxisTiling::CalcCoreTiling()
 {
-    // group_index partitions route 2 only; the activation and route 1 always consume all T rows,
-    // so every core participates in the global 64-row task space.
+    // Grouped non-empty work uses all cores; zero rows need only one no-op core.
     const auto geometry = SwigluGroupQuantMxTiling::MakeGeometry(splitD_, static_cast<int64_t>(coreNum_));
-    usedCoreNums_ = geometry.usedCoreNum;
+    usedCoreNums_ = bs_ == 0 ? 1 : geometry.usedCoreNum;
     rowOfFormerBlock_ = bs_;
     rowOfTailBlock_ = bs_;
     rowFactor_ = SwigluGroupQuantMxTiling::TILE_ROWS;
@@ -509,8 +508,10 @@ void SwigluGroupQuantWithDualAxisTiling::SetTilingData()
     tilingData_.set_bias(bias_);
     tilingData_.set_clampLimit(static_cast<float>(clampLimit_));
     tilingData_.set_scale1RowBytes(MX_SCALE_PAIR * CeilDiv(splitD_, SCALE_PAIR_ELEMENTS));
-    tilingData_.set_scale2PairRows(hasGroupIndex_ ? bs_ / SCALE_PAIR_ELEMENTS + g_ :
-                                                    (bs_ / batchRows_) * CeilDiv(batchRows_, SCALE_PAIR_ELEMENTS));
+    const int64_t scale2PairRows = hasGroupIndex_ ?
+                                       bs_ / SCALE_PAIR_ELEMENTS + g_ :
+                                       (bs_ == 0 ? 0 : (bs_ / batchRows_) * CeilDiv(batchRows_, SCALE_PAIR_ELEMENTS));
+    tilingData_.set_scale2PairRows(scale2PairRows);
     tilingData_.set_rowOfFormerBlock(rowOfFormerBlock_);
     tilingData_.set_rowOfTailBlock(rowOfTailBlock_);
     tilingData_.set_rowLoopOfFormerBlock(rowLoopOfFormerBlock_);

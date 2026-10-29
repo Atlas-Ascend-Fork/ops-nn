@@ -63,6 +63,9 @@ __global__ __aicore__ void swiglu_group_quant_with_dual_axis(GM_ADDR x, GM_ADDR 
     REGISTER_TILING_DEFAULT(SwigluGroupQuantWithDualAxisTilingData);
     (void)workspace;
     GET_TILING_DATA_WITH_STRUCT(SwigluGroupQuantWithDualAxisTilingData, tilingData, tiling);
+    if (tilingData.t == 0) {
+        return;
+    }
 
     const int64_t originalOverflowMode = AscendC::GetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>();
     TPipe pipe;
