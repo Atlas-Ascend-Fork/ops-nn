@@ -21,6 +21,7 @@ namespace Ops {
 namespace NN {
 namespace Conv {
 
+REGISTER_TILING_TEMPLATE("Conv3DTransposeV2", Conv3DTransposeV2PolyphaseTiling, 95);
 REGISTER_TILING_TEMPLATE("Conv3DTransposeV2", Conv3DTransposeV2SmallKernelTiling, 96);
 REGISTER_TILING_TEMPLATE("Conv3DTransposeV2", Conv3DTransposeV2KernelSplitFullLoadTiling, 97);
 REGISTER_TILING_TEMPLATE("Conv3DTransposeV2", Conv3DTransposeV2KernelSplitTiling, 98);

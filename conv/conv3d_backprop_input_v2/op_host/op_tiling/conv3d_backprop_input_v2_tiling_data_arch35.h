@@ -114,6 +114,11 @@ TILING_DATA_FIELD_DEF(uint8_t, quantMode1);
 TILING_DATA_FIELD_DEF(uint8_t, loadB1FractalZ);
 TILING_DATA_FIELD_DEF(uint8_t, enableLocalW);
 TILING_DATA_FIELD_DEF_ARR(uint8_t, 4, reserved);
+TILING_DATA_FIELD_DEF(uint8_t, polyphaseMode);
+TILING_DATA_FIELD_DEF(uint8_t, polyphaseStrategy);
+TILING_DATA_FIELD_DEF(uint8_t, polyphaseDense);
+TILING_DATA_FIELD_DEF(uint8_t, polyphaseDualAiv);
+TILING_DATA_FIELD_DEF(uint8_t, polyphaseBulkFilter);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(Conv3DBackpropInputV2, Conv3DBackpropInputArch35TilingData);

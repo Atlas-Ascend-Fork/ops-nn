@@ -1312,6 +1312,11 @@ void Conv3DDXV2InnerProductTiling::SetCommonTilingData(const CoreTilingParams& c
     dxt.set_enableLocalW(static_cast<uint8_t>(enableLocalWSplit_));
     uint8_t reserved[4] = {0};
     dxt.set_reserved(reserved);
+    dxt.set_polyphaseMode(0);
+    dxt.set_polyphaseStrategy(0);
+    dxt.set_polyphaseDense(0);
+    dxt.set_polyphaseDualAiv(0);
+    dxt.set_polyphaseBulkFilter(0);
     if (enableLocalWSplit_ || tilingRunInfo_.tilingHkWkMode != NO_TILING_HWK || runInfo_.stride_d > runInfo_.kernel_d) {
         dxt.set_initOutputFlag(runInfo_.initOutputFlag);
     }
@@ -1369,6 +1374,11 @@ bool Conv3DDXV2InnerProductTiling::GetTilingFromRepo()
     tilingData_.set_enableLocalW(static_cast<uint8_t>(loadB1Condition_ == ENABLE_LOCAL_W));
     uint8_t reserved[4] = {0};
     tilingData_.set_reserved(reserved);
+    tilingData_.set_polyphaseMode(0);
+    tilingData_.set_polyphaseStrategy(0);
+    tilingData_.set_polyphaseDense(0);
+    tilingData_.set_polyphaseDualAiv(0);
+    tilingData_.set_polyphaseBulkFilter(0);
     if (tilingData_.get_enlarge() == 1) {
         groupConvMode_ = TILING_GROUP_MODE_ORIGIN;
     } else {

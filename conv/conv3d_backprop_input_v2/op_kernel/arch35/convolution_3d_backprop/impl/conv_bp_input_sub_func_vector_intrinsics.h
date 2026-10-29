@@ -10,7 +10,7 @@
 
 /*!
  * \file conv_bp_input_sub_func_vector_intrinsics.h
- * \brief Vector instruction wrappers for interleave and gather operations
+ * \brief Vector instruction wrappers for interleave, gather and polyphase transforms
  */
 
 #ifndef CONV3D_BP_INPUT_SUB_FUNC_VECTOR_INTRINSICS_H

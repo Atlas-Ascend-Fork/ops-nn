@@ -34,6 +34,7 @@
 #define TPL_GM_TO_L1_NO_HK 2
 #define TPL_GM_TO_L1_NO_HK_WK 3
 #define TPL_SMALL_KERNEL 4
+#define TPL_POLYPHASE 5
 
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CONV3D_DX_KERNEL_TYPE_SEL ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_1_2)
@@ -53,7 +54,7 @@ ASCENDC_TPL_ARGS_DECL(Conv3dBackPropInputV2Arch35,
                       ASCENDC_TPL_BOOL_DECL(isBasicBlockTiling, 0, 1),
                       ASCENDC_TPL_UINT_DECL(loadB1Condition, ASCENDC_TPL_8_BW, ASCENDC_TPL_UI_LIST, TPL_GM_TO_L1,
                                             TPL_VEC_TO_L1_C04, TPL_GM_TO_L1_NO_HK, TPL_GM_TO_L1_NO_HK_WK,
-                                            TPL_SMALL_KERNEL));
+                                            TPL_SMALL_KERNEL, TPL_POLYPHASE));
 
 // 模板参数组合
 // 用于调用GET_TPL_TILING_KEY获取TilingKey时，接口内部校验TilingKey是否合法
@@ -147,6 +148,12 @@ ASCENDC_TPL_SEL(
                          ASCENDC_TPL_UINT_SEL(kernelSplitMode, ASCENDC_TPL_UI_LIST, TPL_NO_SPLIT_KERNEL),
                          ASCENDC_TPL_UINT_SEL(groupConvMode, ASCENDC_TPL_UI_LIST, TPL_GROUP_MODE_ORIGIN),
                          ASCENDC_TPL_BOOL_SEL(isBasicBlockTiling, 1),
-                         ASCENDC_TPL_UINT_SEL(loadB1Condition, ASCENDC_TPL_UI_LIST, TPL_SMALL_KERNEL)));
+                         ASCENDC_TPL_UINT_SEL(loadB1Condition, ASCENDC_TPL_UI_LIST, TPL_SMALL_KERNEL)),
+    ASCENDC_TPL_ARGS_SEL(CONV3D_DX_KERNEL_TYPE_SEL,
+                         ASCENDC_TPL_UINT_SEL(loadB2Condition, ASCENDC_TPL_UI_LIST, TPL_TRANSPOSE_AND_REVERSE),
+                         ASCENDC_TPL_UINT_SEL(kernelSplitMode, ASCENDC_TPL_UI_LIST, TPL_NO_SPLIT_KERNEL),
+                         ASCENDC_TPL_UINT_SEL(groupConvMode, ASCENDC_TPL_UI_LIST, TPL_GROUP_MODE_ORIGIN),
+                         ASCENDC_TPL_BOOL_SEL(isBasicBlockTiling, 1),
+                         ASCENDC_TPL_UINT_SEL(loadB1Condition, ASCENDC_TPL_UI_LIST, TPL_POLYPHASE)));
 
 #endif // CONV3D_BACKPROP_INPUT_V2_ARCH35_TILING_KEY_H

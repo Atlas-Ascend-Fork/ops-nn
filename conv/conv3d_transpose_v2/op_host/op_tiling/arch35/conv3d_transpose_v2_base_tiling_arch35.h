@@ -16,9 +16,11 @@
 #define CONV3D_TRANSPOSE_V2_BASE_TILING_ARCH35_H
 
 #include "conv/conv3d_backprop_input_v2/op_host/op_tiling/arch35/conv3d_backprop_input_v2_fullLoad_tiling.h"
+#include "conv/common/op_host/op_tiling/conv_platform_util.h"
 #include "conv/conv3d_backprop_input_v2/op_host/op_tiling/arch35/conv3d_backprop_input_v2_inner_product_tiling.h"
 #include "conv/conv3d_backprop_input_v2/op_host/op_tiling/arch35/conv3d_backprop_input_v2_kernel_split_fullLoad_tiling.h"
 #include "conv/conv3d_backprop_input_v2/op_host/op_tiling/arch35/conv3d_backprop_input_v2_kernel_split_tiling.h"
+#include "conv/conv3d_backprop_input_v2/op_host/op_tiling/arch35/polyphase/conv3d_backprop_input_v2_polyphase_tiling.h"
 #include "conv/conv3d_backprop_input_v2/op_host/op_tiling/arch35/conv3d_backprop_input_v2_small_kernel_tiling.h"
 #include "conv/conv3d_backprop_input_v2/op_host/op_tiling/arch35/conv3d_backprop_input_v2_small_shape_tiling.h"
 #include "conv/conv3d_transpose_v2/op_kernel/conv3d_transpose_v2_arch35_tiling_key.h"
@@ -26,6 +28,14 @@
 namespace Ops {
 namespace NN {
 namespace Conv {
+
+class Conv3DTransposeV2PolyphaseTiling : public Conv3DBackpropInputV2PolyphaseTiling {
+public:
+    explicit Conv3DTransposeV2PolyphaseTiling(gert::TilingContext* context)
+        : Conv3DBackpropInputV2PolyphaseTiling(context, optiling::OpTypeV2::kConv3DTransposeV2)
+    {}
+    ~Conv3DTransposeV2PolyphaseTiling() override = default;
+};
 
 class Conv3DTransposeV2TilingArch35 : public Conv3DDXV2InnerProductTiling {
 public:

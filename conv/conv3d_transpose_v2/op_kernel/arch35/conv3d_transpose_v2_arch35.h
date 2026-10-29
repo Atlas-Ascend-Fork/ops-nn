@@ -19,6 +19,7 @@
 #include "../conv3d_backprop_input_v2/arch35/conv3d_backprop_input_v2/conv3d_backprop_input_v2_init_output_arch35.h"
 #include "../conv3d_backprop_input_v2/arch35/conv3d_backprop_input_v2/conv3d_backprop_input_v2_vec_transpose.h"
 #include "../conv3d_backprop_input_v2/arch35/conv3d_backprop_input_v2/conv3d_dx_small_kernel.h"
+#include "../conv3d_backprop_input_v2/arch35/conv3d_backprop_input_v2/conv3d_dx_polyphase_func.h"
 
 using namespace AscendC;
 
@@ -44,6 +45,26 @@ __global__ __aicore__ void conv3d_transpose_v2_arch35(GM_ADDR input_size, GM_ADD
 {
     GET_TILING_DATA(tilingData, tiling);
 
+#if defined(__DAV_310R6__) || (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202))
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
+
+    if constexpr (loadB2Condition == TPL_TRANSPOSE_AND_REVERSE && kernelSplitMode == TPL_NO_SPLIT_KERNEL &&
+                  groupConvMode == TPL_GROUP_MODE_ORIGIN && isBasicBlockTiling && loadB1Condition == TPL_POLYPHASE) {
+        if constexpr (IsSameType<DTYPE_Y, half>::value || IsSameType<DTYPE_Y, bfloat16_t>::value) {
+            Conv3dPolyphase<DTYPE_Y> op;
+            op.Init(filter, x, y, tilingData, bias);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+            op.ProcessTranspose();
+#else
+            op.ProcessDx();
+#endif
+        }
+        return;
+    }
+
     GM_ADDR usrWsp = nullptr;
     if (workSpace != nullptr) {
         usrWsp = GetUserWorkspace(workSpace);
@@ -52,12 +73,6 @@ __global__ __aicore__ void conv3d_transpose_v2_arch35(GM_ADDR input_size, GM_ADD
                               tilingData.useUbAccumForSplitK || tilingData.singleIterateDk != tilingData.dk)) {
         return;
     }
-#if defined(__DAV_310R6__) || (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202))
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
-#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
-#endif
-
     if (tilingData.initOutputFlag == static_cast<int32_t>(InitOutputFlag::L0_INIT)) {
         Conv3dDxInitOutput<DTYPE_Y> opInitOutput;
         opInitOutput.Init(y, tilingData);
