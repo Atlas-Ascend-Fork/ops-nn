@@ -2,7 +2,7 @@
 
 ## 使用须知
 
-本指南旨在帮助您快速上手CANN和`ops-nn`算子仓的使用。为方便您快速了解算子开发全流程，以**AddExample**算子为实践对象，算子源码位于`ops-nn/examples/add_example`，操作流程如下：
+本指南旨在帮助用户快速上手CANN和`ops-nn`算子仓。为方便用户快速了解算子开发全流程，以**AddExample**算子为实践对象，算子源码位于`ops-nn/examples/add_example`，操作流程如下：
 
 1. **[前提条件](../README.md)**：参考项目README完成环境准备和源码下载，此处不再赘述。快速入门场景**推荐CANNLab或Docker部署**，操作简单。
 
@@ -36,10 +36,10 @@
   git clone -b ${tag_version} https://gitcode.com/cann/ops-nn.git && cd ops-nn
   ```
 
-> 说明：如需切换源码分支版本，请参考如下指导。
+> 说明：如需切换源码分支版本，请参见如下指导。
 >
 > 1. 在源码目录执行`git branch`，查询当前源码版本。
-> 2. 在源码目录执行`git checkout ${tag_version}`，切换到目标分支源码，注意满足源码与CANN版本配套关系。若源码已存在，执行`git pull`拉取最新源码。
+> 2. 在源码目录执行`git checkout ${tag_version}`，切换到目标分支源码，注意满足源码与CANN版本配套关系。若本地已克隆过该分支源码，执行git pull拉取最新源码。
 
 ### 2. 编译AddExample算子
 
@@ -104,10 +104,11 @@ export LD_LIBRARY_PATH=${ASCEND_HOME_PATH}/opp/vendors/custom_nn/op_api/lib:${LD
 ```bash
 bash build.sh --run_example add_example eager cust --vendor_name=custom --soc=${soc_version}
 ```
-- <算子名>:add_example
+
+- <算子名>：add_example
 - <运行模式>：eager
-- <包模式>:cust
-- --vendor_name(可选)：vendorname表示构建的自定义算子包名，默认名为custom.
+- <包模式>：cust
+- --vendor_name(可选)：vendorname表示构建的自定义算子包名，默认名为custom
 
 > **注意**：运行样例时需确保`--soc`参数与编译算子包时使用的`--soc`取值一致，否则可能报`error 161001`（如`aclnnXxxGetWorkspaceSize failed`）。如遇此错误，请回到[第2节](#2-编译addexample算子)核对`--soc`取值后重新编译安装。
 
@@ -196,7 +197,7 @@ __aicore__ inline void AddExample<T>::Compute(int64_t currentNum)
 
 本阶段以AddExample为例，在算子中添加打印并采集算子性能数据，以便后续问题分析定位。
 
-### 1. 打印
+### 1. 算子打印
 
 算子如果出现执行失败、精度异常等问题，添加打印进行问题分析和定位。
 
@@ -252,7 +253,7 @@ __aicore__ inline void AddExample<T>::Compute(int64_t currentNum)
 
 ### 1. 修改测试输入
 
-找到并编辑`AddExample`的`ops-nn/examples/add_example/examples/test_aclnn_add_example.cpp`，修改输入张量的形状和数值。
+找到并编辑`AddExample`的`examples/add_example/examples/test_aclnn_add_example.cpp`，修改输入张量的形状和数值。
 
 **修改输入/输出数据**：修改输入、输出的shape信息，以及初始化数据，构造相应的输入、输出tensor。
 
