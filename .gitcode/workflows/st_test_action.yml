@@ -1,27 +1,18 @@
-name: st_test_950_action
+name: A5_smoke
 
 on:
-  pr_comment:
-    types: [created]
-    keyword: '^(?:\/)?st_950\b'
-  pull_request_comment:
-    types: [created]
-    branches: ['master']
-    comments: ['^(?:\/)?st_950\b']
   workflow_call:
+    inputs:
+      task_name:
+        required: true
+        type: string
 
 env:
-  org_name: ${{ vars.ORG_NAME }}
-  repo_name: "ops-nn"
-  MERGE_ID: ${{atomgit.event.pull_request.number}}
-  TARGET_BRANCH: ${{atomgit.ref_name}}
-  SOURCE_BRANCH: ${{atomgit.head_ref}}
-  obs_path: "${{ env.org_name }}/${{ env.repo_name }}/ci/package/${{ env.MERGE_ID }}"
   run_package_name: "cann-ops-nn-custom_linux-x86_64_950.run"
 
 jobs:
-  JOB_st_test_950:
-    name: ST_test_950
+  A5_smoke:
+    name: PreSmoke_A5
     steps:
       -
         name: Checkout
@@ -31,18 +22,7 @@ jobs:
           ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
           allow-unsafe-pr-checkout: true
       -
-        name: check_branch
-        identifier: check_branch
-        run: |
-          if [[ "${{ env.TARGET_BRANCH }}" != "master" ]]; then
-            echo "branch_ok=no" >> "$ATOMGIT_OUTPUT"
-            echo "Skip st_950: target branch '${{ env.TARGET_BRANCH }}' is not master"
-          else
-            echo "branch_ok=yes" >> "$ATOMGIT_OUTPUT"
-          fi
-      -
-        name: download_pr_filelist
-        if: ${{ steps.check_branch.outputs.branch_ok == 'yes' }}
+        name: download
         uses: obs-download
         with:
           endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
@@ -51,11 +31,13 @@ jobs:
           secret-key: ${{ secrets.SK }}
           key: |
             ${{ env.obs_path }}/pr_filelist.txt
+            ${{ env.obs_path }}/pr_filelist_mod.txt
+            ${{ env.obs_path }}/update_file_detail.txt
+            ${{ env.obs_path }}/compile.sh
           path: ${{ steps.process_checkout.outputs.path }}
       -
         name: check_pr_whitelist
         identifier: check_whitelist
-        if: ${{ steps.check_branch.outputs.branch_ok == 'yes' }}
         run: |
           set -euo pipefail
           cd ${{ steps.process_checkout.outputs.path }}
@@ -63,7 +45,7 @@ jobs:
           echo "in_whitelist=${result##*=}" >> "$ATOMGIT_OUTPUT"
       -
         name: download_compiled_package
-        if: ${{ steps.check_branch.outputs.branch_ok == 'yes' && steps.check_whitelist.outputs.in_whitelist == 'yes' }}
+        if: ${{ steps.check_whitelist.outputs.in_whitelist == 'yes' }}
         uses: obs-download
         with:
           endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
@@ -108,6 +90,7 @@ jobs:
           cd ${{ steps.process_checkout.outputs.path }}
           source /usr/local/Ascend/cann/bin/setenv.bash 2>/dev/null || true
           export CI_ONLINE_ST=1
+          pip3 install psutil openpyxl en-dtypes
           bash scripts/ci/ops_st_test.sh --pr_filelist=./pr_filelist.txt --soc_version=ascend950
       -
         name: package_st_results
@@ -133,4 +116,6 @@ jobs:
             ${{ steps.process_checkout.outputs.path }}/st_950_log.tar.gz
           object-prefix: ${{ env.obs_path }}/st_results/cann
     if: "${{ default() }}"
-    runs-on: ['self-hosted', 'os=ubuntu', 'evb=a5', 'repo=nn']
+    runs-on: ['self-hosted', 'npu=1','smoke=501']
+    container:
+      image: swr.cn-north-4.myhuaweicloud.com/pre_smoke/ubuntu24.04_x86:pre_mindspore_A5_conda_v1.1001

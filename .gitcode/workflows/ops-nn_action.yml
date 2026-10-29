@@ -39,7 +39,7 @@ stages:
             identifier: revise_image
             uses: cann/.gitcode/actions/revise-img@master
             with:
-              repo_name: ${{ env.repo_name }}
+              repo_name: "ops-nn"
               target_branch: ${{ env.TARGET_BRANCH }}
               comment: ${{ atomgit.event.comment.body }}
               token: ${{ secrets.TESTTOKEN }}
@@ -418,6 +418,13 @@ stages:
         runs-on: ['self-hosted','npu=1','smoke=204']
         container:
           image: swr.cn-south-1.myhuaweicloud.com/pre_smoke/${{ jobs.JOB_image.outputs.PreSmoke_A900 }}
+      A5_smoke:
+        name: PreSmoke_A5
+        uses: .gitcode/workflows/st_test_action.yml
+        if: env.TARGET_BRANCH == 'master'
+        with:
+          task_name: 'opkernel'
+          image_version: ${{ jobs.JOB_image.outputs.UT_Test_kernel }}
       PreSmoke_harmony-infer-chs-nn:
         name: PreSmoke_harmony-infer-chs-nn
         uses: .gitcode/workflows/kirin_pre_smoke_action.yml
