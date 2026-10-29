@@ -123,6 +123,11 @@ __aicore__ inline void FakeQuantAffineCachemaskPT<T, ZpT, HAS_ZP>::LoadScaleZpSc
     AscendC::DataCopyExtParams sp{1, static_cast<uint32_t>(sizeof(T)), 0, 0, 0};
     AscendC::DataCopyPadExtParams<T> sPad{false, 0, 0, 0};
     AscendC::DataCopyPad(sRaw, buf_.inputGMScale_, sp, sPad);
+    // MTE2 → V：必须等 MTE2 把标量写入 sRaw 后再由 V 读取转换，
+    // 否则 V 先读到未初始化 UB，且首跑与后续跑结果不一致（非确定性输出根因）
+    AscendC::TEventID eventS = pipe_.template FetchEventID<AscendC::HardEvent::MTE2_V>();
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventS);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventS);
     if constexpr (std::is_same<T, float>::value) {
         AscendC::Adds<float>(sUb, sRaw, 0.0f, 1);
     } else {
@@ -135,6 +140,10 @@ __aicore__ inline void FakeQuantAffineCachemaskPT<T, ZpT, HAS_ZP>::LoadScaleZpSc
         AscendC::DataCopyExtParams zp{1, static_cast<uint32_t>(sizeof(ZpT)), 0, 0, 0};
         AscendC::DataCopyPadExtParams<ZpT> zPad{false, 0, 0, 0};
         AscendC::DataCopyPad(zRaw, buf_.inputGMZp_, zp, zPad);
+        // 同上：zp 的 MTE2 → V 同步
+        AscendC::TEventID eventZ = pipe_.template FetchEventID<AscendC::HardEvent::MTE2_V>();
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventZ);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventZ);
         if constexpr (std::is_same<ZpT, float>::value) {
             AscendC::Adds<float>(zUb, zRaw, 0.0f, 1);
         } else {
@@ -200,6 +209,8 @@ __aicore__ inline void FakeQuantAffineCachemaskPT<T, ZpT, HAS_ZP>::Compute(int64
         Reg::RegTensor<T> vregX;
         Reg::RegTensor<float> vregTmp;
         Reg::RegTensor<float> vregSc;
+        Reg::RegTensor<float> vregInvSc;
+        Reg::RegTensor<float> vregOne;
         Reg::RegTensor<float> vregQ;
         Reg::RegTensor<float> vregZp;
         Reg::RegTensor<float> vregM1;
@@ -230,13 +241,21 @@ __aicore__ inline void FakeQuantAffineCachemaskPT<T, ZpT, HAS_ZP>::Compute(int64
                 Reg::Cast<float, T, layoutZMrgZ>(vregTmp, vregX, mask);
             }
 
-            Reg::Div<float>(vregTmp, vregTmp, vregSc, mask);
-            if constexpr (HAS_ZP == 1) {
-                // 必须在 round 前加 zp，与 PyTorch 公式 round(x/s + zp) 对齐
-                Reg::Add<float>(vregTmp, vregTmp, vregZp, mask);
+            // 与 torch 原生（aten cachemask）一致：inv = 1/s 为 fp32 倒数（0ulp 正确舍入），
+            // t = x * inv 为 fp32 乘法（非除法；x/s 恰为 tie 时的舍入方向由此确定）
+            Reg::Duplicate<float>(vregOne, 1.0f);
+            static constexpr AscendC::Reg::DivSpecificMode divMode = {AscendC::Reg::MaskMergeMode::ZEROING, true};
+            Reg::Div<float, &divMode>(vregInvSc, vregOne, vregSc, mask);
+            if constexpr (HAS_ZP == 1 && !ZP_IS_INTEGRAL<ZpT>) {
+                // 浮点 zp 在 round 前加（lrintf 路径），用单次舍入的融合乘加对齐 aten float 路径
+                Reg::MulDstAdd<float>(vregTmp, vregInvSc, vregZp, mask);
+            } else {
+                // 整数 zp 在 round 后加（见 ComputeQuantMaskBody），round 前仅 x/s
+                Reg::Mul<float>(vregTmp, vregTmp, vregInvSc, mask);
             }
-            ComputeQuantMaskBody<T, HAS_ZP>(vregTmp, vregSc, vregZp, vregQ, vregM1, vregM2, vregInt32, mask, i, m1Ptr,
-                                            yPtr, qMinF, qMaxF, qMinMinus1F, qMaxPlus1F);
+            ForceNonFiniteToSentinel(vregTmp, mask);
+            ComputeQuantMaskBody<T, ZpT, HAS_ZP>(vregTmp, vregSc, vregZp, vregQ, vregM1, vregM2, vregInt32, mask, i,
+                                                 m1Ptr, yPtr, qMinF, qMaxF, qMinMinus1F, qMaxPlus1F);
         }
     }
 

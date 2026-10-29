@@ -62,7 +62,34 @@ struct CommonBuffers {
     GlobalTensor<uint8_t> outputGMMask_;
 };
 
-template <typename T, int HAS_ZP>
+// zero_point dtype 分支判据（REQUIREMENTS §2.1.1 / §4.6.4，与 PyTorch aten 逐位对齐）：
+//   - 整数 zp  : qval = rint(x/s) + zp        （先 round 再加 zp）
+//   - 浮点 zp  : qval = rint(x/s + zp)        （先加 zp 再 round，lrintf 路径）
+template <typename ZpT>
+constexpr bool ZP_IS_INTEGRAL = std::is_same_v<ZpT, int32_t> || std::is_same_v<ZpT, int16_t> ||
+                                std::is_same_v<ZpT, int64_t>;
+
+// 特殊值口径（spec.yaml formula notes / DESIGN §1.4）：x/s (+zp) 为非有限值（NaN/±inf）时，
+// 经 int 转换须饱和到 INT32_MIN（等价 golden 的 non-finite → INT64_MIN），随后被
+// min/max 钳到 quant_min、对应 mask = False。
+// VF 的 Cast+RINT+Sat 对 NaN 不产生 INT32_MIN（实测为 0），故在 Cast 前显式做一次
+// 非有限值检测并替换为 -FLT_MAX（其 RINT+Sat 结果即 INT32_MIN）：
+//   有限 <=> (v > -FLT_MAX) && (v < +FLT_MAX)；NaN/±inf 均不满足，替换为 -FLT_MAX。
+__aicore__ inline void ForceNonFiniteToSentinel(Reg::RegTensor<float>& vreg, Reg::MaskReg mask)
+{
+    constexpr float FLT_MAX_F = 3.4028234663852886e+38F;
+    Reg::MaskReg mGt;
+    Reg::MaskReg mLt;
+    Reg::MaskReg mFinite;
+    Reg::RegTensor<float> vregSentinel;
+    Reg::Compares<float, CMPMODE::GT>(mGt, vreg, -FLT_MAX_F, mask);
+    Reg::Compares<float, CMPMODE::LT>(mLt, vreg, FLT_MAX_F, mask);
+    Reg::And(mFinite, mGt, mLt, mask);
+    Reg::Duplicate<float>(vregSentinel, -FLT_MAX_F);
+    Reg::Select(vreg, vreg, vregSentinel, mFinite); // mask 位为 1 取 src0（有限值），否则取哨兵
+}
+
+template <typename T, typename ZpT, int HAS_ZP>
 __aicore__ inline void ComputeQuantMaskBody(Reg::RegTensor<float>& vregTmp, Reg::RegTensor<float>& vregSc,
                                             Reg::RegTensor<float>& vregZp, Reg::RegTensor<float>& vregQ,
                                             Reg::RegTensor<float>& vregM1, Reg::RegTensor<float>& vregM2,
@@ -70,8 +97,13 @@ __aicore__ inline void ComputeQuantMaskBody(Reg::RegTensor<float>& vregTmp, Reg:
                                             __ubuf__ float* m1Ptr, __ubuf__ T* yPtr, float qMinF, float qMaxF,
                                             float qMinMinus1F, float qMaxPlus1F)
 {
+    // vregTmp 入参约定：整数 zp 为 x/s（round 前不加 zp）；浮点 zp 为 x/s + zp
     Reg::Cast<int32_t, float, layoutZSatSMrgZRndR>(vregInt32, vregTmp, mask);
     Reg::Cast<float, int32_t, layoutZMrgZRndR>(vregQ, vregInt32, mask);
+    if constexpr (HAS_ZP == 1 && ZP_IS_INTEGRAL<ZpT>) {
+        // 整数 zp：qval = rint(x/s) + zp（round 之后加，整数 zp 值在 fp32 中精确表示）
+        Reg::Add<float>(vregQ, vregQ, vregZp, mask);
+    }
     Reg::Adds<float, float>(vregM1, vregQ, -qMinMinus1F, mask);
     Reg::Mins<float, float>(vregM1, vregM1, 1.0f, mask);
     Reg::Maxs<float, float>(vregM1, vregM1, 0.0f, mask);

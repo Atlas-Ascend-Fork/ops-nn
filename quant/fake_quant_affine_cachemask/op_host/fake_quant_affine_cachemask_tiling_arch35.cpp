@@ -50,7 +50,8 @@ constexpr int64_t BUFF_NUM = 2;       // 双缓冲
 constexpr int64_t CACHE_LINE = 128;   // arch35
 constexpr int64_t BLOCK_SIZE = 32;    // DMA 最小对齐单元
 constexpr int64_t VL_BYTES = 256;     // VECTOR_REG_WIDTH (arch3510)
-constexpr int64_t PC_NDDMA_THR = 32;  // dim1 < 32B 时 PC → PC_NDDMA
+constexpr int64_t VL_FP32_ELEMS = VL_BYTES / static_cast<int64_t>(sizeof(float)); // VF 一次处理的 fp32 元素数
+constexpr int64_t PC_NDDMA_THR = 32;                                              // dim1 < 32B 时 PC → PC_NDDMA
 
 constexpr int64_t MODE_PT = 0;
 constexpr int64_t MODE_PC = 1;
@@ -436,50 +437,124 @@ static void CalcPHBlockParams(TilingResult* r, int64_t dim0, int64_t dim1, int64
         r->blockTailFactor = r->blockFactor;
 }
 
-static void CalcPHUbTiling(TilingResult* r, int64_t dim1, int64_t dim2, int64_t ubSize, int64_t xBytes,
-                           int64_t cacheLineElems)
+// PH kernel UB 预算镜像（与 op_kernel/arch35/fake_quant_affine_cachemask_ph.h Init 中
+// 各 buffer 一一对应；tile = bn × bl）：
+//   inQueueX / outQueueY：BUFF_NUM × tile × sizeof(T)（各一份）
+//   outQueueMask：BUFF_NUM × tile（uint8）
+//   m1Fp32Buf：tile × 4；halfMaskBuf：tile × 2
+//   scale/zp 原始段：32B 对齐的 (bn + lanesPerBlock - 1) × sizeof(dtype)
+//   scale/zp fp32 段：VL(64) 对齐的 (bn + lanesPerBlock - 1) × 4（scale + zp 各一份）
+static int64_t PHScaleZpKernelBytes(int64_t bn, int64_t xBytes, int64_t zpBytes, bool hasZp)
+{
+    int64_t lanesT = BLOCK_SIZE / xBytes;
+    int64_t lanesZ = BLOCK_SIZE / zpBytes;
+    int64_t supRawT = bn + lanesT - 1;
+    int64_t supRawZ = bn + lanesZ - 1;
+    int64_t bytes = CeilAlign(supRawT, lanesT) * xBytes;                              // scale 原始段
+    bytes += CeilAlign(supRawT, VL_FP32_ELEMS) * static_cast<int64_t>(sizeof(float)); // scale fp32 段
+    bytes += CeilAlign(supRawZ, VL_FP32_ELEMS) * static_cast<int64_t>(sizeof(float)); // zp fp32 段（HAS_ZP=0 亦分配）
+    if (hasZp) {
+        bytes += CeilAlign(supRawZ, lanesZ) * zpBytes; // zp 原始段
+    }
+    return bytes;
+}
+
+static int64_t PHUbUsed(int64_t bn, int64_t bl, int64_t xBytes, int64_t zpBytes, bool hasZp)
+{
+    int64_t tile = bn * bl;
+    int64_t bytes = BUFF_NUM * tile * xBytes; // inQueueX
+    bytes += BUFF_NUM * tile * xBytes;        // outQueueY
+    bytes += BUFF_NUM * tile;                 // outQueueMask
+    bytes += tile * 4;                        // m1Fp32Buf
+    bytes += tile * 2;                        // halfMaskBuf
+    bytes += PHScaleZpKernelBytes(bn, xBytes, zpBytes, hasZp);
+    return bytes;
+}
+
+// 给定行宽 bl，求 budget 内可容纳的最大行数 bn（仅作保守估计，再按精确预算收敛）
+static int64_t PHMaxN(int64_t budget, int64_t bl, int64_t xBytes, int64_t zpBytes, bool hasZp)
+{
+    int64_t perN = bl * (BUFF_NUM * (2 * xBytes + 1) + 6);
+    int64_t scalePerN = xBytes + 2 * static_cast<int64_t>(sizeof(float)) + (hasZp ? zpBytes : 0);
+    if (perN <= 0)
+        perN = 1;
+    int64_t n = budget / (perN + scalePerN + 1);
+    if (n < 1)
+        n = 1;
+    int64_t guard = 4096;
+    while (n > 1 && PHUbUsed(n, bl, xBytes, zpBytes, hasZp) > budget && (guard--) > 0) {
+        --n;
+    }
+    return (n < 1) ? 1 : n;
+}
+
+// 给定 bn = 1，求 budget 内可容纳的最大行宽 bl
+static int64_t PHMaxBl(int64_t budget, int64_t xBytes, int64_t zpBytes, bool hasZp)
+{
+    int64_t perElem = BUFF_NUM * (2 * xBytes + 1) + 6;
+    if (perElem <= 0)
+        perElem = 1;
+    int64_t bl = budget / perElem;
+    if (bl < 1)
+        bl = 1;
+    int64_t guard = 4096;
+    while (bl > 1 && PHUbUsed(1, bl, xBytes, zpBytes, hasZp) > budget && (guard--) > 0) {
+        --bl;
+    }
+    return (bl < 1) ? 1 : bl;
+}
+
+static void CalcPHUbTiling(TilingResult* r, int64_t dim1, int64_t dim2, int64_t ubSize, int64_t xBytes, int64_t zpBytes,
+                           bool hasZp, int64_t cacheLineElems)
 {
     int64_t shape2 = CeilAlign(dim2, cacheLineElems);
     if (shape2 <= 0)
         shape2 = 1;
-    int64_t maxBase = FloorAlign(CalcMaxBaseLen(ubSize, xBytes, /*perChannelLike=*/true), cacheLineElems);
-    if (maxBase < cacheLineElems)
-        maxBase = cacheLineElems;
+    int64_t budget = static_cast<int64_t>(ubSize) - RESERVED_UB;
+    if (budget <= 0)
+        budget = static_cast<int64_t>(ubSize) / 2;
     int64_t blockSize = CeilAlign(r->blockFactor, cacheLineElems);
 
     if (r->blockAxis == 0) {
-        if (dim1 * shape2 <= maxBase) {
+        if (dim1 > 0 && PHUbUsed(dim1, shape2, xBytes, zpBytes, hasZp) <= budget) {
             r->ubAxis = 0;
             r->baseN = dim1;
             r->baseLen = shape2;
-        } else if (shape2 <= maxBase) {
+        } else if (PHUbUsed(1, shape2, xBytes, zpBytes, hasZp) <= budget) {
             r->ubAxis = 1;
-            r->baseN = std::max<int64_t>(maxBase / (shape2 > 0 ? shape2 : 1), 1);
+            r->baseN = PHMaxN(budget, shape2, xBytes, zpBytes, hasZp);
             r->baseLen = shape2;
         } else {
             r->ubAxis = 2;
             r->baseN = 1;
-            r->baseLen = maxBase;
+            r->baseLen = PHMaxBl(budget, xBytes, zpBytes, hasZp);
         }
     } else if (r->blockAxis == 1) {
-        if (shape2 <= maxBase) {
+        if (PHUbUsed(1, shape2, xBytes, zpBytes, hasZp) <= budget) {
             r->ubAxis = 1;
-            r->baseN = std::min<int64_t>(r->blockFactor, std::max<int64_t>(maxBase / (shape2 > 0 ? shape2 : 1), 1));
+            r->baseN = std::min<int64_t>(r->blockFactor, PHMaxN(budget, shape2, xBytes, zpBytes, hasZp));
             r->baseLen = shape2;
         } else {
             r->ubAxis = 2;
             r->baseN = 1;
-            r->baseLen = maxBase;
+            r->baseLen = PHMaxBl(budget, xBytes, zpBytes, hasZp);
         }
     } else {
         r->ubAxis = 2;
         r->baseN = 1;
-        r->baseLen = std::min(blockSize, maxBase);
+        r->baseLen = std::min(blockSize, PHMaxBl(budget, xBytes, zpBytes, hasZp));
+    }
+    // UB tile 需按 cacheLine 对齐（保证各 buffer 尺寸为 32B 整数倍）
+    if (r->baseLen > 0 && (r->baseLen % cacheLineElems) != 0) {
+        int64_t aligned = FloorAlign(r->baseLen, cacheLineElems);
+        r->baseLen = (aligned >= cacheLineElems) ? aligned : cacheLineElems;
     }
     if (r->baseLen <= 0)
         r->baseLen = cacheLineElems;
     if (r->baseN <= 0)
         r->baseN = 1;
+    if (r->baseN > dim1 && dim1 > 0)
+        r->baseN = dim1;
 
     if ((dim2 * xBytes) % BLOCK_SIZE != 0) {
         r->baseN = 1;
@@ -487,7 +562,7 @@ static void CalcPHUbTiling(TilingResult* r, int64_t dim1, int64_t dim2, int64_t 
 }
 
 static TilingResult CalcPHTiling(int64_t dim0, int64_t dim1, int64_t dim2, int64_t coreNum, int64_t ubSize,
-                                 int64_t xBytes)
+                                 int64_t xBytes, int64_t zpBytes, bool hasZp)
 {
     TilingResult r;
     r.mode = MODE_PH;
@@ -501,7 +576,7 @@ static TilingResult CalcPHTiling(int64_t dim0, int64_t dim1, int64_t dim2, int64
 
     SelectPHBlockAxis(&r, dim0, dim1, dim2, coreNum, cacheLineNum, xBytes);
     CalcPHBlockParams(&r, dim0, dim1, dim2, cacheLineNum, cacheLineElems);
-    CalcPHUbTiling(&r, dim1, dim2, ubSize, xBytes, cacheLineElems);
+    CalcPHUbTiling(&r, dim1, dim2, ubSize, xBytes, zpBytes, hasZp, cacheLineElems);
     return r;
 }
 
@@ -550,7 +625,7 @@ static ge::graphStatus GetWorkspaceSize(gert::TilingContext* context)
 
 // ---------- Dispatch ----------
 static bool DispatchTiling(int64_t mode, int64_t dim0, int64_t dim1, int64_t dim2, int64_t coreNum, int64_t ubSize,
-                           int64_t xBytes, TilingResult* res)
+                           int64_t xBytes, int64_t zpBytes, bool hasZp, TilingResult* res)
 {
     switch (mode) {
         case MODE_PT:
@@ -561,7 +636,7 @@ static bool DispatchTiling(int64_t mode, int64_t dim0, int64_t dim1, int64_t dim
             DemoteToPCNddma(res, dim1, xBytes, ubSize);
             return true;
         case MODE_PH:
-            *res = CalcPHTiling(dim0, dim1, dim2, coreNum, ubSize, xBytes);
+            *res = CalcPHTiling(dim0, dim1, dim2, coreNum, ubSize, xBytes, zpBytes, hasZp);
             return true;
         default:
             return false;
@@ -611,6 +686,7 @@ static ge::graphStatus FakeQuantAffineCachemaskTilingFunc(gert::TilingContext* c
 
     int64_t hasZeroPoint = (info.zpNum > 0) ? 1 : 0;
     int64_t xBytes = XDtypeBytes(info.xDtype);
+    int64_t zpBytes = XDtypeBytes(info.zpDtype);
 
     auto* tiling = context->GetTilingData<FakeQuantAffineCachemaskTilingDataArch35>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
@@ -626,7 +702,7 @@ static ge::graphStatus FakeQuantAffineCachemaskTilingFunc(gert::TilingContext* c
 
     TilingResult res;
     int64_t ubSizeI = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF(!DispatchTiling(mode, dim0, dim1, dim2, coreNum, ubSizeI, xBytes, &res),
+    OP_CHECK_IF(!DispatchTiling(mode, dim0, dim1, dim2, coreNum, ubSizeI, xBytes, zpBytes, hasZeroPoint != 0, &res),
                 OP_LOGE(context, "unsupported mode %ld", static_cast<long>(mode)), return ge::GRAPH_FAILED);
 
     WriteTilingData(tiling, res, dim0, dim1, dim2, hasZeroPoint, info.axisNorm, *qMinPtr, *qMaxPtr);

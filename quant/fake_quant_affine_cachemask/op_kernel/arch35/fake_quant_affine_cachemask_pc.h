@@ -269,22 +269,24 @@ __aicore__ inline void FakeQuantAffineCachemaskPC<T, ZpT, HAS_ZP>::Compute(int64
                 Reg::Cast<float, T, layoutZMrgZ>(vregTmp, vregX, mask);
             }
             Reg::DataCopy<float, Reg::LoadDist::DIST_NORM>(vregSc, sPtr + i * VL_FP32);
-            // VF 内现算 1/scale：用 vreg 替代独立 invScale UB buf
+            // 与 torch 原生（aten cachemask）一致：inv = 1/s 为 fp32 倒数（0ulp 正确舍入），
+            // t = x * inv 为 fp32 乘法（非除法；x/s 恰为 tie 时的舍入方向由此确定）
             Reg::Duplicate<float>(vregOne, 1.0f);
             static constexpr AscendC::Reg::DivSpecificMode divMode = {AscendC::Reg::MaskMergeMode::ZEROING, true};
             Reg::Div<float, &divMode>(vregInvSc, vregOne, vregSc, mask);
-            // 两步 inv_scale：x * (1/s)，对齐 torch CUDA _fake_quant_per_channel_cachemask_cuda_helper
-            // Reg::Mul<float>(vregTmp, vregTmp, vregInvSc, mask);
             if constexpr (HAS_ZP == 1) {
                 Reg::DataCopy<float, Reg::LoadDist::DIST_NORM>(vregZp, zPtr + i * VL_FP32);
-                // Reg::Mul<float>(vregTmp, vregTmp, vregInvSc, mask);
-                // Reg::Add<float>(vregTmp, vregTmp, vregZp, mask);
+            }
+            if constexpr (HAS_ZP == 1 && !ZP_IS_INTEGRAL<ZpT>) {
+                // 浮点 zp 在 round 前加（lrintf 路径），用单次舍入的融合乘加对齐 aten float 路径
                 Reg::MulDstAdd<float>(vregTmp, vregInvSc, vregZp, mask);
             } else {
+                // 整数 zp 在 round 后加（见 ComputeQuantMaskBody），round 前仅 x/s
                 Reg::Mul<float>(vregTmp, vregTmp, vregInvSc, mask);
             }
-            ComputeQuantMaskBody<T, HAS_ZP>(vregTmp, vregSc, vregZp, vregQ, vregM1, vregM2, vregInt32, mask, i, m1Ptr,
-                                            yPtr, qMinF, qMaxF, qMinMinus1F, qMaxPlus1F);
+            ForceNonFiniteToSentinel(vregTmp, mask);
+            ComputeQuantMaskBody<T, ZpT, HAS_ZP>(vregTmp, vregSc, vregZp, vregQ, vregM1, vregM2, vregInt32, mask, i,
+                                                 m1Ptr, yPtr, qMinF, qMaxF, qMinMinus1F, qMaxPlus1F);
         }
     }
 
