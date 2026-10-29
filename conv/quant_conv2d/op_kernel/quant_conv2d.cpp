@@ -14,7 +14,7 @@
  */
 
 #include "../inc/macro.h"
-#if !defined(__DAV_35_FAMILY__) && !defined(KERNELUT)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202) && !defined(KERNELUT)
 #include "../conv2d_v2/conv2d_v2_common_tilingdata.h"
 using Conv2DTilingData = Ops::NN::Conv2dV2::Conv2DTilingData;
 #endif
@@ -44,7 +44,7 @@ __global__ __aicore__ void quant_conv2d(GM_ADDR x, GM_ADDR filter, GM_ADDR scale
     SetSysWorkspace(workspace);
     __gm__ uint8_t* user = GetUserWorkspace(workspace);
 
-#if !defined(__DAV_35_FAMILY__) && !defined(KERNELUT)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202) && !defined(KERNELUT)
     REGISTER_TILING_DEFAULT(Ops::NN::Conv2dV2::Conv2DTilingData);
 #endif
     GET_TILING_DATA(tilingData, tiling);

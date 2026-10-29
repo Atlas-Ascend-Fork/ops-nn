@@ -16,7 +16,7 @@
 #define K_MAX_SHAPE_DIM 0
 
 #include "../inc/macro.h"
-#if !defined(__DAV_35_FAMILY__) && !defined(KERNELUT)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202) && !defined(KERNELUT)
 #include "conv2d_v2_common_tilingdata.h"
 using Conv2DTilingData = Ops::NN::Conv2dV2::Conv2DTilingData;
 #endif
@@ -66,11 +66,6 @@ constexpr ConvFormat outputFormat = ConvFormat::NCHW;
 constexpr ConvFormat fmapFormat = ConvFormat::NHWC;
 constexpr ConvFormat weightFormat = ConvFormat::FRACTAL_Z_C04;
 constexpr ConvFormat outputFormat = ConvFormat::NHWC;
-#elif defined(FORMAT_X) && FORMAT_X == FORMAT_NCHW && defined(FORMAT_FILTER) && FORMAT_FILTER == FORMAT_NHWC && \
-    defined(FORMAT_Y) && FORMAT_Y == FORMAT_NCHW
-constexpr ConvFormat fmapFormat = ConvFormat::NCHW;
-constexpr ConvFormat weightFormat = ConvFormat::NHWC;
-constexpr ConvFormat outputFormat = ConvFormat::NCHW;
 #elif defined(FORMAT_X) && FORMAT_X == FORMAT_NCHW && defined(FORMAT_FILTER) && FORMAT_FILTER == FORMAT_FRACTAL_Z && \
     defined(FORMAT_Y) && FORMAT_Y == FORMAT_NHWC
 constexpr ConvFormat fmapFormat = ConvFormat::NCHW;
@@ -155,7 +150,7 @@ template <int8_t FmapTiling, int8_t WeightTiling, int8_t L1PingPong, int8_t L0Pi
 __global__ __aicore__ void conv2dv2(GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_ADDR offset_w, GM_ADDR y,
                                     GM_ADDR workspace, GM_ADDR tiling)
 {
-#if !defined(__DAV_35_FAMILY__) && !defined(KERNELUT)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202) && !defined(KERNELUT)
     REGISTER_TILING_DEFAULT(Ops::NN::Conv2dV2::Conv2DTilingData);
 #endif
     GET_TILING_DATA(tilingData, tiling);
