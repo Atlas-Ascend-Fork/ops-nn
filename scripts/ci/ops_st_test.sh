@@ -15,12 +15,6 @@ set -euo pipefail
 declare -A SOC_TO_ST_ARCH
 SOC_TO_ST_ARCH=(["ascend910b"]="arch22" ["ascend950"]="arch35")
 
-# Ops allowed in CI_ONLINE_ST mode
-ONLINE_ST_WHITELIST=(
-    "mat_mul_v3"
-    "batch_mat_mul_v3"
-)
-
 # Ops running kernel RDV with dynamic-shape compilation (-d=true, no -b).
 # These ops' installed binary_info_config.json carries a mis-injected
 # formatMode=static_nd_agnostic on non-ND declared formats, so the TTK
@@ -30,15 +24,6 @@ ONLINE_ST_WHITELIST=(
 KERNEL_DYN_COMPILE_WHITELIST=(
     "extend_conv_transpose"
 )
-
-# Check if an op is in the online ST mode whitelist
-is_op_in_online_whitelist() {
-    local op="$1"
-    for whitelisted in "${ONLINE_ST_WHITELIST[@]}"; do
-        [[ "${op}" == "${whitelisted}" ]] && return 0
-    done
-    return 1
-}
 
 # Check if an op is in the kernel dynamic-compile whitelist
 is_op_in_kernel_dyn_whitelist() {
@@ -196,7 +181,7 @@ parse_ops_from_filelist() {
     echo "${ops_set}"
 }
 
-# Check mode: parse ops from pr_filelist, match against ONLINE_ST_WHITELIST.
+# Check mode: parse ops from pr_filelist and decide whether st_950 is needed.
 # All logs go to stderr; stdout prints ONLY the machine-readable result line.
 run_ci_st_check() {
     local pr_file="$1"
@@ -220,24 +205,8 @@ run_ci_st_check() {
         return 0
     fi
 
-    local matched="" nonmatched="" op=""
-    for op in ${ops_list//,/ }; do
-        if is_op_in_online_whitelist "${op}"; then
-            matched="${matched:+${matched},}${op}"
-        else
-            nonmatched="${nonmatched:+${nonmatched},}${op}"
-        fi
-    done
-
-    print_msg "ci_st_check: parsed ops -> ${ops_list}"
-    if [[ -n "${matched}" ]]; then
-        print_msg "ci_st_check: ops in whitelist -> ${matched}"
-        [[ -n "${nonmatched}" ]] && print_msg "ci_st_check: ops NOT in whitelist -> ${nonmatched}"
-        echo "need_st=yes"
-    else
-        print_warning "ci_st_check: no op in whitelist, skip st_950 (blocked ops -> ${ops_list})"
-        echo "need_st=no"
-    fi
+    print_msg "ci_st_check: parsed ops -> ${ops_list}, need_st=yes"
+    echo "need_st=yes"
     return 0
 }
 
@@ -278,7 +247,7 @@ usage() {
     echo "    --case_path     (Optional) Custom base path for test cases. If specified, st_path will be {case_path}/\${op_type}/\${op_name}"
     echo "    --testcase, -t  (Optional) Specify testcase name(s) to run (comma-separated). Mutually exclusive; cannot specify both or repeat."
     echo "    --update_ttk    (Optional) Force re-download ops-test-kit by removing existing directory and cloning again."
-    echo "    --ci_st_check   (Optional) Must be used ONLY with --pr_filelist. Parse pr_filelist and check ops against ONLINE_ST_WHITELIST; prints 'need_st=yes|no' to stdout and exits (no env/ttk required)."
+    echo "    --ci_st_check   (Optional) Must be used ONLY with --pr_filelist. Parse pr_filelist and decide whether ST is needed; prints 'need_st=yes|no' to stdout and exits (no env/ttk required)."
     echo "Examples:"
     echo "    bash ops_st_test.sh"
     echo "    bash ops_st_test.sh pr_filelist.txt"
@@ -1137,12 +1106,6 @@ IFS=',' read -r -a op_name_array <<< "${ops_list}"
 all_result_csvs=()
 result_flag=0
 for op_name in "${op_name_array[@]}"; do
-    if is_online_st_mode; then
-        if ! is_op_in_online_whitelist "${op_name}"; then
-            print_msg "CI_ONLINE_ST mode: skipping ${op_name} (not in whitelist)"
-            continue
-        fi
-    fi
     op_results=$(run_single_op_test "${op_name}") || result_flag=1
     if [[ -n "${op_results}" ]]; then
         while IFS= read -r line; do
