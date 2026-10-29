@@ -21,14 +21,19 @@
 | 参数名 | 输入/输出/属性 | 描述 | 数据类型 | 数据格式 |
 | :--- | :--- | :--- | :--- | :--- |
 | bounds | 输入 | 各维度的边界值（即各维度的size），长度需与indices列表中tensor个数一致。 | INT64 | ND |
-| indices | 输入 | 索引张量列表，列表中每个张量按顺序对应bounds中的一个边界值。 | INT32、INT64 | ND |
+| indices_list | 输入 | 索引张量列表（变长输入），列表中每个张量按顺序对应bounds中的一个边界值。 | INT32、INT64 | ND |
 
 ## 约束说明
 
 - bounds必须为1维Tensor，长度范围为1～8。
 - bounds的长度需要等于indices列表中tensor的个数。
 - indices列表不能为空，列表中Tensor的个数不能超过8。
+- indices列表中的每个Tensor数据类型必须一致（同为INT32或同为INT64）。
 - indices列表中的每个Tensor支持0～8维、空Tensor；不支持9维及以上Tensor。
 - 空indices Tensor不执行索引检查；空indices列表为非法输入。
 - indices中的索引值支持负数。
 - 若索引越界，算子会触发硬件异常并终止程序。
+
+## 调用说明
+
+IndexCheck 通过 l0op 接口（`op_api/index_check.h` 中的 `l0op::IndexCheck`）被索引类 aclnn l2 接口（如 aclnnIndex、aclnnIndexPutV2）在 `GetWorkspaceSize` 阶段内部调用，用于在执行索引操作前进行索引合法性检查。本算子无独立对外 aclnn 单算子接口。

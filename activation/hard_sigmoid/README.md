@@ -64,6 +64,20 @@
       <td>FLOAT、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>
     </tr>
+    <tr>
+      <td>alpha</td>
+      <td>属性</td>
+      <td>可选属性，激活函数的斜率，公式中的α，默认值为1/6。</td>
+      <td>FLOAT</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>beta</td>
+      <td>属性</td>
+      <td>可选属性，激活函数的偏移，公式中的β，默认值为1/2。</td>
+      <td>FLOAT</td>
+      <td>-</td>
+    </tr>
   </tbody>
   </table>
 
@@ -77,6 +91,6 @@
 
 | 调用方式 | 调用样例                                                                   | 说明                                                           |
 |--------------|------------------------------------------------------------------------|--------------------------------------------------------------|
-| aclnn调用 | [test_aclnn_hard_sigmoid](examples/test_aclnn_hard_sigmoid.cpp) | 通过[aclnnHardsigmoid&aclnnInplaceHardsigmoid](docs/aclnnHardsigmoid&aclnnInplaceHardsigmoid.md)接口方式调用HardSigmoid算子。 |
-| aclnn调用 | [test_aclnn_inplace_hard_sigmoid](examples/test_aclnn_inplace_hard_sigmoid.cpp) | 通过[aclnnHardsigmoid&aclnnInplaceHardsigmoid](docs/aclnnHardsigmoid&aclnnInplaceHardsigmoid.md)接口方式调用HardSigmoid算子。 |
-| 图模式 | [test_geir_hard_sigmoid](examples/arch35/test_geir_hard_sigmoid.cpp) | 通过[算子IR](op_graph/hard_sigmoid_proto.h)构图方式调用HardSigmoid算子。 |
+| aclnn API | [test_aclnn_hard_sigmoid](examples/test_aclnn_hard_sigmoid.cpp) | 通过[aclnnHardsigmoid&aclnnInplaceHardsigmoid](docs/aclnnHardsigmoid&aclnnInplaceHardsigmoid.md)接口方式调用HardSigmoid算子。 |
+| aclnn API | [test_aclnn_inplace_hard_sigmoid](examples/test_aclnn_inplace_hard_sigmoid.cpp) | 通过[aclnnHardsigmoid&aclnnInplaceHardsigmoid](docs/aclnnHardsigmoid&aclnnInplaceHardsigmoid.md)接口方式调用HardSigmoid算子。 |
+| GE图模式 | [test_geir_hard_sigmoid](examples/arch35/test_geir_hard_sigmoid.cpp) | 通过[算子IR](op_graph/hard_sigmoid_proto.h)构图方式调用HardSigmoid算子。 |

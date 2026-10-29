@@ -90,14 +90,28 @@ ge::graphStatus IndexCheckTiling::Init()
                     "IndexCheck", "indices_list", "tensor count=" + std::to_string(tensorId_) + "; expected [1, 8]"),
                 return ge::GRAPH_FAILED);
 
-    auto idxTensorDtypePtr = tilingContext_->GetDynamicInputDesc(1, 0);
-    OP_CHECK_IF(idxTensorDtypePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "indices_list"),
+    for (uint64_t i = 0; i < tensorId_; i++) {
+        auto idxTensorDtypePtr = tilingContext_->GetDynamicInputDesc(1, i);
+        OP_CHECK_IF(idxTensorDtypePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "indices_list"),
+                    return ge::GRAPH_FAILED);
+        auto idxTensorDtype = idxTensorDtypePtr->GetDataType();
+        if (i == 0) {
+            indicesDtype_ = idxTensorDtype;
+            OP_CHECK_IF(
+                indicesDtype_ != ge::DT_INT32 && indicesDtype_ != ge::DT_INT64,
+                OP_LOGE_FOR_INVALID_DTYPE("IndexCheck", "indices_list",
+                                          ge::TypeUtils::DataTypeToSerialString(indicesDtype_), "[DT_INT32, DT_INT64]"),
                 return ge::GRAPH_FAILED);
-    indicesDtype_ = idxTensorDtypePtr->GetDataType();
-    if (indicesDtype_ != ge::DT_INT32 && indicesDtype_ != ge::DT_INT64) {
-        OP_LOGE_FOR_INVALID_DTYPE("IndexCheck", "indices_list", ge::TypeUtils::DataTypeToSerialString(indicesDtype_),
-                                  "[DT_INT32, DT_INT64]");
-        return ge::GRAPH_FAILED;
+        } else {
+            OP_CHECK_IF(idxTensorDtype != indicesDtype_,
+                        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                            "IndexCheck", "indices_list[0] and indices_list[" + std::to_string(i) + "]",
+                            (ge::TypeUtils::DataTypeToSerialString(indicesDtype_) + " and " +
+                             ge::TypeUtils::DataTypeToSerialString(idxTensorDtype))
+                                .c_str(),
+                            "indices tensors must have the same dtype"),
+                        return ge::GRAPH_FAILED);
+        }
     }
 
     auto boundsShapePtr = tilingContext_->GetInputShape(0);

@@ -57,7 +57,12 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
 
     // 调用aclrtMemcpy将host侧数据拷贝到device侧内存上
     ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret);
+        aclrtFree(*deviceAddr);
+        *deviceAddr = nullptr;
+        return ret;
+    }
 
     // 计算连续tensor的strides
     std::vector<int64_t> strides(shape.size(), 1);
@@ -71,12 +76,30 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
     return 0;
 }
 
+// 公共资源释放函数：正常路径与错误路径统一在此显式释放，避免资源泄漏。
+static void ReleaseResources(aclTensor* self, void* selfDeviceAddr, void* workspaceAddr, aclrtStream stream,
+                             int32_t deviceId)
+{
+    if (self != nullptr) {
+        aclDestroyTensor(self);
+    }
+    if (selfDeviceAddr != nullptr) {
+        aclrtFree(selfDeviceAddr);
+    }
+    if (workspaceAddr != nullptr) {
+        aclrtFree(workspaceAddr);
+    }
+    aclrtDestroyStream(stream);
+    aclrtResetDevice(deviceId);
+    aclFinalize();
+}
+
 int main()
 {
     // 1. （固定写法）device/stream初始化, 参考acl API手册
     // 根据自己的实际device填写deviceId
     int32_t deviceId = 0;
-    aclrtStream stream;
+    aclrtStream stream = nullptr;
     auto ret = Init(deviceId, &stream);
     // check根据自己的需要处理
     CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
@@ -84,52 +107,66 @@ int main()
     std::vector<int64_t> selfShape = {4, 2};
     void* selfDeviceAddr = nullptr;
     aclTensor* self = nullptr;
+    void* inplaceWorkspaceAddr = nullptr;
     std::vector<float> selfHostData = {-4, -3, -2, 0, 1, 2, 4, 5};
     // 创建self aclTensor
     ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    if (ret != ACL_SUCCESS) {
+        ReleaseResources(self, selfDeviceAddr, inplaceWorkspaceAddr, stream, deviceId);
+        return ret;
+    }
 
     // 3. 调用CANN算子库API
     // 调用aclnnInplaceHardsigmoid第一段接口
     uint64_t inplaceWorkspaceSize = 0;
     aclOpExecutor* inplaceExecutor;
     ret = aclnnInplaceHardsigmoidGetWorkspaceSize(self, &inplaceWorkspaceSize, &inplaceExecutor);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnInplaceHardsigmoidGetWorkspaceSize failed. ERROR: %d\n", ret);
-              return ret);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("aclnnInplaceHardsigmoidGetWorkspaceSize failed. ERROR: %d\n", ret);
+        ReleaseResources(self, selfDeviceAddr, inplaceWorkspaceAddr, stream, deviceId);
+        return ret;
+    }
     // 根据第一段接口计算出的workspaceSize申请device内存
-    void* inplaceWorkspaceAddr = nullptr;
     if (inplaceWorkspaceSize > 0) {
         ret = aclrtMalloc(&inplaceWorkspaceAddr, inplaceWorkspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
+        if (ret != ACL_SUCCESS) {
+            LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret);
+            ReleaseResources(self, selfDeviceAddr, inplaceWorkspaceAddr, stream, deviceId);
+            return ret;
+        }
     }
     // 调用aclnnInplaceHardsigmoid第二段接口
     ret = aclnnInplaceHardsigmoid(inplaceWorkspaceAddr, inplaceWorkspaceSize, inplaceExecutor, stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnInplaceHardsigmoid failed. ERROR: %d\n", ret); return ret);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("aclnnInplaceHardsigmoid failed. ERROR: %d\n", ret);
+        ReleaseResources(self, selfDeviceAddr, inplaceWorkspaceAddr, stream, deviceId);
+        return ret;
+    }
 
     // 4. （固定写法）同步等待任务执行结束
     ret = aclrtSynchronizeStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret);
+        ReleaseResources(self, selfDeviceAddr, inplaceWorkspaceAddr, stream, deviceId);
+        return ret;
+    }
 
     // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
     auto size = GetShapeSize(selfShape);
     std::vector<float> resultData(size, 0);
     ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), selfDeviceAddr,
                       size * sizeof(float), ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret);
+        ReleaseResources(self, selfDeviceAddr, inplaceWorkspaceAddr, stream, deviceId);
+        return ret;
+    }
     for (int64_t i = 0; i < size; i++) {
         LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
     }
 
     // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
-    aclDestroyTensor(self);
-
     // 7. 释放device资源，需要根据具体API的接口定义修改
-    aclrtFree(selfDeviceAddr);
-    if (inplaceWorkspaceSize > 0) {
-        aclrtFree(inplaceWorkspaceAddr);
-    }
-    aclrtDestroyStream(stream);
-    aclrtResetDevice(deviceId);
-    aclFinalize();
-    return 0;
+    ReleaseResources(self, selfDeviceAddr, inplaceWorkspaceAddr, stream, deviceId);
+    return ret;
 }

@@ -26,7 +26,7 @@ namespace ge {
  * Must be one of the following types: float16, float32, int32, bfloat16.
  *
  * @par Attributes:
- * @li alpha: An optional float. Slope of the operator, defaults to 0.16666666.
+ * @li alpha: An optional float. Slope of the operator, defaults to 0.16666667.
  * @li beta: An optional float. Offset of the operator, defaults to 0.5.
  *
  * @par Outputs:
@@ -40,7 +40,7 @@ namespace ge {
 REG_OP(HardSigmoid)
     .INPUT(input_x, TensorType({DT_FLOAT, DT_FLOAT16, DT_BF16, DT_INT32}))
     .OUTPUT(output_y, TensorType({DT_FLOAT, DT_FLOAT16, DT_BF16, DT_INT32}))
-    .ATTR(alpha, Float, 0.16666666)
+    .ATTR(alpha, Float, 0.16666667f)
     .ATTR(beta, Float, 0.5)
     .OP_END_FACTORY_REG(HardSigmoid)
 #endif // OPS_PROTO_DEF_HARDSIGMOID
