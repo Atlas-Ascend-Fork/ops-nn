@@ -24,7 +24,6 @@ using namespace ge;
 using namespace ApplyMomentumOp;
 
 namespace optiling {
-const size_t SYS_WORKSPACE = 16777216; // 16M
 const static std::map<int32_t, string> TENSOR_INDEX_LIST = {{1, "accum"}, {3, "grad"}};
 const static std::map<int32_t, string> SCALAR_INDEX_LIST = {{2, "lr"}, {4, "momentum"}};
 
@@ -169,7 +168,7 @@ ge::graphStatus ApplyMomentumRegbaseTiling::SetTilingData()
     OP_LOGD(tilingContext_->GetNodeName(), "Enter SetTilingData");
     size_t* currentWorkspace = tilingContext_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, currentWorkspace);
-    currentWorkspace[0] = SYS_WORKSPACE;
+    currentWorkspace[0] = 0;
     OP_LOGI(tilingContext_->GetNodeName(), "scheMode is %ld, useNesterov is %ld", tiling_->elewiseTiling.scheMode,
             useNesterovKey_);
     tilingKey_ = GET_TPL_TILING_KEY(tiling_->elewiseTiling.scheMode, useNesterovKey_);

@@ -128,7 +128,7 @@ ge::graphStatus ClippedSwigluArch35Tiling::GetPlatformInfo()
     OP_CHECK_IF((ubSize_ == 0), OP_LOGE(context_, "ubSize must > 0"), return ge::GRAPH_FAILED);
     blockSize_ = Ops::Base::GetUbBlockSize(context_);
     OP_CHECK_IF((blockSize_ <= 0), OP_LOGE(context_, "block size is invalid."), return ge::GRAPH_FAILED);
-    workspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
+    workspaceSize_ = 0;
     return ge::GRAPH_SUCCESS;
 }
 

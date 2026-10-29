@@ -36,7 +36,6 @@ using namespace Ops::Base;
 namespace optiling {
 
 constexpr uint32_t THREAD_DIM = 512;
-constexpr uint32_t ASCENDC_TOOLS_WORKSPACE = 16 * 1024 * 1024;
 constexpr int64_t SIMT_TILINGKEY = 0;
 constexpr int64_t SIMD_TILINGKEY = 1;
 constexpr int64_t SCHID_EMPTY = 2;
@@ -374,7 +373,7 @@ static ge::graphStatus Tiling4NLLLossAC(gert::TilingContext* context, uint32_t m
         usrSize = tilingParams.maxCoreNum * sizeof(float) * NUMBER_TWO;
     }
     size_t* workspace = context->GetWorkspaceSizes(1);
-    workspace[0] = ASCENDC_TOOLS_WORKSPACE + usrSize;
+    workspace[0] = platform_ascendc::PlatformAscendC(context->GetPlatformInfo()).GetLibApiWorkSpaceSize() + usrSize;
     OP_LOGD(context->GetNodeName(), "Tiling4NLLLossAC is end");
     return ge::GRAPH_SUCCESS;
 }

@@ -30,7 +30,6 @@ using namespace ge;
 using namespace Ops::Base;
 
 namespace optiling {
-static const int64_t ASCEND_WORKSPACE = 16 * 1024 * 1024;
 static const uint32_t REDUCTION_MEAN = 2;
 static const map<std::string, uint32_t> STR_2_INT = {{"none", 0}, {"sum", 1}, {"mean", 2}};
 static const map<ge::DataType, uint32_t> DTYEP_2_INT_KEY{{ge::DT_FLOAT16, 10}, {ge::DT_FLOAT, 20}, {ge::DT_BF16, 30}};
@@ -99,7 +98,7 @@ ge::graphStatus LpLossTiling::SetTilingData()
             key.Reduction, key.Dtype);
     if (static_cast<int32_t>(this->reduction) < 1) {
         size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
-        currentWorkspace[0] = ASCEND_WORKSPACE;
+        currentWorkspace[0] = 0;
         tilingContext->SetBlockDim(tiling->baseTiling.blockNum);
     }
     tilingContext->SetTilingKey(tilingKey);

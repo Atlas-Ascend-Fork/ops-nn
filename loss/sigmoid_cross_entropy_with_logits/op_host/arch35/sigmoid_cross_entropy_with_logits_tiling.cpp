@@ -25,7 +25,6 @@ using namespace SigmoidCrossEntropyWithLogitsOp;
 
 namespace optiling {
 
-const size_t ASCEND_WORKSPACE = 16777216;
 const gert::Shape g_vec_1_shape = {1};
 
 static inline const gert::Shape& EnsureNotScalar(const gert::Shape& in_shape)
@@ -152,7 +151,7 @@ ge::graphStatus SigmoidCrossEntropyWithLogitsTiling::DoElewiseTiling()
 
     size_t* currentWorkspace = tilingContext_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, currentWorkspace);
-    currentWorkspace[0] = ASCEND_WORKSPACE;
+    currentWorkspace[0] = 0;
 
     return ge::GRAPH_SUCCESS;
 }

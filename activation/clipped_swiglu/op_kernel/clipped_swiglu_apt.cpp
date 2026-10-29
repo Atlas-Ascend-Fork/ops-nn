@@ -28,7 +28,6 @@ __global__ __aicore__ void clipped_swiglu(GM_ADDR x, GM_ADDR groupIndex, GM_ADDR
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     REGISTER_TILING_DEFAULT(ClippedSwigluArch35TilingData);
     GET_TILING_DATA_WITH_STRUCT(ClippedSwigluArch35TilingData, tilingData, tiling);
-    GM_ADDR usrWorkspace = AscendC::GetUserWorkspace(workspace);
     TPipe pipe;
 
     if constexpr (isInterleaved == 1) {

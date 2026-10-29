@@ -46,7 +46,6 @@ constexpr int64_t MAX_INT32 = 2147483647; // INT32最大值
 constexpr int64_t MAX_CORE_NUM = 64;
 constexpr int64_t VF_MAX_THREAD_NUM = 256;
 constexpr int64_t EXCEPTED_KERNEL_SIZE = 2;
-constexpr int64_t SYS_WORK_SPACE_SIZE = static_cast<int64_t>(16 * 1024 * 1024);
 constexpr int64_t SCH_KEY = 1000; // 基础tilingkey为1000
 
 class DeformableOffsetsGradAscendCTilingImpl {
@@ -448,7 +447,7 @@ ge::graphStatus DeformableOffsetsGradAscendCTilingImpl::DoTiling()
 
     realUseCoreNum_ = (realCoreNum_ > clearGradXCoreNum_) ? realCoreNum_ : clearGradXCoreNum_;
     FillTilingData();
-    size_t sysWorkSpaceSize = SYS_WORK_SPACE_SIZE;
+    size_t sysWorkSpaceSize = 0;
     size_t* userWorkSpaceSize = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, userWorkSpaceSize);
     userWorkSpaceSize[0] = sysWorkSpaceSize;

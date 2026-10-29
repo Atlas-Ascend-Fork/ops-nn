@@ -31,7 +31,6 @@ const size_t INPUT_INDEX_SHAPE = 1;
 const size_t NEGTIVE_CONST_ONE = -1;
 } // namespace
 namespace optiling {
-static const int64_t ASCEND_WORKSPACE = 16 * 1024 * 1024;
 static const uint32_t REDUCTION_MEAN = 2;
 static const float NEGTIVE_CONST_HALF = -0.5;
 static const map<std::string, uint32_t> STR_2_INT = {{"none", 0}, {"sum", 1}, {"mean", 2}};
@@ -84,7 +83,7 @@ ge::graphStatus SmoothL1LossV2Tiling::SetTilingData()
             key.Reduction, key.Dtype);
     if (static_cast<int32_t>(this->reduction) < 1) {
         size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
-        currentWorkspace[0] = ASCEND_WORKSPACE;
+        currentWorkspace[0] = 0;
         tilingContext->SetBlockDim(tiling->baseTiling.blockNum);
     }
     tilingContext->SetTilingKey(tilingKey);

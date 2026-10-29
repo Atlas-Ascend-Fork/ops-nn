@@ -58,7 +58,6 @@ constexpr uint64_t SCHID_SPLIT_R = 1;
 constexpr uint64_t NEED_BROC = 1;
 constexpr uint64_t IS_SCALAR = 2;
 constexpr uint64_t SIMD_SIMT_DCACHE_SIZE = static_cast<uint64_t>(32 * 1024);
-constexpr size_t WORKSPACE_SIZE = static_cast<size_t>(16 * 1024 * 1024);
 
 struct BaseTilingData {
     int64_t realCoreNum = 0;
@@ -68,21 +67,21 @@ struct BaseTilingData {
     int64_t tailBlockFactor = 0; // a轴分核，尾核数据量
     int64_t rUbNumFactor = 0; // R轴切分，一次UB可以放下的数据量，全载模板下等于r，注意32b对齐
     int64_t aUbNumFactor = 0; // A轴切分，一次UB可以放下的数据量，非全载模板下等于1，注意32b对齐
-    int64_t aLoopTimes = 0;     //主核A方向循环搬移数据的次数
-    int64_t aLoopTimesT = 0;    //尾核A方向循环搬移数据的次数
-    int64_t aLoopTail = 0;      //主核A方向尾块的数据量
-    int64_t aLoopTailT = 0;     //尾核A方向尾块的数据量
-    int64_t rLoopTime = 0;      //不能全载时，R轴反向的循环次数
-    int64_t rLoopTile = 0;      //不能全载时，R轴反向的尾块数据量
-    int64_t rLoopTileAlign = 0; //不能全载时，R轴反向的尾块数据量
-    int64_t kTimesTail = 0;     //不能全载时，完全二分累加，存在主尾块相加的次数
-    int64_t kTimes = 0;         //不能全载时，完全二分累加，2的k次方内循环次数
+    int64_t aLoopTimes = 0;     // 主核A方向循环搬移数据的次数
+    int64_t aLoopTimesT = 0;    // 尾核A方向循环搬移数据的次数
+    int64_t aLoopTail = 0;      // 主核A方向尾块的数据量
+    int64_t aLoopTailT = 0;     // 尾核A方向尾块的数据量
+    int64_t rLoopTime = 0;      // 不能全载时，R轴反向的循环次数
+    int64_t rLoopTile = 0;      // 不能全载时，R轴反向的尾块数据量
+    int64_t rLoopTileAlign = 0; // 不能全载时，R轴反向的尾块数据量
+    int64_t kTimesTail = 0;     // 不能全载时，完全二分累加，存在主尾块相加的次数
+    int64_t kTimes = 0;         // 不能全载时，完全二分累加，2的k次方内循环次数
     int64_t tilingKey = 0;
 };
 
 class SparseSoftmaxCrossEntropyWithLogitsTiling {
 public:
-    explicit SparseSoftmaxCrossEntropyWithLogitsTiling(gert::TilingContext* context) : context_(context){};
+    explicit SparseSoftmaxCrossEntropyWithLogitsTiling(gert::TilingContext* context) : context_(context) {};
 
     ge::graphStatus Init();
     ge::graphStatus DoTiling();
@@ -404,7 +403,7 @@ ge::graphStatus SparseSoftmaxCrossEntropyWithLogitsTiling::DoTiling()
     context_->SetLocalMemorySize(ubSize);
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
-    workspaces[0] = WORKSPACE_SIZE;
+    workspaces[0] = 0;
     OP_LOGD(context_->GetNodeName(), "Exit SparseSoftmaxCrossEntropyWithLogitsTiling DoTiling.");
     return ge::GRAPH_SUCCESS;
 }

@@ -26,7 +26,6 @@
 #include "op_host/tiling_util.h"
 
 namespace optiling {
-constexpr uint32_t SYS_WORKSPACE_SIZE = static_cast<size_t>(16 * 1024 * 1024);
 constexpr uint64_t INPUT_GRAD_LOSS_IDX = 0;
 constexpr uint64_t INPUT_LOG_PROB_IDX = 1;
 constexpr uint64_t INPUT_TARGET_IDX = 2;
@@ -324,7 +323,8 @@ ge::graphStatus CrossEntropyLossGradRegbaseTiling::SetTilingData()
     size_t usrSize = static_cast<size_t>(totalCoreNum * FP32_INT32_DTYPE_SIZE * blockSize);
     size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext, currentWorkspace);
-    currentWorkspace[0] = usrSize + SYS_WORKSPACE_SIZE;
+    currentWorkspace[0] = usrSize +
+                          platform_ascendc::PlatformAscendC(tilingContext->GetPlatformInfo()).GetLibApiWorkSpaceSize();
 
     PrintInfo();
     return ge::GRAPH_SUCCESS;
@@ -450,7 +450,7 @@ ge::graphStatus CrossEntropyLossGradRegbaseTiling::DoEmptyTensorTiling()
     tilingContext->SetTilingKey(tilingKey);
 
     size_t* workSpaces = tilingContext->GetWorkspaceSizes(1);
-    workSpaces[0] = SYS_WORKSPACE_SIZE;
+    workSpaces[0] = 0;
     tilingContext->SetBlockDim(1);
     return ge::GRAPH_SUCCESS;
 }

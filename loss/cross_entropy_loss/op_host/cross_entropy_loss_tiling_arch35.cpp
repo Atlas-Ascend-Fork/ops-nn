@@ -52,7 +52,6 @@ constexpr int64_t A_NUM = 6;     // shape为A的的ub数量
 constexpr int64_t SUM_NUM = 6;   // redution为sum和mean时所需要reduceSum的数量
 constexpr int64_t DOUBLE_BUFFER_2 = 2;
 constexpr int64_t DOUBLE_BUFFER_1 = 1;
-constexpr size_t WORKSPACE_SIZE = static_cast<size_t>(16 * 1024 * 1024);
 
 struct BaseTilingData {
     int64_t realCoreNum;
@@ -555,7 +554,8 @@ ge::graphStatus CrossEntropyLossRegbaseTiling::DoTiling()
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
     int64_t extraWorkSpace = coreNum * blockSize * DTYPE_LEN_FP32 * CONST_3;
     int64_t workSpaceSize = reduction == static_cast<uint64_t>(0) ? 0 : extraWorkSpace;
-    workspaces[0] = WORKSPACE_SIZE + workSpaceSize;
+    workspaces[0] = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo()).GetLibApiWorkSpaceSize() +
+                    workSpaceSize;
     OP_LOGI(context_, "End dotiling, workspaces is %ld", extraWorkSpace);
     return ge::GRAPH_SUCCESS;
 }

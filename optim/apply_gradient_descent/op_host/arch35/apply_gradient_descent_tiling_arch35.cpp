@@ -28,7 +28,6 @@
 #include "op_host/tiling_templates_registry.h"
 namespace optiling {
 using namespace ApplyGradientDescentOp;
-const size_t ASCEND_WORKSPACE = 16777216; // 16 * 1024 * 1024
 const gert::Shape g_vec_1_shape = {1};
 
 ge::graphStatus ApplyGradientDescentTiling::SetTilingData()
@@ -42,7 +41,7 @@ ge::graphStatus ApplyGradientDescentTiling::SetTilingData()
 
     size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext, currentWorkspace);
-    currentWorkspace[0] = ASCEND_WORKSPACE;
+    currentWorkspace[0] = 0;
     return ge::GRAPH_SUCCESS;
 }
 

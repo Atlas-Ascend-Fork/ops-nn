@@ -31,7 +31,6 @@ namespace optiling {
 using namespace L1LossGradKernel;
 using namespace Ops::Base;
 
-const size_t ASCEND_WORKSPACE = 16777216; // 16MB
 constexpr static uint64_t COMMON_TILING_PRIORITY = 0;
 static const size_t INPUT_PREDICT_INDEX = 1;
 static const size_t INPUT_GRADS_INDEX = 0;

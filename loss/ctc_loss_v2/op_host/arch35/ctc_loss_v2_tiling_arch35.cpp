@@ -262,7 +262,8 @@ ge::graphStatus Tiling4CTCLossV2ForAscendC(gert::TilingContext* context)
     context->SetBlockDim(usedCoreNum);
 
     // set workspace
-    size_t SYSTEM_WORKSPACE_SIZE = 16 * 1024 * 1024;
+    size_t SYSTEM_WORKSPACE_SIZE = platform_ascendc::PlatformAscendC(context->GetPlatformInfo())
+                                       .GetLibApiWorkSpaceSize();
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = SYSTEM_WORKSPACE_SIZE + EXTRA_WORKSPACE_SIZE;
     tilingData.set_workspaceSize(currentWorkspace[0]);

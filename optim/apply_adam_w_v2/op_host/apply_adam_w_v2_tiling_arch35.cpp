@@ -28,7 +28,6 @@ using namespace ge;
 using namespace ApplyAdamWV2RegbaseOp;
 
 namespace optiling {
-const size_t SYS_WORKSPACE = 16777216; // 16M
 constexpr static int32_t OPTIONAL_INPUT_INDEX = 11;
 constexpr static int32_t SCALAR_INPUT_INDEX = 4;
 constexpr static int32_t INPUT_GRAD_INDEX = 3;
@@ -63,7 +62,7 @@ ge::graphStatus ApplyAdamWV2RegbaseTiling::SetTilingData()
     }
     size_t* currentWorkspace = tilingContext_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, currentWorkspace);
-    currentWorkspace[0] = SYS_WORKSPACE;
+    currentWorkspace[0] = 0;
     PrintInfo();
     tilingKey = GET_TPL_TILING_KEY(schMode, amsgrad);
     tilingContext_->SetTilingKey(tilingKey);

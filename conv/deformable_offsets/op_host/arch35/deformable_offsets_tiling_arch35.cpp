@@ -421,7 +421,7 @@ ge::graphStatus DeformableOffsetTiling(gert::TilingContext* context, int64_t max
     context->GetRawTilingData()->SetDataSize(deformableOffsetTilingData.GetDataSize());
 
     size_t usrSize = 0;
-    size_t sysWorkSpaceSize = 16 * 1024 * 1024;
+    size_t sysWorkSpaceSize = 0;
 
     size_t* userWorkSpaceSize = context->GetWorkspaceSizes(1);
     userWorkSpaceSize[0] = usrSize + sysWorkSpaceSize;

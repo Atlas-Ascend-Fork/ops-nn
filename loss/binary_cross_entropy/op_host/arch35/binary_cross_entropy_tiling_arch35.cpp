@@ -28,7 +28,6 @@ using namespace Ops::Base;
 
 namespace optiling {
 using namespace BinaryCrossEntropy;
-const size_t ASCEND_WORKSPACE = 16777216; // 16MB
 
 static const size_t INPUT_X_INDEX = 0;
 static const size_t INPUT_Y_INDEX = 1;
@@ -249,7 +248,7 @@ ge::graphStatus BinaryCrossEntropyTiling::SetTilingData()
             bceTilingKey.dType);
     if (this->isReductionNone) {
         size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
-        currentWorkspace[0] = static_cast<size_t>(ASCEND_WORKSPACE);
+        currentWorkspace[0] = 0;
         tilingContext->SetBlockDim(tiling->eleBaseTiling.blockNum);
     }
     tilingContext->SetTilingKey(tilingKey);

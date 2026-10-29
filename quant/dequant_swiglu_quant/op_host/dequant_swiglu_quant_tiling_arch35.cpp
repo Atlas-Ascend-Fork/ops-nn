@@ -47,7 +47,6 @@ constexpr int64_t BLOCK_SIZE = 32;
 constexpr int64_t BLOCK_ELEM_B32 = BLOCK_SIZE / static_cast<int64_t>(sizeof(float));
 constexpr int64_t BLOCK_ELEM_B16 = BLOCK_SIZE / static_cast<int64_t>(sizeof(int16_t));
 constexpr int64_t BLOCK_ELEM_B8 = BLOCK_SIZE / static_cast<int64_t>(sizeof(int8_t));
-constexpr size_t SYS_WORK_SPACE_SIZE = static_cast<size_t>(16 * 1024 * 1024);
 constexpr uint64_t WORKSPACE_SIZE = 32;
 constexpr int64_t UB_REVERSE = 1024;
 constexpr int64_t SWI_FACTOR = 2;
@@ -1198,7 +1197,7 @@ ge::graphStatus DequantSwigluQuantV35DskTiling::GetWorkspaceSize()
         usrSize = maxPreCore_ * outDimy_ * sizeof(float);
     }
     OP_LOGI(context_->GetNodeName(), "usrSize is %u", usrSize);
-    workspaceSize_ = SYS_WORK_SPACE_SIZE + usrSize;
+    workspaceSize_ = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo()).GetLibApiWorkSpaceSize() + usrSize;
     return ge::GRAPH_SUCCESS;
 }
 

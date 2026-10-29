@@ -49,7 +49,6 @@ constexpr uint64_t SCHID_SPLIT_R = 1;
 constexpr uint64_t SCHID_EMPTY = 2;
 constexpr uint64_t NEED_BROC = 1;
 constexpr uint64_t IS_SCALAR = 2;
-constexpr size_t WORKSPACE_SIZE = static_cast<size_t>(16 * 1024 * 1024);
 
 struct BaseTilingData {
     int64_t realCoreNum = 0;
@@ -441,7 +440,7 @@ ge::graphStatus SoftmaxCrossEntropyWithLogitsRegbaseTiling::DoTiling()
     context_->SetBlockDim(tilingData_->realCoreNum);
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
-    workspaces[0] = WORKSPACE_SIZE;
+    workspaces[0] = 0;
     OP_LOGD(context_->GetNodeName(), "Exit SoftmaxCrossEntropyWithLogitsRegbaseTiling DoTiling.");
     return ge::GRAPH_SUCCESS;
 }

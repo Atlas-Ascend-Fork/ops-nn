@@ -47,7 +47,6 @@ constexpr uint32_t INPUT_X_FOUR_DIM = 4;
 constexpr uint32_t INPUT_TARGET_IDX = 2;
 constexpr int64_t TILING_OFFSET = 10;
 constexpr uint32_t DCACHE_SIZE = 32 * 1024;
-constexpr uint32_t ASCENDC_TOOLS_WORKSPACE = 16 * 1024 * 1024;
 
 constexpr uint64_t MAGIC_AND_SPECIAL_CONSTANT = 128;
 
@@ -199,7 +198,7 @@ uint64_t NLLLossGradSimtTiling::GetTilingKey() const { return tilingKey_; }
 ge::graphStatus NLLLossGradSimtTiling::GetWorkspaceSize()
 {
     size_t* workspace = context_->GetWorkspaceSizes(1);
-    workspace[0] = ASCENDC_TOOLS_WORKSPACE;
+    workspace[0] = 0;
     return ge::GRAPH_SUCCESS;
 }
 
