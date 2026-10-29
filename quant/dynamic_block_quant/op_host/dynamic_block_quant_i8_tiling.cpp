@@ -169,6 +169,10 @@ ge::graphStatus DynamicBlockQuantI8::GetAttr(DynamicBlockQuantTilingParam& tilin
                 return ge::GRAPH_FAILED);
     std::string roundModeStr = attrRoundMode;
     RoundModeList roundMode = GetRoundMode(roundModeStr);
+    OP_CHECK_IF(roundMode != RoundModeList::MODE_RINT,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "round_mode", roundModeStr,
+                                                      "The value of round_mode must be rint"),
+                return ge::GRAPH_FAILED);
     tilingParam.roundMode = static_cast<int64_t>(roundMode);
 
     auto* attrDstType = attrs->GetAttrPointer<int64_t>(INDEX_ATTR_DST_DTYPE);
