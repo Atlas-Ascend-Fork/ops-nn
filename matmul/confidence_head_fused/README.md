@@ -13,7 +13,7 @@
 
 ## 功能说明
 
-将 hidden 与可选 markov_emb 沿最后一维逻辑拼接，与一维 weight 做矩阵向量乘，加上可选 bias，经温度缩放、可选截断和 Sigmoid 后，输出 FP32 置信度。
+将hidden与可选markov_emb沿最后一维逻辑拼接，与一维weight做矩阵向量乘，加上可选bias，经温度缩放、可选截断和Sigmoid后，输出FP32置信度。
 
 ```text
 features = cat([hidden, markov_emb], dim=-1)  # markov_emb 缺省时为 hidden
@@ -29,27 +29,29 @@ out = 1 / (1 + exp(u))
 
 | 参数名 | 输入/输出/属性 | 描述 | 数据类型 | 数据格式 |
 | --- | --- | --- | --- | --- |
-| hidden | 输入 | 特征，shape 为 [N,K1] 或 [B,N,K1]。 | FLOAT16、BFLOAT16 | ND |
-| weight | 输入 | 所有行共用的投影权重，shape 为 [K1+K2]，类型与 hidden 一致。 | FLOAT16、BFLOAT16 | ND |
-| markov_emb | 可选输入 | shape 为 [N,K2] 或 [B,N,K2]，前导维度、类型与 hidden 一致。缺省时 K2=0。 | FLOAT16、BFLOAT16 | ND |
-| temperature | 可选输入 | shape 为 [1]；缺省或当前值为正负零时按 1 计算。 | FLOAT32 | ND |
-| bias | 可选输入 | shape 为 [N]，在 batch 间广播。 | FLOAT32 | ND |
+| hidden | 输入 | 特征，shape为 [N,K1] 或 [B,N,K1]。 | FLOAT16、BFLOAT16 | ND |
+| weight | 输入 | 所有行共用的投影权重，shape为 [K1+K2]，类型与hidden一致。 | FLOAT16、BFLOAT16 | ND |
+| markov_emb | 可选输入 | shape为 [N,K2] 或 [B,N,K2]，前导维度、类型与hidden一致。缺省时K2=0。 | FLOAT16、BFLOAT16 | ND |
+| temperature | 可选输入 | shape为 [1]；缺省或当前值为正负零时按1计算。 | FLOAT32 | ND |
+| bias | 可选输入 | shape为 [N]，在batch间广播。 | FLOAT32 | ND |
 | clamp_low | 可选属性 | 指数输入下限，未传入时不做下限截断。 | Float | - |
 | clamp_high | 可选属性 | 指数输入上限，未传入时不做上限截断。 | Float | - |
-| out | 输出 | shape 为 [N] 或 [B,N]。 | FLOAT32 | ND |
+| out | 输出 | shape为 [N] 或 [B,N]。 | FLOAT32 | ND |
 
 ## 约束说明
 
-- 支持合法基础格式，不支持 FRACTAL_NZ。ACLNN 内部将输入转连续并统一为 ND，支持合法非连续输入及输出视图。
-- hidden、weight、markov_emb 必须同为 FLOAT16 或同为 BFLOAT16；temperature、bias、out 为 FLOAT32。
-- 各维度、B*N 和 K1+K2 须位于 [0,UINT32_MAX]；非空 GEMV 受权重全载 L1 及分块所需片上容量限制。
-- temperature 由 Kernel 读取当前值，允许负值，不修改输入 Tensor。
-- clamp 作用于 -z/T_eff，先执行下限截断，再执行上限截断。下限 -2147483648.0、上限 2147483648.0 为 FP32 约定值，表示跳过对应截断；显式传入 0 时正常截断。
-- K1+K2=0 时仍执行后处理；B=0 或 N=0 时输出为空。
+- 支持合法基础格式，不支持FRACTAL_NZ。ACLNN内部将输入转连续并统一为ND，支持合法非连续输入及输出视图。
+- hidden、weight、markov_emb必须同为FLOAT16或同为BFLOAT16；temperature、bias、out为FLOAT32。
+- 各维度、B*N和K1+K2须位于 [0,UINT32_MAX]；非空GEMV受权重全载L1及分块所需片上容量限制。
+- temperature由Kernel读取当前值，允许负值，不修改输入Tensor。
+- clamp作用于 -z/T_eff，先执行下限截断，再执行上限截断。下限 -2147483648.0、上限2147483648.0为FP32约定值，表示跳过对应截断；显式传入0时正常截断。
+- K1+K2=0时仍执行后处理；B=0或N=0时输出为空。
 
-## 调用方式
+## 调用说明
 
-| 调用方式 | 接口 |
-| --- | --- |
-| ACLNN | [aclnnConfidenceHeadFused](docs/aclnnConfidenceHeadFused.md)（[调用示例](examples/arch35/test_aclnn_confidence_head_fused.cpp)） |
-| Torch 单算子 | [confidence_head_fused](docs/torchapi_confidence_head_fused.md) |
+- <term>Ascend 950PR&950DT系列产品</term>：
+
+  | 调用方式 | 样例代码 | 说明 |
+  | --- | --- | --- |
+  | aclnn接口 | [test_aclnn_confidence_head_fused](examples/arch35/test_aclnn_confidence_head_fused.cpp) | 通过<br>[aclnnConfidenceHeadFused](docs/aclnnConfidenceHeadFused.md)<br>接口调用ConfidenceHeadFused算子。 |
+  | PyTorch API | [调用示例](docs/torchapi_confidence_head_fused.md#调用示例) | 通过<br>[confidence_head_fused](docs/torchapi_confidence_head_fused.md)<br>接口调用ConfidenceHeadFused算子。 |

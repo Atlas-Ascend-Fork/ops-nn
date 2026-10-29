@@ -3020,6 +3020,16 @@
   </tr>
   <tr>
     <td>matmul</td>
+    <td><a href="../../matmul/confidence_head_fused/README.md">confidence_head_fused</a></td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✗</td>
+    <td>AI Core</td>
+    <td>融合特征拼接、矩阵向量乘、可选偏置、温度缩放、截断和Sigmoid，输出每行置信度。</td>
+  </tr>
+  <tr>
+    <td>matmul</td>
     <td><a href="../../matmul/convert_weight_to_int4_pack/README.md">convert_weight_to_int4_pack</a></td>
     <td>✗</td>
     <td>✓</td>

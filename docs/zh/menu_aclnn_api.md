@@ -73,6 +73,7 @@
 - [aclnnClippedSwiglu](../../activation/clipped_swiglu/docs/aclnnClippedSwiglu.md)
 - [aclnnClippedSwigluV2](../../activation/clipped_swiglu/docs/aclnnClippedSwigluV2.md)
 - [aclnnClippedSwigluGrad](../../activation/clipped_swiglu_grad/docs/aclnnClippedSwigluGrad.md)
+- [aclnnConfidenceHeadFused](../../matmul/confidence_head_fused/docs/aclnnConfidenceHeadFused.md)
 - [aclnnConvDepthwise2d](../../conv/convolution_forward/docs/aclnnConvDepthwise2d.md)
 - [aclnnConvTbc](../../conv/convolution_forward/docs/aclnnConvTbc.md)
 - [aclnnConvTbcBackward](../../conv/convolution_backward/docs/aclnnConvTbcBackward.md)
