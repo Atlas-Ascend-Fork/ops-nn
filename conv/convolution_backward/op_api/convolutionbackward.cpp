@@ -11,6 +11,7 @@
 #include "convolutionbackward.h"
 #include "convolution_backward_white_list.h"
 #include "aclnn_kernels/common/op_error_check.h"
+#include "aclnn_kernels/transdata.h"
 #include "aclnn_kernels/transpose.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_def.h"
@@ -954,19 +955,15 @@ static aclnnStatus TransposeConv3DBackpropFilterInputs(const aclTensor*& input, 
     // change input format
     input = l0op::Transpose(input, permAfter, executor);
     OP_CHECK(input != nullptr, OP_LOGD("input transpose return null."), return ACLNN_ERR_INNER_INFERSHAPE_ERROR);
-    // l0op返回const指针，此处仅需修改tensor的format元数据
-    aclTensor* mutableInput = const_cast<aclTensor*>(input);
-    mutableInput->SetOriginalFormat(Format::FORMAT_NDHWC);
-    mutableInput->SetStorageFormat(Format::FORMAT_NDHWC);
-    mutableInput->SetViewFormat(Format::FORMAT_NDHWC);
+    input = l0op::ReFormat(input, Format::FORMAT_NDHWC);
+    OP_CHECK(input != nullptr, OP_LOGD("input reformat return null."), return ACLNN_ERR_INNER_INFERSHAPE_ERROR);
     // change output format
     outBackprop = l0op::Transpose(outBackprop, permAfter, executor);
     OP_CHECK(outBackprop != nullptr, OP_LOGD("outBackprop transpose return null."),
              return ACLNN_ERR_INNER_INFERSHAPE_ERROR);
-    aclTensor* mutableOutBackprop = const_cast<aclTensor*>(outBackprop);
-    mutableOutBackprop->SetOriginalFormat(Format::FORMAT_NDHWC);
-    mutableOutBackprop->SetStorageFormat(Format::FORMAT_NDHWC);
-    mutableOutBackprop->SetViewFormat(Format::FORMAT_NDHWC);
+    outBackprop = l0op::ReFormat(outBackprop, Format::FORMAT_NDHWC);
+    OP_CHECK(outBackprop != nullptr, OP_LOGD("outBackprop reformat return null."),
+             return ACLNN_ERR_INNER_INFERSHAPE_ERROR);
     // change stride
     if (stride5->Size() == CONV3D_DIM) {
         auto oriStrideData = stride5->GetData();
