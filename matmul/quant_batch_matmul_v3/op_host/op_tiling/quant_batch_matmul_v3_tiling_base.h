@@ -110,6 +110,7 @@ public:
     uint64_t x2TableKSize = 0UL;
     uint64_t x2TableNSize = 0UL;
     const char* opName = nullptr;
+    ge::Format scaleFormat = ge::FORMAT_ND;
     ge::Format aFormat = ge::FORMAT_ND;
     ge::Format bFormat = ge::FORMAT_ND;
     ge::Format cFormat = ge::FORMAT_ND; // 新增数据成员要修改Reset函数

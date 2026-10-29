@@ -13,6 +13,7 @@
  * \brief Blaze tensor API entries for quant batch matmul MX kernels with and without batch.
  */
 #pragma once
+#include "qbmm_mx_scale_layout.h"
 #include "quant_batch_matmul_v3_tiling_data.h"
 #include "blaze/gemm/block/block_scheduler_qbmm.h"
 #include "blaze/epilogue/block/block_epilogue_empty.h"
@@ -43,8 +44,9 @@ __aicore__ inline void QbmmMxTensorApiKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR s
 
     // 定义MMAD类型
     using DispatchPolicy = Blaze::Gemm::MatmulWithScaleMx<FULL_LOAD_MODE, false>;
-    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType, bLayout, OutType, cLayout,
-                                                    BiasType, cLayout>;
+    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType,
+                                                    QbmmMxWeightAndScaleLayout<bLayout>, OutType, cLayout, BiasType,
+                                                    cLayout>;
 
     // 定义Kernel类型
     using MatmulKernel = Blaze::Gemm::Kernel::GemmUniversal<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
@@ -84,8 +86,9 @@ __aicore__ inline void QbmmMxWithoutBatchTensorApiKernel(GM_ADDR aGM, GM_ADDR bG
 
     using DispatchPolicy = Blaze::Gemm::MatmulWithScaleMx<FULL_LOAD_MODE, false,
                                                           Blaze::Gemm::KernelMmadWithScaleMxWithoutBatch>;
-    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType, bLayout, OutType, cLayout,
-                                                    BiasType, cLayout>;
+    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType,
+                                                    QbmmMxWeightAndScaleLayout<bLayout>, OutType, cLayout, BiasType,
+                                                    cLayout>;
 
     using MatmulKernel = Blaze::Gemm::Kernel::GemmUniversal<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
     using Params = typename MatmulKernel::Params;

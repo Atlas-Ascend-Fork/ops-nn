@@ -1308,6 +1308,11 @@ aclnnStatus aclnnQuantMatmulV5GetWorkspaceSize(const aclTensor* x1, const aclTen
     OP_CHECK_COMM_INPUT(workspaceSize, executor);
     if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510) {
         OP_CHECK_NULL(x2, return ACLNN_ERR_PARAM_NULLPTR);
+        OP_CHECK(
+            x2Scale == nullptr || !IsFormatNZ(x2Scale),
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                    "ScaleNZ requires aclnnQuantMatmulWeightNz with NZ x2; aclnnQuantMatmulV5 does not support it."),
+            return ACLNN_ERR_PARAM_INVALID);
         OP_CHECK(!IsFormatNZ(x2), OP_LOGE_FOR_INVALID_FORMAT(kOpName, "x2", "FORMAT_FRACTAL_NZ", "FORMAT_ND"),
                  return ACLNN_ERR_PARAM_INVALID);
     }

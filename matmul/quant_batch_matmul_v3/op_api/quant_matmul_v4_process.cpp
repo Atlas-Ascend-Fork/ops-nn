@@ -84,6 +84,21 @@ static const aclTensor* SetTensorToNDFormat(const aclTensor* input)
     return formatTensor;
 }
 
+static aclTensor* CreateScaleDescriptorView(const aclTensor* input, aclOpExecutor* executor)
+{
+    auto view = executor->CreateView(input, input->GetViewShape(), input->GetViewOffset());
+    CHECK_RET(view != nullptr, nullptr);
+    // CreateView shares the allocation. Preserve private storage and the caller's
+    // actual strides/offset so malformed descriptors still fail normal validation.
+    view->SetViewStrides(input->GetViewStrides());
+    view->SetStorageShape(input->GetStorageShape());
+    view->SetViewFormat(input->GetViewFormat());
+    view->SetStorageFormat(input->GetStorageFormat());
+    view->SetOriginalFormat(input->GetOriginalFormat());
+    view->SetOriginalShape(input->GetOriginalShape());
+    return view;
+}
+
 static aclIntArray* GetPerm(int64_t dim, aclOpExecutor* executor)
 {
     CHECK_RET(dim >= MIN_DIM_NUM_ND, nullptr);
@@ -307,6 +322,11 @@ static aclnnStatus PostMatmulCalcProcess(const aclTensor* matmulRet, TupleTensor
 
 static inline bool MxScaleContiguousProcess(const aclTensor*& mxScaleTensor, aclOpExecutor* executor)
 {
+    // Preserve private C0=2 storage; the common checker validates it before the L0 call.
+    if (mxScaleTensor != nullptr &&
+        ge::GetPrimaryFormat(mxScaleTensor->GetStorageFormat()) == op::Format::FORMAT_FRACTAL_NZ) {
+        return true;
+    }
     if (mxScaleTensor == nullptr || mxScaleTensor->GetViewShape().GetDimNum() < MX_SCALE_MAX_DIM) {
         OP_LOGD("MX scale no need to do contiguous process.");
         return true;
@@ -533,6 +553,37 @@ aclnnStatus aclnnQuantMatmulGetWorkspaceSizeCommonProcess(TupleTensor mandatoryT
     bool& transposeX1 = std::get<INDEX_X1_IN_MANDTORY_TUPLE>(boolsTrans);
     bool& transposeX2 = std::get<INDEX_X2_IN_MANDTORY_TUPLE>(boolsTrans);
     CHECK_RET(CheckNotNull(mandatoryTensors, out), ACLNN_ERR_PARAM_NULLPTR);
+    const bool isScaleNz = ge::GetPrimaryFormat(scale->GetStorageFormat()) == op::Format::FORMAT_FRACTAL_NZ;
+    if (isScaleNz) {
+        CHECK_RET(ge::GetPrimaryFormat(x2->GetStorageFormat()) == op::Format::FORMAT_FRACTAL_NZ,
+                  ACLNN_ERR_PARAM_INVALID);
+    }
+    if (isScaleNz && pertokenScaleOptional != nullptr) {
+        pertokenScaleOptional = CreateScaleDescriptorView(pertokenScaleOptional, executor);
+        CHECK_RET(pertokenScaleOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        // Torch describes a dense rank-3 scale as NCL. Normalize only base formats.
+        const auto fmt = pertokenScaleOptional->GetStorageFormat();
+        if (fmt == op::Format::FORMAT_NCL || fmt == op::Format::FORMAT_NCHW || fmt == op::Format::FORMAT_NCDHW) {
+            pertokenScaleOptional = SetTensorToNDFormat(pertokenScaleOptional);
+        }
+    }
+    if (isScaleNz) {
+        // Only MX preprocessing preserves this private tensor. Full shape validation must use
+        // the normalized matrix descriptors/transpose attributes, especially for packed FP4.
+        const auto aType = x1->GetDataType();
+        const auto bType = x2->GetDataType();
+        const bool mxFp8 = aType == DataType::DT_FLOAT8_E4M3FN && bType == DataType::DT_FLOAT8_E4M3FN;
+        const bool mxFp4 = aType == DataType::DT_FLOAT4_E2M1 && bType == DataType::DT_FLOAT4_E2M1;
+        CHECK_RET(op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510 && (mxFp8 || mxFp4) &&
+                      IsMicroScaling(pertokenScaleOptional, scale),
+                  ACLNN_ERR_PARAM_INVALID);
+        // aclCreateTensor may initialize original shape from private storage dimensions.
+        // The common checker validates this canonical logical view before the L0 call.
+        auto scaleView = CreateScaleDescriptorView(scale, executor);
+        CHECK_RET(scaleView != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        scaleView->SetOriginalShape(scaleView->GetViewShape());
+        scale = scaleView;
+    }
     bool isA8W4F = isA8W4Float(x1, x2);
     bool isA8W4I = isA8W4Int(x1, x2);
     bool isPseudoQuant = isA8W4F || isA8W4I;
@@ -562,7 +613,9 @@ aclnnStatus aclnnQuantMatmulGetWorkspaceSizeCommonProcess(TupleTensor mandatoryT
     bool biasTransposeValue = false;
     CHECK_RET(TensorContiguousProcess(bias, biasTransposeValue, executor), ACLNN_ERR_INNER_NULLPTR);
     bool scaleTransposeValue = false;
-    CHECK_RET(TensorContiguousProcess(scale, scaleTransposeValue, executor), ACLNN_ERR_INNER_NULLPTR);
+    if (!isScaleNz) {
+        CHECK_RET(TensorContiguousProcess(scale, scaleTransposeValue, executor), ACLNN_ERR_INNER_NULLPTR);
+    }
     bool offsetTransposeValue = false;
     CHECK_RET(TensorContiguousProcess(offset, offsetTransposeValue, executor), ACLNN_ERR_INNER_NULLPTR);
     bool perTokenScaleTransposeValue = false;
@@ -573,7 +626,7 @@ aclnnStatus aclnnQuantMatmulGetWorkspaceSizeCommonProcess(TupleTensor mandatoryT
     ret = SetReformtedX2(reformatedX1, reformatedX2, transposeX1, transposeX2, executor);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
-    const aclTensor* reformatedScale = GetNDFormat(scale);
+    const aclTensor* reformatedScale = isScaleNz ? scale : GetNDFormat(scale);
     const aclTensor* reformatedpertokenScaleOptional = GetNDFormat(pertokenScaleOptional);
     const aclTensor* reformatedBias = GetNDFormat(bias);
     const aclTensor* reformatedYScale = GetNDFormat(yScale);

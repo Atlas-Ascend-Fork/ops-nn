@@ -15,6 +15,8 @@
 
 #include "common/inc/op_host/op_const_def_nn.h"
 #include "quant_batch_matmul_v3_tiling_base.h"
+#include "../mx_scale_nz_shape.h"
+#include "arch35/quant_batch_matmul_v3_tiling_util.h"
 #include "quant_batch_matmul_info_factory.h"
 #include "error_util.h"
 #include "matmul/common/op_host/op_tiling/debug_tiling.h"
@@ -246,6 +248,8 @@ bool QuantBatchMatmulV3TilingBase::AnalyzeDtype()
     inputParams_.cDtype = context_->GetOutputDesc(0)->GetDataType();
     isUbQuant_ = inputParams_.cDtype == ge::DT_BF16 || pertokenScaleDesc != nullptr;
     SetFormat();
+    inputParams_.scaleFormat = static_cast<ge::Format>(
+        ge::GetPrimaryFormat(context_->GetInputDesc(GetScaleIdx())->GetStorageFormat()));
 
     OP_TILING_CHECK(!CheckDtype(), CUBE_INNER_ERR_REPORT(inputParams_.opName, "CheckDtype failed!"), return false);
     return true;
@@ -611,6 +615,28 @@ bool QuantBatchMatmulV3TilingBase::AnalyzeInputs()
     if (!SetQuantMode(scaleShape, pertokenShape)) {
         return false;
     }
+    if (inputParams_.scaleFormat == ge::FORMAT_FRACTAL_NZ) {
+        const bool fp8Inputs = inputParams_.aDtype == ge::DT_FLOAT8_E4M3FN &&
+                               inputParams_.bDtype == ge::DT_FLOAT8_E4M3FN;
+        OP_TILING_CHECK(inputParams_.bFormat != ge::FORMAT_FRACTAL_NZ || isTilingOut_ ||
+                            compileInfo_.npuArch != NpuArch::DAV_3510 || !IsTensorapiCapable() ||
+                            !(fp8Inputs || (inputParams_.aDtype == ge::DT_FLOAT4_E2M1 &&
+                                            inputParams_.bDtype == ge::DT_FLOAT4_E2M1)) ||
+                            !inputParams_.isMxPerGroup || inputParams_.groupSizeM != 1 ||
+                            inputParams_.groupSizeN != 1 || inputParams_.groupSizeK != 32,
+                        CUBE_INNER_ERR_REPORT(inputParams_.opName,
+                                              "ScaleNZ requires WeightNZ, DAV3510 Tensor API E4M3/E4M3 or E2M1/E2M1 "
+                                              "and groups 1/1/32."),
+                        return false);
+        OP_TILING_CHECK(!QuantBatchMatmul::CheckMxScaleNzShape(
+                            scaleShape, context_->GetInputShape(GetScaleIdx())->GetStorageShape(), inputParams_.nSize,
+                            inputParams_.kSize),
+                        CUBE_INNER_ERR_REPORT(inputParams_.opName,
+                                              "ScaleNZ requires logical [batch..., ceil(K/64), N, 2] and storage "
+                                              "[batch..., ceil(N/16), ceil(K/64), 16, 2], independent of B transpose. "
+                                              "Arrange scale axes before npu_format_cast."),
+                        return false);
+    }
     if (inputParams_.bFormat == ge::FORMAT_FRACTAL_NZ && !CheckShape4WeightNz()) {
         return false;
     }
@@ -718,7 +744,8 @@ bool QuantBatchMatmulV3TilingBase::AnalyzeMxGroupInfo(const gert::Shape& scaleSh
     if (!ReCalcGroupSize(inputParams_.groupSizeK, inputParams_.kSize, mxPertokenKSize, "k")) {
         return false;
     }
-    uint64_t mxScaleNSize = static_cast<uint64_t>(scaleShape.GetDim(scaleBatchDimNum + (inputParams_.transB ? 0 : 1)));
+    const bool scaleTransposed = inputParams_.transB && inputParams_.scaleFormat != ge::FORMAT_FRACTAL_NZ;
+    uint64_t mxScaleNSize = static_cast<uint64_t>(scaleShape.GetDim(scaleBatchDimNum + (scaleTransposed ? 0 : 1)));
     if (!ReCalcGroupSize(inputParams_.groupSizeN, inputParams_.nSize, mxScaleNSize, "n")) {
         return false;
     }
@@ -851,6 +878,8 @@ const gert::StorageShape* QuantBatchMatmulV3TilingBase::GetBiasShape(const size_
 
 void QuantBatchMatmulV3TilingBase::SetFormat()
 {
+    // Derived fused operators use optional scale inputs with different descriptor indices.
+    inputParams_.scaleFormat = ge::FORMAT_ND;
     inputParams_.aFormat = ge::FORMAT_ND;
     inputParams_.bFormat = ge::FORMAT_ND;
     inputParams_.cFormat = ge::FORMAT_ND;
@@ -1030,5 +1059,6 @@ void QuantBatchMatmulInfo::Reset()
     aFormat = ge::FORMAT_ND;
     bFormat = ge::FORMAT_ND;
     cFormat = ge::FORMAT_ND;
+    scaleFormat = ge::FORMAT_ND;
 }
 } // namespace optiling

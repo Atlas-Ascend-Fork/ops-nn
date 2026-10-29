@@ -14,6 +14,7 @@
  */
 #include "common/inc/op_host/op_const_def_nn.h"
 #include "quant_matmul_checker.h"
+#include "../op_host/mx_scale_nz_shape.h"
 #include "log/log.h"
 #include "matmul/common/op_host/log_format_util.h"
 
@@ -510,8 +511,11 @@ bool QuantMatmulChecker::CheckDimValueMicroScaling() const
     size_t x2ScaleBatchDimNum = x2Scale_->GetViewShape().GetDimNum() - MX_SCALE_DIM;
     auto x1ScaleMDimIndex = x1ScaleBatchDimNum + (transposeX1_ ? 1 : 0);
     auto x1ScaleKDimIndex = x1ScaleBatchDimNum + (transposeX1_ ? 0 : 1);
-    auto x2ScaleNDimIndex = x2ScaleBatchDimNum + (transposeX2_ ? 0 : 1);
-    auto x2ScaleKDimIndex = x2ScaleBatchDimNum + (transposeX2_ ? 1 : 0);
+    // ScaleNZ is packed from canonical [Kg, N, 2]; only ND scales follow B transpose.
+    const bool scaleTransposed = transposeX2_ &&
+                                 ge::GetPrimaryFormat(x2Scale_->GetStorageFormat()) != op::Format::FORMAT_FRACTAL_NZ;
+    auto x2ScaleNDimIndex = x2ScaleBatchDimNum + (scaleTransposed ? 0 : 1);
+    auto x2ScaleKDimIndex = x2ScaleBatchDimNum + (scaleTransposed ? 1 : 0);
     auto x1ScaleMDim = x1Scale_->GetViewShape().GetDim(x1ScaleMDimIndex);
     auto x1ScaleKDim = x1Scale_->GetViewShape().GetDim(x1ScaleKDimIndex);
     auto x2ScaleNDim = x2Scale_->GetViewShape().GetDim(x2ScaleNDimIndex);
@@ -773,7 +777,9 @@ bool QuantMatmulChecker::InferGroupSizeN(const aclTensor* x2, const aclTensor* x
     auto scaleSizeN = 0L;
     if (IsMicroScaling(x1Scale, x2Scale)) {
         size_t batchDimNum = x2Scale->GetViewShape().GetDimNum() - MX_SCALE_DIM;
-        scaleSizeN = x2Scale->GetViewShape().GetDim(batchDimNum + (transX2 ? 0 : 1));
+        const bool scaleTransposed = transX2 &&
+                                     ge::GetPrimaryFormat(x2Scale->GetStorageFormat()) != op::Format::FORMAT_FRACTAL_NZ;
+        scaleSizeN = x2Scale->GetViewShape().GetDim(batchDimNum + (scaleTransposed ? 0 : 1));
         auto scaleSizeDim0 = x2Scale->GetViewShape().GetDim(batchDimNum);
         auto scaleSizeDim1 = x2Scale->GetViewShape().GetDim(batchDimNum + 1);
         if ((scaleSizeDim0 == 1 && scaleSizeDim1 == inputSizeN) ||
@@ -1477,7 +1483,39 @@ bool QuantMatmulChecker::CheckFormat() const
     if (x1Scale_ != nullptr) {
         CHECK_RET(x1Scale_->GetStorageFormat() == op::Format::FORMAT_ND, false);
     }
-    CHECK_RET(x2Scale_->GetStorageFormat() == op::Format::FORMAT_ND, false);
+    if (ge::GetPrimaryFormat(x2Scale_->GetStorageFormat()) == op::Format::FORMAT_FRACTAL_NZ) {
+        const bool fp8Inputs = x1_->GetDataType() == op::DataType::DT_FLOAT8_E4M3FN &&
+                               x2_->GetDataType() == op::DataType::DT_FLOAT8_E4M3FN;
+        const bool fp4Inputs = x1_->GetDataType() == op::DataType::DT_FLOAT4_E2M1 &&
+                               x2_->GetDataType() == op::DataType::DT_FLOAT4_E2M1;
+        if (ge::GetPrimaryFormat(x2_->GetStorageFormat()) != op::Format::FORMAT_FRACTAL_NZ) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "%s: ScaleNZ requires NZ x2 (WeightNZ).", apiName_);
+            return false;
+        }
+        CHECK_RET(npuArch_ == NpuArch::DAV_3510 && (fp8Inputs || fp4Inputs) && x1Scale_ != nullptr &&
+                      x1Scale_->GetDataType() == op::DataType::DT_FLOAT8_E8M0 &&
+                      x2Scale_->GetDataType() == op::DataType::DT_FLOAT8_E8M0,
+                  false);
+        if (!QuantBatchMatmul::CheckMxScaleNzShape(x2Scale_->GetViewShape(), x2Scale_->GetStorageShape(), x2NDim_,
+                                                   x2KDim_)) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                    "%s: ScaleNZ requires logical [batch..., ceil(K/64), N, 2] and storage "
+                    "[batch..., ceil(N/16), ceil(K/64), 16, 2], independent of B transpose. "
+                    "Arrange scale axes before npu_format_cast. K=%ld, N=%ld.",
+                    apiName_, x2KDim_, x2NDim_);
+            return false;
+        }
+        CHECK_RET(x2Scale_->GetViewOffset() == 0, false);
+        int64_t stride = 1;
+        for (int64_t i = static_cast<int64_t>(x2Scale_->GetViewShape().GetDimNum()) - 1; i >= 0; --i) {
+            CHECK_RET(x2Scale_->GetViewStrides()[i] == stride, false);
+            const int64_t dim = x2Scale_->GetViewShape().GetDim(i);
+            CHECK_RET(dim > 0 && stride <= INT64_MAX / dim, false);
+            stride *= dim;
+        }
+    } else {
+        CHECK_RET(x2Scale_->GetStorageFormat() == op::Format::FORMAT_ND, false);
+    }
     if (x2Offset_ != nullptr) {
         CHECK_RET(x2Offset_->GetStorageFormat() == op::Format::FORMAT_ND, false);
     }

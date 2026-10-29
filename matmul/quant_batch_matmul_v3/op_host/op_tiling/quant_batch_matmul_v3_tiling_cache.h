@@ -15,59 +15,10 @@
 #ifndef QUANT_BATCH_MATMUL_V3_TILING_CACHE_H
 #define QUANT_BATCH_MATMUL_V3_TILING_CACHE_H
 
-#include "quant_batch_matmul_v3_basic_tiling.h"
+#include "quant_batch_matmul_v3_tiling_cache_key.h"
 #include "common/op_host/op_tiling/tiling_cache.h"
 
 namespace optiling {
-struct QuantBatchMatmulV3BitField {
-    // 这里要保证是32bit
-    uint16_t transA : 1;
-    uint16_t transB : 1;
-    uint16_t hasBias : 1;
-    uint16_t aFormatNd : 1;
-    uint16_t bFormatNd : 1;
-    uint16_t cFormatNd : 1;
-    uint16_t isPerTensor : 1;
-    uint16_t isPertoken : 1;
-    uint32_t reserved : 24;
-};
-
-class QuantBatchMatmulV3HashInput {
-public:
-    explicit QuantBatchMatmulV3HashInput(const QuantBatchMatmulInfo& params,
-                                         const Ops::NN::Optiling::AiCoreParams& aicoreParams);
-    ~QuantBatchMatmulV3HashInput() = default;
-    bool operator==(const QuantBatchMatmulV3HashInput& params) const
-    {
-        return memcmp(this, &params, sizeof(params)) == 0;
-    }
-    std::string ToString() const;
-
-private:
-    uint64_t mSize = 0;
-    uint64_t mSizePerNpu = 0;
-    uint64_t kSize = 0;
-    uint64_t nSize = 0;
-    uint64_t batchA1 = 0;
-    uint64_t batchA2 = 0;
-    uint64_t batchA3 = 0;
-    uint64_t batchA4 = 0;
-    uint64_t batchB1 = 0;
-    uint64_t batchB2 = 0;
-    uint64_t batchB3 = 0;
-    uint64_t batchB4 = 0;
-    uint64_t batchBias = 0;
-    int32_t aDtype = 0;
-    int32_t bDtype = 0;
-    int32_t cDtype = 0;
-    int32_t biasDtype = 0;
-    int32_t scaleDtype = 0;
-    int32_t outDtype = 0;
-    int32_t aicNum = 0;
-    int32_t reserved = 0;
-    QuantBatchMatmulV3BitField bitField = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-};
-
 class QuantBatchMatmulV3HashItem {
 public:
     explicit QuantBatchMatmulV3HashItem(const QuantBatchMatmulInfo& params,

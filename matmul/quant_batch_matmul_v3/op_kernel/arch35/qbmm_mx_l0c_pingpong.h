@@ -13,6 +13,7 @@
  * \brief Blaze tensor API entry for MX L0C ping-pong kernels.
  */
 #pragma once
+#include "qbmm_mx_scale_layout.h"
 #include "quant_batch_matmul_v3_tiling_data.h"
 #include "blaze/gemm/block/block_scheduler_qbmm.h"
 #include "blaze/epilogue/block/block_epilogue_empty.h"
@@ -36,8 +37,9 @@ __aicore__ inline void QbmmMxL0CPingpongTensorApiKernel(GM_ADDR aGM, GM_ADDR bGM
                                                                                 bLayout, AType>;
 
     using DispatchPolicy = Blaze::Gemm::MatmulWithScaleMxL0CPingpong<FULL_LOAD_MODE, false>;
-    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType, bLayout, OutType, cLayout,
-                                                    BiasType, cLayout>;
+    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType,
+                                                    QbmmMxWeightAndScaleLayout<bLayout>, OutType, cLayout, BiasType,
+                                                    cLayout>;
 
     using MatmulKernel = Blaze::Gemm::Kernel::GemmUniversal<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
     using Params = typename MatmulKernel::Params;
@@ -95,8 +97,9 @@ __aicore__ inline void QbmmMxL0CPingpongWithoutBatchTensorApiKernel(GM_ADDR aGM,
 
     using DispatchPolicy = Blaze::Gemm::MatmulWithScaleMxL0CPingpong<FULL_LOAD_MODE, false,
                                                                      Blaze::Gemm::KernelMmadWithScaleMxWithoutBatch>;
-    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType, bLayout, OutType, cLayout,
-                                                    BiasType, cLayout>;
+    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType,
+                                                    QbmmMxWeightAndScaleLayout<bLayout>, OutType, cLayout, BiasType,
+                                                    cLayout>;
 
     using MatmulKernel = Blaze::Gemm::Kernel::GemmUniversal<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
     using Params = typename MatmulKernel::Params;

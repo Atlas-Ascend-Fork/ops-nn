@@ -42,7 +42,7 @@ QuantBatchMatmulV3HashInput::QuantBatchMatmulV3HashInput(const QuantBatchMatmulI
     scaleDtype = static_cast<int32_t>(params.scaleDtype);
     outDtype = static_cast<int32_t>(params.outDtype);
     aicNum = static_cast<int32_t>(aicoreParams.aicNum);
-    reserved = 0;
+    scaleFormat = static_cast<int32_t>(params.scaleFormat);
 
     bitField.transA = static_cast<uint16_t>(params.transA);
     bitField.transB = static_cast<uint16_t>(params.transB);

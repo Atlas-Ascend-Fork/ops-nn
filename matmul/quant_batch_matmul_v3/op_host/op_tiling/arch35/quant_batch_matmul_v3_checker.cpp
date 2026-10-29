@@ -812,8 +812,9 @@ bool QuantBatchMatmulV3Checker::MxScaleShapeCheck(const gert::Shape& scaleShape)
                             .c_str()),
                     return false);
     size_t batchDimNum = scaleShapeLen - SCALE_THREE_DIM;
-    auto kDimIdx = batchDimNum + (inputParams_.transB ? 1 : 0);
-    auto nDimIdx = batchDimNum + (inputParams_.transB ? 0 : 1);
+    const bool scaleTransposed = inputParams_.transB && inputParams_.scaleFormat != ge::FORMAT_FRACTAL_NZ;
+    auto kDimIdx = batchDimNum + (scaleTransposed ? 1 : 0);
+    auto nDimIdx = batchDimNum + (scaleTransposed ? 0 : 1);
     bool nDimHasOne = (scaleShape.GetDim(kDimIdx) == 1 &&
                        static_cast<uint64_t>(scaleShape.GetDim(nDimIdx)) ==
                            ops::CeilDiv(inputParams_.kSize, qmmv3_tiling_const::MXFP_DIVISOR_SIZE)) ||

@@ -13,6 +13,7 @@
  * \brief Quantized batch matrix multiplication using StreamK pipeline.
  */
 #pragma once
+#include "qbmm_mx_scale_layout.h"
 
 #include "blaze/gemm/kernel/kernel_qbmm_streamk.h"
 #include "blaze/epilogue/block/block_epilogue_matmul_streamk.h"
@@ -39,8 +40,9 @@ __aicore__ inline void QbmmMxStreamKBasicApiKernel(GM_ADDR aGM, GM_ADDR bGM, GM_
     using BlockEpilogue = Blaze::Epilogue::Block::BlockEpilogueMatmulStreamK<WorkspaceType, OutType,
                                                                              EpilogueDispatchPolicy>;
     using BlockScheduler = Blaze::Gemm::Block::BlockSchedulerMatmulStreamK<ProblemShape>;
-    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType, bLayout, OutType, cLayout,
-                                                    BiasType, cLayout>;
+    using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, aLayout, BType,
+                                                    QbmmMxWeightAndScaleLayout<bLayout>, OutType, cLayout, BiasType,
+                                                    cLayout>;
     using MatmulKernel = Blaze::Gemm::Kernel::GemmUniversal<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
     using Params = typename MatmulKernel::Params;
 
