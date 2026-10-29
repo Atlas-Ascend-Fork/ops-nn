@@ -74,6 +74,17 @@ constexpr AscendC::Reg::CastTrait castTraitFp32ToB16 = {
     AscendC::RoundMode::CAST_RINT,
 };
 
+// sqrt 必须不 flush 次正规输入：native vsqrt 把次正规的 var+eps（L0_045）flush 为 0，
+// 使 multiplier=scale/0=inf、addend=offset-inf*mean=NaN，与保留次正规的 golden
+// 产生 NaN/Inf 类别差；FTZ_FALSE 路径 0ULP 正确舍入，与 numpy 一致。
+static constexpr AscendC::Reg::SqrtSpecificMode kSqrtFtzFalseMode = {AscendC::Reg::MaskMergeMode::ZEROING, false,
+                                                                     AscendC::SqrtAlgo::PRECISION_0ULP_FTZ_FALSE};
+
+// div 同理必须保留次正规商：native vdiv 把次正规 multiplier（L1_505/L1_154）flush 为 0，
+// 使 x=±inf 处 y=inf*0+addend=NaN；FTZ_FALSE 软除法正确舍入，与 torch fp32 一致。
+static constexpr AscendC::Reg::DivSpecificMode kDivFtzFalseMode = {AscendC::Reg::MaskMergeMode::ZEROING, false,
+                                                                   AscendC::DivAlgo::PRECISION_0ULP_FTZ_FALSE};
+
 // x tile 从 UB 全宽 load 进 fp32 寄存器（fp16/bf16 解包升精度）；offset 以元素计
 template <typename T_IN>
 __aicore__ inline void LoadXToFp32(__ubuf__ T_IN* src, RegTensor<float>& dst, MaskReg& preg, uint32_t offset)
@@ -289,8 +300,10 @@ private:
             Mul(tmpReg, meanReg, meanReg, validMask);
             Sub(varReg, varReg, tmpReg, validMask); // var -= mean^2
             Adds(varReg, varReg, epsilon_, validMask);
-            Sqrt(varReg, varReg, validMask);
-            Div(mulReg, scaleReg, varReg, validMask); // multiplier = scale / sqrt(var+eps)
+            // 见 kSqrtFtzFalseMode：避免原生 vsqrt flush 次正规 var+eps
+            AscendC::Reg::Sqrt<float, &kSqrtFtzFalseMode>(varReg, varReg, validMask);
+            // 见 kDivFtzFalseMode：避免原生 vdiv flush 次正规商
+            AscendC::Reg::Div<float, &kDivFtzFalseMode>(mulReg, scaleReg, varReg, validMask);
             Mul(tmpReg, mulReg, meanReg, validMask);
             Sub(addReg, offsetReg, tmpReg, validMask); // addend = offset - multiplier*mean
             DataCopy<float, StoreDist::DIST_NORM>(multiplierAddr, mulReg, validMask);
