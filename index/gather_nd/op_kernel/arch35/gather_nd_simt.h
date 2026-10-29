@@ -115,7 +115,7 @@ class GatherNdSimt {
 public:
     __aicore__ inline GatherNdSimt(){};
 
-    __aicore__ inline void Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y, GM_ADDR workspace,
+    __aicore__ inline void Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y,
                                 const GatherNdTilingData* __restrict ordTilingData, TPipe* pipeIn);
     __aicore__ inline void CopyIn(LocalTensor<T2>& dstTensor, uint32_t gatherLength);
     __aicore__ inline void CopyOut(LocalTensor<T1>& srcTensor, uint32_t gatherLength);
@@ -160,7 +160,7 @@ protected:
 };
 
 template <typename T1, typename T2, typename T3, const bool NIS>
-__aicore__ inline void GatherNdSimt<T1, T2, T3, NIS>::Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y, GM_ADDR workspace,
+__aicore__ inline void GatherNdSimt<T1, T2, T3, NIS>::Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y,
                                                            const GatherNdTilingData* __restrict ordTilingData,
                                                            TPipe* pipeIn)
 {

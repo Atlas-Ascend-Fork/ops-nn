@@ -25,8 +25,6 @@ const int32_t INPUT_BOUND_IDX = 1;
 const int32_t OUT_INT32 = 0;
 const int32_t RIGHT_POS = 1;
 
-const uint32_t WS_SYS_SIZE = 16U * 1024U * 1024U;
-
 ge::graphStatus BucketizeV2BaseTiling::GetPlatformInfo()
 {
     auto platformPtr = context_->GetPlatformInfo();
@@ -162,10 +160,9 @@ uint64_t BucketizeV2BaseTiling::GetTilingKey() const { return 0; }
 
 ge::graphStatus BucketizeV2BaseTiling::GetWorkspaceSize()
 {
-    uint32_t sysWorkspace = WS_SYS_SIZE;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
-    currentWorkspace[0] = sysWorkspace;
+    currentWorkspace[0] = 0; // 模板均不读写 workspace，显式置 0
 
     return ge::GRAPH_SUCCESS;
 }

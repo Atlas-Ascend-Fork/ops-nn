@@ -164,7 +164,7 @@ class GatherNdMixKernel {
 public:
     __aicore__ inline GatherNdMixKernel(){};
 
-    __aicore__ inline void Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y, GM_ADDR workspace,
+    __aicore__ inline void Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y,
                                 const GatherNdTilingData* __restrict ordTilingData, TPipe* pipeIn);
     __aicore__ inline void CopyInIndices(LocalTensor<T2>& dstTensor, int32_t indicesCount, int64_t indicesOffset,
                                          uint16_t rank);
@@ -193,7 +193,7 @@ protected:
 };
 
 template <typename T1, typename T2, typename T3>
-__aicore__ inline void GatherNdMixKernel<T1, T2, T3>::Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y, GM_ADDR workspace,
+__aicore__ inline void GatherNdMixKernel<T1, T2, T3>::Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y,
                                                            const GatherNdTilingData* __restrict ordTilingData,
                                                            TPipe* pipeIn)
 {

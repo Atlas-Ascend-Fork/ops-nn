@@ -340,7 +340,7 @@ public:
         }
     }
 
-    __aicore__ inline void Init(GM_ADDR x, GM_ADDR indices, GM_ADDR updates, GM_ADDR y, GM_ADDR workspace,
+    __aicore__ inline void Init(GM_ADDR x, GM_ADDR indices, GM_ADDR updates, GM_ADDR y,
                                 const ScatterTilingData* tilingData, TPipe* pipeIn)
     {
         pipe = pipeIn;

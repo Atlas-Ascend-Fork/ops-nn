@@ -1067,11 +1067,7 @@ void Gatherv2TilingBase::DumpTilingInfo()
 }
 ge::graphStatus Gatherv2TilingBase::GetWorkspaceSize()
 {
-    // 计算workspace大小
-    auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
-    workspaceSize_ = ascendcPlatform.GetLibApiWorkSpaceSize();
+    workspaceSize_ = 0; // 模板均不读写 workspace，显式置 0
     return ge::GRAPH_SUCCESS;
 }
 

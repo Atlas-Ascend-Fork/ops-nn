@@ -83,7 +83,7 @@ class ScatterNdCommonSimtSort : public ScatterNdCommonBase<PARAMS_T, INDICES_T, 
 public:
     __aicore__ inline ScatterNdCommonSimtSort(const ScatterNdCommonSimtSortTilingData& tilingData, TPipe& pipe)
         : tilingData_(tilingData), pipe_(pipe){};
-    __aicore__ inline void Init(GM_ADDR var, GM_ADDR indices, GM_ADDR updates, GM_ADDR y, GM_ADDR workspace);
+    __aicore__ inline void Init(GM_ADDR var, GM_ADDR indices, GM_ADDR updates, GM_ADDR y);
     __aicore__ inline void ProcessSplitIndices();
     __aicore__ inline void Process();
     __aicore__ inline void SimtOutUpdate(int64_t rowLen, int64_t colLen, int64_t updateOffset);
@@ -99,7 +99,7 @@ private:
 
 template <typename PARAMS_T, typename INDICES_T, typename TYPE_T, typename CAST_T, uint32_t castType, uint8_t Mode>
 __aicore__ inline void ScatterNdCommonSimtSort<PARAMS_T, INDICES_T, TYPE_T, CAST_T, castType, Mode>::Init(
-    GM_ADDR var, GM_ADDR indices, GM_ADDR updates, GM_ADDR y, GM_ADDR workspace)
+    GM_ADDR var, GM_ADDR indices, GM_ADDR updates, GM_ADDR y)
 {
     this->indicesFactor_ = tilingData_.indicesFactor;
     this->afterAxis_ = tilingData_.afterAxis;

@@ -19,7 +19,6 @@ using namespace AscendC;
 using namespace ge;
 
 namespace optiling {
-constexpr uint64_t ASCENDC_WORKSPACE = static_cast<uint64_t>(16) * 1024 * 1024;
 static constexpr uint64_t CASTMODE1 = 1; // int32 Cast int16
 static constexpr uint64_t CASTMODE2 = 2; // int64 Cast int32
 static constexpr uint64_t CASTMODE3 = 3; // int64 Cast int16
@@ -208,7 +207,7 @@ ge::graphStatus ScatterNdCommonBaseTiling::GetWorkspaceSize()
 {
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
-    workspaces[0] = ASCENDC_WORKSPACE;
+    workspaces[0] = 0; // 模板均不读写 workspace，显式置 0
 
     return ge::GRAPH_SUCCESS;
 }

@@ -701,10 +701,8 @@ uint64_t GatherNdSimtTiling::GetTilingKey() const
 ge::graphStatus GatherNdSimtTiling::GetWorkspaceSize()
 {
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
-    workspaces[0] = ascendcPlatform.GetLibApiWorkSpaceSize();
+    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    workspaces[0] = 0; // 模板均不读写 workspace，显式置 0
     return ge::GRAPH_SUCCESS;
 }
 

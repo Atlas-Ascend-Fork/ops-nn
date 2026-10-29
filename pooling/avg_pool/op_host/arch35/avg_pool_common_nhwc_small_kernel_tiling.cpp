@@ -487,10 +487,7 @@ ge::graphStatus AvgPoolCommonNHWCSmallKernelTiling::GetWorkspaceSize()
 {
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
-    auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
-    currentWorkspace[0] = ascendcPlatform.GetLibApiWorkSpaceSize();
+    currentWorkspace[0] = 0; // 模板均不读写 workspace，显式置 0
 
     return ge::GRAPH_SUCCESS;
 }

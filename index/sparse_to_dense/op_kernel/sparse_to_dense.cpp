@@ -26,14 +26,6 @@ extern "C" __global__ __aicore__ void sparse_to_dense(GM_ADDR indices, GM_ADDR o
                                                       GM_ADDR default_value, GM_ADDR y, GM_ADDR workSpace,
                                                       GM_ADDR tiling)
 {
-    if (workSpace == nullptr) {
-        return;
-    }
-    GM_ADDR user = AscendC::GetUserWorkspace(workSpace);
-    if (user == nullptr) {
-        return;
-    }
-
     REGISTER_TILING_DEFAULT(SparseToDenseTilingData);
     GET_TILING_DATA(tilingData, tiling);
     AscendC::TPipe pipe;

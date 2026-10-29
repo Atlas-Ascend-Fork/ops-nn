@@ -28,7 +28,6 @@ using namespace ge;
 using namespace std;
 
 namespace optiling {
-constexpr size_t SYS_WORKSPACE_SIZE = static_cast<size_t>(16) * 1024 * 1024;
 constexpr int32_t BLOCK_SIZE = 32;
 constexpr int32_t MAX_INDICES_DIM = 2;
 constexpr int32_t INPUT_INDEX = 0;
@@ -797,7 +796,7 @@ uint64_t ScatterTiling::GetTilingKey() const
 
 ge::graphStatus ScatterTiling::GetWorkspaceSize()
 {
-    workspaceSize_ = SYS_WORKSPACE_SIZE;
+    workspaceSize_ = 0; // 模板均不读写 workspace，显式置 0
     return ge::GRAPH_SUCCESS;
 }
 

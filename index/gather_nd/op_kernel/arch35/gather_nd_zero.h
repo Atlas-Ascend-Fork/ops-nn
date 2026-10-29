@@ -25,7 +25,7 @@ class GatherNdZero {
 public:
     __aicore__ inline GatherNdZero(){};
 
-    __aicore__ inline void Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y, GM_ADDR workspace,
+    __aicore__ inline void Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y,
                                 const GatherNdTilingData* __restrict ordTilingData, TPipe* pipeIn);
     __aicore__ inline void CopyIn(LocalTensor<T1>& dstTensor, uint32_t offset, uint32_t gatherLength);
     __aicore__ inline void CopyUb(LocalTensor<T1>& dstTensor, LocalTensor<T1>& srcTensor, uint32_t gatherLength);
@@ -73,7 +73,7 @@ protected:
 };
 
 template <typename T1>
-__aicore__ inline void GatherNdZero<T1>::Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y, GM_ADDR workspace,
+__aicore__ inline void GatherNdZero<T1>::Init(GM_ADDR x, GM_ADDR indices, GM_ADDR y,
                                               const GatherNdTilingData* __restrict ordTilingData, TPipe* pipeIn)
 {
     cBlockIdx = GetBlockIdx();

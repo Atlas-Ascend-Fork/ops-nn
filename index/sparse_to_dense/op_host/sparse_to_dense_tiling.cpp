@@ -33,7 +33,6 @@ constexpr int64_t ATTR_VALIDATE_INDICES_IDX = 0;
 constexpr int64_t DIM_NUM_2 = 2;
 constexpr int64_t DCACHE_SIZE_SIMT = 32 * 1024;
 constexpr int64_t MIN_THREAD_NUM = 128;
-constexpr int64_t ASCENDC_TOOLS_WORKSPACE = 16777216; // 16M
 constexpr int64_t MAX_INT32_NUM = 2147483647;
 constexpr int64_t SINGLE_CORE_SPARSE_NUM = 1024;
 constexpr int64_t SINGLE_CORE_DENSE_NUM = 8192;
@@ -324,7 +323,7 @@ ge::graphStatus SparseToDenseTiling::PostTiling()
 {
     auto workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
-    workspaces[0] = ASCENDC_TOOLS_WORKSPACE;
+    workspaces[0] = 0; // 模板均不读写 workspace，显式置 0
 
     context_->SetBlockDim(useCoreNum_);
     context_->SetScheduleMode(1);
