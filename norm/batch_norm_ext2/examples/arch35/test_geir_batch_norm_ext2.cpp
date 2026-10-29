@@ -47,7 +47,7 @@ using std::vector;
     placeholder##inputIndex##_desc.SetFormat(inputFormat);                                                          \
     Tensor tensor_placeholder##inputIndex;                                                                          \
     ret = GenOnesDataFloat32(placeholder##inputIndex##_shape, tensor_placeholder##inputIndex,                       \
-                             placeholder##inputIndex##_desc, 2);                                                    \
+                             placeholder##inputIndex##_desc, 2, allocBufs);                                         \
     if (ret != SUCCESS) {                                                                                           \
         printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                              \
         return FAILED;                                                                                              \
@@ -70,7 +70,7 @@ using std::vector;
     placeholder##inputIndex##_desc.SetFormat(FORMAT_NCHW);                                                             \
     Tensor tensor_placeholder##inputIndex;                                                                             \
     ret = GenOnesData(placeholder##inputIndex##_shape, tensor_placeholder##inputIndex, placeholder##inputIndex##_desc, \
-                      inputDtype, 2);                                                                                  \
+                      inputDtype, 2, allocBufsInt32);                                                                  \
     if (ret != SUCCESS) {                                                                                              \
         printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                                 \
         return FAILED;                                                                                                 \
@@ -132,7 +132,8 @@ uint32_t GetDataTypeSize(DataType dt)
     return dilation;
 }
 
-int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, float value)
+int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, float value,
+                           vector<float*>& allocBufs)
 {
     input_tensor_desc.SetRealDimCnt(shapes.size());
     size_t size = 1;
@@ -142,16 +143,21 @@ int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorD
     uint32_t byteSizeFloat32 = 4;
     uint32_t data_len = size * byteSizeFloat32;
     float* pData = new (std::nothrow) float[size];
+    if (pData == nullptr) {
+        printf("%s - ERROR - [XIR]: Alloc input data failed\n", GetTime().c_str());
+        return FAILED;
+    }
 
     for (size_t i = 0; i < size; ++i) {
         *(pData + i) = value;
     }
     input_tensor = Tensor(input_tensor_desc, (uint8_t*)pData, data_len);
+    allocBufs.push_back(pData); // 登记，RunGraph 完成后（含失败分支）统一 delete[]
     return SUCCESS;
 }
 
 int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, DataType data_type,
-                    int value)
+                    int value, vector<int32_t*>& allocBufs)
 {
     input_tensor_desc.SetRealDimCnt(shapes.size());
     size_t size = 1;
@@ -159,11 +165,18 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
         size *= shapes[i];
     }
     uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[data_len];
-    for (uint32_t i = 0; i < size; ++i) {
+    // data_len 为字节数，而 pData 以 int32_t 为单位分配，需按 4 字节向上取整，避免 dtype 元素字节数 > 4 时欠分配
+    uint32_t wordNum = (data_len + sizeof(int32_t) - 1) / sizeof(int32_t);
+    int32_t* pData = new (std::nothrow) int32_t[wordNum];
+    if (pData == nullptr) {
+        printf("%s - ERROR - [XIR]: Alloc input data failed\n", GetTime().c_str());
+        return FAILED;
+    }
+    for (uint32_t i = 0; i < wordNum; ++i) {
         *(pData + i) = value;
     }
     input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
+    allocBufs.push_back(pData); // 登记，RunGraph 完成后（含失败分支）统一 delete[]
     return SUCCESS;
 }
 
@@ -177,7 +190,8 @@ int32_t WriteDataToFile(string bin_file, uint64_t data_size, uint8_t* inputData)
 }
 
 int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vector<Operator>& inputs,
-                     std::vector<Operator>& outputs, Graph& graph)
+                     std::vector<Operator>& outputs, Graph& graph, vector<float*>& allocBufs,
+                     vector<int32_t*>& allocBufsInt32)
 {
     Status ret = SUCCESS;
     // 自定义代码：添加单算子定义到图中
@@ -207,6 +221,19 @@ int main(int argc, char* argv[])
     const char* graph_name = "tc_ge_irrun_test";
     Graph graph(graph_name);
     std::vector<ge::Tensor> input;
+    // 输入数据缓冲：Tensor 不接管所有权，统一登记后由 freeBufs 在 RunGraph 结束（含失败分支）时释放。
+    vector<float*> allocBufs;
+    vector<int32_t*> allocBufsInt32;
+    auto freeBufs = [&allocBufs, &allocBufsInt32]() {
+        for (float* p : allocBufs) {
+            delete[] p;
+        }
+        allocBufs.clear();
+        for (int32_t* p : allocBufsInt32) {
+            delete[] p;
+        }
+        allocBufsInt32.clear();
+    };
 
     printf("%s - INFO - [XIR]: Start to initialize ge using ge global options\n", GetTime().c_str());
     std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
@@ -227,9 +254,10 @@ int main(int argc, char* argv[])
 
     std::cout << inDtype << std::endl;
 
-    ret = CreateOppInGraph(inDtype, input, inputs, outputs, graph);
+    ret = CreateOppInGraph(inDtype, input, inputs, outputs, graph, allocBufs, allocBufsInt32);
     if (ret != SUCCESS) {
         printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
+        freeBufs();
         return FAILED;
     }
 
@@ -245,6 +273,7 @@ int main(int argc, char* argv[])
 
     if (session == nullptr) {
         printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
+        freeBufs();
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Create ir session using build options success\n", GetTime().c_str());
@@ -255,7 +284,13 @@ int main(int argc, char* argv[])
     };
     uint32_t graph_id = 0;
     ret = session->AddGraph(graph_id, graph, graph_options);
-
+    if (ret != SUCCESS) {
+        printf("%s - ERROR - [XIR]: Session add ir compute graph to ir session failed\n", GetTime().c_str());
+        delete session;
+        GEFinalize();
+        freeBufs();
+        return FAILED;
+    }
     printf("%s - INFO - [XIR]: Session add ir compute graph to ir session success\n", GetTime().c_str());
     printf("%s - INFO - [XIR]: dump graph to txt\n", GetTime().c_str());
     std::string file_path = "./dump";
@@ -267,6 +302,7 @@ int main(int argc, char* argv[])
         printf("%s - INFO - [XIR]: Run graph failed\n", GetTime().c_str());
         delete session;
         GEFinalize();
+        freeBufs();
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Session run ir compute graph success\n", GetTime().c_str());
@@ -281,6 +317,8 @@ int main(int argc, char* argv[])
         uint32_t data_size = input_shape * GetDataTypeSize(input[i].GetTensorDesc().GetDataType());
         WriteDataToFile((const char*)input_file.c_str(), data_size, input_data_i);
     }
+    // 输入数据已随 RunGraph 消费完毕并完成落盘，输入缓冲在此统一释放。
+    freeBufs();
 
     int output_num = output.size();
     for (int i = 0; i < output_num; i++) {

@@ -189,11 +189,12 @@ def _golden_batch_norm_ext2(
         k_t = rstd_t * scale_t
         y_t = torch.add(torch.mul(xt - mean_t, k_t), bias_t)
         batch_mean = mean_t.reshape(-1).numpy()
-        batch_var = var_t.reshape(-1).numpy()
+        batch_var_t = var_t.reshape(-1)
+        batch_var = batch_var_t.numpy()  # 有偏方差，给 out_rs2
         # output_variance is unbiased (Bessel correction) — same as TF FusedBatchNormV2
         unbiased_var = (
-            batch_var * (num / (num - 1)) if num > 1 else batch_var * float("inf")
-        )
+            batch_var_t * (num / (num - 1)) if num > 1 else batch_var_t * float("inf")
+        ).numpy()
         out_mean = batch_mean
         out_variance = unbiased_var
         out_rs1 = batch_mean

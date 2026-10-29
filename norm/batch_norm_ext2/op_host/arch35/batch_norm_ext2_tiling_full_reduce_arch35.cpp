@@ -59,6 +59,12 @@ protected:
         int64_t quotientVcaddNum = binaryAddQuotient / vlFp32_;
         int64_t quotientVcaddSizeAlign = ((quotientVcaddNum * FLOAT32_BYTES + blockSize_ - 1) / blockSize_) *
                                          blockSize_;
+        // kernel 侧二分折叠的 LoadAlign 无掩码、固定读满一个 VL，该缓冲实际至少分配一个 VL；
+        // 这里按同一口径预留，否则 aFactor 把 UB 用满后 kernel 会再多占一个 VL（256 B）。
+        int64_t minBinaryAddBufSize = static_cast<int64_t>(vlFp32_) * FLOAT32_BYTES;
+        if (quotientVcaddSizeAlign < minBinaryAddBufSize) {
+            quotientVcaddSizeAlign = minBinaryAddBufSize;
+        }
         if (static_cast<uint64_t>(quotientVcaddSizeAlign) >= aicoreParams_.ubSize) {
             return false;
         }

@@ -99,6 +99,11 @@ public:
 
         int64_t binaryAddBufSize = (((binaryAddQuotient / VL_FP32) * FLOAT_BYTES + BLOCK_SIZE - 1) / BLOCK_SIZE) *
                                    BLOCK_SIZE;
+        // 二分折叠的 LoadAlign 无掩码，固定读满一个 VL；binaryAddQuotient 退化到半个 VL 时上述计算
+        // 只有 128 B（甚至为 0），会越读一个 VL，故分配至少抬到一个 VL（VECTOR_LENGTH 字节）。
+        if (binaryAddBufSize < static_cast<int64_t>(VECTOR_LENGTH)) {
+            binaryAddBufSize = static_cast<int64_t>(VECTOR_LENGTH);
+        }
         if (binaryAddBufSize > 0) {
             pipe->InitBuffer(binaryAddBuf, binaryAddBufSize);
         }

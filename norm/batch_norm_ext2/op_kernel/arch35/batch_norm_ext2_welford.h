@@ -131,7 +131,13 @@ public:
         // rstd 暂存(只参与归一化，不进 GM)；原 batchVarBuff 改作此用，UB 预算不变。
         pipe->InitBuffer(rstdBuff, aGatherLimitAlign * sizeof(float));
         int64_t vcaddNum = RoundUp32(binaryAddQuotient / VL_FP32, sizeof(float));
-        pipe->InitBuffer(dichotomyAddBuf, vcaddNum * sizeof(float));
+        // NormCommon::DichotomyAdd 对该缓冲整 VL 无掩码读取；binaryAddQuotient 只有一个 VL 时
+        // 这里只有 32 B，会越读一个 VL，故分配至少抬到一个 VL（VECTOR_LENGTH 字节）。
+        int64_t dichotomyAddBufSize = vcaddNum * sizeof(float);
+        if (dichotomyAddBufSize < static_cast<int64_t>(VECTOR_LENGTH)) {
+            dichotomyAddBufSize = static_cast<int64_t>(VECTOR_LENGTH);
+        }
+        pipe->InitBuffer(dichotomyAddBuf, dichotomyAddBufSize);
     }
 
     __aicore__ inline uint32_t FindCofFactor(uint32_t n)
