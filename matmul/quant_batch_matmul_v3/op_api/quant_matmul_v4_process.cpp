@@ -439,17 +439,19 @@ static bool IsX1Transdata(const aclTensor* x1, const aclTensor* x2, int64_t dtyp
     return true;
 }
 
-static void A8W4ProcessYScaleTensor(const aclTensor* x1Scale, const aclTensor* yScale)
+static aclnnStatus A8W4ProcessYScaleTensor(const aclTensor* x1Scale, const aclTensor*& yScale, aclOpExecutor* executor)
 {
     if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510) {
         // A8W4场景输入的INT64转为UINT64
         if (x1Scale == nullptr && yScale != nullptr && yScale->GetDataType() == op::DataType::DT_INT64) {
-            auto castYScale = const_cast<aclTensor*>(yScale);
+            auto castYScale = executor->CreateView(yScale, yScale->GetViewShape(), yScale->GetViewOffset());
+            CHECK_RET(castYScale != nullptr, ACLNN_ERR_INNER_NULLPTR);
             castYScale->SetDataType(op::DataType::DT_UINT64);
             yScale = castYScale;
             OP_LOGD("The conversion from INT64 to UINT64 has been completed.");
         }
     }
+    return ACLNN_SUCCESS;
 }
 
 static inline bool A8W4ValidGroupSize(uint64_t groupSizeM, uint64_t groupSizeN)
@@ -476,11 +478,11 @@ static inline bool A8W4InferGroupSize(int64_t& groupSize)
 }
 
 static aclnnStatus TensorPreProcess(const aclTensor* x1, const aclTensor* x2, const aclTensor* x1Scale,
-                                    const aclTensor* yScale, int64_t& groupSize)
+                                    const aclTensor*& yScale, int64_t& groupSize, aclOpExecutor* executor)
 {
     bool isA8W4F = isA8W4Float(x1, x2);
     if (isA8W4F) {
-        A8W4ProcessYScaleTensor(x1Scale, yScale);
+        CHECK_RET(A8W4ProcessYScaleTensor(x1Scale, yScale, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(A8W4InferGroupSize(groupSize), ACLNN_ERR_PARAM_INVALID);
         OP_LOGD("Infer groupSize success. groupSize: %ld.", groupSize);
     }
@@ -552,7 +554,7 @@ aclnnStatus aclnnQuantMatmulGetWorkspaceSizeCommonProcess(TupleTensor mandatoryT
             }
         }
     }
-    auto ret = TensorPreProcess(x1, x2, pertokenScaleOptional, yScale, groupSize);
+    auto ret = TensorPreProcess(x1, x2, pertokenScaleOptional, yScale, groupSize, executor);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
     bool isA4W4 = false;
     ret = PreMatmulCalcProcess(mandatoryTensors, optionalTensors, boolsTrans, isA4W4, out, executor);

@@ -1118,17 +1118,19 @@ static aclTensor* ProcessScaleTensor(const aclTensor* scale)
     return castedScale;
 }
 
-static void A8W4ProcessYScaleTensor(const aclTensor* x1Scale, const aclTensor* yScale)
+static aclnnStatus A8W4ProcessYScaleTensor(const aclTensor* x1Scale, const aclTensor*& yScale, aclOpExecutor* executor)
 {
     if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510) {
         // A8W4场景输入的INT64转为UINT64
         if (x1Scale == nullptr && yScale != nullptr && yScale->GetDataType() == op::DataType::DT_INT64) {
-            auto castedYScale = const_cast<aclTensor*>(yScale);
+            auto castedYScale = executor->CreateView(yScale, yScale->GetViewShape(), yScale->GetViewOffset());
+            CHECK_RET(castedYScale != nullptr, ACLNN_ERR_INNER_NULLPTR);
             castedYScale->SetDataType(op::DataType::DT_UINT64);
             yScale = castedYScale;
             OP_LOGD("The conversion from INT64 to UINT64 is completed.");
         }
     }
+    return ACLNN_SUCCESS;
 }
 
 static inline bool validGroupSize(uint64_t groupSizeM, uint64_t groupSizeN)
@@ -1241,7 +1243,7 @@ static aclnnStatus aclnnQuantMatmulGetWorkspaceSizeCommonProcess(TupleInput& inp
         CHECK_RET(qmmV3Checker.InferGroupSize(groupSizeReal), ACLNN_ERR_PARAM_INVALID);
         OP_LOGD("Infer groupSize success. groupSize: %ld.", groupSizeReal);
     } else {
-        A8W4ProcessYScaleTensor(x1Scale, yScale);
+        CHECK_RET(A8W4ProcessYScaleTensor(x1Scale, yScale, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     }
     const aclTensor* reformatedX1Scale = GetNDFormat(x1Scale);
     const aclTensor* reformatedX2Scale = GetNDFormat(x2Scale);
