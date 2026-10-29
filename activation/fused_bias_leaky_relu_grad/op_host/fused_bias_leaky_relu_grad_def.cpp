@@ -48,9 +48,10 @@ public:
             .PrecisionReduceFlag(true)
             .ExtendCfgInfo("opFile.value", "fused_bias_leaky_relu_grad");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 
 OP_ADD(FusedBiasLeakyReluGrad);
 
-}  // namespace ops
+} // namespace ops

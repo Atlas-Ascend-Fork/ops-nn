@@ -13,6 +13,6 @@
 # This is additive soc isolation — A2 tiling behaviour is preserved (red-line R2 / A5 must not
 # touch A2). DEPENDENCIES mse_loss / ACLNNTYPE aclnn_exclude are kept (MSELossV2 reuses the
 # aclnnMseLoss entry from loss/mse_loss and has no op_api of its own).
-set(SUPPORT_COMPUTE_UNIT "ascend910b" "ascend910_93" "ascend310p" "ascend950")
-set(SUPPORT_TILING_DIR "arch22" "arch22" "arch22" "arch35")
+set(SUPPORT_COMPUTE_UNIT "ascend910b" "ascend910_93" "ascend310p" "ascend950" "ascend350")
+set(SUPPORT_TILING_DIR "arch22" "arch22" "arch22" "arch35" "arch35")
 add_modules_sources(HOSTNAME ${OPHOST_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR} OPTYPE mse_loss_v2 ACLNNTYPE aclnn_exclude COMPUTE_UNIT ${SUPPORT_COMPUTE_UNIT} TILING_DIR ${SUPPORT_TILING_DIR} DEPENDENCIES mse_loss)

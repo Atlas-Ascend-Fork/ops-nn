@@ -78,6 +78,7 @@ public:
             .PrecisionReduceFlag(false)
             .ExtendCfgInfo("opFile.value", "sigmoid_focal_loss_grad");
         this->AICore().AddConfig("ascend950", aiCoreConfig);
+        this->AICore().AddConfig("ascend350", aiCoreConfig);
     }
 };
 

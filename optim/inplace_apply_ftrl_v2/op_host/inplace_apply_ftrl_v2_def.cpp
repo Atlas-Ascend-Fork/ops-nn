@@ -122,6 +122,7 @@ public:
             .PrecisionReduceFlag(true)
             .ExtendCfgInfo("opFile.value", "inplace_apply_ftrl_v2");
         this->AICore().AddConfig("ascend950", aiCoreConfig);
+        this->AICore().AddConfig("ascend350", aiCoreConfig);
     }
 };
 

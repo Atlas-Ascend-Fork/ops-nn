@@ -61,7 +61,7 @@ public:
                      ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
                                  ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
-        this->Attr("output_dtype").AttrType(REQUIRED).Int(); //输出类型，传入
+        this->Attr("output_dtype").AttrType(REQUIRED).Int(); // 输出类型，传入
         this->AICore().AddConfig("ascend910b");
         this->AICore().AddConfig("ascend910_93");
         OpAICoreConfig config_950;
@@ -71,6 +71,7 @@ public:
             .NeedCheckSupportFlag(false)
             .ExtendCfgInfo("opFile.value", "dequant_bias_apt");
         this->AICore().AddConfig("ascend950", config_950);
+        this->AICore().AddConfig("ascend350", config_950);
 
         OpAICoreConfig config_kirin = GetKirinCoreConfig();
         this->AICore().AddConfig("kirinx90", config_kirin);

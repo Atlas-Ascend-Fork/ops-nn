@@ -18,6 +18,6 @@ add_kernel_sources(
 # arch35: 显式指定 arch35/foreach_erfc.cpp 入口
 add_kernel_sources(
     KERNEL_SRC arch35/foreach_erfc.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS  ascend950 ascend350
     AUTO_SYNC false
 )

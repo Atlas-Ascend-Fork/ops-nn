@@ -85,6 +85,7 @@ public:
             .PrecisionReduceFlag(true)
             .ExtendCfgInfo("opFile.value", "mse_loss_v2");
         this->AICore().AddConfig("ascend950", config950);
+        this->AICore().AddConfig("ascend350", config950);
     }
 };
 OP_ADD(MSELossV2);

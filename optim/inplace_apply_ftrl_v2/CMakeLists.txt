@@ -9,14 +9,14 @@
 
 add_all_modules_sources(
     ACLNNTYPE aclnn_exclude
-    COMPUTE_UNIT ascend950
-    TILING_DIR arch35
+    COMPUTE_UNIT ascend950 ascend350
+    TILING_DIR arch35 arch35
     DISABLE_IN_OPP TRUE
 )
 
 add_kernel_sources(
     KERNEL_SRC arch35/inplace_apply_ftrl_v2.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
 )
 
 if ((UT_TEST_ALL OR OP_KERNEL_UT) AND NOT UT_DONE)

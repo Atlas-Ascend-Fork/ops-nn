@@ -52,6 +52,7 @@ public:
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true);
         this->AICore().AddConfig("ascend950", aicoreConfigAscend950);
+        this->AICore().AddConfig("ascend350", aicoreConfigAscend950);
         this->AICore().AddConfig("ascend910_93");
         this->AICore().AddConfig("ascend910b");
 

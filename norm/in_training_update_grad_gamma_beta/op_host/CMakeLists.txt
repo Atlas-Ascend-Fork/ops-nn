@@ -14,8 +14,8 @@ add_modules_sources(
     DIR ${CMAKE_CURRENT_SOURCE_DIR}
     OPTYPE in_training_update_grad_gamma_beta
     ACLNNTYPE aclnn_exclude
-    COMPUTE_UNIT ascend950
-    TILING_DIR arch35
+    COMPUTE_UNIT ascend950 ascend350
+    TILING_DIR arch35 arch35
     DISABLE_IN_OPP TRUE
     DEPENDENCIES norm_common
 )

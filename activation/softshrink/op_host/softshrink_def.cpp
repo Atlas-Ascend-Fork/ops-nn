@@ -55,6 +55,7 @@ public:
             // opFile.value 与当前算子目录名 / kernel 入口函数名保持一致。
             .ExtendCfgInfo("opFile.value", "softshrink");
         this->AICore().AddConfig("ascend950", aiCoreConfig);
+        this->AICore().AddConfig("ascend350", aiCoreConfig);
     }
 };
 OP_ADD(SoftShrink);

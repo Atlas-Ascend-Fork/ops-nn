@@ -12,6 +12,6 @@
 # arch35 (ascend950)
 add_kernel_sources(
     KERNEL_SRC roi_pooling_apt.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS  ascend950 ascend350
     AUTO_SYNC false
 )

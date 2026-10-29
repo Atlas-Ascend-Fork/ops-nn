@@ -51,6 +51,7 @@ public:
             .ExtendCfgInfo("opFile.value", "npu_get_float_status_apt")
             .ExtendCfgInfo("opInterface.value", "npu_get_float_status");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 OP_ADD(NPUGetFloatStatus);

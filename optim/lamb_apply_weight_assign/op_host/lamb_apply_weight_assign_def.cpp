@@ -52,6 +52,7 @@ public:
             .PrecisionReduceFlag(false)
             .ExtendCfgInfo("opFile.value", "lamb_apply_weight_assign");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 

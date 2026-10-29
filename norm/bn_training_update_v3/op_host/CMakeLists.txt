@@ -10,4 +10,4 @@
 
 # 仅 ascend950（arch35 tiling 目录）
 add_modules_sources(HOSTNAME ${OPHOST_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR} OPTYPE bn_training_update_v3
-        ACLNNTYPE aclnn_exclude COMPUTE_UNIT ascend950 TILING_DIR arch35)
+        ACLNNTYPE aclnn_exclude COMPUTE_UNIT ascend950 ascend350 TILING_DIR arch35 arch35)
