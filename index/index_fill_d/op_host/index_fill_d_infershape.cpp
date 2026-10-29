@@ -10,8 +10,15 @@
 
 #include "op_host/infershape_elewise_util.h"
 #include "register/op_impl_registry.h"
+#include "log/log.h"
 
 using namespace ge;
 namespace ops {
-IMPL_OP_INFERSHAPE(IndexFillD).InferShape(Ops::Base::InferShape4Elewise);
+static ge::graphStatus InferShape4IndexFillD(gert::InferShapeContext* context)
+{
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
+    return Ops::Base::InferShape4Elewise(context);
+}
+
+IMPL_OP_INFERSHAPE(IndexFillD).InferShape(InferShape4IndexFillD);
 } // namespace ops

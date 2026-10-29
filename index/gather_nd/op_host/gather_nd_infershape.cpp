@@ -14,6 +14,7 @@
  */
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include "util/shape_util.h"
 
 using namespace ge;
 namespace ops {
@@ -34,6 +35,7 @@ static bool CheckGatherNdParamsSize(const gert::InferShapeContext* context, cons
 
 static ge::graphStatus InferShape4GatherNd(gert::InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     OP_LOGD(context->GetNodeName(), "infershape is begin");
     auto x_shape = context->GetInputShape(INPUT_IDX_X);
     OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
@@ -44,12 +46,23 @@ static ge::graphStatus InferShape4GatherNd(gert::InferShapeContext* context)
     auto out_shape = context->GetOutputShape(INPUT_IDX_X);
     OP_CHECK_NULL_WITH_CONTEXT(context, out_shape);
     out_shape->SetDimNum(0);
+    if (Ops::Base::IsUnknownRank(*x_shape)) {
+        OP_LOGD(context->GetNodeName(), "x shape is unknown rank, set output shape to (-2, ).");
+        Ops::Base::SetUnknownRank(*out_shape);
+        return ge::GRAPH_SUCCESS;
+    }
     if (rank_indices < 1) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "indices", std::to_string(rank_indices) + "D",
                                                  "The shape dim of indices must be greater than 0");
         return GRAPH_FAILED;
     }
     int64_t indices_last_element = indies_shape->GetDim(rank_indices - 1);
+    if (indices_last_element < 0) {
+        // indices末维为未知维（-1/-2）时，无法确定输出rank，将输出置为未知rank
+        OP_LOGD(context->GetNodeName(), "indices last dim is unknown, set output shape to (-2, ).");
+        Ops::Base::SetUnknownRank(*out_shape);
+        return ge::GRAPH_SUCCESS;
+    }
     if (!CheckGatherNdParamsSize(context, indices_last_element, x_real_dim_cnt)) {
         return ge::GRAPH_FAILED;
     }

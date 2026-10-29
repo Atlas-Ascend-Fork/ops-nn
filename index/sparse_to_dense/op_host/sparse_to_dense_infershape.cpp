@@ -49,6 +49,7 @@ static ge::graphStatus SetAllUnknownDim(const int64_t rank, gert::Shape* outputS
 
 static ge::graphStatus InferShapeForSparseToDense(gert::InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     OP_LOGI(context->GetNodeName(), "Begin to do InferShapeForSparseToDense");
     const gert::Shape* outputShapeShape = context->GetInputShape(kInputIndex1);
     OPS_CHECK_NULL_WITH_CONTEXT(context, outputShapeShape);

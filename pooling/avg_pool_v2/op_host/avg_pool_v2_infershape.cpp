@@ -14,6 +14,7 @@
  */
 #include "log/log.h"
 #include "pooling/avg_pool/op_host/avg_pool_infershape_common.h"
+#include "util/shape_util.h"
 
 template <class T>
 bool CheckPoolingPadsPositive(const std::string& opName, const std::string& paddingModeStr, T& inputs)
@@ -49,6 +50,7 @@ const size_t EXCLUSIVE_IDX_AVGPOOLV2 = 7;
 // support information
 const size_t DIM_SIZE4 = 4;
 const size_t PAD_SIZE_LIMIT = 4;
+constexpr int64_t UNKNOWN_DIM_VALUE = -1;
 // pad index
 const size_t TOP_IDX_PAD = 0;
 const size_t BOTTOM_IDX_PAD = 1;
@@ -124,8 +126,8 @@ static graphStatus GetAvgPoolV2XShape(const gert::CompileTimeTensorDesc* tensorD
     inputs.inH = shapeIn->GetDim(inputs.xhPosition);
     inputs.inW = shapeIn->GetDim(inputs.xwPosition);
 
-    OP_LOGE_IF(inputs.inC < 1, GRAPH_FAILED, opName, "x channel should be greater than or equal to 1. actual is: %ld",
-               inputs.inC);
+    OP_LOGE_IF(inputs.inC != UNKNOWN_DIM_VALUE && inputs.inC < 1, GRAPH_FAILED, opName,
+               "x channel should be greater than or equal to 1. actual is: %ld", inputs.inC);
 
     return GRAPH_SUCCESS;
 }
@@ -154,6 +156,7 @@ static graphStatus SetAvgPoolV2Output(InferShapeContext* context, AvgPoolV2Input
 
 static graphStatus InferShapeForAvgPoolV2(InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     const std::string opName = context->GetNodeName();
     OP_LOGD(opName, "Enter avgpoolv2 shape infer.");
 
@@ -229,10 +232,30 @@ static graphStatus InferShapeForAvgPoolV2(InferShapeContext* context)
     OP_LOGE_IF(ceilModeFlag == nullptr, GRAPH_FAILED, opName, "Get ceil mode failed.");
 
     // Get input shape of avgpoolv2
+    const gert::Shape* xShape = context->GetInputShape(X_IDX_AVGPOOLV2);
+    OP_LOGE_IF(xShape == nullptr, GRAPH_FAILED, opName, "fmap is null.");
+    if (Ops::Base::IsUnknownRank(*xShape)) {
+        OP_LOGD(opName, "x shape is unknown rank, set output shape to unknown rank.");
+        gert::Shape* outputShape = context->GetOutputShape(OUT_IDX_AVGPOOLV2);
+        OP_LOGE_IF(outputShape == nullptr, GRAPH_FAILED, opName, "Get output shape failed.");
+        Ops::Base::SetUnknownRank(*outputShape);
+        return ge::GRAPH_SUCCESS;
+    }
     if (GetAvgPoolV2XShape(tensorDescIn, opName, context, dataFormatArray, inputs) != GRAPH_SUCCESS) {
         return GRAPH_FAILED;
     }
 
+    inputs.outN = inputs.inN;
+    inputs.outC = inputs.inC;
+    if (inputs.inH == UNKNOWN_DIM_VALUE || inputs.inW == UNKNOWN_DIM_VALUE) {
+        OP_LOGD(opName, "x H/W dim is unknown, set output H/W dim to unknown.");
+        inputs.outH = UNKNOWN_DIM_VALUE;
+        inputs.outW = UNKNOWN_DIM_VALUE;
+        if (SetAvgPoolV2Output(context, inputs, opName) != GRAPH_SUCCESS) {
+            return GRAPH_FAILED;
+        }
+        return ge::GRAPH_SUCCESS;
+    }
     if (*globalPoolingPtr) {
         inputs.windowH = static_cast<int32_t>(inputs.inH);
         inputs.windowW = static_cast<int32_t>(inputs.inW);
@@ -260,8 +283,6 @@ static graphStatus InferShapeForAvgPoolV2(InferShapeContext* context)
                         "stride values must be > 0"),
                     return GRAPH_FAILED);
     }
-    inputs.outN = inputs.inN;
-    inputs.outC = inputs.inC;
 
     if (paddingModeStr == "SAME") {
         OP_CHECK_IF(inputs.strideH == 0 || inputs.strideW == 0,

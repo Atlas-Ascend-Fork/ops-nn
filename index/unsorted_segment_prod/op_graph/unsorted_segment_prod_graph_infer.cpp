@@ -17,6 +17,7 @@
 
 #include "exe_graph/runtime/infer_datatype_context.h"
 #include "register/op_impl_registry.h"
+#include "log/log.h"
 
 namespace ops {
 using namespace ge;
@@ -30,6 +31,7 @@ ge::graphStatus InferDataTypeForUnsortedSegmentProd(gert::InferDataTypeContext* 
     if (context == nullptr) {
         return ge::GRAPH_FAILED;
     }
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferDtype***");
     return context->SetOutputDataType(kOutputYIndex, context->GetInputDataType(kXIndex));
 }
 } // namespace

@@ -260,6 +260,7 @@ static ge::graphStatus SegmentMeanCheck(gert::InferShapeContext* context)
 
 static ge::graphStatus InferShapeForSparseSegmentMean(gert::InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     OP_LOGI(context->GetNodeName(), "Begin to do InferShapeForSparseSegmentMean");
     OP_LOGE_IF(SegmentMeanCheck(context) != GRAPH_SUCCESS, ge::GRAPH_FAILED, context->GetNodeName(), "Check failed.");
     const gert::Shape* xShape = context->GetInputShape(kInputIndex0);

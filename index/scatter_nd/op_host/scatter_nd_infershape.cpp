@@ -41,6 +41,7 @@ static constexpr int64_t SC_IN_SHAPE_IDX = 2;
 
 static ge::graphStatus Infershape4Nd(gert::InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     OP_LOGD(context->GetNodeName(), "Begin to do ScatterNdInfershape.");
 
     const gert::Tensor* shape_tensor = context->GetInputTensor(SC_IN_SHAPE_IDX);

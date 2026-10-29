@@ -42,6 +42,7 @@ static ge::graphStatus UnsortedSegmentInferShapeImpl(const int64_t& first_dim, c
 
 static graphStatus InferShape4UnsortedSegment(gert::InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     OP_LOGD(context->GetNodeName(), "Begin to do unsortedSegmentInferShape");
     const gert::Shape* x_shape = context->GetInputShape(INPUT_X_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);

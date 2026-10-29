@@ -26,6 +26,7 @@ constexpr size_t kOutputIndex0 = 0U;
 
 static ge::graphStatus InferDtypeForSparseSegmentMean(gert::InferDataTypeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferDtype***");
     OP_LOGI(context->GetNodeName(), "Begin to do InferDtypeForSparseSegmentMean");
     DataType xDataType = context->GetInputDataType(kInputIndex0);
     return context->SetOutputDataType(kOutputIndex0, xDataType);

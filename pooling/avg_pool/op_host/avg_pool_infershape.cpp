@@ -14,6 +14,7 @@
  */
 #include "log/log.h"
 #include "avg_pool_infershape_common.h"
+#include "util/shape_util.h"
 std::string GetInputFormatNotSupportErrMsg(const std::string& param_name, const std::string& expected_format_list,
                                            const std::string& data_format)
 {
@@ -35,6 +36,7 @@ const size_t DATA_FORMAT_IDX_AVGPOOL = 3;
 // support information
 const size_t DIM_SIZE4 = 4;
 const size_t SUPPORTED_DIM_NUM = 4;
+constexpr int64_t UNKNOWN_DIM_VALUE = -1;
 
 struct AvgPoolInputs {
     // fmap index 4D
@@ -93,7 +95,7 @@ static graphStatus GetAvgPoolXShape(const gert::CompileTimeTensorDesc* tensorDes
     inputs.inH = shapeIn->GetDim(inputs.xhPosition);
     inputs.inW = shapeIn->GetDim(inputs.xwPosition);
 
-    OP_LOGE_IF(inputs.inC < 1, ge::GRAPH_FAILED, opName,
+    OP_LOGE_IF(inputs.inC != UNKNOWN_DIM_VALUE && inputs.inC < 1, ge::GRAPH_FAILED, opName,
                "x channel should be greater than or equal to 1. actual is: %ld", inputs.inC);
 
     return ge::GRAPH_SUCCESS;
@@ -135,6 +137,7 @@ static graphStatus SetAvgPoolOutput(InferShapeContext* context, AvgPoolInputs& i
 
 static graphStatus InferShapeForAvgPool(InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     const std::string opName = context->GetNodeName();
     OP_LOGD(opName, "Enter avgpool shape infer.");
 
@@ -185,6 +188,15 @@ static graphStatus InferShapeForAvgPool(InferShapeContext* context)
     }
 
     // Get input shape
+    const gert::Shape* xShape = context->GetInputShape(X_IDX_AVGPOOL);
+    OP_LOGE_IF(xShape == nullptr, GRAPH_FAILED, opName, "fmap is null.");
+    if (Ops::Base::IsUnknownRank(*xShape)) {
+        OP_LOGD(opName, "x shape is unknown rank, set output shape to unknown rank.");
+        gert::Shape* outputShape = context->GetOutputShape(OUT_IDX_AVGPOOL);
+        OP_LOGE_IF(outputShape == nullptr, GRAPH_FAILED, opName, "Get output shape failed.");
+        Ops::Base::SetUnknownRank(*outputShape);
+        return GRAPH_SUCCESS;
+    }
     if (GetAvgPoolXShape(tensorDescIn, opName, context, inputs) != GRAPH_SUCCESS) {
         return GRAPH_FAILED;
     }
@@ -211,7 +223,11 @@ static graphStatus InferShapeForAvgPool(InferShapeContext* context)
 
     inputs.outN = inputs.inN;
     inputs.outC = inputs.inC;
-    if (padStr == "SAME") {
+    if (inputs.inH == UNKNOWN_DIM_VALUE || inputs.inW == UNKNOWN_DIM_VALUE) {
+        OP_LOGD(opName, "x H/W dim is unknown, set output H/W dim to unknown.");
+        inputs.outH = UNKNOWN_DIM_VALUE;
+        inputs.outW = UNKNOWN_DIM_VALUE;
+    } else if (padStr == "SAME") {
         inputs.outH = (inputs.inH + inputs.strideH - 1) / inputs.strideH;
         inputs.outW = (inputs.inW + inputs.strideW - 1) / inputs.strideW;
     } else {

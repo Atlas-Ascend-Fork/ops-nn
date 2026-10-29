@@ -15,6 +15,7 @@
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 #include "util/const_util.h"
+#include "util/shape_util.h"
 #include "version/metadef_version.h"
 #include <string>
 #include <sstream>
@@ -168,6 +169,7 @@ static ge::graphStatus GatherCommonInfer(gert::InferShapeContext* context, const
 
 static ge::graphStatus InferShapeForGatherV2(gert::InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     OP_LOGD(context->GetNodeName(), "infershape is begin");
     auto x_shape = context->GetInputShape(INPUT_IDX_X);
     OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
@@ -181,17 +183,49 @@ static ge::graphStatus InferShapeForGatherV2(gert::InferShapeContext* context)
     auto out_shape = context->GetOutputShape(INPUT_IDX_X);
     OP_CHECK_NULL_WITH_CONTEXT(context, out_shape);
     out_shape->SetDimNum(0);
+    if (Ops::Base::IsUnknownRank(*x_shape) || Ops::Base::IsUnknownRank(*indies_shape)) {
+        OP_LOGD(context->GetNodeName(), "x or indices shape is unknown rank, set output shape to (-2, ).");
+        Ops::Base::SetUnknownRank(*out_shape);
+        return ge::GRAPH_SUCCESS;
+    }
     auto axes_size = static_cast<int32_t>(axes_tensor->GetShapeSize());
     OP_LOGD(context->GetNodeName(), "axes_size is %d", axes_size);
     OP_CHECK_IF(
-        axes_size < 1,
+        axes_size == 0,
         OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "axis", std::to_string(axes_size).c_str(),
                                                   "The shape size of axis must be greater than 0."),
         return ge::GRAPH_FAILED);
     int64_t axis = 0;
-    OP_CHECK_IF(!Ops::Base::GetConstInt(context, INPUT_IDX_AXIS, axis),
-                OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "axis", "null", "const int"),
-                return ge::GRAPH_FAILED);
+    if (axes_size < 0 || !Ops::Base::GetConstInt(context, INPUT_IDX_AXIS, axis)) {
+        // 对齐rt1.0：axis数据不可得（未知rank/未知维/数据未就绪）时，输出rank与axis值无关，
+        // 可推导为 x_rank + rank_indices - batch_dims - 1，各维置为未知维-1
+        auto attrs = context->GetAttrs();
+        OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+        const auto* batchDimsPtr = attrs->GetAttrPointer<int64_t>(0);
+        OP_CHECK_NULL_WITH_CONTEXT(context, batchDimsPtr);
+        int64_t batchDims = *batchDimsPtr;
+        int64_t xRank = x_shape->IsScalar() ? 1 : x_real_dim_cnt;
+        OP_CHECK_IF(batchDims < -rank_indices || (batchDims > rank_indices && rank_indices != 0),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "batch_dims", std::to_string(batchDims).c_str(),
+                        ("The value of batch_dims must be in the range [" + std::to_string(-rank_indices) + ", " +
+                         std::to_string(rank_indices - 1) + "]")
+                            .c_str()),
+                    return ge::GRAPH_FAILED);
+        if (batchDims < 0) {
+            batchDims = batchDims + rank_indices;
+        }
+        OP_CHECK_IF(batchDims >= xRank,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "batch_dims", std::to_string(batchDims).c_str(),
+                        ("The value of batch_dims must be less than " + std::to_string(xRank)).c_str()),
+                    return ge::GRAPH_FAILED);
+        int64_t outRank = xRank + rank_indices - batchDims - 1;
+        for (int64_t i = 0; i < outRank; i++) {
+            out_shape->AppendDim(-1);
+        }
+        return ge::GRAPH_SUCCESS;
+    }
 
     GatherInfo gatherinfo = {axis, 0, x_real_dim_cnt, rank_indices};
     return GatherCommonInfer(context, x_shape, indies_shape, out_shape, gatherinfo);

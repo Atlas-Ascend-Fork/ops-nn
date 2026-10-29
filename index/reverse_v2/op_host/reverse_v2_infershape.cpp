@@ -35,6 +35,7 @@ static ge::graphStatus CopyShapeInput2OutputWithIdxForReverseV2(gert::InferShape
 
 static ge::graphStatus InferShape4ReverseV2(gert::InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     OP_LOGD(context->GetNodeName(), "begin to do InferShape4ReverseV2 with CopyShapeInput2OutputWithIdx");
     return CopyShapeInput2OutputWithIdxForReverseV2(context, IN_X, OUT_Y);
 }

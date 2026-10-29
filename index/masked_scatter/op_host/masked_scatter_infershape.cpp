@@ -20,11 +20,13 @@
 namespace ops {
 static ge::graphStatus InferShape4MaskedScatter(gert::InferShapeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferShape***");
     return Ops::Base::InferShape4Elewise(context);
 }
 
 static ge::graphStatus InferDataType4MaskedScatter(gert::InferDataTypeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferDtype***");
     OP_LOGD(context->GetNodeName(), "InferDataType4SameAsInput enter");
     auto input_x_dtype = context->GetInputDataType(0);
     context->SetOutputDataType(0, input_x_dtype);

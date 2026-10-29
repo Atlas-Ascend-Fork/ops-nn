@@ -27,6 +27,7 @@ constexpr size_t kOutputIndex0 = 0U;
 
 static ge::graphStatus InferDtypeForSparseToDense(gert::InferDataTypeContext* context)
 {
+    OP_LOGI(context->GetNodeName(), "***runtime2.0 inferDtype***");
     OP_LOGI(context->GetNodeName(), "Begin to do InferDtypeForSparseToDense");
     DataType valuesType = context->GetInputDataType(kInputIndex2);
     OP_LOGE_IF(context->SetOutputDataType(kOutputIndex0, valuesType) != ge::GRAPH_SUCCESS, ge::GRAPH_FAILED,
