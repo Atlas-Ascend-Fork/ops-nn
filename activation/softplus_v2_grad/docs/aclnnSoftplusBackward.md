@@ -326,6 +326,7 @@ int main()
     void* gradOutputDeviceAddr = nullptr;
     void* selfDeviceAddr = nullptr;
     void* gradInputDeviceAddr = nullptr;
+    void* workspaceAddr = nullptr;
     aclTensor* gradOutput = nullptr;
     aclTensor* self = nullptr;
     aclTensor* gradInput = nullptr;
@@ -337,65 +338,113 @@ int main()
     std::vector<float> gradInputHostData = {0, 0, 0, 0, 0, 0, 0, 0};
     float betaValue = 1.1f;
     float thresholdValue = 1.2f;
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor = nullptr;
+    int64_t size = 0;
+    std::vector<float> resultData;
 
     // 创建 gradOutput, self, gradInput aclTensor
+    // DEMO.04: 各失败分支统一 goto CLEANUP 释放已申请资源，不再直接 return
     ret = CreateAclTensor(gradOutputHostData, gradOutputShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT,
                           &gradOutput);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    if (ret != ACL_SUCCESS) {
+        goto CLEANUP;
+    }
     ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    if (ret != ACL_SUCCESS) {
+        goto CLEANUP;
+    }
     ret = CreateAclTensor(gradInputHostData, gradInputShape, &gradInputDeviceAddr, aclDataType::ACL_FLOAT, &gradInput);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    if (ret != ACL_SUCCESS) {
+        goto CLEANUP;
+    }
     beta = aclCreateScalar(&betaValue, aclDataType::ACL_FLOAT);
-    CHECK_RET(beta != nullptr, return ret);
+    if (beta == nullptr) {
+        ret = ACL_ERROR_FAILURE;
+        goto CLEANUP;
+    }
     threshold = aclCreateScalar(&thresholdValue, aclDataType::ACL_FLOAT);
-    CHECK_RET(threshold != nullptr, return ret);
+    if (threshold == nullptr) {
+        ret = ACL_ERROR_FAILURE;
+        goto CLEANUP;
+    }
 
     // 3. 调用CANN算子库API，需要修改为具体的API
-    uint64_t workspaceSize = 0;
-    aclOpExecutor* executor;
     // 调用aclnnSoftplusBackward第一段接口
     ret = aclnnSoftplusBackwardGetWorkspaceSize(gradOutput, self, beta, threshold, gradInput, &workspaceSize,
                                                 &executor);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSoftplusBackwardGetWorkspaceSize failed. ERROR: %d\n", ret);
-              return ret);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("aclnnSoftplusBackwardGetWorkspaceSize failed. ERROR: %d\n", ret);
+        goto CLEANUP;
+    }
     // 根据第一段接口计算出的workspaceSize申请device内存
-    void* workspaceAddr = nullptr;
     if (workspaceSize > 0) {
         ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
+        if (ret != ACL_SUCCESS) {
+            LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret);
+            goto CLEANUP;
+        }
     }
     // 调用aclnnSoftplusBackward第二段接口
     ret = aclnnSoftplusBackward(workspaceAddr, workspaceSize, executor, stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSoftplusBackward failed. ERROR: %d\n", ret); return ret);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("aclnnSoftplusBackward failed. ERROR: %d\n", ret);
+        goto CLEANUP;
+    }
     // 4. （固定写法）同步等待任务执行结束
     ret = aclrtSynchronizeStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret);
+        goto CLEANUP;
+    }
     // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
-    auto size = GetShapeSize(gradInputShape);
-    std::vector<float> resultData(size, 0);
+    size = GetShapeSize(gradInputShape);
+    resultData.resize(size, 0);
     ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), gradInputDeviceAddr,
                       size * sizeof(float), ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret);
+        goto CLEANUP;
+    }
     for (int64_t i = 0; i < size; i++) {
         LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
     }
 
+CLEANUP:
     // 6. 释放aclTensor，需要根据具体API的接口定义
-    aclDestroyTensor(gradOutput);
-    aclDestroyTensor(self);
-    aclDestroyTensor(gradInput);
+    if (gradOutput != nullptr) {
+        aclDestroyTensor(gradOutput);
+    }
+    if (self != nullptr) {
+        aclDestroyTensor(self);
+    }
+    if (gradInput != nullptr) {
+        aclDestroyTensor(gradInput);
+    }
+    // DEMO.04: 释放aclScalar，与aclCreateScalar成对
+    if (beta != nullptr) {
+        aclDestroyScalar(beta);
+    }
+    if (threshold != nullptr) {
+        aclDestroyScalar(threshold);
+    }
 
     // 7. 释放device资源，需要根据具体API的接口定义修改
-    aclrtFree(gradOutputDeviceAddr);
-    aclrtFree(selfDeviceAddr);
-    aclrtFree(gradInputDeviceAddr);
-    if (workspaceSize > 0) {
+    if (gradOutputDeviceAddr != nullptr) {
+        aclrtFree(gradOutputDeviceAddr);
+    }
+    if (selfDeviceAddr != nullptr) {
+        aclrtFree(selfDeviceAddr);
+    }
+    if (gradInputDeviceAddr != nullptr) {
+        aclrtFree(gradInputDeviceAddr);
+    }
+    if (workspaceAddr != nullptr) {
         aclrtFree(workspaceAddr);
     }
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
     aclFinalize();
-    return 0;
+    return ret;
 }
 ```
