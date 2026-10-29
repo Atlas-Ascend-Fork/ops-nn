@@ -13,6 +13,6 @@ add_kernel_sources(
     AUTO_SYNC false
 )
 add_kernel_sources(
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend960dt
     AUTO_SYNC false
 )

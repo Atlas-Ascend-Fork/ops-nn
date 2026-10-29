@@ -37,7 +37,10 @@ bool CheckSocVersion()
         case SocVersion::ASCEND950:
             return true;
         default:
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Logit only supports Ascend 910B, 910_93 and 950.");
+            if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9201) {
+                return true;
+            }
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Logit only supports Ascend 910B, 910_93, 950 and 960DT.");
             return false;
     }
 }
