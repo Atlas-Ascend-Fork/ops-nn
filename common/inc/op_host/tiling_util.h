@@ -19,6 +19,7 @@
 #include "platform/platform_ascendc.h"
 #include "platform/soc_spec.h"
 #include "log/log.h"
+#include "op_common/op_host/util/op_const_def.h"
 
 namespace Ops {
 namespace NN {
@@ -27,8 +28,8 @@ static const gert::Shape g_vec_1_shape = {1};
 
 static bool IsRegbaseNpuArch(NpuArch npuArch)
 {
-    const static std::set<NpuArch> regbaseNpuArchs = {NpuArch::DAV_3510, NpuArch::DAV_5102, NpuArch::DAV_9201,
-                                                      NpuArch::DAV_9202};
+    const static std::set<NpuArch> regbaseNpuArchs = {Ops::Base::DAV_3510, Ops::Base::DAV_5102, Ops::Base::DAV_9201,
+                                                      Ops::Base::DAV_9202, Ops::Base::DAV_5162};
     return regbaseNpuArchs.find(npuArch) != regbaseNpuArchs.end();
 }
 
