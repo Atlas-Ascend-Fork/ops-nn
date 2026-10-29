@@ -1530,9 +1530,13 @@ __aicore__ inline void GroupNormGradMixBase<T, U>::VFDbetaDgammaBinaryFoldCommon
                 LoadUnAlignOneTensor<T>(curUbDyR, vregDyR, uSrcDyR, pregLoop, sregvl);
                 Mul(vregXQ, vregXQ, vregDyQ, pregMain);
                 MulDstAdd(vregXR, vregDyR, vregXQ, pregLoop);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(vregDyQ, vregDyQ, vregDyR, pregLoop);
+#else
                 Add(tempDy, vregDyQ, vregDyR, pregLoop);
-                Move<float, AscendC::Reg::MaskMergeMode::MERGING>(vregXQ, vregXR, pregLoop);
                 Move<float, AscendC::Reg::MaskMergeMode::MERGING>(vregDyQ, tempDy, pregLoop);
+#endif
+                Move<float, AscendC::Reg::MaskMergeMode::MERGING>(vregXQ, vregXR, pregLoop);
                 Reduce<AscendC::Reg::ReduceType::SUM>(vregDgamma, vregXQ, pregMain);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(ubBinaryDgamma + remainderGeneral, vregDgamma,
                                                                      pregMerge);

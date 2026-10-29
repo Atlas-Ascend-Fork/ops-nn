@@ -326,8 +326,12 @@ __aicore__ inline void GroupNormGradSmallNGCFullLoad<T, U>::VFMode0DbetaDs(
             LoadUnAlignOneTensor<T>(curUbX, vregX, uSrcX, preg, sregvl);
             LoadUnAlignOneTensor<T>(curUbDy, vregDy, uSrcDy, preg, sregvl);
             MulDstAdd(vregX, vregDy, vregDs, preg);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            Add<float, AscendC::Reg::MaskMergeMode::MERGING>(vregDbeta, vregDbeta, vregDy, preg);
+#else
             Add(tempDbeta, vregDbeta, vregDy, preg);
             Move<float, AscendC::Reg::MaskMergeMode::MERGING>(vregDbeta, tempDbeta, preg);
+#endif
             Move<float, AscendC::Reg::MaskMergeMode::MERGING>(vregDs, vregX, preg);
 
             MaskReg pregMerge = CreateMask<float, MaskPattern::VL1>();

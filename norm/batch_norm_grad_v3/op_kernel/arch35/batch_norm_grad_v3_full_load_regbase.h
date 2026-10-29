@@ -225,9 +225,14 @@ public:
                 LoadOneTensor<DY_TYPE>(data, binaryAddQ, pregMain, aOffset + remainderGeneral * VL_FP32);
                 LoadOneTensor<DY_TYPE>(data, binaryAddR, pregLoop,
                                        aOffset + remainderGeneral * VL_FP32 + binaryAddQuotientOffset);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddQ, binaryAddQ, binaryAddR, pregLoop);
+                Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, binaryAddQ, pregMain);
+#else
                 Add(binaryAddRes, binaryAddQ, binaryAddR, pregLoop);
                 Select(binaryAddRes, binaryAddRes, binaryAddQ, pregLoop);
                 Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, binaryAddRes, pregMain);
+#endif
                 StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>((__ubuf__ float*)binaryAdd + remainderGeneral,
                                                                           vlSum, pregMerge);
 
@@ -386,9 +391,14 @@ public:
                 Mul(binaryAddQ1, binaryAddQ1, rstdValue, pregMain);
                 Mul(binaryAddR1, binaryAddR1, binaryAddR2, pregLoop);
                 Mul(binaryAddR1, binaryAddR1, rstdValue, pregLoop);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddQ1, binaryAddQ1, binaryAddR1, pregLoop);
+                Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, binaryAddQ1, pregMain);
+#else
                 Add(binaryAddRes, binaryAddQ1, binaryAddR1, pregLoop);
                 Select(binaryAddRes, binaryAddRes, binaryAddQ1, pregLoop);
                 Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, binaryAddRes, pregMain);
+#endif
                 StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>((__ubuf__ float*)binaryAdd + remainderGeneral,
                                                                           vlSum, pregMerge);
 

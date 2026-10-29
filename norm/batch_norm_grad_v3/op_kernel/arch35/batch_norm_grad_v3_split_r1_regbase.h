@@ -449,8 +449,12 @@ public:
                 Reg::MaskReg pregLoop = Reg::UpdateMask<float>(sreg0);
                 LoadOneTensor<DY_TYPE>(data, binaryAddQ, pregMain, i * VL_FP32);
                 LoadOneTensor<DY_TYPE>(data, binaryAddR, pregLoop, i * VL_FP32 + binaryAddQuotientOffset);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddQ, binaryAddQ, binaryAddR, pregLoop);
+#else
                 Reg::Add(tmp, binaryAddQ, binaryAddR, pregLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(binaryAddQ, tmp, pregLoop);
+#endif
                 Reg::Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, binaryAddQ, pregMain);
                 Reg::StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>((__ubuf__ float*)binaryAdd + i, vlSum,
                                                                                pregMerge);
@@ -528,12 +532,19 @@ public:
                 LoadOneTensor<DY_TYPE>(data, binaryAddQTail, pregTailLoop, i * VL_FP32 + halfXBufOffset_);
                 LoadOneTensor<DY_TYPE>(data, binaryAddRTail, pregTailReminderLoop,
                                        i * VL_FP32 + binaryAddQuotientOffset + halfXBufOffset_);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddQ, binaryAddQ, binaryAddQTail, pregTailLoop);
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddR, binaryAddR, binaryAddRTail,
+                                                                 pregTailReminderLoop);
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddQ, binaryAddQ, binaryAddR, pregLoop);
+#else
                 Reg::Add(tmp1, binaryAddQ, binaryAddQTail, pregTailLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(binaryAddQ, tmp1, pregTailLoop);
                 Reg::Add(tmp2, binaryAddR, binaryAddRTail, pregTailReminderLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(binaryAddR, tmp2, pregTailReminderLoop);
                 Reg::Add(tmp1, binaryAddQ, binaryAddR, pregLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(binaryAddQ, tmp1, pregLoop);
+#endif
                 Reg::Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, binaryAddQ, pregMain);
                 Reg::StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>((__ubuf__ float*)binaryAdd + i, vlSum,
                                                                                pregMerge);
@@ -544,8 +555,12 @@ public:
                 LoadOneTensor<DY_TYPE>(data, x, pregMain, (i + binaryAddRemainderLoop) * VL_FP32);
                 LoadOneTensor<DY_TYPE>(data, xTail, pregTailLoop,
                                        (i + binaryAddRemainderLoop) * VL_FP32 + halfXBufOffset_);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(x, x, xTail, pregTailLoop);
+#else
                 Reg::Add(tmp2, x, xTail, pregTailLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(x, tmp2, pregTailLoop);
+#endif
                 Reg::Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, x, pregMain);
                 Reg::StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>(
                     (__ubuf__ float*)binaryAdd + binaryAddRemainderLoop + i, vlSum, pregMerge);
@@ -606,8 +621,12 @@ public:
             Reg::MaskReg pregTailLoop = Reg::UpdateMask<float>(sreg1);
             LoadOneTensor<DY_TYPE>(data, x, pregLoop, 0);
             LoadOneTensor<DY_TYPE>(data, xTail, pregTailLoop, halfXBufOffset_);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            Add<float, AscendC::Reg::MaskMergeMode::MERGING>(x, x, xTail, pregTailLoop);
+#else
             Reg::Add(tmp, x, xTail, pregTailLoop);
             Reg::Move<float, Reg::MaskMergeMode::MERGING>(x, tmp, pregTailLoop);
+#endif
             Reg::Reduce<AscendC::Reg::ReduceType::SUM>(sum, x, pregLoop);
             Reg::StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>(((__ubuf__ float*)out) + idxInLevel0Cache,
                                                                            sum, pregMerge);
@@ -686,8 +705,12 @@ public:
 
                 Reg::Mul(binaryAddQ1, rstdValue, binaryAddQ2, pregMain);
                 Reg::Mul(binaryAddR1, rstdValue, binaryAddR2, pregLoop);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddQ1, binaryAddQ1, binaryAddR1, pregLoop);
+#else
                 Reg::Add(tmp, binaryAddQ1, binaryAddR1, pregLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(binaryAddQ1, tmp, pregLoop);
+#endif
                 Reg::Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, binaryAddQ1, pregMain);
                 Reg::StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>((__ubuf__ float*)binaryAdd + i, vlSum,
                                                                                pregMerge);
@@ -799,12 +822,20 @@ public:
                 Reg::Mul(binaryAddQ1Tail, rstdValue, binaryAddQ2Tail, pregTailLoop);
                 Reg::Mul(binaryAddR1Tail, rstdValue, binaryAddR2Tail, pregTailReminderLoop);
 
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddQ1, binaryAddQ1, binaryAddQ1Tail,
+                                                                 pregTailLoop);
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddR1, binaryAddR1, binaryAddR1Tail,
+                                                                 pregTailReminderLoop);
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddQ1, binaryAddQ1, binaryAddR1, pregLoop);
+#else
                 Reg::Add(tmp1, binaryAddQ1, binaryAddQ1Tail, pregTailLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(binaryAddQ1, tmp1, pregTailLoop);
                 Reg::Add(tmp2, binaryAddR1, binaryAddR1Tail, pregTailReminderLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(binaryAddR1, tmp2, pregTailReminderLoop);
                 Reg::Add(tmp1, binaryAddQ1, binaryAddR1, pregLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(binaryAddQ1, tmp1, pregLoop);
+#endif
                 Reg::Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, binaryAddQ1, pregMain);
                 Reg::StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>((__ubuf__ float*)binaryAdd + i, vlSum,
                                                                                pregMerge);
@@ -825,8 +856,13 @@ public:
                 Reg::Sub(binaryAddQ2Tail, binaryAddQ2Tail, meanValue, pregTailLoop);
                 Reg::Mul(binaryAddQ2Tail, binaryAddQ2Tail, binaryAddQ1Tail, pregTailLoop);
                 Reg::Mul(binaryAddQ1Tail, rstdValue, binaryAddQ2Tail, pregTailLoop);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+                Add<float, AscendC::Reg::MaskMergeMode::MERGING>(binaryAddQ1, binaryAddQ1, binaryAddQ1Tail,
+                                                                 pregTailLoop);
+#else
                 Reg::Add(tmp1, binaryAddQ1, binaryAddQ1Tail, pregTailLoop);
                 Reg::Move<float, Reg::MaskMergeMode::MERGING>(binaryAddQ1, tmp1, pregTailLoop);
+#endif
 
                 Reg::Reduce<AscendC::Reg::ReduceType::SUM>(vlSum, binaryAddQ1, pregMain);
                 Reg::StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>(
@@ -918,8 +954,12 @@ public:
             Reg::Sub(xTail, xTail, meanValue, pregTailLoop);
             Reg::Mul(xTail, xTail, yTail, pregTailLoop);
             Reg::Mul(xTail, rstdValue, xTail, pregTailLoop);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            Add<float, AscendC::Reg::MaskMergeMode::MERGING>(x, x, xTail, pregTailLoop);
+#else
             Reg::Add(tmp, x, xTail, pregTailLoop);
             Reg::Move<float, Reg::MaskMergeMode::MERGING>(x, tmp, pregTailLoop);
+#endif
             Reg::Reduce<AscendC::Reg::ReduceType::SUM>(sum, x, pregLoop);
             Reg::StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>(
                 ((__ubuf__ float*)dgammaAddr) + idxInLevel0Cache, sum, pregMerge);
