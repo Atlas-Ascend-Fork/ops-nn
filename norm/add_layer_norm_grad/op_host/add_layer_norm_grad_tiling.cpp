@@ -384,6 +384,8 @@ bool BasicCheck(const gert::TilingContext* context, TilingStruct& tilingStruct, 
     hasDxInput = (dxInputShape != nullptr);
     if (hasDxInput) {
         OP_LOGI(context, "hasDxInput");
+        OP_CHECK_IF(dxInputShape->GetStorageShape() != dyShape->GetStorageShape(),
+                    OP_LOGE(context, "dsum shape must be the same as dy shape."), return false);
         int64_t DxInputSize = 1;
         for (size_t i = 0; i < dxInputShape->GetStorageShape().GetDimNum(); i++) {
             DxInputSize *= dxInputShape->GetStorageShape().GetDim(i);

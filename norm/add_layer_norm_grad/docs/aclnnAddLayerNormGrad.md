@@ -222,7 +222,7 @@ aclnnStatus aclnnAddLayerNormGrad(
     <tr>
       <td>dsumOptional（aclTensor*）</td>
       <td>输入</td>
-      <td>可选输入，表示额外的反向梯度累加输入。对应公式中的`dsumOptional`。</td>
+      <td>可选输入，表示额外的反向梯度累加输入。对应公式中的`dsumOptional`，可传入nullptr；非空时shape需与`dy`一致。</td>
       <td><ul><li>不支持空Tensor。</li><li>shape、数据类型与`dy`的shape、数据类型保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
