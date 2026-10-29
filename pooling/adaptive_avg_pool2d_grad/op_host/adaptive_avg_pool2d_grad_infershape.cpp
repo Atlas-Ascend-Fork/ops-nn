@@ -43,6 +43,11 @@ static ge::graphStatus InferShape4AdaptiveAvgPool2dGrad(gert::InferShapeContext*
                                                                     "xGradShape is null; InferShape cannot continue"})),
                 return ge::GRAPH_FAILED);
 
+    if (Ops::Base::IsUnknownRank(*gradShape)) {
+        Ops::Base::SetUnknownRank(*xGradShape);
+        return ge::GRAPH_SUCCESS;
+    }
+
     auto attr_ptr = context->GetAttrs();
     OP_CHECK_IF(
         attr_ptr == nullptr,
