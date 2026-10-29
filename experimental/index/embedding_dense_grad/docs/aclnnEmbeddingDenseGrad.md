@@ -72,7 +72,7 @@ aclnnStatus aclnnEmbeddingDenseGrad(
 ## 约束说明
 
 - `indices` 的元素值必须在 `[0, numWeights)` 范围内，`paddingIdx` 除外。
-- `grad` 的第 0 维大小必须等于 `indices` 的元素个数。
+- `indices` 必须是一维，元素个数必须等于 `grad.shape[:-1]` 各维度的乘积（即 `grad` 最后一维以外各维的乘积，等于将最后一维视为 embedding 维度时的 batch 大小）。例如 `grad.shape=[2,3,4]` 时，需要 6 个 `indices`。
 - `y` 的 shape 为 `{numWeights, dimSize}`，其中 `dimSize` 等于 `grad` 的最后一维大小（即 `grad.shape[-1]`）。
 - `scaleGradByFreq` 为 `true` 时，梯度会除以每个索引出现的次数。
 

@@ -43,7 +43,7 @@
 ## 约束说明
 
 - `indices` 的元素值必须在 `[0, num_weights)` 范围内，`padding_idx` 除外。
-- `grad` 的第 0 维大小必须等于 `indices` 的元素个数。
+- `indices` 必须是一维，元素个数必须等于 `grad.shape[:-1]` 各维度的乘积（即 `grad` 最后一维以外各维的乘积，等于将最后一维视为 embedding 维度时的 batch 大小）。例如 `grad.shape=[2,3,4]` 时，需要 6 个 `indices`。
 - `padding_idx` 默认为 `-1`（不填充），有效范围 `[-1, num_weights)`。
 
 ## 调用说明
