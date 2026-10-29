@@ -142,7 +142,7 @@ aclnnStatus aclnnBinaryCrossEntropyWithLogitsTargetBackward(
       <td class="tg-0lax">gradTarget (aclTensor*)</td>
       <td class="tg-0lax">Output</td>
       <td class="tg-0lax">Stores the gradient computation result.</td>
-      <td class="tg-0lax">The inferred dtype of the input Tensor. It must be convertible to the dtype of gradTarget.</td>
+      <td class="tg-0lax">The dtype must be the same as that of target.</td>
       <td class="tg-0lax">FLOAT16, FLOAT, BFLOAT16</td>
       <td class="tg-0lax">Consistent with self</td>
       <td class="tg-0lax">Consistent with self</td>
@@ -194,12 +194,15 @@ aclnnStatus aclnnBinaryCrossEntropyWithLogitsTargetBackward(
       <td class="tg-0pky">gradOutput, self, target, or gradTarget is a null pointer.</td>
     </tr>
     <tr>
-      <td class="tg-0pky" rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
-      <td class="tg-0pky" rowspan="7">161002</td>
+      <td class="tg-0pky" rowspan="8">ACLNN_ERR_PARAM_INVALID</td>
+      <td class="tg-0pky" rowspan="8">161002</td>
       <td class="tg-0pky">The data types or data formats of gradOutput, self, target, and gradTarget are not in the supported range.</td>
     </tr>
     <tr>
       <td class="tg-0pky">If weightOptional and posWeightOptional are not null pointers, their data types or data formats are not in the supported range.</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">The dtype of gradTarget is inconsistent with that of target.</td>
     </tr>
     <tr>
       <td class="tg-0pky">The shapes of self, target, and gradTarget are inconsistent.</td>

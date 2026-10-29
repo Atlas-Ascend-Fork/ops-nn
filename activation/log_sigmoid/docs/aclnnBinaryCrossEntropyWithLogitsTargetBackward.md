@@ -140,7 +140,7 @@ aclnnStatus aclnnBinaryCrossEntropyWithLogitsTargetBackward(
       <td class="tg-0lax">gradTarget（aclTensor*）</td>
       <td class="tg-0lax">输出</td>
       <td class="tg-0lax">存储梯度计算结果。</td>
-      <td class="tg-0lax">输入Tensor推导后的dtype，需要可以转化为gradTarget的dtype。</td>
+      <td class="tg-0lax">dtype必须与target的dtype保持一致。</td>
       <td class="tg-0lax">FLOAT16、FLOAT、BFLOAT16</td>
       <td class="tg-0lax">与self保持一致</td>
       <td class="tg-0lax">与self保持一致</td>
@@ -192,12 +192,15 @@ aclnnStatus aclnnBinaryCrossEntropyWithLogitsTargetBackward(
       <td class="tg-0pky">传入的gradOutput、self、target、gradTarget为空指针。</td>
     </tr>
     <tr>
-      <td class="tg-0pky" rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
-      <td class="tg-0pky" rowspan="7">161002</td>
+      <td class="tg-0pky" rowspan="8">ACLNN_ERR_PARAM_INVALID</td>
+      <td class="tg-0pky" rowspan="8">161002</td>
       <td class="tg-0pky">gradOutput、self、target、gradTarget的数据类型和数据格式不在支持的范围内。</td>
     </tr>
     <tr>
       <td class="tg-0pky">当weightOptional和posWeightOptional不为空指针，其数据类型和数据格式不在支持的范围内。</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">gradTarget的dtype与target不一致。</td>
     </tr>
     <tr>
       <td class="tg-0pky">self、target、gradTarget的shape不一致。</td>

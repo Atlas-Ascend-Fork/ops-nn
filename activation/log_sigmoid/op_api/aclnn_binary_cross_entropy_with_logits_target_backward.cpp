@@ -189,10 +189,7 @@ static bool CheckFormat([[maybe_unused]] const aclTensor* gradOutput, const aclT
 static bool CheckShape(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* target,
                        const aclTensor* weightOptional, const aclTensor* posWeightOptional, const aclTensor* gradTarget)
 {
-    if (self->IsEmpty()) {
-        return true;
-    }
-
+    // 空 Tensor 场景也需校验 shape 约束，避免 self 为空时跳过校验并静默成功
     // target与self, gradTarget的shape必须一致
     OP_CHECK_SHAPE_NOT_EQUAL(self, target, return false);
     OP_CHECK_SHAPE_NOT_EQUAL(self, gradTarget, return false);

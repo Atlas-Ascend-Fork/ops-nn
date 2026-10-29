@@ -243,6 +243,74 @@ TEST_F(l2_binary_cross_entropy_with_logits_target_backward_test, case_empty)
     // ut.TestPrecision();
 }
 
+TEST_F(l2_binary_cross_entropy_with_logits_target_backward_test, case_empty_target_shape_mismatch)
+{
+    // self 为空但 target shape 不一致，应返回 161002，不可因空 Tensor 跳过校验
+    auto gradOutput = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 1);
+    auto input = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 1);
+    auto target = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradTarget = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    int64_t reduction = None;
+    uint64_t workspace_size = 0;
+
+    auto ut = OP_API_UT(aclnnBinaryCrossEntropyWithLogitsTargetBackward,
+                        INPUT(gradOutput, input, target, (aclTensor*)nullptr, (aclTensor*)nullptr, reduction),
+                        OUTPUT(gradTarget));
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_binary_cross_entropy_with_logits_target_backward_test, case_empty_grad_target_shape_mismatch)
+{
+    // self 为空但 gradTarget 非空且 shape 不一致，应返回 161002
+    auto gradOutput = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 1);
+    auto input = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 1);
+    auto target = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradTarget = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    int64_t reduction = None;
+    uint64_t workspace_size = 0;
+
+    auto ut = OP_API_UT(aclnnBinaryCrossEntropyWithLogitsTargetBackward,
+                        INPUT(gradOutput, input, target, (aclTensor*)nullptr, (aclTensor*)nullptr, reduction),
+                        OUTPUT(gradTarget));
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_binary_cross_entropy_with_logits_target_backward_test, case_empty_grad_output_not_broadcast)
+{
+    // self 为空但 gradOutput 无法 broadcast 到 self，应返回 161002
+    auto gradOutput = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 1);
+    auto input = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 1);
+    auto target = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradTarget = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    int64_t reduction = None;
+    uint64_t workspace_size = 0;
+
+    auto ut = OP_API_UT(aclnnBinaryCrossEntropyWithLogitsTargetBackward,
+                        INPUT(gradOutput, input, target, (aclTensor*)nullptr, (aclTensor*)nullptr, reduction),
+                        OUTPUT(gradTarget));
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_binary_cross_entropy_with_logits_target_backward_test, case_grad_target_dtype_not_match_target)
+{
+    // 当前实现要求 gradTarget.dtype 与 target.dtype 完全一致
+    auto gradOutput = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 1);
+    auto input = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 1);
+    auto target = TensorDesc({4}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto gradTarget = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND);
+    int64_t reduction = None;
+    uint64_t workspace_size = 0;
+
+    auto ut = OP_API_UT(aclnnBinaryCrossEntropyWithLogitsTargetBackward,
+                        INPUT(gradOutput, input, target, (aclTensor*)nullptr, (aclTensor*)nullptr, reduction),
+                        OUTPUT(gradTarget));
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
 TEST_F(l2_binary_cross_entropy_with_logits_target_backward_test, case_dtype_promotion)
 {
     vector<float> target_value;
@@ -509,7 +577,7 @@ TEST_F(l2_binary_cross_entropy_with_logits_target_backward_test, case_null)
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_NULLPTR);
 }
 
-TEST_F(l2_binary_cross_entropy_with_logits_target_backward_test, Ascend910B2_case_bf16_reduce_valid)
+TEST_F(l2_binary_cross_entropy_with_logits_target_backward_test, ascend910B2_case_bf16_reduce_valid)
 {
     auto gradOutput = TensorDesc({1, 2, 3, 4, 5}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
     auto input = TensorDesc({1, 2, 3, 4, 5}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
