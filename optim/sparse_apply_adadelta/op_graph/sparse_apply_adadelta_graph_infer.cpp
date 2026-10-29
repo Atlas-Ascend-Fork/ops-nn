@@ -17,6 +17,50 @@
 
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include "sparse_apply_adadelta_proto.h"
+
+namespace ge {
+// 覆盖内置 nn_training_ops.cc 的 SparseApplyAdadeltaVerify（无未知维保护，
+// 拒绝 var 静态 + grad 动态的 resource 类动态图）。同仓 apply_adagrad/inplace_sub 同款模式。
+IMPLEMT_VERIFIER(SparseApplyAdadelta, VerifySparseApplyAdadelta)
+{
+    constexpr int64_t UNKNOWN_DIM = -1;
+    constexpr int64_t UNKNOWN_RANK = -2;
+    constexpr uint32_t IDX_VAR = 0;
+    constexpr uint32_t IDX_GRAD = 6;
+    constexpr uint32_t IDX_INDICES = 7;
+    const auto varDims = op.GetInputDesc(IDX_VAR).GetShape().GetDims();
+    const auto gradDims = op.GetInputDesc(IDX_GRAD).GetShape().GetDims();
+    const auto indicesDims = op.GetInputDesc(IDX_INDICES).GetShape().GetDims();
+    if (indicesDims.size() == 1 && indicesDims[0] == UNKNOWN_RANK) {
+        return GRAPH_SUCCESS;
+    }
+    if (indicesDims.size() != 1) {
+        OP_LOGE(op.GetName().c_str(), "Input indices must be one-dimensional");
+        return GRAPH_FAILED;
+    }
+    // 任一参与校验的输入秩未知(-2)时透传，与本算子 infershape 的未知秩契约一致
+    if ((varDims.size() == 1 && varDims[0] == UNKNOWN_RANK) || (gradDims.size() == 1 && gradDims[0] == UNKNOWN_RANK)) {
+        return GRAPH_SUCCESS;
+    }
+    if (varDims.empty() || gradDims.empty()) {
+        OP_LOGE(op.GetName().c_str(), "input var or grad shape size should be greater than 0.");
+        return GRAPH_FAILED;
+    }
+    if (varDims.size() != gradDims.size()) {
+        OP_LOGE(op.GetName().c_str(), "input var and grad should have same rank.");
+        return GRAPH_FAILED;
+    }
+    for (size_t i = 1; i < varDims.size(); i++) {
+        if (varDims[i] != UNKNOWN_DIM && gradDims[i] != UNKNOWN_DIM && varDims[i] != gradDims[i]) {
+            OP_LOGE(op.GetName().c_str(), "Input var and grad must match in dimension (%zu)", i);
+            return GRAPH_FAILED;
+        }
+    }
+    return GRAPH_SUCCESS;
+}
+VERIFY_FUNC_REG(SparseApplyAdadelta, VerifySparseApplyAdadelta);
+} // namespace ge
 
 namespace ops {
 using namespace ge;
