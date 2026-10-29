@@ -346,7 +346,6 @@ static int32_t InitPlatformInfo(optiling::conv_ops_tiling::ConvAscendcPlatformIn
  */
 static int32_t InitNodeInfo(optiling::conv_ops_tiling::ConvAscendcNodeInfo& nodeInfo)
 {
-    nodeInfo.nodeName = "conv3d_v2"; // 节点名称
     nodeInfo.nodeType = "conv3d_v2"; // 节点类型
     return DEMO_RET_SUC;
 }
