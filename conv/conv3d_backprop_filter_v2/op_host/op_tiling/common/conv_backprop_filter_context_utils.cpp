@@ -45,6 +45,7 @@ constexpr size_t GROUPS_INDEX = 3;
 constexpr size_t ENABLE_HF32_INDEX = 5;
 constexpr size_t OUTPUT_PADDING_INDEX = 6;
 constexpr size_t PADDING_INDEX = 7;
+constexpr size_t FROM_DEPTHWISE_INDEX = 9;
 
 constexpr size_t DEFAULT_C0 = 16;
 constexpr size_t DEFAULT_FP32_C0 = 8;
@@ -597,6 +598,14 @@ bool SetGradOutputDesc(const gert::TilingContext* context, Conv3dBpFilterV2RunIn
         return false;
     }
 
+    OP_CHECK_IF(normalized_dedy_shape[NCDHW_N_INDEX] != runInfoV2.batch,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    op_name, "out_backprop_n", std::to_string(normalized_dedy_shape[NCDHW_N_INDEX]).c_str(),
+                    FormatString("out_backprop_n(%ld) != x_shape_batch(%d), batch must be equal",
+                                 normalized_dedy_shape[NCDHW_N_INDEX], runInfoV2.batch)
+                        .c_str()),
+                return false);
+
     runInfoV2.batch = normalized_dedy_shape[NCDHW_N_INDEX];
     runInfoV2.co = normalized_dedy_shape[NCDHW_C_INDEX];
     runInfoV2.dout = normalized_dedy_shape[NCDHW_D_INDEX];
@@ -674,6 +683,16 @@ static bool CheckOutputShapeDHW(const char* op_name, const std::vector<int64_t>&
     return true;
 }
 
+static bool IsFromDepthwise(const gert::TilingContext* context)
+{
+    const auto attrs = context->GetAttrs();
+    if (attrs == nullptr || attrs->GetAttrNum() <= FROM_DEPTHWISE_INDEX) {
+        return false;
+    }
+    const bool* fromDepthwise = attrs->GetBool(FROM_DEPTHWISE_INDEX);
+    return fromDepthwise != nullptr && *fromDepthwise;
+}
+
 static bool SetOutputDtypeBytes(const char* op_name, const gert::CompileTimeTensorDesc* outputDesc,
                                 Conv3dBpFilterV2RunInfo& runInfoV2)
 {
@@ -708,6 +727,16 @@ bool SetOutputDesc(const gert::TilingContext* context, Conv3dBpFilterV2RunInfo& 
 
     if (!CheckOutputShapeDHW(op_name, normalized_output_shape)) {
         return false;
+    }
+
+    if (!IsFromDepthwise(context)) {
+        OP_CHECK_IF(normalized_output_shape[NCDHW_N_INDEX] != runInfoV2.co,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        op_name, "out_backprop_c", std::to_string(runInfoV2.co).c_str(),
+                        FormatString("out_backprop_c(%d) != cout(%ld), must be equal to the output channel",
+                                     runInfoV2.co, normalized_output_shape[NCDHW_N_INDEX])
+                            .c_str()),
+                    return false);
     }
 
     runInfoV2.kd = normalized_output_shape[NCDHW_D_INDEX];
