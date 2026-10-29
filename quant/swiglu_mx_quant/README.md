@@ -105,7 +105,7 @@
     <tr>
       <td>activate_dim</td>
       <td>属性</td>
-      <td>SwiGLU的分割维度，取值范围为[-1, -2, xDim-2, xDim-1]（xDim为输入x的维度，即最后两维）。</td>
+      <td>SwiGLU的分割维度，取值范围为[-1, -2, xDim-2, xDim-1]（xDim为输入x的维度，即最后两维）。当activate_dim为非最后一维时，swiglu_mode不能为1。</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
@@ -119,7 +119,7 @@
     <tr>
       <td>swiglu_mode</td>
       <td>属性</td>
-      <td>SwiGLU计算模式：0=传统SwiGLU，1=奇偶交错变体，2=前后分半clamp变体，3=前后分半sigmoid-clamp变体，取值范围[0, 3]。</td>
+      <td>SwiGLU计算模式：0=传统SwiGLU，1=奇偶交错变体，2=前后分半clamp变体，3=前后分半sigmoid-clamp变体，取值范围[0, 3]。当activate_dim为非最后一维时，swiglu_mode不能为1。</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
@@ -192,7 +192,7 @@
 
 - 输入x支持2-7维张量，在activate_dim指定维度上的尺寸必须能被2整除。
 - activate_dim和axis必须取输入x的最后两维，取值范围为[-1, -2, xDim-2, xDim-1]（xDim为输入x的维度）。
-- activate_dim为-2时，swiglu_mode必须为0。
+- activate_dim为非最后一维时，swiglu_mode不能为1。
 - swiglu_mode为2或3时，axis必须为-1。
 - 当activate_dim = -2 或者axis = -2, group_index存在时，输入x必须为2维。
 - 当dst_type为FP4类型时，输出shape的最后一维必须能被2整除。

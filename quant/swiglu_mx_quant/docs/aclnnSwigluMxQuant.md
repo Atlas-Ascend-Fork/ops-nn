@@ -232,7 +232,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>activateDim（int64_t）</td>
       <td>输入</td>
       <td>表示进行swish计算时，选择的指定切分轴。</td>
-      <td><ul><li>activateDim的取值范围是：[-1, -2, xDim - 2, xDim - 1]（其中xDim指输入x的维度）。</li><li>当activateDim为非最后一根轴时，swigluMode必须为0</li></ul></td>
+      <td><ul><li>activateDim的取值范围是：[-1, -2, xDim - 2, xDim - 1]（其中xDim指输入x的维度）。</li><li>当activateDim为非最后一维时，swigluMode不能为1</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -252,7 +252,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>swigluMode（int64_t）</td>
       <td>输入</td>
       <td>表示swiglu的计算模式。</td>
-      <td><ul><li>取值范围为：[0, 3]。</li><li>0：表示传统swiglu计算方式。</li><li>1：表示swiglu的变种，使用奇偶分块方式，并支持clampLimit、激活系数以及偏差。</li><li>2：表示swiglu的变种，使用前后分半方式，先clamp再sigmoid(alpha)激活，并支持偏差。此模式要求axis=-1。</li><li>3：表示swiglu的变种，使用前后分半方式，先sigmoid激活（alpha固定为1）再clamp，不支持偏差。此模式要求axis=-1。</li></ul></td>
+      <td><ul><li>取值范围为：[0, 3]。</li><li>0：表示传统swiglu计算方式。</li><li>1：表示swiglu的变种，使用奇偶分块方式，并支持clampLimit、激活系数以及偏差。</li><li>2：表示swiglu的变种，使用前后分半方式，先clamp再sigmoid(alpha)激活，并支持偏差。此模式要求axis=-1。</li><li>3：表示swiglu的变种，使用前后分半方式，先sigmoid激活（alpha固定为1）再clamp，不支持偏差。此模式要求axis=-1。</li><li>当activateDim为非最后一维时，swigluMode不能为1。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -356,7 +356,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2</td>
       <td>ND</td>
       <td>2-7</td>
-      <td>√</td>
+      <td>×</td>
     </tr>
     <tr>
       <td>mxscaleOut（aclTensor*）</td>
@@ -366,7 +366,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>FLOAT8_E8M0</td>
       <td>ND</td>
       <td>3-8</td>
-      <td>√</td>
+      <td>×</td>
     </tr>
        <tr>
       <td>workspaceSize（uint64_t*）</td>
@@ -497,7 +497,7 @@ aclnnStatus aclnnSwigluMxQuant(
   - aclnnSwigluMxQuant默认确定性实现。
 
 - 输入x对应activateDim的维度需要是2的倍数，且x的维数必须大于1维。
-- activateDim为非last轴时，swigluMode必须为0。
+- activateDim为非最后一维时，swigluMode不能为1。
 - swigluMode为2或3时，axis必须为-1（仅支持尾轴量化）。
 - 当输出yOut的数据类型为FLOAT4_E2M1、FLOAT4_E1M2时，yOut的最后一维需要是2的倍数。
 - 当输出yOut的数据类型为FLOAT4_E2M1、FLOAT4_E1M2时，scaleAlg必须为0。

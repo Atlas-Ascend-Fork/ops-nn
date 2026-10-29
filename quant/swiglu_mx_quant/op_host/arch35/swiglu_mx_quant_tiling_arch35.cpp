@@ -239,6 +239,12 @@ ge::graphStatus SwigluMxQuantRegbaseTiling::ParseAttrs()
                         attrParam_.activateDim),
                 return ge::GRAPH_FAILED);
 
+    // activate_dim 为非尾轴（非-1）时不支持 swiglu_mode=1（奇偶切分布局），非法组合直接拒绝
+    OP_CHECK_IF((attrParam_.activateDim != -1) && (attrParam_.swigluMode == 1),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "swiglu_mode",
+                                                      std::to_string(attrParam_.swigluMode),
+                                                      "swiglu_mode cannot be 1 when activate_dim is not the last axis"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF((attrParam_.axis != -1 && attrParam_.axis != -2),
                 OP_LOGE(context_->GetNodeName(), "axis must be -1 or -2, but got %ld.", attrParam_.axis),
                 return ge::GRAPH_FAILED);
