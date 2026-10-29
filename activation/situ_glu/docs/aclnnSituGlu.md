@@ -238,17 +238,21 @@ aclnnStatus aclnnSituGlu(
       <td>x、out存在空指针。</td>
     </tr>
     <tr>
-      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="5">161002</td>
+      <td>ACLNN_ERR_PARAM_INVALID</td>
+      <td>161002</td>
       <td>x或out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
+      <td rowspan="2">ACLNN_ERR_INNER_INFERSHAPE_ERROR</td>
+      <td rowspan="2">561001</td>
       <td>x或out的shape维度不在支持的范围之内。</td>
     </tr>
     <tr>
       <td>dim不在指定的取值范围内或x在dim对应维度上不能被2整除。</td>
     </tr>
     <tr>
+      <td rowspan="2">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="2">561002</td>
       <td>out的维度数与x不一致，或out在dim对应维度上的大小不等于x的一半。</td>
     </tr>
     <tr>

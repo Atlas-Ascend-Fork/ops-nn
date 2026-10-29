@@ -258,11 +258,13 @@ aclnnStatus aclnnSituGluGrad(
       <td>gradY、x、out存在空指针。</td>
     </tr>
     <tr>
-      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="5">161002</td>
+      <td>ACLNN_ERR_PARAM_INVALID</td>
+      <td>161002</td>
       <td>gradY、x或out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
+      <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="4">561002</td>
       <td>gradY、x或out的shape维度不在支持的范围之内。</td>
     </tr>
     <tr>
