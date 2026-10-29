@@ -74,6 +74,21 @@ std::vector<ge::fusion::PatternUniqPtr> BuildBatchMatMulV2Patterns(const std::st
 
 bool GetTransposePermFromConst(const ge::GNode& transposeNode, std::vector<int64_t>& permValue);
 
+// The dtype override described by the compile option (aligned with the canndev OpCustomizeDtype).
+struct CustomizeDtype {
+    std::vector<ge::DataType> inputDtypes;
+    std::vector<ge::DataType> outputDtypes;
+};
+
+// Read the compile-time precision mode (atc --precision_mode, e.g. "force_fp16") from the pass
+// context. Returns an empty string when the option is absent (e.g. in the UT environment), the
+// caller skips the precision-reduction logic accordingly.
+std::string GetPrecisionModeStr(const ge::CustomPassContext& passContext);
+
+// Check whether the compile option customize_dtypes overrides the given selector (the operator
+// type or the operator instance name). Returns false when no override is specified.
+bool GetCustomizeDtypeBySelector(const ge::CustomPassContext& passContext, const std::string& selector);
+
 } // namespace ops
 
 #endif // NN_MATMUL_FUSION_UTILS_PASS_H

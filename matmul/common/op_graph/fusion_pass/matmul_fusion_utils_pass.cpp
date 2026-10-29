@@ -357,4 +357,133 @@ bool GetTransposePermFromConst(const GNode& transposeNode, std::vector<int64_t>&
     return true;
 }
 
+// ============================================================================
+// compile option helpers (bridged to CustomPassContext::GetOptionValue)
+// ============================================================================
+
+namespace {
+
+// The option value keys tried in order: the full GE session option key first, then the short
+// atc style key. An absent option returns an empty value and the caller degrades gracefully.
+constexpr char kPrecisionModeOptionKey[] = "ge.exec.precision_mode";
+constexpr char kPrecisionModeOptionKeyShort[] = "precision_mode";
+constexpr char kCustomizeDtypesOptionKey[] = "ge.exec.customize_dtypes";
+constexpr char kCustomizeDtypesOptionKeyShort[] = "customize_dtypes";
+// Every option is queried with exactly one long key and one short key.
+constexpr size_t kOptionKeyNum = 2;
+
+std::string GetOptionValueStr(const ge::CustomPassContext& passContext, const char* const* keys, size_t keyNum)
+{
+    for (size_t index = 0; index < keyNum; index++) {
+        ge::AscendString optionValue;
+        if (passContext.GetOptionValue(ge::AscendString(keys[index]), optionValue) == ge::GRAPH_SUCCESS) {
+            return std::string(optionValue.GetString());
+        }
+    }
+    return "";
+}
+
+// The customize_dtypes option grammar (atc style):
+//   "opType:inIdx0:dtype0,inIdx1:dtype1:outIdx0:dtypeOut0;opName:..."
+// The input entries come before the first output entry whose index counts from the output side
+// (the atc doc marks outputs with the "out" prefix), e.g. "Op:0:fp16,out0:fp16".
+ge::DataType ParseDtypeToken(const std::string& token)
+{
+    if (token == "fp16" || token == "float16") {
+        return ge::DT_FLOAT16;
+    }
+    if (token == "fp32" || token == "float32" || token == "float") {
+        return ge::DT_FLOAT;
+    }
+    if (token == "bf16") {
+        return ge::DT_BF16;
+    }
+    if (token == "int8" || token == "s8") {
+        return ge::DT_INT8;
+    }
+    if (token == "uint8" || token == "u8") {
+        return ge::DT_UINT8;
+    }
+    if (token == "int32" || token == "s32") {
+        return ge::DT_INT32;
+    }
+    if (token == "int64") {
+        return ge::DT_INT64;
+    }
+    return ge::DT_UNDEFINED;
+}
+
+// Parse one customize entry like "opSelector:0:fp16,out0:fp16" into the dtype lists.
+bool ParseCustomizeEntry(const std::string& entry, std::string& opSelector, CustomizeDtype& customDtype)
+{
+    const size_t selectorEnd = entry.find(':');
+    if (selectorEnd == std::string::npos) {
+        return false;
+    }
+    opSelector = entry.substr(0, selectorEnd);
+    std::string rest = entry.substr(selectorEnd + 1);
+
+    size_t pos = 0;
+    while (pos < rest.size()) {
+        const size_t comma = rest.find(',', pos);
+        const std::string item = (comma == std::string::npos) ? rest.substr(pos) : rest.substr(pos, comma - pos);
+        // item looks like "0:fp16" or "out0:fp16"
+        const size_t colon = item.find(':');
+        if (colon == std::string::npos) {
+            return false;
+        }
+        const std::string indexToken = item.substr(0, colon);
+        const ge::DataType dtype = ParseDtypeToken(item.substr(colon + 1));
+        if (dtype == ge::DT_UNDEFINED) {
+            return false;
+        }
+        if (indexToken.rfind("out", 0) == 0) {
+            customDtype.outputDtypes.emplace_back(dtype);
+        } else {
+            customDtype.inputDtypes.emplace_back(dtype);
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        pos = comma + 1;
+    }
+    return !opSelector.empty() && (!customDtype.inputDtypes.empty() || !customDtype.outputDtypes.empty());
+}
+
+} // namespace
+
+std::string GetPrecisionModeStr(const ge::CustomPassContext& passContext)
+{
+    const char* keys[] = {kPrecisionModeOptionKey, kPrecisionModeOptionKeyShort};
+    return GetOptionValueStr(passContext, keys, kOptionKeyNum);
+}
+
+// The customize_dtypes entries share one selector namespace (the atc grammar mixes the operator
+// type and the operator instance name entries), so the query is one exact selector match.
+bool GetCustomizeDtypeBySelector(const ge::CustomPassContext& passContext, const std::string& selector)
+{
+    const char* keys[] = {kCustomizeDtypesOptionKey, kCustomizeDtypesOptionKeyShort};
+    const std::string optionValue = GetOptionValueStr(passContext, keys, kOptionKeyNum);
+    if (optionValue.empty()) {
+        return false;
+    }
+    // Entries are separated by ';', each entry is "selector:item,item...".
+    size_t pos = 0;
+    while (pos < optionValue.size()) {
+        const size_t semicolon = optionValue.find(';', pos);
+        const std::string entry = (semicolon == std::string::npos) ? optionValue.substr(pos) :
+                                                                     optionValue.substr(pos, semicolon - pos);
+        std::string entrySelector;
+        CustomizeDtype entryDtypes;
+        if (ParseCustomizeEntry(entry, entrySelector, entryDtypes) && entrySelector == selector) {
+            return true; // the selector is overridden, the caller must respect the given dtypes
+        }
+        if (semicolon == std::string::npos) {
+            break;
+        }
+        pos = semicolon + 1;
+    }
+    return false;
+}
+
 } // namespace ops
