@@ -35,6 +35,14 @@ void ExpectShapeEq(const std::vector<int64_t>& expected, const gert::Shape& actu
         EXPECT_EQ(actual.GetDim(i), expected[i]);
     }
 }
+
+void ExpectShapeEq(const std::vector<int64_t>& expected, const ge::Shape& actual)
+{
+    ASSERT_EQ(actual.GetDimNum(), expected.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+        EXPECT_EQ(actual.GetDim(i), expected[i]);
+    }
+}
 } // namespace
 
 class Dilation2DInferShapeTest : public testing::Test {
@@ -318,4 +326,112 @@ TEST_F(Dilation2DInferShapeTest, inferDataType)
     EXPECT_EQ(InferDataTypeTest(op, MakeParam()), ge::GRAPH_SUCCESS);
     auto y_desc = op.GetOutputDescByName("y");
     EXPECT_EQ(y_desc.GetDataType(), ge::DT_FLOAT16);
+}
+
+// 实际使能仅 FLOAT16：非 FLOAT16 dtype 在 InferDataType 阶段显式拒绝
+TEST_F(Dilation2DInferShapeTest, inferDataType_reject_non_float16)
+{
+    for (ge::DataType x_type : {ge::DT_FLOAT, ge::DT_INT32}) {
+        ge::op::Dilation2D op;
+        ge::Format x_format = ge::FORMAT_ND;
+        op.UpdateInputDesc("x", create_desc_with_ori({1, 8, 8, 4}, x_type, x_format, {1, 8, 8, 4}, x_format));
+        op.UpdateInputDesc("filter", create_desc_with_ori({3, 3, 4}, x_type, x_format, {3, 3, 4}, x_format));
+        op.SetAttr("strides", {1, 1, 1, 1});
+        op.SetAttr("rates", {1, 1, 1, 1});
+        op.SetAttr("padding_mode", "SAME");
+        op.SetAttr("pads", {0, 0, 0, 0});
+        op.SetAttr("ceil_mode", false);
+        op.SetAttr("data_format", "NHWC");
+        EXPECT_EQ(InferDataTypeTest(op, MakeParam()), ge::GRAPH_FAILED);
+    }
+}
+
+TEST_F(Dilation2DInferShapeTest, zero_dim_h_nchw_same)
+{
+    ge::op::Dilation2D op;
+    ge::DataType x_type = ge::DT_FLOAT16;
+    ge::Format x_format = ge::FORMAT_ND;
+    op.UpdateInputDesc("x", create_desc_with_ori({9, 6, 0, 118}, x_type, x_format, {9, 6, 0, 118}, x_format));
+    op.UpdateInputDesc("filter", create_desc_with_ori({6, 2, 3}, x_type, x_format, {6, 2, 3}, x_format));
+    op.SetAttr("strides", {1, 1, 4, 4});
+    op.SetAttr("rates", {1, 1, 2, 3});
+    op.SetAttr("padding_mode", "SAME");
+    op.SetAttr("pads", {0, 0, 0, 0});
+    op.SetAttr("ceil_mode", true);
+    op.SetAttr("data_format", "NCHW");
+    EXPECT_EQ(InferShapeTest(op, MakeParam()), ge::GRAPH_SUCCESS);
+    auto y_shape = op.GetOutputDescByName("y").GetShape();
+    ExpectShapeEq({9, 6, 0, 30}, y_shape);
+}
+
+TEST_F(Dilation2DInferShapeTest, zero_dim_c_nchw_same)
+{
+    ge::op::Dilation2D op;
+    ge::DataType x_type = ge::DT_FLOAT16;
+    ge::Format x_format = ge::FORMAT_ND;
+    op.UpdateInputDesc("x", create_desc_with_ori({7, 0, 1, 86}, x_type, x_format, {7, 0, 1, 86}, x_format));
+    op.UpdateInputDesc("filter", create_desc_with_ori({0, 5, 8}, x_type, x_format, {0, 5, 8}, x_format));
+    op.SetAttr("strides", {1, 1, 2, 4});
+    op.SetAttr("rates", {1, 1, 4, 2});
+    op.SetAttr("padding_mode", "SAME");
+    op.SetAttr("pads", {0, 0, 0, 0});
+    op.SetAttr("ceil_mode", false);
+    op.SetAttr("data_format", "NCHW");
+    EXPECT_EQ(InferShapeTest(op, MakeParam()), ge::GRAPH_SUCCESS);
+    auto y_shape = op.GetOutputDescByName("y").GetShape();
+    ExpectShapeEq({7, 0, 1, 22}, y_shape);
+}
+
+TEST_F(Dilation2DInferShapeTest, zero_dim_h_nhwc_same)
+{
+    ge::op::Dilation2D op;
+    ge::DataType x_type = ge::DT_FLOAT16;
+    ge::Format x_format = ge::FORMAT_ND;
+    op.UpdateInputDesc("x", create_desc_with_ori({1, 0, 4, 2}, x_type, x_format, {1, 0, 4, 2}, x_format));
+    op.UpdateInputDesc("filter", create_desc_with_ori({2, 2, 2}, x_type, x_format, {2, 2, 2}, x_format));
+    op.SetAttr("strides", {1, 1, 1, 1});
+    op.SetAttr("rates", {1, 1, 1, 1});
+    op.SetAttr("padding_mode", "SAME");
+    op.SetAttr("pads", {0, 0, 0, 0});
+    op.SetAttr("ceil_mode", false);
+    op.SetAttr("data_format", "NHWC");
+    EXPECT_EQ(InferShapeTest(op, MakeParam()), ge::GRAPH_SUCCESS);
+    auto y_shape = op.GetOutputDescByName("y").GetShape();
+    ExpectShapeEq({1, 0, 4, 2}, y_shape);
+}
+
+TEST_F(Dilation2DInferShapeTest, zero_dim_w_nhwc_same)
+{
+    ge::op::Dilation2D op;
+    ge::DataType x_type = ge::DT_FLOAT16;
+    ge::Format x_format = ge::FORMAT_ND;
+    op.UpdateInputDesc("x", create_desc_with_ori({1, 3, 0, 2}, x_type, x_format, {1, 3, 0, 2}, x_format));
+    op.UpdateInputDesc("filter", create_desc_with_ori({2, 2, 2}, x_type, x_format, {2, 2, 2}, x_format));
+    op.SetAttr("strides", {1, 1, 1, 1});
+    op.SetAttr("rates", {1, 1, 1, 1});
+    op.SetAttr("padding_mode", "SAME");
+    op.SetAttr("pads", {0, 0, 0, 0});
+    op.SetAttr("ceil_mode", false);
+    op.SetAttr("data_format", "NHWC");
+    EXPECT_EQ(InferShapeTest(op, MakeParam()), ge::GRAPH_SUCCESS);
+    auto y_shape = op.GetOutputDescByName("y").GetShape();
+    ExpectShapeEq({1, 3, 0, 2}, y_shape);
+}
+
+TEST_F(Dilation2DInferShapeTest, zero_dim_c_nhwc_same)
+{
+    ge::op::Dilation2D op;
+    ge::DataType x_type = ge::DT_FLOAT16;
+    ge::Format x_format = ge::FORMAT_ND;
+    op.UpdateInputDesc("x", create_desc_with_ori({1, 3, 4, 0}, x_type, x_format, {1, 3, 4, 0}, x_format));
+    op.UpdateInputDesc("filter", create_desc_with_ori({2, 2, 0}, x_type, x_format, {2, 2, 0}, x_format));
+    op.SetAttr("strides", {1, 1, 1, 1});
+    op.SetAttr("rates", {1, 1, 1, 1});
+    op.SetAttr("padding_mode", "SAME");
+    op.SetAttr("pads", {0, 0, 0, 0});
+    op.SetAttr("ceil_mode", false);
+    op.SetAttr("data_format", "NHWC");
+    EXPECT_EQ(InferShapeTest(op, MakeParam()), ge::GRAPH_SUCCESS);
+    auto y_shape = op.GetOutputDescByName("y").GetShape();
+    ExpectShapeEq({1, 3, 4, 0}, y_shape);
 }

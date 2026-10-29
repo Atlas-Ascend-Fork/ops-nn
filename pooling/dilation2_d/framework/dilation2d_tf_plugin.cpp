@@ -18,6 +18,9 @@
 
 #include "log/log.h"
 
+#include <string>
+#include <vector>
+
 namespace domi {
 static Status ParseDilation2D(const ge::Operator& op_src, ge::Operator& op)
 {
@@ -51,8 +54,12 @@ static Status ParseDilation2D(const ge::Operator& op_src, ge::Operator& op)
         return FAILED;
     }
     std::string padding;
-    if (op.GetAttr("padding", padding) == ge::GRAPH_SUCCESS) {
+    if (op_src.GetAttr("padding", padding) == ge::GRAPH_SUCCESS) {
         (void)op.SetAttr("padding_mode", padding);
+    }
+    std::vector<int64_t> dilations;
+    if (op_src.GetAttr("dilations", dilations) == ge::GRAPH_SUCCESS && dilations.size() == 4) {
+        (void)op.SetAttr("rates", dilations);
     }
     return SUCCESS;
 }

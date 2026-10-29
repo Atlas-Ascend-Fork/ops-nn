@@ -54,7 +54,8 @@ protected:
 static void ExecuteDilation2D950TestCase(gert::StorageShape xShape, gert::StorageShape filterShape,
                                          gert::StorageShape yShape, ge::DataType dtype, std::vector<int64_t> strides,
                                          std::vector<int64_t> rates, std::string paddingMode, std::string dataFormat,
-                                         ge::graphStatus expectedResult)
+                                         ge::graphStatus expectedResult, std::vector<int64_t> pads = {0, 0, 0, 0},
+                                         bool ceilMode = false, ge::DataType yDtype = ge::DT_UNDEFINED)
 {
     string compile_info_string = R"({
         "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -117,12 +118,12 @@ static void ExecuteDilation2D950TestCase(gert::StorageShape xShape, gert::Storag
                       .PlatformInfo(reinterpret_cast<char*>(&platform_info))
                       .NodeInputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, (yDtype == ge::DT_UNDEFINED) ? dtype : yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(strides)},
                                   {"rates", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(rates)},
                                   {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>(paddingMode)},
-                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
-                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(pads)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(ceilMode)},
                                   {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>(dataFormat)}})
                       .TilingData(tiling_data.get())
                       .Workspace(ws_size)
@@ -237,4 +238,76 @@ TEST_F(Dilation2DTiling950Test, tiling_calculated_mode)
     gert::StorageShape yShape({1, 6, 6, 3}, {1, 6, 6, 3});
     ExecuteDilation2D950TestCase(xShape, filterShape, yShape, ge::DT_FLOAT16, {1, 1, 1, 1}, {1, 1, 1, 1}, "CALCULATED",
                                  "NHWC", ge::GRAPH_SUCCESS);
+}
+
+TEST_F(Dilation2DTiling950Test, tiling_calculated_negative_hnum_empty_output)
+{
+    gert::StorageShape xShape({1, 2, 2, 1}, {1, 2, 2, 1});
+    gert::StorageShape filterShape({3, 3, 1}, {3, 3, 1});
+    gert::StorageShape yShape({1, 0, 0, 1}, {1, 0, 0, 1});
+    ExecuteDilation2D950TestCase(xShape, filterShape, yShape, ge::DT_FLOAT16, {1, 3, 3, 1}, {1, 1, 1, 1}, "CALCULATED",
+                                 "NHWC", ge::GRAPH_SUCCESS);
+}
+
+TEST_F(Dilation2DTiling950Test, tiling_calculated_ceil_negative_hnum)
+{
+    gert::StorageShape xShape({1, 1, 1, 1}, {1, 1, 1, 1});
+    gert::StorageShape filterShape({3, 3, 1}, {3, 3, 1});
+    gert::StorageShape yShape({1, 0, 0, 1}, {1, 0, 0, 1});
+    ExecuteDilation2D950TestCase(xShape, filterShape, yShape, ge::DT_FLOAT16, {1, 2, 2, 1}, {1, 1, 1, 1}, "CALCULATED",
+                                 "NHWC", ge::GRAPH_SUCCESS, {0, 0, 0, 0}, true);
+}
+
+TEST_F(Dilation2DTiling950Test, tiling_same_pad_top_exceeds_int32_rejected)
+{
+    gert::StorageShape xShape({1, 1, 1, 1}, {1, 1, 1, 1});
+    gert::StorageShape filterShape({4, 1, 1}, {4, 1, 1});
+    gert::StorageShape yShape({1, 1, 1, 1}, {1, 1, 1, 1});
+    ExecuteDilation2D950TestCase(xShape, filterShape, yShape, ge::DT_FLOAT16, {1, 1, 1, 1}, {1, 2147483647, 1, 1},
+                                 "SAME", "NHWC", ge::GRAPH_FAILED);
+}
+
+TEST_F(Dilation2DTiling950Test, tiling_rate_exceeds_int32_rejected)
+{
+    gert::StorageShape xShape({1, 4, 2, 3}, {1, 4, 2, 3});
+    gert::StorageShape filterShape({3, 3, 3}, {3, 3, 3});
+    gert::StorageShape yShape({1, 4, 2, 3}, {1, 4, 2, 3});
+    ExecuteDilation2D950TestCase(xShape, filterShape, yShape, ge::DT_FLOAT16, {1, 1, 1, 1}, {1, 1, 4294967297, 1},
+                                 "SAME", "NHWC", ge::GRAPH_FAILED);
+}
+
+TEST_F(Dilation2DTiling950Test, tiling_stride_exceeds_int32_rejected)
+{
+    gert::StorageShape xShape({1, 4, 2, 3}, {1, 4, 2, 3});
+    gert::StorageShape filterShape({3, 3, 3}, {3, 3, 3});
+    gert::StorageShape yShape({1, 4, 2, 3}, {1, 4, 2, 3});
+    ExecuteDilation2D950TestCase(xShape, filterShape, yShape, ge::DT_FLOAT16, {1, 1, 4294967297, 1}, {1, 1, 1, 1},
+                                 "SAME", "NHWC", ge::GRAPH_FAILED);
+}
+
+TEST_F(Dilation2DTiling950Test, tiling_negative_pads_rejected)
+{
+    gert::StorageShape xShape({1, 8, 8, 3}, {1, 8, 8, 3});
+    gert::StorageShape filterShape({3, 3, 3}, {3, 3, 3});
+    gert::StorageShape yShape({1, 6, 6, 3}, {1, 6, 6, 3});
+    ExecuteDilation2D950TestCase(xShape, filterShape, yShape, ge::DT_FLOAT16, {1, 1, 1, 1}, {1, 1, 1, 1}, "CALCULATED",
+                                 "NHWC", ge::GRAPH_FAILED, {-1, 0, 0, 0});
+}
+
+TEST_F(Dilation2DTiling950Test, tiling_output_shape_mismatch_rejected)
+{
+    gert::StorageShape xShape({1, 8, 8, 3}, {1, 8, 8, 3});
+    gert::StorageShape filterShape({3, 3, 3}, {3, 3, 3});
+    gert::StorageShape yShape({1, 7, 7, 3}, {1, 7, 7, 3});
+    ExecuteDilation2D950TestCase(xShape, filterShape, yShape, ge::DT_FLOAT16, {1, 1, 1, 1}, {1, 1, 1, 1}, "VALID",
+                                 "NHWC", ge::GRAPH_FAILED);
+}
+
+TEST_F(Dilation2DTiling950Test, tiling_output_dtype_mismatch_rejected)
+{
+    gert::StorageShape xShape({1, 8, 8, 3}, {1, 8, 8, 3});
+    gert::StorageShape filterShape({3, 3, 3}, {3, 3, 3});
+    gert::StorageShape yShape({1, 8, 8, 3}, {1, 8, 8, 3});
+    ExecuteDilation2D950TestCase(xShape, filterShape, yShape, ge::DT_FLOAT16, {1, 1, 1, 1}, {1, 1, 1, 1}, "SAME",
+                                 "NHWC", ge::GRAPH_FAILED, {0, 0, 0, 0}, false, ge::DT_FLOAT);
 }

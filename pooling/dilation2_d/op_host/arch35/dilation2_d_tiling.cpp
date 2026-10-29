@@ -25,6 +25,7 @@
 #include "../../op_kernel/arch35/dilation2_d_tiling_key.h"
 #include <cstring>
 #include <algorithm>
+#include <limits>
 #include <string>
 
 namespace optiling {
@@ -41,6 +42,8 @@ constexpr uint32_t DEFAULT_BLOCK_DIM = 1;
 // ===== Shape dimension constants =====
 constexpr size_t X_DIM_NUM = 4;
 constexpr size_t FILTER_DIM_NUM = 3;
+constexpr int64_t INT32_POSITIVE_MAX = 2147483647LL;
+constexpr int64_t UNKNOWN_DIM = -1LL;
 
 // ===== List size constants =====
 constexpr size_t STRIDES_RATES_SIZE = 4;
@@ -79,15 +82,26 @@ struct Dilation2DCompileInfo {};
 
 // Parsed tiling parameters
 struct Dilation2DTilingCtx {
-    int32_t N = 0, H = 0, W = 0, C = 0;
-    int32_t filterH = 0, filterW = 0, filterC = 0;
-    int32_t strideH = 0, strideW = 0, rateH = 0, rateW = 0;
-    int32_t oH = 0, oW = 0, padTop = 0, padLeft = 0;
+    int64_t N = 0, H = 0, W = 0, C = 0;
+    int64_t filterH = 0, filterW = 0, filterC = 0;
+    int64_t strideH = 0, strideW = 0, rateH = 0, rateW = 0;
+    int64_t oH = 0, oW = 0, padTop = 0, padLeft = 0;
     int32_t isNCHW = 0;
     std::string paddingMode = DEFAULT_PADDING_MODE;
     int32_t needCoreNum = 0;
     int64_t totalElements = 0;
 };
+
+static inline int64_t FloorDiv(int64_t a, int64_t b)
+{
+    int64_t q = a / b;
+    if ((a % b != 0) && ((a < 0) != (b < 0))) {
+        --q;
+    }
+    return q;
+}
+
+static inline int64_t CeilDiv(int64_t a, int64_t b) { return -FloorDiv(-a, b); }
 
 // ===== Platform helpers (ubSize/coreNum OP_LOGE kept as-is per spec) =====
 
@@ -138,6 +152,17 @@ static ge::graphStatus CheckInputDtype(gert::TilingContext* context)
                                    std::string(ge::TypeUtils::DataTypeToSerialString(filterDtype));
             OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "x and filter", dtypeMsg.c_str(),
                                                    "dtype of x and filter must be the same");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    auto outputDesc = context->GetOutputDesc(0);
+    if (outputDesc != nullptr) {
+        auto outputDtype = outputDesc->GetDataType();
+        if (outputDtype != inputDtype) {
+            std::string dtypeMsg = std::string(ge::TypeUtils::DataTypeToSerialString(inputDtype)) + " and " +
+                                   std::string(ge::TypeUtils::DataTypeToSerialString(outputDtype));
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "x and y", dtypeMsg.c_str(),
+                                                   "dtype of y must be the same as x");
             return ge::GRAPH_FAILED;
         }
     }
@@ -192,24 +217,60 @@ static ge::graphStatus HandleZeroDimTiling(gert::TilingContext* context)
 static ge::graphStatus ParseInputDimensions(gert::TilingContext* context, const gert::Shape& xShape,
                                             const gert::Shape& filterShape, Dilation2DTilingCtx& params)
 {
-    params.N = static_cast<int32_t>(xShape.GetDim(0));
+    auto checkDim = [context](const char* tensor, size_t idx, int64_t dim, int64_t min) -> bool {
+        if (dim < min || dim > INT32_POSITIVE_MAX) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                context->GetNodeName(), tensor, std::to_string(dim).c_str(),
+                (std::string("dim[") + std::to_string(idx) + "] must be in [" + std::to_string(min) + ", " +
+                 std::to_string(INT32_POSITIVE_MAX) + "]")
+                    .c_str());
+            return false;
+        }
+        return true;
+    };
+    params.N = xShape.GetDim(0);
     if (params.isNCHW) {
-        params.C = static_cast<int32_t>(xShape.GetDim(NCHW_C_IDX));
-        params.H = static_cast<int32_t>(xShape.GetDim(NCHW_H_IDX));
-        params.W = static_cast<int32_t>(xShape.GetDim(NCHW_W_IDX));
+        params.C = xShape.GetDim(NCHW_C_IDX);
+        params.H = xShape.GetDim(NCHW_H_IDX);
+        params.W = xShape.GetDim(NCHW_W_IDX);
     } else {
-        params.H = static_cast<int32_t>(xShape.GetDim(NHWC_H_IDX));
-        params.W = static_cast<int32_t>(xShape.GetDim(NHWC_W_IDX));
-        params.C = static_cast<int32_t>(xShape.GetDim(NHWC_C_IDX));
+        params.H = xShape.GetDim(NHWC_H_IDX);
+        params.W = xShape.GetDim(NHWC_W_IDX);
+        params.C = xShape.GetDim(NHWC_C_IDX);
     }
     if (params.isNCHW) {
-        params.filterC = static_cast<int32_t>(filterShape.GetDim(0));
-        params.filterH = static_cast<int32_t>(filterShape.GetDim(1));
-        params.filterW = static_cast<int32_t>(filterShape.GetDim(2));
+        params.filterC = filterShape.GetDim(0);
+        params.filterH = filterShape.GetDim(1);
+        params.filterW = filterShape.GetDim(2);
     } else {
-        params.filterH = static_cast<int32_t>(filterShape.GetDim(0));
-        params.filterW = static_cast<int32_t>(filterShape.GetDim(1));
-        params.filterC = static_cast<int32_t>(filterShape.GetDim(2));
+        params.filterH = filterShape.GetDim(0);
+        params.filterW = filterShape.GetDim(1);
+        params.filterC = filterShape.GetDim(2);
+    }
+    if (!checkDim("x", 0, params.N, 0)) {
+        return ge::GRAPH_FAILED;
+    }
+    if (params.isNCHW) {
+        if (!checkDim("x", NCHW_C_IDX, params.C, 1) || !checkDim("x", NCHW_H_IDX, params.H, 1) ||
+            !checkDim("x", NCHW_W_IDX, params.W, 1)) {
+            return ge::GRAPH_FAILED;
+        }
+    } else {
+        if (!checkDim("x", NHWC_H_IDX, params.H, 1) || !checkDim("x", NHWC_W_IDX, params.W, 1) ||
+            !checkDim("x", NHWC_C_IDX, params.C, 1)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (params.isNCHW) {
+        if (!checkDim("filter", 0, params.filterC, 1) || !checkDim("filter", 1, params.filterH, 1) ||
+            !checkDim("filter", 2, params.filterW, 1)) {
+            return ge::GRAPH_FAILED;
+        }
+    } else {
+        if (!checkDim("filter", 0, params.filterH, 1) || !checkDim("filter", 1, params.filterW, 1) ||
+            !checkDim("filter", 2, params.filterC, 1)) {
+            return ge::GRAPH_FAILED;
+        }
     }
     if (params.filterC != params.C) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
@@ -257,26 +318,28 @@ static ge::graphStatus ParseStridesAndRates(gert::TilingContext* context, const 
         return ge::GRAPH_FAILED;
     }
     if (params.isNCHW) {
-        params.strideH = static_cast<int32_t>(stridesData[NCHW_H_IDX]);
-        params.strideW = static_cast<int32_t>(stridesData[NCHW_W_IDX]);
-        params.rateH = static_cast<int32_t>(ratesData[NCHW_H_IDX]);
-        params.rateW = static_cast<int32_t>(ratesData[NCHW_W_IDX]);
+        params.strideH = stridesData[NCHW_H_IDX];
+        params.strideW = stridesData[NCHW_W_IDX];
+        params.rateH = ratesData[NCHW_H_IDX];
+        params.rateW = ratesData[NCHW_W_IDX];
     } else {
-        params.strideH = static_cast<int32_t>(stridesData[NHWC_H_IDX]);
-        params.strideW = static_cast<int32_t>(stridesData[NHWC_W_IDX]);
-        params.rateH = static_cast<int32_t>(ratesData[NHWC_H_IDX]);
-        params.rateW = static_cast<int32_t>(ratesData[NHWC_W_IDX]);
+        params.strideH = stridesData[NHWC_H_IDX];
+        params.strideW = stridesData[NHWC_W_IDX];
+        params.rateH = ratesData[NHWC_H_IDX];
+        params.rateW = ratesData[NHWC_W_IDX];
     }
-    if (params.strideH <= 0 || params.strideW <= 0) {
+    if (params.strideH <= 0 || params.strideW <= 0 || params.strideH > INT32_POSITIVE_MAX ||
+        params.strideW > INT32_POSITIVE_MAX) {
         std::string s = "[" + std::to_string(params.strideH) + "," + std::to_string(params.strideW) + "]";
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "strides", s.c_str(),
-                                              "H and W dimensions of strides must be positive");
+                                              "H and W dimensions of strides must be in [1, 2147483647]");
         return ge::GRAPH_FAILED;
     }
-    if (params.rateH <= 0 || params.rateW <= 0) {
+    if (params.rateH <= 0 || params.rateW <= 0 || params.rateH > INT32_POSITIVE_MAX ||
+        params.rateW > INT32_POSITIVE_MAX) {
         std::string s = "[" + std::to_string(params.rateH) + "," + std::to_string(params.rateW) + "]";
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "rates", s.c_str(),
-                                              "H and W dimensions of rates must be positive");
+                                              "H and W dimensions of rates must be in [1, 2147483647]");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -285,17 +348,23 @@ static ge::graphStatus ParseStridesAndRates(gert::TilingContext* context, const 
 // ===== Output size and padding computation =====
 
 static ge::graphStatus ComputeCalculatedPadding(gert::TilingContext* context, const gert::RuntimeAttrs* attrs,
-                                                Dilation2DTilingCtx& params, int32_t filterHEff, int32_t filterWEff)
+                                                Dilation2DTilingCtx& params, int64_t filterHEff, int64_t filterWEff)
 {
     auto padsVec = attrs->GetListInt(ATTR_PADS);
-    int32_t padTop = 0, padLeft = 0, padBottom = 0, padRight = 0;
+    int64_t padTop = 0, padLeft = 0, padBottom = 0, padRight = 0;
     if (padsVec != nullptr) {
         const int64_t* padsData = padsVec->GetData();
         size_t padsSize = padsVec->GetSize();
-        padTop = static_cast<int32_t>(padsData[PAD_H_TOP_IDX]);
-        padBottom = static_cast<int32_t>(padsData[PAD_H_BOTTOM_IDX]);
-        padLeft = padsSize > PAD_W_LEFT_IDX ? static_cast<int32_t>(padsData[PAD_W_LEFT_IDX]) : 0;
-        padRight = padsSize > PAD_W_RIGHT_IDX ? static_cast<int32_t>(padsData[PAD_W_RIGHT_IDX]) : 0;
+        padTop = padsData[PAD_H_TOP_IDX];
+        padBottom = padsData[PAD_H_BOTTOM_IDX];
+        padLeft = padsSize > PAD_W_LEFT_IDX ? padsData[PAD_W_LEFT_IDX] : 0;
+        padRight = padsSize > PAD_W_RIGHT_IDX ? padsData[PAD_W_RIGHT_IDX] : 0;
+    }
+    if (padTop < 0 || padBottom < 0 || padLeft < 0 || padRight < 0 || padTop > INT32_POSITIVE_MAX ||
+        padBottom > INT32_POSITIVE_MAX || padLeft > INT32_POSITIVE_MAX || padRight > INT32_POSITIVE_MAX) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "pads", "pads values must be in [0, 2147483647]",
+                                              "pads must be non-negative and fit int32");
+        return ge::GRAPH_FAILED;
     }
     if (padTop >= filterHEff || padBottom >= filterHEff || padLeft >= filterWEff || padRight >= filterWEff) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "pads",
@@ -305,14 +374,14 @@ static ge::graphStatus ComputeCalculatedPadding(gert::TilingContext* context, co
     }
     const bool* ceilModePtr = attrs->GetBool(ATTR_CEIL_MODE);
     bool ceilMode = (ceilModePtr != nullptr) ? *ceilModePtr : false;
-    int32_t hNum = params.H + padTop + padBottom - filterHEff;
-    int32_t wNum = params.W + padLeft + padRight - filterWEff;
+    int64_t hNum = params.H + padTop + padBottom - filterHEff;
+    int64_t wNum = params.W + padLeft + padRight - filterWEff;
     if (ceilMode) {
-        params.oH = std::max(0, (hNum + params.strideH - 1) / params.strideH + 1);
-        params.oW = std::max(0, (wNum + params.strideW - 1) / params.strideW + 1);
+        params.oH = std::max<int64_t>(0, CeilDiv(hNum, params.strideH) + 1);
+        params.oW = std::max<int64_t>(0, CeilDiv(wNum, params.strideW) + 1);
     } else {
-        params.oH = std::max(0, hNum / params.strideH + 1);
-        params.oW = std::max(0, wNum / params.strideW + 1);
+        params.oH = (hNum < 0) ? 0 : (hNum / params.strideH + 1);
+        params.oW = (wNum < 0) ? 0 : (wNum / params.strideW + 1);
     }
     params.padTop = padTop;
     params.padLeft = padLeft;
@@ -322,18 +391,18 @@ static ge::graphStatus ComputeCalculatedPadding(gert::TilingContext* context, co
 static ge::graphStatus ComputeOutputAndPadding(gert::TilingContext* context, const gert::RuntimeAttrs* attrs,
                                                Dilation2DTilingCtx& params)
 {
-    int32_t filterHEff = params.filterH + (params.filterH - 1) * (params.rateH - 1);
-    int32_t filterWEff = params.filterW + (params.filterW - 1) * (params.rateW - 1);
+    int64_t filterHEff = params.filterH + (params.filterH - 1) * (params.rateH - 1);
+    int64_t filterWEff = params.filterW + (params.filterW - 1) * (params.rateW - 1);
     if (params.paddingMode == "SAME") {
         params.oH = (params.H + params.strideH - 1) / params.strideH;
         params.oW = (params.W + params.strideW - 1) / params.strideW;
-        int32_t padH = std::max((params.oH - 1) * params.strideH + filterHEff - params.H, 0);
-        int32_t padW = std::max((params.oW - 1) * params.strideW + filterWEff - params.W, 0);
+        int64_t padH = std::max((params.oH - 1) * params.strideH + filterHEff - params.H, static_cast<int64_t>(0));
+        int64_t padW = std::max((params.oW - 1) * params.strideW + filterWEff - params.W, static_cast<int64_t>(0));
         params.padTop = padH / 2;
         params.padLeft = padW / 2;
     } else if (params.paddingMode == "VALID") {
-        params.oH = std::max(0, (params.H - filterHEff + params.strideH) / params.strideH);
-        params.oW = std::max(0, (params.W - filterWEff + params.strideW) / params.strideW);
+        params.oH = std::max(static_cast<int64_t>(0), (params.H - filterHEff + params.strideH) / params.strideH);
+        params.oW = std::max(static_cast<int64_t>(0), (params.W - filterWEff + params.strideW) / params.strideW);
         params.padTop = 0;
         params.padLeft = 0;
     } else {
@@ -377,11 +446,58 @@ static ge::graphStatus ParseAndCompute(gert::TilingContext* context, const gert:
     return ComputeOutputAndPadding(context, attrs, params);
 }
 
+static ge::graphStatus CrossCheckOutputShape(gert::TilingContext* context, const Dilation2DTilingCtx& params)
+{
+    auto outputShape = context->GetOutputShape(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outputShape);
+    gert::Shape yShape = EnsureNotScalar(outputShape->GetStorageShape());
+    if (yShape.GetDimNum() != X_DIM_NUM) {
+        return ge::GRAPH_SUCCESS;
+    }
+    auto mismatch = [](int64_t declared, int64_t computed) { return declared != UNKNOWN_DIM && declared != computed; };
+    int64_t yN = yShape.GetDim(0);
+    int64_t yH = params.isNCHW ? yShape.GetDim(NCHW_H_IDX) : yShape.GetDim(NHWC_H_IDX);
+    int64_t yW = params.isNCHW ? yShape.GetDim(NCHW_W_IDX) : yShape.GetDim(NHWC_W_IDX);
+    int64_t yC = params.isNCHW ? yShape.GetDim(NCHW_C_IDX) : yShape.GetDim(NHWC_C_IDX);
+    OP_CHECK_IF(mismatch(yN, params.N) || mismatch(yH, params.oH) || mismatch(yW, params.oW) || mismatch(yC, params.C),
+                OP_LOGE(context,
+                        "Dilation2D: tiling output (N=%ld, oH=%ld, oW=%ld, C=%ld) mismatches InferShape y (N=%ld, "
+                        "H=%ld, W=%ld, C=%ld)",
+                        params.N, params.oH, params.oW, params.C, yN, yH, yW, yC),
+                return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
+
 // ===== Core split + TilingData fill =====
 
 static ge::graphStatus FillTilingData(gert::TilingContext* context, Dilation2DTilingCtx& params, int64_t maxCoreNum)
 {
-    params.totalElements = static_cast<int64_t>(params.N) * params.oH * params.oW * params.C;
+    if (params.N > INT32_POSITIVE_MAX || params.C > INT32_POSITIVE_MAX || params.oH > INT32_POSITIVE_MAX ||
+        params.oW > INT32_POSITIVE_MAX || params.padTop < 0 || params.padTop > INT32_POSITIVE_MAX ||
+        params.padLeft < 0 || params.padLeft > INT32_POSITIVE_MAX) {
+        OP_LOGE(context,
+                "Dilation2D: output/padding size exceeds int32 tiling field limit (N=%ld, C=%ld, oH=%ld, oW=%ld, "
+                "padTop=%ld, padLeft=%ld)",
+                params.N, params.C, params.oH, params.oW, params.padTop, params.padLeft);
+        return ge::GRAPH_FAILED;
+    }
+    params.totalElements = 0;
+    if (params.N > 0 && params.oH > 0 && params.oW > 0 && params.C > 0) {
+        const int64_t kInt64Max = std::numeric_limits<int64_t>::max();
+        int64_t acc = params.N * params.oH;
+        if (params.oW != 0 && acc > kInt64Max / params.oW) {
+            OP_LOGE(context, "Dilation2D: totalElements overflow at oW (N=%ld, oH=%ld, oW=%ld, C=%ld)", params.N,
+                    params.oH, params.oW, params.C);
+            return ge::GRAPH_FAILED;
+        }
+        acc *= params.oW;
+        if (params.C != 0 && acc > kInt64Max / params.C) {
+            OP_LOGE(context, "Dilation2D: totalElements overflow at C (N=%ld, oH=%ld, oW=%ld, C=%ld)", params.N,
+                    params.oH, params.oW, params.C);
+            return ge::GRAPH_FAILED;
+        }
+        params.totalElements = acc * params.C;
+    }
     if (params.totalElements == 0) {
         params.needCoreNum = 0;
     } else {
@@ -398,20 +514,20 @@ static ge::graphStatus FillTilingData(gert::TilingContext* context, Dilation2DTi
     }
     tiling->needCoreNum = params.needCoreNum;
     tiling->totalElements = params.totalElements;
-    tiling->N = params.N;
-    tiling->H = params.H;
-    tiling->W = params.W;
-    tiling->C = params.C;
-    tiling->oH = params.oH;
-    tiling->oW = params.oW;
-    tiling->filterH = params.filterH;
-    tiling->filterW = params.filterW;
-    tiling->strideH = params.strideH;
-    tiling->strideW = params.strideW;
-    tiling->rateH = params.rateH;
-    tiling->rateW = params.rateW;
-    tiling->padTop = params.padTop;
-    tiling->padLeft = params.padLeft;
+    tiling->N = static_cast<int32_t>(params.N);
+    tiling->H = static_cast<int32_t>(params.H);
+    tiling->W = static_cast<int32_t>(params.W);
+    tiling->C = static_cast<int32_t>(params.C);
+    tiling->oH = static_cast<int32_t>(params.oH);
+    tiling->oW = static_cast<int32_t>(params.oW);
+    tiling->filterH = static_cast<int32_t>(params.filterH);
+    tiling->filterW = static_cast<int32_t>(params.filterW);
+    tiling->strideH = static_cast<int32_t>(params.strideH);
+    tiling->strideW = static_cast<int32_t>(params.strideW);
+    tiling->rateH = static_cast<int32_t>(params.rateH);
+    tiling->rateW = static_cast<int32_t>(params.rateW);
+    tiling->padTop = static_cast<int32_t>(params.padTop);
+    tiling->padLeft = static_cast<int32_t>(params.padLeft);
     tiling->isNCHW = params.isNCHW;
     return ge::GRAPH_SUCCESS;
 }
@@ -448,6 +564,9 @@ static ge::graphStatus Dilation2DTilingFunc(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     Dilation2DTilingCtx params;
     if (ParseAndCompute(context, xShape, filterShape, attrs, params) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    if (CrossCheckOutputShape(context, params) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
     if (FillTilingData(context, params, maxCoreNum) != ge::GRAPH_SUCCESS) {

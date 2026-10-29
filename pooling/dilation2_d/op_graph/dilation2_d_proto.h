@@ -26,18 +26,21 @@ namespace ge {
  *@brief Computes morphological dilation 2D.
  *@par Inputs:
  *Two inputs, including:
- * @li x: A 4D Tensor (NHWC or NCHW). Must be one of the following types: float16, float32, float64, int8, int16, int32,
- int64, uint8, uint16.
+ * @li x: A 4D Tensor (NHWC or NCHW). Dtype declared as real number types (f16/f32/f64/i32/i64/u8/i16/i8/u16);
+ * only float16 is actually enabled (filtered at runtime by InferDataType). \n
  * @li filter: A 3D Tensor (fH, fW, C). Must be the same type as x. \n
 
  *@par Outputs:
  *y: A 4D Tensor (NHWC or NCHW). Must be the same type as x.
  *
  *@par Attributes:
- * @li strides: Required. ListInt. 4 integers, [stride_n, stride_h, stride_w, stride_c].
- * @li rates: Required. ListInt. 4 integers, [rate_n, rate_h, rate_w, rate_c].
- * @li padding_mode: Optional. String. Default "SAME". One of "SAME", "VALID".
- * @li pads: Optional. ListInt. Default {0,0,0,0}.
+ * @li strides: Required. ListInt. 4 integers. NHWC: [stride_n, stride_h, stride_w, stride_c]; NCHW:
+ * [stride_n, stride_c, stride_h, stride_w].
+ * @li rates: Required. ListInt. 4 integers. NHWC: [rate_n, rate_h, rate_w, rate_c]; NCHW:
+ * [rate_n, rate_c, rate_h, rate_w].
+ * @li padding_mode: Optional. String. Default "SAME". One of "SAME", "VALID", "CALCULATED".
+ * @li pads: Optional. ListInt. Default {0,0,0,0}. Four non-negative integers
+ * [H_top, H_bottom, W_left, W_right], used only in CALCULATED mode.
  * @li ceil_mode: Optional. Bool. Default false.
  * @li data_format: Optional. String. Default "NHWC". One of "NHWC", "NCHW".
  *

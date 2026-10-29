@@ -62,6 +62,21 @@ static constexpr int32_t PAD_INDEX_3 = 3;
 
 static inline bool IsDimUnknown(int64_t dim) { return dim == UNKNOWN_DIM_VALUE; }
 
+static constexpr int64_t INT32_POSITIVE_MAX = 2147483647LL;
+
+static inline bool IsKnownDimInRange(int64_t dim, int64_t min) { return dim >= min && dim <= INT32_POSITIVE_MAX; }
+
+static inline int64_t FloorDiv(int64_t a, int64_t b)
+{
+    int64_t q = a / b;
+    if ((a % b != 0) && ((a < 0) != (b < 0))) {
+        --q;
+    }
+    return q;
+}
+
+static inline int64_t CeilDiv(int64_t a, int64_t b) { return -FloorDiv(-a, b); }
+
 static inline bool IsDimConflict(int64_t lhs, int64_t rhs)
 {
     return !IsDimUnknown(lhs) && !IsDimUnknown(rhs) && lhs != rhs;
@@ -125,6 +140,24 @@ static ge::graphStatus InferShapeDilation2D(gert::InferShapeContext* context)
     OP_CHECK_IF(IsDimConflict(filterC, C),
                 OP_LOGE(context, "Dilation2D: filter channels (%ld) must match x channels (%ld)", filterC, C),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!IsDimUnknown(N) && !IsKnownDimInRange(N, 0),
+                OP_LOGE(context, "Dilation2D: N (%ld) must be in [0, %ld]", N, INT32_POSITIVE_MAX),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!IsDimUnknown(H) && !IsKnownDimInRange(H, 0),
+                OP_LOGE(context, "Dilation2D: H (%ld) must be in [0, %ld]", H, INT32_POSITIVE_MAX),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!IsDimUnknown(W) && !IsKnownDimInRange(W, 0),
+                OP_LOGE(context, "Dilation2D: W (%ld) must be in [0, %ld]", W, INT32_POSITIVE_MAX),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!IsDimUnknown(C) && !IsKnownDimInRange(C, 0),
+                OP_LOGE(context, "Dilation2D: C (%ld) must be in [0, %ld]", C, INT32_POSITIVE_MAX),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!IsDimUnknown(filterH) && !IsKnownDimInRange(filterH, 1),
+                OP_LOGE(context, "Dilation2D: filterH (%ld) must be in [1, %ld]", filterH, INT32_POSITIVE_MAX),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!IsDimUnknown(filterW) && !IsKnownDimInRange(filterW, 1),
+                OP_LOGE(context, "Dilation2D: filterW (%ld) must be in [1, %ld]", filterW, INT32_POSITIVE_MAX),
+                return ge::GRAPH_FAILED);
 
     auto stridesVec = attrs->GetListInt(ATTR_STRIDES);
     auto ratesVec = attrs->GetListInt(ATTR_RATES);
@@ -171,12 +204,13 @@ static ge::graphStatus InferShapeDilation2D(gert::InferShapeContext* context)
     int64_t rateH = isNCHW ? ratesData[NCHW_H_IDX] : ratesData[1];
     int64_t rateW = isNCHW ? ratesData[NCHW_W_IDX] : ratesData[NHWC_W_IDX];
 
-    OP_CHECK_IF(
-        strideH <= 0 || strideW <= 0,
-        OP_LOGE(context, "Dilation2D: H/W strides must be positive, got strideH=%ld, strideW=%ld", strideH, strideW),
-        return ge::GRAPH_FAILED);
-    OP_CHECK_IF(rateH <= 0 || rateW <= 0,
-                OP_LOGE(context, "Dilation2D: H/W rates must be positive, got rateH=%ld, rateW=%ld", rateH, rateW),
+    OP_CHECK_IF(strideH <= 0 || strideW <= 0 || strideH > INT32_POSITIVE_MAX || strideW > INT32_POSITIVE_MAX,
+                OP_LOGE(context, "Dilation2D: H/W strides must be in [1, %ld], got strideH=%ld, strideW=%ld",
+                        INT32_POSITIVE_MAX, strideH, strideW),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(rateH <= 0 || rateW <= 0 || rateH > INT32_POSITIVE_MAX || rateW > INT32_POSITIVE_MAX,
+                OP_LOGE(context, "Dilation2D: H/W rates must be in [1, %ld], got rateH=%ld, rateW=%ld",
+                        INT32_POSITIVE_MAX, rateH, rateW),
                 return ge::GRAPH_FAILED);
 
     int64_t oH = UNKNOWN_DIM_VALUE;
@@ -211,6 +245,12 @@ static ge::graphStatus InferShapeDilation2D(gert::InferShapeContext* context)
         const int64_t* padsData = padsVec->GetData();
         int64_t padTop = padsData[PAD_INDEX_0], padBottom = padsData[PAD_INDEX_1];
         int64_t padLeft = padsData[PAD_INDEX_2], padRight = padsData[PAD_INDEX_3];
+        OP_CHECK_IF(padTop < 0 || padBottom < 0 || padLeft < 0 || padRight < 0 || padTop > INT32_POSITIVE_MAX ||
+                        padBottom > INT32_POSITIVE_MAX || padLeft > INT32_POSITIVE_MAX || padRight > INT32_POSITIVE_MAX,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "pads",
+                                                          "pads values must be in [0, 2147483647]",
+                                                          "pads must be non-negative and fit int32"),
+                    return ge::GRAPH_FAILED);
         if (!IsDimUnknown(filterH)) {
             int64_t filterHEff = filterH + (filterH - 1) * (rateH - 1);
             OP_CHECK_IF(
@@ -235,18 +275,18 @@ static ge::graphStatus InferShapeDilation2D(gert::InferShapeContext* context)
             int64_t filterHEff = filterH + (filterH - 1) * (rateH - 1);
             int64_t hNum = H + padTop + padBottom - filterHEff;
             if (ceilMode) {
-                oH = std::max((int64_t)0, (hNum + strideH - 1) / strideH + 1);
+                oH = std::max(static_cast<int64_t>(0), CeilDiv(hNum, strideH) + 1);
             } else {
-                oH = std::max((int64_t)0, hNum / strideH + 1);
+                oH = (hNum < 0) ? 0 : (hNum / strideH + 1);
             }
         }
         if (canComputeW) {
             int64_t filterWEff = filterW + (filterW - 1) * (rateW - 1);
             int64_t wNum = W + padLeft + padRight - filterWEff;
             if (ceilMode) {
-                oW = std::max((int64_t)0, (wNum + strideW - 1) / strideW + 1);
+                oW = std::max(static_cast<int64_t>(0), CeilDiv(wNum, strideW) + 1);
             } else {
-                oW = std::max((int64_t)0, wNum / strideW + 1);
+                oW = (wNum < 0) ? 0 : (wNum / strideW + 1);
             }
         }
     }
@@ -269,12 +309,12 @@ static ge::graphStatus InferShapeDilation2D(gert::InferShapeContext* context)
 
 static ge::graphStatus InferDataTypeDilation2D(gert::InferDataTypeContext* context)
 {
-    if (context == nullptr) {
-        return GRAPH_FAILED;
-    }
     const ge::DataType xDtype = context->GetInputDataType(X_INPUT_INDEX);
+    OP_CHECK_IF((xDtype != ge::DT_FLOAT16),
+                OP_LOGE(context, "Dilation2D only supports FLOAT16, got input dtype %d.", static_cast<int>(xDtype)),
+                return ge::GRAPH_FAILED);
     context->SetOutputDataType(Y_OUTPUT_INDEX, xDtype);
-    return GRAPH_SUCCESS;
+    return ge::GRAPH_SUCCESS;
 }
 
 IMPL_OP_INFERSHAPE(Dilation2D).InferShape(InferShapeDilation2D).InferDataType(InferDataTypeDilation2D);
