@@ -33,6 +33,9 @@ constexpr int SCALE_IDX = 1;
 
 constexpr int SHAPEDIM_OF_GAMMA = 1;
 
+// 与资料「x维度 1-8」保持一致，rank=1 时 scaleOut 为 0 维张量
+constexpr size_t MAX_X_DIM_NUM = 8;
+
 constexpr int NUM_WITH_BETA = 3;
 constexpr int NUM_WITHOUT_BETA = 2;
 
@@ -343,9 +346,9 @@ bool RmsNormDynamicQuantTilingHelper::CheckInputShapes()
         return false;
     }
 
-    if (xDimNum <= 0) {
+    if (xDimNum == 0 || xDimNum > MAX_X_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "x", std::to_string(xDimNum).c_str(),
-                                                 "The shape dim of input x must be greater than 0");
+                                                 "The shape dim of input x must be in range [1, 8]");
         return false;
     }
     if (gammaDimNum != 1) {

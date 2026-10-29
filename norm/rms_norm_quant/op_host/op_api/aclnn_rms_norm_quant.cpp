@@ -258,24 +258,28 @@ static bool CheckShapeDim(RmsNormQuantInputTensor& inputTensor, const aclTensor*
 
     int64_t scaleDimNum = static_cast<int64_t>(inputTensor.scale->GetViewShape().GetDimNum());
     if (scaleDimNum != 1) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnRmsNormQuant", "scale", std::to_string(scaleDimNum).c_str(), "1");
-        if (Ops::NN::AclnnUtil::IsRegbase()) {
-            return false;
-        }
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "DimNum of scale must be 1, but get [%ld]", scaleDimNum);
+        return false;
     }
     int64_t gammaDimNum = static_cast<int64_t>(inputTensor.gamma->GetViewShape().GetDimNum());
     int64_t gammaLastDim = inputTensor.gamma->GetViewShape().GetDim(gammaDimNum - 1);
     int64_t xDimNum = static_cast<int64_t>(inputTensor.x->GetViewShape().GetDimNum());
     int64_t xLastDim = inputTensor.x->GetViewShape().GetDim(xDimNum - 1);
+    int64_t scaleLength = inputTensor.scale->GetViewShape().GetDim(0);
     if (Ops::NN::AclnnUtil::IsRegbase()) {
-        int64_t scaleLength = inputTensor.scale->GetViewShape().GetDim(0);
-        OP_CHECK(
-            scaleLength == 1 || scaleLength == xLastDim,
-            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-                "aclnnRmsNormQuant", "scale", std::to_string(scaleLength).c_str(),
-                (std::string("the length of scale must be 1 or the last dim of x (") + std::to_string(xLastDim) + ")")
-                    .c_str()),
-            return false);
+        OP_CHECK(scaleLength == 1 || scaleLength == xLastDim,
+                 OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                         "The length of scale must be 1 or x last dimension (%ld), "
+                         "but got %ld.",
+                         xLastDim, scaleLength),
+                 return false);
+    } else {
+        // A2/A3 的 kernel 仅按标量读取 scale（只取 scale[0] 广播到全部输出），只支持 shape 为 [1] 的 scale；
+        // 空 scale（长度 0）时 kernel 会从空 tensor 地址读取，必须一并拦截。
+        OP_CHECK(scaleLength == 1,
+                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The length of scale must be 1 on this platform, but got %ld.",
+                         scaleLength),
+                 return false);
     }
     if (gammaLastDim != xLastDim) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnRmsNormQuant", "x", std::to_string(xLastDim).c_str(),

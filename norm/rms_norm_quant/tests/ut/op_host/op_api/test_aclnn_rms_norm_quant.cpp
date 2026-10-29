@@ -126,6 +126,71 @@ TEST_F(l2_rms_norm_quant_test, ascend950_rank2_scale_returns_param_invalid)
     EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
 }
 
+TEST_F(l2_rms_norm_quant_test, non_regbase_rank2_scale_returns_param_invalid)
+{
+    // A2/A3 的 kernel 仅按标量读取 scale（只取 scale[0] 广播到全部输出），
+    // 2 维 scale 会静默产出错误量化结果，必须在第一段拦截。
+    for (auto socVersion : {op::SocVersion::ASCEND910B, op::SocVersion::ASCEND910_93}) {
+        op::SocVersionManager versionManager(socVersion);
+        SCOPED_TRACE("soc version: " + to_string(static_cast<int>(socVersion)));
+        TensorCase testCase;
+        testCase.dtypes[3] = ACL_FLOAT16;
+        testCase.dtypes[4] = ACL_INT8;
+        for (const auto& scaleShape : {vector<int64_t>{2, 16}, vector<int64_t>{1, 16}}) {
+            SCOPED_TRACE("rank-2 scale shape: " + to_string(scaleShape[0]) + "x" + to_string(scaleShape[1]));
+            testCase.shapes[3] = scaleShape;
+            testCase.shapes[4] = scaleShape;
+            EXPECT_EQ(RunTensorCase(testCase), ACLNN_ERR_PARAM_INVALID);
+        }
+        testCase.shapes[3] = {1};
+        testCase.shapes[4] = {1};
+        EXPECT_EQ(RunTensorCase(testCase), ACLNN_SUCCESS);
+    }
+}
+
+TEST_F(l2_rms_norm_quant_test, non_regbase_scale_length_must_be_one)
+{
+    // A2/A3 文档约束 scale shape 为 [1]：1 维多元素（regbase 上合法的 [H]）与空 scale（长度 0）
+    // 在非 regbase 上都会导致 kernel 只读 scale[0] 或从空 tensor 地址读取，必须拦截。
+    for (auto socVersion : {op::SocVersion::ASCEND910B, op::SocVersion::ASCEND910_93}) {
+        op::SocVersionManager versionManager(socVersion);
+        SCOPED_TRACE("soc version: " + to_string(static_cast<int>(socVersion)));
+        TensorCase testCase;
+        testCase.dtypes[3] = ACL_FLOAT16;
+        testCase.dtypes[4] = ACL_INT8;
+        // 1 维 [H]（H == xLastDim，regbase 合法）在非 regbase 上非法
+        testCase.shapes[3] = {16};
+        testCase.shapes[4] = {16};
+        EXPECT_EQ(RunTensorCase(testCase), ACLNN_ERR_PARAM_INVALID);
+        // 空 scale（长度 0）非法
+        testCase.shapes[3] = {0};
+        testCase.shapes[4] = {0};
+        EXPECT_EQ(RunTensorCase(testCase), ACLNN_ERR_PARAM_INVALID);
+        // x 为空但 scale 为 [1]：保持既有第一段成功行为（仅校验 scale 长度，不联动 x）
+        testCase.shapes[0] = {0, 16};
+        testCase.shapes[3] = {1};
+        testCase.shapes[4] = {1};
+        testCase.shapes[5] = {0, 16};
+        EXPECT_EQ(RunTensorCase(testCase), ACLNN_SUCCESS);
+    }
+}
+
+TEST_F(l2_rms_norm_quant_test, regbase_scale_length_one_or_x_last_dim_is_unchanged)
+{
+    // regbase 上 [1] 与 [H]（== xLastDim）保持合法，空 scale（长度 0）保持非法。
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND950);
+    TensorCase testCase;
+    for (int64_t scaleLength : {1, 16}) {
+        SCOPED_TRACE("regbase scale length: " + to_string(scaleLength));
+        testCase.shapes[3] = {scaleLength};
+        testCase.shapes[4] = {scaleLength};
+        EXPECT_EQ(RunTensorCase(testCase), ACLNN_SUCCESS);
+    }
+    testCase.shapes[3] = {0};
+    testCase.shapes[4] = {0};
+    EXPECT_EQ(RunTensorCase(testCase), ACLNN_ERR_PARAM_INVALID);
+}
+
 TEST_F(l2_rms_norm_quant_test, ascend950_invalid_norm_leading_dim_returns_param_invalid)
 {
     op::SocVersionManager versionManager(op::SocVersion::ASCEND950);

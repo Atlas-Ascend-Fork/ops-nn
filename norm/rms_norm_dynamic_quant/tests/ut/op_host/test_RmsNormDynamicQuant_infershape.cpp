@@ -72,6 +72,43 @@ TEST_F(RmsNormDynamicQuantInfershapeTest, y_shape_equals_x)
 }
 
 // ============================================================================
+// InferShape — x rank=1 时 scale 应推导为 0 维张量（资料维度 1-8 的下界）
+// ============================================================================
+
+TEST_F(RmsNormDynamicQuantInfershapeTest, rank1_x_infers_scalar_scale)
+{
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("RmsNormDynamicQuant"), nullptr);
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("RmsNormDynamicQuant")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape xShape = {{16}, {16}};
+    gert::StorageShape gammaShape = {{16}, {16}};
+    gert::StorageShape smoothShape = {{16}, {16}};
+    gert::StorageShape yShape = {{16}, {16}};
+    gert::StorageShape scaleShape = {{}, {}};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(4, 2)
+                      .IrInstanceNum({1, 1, 1, 1})
+                      .InputShapes({&xShape, &gammaShape, &smoothShape, &gammaShape})
+                      .OutputShapes({&yShape, &scaleShape})
+                      .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)}})
+                      .NodeInputTd(0, DT_FLOAT16, FORMAT_ND, FORMAT_ND)
+                      .NodeInputTd(1, DT_FLOAT16, FORMAT_ND, FORMAT_ND)
+                      .NodeInputTd(2, DT_FLOAT16, FORMAT_ND, FORMAT_ND)
+                      .NodeInputTd(3, DT_FLOAT16, FORMAT_ND, FORMAT_ND)
+                      .NodeOutputTd(0, DT_INT8, FORMAT_ND, FORMAT_ND)
+                      .NodeOutputTd(1, DT_FLOAT, FORMAT_ND, FORMAT_ND)
+                      .Build();
+
+    auto* ctx = holder.GetContext<gert::InferShapeContext>();
+    EXPECT_EQ(inferShapeFunc(ctx), ge::GRAPH_SUCCESS);
+
+    auto* scale = ctx->GetOutputShape(1);
+    EXPECT_EQ(scale->GetDimNum(), 0u);
+}
+
+// ============================================================================
 // InferDtype — fp16, dst_type = INT8
 // ============================================================================
 

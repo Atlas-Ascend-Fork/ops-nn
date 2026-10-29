@@ -502,3 +502,150 @@ TEST_F(l2_add_rms_norm_quant_test, dtype_combination_invalid)
     uint64_t workspace_size = 0;
     EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
 }
+
+// A2（非 RegBase）合法输入正常通过，确保新增校验无误伤
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_case_normal_001)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e-5, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACL_SUCCESS);
+}
+
+// A2 上 x2 dtype 与 x1 不一致应返回 161002（修复前放行，下游报 561000/561103）
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_dtype_relation_x2_mismatch)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_BF16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e-5, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+// A2 上 gamma dtype 与 x1 不一致应返回 161002（kernel 按 x1 的 dtype 消费 gamma，修复前静默错误结果）
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_dtype_relation_gamma_mismatch)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e-5, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+// gamma shape 与 x1 尾部维度不一致应返回 161002（修复前静默放行产出错误结果）
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_gamma_shape_mismatch)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({32}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e-5, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+// gamma rank 大于 x1 rank 应返回 161002（修复前 tiling 的 xDimNum - gammaDimNum 无符号下溢）
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_gamma_rank_exceeds_x1)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({2, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({128}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e-5, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+// y1Out shape 与 x1 不一致应返回 161002（修复前 ViewCopy 返回空指针报 561103）
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_y1_shape_mismatch)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 32}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e-5, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+// x2 shape 与 x1 不一致应返回 161002（kernel 按 x1 布局扁平读 x2，修复前静默错误结果）
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_x2_shape_mismatch)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 32}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e-5, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}

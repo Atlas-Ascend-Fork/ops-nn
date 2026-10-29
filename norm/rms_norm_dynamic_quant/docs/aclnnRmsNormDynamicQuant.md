@@ -116,7 +116,7 @@ aclnnStatus aclnnRmsNormDynamicQuant(
       <td>不支持空Tensor。</td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>2-8</td>
+      <td>1-8</td>
       <td>√</td>
     </tr>
     <tr>
@@ -176,7 +176,7 @@ aclnnStatus aclnnRmsNormDynamicQuant(
       <td><ul><li>不支持空Tensor。</li><li>shape需要与输入x一致。</li></ul></td>
       <td>INT8</td>
       <td>ND</td>
-      <td>2-8</td>
+      <td>1-8</td>
       <td>×</td>
     </tr>
     <tr>
@@ -186,7 +186,7 @@ aclnnStatus aclnnRmsNormDynamicQuant(
       <td><ul><li>不支持空Tensor。</li><li>shape需要与输入x除最后一维后的shape一致。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
-      <td>1-8</td>
+      <td>0-7</td>
       <td>×</td>
     </tr>
     <tr>
@@ -237,9 +237,20 @@ aclnnStatus aclnnRmsNormDynamicQuant(
       <td>x、gamma、yOut、scaleOut存在空指针。</td>
     </tr>
     <tr>
-      <td>ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td>561002</td>
-      <td>调用tiling时发生异常。</td>
+      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="2">161002</td>
+      <td>输入或输出的数据类型不在支持的范围之内。</td>
+    </tr>
+    <tr>
+      <td>输入或输出的数据类型不满足参数说明中的约束（如gamma、smoothScalesOptional、betaOptional与x的数据类型不一致）。</td>
+    </tr>
+    <tr>
+      <td rowspan="2">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="2">561002</td>
+      <td>输入或输出的shape不匹配或者不在支持的维度范围内，或epsilon、dstType等输入属性不在取值范围（详见参数说明）。</td>
+    </tr>
+    <tr>
+      <td>输入或输出为空Tensor（不支持空Tensor，详见参数说明）。</td>
     </tr>
   </tbody></table>
 

@@ -144,6 +144,11 @@ static bool CheckDtypeValid(const aclTensor* x1, const aclTensor* x2, const aclT
     OP_CHECK_DTYPE_NOT_SUPPORT(xOut, REGBASE_DTYPE_SUPPORT_LIST_X_SCALE, return false);
 
     if (!Ops::NN::AclnnUtil::IsRegbase()) {
+        // 非 RegBase（A2/A3/310P）：kernel 按 x1 的 dtype 消费 x2/gamma/xOut，不一致会静默产出错误结果，
+        // 必须在此拦截（161002）；RegBase（A5）沿用原有校验路径，行为保持不变
+        OP_CHECK_DTYPE_NOT_SAME(x1, x2, return false);
+        OP_CHECK_DTYPE_NOT_SAME(x1, gamma, return false);
+        OP_CHECK_DTYPE_NOT_SAME(x1, xOut, return false);
         return true;
     }
 
@@ -202,6 +207,35 @@ static bool CheckShapeDim(const aclTensor* x1, const aclTensor* x2, const aclTen
     return true;
 }
 
+static bool CheckShapeRelation(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma, aclTensor* y1Out,
+                               aclTensor* y2Out, aclTensor* xOut)
+{
+    // 资料约束：x2/y1Out/y2Out/xOut 的 shape 须与 x1 一致，
+    // 否则 kernel 按 x1 布局扁平读 x2 静默出错、ViewCopy 因输出 shape 不匹配返回空指针（561103）
+    OP_CHECK_SHAPE_NOT_EQUAL(x1, x2, return false);
+    OP_CHECK_SHAPE_NOT_EQUAL(x1, y1Out, return false);
+    OP_CHECK_SHAPE_NOT_EQUAL(y1Out, y2Out, return false);
+    OP_CHECK_SHAPE_NOT_EQUAL(x1, xOut, return false);
+
+    // gamma 的各维须与 x1 尾部 gammaRank 维一致；gammaRank 大于 x1 rank 会导致 tiling 无符号下溢
+    auto x1Shape = x1->GetViewShape();
+    auto gammaShape = gamma->GetViewShape();
+    size_t x1DimNum = x1Shape.GetDimNum();
+    size_t gammaDimNum = gammaShape.GetDimNum();
+    OP_CHECK(gammaDimNum <= x1DimNum,
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The dim num of gamma(%zu) should not be greater than x1(%zu).",
+                     gammaDimNum, x1DimNum),
+             return false);
+    for (size_t i = 0; i < gammaDimNum; ++i) {
+        OP_CHECK(gammaShape.GetDim(i) == x1Shape.GetDim(x1DimNum - gammaDimNum + i),
+                 OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                         "The dim(%zu) of gamma should be %ld to match the normed dims of x1, but got %ld.", i,
+                         x1Shape.GetDim(x1DimNum - gammaDimNum + i), gammaShape.GetDim(i)),
+                 return false);
+    }
+    return true;
+}
+
 static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma,
                                const aclTensor* scales1, const aclTensor* scales2Optional,
                                const aclTensor* zeroPoints1Optional, const aclTensor* zeroPoints2Optional,
@@ -219,6 +253,13 @@ static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, const a
     CHECK_RET(CheckShapeDim(x1, x2, gamma, scales1, scales2Optional, zeroPoints1Optional, zeroPoints2Optional, y1Out,
                             y2Out, xOut),
               ACLNN_ERR_PARAM_INVALID);
+
+    // 4. 检查输入/输出之间的shape关系（仅非 RegBase 平台：其 tiling 无跨张量校验，
+    //    非法 shape 会静默放行或触发 561000/561103；RegBase（A5）由 arch35 tiling
+    //    的 CheckMainInputShapes/CheckShapeBC 校验，保持原行为不变）
+    if (!Ops::NN::AclnnUtil::IsRegbase()) {
+        CHECK_RET(CheckShapeRelation(x1, x2, gamma, y1Out, y2Out, xOut), ACLNN_ERR_PARAM_INVALID);
+    }
 
     return ACLNN_SUCCESS;
 }

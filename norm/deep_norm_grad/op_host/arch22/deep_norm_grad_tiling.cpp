@@ -111,6 +111,19 @@ inline void CalMergeCountValue(uint32_t& mergeCount, uint32_t& ubElemNum, uint32
                   (tensorNDNum * elemWithDInUB + tensorJustNNum * elemWithoutDInUB));
 }
 
+// A2 上 cutD 尾块（cutDLastTime）过小时 dgamma 的原子加写出存在精度缺陷（尾块非零偏移 + 小长度触发），
+// 尾块过小时按块均匀重分配，保证尾块远离缺陷区间；重分配后 cutDPerTime 不超过单次切 D 容量。
+inline void BalanceCutDTail(uint32_t& cutDTime, uint32_t& cutDPerTime, uint32_t& cutDLastTime, uint32_t dDimNum,
+                            uint32_t blockElem)
+{
+    constexpr uint32_t CUT_D_MIN_TAIL = 2048;
+    if (cutDTime > 1 && cutDLastTime < CUT_D_MIN_TAIL) {
+        cutDPerTime = Ops::Base::CeilAlign(Ops::Base::CeilDiv(dDimNum, cutDTime), blockElem);
+        cutDTime = Ops::Base::CeilDiv(dDimNum, cutDPerTime);
+        cutDLastTime = dDimNum - cutDPerTime * (cutDTime - 1);
+    }
+}
+
 // SetFp32Config: configure tiling parameters for FP32 data type
 inline void SetFp32Config(DeepNormGradTilingData& tiling, uint32_t& ubElemNum, uint32_t& elemWithDInUB,
                           uint32_t& elemWithoutDInUB, uint32_t& blockElem, uint32_t& dDimNum, uint32_t& cutDKey)
@@ -193,6 +206,7 @@ inline void SetFp32Config(DeepNormGradTilingData& tiling, uint32_t& ubElemNum, u
         cutDPerTime = cutStageCutD;
         cutDTime = Ops::Base::CeilDiv(dDimNum, cutStageCutD);
         cutDLastTime = dDimNum - cutStageCutD * (cutDTime - 1);
+        BalanceCutDTail(cutDTime, cutDPerTime, cutDLastTime, dDimNum, blockElem);
     } else {
         cutDPerTime = dDimNum;
         cutDTime = 1;
@@ -289,6 +303,7 @@ inline void SetFp16Bf16Config(DeepNormGradTilingData& tiling, uint32_t& ubElemNu
         cutDTime = Ops::Base::CeilDiv(dDimNum, cutStageCutD);
         cutDPerTime = cutStageCutD;
         cutDLastTime = dDimNum - cutStageCutD * (cutDTime - 1);
+        BalanceCutDTail(cutDTime, cutDPerTime, cutDLastTime, dDimNum, blockElem);
     } else {
         // fp16/bf16 no cutD
         cutDTime = 1;
@@ -434,6 +449,15 @@ static bool CheckMeanRstdShapeValue(const gert::TilingContext* context)
                             context->GetNodeName(), "parameter", "invalid",
                             "Input rstd/mean shape invaild, shape is not equal dy first few dim."),
                         return false);
+    }
+    // 与前向 DeepNorm 输出契约一致：mean/rstd 尾部 gamma 维度个数的维度必须为 1，
+    // 否则 kernel 按行扁平读取 mean/rstd 会取到错误数据（静默精度问题）
+    for (uint32_t i = dyDimNum - gammaDimNum; i < dyDimNum; i++) {
+        OP_TILING_CHECK(
+            (rstdShape->GetStorageShape().GetDim(i) != 1) || (meanShape->GetStorageShape().GetDim(i) != 1),
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "parameter", "invalid",
+                                                  "Input rstd/mean shape invaild, trailing dims must be 1."),
+            return false);
     }
     return true;
 }

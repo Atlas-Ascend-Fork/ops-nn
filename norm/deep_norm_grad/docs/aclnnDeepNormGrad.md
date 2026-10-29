@@ -124,7 +124,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>dy（aclTensor*）</td>
       <td>输入</td>
       <td>表示主要的grad输入，对应公式中的`dy`。</td>
-      <td><ul><li>支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2-8</td>
@@ -134,7 +134,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>x（aclTensor*）</td>
       <td>输入</td>
       <td>表示正向融合算子的输入张量，对应公式中的`x`。</td>
-      <td>支持空Tensor。</td>
+      <td>不支持空Tensor。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2-8</td>
@@ -144,7 +144,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>gx（aclTensor*）</td>
       <td>输入</td>
       <td>表示正向融合算子的输入张量，对应公式中的`gx`。</td>
-      <td><ul><li>支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2-8</td>
@@ -154,7 +154,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>gamma（aclTensor*）</td>
       <td>输入</td>
       <td>表示前向传播的缩放参数，对应公式中的`gamma`。</td>
-      <td><ul><li>支持空Tensor。</li><li>数据类型与`x`的数据类型保持一致。</li><li>shape维度和输入`x`后几维的维度相同，后几维表示需要norm的维度。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>数据类型与`x`的数据类型保持一致。</li><li>shape维度和输入`x`后几维的维度相同，后几维表示需要norm的维度。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-7</td>
@@ -164,7 +164,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>mean（aclTensor*）</td>
       <td>输入</td>
       <td>表示正向输入x、gx之和的均值，对应公式中的`mean`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape维度和输入`x`前几维的维度相同，前几维表示不需要norm的维度。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape维度和输入`x`前几维的维度相同，其余维度为1，前几维表示不需要norm的维度。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>2-8</td>
@@ -174,7 +174,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>rstd（aclTensor*）</td>
       <td>输入</td>
       <td>表示正向输入x、gx之和的rstd，对应公式中的`rstd`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape与`mean`shape保持一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape与`mean`shape保持一致。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>2-8</td>
@@ -194,7 +194,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>dxOut（aclTensor*）</td>
       <td>输出</td>
       <td>表示计算输出的梯度，用于更新输入数据x的梯度。对应公式中的`dx`。</td>
-      <td><ul><li>支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2-8</td>
@@ -204,7 +204,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>dgxOut（aclTensor*）</td>
       <td>输出</td>
       <td>表示计算输出的梯度，用于更新输入数据gx的梯度。对应公式中的`dgx`。</td>
-      <td><ul><li>支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2-8</td>
@@ -214,7 +214,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>dbetaOut（aclTensor*）</td>
       <td>输出</td>
       <td>表示计算输出的梯度，用于更新偏置参数的梯度。对应公式中的`dbeta`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape与`gamma`保持一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape与`gamma`保持一致。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>1-7</td>
@@ -224,7 +224,7 @@ aclnnStatus aclnnDeepNormGrad(
       <td>dgammaOut（aclTensor*）</td>
       <td>输出</td>
       <td>表示计算输出的梯度，用于更新缩放参数的梯度。对应公式中的`dgamma`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape与`gamma`保持一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape与`gamma`保持一致。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>1-7</td>
@@ -282,15 +282,23 @@ aclnnStatus aclnnDeepNormGrad(
       <td>如果传入参数是必选输入，输出或者必选属性，且是空指针，则返回161001。</td>
     </tr>
     <tr>
-      <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="3">161002</td>
+      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="2">161002</td>
       <td>输入或输出的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>输入和输出的shape不匹配或者不在支持的维度范围内。</td>
+      <td>输入和输出的数据类型不满足参数说明中的约束。</td>
     </tr>
     <tr>
-      <td>输入和输出的数据类型不满足参数说明中的约束。</td>
+      <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="3">561002</td>
+      <td>输入或输出的shape不匹配或者不在支持的维度范围内。</td>
+    </tr>
+    <tr>
+      <td>mean/rstd的尾部维度（对应gamma的维度个数）不为1。</td>
+    </tr>
+    <tr>
+      <td>输入或输出的shape包含0维（不支持空Tensor）。</td>
     </tr>
   </tbody></table>
 

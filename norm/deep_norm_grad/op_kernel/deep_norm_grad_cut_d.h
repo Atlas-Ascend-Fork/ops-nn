@@ -192,8 +192,11 @@ public:
 
             LocalTensor<float> dgammaFp32 = outputPdGammaQue.AllocTensor<float>();
             LocalTensor<float> dbetaFp32 = outputPdBetaQue.AllocTensor<float>();
-            Duplicate(dgammaFp32, 0.0f, dDimNumUB);
-            Duplicate(dbetaFp32, 0.0f, dDimNumUB);
+            // 与 mergeN/smallD 模板保持一致：清零到块对齐长度，保证尾块的块粒度原子加搬运
+            // 不会把对齐填充区的残留数据加到 GM
+            uint32_t dDimNumUBAlign = this->BlockAlign(dDimNumUB, blockElemFp32);
+            Duplicate(dgammaFp32, 0.0f, dDimNumUBAlign);
+            Duplicate(dbetaFp32, 0.0f, dDimNumUBAlign);
 
             for (uint32_t processID = 0; processID < nDeal; ++processID) {
                 CopyInCutD(processID, cutDIndex, dDimNumUB);

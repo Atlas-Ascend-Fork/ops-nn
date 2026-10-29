@@ -31,11 +31,29 @@ protected:
 };
 struct DeepNormGradCompileInfo {};
 
+// 与 op_host/arch22 生成的 DeepNormGradTilingData 内存布局一致，用于读取 tiling 结果
+#pragma pack(1)
+struct DeepNormGradTilingDataMirror {
+    uint32_t useCoreNum;
+    uint32_t nDimNum;
+    uint32_t dDimNum;
+    uint32_t nDealPerCore;
+    uint32_t nDealLastCore;
+    uint32_t mergeNCount;
+    uint32_t cutDTime;
+    uint32_t cutDPerTime;
+    uint32_t cutDLastTime;
+    uint32_t alpha;
+    uint32_t fixedOutputFlag;
+};
+#pragma pack()
+
 inline void runTest(gert::StorageShape& input_shape, gert::StorageShape& input1_shape, gert::StorageShape& input2_shape,
                     gert::StorageShape& input3_shape, gert::StorageShape& input4_shape,
                     gert::StorageShape& input5_shape, gert::StorageShape& out_shape, gert::StorageShape& out1_shape,
                     gert::StorageShape& out2_shape, gert::StorageShape& out3_shape, ge::DataType data_type,
-                    uint32_t tiling_key_expect, ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS)
+                    uint32_t tiling_key_expect, ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS,
+                    uint32_t cutDTimeExpect = 0, uint32_t cutDPerTimeExpect = 0, uint32_t cutDLastTimeExpect = 0)
 {
     // dlog_setlevel(0, 0, 0);
 
@@ -123,6 +141,13 @@ inline void runTest(gert::StorageShape& input_shape, gert::StorageShape& input1_
     if (expectedStatus == ge::GRAPH_SUCCESS) {
         auto tiling_key = tiling_context->GetTilingKey();
         ASSERT_EQ(tiling_key, tiling_key_expect);
+        if (cutDPerTimeExpect != 0) {
+            auto* tilingData = reinterpret_cast<DeepNormGradTilingDataMirror*>(
+                tiling_context->GetRawTilingData()->GetData());
+            EXPECT_EQ(tilingData->cutDTime, cutDTimeExpect);
+            EXPECT_EQ(tilingData->cutDPerTime, cutDPerTimeExpect);
+            EXPECT_EQ(tilingData->cutDLastTime, cutDLastTimeExpect);
+        }
     }
     // dlog_setlevel(0, 3, 0);
 }
@@ -652,4 +677,132 @@ TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_gamma_2d)
 
     runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
             out2_shape, out3_shape, ge::DT_FLOAT, 0);
+}
+
+// UT 平台 UB=196608 时 fp32 cutD 单次容量为 6112。D=6121 原始尾块为 9，
+// 触发均匀重分配：(6112, 9) -> (3064, 3057)，避免小尾块
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_cut_d_small_tail_fp32)
+{
+    gert::StorageShape input_shape = {{2, 1, 6121}, {2, 1, 6121}};
+    gert::StorageShape input1_shape = {{2, 1, 6121}, {2, 1, 6121}};
+    gert::StorageShape input2_shape = {{2, 1, 6121}, {2, 1, 6121}};
+    gert::StorageShape input3_shape = {{6121}, {6121}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 6121}, {2, 1, 6121}};
+    gert::StorageShape out1_shape = {{2, 1, 6121}, {2, 1, 6121}};
+    gert::StorageShape out2_shape = {{6121}, {6121}};
+    gert::StorageShape out3_shape = {{6121}, {6121}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 1, ge::GRAPH_SUCCESS, 2, 3064, 3057);
+}
+
+// fp32 三分块小尾块：D=12249 原始 (6112, 6112, 25) -> (4088, 4088, 4073)
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_cut_d_small_tail_fp32_three_chunks)
+{
+    gert::StorageShape input_shape = {{2, 1, 12249}, {2, 1, 12249}};
+    gert::StorageShape input1_shape = {{2, 1, 12249}, {2, 1, 12249}};
+    gert::StorageShape input2_shape = {{2, 1, 12249}, {2, 1, 12249}};
+    gert::StorageShape input3_shape = {{12249}, {12249}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 12249}, {2, 1, 12249}};
+    gert::StorageShape out1_shape = {{2, 1, 12249}, {2, 1, 12249}};
+    gert::StorageShape out2_shape = {{12249}, {12249}};
+    gert::StorageShape out3_shape = {{12249}, {12249}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 1, ge::GRAPH_SUCCESS, 3, 4088, 4073);
+}
+
+// fp32 尾块足够大（D=8192，尾块 2080 >= 2048）时不重分配，保持原切分
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_cut_d_large_tail_fp32_unchanged)
+{
+    gert::StorageShape input_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape input1_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape input2_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape input3_shape = {{8192}, {8192}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape out1_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape out2_shape = {{8192}, {8192}};
+    gert::StorageShape out3_shape = {{8192}, {8192}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 1, ge::GRAPH_SUCCESS, 2, 6112, 2080);
+}
+
+// UT 平台 UB=196608 时 fp16 cutD 单次容量为 4432。D=4449 原始尾块为 17，
+// 触发均匀重分配：(4432, 17) -> (2240, 2209)
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_cut_d_small_tail_fp16)
+{
+    gert::StorageShape input_shape = {{40, 1, 4449}, {40, 1, 4449}};
+    gert::StorageShape input1_shape = {{40, 1, 4449}, {40, 1, 4449}};
+    gert::StorageShape input2_shape = {{40, 1, 4449}, {40, 1, 4449}};
+    gert::StorageShape input3_shape = {{4449}, {4449}};
+    gert::StorageShape input4_shape = {{40, 1, 1}, {40, 1, 1}};
+    gert::StorageShape input5_shape = {{40, 1, 1}, {40, 1, 1}};
+    gert::StorageShape out_shape = {{40, 1, 4449}, {40, 1, 4449}};
+    gert::StorageShape out1_shape = {{40, 1, 4449}, {40, 1, 4449}};
+    gert::StorageShape out2_shape = {{4449}, {4449}};
+    gert::StorageShape out3_shape = {{4449}, {4449}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT16, 11, ge::GRAPH_SUCCESS, 2, 2240, 2209);
+}
+
+// fp16 尾块足够大（D=8192，尾块 3760 >= 2048）时不重分配，保持原切分
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_cut_d_large_tail_fp16_unchanged)
+{
+    gert::StorageShape input_shape = {{40, 1, 8192}, {40, 1, 8192}};
+    gert::StorageShape input1_shape = {{40, 1, 8192}, {40, 1, 8192}};
+    gert::StorageShape input2_shape = {{40, 1, 8192}, {40, 1, 8192}};
+    gert::StorageShape input3_shape = {{8192}, {8192}};
+    gert::StorageShape input4_shape = {{40, 1, 1}, {40, 1, 1}};
+    gert::StorageShape input5_shape = {{40, 1, 1}, {40, 1, 1}};
+    gert::StorageShape out_shape = {{40, 1, 8192}, {40, 1, 8192}};
+    gert::StorageShape out1_shape = {{40, 1, 8192}, {40, 1, 8192}};
+    gert::StorageShape out2_shape = {{8192}, {8192}};
+    gert::StorageShape out3_shape = {{8192}, {8192}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT16, 11, ge::GRAPH_SUCCESS, 2, 4432, 3760);
+}
+
+// mean 尾部维（对应 gamma 维度）不为 1 时应被拒绝：kernel 按行扁平读取 mean 会取错数据
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_mean_trailing_dim_not_one_rejected)
+{
+    gert::StorageShape input_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape input1_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape input2_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape input3_shape = {{8192}, {8192}};
+    gert::StorageShape input4_shape = {{2, 1, 3}, {2, 1, 3}};
+    gert::StorageShape input5_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape out_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape out1_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape out2_shape = {{8192}, {8192}};
+    gert::StorageShape out3_shape = {{8192}, {8192}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 1, ge::GRAPH_FAILED);
+}
+
+// rstd 尾部维为 0（空维）时应被拒绝：修复前该形状通过校验导致 kernel 越界读
+TEST_F(DeepNormGradTiling, deep_norm_grad_tiling_rstd_trailing_dim_zero_rejected)
+{
+    gert::StorageShape input_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape input1_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape input2_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape input3_shape = {{8192}, {8192}};
+    gert::StorageShape input4_shape = {{2, 1, 1}, {2, 1, 1}};
+    gert::StorageShape input5_shape = {{2, 1, 0}, {2, 1, 0}};
+    gert::StorageShape out_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape out1_shape = {{2, 1, 8192}, {2, 1, 8192}};
+    gert::StorageShape out2_shape = {{8192}, {8192}};
+    gert::StorageShape out3_shape = {{8192}, {8192}};
+
+    runTest(input_shape, input1_shape, input2_shape, input3_shape, input4_shape, input5_shape, out_shape, out1_shape,
+            out2_shape, out3_shape, ge::DT_FLOAT, 1, ge::GRAPH_FAILED);
 }

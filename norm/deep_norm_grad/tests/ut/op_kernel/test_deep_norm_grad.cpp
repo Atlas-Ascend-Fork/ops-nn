@@ -168,6 +168,75 @@ TEST_F(deep_norm_grad_test, test_case_1)
     free(path_);
 }
 
+TEST_F(deep_norm_grad_test, test_case_1_small_tail_after_balance)
+{ // tiling key 1, D=6113 修复前尾块为 9，重分配后为 (3064, 3049)
+    size_t N = 2;
+    size_t D = 6113;
+    size_t dyByteSize = N * D * sizeof(float);
+    size_t xByteSize = N * D * sizeof(float);
+    size_t gxByteSize = N * D * sizeof(float);
+    size_t gammaByteSize = D * sizeof(float);
+    size_t meanByteSize = N * sizeof(float);
+    size_t rstdByteSize = N * sizeof(float);
+    size_t dxByteSize = N * D * sizeof(float);
+    size_t dgxByteSize = N * D * sizeof(float);
+    size_t dbetaByteSize = D * sizeof(float);
+    size_t dgammaByteSize = D * sizeof(float);
+    size_t tiling_data_size = sizeof(DeepNormGradTilingData);
+
+    uint8_t* dy = (uint8_t*)AscendC::GmAlloc(dyByteSize);
+    uint8_t* x = (uint8_t*)AscendC::GmAlloc(xByteSize);
+    uint8_t* gx = (uint8_t*)AscendC::GmAlloc(gxByteSize);
+    uint8_t* gamma = (uint8_t*)AscendC::GmAlloc(gammaByteSize);
+    uint8_t* mean = (uint8_t*)AscendC::GmAlloc(meanByteSize);
+    uint8_t* rstd = (uint8_t*)AscendC::GmAlloc(rstdByteSize);
+
+    uint8_t* dx = (uint8_t*)AscendC::GmAlloc(dxByteSize);
+    uint8_t* dgx = (uint8_t*)AscendC::GmAlloc(dgxByteSize);
+    uint8_t* dgamma = (uint8_t*)AscendC::GmAlloc(dgammaByteSize);
+    uint8_t* dbeta = (uint8_t*)AscendC::GmAlloc(dbetaByteSize);
+
+    uint8_t* workspace = (uint8_t*)AscendC::GmAlloc(36 * 1024 * 1024);
+    uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(tiling_data_size);
+    uint32_t blockDim = 2;
+
+    char* path_ = get_current_dir_name();
+    string path(path_);
+
+    DeepNormGradTilingData* tilingDatafromBin = reinterpret_cast<DeepNormGradTilingData*>(tiling);
+
+    tilingDatafromBin->useCoreNum = 2;
+    tilingDatafromBin->nDimNum = N;
+    tilingDatafromBin->dDimNum = D;
+    tilingDatafromBin->nDealPerCore = 1;
+    tilingDatafromBin->nDealLastCore = 1;
+    tilingDatafromBin->mergeNCount = 1;
+    tilingDatafromBin->cutDTime = 2;
+    tilingDatafromBin->cutDPerTime = 3064;
+    tilingDatafromBin->cutDLastTime = 3049;
+    tilingDatafromBin->alpha = 0;
+    tilingDatafromBin->fixedOutputFlag = 0;
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+
+    ICPU_SET_TILING_KEY(1);
+    ICPU_RUN_KF(deep_norm_grad, blockDim, dy, x, gx, gamma, mean, rstd, dx, dgx, dbeta, dgamma, workspace,
+                (uint8_t*)(tilingDatafromBin));
+
+    AscendC::GmFree(dy);
+    AscendC::GmFree(x);
+    AscendC::GmFree(gx);
+    AscendC::GmFree(gamma);
+    AscendC::GmFree(mean);
+    AscendC::GmFree(rstd);
+    AscendC::GmFree(dx);
+    AscendC::GmFree(dgx);
+    AscendC::GmFree(dbeta);
+    AscendC::GmFree(dgamma);
+    AscendC::GmFree(workspace);
+    AscendC::GmFree(tiling);
+    free(path_);
+}
+
 TEST_F(deep_norm_grad_test, test_case_10)
 { // tiling key 10
     size_t N = 2;
