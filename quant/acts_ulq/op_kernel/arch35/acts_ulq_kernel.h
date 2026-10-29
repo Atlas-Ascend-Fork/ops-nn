@@ -197,6 +197,8 @@ public:
                 nddmaParams_[inp].loopInfo.loopLpSize[nd] = 0;
                 nddmaParams_[inp].loopInfo.loopRpSize[nd] = 0;
             }
+            // constantValue 无默认成员初始化，三参 NDDMA DataCopy 无条件读取该成员（与 pad 设置无关），须逐槽显式清零
+            nddmaParams_[inp].constantValue = (T)0;
             nddmaOuterIters_[inp] = 1;
             for (int64_t d = k; d < RANK - nddma_dims_; d++)
                 nddmaOuterIters_[inp] *= (d == k) ? td_->split.a_i : dstShape[d];
