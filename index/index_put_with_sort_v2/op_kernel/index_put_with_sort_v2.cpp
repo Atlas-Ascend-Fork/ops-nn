@@ -24,14 +24,6 @@ template <bool ACCUMULATE, bool ALL_INDEXED, bool INDEXED_BLOCK_MODE, bool IS_CA
 __global__ __aicore__ void index_put_with_sort_v2(GM_ADDR self, GM_ADDR linearIndex, GM_ADDR posIdx, GM_ADDR values,
                                                   GM_ADDR output, GM_ADDR workSpace, GM_ADDR tiling)
 {
-    if (workSpace == nullptr) {
-        return;
-    }
-    GM_ADDR user = AscendC::GetUserWorkspace(workSpace);
-    if (user == nullptr) {
-        return;
-    }
-
     REGISTER_TILING_DEFAULT(IndexPutWithSortV2SimdTilingData);
     REGISTER_TILING_FOR_TILINGKEY("IS_SIMD == false", IndexPutWithSortV2TilingData);
     REGISTER_TILING_FOR_TILINGKEY("IS_SIMD == true", IndexPutWithSortV2SimdTilingData);

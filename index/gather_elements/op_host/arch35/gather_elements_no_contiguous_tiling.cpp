@@ -454,10 +454,7 @@ ge::graphStatus GatherElementsNoContiguousTiling::GetWorkspaceSize()
 {
     auto workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
-    auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
-    workspaces[0] = ascendcPlatform.GetLibApiWorkSpaceSize();
+    workspaces[0] = 0;
     return ge::GRAPH_SUCCESS;
 }
 

@@ -19,6 +19,7 @@
 #include "register/op_impl_registry.h"
 #include "register/tilingdata_base.h"
 #include "platform/platform_info.h"
+#include "tiling/platform/platform_ascendc.h"
 #include "unsorted_segment_sum_deterministic_tiling.h"
 
 namespace optiling {
@@ -50,6 +51,16 @@ uint64_t UnsortedSegmentSumDetermTiling::GetTilingKey() const
 {
     uint64_t tilingKey = GET_TPL_TILING_KEY(USS_TEMPLATE_DETERM, USS_CAST_NONE);
     return tilingKey;
+}
+
+ge::graphStatus UnsortedSegmentSumDetermTiling::GetWorkspaceSize()
+{
+    // deterministic kernel 以 workspace 基址作为 user 区使用，需保留 sys workspace 偏移
+    auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
+    size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    currentWorkspace[0] = ascendcPlatform.GetLibApiWorkSpaceSize() + usrWorkspaceSize_;
+    return ge::GRAPH_SUCCESS;
 }
 
 void UnsortedSegmentSumDetermTiling::SetTilingData()

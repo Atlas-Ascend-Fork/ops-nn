@@ -31,7 +31,6 @@ constexpr int64_t INPUT_INDEX_2 = 2;
 constexpr int64_t INPUT_INDEX_3 = 3;
 constexpr int64_t INPUT_INDEX_4 = 4;
 constexpr uint32_t DCACHE_SIZE = 32768;
-constexpr uint32_t ASCENDC_TOOLS_WORKSPACE = 16777216;
 constexpr int64_t UB_BLOCK = 32;
 constexpr int64_t COL_ALING = 512;
 constexpr int32_t SPLIT_LIMIT = 256;

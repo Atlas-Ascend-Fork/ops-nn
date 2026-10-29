@@ -53,14 +53,6 @@ template <uint32_t X_DTYPE, uint32_t FULL_LOAD_TYPE, bool IS_PERF, bool IS_SIMD,
 __global__ __aicore__ void index_put_v2(GM_ADDR inputX, GM_ADDR value, GM_ADDR indexedSizes, GM_ADDR indexedStrides,
                                         GM_ADDR indices, GM_ADDR output, GM_ADDR workspace, GM_ADDR tiling)
 {
-    if (workspace == nullptr) {
-        return;
-    }
-    SetSysWorkspace(workspace);
-    GM_ADDR userWS = GetUserWorkspace(workspace);
-    if (userWS == nullptr) {
-        return;
-    }
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     REGISTER_TILING_DEFAULT(Index::IndexSimtTilingData);
 

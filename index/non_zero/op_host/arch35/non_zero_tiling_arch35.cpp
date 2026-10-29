@@ -94,7 +94,7 @@ constexpr int64_t TILING_KEY_BIG_MASK_6_DIM = 20006;
 constexpr int64_t TILING_KEY_BIG_MASK_7_DIM = 20007;
 constexpr int64_t TILING_KEY_BIG_MASK_8_DIM = 20008;
 constexpr int64_t TILING_KEY_NULL_INPUT_TENSOR = 30001;
-constexpr size_t WORKSPACE_SIZE_NULL_TENSOR = 16 * 1024 * 1024;
+constexpr size_t WORKSPACE_SIZE_NULL_TENSOR = 0;
 
 constexpr int64_t TILING_KEY_FULL_LOAD_BASE = 40000;
 constexpr int64_t FULL_LOAD_DIM_1_HRESHOLD = 16384; // 1维进入全载模板的数据量阈值 16K

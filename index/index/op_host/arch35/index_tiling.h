@@ -90,7 +90,7 @@ protected:
     {
         size_t* workspace = context_->GetWorkspaceSizes(1);
         OP_CHECK_NULL_WITH_CONTEXT(context_, workspace);
-        workspace[0] = ASCENDC_TOOLS_WORKSPACE;
+        workspace[0] = SYS_WORKSPACE;
         return ge::GRAPH_SUCCESS;
     }
 
@@ -127,7 +127,7 @@ protected:
     static constexpr uint64_t DTYPE_SIZE_B32 = 4;
     static constexpr uint64_t DTYPE_SIZE_B64 = 8;
     static constexpr uint64_t DTYPE_SIZE_B128 = 16;
-    static constexpr size_t ASCENDC_TOOLS_WORKSPACE = 16 * 1024 * 1024;
+    static constexpr size_t SYS_WORKSPACE = 0;
     uint64_t coreNum_{0};
     uint64_t ubSize_{0};
 };

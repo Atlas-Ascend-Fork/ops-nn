@@ -78,6 +78,14 @@ using namespace AscendC;
 extern "C" __global__ __aicore__ void non_zero(GM_ADDR x, GM_ADDR y, GM_ADDR outShape, GM_ADDR workspace,
                                                GM_ADDR tiling)
 {
+    GET_TILING_DATA(tilingData, tiling);
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
+    if (TILING_KEY_IS(TILING_KEY_NULL_INPUT_TENSOR)) {
+        NonZero::NonZeroNullInputTensor<DTYPE_X, DTYPE_Y> op;
+        op.Init(x, y, outShape, workspace, &tilingData);
+        op.Process();
+        return;
+    }
     if (workspace == nullptr) {
         return;
     }
@@ -87,14 +95,6 @@ extern "C" __global__ __aicore__ void non_zero(GM_ADDR x, GM_ADDR y, GM_ADDR out
         return;
     }
 
-    GET_TILING_DATA(tilingData, tiling);
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
-    if (TILING_KEY_IS(TILING_KEY_NULL_INPUT_TENSOR)) {
-        NonZero::NonZeroNullInputTensor<DTYPE_X, DTYPE_Y> op;
-        op.Init(x, y, outShape, userWS, &tilingData);
-        op.Process();
-        return;
-    }
     if constexpr (IsSameType<DTYPE_X, bool>::value) {
         if (TILING_KEY_IS(TILING_KEY_FULL_LOAD_1_DIM)) {
             NonZero::NonZeroFullLoadDim1<int8_t, DTYPE_Y, 1> op;

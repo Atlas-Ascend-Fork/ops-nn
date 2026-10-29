@@ -77,7 +77,7 @@ void SetConstInput(size_t const_index, ge::DataType dtype, T* const_data, int64_
 namespace {
 constexpr uint64_t SIMD_TILING_KEY = 131072;
 constexpr uint64_t SIMD_ACCUMULATE_TILING_KEY = 655360;
-constexpr size_t EXPECTED_WORKSPACE_SIZE = 16 * 1024 * 1024;
+constexpr size_t EXPECTED_WORKSPACE_SIZE = 0;
 constexpr int32_t DEFAULT_CORE_NUM = 64;
 constexpr uint64_t DEFAULT_UB_SIZE = 196608;
 constexpr const char* DEFAULT_COMPILE_INFO = R"({
