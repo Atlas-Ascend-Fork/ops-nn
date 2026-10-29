@@ -15,9 +15,11 @@
 #include "level0/broadcast_to.h"
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
+#include "aclnn_kernels/transdata.h"
 #include "matmul/common/op_host/op_api/matmul.h"
 #include "matmul/common/op_host/op_api/cube_util.h"
 #include "matmul/common/op_host/op_api/matmul_util.h"
+#include "matmul/common/op_host/op_api/fusedmatmul.h"
 #include "level0/muls.h"
 
 #include "aclnn/aclnn_base.h"
@@ -779,6 +781,116 @@ public:
     ~AddmmGemmV3Graph() override = default;
 };
 
+// ================================================================================================
+// fmm(add) 路由: addmm -> FusedMatMul(fusedOpType="add") 单kernel融合
+// 仅当 fmm 的支持域完整覆盖当前入参时启用，否则回退小算子拼接(AddmmMatmulGraph)，行为不变。
+// fmm add 语义: y = (x1@x2 + bias) + x3, bias=nullptr, x3=self
+// ================================================================================================
+constexpr int64_t FMM_INNER_PRECISE_HIGH_PRECISION = 0;
+constexpr size_t FMM_MM_DIM = 2; // mat1/mat2/self 的二维矩阵维度数
+constexpr int64_t FMM_INNER_PRECISE_HIGH_PERFORMANCE = 1;
+
+static bool CheckFmmAddSupport(const aclTensor* self, const aclTensor* mat1, const aclTensor* mat2,
+                               const aclTensor* out, const aclScalar* alpha, const aclScalar* beta, int8_t cubeMathType)
+{
+    // fmm add/mul 的核配硬校验(MIX_AIC_1_2 依赖 1:2 核配, 见 cube_util.h)
+    if (!IsAivNumDoubleOfAicNum()) {
+        return false;
+    }
+    // fmm 的 add 无缩放语义：仅覆盖 alpha==1 && beta==1 (out = self + mat1@mat2)
+    if (fabs(alpha->ToFloat() - 1.0f) > numeric_limits<float>::epsilon() ||
+        fabs(beta->ToFloat() - 1.0f) > numeric_limits<float>::epsilon()) {
+        return false;
+    }
+    // fmm x3 硬约束：self 必须已是完整 (M,N)，不支持 (n,)/(1,n) 广播（回退默认通路的广播链路）
+    const op::Shape& selfShape = self->GetViewShape();
+    const op::Shape& mat1Shape = mat1->GetViewShape();
+    const op::Shape& mat2Shape = mat2->GetViewShape();
+    if (mat1Shape.GetDimNum() != FMM_MM_DIM || mat2Shape.GetDimNum() != FMM_MM_DIM ||
+        selfShape.GetDimNum() != FMM_MM_DIM) {
+        return false;
+    }
+    if (selfShape.GetDim(0) != mat1Shape.GetDim(0) || selfShape.GetDim(1) != mat2Shape.GetDim(1)) {
+        return false;
+    }
+    // K=0 (mat1 列数为 0): 保持 addmm 既有的空tensor广播处理(ProcessEmptyTensor -> β·self 广播链),
+    // 不路由 fmm, 行为与 master 基线完全一致。
+    if (mat1Shape.GetDim(1) == 0 || mat2Shape.GetDim(0) == 0) {
+        return false;
+    }
+    // fmm dtype 组合约束：x1/x2/y/x3 同 dtype 且 ∈ {FP16, BF16, FP32}（默认通路的隐式提升不覆盖）
+    const op::DataType matDtype = mat1->GetDataType();
+    if (matDtype != op::DataType::DT_FLOAT16 && matDtype != op::DataType::DT_BF16 &&
+        matDtype != op::DataType::DT_FLOAT) {
+        return false;
+    }
+    if (mat2->GetDataType() != matDtype || self->GetDataType() != matDtype || out->GetDataType() != matDtype) {
+        return false;
+    }
+    // fmm 的 cubeMathType×dtype 矩阵：FP32 输入仅 USE_HF32(3) 接受（fmm CheckMathType 对 FP32+其他值直接报错），
+    // FP32+0(直算)/1(降精度)/4(提精度) 的 addmm 合法场景必须回退原通路；FP16/BF16 输入全值域安全。
+    if (matDtype == op::DataType::DT_FLOAT && cubeMathType != USE_HF32) {
+        return false;
+    }
+    // storage format 必须 ND（非 ND 视图回退原通路）
+    if (mat1->GetStorageFormat() != op::Format::FORMAT_ND || mat2->GetStorageFormat() != op::Format::FORMAT_ND ||
+        self->GetStorageFormat() != op::Format::FORMAT_ND) {
+        return false;
+    }
+    return true;
+}
+
+class AddmmFmmGraph : public Ops::NN::MatmulGraphImpl {
+public:
+    using MatmulGraphImpl::MatmulGraphImpl;
+
+    aclnnStatus Impl() override
+    {
+        // 单kernel融合: out = (mat1 @ mat2) + self (bias成员即self)
+        MmOpInfo mmOpInfo = GetMatmulOpInfo(matA, matB, nullptr, output, cubeMathType);
+        auto selfCastOut = matA;
+        bool selfCastRes = ContiguousAndCast(matA, selfCastOut, mmOpInfo.shapeInfo.transposeX1,
+                                             mmOpInfo.support_info.self_dtype, executor);
+        CHECK_RET(selfCastRes, ACLNN_ERR_INNER_NULLPTR);
+        auto mat2CastOut = matB;
+        bool mat2CastRes = ContiguousAndCast(matB, mat2CastOut, mmOpInfo.shapeInfo.transposeX2,
+                                             mmOpInfo.support_info.mat2_dtype, executor);
+        CHECK_RET(mat2CastRes, ACLNN_ERR_INNER_NULLPTR);
+        auto selfContiguous = l0op::Contiguous(bias, executor);
+        CHECK_RET(selfContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        selfContiguous = l0op::ReFormat(selfContiguous, op::Format::FORMAT_ND);
+        CHECK_RET(selfContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        // 退化 shape 布局修正(对齐 fmm 直调链 BuildDirectFusedMatMulGraph):
+        // K=1 消转置 / M=1(x1转置时)M 转外轴 / N=1(x2非转置时)N 转外轴,
+        // 避免 fmm tiling 在 1 维内轴+transpose 组合上的边界问题。bias 恒 null(addmm 无 fmm bias)。
+        auto selfReshapeOutput = selfCastOut;
+        auto mat2ReshapeOutput = mat2CastOut;
+        const aclTensor* nullBias = nullptr; // ProcessSpecialCases 第四参为 const aclTensor*&, 需左值
+        bool ifKEqual1 = false;
+        CHECK_RET(ProcessSpecialCases(selfCastOut, mat2CastOut, mmOpInfo, nullBias, selfReshapeOutput,
+                                      mat2ReshapeOutput, executor, ifKEqual1) != -1,
+                  ACLNN_ERR_INNER_NULLPTR);
+        auto selfNd = l0op::ReFormat(selfReshapeOutput, op::Format::FORMAT_ND);
+        CHECK_RET(selfNd != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        auto mat2Nd = l0op::ReFormat(mat2ReshapeOutput, op::Format::FORMAT_ND);
+        CHECK_RET(mat2Nd != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        // innerPrecise 与 fmm GetInnerPrecise 同构: FP16/BF16 + USE_FP32_ADD 走高精度(累加FP32域)
+        int64_t innerPrecise = FMM_INNER_PRECISE_HIGH_PERFORMANCE;
+        if (cubeMathType == USE_FP32_ADD &&
+            (matA->GetDataType() == DataType::DT_FLOAT16 || matA->GetDataType() == DataType::DT_BF16)) {
+            innerPrecise = FMM_INNER_PRECISE_HIGH_PRECISION;
+        }
+        auto fmmOut = l0op::FusedMatMulNd(selfNd, mat2Nd, nullptr, selfContiguous, mmOpInfo.shapeInfo.transposeX1,
+                                          mmOpInfo.shapeInfo.transposeX2, mmOpInfo.enableHf32, "add", innerPrecise,
+                                          executor);
+        CHECK_RET(fmmOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        convOut = fmmOut;
+        return ACLNN_SUCCESS;
+    }
+
+    ~AddmmFmmGraph() override = default;
+};
+
 // 创建计算图
 std::shared_ptr<MatmulGraphImpl> CreateAddmmGraphImpl(const aclTensor* self, const aclTensor* mat1,
                                                       const aclTensor* mat2, const aclScalar* beta,
@@ -841,6 +953,16 @@ std::shared_ptr<MatmulGraphImpl> CreateAddmmGraphImpl(const aclTensor* self, con
             matmulGraph->SetOpInfo(mmOpInfo); // 将CheckGemmV3Support计算出的mmOpInfo 直接赋值;
             return matmulGraph;
         }
+    }
+
+    // fmm(add) 单kernel融合: 3510(仅950, 归一后 IsNpuArch3510Series 含 920x/960, 但 TENSOR_LEVEL Blaze TPL
+    // 仅注册在 950 的 TPL 段, 960 上无对应 binary, 必须排除) && 门禁通过时路由到 FusedMatMul（MM 走 Blaze 通路），
+    // 消除小算子拼接的中间tensor HBM往返与多次kernel下发。
+    if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510 &&
+        CheckFmmAddSupport(self, mat1, mat2, out, alpha, beta, cubeMathType)) {
+        OP_LOGI("run in AddmmFmmGraph branch (FusedMatMul add, single fused kernel)");
+        matmulGraph = std::make_shared<AddmmFmmGraph>(mat1, mat2, self, out, alpha, beta, cubeMathType, executor);
+        return matmulGraph;
     }
 
     // 多数场景

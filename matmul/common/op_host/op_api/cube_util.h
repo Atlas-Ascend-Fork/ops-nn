@@ -74,6 +74,15 @@ inline bool IsCubeSupportHf32()
     return true;
 }
 
+// 检查当前平台核配是否为AIV:AIC=2:1 (fmm add/mul/scale_add 的 MIX_AIC_1_2 协作架构硬约束,
+// 不满足时 fmm tiling 直接 GRAPH_FAILED, 路由层提前拦截保证回退而非报错)
+inline bool IsAivNumDoubleOfAicNum()
+{
+    constexpr int64_t AIV_PER_AIC = 2;
+    const auto& platformInfo = op::GetCurrentPlatformInfo();
+    return platformInfo.GetVectorCoreNum() == platformInfo.GetCubeCoreNum() * AIV_PER_AIC;
+}
+
 bool CheckUnSupportDtype(const aclTensor* input, const aclTensor* weight);
 
 } // namespace NN

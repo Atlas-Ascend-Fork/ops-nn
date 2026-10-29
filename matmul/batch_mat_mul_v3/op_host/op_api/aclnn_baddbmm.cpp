@@ -26,12 +26,14 @@
 #include "level0/broadcast_to.h"
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
+#include "aclnn_kernels/transdata.h"
 #include "level0/fill.h"
 #include "level0/muls.h"
 
 #include "matmul/common/op_host/op_api/cube_util.h"
 #include "matmul/common/op_host/op_api/matmul_util.h"
 #include "matmul/common/op_host/op_api/batch_matmul_util.h"
+#include "matmul/common/op_host/op_api/fusedmatmul.h"
 
 using namespace Ops::NN;
 using namespace op;
@@ -351,6 +353,208 @@ public:
     ~BaddbmmBeta0Graph() override = default;
 };
 
+// ================================================================================================
+// baddbmm → fmm 两级路由 (详见 baddbmm_fmm路由场景约束全量分析.md):
+//   一级: α=β=1 + 门禁 → fmm BMM+add (CMCT kernel, 单kernel融合)
+//   二级: α/β 任意 + scale_add 门禁 → fmm scale_add (Blaze kernel, y=α·mm+β·x3 语义精确匹配)
+//   不满足 → 落回既有拼接路径, 行为零变化
+// ================================================================================================
+constexpr int64_t FMM_INNER_PRECISE_HIGH_PERFORMANCE = 1;
+constexpr size_t FMM_MM_DIM = 2;      // self 的二维矩阵形态维度数
+constexpr size_t FMM_BMM_DIM = 3;     // batch1/batch2 的三维批次矩阵维度数
+constexpr size_t FMM_BMM_COL_IDX = 2; // 三维(B,M,K)/(B,K,N)/(B,M,N) 的第三维索引
+
+// 一级门禁: fmm BMM+add 的可覆盖子集
+static bool CheckFmmBaddbmmSupport(const aclTensor* self, const aclTensor* batch1, const aclTensor* batch2,
+                                   const aclTensor* out, const aclScalar* alpha, const aclScalar* beta,
+                                   int8_t cubeMathType)
+{
+    // fmm add/mul 的核配硬校验(MIX_AIC_1_2 依赖 1:2 核配, 见 cube_util.h)
+    if (!IsAivNumDoubleOfAicNum()) {
+        return false;
+    }
+    // fmm add 无缩放语义: 仅覆盖 α=β=1 (缩放场景由二级 scale_add 承接)
+    if (std::abs(alpha->ToFloat() - 1.0f) > std::numeric_limits<float>::epsilon() ||
+        std::abs(beta->ToFloat() - 1.0f) > std::numeric_limits<float>::epsilon()) {
+        return false;
+    }
+    const op::Shape& b1Shape = batch1->GetViewShape();
+    const op::Shape& b2Shape = batch2->GetViewShape();
+    const op::Shape& selfShape = self->GetViewShape();
+    // 3D 且 batch 维一致(fmm BMM 不支持 batch 互播, 含 batch2 权重共享场景 → 回退)
+    if (b1Shape.GetDimNum() != FMM_BMM_DIM || b2Shape.GetDimNum() != FMM_BMM_DIM) {
+        return false;
+    }
+    if (b1Shape.GetDim(0) != b2Shape.GetDim(0) || b1Shape.GetDim(FMM_BMM_COL_IDX) != b2Shape.GetDim(1)) {
+        return false;
+    }
+    const int64_t mDim = b1Shape.GetDim(1);
+    const int64_t nDim = b2Shape.GetDim(FMM_BMM_COL_IDX);
+    // fmm x3 形状约束: (b,m,n)/(1,m,n)/(m,n) 三形, 末两维严格 (M,N), 无一维/标量
+    const int64_t selfDimNum = selfShape.GetDimNum();
+    if (selfDimNum == FMM_BMM_DIM) {
+        if ((selfShape.GetDim(0) != b1Shape.GetDim(0) && selfShape.GetDim(0) != 1) || selfShape.GetDim(1) != mDim ||
+            selfShape.GetDim(FMM_BMM_COL_IDX) != nDim) {
+            return false;
+        }
+    } else if (selfDimNum == FMM_MM_DIM) {
+        if (selfShape.GetDim(0) != mDim || selfShape.GetDim(1) != nDim) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    // fmm dtype 约束: 四方同 dtype ∈ {FP16, BF16, FP32} (baddbmm 合同本身四方一致, 此处为零回退项)
+    const op::DataType matDtype = batch1->GetDataType();
+    if (matDtype != op::DataType::DT_FLOAT16 && matDtype != op::DataType::DT_BF16 &&
+        matDtype != op::DataType::DT_FLOAT) {
+        return false;
+    }
+    if (batch2->GetDataType() != matDtype || self->GetDataType() != matDtype || out->GetDataType() != matDtype) {
+        return false;
+    }
+    // cubeMathType: cmt=4 全 dtype 排除(baddbmm 合同"不做处理" vs fmm GetInnerPrecise 升精度, 行为冲突);
+    // FP32 输入仅 3(USE_HF32)(fmm CheckMathType 与 addmm 同源)
+    if (cubeMathType == USE_FP32_ADD) {
+        return false;
+    }
+    if (matDtype == op::DataType::DT_FLOAT && cubeMathType != USE_HF32) {
+        return false;
+    }
+    // storage format: 对齐fmm直调链CheckFormat语义——任一输入为FRACTAL_NZ即回退(其余格式由fmm侧校验)
+    if (batch1->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ ||
+        batch2->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ ||
+        self->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ) {
+        return false;
+    }
+    // K>0 (对齐 addmm 侧求稳决策)
+    if (b1Shape.GetDim(FMM_BMM_COL_IDX) == 0) {
+        return false;
+    }
+    return true;
+}
+
+// 一级执行: 对齐 fmm 3D 直调链(BuildDirectFusedMatMulGraph)的预处理与调用
+static const aclTensor* ExecBaddbmmFmmOp(const aclTensor* bias, const aclTensor* matA, const aclTensor* matB,
+                                         int8_t cubeMathType, aclOpExecutor* executor)
+{
+    MmOpInfo mmOpInfo = GetMatmulOpInfo(matA, matB, nullptr, nullptr, cubeMathType);
+    auto selfCastOut = matA;
+    bool selfCastRes = ContiguousAndCast(matA, selfCastOut, mmOpInfo.shapeInfo.transposeX1,
+                                         mmOpInfo.support_info.self_dtype, executor);
+    CHECK_RET(selfCastRes, nullptr);
+    auto mat2CastOut = matB;
+    bool mat2CastRes = ContiguousAndCast(matB, mat2CastOut, mmOpInfo.shapeInfo.transposeX2,
+                                         mmOpInfo.support_info.mat2_dtype, executor);
+    CHECK_RET(mat2CastRes, nullptr);
+    auto selfContiguous = l0op::Contiguous(bias, executor);
+    CHECK_RET(selfContiguous != nullptr, nullptr);
+    selfContiguous = l0op::ReFormat(selfContiguous, op::Format::FORMAT_ND);
+    CHECK_RET(selfContiguous != nullptr, nullptr);
+    // 3D 退化 shape 布局修正(对齐 fmm 直调链): K=1消转置/M=1(adjX1)转外轴/N=1(adjX2且enableNEqual1)转外轴;
+    // add/mul 传 enableNEqual1Transpose=true(非 scale_add)
+    auto selfReshapeOutput = selfCastOut;
+    auto mat2ReshapeOutput = mat2CastOut;
+    const aclTensor* nullBias = nullptr;
+    bool ifKEqual1 = false;
+    CHECK_RET(ProcessEqual1Cases(selfCastOut, mat2CastOut, mmOpInfo, nullBias, mmOpInfo.shapeInfo.transposeX1,
+                                 mmOpInfo.shapeInfo.transposeX2, selfReshapeOutput, mat2ReshapeOutput, executor,
+                                 ifKEqual1, true) != -1,
+              nullptr);
+    auto selfNd = l0op::ReFormat(selfReshapeOutput, op::Format::FORMAT_ND);
+    CHECK_RET(selfNd != nullptr, nullptr);
+    auto mat2Nd = l0op::ReFormat(mat2ReshapeOutput, op::Format::FORMAT_ND);
+    CHECK_RET(mat2Nd != nullptr, nullptr);
+    // 门禁已排除 cmt=4 → innerPrecise 恒高性能; HF32 仅对 FP32+cmt=3 生效
+    return l0op::FusedMatMulNd(selfNd, mat2Nd, nullptr, selfContiguous, mmOpInfo.shapeInfo.transposeX1,
+                               mmOpInfo.shapeInfo.transposeX2, mmOpInfo.enableHf32, "add",
+                               FMM_INNER_PRECISE_HIGH_PERFORMANCE, executor);
+}
+
+// 二级门禁: fmm scale_add(Blaze) 的可覆盖子集——y=α·mm+β·x3 与 baddbmm 缩放语义精确匹配
+static bool CheckScaleAddSupport(const aclTensor* self, const aclTensor* batch1, const aclTensor* batch2,
+                                 const aclTensor* out)
+{
+    // fmm scale_add 的核配硬校验(Blaze MIX_AIC_1_2, 同一级, 见 cube_util.h)
+    if (!IsAivNumDoubleOfAicNum()) {
+        return false;
+    }
+    const op::Shape& b1Shape = batch1->GetViewShape();
+    const op::Shape& b2Shape = batch2->GetViewShape();
+    const op::Shape& selfShape = self->GetViewShape();
+    if (b1Shape.GetDimNum() != FMM_BMM_DIM || b2Shape.GetDimNum() != FMM_BMM_DIM) {
+        return false;
+    }
+    if (b1Shape.GetDim(0) != b2Shape.GetDim(0) || b1Shape.GetDim(FMM_BMM_COL_IDX) != b2Shape.GetDim(1)) {
+        return false;
+    }
+    const int64_t mDim = b1Shape.GetDim(1);
+    const int64_t nDim = b2Shape.GetDim(FMM_BMM_COL_IDX);
+    // scale_add 要求 x3 严格 (b,m,n) 完整 3D(不支持 (1,m,n)/(m,n) 广播)
+    if (selfShape.GetDimNum() != FMM_BMM_DIM || selfShape.GetDim(0) != b1Shape.GetDim(0) ||
+        selfShape.GetDim(1) != mDim || selfShape.GetDim(FMM_BMM_COL_IDX) != nDim) {
+        return false;
+    }
+    // scale_add 仅 FP16/BF16(无 FP32)
+    const op::DataType matDtype = batch1->GetDataType();
+    if (matDtype != op::DataType::DT_FLOAT16 && matDtype != op::DataType::DT_BF16) {
+        return false;
+    }
+    if (batch2->GetDataType() != matDtype || self->GetDataType() != matDtype || out->GetDataType() != matDtype) {
+        return false;
+    }
+    // scale_add 不支持转置
+    if (Ops::NN::IsTransposeLastTwoDims(batch1) || Ops::NN::IsTransposeLastTwoDims(batch2)) {
+        return false;
+    }
+    // k>0
+    if (b1Shape.GetDim(FMM_BMM_COL_IDX) == 0) {
+        return false;
+    }
+    // storage format: 对齐fmm直调链CheckFormat语义——任一输入为FRACTAL_NZ即回退(其余格式由fmm侧校验)
+    if (batch1->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ ||
+        batch2->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ ||
+        self->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ) {
+        return false;
+    }
+    return true;
+}
+
+// 二级执行: scale_add 直调链同构(转置恒 false, enableNEqual1Transpose=false 同 scale_add 直调)
+static const aclTensor* ExecBaddbmmScaleAddOp(const aclTensor* bias, const aclTensor* matA, const aclTensor* matB,
+                                              const aclScalar* alpha, const aclScalar* beta, int8_t cubeMathType,
+                                              aclOpExecutor* executor)
+{
+    MmOpInfo mmOpInfo = GetMatmulOpInfo(matA, matB, nullptr, nullptr, cubeMathType);
+    auto selfCastOut = matA;
+    bool selfCastRes = ContiguousAndCast(matA, selfCastOut, mmOpInfo.shapeInfo.transposeX1,
+                                         mmOpInfo.support_info.self_dtype, executor);
+    CHECK_RET(selfCastRes, nullptr);
+    auto mat2CastOut = matB;
+    bool mat2CastRes = ContiguousAndCast(matB, mat2CastOut, mmOpInfo.shapeInfo.transposeX2,
+                                         mmOpInfo.support_info.mat2_dtype, executor);
+    CHECK_RET(mat2CastRes, nullptr);
+    auto selfContiguous = l0op::Contiguous(bias, executor);
+    CHECK_RET(selfContiguous != nullptr, nullptr);
+    selfContiguous = l0op::ReFormat(selfContiguous, op::Format::FORMAT_ND);
+    CHECK_RET(selfContiguous != nullptr, nullptr);
+    auto selfReshapeOutput = selfCastOut;
+    auto mat2ReshapeOutput = mat2CastOut;
+    const aclTensor* nullBias = nullptr;
+    bool ifKEqual1 = false;
+    CHECK_RET(ProcessEqual1Cases(selfCastOut, mat2CastOut, mmOpInfo, nullBias, mmOpInfo.shapeInfo.transposeX1,
+                                 mmOpInfo.shapeInfo.transposeX2, selfReshapeOutput, mat2ReshapeOutput, executor,
+                                 ifKEqual1, false) != -1,
+              nullptr);
+    auto selfNd = l0op::ReFormat(selfReshapeOutput, op::Format::FORMAT_ND);
+    CHECK_RET(selfNd != nullptr, nullptr);
+    auto mat2Nd = l0op::ReFormat(mat2ReshapeOutput, op::Format::FORMAT_ND);
+    CHECK_RET(mat2Nd != nullptr, nullptr);
+    // scale_add: innerPrecise 恒高性能("scale_add" 不在 kSupportedX3OpTypes), FP16/BF16 无 HF32
+    return l0op::FusedMatMulWithScaleAddNd(selfNd, mat2Nd, nullptr, selfContiguous, alpha->ToFloat(), beta->ToFloat(),
+                                           false, false, false, FMM_INNER_PRECISE_HIGH_PERFORMANCE, executor);
+}
+
 class BaddbmmMatmulGraph : public Ops::NN::MatmulGraphImpl {
 public:
     using MatmulGraphImpl::MatmulGraphImpl;
@@ -365,6 +569,27 @@ public:
             const aclTensor* bmmOut = ExecFusedmmOp(bias, matA, matB, cubeMathType, isNeedSwapInnerTwoDim, executor);
             CHECK_RET(bmmOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
             convOut = bmmOut;
+            return ACLNN_SUCCESS;
+        }
+        // fmm 一级路由: α=β=1 + 门禁 → fmm BMM+add 单kernel融合(CMCT kernel, 消除 Muls+BMM+Add 拼接的中间tensor往返)
+        // 平台限定 DAV_3510(仅950): 归一后 IsNpuArch3510Series 含 920x/960, 960 上 fmm tiling 走归一 basic 级,
+        // 不含本路由假设的模板形态, 必须排除.
+        if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510 &&
+            CheckFmmBaddbmmSupport(bias, matA, matB, output, alpha, beta, cubeMathType)) {
+            OP_LOGI("baddbmm run in fmm add branch (single fused kernel)");
+            const aclTensor* fmmOut = ExecBaddbmmFmmOp(bias, matA, matB, cubeMathType, executor);
+            CHECK_RET(fmmOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            convOut = fmmOut;
+            return ACLNN_SUCCESS;
+        }
+        // fmm 二级路由: α/β 任意缩放 + scale_add 门禁 → fmm scale_add(Blaze kernel, y=α·mm+β·x3 语义精确匹配)
+        // 同上平台限定 DAV_3510(仅950).
+        if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510 &&
+            CheckScaleAddSupport(bias, matA, matB, output)) {
+            OP_LOGI("baddbmm run in fmm scale_add branch (Blaze kernel)");
+            const aclTensor* scaleOut = ExecBaddbmmScaleAddOp(bias, matA, matB, alpha, beta, cubeMathType, executor);
+            CHECK_RET(scaleOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            convOut = scaleOut;
             return ACLNN_SUCCESS;
         }
         bool enable16In32Out = NeedEnableFp32Output(matA->GetDataType(), matB->GetDataType(), output->GetDataType(),
