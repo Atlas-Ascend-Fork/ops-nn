@@ -28,7 +28,7 @@ static ge::graphStatus InferShapeRangeForBatchMatMulV3(gert::InferShapeRangeCont
 }
 } // namespace
 
-namespace ops {
+namespace Ops::NN::MatMul {
 IMPL_OP_INFERSHAPE(BatchMatMulV3)
     .InferShape(InferShapeForBatchMatMulV3)
     .InferShapeRange(InferShapeRangeForBatchMatMulV3)

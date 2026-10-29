@@ -197,7 +197,8 @@ static ge::graphStatus InferShapeForMatMulV3(InferShapeContext* context)
 }
 
 } // namespace
-namespace ops {
+
+namespace Ops::NN::MatMul {
 IMPL_OP_INFERSHAPE(MatMulV3)
     .InferShape(InferShapeForMatMulV3)
     .PrivateAttr("enable_uncache", static_cast<int64_t>(0))
