@@ -40,20 +40,19 @@ static graphStatus InferShape4SparseSoftmaxCrossEntropyWithLogits(gert::InferSha
     gert::Shape* backpropShape = context->GetOutputShape(OUTPUT_BACKPROP_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, backpropShape);
 
+    OP_CHECK_IF(!Ops::Base::IsUnknownRank(*featuresShape) && featuresShape->GetDimNum() < DIM_NUM_2,
+                OP_LOGE(context, "Features must be at least 2D matrix [N, C]."), return ge::GRAPH_FAILED);
     if (!Ops::Base::IsUnknownRank(*featuresShape) && !Ops::Base::IsUnknownRank(*labelsShape)) {
-        OP_CHECK_IF(featuresShape->GetDimNum() < DIM_NUM_2,
-                    OP_LOGE(context, "Features must be at least 2D matrix [N, C]."), return ge::GRAPH_FAILED);
         OP_CHECK_IF(labelsShape->GetDimNum() != (featuresShape->GetDimNum() - 1),
                     OP_LOGE(context, "Labels.dimNum must equal featuresShape.dimNum - 1."), return ge::GRAPH_FAILED);
 
         for (uint32_t i = 0; i < featuresShape->GetDimNum() - 1; i++) {
-            if (featuresShape->GetDim(i) != labelsShape->GetDim(i)) {
+            if (featuresShape->GetDim(i) != UNKNOWN_DIM && labelsShape->GetDim(i) != UNKNOWN_DIM &&
+                featuresShape->GetDim(i) != labelsShape->GetDim(i)) {
                 OP_LOGE(context, "Labels.shape must equal features.shape except for last dim");
                 return ge::GRAPH_FAILED;
             }
         }
-        OP_CHECK_IF(featuresShape->GetDim(featuresShape->GetDimNum() - 1) <= 0,
-                    OP_LOGE(context, "Must have at least one class"), return ge::GRAPH_FAILED);
     }
     *lossShape = *labelsShape;
     *backpropShape = *featuresShape;
