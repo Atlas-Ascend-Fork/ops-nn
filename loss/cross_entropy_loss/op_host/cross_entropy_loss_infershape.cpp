@@ -22,6 +22,8 @@ constexpr uint32_t INPUT_TARGET_IDX = 1;
 constexpr uint32_t INPUT_WEIGHT_IDX = 2;
 constexpr uint32_t OUTPUT_LOSS_IDX = 0;
 constexpr uint32_t OUTPUT_LOGPROB_IDX = 1;
+constexpr uint32_t OUTPUT_ZLOSS_IDX = 2;
+constexpr uint32_t OUTPUT_LSE_LOSS_IDX = 3;
 constexpr uint32_t ATTR_REDUCTION_IDX = 0;
 constexpr uint32_t DIM_0 = 0;
 constexpr uint32_t DIM_1 = 1;
@@ -44,6 +46,10 @@ static ge::graphStatus InferShapeForCrossEntropyLoss(gert::InferShapeContext* co
     OP_CHECK_NULL_WITH_CONTEXT(context, lossShape);
     gert::Shape* logprobShape = context->GetOutputShape(OUTPUT_LOGPROB_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, logprobShape);
+    gert::Shape* zlossbShape = context->GetOutputShape(OUTPUT_ZLOSS_IDX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, zlossbShape);
+    gert::Shape* lseLossShape = context->GetOutputShape(OUTPUT_LSE_LOSS_IDX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, lseLossShape);
 
     if (Ops::Base::IsUnknownRank(*inputShape)) { // -2
         Ops::Base::SetUnknownRank(*lossShape);
@@ -80,7 +86,7 @@ static ge::graphStatus InferShapeForCrossEntropyLoss(gert::InferShapeContext* co
 
             if (inputShape->GetDim(DIM_1) != UNKNOWN_DIM && weightShape->GetDim(DIM_0) != UNKNOWN_DIM &&
                 inputShape->GetDim(DIM_1) != weightShape->GetDim(DIM_0)) {
-                std::string shapeMsg = Ops::Base::ToString(*inputShape) + " and " + Ops::Base::ToString(*targetShape);
+                std::string shapeMsg = Ops::Base::ToString(*inputShape) + " and " + Ops::Base::ToString(*weightShape);
                 std::string errMsg = "The dim 1 of input and the dim 0 of weight must be the same";
                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input and weight", shapeMsg.c_str(),
                                                        errMsg.c_str());
@@ -99,6 +105,11 @@ static ge::graphStatus InferShapeForCrossEntropyLoss(gert::InferShapeContext* co
         }
         *logprobShape = *inputShape;
     }
+    // zloss和lse_for_zloss为预留输出，实际不会真实计算。infershape固定推出1的shape，仅做预留。
+    zlossbShape->SetDimNum(DIM_NUM_1);
+    lseLossShape->SetDimNum(DIM_NUM_1);
+    zlossbShape->SetDim(DIM_0, LOSS_SHAPE);
+    lseLossShape->SetDim(DIM_0, LOSS_SHAPE);
     OP_LOGD(context, "InferShapeForCrossEntropyLoss End.");
     return ge::GRAPH_SUCCESS;
 }
@@ -108,6 +119,8 @@ static graphStatus InferDataTypeForCrossEntropyLoss(gert::InferDataTypeContext* 
     OP_LOGD(context, "InferDataTypeForCrossEntropyLoss Begin.");
     context->SetOutputDataType(OUTPUT_LOSS_IDX, context->GetInputDataType(INPUT_DATA_IDX));
     context->SetOutputDataType(OUTPUT_LOGPROB_IDX, context->GetInputDataType(INPUT_DATA_IDX));
+    context->SetOutputDataType(OUTPUT_ZLOSS_IDX, context->GetInputDataType(INPUT_DATA_IDX));
+    context->SetOutputDataType(OUTPUT_LSE_LOSS_IDX, context->GetInputDataType(INPUT_DATA_IDX));
     OP_LOGD(context, "InferDataTypeForCrossEntropyLoss End.");
     return GRAPH_SUCCESS;
 }

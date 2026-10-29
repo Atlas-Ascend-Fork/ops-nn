@@ -26,18 +26,22 @@ TEST_F(CrossEntropyLoss, cross_entropy_loss_infershape_bf16_mean_case)
     gert::StorageShape targetShape = {{49}, {49}};
     gert::StorageShape weightShape = {{112595}, {112595}};
     gert::StorageShape lossShape = {{1}, {1}};
+    gert::StorageShape zlossShape = {{1}, {1}};
+    gert::StorageShape lseForZlossShape = {{1}, {1}};
 
     auto holder = gert::InferShapeContextFaker()
                       .SetOpType("CrossEntropyLoss")
-                      .NodeIoNum(3, 2)
+                      .NodeIoNum(3, 4)
                       .IrInstanceNum({1, 1, 1})
                       .InputShapes({&inputShape, &targetShape, &weightShape})
-                      .OutputShapes({&lossShape, &inputShape})
+                      .OutputShapes({&lossShape, &inputShape, &zlossShape, &lseForZlossShape})
                       .NodeInputTd(0, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(0, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(1, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"reduction", Ops::NN::AnyValue::CreateFrom<std::string>("mean")},
                                   {"ignore_index", Ops::NN::AnyValue::CreateFrom<int64_t>(-100)},
                                   {"label_smoothing", Ops::NN::AnyValue::CreateFrom<float>(0.0f)}})
@@ -54,6 +58,11 @@ TEST_F(CrossEntropyLoss, cross_entropy_loss_infershape_bf16_mean_case)
     auto logProbOutShape = context->GetOutputShape(1);
     EXPECT_EQ(ToVector(*lossOutShape), expectedLossShape);
     EXPECT_EQ(ToVector(*logProbOutShape), expectedLogProbShape);
+    std::vector<int64_t> expectedReservedShape = {1};
+    auto zlossOutShape = context->GetOutputShape(2);
+    auto lseForZlossOutShape = context->GetOutputShape(3);
+    EXPECT_EQ(ToVector(*zlossOutShape), expectedReservedShape);
+    EXPECT_EQ(ToVector(*lseForZlossOutShape), expectedReservedShape);
 }
 
 TEST_F(CrossEntropyLoss, cross_entropy_loss_infershape_fp32_mean_case)
@@ -62,18 +71,22 @@ TEST_F(CrossEntropyLoss, cross_entropy_loss_infershape_fp32_mean_case)
     gert::StorageShape targetShape = {{49}, {49}};
     gert::StorageShape weightShape = {{112595}, {112595}};
     gert::StorageShape lossShape = {{1}, {1}};
+    gert::StorageShape zlossShape = {{1}, {1}};
+    gert::StorageShape lseForZlossShape = {{1}, {1}};
 
     auto holder = gert::InferShapeContextFaker()
                       .SetOpType("CrossEntropyLoss")
-                      .NodeIoNum(3, 2)
+                      .NodeIoNum(3, 4)
                       .IrInstanceNum({1, 1, 1})
                       .InputShapes({&inputShape, &targetShape, &weightShape})
-                      .OutputShapes({&lossShape, &inputShape})
+                      .OutputShapes({&lossShape, &inputShape, &zlossShape, &lseForZlossShape})
                       .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"reduction", Ops::NN::AnyValue::CreateFrom<std::string>("mean")},
                                   {"ignore_index", Ops::NN::AnyValue::CreateFrom<int64_t>(-100)},
                                   {"label_smoothing", Ops::NN::AnyValue::CreateFrom<float>(0.0f)}})
@@ -90,6 +103,11 @@ TEST_F(CrossEntropyLoss, cross_entropy_loss_infershape_fp32_mean_case)
     auto logProbOutShape = context->GetOutputShape(1);
     EXPECT_EQ(ToVector(*lossOutShape), expectedLossShape);
     EXPECT_EQ(ToVector(*logProbOutShape), expectedLogProbShape);
+    std::vector<int64_t> expectedReservedShape = {1};
+    auto zlossOutShape = context->GetOutputShape(2);
+    auto lseForZlossOutShape = context->GetOutputShape(3);
+    EXPECT_EQ(ToVector(*zlossOutShape), expectedReservedShape);
+    EXPECT_EQ(ToVector(*lseForZlossOutShape), expectedReservedShape);
 }
 
 TEST_F(CrossEntropyLoss, cross_entropy_loss_infershape_fp16_mean_case)
@@ -98,18 +116,22 @@ TEST_F(CrossEntropyLoss, cross_entropy_loss_infershape_fp16_mean_case)
     gert::StorageShape targetShape = {{49}, {49}};
     gert::StorageShape weightShape = {{112595}, {112595}};
     gert::StorageShape lossShape = {{1}, {1}};
+    gert::StorageShape zlossShape = {{1}, {1}};
+    gert::StorageShape lseForZlossShape = {{1}, {1}};
 
     auto holder = gert::InferShapeContextFaker()
                       .SetOpType("CrossEntropyLoss")
-                      .NodeIoNum(3, 2)
+                      .NodeIoNum(3, 4)
                       .IrInstanceNum({1, 1, 1})
                       .InputShapes({&inputShape, &targetShape, &weightShape})
-                      .OutputShapes({&lossShape, &inputShape})
+                      .OutputShapes({&lossShape, &inputShape, &zlossShape, &lseForZlossShape})
                       .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"reduction", Ops::NN::AnyValue::CreateFrom<std::string>("mean")},
                                   {"ignore_index", Ops::NN::AnyValue::CreateFrom<int64_t>(-100)},
                                   {"label_smoothing", Ops::NN::AnyValue::CreateFrom<float>(0.0f)}})
@@ -126,4 +148,9 @@ TEST_F(CrossEntropyLoss, cross_entropy_loss_infershape_fp16_mean_case)
     auto logProbOutShape = context->GetOutputShape(1);
     EXPECT_EQ(ToVector(*lossOutShape), expectedLossShape);
     EXPECT_EQ(ToVector(*logProbOutShape), expectedLogProbShape);
+    std::vector<int64_t> expectedReservedShape = {1};
+    auto zlossOutShape = context->GetOutputShape(2);
+    auto lseForZlossOutShape = context->GetOutputShape(3);
+    EXPECT_EQ(ToVector(*zlossOutShape), expectedReservedShape);
+    EXPECT_EQ(ToVector(*lseForZlossOutShape), expectedReservedShape);
 }

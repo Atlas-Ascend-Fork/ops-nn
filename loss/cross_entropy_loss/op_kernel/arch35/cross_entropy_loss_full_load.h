@@ -249,7 +249,10 @@ __aicore__ inline void CrossEntropyLossFullLoad<T1, T2, reduction, isWeight, lab
         CopyInWeight(tilingData_->C, tilingData_->cOnceNum);
     }
 
-    LocalTensor<float> weightLocal = weightQueue_.DeQue<float>();
+    LocalTensor<float> weightLocal = weightYnUb_.Get<float>();
+    if constexpr (isWeight == 1) {
+        weightLocal = weightQueue_.DeQue<float>();
+    }
     LocalTensor<float> lossOutLocal = lossOutUb_.Get<float>();
     LocalTensor<float> weightYnLocal = weightYnUb_.Get<float>();
     LocalTensor<float> smoothLossLocal = smoothLossUb_.Get<float>();
