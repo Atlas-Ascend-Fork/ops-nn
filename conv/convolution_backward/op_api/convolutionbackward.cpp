@@ -1228,6 +1228,30 @@ static bool IsSocVersion960()
     return npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
 }
 
+static bool CheckPreTransposeGainOn960(uint64_t cout, uint64_t cin, uint64_t dk, uint64_t hk, uint64_t wk,
+                                       op::DataType dataType)
+{
+    const uint64_t dtypeSize = (dataType == op::DataType::DT_FLOAT) ? sizeof(float) : sizeof(uint16_t);
+    if (cout * cin * dk * hk * wk * dtypeSize < PRE_TRANSPOSE_MIN_FILTER_BYTES) {
+        return false;
+    }
+    return (cout > cin) ? (cout <= PRE_TRANSPOSE_MAX_CIN_RATIO * cin) : (cin <= PRE_TRANSPOSE_MAX_CIN_RATIO * cout);
+}
+
+static bool CheckStrideTransposeConstraint(int64_t strideH, op::DataType dataType, uint64_t dk, uint64_t di,
+                                           uint64_t hi, uint64_t wi, uint64_t batch)
+{
+    if (strideH < STRIDEH_TRANSPOSE_LIMIT) {
+        // 16bit只支持dk>1且di>1
+        bool isTrans16bit = dataType != op::DataType::DT_FLOAT && (dk <= 1 || di <= 1);
+        bool isMmadCoverMte2 = hi * wi >= BASEM_TRANSPOSE_LIMIT && batch <= BATCH_TRANSPOSE_LIMIT;
+        if (isTrans16bit || isMmadCoverMte2) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool CheckWeightPreTransposeEnable(const aclTensor* weight, const aclTensor* input, const aclIntArray* stride5,
                                    int groups)
 {
@@ -1266,13 +1290,8 @@ bool CheckWeightPreTransposeEnable(const aclTensor* weight, const aclTensor* inp
 
     auto strideData = stride5->GetData();
     auto strideH = strideData[H_DIM_NCDHW_INDEX];
-    if (strideH < STRIDEH_TRANSPOSE_LIMIT) {
-        // 16bit只支持dk>1且di>1
-        bool isTrans16bit = dataType != op::DataType::DT_FLOAT && (dk <= 1 || di <= 1);
-        bool isMmadCoverMte2 = hi * wi >= BASEM_TRANSPOSE_LIMIT && batch <= BATCH_TRANSPOSE_LIMIT;
-        if (isTrans16bit || isMmadCoverMte2) {
-            return false;
-        }
+    if (!CheckStrideTransposeConstraint(strideH, dataType, dk, di, hi, wi, batch)) {
+        return false;
     }
 
     if (dk * hk * wk <= 1) {
@@ -1282,11 +1301,7 @@ bool CheckWeightPreTransposeEnable(const aclTensor* weight, const aclTensor* inp
         return false;
     }
     if (IsSocVersion960()) {
-        const uint64_t dtypeSize = (dataType == op::DataType::DT_FLOAT) ? sizeof(float) : sizeof(uint16_t);
-        if (cout * cin * dk * hk * wk * dtypeSize < PRE_TRANSPOSE_MIN_FILTER_BYTES) {
-            return false;
-        }
-        return (cout > cin) ? (cout <= PRE_TRANSPOSE_MAX_CIN_RATIO * cin) : (cin <= PRE_TRANSPOSE_MAX_CIN_RATIO * cout);
+        return CheckPreTransposeGainOn960(cout, cin, dk, hk, wk, dataType);
     }
     return (cout > cin) ? (cout < MAX_CIN_MULTIPLIER * cin) : (cin < MAX_CIN_MULTIPLIER * cout);
 }

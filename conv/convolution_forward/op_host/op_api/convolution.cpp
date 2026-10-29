@@ -1278,6 +1278,16 @@ static bool IsSocVersion960()
     return npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
 }
 
+static bool CheckPreTransposeGainOn960(uint64_t cout, uint64_t cin, uint64_t dk, uint64_t hk, uint64_t wk,
+                                       op::DataType dataType)
+{
+    const uint64_t dtypeSize = (dataType == op::DataType::DT_FLOAT) ? sizeof(float) : sizeof(uint16_t);
+    if (cout * cin * dk * hk * wk * dtypeSize < PRE_TRANSPOSE_MIN_FILTER_BYTES) {
+        return false;
+    }
+    return (cout > cin) ? (cout <= PRE_TRANSPOSE_MAX_CIN_RATIO * cin) : (cin <= PRE_TRANSPOSE_MAX_CIN_RATIO * cout);
+}
+
 bool CheckPreTransposeEnable(const aclTensor* weight, int groups)
 {
     OP_LOGD("enter CheckPreTransposeEnable.");
@@ -1317,11 +1327,7 @@ bool CheckPreTransposeEnable(const aclTensor* weight, int groups)
         return false;
     }
     if (IsSocVersion960()) {
-        const uint64_t dtypeSize = (dataType == op::DataType::DT_FLOAT) ? sizeof(float) : sizeof(uint16_t);
-        if (cout * cin * dk * hk * wk * dtypeSize < PRE_TRANSPOSE_MIN_FILTER_BYTES) {
-            return false;
-        }
-        return (cout > cin) ? (cout <= PRE_TRANSPOSE_MAX_CIN_RATIO * cin) : (cin <= PRE_TRANSPOSE_MAX_CIN_RATIO * cout);
+        return CheckPreTransposeGainOn960(cout, cin, dk, hk, wk, dataType);
     }
     return (cout > cin) ? (cout < MAX_CIN_MULTIPLIER * cin) : (cin < MAX_CIN_MULTIPLIER * cout);
 }
