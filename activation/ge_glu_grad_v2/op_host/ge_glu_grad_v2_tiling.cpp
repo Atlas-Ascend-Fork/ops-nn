@@ -65,6 +65,7 @@ constexpr int32_t DOUBLE_BUFFER = 2;
 constexpr int32_t NUM_ONE = 1;
 constexpr int32_t NUM_TWO = 2;
 constexpr int32_t NUM_HUNDRED = 100;
+constexpr int64_t REGBASE_FP32_PIPELINE_MIN_ELEMENTS = 2048;
 
 static const std::map<ge::DataType, int32_t> DTYPE_BUF_CNT_MAP_TANH = {
     {ge::DT_BF16, TANH_BUF_CNT_BFP16}, {ge::DT_FLOAT16, TANH_BUF_CNT_FP16}, {ge::DT_FLOAT, TANH_BUF_CNT_FP32}};
@@ -278,6 +279,11 @@ ge::graphStatus GeGluGradV2Tiling::Init()
         return ge::GRAPH_FAILED;
     };
     approximateAttr = *ptrApproximate;
+    OP_CHECK_IF(
+        approximateAttr != 0 && approximateAttr != 1,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext->GetNodeName(), "approximate",
+                                              std::to_string(approximateAttr), "approximate must be 0(erf) or 1(tanh)"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(approximateAttr == 0 && is310p,
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext->GetNodeName(), "approximate",
                                                       std::to_string(approximateAttr),
@@ -329,7 +335,9 @@ ge::graphStatus GeGluGradV2Tiling::CheckParams()
 
     auto xDtype = tilingContext->GetInputDesc(X_INDEX)->GetDataType();
     auto geluDtype = tilingContext->GetInputDesc(GELU_INDEX)->GetDataType();
-    auto dxDtype = tilingContext->GetInputDesc(DX_INDEX)->GetDataType();
+    auto outputDxDesc = tilingContext->GetOutputDesc(DX_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, outputDxDesc);
+    auto dxDtype = outputDxDesc->GetDataType();
     OP_CHECK_IF(dyDtype != geluDtype || xDtype != dxDtype || dyDtype != xDtype,
                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(tilingContext->GetNodeName(), "dy, x, gelu, dx",
                                                        ge::TypeUtils::DataTypeToSerialString(dyDtype) + ", " +
@@ -440,7 +448,14 @@ void GeGluGradV2Tiling::ProcessTilingCore()
     int64_t ubLoopNum = 0;
     int64_t repeatDataCount = static_cast<int64_t>(TRANSPOSE_REPEAT_SIZE / dtypeSize);
     int64_t maxPerfCount = maxProcCount / repeatDataCount;
-    if ((ptrCompileInfo->curSocVersion == NpuArch::DAV_2201 || ptrCompileInfo->isRegbase) && valueM <= maxPerfCount) {
+    // Pack/transpose has a fixed setup cost. On regbase, require at least two waves of
+    // rows before paying that cost; tiny N is better served by the direct path.
+    bool usePerfPath = (ptrCompileInfo->curSocVersion == NpuArch::DAV_2201 || ptrCompileInfo->isRegbase) &&
+                       valueM <= maxPerfCount;
+    if (ptrCompileInfo->isRegbase && valueN < static_cast<int64_t>(ptrCompileInfo->totalCoreNum) * NUM_TWO) {
+        usePerfPath = false;
+    }
+    if (usePerfPath) {
         tilingKey = static_cast<GeGluGradV2TilingKey>(static_cast<int32_t>(tilingKey) + NUM_TWO);
         groupNum = AlignA2B(maxProcCount / valueM, repeatDataCount);
         ubLoopNum = Ops::Base::CeilDiv(valueN, groupNum);
@@ -448,10 +463,44 @@ void GeGluGradV2Tiling::ProcessTilingCore()
     } else if (valueM <= maxProcCount) {
         int64_t alignValueM = Ops::Base::CeilDiv(valueM, static_cast<int64_t>((BLOCK_SIZE / dtypeSize))) *
                               (BLOCK_SIZE / dtypeSize);
-        groupNum = maxProcCount / alignValueM;
+        int64_t groupUb = maxProcCount / alignValueM;
+        if (groupUb < NUM_ONE) {
+            groupUb = NUM_ONE;
+        }
+        if (ptrCompileInfo->isRegbase) {
+            // Size tasks from the per-core row budget, including padding through
+            // groupUb. Use the minimum number of UB waves and balance their row
+            // counts instead of always targeting two waves. ceil(rows / waves)
+            // cannot exceed groupUb, and avoids multiplying N by padded M.
+            int64_t rowsPerCore = Ops::Base::CeilDiv(valueN, static_cast<int64_t>(ptrCompileInfo->totalCoreNum));
+            int64_t waves = Ops::Base::CeilDiv(rowsPerCore, groupUb);
+            // Larger FP32 erf tasks benefit from retaining two rounds of MTE/VF
+            // overlap even when the row budget fits in a single UB tile.
+            // Tanh keeps the minimum wave count to avoid added task overhead.
+            // Compare in rows to include padding without multiplying N by M.
+            if (dyDtype == ge::DT_FLOAT && approximateAttr == 0 && waves == NUM_ONE && rowsPerCore > NUM_ONE &&
+                rowsPerCore >= Ops::Base::CeilDiv(REGBASE_FP32_PIPELINE_MIN_ELEMENTS, alignValueM)) {
+                waves = NUM_TWO;
+            }
+            groupNum = Ops::Base::CeilDiv(rowsPerCore, waves);
+        } else {
+            groupNum = groupUb;
+        }
         ubLoopNum = Ops::Base::CeilDiv(valueN, groupNum);
         tailUbLoopNum = groupNum == 0 ? valueN : valueN % groupNum;
     } else {
+        // Balance the last M tile on regbase. Using the raw UB capacity directly
+        // can create a full tile followed by a tiny tail (for example M=capacity+1),
+        // leaving the tail task with the same setup cost but almost no useful work.
+        // The forward GeGluV2 tiling uses the same balanced split policy.
+        if (ptrCompileInfo->isRegbase) {
+            int64_t tileNum = Ops::Base::CeilDiv(valueM, maxProcCount);
+            int64_t balancedTile = Ops::Base::CeilDiv(valueM, tileNum);
+            int64_t alignCount = BLOCK_SIZE / dtypeSize;
+            // Round up: rounding down can create an extra, tiny third tile.
+            // Since the original capacity is aligned, this cannot exceed it.
+            maxProcCount = Ops::Base::CeilDiv(balancedTile, alignCount) * alignCount;
+        }
         groupNum = Ops::Base::CeilDiv(valueM, maxProcCount);
         ubLoopNum = valueN * groupNum;
         tilingKey = static_cast<GeGluGradV2TilingKey>(static_cast<int32_t>(tilingKey) + NUM_ONE);

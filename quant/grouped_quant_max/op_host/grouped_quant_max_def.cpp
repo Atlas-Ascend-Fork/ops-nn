@@ -82,6 +82,7 @@ public:
             .ExtendCfgInfo("opFile.value", "grouped_quant_max");
         this->AICore().AddConfig("ascend950", aicoreConfig950);
         this->AICore().AddConfig("ascend350", aicoreConfig950);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig950);
     }
 };
 OP_ADD(GroupedQuantMax);

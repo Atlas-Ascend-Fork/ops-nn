@@ -88,6 +88,8 @@ protected:
     template <typename CLS_NAME, void (CLS_NAME::*funComputeLeftHalf)(const int64_t&),
               void (CLS_NAME::*funComputeRightHalf)(const int64_t&)>
     __aicore__ inline void ProcessPerf(CLS_NAME* objPtr);
+    template <typename CLS_NAME, void (CLS_NAME::*funComputeFused)(const int64_t&)>
+    __aicore__ inline void ProcessFused(CLS_NAME* objPtr);
 
     __aicore__ inline void ComputeGeluGrad(LocalTensor<float>& y, LocalTensor<float>& dy, LocalTensor<float>& x,
                                            const int64_t& realProcCount);
@@ -110,6 +112,7 @@ protected:
 
     __aicore__ inline void CopyOutLeft(const int64_t& gmOffset, const int64_t& dataCount, const int64_t& blockCount);
     __aicore__ inline void CopyOutRight(const int64_t& gmOffset, const int64_t& dataCount, const int64_t& blockCount);
+    __aicore__ inline void CopyOutBoth(const int64_t& gmOffset, const int64_t& dataCount, const int64_t& blockCount);
 
     __aicore__ inline void CopyOutDXPerf(const int64_t& gmOffset, const int64_t& dataCount);
     template <typename T2>
@@ -223,9 +226,13 @@ __aicore__ inline void GeGluGradV2TanhBase<T>::ProcessGreater(CLS_NAME* objPtr)
     }
     int64_t modCount = valueM % maxProcCount;
     modCount = modCount ? modCount : maxProcCount;
+    // Large-M tasks have no separate tail-UB iteration. Assign contiguous task
+    // ranges so short row tails do not repeatedly land on the same cores.
+    int64_t firstTask = blockIdx * loopNumPerCore + (blockIdx < tailCoreIndex ? blockIdx : tailCoreIndex);
     for (int64_t idx = 0; idx < loopNum; idx++) {
-        int64_t mIndex = (needCoreNum * idx + blockIdx) / groupNum;
-        int64_t mIndexSub = (needCoreNum * idx + blockIdx) % groupNum;
+        int64_t taskIndex = firstTask + idx;
+        int64_t mIndex = taskIndex / groupNum;
+        int64_t mIndexSub = taskIndex % groupNum;
         int64_t tempOffset = mIndex * valueM + mIndexSub * maxProcCount;
         int64_t tempXOffset = 2 * mIndex * valueM + mIndexSub * maxProcCount;
         if (mIndexSub + 1 == groupNum) {
@@ -273,6 +280,54 @@ __aicore__ inline void GeGluGradV2TanhBase<T>::ProcessPerf(CLS_NAME* objPtr)
         (objPtr->*funComputeLeftHalf)(realProcCount);
         (objPtr->*funComputeRightHalf)(realProcCount);
         CopyOutDXPerf(2 * tempOffset, 2 * valueM * tailUbLoopNum);
+    }
+}
+
+template <typename T>
+template <typename CLS_NAME, void (CLS_NAME::*funComputeFused)(const int64_t&)>
+__aicore__ inline void GeGluGradV2TanhBase<T>::ProcessFused(CLS_NAME* objPtr)
+{
+    int64_t loopNum = loopNumPerCore;
+    if (blockIdx < tailCoreIndex) {
+        loopNum += 1;
+    }
+
+    if (valueM <= maxProcCount) {
+        int64_t idx = 0;
+        for (; idx < loopNum; ++idx) {
+            int64_t tempOffset = (needCoreNum * idx + blockIdx) * groupNum * valueM;
+            int64_t realProcCount = CeilAlignA2B(valueM, perBlockCount) * groupNum;
+            CopyInDyAndGelu(tempOffset, valueM, groupNum);
+            CopyInX(2 * tempOffset, valueM, groupNum);
+            (objPtr->*funComputeFused)(realProcCount);
+            CopyOutBoth(2 * tempOffset, valueM, groupNum);
+        }
+        if (blockIdx == tailCoreIndex && tailUbLoopNum > 0) {
+            int64_t tempOffset = (needCoreNum * idx + blockIdx) * groupNum * valueM;
+            int64_t realProcCount = CeilAlignA2B(valueM, perBlockCount) * tailUbLoopNum;
+            CopyInDyAndGelu(tempOffset, valueM, tailUbLoopNum);
+            CopyInX(2 * tempOffset, valueM, tailUbLoopNum);
+            (objPtr->*funComputeFused)(realProcCount);
+            CopyOutBoth(2 * tempOffset, valueM, tailUbLoopNum);
+        }
+        return;
+    }
+
+    int64_t modCount = valueM % maxProcCount;
+    modCount = modCount ? modCount : maxProcCount;
+    int64_t firstTask = blockIdx * loopNumPerCore + (blockIdx < tailCoreIndex ? blockIdx : tailCoreIndex);
+    for (int64_t idx = 0; idx < loopNum; ++idx) {
+        int64_t taskIndex = firstTask + idx;
+        int64_t mIndex = taskIndex / groupNum;
+        int64_t mIndexSub = taskIndex % groupNum;
+        int64_t tempOffset = mIndex * valueM + mIndexSub * maxProcCount;
+        int64_t tempXOffset = 2 * mIndex * valueM + mIndexSub * maxProcCount;
+        int64_t realProcCount = (mIndexSub + 1 == groupNum) ? CeilAlignA2B(modCount, perBlockCount) : maxProcCount;
+        int64_t dataCount = (mIndexSub + 1 == groupNum) ? modCount : maxProcCount;
+        CopyInDyAndGelu(tempOffset, dataCount, 1);
+        CopyInX(tempXOffset, dataCount, 1);
+        (objPtr->*funComputeFused)(realProcCount);
+        CopyOutBoth(tempXOffset, dataCount, 1);
     }
 }
 
@@ -538,6 +593,32 @@ __aicore__ inline void GeGluGradV2TanhBase<T>::CopyOutRight(const int64_t& gmOff
         copyOutParams.dstStride = copyOutParams.blockLen;
         DataCopyPad(dxGm[x2GmOffset], outLocalRight, copyOutParams);
     }
+    outQueueDX2.FreeTensor(outLocalRight);
+}
+
+template <typename T>
+__aicore__ inline void GeGluGradV2TanhBase<T>::CopyOutBoth(const int64_t& gmOffset, const int64_t& dataCount,
+                                                           const int64_t& blockCount)
+{
+    LocalTensor<T> outLocalLeft = outQueueDX1.DeQue<T>();
+    LocalTensor<T> outLocalRight = outQueueDX2.DeQue<T>();
+    struct DataCopyParams copyOutParams(blockCount, 0, 0, 0);
+    if (dataCount % perBlockCount == 0) {
+        copyOutParams.blockLen = dataCount / perBlockCount;
+        copyOutParams.dstStride = copyOutParams.blockLen;
+        int64_t x1GmOffset = activateLeft ? gmOffset + valueM : gmOffset;
+        int64_t x2GmOffset = activateLeft ? gmOffset : gmOffset + valueM;
+        DataCopy(dxGm[x1GmOffset], outLocalLeft, copyOutParams);
+        DataCopy(dxGm[x2GmOffset], outLocalRight, copyOutParams);
+    } else {
+        copyOutParams.blockLen = dataCount * dtypeSize;
+        copyOutParams.dstStride = copyOutParams.blockLen;
+        int64_t x1GmOffset = activateLeft ? gmOffset + valueM : gmOffset;
+        int64_t x2GmOffset = activateLeft ? gmOffset : gmOffset + valueM;
+        DataCopyPad(dxGm[x1GmOffset], outLocalLeft, copyOutParams);
+        DataCopyPad(dxGm[x2GmOffset], outLocalRight, copyOutParams);
+    }
+    outQueueDX1.FreeTensor(outLocalLeft);
     outQueueDX2.FreeTensor(outLocalRight);
 }
 

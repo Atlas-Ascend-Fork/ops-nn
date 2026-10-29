@@ -8,6 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include <iostream>
+#include <array>
+#include <cstring>
 #include <vector>
 #include <gtest/gtest.h>
 #include "../../../op_host/ge_glu_grad_v2_tiling.h"
@@ -95,6 +97,134 @@ TEST_F(GeGluGradV2Tiling, ge_glu_grad_v2_tiling_parse_func)
                                                                                            intrinsics);
 
     ASSERT_EQ(tilingParseFunc(kernelHolder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+}
+
+TEST_F(GeGluGradV2Tiling, regbase_balanced_tiles_do_not_create_an_extra_tail)
+{
+    struct SplitCase {
+        ge::DataType dtype;
+        int64_t approximate;
+        int64_t m;
+        int64_t tile;
+        int64_t groups;
+    };
+    // Capacity+1 is particularly important: rounding down the balanced tile
+    // incorrectly creates a third task with a tiny tail.
+    const std::vector<SplitCase> cases = {
+        {ge::DT_FLOAT16, 1, 5761, 2896, 2}, {ge::DT_BF16, 1, 4881, 2448, 2},   {ge::DT_FLOAT, 0, 3337, 1672, 2},
+        {ge::DT_FLOAT, 1, 3729, 1872, 2},   {ge::DT_FLOAT, 1, 11008, 3672, 3},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.m);
+        gert::StorageShape dy = {{65, item.m}, {65, item.m}};
+        gert::StorageShape x = {{65, 2 * item.m}, {65, 2 * item.m}};
+        optiling::GeGluGradV2CompileInfo info = {64, 253952, NpuArch::DAV_3510, true};
+        auto data = gert::TilingData::CreateCap(4096);
+        auto workspace = gert::ContinuousVector::Create<size_t>(4096);
+        auto holder = gert::TilingContextFaker()
+                          .NodeIoNum(3, 1)
+                          .IrInstanceNum({1, 1, 1})
+                          .InputShapes({&dy, &x, &dy})
+                          .OutputShapes({&x})
+                          .CompileInfo(&info)
+                          .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                          .NodeAttrs({{"dim", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
+                                      {"approximate", Ops::NN::AnyValue::CreateFrom<int64_t>(item.approximate)},
+                                      {"activate_left", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                          .NodeInputTd(0, item.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(1, item.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(2, item.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeOutputTd(0, item.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .TilingData(data.get())
+                          .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                          .Build();
+        auto context = holder.GetContext<gert::TilingContext>();
+        ASSERT_EQ(tilingFunc(context), ge::GRAPH_SUCCESS);
+        // Wire layout: two int32 attrs followed by eight int64 fields.
+        std::array<int64_t, 9> result{};
+        ASSERT_EQ(context->GetRawTilingData()->GetDataSize(), sizeof(result));
+        std::memcpy(result.data(), context->GetRawTilingData()->GetData(), sizeof(result));
+        EXPECT_EQ(result[1], item.tile);   // maxProcCount
+        EXPECT_EQ(result[8], item.groups); // groupNum
+        EXPECT_EQ(context->GetBlockDim(), 64);
+        EXPECT_GT(item.m - (item.groups - 1) * item.tile, 0);
+    }
+}
+
+TEST_F(GeGluGradV2Tiling, regbase_direct_group_uses_per_core_budget)
+{
+    struct GroupCase {
+        ge::DataType dtype;
+        int64_t approximate;
+        int64_t n;
+        int64_t m;
+        int64_t expectedGroup;
+        int64_t expectedBlockDim;
+    };
+    const std::vector<GroupCase> cases = {
+        // One wave fits in the UB tile: ceil(192 * 160 / 64) = 480 elements,
+        // so three 160-element rows are assigned to each core.
+        {ge::DT_FLOAT16, 1, 192, 160, 3, 64},
+        // Include row padding: M=23 occupies 32 elements, but all 16 rows
+        // assigned to a core still fit in one tile.
+        {ge::DT_FLOAT16, 1, 1024, 23, 16, 64},
+        {ge::DT_FLOAT, 0, 192, 160, 3, 64},
+        // Capacity-limited cases balance the minimum number of waves.
+        {ge::DT_FLOAT, 0, 4096, 129, 22, 64},
+        {ge::DT_BF16, 0, 16384, 129, 32, 64},
+        {ge::DT_FLOAT, 1, 65, 129, 2, 33},
+        {ge::DT_FLOAT16, 1, 1, 23, 1, 1},
+        // FP32 erf retains two waves at 2048 padded elements per core.
+        {ge::DT_FLOAT, 0, 1024, 120, 16, 64},
+        {ge::DT_FLOAT, 0, 1024, 121, 8, 64},
+        {ge::DT_FLOAT, 0, 1024, 129, 8, 64},
+        {ge::DT_FLOAT, 1, 512, 248, 8, 64},
+        {ge::DT_FLOAT, 1, 512, 249, 8, 64},
+        {ge::DT_FLOAT, 0, 512, 249, 4, 64},
+        {ge::DT_FLOAT, 1, 128, 1024, 2, 64},
+        {ge::DT_FLOAT, 0, 128, 1024, 1, 64},
+        {ge::DT_FLOAT, 0, 64, 2048, 1, 64},
+        {ge::DT_BF16, 0, 1024, 129, 16, 64},
+    };
+
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.m);
+        gert::StorageShape dy = {{item.n, item.m}, {item.n, item.m}};
+        gert::StorageShape x = {{item.n, 2 * item.m}, {item.n, 2 * item.m}};
+        optiling::GeGluGradV2CompileInfo info = {64, 253952, NpuArch::DAV_3510, true};
+        auto data = gert::TilingData::CreateCap(4096);
+        auto workspace = gert::ContinuousVector::Create<size_t>(4096);
+        auto holder = gert::TilingContextFaker()
+                          .NodeIoNum(3, 1)
+                          .IrInstanceNum({1, 1, 1})
+                          .InputShapes({&dy, &x, &dy})
+                          .OutputShapes({&x})
+                          .CompileInfo(&info)
+                          .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                          .NodeAttrs({{"dim", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
+                                      {"approximate", Ops::NN::AnyValue::CreateFrom<int64_t>(item.approximate)},
+                                      {"activate_left", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                          .NodeInputTd(0, item.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(1, item.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(2, item.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeOutputTd(0, item.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .TilingData(data.get())
+                          .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                          .Build();
+        auto context = holder.GetContext<gert::TilingContext>();
+        ASSERT_EQ(tilingFunc(context), ge::GRAPH_SUCCESS);
+
+        std::array<int64_t, 9> result{};
+        ASSERT_EQ(context->GetRawTilingData()->GetDataSize(), sizeof(result));
+        std::memcpy(result.data(), context->GetRawTilingData()->GetData(), sizeof(result));
+        EXPECT_EQ(result[8], item.expectedGroup);
+        EXPECT_EQ(context->GetBlockDim(), item.expectedBlockDim);
+        const int64_t blockElements = 32 / ge::GetSizeByDataType(item.dtype);
+        const int64_t alignedM = (item.m + blockElements - 1) / blockElements * blockElements;
+        EXPECT_LE(result[8] * alignedM, result[1]);
+        // Full core loops, extra full tasks and the final partial task cover N.
+        EXPECT_EQ((result[5] * result[4] + result[6]) * result[8] + result[7], item.n);
+    }
 }
 
 TEST_F(GeGluGradV2Tiling, ge_glu_grad_v2_tiling_bfp16_001)

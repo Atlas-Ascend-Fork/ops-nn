@@ -35,18 +35,13 @@ public:
             return;
         }
 
-        if (valueM <= maxProcCount) {
-            ProcessLessEqual<GeGluGradV2ErfFP32, &GeGluGradV2ErfFP32::ComputeLeftHalf,
-                             &GeGluGradV2ErfFP32::ComputeRightHalf>(this);
-        } else {
-            ProcessGreater<GeGluGradV2ErfFP32, &GeGluGradV2ErfFP32::ComputeLeftHalf,
-                           &GeGluGradV2ErfFP32::ComputeRightHalf>(this);
-        }
+        ProcessFused<GeGluGradV2ErfFP32, &GeGluGradV2ErfFP32::ComputeFused>(this);
     };
 
 private:
     __aicore__ inline void ComputeLeftHalf(const int64_t& realProcCount);
     __aicore__ inline void ComputeRightHalf(const int64_t& realProcCount);
+    __aicore__ inline void ComputeFused(const int64_t& realProcCount);
 };
 
 __aicore__ inline void GeGluGradV2ErfFP32::Init()
@@ -91,6 +86,113 @@ __aicore__ inline void GeGluGradV2ErfFP32::ComputeRightHalf(const int64_t& realP
     ComputeGeluGrad(outLocalRight, xBufLeft, ubX2, realProcCount);
     outQueueDX2.EnQue(outLocalRight);
     inQueueX2.FreeTensor(ubX2);
+}
+
+__aicore__ inline void GeGluGradV2ErfFP32::ComputeFused(const int64_t& realProcCount)
+{
+#ifndef __CCE_AICORE__
+    ComputeLeftHalf(realProcCount);
+    ComputeRightHalf(realProcCount);
+    return;
+#else
+    LocalTensor<float> ubDY = inQueueDY.DeQue<float>();
+    LocalTensor<float> ubGelu = inQueueGelu.DeQue<float>();
+    LocalTensor<float> ubX1 = inQueueX1.DeQue<float>();
+    LocalTensor<float> ubX2 = inQueueX2.DeQue<float>();
+    LocalTensor<float> outLocalLeft = outQueueDX1.AllocTensor<float>();
+    LocalTensor<float> outLocalRight = outQueueDX2.AllocTensor<float>();
+
+    __ubuf__ float* dyPtr = (__ubuf__ float*)ubDY.GetPhyAddr();
+    __ubuf__ float* geluPtr = (__ubuf__ float*)ubGelu.GetPhyAddr();
+    __ubuf__ float* x1Ptr = (__ubuf__ float*)ubX1.GetPhyAddr();
+    __ubuf__ float* x2Ptr = (__ubuf__ float*)ubX2.GetPhyAddr();
+    __ubuf__ float* outLeftPtr = (__ubuf__ float*)outLocalLeft.GetPhyAddr();
+    __ubuf__ float* outRightPtr = (__ubuf__ float*)outLocalRight.GetPhyAddr();
+
+    constexpr uint32_t vl = VECTOR_REG_WIDTH / sizeof(float);
+    uint16_t loopNum = (static_cast<uint32_t>(realProcCount) + vl - 1) / vl;
+    uint32_t count = static_cast<uint32_t>(realProcCount);
+
+    __VEC_SCOPE__
+    {
+        Reg::RegTensor<float> vDy;
+        Reg::RegTensor<float> vGelu;
+        Reg::RegTensor<float> vGate;
+        Reg::RegTensor<float> vAct;
+        Reg::RegTensor<float> vGateDy;
+        Reg::RegTensor<float> vDxGate;
+        Reg::RegTensor<float> vActSq;
+        Reg::RegTensor<float> vZ;
+        Reg::RegTensor<float> vT1;
+        Reg::RegTensor<float> vT2;
+        Reg::RegTensor<float> vNum;
+        Reg::RegTensor<float> vCdf;
+        Reg::RegTensor<float> vPdf;
+        Reg::RegTensor<float> vTmp;
+        Reg::RegTensor<float> vResp;
+        Reg::MaskReg mask;
+
+        for (uint16_t loopIdx = 0; loopIdx < loopNum; ++loopIdx) {
+            mask = Reg::UpdateMask<float>(count);
+            Reg::DataCopy(vDy, dyPtr + loopIdx * vl);
+            Reg::DataCopy(vGelu, geluPtr + loopIdx * vl);
+            Reg::DataCopy(vGate, x1Ptr + loopIdx * vl);
+            Reg::DataCopy(vAct, x2Ptr + loopIdx * vl);
+
+            Reg::Mul(vDxGate, vGelu, vDy, mask);
+            Reg::Mul(vGateDy, vGate, vDy, mask);
+
+            // CDF approximation, kept algebraically identical to the existing path.
+            Reg::Muls(vZ, vAct, COEFFICIENT_1, mask);
+            Reg::Mins(vZ, vZ, TH_MAX, mask);
+            Reg::Maxs(vZ, vZ, TH_MIN, mask);
+            Reg::Mul(vT1, vZ, vZ, mask);
+            Reg::Muls(vT2, vT1, COEFFICIENT_3, mask);
+            Reg::Adds(vT2, vT2, COEFFICIENT_4, mask);
+            Reg::Mul(vT2, vT2, vT1, mask);
+            Reg::Adds(vT2, vT2, COEFFICIENT_5, mask);
+            Reg::Mul(vT2, vT2, vT1, mask);
+            Reg::Adds(vT2, vT2, COEFFICIENT_6, mask);
+            Reg::Mul(vT2, vT2, vT1, mask);
+            Reg::Adds(vT2, vT2, COEFFICIENT_7, mask);
+            Reg::Mul(vT2, vT2, vT1, mask);
+            Reg::Adds(vT2, vT2, COEFFICIENT_8, mask);
+            Reg::Mul(vT2, vT2, vZ, mask);
+
+            Reg::Adds(vNum, vT1, COEFFICIENT_9, mask);
+            Reg::Mul(vNum, vNum, vT1, mask);
+            Reg::Adds(vNum, vNum, COEFFICIENT_10, mask);
+            Reg::Mul(vNum, vNum, vT1, mask);
+            Reg::Adds(vNum, vNum, COEFFICIENT_11, mask);
+            Reg::Mul(vNum, vNum, vT1, mask);
+            Reg::Adds(vNum, vNum, COEFFICIENT_12, mask);
+            Reg::Mul(vNum, vNum, vT1, mask);
+            Reg::Adds(vNum, vNum, COEFFICIENT_13, mask);
+            Reg::Div(vCdf, vT2, vNum, mask);
+            Reg::Muls(vCdf, vCdf, POS_HALF, mask);
+            Reg::Adds(vCdf, vCdf, POS_HALF, mask);
+
+            // PDF and GELU derivative.
+            Reg::Mul(vActSq, vAct, vAct, mask);
+            Reg::Muls(vActSq, vActSq, NEG_HALF, mask);
+            Reg::Exp(vPdf, vActSq, mask);
+            Reg::Muls(vPdf, vPdf, COEFFICIENT_2, mask);
+            Reg::Mul(vTmp, vPdf, vAct, mask);
+            Reg::Add(vResp, vCdf, vTmp, mask);
+            Reg::Mul(vResp, vResp, vGateDy, mask);
+
+            Reg::StoreAlign(outLeftPtr + loopIdx * vl, vDxGate, mask);
+            Reg::StoreAlign(outRightPtr + loopIdx * vl, vResp, mask);
+        }
+    }
+
+    inQueueDY.FreeTensor(ubDY);
+    inQueueGelu.FreeTensor(ubGelu);
+    inQueueX1.FreeTensor(ubX1);
+    inQueueX2.FreeTensor(ubX2);
+    outQueueDX1.EnQue(outLocalLeft);
+    outQueueDX2.EnQue(outLocalRight);
+#endif
 }
 
 } // namespace GeGluGradV2Erf
