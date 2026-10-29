@@ -15,9 +15,9 @@ TARGET_H_FILENAME=""
 INCLUDE_TYPES=("--include=*.c" "--include=*.h" "--include=*.cpp" "--include=*.CPP" "--include=*.C" "--include=*.H")
 
 run_build_command() {
-    local cmd=$1
-    echo "$cmd"
-    if ! eval "$cmd"; then
+    printf '%q ' "$@"
+    echo
+    if ! "$@"; then
         echo "build pkg error"
         exit 1
     fi
@@ -249,23 +249,25 @@ a5_soc="ascend950"
 
 if [[ ${#builtin_ops_name[@]} -gt 0 ]]; then
     builtin_ops_str=$(IFS=,; echo "${builtin_ops_name[*]}")
-    jit_flag=""
-    [[ "$force_jit" == "true" ]] && jit_flag="--jit"
-    build_cmd="bash build.sh --pkg ${jit_flag} --ops=$builtin_ops_str --soc=$a5_soc ${THREAD_NUM} --cann_3rd_lib_path=${ASCEND_3RD_LIB_PATH} ${force}"
-    run_build_command "$build_cmd"
+    build_args=(bash build.sh --pkg)
+    [[ "$force_jit" == "true" ]] && build_args+=(--jit)
+    build_args+=(--ops="$builtin_ops_str" --soc="$a5_soc" "$THREAD_NUM" --cann_3rd_lib_path="${ASCEND_3RD_LIB_PATH}")
+    [ -n "$force" ] && build_args+=("$force")
+    run_build_command "${build_args[@]}"
     execute_run_file "custom"
 fi
 
 if [[ ${#experimental_ops_name[@]} -gt 0 && "$force_jit" = "false" ]]; then
     experimental_ops_str=$(IFS=,; echo "${experimental_ops_name[*]}")
-    build_cmd="bash build.sh --pkg --experimental --ops=$experimental_ops_str --soc=$a5_soc ${THREAD_NUM} --cann_3rd_lib_path=${ASCEND_3RD_LIB_PATH} ${force}"
-    run_build_command "$build_cmd"
+    build_args=(bash build.sh --pkg --experimental --ops="$experimental_ops_str" --soc="$a5_soc" "$THREAD_NUM" --cann_3rd_lib_path="${ASCEND_3RD_LIB_PATH}")
+    [ -n "$force" ] && build_args+=("$force")
+    run_build_command "${build_args[@]}"
     execute_run_file "custom"
 fi
 
 if [ "${build_all}" == "true" ]; then
-    build_cmd="bash build.sh --pkg --jit --soc=$a5_soc ${THREAD_NUM} --cann_3rd_lib_path=${ASCEND_3RD_LIB_PATH}"
-    run_build_command "$build_cmd"
+    build_args=(bash build.sh --pkg --jit --soc="$a5_soc" "$THREAD_NUM" --cann_3rd_lib_path="${ASCEND_3RD_LIB_PATH}")
+    run_build_command "${build_args[@]}"
     execute_run_file "builtin"
 fi
 
