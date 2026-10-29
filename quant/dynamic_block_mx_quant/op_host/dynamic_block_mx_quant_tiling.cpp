@@ -407,6 +407,8 @@ void DynamicBlockMxQuantTiling::SplitCore()
     int64_t scaleAlignedBlockW = Ops::Base::CeilAlign((tilingParams.blockW / BLOCK_SIZE), BLOCK_SIZE);
     perBlockUbSize = perBlockTmpUbSize +
                      (tilingParams.blockH / BLOCK_SIZE) * scaleAlignedBlockW * BYTES_OF_RECIPROCAL_SCALE_TYPE;
+    // Keep raw scale2 separate from the double-buffered interleaved output.
+    perBlockUbSize += (tilingParams.blockH / BLOCK_SIZE) * tilingParams.blockW;
 
     perBlockUbSize = perBlockUbSize != 0 ? perBlockUbSize : 1;
 

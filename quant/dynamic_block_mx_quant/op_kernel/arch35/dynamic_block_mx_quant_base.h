@@ -125,7 +125,8 @@ private:
     TBuf<TPosition::VECCALC> tempIndexBuf_;
 
     TQue<QuePosition::VECOUT, DB_BUFFER> scale1Queue_;
-    TQue<QuePosition::VECOUT, DB_BUFFER> scale2Queue_;
+    TBuf<TPosition::VECCALC> scale2RawBuf_;
+    TQue<QuePosition::VECOUT, DB_BUFFER> scale2InterleaveQueue_;
     GlobalTensor<uint8_t> mxScale1Gm_;
     GlobalTensor<uint8_t> mxScale2Gm_;
 
@@ -214,7 +215,9 @@ __aicore__ inline void DynamicBlockMxQuantBase<T, U, roundMode, scaleAlg>::Init(
     pipe_->InitBuffer(inQueue_, DB_BUFFER, rowUbFactor_ * colUbFactor_ * sizeof(T));
     pipe_->InitBuffer(outQueue_, DB_BUFFER, rowUbFactor_ * colUbFactor_);
     pipe_->InitBuffer(scale1Queue_, DB_BUFFER, rowUbFactor_ * colUbBlockLoopNum_ * ubBlockSize_);
-    pipe_->InitBuffer(scale2Queue_, DB_BUFFER, rowUbBlockLoopNum_ * DIGIT_TWO * colUbBlockLoopNum_ * blockW_);
+    const int64_t scale2BufferSize = rowUbBlockLoopNum_ * DIGIT_TWO * colUbBlockLoopNum_ * blockW_;
+    pipe_->InitBuffer(scale2RawBuf_, scale2BufferSize);
+    pipe_->InitBuffer(scale2InterleaveQueue_, DB_BUFFER, scale2BufferSize);
     pipe_->InitBuffer(mxScaleReciprocalBuf_,
                       rowUbBlockLoopNum_ * DIGIT_TWO * colUbBlockLoopNum_ * ubBlockSize_ * sizeof(T));
     pipe_->InitBuffer(tempIndexBuf_, vlForFp8);
@@ -972,8 +975,9 @@ __aicore__ inline void DynamicBlockMxQuantBase<T, U, roundMode, scaleAlg>::Compu
     LocalTensor<uint8_t> scale1Local = scale1Queue_.AllocTensor<uint8_t>();
     __ubuf__ uint8_t* scale1LocalAddr = (__ubuf__ uint8_t*)scale1Local.GetPhyAddr();
 
-    LocalTensor<uint8_t> scale2Local = scale2Queue_.AllocTensor<uint8_t>();
+    LocalTensor<uint8_t> scale2Local = scale2RawBuf_.Get<uint8_t>();
     __ubuf__ uint8_t* scale2LocalAddr = (__ubuf__ uint8_t*)scale2Local.GetPhyAddr();
+    LocalTensor<uint8_t> scale2InterleaveLocal = scale2InterleaveQueue_.AllocTensor<uint8_t>();
 
     LocalTensor<uint8_t> outLocal = outQueue_.AllocTensor<uint8_t>();
     __ubuf__ uint8_t* outLocalAddr = (__ubuf__ uint8_t*)outLocal.GetPhyAddr();
@@ -1066,16 +1070,17 @@ __aicore__ inline void DynamicBlockMxQuantBase<T, U, roundMode, scaleAlg>::Compu
                 scaleReciprocalOffset = scaleReciprocalOffset + oneBlockCountB16_;
                 yOffset = yOffset + row2BlockSize * blockW_ / yOffsetFactor;
             }
-            // -2轴交织
-            Interleave(scale2Local[scale2Offset - (DIGIT_TWO * blockW_)], scale2Local[scale2Offset - blockW_],
-                       scale2Local[scale2Offset - (DIGIT_TWO * blockW_)], scale2Local[scale2Offset - blockW_], blockW_);
+            // -2轴交织：源数据与交织结果使用独立的UB buffer。
+            Interleave(scale2InterleaveLocal[scale2Offset - (DIGIT_TWO * blockW_)],
+                       scale2InterleaveLocal[scale2Offset - blockW_], scale2Local[scale2Offset - (DIGIT_TWO * blockW_)],
+                       scale2Local[scale2Offset - blockW_], blockW_);
         }
     }
 
     inQueue_.FreeTensor(inLocal);
     outQueue_.EnQue(outLocal);
     scale1Queue_.EnQue(scale1Local);
-    scale2Queue_.EnQue(scale2Local);
+    scale2InterleaveQueue_.EnQue(scale2InterleaveLocal);
 }
 
 template <typename T, typename U, AscendC::RoundMode roundMode, uint64_t scaleAlg>
@@ -1085,7 +1090,7 @@ __aicore__ inline void DynamicBlockMxQuantBase<T, U, roundMode, scaleAlg>::CopyO
 {
     LocalTensor<uint8_t> outLocal = outQueue_.DeQue<uint8_t>();
     LocalTensor<uint8_t> scale1Local = scale1Queue_.DeQue<uint8_t>();
-    LocalTensor<uint8_t> scale2Local = scale2Queue_.DeQue<uint8_t>();
+    LocalTensor<uint8_t> scale2InterleaveLocal = scale2InterleaveQueue_.DeQue<uint8_t>();
     int64_t outputColAlign = ubBlockSize_ / sizeof(uint8_t);
     // yGm偏移地址
     int64_t outGmOffset = 0;
@@ -1160,11 +1165,11 @@ __aicore__ inline void DynamicBlockMxQuantBase<T, U, roundMode, scaleAlg>::CopyO
     DataCopyExtParams scale2CopyParams = {static_cast<uint16_t>(blockRow),
                                           static_cast<uint32_t>(blockColNum * DIGIT_TWO), scale2SrcStride,
                                           DIGIT_TWO * (colNum_ - blockColNum), 0};
-    DataCopyPad(mxScale2Gm_[baseScale2Offset], scale2Local, scale2CopyParams);
+    DataCopyPad(mxScale2Gm_[baseScale2Offset], scale2InterleaveLocal, scale2CopyParams);
 
     outQueue_.FreeTensor(outLocal);
     scale1Queue_.FreeTensor(scale1Local);
-    scale2Queue_.FreeTensor(scale2Local);
+    scale2InterleaveQueue_.FreeTensor(scale2InterleaveLocal);
 }
 
 } // namespace DynamicBlockMxQuant
