@@ -28,7 +28,10 @@ __aicore__ inline void DeepNormGrad<T>::AccumulateKahan(LocalTensor<float>& sum,
         RegTensor<float> adjustedReg;
         RegTensor<float> newSumReg;
         RegTensor<float> deltaReg;
+        RegTensor<float> guardAbsReg;
+        RegTensor<float> guardZeroReg;
         MaskReg mask;
+        MaskReg guardCmpMask;
         for (uint16_t i = 0; i < loops; ++i) {
             uint32_t valid = Min(remaining, VL_FP32);
             remaining -= valid;
@@ -37,10 +40,12 @@ __aicore__ inline void DeepNormGrad<T>::AccumulateKahan(LocalTensor<float>& sum,
             DataCopy(sumReg, sumPtr + offset);
             DataCopy(compensationReg, compensationPtr + offset);
             DataCopy(valueReg, valuePtr + offset);
+            Duplicate(guardZeroReg, 0.0F, mask);
             Sub(adjustedReg, valueReg, compensationReg, mask);
             Add(newSumReg, sumReg, adjustedReg, mask);
             Sub(deltaReg, newSumReg, sumReg, mask);
             Sub(compensationReg, deltaReg, adjustedReg, mask);
+            KahanGuardComp(compensationReg, guardAbsReg, guardZeroReg, guardCmpMask, mask);
             DataCopy<float, StoreDist::DIST_NORM_B32>(sumPtr + offset, newSumReg, mask);
             DataCopy<float, StoreDist::DIST_NORM_B32>(compensationPtr + offset, compensationReg, mask);
         }

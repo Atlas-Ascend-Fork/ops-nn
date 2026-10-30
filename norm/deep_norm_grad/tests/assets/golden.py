@@ -224,6 +224,8 @@ def _reduce_sum_rows(values):
 
 
 def _reduce_sum_rows_fp64(values):
+    # NPU 对 dbeta/dgamma 的行归约实测为 fp64 级精度（大 N 下与 fp64 累加位级一致），
+    # 按跟 NPU 加宽行为的原则：fp64 入参（Promote）与常规入参均保持 fp64 累加，出口窄回。
     values = np.asarray(values)
     values32 = torch.as_tensor(values)
     torch_dtype = torch.float64 if values.dtype == np.float64 else torch.float32
@@ -245,15 +247,54 @@ def _fp32(x):
     return np.asarray(x).astype(np.float32)
 
 
+def _first_scalar(values):
+    """返回序列中第一个标量（跳过 bool 与张量），无则 None。"""
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            return float(value)
+        if isinstance(value, torch.Tensor) and value.dim() == 0:
+            return float(value.item())
+        if isinstance(value, np.ndarray) and value.shape == ():
+            return float(value.item())
+    return None
+
+
+def _resolve_alpha(positional, kwargs, default=0.3):
+    """解析真实 alpha：显式 kwargs 优先，其次位置参数中的标量，最后默认值。
+
+    ttk aclnn 通路按 C 头文件顺序以位置参数下发 (dy,x,gx,gamma,mean,rstd,alpha,
+    输出...)，位置形态下 alpha 会被 ``*unused_outputs`` 吞掉，命名的 ``alpha``
+    形参停留在外部声明的默认值上——必须在函数体内显式找回。
+    """
+    if kwargs.get("alpha") is not None:
+        return float(kwargs["alpha"])
+    scalar = _first_scalar(positional)
+    if scalar is not None:
+        return scalar
+    return float(default)
+
+
 def deep_norm_grad_input(
     dy, x, gx, gamma, mean, rstd, *unused_outputs, alpha=0.3, epsilon=1e-6, **kwargs
 ):
     """Generate forward-consistent mean and rstd while preserving TTK random inputs."""
+    # ACLNN/E2E 通路张量为 torch.Tensor（回写 view.copy_ 要求 Tensor）；
+    # Kernel/GEIR 通路为 numpy.ndarray。按框架 use_numpy 标记（入参类型兜底）区分。
+    use_numpy = kwargs.get("use_numpy")
+    if use_numpy is None:
+        use_numpy = not isinstance(dy, torch.Tensor)
+    # ttk 按 C 头文件顺序以位置参数下发：(dy,x,gx,gamma,mean,rstd,alpha,输出...)，
+    # 位置形态下真实 alpha 会被 *unused_outputs 吞掉，显式解析回真值
+    alpha = _resolve_alpha(unused_outputs, kwargs, alpha)
     rows, cols = _flatten_shape(x, gamma)
     semantic_shape = _semantic_shape(x, gamma)
     if rows == 0 or cols == 0:
         zero = np.zeros(semantic_shape, dtype=np.float32)
-        return [dy, x, gx, gamma, zero, zero]
+        if use_numpy:
+            return [dy, x, gx, gamma, zero, zero]
+        return [dy, x, gx, gamma, _torch_out(zero, mean), _torch_out(zero, rstd)]
 
     alpha32 = torch.tensor(float(alpha), dtype=torch.float32)
     x32 = _to_torch_compute(x)
@@ -261,9 +302,11 @@ def deep_norm_grad_input(
     mean32, rstd32 = _compute_mean_rstd(
         x32, gx32, rows, cols, semantic_shape, alpha32, epsilon
     )
-    mean = _to_numpy_compute(mean32)
-    rstd = _to_numpy_compute(rstd32)
-    return [dy, x, gx, gamma, mean, rstd]
+    mean_np = _to_numpy_compute(mean32)
+    rstd_np = _to_numpy_compute(rstd32)
+    if use_numpy:
+        return [dy, x, gx, gamma, mean_np, rstd_np]
+    return [dy, x, gx, gamma, _torch_out(mean_np, mean), _torch_out(rstd_np, rstd)]
 
 
 def _output_dtype(kwargs, index, default):
@@ -366,6 +409,8 @@ def _torch_out(array, like, dtype=None):
 def deep_norm_grad_aclnn_golden(
     dy, x, gx, gamma, mean, rstd, *unused_outputs, alpha=0.3, **kwargs
 ):
+    # 位置参数形态下真实 alpha 在 rstd 之后（C 头文件顺序），显式解析回真值
+    alpha = _resolve_alpha(unused_outputs, kwargs, alpha)
     outputs = deep_norm_grad_golden(dy, x, gx, gamma, mean, rstd, alpha, **kwargs)
     return [
         _torch_out(outputs[0], x),
@@ -435,8 +480,8 @@ class _DeepNormGradCompose:
     def __init__(self, alpha=0.3, **kwargs):
         self.alpha = float(alpha)
 
-    def __call__(self, dy, x, gx, gamma, mean, rstd, **kwargs):
-        alpha = float(kwargs.pop("alpha", self.alpha))
+    def __call__(self, dy, x, gx, gamma, mean, rstd, *args, **kwargs):
+        alpha = _resolve_alpha(args, kwargs, self.alpha)
         return _deep_norm_grad_torch_reference(
             dy, x, gx, gamma, mean, rstd, alpha=alpha
         )

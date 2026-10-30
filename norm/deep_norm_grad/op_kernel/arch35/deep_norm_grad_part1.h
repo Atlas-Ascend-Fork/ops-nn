@@ -231,7 +231,10 @@ __aicore__ inline void DeepNormGrad<T>::ComputeSmallDSecondPass(
         RegTensor<float> adjustedReg;
         RegTensor<float> newSumReg;
         RegTensor<float> deltaReg;
+        RegTensor<float> guardAbsReg;
+        RegTensor<float> guardZeroReg;
         MaskReg mask;
+        MaskReg guardCmpMask;
         DataCopy<float, LoadDist::DIST_BRC_B32>(meanReg, meanPtr);
         DataCopy<float, LoadDist::DIST_BRC_B32>(rstdReg, rstdPtr);
         DataCopy<float, LoadDist::DIST_BRC_B32>(avgTmpReg, avgTmpPtr);
@@ -251,12 +254,14 @@ __aicore__ inline void DeepNormGrad<T>::ComputeSmallDSecondPass(
             Muls(xReg, xReg, alpha, mask);
             Add(normReg, xReg, gxReg, mask);
             Sub(normReg, normReg, meanReg, mask);
+            Duplicate(guardZeroReg, 0.0F, mask);
             Mul(valueReg, dyReg, normReg, mask);
             Mul(valueReg, valueReg, rstdReg, mask);
             Sub(adjustedReg, valueReg, compReg, mask);
             Add(newSumReg, sumReg, adjustedReg, mask);
             Sub(deltaReg, newSumReg, sumReg, mask);
             Sub(compReg, deltaReg, adjustedReg, mask);
+            KahanGuardComp(compReg, guardAbsReg, guardZeroReg, guardCmpMask, mask);
             DataCopy<float, StoreDist::DIST_NORM_B32>(dgammaPtr + offset, newSumReg, mask);
             DataCopy<float, StoreDist::DIST_NORM_B32>(dgammaCompPtr + offset, compReg, mask);
 
@@ -266,6 +271,7 @@ __aicore__ inline void DeepNormGrad<T>::ComputeSmallDSecondPass(
             Add(newSumReg, sumReg, adjustedReg, mask);
             Sub(deltaReg, newSumReg, sumReg, mask);
             Sub(compReg, deltaReg, adjustedReg, mask);
+            KahanGuardComp(compReg, guardAbsReg, guardZeroReg, guardCmpMask, mask);
             DataCopy<float, StoreDist::DIST_NORM_B32>(dbetaPtr + offset, newSumReg, mask);
             DataCopy<float, StoreDist::DIST_NORM_B32>(dbetaCompPtr + offset, compReg, mask);
 
@@ -332,9 +338,13 @@ __aicore__ inline void DeepNormGrad<T>::ComputeTinyDBatch(LocalTensor<T>& dy, Lo
         RegTensor<float> newSumReg;
         RegTensor<float> deltaReg;
         RegTensor<float> valueReg;
+        RegTensor<float> guardAbsReg;
+        RegTensor<float> guardZeroReg;
         uint32_t validCols = COLS;
         MaskReg mask = UpdateMask<float>(validCols);
         MaskReg scalarMask = CreateMask<float, MaskPattern::VL1>();
+        MaskReg guardCmpMask;
+        Duplicate(guardZeroReg, 0.0F, mask);
 
         NormCommon::NormCommonRegbase::LoadRegForDtype<T>(gammaPtr, gammaReg, mask, 0);
         DataCopy(dgammaSumReg, dgammaPtr);
@@ -359,12 +369,14 @@ __aicore__ inline void DeepNormGrad<T>::ComputeTinyDBatch(LocalTensor<T>& dy, Lo
             Add(newSumReg, dgammaSumReg, adjustedReg, mask);
             Sub(deltaReg, newSumReg, dgammaSumReg, mask);
             Sub(dgammaCompReg, deltaReg, adjustedReg, mask);
+            KahanGuardComp(dgammaCompReg, guardAbsReg, guardZeroReg, guardCmpMask, mask);
             AscendC::Reg::Copy<float, AscendC::Reg::MaskMergeMode::MERGING>(dgammaSumReg, newSumReg, mask);
 
             Sub(adjustedReg, dyReg, dbetaCompReg, mask);
             Add(newSumReg, dbetaSumReg, adjustedReg, mask);
             Sub(deltaReg, newSumReg, dbetaSumReg, mask);
             Sub(dbetaCompReg, deltaReg, adjustedReg, mask);
+            KahanGuardComp(dbetaCompReg, guardAbsReg, guardZeroReg, guardCmpMask, mask);
             AscendC::Reg::Copy<float, AscendC::Reg::MaskMergeMode::MERGING>(dbetaSumReg, newSumReg, mask);
 
             Mul(dyGammaReg, dyReg, gammaReg, mask);

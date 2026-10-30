@@ -19,6 +19,9 @@
 namespace DeepNormGradArch35 {
 
 using namespace AscendC;
+using AscendC::Reg::Abs;
+using AscendC::Reg::Compare;
+using AscendC::Reg::Compares;
 using AscendC::Reg::CreateMask;
 using AscendC::Reg::LoadDist;
 using AscendC::Reg::LocalMemBar;
@@ -26,6 +29,7 @@ using AscendC::Reg::MaskPattern;
 using AscendC::Reg::MaskReg;
 using AscendC::Reg::MemType;
 using AscendC::Reg::RegTensor;
+using AscendC::Reg::Select;
 using AscendC::Reg::StoreDist;
 using AscendC::Reg::UpdateMask;
 
@@ -33,6 +37,23 @@ constexpr uint32_t BLOCK_SIZE = 32;
 constexpr uint32_t VL_FP32 = 256 / sizeof(float);
 constexpr uint32_t SCALAR_BLOCK_ELEMS = BLOCK_SIZE / sizeof(float);
 constexpr uint32_t REDUCE_TMP_ELEMS = 2 * VL_FP32;
+// |comp| 大于 FLT_MAX 即为 ±Inf（NaN 已单独判出），用于 Kahan 补偿项守护
+constexpr float KAHAN_GUARD_FLT_MAX = 3.4028234663852886e+38F;
+
+// Kahan 补偿项非有限值守护：补偿项出现 NaN（如恒 ±Inf 输入下 delta-adjusted=inf-inf=NaN）
+// 或 ±Inf（有限大数溢出）时若不清理，下一轮 adjusted=value-comp 会把累加和污染成
+// NaN/错误符号，使 dbeta=Σdy 在 dy≡±Inf 时错误地输出 NaN（数学期望 ±Inf）。
+// 非有限补偿项清零后，累加对非有限输入退化为普通 IEEE 顺序和语义（±Inf 得 ±Inf，
+// +Inf 与 -Inf 相遇得 NaN，与 golden 一致）；全有限数据路径数值完全不变。
+__aicore__ inline void KahanGuardComp(RegTensor<float>& compReg, RegTensor<float>& absReg, RegTensor<float>& zeroReg,
+                                      MaskReg& cmpMask, MaskReg& mask)
+{
+    Compare<float, AscendC::CMPMODE::NE>(cmpMask, compReg, compReg, mask); // NaN → true
+    Select<float>(compReg, zeroReg, compReg, cmpMask);                     // NaN → 0
+    Abs<float, AscendC::Reg::MaskMergeMode::ZEROING>(absReg, compReg, mask);
+    Compares<float, AscendC::CMPMODE::GT>(cmpMask, absReg, KAHAN_GUARD_FLT_MAX, mask); // ±Inf → true
+    Select<float>(compReg, zeroReg, compReg, cmpMask);                                 // ±Inf → 0
+}
 constexpr AscendC::Reg::CastTrait CAST_TRAIT_B32_TO_F16 = {
     AscendC::Reg::RegLayout::ZERO,
     AscendC::Reg::SatMode::NO_SAT,
