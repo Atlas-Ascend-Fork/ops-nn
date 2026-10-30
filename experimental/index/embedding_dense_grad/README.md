@@ -57,7 +57,7 @@
 ```bash
 # 在 ops-nn 仓根目录
 bash build.sh --pkg --experimental --soc=ascend310p --ops=embedding_dense_grad
-bash build.sh --pkg --experimental --soc=ascend310p --ops=embedding_dense_grad
+```
 
 ## 贡献说明
 
