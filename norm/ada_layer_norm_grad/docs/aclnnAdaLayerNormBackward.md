@@ -356,10 +356,10 @@ aclnnStatus aclnnAdaLayerNormBackward(
       <td>gradOut的shape与input的shape不相等。</td>
     </tr>
     <tr>
-      <td>mean的shape乘积与input从第0轴到第len(input) - len(normalizedShape)轴的乘积不相等。</td>
+      <td>mean的shape不为[B…, S, 1]。</td>
     </tr>
     <tr>
-      <td>rstd的shape乘积与input从第0轴到第len(input) - len(normalizedShape)轴的乘积不相等。</td>
+      <td>rstd的shape不为[B…, S, 1]。</td>
     </tr>
     <tr>
       <td>scale的shape不等于[B…, 1, H]或[B…, H]。</td>
