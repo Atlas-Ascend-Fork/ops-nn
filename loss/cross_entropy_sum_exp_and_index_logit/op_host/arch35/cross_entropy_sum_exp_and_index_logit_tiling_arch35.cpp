@@ -87,45 +87,6 @@ int64_t QueryReduceSumTmpBytes(const int64_t rows, const int64_t vTile)
 } // namespace
 
 namespace optiling {
-class CrossEntropySumExpAndIndexLogitTiling {
-public:
-    explicit CrossEntropySumExpAndIndexLogitTiling(gert::TilingContext* context) : tilingContext(context) {};
-    ge::graphStatus Init();
-    ge::graphStatus RunKernelTiling();
-
-private:
-    void TilingDataSet();
-    void TilingDataPrint() const;
-    bool CheckParam();
-    bool CoreSplit();
-    bool UbSplit();
-    CrossEntropySumExpAndIndexLogitRegBaseTilingData* tilingData_{nullptr};
-    gert::TilingContext* tilingContext = nullptr;
-    int32_t coreNum = 1;
-    uint64_t ubSize = 0;
-    uint64_t workspaceSize = 0;
-
-    // 解析参数
-    ge::DataType logitsType_ = ge::DT_FLOAT;
-    ge::DataType globalMaxType_ = ge::DT_FLOAT;
-    int64_t N_ = 0;
-    int64_t vLocal_ = 0;
-    int64_t vocabStart_ = 0;
-    int64_t vocabEnd_ = 0;
-
-    // 切分结果
-    int64_t usedCores_ = 0;
-    int64_t headCoreNum_ = 0;
-    int64_t tokensPerCore_ = 0;
-    int64_t tokensPerCoreTail_ = 0;
-    int64_t headBlockNum_ = 0;
-    int64_t tailBlockNum_ = 0;
-    int64_t rowBlockMax_ = 0;
-    int64_t reduceTmpBytes_ = 0;
-    int64_t vTile_ = 0;
-    int64_t vLoopNum_ = 0;
-    int64_t lastVTile_ = 0;
-};
 
 bool CrossEntropySumExpAndIndexLogitTiling::CheckParam()
 {
@@ -170,7 +131,7 @@ bool CrossEntropySumExpAndIndexLogitTiling::CheckParam()
                                   Ops::Base::ToString(logitsType_).c_str(), "FLOAT or BF16");
         return false;
     }
-    auto& logitsShape = tilingContext->GetInputShape(LOGITS_INDEX)->GetStorageShape();
+    auto& logitsShape = tilingContext->GetInputShape(LOGITS_INDEX)->GetOriginShape();
     int64_t logitsDim = logitsShape.GetDimNum();
     if (logitsDim != DIM_NUM_TWO && logitsDim != DIM_NUM_THREE) {
         OP_LOGE_FOR_INVALID_SHAPEDIM(tilingContext->GetNodeName(), "vocab_parallel_logits",
@@ -200,6 +161,55 @@ bool CrossEntropySumExpAndIndexLogitTiling::CheckParam()
     }
     vLocal_ = vLocal;
     N_ = n;
+    // 非连续 stride 解析（仅 inplace 时读取；非 inplace 的 kernel 不读 logitsRowStride）
+    //   连续输入时行距 == vLocal_，原地版 kernel 用 logitsRowStride_ 寻址等价于用 vLocal_
+    logitsRowStride_ = vLocal;
+    if (isInplace_) {
+        bool isView = tilingContext->InputIsView(static_cast<size_t>(LOGITS_INDEX));
+        if (isView) {
+            auto* logitsStride = tilingContext->GetInputStride(static_cast<size_t>(LOGITS_INDEX));
+            OP_CHECK_IF(logitsStride == nullptr || logitsStride->GetDimNum() == NUM_ZERO,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            tilingContext->GetNodeName(), "vocab_parallel_logits stride", "stride is nullptr or empty"),
+                        return false);
+            OP_CHECK_IF(
+                logitsStride->GetDimNum() != static_cast<size_t>(logitsDim),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "vocab_parallel_logits stride",
+                                                         "stride dim mismatch with shape dim"),
+                return false);
+            // 末维 stride 必须 == 1（内维连续约束）
+            OP_CHECK_IF(logitsStride->GetStride(static_cast<size_t>(logitsDim - NUM_ONE)) != NUM_ONE,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            tilingContext->GetNodeName(), "vocab_parallel_logits stride", "last-dim stride must be 1"),
+                        return false);
+            // 2 维: rowStride = stride[0]; 3 维: rowStride = stride[1], 校验 stride[0]==B*stride[1]
+            if (logitsDim == DIM_NUM_TWO) {
+                logitsRowStride_ = logitsStride->GetStride(0);
+            } else {
+                int64_t dimB = logitsShape.GetDim(NUM_ONE);
+                int64_t strideS = logitsStride->GetStride(0);
+                int64_t strideB = logitsStride->GetStride(1);
+                OP_CHECK_IF(
+                    strideS != dimB * strideB,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        tilingContext->GetNodeName(), "vocab_parallel_logits stride", "3D S/B dims not contiguous"),
+                    return false);
+                logitsRowStride_ = strideB;
+            }
+            // 行 stride alignment: BF16 需 16 倍数, FP32 需 8 倍数
+            int64_t rowAlignReq = (logitsType_ == ge::DT_BF16) ? ALIGN_BF16 : ALIGN_FP32;
+            OP_CHECK_IF(
+                logitsRowStride_ % rowAlignReq != NUM_ZERO,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "vocab_parallel_logits stride",
+                                                         "row stride not aligned for dtype"),
+                return false);
+            OP_CHECK_IF(logitsRowStride_ < vLocal,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            tilingContext->GetNodeName(), "vocab_parallel_logits stride",
+                            "row stride less than vLocal, overlapping rows not allowed for inplace write-back"),
+                        return false);
+        }
+    }
     if (n < N_SIZE_DOWN_LIMIT || n > N_SIZE_UP_LIMIT) {
         OP_LOGE_FOR_INVALID_SHAPESIZE(tilingContext->GetNodeName(), "vocab_parallel_logits", std::to_string(n).c_str(),
                                       "in [1, 32768]");
@@ -291,10 +301,18 @@ bool CrossEntropySumExpAndIndexLogitTiling::CheckParam()
         return false;
     }
     auto expDtype = tilingContext->GetOutputDesc(OUT_EXP_INDEX)->GetDataType();
-    if (expDtype != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE(tilingContext->GetNodeName(), "exp_logits", Ops::Base::ToString(expDtype).c_str(),
-                                  "FLOAT");
-        return false;
+    if (isInplace_) {
+        if (expDtype != logitsType_) {
+            OP_LOGE_FOR_INVALID_DTYPE(tilingContext->GetNodeName(), "exp_logits(inplace)",
+                                      Ops::Base::ToString(expDtype).c_str(), "same as vocab_parallel_logits dtype");
+            return false;
+        }
+    } else {
+        if (expDtype != ge::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE(tilingContext->GetNodeName(), "exp_logits", Ops::Base::ToString(expDtype).c_str(),
+                                      "FLOAT");
+            return false;
+        }
     }
     auto offsetDtype = tilingContext->GetOutputDesc(OUT_OFFSET_INDEX)->GetDataType();
     if (offsetDtype != ge::DT_INT32) {
@@ -442,6 +460,7 @@ void CrossEntropySumExpAndIndexLogitTiling::TilingDataSet()
     tilingData_->reduceTmpBytes = reduceTmpBytes_;
     tilingData_->vocabStart = vocabStart_;
     tilingData_->vocabEnd = vocabEnd_;
+    tilingData_->logitsRowStride = logitsRowStride_;
 
     TilingDataPrint();
 
@@ -468,6 +487,7 @@ void CrossEntropySumExpAndIndexLogitTiling::TilingDataPrint() const
     OP_LOGI(tilingContext, "lastVTile: %u.", tilingData_->lastVTile);
     OP_LOGI(tilingContext, "vocabStart: %ld.", tilingData_->vocabStart);
     OP_LOGI(tilingContext, "vocabEnd: %ld.", tilingData_->vocabEnd);
+    OP_LOGI(tilingContext, "logitsRowStride: %ld.", tilingData_->logitsRowStride);
     OP_LOGI(tilingContext, "blockDim: %u.", tilingData_->usedCores);
 }
 

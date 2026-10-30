@@ -32,7 +32,7 @@
 #include "array_ops.h"
 #include "ge_ir_build.h"
 
-#include "../op_graph/cross_entropy_sum_exp_and_index_logit_proto.h"
+#include "../../op_graph/cross_entropy_sum_exp_and_index_logit_proto.h"
 
 #define FAILED -1
 #define SUCCESS 0
@@ -235,7 +235,7 @@ int main(int argc, char* argv[])
     std::vector<ge::Tensor> input;
 
     printf("%s - INFO - [XIR]: Start to initialize ge using ge global options\n", GetTime().c_str());
-    std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
+    std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", "1"}, {"ge.graphRunMode", "1"}};
     Status ret = ge::GEInitialize(global_options);
     if (ret != SUCCESS) {
         printf("%s - ERROR - [XIR]: Initialize ge failed\n", GetTime().c_str());

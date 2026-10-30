@@ -37,6 +37,8 @@ struct CrossEntropySumExpAndIndexLogitRegBaseTilingData {
     uint32_t reduceTmpBytes;    // ReduceSum(AR) sharedTmpBuffer 字节（host 官方接口算好）
     int64_t vocabStart;         // vocab_start_index
     int64_t vocabEnd;           // vocab_end_index
+    // --- 新增：非连续 stride 支持（isInplace 由 kernel 类模板参数 IS_INPLACE 提供，不进 TilingData）---
+    int64_t logitsRowStride; // vocab_parallel_logits 实际行 stride（元素数）
 };
 
 #endif // CROSS_ENTROPY_SUM_EXP_AND_INDEX_LOGIT_ARCH35_STRUCT_H_

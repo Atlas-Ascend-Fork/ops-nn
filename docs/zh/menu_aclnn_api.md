@@ -268,6 +268,7 @@
 - [aclnnIndexPutImpl](../../index/index_put_v2/docs/aclnnIndexPutImpl.md)
 - [aclnnIndexSelect](../../index/gather_v2/docs/aclnnIndexSelect.md)
 - [aclnnInplaceAddRmsNorm](../../norm/inplace_add_rms_norm/docs/aclnnInplaceAddRmsNorm.md)
+- [aclnnInplaceCrossEntropySumExpAndIndexLogit](../../loss/inplace_cross_entropy_sum_exp_and_index_logit/docs/aclnnInplaceCrossEntropySumExpAndIndexLogit.md)
 - [aclnnInplaceMaskedScatter](../../index/masked_scatter/docs/aclnnInplaceMaskedScatter.md)
 - [aclnnInplacePut](../../index/scatter_nd_update/docs/aclnnInplacePut.md)
 - [aclnnInplaceQuantScatter](../../index/quant_update_scatter/docs/aclnnInplaceQuantScatter.md)

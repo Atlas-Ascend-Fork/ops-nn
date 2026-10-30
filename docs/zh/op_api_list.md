@@ -299,6 +299,7 @@
 | [aclnnIndexFill&aclnnInplaceIndexFill](../../index/index_fill_d/docs/aclnnIndexFill&aclnnInplaceIndexFill.md) | 沿输入self的给定轴dim，将index指定位置的值使用value进行替换。 | 默认确定性实现 | 默认确定性实现 |
 | [aclnnIndexFillTensor&aclnnInplaceIndexFillTensor](../../index/index_fill_d/docs/aclnnIndexFillTensor&aclnnInplaceIndexFillTensor.md) | 沿输入self的给定轴dim，将index指定位置的值使用value进行替换。 | 默认确定性实现 | 默认确定性实现 |
 | [aclnnIndexPutImpl](../../index/index_put_v2/docs/aclnnIndexPutImpl.md) | 根据索引indices将输入x对应坐标的数据与输入value进行替换或累加。 | 默认非确定性实现，支持配置开启 | 默认非确定性实现，支持配置开启 |
+| [aclnnInplaceCrossEntropySumExpAndIndexLogit](../../loss/inplace_cross_entropy_sum_exp_and_index_logit/docs/aclnnInplaceCrossEntropySumExpAndIndexLogit.md) | 面向vocab并行（Tensor Parallel）场景的CrossEntropy本地计算融合算子（原地更新版）。 | - | 默认确定性实现 |
 | [aclnnInplacePut](../../index/scatter_nd_update/docs/aclnnInplacePut.md) | 将selfRef视为一维张量，把index张量中元素值作为索引，如果accumulate为true，把source中元素和selfRef对应的位置上元素做累加操作；如果accumulate为false，把source中元素替换掉selfRef对应位置上的元素。 | 默认确定性实现 | 默认非确定性实现，支持配置开启 |
 | [aclnnInplaceScatterUpdate](../../index/scatter/docs/aclnnInplaceScatterUpdate.md) | 将tensor updates中的值按指定的轴axis和索引indices逐个更新tensor data中的值。该算子为自定义算子语义，无对应的tensorflow或pytorch接口。 | 默认确定性实现 | 默认非确定性实现，支持配置开启 |
 | [aclnnIndexSelect](../../index/gather_v2/docs/aclnnIndexSelect.md) | 从输入Tensor的指定维度dim，按index中的下标序号提取元素，保存到out Tensor中。 | 默认确定性实现 | 默认确定性实现 |

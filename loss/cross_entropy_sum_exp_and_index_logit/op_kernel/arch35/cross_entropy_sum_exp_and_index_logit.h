@@ -33,8 +33,10 @@
 namespace CrossEntropySumExpAndIndexLogit {
 using namespace AscendC;
 
-// ===== Kernel 主类 =====
-template <typename T>
+// IS_INPLACE：原地更新版本开关。true 时 exp_logits_phi 不再写入独立显存，而是原地覆盖
+//   vocab_parallel_logits_phi 的存储（expGm_ 绑定到 vocab_parallel_logits 地址）。
+//   默认 false，保证原算子编译期与本特性完全无关，二进制行为零变化。
+template <typename T, bool IS_INPLACE = false>
 class KernelCrossEntropyRegbase {
 public:
     __aicore__ inline void Init(GM_ADDR vocabParallelLogits, GM_ADDR target, GM_ADDR globalLogitsMax,
@@ -49,6 +51,12 @@ public:
         vocabEnd_ = t->vocabEnd;
         rowBlockMax_ = t->rowBlockMax;
         reduceTmpBytes_ = t->reduceTmpBytes;
+        // 非连续寻址：inplace 版读 TilingData 实际行 stride；非原地版等价连续，直接用 vLocal_
+        if constexpr (IS_INPLACE) {
+            logitsRowStride_ = t->logitsRowStride;
+        } else {
+            logitsRowStride_ = t->vLocal;
+        }
 
         // 两级均衡切分：核间 floor+remainder 均分 token，每核独立内循环参数
         //   头核(blockIdx < headCoreNum): tokensPerCore, blockNum=headBlockNum
@@ -204,8 +212,8 @@ private:
         SetWaitFlag<HardEvent::V_S>(); // Duplicate(V) 完成后再 SetValue(S)，同时覆盖 VF1 StoreAlign
         for (int64_t i = 0; i < curN; ++i) {
             if (msk.GetValue(i) == 0) {
-                int64_t o = static_cast<int64_t>(off.GetValue(i));       // 0 ~ vLocal-1
-                T raw = logitsGm_.GetValue((baseRow + i) * vLocal_ + o); // GM 标量读
+                int64_t o = static_cast<int64_t>(off.GetValue(i));                // 0 ~ vLocal-1
+                T raw = logitsGm_.GetValue((baseRow + i) * logitsRowStride_ + o); // GM 标量读（非连续用 rowStride）
                 // BF16→FP32：bfloat16_t 标量与 float 互转必须走 AscendC::Cast intrinsic，
                 // 禁止 static_cast（device bisheng backend 无内置 bf16 隐式转换）
                 float logit;
@@ -265,15 +273,15 @@ private:
             int64_t vOff = vt * vTile_;
             int64_t curV = (vt == vLoopNum_ - NUM_ONE) ? lastVTile_ : vTile_;
 
-            // CopyIn logits[curN, curV]（行优先，行间 stride = vLocal - curV）
+            // CopyIn logits[curN, curV]（行优先，行间 stride = logitsRowStride - curV）
             LocalTensor<T> xin = inQue_.template AllocTensor<T>();
             DataCopyPadExtParams<T> padParams{false, 0, 0, 0};
             DataCopyExtParams inParams;
             inParams.blockCount = static_cast<uint16_t>(curN);
             inParams.blockLen = static_cast<uint32_t>(curV * sizeof(T));
-            inParams.srcStride = static_cast<uint32_t>((vLocal_ - curV) * sizeof(T));
+            inParams.srcStride = static_cast<uint32_t>((logitsRowStride_ - curV) * sizeof(T));
             inParams.dstStride = 0;
-            DataCopyPad(xin, logitsGm_[baseRow * vLocal_ + vOff], inParams, padParams);
+            DataCopyPad(xin, logitsGm_[baseRow * logitsRowStride_ + vOff], inParams, padParams);
             inQue_.EnQue(xin);
             xin = inQue_.template DeQue<T>();
 
@@ -292,15 +300,40 @@ private:
             // 行规约求和累加（固定顺序，确定性）：tileSum[curN] = sum_j xout[i, j]
             ReduceRowsBlockwise(tileSum, xout, redTmp, curN, curV);
 
-            // 搬出 exp_logits：xout 已是 exp 结果，EnQue → CopyOut
+            // 搬出 exp_logits：xout 已是 exp 结果
+            // 原地 BF16：先 Cast FP32→BF16 原地窄化（EnQue 前完成，被 V→MTE3 同步覆盖），再以 BF16 写回
+            // 原地 FP32：直接以 FP32 写回 vocab_parallel_logits
+            // 非原地：写 FP32 到独立 exp_logits 输出
+            if constexpr (IS_INPLACE && std::is_same<T, bfloat16_t>::value) {
+                LocalTensor<bfloat16_t> xoutBf16 = xout.ReinterpretCast<bfloat16_t>();
+                Cast(xoutBf16, xout, RoundMode::CAST_RINT, static_cast<int32_t>(curN * curV));
+            }
             expOutQue_.EnQue(xout);
             xout = expOutQue_.template DeQue<float>();
             DataCopyExtParams outParams;
-            outParams.blockCount = static_cast<uint16_t>(curN);
-            outParams.blockLen = static_cast<uint32_t>(curV * sizeof(float));
-            outParams.srcStride = 0;
-            outParams.dstStride = static_cast<uint32_t>((vLocal_ - curV) * sizeof(float));
-            DataCopyPad(expGm_[baseRow * vLocal_ + vOff], xout, outParams);
+            if constexpr (IS_INPLACE) {
+                if constexpr (std::is_same<T, bfloat16_t>::value) {
+                    LocalTensor<bfloat16_t> xoutBf16 = xout.ReinterpretCast<bfloat16_t>();
+                    outParams.blockCount = static_cast<uint16_t>(curN);
+                    outParams.blockLen = static_cast<uint32_t>(curV * sizeof(bfloat16_t));
+                    outParams.srcStride = 0;
+                    outParams.dstStride = static_cast<uint32_t>((logitsRowStride_ - curV) * sizeof(bfloat16_t));
+                    GlobalTensor<bfloat16_t> expGmBf16 = expGm_.template ReinterpretCast<bfloat16_t>();
+                    DataCopyPad(expGmBf16[baseRow * logitsRowStride_ + vOff], xoutBf16, outParams);
+                } else {
+                    outParams.blockCount = static_cast<uint16_t>(curN);
+                    outParams.blockLen = static_cast<uint32_t>(curV * sizeof(float));
+                    outParams.srcStride = 0;
+                    outParams.dstStride = static_cast<uint32_t>((logitsRowStride_ - curV) * sizeof(float));
+                    DataCopyPad(expGm_[baseRow * logitsRowStride_ + vOff], xout, outParams);
+                }
+            } else {
+                outParams.blockCount = static_cast<uint16_t>(curN);
+                outParams.blockLen = static_cast<uint32_t>(curV * sizeof(float));
+                outParams.srcStride = 0;
+                outParams.dstStride = static_cast<uint32_t>((logitsRowStride_ - curV) * sizeof(float));
+                DataCopyPad(expGm_[baseRow * logitsRowStride_ + vOff], xout, outParams);
+            }
             expOutQue_.FreeTensor(xout);
             inQue_.FreeTensor(xin);
 
@@ -395,6 +428,7 @@ private:
 
     // Tiling 缓存
     int64_t vLocal_{0};
+    int64_t logitsRowStride_{0}; // 实际行 stride（inplace 读 TilingData，非原地 = vLocal_）
     int64_t vTile_{0};
     int64_t vLoopNum_{0};
     int64_t lastVTile_{0};
