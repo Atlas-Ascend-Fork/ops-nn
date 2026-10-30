@@ -27,6 +27,7 @@ static constexpr size_t LR_INDEX = 4;
 static constexpr size_t L1_INDEX = 5;
 static constexpr size_t L2_INDEX = 6;
 static constexpr size_t LR_POWER_INDEX = 7;
+static constexpr const char* INPUT_NAMES[] = {"var", "accum", "linear", "grad", "lr", "l1", "l2", "lr_power"};
 
 namespace ops {
 static ge::graphStatus ReportInferShapeFailure(const char* opName, const char* reason)
@@ -84,8 +85,25 @@ static ge::graphStatus InferShapeForApplyFtrl(gert::InferShapeContext* context)
 
 static graphStatus InferDataTypeForApplyFtrl(gert::InferDataTypeContext* context)
 {
-    context->SetOutputDataType(VAR_INDEX, context->GetInputDataType(VAR_INDEX));
-    return GRAPH_SUCCESS;
+    if (context == nullptr) {
+        return ReportInferShapeFailure("ApplyFtrl", "InferDataTypeContext is nullptr");
+    }
+    const auto dtype = context->GetInputDataType(VAR_INDEX);
+    OP_CHECK_IF(dtype != ge::DT_FLOAT && dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16,
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "var", Ops::Base::ToString(dtype).c_str(),
+                                          "FLOAT, FLOAT16 or BF16"),
+                return ge::GRAPH_FAILED);
+    for (size_t i = ACCUM_INDEX; i <= LR_POWER_INDEX; ++i) {
+        OP_CHECK_IF(context->GetInputDataType(i) != dtype,
+                    OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), INPUT_NAMES[i],
+                                              Ops::Base::ToString(context->GetInputDataType(i)).c_str(),
+                                              Ops::Base::ToString(dtype).c_str()),
+                    return ge::GRAPH_FAILED);
+    }
+    if (context->SetOutputDataType(VAR_INDEX, dtype) != ge::GRAPH_SUCCESS) {
+        return ReportInferShapeFailure(context->GetNodeName(), "Failed to set output var dtype");
+    }
+    return ge::GRAPH_SUCCESS;
 }
 
 IMPL_OP_INFERSHAPE(ApplyFtrl).InferShape(InferShapeForApplyFtrl).InferDataType(InferDataTypeForApplyFtrl);

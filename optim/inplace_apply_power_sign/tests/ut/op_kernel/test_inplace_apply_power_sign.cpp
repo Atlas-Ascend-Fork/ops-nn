@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <limits>
 #include "gtest/gtest.h"
 
 #ifdef __CCE_KT_TEST__
@@ -268,4 +269,115 @@ TEST_F(InplaceApplyPowerSignKernelTest, test_fp32_negative_grad)
     }
 
     buf.Free();
+}
+
+// Category checks use exact identities and IEEE special values rather than
+// duplicating the device implementation or introducing a looser tolerance.
+static void CheckScalarEdge(float momentum, float learningRate, float logbase, float gradient, float expectedVar,
+                            float expectedM, float initialVar = 1.0f, float beta = 0.0f, float signDecay = 1.0f,
+                            size_t count = 128)
+{
+    const size_t N = count;
+    GmBufs buf;
+    buf.Alloc(N * sizeof(float), sizeof(InplaceApplyPowerSignTilingData));
+    for (size_t i = 0; i < N; ++i) {
+        reinterpret_cast<float*>(buf.var)[i] = initialVar;
+        reinterpret_cast<float*>(buf.m)[i] = momentum;
+        reinterpret_cast<float*>(buf.grad)[i] = gradient;
+    }
+    buf.SetScalars(learningRate, logbase, signDecay, beta);
+    FillTilingData(reinterpret_cast<InplaceApplyPowerSignTilingData*>(buf.tiling), N, N);
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    ICPU_RUN_KF(inplace_apply_power_sign, 1, buf.var, buf.m, buf.lr, buf.logbase, buf.signDecay, buf.beta, buf.grad,
+                buf.varOut, buf.mOut, buf.workspace, buf.tiling);
+    for (size_t i = 0; i < N; ++i) {
+        const float actualVar = reinterpret_cast<float*>(buf.varOut)[i];
+        const float actualM = reinterpret_cast<float*>(buf.mOut)[i];
+        if (std::isnan(expectedVar)) {
+            EXPECT_TRUE(std::isnan(actualVar)) << "var at " << i;
+        } else {
+            EXPECT_EQ(actualVar, expectedVar) << "var at " << i;
+        }
+        if (std::isnan(expectedM)) {
+            EXPECT_TRUE(std::isnan(actualM)) << "m at " << i;
+        } else {
+            EXPECT_EQ(actualM, expectedM) << "m at " << i;
+        }
+    }
+    buf.Free();
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_zero_lr_does_not_multiply_overflowed_gradient)
+{
+    // exp(2) is finite. (0 * exp(2)) * FLT_MAX is zero;
+    // (exp(2) * FLT_MAX) * 0 incorrectly creates NaN.
+    const float largest = std::numeric_limits<float>::max();
+    CheckScalarEdge(0.0f, 0.0f, 2.0f, largest, 1.0f, largest);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_lr_product_overflow_precedes_gradient_product)
+{
+    // FLT_MAX * exp(2) overflows before multiplication by a tiny gradient.
+    CheckScalarEdge(0.0f, std::numeric_limits<float>::max(), 2.0f, 1.0e-20f, -std::numeric_limits<float>::infinity(),
+                    1.0e-20f);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_nan_momentum_propagates_to_var)
+{
+    // beta=0 and old m=Inf produce NaN; sign must not turn it into zero.
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    CheckScalarEdge(std::numeric_limits<float>::infinity(), 1.0f, 1.0f, 1.0f, nan, nan);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_subnormal_gradient_does_not_create_normal_update)
+{
+    // TF's worker uses DAZ: a large finite lr must not amplify a subnormal grad.
+    CheckScalarEdge(0.0f, 0x1p+126f, 0.0f, 0x1p-127f, 1.0f, 0.0f);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_min_normal_gradient_is_preserved)
+{
+    // The exact boundary stays normal; lr * grad is exactly one.
+    CheckScalarEdge(0.0f, 0x1p+126f, 0.0f, 0x1p-126f, 0.0f, 0x1p-126f);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_subnormal_var_is_flushed)
+{
+    CheckScalarEdge(0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0x1p-127f);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_momentum_underflow_is_flushed)
+{
+    // Both operands are normal; (1-beta) * grad underflows in the TF worker.
+    CheckScalarEdge(0.0f, 0.0f, 0.0f, 0x1p-126f, 1.0f, 0.0f, 1.0f, 0.5f);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_captured_exp_cancellation)
+{
+    // Frozen raw TF output for newly captured case826, flat index 185869.
+    // A one-ULP exp difference is amplified by cancellation in the var update.
+    constexpr float gradient = -0.8772921562194824f;
+    CheckScalarEdge(0.07383853942155838f, -0.027000000700354576f, 0.08299999684095383f, gradient, 9.313225746154785e-9f,
+                    gradient, 0.023646429181098938f, 0.0f, -0.020602652803063393f);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_exp_overflow_with_zero_lr_propagates_nan)
+{
+    // exp(100) overflows; the following zero * Inf must remain NaN.
+    CheckScalarEdge(0.0f, 0.0f, 100.0f, 1.0f, std::numeric_limits<float>::quiet_NaN(), 1.0f);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_exp_underflow_is_flushed_before_large_lr)
+{
+    // exp(-100) is subnormal, so FTZ precedes multiplication by finite FLT_MAX.
+    CheckScalarEdge(0.0f, std::numeric_limits<float>::max(), -100.0f, 1.0f, 1.0f, 1.0f);
+}
+
+TEST_F(InplaceApplyPowerSignKernelTest, test_small_and_partial_vector_tiles)
+{
+    for (size_t count : {1U, 17U, 65U, 129U}) {
+        SCOPED_TRACE(count);
+        CheckScalarEdge(0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, count);
+        CheckScalarEdge(0.0f, 0x1p+126f, 0.0f, 0x1p-127f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, count);
+    }
 }

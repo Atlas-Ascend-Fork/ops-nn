@@ -12,4 +12,9 @@ file(GLOB CURRENT_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOUR
 if(UT_TEST_ALL OR OP_HOST_UT)
     add_modules_ut_sources(HOSTNAME ${OP_TILING_MODULE_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR})
     add_modules_ut_sources(HOSTNAME ${OP_INFERSHAPE_MODULE_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR})
+    # Dtype inference is registered in op_graph; exercise that implementation in Host UTs.
+    if(TARGET ${OP_INFERSHAPE_MODULE_NAME}_cases_obj)
+        target_sources(${OP_INFERSHAPE_MODULE_NAME}_cases_obj PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_graph/inplace_apply_power_sign_graph_infer.cpp)
+    endif()
 endif()

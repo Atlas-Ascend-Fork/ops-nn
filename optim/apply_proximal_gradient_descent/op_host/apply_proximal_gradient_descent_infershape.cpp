@@ -21,19 +21,41 @@
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "log/log.h"
+#include "apply_proximal_gradient_descent_check.h"
 
 using namespace ge;
 
 namespace ops {
+using namespace ApplyProximalGradientDescentCheck;
 
 static ge::graphStatus InferShape4ApplyProximalGradientDescent(gert::InferShapeContext* context)
 {
-    const gert::Shape* varShape = context->GetInputShape(0);
-    if (varShape == nullptr) {
-        return ge::GRAPH_FAILED;
+    if (context == nullptr) {
+        return ReportInferenceFailure("ApplyProximalGradientDescent", "InferShapeContext is nullptr");
     }
+    const gert::Shape* varShape = context->GetInputShape(0);
+    OP_CHECK_IF(varShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     gert::Shape* outShape = context->GetOutputShape(0);
     if (outShape == nullptr) {
+        return ReportInferenceFailure(context->GetNodeName(), "Output var shape storage is nullptr");
+    }
+    using namespace ApplyProximalGradientDescentCheck;
+    for (size_t i = 0; i < INPUT_COUNT; ++i) {
+        const gert::Shape* shape = context->GetInputShape(i);
+        OP_CHECK_IF(shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), INPUT_NAMES[i]),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(!IsValidShape(*shape, true) || (i >= 1 && i <= 3 && !IsScalar(*shape, true)),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), INPUT_NAMES[i], Ops::Base::ToString(*shape).c_str(),
+                        "Dimensions must be valid; alpha, l1 and l2 must have shape [] or [1]"),
+                    return ge::GRAPH_FAILED);
+    }
+    if (!ShapesMatch(*varShape, *context->GetInputShape(4), true)) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "var and delta",
+            (Ops::Base::ToString(*varShape) + " and " + Ops::Base::ToString(*context->GetInputShape(4))).c_str(),
+            "Known dimensions must match");
         return ge::GRAPH_FAILED;
     }
     *outShape = *varShape;

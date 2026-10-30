@@ -12,6 +12,7 @@
  * \file apply_ftrl_tiling.cpp
  * \brief
  */
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -57,7 +58,11 @@ ge::graphStatus ApplyFtrlRegbaseTiling::CheckScalarShape(int32_t inputIdx)
                 return ge::GRAPH_FAILED);
     auto storageShape = inputShape->GetStorageShape();
     std::string paramName = SCALAR_INDEX_LIST.at(inputIdx);
-    OP_CHECK_IF((!storageShape.IsScalar() && storageShape.GetShapeSize() != 1),
+    bool scalarShapeValid = true;
+    for (size_t dim = 0; dim < storageShape.GetDimNum(); ++dim) {
+        scalarShapeValid = scalarShapeValid && storageShape.GetDim(dim) == 1;
+    }
+    OP_CHECK_IF(!scalarShapeValid,
                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingContext_->GetNodeName(), paramName.c_str(),
                                                       Ops::Base::ToString(storageShape).c_str(),
                                                       "The param must be a scalar(0D) or have shape size 1"),
@@ -111,6 +116,22 @@ ge::graphStatus ApplyFtrlRegbaseTiling::CheckShapeAndType()
     OP_CHECK_IF(inputVarDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), "var"),
                 return ge::GRAPH_FAILED);
     auto inputDtype = inputVarDesc->GetDataType();
+    OP_CHECK_IF(
+        inputDtype != ge::DT_FLOAT && inputDtype != ge::DT_FLOAT16 && inputDtype != ge::DT_BF16,
+        OP_LOGE_FOR_INVALID_DTYPE(tilingContext_->GetNodeName(), "var",
+                                  ge::TypeUtils::DataTypeToSerialString(inputDtype).c_str(), "fp32, fp16 or bf16"),
+        return ge::GRAPH_FAILED);
+    int64_t elements = 1;
+    for (size_t dim = 0; dim < inputStorageShape.GetDimNum(); ++dim) {
+        const auto size = inputStorageShape.GetDim(dim);
+        OP_CHECK_IF(
+            size < 0 || (size != 0 && elements > std::numeric_limits<int64_t>::max() / size),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                tilingContext_->GetNodeName(), "var", Ops::Base::ToString(inputStorageShape).c_str(),
+                "Storage dimensions must be resolved, nonnegative and have an element count representable in int64"),
+            return ge::GRAPH_FAILED);
+        elements *= size;
+    }
     for (const auto& pair : SCALAR_INDEX_LIST) {
         auto ret = CheckScalarShape(pair.first);
         if (ret != ge::GRAPH_SUCCESS) {
@@ -130,6 +151,46 @@ ge::graphStatus ApplyFtrlRegbaseTiling::CheckShapeAndType()
         if (ret != ge::GRAPH_SUCCESS) {
             return ret;
         }
+    }
+    auto outputShape = tilingContext_->GetOutputShape(0);
+    if (outputShape == nullptr) {
+        return ReportTilingFailure(tilingContext_->GetNodeName(), "Output var shape storage is nullptr");
+    }
+    auto outputDesc = tilingContext_->GetOutputDesc(0);
+    if (outputDesc == nullptr) {
+        return ReportTilingFailure(tilingContext_->GetNodeName(), "Output var descriptor is nullptr");
+    }
+    const auto& outputStorage = outputShape->GetStorageShape();
+    const auto& origin = inputShape->GetOriginShape();
+    // Native scalar lowering can retain a 0D output while promoting var to [1].
+    // Accept only these two canonical storage views with the same scalar origin.
+    const bool scalarStorageAlias = ((inputStorageShape.GetDimNum() == 0 && outputStorage.GetDimNum() == 1 &&
+                                      outputStorage.GetDim(0) == 1) ||
+                                     (outputStorage.GetDimNum() == 0 && inputStorageShape.GetDimNum() == 1 &&
+                                      inputStorageShape.GetDim(0) == 1)) &&
+                                    outputShape->GetOriginShape() == origin &&
+                                    (origin.GetDimNum() == 0 || (origin.GetDimNum() == 1 && origin.GetDim(0) == 1)) &&
+                                    inputVarDesc->GetOriginFormat() == ge::FORMAT_ND &&
+                                    inputVarDesc->GetStorageFormat() == ge::FORMAT_ND &&
+                                    outputDesc->GetOriginFormat() == ge::FORMAT_ND &&
+                                    outputDesc->GetStorageFormat() == ge::FORMAT_ND;
+    OP_CHECK_IF(outputStorage != inputStorageShape && !scalarStorageAlias,
+                OP_LOGE_FOR_INVALID_SHAPE(tilingContext_->GetNodeName(), "output var",
+                                          Ops::Base::ToString(outputStorage).c_str(),
+                                          Ops::Base::ToString(inputStorageShape).c_str()),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(outputDesc->GetDataType() != inputDtype,
+                OP_LOGE_FOR_INVALID_DTYPE(tilingContext_->GetNodeName(), "output var",
+                                          Ops::Base::ToString(outputDesc->GetDataType()).c_str(),
+                                          Ops::Base::ToString(inputDtype).c_str()),
+                return ge::GRAPH_FAILED);
+
+    auto attrs = tilingContext_->GetAttrs();
+    if (attrs != nullptr) {
+        auto useLocking = attrs->GetAttrPointer<bool>(0);
+        OP_CHECK_IF(useLocking != nullptr && *useLocking,
+                    OP_LOGE_FOR_INVALID_VALUE(tilingContext_->GetNodeName(), "use_locking", "true", "false"),
+                    return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -169,8 +230,8 @@ ge::graphStatus ApplyFtrlRegbaseTiling::SetTilingData()
     currentWorkspace[0] = SYS_WORKSPACE;
     tilingKey = GET_TPL_TILING_KEY(tiling_->elewiseTiling.scheMode);
     tilingContext_->SetTilingKey(tilingKey);
-    uint32_t numBlocks = static_cast<uint32_t>(tiling_->elewiseTiling.blockNum);
-    if (numBlocks == 0) {
+    const auto numBlocks = tiling_->elewiseTiling.blockNum;
+    if (numBlocks <= 0 || numBlocks > std::numeric_limits<uint32_t>::max()) {
         const auto& result = tiling_->elewiseTiling;
         return ReportTilingFailure(
             tilingContext_->GetNodeName(),
@@ -182,7 +243,7 @@ ge::graphStatus ApplyFtrlRegbaseTiling::SetTilingData()
                 ", dtype=" + ge::TypeUtils::DataTypeToSerialString(tilingContext_->GetInputDesc(0)->GetDataType()) +
                 ". Preserve input metadata and tiling logs for the opbase implementation owner.");
     }
-    tilingContext_->SetBlockDim(numBlocks);
+    tilingContext_->SetBlockDim(static_cast<uint32_t>(numBlocks));
     return ge::GRAPH_SUCCESS;
 }
 
@@ -212,6 +273,15 @@ ge::graphStatus ApplyFtrlRegbaseTiling::RunTiling()
                 ", actualBytes=" + std::to_string(actualBytes) + ". Check the registered maximum tiling data size.");
     }
     tiling_ = tilingContext_->GetTilingData<ApplyFtrlRegbaseTilingData>();
+    if (tiling_ == nullptr) {
+        return ReportTilingFailure(tilingContext_->GetNodeName(), "Typed tiling data buffer is nullptr");
+    }
+    // Empty states need one launchable block; the kernel returns without reading inputs.
+    if (tilingContext_->GetInputShape(0)->GetStorageShape().GetShapeSize() == 0) {
+        tiling_->elewiseTiling = {};
+        tiling_->elewiseTiling.blockNum = 1;
+        return SetTilingData();
+    }
     ret = DoElewiseTiling();
     OP_CHECK_IF(
         ret != ge::GRAPH_SUCCESS,

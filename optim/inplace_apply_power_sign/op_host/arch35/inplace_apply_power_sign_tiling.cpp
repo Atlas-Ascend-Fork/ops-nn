@@ -16,13 +16,14 @@
  */
 
 #include "inplace_apply_power_sign_tiling.h"
+#include "../inplace_apply_power_sign_host_guard.h"
+#include <algorithm>
+#include <limits>
 #include <graph/utils/type_utils.h>
 #include "platform/platform_ascendc.h"
 #include "log/log.h"
 #include "register/tilingdata_base.h"
 #include "register/op_impl_registry.h"
-#include "tiling/math/sign_tiling.h"
-#include "tiling/math/exp_tiling.h"
 #include "op_common/op_host/util/math_util.h"
 #include "op_common/op_host/util/platform_util.h"
 #include "../../op_kernel/arch35/inplace_apply_power_sign_tiling_data.h"
@@ -30,51 +31,58 @@
 
 namespace optiling {
 
+static ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+
 using Ops::Base::CeilAlign;      // 向上对齐
 using Ops::Base::CeilDiv;        // 向上整除
 using Ops::Base::FloorAlign;     // 向下对齐
 using Ops::Base::FloorDiv;       // 向下整除
-using Ops::Base::GetUbBlockSize; // UB 最小操作块大小（元素数）
+using Ops::Base::GetUbBlockSize; // UB 最小操作块大小（字节）
 
-constexpr int64_t MIN_TILING_BITS = 32768; // 每核最小分配粒度（bit），保证核间均衡
-constexpr int64_t ELEM_ALIGN_FACTOR = 512; // 元素对齐因子，满足 DataCopy 32B 对齐要求
-constexpr int64_t ALIGN_256_BYTES = 256;   // UB 地址 256B 对齐
-constexpr uint32_t SHARED_TMP_MIN_SIZE = 2048; // Sign/Exp API sharedTmp 保底大小（字节），防止 API 返回 0 时分配过小
-// UB buffer 数量（取 FP32 / FP16 / BF16 路径最坏情况）
-// BF16 路径: 5 个 bf16 queue + 6 个 FP32 buf = 等效 8.5 → 向上取整 9
-constexpr int64_t UB_BUF_COUNT = 9;
-
-static const gert::Shape g_vec_1_shape = {1};
-
-static inline const gert::Shape EnsureNotScalar(const gert::Shape& inShape)
-{
-    if (inShape.GetDimNum() == 0) {
-        return g_vec_1_shape;
-    }
-    return inShape;
-}
+constexpr int64_t MIN_TILING_BITS = 32768;   // 每核最小分配粒度（bit），保证核间均衡
+constexpr int64_t ELEM_ALIGN_FACTOR = 512;   // 元素对齐因子，满足 DataCopy 32B 对齐要求
+constexpr int64_t SCALAR_BUFFER_BYTES = 256; // 8 个 32B 槽，与 kernel scalarBuf 保持一致
 
 static ge::graphStatus CheckInputRankLimit(gert::TilingContext* context, int64_t inputIndex, const char* inputName)
 {
     auto inputShape = context->GetInputShape(inputIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputShape);
-    auto shape = EnsureNotScalar(inputShape->GetStorageShape());
+    OP_CHECK_IF(inputShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), inputName),
+                return ge::GRAPH_FAILED);
+    const auto& shape = inputShape->GetStorageShape();
     OP_CHECK_IF(
         shape.GetDimNum() > 8,
-        OP_LOGE(context, "InplaceApplyPowerSign: input %s rank %ld exceeds max 8", inputName, shape.GetDimNum()),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), inputName,
+                                                 std::to_string(shape.GetDimNum()).c_str(), "Rank must not exceed 8"),
         return ge::GRAPH_FAILED);
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        OP_CHECK_IF(
+            shape.GetDim(i) < 0,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), inputName, Ops::Base::ToString(shape).c_str(),
+                                                  "Storage dimensions must be resolved and nonnegative"),
+            return ge::GRAPH_FAILED);
+    }
     return ge::GRAPH_SUCCESS;
 }
 
 static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t* ubSize, int64_t* coreNum)
 {
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
+    if (platformInfoPtr == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "PlatformInfo is nullptr");
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     *coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF(*coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(*coreNum == 0, ReportTilingFailure(context->GetNodeName(), "Available vector core count is zero"),
+                return ge::GRAPH_FAILED);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, *ubSize);
-    OP_CHECK_IF(*ubSize == 0, OP_LOGE(context, "ubSize is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(*ubSize == 0, ReportTilingFailure(context->GetNodeName(), "UB size is zero"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -82,25 +90,33 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
                                          ge::DataType* dataType)
 {
     auto varInput = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varInput);
-    auto varShape = EnsureNotScalar(varInput->GetStorageShape());
+    OP_CHECK_IF(varInput == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
+    const auto& varShape = varInput->GetStorageShape();
 
     auto mInput = context->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mInput);
-    auto mShape = EnsureNotScalar(mInput->GetStorageShape());
+    OP_CHECK_IF(mInput == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "m"), return ge::GRAPH_FAILED);
+    const auto& mShape = mInput->GetStorageShape();
 
     auto gradInput = context->GetInputShape(6);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradInput);
-    auto gradShape = EnsureNotScalar(gradInput->GetStorageShape());
+    OP_CHECK_IF(gradInput == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "grad"),
+                return ge::GRAPH_FAILED);
+    const auto& gradShape = gradInput->GetStorageShape();
 
-    OP_CHECK_IF(varShape.GetShapeSize() != mShape.GetShapeSize() || varShape.GetShapeSize() != gradShape.GetShapeSize(),
-                OP_LOGE(context, "InplaceApplyPowerSign: var/m/grad shape mismatch"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        varShape != mShape || varShape != gradShape,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "var, m and grad",
+            (Ops::Base::ToString(varShape) + ", " + Ops::Base::ToString(mShape) + ", " + Ops::Base::ToString(gradShape))
+                .c_str(),
+            "Storage shapes must match"),
+        return ge::GRAPH_FAILED);
 
     constexpr int64_t TOTAL_RANK_INPUTS = 7;
     const char* rankInputNames[] = {"var", "m", "lr", "logbase", "sign_decay", "beta", "grad"};
     for (int64_t i = 0; i < TOTAL_RANK_INPUTS; ++i) {
         OP_CHECK_IF(CheckInputRankLimit(context, i, rankInputNames[i]) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context, "InplaceApplyPowerSign: rank check failed for input %s", rankInputNames[i]),
+                    OP_LOGE_WITHOUT_REPORT(context, "Input validation failed for %s", rankInputNames[i]),
                     return ge::GRAPH_FAILED);
     }
 
@@ -109,67 +125,72 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     const char* scalarNames[] = {"lr", "logbase", "sign_decay", "beta"};
     for (int64_t i = SCALAR_INPUT_START; i <= SCALAR_INPUT_END; ++i) {
         auto scalarInput = context->GetInputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, scalarInput);
-        auto scalarShape = EnsureNotScalar(scalarInput->GetStorageShape());
-        OP_CHECK_IF(scalarShape.GetShapeSize() != 1,
-                    OP_LOGE(context, "InplaceApplyPowerSign: %s must be a scalar (shape_size=1), got %ld",
-                            scalarNames[i - SCALAR_INPUT_START], scalarShape.GetShapeSize()),
+        OP_CHECK_IF(scalarInput == nullptr,
+                    OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), scalarNames[i - SCALAR_INPUT_START]),
+                    return ge::GRAPH_FAILED);
+        const auto& scalarShape = scalarInput->GetStorageShape();
+        OP_CHECK_IF(scalarShape.GetDimNum() > 1 || (scalarShape.GetDimNum() == 1 && scalarShape.GetDim(0) != 1),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), scalarNames[i - SCALAR_INPUT_START],
+                                                          Ops::Base::ToString(scalarShape).c_str(),
+                                                          "Scalar inputs must have shape [] or [1]"),
                     return ge::GRAPH_FAILED);
     }
 
     auto inputDesc = context->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+    OP_CHECK_IF(inputDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     *dataType = inputDesc->GetDataType();
 
     const std::set<ge::DataType> supportedDtype = {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16};
     OP_CHECK_IF(supportedDtype.count(*dataType) == 0,
-                OP_LOGE(context, "InplaceApplyPowerSign: unsupported dtype %d", static_cast<int32_t>(*dataType)),
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "var", Ops::Base::ToString(*dataType).c_str(),
+                                          "FLOAT, FLOAT16 or BF16"),
                 return ge::GRAPH_FAILED);
 
     constexpr int64_t TOTAL_INPUTS = 7;
     const char* inputNames[] = {"var", "m", "lr", "logbase", "sign_decay", "beta", "grad"};
     for (int64_t i = 1; i < TOTAL_INPUTS; ++i) {
         auto desc = context->GetInputDesc(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, desc);
+        OP_CHECK_IF(desc == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), inputNames[i]),
+                    return ge::GRAPH_FAILED);
         auto dt = desc->GetDataType();
         OP_CHECK_IF(dt != *dataType,
-                    OP_LOGE(context, "InplaceApplyPowerSign: input %s dtype %d mismatch with var dtype %d",
-                            inputNames[i], static_cast<int32_t>(dt), static_cast<int32_t>(*dataType)),
+                    OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), inputNames[i], Ops::Base::ToString(dt).c_str(),
+                                              Ops::Base::ToString(*dataType).c_str()),
                     return ge::GRAPH_FAILED);
     }
 
-    *dim0 = varShape.GetShapeSize();
     uint32_t dtypeLen = 0;
-    OP_CHECK_IF(
-        !ge::TypeUtils::GetDataTypeLength(*dataType, dtypeLen) || dtypeLen == 0,
-        OP_LOGE(context, "InplaceApplyPowerSign: GetDataTypeLength failed for dtype %d", static_cast<int>(*dataType)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!ge::TypeUtils::GetDataTypeLength(*dataType, dtypeLen) || dtypeLen == 0,
+                ReportTilingFailure(context->GetNodeName(),
+                                    "Cannot obtain byte length for validated dtype " + Ops::Base::ToString(*dataType)),
+                return ge::GRAPH_FAILED);
     *dtypeSize = static_cast<int32_t>(dtypeLen);
 
+    // Validate every dimension before multiplying, including dimensions after a zero.
+    // Limit the byte count as well so all kernel GM offsets remain representable.
+    int64_t elemNum = 1;
+    const int64_t maxElemNum = std::numeric_limits<int64_t>::max() / *dtypeSize;
+    bool isEmpty = false;
+    for (size_t i = 0; i < varShape.GetDimNum(); ++i) {
+        isEmpty = isEmpty || varShape.GetDim(i) == 0;
+    }
+    if (isEmpty) {
+        elemNum = 0;
+    } else {
+        for (size_t i = 0; i < varShape.GetDimNum(); ++i) {
+            const int64_t dim = varShape.GetDim(i);
+            OP_CHECK_IF(elemNum > maxElemNum / dim,
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "var",
+                                                              Ops::Base::ToString(varShape).c_str(),
+                                                              "Tensor byte size must be representable in int64"),
+                        return ge::GRAPH_FAILED);
+            elemNum *= dim;
+        }
+    }
+    *dim0 = elemNum;
+
     return ge::GRAPH_SUCCESS;
-}
-
-// Compute sharedTmpSize for Sign/Exp APIs using official tiling interfaces
-static uint32_t ComputeSharedTmpSize(int64_t tileSize)
-{
-    ge::Shape srcShape(std::vector<int64_t>{tileSize});
-
-    uint32_t signMaxSize = 0, signMinSize = 0;
-    AscendC::GetSignMaxMinTmpSize(srcShape, static_cast<uint32_t>(sizeof(float)), false, signMaxSize, signMinSize);
-
-    uint32_t expMaxSize = 0, expMinSize = 0;
-    bool expOk = AscendC::GetExpMaxMinTmpSize(srcShape, static_cast<uint32_t>(sizeof(float)), false, expMaxSize,
-                                              expMinSize);
-
-    uint32_t sharedTmpSize = signMinSize;
-    if (expOk && expMinSize > sharedTmpSize) {
-        sharedTmpSize = expMinSize;
-    }
-
-    if (sharedTmpSize < SHARED_TMP_MIN_SIZE) {
-        sharedTmpSize = SHARED_TMP_MIN_SIZE;
-    }
-    return sharedTmpSize;
 }
 
 // Kernel 不读写 workspace (no extra scratch GM needed), workspace 上报 0.
@@ -179,12 +200,14 @@ static uint32_t ComputeSharedTmpSize(int64_t tileSize)
 static ge::graphStatus SetWorkspace(gert::TilingContext* context)
 {
     size_t* ws = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, ws);
+    if (ws == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "Workspace output container has no capacity for one slot");
+    }
     ws[0] = 0;
     return ge::GRAPH_SUCCESS;
 }
 
-// Select the kernel template, reserve system workspace, and commit the tiling
+// Select the kernel template, report workspace requirements, and commit the tiling
 // data size. The tiling struct itself is written directly into the raw buffer
 // via GetTilingData<T>() (see InplaceApplyPowerSignTilingFunc), matching the
 // sibling optim operators — no memcpy_s. The data size is set explicitly (as
@@ -194,11 +217,13 @@ static ge::graphStatus FinalizeTilingData(gert::TilingContext* context)
 {
     ASCENDC_TPL_SEL_PARAM(context, 0);
 
-    OP_CHECK_IF(SetWorkspace(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "SetWorkspace error"),
+    OP_CHECK_IF(SetWorkspace(context) != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context, "SetWorkspace failed"),
                 return ge::GRAPH_FAILED);
 
     auto rawTiling = context->GetRawTilingData();
-    OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
+    if (rawTiling == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "Raw tiling data buffer is nullptr");
+    }
     rawTiling->SetDataSize(sizeof(InplaceApplyPowerSignTilingData));
 
     return ge::GRAPH_SUCCESS;
@@ -210,12 +235,11 @@ static ge::graphStatus FinalizeTilingData(gert::TilingContext* context)
 static void FillEmptyTiling(gert::TilingContext* context, InplaceApplyPowerSignTilingData& tilingData)
 {
     OP_LOGW(context->GetNodeName(), "InplaceApplyPowerSign: dim0 is 0, empty tensor detected, returning empty output");
-    int64_t ubBlockSize = GetUbBlockSize(context);
     tilingData.coreNum = 1;
     tilingData.blockFormer = 1;
     tilingData.blockNum = 0;
-    tilingData.ubFormer = static_cast<int32_t>(ubBlockSize);
-    tilingData.sharedTmpSize = SHARED_TMP_MIN_SIZE;
+    tilingData.ubFormer = 0;
+    tilingData.sharedTmpSize = 0;
     tilingData.ubLoopOfFormerBlock = 0;
     tilingData.ubTailOfFormerBlock = 0;
     tilingData.ubLoopOfTailBlock = 0;
@@ -224,11 +248,11 @@ static void FillEmptyTiling(gert::TilingContext* context, InplaceApplyPowerSignT
 }
 
 // Compute core/UB split for the non-empty case and populate tilingData.
-static void ComputeTiling(gert::TilingContext* context, int64_t dim0, int32_t dtypeSize, uint64_t ubSize,
-                          int64_t availableCoreNum, InplaceApplyPowerSignTilingData& tilingData)
+static ge::graphStatus ComputeTiling(gert::TilingContext* context, int64_t dim0, int32_t dtypeSize, uint64_t ubSize,
+                                     int64_t availableCoreNum, InplaceApplyPowerSignTilingData& tilingData)
 {
     int64_t minDtypeBits = dtypeSize * 8;
-    int64_t coreNum = (dim0 * minDtypeBits + MIN_TILING_BITS - 1) / MIN_TILING_BITS;
+    int64_t coreNum = CeilDiv(dim0, MIN_TILING_BITS / minDtypeBits);
     if (coreNum > availableCoreNum) {
         coreNum = availableCoreNum;
     }
@@ -246,26 +270,22 @@ static void ComputeTiling(gert::TilingContext* context, int64_t dim0, int32_t dt
     tilingData.blockFormer = blockFormer;
     tilingData.blockNum = blockNum;
 
-    int64_t ubBlockSize = GetUbBlockSize(context);
-    int64_t perElemBudget = UB_BUF_COUNT * static_cast<int64_t>(sizeof(float));
-    int64_t maxElemNum = FloorDiv(static_cast<int64_t>(ubSize), perElemBudget);
-    int64_t ubFormer = FloorAlign(maxElemNum, ubBlockSize);
-    if (ubFormer < ubBlockSize) {
-        ubFormer = ubBlockSize;
-    }
+    // Match InitBuffer exactly: 5 dtype queues, 2/5 FP32 buffers, scalar staging.
+    // Basic Sign/Exp calls do not allocate shared temporary storage.
+    const int64_t elemAlign = GetUbBlockSize(context) / dtypeSize;
+    const int64_t fp32BufferCount = dtypeSize == sizeof(float) ? 2 : 5;
+    const int64_t perElemBudget = 5 * dtypeSize + fp32BufferCount * sizeof(float);
+    OP_CHECK_IF(ubSize > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
+                    ubSize < static_cast<uint64_t>(SCALAR_BUFFER_BYTES + elemAlign * perElemBudget),
+                ReportTilingFailure(context->GetNodeName(),
+                                    "UB cannot hold one aligned tile; ubSize=" + std::to_string(ubSize)),
+                return ge::GRAPH_FAILED);
+    int64_t maxElemNum = FloorDiv(static_cast<int64_t>(ubSize) - SCALAR_BUFFER_BYTES, perElemBudget);
+    maxElemNum = std::min(maxElemNum, static_cast<int64_t>(std::numeric_limits<int32_t>::max()));
+    // Avoid allocating a full UB for tiny tensors.
+    const int64_t ubFormer = FloorAlign(std::min(maxElemNum, CeilAlign(blockFormer, elemAlign)), elemAlign);
 
-    uint32_t sharedTmpSize = ComputeSharedTmpSize(ubFormer);
-    int64_t availableUb = static_cast<int64_t>(ubSize) - static_cast<int64_t>(sharedTmpSize);
-    if (availableUb < 0) {
-        availableUb = static_cast<int64_t>(ubSize) / 2;
-    }
-    maxElemNum = FloorDiv(availableUb, perElemBudget);
-    ubFormer = FloorAlign(maxElemNum, ubBlockSize);
-    if (ubFormer < ubBlockSize) {
-        ubFormer = ubBlockSize;
-    }
-
-    tilingData.sharedTmpSize = sharedTmpSize;
+    tilingData.sharedTmpSize = 0;
     tilingData.ubFormer = static_cast<int32_t>(ubFormer);
 
     int64_t ubLoopOfFormerBlock = CeilDiv(blockFormer, ubFormer);
@@ -281,30 +301,38 @@ static void ComputeTiling(gert::TilingContext* context, int64_t dim0, int32_t dt
     tilingData.ubTailOfTailBlock = ubTailOfTailBlock;
 
     context->SetBlockDim(static_cast<uint32_t>(blockNum));
+    return ge::GRAPH_SUCCESS;
 }
 
 static ge::graphStatus InplaceApplyPowerSignTilingFunc(gert::TilingContext* context)
 {
+    if (!ops::HasInplaceApplyPowerSignRequiredIo(context, "EZ1008")) {
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGI(context->GetNodeName(), "Enter InplaceApplyPowerSignTilingFunc");
 
     uint64_t ubSize;
     int64_t availableCoreNum;
     OP_CHECK_IF(GetPlatformInfo(context, &ubSize, &availableCoreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo failed"), return ge::GRAPH_FAILED);
 
     int64_t dim0;
     int32_t dtypeSize;
     ge::DataType dataType;
     OP_CHECK_IF(GetShapeAttrsInfo(context, &dim0, &dtypeSize, &dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetShapeAttrsInfo failed"), return ge::GRAPH_FAILED);
 
     // Write tiling fields directly into the raw tiling buffer (matching the
     // sibling optim operators). GetTilingData<T>() validates that the buffer
     // capacity holds sizeof(T) — returning nullptr otherwise — and sets the
     // data size internally, so no memcpy_s / SetDataSize is needed.
     auto tilingDataPtr = context->GetTilingData<InplaceApplyPowerSignTilingData>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, tilingDataPtr);
+    if (tilingDataPtr == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(),
+                                   "Tiling data buffer is nullptr or has insufficient capacity");
+    }
     InplaceApplyPowerSignTilingData& tilingData = *tilingDataPtr;
+    tilingData = {};
 
     tilingData.dim0 = dim0;
     tilingData.dtypeSize = dtypeSize;
@@ -316,7 +344,8 @@ static ge::graphStatus InplaceApplyPowerSignTilingFunc(gert::TilingContext* cont
         return FinalizeTilingData(context);
     }
 
-    ComputeTiling(context, dim0, dtypeSize, ubSize, availableCoreNum, tilingData);
+    OP_CHECK_IF(ComputeTiling(context, dim0, dtypeSize, ubSize, availableCoreNum, tilingData) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "ComputeTiling failed"), return ge::GRAPH_FAILED);
 
     return FinalizeTilingData(context);
 }

@@ -8,11 +8,12 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#include <gtest/gtest.h> // NOLINT
+#include <gtest/gtest.h>
+#include "base/context_builder/op_infer_datatype_context_builder.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h" // NOLINT
 #include <iostream>
 #include "infershape_test_util.h" // NOLINT
 #include "ut_op_common.h"
-#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "../../../op_graph/apply_ftrl_proto.h"
 
 class ApplyFtrl : public testing::Test {
@@ -131,4 +132,47 @@ TEST_F(ApplyFtrl, null_context_reports_infershape_failure_once)
     EXPECT_EQ(errors[0].error_id, "EZ1014");
     EXPECT_NE(errors[0].error_message.find("ApplyFtrl"), std::string::npos);
     EXPECT_NE(errors[0].error_message.find("InferShapeContext is nullptr"), std::string::npos);
+}
+
+TEST(ApplyFtrlErrorCodes, InferDtypeReportsOneSpecificError)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyFtrl");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_datatype, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    for (int changed = -2; changed < 8; ++changed) {
+        SCOPED_TRACE(changed);
+        gert::OpInferDataTypeContextBuilder builder;
+        builder.OpName("ApplyFtrl")
+            .OpType("ApplyFtrl")
+            .IOInstanceNum(std::vector<uint32_t>(8, 1), std::vector<uint32_t>(1, 1));
+        for (int i = 0; i < 8; ++i) {
+            auto dtype = changed == -1 ? ge::DT_INT32 : (changed == i ? ge::DT_FLOAT16 : ge::DT_FLOAT);
+            builder.InputTensorDesc(i, dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+        for (size_t i = 0; i < 1; ++i) {
+            builder.OutputTensorDesc(i, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+        auto holder = builder.Build();
+        auto* context = holder.GetContext();
+        ASSERT_NE(context, nullptr);
+        manager.GetRawErrorMessages();
+        const auto status = impl->infer_datatype(context);
+        const auto errors = manager.GetRawErrorMessages();
+        if (changed == -2) {
+            EXPECT_EQ(status, ge::GRAPH_SUCCESS);
+            EXPECT_TRUE(errors.empty());
+            EXPECT_EQ(context->GetOutputDataType(0), ge::DT_FLOAT);
+        } else {
+            EXPECT_EQ(status, ge::GRAPH_FAILED);
+            ASSERT_EQ(errors.size(), 1U);
+            EXPECT_EQ(errors[0].error_id, "EZ0019");
+        }
+    }
+    manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_datatype(nullptr), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1014");
 }

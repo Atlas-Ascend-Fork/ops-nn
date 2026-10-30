@@ -28,6 +28,9 @@ __global__ __aicore__ void apply_ftrl(GM_ADDR var, GM_ADDR accum, GM_ADDR linear
 {
     REGISTER_TILING_DEFAULT(ApplyFtrlRegbaseTilingData);
     GET_TILING_DATA_WITH_STRUCT(ApplyFtrlRegbaseTilingData, tilingData, tiling);
+    if (tilingData.elewiseTiling.dim0 == 0) {
+        return;
+    }
     TPipe pipe;
     ElementwiseSch<schMode, ApplyFtrlOp::ApplyFtrlDag<DTYPE_VAR>::OpDag> sch(&(tilingData.elewiseTiling), &pipe);
     sch.Init(var, accum, linear, grad, lr, l1, l2, lr_power, var_out, accum, linear);

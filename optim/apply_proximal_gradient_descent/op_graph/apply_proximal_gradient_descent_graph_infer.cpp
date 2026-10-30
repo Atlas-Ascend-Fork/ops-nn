@@ -12,14 +12,33 @@
 
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_datatype_context.h"
+#include "../op_host/apply_proximal_gradient_descent_check.h"
 
 using namespace ge;
 
 namespace ops {
+using namespace ApplyProximalGradientDescentCheck;
 
 static ge::graphStatus InferDataType4ApplyProximalGradientDescent(gert::InferDataTypeContext* context)
 {
-    context->SetOutputDataType(0, context->GetInputDataType(0));
+    if (context == nullptr) {
+        return ReportInferenceFailure("ApplyProximalGradientDescent", "InferDataTypeContext is nullptr");
+    }
+    const auto dtype = context->GetInputDataType(0);
+    OP_CHECK_IF(dtype != ge::DT_FLOAT && dtype != ge::DT_FLOAT16,
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "var", Ops::Base::ToString(dtype).c_str(),
+                                          "FLOAT or FLOAT16"),
+                return ge::GRAPH_FAILED);
+    for (size_t i = 1; i < ApplyProximalGradientDescentCheck::INPUT_COUNT; ++i) {
+        OP_CHECK_IF(context->GetInputDataType(i) != dtype,
+                    OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), INPUT_NAMES[i],
+                                              Ops::Base::ToString(context->GetInputDataType(i)).c_str(),
+                                              Ops::Base::ToString(dtype).c_str()),
+                    return ge::GRAPH_FAILED);
+    }
+    if (context->SetOutputDataType(0, dtype) != ge::GRAPH_SUCCESS) {
+        return ReportInferenceFailure(context->GetNodeName(), "Failed to set output var dtype");
+    }
     return ge::GRAPH_SUCCESS;
 }
 

@@ -16,6 +16,8 @@
  */
 
 #include <gtest/gtest.h>
+#include "base/context_builder/op_infer_datatype_context_builder.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include <iostream>
 #include "infershape_test_util.h"
 #include "ut_op_common.h"
@@ -134,4 +136,123 @@ TEST_F(InplaceApplyPowerSignInferShape, infershape_case_2_1d)
     std::vector<int64_t> expectedMOut = {16};
     EXPECT_EQ(ShapeToVec(*context->GetOutputShape(0)), expectedVarOut);
     EXPECT_EQ(ShapeToVec(*context->GetOutputShape(1)), expectedMOut);
+}
+
+TEST(InplaceApplyPowerSignErrorCodes, InferDtypeReportsOneSpecificError)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("InplaceApplyPowerSign");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_datatype, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    for (int changed = -2; changed < 7; ++changed) {
+        SCOPED_TRACE(changed);
+        gert::OpInferDataTypeContextBuilder builder;
+        builder.OpName("InplaceApplyPowerSign")
+            .OpType("InplaceApplyPowerSign")
+            .IOInstanceNum(std::vector<uint32_t>(7, 1), std::vector<uint32_t>(2, 1));
+        for (int i = 0; i < 7; ++i) {
+            auto dtype = changed == -1 ? ge::DT_INT32 : (changed == i ? ge::DT_FLOAT16 : ge::DT_FLOAT);
+            builder.InputTensorDesc(i, dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+        for (size_t i = 0; i < 2; ++i) {
+            builder.OutputTensorDesc(i, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+        auto holder = builder.Build();
+        auto* context = holder.GetContext();
+        ASSERT_NE(context, nullptr);
+        manager.GetRawErrorMessages();
+        const auto status = impl->infer_datatype(context);
+        const auto errors = manager.GetRawErrorMessages();
+        if (changed == -2) {
+            EXPECT_EQ(status, ge::GRAPH_SUCCESS);
+            EXPECT_TRUE(errors.empty());
+            EXPECT_EQ(context->GetOutputDataType(0), ge::DT_FLOAT);
+        } else {
+            EXPECT_EQ(status, ge::GRAPH_FAILED);
+            ASSERT_EQ(errors.size(), 1U);
+            EXPECT_EQ(errors[0].error_id, "EZ0019");
+        }
+    }
+    manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_datatype(nullptr), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1014");
+}
+
+TEST(InplaceApplyPowerSignErrorCodes, InferShapeReportsOneSpecificError)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("InplaceApplyPowerSign");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    const char* codes[] = {"EZ0010", "EZ0009", "EZ0004", "EZ1014"};
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        SCOPED_TRACE(scenario);
+        gert::Shape tensor{16}, scalar{1}, different{8}, invalidScalar{2}, output, outputM;
+        auto holder = gert::InferShapeContextFaker()
+                          .SetOpType("InplaceApplyPowerSign")
+                          .NodeIoNum(7, 2)
+                          .IrInstanceNum(std::vector<uint32_t>(7, 1))
+                          .InputShapes({&tensor, scenario == 0 ? &different : &tensor,
+                                        scenario == 1 ? &invalidScalar : &scalar, &scalar, &scalar, &scalar, &tensor})
+                          .OutputShapes({&output, &outputM})
+                          .Build();
+        auto* context = holder.GetContext<gert::InferShapeContext>();
+        ASSERT_NE(context, nullptr);
+        auto* kernelContext = holder.GetContext<gert::KernelContext>();
+        if (scenario == 2) {
+            kernelContext->MutableInput(0)->Set(nullptr, nullptr);
+            ASSERT_EQ(context->GetInputShape(0), nullptr);
+        }
+        if (scenario == 3) {
+            kernelContext->GetOutput(0)->Set(nullptr, nullptr);
+            ASSERT_EQ(context->GetOutputShape(0), nullptr);
+        }
+        manager.GetRawErrorMessages();
+        EXPECT_EQ(impl->infer_shape(context), ge::GRAPH_FAILED);
+        const auto errors = manager.GetRawErrorMessages();
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, codes[scenario]);
+    }
+    manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_shape(nullptr), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1014");
+}
+
+TEST(InplaceApplyPowerSignErrorCodes, InvalidIoCountsReportContextErrorOnce)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("InplaceApplyPowerSign");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_datatype, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    const std::vector<std::vector<uint32_t>> instances = {
+        {1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1}, {2, 0, 1, 1, 1, 1, 1}, {0, 2, 1, 1, 1, 1, 1}};
+    for (size_t scenario = 0; scenario < instances.size(); ++scenario) {
+        SCOPED_TRACE(scenario);
+        const size_t inputs = scenario == 0 ? 6 : 7;
+        const size_t outputs = scenario == 1 ? 1 : 2;
+        gert::OpInferDataTypeContextBuilder builder;
+        builder.OpName("InplaceApplyPowerSign")
+            .OpType("InplaceApplyPowerSign")
+            .IOInstanceNum(instances[scenario], std::vector<uint32_t>(outputs, 1));
+        for (size_t i = 0; i < inputs; ++i) {
+            builder.InputTensorDesc(i, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+        for (size_t i = 0; i < outputs; ++i) {
+            builder.OutputTensorDesc(i, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+        auto holder = builder.Build();
+        ASSERT_NE(holder.GetContext(), nullptr);
+        manager.GetRawErrorMessages();
+        EXPECT_EQ(impl->infer_datatype(holder.GetContext()), ge::GRAPH_FAILED);
+        const auto errors = manager.GetRawErrorMessages();
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, scenario == 3 ? "EZ0004" : "EZ1014");
+    }
 }

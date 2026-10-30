@@ -12,6 +12,8 @@
 
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_datatype_context.h"
+#include "log/log.h"
+#include "../op_host/inplace_apply_power_sign_host_guard.h"
 
 using namespace ge;
 
@@ -19,8 +21,27 @@ namespace ops {
 
 static ge::graphStatus InferDataType4InplaceApplyPowerSign(gert::InferDataTypeContext* context)
 {
-    context->SetOutputDataType(0, context->GetInputDataType(0));
-    context->SetOutputDataType(1, context->GetInputDataType(1));
+    if (!HasInplaceApplyPowerSignRequiredIo(context)) {
+        return ge::GRAPH_FAILED;
+    }
+    const auto dtype = context->GetInputDataType(0);
+    OP_CHECK_IF(dtype != ge::DT_FLOAT && dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16,
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "var", Ops::Base::ToString(dtype).c_str(),
+                                          "FLOAT, FLOAT16 or BF16"),
+                return ge::GRAPH_FAILED);
+    for (size_t i = 1; i < 7; ++i) {
+        OP_CHECK_IF(context->GetInputDataType(i) != dtype,
+                    OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), POWER_SIGN_INPUT_NAMES[i],
+                                              Ops::Base::ToString(context->GetInputDataType(i)).c_str(),
+                                              Ops::Base::ToString(dtype).c_str()),
+                    return ge::GRAPH_FAILED);
+    }
+    for (size_t i = 0; i < 2; ++i) {
+        if (context->SetOutputDataType(i, dtype) != ge::GRAPH_SUCCESS) {
+            return ReportPowerSignFailure(context->GetNodeName(),
+                                          "Failed to set output dtype at index " + std::to_string(i));
+        }
+    }
     return ge::GRAPH_SUCCESS;
 }
 

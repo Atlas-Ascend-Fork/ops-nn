@@ -10,6 +10,8 @@
 
 #include <iostream>
 #include <gtest/gtest.h>
+#include "base/context_builder/op_infer_datatype_context_builder.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "register/op_impl_registry.h"
 #include "kernel_run_context_facker.h"
 #include "../../../op_graph/apply_proximal_gradient_descent_proto.h"
@@ -128,4 +130,90 @@ TEST_F(ApplyProximalGradientDescentProtoTest, infershape_3d_fp32)
                       .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+}
+
+TEST(ApplyProximalGradientDescentErrorCodes, InferDtypeReportsOneSpecificError)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyProximalGradientDescent");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_datatype, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    for (int changed = -2; changed < 5; ++changed) {
+        SCOPED_TRACE(changed);
+        gert::OpInferDataTypeContextBuilder builder;
+        builder.OpName("ApplyProximalGradientDescent")
+            .OpType("ApplyProximalGradientDescent")
+            .IOInstanceNum(std::vector<uint32_t>(5, 1), std::vector<uint32_t>(1, 1));
+        for (int i = 0; i < 5; ++i) {
+            auto dtype = changed == -1 ? ge::DT_INT32 : (changed == i ? ge::DT_FLOAT16 : ge::DT_FLOAT);
+            builder.InputTensorDesc(i, dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+        for (size_t i = 0; i < 1; ++i) {
+            builder.OutputTensorDesc(i, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+        auto holder = builder.Build();
+        auto* context = holder.GetContext();
+        ASSERT_NE(context, nullptr);
+        manager.GetRawErrorMessages();
+        const auto status = impl->infer_datatype(context);
+        const auto errors = manager.GetRawErrorMessages();
+        if (changed == -2) {
+            EXPECT_EQ(status, ge::GRAPH_SUCCESS);
+            EXPECT_TRUE(errors.empty());
+            EXPECT_EQ(context->GetOutputDataType(0), ge::DT_FLOAT);
+        } else {
+            EXPECT_EQ(status, ge::GRAPH_FAILED);
+            ASSERT_EQ(errors.size(), 1U);
+            EXPECT_EQ(errors[0].error_id, "EZ0019");
+        }
+    }
+    manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_datatype(nullptr), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1014");
+}
+
+TEST(ApplyProximalGradientDescentErrorCodes, InferShapeReportsOneSpecificError)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyProximalGradientDescent");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    const char* codes[] = {"EZ0010", "EZ0009", "EZ0004", "EZ1014"};
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        SCOPED_TRACE(scenario);
+        gert::Shape tensor{16}, scalar{1}, different{8}, invalidScalar{2}, output, outputM;
+        auto holder = gert::InferShapeContextFaker()
+                          .SetOpType("ApplyProximalGradientDescent")
+                          .NodeIoNum(5, 1)
+                          .IrInstanceNum(std::vector<uint32_t>(5, 1))
+                          .InputShapes({&tensor, scenario == 1 ? &invalidScalar : &scalar, &scalar, &scalar,
+                                        scenario == 0 ? &different : &tensor})
+                          .OutputShapes({&output})
+                          .Build();
+        auto* context = holder.GetContext<gert::InferShapeContext>();
+        ASSERT_NE(context, nullptr);
+        auto* kernelContext = holder.GetContext<gert::KernelContext>();
+        if (scenario == 2) {
+            kernelContext->MutableInput(0)->Set(nullptr, nullptr);
+            ASSERT_EQ(context->GetInputShape(0), nullptr);
+        }
+        if (scenario == 3) {
+            kernelContext->GetOutput(0)->Set(nullptr, nullptr);
+            ASSERT_EQ(context->GetOutputShape(0), nullptr);
+        }
+        manager.GetRawErrorMessages();
+        EXPECT_EQ(impl->infer_shape(context), ge::GRAPH_FAILED);
+        const auto errors = manager.GetRawErrorMessages();
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, codes[scenario]);
+    }
+    manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_shape(nullptr), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1014");
 }

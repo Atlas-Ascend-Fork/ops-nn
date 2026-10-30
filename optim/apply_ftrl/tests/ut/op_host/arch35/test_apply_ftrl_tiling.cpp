@@ -71,8 +71,42 @@ static void InitPlatForm(fe::PlatFormInfos& platFormInfo, map<string, string>& s
 
 struct ApplyFtrlUtCompileInfo {};
 
+static void CheckApplyFtrlCoverage(gert::TilingContext* context, const std::initializer_list<int64_t>& shape)
+{
+    int64_t elements = 1;
+    for (auto dimension : shape) {
+        elements *= dimension;
+    }
+    auto raw = context->GetRawTilingData();
+    ASSERT_NE(raw, nullptr);
+    ASSERT_EQ(raw->GetDataSize(), sizeof(ApplyFtrlOpTiling::ApplyFtrlRegbaseTilingData));
+    const auto& tiling = static_cast<const ApplyFtrlOpTiling::ApplyFtrlRegbaseTilingData*>(raw->GetData())
+                             ->elewiseTiling;
+    EXPECT_EQ(tiling.dim0, elements);
+    EXPECT_EQ(context->GetBlockDim(), tiling.blockNum);
+    ASSERT_GT(tiling.blockNum, 0);
+    EXPECT_LE(tiling.blockNum, 64); // The fixture platform declares 64 cores.
+    if (elements == 0) {
+        EXPECT_EQ(tiling.blockNum, 1);
+        return;
+    }
+    EXPECT_LE(tiling.blockNum, elements);
+    ASSERT_GT(tiling.ubFormer, 0);
+    ASSERT_GT(tiling.ubLoopOfFormerBlock, 0);
+    ASSERT_GT(tiling.ubLoopOfTailBlock, 0);
+    ASSERT_GT(tiling.ubTailOfFormerBlock, 0);
+    ASSERT_GT(tiling.ubTailOfTailBlock, 0);
+    EXPECT_LE(tiling.ubTailOfFormerBlock, tiling.ubFormer);
+    EXPECT_LE(tiling.ubTailOfTailBlock, tiling.ubFormer);
+    const auto former = (tiling.ubLoopOfFormerBlock - 1) * tiling.ubFormer + tiling.ubTailOfFormerBlock;
+    const auto tail = (tiling.ubLoopOfTailBlock - 1) * tiling.ubFormer + tiling.ubTailOfTailBlock;
+    EXPECT_EQ(former, tiling.blockFormer);
+    EXPECT_LE(tail, former);
+    EXPECT_EQ((tiling.blockNum - 1) * former + tail, elements);
+}
+
 static void DoApplyFtrlTilingCase(std::initializer_list<int64_t>& inputShape, ge::DataType inputDtype,
-                                  ge::Format inputFormat, std::string& expectStr)
+                                  ge::Format inputFormat, std::string& expectStr, uint32_t expectBlockDim = 0)
 {
     // init platform
     fe::PlatFormInfos platFormInfo;
@@ -129,10 +163,25 @@ static void DoApplyFtrlTilingCase(std::initializer_list<int64_t>& inputShape, ge
     tiling_context->GetPlatformInfo()->SetPlatformRes("version", socVersion);
 
     // workspaces nullptr return failed
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+    CheckApplyFtrlCoverage(tiling_context, inputShape);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
     EXPECT_EQ(tiling_data_result, expectStr);
+    if (expectBlockDim != 0) {
+        EXPECT_EQ(tiling_context->GetBlockDim(), expectBlockDim);
+    }
+}
+
+TEST_F(TestApplyFtrlTiling, apply_ftrl_empty_states_have_launchable_noop_tiling)
+{
+    for (auto dtype : {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16}) {
+        for (auto shape : {std::initializer_list<int64_t>{0}, std::initializer_list<int64_t>{0, 1, 1, 1, 1, 1, 1, 1},
+                           std::initializer_list<int64_t>{2, 0, 3}}) {
+            std::string expected = "0 0 0 1 0 0 0 0 0 0 ";
+            DoApplyFtrlTilingCase(shape, dtype, ge::FORMAT_ND, expected, 1);
+        }
+    }
 }
 
 TEST_F(TestApplyFtrlTiling, apply_ftrl_testcase_float32)
@@ -141,7 +190,9 @@ TEST_F(TestApplyFtrlTiling, apply_ftrl_testcase_float32)
     std::initializer_list<int64_t> inputShape = {16, 26, 16, 19};
     auto inputDtype = ge::DT_FLOAT;
     auto inputFormat = ge::FORMAT_ND;
-    std::string expectStr = "126464 12094627905567 4096 31 2 2 1280 768 2816 1 ";
+    // The promoted tensor DAG changes UB planning: ubFormer=2560, while the
+    // 31-block partition and total coverage remain unchanged (checked above).
+    std::string expectStr = "126464 10995116277791 4096 31 2 2 1536 1024 2560 1 ";
     DoApplyFtrlTilingCase(inputShape, inputDtype, inputFormat, expectStr);
 }
 
@@ -164,6 +215,162 @@ TEST_F(TestApplyFtrlTiling, apply_ftrl_testcase_bfloat16)
     std::string expectStr = "7840 10995116277762 4096 2 2 2 1536 1184 2560 1 ";
     DoApplyFtrlTilingCase(inputShape, inputDtype, inputFormat, expectStr);
 }
+// Exercise validation before platform-dependent tiling, including malformed contexts.
+class ApplyFtrlValidation : public optiling::ApplyFtrlRegbaseTiling {
+public:
+    using ApplyFtrlRegbaseTiling::ApplyFtrlRegbaseTiling;
+    using ApplyFtrlRegbaseTiling::CheckShapeAndType;
+};
+
+static ge::graphStatus ValidateApplyFtrl(int changedInput = -1, gert::StorageShape changedShape = {{2, 3}, {2, 3}},
+                                         ge::DataType changedDtype = ge::DT_FLOAT, bool missingShape = false,
+                                         bool useLocking = false, bool changeOutput = false)
+{
+    // The native builder requires real context output storage even when this
+    // fixture only calls validation before platform-dependent tiling.
+    fe::PlatFormInfos platform;
+    map<string, string> socInfos, aicoreSpec, intrinsics;
+    map<string, string> socVersion = {{"Short_SoC_version", "ASCEND950"}};
+    InitPlatForm(platform, socInfos, aicoreSpec, intrinsics, socVersion);
+    ApplyFtrlUtCompileInfo compileInfo;
+    auto parameter = gert::TilingData::CreateCap(4096);
+    auto workspaceHolder = gert::ContinuousVector::Create<size_t>(4096);
+    if (parameter == nullptr || workspaceHolder == nullptr) {
+        ADD_FAILURE() << "Cannot allocate native validation fixture storage";
+        return ge::GRAPH_FAILED;
+    }
+    auto workspace = reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get());
+    gert::StorageShape tensor = {{2, 3}, {2, 3}};
+    gert::StorageShape scalar = {{}, {}};
+    std::vector<gert::StorageShape*> shapes = {&tensor, &tensor, &tensor, &tensor, &scalar, &scalar, &scalar, &scalar};
+    std::vector<ge::DataType> dtypes(8, ge::DT_FLOAT);
+    if (changedInput >= 0) {
+        // Build a valid complete context first. A nullptr InputShapes entry
+        // packs optional inputs instead of creating a missing required pointer.
+        if (!missingShape) {
+            shapes[changedInput] = &changedShape;
+        }
+        dtypes[changedInput] = changedDtype;
+    }
+    auto outputShape = changeOutput ? &changedShape : &tensor;
+    auto outputDtype = changeOutput ? changedDtype : ge::DT_FLOAT;
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("ApplyFtrl")
+                      .NodeIoNum(8, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes(shapes)
+                      .OutputShapes({outputShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform))
+                      .TilingData(parameter.get())
+                      .Workspace(workspace)
+                      .NodeInputTd(0, dtypes[0], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, dtypes[1], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, dtypes[2], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, dtypes[3], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, dtypes[4], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, dtypes[5], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, dtypes[6], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(7, dtypes[7], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, outputDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"use_locking", Ops::NN::AnyValue::CreateFrom<bool>(useLocking)}})
+                      .Build();
+    auto context = holder.GetContext<gert::TilingContext>();
+    if (context == nullptr || context->GetComputeNodeInfo() == nullptr) {
+        ADD_FAILURE() << "Native validation fixture did not build a valid context";
+        return ge::GRAPH_FAILED; // ADD_FAILURE also fails negative tests.
+    }
+    for (size_t index = 0; index < 8; ++index) {
+        if (context->GetInputShape(index) == nullptr || context->GetInputDesc(index) == nullptr) {
+            ADD_FAILURE() << "Native fixture input missing before fault injection: " << index;
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (missingShape) {
+        // Use the holder's public KernelContext view: ExtendedKernelContext
+        // inherits KernelContext with protected access in SDK 9.2.
+        auto kernelContext = holder.GetContext<gert::KernelContext>();
+        if (kernelContext == nullptr) {
+            ADD_FAILURE() << "Native fixture has no KernelContext view";
+            return ge::GRAPH_FAILED;
+        }
+        auto slot = kernelContext->MutableInput(static_cast<size_t>(changedInput));
+        if (slot == nullptr) {
+            ADD_FAILURE() << "Native fixture has no input slot for fault injection";
+            return ge::GRAPH_FAILED;
+        }
+        slot->Set(nullptr, nullptr);
+        if (context->GetInputShape(static_cast<size_t>(changedInput)) != nullptr) {
+            ADD_FAILURE() << "Native input pointer fault injection did not take effect";
+            return ge::GRAPH_FAILED;
+        }
+    }
+    ApplyFtrlValidation tiling(context);
+    return tiling.CheckShapeAndType();
+}
+
+TEST_F(TestApplyFtrlTiling, validation_accepts_scalar_and_singleton_shapes)
+{
+    EXPECT_EQ(ValidateApplyFtrl(), ge::GRAPH_SUCCESS);
+    for (int i = 4; i < 8; ++i) {
+        EXPECT_EQ(ValidateApplyFtrl(i, {{1}, {1}}), ge::GRAPH_SUCCESS);
+        EXPECT_EQ(ValidateApplyFtrl(i, {{1, 1}, {1, 1}}), ge::GRAPH_SUCCESS);
+    }
+}
+
+TEST_F(TestApplyFtrlTiling, validation_rejects_missing_input_shapes)
+{
+    for (int i = 0; i < 8; ++i) {
+        SCOPED_TRACE(i);
+        EXPECT_EQ(ValidateApplyFtrl(i, {}, ge::DT_FLOAT, true), ge::GRAPH_FAILED);
+    }
+}
+
+TEST_F(TestApplyFtrlTiling, validation_rejects_dtype_mismatch)
+{
+    for (int i = 0; i < 8; ++i) {
+        SCOPED_TRACE(i);
+        EXPECT_EQ(
+            ValidateApplyFtrl(i, i < 4 ? gert::StorageShape{{2, 3}, {2, 3}} : gert::StorageShape{}, ge::DT_FLOAT16),
+            ge::GRAPH_FAILED);
+    }
+    EXPECT_EQ(ValidateApplyFtrl(0, {{2, 3}, {2, 3}}, ge::DT_INT32), ge::GRAPH_FAILED);
+}
+
+TEST_F(TestApplyFtrlTiling, validation_rejects_tensor_shape_mismatch)
+{
+    for (int i = 1; i < 4; ++i) {
+        SCOPED_TRACE(i);
+        EXPECT_EQ(ValidateApplyFtrl(i, {{3, 2}, {3, 2}}), ge::GRAPH_FAILED);
+        EXPECT_EQ(ValidateApplyFtrl(i, {{6}, {6}}), ge::GRAPH_FAILED);
+    }
+}
+
+TEST_F(TestApplyFtrlTiling, validation_rejects_invalid_scalar_shapes)
+{
+    for (int i = 4; i < 8; ++i) {
+        SCOPED_TRACE(i);
+        for (const auto& dims : {std::initializer_list<int64_t>{0}, {2}, {-1}, {-1, -1}}) {
+            EXPECT_EQ(ValidateApplyFtrl(i, {dims, dims}), ge::GRAPH_FAILED);
+        }
+    }
+}
+
+TEST_F(TestApplyFtrlTiling, validation_rejects_invalid_output_and_locking)
+{
+    EXPECT_EQ(ValidateApplyFtrl(-1, {{3, 2}, {3, 2}}, ge::DT_FLOAT, false, false, true), ge::GRAPH_FAILED);
+    EXPECT_EQ(ValidateApplyFtrl(-1, {{2, 3}, {2, 3}}, ge::DT_FLOAT16, false, false, true), ge::GRAPH_FAILED);
+    EXPECT_EQ(ValidateApplyFtrl(-1, {}, ge::DT_FLOAT, false, true), ge::GRAPH_FAILED);
+}
+
+TEST_F(TestApplyFtrlTiling, validation_rejects_unknown_and_overflowing_runtime_shape)
+{
+    EXPECT_EQ(ValidateApplyFtrl(0, {{-1, 3}, {-1, 3}}), ge::GRAPH_FAILED);
+    EXPECT_EQ(ValidateApplyFtrl(0, {{INT64_MAX, 2}, {INT64_MAX, 2}}), ge::GRAPH_FAILED);
+    optiling::ApplyFtrlRegbaseTiling tiling(nullptr);
+    EXPECT_EQ(tiling.RunTiling(), ge::GRAPH_FAILED);
+}
+
 class ApplyFtrlTilingAccessor : public optiling::ApplyFtrlRegbaseTiling {
 public:
     using optiling::ApplyFtrlRegbaseTiling::ApplyFtrlRegbaseTiling;
@@ -353,4 +560,29 @@ TEST_F(TestApplyFtrlTiling, corrupted_successful_block_count_reports_tiling_fail
 TEST_F(TestApplyFtrlTiling, lower_tiling_failure_preserves_reports_without_adding_another)
 {
     CheckApplyFtrlError(9, "", "", "", "");
+}
+
+TEST_F(TestApplyFtrlTiling, RemainingValidationErrorsReportSpecificCodeOnce)
+{
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    const char* codes[] = {"EZ0008", "EZ0019", "EZ0024", "EZ0009"};
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        SCOPED_TRACE(scenario);
+        manager.GetRawErrorMessages();
+        ge::graphStatus status;
+        if (scenario == 0) {
+            status = ValidateApplyFtrl(-1, {{3, 2}, {3, 2}}, ge::DT_FLOAT, false, false, true);
+        } else if (scenario == 1) {
+            status = ValidateApplyFtrl(-1, {{2, 3}, {2, 3}}, ge::DT_FLOAT16, false, false, true);
+        } else if (scenario == 2) {
+            status = ValidateApplyFtrl(-1, {}, ge::DT_FLOAT, false, true);
+        } else {
+            status = ValidateApplyFtrl(0, {{INT64_MAX, 2}, {INT64_MAX, 2}});
+        }
+        EXPECT_EQ(status, ge::GRAPH_FAILED);
+        const auto errors = manager.GetRawErrorMessages();
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, codes[scenario]);
+    }
 }

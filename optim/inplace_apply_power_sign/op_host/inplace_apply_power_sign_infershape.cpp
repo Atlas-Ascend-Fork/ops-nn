@@ -19,6 +19,7 @@
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "log/log.h"
+#include "inplace_apply_power_sign_host_guard.h"
 
 using namespace ge;
 
@@ -30,19 +31,71 @@ static constexpr size_t IDX_M = 1;
 static constexpr size_t OUT_VAR = 0;
 static constexpr size_t OUT_M = 1;
 
+static bool ShapesCompatible(const gert::Shape& lhs, const gert::Shape& rhs)
+{
+    if (Ops::Base::IsUnknownRank(lhs) || Ops::Base::IsUnknownRank(rhs)) {
+        return true;
+    }
+    if (lhs.GetDimNum() != rhs.GetDimNum()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.GetDimNum(); ++i) {
+        if (lhs.GetDim(i) >= 0 && rhs.GetDim(i) >= 0 && lhs.GetDim(i) != rhs.GetDim(i)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static ge::graphStatus InferShape4InplaceApplyPowerSign(gert::InferShapeContext* context)
 {
+    if (!HasInplaceApplyPowerSignRequiredIo(context)) {
+        return ge::GRAPH_FAILED;
+    }
     const gert::Shape* varShape = context->GetInputShape(IDX_VAR);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
+    OP_CHECK_IF(varShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
 
     const gert::Shape* mShape = context->GetInputShape(IDX_M);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mShape);
+    OP_CHECK_IF(mShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "m"), return ge::GRAPH_FAILED);
+
+    const gert::Shape* gradShape = context->GetInputShape(6);
+    OP_CHECK_IF(gradShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "grad"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !ShapesCompatible(*varShape, *mShape) || !ShapesCompatible(*varShape, *gradShape) ||
+            !ShapesCompatible(*mShape, *gradShape),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "var, m and grad",
+                                               (Ops::Base::ToString(*varShape) + ", " + Ops::Base::ToString(*mShape) +
+                                                ", " + Ops::Base::ToString(*gradShape))
+                                                   .c_str(),
+                                               "Known dimensions must match"),
+        return ge::GRAPH_FAILED);
+    for (size_t i = 2; i <= 5; ++i) {
+        const auto* scalarShape = context->GetInputShape(i);
+        OP_CHECK_IF(scalarShape == nullptr,
+                    OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), POWER_SIGN_INPUT_NAMES[i]),
+                    return ge::GRAPH_FAILED);
+        if (Ops::Base::IsUnknownRank(*scalarShape)) {
+            continue;
+        }
+        OP_CHECK_IF(scalarShape->GetDimNum() > 1 ||
+                        (scalarShape->GetDimNum() == 1 && scalarShape->GetDim(0) >= 0 && scalarShape->GetDim(0) != 1),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), POWER_SIGN_INPUT_NAMES[i],
+                                                          Ops::Base::ToString(*scalarShape).c_str(),
+                                                          "Scalar inputs must have shape [] or [1]"),
+                    return ge::GRAPH_FAILED);
+    }
 
     gert::Shape* varOutShape = context->GetOutputShape(OUT_VAR);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varOutShape);
+    if (varOutShape == nullptr) {
+        return ReportPowerSignFailure(context->GetNodeName(), "Output var shape storage is nullptr");
+    }
 
     gert::Shape* mOutShape = context->GetOutputShape(OUT_M);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mOutShape);
+    if (mOutShape == nullptr) {
+        return ReportPowerSignFailure(context->GetNodeName(), "Output m shape storage is nullptr");
+    }
 
     *varOutShape = *varShape;
     *mOutShape = *mShape;

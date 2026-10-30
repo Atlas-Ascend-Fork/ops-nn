@@ -16,6 +16,7 @@
  */
 
 #include "register/op_def_registry.h"
+#include "../apply_proximal_gradient_descent_check.h"
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/math_util.h"
 #include "op_common/op_host/util/platform_util.h"
@@ -23,6 +24,15 @@
 #include "../../op_kernel/arch35/apply_proximal_gradient_descent_tiling_key.h"
 
 namespace optiling {
+
+static ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
 
 using Ops::Base::CeilAlign;
 using Ops::Base::CeilDiv;
@@ -36,25 +46,18 @@ constexpr int64_t MIN_SPLIT_THRESHOLD = 1024;
 // 系统/流水线开销预留（防止 UB 满分配后 pipe 控制结构溢出）
 constexpr int64_t UB_RESERVE_BYTES = 8 * 1024;
 
-static const gert::Shape g_vec_1_shape = {1};
-
-static inline const gert::Shape EnsureNotScalar(const gert::Shape& in_shape)
-{
-    if (in_shape.GetDimNum() == 0) {
-        return g_vec_1_shape;
-    }
-    return in_shape;
-}
-
 static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& ubSize, int64_t& coreNum)
 {
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
+    if (platformInfoPtr == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "PlatformInfo is nullptr");
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(coreNum == 0, ReportTilingFailure(context->GetNodeName(), "Available vector core count is zero"),
+                return ge::GRAPH_FAILED);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
-    OP_CHECK_IF(ubSize == 0, OP_LOGE(context, "ubSize is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ubSize == 0, ReportTilingFailure(context->GetNodeName(), "UB size is zero"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -63,70 +66,153 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& u
 // 输出顺序：0=varOut
 static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& totalIdx, ge::DataType& dataType)
 {
+    using namespace ApplyProximalGradientDescentCheck;
     auto varStorage = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varStorage);
-    auto varShape = EnsureNotScalar(varStorage->GetStorageShape());
-
     auto deltaStorage = context->GetInputShape(4);
-    OP_CHECK_NULL_WITH_CONTEXT(context, deltaStorage);
-    auto deltaShape = EnsureNotScalar(deltaStorage->GetStorageShape());
-
     auto outStorage = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outStorage);
-    auto outShape = EnsureNotScalar(outStorage->GetStorageShape());
-
+    OP_CHECK_IF(varStorage == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(deltaStorage == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "delta"),
+                return ge::GRAPH_FAILED);
+    if (outStorage == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "Output var shape storage is nullptr");
+    }
+    const auto& varShape = varStorage->GetStorageShape();
+    const auto& deltaShape = deltaStorage->GetStorageShape();
+    const auto& outShape = outStorage->GetStorageShape();
+    OP_CHECK_IF(!ShapesMatch(varStorage->GetOriginShape(), deltaStorage->GetOriginShape(), false) ||
+                    !ShapesMatch(varStorage->GetOriginShape(), outStorage->GetOriginShape(), false) ||
+                    !ShapesMatch(varShape, deltaShape, false) || !ShapesMatch(varShape, outShape, false),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "var, delta and output var",
+                                                       ((Ops::Base::ToString(varStorage->GetOriginShape()) + "/" +
+                                                         Ops::Base::ToString(varStorage->GetStorageShape())) +
+                                                        ", " +
+                                                        (Ops::Base::ToString(deltaStorage->GetOriginShape()) + "/" +
+                                                         Ops::Base::ToString(deltaStorage->GetStorageShape())) +
+                                                        ", " +
+                                                        (Ops::Base::ToString(outStorage->GetOriginShape()) + "/" +
+                                                         Ops::Base::ToString(outStorage->GetStorageShape())))
+                                                           .c_str(),
+                                                       "Origin and storage shapes must match"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(
-        varShape.GetShapeSize() != deltaShape.GetShapeSize() || varShape.GetShapeSize() != outShape.GetShapeSize(),
-        OP_LOGE(context,
-                "ApplyProximalGradientDescent: var/delta/varOut shape size mismatch: var=%ld, delta=%ld, varOut=%ld",
-                varShape.GetShapeSize(), deltaShape.GetShapeSize(), outShape.GetShapeSize()),
+        !GetElementCount(varShape, totalIdx),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "var", Ops::Base::ToString(varShape).c_str(),
+            "Storage dimensions must be resolved, nonnegative and have an element count representable in int64"),
         return ge::GRAPH_FAILED);
 
-    totalIdx = varShape.GetShapeSize();
-
-    const std::set<ge::DataType> supportedDtype = {ge::DT_FLOAT, ge::DT_FLOAT16};
     auto inputDesc = context->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+    OP_CHECK_IF(inputDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
     dataType = inputDesc->GetDataType();
-    if (supportedDtype.count(dataType) == 0) {
-        OP_LOGE(context, "invalid dtype: %d", static_cast<int>(dataType));
-        return ge::GRAPH_FAILED;
+    OP_CHECK_IF(dataType != ge::DT_FLOAT && dataType != ge::DT_FLOAT16,
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "var", Ops::Base::ToString(dataType).c_str(),
+                                          "FLOAT or FLOAT16"),
+                return ge::GRAPH_FAILED);
+    const int64_t elementBytes = dataType == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
+    OP_CHECK_IF(
+        totalIdx > std::numeric_limits<int64_t>::max() / elementBytes,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "var", Ops::Base::ToString(varShape).c_str(),
+                                              "Tensor byte size must be representable in int64"),
+        return ge::GRAPH_FAILED);
+    for (size_t i = 0; i < INPUT_COUNT; ++i) {
+        auto desc = context->GetInputDesc(i);
+        auto shape = context->GetInputShape(i);
+        OP_CHECK_IF(desc == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), INPUT_NAMES[i]),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), INPUT_NAMES[i]),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(desc->GetDataType() != dataType,
+                    OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), INPUT_NAMES[i],
+                                              Ops::Base::ToString(desc->GetDataType()).c_str(),
+                                              Ops::Base::ToString(dataType).c_str()),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(desc->GetOriginFormat() != ge::FORMAT_ND || desc->GetStorageFormat() != ge::FORMAT_ND,
+                    OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(context->GetNodeName(), INPUT_NAMES[i],
+                                                            (Ops::Base::ToString(desc->GetOriginFormat()) + "/" +
+                                                             Ops::Base::ToString(desc->GetStorageFormat()))
+                                                                .c_str(),
+                                                            "Origin and storage formats must both be ND"),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            !IsValidShape(shape->GetOriginShape(), false) || !IsValidShape(shape->GetStorageShape(), false),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), INPUT_NAMES[i],
+                (Ops::Base::ToString(shape->GetOriginShape()) + "/" + Ops::Base::ToString(shape->GetStorageShape()))
+                    .c_str(),
+                "Origin and storage dimensions must be resolved and nonnegative"),
+            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(i >= 1 && i <= 3 &&
+                        (!IsScalar(shape->GetOriginShape(), false) || !IsScalar(shape->GetStorageShape(), false)),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), INPUT_NAMES[i],
+                                                           (Ops::Base::ToString(shape->GetOriginShape()) + "/" +
+                                                            Ops::Base::ToString(shape->GetStorageShape()))
+                                                               .c_str(),
+                                                           "Origin and storage shapes must be [] or [1]"),
+                    return ge::GRAPH_FAILED);
     }
+    auto outDesc = context->GetOutputDesc(0);
+    if (outDesc == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "Output var descriptor is nullptr");
+    }
+    OP_CHECK_IF(outDesc->GetDataType() != dataType,
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "output var",
+                                          Ops::Base::ToString(outDesc->GetDataType()).c_str(),
+                                          Ops::Base::ToString(dataType).c_str()),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(outDesc->GetOriginFormat() != ge::FORMAT_ND || outDesc->GetStorageFormat() != ge::FORMAT_ND,
+                OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(context->GetNodeName(), "output var",
+                                                        (Ops::Base::ToString(outDesc->GetOriginFormat()) + "/" +
+                                                         Ops::Base::ToString(outDesc->GetStorageFormat()))
+                                                            .c_str(),
+                                                        "Origin and storage formats must both be ND"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 static ge::graphStatus GetWorkspaceSize(gert::TilingContext* context)
 {
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
+    if (currentWorkspace == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "Workspace output container has no capacity for one slot");
+    }
     currentWorkspace[0] = WS_SYS_SIZE;
     return ge::GRAPH_SUCCESS;
 }
 
 static ge::graphStatus ApplyProximalGradientDescentTilingFunc(gert::TilingContext* context)
 {
+    if (context == nullptr) {
+        return ReportTilingFailure("ApplyProximalGradientDescent", "TilingContext is nullptr");
+    }
     OP_LOGD(context->GetNodeName(), "Begin the tiling process for Arch35 architecture");
     uint64_t ubSize = 0;
     int64_t coreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo failed"), return ge::GRAPH_FAILED);
 
     int64_t totalIdx = 0;
     ge::DataType dataType = ge::DT_FLOAT;
     OP_CHECK_IF(GetShapeAttrsInfo(context, totalIdx, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetShapeAttrsInfo failed"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize failed"), return ge::GRAPH_FAILED);
 
     ApplyProximalGradientDescentTilingData* tiling = context->GetTilingData<ApplyProximalGradientDescentTilingData>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+    if (tiling == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(),
+                                   "Tiling data buffer is nullptr or has insufficient capacity");
+    }
     OP_CHECK_IF(memset_s(tiling, sizeof(ApplyProximalGradientDescentTilingData), 0,
                          sizeof(ApplyProximalGradientDescentTilingData)) != EOK,
-                OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
+                ReportTilingFailure(context->GetNodeName(), "Failed to initialize tiling data buffer"),
+                return ge::GRAPH_FAILED);
 
     int64_t ubBlockSize = Ops::Base::GetUbBlockSize(context);
-    OP_CHECK_IF(ubBlockSize == 0, OP_LOGE(context, "ubBlockSize is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ubBlockSize <= 0, ReportTilingFailure(context->GetNodeName(), "UB block size is invalid"),
+                return ge::GRAPH_FAILED);
     tiling->totalNum = totalIdx;
 
     // 空 tensor 分支：blockDim=1，blockFactor=0，ubFactor=0；Kernel 检测 blockLength_==0 直接 return
@@ -142,8 +228,9 @@ static ge::graphStatus ApplyProximalGradientDescentTilingFunc(gert::TilingContex
     }
 
     // 多核切分：按 DMA 最小粒度对齐
-    tiling->blockFactor = CeilAlign(CeilDiv(totalIdx, coreNum), ubBlockSize);
-    int64_t usedCoreNum = CeilDiv(totalIdx, tiling->blockFactor);
+    const int64_t elementsPerCore = totalIdx / coreNum + (totalIdx % coreNum != 0);
+    tiling->blockFactor = CeilAlign(elementsPerCore, ubBlockSize);
+    int64_t usedCoreNum = totalIdx / tiling->blockFactor + (totalIdx % tiling->blockFactor != 0);
 
     // UB 切分（按每元素实际占用字节数计算，预留系统开销 8KB）
     // FP32 路径每元素占用：
@@ -160,11 +247,14 @@ static ge::graphStatus ApplyProximalGradientDescentTilingFunc(gert::TilingContex
     } else { // DT_FLOAT16
         bytesPerElem = useDoubleBuffer ? 32 : 26;
     }
-    int64_t usableUbSize = (static_cast<int64_t>(ubSize) > UB_RESERVE_BYTES) ?
-                               (static_cast<int64_t>(ubSize) - UB_RESERVE_BYTES) :
-                               static_cast<int64_t>(ubSize);
+    OP_CHECK_IF(ubSize <= UB_RESERVE_BYTES || ubSize > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+                ReportTilingFailure(context->GetNodeName(),
+                                    "Invalid UB size or insufficient reserve; ubSize=" + std::to_string(ubSize)),
+                return ge::GRAPH_FAILED);
+    int64_t usableUbSize = static_cast<int64_t>(ubSize) - UB_RESERVE_BYTES;
     tiling->ubFactor = Ops::Base::FloorAlign(Ops::Base::FloorDiv(usableUbSize, bytesPerElem), ubBlockSize);
-    OP_CHECK_IF(tiling->ubFactor == 0, OP_LOGE(context, "ubFactor is 0, UB too small"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tiling->ubFactor == 0, ReportTilingFailure(context->GetNodeName(), "UB cannot hold one aligned tile"),
+                return ge::GRAPH_FAILED);
 
     context->SetBlockDim(usedCoreNum);
 

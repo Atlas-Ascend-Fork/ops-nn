@@ -105,6 +105,13 @@
           ],
           "format_match_mode": "FormatAgnostic"
         }
+      ],
+      "attrs": [
+        {
+          "name": "use_locking",
+          "dtype": "bool",
+          "value": false
+        }
       ]
     },
     {
@@ -211,6 +218,13 @@
           ],
           "format_match_mode": "FormatAgnostic"
         }
+      ],
+      "attrs": [
+        {
+          "name": "use_locking",
+          "dtype": "bool",
+          "value": false
+        }
       ]
     },
     {
@@ -316,6 +330,13 @@
             -2
           ],
           "format_match_mode": "FormatAgnostic"
+        }
+      ],
+      "attrs": [
+        {
+          "name": "use_locking",
+          "dtype": "bool",
+          "value": false
         }
       ]
     }

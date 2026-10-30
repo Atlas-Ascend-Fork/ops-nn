@@ -40,6 +40,7 @@
 #include "kernel_tiling/kernel_tiling.h"
 #include "inplace_apply_power_sign_tiling_data.h"
 #include "inplace_apply_power_sign_tiling_key.h"
+#include "inplace_apply_power_sign_numeric.h"
 
 namespace NsInplaceApplyPowerSign {
 
@@ -229,10 +230,10 @@ __aicore__ inline void InplaceApplyPowerSign<T>::LoadScalarsFp32(const AscendC::
     AscendC::DataCopyPad(s2, signDecayGM, cpScalar, padParams);
     AscendC::DataCopyPad(s3, betaGM, cpScalar, padParams);
     AscendC::PipeBarrier<PIPE_ALL>();
-    lr_ = s0.GetValue(0);
-    logbase_ = s1.GetValue(0);
-    signDecay_ = s2.GetValue(0);
-    beta_ = s3.GetValue(0);
+    lr_ = PowerSignFlushScalarFp32(s0.GetValue(0));
+    logbase_ = PowerSignFlushScalarFp32(s1.GetValue(0));
+    signDecay_ = PowerSignFlushScalarFp32(s2.GetValue(0));
+    beta_ = PowerSignFlushScalarFp32(s3.GetValue(0));
 }
 
 // fp16/bf16 path: stage each 1-element T payload, tensor Cast to fp32, then read.
@@ -274,10 +275,10 @@ __aicore__ inline void InplaceApplyPowerSign<T>::LoadScalarsCasted(const AscendC
     AscendC::Cast<float, T>(s3, tBeta, AscendC::RoundMode::CAST_NONE, 1);
     AscendC::PipeBarrier<PIPE_ALL>();
 
-    lr_ = s0.GetValue(0);
-    logbase_ = s1.GetValue(0);
-    signDecay_ = s2.GetValue(0);
-    beta_ = s3.GetValue(0);
+    lr_ = PowerSignFlushScalarFp32(s0.GetValue(0));
+    logbase_ = PowerSignFlushScalarFp32(s1.GetValue(0));
+    signDecay_ = PowerSignFlushScalarFp32(s2.GetValue(0));
+    beta_ = PowerSignFlushScalarFp32(s3.GetValue(0));
 }
 
 template <typename T>
@@ -434,39 +435,45 @@ __aicore__ inline void InplaceApplyPowerSign<T>::ComputeFp32(AscendC::LocalTenso
 {
     AscendC::LocalTensor<float> tmpBuf = fp32Buf0.template AllocTensor<float>();
     AscendC::LocalTensor<float> signGBuf = fp32Buf1.template AllocTensor<float>();
+    PowerSignFlushFp32(varFp32, count);
+    PowerSignFlushFp32(mFp32, count);
+    PowerSignFlushFp32(gradFp32, count);
 
     // Step 3: m_new = beta * m + (1 - beta) * grad
-    AscendC::Muls(tmpBuf, mFp32, beta_, count);
+    PowerSignMuls(tmpBuf, mFp32, beta_, count);
     float oneMinusBeta = 1.0f - beta_;
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Muls(mFp32, gradFp32, oneMinusBeta, count);
+    PowerSignMuls(mFp32, gradFp32, oneMinusBeta, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Add(mFp32, tmpBuf, mFp32, count);
+    PowerSignAdd(mFp32, tmpBuf, mFp32, count);
 
     // Save m_new to output BEFORE Sign overwrites mFp32's dependencies
     AscendC::PipeBarrier<PIPE_V>();
     AscendC::DataCopy(mOutLocal, mFp32, count);
 
     // Step 4: sign_gm = Sign(m_new) * Sign(grad)
-    AscendC::Sign(tmpBuf, mFp32, count);
-    AscendC::Sign(signGBuf, gradFp32, count);
+    PowerSignSign(tmpBuf, mFp32, count);
+    PowerSignSign(signGBuf, gradFp32, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Mul(tmpBuf, tmpBuf, signGBuf, count);
+    PowerSignMul(tmpBuf, tmpBuf, signGBuf, count);
 
     // Step 5: exp_val = Exp(logbase * sign_decay * sign_gm)
-    float coeff = logbase_ * signDecay_;
+    float coeff = PowerSignFlushScalarFp32(logbase_ * signDecay_);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Muls(tmpBuf, tmpBuf, coeff, count);
+    PowerSignMuls(tmpBuf, tmpBuf, coeff, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Exp(signGBuf, tmpBuf, static_cast<int32_t>(count));
+    PowerSignExp(signGBuf, tmpBuf, count);
+    PowerSignFlushFp32(signGBuf, count);
 
     // Step 6-7: var_new = var - lr * exp_val * grad
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Mul(tmpBuf, signGBuf, gradFp32, count);
+    // Keep TensorFlow's left-associated (lr * exp_val) * grad order:
+    // reassociation changes underflow/overflow and cancellation residuals.
+    PowerSignMuls(tmpBuf, signGBuf, lr_, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Muls(tmpBuf, tmpBuf, lr_, count);
+    PowerSignMul(tmpBuf, tmpBuf, gradFp32, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Sub(varOutLocal, varFp32, tmpBuf, count);
+    PowerSignSub(varOutLocal, varFp32, tmpBuf, count);
 }
 
 // Shared Steps 3-7 core for non-FP32 paths (3-param Sign + basic Exp)
@@ -477,34 +484,35 @@ __aicore__ inline void InplaceApplyPowerSign<T>::ComputeUpdateFp32(
     AscendC::LocalTensor<float>& gradFp32, AscendC::LocalTensor<float>& varOrigFp32, int64_t count)
 {
     // Step 3: m_new = beta * m + (1 - beta) * grad
-    AscendC::Muls(tempBuf, mFp32, beta_, count);
+    PowerSignMuls(tempBuf, mFp32, beta_, count);
     float oneMinusBeta = 1.0f - beta_;
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Muls(mFp32, gradFp32, oneMinusBeta, count);
+    PowerSignMuls(mFp32, gradFp32, oneMinusBeta, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Add(mFp32, tempBuf, mFp32, count);
+    PowerSignAdd(mFp32, tempBuf, mFp32, count);
 
     // Step 4: sign_gm = Sign(m_new) * Sign(grad)
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Sign(tempBuf, mFp32, count);
-    AscendC::Sign(varFp32, gradFp32, count);
+    PowerSignSign(tempBuf, mFp32, count);
+    PowerSignSign(varFp32, gradFp32, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Mul(tempBuf, tempBuf, varFp32, count);
+    PowerSignMul(tempBuf, tempBuf, varFp32, count);
 
     // Step 5: exp_val = Exp(logbase * sign_decay * sign_gm)
-    float coeff = logbase_ * signDecay_;
+    float coeff = PowerSignFlushScalarFp32(logbase_ * signDecay_);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Muls(tempBuf, tempBuf, coeff, count);
+    PowerSignMuls(tempBuf, tempBuf, coeff, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Exp(varFp32, tempBuf, static_cast<int32_t>(count));
+    PowerSignExp(varFp32, tempBuf, count);
+    PowerSignFlushFp32(varFp32, count);
 
     // Step 6-7: var_new = var_orig - lr * exp_val * grad
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Mul(tempBuf, varFp32, gradFp32, count);
+    PowerSignMuls(tempBuf, varFp32, lr_, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Muls(tempBuf, tempBuf, lr_, count);
+    PowerSignMul(tempBuf, tempBuf, gradFp32, count);
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Sub(varFp32, varOrigFp32, tempBuf, count);
+    PowerSignSub(varFp32, varOrigFp32, tempBuf, count);
 }
 
 // Standard Cast path for FP16 and BF16 (arch35 tensor Cast supports both)
@@ -524,6 +532,9 @@ __aicore__ inline void InplaceApplyPowerSign<T>::ComputeCasted(AscendC::LocalTen
     AscendC::Cast<float, T>(varFp32, varLocal, AscendC::RoundMode::CAST_NONE, count);
     AscendC::Cast<float, T>(mFp32, mLocal, AscendC::RoundMode::CAST_NONE, count);
     AscendC::Cast<float, T>(gradFp32, gradLocal, AscendC::RoundMode::CAST_NONE, count);
+    PowerSignFlushFp32(varFp32, count);
+    PowerSignFlushFp32(mFp32, count);
+    PowerSignFlushFp32(gradFp32, count);
 
     AscendC::PipeBarrier<PIPE_V>();
     AscendC::DataCopy(varOrigFp32, varFp32, count);

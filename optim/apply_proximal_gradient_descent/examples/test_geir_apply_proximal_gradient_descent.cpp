@@ -109,17 +109,19 @@ uint32_t GetDataTypeSize(DataType dt)
 int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, DataType data_type,
                     int value)
 {
+    // The example main uses DT_FLOAT; reject other declarations instead of
+    // encoding integer bits as floating-point input data.
+    if (data_type != ge::DT_FLOAT || input_tensor_desc.GetDataType() != data_type) {
+        return FAILED;
+    }
     input_tensor_desc.SetRealDimCnt(shapes.size());
     size_t size = 1;
     for (uint32_t i = 0; i < shapes.size(); i++) {
         size *= shapes[i];
     }
-    uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[data_len];
-    for (uint32_t i = 0; i < size; ++i) {
-        *(pData + i) = value;
-    }
-    input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
+    const std::vector<float> data(size, static_cast<float>(value));
+    input_tensor = Tensor(input_tensor_desc, reinterpret_cast<const uint8_t*>(data.data()),
+                          data.size() * sizeof(float));
     return SUCCESS;
 }
 

@@ -217,10 +217,8 @@ __aicore__ inline void ApplyProximalGradientDescent<T, BUFFER_MODE>::Compute(int
     // relu
     AscendC::Maxs(tmpAbs, tmpAbs, 0.0f, currentNum);
 
-    // sign(prox)：clamp(prox * BIG, -1, 1)，零值保持为 0
-    AscendC::Muls(tmpSign, tmpProx, 1e30f, currentNum);
-    AscendC::Mins(tmpSign, tmpSign, 1.0f, currentNum);
-    AscendC::Maxs(tmpSign, tmpSign, -1.0f, currentNum);
+    // Exact sign, including normal FP32 values below 1e-30 and sign(0) = 0.
+    AscendC::Sign(tmpSign, tmpProx, currentNum);
 
     // sign * relu
     AscendC::Mul(tmpProx, tmpSign, tmpAbs, currentNum);
