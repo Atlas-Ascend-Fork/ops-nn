@@ -24,6 +24,7 @@
 #include "qbmm_cube_on_the_fly_bl1_full_load.h"
 #include "qbmm_cube_on_the_fly_abl1_full_load.h"
 #include "qbmm_cube_on_the_fly_iterbatch.h"
+#include "quant_batch_matmul_v3_pergroup.h"
 #endif
 #if (ORIG_DTYPE_SCALE == DT_FLOAT || ORIG_DTYPE_SCALE == DT_BF16)
 #include "qbmm_mix_online_dynamic.h"
@@ -673,6 +674,22 @@ UT_STATIC __global__ __aicore__ void quant_batch_matmul_v3(GM_ADDR x1, GM_ADDR x
             op;
         op.Init(x1, x2, bias, scale, pertokenScale, y, user1, &tilingData, &tPipe);
         op.Process();
+    }
+
+    if constexpr (TPL_KERNELTYPE == TPL_VEC_EPILOGUE_X2_PERGROUP && TPL_APILEVEL == TPL_API_LEVEL_BASIC) {
+        GET_TILING_DATA_WITH_STRUCT(DequantBmm::QuantBatchMatmulV3BasicAPITilingData, tilingData, tiling);
+        QuantBatchMatmulV3::QbmmX2PerGroupCmctKernel<DTYPE_X2, transB, Cmct::Gemm::NONE_FULL_LOAD_MODE>(
+            x1, x2, scale, bias, y, tilingData, &tPipe);
+    }
+    if constexpr (TPL_KERNELTYPE == TPL_VEC_EPILOGUE_X2_PERGROUP_AFULL && TPL_APILEVEL == TPL_API_LEVEL_BASIC) {
+        GET_TILING_DATA_WITH_STRUCT(DequantBmm::QuantBatchMatmulV3BasicAPITilingData, tilingData, tiling);
+        QuantBatchMatmulV3::QbmmX2PerGroupCmctKernel<DTYPE_X2, transB, Cmct::Gemm::A_FULL_LOAD_MODE>(
+            x1, x2, scale, bias, y, tilingData, &tPipe);
+    }
+    if constexpr (TPL_KERNELTYPE == TPL_VEC_EPILOGUE_X2_PERGROUP_BFULL && TPL_APILEVEL == TPL_API_LEVEL_BASIC) {
+        GET_TILING_DATA_WITH_STRUCT(DequantBmm::QuantBatchMatmulV3BasicAPITilingData, tilingData, tiling);
+        QuantBatchMatmulV3::QbmmX2PerGroupCmctKernel<DTYPE_X2, transB, Cmct::Gemm::B_FULL_LOAD_MODE>(
+            x1, x2, scale, bias, y, tilingData, &tPipe);
     }
 
     if constexpr (TPL_BATCHMODE == TPL_WITH_BATCH) {

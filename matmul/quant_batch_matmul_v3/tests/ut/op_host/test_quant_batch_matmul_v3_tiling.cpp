@@ -79,7 +79,7 @@ static void SetExpectedTilingFieldIfPresent(std::vector<int32_t>& tilingDataInt,
     std::memcpy(reinterpret_cast<char*>(tilingDataInt.data()) + fieldOffset, &value, sizeof(T));
 }
 
-static gert::Shape TransNd2Nz(const gert::Shape& inShape)
+static gert::Shape TransNd2Nz(const gert::Shape& inShape, int64_t c0 = 32)
 {
     gert::Shape outShape;
     for (size_t idx = 0; idx < inShape.GetDimNum() - 2; ++idx) {
@@ -88,10 +88,10 @@ static gert::Shape TransNd2Nz(const gert::Shape& inShape)
 
     int64_t m = inShape.GetDim(inShape.GetDimNum() - 2);
     int64_t n = inShape.GetDim(inShape.GetDimNum() - 1);
-    outShape.AppendDim((n + 31) / 32);
+    outShape.AppendDim((n + c0 - 1) / c0);
     outShape.AppendDim((m + 15) / 16);
     outShape.AppendDim(16);
-    outShape.AppendDim(32);
+    outShape.AppendDim(c0);
     return outShape;
 }
 
@@ -451,6 +451,9 @@ void QuantBatchMatmulV3TilingTestParam::Prepare(QuantBatchMatmulV3CompileInfo& c
     } else if (quantMode == 6) { // double per-tensor scale: x1Scale {1}, x2Scale {1}.
         pertokenShape.MutableStorageShape() = gert::Shape({1});
         scaleShape.MutableStorageShape() = gert::Shape({1});
+    } else if (quantMode == 7) { // X2 per-group CSV cases use G=128.
+        const int64_t groupCnt = ops::CeilDiv<int64_t>(k, 128);
+        scaleShape.MutableStorageShape() = x2Dim == 3 ? gert::Shape({batchB, groupCnt, n}) : gert::Shape({groupCnt, n});
     }
 
     biasShape.MutableStorageShape() = gert::Shape({n});
@@ -458,13 +461,13 @@ void QuantBatchMatmulV3TilingTestParam::Prepare(QuantBatchMatmulV3CompileInfo& c
     biasShape.MutableOriginShape() = biasShape.MutableStorageShape();
     pertokenShape.MutableOriginShape() = pertokenShape.MutableStorageShape();
     if (fmapNz) {
-        x1Shape.MutableStorageShape() = TransNd2Nz(x1Shape.MutableOriginShape());
+        x1Shape.MutableStorageShape() = TransNd2Nz(x1Shape.MutableOriginShape(), x1Dtype == ge::DT_INT4 ? 64 : 32);
     } else {
         x1Shape.MutableStorageShape() = x1Shape.MutableOriginShape();
     }
 
     if (weightNz) {
-        x2Shape.MutableStorageShape() = TransNd2Nz(x2Shape.MutableOriginShape());
+        x2Shape.MutableStorageShape() = TransNd2Nz(x2Shape.MutableOriginShape(), x2Dtype == ge::DT_INT4 ? 64 : 32);
     } else {
         x2Shape.MutableStorageShape() = x2Shape.MutableOriginShape();
     }
@@ -489,6 +492,8 @@ void QuantBatchMatmulV3TilingTestParam::Prepare(QuantBatchMatmulV3CompileInfo& c
         groupSize = 549764202624;
     } else if (quantMode == 4) {
         groupSize = 4303356032;
+    } else if (quantMode == 7) {
+        groupSize = 128LL | (1LL << 16) | (1LL << 32); // [M, N, K] = [1, 1, 128].
     }
     auto holder = gert::TilingContextFaker()
                       .NodeIoNum(6, 1)
@@ -665,6 +670,9 @@ void QuantBatchMatmulV3TilingTestParam::InvokeTilingFunc(QuantBatchMatmulV3Compi
     } else if (quantMode == 6) { // double per-tensor scale: x1Scale {1}, x2Scale {1}.
         pertokenShape.MutableStorageShape() = gert::Shape({1});
         scaleShape.MutableStorageShape() = gert::Shape({1});
+    } else if (quantMode == 7) { // X2 per-group CSV cases use G=128.
+        const int64_t groupCnt = ops::CeilDiv<int64_t>(k, 128);
+        scaleShape.MutableStorageShape() = x2Dim == 3 ? gert::Shape({batchB, groupCnt, n}) : gert::Shape({groupCnt, n});
     }
 
     biasShape.MutableStorageShape() = gert::Shape({n});
@@ -672,13 +680,13 @@ void QuantBatchMatmulV3TilingTestParam::InvokeTilingFunc(QuantBatchMatmulV3Compi
     biasShape.MutableOriginShape() = biasShape.MutableStorageShape();
     pertokenShape.MutableOriginShape() = pertokenShape.MutableStorageShape();
     if (fmapNz) {
-        x1Shape.MutableStorageShape() = TransNd2Nz(x1Shape.MutableOriginShape());
+        x1Shape.MutableStorageShape() = TransNd2Nz(x1Shape.MutableOriginShape(), x1Dtype == ge::DT_INT4 ? 64 : 32);
     } else {
         x1Shape.MutableStorageShape() = x1Shape.MutableOriginShape();
     }
 
     if (weightNz) {
-        x2Shape.MutableStorageShape() = TransNd2Nz(x2Shape.MutableOriginShape());
+        x2Shape.MutableStorageShape() = TransNd2Nz(x2Shape.MutableOriginShape(), x2Dtype == ge::DT_INT4 ? 64 : 32);
     } else {
         x2Shape.MutableStorageShape() = x2Shape.MutableOriginShape();
     }
@@ -703,6 +711,8 @@ void QuantBatchMatmulV3TilingTestParam::InvokeTilingFunc(QuantBatchMatmulV3Compi
         groupSize = 549764202624;
     } else if (quantMode == 4) {
         groupSize = 4303356032;
+    } else if (quantMode == 7) {
+        groupSize = 128LL | (1LL << 16) | (1LL << 32); // [M, N, K] = [1, 1, 128].
     }
     auto holder = gert::TilingContextFaker()
                       .NodeIoNum(6, 1)
@@ -753,6 +763,7 @@ void QuantBatchMatmulV3TilingTestParam::InvokeTilingFunc(QuantBatchMatmulV3Compi
         bool expectBlazeApiLevel = (tilingKey & apiLevelMask) ==
                                    (static_cast<uint64_t>(QMMApiLevel::BLAZE_LEVEL) << apiLevelShift);
         bool skipBlazeCheckWithoutTensorApi = isAscend950 && !tensorApiCapable && expectBlazeApiLevel;
+
         if (tilingStub || (weightNz && !tensorApiCapable) || skipMxCheckWithoutTensorApi ||
             skipBlazeCheckWithoutTensorApi) {
             return;

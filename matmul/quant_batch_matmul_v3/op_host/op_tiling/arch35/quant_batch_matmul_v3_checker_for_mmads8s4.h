@@ -37,6 +37,8 @@ protected:
     virtual bool CheckDtypesInRange() const;
     virtual bool CheckABDtypes() const;
 
+    bool CheckX2PerGroup(const gert::Shape& scaleShape, const gert::Shape& x2Shape) const;
+
     bool CheckShapeInRangeForOptionalInputs(const gert::StorageShape* biasShape,
                                             const gert::StorageShape* offsetShape) const;
     bool CheckBias(const gert::StorageShape* biasShape) const;

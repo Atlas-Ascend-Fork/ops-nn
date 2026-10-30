@@ -88,7 +88,8 @@ const std::map<ge::DataType, std::vector<BasicQuantMode>> X2_QUANT_MODE_MAP = {
     {ge::DT_FLOAT4_E2M1, {BasicQuantMode::MX_PERGROUP_MODE}},
     {Ops::NN::DT_HIFLOAT4, {BasicQuantMode::HIF4_PERGROUP_MODE}},
     {ge::DT_HIFLOAT8, {BasicQuantMode::PERTENSOR_MODE, BasicQuantMode::PERCHANNEL_MODE, BasicQuantMode::PERBLOCK_MODE}},
-    {ge::DT_INT8, {BasicQuantMode::PERTENSOR_MODE, BasicQuantMode::PERCHANNEL_MODE}},
+    {ge::DT_INT8, {BasicQuantMode::PERTENSOR_MODE, BasicQuantMode::PERCHANNEL_MODE, BasicQuantMode::PERGROUP_MODE}},
+    {ge::DT_INT4, {BasicQuantMode::PERGROUP_MODE}},
 
 };
 
@@ -470,6 +471,30 @@ std::string QuantBatchMatmulV3TilingBase::QuantModeToString(BasicQuantMode quant
     return mode;
 }
 
+// Detects the X2 Per-Group mode only; whether the parameters are legal is reported by the checker,
+// so an illegal case must still be recognised here rather than silently falling into PerChannel.
+bool QuantBatchMatmulV3TilingBase::IsX2PerGroupScale(const gert::Shape& scaleShape) const
+{
+    // SetQuantMode is shared by all platforms, so without this gate a
+    //     legacy PerChannel case whose group_size happens to be set is silently taken for per-group.
+    if (!compileInfo_.supportMmadS8S4) {
+        return false;
+    }
+    //  reads scale[-2:], so its implied rank comes first.
+    const auto scaleShapeLen = scaleShape.GetDimNum();
+    if (scaleShapeLen < SCALE_PERGROUP_MIN_DIM_NUM) {
+        return false;
+    }
+    const auto scaleGroupCnt = static_cast<uint64_t>(scaleShape.GetDim(scaleShapeLen - LAST_SECOND_DIM_INDEX));
+    const auto scaleN = static_cast<uint64_t>(scaleShape.GetDim(scaleShapeLen - LAST_FIRST_DIM_INDEX));
+    return inputParams_.aDtype == ge::DT_INT8 &&
+           (inputParams_.bDtype == ge::DT_INT8 || inputParams_.bDtype == ge::DT_INT4) &&
+           inputParams_.scaleDtype == ge::DT_UINT64 && inputParams_.cDtype == ge::DT_FLOAT16 &&
+           context_->GetOptionalInputShape(GetOffsetIdx()) == nullptr && !inputParams_.isPertoken &&
+           inputParams_.groupSizeM == 1UL && inputParams_.groupSizeN == 1UL && inputParams_.groupSizeK > 0UL &&
+           scaleGroupCnt == ops::CeilDiv(inputParams_.kSize, inputParams_.groupSizeK) && scaleN == inputParams_.nSize;
+}
+
 bool QuantBatchMatmulV3TilingBase::SetX2QuantMode(BasicQuantMode& x2QuantMode, bool isFp8Hif8Input,
                                                   const gert::Shape& scaleShape)
 {
@@ -482,6 +507,10 @@ bool QuantBatchMatmulV3TilingBase::SetX2QuantMode(BasicQuantMode& x2QuantMode, b
                (scaleShapeLen > SCALE_PERGROUP_MIN_DIM_NUM || scaleShape.GetDim(0) != 1 ||
                 inputParams_.groupSizeN > 1)) {
         x2QuantMode = BasicQuantMode::PERBLOCK_MODE;
+    } else if (IsX2PerGroupScale(scaleShape)) {
+        // Must precede PERCHANNEL: this scale is [..., ceilDiv(K, G), N], whose last dim also equals N,
+        // so a later position would silently classify such a case as PerChannel instead.
+        x2QuantMode = BasicQuantMode::PERGROUP_MODE;
     } else if (scaleShape.GetDim(scaleShapeLen - LAST_FIRST_DIM_INDEX) == 1) {
         x2QuantMode = BasicQuantMode::PERTENSOR_MODE;
     } else if (static_cast<uint64_t>(scaleShape.GetDim(scaleShapeLen - LAST_FIRST_DIM_INDEX)) == inputParams_.nSize) {
@@ -566,10 +595,11 @@ bool QuantBatchMatmulV3TilingBase::SetQuantMode(const gert::Shape& scaleShape, c
     inputParams_.isMxPerGroup = x1QuantMode == BasicQuantMode::MX_PERGROUP_MODE && x1QuantMode == x2QuantMode;
     inputParams_.isPerBlock = x1QuantMode == BasicQuantMode::PERBLOCK_MODE;
     inputParams_.isHif4PerGroup = x1QuantMode == BasicQuantMode::HIF4_PERGROUP_MODE && x1QuantMode == x2QuantMode;
+    inputParams_.isX2PerGroup = x2QuantMode == BasicQuantMode::PERGROUP_MODE && x1QuantMode == BasicQuantMode::DEFAULT;
     OP_TILING_CHECK(
         !(inputParams_.isPerChannel || inputParams_.isDoubleScale || inputParams_.isPerTensor ||
           inputParams_.isPertoken || inputParams_.isMxPerGroup || inputParams_.isPerBlock ||
-          inputParams_.isHif4PerGroup),
+          inputParams_.isHif4PerGroup || inputParams_.isX2PerGroup),
         CUBE_INNER_ERR_REPORT(inputParams_.opName,
                               "Unexpected quantification, quantification of x1: %s, quantification of x2: %s",
                               QuantModeToString(x1QuantMode).c_str(), QuantModeToString(x2QuantMode).c_str()),
@@ -1050,6 +1080,7 @@ void QuantBatchMatmulInfo::Reset()
     isPerBlock = false;
     isPerBlockPerToken = false;
     isHif4PerGroup = false;
+    isX2PerGroup = false;
     isLut = false;
     outDtype = 0L;
     libApiWorkSpaceSize = 0U;

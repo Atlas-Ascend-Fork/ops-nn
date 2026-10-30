@@ -29,6 +29,7 @@ constexpr int32_t MIX_BASIC_API_ASW = 5L;
 constexpr int32_t MIX_ASW = 6L;
 constexpr int32_t PERBLOCK_BASIC_API_ASW = 7L;
 constexpr int32_t MX_STREAMK = 8L;
+constexpr int32_t X2_PERGROUP = 9L;
 
 // AIV num paired with one AIC. DAV_3510 binds two AIVs per AIC, DAV_9201/9202(960DT/960PR) bind one.
 // Returns 0 for architectures whose core ratio is not maintained here.
@@ -53,8 +54,8 @@ inline const std::vector<int32_t>& GetQuantBatchMatmulV3Priorities(NpuArch npuAr
     static const std::vector<int32_t> dav9201Priorities = {
         strategy::MX_STREAMK, strategy::MX_BASIC_API_ASW, strategy::CUBE_BASIC_API_ASW,
         strategy::CUBE_ASW,   strategy::MIX_ASW,          strategy::PERBLOCK_BASIC_API_ASW};
-    static const std::vector<int32_t> davResvPriorities = {strategy::ITER_BATCH, strategy::CUBE_BASIC_API_ASW,
-                                                           strategy::CUBE_ASW};
+    static const std::vector<int32_t> davResvPriorities = {strategy::X2_PERGROUP, strategy::ITER_BATCH,
+                                                           strategy::CUBE_BASIC_API_ASW, strategy::CUBE_ASW};
     static const std::vector<int32_t> emptyPriorities = {};
     switch (npuArch) {
         case NpuArch::DAV_3510:

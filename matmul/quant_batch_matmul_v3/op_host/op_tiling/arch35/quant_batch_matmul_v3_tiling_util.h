@@ -78,6 +78,25 @@ constexpr double ASCEND_950_CUBE_FREQ_MHZ = 1650.0;
 constexpr uint64_t B8_CUBE_MACS_PER_CYCLE = 16UL * 32UL * 16UL;
 } // namespace qmmv3_tiling_const
 
+class X2PerGroupConfig {
+public:
+    static constexpr uint64_t CUBE_BLOCK = 16UL;
+    static constexpr uint64_t DATA_BLOCK = 32UL;
+    static constexpr uint64_t GROUP_ALIGN = 64UL;
+    static constexpr uint64_t MIN_GROUP_SIZE = GROUP_ALIGN;
+    static constexpr uint64_t MAX_GROUP_SIZE = 0xFFFFUL;
+    static constexpr uint64_t ACC_BYTES = sizeof(float);
+    static constexpr uint64_t UB_BYTES_PER_ELEMENT = 2UL * sizeof(uint16_t) + 2UL * sizeof(float);
+    static constexpr uint64_t W4_STREAM_SCALE_ROWS = 2UL;
+    static constexpr uint64_t W8_STREAM_SCALE_ROWS = 4UL;
+    static constexpr uint64_t MAX_BASE_M = 256UL; // Retained tile-search bound.
+    static constexpr uint64_t MAX_BASE_N = 256UL; // Half of the 4 KiB uint64 scale capacity.
+    static constexpr uint64_t FULL_LOAD_MAX_BYTES = 256UL * 1024UL;
+    static constexpr uint64_t FULL_LOAD_BUFFER_COUNT = 4UL;
+    static constexpr uint64_t FULL_LOAD_MIN_COPY_BYTES = 32UL * 1024UL;
+    static constexpr uint64_t BUFFER_COUNT = 2UL;
+};
+
 struct BasicRunInfoTiling {
     uint32_t usedCoreNum = 1;
     uint32_t singleCoreM = 1;

@@ -14,6 +14,7 @@
  */
 
 #include "quant_batch_matmul_v3_checker_for_mmads8s4.h"
+#include "quant_batch_matmul_v3_tiling_util.h"
 
 #include "common/op_host/op_tiling/tiling_type_mm.h"
 #include "error_util.h"
@@ -22,6 +23,9 @@
 
 namespace {
 constexpr size_t LAST_FIRST_DIM_INDEX = 1;
+constexpr size_t LAST_SECOND_DIM_INDEX = 2;
+// X2 scale stores [..., ceilDiv(K, G), N].
+constexpr size_t X2_PERGROUP_SCALE_MIN_RANK = 2;
 } // namespace
 
 namespace optiling {
@@ -70,15 +74,29 @@ bool QuantBatchMatmulV3Checker4MmadS8S4::CheckDtypesInRange() const
                                               ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype).c_str(),
                                               "the dtype of scale must be UINT64/INT64"),
         return false);
-    // bias supports INT32 only.
-    OP_TILING_CHECK(
-        (context_->GetOptionalInputDesc(GetBiasIdx()) != nullptr &&
-         context_->GetOptionalInputShape(GetBiasIdx()) != nullptr) &&
-            inputParams_.biasDtype != ge::DT_INT32,
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "bias",
-                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype).c_str(),
-                                              "the dtype of bias must be INT32"),
-        return false);
+    // Dtype checking precedes quantization-mode inference, so use the parsed group attribute here.
+    // Common dtype checks above apply to both routes; only X2 optional dtypes differ.
+    if (inputParams_.groupSizeK != 0UL && inputParams_.aDtype == ge::DT_INT8 &&
+        (inputParams_.bDtype == ge::DT_INT8 || inputParams_.bDtype == ge::DT_INT4)) {
+        OP_TILING_CHECK(
+            (context_->GetOptionalInputDesc(GetBiasIdx()) != nullptr &&
+             context_->GetOptionalInputShape(GetBiasIdx()) != nullptr) &&
+                inputParams_.biasDtype != ge::DT_FLOAT16,
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "bias",
+                                                  ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype).c_str(),
+                                                  "for X2 Per-Group, bias must be FLOAT16"),
+            return false);
+    } else {
+        // bias supports INT32 only.
+        OP_TILING_CHECK(
+            (context_->GetOptionalInputDesc(GetBiasIdx()) != nullptr &&
+             context_->GetOptionalInputShape(GetBiasIdx()) != nullptr) &&
+                inputParams_.biasDtype != ge::DT_INT32,
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "bias",
+                                                  ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype).c_str(),
+                                                  "the dtype of bias must be INT32"),
+            return false);
+    }
     // pertokenScale is not supported in the mmad S8S4 path.
     OP_TILING_CHECK((context_->GetOptionalInputDesc(GetPertokenIdx()) != nullptr &&
                      context_->GetOptionalInputShape(GetPertokenIdx()) != nullptr),
@@ -175,6 +193,14 @@ bool QuantBatchMatmulV3Checker4MmadS8S4::CheckShapeInBoundary(const gert::Shape&
                 FormatString("the dimension value of %s must be within the range of [1,%d]", dimName, INT32_MAX)
                     .c_str()),
             return false);
+        // PG checks the bound before the shared signed multiplication; curDim is positive above.
+        if (inputParams_.isX2PerGroup) {
+            OP_TILING_CHECK(mul > INT64_MAX / curDim,
+                            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                                inputParams_.opName, dimName, Shape2String(shape).c_str(),
+                                "the product of shape dimensions must be within the range of INT64_MAX"),
+                            return false);
+        }
         // The total element count must stay within INT64 range.
         mulBound = curDim * mul;
         OP_TILING_CHECK(mulBound / curDim != mul,
@@ -214,6 +240,121 @@ bool QuantBatchMatmulV3Checker4MmadS8S4::ExtraInputCheck() const
     return true;
 }
 
+bool QuantBatchMatmulV3Checker4MmadS8S4::CheckX2PerGroup(const gert::Shape& scaleShape,
+                                                         const gert::Shape& x2Shape) const
+{
+    if (!inputParams_.isX2PerGroup) {
+        return true;
+    }
+    // Shared checks: AnalyzeInputs validates input rank [2, 6] and A/B batch broadcasting;
+    // CheckDimValue has checked K equality, bias length and offset shape before this call.
+    // CheckShapeInBoundary checks positive INT32 dimensions and element counts afterwards.
+    // Output rank, batch prefix and M/N come from the common InferShapeForBatchMatMul path.
+    // PG-specific group encoding: [groupM, groupN, groupK] = [1, 1, G], G % 64 == 0,
+    // with G in [64, 65472]. Validate G before using it as the scale-group divisor.
+    OP_TILING_CHECK(
+        inputParams_.groupSizeM != 1UL || inputParams_.groupSizeN != 1UL,
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            inputParams_.opName, "groupSizeM, groupSizeN, groupSizeK",
+            FormatString("%lu, %lu, %lu", inputParams_.groupSizeM, inputParams_.groupSizeN, inputParams_.groupSizeK)
+                .c_str(),
+            "for X2 Per-Group, [groupSizeM, groupSizeN, groupSizeK] must be [1, 1, G], "
+            "groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32"),
+        return false);
+    OP_TILING_CHECK(
+        inputParams_.groupSizeK % X2PerGroupConfig::GROUP_ALIGN != 0UL ||
+            inputParams_.groupSizeK < X2PerGroupConfig::MIN_GROUP_SIZE ||
+            inputParams_.groupSizeK > X2PerGroupConfig::MAX_GROUP_SIZE,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            inputParams_.opName, "groupSizeK", std::to_string(inputParams_.groupSizeK).c_str(),
+            FormatString("groupSizeK must be a multiple of %lu and within [%lu, %lu]", X2PerGroupConfig::GROUP_ALIGN,
+                         X2PerGroupConfig::MIN_GROUP_SIZE, X2PerGroupConfig::MAX_GROUP_SIZE)
+                .c_str()),
+        return false);
+    // PG dtypes: A=INT8, B=INT8/INT4, scale=UINT64, output=FLOAT16.
+    OP_TILING_CHECK(
+        inputParams_.cDtype != ge::DT_FLOAT16,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "output",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str(),
+                                              "for X2 Per-Group, the dtype of output must be FLOAT16"),
+        return false);
+    OP_TILING_CHECK(
+        inputParams_.scaleDtype != ge::DT_UINT64,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "scale",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype).c_str(),
+                                              "for X2 Per-Group, the dtype of scale must be UINT64"),
+        return false);
+    // Unlike ordinary S8S4, this PG path requires INT8 activations for both weight types.
+    OP_TILING_CHECK(inputParams_.aDtype != ge::DT_INT8 ||
+                        (inputParams_.bDtype != ge::DT_INT8 && inputParams_.bDtype != ge::DT_INT4),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "x2", ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str(),
+                        "for X2 Per-Group, x1 must be INT8 and x2 must be INT8/INT4"),
+                    return false);
+    // PG supports only nontransposed A and NZ weights; either B transpose is accepted.
+    // ExtraInputCheck separately validates the common X1 ND-format requirement.
+    OP_TILING_CHECK(inputParams_.transA,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "trans_a", "true",
+                                                          "for X2 Per-Group, trans_a must be false"),
+                    return false);
+    auto x2PerGroupDesc = context_->GetInputDesc(GetX2Idx());
+    auto x2PerGroupFormat = static_cast<ge::Format>(ge::GetPrimaryFormat(x2PerGroupDesc->GetStorageFormat()));
+    OP_TILING_CHECK(x2PerGroupFormat != ge::Format::FORMAT_FRACTAL_NZ,
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                        inputParams_.opName, "x2", ge::TypeUtils::FormatToSerialString(x2PerGroupFormat).c_str(),
+                        "for X2 Per-Group, the format of x2 must be FRACTAL_NZ"),
+                    return false);
+    // PG has no offset or pertoken scale. Optional bias is FP16 [N], shared across batches;
+    // its dtype, rank and N length are checked by the existing dtype/shape entry.
+    OP_TILING_CHECK(inputParams_.isPertoken || context_->GetOptionalInputShape(GetOffsetIdx()) != nullptr,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "offset/pertokenScale", "not null",
+                                                          "for X2 Per-Group, offset and pertokenScale must be null"),
+                    return false);
+    // INT4 requires an even innermost logical X2 axis for two-elements-per-byte packing:
+    // N for [K, N] (transB=false), K for [N, K] (transB=true).
+    const uint64_t packedInner = inputParams_.transB ? inputParams_.kSize : inputParams_.nSize;
+    OP_TILING_CHECK(inputParams_.bDtype == ge::DT_INT4 && (packedInner & 1UL) != 0UL,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        inputParams_.opName, inputParams_.transB ? "k" : "n", std::to_string(packedInner).c_str(),
+                        "for INT4 x2, its innermost logical axis must be even (K if transB, otherwise N)"),
+                    return false);
+    // PG scale must have the same rank as B and trailing dimensions [ceilDiv(K, G), N].
+    // PerChannel's one-dimensional scale rule does not apply here; M/N tails remain supported.
+    const auto scaleRank = scaleShape.GetDimNum();
+    const auto x2Rank = x2Shape.GetDimNum();
+    OP_TILING_CHECK(scaleRank < X2_PERGROUP_SCALE_MIN_RANK || scaleRank != x2Rank,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        inputParams_.opName, "scale", FormatString("%zuD", scaleRank).c_str(),
+                        FormatString("for X2 Per-Group, the shape dim of scale must be at least 2 and the same "
+                                     "as that of x2 (%zuD)",
+                                     x2Rank)
+                            .c_str()),
+                    return false);
+    const uint64_t groupCnt = (inputParams_.kSize + inputParams_.groupSizeK - 1UL) / inputParams_.groupSizeK;
+    const auto scaleGroupCnt = static_cast<uint64_t>(scaleShape.GetDim(scaleRank - LAST_SECOND_DIM_INDEX));
+    const auto scaleN = static_cast<uint64_t>(scaleShape.GetDim(scaleRank - LAST_FIRST_DIM_INDEX));
+    OP_TILING_CHECK(
+        scaleGroupCnt != groupCnt || scaleN != inputParams_.nSize,
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            inputParams_.opName, "scale last two dims", FormatString("%lu, %lu", scaleGroupCnt, scaleN).c_str(),
+            FormatString("the last two dims of scale must be [ceilDiv(K, G), N] = [%lu, %lu], "
+                         "where K=%lu, G=%lu",
+                         groupCnt, inputParams_.nSize, inputParams_.kSize, inputParams_.groupSizeK)
+                .c_str()),
+        return false);
+    // Scale batch dimensions must equal B's exactly; scale does not broadcast independently.
+    // The shared B boundary check supplies positivity/range validation for equal scale batch axes.
+    for (size_t i = 0UL; i + LAST_SECOND_DIM_INDEX < scaleRank; ++i) {
+        OP_TILING_CHECK(scaleShape.GetDim(i) != x2Shape.GetDim(i),
+                        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                            inputParams_.opName, "scale batch, x2 batch",
+                            FormatString("%ld, %ld", scaleShape.GetDim(i), x2Shape.GetDim(i)).c_str(),
+                            "for X2 Per-Group, the batch dims of scale must be the same as those of x2"),
+                        return false);
+    }
+    return true;
+}
+
 bool QuantBatchMatmulV3Checker4MmadS8S4::CheckDimValue(const gert::Shape& scaleShape,
                                                        const gert::StorageShape* biasShape,
                                                        const gert::StorageShape* offsetShape,
@@ -246,6 +387,10 @@ bool QuantBatchMatmulV3Checker4MmadS8S4::CheckDimValue(const gert::Shape& scaleS
                         FormatString("%lu, %ld", inputParams_.nSize, offsetShape->GetStorageShape().GetDim(0)).c_str(),
                         "dimension 0 of offset must be 1 or n"),
                     return false);
+    // PG shares K/bias/offset validation above; its scale and mode rules differ below.
+    if (inputParams_.isX2PerGroup) {
+        return CheckX2PerGroup(scaleShape, context_->GetInputShape(GetX2Idx())->GetOriginShape());
+    }
     // scale must be 1D.
     OP_TILING_CHECK(scaleShape.GetDimNum() != 1,
                     OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(inputParams_.opName, "scale",

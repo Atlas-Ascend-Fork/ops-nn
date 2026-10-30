@@ -99,6 +99,7 @@ public:
     bool isPerBlock = false;
     bool isPerBlockPerToken = false;
     bool isHif4PerGroup = false;
+    bool isX2PerGroup = false;
     bool isLut = false;
     int64_t outDtype = 0L;
     uint32_t libApiWorkSpaceSize = 0U;
@@ -176,6 +177,7 @@ protected:
     bool SetQuantMode(const gert::Shape& scaleShape, const gert::StorageShape* pertokenShape);
     bool SetX1QuantMode(BasicQuantMode& x1QuantMode, bool isFp8Hif8Input, const gert::StorageShape* pertokenShape);
     bool SetX2QuantMode(BasicQuantMode& x2QuantMode, bool isFp8Hif8Input, const gert::Shape& scaleShape);
+    bool IsX2PerGroupScale(const gert::Shape& scaleShape) const;
     std::string QuantModeMapToString(const std::vector<BasicQuantMode>& quantModeList) const;
     bool IsMicroScaling() const;
     bool IsHif4Scale() const;
