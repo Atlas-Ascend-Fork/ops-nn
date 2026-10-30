@@ -27,6 +27,42 @@ using namespace ut_util;
 using namespace std;
 using namespace ge;
 
+namespace optiling {
+ge::graphStatus TilingPrepareExpandIntoJaggedPermute(gert::TilingParseContext* context);
+} // namespace optiling
+
+namespace error_message {
+struct CapturedError {
+    std::string code;
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+};
+static thread_local CapturedError g_lastError;
+static thread_local int g_reportCount = 0;
+
+__attribute__((weak)) int32_t ReportPredefinedErrMsg(const char* errorCode, const std::vector<const char*>& keys,
+                                                     const std::vector<const char*>& values)
+{
+    g_lastError.code = errorCode == nullptr ? "" : errorCode;
+    g_lastError.keys.clear();
+    g_lastError.values.clear();
+    for (const auto* key : keys) {
+        g_lastError.keys.emplace_back(key == nullptr ? "" : key);
+    }
+    for (const auto* value : values) {
+        g_lastError.values.emplace_back(value == nullptr ? "" : value);
+    }
+    ++g_reportCount;
+    return 0;
+}
+
+static void ResetCapture()
+{
+    g_lastError = {};
+    g_reportCount = 0;
+}
+} // namespace error_message
+
 class ExpandIntoJaggedPermuteTiling : public testing::Test {
 protected:
     static void SetUpTestCase() { std::cout << "ExpandIntoJaggedPermuteTiling SetUp" << std::endl; }
@@ -106,4 +142,31 @@ TEST_F(ExpandIntoJaggedPermuteTiling, test_tiling_int32)
     ASSERT_NE(input_offsets_context_shape, nullptr);
     *input_offsets_context_shape = {{5}, {5}};
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+}
+
+static void ExpectSingleStageError(const std::string& reason)
+{
+    ASSERT_EQ(error_message::g_reportCount, 1);
+    EXPECT_EQ(error_message::g_lastError.code, "EZ1008");
+    ASSERT_EQ(error_message::g_lastError.keys, (std::vector<std::string>{"opName", "reason"}));
+    ASSERT_EQ(error_message::g_lastError.values.size(), 2U);
+    EXPECT_EQ(error_message::g_lastError.values[0], "ExpandIntoJaggedPermute");
+    EXPECT_NE(error_message::g_lastError.values[1].find(reason), std::string::npos);
+}
+
+TEST_F(ExpandIntoJaggedPermuteTiling, null_tiling_context_reports_stage_failure_once)
+{
+    auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ExpandIntoJaggedPermute");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling, nullptr);
+    error_message::ResetCapture();
+    EXPECT_EQ(impl->tiling(nullptr), ge::GRAPH_FAILED);
+    ExpectSingleStageError("TilingContext is nullptr");
+}
+
+TEST_F(ExpandIntoJaggedPermuteTiling, null_parse_context_reports_stage_failure_once)
+{
+    error_message::ResetCapture();
+    EXPECT_EQ(optiling::TilingPrepareExpandIntoJaggedPermute(nullptr), ge::GRAPH_FAILED);
+    ExpectSingleStageError("TilingParseContext is nullptr");
 }

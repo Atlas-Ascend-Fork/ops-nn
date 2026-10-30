@@ -15,6 +15,7 @@
 #include <limits>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include "exe_graph/runtime/storage_format.h"
@@ -33,6 +34,38 @@ ge::graphStatus ValidateOutputViewSpanForExpandIntoJaggedPermute(gert::TilingCon
                                                                  int64_t outputOffset, int64_t outputStride);
 } // namespace optiling
 
+namespace error_message {
+struct CapturedError {
+    std::string code;
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+};
+static thread_local CapturedError g_lastError;
+static thread_local int g_reportCount = 0;
+
+__attribute__((weak)) int32_t ReportPredefinedErrMsg(const char* errorCode, const std::vector<const char*>& keys,
+                                                     const std::vector<const char*>& values)
+{
+    g_lastError.code = errorCode == nullptr ? "" : errorCode;
+    g_lastError.keys.clear();
+    g_lastError.values.clear();
+    for (const auto* key : keys) {
+        g_lastError.keys.emplace_back(key == nullptr ? "" : key);
+    }
+    for (const auto* value : values) {
+        g_lastError.values.emplace_back(value == nullptr ? "" : value);
+    }
+    ++g_reportCount;
+    return 0;
+}
+
+static void ResetCapture()
+{
+    g_lastError = {};
+    g_reportCount = 0;
+}
+} // namespace error_message
+
 namespace {
 constexpr char OP_TYPE[] = "ExpandIntoJaggedPermute";
 constexpr size_t TILING_CAPACITY = 4096;
@@ -44,12 +77,25 @@ struct TilingResult {
     uint64_t tilingKey = 0;
     uint32_t blockDim = 0;
     ExpandIntoJaggedPermuteTilingData data{};
+    size_t errorCount = 0;
+    std::string errorId;
+    std::string errorMessage;
+    std::vector<std::string> errorKeys;
+    std::vector<std::string> errorValues;
+};
+
+enum class FailurePoint {
+    NONE,
+    PLATFORM_INFO,
+    TILING_DATA,
+    WORKSPACE,
+    LOCAL_MEMORY_OUTPUT,
 };
 
 TilingResult RunTiling(gert::StorageShape& permute, gert::StorageShape& inputOffsets, gert::StorageShape& outputOffsets,
                        gert::StorageShape& output, int64_t outputSize, ge::DataType permuteType = ge::DT_INT32,
                        ge::Format permuteFormat = ge::FORMAT_ND, ge::DataType outputType = ge::DT_INT32,
-                       ge::Format outputFormat = ge::FORMAT_ND)
+                       ge::Format outputFormat = ge::FORMAT_ND, FailurePoint failurePoint = FailurePoint::NONE)
 {
     const std::string platformJson = R"({
         "hardware_info": {
@@ -91,16 +137,71 @@ TilingResult RunTiling(gert::StorageShape& permute, gert::StorageShape& inputOff
     if (context == nullptr) {
         return result;
     }
-    context->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
-    context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
-    context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
-    context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    auto* kernelContext = holder.GetContext<gert::KernelContext>();
+    if (kernelContext == nullptr) {
+        return result;
+    }
+    if (failurePoint == FailurePoint::PLATFORM_INFO) {
+        const auto* nodeInfo = context->GetComputeNodeInfo();
+        if (nodeInfo == nullptr) {
+            return result;
+        }
+        const size_t platformIndex = nodeInfo->GetInputsNum() + nodeInfo->GetOutputsNum() + 1;
+        auto* platformInput = kernelContext->MutableInput(platformIndex);
+        if (platformInput == nullptr) {
+            return result;
+        }
+        platformInput->Set(nullptr, nullptr);
+    } else {
+        context->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+        context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+        context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+        context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    }
+    auto* runContext = kernelContext->GetContext();
+    auto* savedOutputSlot = runContext->values[runContext->input_size];
+    bool outputSlotCleared = false;
+    size_t outputIndex = 0;
+    if (failurePoint == FailurePoint::TILING_DATA) {
+        auto* outputSlot = kernelContext->GetOutput(gert::TilingContext::kOutputTilingData);
+        if (outputSlot == nullptr) {
+            return result;
+        }
+        outputSlot->Set(nullptr, nullptr);
+    } else if (failurePoint == FailurePoint::WORKSPACE) {
+        auto* outputSlot = kernelContext->GetOutput(gert::TilingContext::kOutputWorkspace);
+        if (outputSlot == nullptr) {
+            return result;
+        }
+        outputSlot->Set(nullptr, nullptr);
+    } else if (failurePoint == FailurePoint::LOCAL_MEMORY_OUTPUT) {
+        outputIndex = gert::TilingContext::kOutputDynUBufSize;
+        outputSlotCleared = true;
+    }
+    if (outputSlotCleared) {
+        savedOutputSlot = runContext->values[runContext->input_size + outputIndex];
+        runContext->values[runContext->input_size + outputIndex] = nullptr;
+    }
 
     auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl(OP_TYPE);
     if (impl == nullptr || impl->tiling == nullptr) {
+        if (outputSlotCleared) {
+            runContext->values[runContext->input_size + outputIndex] = savedOutputSlot;
+        }
         return result;
     }
+    error_message::ResetCapture();
     result.status = impl->tiling(context);
+    if (outputSlotCleared) {
+        runContext->values[runContext->input_size + outputIndex] = savedOutputSlot;
+    }
+    result.errorCount = static_cast<size_t>(error_message::g_reportCount);
+    result.errorId = error_message::g_lastError.code;
+    result.errorKeys = error_message::g_lastError.keys;
+    result.errorValues = error_message::g_lastError.values;
+    if (error_message::g_lastError.values.size() == 2U) {
+        result.errorMessage = error_message::g_lastError.values[0] + ": " + error_message::g_lastError.values[1];
+    }
     if (result.status != ge::GRAPH_SUCCESS) {
         return result;
     }
@@ -118,6 +219,20 @@ TilingResult RunTiling(gert::StorageShape& permute, gert::StorageShape& inputOff
         }
     }
     return result;
+}
+
+void ExpectSingleStageError(const TilingResult& result, const std::string& reason)
+{
+    SCOPED_TRACE(reason);
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    ASSERT_EQ(result.errorCount, 1U);
+    EXPECT_EQ(result.errorId, "EZ1008");
+    EXPECT_EQ(result.errorKeys, (std::vector<std::string>{"opName", "reason"}));
+    ASSERT_EQ(result.errorValues.size(), 2U);
+    EXPECT_EQ(result.errorValues[0], OP_TYPE);
+    EXPECT_NE(result.errorMessage.find(OP_TYPE), std::string::npos);
+    EXPECT_NE(result.errorMessage.find(reason), std::string::npos);
+    EXPECT_EQ(result.errorMessage.find("EZ9999"), std::string::npos);
 }
 
 ge::graphStatus RunViewSpan(int64_t outputSize, int64_t outputOffset, int64_t outputStride)
@@ -283,4 +398,49 @@ TEST(ExpandIntoJaggedPermuteTiling950, ValidatesOutputViewSpanOverflow)
     EXPECT_EQ(RunViewSpan(10, 1, 2), ge::GRAPH_SUCCESS);
     EXPECT_EQ(RunViewSpan(std::numeric_limits<int32_t>::max(), 0, std::numeric_limits<int64_t>::max()),
               ge::GRAPH_FAILED);
+}
+
+TEST(ExpandIntoJaggedPermuteTiling950, NullContextReportsStageFailureOnce)
+{
+    auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl(OP_TYPE);
+    ASSERT_NE(impl, nullptr);
+    error_message::ResetCapture();
+    EXPECT_EQ(impl->tiling(nullptr), ge::GRAPH_FAILED);
+    ASSERT_EQ(error_message::g_reportCount, 1);
+    EXPECT_EQ(error_message::g_lastError.code, "EZ1008");
+    ASSERT_EQ(error_message::g_lastError.keys, (std::vector<std::string>{"opName", "reason"}));
+    ASSERT_EQ(error_message::g_lastError.values.size(), 2U);
+    EXPECT_EQ(error_message::g_lastError.values[0], OP_TYPE);
+    EXPECT_NE(error_message::g_lastError.values[1].find("TilingContext is nullptr"), std::string::npos);
+}
+
+void CheckFrameworkResourceFailure(FailurePoint failurePoint, const std::string& reason)
+{
+    gert::StorageShape permute = {{3}, {3}};
+    gert::StorageShape inputOffsets = {{4}, {4}};
+    gert::StorageShape outputOffsets = {{4}, {4}};
+    gert::StorageShape output = {{6}, {6}};
+    ExpectSingleStageError(RunTiling(permute, inputOffsets, outputOffsets, output, 6, ge::DT_INT32, ge::FORMAT_ND,
+                                     ge::DT_INT32, ge::FORMAT_ND, failurePoint),
+                           reason);
+}
+
+TEST(ExpandIntoJaggedPermuteTiling950, MissingPlatformInfoReportsStageCodeOnce)
+{
+    CheckFrameworkResourceFailure(FailurePoint::PLATFORM_INFO, "GetPlatformInfo() returned nullptr");
+}
+
+TEST(ExpandIntoJaggedPermuteTiling950, MissingTilingDataReportsStageCodeOnce)
+{
+    CheckFrameworkResourceFailure(FailurePoint::TILING_DATA, "GetTilingData() returned nullptr");
+}
+
+TEST(ExpandIntoJaggedPermuteTiling950, MissingWorkspaceReportsStageCodeOnce)
+{
+    CheckFrameworkResourceFailure(FailurePoint::WORKSPACE, "GetWorkspaceSizes(1) returned nullptr");
+}
+
+TEST(ExpandIntoJaggedPermuteTiling950, MissingLocalMemoryOutputReportsStageCodeOnce)
+{
+    CheckFrameworkResourceFailure(FailurePoint::LOCAL_MEMORY_OUTPUT, "SetLocalMemorySize(0) failed");
 }

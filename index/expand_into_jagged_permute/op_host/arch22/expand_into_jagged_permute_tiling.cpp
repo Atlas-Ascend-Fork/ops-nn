@@ -14,6 +14,7 @@
  */
 #include "expand_into_jagged_permute_tiling.h"
 #include <string>
+#include <vector>
 #include "register/op_impl_registry.h"
 #include "util/math_util.h"
 #include "log/log.h"
@@ -31,6 +32,14 @@ constexpr size_t PERMUTE_INDEX = 0;
 constexpr size_t INPUT_OFFSETS_INDEX = 1;
 constexpr size_t OUTPUT_OFFSETS_INDEX = 2;
 constexpr size_t OUTPUT_SIZE_ATTR = 0;
+
+static void ReportTilingError(const char* opName, const std::string& reason)
+{
+    const char* safeOpName = opName == nullptr ? OP_NAME : opName;
+    OP_LOGE_WITHOUT_REPORT(safeOpName, "%s", reason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{safeOpName, reason.c_str()}));
+}
 
 static ge::graphStatus ValidateInputDesc(const gert::TilingContext* context, size_t index, const char* tensorName)
 {
@@ -115,7 +124,7 @@ static inline ge::graphStatus Init(gert::TilingContext* context, ExpandIntoJagge
     size_t sysWorkspaceSize = 16 * 1024 * 1024;
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
     if (currentWorkspace == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context, "failed to get workspace size buffer");
+        ReportTilingError(context->GetNodeName(), "GetWorkspaceSizes(1) returned nullptr");
         return ge::GRAPH_FAILED;
     }
     currentWorkspace[0] = sysWorkspaceSize;
@@ -123,7 +132,7 @@ static inline ge::graphStatus Init(gert::TilingContext* context, ExpandIntoJagge
 
     auto* platformInfo = context->GetPlatformInfo();
     if (platformInfo == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context, "platform info is nullptr");
+        ReportTilingError(context->GetNodeName(), "GetPlatformInfo() returned nullptr");
         return ge::GRAPH_FAILED;
     }
     auto ascendPlaform = platform_ascendc::PlatformAscendC(platformInfo);
@@ -158,8 +167,10 @@ static inline ge::graphStatus Init(gert::TilingContext* context, ExpandIntoJagge
     param.outputoffset = outputoffsetShape->GetStorageShape().GetDim(0);
     param.dtypeSize = ge::GetSizeByDataType(context->GetInputDesc(0)->GetDataType());
     if (param.coreNum <= 0 || param.dtypeSize <= 0) {
-        OP_LOGE_WITHOUT_REPORT(context, "invalid internal tiling metadata: coreNum=%ld, dtypeSize=%ld", param.coreNum,
-                               param.dtypeSize);
+        const std::string reason = "Invalid tiling metadata: coreNum=" + std::to_string(param.coreNum) +
+                                   ", dtypeSize=" + std::to_string(param.dtypeSize) +
+                                   "; expected both values to be positive";
+        ReportTilingError(context->GetNodeName(), reason);
         return ge::GRAPH_FAILED;
     }
 
@@ -197,12 +208,11 @@ static ge::graphStatus SetTilingData(gert::TilingContext* context, const ExpandI
     tilingData.set_oneTaskLen(param.oneTaskLen);
     auto rawTilingData = context->GetRawTilingData();
     if (rawTilingData == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context, "raw tiling data is nullptr");
+        ReportTilingError(context->GetNodeName(), "GetRawTilingData() returned nullptr");
         return ge::GRAPH_FAILED;
     }
     tilingData.SaveToBuffer(rawTilingData->GetData(), rawTilingData->GetCapacity());
     rawTilingData->SetDataSize(tilingData.GetDataSize());
-    context->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
     return ge::GRAPH_SUCCESS;
 }
 
@@ -224,7 +234,7 @@ static inline void PrintTilingData(const gert::TilingContext* context, const Exp
 static ge::graphStatus TilingForExpandIntoJaggedPermute(gert::TilingContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "tiling context is nullptr");
+        ReportTilingError(OP_NAME, "TilingContext is nullptr");
         return ge::GRAPH_FAILED;
     }
     auto nodeName = context->GetNodeName();
@@ -245,7 +255,7 @@ static ge::graphStatus TilingForExpandIntoJaggedPermute(gert::TilingContext* con
 ge::graphStatus TilingPrepareExpandIntoJaggedPermute(gert::TilingParseContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "tiling parse context is nullptr");
+        ReportTilingError(OP_NAME, "TilingParseContext is nullptr");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <vector>
 
 #include "graph/types.h"
 #include "log/log.h"
@@ -46,6 +47,14 @@ constexpr int64_t PER_CORE_MIN = 1024;
 constexpr int64_t WARP_SIZE = 32;
 constexpr uint64_t MIN_UB_BYTES = 40 * 1024;
 constexpr uint32_t WS_SYS_SIZE = 0U; // The kernel does not consume workspace, so the system workspace is always 0.
+
+static void ReportTilingError(const char* opName, const std::string& reason)
+{
+    const char* safeOpName = opName == nullptr ? OP_NAME : opName;
+    OP_LOGE_WITHOUT_REPORT(safeOpName, "%s", reason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{safeOpName, reason.c_str()}));
+}
 
 struct ExpandIntoJaggedPermuteCompileInfo {};
 
@@ -281,24 +290,22 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, PlatformInf
 {
     auto* platformInfo = context->GetPlatformInfo();
     if (platformInfo == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context, "platform info is nullptr");
+        ReportTilingError(context->GetNodeName(), "GetPlatformInfo() returned nullptr");
         return ge::GRAPH_FAILED;
     }
     auto platform = platform_ascendc::PlatformAscendC(platformInfo);
     info.coreNum = static_cast<int64_t>(platform.GetCoreNumAiv());
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, info.ubSize);
     if (info.coreNum <= 0 || info.coreNum > std::numeric_limits<uint32_t>::max()) {
-        OP_LOGE_WITHOUT_REPORT(
-            context->GetNodeName(),
-            "Invalid internal AIV core count, actual=%s, reason=expected an integer in [1, UINT32_MAX]",
-            std::to_string(info.coreNum).c_str());
+        const std::string reason = "Invalid AIV core count from platform metadata: actual=" +
+                                   std::to_string(info.coreNum) + ", expected an integer in [1, UINT32_MAX]";
+        ReportTilingError(context->GetNodeName(), reason);
         return ge::GRAPH_FAILED;
     }
     if (info.ubSize < MIN_UB_BYTES) {
-        OP_LOGE_WITHOUT_REPORT(
-            context->GetNodeName(),
-            "Invalid internal UB size, actual=%s, reason=expected at least 40960 bytes for the DCache reserve",
-            std::to_string(info.ubSize).c_str());
+        const std::string reason = "Invalid UB size from platform metadata: actual=" + std::to_string(info.ubSize) +
+                                   ", expected at least 40960 bytes for the DCache reserve";
+        ReportTilingError(context->GetNodeName(), reason);
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -353,14 +360,15 @@ static ge::graphStatus SetRuntimeConfig(gert::TilingContext* context, const Expa
 {
     size_t* workspaceSizes = context->GetWorkspaceSizes(1);
     if (workspaceSizes == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context, "failed to get workspace size buffer");
+        ReportTilingError(context->GetNodeName(), "GetWorkspaceSizes(1) returned nullptr");
         return ge::GRAPH_FAILED;
     }
     workspaceSizes[0] = WS_SYS_SIZE;
     context->SetBlockDim(tiling->needCoreNum);
     const ge::graphStatus localMemoryStatus = context->SetLocalMemorySize(0);
     if (localMemoryStatus != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context, "SetLocalMemorySize(0) failed, status=%u", localMemoryStatus);
+        const std::string reason = "SetLocalMemorySize(0) failed, status=" + std::to_string(localMemoryStatus);
+        ReportTilingError(context->GetNodeName(), reason);
         return localMemoryStatus;
     }
     context->SetTilingKey(GET_TPL_TILING_KEY(EXPAND_JAGGED_MODE_OUTPUT_BLOCK));
@@ -370,7 +378,7 @@ static ge::graphStatus SetRuntimeConfig(gert::TilingContext* context, const Expa
 static ge::graphStatus ExpandIntoJaggedPermuteTilingFunc(gert::TilingContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "tiling context is nullptr");
+        ReportTilingError(OP_NAME, "TilingContext is nullptr");
         return ge::GRAPH_FAILED;
     }
     int64_t segmentCount = 0;
@@ -391,11 +399,11 @@ static ge::graphStatus ExpandIntoJaggedPermuteTilingFunc(gert::TilingContext* co
     }
     auto* tiling = context->GetTilingData<ExpandIntoJaggedPermuteTilingData>();
     if (tiling == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context, "tiling data is nullptr");
+        ReportTilingError(context->GetNodeName(), "GetTilingData() returned nullptr");
         return ge::GRAPH_FAILED;
     }
     if (memset_s(tiling, sizeof(*tiling), 0, sizeof(*tiling)) != EOK) {
-        OP_LOGE_WITHOUT_REPORT(context, "memset_s failed while initializing %zu-byte tiling data", sizeof(*tiling));
+        OP_LOGE(context, "memset_s failed while initializing %zu-byte tiling data", sizeof(*tiling));
         return ge::GRAPH_FAILED;
     }
     status = ComputeTiling(context, segmentCount, outputSize, outputStride, platform.coreNum, tiling);
