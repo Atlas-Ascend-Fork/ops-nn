@@ -498,9 +498,9 @@ protected:
 
     __aicore__ inline void CastFloatToInt8(const LocalTensor<float>& src, LocalTensor<int8_t>& dst, int64_t count)
     {
-        // FP32 -> INT32 (rint)
+        // The API contract specifies trunc() rounding: FP32 -> INT32 (trunc)
         LocalTensor<int32_t> tmpI32 = castBuf_.template Get<int32_t>();
-        Cast(tmpI32, src, RoundMode::CAST_RINT, count);
+        Cast(tmpI32, src, RoundMode::CAST_TRUNC, count);
         PipeBarrier<PIPE_V>();
         SetDeqScale((half)1.000000e+00f);
 
@@ -889,10 +889,23 @@ public:
 
         xGm_.SetGlobalBuffer((__gm__ XType*)x, rowLen_ * inputWidth_);
         if constexpr (std::is_same_v<XType, int32_t>) {
-            weightScaleGm_.SetGlobalBuffer((__gm__ float*)weightScale, expertNum_ * inputWidth_);
-            activationScaleGm_.SetGlobalBuffer((__gm__ float*)activationScale, rowLen_);
+            weightScaleIsOne_ = (tilingData_->weightScaleIsOne != 0);
+            activationScaleIsOne_ = (tilingData_->activationScaleIsOne != 0);
+            biasIsOne_ = (tilingData_->biasIsOne != 0);
+            weightScaleGm_.SetGlobalBuffer((__gm__ float*)weightScale,
+                                           weightScaleIsOne_ ? 1 : expertNum_ * inputWidth_);
+            activationScaleGm_.SetGlobalBuffer((__gm__ float*)activationScale, activationScaleIsOne_ ? 1 : rowLen_);
             if (hasBias_) {
-                biasGm_.SetGlobalBuffer((__gm__ float*)bias, expertNum_ * inputWidth_);
+                biasGm_.SetGlobalBuffer((__gm__ float*)bias, biasIsOne_ ? 1 : expertNum_ * inputWidth_);
+            }
+            if (weightScaleIsOne_) {
+                weightScaleVal_ = weightScaleGm_.GetValue(0);
+            }
+            if (hasBias_ && biasIsOne_) {
+                biasVal_ = biasGm_.GetValue(0);
+            }
+            if (activationScaleIsOne_) {
+                activationScaleVal_ = activationScaleGm_.GetValue(0);
             }
         }
         if (hasGroupIndex_) {
@@ -941,12 +954,14 @@ public:
             pipe_->InitBuffer(dequantBuf_, bufferBytes);
         }
         pipe_->InitBuffer(outQueue_, K3_BUFFER_NUM, outputBytes);
-        // tmpBuf_ holds: sigmoid[0:alignOutputWidth_] + sigmoidTmp workspace
-        // [alignOutputWidth_:2*alignOutputWidth_] (ComputeRow), then later
+        // tmpBuf_ holds: sigmoid[0:alignOutputWidth_] + exp(-gate) intermediate
+        // [alignOutputWidth_:2*alignOutputWidth_] (ComputeRow manual sigmoid), the
+        // ones block at [bufferWidth_:bufferWidth_+8], then later
         // Abs[0:alignOutputWidth_] + maskTensor[bufferWidth_:] + tempInt32
         // [alignOutputWidth_:] (DynamicQuant/CastFloatToInt8). The mask region
         // starts at bufferWidth_ (>= alignInputWidth_), so size for
-        // bufferWidth_ + alignOutputWidth_ floats to cover mask + tempInt32.
+        // bufferWidth_ + alignOutputWidth_ floats to cover mask + tempInt32; the
+        // ones block reuses the maskTensor slot (different pipeline stages).
         pipe_->InitBuffer(tmpBuf_, (bufferWidth_ + alignOutputWidth_) * static_cast<int64_t>(sizeof(float)));
     }
 
@@ -974,6 +989,12 @@ public:
                 ProcessGroup(expertIdx, groupRows, groupOffset);
                 groupOffset += groupRows;
             }
+        }
+        // Rows not covered by any expert (sum(group_index) < row count) must be
+        // written explicitly, otherwise y/y_scale keep stale buffer contents
+        // while the API still reports success.
+        if (groupOffset < rowLen_) {
+            ZeroOutRows(groupOffset, rowLen_ - groupOffset);
         }
     }
 
@@ -1020,23 +1041,41 @@ private:
         // Float DataCopyPad rightPadding (in float elems) bytes must not exceed 32B:
         // max padding = alignOutputWidth_ - outputWidth_ <= alignUnit-1, and
         // (alignUnit-1)*4 <= 28 < 32B, so a single DataCopyPad per half suffices.
+        // Scalar ([1]) scales/bias are host-flagged (weightScaleIsOne_/biasIsOne_):
+        // only the first element is copied; ComputeRow uses the scalar value.
         const int64_t paramOffset = expertIdx * inputWidth_;
-        uint8_t rPad = static_cast<uint8_t>(alignOutputWidth_ - outputWidth_);
-        const uint32_t halfBytes = static_cast<uint32_t>(outputWidth_ * sizeof(float));
-        DataCopyExtParams params{1, halfBytes, 0, 0, 0};
-        DataCopyPadExtParams<float> padParams{true, 0, rPad, 0.0f};
-
         LocalTensor<float> weightScaleLocal = weightScaleQueue_.AllocTensor<float>();
-        // First half: weight_scale[0:H] -> [0:alignOutputWidth_]
-        DataCopyPad(weightScaleLocal, weightScaleGm_[paramOffset], params, padParams);
-        // Second half: weight_scale[H:2H] -> [alignOutputWidth_:2*alignOutputWidth_]
-        DataCopyPad(weightScaleLocal[alignOutputWidth_], weightScaleGm_[paramOffset + outputWidth_], params, padParams);
+        if (weightScaleIsOne_) {
+            DataCopyExtParams sParams{1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0};
+            DataCopyPadExtParams<float> sPad{false, 0, 0, 0};
+            DataCopyPad(weightScaleLocal, weightScaleGm_[paramOffset], sParams, sPad);
+        } else {
+            uint8_t rPad = static_cast<uint8_t>(alignOutputWidth_ - outputWidth_);
+            const uint32_t halfBytes = static_cast<uint32_t>(outputWidth_ * sizeof(float));
+            DataCopyExtParams params{1, halfBytes, 0, 0, 0};
+            DataCopyPadExtParams<float> padParams{true, 0, rPad, 0.0f};
+            // First half: weight_scale[0:H] -> [0:alignOutputWidth_]
+            DataCopyPad(weightScaleLocal, weightScaleGm_[paramOffset], params, padParams);
+            // Second half: weight_scale[H:2H] -> [alignOutputWidth_:2*alignOutputWidth_]
+            DataCopyPad(weightScaleLocal[alignOutputWidth_], weightScaleGm_[paramOffset + outputWidth_], params,
+                        padParams);
+        }
         weightScaleQueue_.EnQue(weightScaleLocal);
 
         if (hasBias_) {
             LocalTensor<float> biasLocal = biasQueue_.AllocTensor<float>();
-            DataCopyPad(biasLocal, biasGm_[paramOffset], params, padParams);
-            DataCopyPad(biasLocal[alignOutputWidth_], biasGm_[paramOffset + outputWidth_], params, padParams);
+            if (biasIsOne_) {
+                DataCopyExtParams sParams{1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0};
+                DataCopyPadExtParams<float> sPad{false, 0, 0, 0};
+                DataCopyPad(biasLocal, biasGm_[paramOffset], sParams, sPad);
+            } else {
+                uint8_t rPad = static_cast<uint8_t>(alignOutputWidth_ - outputWidth_);
+                const uint32_t halfBytes = static_cast<uint32_t>(outputWidth_ * sizeof(float));
+                DataCopyExtParams params{1, halfBytes, 0, 0, 0};
+                DataCopyPadExtParams<float> padParams{true, 0, rPad, 0.0f};
+                DataCopyPad(biasLocal, biasGm_[paramOffset], params, padParams);
+                DataCopyPad(biasLocal[alignOutputWidth_], biasGm_[paramOffset + outputWidth_], params, padParams);
+            }
             biasQueue_.EnQue(biasLocal);
         }
     }
@@ -1085,13 +1124,22 @@ private:
             xQueue_.FreeTensor(xLocal);
         }
         if constexpr (std::is_same_v<XType, int32_t>) {
-            const float activationScale = activationScaleGm_.GetValue(rowIdx);
-            Mul(xLocalF32, xLocalF32, weightScaleLocal_, bufferWidth_);
+            const float activationScale = activationScaleIsOne_ ? activationScaleVal_ :
+                                                                  activationScaleGm_.GetValue(rowIdx);
+            if (weightScaleIsOne_) {
+                Muls(xLocalF32, xLocalF32, weightScaleVal_, bufferWidth_);
+            } else {
+                Mul(xLocalF32, xLocalF32, weightScaleLocal_, bufferWidth_);
+            }
             PipeBarrier<PIPE_V>();
             Muls(xLocalF32, xLocalF32, activationScale, bufferWidth_);
             PipeBarrier<PIPE_V>();
             if (hasBias_) {
-                Add(xLocalF32, xLocalF32, biasLocal_, bufferWidth_);
+                if (biasIsOne_) {
+                    Adds(xLocalF32, xLocalF32, biasVal_, bufferWidth_);
+                } else {
+                    Add(xLocalF32, xLocalF32, biasLocal_, bufferWidth_);
+                }
                 PipeBarrier<PIPE_V>();
             }
         }
@@ -1103,11 +1151,37 @@ private:
         LocalTensor<float> gate = xLocalF32[gateOffset];
         LocalTensor<float> up = xLocalF32[upOffset];
         LocalTensor<float> sigmoid = temp;
-        LocalTensor<uint8_t> sigmoidTmp = temp[alignOutputWidth_].template ReinterpretCast<uint8_t>();
-
-        // Sigmoid(gate) — result stored in sigmoid buffer, gate unchanged
-        Sigmoid(sigmoid, gate, sigmoidTmp, alignOutputWidth_);
+        // Manual sigmoid: sigmoid(gate) = 1 / (1 + exp(-gate)), computed over the
+        // full aligned width. The high-level Sigmoid API requires a hidden shared
+        // tmp buffer that is not accounted for by tiling and can run past the UB
+        // on large H (vector core exception). expNeg reuses the sigmoidTmp slot
+        // and the ones block reuses the maskTensor slot (different pipeline stages).
+        LocalTensor<float> expNeg = temp[alignOutputWidth_];
+        Muls(expNeg, gate, -1.0f, alignOutputWidth_);
         PipeBarrier<PIPE_V>();
+        Exp(expNeg, expNeg, alignOutputWidth_);
+        PipeBarrier<PIPE_V>();
+        Adds(expNeg, expNeg, 1.0f, alignOutputWidth_);
+        PipeBarrier<PIPE_V>();
+
+        const int64_t onesIdx = bufferWidth_; // 32B-aligned float offset
+        LocalTensor<float> onesBlock = temp[onesIdx];
+        Duplicate<float>(onesBlock, 1.0f, 8);
+        PipeBarrier<PIPE_V>();
+
+        constexpr uint64_t maskFp32 = static_cast<uint64_t>(ELEM_PER_REP_FP32);
+        const uint32_t fullReps = static_cast<uint32_t>(alignOutputWidth_ / ELEM_PER_REP_FP32);
+        const uint32_t remainder = static_cast<uint32_t>(alignOutputWidth_ % ELEM_PER_REP_FP32);
+        BinaryRepeatParams divParams(1, 0, 1, 8, 0, 8);
+        if (fullReps > 0) {
+            Div(sigmoid, onesBlock, expNeg, maskFp32, static_cast<uint8_t>(fullReps), divParams);
+            PipeBarrier<PIPE_V>();
+        }
+        if (remainder > 0) {
+            Div(sigmoid[fullReps * ELEM_PER_REP_FP32], onesBlock, expNeg[fullReps * ELEM_PER_REP_FP32], remainder, 1,
+                divParams);
+            PipeBarrier<PIPE_V>();
+        }
 
         // gate tanh: beta * tanh(gate / beta)
         Muls(gate, gate, 1.0f / beta_, alignOutputWidth_);
@@ -1215,8 +1289,9 @@ private:
     __aicore__ inline void CastFloatToInt8(const LocalTensor<float>& src, LocalTensor<float>& temp,
                                            LocalTensor<int8_t>& dst)
     {
+        // The API contract specifies trunc() rounding: FP32 -> INT32 (trunc)
         LocalTensor<int32_t> tempInt32 = temp[alignOutputWidth_].ReinterpretCast<int32_t>();
-        Cast(tempInt32, src, RoundMode::CAST_RINT, alignOutputWidth_);
+        Cast(tempInt32, src, RoundMode::CAST_TRUNC, alignOutputWidth_);
         PipeBarrier<PIPE_V>();
         SetDeqScale((half)1.0f);
 
@@ -1225,6 +1300,26 @@ private:
         PipeBarrier<PIPE_V>();
         Cast(dst, tempHalf, RoundMode::CAST_TRUNC, alignOutputWidth_);
         PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void ZeroOutRows(int64_t rowStart, int64_t rowCount)
+    {
+        const int64_t rowsPerCore = (rowCount + usedCoreNum_ - 1) / usedCoreNum_;
+        const int64_t localOffset = blockIdx_ * rowsPerCore;
+        if (localOffset >= rowCount) {
+            return;
+        }
+        const int64_t localRows = (rowCount - localOffset < rowsPerCore) ? rowCount - localOffset : rowsPerCore;
+        for (int64_t r = 0; r < localRows; ++r) {
+            const int64_t rowIdx = rowStart + localOffset + r;
+            LocalTensor<float> outLocal = outQueue_.AllocTensor<float>();
+            // Clear y [H int8] and y_scale [1 float] in one go: Duplicate does not
+            // support int8_t on all CANN versions, so zero the region as floats.
+            // Clear up to scaleIdx_ (32B-aligned y region end) plus the scale slot.
+            Duplicate<float>(outLocal, 0.0f, scaleIdx_ + 1);
+            outQueue_.EnQue<float>(outLocal);
+            CopyOutRow(rowIdx);
+        }
     }
 
     __aicore__ inline void CopyOutRow(int64_t rowIdx)
@@ -1264,6 +1359,12 @@ private:
     uint32_t activateLeft_ = 1;
     bool hasBias_ = false;
     bool hasGroupIndex_ = false;
+    bool weightScaleIsOne_ = false;
+    bool activationScaleIsOne_ = false;
+    bool biasIsOne_ = false;
+    float weightScaleVal_ = 1.0f;
+    float activationScaleVal_ = 1.0f;
+    float biasVal_ = 0.0f;
     float beta_ = 4.0f;
     float linearBeta_ = 25.0f;
 

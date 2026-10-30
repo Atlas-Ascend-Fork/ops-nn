@@ -56,6 +56,9 @@ TILING_DATA_FIELD_DEF(uint32_t, hasActivationScale);
 TILING_DATA_FIELD_DEF(uint32_t, isPreDequantized);
 TILING_DATA_FIELD_DEF(uint32_t, inputWidth);
 TILING_DATA_FIELD_DEF(uint32_t, outputWidth);
+TILING_DATA_FIELD_DEF(uint32_t, weightScaleIsOne);
+TILING_DATA_FIELD_DEF(uint32_t, activationScaleIsOne);
+TILING_DATA_FIELD_DEF(uint32_t, biasIsOne);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(DequantSituQuant, DequantSituQuantTilingData)
@@ -103,7 +106,7 @@ private:
     void ShowTilingData();
     ge::graphStatus GetShapeAttrsInfoInner();
     ge::graphStatus CheckInputShapes();
-    ge::graphStatus CheckInputShapesInt8(int64_t dimNum, int64_t inDimy, int64_t outDimy);
+    ge::graphStatus CheckInputShapesInt8(int64_t dimNum, int64_t inDimy, int64_t outDimy, const gert::Shape& xShape);
     ge::graphStatus CheckInputShapesInt32(int64_t inDimy, int64_t outDimy);
     ge::graphStatus CheckInputShapesBF16();
     bool SetAttrs(const gert::RuntimeAttrs* attrs);
@@ -127,6 +130,10 @@ private:
     bool hasQuantScale = false;
     bool hasQuantOffset = false;
     bool quantIsOne = false;
+    bool quantOffsetIsOne_ = false;
+    bool weightScaleIsOne_ = false;
+    bool activationScaleIsOne_ = false;
+    bool biasIsOne_ = false;
     bool dequantScaleIsOne = false;
     bool dequantBiasIsOne = false;
     uint32_t activateLeft = 0;

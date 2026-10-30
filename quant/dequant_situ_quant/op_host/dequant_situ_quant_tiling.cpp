@@ -38,7 +38,10 @@ namespace optiling {
 using Ops::NN::Optiling::TilingBaseClass;
 using Ops::NN::Optiling::TilingRegistry;
 
-constexpr uint32_t UB_RESERVED_BUFF = 1024;
+// Reserved UB space for TPipe/TQue management overhead, buffer alignment and
+// high-level API temporaries. Tiling must account for it so that the estimate
+// never reports "fits" while the kernel-side InitBuffer actually runs out.
+constexpr uint32_t UB_RESERVED_BUFF = 8192;
 constexpr uint32_t ALIGN_UINT_IN_CACHE_32B = 32;
 constexpr uint32_t PACK_UINT_IN_CACHE_512B = 512;
 constexpr uint32_t DEFAULT_BUFFER_NUM = 2;
@@ -80,6 +83,10 @@ void DequantSituQuantTiling::Reset()
     hasQuantScale = false;
     hasQuantOffset = false;
     quantIsOne = false;
+    quantOffsetIsOne_ = false;
+    weightScaleIsOne_ = false;
+    activationScaleIsOne_ = false;
+    biasIsOne_ = false;
     dequantScaleIsOne = false;
     dequantBiasIsOne = false;
     activateLeft = 0;
@@ -171,7 +178,8 @@ bool DequantSituQuantTiling::SetAttrs(const gert::RuntimeAttrs* attrs)
     return true;
 }
 
-ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int64_t inDimy, int64_t outDimy)
+ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int64_t inDimy, int64_t outDimy,
+                                                             const gert::Shape& xShape)
 {
     CHECK_FAIL(context_, dimNum <= 1, "The shape dim of x can not be less than 2");
 
@@ -230,7 +238,6 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int
     auto quantOffsetShapePtr = context_->GetOptionalInputShape(INDEX_IN_QUANT_OFFSET);
     hasQuantOffset = (quantOffsetShapePtr != nullptr);
     tilingData.set_quantOffsetIsEmpty(!hasQuantOffset);
-    bool quantOffsetIsOne = false;
     if (quantType == QUANT_TYPE_STATIC) {
         OP_CHECK_IF(!hasQuantScale, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "quant_scale"),
                     return ge::GRAPH_FAILED);
@@ -241,10 +248,17 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int
                                                       std::to_string(quantOffsetSize).c_str(),
                                                       (std::to_string(outDimy) + " or 1").c_str()),
                         return ge::GRAPH_FAILED);
-            quantOffsetIsOne = (quantOffsetSize == 1);
+            quantOffsetIsOne_ = (quantOffsetSize == 1);
         }
+    } else {
+        // quant_offset is only meaningful for static quant; a dynamic quant call
+        // that passes quant_offset would make the kernel write past quantBuf_.
+        OP_CHECK_IF(hasQuantOffset,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "quant_offset",
+                                                             "quant_offset is only valid when quant_type is static"),
+                    return ge::GRAPH_FAILED);
     }
-    tilingData.set_quantOffsetIsOne(quantOffsetIsOne);
+    tilingData.set_quantOffsetIsOne(quantOffsetIsOne_ ? 1 : 0);
 
     // group_index: must be absent for int8
     OP_CHECK_IF(context_->GetOptionalInputShape(INDEX_IN_GROUP_INDEX) != nullptr,
@@ -272,10 +286,22 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int
                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yShape),
                                                       "y shape dim must equal to x shape dim"),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(yShape.GetShapeSize() == 0,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yShape),
+                                                      "y must not be an empty tensor"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(yShape.GetDim(dimNum - 1) != outDimy,
                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yShape),
                                                       "y last dim must be x last dim / 2"),
                 return ge::GRAPH_FAILED);
+    // Leading dims of y must match x exactly: the kernel writes rows x leading dims
+    // unconditionally, so a smaller declared y would be written out of bounds.
+    for (int64_t i = 0; i < dimNum - 1; i++) {
+        OP_CHECK_IF(yShape.GetDim(i) != xShape.GetDim(i),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yShape),
+                                                          "y leading dims must match x leading dims"),
+                    return ge::GRAPH_FAILED);
+    }
 
     auto yScaleShapePtr = context_->GetOutputShape(1);
     if (yScaleShapePtr == nullptr) {
@@ -293,10 +319,22 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int
     };
     const gert::Shape yScaleShape = yScaleShapePtr->GetStorageShape();
     OP_CHECK_IF(
-        static_cast<uint64_t>(yScaleShape.GetShapeSize()) != static_cast<uint64_t>(inDimx),
+        yScaleShape.GetShapeSize() == 0,
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y_scale", Ops::Base::ToString(yScaleShape),
-                                              "y_scale shape size must equal to rowLen"),
+                                              "y_scale must not be an empty tensor"),
         return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        yScaleShape.GetDimNum() != static_cast<size_t>(dimNum) - 1,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y_scale", Ops::Base::ToString(yScaleShape),
+                                              "y_scale shape must be x.shape[:-1]"),
+        return ge::GRAPH_FAILED);
+    for (int64_t i = 0; i < dimNum - 1; i++) {
+        OP_CHECK_IF(
+            yScaleShape.GetDim(i) != xShape.GetDim(i),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y_scale", Ops::Base::ToString(yScaleShape),
+                                                  "y_scale dims must match x leading dims"),
+            return ge::GRAPH_FAILED);
+    }
 
     tilingData.set_expertNum(1);
     tilingData.set_hasGroupIndex(0);
@@ -304,6 +342,9 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesInt8(int64_t dimNum, int
     tilingData.set_isPreDequantized(0);
     tilingData.set_inputWidth(0);
     tilingData.set_outputWidth(0);
+    tilingData.set_weightScaleIsOne(0);
+    tilingData.set_activationScaleIsOne(0);
+    tilingData.set_biasIsOne(0);
     tilingData.set_dequantScaleIsOne(dequantScaleIsOne);
     tilingData.set_dequantBiasIsOne(dequantBiasIsOne);
     return ge::GRAPH_SUCCESS;
@@ -350,13 +391,15 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
         expertNum_ = static_cast<uint32_t>(groupIndexShape.GetDim(0));
     }
 
-    // weight_scale shape validation
+    // weight_scale shape validation: (2H,) / (1,) without group_index,
+    // [expertNum, 2H] with group_index (per-expert scales cannot be scalar)
     const gert::Shape weightScaleShape = weightScaleShapePtr->GetStorageShape();
     const bool weightShapeValid = hasGroupIndex_ ?
                                       (weightScaleShape.GetDimNum() == 2 &&
                                        weightScaleShape.GetDim(0) == static_cast<int64_t>(expertNum_) &&
                                        weightScaleShape.GetDim(1) == inDimy) :
                                       ((weightScaleShape.GetDimNum() == 1 && weightScaleShape.GetDim(0) == inDimy) ||
+                                       (weightScaleShape.GetDimNum() == 1 && weightScaleShape.GetDim(0) == 1) ||
                                        (weightScaleShape.GetDimNum() == 2 && weightScaleShape.GetDim(0) == 1 &&
                                         weightScaleShape.GetDim(1) == inDimy));
     OP_CHECK_IF(!weightShapeValid,
@@ -366,19 +409,24 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
                                 "otherwise [input_width] or [1,input_width]; expert_count=") +
                         std::to_string(expertNum_) + ", input_width=" + std::to_string(inDimy)),
                 return ge::GRAPH_FAILED);
+    weightScaleIsOne_ = !hasGroupIndex_ && weightScaleShape.GetShapeSize() == 1;
+    tilingData.set_weightScaleIsOne(weightScaleIsOne_ ? 1 : 0);
 
-    // activation_scale shape: [rows] or [rows, 1]
+    // activation_scale shape: (1,) per the API contract, or one value per row
     const gert::Shape activationScaleShape = activationScaleShapePtr->GetStorageShape();
     const bool actScaleValid = (activationScaleShape.GetDimNum() == 1 ||
                                 (activationScaleShape.GetDimNum() == 2 && activationScaleShape.GetDim(1) == 1)) &&
-                               activationScaleShape.GetShapeSize() == inDimx;
+                               (activationScaleShape.GetShapeSize() == inDimx ||
+                                activationScaleShape.GetShapeSize() == 1);
     OP_CHECK_IF(!actScaleValid,
-                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "activation_scale",
-                                                      Ops::Base::ToString(activationScaleShape),
-                                                      "activation_scale must contain one FP32 value per row"),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context_->GetNodeName(), "activation_scale", Ops::Base::ToString(activationScaleShape),
+                    "activation_scale must be (1,) or contain one FP32 value per row"),
                 return ge::GRAPH_FAILED);
+    activationScaleIsOne_ = activationScaleShape.GetShapeSize() == 1;
+    tilingData.set_activationScaleIsOne(activationScaleIsOne_ ? 1 : 0);
 
-    // bias: optional, same shape as weight_scale
+    // bias: optional, same shape contract as weight_scale
     auto biasShapePtr = context_->GetOptionalInputShape(INDEX_IN_BIAS);
     hasDequantBias = (biasShapePtr != nullptr);
     tilingData.set_dequantBiasIsEmpty(!hasDequantBias);
@@ -388,6 +436,7 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
                                                       biasShape.GetDim(0) == static_cast<int64_t>(expertNum_) &&
                                                       biasShape.GetDim(1) == inDimy) :
                                                      ((biasShape.GetDimNum() == 1 && biasShape.GetDim(0) == inDimy) ||
+                                                      (biasShape.GetDimNum() == 1 && biasShape.GetDim(0) == 1) ||
                                                       (biasShape.GetDimNum() == 2 && biasShape.GetDim(0) == 1 &&
                                                        biasShape.GetDim(1) == inDimy));
         OP_CHECK_IF(
@@ -395,7 +444,9 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "bias", Ops::Base::ToString(biasShape),
                                                   "bias shape must match weight_scale"),
             return ge::GRAPH_FAILED);
+        biasIsOne_ = !hasGroupIndex_ && biasShape.GetShapeSize() == 1;
     }
+    tilingData.set_biasIsOne(biasIsOne_ ? 1 : 0);
 
     // check output shapes
     auto yShapePtr = context_->GetOutputShape(0);
@@ -441,7 +492,11 @@ ge::graphStatus DequantSituQuantTiling::ValidateInt32Contract()
     // UB capacity check (xQueue and outQueue are double-buffered)
     const uint64_t inputBytes = static_cast<uint64_t>(inDimy) * sizeof(int32_t) * 2; // double buffer
     const uint64_t paramBytes = static_cast<uint64_t>(inDimy) * sizeof(float);
-    const uint64_t tempBytes = static_cast<uint64_t>(inDimy) * sizeof(float);
+    // kernel tmpBuf_ holds sigmoid[alignH] + expNeg[alignH] + ones[8] (manual
+    // sigmoid) and later Abs + maskTensor + tempInt32: (bufferWidth_+alignH)
+    // floats, i.e. about 3*outDimy floats. Underestimating here lets large-H
+    // inputs pass and fail in the kernel with a vector core exception.
+    const uint64_t tempBytes = static_cast<uint64_t>(outDimy) * 3 * sizeof(float);
     const uint64_t outputBytes = (static_cast<uint64_t>(outDimy) * sizeof(int8_t) + BLOCK_BYTES) * 2; // double buffer
     const uint64_t requiredUb = inputBytes + paramBytes + (hasDequantBias ? paramBytes : 0) + tempBytes + outputBytes +
                                 UB_RESERVED_BUFF;
@@ -550,8 +605,12 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesBF16()
 
     // UB capacity check (xQueue and outQueue are double-buffered)
     const uint64_t inputBytes = static_cast<uint64_t>(inDimy) * 2 * 2; // BF16 = 2 bytes, double buffer
-    const uint64_t tempBytes = static_cast<uint64_t>(inDimy) * sizeof(float);
-    const uint64_t dequantBytes = tempBytes;
+    // kernel tmpBuf_ holds sigmoid[alignH] + expNeg[alignH] + ones[8] (manual
+    // sigmoid) and later Abs + maskTensor + tempInt32: (bufferWidth_+alignH)
+    // floats, i.e. about 3*outDimy floats. Underestimating here lets large-H
+    // inputs pass and fail in the kernel with a vector core exception.
+    const uint64_t tempBytes = static_cast<uint64_t>(outDimy) * 3 * sizeof(float);
+    const uint64_t dequantBytes = static_cast<uint64_t>(inDimy) * sizeof(float);
     const uint64_t outputBytes = (static_cast<uint64_t>(outDimy) * sizeof(int8_t) + BLOCK_BYTES) * 2; // double buffer
     const uint64_t requiredUb = inputBytes + tempBytes + dequantBytes + outputBytes + UB_RESERVED_BUFF;
     OP_CHECK_IF(aicoreParams_.ubSize < requiredUb,
@@ -573,6 +632,9 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapesBF16()
     tilingData.set_isPreDequantized(1);
     tilingData.set_inputWidth(static_cast<uint32_t>(inDimy));
     tilingData.set_outputWidth(static_cast<uint32_t>(outDimy));
+    tilingData.set_weightScaleIsOne(0);
+    tilingData.set_activationScaleIsOne(0);
+    tilingData.set_biasIsOne(0);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -588,6 +650,8 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapes()
     const gert::Shape xShape = xShapePtr->GetStorageShape();
     int64_t dimNum = xShape.GetDimNum();
 
+    CHECK_FAIL(context_, xShape.GetShapeSize() == 0, "x must not be an empty tensor");
+
     int64_t shapeBefore = 1;
     for (int64_t i = 0; i < dimNum - 1; i++) {
         shapeBefore *= xShape.GetDim(i);
@@ -602,7 +666,7 @@ ge::graphStatus DequantSituQuantTiling::CheckInputShapes()
     tilingData.set_colLen(outDimy);
 
     if (xDtype_ == ge::DT_INT8) {
-        return CheckInputShapesInt8(dimNum, inDimy, outDimy);
+        return CheckInputShapesInt8(dimNum, inDimy, outDimy, xShape);
     } else if (xDtype_ == ge::DT_INT32) {
         CHECK_FAIL(context_, dimNum != 2, "x shape rank must be 2 for int32, but is %ld", dimNum);
         return ValidateInt32Contract();
@@ -675,7 +739,11 @@ bool DequantSituQuantTiling::CalcUbMaxTileLen(const uint64_t ubSize, uint32_t& m
         bytesPerElement += BYTES_DEQUANT_BIAS_PER_ELEM;
     }
     if (hasQuantScale && !quantIsOne) {
+        // kernel quantBuf_: dynamic -> H floats, static -> 2H floats
         bytesPerElement += (quantType == QUANT_TYPE_DYNAMIC) ? BYTES_QUANT_SCALE_DYNAMIC : BYTES_QUANT_SCALE_STATIC;
+    } else if (hasQuantScale && quantIsOne && hasQuantOffset && !quantOffsetIsOne_) {
+        // static with scalar scale but vector offset: kernel still allocates quantBuf_ (2H floats)
+        bytesPerElement += BYTES_QUANT_SCALE_STATIC;
     }
 
     uint64_t availableUb = ubSize - UB_RESERVED_BUFF - ALIGN_UINT_IN_CACHE_32B;
