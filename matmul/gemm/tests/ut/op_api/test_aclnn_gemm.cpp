@@ -539,3 +539,328 @@ TEST_F(l2_gemm_test, gemm_950_route_addmm_use_fp32_add)
     test_run({3, 4}, ACL_FLOAT16, ACL_FORMAT_ND, {-2, 2}, {4, 5}, ACL_FLOAT16, ACL_FORMAT_ND, {-2, 2}, {3, 5},
              ACL_FLOAT16, ACL_FORMAT_ND, {-2, 2}, {3, 5}, ACL_FLOAT16, ACL_FORMAT_ND, 2.0, 3.0, 0, 0, USE_FP32_ADD);
 }
+
+#include <cstdint>
+#include <dlfcn.h>
+
+#include "gtest/gtest.h"
+#include "opdev/platform.h"
+#include "opdev/common_types.h"
+#include "opdev/format_utils.h"
+#include "opdev/op_executor.h"
+
+#include "aclnn/aclnn_base.h"
+#include "aclnn_kernels/cast.h"
+#include "aclnn_kernels/common/op_error_check.h"
+#include "aclnn_kernels/contiguous.h"
+#include "aclnn_kernels/reshape.h"
+#include "aclnn_kernels/transdata.h"
+#include "aclnn_kernels/transpose.h"
+#include "level0/fill.h"
+#include "level0/mul.h"
+#include "level0/padv3.h"
+#include "op_api/op_api_def_nn.h"
+#include "opdev/data_type_utils.h"
+#include "opdev/make_op_executor.h"
+#include "opdev/op_def.h"
+#include "opdev/op_dfx.h"
+#include "opdev/op_log.h"
+#include "opdev/shape_utils.h"
+#include "opdev/tensor_view_utils.h"
+
+namespace gemm_util_whitebox {
+
+namespace l0op {
+__attribute__((visibility("hidden"))) const aclTensor* Cast(const aclTensor* self, op::DataType dstDtype,
+                                                            aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Contiguous(const aclTensor* x, aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Fill(const aclTensor* dims, const aclTensor* value,
+                                                            const aclIntArray* outShape, aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Mul(const aclTensor* self, const aclTensor* other,
+                                                           aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* ReFormat(const aclTensor* x, const op::Format& format,
+                                                                aclOpExecutor* executor = nullptr);
+__attribute__((visibility("hidden"))) const aclTensor* Reshape(const aclTensor* x, const op::Shape& shape,
+                                                               aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Reshape(const aclTensor* x, const aclIntArray* shape,
+                                                               aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* TransData(const aclTensor* x, op::Format dstPrimaryFormat,
+                                                                 int64_t groups, aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Transpose(const aclTensor* x, const aclIntArray* perm,
+                                                                 aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* ViewCopy(const aclTensor* x, const aclTensor* y,
+                                                                aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) bool MmCheckHitV3Shape(const aclTensor* x1, const aclTensor* x2,
+                                                             const aclTensor* bias, const bool transposeX1,
+                                                             const bool transposeX2, op::Format mat2_format,
+                                                             bool supportSplitK);
+} // namespace l0op
+
+#include "../../../../common/op_host/op_api/cube_util.cpp"
+#include "../../../../common/op_host/op_api/matmul.cpp"
+#include "../../../../common/op_host/op_api/matmul_util.cpp"
+
+namespace l0op {
+const aclTensor* Cast(const aclTensor* self, op::DataType, aclOpExecutor*) { return self; }
+const aclTensor* Contiguous(const aclTensor* x, aclOpExecutor*) { return x; }
+const aclTensor* Fill(const aclTensor*, const aclTensor*, const aclIntArray*, aclOpExecutor*) { return nullptr; }
+const aclTensor* Mul(const aclTensor*, const aclTensor*, aclOpExecutor*) { return nullptr; }
+const aclTensor* ReFormat(const aclTensor* x, const op::Format& format, aclOpExecutor*)
+{
+    return (x != nullptr && x->GetStorageFormat() == format) ? x : nullptr;
+}
+const aclTensor* Reshape(const aclTensor* x, const op::Shape& shape, aclOpExecutor* executor)
+{
+    op::Shape out = shape;
+    int64_t known = 1;
+    int64_t inferIdx = -1;
+    for (size_t i = 0; i < out.GetDimNum(); i++) {
+        if (out.GetDim(i) == -1) {
+            inferIdx = static_cast<int64_t>(i);
+        } else {
+            known *= out.GetDim(i);
+        }
+    }
+    if (inferIdx >= 0) {
+        out.SetDim(inferIdx, x->GetViewShape().GetShapeSize() / known);
+    }
+    return executor->CreateView(x, out, 0);
+}
+const aclTensor* Reshape(const aclTensor* x, const aclIntArray* shape, aclOpExecutor* executor)
+{
+    using ReshapeFn = const aclTensor* (*)(const aclTensor*, const aclIntArray*, aclOpExecutor*);
+    static ReshapeFn realReshape = reinterpret_cast<ReshapeFn>(
+        dlsym(RTLD_DEFAULT, "_ZN4l0op7ReshapeEPK9aclTensorPK11aclIntArrayP13aclOpExecutor"));
+    if (realReshape == nullptr) {
+        return nullptr;
+    }
+    return realReshape(x, shape, executor);
+}
+const aclTensor* TransData(const aclTensor*, op::Format, int64_t, aclOpExecutor*) { return nullptr; }
+const aclTensor* Transpose(const aclTensor* x, const aclIntArray*, aclOpExecutor*) { return x; }
+const aclTensor* ViewCopy(const aclTensor*, const aclTensor*, aclOpExecutor*) { return nullptr; }
+bool MmCheckHitV3Shape(const aclTensor*, const aclTensor*, const aclTensor*, bool, bool, op::Format, bool)
+{
+    return false;
+}
+} // namespace l0op
+
+} // namespace gemm_util_whitebox
+
+namespace gemm_util_whitebox {
+const aclTensor* ExecProcessEmptyTensorWithTrans(const aclTensor* self, const aclTensor* mat2, int64_t transSelf,
+                                                 int64_t transMat2, aclOpExecutor* executor)
+{
+    return ProcessEmptyTensorWithTrans(self, mat2, transSelf, transMat2, executor);
+}
+} // namespace gemm_util_whitebox
+
+using namespace op;
+
+namespace {
+
+constexpr int8_t kCubeMathKeepDtype = 0;
+
+aclTensor* MakeTensor(aclOpExecutor* executor, const std::initializer_list<int64_t>& dims, op::DataType dtype,
+                      op::Format format)
+{
+    return executor->AllocTensor(op::Shape(dims), dtype, format);
+}
+
+} // namespace
+
+class GemmUtilWhiteboxTest : public testing::Test {};
+
+TEST_F(GemmUtilWhiteboxTest, ProcessEmptyTensorWithTrans_EmptyOut)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {4, 0}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {0, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+
+    auto* out = gemm_util_whitebox::ExecProcessEmptyTensorWithTrans(self, mat2, 1, 1, executor);
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(out->GetViewShape().GetDimNum(), 2);
+    EXPECT_EQ(out->GetViewShape().GetDim(0), 0);
+    EXPECT_EQ(out->GetViewShape().GetDim(1), 0);
+    EXPECT_TRUE(out->IsEmpty());
+}
+
+TEST_F(GemmUtilWhiteboxTest, ProcessEmptyTensorWithTrans_NonEmptyOut)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {4, 0}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {0, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+
+    auto* out = gemm_util_whitebox::ExecProcessEmptyTensorWithTrans(self, mat2, 0, 0, executor);
+    EXPECT_EQ(out, nullptr);
+}
+
+class GemmV3UtilWhiteboxTest : public testing::Test {};
+
+TEST_F(GemmV3UtilWhiteboxTest, CheckGemmV3Support_ShapeInvalid)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* mat1 = MakeTensor(executor, {4, 8}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {9, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* out = MakeTensor(executor, {4, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(mat1, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    ASSERT_NE(out, nullptr);
+    gemm_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+
+    EXPECT_FALSE(
+        gemm_util_whitebox::Ops::NN::CheckGemmV3Support(mat1, mat2, nullptr, out, mmOpInfo, kCubeMathKeepDtype));
+}
+
+TEST_F(GemmV3UtilWhiteboxTest, CheckGemmV3Support_EmptyTensor)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* mat1 = MakeTensor(executor, {4, 8}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {8, 0}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* out = MakeTensor(executor, {4, 0}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(mat1, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    ASSERT_NE(out, nullptr);
+    gemm_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+
+    EXPECT_FALSE(
+        gemm_util_whitebox::Ops::NN::CheckGemmV3Support(mat1, mat2, nullptr, out, mmOpInfo, kCubeMathKeepDtype));
+}
+
+TEST_F(GemmV3UtilWhiteboxTest, CheckGemmV3Support_NzFormat)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* mat1 = MakeTensor(executor, {1024, 512}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    const aclTensor* mat2 = MakeTensor(executor, {512, 1024}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* out = MakeTensor(executor, {1024, 1024}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(mat1, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    ASSERT_NE(out, nullptr);
+    gemm_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+
+    EXPECT_FALSE(
+        gemm_util_whitebox::Ops::NN::CheckGemmV3Support(mat1, mat2, nullptr, out, mmOpInfo, kCubeMathKeepDtype));
+}
+
+TEST_F(GemmV3UtilWhiteboxTest, CheckGemmV3Support_UnsupportedArch)
+{
+    NpuArchManager archManager(NpuArch::DAV_1001);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* mat1 = MakeTensor(executor, {1024, 512}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {512, 1024}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* out = MakeTensor(executor, {1024, 1024}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(mat1, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    ASSERT_NE(out, nullptr);
+    gemm_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+
+    EXPECT_FALSE(
+        gemm_util_whitebox::Ops::NN::CheckGemmV3Support(mat1, mat2, nullptr, out, mmOpInfo, kCubeMathKeepDtype));
+}
+
+TEST_F(GemmV3UtilWhiteboxTest, CheckGemmV3Support_Dav2201DtypeReject)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* mat1 = MakeTensor(executor, {1024, 512}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {512, 1024}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
+    const aclTensor* out = MakeTensor(executor, {1024, 1024}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
+    ASSERT_NE(mat1, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    ASSERT_NE(out, nullptr);
+    gemm_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+
+    EXPECT_FALSE(
+        gemm_util_whitebox::Ops::NN::CheckGemmV3Support(mat1, mat2, nullptr, out, mmOpInfo, kCubeMathKeepDtype));
+}
+
+TEST_F(GemmV3UtilWhiteboxTest, CheckGemmV3Support_Dav2201ShapeTooSmall)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* mat1 = MakeTensor(executor, {256, 128}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {128, 256}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* out = MakeTensor(executor, {256, 256}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(mat1, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    ASSERT_NE(out, nullptr);
+    gemm_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+
+    EXPECT_FALSE(
+        gemm_util_whitebox::Ops::NN::CheckGemmV3Support(mat1, mat2, nullptr, out, mmOpInfo, kCubeMathKeepDtype));
+}
+
+TEST_F(GemmV3UtilWhiteboxTest, CheckGemmV3Support_Dav2201Supported)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* mat1 = MakeTensor(executor, {1024, 512}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {512, 1024}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* out = MakeTensor(executor, {1024, 1024}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(mat1, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    ASSERT_NE(out, nullptr);
+    gemm_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+
+    EXPECT_TRUE(
+        gemm_util_whitebox::Ops::NN::CheckGemmV3Support(mat1, mat2, nullptr, out, mmOpInfo, kCubeMathKeepDtype));
+}
+
+TEST_F(GemmV3UtilWhiteboxTest, CheckGemmV3Support_Bf16Supported)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* mat1 = MakeTensor(executor, {1024, 512}, op::DataType::DT_BF16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {512, 1024}, op::DataType::DT_BF16, op::Format::FORMAT_ND);
+    const aclTensor* out = MakeTensor(executor, {1024, 1024}, op::DataType::DT_BF16, op::Format::FORMAT_ND);
+    ASSERT_NE(mat1, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    ASSERT_NE(out, nullptr);
+    gemm_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+
+    EXPECT_TRUE(
+        gemm_util_whitebox::Ops::NN::CheckGemmV3Support(mat1, mat2, nullptr, out, mmOpInfo, kCubeMathKeepDtype));
+}
+
+TEST_F(GemmV3UtilWhiteboxTest, CheckGemmV3Support_Arch3510Supported)
+{
+    NpuArchManager archManager(NpuArch::DAV_3510);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* mat1 = MakeTensor(executor, {1024, 512}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {512, 1024}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* out = MakeTensor(executor, {1024, 1024}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(mat1, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    ASSERT_NE(out, nullptr);
+    gemm_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+
+    EXPECT_TRUE(
+        gemm_util_whitebox::Ops::NN::CheckGemmV3Support(mat1, mat2, nullptr, out, mmOpInfo, kCubeMathKeepDtype));
+}

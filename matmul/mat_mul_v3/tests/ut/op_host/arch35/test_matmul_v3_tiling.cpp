@@ -4178,6 +4178,14 @@ public:
 
     void ExtractFormatPublic() { ExtractFormat(); }
 
+    void GetFormatPublic() { GetFormat(); }
+
+    ge::Format GetAFormat() const { return args_.aFormat; }
+
+    ge::Format GetBFormat() const { return args_.bFormat; }
+
+    ge::Format GetOutFormat() const { return args_.outFormat; }
+
     void ExtractDtypePublic() { ExtractDtype(); }
 
     bool GetIsSelfSlice() const { return isSelfSlice_; }
@@ -4215,7 +4223,8 @@ protected:
                       const gert::StorageShape& bShape, ge::DataType bDtype, ge::Format bOriFmt, ge::Format bFmt,
                       const gert::StorageShape& yShape, ge::DataType yDtype,
                       const gert::StorageShape* biasShape = nullptr, ge::DataType biasDtype = ge::DT_FLOAT16,
-                      bool transA = false, bool transB = false)
+                      bool transA = false, bool transB = false, ge::Format yOriFmt = ge::FORMAT_ND,
+                      ge::Format yFmt = ge::FORMAT_ND)
     {
         aShape_ = aShape;
         bShape_ = bShape;
@@ -4241,7 +4250,7 @@ protected:
                           .NodeInputTd(0, aDtype, aOriFmt, aFmt)
                           .NodeInputTd(1, bDtype, bOriFmt, bFmt)
                           .NodeInputTd(2, biasDtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                          .NodeOutputTd(0, yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeOutputTd(0, yDtype, yOriFmt, yFmt)
                           .CompileInfo(&compileInfo_)
                           .PlatformInfo(reinterpret_cast<char*>(&platformInfo_))
                           .Build();
@@ -4255,7 +4264,7 @@ protected:
                           .NodeAttrs(attrs())
                           .NodeInputTd(0, aDtype, aOriFmt, aFmt)
                           .NodeInputTd(1, bDtype, bOriFmt, bFmt)
-                          .NodeOutputTd(0, yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeOutputTd(0, yDtype, yOriFmt, yFmt)
                           .CompileInfo(&compileInfo_)
                           .PlatformInfo(reinterpret_cast<char*>(&platformInfo_))
                           .Build();
@@ -4687,4 +4696,54 @@ TEST_F(MatMulV3TilingAdvancedDirectTest, ExtractNormalDims_NzAligned_Success)
     EXPECT_EQ(tiling->GetNValue(), 4UL);
 }
 
+TEST_F(MatMulV3StreamKTilingDirectTest, GetL0C2Out_Non3510Arch_DefaultOnTheFly)
+{
+    optiling::matmul_v3_advanced::MatMulV3RunInfo runInfo{};
+    EXPECT_EQ(
+        optiling::matmul_v3_advanced::MatMulV3TilingHelper::GetL0C2Out(compileInfo_, args_, runInfo, false, nullptr),
+        MatMulV3L0C2Out::ON_THE_FLY);
+}
+
+TEST_F(MatMulV3TilingAdvancedDirectTest, GetFormat_NdFormats)
+{
+    gert::StorageShape a = {{2, 32}, {2, 32}};
+    gert::StorageShape b = {{32, 4}, {32, 4}};
+    gert::StorageShape y = {{2, 4}, {2, 4}};
+    BuildContext(a, DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND, b, DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND, y,
+                 DT_FLOAT16);
+    auto tiling = CreateTiling();
+    tiling->GetFormatPublic();
+    EXPECT_EQ(tiling->GetAFormat(), ge::FORMAT_ND);
+    EXPECT_EQ(tiling->GetBFormat(), ge::FORMAT_ND);
+    EXPECT_EQ(tiling->GetOutFormat(), ge::FORMAT_ND);
+}
+
+TEST_F(MatMulV3TilingAdvancedDirectTest, GetFormat_NzAAndOut)
+{
+    gert::StorageShape a = {{2, 32}, {2, 32}};
+    gert::StorageShape b = {{32, 4}, {32, 4}};
+    gert::StorageShape y = {{2, 4}, {2, 4}};
+    BuildContext(a, DT_FLOAT16, ge::FORMAT_FRACTAL_NZ, ge::FORMAT_FRACTAL_NZ, b, DT_FLOAT16, ge::FORMAT_ND,
+                 ge::FORMAT_ND, y, DT_FLOAT16, nullptr, DT_FLOAT16, false, false, ge::FORMAT_FRACTAL_NZ,
+                 ge::FORMAT_FRACTAL_NZ);
+    auto tiling = CreateTiling();
+    tiling->GetFormatPublic();
+    EXPECT_EQ(tiling->GetAFormat(), ge::FORMAT_FRACTAL_NZ);
+    EXPECT_EQ(tiling->GetBFormat(), ge::FORMAT_ND);
+    EXPECT_EQ(tiling->GetOutFormat(), ge::FORMAT_FRACTAL_NZ);
+}
+
+TEST_F(MatMulV3TilingAdvancedDirectTest, GetFormat_NzB)
+{
+    gert::StorageShape a = {{2, 32}, {2, 32}};
+    gert::StorageShape b = {{32, 4}, {32, 4}};
+    gert::StorageShape y = {{2, 4}, {2, 4}};
+    BuildContext(a, DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND, b, DT_FLOAT16, ge::FORMAT_FRACTAL_NZ,
+                 ge::FORMAT_FRACTAL_NZ, y, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    tiling->GetFormatPublic();
+    EXPECT_EQ(tiling->GetAFormat(), ge::FORMAT_ND);
+    EXPECT_EQ(tiling->GetBFormat(), ge::FORMAT_FRACTAL_NZ);
+    EXPECT_EQ(tiling->GetOutFormat(), ge::FORMAT_ND);
+}
 } // namespace

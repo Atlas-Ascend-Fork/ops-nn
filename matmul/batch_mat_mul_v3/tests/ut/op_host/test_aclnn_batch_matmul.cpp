@@ -2162,6 +2162,10 @@ using namespace ::Ops::NN;
 } // namespace NN
 } // namespace Ops
 #include "../../../../common/op_host/op_api/batch_matmul_util.cpp"
+const aclTensor* CallProcessEmptyTensor(const aclTensor* self, const aclTensor* mat2, aclOpExecutor* executor)
+{
+    return ProcessEmptyTensor(self, mat2, executor);
+}
 } // namespace bmm_util_direct_ut
 #undef rtGetSocSpec // 恢复宏，避免影响本 TU 其余代码
 
@@ -3261,4 +3265,52 @@ TEST_F(BatchMatmulL0OpDirectTest, Util_NeedCubeGoHF32_TwoStates)
         EXPECT_FALSE(Ops::NN::NeedCubeGoHF32(op::DataType::DT_FLOAT, op::USE_HF32));
         EXPECT_FALSE(Ops::NN::NeedCubeGoHF32(op::DataType::DT_FLOAT, op::ALLOW_FP32_DOWN_PRECISION));
     }
+}
+
+TEST_F(BatchMatmulL0OpDirectTest, Util_PrintIndex_Format)
+{
+    EXPECT_EQ(Ops::NN::PrintIndex(std::vector<int>{0, 2, 1}), "[0,2,1]");
+    EXPECT_EQ(Ops::NN::PrintIndex(std::vector<int>{1}), "[1]");
+    EXPECT_EQ(Ops::NN::PrintIndex(std::vector<int>{}), "[]");
+}
+
+TEST_F(BatchMatmulL0OpDirectTest, Util_CheckTransposeNonContigStride_UnsupportedIndex)
+{
+    op::Shape viewShape{2, 3, 4};
+    op::Strides viewStrides{12, 1, 3};
+    bool needSwap = false;
+    EXPECT_FALSE(Ops::NN::CheckTransposeNonContiguousStridePattern(viewShape, viewStrides, needSwap));
+    EXPECT_FALSE(needSwap);
+}
+
+TEST_F(BatchMatmulL0OpDirectTest, Util_ProcessEmptyTensor_EmptyOut)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {2, 0, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {2, 4, 8}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+
+    const aclTensor* out = bmmu::CallProcessEmptyTensor(self, mat2, executor);
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(out->GetViewShape().GetDimNum(), 3);
+    EXPECT_EQ(out->GetViewShape().GetDim(0), 2);
+    EXPECT_EQ(out->GetViewShape().GetDim(1), 0);
+    EXPECT_EQ(out->GetViewShape().GetDim(2), 8);
+    EXPECT_TRUE(out->IsEmpty());
+}
+
+TEST_F(BatchMatmulL0OpDirectTest, Util_ProcessEmptyTensor_NonEmptyOut)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {2, 3, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {2, 4, 8}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+
+    EXPECT_EQ(bmmu::CallProcessEmptyTensor(self, mat2, executor), nullptr);
 }

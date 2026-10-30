@@ -1190,3 +1190,1294 @@ TEST_F(l2_matmul_test, ascend910B_sc_splitk_al1_fullload_bf16_b_trans_hit)
     TensorDesc out_desc = TensorDesc({64, 20480}, ACL_BF16, ACL_FORMAT_ND);
     MatMulCommonTest(a_desc, b_desc, out_desc, ACL_SUCCESS);
 }
+
+#include <cstdint>
+#include <dlfcn.h>
+
+#include "gtest/gtest.h"
+#include "opdev/platform.h"
+#include "opdev/common_types.h"
+#include "opdev/format_utils.h"
+#include "opdev/op_executor.h"
+
+#include "aclnn/aclnn_base.h"
+#include "aclnn_kernels/cast.h"
+#include "aclnn_kernels/common/op_error_check.h"
+#include "aclnn_kernels/contiguous.h"
+#include "aclnn_kernels/reshape.h"
+#include "aclnn_kernels/transdata.h"
+#include "aclnn_kernels/transpose.h"
+#include "level0/fill.h"
+#include "level0/mul.h"
+#include "level0/padv3.h"
+#include "op_api/op_api_def_nn.h"
+#include "opdev/data_type_utils.h"
+#include "opdev/make_op_executor.h"
+#include "opdev/op_def.h"
+#include "opdev/op_dfx.h"
+#include "opdev/op_log.h"
+#include "opdev/shape_utils.h"
+#include "opdev/tensor_view_utils.h"
+
+namespace matmul_util_whitebox {
+
+namespace l0op {
+__attribute__((visibility("hidden"))) const aclTensor* Cast(const aclTensor* self, op::DataType dstDtype,
+                                                            aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Contiguous(const aclTensor* x, aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Fill(const aclTensor* dims, const aclTensor* value,
+                                                            const aclIntArray* outShape, aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Mul(const aclTensor* self, const aclTensor* other,
+                                                           aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* ReFormat(const aclTensor* x, const op::Format& format,
+                                                                aclOpExecutor* executor = nullptr);
+__attribute__((visibility("hidden"))) const aclTensor* Reshape(const aclTensor* x, const op::Shape& shape,
+                                                               aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Reshape(const aclTensor* x, const aclIntArray* shape,
+                                                               aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* TransData(const aclTensor* x, op::Format dstPrimaryFormat,
+                                                                 int64_t groups, aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* Transpose(const aclTensor* x, const aclIntArray* perm,
+                                                                 aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) const aclTensor* ViewCopy(const aclTensor* x, const aclTensor* y,
+                                                                aclOpExecutor* executor);
+__attribute__((visibility("hidden"))) bool MmCheckHitV3Shape(const aclTensor* x1, const aclTensor* x2,
+                                                             const aclTensor* bias, const bool transposeX1,
+                                                             const bool transposeX2, op::Format mat2_format,
+                                                             bool supportSplitK);
+} // namespace l0op
+
+#include "../../../../common/op_host/op_api/cube_util.cpp"
+#include "../../../../common/op_host/op_api/matmul.cpp"
+#include "../../../../common/op_host/op_api/matmul_util.cpp"
+
+bool gCastToNullForTest = false;
+
+namespace l0op {
+const aclTensor* Cast(const aclTensor* self, op::DataType, aclOpExecutor*)
+{
+    return gCastToNullForTest ? nullptr : self;
+}
+const aclTensor* Contiguous(const aclTensor* x, aclOpExecutor*) { return x; }
+const aclTensor* Fill(const aclTensor*, const aclTensor*, const aclIntArray*, aclOpExecutor*) { return nullptr; }
+const aclTensor* Mul(const aclTensor*, const aclTensor*, aclOpExecutor*) { return nullptr; }
+const aclTensor* ReFormat(const aclTensor* x, const op::Format& format, aclOpExecutor*)
+{
+    return (x != nullptr && x->GetStorageFormat() == format) ? x : nullptr;
+}
+const aclTensor* Reshape(const aclTensor* x, const op::Shape& shape, aclOpExecutor* executor)
+{
+    op::Shape out = shape;
+    int64_t known = 1;
+    int64_t inferIdx = -1;
+    for (size_t i = 0; i < out.GetDimNum(); i++) {
+        if (out.GetDim(i) == -1) {
+            inferIdx = static_cast<int64_t>(i);
+        } else {
+            known *= out.GetDim(i);
+        }
+    }
+    if (inferIdx >= 0) {
+        out.SetDim(inferIdx, x->GetViewShape().GetShapeSize() / known);
+    }
+    return executor->CreateView(x, out, 0);
+}
+const aclTensor* Reshape(const aclTensor* x, const aclIntArray* shape, aclOpExecutor* executor)
+{
+    using ReshapeFn = const aclTensor* (*)(const aclTensor*, const aclIntArray*, aclOpExecutor*);
+    static ReshapeFn realReshape = reinterpret_cast<ReshapeFn>(
+        dlsym(RTLD_DEFAULT, "_ZN4l0op7ReshapeEPK9aclTensorPK11aclIntArrayP13aclOpExecutor"));
+    if (realReshape == nullptr) {
+        return nullptr;
+    }
+    return realReshape(x, shape, executor);
+}
+const aclTensor* TransData(const aclTensor*, op::Format, int64_t, aclOpExecutor*) { return nullptr; }
+const aclTensor* Transpose(const aclTensor* x, const aclIntArray*, aclOpExecutor*) { return x; }
+const aclTensor* ViewCopy(const aclTensor*, const aclTensor*, aclOpExecutor*) { return nullptr; }
+bool MmCheckHitV3Shape(const aclTensor*, const aclTensor*, const aclTensor*, bool, bool, op::Format, bool)
+{
+    return false;
+}
+} // namespace l0op
+
+} // namespace matmul_util_whitebox
+
+namespace matmul_util_whitebox {
+bool CallCheckAscendCScenario2(const aclTensor* x1, const aclTensor* x2, const Ops::NN::MmOpInfo& mmOpInfo,
+                               bool transposeX1, bool transposeX2)
+{
+    return CheckAscendCScenario2(x1, x2, mmOpInfo, transposeX1, transposeX2);
+}
+} // namespace matmul_util_whitebox
+
+namespace matmul_util_whitebox {
+op::DataType CallPromoteOutputAndBiasDtype(op::DataType outputDtype, op::DataType biasDtype)
+{
+    Ops::NN::DefaultMatMulRule rule(::NpuArch::DAV_1001);
+    return rule.PromoteOutputAndBiasDtype(outputDtype, biasDtype);
+}
+} // namespace matmul_util_whitebox
+
+namespace matmul_util_whitebox {
+bool CallCheckDtypeValid(const aclTensor* self, const aclTensor* mat2, const aclTensor* bias, const aclTensor* out,
+                         int8_t cubeMathType)
+{
+    return CheckDtypeValid(self, mat2, bias, out, cubeMathType);
+}
+} // namespace matmul_util_whitebox
+
+namespace matmul_util_whitebox {
+bool CallCheckStreamKSKTiling(Ops::NN::MmOpInfo& mmOpInfo) { return CheckStreamKSKTiling(mmOpInfo); }
+} // namespace matmul_util_whitebox
+
+namespace matmul_util_whitebox {
+bool CallCheckStreamKDPSKTiling(Ops::NN::MmOpInfo& mmOpInfo) { return CheckStreamKDPSKTiling(mmOpInfo); }
+} // namespace matmul_util_whitebox
+
+namespace matmul_util_whitebox {
+const aclTensor* CallHandleEmptyTensor(const aclTensor* self, const aclTensor* mat2, aclOpExecutor* executor,
+                                       int8_t cubeMathType)
+{
+    return HandleEmptyTensor(self, mat2, executor, cubeMathType);
+}
+} // namespace matmul_util_whitebox
+
+namespace matmul_util_whitebox {
+const aclTensor* CallSetTensorToNDFormat(const aclTensor* input) { return SetTensorToNDFormat(input); }
+} // namespace matmul_util_whitebox
+
+using namespace op;
+
+namespace {
+
+constexpr int8_t kCubeMathKeepDtype = 0;
+
+aclTensor* MakeTensor(aclOpExecutor* executor, const std::initializer_list<int64_t>& dims, op::DataType dtype,
+                      op::Format format)
+{
+    return executor->AllocTensor(op::Shape(dims), dtype, format);
+}
+
+const aclTensor* MakeViewTensor(aclOpExecutor* executor, op::DataType dtype, const op::Shape& storageShape,
+                                const op::Shape& viewShape, const op::Strides& strides)
+{
+    auto* storage = executor->AllocTensor(storageShape, dtype, op::Format::FORMAT_ND);
+    if (storage == nullptr) {
+        return nullptr;
+    }
+    return executor->CreateView(storage, viewShape, storageShape, strides, 0);
+}
+
+bool CheckAscendCScenario2Case(
+    const std::initializer_list<int64_t>& x1Dims, const std::initializer_list<int64_t>& x2Dims,
+    op::DataType x1Dtype = op::DataType::DT_FLOAT16, op::DataType x2Dtype = op::DataType::DT_FLOAT16,
+    op::Format selfFormat = op::Format::FORMAT_ND, op::Format mat2Format = op::Format::FORMAT_FRACTAL_NZ,
+    op::Format outFormat = op::Format::FORMAT_ND, bool transposeX1 = false, bool transposeX2 = false)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    if (uniqueExecutor.get() == nullptr) {
+        ADD_FAILURE() << "CREATE_EXECUTOR failed";
+        return false;
+    }
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* x1 = MakeTensor(executor, x1Dims, x1Dtype, op::Format::FORMAT_ND);
+    const aclTensor* x2 = MakeTensor(executor, x2Dims, x2Dtype, op::Format::FORMAT_ND);
+    if (x1 == nullptr || x2 == nullptr) {
+        ADD_FAILURE() << "AllocTensor failed";
+        return false;
+    }
+    matmul_util_whitebox::Ops::NN::MmOpInfo mmOpInfo{};
+    mmOpInfo.support_info.self_format = selfFormat;
+    mmOpInfo.support_info.mat2_format = mat2Format;
+    mmOpInfo.support_info.output_format = outFormat;
+    return matmul_util_whitebox::CallCheckAscendCScenario2(x1, x2, mmOpInfo, transposeX1, transposeX2);
+}
+
+matmul_util_whitebox::Ops::NN::MmOpInfo MakeMmOpInfo(op::DataType selfDtype, op::DataType mat2Dtype,
+                                                     op::DataType outputDtype)
+{
+    matmul_util_whitebox::Ops::NN::MmOpInfo info{};
+    info.ori_info.self_dtype = selfDtype;
+    info.ori_info.mat2_dtype = mat2Dtype;
+    info.ori_info.output_dtype = outputDtype;
+    info.support_info = info.ori_info;
+    return info;
+}
+
+bool CheckDtypeValidCase(op::DataType selfDtype, op::DataType mat2Dtype, bool hasBias = false,
+                         op::DataType biasDtype = op::DataType::DT_FLOAT16, bool hasOut = false,
+                         op::DataType outDtype = op::DataType::DT_FLOAT16, int8_t cubeMathType = kCubeMathKeepDtype)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    if (uniqueExecutor.get() == nullptr) {
+        ADD_FAILURE() << "CREATE_EXECUTOR failed";
+        return false;
+    }
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {4, 8}, selfDtype, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {8, 4}, mat2Dtype, op::Format::FORMAT_ND);
+    const aclTensor* bias = hasBias ? MakeTensor(executor, {4}, biasDtype, op::Format::FORMAT_ND) : nullptr;
+    const aclTensor* out = hasOut ? MakeTensor(executor, {4, 4}, outDtype, op::Format::FORMAT_ND) : nullptr;
+    if (self == nullptr || mat2 == nullptr || (hasBias && bias == nullptr) || (hasOut && out == nullptr)) {
+        ADD_FAILURE() << "AllocTensor failed";
+        return false;
+    }
+    return matmul_util_whitebox::CallCheckDtypeValid(self, mat2, bias, out, cubeMathType);
+}
+
+matmul_util_whitebox::Ops::NN::MmOpInfo MakeStreamKMmOpInfo(int64_t mDim, int64_t nDim, int64_t kDim,
+                                                            int64_t dtypeASize, bool enableHf32, int64_t aiCoreCnt)
+{
+    matmul_util_whitebox::Ops::NN::MmOpInfo info{};
+    info.shapeInfo.mDim = mDim;
+    info.shapeInfo.nDim = nDim;
+    info.shapeInfo.kDim = kDim;
+    info.shapeInfo.dtypeASize = dtypeASize;
+    info.enableHf32 = enableHf32;
+    info.aiCoreCnt = aiCoreCnt;
+    return info;
+}
+
+matmul_util_whitebox::Ops::NN::MmOpInfo MakeDPSKMmOpInfo(int64_t mDim, int64_t nDim, int64_t kDim, int64_t dtypeASize,
+                                                         bool enableHf32, int64_t aiCoreCnt)
+{
+    matmul_util_whitebox::Ops::NN::MmOpInfo info{};
+    info.shapeInfo.mDim = mDim;
+    info.shapeInfo.nDim = nDim;
+    info.shapeInfo.kDim = kDim;
+    info.shapeInfo.dtypeASize = dtypeASize;
+    info.enableHf32 = enableHf32;
+    info.aiCoreCnt = aiCoreCnt;
+    return info;
+}
+
+struct CastNullGuard {
+    CastNullGuard() { matmul_util_whitebox::gCastToNullForTest = true; }
+    ~CastNullGuard() { matmul_util_whitebox::gCastToNullForTest = false; }
+};
+
+matmul_util_whitebox::Ops::NN::MmOpInfo MakeNonContigMmOpInfo(int64_t mDim, int64_t nDim, int64_t kDim,
+                                                              int64_t dtypeASize, bool enableHf32, int64_t aiCoreCnt,
+                                                              op::DataType mat2Dtype)
+{
+    matmul_util_whitebox::Ops::NN::MmOpInfo info{};
+    info.shapeInfo.mDim = mDim;
+    info.shapeInfo.nDim = nDim;
+    info.shapeInfo.kDim = kDim;
+    info.shapeInfo.dtypeASize = dtypeASize;
+    info.enableHf32 = enableHf32;
+    info.aiCoreCnt = aiCoreCnt;
+    info.ori_info.mat2_dtype = mat2Dtype;
+    return info;
+}
+
+bool CheckGemmV3WithAlphaBetaCase(op::DataType biasDtype, op::DataType selfDtype, op::DataType mat2Dtype,
+                                  int8_t cubeMathType = op::USE_FP32_ADD)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    if (uniqueExecutor.get() == nullptr) {
+        ADD_FAILURE() << "CREATE_EXECUTOR failed";
+        return false;
+    }
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* bias = MakeTensor(executor, {4}, biasDtype, op::Format::FORMAT_ND);
+    const aclTensor* self = MakeTensor(executor, {4, 8}, selfDtype, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {8, 4}, mat2Dtype, op::Format::FORMAT_ND);
+    if (bias == nullptr || self == nullptr || mat2 == nullptr) {
+        ADD_FAILURE() << "AllocTensor failed";
+        return false;
+    }
+    return matmul_util_whitebox::Ops::NN::CheckGemmV3WithAlphaBeta(bias, self, mat2, cubeMathType);
+}
+
+bool IsSliceCase(const std::initializer_list<int64_t>& storageDims, const std::initializer_list<int64_t>& viewDims,
+                 const op::Strides& strides, op::DataType selfDtype = op::DataType::DT_FLOAT16,
+                 op::DataType mat2Dtype = op::DataType::DT_FLOAT16, op::Format mat2Format = op::Format::FORMAT_ND,
+                 int8_t cubeMathType = kCubeMathKeepDtype, int64_t viewOffset = 0,
+                 op::Format selfFormat = op::Format::FORMAT_ND)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    if (uniqueExecutor.get() == nullptr) {
+        ADD_FAILURE() << "CREATE_EXECUTOR failed";
+        return false;
+    }
+    auto* executor = uniqueExecutor.get();
+    auto* storage = executor->AllocTensor(op::Shape(storageDims), selfDtype, selfFormat);
+    if (storage == nullptr) {
+        ADD_FAILURE() << "AllocTensor failed";
+        return false;
+    }
+    const aclTensor* self = executor->CreateView(storage, op::Shape(viewDims), op::Shape(storageDims), strides,
+                                                 viewOffset);
+    const aclTensor* mat2 = MakeTensor(executor, {8, 8}, mat2Dtype, mat2Format);
+    if (self == nullptr || mat2 == nullptr) {
+        ADD_FAILURE() << "CreateView/AllocTensor failed";
+        return false;
+    }
+    return matmul_util_whitebox::Ops::NN::IsSliceNonContiguous(self, mat2, cubeMathType);
+}
+
+bool IsCapableContiguousCase(const std::initializer_list<int64_t>& selfDims,
+                             const std::initializer_list<int64_t>& mat2Dims,
+                             op::DataType selfDtype = op::DataType::DT_FLOAT,
+                             op::DataType mat2Dtype = op::DataType::DT_FLOAT,
+                             op::Format selfFormat = op::Format::FORMAT_ND,
+                             op::Format mat2Format = op::Format::FORMAT_ND, bool hasBias = false,
+                             int8_t cubeMathType = op::USE_FP32_ADD)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    if (uniqueExecutor.get() == nullptr) {
+        ADD_FAILURE() << "CREATE_EXECUTOR failed";
+        return false;
+    }
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, selfDims, selfDtype, selfFormat);
+    const aclTensor* mat2 = MakeTensor(executor, mat2Dims, mat2Dtype, mat2Format);
+    const aclTensor* bias = hasBias ? MakeTensor(executor, {4}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND) :
+                                      nullptr;
+    if (self == nullptr || mat2 == nullptr || (hasBias && bias == nullptr)) {
+        ADD_FAILURE() << "AllocTensor failed";
+        return false;
+    }
+    return matmul_util_whitebox::Ops::NN::IsCapableForMultiMul(self, mat2, bias, cubeMathType);
+}
+
+bool IsCapableViewCase(const std::initializer_list<int64_t>& selfStorageDims,
+                       const std::initializer_list<int64_t>& selfViewDims, const op::Strides& selfStrides,
+                       const std::initializer_list<int64_t>& mat2StorageDims,
+                       const std::initializer_list<int64_t>& mat2ViewDims, const op::Strides& mat2Strides)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    if (uniqueExecutor.get() == nullptr) {
+        ADD_FAILURE() << "CREATE_EXECUTOR failed";
+        return false;
+    }
+    auto* executor = uniqueExecutor.get();
+    auto* selfStorage = executor->AllocTensor(op::Shape(selfStorageDims), op::DataType::DT_FLOAT,
+                                              op::Format::FORMAT_ND);
+    auto* mat2Storage = executor->AllocTensor(op::Shape(mat2StorageDims), op::DataType::DT_FLOAT,
+                                              op::Format::FORMAT_ND);
+    if (selfStorage == nullptr || mat2Storage == nullptr) {
+        ADD_FAILURE() << "AllocTensor failed";
+        return false;
+    }
+    const aclTensor* self = executor->CreateView(selfStorage, op::Shape(selfViewDims), op::Shape(selfStorageDims),
+                                                 selfStrides, 0);
+    const aclTensor* mat2 = executor->CreateView(mat2Storage, op::Shape(mat2ViewDims), op::Shape(mat2StorageDims),
+                                                 mat2Strides, 0);
+    if (self == nullptr || mat2 == nullptr) {
+        ADD_FAILURE() << "CreateView failed";
+        return false;
+    }
+    return matmul_util_whitebox::Ops::NN::IsCapableForMultiMul(self, mat2, nullptr, op::USE_FP32_ADD);
+}
+
+} // namespace
+
+class MatmulUtilWhiteboxTest : public testing::Test {};
+
+TEST_F(MatmulUtilWhiteboxTest, MultiMulTranspose_NoTransposeNeeded)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {4, 8}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeViewTensor(executor, op::DataType::DT_FLOAT, {4, 8}, {8, 4}, op::Strides{1, 8});
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    bool transposeX2 = false;
+
+    EXPECT_TRUE(matmul_util_whitebox::Ops::NN::MultiMulTranspose(self, mat2, transposeX2, executor));
+    EXPECT_FALSE(transposeX2);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, MultiMulTranspose_ATransposeOnly)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeViewTensor(executor, op::DataType::DT_FLOAT, {4, 8}, {8, 4}, op::Strides{1, 8});
+    const aclTensor* mat2 = MakeViewTensor(executor, op::DataType::DT_FLOAT, {4, 8}, {8, 4}, op::Strides{1, 8});
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    bool transposeX2 = false;
+
+    EXPECT_TRUE(matmul_util_whitebox::Ops::NN::MultiMulTranspose(self, mat2, transposeX2, executor));
+    EXPECT_FALSE(transposeX2);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, MultiMulTranspose_BNotTransposed)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {4, 8}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {8, 4}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+    bool transposeX2 = false;
+
+    EXPECT_TRUE(matmul_util_whitebox::Ops::NN::MultiMulTranspose(self, mat2, transposeX2, executor));
+    EXPECT_TRUE(transposeX2);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_ScSplitKAl1FullLoad_Hit)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_TRUE(CheckAscendCScenario2Case({128, 9216}, {9216, 9472}, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16,
+                                          op::Format::FORMAT_ND, op::Format::FORMAT_ND, op::Format::FORMAT_ND));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_ArchNotDav2002)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_FALSE(CheckAscendCScenario2Case({4096, 4096}, {4096, 4096}, op::DataType::DT_FLOAT16,
+                                           op::DataType::DT_FLOAT16, op::Format::FORMAT_ND, op::Format::FORMAT_ND,
+                                           op::Format::FORMAT_ND));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_DtypeX1NotFp16)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_FALSE(
+        CheckAscendCScenario2Case({4096, 4096}, {4096, 4096}, op::DataType::DT_BF16, op::DataType::DT_FLOAT16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_DtypeX2NotFp16)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_FALSE(
+        CheckAscendCScenario2Case({4096, 4096}, {4096, 4096}, op::DataType::DT_FLOAT16, op::DataType::DT_BF16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_FormatSelfNotNd)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_FALSE(CheckAscendCScenario2Case({4096, 4096}, {4096, 4096}, op::DataType::DT_FLOAT16,
+                                           op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ,
+                                           op::Format::FORMAT_FRACTAL_NZ, op::Format::FORMAT_ND));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_FormatMat2NotNz)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_FALSE(CheckAscendCScenario2Case({4096, 4096}, {4096, 4096}, op::DataType::DT_FLOAT16,
+                                           op::DataType::DT_FLOAT16, op::Format::FORMAT_ND, op::Format::FORMAT_ND,
+                                           op::Format::FORMAT_ND));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_FormatOutNotNd)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_FALSE(CheckAscendCScenario2Case({4096, 4096}, {4096, 4096}, op::DataType::DT_FLOAT16,
+                                           op::DataType::DT_FLOAT16, op::Format::FORMAT_ND,
+                                           op::Format::FORMAT_FRACTAL_NZ, op::Format::FORMAT_FRACTAL_NZ));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_BoundsM)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_FALSE(CheckAscendCScenario2Case({5505, 4096}, {4096, 4096}));
+    EXPECT_FALSE(CheckAscendCScenario2Case({2047, 4096}, {4096, 4096}));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_BoundsK)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_FALSE(CheckAscendCScenario2Case({4096, 5505}, {4096, 4096}));
+    EXPECT_FALSE(CheckAscendCScenario2Case({4096, 2047}, {4096, 4096}));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_BoundsN)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_FALSE(CheckAscendCScenario2Case({4096, 4096}, {4096, 5505}));
+    EXPECT_FALSE(CheckAscendCScenario2Case({4096, 4096}, {4096, 2047}));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_InRange_True)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_TRUE(CheckAscendCScenario2Case({4096, 4096}, {4096, 4096}));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_TransposeTrue_True)
+{
+    NpuArchManager archManager(NpuArch::DAV_2002);
+    EXPECT_TRUE(CheckAscendCScenario2Case({3000, 4000}, {4000, 3000}, op::DataType::DT_FLOAT16,
+                                          op::DataType::DT_FLOAT16, op::Format::FORMAT_ND,
+                                          op::Format::FORMAT_FRACTAL_NZ, op::Format::FORMAT_ND, true, true));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, PromoteOutputAndBiasDtype_BiasFp32)
+{
+    EXPECT_EQ(matmul_util_whitebox::CallPromoteOutputAndBiasDtype(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT),
+              op::DataType::DT_FLOAT);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, PromoteOutputAndBiasDtype_OutputFp32)
+{
+    EXPECT_EQ(matmul_util_whitebox::CallPromoteOutputAndBiasDtype(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16),
+              op::DataType::DT_FLOAT);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, PromoteOutputAndBiasDtype_BothFp16)
+{
+    EXPECT_EQ(matmul_util_whitebox::CallPromoteOutputAndBiasDtype(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16),
+              op::DataType::DT_FLOAT16);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetMmSupportDType_ArchNotSupportFp32)
+{
+    NpuArchManager archManager(NpuArch::DAV_1001);
+    auto info = MakeMmOpInfo(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT);
+    EXPECT_EQ(matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype), ACLNN_SUCCESS);
+    EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT16);
+    EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT16);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetMmSupportDType_UseFp16)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, op::USE_FP16);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT16);
+    }
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, op::USE_FP16);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT16);
+    }
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_BF16, op::DataType::DT_BF16, op::DataType::DT_BF16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, op::USE_FP16);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_BF16);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_BF16);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_BF16);
+    }
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetMmSupportDType_DtypeMismatchToFp32)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT);
+    }
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT);
+    }
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_FLOAT16, op::DataType::DT_BF16, op::DataType::DT_FLOAT16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT);
+    }
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_BF16, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT);
+    }
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetMmSupportDType_UseFp32Add)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, op::USE_FP32_ADD);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT);
+    }
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_BF16, op::DataType::DT_BF16, op::DataType::DT_BF16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, op::USE_FP32_ADD);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_BF16);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_BF16);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT);
+    }
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetMmSupportDType_LowPrecisionFp32Out)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT);
+    }
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_BF16, op::DataType::DT_BF16, op::DataType::DT_FLOAT);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_BF16);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_BF16);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT);
+    }
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetMmSupportDType_NoChange)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT);
+    }
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT16);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT16);
+    }
+    {
+        auto info = MakeMmOpInfo(op::DataType::DT_BF16, op::DataType::DT_BF16, op::DataType::DT_BF16);
+        matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, kCubeMathKeepDtype);
+        EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_BF16);
+        EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_BF16);
+        EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_BF16);
+    }
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetMmSupportDType_Arch3510UseFp16)
+{
+    NpuArchManager archManager(NpuArch::DAV_3510);
+    auto info = MakeMmOpInfo(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT);
+    matmul_util_whitebox::Ops::NN::SetMmSupportDType(info, op::USE_FP16);
+    EXPECT_EQ(info.support_info.self_dtype, op::DataType::DT_FLOAT16);
+    EXPECT_EQ(info.support_info.mat2_dtype, op::DataType::DT_FLOAT16);
+    EXPECT_EQ(info.support_info.output_dtype, op::DataType::DT_FLOAT16);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, GetOffSet_BmmAndMm)
+{
+    EXPECT_EQ(matmul_util_whitebox::Ops::NN::GetOffSet(3), 1);
+    EXPECT_EQ(matmul_util_whitebox::Ops::NN::GetOffSet(2), 0);
+    EXPECT_EQ(matmul_util_whitebox::Ops::NN::GetOffSet(4), 0);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_Bf16ArchSupported)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_TRUE(CheckDtypeValidCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16));
+    EXPECT_TRUE(CheckDtypeValidCase(op::DataType::DT_BF16, op::DataType::DT_BF16, true, op::DataType::DT_BF16));
+    EXPECT_TRUE(CheckDtypeValidCase(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_Bf16ArchUnsupportedSelf)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_FALSE(CheckDtypeValidCase(op::DataType::DT_INT8, op::DataType::DT_FLOAT16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_Bf16ArchUnsupportedMat2)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_FALSE(CheckDtypeValidCase(op::DataType::DT_FLOAT16, op::DataType::DT_INT8));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_Bf16ArchUnsupportedBias)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_FALSE(CheckDtypeValidCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16, true, op::DataType::DT_INT8));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_NoBf16ArchSupported)
+{
+    NpuArchManager archManager(NpuArch::DAV_1001);
+    EXPECT_TRUE(CheckDtypeValidCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16));
+    EXPECT_TRUE(CheckDtypeValidCase(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16));
+    EXPECT_TRUE(
+        CheckDtypeValidCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16, true, op::DataType::DT_FLOAT16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_NoBf16ArchRejectSelfBf16)
+{
+    NpuArchManager archManager(NpuArch::DAV_1001);
+    EXPECT_FALSE(CheckDtypeValidCase(op::DataType::DT_BF16, op::DataType::DT_FLOAT16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_NoBf16ArchRejectMat2Bf16)
+{
+    NpuArchManager archManager(NpuArch::DAV_1001);
+    EXPECT_FALSE(CheckDtypeValidCase(op::DataType::DT_FLOAT16, op::DataType::DT_BF16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_NoBf16ArchRejectBiasBf16)
+{
+    NpuArchManager archManager(NpuArch::DAV_1001);
+    EXPECT_FALSE(CheckDtypeValidCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16, true, op::DataType::DT_BF16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_KeepDtypeFp16OutFp32Self)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_FALSE(CheckDtypeValidCase(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16, false, op::DataType::DT_FLOAT16,
+                                     true, op::DataType::DT_FLOAT16, kCubeMathKeepDtype));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_OutNull)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_TRUE(CheckDtypeValidCase(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_NotKeepDtype)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_TRUE(CheckDtypeValidCase(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16, false, op::DataType::DT_FLOAT16,
+                                    true, op::DataType::DT_FLOAT16, op::ALLOW_FP32_DOWN_PRECISION));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_SelfNotFp32)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_TRUE(CheckDtypeValidCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16, false, op::DataType::DT_FLOAT16,
+                                    true, op::DataType::DT_FLOAT16, kCubeMathKeepDtype));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckDtypeValid_OutNotFp16)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_TRUE(CheckDtypeValidCase(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16, false, op::DataType::DT_FLOAT16,
+                                    true, op::DataType::DT_FLOAT, kCubeMathKeepDtype));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKSKTiling_Fp32LargeK_Rejected)
+{
+    auto info = MakeStreamKMmOpInfo(1024, 1024, 2000001, 4, false, 16);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKSKTiling_Fp32LargeKHf32_True)
+{
+    auto info = MakeStreamKMmOpInfo(256, 256, 2000001, 4, true, 16);
+    EXPECT_TRUE(matmul_util_whitebox::CallCheckStreamKSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKSKTiling_Fp16LargeK_True)
+{
+    auto info = MakeStreamKMmOpInfo(256, 256, 2000001, 2, false, 16);
+    EXPECT_TRUE(matmul_util_whitebox::CallCheckStreamKSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKSKTiling_KBelowThreshold_Rejected)
+{
+    auto info = MakeStreamKMmOpInfo(256, 256, 256, 2, false, 32);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKSKTiling_Fp32Align32_Rejected)
+{
+    auto info = MakeStreamKMmOpInfo(1024, 1024, 8192, 4, false, 16);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKSKTiling_Fp32Align32_True)
+{
+    auto info = MakeStreamKMmOpInfo(64, 64, 8192, 4, false, 16);
+    EXPECT_TRUE(matmul_util_whitebox::CallCheckStreamKSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKSKTiling_Fp16Align256_Rejected)
+{
+    auto info = MakeStreamKMmOpInfo(1024, 1024, 8192, 2, false, 1);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKSKTiling_Fp16Align256_True)
+{
+    auto info = MakeStreamKMmOpInfo(256, 256, 8192, 2, false, 16);
+    EXPECT_TRUE(matmul_util_whitebox::CallCheckStreamKSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKSKTiling_ZeroAiCore_Rejected)
+{
+    auto info = MakeStreamKMmOpInfo(256, 256, 8192, 2, false, 0);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_MNotAligned)
+{
+    auto info = MakeDPSKMmOpInfo(257, 256, 8192, 2, false, 8);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_NNotAligned)
+{
+    auto info = MakeDPSKMmOpInfo(256, 257, 8192, 2, false, 8);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_KBelowThreshold)
+{
+    auto info = MakeDPSKMmOpInfo(256, 256, 4095, 2, false, 8);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_Fp32NoHf32)
+{
+    auto info = MakeDPSKMmOpInfo(256, 256, 8192, 4, false, 8);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_Fp32Hf32_True)
+{
+    auto info = MakeDPSKMmOpInfo(768, 256, 8192, 4, true, 2);
+    EXPECT_TRUE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_TotalLessThanAiCore)
+{
+    auto info = MakeDPSKMmOpInfo(256, 256, 8192, 2, false, 16);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_TotalModAiCoreZero)
+{
+    auto info = MakeDPSKMmOpInfo(512, 1024, 8192, 2, false, 8);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_TotalModAiCoreOverHalf)
+{
+    auto info = MakeDPSKMmOpInfo(3328, 256, 8192, 2, false, 8);
+    EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_AllConditionsPass_True)
+{
+    auto info = MakeDPSKMmOpInfo(3072, 256, 8192, 2, false, 8);
+    EXPECT_TRUE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckStreamKDPSKTiling_BoundaryValues)
+{
+    {
+        auto info = MakeDPSKMmOpInfo(256, 256, 8192, 2, false, 0);
+        EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+    }
+    {
+        auto info = MakeDPSKMmOpInfo(256, 256, 8192, 0, false, 8);
+        EXPECT_FALSE(matmul_util_whitebox::CallCheckStreamKDPSKTiling(info));
+    }
+}
+
+TEST_F(MatmulUtilWhiteboxTest, HandleEmptyTensor_ProcessEmptyTensorNull)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {4, 0}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {0, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+
+    EXPECT_EQ(matmul_util_whitebox::CallHandleEmptyTensor(self, mat2, executor, kCubeMathKeepDtype), nullptr);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, HandleEmptyTensor_CastDav2201KeepDtype)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {0, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {4, 5}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+
+    auto* out = matmul_util_whitebox::CallHandleEmptyTensor(self, mat2, executor, op::FP16FP32_KEEP_DTYPE);
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(out->GetViewShape().GetDimNum(), 2);
+    EXPECT_EQ(out->GetViewShape().GetDim(0), 0);
+    EXPECT_EQ(out->GetViewShape().GetDim(1), 5);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, HandleEmptyTensor_NotDav2201)
+{
+    NpuArchManager archManager(NpuArch::DAV_1001);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {0, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {4, 5}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+
+    auto* out = matmul_util_whitebox::CallHandleEmptyTensor(self, mat2, executor, op::FP16FP32_KEEP_DTYPE);
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(out->GetViewShape().GetDim(0), 0);
+    EXPECT_EQ(out->GetViewShape().GetDim(1), 5);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, HandleEmptyTensor_NotKeepDtype)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {0, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {4, 5}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+
+    auto* out = matmul_util_whitebox::CallHandleEmptyTensor(self, mat2, executor, kCubeMathKeepDtype);
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(out->GetViewShape().GetDim(0), 0);
+    EXPECT_EQ(out->GetViewShape().GetDim(1), 5);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, HandleEmptyTensor_CastNull)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* self = MakeTensor(executor, {0, 4}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* mat2 = MakeTensor(executor, {4, 5}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(self, nullptr);
+    ASSERT_NE(mat2, nullptr);
+
+    CastNullGuard guard;
+    EXPECT_EQ(matmul_util_whitebox::CallHandleEmptyTensor(self, mat2, executor, op::FP16FP32_KEEP_DTYPE), nullptr);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetTensorToNDFormat_NchwToNd)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* input = MakeTensor(executor, {2, 3}, op::DataType::DT_FLOAT16, op::Format::FORMAT_NCHW);
+    ASSERT_NE(input, nullptr);
+
+    const aclTensor* out = matmul_util_whitebox::CallSetTensorToNDFormat(input);
+    EXPECT_EQ(out, input);
+    EXPECT_EQ(out->GetViewFormat(), op::Format::FORMAT_ND);
+    EXPECT_EQ(out->GetOriginalFormat(), op::Format::FORMAT_ND);
+    EXPECT_EQ(out->GetStorageFormat(), op::Format::FORMAT_ND);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetTensorToNDFormat_AlreadyNd)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* input = MakeTensor(executor, {2, 3}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(input, nullptr);
+
+    const aclTensor* out = matmul_util_whitebox::CallSetTensorToNDFormat(input);
+    EXPECT_EQ(out, input);
+    EXPECT_EQ(out->GetStorageFormat(), op::Format::FORMAT_ND);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, SetTensorToNDFormat_AlreadyNz)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* input = MakeTensor(executor, {2, 3}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    ASSERT_NE(input, nullptr);
+
+    const aclTensor* out = matmul_util_whitebox::CallSetTensorToNDFormat(input);
+    EXPECT_EQ(out, input);
+    EXPECT_EQ(out->GetStorageFormat(), op::Format::FORMAT_FRACTAL_NZ);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckNonContiguousShapeSupport_SkTiling)
+{
+    auto info = MakeNonContigMmOpInfo(256, 256, 8192, 2, false, 16, op::DataType::DT_FLOAT16);
+    EXPECT_FALSE(matmul_util_whitebox::Ops::NN::CheckNonContiguousShapeSupport(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckNonContiguousShapeSupport_DpskTiling)
+{
+    auto info = MakeNonContigMmOpInfo(2560, 256, 8192, 2, false, 8, op::DataType::DT_FLOAT16);
+    EXPECT_FALSE(matmul_util_whitebox::Ops::NN::CheckNonContiguousShapeSupport(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckNonContiguousShapeSupport_Fp32LargeK)
+{
+    auto info = MakeNonContigMmOpInfo(256, 256, 8192, 4, false, 16, op::DataType::DT_FLOAT);
+    EXPECT_FALSE(matmul_util_whitebox::Ops::NN::CheckNonContiguousShapeSupport(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckNonContiguousShapeSupport_Fp32Hf32)
+{
+    auto info = MakeNonContigMmOpInfo(1536, 256, 8192, 4, true, 8, op::DataType::DT_FLOAT);
+    EXPECT_TRUE(matmul_util_whitebox::Ops::NN::CheckNonContiguousShapeSupport(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckNonContiguousShapeSupport_Fp32SmallK)
+{
+    auto info = MakeNonContigMmOpInfo(256, 256, 1024, 4, false, 8, op::DataType::DT_FLOAT);
+    EXPECT_TRUE(matmul_util_whitebox::Ops::NN::CheckNonContiguousShapeSupport(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckNonContiguousShapeSupport_NonFp32)
+{
+    auto info = MakeNonContigMmOpInfo(1536, 256, 8192, 2, false, 8, op::DataType::DT_FLOAT16);
+    EXPECT_TRUE(matmul_util_whitebox::Ops::NN::CheckNonContiguousShapeSupport(info));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckGemmV3WithAlphaBeta_NotUseFp32Add)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_FALSE(CheckGemmV3WithAlphaBetaCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16,
+                                              op::DataType::DT_FLOAT16, kCubeMathKeepDtype));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckGemmV3WithAlphaBeta_NotDav2201)
+{
+    NpuArchManager archManager(NpuArch::DAV_1001);
+    EXPECT_FALSE(CheckGemmV3WithAlphaBetaCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16,
+                                              op::DataType::DT_FLOAT16, op::USE_FP32_ADD));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckGemmV3WithAlphaBeta_AllFp16)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_TRUE(CheckGemmV3WithAlphaBetaCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16,
+                                             op::DataType::DT_FLOAT16, op::USE_FP32_ADD));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckGemmV3WithAlphaBeta_AllBf16)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_TRUE(CheckGemmV3WithAlphaBetaCase(op::DataType::DT_BF16, op::DataType::DT_BF16, op::DataType::DT_BF16,
+                                             op::USE_FP32_ADD));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckGemmV3WithAlphaBeta_MixedFp32)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_FALSE(
+        CheckGemmV3WithAlphaBetaCase(op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16));
+    EXPECT_FALSE(
+        CheckGemmV3WithAlphaBetaCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16));
+    EXPECT_FALSE(
+        CheckGemmV3WithAlphaBetaCase(op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, CheckGemmV3WithAlphaBeta_MixedBf16)
+{
+    NpuArchManager archManager(NpuArch::DAV_2201);
+    EXPECT_FALSE(CheckGemmV3WithAlphaBetaCase(op::DataType::DT_BF16, op::DataType::DT_BF16, op::DataType::DT_FLOAT16));
+    EXPECT_FALSE(CheckGemmV3WithAlphaBetaCase(op::DataType::DT_BF16, op::DataType::DT_FLOAT16, op::DataType::DT_BF16));
+    EXPECT_FALSE(CheckGemmV3WithAlphaBetaCase(op::DataType::DT_FLOAT16, op::DataType::DT_BF16, op::DataType::DT_BF16));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, IsSliceNonContiguous_EarlyRejects)
+{
+    {
+        NpuArchManager archManager(NpuArch::DAV_2201);
+        EXPECT_FALSE(IsSliceCase({4, 64}, {4, 32}, op::Strides{64, 1}));
+    }
+    {
+        NpuArchManager archManager(NpuArch::DAV_3510);
+        EXPECT_FALSE(IsSliceCase({4, 32}, {4, 32}, op::Strides{32, 1}));
+        EXPECT_FALSE(IsSliceCase({4, 64}, {4, 32}, op::Strides{64, 1}, op::DataType::DT_FLOAT16,
+                                 op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ));
+        EXPECT_FALSE(IsSliceCase({4, 64}, {4, 32}, op::Strides{64, 1}, op::DataType::DT_FLOAT16,
+                                 op::DataType::DT_FLOAT16, op::Format::FORMAT_ND, kCubeMathKeepDtype, 0,
+                                 op::Format::FORMAT_FRACTAL_NZ));
+        EXPECT_FALSE(IsSliceCase({4, 64}, {4, 32}, op::Strides{64, 1}, op::DataType::DT_FLOAT16,
+                                 op::DataType::DT_FLOAT16, op::Format::FORMAT_ND, op::USE_FP32_ADD));
+        EXPECT_FALSE(
+            IsSliceCase({4, 64}, {4, 32}, op::Strides{64, 1}, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT));
+        EXPECT_FALSE(IsSliceCase({2, 2, 8, 8}, {2, 2, 4, 8}, op::Strides{128, 64, 8, 1}));
+    }
+}
+
+TEST_F(MatmulUtilWhiteboxTest, IsSliceNonContiguous_StrideChecks)
+{
+    NpuArchManager archManager(NpuArch::DAV_3510);
+    EXPECT_FALSE(IsSliceCase({4, 64}, {4, 32}, op::Strides{64, 0}));
+    EXPECT_FALSE(IsSliceCase({4, 64}, {4, 1}, op::Strides{64, 1}));
+    EXPECT_FALSE(IsSliceCase({32, 64}, {4, 32}, op::Strides{1, 64}));
+    EXPECT_FALSE(IsSliceCase({32, 64}, {4, 32}, op::Strides{6, 4}));
+    EXPECT_FALSE(IsSliceCase({64, 64}, {4, 16}, op::Strides{8, 1}));
+    EXPECT_FALSE(IsSliceCase({4, 64}, {4, 32}, op::Strides{64, 2}));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, IsSliceNonContiguous_ValidCases)
+{
+    NpuArchManager archManager(NpuArch::DAV_3510);
+    EXPECT_TRUE(IsSliceCase({4, 64}, {4, 32}, op::Strides{64, 1}));
+    EXPECT_TRUE(IsSliceCase({2, 4, 64}, {2, 4, 32}, op::Strides{256, 64, 1}));
+    EXPECT_TRUE(IsSliceCase({2, 32, 32}, {2, 16, 32}, op::Strides{1024, 32, 1}));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, IsSliceNonContiguous_ValidateRejects)
+{
+    NpuArchManager archManager(NpuArch::DAV_3510);
+    EXPECT_FALSE(IsSliceCase({2, 32, 32}, {2, 6, 32}, op::Strides{1024, 32, 1}));
+    EXPECT_FALSE(IsSliceCase({4, 64}, {4, 16}, op::Strides{64, 1}));
+    EXPECT_FALSE(IsSliceCase({4, 57}, {4, 32}, op::Strides{64, 1}));
+    EXPECT_FALSE(IsSliceCase({4, 4, 64}, {2, 4, 32}, op::Strides{256, 64, 1}));
+    EXPECT_FALSE(IsSliceCase({3, 64}, {4, 32}, op::Strides{64, 1}));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, IsCapableForMultiMul_Rejects)
+{
+    {
+        NpuArchManager archManager(NpuArch::DAV_3510);
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT,
+                                             op::Format::FORMAT_ND, op::Format::FORMAT_ND, false, kCubeMathKeepDtype));
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT,
+                                             op::Format::FORMAT_ND, op::Format::FORMAT_ND, true));
+        EXPECT_FALSE(IsCapableContiguousCase({0, 8}, {8, 4}));
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 0}));
+        EXPECT_FALSE(IsCapableContiguousCase({2, 4, 8}, {8, 4}));
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {2, 8, 4}));
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT,
+                                             op::Format::FORMAT_FRACTAL_NZ, op::Format::FORMAT_ND));
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT,
+                                             op::Format::FORMAT_ND, op::Format::FORMAT_FRACTAL_NZ));
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT));
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16));
+        EXPECT_FALSE(IsCapableContiguousCase({1, 8}, {8, 4}));
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 1}));
+        EXPECT_FALSE(IsCapableContiguousCase({4, 1}, {1, 4}));
+    }
+    {
+        NpuArchManager archManager(NpuArch::DAV_2201);
+        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}));
+    }
+}
+
+TEST_F(MatmulUtilWhiteboxTest, IsCapableForMultiMul_True)
+{
+    NpuArchManager archManager(NpuArch::DAV_3510);
+    EXPECT_TRUE(IsCapableContiguousCase({4, 8}, {8, 4}));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, IsCapableForMultiMul_Transposed_True)
+{
+    NpuArchManager archManager(NpuArch::DAV_3510);
+    EXPECT_TRUE(IsCapableViewCase({4, 8}, {8, 4}, op::Strides{1, 8}, {8, 4}, {4, 8}, op::Strides{1, 4}));
+}
+
+TEST_F(MatmulUtilWhiteboxTest, L0_MatMulNdFp162Fp32)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* x1 = MakeTensor(executor, {64, 128}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* x2 = MakeTensor(executor, {128, 64}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(x1, nullptr);
+    ASSERT_NE(x2, nullptr);
+    EXPECT_NE(matmul_util_whitebox::l0op::MatMulNdFp162Fp32(x1, x2, nullptr, nullptr, false, false, false, 0, executor),
+              nullptr);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, L0_MatMulNdFp162Fp32Adj)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* x1 = MakeTensor(executor, {128, 64}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    const aclTensor* x2 = MakeTensor(executor, {64, 128}, op::DataType::DT_FLOAT16, op::Format::FORMAT_ND);
+    ASSERT_NE(x1, nullptr);
+    ASSERT_NE(x2, nullptr);
+    EXPECT_NE(matmul_util_whitebox::l0op::MatMulNdFp162Fp32(x1, x2, nullptr, nullptr, true, true, false, 0, executor),
+              nullptr);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, L0_MatMulNzNzNd)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* x1 = MakeTensor(executor, {64, 128}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    const aclTensor* x2 = MakeTensor(executor, {128, 64}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    ASSERT_NE(x1, nullptr);
+    ASSERT_NE(x2, nullptr);
+    EXPECT_NE(matmul_util_whitebox::l0op::MatMulNzNzNd(x1, x2, nullptr, nullptr, false, false, false, 0, executor),
+              nullptr);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, L0_MatMulNzNzNdAdj)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* x1 = MakeTensor(executor, {128, 64}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    const aclTensor* x2 = MakeTensor(executor, {64, 128}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    ASSERT_NE(x1, nullptr);
+    ASSERT_NE(x2, nullptr);
+    EXPECT_NE(matmul_util_whitebox::l0op::MatMulNzNzNd(x1, x2, nullptr, nullptr, true, true, false, 0, executor),
+              nullptr);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, L0_MatMulV3NzNzNd)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* x1 = MakeTensor(executor, {64, 128}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    const aclTensor* x2 = MakeTensor(executor, {128, 64}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    ASSERT_NE(x1, nullptr);
+    ASSERT_NE(x2, nullptr);
+    EXPECT_NE(matmul_util_whitebox::l0op::MatMulV3NzNzNd(x1, x2, nullptr, false, false, false, 0, executor), nullptr);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, L0_MatMulV3NzNzNdAdj)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* x1 = MakeTensor(executor, {128, 64}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    const aclTensor* x2 = MakeTensor(executor, {64, 128}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    ASSERT_NE(x1, nullptr);
+    ASSERT_NE(x2, nullptr);
+    EXPECT_NE(matmul_util_whitebox::l0op::MatMulV3NzNzNd(x1, x2, nullptr, true, true, false, 0, executor), nullptr);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, L0_MatMulV3NzNzNdFp162Fp32)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* x1 = MakeTensor(executor, {64, 128}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    const aclTensor* x2 = MakeTensor(executor, {128, 64}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    ASSERT_NE(x1, nullptr);
+    ASSERT_NE(x2, nullptr);
+    EXPECT_NE(matmul_util_whitebox::l0op::MatMulV3NzNzNdFp162Fp32(x1, x2, nullptr, false, false, false, 0, executor),
+              nullptr);
+}
+
+TEST_F(MatmulUtilWhiteboxTest, L0_MatMulV3NzNzNdFp162Fp32Adj)
+{
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    ASSERT_NE(uniqueExecutor.get(), nullptr);
+    auto* executor = uniqueExecutor.get();
+    const aclTensor* x1 = MakeTensor(executor, {128, 64}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    const aclTensor* x2 = MakeTensor(executor, {64, 128}, op::DataType::DT_FLOAT16, op::Format::FORMAT_FRACTAL_NZ);
+    ASSERT_NE(x1, nullptr);
+    ASSERT_NE(x2, nullptr);
+    EXPECT_NE(matmul_util_whitebox::l0op::MatMulV3NzNzNdFp162Fp32(x1, x2, nullptr, true, true, false, 0, executor),
+              nullptr);
+}
