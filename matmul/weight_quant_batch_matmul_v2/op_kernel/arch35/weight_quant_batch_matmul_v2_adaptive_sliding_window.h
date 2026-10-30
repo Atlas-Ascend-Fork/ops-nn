@@ -34,11 +34,25 @@ using AscendC::GetBlockIdx;
 using AscendC::GlobalTensor;
 namespace WeightQuantBatchMatmulV2::Arch35 {
 
+// 融合算子epilogue类型：RELU由fixpipe硬件在FixpipeOut阶段随路生效。
+// 枚举值对齐 quant_batch_matmul_v3_base.h 的 FusedOpType（NONE=0, RELU=1），
+// 供薄封装融合算子（fused_weight_quant_mat_mul）以模板参数注入。
+enum class FusedOpType : uint8_t {
+    NONE = 0,
+    RELU = 1,
+};
+
+// 含默认值，仅用于类的主声明；类外成员定义须使用 LOCAL_TEMPLATE_OUTLINE_PARAMS（默认参数不可重复声明）
 #define LOCAL_TEMPLATE_CLASS_PARAMS                                                                        \
     template <typename xType, typename wType, typename biasType, typename yType, bool aTrans, bool bTrans, \
-              QuantType antiQuantType, bool hasAntiQuantOffset, QuantType quantType>
+              QuantType antiQuantType, bool hasAntiQuantOffset, QuantType quantType,                       \
+              FusedOpType fusedOpType = FusedOpType::NONE>
+// 不含默认值，用于类外成员定义
+#define LOCAL_TEMPLATE_OUTLINE_PARAMS                                                                      \
+    template <typename xType, typename wType, typename biasType, typename yType, bool aTrans, bool bTrans, \
+              QuantType antiQuantType, bool hasAntiQuantOffset, QuantType quantType, FusedOpType fusedOpType>
 #define LOCAL_TEMPLATE_FUNC_PARAMS \
-    xType, wType, biasType, yType, aTrans, bTrans, antiQuantType, hasAntiQuantOffset, quantType
+    xType, wType, biasType, yType, aTrans, bTrans, antiQuantType, hasAntiQuantOffset, quantType, fusedOpType
 
 LOCAL_TEMPLATE_CLASS_PARAMS
 class WeightQuantBatchMatmulV2ASWKernel {
@@ -196,7 +210,7 @@ private:
     AscendC::LocalTensor<biasType> biasBt_;
 };
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::Init(
     GM_ADDR x, GM_ADDR weight, GM_ADDR antiquantScale, GM_ADDR antiquantOffset, GM_ADDR quantScale, GM_ADDR quantOffset,
     GM_ADDR bias, GM_ADDR y, GM_ADDR workspace, const void* tilingData)
@@ -211,7 +225,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
 }
 
 // mmad 的 buffer 布局与 tiling 参数初始化
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::InitMmad()
 {
     baseM_ = tiling_->baseM;
@@ -261,7 +275,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     enableL0cDb_ = tiling_->l0cDB >= DOUBLE_BUFFER_NUM && baseM_ * baseN_ <= HALF_L0C_ELEMS;
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::UpdateGlobalAddr(
     GM_ADDR x, GM_ADDR weight, GM_ADDR antiquantScale, GM_ADDR antiquantOffset, GM_ADDR quantScale, GM_ADDR quantOffset,
     GM_ADDR bias, GM_ADDR y, GM_ADDR workspace)
@@ -271,13 +285,13 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
         blockIdx_, aGlobal_, bGlobal_, cGlobal_, biasGlobal_, scaleGlobal_, tiling_->l2CacheDisable);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::SetL2CacheHint()
 {
     SetL2CacheHintHelper<xType, wType, biasType, yType>(tiling_->l2CacheDisable, aGlobal_, bGlobal_);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::Process()
 {
     if ASCEND_IS_AIV {
@@ -293,7 +307,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     }
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::ComputeBasicOptiLoop()
 {
     for (uint64_t roundIndex = 0; roundIndex < block_.params_.round; ++roundIndex) {
@@ -311,7 +325,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     }
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::ComputeBmmOptiLoop()
 {
     uint64_t batchC3C4 = static_cast<uint64_t>(tiling_->batchC3) * tiling_->batchC4;
@@ -352,7 +366,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     }
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::SetMMParaAndCompute()
 {
     if constexpr (antiQuantType == QuantType::PER_TENSOR) { // pertensor
@@ -374,7 +388,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     GetTensorC(cGlobal_[block_.offset_.offsetC]);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::SetSingleShape(int32_t singleM,
                                                                                                      int32_t singleN,
                                                                                                      int32_t singleK)
@@ -384,7 +398,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     singleK_ = static_cast<uint64_t>(singleK);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::CopyInA1(uint64_t kGmOffset,
                                                                                                uint64_t curK,
                                                                                                uint64_t l1BufId)
@@ -404,7 +418,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     AscendC::DataCopy(aL1_[l1BufId * aL1BufElems_], aTileGlobal_[gmOffset], nd2nzParams);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::CopyInB1(uint64_t kGmOffset,
                                                                                                uint64_t curK,
                                                                                                uint64_t l1BufId)
@@ -424,7 +438,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     AscendC::DataCopy(bL1_[l1BufId * bL1BufElems_], bTileGlobal_[gmOffset], nd2nzParams);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::CopyInBiasL1()
 {
     AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(BIAS_MTE1_MTE2_FLAG);
@@ -433,7 +447,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     AscendC::DataCopyPad(biasL1_, biasTileGlobal_, biasParam, padParams);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::CopyInA2(uint64_t kL1Offset,
                                                                                                uint64_t curK,
                                                                                                uint64_t curK0,
@@ -463,7 +477,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     AscendC::LoadData<xType>(aL0_[l0BufId * HALF_L0A_ELEMS], aL1_[aL1Offset], loadDataParams);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::CopyInB2(uint64_t kL1Offset,
                                                                                                uint64_t curK,
                                                                                                uint64_t curK0,
@@ -508,7 +522,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     }
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::CopyInBiasBt()
 {
     // s32场景要对齐到2，因此是align(n / biasC0, 16 / biasC0)
@@ -526,7 +540,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(BIAS_MTE1_MTE2_FLAG);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::MmadCompute(
     uint64_t curK0, uint64_t l0BufId, uint64_t l0cBufId, bool needBias, bool needCInit, bool isFinalAccum)
 {
@@ -553,7 +567,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     }
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::CopyScaleL1(uint64_t scaleBufId)
 {
     // 等待l1BufNum_级前的同序号scale buffer被fixpipe读完，scale多buffer与A/B L1 buffer同级
@@ -565,7 +579,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     AscendC::WaitFlag<AscendC::HardEvent::MTE2_FIX>(SCALE_MTE2_FIX_FLAG + scaleBufId);
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::FixpipeOut(
     const AscendC::GlobalTensor<yType>& gm, uint64_t l0cBufId, uint64_t scaleBufId)
 {
@@ -574,6 +588,10 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     fixpipeParams.mSize = singleM_;
     fixpipeParams.dstStride = tiling_->n;
     fixpipeParams.srcStride = CeilAlign(singleM_, BLOCK_CUBE_SIZE);
+    if constexpr (fusedOpType == FusedOpType::RELU) {
+        // fixpipe随路relu：作用于bias加与随路反量化之后、搬出GM之前，relu(mm + bias)语义
+        fixpipeParams.reluEn = 1;
+    }
     if constexpr (antiQuantType == QuantType::PER_TENSOR) {
         if constexpr (AscendC::IsSameType<yType, int8_t>::value) {
             fixpipeParams.quantPre = QuantMode_t::REQ8;
@@ -611,7 +629,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     }
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::Iterate()
 {
     uint64_t l0cBufId = enableL0cDb_ ? (l0cPingPong_ & 1) : 0;
@@ -691,7 +709,7 @@ __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PAR
     }
 }
 
-LOCAL_TEMPLATE_CLASS_PARAMS
+LOCAL_TEMPLATE_OUTLINE_PARAMS
 template <bool sync>
 __aicore__ inline void WeightQuantBatchMatmulV2ASWKernel<LOCAL_TEMPLATE_FUNC_PARAMS>::GetTensorC(
     const AscendC::GlobalTensor<yType>& gm)
