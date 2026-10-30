@@ -28,6 +28,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE="$(dirname "$(dirname "$SCRIPT_DIR")")"
 cd "$WORKSPACE"
 
+# Build dependencies must discover their own repositories, not inherit hook-local paths.
+if ! git_local_env_vars=$(git rev-parse --local-env-vars); then
+    echo "[pre-push][ERROR] Cannot enumerate Git repository-local environment." >&2
+    exit 1
+fi
+while IFS= read -r git_env_var; do
+    unset "$git_env_var"
+done <<< "$git_local_env_vars"
+unset git_env_var git_local_env_vars
+
 # ---------------------------------------------------------------------------
 # 0. 旁路控制
 # ---------------------------------------------------------------------------
