@@ -41,12 +41,9 @@ static ge::graphStatus InferShapeSparseSegmentSumGrad(gert::InferShapeContext* c
     gert::Shape* outputShape = context->GetOutputShape(IDX_0);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputShape);
 
-    if (IsUnknownRank(*gradShape)) {
-        OP_LOGD(context->GetNodeName(), "grad_shape is UnknownRank, set output_shape to -2");
-        *outputShape = *gradShape;
-        return GRAPH_SUCCESS;
-    }
-
+    // indices/segment_ids constraints are checked before the unknown-rank early return
+    // so that declared-unsupported inputs (non 1-D, length mismatch) are still rejected
+    // when grad rank is unknown.
     const gert::Shape* indicesShape = context->GetInputShape(IDX_1);
     OP_CHECK_NULL_WITH_CONTEXT(context, indicesShape);
     if (!IsUnknownRank(*indicesShape) && indicesShape->GetDimNum() != 1) {
@@ -73,6 +70,20 @@ static ge::graphStatus InferShapeSparseSegmentSumGrad(gert::InferShapeContext* c
                                                        "length of indices must be equal to length of segment_ids");
             return GRAPH_FAILED;
         }
+    }
+
+    if (IsUnknownRank(*gradShape)) {
+        OP_LOGD(context->GetNodeName(), "grad_shape is UnknownRank, set output_shape to -2");
+        *outputShape = *gradShape;
+        return GRAPH_SUCCESS;
+    }
+
+    // grad must be at least 1-D: rank-0 grad has no rows and the output shape
+    // construction below would read a non-existent dim 0.
+    if (gradShape->GetDimNum() < 1) {
+        std::string gradDim = std::to_string(gradShape->GetDimNum()) + "D";
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "grad", gradDim.c_str(), "at least 1D");
+        return GRAPH_FAILED;
     }
 
     int64_t outputDim0 = UNKNOWN_DIM_VALUE_;

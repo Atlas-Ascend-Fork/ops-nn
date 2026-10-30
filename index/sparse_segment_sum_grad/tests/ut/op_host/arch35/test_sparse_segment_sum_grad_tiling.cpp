@@ -175,3 +175,40 @@ TEST_F(SparseSegmentSumGradTiling, fail_invalid_output_dim0_dtype)
                     gert::StorageShape({4}, {4}), gert::StorageShape({4}, {4}), gert::StorageShape({}, {}),
                     gert::StorageShape({4, 2}, {4, 2}), 0, 0, 0, 0, ge::GRAPH_FAILED, ge::DT_INT64);
 }
+
+TEST_F(SparseSegmentSumGradTiling, fail_grad_rank0)
+{
+    ExecuteTestCase(ge::DT_FLOAT, ge::DT_INT32, ge::DT_INT32, gert::StorageShape({}, {}), gert::StorageShape({4}, {4}),
+                    gert::StorageShape({4}, {4}), gert::StorageShape({}, {}), gert::StorageShape({4, 2}, {4, 2}), 0, 0,
+                    0, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(SparseSegmentSumGradTiling, fail_grad_unknown_dim)
+{
+    ExecuteTestCase(ge::DT_FLOAT, ge::DT_INT32, ge::DT_INT32, gert::StorageShape({-1, 3}, {-1, 3}),
+                    gert::StorageShape({4}, {4}), gert::StorageShape({4}, {4}), gert::StorageShape({}, {}),
+                    gert::StorageShape({4, 3}, {4, 3}), 0, 0, 0, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(SparseSegmentSumGradTiling, fail_indices_not_1d)
+{
+    ExecuteTestCase(ge::DT_FLOAT, ge::DT_INT32, ge::DT_INT32, gert::StorageShape({4, 2}, {4, 2}),
+                    gert::StorageShape({2, 2}, {2, 2}), gert::StorageShape({4}, {4}), gert::StorageShape({}, {}),
+                    gert::StorageShape({4, 2}, {4, 2}), 0, 0, 0, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(SparseSegmentSumGradTiling, fail_indices_unknown_dim)
+{
+    ExecuteTestCase(ge::DT_FLOAT, ge::DT_INT32, ge::DT_INT32, gert::StorageShape({4, 2}, {4, 2}),
+                    gert::StorageShape({-1}, {-1}), gert::StorageShape({4}, {4}), gert::StorageShape({}, {}),
+                    gert::StorageShape({4, 2}, {4, 2}), 0, 0, 0, 0, ge::GRAPH_FAILED);
+}
+
+TEST_F(SparseSegmentSumGradTiling, fail_output_dim0_not_const)
+{
+    // Output dim0 of -1 is the InferShape fallback for a non-compile-time-constant
+    // output_dim0; tiling rejects it through the existing negative-value check.
+    ExecuteTestCase(ge::DT_FLOAT, ge::DT_INT32, ge::DT_INT32, gert::StorageShape({4, 2}, {4, 2}),
+                    gert::StorageShape({4}, {4}), gert::StorageShape({4}, {4}), gert::StorageShape({}, {}),
+                    gert::StorageShape({-1, 2}, {-1, 2}), 0, 0, 0, 0, ge::GRAPH_FAILED);
+}

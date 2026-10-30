@@ -5,8 +5,8 @@
 | 产品                                                         | 是否支持 |
 | :----------------------------------------------------------- | :------: |
 | <term>Ascend 950PR&950DT系列产品</term>                     |     √    |
-| <term>Atlas A3系列产品</term>   |    √     |
-| <term>Atlas A2系列产品</term>    |    √     |
+| <term>Atlas A3系列产品</term>   |    ×     |
+| <term>Atlas A2系列产品</term>    |    ×     |
 | <term>Atlas 200I/500 A2推理产品</term>                      |    ×     |
 | <term>Atlas推理系列产品</term>                               |    ×     |
 | <term>Atlas训练系列产品</term>                               |    ×     |
@@ -78,13 +78,15 @@ $$
 
 ## 约束说明
 
+- grad 必须为至少 1 维张量（rank ≥ 1）。
 - indices 和 segment_ids 必须为 1-D 且长度相同。
 - indices 中的值必须在 [0, output_dim0) 范围内。
 - segment_ids 中的值必须在 [0, grad.shape[0]) 范围内。
+- output_dim0 必须为非负的编译期常量标量。
 - 多个 segment 指向同一 indices 时使用确定性 gather-add 累加（每个输出由单线程顺序累加，无 atomic 操作）。
 
 ## 调用说明
 
-| 调用方式 | 调用样例                                                                   | 说明                                                           |
+| 调用方式 | 样例代码                                                                   | 说明                                                           |
 |--------------|------------------------------------------------------------------------|--------------------------------------------------------------|
-| 图模式调用 | [test_geir]   | 通过[算子IR](./op_graph/sparse_segment_sum_grad_proto.h)构图方式调用SparseSegmentSumGrad算子。 |
+| GE图模式 | [test_geir](./examples/arch35/test_geir_sparse_segment_sum_grad.cpp)   | 通过[算子IR](./op_graph/sparse_segment_sum_grad_proto.h)构图方式调用SparseSegmentSumGrad算子。 |

@@ -208,9 +208,15 @@ template <typename T, typename IDX_T>
 __simt_vf__ __aicore__ __launch_bounds__(THREAD_NUM<IDX_T>) inline void OpSparseSegmentSumGradZeroInit(
     IDX_T totalOutputElements, __gm__ T* output)
 {
-    for (IDX_T idx = static_cast<IDX_T>(blockIdx.x) * static_cast<IDX_T>(blockDim.x) + static_cast<IDX_T>(threadIdx.x);
-         idx < totalOutputElements; idx += static_cast<IDX_T>(blockDim.x) * static_cast<IDX_T>(gridDim.x)) {
-        output[idx] = static_cast<T>(0);
+    // The loop counter is 64-bit: with a 32-bit counter the grid-stride increment
+    // wraps to a negative value when totalOutputElements is close to INT32_MAX,
+    // re-satisfying the loop condition and writing out of bounds.
+    const int64_t total = static_cast<int64_t>(totalOutputElements);
+    const int64_t stride = static_cast<int64_t>(blockDim.x) * static_cast<int64_t>(gridDim.x);
+    for (int64_t idx =
+             static_cast<int64_t>(blockIdx.x) * static_cast<int64_t>(blockDim.x) + static_cast<int64_t>(threadIdx.x);
+         idx < total; idx += stride) {
+        output[static_cast<IDX_T>(idx)] = static_cast<T>(0);
     }
 }
 
@@ -219,11 +225,14 @@ __simt_vf__ __aicore__ __launch_bounds__(THREAD_NUM<IDX_T>) inline void OpSparse
     IDX_T n, IDX_T innerSize, IDX_T totalOutputElements, __gm__ T* grad, __gm__ IndexT* indices,
     __gm__ SegIdT* segmentIds, __gm__ T* output)
 {
-    for (IDX_T elemIdx =
-             static_cast<IDX_T>(blockIdx.x) * static_cast<IDX_T>(blockDim.x) + static_cast<IDX_T>(threadIdx.x);
-         elemIdx < totalOutputElements; elemIdx += static_cast<IDX_T>(blockDim.x) * static_cast<IDX_T>(gridDim.x)) {
-        IDX_T row = elemIdx / innerSize;
-        IDX_T k = elemIdx % innerSize;
+    // 64-bit loop counter for the same overflow reason as Phase 1.
+    const int64_t total = static_cast<int64_t>(totalOutputElements);
+    const int64_t stride = static_cast<int64_t>(blockDim.x) * static_cast<int64_t>(gridDim.x);
+    for (int64_t elemIdx =
+             static_cast<int64_t>(blockIdx.x) * static_cast<int64_t>(blockDim.x) + static_cast<int64_t>(threadIdx.x);
+         elemIdx < total; elemIdx += stride) {
+        IDX_T row = static_cast<IDX_T>(elemIdx) / innerSize;
+        IDX_T k = static_cast<IDX_T>(elemIdx) % innerSize;
         if constexpr (sizeof(T) == DOUBLE_TYPE_SIZE) {
             // double: aicore forbids double arithmetic in VF; use bit manipulation
             uint64_t sumBits = 0;

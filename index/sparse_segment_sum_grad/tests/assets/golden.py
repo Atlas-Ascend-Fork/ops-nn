@@ -9,74 +9,126 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
+"""sparse_segment_sum_grad 在 kernel/geir 测试路径下的 golden 编写。
+
+Kernel/GEIR 的 golden 收到 numpy.ndarray，转 tf tensor 后调 tf.raw_ops.SparseSegmentSumGrad 计算，结果转回 numpy；
+third_party 的 tf vendor 收到 tf.Tensor（框架按 vendor 自动转换），直接调同一接口，无需手动转换。
+无 torch 现成接口，以 tf.raw_ops.SparseSegmentSumGrad 作为三方标杆。
+"""
+
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-import numpy as np
-import tensorflow as tf
-
-__golden__ = {"kernel": {"sparse_segment_sum_grad": "sparse_segment_sum_grad_golden"}}
-
-_NP_TO_TF_DTYPE = {
-    "float16": tf.float16,
-    "float32": tf.float32,
-    "float64": tf.float64,
-    "bfloat16": tf.bfloat16,
-    "int32": tf.int32,
-    "int64": tf.int64,
+__spec__ = {
+    "sparse_segment_sum_grad": "SparseSegmentSumGradKernelSpec",
+    "tf.raw_ops.SparseSegmentSumGrad": "TfSparseSegmentSumGradSpec",
 }
 
-
-def _numpy_to_tf(arr):
-    dtype_name = arr.dtype.name
-    if dtype_name == "bfloat16":
-        return tf.cast(tf.constant(arr.astype(np.float32)), tf.bfloat16)
-    tf_dtype = _NP_TO_TF_DTYPE.get(dtype_name)
-    if tf_dtype is None:
-        return tf.constant(arr)
-    return tf.cast(tf.constant(arr), tf_dtype)
+import tensorflow as tf
 
 
-def sparse_segment_sum_grad_golden(grad, indices, segment_ids, output_dim0, **kwargs):
-    """
-    Golden function for sparse_segment_sum_grad using TensorFlow SparseSegmentSumGrad.
-    Equivalent to: output[indices[j]] += grad[segment_ids[j]]
+class SparseSegmentSumGradKernelSpec:
+    """Kernel / GEIR 流程 — golden 收到 numpy.ndarray，third_party 收到 tf.Tensor"""
 
-    Args:
-        grad: numpy array, shape (N, d1, d2, ...), output gradient
-        indices: numpy array, shape (K,), index tensor pointing to original data rows
-        segment_ids: numpy array, shape (K,), segment ID tensor pointing to grad rows
-        output_dim0: numpy array, shape (1,), scalar tensor for original data first dim size
-        **kwargs: {input,output}_{dtypes,ori_shapes,formats,ori_formats},
-                  full_soc_version, short_soc_version, testcase_name
-
-    Returns:
-        Output tensor (numpy array), shape (output_dim0, d1, d2, ...)
-    """
-    orig_dtype = grad.dtype
-    dim0_val = int(output_dim0.item())
-
-    grad_t = _numpy_to_tf(grad)
-    indices_t = tf.constant(indices.astype(np.int64), dtype=tf.int64)
-    segment_ids_t = tf.constant(segment_ids.astype(np.int64), dtype=tf.int64)
-    output_dim0_t = tf.constant(dim0_val, dtype=tf.int32)
-
-    if len(indices) == 0:
-        inner_shape = grad.shape[1:]
-        result_np = np.zeros((dim0_val,) + inner_shape, dtype=orig_dtype)
-    else:
-        result_t = tf.raw_ops.SparseSegmentSumGrad(
-            grad=grad_t,
-            indices=indices_t,
-            segment_ids=segment_ids_t,
-            output_dim0=output_dim0_t,
-        )
-        if orig_dtype.name == "bfloat16":
-            result_np = (
-                tf.cast(result_t, tf.float32).numpy().astype(orig_dtype, copy=False)
-            )
+    def golden(grad, indices, segment_ids, output_dim0, **kwargs):
+        grad = tf.convert_to_tensor(grad)
+        indices = tf.convert_to_tensor(indices)
+        segment_ids = tf.convert_to_tensor(segment_ids)
+        orig_dtype = grad.dtype
+        if hasattr(output_dim0, "item"):
+            dim0_val = output_dim0.item()
         else:
-            result_np = result_t.numpy()
+            dim0_val = int(output_dim0)
 
-    return result_np
+        if len(indices) == 0:
+            inner_shape = grad.shape[1:]
+            result = tf.zeros((dim0_val,) + inner_shape, dtype=orig_dtype)
+        else:
+            result = tf.raw_ops.SparseSegmentSumGrad(
+                grad=grad,
+                indices=tf.cast(indices, tf.int64),
+                segment_ids=tf.cast(segment_ids, tf.int64),
+                output_dim0=tf.constant(dim0_val, dtype=tf.int32),
+            )
+
+        return [result.numpy()]
+
+    class ThirdPartyImpl:
+        def __init__(self, grad, indices, segment_ids, output_dim0, **kwargs):
+            self.grad = grad
+            self.indices = indices
+            self.segment_ids = segment_ids
+            self.orig_dtype = grad.dtype
+            self.output_dim0_t = output_dim0
+            self._empty = indices.shape[0] == 0
+            if self._empty:
+                self._inner_shape = grad.shape[1:]
+
+        def __call__(self, **kwargs):
+            if self._empty:
+                result = tf.zeros(
+                    (self.output_dim0_t[0],) + self._inner_shape, dtype=self.orig_dtype
+                )
+                return [result]
+            result = tf.raw_ops.SparseSegmentSumGrad(
+                grad=self.grad,
+                indices=tf.cast(self.indices, tf.int64),
+                segment_ids=tf.cast(self.segment_ids, tf.int64),
+                output_dim0=self.output_dim0_t[0],
+            )
+            return [result]
+
+    third_party = {"tf": ThirdPartyImpl}
+    tolerance = {
+        "float32": {"standard": "cross_check", "level": "L1"},
+        "float16": {"standard": "cross_check", "level": "L1"},
+    }
+
+
+class TfSparseSegmentSumGradSpec:
+    """TensorFlow SparseSegmentSumGrad E2E TestSpec。"""
+
+    @staticmethod
+    def _run(grad, indices, segment_ids, output_dim0):
+        return tf.raw_ops.SparseSegmentSumGrad(
+            grad=tf.convert_to_tensor(grad),
+            indices=tf.convert_to_tensor(indices),
+            segment_ids=tf.convert_to_tensor(segment_ids),
+            output_dim0=tf.cast(
+                tf.reshape(tf.convert_to_tensor(output_dim0), []), tf.int32
+            ),
+        )
+
+    @staticmethod
+    def golden(grad, indices, segment_ids, output_dim0, name=None, **kwargs):
+        del name, kwargs
+        return [
+            TfSparseSegmentSumGradSpec._run(grad, indices, segment_ids, output_dim0)
+        ]
+
+    class ThirdPartyImpl:
+        def __init__(
+            self, grad, indices, segment_ids, output_dim0, name=None, **kwargs
+        ):
+            del name, kwargs
+            self.grad = grad
+            self.indices = indices
+            self.segment_ids = segment_ids
+            self.output_dim0 = output_dim0
+
+        def __call__(self):
+            return [
+                TfSparseSegmentSumGradSpec._run(
+                    self.grad,
+                    self.indices,
+                    self.segment_ids,
+                    self.output_dim0,
+                )
+            ]
+
+    third_party = {"tf": ThirdPartyImpl}
+    tolerance = {
+        "float32": {"standard": "cross_check", "level": "L1"},
+        "float16": {"standard": "cross_check", "level": "L1"},
+    }

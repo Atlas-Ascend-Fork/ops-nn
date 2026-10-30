@@ -99,6 +99,36 @@ static ge::graphStatus GetShapeInfo(gert::TilingContext* context, int64_t& n, in
     OP_CHECK_NULL_WITH_CONTEXT(context, segmentIdsShape);
     auto segmentIdsStorageShape = segmentIdsShape->GetStorageShape();
 
+    // grad must be at least 1-D: rank-0 grad has no rows and GetDim(0) below would
+    // read an out-of-range dim.
+    if (gradStorageShape.GetDimNum() < 1) {
+        std::string gradDim = std::to_string(gradStorageShape.GetDimNum()) + "D";
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "grad", gradDim.c_str(), "at least 1D");
+        return ge::GRAPH_FAILED;
+    }
+
+    // Reject unknown dims (-1/-2) early: GetShapeSize treats them as signed values,
+    // and negative products would silently flow into N/innerSize/totalOutputElements.
+    for (size_t i = 0; i < gradStorageShape.GetDimNum(); ++i) {
+        if (gradStorageShape.GetDim(i) < 0) {
+            std::string dimMsg = "dim " + std::to_string(i) + " of grad is " +
+                                 std::to_string(gradStorageShape.GetDim(i));
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "grad", dimMsg.c_str(),
+                                                  "grad dims must be known (no -1/-2) at tiling time");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (indicesStorageShape.GetDimNum() != 1 || indicesStorageShape.GetDim(0) < 0) {
+        std::string indicesDim = std::to_string(indicesStorageShape.GetDimNum()) + "D";
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "indices", indicesDim.c_str(), "1D with known dim");
+        return ge::GRAPH_FAILED;
+    }
+    if (segmentIdsStorageShape.GetDimNum() != 1 || segmentIdsStorageShape.GetDim(0) < 0) {
+        std::string segmentIdsDim = std::to_string(segmentIdsStorageShape.GetDimNum()) + "D";
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "segment_ids", segmentIdsDim.c_str(), "1D with known dim");
+        return ge::GRAPH_FAILED;
+    }
+
     // validate: indices and segment_ids must have the same length
     int64_t indicesSize = indicesStorageShape.GetShapeSize();
     int64_t segmentIdsSize = segmentIdsStorageShape.GetShapeSize();

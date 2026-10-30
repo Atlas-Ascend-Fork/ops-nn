@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 #include "../../../op_graph/sparse_segment_sum_grad_proto.h"
 #include "infershape_test_util.h"
+#include "infershape_case_executor.h"
 #include "ut_op_common.h"
 #include "log/log.h"
 #include "exe_graph/runtime/storage_shape.h"
@@ -272,5 +273,80 @@ TEST_F(SparseSegmentSumGradInfershapeTest, InferShapeIndicesNot1dFailed)
                       .InputShapes({&gradShape, &indicesShape, &segmentIdsShape, outputDim0Tensor})
                       .OutputShapes({&yShape})
                       .Build();
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(SparseSegmentSumGradInfershapeTest, InferShapeOutputDim0ConstSuccess)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("SparseSegmentSumGrad")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    // Const input declared via InfershapeContextPara so GetConstInt folds the value,
+    // covering the constant-fold success branch (the scalar-shaped helper above only
+    // exercises the -1 fallback).
+    std::vector<int32_t> outputDim0Data{3};
+    gert::InfershapeContextPara::TensorDescription gradShape({{2, 3}, {2, 3}}, ge::DT_FLOAT, ge::FORMAT_ND);
+    gert::InfershapeContextPara::TensorDescription indicesShape({{3}, {3}}, ge::DT_INT32, ge::FORMAT_ND);
+    gert::InfershapeContextPara::TensorDescription segmentIdsShape({{3}, {3}}, ge::DT_INT32, ge::FORMAT_ND);
+    gert::InfershapeContextPara::TensorDescription outputDim0Shape({{1}, {1}}, ge::DT_INT32, ge::FORMAT_ND, true,
+                                                                   outputDim0Data.data());
+    gert::InfershapeContextPara::TensorDescription yShape({{}, {}}, ge::DT_FLOAT, ge::FORMAT_ND);
+    gert::InfershapeContextPara para("SparseSegmentSumGrad",
+                                     {gradShape, indicesShape, segmentIdsShape, outputDim0Shape}, {yShape},
+                                     {1, 1, 1, 1}, {1});
+    std::vector<std::vector<int64_t>> expectOutputShape = {{3, 3}};
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, expectOutputShape);
+}
+
+TEST_F(SparseSegmentSumGradInfershapeTest, InferShapeGradRank0Failed)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("SparseSegmentSumGrad")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape gradShape = {{}, {}};
+    gert::StorageShape indicesShape = {{3}, {3}};
+    gert::StorageShape segmentIdsShape = {{3}, {3}};
+    gert::Shape yShape;
+    gert::Tensor* outputDim0Tensor = nullptr;
+    auto holderData = BuildOutputDim0Tensor({}, 3, outputDim0Tensor);
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(4, 1)
+                      .IrInstanceNum({1, 1, 1, 1})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .InputShapes({&gradShape, &indicesShape, &segmentIdsShape, outputDim0Tensor})
+                      .OutputShapes({&yShape})
+                      .Build();
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(SparseSegmentSumGradInfershapeTest, InferShapeGradUnknownRankIndicesNot1dFailed)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("SparseSegmentSumGrad")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape gradShape = {{kUnknownRank}, {kUnknownRank}};
+    gert::StorageShape indicesShape = {{3, 1}, {3, 1}};
+    gert::StorageShape segmentIdsShape = {{3}, {3}};
+    gert::Shape yShape;
+    gert::Tensor* outputDim0Tensor = nullptr;
+    auto holderData = BuildOutputDim0Tensor({}, 3, outputDim0Tensor);
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(4, 1)
+                      .IrInstanceNum({1, 1, 1, 1})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .InputShapes({&gradShape, &indicesShape, &segmentIdsShape, outputDim0Tensor})
+                      .OutputShapes({&yShape})
+                      .Build();
+    // indices/segment_ids constraints are enforced even when grad rank is unknown.
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
