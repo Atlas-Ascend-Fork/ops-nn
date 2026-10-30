@@ -165,7 +165,7 @@ static aclnnStatus ExecForeachTanhGetWorkspaceSize(const aclTensorList* x, const
     return ACLNN_SUCCESS;
 }
 
-aclnnStatus aclnnForeachTanhGetWorkspaceSize(const aclTensorList* x, aclTensorList* out, uint64_t* workspaceSize,
+aclnnStatus aclnnForeachTanhGetWorkspaceSize(const aclTensorList* x, const aclTensorList* out, uint64_t* workspaceSize,
                                              aclOpExecutor** executor)
 {
     L2_DFX_PHASE_1(aclnnForeachTanh, DFX_IN(x), DFX_OUT(out));

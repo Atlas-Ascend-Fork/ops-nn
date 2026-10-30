@@ -28,7 +28,7 @@ extern "C" {
  * @param [out]  executor        返回op执行器，包含了算子计算流程。
  * @return       aclnnStatus     返回状态码
  */
-ACLNN_API aclnnStatus aclnnForeachNegGetWorkspaceSize(const aclTensorList* x, aclTensorList* out,
+ACLNN_API aclnnStatus aclnnForeachNegGetWorkspaceSize(const aclTensorList* x, const aclTensorList* out,
                                                       uint64_t* workspaceSize, aclOpExecutor** executor);
 
 /**

@@ -30,6 +30,9 @@ static const std::initializer_list<DataType> ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPP
     DataType::DT_FLOAT, DataType::DT_FLOAT16, DataType::DT_INT32, DataType::DT_BF16,
     DataType::DT_INT16, DataType::DT_INT8,    DataType::DT_UINT8};
 
+static const std::initializer_list<DataType> ASCEND950_TENSOR_DTYPE_DTYPE_SUPPORT_LIST = {
+    DataType::DT_FLOAT, DataType::DT_FLOAT16, DataType::DT_INT32, DataType::DT_BF16};
+
 static const std::initializer_list<DataType> EMPTY_LIST = {};
 
 static inline bool CheckNotNull(const aclTensorList* self, const aclTensorList* out)
@@ -56,8 +59,9 @@ static const std::initializer_list<DataType>& GetDtypeSupportList()
     switch (GetCurrentPlatformInfo().GetSocVersion()) {
         case SocVersion::ASCEND910B:
         case SocVersion::ASCEND910_93:
-        case SocVersion::ASCEND950:
             return ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPPORT_LIST;
+        case SocVersion::ASCEND950:
+            return ASCEND950_TENSOR_DTYPE_DTYPE_SUPPORT_LIST;
         default:
             return EMPTY_LIST;
     }
@@ -166,7 +170,7 @@ static aclnnStatus ExecForeachNegGetWorkspaceSize(const aclTensorList* x, const 
     return ACLNN_SUCCESS;
 }
 
-aclnnStatus aclnnForeachNegGetWorkspaceSize(const aclTensorList* x, aclTensorList* out, uint64_t* workspaceSize,
+aclnnStatus aclnnForeachNegGetWorkspaceSize(const aclTensorList* x, const aclTensorList* out, uint64_t* workspaceSize,
                                             aclOpExecutor** executor)
 {
     L2_DFX_PHASE_1(aclnnForeachNeg, DFX_IN(x), DFX_OUT(out));
