@@ -79,6 +79,7 @@ public:
                            "bn3_d_training_reduce_grad") // Links to kernel file bn3_d_training_reduce_grad.cpp
             .ExtendCfgInfo("opInterface.value", "bn3_d_training_reduce_grad");
         this->AICore().AddConfig("ascend950", aiCoreConfig);
+        this->AICore().AddConfig("ascend350", aiCoreConfig);
     }
 };
 

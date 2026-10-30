@@ -66,6 +66,7 @@ public:
             .UnknownShapeFormat(format_list_ascend950)
             .AutoContiguous();
         this->AICore().AddConfig("ascend950", regbaseCfg);
+        this->AICore().AddConfig("ascend350", regbaseCfg);
 
         OpAICoreConfig config_kirin = GetKirinCoreConfig();
         this->AICore().AddConfig("kirinx90", config_kirin);

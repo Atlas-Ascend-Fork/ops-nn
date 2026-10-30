@@ -26,6 +26,7 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "log/log.h"
+#include "op_api/aclnn_util.h"
 
 using namespace op;
 
@@ -478,9 +479,8 @@ static aclnnStatus CreateContiguousTensorsAndComputeGrad(
 
     CHECK_RET(biasContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    bool gradCompute = GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND910B ||
-                       GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND910_93 ||
-                       GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND950;
+    auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    bool gradCompute = curArch == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(curArch);
     if (gradCompute) {
         OP_LOGD("Entering into ada_layer_norm_grad Func.");
         // AdaLayerNormGrad只支持fp32 rstd mean输入，如果不是fp32先转fp32

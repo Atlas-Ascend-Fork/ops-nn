@@ -20,9 +20,9 @@
 #    OPDEF_SRCS 仍正确 glob 到 <op>/op_host/sgd_def*.cpp。
 
 # 设置算子定义时支持的芯片类型
-set(SUPPORT_COMPUTE_UNIT "ascend950")
+set(SUPPORT_COMPUTE_UNIT "ascend950" "ascend350")
 # 设置每种芯片类型对应的 tiling 文件目录，即采用 op_host 目录下哪个文件夹下的 tiling 文件编译
-set(SUPPORT_TILING_DIR "arch35")
+set(SUPPORT_TILING_DIR "arch35" "arch35")
 
 # ACLNNTYPE aclnn_exclude：把 sgd_def.cpp 归入 aclnnExc 桶 —— 该桶【不触发 aclnn 接口自动生成】
 # （opbuild.cmake:57 分支只收集手写的 op_api/aclnn_*.h，本算子已无该目录，故不产出任何 aclnn 头）。

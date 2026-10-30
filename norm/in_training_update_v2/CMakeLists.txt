@@ -12,8 +12,8 @@ add_modules_sources(
     DIR ${CMAKE_CURRENT_SOURCE_DIR}
     OPTYPE in_training_update_v2
     ACLNNTYPE aclnn_exclude
-    COMPUTE_UNIT ascend950
-    TILING_DIR arch35
+    COMPUTE_UNIT ascend950 ascend350
+    TILING_DIR arch35 arch35
     DISABLE_IN_OPP TRUE
 )
 
@@ -42,7 +42,7 @@ endif()
 
 add_kernel_sources(
     KERNEL_SRC arch35/in_training_update_v2.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
     AUTO_SYNC false
     OPTIONS "--cce-no-dcache-flush"
 )

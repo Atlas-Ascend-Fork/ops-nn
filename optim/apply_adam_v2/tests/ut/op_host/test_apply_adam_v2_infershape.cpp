@@ -70,7 +70,6 @@ TEST_F(ApplyAdamV2InferShape, optional_inputs_can_be_omitted)
     gert::StorageShape varShape = {{8, 16}, {8, 16}};
     gert::StorageShape scalarShape = {{1}, {1}};
     auto holder = gert::InferShapeContextFaker()
-                      .NodeIoNum(10, 3)
                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0}, {1, 1, 1})
                       .InputShapes({&varShape, &varShape, &varShape, &scalarShape, &scalarShape, &scalarShape,
                                     &scalarShape, &varShape, &scalarShape, &scalarShape})

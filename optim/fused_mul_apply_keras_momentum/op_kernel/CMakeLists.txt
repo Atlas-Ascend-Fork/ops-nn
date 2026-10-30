@@ -12,5 +12,5 @@
 # 主线范式：kernel 入口文件为 ${op_name}.cpp（fused_mul_apply_keras_momentum.cpp），
 # add_kernel_sources 默认 KERNEL_SRC=${op_name}，自动登记为 ascend950 的 kernel 源。
 add_kernel_sources(
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
 )

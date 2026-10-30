@@ -12,6 +12,6 @@ add_kernel_sources(
 )
 add_kernel_sources(
     KERNEL_SRC arch35/ada_layer_norm_grad.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
     AUTO_SYNC false
 )

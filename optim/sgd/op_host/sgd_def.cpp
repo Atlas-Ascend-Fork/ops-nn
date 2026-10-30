@@ -75,6 +75,7 @@ public:
             .PrecisionReduceFlag(false)    // 对齐 ascend910b precision_reduce.flag=false
             .ExtendCfgInfo("opInterface.value", "sgd");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 

@@ -63,10 +63,9 @@ void IndexCheck(const aclTensor* bounds, const aclTensorList* indices, aclOpExec
         OP_LOGW("IndexCheck received null input, skip.");
         return;
     }
-    auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
-    if (socVersion != SocVersion::ASCEND910B && socVersion != SocVersion::ASCEND910_93 &&
-        !Ops::NN::AclnnUtil::IsRegbase()) {
-        OP_LOGD("IndexCheck only support ASCEND910B, ASCEND910_93 and ASCEND950, skip.");
+    auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (curArch != NpuArch::DAV_2201 && !Ops::NN::AclnnUtil::IsRegbase(curArch)) {
+        OP_LOGD("IndexCheck is not supported on current platform, skip.");
         return;
     }
 

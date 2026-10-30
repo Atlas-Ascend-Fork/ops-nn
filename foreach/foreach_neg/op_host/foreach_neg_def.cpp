@@ -39,6 +39,7 @@ public:
             .AutoContiguous();
         OpAICoreConfig config_950 = GetA5CoreConfig();
         this->AICore().AddConfig("ascend950", config_950);
+        this->AICore().AddConfig("ascend350", config_950);
         this->AICore().AddConfig("ascend910_93");
         this->AICore().AddConfig("ascend910b");
 

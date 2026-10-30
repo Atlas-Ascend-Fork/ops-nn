@@ -24,6 +24,7 @@
 #include "opdev/op_log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include "opdev/platform.h"
 #include "aclnn_softshrink_backward.h"
 
 using namespace op;
@@ -39,9 +40,8 @@ static const std::initializer_list<DataType> ASCEND910B_DTYPE_SUPPORT_LIST = {Da
 
 static inline const std::initializer_list<DataType>& GetDtypeSupportList()
 {
-    if (GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND910 ||
-        GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND310P ||
-        GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND310B) {
+    auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (curArch == NpuArch::DAV_1001 || curArch == NpuArch::DAV_2002 || curArch == NpuArch::DAV_3002) {
         return ASCEND910_DTYPE_SUPPORT_LIST;
     } else {
         return ASCEND910B_DTYPE_SUPPORT_LIST;

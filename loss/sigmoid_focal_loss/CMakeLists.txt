@@ -13,14 +13,14 @@ set(SIGMOID_FOCAL_LOSS_ASC_INCLUDE ${ASCEND_DIR}/${SYSTEM_PREFIX}/asc/include)
 list(APPEND OP_TILING_INCLUDE ${SIGMOID_FOCAL_LOSS_ASC_INCLUDE})
 add_all_modules_sources(
     ACLNNTYPE aclnn_exclude
-    COMPUTE_UNIT ascend950
-    TILING_DIR arch35
+    COMPUTE_UNIT ascend950 ascend350
+    TILING_DIR arch35 arch35
     DISABLE_IN_OPP TRUE
 )
 
 add_kernel_sources(
     KERNEL_SRC sigmoid_focal_loss.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
     AUTO_SYNC false
     OPTIONS "--cce-no-dcache-flush"
 )

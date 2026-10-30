@@ -127,9 +127,9 @@ public:
             .DynamicShapeSupportFlag(true)
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true)
-            .ExtendCfgInfo("opFile.value", "apply_adam_w_quant")
             .ExtendCfgInfo("opInterface.value", "apply_adam_w_quant");
         this->AICore().AddConfig("ascend950", aicoreConfig950);
+        this->AICore().AddConfig("ascend350", aicoreConfig950);
     }
 };
 
