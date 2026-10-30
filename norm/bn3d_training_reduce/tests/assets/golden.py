@@ -174,7 +174,12 @@ def _compute(x, **kwargs):
         if promoted
         else torch.sum(work, dim=dims, keepdim=keepdim)
     )
-    sq = torch.sum(torch.square(work), dim=dims, keepdim=keepdim)
+    squares = torch.square(work)
+    sq = (
+        _promoted_sum(squares, dims, keepdim)
+        if promoted
+        else torch.sum(squares, dim=dims, keepdim=keepdim)
+    )
     return [s, sq]
 
 

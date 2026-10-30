@@ -141,7 +141,8 @@ public:
     __aicore__ inline void InitSplitReduce(GM_ADDR x, GM_ADDR sum, GM_ADDR squareSum, GM_ADDR workspace)
     {
         Init(x, sum, squareSum);
-        partialGm_.SetGlobalBuffer((__gm__ float*)workspace, usedCoreNum_ * ACC_SLOT_NUM);
+        constexpr uint32_t partialSlots = ACC_SLOT_NUM * (IsSameType<T_X, half>::value ? NUM_ACC_AND_COMP : 1U);
+        partialGm_.SetGlobalBuffer((__gm__ float*)workspace, usedCoreNum_ * partialSlots);
     }
 
     __aicore__ inline void Process()
@@ -227,9 +228,13 @@ private:
 
             LocalTensor<T_X> xIn = inQueueX_.DeQue<T_X>();
             __ubuf__ T_X* xUb = (__ubuf__ T_X*)xIn.GetPhyAddr();
-            // split-reduce 已把单核链长缩短为原来的 1/coresPerChannel，且三 dtype 定向均通过；
-            // 保持原有块内口径，避免普通 sub-R 的精度加固影响这条性能关键路径。
-            AccumulateRows<false>(xUb, AccSlot(accUb, 0), CompSlot(accUb, 0), 1, r0Factor_, curLen);
+            // Keep the split path at K=8; balance FP16 square sums without
+            // doubling the frequency of block-level compensation.
+            if constexpr (IsSameType<T_X, half>::value) {
+                AccumulateRows<true>(xUb, AccSlot(accUb, 0), CompSlot(accUb, 0), 1, r0Factor_, curLen);
+            } else {
+                AccumulateRows<false>(xUb, AccSlot(accUb, 0), CompSlot(accUb, 0), 1, r0Factor_, curLen);
+            }
             inQueueX_.FreeTensor(xIn);
             logical += curLen;
         }
@@ -239,7 +244,10 @@ private:
     {
         LocalTensor<T_SUM> sumLocal = outQueueSum_.AllocTensor<T_SUM>();
         LocalTensor<T_SUM> squareSumLocal = outQueueSquareSum_.AllocTensor<T_SUM>();
-        FinalizeChannel(accUb, (__ubuf__ float*)sumLocal.GetPhyAddr(), (__ubuf__ float*)squareSumLocal.GetPhyAddr(), 0);
+        // FP16 partials carry both components through workspace. Rounding each
+        // core to one FP32 value can lose a residual before other cores cancel.
+        FinalizeChannel<IsSameType<T_X, half>::value>(accUb, (__ubuf__ float*)sumLocal.GetPhyAddr(),
+                                                      (__ubuf__ float*)squareSumLocal.GetPhyAddr(), 0);
         outQueueSum_.EnQue<T_SUM>(sumLocal);
         outQueueSquareSum_.EnQue<T_SUM>(squareSumLocal);
         sumLocal = outQueueSum_.DeQue<T_SUM>();
@@ -248,6 +256,13 @@ private:
         const uint64_t partialOffset = static_cast<uint64_t>(blockIdx_);
         DataCopyPad(partialGm_[partialOffset], sumLocal, copyParams);
         DataCopyPad(partialGm_[usedCoreNum_ + partialOffset], squareSumLocal, copyParams);
+        if constexpr (IsSameType<T_X, half>::value) {
+            LocalTensor<float> accLocal = accBuf_.Get<float>();
+            const uint64_t compOffset = static_cast<uint64_t>(numAccSlots_) * ACC_SLOT_NUM * VL_FP32;
+            DataCopyPad(partialGm_[NUM_ACC_AND_COMP * usedCoreNum_ + partialOffset], accLocal[compOffset], copyParams);
+            DataCopyPad(partialGm_[(NUM_ACC_AND_COMP + 1U) * usedCoreNum_ + partialOffset],
+                        accLocal[compOffset + VL_FP32], copyParams);
+        }
         outQueueSum_.FreeTensor(sumLocal);
         outQueueSquareSum_.FreeTensor(squareSumLocal);
     }
@@ -263,6 +278,13 @@ private:
         const uint64_t partialOffset = channel * coresPerChannel;
         DataCopyPad(accLocal, partialGm_[partialOffset], copyParams, padParams);
         DataCopyPad(accLocal[VL_FP32], partialGm_[usedCoreNum_ + partialOffset], copyParams, padParams);
+        if constexpr (IsSameType<T_X, half>::value) {
+            const uint64_t compOffset = static_cast<uint64_t>(numAccSlots_) * ACC_SLOT_NUM * VL_FP32;
+            DataCopyPad(accLocal[compOffset], partialGm_[NUM_ACC_AND_COMP * usedCoreNum_ + partialOffset], copyParams,
+                        padParams);
+            DataCopyPad(accLocal[compOffset + VL_FP32],
+                        partialGm_[(NUM_ACC_AND_COMP + 1U) * usedCoreNum_ + partialOffset], copyParams, padParams);
+        }
         SetFlag<HardEvent::MTE2_V>(EVENT_ID0);
         WaitFlag<HardEvent::MTE2_V>(EVENT_ID0);
 
@@ -502,7 +524,7 @@ private:
     // 可把块内 Σx² 依赖链减半，而每块只增加一次 Duplicate + Add。该策略覆盖两类实测
     // 精度瓶颈：full-R 多 tile/多槽，以及普通 channel 独占的 sub-R。C0 packed 的每个
     // 64-lane chunk 也保持 lane % C0 的映射，因此 sub-R 可安全复用同一双链策略。
-    // split-reduce 已通过多核缩短链长，调用点显式保留原实现；其他 dtype 继续走原实现。
+    // split-reduce 使用同一 FP16 策略；其他 dtype 继续走原实现。
     __aicore__ inline void AccumulateRowsByPrecisionPolicy(__ubuf__ T_X* xUb, __ubuf__ float* accUb,
                                                            __ubuf__ float* compUb, uint16_t rows, uint32_t rowStride,
                                                            uint32_t validLen)
@@ -697,14 +719,12 @@ private:
     // y = x - c 会在临界舍入点把结果推到相邻 fp32，固定输入已复现该问题。这里用
     // error-free TwoSum 把每次加法的舍入误差累计在 lo 中，最后一次性做 hi + lo；
     // 其他 R0 仍走原分块 Kahan 路径，避免改变大规约的性能与数值口径。
-    // FP16 且 rows <= 64 时，输入提升 FP32 后的短链直接累加已有充足精度；
-    // 这类多通道小规约的主要开销正是 TwoSum 每行的两套误差恢复。只对该有界
-    // 短链走直接累加，长链、BF16 和 FP32 仍保留 TwoSum 口径。
+    // FP16 单行的平方可在 FP32 中精确表示；多行平方和仍须保留累加误差。
     __aicore__ inline void ProcessChannelFusedR0One(uint64_t c, __ubuf__ float* sumUb, __ubuf__ float* squareSumUb,
                                                     uint32_t slot)
     {
         if constexpr (IsSameType<T_X, half>::value) {
-            if (numN_ <= 64U) {
+            if (numN_ == 1U) {
                 ProcessChannelFusedR0OneShortFp16(c, sumUb, squareSumUb, slot);
                 return;
             }
@@ -1131,6 +1151,7 @@ private:
     // 非有限值需要单独守护：inf 参与 TwoSum 的误差表达式会产生 nan，但此时主值 inf
     // 已经是正确传播结果，误差项应视为 0；若主值本身因 +inf + -inf 得到 nan，则仍由
     // hi 原样传播。复用 SanitizeComp 清理 err 中的非有限值，不改动 hi。
+    template <bool KEEP_LOW = false>
     __aicore__ inline void CompensatedReduceSum(RegTensor<float>& dst, RegTensor<float>& hi, RegTensor<float>& comp,
                                                 RegTensor<float>& zeroReg, MaskReg& pregFull)
     {
@@ -1170,13 +1191,19 @@ private:
             Add(lo, lhsLo, rhsLo, pregActive);
             Add(lo, lo, err, pregActive);
         }
-        Add(dst, hi, lo, pregFull);
+        if constexpr (KEEP_LOW) {
+            Adds(dst, hi, static_cast<float>(0.0), pregFull);
+            Muls(comp, lo, static_cast<float>(-1.0), pregFull);
+        } else {
+            Add(dst, hi, lo, pregFull);
+        }
     }
 
     // 普通 channel-first 收尾：主值与补偿量必须作为双分量数一起归约。
     // 逐 lane 先做 acc_i - comp_i 会在大数减末位补偿时再次舍入；分别 ReduceSum(acc)
     // 与 ReduceSum(comp) 再相减，又无法恢复主值横向归约中新产生的误差。因此两路输出
     // 都通过 CompensatedReduceSum 逐层携带低位误差，最后只写首 lane。
+    template <bool KEEP_LOW = false>
     __aicore__ inline void FinalizeChannel(__ubuf__ float* accUb, __ubuf__ float* sumUb, __ubuf__ float* squareSumUb,
                                            uint32_t slot)
     {
@@ -1194,13 +1221,19 @@ private:
             Duplicate(zeroReg, static_cast<float>(0.0), pregFull);
             LoadAlign<float, LoadDist::DIST_NORM>(acc, accUb);
             LoadAlign<float, LoadDist::DIST_NORM>(comp, compUb);
-            CompensatedReduceSum(result, acc, comp, zeroReg, pregFull);
+            CompensatedReduceSum<KEEP_LOW>(result, acc, comp, zeroReg, pregFull);
             StoreOneFp32(sumUb, result, pregOne, slot);
+            if constexpr (KEEP_LOW) {
+                StoreAlign<float, StoreDist::DIST_NORM>(compUb, comp, pregFull);
+            }
 
             LoadAlign<float, LoadDist::DIST_NORM>(acc, accUb + VL_FP32);
             LoadAlign<float, LoadDist::DIST_NORM>(comp, compUb + VL_FP32);
-            CompensatedReduceSum(result, acc, comp, zeroReg, pregFull);
+            CompensatedReduceSum<KEEP_LOW>(result, acc, comp, zeroReg, pregFull);
             StoreOneFp32(squareSumUb, result, pregOne, slot);
+            if constexpr (KEEP_LOW) {
+                StoreAlign<float, StoreDist::DIST_NORM>(compUb + VL_FP32, comp, pregFull);
+            }
         }
     }
 

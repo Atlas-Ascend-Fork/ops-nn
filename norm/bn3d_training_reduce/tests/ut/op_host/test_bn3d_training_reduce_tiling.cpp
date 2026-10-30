@@ -74,6 +74,7 @@ struct TilingResult {
     uint32_t blockDim{0};
     optiling::BN3DTrainingReduceDenseChannelTilingData td{};
     uint32_t vectorLength{0}; // tiling_parse 解析出的向量寄存器字节宽度
+    size_t workspaceSize{0};
     bool ok{false};
 };
 
@@ -164,6 +165,7 @@ static TilingResult RunTiling(gert::StorageShape& x_shape, gert::StorageShape& o
 
     result.key = tiling_context->GetTilingKey();
     result.blockDim = tiling_context->GetBlockDim();
+    result.workspaceSize = tiling_context->GetWorkspaceSizes(1)[0];
     auto raw = tiling_context->GetRawTilingData();
     if (raw != nullptr && raw->GetDataSize() >= sizeof(optiling::BN3DTrainingReduceDenseChannelTilingData)) {
         result.td = *reinterpret_cast<const optiling::BN3DTrainingReduceDenseChannelTilingData*>(raw->GetData());
@@ -719,6 +721,26 @@ TEST_F(BN3DTrainingReduceTilingTest, tiling_split_reduce_aligns_partial_copy_021
     EXPECT_EQ(r.td.cPerCore, 16U); // floor(64 / 3) 再向下对齐到 8
     EXPECT_EQ(r.td.usedCoreNum, 48U);
     EXPECT_EQ(r.blockDim, 48U);
+}
+
+TEST_F(BN3DTrainingReduceTilingTest, tiling_split_reduce_fp16_partial_compensation_workspace)
+{
+    // Metadata only: no allocation of the input tensor.
+    gert::StorageShape x_shape = {{1, 1, 1048576}, {1, 1, 1048576}};
+    gert::StorageShape out_shape = {{1}, {1}};
+    auto fp16 = RunTiling(x_shape, out_shape, ge::DT_FLOAT16, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
+    auto fp32 = RunTiling(x_shape, out_shape, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
+    auto bf16 = RunTiling(x_shape, out_shape, ge::DT_BF16, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
+
+    ASSERT_TRUE(fp16.ok && fp32.ok && bf16.ok);
+    ASSERT_EQ(fp16.key, TILINGKEY_SPLIT_REDUCE);
+    ASSERT_EQ(fp32.key, TILINGKEY_SPLIT_REDUCE);
+    ASSERT_EQ(bf16.key, TILINGKEY_SPLIT_REDUCE);
+    ASSERT_EQ(fp16.blockDim, fp32.blockDim);
+    ASSERT_EQ(fp32.blockDim, bf16.blockDim);
+    const size_t compensationBytes = static_cast<size_t>(fp16.blockDim) * 2U * sizeof(float);
+    EXPECT_EQ(fp16.workspaceSize, fp32.workspaceSize + compensationBytes);
+    EXPECT_EQ(fp32.workspaceSize, bf16.workspaceSize);
 }
 
 // A == 1 且 R0 本身够大时同样折叠，且不改变"单行放不下就走 sub-R"的既有判定。

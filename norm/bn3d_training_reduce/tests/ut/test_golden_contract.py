@@ -57,6 +57,20 @@ def test_two_party_widens_half_to_float32():
     assert b[0] == 180000
 
 
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_promote_square_sum_preserves_small_integer_terms(dtype):
+    # Every square and the final sum are exactly representable in both dtypes.
+    # CPU torch.cumsum accumulates float32 inputs in double; storing a rounded
+    # prefix does not round its internal accumulator or change the output dtype.
+    x = np.array([2047, 1] * 5, dtype=dtype).reshape(10, 1)
+    a, b = _G.BN3DTrainingReduceKernelSpec.golden(
+        x, golden_mode="Promote", input_formats=("NCDHW",)
+    )
+    assert a.dtype == b.dtype == dtype
+    assert a[0] == 10240
+    assert b[0] == 20951050
+
+
 def test_special_values_remain_channel_local():
     x = np.array([[1, np.nan, np.inf], [2, 3, 4]], np.float64)
     a, b = _G.BN3DTrainingReduceKernelSpec.golden(x, golden_mode="Promote")

@@ -465,7 +465,8 @@ ge::graphStatus BN3DTrainingReduceDenseChannelTiling::PostTiling()
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
     currentWorkspace[0] = workspaceSize_;
     if (splitReduce_) {
-        currentWorkspace[0] += static_cast<size_t>(blockNum_) * ACC_SLOTS_PER_ACCUM * sizeof(float);
+        const size_t components = dataType_ == ge::DT_FLOAT16 ? NUM_ACC_AND_COMP : 1U;
+        currentWorkspace[0] += static_cast<size_t>(blockNum_) * ACC_SLOTS_PER_ACCUM * components * sizeof(float);
     }
 
     auto rawTilingData = context_->GetRawTilingData();
