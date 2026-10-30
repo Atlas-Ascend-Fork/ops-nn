@@ -178,7 +178,10 @@ __aicore__ inline void GroupNormSiluSmallB32<T>::ComputeWithCopyOnce(const int64
         float mean = tmpMean.GetValue(0);
         float rstd = x1Ub32.GetValue(0);
         mean = mean * numRec;
-        rstd = float(1.0) / sqrt(rstd * numRec - mean * mean + tiling->epsilon);
+        // 方差因浮点抵消可能为负，钳位至0避免sqrt产生NaN
+        float var = rstd * numRec - mean * mean;
+        var = (var > 0.0f) ? var : 0.0f;
+        rstd = float(1.0) / sqrt(var + tiling->epsilon);
         meanUb.SetValue(outIdx, mean);
         rstdUb.SetValue(outIdx, rstd);
         // normalize x and calc silu
@@ -218,7 +221,10 @@ __aicore__ inline void GroupNormSiluSmallB32<T>::ComputeAlign(const int64_t& loo
         float mean = tmpTensor.Get<float>().GetValue(0);
         float rstd = x1Buf32.Get<float>().GetValue(0);
         mean = mean * numRec;
-        rstd = float(1.0) / sqrt(rstd * numRec - mean * mean + tiling->epsilon);
+        // 方差因浮点抵消可能为负，钳位至0避免sqrt产生NaN
+        float var = rstd * numRec - mean * mean;
+        var = (var > 0.0f) ? var : 0.0f;
+        rstd = float(1.0) / sqrt(var + tiling->epsilon);
         meanUb.SetValue(outIdx, mean);
         rstdUb.SetValue(outIdx, rstd);
         // normalize x and calc silu

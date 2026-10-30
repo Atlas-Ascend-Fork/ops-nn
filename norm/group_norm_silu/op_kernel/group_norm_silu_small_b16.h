@@ -210,7 +210,10 @@ __aicore__ inline void GroupNormSiluSmallB16<T1, T2>::ComputeWithCopyOnce(const 
         float mean = tmpTensor.Get<float>().GetValue(0);
         float rstd = x2Buf32.Get<float>().GetValue(0);
         mean = mean * numRec;
-        rstd = float(1.0) / sqrt(rstd * numRec - mean * mean + tiling->epsilon);
+        // 方差因浮点抵消可能为负，钳位至0避免sqrt产生NaN
+        float var = rstd * numRec - mean * mean;
+        var = (var > 0.0f) ? var : 0.0f;
+        rstd = float(1.0) / sqrt(var + tiling->epsilon);
         meanBuf32.Get<float>().SetValue(outIdx, mean);
         rstdBuf32.Get<float>().SetValue(outIdx, rstd);
         event_t eventS2V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_V));
@@ -257,7 +260,10 @@ __aicore__ inline void GroupNormSiluSmallB16<T1, T2>::ComputeAlign(const int64_t
         float mean = tmpTensor.Get<float>().GetValue(0);
         float rstd = x2Buf32.Get<float>().GetValue(0);
         mean = mean * numRec;
-        rstd = float(1.0) / sqrt(rstd * numRec - mean * mean + tiling->epsilon);
+        // 方差因浮点抵消可能为负，钳位至0避免sqrt产生NaN
+        float var = rstd * numRec - mean * mean;
+        var = (var > 0.0f) ? var : 0.0f;
+        rstd = float(1.0) / sqrt(var + tiling->epsilon);
         meanBuf32.Get<float>().SetValue(outIdx, mean);
         rstdBuf32.Get<float>().SetValue(outIdx, rstd);
         // normalize x and calc silu

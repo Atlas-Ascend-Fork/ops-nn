@@ -100,6 +100,25 @@ static bool CheckDtypeValid(const aclTensor* self, const aclTensor* gamma, const
                                           "The dtype of gamma must be the same as self or FLOAT"}));
             return false;
         }
+    } else if (!Ops::NN::AclnnUtil::IsRegbase(npuArch) && (gamma != nullptr || beta != nullptr)) {
+        // 非RegBase平台单侧为空时，空侧会按self的dtype补齐（OnesLike/ZerosLike），
+        // 等效dtype组合仍需保持gamma与beta一致，否则会在kernel匹配阶段以内部错误码失败，此处提前按参数错误返回
+        auto gammaDtype = (gamma != nullptr) ? gamma->GetDataType() : self->GetDataType();
+        auto betaDtype = (beta != nullptr) ? beta->GetDataType() : self->GetDataType();
+        if (gammaDtype != betaDtype) {
+            std::string reason = "The dtype of gamma must be the same as the dtype of beta, because when one of gamma "
+                                 "and beta is "
+                                 "null, it will be filled with the dtype of self";
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ0021", (std::vector<const char*>{"param_names", "op_name", "incorrect_dtypes", "reason"}),
+                (std::vector<const char*>{
+                    "gamma,beta", "aclnnGroupNormSilu",
+                    (std::string(op::ToString(gammaDtype).GetString()) + "," + op::ToString(betaDtype).GetString())
+                        .c_str(),
+                    reason.c_str()}));
+            return false;
+        }
     }
     // 检查out, meanOut, rstdOut的数据类型是否与self一致
     OP_CHECK_DTYPE_NOT_MATCH(out, self->GetDataType(), return false);

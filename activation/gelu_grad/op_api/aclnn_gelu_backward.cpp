@@ -57,12 +57,14 @@ static bool CheckShape(const aclTensor* gradOutput, const aclTensor* self, const
 }
 
 namespace {
-static bool CheckPromoteType(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* /* gradInput */)
+static bool CheckPromoteType(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* gradInput)
 {
     op::DataType promoteType;
     if (!CheckPromoteTypeGeluBackward(gradOutput, self, promoteType, DTYPE_SUPPORT_LIST)) {
         return false;
     }
+    // 检查出参gradInput的数据类型在支持列表内
+    OP_CHECK_DTYPE_NOT_SUPPORT(gradInput, DTYPE_SUPPORT_LIST, return false);
     return true;
 }
 } // namespace
@@ -83,7 +85,7 @@ static aclnnStatus CheckParams(const aclTensor* gradOutput, const aclTensor* sel
     // 1. 检查参数是否为空指针
     CHECK_RET(CheckNotNull(gradOutput, self, gradInput), ACLNN_ERR_PARAM_NULLPTR);
 
-    // 2. 检查gradOutput和self的dtype能否作类型推导,类型推导后的结果需要与gradInput一致
+    // 2. 检查gradOutput和self的dtype能否作类型推导,并检查gradInput的数据类型在支持列表内
     CHECK_RET(CheckPromoteType(gradOutput, self, gradInput), ACLNN_ERR_PARAM_INVALID);
 
     // 3. 检查gradOutput和self以及gradInput的维度匹配关系

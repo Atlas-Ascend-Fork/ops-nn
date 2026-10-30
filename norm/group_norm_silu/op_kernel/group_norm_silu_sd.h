@@ -145,7 +145,10 @@ __aicore__ inline void GroupNormSiluSD<T1, T2>::ComputeSilu(const int64_t& group
         float mean = tmpTensor.Get<float>().GetValue(0);
         float rstd = x2Buf32.Get<float>().GetValue(0);
         mean = mean * numRec;
-        rstd = float(1.0) / sqrt(rstd * numRec - mean * mean + tiling->epsilon);
+        // 方差因浮点抵消可能为负，钳位至0避免sqrt产生NaN
+        float var = rstd * numRec - mean * mean;
+        var = (var > 0.0f) ? var : 0.0f;
+        rstd = float(1.0) / sqrt(var + tiling->epsilon);
         // normalize x and calc silu
         int64_t gammaIdx = group * tiling->shapeD;
         if (tiling->processSize >= tiling->hwNum) {

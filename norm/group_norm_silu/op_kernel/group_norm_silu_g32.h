@@ -221,7 +221,10 @@ __aicore__ inline void GroupNormSiluG32<T>::ComputeGroupNormSilu(const int64_t& 
     float mean = tmpMean.GetValue(0);
     float rstd = x2Ub.GetValue(0);
     mean = mean * numRec;
-    rstd = float(1.0) / sqrt(rstd * numRec - mean * mean + tiling->epsilon);
+    // 方差因浮点抵消可能为负，钳位至0避免sqrt产生NaN
+    float var = rstd * numRec - mean * mean;
+    var = (var > 0.0f) ? var : 0.0f;
+    rstd = float(1.0) / sqrt(var + tiling->epsilon);
     meanUb.SetValue(groupIdx % innerNumPerCore, mean);
     rstdUb.SetValue(groupIdx % innerNumPerCore, rstd);
     // calculating y  y = (x- mean) * rstd * gamma + beta

@@ -175,12 +175,20 @@ aclnnStatus aclnnSwiGluGrad(
       <td>传入的yGrad或x或out是空指针。</td>
     </tr>
     <tr>
-      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="2">161002</td>
+      <td>ACLNN_ERR_PARAM_INVALID</td>
+      <td>161002</td>
       <td>yGrad或x或out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>dim不在取值范围内。</td>
+      <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="3">561002</td>
+      <td>dim不在取值范围内，或x在dim维的大小不能被2整除。</td>
+    </tr>
+    <tr>
+      <td>yGrad与x的维度数不一致。</td>
+    </tr>
+    <tr>
+      <td>yGrad与x在非dim维的大小不一致，或yGrad在dim维的大小不等于x在该维大小的一半。</td>
     </tr>
   </tbody></table>
 
