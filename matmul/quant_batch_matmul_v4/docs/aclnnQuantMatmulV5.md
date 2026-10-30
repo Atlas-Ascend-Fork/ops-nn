@@ -897,7 +897,7 @@ aclnnStatus aclnnQuantMatmulV5(
     |G-B量化|<li>非转置：(batch, m, k)</li><li>转置：(batch, k, m)</li>|<li>非转置：(batch, k, n)</li><li>转置：(batch, n, k)</li>|<li>非转置：(batch, m, ceil(k / 128))</li><li>转置：(batch, ceil(k / 128), m)</li>|<li>非转置：(batch, ceil(k / 128), ceil(n / 128))</li><li>转置：(batch, ceil(n / 128), ceil(k / 128))</li>|null|[1, 128, 128]|4303356032|
 
   - 注：上表中gsM、gsK和gsN分别表示groupSizeM、groupSizeK和groupSizeN。gsM、gsK和gsN为0的维度会自动推导，上表中是不用自动推导的情况。
-  - G-B量化和B-B量化场景下，x1和x1Scale的转置属性需要保持一致，x2和x2Scale的转置属性需要保持一致（当shape轴里有1，并且非动态图NZ场景，x和scale的转置属性可以不一致）。
+  - G-B量化和B-B量化场景下，x1和x1Scale的转置属性需要保持一致，x2和x2Scale的转置属性需要保持一致。
   - G-B量化场景下，仅INT8输入支持bias，其余场景不支持bias。
   - B-B量化场景下，不支持int8输入，且不支持bias。
   - Batch一致性说明：B-B量化场景不支持Batch一致性。即使开启Batch一致性开关，也不能保证输出满足Batch一致性要求。
@@ -927,7 +927,7 @@ aclnnStatus aclnnQuantMatmulV5(
     |MX伪量化|FLOAT8_E4M3FN|FLOAT4_E2M1|(m, k)|(n, k)|(m, ceil(k / 64), 2)|(n, ceil(k / 64), 2)|(1, n)|null|[0, 0, 32]/[1, 1, 32]|32/4295032864|
 
   - 注：上表中gsM、gsK和gsN分别表示groupSizeM、groupSizeK和groupSizeN。gsM、gsK和gsN为0的维度会自动推导，上表中是不用自动推导的情况。
-  - MX全量化场景下，当x2数据类型为FLOAT8_E4M3FN/FLOAT8_E5M2时，x1和x1Scale的转置属性需要保持一致，x2和x2Scale的转置属性需要保持一致（当shape轴里有1，并且非动态图NZ场景，x和scale的转置属性可以不一致）。
+  - MX全量化场景下，当x2数据类型为FLOAT8_E4M3FN/FLOAT8_E5M2时，x1和x1Scale的转置属性需要保持一致，x2和x2Scale的转置属性需要保持一致。
   - MX全量化场景下，当x2数据类型为FLOAT4_E2M1时，x1和x2的内轴必须为偶数，且k必须大于2。
   - MX全量化场景下，x1Scale、x2Scale 仅最后三轴支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续的Tensor</a>。
   - MX伪量化场景下，当x2数据类型为FLOAT4_E2M1时，不支持batch轴，且k必须为8的倍数。

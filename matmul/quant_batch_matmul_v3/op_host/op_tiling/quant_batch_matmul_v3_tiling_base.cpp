@@ -823,6 +823,11 @@ bool QuantBatchMatmulV3TilingBase::AnalyzeGroupInfo(const gert::Shape& scaleShap
     auto pertokenInner = pertoken.GetDim(1);
     auto pertokenOuter = pertoken.GetDim(0);
     uint64_t pertokenMSize = static_cast<uint64_t>(inputParams_.transA ? pertokenInner : pertokenOuter);
+    if ((pertokenInner == 1 && pertokenOuter == inputParams_.mSize) ||
+        (pertokenInner == inputParams_.mSize && pertokenOuter == 1) ||
+        (inputParams_.mSize == 1 && (pertokenInner == 1 || pertokenOuter == 1))) {
+        pertokenMSize = inputParams_.mSize;
+    }
     if (!ReCalcGroupSize(inputParams_.groupSizeM, inputParams_.mSize, pertokenMSize, "m")) {
         return false;
     }

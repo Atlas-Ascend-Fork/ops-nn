@@ -776,21 +776,33 @@ bool QuantBatchMatmulV3Checker::MxPertokenScaleShapeCheck(const gert::StorageSha
     size_t batchDimNum = pertokenShapeLen - SCALE_THREE_DIM;
     auto mDimIdx = batchDimNum + (inputParams_.transA ? 1 : 0);
     auto kDimIdx = batchDimNum + (inputParams_.transA ? 0 : 1);
-    OP_TILING_CHECK(static_cast<uint64_t>(pertoken.GetDim(kDimIdx)) !=
-                        ops::CeilDiv(inputParams_.kSize, qmmv3_tiling_const::MXFP_DIVISOR_SIZE),
-                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                        inputParams_.opName, "x1K, pertokenScaleK",
-                        FormatString("%lu, %ld", inputParams_.kSize, pertoken.GetDim(kDimIdx)).c_str(),
-                        "when the quantization mode is mx, the k dimension of pertokenScale must be equal to the k "
-                        "dimension size of x1 ceildivided by 64"),
-                    return false);
-    OP_TILING_CHECK(static_cast<uint64_t>(pertoken.GetDim(mDimIdx)) != inputParams_.mSize,
-                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                        inputParams_.opName, "x1M, pertokenScaleM",
-                        FormatString("%lu, %ld", inputParams_.mSize, pertoken.GetDim(mDimIdx)).c_str(),
-                        "when the quantization mode is mx, the m dimension of pertokenScale must be equal to the m "
-                        "dimension size of x1"),
-                    return false);
+    bool mDimHasOne = (pertoken.GetDim(kDimIdx) == 1 &&
+                       static_cast<uint64_t>(pertoken.GetDim(mDimIdx)) ==
+                           ops::CeilDiv(inputParams_.kSize, qmmv3_tiling_const::MXFP_DIVISOR_SIZE)) ||
+                      (pertoken.GetDim(mDimIdx) == 1 &&
+                       static_cast<uint64_t>(pertoken.GetDim(kDimIdx)) ==
+                           ops::CeilDiv(inputParams_.kSize, qmmv3_tiling_const::MXFP_DIVISOR_SIZE));
+    bool kDimHasOne = (pertoken.GetDim(kDimIdx) == 1 &&
+                       static_cast<uint64_t>(pertoken.GetDim(mDimIdx)) == inputParams_.mSize) ||
+                      (pertoken.GetDim(mDimIdx) == 1 &&
+                       static_cast<uint64_t>(pertoken.GetDim(kDimIdx)) == inputParams_.mSize);
+    if (!mDimHasOne && !kDimHasOne) {
+        OP_TILING_CHECK(static_cast<uint64_t>(pertoken.GetDim(kDimIdx)) !=
+                            ops::CeilDiv(inputParams_.kSize, qmmv3_tiling_const::MXFP_DIVISOR_SIZE),
+                        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                            inputParams_.opName, "x1K, pertokenScaleK",
+                            FormatString("%lu, %ld", inputParams_.kSize, pertoken.GetDim(kDimIdx)).c_str(),
+                            "when the quantization mode is mx, the k dimension of pertokenScale must be equal to the k "
+                            "dimension size of x1 ceildivided by 64"),
+                        return false);
+        OP_TILING_CHECK(static_cast<uint64_t>(pertoken.GetDim(mDimIdx)) != inputParams_.mSize,
+                        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                            inputParams_.opName, "x1M, pertokenScaleM",
+                            FormatString("%lu, %ld", inputParams_.mSize, pertoken.GetDim(mDimIdx)).c_str(),
+                            "when the quantization mode is mx, the m dimension of pertokenScale must be equal to the m "
+                            "dimension size of x1"),
+                        return false);
+    }
     OP_TILING_CHECK(
         static_cast<uint64_t>(pertoken.GetDim(pertokenShapeLen - 1)) != qmmv3_tiling_const::MXFP_MULTI_BASE_SIZE,
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(

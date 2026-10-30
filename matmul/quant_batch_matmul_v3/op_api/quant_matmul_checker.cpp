@@ -741,6 +741,13 @@ bool QuantMatmulChecker::InferGroupSizeM(const aclTensor* x1, const aclTensor* x
     if (IsMicroScaling(x1Scale, x2Scale)) {
         size_t batchDimNum = x1Scale->GetViewShape().GetDimNum() - MX_SCALE_DIM;
         scaleSizeM = x1Scale->GetViewShape().GetDim(batchDimNum + (transX1 ? 1 : 0));
+        auto scaleSizeDim0 = x1Scale->GetViewShape().GetDim(batchDimNum);
+        auto scaleSizeDim1 = x1Scale->GetViewShape().GetDim(batchDimNum + 1);
+        if ((scaleSizeDim0 == 1 && scaleSizeDim1 == inputSizeM) ||
+            (scaleSizeDim0 == inputSizeM && scaleSizeDim1 == 1) ||
+            (inputSizeM == 1 && (scaleSizeDim0 == 1 || scaleSizeDim1 == 1))) {
+            scaleSizeM = inputSizeM;
+        }
     } else {
         scaleSizeM = transX1 ? x1Scale->GetViewShape().GetDim(x1ScaleDimNum - 1) :
                                x1Scale->GetViewShape().GetDim(x1ScaleDimNum - PENULTIMATE_DIM);
