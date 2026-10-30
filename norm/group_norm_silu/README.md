@@ -82,7 +82,7 @@
     <tr>
       <td>group</td>
       <td>属性</td>
-      <td>self的第1维度分为group组。</td>
+      <td>self的第2维度分为group组。</td>
       <td>INT32、INT64</td>
       <td>-</td>
     </tr>

@@ -131,7 +131,7 @@ aclnnStatus aclnnGroupNormSilu(
         <td>group（int64_t）</td>
         <td>输入</td>
         <td>表示将输入self的第2维分为group组。</td>
-        <td>group需可以整除self的第一维度。</td>
+        <td>group需可以整除self的第二维度。</td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>

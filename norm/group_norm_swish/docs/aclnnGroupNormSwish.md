@@ -128,7 +128,7 @@ aclnnStatus aclnnGroupNormSwish(
        <td><ul><li>不支持空tensor。</li><li>元素数量需与输入x的第1维度相同，gamma与beta的数据类型必须保持一致，且数据类型与x相同或者为FLOAT。</li></ul></td>
        <td>FLOAT16、FLOAT、BFLOAT16</td>
        <td>ND</td>
-       <td>2</td>
+       <td>1</td>
        <td>√</td>
       </tr>
       <tr>
@@ -258,9 +258,21 @@ aclnnStatus aclnnGroupNormSwish(
       <td>传入的x、gamma、beta、yOut、meanOut、rstdOut是空指针时。</td>
     </tr>
     <tr>
-      <td rowspan="1">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="1">161002</td>
+      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="5">161002</td>
       <td>x、gamma、beta、yOut、meanOut、rstdOut数据类型不在支持的范围之内。</td>
+    </tr>
+    <tr>
+      <td>输入或者输出的参数维度不在支持的范围内。</td>
+    </tr>
+    <tr>
+      <td>输入输出参数的shape或数据类型不一致。</td>
+    </tr>
+    <tr>
+      <td>x的第0、1维为0，不满足要求。</td>
+    </tr>
+    <tr>
+      <td>x的第1维（C）不能被numGroups整除。</td>
     </tr>
   </tbody></table>
 
