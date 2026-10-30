@@ -115,10 +115,10 @@
     </tr>
     <tr>
       <td>step</td>
-      <td>属性</td>
+      <td>输入</td>
       <td><ul><li>迭代次数，公式中的t。</li><li>取值范围是大于1的正整数。</li></ul></td>
       <td>INT64</td>
-      <td>-</td>
+      <td>ND</td>
     </tr>
     <tr>
       <td>lr</td>
