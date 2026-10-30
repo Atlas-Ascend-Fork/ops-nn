@@ -22,13 +22,27 @@
 #include "fake_quant_with_min_max_vars_per_channel_gradient_tiling.h"
 
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include "../op_kernel/arch35/fake_quant_with_min_max_vars_per_channel_gradient_tilingdata.h"
 #include "../op_kernel/arch35/fake_quant_with_min_max_vars_per_channel_gradient_tiling_key.h"
+#include "log/log.h"
 
 using namespace FakeQuantWMMVPCG;
 
 namespace optiling {
+namespace {
+void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::string safeOpName = opName != nullptr ? opName : "nil";
+    OP_LOGE_LIBOPAPI_REPORT(safeOpName.c_str(), "Tiling stage contract failure. Reason: %s.", reason.c_str());
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {safeOpName.c_str(), reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+} // namespace
+
 constexpr uint32_t VL_FP32 = 64;
 constexpr uint32_t RESERVED_UB = 8 * 1024; // 8 KB scratchpad
 // 9 FP32 buffers all sized by dTileLen: nudgedMin/Max + bpMinAcc/Max + bpMinComp/MaxComp + g + x + bpx = 9 * 4 bytes.
@@ -82,24 +96,36 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
     OP_LOGD(tilingContext->GetNodeName(), "Tiling init begin.");
 
     auto compileInfo = tilingContext->GetCompileInfo<FakeQuantWithMinMaxVarsPerChannelGradientCompileInfo>();
-    OP_CHECK_IF((compileInfo == nullptr), OP_LOGE(tilingContext, "compileInfo is nullptr"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo == nullptr),
+        ReportTilingStageError(tilingContext->GetNodeName(),
+                               "compileInfo is null in the tiling context; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     coreNumPlatform_ = static_cast<uint32_t>(compileInfo->totalCoreNum);
     ubSizePlatForm_ = compileInfo->ubSizePlatForm;
     if (coreNumPlatform_ == 0 || ubSizePlatForm_ == 0) {
-        OP_LOGE(tilingContext, "platform info invalid: coreNum=%u, ubSize=%lu", coreNumPlatform_, ubSizePlatForm_);
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            tilingContext->GetNodeName(), "platform",
+            (std::to_string(coreNumPlatform_) + ", " + std::to_string(ubSizePlatForm_)).c_str(),
+            "platform info invalid: coreNum=, ubSize=");
         return ge::GRAPH_FAILED;
     }
 
     auto xShapePtr = tilingContext->GetInputShape(INPUT_IDX_X);
-    OP_CHECK_IF((xShapePtr == nullptr), OP_LOGE(tilingContext, "x shape is nullptr"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((xShapePtr == nullptr),
+                ReportTilingStageError(tilingContext->GetNodeName(),
+                                       "shape is null in the tiling context; check the TilingContext construction"),
+                return ge::GRAPH_FAILED);
     auto xShape = xShapePtr->GetStorageShape();
     size_t dimNum = xShape.GetDimNum();
     if (dimNum == 0) {
-        OP_LOGE(tilingContext, "x rank is 0");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "rank", "x rank is 0");
         return ge::GRAPH_FAILED;
     }
     if (dimNum > MAX_RANK) {
-        OP_LOGE(tilingContext, "x rank %zu exceeds max %u", dimNum, MAX_RANK);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(tilingContext->GetNodeName(), "rank",
+                                               (std::to_string(dimNum) + ", " + std::to_string(MAX_RANK)).c_str(),
+                                               "x rank exceeds max");
         return ge::GRAPH_FAILED;
     }
     int64_t numel = xShape.GetShapeSize();
@@ -107,7 +133,10 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
 
     // Attrs（空 tensor 分支也需要 quantMin/quantMax，故提前解析）
     auto attrs = tilingContext->GetAttrs();
-    OP_CHECK_IF((attrs == nullptr), OP_LOGE(tilingContext, "attrs is nullptr"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((attrs == nullptr),
+                ReportTilingStageError(tilingContext->GetNodeName(),
+                                       "attrs is null in the tiling context; check the TilingContext construction"),
+                return ge::GRAPH_FAILED);
     int64_t numBits = 8;
     bool narrowRange = false;
     // num_bits is registered as Int (int64). Read it as int64 and range-check before narrowing:
@@ -122,7 +151,8 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
         narrowRange = *narrowPtr;
     }
     if (numBits < 2 || numBits > 16) {
-        OP_LOGE(tilingContext, "num_bits %ld out of range [2,16]", numBits);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext->GetNodeName(), "num_bits", std::to_string(numBits).c_str(),
+                                              "num_bits out of range [2,16]");
         return ge::GRAPH_FAILED;
     }
     quantMin_ = narrowRange ? 1 : 0;
@@ -144,7 +174,12 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
         tailChunks_ = 0;
 
         size_t* emptyWorkSpace = tilingContext->GetWorkspaceSizes(1);
-        OP_CHECK_NULL_WITH_CONTEXT(tilingContext, emptyWorkSpace);
+        OP_CHECK_IF(emptyWorkSpace == nullptr,
+                    ReportTilingStageError(
+                        tilingContext->GetNodeName(),
+                        "emptyWorkSpace is null in the tiling context; check the TilingContext construction"),
+                    return ge::GRAPH_FAILED);
+        ;
         emptyWorkSpace[0] = SYS_WORKSPACE_SIZE; // 空模板无跨核归约，仅系统 workspace
         tilingContext->SetScheduleMode(1);
         OP_LOGI(tilingContext->GetNodeName(),
@@ -153,11 +188,13 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
     }
 
     if (channelNum <= 0) {
-        OP_LOGE(tilingContext, "channelNum <= 0");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "channel_num", "channelNum <= 0");
         return ge::GRAPH_FAILED;
     }
     if (numel <= 0 || (numel % channelNum) != 0) {
-        OP_LOGE(tilingContext, "x numel %ld not divisible by channelNum %ld", numel, channelNum);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(tilingContext->GetNodeName(), "numel",
+                                               (std::to_string(numel) + ", " + std::to_string(channelNum)).c_str(),
+                                               "x numel not divisible by channelNum");
         return ge::GRAPH_FAILED;
     }
     // Cross-input constraints (README): gradients shape must equal x shape; min/max must be 1-D
@@ -169,33 +206,45 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
     auto minShapePtr = tilingContext->GetInputShape(INPUT_IDX_MIN);
     auto maxShapePtr = tilingContext->GetInputShape(INPUT_IDX_MAX);
     OP_CHECK_IF((gradShapePtr == nullptr || minShapePtr == nullptr || maxShapePtr == nullptr),
-                OP_LOGE(tilingContext, "gradients/min/max shape is nullptr"), return ge::GRAPH_FAILED);
+                ReportTilingStageError(tilingContext->GetNodeName(),
+                                       "shape is null in the tiling context; check the TilingContext construction"),
+                return ge::GRAPH_FAILED);
     auto gradShape = gradShapePtr->GetStorageShape();
     auto minShape = minShapePtr->GetStorageShape();
     auto maxShape = maxShapePtr->GetStorageShape();
     if (gradShape.GetDimNum() != dimNum) {
-        OP_LOGE(tilingContext, "gradients rank %zu != x rank %zu", gradShape.GetDimNum(), dimNum);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            tilingContext->GetNodeName(), "gradients",
+            (std::to_string(gradShape.GetDimNum()) + ", " + std::to_string(dimNum)).c_str(),
+            "gradients rank != x rank");
         return ge::GRAPH_FAILED;
     }
     for (size_t i = 0U; i < dimNum; ++i) {
         if (gradShape.GetDim(static_cast<int64_t>(i)) != xShape.GetDim(static_cast<int64_t>(i))) {
-            OP_LOGE(tilingContext, "gradients shape mismatch with x at dim %zu", i);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingContext->GetNodeName(), "gradients", std::to_string(i).c_str(),
+                                                  "gradients shape mismatch with x at dim");
             return ge::GRAPH_FAILED;
         }
     }
     if (minShape.GetDimNum() != 1U || maxShape.GetDimNum() != 1U) {
-        OP_LOGE(tilingContext, "min/max must be 1-D, got min rank %zu max rank %zu", minShape.GetDimNum(),
-                maxShape.GetDimNum());
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            tilingContext->GetNodeName(), "min",
+            (std::to_string(minShape.GetDimNum()) + ", " + std::to_string(maxShape.GetDimNum())).c_str(),
+            "min/max must be 1-D, got min rank max rank");
         return ge::GRAPH_FAILED;
     }
     if (minShape.GetDim(0) != channelNum || maxShape.GetDim(0) != channelNum) {
-        OP_LOGE(tilingContext, "min/max length (%ld/%ld) must equal channel C (%ld)", minShape.GetDim(0),
-                maxShape.GetDim(0), channelNum);
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            tilingContext->GetNodeName(), "min",
+            (std::to_string(minShape.GetDim(0)) + ", " + std::to_string(maxShape.GetDim(0)) + ", " +
+             std::to_string(channelNum))
+                .c_str(),
+            "min/max length (/) must equal channel C ()");
         return ge::GRAPH_FAILED;
     }
     int64_t totalRows = numel / channelNum;
     if (totalRows <= 0) {
-        OP_LOGE(tilingContext, "totalRows <= 0");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "total_rows", "totalRows <= 0");
         return ge::GRAPH_FAILED;
     }
     // Guard the narrowing into the uint32 TilingData fields. All later arithmetic that adds to
@@ -203,7 +252,9 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
     // uint32 is sufficient here; a silent truncation would still corrupt the split decisions.
     constexpr int64_t kUint32Max = static_cast<int64_t>(0xFFFFFFFFu);
     if (totalRows > kUint32Max || channelNum > kUint32Max) {
-        OP_LOGE(tilingContext, "totalRows %ld or channelNum %ld exceeds uint32 range", totalRows, channelNum);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(tilingContext->GetNodeName(), "total_rows",
+                                               (std::to_string(totalRows) + ", " + std::to_string(channelNum)).c_str(),
+                                               "totalRows or channelNum exceeds uint32 range");
         return ge::GRAPH_FAILED;
     }
     totalRows_ = static_cast<uint32_t>(totalRows);
@@ -213,13 +264,16 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
     // freeBytes = ubSize - RESERVED_UB; dTileLen = floor(freeBytes / BYTES_PER_DTILE_ELEM), align down to VL=64.
     int64_t freeBytes = static_cast<int64_t>(ubSizePlatForm_) - static_cast<int64_t>(RESERVED_UB);
     if (freeBytes <= 0) {
-        OP_LOGE(tilingContext, "UB %lu too small (reserved %u)", ubSizePlatForm_, RESERVED_UB);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            tilingContext->GetNodeName(), "too",
+            (std::to_string(ubSizePlatForm_) + ", " + std::to_string(RESERVED_UB)).c_str(), "UB too small (reserved )");
         return ge::GRAPH_FAILED;
     }
     int64_t rawDTileLen = freeBytes / static_cast<int64_t>(BYTES_PER_DTILE_ELEM);
     int64_t alignedDTileLen = (rawDTileLen / VL_FP32) * VL_FP32;
     if (alignedDTileLen <= 0) {
-        OP_LOGE(tilingContext, "dTileLen too small after alignment");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "d_tile_len",
+                                                 "dTileLen too small after alignment");
         return ge::GRAPH_FAILED;
     }
     // Cap dTileLen at ceil(D, VL): no benefit to going larger than D itself.
@@ -268,7 +322,7 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
         tailRows_ = 0;
     }
     if (usedCoreNum_ == 0) {
-        OP_LOGE(tilingContext, "usedCoreNum is 0");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "used_core_num", "usedCoreNum is 0");
         return ge::GRAPH_FAILED;
     }
 
@@ -282,7 +336,12 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::Init()
         userWorkspaceBytes = static_cast<size_t>(2) * usedCoreNum_ * wsStride * sizeof(float);
     }
     size_t* currentWorkSpace = tilingContext->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, currentWorkSpace);
+    OP_CHECK_IF(
+        currentWorkSpace == nullptr,
+        ReportTilingStageError(tilingContext->GetNodeName(),
+                               "currentWorkSpace is null in the tiling context; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
+    ;
     currentWorkSpace[0] = SYS_WORKSPACE_SIZE + userWorkspaceBytes;
     tilingContext->SetScheduleMode(1);
     OP_LOGD(tilingContext->GetNodeName(),
@@ -317,12 +376,18 @@ ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientTiling::RunKernelTiling
     tilingData.tailChunks = tailChunks_;
 
     auto rawTiling = tilingContext->GetRawTilingData();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, rawTiling);
+    OP_CHECK_IF(rawTiling == nullptr,
+                ReportTilingStageError(tilingContext->GetNodeName(),
+                                       "rawTiling is null in the tiling context; check the TilingContext construction"),
+                return ge::GRAPH_FAILED);
+    ;
     const size_t dataSize = sizeof(tilingData);
     errno_t ret = memcpy_s(rawTiling->GetData(), rawTiling->GetCapacity(), reinterpret_cast<void*>(&tilingData),
                            dataSize);
     if (ret != EOK) {
-        OP_LOGE(tilingContext->GetNodeName(), "memcpy_s tiling failed, ret=%d", ret);
+        OP_LOGE_WITHOUT_REPORT(
+            tilingContext->GetNodeName(),
+            "memcpy_s tiling failed, ret=%d; propagate the first error reported by the failing stage", ret);
         return ge::GRAPH_FAILED;
     }
     rawTiling->SetDataSize(dataSize);
@@ -370,17 +435,29 @@ static ge::graphStatus TilingPrepareForFakeQuantWithMinMaxVarsPerChannelGradient
 {
     OP_LOGD(context, "TilingPrepareForFakeQuantWithMinMaxVarsPerChannelGradient start.");
     auto compileInfo = context->GetCompiledInfo<FakeQuantWithMinMaxVarsPerChannelGradientCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(
+        compileInfo == nullptr,
+        ReportTilingStageError(context->GetNodeName(),
+                               "compileInfo is null in the tiling context; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
+    ;
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(
+        platformInfo == nullptr,
+        ReportTilingStageError(context->GetNodeName(),
+                               "platformInfo is null in the tiling context; check the TilingContext construction"),
+        return ge::GRAPH_FAILED);
+    ;
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     uint64_t ubSizePlatForm = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = ubSizePlatForm;
     OP_CHECK_IF((compileInfo->totalCoreNum <= 0 || compileInfo->ubSizePlatForm <= 0),
-                OP_LOGE(context->GetNodeName(), "GetHardwareInfo failed, totalCoreNum:%d, ubSize:%lu.",
-                        compileInfo->totalCoreNum, compileInfo->ubSizePlatForm),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                       "GetHardwareInfo failed, totalCoreNum:%d, ubSize:%lu; propagate the first error "
+                                       "reported by the failing stage",
+                                       compileInfo->totalCoreNum, compileInfo->ubSizePlatForm),
                 return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "TilingPrepareForFakeQuantWithMinMaxVarsPerChannelGradient end.");
     return ge::GRAPH_SUCCESS;

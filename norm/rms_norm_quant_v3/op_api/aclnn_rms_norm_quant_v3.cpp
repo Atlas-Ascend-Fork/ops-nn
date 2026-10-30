@@ -246,10 +246,12 @@ static aclnnStatus CheckParams(const aclTensor* x, const aclTensor* gamma, const
     CHECK_RET(CheckShapeValid(x, gamma, scale, y), ACLNN_ERR_PARAM_INVALID);
     if (Ops::NN::AclnnUtil::IsRegbase()) {
         CHECK_RET(CheckRegbaseShape(x, gamma, scale, offset, beta, y, outputRstd, rstd), ACLNN_ERR_PARAM_INVALID);
-        OP_CHECK(!(x->IsEmpty() && outputRstd && !rstd->IsEmpty()),
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Empty x requires all requested outputs to be empty; "
-                                                  "a nonempty rstd is not supported for empty x."),
-                 return ACLNN_ERR_PARAM_INVALID);
+        OP_CHECK(
+            !(x->IsEmpty() && outputRstd && !rstd->IsEmpty()),
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "aclnnRmsNormQuantV3", "requires",
+                "empty x requires all requested outputs to be empty; a nonempty rstd is not supported for empty x"),
+            return ACLNN_ERR_PARAM_INVALID);
     }
     return ACLNN_SUCCESS;
 }

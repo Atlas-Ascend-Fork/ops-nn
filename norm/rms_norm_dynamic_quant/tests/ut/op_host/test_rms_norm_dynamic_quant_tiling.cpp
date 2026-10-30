@@ -21,6 +21,7 @@
 #include "platform/platform_infos_def.h"
 #include "ut_op_util.h"
 #include "../../../op_host/rms_norm_dynamic_quant_tiling.h"
+#include "base/err_mgr.h"
 
 using namespace ut_util;
 using namespace std;
@@ -123,6 +124,49 @@ static ge::graphStatus RunTiling(const std::string& compileInfoJson, const vecto
 // ========================================================================
 // {1,1,1,1}: 全部输入存在
 // ========================================================================
+
+// ErrorManager raw message helpers (replaces weak-symbol capture)
+static std::vector<std::string> g_ezCodes;
+static bool g_ezCodesLoaded = false;
+
+static void InitErrMgr()
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
+    g_ezCodes.clear();
+    g_ezCodesLoaded = false;
+}
+
+static void LoadEZCodes()
+{
+    if (g_ezCodesLoaded) {
+        return;
+    }
+    g_ezCodes.clear();
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    for (const auto& e : errors) {
+        g_ezCodes.push_back(e.error_id == nullptr ? std::string() : std::string(e.error_id.get()));
+    }
+    g_ezCodesLoaded = true;
+}
+
+static bool HasEZCode(const std::string& code)
+{
+    LoadEZCodes();
+    for (const auto& id : g_ezCodes) {
+        if (id == code) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int GetEZCodeCount()
+{
+    LoadEZCodes();
+    return static_cast<int>(g_ezCodes.size());
+}
+
 TEST_F(RmsNormDynamicQuantTilingTest, normal_fp16_all_exist)
 {
     gert::StorageShape x = {{1, 1, 16}, {1, 1, 16}};
@@ -223,9 +267,6 @@ TEST_F(RmsNormDynamicQuantTilingTest, error_gamma_lastdim_mismatch)
               ge::GRAPH_FAILED);
 }
 
-// ========================================================================
-// x rank=1（scale 为 0 维张量）：资料维度 1-8 的下界支持场景
-// ========================================================================
 TEST_F(RmsNormDynamicQuantTilingTest, rank1_x_with_scalar_scale)
 {
     gert::StorageShape x = {{16}, {16}};
@@ -239,9 +280,6 @@ TEST_F(RmsNormDynamicQuantTilingTest, rank1_x_with_scalar_scale)
     EXPECT_EQ(key, 1u);
 }
 
-// ========================================================================
-// Error case: x rank=9 超出支持上限 [1,8]
-// ========================================================================
 TEST_F(RmsNormDynamicQuantTilingTest, error_x_rank_exceeds_limit)
 {
     gert::StorageShape x = {{1, 1, 1, 1, 1, 1, 1, 1, 16}, {1, 1, 1, 1, 1, 1, 1, 1, 16}};
@@ -251,4 +289,122 @@ TEST_F(RmsNormDynamicQuantTilingTest, error_x_rank_exceeds_limit)
     EXPECT_EQ(RunTiling(COMPILE_INFO_910B, {1, 1, 0, 0}, DT_FLOAT16, {DT_INT8, DT_FLOAT}, {&x, &gamma}, {&y, &scale},
                         {{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)}}),
               ge::GRAPH_FAILED);
+}
+
+// namespace error_message
+
+#define EXPECT_ERROR_CODE(expected) EXPECT_TRUE(HasEZCode(expected)) << "Expected error code " << expected
+
+// After each test, verify no EZ9999 internal code was captured
+class RmsNormDynamicQuantNoEz9999Check : public testing::EmptyTestEventListener {
+public:
+    void OnTestStart(const testing::TestInfo& test_info) override
+    {
+        InitErrMgr();
+        (void)error_message::GetErrMgrErrorMessage(); // 清除上一用例残留捕获, 避免多算子联合UT下跨套件级联误判
+    }
+    void OnTestEnd(const testing::TestInfo& test_info) override
+    {
+        // 只守护本文件的测试套件, 框架层或其他算子用例的EZ9999不跨套件追责
+        static const char* const guardedSuites[] = {"RmsNormDynamicQuantTilingTest"};
+        bool guarded = false;
+        for (const char* s : guardedSuites) {
+            if (std::string(test_info.test_suite_name()) == s) {
+                guarded = true;
+                break;
+            }
+        }
+        if (!guarded) {
+            return;
+        }
+        if (HasEZCode("EZ9999")) {
+            ADD_FAILURE() << "EZ9999 captured during test [" << test_info.name() << "] in " << test_info.file();
+        }
+    }
+};
+static const auto _inst_rms_norm_dynamic_quant = []() {
+    testing::UnitTest::GetInstance()->listeners().Append(new RmsNormDynamicQuantNoEz9999Check());
+    return 0;
+}();
+
+namespace {
+// UB_SIZE=0 平台信息, 用于触发 ValidateBaseParameters 中 EZ1008 (ubSize<=0) 分支
+const std::string COMPILE_INFO_UB_ZERO = R"({
+      "hardware_info": {
+        "BT_SIZE": 0, "load3d_constraints": "1",
+        "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
+        "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+        "UB_SIZE": 0, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+        "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072, "CORE_NUM": 40
+      }
+    })";
+} // namespace
+
+TEST_F(RmsNormDynamicQuantTilingTest, err_dst_type_invalid_ez0024)
+{
+    gert::StorageShape x = {{1, 1, 16}, {1, 1, 16}};
+    gert::StorageShape gamma = {{16}, {16}};
+    gert::StorageShape y = {{1, 1, 16}, {1, 1, 16}};
+    gert::StorageShape scale = {{1, 1}, {1, 1}};
+    InitErrMgr();
+    EXPECT_EQ(RunTiling(COMPILE_INFO_910B, {1, 1, 0, 0}, DT_FLOAT16, {DT_INT8, DT_FLOAT}, {&x, &gamma}, {&y, &scale},
+                        {{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)},
+                         {"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(3)}}),
+              ge::GRAPH_FAILED);
+    EXPECT_ERROR_CODE("EZ0024");
+}
+
+TEST_F(RmsNormDynamicQuantTilingTest, err_epsilon_invalid_ez0024)
+{
+    gert::StorageShape x = {{1, 1, 16}, {1, 1, 16}};
+    gert::StorageShape gamma = {{16}, {16}};
+    gert::StorageShape y = {{1, 1, 16}, {1, 1, 16}};
+    gert::StorageShape scale = {{1, 1}, {1, 1}};
+    InitErrMgr();
+    EXPECT_EQ(RunTiling(COMPILE_INFO_910B, {1, 1, 0, 0}, DT_FLOAT16, {DT_INT8, DT_FLOAT}, {&x, &gamma}, {&y, &scale},
+                        {{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(-1.0)},
+                         {"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(2)}}),
+              ge::GRAPH_FAILED);
+    EXPECT_ERROR_CODE("EZ0024");
+}
+
+TEST_F(RmsNormDynamicQuantTilingTest, err_x_dtype_unsupported_ez0019)
+{
+    gert::StorageShape x = {{1, 1, 16}, {1, 1, 16}};
+    gert::StorageShape gamma = {{16}, {16}};
+    gert::StorageShape y = {{1, 1, 16}, {1, 1, 16}};
+    gert::StorageShape scale = {{1, 1}, {1, 1}};
+    InitErrMgr();
+    EXPECT_EQ(RunTiling(COMPILE_INFO_910B, {1, 1, 0, 0}, DT_FLOAT, {DT_INT8, DT_FLOAT}, {&x, &gamma}, {&y, &scale},
+                        {{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)}}),
+              ge::GRAPH_FAILED);
+    EXPECT_ERROR_CODE("EZ0019");
+}
+
+TEST_F(RmsNormDynamicQuantTilingTest, err_ub_size_zero_ez1008)
+{
+    gert::StorageShape x = {{1, 1, 16}, {1, 1, 16}};
+    gert::StorageShape gamma = {{16}, {16}};
+    gert::StorageShape y = {{1, 1, 16}, {1, 1, 16}};
+    gert::StorageShape scale = {{1, 1}, {1, 1}};
+    InitErrMgr();
+    EXPECT_EQ(RunTiling(COMPILE_INFO_UB_ZERO, {1, 1, 0, 0}, DT_FLOAT16, {DT_INT8, DT_FLOAT}, {&x, &gamma}, {&y, &scale},
+                        {{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)}}),
+              ge::GRAPH_FAILED);
+    EXPECT_ERROR_CODE("EZ1008");
+}
+
+TEST_F(RmsNormDynamicQuantTilingTest, err_gamma_x_mismatch_ez0010)
+{
+    gert::StorageShape x = {{24, 1, 2560}, {24, 1, 2560}};
+    gert::StorageShape gamma = {{2000}, {2000}};
+    gert::StorageShape smooth = {{2000}, {2000}};
+    gert::StorageShape beta = {{2000}, {2000}};
+    gert::StorageShape y = {{24, 1, 2560}, {24, 1, 2560}};
+    gert::StorageShape scale = {{24, 1}, {24, 1}};
+    InitErrMgr();
+    EXPECT_EQ(RunTiling(COMPILE_INFO_910B, {1, 1, 1, 1}, DT_FLOAT16, {DT_INT8, DT_FLOAT}, {&x, &gamma, &smooth, &beta},
+                        {&y, &scale}, {{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0.01)}}),
+              ge::GRAPH_FAILED);
+    EXPECT_ERROR_CODE("EZ0010");
 }

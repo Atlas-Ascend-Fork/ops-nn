@@ -16,11 +16,28 @@
 #include <string>
 #include <vector>
 #include "platform/platform_info.h"
+#include "base/err_msg.h"
 #include "base/registry/op_impl_space_registry_v2.h"
 
 using namespace std;
 
 namespace {
+// The UT build links the CANN-installed libnnopbase whose registry may predate
+// the tiling-stage error codes reported by this repository. Register them here
+// so assertions observe the same codes that a product build emits.
+constexpr const char* kOpsNnHostUtErrorCodes = R"json({"error_info_list":[
+    {"errClass":"Nnopbase Errors","errTitle":"Execution_Error",
+     "ErrCode":"EZ1008",
+     "ErrMessage":"Failed to execute operator %s. Reason: %s.",
+     "Arglist":"opName, reason",
+     "suggestion":{"Possible Cause":"N/A","Solution":"N/A"}},
+    {"errClass":"Nnopbase Errors","errTitle":"Execution_Error",
+     "ErrCode":"EZ1014",
+     "ErrMessage":"Failed to execute operator %s. Reason: %s.",
+     "Arglist":"opName, reason",
+     "suggestion":{"Possible Cause":"N/A","Solution":"N/A"}}
+]})json";
+
 int PinLoadedSo(struct dl_phdr_info* info, size_t, void*)
 {
     if (info->dlpi_name && info->dlpi_name[0]) {
@@ -31,7 +48,7 @@ int PinLoadedSo(struct dl_phdr_info* info, size_t, void*)
     }
     return 0;
 }
-} // namespaces
+} // namespace
 
 class OpTilingUtEnvironment : public testing::Environment {
 public:
@@ -39,6 +56,7 @@ public:
     virtual void SetUp()
     {
         cout << "Global Environment SetpUp." << endl;
+        (void)error_message::RegisterFormatErrorMessage(kOpsNnHostUtErrorCodes, strlen(kOpsNnHostUtErrorCodes));
         fe::OptionalInfos opti_compilation_infos_ge;
         opti_compilation_infos_ge.Init();
         opti_compilation_infos_ge.SetSocVersion("soc_version");

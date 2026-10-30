@@ -14,7 +14,6 @@
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/op_log.h"
-#include "opdev/op_log.h"
 #include "log/log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/common_types.h"
@@ -121,11 +120,11 @@ static const std::initializer_list<DataType>& GetScaleOffsetDtypeSupportList()
 static inline bool CheckNotNull(const aclTensor* self, const aclTensor* scale, const char* roundMode,
                                 const aclTensor* out)
 {
-    OP_CHECK(self != nullptr, ReportNullPointerError(__func__, "self"), return false);
-    OP_CHECK(scale != nullptr, ReportNullPointerError(__func__, "scale"), return false);
-    OP_CHECK(out != nullptr, ReportNullPointerError(__func__, "out"), return false);
+    OP_CHECK(self != nullptr, ReportNullPointerError("aclnnAscendQuant", "x"), return false);
+    OP_CHECK(scale != nullptr, ReportNullPointerError("aclnnAscendQuant", "scale"), return false);
+    OP_CHECK(out != nullptr, ReportNullPointerError("aclnnAscendQuant", "y"), return false);
     if (roundMode == nullptr) {
-        ReportNullPointerError(__func__, "roundMode");
+        ReportNullPointerError("aclnnAscendQuant", "roundMode");
         return false;
     }
     return true;
@@ -219,7 +218,7 @@ static bool CheckInt32OutputShape(const aclTensor* self, const aclTensor* out)
 {
     int64_t dimNum = static_cast<int64_t>(self->GetViewShape().GetDimNum());
     if (dimNum == 0) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAscendQuant", "self", std::to_string(dimNum).c_str(),
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAscendQuant", "x", std::to_string(dimNum).c_str(),
                                      "at least 1 (scalar not supported for int32)");
         return false;
     }
@@ -231,7 +230,7 @@ static bool CheckInt32OutputShape(const aclTensor* self, const aclTensor* out)
                                   true :
                                   false;
     if (inputIsNot8xOutput) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "out", std::to_string(dimOutput).c_str(),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "y", std::to_string(dimOutput).c_str(),
                                                  "the last dim of y must be 1/8 of the last dim of input for int32");
         return false;
     }
@@ -240,7 +239,7 @@ static bool CheckInt32OutputShape(const aclTensor* self, const aclTensor* out)
         dimInput = self->GetViewShape().GetDim(i);
         dimOutput = out->GetViewShape().GetDim(i);
         if (dimInput != dimOutput) {
-            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "self", std::to_string(dimInput).c_str(),
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "x", std::to_string(dimInput).c_str(),
                                                      "dims of input must match the corresponding dims of output");
             return false;
         }
@@ -253,14 +252,14 @@ static bool CheckInt4LastDim(const aclTensor* self)
 {
     int64_t dimNum = static_cast<int64_t>(self->GetViewShape().GetDimNum());
     if (dimNum == 0) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAscendQuant", "self", std::to_string(dimNum).c_str(),
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAscendQuant", "x", std::to_string(dimNum).c_str(),
                                      "at least 1 (scalar not supported for int4)");
         return false;
     }
     int64_t lastDimInput = self->GetViewShape().GetDim(dimNum - 1);
     bool lastDimOdd = ((static_cast<uint64_t>(lastDimInput) % INT4_NUMS_IN_INT8_SPACE) > 0) ? true : false;
     if (lastDimOdd) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "self", std::to_string(lastDimInput).c_str(),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAscendQuant", "x", std::to_string(lastDimInput).c_str(),
                                                  "x last dim must be divisible by 2 for int4");
         return false;
     }

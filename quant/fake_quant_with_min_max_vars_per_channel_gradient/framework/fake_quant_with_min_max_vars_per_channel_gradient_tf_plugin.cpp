@@ -26,7 +26,7 @@ static bool SetNhwcFormatForRank4Input(ge::Operator& op, size_t idx)
     tensor.SetOriginFormat(isNhwc ? ge::FORMAT_NHWC : ge::FORMAT_ND);
     tensor.SetFormat(isNhwc ? ge::FORMAT_NHWC : ge::FORMAT_ND);
     if (op.UpdateInputDesc(idx, tensor) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(GetOpName(op).c_str(), "update input format failed.");
+        OP_LOGE_WITHOUT_REPORT(GetOpName(op).c_str(), "update input format failed.");
         return false;
     }
     return true;
@@ -39,7 +39,7 @@ static bool SetNhwcFormatForRank4Output(ge::Operator& op, size_t idx)
     tensor.SetOriginFormat(isNhwc ? ge::FORMAT_NHWC : ge::FORMAT_ND);
     tensor.SetFormat(isNhwc ? ge::FORMAT_NHWC : ge::FORMAT_ND);
     if (op.UpdateOutputDesc(idx, tensor) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(GetOpName(op).c_str(), "update output format failed.");
+        OP_LOGE_WITHOUT_REPORT(GetOpName(op).c_str(), "update output format failed.");
         return false;
     }
     return true;

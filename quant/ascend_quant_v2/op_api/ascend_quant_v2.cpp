@@ -55,8 +55,8 @@ const aclTensor* AscendQuantV2(const aclTensor* x, const aclTensor* scale, const
     auto out = executor->AllocTensor(outShape, op::DataType(dstType));
 
     if (!IsAiCoreSupport(x)) {
-        OP_LOGE(ACL_ERROR_INVALID_PARAM, "dtype[%s] of input x is not supported",
-                op::ToString(x->GetDataType()).GetString());
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "dtype[%s] of input x is not supported",
+                               op::ToString(x->GetDataType()).GetString());
         return nullptr;
     }
 

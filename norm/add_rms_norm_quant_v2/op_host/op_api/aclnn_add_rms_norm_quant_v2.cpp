@@ -14,6 +14,10 @@
 #include "opdev/data_type_utils.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#ifndef OP_LOG_LIBOPAPI_ONLY
+#define OP_LOG_LIBOPAPI_ONLY
+#endif
+#include "log/log.h"
 #include "opdev/format_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/op_dfx.h"
@@ -128,7 +132,7 @@ static bool CheckOutputNotNull(aclTensor* y1Out, aclTensor* y2Out, const aclTens
     OP_CHECK_NULL(y2Out, return false);
     OP_CHECK_NULL(xOut, return false);
     if (nullptr != resOut) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The rmsNormOut tensor should be nullptr in computeV1.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "The rmsNormOut tensor should be nullptr in computeV1");
         return false;
     }
     return true;
@@ -313,16 +317,20 @@ static inline bool CheckGammaShapeX(const aclTensor* x1, const op::Shape& gammaS
     int64_t formerDimNum = xDimNum - gammaDimNum;
     // gamma的dim必须小于x的dim
     if (formerDimNum < 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The gamma tensor's dim %ld should not greater than x1 tensor's dim %ld.",
-                gammaDimNum, xDimNum);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnAddRmsNormQuantV2", "gamma", std::to_string(gammaDimNum).c_str(),
+            ("the gamma tensor's dim count must not exceed x1 tensor's dim count " + std::to_string(xDimNum)).c_str());
         return false;
     }
     int64_t totalGammaNum = 1;
     for (int64_t i = 0; i < gammaDimNum; i++) {
         // gamma和x的shape后N维，每一维对应的大小应该相等
         if (xShape.GetDim(formerDimNum + i) != gammaShape.GetDim(i)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The gamma tensor's shape dim %ld is %ld, is not equal to x1 %ld.", i,
-                    gammaShape.GetDim(i), xShape.GetDim(formerDimNum + i));
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                "aclnnAddRmsNormQuantV2", "gamma", std::to_string(gammaShape.GetDim(i)).c_str(),
+                ("gamma dim[" + std::to_string(i) + "] must match x1 dim[" + std::to_string(formerDimNum + i) +
+                 "] with value " + std::to_string(xShape.GetDim(formerDimNum + i)))
+                    .c_str());
             return false;
         } else {
             totalGammaNum = totalGammaNum * gammaShape.GetDim(i);
@@ -331,8 +339,10 @@ static inline bool CheckGammaShapeX(const aclTensor* x1, const op::Shape& gammaS
 
     if (IsSocVersion310P()) {
         if (totalGammaNum < SIZE_MIN_LIMIT_310P) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The gamma tensor's size %ld is smaller than %ld.", totalGammaNum,
-                    SIZE_MIN_LIMIT_310P);
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                "aclnnAddRmsNormQuantV2", "gamma", std::to_string(totalGammaNum).c_str(),
+                ("gamma must contain at least " + std::to_string(SIZE_MIN_LIMIT_310P) + " elements on Ascend 310P")
+                    .c_str());
             return false;
         }
     }
@@ -462,17 +472,21 @@ static bool CheckRegbaseDtypeCombinationV2(const aclTensor* x1, const aclTensor*
     }
 
     OP_CHECK(scalesDtype == xDtype || scalesDtype == op::DataType::DT_FLOAT,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                     "When x1 is FLOAT16 or BFLOAT16, scales1 must have the same dtype as x1 or be FLOAT32."),
+             OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                 "aclnnAddRmsNormQuantV2", "x1, scales1",
+                 (std::to_string(xDtype) + ", " + std::to_string(scalesDtype)).c_str(),
+                 "when x1 is FLOAT16 or BFLOAT16, scales1 must have the same dtype as x1 or be FLOAT32"),
              return false);
     if (zeroPoints == nullptr) {
         return true;
     }
     if (scalesDtype == op::DataType::DT_FLOAT) {
         const op::DataType zeroPointsDtype = zeroPoints->GetDataType();
+        const char* zeroPointsName = zeroPoints1Optional != nullptr ? "zeroPoints1Optional" : "zeroPoints2Optional";
         OP_CHECK(zeroPointsDtype == op::DataType::DT_FLOAT || zeroPointsDtype == op::DataType::DT_INT32,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                         "When scales1 is FLOAT32, zeroPoints must be FLOAT32 or INT32 on Ascend 950."),
+                 OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                     "aclnnAddRmsNormQuantV2", zeroPointsName, op::ToString(zeroPointsDtype).GetString(),
+                     "when scales1 is FLOAT32, the zeroPoints tensor must be FLOAT32 or INT32 on Ascend 950"),
                  return false);
     } else {
         OP_CHECK_DTYPE_NOT_MATCH(zeroPoints, xDtype, return false);

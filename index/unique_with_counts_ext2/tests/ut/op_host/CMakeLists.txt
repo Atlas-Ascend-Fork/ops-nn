@@ -19,7 +19,9 @@ if(UT_TEST_ALL OR OP_API_UT)
     set(UNIQUE_DIM_ERROR_CODE_UT unique_dim_error_code_ut)
     add_executable(${UNIQUE_DIM_ERROR_CODE_UT}
         ${CMAKE_CURRENT_SOURCE_DIR}/unique_dim_error_code_ut.cpp
+        ${UT_PATH}/common/legacy_common_manager_stub.cpp
         $<TARGET_OBJECTS:${OPHOST_NAME}_opapi_obj>
+        $<$<TARGET_EXISTS:opbuild_gen_aclnn_all>:$<TARGET_OBJECTS:opbuild_gen_aclnn_all>>
         ${UT_PATH}/op_api/stub/opdev/platform.cpp
         ${UT_PATH}/op_api/stub/opdev/op_executor.cpp)
     target_include_directories(${UNIQUE_DIM_ERROR_CODE_UT} PRIVATE
@@ -40,6 +42,8 @@ if(UT_TEST_ALL OR OP_API_UT)
         -Wl,--push-state,--no-as-needed
         nnopbase
         error_manager
+        acl_rt
+        runtime
         -Wl,--pop-state
         opapi_math_stub
         graph

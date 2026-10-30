@@ -26,6 +26,7 @@
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
 #include "array_ops.h"
+#include "base/err_mgr.h"
 
 using namespace ut_util;
 using namespace std;
@@ -42,6 +43,48 @@ protected:
 
     static void TearDownTestCase() { std::cout << "QuantizedBatchNormTiling TearDown" << std::endl; }
 };
+
+// ErrorManager raw message helpers (replaces weak-symbol capture)
+static std::vector<std::string> g_ezCodes;
+static bool g_ezCodesLoaded = false;
+
+static void InitErrMgr()
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
+    g_ezCodes.clear();
+    g_ezCodesLoaded = false;
+}
+
+static void LoadEZCodes()
+{
+    if (g_ezCodesLoaded) {
+        return;
+    }
+    g_ezCodes.clear();
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    for (const auto& e : errors) {
+        g_ezCodes.push_back(e.error_id == nullptr ? std::string() : std::string(e.error_id.get()));
+    }
+    g_ezCodesLoaded = true;
+}
+
+static bool HasEZCode(const std::string& code)
+{
+    LoadEZCodes();
+    for (const auto& id : g_ezCodes) {
+        if (id == code) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int GetEZCodeCount()
+{
+    LoadEZCodes();
+    return static_cast<int>(g_ezCodes.size());
+}
 
 TEST_F(QuantizedBatchNormTiling, quantized_batch_norm_1000)
 {
@@ -779,102 +822,15 @@ TEST_F(QuantizedBatchNormTiling, quantized_batch_norm_1002_full_reduce_not_suppo
     //           ");
     // dlog_setlevel(0, 3, 0);
 }
-// ============================================================================
-// Error code verification UT for E*9*** remediation (2026-10-21)
-// Captures ErrorManager output via weak-symbol override, asserts formal codes.
-// ============================================================================
+// namespace error_message
 
-namespace error_message {
-struct CapturedError {
-    std::string code;
-    std::vector<std::string> keys;
-    std::vector<std::string> values;
-};
-static thread_local CapturedError g_last_error;
-static thread_local int g_report_count = 0;
-static thread_local std::vector<std::string> g_all_codes; // 记录用例全程上报过的全部错误码
-
-__attribute__((weak)) void ResetCapture()
-{
-    g_last_error.code.clear();
-    g_last_error.keys.clear();
-    g_last_error.values.clear();
-    g_report_count = 0;
-    g_all_codes.clear();
-}
-__attribute__((weak)) std::string GetLastError() { return g_last_error.code; }
-__attribute__((weak)) int GetReportCount() { return g_report_count; }
-__attribute__((weak)) bool HasCode(const std::string& c)
-{
-    for (const auto& code : g_all_codes) {
-        if (code == c) {
-            return true;
-        }
-    }
-    return false;
-}
-
-__attribute__((weak)) int32_t ReportPredefinedErrMsg(const char* error_code, const std::vector<const char*>& key,
-                                                     const std::vector<const char*>& value)
-{
-    g_last_error.code = error_code ? error_code : "";
-    if (error_code != nullptr) {
-        g_all_codes.push_back(error_code);
-    }
-    g_last_error.keys.clear();
-    g_last_error.values.clear();
-    for (const auto& k : key)
-        g_last_error.keys.push_back(k ? k : "");
-    for (const auto& v : value)
-        g_last_error.values.push_back(v ? v : "");
-    g_report_count++;
-    return 0;
-}
-__attribute__((weak)) int32_t ReportPredefinedErrMsg(const char* error_code)
-{
-    g_last_error.code = error_code ? error_code : "";
-    if (error_code != nullptr) {
-        g_all_codes.push_back(error_code);
-    }
-    g_report_count++;
-    return 0;
-}
-__attribute__((weak)) int32_t ReportInnerErrMsg(const char* file_name, const char* func, uint32_t line,
-                                                const char* error_code, const char* format, ...)
-{
-    g_last_error.code = error_code ? error_code : "";
-    if (error_code != nullptr) {
-        g_all_codes.push_back(error_code);
-    }
-    g_report_count++;
-    return 0;
-}
-} // namespace error_message
-
-// 验证弱符号截获通道在本二进制内生效: 若链接格局变化导致强定义压制弱定义, 该用例显式失败,
-// 避免EZ9999守护用例静默失效
-TEST_F(QuantizedBatchNormTiling, error_capture_channel_self_check)
-{
-    error_message::ResetCapture();
-    const std::vector<const char*> selfKey = {"self_check"};
-    const std::vector<const char*> selfValue = {"capture channel liveness"};
-    error_message::ReportPredefinedErrMsg("EZ0000", selfKey, selfValue);
-    EXPECT_TRUE(error_message::HasCode("EZ0000")) << "capture channel is dead: weak override suppressed";
-    EXPECT_EQ(error_message::GetReportCount(), 1);
-    error_message::ResetCapture();
-}
-#define EXPECT_ERROR_CODE(expected)                                                 \
-    EXPECT_EQ(error_message::GetLastError(), expected)                              \
-        << "Expected " << expected << " but got [" << error_message::GetLastError() \
-        << "] count=" << error_message::GetReportCount()
-#define EXPECT_NO_EZ9999()                             \
-    EXPECT_NE(error_message::GetLastError(), "EZ9999") \
-        << "EZ9999 still generated! Got [" << error_message::GetLastError() << "]"
-#define EXPECT_ERROR_REPORTED() EXPECT_GT(error_message::GetReportCount(), 0) << "No error reported"
+#define EXPECT_ERROR_CODE(expected) EXPECT_TRUE(HasEZCode(expected)) << "Expected error code " << expected
+#define EXPECT_NO_EZ9999() EXPECT_FALSE(HasEZCode("EZ9999")) << "EZ9999 still generated"
+#define EXPECT_ERROR_REPORTED() EXPECT_GT(GetEZCodeCount(), 0) << "No error reported"
 
 class QuantizedBatchNormErrorTest : public testing::Test {
 protected:
-    void SetUp() override { error_message::ResetCapture(); }
+    void SetUp() override { InitErrMgr(); }
 };
 
 static ge::graphStatus RunTilingWithErr(ge::DataType xDtype, ge::Format xFormat, gert::StorageShape& xShape,

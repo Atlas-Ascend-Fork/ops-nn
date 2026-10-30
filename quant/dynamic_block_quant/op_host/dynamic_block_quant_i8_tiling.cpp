@@ -26,6 +26,8 @@ using namespace AscendC;
 
 namespace optiling {
 // Tiling阶段框架契约类失败(框架对象为空/平台信息异常)统一上报EZ1008, 不再生成EZ9999内部码
+// 分层规则: 输入desc缺失(图侧未提供输入)记EZ0037结构化参数错误;
+// 框架构造的输出desc/attrs为空属tiling阶段契约失败, 记EZ1008
 static void ReportTilingStageError(const char* opName, const std::string& reason)
 {
     const std::vector<const char*> msgKey = {"opName", "reason"};
@@ -105,11 +107,12 @@ ge::graphStatus DynamicBlockQuantI8::CheckDtype()
                 return ge::GRAPH_FAILED);
 
     auto outputYPtr = context->GetOutputDesc(0);
-    OP_CHECK_IF(outputYPtr == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
-                                                         "the output desc of y is missing in the tiling context; check "
-                                                         "that the graph node provides all required outputs"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        outputYPtr == nullptr,
+        ReportTilingStageError(context->GetNodeName(),
+                               "the output desc of y (output index 0) is missing in the tiling context; check the "
+                               "TilingContext construction"),
+        return ge::GRAPH_FAILED);
     auto yDtype = outputYPtr->GetDataType();
     OP_CHECK_IF(Y_SUPPORT_DTYPE_I8_SET.count(yDtype) == 0,
                 OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "y", ge::TypeUtils::DataTypeToSerialString(yDtype),
@@ -117,11 +120,12 @@ ge::graphStatus DynamicBlockQuantI8::CheckDtype()
                 return ge::GRAPH_FAILED);
 
     auto outputScalePtr = context->GetOutputDesc(1);
-    OP_CHECK_IF(outputScalePtr == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "scale",
-                                                         "the output desc of scale is missing in the tiling context; "
-                                                         "check that the graph node provides all required outputs"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        outputScalePtr == nullptr,
+        ReportTilingStageError(context->GetNodeName(),
+                               "the output desc of scale (output index 1) is missing in the tiling context; check "
+                               "the TilingContext construction"),
+        return ge::GRAPH_FAILED);
     auto scaleDtype = outputScalePtr->GetDataType();
     OP_CHECK_IF(SCALE_SUPPORT_I8_DTYPE_SET.count(scaleDtype) == 0,
                 OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "scale",
@@ -332,11 +336,12 @@ ge::graphStatus DynamicBlockQuantI8::DoTiling(DynamicBlockQuantTilingParam& tili
                 return ge::GRAPH_FAILED);
     auto inDtype = inputXPtr->GetDataType();
     auto outputYPtr = context->GetOutputDesc(0);
-    OP_CHECK_IF(outputYPtr == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
-                                                         "the output desc of y is missing in the tiling context; check "
-                                                         "that the graph node provides all required outputs"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        outputYPtr == nullptr,
+        ReportTilingStageError(context->GetNodeName(),
+                               "the output desc of y (output index 0) is missing in the tiling context; check the "
+                               "TilingContext construction"),
+        return ge::GRAPH_FAILED);
     auto outDtype = outputYPtr->GetDataType();
     CalcTilingKey(inDtype, tilingParam);
     return ge::GRAPH_SUCCESS;

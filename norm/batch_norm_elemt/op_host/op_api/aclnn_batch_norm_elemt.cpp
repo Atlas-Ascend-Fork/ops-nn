@@ -24,6 +24,10 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#ifndef OP_LOG_LIBOPAPI_ONLY
+#define OP_LOG_LIBOPAPI_ONLY
+#endif
+#include "log/log.h"
 #include "opdev/tensor_view_utils.h"
 #include "aclnn_batch_norm_elemt.h"
 #include "op_api/aclnn_util.h"
@@ -56,8 +60,11 @@ static bool CheckDtypeValid(const T& t, const Ts&... args)
                                                                            ASCEND910B_DTYPE_SUPPORT_LIST :
                                                                            ASCEND910_DTYPE_SUPPORT_LIST;
         if (t && !CheckType(t->GetDataType(), DTYPE_SUPPORT_LIST)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "input not implemented for %s, should be in dtype support list %s.",
-                    op::ToString(t->GetDataType()).GetString(), op::ToString(DTYPE_SUPPORT_LIST).GetString());
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON("aclnnBatchNormElemt", "input",
+                                                   (std::string(op::ToString(t->GetDataType()).GetString()) + ", " +
+                                                    std::string(op::ToString(DTYPE_SUPPORT_LIST).GetString()))
+                                                       .c_str(),
+                                                   "input not implemented for , should be in dtype support list");
             return false;
         }
     }
@@ -71,13 +78,17 @@ static bool CheckDtypeValid(const T& t, const Ts&... args)
 static bool CheckFormat(const aclTensor* input, const aclTensor* out)
 {
     if (input->GetStorageFormat() != out->GetStorageFormat()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format of input and out should be equal, input [%s], out [%s].",
-                op::ToString(input->GetStorageFormat()).GetString(), op::ToString(out->GetStorageFormat()).GetString());
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON("aclnnBatchNormElemt", "format",
+                                                (std::string(op::ToString(input->GetStorageFormat()).GetString()) +
+                                                 ", " + std::string(op::ToString(out->GetStorageFormat()).GetString()))
+                                                    .c_str(),
+                                                "format of input and out should be equal, input , out");
         return false;
     }
 
     if (op::IsPrivateFormat(input->GetStorageFormat())) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND,NCHW,NCL,NCDHW.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnBatchNormElemt", "format",
+                                                 "format only support ND,NCHW,NCL,NCDHW");
         return false;
     }
     return true;
@@ -93,14 +104,16 @@ static bool CheckShape(const aclTensor* input, const aclTensor* weight, const ac
 
     OP_CHECK_SHAPE_NOT_EQUAL(out, input, return false);
     if (input->GetViewShape()[1] == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Input channel size should not be zero.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnBatchNormElemt", "input",
+                                                 "input channel size should not be zero");
         return false;
     }
 
     if ((weight != nullptr && weight->GetViewShape().GetDimNum() != 1) ||
         (bias != nullptr && bias->GetViewShape().GetDimNum() != 1) || mean->GetViewShape().GetDimNum() != 1 ||
         invstd->GetViewShape().GetDimNum() != 1) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Weight/bias/mean/invstd dim size should be one.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnBatchNormElemt", "weight",
+                                                 "weight/bias/mean/invstd dim size should be one");
         return false;
     }
 
@@ -108,7 +121,9 @@ static bool CheckShape(const aclTensor* input, const aclTensor* weight, const ac
     if ((weight != nullptr && weight->GetViewShape()[0] != dimC) ||
         (bias != nullptr && bias->GetViewShape()[0] != dimC) || mean->GetViewShape()[0] != dimC ||
         invstd->GetViewShape()[0] != dimC) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Weight/bias/mean/invstd shape should be same as the channel size of input.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            "aclnnBatchNormElemt", "weight", std::to_string(dimC).c_str(),
+            "the first dim of weight/bias/mean/invstd must be the same as the channel size of input");
         return false;
     }
     return true;

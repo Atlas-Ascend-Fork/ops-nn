@@ -61,7 +61,7 @@ const aclTensor* GroupQuant(const aclTensor* x, const aclTensor* scale, const ac
     auto out = executor->AllocTensor(outShape, op::DataType(dstType));
 
     if (!CheckType(x->GetDataType(), GetDtypeSupportListBySocVersion())) {
-        OP_LOGE(ACL_ERROR_INVALID_PARAM, "dtype of input x is not supported");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "dtype of input x is not supported");
         return nullptr;
     }
 

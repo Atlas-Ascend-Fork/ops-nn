@@ -85,7 +85,7 @@ inline static bool CheckOptionalDtype(const aclTensor* tensorOptional)
     if (tensorOptional && !CheckType(tensorOptional->GetDataType(), DTYPE_SUPPORT_LIST)) {
         OP_LOGE(
             ACLNN_ERR_PARAM_INVALID,
-            "Expected aclnnLayerNormBackward tensorOptional dtype [%s] to be in support list [%s] but check failed.",
+            "Expected aclnnLayerNormBackward optional tensor dtype [%s] to be in support list [%s] but check failed.",
             ToString(tensorOptional->GetDataType()).GetString(), ToString(DTYPE_SUPPORT_LIST).GetString());
         return false;
     }
@@ -132,10 +132,11 @@ static bool CheckShapeEqual(const aclTensor* input, const aclIntArray* normalize
         int64_t normDim = *(normalizedShape->GetData() + i);
         int64_t inputDim = inputShape.GetDim(i + axis);
         if (normDim != inputDim) {
-            OP_LOGE(
-                ACLNN_ERR_PARAM_INVALID,
-                "Expected normalized index [%zu] shape [%ld] be equal to tensor index [%zu] shape [%ld], but failed.",
-                i, normDim, i + axis, inputDim);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                "aclnnLayerNormBackward", "input", std::to_string(inputDim).c_str(),
+                ("normalizedShape[" + std::to_string(i) + "] with value " + std::to_string(normDim) +
+                 " must match input dim[" + std::to_string(i + axis) + "]")
+                    .c_str());
             return false;
         }
     }
@@ -153,10 +154,9 @@ static bool CheckDimLimitsAndNormalizedRange(const aclTensor* gradOut, const acl
     OP_CHECK_MAX_DIM(mean, MAX_DIM_LEN, return false);
     OP_CHECK_MAX_DIM(rstd, MAX_DIM_LEN, return false);
     if (normalizedShape->Size() > MAX_DIM_LEN) {
-        OP_LOGE(
-            ACLNN_ERR_PARAM_INVALID,
-            "Expected aclnnLayerNormBackward normalizedShape len [%zu] to not be greater than [%zu] but check failed.",
-            normalizedShape->Size(), MAX_DIM_LEN);
+        OP_LOGE_FOR_INVALID_LISTSIZE("aclnnLayerNormBackward", "normalizedShape",
+                                     std::to_string(normalizedShape->Size()).c_str(),
+                                     std::to_string(MAX_DIM_LEN).c_str());
         return false;
     }
     if ((*outputMask)[GRAD_INPUT_INDEX]) {

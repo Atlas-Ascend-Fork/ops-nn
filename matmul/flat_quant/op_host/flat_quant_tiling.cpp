@@ -621,10 +621,13 @@ bool FlatQuantTiling::ValidateAll()
     if (outDtype == Ops::NN::DT_HIFLOAT4) {
         int64_t mHif4 = xShape_.GetDim(INDEX_ONE);
         int64_t nHif4 = xShape_.GetDim(INDEX_TWO);
-        OP_CHECK_IF(mHif4 % CEIL_SIZE != 0 || nHif4 % CEIL_SIZE != 0,
-                    OP_LOGE(tilingContext_->GetNodeName(),
-                            "HIFLOAT4 output requires M[%ld] and N[%ld] to be aligned to %d.", mHif4, nHif4, CEIL_SIZE),
-                    return false);
+        OP_CHECK_IF(
+            mHif4 % CEIL_SIZE != 0 || nHif4 % CEIL_SIZE != 0,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                tilingContext_->GetNodeName(), "x", Ops::Base::ToString(xShape_).c_str(),
+                ("HIFLOAT4 output requires M (dim1) and N (dim2) of x to be aligned to " + std::to_string(CEIL_SIZE))
+                    .c_str()),
+            return false);
     }
     if (outDtype == ge::DT_FLOAT4_E2M1 && !hasP2_) {
         // A6 非对齐 mxfp4 回退 FlatQuantHighV2 (key4), 该路径要求 p2 存在; 对齐场景由 CMCT (key6) 处理,
@@ -634,12 +637,14 @@ bool FlatQuantTiling::ValidateAll()
             (compileInfo->npuArch == NpuArch::DAV_9201 || compileInfo->npuArch == NpuArch::DAV_9202)) {
             int64_t mMxfp4 = xShape_.GetDim(INDEX_ONE);
             int64_t nMxfp4 = xShape_.GetDim(INDEX_TWO);
-            OP_CHECK_IF(mMxfp4 % CEIL_SIZE != 0 || nMxfp4 % CEIL_SIZE != 0,
-                        OP_LOGE(tilingContext_->GetNodeName(),
-                                "On ascend960, FLOAT4_E2M1 output with empty kronecker_p2 requires M[%ld] and "
-                                "N[%ld] to be aligned to %d, or provide kronecker_p2 of shape [N,N].",
-                                mMxfp4, nMxfp4, CEIL_SIZE),
-                        return false);
+            OP_CHECK_IF(
+                mMxfp4 % CEIL_SIZE != 0 || nMxfp4 % CEIL_SIZE != 0,
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    tilingContext_->GetNodeName(), "ascend960",
+                    (std::to_string(mMxfp4) + ", " + std::to_string(nMxfp4) + ", " + std::to_string(CEIL_SIZE)).c_str(),
+                    "on ascend960, FLOAT4_E2M1 output with empty kronecker_p2 requires M and N to be aligned to , or "
+                    "provide kronecker_p2 of shape [N,N]"),
+                return false);
         }
     }
     return true;
@@ -711,7 +716,9 @@ static ge::graphStatus TilingPrepareTiling(gert::TilingParseContext* context)
     if (compileInfo->npuArch == NpuArch::DAV_9201 || compileInfo->npuArch == NpuArch::DAV_9202) {
         // ascend960(v121): AIC:AIV = 1:1
         OP_CHECK_IF(compileInfo->aivNum != compileInfo->aicNum,
-                    OP_LOGE(context->GetNodeName(), "FlatQuantTiling is only supported for aivNum == aicNum on v121"),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "flat_quant_tiling", std::to_string(compileInfo->aivNum).c_str(),
+                        "flatQuantTiling is only supported for aivNum == aicNum on v121"),
                     return ge::GRAPH_FAILED);
     }
 

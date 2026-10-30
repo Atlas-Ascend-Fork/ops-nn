@@ -212,10 +212,11 @@ static bool CheckNormalizedShapeMatch(const aclTensor* input, const aclIntArray*
         int64_t normDim = *(normalizedShape->GetData() + index);
         int64_t inputDim = inputShape.GetDim(index + beginAxis);
         if (normDim != inputDim) {
-            OP_LOGE(
-                ACLNN_ERR_PARAM_INVALID,
-                "Expected normalized index [%zu] shape [%ld] be equal to input index [%zu] shape [%ld], but failed.",
-                index, normDim, index + beginAxis, inputDim);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                "aclnnLayerNorm", "input", std::to_string(inputDim).c_str(),
+                ("normalizedShape[" + std::to_string(index) + "] with value " + std::to_string(normDim) +
+                 " must match input dim[" + std::to_string(index + beginAxis) + "]")
+                    .c_str());
             return false;
         }
         // 6.2 校验weight存在时与normalizedShape是否相等
@@ -232,10 +233,11 @@ static bool CheckNormalizedShapeMatch(const aclTensor* input, const aclIntArray*
         if (biasOptional) {
             int64_t biasDim = biasOptional->GetViewShape().GetDim(index);
             if (normDim != biasDim) {
-                OP_LOGE(
-                    ACLNN_ERR_PARAM_INVALID,
-                    "Expected normalized index [%zu] shape [%ld] be equal to bias index [%zu] shape [%ld], but failed.",
-                    index, normDim, index, biasDim);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    "aclnnLayerNorm", "biasOptional", std::to_string(biasDim).c_str(),
+                    ("normalizedShape[" + std::to_string(index) + "] with value " + std::to_string(normDim) +
+                     " must match biasOptional dim[" + std::to_string(index) + "]")
+                        .c_str());
                 return false;
             }
         }

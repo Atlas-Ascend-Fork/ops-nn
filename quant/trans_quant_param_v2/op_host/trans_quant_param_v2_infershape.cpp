@@ -72,9 +72,9 @@ static ge::graphStatus InferShape4TransQuantParamV2(gert::InferShapeContext* con
     gert::Shape* outYShape = context->GetOutputShape(OUTPUT_Y_INDEX);
     OP_CHECK_IF(
         outYShape == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
-                                                 "the output shape of required output y is missing in the infer-shape "
-                                                 "context; check that the graph node provides all required outputs"),
+        ReportInferShapeStageError(context->GetNodeName(),
+                                   "the output shape container of y (output index 0) is missing in the infer-shape "
+                                   "context; check the InferShapeContext construction"),
         return ge::GRAPH_FAILED);
 
     OP_LOGD(context->GetNodeName(), "scaleShape: %s", Ops::Base::ToString(*scaleShape).c_str());

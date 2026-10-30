@@ -13,7 +13,6 @@
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/op_log.h"
-#include "opdev/op_log.h"
 #include "log/log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/common_types.h"
@@ -231,9 +230,9 @@ static bool CheckDim(const aclTensor* x, const aclTensor* scale, const aclTensor
 
     int64_t scaleTotalSize = scaleShape.GetShapeSize();
     if (scaleTotalSize != scaleDim) {
-        OP_LOGE(
-            ACLNN_ERR_PARAM_INVALID,
-            "If scale is not 1-dimensional tensor, all dimensions except the dimension specified by axis should be 1");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnAscendQuantV3", "scale", std::to_string(scaleTotalSize).c_str(),
+            "if scale is not a 1-dimensional tensor, all dimensions except the dimension specified by axis must be 1");
         return false;
     }
 
@@ -248,10 +247,9 @@ static bool CheckInt32OutputShape(const aclTensor* x, const aclTensor* y)
     int64_t dimOutput = y->GetViewShape().GetDim(dimNum - 1);
     // check last dim
     if (dimInput != (dimOutput * INT4_NUMS_IN_INT32_SPACE)) {
-        OP_LOGE(
-            ACLNN_ERR_PARAM_INVALID,
-            "if y dtype is int32, the y last dim must be 1/8 of x last dim, x last dim is (%ld), y last dim is (%ld)",
-            dimInput, dimOutput);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnAscendQuantV3", "y", std::to_string(dimOutput).c_str(),
+            "if the dtype of y is int32, the last dim of y must be 1/8 of the last dim of x");
         return false;
     }
     // check others dim
@@ -335,10 +333,9 @@ static bool CheckRoundMode(const char* roundMode, int32_t dstType)
         }
     } else {
         if (mode != "round" && mode != "floor" && mode != "ceil" && mode != "trunc") {
-            OP_LOGE(
-                ACLNN_ERR_PARAM_INVALID,
-                "check roundMode failed, roundMode[%s] not in ['round','floor','ceil','trunc'] for int8/int4/int32.",
-                mode.c_str());
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                "aclnnAscendQuantV3", "roundMode", mode.c_str(),
+                "roundMode must be one of round/floor/ceil/trunc for int8/int4/int32");
             return false;
         }
     }

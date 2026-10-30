@@ -41,6 +41,7 @@ static constexpr int64_t GROUP_LIST_SPARSE_TYPE = 2;
 static constexpr int64_t MAX_GROUP_LIST_SIZE = 1024;
 static constexpr int32_t DIM_NUM = 3;
 static constexpr int32_t P_DIM_NUM = 2;
+static constexpr const char* KRONECKER_MATRIX_EXPECTED_RANK = "2";
 static constexpr int32_t SCALE_DIM_NUM = 1;
 static constexpr int32_t INDEX_0 = 0;
 static constexpr int32_t INDEX_1 = 1;
@@ -299,26 +300,43 @@ static bool CheckDim(const aclTensor* x, const aclTensor* kroneckerP1, const acl
                               p2Shape.GetDim(INDEX_1) == 0);
         if (!isP2ZeroShape) {
             OP_CHECK(p2Shape.GetDimNum() == P_DIM_NUM,
-                     OP_LOGE(ACLNN_ERR_PARAM_INVALID, "kroneckerP2 tensor should be 2D."), return false);
-            OP_CHECK(p2Shape.GetDim(INDEX_0) == N && p2Shape.GetDim(INDEX_1) == N,
-                     OP_LOGE(ACLNN_ERR_PARAM_INVALID, "kroneckerP2 dim0 and dim1 should be same with x dim2."),
+                     OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnFlatQuant", "kroneckerP2",
+                                                  std::to_string(p2Shape.GetDimNum()).c_str(),
+                                                  KRONECKER_MATRIX_EXPECTED_RANK),
                      return false);
+            OP_CHECK(
+                p2Shape.GetDim(INDEX_0) == N && p2Shape.GetDim(INDEX_1) == N,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    "aclnnFlatQuant", "kroneckerP2",
+                    (std::to_string(p2Shape.GetDim(INDEX_0)) + ", " + std::to_string(p2Shape.GetDim(INDEX_1))).c_str(),
+                    "dim0 and dim1 of kroneckerP2 should be the same as dim2 of x"),
+                return false);
         }
         // out: [K, M*N] for both mxfp4 and hif4 (element count, 4-bit packing handled by framework)
         OP_CHECK(outShape.GetDim(INDEX_0) == K,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out dim0 should be same with x dim0."), return false);
+                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnFlatQuant", "out",
+                                                          std::to_string(outShape.GetDim(INDEX_0)).c_str(),
+                                                          "dim0 of out should be the same as dim0 of x"),
+                 return false);
         int64_t expectedOutDim1 = M * N;
         OP_CHECK(outShape.GetDim(INDEX_1) == expectedOutDim1,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out dim1 should be (x dim1 * x dim2)."), return false);
+                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnFlatQuant", "out",
+                                                          std::to_string(outShape.GetDim(INDEX_1)).c_str(),
+                                                          "dim1 of out should be x dim1 * x dim2"),
+                 return false);
         // quantScale: [K, ceil(M*N/64), lastDim], lastDim=1(hif4)/2(mxfp4)
         int64_t expectedScaleDim1 = (M * N + DOUBLE_CEIL_SIZE - 1) / DOUBLE_CEIL_SIZE;
         OP_CHECK(quantScaleShape.GetDim(INDEX_1) == expectedScaleDim1,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "quantScale dim1 should be ceil(x dim1 * x dim2 / 64)."),
+                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnFlatQuant", "quantScale",
+                                                          std::to_string(quantScaleShape.GetDim(INDEX_1)).c_str(),
+                                                          "dim1 of quantScale should be ceil(x dim1 * x dim2 / 64)"),
                  return false);
         int64_t expectedScaleLastDim = (out->GetDataType() == Ops::NN::DT_HIFLOAT4) ? HIF4_SCALE_LAST_DIM :
                                                                                       MXFP4_SCALE_LAST_DIM;
         OP_CHECK(quantScaleShape.GetDim(INDEX_2) == expectedScaleLastDim,
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "quantScale dim2 should be %ld.", expectedScaleLastDim),
+                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnFlatQuant", "quantScale",
+                                                          std::to_string(quantScaleShape.GetDim(INDEX_2)).c_str(),
+                                                          "dim2 of quantScale should be 1 for hif4 or 2 for mxfp4"),
                  return false);
     }
 
@@ -405,7 +423,9 @@ static bool CheckOutDtypeValid(const aclTensor* out)
         appendDtypeStr(OUT_DTYPE_SUPPORT_LIST_HIF4);
     }
     fullListStr += "]";
-    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor out should be in dtype support list %s", fullListStr.c_str());
+    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+        "aclnnFlatQuant", "out", op::ToString(outDtype).GetString(),
+        (std::string("the dtype of out must be in the dtype support list ") + fullListStr).c_str());
     return false;
 }
 
@@ -418,8 +438,11 @@ static bool CheckScaleDtypeValid(const aclTensor* quantScale, const aclTensor* o
         scaleList = &SCALE_DTYPE_SUPPORT_LIST_HIF4;
     }
     OP_CHECK(std::find(scaleList->begin(), scaleList->end(), scaleDtype) != scaleList->end(),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor scale should be in dtype support list %s",
-                     op::ToString(*scaleList).GetString()),
+             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                 "aclnnFlatQuant", "quantScale", op::ToString(scaleDtype).GetString(),
+                 (std::string("the dtype of quantScale must be in the dtype support list ") +
+                  op::ToString(*scaleList).GetString())
+                     .c_str()),
              return false);
     return true;
 }

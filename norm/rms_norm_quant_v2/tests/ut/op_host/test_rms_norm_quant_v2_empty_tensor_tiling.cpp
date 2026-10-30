@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include "kernel_run_context_facker.h"
+#include "platform/platform_infos_def.h"
 #include "../../../op_host/rms_norm_quant_v2_tiling.h"
 
 namespace {
@@ -46,7 +47,8 @@ bool ValidateShapeAttrs(const std::vector<gert::StorageShape*>& inputShapes,
     auto tilingData = gert::TilingData::CreateCap(TILING_DATA_CAPACITY);
     auto workspaceHolder = gert::ContinuousVector::Create<size_t>(WORKSPACE_ELEMENT_CAPACITY);
     optiling::RmsNormQuantV2CompileInfo compileInfo;
-    char platformInfo = 0;
+    fe::PlatFormInfos platformInfo;
+    platformInfo.Init();
     if (tilingData == nullptr || workspaceHolder == nullptr) {
         return false;
     }
@@ -67,7 +69,7 @@ bool ValidateShapeAttrs(const std::vector<gert::StorageShape*>& inputShapes,
         .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeOutputTd(1, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
         .CompileInfo(&compileInfo)
-        .PlatformInfo(&platformInfo);
+        .PlatformInfo(reinterpret_cast<char*>(&platformInfo));
     if (isV3) {
         faker.NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
     }

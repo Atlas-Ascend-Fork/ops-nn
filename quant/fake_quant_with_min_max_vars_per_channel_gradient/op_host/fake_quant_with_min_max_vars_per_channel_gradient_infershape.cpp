@@ -26,12 +26,28 @@ static constexpr size_t OUTPUT_IDX_BPX = 0;
 static constexpr size_t OUTPUT_IDX_BPMIN = 1;
 static constexpr size_t OUTPUT_IDX_BPMAX = 2;
 
+// 分层规则: 输入shape缺失(图侧未提供输入)记EZ0037结构化参数错误;
+// 框架构造的输出shape容器为空属infershape阶段契约失败, 记EZ1014
+static void ReportInferShapeStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "FakeQuantWithMinMaxVarsPerChannelGradient",
+                                               reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", msgKey, msgValue);
+}
+
 static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientInferShape(gert::InferShapeContext* context)
 {
     OP_LOGD(context, "Begin to do FakeQuantWithMinMaxVarsPerChannelGradientInferShape");
 
     const gert::Shape* gradShape = context->GetInputShape(INPUT_IDX_GRADIENTS);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
+    OP_CHECK_IF(
+        gradShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "gradients",
+                                                 "the input shape of required input gradients is missing in the "
+                                                 "infer-shape context; check that the graph node provides all "
+                                                 "required inputs"),
+        return ge::GRAPH_FAILED);
     const gert::Shape* xShape = context->GetInputShape(INPUT_IDX_X);
     OP_CHECK_IF(
         xShape == nullptr,
@@ -55,26 +71,26 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientInferShape(gert:
         return ge::GRAPH_FAILED);
 
     gert::Shape* bpxShape = context->GetOutputShape(OUTPUT_IDX_BPX);
-    OP_CHECK_IF(bpxShape == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    context->GetNodeName(), "backprops_wrt_x",
-                    "the output shape of required output backprops_wrt_x is missing in the infer-shape context; check "
-                    "that the graph node provides all required outputs"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        bpxShape == nullptr,
+        ReportInferShapeStageError(context->GetNodeName(),
+                                   "the output shape container of backprops_wrt_x (output index 0) is missing in the "
+                                   "infer-shape context; check the InferShapeContext construction"),
+        return ge::GRAPH_FAILED);
     gert::Shape* bpMinShape = context->GetOutputShape(OUTPUT_IDX_BPMIN);
-    OP_CHECK_IF(bpMinShape == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    context->GetNodeName(), "backprops_wrt_min",
-                    "the output shape of required output backprops_wrt_min is missing in the infer-shape context; "
-                    "check that the graph node provides all required outputs"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        bpMinShape == nullptr,
+        ReportInferShapeStageError(context->GetNodeName(),
+                                   "the output shape container of backprops_wrt_min (output index 1) is missing in "
+                                   "the infer-shape context; check the InferShapeContext construction"),
+        return ge::GRAPH_FAILED);
     gert::Shape* bpMaxShape = context->GetOutputShape(OUTPUT_IDX_BPMAX);
-    OP_CHECK_IF(bpMaxShape == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    context->GetNodeName(), "backprops_wrt_max",
-                    "the output shape of required output backprops_wrt_max is missing in the infer-shape context; "
-                    "check that the graph node provides all required outputs"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        bpMaxShape == nullptr,
+        ReportInferShapeStageError(context->GetNodeName(),
+                                   "the output shape container of backprops_wrt_max (output index 2) is missing in "
+                                   "the infer-shape context; check the InferShapeContext construction"),
+        return ge::GRAPH_FAILED);
 
     // Cross-input constraints (README): x rank in [1, 8]; gradients shape == x shape;
     // min/max are 1-D with length == x last dim C and equal lengths. The kernel indexes
@@ -91,20 +107,26 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientInferShape(gert:
     }
     // Known rank, including the illegal rank-0 scalar: x rank must be in [1, 8].
     if (xRank < 1U || xRank > 8U) {
-        OP_LOGE(context, "x rank %zu out of range [1, 8]", xRank);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "rank", std::to_string(xRank).c_str(),
+                                              "x rank out of range [1, 8]");
         return ge::GRAPH_FAILED;
     }
     const size_t gradRank = gradShape->GetDimNum();
     if (!Ops::Base::IsUnknownRank(*gradShape)) {
         if (gradRank != xRank) {
-            OP_LOGE(context, "gradients rank %zu != x rank %zu", gradRank, xRank);
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "gradients",
+                                                   (std::to_string(gradRank) + ", " + std::to_string(xRank)).c_str(),
+                                                   "gradients rank != x rank");
             return ge::GRAPH_FAILED;
         }
         for (size_t i = 0U; i < xRank; ++i) {
             const int64_t xDim = xShape->GetDim(i);
             const int64_t gDim = gradShape->GetDim(i);
             if (xDim >= 0 && gDim >= 0 && xDim != gDim) {
-                OP_LOGE(context, "gradients dim %zu (%ld) != x dim (%ld)", i, gDim, xDim);
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    context->GetNodeName(), "gradients",
+                    (std::to_string(i) + ", " + std::to_string(gDim) + ", " + std::to_string(xDim)).c_str(),
+                    "gradients dim () != x dim ()");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -117,7 +139,9 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientInferShape(gert:
     // A known rank must be 1 (rank-0 scalar min/max is illegal); unknown rank is deferred to
     // tiling, which only sees concrete shapes.
     if ((!minUnknown && minRank != 1U) || (!maxUnknown && maxRank != 1U)) {
-        OP_LOGE(context, "min/max must be 1-D, got min rank %zu max rank %zu", minRank, maxRank);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "min",
+                                               (std::to_string(minRank) + ", " + std::to_string(maxRank)).c_str(),
+                                               "min/max must be 1-D, got min rank max rank");
         return ge::GRAPH_FAILED;
     }
     if (!minUnknown && !maxUnknown) {
@@ -125,7 +149,10 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelGradientInferShape(gert:
         const int64_t maxLen = maxShape->GetDim(0);
         if (channelNum >= 0 && minLen >= 0 && maxLen >= 0 &&
             (minLen != channelNum || maxLen != channelNum || minLen != maxLen)) {
-            OP_LOGE(context, "min/max length (%ld/%ld) must equal channel C (%ld)", minLen, maxLen, channelNum);
+            OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+                context->GetNodeName(), "min",
+                (std::to_string(minLen) + ", " + std::to_string(maxLen) + ", " + std::to_string(channelNum)).c_str(),
+                "min/max length (/) must equal channel C ()");
             return ge::GRAPH_FAILED;
         }
     }
