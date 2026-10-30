@@ -27,27 +27,30 @@ namespace l0op {
 OP_TYPE_REGISTER(RotateQuant);
 
 static std::tuple<aclTensor*, aclTensor*> RotateQuantAICore(const aclTensor* x, const aclTensor* rotation,
-                                                            const aclTensor* alpha, int64_t axis, const char* roundMode,
-                                                            int64_t scaleAlg, float dstTypeMax, bool trans,
-                                                            int64_t dstType, aclTensor* yOut, aclTensor* scaleOut,
+                                                            const aclTensor* alpha, const aclTensor* groupList,
+                                                            int64_t axis, const char* roundMode, int64_t scaleAlg,
+                                                            float dstTypeMax, bool trans, int64_t dstType,
+                                                            int64_t groupListType, aclTensor* yOut, aclTensor* scaleOut,
                                                             aclOpExecutor* executor)
 {
-    L0_DFX(RotateQuantAICore, x, rotation, alpha, axis, roundMode, scaleAlg, dstTypeMax, trans, dstType, yOut,
-           scaleOut);
-    auto retAicore = ADD_TO_LAUNCHER_LIST_AICORE(RotateQuant, OP_INPUT(x, rotation, alpha), OP_OUTPUT(yOut, scaleOut),
-                                                 OP_ATTR(dstType, axis, roundMode, scaleAlg, dstTypeMax, trans));
+    L0_DFX(RotateQuantAICore, x, rotation, alpha, groupList, axis, roundMode, scaleAlg, dstTypeMax, trans, dstType,
+           groupListType, yOut, scaleOut);
+    auto retAicore = ADD_TO_LAUNCHER_LIST_AICORE(
+        RotateQuant, OP_INPUT(x, rotation, alpha, groupList), OP_OUTPUT(yOut, scaleOut),
+        OP_ATTR(dstType, axis, roundMode, scaleAlg, dstTypeMax, trans, groupListType));
     OP_CHECK_ADD_TO_LAUNCHER_LIST_AICORE(retAicore != ACLNN_SUCCESS, return std::tuple(nullptr, nullptr),
                                          "RotateQuant add to aicore launch list failed.");
     return std::tie(yOut, scaleOut);
 }
 
 const std::tuple<aclTensor*, aclTensor*> RotateQuant(const aclTensor* x, const aclTensor* rotation,
-                                                     const aclTensor* alpha, int64_t axis, const char* roundMode,
-                                                     int64_t scaleAlg, float dstTypeMax, bool trans, int64_t dstType,
+                                                     const aclTensor* alpha, const aclTensor* groupList, int64_t axis,
+                                                     const char* roundMode, int64_t scaleAlg, float dstTypeMax,
+                                                     bool trans, int64_t dstType, int64_t groupListType,
                                                      aclTensor* yOut, aclTensor* scaleOut, aclOpExecutor* executor)
 {
     // 仅910b int路径(scale=FLOAT)需重新分配一维scale; 对齐cann_out正向判断——
-    // v121 hif4路径(scale=HIFLOAT4_SCALE)不得进入本分支, 否则scale类型被改成FLOAT且shape降为一维
+    // DAV_9201/DAV_9202 hif4路径(scale=HIFLOAT4_SCALE)不得进入本分支, 否则scale类型被改成FLOAT且shape降为一维
     // (主线旧版反向判断"!=DT_FLOAT8_E8M0"会误伤hif4, 机器实测表现为hifloat4_scale进workspace前变float)
     if (scaleOut->GetDataType() == DataType::DT_FLOAT) {
         auto yAlloc = executor->AllocTensor(x->GetViewShape(), op::DataType(dstType), op::Format::FORMAT_ND);
@@ -60,8 +63,8 @@ const std::tuple<aclTensor*, aclTensor*> RotateQuant(const aclTensor* x, const a
         yOut = yAlloc;
         scaleOut = scaleAlloc;
     }
-    return RotateQuantAICore(x, rotation, alpha, axis, roundMode, scaleAlg, dstTypeMax, trans, dstType, yOut, scaleOut,
-                             executor);
+    return RotateQuantAICore(x, rotation, alpha, groupList, axis, roundMode, scaleAlg, dstTypeMax, trans, dstType,
+                             groupListType, yOut, scaleOut, executor);
 }
 
 } // namespace l0op

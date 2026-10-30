@@ -3,22 +3,22 @@
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
-- Ascend 950PR&950DT系列产品：支持
+- <term>Ascend 950PR&950DT系列产品</term>：支持
 <!-- end id1 -->
 <!-- npu="A3" id2 -->
-- Atlas A3系列产品：支持
+- <term>Atlas A3系列产品</term>：支持
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2系列产品：支持
+- <term>Atlas A2系列产品</term>：支持
 <!-- end id3 -->
 <!-- npu="310b" id4 -->
-- Atlas 200I/500 A2推理产品：不支持
+- <term>Atlas 200I/500 A2推理产品</term>：不支持
 <!-- end id4 -->
 <!-- npu="310p" id5 -->
-- Atlas推理系列产品：不支持
+- <term>Atlas推理系列产品</term>：不支持
 <!-- end id5 -->
 <!-- npu="910" id6 -->
-- Atlas训练系列产品：不支持
+- <term>Atlas训练系列产品</term>：不支持
 <!-- end id6 -->
 
 ## 功能说明
@@ -230,7 +230,7 @@ aclnnStatus aclnnRotateQuant(
       <td>alpha(aclTensor*)</td>
       <td>输入</td>
       <td>clamp需要限制的范围的缩放系数</td>
-      <td>可选参数。shape为(1,)，数据类型为BFLOAT16，有效取值范围[0.0, 1.0]，不在有效取值范围内不做clamp处理。</td>
+      <td>可选参数。shape为(1,)，数据类型为BFLOAT16，有效取值范围(0.0, 1.0)，不在有效取值范围内不做clamp处理。</td>
       <td>BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -260,7 +260,7 @@ aclnnStatus aclnnRotateQuant(
       <td>scaleAlg(int64_t)</td>
       <td>输入</td>
       <td>表示scale的计算算法</td>
-      <td>支持取值0、1、2,默认值0。</td>
+      <td>支持取值0、1、2。</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -307,7 +307,7 @@ aclnnStatus aclnnRotateQuant(
       <td>√</td>
     </tr>
     <tr>
-      <td>workspaceSize(uint64_t)</td>
+      <td>workspaceSize(uint64_t*)</td>
       <td>输出</td>
       <td>返回需要在Device侧申请的workspace大小</td>
       <td>-</td>
@@ -317,7 +317,7 @@ aclnnStatus aclnnRotateQuant(
       <td>-</td>
     </tr>
     <tr>
-      <td>executor(aclOpExecutor*)</td>
+      <td>executor(aclOpExecutor**)</td>
       <td>输出</td>
       <td>返回op执行器，包含算子计算流程</td>
       <td>-</td>
@@ -407,14 +407,14 @@ aclnnStatus aclnnRotateQuant(
 
 <!-- npu="950" id9 -->
 - <term>Ascend 950PR&950DT系列产品</term>：
-  - x的shape为(*, N)，维度范围[1, 7]；rotation的shape为(K, K)或(N/K, K, K)，维度范围[2, 3], K当前版本仅支持取32，64，128。
+  - x的shape为(*, N)，维度范围[1, 7]；rotation的shape为(K, K)或(N/K, K, K)，维度范围[2, 3], K当前版本仅支持取32，64，128，256。
   - x最后一维的长度(N)必须是K的整数倍。
   - yOut的输出类型为FLOAT4_E2M1、FLOAT8_E4M3FN或FLOAT8_E5M2，shape与x相同。
   - x和rotation的数据类型必须相同，必须同时为BFLOAT16或FLOAT16。
   - rotation最后两维的长度必须一致。
   - scaleOut的shape必须是(*, CeilDiv(N,64), 2)，shape的维度支持2-8，数据类型为FLOAT8_E8M0。
   - yOut的数据类型必须在[FLOAT4_E2M1,FLOAT8_E4M3FN,FLOAT8_E5M2],yOut的shape必须和x的shape保持一致。
-  - alpha为可选输入，不为空指针时，shape为(1,)，数据类型为BFLOAT16，有效取值范围[0.0, 1.0]。传入空指针或者不在有效取值范围内不做clamp处理。
+  - alpha为可选输入，不为空指针时，shape为(1,)，数据类型为BFLOAT16，有效取值范围(0.0, 1.0)。传入空指针或者不在有效取值范围内不做clamp处理。
   - axis目前只支持-1或者D-1，D为x的shape的维数。
   - roundMode支持"rint"、"round"、"floor"，传入空指针时，采用"rint"模式。当yOut的数据类型为FLOAT8_E4M3FN或FLOAT8_E5M2时，roundMode仅支持"rint"。
   - scaleAlg支持取值0、1、2，当yOut的数据类型为FLOAT8_E4M3FN或FLOAT8_E5M2时只支持0和1，当yOut的数据类型为FLOAT4_E2M1时只支持0和2。

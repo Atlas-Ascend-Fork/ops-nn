@@ -14,8 +14,9 @@
 
 namespace l0op {
 const std::tuple<aclTensor*, aclTensor*> RotateQuant(const aclTensor* x, const aclTensor* rotation,
-                                                     const aclTensor* alpha, int64_t axis, const char* roundMode,
-                                                     int64_t scaleAlg, float dstTypeMax, bool trans, int64_t dstType,
+                                                     const aclTensor* alpha, const aclTensor* groupList, int64_t axis,
+                                                     const char* roundMode, int64_t scaleAlg, float dstTypeMax,
+                                                     bool trans, int64_t dstType, int64_t groupListType,
                                                      aclTensor* yOut, aclTensor* scaleOut, aclOpExecutor* executor);
 }
 

@@ -31,7 +31,7 @@ namespace RotateQuantNS {
 using namespace Cmct;
 using namespace Cmct::Gemm;
 
-// HIFLOAT4输出分发: v121(9201/9202)下按输出dtype选择epilogue——binary.json的hif4条目
+// HIFLOAT4输出分发: DAV_9201/DAV_9202下按输出dtype选择epilogue——binary.json的hif4条目
 // (y=hifloat4)编译时DTYPE_Y=hifloat4x2_t, 使用hif4 epilogue; 其余走主线原epilogue。
 // 3510不支持HIFLOAT4输出, 直接使用主线原epilogue(与master一致)。
 template <class X_TYPE, class Y_TYPE, class SCALE_TYPE, class C_LAYOUT>
@@ -62,7 +62,7 @@ __aicore__ inline void RotateQuantCmctKernel(GM_ADDR xGM, GM_ADDR rotGM, GM_ADDR
     using FusionOp = Block::DefaultFusion<OutType, CType>;
 
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
-    // v121: HIFLOAT4输出(y=hifloat4x2_t)使用hif4 epilogue, 其余使用主线原epilogue(dtype驱动分发)
+    // DAV_9201/DAV_9202: HIFLOAT4输出(y=hifloat4x2_t)使用hif4 epilogue, 其余使用主线原epilogue(dtype驱动分发)
     // 注: hifloat4x2_t为CCE编译器内置类型(同fp4x2_e2m1_t, 不属于AscendC命名空间, 须裸用)
     using BlockEpilogue = typename std::conditional<
         std::is_same<Y_TYPE, hifloat4x2_t>::value,

@@ -53,6 +53,9 @@ struct RotateQuantAptInfo {
     const char* opName = "RotateQuantApt";
     bool hasAlpha = false;
     uint32_t realCoreNum = 0;
+    bool groupMode = false;
+    uint32_t groupNum = 0;
+    int64_t groupListType = 0;
 };
 
 class RotateQuantAptTiling : public Ops::NN::Optiling::TilingBaseClass {
@@ -79,12 +82,14 @@ protected:
     ge::graphStatus AnalyzeDtype();
     ge::graphStatus AnalyzeAttrs();
     ge::graphStatus AnalyzeShapes();
+    ge::graphStatus AnalyzeGroups();
     ge::graphStatus ParseAttrValues();
     ge::graphStatus CheckAlphaInput();
     ge::graphStatus ValidateRotShape(const gert::Shape& rotShape);
     ge::graphStatus ValidateScaleShape(const gert::Shape& mxscaleShape, const gert::Shape& scaleShape);
     void PrintTilingData();
     ge::graphStatus CalcTilingData();
+    bool SetBaseBlockTiling();
     bool SetMatmulTiling();
 
     RotateQuantAptOpt::RotateQuantAptTilingData tilingData_;

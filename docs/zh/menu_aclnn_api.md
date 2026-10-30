@@ -372,6 +372,7 @@
 - [aclnnRmsNormQuant](../../norm/rms_norm_quant/docs/aclnnRmsNormQuant.md)
 - [aclnnRmsNormQuantV3](../../norm/rms_norm_quant_v3/docs/aclnnRmsNormQuantV3.md)
 - [aclnnRotateQuant](../../matmul/rotate_quant/docs/aclnnRotateQuant.md)
+- [aclnnRotateQuantV2](../../matmul/rotate_quant/docs/aclnnRotateQuantV2.md)
 - [aclnnScaledMaskedSoftmax](../../vfusion/scaled_masked_softmax_v2/docs/aclnnScaledMaskedSoftmax.md)
 - [aclnnScaledMaskedSoftmaxBackward](../../vfusion/scaled_masked_softmax_grad_v2/docs/aclnnScaledMaskedSoftmaxBackward.md)
 - [aclnnScatter&aclnnInplaceScatter](../../index/scatter_elements_v2/docs/aclnnScatter&aclnnInplaceScatter.md)

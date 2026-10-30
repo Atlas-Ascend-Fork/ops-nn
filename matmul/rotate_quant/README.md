@@ -175,6 +175,13 @@
       <td>ND</td>
     </tr>
     <tr>
+      <td>group_list</td>
+      <td>可选输入</td>
+      <td>代表输入`x`的量化分组大小分布。</td>
+      <td>INT64</td>
+      <td>ND</td>
+    </tr>
+    <tr>
       <td>yOut</td>
       <td>输出</td>
       <td>量化后的输出张量。</td>
@@ -230,13 +237,20 @@
       <td>BOOL</td>
       <td>-</td>
     </tr>
+    <tr>
+      <td>group_list_type</td>
+      <td>可选属性</td>
+      <td><ul><li>代表groupList输入的分组方式。当group_list不为nullptr时支持取值0，1。</li><li>默认值为0。</li></ul></td>
+      <td>INT</td>
+      <td>-</td>
+    </tr>
   </tbody>
   </table>
 
 ## 约束说明
 
 - <term>Ascend 950PR&950DT系列产品</term>：
-  - x的shape为(*, N)，维度范围[1, 7]；rotation的shape为(K, K)或(N/K, K, K)，维度范围[2, 3], K当前版本仅支持取32，64，128。
+  - x的shape为(*, N)，维度范围[1, 7]；rotation的shape为(K, K)或(N/K, K, K)，维度范围[2, 3], K当前版本仅支持取32，64，128，256。
   - x最后一维的长度(N)必须是K的整数倍。
   - yOut的输出类型为FLOAT4_E2M1、FLOAT8_E4M3FN或FLOAT8_E5M2，shape与x相同。
   - x和rotation的数据类型必须相同。
@@ -247,8 +261,16 @@
   - scaleAlg支持取值0、1、2，当yOut的数据类型为FLOAT8_E4M3FN或FLOAT8_E5M2时只支持0和1，当yOut的数据类型为FLOAT4_E2M1时只支持0和2。
   - dstTypeMax：当scaleAlg=2时dstTypeMax必须在[6.0, 12.0]范围内，其余场景仅支持0.0。
   - trans目前只支持false。
+  - group_list支持nullptr。
+  - group_list不为nullptr时：
+    - group_list_type必须从[0, 1]中取值。
+    - group_list的shape为(E,)，E表示分组数，E需要大于等于1且小于等于1024。
+    - group_list的数值需要满足以下条件，否则无法保证输出是否符合预期：
+      - 当group_list_type为0时，group_list必须为非负单调非递减数列，表示分组后每组大小的cumsum结果（累计和），最后一个值应小于等于x中tensor的第一维。
+      - 当group_list_type为1时，group_list必须为非负数列，表示分组后每组大小，数值的总和应小于等于x中tensor的第一维。
 
 - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：
+  - group_list仅支持nullptr。
   - x的shape为(M, N)，rotation的shape为(K, K)。
   - rotation的shape必须是方阵(K, K)。
   - x第二维的长度(N)必须是K的整数倍，N必须可以整除8。
@@ -269,4 +291,6 @@
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| aclnn接口  | [test_aclnn_rotate_quant](examples/test_aclnn_rotate_quant.cpp) | 通过[aclnnRotateQuant](docs/aclnnRotateQuant.md)等方式调用RotateQuant算子。 |
+| aclnn接口（V1） | [test_aclnn_rotate_quant](examples/test_aclnn_rotate_quant.cpp) | 通过[aclnnRotateQuant](docs/aclnnRotateQuant.md)接口方式调用RotateQuant算子。 |
+| aclnn接口（V2） | [test_aclnn_rotate_quant_v2](examples/test_aclnn_rotate_quant_v2.cpp) | 通过[aclnnRotateQuantV2](docs/aclnnRotateQuantV2.md)接口方式调用RotateQuant算子，V2接口支持分组量化特性。 |
+| PyTorch接口 | - | 通过[rotate_quant](docs/torchapi_rotate_quant.md)接口调用RotateQuant算子。|

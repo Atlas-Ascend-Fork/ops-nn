@@ -14,6 +14,9 @@
  */
 #include "../../../../common/inc/op_host/op_const_def_nn.h"
 #include "rotate_quant_tiling.h"
+#include <algorithm>
+#include <array>
+#include <limits>
 #include "error_util.h"
 #include "log/log.h"
 #include "util/math_util.h"
@@ -35,14 +38,18 @@ constexpr uint32_t MAX_X_DIM_NUM = 7;
 constexpr uint32_t MIN_X_DIM_NUM = 1;
 constexpr uint32_t MIN_ROT_DIM_NUM = 2;
 constexpr uint32_t MAX_ROT_DIM_NUM = 3;
+constexpr int64_t MIN_GROUP_NUM = 1;
+constexpr int64_t MAX_GROUP_NUM = 1024;
 constexpr uint32_t MIN_M = 16;
 constexpr uint32_t INIT_ACCUMULATE_VALUE = 1;
 constexpr uint32_t MIN_BASE_M = 1;
+constexpr uint32_t EPILOGUE_ELEMENTS = 16384;
 constexpr int64_t MX_SCALE_LAST_SIZE = 2;
 constexpr int64_t HIF4_SCALE_LAST_DIM = 1;
 constexpr int64_t MX_SCALE_CEIL_NUM = 64;
 constexpr int64_t SYS_WORKSPACE_SIZE = 16UL * 1024UL * 1024UL;
 constexpr uint64_t DEFAULT_TILING_KEY = 0;
+constexpr uint64_t GROUPED_TILING_KEY = 1;
 constexpr uint32_t WORKSPACE_NUM = 1;
 constexpr uint32_t AIC_AIV_RATIO_950 = 2;
 
@@ -65,6 +72,8 @@ constexpr int32_t DEFAULT_AXIS = -1;
 constexpr int64_t ROT_K_SIZE_32 = 32;
 constexpr int64_t ROT_K_SIZE_64 = 64;
 constexpr int64_t ROT_K_SIZE_128 = 128;
+constexpr int64_t ROT_K_SIZE_256 = 256;
+constexpr std::array<int64_t, 4> SUPPORTED_ROT_K_SIZES = {ROT_K_SIZE_32, ROT_K_SIZE_64, ROT_K_SIZE_128, ROT_K_SIZE_256};
 
 constexpr uint32_t ALPHA_DIM_NUM = 1;
 constexpr uint32_t ALPHA_DIM_SIZE = 1;
@@ -105,6 +114,10 @@ namespace Ops {
 namespace NN {
 namespace RotateQuant {
 
+namespace {
+constexpr bool IsDav920Series(NpuArch npuArch) { return npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202; }
+} // namespace
+
 ge::graphStatus RotateQuantAptTiling::GetPlatformInfo() { return ge::GRAPH_SUCCESS; }
 
 bool RotateQuantAptTiling::IsCapable()
@@ -114,11 +127,11 @@ bool RotateQuantAptTiling::IsCapable()
                 compileInfo_.aicNum, compileInfo_.aivNum);
         return false;
     }
-    // v121(ascend960dt/ascend960pr): AIC:AIV = 1:1
-    if (compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202) {
+    // DAV_9201/DAV_9202: AIC:AIV = 1:1
+    if (IsDav920Series(compileInfo_.npuArch)) {
         if (compileInfo_.aivNum != compileInfo_.aicNum) {
             OP_LOGE(context_->GetNodeName(),
-                    "RotateQuant is only supported for aicNum:aivNum=1:1 on v121, aicNum=%lu, aivNum=%lu",
+                    "RotateQuant is only supported for aicNum:aivNum=1:1 on DAV_9201/DAV_9202, aicNum=%lu, aivNum=%lu",
                     compileInfo_.aicNum, compileInfo_.aivNum);
             return false;
         }
@@ -179,6 +192,8 @@ ge::graphStatus RotateQuantAptTiling::GetShapeAttrsInfo()
     OP_TILING_CHECK(AnalyzeAttrs() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid attrs."),
                     return ge::GRAPH_FAILED);
     OP_TILING_CHECK(AnalyzeDtype() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid dtypes."),
+                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(AnalyzeGroups() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid groups."),
                     return ge::GRAPH_FAILED);
     OP_TILING_CHECK(AnalyzeShapes() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid shapes."),
                     return ge::GRAPH_FAILED);
@@ -289,26 +304,24 @@ ge::graphStatus RotateQuantAptTiling::CheckAlphaInput()
 {
     auto computeNodeInfo = context_->GetComputeNodeInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context_, computeNodeInfo);
-    if (computeNodeInfo->GetInputsNum() > ALPHA_INDEX) {
-        auto alphaDesc = context_->GetInputDesc(ALPHA_INDEX);
-        if (alphaDesc != nullptr) {
-            OP_TILING_CHECK(
-                inputParams_.yDtype == Ops::NN::DT_HIFLOAT4,
-                OP_LOGE(inputParams_.opName, "alpha is only supported for mxfp4/mxfp8 output, not for hif4."),
-                return ge::GRAPH_FAILED);
-            auto alphaDtype = alphaDesc->GetDataType();
-            OP_TILING_CHECK(alphaDtype != ge::DT_BF16, OP_LOGE(inputParams_.opName, "alpha dtype should be bf16."),
-                            return ge::GRAPH_FAILED);
-            auto alphaShape = context_->GetInputShape(ALPHA_INDEX);
-            OPS_CHECK_NULL_WITH_CONTEXT(context_, alphaShape);
-            auto alphaStorageShape = alphaShape->GetStorageShape();
-            OP_TILING_CHECK(
-                alphaStorageShape.GetDimNum() != ALPHA_DIM_NUM || alphaStorageShape.GetDim(0) != ALPHA_DIM_SIZE,
-                OP_LOGE(inputParams_.opName, "alpha shape should be (1,)."), return ge::GRAPH_FAILED);
-            inputParams_.hasAlpha = true;
-            OP_LOGD(inputParams_.opName, "hasAlpha detected");
-        }
+    inputParams_.hasAlpha = false;
+    auto alphaDesc = context_->GetOptionalInputDesc(ALPHA_INDEX);
+    if (alphaDesc == nullptr) {
+        return ge::GRAPH_SUCCESS;
     }
+    OP_TILING_CHECK(inputParams_.yDtype == Ops::NN::DT_HIFLOAT4,
+                    OP_LOGE(inputParams_.opName, "alpha is only supported for mxfp4/mxfp8 output, not for hif4."),
+                    return ge::GRAPH_FAILED);
+    auto alphaDtype = alphaDesc->GetDataType();
+    OP_TILING_CHECK(alphaDtype != ge::DT_BF16, OP_LOGE(inputParams_.opName, "alpha dtype should be bf16."),
+                    return ge::GRAPH_FAILED);
+    auto alphaShape = context_->GetOptionalInputShape(ALPHA_INDEX);
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, alphaShape);
+    auto alphaStorageShape = alphaShape->GetStorageShape();
+    OP_TILING_CHECK(alphaStorageShape.GetDimNum() != ALPHA_DIM_NUM || alphaStorageShape.GetDim(0) != ALPHA_DIM_SIZE,
+                    OP_LOGE(inputParams_.opName, "alpha shape should be (1,)."), return ge::GRAPH_FAILED);
+    inputParams_.hasAlpha = true;
+    OP_LOGD(inputParams_.opName, "hasAlpha detected");
     return ge::GRAPH_SUCCESS;
 }
 
@@ -330,6 +343,9 @@ ge::graphStatus RotateQuantAptTiling::AnalyzeDtype()
                         yDtype != Ops::NN::DT_HIFLOAT4,
                     OP_LOGE(inputParams_.opName,
                             "y dtype should be in [FLOAT4_E2M1, FLOAT8_E4M3FN, FLOAT8_E5M2, HIFLOAT4] for ascend950."),
+                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(yDtype == Ops::NN::DT_HIFLOAT4 && !IsDav920Series(compileInfo_.npuArch),
+                    OP_LOGE(inputParams_.opName, "HIFLOAT4 output is only supported on DAV_9201/DAV_9202."),
                     return ge::GRAPH_FAILED);
     if (yDtype == ge::DT_FLOAT4_E2M1) {
         OP_TILING_CHECK(inputParams_.scaleAlg != MIN_SCALE_ALG && inputParams_.scaleAlg != MAX_SCALE_ALG,
@@ -387,9 +403,13 @@ ge::graphStatus RotateQuantAptTiling::AnalyzeDtype()
 
 ge::graphStatus RotateQuantAptTiling::ValidateRotShape(const gert::Shape& rotShape)
 {
-    OP_TILING_CHECK(rotShape.GetDimNum() < MIN_ROT_DIM_NUM || rotShape.GetDimNum() > MAX_ROT_DIM_NUM,
-                    OP_LOGE(inputParams_.opName, "Input rot rank[%zu] should be in [2, 3].", rotShape.GetDimNum()),
-                    return ge::GRAPH_FAILED);
+    const size_t rotRank = rotShape.GetDimNum();
+    const size_t minRotRank = inputParams_.groupMode ? 3 : MIN_ROT_DIM_NUM;
+    const size_t maxRotRank = inputParams_.groupMode ? 4 : MAX_ROT_DIM_NUM;
+    OP_TILING_CHECK(
+        rotRank < minRotRank || rotRank > maxRotRank,
+        OP_LOGE(inputParams_.opName, "Input rot rank[%zu] should be in [%zu, %zu].", rotRank, minRotRank, maxRotRank),
+        return ge::GRAPH_FAILED);
 
     inputParams_.K = rotShape.GetDim(rotShape.GetDimNum() - 1);
     if (inputParams_.yDtype == Ops::NN::DT_HIFLOAT4) {
@@ -403,17 +423,33 @@ ge::graphStatus RotateQuantAptTiling::ValidateRotShape(const gert::Shape& rotSha
                                 ROT_K_SIZE_64, ROT_K_SIZE_128),
                         return ge::GRAPH_FAILED);
     }
-    OP_TILING_CHECK(
-        inputParams_.K != ROT_K_SIZE_32 && inputParams_.K != ROT_K_SIZE_64 && inputParams_.K != ROT_K_SIZE_128,
-        OP_LOGE(inputParams_.opName, "Input rot last dim size must be in [%ld, %ld, %ld].", ROT_K_SIZE_32,
-                ROT_K_SIZE_64, ROT_K_SIZE_128),
-        return ge::GRAPH_FAILED);
+    auto platformInfo = context_->GetPlatformInfo();
+    const bool isAscend950 = platformInfo != nullptr &&
+                             platform_ascendc::PlatformAscendC(platformInfo).GetSocVersion() ==
+                                 platform_ascendc::SocVersion::ASCEND950;
+    const bool isSupportedK = isAscend950 ? std::find(SUPPORTED_ROT_K_SIZES.begin(), SUPPORTED_ROT_K_SIZES.end(),
+                                                      inputParams_.K) != SUPPORTED_ROT_K_SIZES.end() :
+                                            (inputParams_.K == ROT_K_SIZE_32 || inputParams_.K == ROT_K_SIZE_64 ||
+                                             inputParams_.K == ROT_K_SIZE_128 || inputParams_.K == ROT_K_SIZE_256);
+    OP_TILING_CHECK(!isSupportedK,
+                    OP_LOGE(inputParams_.opName, "Input rot last dim size must be in [%ld, %ld, %ld, %ld].",
+                            ROT_K_SIZE_32, ROT_K_SIZE_64, ROT_K_SIZE_128, ROT_K_SIZE_256),
+                    return ge::GRAPH_FAILED);
 
     OP_TILING_CHECK(inputParams_.N % inputParams_.K != 0,
                     OP_LOGE(inputParams_.opName, "N(%ld) must be divisible by K(%ld).", inputParams_.N, inputParams_.K),
                     return ge::GRAPH_FAILED);
 
     inputParams_.nKRatio = inputParams_.N / inputParams_.K;
+
+    if (inputParams_.groupMode) {
+        OP_TILING_CHECK(rotShape.GetDim(rotRank - 2) != inputParams_.K ||
+                            (rotRank == 4 && rotShape.GetDim(1) != inputParams_.nKRatio),
+                        OP_LOGE(inputParams_.opName, "Grouped rotation must have shape [E,K,K] or [E,N/K,K,K]."),
+                        return ge::GRAPH_FAILED);
+        inputParams_.rotType = (rotRank == 4 && inputParams_.nKRatio > 1) ? ROT_TYPE_MULTI : ROT_TYPE_SINGLE;
+        return ge::GRAPH_SUCCESS;
+    }
 
     if (rotShape.GetDimNum() == MIN_ROT_DIM_NUM) {
         inputParams_.rotType = ROT_TYPE_SINGLE;
@@ -447,6 +483,49 @@ ge::graphStatus RotateQuantAptTiling::ValidateScaleShape(const gert::Shape& mxsc
     return ge::GRAPH_SUCCESS;
 }
 
+ge::graphStatus RotateQuantAptTiling::AnalyzeGroups()
+{
+    constexpr size_t GROUP_INDEX = 3;
+    constexpr size_t GROUP_TYPE_INDEX = 6;
+    auto nodeInfo = context_->GetComputeNodeInfo();
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, nodeInfo);
+    if (context_->GetOptionalInputDesc(GROUP_INDEX) == nullptr) {
+        return ge::GRAPH_SUCCESS;
+    }
+    auto platformInfo = context_->GetPlatformInfo();
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    const auto& platform = platform_ascendc::PlatformAscendC(platformInfo);
+    OP_TILING_CHECK(platform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950,
+                    OP_LOGE(inputParams_.opName, "Grouped RotateQuant is only supported on Ascend950."),
+                    return ge::GRAPH_FAILED);
+    auto groups = context_->GetOptionalInputShape(GROUP_INDEX);
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, groups);
+    const auto& shape = groups->GetStorageShape();
+    const auto& xShape = context_->GetInputShape(X_INDEX)->GetStorageShape();
+    const auto& rotShape = context_->GetInputShape(ROT_INDEX)->GetStorageShape();
+    OP_TILING_CHECK(
+        context_->GetOptionalInputDesc(GROUP_INDEX)->GetDataType() != ge::DT_INT64 || shape.GetDimNum() != 1 ||
+            xShape.GetDimNum() != 2 || (rotShape.GetDimNum() != 3 && rotShape.GetDimNum() != 4),
+        OP_LOGE(inputParams_.opName, "Grouped mode requires int64[E], x[M,N], rotation[E,K,K] or [E,N/K,K,K]."),
+        return ge::GRAPH_FAILED);
+    int64_t groupsNum = shape.GetDim(0);
+    OP_TILING_CHECK(groupsNum < MIN_GROUP_NUM || groupsNum > MAX_GROUP_NUM || rotShape.GetDim(0) != groupsNum,
+                    OP_LOGE(inputParams_.opName, "Group count must equal rotation dim0 and be in [%ld,%ld].",
+                            MIN_GROUP_NUM, MAX_GROUP_NUM),
+                    return ge::GRAPH_FAILED);
+    auto attrs = context_->GetAttrs();
+    if (attrs != nullptr && attrs->GetAttrNum() > GROUP_TYPE_INDEX) {
+        auto type = attrs->GetAttrPointer<int64_t>(GROUP_TYPE_INDEX);
+        OPS_CHECK_NULL_WITH_CONTEXT(context_, type);
+        inputParams_.groupListType = *type;
+    }
+    OP_TILING_CHECK(inputParams_.groupListType != 0 && inputParams_.groupListType != 1,
+                    OP_LOGE(inputParams_.opName, "group_list_type must be 0 or 1."), return ge::GRAPH_FAILED);
+    inputParams_.groupMode = true;
+    inputParams_.groupNum = static_cast<uint32_t>(groupsNum);
+    return ge::GRAPH_SUCCESS;
+}
+
 ge::graphStatus RotateQuantAptTiling::AnalyzeShapes()
 {
     const auto& xShape = context_->GetInputShape(X_INDEX)->GetStorageShape();
@@ -457,9 +536,14 @@ ge::graphStatus RotateQuantAptTiling::AnalyzeShapes()
                             MIN_X_DIM_NUM, MAX_X_DIM_NUM),
                     return ge::GRAPH_FAILED);
 
+    constexpr int64_t maxShapeDim = std::numeric_limits<int32_t>::max();
     inputParams_.M = INIT_ACCUMULATE_VALUE;
     for (size_t i = 0; i < xShape.GetDimNum() - 1; i++) {
-        inputParams_.M *= xShape.GetDim(i);
+        const int64_t dim = xShape.GetDim(i);
+        OP_TILING_CHECK(dim <= 0 || inputParams_.M > maxShapeDim / dim,
+                        OP_LOGE(inputParams_.opName, "Flattened M must be in [1, %ld].", maxShapeDim),
+                        return ge::GRAPH_FAILED);
+        inputParams_.M *= dim;
     }
     inputParams_.N = xShape.GetDim(xShape.GetDimNum() - 1);
 
@@ -467,11 +551,16 @@ ge::graphStatus RotateQuantAptTiling::AnalyzeShapes()
                     OP_LOGE(inputParams_.opName, "M[%ld] and N[%ld] must be positive.", inputParams_.M, inputParams_.N),
                     return ge::GRAPH_FAILED);
 
+    OP_TILING_CHECK(inputParams_.M > maxShapeDim || inputParams_.N > maxShapeDim,
+                    OP_LOGE(inputParams_.opName, "M[%ld] and N[%ld] must not exceed INT32_MAX[%ld].", inputParams_.M,
+                            inputParams_.N, maxShapeDim),
+                    return ge::GRAPH_FAILED);
+
     OP_TILING_CHECK(ValidateRotShape(rotShape) != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid rot shape."),
                     return ge::GRAPH_FAILED);
 
     // 校验输出scale总元素数与推导结果一致（允许扁平等总量view）：M*CeilDiv(N,64)*lastDim
-    // v121 hif4输出: scale为(*, CeilDiv(N,64), 1); mxfp输出: (*, CeilDiv(N,64), 2)
+    // DAV_9201/DAV_9202 hif4输出: scale为(*, CeilDiv(N,64), 1); mxfp输出: (*, CeilDiv(N,64), 2)
     const auto& scaleShape = context_->GetOutputShape(SCALE_INDEX)->GetStorageShape();
     gert::Shape mxScaleShape = xShape;
     mxScaleShape.SetDim(mxScaleShape.GetDimNum() - 1, Ops::Base::CeilDiv(inputParams_.N, MX_SCALE_CEIL_NUM));
@@ -505,6 +594,9 @@ void RotateQuantAptTiling::PrintTilingData()
     OP_LOGD(inputParams_.opName, "scaleAlg:     [%d]", tiling.scaleAlg);
     OP_LOGD(inputParams_.opName, "trans:        [%u]", tiling.trans);
     OP_LOGD(inputParams_.opName, "hasAlpha:     [%u]", tiling.hasAlpha);
+    OP_LOGD(inputParams_.opName, "groupMode:    [%u]", tiling.groupMode);
+    OP_LOGD(inputParams_.opName, "groupNum:     [%u]", tiling.groupNum);
+    OP_LOGD(inputParams_.opName, "groupListType:[%d]", tiling.groupListType);
     OP_LOGD(inputParams_.opName, "=== End Tiling Data ===");
 }
 
@@ -516,6 +608,9 @@ ge::graphStatus RotateQuantAptTiling::CalcTilingData()
     tilingData_.B = (inputParams_.rotType == ROT_TYPE_MULTI) ? static_cast<uint32_t>(inputParams_.nKRatio) :
                                                                SINGLE_ROTATION_B_SIZE;
     tilingData_.nKRatio = static_cast<uint32_t>(inputParams_.nKRatio);
+    tilingData_.groupMode = inputParams_.groupMode;
+    tilingData_.groupNum = inputParams_.groupNum;
+    tilingData_.groupListType = static_cast<int32_t>(inputParams_.groupListType);
 
     tilingData_.dstTypeMax = inputParams_.dstTypeMax;
     if (tilingData_.dstTypeMax > DST_TYPE_MAX_DEFAULT) {
@@ -532,36 +627,97 @@ ge::graphStatus RotateQuantAptTiling::CalcTilingData()
     return ge::GRAPH_SUCCESS;
 }
 
+bool RotateQuantAptTiling::SetBaseBlockTiling()
+{
+    tilingData_.baseK = tilingData_.kL1;
+    tilingData_.baseN = tilingData_.nL1;
+    uint32_t maxBaseM = std::numeric_limits<uint32_t>::max();
+    uint32_t baseMAlignment = MIN_BASE_M;
+    if (tilingData_.K == ROT_K_SIZE_256) {
+        // Each L0B ping-pong slot holds only part of the 256x256 rotation.
+        // BlockMmad accumulates these K slices into the same L0C tile before Fixpipe.
+        uint32_t maxBaseK = compileInfo_.l0BSize / DOUBLE_BUFFER / tilingData_.baseN / ELEMENT_BYTES_16BIT;
+        maxBaseK = maxBaseK / MIN_M * MIN_M;
+        if (maxBaseK == 0) {
+            return false;
+        }
+        tilingData_.baseK = std::min(tilingData_.baseK, maxBaseK);
+        // The fixed epilogue UB contains at most 16384 BF16 values (512 MX blocks).
+        // Account for both A and rotation L1 slots, including physical M alignment.
+        uint64_t rotBytes = static_cast<uint64_t>(tilingData_.K) * tilingData_.K * ELEMENT_BYTES_16BIT;
+        if (compileInfo_.l1Size <= DOUBLE_BUFFER * rotBytes) {
+            return false;
+        }
+        uint32_t l1Rows = (compileInfo_.l1Size - DOUBLE_BUFFER * rotBytes) /
+                          (DOUBLE_BUFFER * tilingData_.K * ELEMENT_BYTES_16BIT);
+        maxBaseM = std::min(l1Rows, EPILOGUE_ELEMENTS / tilingData_.K);
+        baseMAlignment = MIN_M;
+    }
+    // baseM按L0容量折算: DAV_9201/DAV_9202 的 block层为单缓冲(全量L0可用), 按全量L0计算(对齐cann_out,
+    // 半量残留会使baseM减半→mL1偏离cann_out验证基线); 3510保留L0 ping-pong双缓冲, 按半量L0计算(主线行为)
+    const uint32_t l0BufferDiv = IsDav920Series(compileInfo_.npuArch) ? 1U : DOUBLE_BUFFER;
+    uint32_t baseML0A = compileInfo_.l0ASize / tilingData_.baseK / l0BufferDiv / ELEMENT_BYTES_16BIT;
+    uint32_t baseML0C = compileInfo_.l0CSize / tilingData_.baseN / l0BufferDiv / ELEMENT_BYTES_32BIT;
+    tilingData_.baseM = std::max(std::min(baseML0A, baseML0C), MIN_BASE_M);
+    tilingData_.baseM = std::min(tilingData_.baseM, maxBaseM) / baseMAlignment * baseMAlignment;
+    return tilingData_.baseM != 0;
+}
+
 bool RotateQuantAptTiling::SetMatmulTiling()
 {
     tilingData_.kL1 = tilingData_.K;
     tilingData_.nL1 = tilingData_.K;
-    tilingData_.baseK = tilingData_.kL1;
-    tilingData_.baseN = tilingData_.nL1;
-    // 核配决策: aivNumRatio由tiling层统一下发, kernel/block层按此运行时分发
-    tilingData_.aivNumRatio = (compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202) ?
-                                  1 :
-                                  2;
-    // baseM按L0容量折算: v121(9201/9202)block层为单缓冲(全量L0可用), 按全量L0计算(对齐cann_out,
-    // 半量残留会使baseM减半→mL1偏离cann_out验证基线); 3510保留L0 ping-pong双缓冲, 按半量L0计算(主线行为)
-    const bool isV121Arch = (compileInfo_.npuArch == NpuArch::DAV_9201 || compileInfo_.npuArch == NpuArch::DAV_9202);
-    const uint32_t l0BufferDiv = isV121Arch ? 1U : DOUBLE_BUFFER;
-    uint32_t baseML0A = compileInfo_.l0ASize / tilingData_.baseK / l0BufferDiv / ELEMENT_BYTES_16BIT;
-    uint32_t baseML0C = compileInfo_.l0CSize / tilingData_.baseN / l0BufferDiv / ELEMENT_BYTES_32BIT;
-    tilingData_.baseM = std::max(std::min(baseML0A, baseML0C), MIN_BASE_M);
+    // Record the core ratio; kernel routing remains architecture-specific.
+    tilingData_.aivNumRatio = IsDav920Series(compileInfo_.npuArch) ? 1 : AIC_AIV_RATIO_950;
+    if (!SetBaseBlockTiling()) {
+        return false;
+    }
 
     uint32_t totalCoreNum = static_cast<uint32_t>(compileInfo_.aicNum);
+    if (inputParams_.groupMode) {
+        // Actual group lengths live on device. Launch all cores; the scheduler
+        // determines active cores and each group tail without crossing boundaries.
+        uint64_t totalRows = static_cast<uint64_t>(tilingData_.M) * tilingData_.nKRatio;
+        uint64_t perCore = (totalRows + totalCoreNum - 1) / totalCoreNum;
+        if (tilingData_.B > SINGLE_ROTATION_B_SIZE) {
+            // Each M tile produces B tasks, one per N-axis rotation.
+            uint32_t mLoops = std::max(totalCoreNum / tilingData_.B, 1U);
+            perCore = (static_cast<uint64_t>(tilingData_.M) + mLoops - 1) / mLoops;
+        }
+        perCore = (perCore + MIN_M - 1) / MIN_M * MIN_M;
+        uint64_t rotBytes = static_cast<uint64_t>(tilingData_.K) * tilingData_.K * ELEMENT_BYTES_16BIT;
+        if (compileInfo_.l1Size <= DOUBLE_BUFFER * rotBytes) {
+            return false;
+        }
+        uint64_t l1Rows = (compileInfo_.l1Size - DOUBLE_BUFFER * rotBytes) /
+                          (DOUBLE_BUFFER * tilingData_.K * ELEMENT_BYTES_16BIT);
+        uint64_t rows = std::min({perCore, l1Rows, static_cast<uint64_t>(tilingData_.baseM),
+                                  static_cast<uint64_t>(EPILOGUE_ELEMENTS / tilingData_.K)});
+        if (rows == 0) {
+            return false;
+        }
+        tilingData_.mL1 = static_cast<uint32_t>(rows);
+        tilingData_.tailML1 = tilingData_.mL1;
+        inputParams_.realCoreNum = totalCoreNum;
+        return true;
+    }
     if (tilingData_.B == SINGLE_ROTATION_B_SIZE) {
+        const uint64_t totalEffectiveM = static_cast<uint64_t>(tilingData_.M) * tilingData_.nKRatio;
+        // The retained CMCT scheduler stores the flattened row count in uint32_t.
+        OP_TILING_CHECK(
+            totalEffectiveM > std::numeric_limits<uint32_t>::max(),
+            OP_LOGE(inputParams_.opName, "M * (N / K) must not exceed UINT32_MAX for ordinary shared rotation."),
+            return false);
         uint32_t mL1Max = static_cast<uint32_t>(
             (compileInfo_.l1Size - tilingData_.kL1 * tilingData_.nL1 * ELEMENT_BYTES_16BIT) /
             (tilingData_.kL1 * ELEMENT_BYTES_16BIT));
-        uint32_t mL1PerCore = Ops::Base::CeilDiv(tilingData_.M * tilingData_.nKRatio, totalCoreNum);
-        mL1PerCore = Ops::Base::CeilAlign(mL1PerCore, MIN_M); // 16对齐
-        tilingData_.mL1 = std::min({mL1Max, mL1PerCore, tilingData_.baseM});
-        inputParams_.realCoreNum = std::min(Ops::Base::CeilDiv(tilingData_.M * tilingData_.nKRatio, tilingData_.mL1),
-                                            totalCoreNum);
-        uint32_t totalEffectiveM = tilingData_.M * tilingData_.nKRatio;
-        uint32_t remainderM = totalEffectiveM % tilingData_.mL1;
+        uint64_t mL1PerCore = (totalEffectiveM + totalCoreNum - 1) / totalCoreNum;
+        mL1PerCore = (mL1PerCore + MIN_M - 1) / MIN_M * MIN_M;
+        tilingData_.mL1 = static_cast<uint32_t>(
+            std::min({static_cast<uint64_t>(mL1Max), mL1PerCore, static_cast<uint64_t>(tilingData_.baseM)}));
+        const uint64_t tileNum = (totalEffectiveM + tilingData_.mL1 - 1) / tilingData_.mL1;
+        inputParams_.realCoreNum = static_cast<uint32_t>(std::min(tileNum, static_cast<uint64_t>(totalCoreNum)));
+        uint32_t remainderM = static_cast<uint32_t>(totalEffectiveM % tilingData_.mL1);
         tilingData_.tailML1 = (remainderM == 0) ? tilingData_.mL1 : remainderM;
     } else {
         tilingData_.mL1 = tilingData_.baseM;
@@ -594,8 +750,11 @@ ge::graphStatus RotateQuantAptTiling::DoOpTiling()
 
 ge::graphStatus RotateQuantAptTiling::DoLibApiTiling() { return ge::GRAPH_SUCCESS; }
 
-// 统一kernel入口(REGISTER_TILING_DEFAULT)下tiling key恒为0; hif4与mxfp的binary按输入输出dtype区分(binary.json驱动)
-uint64_t RotateQuantAptTiling::GetTilingKey() const { return DEFAULT_TILING_KEY; }
+// Select ordinary/grouped scheduling; input and output dtypes remain binary metadata.
+uint64_t RotateQuantAptTiling::GetTilingKey() const
+{
+    return inputParams_.groupMode ? GROUPED_TILING_KEY : DEFAULT_TILING_KEY;
+}
 
 ge::graphStatus RotateQuantAptTiling::GetWorkspaceSize()
 {
@@ -621,7 +780,7 @@ ge::graphStatus RotateQuantAptTiling::PostTiling()
     return ge::GRAPH_SUCCESS;
 }
 
-// 注册tiling类（950与v121复用同一个arch35 tiling类，分别按arch注册）
+// 注册tiling类（950与DAV_9201/DAV_9202复用同一个arch35 tiling类，分别按arch注册）
 REGISTER_TILING_TEMPLATE_WITH_ARCH(RotateQuant, RotateQuantAptTiling, static_cast<int32_t>(NpuArch::DAV_3510),
                                    TEMPLATE_PRIORITY);
 static Ops::NN::Optiling::RegisterArch g_rotateQuantAptTiling9201Register = Ops::NN::Optiling::RegisterArch(

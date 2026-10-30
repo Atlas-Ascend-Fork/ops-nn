@@ -30,7 +30,7 @@ add_kernel_sources(
     AUTO_SYNC false
 )
 
-# arch35全平台(950/350/v121)统一走主线kernel入口: v121(9201/9202)的HIFLOAT4输出由
+# arch35全平台(950/350/DAV_9201/DAV_9202)统一走主线kernel入口: DAV_9201/DAV_9202的HIFLOAT4输出由
 # binary.json的dtype条目驱动(kernel内按DTYPE_Y类型分发epilogue)
 add_kernel_sources(
     KERNEL_SRC arch35/rotate_quant.cpp

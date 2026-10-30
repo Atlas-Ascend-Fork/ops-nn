@@ -25,8 +25,8 @@ using namespace RotateQuantOpt;
 #define KERNEL_LINKAGE extern "C"
 #endif
 
-KERNEL_LINKAGE __global__ __aicore__ void rotate_quant(GM_ADDR x, GM_ADDR rot, GM_ADDR alpha, GM_ADDR y, GM_ADDR scale,
-                                                       GM_ADDR workSpace, GM_ADDR tiling)
+KERNEL_LINKAGE __global__ __aicore__ void rotate_quant(GM_ADDR x, GM_ADDR rot, GM_ADDR alpha, GM_ADDR groupList,
+                                                       GM_ADDR y, GM_ADDR scale, GM_ADDR workSpace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(RotateQuantTilingData);
     GET_TILING_DATA(tilingData, tiling);

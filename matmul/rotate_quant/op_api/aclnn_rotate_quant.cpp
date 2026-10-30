@@ -10,6 +10,10 @@
 
 #include "../../../common/inc/op_host/op_const_def_nn.h"
 #include "aclnn_rotate_quant.h"
+#include "aclnn_rotate_quant_v2.h"
+#include <algorithm>
+#include <array>
+#include <limits>
 #include "rotate_quant.h"
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
@@ -46,10 +50,14 @@ static constexpr double TWELVE = 12.0;
 constexpr uint32_t MAX_X_DIM_NUM = 7;
 constexpr uint32_t MIN_ROT_DIM_NUM = 2;
 constexpr uint32_t MAX_ROT_DIM_NUM = 3;
+constexpr int64_t MIN_GROUP_NUM = 1;
+constexpr int64_t MAX_GROUP_NUM = 1024;
 constexpr int64_t MX_SCALE_CEIL_NUM = 64;
 constexpr int64_t ROT_K_SIZE_32 = 32;
 constexpr int64_t ROT_K_SIZE_64 = 64;
 constexpr int64_t ROT_K_SIZE_128 = 128;
+constexpr int64_t ROT_K_SIZE_256 = 256;
+constexpr std::array<int64_t, 4> SUPPORTED_ROT_K_SIZES = {ROT_K_SIZE_32, ROT_K_SIZE_64, ROT_K_SIZE_128, ROT_K_SIZE_256};
 constexpr int64_t HIF4_BLOCK_SIZE = 64;
 constexpr int64_t HIF4_SCALE_LAST_SIZE = 1;
 
@@ -129,7 +137,8 @@ static bool CheckOutDtypeValid(const aclTensor* yOut)
         }
     }
     fullListStr += "]";
-    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor yOut should be in dtype support list %s", fullListStr.c_str());
+    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnRotateQuantGetWorkspaceSize", "yOut", op::ToString(yDtype).GetString(),
+                                          FormatString("the dtype of yOut must be in %s", fullListStr.c_str()).c_str());
     return false;
 }
 
@@ -142,8 +151,9 @@ static bool CheckScaleDtypeValid(const aclTensor* scaleOut, const aclTensor* yOu
         scaleList = &SCALE_DTYPE_SUPPORT_LIST_HIF4;
     }
     OP_CHECK(std::find(scaleList->begin(), scaleList->end(), scaleDtype) != scaleList->end(),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor scaleOut should be in dtype support list %s",
-                     op::ToString(*scaleList).GetString()),
+             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                 "aclnnRotateQuantGetWorkspaceSize", "scaleOut", op::ToString(scaleDtype).GetString(),
+                 FormatString("the dtype of scaleOut must be in %s", op::ToString(*scaleList).GetString()).c_str()),
              return false);
     return true;
 }
@@ -233,10 +243,12 @@ static bool CheckMxRotationShape(const aclTensor* x, const aclTensor* rotation)
 
     int64_t N = xShape.GetDim(xShape.GetDimNum() - 1);
     int64_t K = rotShape.GetDim(rotShape.GetDimNum() - 1);
-    OP_CHECK(K == 32 || K == 64 || K == 128,
+    const bool isSupportedK = std::find(SUPPORTED_ROT_K_SIZES.begin(), SUPPORTED_ROT_K_SIZES.end(), K) !=
+                              SUPPORTED_ROT_K_SIZES.end();
+    OP_CHECK(isSupportedK,
              OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                  kOpName, "rotation last dim", FormatString("%ld", K).c_str(),
-                 FormatString("The value of %s must be in %s", "rotation last dim", "[32, 64, 128]").c_str()),
+                 FormatString("The value of %s must be in %s", "rotation last dim", "[32, 64, 128, 256]").c_str()),
              return false);
     OP_CHECK(N % K == 0,
              OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
@@ -293,7 +305,9 @@ static bool CheckMxShape(const aclTensor* x, const aclTensor* rotation, const ac
 static bool CheckHif4RotKSize(int64_t k)
 {
     OP_CHECK(k == ROT_K_SIZE_64 || k == ROT_K_SIZE_128,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "for hif4 output, rotation last dim size must be in [64, 128]."),
+             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                 "aclnnRotateQuantGetWorkspaceSize", "rotation.dim-1", std::to_string(k).c_str(),
+                 "the last dimension of rotation must be 64 or 128 for HIFLOAT4 output"),
              return false);
     return true;
 }
@@ -301,10 +315,16 @@ static bool CheckHif4RotKSize(int64_t k)
 static bool CheckHif4RotMatrixShape(const op::Shape& rotShape, int64_t k)
 {
     OP_CHECK(rotShape.GetDimNum() == MIN_ROT_DIM_NUM,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "for hif4 output, rotation only supports 2D (per-axis=-1 quant)."),
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnRotateQuantGetWorkspaceSize", "rotation",
+                                                      (std::to_string(rotShape.GetDimNum()) + "D").c_str(),
+                                                      "the shape of rotation must be 2D for HIFLOAT4 output"),
              return false);
     OP_CHECK(rotShape.GetDim(0) == k,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "rotation matrix shape should be (%d, %d).", k, k), return false);
+             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                 "aclnnRotateQuantGetWorkspaceSize", "rotation.dim0, rotation.dim1",
+                 FormatString("%s, %s", std::to_string(rotShape.GetDim(0)).c_str(), std::to_string(k).c_str()).c_str(),
+                 "the last two dimensions of rotation must be equal"),
+             return false);
     return true;
 }
 
@@ -580,12 +600,83 @@ static bool CheckTransValid(bool trans)
     return true;
 }
 
+static bool CheckGroupShape(const aclTensor* x, const aclTensor* rotation, const aclTensor* groupList,
+                            int64_t groupListType, const aclTensor* yOut, const aclTensor* scaleOut)
+{
+    OP_CHECK(GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND950,
+             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnRotateQuantV2GetWorkspaceSize", "groupList", "not nullptr",
+                                                   "groupList must be nullptr on platforms other than Ascend950"),
+             return false);
+    const auto& xs = x->GetViewShape();
+    const auto& rs = rotation->GetViewShape();
+    const auto& gs = groupList->GetViewShape();
+    const auto rotRank = rs.GetDimNum();
+    OP_CHECK(xs.GetDimNum() == 2 && (rotRank == 3 || rotRank == 4) && gs.GetDimNum() == 1,
+             OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                 "aclnnRotateQuantV2GetWorkspaceSize", "x, rotation, groupList",
+                 FormatString("%zuD, %zuD, %zuD", xs.GetDimNum(), rotRank, gs.GetDimNum()).c_str(),
+                 "x must be 2D, rotation must be 3D or 4D, and groupList must be 1D"),
+             return false);
+    OP_CHECK(
+        groupList->GetDataType() == DataType::DT_INT64 && groupList->GetStorageFormat() == Format::FORMAT_ND &&
+            (groupListType == 0 || groupListType == 1),
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            "aclnnRotateQuantV2GetWorkspaceSize", "groupList.dtype, groupList.format, groupListType",
+            FormatString("%s, %s, %s", op::ToString(groupList->GetDataType()).GetString(),
+                         op::ToString(groupList->GetStorageFormat()).GetString(), std::to_string(groupListType).c_str())
+                .c_str(),
+            "the dtype of groupList must be INT64, its format must be ND, and groupListType must be 0 or 1"),
+        return false);
+    int64_t e = gs.GetDim(0);
+    int64_t k = rs.GetDim(rotRank - 1);
+    int64_t m = xs.GetDim(0);
+    int64_t n = xs.GetDim(1);
+    const bool isSupportedK = std::find(SUPPORTED_ROT_K_SIZES.begin(), SUPPORTED_ROT_K_SIZES.end(), k) !=
+                              SUPPORTED_ROT_K_SIZES.end();
+    OP_CHECK(
+        e >= MIN_GROUP_NUM && e <= MAX_GROUP_NUM && rs.GetDim(0) == e && rs.GetDim(rotRank - 2) == k && isSupportedK,
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            "aclnnRotateQuantV2GetWorkspaceSize", "groupList.length, rotation.dim0, rotation.dim-2, rotation.dim-1",
+            FormatString("%s, %s, %s, %s", std::to_string(e).c_str(), std::to_string(rs.GetDim(0)).c_str(),
+                         std::to_string(rs.GetDim(rotRank - 2)).c_str(), std::to_string(k).c_str())
+                .c_str(),
+            FormatString("the group count must be in [%s, %s] and equal rotation dim0; rotation must end in "
+                         "[K, K] with K in {32, 64, 128, 256}",
+                         std::to_string(MIN_GROUP_NUM).c_str(), std::to_string(MAX_GROUP_NUM).c_str())
+                .c_str()),
+        return false);
+    OP_CHECK(
+        m >= 0 && n > 0 && n % k == 0 && m <= std::numeric_limits<uint32_t>::max() &&
+            n <= std::numeric_limits<uint32_t>::max() && m <= std::numeric_limits<int64_t>::max() / n / 4,
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            "aclnnRotateQuantV2GetWorkspaceSize", "x.M, x.N, rotation.K",
+            FormatString("%s, %s, %s", std::to_string(m).c_str(), std::to_string(n).c_str(), std::to_string(k).c_str())
+                .c_str(),
+            "the dimensions must satisfy M >= 0, N > 0, N % K = 0, M <= UINT32_MAX, N <= UINT32_MAX, "
+            "and M*N <= INT64_MAX/4"),
+        return false);
+    OP_CHECK(
+        rotRank != 4 || rs.GetDim(1) == n / k,
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON("aclnnRotateQuantV2GetWorkspaceSize", "rotation.dim1, x.N, rotation.K",
+                                               FormatString("%s, %s, %s", std::to_string(rs.GetDim(1)).c_str(),
+                                                            std::to_string(n).c_str(), std::to_string(k).c_str())
+                                                   .c_str(),
+                                               "rotation dim1 must equal N/K for 4D grouped rotation"),
+        return false);
+    return CheckMxOutputShape(x, yOut, scaleOut);
+}
+
 static aclnnStatus CheckParams(const aclTensor* x, const aclTensor* rotation, const aclTensor* alpha,
-                               const aclTensor* yOut, const aclTensor* scaleOut)
+                               const aclTensor* yOut, const aclTensor* scaleOut, const aclTensor* groupList,
+                               int64_t groupListType)
 {
     CHECK_RET(CheckNotNull(x, rotation, yOut, scaleOut), ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(CheckDtypeValid(x, rotation, yOut, scaleOut), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(x, rotation, yOut, scaleOut), ACLNN_ERR_PARAM_INVALID);
+    if (groupList != nullptr) {
+        CHECK_RET(CheckGroupShape(x, rotation, groupList, groupListType, yOut, scaleOut), ACLNN_ERR_PARAM_INVALID);
+    } else {
+        CHECK_RET(CheckShape(x, rotation, yOut, scaleOut), ACLNN_ERR_PARAM_INVALID);
+    }
     CHECK_RET(CheckFormat(x, rotation, yOut, scaleOut), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckAlphaDtype(alpha, scaleOut), ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
@@ -619,7 +710,7 @@ aclnnStatus aclnnRotateQuantGetWorkspaceSize(const aclTensor* x, const aclTensor
     CHECK_RET(x != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(CheckAxisValid(axis, x), ACLNN_ERR_PARAM_INVALID);
 
-    auto ret = CheckParams(x, rotation, alpha, yOut, scaleOut);
+    auto ret = CheckParams(x, rotation, alpha, yOut, scaleOut, nullptr, 0);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     const char* roundModeValue = (roundMode != nullptr) ? roundMode : "rint";
@@ -653,8 +744,8 @@ aclnnStatus aclnnRotateQuantGetWorkspaceSize(const aclTensor* x, const aclTensor
     int64_t dstDtype = static_cast<int64_t>(yDtype);
 
     std::tuple<aclTensor*, aclTensor*> result = l0op::RotateQuant(
-        xContiguous, rotContiguous, alphaContiguous, axis, roundModeValue, scaleAlg, static_cast<float>(dstTypeMax),
-        trans, dstDtype, yOut, scaleOut, uniqueExecutor.get());
+        xContiguous, rotContiguous, alphaContiguous, nullptr, axis, roundModeValue, scaleAlg,
+        static_cast<float>(dstTypeMax), trans, dstDtype, 0, yOut, scaleOut, uniqueExecutor.get());
 
     const aclTensor* y = std::get<0>(result);
     const aclTensor* scale = std::get<1>(result);
@@ -674,6 +765,92 @@ aclnnStatus aclnnRotateQuantGetWorkspaceSize(const aclTensor* x, const aclTensor
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;
+}
+
+aclnnStatus aclnnRotateQuantV2GetWorkspaceSize(const aclTensor* x, const aclTensor* rotation, const aclTensor* alpha,
+                                               const aclTensor* groupList, int64_t groupListType, int64_t axis,
+                                               char* roundMode, int64_t scaleAlg, double dstTypeMax, bool trans,
+                                               aclTensor* yOut, aclTensor* scaleOut, uint64_t* workspaceSize,
+                                               aclOpExecutor** executor)
+{
+    L2_DFX_PHASE_1(aclnnRotateQuantV2,
+                   DFX_IN(x, rotation, alpha, groupList, groupListType, axis, roundMode, scaleAlg, dstTypeMax, trans),
+                   DFX_OUT(yOut, scaleOut));
+    CHECK_RET(groupListType == 0 || groupListType == 1, ACLNN_ERR_PARAM_INVALID);
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+
+    CHECK_RET(x != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(CheckAxisValid(axis, x), ACLNN_ERR_PARAM_INVALID);
+
+    CHECK_RET(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    auto ret = CheckParams(x, rotation, alpha, yOut, scaleOut, groupList, groupListType);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
+    const char* roundModeValue = (roundMode != nullptr) ? roundMode : "rint";
+    CHECK_RET(CheckRoundModeValid(roundModeValue, yOut), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckScaleAlgValid(scaleAlg, yOut), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckDstTypeMaxValid(dstTypeMax, scaleAlg, yOut), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckTransValid(trans), ACLNN_ERR_PARAM_INVALID);
+
+    if (x->IsEmpty() || rotation->IsEmpty() || yOut->IsEmpty() || scaleOut->IsEmpty()) {
+        *workspaceSize = 0;
+        uniqueExecutor.ReleaseTo(executor);
+        return ACLNN_SUCCESS;
+    }
+
+    auto xContiguous = l0op::Contiguous(x, uniqueExecutor.get());
+    CHECK_RET(xContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    auto rotContiguous = l0op::Contiguous(rotation, uniqueExecutor.get());
+    CHECK_RET(rotContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    const aclTensor* alphaContiguous = nullptr;
+    if (alpha != nullptr) {
+        alphaContiguous = l0op::Contiguous(alpha, uniqueExecutor.get());
+        CHECK_RET(alphaContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    const aclTensor* groupsContiguous = nullptr;
+    if (groupList != nullptr) {
+        groupsContiguous = l0op::Contiguous(groupList, uniqueExecutor.get());
+        CHECK_RET(groupsContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    auto yDtype = yOut->GetDataType();
+    if (yDtype == op::DataType::DT_INT32) {
+        yDtype = op::DataType::DT_INT4;
+    }
+    int64_t dstDtype = static_cast<int64_t>(yDtype);
+
+    std::tuple<aclTensor*, aclTensor*> result = l0op::RotateQuant(
+        xContiguous, rotContiguous, alphaContiguous, groupsContiguous, axis, roundModeValue, scaleAlg,
+        static_cast<float>(dstTypeMax), trans, dstDtype, groupListType, yOut, scaleOut, uniqueExecutor.get());
+
+    const aclTensor* y = std::get<0>(result);
+    const aclTensor* scale = std::get<1>(result);
+    CHECK_RET(y != nullptr && scale != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    const aclTensor* yTensor = y;
+    if (yDtype == op::DataType::DT_INT4) {
+        ret = Int42Int32PackedTensor(y, yTensor, uniqueExecutor.get());
+        CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    }
+
+    auto yResult = l0op::ViewCopy(yTensor, yOut, uniqueExecutor.get());
+    CHECK_RET(yResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    auto scaleResult = l0op::ViewCopy(scale, scaleOut, uniqueExecutor.get());
+    CHECK_RET(scaleResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+    uniqueExecutor.ReleaseTo(executor);
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus aclnnRotateQuantV2(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor, aclrtStream stream)
+{
+    L2_DFX_PHASE_2(aclnnRotateQuantV2);
+    return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }
 
 aclnnStatus aclnnRotateQuant(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor, aclrtStream stream)

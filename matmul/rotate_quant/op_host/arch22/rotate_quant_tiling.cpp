@@ -25,6 +25,7 @@
 namespace {
 constexpr uint32_t X_INDEX = 0;
 constexpr uint32_t ROT_INDEX = 1;
+constexpr uint32_t GROUP_INDEX = 3;
 constexpr uint32_t Y_INDEX = 0;
 constexpr uint32_t SCALE_INDEX = 1;
 
@@ -117,6 +118,9 @@ ge::graphStatus RotateQuantTiling::GetShapeAttrsInfo()
 
 ge::graphStatus RotateQuantTiling::CheckContext()
 {
+    OP_TILING_CHECK(context_->GetOptionalInputDesc(GROUP_INDEX) != nullptr,
+                    OP_LOGE(inputParams_.opName, "groupList must be nullptr on this platform."),
+                    return ge::GRAPH_FAILED);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(X_INDEX));
     OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(X_INDEX));
     OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(ROT_INDEX));

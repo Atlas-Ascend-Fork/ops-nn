@@ -21,7 +21,7 @@
 #include "kernel_operator.h"
 #endif
 #include "fusion/default_fusion_op.h"
-// v121贴cann_out: 宏保护写法(避免重复定义)
+// DAV_9201/DAV_9202贴cann_out: 宏保护写法(避免重复定义)
 #ifndef FLOAT_OVERFLOW_MODE_CTRL
 #define FLOAT_OVERFLOW_MODE_CTRL 60
 #endif
@@ -36,8 +36,8 @@ namespace Cmct {
 namespace Gemm {
 namespace Block {
 using namespace AscendC;
-// 命名空间差异: cann_out(v121)用MicroAPI, 主线(3510)用Reg——同名API(LoadAlign/StoreAlign/Compare/
-// Select等)在两个命名空间下可能解析到不同实现, v121必须与cann_out一致
+// 命名空间差异: cann_out(DAV_9201/DAV_9202)用MicroAPI, 主线(3510)用Reg——同名API(LoadAlign/StoreAlign/Compare/
+// Select等)在两个命名空间下可能解析到不同实现, DAV_9201/DAV_9202必须与cann_out一致
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
 using namespace AscendC::MicroAPI;
 #else
@@ -73,7 +73,7 @@ public:
     {
         // 饱和模式由单指令设置生效
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
-        // v121(1:1): 溢出模式在epilogue层设置(cann_out方式, v121侧kernel层不做)
+        // DAV_9201/DAV_9202(1:1): 溢出模式在epilogue层设置(cann_out方式, DAV_9201/DAV_9202侧kernel层不做)
         SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(0);
 #endif
         InitGlobalBuffer(params);
@@ -142,7 +142,7 @@ private:
     static constexpr int64_t MODE_FLOOR = 1;
 
     static constexpr int32_t GROUP_SIZE = 32;
-    // UB布局对齐cann_out(v121机器验证基线): x区128KB/y区32KB/max区2KB/eMax链4KB; 950主线布局在
+    // UB布局对齐cann_out(DAV_9201/DAV_9202机器验证基线): x区128KB/y区32KB/max区2KB/eMax链4KB; 950主线布局在
     // mL1=128大块时x区(16K bf16)恰好贴满无余量, 3510保持主线小布局不变
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
     static constexpr int32_t MN_SIZE = 64 * 1024;
@@ -209,8 +209,8 @@ private:
     GlobalTensor<int8_t> cGlobal_;
     GlobalTensor<int8_t> scaleGlobal_;
 
-    // TBuf模板参数差异: cann_out(v121)用TPosition::VECCALC, 主线(3510)用QuePosition::VECCALC
-    // (TPipe::InitBuffer重载与位置语义不同), v121必须与cann_out一致
+    // TBuf模板参数差异: cann_out(DAV_9201/DAV_9202)用TPosition::VECCALC, 主线(3510)用QuePosition::VECCALC
+    // (TPipe::InitBuffer重载与位置语义不同), DAV_9201/DAV_9202必须与cann_out一致
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
     TBuf<TPosition::VECCALC> bufQueue_;
 #else
@@ -297,7 +297,7 @@ private:
         xTensor_ = bufQueue_.Get<bfloat16_t>();
         yTensor_ = xTensor_[MN_SIZE].template ReinterpretCast<int8_t>();
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
-        // v121: 切分基对齐cann_out(y区按OUT_SIZE, max区按MAX_SIZE), 与上方大布局常量配套
+        // DAV_9201/DAV_9202: 切分基对齐cann_out(y区按OUT_SIZE, max区按MAX_SIZE), 与上方大布局常量配套
         maxTensor_ = yTensor_[OUT_SIZE].template ReinterpretCast<bfloat16_t>();
         eMaxTensor_ = maxTensor_[MAX_SIZE].template ReinterpretCast<uint16_t>();
 #else
@@ -710,7 +710,7 @@ private:
         MaskReg preMaskScale;
         for (uint16_t i = 0; i < repeatTimes; i++) {
             preMaskScale = UpdateMask<uint16_t>(scaleNum);
-            // cann_out原版此处为LoadAlign(v121验证过), 02b5811f7误改为DataCopy——回退
+            // cann_out原版此处为LoadAlign(DAV_9201/DAV_9202验证过), 02b5811f7误改为DataCopy——回退
             LoadAlign<uint16_t, PostLiteral::POST_MODE_UPDATE>(vdMaxExp, srcPtr, vfLen16);
 
             if constexpr (isDynamic) {
@@ -741,7 +741,7 @@ private:
 #endif
             StoreAlign<uint16_t, PostLiteral::POST_MODE_UPDATE, StoreDist::DIST_PACK_B16>(dstPtr, scaleValue, vfLen32,
                                                                                           preMaskScale);
-            // zeroMask重算(sharedExp!=0)为主线c2ebb486f的subnormal修复, v121无此修复且机器验证
+            // zeroMask重算(sharedExp!=0)为主线c2ebb486f的subnormal修复, DAV_9201/DAV_9202无此修复且机器验证
             // sharedExp==0&&vdMaxExp!=0的组halfScale应为scaleBias而非0(否则y整组量化为0)
 #if !(defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202)))
             Compare<uint16_t, CMPMODE::NE>(zeroMask, sharedExp, zeroRegTensor, preMaskScale);
@@ -800,7 +800,7 @@ private:
         MaskReg dataMaskB16Half = UpdateMask<uint16_t>(SixtyFour);
         for (uint16_t i = 0; i < repeatTimes; i++) {
             preMaskScale = UpdateMask<uint32_t>(scaleNum);
-            // cann_out原版此处为LoadAlign(v121验证过), 02b5811f7误改为DataCopy——回退
+            // cann_out原版此处为LoadAlign(DAV_9201/DAV_9202验证过), 02b5811f7误改为DataCopy——回退
             LoadAlign<uint16_t, PostLiteral::POST_MODE_UPDATE, LoadDist::DIST_UNPACK_B16>(max16, srcPtr, vfLen32);
 
             Cast<float, bfloat16_t, castTraitZero>((RegTensor<float>&)max32, (RegTensor<bfloat16_t>&)max16,

@@ -9,6 +9,7 @@
  */
 #include <gtest/gtest.h>
 #include <iostream>
+#include <vector>
 #include "infershape_test_util.h"
 #include "ut_op_common.h"
 #include "platform/platform_info.h"
@@ -162,5 +163,155 @@ TEST_F(RotateQuantInferShape, RotateQuant_InferDtype_case_0)
 
         EXPECT_EQ(context->GetOutputDataType(0), output_y_ref);
         EXPECT_EQ(context->GetOutputDataType(1), output_scale_ref);
+    }
+}
+
+static void CheckGroupedInferShapePlatform(const string& socVersion, ge::graphStatus expected, int64_t rotSlices = 0)
+{
+    SCOPED_TRACE(::testing::Message() << "soc=" << socVersion << ", rotSlices=" << rotSlices);
+    fe::PlatformInfo platform;
+    fe::OptionalInfo optional;
+    platform.str_info.short_soc_version = socVersion;
+    optional.soc_version = socVersion;
+    fe::PlatformInfoManager::Instance().platform_info_map_[socVersion] = platform;
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optional);
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("RotateQuant");
+    ASSERT_NE(impl, nullptr);
+    // Runtime inputs are compacted: the missing alpha occupies no instance.
+    // The group list is the fourth IR input, but the third runtime input.
+    gert::StorageShape x = {{29, 96}, {29, 96}};
+    gert::StorageShape rot = {{7, 32, 32}, {7, 32, 32}};
+    if (rotSlices != 0) {
+        rot = gert::StorageShape({7, rotSlices, 32, 32}, {7, rotSlices, 32, 32});
+    }
+    gert::StorageShape groups = {{7}, {7}};
+    gert::StorageShape y = {{}, {}};
+    gert::StorageShape scale = {{}, {}};
+    // IONum and IOInstanceNum are mutually exclusive; the first call takes precedence.
+    // Describe optional input holes with IrInstanceNum only, without NodeIoNum.
+    auto holder = gert::InferShapeContextFaker()
+                      .IrInstanceNum({1, 1, 0, 1}, {1, 1})
+                      .InputShapes({&x, &rot, &groups})
+                      .OutputShapes({&y, &scale})
+                      .NodeInputTd(0, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT8_E4M3FN, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT8_E8M0, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"y_dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(ge::DT_FLOAT8_E4M3FN)},
+                                  {"axis", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
+                                  {"round_mode", Ops::NN::AnyValue::CreateFrom<string>("rint")},
+                                  {"scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"dst_type_max", Ops::NN::AnyValue::CreateFrom<float>(0.0f)},
+                                  {"trans", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"group_list_type", Ops::NN::AnyValue::CreateFrom<int64_t>(1)}})
+                      .Build();
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(context->GetOptionalInputShape(2), nullptr);
+    ASSERT_NE(context->GetOptionalInputShape(3), nullptr);
+    ASSERT_EQ(*context->GetOptionalInputShape(3), gert::Shape({7}));
+    ASSERT_EQ(impl->infer_shape(context), expected);
+    if (expected == ge::GRAPH_SUCCESS) {
+        EXPECT_EQ(*context->GetOutputShape(0), gert::Shape({29, 96}));
+        EXPECT_EQ(*context->GetOutputShape(1), gert::Shape({29, 2, 2}));
+    }
+}
+
+TEST_F(RotateQuantInferShape, GroupedRotationWithoutAlphaUsesOptionalInputIndex)
+{
+    CheckGroupedInferShapePlatform("Ascend950", ge::GRAPH_SUCCESS);
+}
+
+TEST_F(RotateQuantInferShape, GroupedRotationRequiresAscend950)
+{
+    CheckGroupedInferShapePlatform("Ascend350", ge::GRAPH_FAILED);
+    CheckGroupedInferShapePlatform("Ascend910B", ge::GRAPH_FAILED);
+    CheckGroupedInferShapePlatform("Ascend960DT", ge::GRAPH_FAILED);
+    CheckGroupedInferShapePlatform("Ascend960PR", ge::GRAPH_FAILED);
+}
+
+TEST_F(RotateQuantInferShape, GroupedPerNRotation)
+{
+    CheckGroupedInferShapePlatform("Ascend950", ge::GRAPH_SUCCESS, 3);
+    CheckGroupedInferShapePlatform("Ascend950", ge::GRAPH_FAILED, 2);
+    CheckGroupedInferShapePlatform("Ascend350", ge::GRAPH_FAILED, 3);
+}
+
+static void CheckOptionalAlphaInferShape(bool hasAlpha, int64_t groupNum, int64_t alphaSize, ge::graphStatus expected)
+{
+    SCOPED_TRACE(::testing::Message() << "hasAlpha=" << hasAlpha << ", groupNum=" << groupNum
+                                      << ", alphaSize=" << alphaSize);
+    fe::PlatformInfo platform;
+    fe::OptionalInfo optional;
+    platform.str_info.short_soc_version = "Ascend950";
+    optional.soc_version = "Ascend950";
+    fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platform;
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optional);
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("RotateQuant");
+    ASSERT_NE(impl, nullptr);
+
+    const bool grouped = groupNum > 0;
+    gert::StorageShape x = {{29, 96}, {29, 96}};
+    gert::StorageShape rot = grouped ? gert::StorageShape{{groupNum, 32, 32}, {groupNum, 32, 32}} :
+                                       gert::StorageShape{{32, 32}, {32, 32}};
+    gert::StorageShape alpha = {{alphaSize}, {alphaSize}};
+    gert::StorageShape groups = {{groupNum}, {groupNum}};
+    gert::StorageShape y = {{}, {}};
+    gert::StorageShape scale = {{}, {}};
+    std::vector<gert::StorageShape*> inputs{&x, &rot};
+    if (hasAlpha) {
+        inputs.push_back(&alpha);
+    }
+    if (grouped) {
+        inputs.push_back(&groups);
+    }
+    gert::InferShapeContextFaker faker;
+    // Do not call NodeIoNum before IrInstanceNum: it would mask the optional input mapping.
+    faker.IrInstanceNum({1, 1, hasAlpha ? 1U : 0U, grouped ? 1U : 0U}, {1, 1})
+        .InputShapes(inputs)
+        .OutputShapes({&y, &scale})
+        .NodeInputTd(0, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(0, ge::DT_FLOAT8_E4M3FN, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(1, ge::DT_FLOAT8_E8M0, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeAttrs({{"y_dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(ge::DT_FLOAT8_E4M3FN)},
+                    {"axis", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
+                    {"round_mode", Ops::NN::AnyValue::CreateFrom<string>("rint")},
+                    {"scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                    {"dst_type_max", Ops::NN::AnyValue::CreateFrom<float>(0.0f)},
+                    {"trans", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                    {"group_list_type", Ops::NN::AnyValue::CreateFrom<int64_t>(1)}});
+    if (hasAlpha) {
+        faker.NodeInputTd(2, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    if (grouped) {
+        faker.NodeInputTd(hasAlpha ? 3 : 2, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto holder = faker.Build();
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(context->GetOptionalInputShape(2) != nullptr, hasAlpha);
+    ASSERT_EQ(context->GetOptionalInputShape(3) != nullptr, grouped);
+    if (hasAlpha) {
+        ASSERT_EQ(*context->GetOptionalInputShape(2), gert::Shape({alphaSize}));
+    }
+    if (grouped) {
+        ASSERT_EQ(*context->GetOptionalInputShape(3), gert::Shape({groupNum}));
+    }
+    ASSERT_EQ(impl->infer_shape(context), expected);
+    if (expected == ge::GRAPH_SUCCESS) {
+        EXPECT_EQ(*context->GetOutputShape(0), gert::Shape({29, 96}));
+        EXPECT_EQ(*context->GetOutputShape(1), gert::Shape({29, 2, 2}));
+    }
+}
+
+TEST_F(RotateQuantInferShape, OptionalAlphaPreservesOrdinaryAndGroupedInputs)
+{
+    for (int64_t groupNum : {0, 1, 7, 1024}) {
+        CheckOptionalAlphaInferShape(false, groupNum, 1, ge::GRAPH_SUCCESS);
+        CheckOptionalAlphaInferShape(true, groupNum, 1, ge::GRAPH_SUCCESS);
+        CheckOptionalAlphaInferShape(true, groupNum, 0, ge::GRAPH_FAILED);
+        CheckOptionalAlphaInferShape(true, groupNum, 2, ge::GRAPH_FAILED);
     }
 }

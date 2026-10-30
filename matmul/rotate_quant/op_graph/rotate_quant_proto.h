@@ -58,10 +58,13 @@ quantization.
 
 * Ascend 950PR&950DT products:
 * - x is 1-D to 7-D, with the last dimension being N.
-* - rot shape is [K, K] or [blockNum, K, K], where blockNum = K/N, and N must divide K.
+* - rot shape is [K, K] or [blockNum, K, K], where blockNum = N/K, and N must be divisible by K.
 * - x and rot must have the same data type.
 * - scale output shape is [*, ceilDiv(N,64), 2].
-* - K must be one of {32, 64, 128}. \n
+* - K must be one of {32, 64, 128, 256}. \n
+* - Optional group_list and group_list_type enable M-axis grouping only on Ascend950.
+*   Grouped shapes are x[M,N], rot[E,K,K] or [E,N/K,K,K], group_list[E], with 1 <= E <= 1024.
+*   Other platforms retain the original ungrouped interface and kernel input list. \n
 
 * | x        | rot      | alpha | y              | scale       |
 * |----------|----------|-------|----------------|-------------|
@@ -80,6 +83,7 @@ REG_OP(RotateQuant)
     .INPUT(x, TensorType({DT_FLOAT16, DT_BF16}))
     .INPUT(rot, TensorType({DT_FLOAT16, DT_BF16}))
     .OPTIONAL_INPUT(alpha, TensorType({DT_BF16}))
+    .OPTIONAL_INPUT(group_list, TensorType({DT_INT64}))
     .OUTPUT(y, TensorType({DT_INT8, DT_INT4, DT_FLOAT4_E2M1, DT_FLOAT8_E4M3FN, DT_FLOAT8_E5M2}))
     .OUTPUT(scale, TensorType({DT_FLOAT32, DT_FLOAT8_E8M0}))
     .ATTR(y_dtype, Int, DT_INT8)
@@ -88,6 +92,7 @@ REG_OP(RotateQuant)
     .ATTR(scale_alg, Int, 0)
     .ATTR(dst_type_max, Float, 0.0)
     .ATTR(trans, Bool, false)
+    .ATTR(group_list_type, Int, 0)
     .OP_END_FACTORY_REG(RotateQuant)
 } // namespace ge
 

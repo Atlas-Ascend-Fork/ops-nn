@@ -14,6 +14,7 @@
 
 #include "gtest/gtest.h"
 #include "../../../op_api/aclnn_rotate_quant.h"
+#include "../../../op_api/aclnn_rotate_quant_v2.h"
 #include "op_api_ut_common/tensor_desc.h"
 #include "op_api_ut_common/scalar_desc.h"
 #include "op_api_ut_common/op_api_ut.h"
@@ -562,6 +563,53 @@ TEST_F(l2_rotate_quant_test, ascend950_rotate_quant_mx_invalid_rot_k)
     EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
 }
 
+TEST_F(l2_rotate_quant_test, ascend950_rotate_quant_k256_all_mx_dtypes)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    for (auto inType : {ACL_FLOAT16, ACL_BF16}) {
+        for (auto outType : {ACL_FLOAT4_E2M1, ACL_FLOAT8_E4M3FN, ACL_FLOAT8_E5M2}) {
+            for (bool multiRot : {false, true}) {
+                TensorDesc x = TensorDesc({65, 768}, inType, ACL_FORMAT_ND);
+                TensorDesc rot = multiRot ? TensorDesc({3, 256, 256}, inType, ACL_FORMAT_ND) :
+                                            TensorDesc({256, 256}, inType, ACL_FORMAT_ND);
+                TensorDesc y = TensorDesc({65, 768}, outType, ACL_FORMAT_ND);
+                TensorDesc scale = TensorDesc({65, 12, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+                auto ut = OP_API_UT(aclnnRotateQuant,
+                                    INPUT(x, rot, (aclTensor*)nullptr, -1, (char*)nullptr, 0, 0.0, false),
+                                    OUTPUT(y, scale));
+                uint64_t size = 0;
+                EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_SUCCESS);
+                auto v2 = OP_API_UT(
+                    aclnnRotateQuantV2,
+                    INPUT(x, rot, (aclTensor*)nullptr, (aclTensor*)nullptr, 0, -1, (char*)nullptr, 0, 0.0, false),
+                    OUTPUT(y, scale));
+                EXPECT_EQ(v2.TestGetWorkspaceSize(&size), ACLNN_SUCCESS);
+            }
+        }
+    }
+}
+
+TEST_F(l2_rotate_quant_test, ascend950_grouped_rotate_quant_k256_all_mx_dtypes)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    for (auto inType : {ACL_FLOAT16, ACL_BF16}) {
+        for (auto outType : {ACL_FLOAT4_E2M1, ACL_FLOAT8_E4M3FN, ACL_FLOAT8_E5M2}) {
+            for (int64_t type : {0, 1}) {
+                TensorDesc x = TensorDesc({65, 768}, inType, ACL_FORMAT_ND);
+                TensorDesc rot = TensorDesc({7, 256, 256}, inType, ACL_FORMAT_ND);
+                TensorDesc groups = TensorDesc({7}, ACL_INT64, ACL_FORMAT_ND);
+                TensorDesc y = TensorDesc({65, 768}, outType, ACL_FORMAT_ND);
+                TensorDesc scale = TensorDesc({65, 12, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+                auto ut = OP_API_UT(aclnnRotateQuantV2,
+                                    INPUT(x, rot, (aclTensor*)nullptr, groups, type, -1, (char*)nullptr, 0, 0.0, false),
+                                    OUTPUT(y, scale));
+                uint64_t size = 0;
+                EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_SUCCESS);
+            }
+        }
+    }
+}
+
 TEST_F(l2_rotate_quant_test, ascend950_rotate_quant_mx_invalid_round_mode)
 {
     SocVersionManager versionManager(SocVersion::ASCEND950);
@@ -588,4 +636,157 @@ TEST_F(l2_rotate_quant_test, ascend950_rotate_quant_mx_fp4_invalid_dst_type_max)
                         OUTPUT(y_desc, scale_desc));
     uint64_t workspace_size = 0;
     EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_rotate_quant_test, ascend950_grouped_rotate_quant_v2_metadata)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    for (int64_t type : {0, 1}) {
+        TensorDesc x = TensorDesc({29, 96}, ACL_BF16, ACL_FORMAT_ND);
+        TensorDesc rot = TensorDesc({7, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
+        TensorDesc groups = TensorDesc({7}, ACL_INT64, ACL_FORMAT_ND);
+        TensorDesc y = TensorDesc({29, 96}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+        TensorDesc scale = TensorDesc({29, 2, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnRotateQuantV2,
+                            INPUT(x, rot, (aclTensor*)nullptr, groups, type, -1, (char*)nullptr, 0, 0.0, false),
+                            OUTPUT(y, scale));
+        uint64_t size = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_SUCCESS);
+    }
+}
+
+TEST_F(l2_rotate_quant_test, ascend950_grouped_rotate_quant_v2_per_n_rotation)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    for (int64_t k : {32, 256}) {
+        for (auto inType : {ACL_FLOAT16, ACL_BF16}) {
+            for (auto outType : {ACL_FLOAT4_E2M1, ACL_FLOAT8_E4M3FN, ACL_FLOAT8_E5M2}) {
+                for (int64_t type : {0, 1}) {
+                    for (int64_t q : {1, 3}) {
+                        TensorDesc x = TensorDesc({65, q * k}, inType, ACL_FORMAT_ND);
+                        TensorDesc rot = TensorDesc({7, q, k, k}, inType, ACL_FORMAT_ND);
+                        TensorDesc groups = TensorDesc({7}, ACL_INT64, ACL_FORMAT_ND);
+                        TensorDesc y = TensorDesc({65, q * k}, outType, ACL_FORMAT_ND);
+                        TensorDesc scale = TensorDesc({65, (q * k + 63) / 64, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+                        auto ut = OP_API_UT(
+                            aclnnRotateQuantV2,
+                            INPUT(x, rot, (aclTensor*)nullptr, groups, type, -1, (char*)nullptr, 0, 0.0, false),
+                            OUTPUT(y, scale));
+                        uint64_t size = 0;
+                        EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_SUCCESS);
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST_F(l2_rotate_quant_test, ascend950_grouped_rotate_quant_v2_rejects_invalid_4d_rotation)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    TensorDesc x = TensorDesc({7, 96}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc groups = TensorDesc({7}, ACL_INT64, ACL_FORMAT_ND);
+    TensorDesc y = TensorDesc({7, 96}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+    TensorDesc scale = TensorDesc({7, 2, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+    for (int64_t q : {0, 1, 2, 4}) {
+        TensorDesc rot = TensorDesc({7, q, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnRotateQuantV2,
+                            INPUT(x, rot, (aclTensor*)nullptr, groups, 1, -1, (char*)nullptr, 0, 0.0, false),
+                            OUTPUT(y, scale));
+        uint64_t size = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_ERR_PARAM_INVALID);
+    }
+    TensorDesc rot = TensorDesc({7, 3, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnRotateQuantV2,
+                        INPUT(x, rot, (aclTensor*)nullptr, (aclTensor*)nullptr, 0, -1, (char*)nullptr, 0, 0.0, false),
+                        OUTPUT(y, scale));
+    uint64_t size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_rotate_quant_test, ascend950_grouped_rotate_quant_v2_invalid_metadata)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    // Vary E, rotation E, group-list dtype, and representation independently.
+    struct Case {
+        int64_t e, rotE, type;
+        aclDataType dtype;
+    };
+    for (const auto& c : std::vector<Case>{{0, 0, 0, ACL_INT64},
+                                           {1025, 1025, 0, ACL_INT64},
+                                           {7, 3, 0, ACL_INT64},
+                                           {7, 7, 2, ACL_INT64},
+                                           {7, 7, 0, ACL_INT32}}) {
+        TensorDesc x = TensorDesc({29, 96}, ACL_BF16, ACL_FORMAT_ND);
+        TensorDesc rot = TensorDesc({c.rotE, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
+        TensorDesc groups = TensorDesc({c.e}, c.dtype, ACL_FORMAT_ND);
+        TensorDesc y = TensorDesc({29, 96}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+        TensorDesc scale = TensorDesc({29, 2, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnRotateQuantV2,
+                            INPUT(x, rot, (aclTensor*)nullptr, groups, c.type, -1, (char*)nullptr, 0, 0.0, false),
+                            OUTPUT(y, scale));
+        uint64_t size = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_ERR_PARAM_INVALID);
+    }
+}
+
+TEST_F(l2_rotate_quant_test, ascend950_rotate_quant_v2_null_groups_keep_n_axis_rotation)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND950);
+    TensorDesc x = TensorDesc({7, 96}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc rot = TensorDesc({3, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc y = TensorDesc({7, 96}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+    TensorDesc scale = TensorDesc({7, 2, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnRotateQuantV2,
+                        INPUT(x, rot, (aclTensor*)nullptr, (aclTensor*)nullptr, 0, -1, (char*)nullptr, 0, 0.0, false),
+                        OUTPUT(y, scale));
+    uint64_t size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_SUCCESS);
+}
+
+TEST_F(l2_rotate_quant_test, ascend910B1_rotate_quant_v2_rejects_grouped_mode)
+{
+    SocVersionManager versionManager(SocVersion::ASCEND910B);
+    TensorDesc x = TensorDesc({7, 96}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc rot = TensorDesc({3, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc groups = TensorDesc({3}, ACL_INT64, ACL_FORMAT_ND);
+    TensorDesc y = TensorDesc({7, 96}, ACL_INT8, ACL_FORMAT_ND);
+    TensorDesc scale = TensorDesc({7}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnRotateQuantV2,
+                        INPUT(x, rot, (aclTensor*)nullptr, groups, 0, -1, (char*)nullptr, 0, 0.0, false),
+                        OUTPUT(y, scale));
+    uint64_t size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_rotate_quant_test, ascend350_rotate_quant_v2_rejects_groups_on_same_arch)
+{
+    // Ascend350 shares DAV_3510; checking only the NPU architecture is insufficient.
+    NpuArchManager archManager(NpuArch::DAV_3510);
+    SocVersionManager versionManager(SocVersion::ASCEND350);
+    TensorDesc x = TensorDesc({7, 96}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc rot = TensorDesc({3, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc groups = TensorDesc({3}, ACL_INT64, ACL_FORMAT_ND);
+    TensorDesc y = TensorDesc({7, 96}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+    TensorDesc scale = TensorDesc({7, 2, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnRotateQuantV2,
+                        INPUT(x, rot, (aclTensor*)nullptr, groups, 1, -1, (char*)nullptr, 0, 0.0, false),
+                        OUTPUT(y, scale));
+    uint64_t size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_rotate_quant_test, ascend350_rotate_quant_v2_null_groups_keep_legacy_mx)
+{
+    NpuArchManager archManager(NpuArch::DAV_3510);
+    SocVersionManager versionManager(SocVersion::ASCEND350);
+    TensorDesc x = TensorDesc({7, 96}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc rot = TensorDesc({3, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc y = TensorDesc({7, 96}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+    TensorDesc scale = TensorDesc({7, 2, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnRotateQuantV2,
+                        INPUT(x, rot, (aclTensor*)nullptr, (aclTensor*)nullptr, 0, -1, (char*)nullptr, 0, 0.0, false),
+                        OUTPUT(y, scale));
+    uint64_t size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_SUCCESS);
 }

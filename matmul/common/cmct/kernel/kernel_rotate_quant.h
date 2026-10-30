@@ -159,7 +159,7 @@ public:
         if ASCEND_IS_AIC {
             blockMmadOp.Init(problemShape_, bs.GetTileL1Shape(), bs.GetTileL0Shape());
         }
-// v121(9201/9202, AIC:AIV=1:1)无需溢出模式处理(参照v121适配版); v100(3510)保持主线行为
+// DAV_9201/DAV_9202(AIC:AIV=1:1)无需溢出模式处理(参照DAV_9201/DAV_9202适配版); DAV_3510保持主线行为
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
         if ASCEND_IS_AIV {
             epilogueOp.Init(params.epilogueParams, problemShape_, alpha_, needClamp_, bs.GetAxis(), bs.GetRoundMode(),
@@ -181,7 +181,7 @@ public:
             int64_t rotOffset = bs.GetRotOffset(tileIdx);
             int64_t blkM = Get<MNK_M>(blockShape);
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
-            // v121(1:1): cann_out原版结构——AIC→AIV方向用flag 9(AIC Set/AIV Wait),
+            // DAV_9201/DAV_9202(1:1): cann_out原版结构——AIC→AIV方向用flag 9(AIC Set/AIV Wait),
             // AIV→AIC方向用flag 8(AIV Set/AIC Wait), 两方向flag id隔离避免互踩;
             // AIC首轮跳过等待为cann_out原版行为(034c3f391曾误删致死锁, 0017ebdf1恢复)
             if ASCEND_IS_AIC {
@@ -225,7 +225,7 @@ public:
         }
 
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
-        // v121: 无需恢复溢出模式
+        // DAV_9201/DAV_9202: 无需恢复溢出模式
 #else
         if ASCEND_IS_AIV {
             SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(oriOverflowMode);

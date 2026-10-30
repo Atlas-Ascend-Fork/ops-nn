@@ -28,6 +28,14 @@
             "format": "ND",
             "paramType": "optional",
             "shape": [-2]
+          },
+          {
+            "name": "group_list",
+            "index": 3,
+            "dtype": "int64",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [-2]
           }
         ],
         "outputs": [
@@ -77,6 +85,11 @@
           {
             "name": "trans",
             "dtype": "bool",
+            "value": null
+          },
+          {
+            "name": "group_list_type",
+            "dtype": "int",
             "value": null
           }
         ]
@@ -107,6 +120,14 @@
             "format": "ND",
             "paramType": "optional",
             "shape": [-2]
+          },
+          {
+            "name": "group_list",
+            "index": 3,
+            "dtype": "int64",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [-2]
           }
         ],
         "outputs": [
@@ -157,6 +178,11 @@
             "name": "trans",
             "dtype": "bool",
             "value": null
+          },
+          {
+            "name": "group_list_type",
+            "dtype": "int",
+            "value": null
           }
         ]
       },
@@ -183,6 +209,14 @@
             "name": "alpha",
             "index": 2,
             "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [-2]
+          },
+          {
+            "name": "group_list",
+            "index": 3,
+            "dtype": "int64",
             "format": "ND",
             "paramType": "optional",
             "shape": [-2]
@@ -235,6 +269,11 @@
           {
             "name": "trans",
             "dtype": "bool",
+            "value": null
+          },
+          {
+            "name": "group_list_type",
+            "dtype": "int",
             "value": null
           }
         ]
@@ -265,6 +304,14 @@
             "format": "ND",
             "paramType": "optional",
             "shape": [-2]
+          },
+          {
+            "name": "group_list",
+            "index": 3,
+            "dtype": "int64",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [-2]
           }
         ],
         "outputs": [
@@ -315,6 +362,11 @@
             "name": "trans",
             "dtype": "bool",
             "value": null
+          },
+          {
+            "name": "group_list_type",
+            "dtype": "int",
+            "value": null
           }
         ]
       },
@@ -341,6 +393,14 @@
             "name": "alpha",
             "index": 2,
             "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [-2]
+          },
+          {
+            "name": "group_list",
+            "index": 3,
+            "dtype": "int64",
             "format": "ND",
             "paramType": "optional",
             "shape": [-2]
@@ -393,6 +453,11 @@
           {
             "name": "trans",
             "dtype": "bool",
+            "value": null
+          },
+          {
+            "name": "group_list_type",
+            "dtype": "int",
             "value": null
           }
         ]
@@ -423,6 +488,14 @@
             "format": "ND",
             "paramType": "optional",
             "shape": [-2]
+          },
+          {
+            "name": "group_list",
+            "index": 3,
+            "dtype": "int64",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [-2]
           }
         ],
         "outputs": [
@@ -472,6 +545,11 @@
           {
             "name": "trans",
             "dtype": "bool",
+            "value": null
+          },
+          {
+            "name": "group_list_type",
+            "dtype": "int",
             "value": null
           }
         ]

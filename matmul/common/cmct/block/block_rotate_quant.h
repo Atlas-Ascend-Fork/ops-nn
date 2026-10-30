@@ -54,13 +54,13 @@ public:
     uint64_t baseK_{16};
     uint64_t kAlign_{1};
     uint64_t l0PingPong_{1};
-    uint64_t subBlockId_{0}; // master原版: 3510侧Fixpipe subBlockId自增(乒乓), v121侧不使用
+    uint64_t subBlockId_{0}; // master原版: 3510侧Fixpipe subBlockId自增(乒乓), DAV_9201/DAV_9202侧不使用
     constexpr static uint64_t BUFFER_NUM = 2;
     constexpr static uint64_t HALF_L0_SIZE = L0A_SIZE / BUFFER_NUM / sizeof(A_T);
     constexpr static uint64_t HALF_L0C_SIZE = AscendC::TOTAL_L0C_SIZE / BUFFER_NUM / sizeof(L0cType);
     constexpr static int32_t C0_SIZE = AscendC::AuxGetC0Size<typename AType::T>();
 
-    // v121(9201/9202)回退cann_out原版单缓冲(仅单flag); v100(3510)保持ping-pong双flag预置
+    // DAV_9201/DAV_9202回退cann_out原版单缓冲(仅单flag); DAV_3510保持ping-pong双flag预置
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
     __aicore__ inline BlockMmad()
     {
@@ -194,7 +194,7 @@ public:
                                    const AscendC::LocalTensor<L0cType>& c1Local, uint64_t baseM, uint64_t baseN,
                                    uint64_t ubOffset)
     {
-        // FixpipeParams类型为编译期差异(3510用Arch3510+subBlockId自增, v121用C310+subBlockId恒0)
+        // FixpipeParams类型为编译期差异(3510用Arch3510+subBlockId自增, DAV_9201/DAV_9202用C310+subBlockId恒0)
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
         AscendC::FixpipeParamsC310<AscendC::CO2Layout::ROW_MAJOR> fixpipeParams;
 #else
@@ -209,7 +209,7 @@ public:
         fixpipeParams.dualDstCtl = 0;
         fixpipeParams.unitFlag = 0;
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
-        fixpipeParams.subBlockId = 0; // v121(1:1): cann_out同款, 无路由恒0
+        fixpipeParams.subBlockId = 0; // DAV_9201/DAV_9202(1:1): cann_out同款, 无路由恒0
 #else
         fixpipeParams.subBlockId = (subBlockId_++) & 0x1; // master原版(1:2): 乒乓自增
 #endif
@@ -233,7 +233,7 @@ public:
         aL1OneBuffer_ = Cmct::Gemm::Align(mL1, AscendC::BLOCK_CUBE) * Cmct::Gemm::Align(curKL1, AscendC::BLOCK_CUBE);
 
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
-        // v121: 回退cann_out原版单缓冲流水(无L0 ping-pong偏移, 单flag), 机器验证的正确基线
+        // DAV_9201/DAV_9202: 回退cann_out原版单缓冲流水(无L0 ping-pong偏移, 单flag), 机器验证的正确基线
         AscendC::LocalTensor<L0cType> c1Local = c1Local_;
         uint64_t bl1Offset = aL1OneBuffer_ * NUM_TWO;
         if (b_ > 1) {
@@ -263,12 +263,12 @@ public:
         mmadParams.disableGemv = true;
         mmadParams.unitFlag = 0;
         mmadParams.cmatrixInitVal = true;
-        Mmad(mmadParams); // v121贴cann_out: 无偏移参数
+        Mmad(mmadParams); // DAV_9201/DAV_9202贴cann_out: 无偏移参数
 
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(SIXTH_FLAG);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(ZERO_FLAG);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(ZERO_FLAG);
-        CopyOut(cTensor, c1Local, curML1, curNL0, 0); // v121贴cann_out: 局部c1Local(无偏移), ubOffset=0
+        CopyOut(cTensor, c1Local, curML1, curNL0, 0); // DAV_9201/DAV_9202贴cann_out: 局部c1Local(无偏移), ubOffset=0
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(ZERO_FLAG);
 #else
         uint64_t mte1Flag = ((l0PingPong_ & 0x1) + SIXTH_FLAG);
@@ -326,7 +326,7 @@ private:
     {
         mmadParams.cmatrixSource = false;
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
-        AscendC::Mmad(c1Local_, l0aLocal_, l0bLocal_, mmadParams); // v121贴cann_out: 无偏移
+        AscendC::Mmad(c1Local_, l0aLocal_, l0bLocal_, mmadParams); // DAV_9201/DAV_9202贴cann_out: 无偏移
 #else
         AscendC::Mmad(c1Local_[l0cOffset], l0aLocal_[l0abOffset], l0bLocal_[l0abOffset], mmadParams);
 #endif

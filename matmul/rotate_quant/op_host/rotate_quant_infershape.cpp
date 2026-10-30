@@ -37,7 +37,7 @@ constexpr int32_t MAX_ROT_DIM_NUM = 3;
 constexpr size_t ATTR_INDEX_DST_TYPE = 0;
 constexpr uint32_t OUTPUT_NUM_ROTATE_QUANT = 2;
 constexpr uint32_t INPUT_NUM_MIN_ROTATE_QUANT = 2;
-constexpr uint32_t INPUT_NUM_MAX_ROTATE_QUANT = 3;
+constexpr uint32_t INPUT_NUM_MAX_ROTATE_QUANT = 4;
 
 constexpr int64_t MX_BLOCK_SIZE = 64;
 constexpr int64_t MX_SCALE_LAST_DIM = 2;
@@ -55,6 +55,14 @@ static bool IsRotateQuant950Support()
     fe::OptionalInfo optionalInfo;
     auto ret = fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfo, optionalInfo);
     return (ret == ge::GRAPH_SUCCESS && RotateQuant950SupportSoc.count(platformInfo.str_info.short_soc_version) > 0);
+}
+
+static bool IsGroupedRotateQuantSupport()
+{
+    fe::PlatformInfo platformInfo;
+    fe::OptionalInfo optionalInfo;
+    auto ret = fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfo, optionalInfo);
+    return ret == ge::GRAPH_SUCCESS && platformInfo.str_info.short_soc_version == "Ascend950";
 }
 
 static ge::graphStatus CheckComputeNodeNum(gert::InferShapeContext* context)
@@ -93,14 +101,11 @@ static ge::graphStatus InferShapeCheck(gert::InferShapeContext* context)
 
 static ge::graphStatus CheckAlphaShape(gert::InferShapeContext* context)
 {
-    size_t inputNum = context->GetComputeNodeInputNum();
-    if (inputNum > ALPHA_INDEX) {
-        const gert::Shape* alphaShape = context->GetInputShape(ALPHA_INDEX);
-        if (alphaShape != nullptr) {
-            if (alphaShape->GetDimNum() != ALPHA_DIM_NUM || alphaShape->GetDim(0) != ALPHA_DIM_SIZE) {
-                OP_LOGE(context, "alpha shape must be (1), but got %zu dims", alphaShape->GetDimNum());
-                return ge::GRAPH_FAILED;
-            }
+    const gert::Shape* alphaShape = context->GetOptionalInputShape(ALPHA_INDEX);
+    if (alphaShape != nullptr) {
+        if (alphaShape->GetDimNum() != ALPHA_DIM_NUM || alphaShape->GetDim(0) != ALPHA_DIM_SIZE) {
+            OP_LOGE(context, "alpha shape must be (1), but got %zu dims", alphaShape->GetDimNum());
+            return ge::GRAPH_FAILED;
         }
     }
     return ge::GRAPH_SUCCESS;
@@ -165,9 +170,12 @@ static ge::graphStatus CheckInputShape4Mx(gert::InferShapeContext* context)
     }
 
     size_t rotDimNum = rotShape->GetDimNum();
-    if (rotDimNum < MIN_ROT_DIM_NUM || rotDimNum > MAX_ROT_DIM_NUM) {
-        OP_LOGE(context, "For mxfp8, rot shape dimension must be in [%d, %d], but got %zu", MIN_ROT_DIM_NUM,
-                MAX_ROT_DIM_NUM, rotDimNum);
+    const gert::Shape* groupShape = context->GetOptionalInputShape(3);
+    const size_t minRotRank = groupShape != nullptr ? 3 : MIN_ROT_DIM_NUM;
+    const size_t maxRotRank = groupShape != nullptr ? 4 : MAX_ROT_DIM_NUM;
+    if (rotDimNum < minRotRank || rotDimNum > maxRotRank) {
+        OP_LOGE(context, "For mxfp8, rot shape dimension must be in [%zu, %zu], but got %zu", minRotRank, maxRotRank,
+                rotDimNum);
         return ge::GRAPH_FAILED;
     }
 
@@ -189,7 +197,23 @@ static ge::graphStatus CheckInputShape4Mx(gert::InferShapeContext* context)
         return ge::GRAPH_FAILED;
     }
 
-    if (rotDimNum == MAX_ROT_DIM_NUM) {
+    if (groupShape != nullptr) {
+        if (xDimNum != DIMENSION_2 || groupShape->GetDimNum() != 1 || groupShape->GetDim(0) < 1 ||
+            groupShape->GetDim(0) > 1024 || rotShape->GetDim(0) != groupShape->GetDim(0) ||
+            (rotDimNum == 4 && rotShape->GetDim(1) != xN / rotLastDim)) {
+            OP_LOGE(context,
+                    "Grouped mode requires x[M,N], rotation[E,K,K] or [E,N/K,K,K], group_list[E], 1 <= E <= 1024.");
+            return ge::GRAPH_FAILED;
+        }
+        auto attrs = context->GetAttrs();
+        if (attrs != nullptr && attrs->GetAttrNum() > 6) {
+            auto type = attrs->GetAttrPointer<int64_t>(6);
+            if (type == nullptr || (*type != 0 && *type != 1)) {
+                OP_LOGE(context, "group_list_type must be 0 or 1.");
+                return ge::GRAPH_FAILED;
+            }
+        }
+    } else if (rotDimNum == MAX_ROT_DIM_NUM) {
         int64_t nKRatio = xN / rotLastDim;
         int64_t rotFirstDim = rotShape->GetDim(0);
         if (rotFirstDim != nKRatio) {
@@ -258,6 +282,10 @@ static ge::graphStatus RotateQuantInferShape(gert::InferShapeContext* context)
     }
     OP_LOGD(context->GetNodeName(), "Begin to do InferShape RotateQuant");
     if (InferShapeCheck(context) == ge::GRAPH_FAILED) {
+        return ge::GRAPH_FAILED;
+    }
+    if (context->GetOptionalInputShape(3) != nullptr && !IsGroupedRotateQuantSupport()) {
+        OP_LOGE(context, "Grouped RotateQuant is only supported on Ascend950.");
         return ge::GRAPH_FAILED;
     }
 
