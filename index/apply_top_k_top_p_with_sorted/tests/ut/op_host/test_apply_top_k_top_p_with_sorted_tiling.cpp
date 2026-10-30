@@ -16,6 +16,8 @@
 #include <iostream>
 #include <vector>
 #include <gtest/gtest.h>
+#include <initializer_list>
+#include <string>
 #include "experiment/metadef/common/util/error_manager/error_manager.h"
 
 #include "apply_top_k_top_p_with_sorted_compile_info.h"
@@ -27,6 +29,56 @@
 
 using namespace std;
 using namespace ge;
+
+namespace error_message {
+// Other operator UTs may replace the reporting API with a weak capture implementation.
+void ResetCapture() __attribute__((weak));
+std::string GetLastError() __attribute__((weak));
+int GetReportCount() __attribute__((weak));
+} // namespace error_message
+
+namespace {
+static void ResetErrorReports()
+{
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    if (error_message::ResetCapture != nullptr) {
+        error_message::ResetCapture();
+    }
+}
+
+static void ExpectSingleErrorReport(const std::string& expectedCode,
+                                    const std::initializer_list<std::string>& messageParts)
+{
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    if (error_message::GetLastError != nullptr && error_message::GetReportCount != nullptr &&
+        error_message::GetReportCount() != 0) {
+        const auto reportCount = error_message::GetReportCount();
+        const auto reportedCode = error_message::GetLastError();
+        if (error_message::ResetCapture != nullptr) {
+            error_message::ResetCapture();
+        }
+        EXPECT_EQ(reportCount, 1);
+        EXPECT_EQ(expectedCode == "EZ00" ? reportedCode.substr(0, 4) : reportedCode, expectedCode);
+        if (errors.empty()) {
+            // The legacy weak collector exposes the code and count, but no formatted message.
+            return;
+        }
+    }
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(expectedCode == "EZ00" ? errors[0].error_id.substr(0, 4) : errors[0].error_id, expectedCode);
+    if (expectedCode == "EZ1008" || expectedCode == "EZ1014") {
+        EXPECT_NE(errors[0].error_message.find("Preserve the execution logs"), std::string::npos);
+        for (const auto* detail : {"compileInfo", "compile info", "compiled info", "platformInfo", "platform info",
+                                   "attrs is null", "shape is null", "totalCoreNum"}) {
+            EXPECT_EQ(errors[0].error_message.find(detail), std::string::npos);
+        }
+    }
+    for (const auto& part : messageParts) {
+        EXPECT_NE(errors[0].error_message.find(part), std::string::npos) << errors[0].error_message;
+    }
+}
+
+} // namespace
 
 struct ApplyTopKTopPWithSortedTilingTestParam {
     string case_name;
@@ -142,13 +194,10 @@ TEST_P(ApplyTopKTopPWithSortedTilingTest, test_case_apply_top_k_top_p_with_sorte
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
     // workspaces nullptr return failed
-    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    ResetErrorReports();
     EXPECT_EQ(tiling_func(tiling_context), param.status);
     if (param.status != ge::GRAPH_SUCCESS) {
-        const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
-        ASSERT_EQ(errors.size(), 1U);
-        EXPECT_EQ(errors[0].error_id.substr(0, 4), "EZ00");
-        EXPECT_NE(errors[0].error_message.find("Parameter"), std::string::npos);
+        ExpectSingleErrorReport("EZ00", {"Parameter"});
     }
 
     if (param.status == ge::GRAPH_SUCCESS) {
@@ -298,3 +347,25 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
 };
 
 INSTANTIATE_TEST_CASE_P(ApplyTopKTopPWithSorted, ApplyTopKTopPWithSortedTilingTest, testing::ValuesIn(cases));
+
+TEST(ApplyTopKTopPFrameworkErrors, missing_compile_metadata_reports_tiling_execution_failure)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyTopKTopPWithSorted");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling_parse, nullptr);
+    char compiledJson[] = "{}";
+    int compileInfo = 0;
+    fe::PlatFormInfos platformInfo;
+    auto holder = gert::KernelRunContextFaker()
+                      .KernelIONum(2, 1)
+                      .Inputs({compiledJson, &platformInfo})
+                      .Outputs({&compileInfo})
+                      .Build();
+    auto* context = holder.GetContext<gert::KernelContext>();
+    ASSERT_NE(context, nullptr);
+    context->GetOutput(0)->Set(nullptr, nullptr);
+    ASSERT_EQ(holder.GetContext<gert::TilingParseContext>()->GetCompiledInfo<void>(), nullptr);
+    ResetErrorReports();
+    EXPECT_EQ(impl->tiling_parse(context), ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ1008", {"tiling execution failed"});
+}

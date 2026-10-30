@@ -31,7 +31,8 @@ namespace ops {
 static ge::graphStatus ReportInferShapeFailure(const char* opName, const char* reason)
 {
     const std::vector<const char*> keys = {"opName", "reason"};
-    const std::vector<const char*> values = {opName, reason};
+    const std::vector<const char*> values = {
+        opName, "Operator shape inference execution failed. Preserve the execution logs and contact operator support."};
     REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values);
     OP_LOGE_WITHOUT_REPORT(opName, "%s", reason);
     return ge::GRAPH_FAILED;

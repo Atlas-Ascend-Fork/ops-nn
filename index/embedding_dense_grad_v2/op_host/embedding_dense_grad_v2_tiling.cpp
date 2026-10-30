@@ -30,7 +30,8 @@ namespace {
 ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
 {
     const std::vector<const char*> keys = {"opName", "reason"};
-    const std::vector<const char*> values = {opName, reason.c_str()};
+    const std::vector<const char*> values = {
+        opName, "Operator tiling execution failed. Preserve the execution logs and contact operator support."};
     REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
     OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
     return ge::GRAPH_FAILED;
@@ -297,6 +298,11 @@ ge::graphStatus EmbeddingDenseGradV2Tiling::Init()
     SetDtypeSize();
     isDeterministMode_ = (tilingContext_->GetDeterministic() == 1) && dataTypeSize_ == sizeof(float);
     auto compileInfo = static_cast<const EmbeddingDenseGradV2CompileInfo*>(tilingContext_->GetCompileInfo());
+    if (compileInfo->totalCoreNum == 0) {
+        return ReportTilingFailure(
+            tilingContext_->GetNodeName(),
+            "AIV core count must be greater than 0, totalCoreNum=" + std::to_string(compileInfo->totalCoreNum));
+    }
     auto attrs = tilingContext_->GetAttrs();
     auto selfShape = tilingContext_->GetInputShape(0)->GetStorageShape();
     int64_t gradRow = 1;
@@ -317,9 +323,16 @@ ge::graphStatus EmbeddingDenseGradV2Tiling::Init()
                                                   "the last dimension of grad must be greater than 0");
         return ge::GRAPH_FAILED;
     }
-    if (coreNum_ == 0UL) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(tilingContext_->GetNodeName(), "grad, num_weights", "0",
-                                               "the grad row count and num_weights must yield a non-zero core number");
+    if (gradRow == 0) {
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            tilingContext_->GetNodeName(), "grad", std::to_string(selfShape.GetShapeSize()).c_str(),
+            "the product of grad dimensions excluding the last must be greater than 0");
+        return ge::GRAPH_FAILED;
+    }
+    if (scaleGrad_ && numWeights_ == 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext_->GetNodeName(), "num_weights",
+                                              std::to_string(numWeights_).c_str(),
+                                              "num_weights must be greater than 0 when scale_grad_by_freq is true");
         return ge::GRAPH_FAILED;
     }
     CalMaxFormerNum(ubSize_);
@@ -508,6 +521,9 @@ ge::graphStatus TilingEmbeddingDenseGradV2(gert::TilingContext* context)
 
     const EmbeddingDenseGradV2CompileInfo* compile_info = static_cast<const EmbeddingDenseGradV2CompileInfo*>(
         context->GetCompileInfo());
+    if (compile_info == nullptr) {
+        return ReportTilingFailure(context->GetNodeName(), "compile info is null");
+    }
 
     if (compile_info->isRegBase) {
         OP_LOGD(context->GetNodeName(), "Tiling EmbeddingDenseGradV2 RegBase start");

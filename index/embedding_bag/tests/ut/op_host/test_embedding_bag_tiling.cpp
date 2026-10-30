@@ -16,6 +16,9 @@
 #include <iostream>
 #include <vector>
 #include <gtest/gtest.h>
+#include <initializer_list>
+#include <string>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -29,8 +32,55 @@
 using namespace std;
 using namespace ge;
 
+namespace error_message {
+// Other operator UTs may replace the reporting API with a weak capture implementation.
+void ResetCapture() __attribute__((weak));
+std::string GetLastError() __attribute__((weak));
+int GetReportCount() __attribute__((weak));
+} // namespace error_message
+
 class EmbeddingBagTiling : public testing::Test {
 protected:
+    static void ResetErrorReports()
+    {
+        (void)ErrorManager::GetInstance().GetRawErrorMessages();
+        if (error_message::ResetCapture != nullptr) {
+            error_message::ResetCapture();
+        }
+    }
+
+    static void ExpectSingleErrorReport(const std::string& expectedCode,
+                                        const std::initializer_list<std::string>& messageParts)
+    {
+        const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+        if (error_message::GetLastError != nullptr && error_message::GetReportCount != nullptr &&
+            error_message::GetReportCount() != 0) {
+            const auto reportCount = error_message::GetReportCount();
+            const auto reportedCode = error_message::GetLastError();
+            if (error_message::ResetCapture != nullptr) {
+                error_message::ResetCapture();
+            }
+            EXPECT_EQ(reportCount, 1);
+            EXPECT_EQ(reportedCode, expectedCode);
+            if (errors.empty()) {
+                // The legacy weak collector exposes the code and count, but no formatted message.
+                return;
+            }
+        }
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, expectedCode);
+        if (expectedCode == "EZ1008" || expectedCode == "EZ1014") {
+            EXPECT_NE(errors[0].error_message.find("Preserve the execution logs"), std::string::npos);
+            for (const auto* detail : {"compileInfo", "compile info", "compiled info", "platformInfo", "platform info",
+                                       "attrs is null", "shape is null", "totalCoreNum"}) {
+                EXPECT_EQ(errors[0].error_message.find(detail), std::string::npos);
+            }
+        }
+        for (const auto& part : messageParts) {
+            EXPECT_NE(errors[0].error_message.find(part), std::string::npos) << errors[0].error_message;
+        }
+    }
+
     static void SetUpTestCase() { std::cout << "EmbeddingBagTiling SetUp" << std::endl; }
 
     static void TearDownTestCase() { std::cout << "EmbeddingBagTiling TearDown" << std::endl; }
@@ -130,6 +180,17 @@ TEST_F(EmbeddingBagTiling, embedding_bag_tiling_0)
     // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 1);
+
+    // The same valid context must reject missing internal compile metadata before dereferencing it.
+    const auto* nodeInfo = tiling_context->GetComputeNodeInfo();
+    auto* kernelContext = reinterpret_cast<gert::KernelContext*>(tiling_context);
+    auto* compileInfoSlot = kernelContext->MutableInput(nodeInfo->GetInputsNum() + nodeInfo->GetOutputsNum());
+    ASSERT_NE(compileInfoSlot, nullptr);
+    compileInfoSlot->Set(nullptr, nullptr);
+    ASSERT_EQ(tiling_context->GetCompileInfo(), nullptr);
+    ResetErrorReports();
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ1008", {"tiling execution failed"});
 }
 
 TEST_F(EmbeddingBagTiling, embedding_bag_tiling_1)
@@ -223,4 +284,26 @@ TEST_F(EmbeddingBagTiling, embedding_bag_tiling_1)
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+}
+
+TEST_F(EmbeddingBagTiling, missing_compile_metadata_reports_tiling_execution_failure)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("EmbeddingBag");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling_parse, nullptr);
+    char compiledJson[] = "{}";
+    int compileInfo = 0;
+    fe::PlatFormInfos platformInfo;
+    auto holder = gert::KernelRunContextFaker()
+                      .KernelIONum(2, 1)
+                      .Inputs({compiledJson, &platformInfo})
+                      .Outputs({&compileInfo})
+                      .Build();
+    auto* context = holder.GetContext<gert::KernelContext>();
+    ASSERT_NE(context, nullptr);
+    context->GetOutput(0)->Set(nullptr, nullptr);
+    ASSERT_EQ(holder.GetContext<gert::TilingParseContext>()->GetCompiledInfo<void>(), nullptr);
+    ResetErrorReports();
+    EXPECT_EQ(impl->tiling_parse(context), ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ1008", {"tiling execution failed"});
 }

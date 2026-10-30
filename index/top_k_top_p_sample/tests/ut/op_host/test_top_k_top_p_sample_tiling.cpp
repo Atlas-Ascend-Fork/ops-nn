@@ -12,6 +12,8 @@
 #include <vector>
 #include <thread>
 #include <gtest/gtest.h>
+#include <initializer_list>
+#include <string>
 #include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include <nlohmann/json.hpp>
 #include "log/log.h"
@@ -30,8 +32,55 @@ using namespace ut_util;
 using namespace std;
 using namespace ge;
 
+namespace error_message {
+// Other operator UTs may replace the reporting API with a weak capture implementation.
+void ResetCapture() __attribute__((weak));
+std::string GetLastError() __attribute__((weak));
+int GetReportCount() __attribute__((weak));
+} // namespace error_message
+
 class TopKTopPSampleTiling : public testing::Test {
 protected:
+    static void ResetErrorReports()
+    {
+        (void)ErrorManager::GetInstance().GetRawErrorMessages();
+        if (error_message::ResetCapture != nullptr) {
+            error_message::ResetCapture();
+        }
+    }
+
+    static void ExpectSingleErrorReport(const std::string& expectedCode,
+                                        const std::initializer_list<std::string>& messageParts)
+    {
+        const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+        if (error_message::GetLastError != nullptr && error_message::GetReportCount != nullptr &&
+            error_message::GetReportCount() != 0) {
+            const auto reportCount = error_message::GetReportCount();
+            const auto reportedCode = error_message::GetLastError();
+            if (error_message::ResetCapture != nullptr) {
+                error_message::ResetCapture();
+            }
+            EXPECT_EQ(reportCount, 1);
+            EXPECT_EQ(reportedCode, expectedCode);
+            if (errors.empty()) {
+                // The legacy weak collector exposes the code and count, but no formatted message.
+                return;
+            }
+        }
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, expectedCode);
+        if (expectedCode == "EZ1008" || expectedCode == "EZ1014") {
+            EXPECT_NE(errors[0].error_message.find("Preserve the execution logs"), std::string::npos);
+            for (const auto* detail : {"compileInfo", "compile info", "compiled info", "platformInfo", "platform info",
+                                       "attrs is null", "shape is null", "totalCoreNum"}) {
+                EXPECT_EQ(errors[0].error_message.find(detail), std::string::npos);
+            }
+        }
+        for (const auto& part : messageParts) {
+            EXPECT_NE(errors[0].error_message.find(part), std::string::npos) << errors[0].error_message;
+        }
+    }
+
     static void SetUpTestCase() { std::cout << "TopKTopPSampleTiling SetUp" << std::endl; }
 
     static void TearDownTestCase() { std::cout << "TopKTopPSampleTiling TearDown" << std::endl; }
@@ -152,24 +201,15 @@ TEST_F(TopKTopPSampleTiling, TOP_K_TOP_P_SAMPLE_001_FLOAT16)
     ASSERT_EQ(tiling_key, 1001);
 
     // The shape validator owns the first error; RunKernelTiling only propagates it.
-    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    ResetErrorReports();
     *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(0)) = {{8}, {8}};
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
-    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
-    ASSERT_EQ(errors.size(), 1U);
-    EXPECT_EQ(errors[0].error_id, "EZ0012");
-    EXPECT_NE(errors[0].error_message.find("logits"), std::string::npos);
-    EXPECT_NE(errors[0].error_message.find("1D"), std::string::npos);
-    EXPECT_NE(errors[0].error_message.find("greater than or equal to 2"), std::string::npos);
+    ExpectSingleErrorReport("EZ0012", {"logits", "1D", "greater than or equal to 2"});
 
     *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(0)) = {{8, 64}, {8, 64}};
     *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(1)) = {{7}, {7}};
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
-    errors = ErrorManager::GetInstance().GetRawErrorMessages();
-    ASSERT_EQ(errors.size(), 1U);
-    EXPECT_EQ(errors[0].error_id, "EZ0010");
-    EXPECT_NE(errors[0].error_message.find("top_k"), std::string::npos);
-    EXPECT_NE(errors[0].error_message.find("batch"), std::string::npos);
+    ExpectSingleErrorReport("EZ0010", {"top_k", "batch"});
 }
 
 TEST_F(TopKTopPSampleTiling, TOP_K_TOP_P_SAMPLE_002_BFLOAT16)
@@ -258,4 +298,14 @@ TEST_F(TopKTopPSampleTiling, TOP_K_TOP_P_SAMPLE_002_BFLOAT16)
     // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 1027);
+}
+
+TEST_F(TopKTopPSampleTiling, framework_context_failure_reports_execution_failure)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("TopKTopPSample");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling, nullptr);
+    ResetErrorReports();
+    EXPECT_EQ(impl->tiling(nullptr), ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ1008", {"tiling execution failed"});
 }

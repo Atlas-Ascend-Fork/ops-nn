@@ -9,13 +9,62 @@
  */
 
 #include <gtest/gtest.h>
+#include <initializer_list>
+#include <string>
 #include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_shape_range_context.h"
 #include "kernel_run_context_facker.h"
 
+namespace error_message {
+// Other operator UTs may replace the reporting API with a weak capture implementation.
+void ResetCapture() __attribute__((weak));
+std::string GetLastError() __attribute__((weak));
+int GetReportCount() __attribute__((weak));
+} // namespace error_message
+
 class WhereUT : public testing::Test {
 protected:
+    static void ResetErrorReports()
+    {
+        (void)ErrorManager::GetInstance().GetRawErrorMessages();
+        if (error_message::ResetCapture != nullptr) {
+            error_message::ResetCapture();
+        }
+    }
+
+    static void ExpectSingleErrorReport(const std::string& expectedCode,
+                                        const std::initializer_list<std::string>& messageParts)
+    {
+        const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+        if (error_message::GetLastError != nullptr && error_message::GetReportCount != nullptr &&
+            error_message::GetReportCount() != 0) {
+            const auto reportCount = error_message::GetReportCount();
+            const auto reportedCode = error_message::GetLastError();
+            if (error_message::ResetCapture != nullptr) {
+                error_message::ResetCapture();
+            }
+            EXPECT_EQ(reportCount, 1);
+            EXPECT_EQ(reportedCode, expectedCode);
+            if (errors.empty()) {
+                // The legacy weak collector exposes the code and count, but no formatted message.
+                return;
+            }
+        }
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, expectedCode);
+        if (expectedCode == "EZ1008" || expectedCode == "EZ1014") {
+            EXPECT_NE(errors[0].error_message.find("Preserve the execution logs"), std::string::npos);
+            for (const auto* detail : {"compileInfo", "compile info", "compiled info", "platformInfo", "platform info",
+                                       "attrs is null", "shape is null", "totalCoreNum"}) {
+                EXPECT_EQ(errors[0].error_message.find(detail), std::string::npos);
+            }
+        }
+        for (const auto& part : messageParts) {
+            EXPECT_NE(errors[0].error_message.find(part), std::string::npos) << errors[0].error_message;
+        }
+    }
+
     static void SetUpTestCase() { std::cout << "Where SetUp" << std::endl; }
 
     static void TearDownTestCase() { std::cout << "Where TearDown" << std::endl; }
@@ -69,13 +118,31 @@ TEST_F(WhereUT, invalid_rank_reports_one_formal_error)
                           .InputShapes({&input})
                           .OutputShapes({&output})
                           .Build();
-        (void)ErrorManager::GetInstance().GetRawErrorMessages();
+        ResetErrorReports();
         EXPECT_EQ(inferShape(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
-        const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
-        ASSERT_EQ(errors.size(), 1U);
-        EXPECT_EQ(errors[0].error_id, "EZ0012");
-        EXPECT_NE(errors[0].error_message.find("x"), std::string::npos);
-        EXPECT_NE(errors[0].error_message.find(std::to_string(input.GetDimNum())), std::string::npos);
-        EXPECT_NE(errors[0].error_message.find("rank"), std::string::npos);
+        ExpectSingleErrorReport("EZ0012", {"x", std::to_string(input.GetDimNum()), "rank"});
     }
+}
+
+TEST_F(WhereUT, missing_output_reports_shape_inference_execution_failure)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("Where");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    gert::Shape input{2, 3};
+    gert::Shape output;
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInputNum(1)
+                      .InputShapes({&input})
+                      .OutputShapes({&output})
+                      .Build();
+    auto* context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(context, nullptr);
+    auto* kernelContext = reinterpret_cast<gert::KernelContext*>(context);
+    kernelContext->GetOutput(0)->Set(nullptr, nullptr);
+    ASSERT_EQ(context->GetOutputShape(0), nullptr);
+    ResetErrorReports();
+    EXPECT_EQ(impl->infer_shape(context), ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ1014", {"shape inference execution failed"});
 }

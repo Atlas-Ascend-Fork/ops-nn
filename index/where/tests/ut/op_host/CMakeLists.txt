@@ -8,4 +8,8 @@
 #/
 if(UT_TEST_ALL OR OP_HOST_UT)
     add_modules_ut_sources(HOSTNAME ${OP_INFERSHAPE_MODULE_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR})
+    # Preserve production framework-error registrations in this operator's host UT.
+    target_link_libraries(${OP_INFERSHAPE_MODULE_NAME}_static_lib PRIVATE
+        "-Wl,--push-state,--no-as-needed,-lnnopbase,--pop-state"
+    )
 endif()

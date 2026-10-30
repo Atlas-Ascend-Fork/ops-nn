@@ -30,7 +30,8 @@ namespace {
 ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
 {
     const std::vector<const char*> keys = {"opName", "reason"};
-    const std::vector<const char*> values = {opName, reason.c_str()};
+    const std::vector<const char*> values = {
+        opName, "Operator tiling execution failed. Preserve the execution logs and contact operator support."};
     REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
     OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
     return ge::GRAPH_FAILED;
@@ -125,6 +126,9 @@ private:
 ge::graphStatus EmbeddingBagTiling::Init()
 {
     auto compileInfo = tilingContext_->GetCompileInfo<EmbeddingBagCompileInfo>();
+    if (compileInfo == nullptr) {
+        return ReportTilingFailure(tilingContext_->GetNodeName(), "compileInfo is null");
+    }
     indicesMaxMoveLength_ = INDICES_MAX_MOVE_LENGTH;
 
     const gert::StorageShape* weightShape = tilingContext_->GetInputShape(WEIGHT_INPUT_INDEX);

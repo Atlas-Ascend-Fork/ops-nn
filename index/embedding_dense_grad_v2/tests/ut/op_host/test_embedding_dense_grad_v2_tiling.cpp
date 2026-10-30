@@ -16,6 +16,8 @@
 #include <iostream>
 #include <vector>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
+#include "../../../op_host/embedding_dense_grad_v2_tiling.h"
 
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
@@ -29,6 +31,13 @@
 
 using namespace std;
 using namespace ge;
+
+namespace error_message {
+// Other operator UTs may replace the reporting API with a weak capture implementation.
+void ResetCapture() __attribute__((weak));
+std::string GetLastError() __attribute__((weak));
+int GetReportCount() __attribute__((weak));
+} // namespace error_message
 
 class EmbeddingDenseGradV2Tiling : public testing::Test {
 protected:
@@ -966,3 +975,160 @@ TEST_F(EmbeddingDenseGradV2Tiling, embedding_dense_grad_v2_tiling_2)
 //   // workspaces nullptr return failed
 //   EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
 // }
+
+namespace {
+struct TilingValidationInput {
+    int64_t gradRows = 4;
+    int64_t embeddingDim = 8;
+    int64_t numWeights = 16;
+    uint64_t totalCoreNum = 8;
+    bool scaleGrad = false;
+    bool hasCompileInfo = true;
+};
+
+void CheckTilingValidation(const TilingValidationInput& input, const char* expectedCode, const char* expectedDetail)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("EmbeddingDenseGradV2");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling, nullptr);
+    optiling::EmbeddingDenseGradV2CompileInfo compileInfo;
+    compileInfo.totalCoreNum = input.totalCoreNum;
+    compileInfo.ubSizePlatForm = 196608;
+    compileInfo.isRegBase = false;
+    gert::StorageShape grad = {{input.gradRows, input.embeddingDim}, {input.gradRows, input.embeddingDim}};
+    gert::StorageShape indices = {{input.gradRows}, {input.gradRows}};
+    gert::StorageShape positions = indices;
+    gert::StorageShape output = {{input.numWeights, input.embeddingDim}, {input.numWeights, input.embeddingDim}};
+    fe::PlatFormInfos platformInfo;
+    ASSERT_TRUE(platformInfo.Init());
+    auto tilingData = gert::TilingData::CreateCap(4096);
+    auto workspace = gert::ContinuousVector::Create<size_t>(1);
+    auto holder = gert::TilingContextFaker()
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&grad, &indices, &positions})
+                      .OutputShapes({&output})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(&platformInfo)
+                      .NodeAttrs({{"num_weights", Ops::NN::AnyValue::CreateFrom<int64_t>(input.numWeights)},
+                                  {"padding_idx", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
+                                  {"scale_grad_by_freq", Ops::NN::AnyValue::CreateFrom<bool>(input.scaleGrad)}})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(tilingData.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                      .Build();
+    auto* context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(context->GetCompileInfo(), &compileInfo);
+    if (!input.hasCompileInfo) {
+        // Build a valid context first, then simulate missing compile metadata at the tiling entry.
+        const auto* nodeInfo = context->GetComputeNodeInfo();
+        auto* kernelContext = reinterpret_cast<gert::KernelContext*>(context);
+        auto* compileInfoSlot = kernelContext->MutableInput(nodeInfo->GetInputsNum() + nodeInfo->GetOutputsNum());
+        ASSERT_NE(compileInfoSlot, nullptr);
+        compileInfoSlot->Set(nullptr, nullptr);
+        ASSERT_EQ(context->GetCompileInfo(), nullptr);
+    }
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    if (error_message::ResetCapture != nullptr) {
+        error_message::ResetCapture();
+    }
+    auto status = impl->tiling(context);
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    const auto weakReportCount = error_message::GetReportCount != nullptr ? error_message::GetReportCount() : 0;
+    const auto weakReportedCode = error_message::GetLastError != nullptr ? error_message::GetLastError() : "";
+    if (error_message::ResetCapture != nullptr) {
+        error_message::ResetCapture();
+    }
+    if (expectedCode == nullptr) {
+        EXPECT_EQ(status, ge::GRAPH_SUCCESS);
+        EXPECT_TRUE(errors.empty());
+        EXPECT_EQ(weakReportCount, 0);
+        return;
+    }
+    EXPECT_EQ(status, ge::GRAPH_FAILED);
+    if (weakReportCount != 0) {
+        EXPECT_EQ(weakReportCount, 1);
+        EXPECT_EQ(weakReportedCode, expectedCode);
+        if (errors.empty()) {
+            // The legacy weak collector exposes the code and count, but no formatted message.
+            return;
+        }
+    }
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, expectedCode);
+    if (std::string(expectedCode) == "EZ1008") {
+        EXPECT_NE(errors[0].error_message.find("Preserve the execution logs"), std::string::npos);
+        for (const auto* detail : {"compileInfo", "compile info", "compiled info", "totalCoreNum"}) {
+            EXPECT_EQ(errors[0].error_message.find(detail), std::string::npos);
+        }
+    }
+    EXPECT_NE(errors[0].error_message.find(context->GetNodeName()), std::string::npos);
+    EXPECT_NE(errors[0].error_message.find(expectedDetail), std::string::npos) << errors[0].error_message;
+    if (std::string(expectedCode) == "EZ0026") {
+        EXPECT_NE(errors[0].error_message.find("incorrect value " + std::to_string(input.numWeights)),
+                  std::string::npos);
+    }
+}
+} // namespace
+
+TEST_F(EmbeddingDenseGradV2Tiling, zero_platform_cores_report_tiling_error)
+{
+    for (bool scaleGrad : {false, true}) {
+        TilingValidationInput input;
+        input.totalCoreNum = 0;
+        input.scaleGrad = scaleGrad;
+        CheckTilingValidation(input, "EZ1008", "tiling execution failed");
+    }
+}
+
+TEST_F(EmbeddingDenseGradV2Tiling, missing_compile_info_reports_tiling_error)
+{
+    TilingValidationInput input;
+    input.hasCompileInfo = false;
+    CheckTilingValidation(input, "EZ1008", "tiling execution failed");
+}
+
+TEST_F(EmbeddingDenseGradV2Tiling, empty_grad_rows_report_shape_size_error)
+{
+    for (bool scaleGrad : {false, true}) {
+        TilingValidationInput input;
+        input.gradRows = 0;
+        input.scaleGrad = scaleGrad;
+        CheckTilingValidation(input, "EZ0015", "incorrect shape size 0");
+    }
+}
+
+TEST_F(EmbeddingDenseGradV2Tiling, scaled_zero_num_weights_reports_value_error)
+{
+    TilingValidationInput input;
+    input.numWeights = 0;
+    input.scaleGrad = true;
+    CheckTilingValidation(input, "EZ0026", "num_weights");
+}
+
+TEST_F(EmbeddingDenseGradV2Tiling, zero_embedding_dim_reports_shape_size_error)
+{
+    TilingValidationInput input;
+    input.embeddingDim = 0;
+    CheckTilingValidation(input, "EZ0015", "incorrect shape size 0");
+}
+
+TEST_F(EmbeddingDenseGradV2Tiling, valid_inputs_keep_both_scale_modes)
+{
+    for (bool scaleGrad : {false, true}) {
+        TilingValidationInput input;
+        input.scaleGrad = scaleGrad;
+        CheckTilingValidation(input, nullptr, nullptr);
+    }
+}
+
+TEST_F(EmbeddingDenseGradV2Tiling, unscaled_zero_num_weights_keeps_existing_behavior)
+{
+    TilingValidationInput input;
+    input.numWeights = 0;
+    CheckTilingValidation(input, nullptr, nullptr);
+}
