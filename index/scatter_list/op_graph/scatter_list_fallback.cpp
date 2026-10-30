@@ -24,9 +24,19 @@ static const size_t UPDATA_INDEX = 2;
 static const size_t MASK_INDEX = 3;
 static const size_t MAX_TENSOR_NUM = 256;
 
+static void ReportFallbackError(const char* opName, const char* reason)
+{
+    const char* name = opName != nullptr ? opName : "ScatterList";
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {name, reason};
+    REPORT_PREDEFINED_ERR_MSG("EZ1009", msgKey, msgValue);
+    OP_LOGE_WITHOUT_REPORT(name, "%s", reason);
+}
+
 static graphStatus ScatterListHostExecuteFunc(OpExecuteContext* hostApiCtx)
 {
-    OP_CHECK_IF(hostApiCtx == nullptr, OP_LOGE(hostApiCtx->GetNodeName(), "hostApiCtx is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(hostApiCtx == nullptr, ReportFallbackError("ScatterList", "fallback: OpExecuteContext is null"),
+                return GRAPH_FAILED);
     OP_LOGD(hostApiCtx->GetNodeName(), "ScatterListHostExecuteFunc in ");
 
     std::vector<const gert::Tensor*> geTenserListVar;
@@ -42,14 +52,17 @@ static graphStatus ScatterListHostExecuteFunc(OpExecuteContext* hostApiCtx)
     } while (true);
 
     auto indices = hostApiCtx->GetInputTensor(idx++);
-    OP_CHECK_IF(indices == nullptr, OP_LOGE(hostApiCtx->GetNodeName(), "indices is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(indices == nullptr, OP_LOGE_WITH_INVALID_INPUT(hostApiCtx->GetNodeName(), "indice"),
+                return GRAPH_FAILED);
 
     auto update = hostApiCtx->GetInputTensor(idx++);
-    OP_CHECK_IF(update == nullptr, OP_LOGE(hostApiCtx->GetNodeName(), "update is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(update == nullptr, OP_LOGE_WITH_INVALID_INPUT(hostApiCtx->GetNodeName(), "updates"),
+                return GRAPH_FAILED);
 
     auto mask = hostApiCtx->GetOptionalInputTensor(MASK_INDEX);
     auto output = hostApiCtx->GetOutputTensor(0);
-    OP_CHECK_IF(output == nullptr, OP_LOGE(hostApiCtx->GetNodeName(), "output is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(output == nullptr, ReportFallbackError(hostApiCtx->GetNodeName(), "fallback: output tensor 0 is null"),
+                return GRAPH_FAILED);
 
     auto attrs = hostApiCtx->GetAttrs();
     const char* reduce = attrs->GetAttrPointer<char>(0);
@@ -58,7 +71,9 @@ static graphStatus ScatterListHostExecuteFunc(OpExecuteContext* hostApiCtx)
     // execute opapi
     auto apiRet = CANN_OPS_OPB_SYN_EXEC_ACLNN(hostApiCtx, aclnnScatterList, geTenserListVar, indices, update, mask,
                                               reduce, *axis);
-    OP_CHECK_IF(apiRet != GRAPH_SUCCESS, OP_LOGE(hostApiCtx->GetNodeName(), "apiRet faild:%d", apiRet),
+    OP_CHECK_IF(apiRet != GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(hostApiCtx->GetNodeName(), "aclnnScatterList failed, ret=%u",
+                                       static_cast<unsigned int>(apiRet)),
                 return GRAPH_FAILED);
 
     return GRAPH_SUCCESS;
