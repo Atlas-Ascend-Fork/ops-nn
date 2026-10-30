@@ -72,6 +72,7 @@ public:
             .PrecisionReduceFlag(false)
             .ExtendCfgInfo("opFile.value", "quant_max_apt");
         this->AICore().AddConfig("ascend950", aicoreConfig950);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig950);
     }
 };
 OP_ADD(QuantMax);

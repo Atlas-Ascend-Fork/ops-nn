@@ -82,6 +82,7 @@ public:
             .ExtendCfgInfo("opFile.value", "grouped_dynamic_block_quant");
         this->AICore().AddConfig("ascend950", aicoreConfig);
         this->AICore().AddConfig("ascend350", aicoreConfig);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig);
     }
 };
 

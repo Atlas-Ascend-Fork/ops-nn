@@ -12,7 +12,7 @@
 #include <vector>
 #include <thread>
 #include <gtest/gtest.h>
-#include "experiment/metadef/common/util/error_manager/error_manager.h"
+#include "base/err_mgr.h"
 #include <nlohmann/json.hpp>
 #include "log/log.h"
 #include "graph/graph.h"
@@ -163,24 +163,27 @@ TEST_F(TopKTopPSampleV2Tiling, TOP_K_TOP_P_SAMPLE_V2_001_FLOAT16)
     ASSERT_EQ(tiling_key, 1001);
 
     // The shape validator owns the first error; RunKernelTiling only propagates it.
-    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
     *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(0)) = {{8}, {8}};
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
-    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
-    ASSERT_EQ(errors.size(), 1U);
-    EXPECT_EQ(errors[0].error_id, "EZ0012");
-    EXPECT_NE(errors[0].error_message.find("logits"), std::string::npos);
-    EXPECT_NE(errors[0].error_message.find("1D"), std::string::npos);
-    EXPECT_NE(errors[0].error_message.find("greater than or equal to 2"), std::string::npos);
+    auto errors = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errors, nullptr);
+    std::string errorMsg = errors.get();
+    EXPECT_NE(errorMsg.find("EZ0012"), std::string::npos) << errorMsg;
+    EXPECT_NE(errorMsg.find("logits"), std::string::npos) << errorMsg;
+    EXPECT_NE(errorMsg.find("1D"), std::string::npos) << errorMsg;
+    EXPECT_NE(errorMsg.find("greater than or equal to 2"), std::string::npos) << errorMsg;
 
     *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(0)) = {{8, 64}, {8, 64}};
     *const_cast<gert::StorageShape*>(tiling_context->GetInputShape(1)) = {{7}, {7}};
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
-    errors = ErrorManager::GetInstance().GetRawErrorMessages();
-    ASSERT_EQ(errors.size(), 1U);
-    EXPECT_EQ(errors[0].error_id, "EZ0010");
-    EXPECT_NE(errors[0].error_message.find("top_k"), std::string::npos);
-    EXPECT_NE(errors[0].error_message.find("batch"), std::string::npos);
+    errors = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errors, nullptr);
+    errorMsg = errors.get();
+    EXPECT_NE(errorMsg.find("EZ0010"), std::string::npos) << errorMsg;
+    EXPECT_NE(errorMsg.find("top_k"), std::string::npos) << errorMsg;
+    EXPECT_NE(errorMsg.find("batch"), std::string::npos) << errorMsg;
 }
 
 TEST_F(TopKTopPSampleV2Tiling, TOP_K_TOP_P_SAMPLE_V2_002_BFLOAT16)

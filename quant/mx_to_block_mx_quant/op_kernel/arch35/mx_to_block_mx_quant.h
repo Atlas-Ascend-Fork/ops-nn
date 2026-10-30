@@ -105,7 +105,7 @@ __aicore__ inline void MxToBlockMxQuant<T, U, rowMode>::Init(GM_ADDR x, GM_ADDR 
                                                              GM_ADDR scale2,
                                                              const MxToBlockMxQuantTilingData* tilingData)
 {
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
     SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(0);
 #endif
     ParseTilingData(tilingData);
