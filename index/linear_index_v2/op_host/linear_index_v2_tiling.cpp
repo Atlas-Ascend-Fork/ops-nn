@@ -12,6 +12,8 @@
  * \file linear_index_v2_tiling.cpp
  * \brief
  */
+#include <string>
+#include <vector>
 #include "register/op_impl_registry.h"
 #include "util/math_util.h"
 #include "log/log.h"
@@ -32,6 +34,18 @@ constexpr uint64_t INVALID_INDICES = 0;
 constexpr uint32_t DCACHE_SIZE = 32 * 1024;
 constexpr uint32_t REGBASE_CCEC_CACHE_SIZE = 8 * 1024;
 constexpr uint64_t WORKSPACE_SIZE = 0;
+
+namespace {
+void ReportMissingTilingObject(const char* functionName, const char* objectName)
+{
+    const std::string reason = std::string(functionName) + ": framework-provided " + objectName +
+                               " is nullptr; check framework context construction";
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {"LinearIndexV2", reason.c_str()};
+    OP_LOGE_WITHOUT_REPORT("LinearIndexV2", "%s", reason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+}
+} // namespace
 
 namespace optiling {
 struct computeParam {
@@ -99,17 +113,16 @@ ge::graphStatus LinearIndexV2Tiling::Init()
 {
     OP_LOGD(tilingContext_, "Tiling start.");
     if (tilingContext_ == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "tilingContext");
+        ReportMissingTilingObject(__func__, "tilingContext");
         return ge::GRAPH_FAILED;
     }
     auto compileInfo = static_cast<const LinearIndexV2CompileInfo*>(tilingContext_->GetCompileInfo());
     auto computeNodeInfoPtr = tilingContext_->GetComputeNodeInfo();
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "compileInfo"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(computeNodeInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "computeNodeInfoPtr"),
+    OP_CHECK_IF(compileInfo == nullptr, ReportMissingTilingObject(__func__, "compileInfo"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(computeNodeInfoPtr == nullptr, ReportMissingTilingObject(__func__, "computeNodeInfoPtr"),
                 return ge::GRAPH_FAILED);
     auto idxInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(0);
-    OP_CHECK_IF(idxInstanceInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "idxInstanceInfoPtr"),
+    OP_CHECK_IF(idxInstanceInfoPtr == nullptr, ReportMissingTilingObject(__func__, "idxInstanceInfoPtr"),
                 return ge::GRAPH_FAILED);
     tensorId_ = idxInstanceInfoPtr->GetInstanceNum();
     if (tensorId_ == 0) {
@@ -270,11 +283,9 @@ ge::graphStatus TilingPrepareForLinearIndexV2(gert::TilingParseContext* context)
 {
     OP_LOGD(context, "TilingPrepareForLinearIndexV2 start");
     auto compileInfo = context->GetCompiledInfo<LinearIndexV2CompileInfo>();
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "compileInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfo == nullptr, ReportMissingTilingObject(__func__, "compileInfo"), return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "platformInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(platformInfo == nullptr, ReportMissingTilingObject(__func__, "platformInfo"), return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo->isAscend950 = Ops::NN::OpTiling::IsRegbaseSocVersion(context);

@@ -12,6 +12,8 @@
  * \file index_check_tiling.cpp
  * \brief
  */
+#include <string>
+#include <vector>
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "tiling/platform/platform_ascendc.h"
@@ -24,6 +26,18 @@ constexpr int64_t SCALE_SPACE = 20480;
 constexpr int64_t MIN_UB_SIZE = 1024;
 constexpr uint64_t BLOCK_BYTES = 32;
 constexpr size_t MAX_DIM_NUM = 8;
+
+namespace {
+void ReportMissingTilingObject(const char* functionName, const char* objectName)
+{
+    const std::string reason = std::string(functionName) + ": framework-provided " + objectName +
+                               " is nullptr; check framework context construction";
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {"IndexCheck", reason.c_str()};
+    OP_LOGE_WITHOUT_REPORT("IndexCheck", "%s", reason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+}
+} // namespace
 
 namespace optiling {
 class IndexCheckTiling {
@@ -51,13 +65,12 @@ ge::graphStatus IndexCheckTiling::Init()
 {
     OP_LOGD(tilingContext_, "Tiling start.");
     if (tilingContext_ == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "tilingContext");
+        ReportMissingTilingObject(__func__, "tilingContext");
         return ge::GRAPH_FAILED;
     }
 
     auto compileInfo = tilingContext_->GetCompileInfo<IndexCheckCompileInfo>();
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "compileInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfo == nullptr, ReportMissingTilingObject(__func__, "compileInfo"), return ge::GRAPH_FAILED);
     totalCoreNum_ = compileInfo->totalCoreNum;
     workspaceSize_ = compileInfo->workspaceSize;
     if (compileInfo->ubSizePlatform < static_cast<uint64_t>(SCALE_SPACE + MIN_UB_SIZE)) {
@@ -74,11 +87,11 @@ ge::graphStatus IndexCheckTiling::Init()
             workspaceSize_);
 
     auto computeNodeInfoPtr = tilingContext_->GetComputeNodeInfo();
-    OP_CHECK_IF(computeNodeInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "computeNodeInfoPtr"),
+    OP_CHECK_IF(computeNodeInfoPtr == nullptr, ReportMissingTilingObject(__func__, "computeNodeInfoPtr"),
                 return ge::GRAPH_FAILED);
 
     auto idxInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(1);
-    OP_CHECK_IF(idxInstanceInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "idxInstanceInfoPtr"),
+    OP_CHECK_IF(idxInstanceInfoPtr == nullptr, ReportMissingTilingObject(__func__, "idxInstanceInfoPtr"),
                 return ge::GRAPH_FAILED);
     tensorId_ = idxInstanceInfoPtr->GetInstanceNum();
     OP_CHECK_IF(
@@ -186,7 +199,7 @@ ge::graphStatus IndexCheckTiling::RunKernelTiling()
     tilingData_.params.set_tensorLens(tensorLens_.data());
 
     auto rawTilingData = tilingContext_->GetRawTilingData();
-    OP_CHECK_IF(rawTilingData == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "rawTilingData"),
+    OP_CHECK_IF(rawTilingData == nullptr, ReportMissingTilingObject(__func__, "rawTilingData"),
                 return ge::GRAPH_FAILED);
     tilingData_.SaveToBuffer(rawTilingData->GetData(), rawTilingData->GetCapacity());
     rawTilingData->SetDataSize(tilingData_.GetDataSize());
@@ -201,7 +214,7 @@ ge::graphStatus IndexCheckTiling::RunKernelTiling()
         return ge::GRAPH_FAILED;
     }
     size_t* workspaces = tilingContext_->GetWorkspaceSizes(1);
-    OP_CHECK_IF(workspaces == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "workspaces"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(workspaces == nullptr, ReportMissingTilingObject(__func__, "workspaces"), return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     TilingDataPrint();
     OP_LOGD(tilingContext_, "set tiling data end.");
@@ -222,7 +235,7 @@ void IndexCheckTiling::TilingDataPrint() const
 ge::graphStatus TilingIndexCheck(gert::TilingContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "context");
+        ReportMissingTilingObject(__func__, "context");
         return ge::GRAPH_FAILED;
     }
     OP_LOGD(context->GetNodeName(), "IndexCheck tiling begin");
@@ -237,16 +250,14 @@ ge::graphStatus TilingIndexCheck(gert::TilingContext* context)
 ge::graphStatus TilingPrepareForIndexCheck(gert::TilingParseContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "context");
+        ReportMissingTilingObject(__func__, "context");
         return ge::GRAPH_FAILED;
     }
     OP_LOGD(context, "TilingPrepareForIndexCheck start");
     auto compileInfo = context->GetCompiledInfo<IndexCheckCompileInfo>();
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "compileInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfo == nullptr, ReportMissingTilingObject(__func__, "compileInfo"), return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "platformInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(platformInfo == nullptr, ReportMissingTilingObject(__func__, "platformInfo"), return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo->workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();

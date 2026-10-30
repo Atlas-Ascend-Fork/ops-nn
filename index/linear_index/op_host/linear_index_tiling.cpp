@@ -12,6 +12,8 @@
  * \file linear_index_tiling.cpp
  * \brief
  */
+#include <string>
+#include <vector>
 #include "register/op_impl_registry.h"
 #include "util/math_util.h"
 #include "log/log.h"
@@ -21,6 +23,18 @@
 #include "linear_index_tiling.h"
 
 using namespace std;
+
+namespace {
+void ReportMissingTilingObject(const char* functionName, const char* objectName)
+{
+    const std::string reason = std::string(functionName) + ": framework-provided " + objectName +
+                               " is nullptr; check framework context construction";
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {"LinearIndex", reason.c_str()};
+    OP_LOGE_WITHOUT_REPORT("LinearIndex", "%s", reason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+}
+} // namespace
 
 namespace {
 const int BUFFER_NUM = 1;
@@ -77,13 +91,12 @@ private:
 ge::graphStatus LinearIndexTiling::Init()
 {
     if (tilingContext == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "tilingContext");
+        ReportMissingTilingObject(__func__, "tilingContext");
         return ge::GRAPH_FAILED;
     }
 
     auto compileInfo = static_cast<const LinearIndexCompileInfo*>(tilingContext->GetCompileInfo());
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "compileInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfo == nullptr, ReportMissingTilingObject(__func__, "compileInfo"), return ge::GRAPH_FAILED);
     static uint32_t coreNum = static_cast<uint32_t>(compileInfo->totalCoreNum);
     if (coreNum == 0) {
         const std::string reason = "Tiling requires a positive AIV core count; actual=" + std::to_string(coreNum);
@@ -99,15 +112,15 @@ ge::graphStatus LinearIndexTiling::Init()
     OP_LOGD(tilingContext, "ubSizePlatForm: %lu.", ubSizePlatForm);
 
     auto attrs = tilingContext->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "attrs"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(attrs == nullptr, ReportMissingTilingObject(__func__, "attrs"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(tilingContext->GetInputShape(INPUT_0) == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "indices"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(tilingContext->GetInputShape(INPUT_1) == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "shape"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(tilingContext->GetInputDesc(INPUT_0) == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "indices"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tilingContext->GetRawTilingData() == nullptr,
-                OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "rawTilingData"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingContext->GetRawTilingData() == nullptr, ReportMissingTilingObject(__func__, "rawTilingData"),
+                return ge::GRAPH_FAILED);
 
     auto indicesShape = tilingContext->GetInputShape(INPUT_0)->GetStorageShape();
     auto varShapeTensor = tilingContext->GetInputTensor(INPUT_1);
@@ -265,11 +278,9 @@ ge::graphStatus TilingPrepareForLinearIndex(gert::TilingParseContext* context)
 {
     OP_LOGD(context, "TilingPrepareForLinearIndex start.");
     auto compileInfo = context->GetCompiledInfo<LinearIndexCompileInfo>();
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "compileInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfo == nullptr, ReportMissingTilingObject(__func__, "compileInfo"), return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndex", "platformInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(platformInfo == nullptr, ReportMissingTilingObject(__func__, "platformInfo"), return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo->workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();

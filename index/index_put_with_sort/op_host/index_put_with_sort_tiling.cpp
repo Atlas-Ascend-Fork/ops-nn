@@ -13,6 +13,8 @@
  * \brief
  */
 
+#include <string>
+#include <vector>
 #include "index_put_with_sort_tiling.h"
 #include "log/log.h"
 #include "platform/platform_infos_def.h"
@@ -21,6 +23,18 @@
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "util/math_util.h"
+
+namespace {
+void ReportMissingTilingObject(const char* functionName, const char* objectName)
+{
+    const std::string reason = std::string(functionName) + ": framework-provided " + objectName +
+                               " is nullptr; check framework context construction";
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {"IndexPutWithSort", reason.c_str()};
+    OP_LOGE_WITHOUT_REPORT("IndexPutWithSort", "%s", reason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+}
+} // namespace
 
 namespace optiling {
 constexpr uint32_t BLOCK_SIZE = 32;
@@ -202,7 +216,7 @@ ge::graphStatus IndexPutWithSortTilingOp::Init()
 
     tilingData.coreNums = coreNum;
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexPutWithSort", "attrs"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(attrs == nullptr, ReportMissingTilingObject(__func__, "attrs"), return ge::GRAPH_FAILED);
     tilingData.sliceSize = *(attrs->GetAttrPointer<uint32_t>)(0);
     tilingData.sliceSizeAligned = ((tilingData.sliceSize + HALF_ALIGNED - 1) / HALF_ALIGNED) * HALF_ALIGNED;
     bool accumulate = *(attrs->GetAttrPointer<bool>)(1); // false为替换, true为累加
@@ -249,11 +263,9 @@ ge::graphStatus TilingPrepareForIndexPutWithSort(gert::TilingParseContext* conte
 {
     OP_LOGD(context->GetNodeName(), "Tiling Prepare For IndexPutWithSort start");
     auto compileInfo = context->GetCompiledInfo<IndexPutWithSortCompileInfo>();
-    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexPutWithSort", "compileInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfo == nullptr, ReportMissingTilingObject(__func__, "compileInfo"), return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT("IndexPutWithSort", "platformInfo"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(platformInfo == nullptr, ReportMissingTilingObject(__func__, "platformInfo"), return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();

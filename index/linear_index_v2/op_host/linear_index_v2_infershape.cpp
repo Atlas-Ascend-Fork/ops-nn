@@ -16,12 +16,26 @@
  * Output shape is same as the first indices tensor shape.
  */
 
+#include <string>
+#include <vector>
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "util/shape_util.h"
 
 using namespace ge;
 using namespace Ops::Base;
+
+namespace {
+void ReportMissingInferenceObject(const char* functionName, const char* objectName)
+{
+    const std::string reason = std::string(functionName) + ": framework-provided " + objectName +
+                               " is nullptr; check framework context construction";
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {"LinearIndexV2", reason.c_str()};
+    OP_LOGE_WITHOUT_REPORT("LinearIndexV2", "%s", reason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values);
+}
+} // namespace
 
 namespace ops {
 
@@ -39,12 +53,13 @@ namespace ops {
 static ge::graphStatus InferShapeForLinearIndexV2(gert::InferShapeContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "context");
+        ReportMissingInferenceObject(__func__, "context");
         return GRAPH_FAILED;
     }
     // Get output shape
     auto outShape = context->GetOutputShape(0);
-    OP_CHECK_IF(outShape == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "index"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(outShape == nullptr, ReportMissingInferenceObject(__func__, "outputShape(index)"),
+                return ge::GRAPH_FAILED);
     // Get the first indices tensor shape (indices_list is dynamic input, index 0)
     auto indicesShape = context->GetDynamicInputShape(0, 0);
     OP_CHECK_IF(indicesShape == nullptr, OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "indices_list"),
@@ -70,7 +85,7 @@ static ge::graphStatus InferShapeForLinearIndexV2(gert::InferShapeContext* conte
 static graphStatus InferDataTypeForLinearIndexV2(gert::InferDataTypeContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("LinearIndexV2", "context");
+        ReportMissingInferenceObject(__func__, "context");
         return GRAPH_FAILED;
     }
 

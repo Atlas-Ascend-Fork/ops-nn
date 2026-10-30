@@ -15,18 +15,32 @@
  * \brief
  */
 
+#include <string>
+#include <vector>
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "exe_graph/runtime/infer_datatype_context.h"
 
 using namespace ge;
 
+namespace {
+void ReportMissingInferenceObject(const char* functionName, const char* objectName)
+{
+    const std::string reason = std::string(functionName) + ": framework-provided " + objectName +
+                               " is nullptr; check framework context construction";
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {"IndexCheck", reason.c_str()};
+    OP_LOGE_WITHOUT_REPORT("IndexCheck", "%s", reason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values);
+}
+} // namespace
+
 namespace ops {
 
 static ge::graphStatus InferDataTypeForIndexCheck(gert::InferDataTypeContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("IndexCheck", "context");
+        ReportMissingInferenceObject(__func__, "context");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
