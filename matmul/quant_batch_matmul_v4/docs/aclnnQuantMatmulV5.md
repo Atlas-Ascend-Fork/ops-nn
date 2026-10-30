@@ -450,7 +450,7 @@ aclnnStatus aclnnQuantMatmulV5(
       </tr>
       <tr>
         <td>groupSize(int64_t)</td>
-        <td>可选输入</td>
+        <td>输入</td>
         <td>用于输入m、n、k方向上的量化分组大小。</td>
         <td>由3个方向的groupSizeM，groupSizeN，groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（groupSize中的高16位的数值无效），计算公式见表格下方。</td>
         <td>INT64</td>
@@ -501,7 +501,6 @@ aclnnStatus aclnnQuantMatmulV5(
 
     - 上表数据类型列中的角标“1”代表该系列不支持的数据类型。
     - 输入参数x1、x2均不支持INT32类型。
-    - x2仅支持ND格式。
 
   <!-- end id12 -->
   <!-- npu="A3,910b" id13 -->
@@ -792,7 +791,7 @@ aclnnStatus aclnnQuantMatmulV5(
     - 当out的shape为4、5、6维时，bias的shape支持1维(n,)。
     - 当out的shape为3维时，bias的shape支持1维(n,)或3维(batch, 1, n)。
   - groupSize相关约束：
-    - 仅在MX、G-B、B-B、K-G、T-CG[量化模式](../../../docs/zh/context/quant_mode_introduction.md)中生效。
+    - 仅在MX、G-B、B-B、K-G、T-CG[量化模式](../../../docs/zh/context/quant_mode_introduction.md)中生效，其他场景下必须为0。
     - 传入的groupSize内部会按如下公式分解得到groupSizeM、groupSizeN、groupSizeK，当其中有1个或多个为0，会根据x1/x2/x1Scale/x2Scale输入shape重新设置groupSizeM、groupSizeN、groupSizeK用于计算。原理：假设groupSizeM=0，表示m方向量化分组值由接口推断，推断公式为groupSizeM = m / scaleM（需保证m能被scaleM整除），其中m与x1 shape中的m一致，scaleM与x1Scale shape中的m一致。
 
     $$
