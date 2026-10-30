@@ -34,7 +34,7 @@ namespace ge {
 
 * @par Attributes
 * @li dtype: A required attribute, the type is int. No defaults value.
-* @li axis: A optional attribute, the type is float. Defaults to -1.
+* @li axis: A optional attribute, the type is int. Defaults to -1.
 * @li epsilon: A optional attribute, the type is float. Defaults to 1e-5.
 * @li additional_output: A optional attribute, the type is bool. Defaults to false.
 

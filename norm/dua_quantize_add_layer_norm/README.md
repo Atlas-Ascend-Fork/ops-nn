@@ -97,21 +97,21 @@
     </tr>
     <tr>
       <td>bias</td>
-      <td>可选输入</td>
+      <td>输入</td>
       <td>表示DuaQuantizeAddLayerNorm中加法计算的输入，对应公式中的`bias`。</td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>scales1</td>
-      <td>可选输入</td>
+      <td>输入</td>
       <td>用于量化第一个输入张量的缩放因子，对应公式中的`scales1`。</td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>scales2</td>
-      <td>可选输入</td>
+      <td>输入</td>
       <td>用于量化第二个输入张量的缩放因子，对应公式中的`scales2`。</td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>
@@ -132,8 +132,8 @@
     </tr>
     <tr>
       <td>dtype</td>
-      <td>必选属性</td>
-      <td><ul><li>指定量化后的输出张量y的数据类型。</li><li>没有默认值。</li></ul></td>
+      <td>属性</td>
+      <td><ul><li>指定量化后的输出张量y的数据类型。</li><li>没有默认值。</li><li>当前交付仅支持INT8（y1、y2固定为INT8）。</li></ul></td>
       <td>INT</td>
       <td>-</td>
     </tr>
@@ -154,7 +154,7 @@
     <tr>
       <td>additional_output</td>
       <td>可选属性</td>
-      <td><ul><li>表示是否开启x的输出。</li><li>默认值为false。</li></ul></td>
+      <td><ul><li>表示是否开启x的输出（预留开关）。</li><li>默认值为false。</li><li>当前实现中x为必选输出且始终写出，该属性不影响x的输出。</li></ul></td>
       <td>BOOL</td>
       <td>-</td>
     </tr>
@@ -183,7 +183,15 @@
 
 ## 约束说明
 
-无
+- 数据类型：9 个输入的 dtype 必须一致，取值 FLOAT16、BFLOAT16、FLOAT32。
+- 维度：x1（及 x2）的 rank 取值范围为 [1, 8]；rank 为 0 的标量按 shape [1] 处理。
+- 归一化维：x1 的最后一维（W = x1.shape[-1]）必须大于 0。
+- 输入形状：x2.shape 必须等于 x1.shape。
+- 参数形状：gamma、beta、bias、scales1、scales2、zero_points1、zero_points2 必须为 1 维，且长度等于 W。
+- 输出：y1、y2、x 的 shape 必须等于 x1.shape；y1、y2 的 dtype 固定为 INT8，x 的 dtype 与 x1 一致。
+- 量化参数：axis 不为 -65535（除法模式）时，scales1、scales2 不得为 0；实现对除零不作守卫，结果按 Inf/NaN 语义传播。
+- 数值范围：epsilon 无值域校验；当 Var(x)+epsilon 的平方项超出 FLOAT32 可表示范围时按 IEEE 语义传播（例如方差平方上溢为 Inf 时 rstd 为 0，norm_out 退化为 beta）。
+- 平台差异：Atlas A2（ascend910b）、Atlas A3（ascend910_93）当前仅交付 BFLOAT16 二进制；FLOAT16、FLOAT32 仅在 Ascend 950 系列交付。
 
 ## 调用说明
 
