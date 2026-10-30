@@ -82,6 +82,7 @@ public:
             .ExtendCfgInfo("opInterface.value", "inplace_apply_keras_momentum")
             .ExtendCfgInfo("opFile.value", "inplace_apply_keras_momentum");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 OP_ADD(InplaceApplyKerasMomentum);
