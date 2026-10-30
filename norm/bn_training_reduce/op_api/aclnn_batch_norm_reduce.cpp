@@ -22,7 +22,6 @@
 #include "norm/norm_common/op_host/op_api/norm_tensor_util.h"
 #include "../../../batch_norm_v3/op_host/op_api/batch_norm.h"
 #include "level0/squeeze.h"
-#include "level0/unsqueeze.h"
 
 using namespace op;
 #ifdef __cplusplus
@@ -124,25 +123,6 @@ static aclnnStatus CheckParams(const aclTensor* x, aclTensor* sum, aclTensor* sq
     return ACLNN_SUCCESS;
 }
 
-const aclTensor* ResizeTo4D(const aclTensor* input, aclOpExecutor* executor)
-{
-    const int64_t appendDim[] = {0, 2, 3};
-    constexpr size_t appendDimNum = sizeof(appendDim) / sizeof(appendDim[0]);
-    aclIntArray* newShape = executor->AllocIntArray(appendDim, appendDimNum);
-
-    auto inputUnsqueeze = l0op::UnsqueezeNd(input, newShape, executor);
-    if (inputUnsqueeze == nullptr) {
-        return inputUnsqueeze;
-    }
-    auto formatTensor = executor == nullptr ? const_cast<aclTensor*>(inputUnsqueeze) :
-                                              executor->CreateView(inputUnsqueeze, inputUnsqueeze->GetViewShape(),
-                                                                   inputUnsqueeze->GetViewOffset());
-    formatTensor->SetViewFormat(Format::FORMAT_NCHW);
-    formatTensor->SetOriginalFormat(Format::FORMAT_NCHW);
-    formatTensor->SetStorageFormat(Format::FORMAT_NCHW);
-    return formatTensor;
-}
-
 const aclTensor* ResizeTo1D(const aclTensor* input, aclOpExecutor* executor)
 {
     const int64_t removeDim[] = {0, 2, 3};
@@ -190,11 +170,8 @@ aclnnStatus aclnnBatchNormReduceGetWorkspaceSize(const aclTensor* x, aclTensor* 
     auto xContiguous = l0op::Contiguous(x, uniqueExecutor.get());
     CHECK_RET(xContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    auto sumNCHW = ResizeTo4D(sum, uniqueExecutor.get());
-    CHECK_RET(sumNCHW != nullptr, ACLNN_ERR_INNER_NULLPTR);
-
-    std::array<aclTensor*, TENSOR_NUM> sumTensor = l0op::BNTrainingReduce(xContiguous, sumNCHW->GetViewShape(),
-                                                                          uniqueExecutor.get());
+    const op::Shape outShape{1, x->GetViewShape().GetDim(DIM_ONE), 1, 1};
+    std::array<aclTensor*, TENSOR_NUM> sumTensor = l0op::BNTrainingReduce(xContiguous, outShape, uniqueExecutor.get());
 
     auto sumND = ResizeTo1D(sumTensor[0], uniqueExecutor.get());
     CHECK_RET(sumND != nullptr, ACLNN_ERR_INNER_NULLPTR);

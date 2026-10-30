@@ -34,6 +34,45 @@ TEST_F(l2BatchNormReduceTest, l2_batch_norm_reduce_bfloat16)
     EXPECT_EQ(aclRet, ACL_SUCCESS);
 }
 
+TEST_F(l2BatchNormReduceTest, l2_batch_norm_reduce_noncontiguous_sum)
+{
+    auto x = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto sum = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND, {2}, 0, {10});
+    auto squareSum = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnBatchNormReduce, INPUT(x), OUTPUT(sum, squareSum));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+}
+
+TEST_F(l2BatchNormReduceTest, l2_batch_norm_reduce_noncontiguous_square_sum)
+{
+    auto x = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto sum = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto squareSum = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND, {2}, 0, {10});
+
+    auto ut = OP_API_UT(aclnnBatchNormReduce, INPUT(x), OUTPUT(sum, squareSum));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+}
+
+TEST_F(l2BatchNormReduceTest, l2_batch_norm_reduce_noncontiguous_outputs_with_offset)
+{
+    auto x = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto sum = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND, {2}, 1, {10});
+    auto squareSum = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND, {2}, 1, {10});
+
+    auto ut = OP_API_UT(aclnnBatchNormReduce, INPUT(x), OUTPUT(sum, squareSum));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+}
+
 TEST_F(l2BatchNormReduceTest, l2_batch_norm_reduce_rejects_nhwc)
 {
     auto x = TensorDesc({3, 3, 8, 5}, ACL_FLOAT, ACL_FORMAT_NHWC);
