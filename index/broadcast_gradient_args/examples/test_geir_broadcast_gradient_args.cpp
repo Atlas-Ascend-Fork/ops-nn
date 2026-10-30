@@ -48,7 +48,7 @@ using std::map;
 using std::string;
 using std::vector;
 
-#define ADD_INPUT(intputIndex, intputName, intputDtype, inputShape)                                          \
+#define ADD_INPUT(intputIndex, intputName, intputDtype, inputShape, inputValues)                             \
     do {                                                                                                     \
         vector<int64_t> placeholder##intputIndex##_shape = inputShape;                                       \
         auto placeholder##intputIndex = op::Data("placeholder" + intputIndex).set_attr_index(0);             \
@@ -57,8 +57,8 @@ using std::vector;
         placeholder##intputIndex##_desc.SetPlacement(ge::kPlacementHost);                                    \
         placeholder##intputIndex##_desc.SetFormat(FORMAT_ND);                                                \
         Tensor tensor_placeholder##intputIndex;                                                              \
-        ret = GenOnesDataFloat32(placeholder##intputIndex##_shape, tensor_placeholder##intputIndex,          \
-                                 placeholder##intputIndex##_desc, 2);                                        \
+        ret = GenInt32Data(placeholder##intputIndex##_shape, tensor_placeholder##intputIndex,                \
+                           placeholder##intputIndex##_desc, inputValues);                                    \
         if (ret != SUCCESS) {                                                                                \
             printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                   \
             return FAILED;                                                                                   \
@@ -152,6 +152,23 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
     return SUCCESS;
 }
 
+int32_t GenInt32Data(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc,
+                     const vector<int32_t>& values)
+{
+    input_tensor_desc.SetRealDimCnt(shapes.size());
+    size_t size = 1;
+    for (uint32_t i = 0; i < shapes.size(); i++) {
+        size *= shapes[i];
+    }
+    uint32_t data_len = size * GetDataTypeSize(ge::DT_INT32);
+    int32_t* pData = new (std::nothrow) int32_t[size];
+    for (size_t i = 0; i < size; ++i) {
+        *(pData + i) = values[i % values.size()];
+    }
+    input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
+    return SUCCESS;
+}
+
 int32_t WriteDataToFile(string bin_file, uint64_t data_size, uint8_t* inputData)
 {
     FILE* fp = fopen(bin_file.c_str(), "w");
@@ -166,9 +183,13 @@ int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vect
     Status ret = SUCCESS;
     // 自定义代码：添加单算子定义到图中
     auto broadcast_gradient_args1 = op::BroadcastGradientArgs("broadcast_gradient_args1");
-    std::vector<int64_t> xShape = {4};
-    ADD_INPUT(1, x1, inDtype, xShape);
-    ADD_INPUT(2, x2, inDtype, xShape);
+    // x1 = {2, 1, 4, 1, 6} (原始张量a的shape)  x2 = {2, 3, 1, 5, 1} (原始张量b的shape)
+    // 广播后shape为{2, 3, 4, 5, 6}，期望输出：y1 = {1, 3}（x1中为1的轴），y2 = {2, 4}（x2中为1的轴）
+    std::vector<int64_t> xShape = {5};
+    std::vector<int32_t> x1Values = {2, 1, 4, 1, 6};
+    std::vector<int32_t> x2Values = {2, 3, 1, 5, 1};
+    ADD_INPUT(1, x1, inDtype, xShape, x1Values);
+    ADD_INPUT(2, x2, inDtype, xShape, x2Values);
 
     outputs.push_back(broadcast_gradient_args1);
     // 添加完毕

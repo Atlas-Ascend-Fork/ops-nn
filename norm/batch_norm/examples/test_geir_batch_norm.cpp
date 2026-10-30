@@ -38,25 +38,25 @@ using namespace ge;
 using std::map;
 using std::string;
 using std::vector;
-#define ADD_INPUT(inputIndex, inputName, inputDtype, inputShape)                                                  \
-    vector<int64_t> placeholder##inputIndex##_shape = inputShape;                                                 \
-    auto placeholder##inputIndex = op::Data("placeholder" + inputIndex).set_attr_index(0);                        \
-    TensorDesc placeholder##inputIndex##_desc = TensorDesc(ge::Shape(placeholder##inputIndex##_shape), FORMAT_ND, \
-                                                           inputDtype);                                           \
-    placeholder##inputIndex##_desc.SetPlacement(ge::kPlacementHost);                                              \
-    placeholder##inputIndex##_desc.SetFormat(FORMAT_ND);                                                          \
-    Tensor tensor_placeholder##inputIndex;                                                                        \
-    ret = GenOnesDataFloat32(placeholder##inputIndex##_shape, tensor_placeholder##inputIndex,                     \
-                             placeholder##inputIndex##_desc, 2);                                                  \
-    if (ret != SUCCESS) {                                                                                         \
-        printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                            \
-        return FAILED;                                                                                            \
-    }                                                                                                             \
-    placeholder##inputIndex.update_input_desc_x(placeholder##inputIndex##_desc);                                  \
-    placeholder##inputIndex.update_output_desc_y(placeholder##inputIndex##_desc);                                 \
-    input.push_back(tensor_placeholder##inputIndex);                                                              \
-    graph.AddOp(placeholder##inputIndex);                                                                         \
-    batchNorm_1.set_input_##inputName(placeholder##inputIndex);                                                   \
+#define ADD_INPUT(inputIndex, inputName, inputDtype, inputShape, inputFormat)                                       \
+    vector<int64_t> placeholder##inputIndex##_shape = inputShape;                                                   \
+    auto placeholder##inputIndex = op::Data("placeholder" + inputIndex).set_attr_index(0);                          \
+    TensorDesc placeholder##inputIndex##_desc = TensorDesc(ge::Shape(placeholder##inputIndex##_shape), inputFormat, \
+                                                           inputDtype);                                             \
+    placeholder##inputIndex##_desc.SetPlacement(ge::kPlacementHost);                                                \
+    placeholder##inputIndex##_desc.SetFormat(inputFormat);                                                          \
+    Tensor tensor_placeholder##inputIndex;                                                                          \
+    ret = GenOnesDataFloat32(placeholder##inputIndex##_shape, tensor_placeholder##inputIndex,                       \
+                             placeholder##inputIndex##_desc, 2);                                                    \
+    if (ret != SUCCESS) {                                                                                           \
+        printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                              \
+        return FAILED;                                                                                              \
+    }                                                                                                               \
+    placeholder##inputIndex.update_input_desc_x(placeholder##inputIndex##_desc);                                    \
+    placeholder##inputIndex.update_output_desc_y(placeholder##inputIndex##_desc);                                   \
+    input.push_back(tensor_placeholder##inputIndex);                                                                \
+    graph.AddOp(placeholder##inputIndex);                                                                           \
+    batchNorm_1.set_input_##inputName(placeholder##inputIndex);                                                     \
     inputs.push_back(placeholder##inputIndex);
 
 #define ADD_INPUT_ATTR(attrName, attrValue) batchNorm_1.set_attr_##attrName(attrValue);
@@ -82,8 +82,8 @@ using std::vector;
     batchNorm_1.update_input_desc_##inputName(placeholder##inputIndex##_desc);                                         \
     inputs.push_back(placeholder##inputIndex);
 
-#define ADD_OUTPUT(outputIndex, outputName, outputDtype, outputShape)                                        \
-    TensorDesc outputName##outputIndex##_desc_ = TensorDesc(ge::Shape(outputShape), FORMAT_ND, outputDtype); \
+#define ADD_OUTPUT(outputIndex, outputName, outputDtype, outputShape, outputFormat)                             \
+    TensorDesc outputName##outputIndex##_desc_ = TensorDesc(ge::Shape(outputShape), outputFormat, outputDtype); \
     batchNorm_1.update_output_desc_##outputName(outputName##outputIndex##_desc_);
 
 #define LOG_PRINT(message, ...)         \
@@ -185,17 +185,17 @@ int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vect
     std::vector<int64_t> xShape = {2, 3, 4, 5};
     std::vector<int64_t> channelShape = {5};
     std::vector<int64_t> oneShape = {1};
-    ADD_INPUT(1, x, inDtype, xShape);
-    ADD_INPUT(2, scale, inDtype, channelShape);
-    ADD_INPUT(3, offset, inDtype, channelShape);
-    ADD_INPUT(4, mean, inDtype, channelShape);
-    ADD_INPUT(5, variance, inDtype, channelShape);
-    ADD_OUTPUT(1, y, inDtype, xShape);
-    ADD_OUTPUT(2, batch_mean, inDtype, channelShape);
-    ADD_OUTPUT(3, batch_variance, inDtype, channelShape);
-    ADD_OUTPUT(4, reserve_space_1, inDtype, channelShape);
-    ADD_OUTPUT(5, reserve_space_2, inDtype, channelShape);
-    ADD_OUTPUT(6, reserve_space_3, inDtype, oneShape);
+    ADD_INPUT(1, x, inDtype, xShape, FORMAT_NHWC);
+    ADD_INPUT(2, scale, inDtype, channelShape, FORMAT_ND);
+    ADD_INPUT(3, offset, inDtype, channelShape, FORMAT_ND);
+    ADD_INPUT(4, mean, inDtype, channelShape, FORMAT_ND);
+    ADD_INPUT(5, variance, inDtype, channelShape, FORMAT_ND);
+    ADD_OUTPUT(1, y, inDtype, xShape, FORMAT_NHWC);
+    ADD_OUTPUT(2, batch_mean, inDtype, channelShape, FORMAT_ND);
+    ADD_OUTPUT(3, batch_variance, inDtype, channelShape, FORMAT_ND);
+    ADD_OUTPUT(4, reserve_space_1, inDtype, channelShape, FORMAT_ND);
+    ADD_OUTPUT(5, reserve_space_2, inDtype, channelShape, FORMAT_ND);
+    ADD_OUTPUT(6, reserve_space_3, inDtype, oneShape, FORMAT_ND);
     ADD_INPUT_ATTR(epsilon, 1e-4f);
     ADD_INPUT_ATTR(data_format, "NHWC");
     ADD_INPUT_ATTR(is_training, true);
