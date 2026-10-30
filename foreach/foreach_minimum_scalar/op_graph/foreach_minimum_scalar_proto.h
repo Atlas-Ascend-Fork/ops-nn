@@ -22,7 +22,7 @@ namespace ge {
  * @par Inputs:
  * Two inputs:
  * @li x: A tensor list containing multiple tensors
- * @li scalar: A scalar in form of tensor with only one element, the shape must be (1,)
+ * @li scalar: A scalar in form of tensor with exactly one element; the dim num must be in range [0, 8]
  * @par Outputs:
  * @li y: A tensor list which store the tensors whose value are minimum with the scalar
  */

@@ -20,6 +20,7 @@
 #include "util/platform_util.h"
 #include "op_host/tiling_util.h"
 #include "op_host/tiling_templates_registry.h"
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_validator.h"
 #include "../../op_kernel/arch35/foreach_log10_tiling_data.h"
 #include "../../op_kernel/arch35/foreach_log10_tiling_key.h"
 
@@ -31,6 +32,7 @@ constexpr uint32_t WS_SYS_SIZE = 0U;
 constexpr int32_t INPUT_IDX_0 = 0;
 constexpr uint32_t DCACHE_SIZE = 128 * 1024;
 constexpr int64_t MIN_PER_CORE = 1024;
+// Upper bound of the tensor list, must not exceed the fixed-size tensorElements[] array (256).
 constexpr int32_t MAX_TENSOR_NUM = 256;
 
 struct ForeachLog10CompileInfo {};
@@ -54,11 +56,18 @@ static ge::graphStatus ForeachLog10TilingFunc(gert::TilingContext* context)
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
+    OP_CHECK_IF(ForeachFlatRegbaseValidation::ValidateHomogeneous<1>(
+                    context, ForeachFlatRegbaseValidation::IsFloatFamily) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "foreach_log10 input/output contract validation failed"), return ge::GRAPH_FAILED);
+
     auto computeNodeInfoPtr = context->GetComputeNodeInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoPtr);
     auto idxInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_0);
     OP_CHECK_NULL_WITH_CONTEXT(context, idxInstanceInfoPtr);
     uint64_t tensorNum = idxInstanceInfoPtr->GetInstanceNum();
+    OP_CHECK_IF(tensorNum > static_cast<uint64_t>(MAX_TENSOR_NUM),
+                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
+                return ge::GRAPH_FAILED);
 
     auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, 0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
@@ -69,9 +78,6 @@ static ge::graphStatus ForeachLog10TilingFunc(gert::TilingContext* context)
     OP_CHECK_IF(memset_s(tiling, sizeof(ForeachLog10TilingData), 0, sizeof(ForeachLog10TilingData)) != EOK,
                 OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
-                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
-                return ge::GRAPH_FAILED);
     tiling->tensorCount = static_cast<int32_t>(tensorNum);
     int64_t totalElements = 0;
 
@@ -98,6 +104,9 @@ static ge::graphStatus ForeachLog10TilingFunc(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
     currentWorkspace[0] = WS_SYS_SIZE;
 
+    OP_CHECK_IF(ubSize <= DCACHE_SIZE,
+                OP_LOGE(context, "ubSize[%lu] should be greater than DCACHE_SIZE[%u]", ubSize, DCACHE_SIZE),
+                return ge::GRAPH_FAILED);
     context->SetLocalMemorySize(static_cast<uint32_t>(ubSize - DCACHE_SIZE));
 
     uint64_t tilingKey = 0;

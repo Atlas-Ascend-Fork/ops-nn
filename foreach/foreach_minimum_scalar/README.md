@@ -49,7 +49,7 @@
     <tr>
       <td>x</td>
       <td>输入</td>
-      <td>表示取最小值运算的输入张量列表，对应公式中的`x`。该参数中所有Tensor的数据类型保持一致。</td>
+      <td>表示取最小值运算的输入张量列表，对应公式中的`x`。该参数中所有Tensor的数据类型保持一致，Tensor个数上限为256。</td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -63,7 +63,7 @@
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>表示取最小值运算的输出张量列表，对应公式中的`y`。数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size大于等于入参`x`的shape size。该参数中所有Tensor的数据类型保持一致。</td>
+      <td>表示取最小值运算的输出张量列表，对应公式中的`y`。数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size与入参`x`的shape size相同，且Tensor个数与`x`的Tensor个数相同。该参数中所有Tensor的数据类型保持一致。</td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>
     </tr>

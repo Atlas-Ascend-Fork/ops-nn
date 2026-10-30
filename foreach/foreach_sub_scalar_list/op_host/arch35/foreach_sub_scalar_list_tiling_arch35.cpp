@@ -15,6 +15,7 @@
  * \brief arch35 (Ascend950) tiling implementation for foreach_sub_scalar_list
  */
 
+#include <limits>
 #include "log/log.h"
 #include "util/math_util.h"
 #include "util/platform_util.h"
@@ -27,11 +28,96 @@ namespace optiling {
 
 constexpr uint32_t WS_SYS_SIZE = 0U;
 constexpr int32_t INPUT_IDX_0 = 0;
+constexpr int32_t INPUT_IDX_SCALARS = 1;
 constexpr uint32_t DCACHE_SIZE = 128 * 1024;
 constexpr int64_t MIN_PER_CORE = 1024;
 constexpr int32_t MAX_TENSOR_NUM = 256;
+constexpr int64_t MAX_SUPPORT_DIM_NUMS = 8;
 
 struct ForeachSubScalarListCompileInfo {};
+
+static bool IsScalarDtypeMatched(ge::DataType dataType, ge::DataType scalarDtype)
+{
+    if (dataType == ge::DT_INT32) {
+        return scalarDtype == ge::DT_INT64;
+    }
+    return scalarDtype == ge::DT_FLOAT;
+}
+
+static bool IsShapeAllNonNegative(const gert::Shape& shape)
+{
+    for (size_t dimIdx = 0; dimIdx < shape.GetDimNum(); dimIdx++) {
+        if (shape.GetDim(dimIdx) < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static ge::graphStatus CheckTensorListAndScalars(gert::TilingContext* context, uint64_t tensorNum,
+                                                 ge::DataType dataType)
+{
+    OP_CHECK_IF(context->GetComputeNodeOutputNum() != tensorNum,
+                OP_LOGE(context, "The tensor num of output y is %zu, which is not equal to that of x %lu.",
+                        context->GetComputeNodeOutputNum(), tensorNum),
+                return ge::GRAPH_FAILED);
+
+    for (uint64_t i = 0; i < tensorNum; i++) {
+        auto xShapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, xShapePtr);
+        const auto& xShape = xShapePtr->GetStorageShape();
+        OP_CHECK_IF(static_cast<int64_t>(xShape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                    OP_LOGE(context, "The dim num of x[%lu] must be less than or equal to 8, but got %zu.", i,
+                            xShape.GetDimNum()),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(!IsShapeAllNonNegative(xShape), OP_LOGE(context, "The dims of x[%lu] must be non-negative.", i),
+                    return ge::GRAPH_FAILED);
+        auto xDescPtr = context->GetDynamicInputDesc(INPUT_IDX_0, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, xDescPtr);
+        OP_CHECK_IF(xDescPtr->GetDataType() != dataType,
+                    OP_LOGE(context, "The dtype of x[%lu] must be consistent with that of x[0].", i),
+                    return ge::GRAPH_FAILED);
+
+        auto yShapePtr = context->GetOutputShape(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, yShapePtr);
+        const auto& yShape = yShapePtr->GetStorageShape();
+        OP_CHECK_IF(static_cast<int64_t>(yShape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                    OP_LOGE(context, "The dim num of y[%lu] must be less than or equal to 8, but got %zu.", i,
+                            yShape.GetDimNum()),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(!IsShapeAllNonNegative(yShape), OP_LOGE(context, "The dims of y[%lu] must be non-negative.", i),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(yShape.GetShapeSize() != xShape.GetShapeSize(),
+                    OP_LOGE(context, "The shape size of y[%lu] must be the same as that of x[%lu].", i, i),
+                    return ge::GRAPH_FAILED);
+        auto yDescPtr = context->GetOutputDesc(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, yDescPtr);
+        OP_CHECK_IF(yDescPtr->GetDataType() != dataType,
+                    OP_LOGE(context, "The dtype of y[%lu] must be the same as that of x.", i), return ge::GRAPH_FAILED);
+    }
+
+    auto scalarsShapePtr = context->GetRequiredInputShape(INPUT_IDX_SCALARS);
+    OP_CHECK_NULL_WITH_CONTEXT(context, scalarsShapePtr);
+    const auto& scalarsShape = scalarsShapePtr->GetStorageShape();
+    OP_CHECK_IF(static_cast<int64_t>(scalarsShape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
+                OP_LOGE(context, "The dim num of scalars must be less than or equal to 8, but got %zu.",
+                        scalarsShape.GetDimNum()),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        scalarsShape.GetShapeSize() != static_cast<int64_t>(tensorNum),
+        OP_LOGE(context, "The element count of scalars must be equal to the tensor num of x (%lu), but got %ld.",
+                tensorNum, scalarsShape.GetShapeSize()),
+        return ge::GRAPH_FAILED);
+    auto scalarsDescPtr = context->GetRequiredInputDesc(INPUT_IDX_SCALARS);
+    OP_CHECK_NULL_WITH_CONTEXT(context, scalarsDescPtr);
+    OP_CHECK_IF(!IsScalarDtypeMatched(dataType, scalarsDescPtr->GetDataType()),
+                OP_LOGE(context,
+                        "The dtype of scalars must be float32 when x is float32/bfloat16/float16, and int64 when x "
+                        "is int32, but got x dtype %d and scalars dtype %d.",
+                        static_cast<int32_t>(dataType), static_cast<int32_t>(scalarsDescPtr->GetDataType())),
+                return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
 
 inline const gert::Shape& EnsureNotScalar(const gert::Shape& in_shape) { return in_shape; }
 
@@ -44,6 +130,34 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& u
     OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     OP_CHECK_IF(ubSize == 0, OP_LOGE(context, "ubSize is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ubSize <= DCACHE_SIZE,
+                OP_LOGE(context, "ubSize[%lu] should be greater than DCACHE_SIZE[%u]", ubSize, DCACHE_SIZE),
+                return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
+
+static ge::graphStatus HandleEmptyTensorList(gert::TilingContext* context, uint64_t ubSize)
+{
+    // The empty tensor-list path must keep the non-empty path's constraint: scalars element count == tensorNum (0).
+    auto scalarsShapePtr = context->GetRequiredInputShape(INPUT_IDX_SCALARS);
+    OP_CHECK_NULL_WITH_CONTEXT(context, scalarsShapePtr);
+    OP_CHECK_IF(scalarsShapePtr->GetStorageShape().GetShapeSize() != 0,
+                OP_LOGE(context, "The element count of scalars must be 0 when the tensor list is empty, but got %ld.",
+                        scalarsShapePtr->GetStorageShape().GetShapeSize()),
+                return ge::GRAPH_FAILED);
+
+    ForeachSubScalarListTilingData* tiling = context->GetTilingData<ForeachSubScalarListTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+    OP_CHECK_IF(
+        memset_s(tiling, sizeof(ForeachSubScalarListTilingData), 0, sizeof(ForeachSubScalarListTilingData)) != EOK,
+        OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
+    tiling->needCoreNum = 1;
+    context->SetBlockDim(1);
+    size_t* currentWorkspace = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
+    currentWorkspace[0] = WS_SYS_SIZE;
+    context->SetLocalMemorySize(static_cast<uint32_t>(ubSize - DCACHE_SIZE));
+    context->SetTilingKey(GET_TPL_TILING_KEY(FOREACH_SUB_SCALAR_LIST_TPL_SCH_MODE_FLOAT));
     return ge::GRAPH_SUCCESS;
 }
 
@@ -59,10 +173,20 @@ static ge::graphStatus ForeachSubScalarListTilingFunc(gert::TilingContext* conte
     auto idxInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_0);
     OP_CHECK_NULL_WITH_CONTEXT(context, idxInstanceInfoPtr);
     uint64_t tensorNum = idxInstanceInfoPtr->GetInstanceNum();
+    OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
+                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
+                return ge::GRAPH_FAILED);
+
+    // An empty TensorList is collapsed to a single-core no-op before instance 0 is read.
+    if (tensorNum == 0) {
+        return HandleEmptyTensorList(context, ubSize);
+    }
 
     auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, 0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     ge::DataType dataType = inputDesc->GetDataType();
+    OP_CHECK_IF(CheckTensorListAndScalars(context, tensorNum, dataType) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "input compatibility check failed"), return ge::GRAPH_FAILED);
 
     ForeachSubScalarListTilingData* tiling = context->GetTilingData<ForeachSubScalarListTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
@@ -70,9 +194,6 @@ static ge::graphStatus ForeachSubScalarListTilingFunc(gert::TilingContext* conte
         memset_s(tiling, sizeof(ForeachSubScalarListTilingData), 0, sizeof(ForeachSubScalarListTilingData)) != EOK,
         OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
-                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
-                return ge::GRAPH_FAILED);
     tiling->tensorCount = static_cast<int32_t>(tensorNum);
     int64_t totalElements = 0;
 
@@ -81,6 +202,11 @@ static ge::graphStatus ForeachSubScalarListTilingFunc(gert::TilingContext* conte
         OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
         auto storageShape = shapePtr->GetStorageShape();
         int64_t numel = storageShape.GetShapeSize();
+        OP_CHECK_IF(numel < 0,
+                    OP_LOGE(context, "The element count of x[%lu] must be non-negative, but got %ld.", i, numel),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(totalElements > std::numeric_limits<int64_t>::max() - numel - MIN_PER_CORE,
+                    OP_LOGE(context, "The total element count overflows at x[%lu].", i), return ge::GRAPH_FAILED);
         tiling->tensorElements[i] = numel;
         totalElements += numel;
     }

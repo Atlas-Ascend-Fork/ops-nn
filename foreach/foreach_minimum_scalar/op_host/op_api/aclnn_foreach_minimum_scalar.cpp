@@ -46,6 +46,17 @@ static inline bool CheckNull(const aclTensorList* self, const aclTensor* scalar,
     return true;
 }
 
+static inline bool CheckTensorListSize(const aclTensorList* self, const aclTensorList* out)
+{
+    // self 和 out 的 tensor 个数必须一致，避免后续按下标访问 out 越界
+    if (self->Size() != out->Size()) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor lists must have the same number of tensors, got %lu and %lu",
+                self->Size(), out->Size());
+        return false;
+    }
+    return true;
+}
+
 static inline bool CheckFormat(const aclTensorList* self, const aclTensorList* out)
 {
     for (uint64_t m = 0; m < self->Size(); m++) {
@@ -78,10 +89,10 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclTensor* s
                 op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
         return false;
     }
-    auto selfDtyte = (*self)[0]->GetDataType();
     if (self->Size() == 0) {
         return true;
     }
+    auto selfDtyte = (*self)[0]->GetDataType();
     // checkself input dtype, and check the releation of input and out
     OP_CHECK_DTYPE_NOT_SUPPORT((*self)[0], dtypeSupportList_2, return false);
     for (uint64_t k = 0; k < self->Size(); k++) {
@@ -126,6 +137,9 @@ static inline aclnnStatus CheckParams(const aclTensorList* self, const aclTensor
     // dereference in CheckDtypeValid/CheckShape/CheckFormat.
     CHECK_RET(CheckTensorListNotNull(self, "self"), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckTensorListNotNull(out, "out"), ACLNN_ERR_PARAM_INVALID);
+
+    // self 和 out 的 tensor 个数必须一致（文档约束：Tensor 个数与 x 的 Tensor 个数相同）
+    CHECK_RET(CheckTensorListSize(self, out), ACLNN_ERR_PARAM_INVALID);
 
     // 2. 检查输入的数据类型是否在API支持的数据类型范围之内，需要根据api定义校验
     CHECK_RET(CheckDtypeValid(self, scalar, out), ACLNN_ERR_PARAM_INVALID);

@@ -22,6 +22,16 @@ static ge::graphStatus TilingPrepare4ForeachTiling([[maybe_unused]] gert::Tiling
 
 static ge::graphStatus Tiling4ForeachReciprocalTiling(gert::TilingContext* context)
 {
+    auto computeNodeInfo = context->GetComputeNodeInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfo);
+    auto xInstanceInfo = computeNodeInfo->GetInputInstanceInfo(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, xInstanceInfo);
+    uint64_t tensorNum = xInstanceInfo->GetInstanceNum();
+    OP_CHECK_IF(tensorNum > MAX_TENSOR_CONT,
+                OP_LOGE(context->GetNodeName(), "input tensor-list size %lu exceeds the supported max %u", tensorNum,
+                        static_cast<uint32_t>(MAX_TENSOR_CONT)),
+                return ge::GRAPH_FAILED);
+
     ForeachCommonTiling tilingObject(context);
     if (tilingObject.Init(SOLO_NEG_OP_CODE) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;

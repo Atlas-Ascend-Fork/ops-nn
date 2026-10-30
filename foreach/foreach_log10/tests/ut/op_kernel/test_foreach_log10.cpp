@@ -37,7 +37,7 @@ TEST_F(foreach_log10_test, test_case_float_1)
     system("cp -rf "
            "../../../../foreach/foreach_log10/tests/ut/op_kernel/log10_data ./");
     system("chmod -R 755 ./log10_data/");
-    system("cd ./log10_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'float32'");
+    ASSERT_EQ(system("cd ./log10_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'float32'"), 0);
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
     uint32_t blockDim = 4;
     size_t sysWorkspaceSize = 16 * 1024 * 1024;
@@ -55,12 +55,14 @@ TEST_F(foreach_log10_test, test_case_float_1)
 
     ICPU_SET_TILING_KEY(2);
 
+    ICPU_RUN_KF(foreach_log10, blockDim, x1, x2, workspace, tiling);
+
     FreeTensorListForeachLog10<float>(x2, shapeInfos, "float32");
     AscendC::GmFree((void*)x1);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
 
-    system("cd ./log10_data/ && python3 compare_data.py 'float32'");
+    ASSERT_EQ(system("cd ./log10_data/ && python3 compare_data.py 'float32'"), 0);
 }
 
 TEST_F(foreach_log10_test, test_case_float16_2)
@@ -69,7 +71,7 @@ TEST_F(foreach_log10_test, test_case_float16_2)
     system("cp -rf "
            "../../../../foreach/foreach_log10/tests/ut/op_kernel/log10_data ./");
     system("chmod -R 755 ./log10_data/");
-    system("cd ./log10_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'float16'");
+    ASSERT_EQ(system("cd ./log10_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'float16'"), 0);
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
     uint32_t blockDim = 4;
     size_t sysWorkspaceSize = 16 * 1024 * 1024;
@@ -87,12 +89,14 @@ TEST_F(foreach_log10_test, test_case_float16_2)
 
     ICPU_SET_TILING_KEY(1);
 
+    ICPU_RUN_KF(foreach_log10, blockDim, x1, x2, workspace, tiling);
+
     FreeTensorListForeachLog10<half>(x2, shapeInfos, "float16");
     AscendC::GmFree((void*)x1);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
 
-    system("cd ./log10_data/ && python3 compare_data.py 'float16'");
+    ASSERT_EQ(system("cd ./log10_data/ && python3 compare_data.py 'float16'"), 0);
 }
 
 TEST_F(foreach_log10_test, test_case_bfloat16_3)
@@ -101,7 +105,7 @@ TEST_F(foreach_log10_test, test_case_bfloat16_3)
     system("cp -rf "
            "../../../../foreach/foreach_log10/tests/ut/op_kernel/log10_data ./");
     system("chmod -R 755 ./log10_data/");
-    system("cd ./log10_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'bfloat16_t'");
+    ASSERT_EQ(system("cd ./log10_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'bfloat16_t'"), 0);
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
     uint32_t blockDim = 4;
     size_t sysWorkspaceSize = 16 * 1024 * 1024;
@@ -119,9 +123,12 @@ TEST_F(foreach_log10_test, test_case_bfloat16_3)
 
     ICPU_SET_TILING_KEY(4); // bfloat16_t
 
+    ICPU_RUN_KF(foreach_log10, blockDim, x1, x2, workspace, tiling);
+
     FreeTensorListForeachLog10<bfloat16_t>(x2, shapeInfos, "bfloat16_t");
+    AscendC::GmFree((void*)x1);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
 
-    system("cd ./log10_data/ && python3 compare_data.py 'bfloat16_t'");
+    ASSERT_EQ(system("cd ./log10_data/ && python3 compare_data.py 'bfloat16_t'"), 0);
 }

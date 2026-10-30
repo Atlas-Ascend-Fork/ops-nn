@@ -65,11 +65,14 @@
 
 ## 约束说明
 
+- 张量列表`x`与输出列表`out`包含的Tensor个数必须相等，单个Tensor列表中Tensor的数量不超过256个；不支持成员数为0的空TensorList。
+- `x`、`out`中每个Tensor的维度数不超过8。
+- 图模式（GE/IR）通路支持动态 Shape/Rank 标记：`-1` 表示动态维度、`-2` 表示动态 Rank，Host 推导按标记透传；执行前须完成具体化，各 Tensor 的维度必须为具体非负值（Tiling 对含负维标记的输入返回失败）。
 - 输出不支持非连续Tensor。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| aclnn接口  | [test_aclnn_foreach_log10](examples/test_aclnn_foreach_log10.cpp) | 通过[aclnnForeachLog10](docs/aclnnForeachLog10.md)接口方式调用ForeachLog10算子。 |
-| 图模式 | -  | 通过[算子IR](op_graph/foreach_log10_proto.h)构图方式调用ForeachLog10算子。         |
+| aclnn API  | [test_aclnn_foreach_log10](examples/test_aclnn_foreach_log10.cpp) | 通过[aclnnForeachLog10](docs/aclnnForeachLog10.md)接口方式调用ForeachLog10算子。 |
+| GE图模式 | -  | 通过[算子IR](op_graph/foreach_log10_proto.h)构图方式调用ForeachLog10算子。         |

@@ -86,7 +86,7 @@ aclnnStatus aclnnForeachMinimumScalarV2(
       <td>x（aclTensorList*）</td>
       <td>输入</td>
       <td>对应公式中的`x`，表示取最小值运算的输入张量列表。</td>
-      <td><ul><li>支持空TensorList</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
+      <td><ul><li>支持空TensorList</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>Tensor个数上限为256。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16、INT32</td>
       <td>ND</td>
       <td>0-8</td>
@@ -106,7 +106,7 @@ aclnnStatus aclnnForeachMinimumScalarV2(
       <td>out（aclTensorList*）</td>
       <td>输出</td>
       <td>对应公式中的`y`，表示取最小值运算的输出张量列表。</td>
-      <td><ul><li>支持空TensorList</li><li>数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size大于等于入参`x`的shape size。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
+      <td><ul><li>支持空TensorList</li><li>数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape（逐张量view shape）与入参`x`完全一致，且Tensor个数与`x`的Tensor个数相同。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16、INT32</td>
       <td>ND</td>
       <td>0-8</td>
@@ -325,7 +325,7 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建alpha aclScalar
   alpha = aclCreateScalar(&alphaValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(alpha != nullptr, return ret);
+  CHECK_RET(alpha != nullptr, LOG_PRINT("aclCreateScalar failed.\n"); return ACL_ERROR_FAILURE);
   // 创建out1 aclTensor
   ret = CreateAclTensor(out1HostData, outShape1, &out1DeviceAddr, aclDataType::ACL_FLOAT, &out1);
   CHECK_RET(ret == ACL_SUCCESS, return ret);

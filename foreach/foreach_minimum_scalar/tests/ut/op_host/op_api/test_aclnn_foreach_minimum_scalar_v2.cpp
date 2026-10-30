@@ -81,6 +81,24 @@ TEST_F(l2_foreach_minimum_scalar_v2_test, Ascend910B2_foreach_minimum_v2_test_sh
     EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
 }
 
+// self and out have different tensor list length
+TEST_F(l2_foreach_minimum_scalar_v2_test, Ascend910B2_foreach_minimum_v2_test_list_length_different)
+{
+    vector<vector<int64_t>> selfDims = {{2, 2}, {2, 2}};
+    auto scalar_desc = ScalarDesc(1.0);
+    vector<vector<int64_t>> outDims = {{2, 2}};
+    auto x1 = TensorDesc(selfDims[0], ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto x2 = TensorDesc(selfDims[1], ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto out = TensorDesc(outDims[0], ACL_FLOAT, ACL_FORMAT_ND).Precision(0.001, 0.001);
+    auto xList = TensorListDesc({x1, x2});
+    auto outList = TensorListDesc({out});
+
+    auto ut = OP_API_UT(aclnnForeachMinimumScalarV2, INPUT(xList, scalar_desc), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+}
+
 TEST_F(l2_foreach_minimum_scalar_v2_test, ascend910B2_foreach_minimum_scalar_v2_test_dtype_fp32)
 {
     vector<vector<int64_t>> selfDims = {{2, 2}};

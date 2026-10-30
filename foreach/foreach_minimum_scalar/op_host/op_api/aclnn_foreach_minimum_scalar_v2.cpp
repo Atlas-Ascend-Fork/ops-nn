@@ -108,10 +108,11 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclScalar* s
                                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
         return false;
     }
-    auto selfDtyte = (*self)[0]->GetDataType();
+    // 空列表直接返回，避免在列表长度判断前解引用首元素
     if (self->Size() == 0) {
         return true;
     }
+    auto selfDtyte = (*self)[0]->GetDataType();
     // checkself input dtype, and check the releation of input and out
     OP_CHECK_DTYPE_NOT_SUPPORT((*self)[0], dtypeSupportList_2, return false);
     for (uint64_t k = 0; k < self->Size(); k++) {
@@ -138,6 +139,13 @@ static inline bool CheckShape(const aclTensorList* self, const aclTensorList* ou
     // tensor 维度检查
     for (uint64_t k = 0; k < self->Size(); k++) {
         OP_CHECK_MAX_DIM((*self)[k], MAX_SUPPORT_DIMS_NUMS, return false);
+    }
+
+    // self和out的tensor个数必须一致，避免后续按下标访问out越界
+    if (self->Size() != out->Size()) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor lists must have the same number of tensors, got %lu and %lu",
+                self->Size(), out->Size());
+        return false;
     }
 
     // self和out的shape必须一致

@@ -138,3 +138,122 @@ TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_bf16)
     std::vector<size_t> expectWorkspaces = {0};
     ExecuteTestCase(tilingContextPara, ge::GRAPH_SUCCESS, expectTilingKey, expectTilingData, expectWorkspaces);
 }
+
+// Negative: x members must share the same dtype
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_x_dtype_inconsistent_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara("ForeachSubScalarList",
+                                              {
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                                  {{{2}, {2}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                              },
+                                              {}, {2, 1}, {2}, &compileInfo, 80, 262144, 8192);
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+}
+
+// Negative: out members must share the same dtype as x
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_out_dtype_inconsistent_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara("ForeachSubScalarList",
+                                              {
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{2}, {2}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                              },
+                                              {}, {2, 1}, {2}, &compileInfo, 80, 262144, 8192);
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+}
+
+// Negative: x rank must be less than or equal to 8
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_x_rank_over_8_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara(
+        "ForeachSubScalarList",
+        {
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+            {{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+        },
+        {
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+        },
+        {}, &compileInfo, 80, 262144, 8192);
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+}
+
+// Negative: out shape size must be the same as that of x
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_out_shape_mismatch_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara("ForeachSubScalarList",
+                                              {
+                                                  {{{8}, {8}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {
+                                                  {{{7}, {7}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {}, &compileInfo, 80, 262144, 8192);
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+}
+
+// Negative: out shape size larger than x is also rejected (equality required)
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_out_shape_larger_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara("ForeachSubScalarList",
+                                              {
+                                                  {{{8}, {8}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {
+                                                  {{{9}, {9}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {}, &compileInfo, 80, 262144, 8192);
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+}
+
+// Negative: scalars element count must be equal to the tensor count of x
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_scalars_count_mismatch_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara("ForeachSubScalarList",
+                                              {
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {}, {2, 1}, {2}, &compileInfo, 80, 262144, 8192);
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+}
+
+// Negative: scalars dtype must pair with the dtype of x
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_scalars_dtype_mismatch_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara("ForeachSubScalarList",
+                                              {
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_INT32, ge::FORMAT_ND},
+                                                  {{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {
+                                                  {{{32, 4, 4}, {32, 4, 4}}, ge::DT_INT32, ge::FORMAT_ND},
+                                              },
+                                              {}, &compileInfo, 80, 262144, 8192);
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+}

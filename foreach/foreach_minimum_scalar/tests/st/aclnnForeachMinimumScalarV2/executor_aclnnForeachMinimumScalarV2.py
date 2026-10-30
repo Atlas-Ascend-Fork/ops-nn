@@ -11,22 +11,18 @@
 
 import torch
 from atk.configs.dataset_config import InputDataset
-from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 from atk.tasks.api_execute.aclnn_base_api import AclnnBaseApi
-from atk.tasks.dataset.base_dataset import OpsDataset
-import numpy as np
 
 
 @register("function_aclnnForeachMinimumScalarV2")
 class aclnnForeachMinimumScalarV2Executor(BaseApi):
-
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         x1 = input_data.kwargs["x1"]
         x2 = input_data.kwargs["scalar"]
         output = torch._foreach_minimum(x1, x2)
-        
+
         return output
 
 

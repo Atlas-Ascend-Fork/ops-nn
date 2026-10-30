@@ -55,7 +55,7 @@
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>表示进行倒数运算的输出张量列表，对应公式中的`y`。该参数中所有Tensor的数据类型保持一致。数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size大于等于入参`x`的shape size。</td>
+      <td>表示进行倒数运算的输出张量列表，对应公式中的`y`。该参数中所有Tensor的数据类型保持一致。数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape与入参`x`的shape完全一致。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -65,11 +65,11 @@
 
 ## 约束说明
 
-- 输出不支持非连续Tensor。
+- 输出非连续Tensor支持情况：aclnnForeachReciprocal 支持非连续输出Tensor（内部自动转连续并写回）；图模式（IR）不支持非连续输出Tensor。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| aclnn接口  | [test_aclnn_foreach_reciprocal](examples/test_aclnn_foreach_reciprocal.cpp) | 通过[aclnnForeachReciprocal](docs/aclnnForeachReciprocal.md)接口方式调用ForeachReciprocal算子。 |
-| 图模式 | -  | 通过[算子IR](op_graph/foreach_reciprocal_proto.h)构图方式调用ForeachReciprocal算子。         |
+| aclnn API  | [test_aclnn_foreach_reciprocal](examples/test_aclnn_foreach_reciprocal.cpp) | 通过[aclnnForeachReciprocal](docs/aclnnForeachReciprocal.md)接口方式调用ForeachReciprocal算子。 |
+| GE图模式 | -  | 通过[算子IR](op_graph/foreach_reciprocal_proto.h)构图方式调用ForeachReciprocal算子。         |

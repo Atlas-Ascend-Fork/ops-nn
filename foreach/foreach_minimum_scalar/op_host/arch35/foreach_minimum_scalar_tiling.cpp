@@ -27,11 +27,31 @@ namespace optiling {
 
 constexpr uint32_t WS_SYS_SIZE = 0U;
 constexpr int32_t INPUT_IDX_0 = 0;
+constexpr int32_t INPUT_IDX_SCALAR = 1;
 constexpr uint32_t DCACHE_SIZE = 128 * 1024;
 constexpr int64_t MIN_PER_CORE = 1024;
 constexpr int32_t MAX_TENSOR_NUM = 256;
+constexpr size_t MAX_SUPPORT_DIMS = 8;
 
 struct ForeachMinimumScalarCompileInfo {};
+
+// 空 TensorList：与 Host 推理回调的 0 实例合法语义一致，空任务以单核成功收口
+static ge::graphStatus HandleEmptyTensorList(gert::TilingContext* context, uint64_t ubSize)
+{
+    ForeachMinimumScalarTilingData* tiling = context->GetTilingData<ForeachMinimumScalarTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+    OP_CHECK_IF(
+        memset_s(tiling, sizeof(ForeachMinimumScalarTilingData), 0, sizeof(ForeachMinimumScalarTilingData)) != EOK,
+        OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
+    tiling->needCoreNum = 1;
+    context->SetBlockDim(1);
+    size_t* currentWorkspace = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
+    currentWorkspace[0] = WS_SYS_SIZE;
+    context->SetLocalMemorySize(static_cast<uint32_t>(ubSize - DCACHE_SIZE));
+    context->SetTilingKey(GET_TPL_TILING_KEY(FOREACH_MINIMUM_SCALAR_TPL_SCH_MODE_FLOAT));
+    return ge::GRAPH_SUCCESS;
+}
 
 static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& ubSize, int64_t& coreNum)
 {
@@ -53,6 +73,12 @@ static ge::graphStatus ForeachMinimumScalarTilingFunc(gert::TilingContext* conte
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
+    // ubSize must be greater than DCACHE_SIZE: both the empty-list path and the main path compute
+    // local memory as (ubSize - DCACHE_SIZE); a smaller UB would underflow in the unsigned domain.
+    OP_CHECK_IF(ubSize <= DCACHE_SIZE,
+                OP_LOGE(context, "ubSize[%lu] should be greater than DCACHE_SIZE[%u]", ubSize, DCACHE_SIZE),
+                return ge::GRAPH_FAILED);
+
     // 2. Get tensor list info
     auto computeNodeInfoPtr = context->GetComputeNodeInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoPtr);
@@ -60,10 +86,52 @@ static ge::graphStatus ForeachMinimumScalarTilingFunc(gert::TilingContext* conte
     OP_CHECK_NULL_WITH_CONTEXT(context, idxInstanceInfoPtr);
     uint64_t tensorNum = idxInstanceInfoPtr->GetInstanceNum();
 
+    OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
+                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
+                return ge::GRAPH_FAILED);
+
+    // scalar must contain exactly one element and its dim num must not exceed MAX_SUPPORT_DIMS
+    auto scalarShapePtr = context->GetRequiredInputShape(INPUT_IDX_SCALAR);
+    OP_CHECK_NULL_WITH_CONTEXT(context, scalarShapePtr);
+    const auto& scalarShape = scalarShapePtr->GetStorageShape();
+    OP_CHECK_IF(scalarShape.GetDimNum() > MAX_SUPPORT_DIMS,
+                OP_LOGE(context, "the dim num of scalar should be less than or equal to %zu, but got %zu",
+                        MAX_SUPPORT_DIMS, scalarShape.GetDimNum()),
+                return ge::GRAPH_FAILED);
+    int64_t scalarCount = scalarShape.GetShapeSize();
+    OP_CHECK_IF(scalarCount != 1, OP_LOGE(context, "the scalar element count must be 1, but got %ld", scalarCount),
+                return ge::GRAPH_FAILED);
+
+    // 空 TensorList 先收口，避免在实例数为 0 时读取 x[0] 元数据
+    if (tensorNum == 0) {
+        return HandleEmptyTensorList(context, ubSize);
+    }
+
     // 3. Get dtype for tiling key
     auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, 0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     ge::DataType dataType = inputDesc->GetDataType();
+
+    // x 列表内 dtype 必须一致，且 scalar dtype 必须与 x 对应（f16↔f16；f32/bf16→f32；int32↔int32）
+    for (uint64_t i = 1; i < tensorNum; i++) {
+        auto xDescPtr = context->GetDynamicInputDesc(INPUT_IDX_0, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, xDescPtr);
+        OP_CHECK_IF(xDescPtr->GetDataType() != dataType,
+                    OP_LOGE(context, "the dtype of the %luth tensor in x must be the same as that of x[0]", i),
+                    return ge::GRAPH_FAILED);
+    }
+    auto scalarDescPtr = context->GetRequiredInputDesc(INPUT_IDX_SCALAR);
+    OP_CHECK_NULL_WITH_CONTEXT(context, scalarDescPtr);
+    ge::DataType scalarDtype = scalarDescPtr->GetDataType();
+    bool scalarDtypeMatched = (dataType == ge::DT_FLOAT16 && scalarDtype == ge::DT_FLOAT16) ||
+                              ((dataType == ge::DT_FLOAT || dataType == ge::DT_BF16) && scalarDtype == ge::DT_FLOAT) ||
+                              (dataType == ge::DT_INT32 && scalarDtype == ge::DT_INT32);
+    OP_CHECK_IF(!scalarDtypeMatched,
+                OP_LOGE(context,
+                        "the scalar dtype %d does not match x dtype %d: f16 scalar for f16 x, f32 scalar for "
+                        "f32/bf16 x, int32 scalar for int32 x",
+                        static_cast<int32_t>(scalarDtype), static_cast<int32_t>(dataType)),
+                return ge::GRAPH_FAILED);
 
     // 4. Fill tiling data
     ForeachMinimumScalarTilingData* tiling = context->GetTilingData<ForeachMinimumScalarTilingData>();
@@ -72,19 +140,40 @@ static ge::graphStatus ForeachMinimumScalarTilingFunc(gert::TilingContext* conte
         memset_s(tiling, sizeof(ForeachMinimumScalarTilingData), 0, sizeof(ForeachMinimumScalarTilingData)) != EOK,
         OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
-                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
-                return ge::GRAPH_FAILED);
     tiling->tensorCount = static_cast<int32_t>(tensorNum);
     int64_t totalElements = 0;
 
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto shapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);
         OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
-        auto storageShape = shapePtr->GetStorageShape();
+        const auto& storageShape = shapePtr->GetStorageShape();
+        OP_CHECK_IF(storageShape.GetDimNum() > MAX_SUPPORT_DIMS,
+                    OP_LOGE(context, "the dim num of the %luth tensor in x should be less than or equal to %zu", i,
+                            MAX_SUPPORT_DIMS),
+                    return ge::GRAPH_FAILED);
         int64_t numel = storageShape.GetShapeSize();
         tiling->tensorElements[i] = numel;
         totalElements += numel;
+    }
+
+    OP_CHECK_IF(context->GetComputeNodeOutputNum() != tensorNum,
+                OP_LOGE(context, "the tensor num of output y is %zu, which is not equal to that of x %lu",
+                        context->GetComputeNodeOutputNum(), tensorNum),
+                return ge::GRAPH_FAILED);
+    for (uint64_t i = 0; i < tensorNum; i++) {
+        auto yShapePtr = context->GetOutputShape(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, yShapePtr);
+        const auto& yStorageShape = yShapePtr->GetStorageShape();
+        OP_CHECK_IF(yStorageShape.GetDimNum() > MAX_SUPPORT_DIMS,
+                    OP_LOGE(context, "the dim num of the %luth tensor in y should be less than or equal to %zu", i,
+                            MAX_SUPPORT_DIMS),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(yStorageShape.GetShapeSize() != tiling->tensorElements[i],
+                    OP_LOGE(context,
+                            "the shape size of the %luth tensor in y should be equal to that of x, but got %ld and "
+                            "%ld",
+                            i, yStorageShape.GetShapeSize(), tiling->tensorElements[i]),
+                    return ge::GRAPH_FAILED);
     }
     tiling->totalElements = totalElements;
 

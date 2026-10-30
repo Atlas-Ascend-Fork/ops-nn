@@ -13,6 +13,7 @@
 #include "../../foreach_utils/op_host/foreach_contiguous_helper.h"
 #include "aclnn_kernels/contiguous.h"
 #include "op_api/op_api_def_nn.h"
+#include "op_api/aclnn_util.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
@@ -52,14 +53,11 @@ static inline bool CheckFormat(const aclTensorList* self, const aclTensorList* o
 
 static const std::initializer_list<DataType>& GetDtypeSupportList()
 {
-    switch (GetCurrentPlatformInfo().GetSocVersion()) {
-        case SocVersion::ASCEND910B:
-        case SocVersion::ASCEND910_93:
-        case SocVersion::ASCEND950:
-            return ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPPORT_LIST;
-        default:
-            return EMPTY_LIST;
+    auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (curArch != NpuArch::DAV_2201 && !Ops::NN::AclnnUtil::IsRegbase(curArch)) {
+        return EMPTY_LIST;
     }
+    return ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPPORT_LIST;
 }
 
 static inline bool CheckDtypeValid(const aclTensorList* self, const aclTensorList* out)

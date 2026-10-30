@@ -20,6 +20,7 @@
 #include "util/platform_util.h"
 #include "op_host/tiling_util.h"
 #include "op_host/tiling_templates_registry.h"
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_validator.h"
 #include "foreach/foreach_reciprocal/op_kernel/arch35/foreach_reciprocal_tiling_data.h"
 #include "foreach/foreach_reciprocal/op_kernel/arch35/foreach_reciprocal_tiling_key.h"
 
@@ -62,6 +63,13 @@ static ge::graphStatus ForeachReciprocalTilingFunc(gert::TilingContext* context)
 
     OP_CHECK_IF(tensorNum < 0 || tensorNum > MAX_TENSOR_COUNT,
                 OP_LOGE(context, "tensorNum %d must be in [0, 256]", tensorNum), return ge::GRAPH_FAILED);
+
+    if (tensorNum > 0) {
+        OP_CHECK_IF(ForeachFlatRegbaseValidation::ValidateHomogeneous<1>(
+                        context, ForeachFlatRegbaseValidation::IsFloatFamily) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(context, "foreach_reciprocal input/output contract validation failed"),
+                    return ge::GRAPH_FAILED);
+    }
 
     ge::DataType xDtype = ge::DT_FLOAT;
     if (tensorNum > 0) {
@@ -117,6 +125,9 @@ static ge::graphStatus ForeachReciprocalTilingFunc(gert::TilingContext* context)
     wsSizes[0] = static_cast<size_t>(ASCENDC_TOOLS_WORKSPACE);
 
     context->SetBlockDim(needCoreNum);
+    OP_CHECK_IF(ubSize <= DCACHE_SIZE,
+                OP_LOGE(context, "ubSize[%lu] should be greater than DCACHE_SIZE[%u]", ubSize, DCACHE_SIZE),
+                return ge::GRAPH_FAILED);
     context->SetLocalMemorySize(static_cast<uint32_t>(ubSize - DCACHE_SIZE));
 
     OP_LOGD(context->GetNodeName(),
