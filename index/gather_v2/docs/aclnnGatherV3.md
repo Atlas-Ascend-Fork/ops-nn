@@ -96,7 +96,7 @@ aclnnStatus aclnnGatherV3(
         <td>输入</td>
         <td>待收集的数据。</td>
         <td>-</td>
-        <td>FLOAT、FLOAT16、BFLOAT16、INT64、INT32、INT16、INT8、UINT8、BOOL、DOUBLE、COMPLEX64</td>
+        <td>FLOAT、FLOAT16、BFLOAT16、INT64、INT32、INT16、INT8、UINT8、BOOL、DOUBLE、COMPLEX64、COMPLEX128</td>
         <td>ND</td>
         <td>1-8</td>
         <td>√</td>
@@ -115,7 +115,7 @@ aclnnStatus aclnnGatherV3(
         <td>index</td>
         <td>输入</td>
         <td>收集数据的索引。</td>
-        <td>取值范围在0 ~ self.shape[dim]内（包含0，不包含self.shape[dim]）。batchDims = N, N != 0时，index前N维与self一致</td>
+        <td>取值范围在0 ~ self.shape[dim]内（包含0，不包含self.shape[dim]），由调用方保证，接口不会检查index的数据取值范围。batchDims = N, N != 0时，index前N维与self一致</td>
         <td>INT64、INT32</td>
         <td>ND</td>
         <td>1-8</td>
@@ -263,6 +263,7 @@ aclnnStatus aclnnGatherV3(
 
 ## 约束说明
 
+- index中的每个索引值必须满足0 ≤ index < self.shape[dim]，不支持负索引和越界索引。调用方需保证索引合法，否则行为未定义，可能产生错误结果或设备执行异常。
 - 确定性计算：
   - aclnnGatherV3默认确定性实现。
 

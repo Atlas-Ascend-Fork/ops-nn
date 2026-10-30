@@ -98,7 +98,7 @@ aclnnStatus aclnnGatherV3(
         <td>Input</td>
         <td>Data to gather.</td>
         <td>-</td>
-        <td>FLOAT,FLOAT16,BFLOAT16,INT64,INT32,INT16,INT8,UINT8,BOOL,DOUBLE,COMPLEX64</td>
+        <td>FLOAT,FLOAT16,BFLOAT16,INT64,INT32,INT16,INT8,UINT8,BOOL,DOUBLE,COMPLEX64,COMPLEX128</td>
         <td>ND</td>
         <td>1-8</td>
         <td>√</td>
@@ -117,7 +117,7 @@ aclnnStatus aclnnGatherV3(
         <td>index</td>
         <td>Input</td>
         <td>Index for collecting data.</td>
-        <td>The value range is 0-self.shape[dim] (including 0, excluding self.shape[dim]). When batchDims = N and N != 0, the first N dimensions of index must be the same as those of self.</td>
+        <td>The value range is 0-self.shape[dim] (including 0, excluding self.shape[dim]). The caller must ensure that indices are in this range; the API does not check index data values. When batchDims = N and N != 0, the first N dimensions of index must be the same as those of self.</td>
         <td>INT64, INT32</td>
         <td>ND</td>
         <td>1-8</td>
@@ -265,6 +265,7 @@ aclnnStatus aclnnGatherV3(
 
 ## Constraints
 
+- Each value in index must satisfy 0 <= index < self.shape[dim]. Negative and out-of-range indices are not supported. The caller must provide valid indices; otherwise, behavior is undefined and may include incorrect results or device execution errors.
 - Deterministic computation:
   - aclnnGatherV3 defaults to a deterministic implementation.
 

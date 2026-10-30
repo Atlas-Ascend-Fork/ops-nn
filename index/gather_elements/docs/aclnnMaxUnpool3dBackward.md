@@ -311,6 +311,8 @@ aclnnStatus aclnnMaxUnpool3dBackward(
 
 ## 约束说明
 
+> **警告**：indices中每个元素的取值必须满足`0 <= indices[i] < outputSize[0] * outputSize[1] * outputSize[2]`，上界为gradOutput最后三维的乘积。本接口不检查indices的数据取值范围，由调用者保证其合法性；传入越界值（含负值）时，行为未定义。
+
 - 确定性计算：
   - aclnnMaxUnpool3dBackward默认确定性实现。
 

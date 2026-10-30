@@ -272,6 +272,8 @@ aclnnStatus aclnnMaxUnpool2dBackward(
 
 ## Constraints
 
+> **Warning**: Each element of **indices** must satisfy `0 <= indices[i] < outputSize[0] * outputSize[1]`. The upper bound is the product of the last two dimensions of **gradOutput**. This interface does not check the data value range of **indices**. The caller must ensure that all indices are valid; out-of-range values (including negative values) result in undefined behavior.
+
 - Deterministic computation:
   - aclnnMaxUnpool2dBackward defaults to a deterministic implementation.
 
