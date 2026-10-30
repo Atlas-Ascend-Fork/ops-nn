@@ -25,12 +25,12 @@
 
 - 接口功能：实现输入输出维度为**T**（时间或空间维度）、**B**（批次）、**C**（通道）的一维卷积的反向传播。
 
-- 计算公式：假定Conv_tbc正向的输入$input$的shape是$(H_{\text{in}},N,C_{\text{in}})$，输出梯度$gradOutput$
-  的shape是$(H_{\text{out}},N,C_{\text{out}})$，卷积核$weight$的shape是$(K,C_{\text{in}},C_{\text{out}})$，偏置$bias$
-  的shape为$(C_{\text{out}})$，反向传播过程中对于输入的填充为 $pad$，上述参数的关系是：
+- 计算公式：假定 Conv_tbc 正向的输入 $input$ 的 shape 是 $(T_{\text{in}},B,C_{\text{in}})$，输出梯度 $gradOutput$
+  的 shape 是 $(T_{\text{out}},B,C_{\text{out}})$，卷积核 $weight$ 的 shape 是 $(K,C_{\text{in}},C_{\text{out}})$，偏置 $bias$
+  的 shape 为 $(C_{\text{out}})$，反向传播过程中对于输入的填充为 $pad$，上述参数的关系是：
 
   $$
-  H_{out} = {H_{in} + 2 \cdot pad - K} + 1
+  T_{out} = T_{in} + 2 \cdot pad - K + 1
   $$
 
   卷积反向传播需要计算对卷积正向的输入张量 $x$（对应函数原型中的input）、卷积核权重张量 $w$
@@ -39,23 +39,30 @@
     - 对于 $x$ 的梯度 $\frac{\partial L}{\partial x}$（对应函数原型中的gradInput参数）：
 
       $$
-      \frac{\partial L}{\partial x_{t,b,c_{in}}} = \sum_{k=0}^{K-1} \sum_{c_{out}=0}^{C_{out}-1} \frac{\partial L}{\partial y_{t-k,b,c_{out}}} \cdot w_{k,c_{in},c_{out}}
+      \frac{\partial L}{\partial x_{t,b,c_{in}}} =
+      \sum_{k=0}^{K-1} \sum_{c_{out}=0}^{C_{out}-1}
+      \frac{\partial L}{\partial y_{t-k+pad,b,c_{out}}} \cdot w_{k,c_{in},c_{out}}
       $$
-
-      其中，$N$ 表示批次大小（batch size），$C$ 表示通道数，$H$ 表示时间或空间维度，$L$
-      表示损失函数，$\frac{\partial L}{\partial y}$ 代表输出张量 $y$ 对 $L$ 的梯度（对应函数原型中的self参数）。
 
     - 对于 $w$ 的梯度 $\frac{\partial L}{\partial w}$（对应函数原型中的gradWeight参数）：
 
       $$
-      \frac{\partial L}{\partial w_{k,c_{in},c_{out}}} = \sum_{b=0}^{N-1} \sum_{t=0}^{H_{out}-1} x_{t+k,b,c_{in}} \cdot \frac{\partial L}{\partial y_{t,b,c_{out}}}
+      \frac{\partial L}{\partial w_{k,c_{in},c_{out}}} =
+      \sum_{b=0}^{B-1} \sum_{t=0}^{T_{out}-1}
+      x_{t+k-pad,b,c_{in}} \cdot \frac{\partial L}{\partial y_{t,b,c_{out}}}
       $$
+      其中，$x_{t+k-pad,b,c_{in}}$ 在 $t+k-pad$ 超出输入张量有效范围时按 0 处理。
 
     - 对于 $b$ 的梯度 $\frac{\partial L}{\partial b}$（对应函数原型中的gradBias参数）：
 
       $$
-      \frac{\partial L}{\partial b_{c_{out}}} = \sum_{b=0}^{N-1}\sum_{t=0}^{H_{\text{out}}-1} \frac{\partial L}{\partial y_{t,b,c_{out}}}
+      \frac{\partial L}{\partial b_{c_{out}}} =
+      \sum_{b=0}^{B-1}\sum_{t=0}^{T_{\text{out}}-1} \frac{\partial L}{\partial y_{t,b,c_{out}}}
       $$
+
+      其中，$T$ 表示时间或空间维度，$B$ 表示批次大小（batch size），$C_{\text{in}}$ 和 $C_{\text{out}}$ 分别表示输入和输出通道数，$K$ 表示卷积核大小，$L$
+      表示损失函数，$\frac{\partial L}{\partial y}$ 代表输出张量 $y$ 对 $L$ 的梯度（对应函数原型中的self参数）。$t$、$b$、$k$、$c_{\text{in}}$ 和 $c_{\text{out}}$
+      分别是对应维度上的索引；索引超出输出张量有效范围时，梯度按 0 处理。
 
 ## 函数原型
 
@@ -116,7 +123,7 @@ aclnnStatus aclnnConvTbcBackward(
      <td>输入</td>
      <td>公式中的输出张量y对L的梯度，表示卷积反向的输入。</td>
      <td>
-       <ul><li>支持空Tensor。</li><li>shape为(N,C<sub>out</sub>,H<sub>out</sub>)。</li><li>数据类型与weight的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li></ul>
+       <ul><li>支持空Tensor。</li><li>shape为(T<sub>out</sub>,B,C<sub>out</sub>)。</li><li>数据类型与weight的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li></ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16</td>
      <td>ND、NCL</td>
@@ -130,7 +137,7 @@ aclnnStatus aclnnConvTbcBackward(
      <td>
        <ul>
         <li>支持空Tensor。</li>
-        <li>shape为(N,C<sub>in</sub>,H<sub>in</sub>)。</li>
+        <li>shape为(T<sub>in</sub>,B,C<sub>in</sub>)。</li>
         <li>数据类型与weight的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>)。</li></ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16</td>
@@ -145,7 +152,7 @@ aclnnStatus aclnnConvTbcBackward(
      <td>
        <ul>
         <li>支持空Tensor。</li>
-        <li>shape为(C<sub>out</sub>,C<sub>in</sub>,K)。</li>
+        <li>shape为(K,C<sub>in</sub>,C<sub>out</sub>)。</li>
         <li>数据类型与input、self的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>)。</li>
       </ul>
      </td>
@@ -161,7 +168,7 @@ aclnnStatus aclnnConvTbcBackward(
      <td>
        <ul>
         <li>shape为(C<sub>out</sub>)。</li>
-        <li>一维且与weight第一维相等，不允许传入空指针。</li>
+        <li>一维且与weight第三维相等，不允许传入空指针。</li>
         <li>数据类型需在支持范围内，其数值不参与梯度计算。</li></ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16</td>
@@ -172,7 +179,7 @@ aclnnStatus aclnnConvTbcBackward(
     <tr>
      <td>pad</td>
      <td>输入</td>
-     <td>反向传播过程中在输入的H维度上左右填充的个数。</td>
+     <td>反向传播过程中在输入的T维度上左右填充的个数。</td>
      <td>
        <ul><li>大小应该在[0,2147483647]的范围内。</li></ul>
      </td>
@@ -207,7 +214,7 @@ aclnnStatus aclnnConvTbcBackward(
        <ul>
         <li>支持空Tensor。</li>
         <li>数据类型需在支持范围内；非空Tensor时与input类型一致。</li>
-        <li>shape为(N,C<sub>in</sub>,H<sub>in</sub>)。</li></ul>
+        <li>shape为(T<sub>in</sub>,B,C<sub>in</sub>)。</li></ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16</td>
      <td>ND、NCL</td>
@@ -221,7 +228,7 @@ aclnnStatus aclnnConvTbcBackward(
      <td>
        <ul><li>支持空Tensor。</li>
        <li>数据类型需在支持范围内；非空Tensor时与weight类型一致。</li>
-       <li>shape为(C<sub>out</sub>,C<sub>in</sub>,K)。</li></ul>
+       <li>shape为(K,C<sub>in</sub>,C<sub>out</sub>)。</li></ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16、HIFLOAT8、FLOAT8_E4M3FN</td>
      <td>ND、NCL</td>
@@ -323,7 +330,7 @@ aclnnStatus aclnnConvTbcBackward(
       <td>input的第三个维度值不等于weight的第2个维度值。</td>
     </tr>
     <tr>
-      <td>bias的值不等于weight的第三个维度值。</td>
+      <td>bias的维度值不等于weight的第三个维度值。</td>
     </tr>
     <tr>
       <td>pad值不满足要求。</td>
@@ -416,39 +423,70 @@ aclnnStatus aclnnConvTbcBackward(
      <th scope="row">self约束</th>
      <td>
       <ul>
-        <li>支持N维度大于等于0，支持C维度大于等于0（等于0的场景仅在weight的N维度等于0时支持）。</li>
-        <li>支持L维度大于等于0（等于0的场景仅在self的L维度等于0时支持）。</li>
+        <li>支持空Tensor。</li>
+        <li>T<sub>out</sub>、B、C<sub>out</sub> 均需大于等于0。</li>
+        <li>非空时需满足 T<sub>out</sub> = T<sub>in</sub> + 2 × pad - K + 1，且 self 的 B、C<sub>out</sub> 分别与 input 的 B、weight 的 C<sub>out</sub> 一致。</li>
       </ul>
      </td>
      <td colspan="2">
-        支持N、C、L维度大于等于0（等于0的场景仅在self的N或C或L维度等于0时支持）。
+        <ul>
+          <li>支持空Tensor。</li>
+          <li>T<sub>out</sub>、B、C<sub>out</sub> 均需大于等于0。</li>
+          <li>非空时需满足 T<sub>out</sub> = T<sub>in</sub> + 2 × pad - K + 1，且 self 的 B、C<sub>out</sub> 分别与 input 的 B、weight 的 C<sub>out</sub> 一致。</li>
+        </ul>
      </td>
    </tr>
    <tr>
      <th scope="row">input约束</th>
      <td>
-      input支持N、C维度大于等于0，支持L维度大于等于0（等于0的场景仅在out推导的L维度也等于0时支持）。
+      <ul>
+        <li>支持空Tensor。</li>
+        <li>T<sub>in</sub>、B、C<sub>in</sub> 均需大于等于0。</li>
+        <li>C<sub>in</sub> 必须等于 weight 的第二维。</li>
+      </ul>
       </td>
      <td>
-        input数据类型不支持HIFLOAT8。支持N、C、L维度大于等于0。
+        <ul>
+          <li>支持空Tensor。</li>
+          <li>T<sub>in</sub>、B、C<sub>in</sub> 均需大于等于0。</li>
+          <li>C<sub>in</sub> 必须等于 weight 的第二维。</li>
+          <li>input 数据类型不支持HIFLOAT8。</li>
+        </ul>
      </td>
      <td>
-        input数据类型不支持BFLOAT16、HIFLOAT8。支持N、C、L维度大于等于0。
+        <ul>
+          <li>支持空Tensor。</li>
+          <li>T<sub>in</sub>、B、C<sub>in</sub> 均需大于等于0。</li>
+          <li>C<sub>in</sub> 必须等于 weight 的第二维。</li>
+          <li>input 数据类型不支持BFLOAT16、HIFLOAT8。</li>
+        </ul>
      </td>
    </tr>
    <tr>
      <th scope="row">weight约束</th>
      <td>
         <ul>
-          <li>weight支持N、C维度大于等于0，支持L维度大于等于0（等于0的场景仅在out推导的L维度也等于0时支持）。</li>
-          <li>weight支持N维度大于等于0（等于0的场景仅在bias的N维度和out的C维度也等于0时支持），C维度大小的支持情况与self的C维度一致，L维度的大小应该在 [1,255] 的范围内。</li>
+          <li>支持空Tensor。</li>
+          <li>K、C<sub>in</sub>、C<sub>out</sub> 均需大于等于0。</li>
+          <li>C<sub>in</sub> 必须等于 input 的第三维，C<sub>out</sub> 必须等于 bias 和 self 的最后一维。</li>
+          <li>非空Tensor时，K 的大小应在 [1,255] 的范围内。</li>
         </ul>
      </td>
      <td>
-          weight数据类型不支持HIFLOAT8。支持N、C、L维度大于等于0。
+        <ul>
+          <li>支持空Tensor。</li>
+          <li>K、C<sub>in</sub>、C<sub>out</sub> 均需大于等于0。</li>
+          <li>C<sub>in</sub> 必须等于 input 的第三维，C<sub>out</sub> 必须等于 bias 和 self 的最后一维。</li>
+          <li>weight 数据类型不支持HIFLOAT8。</li>
+        </ul>
      </td>
      <td>
-          weight数据类型不支持BFLOAT16、HIFLOAT8。支持N、C、L维度大于等于0。
+        <ul>
+          <li>支持空Tensor。</li>
+          <li>K、C<sub>in</sub>、C<sub>out</sub> 均需大于等于0。</li>
+          <li>C<sub>in</sub> 必须等于 input 的第三维，C<sub>out</sub> 必须等于 bias 和 self 的最后一维。</li>
+          <li>weight 数据类型不支持BFLOAT16、HIFLOAT8。</li>
+        </ul>
      </td>
    </tr>
    <tr>
@@ -473,10 +511,11 @@ aclnnStatus aclnnConvTbcBackward(
         </ul>
      </td>
      <td>
-        <ul><li>枚举值为0：当输入是FLOAT，Cube计算单元暂不支持，取0时会报错。</li>
+        <ul><li>枚举值为0：保持输入的数据类型进行计算。</li>
         <li>枚举值为1：当输入是FLOAT，转换为HFLOAT32计算。当输入为其他数据类型时不做处理。</li>
-        <li>枚举值为2：当输入是BFLOAT16不支持该选项。</li>
-        <li>枚举值为3：当输入是FLOAT，Cube计算单元暂不支持，取3时会报错。</li>
+        <li>枚举值为2：输入为FLOAT或BFLOAT16时转换为FLOAT16计算，输出数据类型保持不变。</li>
+        <li>枚举值为3：当输入是FLOAT，转换为HFLOAT32计算；FLOAT16或BFLOAT16输入不进行HF32转换。</li>
+        <li>上述精度转换针对卷积Cube实现。内部因shape或资源限制转为MatMul实现时，按矩阵乘路径的数据类型规则计算，例如cubeMathType为2时的BFLOAT16输入不转换；转为Vector计算路径时，不执行FP16或HF32转换，按输入数据类型计算。</li>
         </ul>
      </td>
      <td>
