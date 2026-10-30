@@ -1462,3 +1462,95 @@ TEST_F(GroupNormSwishTiling, group_norm_swish_tiling_rank_9_failed)
     // rank=9 超出资料声明的 2-8 维，必须返回失败(issue #7322)
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
 }
+
+TEST_F(GroupNormSwishTiling, group_norm_swish_tiling_empty_x_failed)
+{
+    string compile_info_string = R"({
+        "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                          "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true, "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+                          "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                          "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                          "CORE_NUM": 48}
+                          })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    optiling::GroupNormSwishCompileInfo compile_info;
+
+    std::string op_type("GroupNormSwish");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+
+    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+
+    const std::vector<std::vector<uint32_t>> empty_shapes = {{0, 32, 4, 4}, {2, 0, 4, 4}, {2, 32, 0, 4}, {2, 32, 4, 0}};
+    for (const auto& shape : empty_shapes) {
+        uint32_t N = shape[0];
+        uint32_t C = shape[1];
+        uint32_t H = shape[2];
+        uint32_t W = shape[3];
+        uint32_t G = 2;
+        gert::StorageShape x_shape = {{N, C, H, W}, {N, C, H, W}};
+        gert::StorageShape gamma_shape = {{C}, {C}};
+        gert::StorageShape beta_shape = {{C}, {C}};
+        gert::StorageShape y_shape = {{N, C, H, W}, {N, C, H, W}};
+        gert::StorageShape mean_shape = {{N * G}, {N * G}};
+        gert::StorageShape rstd_shape = {{N * G}, {N * G}};
+
+        auto param = gert::TilingData::CreateCap(4096);
+        auto workspace_size_holder = gert::ContinuousVector::Create<size_t>(4096);
+        auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holder.get());
+        ASSERT_NE(param, nullptr);
+        auto holder = gert::TilingContextFaker()
+                          .NodeIoNum(3, 3)
+                          .IrInstanceNum({1, 1, 1})
+                          .InputShapes({&x_shape, &gamma_shape, &beta_shape})
+                          .OutputShapes({&y_shape, &mean_shape, &rstd_shape})
+                          .CompileInfo(&compile_info)
+                          .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                          .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeAttrs({
+                              {"num_groups", Ops::NN::AnyValue::CreateFrom<int64_t>(G)},
+                              {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                              {"eps", Ops::NN::AnyValue::CreateFrom<float>(0.00001)},
+                              {"activate_swish", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                              {"swish_scale", Ops::NN::AnyValue::CreateFrom<float>(1.0)},
+                          })
+                          .TilingData(param.get())
+                          .Workspace(ws_size)
+                          .Build();
+
+        gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+        ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
+        tiling_context->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+        tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+        tiling_context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+        tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+        EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED)
+            << "empty x shape: [" << N << ", " << C << ", " << H << ", " << W << "]";
+    }
+}

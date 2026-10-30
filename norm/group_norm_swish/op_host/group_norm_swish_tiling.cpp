@@ -118,6 +118,13 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xDims),
                                                          "inputDims must be in range [2, 8]."),
                 return ge::GRAPH_FAILED);
+    for (uint64_t dim = 0; dim < xDims; ++dim) {
+        OP_CHECK_IF(xShape.GetDim(dim) <= 0,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(xShape),
+                                                          "x does not support empty tensor; all dimensions must be "
+                                                          "greater than 0."),
+                    return ge::GRAPH_FAILED);
+    }
     uint64_t channel = xShape.GetDim(DIM_1);
     // check gamma and beta
     auto gammaShapePtr = context->GetInputShape(INPUT_IDX_GAMMA);
