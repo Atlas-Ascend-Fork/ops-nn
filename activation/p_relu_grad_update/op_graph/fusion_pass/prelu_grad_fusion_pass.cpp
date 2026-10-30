@@ -11,7 +11,7 @@
 #include "common/inc/error_util.h"
 #include "prelu_grad_fusion_pass.h"
 #include "es_nn_ops.h"
-#include "platform/platform_info.h"
+#include "arch_utils.h"
 #include "ge/ge_utils.h"
 #include "compliant_node_builder.h"
 
@@ -38,6 +38,8 @@ namespace ops {
 const int64_t SIZE_2 = 2;
 const int64_t SIZE_3 = 3;
 static const std::string PASS_NAME = "PReluGradFusionPass";
+// NpuArch "3510" 覆盖 Ascend950/Ascend350
+const std::set<std::string> kSupportedNpuArchs = {"3510"};
 const int64_t CAPTURE_TENSOR_IDX_PRELU_GRAD = 0l;
 
 std::vector<es::EsTensorHolder> CreatePatternPreluGrad(es::EsGraphBuilder& graph_builder, const es::EsTensorHolder& dy,
@@ -153,28 +155,11 @@ std::vector<PatternUniqPtr> PReluGradFusionPass::Patterns()
     return pattern_graphs;
 }
 
-static bool IsTargetPlatform()
-{
-    PlatformInfo platform_info;
-    OptionalInfo optional_info;
-    OP_LOGE_IF(
-        PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) != SUCCESS,
-        false, PASS_NAME.c_str(), "Get platform_info failed.");
-    const std::string soc = platform_info.str_info.short_soc_version;
-    bool is_platform950 = (soc == "Ascend950");
-    OPS_LOG_D(PASS_NAME.c_str(), "Platform short soc: %s", soc.c_str());
-    if (!is_platform950) {
-        OPS_LOG_D(PASS_NAME.c_str(), "Platform is not support, only work on Ascend950.");
-        return false;
-    }
-    return true;
-}
-
 bool PReluGradFusionPass::MeetRequirements(const std::unique_ptr<MatchResult>& match_result)
 {
     OPS_LOG_D(PASS_NAME.c_str(), "Enter MeetRequirements for PReluGradFusionPass");
 
-    if (!IsTargetPlatform()) {
+    if (!CheckNpuArch(PASS_NAME, kSupportedNpuArchs)) {
         OPS_LOG_D(PASS_NAME.c_str(), "Check platform fail");
         return false;
     }

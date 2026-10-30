@@ -7,6 +7,10 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <vector>
 #include <gtest/gtest.h>
@@ -171,22 +175,24 @@ BuiltGraph BuildSoftmaxGradGraph(DataType dtype, const vector<int64_t>& dims, in
     return ret;
 }
 
-void SetPlatform(const string& soc)
+void SetPlatform(const std::string& npuArch, const std::string& soc)
 {
-    PlatformInfo platformInfo;
-    OptionalInfo optiCompilationInfo;
-    platformInfo.soc_info.ai_core_cnt = 64;
-    platformInfo.str_info.short_soc_version = soc;
-    optiCompilationInfo.soc_version = soc;
-    PlatformInfoManager::Instance().platform_info_map_[soc] = platformInfo;
-    PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
+    PlatFormInfos platform_infos;
+    (void)platform_infos.Init();
+    std::map<std::string, std::string> version_res{{"NpuArch", npuArch}, {"Short_SoC_version", soc}};
+    platform_infos.SetPlatformRes("version", version_res);
+    OptionalInfos optional_infos;
+    (void)optional_infos.Init();
+    optional_infos.SetSocVersion(soc);
+    PlatformInfoManager::Instance().platform_infos_map_[soc] = platform_infos;
+    PlatformInfoManager::Instance().SetOptionalCompilationInfo(optional_infos);
 }
 } // namespace
 
 class SoftmaxGradExtFusionPassTest : public testing::Test {
 protected:
-    static void SetUpTestCase() { SetPlatform("Ascend950"); }
-    void SetUp() override { SetPlatform("Ascend950"); }
+    static void SetUpTestCase() { SetPlatform("3510", "Ascend950"); }
+    void SetUp() override { SetPlatform("3510", "Ascend950"); }
 
     // Check SoftmaxGradExt input dtype and shape size match expectations (from PR).
     bool IsSoftmaxGradExtInputRight(GNode& node, const vector<int64_t>& dims, DataType dtype)
@@ -297,7 +303,7 @@ TEST_F(SoftmaxGradExtFusionPassTest, v1_unknown_shape_not_changed)
 
 TEST_F(SoftmaxGradExtFusionPassTest, v1_unsupported_platform_not_changed)
 {
-    SetPlatform("Ascend910_93");
+    SetPlatform("2201", "Ascend910_93");
     vector<int64_t> dims{2, 32, 128};
     auto built = BuildSoftmaxGradGraph(DT_FLOAT16, dims, -1, true, kVariantV1);
     built.graph->DumpToFile(Graph::DumpFormat::kOnnx, "dump_graph_for_softmax_grad_ext_v1_test4");
@@ -368,7 +374,7 @@ TEST_F(SoftmaxGradExtFusionPassTest, v2_unknown_shape_not_changed)
 
 TEST_F(SoftmaxGradExtFusionPassTest, v2_unsupported_platform_not_changed)
 {
-    SetPlatform("Ascend910_93");
+    SetPlatform("2201", "Ascend910_93");
     vector<int64_t> dims{2, 32, 128};
     auto built = BuildSoftmaxGradGraph(DT_FLOAT16, dims, -1, true, 0);
     built.graph->DumpToFile(Graph::DumpFormat::kOnnx, "dump_graph_for_softmax_grad_ext_v2_test6");

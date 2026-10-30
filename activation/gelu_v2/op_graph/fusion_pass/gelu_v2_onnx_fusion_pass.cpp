@@ -30,7 +30,7 @@
 #include <vector>
 
 #include "common/inc/error_util.h"
-#include "common/inc/op_host/npu_arch_util.h"
+#include "arch_utils.h"
 #include "cube_utils/cube_fp16_t.h"
 #include "es_math_ops.h"
 #include "es_nn_ops.h"
@@ -43,6 +43,8 @@
 namespace ops {
 namespace {
 const std::string kPassName = "GeluV2ONNXFusionPass";
+// NpuArch "3510" 覆盖 Ascend950/Ascend350
+const std::set<std::string> kSupportedNpuArchs = {"3510"};
 
 const char* const kOpTypeErf = "Erf";
 const char* const kOpTypeTanh = "Tanh";
@@ -597,8 +599,8 @@ std::vector<ge::fusion::PatternUniqPtr> GeluV2ONNXFusionPass::Patterns()
 bool GeluV2ONNXFusionPass::MeetRequirements(const std::unique_ptr<ge::fusion::MatchResult>& matchResult)
 {
     OPS_LOG_D(kPassName.c_str(), "Enter MeetRequirements for GeluV2ONNXFusionPass");
-    if (!IsDav3510Arch()) {
-        OPS_LOG_D(kPassName.c_str(), "Current platform is not DAV_3510, skip fusion.");
+    if (!CheckNpuArch(kPassName, kSupportedNpuArchs)) {
+        OPS_LOG_D(kPassName.c_str(), "Current platform is not supported, skip fusion.");
         return false;
     }
 

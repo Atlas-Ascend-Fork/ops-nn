@@ -1,12 +1,16 @@
-/*
- * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under terms and conditions of
+/**
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to License for details. You may not use this file except in compliance with the License.
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <vector>
 #include <gtest/gtest.h>
@@ -24,31 +28,25 @@ using namespace ge;
 using namespace fe;
 using namespace fusion;
 using namespace es;
+
 using namespace ops;
 
 class AscendQuantV2ScatterFusionPassTest : public testing::Test {
 protected:
-    static void SetUpTestCase()
+    static void SetPlatform(const std::string& npuArch, const std::string& soc)
     {
-        fe::PlatformInfo platformInfo;
-        fe::OptionalInfo optiCompilationInfo;
-        platformInfo.soc_info.ai_core_cnt = 64;
-        platformInfo.str_info.short_soc_version = "Ascend950";
-        optiCompilationInfo.soc_version = "Ascend950";
-        fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
-        fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
+        PlatFormInfos platform_infos;
+        (void)platform_infos.Init();
+        std::map<std::string, std::string> version_res{{"NpuArch", npuArch}, {"Short_SoC_version", soc}};
+        platform_infos.SetPlatformRes("version", version_res);
+        OptionalInfos optional_infos;
+        (void)optional_infos.Init();
+        optional_infos.SetSocVersion(soc);
+        PlatformInfoManager::Instance().platform_infos_map_[soc] = platform_infos;
+        PlatformInfoManager::Instance().SetOptionalCompilationInfo(optional_infos);
     }
 
-    void SetUp() override
-    {
-        fe::PlatformInfo platformInfo;
-        fe::OptionalInfo optiCompilationInfo;
-        platformInfo.soc_info.ai_core_cnt = 64;
-        platformInfo.str_info.short_soc_version = "Ascend950";
-        optiCompilationInfo.soc_version = "Ascend950";
-        fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
-        fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
-    }
+    void SetUp() override { SetPlatform("3510", "Ascend950"); }
 
     static void InferShapeForTest(DataType dtype1, Shape& shape1, DataType dtype2, Shape& shape2, DataType dtype3,
                                   Shape& shape3, es::EsTensorHolder& input0, es::EsTensorHolder& input1,

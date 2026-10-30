@@ -12,7 +12,7 @@
 #include "softmax_grad_ext_fusion_pass.h"
 #include "es_nn_ops.h"
 #include "ge/compliant_node_builder.h"
-#include "platform/platform_info.h"
+#include "arch_utils.h"
 #include "ge/ge_utils.h"
 
 using namespace ge;
@@ -23,6 +23,8 @@ namespace ops {
 namespace {
 const std::string kPassName = "SoftmaxGradExtFusionPass";
 const std::string kPassNameV2 = "SoftmaxGradExtV2FusionPass";
+// NpuArch "3510" 覆盖 Ascend950/Ascend350
+const std::set<std::string> kSupportedNpuArchs = {"3510"};
 
 const int64_t kCaptureSumIdx = 0;
 const int64_t kSubgraphInputGrad = 0;
@@ -39,7 +41,6 @@ const int32_t kBinaryInputX1Idx = 0;
 const int32_t kBinaryInputX2Idx = 1;
 const int32_t kReduceSumInputXIdx = 0;
 const int32_t kNodeOutputIdx = 0;
-const std::string kTargetSocVersion = "Ascend950";
 
 bool IsUnknownShape(const std::vector<int64_t>& dims)
 {
@@ -49,22 +50,6 @@ bool IsUnknownShape(const std::vector<int64_t>& dims)
         }
     }
     return false;
-}
-
-bool IsTargetPlatform()
-{
-    PlatformInfo platform_info;
-    OptionalInfo optional_info;
-    OP_LOGE_IF(
-        PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) != SUCCESS,
-        false, kPassName.c_str(), "Get platform_info failed.");
-    const std::string soc = platform_info.str_info.short_soc_version;
-    OPS_LOG_D(kPassName.c_str(), "Platform short soc: %s", soc.c_str());
-    if (soc != kTargetSocVersion) {
-        OPS_LOG_D(kPassName.c_str(), "Platform is not supported, only support %s.", kTargetSocVersion.c_str());
-        return false;
-    }
-    return true;
 }
 
 bool CheckInputsShapeValid(const std::unique_ptr<MatchResult>& match_result)
@@ -342,7 +327,7 @@ std::vector<PatternUniqPtr> SoftmaxGradExtFusionPass::Patterns()
 bool SoftmaxGradExtFusionPass::MeetRequirements(const std::unique_ptr<MatchResult>& match_result)
 {
     OPS_LOG_D(kPassName.c_str(), "Enter MeetRequirements for SoftmaxGradExtFusionPass.");
-    if (!IsTargetPlatform()) {
+    if (!CheckNpuArch(kPassName, kSupportedNpuArchs)) {
         return false;
     }
     if (!CheckInputsShapeValid(match_result)) {
@@ -371,7 +356,7 @@ std::vector<PatternUniqPtr> SoftmaxGradExtV2FusionPass::Patterns()
 bool SoftmaxGradExtV2FusionPass::MeetRequirements(const std::unique_ptr<MatchResult>& match_result)
 {
     OPS_LOG_D(kPassNameV2.c_str(), "Enter MeetRequirements for SoftmaxGradExtV2FusionPass.");
-    if (!IsTargetPlatform()) {
+    if (!CheckNpuArch(kPassNameV2, kSupportedNpuArchs)) {
         return false;
     }
     if (!CheckInputsShapeValid(match_result)) {

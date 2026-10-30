@@ -22,34 +22,11 @@
 #include "../../../op_graph/fusion_pass/gelu_v2_onnx_fusion_pass.h"
 #include "register/register_custom_pass.h"
 
-// UT stub for rtGetSocSpec: the pass gates on NpuArch via this API and the UT must control the
-// arch per test case. The weak definition is effective because the UT executable does not link
-// the runtime lib, feeding the arch from the ASCEND_NPU_ARCH env variable (same convention as
-// the opbase runtime_stub.cpp). It lives at global scope so the extern "C" definition keeps
-// external linkage and satisfies the pass TU's reference.
-extern "C" {
-typedef int32_t rtError_t;
-static const int32_t RT_ERROR_NONE = 0;
-rtError_t rtGetSocSpec(const char* label, const char* key, char* val, const uint32_t maxLen);
-}
-
-__attribute__((weak)) rtError_t rtGetSocSpec(const char* label, const char* key, char* val, const uint32_t maxLen)
-{
-    const char* arch = std::getenv("ASCEND_NPU_ARCH");
-    if (arch == nullptr || std::strcmp(label, "version") != 0 || std::strcmp(key, "NpuArch") != 0) {
-        return static_cast<rtError_t>(1);
-    }
-    (void)std::snprintf(val, maxLen, "%s", arch);
-    return RT_ERROR_NONE;
-}
-
 namespace {
 // erf: 3 topologies times 8 input-order variants = 24; tanh: full formula with kappa/beta/one
 // const positions and the outer mul orders = 32 (the 0.5 const keeps the first-binding family),
 // see Patterns()
 constexpr size_t kExpectedPatternCount = 56;
-constexpr int32_t kArch950 = 3510;
-constexpr int32_t kArch910_93 = 2201; // real NpuArch of the Ascend910_93 family (platform_config ini)
 
 struct GeluGraphParam {
     bool useTanh = false;          // full tanh formula or erf
@@ -542,24 +519,23 @@ std::shared_ptr<ge::Graph> BuildNonScalarAddConstGraph()
     return builder.BuildAndReset({mul1});
 }
 
-static void SetNpuArch(const char* arch) { (void)setenv("ASCEND_NPU_ARCH", arch, 1); }
-
-static void SetPlatform(const std::string& soc, const int32_t npuArch)
+static void SetPlatform(const std::string& npuArch, const std::string& soc)
 {
-    fe::PlatformInfo platformInfo;
-    fe::OptionalInfo optiCompilationInfo;
-    platformInfo.soc_info.ai_core_cnt = 64;
-    platformInfo.str_info.short_soc_version = soc;
-    optiCompilationInfo.soc_version = soc;
-    fe::PlatformInfoManager::Instance().platform_info_map_[soc] = platformInfo;
-    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
-    SetNpuArch(std::to_string(npuArch).c_str());
+    fe::PlatFormInfos platform_infos;
+    (void)platform_infos.Init();
+    std::map<std::string, std::string> version_res{{"NpuArch", npuArch}, {"Short_SoC_version", soc}};
+    platform_infos.SetPlatformRes("version", version_res);
+    fe::OptionalInfos optional_infos;
+    (void)optional_infos.Init();
+    optional_infos.SetSocVersion(soc);
+    fe::PlatformInfoManager::Instance().platform_infos_map_[soc] = platform_infos;
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optional_infos);
 }
 } // namespace
 
 class GeluV2ONNXFusionPassTest : public testing::Test {
 protected:
-    void SetUp() override { SetPlatform("Ascend950", kArch950); }
+    void SetUp() override { SetPlatform("3510", "Ascend950"); }
 
     // verify the graph contains exactly one GeluV2 node with the expected approximate attr,
     // input/output desc and input mapping, and no residual source ops
@@ -851,7 +827,7 @@ TEST_F(GeluV2ONNXFusionPassTest, unsupportedPlatformNotChanged)
 {
     // the Ascend910_93 family reports NpuArch 2201, the arch guard must reject it; SetUp
     // restores the Ascend950 platform for the next test
-    SetPlatform("Ascend910_93", kArch910_93);
+    SetPlatform("2201", "Ascend910_93");
     GeluGraphParam param;
     std::shared_ptr<ge::Graph> graph = BuildGeluGraph(param);
     ge::CustomPassContext passContext;
@@ -861,9 +837,11 @@ TEST_F(GeluV2ONNXFusionPassTest, unsupportedPlatformNotChanged)
 
 TEST_F(GeluV2ONNXFusionPassTest, archQueryFailedNotChanged)
 {
-    // rtGetSocSpec fails (env unset in the stub): IsDav3510Arch falls back to false with a
-    // warning, the fusion must be skipped
-    (void)unsetenv("ASCEND_NPU_ARCH");
+    // 平台信息查询失败（soc 未注册平台信息）: CheckNpuArch 返回 false，融合必须跳过
+    fe::OptionalInfos optional_infos;
+    (void)optional_infos.Init();
+    optional_infos.SetSocVersion("AscendUnknown");
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optional_infos);
     GeluGraphParam param;
     std::shared_ptr<ge::Graph> graph = BuildGeluGraph(param);
     ge::CustomPassContext passContext;

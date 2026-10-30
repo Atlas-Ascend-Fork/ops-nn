@@ -38,7 +38,7 @@
 #include "common/inc/error_util.h"
 #include "ascend_quant_v2_scatter_fusion_pass.h"
 #include "es_nn_ops.h"
-#include "platform/platform_info.h"
+#include "arch_utils.h"
 #include "ge/ge_utils.h"
 #include "compliant_node_builder.h"
 
@@ -49,6 +49,8 @@ using namespace fusion;
 namespace ops {
 
 static const std::string PASS_NAME = "AscendQuantV2ScatterFusionPass";
+// NpuArch "3510" 覆盖 Ascend950/Ascend350
+const std::set<std::string> kSupportedNpuArchs = {"3510"};
 
 static const size_t CAPTURE_IDX_QUANT_V2_NODE = 0L;
 static const size_t CAPTURE_IDX_SCATTER_NODE = 1L;
@@ -232,23 +234,6 @@ std::vector<PatternUniqPtr> AscendQuantV2ScatterFusionPass::Patterns()
     return patternGraphs;
 }
 
-static bool IsTargetPlatform()
-{
-    PlatformInfo platform_info;
-    OptionalInfo optional_info;
-    OP_LOGE_IF(
-        PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platform_info, optional_info) != SUCCESS,
-        false, PASS_NAME.c_str(), "Get platform_info failed.");
-    const std::string soc = platform_info.str_info.short_soc_version;
-    bool is_platform950 = (soc == "Ascend950");
-    OPS_LOG_D(PASS_NAME.c_str(), "Platform short soc: %s", soc.c_str());
-    if (!is_platform950) {
-        OPS_LOG_D(PASS_NAME.c_str(), "Platform is not supported, this pass only works on Ascend950.");
-        return false;
-    }
-    return true;
-}
-
 static bool CheckQuantAttr(NodeIo& quantV2NodeIo)
 {
     // 5. Check AscendQuantV2 attributes
@@ -381,7 +366,7 @@ bool AscendQuantV2ScatterFusionPass::MeetRequirements(const std::unique_ptr<Matc
 {
     OPS_LOG_D(PASS_NAME.c_str(), "Enter MeetRequirements for AscendQuantV2ScatterFusionPass");
 
-    if (!IsTargetPlatform()) {
+    if (!CheckNpuArch(PASS_NAME, kSupportedNpuArchs)) {
         OPS_LOG_D(PASS_NAME.c_str(), "Check platform fail");
         return false;
     }
