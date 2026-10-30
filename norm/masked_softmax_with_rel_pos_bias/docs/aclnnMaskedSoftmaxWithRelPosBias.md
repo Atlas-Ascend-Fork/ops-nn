@@ -236,9 +236,6 @@ aclnnStatus aclnnMaskedSoftmaxWithRelPosBias(
 - 数据类型约束：
   - x仅支持FLOAT、FLOAT16、BFLOAT16；attenMaskOptional（非空时）、relativePosBias、out的数据类型必须与x一致，不一致时算子报错。
 
-- 数据格式约束：
-  - x、attenMaskOptional、relativePosBias、out仅支持ND格式。
-
 - 属性值域约束：
   - scaleValue必须为有限值（支持NaN、+Inf、-Inf以外的任意DOUBLE值），传入NaN或±Inf时算子报错。
   - innerPrecisionMode为保留字段，当前仅支持取值0，传入其他值时算子报错。
