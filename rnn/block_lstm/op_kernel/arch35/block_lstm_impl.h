@@ -2384,8 +2384,12 @@ __aicore__ inline void VectorLoopSlab(const ch::RowStripe& stripe, uint32_t bloc
             pz.blockLen = L.hid * sizeof(T);
             pz.srcStride = 0;
             pz.dstStride = 0;
-            for (uint32_t r = 0; r < L.m; ++r) {
-                AscendC::DataCopyPad(hLoGM[(size_t)(chunkBase + r) * L.hid], tBufT, pz);
+            /* Clear only the rows THIS AIV actually owns (stripe.count), not the full
+             * L.m (rowChunkB): the tail chunk of a ragged batch carries fewer rows,
+             * and clearing past stripe.count writes into the NEXT cluster's batch
+             * stripe in the shared hLo plane. */
+            for (uint32_t r = 0; r < stripe.count; ++r) {
+                AscendC::DataCopyPad(hLoGM[(size_t)(chunkBase + stripe.base + r) * L.hid], tBufT, pz);
                 AscendC::PipeBarrier<PIPE_ALL>();
             }
         }

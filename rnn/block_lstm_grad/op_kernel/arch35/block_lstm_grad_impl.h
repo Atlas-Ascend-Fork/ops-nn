@@ -446,22 +446,25 @@ __aicore__ inline void ShiftCopyVec(const AscendC::LocalTensor<T>& dst, uint32_t
 }
 
 template <typename T>
-__aicore__ inline void ReadRowUnaligned(const AscendC::GlobalTensor<T>& gm, uint32_t byteStart, uint32_t rowElems,
-                                        uint32_t tensorByteEnd, const AscendC::LocalTensor<T>& dst,
+__aicore__ inline void ReadRowUnaligned(const AscendC::GlobalTensor<T>& gm, uint64_t byteStart, uint32_t rowElems,
+                                        uint64_t tensorByteEnd, const AscendC::LocalTensor<T>& dst,
                                         const AscendC::LocalTensor<T>& stage)
 {
     const uint32_t esz = sizeof(T);
     const uint32_t want = rowElems * esz;
-    uint32_t lo = byteStart & ~(BLK - 1u);
-    uint32_t end = byteStart + want;
+    /* byteStart/end run in uint64: a single [T,B,W] plane can exceed 4 GiB, and the
+     * historical uint32 truncation wrapped both the row base and the tensor end,
+     * reading rows from wrong GM addresses or skipping them wholesale. */
+    const uint64_t lo = byteStart & ~static_cast<uint64_t>(BLK - 1u);
+    uint64_t end = byteStart + want;
     if (end > tensorByteEnd) {
         end = tensorByteEnd;
     }
     if (end <= lo || byteStart >= tensorByteEnd) {
         return;
     }
-    const uint32_t headSkip = (byteStart > lo) ? (byteStart - lo) : 0; // bytes, esz-aligned
-    const uint32_t burst = end - lo;
+    const uint32_t headSkip = (byteStart > lo) ? static_cast<uint32_t>(byteStart - lo) : 0; // bytes, esz-aligned
+    const uint32_t burst = static_cast<uint32_t>(end - lo); // one row + block slack: fits u32
     AscendC::DataCopyExtParams p;
     p.blockCount = 1;
     p.blockLen = burst; // byte-granular, from an ALIGNED base => legal
@@ -473,7 +476,8 @@ __aicore__ inline void ReadRowUnaligned(const AscendC::GlobalTensor<T>& gm, uint
     AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
 
     const uint32_t shiftE = headSkip / esz;
-    const uint32_t n = (want / esz < (end - byteStart) / esz) ? want / esz : (end - byteStart) / esz;
+    const uint32_t n = (want / esz < (end - byteStart) / esz) ? static_cast<uint32_t>(want / esz) :
+                                                                static_cast<uint32_t>((end - byteStart) / esz);
     /* VF shift-copy replaces the per-element scalar slide (the odd path's dominant
      * aiv_scalar cost): Reg::LoadUnAlign absorbs the unaligned source base. */
     ShiftCopyVec<T>(dst, 0, stage, shiftE, n);
@@ -674,7 +678,7 @@ __aicore__ inline void ScatterTensor(const AscendC::GlobalTensor<IT>& gm, const 
                     const uint32_t nB = (uint32_t)((midHi - c < chunkB) ? (midHi - c) : chunkB);
                     const uint32_t nE = nB / esz;
                     const uint64_t srcByte = ((uint64_t)wsRow * wPad + (c - start) / esz) * sizeof(CT);
-                    odda::ReadRowUnaligned<CT>(ws, (uint32_t)srcByte, nE, (uint32_t)wsTensEnd, ctDst, rdStage);
+                    odda::ReadRowUnaligned<CT>(ws, srcByte, nE, wsTensEnd, ctDst, rdStage);
                     /* PIPE_ALL, not a named pair: the VF shift inside ReadRowUnaligned is
                      * async and only a full drain gates it against the V ops below. */
                     AscendC::PipeBarrier<PIPE_ALL>();
@@ -3092,7 +3096,8 @@ __aicore__ inline void ReduceBGrad(AscendC::GlobalTensor<IT> oBGM, AscendC::Glob
         if (cap2 < 1) {
             cap2 = 1;
         }
-        AscendC::LocalTensor<float> foldB(AscendC::TPosition::VECCALC, 0, (uint32_t)L.hid * cap2 + blg::ALIGN_SLACK);
+        AscendC::LocalTensor<float> foldB(AscendC::TPosition::VECCALC, L.foldBOff,
+                                          (uint32_t)L.hid * cap2 + blg::ALIGN_SLACK);
         for (uint32_t g = 0; g < GATES; ++g) {
             for (uint32_t c0 = 0; c0 < rows2; c0 += cap2) {
                 const uint32_t cnt = (rows2 - c0 < cap2) ? (rows2 - c0) : cap2;

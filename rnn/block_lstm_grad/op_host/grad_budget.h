@@ -48,8 +48,17 @@ inline bool PickGradTiling(uint32_t B, uint32_t I, uint32_t H, uint32_t T, uint3
     *jChunk = 0;
     /* RAGGED: B need not divide mBlk -- the last cluster's ragged remainder is clamped
      * in the kernel, so this budget must only refuse genuinely empty / invalid shapes. */
-    if (B == 0 || I == 0 || H == 0 || T == 0 || mBlk == 0) {
+    if (B == 0 || H == 0 || T == 0 || mBlk == 0) {
         return false;
+    }
+    /* I == 0 is a LEGAL empty projection (TF parity): the LAYOUT carries padI
+     * (== c0 here) so the UB/L0 budget must be probed at the padded width,
+     * while the kernel's dX phase is skipped outright via the REAL inputSize
+     * gate (see block_lstm_grad.cpp). The historical blanket rejection made
+     * every I == 0 input fail tiling with "no row-chunked tiling fits"
+     * instead of computing the non-trivial parameter gradients. */
+    if (I == 0) {
+        I = C0F; /* the padded minimum: the layout/x-plane is probed at this width */
     }
     if (I % c0Step != 0 || H % c0Step != 0) {
         return false; /* defensive: inputs must arrive pre-padded */

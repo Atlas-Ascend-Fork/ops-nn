@@ -31,6 +31,20 @@ static ge::graphStatus InferDataTypeBlockLstmGrad(gert::InferDataTypeContext* co
      * (inputs 1..17; index 0 is the int64 seq_len_max) must share x's dtype.
      * GE would otherwise silently insert an implicit Cast. */
     const ge::DataType xdt = context->GetInputDataType(1);
+    /* Host-side dtype domain gate (independent of tiling): x must be in the
+     * registered FLOAT/FLOAT16 domain and seq_len_max must be INT64, otherwise
+     * the outputs would be assigned an illegal dtype and the tiling gate could
+     * be bypassed by an implicitly inserted Cast. */
+    if (xdt != ge::DT_FLOAT && xdt != ge::DT_FLOAT16) {
+        OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] x must be float32 or float16, got dtype(%d).",
+                static_cast<int>(xdt));
+        return ge::GRAPH_FAILED;
+    }
+    if (context->GetInputDataType(0) != ge::DT_INT64) {
+        OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] seq_len_max must be int64, got dtype(%d).",
+                static_cast<int>(context->GetInputDataType(0)));
+        return ge::GRAPH_FAILED;
+    }
     for (size_t k = 2; k <= 17; ++k) {
         if (context->GetInputDataType(k) != xdt) {
             OP_LOGE(context->GetNodeName(),

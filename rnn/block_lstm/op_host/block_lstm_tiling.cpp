@@ -69,10 +69,12 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
      *             zero-contribution that the kernel skips wholesale) and h@Wh + bias (K = padH,
      *             unaffected) -- only the x-side vanishes, the gates are still computed from
      *             h_prev and b for real.
-     *   T/B/H == 0 -- REFUSED as a defensive net. All seven outputs are then zero-element and
-     *             the GE graph prunes such a node right after InferShape, before tiling, so
-     *             TilingFunc is never entered on the graph path (verified by probing this
-     *             function's entry: zero hits for an H==0 case while a normal case hits). */
+     *   T/B/H == 0 -- ALLOWED by the host InferShape (TF parity: empty [T,B,H] outputs). The
+     *             GE graph prunes such a zero-output node right after InferShape, before
+     *             tiling, so TilingFunc is never entered on the graph path (verified by
+     *             probing this function's entry: zero hits for an H==0 case while a normal
+     *             case hits). The refusal below is a defensive net for any non-graph path
+     *             that reaches tiling directly with zero T/B/H. */
     OP_CHECK_IF(iT < 0 || iB < 0 || iI < 0 || iH < 0 || iT > UINT32_MAX || iB > UINT32_MAX || iI > UINT32_MAX ||
                     iH > UINT32_MAX,
                 OP_LOGE(context->GetNodeName(),
@@ -81,8 +83,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(iT == 0 || iB == 0 || iH == 0,
                 OP_LOGE(context->GetNodeName(),
-                        "[BlockLstm] a zero T/B/H extent is not supported (all seven outputs would be "
-                        "zero-element): T(%ld), B(%ld), H(%ld).",
+                        "[BlockLstm] a zero T/B/H extent reached tiling (the graph path prunes such "
+                        "nodes after InferShape); empty-output execution is not tiled: T(%ld), B(%ld), H(%ld).",
                         (long)iT, (long)iB, (long)iH),
                 return ge::GRAPH_FAILED);
     const uint32_t T = static_cast<uint32_t>(iT);
@@ -131,6 +133,21 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
                     OP_LOGE(context->GetNodeName(), "[BlockLstm] seq_len_max dtype must be int64, got dtype(%d).",
                             (int)d0->GetDataType()),
                     return ge::GRAPH_FAILED);
+        /* Scalar-shape contract: the kernel dereferences seq_len_max[0] unconditionally,
+         * so a non-scalar binding ([B] with B>1, or an empty [0]) is rejected here --
+         * mirroring the Host InferShape gate so neither path accepts it alone. */
+        {
+            const auto* s0 = context->GetInputShape(IDX_SEQ_LEN_MAX);
+            OP_CHECK_IF(s0 == nullptr, OP_LOGE(context->GetNodeName(), "[BlockLstm] seq_len_max shape missing."),
+                        return ge::GRAPH_FAILED);
+            const auto& zd = s0->GetStorageShape();
+            const bool scalarOk = (zd.GetDimNum() == 0U) || (zd.GetDimNum() == 1U && zd.GetDim(0) == 1);
+            OP_CHECK_IF(!scalarOk,
+                        OP_LOGE(context->GetNodeName(),
+                                "[BlockLstm] seq_len_max must be a scalar (rank 0 or [1]), got rank(%u).",
+                                (unsigned)zd.GetDimNum()),
+                        return ge::GRAPH_FAILED);
+        }
         /* input 0 (seq_len_max) gets NO format check: GE's format-assign stage normalizes a
          * caller-declared NCHW on it to the prototype's ND before tiling runs, and a
          * 1-element scalar is layout-identical either way. */
@@ -148,11 +165,18 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
              * dense-family exemption (see denseFmt). */
             const bool fmtOk = (i >= 5) ? (d->GetFormat().GetStorageFormat() == ge::FORMAT_ND) :
                                           denseFmt(d->GetFormat().GetStorageFormat());
-            OP_CHECK_IF(!fmtOk,
-                        OP_LOGE(context->GetNodeName(),
-                                "[BlockLstm] input %u format(%d) is not dense-contiguous (ND/NCHW/NHWC).", i,
-                                (int)d->GetFormat().GetStorageFormat()),
-                        return ge::GRAPH_FAILED);
+            if (!fmtOk) {
+                if (i >= 5) {
+                    OP_LOGE(context->GetNodeName(),
+                            "[BlockLstm] input %u (rank<=1 operand) format(%d) must be strictly FORMAT_ND.", i,
+                            (int)d->GetFormat().GetStorageFormat());
+                } else {
+                    OP_LOGE(context->GetNodeName(),
+                            "[BlockLstm] input %u format(%d) is not dense-contiguous (ND/NCHW/NHWC).", i,
+                            (int)d->GetFormat().GetStorageFormat());
+                }
+                return ge::GRAPH_FAILED;
+            }
             const auto dims = s->GetStorageShape();
             const uint32_t r = dims.GetDimNum();
             /* cs_prev [B, H]: dim0 must match B -- B' < B reads GM OOB in the kernel,
@@ -301,18 +325,19 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
      * columns of the weights/bias are zero-filled on the way in, and the seven GM outputs are
      * sliced back to the real H on the way out. */
     const uint32_t c0 = ch::C0_BYTES / dtypeSize;
-    const uint32_t padI = (I + c0 - 1) / c0 * c0;
-    const uint32_t padH = (H + c0 - 1) / c0 * c0;
-
-    /* Phase-0 restage staging budget: PadInputsToWs stages x/w/b rows in a UB region whose peak
-     * (odd-I / w-reorder path: three aligned sub-regions + a w row block) reaches ~16*padH + 48
-     * elements. Past the per-AIV CAP_UB that is a silent over-write, so refuse up front. */
-    if ((16ULL * static_cast<uint64_t>(padH) + 48ULL) * dtypeSize > ch::CAP_UB) {
-        OP_LOGE(context->GetNodeName(),
-                "[BlockLstm] phase-0 staging needs %llu B but the per-AIV UB capacity is %u B (padH=%u, dtypeSize=%u).",
-                (unsigned long long)((16ULL * padH + 48ULL) * dtypeSize), (unsigned)ch::CAP_UB, padH, dtypeSize);
-        return ge::GRAPH_FAILED;
-    }
+    /* Derived layout quantities are computed in int64 and range-checked before the
+     * uint32 narrowing: a dim near UINT32_MAX makes (I + c0 - 1) or blockDim*mBlk
+     * wrap in u32, silently producing padI==0 / paddedB==0 layouts that defeat
+     * every downstream capacity guard. */
+    const int64_t padI64 = (static_cast<int64_t>(I) + c0 - 1) / c0 * c0;
+    const int64_t padH64 = (static_cast<int64_t>(H) + c0 - 1) / c0 * c0;
+    OP_CHECK_IF(padI64 > UINT32_MAX || padH64 > UINT32_MAX,
+                OP_LOGE(context->GetNodeName(),
+                        "[BlockLstm] padded extents exceed the u32 layout envelope: padI(%lld), padH(%lld).",
+                        (long long)padI64, (long long)padH64),
+                return ge::GRAPH_FAILED);
+    const uint32_t padI = static_cast<uint32_t>(padI64);
+    const uint32_t padH = static_cast<uint32_t>(padH64);
 
     /* NO SetTilingKey, deliberately. The binary-build pipeline compiles every dtype variant
      * through ONE wrapper py whose embedded __inputs__ are fp16, so a dtype-dependent key would
@@ -344,7 +369,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
      * So the batch is PADDED up to paddedB = blockDim*mBlk (pad-to-divisible): phase 0 zero-fills
      * the [B, paddedB) tail of every batch-strided WS plane, GM reads clamp their source row at
      * B-1, and the scatter clamps its GM writes at B. */
-    uint32_t mBlk = (B + hangSafeCores - 1) / hangSafeCores; // ceil(B / cap)
+    int64_t mBlk64 = (static_cast<int64_t>(B) + hangSafeCores - 1) / hangSafeCores; // ceil(B / cap)
     /* INVARIANT: mBlk >= 2, UNCONDITIONALLY. The Mmad M axis has a hardware floor of
      * 2 -- mp.m == 1 RETURNS GARBAGE silently (see MmadM). B == 1 must also ride
      * mBlk == 2: blockDim stays 1, paddedB becomes 2, phase 0 zero-fills the pad row
@@ -352,16 +377,24 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
      * (SPLIT halves a cluster's rows across its two AIVs, so mBlk == 1 would also
      * hand AIV1 an empty stripe.) Raising mBlk can only LOWER blockDim, so the
      * hangSafe bound above still holds. */
-    if (mBlk < 2) {
-        mBlk = 2;
+    if (mBlk64 < 2) {
+        mBlk64 = 2;
     }
-    if (mBlk == 0) {
+    if (mBlk64 == 0) {
         OP_LOGE(context->GetNodeName(), "[BlockLstm] no rows-per-cluster for B(%u), hangSafeCores(%u).", B,
                 hangSafeCores);
         return ge::GRAPH_FAILED;
     }
-    const uint32_t blockDim = (B + mBlk - 1) / mBlk; // ceil(B/mBlk): no idle cluster
-    const uint32_t paddedB = blockDim * mBlk;        // WS batch axis, >= B
+    const int64_t blockDim64 = (static_cast<int64_t>(B) + mBlk64 - 1) / mBlk64; // ceil(B/mBlk): no idle cluster
+    const int64_t paddedB64 = blockDim64 * mBlk64;                              // WS batch axis, >= B
+    OP_CHECK_IF(paddedB64 > UINT32_MAX,
+                OP_LOGE(context->GetNodeName(),
+                        "[BlockLstm] padded batch extent exceeds the u32 layout envelope: paddedB(%lld).",
+                        (long long)paddedB64),
+                return ge::GRAPH_FAILED);
+    const uint32_t mBlk = static_cast<uint32_t>(mBlk64);
+    const uint32_t blockDim = static_cast<uint32_t>(blockDim64);
+    const uint32_t paddedB = static_cast<uint32_t>(paddedB64);
     /* Tiling preference: the resident pickers first (they keep the simpler loops for every shape
      * they accept), the wave pickers as the fallback (decoupled M/K/N blocks). tiledA/tiledB record
      * which kernel loops run; tChunk/kChunk/rowsPerBlock stay meaningful in both regimes
@@ -452,6 +485,36 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     td->wDirect = (padI == I && padH == H) ? 1 : 0;
     td->bDirect = (padH == H) ? 1 : 0;
 
+    /* Phase-0 restage staging budget, modeled on the kernel's REAL layout
+     * (PadInputsToWs): stageElems = max(padI, 4*padH) and the VECCALC staging
+     * tensor spans three stageElems-sized regions plus two w-row regions plus
+     * per-region 16-element overshoot, each base aligned to 32B. The old
+     * 16*padH+48 model missed the padI scaling and let padI > 4*padH inputs
+     * silently exceed the per-AIV UB. The gate applies ONLY when at least one
+     * operand actually restages: under xDirect/wDirect/bDirect all 1 the
+     * kernel never builds the staging tensor, so an unconditional gate would
+     * wrongly reject large aligned shapes. */
+    if (!td->xDirect || !td->wDirect || !td->bDirect) {
+        const int64_t stageElems = (padI64 > static_cast<int64_t>(fwd::GATES) * padH64) ?
+                                       padI64 :
+                                       static_cast<int64_t>(fwd::GATES) * padH64;
+        const int64_t al = static_cast<int64_t>(ch::C0_BYTES) / dtypeSize; // 32B alignment in elements
+        const auto ceilAlign = [al](int64_t v) { return (v + al - 1) / al * al; };
+        const int64_t wRow = static_cast<int64_t>(fwd::GATES) * padH64;
+        const int64_t rgnDst = ceilAlign(stageElems + 16);
+        const int64_t rgnZero = ceilAlign(rgnDst + stageElems + 16);
+        const int64_t stageOdd = ceilAlign(rgnZero + stageElems + 16 + wRow);
+        const int64_t stageTotal = stageOdd + wRow;
+        if (stageTotal * dtypeSize > static_cast<int64_t>(ch::CAP_UB)) {
+            OP_LOGE(context->GetNodeName(),
+                    "[BlockLstm] phase-0 staging needs %lld B but the per-AIV UB capacity is %u B "
+                    "(stageElems=%lld, padI=%u, padH=%u, dtypeSize=%u).",
+                    (long long)(stageTotal * dtypeSize), (unsigned)ch::CAP_UB, (long long)stageElems, padI, padH,
+                    dtypeSize);
+            return ge::GRAPH_FAILED;
+        }
+    }
+
     /* Workspace offsets in BYTES from the start of the user area, all regions in PADDED units:
      * the strided UB copies over igates/store state their pitch in 32-byte blocks, so the
      * workspace adopts padH (4*padH per row). The GM outputs are NOT affected -- they keep the
@@ -477,7 +540,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
      * offset fields inside the u32 envelope for aligned big-H shapes. */
     td->offPadW = off;
     if (!td->wDirect) {
-        off += static_cast<size_t>(padI + padH) * fwd::GATES * padH * dtypeSize;
+        /* padI + padH runs in size_t: the u32 sum wraps when both extents are large. */
+        off += (static_cast<size_t>(padI) + padH) * fwd::GATES * padH * dtypeSize;
     }
     td->offPadB = off;
     if (!td->bDirect) {

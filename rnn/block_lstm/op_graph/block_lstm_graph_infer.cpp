@@ -35,10 +35,24 @@ static ge::graphStatus InferDataTypeBlockLstm(gert::InferDataTypeContext* contex
      * ran through with numerics matching the casted reference) -- the
      * tiling-side defensive check is unreachable on that path, so the
      * rejection lives here, before any cast insertion. */
-    constexpr size_t IDX_X = 1;         // the dtype every float operand must match
+    constexpr size_t IDX_X = 1; // the dtype every float operand must match
+    constexpr size_t IDX_SEQ_LEN_MAX = 0;
     constexpr size_t LAST_FLOAT_IN = 8; // x, cs_prev, h_prev, w, wci, wcf, wco, b
     constexpr size_t NUM_OUTPUTS = 7;   // i, cs, f, o, ci, co, h
     const ge::DataType xdt = context->GetInputDataType(IDX_X);
+    /* Host-side dtype domain gate (independent of tiling): x must be in the
+     * registered FLOAT/FLOAT16 domain and seq_len_max must be INT64, otherwise
+     * the outputs would be assigned an illegal dtype and the tiling gate could
+     * be bypassed by an implicitly inserted Cast. */
+    if (xdt != ge::DT_FLOAT && xdt != ge::DT_FLOAT16) {
+        OP_LOGE(context->GetNodeName(), "BlockLstm requires x to be float32 or float16, got dtype(%d).", (int)xdt);
+        return ge::GRAPH_FAILED;
+    }
+    if (context->GetInputDataType(IDX_SEQ_LEN_MAX) != ge::DT_INT64) {
+        OP_LOGE(context->GetNodeName(), "BlockLstm requires seq_len_max to be int64, got dtype(%d).",
+                (int)context->GetInputDataType(IDX_SEQ_LEN_MAX));
+        return ge::GRAPH_FAILED;
+    }
     for (size_t k = IDX_X + 1; k <= LAST_FLOAT_IN; ++k) {
         if (context->GetInputDataType(k) != xdt) {
             OP_LOGE(context->GetNodeName(),

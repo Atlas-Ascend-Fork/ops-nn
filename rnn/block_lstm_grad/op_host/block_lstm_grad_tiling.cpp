@@ -269,7 +269,10 @@ static ge::graphStatus TilingFuncGrad(gert::TilingContext* context)
     /* Zero extents are LEGAL (TF parity). Only B == 0 empties every output;
      * H == 0 leaves x_grad as the sole non-empty output (all zeros); T == 0 the
      * reverse (x_grad empty, the seven param grads zeros); I == 0 rides the padded
-     * normal path (padI = c0, the x-side blocks are zero-filled by phase 0). */
+     * normal path (padI = c0, the x-side blocks are zero-filled by phase 0) --
+     * every output except x_grad is non-trivial there (verified against the TF
+     * reference: dcs_prev/dh_prev/w_grad/b_grad carry real values), so the
+     * degenerate zero-fill path must NOT be taken. */
     uint32_t zeroMode = 0;
     if (B == 0) {
         zeroMode = 1;
@@ -277,8 +280,6 @@ static ge::graphStatus TilingFuncGrad(gert::TilingContext* context)
         zeroMode = 2;
     } else if (T == 0) {
         zeroMode = 3;
-    } else if (I == 0) {
-        zeroMode = 4;
     }
     if (zeroMode == 1 || zeroMode == 2 || zeroMode == 3) {
         /* Degenerate launch: no compute, at most a zero-fill of the non-empty
@@ -351,8 +352,32 @@ static ge::graphStatus TilingFuncGrad(gert::TilingContext* context)
      * carries ceil(B/usedCore) rows, blockDim = ceil(B/mBlkFull) exactly covers B (no idle
      * core, only a ragged LAST core). blockDim = min(B, cap) is WRONG -- it OVER-PROVISIONS
      * cores when B < cap*mBlkFull, leaving idle cores that trap the device. */
-    uint32_t mBlkFull = (B + hangSafeCores - 1) / hangSafeCores; // ceil(B / cap)
-    uint32_t blockDim = (B + mBlkFull - 1) / mBlkFull;           // ceil(B/mBlkFull), no idle
+    uint32_t mBlkFull = 0, blockDim = 0, paddedB = 0;
+    OP_CHECK_IF(hangSafeCores == 0,
+                OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] hangSafeCores is zero; cannot split the batch."),
+                return ge::GRAPH_FAILED);
+    {
+        /* Derived layout quantities run in int64: a dim near UINT32_MAX makes
+         * (B + hangSafeCores - 1) or blockDim*mBlkFull wrap in u32, silently producing
+         * mBlkFull==0 (integer div-by-zero below) or a paddedB==0 layout that defeats
+         * every downstream capacity guard. */
+        const int64_t mBlkFull64 = ((int64_t)B + hangSafeCores - 1) / hangSafeCores;
+        OP_CHECK_IF(mBlkFull64 <= 0 || mBlkFull64 > UINT32_MAX,
+                    OP_LOGE(context->GetNodeName(),
+                            "[BlockLstmGrad] rows-per-cluster out of u32 envelope: %lld (B=%u, cores=%u).",
+                            (long long)mBlkFull64, B, hangSafeCores),
+                    return ge::GRAPH_FAILED);
+        const int64_t blockDim64 = ((int64_t)B + mBlkFull64 - 1) / mBlkFull64;
+        const int64_t paddedB64 = blockDim64 * mBlkFull64;
+        OP_CHECK_IF(blockDim64 > UINT32_MAX || paddedB64 > UINT32_MAX,
+                    OP_LOGE(context->GetNodeName(),
+                            "[BlockLstmGrad] padded batch extent exceeds u32 envelope: blockDim(%lld), paddedB(%lld).",
+                            (long long)blockDim64, (long long)paddedB64),
+                    return ge::GRAPH_FAILED);
+        mBlkFull = (uint32_t)mBlkFull64;
+        blockDim = (uint32_t)blockDim64;
+        paddedB = (uint32_t)paddedB64;
+    }
     /* PAD-TO-DIVISIBLE (regbase example/README.md tail contract: pad-M-up, never read the
      * padding; bwd_loop_impl.h: "mBlk MUST divide the batch exactly -- the host picks a
      * divisor instead"): the batch axis of every batch-strided WS plane is padded up to
@@ -360,7 +385,6 @@ static ge::graphStatus TilingFuncGrad(gert::TilingContext* context)
      * runs at the CONSTANT mBlk/mClus (runtime mBlkActual/mClusActual shrinking broke the
      * parent-vs-child NZ stride). Phase 0 zero-fills the [B, paddedB) tail; GM-output
      * writes clamp at the real B. */
-    uint32_t paddedB = blockDim * mBlkFull;
     uint32_t mBlk = 0, tcX = 0, iChunk = 0, tcW = 0, jChunk = 0;
     OP_CHECK_IF(mBlkFull == 0, OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] no rows-per-cluster for this batch"),
                 return ge::GRAPH_FAILED);

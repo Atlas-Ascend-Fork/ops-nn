@@ -100,7 +100,10 @@ constexpr uint32_t MAX_SPLIT_K = 16;      /* max split-K segments (L0C/L0B budge
 constexpr uint32_t ACC_INTERLEAVE = 8;    /* interleaved partials for the db/peep accumulators */
 constexpr uint32_t REC_VEC_MAX_N4 = 384;  /* vector-recurrence gate: padded 4H bound (H <= 96) */
 constexpr uint32_t REC_VEC_ROWS = 8;      /* W rows staged per vector-recurrence block */
-constexpr uint32_t REC_VEC_TAIL_MAX = 48; /* scalar tree-fold bound on the post-vector tail (<= 40 for n4 <= 384) */
+constexpr uint32_t REC_VEC_TAIL_MAX = 96; /* scalar tree-fold bound: the vector loop stops when the width is no
+                                           * longer a multiple of 16; the tail can carry up to n4/8 lanes when the
+                                           * 4H width is an odd multiple of 8 (H in [49..56]/[65..72]/[81..88]).
+                                           * 96 covers n4 <= 768 (= REC_VEC_MAX_N4 * 2 margin). */
 constexpr uint32_t NUM_VEC_PLANES = 11;   /* phase-A vector planes */
 constexpr uint32_t NUM_PEEP_BUFS = 6;     /* dwci, dwcf, dwco, wci, wcf, wco */
 constexpr uint32_t UB_BUF_PER_PLANE = 16; /* UB words per vector-plane row */
@@ -241,6 +244,9 @@ struct Layout {
     uint32_t dwci, dwcf, dwco, wciUB, wcfUB, wcoUB;          // peephole grad accumulators + weights
     uint32_t dxCub;                                          // phase B drain [rowsMaxX, iChunk]
     uint32_t dwCub;                                          // phase C drain [ceil(jChunk/2), H]
+    uint32_t foldBOff;                                       // ReduceBGrad batch-fold slots, ABOVE all
+                                                             // live regions (the historical offset-0
+                                                             // declaration overlapped t1/t2/t3)
 
     uint32_t l1Bytes, l0aBytes, l0bBytes, l0cBytes, ubBytes;
     bool ok;
@@ -795,6 +801,15 @@ CH_BOTH Layout MakeLayout(uint32_t bIn, uint32_t iIn, uint32_t hIn, uint32_t tIn
         dwCub = ubc.TakeT<float>(ch::CeilDiv(jChunk, 2) * (dwSlab ? dwNS : hid));
 
         ubBytes = Max2(ubA, Max2(ubb.cur, ubc.cur));
+        /* ReduceBGrad's batch-fold slots reuse the phase-A vector planes: foldB
+         * runs AFTER the recurrence has drained every plane to WS, so the
+         * [dh..t3] region is dead by then. foldB is anchored at the LOWEST
+         * phase-A plane offset (dh, offset 0): dead after the drain, and a
+         * separate ABOVE-everything region would blow the CAP_UB budget on
+         * large-H shapes. The kernel sizes its fold width independently
+         * (min(blockDim*2, 32, RED_UB_ELEMS/hid)) -- no host-side budget is
+         * consumed here. */
+        l.foldBOff = 0;
         l1Bytes = Max2(recL1, Max2(dxL1, dwL1));
         l0aBytes = Max2(recA2, Max2(dxA2, dwA2)) * sizeof(float);
         l0bBytes = Max2(recB, Max2(dxB, dwB2)) * sizeof(float);

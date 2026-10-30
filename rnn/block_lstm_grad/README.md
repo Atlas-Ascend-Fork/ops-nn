@@ -276,7 +276,7 @@
 - 仅支持Ascend 950PR&950DT系列产品。
 - w_grad和b_grad由确定性归约直接写入，无需调用方清零初始化。
 - gate_order支持"ifco"（默认）和"icfo"两种门控顺序。
-- seq_len_max须满足 0 <= seq_len_max <= T。
+- seq_len_max须满足 0 <= seq_len_max <= T，且仅支持标量或单元素张量（rank 0 或 [1]），多元素（如TF 1.x时代V1的seq_len[B]数组）在InferShape阶段明确拒绝——与TF 2.6公开API契约一致（BlockLSTM(V1)/BlockLSTMV2均要求单元素，实测多元素TF自身CHECK崩溃）。
 
 ## 调用说明
 

@@ -24,10 +24,43 @@
 
 namespace domi {
 
+/* TF tensors are dense row-major and carry no format concept; the TF parser may
+ * leave the mapped descs in a non-ND storage format (an NHWC label on the
+ * rank<=1 wci/wcf/wco/b inputs is the observed default-condition case), which
+ * the BlockLstmGrad tiling's format gate refuses -- the whole graph is then
+ * rejected at tiling instead of the plugin normalizing the label away. Force
+ * every desc to ND after the auto mapping, mirroring the forward plugin's
+ * ForceNdDescs. */
+static Status ForceNdDescs(ge::Operator& dst)
+{
+    for (uint32_t i = 0; i < dst.GetInputsSize(); ++i) {
+        ge::TensorDesc d = dst.GetInputDesc(i);
+        d.SetFormat(ge::FORMAT_ND);
+        d.SetOriginFormat(ge::FORMAT_ND);
+        if (dst.UpdateInputDesc(i, d) != ge::GRAPH_SUCCESS) {
+            OP_LOGE(GetOpName(dst).c_str(), "ForceNdDescs: UpdateInputDesc(%u) failed.", i);
+            return FAILED;
+        }
+    }
+    for (uint32_t i = 0; i < dst.GetOutputsSize(); ++i) {
+        ge::TensorDesc d = dst.GetOutputDesc(i);
+        d.SetFormat(ge::FORMAT_ND);
+        d.SetOriginFormat(ge::FORMAT_ND);
+        if (dst.UpdateOutputDesc(i, d) != ge::GRAPH_SUCCESS) {
+            OP_LOGE(GetOpName(dst).c_str(), "ForceNdDescs: UpdateOutputDesc(%u) failed.", i);
+            return FAILED;
+        }
+    }
+    return SUCCESS;
+}
+
 static Status ParseParamsBlockLstmGradV1(const ge::Operator& src, ge::Operator& dst)
 {
     if (AutoMappingByOpFn(src, dst) != SUCCESS) {
         OP_LOGE(GetOpName(dst).c_str(), "auto mapping failed.");
+        return FAILED;
+    }
+    if (ForceNdDescs(dst) != SUCCESS) {
         return FAILED;
     }
     (void)dst.SetAttr("gate_order", ge::AscendString("icfo"));
@@ -38,6 +71,9 @@ static Status ParseParamsBlockLstmGradV2(const ge::Operator& src, ge::Operator& 
 {
     if (AutoMappingByOpFn(src, dst) != SUCCESS) {
         OP_LOGE(GetOpName(dst).c_str(), "auto mapping failed.");
+        return FAILED;
+    }
+    if (ForceNdDescs(dst) != SUCCESS) {
         return FAILED;
     }
     (void)dst.SetAttr("gate_order", ge::AscendString("ifco"));

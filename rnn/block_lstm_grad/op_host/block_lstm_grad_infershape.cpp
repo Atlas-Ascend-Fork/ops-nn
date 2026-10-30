@@ -4,7 +4,7 @@
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
@@ -16,6 +16,12 @@
  *
  * InferDataType moved to op_graph/block_lstm_grad_graph_infer.cpp (IMPL_OP
  * registration) to match the forward's infer layout rule.
+ *
+ * Host gate is INDEPENDENT of tiling: every input's existence, rank, shape
+ * and cross-input relationship is validated here. seq_len_max must carry
+ * exactly one element -- the kernel dereferences its first element
+ * unconditionally, so an empty binding must be rejected before the device
+ * path. Zero extents on tensor inputs stay legal (TF parity).
  */
 #include "log/log.h"
 #include "register/op_impl_registry.h"
@@ -26,6 +32,17 @@ namespace ge {
 /* The operator has eight gradient outputs: x_grad, cs_prev_grad, h_prev_grad,
  * w_grad, wci_grad, wcf_grad, wco_grad and b_grad. */
 constexpr int NUM_OUTPUTS = 8;
+/* Inputs: 0 seq_len_max(scalar) | 1 x[T,B,I] | 2 cs_prev[B,H] | 3 h_prev[B,H]
+ *         4 w[I+H,4H] | 5 wci[H] | 6 wcf[H] | 7 wco[H] | 8 b[4H]
+ *         9..15 i/cs/f/o/ci/co/h[T,B,H] | 16 cs_grad[T,B,H] | 17 h_grad[T,B,H]. */
+constexpr int NUM_INPUTS = 18;
+constexpr int FIRST_GATE_INPUT = 9;
+constexpr int LAST_GATE_INPUT = 17;
+
+static bool IsUnknownRank(const gert::Shape* s) { return s->GetDimNum() == 1U && s->GetDim(0) == -2; }
+
+/* Two known dims must be equal; unknown (-1) dims defer to the binding. */
+static bool DimConflict(int64_t a, int64_t b) { return a != -1 && b != -1 && a != b; }
 
 static ge::graphStatus InferShape4BlockLstmGrad(gert::InferShapeContext* context)
 {
@@ -34,62 +51,123 @@ static ge::graphStatus InferShape4BlockLstmGrad(gert::InferShapeContext* context
      * wci_grad~wci, wcf_grad~wcf, wco_grad~wco, b_grad~b. */
     const int mapIn[NUM_OUTPUTS] = {1, 2, 3, 4, 5, 6, 7, 8};
 
-    const gert::Shape* x = context->GetInputShape(1);
-    const gert::Shape* csPrev = context->GetInputShape(2);
-    if (x == nullptr || csPrev == nullptr) {
-        OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] x/cs_prev shape is missing from the context.");
-        return GRAPH_FAILED;
-    }
-    const size_t xr = x->GetDimNum();
-    const size_t cr = csPrev->GetDimNum();
-
-    /* Scalar inputs are not part of the contract (x is [T,B,I] rank 3) -- reject
-     * them rather than treat rank 0 as an unknown rank. */
-    if (xr == 0U || cr == 0U) {
-        OP_LOGE(context->GetNodeName(),
-                "[BlockLstmGrad] scalar input is not supported: x rank(%zu), cs_prev rank(%zu).", xr, cr);
-        return GRAPH_FAILED;
+    const gert::Shape* in[NUM_INPUTS] = {};
+    for (int k = 0; k < NUM_INPUTS; ++k) {
+        in[k] = context->GetInputShape(k);
+        if (in[k] == nullptr) {
+            OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] input %d shape is missing from the context.", k);
+            return GRAPH_FAILED;
+        }
     }
 
-    /* Unknown-rank (-2) inputs: the output ranks cannot be determined until the
-     * runtime shape binding supplies concrete dims. Propagate UNKNOWN RANK to
-     * the outputs (not a fabricated concrete shape); GE re-invokes InferShape
-     * after the binding. */
-    const bool xUnknownRank = (xr == 1U && x->GetDim(0) == -2);
-    const bool csUnknownRank = (cr == 1U && csPrev->GetDim(0) == -2);
-    if (xUnknownRank || csUnknownRank) {
-        for (int k = 0; k < NUM_OUTPUTS; ++k) {
-            gert::Shape* out = context->GetOutputShape(k);
-            if (out == nullptr) {
-                OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] output %d shape is missing.", k);
+    /* Unknown-rank (-2) inputs are honoured FIRST: they skip their own checks
+     * and force UNKNOWN RANK propagation below. Every OTHER input is still
+     * validated, so a mixed graph fails on its concrete offenders only.
+     * seq_len_max must be a scalar carrying exactly one element: the kernel
+     * reads its first element unconditionally, so an empty ([0]) or
+     * multi-element binding is a contract violation, not a zero-extent case. */
+    bool anyUnknownRank = false;
+    for (int k = 0; k < NUM_INPUTS; ++k) {
+        if (IsUnknownRank(in[k])) {
+            anyUnknownRank = true;
+        }
+    }
+    for (int k = 0; k < NUM_INPUTS; ++k) {
+        if (IsUnknownRank(in[k])) {
+            continue;
+        }
+        const size_t rank = in[k]->GetDimNum();
+        bool ok = true;
+        if (k == 0) {
+            ok = (rank == 0U) || (rank == 1U && in[k]->GetDim(0) == 1);
+        } else if (k == 1) {
+            ok = (rank == 3U);
+        } else if (k == 2 || k == 3 || k == 4) {
+            ok = (rank == 2U);
+        } else if (k >= FIRST_GATE_INPUT && k <= LAST_GATE_INPUT) {
+            ok = (rank == 3U);
+        } else {
+            ok = (rank == 1U);
+        }
+        if (!ok) {
+            OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] input %d has an unsupported rank(%zu).", k, rank);
+            return GRAPH_FAILED;
+        }
+    }
+
+    if (anyUnknownRank) {
+        /* The output ranks cannot be determined until the runtime shape
+         * binding supplies concrete dims. Propagate UNKNOWN RANK to the
+         * outputs (not a fabricated concrete shape). */
+        for (int out = 0; out < NUM_OUTPUTS; ++out) {
+            gert::Shape* o = context->GetOutputShape(out);
+            if (o == nullptr) {
+                OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] output %d shape is missing.", out);
                 return GRAPH_FAILED;
             }
-            out->SetDimNum(1);
-            out->SetDim(0, -2);
+            o->SetDimNum(1);
+            o->SetDim(0, -2);
         }
         return GRAPH_SUCCESS;
     }
 
-    if (xr != 3U || cr != 2U) {
-        OP_LOGE(context->GetNodeName(),
-                "[BlockLstmGrad] x must be 3-D [T,B,I] and cs_prev 2-D [B,H], got x rank(%zu), "
-                "cs_prev rank(%zu).",
-                xr, cr);
+    /* Cross-input relationships over known dims (unknown -1 dims defer):
+     *   B: x[B] == cs_prev[B] == h_prev[B]
+     *   H: cs_prev[H] == h_prev[H] == wci/wcf/wco[H]
+     *   w: [I+H, 4H] with I = x[I]; b: [4H]
+     *   gate planes 9..17: [T,B,H] matching x and cs_prev. */
+    const int64_t bDim = in[1]->GetDim(1);
+    const int64_t iDim = in[1]->GetDim(2);
+    const int64_t hDim = in[2]->GetDim(1);
+    if (DimConflict(bDim, in[2]->GetDim(0)) || DimConflict(bDim, in[3]->GetDim(0))) {
+        OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] batch dims disagree: x B(%ld), cs_prev B(%ld), h_prev B(%ld).",
+                (long)bDim, (long)in[2]->GetDim(0), (long)in[3]->GetDim(0));
         return GRAPH_FAILED;
     }
+    if (DimConflict(hDim, in[3]->GetDim(1)) || DimConflict(hDim, in[5]->GetDim(0)) ||
+        DimConflict(hDim, in[6]->GetDim(0)) || DimConflict(hDim, in[7]->GetDim(0))) {
+        OP_LOGE(context->GetNodeName(),
+                "[BlockLstmGrad] hidden dims disagree: cs_prev H(%ld), h_prev H(%ld), wci(%ld), wcf(%ld), wco(%ld).",
+                (long)hDim, (long)in[3]->GetDim(1), (long)in[5]->GetDim(0), (long)in[6]->GetDim(0),
+                (long)in[7]->GetDim(0));
+        return GRAPH_FAILED;
+    }
+    if (DimConflict(in[4]->GetDim(0), (iDim == -1 || hDim == -1) ? -1 : iDim + hDim) ||
+        DimConflict(in[4]->GetDim(1), (hDim == -1) ? -1 : 4 * hDim)) {
+        OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] w must be [I+H, 4H] = [%ld, %ld], got [%ld, %ld].",
+                (long)((iDim == -1 || hDim == -1) ? -1 : iDim + hDim), (long)((hDim == -1) ? -1 : 4 * hDim),
+                (long)in[4]->GetDim(0), (long)in[4]->GetDim(1));
+        return GRAPH_FAILED;
+    }
+    if (DimConflict(in[8]->GetDim(0), (hDim == -1) ? -1 : 4 * hDim)) {
+        OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] b must be [4H] = [%ld], got [%ld].",
+                (long)((hDim == -1) ? -1 : 4 * hDim), (long)in[8]->GetDim(0));
+        return GRAPH_FAILED;
+    }
+    for (int k = FIRST_GATE_INPUT; k <= LAST_GATE_INPUT; ++k) {
+        if (DimConflict(in[k]->GetDim(0), in[1]->GetDim(0)) || DimConflict(in[k]->GetDim(1), bDim) ||
+            DimConflict(in[k]->GetDim(2), hDim)) {
+            OP_LOGE(context->GetNodeName(),
+                    "[BlockLstmGrad] gate input %d must be [T,B,H] = [%ld, %ld, %ld], got [%ld, %ld, %ld].", k,
+                    (long)in[1]->GetDim(0), (long)bDim, (long)hDim, (long)in[k]->GetDim(0), (long)in[k]->GetDim(1),
+                    (long)in[k]->GetDim(2));
+            return GRAPH_FAILED;
+        }
+    }
+
     /* Zero extents propagate naturally: the mirrored outputs become zero-element
      * tensors and GE skips the corresponding stores (TF parity -- a zero extent is
      * legal input, not an error). */
     for (int k = 0; k < NUM_OUTPUTS; ++k) {
-        const gert::Shape* in = context->GetInputShape(mapIn[k]);
+        const gert::Shape* src = in[mapIn[k]];
         gert::Shape* out = context->GetOutputShape(k);
-        if (in == nullptr || out == nullptr) {
-            OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] input %d / output %d shape is missing.", mapIn[k], k);
+        if (out == nullptr) {
+            OP_LOGE(context->GetNodeName(), "[BlockLstmGrad] output %d shape is missing.", k);
             return GRAPH_FAILED;
         }
         /* Unknown DIMs (-1) copy through unchanged; the runtime shape binding
          * re-invokes InferShape with concrete values. */
-        *out = *in;
+        *out = *src;
     }
     return GRAPH_SUCCESS;
 }

@@ -879,15 +879,19 @@ __aicore__ inline void ScatterPlanes(uint32_t workerId, uint32_t workers, Ascend
 /* Everything dtype-agnostic about the entry; T selects the impl instantiation. */
 /* Worker-striped zero fill for the seq_len_max == 0 fast path: every AIV subcore
  * of every cluster fills its own stripe of the [T,B,H] output planes. The
- * per-worker stripe is rounded UP to whole 8-element groups so every chunk
- * start stays 32B-aligned; only the final tail chunk may be byte-granular. */
+ * per-worker stripe is rounded UP to whole 32-BYTE groups (8 fp32 / 16 fp16
+ * elements) so every chunk start stays block-aligned; every chunk rides
+ * DataCopyPad with a byte-granular blockLen, because plain DataCopy leaves a
+ * final partial 32B block unwritten (measured: the last <=4 fp32 elements of
+ * each plane kept the caller's pre-fill instead of the required zeros). */
 template <typename T>
 __aicore__ inline void WorkerZeroFill(GM_ADDR out, uint64_t elems, uint32_t workerId, uint32_t workers)
 {
     if (out == 0 || elems == 0 || workerId >= workers) {
         return;
     }
-    const uint64_t per = ((((elems + workers - 1) / workers) + 7) / 8) * 8;
+    const uint32_t al = 32U / sizeof(T); // elements per 32B block
+    const uint64_t per = ((((elems + workers - 1) / workers) + al - 1) / al) * al;
     const uint64_t lo = (uint64_t)workerId * per;
     const uint64_t hi = (lo + per < elems) ? (lo + per) : elems;
     if (lo >= hi) {
@@ -902,7 +906,12 @@ __aicore__ inline void WorkerZeroFill(GM_ADDR out, uint64_t elems, uint32_t work
     uint64_t done = lo;
     while (done < hi) {
         const uint32_t n = (hi - done < kBlk) ? static_cast<uint32_t>(hi - done) : kBlk;
-        AscendC::DataCopy(gm[done], z, n);
+        AscendC::DataCopyExtParams p;
+        p.blockCount = 1;
+        p.blockLen = n * sizeof(T); // byte-granular: a partial final block still writes
+        p.srcStride = 0;
+        p.dstStride = 0;
+        AscendC::DataCopyPad(gm[done], z, p);
         done += n;
     }
     AscendC::PipeBarrier<PIPE_ALL>();
@@ -1067,6 +1076,10 @@ __aicore__ inline void block_lstm_impl(GM_ADDR seq_len_max, GM_ADDR x, GM_ADDR c
                      * their pipe) reading the SAME once-written z8 and writing disjoint
                      * GM -- the caller's PipeBarrier before the grid SyncAll drains them. */
                 }
+                /* MTE3→V fence: PadInputsToWs stages from VECCALC offset 0, the SAME
+                 * region z8 occupies. Without this, the vector pipe's first staging
+                 * write can overwrite z8 while the MTE3 read is still in flight. */
+                sh::PipeWait<AscendC::HardEvent::MTE3_V>();
             }
         }
         /* Phase 0: restage x/w/b into padded workspace copies -- ONLY where padding is
@@ -1077,6 +1090,9 @@ __aicore__ inline void block_lstm_impl(GM_ADDR seq_len_max, GM_ADDR x, GM_ADDR c
         if (!tdp.xDirect || !tdp.wDirect || !tdp.bDirect) {
             PadInputsToWs(xGM, wGM, bGM, ws, tdp, blockBase, mBlk, B, I, H, padI, padH, stepsRun);
         }
+        /* Barrier BEFORE the clean: PadInputsToWs's last writes are async MTE3 --
+         * the clean must not race them out of the cache. */
+        AscendC::PipeBarrier<PIPE_ALL>();
         /* ONE whole-data-cache clean covers every restaged plane (the clean is
          * ENTIRE_DATA_CACHE / range-ignoring, so one call per pipe suffices). Why the
          * clean exists at all: SyncAll orders execution, not data visibility across
@@ -1181,6 +1197,18 @@ __aicore__ inline void block_lstm_impl(GM_ADDR seq_len_max, GM_ADDR x, GM_ADDR c
             fwd::VectorLoopSlab(stripe, blockBase, igGM, coAllGM, h0GM, c0GM, hAllGM, cAllGM, storeGM, oCo, 1, SL, mBlk,
                                 wciGM, wcfGM, wcoGM, tdp.forgetBias, tdp.cellClip, tdp.usePeephole, tdp.gateOrder, H,
                                 hAllF, storeF, coAllF, hLoGM);
+        }
+        /* Whole-cache clean before the pre-scatter grid barrier: SyncAll orders
+         * EXECUTION, not data visibility -- the scatter's cross-cluster GM reads of
+         * hAll/cAll/store/co (and their fp32 mirrors) race the WRITING cluster's
+         * writeback on exactly these WS planes. One ENTIRE_DATA_CACHE clean per
+         * AIV suffices (range-ignoring). Mirrors the phase-0 clean above.
+         * Barrier BEFORE the clean: the wave's last writes are async MTE3. */
+        AscendC::PipeBarrier<PIPE_ALL>();
+        {
+            AscendC::GlobalTensor<T> hAllFlush;
+            hAllFlush.SetGlobalBuffer((__gm__ T*)(ws + tdp.offHAll));
+            AscendC::DataCacheCleanAndInvalid<T, AscendC::CacheLine::ENTIRE_DATA_CACHE>(hAllFlush);
         }
         AscendC::PipeBarrier<PIPE_ALL>();
         AscendC::SyncAll<true>();
