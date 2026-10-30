@@ -236,10 +236,21 @@ endfunction()
 # generate outpath: ${CMAKE_BINARY_DIR}/tbe/op_info_cfg/ai_core/${compute_unit}/
 # install path: packages/vendors/${VENDOR_NAME}/op_impl/ai_core/tbe/config/${compute_unit}
 ###################################################################################################
+function(ops_info_input_dependencies out_var input_dir compute_unit target_name)
+  file(GLOB input_files CONFIGURE_DEPENDS
+    "${input_dir}/aic-${compute_unit}-ops-info.ini"
+    "${input_dir}/inner/aic-${compute_unit}-ops-info.ini"
+    "${input_dir}/exc/aic-${compute_unit}-ops-info.ini")
+  set(input_manifest "${CMAKE_CURRENT_BINARY_DIR}/${target_name}-inputs.txt")
+  file(GENERATE OUTPUT "${input_manifest}" CONTENT "${input_files}\n")
+  set(${out_var} ${input_files} "${input_manifest}" PARENT_SCOPE)
+endfunction()
+
 function(add_ops_info_target_v1)
   set(oneValueArgs TARGET OPS_INFO_DIR COMPUTE_UNIT OUTPUT INSTALL_DIR)
   cmake_parse_arguments(OPINFO "" "${oneValueArgs}" "" ${ARGN})
   get_filename_component(opinfo_file_path "${OPINFO_OUTPUT}" DIRECTORY)
+  ops_info_input_dependencies(opinfo_inputs "${OPINFO_OPS_INFO_DIR}" "${OPINFO_COMPUTE_UNIT}" "${OPINFO_TARGET}")
   add_custom_command(OUTPUT ${OPINFO_OUTPUT}
     COMMAND mkdir -p ${opinfo_file_path}
     COMMAND ${ASCEND_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/util/parse_ini_to_json.py
@@ -247,6 +258,7 @@ function(add_ops_info_target_v1)
             ${OPINFO_OPS_INFO_DIR}/inner/aic-${OPINFO_COMPUTE_UNIT}-ops-info.ini
             ${OPINFO_OPS_INFO_DIR}/exc/aic-${OPINFO_COMPUTE_UNIT}-ops-info.ini
             ${OPINFO_OUTPUT}
+    DEPENDS ${opinfo_inputs} ${CMAKE_SOURCE_DIR}/scripts/util/parse_ini_to_json.py
   )
   add_custom_target(${OPINFO_TARGET} ALL
     DEPENDS ${OPINFO_OUTPUT}
@@ -268,6 +280,7 @@ endfunction()
 function(merge_ini_files)
   set(oneValueArgs TARGET OPS_INFO_DIR COMPUTE_UNIT)
   cmake_parse_arguments(MGINI "" "${oneValueArgs}" "" ${ARGN})
+  ops_info_input_dependencies(merge_inputs "${MGINI_OPS_INFO_DIR}" "${MGINI_COMPUTE_UNIT}" "${MGINI_TARGET}")
   add_custom_command(OUTPUT ${ASCEND_KERNEL_CONF_DST}/aic-${MGINI_COMPUTE_UNIT}-ops-info.ini
                     COMMAND touch ${MGINI_OPS_INFO_DIR}/aic-merged-${MGINI_COMPUTE_UNIT}-ops-info.ini
                     COMMAND ${ASCEND_PYTHON_EXECUTABLE} ${OPS_KERNEL_BINARY_SCRIPT}/merge_ini_files.py
@@ -275,6 +288,7 @@ function(merge_ini_files)
                             ${MGINI_OPS_INFO_DIR}/inner/aic-${MGINI_COMPUTE_UNIT}-ops-info.ini
                             ${MGINI_OPS_INFO_DIR}/exc/aic-${MGINI_COMPUTE_UNIT}-ops-info.ini
                             --output-file ${ASCEND_KERNEL_CONF_DST}/aic-${MGINI_COMPUTE_UNIT}-ops-info.ini
+                    DEPENDS ${merge_inputs} ${OPS_KERNEL_BINARY_SCRIPT}/merge_ini_files.py
     )
   add_custom_target(${MGINI_TARGET} ALL
                     DEPENDS ${ASCEND_KERNEL_CONF_DST}/aic-${MGINI_COMPUTE_UNIT}-ops-info.ini
