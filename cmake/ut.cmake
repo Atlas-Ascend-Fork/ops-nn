@@ -642,6 +642,10 @@ function(AddOpTestCase)
                         ERROR_VARIABLE EXEC_ERROR
                     )
 
+                    if(NOT EXEC_RESULT STREQUAL "0")
+                        message(FATAL_ERROR "Failed to read operator info ${opsInfo}: ${EXEC_ERROR}")
+                    endif()
+
                     string(REGEX REPLACE "\n" "" kernel_cpp_name "${TEMP}")
                     message(STATUS "get_opfile_from_opsinfo kernel_cpp_name is ${kernel_cpp_name}")
                 else()
