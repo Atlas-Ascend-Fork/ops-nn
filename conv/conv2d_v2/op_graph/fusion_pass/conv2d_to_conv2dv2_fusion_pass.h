@@ -26,7 +26,9 @@ namespace Conv {
 namespace Conv2dToConv2dV2Fusion {
 
 const std::map<std::string, NpuArch> SUPPORT_SOC_LIST = {{"Ascend950", NpuArch::DAV_3510},
-                                                         {"Ascend350", NpuArch::DAV_3510}};
+                                                         {"Ascend350", NpuArch::DAV_3510},
+                                                         {"Ascend960DT", NpuArch::DAV_9201},
+                                                         {"Ascend960PR", NpuArch::DAV_9202}};
 
 } // namespace Conv2dToConv2dV2Fusion
 

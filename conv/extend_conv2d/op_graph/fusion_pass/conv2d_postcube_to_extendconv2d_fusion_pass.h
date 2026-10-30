@@ -39,7 +39,9 @@ const ge::AscendString RELU_WEIGHT_0 = "relu_weight0";
 const ge::AscendString RELU_WEIGHT_1 = "relu_weight1";
 
 const std::map<std::string, NpuArch> SUPPORT_SOC_LIST = {{"Ascend950", NpuArch::DAV_3510},
-                                                         {"Ascend350", NpuArch::DAV_3510}};
+                                                         {"Ascend350", NpuArch::DAV_3510},
+                                                         {"Ascend960DT", NpuArch::DAV_9201},
+                                                         {"Ascend960PR", NpuArch::DAV_9202}};
 
 const ge::AscendString REARRANGE_A16W8_WEIGHT_FZ_OP = "RearrangeA16W8WeightFzOp";
 const ge::AscendString REFORMAT_OP = "ReFormat";
