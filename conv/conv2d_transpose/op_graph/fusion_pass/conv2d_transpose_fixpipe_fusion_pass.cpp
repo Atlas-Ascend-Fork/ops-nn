@@ -44,6 +44,7 @@ namespace {
 constexpr char const* kAttrSingleOp = "_is_single_op";
 constexpr char const* kAttrOutDtype = "dequantouttype";
 constexpr char const* kAttrOffset = "offset";
+constexpr char const* kSetQuantOffsetScaleOp = "SetQuantOffsetScale";
 // the SetM1Dequant host op packs the requant zero point into M1 bits[45:37] as a 9-bit
 // two's-complement field: it reads the "offset" attr as a float, converts it to an int and
 // shifts it left by 37, so a negative zero point must be pre-encoded with the 9-bit mask
@@ -73,6 +74,34 @@ bool GetZeroPointAttr(const GNode& node, int32_t& zeroPoint)
     }
     return false;
 }
+
+// PostCube keeps the folded AscendQuant offset as input(0) of the
+// SetQuantOffsetScale node feeding FixPipe quant_scale_1.
+bool GetQuantOffsetFromFixPipe(const GNode& postCubeNode, int32_t& zeroPoint)
+{
+    auto quantScale1 = postCubeNode.GetInDataNodesAndPortIndexs(POST_CUBE_INPUT_QUANT_SCALE_1_INDEX);
+    if (quantScale1.first == nullptr) {
+        return false;
+    }
+    AscendString producerType;
+    if (quantScale1.first->GetType(producerType) != GRAPH_SUCCESS || producerType != kSetQuantOffsetScaleOp) {
+        return false;
+    }
+    TensorDesc offsetDesc;
+    if (quantScale1.first->GetInputDesc(0, offsetDesc) != GRAPH_SUCCESS || offsetDesc.GetDataType() != DT_FLOAT) {
+        return false;
+    }
+    Tensor offsetTensor;
+    if (quantScale1.first->GetInputConstData(0, offsetTensor) != GRAPH_SUCCESS || offsetTensor.GetData() == nullptr) {
+        auto offsetConst = quantScale1.first->GetInDataNodesAndPortIndexs(0);
+        if (offsetConst.first == nullptr || offsetConst.first->GetAttr("value", offsetTensor) != GRAPH_SUCCESS ||
+            offsetTensor.GetData() == nullptr) {
+            return false;
+        }
+    }
+    zeroPoint = static_cast<int32_t>(*static_cast<const float*>(static_cast<const void*>(offsetTensor.GetData())));
+    return true;
+}
 } // namespace
 
 void Conv2DTransposeFixpipeFusionPass::InitMember()
@@ -97,6 +126,8 @@ void Conv2DTransposeFixpipeFusionPass::InitMember()
     offsetX = 0;
     fusionMode = DEFAULT_FUSION_MODE;
     requantOffset = 0.0f;
+    requantOffset1 = 0.0f;
+    quantOffsetsByPostCubeName.clear();
     transposeNode = nullptr;
     transposeOutputDesc = TensorDesc();
     hasFusedTranspose = false;
@@ -278,6 +309,37 @@ ge::GNodePtr Conv2DTransposeFixpipeFusionPass::GetScaleSetM1Node(const GNode& po
     return setM1Pair.first;
 }
 
+void Conv2DTransposeFixpipeFusionPass::CaptureRequantOffsets(const std::string& nodeName,
+                                                             const std::vector<ops::PostCubePassInfo>& matchLists)
+{
+    for (const auto& pass : matchLists) {
+        // The INT8 output can be an AscendQuant or an AscendDequant produced by
+        // dequant/requant processing. Keep the offset of the final quantized op
+        // on each branch before PostCube removes it.
+        for (size_t index = pass.m_opnodes.size(); index > 1; --index) {
+            const auto& quantNode = pass.m_opnodes[index - 1].GetNode();
+            if (quantNode == nullptr) {
+                continue;
+            }
+            AscendString nodeType;
+            if (quantNode->GetType(nodeType) != GRAPH_SUCCESS ||
+                (nodeType != kAscendQuantOp && nodeType != kAscendRequantOp && nodeType != kAscendDequantOp)) {
+                continue;
+            }
+            TensorDesc quantOutputDesc;
+            if (quantNode->GetOutputDesc(OUTPUT_INDEX, quantOutputDesc) != GRAPH_SUCCESS ||
+                quantOutputDesc.GetDataType() != ge::DT_INT8) {
+                continue;
+            }
+            int32_t zeroPoint = 0;
+            if (GetZeroPointAttr(*quantNode, zeroPoint)) {
+                quantOffsetsByPostCubeName[nodeName + "_pass." + std::to_string(pass.pass_index)] = zeroPoint;
+                break;
+            }
+        }
+    }
+}
+
 void Conv2DTransposeFixpipeFusionPass::ResolveRequantOffset()
 {
     requantOffset = 0.0f;
@@ -299,16 +361,24 @@ void Conv2DTransposeFixpipeFusionPass::ResolveRequantOffset()
 
 float Conv2DTransposeFixpipeFusionPass::ResolveRequantZeroPoint(const GNode& setM1Node, const GNode& postCubeNode) const
 {
-    // the requant zero point resolution order: the original SetM1Dequant offset attr, the
-    // fused postcube node offset attr, then the symmetric int8 requant default (-128); the
-    // requant fusion pass consumes the AscendQuant offset for its own bookkeeping and does
-    // not always carry it over to either node
+    AscendString postCubeName;
+    if (postCubeNode.GetName(postCubeName) == GRAPH_SUCCESS) {
+        const auto quantOffset = quantOffsetsByPostCubeName.find(postCubeName.GetString());
+        if (quantOffset != quantOffsetsByPostCubeName.end()) {
+            return static_cast<float>(quantOffset->second & kRequantZeroPointMask);
+        }
+    }
     int32_t requantZeroPoint = 0;
+    if (GetQuantOffsetFromFixPipe(postCubeNode, requantZeroPoint)) {
+        OP_LOGD(GetNodeType().GetString(), "Use FixPipe quant_scale_1 offset %d for requant M1.", requantZeroPoint);
+        return static_cast<float>(requantZeroPoint & kRequantZeroPointMask);
+    }
+    // Existing graphs can provide a FixPipe without a selected quantized output match.
     if (!GetZeroPointAttr(setM1Node, requantZeroPoint) && !GetZeroPointAttr(postCubeNode, requantZeroPoint)) {
         requantZeroPoint = kSymmetricInt8RequantZeroPoint;
         std::string postCubeName;
         (void)ConvBackpropFusionUtilsPass::GetNodeName(postCubeNode, postCubeName);
-        OP_LOGD(GetNodeType().GetString(),
+        OP_LOGW(GetNodeType().GetString(),
                 "No requant zero point attr on node[%s] or the postcube node[%s], use the "
                 "symmetric int8 requant zero point %d.",
                 SET_M1_DEQUANT_OP.GetString(), postCubeName.c_str(), kSymmetricInt8RequantZeroPoint);
@@ -617,6 +687,7 @@ PostCubeFusionResult Conv2DTransposeFixpipeFusionPass::PostCubeFusionImpl(ge::Gr
         OP_LOGW(GetNodeType().GetString(), "PostCube case not supported before creation, skip this node.");
         return PostCubeFusionResult::kSkipNode;
     }
+    CaptureRequantOffsets(nodeName, postCubeUtils.m_matchpasses_);
 
     // [Step 4] Create the PostCube operator node and modify the graph, the graph may have been changed
     // even when it fails, so the created nodes are checked in both cases by GetPostCubeNodes

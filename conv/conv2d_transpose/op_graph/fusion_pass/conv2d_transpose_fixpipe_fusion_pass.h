@@ -88,6 +88,7 @@ constexpr int32_t SCALE1_INDEX = 5;
 constexpr size_t CONV2D_TRANSPOSE_INPUT_NUM = 3;
 // PostCube(FixPipe) input index: quant_scale_0 is at index 2
 constexpr int32_t POST_CUBE_INPUT_QUANT_SCALE_0_INDEX = 2;
+constexpr int32_t POST_CUBE_INPUT_QUANT_SCALE_1_INDEX = 5;
 // AscendDequant/AscendRequant scale input (deq_scale/req_scale) is at index 1
 constexpr int32_t QUANT_OP_SCALE_INPUT_INDEX = 1;
 // SetM1Dequant input "x1" is at index 0
@@ -183,10 +184,13 @@ private:
                                    const ge::TensorDesc& filterInputDesc, const std::string& nodeNamePrefix,
                                    ge::es::EsTensorHolder& rearrangeOutput);
 
-    // resolve the requant zero point for the rebuilt SetM1Dequant: the offset attr of the
-    // original SetM1Dequant node, then the offset attr of the fused postcube node, then the
-    // symmetric int8 requant default (-128); the resolved zero point is stored 9-bit
-    // encoded ((zp & 0x1FF)) for the M1 high word packing of the SetM1Dequant host op
+    // Capture the INT8 branch's zero point before PostCube removes its original nodes.
+    // The generated FixPipe name identifies the branch even if dual outputs are reordered.
+    void CaptureRequantOffsets(const std::string& nodeName, const std::vector<ops::PostCubePassInfo>& matchLists);
+
+    // resolve the requant zero point for the rebuilt SetM1Dequant: prefer the original
+    // quantized output offset, then the FixPipe input and host op attrs, finally the existing
+    // symmetric int8 fallback; encode the result as a 9-bit M1 field
     void ResolveRequantOffset();
     float ResolveRequantZeroPoint(const ge::GNode& setM1Node, const ge::GNode& postCubeNode) const;
 
@@ -250,6 +254,7 @@ private:
     // second value is for the scale1 path of the dual output
     float requantOffset = 0.0f;
     float requantOffset1 = 0.0f;
+    std::map<std::string, int32_t> quantOffsetsByPostCubeName;
 
     ge::TensorDesc biasDesc;
     // the y1 output desc of the dual output cases (from the back FixPipe branch or the
