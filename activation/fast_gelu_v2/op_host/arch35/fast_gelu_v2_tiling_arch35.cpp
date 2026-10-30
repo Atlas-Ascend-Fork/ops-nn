@@ -132,7 +132,7 @@ static ge::graphStatus CalcTilingParams(gert::TilingContext* context, FastGeluV2
 
     context->SetBlockDim(CeilDiv(totalIdx, tiling->blockFactor));
     uint32_t doubleBufferKey = useDoubleBuffer ? 1U : 0U;
-    ASCENDC_TPL_SEL_PARAM(context, static_cast<uint32_t>(dataType), doubleBufferKey);
+    ASCENDC_TPL_SEL_PARAM(context, doubleBufferKey);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -160,7 +160,7 @@ static ge::graphStatus FastGeluV2TilingFunc(gert::TilingContext* context)
         tiling->blockFactor = 1;
         tiling->ubFactor = 1;
         context->SetBlockDim(1);
-        ASCENDC_TPL_SEL_PARAM(context, static_cast<uint32_t>(dataType), 0U);
+        ASCENDC_TPL_SEL_PARAM(context, 0U);
         return ge::GRAPH_SUCCESS;
     }
 

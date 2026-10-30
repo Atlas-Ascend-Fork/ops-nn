@@ -37,9 +37,6 @@ using std::map;
 using std::string;
 using std::vector;
 
-constexpr uint32_t FP32_BYTE_SIZE = 4;
-constexpr uint32_t FP16_BYTE_SIZE = 2;
-
 string GetTime()
 {
     time_t timep;
@@ -49,27 +46,20 @@ string GetTime()
     return tmp;
 }
 
-uint32_t GetDataTypeSize(DataType dt)
-{
-    if (dt == ge::DT_FLOAT) {
-        return FP32_BYTE_SIZE;
-    } else if (dt == ge::DT_FLOAT16 || dt == ge::DT_BF16) {
-        return FP16_BYTE_SIZE;
-    }
-    return FP32_BYTE_SIZE;
-}
-
-int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, DataType data_type,
-                    int value)
+int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, float value)
 {
     input_tensor_desc.SetRealDimCnt(shapes.size());
+    input_tensor_desc.SetDataType(ge::DT_FLOAT);
     size_t size = 1;
     for (uint32_t i = 0; i < shapes.size(); i++) {
         size *= shapes[i];
     }
-    uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[data_len];
-    for (uint32_t i = 0; i < size; ++i) {
+    size_t data_len = size * sizeof(float);
+    float* pData = new (std::nothrow) float[size];
+    if (pData == nullptr) {
+        return FAILED;
+    }
+    for (size_t i = 0; i < size; ++i) {
         *(pData + i) = value;
     }
     input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
@@ -99,7 +89,7 @@ int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vect
     placeholder1_desc.SetPlacement(ge::kPlacementHost);
     placeholder1_desc.SetFormat(FORMAT_ND);
     Tensor tensor_placeholder1;
-    ret = GenOnesData(xShape, tensor_placeholder1, placeholder1_desc, inDtype, 2);
+    ret = GenOnesDataFloat32(xShape, tensor_placeholder1, placeholder1_desc, 2.0f);
     if (ret != SUCCESS) {
         printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());
         return FAILED;
@@ -127,7 +117,7 @@ int main(int argc, char* argv[])
     std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
     Status ret = ge::GEInitialize(global_options);
     if (ret != SUCCESS) {
-        printf("%s - INFO - [XIR]: Initialize ge using ge global options failed\n", GetTime().c_str());
+        printf("%s - ERROR - [XIR]: Initialize ge using ge global options failed\n", GetTime().c_str());
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Initialize ge using ge global options success\n", GetTime().c_str());
@@ -164,13 +154,18 @@ int main(int argc, char* argv[])
     std::map<AscendString, AscendString> graph_options = {};
     uint32_t graph_id = 0;
     ret = session->AddGraph(graph_id, graph, graph_options);
-
+    if (ret != SUCCESS) {
+        printf("%s - ERROR - [XIR]: Session add ir compute graph failed\n", GetTime().c_str());
+        delete session;
+        GEFinalize();
+        return FAILED;
+    }
     printf("%s - INFO - [XIR]: Session add ir compute graph success\n", GetTime().c_str());
     printf("%s - INFO - [XIR]: Start to run ir compute graph\n", GetTime().c_str());
     std::vector<ge::Tensor> output;
     ret = session->RunGraph(graph_id, input, output);
     if (ret != SUCCESS) {
-        printf("%s - INFO - [XIR]: Run graph failed\n", GetTime().c_str());
+        printf("%s - ERROR - [XIR]: Run graph failed\n", GetTime().c_str());
         delete session;
         GEFinalize();
         return FAILED;
@@ -195,7 +190,7 @@ int main(int argc, char* argv[])
     delete session;
     ret = ge::GEFinalize();
     if (ret != SUCCESS) {
-        printf("%s - INFO - [XIR]: Finalize ir graph session failed\n", GetTime().c_str());
+        printf("%s - ERROR - [XIR]: Finalize ir graph session failed\n", GetTime().c_str());
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Finalize ir graph session success\n", GetTime().c_str());

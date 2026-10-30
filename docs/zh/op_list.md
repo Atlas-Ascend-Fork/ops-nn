@@ -175,7 +175,7 @@
     <td>✓</td>
     <td>✓</td>
     <td>AI Core</td>
-    <td>对输入特征做非线性激活，用轻量化指数 /sigmoid近似替代原版GELU的复杂计算。</td>
+    <td>对输入特征做非线性激活，用裁剪+多项式近似替代原版GELU的复杂计算。</td>
   </tr>
   <tr>
     <td>activation</td>

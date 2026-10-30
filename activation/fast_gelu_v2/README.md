@@ -13,16 +13,18 @@
 
 ## 功能说明
 
-- 算子功能：计算FastGelu激活函数。
+- 算子功能：计算FastGeluV2激活函数。
 - 计算公式：
 
 $$
-FastGelu(x_i) = \frac{x_i}{1 + \exp(-1.702 \times |x_i|)} \times \exp(0.851 \times (x_i - |x_i|))
+FastGeluV2(x_i) = x_i \times (sgn(x_i) \times [-0.1444 \times (clip(0.7071 \times |x_i|,\ max=1.769) - 1.769)^2 + 0.5] + 0.5)
 $$
 
 其中：
 
 - x: 输入张量
+- $sgn(x) = (x + 0.000000000001) / |x + 0.000000000001|$
+- $clip(v, max)$ 表示将v的取值限制在max以内
 
 ## 参数说明
 
@@ -40,7 +42,7 @@ $$
     <tr>
     <td>x</td>
     <td>输入</td>
-    <td>公式中的'x'，表示FastGelu激活函数的输入张量。</td>
+    <td>公式中的'x'，表示FastGeluV2激活函数的输入张量。</td>
     <td>BFLOAT16、FLOAT16、FLOAT32</td>
     <td>ND</td>
     </tr>
@@ -61,4 +63,4 @@ $$
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| 图模式  | [test_geir_fast_gelu_v2.cpp](examples/arch35/test_geir_fast_gelu_v2.cpp) | 通过GE IR图模式方式调用FastGeluV2算子。 |
+| 图模式  | [test_geir_fast_gelu_v2.cpp](examples/arch35/test_geir_fast_gelu_v2.cpp) | 通过[算子IR](./op_graph/fast_gelu_v2_proto.h)以GE IR图模式方式调用FastGeluV2算子。 |

@@ -41,7 +41,7 @@ public:
             .DynamicShapeSupportFlag(true)
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true)
-            .ExtendCfgInfo("opFile.value", "fast_gelu_v2_apt");
+            .ExtendCfgInfo("opFile.value", "fast_gelu_v2");
         this->AICore().AddConfig("ascend950", aiCoreConfig);
     }
 };

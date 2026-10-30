@@ -57,6 +57,10 @@ TEST_F(fast_gelu_v2_test, test_case_fp32)
     uint8_t* y = (uint8_t*)AscendC::GmAlloc(yByteSize);
     uint8_t* workspace = (uint8_t*)AscendC::GmAlloc(16 * 1024 * 1024);
     uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(tiling_data_size);
+    ASSERT_NE(x, nullptr);
+    ASSERT_NE(y, nullptr);
+    ASSERT_NE(workspace, nullptr);
+    ASSERT_NE(tiling, nullptr);
     uint32_t blockDim = 1;
     kernel_ut::SetupTestEnvironment("activation/fast_gelu_v2/tests/ut/op_kernel/fast_gelu_v2_data",
                                     "fast_gelu_v2_data");
@@ -69,7 +73,7 @@ TEST_F(fast_gelu_v2_test, test_case_fp32)
     tilingData->blockFactor = static_cast<int64_t>(dataNum);
     tilingData->ubFactor = static_cast<int64_t>(dataNum);
 
-    ReadFile(path + "/fast_gelu_v2_data/input_x.bin", xByteSize, x, xByteSize);
+    ASSERT_TRUE(ReadFile(path + "/fast_gelu_v2_data/input_x.bin", xByteSize, x, xByteSize)) << "input_x.bin missing";
     auto KernelFastGeluV2 = [](GM_ADDR x, GM_ADDR y, GM_ADDR workspace, GM_ADDR tiling) {
         fast_gelu_v2_kernel<float>(x, y, workspace, tiling);
     };
@@ -77,6 +81,17 @@ TEST_F(fast_gelu_v2_test, test_case_fp32)
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
     ICPU_RUN_KF(KernelFastGeluV2, blockDim, x, y, workspace, (uint8_t*)(tilingData));
     WriteFile(path + "/fast_gelu_v2_data/output.bin", y, yByteSize);
+
+    uint8_t* goldenBuf = (uint8_t*)AscendC::GmAlloc(yByteSize);
+    ASSERT_NE(goldenBuf, nullptr);
+    ASSERT_TRUE(ReadFile(path + "/fast_gelu_v2_data/golden.bin", yByteSize, goldenBuf, yByteSize))
+        << "golden.bin missing";
+    float* outF = reinterpret_cast<float*>(y);
+    float* goldF = reinterpret_cast<float*>(goldenBuf);
+    for (size_t i = 0; i < dataNum; i++) {
+        ASSERT_NEAR(outF[i], goldF[i], 1e-4) << "mismatch at index " << i;
+    }
+    AscendC::GmFree(goldenBuf);
 
     AscendC::GmFree(x);
     AscendC::GmFree(y);
@@ -95,6 +110,10 @@ TEST_F(fast_gelu_v2_test, test_case_fp16)
     uint8_t* y = (uint8_t*)AscendC::GmAlloc(yByteSize);
     uint8_t* workspace = (uint8_t*)AscendC::GmAlloc(16 * 1024 * 1024);
     uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(tiling_data_size);
+    ASSERT_NE(x, nullptr);
+    ASSERT_NE(y, nullptr);
+    ASSERT_NE(workspace, nullptr);
+    ASSERT_NE(tiling, nullptr);
     uint32_t blockDim = 1;
     kernel_ut::SetupTestEnvironment("activation/fast_gelu_v2/tests/ut/op_kernel/fast_gelu_v2_data",
                                     "fast_gelu_v2_data");
@@ -107,7 +126,7 @@ TEST_F(fast_gelu_v2_test, test_case_fp16)
     tilingData->blockFactor = static_cast<int64_t>(dataNum);
     tilingData->ubFactor = static_cast<int64_t>(dataNum);
 
-    ReadFile(path + "/fast_gelu_v2_data/input_x.bin", xByteSize, x, xByteSize);
+    ASSERT_TRUE(ReadFile(path + "/fast_gelu_v2_data/input_x.bin", xByteSize, x, xByteSize)) << "input_x.bin missing";
     auto KernelFastGeluV2 = [](GM_ADDR x, GM_ADDR y, GM_ADDR workspace, GM_ADDR tiling) {
         fast_gelu_v2_kernel<half>(x, y, workspace, tiling);
     };
@@ -115,6 +134,17 @@ TEST_F(fast_gelu_v2_test, test_case_fp16)
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
     ICPU_RUN_KF(KernelFastGeluV2, blockDim, x, y, workspace, (uint8_t*)(tilingData));
     WriteFile(path + "/fast_gelu_v2_data/output.bin", y, yByteSize);
+
+    uint8_t* goldenBuf = (uint8_t*)AscendC::GmAlloc(yByteSize);
+    ASSERT_NE(goldenBuf, nullptr);
+    ASSERT_TRUE(ReadFile(path + "/fast_gelu_v2_data/golden.bin", yByteSize, goldenBuf, yByteSize))
+        << "golden.bin missing";
+    half* outH = reinterpret_cast<half*>(y);
+    half* goldH = reinterpret_cast<half*>(goldenBuf);
+    for (size_t i = 0; i < dataNum; i++) {
+        ASSERT_NEAR(static_cast<float>(outH[i]), static_cast<float>(goldH[i]), 4e-3) << "mismatch at index " << i;
+    }
+    AscendC::GmFree(goldenBuf);
 
     AscendC::GmFree(x);
     AscendC::GmFree(y);
