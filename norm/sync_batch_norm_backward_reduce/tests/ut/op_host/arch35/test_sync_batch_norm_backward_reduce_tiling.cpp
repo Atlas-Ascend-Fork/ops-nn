@@ -126,7 +126,8 @@ TEST_F(SyncBatchNormBackwardReduceTiling, test_tiling_fp16_001)
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     // check tiling result
     auto tilingDataResult = TilingData2Str(tilingContext->GetRawTilingData());
-    // EXPECT_EQ(tilingDataResult, expectData);
+    std::string expectData = "1000 16492674416641 1024 1 1 1 1024 1000 3840 1 ";
+    EXPECT_EQ(tilingDataResult, expectData);
     auto tiling_key = tilingContext->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
 }
@@ -189,7 +190,8 @@ TEST_F(SyncBatchNormBackwardReduceTiling, test_tiling_fp16_002)
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     // check tiling result
     auto tilingDataResult = TilingData2Str(tilingContext->GetRawTilingData());
-    // EXPECT_EQ(tilingDataResult, expectData);
+    std::string expectData = "20000 16492674416650 2048 10 1 1 2048 1568 3840 1 ";
+    EXPECT_EQ(tilingDataResult, expectData);
     auto tiling_key = tilingContext->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
 }
@@ -252,7 +254,8 @@ TEST_F(SyncBatchNormBackwardReduceTiling, test_tiling_fp16_003)
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     // check tiling result
     auto tilingDataResult = TilingData2Str(tilingContext->GetRawTilingData());
-    // EXPECT_EQ(tilingDataResult, expectData);
+    std::string expectData = "600000 16492674416704 9728 62 3 2 2048 2752 3840 1 ";
+    EXPECT_EQ(tilingDataResult, expectData);
     auto tiling_key = tilingContext->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
 }
@@ -315,7 +318,8 @@ TEST_F(SyncBatchNormBackwardReduceTiling, test_tiling_fp16_004)
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     // check tiling result
     auto tilingDataResult = TilingData2Str(tilingContext->GetRawTilingData());
-    // EXPECT_EQ(tilingDataResult, expectData);
+    std::string expectData = "600000 16492674416704 9728 62 3 2 2048 2752 3840 1 ";
+    EXPECT_EQ(tilingDataResult, expectData);
     auto tiling_key = tilingContext->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
 }
@@ -378,7 +382,8 @@ TEST_F(SyncBatchNormBackwardReduceTiling, test_tiling_bf16_001)
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     // check tiling result
     auto tilingDataResult = TilingData2Str(tilingContext->GetRawTilingData());
-    // EXPECT_EQ(tilingDataResult, expectData);
+    std::string expectData = "1000 16492674416641 1024 1 1 1 1024 1000 3840 1 ";
+    EXPECT_EQ(tilingDataResult, expectData);
     auto tiling_key = tilingContext->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
 }
@@ -441,7 +446,8 @@ TEST_F(SyncBatchNormBackwardReduceTiling, test_tiling_fp32_001)
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     // check tiling result
     auto tilingDataResult = TilingData2Str(tilingContext->GetRawTilingData());
-    // EXPECT_EQ(tilingDataResult, expectData);
+    std::string expectData = "1000 20066087206913 1024 1 1 1 1024 1000 4672 1 ";
+    EXPECT_EQ(tilingDataResult, expectData);
     auto tiling_key = tilingContext->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
 }
@@ -503,7 +509,8 @@ TEST_F(SyncBatchNormBackwardReduceTiling, test_tiling_fp32_002)
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     // check tiling result
     auto tilingDataResult = TilingData2Str(tilingContext->GetRawTilingData());
-    // EXPECT_EQ(tilingDataResult, expectData);
+    std::string expectData = "20000 20066087206932 1024 20 1 1 1024 544 4672 1 ";
+    EXPECT_EQ(tilingDataResult, expectData);
     auto tiling_key = tilingContext->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
 }
@@ -566,7 +573,8 @@ TEST_F(SyncBatchNormBackwardReduceTiling, test_tiling_fp32_003)
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     // check tiling result
     auto tilingDataResult = TilingData2Str(tilingContext->GetRawTilingData());
-    // EXPECT_EQ(tilingDataResult, expectData);
+    std::string expectData = "600000 20066087206976 9728 62 3 2 384 1920 4672 1 ";
+    EXPECT_EQ(tilingDataResult, expectData);
     auto tiling_key = tilingContext->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
 }
@@ -629,7 +637,8 @@ TEST_F(SyncBatchNormBackwardReduceTiling, test_tiling_fp32_004)
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     // check tiling result
     auto tilingDataResult = TilingData2Str(tilingContext->GetRawTilingData());
-    // EXPECT_EQ(tilingDataResult, expectData);
+    std::string expectData = "1200000 20066087206976 18944 64 5 2 256 1856 4672 1 ";
+    EXPECT_EQ(tilingDataResult, expectData);
     auto tiling_key = tilingContext->GetTilingKey();
     ASSERT_EQ(tiling_key, 0);
 }
