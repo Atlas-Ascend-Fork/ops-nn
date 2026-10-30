@@ -13,6 +13,17 @@ import sys
 import re
 import logging
 
+CXX_KEYWORDS = frozenset(
+    "alignas alignof and and_eq asm auto bitand bitor bool break case catch char "
+    "char8_t char16_t char32_t class compl concept const consteval constexpr constinit "
+    "const_cast continue co_await co_return co_yield decltype default delete do double "
+    "dynamic_cast else enum explicit export extern false float for friend goto if inline "
+    "int long mutable namespace new noexcept not not_eq nullptr operator or or_eq private "
+    "protected public register reinterpret_cast requires return short signed sizeof static "
+    "static_assert static_cast struct switch template this thread_local throw true try "
+    "typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq".split()
+)
+
 
 class OpGenerator:
     """算子工程生成器"""
@@ -71,6 +82,12 @@ class OpGenerator:
             raise ValueError(
                 f"算子名称 '{self.op_name}' 包含无效字符。只允许字母、数字和下划线。"
             )
+
+        # The name is used directly for a kernel function and transformed into C++ class names.
+        if not re.fullmatch(r"_*[a-zA-Z][a-zA-Z0-9_]*", self.op_name):
+            raise ValueError(f"算子名称 '{self.op_name}' 无法生成有效的 C++ 标识符。")
+        if self.op_name in CXX_KEYWORDS:
+            raise ValueError(f"算子名称 '{self.op_name}' 是 C++ 关键字。")
 
         if os.path.exists(self.dest_dir):
             raise FileExistsError(f"目标目录 '{self.dest_dir}' 已存在。")
@@ -370,7 +387,10 @@ def register_parser(subparsers):
         "--op_type", "-t", required=True, help="算子分类，例如 math"
     )
     parser_opgen.add_argument(
-        "--op_name", "-n", required=True, help="新算子的名称，例如 asinh"
+        "--op_name",
+        "-n",
+        required=True,
+        help="新算子的名称，如 asinh；须能生成有效 C++ 标识符且不能是 C++ 关键字",
     )
     parser_opgen.add_argument(
         "--output_path", "-p", default=".", help="生成工程的根路径"
@@ -395,7 +415,10 @@ def main():
 
     parser.add_argument("--op_type", "-t", required=True, help="算子分类，例如 math")
     parser.add_argument(
-        "--op_name", "-n", required=True, help="新算子的名称，例如 asinh"
+        "--op_name",
+        "-n",
+        required=True,
+        help="新算子的名称，如 asinh；须能生成有效 C++ 标识符且不能是 C++ 关键字",
     )
     parser.add_argument("--output_path", "-p", default=".", help="生成工程的根路径")
     parser.add_argument(
