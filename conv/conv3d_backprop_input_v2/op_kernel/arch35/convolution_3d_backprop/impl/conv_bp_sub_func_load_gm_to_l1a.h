@@ -321,7 +321,9 @@ static __aicore__ inline void CalcLoadToA1Dn2NzParams(Intf* self, Dn2NzParams& d
     if (unlikely(self->ctx.tiling_->strideW * strideH > 1 || self->ctx.realWoSize_ != self->ctx.tiling_->wo ||
                  resetWoExpand)) {
         dn2NzParams.dnNum = loadToA1HLoop;
-        if (resetWoExpand) {
+        // TILING_HK_WK(loadB1=NO_HK_WK)模式: realWoSize_已在ComputeForWkLoop按当前(hk,wk)窗口计算,
+        // 不得被全局wo区间(woEnd-woStart)覆盖, 否则dn2nz写入远超A1缓冲导致MTE3写L1越界
+        if (resetWoExpand && Intf::conv3dConfig.loadB1Condition != TPL_GM_TO_L1_NO_HK_WK) {
             self->ctx.realWoSize_ = woEnd - woStart;
         }
         dn2NzParams.nValue = self->ctx.realWoSize_;
@@ -379,7 +381,9 @@ static __aicore__ inline void CalcLoadToA1Nd2NzParams(Intf* self, Nd2NzParams& n
     if (unlikely(self->ctx.tiling_->strideW * strideH > 1 || self->ctx.realWoSize_ != self->ctx.tiling_->wo ||
                  resetWoExpand)) {
         nd2NzParams.ndNum = loadToA1HLoop;
-        if (resetWoExpand) {
+        // TILING_HK_WK(loadB1=NO_HK_WK)模式: realWoSize_已在ComputeForWkLoop按当前(hk,wk)窗口计算,
+        // 不得被全局wo区间(woEnd-woStart)覆盖, 否则nd2nz写入远超A1缓冲导致MTE3写L1越界
+        if (resetWoExpand && Intf::conv3dConfig.loadB1Condition != TPL_GM_TO_L1_NO_HK_WK) {
             self->ctx.realWoSize_ = woEnd - woStart;
         }
         nd2NzParams.nValue = self->ctx.realWoSize_;
