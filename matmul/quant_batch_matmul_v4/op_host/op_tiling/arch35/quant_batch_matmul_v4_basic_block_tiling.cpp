@@ -555,7 +555,7 @@ void QuantBatchMatmulV4BasicBlockTiling::GetNzBasicBlockBaseKSolution(const int6
 void QuantBatchMatmulV4BasicBlockTiling::GetBasicBlockSolution()
 {
     // 给定singleM、singleN、mDim、nDim，获取可行基本块集
-    int64_t maxMNSize = isMxType_ && (platformParam_.npuArch != NpuArch::DAV_9201) ? BASE_MN_LIMIT_BUFF_2 :
+    int64_t maxMNSize = isMxType_ && (platformParam_.npuArch != NpuArch::DAV_9202) ? BASE_MN_LIMIT_BUFF_2 :
                                                                                      BASE_MN_LIMIT_BUFF_1;
     // 当nSize大于核数*BASE_N_THRESHOLD时，baseN取小于BASE_N_THRESHOLD的值会让计算轮次增加，无性能收益
     int64_t baseNMin = basicBlockParam_.nSize >= BASE_N_THRESHOLD * platformParam_.blockNum ? BASE_N_THRESHOLD :

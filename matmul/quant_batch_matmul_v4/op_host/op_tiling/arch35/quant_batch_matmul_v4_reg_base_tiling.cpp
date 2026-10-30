@@ -159,7 +159,7 @@ void QuantBatchMatmulV4RegBase::SetMatmulTiling()
     tilingData_.hasX1Scale = static_cast<int32_t>(inputParams_.hasX1Scale);
     tilingData_.hasX2Scale = static_cast<int32_t>(inputParams_.hasX2Scale);
     tilingData_.matmulTiling.shareL1Size = 0;
-    tilingData_.matmulTiling.shareL0CSize = 0;
+    tilingData_.matmulTiling.shareL0CSize = static_cast<int32_t>(aicoreParams_.l0cSize);
 
     uint32_t scaleFactorA = static_cast<uint32_t>(tilingRes.l1Param.scaleFactor);
     uint32_t scaleFactorB = static_cast<uint32_t>(tilingRes.l1Param.scaleFactor);
