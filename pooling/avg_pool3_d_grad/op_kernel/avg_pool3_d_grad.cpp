@@ -13,7 +13,8 @@
  * \brief
  */
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310 && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310 && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)) || \
+    ((defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201))
 #include "arch35/avg_pool3_d_grad_tiling_data.h"
 #include "arch35/avg_pool3_d_grad_tiling_key.h"
 #include "arch35/avg_pool3_d_grad_base.h"
