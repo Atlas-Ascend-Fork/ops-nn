@@ -69,6 +69,7 @@ struct CaseConfig {
     bool useCast;
     bool expectAccept;
     std::string error;
+    std::string expectedStage;
 };
 
 int64_t ElementCount(const std::vector<int64_t>& shape)
@@ -188,11 +189,15 @@ bool RunCase(const CaseConfig& config)
         }
         const std::string actualError = CurrentError();
         const std::string failureStage = FailureStage(actualError);
-        if (failureStage != "tiling" ||
-            (!config.error.empty() && actualError.find(config.error) == std::string::npos)) {
+        // 负例只要求“受控拒绝”：按用例声明期望的拒绝阶段（空 = 不限阶段），并核对错误特征。
+        // 更早阶段（参数检查/引擎选择/图编译）先拒绝是正常链路，不再一律要求死在 tiling。
+        const bool stageMismatch = !config.expectedStage.empty() && failureStage != config.expectedStage;
+        const bool messageMismatch = !config.error.empty() && actualError.find(config.error) == std::string::npos;
+        if (stageMismatch || messageMismatch) {
             std::cout << "EXCEPTION_CASE " << config.id
                       << " FAIL expected=reject actual=reject failure_stage=" << failureStage
-                      << " expected_error=" << config.error << " actual_error=" << actualError << std::endl;
+                      << " expected_stage=" << config.expectedStage << " expected_error=" << config.error
+                      << " actual_error=" << actualError << std::endl;
             return false;
         }
         std::cout << "EXCEPTION_CASE " << config.id << " PASS category=" << config.category
@@ -245,7 +250,8 @@ int main(int argc, char* argv[])
          {4},
          false,
          false,
-         "unsupported dtype"},
+         "DT_INT8",
+         "engine_selection"},
         {"cast_int32_to_float32",
          "dtype_geir_cast",
          ge::DT_INT32,
@@ -256,6 +262,7 @@ int main(int argc, char* argv[])
          {4},
          true,
          true,
+         "",
          ""},
         {"format_x_nchw",
          "format_unsupported",
@@ -267,7 +274,8 @@ int main(int argc, char* argv[])
          {1, 1, 2, 2},
          false,
          false,
-         "input[0] format"},
+         "unsupported format on input x",
+         "graph_compile"},
         {"format_y_nchw",
          "format_unsupported",
          ge::DT_FLOAT,
@@ -278,7 +286,8 @@ int main(int argc, char* argv[])
          {1, 1, 2, 2},
          false,
          false,
-         "output[0] format"},
+         "output[0] format",
+         "tiling"},
         {"rank9_x",
          "rank_9_tensor",
          ge::DT_FLOAT,
@@ -289,7 +298,8 @@ int main(int argc, char* argv[])
          {1, 1, 1, 1, 1, 1, 1, 1, 1},
          false,
          false,
-         "input rank 9 exceeds supported range [0, 8]"},
+         "num of dimensions",
+         "parameter_check"},
     };
 
     bool passed = true;

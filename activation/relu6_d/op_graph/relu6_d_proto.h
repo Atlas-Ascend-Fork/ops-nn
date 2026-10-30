@@ -35,7 +35,8 @@ namespace ge {
  *  @li x: A Tensor. Must be one of RealNumberType. Layout ND.
  *
  * @par Outputs:
- *  @li y: A Tensor. Same type and shape as input x, value range [0, 6*scale].
+ *  @li y: A Tensor. Same type and shape as input x; value range [0, 6*scale] when scale >= 0, and equals 6*scale when
+ * scale < 0.
  *
  * @par Attributes:
  *  @li scale: Float. Threshold scale factor; upper bound = 6*scale. Default: 1.0.

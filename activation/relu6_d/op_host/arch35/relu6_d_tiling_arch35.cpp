@@ -36,6 +36,7 @@
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/math_util.h"
 #include "op_common/op_host/util/platform_util.h"
+#include <cstdint>
 #include <set>
 #include <cmath>
 #include "../../op_kernel/arch35/relu6_d_tiling_data.h"
@@ -93,6 +94,14 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
                 return ge::GRAPH_FAILED);
     auto inputShapeX = EnsureNotScalar(inputX->GetStorageShape());
     *dim0 = inputShapeX.GetShapeSize();
+    // GetShapeSize() 在元素乘积溢出 int64 时返回负的溢出哨兵（kInvalidDimValue=INT64_MIN）。
+    // 负值会绕过下方 dim0==0 的空 Tensor 短路并进入切分算术，必须在此显式拒绝。
+    OP_CHECK_IF(*dim0 < 0,
+                OP_LOGE(context,
+                        "Relu6D: flattened element count is invalid (%ld): the shape product overflows int64; "
+                        "input name=x",
+                        static_cast<long>(*dim0)),
+                return ge::GRAPH_FAILED);
 
     // dtype 校验（全 4 dtype）
     const std::set<ge::DataType> supportedDtype = {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32};
@@ -118,6 +127,16 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
                         "Relu6D: unsupported dtype %d (supports FLOAT16/BF16/FLOAT/INT32); input name=x, legal "
                         "dtypes={FLOAT16,BF16,FLOAT,INT32}",
                         static_cast<int>(*dataType)),
+                return ge::GRAPH_FAILED);
+
+    // 元素总量上界：保证 dim0 * minDtypeBits + (MIN_TILING_BITS_SIZE_PER_CORE - 1) 不溢出 int64，
+    // 供 ComputeTilingParams 的核数切分乘法使用（乘法前置保护）。
+    const int64_t minDtypeBits = static_cast<int64_t>(ge::GetSizeByDataType(*dataType)) * 8;
+    OP_CHECK_IF(*dim0 > (INT64_MAX - MIN_TILING_BITS_SIZE_PER_CORE) / minDtypeBits,
+                OP_LOGE(context,
+                        "Relu6D: flattened element count %ld with %ld bits per element overflows the int64 "
+                        "per-core budget; input name=x",
+                        static_cast<long>(*dim0), static_cast<long>(minDtypeBits)),
                 return ge::GRAPH_FAILED);
 
     // 属性 scale（Float，index 0，默认 1.0）—— 上界阈值 = 6*scale
@@ -203,7 +222,16 @@ static ge::graphStatus Relu6DTilingFunc(gert::TilingContext* context)
                 OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
 
     // 上界阈值 = 6*scale（scale=0 → 0；scale<0 → 负值）
-    tiling->upperThreshold = RELU6_SCALE_FACTOR * scale;
+    const float upperThreshold = RELU6_SCALE_FACTOR * scale;
+    // int32：kernel 以 static_cast<int32_t>(upperThreshold) 消费该阈值，越界转换属未定义行为，
+    // 须在下发前校验其落在 int32 可表示范围内（截断向零：[INT32_MIN, INT32_MAX]）。
+    OP_CHECK_IF(dataType == ge::DT_INT32 && (upperThreshold >= 2147483648.0f || upperThreshold < -2147483648.0f),
+                OP_LOGE(context,
+                        "Relu6D: int32 upper threshold 6*scale=%f is outside the int32 range "
+                        "(requires -2147483648 <= 6*scale < 2147483648); scale=%f",
+                        static_cast<double>(upperThreshold), static_cast<double>(scale)),
+                return ge::GRAPH_FAILED);
+    tiling->upperThreshold = upperThreshold;
     tiling->dim0 = dim0;
     context->SetTilingKey(0); // 单一算法路径；dtype 由 def profile 驱动，不进入 TilingKey
 

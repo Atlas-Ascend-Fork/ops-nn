@@ -20,11 +20,11 @@
  * 4. 读取输出张量并与 CPU golden 逐元素比对（双万分之一 fp32）
  * 5. ge::GEFinalize() 资源释放
  *
- * 算子语义：y = min(max(x, 0), 6*scale)（逐元素 clamp，值域 [0, 6*scale]）
+ * 算子语义：y = min(max(x, 0), 6*scale)（逐元素 clamp；scale ≥ 0 时值域 [0, 6*scale]，scale < 0 时输出恒为 6*scale）
  *   GEIR 通路：x 为输入 Tensor，scale 为编译期 Float 属性（默认 1.0），y 为输出 Tensor。
  *
- * 编译：参见 CMakeLists.txt   运行：参见 run.sh
- *   ⚠ GE IR 执行触发 TBE 动态编译，需系统 Python 3.9（见 run.sh 环境设置）。
+ * 编译并运行：在仓库根目录执行 bash build.sh --run_example relu6_d graph
+ *   ⚠ GE IR 执行触发 TBE 动态编译，首次运行耗时较长。
  */
 
 #include <iostream>

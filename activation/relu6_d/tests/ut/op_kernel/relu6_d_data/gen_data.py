@@ -9,16 +9,21 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 import sys
 import numpy as np
+import torch
 
 SCALE = 1.0  # scale=1.0 → upper threshold = 6.0
 
 
 def relu6_d_fp32(x):
-    return np.minimum(np.maximum(x, 0), 6 * SCALE)
+    """参考输出由 Torch 基础算子组合计算（参考计算不由 NumPy 承担）。"""
+    x_t = torch.from_numpy(np.ascontiguousarray(x.astype(np.float32, copy=False)))
+    return torch.clamp(x_t, min=0.0, max=6.0 * SCALE).numpy()
 
 
 def relu6_d_int32(x):
-    return np.minimum(np.maximum(x, 0), int(6 * SCALE))
+    """int32 参考输出：上界阈值 6*scale 按截断向零。"""
+    x_t = torch.from_numpy(np.ascontiguousarray(x))
+    return torch.clamp(x_t, min=0, max=int(6 * SCALE)).numpy()
 
 
 def gen_golden_data_simple(shape_str, dtype):

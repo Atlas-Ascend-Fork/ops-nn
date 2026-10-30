@@ -15,7 +15,7 @@
  * \brief KernelRelu6D 算子 Kernel 类定义（arch35 / DAV_3510，RegBase VF EleWise 1D 直算）
  *
  * 计算公式：
- *   y = min(max(x, 0), 6*scale)   （逐元素 clamp，值域 [0, 6*scale]）
+ *   y = min(max(x, 0), 6*scale)   （逐元素 clamp；scale ≥ 0 时值域 [0, 6*scale]，scale < 0 时输出恒为 6*scale）
  *
  * 计算链路：
  *   两步 clamp —— Step 1 Reg::Maxs(·, 0) 下截断（VECIN→VECOUT 非原地）
