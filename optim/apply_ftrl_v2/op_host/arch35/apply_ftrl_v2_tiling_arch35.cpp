@@ -137,7 +137,7 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         auto inputShape = context->GetInputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, inputShape);
         auto& s = inputShape->GetStorageShape();
-        OP_CHECK_IF(s.GetShapeSize() > 1,
+        OP_CHECK_IF(s.GetShapeSize() != 1,
                     OP_LOGE(context, "ApplyFtrlV2: input%zu must be scalar, but shapeSize=%ld", i,
                             static_cast<int64_t>(s.GetShapeSize())),
                     return ge::GRAPH_FAILED);
