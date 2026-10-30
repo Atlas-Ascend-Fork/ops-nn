@@ -20,6 +20,7 @@
 #include "../inc/platform.h"
 #include "../inc/kernel_utils.h"
 #include "scatter_elements_v2_common.h"
+#include "simt_api/device_atomic_functions.h"
 #include "simt_api/device_warp_functions.h"
 #include "simt_api/device_sync_functions.h"
 
@@ -42,6 +43,18 @@ constexpr uint32_t ADAPTIVE_UPDATES_PER_THREAD = 4;
 constexpr uint32_t MAX_GROUP_SHIFT = 5;
 static_assert(ADAPTIVE_GROUP_SHIFT_SLOT < PARAM_UB_NUM, "adaptive selection requires a reserved parameter slot");
 constexpr uint16_t ONE = 1;
+
+template <typename DATA_T>
+struct DeterministicAddTraits {
+    using AccT = float;
+    static constexpr bool FIXED_FULL_WARP = false;
+};
+
+template <>
+struct DeterministicAddTraits<int64_t> {
+    using AccT = uint64_t;
+    static constexpr bool FIXED_FULL_WARP = true;
+};
 
 template <typename COMP_T>
 struct ScatterElementsQuickDivParam {
@@ -175,9 +188,7 @@ KernelScatterElementsDeterm<DATA_T, IDX_T, COMP_T, REDU, TEMPLATE_V2, USE_WARP_A
     LocalTensor<uint64_t> tilingUint64Ub = tilingDataUint64Buf_.Get<uint64_t>();
     LocalTensor<COMP_T> paramUb = paramBuf_.Get<COMP_T>();
     if constexpr (USE_WARP_ADD) {
-        // Admission is decided by tiling and dispatched once at the entry.
-        // Preserve the original scalar path for short S tails.
-        if (processS >= WARP_ADD_MIN_PROCESS_S) {
+        if (DeterministicAddTraits<DATA_T>::FIXED_FULL_WARP || processS >= WARP_ADD_MIN_PROCESS_S) {
             // Cache the current divisors, including S and A0 tails, outside the VF.
             if (warpProcessS_ != processS) {
                 GetUintDivMagicAndShift(warpMagicS_, warpShiftS_, processS);
@@ -226,8 +237,12 @@ __aicore__ inline void KernelScatterElementsDeterm<DATA_T, IDX_T, COMP_T, REDU, 
     blockIdx_ = GetBlockIdx();
     blockNum_ = GetBlockNum();
 
-    curCoreAAxis_ = blockIdx_ != (tilingData_->indicesUsedCoreNum - 1) ? tilingData_->indicesNormBlockData :
-                                                                         tilingData_->indicesTailBlockData;
+    if constexpr (REDU == REDU_ADD && DeterministicAddTraits<DATA_T>::FIXED_FULL_WARP) {
+        curCoreAAxis_ = 1;
+    } else {
+        curCoreAAxis_ = blockIdx_ != (tilingData_->indicesUsedCoreNum - 1) ? tilingData_->indicesNormBlockData :
+                                                                             tilingData_->indicesTailBlockData;
+    }
     midAxis_ = tilingData_->midAxis;
     afterAxis_ = tilingData_->afterAxis;
 
@@ -448,11 +463,19 @@ template <typename DATA_T, typename IDX_T, typename COMP_T, const uint32_t REDU,
 __aicore__ inline void
 KernelScatterElementsDeterm<DATA_T, IDX_T, COMP_T, REDU, TEMPLATE_V2, USE_WARP_ADD>::ProcessPatternAS()
 {
-    // a0:tilingData_->preAxis, per core:curCoreAAxis_, s:tilingData_->midAxis
-    int64_t blockOffset = blockIdx_ * tilingData_->indicesNormBlockData * tilingData_->midAxis;
-    int64_t sLoopNum = ops::CeilDiv(tilingData_->midAxis, tilingData_->baseS);
+    int64_t blockOffset;
+    int64_t coreS;
+    if constexpr (REDU == REDU_ADD && DeterministicAddTraits<DATA_T>::FIXED_FULL_WARP) {
+        blockOffset = blockIdx_ * tilingData_->indicesNormBlockData;
+        coreS = blockIdx_ == tilingData_->indicesUsedCoreNum - 1 ? tilingData_->indicesTailBlockData :
+                                                                   tilingData_->indicesNormBlockData;
+    } else {
+        blockOffset = blockIdx_ * tilingData_->indicesNormBlockData * tilingData_->midAxis;
+        coreS = tilingData_->midAxis;
+    }
+    int64_t sLoopNum = ops::CeilDiv(coreS, tilingData_->baseS);
     int64_t a0LoopNum = ops::CeilDiv(curCoreAAxis_, tilingData_->baseA);
-    int64_t sTail = tilingData_->midAxis - (sLoopNum - 1) * tilingData_->baseS;
+    int64_t sTail = coreS - (sLoopNum - 1) * tilingData_->baseS;
     int64_t a0Tail = curCoreAAxis_ - (a0LoopNum - 1) * tilingData_->baseA;
     int64_t processA0 = tilingData_->baseA;
     for (int64_t a0Idx = 0; a0Idx < a0LoopNum; a0Idx++) {
@@ -470,7 +493,11 @@ KernelScatterElementsDeterm<DATA_T, IDX_T, COMP_T, REDU, TEMPLATE_V2, USE_WARP_A
             DataCopyExtParams copyParams;
             copyParams.blockCount = static_cast<uint16_t>(processA0);
             copyParams.blockLen = static_cast<uint32_t>(processS * sizeof(IDX_T));
-            copyParams.srcStride = static_cast<uint32_t>((tilingData_->midAxis - processS) * sizeof(IDX_T));
+            if constexpr (REDU == REDU_ADD && DeterministicAddTraits<DATA_T>::FIXED_FULL_WARP) {
+                copyParams.srcStride = 0;
+            } else {
+                copyParams.srcStride = static_cast<uint32_t>((tilingData_->midAxis - processS) * sizeof(IDX_T));
+            }
             copyParams.dstStride = static_cast<uint32_t>(0);
             DataCopyPadExtParams<IDX_T> padParams = {false, static_cast<uint8_t>(0), static_cast<uint8_t>(0),
                                                      static_cast<IDX_T>(0)};
@@ -1038,6 +1065,19 @@ __simt_callee__ __aicore__ inline uint32_t SelectAdaptiveGroupShift(__ubuf__ IDX
     return static_cast<uint32_t>(params[ADAPTIVE_GROUP_SHIFT_SLOT]);
 }
 
+__simt_callee__ __aicore__ inline uint64_t ReduceAdaptiveGroup(uint64_t value, uint32_t groupShift)
+{
+    const uint32_t groupSize = 1U << groupShift;
+    const uint32_t lane = threadIdx.x & (groupSize - 1);
+    for (uint32_t delta = groupSize >> 1; delta > 0; delta >>= 1) {
+        const uint64_t other = asc_shfl_down(value, delta, groupSize);
+        if (lane < delta) {
+            value += other;
+        }
+    }
+    return value;
+}
+
 __simt_callee__ __aicore__ inline float ReduceAdaptiveGroup(float value, uint32_t groupShift)
 {
     const uint32_t groupSize = 1U << groupShift;
@@ -1064,7 +1104,12 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(USED_THREAD_DETERM_WARP) inline void SimtCom
     uint32_t shiftA0)
 {
     const uint32_t ubProcess = processA1 * processS * processA0;
-    const uint32_t groupShift = SelectAdaptiveGroupShift(sortedKey, sortedIdx, params, ubProcess, magicS, shiftS);
+    using AddTraits = DeterministicAddTraits<DATA_T>;
+    using AccT = typename AddTraits::AccT;
+    uint32_t groupShift = MAX_GROUP_SHIFT;
+    if constexpr (!AddTraits::FIXED_FULL_WARP) {
+        groupShift = SelectAdaptiveGroupShift(sortedKey, sortedIdx, params, ubProcess, magicS, shiftS);
+    }
     const uint32_t groupSize = 1U << groupShift;
     const uint32_t lane = threadIdx.x & (groupSize - 1);
     const uint32_t group = threadIdx.x >> groupShift;
@@ -1079,7 +1124,7 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(USED_THREAD_DETERM_WARP) inline void SimtCom
             continue;
         }
 
-        float partial = 0.0f;
+        AccT partial = 0;
         for (uint32_t idx = i + lane; idx < ubProcess; idx += groupSize) {
             const uint32_t updateIdx = sortedIdx[idx];
             const uint32_t updateA = Simt::UintDiv(updateIdx, magicS, shiftS);
@@ -1097,7 +1142,7 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(USED_THREAD_DETERM_WARP) inline void SimtCom
                 CalcOffset<COMP_T, RANK, DIM, SAME_SHAPE>(origIndicesOffset, static_cast<COMP_T>(sValue), yOffset,
                                                           updatesOffset, tilingUint64Ub, params);
             }
-            partial += static_cast<float>(updates[updatesOffset]);
+            partial += static_cast<AccT>(updates[updatesOffset]);
         }
         // Explicitly select zero for lanes without a matching update; all
         // lanes still participate in the collective.
@@ -1106,7 +1151,7 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(USED_THREAD_DETERM_WARP) inline void SimtCom
         if (firstIdx < ubProcess) {
             laneHasUpdate = sortedKey[firstIdx] == sValue && Simt::UintDiv(sortedIdx[firstIdx], magicS, shiftS) == a;
         }
-        const float groupSum = ReduceAdaptiveGroup(laneHasUpdate ? partial : 0.0f, groupShift);
+        const AccT groupSum = ReduceAdaptiveGroup(laneHasUpdate ? partial : AccT(0), groupShift);
         if (lane == 0) {
             const uint32_t s = originalIdx - a * processS;
             const COMP_T origIndicesOffset = WarpAddIndicesOffset<COMP_T, PATTERN>(a, s, processA0, offset, midAxis,
@@ -1115,8 +1160,11 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(USED_THREAD_DETERM_WARP) inline void SimtCom
             COMP_T updatesOffset = 0;
             CalcOffset<COMP_T, RANK, DIM, SAME_SHAPE>(origIndicesOffset, static_cast<COMP_T>(sValue), yOffset,
                                                       updatesOffset, tilingUint64Ub, params);
-            // One conversion/store per group in this S tile, never per-lane partial stores.
-            y[yOffset] = static_cast<DATA_T>(static_cast<float>(y[yOffset]) + groupSum);
+            if constexpr (AddTraits::FIXED_FULL_WARP) {
+                asc_atomic_add(reinterpret_cast<__gm__ uint64_t*>(y + yOffset), groupSum);
+            } else {
+                y[yOffset] = static_cast<DATA_T>(static_cast<AccT>(y[yOffset]) + groupSum);
+            }
         }
     }
 }
@@ -1160,9 +1208,10 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(USED_THREAD_DETERM) inline void SimtCompute(
         }
         CalcOffset<COMP_T, RANK, DIM, SAME_SHAPE>(origIndicesOffset, static_cast<COMP_T>(sValue), yOffset,
                                                   updatesOffset, TilingUint64Ub, params);
-        float accumulatedValue;
+        using AccT = typename DeterministicAddTraits<DATA_T>::AccT;
+        AccT accumulatedValue;
         if constexpr (REDU == REDU_ADD) {
-            accumulatedValue = static_cast<float>(y[yOffset]) + static_cast<float>(updates[updatesOffset]);
+            accumulatedValue = static_cast<AccT>(y[yOffset]) + static_cast<AccT>(updates[updatesOffset]);
         } else {
             y[yOffset] = updates[updatesOffset];
             continue;
@@ -1182,7 +1231,7 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(USED_THREAD_DETERM) inline void SimtCompute(
                     CalcOffset<COMP_T, RANK, DIM, SAME_SHAPE>(origIndicesOffset, static_cast<COMP_T>(sValue), yOffset,
                                                               updatesOffset, TilingUint64Ub, params);
                 }
-                accumulatedValue += static_cast<float>(updates[updatesOffset]);
+                accumulatedValue += static_cast<AccT>(updates[updatesOffset]);
             } else {
                 break;
             }
@@ -1231,9 +1280,10 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(USED_THREAD_DETERM) inline void SimtComputeA
         COMP_T origIndicesOffset = offset + a1Idx * midAxis * afterAxis + sIdx * afterAxis + a0Idx;
         CalcOffset<COMP_T, RANK, DIM, SAME_SHAPE>(origIndicesOffset, static_cast<COMP_T>(sValue), yOffset,
                                                   updatesOffset, TilingUint64Ub, params);
-        float accumulatedValue;
+        using AccT = typename DeterministicAddTraits<DATA_T>::AccT;
+        AccT accumulatedValue;
         if constexpr (REDU == REDU_ADD) {
-            accumulatedValue = static_cast<float>(y[yOffset]) + static_cast<float>(updates[updatesOffset]);
+            accumulatedValue = static_cast<AccT>(y[yOffset]) + static_cast<AccT>(updates[updatesOffset]);
         } else {
             y[yOffset] = updates[updatesOffset];
             continue;
@@ -1251,7 +1301,7 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(USED_THREAD_DETERM) inline void SimtComputeA
                     CalcOffset<COMP_T, RANK, DIM, SAME_SHAPE>(origIndicesOffset, static_cast<COMP_T>(sValue), yOffset,
                                                               updatesOffset, TilingUint64Ub, params);
                 }
-                accumulatedValue += static_cast<float>(updates[updatesOffset]);
+                accumulatedValue += static_cast<AccT>(updates[updatesOffset]);
             } else {
                 break;
             }

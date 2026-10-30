@@ -18,6 +18,7 @@
 #include "register/op_def_registry.h"
 #include "tiling/tiling_api.h"
 #include "platform/platform_info.h"
+#include "tiling/platform/platform_ascendc.h"
 #include "error_util.h"
 #include "scatter_elements_v2_base_tiling.h"
 #include "../../op_kernel/arch35/scatter_elements_v2_small_shape_tiling.h"
@@ -50,6 +51,7 @@ constexpr int64_t BASE_A_MIN_BYTES = 32;
 constexpr int64_t ADAPTIVE_REDUCE_MIN_S = 32;
 constexpr int64_t ADAPTIVE_REDUCE_SMALL_A_FACTOR = 2;
 constexpr uint64_t ADAPTIVE_REDUCE_REPEAT_RATIO = 4;
+constexpr int64_t INT64_LOCAL_ADD_REPEAT_RATIO = 200;
 constexpr int64_t MIN_DATA_ELEMENTS_PER_CORE = 1024;
 constexpr int64_t MIN_SORT_ELEMENTS_PER_CORE = 1024;
 constexpr int64_t MIN_INDEX_BYTES_PER_CORE = 1024;
@@ -166,6 +168,15 @@ ge::graphStatus ScatterElementsV2AscTiling::GetShapeAttrsInfo()
                           SCAT_ELE_ADD_DETERM_DTYPE.find(dtype_) != SCAT_ELE_ADD_DETERM_DTYPE.end());
     if (!isScalarUpdates_ && context_->GetDeterministic() && isDetermDtype) {
         isDeterministic_ = 1;
+    }
+
+    if (!isScalarUpdates_ && reduction_ == REDUCTION_ADD && dtype_ == ge::DT_INT64 && dataShape.GetDimNum() == 1 &&
+        dataAxis_ > 0 && allAxis_ > 0 && (allAxis_ - 1) / dataAxis_ >= INT64_LOCAL_ADD_REPEAT_RATIO) {
+        auto* platformInfo = context_->GetPlatformInfo();
+        if (platformInfo != nullptr && platform_ascendc::PlatformAscendC(platformInfo).GetSocVersion() ==
+                                           platform_ascendc::SocVersion::ASCEND950) {
+            isDeterministic_ = 1;
+        }
     }
 
     // 全局排序模板 dtype/reduction 资格：none 支持所有合法 dtype，add 支持
@@ -635,7 +646,15 @@ ge::graphStatus ScatterElementsV2AscTiling::DoOpTiling()
         maxSortDim = ubSize_ / sortElementSize;
         int64_t maxBaseS = maxSortDim / minBaseA;
         baseS_ = FindMaxBaseSize(1, std::min(midAxis_, maxBaseS), minBaseA);
-        if (baseS_ > 0) {
+        if (baseS_ > 0 && dtype_ == ge::DT_INT64 && reduction_ == REDUCTION_ADD) {
+            const int64_t sTileCount = Ops::Base::CeilDiv(midAxis_, baseS_);
+            const int64_t sTilesPerCore = Ops::Base::CeilDiv(sTileCount, usedCoreNum_);
+            indicesNormBlockData_ = sTilesPerCore > midAxis_ / baseS_ ? midAxis_ : sTilesPerCore * baseS_;
+            indicesUsedCoreNum_ = Ops::Base::CeilDiv(midAxis_, indicesNormBlockData_);
+            indicesTailBlockData_ = midAxis_ - (indicesUsedCoreNum_ - 1) * indicesNormBlockData_;
+            usedCoreNum_ = indicesUsedCoreNum_;
+            localADim = 1;
+        } else if (baseS_ > 0) {
             int64_t aSplitDim = afterAxis_;
             if (preAxis_ > afterAxis_) {
                 aSplitDim = preAxis_;
@@ -906,6 +925,7 @@ void ScatterElementsV2AscTiling::DumpTilingInfo()
     info << ", midAxis: " << tilingData_.get_midAxis();
     info << ", afterAxis: " << tilingData_.get_afterAxis();
     info << ", indicesUsedCoreNum: " << tilingData_.get_indicesUsedCoreNum();
+    info << ", splitScatterAxis: " << (isDeterministic_ && dtype_ == ge::DT_INT64 && reduction_ == REDUCTION_ADD);
     info << ", indicesNormBlockData: " << tilingData_.get_indicesNormBlockData();
     info << ", indicesTailBlockData: " << tilingData_.get_indicesTailBlockData();
     info << ", baseS: " << tilingData_.get_baseS();

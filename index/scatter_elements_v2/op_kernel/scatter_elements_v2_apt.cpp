@@ -168,13 +168,11 @@ using namespace ScatterElements;
 #define SCAC_ELE_UINT64_IDX64_REDU_MUL_BF16 1011227
 #define SCAC_ELE_UINT64_IDX64_REDU_MUL_INT64 1011209
 
-// Tiling owns adaptive-reduce admission. Instantiate distinct warp and
-// general kernels once here, rather than checking eligibility for every tile.
 template <typename DATA_T, typename IDX_T, typename COMP_T>
 __aicore__ inline void LaunchDeterministicAdd(const ScatterElementsV2AscTilingData* tilingData, TPipe* pipe,
                                               GM_ADDR var, GM_ADDR indices, GM_ADDR updates, GM_ADDR output)
 {
-    if (tilingData->enableAdaptiveReduce != 0) {
+    if (DeterministicAddTraits<DATA_T>::FIXED_FULL_WARP || tilingData->enableAdaptiveReduce != 0) {
         KernelScatterElementsDeterm<DATA_T, IDX_T, COMP_T, REDU_ADD, 1, true> op(tilingData, pipe);
         op.Init(var, indices, updates, output);
         op.Process();
@@ -1143,17 +1141,25 @@ extern "C" __global__ __aicore__ void scatter_elements_v2(GM_ADDR var, GM_ADDR i
     TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_MUL_INT64);
 
 #if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_INT64
-    KernelScatterElements<int64_t, int32_t, uint32_t, uint32_t, REDU_ADD, 1> op(pipe);
-    op.Init(var, indices, updates, output, userWS, &tilingData);
-    op.Process();
+    if (tilingData.isDeterministic != 0) {
+        LaunchDeterministicAdd<int64_t, int32_t, uint32_t>(&tilingData, &pipe, var, indices, updates, output);
+    } else {
+        KernelScatterElements<int64_t, int32_t, uint32_t, uint32_t, REDU_ADD, 1> op(pipe);
+        op.Init(var, indices, updates, output, userWS, &tilingData);
+        op.Process();
+    }
 #elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_MUL_INT64
     KernelScatterElements<int64_t, int32_t, uint32_t, uint32_t, REDU_MUL, 1> op(pipe);
     op.Init(var, indices, updates, output, userWS, &tilingData);
     op.Process();
 #elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_INT64
-    KernelScatterElements<int64_t, int32_t, uint64_t, uint32_t, REDU_ADD, 1> op(pipe);
-    op.Init(var, indices, updates, output, userWS, &tilingData);
-    op.Process();
+    if (tilingData.isDeterministic != 0) {
+        LaunchDeterministicAdd<int64_t, int32_t, uint64_t>(&tilingData, &pipe, var, indices, updates, output);
+    } else {
+        KernelScatterElements<int64_t, int32_t, uint64_t, uint32_t, REDU_ADD, 1> op(pipe);
+        op.Init(var, indices, updates, output, userWS, &tilingData);
+        op.Process();
+    }
 #elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_MUL_INT64
     KernelScatterElements<int64_t, int32_t, uint64_t, uint32_t, REDU_MUL, 1> op(pipe);
     op.Init(var, indices, updates, output, userWS, &tilingData);
@@ -1168,17 +1174,25 @@ extern "C" __global__ __aicore__ void scatter_elements_v2(GM_ADDR var, GM_ADDR i
     TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_MUL_INT64);
 
 #if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_INT64
-    KernelScatterElements<int64_t, int64_t, uint32_t, uint32_t, REDU_ADD, 1> op(pipe);
-    op.Init(var, indices, updates, output, userWS, &tilingData);
-    op.Process();
+    if (tilingData.isDeterministic != 0) {
+        LaunchDeterministicAdd<int64_t, int64_t, uint32_t>(&tilingData, &pipe, var, indices, updates, output);
+    } else {
+        KernelScatterElements<int64_t, int64_t, uint32_t, uint32_t, REDU_ADD, 1> op(pipe);
+        op.Init(var, indices, updates, output, userWS, &tilingData);
+        op.Process();
+    }
 #elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_MUL_INT64
     KernelScatterElements<int64_t, int64_t, uint32_t, uint32_t, REDU_MUL, 1> op(pipe);
     op.Init(var, indices, updates, output, userWS, &tilingData);
     op.Process();
 #elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_INT64
-    KernelScatterElements<int64_t, int64_t, uint64_t, uint32_t, REDU_ADD, 1> op(pipe);
-    op.Init(var, indices, updates, output, userWS, &tilingData);
-    op.Process();
+    if (tilingData.isDeterministic != 0) {
+        LaunchDeterministicAdd<int64_t, int64_t, uint64_t>(&tilingData, &pipe, var, indices, updates, output);
+    } else {
+        KernelScatterElements<int64_t, int64_t, uint64_t, uint32_t, REDU_ADD, 1> op(pipe);
+        op.Init(var, indices, updates, output, userWS, &tilingData);
+        op.Process();
+    }
 #elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_MUL_INT64
     KernelScatterElements<int64_t, int64_t, uint64_t, uint32_t, REDU_MUL, 1> op(pipe);
     op.Init(var, indices, updates, output, userWS, &tilingData);
