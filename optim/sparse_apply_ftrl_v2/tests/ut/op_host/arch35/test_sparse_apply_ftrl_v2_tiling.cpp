@@ -201,7 +201,8 @@ TEST_F(TestSparseApplyFtrlV2Tiling, sparse_apply_ftrl_v2_float32_int32)
     EXPECT_EQ(result.needCoreNum, 1);
 }
 
-// T02 FP32 / INT64 -> non-zero key (MODE_INT64)
+// T02 FP32 / INT64 -> single template mode (schMode=0); indices dtype is
+// auto-instantiated by DTYPE_INDICES, so tilingKey stays 0
 TEST_F(TestSparseApplyFtrlV2Tiling, sparse_apply_ftrl_v2_float32_int64)
 {
     SparseApplyFtrlV2TilingArgs args{/*var=*/{4, 8}, /*grad=*/{2, 8}, /*indices=*/{2},

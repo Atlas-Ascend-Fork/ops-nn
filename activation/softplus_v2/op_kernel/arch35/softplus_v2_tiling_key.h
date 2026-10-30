@@ -14,8 +14,8 @@
  * \file softplus_v2_tiling_key.h
  * \brief SoftplusV2 TilingKey definition
  *
- * Template parameter:
- *   - D_T_X: input data type (C_DT_FLOAT, C_DT_FLOAT16, C_DT_BF16)
+ * Integer-encoded compute dtype (TilingKey must not couple operator dtypes):
+ *   - dtypeMode 0: float32, 1: float16, 2: bfloat16
  */
 
 #ifndef __SOFTPLUS_V2_TILING_KEY_H__
@@ -23,12 +23,16 @@
 
 #include "ascendc/host_api/tiling/template_argument.h"
 
-ASCENDC_TPL_ARGS_DECL(SoftplusV2,
-                      ASCENDC_TPL_DATATYPE_DECL(D_T_X, C_DT_FLOAT, C_DT_FLOAT16, C_DT_BF16, ASCENDC_TPL_INPUT(0)));
+#define SOFTPLUS_V2_TPL_DT_FLOAT32 0
+#define SOFTPLUS_V2_TPL_DT_FLOAT16 1
+#define SOFTPLUS_V2_TPL_DT_BFLOAT16 2
 
-// Iteration 1: only FP32 path is fully implemented, FP16/BF16 skeletons pre-registered
-ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_DATATYPE_SEL(D_T_X, C_DT_FLOAT)),
-                ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_DATATYPE_SEL(D_T_X, C_DT_FLOAT16)),
-                ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_DATATYPE_SEL(D_T_X, C_DT_BF16)), );
+ASCENDC_TPL_ARGS_DECL(SoftplusV2, ASCENDC_TPL_UINT_DECL(dtypeMode, 2, ASCENDC_TPL_UI_LIST, SOFTPLUS_V2_TPL_DT_FLOAT32,
+                                                        SOFTPLUS_V2_TPL_DT_FLOAT16, SOFTPLUS_V2_TPL_DT_BFLOAT16));
+
+ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(dtypeMode, ASCENDC_TPL_UI_LIST, SOFTPLUS_V2_TPL_DT_FLOAT32)),
+                ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(dtypeMode, ASCENDC_TPL_UI_LIST, SOFTPLUS_V2_TPL_DT_FLOAT16)),
+                ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(dtypeMode, ASCENDC_TPL_UI_LIST,
+                                                          SOFTPLUS_V2_TPL_DT_BFLOAT16)), );
 
 #endif // __SOFTPLUS_V2_TILING_KEY_H__

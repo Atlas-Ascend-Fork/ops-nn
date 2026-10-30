@@ -15,6 +15,8 @@
  * \brief SoftplusV2 Host-side Tiling implementation (arch35)
  */
 
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include "register/op_def_registry.h"
 #include "op_common/log/log.h"
@@ -31,15 +33,34 @@ using Ops::Base::FloorDiv;
 
 constexpr uint32_t WS_SYS_SIZE = 0U;
 constexpr uint32_t SIZE_8 = 8;
+constexpr size_t MAX_DIM_NUM = 8;
 
 static const gert::Shape g_vec_1_shape = {1};
 
 static inline float SafeInvBeta(float beta)
 {
-    if (std::fabs(beta) <= std::numeric_limits<float>::epsilon()) {
-        return std::numeric_limits<float>::infinity();
+    // Only guard the reciprocals that truly overflow: 1/beta overflows to infinity
+    // when |beta| < 1/FLT_MAX (~2.94e-39). The former FLT_EPSILON threshold wrongly
+    // turned finite betas with 0 < |beta| <= 1.19e-7 into +inf and dropped the sign.
+    // The sign of beta (including -0.0) is preserved to stay consistent with 1/beta.
+    constexpr float MIN_RECIPROCAL = 1.0f / std::numeric_limits<float>::max();
+    if (std::fabs(beta) < MIN_RECIPROCAL) {
+        return std::copysign(std::numeric_limits<float>::infinity(), beta);
     }
     return 1.0f / beta;
+}
+
+static inline uint32_t DTypeModeOf(ge::DataType dataType)
+{
+    // Integer-encoded compute dtype declared in softplus_v2_tiling_key.h; the
+    // TilingKey must not couple the operator dtype itself.
+    if (dataType == ge::DT_FLOAT16) {
+        return SOFTPLUS_V2_TPL_DT_FLOAT16;
+    }
+    if (dataType == ge::DT_BF16) {
+        return SOFTPLUS_V2_TPL_DT_BFLOAT16;
+    }
+    return SOFTPLUS_V2_TPL_DT_FLOAT32;
 }
 
 static inline const gert::Shape EnsureNotScalar(const gert::Shape& inShape)
@@ -153,12 +174,39 @@ static ge::graphStatus GetInputInfo(gert::TilingContext* context, int64_t& total
 {
     auto inputX = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputX);
+    OP_CHECK_IF(inputX->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
+                OP_LOGE(context, "the dim num of x must be less than or equal to %zu, but got %zu", MAX_DIM_NUM,
+                        inputX->GetStorageShape().GetDimNum()),
+                return ge::GRAPH_FAILED);
     auto inputShapeX = EnsureNotScalar(inputX->GetStorageShape());
+    // Reject out-of-range axes up front: a dim product that overflows int64 is
+    // reported by GetShapeSize() as the negative kInvalidDimValue sentinel, and
+    // a single dim beyond INT32_MAX cannot produce a supported tensor anyway.
+    constexpr int64_t kMaxSingleDim = static_cast<int64_t>(INT32_MAX);
+    for (size_t i = 0; i < inputShapeX.GetDimNum(); i++) {
+        int64_t dim = inputShapeX.GetDim(i);
+        // Unresolved dynamic markers (-1/-2) must be materialized into concrete
+        // dimensions before tiling; a negative dim is never a valid element count.
+        OP_CHECK_IF(
+            dim < 0,
+            OP_LOGE(context, "dim[%zu] of x is %ld (unresolved dynamic marker); tiling requires a concrete shape", i,
+                    dim),
+            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(dim > kMaxSingleDim, OP_LOGE(context, "dim[%zu] of x is %ld, exceeding INT32_MAX", i, dim),
+                    return ge::GRAPH_FAILED);
+    }
     totalLength = inputShapeX.GetShapeSize();
+    OP_CHECK_IF(totalLength < 0,
+                OP_LOGE(context, "element count of x overflows int64 (GetShapeSize returned %ld)", totalLength),
+                return ge::GRAPH_FAILED);
 
     auto inputDesc = context->GetInputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     dataType = inputDesc->GetDataType();
+    OP_CHECK_IF(dataType != ge::DT_FLOAT && dataType != ge::DT_FLOAT16 && dataType != ge::DT_BF16,
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "x", Ops::Base::ToString(dataType).c_str(),
+                                          "float16, bfloat16 and float32"),
+                return ge::GRAPH_FAILED);
 
     const gert::RuntimeAttrs* attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
@@ -182,8 +230,8 @@ static ge::graphStatus HandleEmptyTensor(gert::TilingContext* context, ge::DataT
     tiling->threshold = threshold;
     tiling->invBeta = SafeInvBeta(beta);
     context->SetBlockDim(1);
-    uint32_t dTypeX = static_cast<uint32_t>(dataType);
-    ASCENDC_TPL_SEL_PARAM(context, dTypeX);
+    uint32_t dtypeMode = DTypeModeOf(dataType);
+    ASCENDC_TPL_SEL_PARAM(context, dtypeMode);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -195,10 +243,14 @@ static uint32_t ComputeTileLength(ge::DataType dataType, uint64_t ubSize)
     return ComputeFp16TileLength(ubSize);
 }
 
-static int64_t ComputeUsedCoreNum(int64_t totalLength, ge::DataType dataType, int64_t coreNum)
+static ge::graphStatus ComputeUsedCoreNum(gert::TilingContext* context, int64_t totalLength, ge::DataType dataType,
+                                          int64_t coreNum, int64_t& usedCoreNum)
 {
     constexpr int64_t MIN_BYTES_PER_CORE = 2048; // 2KB
     uint32_t elemSize = (dataType == ge::DT_FLOAT) ? 4 : 2;
+    OP_CHECK_IF(totalLength > INT64_MAX / static_cast<int64_t>(elemSize),
+                OP_LOGE(context, "total bytes overflow: totalLength=%ld elemSize=%u", totalLength, elemSize),
+                return ge::GRAPH_FAILED);
     int64_t totalBytes = totalLength * elemSize;
     int64_t maxCores = CeilDiv(totalBytes, MIN_BYTES_PER_CORE);
     int64_t effectiveCoreNum = std::min(maxCores, coreNum);
@@ -206,7 +258,8 @@ static int64_t ComputeUsedCoreNum(int64_t totalLength, ge::DataType dataType, in
         effectiveCoreNum = 1;
     }
     int64_t blockFactor = CeilDiv(totalLength, effectiveCoreNum);
-    return CeilDiv(totalLength, blockFactor);
+    usedCoreNum = CeilDiv(totalLength, blockFactor);
+    return ge::GRAPH_SUCCESS;
 }
 
 static ge::graphStatus FillTilingData(gert::TilingContext* context, int64_t totalLength, int64_t usedCoreNum,
@@ -230,12 +283,12 @@ static ge::graphStatus FillTilingData(gert::TilingContext* context, int64_t tota
 
     context->SetBlockDim(usedCoreNum);
 
-    OP_LOGI(context, "totalLength:%ld blockFactor:%d tileLength:%ld beta:%f threshold:%f invBeta:%f",
+    OP_LOGI(context, "totalLength:%ld blockFactor:%ld tileLength:%ld beta:%f threshold:%f invBeta:%f",
             tiling->totalLength, tiling->blockFactor, tiling->tileLength, tiling->beta, tiling->threshold,
             tiling->invBeta);
 
-    uint32_t dTypeX = static_cast<uint32_t>(dataType);
-    ASCENDC_TPL_SEL_PARAM(context, dTypeX);
+    uint32_t dtypeMode = DTypeModeOf(dataType);
+    ASCENDC_TPL_SEL_PARAM(context, dtypeMode);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -266,7 +319,9 @@ static ge::graphStatus SoftplusV2TilingFunc(gert::TilingContext* context)
 
     // 5. Compute tileLength and multi-core split
     uint32_t tileLength = ComputeTileLength(dataType, ubSize);
-    int64_t usedCoreNum = ComputeUsedCoreNum(totalLength, dataType, coreNum);
+    int64_t usedCoreNum = 0;
+    OP_CHECK_IF(ComputeUsedCoreNum(context, totalLength, dataType, coreNum, usedCoreNum) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "ComputeUsedCoreNum error"), return ge::GRAPH_FAILED);
 
     // 6. Fill TilingData and set BlockDim/TilingKey
     return FillTilingData(context, totalLength, usedCoreNum, tileLength, dataType, beta, threshold);

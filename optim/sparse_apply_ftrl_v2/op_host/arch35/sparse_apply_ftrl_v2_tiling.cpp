@@ -18,9 +18,11 @@
  *   needCoreNum = ceil(totalElements / MIN_ELEMENTS_PER_CORE), capped at physical coreNum.
  *   Process does NOT split work per-core — VF uses blockIdx.x-based stride.
  *
- * TilingKey: 0=int32 indices, 1=int64 indices.
- * DTYPE_VAR auto-instantiates data dtype.
+ * TilingKey: single template mode (schMode=0); indices dtype is
+ * auto-instantiated by DTYPE_INDICES, not selected by schMode.
  */
+
+#include <cstdint>
 
 #include "register/op_def_registry.h"
 #include "op_common/log/log.h"
@@ -34,6 +36,8 @@ namespace optiling {
 constexpr int64_t MIN_ELEMENTS_PER_CORE = 512;
 constexpr uint32_t DCACHE_SIZE = 128 * 1024;
 constexpr uint32_t STATIC_UB_ESTIMATE = 0;
+// README constraint: ND var holds rank in [1, 8].
+constexpr size_t MAX_ND_RANK = 8;
 
 struct SparseApplyFtrlV2CompileInfo {};
 
@@ -64,13 +68,23 @@ static constexpr int64_t kStateTensorIdx[] = {kAccumIdx, kLinearIdx};
 static constexpr int64_t kDataInputIdx[] = {kAccumIdx, kLinearIdx, kGradIdx,        kLrIdx,
                                             kL1Idx,    kL2Idx,     kL2ShrinkageIdx, kLrPowerIdx};
 static constexpr int64_t kScalarInputIdx[] = {kLrIdx, kL1Idx, kL2Idx, kL2ShrinkageIdx, kLrPowerIdx};
+static const char* const kInputNames[] = {"var", "accum", "linear", "grad",         "indices",
+                                          "lr",  "l1",    "l2",     "l2_shrinkage", "lr_power"};
 
 static ge::graphStatus ValidateVarRank(const gert::TilingContext* context, const gert::Shape& varStorage)
 {
-    OP_CHECK_IF(varStorage.GetDimNum() < 1,
-                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "var",
-                                             std::to_string(varStorage.GetDimNum()).c_str(), ">=1"),
+    size_t dimNum = varStorage.GetDimNum();
+    // README: var rank must be within [1, 8] for ND.
+    OP_CHECK_IF(dimNum < 1 || dimNum > MAX_ND_RANK,
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "var", std::to_string(dimNum).c_str(), "1..8"),
                 return ge::GRAPH_FAILED);
+    // README: var first axis N >= 1. A concrete 0 is rejected here; unresolved
+    // negative markers (-1/-2) are rejected by ValidateInputs at tiling time.
+    int64_t firstDim = varStorage.GetDim(0);
+    OP_CHECK_IF(
+        firstDim == 0,
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "var dim[0]", std::to_string(firstDim).c_str(), ">=1"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -93,7 +107,7 @@ static ge::graphStatus ValidateStateTensorShapes(const gert::TilingContext* cont
         OP_CHECK_NULL_WITH_CONTEXT(context, stateShape);
         OP_CHECK_IF(stateShape->GetStorageShape() != varStorage,
                     OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
-                        context->GetNodeName(), "input and var",
+                        context->GetNodeName(), kInputNames[idx],
                         (Ops::Base::ToString(stateShape->GetStorageShape()) + " and " + Ops::Base::ToString(varStorage))
                             .c_str(),
                         "state tensor shape must match var shape"),
@@ -152,9 +166,9 @@ static ge::graphStatus ValidateDtypes(const gert::TilingContext* context)
         auto dtype = desc->GetDataType();
         OP_CHECK_IF(dtype != varDtype,
                     OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-                        context->GetNodeName(), "input and var",
+                        context->GetNodeName(), kInputNames[idx],
                         (Ops::Base::ToString(dtype) + " and " + Ops::Base::ToString(varDtype)).c_str(),
-                        "all data inputs must have the same dtype as var"),
+                        "data input dtype must equal var dtype"),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -166,11 +180,13 @@ static ge::graphStatus ValidateScalarInputs(const gert::TilingContext* context)
         auto scalarShape = context->GetInputShape(idx);
         OP_CHECK_NULL_WITH_CONTEXT(context, scalarShape);
         auto scalarStorage = scalarShape->GetStorageShape();
-        OP_CHECK_IF(
-            !scalarStorage.IsScalar() && scalarStorage.GetShapeSize() != 1,
-            OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "scalar input",
-                                      std::to_string(scalarStorage.GetShapeSize()).c_str(), "1 (shape [] or [1])"),
-            return ge::GRAPH_FAILED);
+        size_t dimNum = scalarStorage.GetDimNum();
+        bool isScalar = (dimNum == 0) || (dimNum == 1 && scalarStorage.GetDim(0) == 1);
+        OP_CHECK_IF(!isScalar,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), kInputNames[idx],
+                                                          Ops::Base::ToString(scalarStorage).c_str(),
+                                                          "must be a scalar (shape [] or [1])"),
+                    return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -186,6 +202,37 @@ static ge::graphStatus ValidateInputs(const gert::TilingContext* context, int64_
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(ValidateIndicesRank(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateIndicesRank failed"),
                 return ge::GRAPH_FAILED);
+
+    // Unresolved dynamic markers (-1/-2) must be materialized into concrete
+    // dimensions before tiling: writing them into TilingData would feed negative
+    // loop bounds and index thresholds to the kernel. Validated after the rank
+    // checks so a rank violation is still reported as such.
+    OP_CHECK_IF(
+        varStorage.GetDim(0) < 0,
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "var dim[0]", std::to_string(varStorage.GetDim(0)).c_str(),
+                                     ">=0 (unresolved dynamic markers are rejected at tiling time)"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        totalIndices < 0,
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "len(indices) (M)", std::to_string(totalIndices).c_str(),
+                                     ">=0 (unresolved dynamic markers are rejected at tiling time)"),
+        return ge::GRAPH_FAILED);
+    for (size_t i = 1; i < varStorage.GetDimNum(); i++) {
+        OP_CHECK_IF(varStorage.GetDim(i) < 0,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), ("var dim[" + std::to_string(i) + "]").c_str(),
+                                                 std::to_string(varStorage.GetDim(i)).c_str(),
+                                                 ">=0 (unresolved dynamic markers are rejected at tiling time)"),
+                    return ge::GRAPH_FAILED);
+    }
+
+    // README: indices must be unique, so M = len(indices) <= N = var.shape[0].
+    // Validated after the rank checks so a rank violation is reported as such.
+    int64_t nDim0 = varStorage.GetDimNum() > 0 ? varStorage.GetDim(0) : -1;
+    OP_CHECK_IF(
+        nDim0 >= 0 && totalIndices > nDim0,
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "len(indices) (M)", std::to_string(totalIndices).c_str(),
+                                     ("<= var.shape[0] (N)=" + std::to_string(nDim0)).c_str()),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(ValidateStateTensorShapes(context, varStorage) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "ValidateStateTensorShapes failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(ValidateGradShape(context, varStorage, totalIndices) != ge::GRAPH_SUCCESS,
@@ -215,9 +262,22 @@ static ge::graphStatus GetShapeInfo(const gert::TilingContext* context, int64_t&
     N = varStorageShape.GetDim(0);
     M = indicesStorageShape.GetDim(0);
 
+    // Guard the tail-dimension product against out-of-range axes and int64 overflow.
+    constexpr int64_t kMaxSingleDim = static_cast<int64_t>(INT32_MAX);
     innerSize = 1;
     for (size_t i = 1; i < varStorageShape.GetDimNum(); i++) {
-        innerSize *= varStorageShape.GetDim(i);
+        int64_t dim = varStorageShape.GetDim(i);
+        OP_CHECK_IF(dim > kMaxSingleDim,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), ("var dim[" + std::to_string(i) + "]").c_str(),
+                                                 std::to_string(dim).c_str(), "<= INT32_MAX"),
+                    return ge::GRAPH_FAILED);
+        if (dim < 0) {
+            continue; // unresolved axis; rejected by ValidateInputs before TilingData is filled
+        }
+        // A concrete zero-length tail axis makes the tensor empty (innerSize == 0).
+        OP_CHECK_IF(dim != 0 && innerSize > INT64_MAX / dim, OP_LOGE(context, "var innerSize overflow, dim=%ld", dim),
+                    return ge::GRAPH_FAILED);
+        innerSize *= dim;
     }
 
     OP_CHECK_IF(ValidateInputs(context, M) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateInputs failed"),
@@ -241,11 +301,20 @@ static ge::graphStatus GetWorkspaceSize(gert::TilingContext* context)
 // capped at the physical core count, clamped to a minimum of 1.
 static int32_t CalcNeedCoreNum(int64_t totalElements, int64_t coreNum)
 {
-    int32_t calcCoreNum = static_cast<int32_t>((totalElements + MIN_ELEMENTS_PER_CORE - 1) / MIN_ELEMENTS_PER_CORE);
-    int32_t maxCoreNum = static_cast<int32_t>(coreNum);
-    int32_t needCoreNum = (calcCoreNum < maxCoreNum) ? calcCoreNum : maxCoreNum;
-    needCoreNum = (needCoreNum < 1) ? 1 : needCoreNum;
-    return needCoreNum;
+    // Divide first, then carry: avoids the overflow-prone (totalElements + MIN - 1) addition.
+    int64_t calcCoreNum = totalElements / MIN_ELEMENTS_PER_CORE;
+    if (totalElements % MIN_ELEMENTS_PER_CORE != 0) {
+        calcCoreNum += 1;
+    }
+    int64_t needCoreNum = (calcCoreNum < coreNum) ? calcCoreNum : coreNum;
+    if (needCoreNum < 1) {
+        needCoreNum = 1;
+    }
+    // The value is capped by the physical core count, so the int32 narrowing is bounded.
+    if (needCoreNum > static_cast<int64_t>(INT32_MAX)) {
+        needCoreNum = INT32_MAX;
+    }
+    return static_cast<int32_t>(needCoreNum);
 }
 
 // Set local (UB) memory size after reserving the DCACHE region.
@@ -303,20 +372,22 @@ static ge::graphStatus SparseApplyFtrlV2TilingFunc(gert::TilingContext* context)
     OP_CHECK_IF(PrepareTiling(context, ubSize, coreNum, M, innerSize, N, tiling) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "PrepareTiling error"), return ge::GRAPH_FAILED);
 
+    // Guard the total work count against int64 overflow before narrowing.
+    OP_CHECK_IF(M > 0 && innerSize > 0 && M > INT64_MAX / innerSize,
+                OP_LOGE(context, "totalElements overflow: M=%ld innerSize=%ld", M, innerSize), return ge::GRAPH_FAILED);
+    // Bound the var element count too: the kernel derives element offsets as
+    // row * innerSize + col, whose maximum is N * innerSize - 1.
+    OP_CHECK_IF(N > 0 && innerSize > 0 && N > INT64_MAX / innerSize,
+                OP_LOGE(context, "var element count overflow: N=%ld innerSize=%ld", N, innerSize),
+                return ge::GRAPH_FAILED);
     int64_t totalElements = M * innerSize;
 
-    // Empty tensor: fixed INT32-mode key (kernel early-exits on M == 0).
-    if (totalElements == 0) {
-        FillTilingData(tiling, 1, 0, innerSize, N, M);
-        context->SetBlockDim(1);
-        OP_CHECK_IF(SetUbLocalMemory(context, ubSize) != ge::GRAPH_SUCCESS, OP_LOGE(context, "SetUbLocalMemory error"),
-                    return ge::GRAPH_FAILED);
-        context->SetTilingKey(GET_TPL_TILING_KEY(SPARSE_APPLY_FTRL_V2_TPL_SCH_MODE_0));
-        return ge::GRAPH_SUCCESS;
-    }
-
-    // Grid-Stride: simple core count = ceil(totalElements / MIN_ELEMENTS_PER_CORE)
-    int32_t needCoreNum = CalcNeedCoreNum(totalElements, coreNum);
+    // The kernel parallelizes over the inner (column) axis: each thread owns a set of
+    // columns and serially walks the indices. Align the core count to that parallelism
+    // (ceil(innerSize / MAX_THREADS_PER_CORE)), not to M*innerSize, so that blockDim
+    // matches the actual number of useful threads. This also covers the empty-indices
+    // (M == 0) case, where the only possible work is the column copy (when out != in).
+    int32_t needCoreNum = CalcNeedCoreNum(innerSize, coreNum);
     FillTilingData(tiling, needCoreNum, totalElements, innerSize, N, M);
     context->SetBlockDim(needCoreNum);
     OP_CHECK_IF(SetUbLocalMemory(context, ubSize) != ge::GRAPH_SUCCESS, OP_LOGE(context, "SetUbLocalMemory error"),

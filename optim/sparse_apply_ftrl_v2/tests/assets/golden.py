@@ -8,6 +8,9 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
+import hashlib
+from typing import ClassVar
+
 import numpy as np
 import tensorflow as tf
 
@@ -15,47 +18,133 @@ __golden__ = {"kernel": {"sparse_apply_ftrl_v2": "sparse_apply_ftrl_v2_golden"}}
 
 __input__ = {"kernel": {"sparse_apply_ftrl_v2": "sparse_apply_ftrl_v2_input"}}
 
+__spec__ = {"sparse_apply_ftrl_v2": "SparseApplyFtrlV2TestSpec"}
 
-def _constrain(arr, fn):
-    """Apply constraint in fp32, then cast back to original dtype."""
-    orig_dtype = arr.dtype
-    result = fn(arr.astype(np.float32))
-    return result.astype(orig_dtype)
+
+def _magnitude_bound(dtype):
+    """Safe magnitude bound for var/linear/grad so intermediate quantities stay finite.
+
+    Keeps grad**2 and accum within the destination dtype's finite range, including
+    the worst case where several indices target the same row (M > N).
+    """
+    try:
+        name = np.dtype(dtype).name
+        kind = np.dtype(dtype).kind
+        itemsize = np.dtype(dtype).itemsize
+    except TypeError:
+        name = str(dtype)
+        kind = ""
+        itemsize = 0
+    if name == "float16" or name == "bfloat16":
+        return 10.0
+    if kind == "V" and itemsize == 2:  # numpy-visible bfloat16 (void form)
+        return 10.0
+    return 1.0e3
+
+
+def _stable_seed(name):
+    """Deterministic 64-bit seed derived from the testcase name (0 when absent)."""
+    text = str(name) if name is not None else ""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
+
+
+def _finite_clip(arr, lo, hi):
+    """Replace non-finite values and clip into [lo, hi] in fp32, preserving dtype."""
+    out_dtype = np.asarray(arr).dtype
+    values = np.asarray(arr).astype(np.float32)
+    values = np.nan_to_num(values, nan=0.0, posinf=float(hi), neginf=float(lo))
+    values = np.clip(values, lo, hi)
+    return values.astype(out_dtype)
 
 
 def sparse_apply_ftrl_v2_input(
     var, accum, linear, grad, indices, lr, l1, l2, l2_shrinkage, lr_power, **kwargs
 ):
     """
-    Custom input generator: enforce valid parameter ranges for Ftrl semantics.
+    Custom input generator: constrain inputs to the documented valid domain.
 
-    Constraints:
-      - indices: unique, within [0, N) (best-effort; only valid in-range indices are deduped)
-      - lr > 0, l1 >= 0, l2 >= 0, l2_shrinkage >= 0
-      - lr_power <= 0
-      - accum >= 0 (squared gradient accumulator, prevents NaN in pow/sqrt)
+    The README only accepts finite values in a numerically safe range; outside it
+    intermediate terms (grad**2, accum**(-lr_power)) overflow and the result is
+    implementation-specific rather than a defect. Constraints applied here:
+
+      - var/linear/grad: finite and bounded per dtype (see _magnitude_bound)
+      - accum: finite and in [1e-3, 100] (squared-gradient accumulator)
+      - lr:   finite and in [1e-3, 1]
+      - l1/l2/l2_shrinkage: finite and in [0, 1]
+      - lr_power: finite and in [-1, -1e-3] (non-positive)
+      - indices: valid, in [0, N); unique when M <= N, deterministic in-range
+        pattern when M > N (duplicates are still applied in ascending index
+        order, matching TensorFlow)
     """
+    mag = _magnitude_bound(var.dtype)
+
+    var = _finite_clip(var, -mag, mag)
+    linear = _finite_clip(linear, -mag, mag)
+    grad = _finite_clip(grad, -mag, mag)
+    accum = _finite_clip(accum, 1e-3, 100.0)
+    lr = _finite_clip(lr, 1e-3, 1.0)
+    l1 = _finite_clip(l1, 0.0, 1.0)
+    l2 = _finite_clip(l2, 0.0, 1.0)
+    l2_shrinkage = _finite_clip(l2_shrinkage, 0.0, 1.0)
+    lr_power = _finite_clip(lr_power, -1.0, -1e-3)
+
     N = var.shape[0]
     M = indices.shape[0]
-
     if M > 0 and N > 0:
-        valid_mask = (indices >= 0) & (indices < N)
-        valid_count = int(np.sum(valid_mask))
-        if valid_count > 0 and valid_count <= N:
-            unique_valid = np.random.choice(N, size=valid_count, replace=False).astype(
-                indices.dtype
-            )
-            indices = indices.copy()
-            indices[valid_mask] = unique_valid
-
-    lr = _constrain(lr, lambda x: np.maximum(np.abs(x), 1e-6))
-    l1 = _constrain(l1, np.abs)
-    l2 = _constrain(l2, np.abs)
-    l2_shrinkage = _constrain(l2_shrinkage, np.abs)
-    lr_power = _constrain(lr_power, lambda x: -np.abs(x))
-    accum = _constrain(accum, np.abs)
+        # Deterministic per testcase so repeated generations of the same case
+        # produce identical indices (reproducible inputs across modes/routes).
+        seed = _stable_seed(kwargs.get("testcase_name"))
+        rng = np.random.default_rng(seed)
+        if M <= N:
+            valid_indices = rng.permutation(N)[:M]
+        else:
+            valid_indices = np.arange(M) % N
+        indices = valid_indices.astype(indices.dtype)
 
     return [var, accum, linear, grad, indices, lr, l1, l2, l2_shrinkage, lr_power]
+
+
+def _run_tf_ftrl_v2(
+    var, accum, linear, grad, indices, lr, l1, l2, l2_shrinkage, lr_power, use_locking
+):
+    """Run tf.raw_ops.ResourceSparseApplyFtrlV2 on already-prepared arrays."""
+
+    def to_idx(arr):
+        return tf.constant(arr, dtype=tf.int32 if arr.dtype == np.int32 else tf.int64)
+
+    v_var = tf.Variable(var, name="var")
+    v_accum = tf.Variable(accum, name="accum")
+    v_linear = tf.Variable(linear, name="linear")
+
+    lr_val = lr.item() if hasattr(lr, "item") else float(lr)
+    l1_val = l1.item() if hasattr(l1, "item") else float(l1)
+    l2_val = l2.item() if hasattr(l2, "item") else float(l2)
+    l2s_val = (
+        l2_shrinkage.item() if hasattr(l2_shrinkage, "item") else float(l2_shrinkage)
+    )
+    lrp_val = lr_power.item() if hasattr(lr_power, "item") else float(lr_power)
+
+    tf.raw_ops.ResourceSparseApplyFtrlV2(
+        var=v_var.handle,
+        accum=v_accum.handle,
+        linear=v_linear.handle,
+        lr=lr_val,
+        l1=l1_val,
+        l2=l2_val,
+        l2_shrinkage=l2s_val,
+        lr_power=lrp_val,
+        grad=tf.constant(grad),
+        indices=to_idx(indices),
+        use_locking=use_locking,
+        multiply_linear_by_lr=False,
+    )
+
+    return (
+        v_var.read_value().numpy(),
+        v_accum.read_value().numpy(),
+        v_linear.read_value().numpy(),
+    )
 
 
 def sparse_apply_ftrl_v2_golden(
@@ -87,8 +176,16 @@ def sparse_apply_ftrl_v2_golden(
     if indices.size == 0:
         return var, accum, linear
 
-    def to_idx(arr):
-        return tf.constant(arr, dtype=tf.int32 if arr.dtype == np.int32 else tf.int64)
+    # README: rows whose index is out of [0, N) are skipped. TF rejects such
+    # indices, so drop them here using plain Python selection (no NumPy masking)
+    # before calling the TF reference.
+    num_rows = var.shape[0]
+    keep = [k for k in range(indices.shape[0]) if 0 <= int(indices[k]) < num_rows]
+    if not keep:
+        return var, accum, linear
+    if len(keep) != indices.shape[0]:
+        indices = np.asarray([int(indices[k]) for k in keep], dtype=indices.dtype)
+        grad = np.stack([grad[k] for k in keep], axis=0)
 
     is_fp16 = str(orig_dtype) == "float16" or (
         hasattr(orig_dtype, "name") and orig_dtype.name == "float16"
@@ -99,19 +196,6 @@ def sparse_apply_ftrl_v2_golden(
     needs_upcast = is_fp16 or is_bf16
     compute_dtype = np.float32 if needs_upcast else orig_dtype
 
-    # Filter OOB indices (TF's ResourceSparseApplyFtrlV2 rejects them)
-    N_var = var.shape[0]
-    valid_mask = (indices >= 0) & (indices < N_var)
-    if not np.all(valid_mask):
-        if np.any(valid_mask):
-            indices = indices[valid_mask]
-            grad = grad[valid_mask]
-        else:
-            return var, accum, linear
-
-    if indices.size == 0:
-        return var, accum, linear
-
     def safe_cast(arr, target_dtype):
         if arr.dtype != target_dtype:
             return arr.astype(target_dtype)
@@ -121,44 +205,25 @@ def sparse_apply_ftrl_v2_golden(
     accum_c = safe_cast(accum, compute_dtype)
     linear_c = safe_cast(linear, compute_dtype)
     grad_c = safe_cast(grad, compute_dtype)
-    lr_c = safe_cast(lr, compute_dtype)
-    l1_c = safe_cast(l1, compute_dtype)
-    l2_c = safe_cast(l2, compute_dtype)
-    l2_shrinkage_c = safe_cast(l2_shrinkage, compute_dtype)
-    lr_power_c = safe_cast(lr_power, compute_dtype)
+    lr_c = safe_cast(np.asarray(lr), compute_dtype)
+    l1_c = safe_cast(np.asarray(l1), compute_dtype)
+    l2_c = safe_cast(np.asarray(l2), compute_dtype)
+    l2_shrinkage_c = safe_cast(np.asarray(l2_shrinkage), compute_dtype)
+    lr_power_c = safe_cast(np.asarray(lr_power), compute_dtype)
 
-    v_var = tf.Variable(var_c, name="var")
-    v_accum = tf.Variable(accum_c, name="accum")
-    v_linear = tf.Variable(linear_c, name="linear")
-
-    lr_val = lr_c.item() if hasattr(lr_c, "item") else float(lr_c)
-    l1_val = l1_c.item() if hasattr(l1_c, "item") else float(l1_c)
-    l2_val = l2_c.item() if hasattr(l2_c, "item") else float(l2_c)
-    l2s_val = (
-        l2_shrinkage_c.item()
-        if hasattr(l2_shrinkage_c, "item")
-        else float(l2_shrinkage_c)
+    out_var, out_accum, out_linear = _run_tf_ftrl_v2(
+        var_c,
+        accum_c,
+        linear_c,
+        grad_c,
+        indices,
+        lr_c,
+        l1_c,
+        l2_c,
+        l2_shrinkage_c,
+        lr_power_c,
+        use_locking,
     )
-    lrp_val = lr_power_c.item() if hasattr(lr_power_c, "item") else float(lr_power_c)
-
-    tf.raw_ops.ResourceSparseApplyFtrlV2(
-        var=v_var.handle,
-        accum=v_accum.handle,
-        linear=v_linear.handle,
-        lr=lr_val,
-        l1=l1_val,
-        l2=l2_val,
-        l2_shrinkage=l2s_val,
-        lr_power=lrp_val,
-        grad=tf.constant(grad_c),
-        indices=to_idx(indices),
-        use_locking=use_locking,
-        multiply_linear_by_lr=False,
-    )
-
-    out_var = v_var.read_value().numpy()
-    out_accum = v_accum.read_value().numpy()
-    out_linear = v_linear.read_value().numpy()
 
     if needs_upcast:
         out_var = out_var.astype(orig_dtype, copy=False)
@@ -166,3 +231,55 @@ def sparse_apply_ftrl_v2_golden(
         out_linear = out_linear.astype(orig_dtype, copy=False)
 
     return out_var, out_accum, out_linear
+
+
+class _TfSparseApplyFtrlV2:
+    """TensorFlow SparseApplyFtrlV2 reference computed in native dtype (third-party baseline)."""
+
+    def __init__(self, *, use_locking=False, **kwargs):
+        self.use_locking = bool(use_locking)
+
+    def __call__(
+        self,
+        var,
+        accum,
+        linear,
+        grad,
+        indices,
+        lr,
+        l1,
+        l2,
+        l2_shrinkage,
+        lr_power,
+        **kwargs,
+    ):
+        def to_np(value):
+            if hasattr(value, "numpy"):
+                try:
+                    return value.numpy()
+                except (TypeError, RuntimeError):
+                    pass
+            if hasattr(value, "detach"):
+                value = value.detach().cpu()
+            return np.asarray(value)
+
+        return _run_tf_ftrl_v2(
+            to_np(var),
+            to_np(accum),
+            to_np(linear),
+            to_np(grad),
+            to_np(indices),
+            to_np(lr),
+            to_np(l1),
+            to_np(l2),
+            to_np(l2_shrinkage),
+            to_np(lr_power),
+            self.use_locking,
+        )
+
+
+class SparseApplyFtrlV2TestSpec:
+    """SparseApplyFtrlV2 kernel TestSpec (GEIR pathway)."""
+
+    golden = staticmethod(sparse_apply_ftrl_v2_golden)
+    third_party: ClassVar[dict] = {"tf": _TfSparseApplyFtrlV2}

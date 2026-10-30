@@ -19,8 +19,8 @@
  *   2: float16/int32    3: float16/int64
  *   4: bfloat16/int32   5: bfloat16/int64
  *
- * TilingKey uses schMode (0=int32, 1=int64).
- * DTYPE_VAR macro auto-instantiates data dtype.
+ * TilingKey uses a single template mode (schMode=0); indices dtype is
+ * auto-instantiated by the DTYPE_INDICES macro, not selected by schMode.
  *
  * 仅适配 Ascend950 (arch35)。
  */

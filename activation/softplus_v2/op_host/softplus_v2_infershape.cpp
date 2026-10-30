@@ -24,6 +24,8 @@ using namespace ge;
 
 namespace ops {
 
+static constexpr size_t MAX_DIM_NUM = 8;
+
 static ge::graphStatus InferShape4SoftplusV2(gert::InferShapeContext* context)
 {
     const gert::Shape* inputShape = context->GetInputShape(0);
@@ -35,6 +37,13 @@ static ge::graphStatus InferShape4SoftplusV2(gert::InferShapeContext* context)
     if (outputShape == nullptr) {
         return ge::GRAPH_FAILED;
     }
+
+    // Public contract (consistent with aclnn CheckShape): rank must be <= 8.
+    OP_CHECK_IF(
+        inputShape->GetDimNum() > MAX_DIM_NUM,
+        OP_LOGE(context->GetNodeName(), "[InferShape] the dim num of x must be less than or equal to %zu, but got %zu",
+                MAX_DIM_NUM, inputShape->GetDimNum()),
+        return ge::GRAPH_FAILED);
 
     *outputShape = *inputShape;
     OP_LOGI(context->GetNodeName(), "[InferShape] output shape=%s", Ops::Base::ToString(*outputShape).c_str());

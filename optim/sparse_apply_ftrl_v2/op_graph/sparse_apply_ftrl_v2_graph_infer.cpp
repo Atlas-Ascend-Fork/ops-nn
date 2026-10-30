@@ -13,7 +13,14 @@
 /*!
  * \file sparse_apply_ftrl_v2_graph_infer.cpp
  * \brief sparse_apply_ftrl_v2 operator graph infer resource
+ *
+ * Independently validates input dtypes at graph-inference time (contract
+ * INFER_AND_TILING_INDEPENDENT): var must be a supported data dtype, every
+ * data input must share var's dtype, indices must be int32/int64. The three
+ * outputs inherit var's dtype.
  */
+
+#include <string>
 
 #include "register/op_impl_registry.h"
 #include "op_common/log/log.h"
@@ -21,16 +28,71 @@
 namespace ops {
 using namespace ge;
 
-static constexpr int64_t IDX_0 = 0;
-static constexpr int64_t IDX_1 = 1;
-static constexpr int64_t IDX_2 = 2;
+namespace {
+constexpr int64_t IDX_0 = 0;
+constexpr int64_t IDX_1 = 1;
+constexpr int64_t IDX_2 = 2;
+constexpr int64_t IDX_INDICES = 4;
+// Data inputs other than var and indices (accum, linear, grad, lr, l1, l2, l2_shrinkage, lr_power).
+constexpr int64_t kDataInputIdx[] = {1, 2, 3, 5, 6, 7, 8, 9};
+const char* const kInputNames[] = {"var", "accum", "linear", "grad",         "indices",
+                                   "lr",  "l1",    "l2",     "l2_shrinkage", "lr_power"};
+
+bool IsValidDataDtype(ge::DataType dtype)
+{
+    return dtype == ge::DT_FLOAT || dtype == ge::DT_FLOAT16 || dtype == ge::DT_BF16;
+}
+
+bool IsValidIndexDtype(ge::DataType dtype) { return dtype == ge::DT_INT32 || dtype == ge::DT_INT64; }
+
+std::string DtypeName(ge::DataType dtype) { return "dtype_id=" + std::to_string(static_cast<int32_t>(dtype)); }
+} // namespace
 
 static ge::graphStatus InferDataTypeSparseApplyFtrlV2(gert::InferDataTypeContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Begin to do InferDataTypeSparseApplyFtrlV2");
 
-    // All three outputs have the same dtype as input var (IDX_0)
+    // All inputs are REQUIRED; an undefined dtype for a required input is a
+    // contract violation this gate must reject on its own.
     ge::DataType varDtype = context->GetInputDataType(IDX_0);
+    OP_CHECK_IF(varDtype == ge::DT_UNDEFINED,
+                OP_LOGE(context->GetNodeName(), "required input var has an undefined dtype"), return GRAPH_FAILED);
+    {
+        std::string varName = DtypeName(varDtype);
+        OP_CHECK_IF(
+            !IsValidDataDtype(varDtype),
+            OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "var", varName.c_str(), "float16, bfloat16 and float32"),
+            return GRAPH_FAILED);
+    }
+
+    // Every remaining data input must be defined and share var's dtype (README).
+    for (int64_t idx : kDataInputIdx) {
+        ge::DataType dtype = context->GetInputDataType(idx);
+        OP_CHECK_IF(dtype == ge::DT_UNDEFINED,
+                    OP_LOGE(context->GetNodeName(), "required input[%s] has an undefined dtype", kInputNames[idx]),
+                    return GRAPH_FAILED);
+        if (dtype == varDtype) {
+            continue;
+        }
+        std::string actual = DtypeName(dtype) + " and " + DtypeName(varDtype);
+        OP_CHECK_IF(dtype != varDtype,
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), kInputNames[idx], actual.c_str(),
+                                                           "data input dtype must equal var dtype"),
+                    return GRAPH_FAILED);
+    }
+
+    // indices dtype must be defined and int32 or int64 (README).
+    ge::DataType indexDtype = context->GetInputDataType(IDX_INDICES);
+    OP_CHECK_IF(indexDtype == ge::DT_UNDEFINED,
+                OP_LOGE(context->GetNodeName(), "required input indices has an undefined dtype"), return GRAPH_FAILED);
+    {
+        std::string indexName = DtypeName(indexDtype);
+        OP_CHECK_IF(!IsValidIndexDtype(indexDtype),
+                    OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "indices", indexName.c_str(), "int32 or int64"),
+                    return GRAPH_FAILED);
+    }
+
+    // All three outputs have the same dtype as input var (IDX_0).
     context->SetOutputDataType(IDX_0, varDtype);
     context->SetOutputDataType(IDX_1, varDtype);
     context->SetOutputDataType(IDX_2, varDtype);

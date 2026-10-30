@@ -12,11 +12,24 @@
 
 /*!
  * \file sparse_apply_ftrl_v2_infershape.cpp
- * \brief Shape and dtype inference for SparseApplyFtrlV2
+ * \brief Shape inference and input-shape validation for SparseApplyFtrlV2
  *
  * All three outputs (var, accum, linear) have the same shape and dtype
  * as their corresponding inputs (in-place update).
+ *
+ * Per the frozen contract (INFER_AND_TILING_INDEPENDENT) the Host shape gate
+ * independently rejects the illegal conditions visible at inference time:
+ * var rank in [1, 8], var first axis N >= 1, accum/linear shape == var shape,
+ * indices rank == 1, grad rank/leading axis/tail axes consistent with var,
+ * M = len(indices) <= N, and scalar hyper-parameters shaped [] or [1].
+ *
+ * Dynamic handling distinguishes the two negative markers explicitly:
+ *   - -2 (unknown rank): only rank-dependent checks are skipped.
+ *   - -1 (unknown dim of a known rank): rank checks still apply; only the
+ *     unknown value comparisons are skipped.
  */
+
+#include <string>
 
 #include "register/op_impl_registry.h"
 #include "op_common/log/log.h"
@@ -25,15 +38,179 @@ using namespace ge;
 
 namespace ops {
 
+namespace {
+constexpr size_t kVarIdx = 0;
+constexpr size_t kAccumIdx = 1;
+constexpr size_t kLinearIdx = 2;
+constexpr size_t kGradIdx = 3;
+constexpr size_t kIndicesIdx = 4;
+constexpr size_t kLrIdx = 5;
+constexpr size_t kL1Idx = 6;
+constexpr size_t kL2Idx = 7;
+constexpr size_t kL2ShrinkageIdx = 8;
+constexpr size_t kLrPowerIdx = 9;
+constexpr size_t kNumOutputs = 3;
+constexpr size_t kNumInputs = 10;
+
+const char* const kInputNames[kNumInputs] = {"var", "accum", "linear", "grad",         "indices",
+                                             "lr",  "l1",    "l2",     "l2_shrinkage", "lr_power"};
+
+// README constraint: ND var holds rank in [1, 8].
+constexpr size_t kMaxNdRank = 8;
+// Dynamic-shape markers used by GE.
+constexpr int64_t kUnknownRankMarker = -2;
+
+inline bool IsKnownDim(int64_t dim) { return dim >= 0; }
+
+std::string ShapeToString(const gert::Shape& shape)
+{
+    std::string text = "[";
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        if (i != 0) {
+            text += ",";
+        }
+        text += std::to_string(shape.GetDim(i));
+    }
+    text += "]";
+    return text;
+}
+
+// Compare two shapes; unknown (-1) dims match any value.
+bool ShapesCompatible(const gert::Shape& lhs, const gert::Shape& rhs)
+{
+    if (lhs.GetDimNum() != rhs.GetDimNum()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.GetDimNum(); ++i) {
+        int64_t dl = lhs.GetDim(i);
+        int64_t dr = rhs.GetDim(i);
+        if (IsKnownDim(dl) && IsKnownDim(dr) && dl != dr) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The -2 marker denotes an unknown rank: shape is a single element holding -2.
+bool IsUnknownRank(const gert::Shape& shape) { return shape.GetDimNum() == 1 && shape.GetDim(0) == kUnknownRankMarker; }
+
+// A single negative dim (-1) means "unknown value of a known rank-1 shape"; it
+// cannot be used to validate a scalar form, so those checks are deferred.
+bool IsUnknownScalarDim(const gert::Shape& shape) { return shape.GetDimNum() == 1 && !IsKnownDim(shape.GetDim(0)); }
+} // namespace
+
 static ge::graphStatus InferShapeSparseApplyFtrlV2(gert::InferShapeContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Enter InferShapeSparseApplyFtrlV2");
 
-    // Output 0 (var) shape = Input 0 (var) shape
-    // Output 1 (accum) shape = Input 1 (accum) shape
-    // Output 2 (linear) shape = Input 2 (linear) shape
-    constexpr size_t kNumOutputs = 3;
-    for (size_t i = 0; i < kNumOutputs; i++) {
+    // All ten inputs are REQUIRED (def.cpp ParamType(REQUIRED)); an absent input
+    // tensor is a contract violation that this Host gate must reject on its own
+    // (INFER_AND_TILING_INDEPENDENT). Identify the offending input by name.
+    for (size_t idx = 0; idx < kNumInputs; ++idx) {
+        if (context->GetInputShape(idx) == nullptr) {
+            OP_LOGE(context->GetNodeName(), "required input[%s] is absent; all inputs are REQUIRED", kInputNames[idx]);
+            return GRAPH_FAILED;
+        }
+    }
+
+    auto varShape = context->GetInputShape(kVarIdx);
+    auto indicesShape = context->GetInputShape(kIndicesIdx);
+    bool varUnknownRank = IsUnknownRank(*varShape);
+
+    // Validate indices rank first (independent of var's rank) so that no later
+    // check reads indices dims before the rank is known to be 1-D.
+    if (!IsUnknownRank(*indicesShape)) {
+        OP_CHECK_IF(indicesShape->GetDimNum() != 1,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "indices",
+                                                 std::to_string(indicesShape->GetDimNum()).c_str(), "1"),
+                    return GRAPH_FAILED);
+    }
+
+    if (!varUnknownRank) {
+        size_t rank = varShape->GetDimNum();
+        OP_CHECK_IF(rank < 1 || rank > kMaxNdRank,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "var", std::to_string(rank).c_str(), "1..8"),
+                    return GRAPH_FAILED);
+        OP_CHECK_IF(varShape->GetDim(0) == 0,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "var dim[0]", "0", ">=1"),
+                    return GRAPH_FAILED);
+
+        // accum / linear must match var shape (README). Only the unknown-rank
+        // marker is skipped here; an unknown dim (-1) of a known rank still has
+        // to match the var rank.
+        const size_t stateIdx[] = {kAccumIdx, kLinearIdx};
+        for (size_t idx : stateIdx) {
+            auto stateShape = context->GetInputShape(idx);
+            if (IsUnknownRank(*stateShape)) {
+                continue;
+            }
+            OP_CHECK_IF(!ShapesCompatible(*stateShape, *varShape),
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            context->GetNodeName(), kInputNames[idx],
+                            (ShapeToString(*stateShape) + " and " + ShapeToString(*varShape)).c_str(),
+                            "state tensor shape must equal var shape"),
+                        return GRAPH_FAILED);
+        }
+
+        // grad rank must equal var rank; grad.dim(0) == M; tail dims match var (README).
+        auto gradShape = context->GetInputShape(kGradIdx);
+        if (!IsUnknownRank(*gradShape)) {
+            OP_CHECK_IF(gradShape->GetDimNum() != rank,
+                        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                            context->GetNodeName(), "grad and var",
+                            (std::to_string(gradShape->GetDimNum()) + " vs " + std::to_string(rank)).c_str(),
+                            "grad rank must equal var rank"),
+                        return GRAPH_FAILED);
+            if (!IsUnknownRank(*indicesShape) && IsKnownDim(gradShape->GetDim(0)) &&
+                IsKnownDim(indicesShape->GetDim(0))) {
+                OP_CHECK_IF(gradShape->GetDim(0) != indicesShape->GetDim(0),
+                            OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "grad dim[0]",
+                                                         std::to_string(gradShape->GetDim(0)).c_str(),
+                                                         std::to_string(indicesShape->GetDim(0)).c_str()),
+                            return GRAPH_FAILED);
+            }
+            for (size_t i = 1; i < rank; ++i) {
+                int64_t dg = gradShape->GetDim(i);
+                int64_t dv = varShape->GetDim(i);
+                if (IsKnownDim(dg) && IsKnownDim(dv)) {
+                    OP_CHECK_IF(dg != dv,
+                                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(),
+                                                             ("grad dim[" + std::to_string(i) + "]").c_str(),
+                                                             std::to_string(dg).c_str(), std::to_string(dv).c_str()),
+                                return GRAPH_FAILED);
+                }
+            }
+        }
+
+        // README: indices must be unique, so M = len(indices) <= N = var.shape[0].
+        if (!IsUnknownRank(*indicesShape) && IsKnownDim(varShape->GetDim(0)) && IsKnownDim(indicesShape->GetDim(0))) {
+            OP_CHECK_IF(indicesShape->GetDim(0) > varShape->GetDim(0),
+                        OP_LOGE_FOR_INVALID_SHAPEDIM(
+                            context->GetNodeName(), "len(indices) (M)", std::to_string(indicesShape->GetDim(0)).c_str(),
+                            ("<= var.shape[0] (N)=" + std::to_string(varShape->GetDim(0))).c_str()),
+                        return GRAPH_FAILED);
+        }
+    }
+
+    // Scalar hyper-parameters must be scalar ([] or [1]) (README). This does not
+    // depend on var's rank, so it is validated even for an unknown-rank var.
+    const size_t scalarIdx[] = {kLrIdx, kL1Idx, kL2Idx, kL2ShrinkageIdx, kLrPowerIdx};
+    for (size_t idx : scalarIdx) {
+        auto scalarShape = context->GetInputShape(idx);
+        if (IsUnknownScalarDim(*scalarShape)) {
+            continue;
+        }
+        size_t scalarDimNum = scalarShape->GetDimNum();
+        bool isScalar = (scalarDimNum == 0) || (scalarDimNum == 1 && scalarShape->GetDim(0) == 1);
+        OP_CHECK_IF(!isScalar,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), kInputNames[idx],
+                                                          ShapeToString(*scalarShape).c_str(),
+                                                          "must be a scalar (shape [] or [1])"),
+                    return GRAPH_FAILED);
+    }
+
+    // Outputs mirror the corresponding inputs (in-place semantics).
+    for (size_t i = 0; i < kNumOutputs; ++i) {
         auto inShape = context->GetInputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, inShape);
         auto outShape = context->GetOutputShape(i);

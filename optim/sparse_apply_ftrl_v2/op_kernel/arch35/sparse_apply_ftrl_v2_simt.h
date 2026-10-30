@@ -14,13 +14,22 @@
  * \file sparse_apply_ftrl_v2_simt.h
  * \brief SIMT kernel for SparseApplyFtrlV2 operator
  *
- * Sparse Ftrl-proximal V2 optimizer update:
- *   For each sparse index in indices, apply 7-step update to var/accum/linear.
+ * Sparse Ftrl-proximal V2 optimizer update.
  *
- * Grid-Stride distributed pattern:
- *   Each thread loops with stride = blockDim.x * gridDim.x.
- *   workIdx = blockIdx.x * THREAD_NUM + threadIdx.x.
- *   Simple division (workIdx / innerSize) for row index decode.
+ * A single VF kernel parallelizes over the inner (column) axis. Each thread owns a
+ * set of columns and, for every owned column, first copies the whole var/accum/linear
+ * column into the declared output ports (preserving rows not named by indices) and
+ * then walks indices in ascending order to apply the sparse update in place on the
+ * output column.
+ *
+ * Why a single phase:
+ *   - It emits the declared output ports, so it is correct whether or not the runtime
+ *     aliases outputs with inputs.
+ *   - Copy and update for one column happen in the same thread, and columns are
+ *     independent, so there is no cross-thread/cross-phase write hazard and no need
+ *     for a grid barrier.
+ *   - Multiple indices that target the same row are applied sequentially in index
+ *     order, matching the TensorFlow reference deterministically.
  *
  * Precision: fp16/bf16 inputs read as float, all computation in fp32,
  *   results cast back to original dtype on write.
@@ -56,12 +65,13 @@ __simt_callee__ inline float ToFloat(bfloat16_t v) { return __bfloat162float(v);
 
 } // namespace detail
 
-// ========== Main VF kernel ==========
+// ========== Single-phase VF kernel: per-column copy + ordered sparse update ==========
 template <typename VarT, typename IndexT>
 __simt_vf__ __aicore__ __launch_bounds__(THREAD_NUM) inline void OpSparseApplyFtrlV2SimtKernel(
-    int64_t totalElements, int64_t innerSize, int64_t N, int64_t M, __gm__ VarT* var, __gm__ VarT* accum,
-    __gm__ VarT* linear, __gm__ VarT* grad, __gm__ IndexT* indices, __gm__ VarT* lr, __gm__ VarT* l1, __gm__ VarT* l2,
-    __gm__ VarT* l2_shrinkage, __gm__ VarT* lr_power)
+    int64_t innerSize, int64_t N, int64_t M, __gm__ VarT* var, __gm__ VarT* accum, __gm__ VarT* linear,
+    __gm__ VarT* grad, __gm__ IndexT* indices, __gm__ VarT* outVar, __gm__ VarT* outAccum, __gm__ VarT* outLinear,
+    __gm__ VarT* lr, __gm__ VarT* l1, __gm__ VarT* l2, __gm__ VarT* l2_shrinkage, __gm__ VarT* lr_power,
+    int32_t copyNeeded)
 {
     // ---- Read scalar values and convert to float ----
     float fLr = detail::ToFloat(lr[0]);
@@ -79,86 +89,87 @@ __simt_vf__ __aicore__ __launch_bounds__(THREAD_NUM) inline void OpSparseApplyFt
     float twoL2s = 2.0f * fL2s;
     float twoL2 = 2.0f * fL2;
 
-    // ---- Grid-Stride distributed pattern ----
-    uint64_t totalWork = static_cast<uint64_t>(totalElements);
     uint64_t uInnerSize = static_cast<uint64_t>(innerSize);
 
-    for (uint64_t workIdx = static_cast<uint64_t>(blockIdx.x) * THREAD_NUM + threadIdx.x; workIdx < totalWork;
-         workIdx += blockDim.x * gridDim.x) {
-        // ---- Coordinate decode (simple division) ----
-        uint64_t uRowIdx = workIdx / uInnerSize;
-        uint64_t col = workIdx % uInnerSize;
-
-        // ---- Bounds check: row index within M ----
-        if (static_cast<int64_t>(uRowIdx) >= M) {
-            continue;
+    for (uint64_t col = static_cast<uint64_t>(blockIdx.x) * THREAD_NUM + threadIdx.x; col < uInnerSize;
+         col += blockDim.x * gridDim.x) {
+        // ---- Phase A: copy this column to the output ports (keeps unindexed rows) ----
+        // Skipped when the runtime aliases outputs with inputs (in-place), where the
+        // copy would be an identity and pure redundant memory traffic.
+        if (copyNeeded != 0) {
+            for (int64_t r = 0; r < N; ++r) {
+                int64_t off = r * innerSize + static_cast<int64_t>(col);
+                outVar[off] = var[off];
+                outAccum[off] = accum[off];
+                outLinear[off] = linear[off];
+            }
         }
 
-        // ---- Index read and bounds check ----
-        IndexT varIdx = indices[uRowIdx];
-        if (varIdx < static_cast<IndexT>(0) || static_cast<int64_t>(varIdx) >= N) {
-            continue;
-        }
+        // ---- Phase B: ordered sparse update on the output column ----
+        for (int64_t i = 0; i < M; ++i) {
+            IndexT varIdx = indices[i];
+            if (varIdx < static_cast<IndexT>(0) || static_cast<int64_t>(varIdx) >= N) {
+                continue;
+            }
 
-        int64_t varOffset = static_cast<int64_t>(varIdx) * innerSize + static_cast<int64_t>(col);
-        int64_t gradOffset = static_cast<int64_t>(uRowIdx) * innerSize + static_cast<int64_t>(col);
+            int64_t varOffset = static_cast<int64_t>(varIdx) * innerSize + static_cast<int64_t>(col);
+            int64_t gradOffset = i * innerSize + static_cast<int64_t>(col);
 
-        // ---- Read and promote to float ----
-        float varVal = detail::ToFloat(var[varOffset]);
-        float accumVal = detail::ToFloat(accum[varOffset]);
-        float linearVal = detail::ToFloat(linear[varOffset]);
-        float gradVal = detail::ToFloat(grad[gradOffset]);
+            float varVal = detail::ToFloat(outVar[varOffset]);
+            float accumVal = detail::ToFloat(outAccum[varOffset]);
+            float linearVal = detail::ToFloat(outLinear[varOffset]);
+            float gradVal = detail::ToFloat(grad[gradOffset]);
 
-        // ---- Step 1: l2_shrinkage ----
-        float gradShrink = isL2sZero ? gradVal : fmaf(twoL2s, varVal, gradVal);
+            // ---- Step 1: l2_shrinkage ----
+            float gradShrink = isL2sZero ? gradVal : fmaf(twoL2s, varVal, gradVal);
 
-        // ---- Step 2: accum old power + update + new power ----
-        // Clamp accum to non-negative to prevent powf NaN from random test inputs
-        float safeAccumVal = fmaxf(accumVal, 0.0f);
-        float accumOldPow = isLrpNegHalf ? sqrtf(safeAccumVal) : powf(safeAccumVal, -fLrp);
+            // ---- Step 2: accum old power + update + new power ----
+            // Clamp accum to non-negative to prevent powf NaN from random test inputs
+            float safeAccumVal = fmaxf(accumVal, 0.0f);
+            float accumOldPow = isLrpNegHalf ? sqrtf(safeAccumVal) : powf(safeAccumVal, -fLrp);
 
-        float accumNew = accumVal + gradVal * gradVal;
+            float accumNew = accumVal + gradVal * gradVal;
 
-        // Also protect accumNew (should always be >= 0, but safety net)
-        float safeAccumNew = fmaxf(accumNew, 0.0f);
-        float accumNewPow = isLrpNegHalf ? sqrtf(safeAccumNew) : powf(safeAccumNew, -fLrp);
+            // Also protect accumNew (should always be >= 0, but safety net)
+            float safeAccumNew = fmaxf(accumNew, 0.0f);
+            float accumNewPow = isLrpNegHalf ? sqrtf(safeAccumNew) : powf(safeAccumNew, -fLrp);
 
-        // ---- Write accum (type-aware) ----
-        if constexpr (std::is_same_v<VarT, float>) {
-            accum[varOffset] = accumNew;
-        } else if constexpr (std::is_same_v<VarT, half>) {
-            accum[varOffset] = __float2half(accumNew);
-        } else {
-            accum[varOffset] = __float2bfloat16(accumNew);
-        }
+            if constexpr (std::is_same_v<VarT, float>) {
+                outAccum[varOffset] = accumNew;
+            } else if constexpr (std::is_same_v<VarT, half>) {
+                outAccum[varOffset] = __float2half(accumNew);
+            } else {
+                outAccum[varOffset] = __float2bfloat16(accumNew);
+            }
 
-        // ---- Step 3: delta and linear ----
-        float delta = (accumOldPow - accumNewPow) / fLr;
-        float linearNew = fmaf(delta, varVal, linearVal + gradShrink);
+            // ---- Step 3: delta and linear ----
+            float delta = (accumOldPow - accumNewPow) / fLr;
+            float linearNew = fmaf(delta, varVal, linearVal + gradShrink);
 
-        if constexpr (std::is_same_v<VarT, float>) {
-            linear[varOffset] = linearNew;
-        } else if constexpr (std::is_same_v<VarT, half>) {
-            linear[varOffset] = __float2half(linearNew);
-        } else {
-            linear[varOffset] = __float2bfloat16(linearNew);
-        }
+            if constexpr (std::is_same_v<VarT, float>) {
+                outLinear[varOffset] = linearNew;
+            } else if constexpr (std::is_same_v<VarT, half>) {
+                outLinear[varOffset] = __float2half(linearNew);
+            } else {
+                outLinear[varOffset] = __float2bfloat16(linearNew);
+            }
 
-        // ---- Step 4-5: L1 clamp ----
-        float l1Adjust = fminf(fL1, fmaxf(-fL1, linearNew));
-        float x = l1Adjust - linearNew;
+            // ---- Step 4-5: L1 clamp ----
+            float l1Adjust = fminf(fL1, fmaxf(-fL1, linearNew));
+            float x = l1Adjust - linearNew;
 
-        // ---- Step 6-7: var update ----
-        float powDivLr = isLrpNegHalf ? (sqrtf(safeAccumNew) / fLr) : (powf(safeAccumNew, -fLrp) / fLr);
-        float y = fmaf(twoL2, 1.0f, powDivLr);
-        float varNew = x / y;
+            // ---- Step 6-7: var update ----
+            float powDivLr = isLrpNegHalf ? (sqrtf(safeAccumNew) / fLr) : (powf(safeAccumNew, -fLrp) / fLr);
+            float y = fmaf(twoL2, 1.0f, powDivLr);
+            float varNew = x / y;
 
-        if constexpr (std::is_same_v<VarT, float>) {
-            var[varOffset] = varNew;
-        } else if constexpr (std::is_same_v<VarT, half>) {
-            var[varOffset] = __float2half(varNew);
-        } else {
-            var[varOffset] = __float2bfloat16(varNew);
+            if constexpr (std::is_same_v<VarT, float>) {
+                outVar[varOffset] = varNew;
+            } else if constexpr (std::is_same_v<VarT, half>) {
+                outVar[varOffset] = __float2half(varNew);
+            } else {
+                outVar[varOffset] = __float2bfloat16(varNew);
+            }
         }
     }
 }
@@ -166,21 +177,26 @@ __simt_vf__ __aicore__ __launch_bounds__(THREAD_NUM) inline void OpSparseApplyFt
 // ========== Process entry (scalar side) ==========
 template <typename VarT, typename IndexT>
 __aicore__ inline void Process(GM_ADDR var, GM_ADDR accum, GM_ADDR linear, GM_ADDR grad, GM_ADDR indices, GM_ADDR lr,
-                               GM_ADDR l1, GM_ADDR l2, GM_ADDR l2_shrinkage, GM_ADDR lr_power, GM_ADDR /*outVar*/,
-                               GM_ADDR /*outAccum*/, GM_ADDR /*outLinear*/, GM_ADDR workspace,
+                               GM_ADDR l1, GM_ADDR l2, GM_ADDR l2_shrinkage, GM_ADDR lr_power, GM_ADDR outVar,
+                               GM_ADDR outAccum, GM_ADDR outLinear, GM_ADDR workspace,
                                const SparseApplyFtrlV2TilingData* td)
 {
-    if (td->M == 0) {
+    if (td->innerSize == 0 || td->N == 0) {
         return;
     }
 
-    // Cast and launch VF (grid-stride mode: kernel uses blockIdx.x directly)
+    // If every output aliases its same-named input, the copy phase is an identity
+    // and can be skipped entirely (also avoids a needless single-core copy for M==0).
+    int32_t copyNeeded = (outVar == var && outAccum == accum && outLinear == linear) ? 0 : 1;
+
     asc_vf_call<OpSparseApplyFtrlV2SimtKernel<VarT, IndexT>>(
-        dim3(THREAD_NUM), td->totalElements, td->innerSize, td->N, td->M, reinterpret_cast<__gm__ VarT*>(var),
+        dim3(THREAD_NUM), td->innerSize, td->N, td->M, reinterpret_cast<__gm__ VarT*>(var),
         reinterpret_cast<__gm__ VarT*>(accum), reinterpret_cast<__gm__ VarT*>(linear),
         reinterpret_cast<__gm__ VarT*>(grad), reinterpret_cast<__gm__ IndexT*>(indices),
-        reinterpret_cast<__gm__ VarT*>(lr), reinterpret_cast<__gm__ VarT*>(l1), reinterpret_cast<__gm__ VarT*>(l2),
-        reinterpret_cast<__gm__ VarT*>(l2_shrinkage), reinterpret_cast<__gm__ VarT*>(lr_power));
+        reinterpret_cast<__gm__ VarT*>(outVar), reinterpret_cast<__gm__ VarT*>(outAccum),
+        reinterpret_cast<__gm__ VarT*>(outLinear), reinterpret_cast<__gm__ VarT*>(lr),
+        reinterpret_cast<__gm__ VarT*>(l1), reinterpret_cast<__gm__ VarT*>(l2),
+        reinterpret_cast<__gm__ VarT*>(l2_shrinkage), reinterpret_cast<__gm__ VarT*>(lr_power), copyNeeded);
 }
 
 } // namespace NsSparseApplyFtrlV2

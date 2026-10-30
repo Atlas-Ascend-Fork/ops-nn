@@ -78,10 +78,13 @@ $$
 
 ## 约束说明
 
-无
+- 输入 x 的维度上限为 8（rank ≤ 8，与 aclnn 接口一致）；超过 8 维时 InferShape 与 Tiling/GetWorkspaceSize 均拒绝执行。
+- 输入 x 的单个维度长度不超过 INT32_MAX；元素总数（各维度乘积）须在 int64 表示范围内，溢出时 Tiling 拒绝执行。
+- 标量（0 维）输入按 1 个元素处理，空张量（元素数为 0）直接返回。
 
 ## 调用说明
 
 | 调用方式 | 样例代码 | 说明 |
 | :--- | :--- | :--- |
-| aclnn接口 | [test_aclnn_softplus](./examples/test_aclnn_softplus.cpp) | 通过aclnnSoftplusGetWorkspaceSize、aclnnSoftplus接口调用SoftplusV2算子，接口说明参见[aclnnSoftplus](./docs/aclnnSoftplus.md)。 |
+| aclnn API | [test_aclnn_softplus](./examples/test_aclnn_softplus.cpp) | 通过aclnnSoftplusGetWorkspaceSize、aclnnSoftplus接口调用SoftplusV2算子，接口说明参见[aclnnSoftplus](./docs/aclnnSoftplus.md)。 |
+| GE图模式 | - | 通过[算子IR定义](./op_graph/softplus_v2_proto.h)中的REG_OP(SoftplusV2)构图调用SoftplusV2算子。 |

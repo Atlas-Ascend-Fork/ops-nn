@@ -40,9 +40,13 @@ namespace ge {
 *@par Outputs:
 *var: A ND Tensor. Must be one of the following types: float32, float16, bfloat16.
 *accum: A ND Tensor. Must be one of the following types: float32, float16, bfloat16.
-*linear: A ND Tensor. Must be one of the following types: float32, float16, bfloat16.
+*linear: A ND Tensor. Must be one of the following types: float32, float16, bfloat16. \n
+
+*@par Attributes:
+*@li use_locking: An optional bool. Defaults to "false". Whether to use locks for the update operations. \n
+
 *@par Third-party framework compatibility
-*Compatible with the TensorFlow operator ResourceSparseApplyFtrlV2.
+*Compatible with the TensorFlow operator SparseApplyFtrlV2.
 */
 #ifndef OPS_PROTO_DEF_SPARSEAPPLYFTRLV2
 #define OPS_PROTO_DEF_SPARSEAPPLYFTRLV2
