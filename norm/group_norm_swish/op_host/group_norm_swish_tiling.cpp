@@ -26,7 +26,11 @@ namespace optiling {
 static const uint64_t INPUT_IDX_X = 0;
 static const uint64_t INPUT_IDX_GAMMA = 1;
 static const uint64_t INPUT_IDX_BETA = 2;
+static const uint64_t OUTPUT_IDX_Y = 0;
+static const uint64_t OUTPUT_IDX_MEAN = 1;
+static const uint64_t OUTPUT_IDX_RSTD = 2;
 static const uint64_t X_SHAPE_MIN_LEN = 2;
+static const uint64_t X_SHAPE_MAX_LEN = 8;
 static const uint64_t ATTR_IDX_NUM_GROUPS = 0;
 static const uint64_t ATTR_IDX_EPSILON = 2;
 static const uint64_t ATTR_IDX_ACTIVATE_SWISH = 3;
@@ -110,9 +114,9 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
                 return ge::GRAPH_FAILED);
     auto xShape = xShapePtr->GetStorageShape();
     uint64_t xDims = xShape.GetDimNum();
-    OP_CHECK_IF((xDims < X_SHAPE_MIN_LEN),
+    OP_CHECK_IF((xDims < X_SHAPE_MIN_LEN || xDims > X_SHAPE_MAX_LEN),
                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xDims),
-                                                         "inputDims can't be smaller than 2."),
+                                                         "inputDims must be in range [2, 8]."),
                 return ge::GRAPH_FAILED);
     uint64_t channel = xShape.GetDim(DIM_1);
     // check gamma and beta
@@ -177,6 +181,48 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
                                                            " be consistent."),
                     return ge::GRAPH_FAILED);
     }
+    return ge::GRAPH_SUCCESS;
+}
+
+static ge::graphStatus CheckOutputParams(const gert::TilingContext* context)
+{
+    auto xShape = context->GetInputShape(INPUT_IDX_X)->GetStorageShape();
+    // check y: shape must be same as x
+    auto yShapePtr = context->GetOutputShape(OUTPUT_IDX_Y);
+    OP_CHECK_NULL_WITH_CONTEXT(context, yShapePtr);
+    auto yShape = yShapePtr->GetStorageShape();
+    std::string yReasonStr = "The shape of y must be the same as x, currently is " + Ops::Base::ToString(yShape) + ".";
+    OP_CHECK_IF(
+        (xShape != yShape),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "y", Ops::Base::ToString(yShape), yReasonStr),
+        return ge::GRAPH_FAILED);
+
+    // check mean and rstd: numel must be N * num_groups
+    // (kernel writes meanGm/rstdGm in range [0, N * num_groups); 1-D [N*G] and 2-D [N, G] are both accepted)
+    auto attrs = context->GetAttrs();
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    const int64_t* numGroups = attrs->GetAttrPointer<int64_t>(ATTR_IDX_NUM_GROUPS);
+    OP_CHECK_NULL_WITH_CONTEXT(context, numGroups);
+    uint64_t shapeN = xShape.GetDim(DIM_0);
+    auto meanShapePtr = context->GetOutputShape(OUTPUT_IDX_MEAN);
+    OP_CHECK_NULL_WITH_CONTEXT(context, meanShapePtr);
+    auto meanShape = meanShapePtr->GetStorageShape();
+    std::string meanReasonStr = "The numel of mean must be N * num_groups, currently is " +
+                                Ops::Base::ToString(meanShape) + ".";
+    OP_CHECK_IF((meanShape.GetShapeSize() != static_cast<int64_t>(shapeN * static_cast<uint64_t>(*numGroups))),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "mean", Ops::Base::ToString(meanShape),
+                                                      meanReasonStr),
+                return ge::GRAPH_FAILED);
+
+    auto rstdShapePtr = context->GetOutputShape(OUTPUT_IDX_RSTD);
+    OP_CHECK_NULL_WITH_CONTEXT(context, rstdShapePtr);
+    auto rstdShape = rstdShapePtr->GetStorageShape();
+    std::string rstdReasonStr = "The numel of rstd must be N * num_groups, currently is " +
+                                Ops::Base::ToString(rstdShape) + ".";
+    OP_CHECK_IF((rstdShape.GetShapeSize() != static_cast<int64_t>(shapeN * static_cast<uint64_t>(*numGroups))),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "rstd", Ops::Base::ToString(rstdShape),
+                                                      rstdReasonStr),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -334,6 +380,8 @@ static ge::graphStatus Tiling4GroupNormSwish(gert::TilingContext* context)
                 OP_LOGE_WITHOUT_REPORT(context, "InputParams is invalid."), return ge::GRAPH_FAILED);
     OP_CHECK_IF((CheckAttrParams(context) != ge::GRAPH_SUCCESS),
                 OP_LOGE_WITHOUT_REPORT(context, "AttrParams is invalid."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckOutputParams(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "OutputParams is invalid."), return ge::GRAPH_FAILED);
     // set TilingData
 
     SetAttrParams(context, tilingData);
