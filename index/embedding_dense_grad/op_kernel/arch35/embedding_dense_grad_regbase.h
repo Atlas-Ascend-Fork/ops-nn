@@ -28,6 +28,76 @@ using namespace EmbeddingDenseGradBase;
 
 constexpr int32_t NDDMA_DIM = 5;
 
+template <typename T, typename VGatherIndexDType>
+__simd_vf__ inline void DupSegmentProcessVf(__ubuf__ T* gradLocalAddr, __ubuf__ float* resBufBaseAddr,
+                                            __ubuf__ int32_t* noDupResAddr, __ubuf__ int32_t* noDupResProcessLoopAddr,
+                                            int64_t arNum, uint32_t gradFactorPerRowReal, uint32_t loopPerGradRow,
+                                            int32_t sclar0, GroupAddParams gradParams, uint32_t gradFactorPerRowAlign,
+                                            uint32_t vfLengthFp32, uint32_t perVfIndicesIdx)
+{
+    for (uint16_t i = 0; i < (uint16_t)arNum; ++i) {
+        Reg::RegTensor<int32_t> serReg, serRegBase;
+
+        Reg::Arange(serRegBase, sclar0);
+
+        gradParams.segCount = static_cast<uint32_t>(noDupResAddr[i]);
+        gradParams.loopSegCount = static_cast<uint32_t>(noDupResProcessLoopAddr[i]);
+        gradParams.loopSegCoutTail = gradParams.segCount - gradParams.loopSegCount * PROCESS_GROUP;
+        gradParams.ubOutOffset = 0;
+        uint32_t colCount = gradFactorPerRowReal;
+        __ubuf__ float* resBufAddr = resBufBaseAddr + i * gradFactorPerRowAlign;
+
+        for (uint16_t j = 0; j < (uint16_t)loopPerGradRow; ++j) {
+            Reg::MaskReg maskRegUpdate = Reg::UpdateMask<uint32_t>(colCount);
+            Reg::Adds(serReg, serRegBase, perVfIndicesIdx * j, maskRegUpdate);
+            ProcessPerGradGroup<T, float, VGatherIndexDType>(gradLocalAddr, resBufAddr, maskRegUpdate, serReg,
+                                                             gradParams);
+            gradParams.ubOutOffset = gradParams.ubOutOffset + vfLengthFp32;
+        }
+        gradParams.gradWeightGmindex = gradParams.segCount + gradParams.gradWeightGmindex;
+    }
+}
+
+template <typename U>
+__simd_vf__ inline void PrepareFreqBeforeCopyToWsVf(__ubuf__ U* resultAddr, __ubuf__ int32_t* noDupResAddr,
+                                                    uint16_t loopNum, uint32_t uniqueIndexNum, int32_t interval,
+                                                    uint32_t resultOffset, uint32_t perVfIndicesIdx)
+{
+    Reg::RegTensor<int32_t> freqReg, indexDstReg;
+    Reg::MaskReg maskFull = Reg::CreateMask<int32_t, AscendC::Reg::MaskPattern::ALL>();
+    Reg::Arange(indexDstReg, (int32_t)0);
+    Reg::Muls(indexDstReg, indexDstReg, interval, maskFull);
+
+    for (uint16_t i = 0; i < loopNum; ++i) {
+        Reg::MaskReg mask = Reg::UpdateMask<uint32_t>(uniqueIndexNum);
+        Reg::LoadAlign<int32_t, Reg::PostLiteral::POST_MODE_UPDATE>(freqReg, noDupResAddr, perVfIndicesIdx);
+        Reg::Scatter(resultAddr, freqReg, (Reg::RegTensor<uint32_t>&)indexDstReg, mask);
+
+        resultAddr = resultAddr + resultOffset;
+    }
+}
+
+template <typename T>
+__simd_vf__ inline void ExecGradConvertVf(__ubuf__ float* gradFp32BaseAddr, __ubuf__ T* resBufBaseAddr,
+                                          uint32_t indicesNum, uint32_t gradPerRowNum, uint16_t loopPerRow,
+                                          uint32_t gradPerRowAlign, uint32_t resultPerRowAlign, uint32_t vfLengthFp32)
+{
+    Reg::RegTensor<float> srcReg;
+    Reg::MaskReg maskUpdate;
+    for (uint16_t i = 0; i < static_cast<uint16_t>(indicesNum); i++) {
+        uint32_t colCount = gradPerRowNum;
+        __ubuf__ float* gradFp32Addr = gradFp32BaseAddr + i * gradPerRowAlign;
+        __ubuf__ T* resBufAddr = resBufBaseAddr + i * resultPerRowAlign;
+        uint32_t offset = 0;
+        for (uint16_t j = 0; j < loopPerRow; j++) {
+            maskUpdate = Reg::UpdateMask<int32_t>(colCount);
+            ops_vf::LoadOneTensorForDtypeT(gradFp32Addr, srcReg, maskUpdate, offset);
+            ops_vf::StoreOneTensorForDtypeT(resBufAddr, srcReg, maskUpdate, offset);
+            offset = offset + vfLengthFp32;
+        }
+    }
+}
+
 template <typename T, typename U, typename VGatherIndexDType>
 class KernelEmbeddingDenseGrad : public EmbeddingDenseGradProcessIndices<U> {
 public:
@@ -169,6 +239,8 @@ public:
         __ubuf__ T* gradLocalAddr = (__ubuf__ T*)gradLocal.GetPhyAddr();
         __ubuf__ float* resBufAddr = (__ubuf__ float*)resLocal.GetPhyAddr();
         __ubuf__ float* resBufBaseAddr = resBufAddr;
+        __ubuf__ int32_t* noDupResAddr = (__ubuf__ int32_t*)noDupRes.GetPhyAddr();
+        __ubuf__ int32_t* noDupResProcessLoopAddr = (__ubuf__ int32_t*)noDupResProcessLoop.GetPhyAddr();
 
         int32_t sclar0 = 0;
 
@@ -182,30 +254,9 @@ public:
         gradParams.sortedIndiceIndexAddr = (__ubuf__ uint32_t*)sortedIndiceIndex.GetPhyAddr();
         gradParams.ubOutOffset = 0;
 
-        __VEC_SCOPE__
-        {
-            for (uint16_t i = 0; i < (uint16_t)arNum; ++i) {
-                Reg::RegTensor<int32_t> serReg, serRegBase;
-
-                Reg::Arange(serRegBase, sclar0);
-
-                gradParams.segCount = static_cast<uint32_t>(noDupRes(i));
-                gradParams.loopSegCount = static_cast<uint32_t>(noDupResProcessLoop(i));
-                gradParams.loopSegCoutTail = gradParams.segCount - gradParams.loopSegCount * PROCESS_GROUP;
-                gradParams.ubOutOffset = 0;
-                colCount = gradFactorPerRowReal;
-                resBufAddr = resBufBaseAddr + i * gradFactorPerRowAlign_;
-
-                for (uint16_t j = 0; j < (uint16_t)loopPerGradRow; ++j) {
-                    Reg::MaskReg maskRegUpdate = Reg::UpdateMask<uint32_t>(colCount);
-                    Reg::Adds(serReg, serRegBase, perVfIndicesIdx_ * j, maskRegUpdate);
-                    this->template ProcessPerGradGroup<T, float, VGatherIndexDType>(gradLocalAddr, resBufAddr,
-                                                                                    maskRegUpdate, serReg, gradParams);
-                    gradParams.ubOutOffset = gradParams.ubOutOffset + vfLengthFp32_;
-                }
-                gradParams.gradWeightGmindex = gradParams.segCount + gradParams.gradWeightGmindex;
-            }
-        }
+        DupSegmentProcessVf<T, VGatherIndexDType>(gradLocalAddr, resBufBaseAddr, noDupResAddr, noDupResProcessLoopAddr,
+                                                  arNum, gradFactorPerRowReal, loopPerGradRow, sclar0, gradParams,
+                                                  gradFactorPerRowAlign_, vfLengthFp32_, perVfIndicesIdx_);
         inQueueGrad.FreeTensor<T>(gradLocal);
         outQueueRes_.EnQue(resLocal);
     }
@@ -256,21 +307,8 @@ public:
         int32_t interval = b32AlignNum_;
         uint32_t resultOffset = static_cast<uint32_t>(interval) * perVfIndicesIdx_;
 
-        __VEC_SCOPE__
-        {
-            Reg::RegTensor<int32_t> freqReg, indexDstReg;
-            Reg::MaskReg maskFull = Reg::CreateMask<int32_t, AscendC::Reg::MaskPattern::ALL>();
-            Reg::Arange(indexDstReg, (int32_t)0);
-            Reg::Muls(indexDstReg, indexDstReg, interval, maskFull);
-
-            for (uint16_t i = 0; i < loopNum; ++i) {
-                Reg::MaskReg mask = Reg::UpdateMask<uint32_t>(uniqueIndexNum);
-                Reg::LoadAlign<int32_t, Reg::PostLiteral::POST_MODE_UPDATE>(freqReg, noDupResAddr, perVfIndicesIdx_);
-                Reg::Scatter(resultAddr, freqReg, (Reg::RegTensor<uint32_t>&)indexDstReg, mask);
-
-                resultAddr = resultAddr + resultOffset;
-            }
-        }
+        PrepareFreqBeforeCopyToWsVf(resultAddr, noDupResAddr, loopNum, uniqueIndexNum, interval, resultOffset,
+                                    perVfIndicesIdx_);
 
         outQueueRes_.EnQue<U>(resLocal);
     }
@@ -350,23 +388,8 @@ public:
         uint32_t gradPerRowAlign = ops::CeilAlign(gradPerRowNum, b32AlignNum_);
         uint32_t resultPerRowAlign = baseACastAlign_;
 
-        __VEC_SCOPE__
-        {
-            Reg::RegTensor<float> srcReg;
-            Reg::MaskReg maskUpdate;
-            for (uint16_t i = 0; i < static_cast<uint16_t>(indicesNum); i++) {
-                uint32_t colCount = gradPerRowNum;
-                __ubuf__ float* gradFp32Addr = gradFp32BaseAddr + i * gradPerRowAlign;
-                __ubuf__ T* resBufAddr = resBufBaseAddr + i * resultPerRowAlign;
-                uint32_t offset = 0;
-                for (uint16_t j = 0; j < loopPerRow; j++) {
-                    maskUpdate = Reg::UpdateMask<int32_t>(colCount);
-                    ops::LoadOneTensorForDtypeT(gradFp32Addr, srcReg, maskUpdate, offset);
-                    ops::StoreOneTensorForDtypeT(resBufAddr, srcReg, maskUpdate, offset);
-                    offset = offset + vfLengthFp32_;
-                }
-            }
-        }
+        ExecGradConvertVf(gradFp32BaseAddr, resBufBaseAddr, indicesNum, gradPerRowNum, loopPerRow, gradPerRowAlign,
+                          resultPerRowAlign, vfLengthFp32_);
 
         outQueueGradWeight.EnQue<T>(gradOutLocal);
         inQueueGrad.FreeTensor(gradFp32Local);

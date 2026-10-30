@@ -26,6 +26,36 @@ using namespace AscendC;
 using namespace ops;
 using namespace EmbeddingDenseGradBase;
 
+template <typename T, typename VGatherIndexDType, bool isScale>
+__simd_vf__ inline void ComputeGradSumVf(__ubuf__ T* gradLocalAddr, __ubuf__ T* resBufBaseAddr,
+                                         __ubuf__ int32_t* noDupResAddr, __ubuf__ int32_t* noDupResProcessLoopAddr,
+                                         int64_t arNum, uint32_t gradPerRowNum, uint32_t loopPerGradRow, int32_t sclar0,
+                                         GroupAddParams gradParams, uint32_t gradFactorPerRowAlign,
+                                         uint32_t vfLengthFp32, uint32_t perVfIndicesIdx)
+{
+    for (uint16_t i = 0; i < (uint16_t)arNum; ++i) {
+        Reg::RegTensor<int32_t> serReg;
+        Reg::RegTensor<int32_t> serRegBase;
+
+        Reg::Arange(serRegBase, sclar0);
+
+        gradParams.segCount = static_cast<uint32_t>(noDupResAddr[i]);
+        gradParams.loopSegCount = static_cast<uint32_t>(noDupResProcessLoopAddr[i]);
+        gradParams.loopSegCoutTail = gradParams.segCount - gradParams.loopSegCount * PROCESS_GROUP;
+        gradParams.ubOutOffset = 0;
+        uint32_t colCount = gradPerRowNum;
+        __ubuf__ T* resBufAddr = resBufBaseAddr + i * gradFactorPerRowAlign;
+        for (uint16_t j = 0; j < (uint16_t)loopPerGradRow; ++j) {
+            Reg::MaskReg maskRegUpdate = Reg::UpdateMask<uint32_t>(colCount);
+            Reg::Adds(serReg, serRegBase, perVfIndicesIdx * j, maskRegUpdate);
+            ProcessPerGradGroup<T, T, VGatherIndexDType, true, isScale>(gradLocalAddr, resBufAddr, maskRegUpdate,
+                                                                        serReg, gradParams);
+            gradParams.ubOutOffset = gradParams.ubOutOffset + vfLengthFp32;
+        }
+        gradParams.gradWeightGmindex = gradParams.segCount + gradParams.gradWeightGmindex;
+    }
+}
+
 template <typename T, typename U, typename VGatherIndexDType, bool isScale>
 class KernelEmbeddingDenseGradFullLoad : public EmbeddingDenseGradProcessIndices<U> {
 public:
@@ -103,6 +133,8 @@ public:
         __ubuf__ T* gradLocalAddr = (__ubuf__ T*)gradLocal.GetPhyAddr();
         __ubuf__ T* resBufAddr = (__ubuf__ T*)resLocal.GetPhyAddr();
         __ubuf__ T* resBufBaseAddr = resBufAddr;
+        __ubuf__ int32_t* noDupResAddr = (__ubuf__ int32_t*)noDupRes.GetPhyAddr();
+        __ubuf__ int32_t* noDupResProcessLoopAddr = (__ubuf__ int32_t*)noDupResProcessLoop.GetPhyAddr();
 
         int32_t sclar0 = 0;
 
@@ -116,30 +148,9 @@ public:
         gradParams.sortedIndiceIndexAddr = (__ubuf__ uint32_t*)sortedIndiceIndex.GetPhyAddr();
         gradParams.ubOutOffset = 0;
 
-        __VEC_SCOPE__
-        {
-            for (uint16_t i = 0; i < (uint16_t)arNum; ++i) {
-                Reg::RegTensor<int32_t> serReg;
-                Reg::RegTensor<int32_t> serRegBase;
-
-                Reg::Arange(serRegBase, sclar0);
-
-                gradParams.segCount = static_cast<uint32_t>(noDupRes(i));
-                gradParams.loopSegCount = static_cast<uint32_t>(noDupResProcessLoop(i));
-                gradParams.loopSegCoutTail = gradParams.segCount - gradParams.loopSegCount * PROCESS_GROUP;
-                gradParams.ubOutOffset = 0;
-                colCount = gradPerRowNum;
-                resBufAddr = resBufBaseAddr + i * gradFactorPerRowAlign_;
-                for (uint16_t j = 0; j < (uint16_t)loopPerGradRow; ++j) {
-                    Reg::MaskReg maskRegUpdate = Reg::UpdateMask<uint32_t>(colCount);
-                    Reg::Adds(serReg, serRegBase, perVfIndicesIdx_ * j, maskRegUpdate);
-                    this->template ProcessPerGradGroup<T, T, VGatherIndexDType, true, isScale>(
-                        gradLocalAddr, resBufAddr, maskRegUpdate, serReg, gradParams);
-                    gradParams.ubOutOffset = gradParams.ubOutOffset + vfLengthFp32_;
-                }
-                gradParams.gradWeightGmindex = gradParams.segCount + gradParams.gradWeightGmindex;
-            }
-        }
+        ComputeGradSumVf<T, VGatherIndexDType, isScale>(
+            gradLocalAddr, resBufBaseAddr, noDupResAddr, noDupResProcessLoopAddr, arNum, gradPerRowNum, loopPerGradRow,
+            sclar0, gradParams, gradFactorPerRowAlign_, vfLengthFp32_, perVfIndicesIdx_);
         inQueueGrad_.FreeTensor<T>(gradLocal);
         outQueueRes_.EnQue(resLocal);
     }

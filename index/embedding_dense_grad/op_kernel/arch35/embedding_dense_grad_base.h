@@ -64,6 +64,70 @@ typedef struct {
 } GroupAddParams;
 
 template <typename U>
+__simd_vf__ inline void UniqueGetElmVf(__ubuf__ U* sortedIndicesAddr, __ubuf__ int32_t* noDupResAddr, uint16_t loopCnt,
+                                       int32_t scalar, uint32_t counter, uint32_t vfIndicesNum, uint32_t shiftOffset)
+{
+    AscendC::Reg::RegTensor<int32_t> orderReg;
+    AscendC::Reg::RegTensor<int32_t> selReg;
+    AscendC::Reg::RegTensor<U> indicesReg;
+    AscendC::Reg::RegTensor<U> indicesShiftOneReg;
+
+    AscendC::Reg::MaskReg cmpMask;
+    AscendC::Reg::MaskReg maskRegUpdate;
+    AscendC::Reg::UnalignRegForLoad u0;
+    Reg::UnalignRegForStore ureg;
+    AscendC::Reg::ClearSpr<AscendC::SpecialPurposeReg::AR>();
+
+    for (uint16_t i = 0; i < loopCnt; ++i) {
+        scalar = i * vfIndicesNum;
+        auto sortedIndicesAddrUpdate = sortedIndicesAddr + shiftOffset + i * vfIndicesNum;
+        AscendC::Reg::Arange(orderReg, scalar);
+        maskRegUpdate = AscendC::Reg::UpdateMask<U>(counter);
+        AscendC::Reg::LoadAlign(indicesReg, sortedIndicesAddrUpdate);
+        AscendC::Reg::LoadUnAlignPre(u0, sortedIndicesAddrUpdate - 1);
+        AscendC::Reg::LoadUnAlign<U>(indicesShiftOneReg, u0, sortedIndicesAddrUpdate - 1);
+        AscendC::Reg::Compare<U, CMPMODE::NE>(cmpMask, indicesReg, indicesShiftOneReg, maskRegUpdate);
+        if constexpr (IsSameType<U, int64_t>::value) {
+            AscendC::Reg::MaskReg maskHalf;
+            AscendC::Reg::Pack<AscendC::Reg::HighLowPart::LOWEST>(maskHalf, cmpMask);
+            // vSQZ
+            AscendC::Reg::Squeeze<int32_t, AscendC::Reg::GatherMaskMode::STORE_REG>(selReg, orderReg, maskHalf);
+        } else {
+            // vSQZ
+            AscendC::Reg::Squeeze<int32_t, AscendC::Reg::GatherMaskMode::STORE_REG>(selReg, orderReg, cmpMask);
+        }
+        AscendC::Reg::StoreUnAlign<int32_t, AscendC::Reg::PostLiteral::POST_MODE_UPDATE>(noDupResAddr, selReg, ureg);
+        AscendC::Reg::StoreUnAlignPost(noDupResAddr, ureg);
+    }
+}
+
+__simd_vf__ inline void UniqueStatVf(__ubuf__ int32_t* noDupResAddr, __ubuf__ int32_t* noDupResProcessLoopAddr,
+                                     uint16_t loopCntStatFre, uint32_t counterStatFre, uint32_t perVfIndicesIdx)
+{
+    AscendC::Reg::RegTensor<int32_t> beginReg;
+    AscendC::Reg::RegTensor<int32_t> endReg;
+    AscendC::Reg::RegTensor<int32_t> subReg;
+    AscendC::Reg::RegTensor<int32_t> divReg, allFiveReg;
+    AscendC::Reg::MaskReg maskRegUpdate;
+    AscendC::Reg::UnalignRegForLoad u0;
+    AscendC::Reg::MaskReg maskRegFull = AscendC::Reg::CreateMask<int32_t, AscendC::Reg::MaskPattern::ALL>();
+
+    Duplicate(allFiveReg, static_cast<int32_t>(PROCESS_GROUP),
+              maskRegFull); // Abs before reducemax, scaleReg >= 0
+    for (uint16_t i = 0; i < loopCntStatFre; i++) {
+        auto noDupResAddrUpdate = noDupResAddr + i * perVfIndicesIdx + 1;
+        maskRegUpdate = AscendC::Reg::UpdateMask<int32_t>(counterStatFre);
+        AscendC::Reg::LoadAlign(beginReg, noDupResAddr + i * perVfIndicesIdx);
+        AscendC::Reg::LoadUnAlignPre(u0, noDupResAddrUpdate);
+        AscendC::Reg::LoadUnAlign<int32_t>(endReg, u0, noDupResAddrUpdate);
+        AscendC::Reg::Sub(subReg, endReg, beginReg, maskRegUpdate);
+        AscendC::Reg::Div(divReg, subReg, allFiveReg, maskRegUpdate);
+        AscendC::Reg::StoreAlign(noDupResAddr + i * perVfIndicesIdx, subReg, maskRegUpdate);
+        AscendC::Reg::StoreAlign(noDupResProcessLoopAddr + i * perVfIndicesIdx, divReg, maskRegUpdate);
+    }
+}
+
+template <typename U>
 class EmbeddingDenseGradProcessIndices {
 public:
     static constexpr uint32_t vfIndicesNum_ = platform::GetVRegSize() / sizeof(U);
@@ -117,42 +181,7 @@ public:
 
         int32_t scalar = 0;
         uint32_t counter = indicesFactorReal + 1;
-        __VEC_SCOPE__
-        {
-            AscendC::Reg::RegTensor<int32_t> orderReg;
-            AscendC::Reg::RegTensor<int32_t> selReg;
-            AscendC::Reg::RegTensor<U> indicesReg;
-            AscendC::Reg::RegTensor<U> indicesShiftOneReg;
-
-            AscendC::Reg::MaskReg cmpMask;
-            AscendC::Reg::MaskReg maskRegUpdate;
-            AscendC::Reg::UnalignRegForLoad u0;
-            Reg::UnalignRegForStore ureg;
-            AscendC::Reg::ClearSpr<AscendC::SpecialPurposeReg::AR>();
-
-            for (uint16_t i = 0; i < loopCnt; ++i) {
-                scalar = i * vfIndicesNum_;
-                auto sortedIndicesAddrUpdate = sortedIndicesAddr + shiftOffset_ + i * vfIndicesNum_;
-                AscendC::Reg::Arange(orderReg, scalar);
-                maskRegUpdate = AscendC::Reg::UpdateMask<U>(counter);
-                AscendC::Reg::LoadAlign(indicesReg, sortedIndicesAddrUpdate);
-                AscendC::Reg::LoadUnAlignPre(u0, sortedIndicesAddrUpdate - 1);
-                AscendC::Reg::LoadUnAlign<U>(indicesShiftOneReg, u0, sortedIndicesAddrUpdate - 1);
-                AscendC::Reg::Compare<U, CMPMODE::NE>(cmpMask, indicesReg, indicesShiftOneReg, maskRegUpdate);
-                if constexpr (IsSameType<U, int64_t>::value) {
-                    AscendC::Reg::MaskReg maskHalf;
-                    AscendC::Reg::Pack<AscendC::Reg::HighLowPart::LOWEST>(maskHalf, cmpMask);
-                    // vSQZ
-                    AscendC::Reg::Squeeze<int32_t, AscendC::Reg::GatherMaskMode::STORE_REG>(selReg, orderReg, maskHalf);
-                } else {
-                    // vSQZ
-                    AscendC::Reg::Squeeze<int32_t, AscendC::Reg::GatherMaskMode::STORE_REG>(selReg, orderReg, cmpMask);
-                }
-                AscendC::Reg::StoreUnAlign<int32_t, AscendC::Reg::PostLiteral::POST_MODE_UPDATE>(noDupResAddr, selReg,
-                                                                                                 ureg);
-                AscendC::Reg::StoreUnAlignPost(noDupResAddr, ureg);
-            }
-        }
+        UniqueGetElmVf(sortedIndicesAddr, noDupResAddr, loopCnt, scalar, counter, vfIndicesNum_, shiftOffset_);
     }
 
     __aicore__ inline void UniqueStat(LocalTensor<int32_t>& noDupRes, int64_t& arNum)
@@ -164,30 +193,7 @@ public:
 
         uint16_t loopCntStatFre = (arNum + perVfIndicesIdx_ - 1) / perVfIndicesIdx_;
         uint32_t counterStatFre = static_cast<uint32_t>(arNum);
-        __VEC_SCOPE__
-        {
-            AscendC::Reg::RegTensor<int32_t> beginReg;
-            AscendC::Reg::RegTensor<int32_t> endReg;
-            AscendC::Reg::RegTensor<int32_t> subReg;
-            AscendC::Reg::RegTensor<int32_t> divReg, allFiveReg;
-            AscendC::Reg::MaskReg maskRegUpdate;
-            AscendC::Reg::UnalignRegForLoad u0;
-            AscendC::Reg::MaskReg maskRegFull = AscendC::Reg::CreateMask<int32_t, AscendC::Reg::MaskPattern::ALL>();
-
-            Duplicate(allFiveReg, static_cast<int32_t>(PROCESS_GROUP),
-                      maskRegFull); // Abs before reducemax, scaleReg >= 0
-            for (uint16_t i = 0; i < loopCntStatFre; i++) {
-                auto noDupResAddrUpdate = noDupResAddr + i * perVfIndicesIdx_ + 1;
-                maskRegUpdate = AscendC::Reg::UpdateMask<int32_t>(counterStatFre);
-                AscendC::Reg::LoadAlign(beginReg, noDupResAddr + i * perVfIndicesIdx_);
-                AscendC::Reg::LoadUnAlignPre(u0, noDupResAddrUpdate);
-                AscendC::Reg::LoadUnAlign<int32_t>(endReg, u0, noDupResAddrUpdate);
-                AscendC::Reg::Sub(subReg, endReg, beginReg, maskRegUpdate);
-                AscendC::Reg::Div(divReg, subReg, allFiveReg, maskRegUpdate);
-                AscendC::Reg::StoreAlign(noDupResAddr + i * perVfIndicesIdx_, subReg, maskRegUpdate);
-                AscendC::Reg::StoreAlign(noDupResProcessLoopAddr + i * perVfIndicesIdx_, divReg, maskRegUpdate);
-            }
-        }
+        UniqueStatVf(noDupResAddr, noDupResProcessLoopAddr, loopCntStatFre, counterStatFre, perVfIndicesIdx_);
 
         event_t eventV_S = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
         SetFlag<HardEvent::V_S>(eventV_S);
@@ -217,55 +223,31 @@ public:
 
         inQueueIndice_.FreeTensor(indicesLocal);
     }
+};
 
-    template <typename srcDtype, typename resDtype, typename VGatherIndexDType, bool isFullLoad = false,
-              bool isScale = false>
-    __aicore__ inline void ProcessPerGradGroup(__ubuf__ srcDtype* gradLocalAddr, __ubuf__ resDtype* resBufAddr,
-                                               Reg::MaskReg& maskRegUpdate, Reg::RegTensor<int32_t>& serReg,
-                                               GroupAddParams& params)
-    {
-        Reg::RegTensor<VGatherIndexDType> initIdsReg, idsReg;
-        Reg::RegTensor<srcDtype> gatherOut;
-        Reg::RegTensor<float> gatherOutB32, weightReg, tmpWeightReg;
-        Reg::MaskReg maskReg = Reg::CreateMask<float, Reg::MaskPattern::ALL>();
+template <typename srcDtype, typename resDtype, typename VGatherIndexDType, bool isFullLoad = false,
+          bool isScale = false>
+__simd_callee__ inline void ProcessPerGradGroup(__ubuf__ srcDtype* gradLocalAddr, __ubuf__ resDtype* resBufAddr,
+                                                Reg::MaskReg& maskRegUpdate, Reg::RegTensor<int32_t>& serReg,
+                                                GroupAddParams& params)
+{
+    Reg::RegTensor<VGatherIndexDType> initIdsReg, idsReg;
+    Reg::RegTensor<srcDtype> gatherOut;
+    Reg::RegTensor<float> gatherOutB32, weightReg, tmpWeightReg;
+    Reg::MaskReg maskReg = Reg::CreateMask<float, Reg::MaskPattern::ALL>();
 
-        Reg::Duplicate(weightReg, (float)0, maskReg);
-        // Main
-        for (uint16_t pGIdx = 0; pGIdx < params.loopSegCount; ++pGIdx) {
-            Reg::Duplicate(tmpWeightReg, (float)0, maskReg);
-            for (uint16_t pIdx = 0; pIdx < (uint16_t)PROCESS_GROUP; ++pIdx) {
-                // vlds
-                Reg::LoadAlign<uint32_t, Reg::LoadDist::DIST_BRC_B32>(
-                    (Reg::RegTensor<uint32_t>&)initIdsReg,
-                    params.sortedIndiceIndexAddr + (params.gradWeightGmindex + PROCESS_GROUP * pGIdx + pIdx));
-                Reg::Muls(idsReg, initIdsReg, params.gradPerRowNum, maskRegUpdate);
-                Reg::Add(idsReg, (Reg::RegTensor<VGatherIndexDType>&)serReg, idsReg, maskRegUpdate);
-                Reg::Gather(gatherOut, gradLocalAddr, idsReg, maskRegUpdate);
-                if constexpr (is_same<half, srcDtype>::value) {
-                    Cast<float, half, EmbeddingDenseGradBase::castTraitB162B32>(gatherOutB32, gatherOut, maskRegUpdate);
-                    Reg::Add(tmpWeightReg, tmpWeightReg, gatherOutB32, maskRegUpdate);
-                } else if constexpr (is_same<bfloat16_t, srcDtype>::value) {
-                    Cast<float, bfloat16_t, EmbeddingDenseGradBase::castTraitB162B32>(gatherOutB32, gatherOut,
-                                                                                      maskRegUpdate);
-                    Reg::Add(tmpWeightReg, tmpWeightReg, gatherOutB32, maskRegUpdate);
-                } else {
-                    Reg::Add(tmpWeightReg, tmpWeightReg, gatherOut, maskRegUpdate);
-                }
-            }
-            Reg::Add(weightReg, weightReg, tmpWeightReg, maskRegUpdate);
-        }
-
+    Reg::Duplicate(weightReg, (float)0, maskReg);
+    // Main
+    for (uint16_t pGIdx = 0; pGIdx < params.loopSegCount; ++pGIdx) {
         Reg::Duplicate(tmpWeightReg, (float)0, maskReg);
-        __ubuf__ uint32_t* sortedIndicesIndexTailAddr = params.sortedIndiceIndexAddr + params.gradWeightGmindex +
-                                                        params.loopSegCount * PROCESS_GROUP;
-        // Tail
-        for (uint16_t pIdxTail = 0; pIdxTail < params.loopSegCoutTail; ++pIdxTail) {
+        for (uint16_t pIdx = 0; pIdx < (uint16_t)PROCESS_GROUP; ++pIdx) {
             // vlds
-            Reg::LoadAlign<uint32_t, Reg::LoadDist::DIST_BRC_B32>((Reg::RegTensor<uint32_t>&)initIdsReg,
-                                                                  sortedIndicesIndexTailAddr + pIdxTail);
-            Reg::Muls(initIdsReg, initIdsReg, params.gradPerRowNum, maskRegUpdate);
-            Reg::Add(initIdsReg, (Reg::RegTensor<VGatherIndexDType>&)serReg, initIdsReg, maskRegUpdate);
-            Reg::Gather(gatherOut, gradLocalAddr, initIdsReg, maskRegUpdate);
+            Reg::LoadAlign<uint32_t, Reg::LoadDist::DIST_BRC_B32>(
+                (Reg::RegTensor<uint32_t>&)initIdsReg,
+                params.sortedIndiceIndexAddr + (params.gradWeightGmindex + PROCESS_GROUP * pGIdx + pIdx));
+            Reg::Muls(idsReg, initIdsReg, params.gradPerRowNum, maskRegUpdate);
+            Reg::Add(idsReg, (Reg::RegTensor<VGatherIndexDType>&)serReg, idsReg, maskRegUpdate);
+            Reg::Gather(gatherOut, gradLocalAddr, idsReg, maskRegUpdate);
             if constexpr (is_same<half, srcDtype>::value) {
                 Cast<float, half, EmbeddingDenseGradBase::castTraitB162B32>(gatherOutB32, gatherOut, maskRegUpdate);
                 Reg::Add(tmpWeightReg, tmpWeightReg, gatherOutB32, maskRegUpdate);
@@ -277,23 +259,46 @@ public:
                 Reg::Add(tmpWeightReg, tmpWeightReg, gatherOut, maskRegUpdate);
             }
         }
-
         Reg::Add(weightReg, weightReg, tmpWeightReg, maskRegUpdate);
+    }
 
-        if constexpr (isFullLoad) {
-            if constexpr (isScale) {
-                Reg::RegTensor<int32_t> scaleFreqInt;
-                Reg::RegTensor<float> scaleFreqReg;
-                Reg::Duplicate(scaleFreqInt, static_cast<int32_t>(params.segCount), maskReg);
-                Reg::Cast<float, int32_t, EmbeddingDenseGradBase::castTraitI32F32>(scaleFreqReg, scaleFreqInt, maskReg);
-                Reg::Div(weightReg, weightReg, scaleFreqReg, maskRegUpdate);
-            }
-            ops::StoreOneTensorForDtypeT<resDtype>(resBufAddr, weightReg, maskRegUpdate, params.ubOutOffset);
+    Reg::Duplicate(tmpWeightReg, (float)0, maskReg);
+    __ubuf__ uint32_t* sortedIndicesIndexTailAddr = params.sortedIndiceIndexAddr + params.gradWeightGmindex +
+                                                    params.loopSegCount * PROCESS_GROUP;
+    // Tail
+    for (uint16_t pIdxTail = 0; pIdxTail < params.loopSegCoutTail; ++pIdxTail) {
+        // vlds
+        Reg::LoadAlign<uint32_t, Reg::LoadDist::DIST_BRC_B32>((Reg::RegTensor<uint32_t>&)initIdsReg,
+                                                              sortedIndicesIndexTailAddr + pIdxTail);
+        Reg::Muls(initIdsReg, initIdsReg, params.gradPerRowNum, maskRegUpdate);
+        Reg::Add(initIdsReg, (Reg::RegTensor<VGatherIndexDType>&)serReg, initIdsReg, maskRegUpdate);
+        Reg::Gather(gatherOut, gradLocalAddr, initIdsReg, maskRegUpdate);
+        if constexpr (is_same<half, srcDtype>::value) {
+            Cast<float, half, EmbeddingDenseGradBase::castTraitB162B32>(gatherOutB32, gatherOut, maskRegUpdate);
+            Reg::Add(tmpWeightReg, tmpWeightReg, gatherOutB32, maskRegUpdate);
+        } else if constexpr (is_same<bfloat16_t, srcDtype>::value) {
+            Cast<float, bfloat16_t, EmbeddingDenseGradBase::castTraitB162B32>(gatherOutB32, gatherOut, maskRegUpdate);
+            Reg::Add(tmpWeightReg, tmpWeightReg, gatherOutB32, maskRegUpdate);
         } else {
-            Reg::StoreAlign(((__ubuf__ float*)resBufAddr + params.ubOutOffset), weightReg, maskRegUpdate);
+            Reg::Add(tmpWeightReg, tmpWeightReg, gatherOut, maskRegUpdate);
         }
     }
-};
+
+    Reg::Add(weightReg, weightReg, tmpWeightReg, maskRegUpdate);
+
+    if constexpr (isFullLoad) {
+        if constexpr (isScale) {
+            Reg::RegTensor<int32_t> scaleFreqInt;
+            Reg::RegTensor<float> scaleFreqReg;
+            Reg::Duplicate(scaleFreqInt, static_cast<int32_t>(params.segCount), maskReg);
+            Reg::Cast<float, int32_t, EmbeddingDenseGradBase::castTraitI32F32>(scaleFreqReg, scaleFreqInt, maskReg);
+            Reg::Div(weightReg, weightReg, scaleFreqReg, maskRegUpdate);
+        }
+        ops_vf::StoreOneTensorForDtypeT<resDtype>(resBufAddr, weightReg, maskRegUpdate, params.ubOutOffset);
+    } else {
+        Reg::StoreAlign(((__ubuf__ float*)resBufAddr + params.ubOutOffset), weightReg, maskRegUpdate);
+    }
+}
 } // namespace EmbeddingDenseGradBase
 
 #endif

@@ -87,6 +87,29 @@ __aicore__ inline void DuplicateNegInf(LocalTensor<T>& localTensor, int32_t data
 }
 
 template <typename T>
+__simd_vf__ void ComputeSumWithWeightVf(uint16_t loopCnt, uint32_t vfLen, uint32_t counter,
+                                        __ubuf__ float* sumLocalAddr, uint16_t numRows, int64_t colNumAlign,
+                                        __ubuf__ T* weightLocalAddr, float val)
+{
+    AscendC::Reg::MaskReg maskRegUpdate;
+    AscendC::Reg::RegTensor<float> sumCastReg;
+    AscendC::Reg::RegTensor<float> weightCastReg;
+    for (uint16_t i = 0; i < loopCnt; ++i) {
+        uint32_t colOffset = i * vfLen; //
+        maskRegUpdate = AscendC::Reg::UpdateMask<float>(counter);
+        ops_vf::LoadOneTensorForDtypeT<float>(sumLocalAddr, sumCastReg, maskRegUpdate, colOffset);
+        for (uint16_t j = 0; j < numRows; ++j) {
+            uint32_t weightOffset = colOffset + j * colNumAlign;
+            ops_vf::LoadOneTensorForDtypeT<T>(weightLocalAddr, weightCastReg, maskRegUpdate, weightOffset);
+            AscendC::Reg::Muls(weightCastReg, weightCastReg, val, maskRegUpdate);
+            AscendC::Reg::Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(sumCastReg, sumCastReg, weightCastReg,
+                                                                           maskRegUpdate);
+        }
+        ops_vf::StoreOneTensorForDtypeT<float>(sumLocalAddr, sumCastReg, maskRegUpdate, colOffset);
+    }
+}
+
+template <typename T>
 __aicore__ inline void ComputeSumWithWeight(LocalTensor<T> weightLocal, LocalTensor<float> sumLocal, float val,
                                             int64_t rowNum, int64_t colNum, int64_t colNumAlign)
 {
@@ -98,24 +121,29 @@ __aicore__ inline void ComputeSumWithWeight(LocalTensor<T> weightLocal, LocalTen
     uint32_t counter = colNum;
     uint16_t numRows = static_cast<uint16_t>(rowNum);
 
-    __VEC_SCOPE__
-    {
-        AscendC::Reg::MaskReg maskRegUpdate;
-        AscendC::Reg::RegTensor<float> sumCastReg;
-        AscendC::Reg::RegTensor<float> weightCastReg;
-        for (uint16_t i = 0; i < loopCnt; ++i) {
-            uint32_t colOffset = i * vfLen; //
-            maskRegUpdate = AscendC::Reg::UpdateMask<float>(counter);
-            ops::LoadOneTensorForDtypeT<float>(sumLocalAddr, sumCastReg, maskRegUpdate, colOffset);
-            for (uint16_t j = 0; j < numRows; ++j) {
-                uint32_t weightOffset = colOffset + j * colNumAlign;
-                ops::LoadOneTensorForDtypeT<T>(weightLocalAddr, weightCastReg, maskRegUpdate, weightOffset);
-                AscendC::Reg::Muls(weightCastReg, weightCastReg, val, maskRegUpdate);
-                AscendC::Reg::Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(sumCastReg, sumCastReg, weightCastReg,
-                                                                               maskRegUpdate);
-            }
-            ops::StoreOneTensorForDtypeT<float>(sumLocalAddr, sumCastReg, maskRegUpdate, colOffset);
+    ComputeSumWithWeightVf<T>(loopCnt, vfLen, counter, sumLocalAddr, numRows, colNumAlign, weightLocalAddr, val);
+}
+
+template <typename T>
+__simd_vf__ void AccumulateWeightToSumVf(uint16_t loopCnt, uint32_t counter, uint32_t vfLen,
+                                         __ubuf__ float* sumLocalAddr, uint16_t numRows, int64_t colNumAlign,
+                                         __ubuf__ T* weightLocalAddr)
+{
+    AscendC::Reg::RegTensor<float> weightCastReg;
+    AscendC::Reg::RegTensor<float> sumCastReg;
+
+    AscendC::Reg::MaskReg maskRegUpdate;
+    for (uint16_t i = 0; i < loopCnt; ++i) {
+        maskRegUpdate = AscendC::Reg::UpdateMask<float>(counter);
+        uint32_t colOffset = i * vfLen; //
+        ops_vf::LoadOneTensorForDtypeT<float>(sumLocalAddr, sumCastReg, maskRegUpdate, colOffset);
+        for (uint16_t j = 0; j < numRows; ++j) {
+            uint32_t weightOffset = colOffset + j * colNumAlign;
+            ops_vf::LoadOneTensorForDtypeT<T>(weightLocalAddr, weightCastReg, maskRegUpdate, weightOffset);
+            AscendC::Reg::Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(sumCastReg, sumCastReg, weightCastReg,
+                                                                           maskRegUpdate);
         }
+        ops_vf::StoreOneTensorForDtypeT<float>(sumLocalAddr, sumCastReg, maskRegUpdate, colOffset);
     }
 }
 
@@ -130,25 +158,7 @@ __aicore__ inline void ComputeSum(LocalTensor<T> weightLocal, LocalTensor<float>
     uint16_t loopCnt = (uint16_t)((colNum + vfLen - 1) / vfLen);
     uint32_t counter = colNum;
     uint16_t numRows = static_cast<uint16_t>(rowNum);
-    __VEC_SCOPE__
-    {
-        AscendC::Reg::RegTensor<float> weightCastReg;
-        AscendC::Reg::RegTensor<float> sumCastReg;
-
-        AscendC::Reg::MaskReg maskRegUpdate;
-        for (uint16_t i = 0; i < loopCnt; ++i) {
-            maskRegUpdate = AscendC::Reg::UpdateMask<float>(counter);
-            uint32_t colOffset = i * vfLen; //
-            ops::LoadOneTensorForDtypeT<float>(sumLocalAddr, sumCastReg, maskRegUpdate, colOffset);
-            for (uint16_t j = 0; j < numRows; ++j) {
-                uint32_t weightOffset = colOffset + j * colNumAlign;
-                ops::LoadOneTensorForDtypeT<T>(weightLocalAddr, weightCastReg, maskRegUpdate, weightOffset);
-                AscendC::Reg::Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(sumCastReg, sumCastReg, weightCastReg,
-                                                                               maskRegUpdate);
-            }
-            ops::StoreOneTensorForDtypeT<float>(sumLocalAddr, sumCastReg, maskRegUpdate, colOffset);
-        }
-    }
+    AccumulateWeightToSumVf<T>(loopCnt, counter, vfLen, sumLocalAddr, numRows, colNumAlign, weightLocalAddr);
 }
 
 template <typename T>
@@ -170,9 +180,9 @@ __aicore__ inline void DivForMean(LocalTensor<T> sumLocal, int64_t count, int64_
         for (uint16_t j = 0; j < static_cast<uint16_t>(loopSize); j++) {
             maskReg = AscendC::Reg::UpdateMask<float>(maskLen);
             auto sumAddrOffet = j * vfLen;
-            ops::LoadOneTensorForDtypeT<T>(sumAddr, castReg, maskReg, sumAddrOffet);
+            ops_vf::LoadOneTensorForDtypeT<T>(sumAddr, castReg, maskReg, sumAddrOffet);
             AscendC::Reg::Div(castReg, castReg, countReg, maskReg);
-            ops::StoreOneTensorForDtypeT<T>(sumAddr, castReg, maskReg, sumAddrOffet);
+            ops_vf::StoreOneTensorForDtypeT<T>(sumAddr, castReg, maskReg, sumAddrOffet);
         }
     }
 }
@@ -447,14 +457,14 @@ public:
                 maskRegUpdate = AscendC::Reg::UpdateMask<float>(counter);
                 uint32_t colOffset = i * floatSizeNum_;
 
-                ops::LoadOneTensorForDtypeT<float>(outYLocalAddr, outYCastReg, maskRegUpdate, colOffset);
+                ops_vf::LoadOneTensorForDtypeT<float>(outYLocalAddr, outYCastReg, maskRegUpdate, colOffset);
                 for (uint16_t j = 0; j < indicesNumber; ++j) {
                     uint32_t weightOffset = i * floatSizeNum_ + j * weightDimFactor_; // weight
-                    ops::LoadOneTensorForDtypeT<T>(weightLocalAddr, weightCastReg, maskRegUpdate, weightOffset);
+                    ops_vf::LoadOneTensorForDtypeT<T>(weightLocalAddr, weightCastReg, maskRegUpdate, weightOffset);
                     AscendC::Reg::Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(outYCastReg, outYCastReg,
                                                                                    weightCastReg, maskRegUpdate);
                 }
-                ops::StoreOneTensorForDtypeT<float>(outYLocalAddr, outYCastReg, maskRegUpdate, colOffset);
+                ops_vf::StoreOneTensorForDtypeT<float>(outYLocalAddr, outYCastReg, maskRegUpdate, colOffset);
             }
         }
     }
@@ -490,16 +500,16 @@ public:
             for (uint16_t i = 0; i < loopCnt; ++i) {
                 maskRegUpdate = AscendC::Reg::UpdateMask<float>(counter);
                 uint32_t colOffset = i * floatSizeNum_; //
-                ops::LoadOneTensorForDtypeT<float>(outYLocalAddr, outYCastReg, maskRegUpdate, colOffset);
+                ops_vf::LoadOneTensorForDtypeT<float>(outYLocalAddr, outYCastReg, maskRegUpdate, colOffset);
                 for (uint16_t j = 0; j < indicesNumber; ++j) {
                     uint32_t weightOffset = i * floatSizeNum_ + j * weightDimFactor_;
-                    ops::LoadOneTensorForDtypeT<T>(weightLocalAddr, weightCastReg, maskRegUpdate, weightOffset);
+                    ops_vf::LoadOneTensorForDtypeT<T>(weightLocalAddr, weightCastReg, maskRegUpdate, weightOffset);
                     AscendC::Reg::Muls<float, float, AscendC::Reg::MaskMergeMode::ZEROING>(
                         weightCastReg, weightCastReg, perSampleLocalAddr[j], maskRegUpdate);
                     AscendC::Reg::Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(outYCastReg, outYCastReg,
                                                                                    weightCastReg, maskRegUpdate);
                 }
-                ops::StoreOneTensorForDtypeT<float>(outYLocalAddr, outYCastReg, maskRegUpdate, colOffset);
+                ops_vf::StoreOneTensorForDtypeT<float>(outYLocalAddr, outYCastReg, maskRegUpdate, colOffset);
             }
         }
     }

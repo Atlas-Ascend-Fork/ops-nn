@@ -381,6 +381,57 @@ __aicore__ inline void EmbeddingDenseGradV2Kernel<GRAD_T, CAST_T, IDX_T, isScale
     WaitFlag<HardEvent::V_S>(eventV_S);
 }
 
+template <bool useRes, typename GRAD_T, typename CAST_T, typename IDX_T, bool isScale, bool SplitEltwiseAxis,
+          int32_t bufferNum>
+__simd_vf__ void AddGradPerIndiceVf(uint16_t perColLoopNum, uint32_t processColLen, uint16_t vfFp32Block__vf3,
+                                    __ubuf__ CAST_T* ubLastBufAddr, uint16_t loopSegCount, uint32_t perColAlign,
+                                    __ubuf__ GRAD_T* ubGradAddr, uint16_t loopSegCountTail, uint16_t normalSegCount,
+                                    float scaleFreq, __ubuf__ GRAD_T* ubResultAddr)
+{
+    Reg::RegTensor<float> srcGrad;
+    Reg::RegTensor<float> groupAdd;
+    Reg::RegTensor<float> gradResult;
+    Reg::MaskReg preg;
+
+    for (uint16_t col = 0; col < perColLoopNum; col++) { // grad 一行
+        preg = Reg::UpdateMask<float>(processColLen);
+        uint32_t colOffset = col * vfFp32Block__vf3; // 列方向偏移
+        if constexpr (useRes) {                      // 相同UB间相同索引，需要累加
+            ops_vf::LoadOneTensorForDtypeT<CAST_T>(ubLastBufAddr, gradResult, preg, colOffset);
+        } else {
+            Duplicate(gradResult, (float)0, preg);
+        }
+
+        for (uint16_t mainSeg = 0; mainSeg < loopSegCount; mainSeg++) { // Main group
+            Duplicate(groupAdd, (float)0, preg);                        // 分组累加，每组累加前清空reg
+
+            uint32_t groupRowStart = mainSeg * PROCESS_GROUP;
+            for (uint16_t group = 0; group < PROCESS_GROUP; group++) { // per group
+                uint32_t gradOffset = (groupRowStart + group) * perColAlign + colOffset;
+                ops_vf::LoadOneTensorForDtypeT<GRAD_T>(ubGradAddr, srcGrad, preg, gradOffset);
+                Add(groupAdd, groupAdd, srcGrad, preg);
+            }
+            Add(gradResult, gradResult, groupAdd, preg);
+        }
+
+        Duplicate(groupAdd, (float)0, preg);
+        for (uint16_t tailRow = 0; tailRow < loopSegCountTail; tailRow++) { // Tail group
+            uint32_t gradOffset = (normalSegCount + tailRow) * perColAlign + colOffset;
+            ops_vf::LoadOneTensorForDtypeT<GRAD_T>(ubGradAddr, srcGrad, preg, gradOffset);
+            Add(groupAdd, groupAdd, srcGrad, preg);
+        }
+        Add(gradResult, gradResult, groupAdd, preg);
+        // lastRes不进行scale，直接存储
+        ops_vf::StoreOneTensorForDtypeT<CAST_T>(ubLastBufAddr, gradResult, preg, colOffset);
+
+        if constexpr (isScale) {
+            Muls(gradResult, gradResult, scaleFreq, preg);
+        }
+
+        ops_vf::StoreOneTensorForDtypeT<GRAD_T>(ubResultAddr, gradResult, preg, colOffset);
+    }
+}
+
 template <typename GRAD_T, typename CAST_T, typename IDX_T, bool isScale, bool SplitEltwiseAxis, int32_t bufferNum>
 template <bool useRes>
 __aicore__ inline void
@@ -399,51 +450,10 @@ EmbeddingDenseGradV2Kernel<GRAD_T, CAST_T, IDX_T, isScale, SplitEltwiseAxis, buf
     uint16_t normalSegCount = loopSegCount * PROCESS_GROUP;
     uint16_t loopSegCountTail = curGradCount - normalSegCount;
 
-    __VEC_SCOPE__
-    {
-        Reg::RegTensor<float> srcGrad;
-        Reg::RegTensor<float> groupAdd;
-        Reg::RegTensor<float> gradResult;
-        Reg::MaskReg preg;
-
-        for (uint16_t col = 0; col < perColLoopNum; col++) { // grad 一行
-            preg = Reg::UpdateMask<float>(processColLen);
-            uint32_t colOffset = col * vfFp32Block_; // 列方向偏移
-            if constexpr (useRes) {                  // 相同UB间相同索引，需要累加
-                ops::LoadOneTensorForDtypeT<CAST_T>(ubLastBufAddr, gradResult, preg, colOffset);
-            } else {
-                Duplicate(gradResult, (float)0, preg);
-            }
-
-            for (uint16_t mainSeg = 0; mainSeg < loopSegCount; mainSeg++) { // Main group
-                Duplicate(groupAdd, (float)0, preg);                        // 分组累加，每组累加前清空reg
-
-                uint32_t groupRowStart = mainSeg * PROCESS_GROUP;
-                for (uint16_t group = 0; group < PROCESS_GROUP; group++) { // per group
-                    uint32_t gradOffset = (groupRowStart + group) * perColAlign + colOffset;
-                    ops::LoadOneTensorForDtypeT<GRAD_T>(ubGradAddr, srcGrad, preg, gradOffset);
-                    Add(groupAdd, groupAdd, srcGrad, preg);
-                }
-                Add(gradResult, gradResult, groupAdd, preg);
-            }
-
-            Duplicate(groupAdd, (float)0, preg);
-            for (uint16_t tailRow = 0; tailRow < loopSegCountTail; tailRow++) { // Tail group
-                uint32_t gradOffset = (normalSegCount + tailRow) * perColAlign + colOffset;
-                ops::LoadOneTensorForDtypeT<GRAD_T>(ubGradAddr, srcGrad, preg, gradOffset);
-                Add(groupAdd, groupAdd, srcGrad, preg);
-            }
-            Add(gradResult, gradResult, groupAdd, preg);
-            // lastRes不进行scale，直接存储
-            ops::StoreOneTensorForDtypeT<CAST_T>(ubLastBufAddr, gradResult, preg, colOffset);
-
-            if constexpr (isScale) {
-                Muls(gradResult, gradResult, scaleFreq, preg);
-            }
-
-            ops::StoreOneTensorForDtypeT<GRAD_T>(ubResultAddr, gradResult, preg, colOffset);
-        }
-    }
+    const uint16_t vfFp32Block__vf3 = vfFp32Block_;
+    AddGradPerIndiceVf<useRes, GRAD_T, CAST_T, IDX_T, isScale, SplitEltwiseAxis, bufferNum>(
+        perColLoopNum, processColLen, vfFp32Block__vf3, ubLastBufAddr, loopSegCount, perColAlign, ubGradAddr,
+        loopSegCountTail, normalSegCount, scaleFreq, ubResultAddr);
 }
 
 template <typename GRAD_T, typename CAST_T, typename IDX_T, bool isScale, bool SplitEltwiseAxis, int32_t bufferNum>
@@ -598,6 +608,50 @@ EmbeddingDenseGradV2Kernel<GRAD_T, CAST_T, IDX_T, isScale, SplitEltwiseAxis, buf
 }
 
 template <typename GRAD_T, typename CAST_T, typename IDX_T, bool isScale, bool SplitEltwiseAxis, int32_t bufferNum>
+__simd_vf__ void AddGradPerIndiceBetweenBlockVf(uint16_t perColLoopNum, uint16_t vfFp32Block__vf4,
+                                                uint16_t loopSegCount, uint32_t perColAlign,
+                                                __ubuf__ CAST_T* ubGradAddr, uint16_t loopSegCountTail,
+                                                uint16_t normalSegCount, float scaleFreq, __ubuf__ GRAD_T* ubResultAddr,
+                                                uint32_t processColLen)
+{
+    Reg::RegTensor<float> srcGrad;
+    Reg::RegTensor<float> groupAdd;
+    Reg::RegTensor<float> gradResult;
+
+    Reg::MaskReg preg = Reg::CreateMask<float, Reg::MaskPattern::ALL>();
+    for (uint16_t col = 0; col < perColLoopNum; col++) { // grad 一行
+        uint32_t colOffset = col * vfFp32Block__vf4;     // 列方向的偏移
+        Duplicate(gradResult, (float)0, preg);
+
+        for (uint16_t mainSeg = 0; mainSeg < loopSegCount; mainSeg++) {
+            Duplicate(groupAdd, (float)0, preg);
+
+            uint32_t groupRowStart = mainSeg * PROCESS_GROUP;
+            for (uint16_t group = 0; group < PROCESS_GROUP; group++) {
+                uint32_t gradOffset = (groupRowStart + group) * perColAlign + colOffset;
+                ops_vf::LoadOneTensorForDtypeT<CAST_T>(ubGradAddr, srcGrad, preg, gradOffset);
+                Add(groupAdd, groupAdd, srcGrad, preg);
+            }
+            Add(gradResult, gradResult, groupAdd, preg);
+        }
+
+        Duplicate(groupAdd, (float)0, preg);
+        for (uint16_t tailRow = 0; tailRow < loopSegCountTail; tailRow++) {
+            uint32_t gradOffset = (normalSegCount + tailRow) * perColAlign + colOffset;
+            ops_vf::LoadOneTensorForDtypeT<CAST_T>(ubGradAddr, srcGrad, preg, gradOffset);
+            Add(groupAdd, groupAdd, srcGrad, preg);
+        }
+        Add(gradResult, gradResult, groupAdd, preg);
+        if constexpr (isScale) {
+            Muls(gradResult, gradResult, scaleFreq, preg);
+        }
+
+        ops_vf::StoreOneTensorForDtypeT<GRAD_T>(ubResultAddr, gradResult, preg, colOffset);
+        preg = Reg::UpdateMask<float>(processColLen);
+    }
+}
+
+template <typename GRAD_T, typename CAST_T, typename IDX_T, bool isScale, bool SplitEltwiseAxis, int32_t bufferNum>
 __aicore__ inline void
 EmbeddingDenseGradV2Kernel<GRAD_T, CAST_T, IDX_T, isScale, SplitEltwiseAxis, bufferNum>::AddGradPerIndiceBetweenBlock(
     LocalTensor<GRAD_T>& outTensor, const LocalTensor<CAST_T>& gradTensor, uint32_t colLen, uint32_t colLenAlign,
@@ -614,44 +668,10 @@ EmbeddingDenseGradV2Kernel<GRAD_T, CAST_T, IDX_T, isScale, SplitEltwiseAxis, buf
     uint16_t loopSegCountTail = curGradCount - normalSegCount;
     float scaleFreq = freqInBlock;
 
-    __VEC_SCOPE__
-    {
-        Reg::RegTensor<float> srcGrad;
-        Reg::RegTensor<float> groupAdd;
-        Reg::RegTensor<float> gradResult;
-
-        Reg::MaskReg preg = Reg::CreateMask<float, Reg::MaskPattern::ALL>();
-        for (uint16_t col = 0; col < perColLoopNum; col++) { // grad 一行
-            uint32_t colOffset = col * vfFp32Block_;         // 列方向的偏移
-            Duplicate(gradResult, (float)0, preg);
-
-            for (uint16_t mainSeg = 0; mainSeg < loopSegCount; mainSeg++) {
-                Duplicate(groupAdd, (float)0, preg);
-
-                uint32_t groupRowStart = mainSeg * PROCESS_GROUP;
-                for (uint16_t group = 0; group < PROCESS_GROUP; group++) {
-                    uint32_t gradOffset = (groupRowStart + group) * perColAlign + colOffset;
-                    ops::LoadOneTensorForDtypeT<CAST_T>(ubGradAddr, srcGrad, preg, gradOffset);
-                    Add(groupAdd, groupAdd, srcGrad, preg);
-                }
-                Add(gradResult, gradResult, groupAdd, preg);
-            }
-
-            Duplicate(groupAdd, (float)0, preg);
-            for (uint16_t tailRow = 0; tailRow < loopSegCountTail; tailRow++) {
-                uint32_t gradOffset = (normalSegCount + tailRow) * perColAlign + colOffset;
-                ops::LoadOneTensorForDtypeT<CAST_T>(ubGradAddr, srcGrad, preg, gradOffset);
-                Add(groupAdd, groupAdd, srcGrad, preg);
-            }
-            Add(gradResult, gradResult, groupAdd, preg);
-            if constexpr (isScale) {
-                Muls(gradResult, gradResult, scaleFreq, preg);
-            }
-
-            ops::StoreOneTensorForDtypeT<GRAD_T>(ubResultAddr, gradResult, preg, colOffset);
-            preg = Reg::UpdateMask<float>(processColLen);
-        }
-    }
+    const uint16_t vfFp32Block__vf4 = vfFp32Block_;
+    AddGradPerIndiceBetweenBlockVf<GRAD_T, CAST_T, IDX_T, isScale, SplitEltwiseAxis, bufferNum>(
+        perColLoopNum, vfFp32Block__vf4, loopSegCount, perColAlign, ubGradAddr, loopSegCountTail, normalSegCount,
+        scaleFreq, ubResultAddr, processColLen);
 }
 
 template <typename GRAD_T, typename CAST_T, typename IDX_T, bool isScale, bool SplitEltwiseAxis, int32_t bufferNum>
