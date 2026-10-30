@@ -12,6 +12,7 @@
  * \brief
  */
 
+#include "log/log.h"
 #include "aclnn_tf_scatter_add.h"
 #include "tf_scatter_add.h"
 #include "index/common/op_api/scatter_nd_add.h"
@@ -38,6 +39,7 @@ using namespace op;
 extern "C" {
 #endif
 
+static constexpr const char* kOpName = "aclnnTfScatterAdd";
 static constexpr size_t MIN_INPUT_DIM_NUM = 1;
 static constexpr size_t MAX_INPUT_DIM_MUM = 8;
 static constexpr int64_t MIN_INDICES_FOR_SORTED = 32;
@@ -104,8 +106,10 @@ static bool CheckDtypeValid(aclTensor* varRef, const aclTensor* indices, const a
     OP_CHECK_DTYPE_NOT_SUPPORT(indices, INDEX_DTYPE_SUPPORT_LIST, return false);
     // varRef和updates的数据类型要一致
     if (varRef->GetDataType() != updates->GetDataType()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "updates dtype %s should be in same with varRef dtype %s.",
-                op::ToString(updates->GetDataType()).GetString(), op::ToString(varRef->GetDataType()).GetString());
+        std::string dtypes = std::string(op::ToString(updates->GetDataType()).GetString()) + ", " +
+                             op::ToString(varRef->GetDataType()).GetString();
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(kOpName, "updates, varRef", dtypes.c_str(),
+                                               "updates and varRef must have the same dtype");
         return false;
     }
 
@@ -128,23 +132,36 @@ static bool CheckShapeForScatterAdd(aclTensor* varRef, const aclTensor* indices,
     size_t updatesDimNum = updatesShape.GetDimNum();
     // 校验varRef的第一维为0, 且indices不为空的情况, 其他空tensor情况直接返回，与竞品保持一致
     if (varRefShape.GetDim(0) == 0 && !indices->IsEmpty()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "when varRef.shape[0] = 0, indices tensor must be empty.");
+        std::string shapes = std::string(op::ToString(varRefShape).GetString()) + ", " +
+                             op::ToString(indicesShape).GetString();
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(kOpName, "varRef, indices", shapes.c_str(),
+                                               "when varRef.shape[0] is 0, indices must be empty");
         return false;
     }
     // updates.shape = indices.shape + var.shape[1:]
     if (updatesDimNum != indicesDimNum + varRefDimNum - 1) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "updatesDimNum must have the same number of indicesDimNum add varDimNum - 1.");
+        std::string dims = std::to_string(updatesDimNum) + ", " + std::to_string(indicesDimNum) + ", " +
+                           std::to_string(varRefDimNum);
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(kOpName, "updates, indices, varRef", dims.c_str(),
+                                                  "updates rank must equal indices rank + varRef rank - 1");
         return false;
     }
     for (size_t i = 0; i < indicesDimNum; ++i) {
         if (updatesShape.GetDim(i) != indicesShape.GetDim(i)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "updatesShape must have the same number of indicesShape.");
+            std::string dims = std::to_string(updatesShape.GetDim(i)) + ", " + std::to_string(indicesShape.GetDim(i));
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                kOpName, "updates, indices", dims.c_str(),
+                "updates shape must match indices shape in the first indices rank dimensions");
             return false;
         }
     }
     for (size_t i = 1; i < varRefDimNum; ++i) {
         if (updatesShape.GetDim(i + indicesDimNum - 1) != varRefShape.GetDim(i)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "updatesShape must have the same number of varShape.");
+            std::string dims = std::to_string(updatesShape.GetDim(i + indicesDimNum - 1)) + ", " +
+                               std::to_string(varRefShape.GetDim(i));
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                kOpName, "updates, varRef", dims.c_str(),
+                "updates shape must match varRef shape after the first varRef dimension");
             return false;
         }
     }
@@ -163,24 +180,37 @@ static bool CheckShapeForScatterNdAdd(aclTensor* varRef, const aclTensor* indice
     // indices.shape[-1] <= len(varRefShape)
     size_t rankSize = indicesShape.GetDim(indicesDimNum - 1);
     if (rankSize > varRefDimNum) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "indices.shape[-1] must less than or equal to varRefDimNum.");
+        std::string reason = "varRef rank must be greater than or equal to indices last dim " +
+                             std::to_string(rankSize);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(kOpName, "varRef", (std::to_string(varRefDimNum) + "D").c_str(),
+                                                 reason.c_str());
         return false;
     }
     // updates.shape = indices.shape[:-1] + var.shape[indices.shape[-1]:]
     if (updatesDimNum != indicesDimNum - 1 + varRefDimNum - rankSize) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "updatesDimNum must have the same number of indicesDimNum - 1 add varDimNum - rankSize.");
+        std::string dims = std::to_string(updatesDimNum) + ", " + std::to_string(indicesDimNum) + ", " +
+                           std::to_string(varRefDimNum);
+        std::string reason = "updates rank must equal indices rank - 1 + varRef rank - indices.shape[-1] (" +
+                             std::to_string(rankSize) + ")";
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(kOpName, "updates, indices, varRef", dims.c_str(), reason.c_str());
         return false;
     }
     for (size_t i = 0; i < indicesDimNum - 1; ++i) {
         if (updatesShape.GetDim(i) != indicesShape.GetDim(i)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "updatesShape must have the same number of indicesShape.");
+            std::string dims = std::to_string(updatesShape.GetDim(i)) + ", " + std::to_string(indicesShape.GetDim(i));
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                kOpName, "updates, indices", dims.c_str(),
+                "updates shape must match indices shape in all but the last indices dimension");
             return false;
         }
     }
     for (size_t i = 0; i < varRefDimNum - rankSize; ++i) {
         if (updatesShape.GetDim(i + indicesDimNum - 1) != varRefShape.GetDim(i + rankSize)) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "updatesShape must have the same number of varShape.");
+            std::string dims = std::to_string(updatesShape.GetDim(i + indicesDimNum - 1)) + ", " +
+                               std::to_string(varRefShape.GetDim(i + rankSize));
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                kOpName, "updates, varRef", dims.c_str(),
+                "updates shape must match varRef shape after indices.shape[-1] dimensions");
             return false;
         }
     }
