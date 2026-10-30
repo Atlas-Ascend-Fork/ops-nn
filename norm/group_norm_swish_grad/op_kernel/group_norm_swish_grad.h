@@ -1096,9 +1096,11 @@ private:
                                                 uint32_t repeatTime, uint32_t count, const LocalTensor<float>& dstLocal)
     {
         LocalTensor<float> vecInLocal = vecInQue.AllocTensor<float>();
-        DataCopyExtParams copyParams_in{(uint16_t)repeatTime, (uint16_t)(count * sizeof(float)),
-                                        (uint16_t)((C - count) * sizeof(float)),
-                                        (uint16_t)((castEleNum - count) / float_per_block), 0};
+        // Extended copy lengths and strides are 32-bit; large C must not truncate
+        // the workspace row stride to 16 bits during deterministic reduction.
+        DataCopyExtParams copyParams_in{static_cast<uint16_t>(repeatTime), static_cast<uint32_t>(count * sizeof(float)),
+                                        static_cast<uint32_t>((C - count) * sizeof(float)),
+                                        static_cast<uint32_t>((castEleNum - count) / float_per_block), 0};
         DataCopyPadExtParams<float> padParams{false, 0, 0, 0};
         DataCopyPad(vecInLocal, workspace[workSpaceOffset], copyParams_in, padParams);
         event_t eventIDMTE2ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));

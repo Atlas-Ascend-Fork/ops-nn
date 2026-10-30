@@ -57,6 +57,7 @@ constexpr uint64_t WORKSPACE_REVERSE = 16 * 1024 * 1024;
 constexpr uint64_t TEN = 10;
 constexpr uint64_t UB_COPIES_1 = 8;
 constexpr uint64_t UB_COPIES_2 = 4;
+constexpr uint64_t CHANNEL_BUFFER_COUNT = 4;
 constexpr uint64_t WORKSPACE_COPIES = 2;
 constexpr uint64_t BLOCK_BYTES = 32;
 constexpr uint64_t RESERVE_SAPCE = 1024;
@@ -688,7 +689,11 @@ ge::graphStatus GroupNormSwishGradTiling::Init()
             std::string("Aligned channels per group exceed the implementation limit: actual=") +
                 std::to_string(channelPerGroupOnceProcess) + ", maximum=" + std::to_string(UPPER_CARRYING_LIMIT)),
         return ge::GRAPH_FAILED);
-    uint64_t reserveSpace = RESERVE_SAPCE + channelPerGroupOnceProcess * this->dtypeBytes * UB_COPIES_1;
+    // For low-precision inputs, gamma, beta, dgamma and dbeta each keep a float
+    // buffer and a cast buffer. GetDataTypeSize already accounts for both buffers.
+    // Preserve the existing FP32 allocation and stage-1 mode selection.
+    const uint64_t channelBufferCount = (this->dtypeStr == ge::DT_FLOAT) ? UB_COPIES_1 : CHANNEL_BUFFER_COUNT;
+    uint64_t reserveSpace = RESERVE_SAPCE + channelPerGroupOnceProcess * this->dtypeBytes * channelBufferCount;
     // The function PlanStepCoreUsage is to plan the usage of cores for each step.
     OP_CHECK_IF(!PlanStepCoreUsage(), OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "PlanStepCoreUsage failed."),
                 return ge::GRAPH_FAILED);
@@ -709,10 +714,9 @@ ge::graphStatus GroupNormSwishGradTiling::Init()
         !(isDeterministicKey == 0 || isDeterministicKey == 1),
         VECTOR_INNER_ERR_REPORT_TILIING(tilingContext->GetNodeName(), "Error: isDeterministicKey must be 0 or 1!"),
         return ge::GRAPH_FAILED);
-    // Set schedule mode to BATCH_MODE when isDeterministicKey is true.
-    if (isDeterministicKey) {
-        tilingContext->SetScheduleMode(BATCH_MODE);
-    }
+    // Every kernel path uses hardware SyncAll. Use batch scheduling to avoid
+    // deadlocks independently of whether gradient accumulation is deterministic.
+    tilingContext->SetScheduleMode(BATCH_MODE);
     // Set TilingKey mode
     OP_CHECK_IF(SetTilingKeyMode(this->dtypeStr, isDeterministicKey) != ge::GRAPH_SUCCESS,
                 OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "fail to Set TilingKey"), return ge::GRAPH_FAILED);
@@ -798,8 +802,10 @@ void GroupNormSwishGradTiling::TilingDataPrint() const
 static ge::graphStatus TilingGroupNormSwishGrad(gert::TilingContext* context)
 {
     GroupNormSwishGradTiling tilingObject(context);
-    // Upstream behavior: Init() result is intentionally not checked here; tiling_3/4/5 rely on this.
-    tilingObject.Init();
+    const auto status = tilingObject.Init();
+    if (status != ge::GRAPH_SUCCESS) {
+        return status;
+    }
     return tilingObject.SetKernelTiling();
 }
 

@@ -56,6 +56,8 @@ constexpr uint64_t ASCEND_950_CORE_NUM = 64;
 constexpr uint64_t TILING_DATA_TASK_NUM_PER_CORE_INDEX = 7;
 constexpr uint64_t TILING_DATA_TASK_NUM_PER_TAIL_CORE_INDEX = 8;
 constexpr uint64_t TILING_DATA_TAIL_CORE_INDEX = 9;
+constexpr uint64_t TILING_DATA_MODE2_CAPACITY_INDEX = 13;
+constexpr uint64_t TILING_DATA_MODE2_ITERATION_INDEX = 14;
 constexpr uint64_t TILING_DATA_STAGE2_CORE_USED_INDEX = 17;
 constexpr uint64_t TILING_DATA_CAST_ELE_NUM_INDEX = 18;
 constexpr uint64_t TILING_DATA_TAIL_CAST_NUM_INDEX = 19;
@@ -79,6 +81,9 @@ struct TilingRunResult {
     uint64_t coreBatchParts = 0;
     uint64_t coreBatchPartsTailRepeat = 0;
     uint64_t repeatTime4Stage2 = 0;
+    uint64_t mode2UbCapacityEle = 0;
+    uint64_t mode2UbIterationNum = 0;
+    uint32_t scheduleMode = 0;
     size_t workspaceSize = 0;
     string tilingData;
 };
@@ -201,12 +206,15 @@ static TilingRunResult RunIsolatedSocTilingCase(const string& socVersion, bool s
 
     TilingRunResult result;
     result.status = tilingFunc(tilingContext);
+    result.scheduleMode = tilingContext->GetScheduleMode();
     result.tilingKey = tilingContext->GetTilingKey();
     result.tilingData = TilingData2Str(tilingContext->GetRawTilingData());
     auto rawTilingData = tilingContext->GetRawTilingData();
     if (rawTilingData != nullptr &&
         rawTilingData->GetDataSize() > TILING_DATA_REPEAT_TIME4_STAGE2_INDEX * sizeof(uint64_t)) {
         auto tilingData = reinterpret_cast<const uint64_t*>(rawTilingData->GetData());
+        result.mode2UbCapacityEle = tilingData[TILING_DATA_MODE2_CAPACITY_INDEX];
+        result.mode2UbIterationNum = tilingData[TILING_DATA_MODE2_ITERATION_INDEX];
         result.taskNumPerCore = tilingData[TILING_DATA_TASK_NUM_PER_CORE_INDEX];
         result.taskNumPerTailCore = tilingData[TILING_DATA_TASK_NUM_PER_TAIL_CORE_INDEX];
         result.tailCore = tilingData[TILING_DATA_TAIL_CORE_INDEX];
@@ -223,6 +231,47 @@ static TilingRunResult RunIsolatedSocTilingCase(const string& socVersion, bool s
 }
 } // namespace
 
+TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_low_precision_channel_limit)
+{
+    for (auto dtype : {ge::DT_FLOAT16, ge::DT_BF16}) {
+        for (uint32_t channelsPerGroup : {3936U, 3937U, 4000U}) {
+            for (uint32_t groups : {1U, 64U}) {
+                for (int32_t deterministic : {0, 1}) {
+                    auto result = RunIsolatedSocTilingCase("Ascend910B", true, deterministic, channelsPerGroup * groups,
+                                                           groups, 1, 1, 3, dtype);
+                    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+                    EXPECT_GT(result.mode2UbCapacityEle, 0U);
+                    EXPECT_EQ(result.mode2UbIterationNum, 1U);
+                    EXPECT_GT(result.stage2CoreUsed, 0U);
+                    EXPECT_GT(result.castEleNum, 0U);
+                    EXPECT_EQ(result.scheduleMode, 1U);
+                }
+            }
+        }
+    }
+}
+
+TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_rejects_failed_init)
+{
+    // C/G exceeds the supported limit, so Init must fail without serializing tiling data.
+    auto result = RunIsolatedSocTilingCase("Ascend910B", false, 0, 4001, 1, 1, 1, 3, ge::DT_FLOAT16);
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(result.tilingData.empty());
+}
+
+TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_fp32_channel_limit_preserves_mode)
+{
+    for (int32_t deterministic : {0, 1}) {
+        auto result = RunIsolatedSocTilingCase("Ascend910B", true, deterministic, 4000, 1, 1, 1, 3);
+        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+        // FP32 retains mode 3 at the channel limit.
+        EXPECT_EQ(result.tilingData.substr(0, 2), "3 ");
+        EXPECT_GT(result.mode2UbCapacityEle, 0U);
+        EXPECT_EQ(result.mode2UbIterationNum, 1U);
+        EXPECT_EQ(result.scheduleMode, 1U);
+    }
+}
+
 TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_A2_A3_default_fast_path)
 {
     const vector<string> socVersions = {"Ascend910B", "ASCEND910_93"};
@@ -230,6 +279,7 @@ TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_A2_A3_default_fast_pa
         auto result = RunIsolatedSocTilingCase(socVersion, false, 0);
         EXPECT_EQ(result.status, ge::GRAPH_SUCCESS) << socVersion;
         EXPECT_EQ(result.tilingKey, FP32_TILING_KEY) << socVersion;
+        EXPECT_EQ(result.scheduleMode, 1U) << socVersion;
     }
 }
 
@@ -701,13 +751,9 @@ TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_3)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
-    // workspaces nullptr return failed
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_key << std::endl;
-    std::cout << tiling_data_result << std::endl;
+    // num_groups differs from mean.shape[1]; failed Init must reach the caller.
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling_context->GetRawTilingData()->GetDataSize(), 0U);
 }
 
 TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_4)
@@ -805,13 +851,9 @@ TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_4)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
-    // workspaces nullptr return failed
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_key << std::endl;
-    std::cout << tiling_data_result << std::endl;
+    // num_groups differs from mean.shape[1]; failed Init must reach the caller.
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling_context->GetRawTilingData()->GetDataSize(), 0U);
 }
 
 TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_5)
@@ -909,11 +951,7 @@ TEST_F(GroupNormSwishGradTiling, GroupNormSwishGrad_tiling_5)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
-    // workspaces nullptr return failed
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_key << std::endl;
-    std::cout << tiling_data_result << std::endl;
+    // num_groups differs from mean.shape[1]; failed Init must reach the caller.
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling_context->GetRawTilingData()->GetDataSize(), 0U);
 }
