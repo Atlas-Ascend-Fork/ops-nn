@@ -13,6 +13,10 @@
  * \brief
  */
 
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
+#include "log/log.h"
 #include "op_graph/fallback_common_2stages_nn.h"
 
 #ifdef __cplusplus
@@ -33,28 +37,31 @@ constexpr float kAlphaValue = 1.0f;
 
 static graphStatus BatchMatmulExecuteFunc(OpExecutePrepareContext* host_api_ctx)
 {
-    OP_CHECK_IF(host_api_ctx == nullptr, OP_LOGE("aclnnfallback", "host_api_ctx is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(host_api_ctx == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "host_api_ctx"),
+                return GRAPH_FAILED);
 
     auto self_ge = host_api_ctx->GetInputTensor(kBmmInputSelf);
-    OP_CHECK_IF(self_ge == nullptr, OP_LOGE("aclnnfallback", "self_ge is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(self_ge == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "self"), return GRAPH_FAILED);
     auto mat2_ge = host_api_ctx->GetInputTensor(kBmmInputMat2);
-    OP_CHECK_IF(mat2_ge == nullptr, OP_LOGE("aclnnfallback", "mat2_ge is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(mat2_ge == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "mat2"), return GRAPH_FAILED);
     auto bias_ge = host_api_ctx->GetOptionalInputTensor(kBmmInputBias);
     auto out_ge = host_api_ctx->GetOutputTensor(kBmmOutput);
-    OP_CHECK_IF(out_ge == nullptr, OP_LOGE("aclnnfallback", "out_ge is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(out_ge == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "out"), return GRAPH_FAILED);
 
     auto attrs = host_api_ctx->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE("aclnnfallback", "attrs is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "attrs"), return GRAPH_FAILED);
     auto transSelfPtr = attrs->GetAttrPointer<bool>(0);
-    OP_CHECK_IF(transSelfPtr == nullptr, OP_LOGE("aclnnfallback", "transSelf attr is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(transSelfPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "transSelf"),
+                return GRAPH_FAILED);
     auto transMat2Ptr = attrs->GetAttrPointer<bool>(1);
-    OP_CHECK_IF(transMat2Ptr == nullptr, OP_LOGE("aclnnfallback", "transMat2 attr is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(transMat2Ptr == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "transMat2"),
+                return GRAPH_FAILED);
     auto transSelf = *transSelfPtr;
     auto transMat2 = *transMat2Ptr;
     auto self_acl = ConvertMmType(self_ge, transSelf);
-    OP_CHECK_IF(self_acl == nullptr, OP_LOGE("aclnnfallback", "self_acl is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(self_acl == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "self_acl"), return GRAPH_FAILED);
     auto mat2_acl = ConvertMmType(mat2_ge, transMat2);
-    OP_CHECK_IF(mat2_acl == nullptr, OP_LOGE("aclnnfallback", "mat2_acl is null"), return GRAPH_FAILED);
+    OP_CHECK_IF(mat2_acl == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "mat2_acl"), return GRAPH_FAILED);
     auto bias_acl = ConvertType(bias_ge);
 
     auto cubeMathType = GetMathType(host_api_ctx);
@@ -63,33 +70,64 @@ static graphStatus BatchMatmulExecuteFunc(OpExecutePrepareContext* host_api_ctx)
     if (bias_acl != nullptr) {
         auto beta_acl = ConvertScalarType(kBetaValue);
         auto alpha_acl = ConvertScalarType(kAlphaValue);
-        OP_CHECK_IF(beta_acl == nullptr, OP_LOGE("aclnnfallback", "beta_acl is null"), return GRAPH_FAILED);
-        OP_CHECK_IF(alpha_acl == nullptr, OP_LOGE("aclnnfallback", "alpha_acl is null"), return GRAPH_FAILED);
+        OP_CHECK_IF(beta_acl == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "beta"), return GRAPH_FAILED);
+        OP_CHECK_IF(alpha_acl == nullptr, OP_LOGE_WITH_INVALID_INPUT("aclnnBatchMatMul", "alpha"), return GRAPH_FAILED);
         auto api_ret = GRAPH_FAILED;
         if (selfDimNum == kMmDimNum && mat2DimNum == kMmDimNum) {
             api_ret = CANN_OPS_OPB_ASYN_EXEC_ACLNN(host_api_ctx, aclnnAddmm, bias_acl, self_acl, mat2_acl, beta_acl,
                                                    alpha_acl, out_ge, cubeMathType);
-            OP_CHECK_IF(api_ret != GRAPH_SUCCESS, OP_LOGE("aclnnfallback", "aclnnAddmm api_ret failed:%d", api_ret),
+            OP_CHECK_IF(api_ret != GRAPH_SUCCESS, ({
+                            const std::string _msg = "aclnnAddmm api_ret failed:" + std::to_string(api_ret);
+                            OP_LOGE_WITHOUT_REPORT("aclnnfallback", "%s", _msg.c_str());
+                            const std::vector<const char*> _k = {"message"};
+                            const std::vector<const char*> _v = {_msg.c_str()};
+                            REPORT_PREDEFINED_ERR_MSG("EZ1001", _k, _v);
+                        }),
                         return GRAPH_FAILED);
         } else if (selfDimNum == kBmmDimNum && mat2DimNum == kBmmDimNum) {
             api_ret = CANN_OPS_OPB_ASYN_EXEC_ACLNN(host_api_ctx, aclnnBaddbmm, bias_acl, self_acl, mat2_acl, beta_acl,
                                                    alpha_acl, out_ge, cubeMathType);
-            OP_CHECK_IF(api_ret != GRAPH_SUCCESS, OP_LOGE("aclnnfallback", "aclnnBaddbmm api_ret failed:%d", api_ret),
+            OP_CHECK_IF(api_ret != GRAPH_SUCCESS, ({
+                            const std::string _msg = "aclnnBaddbmm api_ret failed:" + std::to_string(api_ret);
+                            OP_LOGE_WITHOUT_REPORT("aclnnfallback", "%s", _msg.c_str());
+                            const std::vector<const char*> _k = {"message"};
+                            const std::vector<const char*> _v = {_msg.c_str()};
+                            REPORT_PREDEFINED_ERR_MSG("EZ1001", _k, _v);
+                        }),
                         return GRAPH_FAILED);
         } else {
-            OP_LOGE("aclnnfallback", "aclnn support 2 or 3 dim, but self:%zu, mat:%zu.", selfDimNum, mat2DimNum);
+            {
+                const std::string _msg = "aclnn support 2 or 3 dim, but self:" + std::to_string(selfDimNum) +
+                                         ", mat:" + std::to_string(mat2DimNum) + ".";
+                OP_LOGE_WITHOUT_REPORT("aclnnfallback", "%s", _msg.c_str());
+                const std::vector<const char*> _k = {"message"};
+                const std::vector<const char*> _v = {_msg.c_str()};
+                REPORT_PREDEFINED_ERR_MSG("EZ1001", _k, _v);
+            }
         }
         return api_ret;
     }
     if (selfDimNum == kBmmDimNum && mat2DimNum == kBmmDimNum) {
         auto api_ret = CANN_OPS_OPB_ASYN_EXEC_ACLNN(host_api_ctx, aclnnBatchMatMul, self_acl, mat2_acl, out_ge,
                                                     cubeMathType);
-        OP_CHECK_IF(api_ret != GRAPH_SUCCESS, OP_LOGE("aclnnfallback", "aclnnBatchMatMul api_ret failed:%d", api_ret),
+        OP_CHECK_IF(api_ret != GRAPH_SUCCESS, ({
+                        const std::string _msg = "aclnnBatchMatMul api_ret failed:" + std::to_string(api_ret);
+                        OP_LOGE_WITHOUT_REPORT("aclnnfallback", "%s", _msg.c_str());
+                        const std::vector<const char*> _k = {"message"};
+                        const std::vector<const char*> _v = {_msg.c_str()};
+                        REPORT_PREDEFINED_ERR_MSG("EZ1001", _k, _v);
+                    }),
                     return GRAPH_FAILED);
         return GRAPH_SUCCESS;
     }
     auto api_ret = CANN_OPS_OPB_ASYN_EXEC_ACLNN(host_api_ctx, aclnnMatmul, self_acl, mat2_acl, out_ge, cubeMathType);
-    OP_CHECK_IF(api_ret != GRAPH_SUCCESS, OP_LOGE("aclnnfallback", "aclnnMatmul api_ret failed:%d", api_ret),
+    OP_CHECK_IF(api_ret != GRAPH_SUCCESS, ({
+                    const std::string _msg = "aclnnMatmul api_ret failed:" + std::to_string(api_ret);
+                    OP_LOGE_WITHOUT_REPORT("aclnnfallback", "%s", _msg.c_str());
+                    const std::vector<const char*> _k = {"message"};
+                    const std::vector<const char*> _v = {_msg.c_str()};
+                    REPORT_PREDEFINED_ERR_MSG("EZ1001", _k, _v);
+                }),
                 return GRAPH_FAILED);
     return GRAPH_SUCCESS;
 }

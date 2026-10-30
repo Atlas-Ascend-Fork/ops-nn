@@ -122,7 +122,9 @@ aclnnStatus aclnnMatmulCompressGetWorkspaceSize(const aclTensor* x, const aclTen
     L2_DFX_PHASE_1(aclnnMatmulCompress, DFX_IN(x, weight, bias, compressIndex), DFX_OUT(out));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 入参检查
     auto ret = CheckParam(x, weight, bias, compressIndex, out);

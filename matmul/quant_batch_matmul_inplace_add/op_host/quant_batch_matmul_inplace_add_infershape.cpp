@@ -42,17 +42,23 @@ const char* GetValidOpName(const gert::InferShapeContext* context)
 
 static ge::graphStatus IsInputTensorNull(const gert::InferShapeContext* context)
 {
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(X1_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(X2_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(X2_SCALE_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(YREF_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetOptionalInputShape(X1_SCALE_INDEX));
+    const char* opName = GetValidOpName(context);
+    OP_CHECK_IF(context->GetInputShape(X1_INDEX) == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "x1"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context->GetInputShape(X2_INDEX) == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "x2"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context->GetInputShape(X2_SCALE_INDEX) == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "x2Scale"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context->GetInputShape(YREF_INDEX) == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "y"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context->GetOptionalInputShape(X1_SCALE_INDEX) == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(opName, "x1Scale"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 static ge::graphStatus InferShape4QuantBatchMatmulInplaceAdd(gert::InferShapeContext* context)
 {
-    OP_CHECK_NULL_WITH_CONTEXT(context, context);
+    OP_CHECK_IF(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("nil", "context"), return ge::GRAPH_FAILED);
     const char* opName = GetValidOpName(context);
     OP_CHECK_IF(IsInputTensorNull(context) != ge::GRAPH_SUCCESS,
                 OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(opName, "x1, x2, x2Scale, y, x1Scale", "null",
@@ -75,9 +81,9 @@ static ge::graphStatus InferShape4QuantBatchMatmulInplaceAdd(gert::InferShapeCon
             Ops::Base::ToString(*shape_x2).c_str());
 
     auto yShape = context->GetInputShape(YREF_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    OP_CHECK_IF(yShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "y"), return ge::GRAPH_FAILED);
     auto outShape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
+    OP_CHECK_IF(outShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "y_out"), return ge::GRAPH_FAILED);
     *outShape = *yShape;
     OP_LOGD(opName, "output shape: %s", Ops::Base::ToString(*(context->GetOutputShape(0))).c_str());
     return ge::GRAPH_SUCCESS;
@@ -85,7 +91,7 @@ static ge::graphStatus InferShape4QuantBatchMatmulInplaceAdd(gert::InferShapeCon
 
 static ge::graphStatus InferDataType4QuantBatchMatmulInplaceAdd(gert::InferDataTypeContext* context)
 {
-    OP_CHECK_NULL_WITH_CONTEXT(context, context);
+    OP_CHECK_IF(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("nil", "context"), return ge::GRAPH_FAILED);
     context->SetOutputDataType(0, ge::DT_FLOAT);
     return ge::GRAPH_SUCCESS;
 }

@@ -14,6 +14,18 @@
  */
 #include "matmul_common_infershape.h"
 #include "log/log.h"
+#include "matmul/common/op_host/matmul_error_report.h"
+#include <cstdio>
+#include <string>
+#include <vector>
+
+#define MATMUL_REPORT_PARAM_ERR(opName, errMsg, ...)                                           \
+    do {                                                                                       \
+        char _matmul_ez1001_buf[1024];                                                         \
+        (void)snprintf(_matmul_ez1001_buf, sizeof(_matmul_ez1001_buf), errMsg, ##__VA_ARGS__); \
+        Ops::NN::ReportMatmulParamError(opName, _matmul_ez1001_buf);                           \
+    } while (0)
+
 using namespace gert;
 namespace {
 constexpr size_t BATCH_MATMUL_MIN_SHAPE_SIZE = 2;
@@ -139,8 +151,8 @@ static bool InferNWithBias(const char* op_name, const int64_t bias_n, const int6
     }
     if (bias_n > 0 && out_n > 0) {
         OP_CHECK_IF(bias_n != out_n,
-                    CUBE_INNER_ERR_REPORT(op_name, "[InferShape] dimensions bias_n(%ld) and out_n(%ld) must be equal",
-                                          bias_n, out_n),
+                    MATMUL_REPORT_PARAM_ERR(op_name, "[InferShape] dimensions bias_n(%ld) and out_n(%ld) must be equal",
+                                            bias_n, out_n),
                     return false);
         n = bias_n;
         return true;
@@ -157,14 +169,13 @@ bool InferShapeBatchMatMul::InferBias()
 {
     int64_t shape_value_out = shape_out.GetDim(num_dim - 1);
     // 1) shape_bias = {}
-    OP_CHECK_IF(num_dim_bias == 0, CUBE_INNER_ERR_REPORT(op_name, "[InferShape] bias dims number is zero"),
-                return true);
+    OP_CHECK_IF(num_dim_bias == 0, OP_LOGI(op_name, "[InferShape] bias dims number is zero"), return true);
     OP_CHECK_IF(shape_bias->GetShapeSize() == 0, OP_LOGI(op_name, "[InferShape] bias shape size is zero"), return true);
 
     // 2) infer n with bias
     OP_CHECK_IF(
         !InferNWithBias(op_name, shape_bias->GetDim(num_dim_bias - 1), shape_out.GetDim(num_dim - 1), shape_value_out),
-        CUBE_INNER_ERR_REPORT(op_name, "[InferShape] failed. infer N dim with bias"), return false);
+        OP_LOGE_WITHOUT_REPORT(op_name, "[InferShape] failed. infer N dim with bias"), return false);
 
     shape_out.SetDim(num_dim - 1, shape_value_out);
 
@@ -175,7 +186,7 @@ bool InferShapeBatchMatMul::InferBias()
         for (auto i = valid_offset; i < num_dim - 2; ++i) {
             OP_CHECK_IF(!Ops::NN::BroadcastBatchDim(op_name, shape_bias->GetDim(i - valid_offset), shape_out.GetDim(i),
                                                     shape_value_out),
-                        CUBE_INNER_ERR_REPORT(op_name, "[InferShape] Failed to broadcast batch dim"), return false);
+                        OP_LOGE_WITHOUT_REPORT(op_name, "[InferShape] Failed to broadcast batch dim"), return false);
 
             shape_out.SetDim(i, shape_value_out);
         }
@@ -186,7 +197,7 @@ bool InferShapeBatchMatMul::InferBias()
     for (auto i = valid_offset; i < num_dim - 2; ++i) {
         OP_CHECK_IF(!Ops::NN::BroadcastBatchDim(op_name, shape_bias->GetDim(i), shape_out.GetDim(i - valid_offset),
                                                 shape_value_out),
-                    CUBE_INNER_ERR_REPORT(op_name, "[InferShape] Failed to broadcast batch dim"), return false);
+                    OP_LOGE_WITHOUT_REPORT(op_name, "[InferShape] Failed to broadcast batch dim"), return false);
 
         shape_out.SetDim(i, shape_value_out);
     }
@@ -196,7 +207,7 @@ bool InferShapeBatchMatMul::InferBias()
 bool InferShapeBatchMatMul::InferShape()
 {
     if (shape_a.GetDimNum() < BATCH_MATMUL_MIN_SHAPE_SIZE || shape_b.GetDimNum() < BATCH_MATMUL_MIN_SHAPE_SIZE) {
-        CUBE_INNER_ERR_REPORT(
+        MATMUL_REPORT_PARAM_ERR(
             op_name,
             "[InferShape] Invalid input: The rank (number of dimensions) of tensors x1 and x2 must be at least 2.");
         return false;
@@ -204,7 +215,7 @@ bool InferShapeBatchMatMul::InferShape()
     for (size_t i = 0; i < shape_a.GetDimNum(); ++i) {
         OP_CHECK_IF(
             shape_a.GetDim(i) < UNKNOWN_DIM_NUM,
-            CUBE_INNER_ERR_REPORT(
+            MATMUL_REPORT_PARAM_ERR(
                 op_name,
                 "[InferShape] Invalid x1 [%zu] dimension: value %ld is less than the minimum allowed value (-2)", i,
                 static_cast<int64_t>(shape_a.GetDim(i))),
@@ -213,7 +224,7 @@ bool InferShapeBatchMatMul::InferShape()
     for (size_t i = 0; i < shape_b.GetDimNum(); ++i) {
         OP_CHECK_IF(
             shape_b.GetDim(i) < UNKNOWN_DIM_NUM,
-            CUBE_INNER_ERR_REPORT(
+            MATMUL_REPORT_PARAM_ERR(
                 op_name,
                 "[InferShape] Invalid x2 [%zu] dimension: value %ld is less than the minimum allowed value (-2)", i,
                 static_cast<int64_t>(shape_b.GetDim(i))),
@@ -239,17 +250,17 @@ bool InferShapeBatchMatMul::InferShape()
     // Check k dim in static shape
     if ((shape_a.GetDim(idx_k_a) != UNKNOWN_DIM && shape_b.GetDim(idx_k_b) != UNKNOWN_DIM) &&
         (shape_a.GetDim(idx_k_a) != shape_b.GetDim(idx_k_b))) {
-        CUBE_INNER_ERR_REPORT(op_name, "[InferShape] The k-axis of a(%ld) and b(%ld) tensors must be the same",
-                              shape_a.GetDim(idx_k_a), shape_b.GetDim(idx_k_b));
+        MATMUL_REPORT_PARAM_ERR(op_name, "[InferShape] The k-axis of a(%ld) and b(%ld) tensors must be the same",
+                                shape_a.GetDim(idx_k_a), shape_b.GetDim(idx_k_b));
         return false;
     }
-    OP_CHECK_IF(!InferBatch(), CUBE_INNER_ERR_REPORT(op_name, "[InferShape] failed. infer Batch."), return false);
+    OP_CHECK_IF(!InferBatch(), OP_LOGE_WITHOUT_REPORT(op_name, "[InferShape] failed. infer Batch."), return false);
 
     // using index - 2 to get m_dim in shape_out
     shape_out.SetDim((num_dim - 2), shape_a.GetDim(idx_m));
     shape_out.SetDim((num_dim - 1), shape_b.GetDim(idx_n));
     if (shape_bias != nullptr) {
-        OP_CHECK_IF(!InferBias(), CUBE_INNER_ERR_REPORT(op_name, "[InferShape] Infer bias failed."), return false);
+        OP_CHECK_IF(!InferBias(), OP_LOGE_WITHOUT_REPORT(op_name, "[InferShape] Infer bias failed."), return false);
     }
     return true;
 }
@@ -277,7 +288,7 @@ bool BroadcastBatchDim(const char* op_name, int64_t dim_a, int64_t dim_b, int64_
     if (dim_a > 1 && dim_b > 1) {
         OP_CHECK_IF(
             dim_a != dim_b,
-            CUBE_INNER_ERR_REPORT(op_name, "[InferShape] dimensions a(%ld) and b(%ld) must be equal", dim_a, dim_b),
+            MATMUL_REPORT_PARAM_ERR(op_name, "[InferShape] dimensions a(%ld) and b(%ld) must be equal", dim_a, dim_b),
             return false);
 
         dim_out = dim_a;
@@ -329,8 +340,7 @@ static ge::graphStatus UpdateX2NewShape(const gert::InferShapeContext* context, 
 
     if (is_packed) {
         auto* desc = context->GetInputDesc(1);
-        OP_CHECK_IF(desc == nullptr, CUBE_INNER_ERR_REPORT(op_name, "[InferShape] x2 is null"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(desc == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "x2"), return ge::GRAPH_FAILED);
         size_t dim_num = new_shape.GetDimNum();
         size_t x2_dim_num = new_shape.GetDimNum();
         size_t k_x2_dim = trans_x2 ? (x2_dim_num - 1UL) : (x2_dim_num - 2UL);
@@ -339,7 +349,7 @@ static ge::graphStatus UpdateX2NewShape(const gert::InferShapeContext* context, 
         int64_t n_dim = new_shape.GetDim(n_x2_dim);
         if (desc->GetDataType() == ge::DT_FLOAT && k_dim > 0 && n_dim > 0) {
             OP_CHECK_IF(dim_num < 1UL,
-                        CUBE_INNER_ERR_REPORT(op_name, "[InferShape] The shape of x2 should not smaller than 1"),
+                        MATMUL_REPORT_PARAM_ERR(op_name, "[InferShape] The shape of x2 should not smaller than 1"),
                         return ge::GRAPH_FAILED);
             bool trans_x2_float = CalculateTransX2Float(context, new_shape, trans_x1, trans_x2);
             if (trans_x2 || trans_x2_float) {
@@ -352,16 +362,16 @@ static ge::graphStatus UpdateX2NewShape(const gert::InferShapeContext* context, 
 
     if (strcmp(fused_op_type, FUSED_OP_TYPE_SWIGLU) == 0) {
         if (new_shape.GetDimNum() != SWIGLU_CONCAT_WEIGHT_DIM_NUM) {
-            CUBE_INNER_ERR_REPORT(op_name, "[InferShape] For swiglu fused operation, x2 shape must be 3-dimensional, \
+            MATMUL_REPORT_PARAM_ERR(op_name, "[InferShape] For swiglu fused operation, x2 shape must be 3-dimensional, \
                 but got %zu dimensions (shape: %s)",
-                                  new_shape.GetDimNum(), Ops::Base::ToString(new_shape).c_str());
+                                    new_shape.GetDimNum(), Ops::Base::ToString(new_shape).c_str());
             return ge::GRAPH_FAILED;
         }
 
         int64_t highest_dim = new_shape.GetDim(0);
         // the highest dimension (dimension 0) equals 2 (indicating concatenation of two weights)
         if (highest_dim != SWIGLU_CONCAT_DIM_VALUE) {
-            CUBE_INNER_ERR_REPORT(
+            MATMUL_REPORT_PARAM_ERR(
                 op_name, "[InferShape] For swiglu fused operation, the highest dimension must be 2, but got %ld",
                 highest_dim);
             return ge::GRAPH_FAILED;
@@ -386,26 +396,25 @@ ge::graphStatus InferShapeForBatchMatMul(gert::InferShapeContext* context, const
     auto attrs = context->GetAttrs();
     auto op_name = context->GetNodeName();
     OP_CHECK_IF(shape_x1 == nullptr || shape_x2 == nullptr || shape_out == nullptr,
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShape] shape is null"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITH_INVALID_INPUT(op_name, "shape"), return ge::GRAPH_FAILED);
     if (CheckIsUnknownDimNum(*shape_x1) || CheckIsUnknownDimNum(*shape_x2)) {
         shape_out->SetDimNum(1);
         shape_out->SetDim(0, UNKNOWN_DIM_NUM);
         return ge::GRAPH_SUCCESS;
     }
-    OP_CHECK_IF(attrs == nullptr, CUBE_INNER_ERR_REPORT(op_name, "[InferShape] attrs is null"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "attrs"), return ge::GRAPH_FAILED);
     const bool* adj_x1 = attrs->GetAttrPointer<bool>(attr_adj_idx);
     const bool* adj_x2 = attrs->GetAttrPointer<bool>(attr_adj_idx + 1);
 
-    OP_CHECK_IF(adj_x1 == nullptr || adj_x2 == nullptr,
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShape] attribute is null"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(adj_x1 == nullptr || adj_x2 == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "attribute"),
+                return ge::GRAPH_FAILED);
 
     OP_LOGD(context->GetNodeName(), "x1_shape: %s, x2_shape: %s, adj_x1: %d, adj_x2: %d",
             Ops::Base::ToString(*shape_x1).c_str(), Ops::Base::ToString(*shape_x2).c_str(), *adj_x1, *adj_x2);
 
     auto dim_num = std::max(shape_x1->GetDimNum(), shape_x2->GetDimNum());
     if (dim_num < 1 || dim_num > BATCH_MATMUL_MAX_SHAPE_SIZE) {
-        CUBE_INNER_ERR_REPORT(op_name, "[InferShape] The shape can only be in the range of 1 to 8.");
+        MATMUL_REPORT_PARAM_ERR(op_name, "[InferShape] The shape can only be in the range of 1 to 8.");
         return ge::GRAPH_FAILED;
     }
 
@@ -431,7 +440,7 @@ ge::graphStatus InferShapeForBatchMatMul(gert::InferShapeContext* context, const
                                                    *adj_x2 && !shape_x2_reshape_flag};
     InferShapeBatchMatMul batchMatMulInfer(context, InferShapeBatchTensor, input_bias_index);
     OP_CHECK_IF(!batchMatMulInfer.InferShape(),
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShape] Failed to infer output shape"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(op_name, "[InferShape] Failed to infer output shape"), return ge::GRAPH_FAILED);
 
     InferComplementedOutput(shape_x1_reshape_flag, shape_x2_reshape_flag, *shape_out);
     OP_LOGD(context->GetNodeName(), "output shape: %s", Ops::Base::ToString(*(context->GetOutputShape(0))).c_str());
@@ -453,8 +462,8 @@ static bool InitializeRange(size_t num, const std::vector<std::pair<int64_t, int
     }
     for (size_t i = 0; i < range.size(); ++i) {
         if (range.at(i).first < 0) {
-            OP_LOGE("MatMulCommon", "[InferShapeRange] range[%ld, %ld] is incorrect.", range.at(i).first,
-                    range.at(i).second);
+            MATMUL_REPORT_PARAM_ERR("MatMulCommon", "[InferShapeRange] range[%ld, %ld] is incorrect.",
+                                    range.at(i).first, range.at(i).second);
             return false;
         }
         if (range.at(i).second == INFINITE_RANGE) {
@@ -493,8 +502,9 @@ static bool GetBatchIntersection(const char* op_name, std::pair<int64_t, int64_t
     out.second = std::min(a.second, b.second);
     // 交集不存在
     if (out.first > out.second || out.first == NORMALIZE_INFINITE_RANGE) {
-        OP_LOGE(op_name, "[GetBatchIntersection] range[%ld, %ld] and range[%ld, %ld] don't have intersection.", a.first,
-                a.second, b.first, b.second);
+        MATMUL_REPORT_PARAM_ERR(op_name,
+                                "[GetBatchIntersection] range[%ld, %ld] and range[%ld, %ld] don't have intersection.",
+                                a.first, a.second, b.first, b.second);
         return false;
     }
     return true;
@@ -508,8 +518,9 @@ static bool GetKNIntersection(const char* op_name, const std::pair<int64_t, int6
     out.second = std::min(a.second, b.second);
     // 交集不存在
     if (out.first > out.second || out.first == NORMALIZE_INFINITE_RANGE) {
-        OP_LOGE(op_name, "[GetKNIntersection] range[%ld, %ld] and range[%ld, %ld] don't have intersection.", a.first,
-                a.second, b.first, b.second);
+        MATMUL_REPORT_PARAM_ERR(op_name,
+                                "[GetKNIntersection] range[%ld, %ld] and range[%ld, %ld] don't have intersection.",
+                                a.first, a.second, b.first, b.second);
         return false;
     }
     return true;
@@ -556,8 +567,8 @@ static bool InferRangeBias(const char* op_name, std::vector<std::pair<int64_t, i
     } else {
         auto bias_min_shape = bias_shape_range->GetMin();
         auto bias_max_shape = bias_shape_range->GetMax();
-        OP_CHECK_IF(bias_min_shape == nullptr || bias_max_shape == nullptr,
-                    CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] bias min/max shape is null"), return false);
+        OP_CHECK_IF(bias_min_shape == nullptr || bias_max_shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "bias"),
+                    return false);
         size_t num_dim_bias = bias_min_shape->GetDimNum();
         // 数组长度为0，也是bias不存在，直接返回true不进行校验
         if (num_dim_bias == 0) {
@@ -578,12 +589,12 @@ static bool InferRangeBias(const char* op_name, std::vector<std::pair<int64_t, i
         }
         std::vector<std::pair<int64_t, int64_t>> new_shape_range_bias;
         OP_CHECK_IF(!InitializeRange(num_dim_out, tmp_shape_range_bias, new_shape_range_bias),
-                    CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] InitializeRange bias failed."), return false);
+                    OP_LOGE_WITHOUT_REPORT(op_name, "[InferShapeRange] InitializeRange bias failed."), return false);
         // 按bias的batch轴校验并扩充，除去最后的2维，继承原有rt1.0逻辑
         for (size_t i = 0; i < num_dim_out - 2; ++i) {
             OP_CHECK_IF(
                 !GetBatchIntersection(op_name, new_shape_range_out[i], new_shape_range_bias[i], new_shape_range_out[i]),
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] Infer bias batch range incorrect at dim[%zu].", i),
+                OP_LOGE_WITHOUT_REPORT(op_name, "[InferShapeRange] Infer bias batch range incorrect at dim[%zu].", i),
                 return false);
         }
         if (!GetKNIntersection(op_name, new_shape_range_bias[num_dim_out - 1], new_shape_range_x2[idx_n],
@@ -636,16 +647,15 @@ protected:
 bool InferShapeRangeBatchMatMul::Init()
 {
     OP_CHECK_IF(x1_shape_range == nullptr || x2_shape_range == nullptr || out_shape_range == nullptr,
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] shape range is null"), return false);
+                OP_LOGE_WITH_INVALID_INPUT(op_name, "shape_range"), return false);
 
     const gert::RuntimeAttrs* attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] attrs is null"), return false);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "attrs"), return false);
 
     adj_x1 = attrs->GetAttrPointer<bool>(attr_adj_idx);
     adj_x2 = attrs->GetAttrPointer<bool>(attr_adj_idx + 1);
 
-    OP_CHECK_IF(adj_x1 == nullptr || adj_x2 == nullptr,
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] attribute is null"), return false);
+    OP_CHECK_IF(adj_x1 == nullptr || adj_x2 == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "attribute"), return false);
 
     x1_min_shape = x1_shape_range->GetMin();
     x1_max_shape = x1_shape_range->GetMax();
@@ -653,7 +663,7 @@ bool InferShapeRangeBatchMatMul::Init()
     x2_max_shape = x2_shape_range->GetMax();
     OP_CHECK_IF(
         x1_min_shape == nullptr || x1_max_shape == nullptr || x2_min_shape == nullptr || x2_max_shape == nullptr,
-        CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] min/max shape is null"), return false);
+        OP_LOGE_WITH_INVALID_INPUT(op_name, "shape"), return false);
     num_dim_x1 = x1_min_shape->GetDimNum();
     num_dim_x2 = x2_min_shape->GetDimNum();
     // 初始化x1和x2，转为vector的形式
@@ -681,10 +691,10 @@ bool InferShapeRangeBatchMatMul::InferShapeRange()
     // 扩充x1和x2到一样的维度，用1在前面补充
     std::vector<std::pair<int64_t, int64_t>> new_shape_range_x1;
     OP_CHECK_IF(!InitializeRange(num_dim_out, src_shape_range_x1, new_shape_range_x1),
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] InitializeRange x1 failed."), return false);
+                OP_LOGE_WITHOUT_REPORT(op_name, "[InferShapeRange] InitializeRange x1 failed."), return false);
     std::vector<std::pair<int64_t, int64_t>> new_shape_range_x2;
     OP_CHECK_IF(!InitializeRange(num_dim_out, src_shape_range_x2, new_shape_range_x2),
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] InitializeRange x2 failed."), return false);
+                OP_LOGE_WITHOUT_REPORT(op_name, "[InferShapeRange] InitializeRange x2 failed."), return false);
     for (size_t i = 0; i < num_dim_out; ++i) {
         new_shape_range_out.emplace_back(NORMALIZE_FULL_RANGE);
     }
@@ -710,7 +720,7 @@ bool InferShapeRangeBatchMatMul::InferShapeRange()
     for (size_t i = 0; i < num_dim_out - 2; ++i) {
         OP_CHECK_IF(
             !GetBatchIntersection(op_name, new_shape_range_x1[i], new_shape_range_x2[i], new_shape_range_out[i]),
-            CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] Infer batch range incorrect at dim[%zu].", i),
+            OP_LOGE_WITHOUT_REPORT(op_name, "[InferShapeRange] Infer batch range incorrect at dim[%zu].", i),
             return false);
     }
     // 推理m，输出的倒数第2维度
@@ -718,10 +728,10 @@ bool InferShapeRangeBatchMatMul::InferShapeRange()
     // 推理k，不输出，只校验
     std::pair<int64_t, int64_t> k_range;
     OP_CHECK_IF(!GetKNIntersection(op_name, new_shape_range_x1[idx_k_x1], new_shape_range_x2[idx_k_x2], k_range),
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] Infer k range incorrect."), return false);
+                OP_LOGE_WITHOUT_REPORT(op_name, "[InferShapeRange] Infer k range incorrect."), return false);
     // 从bias推理N和推理bias的batch
     OP_CHECK_IF(!InferRangeBias(op_name, new_shape_range_out, idx_n, bias_shape_range, new_shape_range_x2),
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] Infer n range incorrect."), return false);
+                OP_LOGE_WITHOUT_REPORT(op_name, "[InferShapeRange] Infer n range incorrect."), return false);
 
     // 设置输出range
     SetOutput();
@@ -750,10 +760,10 @@ ge::graphStatus InferShapeRangeForBatchMatMul(gert::InferShapeRangeContext* cont
     InferShapeRangeBatchMatMul batchMatMulInferRange(context, attr_adj_idx, input_bias_index);
     auto op_name = context->GetNodeName();
     OP_CHECK_IF(!batchMatMulInferRange.Init(),
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] Failed to init shape range"),
+                OP_LOGE_WITHOUT_REPORT(op_name, "[InferShapeRange] Failed to init shape range"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!batchMatMulInferRange.InferShapeRange(),
-                CUBE_INNER_ERR_REPORT(op_name, "[InferShapeRange] Failed to infer output shape range"),
+                OP_LOGE_WITHOUT_REPORT(op_name, "[InferShapeRange] Failed to infer output shape range"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

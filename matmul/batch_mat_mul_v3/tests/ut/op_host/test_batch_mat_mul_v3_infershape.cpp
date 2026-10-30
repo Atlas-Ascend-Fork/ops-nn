@@ -9,6 +9,9 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdint>
+#include "base/err_mgr.h"
+#include "../../../../common/op_host/matmul_error_report.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "register/op_impl_registry.h"
@@ -17,6 +20,91 @@
 
 namespace {
 class TestBatchMatMulV3InferShape : public testing::Test {};
+
+// Keep error assertions local to this test without replacing the shared ErrorManager.
+class TestMatmulErrorReport : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        savedContext_ = error_message::GetErrMgrContext();
+        auto context = savedContext_;
+        context.work_stream_id = reinterpret_cast<std::uintptr_t>(this);
+        error_message::SetErrMgrContext(context);
+        (void)error_message::GetErrMgrRawErrorMessages();
+    }
+
+    void TearDown() override
+    {
+        (void)error_message::GetErrMgrRawErrorMessages();
+        error_message::SetErrMgrContext(savedContext_);
+    }
+
+    void CheckBias(gert::StorageShape* bias, ge::graphStatus expected)
+    {
+        auto inferShape = gert::OpImplRegistry::GetInstance().GetOpImpl("BatchMatMulV3")->infer_shape;
+        gert::StorageShape x1 = {{2, 32, 64}, {2, 32, 64}};
+        gert::StorageShape x2 = {{2, 64, 128}, {2, 64, 128}};
+        gert::StorageShape output = {{}, {}};
+        auto holder = gert::InferShapeContextFaker()
+                          .NodeIoNum(bias == nullptr ? 2 : 3, 1)
+                          .IrInstanceNum(bias == nullptr ? std::vector<uint32_t>{1, 1} : std::vector<uint32_t>{1, 1, 1})
+                          .InputShapes(bias == nullptr ? std::vector<gert::StorageShape*>{&x1, &x2} :
+                                                         std::vector<gert::StorageShape*>{&x1, &x2, bias})
+                          .OutputShapes({&output})
+                          .NodeAttrs({{"adj_x1", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                      {"adj_x2", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                          .Build();
+        ASSERT_EQ(inferShape(holder.GetContext<gert::InferShapeContext>()), expected);
+        auto errors = error_message::GetErrMgrRawErrorMessages();
+        if (expected == ge::GRAPH_SUCCESS) {
+            EXPECT_TRUE(errors.empty());
+            EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)),
+                      "[2, 32, 128]");
+        } else {
+            ASSERT_EQ(errors.size(), 1U);
+            ASSERT_NE(errors[0].error_id, nullptr);
+            EXPECT_STREQ(errors[0].error_id.get(), "EZ1001");
+        }
+    }
+
+private:
+    error_message::ErrorManagerContext savedContext_;
+};
+
+TEST_F(TestMatmulErrorReport, OptionalBiasDoesNotReportError) { CheckBias(nullptr, ge::GRAPH_SUCCESS); }
+
+TEST_F(TestMatmulErrorReport, RankZeroBiasDoesNotReportError)
+{
+    gert::StorageShape bias = {{}, {}};
+    CheckBias(&bias, ge::GRAPH_SUCCESS);
+}
+
+TEST_F(TestMatmulErrorReport, ValidBiasDoesNotReportError)
+{
+    gert::StorageShape bias = {{128}, {128}};
+    CheckBias(&bias, ge::GRAPH_SUCCESS);
+}
+
+TEST_F(TestMatmulErrorReport, InvalidBiasReportsOneParameterError)
+{
+    gert::StorageShape bias = {{64}, {64}};
+    CheckBias(&bias, ge::GRAPH_FAILED);
+}
+
+TEST_F(TestMatmulErrorReport, TilingErrorUsesRegisteredExecutionFields)
+{
+    Ops::NN::ReportMatmulTilingError("BatchMatMulV3", "tiling buffer copy failed");
+    auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ1008");
+    ASSERT_EQ(errors[0].args_key.size(), 2U);
+    ASSERT_EQ(errors[0].args_value.size(), 2U);
+    EXPECT_STREQ(errors[0].args_key[0].get(), "opName");
+    EXPECT_STREQ(errors[0].args_key[1].get(), "reason");
+    EXPECT_STREQ(errors[0].args_value[0].get(), "BatchMatMulV3");
+    EXPECT_STREQ(errors[0].args_value[1].get(), "tiling buffer copy failed");
+}
 
 TEST_F(TestBatchMatMulV3InferShape, Basic)
 {

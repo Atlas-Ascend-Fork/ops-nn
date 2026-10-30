@@ -19,6 +19,9 @@
 #include "register/op_def_registry.h"
 #include "platform/platform_infos_def.h"
 #include "error_util.h"
+#include "matmul/common/op_host/matmul_error_report.h"
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -87,18 +90,16 @@ bool MatmulCompressTilingBase::GetMatMulInfo()
     size_t numAttrs = attrs->GetAttrNum();
     if (numAttrs <= MAX_MOCK_ATTR_NUM) {
         OP_TILING_CHECK(context_->GetAttrs()->GetAttrPointer<uint32_t>(INDEX_ATTR_TILING_K) == nullptr,
-                        CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "Attr tilingK should not be nullptr!"),
-                        return false);
+                        OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "tilingK"), return false);
         params_.tilingK = *context_->GetAttrs()->GetAttrPointer<uint32_t>(INDEX_ATTR_TILING_K);
         OP_TILING_CHECK(context_->GetAttrs()->GetAttrPointer<uint32_t>(INDEX_ATTR_TILING_N) == nullptr,
-                        CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "Attr tilingN should not be nullptr!"),
-                        return false);
+                        OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "tilingN"), return false);
         params_.tilingN = *context_->GetAttrs()->GetAttrPointer<uint32_t>(INDEX_ATTR_TILING_N);
     }
-    OP_TILING_CHECK(
-        params_.batchSize == 0 || params_.m == 0 || params_.k == 0 || params_.n == 0,
-        CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "Shape value(b, m, k, n) of matmul should not be zero!"),
-        return false);
+    OP_TILING_CHECK(params_.batchSize == 0 || params_.m == 0 || params_.k == 0 || params_.n == 0,
+                    Ops::NN::ReportMatmulParamError(context_->GetNodeName(),
+                                                    "Shape value(b, m, k, n) of matmul should not be zero!"),
+                    return false);
     tilingData_.tilingK = params_.tilingK;
     tilingData_.tilingN = params_.tilingN;
     params_.isCompress = (params_.tilingK > 0 && params_.tilingN > 0);
@@ -117,8 +118,7 @@ bool MatmulCompressTilingBase::GetTilingKey()
 
 ge::graphStatus MatmulCompressTilingBase::DoTiling()
 {
-    OP_TILING_CHECK(context_->GetInputDesc(0) == nullptr,
-                    CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "Desc of input matmul A should not be nullptr!"),
+    OP_TILING_CHECK(context_->GetInputDesc(0) == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "x"),
                     return ge::GRAPH_FAILED);
     auto inputDType = context_->GetInputDesc(0)->GetDataType();
     params_.sizeInDtype = ge::GetSizeByDataType(inputDType);
@@ -189,7 +189,10 @@ ge::graphStatus MatmulCompressTilingBase::PostTiling()
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
                            static_cast<void*>(&matmulCompressTilingDataArch20_), tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d", ret);
+        std::string msg = "memcpy_s failed, ret=" + std::to_string(ret) +
+                          ", required bytes=" + std::to_string(tilingDataSize) +
+                          ", capacity bytes=" + std::to_string(context_->GetRawTilingData()->GetCapacity());
+        Ops::NN::ReportMatmulTilingError(context_->GetNodeName(), msg);
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);

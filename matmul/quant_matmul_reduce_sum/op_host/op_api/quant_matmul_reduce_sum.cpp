@@ -41,7 +41,8 @@ const aclTensor* QuantMatmulReduceSum(const aclTensor* x1, const aclTensor* x2, 
 
     L0_DFX(QuantMatmulReduceSum, x1, x2, dims, bias, x1Scale, x2Scale, yScale, x1Offset, x2Offset, yOffset, x2Table,
            dtype, transposeX1, transposeX2, groupSize, keepDims);
-    OP_CHECK(output != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "output AllocTensor failed."), return nullptr);
+    OP_CHECK(output != nullptr, OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "output AllocTensor failed."),
+             return nullptr);
 
     // 对接原型，补充compute_type为默认值-1
     int32_t compute_type = -1;

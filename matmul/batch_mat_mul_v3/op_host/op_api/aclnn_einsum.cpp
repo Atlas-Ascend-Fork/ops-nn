@@ -133,7 +133,9 @@ aclnnStatus HandleABCDxABCED2ABCE(const aclTensorList* tensors, aclTensor* outpu
     OP_CHECK_WRONG_DIMENSION(output, 4, return ACLNN_ERR_PARAM_INVALID); // 校验Tensor output的dimNum为4
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     auto ret = CheckABCDxABCED2ABCE(tensors, output);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
@@ -224,7 +226,9 @@ aclnnStatus HandleAxB2AB(const aclTensorList* tensors, aclTensor* output, uint64
     OP_CHECK_WRONG_DIMENSION(output, 2, return ACLNN_ERR_PARAM_INVALID); // 校验Tensor output的dimNum为2
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     auto ret = CheckAxB2AB(tensors, output);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);

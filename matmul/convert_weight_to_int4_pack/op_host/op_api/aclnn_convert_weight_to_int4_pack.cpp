@@ -10,6 +10,7 @@
 
 #include <iostream>
 #include <vector>
+#include "base/err_msg.h"
 #include "runtime/mem.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
@@ -352,7 +353,10 @@ static bool TransNdToNz(std::vector<int8_t>& weightArray, const Shape& weightSha
 
     int64_t c0SizeInt8 = GetNdToNzC0Size(c032Flag);
     if (c0SizeInt8 == 0) {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "The nz storage shape c0 size should not be 0.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "The nz storage shape c0 size should not be 0.");
+        const std::vector<const char*> msgKey = {"message"};
+        const std::vector<const char*> msgValue = {"The nz storage shape c0 size should not be 0."};
+        REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
         return false;
     }
     // k为外轴，n为内轴，外轴按16对齐，内轴按32B对齐，(k, n) -> (n1,k1,16,c0SizeInt8)
@@ -404,7 +408,7 @@ aclnnStatus aclnnConvertWeightToINT4PackGetWorkspaceSize(const aclTensor* weight
     std::vector<int32_t> weightData(shapeSize, 0);
     auto ret = aclrtMemcpy(weightData.data(), weightData.size() * sizeof(weightData[0]), weight->GetTensor()->GetAddr(),
                            weightData.size() * sizeof(weightData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
-    OP_CHECK(ret == ACL_SUCCESS, OP_LOGE(ret, "copy result from device to host failed."),
+    OP_CHECK(ret == ACL_SUCCESS, OP_LOGE_WITHOUT_REPORT(ret, "copy result from device to host failed."),
              return ACLNN_ERR_RUNTIME_ERROR);
     // 从原先的1个int32的数承载1个int4的数改变成用1个int8的数承载2个int4的数，size缩减为原来的一半
     std::vector<int8_t> weightInt4PackData(shapeSize / 2, 0);
@@ -421,7 +425,7 @@ aclnnStatus aclnnConvertWeightToINT4PackGetWorkspaceSize(const aclTensor* weight
     ret = aclrtMemcpy(weightInt4Pack->GetTensor()->GetAddr(), weightInt4PackData.size() * sizeof(weightInt4PackData[0]),
                       weightInt4PackData.data(), weightInt4PackData.size() * sizeof(weightInt4PackData[0]),
                       ACL_MEMCPY_HOST_TO_DEVICE);
-    OP_CHECK(ret == ACL_SUCCESS, OP_LOGE(ret, "copy result from host to device failed."),
+    OP_CHECK(ret == ACL_SUCCESS, OP_LOGE_WITHOUT_REPORT(ret, "copy result from host to device failed."),
              return ACLNN_ERR_RUNTIME_ERROR);
     return ACLNN_SUCCESS;
 }

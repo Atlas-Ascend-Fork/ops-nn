@@ -1219,6 +1219,9 @@ TEST_F(l2_matmul_test, ascend910B_sc_splitk_al1_fullload_bf16_b_trans_hit)
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 
+// Keep ErrorManager declarations in global scope when including cube_util.cpp below.
+#include "base/err_msg.h"
+
 namespace matmul_util_whitebox {
 
 namespace l0op {

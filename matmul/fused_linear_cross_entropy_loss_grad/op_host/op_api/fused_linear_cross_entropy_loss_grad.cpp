@@ -64,7 +64,8 @@ const std::tuple<aclTensor*, aclTensor*> FusedLinearCrossEntropyLossGrad(
         OP_OUTPUT(std::get<0>(out), std::get<1>(out)), OP_ATTR(labelSmoothing));
 
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "FusedLinearCrossEntropyLossGrad ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                                    "FusedLinearCrossEntropyLossGrad ADD_TO_LAUNCHER_LIST_AICORE failed."),
              return errorRes);
 
     return out;

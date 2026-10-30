@@ -14,6 +14,7 @@
  */
 #include <string>
 #include <vector>
+#include "base/err_msg.h"
 #include "quant_matmul_activation_mx_quant_tiling.h"
 #include "op_host/tiling_templates_registry.h"
 #include "../../op_kernel/arch35/quant_matmul_activation_quant_tiling_key.h"
@@ -47,9 +48,13 @@ bool QuantMatmulActivationQuantMXBasicAPITiling::CheckCoreNum() const
 {
     // CoreNum==0 is rejected by the common platform-info checks before DoOpTiling().
     if (compileInfo_.aivNum != qmmv3_tiling_const::CORE_RATIO * compileInfo_.aicNum) {
-        OP_LOGE(inputParams_.opName,
-                "QuantMatmulActivationQuant MX tiling requires aicNum:aivNum = 1:2; got aicNum=%u, aivNum=%u.",
-                compileInfo_.aicNum, compileInfo_.aivNum);
+        const std::string msg = "QuantMatmulActivationQuant MX tiling requires aicNum:aivNum = 1:2; got aicNum=" +
+                                std::to_string(compileInfo_.aicNum) +
+                                ", aivNum=" + std::to_string(compileInfo_.aivNum) + ".";
+        OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "%s", msg.c_str());
+        const std::vector<const char*> msgKey = {"message"};
+        const std::vector<const char*> msgValue = {msg.c_str()};
+        REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
         return false;
     }
     return true;

@@ -171,7 +171,7 @@ static ge::graphStatus InferShape4QuantMatmulActivationQuant(gert::InferShapeCon
 {
     OP_LOGI(context, "Begin InferShape4QuantMatmulActivationQuant.");
 
-    OP_CHECK_NULL_WITH_CONTEXT(context, context);
+    OP_CHECK_IF(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("nil", "context"), return ge::GRAPH_FAILED);
     const char* opName = GetValidOpNameForInferShape(context);
 
     auto shape_x1 = context->GetInputShape(X1_INDEX);
@@ -179,10 +179,10 @@ static ge::graphStatus InferShape4QuantMatmulActivationQuant(gert::InferShapeCon
     auto shape_x1_scale = context->GetOptionalInputShape(X1_SCALE_INDEX);
     auto shape_x2_scale = context->GetOptionalInputShape(X2_SCALE_INDEX);
 
-    OP_CHECK_NULL_WITH_CONTEXT(context, shape_x1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, shape_x2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, shape_x1_scale);
-    OP_CHECK_NULL_WITH_CONTEXT(context, shape_x2_scale);
+    OP_CHECK_IF(shape_x1 == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "x1"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(shape_x2 == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "x2"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(shape_x1_scale == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "x1_scale"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(shape_x2_scale == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "x2_scale"), return ge::GRAPH_FAILED);
 
     auto dim_a = shape_x1->GetDimNum();
     auto dim_b = shape_x2->GetDimNum();
@@ -190,8 +190,8 @@ static ge::graphStatus InferShape4QuantMatmulActivationQuant(gert::InferShapeCon
 
     auto out_shape_y = context->GetOutputShape(Y_INDEX);
     auto out_shape_y_scale = context->GetOutputShape(Y_SCALE_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, out_shape_y);
-    OP_CHECK_NULL_WITH_CONTEXT(context, out_shape_y_scale);
+    OP_CHECK_IF(out_shape_y == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "y"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(out_shape_y_scale == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "y_scale"), return ge::GRAPH_FAILED);
     if (!CheckMxFp8ActivationAttrs(context, opName)) {
         return ge::GRAPH_FAILED;
     }
@@ -349,7 +349,7 @@ static ge::graphStatus InferDataType4QuantMatmulActivationQuant(gert::InferDataT
 {
     OP_LOGD(context, "Begin InferDataType4QuantMatmulActivationQuant.");
 
-    OP_CHECK_NULL_WITH_CONTEXT(context, context);
+    OP_CHECK_IF(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("nil", "context"), return ge::GRAPH_FAILED);
     const char* opName = GetValidOpNameForInferDataType(context);
     if (!CheckMxFp8ActivationAttrs(context, opName)) {
         return ge::GRAPH_FAILED;

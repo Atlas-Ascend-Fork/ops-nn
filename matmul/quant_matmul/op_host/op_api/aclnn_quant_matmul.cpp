@@ -15,7 +15,11 @@
 
 #include "aclnn_quant_matmul.h"
 
+#include <string>
+#include <vector>
+
 #include "aclnn_kernels/common/op_error_check.h"
+#include "base/err_msg.h"
 #include "opdev/common_types.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
@@ -300,8 +304,13 @@ static aclnnStatus CheckSupportSocVersion()
     if (socVersion == SocVersion::ASCEND910B || socVersion == SocVersion::ASCEND910_93) {
         return ACLNN_SUCCESS;
     }
-    OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "QuantBatchMatmul/V2 support for %s is not implemented",
-            op::ToString(socVersion).GetString());
+    OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "QuantBatchMatmul/V2 support for %s is not implemented",
+                           op::ToString(socVersion).GetString());
+    const std::string msg = std::string("QuantBatchMatmul/V2 support for ") + op::ToString(socVersion).GetString() +
+                            " is not implemented";
+    const std::vector<const char*> msgKey = {"message"};
+    const std::vector<const char*> msgValue = {msg.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
     return ACLNN_ERR_RUNTIME_ERROR;
 }
 
@@ -391,7 +400,9 @@ aclnnStatus aclnnQuantMatmulGetWorkspaceSize(const aclTensor* x1, const aclTenso
 
     // 固定写法，创建OpExecutor
     auto unique_executor = CREATE_EXECUTOR();
-    CHECK_RET(unique_executor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(unique_executor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 实现deqScale的转义
     auto fixpipeDeqScale = TransDequantScaleToM1(deqScale);
@@ -461,7 +472,9 @@ aclnnStatus aclnnQuantMatmulV2GetWorkspaceSize(const aclTensor* x1, const aclTen
 
     // 固定写法，创建OpExecutor
     auto unique_executor = CREATE_EXECUTOR();
-    CHECK_RET(unique_executor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(unique_executor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 入参检查
     auto ret = CheckParamsV2(std::tie(x1, x2, bias), deqScale, adjX1, adjX2, out);

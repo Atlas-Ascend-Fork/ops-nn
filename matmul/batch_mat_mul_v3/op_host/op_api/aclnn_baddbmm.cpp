@@ -727,7 +727,9 @@ aclnnStatus aclnnBaddbmmGetWorkspaceSize(const aclTensor* self, const aclTensor*
 
     // 创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     const aclTensor* castOut = nullptr;
     // 输入空Tensor处理方法，直接返回了一个空 Tensor，未做计算

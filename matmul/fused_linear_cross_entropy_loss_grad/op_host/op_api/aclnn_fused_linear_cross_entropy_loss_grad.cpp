@@ -27,6 +27,8 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/op_errno.h"
+#include <vector>
+#include "base/err_msg.h"
 
 using namespace op;
 #ifdef __cplusplus
@@ -220,7 +222,10 @@ inline static bool CheckPlatformSupported()
         socVersion == SocVersion::ASCEND950) {
         return true;
     }
-    OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "Current platform is not supported");
+    OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "Current platform is not supported");
+    const std::vector<const char*> msgKey = {"message"};
+    const std::vector<const char*> msgValue = {"Current platform is not supported"};
+    REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
     return false;
 }
 
@@ -271,7 +276,9 @@ aclnnStatus aclnnFusedLinearCrossEntropyLossGradGetWorkspaceSize(
                    DFX_OUT(inputGradOut, weightGradOut));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     FusedLinearCrossEntropyLossGradInputs inputs = {grad,
                                                     input,

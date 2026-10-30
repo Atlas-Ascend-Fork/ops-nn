@@ -30,6 +30,10 @@
 #include "opdev/op_def.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include "base/err_msg.h"
+#include <string>
+#include <cstdio>
+#include <vector>
 #include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
@@ -270,10 +274,15 @@ const aclIntArray* GetOutputSize(const aclTensor* x1, const aclTensor* x2, const
     size_t x1DimSize = x1->GetViewShape().GetDimNum();
     size_t x2DimSize = x2->GetViewShape().GetDimNum();
     if ((x1DimSize < minDim || x1DimSize > maxDim) || (x2DimSize < minDim || x2DimSize > maxDim)) {
-        OP_LOGE(
-            ACLNN_ERR_INNER_NULLPTR,
+        char msgBuf[256];
+        (void)snprintf(
+            msgBuf, sizeof(msgBuf),
             "Calculate BatchMatMul out unsuccessfully, one of input dim belows 2 or exceeds 8, which is %zu and %zu.",
             x1DimSize, x2DimSize);
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s", msgBuf);
+        const std::vector<const char*> msgKey = {"message"};
+        const std::vector<const char*> msgValue = {msgBuf};
+        REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
         return nullptr;
     }
     size_t outDimSize = std::max(x1DimSize, x2DimSize);

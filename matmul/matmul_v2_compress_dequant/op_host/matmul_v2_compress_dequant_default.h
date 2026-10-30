@@ -23,6 +23,7 @@
 #include "register/op_def_registry.h"
 #include "platform/platform_infos_def.h"
 #include "error_util.h"
+#include "log/log.h"
 
 namespace {
 constexpr uint64_t L1_DESCALE_BUFFER_SIZE_MAX = 6144;
@@ -126,7 +127,7 @@ void PpMatMulDefault::GetHardwareInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
     if (platformInfo == nullptr) {
-        OP_LOGE("[PpMatMul]", "platformInfo is nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("[PpMatMul]", "platformInfo");
         return;
     }
     HardwareInfo hardwareInfo;

@@ -10,7 +10,9 @@
 #include <cstdlib>
 #include <tuple>
 #include <algorithm>
+#include <cstdint>
 
+#include "base/err_mgr.h"
 #include "test_case_infershape.h"
 #include "error_util.h"
 #include "exe_graph/runtime/storage_shape.h"
@@ -158,3 +160,64 @@ TEST_P(FusedMatMulRuntimeProtoTest, General)
 }
 
 INSTANTIATE_TEST_CASE_P(FusedMatMul, FusedMatMulRuntimeProtoTest, testing::ValuesIn(testcase_fusedmatmul_runtime));
+
+namespace {
+class FusedMatMulErrorReportTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        savedContext_ = error_message::GetErrMgrContext();
+        auto context = savedContext_;
+        context.work_stream_id = reinterpret_cast<std::uintptr_t>(this);
+        error_message::SetErrMgrContext(context);
+        (void)error_message::GetErrMgrRawErrorMessages();
+    }
+
+    void TearDown() override
+    {
+        (void)error_message::GetErrMgrRawErrorMessages();
+        error_message::SetErrMgrContext(savedContext_);
+    }
+
+    void CheckBatchBroadcast(int64_t x2Batch, ge::graphStatus expected)
+    {
+        gert::StorageShape x1 = {{2, 32, 64}, {2, 32, 64}};
+        gert::StorageShape x2 = {{x2Batch, 64, 128}, {x2Batch, 64, 128}};
+        gert::StorageShape bias = {{}, {}};
+        gert::StorageShape x3 = {{}, {}};
+        gert::StorageShape output = {{}, {}};
+        auto holder = CreateFusedMatMulHolder(x1, x2, bias, x3, output, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+                                              ge::DT_FLOAT16, false, false, false, "relu");
+        auto inferShape = gert::OpImplRegistry::GetInstance().GetOpImpl("FusedMatMul")->infer_shape;
+        ASSERT_EQ(inferShape(holder.GetContext<gert::InferShapeContext>()), expected);
+        const auto errors = error_message::GetErrMgrRawErrorMessages();
+        if (expected == ge::GRAPH_SUCCESS) {
+            EXPECT_TRUE(errors.empty());
+            EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)),
+                      "[2, 32, 128]");
+            return;
+        }
+        ASSERT_EQ(errors.size(), 1U);
+        ASSERT_NE(errors[0].error_id, nullptr);
+        EXPECT_STREQ(errors[0].error_id.get(), "EZ1001");
+        ASSERT_EQ(errors[0].args_key.size(), 1U);
+        ASSERT_EQ(errors[0].args_value.size(), 1U);
+        EXPECT_STREQ(errors[0].args_key[0].get(), "message");
+        ASSERT_NE(errors[0].args_value[0], nullptr);
+        const std::string message = errors[0].args_value[0].get();
+        EXPECT_NE(message.find("(2)"), std::string::npos);
+        EXPECT_NE(message.find("(3)"), std::string::npos);
+        EXPECT_NE(message.find("must be equal"), std::string::npos);
+    }
+
+private:
+    error_message::ErrorManagerContext savedContext_;
+};
+
+TEST_F(FusedMatMulErrorReportTest, InvalidBatchBroadcastReportsOneParameterError)
+{
+    CheckBatchBroadcast(3, ge::GRAPH_FAILED);
+}
+
+TEST_F(FusedMatMulErrorReportTest, ValidBatchBroadcastDoesNotReportError) { CheckBatchBroadcast(1, ge::GRAPH_SUCCESS); }
+} // namespace

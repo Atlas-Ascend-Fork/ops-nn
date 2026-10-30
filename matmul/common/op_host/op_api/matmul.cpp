@@ -36,7 +36,7 @@ static const aclTensor* MatMulV3Common(const aclTensor* x1, const aclTensor* x2,
     auto ret = INFER_SHAPE(MatMulV3, OP_INPUT(x1, x2, bias, offsetW), OP_OUTPUT(mm_out),
                            OP_ATTR(transposeX1, transposeX2, offsetX, opImplMode));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed.");
         return nullptr;
     }
     uint32_t execMode = opImplMode == 0x40 ? static_cast<uint32_t>(OpExecMode::OP_EXEC_MODE_HF32) : 0U;
@@ -58,7 +58,7 @@ static const aclTensor* MatMulCommon(const aclTensor* x1, const aclTensor* x2, c
     auto ret = INFER_SHAPE(MatMulV2, OP_INPUT(x1, x2, bias, offsetW), OP_OUTPUT(mm_out),
                            OP_ATTR(transposeX1, transposeX2, offsetX, -1L, -1L, opImplModeEnum, 1L));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed.");
         return nullptr;
     }
     uint32_t execMode = opImplModeEnum == 0x40 ? static_cast<uint32_t>(OpExecMode::OP_EXEC_MODE_HF32) : 0U;
@@ -187,7 +187,7 @@ const aclTensor* GemmV3NdNzWithAlphaBeta(const aclTensor* x1, const aclTensor* x
     auto ret = INFER_SHAPE(GemmV3, OP_INPUT(x1, x2, self), OP_OUTPUT(out),
                            OP_ATTR(alpha, beta, transposeX1, transposeX2, enableHf32));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed");
         return nullptr;
     }
     ret = ADD_TO_LAUNCHER_LIST_AICORE(GemmV3, OP_INPUT(x1, x2, self), OP_OUTPUT(out),

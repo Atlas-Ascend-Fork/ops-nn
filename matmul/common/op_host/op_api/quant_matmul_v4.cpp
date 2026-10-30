@@ -34,7 +34,8 @@ const aclTensor* QuantBatchMatmulV4(const aclTensor* x1, const aclTensor* x2, co
     DataType outType = static_cast<DataType>(dtype);
     Format format = Format::FORMAT_ND;
     auto output = executor->AllocTensor(outType, format, format);
-    OP_CHECK(output != nullptr, OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "output AllocTensor failed."), return nullptr);
+    OP_CHECK(output != nullptr, OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "output AllocTensor failed."),
+             return nullptr);
 
     auto ret = INFER_SHAPE(QuantBatchMatmulV4,
                            OP_INPUT(x1, x2, bias, x1Scale, x2Scale, yScale, x1Offset, x2Offset, yOffset, x2Table),

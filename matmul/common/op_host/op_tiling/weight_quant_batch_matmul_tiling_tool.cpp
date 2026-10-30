@@ -98,10 +98,8 @@ matmul_tiling::DataType GetMatmulTilingDtype(ge::DataType dtype)
 ge::Format GetInputStorageFormat(const gert::TilingContext* context, size_t id)
 {
     auto desc = context->GetInputDesc(id);
-    OP_TILING_CHECK(
-        desc == nullptr,
-        VECTOR_INNER_ERR_REPORT_TILIING("weight_quant_batch_matmul_v2_tiling", "get input[%zu] Desc is null!", id),
-        return ge::FORMAT_NULL);
+    OP_TILING_CHECK(desc == nullptr, OP_LOGE_WITH_INVALID_INPUT("weight_quant_batch_matmul_v2_tiling", "inputDesc"),
+                    return ge::FORMAT_NULL);
     return static_cast<ge::Format>(GetPrimaryFormat(desc->GetStorageFormat()));
 }
 } // namespace optiling

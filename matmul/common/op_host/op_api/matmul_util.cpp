@@ -621,7 +621,7 @@ static inline const aclTensor* GetPadTensor(int64_t padNum, int64_t padDim, aclO
 
     auto padArray = executor->AllocIntArray(padVec.data(), dims);
     if (padArray == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Try alloc padVec failed");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Try alloc padVec failed");
         return nullptr;
     }
 

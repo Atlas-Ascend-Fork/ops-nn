@@ -140,7 +140,9 @@ aclnnStatus aclnnQuantMatmulDequantGetWorkspaceSize(const aclTensor* x, const ac
                    DFX_OUT(out));
     // 创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     if (!transposeWeight) {
         return ACLNN_ERR_PARAM_INVALID;

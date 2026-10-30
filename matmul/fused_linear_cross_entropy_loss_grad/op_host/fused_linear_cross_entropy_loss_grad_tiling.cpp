@@ -17,6 +17,7 @@
 #include <sstream>
 #include <algorithm>
 #include "log/log.h"
+#include "matmul/common/op_host/matmul_error_report.h"
 #include "register/op_def_registry.h"
 #include "tiling/tiling_api.h"
 #include "tiling/platform/platform_ascendc.h"
@@ -109,7 +110,9 @@ static ge::graphStatus HighPerfTilingFunc(gert::TilingContext* context)
     mm1Tiling.SetFixSplit(baseM, baseN, baseK);
     int64_t ret = mm1Tiling.GetTiling(tiling.mm1Tiling); // if ret = -1, get tiling failed
     if (ret == -1) {
-        OP_LOGE(context->GetNodeName(), "GetTiling for FusedLinearCrossEntropyLossGrad mm1 failed.");
+        Ops::NN::ReportMatmulTilingError(
+            context->GetNodeName(),
+            "GetTiling for FusedLinearCrossEntropyLossGrad mm1 failed, ret=" + std::to_string(ret));
         return ge::GRAPH_FAILED;
     };
     tiling.mm1Tiling.set_stepKa(SIZE_4);
@@ -139,7 +142,9 @@ static ge::graphStatus HighPerfTilingFunc(gert::TilingContext* context)
     mm2Tiling.SetFixSplit(baseM, baseN, baseK);
     ret = mm2Tiling.GetTiling(tiling.mm2Tiling); // if ret = -1, get tiling failed
     if (ret == -1) {
-        OP_LOGE(context->GetNodeName(), "GetTiling for FusedLinearCrossEntropyLossGrad mm2 failed.");
+        Ops::NN::ReportMatmulTilingError(
+            context->GetNodeName(),
+            "GetTiling for FusedLinearCrossEntropyLossGrad mm2 failed, ret=" + std::to_string(ret));
         return ge::GRAPH_FAILED;
     };
     tiling.mm2Tiling.set_stepKa(SIZE_4);
@@ -218,31 +223,36 @@ static ge::graphStatus HighPerfTilingFunc(gert::TilingContext* context)
     // validation
     // bt
     if (BT_16ALIGNED - mm2TailK > SIZE_65535) {
-        OP_LOGE(context->GetNodeName(),
-                "[FusedLinearCrossEntropyLossGrad] softmax.size(0) greater than 65536 is not supported now.");
+        Ops::NN::ReportMatmulParamError(
+            context->GetNodeName(),
+            "[FusedLinearCrossEntropyLossGrad] softmax.size(0) greater than 65536 is not supported now.");
         return ge::GRAPH_FAILED;
     };
     // v
     if (V * IN_BYTE_SIZE < SIZE_512) {
-        OP_LOGE(context->GetNodeName(),
-                "[FusedLinearCrossEntropyLossGrad] bytesize of softmax.size(1) smaller than 512B is not supported.");
+        Ops::NN::ReportMatmulParamError(
+            context->GetNodeName(),
+            "[FusedLinearCrossEntropyLossGrad] bytesize of softmax.size(1) smaller than 512B is not supported.");
         return ge::GRAPH_FAILED;
     };
     if (V > (uint64_t)((SIZE_256 - 1) * SIZE_256)) { // VOut512BAlignedByteSize < 65536
-        OP_LOGE(context->GetNodeName(),
-                "[FusedLinearCrossEntropyLossGrad] softmax.size(1) greater than 65280 is not supported now.");
+        Ops::NN::ReportMatmulParamError(
+            context->GetNodeName(),
+            "[FusedLinearCrossEntropyLossGrad] softmax.size(1) greater than 65280 is not supported now.");
         return ge::GRAPH_FAILED;
     };
     // h
     if (H > SIZE_65535) {
-        OP_LOGE(context->GetNodeName(),
-                "[FusedLinearCrossEntropyLossGrad] input.size(1) greater than 65535 is not supported now.");
+        Ops::NN::ReportMatmulParamError(
+            context->GetNodeName(),
+            "[FusedLinearCrossEntropyLossGrad] input.size(1) greater than 65535 is not supported now.");
         return ge::GRAPH_FAILED;
     };
     // others
     if (btPerEpochSingle == 0U) {
-        OP_LOGE(context->GetNodeName(),
-                "[FusedLinearCrossEntropyLossGrad] softmax.size(1) is too large and is not supported now.");
+        Ops::NN::ReportMatmulParamError(
+            context->GetNodeName(),
+            "[FusedLinearCrossEntropyLossGrad] softmax.size(1) is too large and is not supported now.");
         return ge::GRAPH_FAILED;
     }
 
@@ -294,8 +304,11 @@ static ge::graphStatus HighPerfTilingFunc(gert::TilingContext* context)
     // kernel 内跨核 flag 计数屏障要求全部 launch 核共驻; 950 上 stream 调度可能
     // 派发不全导致计数不齐而挂死, 需声明 batch 调度模式保障全核派发
     if (ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) {
-        OP_CHECK_IF(context->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context->GetNodeName(), "Failed to set ScheduleMode!"), return ge::GRAPH_FAILED);
+        const auto scheduleStatus = context->SetScheduleMode(1);
+        OP_CHECK_IF(scheduleStatus != ge::GRAPH_SUCCESS,
+                    Ops::NN::ReportMatmulTilingError(
+                        context->GetNodeName(), "Failed to set ScheduleMode, ret=" + std::to_string(scheduleStatus)),
+                    return ge::GRAPH_FAILED);
     }
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
@@ -362,7 +375,8 @@ static ge::graphStatus MemFriendlyTilingFunc(gert::TilingContext* context)
     auto logitsMax = context->GetInputTensor(INDEX_5);
     auto sumExpLogits = context->GetInputTensor(INDEX_6);
     if (logitsMax == nullptr or sumExpLogits == nullptr) {
-        OP_LOGE(context->GetNodeName(), "logitsMax or sumExpLogits can not be nullptr when softmax is nullptr.");
+        Ops::NN::ReportMatmulParamError(context->GetNodeName(),
+                                        "logitsMax or sumExpLogits can not be nullptr when softmax is nullptr.");
         return ge::GRAPH_FAILED;
     }
     // 信息获取
@@ -486,7 +500,9 @@ static ge::graphStatus MemFriendlyTilingFunc(gert::TilingContext* context)
     mm0Tiling.SetSingleShape(M, N, K);
     int64_t ret = mm0Tiling.GetTiling(tiling.mm0Tiling);
     if (ret == -1) {
-        OP_LOGE(context->GetNodeName(), "GetTiling for FusedLinearCrossEntropyLossGrad mm0 failed.");
+        Ops::NN::ReportMatmulTilingError(
+            context->GetNodeName(),
+            "GetTiling for FusedLinearCrossEntropyLossGrad mm0 failed, ret=" + std::to_string(ret));
         return ge::GRAPH_FAILED;
     };
 
@@ -505,7 +521,9 @@ static ge::graphStatus MemFriendlyTilingFunc(gert::TilingContext* context)
     mm1Tiling.SetSingleShape(M, N, K);
     ret = mm1Tiling.GetTiling(tiling.mm1Tiling);
     if (ret == -1) {
-        OP_LOGE(context->GetNodeName(), "GetTiling for FusedLinearCrossEntropyLossGrad mm1 failed.");
+        Ops::NN::ReportMatmulTilingError(
+            context->GetNodeName(),
+            "GetTiling for FusedLinearCrossEntropyLossGrad mm1 failed, ret=" + std::to_string(ret));
         return ge::GRAPH_FAILED;
     };
 
@@ -524,15 +542,18 @@ static ge::graphStatus MemFriendlyTilingFunc(gert::TilingContext* context)
     mm2Tiling.SetSingleShape(M, N, K);
     ret = mm2Tiling.GetTiling(tiling.mm2Tiling);
     if (ret == -1) {
-        OP_LOGE(context->GetNodeName(), "GetTiling for FusedLinearCrossEntropyLossGrad mm2 failed.");
+        Ops::NN::ReportMatmulTilingError(
+            context->GetNodeName(),
+            "GetTiling for FusedLinearCrossEntropyLossGrad mm2 failed, ret=" + std::to_string(ret));
         return ge::GRAPH_FAILED;
     };
 
     // validation
     // h
     if (H > SIZE_65535) {
-        OP_LOGE(context->GetNodeName(),
-                "[FusedLinearCrossEntropyLossGrad] input.size(1) greater than 65535 is not supported now.");
+        Ops::NN::ReportMatmulParamError(
+            context->GetNodeName(),
+            "[FusedLinearCrossEntropyLossGrad] input.size(1) greater than 65535 is not supported now.");
         return ge::GRAPH_FAILED;
     };
 
@@ -577,8 +598,11 @@ static ge::graphStatus MemFriendlyTilingFunc(gert::TilingContext* context)
     // kernel 内跨核 flag 计数屏障要求全部 launch 核共驻; 950 上 stream 调度可能
     // 派发不全导致计数不齐而挂死, 需声明 batch 调度模式保障全核派发
     if (ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) {
-        OP_CHECK_IF(context->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context->GetNodeName(), "Failed to set ScheduleMode!"), return ge::GRAPH_FAILED);
+        const auto scheduleStatus = context->SetScheduleMode(1);
+        OP_CHECK_IF(scheduleStatus != ge::GRAPH_SUCCESS,
+                    Ops::NN::ReportMatmulTilingError(
+                        context->GetNodeName(), "Failed to set ScheduleMode, ret=" + std::to_string(scheduleStatus)),
+                    return ge::GRAPH_FAILED);
     }
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());

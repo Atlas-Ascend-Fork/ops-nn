@@ -162,7 +162,7 @@ private:
         OP_CHECK_NULL(dims_, return ACLNN_ERR_PARAM_NULLPTR);
         OP_CHECK_NULL(out_, return ACLNN_ERR_PARAM_NULLPTR);
         if (executor_ == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_CREATE_EXECUTOR, "executor is nullptr.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "executor is nullptr.");
             return ACLNN_ERR_INNER_CREATE_EXECUTOR;
         }
 
@@ -348,7 +348,9 @@ aclnnStatus aclnnQuantMatmulReduceSumWeightNzGetWorkspaceSize(
                    DFX_OUT(out));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 参数校验和执行l0接口
     AclnnQuantMatmulReduceSum aclnnOp;

@@ -8,6 +8,9 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "cube_util.h"
+#include "base/err_msg.h"
+#include <string>
+#include <vector>
 #include "aclnn_kernels/contiguous.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/platform.h"
@@ -60,7 +63,11 @@ static bool CheckSocSupportDtype(const op::DataType cubeTensorDtype, bool allowF
 bool CheckUnSupportDtype(const aclTensor* input, const aclTensor* weight)
 {
     if ((input->GetDataType() == op::DataType::DT_HIFLOAT8) != (weight->GetDataType() == op::DataType::DT_HIFLOAT8)) {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "Hif8 not in aclnn framework support dtype list");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "Hif8 not in aclnn framework support dtype list");
+        const char* msg = "Hif8 not in aclnn framework support dtype list";
+        const std::vector<const char*> msgKey = {"message"};
+        const std::vector<const char*> msgValue = {msg};
+        REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
         return true;
     }
     return false;

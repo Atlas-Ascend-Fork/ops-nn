@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <limits>
 #include <string>
+#include <vector>
+#include "base/err_msg.h"
 #include "matmul/quant_batch_matmul_v3/op_host/op_tiling/arch35/adaptive_sliding_window_mx_basic_api_tiling.h"
 
 namespace optiling {
@@ -26,6 +28,15 @@ using Ops::NN::FormatString;
 namespace {
 constexpr size_t BATCH_BIAS_RANK = 3UL;
 constexpr int64_t BATCH_BIAS_BROADCAST_SIZE = 1L;
+
+// Statement-safe EZ1001 reporter for OP_TILING_CHECK log_func (macros are do-while, not expressions).
+void ReportQmmaqParamError(const char* opName, const char* message)
+{
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", message);
+    const std::vector<const char*> msgKey = {"message"};
+    const std::vector<const char*> msgValue = {message};
+    REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
+}
 } // namespace
 
 template <typename BaseT>
@@ -925,7 +936,7 @@ void QuantMatmulActivationQuantHelper<BaseT>::ResetActivationQuantTilingData(QMM
         OP_TILING_CHECK(
             memset_s(this->context_->GetRawTilingData()->GetData(), this->context_->GetRawTilingData()->GetCapacity(),
                      0, this->context_->GetRawTilingData()->GetCapacity()) != EOK,
-            CUBE_INNER_ERR_REPORT(this->inputParams_.opName, "Failed to clear tiling data."), return);
+            ReportQmmaqParamError(this->inputParams_.opName, "Failed to clear tiling data."), return);
     }
 }
 

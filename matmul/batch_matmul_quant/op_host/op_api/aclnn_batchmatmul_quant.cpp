@@ -158,13 +158,15 @@ static aclnnStatus PreInputProcess(const aclTensor* inputTensor, aclOpExecutor* 
 {
     if (inputTensor != nullptr) {
         inputTensor = l0op::Contiguous(inputTensor, executor);
-        OP_CHECK(inputTensor != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input perprocess failed, contiguous return nullptr."),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            inputTensor != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "The input perprocess failed, contiguous return nullptr."),
+            return ACLNN_ERR_INNER_NULLPTR);
         inputTensor = l0op::ReFormat(inputTensor, op::Format::FORMAT_ND);
-        OP_CHECK(inputTensor != nullptr,
-                 OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "THe input perprocess failed, reformat return nullptr."),
-                 return ACLNN_ERR_INNER_NULLPTR);
+        OP_CHECK(
+            inputTensor != nullptr,
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "THe input perprocess failed, reformat return nullptr."),
+            return ACLNN_ERR_INNER_NULLPTR);
     }
 
     return ACLNN_SUCCESS;
@@ -179,7 +181,9 @@ aclnnStatus aclnnBatchMatmulQuantGetWorkspaceSize(const aclTensor* x1, const acl
 
     // 固定写法, 创建OpExecutor
     auto unique_executor = CREATE_EXECUTOR();
-    CHECK_RET(unique_executor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(unique_executor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 入参检查
     aclnnStatus ret = CheckParams(x1, x2, quantParam, bias, out, transposeX1, transposeX2);

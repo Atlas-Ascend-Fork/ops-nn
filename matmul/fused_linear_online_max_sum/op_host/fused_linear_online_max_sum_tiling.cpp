@@ -16,6 +16,7 @@
 #include <map>
 #include <vector>
 #include "error_util.h"
+#include "matmul/common/op_host/matmul_error_report.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "util/math_util.h"
@@ -28,6 +29,7 @@ using namespace ge;
 using namespace std;
 
 namespace {
+
 constexpr size_t INPUT_INPUT_IDX = 0;
 constexpr size_t INPUT_WEIGHT_IDX = 1;
 constexpr size_t INPUT_TARGET_IDX = 2;
@@ -144,26 +146,29 @@ bool FusedLinearOnlineMaxSumTiling::CheckShapeInfoValid()
     auto inputShape = tilingContext_->GetInputShape(INPUT_INPUT_IDX)->GetStorageShape();
     auto weightShape = tilingContext_->GetInputShape(INPUT_WEIGHT_IDX)->GetStorageShape();
     auto targetShape = tilingContext_->GetInputShape(INPUT_TARGET_IDX)->GetStorageShape();
-    OP_TILING_CHECK(inputShape.GetDimNum() != EXPECTED_DIM_NUM_TWO, OP_LOGE(opName_, "the dim of input should be 2."),
-                    return false);
+    OP_TILING_CHECK(inputShape.GetDimNum() != EXPECTED_DIM_NUM_TWO,
+                    Ops::NN::ReportMatmulParamError(opName_, "the dim of input should be 2."), return false);
 
-    OP_TILING_CHECK(weightShape.GetDimNum() != EXPECTED_DIM_NUM_TWO, OP_LOGE(opName_, "the dim of weight should be 2."),
-                    return false);
+    OP_TILING_CHECK(weightShape.GetDimNum() != EXPECTED_DIM_NUM_TWO,
+                    Ops::NN::ReportMatmulParamError(opName_, "the dim of weight should be 2."), return false);
 
-    OP_TILING_CHECK(targetShape.GetDimNum() != EXPECTED_DIM_NUM_ONE, OP_LOGE(opName_, "the dim of target should be 1."),
-                    return false);
+    OP_TILING_CHECK(targetShape.GetDimNum() != EXPECTED_DIM_NUM_ONE,
+                    Ops::NN::ReportMatmulParamError(opName_, "the dim of target should be 1."), return false);
     btSize_ = inputShape.GetDim(DIM_INDEX0);
     hSize_ = inputShape.GetDim(DIM_INDEX1);
     vSize_ = weightShape.GetDim(DIM_INDEX0);
 
     OP_TILING_CHECK(hSize_ > MAX_INPUT_DIM_ONE_SIZE,
-                    OP_LOGE(opName_, "input.size(1) should be less than or equal to 65534."), return false);
+                    Ops::NN::ReportMatmulParamError(opName_, "input.size(1) should be less than or equal to 65534."),
+                    return false);
 
     OP_TILING_CHECK(static_cast<uint64_t>(weightShape.GetDim(DIM_INDEX1)) != hSize_,
-                    OP_LOGE(opName_, "weight.size(1) should be equal to input.size(1)."), return false);
+                    Ops::NN::ReportMatmulParamError(opName_, "weight.size(1) should be equal to input.size(1)."),
+                    return false);
 
     OP_TILING_CHECK(static_cast<uint64_t>(targetShape.GetDim(DIM_INDEX0)) != btSize_,
-                    OP_LOGE(opName_, "the size of target should be equal to input.size(0)."), return false);
+                    Ops::NN::ReportMatmulParamError(opName_, "the size of target should be equal to input.size(0)."),
+                    return false);
 
     return true;
 }
@@ -228,18 +233,23 @@ bool FusedLinearOnlineMaxSumTiling::GetMatmulTiling()
 bool FusedLinearOnlineMaxSumTiling::GetAttrAndCheck()
 {
     auto attrs = tilingContext_->GetAttrs();
-    OP_TILING_CHECK(attrs == nullptr, OP_LOGE(opName_, "Get attrs Failed."), return false);
+    OP_TILING_CHECK(attrs == nullptr, Ops::NN::ReportMatmulParamError(opName_, "Get attrs Failed."), return false);
     int64_t vocabStartIdx = *(attrs->GetAttrPointer<int64_t>(ATTR_VOCAB_START_IDX));
     OP_TILING_CHECK(vocabStartIdx < 0,
-                    OP_LOGE(opName_, "vocabStartIndex %ld should not be smaller than 0.", vocabStartIdx), return false);
-    int64_t vocabEndIdx = *(attrs->GetAttrPointer<int64_t>(ATTR_VOCAB_END_IDX));
-    OP_TILING_CHECK(vocabEndIdx < vocabStartIdx,
-                    OP_LOGE(opName_, "vocabEndIndex %ld should be greater than or equal to vocabStartIndex %ld.",
-                            vocabEndIdx, vocabStartIdx),
+                    Ops::NN::ReportMatmulParamError(
+                        opName_, "vocabStartIndex " + std::to_string(vocabStartIdx) + " should not be smaller than 0."),
                     return false);
+    int64_t vocabEndIdx = *(attrs->GetAttrPointer<int64_t>(ATTR_VOCAB_END_IDX));
+    OP_TILING_CHECK(
+        vocabEndIdx < vocabStartIdx,
+        Ops::NN::ReportMatmulParamError(opName_, "vocabEndIndex " + std::to_string(vocabEndIdx) +
+                                                     " should be greater than or equal to vocabStartIndex " +
+                                                     std::to_string(vocabStartIdx)),
+        return false);
     OP_TILING_CHECK(vocabEndIdx > MAX_FLOAT_EXACT_RANGE,
-                    OP_LOGE(opName_, "vocabEndIndex %ld exceeds float32 exact integer range %ld.", vocabEndIdx,
-                            MAX_FLOAT_EXACT_RANGE),
+                    Ops::NN::ReportMatmulParamError(opName_, "vocabEndIndex " + std::to_string(vocabEndIdx) +
+                                                                 " exceeds float32 exact integer range " +
+                                                                 std::to_string(MAX_FLOAT_EXACT_RANGE)),
                     return false);
     vocabStartIndex_ = static_cast<float>(vocabStartIdx);
     vocabEndIndex_ = static_cast<float>(vocabEndIdx);
@@ -345,7 +355,7 @@ static ge::graphStatus TilingForFusedLinearOnlineMaxSum(gert::TilingContext* con
     FusedLinearOnlineMaxSumTiling tilingObject(context);
     auto ret = tilingObject.Init();
     if (ret != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "TilingForFusedLinearOnlineMaxSum Init failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "TilingForFusedLinearOnlineMaxSum Init failed.");
         return ge::GRAPH_FAILED;
     }
     ret = tilingObject.RunKernelTiling();

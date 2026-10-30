@@ -18,6 +18,9 @@
 #include <cstdint>
 #include "matmul/common/op_host/op_tiling/tiling_type_mm.h"
 #include "error_util.h"
+#include "matmul/common/op_host/matmul_error_report.h"
+#include <vector>
+#include "base/err_msg.h"
 #include "graph/utils/type_utils.h"
 #include "log/log.h"
 #include "matmul/common/op_host/log_format_util.h"
@@ -530,7 +533,7 @@ void QuantBatchMatmulInplaceAddHelper<BaseT>::ResetInplaceTilingData(TilingData&
         OP_TILING_CHECK(
             memset_s(this->context_->GetRawTilingData()->GetData(), this->context_->GetRawTilingData()->GetCapacity(),
                      0, this->context_->GetRawTilingData()->GetCapacity()) != EOK,
-            CUBE_INNER_ERR_REPORT(this->inputParams_.opName, "Fail to clear tiling data"), return);
+            Ops::NN::ReportMatmulTilingError(this->inputParams_.opName, "Fail to clear tiling data"), return);
     }
 }
 
@@ -542,7 +545,8 @@ void QuantBatchMatmulInplaceAddHelper<BaseT>::CopyV3BasicApiTilingData(
         sizeof(DequantBmm::QuantBatchMatmulV3BasicAPITilingData) == sizeof(QMMIA::QbmmiaTilingData),
         "QuantBatchMatmulInplaceAdd basic-api tiling data must stay layout-compatible with QuantBatchMatmulV3.");
     OP_TILING_CHECK(memcpy_s(&dst, sizeof(dst), &src, sizeof(src)) != EOK,
-                    CUBE_INNER_ERR_REPORT(this->inputParams_.opName, "Fail to copy basic-api tiling data"), return);
+                    Ops::NN::ReportMatmulTilingError(this->inputParams_.opName, "Fail to copy basic-api tiling data"),
+                    return);
 }
 
 template <typename BaseT>
@@ -552,8 +556,9 @@ void QuantBatchMatmulInplaceAddHelper<BaseT>::CopyV3WithoutBatchTilingData(
     static_assert(sizeof(DequantBmm::QuantBatchMatmulV3TensorAPIWithoutBatchTilingData) == sizeof(dst),
                   "QuantBatchMatmulInplaceAdd without-batch tiling data must stay layout-compatible with "
                   "QuantBatchMatmulV3.");
-    OP_TILING_CHECK(memcpy_s(&dst, sizeof(dst), &src, sizeof(src)) != EOK,
-                    CUBE_INNER_ERR_REPORT(this->inputParams_.opName, "Fail to copy without-batch tiling data"), return);
+    OP_TILING_CHECK(
+        memcpy_s(&dst, sizeof(dst), &src, sizeof(src)) != EOK,
+        Ops::NN::ReportMatmulTilingError(this->inputParams_.opName, "Fail to copy without-batch tiling data"), return);
 }
 
 } // namespace optiling

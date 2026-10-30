@@ -38,7 +38,7 @@ REGISTER_TILING_TEMPLATE("BatchMatMulV3", BatchMatmulV3BaseTiling, 0);
 
 static ge::graphStatus BatchMatMulV3TilingFunc(gert::TilingContext* context)
 {
-    OP_TILING_CHECK(context == nullptr, CUBE_INNER_ERR_REPORT("BatchMatMulV3", "context is null"),
+    OP_TILING_CHECK(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("BatchMatMulV3", "context"),
                     return ge::GRAPH_FAILED);
     if (IsAdvancedSocVersion(context)) {
         return batch_matmul_v3_advanced::BatchMatMulV3Tiling(context).DoTiling();
@@ -48,14 +48,14 @@ static ge::graphStatus BatchMatMulV3TilingFunc(gert::TilingContext* context)
 
 static ge::graphStatus TilingPrepareForBatchMatMulV3(gert::TilingParseContext* context)
 {
-    OP_TILING_CHECK(context == nullptr, CUBE_INNER_ERR_REPORT("BatchMatMulV3", "context is null"),
+    OP_TILING_CHECK(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("BatchMatMulV3", "context"),
                     return ge::GRAPH_FAILED);
     fe::PlatFormInfos* platformInfo = context->GetPlatformInfo();
-    OP_TILING_CHECK(platformInfo == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "platformInfoPtr is null"),
+    OP_TILING_CHECK(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "platformInfo"),
                     return ge::GRAPH_FAILED);
 
     auto compileInfoPtr = context->GetCompiledInfo<MatmulV3CompileInfo>();
-    OP_TILING_CHECK(compileInfoPtr == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "compileInfoPtr is null"),
+    OP_TILING_CHECK(compileInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "compileInfo"),
                     return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     platformInfo->GetPlatformRes("version", "SoC_version", compileInfoPtr->socVersionStr);

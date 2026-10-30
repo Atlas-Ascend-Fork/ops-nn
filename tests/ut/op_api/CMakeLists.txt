@@ -73,6 +73,7 @@ if(UT_TEST_ALL OR OP_API_UT)
           opp_registry
           rt2_registry
           error_manager
+          c_sec
           )
   ## exec ophost ut exe
   if(ENABLE_UT_EXEC)

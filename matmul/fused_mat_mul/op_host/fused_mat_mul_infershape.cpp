@@ -215,7 +215,7 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
             int64_t batch_dim_out = 1;
             OP_CHECK_IF(!Ops::NN::BroadcastBatchDim(op_name, shape_short.GetDim(i - valid_offset), shape_long.GetDim(i),
                                                     batch_dim_out),
-                        CUBE_INNER_ERR_REPORT(op_name, "failed to infer broadcast batch shape"),
+                        OP_LOGE_WITHOUT_REPORT(op_name, "failed to infer broadcast batch shape"),
                         return ge::GRAPH_FAILED);
             shape_out->SetDim(i, batch_dim_out);
         }

@@ -22,6 +22,9 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 #include "opdev/platform.h"
 #include "log/log.h"
 #include "matmul/common/op_host/log_format_util.h"
@@ -467,7 +470,9 @@ static aclnnStatus CheckExpectedShapes(const QBMMInplaceAdd::QuantBatchMatmulInp
 
 static aclnnStatus CheckShape(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddParams& params)
 {
-    CHECK_COND(CheckInputOutDims(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Check CheckInputOutDims failed.");
+    OP_CHECK(CheckInputOutDims(params) == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "Check CheckInputOutDims failed."),
+             return ACLNN_ERR_PARAM_INVALID);
     if (params.transposeX1 != true || params.transposeX2 != false) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             "aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize", "transposeX1, transposeX2",
@@ -476,8 +481,9 @@ static aclnnStatus CheckShape(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddPa
         return ACLNN_ERR_PARAM_INVALID;
     }
     MatmulShapeInfo shapeInfo = GetMatmulShapeInfo(params);
-    CHECK_COND(CheckShapeInfoMatch(params, shapeInfo) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "CheckShapeInfoMatch failed.");
+    OP_CHECK(CheckShapeInfoMatch(params, shapeInfo) == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "CheckShapeInfoMatch failed."),
+             return ACLNN_ERR_PARAM_INVALID);
 
     if (!CheckMKN(shapeInfo.mDim, shapeInfo.kDim, shapeInfo.nDim)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "CheckMKN failed.");
@@ -487,9 +493,12 @@ static aclnnStatus CheckShape(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddPa
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "CheckMKN4HIF4 failed.");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_COND(CheckMxScaleLastDim(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "CheckMxScaleLastDim failed.");
-    CHECK_COND(CheckHif4ScaleLastDim(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "CheckHif4ScaleLastDim failed.");
+    OP_CHECK(CheckMxScaleLastDim(params) == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "CheckMxScaleLastDim failed."),
+             return ACLNN_ERR_PARAM_INVALID);
+    OP_CHECK(CheckHif4ScaleLastDim(params) == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "CheckHif4ScaleLastDim failed."),
+             return ACLNN_ERR_PARAM_INVALID);
     return CheckExpectedShapes(params, shapeInfo);
 }
 
@@ -660,8 +669,9 @@ static aclnnStatus CheckDtype(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddPa
     auto x2ScaleDtype = params.x2Scale->GetDataType();
     if ((x1Dtype == DataType::DT_FLOAT8_E4M3FN || x1Dtype == DataType::DT_FLOAT8_E5M2) &&
         (x2Dtype == DataType::DT_FLOAT8_E4M3FN || x2Dtype == DataType::DT_FLOAT8_E5M2)) {
-        CHECK_COND(CheckScaleQuantDim(params, "mx") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                   "Check CheckScaleQuantDim for mx failed.");
+        OP_CHECK(CheckScaleQuantDim(params, "mx") == ACLNN_SUCCESS,
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "Check CheckScaleQuantDim for mx failed."),
+                 return ACLNN_ERR_PARAM_INVALID);
         return CheckMxfp8DtypeValid(params);
     } else if (IsHiFloat8Input(params.x1, params.x2)) {
         return CheckHif8DtypeValid(params);
@@ -673,8 +683,9 @@ static aclnnStatus CheckDtype(const QBMMInplaceAdd::QuantBatchMatmulInplaceAddPa
                 "when the dtypes of x1 and x2 are HIFLOAT4, the current NpuArch must be DAV_9201");
             return ACLNN_ERR_PARAM_INVALID;
         }
-        CHECK_COND(CheckScaleQuantDim(params, "hif4") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                   "Check CheckScaleQuantDim for hif4 failed.");
+        OP_CHECK(CheckScaleQuantDim(params, "hif4") == ACLNN_SUCCESS,
+                 OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "Check CheckScaleQuantDim for hif4 failed."),
+                 return ACLNN_ERR_PARAM_INVALID);
         return CheckHif4DtypeValid(params);
     } else {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
@@ -848,7 +859,8 @@ static aclnnStatus aclnnQuantBatchMatmulInplaceAddGetWorkspaceSizeCommon(
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(InferGroupSize(params), ACLNN_ERR_PARAM_INVALID);
     OP_LOGD("Infer groupSize success. groupSize: %ld.", params.groupSize);
-    CHECK_COND(CheckGroupSize(params), ACLNN_ERR_PARAM_INVALID, "CheckGroupSize failed.");
+    OP_CHECK(CheckGroupSize(params), OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "CheckGroupSize failed."),
+             return ACLNN_ERR_PARAM_INVALID);
     MatmulShapeInfo shapeInfo = GetMatmulShapeInfo(params);
     if (shapeInfo.mDim == 0 || shapeInfo.nDim == 0) {
         OP_LOGD("aclnnQuantBatchMatmulInplaceAdd empty tensor m/n=0");
@@ -886,7 +898,9 @@ aclnnStatus aclnnQuantBatchMatmulInplaceAddGetWorkspaceSize(const aclTensor* x1,
     // 固定写法，创建OpExecutor
     OP_CHECK_COMM_INPUT(workspaceSize, executor);
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
     auto ret = aclnnQuantBatchMatmulInplaceAddGetWorkspaceSizeCommon(params, executorPtr);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
@@ -901,8 +915,9 @@ aclnnStatus aclnnQuantBatchMatmulInplaceAdd(void* workspace, uint64_t workspaceS
                                             aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnQuantBatchMatmulInplaceAdd);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "This is an error in QuantBatchMatmulInplaceAdd launch aicore.");
+    OP_CHECK(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "This is an error in QuantBatchMatmulInplaceAdd launch aicore."),
+             return ACLNN_ERR_INNER);
     return ACLNN_SUCCESS;
 }
 

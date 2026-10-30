@@ -98,6 +98,8 @@ if(UT_TEST_ALL OR OP_HOST_UT OR OP_GRAPH_UT OR OP_API_UT)
         -Wl,--no-whole-archive
         -Wl,--no-as-needed
         metadef
+        # Match the SDK tiling dependency, including nnopbase error-code registration.
+        nnopbase
         -Wl,--as-needed
         error_manager
         exe_graph

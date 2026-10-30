@@ -22,6 +22,9 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include "base/err_msg.h"
+#include <vector>
+#include <string>
 #include "opdev/platform.h"
 #include "log/log.h"
 #include "matmul/common/op_host/log_format_util.h"
@@ -95,7 +98,13 @@ static aclnnStatus CheckWeightNzParamsDAV3510(const aclTensor* x1, const aclTens
 {
     if (op::GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_3510) {
         SocVersion socVersion = op::GetCurrentPlatformInfo().GetSocVersion();
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "SOC version %s is not supported", op::ToString(socVersion).GetString());
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "SOC version %s is not supported",
+                               op::ToString(socVersion).GetString());
+        const std::string msg = std::string("SOC version ") + op::ToString(socVersion).GetString() +
+                                " is not supported";
+        const std::vector<const char*> msgKey = {"message"};
+        const std::vector<const char*> msgValue = {msg.c_str()};
+        REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
         return ACLNN_ERR_RUNTIME_ERROR;
     }
 
@@ -416,8 +425,10 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(void* workspace, uint64_t wo
                                                     aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnQuantMatmulActivationQuantWeightNz);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "This is an error in QuantMatmulActivationQuantWeightNz launch aicore.");
+    OP_CHECK(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER,
+                                    "This is an error in QuantMatmulActivationQuantWeightNz launch aicore."),
+             return ACLNN_ERR_INNER);
     return ACLNN_SUCCESS;
 }
 

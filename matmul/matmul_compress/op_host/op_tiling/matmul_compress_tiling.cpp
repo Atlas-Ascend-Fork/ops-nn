@@ -17,6 +17,9 @@
 #include "op_host/tiling_templates_registry.h"
 #include "register/op_def_registry.h"
 #include "error_util.h"
+#include "matmul/common/op_host/matmul_error_report.h"
+#include <string>
+#include <vector>
 
 using namespace optiling::matmul_compress;
 
@@ -24,25 +27,26 @@ namespace optiling {
 
 static ge::graphStatus MatmulCompressTilingFunc(gert::TilingContext* context)
 {
-    OP_TILING_CHECK(context == nullptr, CUBE_INNER_ERR_REPORT("MatmulCompress", "context is null"),
+    OP_TILING_CHECK(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("MatmulCompress", "context"),
                     return ge::GRAPH_FAILED);
     auto ret = MatmulCompressTilingBase(context).DoTiling();
-    OP_TILING_CHECK(ret == ge::GRAPH_FAILED, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "do tiling failed!"),
+    // DoTiling reports parameter and serialization failures at their source; do not duplicate the first error.
+    OP_TILING_CHECK(ret == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "do tiling failed!"),
                     return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 static ge::graphStatus TilingPrepareForMatmulCompress(gert::TilingParseContext* context)
 {
-    OP_TILING_CHECK(context == nullptr, CUBE_INNER_ERR_REPORT("MatmulCompress", "context is null"),
+    OP_TILING_CHECK(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("MatmulCompress", "context"),
                     return ge::GRAPH_FAILED);
     fe::PlatFormInfos* platformInfo = context->GetPlatformInfo();
-    OP_TILING_CHECK(platformInfo == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "platformInfoPtr is null"),
+    OP_TILING_CHECK(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "platformInfo"),
                     return ge::GRAPH_FAILED);
 
     auto hardwareInfoPtr = context->GetCompiledInfo<optiling::pp_matmul::HardwareInfo>();
-    OP_TILING_CHECK(hardwareInfoPtr == nullptr,
-                    CUBE_INNER_ERR_REPORT(context->GetNodeName(), "hardwareInfoPtr is null"), return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(hardwareInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "hardwareInfo"),
+                    return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     hardwareInfoPtr->coreNum = ascendcPlatform.GetCoreNumAic();
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L2, hardwareInfoPtr->l2Size);

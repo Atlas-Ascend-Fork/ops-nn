@@ -12,12 +12,16 @@
  * \file batch_mat_mul_v3_base_tiling.cpp
  * \brief
  */
+#include <string>
+#include <vector>
+#include "base/err_msg.h"
 #include "batch_mat_mul_v3_base_tiling.h"
 #include "batch_mat_mul_v3/op_kernel/batch_mat_mul_v3_tiling_key.h"
 #include "util/math_util.h"
 #include "log/log.h"
 #include "op_host/tiling_key.h"
 #include "error_util.h"
+#include "matmul/common/op_host/matmul_error_report.h"
 #include "op_cache_tiling.h"
 #include "runtime_kb_api.h"
 #include "matmul/common/op_host/math_util_nn.h"
@@ -149,7 +153,9 @@ bool BatchMatmulV3BaseTiling::GetBatchInfo()
     bool batch5Invalid = batchInfo_.batchA5 != batchInfo_.batchB5 && batchInfo_.batchA5 != 1UL &&
                          batchInfo_.batchB5 != 1UL;
     if (batch3Invalid || batch2Invalid || batch1Invalid || batch0Invalid || batch4Invalid || batch5Invalid) {
-        OP_LOGE("[BatchMatMulV3]", "Is M broadcast to N situation, do not support!");
+        {
+            Ops::NN::ReportMatmulParamError(args_.opName, "Is M broadcast to N situation, do not support!");
+        }
         return false;
     }
     return GetBiasWithBatchInfo();
@@ -167,14 +173,18 @@ bool BatchMatmulV3BaseTiling::GetBiasWithBatchInfo()
         return true;
     }
     if (biasDims == NO_BATCH_SHAPE_DIM) {
-        OP_LOGE("[BatchMatMulV3]", " Dim number of bias must not be 2 !");
+        {
+            Ops::NN::ReportMatmulParamError(args_.opName, " Dim number of bias must not be 2 !");
+        }
         return false;
     }
 
     batchInfo_.biasWithBatch = true;
     uint64_t biasMValue = biasShape[biasDims - NO_BATCH_SHAPE_DIM];
     if (biasMValue != 1UL) {
-        OP_LOGE("[BatchMatMulV3]", "M of Bias must be 1 !");
+        {
+            Ops::NN::ReportMatmulParamError(args_.opName, "M of Bias must be 1 !");
+        }
         return false;
     }
 
@@ -188,7 +198,9 @@ bool BatchMatmulV3BaseTiling::GetBiasWithBatchInfo()
                           batchBias2 == batchInfo_.batchC2 && batchBias3 == batchInfo_.batchC3 &&
                           batchBias4 == batchInfo_.batchC4 && batchBias5 == batchInfo_.batchC5;
     if (batchInfo_.biasWithBatch && !biasBatchValid) {
-        OP_LOGE("[BatchMatMulV3]", "Batch of Bias  must be equal to C !");
+        {
+            Ops::NN::ReportMatmulParamError(args_.opName, "Batch of Bias  must be equal to C !");
+        }
         return false;
     }
     return true;
@@ -1311,13 +1323,21 @@ bool BatchMatmulV3BaseTiling::CheckVectorComputationCondition()
 ge::graphStatus BatchMatmulV3BaseTiling::PostTiling()
 {
     size_t tilingDataSize = sizeof(BatchMatmulTilingData);
-    OP_TILING_CHECK(tilingDataSize % sizeof(uint64_t) != 0,
-                    OP_LOGE(args_.opName, "tiling data size[%zu] is not aligned to 8", tilingDataSize),
+    OP_TILING_CHECK(tilingDataSize % sizeof(uint64_t) != 0, ({
+                        const std::string _msg = "tiling data size[" + std::to_string(tilingDataSize) +
+                                                 "] is not aligned to 8";
+                        Ops::NN::ReportMatmulTilingError(args_.opName, _msg);
+                    }),
                     return ge::GRAPH_FAILED);
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
                            reinterpret_cast<void*>(&bmmTilingData_), tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d", ret);
+        {
+            const std::string _msg = "memcpy_s failed, ret=" + std::to_string(ret) +
+                                     ", required bytes=" + std::to_string(tilingDataSize) +
+                                     ", capacity bytes=" + std::to_string(context_->GetRawTilingData()->GetCapacity());
+            Ops::NN::ReportMatmulTilingError(context_->GetNodeName(), _msg);
+        }
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);
@@ -1351,7 +1371,7 @@ ge::graphStatus BatchMatmulV3BaseTiling::PostTiling()
     }
     workspaceSize_ = std::max(workspaceSize_, DEFAULT_SIZE);
     size_t* workspaces = context_->GetWorkspaceSizes(1);
-    OP_TILING_CHECK(workspaces == nullptr, CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "workspaces is null"),
+    OP_TILING_CHECK(workspaces == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "workspaces"),
                     return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     return ge::GRAPH_SUCCESS;

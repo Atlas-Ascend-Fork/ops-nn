@@ -17,7 +17,10 @@
 #include "matmul_compress_dequant.h"
 #include "level0/fill.h"
 
+#include <vector>
+
 #include "aclnn_kernels/common/op_error_check.h"
+#include "base/err_msg.h"
 #include "opdev/common_types.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
@@ -197,7 +200,10 @@ static aclnnStatus InputsContiguousAndTransFormat(const aclTensor* tensor, const
     op::Format tensorFormat = tensor->GetStorageFormat();
     if (tensorFormat != Format::FORMAT_FRACTAL_NZ) {
         reformatedTensor = l0op::Contiguous(tensor, executor);
-        CHECK_COND(reformatedTensor != nullptr, ACLNN_ERR_INNER_NULLPTR, "%s Contiguous failed.", tensorName.c_str());
+        if (reformatedTensor == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s Contiguous failed.", tensorName.c_str());
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
 
         bool is310P = GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND310P;
         // only in 310P, tensor should be transdata to NZ format
@@ -206,7 +212,10 @@ static aclnnStatus InputsContiguousAndTransFormat(const aclTensor* tensor, const
         }
 
         reformatedTensor = l0op::TransData(reformatedTensor, Format::FORMAT_FRACTAL_NZ, 1, executor);
-        CHECK_COND(reformatedTensor != nullptr, ACLNN_ERR_INNER_NULLPTR, "%s TransData failed.", tensorName.c_str());
+        if (reformatedTensor == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s TransData failed.", tensorName.c_str());
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         return ACLNN_SUCCESS;
     }
     reformatedTensor = tensor;
@@ -236,7 +245,9 @@ static const aclTensor* BuildMatMulUnzipGraph(MatmulUnzipInput matmulUnzipInput,
         return emptyOut;
     }
     const aclTensor* reformatedX = nullptr;
-    (void)InputsContiguousAndTransFormat(matmulUnzipInput.x1, reformatedX, "x1", executor);
+    auto ret = InputsContiguousAndTransFormat(matmulUnzipInput.x1, reformatedX, "x1", executor);
+    // Preserve the lower-layer error and stop before using an invalid x1 in the graph.
+    CHECK_RET(ret == ACLNN_SUCCESS, nullptr);
     matmulUnzipInput.bias = l0op::Contiguous(matmulUnzipInput.bias, executor);
     CHECK_RET(matmulUnzipInput.bias != nullptr, nullptr);
     const aclTensor* deqScale5HD = matmulUnzipInput.deqScale;
@@ -244,7 +255,11 @@ static const aclTensor* BuildMatMulUnzipGraph(MatmulUnzipInput matmulUnzipInput,
         deqScale5HD = TensorReformat(matmulUnzipInput.deqScale, op::Format::FORMAT_NC1HWC0, executor);
     } else {
         // CheckParam已前置拦截deqScale非16对齐的非法入参，此处兜底返回错误而非填零成功
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Dequant Scale is invalid Data.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "Dequant Scale is invalid Data.");
+        const std::vector<const char*> msgKey = {"message"};
+        const char* msg = "Dequant Scale is invalid Data.";
+        const std::vector<const char*> msgValue = {msg};
+        REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
         return nullptr;
     }
     const aclTensor* x2ReFormatFractalZ = TensorReformat(matmulUnzipInput.x2, op::Format::FORMAT_FRACTAL_Z, executor);
@@ -269,7 +284,9 @@ aclnnStatus aclnnMatmulCompressDequantGetWorkspaceSize(const aclTensor* x1, cons
                    DFX_IN(x1, x2, compressIndex, bias, deqScale, offsetW, offsetX, compressInfo), DFX_OUT(out));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
     // 入参初始化
     MatmulUnzipInput matmulUnzipInput;
     matmulUnzipInput.x1 = x1;

@@ -7,11 +7,13 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <cstdint>
 #include <iostream>
 #include <fstream>
 #include <vector>
 #include <gtest/gtest.h>
 
+#include "base/err_mgr.h"
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
@@ -20,7 +22,6 @@
 #include "../../../op_host/flat_quant_tiling.h"
 #include "platform/platform_infos_def.h"
 #include "ut_op_util.h"
-#include "base/err_mgr.h"
 
 using namespace ut_util;
 using namespace std;
@@ -33,48 +34,6 @@ protected:
 
     static void TearDownTestCase() { std::cout << "FlatQuantTiling TearDown" << std::endl; }
 };
-
-// ErrorManager raw message helpers (replaces weak-symbol capture)
-static std::vector<std::string> g_ezCodes;
-static bool g_ezCodesLoaded = false;
-
-static void InitErrMgr()
-{
-    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
-    (void)error_message::GetErrMgrErrorMessage();
-    g_ezCodes.clear();
-    g_ezCodesLoaded = false;
-}
-
-static void LoadEZCodes()
-{
-    if (g_ezCodesLoaded) {
-        return;
-    }
-    g_ezCodes.clear();
-    const auto errors = error_message::GetErrMgrRawErrorMessages();
-    for (const auto& e : errors) {
-        g_ezCodes.push_back(e.error_id == nullptr ? std::string() : std::string(e.error_id.get()));
-    }
-    g_ezCodesLoaded = true;
-}
-
-static bool HasEZCode(const std::string& code)
-{
-    LoadEZCodes();
-    for (const auto& id : g_ezCodes) {
-        if (id == code) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static int GetEZCodeCount()
-{
-    LoadEZCodes();
-    return static_cast<int>(g_ezCodes.size());
-}
 
 TEST_F(FlatQuantTiling, flat_quant_tiling_001)
 {
@@ -1684,36 +1643,78 @@ TEST_F(FlatQuantTiling, 910d_flat_quant_mxfp4_tiling_008)
 }
 } // namespace
 
-// namespace error_message
+// ============================================================================
+// Error code verification UT for E*9*** remediation (2026-10-21)
+// Reads ErrorManager output only for FlatQuantTiling; asserts no EZ9999.
+// ============================================================================
+namespace {
+bool HasFlatQuantError(const std::vector<error_message::ErrMsgRawItem>& errors, const std::string& code)
+{
+    for (const auto& error : errors) {
+        if (error.error_id != nullptr && code == error.error_id.get()) {
+            return true;
+        }
+    }
+    return false;
+}
 
-// Global listener: after each test, verify no EZ9999 was captured
+// Verify the real report/read channel, including reporting after a consuming read.
+TEST_F(FlatQuantTiling, error_capture_channel_self_check)
+{
+    const std::string marker = "FlatQuant capture channel liveness";
+    EXPECT_EQ(error_message::ReportUserDefinedErrMsg("EU0000", "%s", marker.c_str()), 0);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    bool found = false;
+    for (const auto& error : errors) {
+        if (error.error_id != nullptr && std::string(error.error_id.get()) == "EU0000" &&
+            error.error_message != nullptr &&
+            std::string(error.error_message.get()).find(marker) != std::string::npos) {
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found) << "ErrorManager did not retain the reported code and marker";
+
+    EXPECT_EQ(error_message::ReportUserDefinedErrMsg("EU0000", "%s", marker.c_str()), 0);
+    EXPECT_EQ(error_message::ReportInnerErrMsg(__FILE__, __FUNCTION__, __LINE__, "EZ9999", "%s", marker.c_str()), 0);
+    // Consume the deliberate EZ9999 here so the listener only checks unexpected errors.
+    const auto subsequentErrors = error_message::GetErrMgrRawErrorMessages();
+    EXPECT_TRUE(HasFlatQuantError(subsequentErrors, "EU0000"));
+    EXPECT_TRUE(HasFlatQuantError(subsequentErrors, "EZ9999"))
+        << "EZ9999 guard stopped observing reports after an ordinary error or a consuming read";
+}
+
 class FLAT_QUANTNoEz9999Check : public testing::EmptyTestEventListener {
 public:
     void OnTestStart(const testing::TestInfo& test_info) override
     {
-        InitErrMgr();
-        (void)error_message::GetErrMgrErrorMessage(); // 清除上一用例残留捕获, 避免多算子联合UT下跨套件级联误判
+        if (std::string(test_info.test_suite_name()) != "FlatQuantTiling") {
+            return;
+        }
+        savedContext_ = error_message::GetErrMgrContext();
+        auto context = savedContext_;
+        context.work_stream_id = reinterpret_cast<std::uintptr_t>(this);
+        // Reporting initializes ErrorManager lazily in its default INTERNAL_MODE.
+        // Use a private context without changing the process-wide error mode.
+        error_message::SetErrMgrContext(context);
+        (void)error_message::GetErrMgrRawErrorMessages();
     }
     void OnTestEnd(const testing::TestInfo& test_info) override
     {
-        // 只守护本文件的测试套件, 框架层或其他算子用例的EZ9999不跨套件追责
-        static const char* const guardedSuites[] = {"FlatQuantTiling"};
-        bool guarded = false;
-        for (const char* s : guardedSuites) {
-            if (std::string(test_info.test_suite_name()) == s) {
-                guarded = true;
-                break;
-            }
-        }
-        if (!guarded) {
+        if (std::string(test_info.test_suite_name()) != "FlatQuantTiling") {
             return;
         }
-        if (HasEZCode("EZ9999")) {
+        const auto errors = error_message::GetErrMgrRawErrorMessages();
+        error_message::SetErrMgrContext(savedContext_);
+        if (HasFlatQuantError(errors, "EZ9999")) {
             ADD_FAILURE() << "EZ9999 captured during test [" << test_info.name() << "] in " << test_info.file();
         }
     }
+
+private:
+    error_message::ErrorManagerContext savedContext_;
 };
 static const auto _inst_FLAT_QUANT = []() {
     testing::UnitTest::GetInstance()->listeners().Append(new FLAT_QUANTNoEz9999Check());
     return 0;
 }();
+} // namespace

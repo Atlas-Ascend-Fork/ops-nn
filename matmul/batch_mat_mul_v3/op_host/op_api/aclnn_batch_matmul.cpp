@@ -326,7 +326,9 @@ aclnnStatus aclnnBatchMatMulGetWorkspaceSize(const aclTensor* self, const aclTen
 
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 空tensor场景
     if (CheckBmmResIsEmpty(self, mat2)) {
@@ -373,7 +375,9 @@ aclnnStatus aclnnBatchMatMulWeightNzGetWorkspaceSize(const aclTensor* self, cons
 
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    OP_CHECK(uniqueExecutor.get() != nullptr,
+             OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "Failed to create executor."),
+             return ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     // 从最初的接口进入bmm计算
     auto bmmOut = ExecBmmOp(self, mat2, out, cubeMathType, uniqueExecutor.get());

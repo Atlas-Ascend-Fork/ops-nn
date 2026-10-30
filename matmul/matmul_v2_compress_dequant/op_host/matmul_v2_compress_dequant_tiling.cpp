@@ -16,8 +16,11 @@
 #include "matmul_v2_compress_dequant_tiling.h"
 #include "op_host/tiling_util.h"
 #include "log/log.h"
+#include "matmul/common/op_host/matmul_error_report.h"
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <vector>
 #include "matmul_v2_compress_dequant_default.h"
 #include "matmul_v2_compress_dequant_info.h"
 
@@ -99,7 +102,7 @@ ge::graphStatus ExtractMatmulDims(const gert::TilingContext* context, uint32_t& 
 {
     const auto* x1ShapePtr = context->GetInputShape(INPUT_IDX_X1);
     if (x1ShapePtr == nullptr) {
-        OP_LOGE("MatMulV2CompressDequant", "x1 shape is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT("MatMulV2CompressDequant", "x1");
         return ge::GRAPH_FAILED;
     }
     const auto& x1Shape = x1ShapePtr->GetOriginShape();
@@ -130,7 +133,9 @@ ge::graphStatus ExtractMatmulDims(const gert::TilingContext* context, uint32_t& 
     }
 
     if (m == 0 || k == 0 || n == 0) {
-        OP_LOGE("MatMulV2CompressDequant", "Invalid dims: m=%u, k=%u, n=%u.", m, k, n);
+        std::string msg = "Invalid dims: m=" + std::to_string(m) + ", k=" + std::to_string(k) +
+                          ", n=" + std::to_string(n) + ".";
+        Ops::NN::ReportMatmulParamError("MatMulV2CompressDequant", msg.c_str());
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -142,7 +147,7 @@ static ge::graphStatus TbmmEinsumTilingFunc(gert::TilingContext* context, uint32
                                             uint32_t& n, uint32_t& tilingK, uint32_t& tilingN)
 {
     if (context == nullptr) {
-        OP_LOGE("MatMulV2CompressDequant", "context is null.");
+        OP_LOGE_WITH_INVALID_INPUT("MatMulV2CompressDequant", "context");
         return ge::GRAPH_FAILED;
     }
     auto compileInfo = static_cast<const MatmulV2CompressDequantCompileInfo*>(context->GetCompileInfo());
@@ -241,20 +246,20 @@ ge::graphStatus TilingForMatmulV2CompressDequant(gert::TilingContext* context)
 ge::graphStatus TilingPrepareForMatmulV2CompressDequant(gert::TilingParseContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("MatMulV2CompressDequant", "TilingParse context is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT("MatMulV2CompressDequant", "context");
         return ge::GRAPH_FAILED;
     }
     OP_LOGD(context, "TilingPrepareForMatmulV2CompressDequant start.");
 
     fe::PlatFormInfos* platformInfo = context->GetPlatformInfo();
     if (platformInfo == nullptr) {
-        OP_LOGE("MatMulV2CompressDequant", "platformInfoPtr is null");
+        OP_LOGE_WITH_INVALID_INPUT("MatMulV2CompressDequant", "platformInfo");
         return ge::GRAPH_FAILED;
     }
 
     auto compileInfoPtr = context->GetCompiledInfo<MatmulV2CompressDequantCompileInfo>();
     if (compileInfoPtr == nullptr) {
-        OP_LOGE("MatMulV2CompressDequant", "compileInfoPtr is null");
+        OP_LOGE_WITH_INVALID_INPUT("MatMulV2CompressDequant", "compileInfo");
         return ge::GRAPH_FAILED;
     }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);

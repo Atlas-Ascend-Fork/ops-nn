@@ -15,6 +15,7 @@
 #include "runtime/infer_shape_context.h"
 #include "register/op_impl_registry.h"
 #include "error_util.h"
+#include "matmul/common/op_host/matmul_error_report.h"
 #include "log/log.h"
 
 using namespace gert;
@@ -27,7 +28,7 @@ const size_t X1_DIM_NUM = 3;
 static ge::graphStatus InferShapeQuantMatmulReduceSum(InferShapeContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("QuantMatmulReduceSum", "inference context is null");
+        Ops::NN::ReportMatmulParamError("QuantMatmulReduceSum", "inference context is null");
         return ge::GRAPH_FAILED;
     }
 
@@ -36,7 +37,7 @@ static ge::graphStatus InferShapeQuantMatmulReduceSum(InferShapeContext* context
     auto shapeX2 = context->GetInputShape(X2_INDEX);
     auto shapeOut = context->GetOutputShape(0);
     if (shapeX1 == nullptr || shapeX2 == nullptr || shapeOut == nullptr) {
-        OP_LOGE(opName, "[InferShape] shape or attrs is null");
+        Ops::NN::ReportMatmulParamError(opName, "[InferShape] shape or attrs is null");
         return ge::GRAPH_FAILED;
     }
 
@@ -44,7 +45,8 @@ static ge::graphStatus InferShapeQuantMatmulReduceSum(InferShapeContext* context
     int64_t dimX1 = shapeX1->GetDimNum();
     int64_t dimX2 = shapeX2->GetDimNum();
     if (dimX1 != X1_DIM_NUM || dimX2 != X1_DIM_NUM) {
-        OP_LOGE(opName, "[InferShape] x1_dim(%ld) and x2_dim(%ld) is not 3.", dimX1, dimX2);
+        Ops::NN::ReportMatmulParamError(opName, "[InferShape] x1_dim(" + std::to_string(dimX1) + ") and x2_dim(" +
+                                                    std::to_string(dimX2) + ") is not 3.");
         return ge::GRAPH_FAILED;
     }
     int64_t bX1 = shapeX1->GetDim(0);
@@ -54,11 +56,13 @@ static ge::graphStatus InferShapeQuantMatmulReduceSum(InferShapeContext* context
     int64_t kX2 = shapeX2->GetDim(1);
     int64_t nX2 = shapeX2->GetDim(2);
     if (bX1 != bX2) {
-        OP_LOGE(opName, "[InferShape] B_x1(%ld) must equal to B_x2(%ld).", bX1, bX2);
+        Ops::NN::ReportMatmulParamError(
+            opName, "[InferShape] B_x1(" + std::to_string(bX1) + ") must equal to B_x2(" + std::to_string(bX2) + ").");
         return ge::GRAPH_FAILED;
     }
     if (kX1 != kX2) {
-        OP_LOGE(opName, "[InferShape] K_x1(%ld) must equal to K_x2(%ld).", kX1, kX2);
+        Ops::NN::ReportMatmulParamError(
+            opName, "[InferShape] K_x1(" + std::to_string(kX1) + ") must equal to K_x2(" + std::to_string(kX2) + ").");
         return ge::GRAPH_FAILED;
     }
 

@@ -34,7 +34,7 @@ static const aclTensor* FusedMatMulCommon(const aclTensor* x1, const aclTensor* 
     auto ret = INFER_SHAPE(FusedMatMul, OP_INPUT(x1, x2, bias, x3), OP_OUTPUT(mm_out),
                            OP_ATTR(transposeX1, transposeX2, enableHf32, fusedOpType, innerPrecise, 1.0F, 1.0F));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed.");
         return nullptr;
     }
     uint32_t execMode = enableHf32 ? static_cast<uint32_t>(OpExecMode::OP_EXEC_MODE_HF32) : 0U;
@@ -57,7 +57,7 @@ static const aclTensor* FusedMatMulWithScaleAddCommon(const aclTensor* x1, const
     auto ret = INFER_SHAPE(FusedMatMul, OP_INPUT(x1, x2, bias, x3), OP_OUTPUT(mm_out),
                            OP_ATTR(transposeX1, transposeX2, enableHf32, "scale_add", innerPrecise, alpha, beta));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_INFERSHAPE_ERROR, "InferShape failed.");
         return nullptr;
     }
     uint32_t execMode = enableHf32 ? static_cast<uint32_t>(OpExecMode::OP_EXEC_MODE_HF32) : 0U;

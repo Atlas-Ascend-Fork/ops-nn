@@ -568,6 +568,9 @@ TEST_F(l2_gemm_test, gemm_950_route_addmm_use_fp32_add)
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 
+// Keep ErrorManager declarations in global scope when including cube_util.cpp below.
+#include "base/err_msg.h"
+
 namespace gemm_util_whitebox {
 
 namespace l0op {
