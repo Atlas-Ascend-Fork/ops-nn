@@ -545,6 +545,17 @@ private:
         uint32_t dstShape[2] = {static_cast<uint32_t>(singleBlockNum), blockSize};
         AscendC::Broadcast<T, BROADCAST_DIM2, BROADCAST_AXIS1>(absMaxBrcb, absMax, dstShape, srcShape);
         AscendC::PipeBarrier<PIPE_V>();
+        // [fix] absmax==0（块内全零，如 gnormScale=0 使 s1' 全零）时 Div 产生 0/0=NaN，
+        // NaN 进入二分查找/CheckSign 后码值走向与 golden 的 where(absmax==0,1,absmax)
+        // 特判分歧。令除数为 max(absmax, FLT_MIN)：absmax=0 时块内 state 必为 0，
+        // 0/FLT_MIN=0 与 golden 的 0/1=0 一致；absmax>0 时 FLT_MIN 无扰动。
+        // （段内 tinyVec 与 BinarySearchFp32 的 gatherOffset 复用同一 offset，
+        //   二者顺序执行，无数据竞争）
+        AscendC::LocalTensor<T> tinyVec = calcBuf.GetWithOffset<T>(singleSize, 3 * singleSize * sizeof(float));
+        AscendC::Duplicate<T>(tinyVec, 1.17549435e-38f, singleSize);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Max<T>(absMaxBrcb, absMaxBrcb, tinyVec, singleSize);
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::Div<T>(state, state, absMaxBrcb, singleSize);
         AscendC::PipeBarrier<PIPE_V>();
     }
