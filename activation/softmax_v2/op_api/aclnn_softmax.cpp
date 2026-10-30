@@ -97,15 +97,16 @@ static aclnnStatus CheckParams(const aclTensor* self, int64_t dim, aclTensor* ou
     // 1. 检查参数是否为空指针
     CHECK_RET(CheckNotNull(self, out), ACLNN_ERR_PARAM_NULLPTR);
 
-    // 空tensor直接返回
-    if (self->IsEmpty()) {
-        return ACLNN_SUCCESS;
-    }
     // 2. 检查输入的数据类型是否在API支持的数据类型范围之内，需要根据api定义校验
     CHECK_RET(CheckDtypeValid(self, out), ACLNN_ERR_PARAM_INVALID);
 
     // 3. 检查指定dim是否在self的维度范围内
     CHECK_RET(CheckDim(self, dim), ACLNN_ERR_PARAM_INVALID);
+
+    // 空tensor直接返回（先完成上述dtype与dim校验，非法入参在空张量下同样报错，再对合法空张量放行）
+    if (self->IsEmpty()) {
+        return ACLNN_SUCCESS;
+    }
 
     // 4. 检查输入shape与输出shape是否一致
     CHECK_RET(CheckShape(self, out), ACLNN_ERR_PARAM_INVALID);

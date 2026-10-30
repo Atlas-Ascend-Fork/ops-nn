@@ -123,6 +123,34 @@ TEST_F(l2_softmax_test, case_010_emptytensor_normal)
     EXPECT_EQ(aclRet, ACLNN_SUCCESS);
 }
 
+TEST_F(l2_softmax_test, case_010_emptytensor_invalid_dtype)
+{
+    // 空张量 + 不支持的 dtype：必须返回 161002（issue #7030）
+    auto self = TensorDesc({0, 3}, ACL_INT8, ACL_FORMAT_ND);
+    auto out = TensorDesc({0, 3}, ACL_INT8, ACL_FORMAT_ND);
+    int64_t dim = -1;
+
+    auto ut = OP_API_UT(aclnnSoftmax, INPUT(self, dim), OUTPUT(out));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_softmax_test, case_010_emptytensor_invalid_dim)
+{
+    // 空张量 + dim 越界（rank=2，dim=5）：必须返回 161002（issue #7030）
+    auto self = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto out = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    int64_t dim = 5;
+
+    auto ut = OP_API_UT(aclnnSoftmax, INPUT(self, dim), OUTPUT(out));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
 TEST_F(l2_softmax_test, case_011_input_shape_diff_with_out_normal)
 {
     auto self = TensorDesc({3, 3}, ACL_FLOAT, ACL_FORMAT_ND);
