@@ -117,7 +117,7 @@ aclnnStatus aclnnAdaLayerNormV2(
       <td><ul><li>不支持空Tensor。</li><li>数据类型与入参`x`的数据类型一致。</li><li>shape为[B…, H]或[B…, 1, H]，其中B支持0到6个维度，维度数量和大小与`x`中的B保持一致，H与`x`中H维一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>2-8</td>
+      <td>1-8</td>
       <td>√</td>
     </tr>
     <tr>
@@ -127,7 +127,7 @@ aclnnStatus aclnnAdaLayerNormV2(
       <td><ul><li>不支持空Tensor。</li><li>数据类型与入参`x`的数据类型一致。</li><li>shape为[B…, H]或[B…, 1, H]，其中B支持0到6个维度，维度数量和大小与`x`中的B保持一致，H与`x`中H维一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>2-8</td>
+      <td>1-8</td>
       <td>√</td>
     </tr>
     <tr>
