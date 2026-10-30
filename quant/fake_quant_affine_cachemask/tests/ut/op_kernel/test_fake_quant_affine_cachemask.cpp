@@ -158,3 +158,63 @@ TEST_F(fake_quant_affine_achemask_test, test_case_fp16)
     AscendC::GmFree(tiling);
     free(path_);
 }
+
+TEST_F(fake_quant_affine_achemask_test, test_case_fp16_mask_range_beyond_half_precision)
+{
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    const uint32_t totalLength = 4;
+
+    size_t x_size = totalLength * sizeof(half);
+    size_t scale_size = sizeof(half);
+    size_t zero_point_size = sizeof(int32_t);
+    size_t y_size = totalLength * sizeof(half);
+    size_t mask_size = totalLength * sizeof(uint8_t);
+    size_t tiling_data_size = sizeof(FakeQuantAffineCachemaskTilingData);
+
+    uint8_t* x = (uint8_t*)AscendC::GmAlloc(x_size);
+    uint8_t* scale = (uint8_t*)AscendC::GmAlloc(scale_size);
+    uint8_t* zero_point = (uint8_t*)AscendC::GmAlloc(zero_point_size);
+    uint8_t* y = (uint8_t*)AscendC::GmAlloc(y_size);
+    uint8_t* mask = (uint8_t*)AscendC::GmAlloc(mask_size);
+    uint8_t* workspace = (uint8_t*)AscendC::GmAlloc(1024 * 16 * 1024);
+    uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(tiling_data_size);
+    uint32_t blockDim = 1;
+
+    const float xHost[4] = {327.6f, 327.7f, 327.7f, 328.0f};
+    for (uint32_t i = 0; i < totalLength; i++) {
+        ((half*)x)[i] = (half)xHost[i];
+    }
+    ((half*)scale)[0] = (half)0.01f;
+    ((int32_t*)zero_point)[0] = 0;
+    for (uint32_t i = 0; i < totalLength; i++) {
+        mask[i] = 0xFF;
+    }
+
+    FakeQuantAffineCachemaskTilingData* tilingData = reinterpret_cast<FakeQuantAffineCachemaskTilingData*>(tiling);
+    tilingData->quantMin = 0;
+    tilingData->quantMax = 32767;
+    tilingData->loopNum = 1;
+    tilingData->remainNum = 0;
+    tilingData->calcLength = totalLength;
+    tilingData->headNum = 1;
+    tilingData->dataPerRepeat = 128;
+    tilingData->totalLengthAligned = 16;
+    tilingData->tileLength = 3968;
+
+    ICPU_SET_TILING_KEY(2);
+    ICPU_RUN_KF(fake_quant_affine_cachemask, blockDim, x, scale, zero_point, y, mask, workspace,
+                (uint8_t*)(tilingData));
+
+    EXPECT_EQ(mask[0], 1);
+    EXPECT_EQ(mask[1], 0);
+    EXPECT_EQ(mask[2], 0);
+    EXPECT_EQ(mask[3], 0);
+
+    AscendC::GmFree(x);
+    AscendC::GmFree(scale);
+    AscendC::GmFree(zero_point);
+    AscendC::GmFree(y);
+    AscendC::GmFree(mask);
+    AscendC::GmFree(workspace);
+    AscendC::GmFree(tiling);
+}

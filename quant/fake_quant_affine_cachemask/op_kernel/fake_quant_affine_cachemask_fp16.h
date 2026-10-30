@@ -103,22 +103,20 @@ private:
             Cast(curInt32Temp, curTemp, RoundMode::CAST_RINT, calCount);
             Cast(curTemp, curInt32Temp, RoundMode::CAST_NONE, calCount);
             Adds(curTemp, curTemp, static_cast<float>(zeroPointValue), calCount);
-            Cast(curHf16Temp, curTemp, RoundMode::CAST_RINT, calCount);
         } else {
             // tmp = lrintf(x / scale + zero_point)
             Adds(curTemp, curTemp, static_cast<float>(zeroPointValue), calCount);
             Cast(curInt32Temp, curTemp, RoundMode::CAST_RINT, calCount);
             Cast(curTemp, curInt32Temp, RoundMode::CAST_NONE, calCount);
-            Cast(curHf16Temp, curTemp, RoundMode::CAST_RINT, calCount);
         }
         PipeBarrier<PIPE_ALL>();
 
         // maskTemp = (round(tmp) >= quant_min) & (round(tmp) <= quant_max)
-        Compare(maskTemp, curHf16Temp, quantMinTensor, CMPMODE::GE, calCount);
+        CompareScalar(maskTemp, curTemp, static_cast<float>(this->quantMin), CMPMODE::GE, calCount);
         BinaryRepeatParams repeatParams = {1, 1, 1, 8, 8, 8};
         Select(selectTemp, maskTemp, oneTensor, zeroTensor, SELMODE::VSEL_TENSOR_TENSOR_MODE, this->mask, repeatTimes,
                repeatParams);
-        Compare(maskTemp, curHf16Temp, quantMaxTensor, CMPMODE::LE, calCount);
+        CompareScalar(maskTemp, curTemp, static_cast<float>(this->quantMax), CMPMODE::LE, calCount);
         Select(curHf16Temp, maskTemp, oneTensor, zeroTensor, SELMODE::VSEL_TENSOR_TENSOR_MODE, this->mask, repeatTimes,
                repeatParams);
         Mul(curHf16Temp, selectTemp, curHf16Temp, calCount);
