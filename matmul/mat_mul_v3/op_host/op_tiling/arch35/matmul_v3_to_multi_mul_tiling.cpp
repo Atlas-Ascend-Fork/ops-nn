@@ -23,6 +23,8 @@ namespace matmul_v3_advanced {
 using namespace strategy;
 
 MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3ToVectorTiling, DAV_3510, TO_MULTI_MUL);
+MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3ToVectorTiling, DAV_9201, TO_MULTI_MUL);
+MM_REGISTER_TILING_TEMPLATE(MatMulV3, MatMulV3ToVectorTiling, DAV_9202, TO_MULTI_MUL);
 
 bool MatMulV3ToVectorTiling::IsCapable()
 {
