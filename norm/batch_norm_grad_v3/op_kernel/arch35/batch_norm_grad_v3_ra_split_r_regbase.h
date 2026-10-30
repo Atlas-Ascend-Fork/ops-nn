@@ -56,8 +56,8 @@ public:
         int64_t offset = blockIdx_ * tilingData_->blockFactor * tilingData_->aDim;
         aFactorAlign_ = tilingData_->aFactorAlign;
         if constexpr (MODE == MODE_PACKED) {
-            while (rowsPerGroup_ * 2 * tilingData_->aDim <= VL_FP32) {
-                rowsPerGroup_ *= 2;
+            while (rowsPerGroup_ * TWO * tilingData_->aDim <= VL_FP32) {
+                rowsPerGroup_ *= TWO;
             }
         }
         if (blockIdx_ == (tilingData_->usedCoreNum - 1)) {

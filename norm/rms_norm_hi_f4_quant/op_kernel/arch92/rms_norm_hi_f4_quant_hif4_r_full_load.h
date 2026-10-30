@@ -110,9 +110,9 @@ public:
         pPipe->InitBuffer(bufE8_, bufE8Buffer_ * sizeof(int16_t));
         pPipe->InitBuffer(buf1E8_, buf1E8Buffer_ * sizeof(int32_t));
         pPipe->InitBuffer(buf1E16_, buf1E16Buffer_ * sizeof(int16_t));
-        pPipe->InitBuffer(bufMaxPer4_, maxPer4Buffer_ * 16 * sizeof(int16_t));
-        pPipe->InitBuffer(bufMaxPer8_, maxPer8Buffer_ * 8 * sizeof(int16_t));
-        pPipe->InitBuffer(bufTmpScale_, tmpScaleBuffer_ * 32 * sizeof(int16_t));
+        pPipe->InitBuffer(bufMaxPer4_, maxPer4Buffer_ * HIF4_MAX_PER4_ELEMENTS_PER_GROUP * sizeof(int16_t));
+        pPipe->InitBuffer(bufMaxPer8_, maxPer8Buffer_ * HIF4_MAX_PER8_ELEMENTS_PER_GROUP * sizeof(int16_t));
+        pPipe->InitBuffer(bufTmpScale_, tmpScaleBuffer_ * HIF4_TMP_SCALE_ELEMENTS_PER_GROUP * sizeof(int16_t));
 
         uint64_t quantYBufSize = CeilAlign(CeilDiv(numColAlign_ * rowFactor_ / DIGIT_TWO, MX_STEP_PROCESS_NUM),
                                            DIGIT_FOUR) *
@@ -121,8 +121,8 @@ public:
         pPipe->InitBuffer(outQueueQuantY, DOUBLE_BUFFER_NUM, quantYBufSize);
         pPipe->InitBuffer(outQueueScale, DOUBLE_BUFFER_NUM, alignTo256UbFormer * sizeof(float));
 
-        sysRegLen_ = 256;
-        gmCopyInRegStep_ = sysRegLen_ / sizeof(float) * 2;
+        sysRegLen_ = VECTOR_LENGTH;
+        gmCopyInRegStep_ = sysRegLen_ / sizeof(float) * HIF4_DEINTERLEAVE_REGISTERS_PER_LOAD;
         gmCopyOutRegStep_ = sysRegLen_ / sizeof(int32_t) / DQ_HIFP4_CAST_COPYOUT_PACK4_NUM;
         gmCopyOutScaleRegStep_ = sysRegLen_ / sizeof(float);
         gmCopyInRegStep2_ = sysRegLen_ / sizeof(T_X);
@@ -825,7 +825,7 @@ private:
     uint32_t vlForHalfNumber;
     uint16_t elementAfterReduce;
 
-    int64_t sysRegLen_ = 256;
+    int64_t sysRegLen_ = VECTOR_LENGTH;
     int64_t gmCopyInRegStep_ = 0;
     int64_t gmCopyOutRegStep_ = 0;
     int64_t gmCopyOutScaleRegStep_ = 0;

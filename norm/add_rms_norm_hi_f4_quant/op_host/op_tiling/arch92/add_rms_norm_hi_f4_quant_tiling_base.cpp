@@ -147,7 +147,6 @@ ge::graphStatus AddRmsNormHiF4QuantRegbaseTilingBase::CheckOutputDtype()
     OP_LOGD(context_->GetNodeName(), "Enter CheckOutputDtype.");
     OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOutputDesc(Y_INDEX));
     ge::DataType yDtype = context_->GetOutputDesc(Y_INDEX)->GetDataType();
-
     if (yDtype != Ops::NN::DT_HIFLOAT4) {
         OP_LOGE(context_->GetNodeName(), "Output y dtype should be HIFLOAT4.");
         return ge::GRAPH_FAILED;
@@ -217,9 +216,10 @@ ge::graphStatus AddRmsNormHiF4QuantRegbaseTilingBase::CheckOutputShapeValue()
     }
 
     uint64_t expectedLastDim = Ops::Base::CeilDiv(numCol_, static_cast<uint64_t>(HIF4_BLOCK_SIZE));
-    if (scaleShape.GetDim(scaleRank - 2) != static_cast<int64_t>(expectedLastDim)) {
-        OP_LOGE(context_->GetNodeName(), "scale dim[%zu]=%ld should be CeilDiv(R=%ld, 64) = %ld.", scaleRank - 2,
-                scaleShape.GetDim(scaleRank - 2), static_cast<int64_t>(numCol_), static_cast<int64_t>(expectedLastDim));
+    if (scaleShape.GetDim(scaleRank - NUM_TWO) != static_cast<int64_t>(expectedLastDim)) {
+        OP_LOGE(context_->GetNodeName(), "scale dim[%zu]=%ld should be CeilDiv(R=%ld, 64) = %ld.", scaleRank - NUM_TWO,
+                scaleShape.GetDim(scaleRank - NUM_TWO), static_cast<int64_t>(numCol_),
+                static_cast<int64_t>(expectedLastDim));
         return ge::GRAPH_FAILED;
     }
 
@@ -375,7 +375,7 @@ ge::graphStatus AddRmsNormHiF4QuantRegbaseTilingBase::GetPlatformInfo()
     OP_LOGD(context_->GetNodeName(), "Enter GetPlatformInfo.");
 
     auto platformInfo = context_->GetPlatformInfo();
-    auto compileInfoPtr = reinterpret_cast<const AddRmsNormHiF4QuantCompileInfo*>(context_->GetCompileInfo());
+    auto compileInfoPtr = static_cast<const AddRmsNormHiF4QuantCompileInfo*>(context_->GetCompileInfo());
     if (compileInfoPtr != nullptr) {
         totalCoreNum_ = compileInfoPtr->totalCoreNum;
         maxUbSize_ = compileInfoPtr->totalUbSize;

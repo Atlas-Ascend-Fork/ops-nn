@@ -338,7 +338,7 @@ __aicore__ inline void PackedFoldChannels(Reg::RegTensor<float>& value, uint32_t
     Reg::RegTensor<uint32_t> index;
     Reg::RegTensor<float> right;
     Reg::Arange(seq, 0);
-    for (uint16_t half = k / 2; half != 0; half /= 2) {
+    for (uint16_t half = k / TWO; half != 0; half /= TWO) {
         uint32_t count = half * channels;
         Reg::MaskReg valid = Reg::UpdateMask<float>(count);
         Reg::Adds<uint32_t, uint32_t, Reg::MaskMergeMode::ZEROING>(index, (Reg::RegTensor<uint32_t>&)seq,
@@ -355,7 +355,7 @@ __aicore__ inline void PackedBroadcastChannels(Reg::RegTensor<float>& value, uin
     Reg::RegTensor<float> next;
     Reg::Arange(seq, 0);
     Reg::MaskReg all = Reg::CreateMask<float, Reg::MaskPattern::ALL>();
-    for (uint16_t copies = 1; copies < k; copies *= 2) {
+    for (uint16_t copies = 1; copies < k; copies *= TWO) {
         uint32_t count = copies * channels;
         Reg::MaskReg low = Reg::UpdateMask<float>(count);
         Reg::Adds(index, seq, -static_cast<int32_t>(copies * channels), all);

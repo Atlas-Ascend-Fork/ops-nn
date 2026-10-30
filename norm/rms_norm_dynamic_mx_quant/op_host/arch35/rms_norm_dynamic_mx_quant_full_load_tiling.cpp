@@ -69,7 +69,8 @@ ge::graphStatus RmsNormDynamicMxQuantFullLoadTiling::DoOpTiling()
     // Match every InitBuffer allocation, including complete unmasked load tiles.
     // This total is monotonic in m, so a binary search retains the largest tile
     // that fits instead of relying on a linear estimate plus a fixed reserve.
-    const auto getUbSize = [&](int64_t m) {
+    const auto getUbSize = [this, &nMxblockAligned, &binAddOutBufLen, &nMxblockNumAlignedTwo,
+                            &gammaBetaUbSize](int64_t m) {
         int64_t xSize = m * nMxblockAligned * FP16_BYTES;
         int64_t normSize = Ops::Base::CeilAlign(m * nMxblockAligned, vlFp32_ * CONST_FOUR) * FP16_BYTES;
         int64_t reduceTmpCount = m * binAddOutBufLen;

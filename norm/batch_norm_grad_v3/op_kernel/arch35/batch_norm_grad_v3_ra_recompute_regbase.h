@@ -243,7 +243,8 @@ public:
         uint32_t factor = aLength;
         uint16_t reductionRows = rLoopFactor;
         uint16_t recursionTimes = 0;
-        for (int64_t rows = rLoopFactor; rows > 2; rows /= 2) {
+        constexpr int FINAL_REDUCTION_ROWS = 2;
+        for (int64_t rows = rLoopFactor; rows > FINAL_REDUCTION_ROWS; rows /= TWO) {
             ++recursionTimes;
         }
         __VEC_SCOPE__

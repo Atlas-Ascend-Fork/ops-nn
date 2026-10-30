@@ -61,7 +61,13 @@ constexpr int64_t DQ_HIFP4_SCALETMP_ALIGN = 256;
 constexpr int64_t DQ_HIFP4_BLOCK_BYTE = 32;
 constexpr int64_t DQ_HIFP4_CAST_COPYOUT_PACK4_NUM = 4;
 
-constexpr static uint32_t VL_F32 = platform::GetVRegSize() / sizeof(float);
+constexpr int64_t HIF4_MAX_PER4_ELEMENTS_PER_GROUP = 16;
+constexpr int64_t HIF4_MAX_PER8_ELEMENTS_PER_GROUP = 8;
+constexpr int64_t HIF4_TMP_SCALE_ELEMENTS_PER_GROUP = 32;
+constexpr int64_t HIF4_DEINTERLEAVE_REGISTERS_PER_LOAD = 2;
+
+constexpr static uint32_t VECTOR_LENGTH = platform::GetVRegSize();
+constexpr static uint32_t VL_F32 = VECTOR_LENGTH / sizeof(float);
 constexpr static uint32_t BLOCK_F32_ALIGN_NUM = Ops::Base::GetUbBlockSize() / sizeof(float);
 constexpr static uint32_t UB_BLOCK_SIZE = Ops::Base::GetUbBlockSize();
 

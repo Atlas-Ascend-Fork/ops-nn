@@ -145,10 +145,11 @@ ge::graphStatus BatchNormGradV3TilingRASplitR::DoOpTiling()
     dyTypeSize_ = ge::GetSizeByDataType(dyDtype);
     // Select the existing internal layout after Split-R admission succeeds.
     packed_ = CanUsePackedRASplitR(r1Dim, aDim, coreNum, dyDtype);
+    constexpr int PACKED_GROUP_GROWTH_FACTOR = 2;
     rowsPerGroup_ = 1;
     if (packed_) {
-        while (rowsPerGroup_ * 2 * aDim <= RC_PACKED_VECTOR_ELEMENTS) {
-            rowsPerGroup_ *= 2;
+        while (rowsPerGroup_ * PACKED_GROUP_GROWTH_FACTOR * aDim <= RC_PACKED_VECTOR_ELEMENTS) {
+            rowsPerGroup_ *= PACKED_GROUP_GROWTH_FACTOR;
         }
     }
     blockFactor_ = CalcBlockFactor();
