@@ -11,6 +11,6 @@
 # 手写 regbase 内核自行下发 SetFlag/WaitFlag, 关闭自动插同步。
 add_kernel_sources(
     KERNEL_SRC arch35/lamb_apply_optimizer_assign.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
     AUTO_SYNC false
 )

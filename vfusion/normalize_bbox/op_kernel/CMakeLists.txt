@@ -10,5 +10,5 @@
 
 add_kernel_sources(
     KERNEL_SRC normalize_bbox.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
 )

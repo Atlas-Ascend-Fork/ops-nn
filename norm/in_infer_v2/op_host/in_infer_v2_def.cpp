@@ -86,6 +86,7 @@ public:
             // Dynamic graphs keep online compilation and the same OPTIONAL contract.
             .ExtendCfgInfo("jitCompile.flag", "static_false");
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 

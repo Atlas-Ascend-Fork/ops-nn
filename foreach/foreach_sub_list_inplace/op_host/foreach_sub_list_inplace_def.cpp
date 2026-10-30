@@ -49,6 +49,8 @@ public:
         regbaseCfg.DynamicCompileStaticFlag(true).DynamicRankSupportFlag(true).DynamicShapeSupportFlag(true);
 
         this->AICore().AddConfig("ascend950", regbaseCfg);
+
+        this->AICore().AddConfig("ascend350", regbaseCfg);
     }
 };
 

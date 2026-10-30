@@ -60,6 +60,7 @@ public:
             .ExtendCfgInfo("opFile.value", "normalize_bbox")
             .ExtendCfgInfo("opInterface.value", "normalize_bbox");
         this->AICore().AddConfig("ascend950", regbaseConfig);
+        this->AICore().AddConfig("ascend350", regbaseConfig);
     }
 };
 

@@ -10,7 +10,7 @@
 
 add_kernel_sources(
     KERNEL_SRC in_infer_v2_apt.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
     AUTO_SYNC false
     OPTIONS "--cce-no-dcache-flush"
 )

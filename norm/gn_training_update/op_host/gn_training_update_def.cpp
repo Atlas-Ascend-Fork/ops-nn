@@ -122,6 +122,7 @@ public:
             .PrecisionReduceFlag(true)                            // 允许编译器安全降精度（fp32→fp16）
             .ExtendCfgInfo("opFile.value", "gn_training_update"); // 指向 kernel 入口文件 gn_training_update.cpp
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend350", aicoreConfig);
     }
 };
 

@@ -66,6 +66,7 @@ public:
             .PrecisionReduceFlag(true)
             .ExtendCfgInfo("opFile.value", "multilabel_margin_loss");
         this->AICore().AddConfig("ascend950", regbaseConfig);
+        this->AICore().AddConfig("ascend350", regbaseConfig);
     }
 };
 OP_ADD(MultilabelMarginLoss);

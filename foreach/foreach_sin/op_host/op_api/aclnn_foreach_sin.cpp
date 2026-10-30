@@ -52,10 +52,9 @@ static inline bool CheckFormat(const aclTensorList* self, const aclTensorList* o
 
 static const std::initializer_list<DataType>& GetDtypeSupportList()
 {
-    switch (GetCurrentPlatformInfo().GetSocVersion()) {
-        case SocVersion::ASCEND910B:
-        case SocVersion::ASCEND910_93:
-        case SocVersion::ASCEND950:
+    switch (GetCurrentPlatformInfo().GetCurNpuArch()) {
+        case NpuArch::DAV_2201:
+        case NpuArch::DAV_3510:
             return ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPPORT_LIST;
         default:
             return EMPTY_LIST;

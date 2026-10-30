@@ -56,6 +56,7 @@ public:
         this->AICore().AddConfig("ascend910b", config_910b);
         this->AICore().AddConfig("ascend910_93", config_910b);
         this->AICore().AddConfig("ascend950", config_910b);
+        this->AICore().AddConfig("ascend350", config_910b);
 
         OpAICoreConfig config;
         config.Input("x")

@@ -9,7 +9,7 @@
 # ----------------------------------------------------------------------------
 add_kernel_sources(
     KERNEL_SRC arch35/global_lp_pool.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS ascend950 ascend350
     SIMPLIFIED_KEY 0
     AUTO_SYNC false
 )

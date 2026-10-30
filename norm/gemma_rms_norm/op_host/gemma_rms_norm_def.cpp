@@ -85,6 +85,7 @@ private:
             .DynamicShapeSupportFlag(true)
             .ExtendCfgInfo("opFile.value", "gemma_rms_norm_apt");
         this->AICore().AddConfig("ascend950", config_regbase);
+        this->AICore().AddConfig("ascend350", config_regbase);
     }
 
     OpAICoreConfig GetKirinCoreConfig() const
