@@ -2,7 +2,8 @@
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software; you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * Please refer to the License for details.
+ * You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
@@ -12,66 +13,153 @@
 
 /*!
  * \file test_mvn_v2_infershape.cpp
- * \brief MVNV2 InferShape UT
+ * \brief MVNV2 InferShape UT. Every case invokes the infer_shape callback that the operator
+ *        registers through IMPL_OP_INFERSHAPE, so the assertions exercise the delivered
+ *        product code instead of a local stub.
  */
-
+#include <gtest/gtest.h>
 #include <cstdint>
 #include <vector>
-#include <string>
-#include <gtest/gtest.h>
+#include "kernel_run_context_facker.h"
+#include "register/op_impl_registry.h"
 
-using Shape = std::vector<int64_t>;
+namespace {
+constexpr const char* OP_TYPE = "MVNV2";
 
-static Shape InferShape4MVNV2(const Shape& inputShape) { return inputShape; }
+ge::graphStatus RunInferShape(gert::Shape& inputShape, gert::Shape& outputShape)
+{
+    const auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(OP_TYPE);
+    if (opImpl == nullptr || opImpl->infer_shape == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType(OP_TYPE)
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1}, {1})
+                      .InputShapes({&inputShape})
+                      .OutputShapes({&outputShape})
+                      .Build();
+    auto* context = holder.GetContext<gert::InferShapeContext>();
+    const ge::graphStatus status = opImpl->infer_shape(context);
+    if (status == ge::GRAPH_SUCCESS && context != nullptr && context->GetOutputShape(0) != nullptr) {
+        outputShape = *context->GetOutputShape(0);
+    }
+    return status;
+}
+
+ge::graphStatus RunInferDataType(ge::DataType inputType, ge::DataType& outputType)
+{
+    const auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(OP_TYPE);
+    if (opImpl == nullptr || opImpl->infer_datatype == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto holder = gert::InferDataTypeContextFaker()
+                      .IrInputNum(1)
+                      .NodeIoNum(1, 1)
+                      .NodeInputTd(0, inputType, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeOutputTd(0, outputType, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .InputDataTypes({&inputType})
+                      .OutputDataTypes({&outputType})
+                      .Build();
+    auto* context = holder.GetContext<gert::InferDataTypeContext>();
+    const ge::graphStatus status = opImpl->infer_datatype(context);
+    if (status == ge::GRAPH_SUCCESS) {
+        outputType = context->GetOutputDataType(0);
+    }
+    return status;
+}
+
+std::vector<int64_t> ShapeToVector(const gert::Shape& shape)
+{
+    std::vector<int64_t> result;
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        result.push_back(shape.GetDim(i));
+    }
+    return result;
+}
+} // namespace
+
+TEST(MvnV2InferShape, IsRegistered)
+{
+    const auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(OP_TYPE);
+    ASSERT_NE(opImpl, nullptr);
+    EXPECT_NE(opImpl->infer_shape, nullptr);
+    EXPECT_NE(opImpl->infer_datatype, nullptr);
+}
+
+TEST(MvnV2InferShape, output_dtype_matches_input)
+{
+    for (const ge::DataType inputType : {ge::DT_FLOAT16, ge::DT_FLOAT}) {
+        ge::DataType outputType = ge::DT_UNDEFINED;
+        ASSERT_EQ(RunInferDataType(inputType, outputType), ge::GRAPH_SUCCESS);
+        EXPECT_EQ(outputType, inputType);
+    }
+}
 
 TEST(MvnV2InferShape, basic_4d)
 {
-    Shape inputShape = {1, 3, 4, 4};
-    Shape outputShape = InferShape4MVNV2(inputShape);
-    EXPECT_EQ(outputShape.size(), inputShape.size());
-    EXPECT_EQ(outputShape, inputShape);
+    gert::Shape inputShape = {1, 3, 4, 4};
+    gert::Shape outputShape = {};
+    ASSERT_EQ(RunInferShape(inputShape, outputShape), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ShapeToVector(outputShape), (std::vector<int64_t>{1, 3, 4, 4}));
 }
 
 TEST(MvnV2InferShape, large_4d)
 {
-    Shape inputShape = {2, 64, 224, 224};
-    Shape outputShape = InferShape4MVNV2(inputShape);
-    EXPECT_EQ(outputShape, inputShape);
+    gert::Shape inputShape = {2, 64, 224, 224};
+    gert::Shape outputShape = {};
+    ASSERT_EQ(RunInferShape(inputShape, outputShape), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ShapeToVector(outputShape), (std::vector<int64_t>{2, 64, 224, 224}));
 }
 
-TEST(MvnV2InferShape, rank8)
+TEST(MvnV2InferShape, propagates_without_rank_validation)
 {
-    Shape inputShape = {2, 3, 4, 5, 6, 7, 8, 9};
-    Shape outputShape = InferShape4MVNV2(inputShape);
-    EXPECT_EQ(outputShape, inputShape);
+    gert::Shape rank8 = {2, 3, 4, 5, 6, 7, 8, 9};
+    gert::Shape rank8Out = {};
+    ASSERT_EQ(RunInferShape(rank8, rank8Out), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ShapeToVector(rank8Out), (std::vector<int64_t>{2, 3, 4, 5, 6, 7, 8, 9}));
+
+    gert::Shape rank1 = {4096};
+    gert::Shape rank1Out = {};
+    ASSERT_EQ(RunInferShape(rank1, rank1Out), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ShapeToVector(rank1Out), (std::vector<int64_t>{4096}));
+
+    gert::Shape scalar = {};
+    gert::Shape scalarOut = {7, 7};
+    ASSERT_EQ(RunInferShape(scalar, scalarOut), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ShapeToVector(scalarOut), (std::vector<int64_t>{}));
 }
 
 TEST(MvnV2InferShape, empty_input)
 {
-    Shape inputShape = {0, 3, 4, 4};
-    Shape outputShape = InferShape4MVNV2(inputShape);
-    EXPECT_EQ(outputShape.size(), 4U);
-    EXPECT_EQ(outputShape[0], 0);
+    // A zero-length dimension is propagated; the empty-tensor short circuit lives in tiling.
+    gert::Shape inputShape = {0, 3, 4, 4};
+    gert::Shape outputShape = {};
+    ASSERT_EQ(RunInferShape(inputShape, outputShape), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ShapeToVector(outputShape), (std::vector<int64_t>{0, 3, 4, 4}));
 }
 
 TEST(MvnV2InferShape, single_element)
 {
-    Shape inputShape = {1, 1, 1, 1};
-    Shape outputShape = InferShape4MVNV2(inputShape);
-    EXPECT_EQ(outputShape, inputShape);
+    gert::Shape inputShape = {1, 1, 1, 1};
+    gert::Shape outputShape = {};
+    ASSERT_EQ(RunInferShape(inputShape, outputShape), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ShapeToVector(outputShape), (std::vector<int64_t>{1, 1, 1, 1}));
 }
 
 TEST(MvnV2InferShape, dynamic_dim)
 {
-    Shape inputShape = {-1, 3, 4, 4};
-    Shape outputShape = InferShape4MVNV2(inputShape);
-    EXPECT_EQ(outputShape, inputShape);
-    EXPECT_EQ(outputShape[0], -1);
+    gert::Shape inputShape = {-1, 32, 8, 4};
+    gert::Shape outputShape = {};
+    ASSERT_EQ(RunInferShape(inputShape, outputShape), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ShapeToVector(outputShape), (std::vector<int64_t>{-1, 32, 8, 4}));
 }
 
-TEST(MvnV2InferShape, unknown_shape)
+TEST(MvnV2InferShape, propagates_unknown_rank_descriptor)
 {
-    Shape inputShape = {-2};
-    Shape outputShape = InferShape4MVNV2(inputShape);
-    EXPECT_EQ(outputShape, inputShape);
+    gert::Shape inputShape = {-2};
+    gert::Shape outputShape = {};
+    ASSERT_EQ(RunInferShape(inputShape, outputShape), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ShapeToVector(outputShape), (std::vector<int64_t>{-2}));
 }

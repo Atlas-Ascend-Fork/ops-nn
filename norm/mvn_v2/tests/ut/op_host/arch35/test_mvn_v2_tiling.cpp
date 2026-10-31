@@ -2,7 +2,8 @@
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software; you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * Please refer to the License for details.
+ * You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
@@ -12,482 +13,496 @@
 
 /*!
  * \file test_mvn_v2_tiling.cpp
- * \brief MVNV2 Tiling (arch35) UT
+ * \brief MVNV2 Tiling (arch35) UT. Every case invokes the tiling entry that the operator
+ *        registers through IMPL_OP_OPTILING, so the assertions exercise the delivered
+ *        product code instead of a local re-implementation.
  */
-
-#include <cmath>
-#include <cstdint>
-#include <cstring>
-#include <vector>
-#include <string>
-#include <algorithm>
 #include <gtest/gtest.h>
+#include <cmath>
+#include <limits>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+#include "kernel_run_context_facker.h"
+#include "platform/platform_infos_def.h"
+#include "register/op_impl_registry.h"
+#include "test_cube_util.h"
+#include "ut_op_util.h"
+#include "../../../../op_host/arch35/mvn_v2_tiling_arch35.h"
+#include "../../../../op_kernel/arch35/mvn_v2_struct.h"
 
-enum LocalDataType {
-    DT_FLOAT = 0,
-    DT_FLOAT16 = 1,
-};
+namespace {
+constexpr const char* OP_TYPE = "MVNV2";
+constexpr const char* COMPILE_INFO = R"({
+ "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                   "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
+                   "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+                   "UB_SIZE": 253952, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                   "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                   "CORE_NUM": 64}
+                   })";
 
-constexpr int32_t MAX_PATTERN_RANK = 9;
-constexpr int32_t MAX_INPUT_RANK = 8;
-
-inline int64_t CeilDiv(int64_t a, int64_t b) { return (a + b - 1) / b; }
-inline int64_t CeilAlign(int64_t v, int64_t f) { return CeilDiv(v, f) * f; }
-inline int64_t FloorAlign(int64_t v, int64_t f) { return (v / f) * f; }
-inline int64_t ElemBytes(LocalDataType dt) { return (dt == DT_FLOAT) ? 4 : 2; }
-
-inline int32_t LastAIdx(int32_t axisNum) { return ((axisNum - 1) / 2) * 2; }
-inline int32_t LastRIdx(int32_t axisNum) { return ((axisNum - 2) / 2) * 2 + 1; }
-inline bool HasOuterA(int32_t idx) { return idx >= 2; }
-inline bool HasOuterR(int32_t idx) { return idx >= 3; }
-
-constexpr int64_t CACHE_BUF_UB = 16 * 1024;
-constexpr int32_t DB = 2;
-constexpr int32_t N_PRE_REUSE = 1;
-constexpr int32_t N_PRE_PARALLEL = 0;
-constexpr int32_t N_OUT = 1;
-constexpr int32_t N_POST_EXTRA = 0;
-
-struct FuseResult {
-    int32_t axisNum;
-    int64_t axisShape[MAX_PATTERN_RANK];
-    int64_t axisType[MAX_PATTERN_RANK];
-    int32_t isTailR;
-};
-
-struct UbSplitResult {
-    int32_t aSplitAxisIdx;
-    int32_t rSplitAxisIdx;
-    int64_t aUbFactor;
-    int64_t aUbFactorAlign;
-    int64_t rUbFactor;
-    int64_t rUbFactorAlign;
-    int64_t innerAProd;
-    int64_t innerAProdAlign;
-    int64_t innerRProd;
-    int64_t innerRProdAlign;
-};
-
-struct MulticoreResult {
-    int64_t aLoopCntTotal;
-    int64_t aSplitChunkCnt;
-    int64_t aBigCoreLoopCnt;
-    int64_t aSmallCoreLoopCnt;
-    int32_t aBigCoreCnt;
-    int32_t usedCoreNum;
-    int64_t rLoopCntTotal;
-};
-
-struct Mvnv2TilingInputs {
-    int64_t shape[MAX_INPUT_RANK];
-    int32_t rank;
-    const int64_t* axes;
-    int32_t axesCount;
-    LocalDataType dtype;
-    int32_t coreNum;
-    int64_t ubSize;
-    int64_t blockSize;
-    int64_t cacheLineSize;
-    int64_t vectorSize;
-    double eps;
-};
-
-struct MVNV2TilingData {
-    int32_t axisNum = 0;
-    int64_t axisShape[MAX_PATTERN_RANK] = {0};
-    int64_t axisStride[MAX_PATTERN_RANK] = {0};
-    int64_t aLoopCntTotal = 0;
-    int64_t aSplitChunkCnt = 0;
-    int64_t aBigCoreLoopCnt = 0;
-    int64_t aSmallCoreLoopCnt = 0;
-    int32_t aBigCoreCnt = 0;
-    int32_t usedCoreNum = 0;
-    int32_t aSplitAxisIdx = 0;
-    int32_t rSplitAxisIdx = 0;
-    int64_t aUbFactor = 0;
-    int64_t aUbFactorAlign = 0;
-    int64_t rUbFactor = 0;
-    int64_t rUbFactorAlign = 0;
-    int64_t innerAProd = 0;
-    int64_t innerAProdAlign = 0;
-    int64_t innerRProd = 0;
-    int64_t innerRProdAlign = 0;
-    int64_t rLoopCntTotal = 0;
-    int64_t preReduceUbSize = 0;
-    int64_t postReduceUbSize = 0;
-    int64_t tmpBufUbSize = 0;
-    int64_t cacheBufUbSize = 0;
-    int64_t rGroupCnt = 0;
-    float invRTotal = 0.0f;
-    float eps = 0.0f;
-};
-
-static void FuseAxisFourSteps(const int64_t* shape, int32_t rank, const int64_t* axes, int32_t axesCount,
-                              FuseResult& out)
+gert::StorageShape MakeShape(const std::vector<int64_t>& dims)
 {
-    bool isR[MAX_INPUT_RANK] = {false};
-    for (int32_t i = 0; i < axesCount; ++i) {
-        if (axes[i] >= 0 && axes[i] < rank)
-            isR[axes[i]] = true;
+    gert::StorageShape shape;
+    for (const int64_t dim : dims) {
+        shape.MutableOriginShape().AppendDim(dim);
+        shape.MutableStorageShape().AppendDim(dim);
+    }
+    return shape;
+}
+
+struct TilingResult {
+    ge::graphStatus status = ge::GRAPH_FAILED;
+    uint64_t key = 0;
+    uint32_t blockDim = 0;
+    size_t workspace = 0;
+    MVNV2TilingData data{};
+};
+
+int64_t PlannedUbBytes(const MVNV2TilingData& data)
+{
+    return data.preReduceUbSize + 2 * data.tmpBufUbSize + data.cacheBufUbSize;
+}
+
+// Passing nullptr for axes omits the attribute entirely, which exercises the documented
+// default ([0, 2, 3] narrowed to the actual rank) rather than an explicitly supplied list.
+TilingResult RunTiling(const std::vector<int64_t>& inputDims, const std::vector<int64_t>* axes, float eps,
+                       ge::DataType inputType = ge::DT_FLOAT, ge::DataType outputType = ge::DT_FLOAT,
+                       ge::Format inputFormat = ge::FORMAT_NCHW, ge::Format outputFormat = ge::FORMAT_NCHW,
+                       ge::Format inputOriginFormat = ge::FORMAT_NCHW, ge::Format outputOriginFormat = ge::FORMAT_NCHW,
+                       const std::vector<int64_t>* outputDims = nullptr)
+{
+    std::map<std::string, std::string> socInfos;
+    std::map<std::string, std::string> aicoreSpec;
+    std::map<std::string, std::string> intrinsics;
+    std::map<std::string, std::string> version = {{"NpuArch", "3510"}, {"Short_SoC_version", "ASCEND950"}};
+    GetPlatFormInfos(COMPILE_INFO, socInfos, aicoreSpec, intrinsics, version);
+
+    fe::PlatFormInfos platformInfo;
+    platformInfo.Init();
+    optiling::MVNV2CompileInfo compileInfo;
+
+    const auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(OP_TYPE);
+    if (opImpl == nullptr || opImpl->tiling == nullptr || opImpl->tiling_parse == nullptr) {
+        return {};
     }
 
-    struct RawAxis {
-        int64_t size;
-        bool isR;
+    auto parseHolder = gert::KernelRunContextFaker()
+                           .SetOpType(OP_TYPE)
+                           .KernelIONum(1, 1)
+                           .Inputs({const_cast<char*>(COMPILE_INFO), reinterpret_cast<void*>(&platformInfo)})
+                           .Outputs({&compileInfo})
+                           .Build();
+    auto* parseContext = parseHolder.GetContext<gert::TilingParseContext>();
+    if (parseContext == nullptr || parseContext->GetPlatformInfo() == nullptr ||
+        !parseContext->GetPlatformInfo()->Init()) {
+        return {};
+    }
+    parseContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    parseContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    parseContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    parseContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    parseContext->GetPlatformInfo()->SetPlatformRes("version", version);
+    if (opImpl->tiling_parse(parseHolder.GetContext<gert::KernelContext>()) != ge::GRAPH_SUCCESS) {
+        return {};
+    }
+
+    gert::StorageShape inputShape = MakeShape(inputDims);
+    gert::StorageShape outputShape = MakeShape(outputDims == nullptr ? inputDims : *outputDims);
+    auto tilingData = gert::TilingData::CreateCap(4096);
+    auto workspaceHolder = gert::ContinuousVector::Create<size_t>(1);
+    auto* workspace = reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get());
+    if (tilingData == nullptr || workspace == nullptr) {
+        return {};
+    }
+
+    std::vector<std::pair<std::string, Ops::NN::AnyValue>> attrs;
+    attrs.emplace_back("eps", Ops::NN::AnyValue::CreateFrom<float>(eps));
+    if (axes != nullptr) {
+        attrs.emplace_back("axes", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(*axes));
+    }
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(OP_TYPE)
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1}, {1})
+                      .InputShapes({&inputShape})
+                      .OutputShapes({&outputShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, inputType, inputOriginFormat, inputFormat)
+                      .NodeOutputTd(0, outputType, outputOriginFormat, outputFormat)
+                      .NodeAttrs(attrs)
+                      .TilingData(tilingData.get())
+                      .Workspace(workspace)
+                      .Build();
+
+    auto* context = holder.GetContext<gert::TilingContext>();
+    if (context == nullptr || context->GetPlatformInfo() == nullptr) {
+        return {};
+    }
+    context->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    context->GetPlatformInfo()->SetPlatformRes("version", version);
+
+    TilingResult result;
+    result.status = opImpl->tiling(context);
+    if (result.status == ge::GRAPH_SUCCESS) {
+        result.key = context->GetTilingKey();
+        result.blockDim = context->GetBlockDim();
+        const auto* raw = context->GetRawTilingData();
+        if (raw != nullptr && raw->GetDataSize() >= sizeof(MVNV2TilingData)) {
+            result.data = *reinterpret_cast<const MVNV2TilingData*>(raw->GetData());
+        }
+        const size_t* workspaceSizes = context->GetWorkspaceSizes(1);
+        if (workspaceSizes != nullptr) {
+            result.workspace = workspaceSizes[0];
+        }
+    }
+    return result;
+}
+
+constexpr float EPS_DEFAULT = 1.0e-9f;
+const std::vector<int64_t> AXES_DEFAULT = {0, 2, 3};
+} // namespace
+
+TEST(MvnV2Tiling, IsRegistered)
+{
+    const auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(OP_TYPE);
+    ASSERT_NE(opImpl, nullptr);
+    EXPECT_NE(opImpl->tiling, nullptr);
+    EXPECT_NE(opImpl->tiling_parse, nullptr);
+}
+
+TEST(MvnV2Tiling, AcceptsDocumentedDomain)
+{
+    EXPECT_EQ(RunTiling({1, 3, 4, 4}, nullptr, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTiling({1, 3, 4, 4}, &AXES_DEFAULT, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTiling({2, 4, 8, 16}, &AXES_DEFAULT, EPS_DEFAULT, ge::DT_FLOAT16, ge::DT_FLOAT16).status,
+              ge::GRAPH_SUCCESS);
+    const std::vector<int64_t> axesMid = {1, 2};
+    EXPECT_EQ(RunTiling({2, 4, 8, 16}, &axesMid, EPS_DEFAULT, ge::DT_FLOAT16, ge::DT_FLOAT16).status,
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTiling({8, 64, 32, 4}, &axesMid, 0.0f).status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTiling({8, 64, 32, 4}, &axesMid, -0.0f).status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTiling({8, 64, 32, 4}, &axesMid, std::numeric_limits<float>::denorm_min()).status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTiling({8, 64, 32, 4}, &axesMid, std::numeric_limits<float>::min()).status, ge::GRAPH_SUCCESS);
+    const std::vector<int64_t> axesAll = {0, 1, 2, 3};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axesAll, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
+    const std::vector<int64_t> axesFirst = {0};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axesFirst, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
+}
+
+TEST(MvnV2Tiling, AcceptsBaselineCompatibleAxes)
+{
+    const std::vector<int64_t> axesNegLast = {-1};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axesNegLast, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
+    const std::vector<int64_t> axesNegMixed = {-4, -2};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axesNegMixed, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
+    const std::vector<int64_t> axesEmpty = {};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axesEmpty, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
+    const std::vector<int64_t> axesDup = {1, 1, 2};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axesDup, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
+}
+
+TEST(MvnV2Tiling, AcceptsBaselineCompatibleEpsViaIeeeMode)
+{
+    constexpr int32_t ieeeEpsMode = 5;
+    for (const float eps : {-1.0f, -std::numeric_limits<float>::denorm_min(), std::numeric_limits<float>::denorm_min(),
+                            -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(),
+                            std::numeric_limits<float>::quiet_NaN()}) {
+        const auto result = RunTiling({1, 3, 4, 4}, &AXES_DEFAULT, eps);
+        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(result.data.kernelMode, ieeeEpsMode);
+    }
+}
+
+TEST(MvnV2Tiling, RejectsOutOfRangeAxes)
+{
+    const std::vector<int64_t> axesUpper = {4};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axesUpper, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    const std::vector<int64_t> axesNegOver = {-5};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axesNegOver, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    const std::vector<int64_t> axesMixed = {0, 4};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axesMixed, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+}
+
+TEST(MvnV2Tiling, RejectsUnsupportedRankDtypeFormat)
+{
+    const std::vector<int64_t> axes = {0, 2, 3};
+    EXPECT_EQ(RunTiling({8}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({64, 96}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({16, 32, 8}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 3, 4, 5, 2}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 3, 4, 5, 2, 3}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 2, 4, 2, 3, 2, 2}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 2, 4, 2, 3, 2, 2, 3}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 2, 2, 2, 2, 2, 2, 2, 2}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 3, 4, -1}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({std::numeric_limits<int64_t>::max(), 2, 1, 1}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axes, EPS_DEFAULT, ge::DT_BF16, ge::DT_BF16).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axes, EPS_DEFAULT, ge::DT_DOUBLE, ge::DT_DOUBLE).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axes, EPS_DEFAULT, ge::DT_INT32, ge::DT_INT32).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axes, EPS_DEFAULT, ge::DT_FLOAT, ge::DT_FLOAT16).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axes, EPS_DEFAULT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                  .status,
+              ge::GRAPH_FAILED);
+    EXPECT_EQ(
+        RunTiling({2, 3, 4, 5}, &axes, EPS_DEFAULT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND).status,
+        ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axes, EPS_DEFAULT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND,
+                        ge::FORMAT_NHWC, ge::FORMAT_NCHW)
+                  .status,
+              ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axes, EPS_DEFAULT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND,
+                        ge::FORMAT_NCHW, ge::FORMAT_NHWC)
+                  .status,
+              ge::GRAPH_FAILED);
+    const std::vector<int64_t> wrongOutputShape = {2, 3, 4, 4};
+    EXPECT_EQ(RunTiling({2, 3, 4, 5}, &axes, EPS_DEFAULT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::FORMAT_NCHW,
+                        ge::FORMAT_NCHW, ge::FORMAT_NCHW, &wrongOutputShape)
+                  .status,
+              ge::GRAPH_FAILED);
+}
+
+TEST(MvnV2Tiling, RejectsUnknownRankDescriptor)
+{
+    const std::vector<int64_t> axes = {0, 2, 3};
+    EXPECT_EQ(RunTiling({-2}, &axes, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+}
+
+TEST(MvnV2Tiling, EmptyTensorTakesShortCircuit)
+{
+    const auto empty4 = RunTiling({4, 0, 8, 16}, &AXES_DEFAULT, EPS_DEFAULT);
+    ASSERT_EQ(empty4.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(empty4.key, GET_TPL_TILING_KEY(MVN_V2_RANK_4));
+
+    const std::vector<int64_t> axesLast = {3};
+    const auto emptyLast = RunTiling({2, 3, 4, 0}, &axesLast, EPS_DEFAULT);
+    ASSERT_EQ(emptyLast.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(emptyLast.key, GET_TPL_TILING_KEY(MVN_V2_RANK_4));
+
+    const auto emptyAll = RunTiling({0, 0, 0, 0}, &AXES_DEFAULT, EPS_DEFAULT);
+    ASSERT_EQ(emptyAll.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(emptyAll.key, GET_TPL_TILING_KEY(MVN_V2_RANK_4));
+
+    EXPECT_EQ(RunTiling({4, 0, 8, 16}, &AXES_DEFAULT, -1.0f).status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTiling({4, 0, 8, 16}, &AXES_DEFAULT, std::numeric_limits<float>::quiet_NaN()).status,
+              ge::GRAPH_SUCCESS);
+}
+
+TEST(MvnV2Tiling, SelectsRank4TilingKey)
+{
+    const auto rank4 = RunTiling({1, 3, 4, 4}, &AXES_DEFAULT, EPS_DEFAULT);
+    ASSERT_EQ(rank4.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(rank4.key, GET_TPL_TILING_KEY(MVN_V2_RANK_4));
+
+    const std::vector<int64_t> axesAll = {0, 1, 2, 3};
+    const auto allAxes = RunTiling({2, 3, 4, 5}, &axesAll, EPS_DEFAULT);
+    ASSERT_EQ(allAxes.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(allAxes.key, GET_TPL_TILING_KEY(MVN_V2_RANK_4));
+
+    const auto defaulted = RunTiling({2, 3, 4, 5}, nullptr, EPS_DEFAULT);
+    ASSERT_EQ(defaulted.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(defaulted.key, GET_TPL_TILING_KEY(MVN_V2_RANK_4));
+}
+
+TEST(MvnV2Tiling, GenericUbPlanFitsPlatformCapacity)
+{
+    constexpr int64_t ubSize = 253952;
+    const std::vector<int64_t> axes = {1, 3};
+    for (const auto& dims : std::vector<std::vector<int64_t>>{{64, 9, 128, 16}, {32, 17, 32, 7}}) {
+        const auto result = RunTiling(dims, &axes, EPS_DEFAULT, ge::DT_FLOAT16, ge::DT_FLOAT16);
+        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(result.data.kernelMode, 0);
+        EXPECT_LE(PlannedUbBytes(result.data), ubSize);
+    }
+
+    const auto fp32 = RunTiling({2, 3, 128, 32}, &axes, EPS_DEFAULT);
+    ASSERT_EQ(fp32.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(fp32.data.kernelMode, 0);
+    EXPECT_LE(PlannedUbBytes(fp32.data), ubSize);
+}
+
+TEST(MvnV2Tiling, EverySpecialRouteFitsPlatformCapacity)
+{
+    constexpr int64_t ubSize = 253952;
+    const std::vector<int64_t> axesChannel = {1};
+    const std::vector<int64_t> axesLast = {3};
+    const std::vector<int64_t> axesFirstAndHeight = {0, 2};
+    const std::vector<TilingResult> results = {
+        RunTiling({2, 64, 32, 4}, &axesChannel, EPS_DEFAULT, ge::DT_FLOAT16, ge::DT_FLOAT16),
+        RunTiling({8, 4, 4, 2}, &axesLast, EPS_DEFAULT),
+        RunTiling({200, 3, 200, 32}, &axesFirstAndHeight, EPS_DEFAULT, ge::DT_FLOAT16, ge::DT_FLOAT16),
+        RunTiling({2, 16, 16, 264}, &axesChannel, EPS_DEFAULT),
     };
-
-    std::vector<RawAxis> dropped;
-    for (int d = 0; d < rank; ++d) {
-        if (shape[d] != 1)
-            dropped.push_back({shape[d], isR[d]});
+    for (const auto& result : results) {
+        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+        EXPECT_LE(PlannedUbBytes(result.data), ubSize);
     }
-    if (dropped.empty()) {
-        dropped.push_back({1, false});
+}
+
+TEST(MvnV2Tiling, EnforcesArch35DmaStrideLimit)
+{
+    const std::vector<int64_t> axesChannel = {1};
+    constexpr int64_t fp32ElemsAtLimit = 1LL << 38;
+    EXPECT_EQ(RunTiling({1, 1, 1, fp32ElemsAtLimit - 1}, &axesChannel, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTiling({1, 1, 1, fp32ElemsAtLimit}, &axesChannel, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTiling({1, 1, 1, fp32ElemsAtLimit + 1}, &axesChannel, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+}
+
+TEST(MvnV2Tiling, HandlesInt64CapacityBoundariesWithoutPrivateInt32Cap)
+{
+    const std::vector<int64_t> axesFirst = {0};
+    const std::vector<int64_t> axesChannel = {1};
+    for (const int64_t elements : {2147483647LL, 2147483648LL, 4294967295LL, 4294967296LL, 4294967297LL}) {
+        const auto result = RunTiling({elements, 1, 1, 1}, &axesFirst, EPS_DEFAULT);
+        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS) << elements;
+        EXPECT_GT(result.workspace, 0U);
+        EXPECT_LE(PlannedUbBytes(result.data), 253952);
     }
 
-    std::vector<RawAxis> fused;
-    for (const auto& a : dropped) {
-        if (!fused.empty() && fused.back().isR == a.isR) {
-            fused.back().size *= a.size;
-        } else {
-            fused.push_back(a);
+    for (const int64_t elements : {(1LL << 30) - 1, 1LL << 30, (1LL << 30) + 1}) {
+        EXPECT_EQ(RunTiling({elements, 1, 1, 1}, &axesFirst, EPS_DEFAULT).status, ge::GRAPH_SUCCESS) << elements;
+    }
+    for (const int64_t elements : {(1LL << 31) - 1, 1LL << 31, (1LL << 31) + 1}) {
+        EXPECT_EQ(RunTiling({elements, 1, 1, 1}, &axesFirst, EPS_DEFAULT, ge::DT_FLOAT16, ge::DT_FLOAT16).status,
+                  ge::GRAPH_SUCCESS)
+            << elements;
+    }
+
+    const auto largeProduct = RunTiling({3037000499LL, 3037000499LL, 1, 1}, &axesChannel, EPS_DEFAULT);
+    ASSERT_EQ(largeProduct.status, ge::GRAPH_SUCCESS);
+    EXPECT_GT(largeProduct.workspace, 0U);
+    EXPECT_LE(PlannedUbBytes(largeProduct.data), 253952);
+    EXPECT_EQ(RunTiling({3037000500LL, 3037000500LL, 1, 1}, &axesChannel, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+
+    EXPECT_EQ(RunTiling({std::numeric_limits<int64_t>::max(), 2, 1, 1}, &axesFirst, EPS_DEFAULT).status,
+              ge::GRAPH_FAILED);
+
+    const std::vector<int64_t> axesFirstAndHeight = {0, 2};
+    const auto alignmentInflation = RunTiling({2, 1LL << 59, 2, 2}, &axesFirstAndHeight, EPS_DEFAULT, ge::DT_FLOAT16,
+                                              ge::DT_FLOAT16);
+    ASSERT_EQ(alignmentInflation.status, ge::GRAPH_SUCCESS);
+    EXPECT_LE(PlannedUbBytes(alignmentInflation.data), 253952);
+}
+
+TEST(MvnV2Tiling, SelectsPrecisionSafeRoutes)
+{
+    const std::vector<int64_t> axesChannel = {1};
+    const auto tileA = RunTiling({2, 64, 32, 4}, &axesChannel, EPS_DEFAULT, ge::DT_FLOAT16, ge::DT_FLOAT16);
+    ASSERT_EQ(tileA.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tileA.data.kernelMode, 2);
+
+    const auto fp32TileAUpper = RunTiling({2, 4096, 32, 4}, &axesChannel, EPS_DEFAULT);
+    ASSERT_EQ(fp32TileAUpper.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(fp32TileAUpper.data.kernelMode, 2);
+
+    const auto oddTailR2Fallback = RunTiling({5, 2, 1, 1}, &axesChannel, EPS_DEFAULT);
+    ASSERT_EQ(oddTailR2Fallback.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(oddTailR2Fallback.data.kernelMode, 0);
+
+    const std::vector<int64_t> axesLast = {3};
+    const auto tailR2 = RunTiling({8, 4, 4, 2}, &axesLast, EPS_DEFAULT);
+    ASSERT_EQ(tailR2.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tailR2.data.kernelMode, 4);
+
+    const std::vector<int64_t> axesFirstAndHeight = {0, 2};
+    const auto rara5 = RunTiling({200, 3, 200, 32}, &axesFirstAndHeight, EPS_DEFAULT, ge::DT_FLOAT16, ge::DT_FLOAT16);
+    ASSERT_EQ(rara5.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(rara5.data.kernelMode, 3);
+
+    // A trailing A axis slightly wider than the 64-column chunk target splits into two balanced
+    // RARA5 chunks (33+32 cols, pitch 48) instead of a 64+1 split with a 1-column remainder,
+    // doubling the work-item count for outerA-small shapes.
+    const auto rara5WideTail = RunTiling({200, 3, 200, 65}, &axesFirstAndHeight, EPS_DEFAULT, ge::DT_FLOAT16,
+                                         ge::DT_FLOAT16);
+    ASSERT_EQ(rara5WideTail.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(rara5WideTail.data.kernelMode, 3);
+    EXPECT_EQ(rara5WideTail.data.aUbFactorAlign, 33);
+    EXPECT_EQ(rara5WideTail.data.aUbFactor, 48);
+    EXPECT_EQ(rara5WideTail.data.usedCoreNum, 6);
+
+    // Reduce rows just below the old 20000 threshold and huge unsplit reductions both take the
+    // vectorized RARA5 path; only tiny reductions or tails wider than RARA5_MAX_COLS stay generic.
+    const auto rara5RowsBelow = RunTiling({7, 3, 2857, 32}, &axesFirstAndHeight, EPS_DEFAULT, ge::DT_FLOAT16,
+                                          ge::DT_FLOAT16);
+    ASSERT_EQ(rara5RowsBelow.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(rara5RowsBelow.data.kernelMode, 3);
+
+    const auto rara5HugeR = RunTiling({2000, 3, 600, 32}, &axesFirstAndHeight, EPS_DEFAULT, ge::DT_FLOAT16,
+                                      ge::DT_FLOAT16);
+    ASSERT_EQ(rara5HugeR.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(rara5HugeR.data.kernelMode, 3);
+    EXPECT_EQ(rara5HugeR.data.usedCoreNum, 3);
+
+    const auto rara5TinyR = RunTiling({2, 3, 500, 32}, &axesFirstAndHeight, EPS_DEFAULT, ge::DT_FLOAT16,
+                                      ge::DT_FLOAT16);
+    ASSERT_EQ(rara5TinyR.status, ge::GRAPH_SUCCESS);
+    EXPECT_NE(rara5TinyR.data.kernelMode, 3);
+
+    const auto rara5TooWide = RunTiling({2, 3, 400, 300}, &axesFirstAndHeight, EPS_DEFAULT, ge::DT_FLOAT16,
+                                        ge::DT_FLOAT16);
+    ASSERT_EQ(rara5TooWide.status, ge::GRAPH_SUCCESS);
+    EXPECT_NE(rara5TooWide.data.kernelMode, 3);
+
+    // R=4096 is the verified upper bound for the tile-A FP32 binned path; longer reductions
+    // stay on the generic element-wise compensated path (see tileAFp32PrecisionLimit).
+    const auto longGeneric = RunTiling({500, 9040, 3, 3}, &axesChannel, EPS_DEFAULT);
+    ASSERT_EQ(longGeneric.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(longGeneric.data.kernelMode, 0);
+
+    // FP32 huge-reduction precision fallback: the flat single-group pattern [1, R] keeps the
+    // multicore FlatRGroup path (vectorized compensated blocks), while non-flat patterns fall
+    // back to the single-core-per-group compensated walk (rGroupCnt == 0).
+    const std::vector<int64_t> axesDefault = {0, 2, 3};
+    const auto flatHuge = RunTiling({1, 1, 1, 4194304}, &axesDefault, EPS_DEFAULT);
+    ASSERT_EQ(flatHuge.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(flatHuge.data.kernelMode, 0);
+    EXPECT_GT(flatHuge.data.rGroupCnt, 0);
+
+    const auto nonFlatHuge = RunTiling({16, 16, 64, 64}, &axesDefault, EPS_DEFAULT);
+    ASSERT_EQ(nonFlatHuge.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(nonFlatHuge.data.kernelMode, 0);
+    EXPECT_EQ(nonFlatHuge.data.rGroupCnt, 0);
+}
+
+TEST(MvnV2Tiling, ReportsCoherentRuntimePlan)
+{
+    const std::vector<int64_t> axesDefault = {0, 2, 3};
+    const std::vector<int64_t> axesChannel = {1};
+    const std::vector<TilingResult> results = {
+        RunTiling({1, 1, 1, 60002}, &axesDefault, EPS_DEFAULT),
+        RunTiling({8, 20000, 1, 1}, &axesChannel, EPS_DEFAULT),
+        RunTiling({2, 65, 32, 4}, &axesChannel, EPS_DEFAULT),
+    };
+    for (const auto& result : results) {
+        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(result.blockDim, static_cast<uint32_t>(result.data.usedCoreNum));
+        EXPECT_GT(result.data.usedCoreNum, 0);
+        EXPECT_LE(result.data.usedCoreNum, 64);
+        EXPECT_GT(result.data.aUbFactor, 0);
+        EXPECT_GT(result.data.rUbFactor, 0);
+        EXPECT_GT(result.data.aLoopCntTotal, 0);
+        EXPECT_GT(result.data.rLoopCntTotal, 0);
+        EXPECT_EQ(result.data.axisStride[result.data.axisNum - 1], 1);
+        for (int32_t index = result.data.axisNum - 2; index >= 0; --index) {
+            EXPECT_EQ(result.data.axisStride[index],
+                      result.data.axisStride[index + 1] * result.data.axisShape[index + 1]);
         }
     }
 
-    if (!fused.empty() && fused[0].isR) {
-        fused.insert(fused.begin(), {1, false});
+    const auto grouped = results[0];
+    ASSERT_GT(grouped.data.rGroupCnt, 0);
+    int64_t aTotal = 1;
+    for (int32_t index = 0; index < grouped.data.axisNum; index += 2) {
+        aTotal *= grouped.data.axisShape[index];
     }
-
-    bool hasR = false;
-    for (const auto& a : fused)
-        if (a.isR) {
-            hasR = true;
-            break;
-        }
-    if (!hasR) {
-        if (fused.size() == 1 && fused[0].size == 1) {
-            fused.push_back({1, true});
-        } else {
-            fused.insert(fused.begin(), {1, true});
-            fused.insert(fused.begin(), {1, false});
-        }
-    }
-
-    out.axisNum = static_cast<int32_t>(fused.size());
-    for (int i = 0; i < MAX_PATTERN_RANK; ++i) {
-        out.axisShape[i] = (i < out.axisNum) ? fused[i].size : 1;
-        out.axisType[i] = (i < out.axisNum) ? (fused[i].isR ? 1 : 0) : 0;
-    }
-    out.isTailR = (out.axisNum % 2 == 0) ? 1 : 0;
-}
-
-static float ComputeInvRTotal(const FuseResult& pat)
-{
-    int64_t rTotal = 1;
-    for (int k = 1; k < pat.axisNum; k += 2)
-        rTotal *= pat.axisShape[k];
-    if (rTotal == 0)
-        return 0.0f;
-    return 1.0f / static_cast<float>(rTotal);
-}
-
-static int32_t ShouldUseGroup(int64_t aOuter, int64_t rOuter, int32_t coreNum)
-{
-    if (aOuter > coreNum / 2)
-        return 0;
-    if (rOuter <= 1)
-        return 0;
-    return 1;
-}
-
-static void ComputeASplit(const FuseResult& pat, int32_t aLast, int64_t atmp, int64_t blockSizeElem, UbSplitResult& out)
-{
-    int64_t innerAProd = 1;
-    int64_t innerAProdAlign = 1;
-    int32_t splitAxis = aLast;
-    while (pat.axisShape[splitAxis] * innerAProdAlign < atmp && HasOuterA(splitAxis)) {
-        if (splitAxis == aLast && !pat.isTailR) {
-            innerAProdAlign *= CeilAlign(pat.axisShape[splitAxis], blockSizeElem);
-        } else {
-            innerAProdAlign *= pat.axisShape[splitAxis];
-        }
-        innerAProd *= pat.axisShape[splitAxis];
-        splitAxis -= 2;
-    }
-    const int64_t aUbFactor = std::min(CeilDiv(atmp, innerAProdAlign), pat.axisShape[splitAxis]);
-    out.aSplitAxisIdx = splitAxis;
-    out.aUbFactor = aUbFactor;
-    out.aUbFactorAlign = (splitAxis == aLast && !pat.isTailR) ? CeilAlign(aUbFactor, blockSizeElem) : aUbFactor;
-    out.innerAProd = innerAProd;
-    out.innerAProdAlign = innerAProdAlign;
-}
-
-static void ComputeUbSplit(const FuseResult& pat, LocalDataType dtype, int32_t coreNum, int64_t ubSize,
-                           int64_t blockSize, int64_t cacheLineSize, UbSplitResult& out)
-{
-    const int64_t eb = ElemBytes(dtype);
-    const int64_t bsElem = blockSize / eb;
-    const int64_t maxInnerA = cacheLineSize / eb;
-    const int64_t ubAvailable = ubSize - CACHE_BUF_UB;
-    const int64_t bytesPerRElem = (DB * N_PRE_REUSE + N_PRE_PARALLEL) * eb + 2 * static_cast<int64_t>(sizeof(float));
-
-    int32_t aLast = LastAIdx(pat.axisNum);
-    int64_t totalA = 1;
-    for (int k = 0; k < pat.axisNum; k += 2)
-        totalA *= pat.axisShape[k];
-
-    int64_t atmp;
-    if (pat.isTailR) {
-        atmp = std::min(maxInnerA, CeilDiv(totalA, coreNum));
-    } else {
-        atmp = maxInnerA;
-    }
-    if (atmp < 1)
-        atmp = 1;
-    ComputeASplit(pat, aLast, atmp, bsElem, out);
-
-    int64_t aUnit = out.aUbFactorAlign * out.innerAProdAlign;
-    int64_t aOnlyBytes = (N_OUT + N_POST_EXTRA) * aUnit * eb;
-    int64_t rImax = (ubAvailable - aOnlyBytes) / (aUnit * bytesPerRElem);
-
-    int32_t rLast = LastRIdx(pat.axisNum);
-    int64_t innerRProd = 1, innerRProdAlign = 1;
-    int32_t rSplit = rLast;
-    while (rSplit == pat.axisNum - 1 && pat.axisShape[rSplit] * innerRProdAlign <= rImax && HasOuterR(rSplit)) {
-        if (rSplit == rLast && pat.isTailR) {
-            innerRProdAlign *= CeilAlign(pat.axisShape[rSplit], bsElem);
-        } else {
-            innerRProdAlign *= pat.axisShape[rSplit];
-        }
-        innerRProd *= pat.axisShape[rSplit];
-        rSplit -= 2;
-    }
-    int64_t rUbFactor = std::min(rImax / innerRProdAlign, pat.axisShape[rSplit]);
-    if (pat.isTailR && rSplit == rLast && rUbFactor < pat.axisShape[rSplit]) {
-        rUbFactor = FloorAlign(rUbFactor, bsElem);
-    }
-    int64_t rUbFactorAlign = (pat.isTailR && rSplit == rLast) ? CeilAlign(rUbFactor, bsElem) : rUbFactor;
-    out.rSplitAxisIdx = rSplit;
-    out.rUbFactor = rUbFactor;
-    out.rUbFactorAlign = rUbFactorAlign;
-    out.innerRProd = innerRProd;
-    out.innerRProdAlign = innerRProdAlign;
-
-    if (rUbFactor == pat.axisShape[rSplit] && !HasOuterR(rSplit)) {
-        int64_t coeff = rUbFactorAlign * innerRProdAlign * bytesPerRElem + (N_OUT + N_POST_EXTRA) * eb;
-        int64_t atmpNew = ubAvailable / coeff;
-        atmpNew = std::min(atmpNew, CACHE_BUF_UB / static_cast<int64_t>(sizeof(float)));
-        if (atmpNew > atmp)
-            ComputeASplit(pat, aLast, atmpNew, bsElem, out);
-    }
-}
-
-static void ComputeMulticore(const FuseResult& pat, const UbSplitResult& split, int32_t coreNum, MulticoreResult& out)
-{
-    int64_t aSplitChunkCnt = CeilDiv(pat.axisShape[split.aSplitAxisIdx], split.aUbFactor);
-    int64_t outerAProd = 1;
-    for (int k = 0; k < split.aSplitAxisIdx; k += 2)
-        outerAProd *= pat.axisShape[k];
-    int64_t aLoopCntTotal = outerAProd * aSplitChunkCnt;
-
-    int64_t aSmall = aLoopCntTotal / coreNum;
-    int64_t aBigCnt = aLoopCntTotal % coreNum;
-    int64_t aBigLoop = aSmall + (aBigCnt > 0 ? 1 : 0);
-    int32_t usedCoreNum = (aSmall > 0) ? coreNum : static_cast<int32_t>(aBigCnt);
-
-    int64_t outerRProd = 1;
-    for (int k = 1; k < split.rSplitAxisIdx; k += 2)
-        outerRProd *= pat.axisShape[k];
-    int64_t rLoopCntTotal = outerRProd * CeilDiv(pat.axisShape[split.rSplitAxisIdx], split.rUbFactor);
-
-    out.aLoopCntTotal = aLoopCntTotal;
-    out.aSplitChunkCnt = aSplitChunkCnt;
-    out.aBigCoreLoopCnt = aBigLoop;
-    out.aSmallCoreLoopCnt = aSmall;
-    out.aBigCoreCnt = static_cast<int32_t>(aBigCnt);
-    out.usedCoreNum = usedCoreNum;
-    out.rLoopCntTotal = rLoopCntTotal;
-}
-
-static void FillTilingData(const Mvnv2TilingInputs& in, const FuseResult& pat, const UbSplitResult& sp,
-                           const MulticoreResult& mc, MVNV2TilingData& out, int64_t rGroupCnt)
-{
-    const int64_t eb = ElemBytes(in.dtype);
-    const int64_t unit = sp.aUbFactorAlign * sp.innerAProdAlign * sp.rUbFactorAlign * sp.innerRProdAlign;
-    const int64_t preReduceUbSize = CeilAlign(unit * eb, in.blockSize);
-    const int64_t tmpBufUbSize = CeilAlign(unit * static_cast<int64_t>(sizeof(float)), in.blockSize);
-    const int64_t postReduceUbSize = CeilAlign(sp.aUbFactorAlign * sp.innerAProdAlign * eb, in.blockSize);
-
-    int64_t stride[MAX_PATTERN_RANK];
-    for (int i = 0; i < MAX_PATTERN_RANK; ++i)
-        stride[i] = 0;
-    if (pat.axisNum > 0) {
-        stride[pat.axisNum - 1] = 1;
-        for (int i = pat.axisNum - 2; i >= 0; --i) {
-            stride[i] = stride[i + 1] * pat.axisShape[i + 1];
-        }
-    }
-
-    const float invRTotal = ComputeInvRTotal(pat);
-
-    out.axisNum = pat.axisNum;
-    for (int i = 0; i < MAX_PATTERN_RANK; ++i) {
-        out.axisShape[i] = pat.axisShape[i];
-        out.axisStride[i] = stride[i];
-    }
-    out.aLoopCntTotal = mc.aLoopCntTotal;
-    out.aSplitChunkCnt = mc.aSplitChunkCnt;
-    out.aBigCoreLoopCnt = mc.aBigCoreLoopCnt;
-    out.aSmallCoreLoopCnt = mc.aSmallCoreLoopCnt;
-    out.aBigCoreCnt = mc.aBigCoreCnt;
-    out.usedCoreNum = mc.usedCoreNum;
-    out.aSplitAxisIdx = sp.aSplitAxisIdx;
-    out.rSplitAxisIdx = sp.rSplitAxisIdx;
-    out.aUbFactor = sp.aUbFactor;
-    out.aUbFactorAlign = sp.aUbFactorAlign;
-    out.rUbFactor = sp.rUbFactor;
-    out.rUbFactorAlign = sp.rUbFactorAlign;
-    out.innerAProd = sp.innerAProd;
-    out.innerAProdAlign = sp.innerAProdAlign;
-    out.innerRProd = sp.innerRProd;
-    out.innerRProdAlign = sp.innerRProdAlign;
-    out.rLoopCntTotal = mc.rLoopCntTotal;
-    out.preReduceUbSize = preReduceUbSize;
-    out.postReduceUbSize = postReduceUbSize;
-    out.tmpBufUbSize = tmpBufUbSize;
-    out.cacheBufUbSize = CACHE_BUF_UB;
-    out.rGroupCnt = rGroupCnt;
-    out.invRTotal = invRTotal;
-    out.eps = static_cast<float>(in.eps);
-}
-
-static int32_t ComputeBranch0Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out)
-{
-    FuseResult pat;
-    FuseAxisFourSteps(in.shape, in.rank, in.axes, in.axesCount, pat);
-    UbSplitResult sp;
-    ComputeUbSplit(pat, in.dtype, in.coreNum, in.ubSize, in.blockSize, in.cacheLineSize, sp);
-    MulticoreResult mc;
-    ComputeMulticore(pat, sp, in.coreNum, mc);
-    FillTilingData(in, pat, sp, mc, out, 0);
-    return 0;
-}
-
-static Mvnv2TilingInputs MakeInputs(int64_t n, int64_t c, int64_t h, int64_t w, const int64_t* axes, int32_t axesCount,
-                                    LocalDataType dtype, double eps = 1e-9)
-{
-    Mvnv2TilingInputs in{};
-    in.shape[0] = n;
-    in.shape[1] = c;
-    in.shape[2] = h;
-    in.shape[3] = w;
-    in.rank = 4;
-    in.axes = axes;
-    in.axesCount = axesCount;
-    in.dtype = dtype;
-    in.coreNum = 40;
-    in.ubSize = 196608;
-    in.blockSize = 32;
-    in.cacheLineSize = 512;
-    in.vectorSize = 256;
-    in.eps = eps;
-    return in;
-}
-
-TEST(MvnV2Tiling, fuse_default_axes)
-{
-    int64_t shape[4] = {1, 3, 4, 4};
-    int64_t axes[3] = {0, 2, 3};
-    FuseResult pat;
-    FuseAxisFourSteps(shape, 4, axes, 3, pat);
-    EXPECT_GE(pat.axisNum, 2);
-    EXPECT_EQ(pat.isTailR, 1);
-    EXPECT_GT(pat.axisShape[0], 0);
-}
-
-TEST(MvnV2Tiling, fuse_all_axes)
-{
-    int64_t shape[4] = {2, 3, 4, 5};
-    int64_t axes[4] = {0, 1, 2, 3};
-    FuseResult pat;
-    FuseAxisFourSteps(shape, 4, axes, 4, pat);
-    EXPECT_GE(pat.axisNum, 2);
-}
-
-TEST(MvnV2Tiling, fuse_size_one_dims)
-{
-    int64_t shape[4] = {1, 1, 4, 4};
-    int64_t axes[2] = {0, 1};
-    FuseResult pat;
-    FuseAxisFourSteps(shape, 4, axes, 2, pat);
-    EXPECT_GE(pat.axisNum, 2);
-}
-
-TEST(MvnV2Tiling, fuse_all_ones)
-{
-    int64_t shape[4] = {1, 1, 1, 1};
-    int64_t axes[3] = {0, 2, 3};
-    FuseResult pat;
-    FuseAxisFourSteps(shape, 4, axes, 3, pat);
-    EXPECT_GE(pat.axisNum, 2);
-}
-
-TEST(MvnV2Tiling, fuse_rank8)
-{
-    int64_t shape[8] = {2, 3, 4, 5, 6, 7, 8, 9};
-    int64_t axes[4] = {0, 2, 4, 6};
-    FuseResult pat;
-    FuseAxisFourSteps(shape, 8, axes, 4, pat);
-    EXPECT_EQ(pat.axisNum, MAX_PATTERN_RANK);
-    EXPECT_LE(pat.axisNum, MAX_PATTERN_RANK);
-}
-
-TEST(MvnV2Tiling, inv_r_total_default)
-{
-    int64_t shape[4] = {1, 3, 4, 4};
-    int64_t axes[3] = {0, 2, 3};
-    FuseResult pat;
-    FuseAxisFourSteps(shape, 4, axes, 3, pat);
-    float invR = ComputeInvRTotal(pat);
-    float expected = 1.0f / (4.0f * 4.0f);
-    EXPECT_NEAR(invR, expected, 1e-6f);
-}
-
-TEST(MvnV2Tiling, inv_r_total_no_r)
-{
-    int64_t shape[4] = {1, 3, 4, 4};
-    int64_t axes[1] = {1};
-    FuseResult pat;
-    FuseAxisFourSteps(shape, 4, axes, 1, pat);
-    EXPECT_GE(pat.axisNum, 2);
-}
-
-TEST(MvnV2Tiling, group_a_full) { EXPECT_EQ(ShouldUseGroup(30, 1, 40), 0); }
-
-TEST(MvnV2Tiling, group_r_no_parallel) { EXPECT_EQ(ShouldUseGroup(1, 1, 40), 0); }
-
-TEST(MvnV2Tiling, group_trigger) { EXPECT_EQ(ShouldUseGroup(1, 10, 40), 1); }
-
-TEST(MvnV2Tiling, branch0_normal)
-{
-    int64_t axes[3] = {0, 2, 3};
-    auto in = MakeInputs(1, 3, 4, 4, axes, 3, DT_FLOAT);
-    MVNV2TilingData td;
-    EXPECT_EQ(ComputeBranch0Tiling(in, td), 0);
-    EXPECT_EQ(td.rGroupCnt, 0);
-    EXPECT_GT(td.axisNum, 0);
-    EXPECT_GE(td.usedCoreNum, 1);
-    EXPECT_NEAR(td.eps, 1e-9f, 1e-12f);
-    EXPECT_GT(td.invRTotal, 0.0f);
-}
-
-TEST(MvnV2Tiling, branch0_fp16)
-{
-    int64_t axes[3] = {0, 2, 3};
-    auto in = MakeInputs(2, 64, 224, 224, axes, 3, DT_FLOAT16);
-    MVNV2TilingData td;
-    EXPECT_EQ(ComputeBranch0Tiling(in, td), 0);
-    EXPECT_EQ(td.rGroupCnt, 0);
-    EXPECT_GT(td.axisNum, 0);
-    EXPECT_GE(td.usedCoreNum, 1);
+    const size_t userWorkspace = static_cast<size_t>(2 * grouped.data.rGroupCnt + 8) * static_cast<size_t>(aTotal) *
+                                 8U * sizeof(float);
+    EXPECT_GE(grouped.workspace, userWorkspace);
 }

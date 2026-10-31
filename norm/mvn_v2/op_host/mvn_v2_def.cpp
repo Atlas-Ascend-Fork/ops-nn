@@ -25,25 +25,25 @@ public:
         this->Input("x")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_FLOAT})
-            .Format({ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
+            .Format({ge::FORMAT_NCHW, ge::FORMAT_NCHW})
+            .UnknownShapeFormat({ge::FORMAT_NCHW, ge::FORMAT_NCHW})
             .AutoContiguous();
         this->Output("y")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_FLOAT})
-            .Format({ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
+            .Format({ge::FORMAT_NCHW, ge::FORMAT_NCHW})
+            .UnknownShapeFormat({ge::FORMAT_NCHW, ge::FORMAT_NCHW})
             .AutoContiguous();
         this->Attr("eps").AttrType(OPTIONAL).Float(1.0e-9f);
-        this->Attr("axes").AttrType(OPTIONAL).ListInt(std::vector<int64_t>{0, 2, 3});
+        this->Attr("axes").AttrType(OPTIONAL).ListInt({0, 2, 3});
 
         OpAICoreConfig aiCoreConfig;
         aiCoreConfig.DynamicCompileStaticFlag(true)
             .DynamicFormatFlag(false)
-            .DynamicRankSupportFlag(true)
+            .DynamicRankSupportFlag(false)
             .DynamicShapeSupportFlag(true)
             .NeedCheckSupportFlag(false)
-            .PrecisionReduceFlag(true)
+            .PrecisionReduceFlag(false)
             .ExtendCfgInfo("opFile.value", "mvn_v2");
         this->AICore().AddConfig("ascend950", aiCoreConfig);
     }

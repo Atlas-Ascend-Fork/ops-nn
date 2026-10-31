@@ -40,7 +40,6 @@ struct Mvnv2TilingInputs {
     int64_t ubSize;
     int64_t blockSize;
     int64_t cacheLineSize;
-    int64_t vectorSize;
     double eps;
 };
 
@@ -67,9 +66,6 @@ struct UbSplitResult {
 struct MulticoreResult {
     int64_t aLoopCntTotal;
     int64_t aSplitChunkCnt;
-    int64_t aBigCoreLoopCnt;
-    int64_t aSmallCoreLoopCnt;
-    int32_t aBigCoreCnt;
     int32_t usedCoreNum;
     int64_t rLoopCntTotal;
 };
@@ -81,9 +77,7 @@ void ComputeMulticore(const FuseResult& pat, const UbSplitResult& split, int32_t
 int32_t ShouldUseGroup(int64_t aOuter, int64_t rOuter, int32_t coreNum);
 float ComputeInvRTotal(const FuseResult& pat);
 int32_t ComputeBranch0Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out);
-int32_t ComputeBranch1Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out);
 int32_t ComputeBranch3Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out);
-int32_t ComputeBranch4Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out);
 
 } // namespace mvn_v2_host
 } // namespace optiling

@@ -22,6 +22,9 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <memory>
+#include <algorithm>
+#include <cmath>
 #include "assert.h"
 
 #include "graph.h"
@@ -42,30 +45,30 @@ using std::map;
 using std::string;
 using std::vector;
 
-#define ADD_INPUT(intputIndex, intputName, intputDtype, inputShape)                                                 \
-    vector<int64_t> placeholder##intputIndex##_shape = inputShape;                                                  \
-    auto placeholder##intputIndex = op::Data("placeholder" + (intputIndex)).set_attr_index(0);                      \
-    TensorDesc placeholder##intputIndex##_desc = TensorDesc(ge::Shape(placeholder##intputIndex##_shape), FORMAT_ND, \
-                                                            intputDtype);                                           \
-    placeholder##intputIndex##_desc.SetPlacement(ge::kPlacementHost);                                               \
-    placeholder##intputIndex##_desc.SetFormat(FORMAT_ND);                                                           \
-    Tensor tensor_placeholder##intputIndex;                                                                         \
-    ret = GenOnesData(placeholder##intputIndex##_shape, tensor_placeholder##intputIndex,                            \
-                      placeholder##intputIndex##_desc, intputDtype, 2);                                             \
-    if (ret != SUCCESS) {                                                                                           \
-        printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                              \
-        return FAILED;                                                                                              \
-    }                                                                                                               \
-    placeholder##intputIndex.update_input_desc_x(placeholder##intputIndex##_desc);                                  \
-    input.push_back(tensor_placeholder##intputIndex);                                                               \
-    graph.AddOp(placeholder##intputIndex);                                                                          \
-    mvn_v2_op.set_input_##intputName(placeholder##intputIndex);                                                     \
+#define ADD_INPUT(intputIndex, intputName, intputDtype, inputShape)                                                   \
+    vector<int64_t> placeholder##intputIndex##_shape = inputShape;                                                    \
+    auto placeholder##intputIndex = op::Data("placeholder" + (intputIndex)).set_attr_index(0);                        \
+    TensorDesc placeholder##intputIndex##_desc = TensorDesc(ge::Shape(placeholder##intputIndex##_shape), FORMAT_NCHW, \
+                                                            intputDtype);                                             \
+    placeholder##intputIndex##_desc.SetPlacement(ge::kPlacementHost);                                                 \
+    placeholder##intputIndex##_desc.SetFormat(FORMAT_NCHW);                                                           \
+    Tensor tensor_placeholder##intputIndex;                                                                           \
+    ret = GenInputData(placeholder##intputIndex##_shape, tensor_placeholder##intputIndex,                             \
+                       placeholder##intputIndex##_desc, intputDtype);                                                 \
+    if (ret != SUCCESS) {                                                                                             \
+        printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                                \
+        return FAILED;                                                                                                \
+    }                                                                                                                 \
+    placeholder##intputIndex.update_input_desc_x(placeholder##intputIndex##_desc);                                    \
+    input.push_back(tensor_placeholder##intputIndex);                                                                 \
+    graph.AddOp(placeholder##intputIndex);                                                                            \
+    mvn_v2_op.set_input_##intputName(placeholder##intputIndex);                                                       \
     inputs.push_back(placeholder##intputIndex)
 
 #define ADD_INPUT_ATTR(attrName, attrValue) mvn_v2_op.set_attr_##attrName(attrValue)
 
-#define ADD_OUTPUT(outputIndex, outputName, outputDtype, outputShape)                                       \
-    TensorDesc outputName##outputIndex##_desc = TensorDesc(ge::Shape(outputShape), FORMAT_ND, outputDtype); \
+#define ADD_OUTPUT(outputIndex, outputName, outputDtype, outputShape)                                         \
+    TensorDesc outputName##outputIndex##_desc = TensorDesc(ge::Shape(outputShape), FORMAT_NCHW, outputDtype); \
     mvn_v2_op.update_output_desc_##outputName(outputName##outputIndex##_desc);
 
 #define LOG_PRINT(message, ...)         \
@@ -114,29 +117,37 @@ uint32_t GetDataTypeSize(DataType dt)
     return dilation;
 }
 
-int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, float value)
+uint16_t FloatToHalfBits(float value)
 {
-    input_tensor_desc.SetRealDimCnt(shapes.size());
-    size_t size = 1;
-    for (uint32_t i = 0; i < shapes.size(); i++) {
-        size *= shapes[i];
+    uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const uint32_t sign = (bits >> 31) & 1U;
+    const uint32_t exponent = (bits >> 23) & 0xFFU;
+    const uint32_t mantissa = bits & 0x7FFFFFU;
+    if (exponent == 0xFFU) {
+        return static_cast<uint16_t>((sign << 15) | 0x7C00U | (mantissa == 0 ? 0U : 0x0200U));
     }
-    uint32_t byteSizeFloat32 = 4;
-    uint32_t data_len = size * byteSizeFloat32;
-    float* pData = new (std::nothrow) float[size];
-    if (pData == nullptr) {
-        return FAILED;
+    const int32_t halfExponent = static_cast<int32_t>(exponent) - 127 + 15;
+    if (halfExponent <= 0) {
+        return static_cast<uint16_t>(sign << 15);
     }
-
-    for (size_t i = 0; i < size; ++i) {
-        *(pData + i) = value;
+    if (halfExponent >= 31) {
+        return static_cast<uint16_t>((sign << 15) | 0x7C00U);
     }
-    input_tensor = Tensor(input_tensor_desc, (uint8_t*)pData, data_len);
-    return SUCCESS;
+    uint16_t result = static_cast<uint16_t>((sign << 15) | (static_cast<uint32_t>(halfExponent) << 10) |
+                                            (mantissa >> 13));
+    const uint32_t remainder = mantissa & 0x1FFFU;
+    if (remainder > 0x1000U || (remainder == 0x1000U && (result & 1U) != 0U)) {
+        ++result;
+    }
+    return result;
 }
 
-int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, DataType data_type,
-                    int value)
+// Deterministic ramp in [-1.5, 3.0): a constant tensor would normalize to all zeros and hide
+// every numerical error, so the demo input must vary inside each reduction group.
+float DemoInputValue(size_t index) { return static_cast<float>(index % 13) * 0.375f - 1.5f; }
+
+int32_t GenInputData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, DataType data_type)
 {
     input_tensor_desc.SetRealDimCnt(shapes.size());
     size_t size = 1;
@@ -144,14 +155,88 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
         size *= shapes[i];
     }
     uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[size];
-    if (pData == nullptr) {
+    // ge::Tensor copies the buffer, so a scoped vector owns the data and no leak is possible.
+    // Fill by dtype: writing a raw integer bit pattern into a FLOAT tensor would produce a
+    // denormal instead of the intended value.
+    std::vector<uint8_t> buffer(data_len, 0);
+    if (data_type == ge::DT_FLOAT) {
+        auto* dst = reinterpret_cast<float*>(buffer.data());
+        for (size_t i = 0; i < size; ++i) {
+            dst[i] = DemoInputValue(i);
+        }
+    } else if (data_type == ge::DT_FLOAT16) {
+        auto* dst = reinterpret_cast<uint16_t*>(buffer.data());
+        for (size_t i = 0; i < size; ++i) {
+            dst[i] = FloatToHalfBits(DemoInputValue(i));
+        }
+    } else {
+        printf("%s - ERROR - [XIR]: MVNV2 supports FLOAT16 and FLOAT only, got dtype %d\n", GetTime().c_str(),
+               static_cast<int>(data_type));
         return FAILED;
     }
-    for (size_t i = 0; i < size; ++i) {
-        *(pData + i) = value;
+    input_tensor = Tensor(input_tensor_desc, buffer.data(), data_len);
+    return SUCCESS;
+}
+
+// Host reference for the demo configuration (shape {1, 3, 4, 4}, axes {0, 2, 3}, eps 1e-9):
+// axis 1 is the only kept axis, so each channel is one contiguous reduction group.
+constexpr double MVN_DEMO_MAX_ABS_ERR = 1.0e-4;
+
+int32_t CheckMvnOutput(const ge::Tensor& input, const ge::Tensor& output, float epsValue)
+{
+    const auto inShape = input.GetTensorDesc().GetShape().GetDims();
+    const auto outShape = output.GetTensorDesc().GetShape().GetDims();
+    if (inShape.size() != 4 || inShape[0] != 1 || inShape != outShape) {
+        printf("%s - ERROR - [XIR]: demo assertion expects shape {1, C, H, W}, got rank %zu\n", GetTime().c_str(),
+               inShape.size());
+        return FAILED;
     }
-    input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
+    if (input.GetTensorDesc().GetDataType() != ge::DT_FLOAT || output.GetTensorDesc().GetDataType() != ge::DT_FLOAT) {
+        printf("%s - ERROR - [XIR]: demo assertion supports DT_FLOAT only\n", GetTime().c_str());
+        return FAILED;
+    }
+    const size_t channels = static_cast<size_t>(inShape[1]);
+    const size_t groupSize = static_cast<size_t>(inShape[2]) * static_cast<size_t>(inShape[3]);
+    const float* x = reinterpret_cast<const float*>(input.GetData());
+    const float* y = reinterpret_cast<const float*>(output.GetData());
+    if (channels == 0 || groupSize == 0 || x == nullptr || y == nullptr) {
+        printf("%s - ERROR - [XIR]: demo assertion got an empty tensor or null data\n", GetTime().c_str());
+        return FAILED;
+    }
+    double maxAbsErr = 0.0;
+    for (size_t c = 0; c < channels; ++c) {
+        const float* xc = x + c * groupSize;
+        const float* yc = y + c * groupSize;
+        double sum = 0.0;
+        for (size_t i = 0; i < groupSize; ++i) {
+            sum += xc[i];
+        }
+        const double mean = sum / static_cast<double>(groupSize);
+        double var = 0.0;
+        for (size_t i = 0; i < groupSize; ++i) {
+            const double diff = xc[i] - mean;
+            var += diff * diff;
+        }
+        var /= static_cast<double>(groupSize);
+        const double denom = std::sqrt(var) + static_cast<double>(epsValue);
+        for (size_t i = 0; i < groupSize; ++i) {
+            const double ref = (xc[i] - mean) / denom;
+            if (!std::isfinite(static_cast<double>(yc[i]))) {
+                printf("%s - ERROR - [XIR]: output[%zu][%zu] is not finite\n", GetTime().c_str(), c, i);
+                return FAILED;
+            }
+            const double err = std::fabs(ref - static_cast<double>(yc[i]));
+            if (err > maxAbsErr) {
+                maxAbsErr = err;
+            }
+        }
+    }
+    printf("%s - INFO - [XIR]: max abs error vs host reference = %e (limit %e)\n", GetTime().c_str(), maxAbsErr,
+           MVN_DEMO_MAX_ABS_ERR);
+    if (maxAbsErr >= MVN_DEMO_MAX_ABS_ERR) {
+        printf("%s - ERROR - [XIR]: output mismatch against host reference\n", GetTime().c_str());
+        return FAILED;
+    }
     return SUCCESS;
 }
 
@@ -217,6 +302,7 @@ int main(int argc, char* argv[])
     ret = CreateOppInGraph(inDtype, input, inputs, outputs, graph);
     if (ret != SUCCESS) {
         printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
+        ge::GEFinalize();
         return FAILED;
     }
 
@@ -228,12 +314,7 @@ int main(int argc, char* argv[])
 
     };
     printf("%s - INFO - [XIR]: Start to create ir session using build options\n", GetTime().c_str());
-    ge::Session* session = new Session(build_options);
-
-    if (session == nullptr) {
-        printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
-        return FAILED;
-    }
+    std::unique_ptr<ge::Session> session = std::make_unique<ge::Session>(build_options);
     printf("%s - INFO - [XIR]: Create ir session using build options success\n", GetTime().c_str());
     printf("%s - INFO - [XIR]: Start to add compute graph to ir session\n", GetTime().c_str());
 
@@ -244,7 +325,7 @@ int main(int argc, char* argv[])
     ret = session->AddGraph(graph_id, graph, graph_options);
     if (ret != SUCCESS) {
         printf("%s - ERROR - [XIR]: AddGraph failed\n", GetTime().c_str());
-        delete session;
+        session.reset();
         GEFinalize();
         return FAILED;
     }
@@ -258,7 +339,7 @@ int main(int argc, char* argv[])
     ret = session->RunGraph(graph_id, input, output);
     if (ret != SUCCESS) {
         printf("%s - INFO - [XIR]: Run graph failed\n", GetTime().c_str());
-        delete session;
+        session.reset();
         GEFinalize();
         return FAILED;
     }
@@ -290,6 +371,15 @@ int main(int argc, char* argv[])
         }
     }
 
+    ret = CheckMvnOutput(input[0], output[0], 1.0e-9f);
+    if (ret != SUCCESS) {
+        printf("%s - ERROR - [XIR]: MVNV2 output verification failed\n", GetTime().c_str());
+        session.reset();
+        GEFinalize();
+        return FAILED;
+    }
+    printf("%s - INFO - [XIR]: MVNV2 output verification passed\n", GetTime().c_str());
+
     ge::AscendString error_msg = ge::GEGetErrorMsgV2();
     std::string error_str(error_msg.GetString());
     std::cout << "Error message: " << error_str << std::endl;
@@ -297,6 +387,7 @@ int main(int argc, char* argv[])
     std::string warning_str(warning_msg.GetString());
     std::cout << "Warning message: " << warning_str << std::endl;
     printf("%s - INFO - [XIR]: Start to finalize ir graph session\n", GetTime().c_str());
+    session.reset();
     ret = ge::GEFinalize();
     if (ret != SUCCESS) {
         printf("%s - INFO - [XIR]: Finalize ir graph session failed\n", GetTime().c_str());

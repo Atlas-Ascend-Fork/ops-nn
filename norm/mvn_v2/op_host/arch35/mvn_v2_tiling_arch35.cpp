@@ -29,6 +29,8 @@
 #include "mvn_v2_tiling_arch35.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <vector>
 
 using Ops::Base::CeilAlign;
@@ -40,11 +42,45 @@ constexpr size_t INPUT_X_INDEX = 0;
 constexpr size_t OUTPUT_Y_INDEX = 0;
 constexpr size_t ATTR_EPS_INDEX = 0;
 constexpr size_t ATTR_AXES_INDEX = 1;
-constexpr int32_t MIN_INPUT_RANK = 1;
+constexpr int32_t REQUIRED_INPUT_RANK = 4;
 constexpr double DEFAULT_EPS = 1.0e-9;
-constexpr int64_t VECTOR_SIZE = 256;
 constexpr int32_t TRAILING_A_KERNEL_MODE = 1;
 constexpr int64_t TRAILING_A_TILE = 256;
+// Statistic slots reserved for the trailing-A path (mean, meanLow, variance, scale,
+// invScale, and denominator are used; the rest is slack). Keep in sync with ProcessTrailingATile.
+constexpr int64_t TRAILING_A_STAT_SLOTS = 12;
+constexpr int32_t TILE_A_KERNEL_MODE = 2;
+constexpr int32_t RARA5_KERNEL_MODE = 3;
+constexpr int32_t TAIL_R2_KERNEL_MODE = 4;
+constexpr int32_t IEEE_EPS_KERNEL_MODE = 5;
+constexpr int64_t TILE_A_MAX_COLS = 64;
+constexpr int64_t TILE_A_MAX_ROWS = 4095;
+// RARA5 (FP16 five-axis A-R-A-R-A) vectorized path gating. ProcessRara5WorkItem column-chunks
+// the trailing A axis and reduces whole row tiles with vector ReduceSum, while the generic
+// group fallback walks every strided R element with single-element DMAs; from ~2K reduce rows
+// the vectorized path wins by an order of magnitude (measured 12x-25x on Ascend950PR), so only
+// tiny reductions stay generic. RARA5_MAX_COLS bounds the trailing axis so the chunk fan-out
+// stays reasonable; the UB plan is sized from the chunked pitch (<= 64, see RARA5_CHUNK_COLS).
+constexpr int64_t RARA5_MAX_COLS = 256;
+constexpr int64_t RARA5_MIN_ROWS = 2048;
+// Column-chunk target for RARA5: keeps pitch <= 64 (the proven ReduceSum/UB width) while
+// splitting a wider trailing A axis into near-equal chunks so outerA-small shapes still
+// expose outerA*colChunks work items (more cores) instead of one wide chunk on outerA cores.
+// Measured: a 16-col target (2x work items) does NOT reduce wall time -- per-chunk pipeline
+// cost is neither column-width nor row-count dominated -- so the 64-col target stands.
+constexpr int64_t RARA5_CHUNK_COLS = 64;
+constexpr int64_t TILE_A_STAT_SLOTS = 268;
+constexpr int64_t TILE_A_STAT_SLACK = 64;
+// FP32 main-path 8-row block mode keeps its Kahan scratch (64 floats) and five
+// row-expanded constant vectors (64 floats each) in the stats slack region:
+// 6 * 64 = 384 floats. FP16 and small-R paths keep the historical 64-float slack.
+constexpr int64_t TILE_A_BLOCK_STAT_SLACK = 384;
+constexpr int64_t TILE_A_UB_MARGIN = 4096;
+// Kernel dispatches ProcessTileSmallR / ProcessTileSmallRFp16 while tRi_ <= 64; those paths
+// load every reduce row at once and use TILE_A_SMALL_R_STAT_SLOTS statistic slots.
+constexpr int64_t TILE_A_SMALL_R_ROWS = 64;
+constexpr int64_t TILE_A_SMALL_R_STAT_SLOTS = 12;
+constexpr uint64_t DMA_STRIDE_LIMIT_BYTES = 1ULL << 40;
 
 namespace mvn_v2_host {
 
@@ -61,6 +97,31 @@ constexpr int32_t N_PRE_REUSE = 1;
 constexpr int32_t N_PRE_PARALLEL = 0;
 constexpr int32_t N_OUT = 1;
 constexpr int32_t N_POST_EXTRA = 0;
+
+bool FitsUbBudget(int64_t preBytes, int64_t tmpBytes, int64_t cacheBytes, int64_t ubSize)
+{
+    if (preBytes < 0 || tmpBytes < 0 || cacheBytes < 0 || preBytes > ubSize || cacheBytes > ubSize - preBytes) {
+        return false;
+    }
+    return tmpBytes <= (ubSize - preBytes - cacheBytes) / 2;
+}
+
+bool SplitFitsUbBudget(const UbSplitResult& split, ge::DataType dtype, int64_t blockSize, int64_t ubSize)
+{
+    const __int128 unitWide = static_cast<__int128>(split.aUbFactorAlign) * split.innerAProdAlign *
+                              split.rUbFactorAlign * split.innerRProdAlign;
+    if (unitWide <= 0 || unitWide > std::numeric_limits<int64_t>::max()) {
+        return false;
+    }
+    const int64_t unit = static_cast<int64_t>(unitWide);
+    if (unit > std::numeric_limits<int64_t>::max() / ElemBytes(dtype) ||
+        unit > std::numeric_limits<int64_t>::max() / static_cast<int64_t>(sizeof(float))) {
+        return false;
+    }
+    const int64_t preBytes = CeilAlign(unit * ElemBytes(dtype), blockSize);
+    const int64_t tmpBytes = CeilAlign(unit * static_cast<int64_t>(sizeof(float)), static_cast<int64_t>(256));
+    return FitsUbBudget(preBytes, tmpBytes, CACHE_BUF_UB, ubSize);
+}
 
 void FuseAxisFourSteps(const int64_t* shape, int32_t rank, const int64_t* axes, int32_t axesCount, FuseResult& out)
 {
@@ -125,7 +186,7 @@ void ComputeASplit(const FuseResult& pat, int32_t aLast, int64_t atmp, int64_t b
     int64_t innerAProd = 1;
     int64_t innerAProdAlign = 1;
     int32_t splitAxis = aLast;
-    while (pat.axisShape[splitAxis] * innerAProdAlign < atmp && HasOuterA(splitAxis)) {
+    while (static_cast<__int128>(pat.axisShape[splitAxis]) * innerAProdAlign < atmp && HasOuterA(splitAxis)) {
         if (splitAxis == aLast && !pat.isTailR) {
             innerAProdAlign *= CeilAlign(pat.axisShape[splitAxis], blockSizeElem);
         } else {
@@ -148,7 +209,8 @@ void ComputeUbSplit(const FuseResult& pat, ge::DataType dtype, int32_t coreNum, 
     const int64_t eb = ElemBytes(dtype);
     const int64_t bsElem = blockSize / eb;
     const int64_t maxInnerA = cacheLineSize / eb;
-    const int64_t ubAvailable = ubSize - CACHE_BUF_UB;
+    constexpr int64_t vfLoadBytes = 256;
+    const int64_t ubAvailable = ubSize - CACHE_BUF_UB - 2 * (vfLoadBytes - blockSize);
     const int64_t bytesPerRElem = (DB * N_PRE_REUSE + N_PRE_PARALLEL) * eb + 2 * static_cast<int64_t>(sizeof(float));
 
     int32_t aLast = LastAIdx(pat.axisNum);
@@ -182,9 +244,13 @@ void ComputeUbSplit(const FuseResult& pat, ge::DataType dtype, int32_t coreNum, 
         innerRProd *= pat.axisShape[rSplit];
         rSplit -= 2;
     }
-    int64_t rUbFactor = std::min(rImax / innerRProdAlign, pat.axisShape[rSplit]);
-    if (pat.isTailR && rSplit == rLast && rUbFactor < pat.axisShape[rSplit]) {
-        rUbFactor = FloorAlign(rUbFactor, bsElem);
+    const int64_t rCapacity = rImax / innerRProdAlign;
+    int64_t rUbFactor = std::min(rCapacity, pat.axisShape[rSplit]);
+    if (pat.isTailR && rSplit == rLast && CeilAlign(rUbFactor, bsElem) > rCapacity) {
+        rUbFactor = FloorAlign(rCapacity, bsElem);
+    }
+    if (rUbFactor < 1) {
+        rUbFactor = 1;
     }
     int64_t rUbFactorAlign = (pat.isTailR && rSplit == rLast) ? CeilAlign(rUbFactor, bsElem) : rUbFactor;
     out.rSplitAxisIdx = rSplit;
@@ -194,11 +260,16 @@ void ComputeUbSplit(const FuseResult& pat, ge::DataType dtype, int32_t coreNum, 
     out.innerRProdAlign = innerRProdAlign;
 
     if (rUbFactor == pat.axisShape[rSplit] && !HasOuterR(rSplit)) {
+        const UbSplitResult beforeExpansion = out;
         int64_t coeff = rUbFactorAlign * innerRProdAlign * bytesPerRElem + (N_OUT + N_POST_EXTRA) * eb;
         int64_t atmpNew = ubAvailable / coeff;
         atmpNew = std::min(atmpNew, CACHE_BUF_UB / static_cast<int64_t>(sizeof(float)));
-        if (atmpNew > atmp)
+        if (atmpNew > atmp) {
             ComputeASplit(pat, aLast, atmpNew, bsElem, out);
+            if (!SplitFitsUbBudget(out, dtype, blockSize, ubSize)) {
+                out = beforeExpansion;
+            }
+        }
     }
 }
 
@@ -212,7 +283,6 @@ void ComputeMulticore(const FuseResult& pat, const UbSplitResult& split, int32_t
 
     int64_t aSmall = aLoopCntTotal / coreNum;
     int64_t aBigCnt = aLoopCntTotal % coreNum;
-    int64_t aBigLoop = aSmall + (aBigCnt > 0 ? 1 : 0);
     int32_t usedCoreNum = (aSmall > 0) ? coreNum : static_cast<int32_t>(aBigCnt);
 
     int64_t outerRProd = 1;
@@ -222,9 +292,6 @@ void ComputeMulticore(const FuseResult& pat, const UbSplitResult& split, int32_t
 
     out.aLoopCntTotal = aLoopCntTotal;
     out.aSplitChunkCnt = aSplitChunkCnt;
-    out.aBigCoreLoopCnt = aBigLoop;
-    out.aSmallCoreLoopCnt = aSmall;
-    out.aBigCoreCnt = static_cast<int32_t>(aBigCnt);
     out.usedCoreNum = usedCoreNum;
     out.rLoopCntTotal = rLoopCntTotal;
 }
@@ -262,8 +329,7 @@ int32_t ComputeBranch0Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out)
     const int64_t eb = ElemBytes(in.dtype);
     const int64_t unit = sp.aUbFactorAlign * sp.innerAProdAlign * sp.rUbFactorAlign * sp.innerRProdAlign;
     const int64_t preReduceUbSize = CeilAlign(unit * eb, in.blockSize);
-    const int64_t tmpBufUbSize = CeilAlign(unit * static_cast<int64_t>(sizeof(float)), in.blockSize);
-    const int64_t postReduceUbSize = CeilAlign(sp.aUbFactorAlign * sp.innerAProdAlign * eb, in.blockSize);
+    const int64_t tmpBufUbSize = CeilAlign(unit * static_cast<int64_t>(sizeof(float)), static_cast<int64_t>(256));
 
     int64_t stride[MAX_PATTERN_RANK];
     for (int i = 0; i < MAX_PATTERN_RANK; ++i)
@@ -284,85 +350,24 @@ int32_t ComputeBranch0Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out)
     }
     out.aLoopCntTotal = mc.aLoopCntTotal;
     out.aSplitChunkCnt = mc.aSplitChunkCnt;
-    out.aBigCoreLoopCnt = mc.aBigCoreLoopCnt;
-    out.aSmallCoreLoopCnt = mc.aSmallCoreLoopCnt;
-    out.aBigCoreCnt = mc.aBigCoreCnt;
+    out.reservedCoreLoop0 = 0;
+    out.reservedCoreLoop1 = 0;
+    out.reservedCoreCount = 0;
     out.usedCoreNum = mc.usedCoreNum;
     out.aSplitAxisIdx = sp.aSplitAxisIdx;
     out.rSplitAxisIdx = sp.rSplitAxisIdx;
     out.aUbFactor = sp.aUbFactor;
     out.aUbFactorAlign = sp.aUbFactorAlign;
     out.rUbFactor = sp.rUbFactor;
-    out.rUbFactorAlign = sp.rUbFactorAlign;
+    out.reservedRUbFactorAlign = 0;
+    // Serialized ABI slot remains populated for layout/value compatibility; the kernel derives it from axis metadata.
     out.innerAProd = sp.innerAProd;
-    out.innerAProdAlign = sp.innerAProdAlign;
+    out.reservedInnerAProdAlign = 0;
     out.innerRProd = sp.innerRProd;
-    out.innerRProdAlign = sp.innerRProdAlign;
+    out.reservedInnerRProdAlign = 0;
     out.rLoopCntTotal = mc.rLoopCntTotal;
     out.preReduceUbSize = preReduceUbSize;
-    out.postReduceUbSize = postReduceUbSize;
-    out.tmpBufUbSize = tmpBufUbSize;
-    out.cacheBufUbSize = CACHE_BUF_UB;
-    out.rGroupCnt = 0;
-    out.invRTotal = invRTotal;
-    out.eps = static_cast<float>(in.eps);
-
-    return 0;
-}
-
-int32_t ComputeBranch1Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out)
-{
-    FuseResult pat;
-    FuseAxisFourSteps(in.shape, in.rank, in.axes, in.axesCount, pat);
-
-    UbSplitResult sp;
-    ComputeUbSplit(pat, in.dtype, in.coreNum, in.ubSize, in.blockSize, in.cacheLineSize, sp);
-
-    MulticoreResult mc;
-    ComputeMulticore(pat, sp, in.coreNum, mc);
-
-    const int64_t eb = ElemBytes(in.dtype);
-    const int64_t unit = sp.aUbFactorAlign * sp.innerAProdAlign * sp.rUbFactorAlign * sp.innerRProdAlign;
-    const int64_t preReduceUbSize = CeilAlign(unit * eb, in.blockSize);
-    const int64_t tmpBufUbSize = CeilAlign(unit * static_cast<int64_t>(sizeof(float)), in.blockSize);
-    const int64_t postReduceUbSize = CeilAlign(sp.aUbFactorAlign * sp.innerAProdAlign * eb, in.blockSize);
-
-    int64_t stride[MAX_PATTERN_RANK];
-    for (int i = 0; i < MAX_PATTERN_RANK; ++i)
-        stride[i] = 0;
-    if (pat.axisNum > 0) {
-        stride[pat.axisNum - 1] = 1;
-        for (int i = pat.axisNum - 2; i >= 0; --i) {
-            stride[i] = stride[i + 1] * pat.axisShape[i + 1];
-        }
-    }
-
-    const float invRTotal = ComputeInvRTotal(pat);
-
-    out.axisNum = pat.axisNum;
-    for (int i = 0; i < MAX_PATTERN_RANK; ++i) {
-        out.axisShape[i] = pat.axisShape[i];
-        out.axisStride[i] = stride[i];
-    }
-    out.aLoopCntTotal = mc.aLoopCntTotal;
-    out.aSplitChunkCnt = mc.aSplitChunkCnt;
-    out.aBigCoreLoopCnt = mc.aBigCoreLoopCnt;
-    out.aSmallCoreLoopCnt = mc.aSmallCoreLoopCnt;
-    out.aBigCoreCnt = mc.aBigCoreCnt;
-    out.usedCoreNum = mc.usedCoreNum;
-    out.aSplitAxisIdx = sp.aSplitAxisIdx;
-    out.rSplitAxisIdx = sp.rSplitAxisIdx;
-    out.aUbFactor = sp.aUbFactor;
-    out.aUbFactorAlign = sp.aUbFactorAlign;
-    out.rUbFactor = sp.rUbFactor;
-    out.rUbFactorAlign = sp.rUbFactorAlign;
-    out.innerAProd = sp.innerAProd;
-    out.innerAProdAlign = sp.innerAProdAlign;
-    out.innerRProd = sp.innerRProd;
-    out.innerRProdAlign = sp.innerRProdAlign;
-    out.rLoopCntTotal = mc.rLoopCntTotal;
-    out.preReduceUbSize = preReduceUbSize;
-    out.postReduceUbSize = postReduceUbSize;
+    out.reservedPostReduceUbSize = 0;
     out.tmpBufUbSize = tmpBufUbSize;
     out.cacheBufUbSize = CACHE_BUF_UB;
     out.rGroupCnt = 0;
@@ -403,15 +408,10 @@ int32_t ComputeBranch3Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out)
     if (numBlocks < mc.aLoopCntTotal)
         numBlocks = mc.aLoopCntTotal;
     const int64_t rGroupCnt = numBlocks / mc.aLoopCntTotal;
-    const int64_t aBigCoreLoopCntGrp = 1;
-    const int64_t aSmallCoreLoopCntGrp = 1;
-    const int32_t aBigCoreCntGrp = 0;
-
     const int64_t eb = ElemBytes(in.dtype);
     const int64_t unit = sp.aUbFactorAlign * sp.innerAProdAlign * sp.rUbFactorAlign * sp.innerRProdAlign;
     const int64_t preReduceUbSize = CeilAlign(unit * eb, in.blockSize);
-    const int64_t tmpBufUbSize = CeilAlign(unit * static_cast<int64_t>(sizeof(float)), in.blockSize);
-    const int64_t postReduceUbSize = CeilAlign(sp.aUbFactorAlign * sp.innerAProdAlign * eb, in.blockSize);
+    const int64_t tmpBufUbSize = CeilAlign(unit * static_cast<int64_t>(sizeof(float)), static_cast<int64_t>(256));
 
     int64_t stride[MAX_PATTERN_RANK];
     for (int i = 0; i < MAX_PATTERN_RANK; ++i)
@@ -432,23 +432,24 @@ int32_t ComputeBranch3Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out)
     }
     out.aLoopCntTotal = mc.aLoopCntTotal;
     out.aSplitChunkCnt = mc.aSplitChunkCnt;
-    out.aBigCoreLoopCnt = aBigCoreLoopCntGrp;
-    out.aSmallCoreLoopCnt = aSmallCoreLoopCntGrp;
-    out.aBigCoreCnt = aBigCoreCntGrp;
+    out.reservedCoreLoop0 = 0;
+    out.reservedCoreLoop1 = 0;
+    out.reservedCoreCount = 0;
     out.usedCoreNum = static_cast<int32_t>(numBlocks);
     out.aSplitAxisIdx = sp.aSplitAxisIdx;
     out.rSplitAxisIdx = sp.rSplitAxisIdx;
     out.aUbFactor = sp.aUbFactor;
     out.aUbFactorAlign = sp.aUbFactorAlign;
     out.rUbFactor = sp.rUbFactor;
-    out.rUbFactorAlign = sp.rUbFactorAlign;
+    out.reservedRUbFactorAlign = 0;
+    // Serialized ABI slot remains populated for layout/value compatibility; the kernel derives it from axis metadata.
     out.innerAProd = sp.innerAProd;
-    out.innerAProdAlign = sp.innerAProdAlign;
+    out.reservedInnerAProdAlign = 0;
     out.innerRProd = sp.innerRProd;
-    out.innerRProdAlign = sp.innerRProdAlign;
+    out.reservedInnerRProdAlign = 0;
     out.rLoopCntTotal = mc.rLoopCntTotal;
     out.preReduceUbSize = preReduceUbSize;
-    out.postReduceUbSize = postReduceUbSize;
+    out.reservedPostReduceUbSize = 0;
     out.tmpBufUbSize = tmpBufUbSize;
     out.cacheBufUbSize = CACHE_BUF_UB;
     out.rGroupCnt = rGroupCnt;
@@ -458,90 +459,148 @@ int32_t ComputeBranch3Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out)
     return 0;
 }
 
-int32_t ComputeBranch4Tiling(const Mvnv2TilingInputs& in, MVNV2TilingData& out)
+bool TileAApplicable(const FuseResult& pat) { return pat.isTailR == 0 && pat.axisNum == 3; }
+
+bool ComputeTileATiling(const Mvnv2TilingInputs& in, const FuseResult& pat, MVNV2TilingData& out, int64_t& workItems)
 {
-    FuseResult pat;
-    FuseAxisFourSteps(in.shape, in.rank, in.axes, in.axesCount, pat);
-
-    UbSplitResult sp;
-    ComputeUbSplit(pat, in.dtype, in.coreNum, in.ubSize, in.blockSize, in.cacheLineSize, sp);
-
-    MulticoreResult mc;
-    ComputeMulticore(pat, sp, in.coreNum, mc);
-
-    const int64_t totalOuter = mc.aLoopCntTotal * mc.rLoopCntTotal;
-    int64_t perCoreNum = CeilDiv(totalOuter, static_cast<int64_t>(in.coreNum));
-    if (perCoreNum < 1)
-        perCoreNum = 1;
-    int64_t numBlocks = CeilDiv(totalOuter, perCoreNum);
-    int64_t ceilAligned = CeilAlign(numBlocks, mc.aLoopCntTotal);
-    int64_t floorAligned = FloorAlign(numBlocks, mc.aLoopCntTotal);
-    if (ceilAligned <= in.coreNum) {
-        numBlocks = ceilAligned;
-    } else {
-        numBlocks = floorAligned;
+    const int64_t elemBytes = ElemBytes(in.dtype);
+    const int64_t alignElems = in.blockSize / elemBytes;
+    const int64_t lastA = pat.axisShape[pat.axisNum - 1];
+    int64_t reduceRows = 1;
+    int64_t outerA = 1;
+    for (int32_t i = 1; i < pat.axisNum; i += 2) {
+        reduceRows *= pat.axisShape[i];
     }
-    if (numBlocks < mc.aLoopCntTotal)
-        numBlocks = mc.aLoopCntTotal;
-    if (numBlocks > in.coreNum) {
-        numBlocks = (numBlocks / mc.aLoopCntTotal) * mc.aLoopCntTotal;
+    for (int32_t i = 0; i < pat.axisNum - 1; i += 2) {
+        outerA *= pat.axisShape[i];
     }
-    if (numBlocks < mc.aLoopCntTotal)
-        numBlocks = mc.aLoopCntTotal;
-    const int64_t rGroupCnt = numBlocks / mc.aLoopCntTotal;
-    const int64_t aBigCoreLoopCntGrp = 1;
-    const int64_t aSmallCoreLoopCntGrp = 1;
-    const int32_t aBigCoreCntGrp = 0;
+    const int64_t targetChunks = std::max<int64_t>(1,
+                                                   std::min(lastA, CeilDiv(static_cast<int64_t>(in.coreNum), outerA)));
+    const bool smallRFp16 = in.dtype == ge::DT_FLOAT16 && reduceRows <= TILE_A_SMALL_R_ROWS;
+    int64_t maxCols = TILE_A_MAX_COLS;
+    if (smallRFp16) {
+        const int64_t bytesPerCol = reduceRows * (elemBytes + 2 * static_cast<int64_t>(sizeof(float))) +
+                                    TILE_A_SMALL_R_STAT_SLOTS * static_cast<int64_t>(sizeof(float));
+        maxCols = std::max<int64_t>(1, std::min<int64_t>(1024, (in.ubSize - TILE_A_UB_MARGIN) / bytesPerCol));
+    }
 
-    const int64_t eb = ElemBytes(in.dtype);
-    const int64_t unit = sp.aUbFactorAlign * sp.innerAProdAlign * sp.rUbFactorAlign * sp.innerRProdAlign;
-    const int64_t preReduceUbSize = CeilAlign(unit * eb, in.blockSize);
-    const int64_t tmpBufUbSize = CeilAlign(unit * static_cast<int64_t>(sizeof(float)), in.blockSize);
-    const int64_t postReduceUbSize = CeilAlign(sp.aUbFactorAlign * sp.innerAProdAlign * eb, in.blockSize);
-
-    int64_t stride[MAX_PATTERN_RANK];
-    for (int i = 0; i < MAX_PATTERN_RANK; ++i)
-        stride[i] = 0;
-    if (pat.axisNum > 0) {
-        stride[pat.axisNum - 1] = 1;
-        for (int i = pat.axisNum - 2; i >= 0; --i) {
-            stride[i] = stride[i + 1] * pat.axisShape[i + 1];
+    const int64_t floatBytes = static_cast<int64_t>(sizeof(float));
+    const int64_t statSlots = smallRFp16 ? TILE_A_SMALL_R_STAT_SLOTS : TILE_A_STAT_SLOTS;
+    // ProcessTileSmallR and ProcessTileSmallRFp16 DMA all reduceRows rows in one shot and
+    // index pre[r * pitch] for r < reduceRows, so the row budget must cover them. Shrink
+    // the column count until it does, and report infeasible rather than under-allocate.
+    const bool needAllRows = reduceRows <= TILE_A_SMALL_R_ROWS;
+    int64_t cols = std::max<int64_t>(1, std::min(maxCols, CeilDiv(lastA, targetChunks)));
+    int64_t pitch = 0;
+    int64_t statsBytes = 0;
+    int64_t tmpBytes = 0;
+    int64_t rows = 0;
+    for (;;) {
+        pitch = CeilAlign(cols, alignElems);
+        const int64_t statSlack = (smallRFp16 || in.dtype != ge::DT_FLOAT) ? TILE_A_STAT_SLACK :
+                                                                             TILE_A_BLOCK_STAT_SLACK;
+        statsBytes = std::max<int64_t>(4096, CeilAlign((statSlots * pitch + statSlack) * floatBytes, in.blockSize));
+        tmpBytes = smallRFp16 ? CeilAlign(reduceRows * pitch * floatBytes, in.blockSize) :
+                                CeilAlign((pitch + TILE_A_STAT_SLACK) * floatBytes, in.blockSize);
+        const int64_t fixedBytes = statsBytes + 2 * tmpBytes + TILE_A_UB_MARGIN;
+        rows = (in.ubSize - fixedBytes) / (pitch * elemBytes);
+        rows = std::max<int64_t>(1, std::min(rows, std::min(TILE_A_MAX_ROWS, reduceRows)));
+        // Dense-mode guard: when the column chunk covers the whole trailing axis and rows are
+        // 32-byte aligned, the kernel issues a single DataCopyPad with blockLen = rows * cols *
+        // elemBytes. Device testing showed descriptors above 16 KB are unreliable (a 180 KB
+        // blockLen corrupted the tile non-deterministically; 16 KB is the largest suite-proven
+        // size), so cap the row chunk whenever the kernel will select that mode.
+        if (CeilDiv(lastA, cols) == 1 && (lastA * elemBytes) % in.blockSize == 0) {
+            const int64_t denseMaxRows = std::max<int64_t>(1, 16384 / std::max<int64_t>(1, cols * elemBytes));
+            rows = std::max<int64_t>(1, std::min(rows, denseMaxRows));
         }
+        if (!needAllRows || rows >= reduceRows || pitch <= alignElems) {
+            break;
+        }
+        cols = pitch - alignElems;
     }
-
-    const float invRTotal = ComputeInvRTotal(pat);
-
-    out.axisNum = pat.axisNum;
-    for (int i = 0; i < MAX_PATTERN_RANK; ++i) {
-        out.axisShape[i] = pat.axisShape[i];
-        out.axisStride[i] = stride[i];
+    if (needAllRows && rows < reduceRows) {
+        return false;
     }
-    out.aLoopCntTotal = mc.aLoopCntTotal;
-    out.aSplitChunkCnt = mc.aSplitChunkCnt;
-    out.aBigCoreLoopCnt = aBigCoreLoopCntGrp;
-    out.aSmallCoreLoopCnt = aSmallCoreLoopCntGrp;
-    out.aBigCoreCnt = aBigCoreCntGrp;
-    out.usedCoreNum = static_cast<int32_t>(numBlocks);
-    out.aSplitAxisIdx = sp.aSplitAxisIdx;
-    out.rSplitAxisIdx = sp.rSplitAxisIdx;
-    out.aUbFactor = sp.aUbFactor;
-    out.aUbFactorAlign = sp.aUbFactorAlign;
-    out.rUbFactor = sp.rUbFactor;
-    out.rUbFactorAlign = sp.rUbFactorAlign;
-    out.innerAProd = sp.innerAProd;
-    out.innerAProdAlign = sp.innerAProdAlign;
-    out.innerRProd = sp.innerRProd;
-    out.innerRProdAlign = sp.innerRProdAlign;
-    out.rLoopCntTotal = mc.rLoopCntTotal;
-    out.preReduceUbSize = preReduceUbSize;
-    out.postReduceUbSize = postReduceUbSize;
-    out.tmpBufUbSize = tmpBufUbSize;
-    out.cacheBufUbSize = CACHE_BUF_UB;
-    out.rGroupCnt = rGroupCnt;
-    out.invRTotal = invRTotal;
-    out.eps = static_cast<float>(in.eps);
+    const int64_t colChunks = (lastA + cols - 1) / cols;
+    workItems = outerA * colChunks;
 
-    return 0;
+    out.aUbFactor = pitch;
+    out.aUbFactorAlign = cols;
+    out.rUbFactor = rows;
+    out.preReduceUbSize = CeilAlign(rows * pitch * elemBytes, in.blockSize);
+    out.tmpBufUbSize = tmpBytes;
+    out.cacheBufUbSize = statsBytes;
+    out.reservedPostReduceUbSize = 0;
+    out.kernelMode = TILE_A_KERNEL_MODE;
+    out.rGroupCnt = 0;
+    out.usedCoreNum = static_cast<int32_t>(std::min<int64_t>(workItems, in.coreNum));
+    return true;
+}
+
+bool Rara5Applicable(const Mvnv2TilingInputs& in, const FuseResult& pat)
+{
+    int64_t reduceRows = 1;
+    for (int32_t axis = 1; axis < pat.axisNum; axis += 2) {
+        reduceRows *= pat.axisShape[axis];
+    }
+    const int64_t lastA = pat.axisShape[pat.axisNum - 1];
+    // ProcessRara5WorkItem column-chunks the trailing A axis (count <= cols <= pitch). ComputeRara5Tiling
+    // chunks at RARA5_CHUNK_COLS so pitch <= 64 (the proven ReduceSum/UB width) for any lastA, and a
+    // tail wider than the chunk target splits into balanced chunks (65 -> 33+32) that also raise the
+    // work-item count so outerA-small shapes fill more cores; stale columns beyond count are discarded
+    // by the count-wide accumulate. ProcessRara5 never splits R across cores (work items are whole
+    // (outerA, colChunk) pairs), so the reduction order is core-count independent and huge reduceRows
+    // only lowers core utilization; the vectorized path still beats the element-wise scalar group
+    // fallback by an order of magnitude there (measured on Ascend950PR). RARA5_MAX_COLS bounds the
+    // trailing axis so the chunk count (and work-item fan-out) stays reasonable.
+    const bool fp16Pattern = in.dtype == ge::DT_FLOAT16 && pat.axisNum == 5 && reduceRows >= RARA5_MIN_ROWS &&
+                             lastA <= RARA5_MAX_COLS;
+    return pat.isTailR == 0 && fp16Pattern;
+}
+
+void ComputeRara5Tiling(const Mvnv2TilingInputs& in, const FuseResult& pat, MVNV2TilingData& out, int64_t& workItems)
+{
+    const int64_t elemBytes = ElemBytes(in.dtype);
+    const int64_t alignElems = in.blockSize / elemBytes;
+    const int64_t lastA = pat.axisShape[pat.axisNum - 1];
+    int64_t outerA = 1;
+    int64_t reduceRows = 1;
+    for (int32_t axis = 0; axis < pat.axisNum - 1; axis += 2) {
+        outerA *= pat.axisShape[axis];
+    }
+    for (int32_t axis = 1; axis < pat.axisNum; axis += 2) {
+        reduceRows *= pat.axisShape[axis];
+    }
+    // Balanced column chunks targeting RARA5_CHUNK_COLS: every chunk is CeilDiv(lastA, colChunks)
+    // wide (pitch <= 64), so a tail slightly wider than the chunk target splits into two
+    // near-equal chunks (e.g. 65 -> 33+32) instead of a full chunk plus a pathological 1-column
+    // remainder, and outerA-small shapes expose outerA*colChunks work items to fill more cores.
+    const int64_t colChunks = CeilDiv(lastA, RARA5_CHUNK_COLS);
+    const int64_t cols = CeilDiv(lastA, colChunks);
+    const int64_t pitch = CeilAlign(cols, alignElems);
+    workItems = outerA * colChunks;
+
+    const int64_t cacheBytes = 20 * 1024;
+    const int64_t fixedBytes = cacheBytes + TILE_A_UB_MARGIN;
+    int64_t rows = (in.ubSize - fixedBytes) / (pitch * (elemBytes + 2 * static_cast<int64_t>(sizeof(float))));
+    // Tiles may span multiple inner-R segments (TileDmaInRows splits at inner-R boundaries),
+    // so rows is bounded only by the UB budget, not by the inner R axis size.
+    rows = std::max<int64_t>(1, std::min<int64_t>(4095, rows));
+    if (in.dtype == ge::DT_FLOAT) {
+        rows = std::min<int64_t>(rows, 64);
+    }
+    out.aUbFactor = pitch;
+    out.aUbFactorAlign = cols;
+    out.rUbFactor = rows;
+    out.preReduceUbSize = CeilAlign(rows * pitch * elemBytes, in.blockSize);
+    out.tmpBufUbSize = CeilAlign(std::max<int64_t>(rows, 8) * pitch * static_cast<int64_t>(sizeof(float)),
+                                 in.blockSize);
+    out.cacheBufUbSize = cacheBytes;
+    out.reservedPostReduceUbSize = 0;
+    out.kernelMode = RARA5_KERNEL_MODE;
+    out.rGroupCnt = 0;
+    out.usedCoreNum = static_cast<int32_t>(std::min<int64_t>(workItems, in.coreNum));
 }
 
 } // namespace mvn_v2_host
@@ -552,15 +611,20 @@ static ge::graphStatus ReadXShape(gert::TilingContext* ctx, int64_t shape[MAX_IN
     OP_CHECK_NULL_WITH_CONTEXT(ctx, xShape);
     const gert::Shape& s = xShape->GetStorageShape();
     const size_t dimNum = s.GetDimNum();
-    OP_CHECK_IF(dimNum < MIN_INPUT_RANK || dimNum > MAX_INPUT_RANK,
-                OP_LOGE(ctx->GetNodeName(), "MVNV2 expects 1-D to 8-D input, got rank %zu.", dimNum),
+    OP_CHECK_IF(dimNum != static_cast<size_t>(REQUIRED_INPUT_RANK),
+                OP_LOGE(ctx->GetNodeName(), "MVNV2 expects 4-D NCHW input, got rank %zu.", dimNum),
                 return ge::GRAPH_FAILED);
     rank = static_cast<int32_t>(dimNum);
+    int64_t numel = 1;
     for (int32_t d = 0; d < rank; ++d) {
-        OP_CHECK_IF(s.GetDim(d) < 0,
-                    OP_LOGE(ctx->GetNodeName(), "MVNV2: input dim[%d]=%ld must be non-negative.", d, s.GetDim(d)),
+        const int64_t dim = s.GetDim(d);
+        OP_CHECK_IF(dim < 0, OP_LOGE(ctx->GetNodeName(), "MVNV2: input dim[%d]=%ld must be non-negative.", d, dim),
                     return ge::GRAPH_FAILED);
-        shape[d] = s.GetDim(d);
+        OP_CHECK_IF(dim > 0 && numel > std::numeric_limits<int64_t>::max() / dim,
+                    OP_LOGE(ctx->GetNodeName(), "MVNV2: input shape product overflows INT64 at dim[%d]=%ld.", d, dim),
+                    return ge::GRAPH_FAILED);
+        numel *= dim;
+        shape[d] = dim;
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -613,39 +677,66 @@ ge::graphStatus MVNV2Tiling::Run()
                         ge::TypeUtils::DataTypeToSerialString(outputDesc->GetDataType()).c_str(),
                         ge::TypeUtils::DataTypeToSerialString(dtype).c_str()),
                 return ge::GRAPH_FAILED);
+    const auto* outputShape = context->GetOutputShape(OUTPUT_Y_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outputShape);
+    const gert::Shape& outputStorageShape = outputShape->GetStorageShape();
+    OP_CHECK_IF(outputStorageShape.GetDimNum() != static_cast<size_t>(rank),
+                OP_LOGE(context->GetNodeName(), "MVNV2: output rank %zu must equal input rank %d.",
+                        outputStorageShape.GetDimNum(), rank),
+                return ge::GRAPH_FAILED);
+    for (int32_t d = 0; d < rank; ++d) {
+        OP_CHECK_IF(outputStorageShape.GetDim(d) != shape[d],
+                    OP_LOGE(context->GetNodeName(), "MVNV2: output dim[%d]=%ld must equal input dim %ld.", d,
+                            outputStorageShape.GetDim(d), shape[d]),
+                    return ge::GRAPH_FAILED);
+    }
+    OP_CHECK_IF(inputDesc->GetOriginFormat() != ge::FORMAT_NCHW,
+                OP_LOGE(context->GetNodeName(), "MVNV2: input origin format %s must be FORMAT_NCHW.",
+                        ge::TypeUtils::FormatToSerialString(inputDesc->GetOriginFormat()).c_str()),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(outputDesc->GetOriginFormat() != ge::FORMAT_NCHW,
+                OP_LOGE(context->GetNodeName(), "MVNV2: output origin format %s must be FORMAT_NCHW.",
+                        ge::TypeUtils::FormatToSerialString(outputDesc->GetOriginFormat()).c_str()),
+                return ge::GRAPH_FAILED);
     ge::Format inputFormat = inputDesc->GetStorageFormat();
-    OP_CHECK_IF(inputFormat != ge::FORMAT_ND,
-                OP_LOGE(context->GetNodeName(), "MVNV2: input format %s must be FORMAT_ND.",
+    OP_CHECK_IF(inputFormat != ge::FORMAT_ND && inputFormat != ge::FORMAT_NCHW,
+                OP_LOGE(context->GetNodeName(), "MVNV2: input storage format %s must be FORMAT_NCHW or FORMAT_ND.",
                         ge::TypeUtils::FormatToSerialString(inputFormat).c_str()),
+                return ge::GRAPH_FAILED);
+    ge::Format outputFormat = outputDesc->GetStorageFormat();
+    OP_CHECK_IF(outputFormat != ge::FORMAT_ND && outputFormat != ge::FORMAT_NCHW,
+                OP_LOGE(context->GetNodeName(), "MVNV2: output storage format %s must be FORMAT_NCHW or FORMAT_ND.",
+                        ge::TypeUtils::FormatToSerialString(outputFormat).c_str()),
                 return ge::GRAPH_FAILED);
 
     double eps = DEFAULT_EPS;
     std::vector<int64_t> axesVec;
     const std::vector<int64_t> defaultAxes = {0, 2, 3};
     const auto* attrs = context->GetAttrs();
-    bool axesAttrPresent = false;
     if (attrs != nullptr) {
         const float* epsPtr = attrs->GetAttrPointer<float>(ATTR_EPS_INDEX);
         if (epsPtr != nullptr)
             eps = static_cast<double>(*epsPtr);
         const auto* axesArr = attrs->GetListInt(ATTR_AXES_INDEX);
         if (axesArr != nullptr) {
-            axesAttrPresent = true;
             const int64_t* data = axesArr->GetData();
             size_t cnt = axesArr->GetSize();
             for (size_t i = 0; i < cnt; ++i)
                 axesVec.push_back(data[i]);
         }
     }
-    if (axesVec.empty() && !axesAttrPresent) {
+    // An absent attribute and an explicitly empty list both fall back to the default axes,
+    // matching the ascend910b/TBE baseline (`if not axis: axis = [0, 2, 3]`).
+    const bool axesDefaulted = axesVec.empty();
+    if (axesDefaulted) {
         axesVec = defaultAxes;
     }
-    if (rank < MVN_V2_RANK_4 && axesVec == defaultAxes) {
-        axesVec.erase(std::remove_if(axesVec.begin(), axesVec.end(), [rank](int64_t axis) { return axis >= rank; }),
-                      axesVec.end());
+    // Negative axes follow Python indexing semantics, as the baseline does.
+    for (auto& axis : axesVec) {
+        if (axis < 0) {
+            axis += rank;
+        }
     }
-    OP_CHECK_IF(eps < 0.0, OP_LOGE(context->GetNodeName(), "MVNV2: eps must be >= 0, got %g.", eps),
-                return ge::GRAPH_FAILED);
     for (size_t i = 0; i < axesVec.size(); ++i) {
         OP_CHECK_IF(axesVec[i] < 0 || axesVec[i] >= rank,
                     OP_LOGE(context->GetNodeName(), "MVNV2: axes[%zu]=%ld out of range [0, %d).", i, axesVec[i], rank),
@@ -660,11 +751,7 @@ ge::graphStatus MVNV2Tiling::Run()
         OP_CHECK_NULL_WITH_CONTEXT(context, td);
         *td = MVNV2TilingData{};
         td->eps = static_cast<float>(eps);
-        if (rank <= MVN_V2_RANK_4) {
-            context->SetTilingKey(GET_TPL_TILING_KEY(MVN_V2_RANK_4));
-        } else {
-            context->SetTilingKey(GET_TPL_TILING_KEY(MVN_V2_RANK_8));
-        }
+        context->SetTilingKey(GET_TPL_TILING_KEY(MVN_V2_RANK_4));
         context->SetBlockDim(1);
         size_t* ws = context->GetWorkspaceSizes(1);
         OP_CHECK_NULL_WITH_CONTEXT(context, ws);
@@ -684,8 +771,9 @@ ge::graphStatus MVNV2Tiling::Run()
     in.ubSize = static_cast<int64_t>(ubSize);
     in.blockSize = blockSize;
     in.cacheLineSize = cacheLineSize;
-    in.vectorSize = VECTOR_SIZE;
     in.eps = eps;
+    const float epsValue = static_cast<float>(eps);
+    const bool ieeeEpsMode = epsValue < 0.0f || !std::isfinite(epsValue) || std::fpclassify(epsValue) == FP_SUBNORMAL;
 
     auto* td = context->GetTilingData<MVNV2TilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, td);
@@ -693,11 +781,70 @@ ge::graphStatus MVNV2Tiling::Run()
     mvn_v2_host::FuseResult fuse;
     mvn_v2_host::FuseAxisFourSteps(shape, rank, axesVec.data(), static_cast<int32_t>(axesVec.size()), fuse);
 
+    const int32_t lastAIdx = mvn_v2_host::LastAIdx(fuse.axisNum);
+    const __int128 rowStrideBytes = static_cast<__int128>(fuse.axisShape[lastAIdx]) * mvn_v2_host::ElemBytes(dtype);
+    OP_CHECK_IF(rowStrideBytes >= static_cast<__int128>(DMA_STRIDE_LIMIT_BYTES),
+                OP_LOGE(context->GetNodeName(),
+                        "MVNV2: DMA row stride for axis size %ld and element size %ld must be less than 2^40 bytes.",
+                        fuse.axisShape[lastAIdx], mvn_v2_host::ElemBytes(dtype)),
+                return ge::GRAPH_FAILED);
+
     mvn_v2_host::UbSplitResult sp;
     mvn_v2_host::ComputeUbSplit(fuse, dtype, coreNum, static_cast<int64_t>(ubSize), blockSize, cacheLineSize, sp);
     mvn_v2_host::MulticoreResult mc;
     mvn_v2_host::ComputeMulticore(fuse, sp, coreNum, mc);
-    bool useGroup = (mvn_v2_host::ShouldUseGroup(mc.aLoopCntTotal, mc.rLoopCntTotal, coreNum) == 1);
+    int64_t reduceTotal = 1;
+    for (int32_t axis = 1; axis < fuse.axisNum; axis += 2) {
+        reduceTotal *= fuse.axisShape[axis];
+    }
+    // FP32 huge reductions must avoid the multicore ProcessGroup2D per-group scalar path
+    // (device evidence: numel_1m-class shapes reached small-value ratio 41 there). The flat
+    // single-group pattern [1, R] dispatches to ProcessFlatRGroup instead, whose vectorized
+    // compensated block reduce over 1/72-length per-core chains plus fixed-order Kahan merge
+    // is device-verified for FP32 R up to 25M (cross_check L0), so it keeps multicore speed.
+    const bool flatSingleGroup = fuse.axisNum == 2 && fuse.axisShape[0] == 1;
+    const bool groupPrecisionFallback = dtype == ge::DT_FLOAT && reduceTotal >= 65536 && !flatSingleGroup;
+    bool useGroup = !ieeeEpsMode && !groupPrecisionFallback &&
+                    (mvn_v2_host::ShouldUseGroup(mc.aLoopCntTotal, mc.rLoopCntTotal, coreNum) == 1);
+    // The trailing-A path walks the trailing axis in TRAILING_A_TILE-wide column tiles, which needs
+    // fewer and larger DMAs than the generic tileA column chunks. Applicability is derived from the
+    // fused pattern and the UB budget rather than a literal input shape:
+    //   - FLOAT only: the tile buffer is typed F, so fp16 input would be reinterpreted;
+    //   - axisNum == 3 with the reduce block not last: an A-R-A pattern, which in ND row-major is
+    //     exactly the contiguous layout the tile offset formula outer*rows*rowStride+column assumes;
+    //   - all reduce rows resident in UB, and at least one full tile on the trailing axis.
+    const int64_t trailingAFloatBytes = TRAILING_A_TILE * static_cast<int64_t>(sizeof(float));
+    const int64_t trailingAFixedBytes = (TRAILING_A_STAT_SLOTS + 2) * trailingAFloatBytes;
+    const int64_t trailingAMaxRows = (static_cast<int64_t>(ubSize) - trailingAFixedBytes) / trailingAFloatBytes;
+    // The tail tile is axisShape[2] % TRAILING_A_TILE elements long and is fed to DataCopyPad and
+    // to unmasked vector ops, so it must be a whole number of 32-byte blocks; otherwise the kernel
+    // raises VEC_ERROR. Full tiles are TRAILING_A_TILE and always satisfy this.
+    const int64_t trailingAAlignElems = in.blockSize / static_cast<int64_t>(sizeof(float));
+    const bool trailingATailAligned = (fuse.axisShape[2] % TRAILING_A_TILE) % trailingAAlignElems == 0;
+    // Very small reductions are handled by tile-A: the trailing-A vector path is intended to
+    // amortize row-wise DMA/statistics work and loses accuracy for R=2/4/5.
+    constexpr int64_t trailingAMinRows = 8;
+    constexpr bool enableFp32TrailingA = true;
+    const bool trailingASpecial = !ieeeEpsMode && dtype == ge::DT_FLOAT && fuse.axisNum == 3 && fuse.isTailR == 0 &&
+                                  fuse.axisShape[1] >= trailingAMinRows && fuse.axisShape[1] <= trailingAMaxRows &&
+                                  fuse.axisShape[2] >= TRAILING_A_TILE && trailingATailAligned && enableFp32TrailingA;
+    // The tile-A FP32 path accumulates per-column statistics in 128 UB bins and refines meanLow
+    // with one full correction walk. Device evidence (cross_check L0, seed 20261019): R=4095 and
+    // R=4096 pass with ratio <= 1.15, while R=9040 reaches ratio 2.24 and R=65536 ratio 73
+    // against the third-party reference — the bin/tree accumulation error grows with R and a
+    // second correction walk cannot shrink it (its own binning error is the same order).
+    // Reductions beyond the verified bound stay on the generic element-wise compensated path.
+    constexpr int64_t tileAFp32PrecisionLimit = 4096;
+    const bool tileAPrecisionFallback = dtype == ge::DT_FLOAT && fuse.axisNum == 3 &&
+                                        fuse.axisShape[1] > tileAFp32PrecisionLimit;
+    bool tileA = !ieeeEpsMode && mvn_v2_host::TileAApplicable(fuse) && !trailingASpecial && !tileAPrecisionFallback;
+    const bool rara5 = !ieeeEpsMode && mvn_v2_host::Rara5Applicable(in, fuse);
+    const bool tailR2 = !ieeeEpsMode && dtype == ge::DT_FLOAT && fuse.axisNum == 2 && fuse.isTailR == 1 &&
+                        fuse.axisShape[1] == 2 && fuse.axisShape[0] >= 4 && fuse.axisShape[0] % 2 == 0;
+    int64_t tileWorkItems = 0;
+    if (tileA || rara5 || tailR2 || trailingASpecial) {
+        useGroup = false;
+    }
     // Group scheduling serializes all trailing A groups on one core. Keep
     // independent prefix-reduction groups on the regular multicore path.
     if (!fuse.isTailR && fuse.axisNum == 3 && fuse.axisShape[0] == 1 && mc.aLoopCntTotal == 1 &&
@@ -706,46 +853,106 @@ ge::graphStatus MVNV2Tiling::Run()
     }
 
     int32_t tilingRet;
-    if (useGroup && fuse.isTailR) {
+    if (useGroup) {
         tilingRet = mvn_v2_host::ComputeBranch3Tiling(in, *td);
-    } else if (useGroup && !fuse.isTailR) {
-        tilingRet = mvn_v2_host::ComputeBranch4Tiling(in, *td);
-    } else if (fuse.isTailR) {
-        tilingRet = mvn_v2_host::ComputeBranch0Tiling(in, *td);
     } else {
-        tilingRet = mvn_v2_host::ComputeBranch1Tiling(in, *td);
+        tilingRet = mvn_v2_host::ComputeBranch0Tiling(in, *td);
     }
     if (tilingRet != 0) {
-        OP_LOGE(context->GetNodeName(), "ComputeBranchTiling failed (isTailR=%d useGroup=%d ret=%d)", fuse.isTailR,
-                useGroup, tilingRet);
+        OP_LOGE(context->GetNodeName(), "MVNV2: ComputeBranchTiling failed (isTailR=%d useGroup=%d ret=%d)",
+                fuse.isTailR, useGroup, tilingRet);
         return ge::GRAPH_FAILED;
     }
 
-    td->kernelMode = 0;
-    if (dtype == ge::DT_FLOAT && rank == 4 && axesVec.size() == 1 && axesVec[0] == 1 && shape[0] == 7 &&
-        shape[1] == 56 && shape[2] == 418 && shape[3] == 96) {
-        td->kernelMode = TRAILING_A_KERNEL_MODE;
-        td->preReduceUbSize = td->axisShape[1] * TRAILING_A_TILE * static_cast<int64_t>(sizeof(float));
-        td->tmpBufUbSize = TRAILING_A_TILE * static_cast<int64_t>(sizeof(float));
-        td->cacheBufUbSize = 12 * TRAILING_A_TILE * static_cast<int64_t>(sizeof(float));
+    td->kernelMode = ieeeEpsMode ? IEEE_EPS_KERNEL_MODE : 0;
+    if (tileA) {
+        tileA = mvn_v2_host::ComputeTileATiling(in, fuse, *td, tileWorkItems);
+        if (!tileA) {
+            OP_LOGW(context->GetNodeName(),
+                    "MVNV2 tiling: tile-A row budget cannot cover the reduce rows at ubSize=%ld, falling back to the "
+                    "generic path.",
+                    static_cast<long>(ubSize));
+        }
+    } else if (rara5) {
+        mvn_v2_host::ComputeRara5Tiling(in, fuse, *td, tileWorkItems);
+    } else if (trailingASpecial) {
+        // The specialized path sizes its UB buffers from TRAILING_A_TILE and the reduce axis
+        // length; take it only when the whole budget fits, otherwise stay on the generic path.
+        const int64_t floatBytes = static_cast<int64_t>(sizeof(float));
+        const int64_t preBytes = td->axisShape[1] * TRAILING_A_TILE * floatBytes;
+        const int64_t tmpBytes = TRAILING_A_TILE * floatBytes;
+        const int64_t cacheBytes = TRAILING_A_STAT_SLOTS * TRAILING_A_TILE * floatBytes;
+        if (preBytes + 2 * tmpBytes + cacheBytes <= static_cast<int64_t>(ubSize)) {
+            td->kernelMode = TRAILING_A_KERNEL_MODE;
+            td->preReduceUbSize = preBytes;
+            td->tmpBufUbSize = tmpBytes;
+            td->cacheBufUbSize = cacheBytes;
+        } else {
+            OP_LOGW(context->GetNodeName(),
+                    "MVNV2 tiling: trailing-A specialization needs %ld bytes but ubSize is %lu, falling back to the "
+                    "generic path.",
+                    static_cast<long>(preBytes + 2 * tmpBytes + cacheBytes), ubSize);
+        }
+    }
+    if (tailR2) {
+        constexpr int64_t valueBytesPerGroup = 4 * static_cast<int64_t>(sizeof(float));
+        constexpr int64_t maskBytesPerGroup = static_cast<int64_t>(sizeof(uint8_t));
+        int64_t groupsPerChunk = static_cast<int64_t>(ubSize) / (valueBytesPerGroup + maskBytesPerGroup);
+        groupsPerChunk = std::max<int64_t>(64, FloorAlign(groupsPerChunk, static_cast<int64_t>(64)));
+        const int64_t workItems = CeilDiv(fuse.axisShape[0], groupsPerChunk);
+        td->kernelMode = TAIL_R2_KERNEL_MODE;
+        td->aUbFactor = groupsPerChunk;
+        td->preReduceUbSize = CeilAlign(groupsPerChunk * 2 * static_cast<int64_t>(sizeof(float)), blockSize);
+        td->tmpBufUbSize = CeilAlign(groupsPerChunk * static_cast<int64_t>(sizeof(float)), blockSize);
+        td->cacheBufUbSize = CeilAlign(groupsPerChunk * maskBytesPerGroup, blockSize);
+        td->usedCoreNum = static_cast<int32_t>(std::min<int64_t>(workItems, coreNum));
     }
 
-    if (rank <= MVN_V2_RANK_4) {
-        context->SetTilingKey(GET_TPL_TILING_KEY(MVN_V2_RANK_4));
-    } else {
-        context->SetTilingKey(GET_TPL_TILING_KEY(MVN_V2_RANK_8));
-    }
+    OP_CHECK_IF(
+        !mvn_v2_host::FitsUbBudget(td->preReduceUbSize, td->tmpBufUbSize, td->cacheBufUbSize,
+                                   static_cast<int64_t>(ubSize)),
+        OP_LOGE(context->GetNodeName(), "MVNV2: UB plan exceeds capacity, pre=%ld, tmp=%ld, cache=%ld, ubSize=%lu.",
+                td->preReduceUbSize, td->tmpBufUbSize, td->cacheBufUbSize, ubSize),
+        return ge::GRAPH_FAILED);
+
+    context->SetTilingKey(GET_TPL_TILING_KEY(MVN_V2_RANK_4));
 
     size_t* ws = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, ws);
-    if (useGroup) {
+    if (tileA || rara5 || tailR2) {
+        context->SetBlockDim(static_cast<uint32_t>(td->usedCoreNum));
+        ws[0] = static_cast<size_t>(ap.GetLibApiWorkSpaceSize());
+        OP_LOGI(context->GetNodeName(),
+                "MVNV2 tiling(tile-A-compbins): rank=%d axes=%zu dtype=%d eps=%g coreNum=%d axisNum=%d "
+                "pitch=%ld cols=%ld rows=%ld workItems=%ld usedCoreNum=%d preUb=%ld tmpUb=%ld statUb=%ld",
+                rank, axesVec.size(), static_cast<int>(dtype), eps, coreNum, td->axisNum, td->aUbFactor,
+                td->aUbFactorAlign, td->rUbFactor, tileWorkItems, td->usedCoreNum, td->preReduceUbSize,
+                td->tmpBufUbSize, td->cacheBufUbSize);
+    } else if (useGroup) {
         context->SetScheduleMode(1);
         context->SetBlockDim(static_cast<uint32_t>(td->usedCoreNum));
         int64_t aTotal = 1;
-        for (int i = 0; i < td->axisNum; i += 2)
+        for (int i = 0; i < td->axisNum; i += 2) {
+            OP_CHECK_IF(td->axisShape[i] > 0 && aTotal > std::numeric_limits<int64_t>::max() / td->axisShape[i],
+                        OP_LOGE(context->GetNodeName(), "MVNV2: workspace group count overflows INT64 at axis %d.", i),
+                        return ge::GRAPH_FAILED);
             aTotal *= td->axisShape[i];
+        }
         size_t sysWs = static_cast<size_t>(ap.GetLibApiWorkSpaceSize());
-        size_t usrWs = static_cast<size_t>(td->rGroupCnt) * static_cast<size_t>(aTotal) * sizeof(float);
+        constexpr size_t wsSlotElems = 8;
+        const size_t rGroupCnt = static_cast<size_t>(td->rGroupCnt);
+        OP_CHECK_IF(rGroupCnt > (std::numeric_limits<size_t>::max() - 8U) / 2U,
+                    OP_LOGE(context->GetNodeName(), "MVNV2: workspace slot count overflows size_t."),
+                    return ge::GRAPH_FAILED);
+        const size_t slotsPerGroup = 2U * rGroupCnt + 8U;
+        const size_t bytesPerGroup = wsSlotElems * sizeof(float);
+        OP_CHECK_IF(static_cast<uint64_t>(aTotal) > std::numeric_limits<size_t>::max() / slotsPerGroup / bytesPerGroup,
+                    OP_LOGE(context->GetNodeName(), "MVNV2: workspace size overflows size_t."),
+                    return ge::GRAPH_FAILED);
+        const size_t usrWs = slotsPerGroup * static_cast<size_t>(aTotal) * bytesPerGroup;
+        OP_CHECK_IF(sysWs > std::numeric_limits<size_t>::max() - usrWs,
+                    OP_LOGE(context->GetNodeName(), "MVNV2: total workspace size overflows size_t."),
+                    return ge::GRAPH_FAILED);
         ws[0] = sysWs + usrWs;
         OP_LOGI(context->GetNodeName(),
                 "MVNV2 tiling(group-tail-%c): rank=%d axes=%zu dtype=%d eps=%g "
@@ -755,8 +962,12 @@ ge::graphStatus MVNV2Tiling::Run()
                 td->aLoopCntTotal, td->rLoopCntTotal, td->rGroupCnt, aTotal, td->usedCoreNum, usrWs);
     } else {
         int64_t realGroups = 1;
-        for (int i = 0; i < td->axisNum; i += 2)
+        for (int i = 0; i < td->axisNum; i += 2) {
+            OP_CHECK_IF(td->axisShape[i] > 0 && realGroups > std::numeric_limits<int64_t>::max() / td->axisShape[i],
+                        OP_LOGE(context->GetNodeName(), "MVNV2: runtime group count overflows INT64 at axis %d.", i),
+                        return ge::GRAPH_FAILED);
             realGroups *= td->axisShape[i];
+        }
         int32_t grpCores = (realGroups < coreNum) ? static_cast<int32_t>(realGroups) : coreNum;
         if (grpCores < 1)
             grpCores = 1;

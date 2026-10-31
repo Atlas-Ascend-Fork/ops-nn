@@ -30,6 +30,20 @@ template <typename T>
 __simd_vf__ inline void Mvnv2DivVf(__ubuf__ T* dstAddr, __ubuf__ T* src0Addr, __ubuf__ T* src1Addr, uint32_t count,
                                    uint32_t oneRepeatSize, uint16_t repeatTimes);
 
+template <typename T>
+__simd_vf__ inline void Mvnv2CompensatedLaneSumVf(__ubuf__ T* dstAddr, __ubuf__ T* srcAddr, uint32_t count,
+                                                  uint32_t oneRepeatSize, uint16_t repeatTimes);
+
+template <typename T, bool PRESERVE_ZERO>
+__simd_vf__ inline void Mvnv2ResidualDivTensorVf(__ubuf__ T* dst, __ubuf__ T* src, __ubuf__ T* origin,
+                                                 __ubuf__ T* invScale, __ubuf__ T* meanLow, __ubuf__ T* denominator,
+                                                 uint32_t count, uint32_t oneRepeatSize, uint16_t repeatTimes);
+
+template <typename T>
+__simd_vf__ inline void Mvnv2R3EftVf(__ubuf__ T* row0, __ubuf__ T* row1, __ubuf__ T* row2, __ubuf__ T* originAddr,
+                                     __ubuf__ T* invScaleAddr, T epsilon, uint32_t count, uint32_t oneRepeatSize,
+                                     uint16_t repeatTimes);
+
 template <typename D_T>
 class Mvnv2Kernel {
     using F = float;
@@ -39,6 +53,7 @@ class Mvnv2Kernel {
     const MVNV2TilingData* td_ = nullptr;
     AscendC::GlobalTensor<D_T> gmX_;
     AscendC::GlobalTensor<D_T> gmY_;
+    AscendC::GlobalTensor<F> gmWorkspace_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> preBuf_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> tmpBuf0_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> tmpBuf1_;
@@ -75,7 +90,6 @@ class Mvnv2Kernel {
     int32_t rSplitAxisIdx_ = 0;
     int64_t rUbFactor_ = 0;
     int64_t rLoopCntTotal_ = 0;
-    int64_t innerRProd_ = 1;
     bool innerRContig_ = false;
     int64_t innerRSize_ = 1;
     int64_t outerRShapes_[MAX_PATTERN_RANK / 2 + 2];
@@ -91,13 +105,75 @@ class Mvnv2Kernel {
     int64_t tmpBufBytes_ = 0;
     int32_t kernelMode_ = 0;
 
+    static constexpr int32_t TILE_A_MODE = 2;
+    static constexpr int32_t RARA5_MODE = 3;
+    static constexpr int32_t TAIL_R2_MODE = 4;
+    static constexpr int32_t IEEE_EPS_MODE = 5;
+    static constexpr int64_t TS_SCALE = 0;
+    static constexpr int64_t TS_INVSCALE = 1;
+    static constexpr int64_t TS_SUM = 2;
+    static constexpr int64_t TS_MEANFULL = 3;
+    static constexpr int64_t TS_MEAN = 4;
+    static constexpr int64_t TS_MEANLOW = 5;
+    static constexpr int64_t TS_VAR = 6;
+    static constexpr int64_t TS_MASK = 7;
+    static constexpr int64_t TS_DENOM = 8;
+    static constexpr int64_t TS_BIN_BASE = 12;
+    static constexpr int64_t TS_BIN_COMP_BASE = 140;
+    static constexpr int64_t TILE_A_BIN_COUNT = 128;
+    static constexpr int64_t FP16_BIN_COUNT = 64;
+    static constexpr int64_t WS_SLOT_ELEMS = 8;
+    // A nonzero residual can be one float ULP of max|x|. Scale inputs below
+    // sqrt(FLT_MIN) / epsilon_float so that squaring that residual cannot underflow.
+    static constexpr F SCALE_UNDERFLOW_GUARD = 9.0949470177292824e-13f;
+    static constexpr F MAX_SCALE_FACTOR = 8.5070591730234615e37f;
+    int64_t tSi_ = 1;
+    int64_t tRi_ = 1;
+    int64_t tPitch_ = 1;
+    int64_t tCols_ = 1;
+    int64_t tRows_ = 1;
+    int64_t tColChunks_ = 1;
+    int64_t tOuterA_ = 1;
+    int64_t tWorkItems_ = 1;
+    int32_t tDmaMode_ = 0;
+
+    __aicore__ inline int64_t PartitionStart(int64_t total, int64_t index, int64_t parts) const
+    {
+        const int64_t quotient = total / parts;
+        const int64_t remainder = total % parts;
+        return quotient * index + (index < remainder ? index : remainder);
+    }
+
+    __aicore__ inline F InvScaleCap() const
+    {
+        constexpr F F32_MAX = 3.402823466e38f;
+        if (eps_ > 0.0f) {
+            const F epsCap = F32_MAX / eps_;
+            return epsCap < MAX_SCALE_FACTOR ? epsCap : MAX_SCALE_FACTOR;
+        }
+        return MAX_SCALE_FACTOR;
+    }
+
+    __aicore__ inline bool NeedsOverflowScaling(F scale) const
+    {
+        constexpr F F32_MAX = 3.402823466e38f;
+        if (!(scale > 1.0f && scale <= F32_MAX)) {
+            return false;
+        }
+        // A centered residual can reach 2 * max|x|. Scale before the
+        // worst-case sum of squared residuals approaches FLOAT overflow.
+        const F maxSafeReduce = MAX_SCALE_FACTOR / scale / scale;
+        return static_cast<F>(reduceSize_) >= maxSafeReduce;
+    }
+
 public:
     __aicore__ inline void Init(__gm__ uint8_t* x, __gm__ uint8_t* y, const MVNV2TilingData* td,
-                                __gm__ uint8_t* /*workspace*/)
+                                __gm__ uint8_t* workspace)
     {
         td_ = td;
         gmX_.SetGlobalBuffer((__gm__ D_T*)x);
         gmY_.SetGlobalBuffer((__gm__ D_T*)y);
+        gmWorkspace_.SetGlobalBuffer(reinterpret_cast<__gm__ F*>(AscendC::GetUserWorkspace(workspace)));
         axisNum_ = td->axisNum;
         for (int32_t i = 0; i < MAX_PATTERN_RANK; ++i) {
             axisShape_[i] = td->axisShape[i];
@@ -147,9 +223,6 @@ public:
         rSplitAxisIdx_ = td->rSplitAxisIdx;
         rUbFactor_ = td->rUbFactor;
         rLoopCntTotal_ = td->rLoopCntTotal;
-        innerRProd_ = td->innerRProd;
-        if (innerRProd_ < 1)
-            innerRProd_ = 1;
         if (rUbFactor_ < 1)
             rUbFactor_ = 1;
         if (rLoopCntTotal_ < 1)
@@ -194,10 +267,37 @@ public:
         pipe_.InitBuffer(tmpBuf0_, tmpBufBytes_);
         pipe_.InitBuffer(tmpBuf1_, tmpBufBytes_);
         pipe_.InitBuffer(cacheBuf_, cacheBufBytes);
+        if ((kernelMode_ == TILE_A_MODE || kernelMode_ == RARA5_MODE) && axisNum_ >= 3) {
+            tSi_ = axisShape_[axisNum_ - 1];
+            tRi_ = reduceSize_;
+            tOuterA_ = realGroups_ / tSi_;
+            tPitch_ = (td->aUbFactor > 0) ? td->aUbFactor : 1;
+            tCols_ = (td->aUbFactorAlign > 0) ? td->aUbFactorAlign : 1;
+            tRows_ = (td->rUbFactor > 0) ? td->rUbFactor : 1;
+            tColChunks_ = (tSi_ + tCols_ - 1) / tCols_;
+            tWorkItems_ = tOuterA_ * tColChunks_;
+            const bool dense = axisNum_ == 3 && tColChunks_ == 1;
+            const bool rowAligned = ((tSi_ * static_cast<int64_t>(sizeof(D_T))) % 32) == 0;
+            tDmaMode_ = dense ? (rowAligned ? 1 : 0) : 2;
+        }
     }
 
     __aicore__ inline void Process()
     {
+        if (kernelMode_ == TILE_A_MODE) {
+            ProcessTileA();
+            return;
+        }
+        if (kernelMode_ == RARA5_MODE) {
+            ProcessRara5();
+            return;
+        }
+        if constexpr (std::is_same_v<D_T, F>) {
+            if (kernelMode_ == TAIL_R2_MODE) {
+                ProcessTailR2();
+                return;
+            }
+        }
         if constexpr (std::is_same_v<D_T, F>) {
             if (kernelMode_ == 1) {
                 ProcessTrailingA();
@@ -213,63 +313,90 @@ public:
         int64_t blockIdx = AscendC::GetBlockIdx();
         if (blockIdx >= usedCoreNum_)
             return;
-        int64_t gStart = (blockIdx * realGroups_) / usedCoreNum_;
-        int64_t gEnd = ((blockIdx + 1) * realGroups_) / usedCoreNum_;
+        int64_t gStart = PartitionStart(realGroups_, blockIdx, usedCoreNum_);
+        int64_t gEnd = PartitionStart(realGroups_, blockIdx + 1, usedCoreNum_);
         for (int64_t g = gStart; g < gEnd; ++g)
             ProcessGroup(g);
     }
 
     __aicore__ inline void ProcessTrailingATile(int64_t gmOffset, int64_t rowStride, int64_t tileLength)
     {
-        constexpr int64_t rows = 56;
+        // Reduce axis length comes from the tiling data so this loop and the host UB budget
+        // (axisShape[1] * TRAILING_A_TILE) cannot drift apart.
+        const int64_t rows = axisShape_[1];
         constexpr int64_t tileSize = 256;
         AscendC::LocalTensor<F> input = preBuf_.Get<F>();
         AscendC::LocalTensor<F> sum = tmpBuf0_.Get<F>();
         AscendC::LocalTensor<F> work = tmpBuf1_.Get<F>();
         AscendC::LocalTensor<F> cache = cacheBuf_.Get<F>();
-        AscendC::LocalTensor<F> mean = cache;
+        AscendC::LocalTensor<F> origin = cache;
         AscendC::LocalTensor<F> variance = cache[tileSize];
         AscendC::LocalTensor<F> scale = cache[2 * tileSize];
         AscendC::LocalTensor<F> invScale = cache[3 * tileSize];
         AscendC::LocalTensor<F> denominator = cache[4 * tileSize];
+        AscendC::LocalTensor<F> meanLow = cache[9 * tileSize];
 
         AscendC::DataCopyExtParams copyIn{static_cast<uint16_t>(rows), static_cast<uint32_t>(tileLength * sizeof(F)),
-                                          static_cast<uint32_t>((rowStride - tileLength) * sizeof(F)), 0, 0};
+                                          (rowStride - tileLength) * static_cast<int64_t>(sizeof(F)), 0, 0};
         AscendC::DataCopyPadExtParams<F> pad{false, 0, 0, 0};
         AscendC::DataCopyPad(input, gmX_[gmOffset], copyIn, pad);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
 
-        AscendC::Duplicate(scale, 0.0f, tileLength);
-        AscendC::PipeBarrier<PIPE_V>();
+        constexpr F F32_MAX = 3.402823466e38f;
+        AscendC::Duplicate(origin, F32_MAX, tileLength);
+        AscendC::Duplicate(denominator, -F32_MAX, tileLength);
         for (int64_t row = 0; row < rows; ++row) {
-            AscendC::Abs(work, input[row * tileLength], tileLength);
+            AscendC::Min(origin, origin, input[row * tileLength], tileLength);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Max(denominator, denominator, input[row * tileLength], tileLength);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        AscendC::Muls(origin, origin, 0.5f, tileLength);
+        AscendC::Muls(denominator, denominator, 0.5f, tileLength);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(origin, origin, denominator, tileLength);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Duplicate(scale, 0.0f, tileLength);
+        for (int64_t row = 0; row < rows; ++row) {
+            AscendC::Sub(work, input[row * tileLength], origin, tileLength);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Abs(work, work, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Max(scale, scale, work, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
         }
-        AscendC::Maxs(scale, scale, 1.0f, tileLength);
+        // Normalize both very large and very small finite columns. This path already
+        // multiplies by invScale unconditionally, so scaling max|x| to one adds no work
+        // and prevents centered residual squares from underflowing.
+        AscendC::Maxs(scale, scale, 1.1754943508222875e-38f, tileLength);
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Reciprocal(invScale, scale, tileLength);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mins(invScale, invScale, InvScaleCap(), tileLength);
         AscendC::PipeBarrier<PIPE_V>();
 
         AscendC::Duplicate(sum, 0.0f, tileLength);
         AscendC::PipeBarrier<PIPE_V>();
         for (int64_t row = 0; row < rows; ++row) {
-            AscendC::Mul(work, input[row * tileLength], invScale, tileLength);
+            AscendC::Sub(work, input[row * tileLength], origin, tileLength);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(work, work, invScale, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Add(sum, sum, work, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
         }
-        AscendC::Muls(mean, sum, static_cast<F>(1.0f / rows), tileLength);
+        AscendC::Muls(meanLow, sum, static_cast<F>(1.0f / rows), tileLength);
         AscendC::PipeBarrier<PIPE_V>();
 
         AscendC::Duplicate(variance, 0.0f, tileLength);
         AscendC::PipeBarrier<PIPE_V>();
         for (int64_t row = 0; row < rows; ++row) {
-            AscendC::Mul(work, input[row * tileLength], invScale, tileLength);
+            AscendC::Sub(work, input[row * tileLength], origin, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Sub(work, work, mean, tileLength);
+            AscendC::Mul(work, work, invScale, tileLength);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(work, work, meanLow, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Mul(work, work, work, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
@@ -280,15 +407,18 @@ public:
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Sqrt(denominator, variance, tileLength);
         AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Muls(sum, invScale, eps_, tileLength);
+        AscendC::Duplicate(sum, eps_, static_cast<int32_t>(tileLength));
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mul(sum, sum, invScale, tileLength);
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Add(denominator, denominator, sum, tileLength);
         AscendC::PipeBarrier<PIPE_V>();
-
         for (int64_t row = 0; row < rows; ++row) {
-            AscendC::Mul(work, input[row * tileLength], invScale, tileLength);
+            AscendC::Sub(work, input[row * tileLength], origin, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Sub(work, work, mean, tileLength);
+            AscendC::Mul(work, work, invScale, tileLength);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(work, work, meanLow, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Div(input[row * tileLength], work, denominator, tileLength);
             AscendC::PipeBarrier<PIPE_V>();
@@ -296,10 +426,111 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
         AscendC::DataCopyExtParams copyOut{static_cast<uint16_t>(rows), static_cast<uint32_t>(tileLength * sizeof(F)),
-                                           0, static_cast<uint32_t>((rowStride - tileLength) * sizeof(F)), 0};
+                                           0, (rowStride - tileLength) * static_cast<int64_t>(sizeof(F)), 0};
         AscendC::DataCopyPad(gmY_[gmOffset], input, copyOut);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
+    }
+
+    __aicore__ inline void ProcessTailR2()
+    {
+        const int64_t groupsPerChunk = aUbFactor_;
+        const int64_t workItems = (realGroups_ + groupsPerChunk - 1) / groupsPerChunk;
+        const int64_t blockIdx = AscendC::GetBlockIdx();
+        AscendC::LocalTensor<F> data = preBuf_.Get<F>();
+        AscendC::LocalTensor<F> scratch = data[groupsPerChunk];
+        AscendC::LocalTensor<F> x0 = tmpBuf0_.Get<F>();
+        AscendC::LocalTensor<F> x1 = tmpBuf1_.Get<F>();
+        AscendC::LocalTensor<uint8_t> smallScaleMask = cacheBuf_.Get<uint8_t>();
+        for (int64_t workItem = blockIdx; workItem < workItems; workItem += usedCoreNum_) {
+            int64_t groupStart = workItem * groupsPerChunk;
+            int64_t groupCount = realGroups_ - groupStart;
+            if (groupCount > groupsPerChunk) {
+                groupCount = groupsPerChunk;
+            }
+            if (workItems > 1) {
+                const int64_t lastCount = realGroups_ - (workItems - 1) * groupsPerChunk;
+                const int64_t tailAdjust = (lastCount > 0 && lastCount < 4) ? 4 - lastCount : 0;
+                if (workItem == workItems - 2) {
+                    groupCount -= tailAdjust;
+                } else if (workItem == workItems - 1) {
+                    groupStart -= tailAdjust;
+                    groupCount += tailAdjust;
+                }
+            }
+            if (groupCount <= 0) {
+                continue;
+            }
+            const int64_t elemCount = groupCount * 2;
+            AscendC::DataCopyExtParams copyIn{1, static_cast<uint32_t>(elemCount * sizeof(F)), 0, 0, 0};
+            AscendC::DataCopyPadExtParams<F> pad{false, 0, 0, 0};
+            AscendC::DataCopyPad(data, gmX_[groupStart * 2], copyIn, pad);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
+            AscendC::DeInterleave(x0, x1, data, static_cast<int32_t>(elemCount));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Abs(data, x0, groupCount);
+            AscendC::Abs(scratch, x1, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Max(data, data, scratch, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Duplicate(scratch, MAX_SCALE_FACTOR, static_cast<int32_t>(groupCount));
+            AscendC::CompareScalar(smallScaleMask, data, 1.1754943508222875e-38f, AscendC::CMPMODE::LT, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Select(scratch, smallScaleMask, scratch, 1.0f, AscendC::SELMODE::VSEL_TENSOR_SCALAR_MODE,
+                            groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(x0, x0, scratch, groupCount);
+            AscendC::Mul(x1, x1, scratch, groupCount);
+            AscendC::Mul(data, data, scratch, groupCount);
+            AscendC::Maxs(data, data, 1.1754943508222875e-38f, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Div(x0, x0, data, groupCount);
+            AscendC::Div(x1, x1, data, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(x0, x0, x1, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Muls(x0, x0, 0.5f, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Duplicate(scratch, eps_, static_cast<int32_t>(groupCount));
+            AscendC::Div(scratch, scratch, data, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Duplicate(x1, MAX_SCALE_FACTOR, static_cast<int32_t>(groupCount));
+            AscendC::Select(x1, smallScaleMask, x1, 1.0f, AscendC::SELMODE::VSEL_TENSOR_SCALAR_MODE, groupCount);
+            AscendC::Mul(scratch, scratch, x1, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Abs(data, x0, groupCount);
+            AscendC::Add(data, data, scratch, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            if (eps_ > 0.0f) {
+                AscendC::CompareScalar(smallScaleMask, data, 0.0f, AscendC::CMPMODE::EQ, groupCount);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Select(data, smallScaleMask, 1.0f, data, AscendC::SELMODE::VSEL_TENSOR_SCALAR_MODE,
+                                groupCount);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+            AscendC::Div(x0, x0, data, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::CompareScalar(smallScaleMask, x0, 0.0f, AscendC::CMPMODE::EQ, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Duplicate(data, 0.0f, static_cast<int32_t>(groupCount));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Select(x0, smallScaleMask, data, x0, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Muls(x1, x0, -1.0f, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Select(x1, smallScaleMask, data, x1, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE, groupCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Interleave(data, scratch, x0, x1, static_cast<int32_t>(groupCount));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+            AscendC::DataCopyExtParams copyOut{1, static_cast<uint32_t>(groupCount * sizeof(F)), 0, 0, 0};
+            AscendC::DataCopyPad(gmY_[groupStart * 2], data, copyOut);
+            AscendC::DataCopyPad(gmY_[groupStart * 2 + groupCount], scratch, copyOut);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
+        }
     }
 
     __aicore__ inline void ProcessTrailingA()
@@ -321,42 +552,1539 @@ public:
         }
     }
 
+private:
+    __aicore__ inline void Rara5Accumulate(AscendC::LocalTensor<F> sum, AscendC::LocalTensor<F> comp,
+                                           AscendC::LocalTensor<F> partial, AscendC::LocalTensor<F> scratch,
+                                           AscendC::LocalTensor<F> next, int64_t count)
+    {
+        AscendC::Sub(scratch, partial, comp, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(next, sum, scratch, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sub(comp, next, sum, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sub(comp, comp, scratch, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Copy<F>(sum, next, static_cast<uint32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void Rara5LoadCalc(AscendC::LocalTensor<F> calc, AscendC::LocalTensor<D_T> pre, int64_t count)
+    {
+        if constexpr (std::is_same_v<D_T, F>) {
+            AscendC::Copy<F>(calc, pre, static_cast<uint32_t>(count));
+        } else {
+            AscendC::Cast(calc, pre, AscendC::RoundMode::CAST_NONE, count);
+        }
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void Rara5StoreCalc(AscendC::LocalTensor<D_T> pre, AscendC::LocalTensor<F> calc, int64_t count)
+    {
+        if constexpr (std::is_same_v<D_T, F>) {
+            AscendC::Copy<F>(pre, calc, static_cast<uint32_t>(count));
+        } else {
+            AscendC::Cast(pre, calc, AscendC::RoundMode::CAST_RINT, count);
+        }
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void ProcessRara5()
+    {
+        const int64_t blockIdx = AscendC::GetBlockIdx();
+        if (blockIdx >= usedCoreNum_) {
+            return;
+        }
+        for (int64_t work = blockIdx; work < tWorkItems_; work += usedCoreNum_) {
+            ProcessRara5WorkItem(work / tColChunks_, work % tColChunks_);
+        }
+    }
+
+    __aicore__ inline void ProcessRara5WorkItem(int64_t outerAIdx, int64_t colChunkIdx)
+    {
+        const int64_t colStart = colChunkIdx * tCols_;
+        int64_t count = tSi_ - colStart;
+        if (count > tCols_) {
+            count = tCols_;
+        }
+        AscendC::LocalTensor<D_T> pre = preBuf_.Get<D_T>();
+        AscendC::LocalTensor<F> calc = tmpBuf0_.Get<F>();
+        AscendC::LocalTensor<F> state = cacheBuf_.Get<F>();
+        AscendC::LocalTensor<F> scale = state[TS_SCALE * tPitch_];
+        AscendC::LocalTensor<F> origin = state[TS_INVSCALE * tPitch_];
+        AscendC::LocalTensor<F> sum = state[TS_SUM * tPitch_];
+        AscendC::LocalTensor<F> partial = state[TS_MEANFULL * tPitch_];
+        AscendC::LocalTensor<F> mean = state[TS_MEAN * tPitch_];
+        AscendC::LocalTensor<F> scratch = state[TS_MEANLOW * tPitch_];
+        AscendC::LocalTensor<F> variance = state[TS_VAR * tPitch_];
+        AscendC::LocalTensor<F> next = state[7 * tPitch_];
+        AscendC::LocalTensor<F> denom = state[TS_DENOM * tPitch_];
+        AscendC::LocalTensor<F> comp = state[9 * tPitch_];
+        AscendC::LocalTensor<F> maxValue = state[10 * tPitch_];
+        AscendC::LocalTensor<F> minValue = state[11 * tPitch_];
+        AscendC::LocalTensor<uint8_t> shared = tmpBuf1_.Get<uint8_t>();
+        // FP16 inputs are range-bounded, so the row-0 origin shift cannot overflow fp32
+        // statistics; the extra min/max scaling pass only added a full data read.
+        const bool useMidrangeScale = false;
+
+        if (useMidrangeScale) {
+            AscendC::Duplicate(maxValue, -3.402823466e38f, static_cast<int32_t>(count));
+            AscendC::Duplicate(minValue, 3.402823466e38f, static_cast<int32_t>(count));
+            AscendC::PipeBarrier<PIPE_V>();
+            for (int64_t row = 0; row < tRi_;) {
+                const int64_t rows = (tRi_ - row > tRows_) ? tRows_ : tRi_ - row;
+                TileDmaInRows(outerAIdx, row, colStart, rows, count);
+                Rara5LoadCalc(calc, pre, rows * tPitch_);
+                uint32_t shape[2] = {static_cast<uint32_t>(rows), static_cast<uint32_t>(tPitch_)};
+                AscendC::ReduceMax<F, AscendC::Pattern::Reduce::RA, false>(partial, calc, shared, shape, false);
+                AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+                AscendC::Max(maxValue, maxValue, partial, count);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::ReduceMin<F, AscendC::Pattern::Reduce::RA, false>(partial, calc, shared, shape, false);
+                AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+                AscendC::Min(minValue, minValue, partial, count);
+                AscendC::PipeBarrier<PIPE_V>();
+                row += rows;
+            }
+            AscendC::Add(origin, maxValue, minValue, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Muls(origin, origin, 0.5f, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(scale, maxValue, origin, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(partial, origin, minValue, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Max(scale, scale, partial, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Maxs(scale, scale, 1.0f, count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+
+        AscendC::Duplicate(sum, 0.0f, static_cast<int32_t>(count));
+        AscendC::Duplicate(comp, 0.0f, static_cast<int32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+        for (int64_t row = 0; row < tRi_;) {
+            const int64_t rows = (tRi_ - row > tRows_) ? tRows_ : tRi_ - row;
+            TileDmaInRows(outerAIdx, row, colStart, rows, count);
+            Rara5LoadCalc(calc, pre, rows * tPitch_);
+            if (!useMidrangeScale && row == 0) {
+                AscendC::Copy<F>(origin, calc, static_cast<uint32_t>(count));
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+            TileBroadcastRows<1>(calc, origin, rows, count);
+            if (useMidrangeScale) {
+                TileBroadcastRows<2>(calc, scale, rows, count);
+            }
+            uint32_t shape[2] = {static_cast<uint32_t>(rows), static_cast<uint32_t>(tPitch_)};
+            AscendC::ReduceSum<F, AscendC::Pattern::Reduce::RA, true>(partial, calc, shared, shape, false);
+            AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            Rara5Accumulate(sum, comp, partial, scratch, next, count);
+            row += rows;
+        }
+        AscendC::Muls(mean, sum, invRTotal_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        if (!useMidrangeScale) {
+            AscendC::Add(mean, mean, origin, count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+
+        AscendC::Duplicate(variance, 0.0f, static_cast<int32_t>(count));
+        AscendC::Duplicate(comp, 0.0f, static_cast<int32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+        for (int64_t row = 0; row < tRi_;) {
+            const int64_t rows = (tRi_ - row > tRows_) ? tRows_ : tRi_ - row;
+            TileDmaInRows(outerAIdx, row, colStart, rows, count);
+            Rara5LoadCalc(calc, pre, rows * tPitch_);
+            if (useMidrangeScale) {
+                TileBroadcastRows<1>(calc, origin, rows, count);
+                TileBroadcastRows<2>(calc, scale, rows, count);
+            }
+            TileBroadcastRows<1>(calc, mean, rows, count);
+            AscendC::Mul(calc, calc, calc, rows * tPitch_);
+            AscendC::PipeBarrier<PIPE_V>();
+            uint32_t shape[2] = {static_cast<uint32_t>(rows), static_cast<uint32_t>(tPitch_)};
+            AscendC::ReduceSum<F, AscendC::Pattern::Reduce::RA, true>(partial, calc, shared, shape, false);
+            AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            Rara5Accumulate(variance, comp, partial, scratch, next, count);
+            row += rows;
+        }
+        AscendC::Muls(variance, variance, invRTotal_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Maxs(variance, variance, 0.0f, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sqrt(denom, variance, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        if (useMidrangeScale) {
+            AscendC::Duplicate(partial, eps_, static_cast<int32_t>(count));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Div(partial, partial, scale, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Add(denom, denom, partial, count);
+        } else {
+            AscendC::Adds(denom, denom, eps_, count);
+        }
+        AscendC::PipeBarrier<PIPE_V>();
+        for (int64_t row = 0; row < tRi_;) {
+            const int64_t rows = (tRi_ - row > tRows_) ? tRows_ : tRi_ - row;
+            TileDmaInRows(outerAIdx, row, colStart, rows, count);
+            Rara5LoadCalc(calc, pre, rows * tPitch_);
+            if (useMidrangeScale) {
+                TileBroadcastRows<1>(calc, origin, rows, count);
+                TileBroadcastRows<2>(calc, scale, rows, count);
+            }
+            TileBroadcastRows<1>(calc, mean, rows, count);
+            TileBroadcastRows<2>(calc, denom, rows, count);
+            Rara5StoreCalc(pre, calc, rows * tPitch_);
+            TileDmaOutRows(outerAIdx, row, colStart, rows, count);
+            row += rows;
+        }
+    }
+
+    __aicore__ inline void ProcessTileA()
+    {
+        int64_t blockIdx = AscendC::GetBlockIdx();
+        if (blockIdx >= usedCoreNum_) {
+            return;
+        }
+        for (int64_t w = blockIdx; w < tWorkItems_; w += usedCoreNum_) {
+            ProcessTileWorkItem(w / tColChunks_, w % tColChunks_);
+        }
+    }
+
+    __aicore__ inline void TileDmaIn(int64_t gmOff, int64_t rows, int64_t rowLen)
+    {
+        AscendC::LocalTensor<D_T> pre = preBuf_.Get<D_T>();
+        const int64_t elemBytes = static_cast<int64_t>(sizeof(D_T));
+        const int64_t blockBytes = rowLen * elemBytes;
+        const int64_t ubOccupiedBytes = ((blockBytes + 31) / 32) * 32;
+        AscendC::DataCopyPadExtParams<D_T> pad{false, 0, 0, 0};
+        if (tDmaMode_ == 1) {
+            AscendC::DataCopyExtParams ext;
+            ext.blockCount = 1;
+            ext.blockLen = static_cast<uint32_t>(rows * blockBytes);
+            ext.srcStride = 0;
+            ext.dstStride = 0;
+            ext.rsv = 0;
+            AscendC::DataCopyPad(pre, gmX_[gmOff], ext, pad);
+        } else if (tDmaMode_ == 2) {
+            AscendC::DataCopyExtParams ext;
+            ext.blockCount = 1;
+            ext.blockLen = static_cast<uint32_t>(blockBytes);
+            ext.srcStride = 0;
+            ext.dstStride = 0;
+            ext.rsv = 0;
+            for (int64_t r = 0; r < rows; ++r) {
+                AscendC::DataCopyPad(pre[r * tPitch_], gmX_[gmOff + r * tSi_], ext, pad);
+            }
+        } else {
+            AscendC::DataCopyExtParams ext;
+            ext.blockCount = static_cast<uint16_t>(rows);
+            ext.blockLen = static_cast<uint32_t>(blockBytes);
+            ext.srcStride = 0;
+            ext.dstStride = (tPitch_ * elemBytes - ubOccupiedBytes) / 32;
+            ext.rsv = 0;
+            AscendC::DataCopyPad(pre, gmX_[gmOff], ext, pad);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
+    }
+
+    __aicore__ inline void TileDmaOut(int64_t gmOff, int64_t rows, int64_t rowLen)
+    {
+        AscendC::LocalTensor<D_T> pre = preBuf_.Get<D_T>();
+        const int64_t elemBytes = static_cast<int64_t>(sizeof(D_T));
+        const int64_t blockBytes = rowLen * elemBytes;
+        const int64_t ubOccupiedBytes = ((blockBytes + 31) / 32) * 32;
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+        if (tDmaMode_ == 1) {
+            AscendC::DataCopyExtParams ext;
+            ext.blockCount = 1;
+            ext.blockLen = static_cast<uint32_t>(rows * blockBytes);
+            ext.srcStride = 0;
+            ext.dstStride = 0;
+            ext.rsv = 0;
+            AscendC::DataCopyPad(gmY_[gmOff], pre, ext);
+        } else if (tDmaMode_ == 2) {
+            AscendC::DataCopyExtParams ext;
+            ext.blockCount = 1;
+            ext.blockLen = static_cast<uint32_t>(blockBytes);
+            ext.srcStride = 0;
+            ext.dstStride = 0;
+            ext.rsv = 0;
+            for (int64_t r = 0; r < rows; ++r) {
+                AscendC::DataCopyPad(gmY_[gmOff + r * tSi_], pre[r * tPitch_], ext);
+            }
+        } else {
+            AscendC::DataCopyExtParams ext;
+            ext.blockCount = static_cast<uint16_t>(rows);
+            ext.blockLen = static_cast<uint32_t>(blockBytes);
+            ext.srcStride = (tPitch_ * elemBytes - ubOccupiedBytes) / 32;
+            ext.dstStride = 0;
+            ext.rsv = 0;
+            AscendC::DataCopyPad(gmY_[gmOff], pre, ext);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
+    }
+
+    __aicore__ inline int64_t TileFullROffset(int64_t logicalRow)
+    {
+        int64_t offset = 0;
+        int64_t rem = logicalRow;
+        for (int32_t axis = axisNum_ - 2; axis >= 1; axis -= 2) {
+            const int64_t coord = rem % axisShape_[axis];
+            rem /= axisShape_[axis];
+            offset += coord * axisStride_[axis];
+        }
+        return offset;
+    }
+
+    __aicore__ inline int64_t TileStableBinRow(int64_t logicalRow)
+    {
+        int64_t coords[MAX_PATTERN_RANK] = {0};
+        int64_t rem = logicalRow;
+        for (int32_t axis = axisNum_ - 2; axis >= 1; axis -= 2) {
+            coords[axis] = rem % axisShape_[axis];
+            rem /= axisShape_[axis];
+        }
+        int64_t stableRow = 0;
+        int64_t stride = 1;
+        for (int32_t axis = 1; axis < axisNum_; axis += 2) {
+            stableRow += coords[axis] * stride;
+            stride *= axisShape_[axis];
+        }
+        return stableRow;
+    }
+
+    __aicore__ inline int64_t TileABase(int64_t outerAIdx, int64_t colStart)
+    {
+        int64_t offset = colStart;
+        int64_t rem = outerAIdx;
+        for (int32_t axis = 0; axis < axisNum_ - 1; axis += 2) {
+            const int64_t coord = rem % axisShape_[axis];
+            rem /= axisShape_[axis];
+            offset += coord * axisStride_[axis];
+        }
+        return offset;
+    }
+
+    __aicore__ inline void TileDmaInRows(int64_t outerAIdx, int64_t rowStart, int64_t colStart, int64_t rows,
+                                         int64_t rowLen)
+    {
+        const int64_t base = TileABase(outerAIdx, colStart);
+        if (axisNum_ == 3) {
+            TileDmaIn(base + rowStart * tSi_, rows, rowLen);
+            return;
+        }
+        AscendC::LocalTensor<D_T> pre = preBuf_.Get<D_T>();
+        const int64_t elemBytes = static_cast<int64_t>(sizeof(D_T));
+        const int64_t blockBytes = rowLen * elemBytes;
+        const int64_t ubOccupiedBytes = ((blockBytes + 31) / 32) * 32;
+        AscendC::DataCopyPadExtParams<D_T> pad{false, 0, 0, 0};
+        const int64_t innerR = axisShape_[axisNum_ - 2];
+        for (int64_t done = 0; done < rows;) {
+            const int64_t logicalRow = rowStart + done;
+            int64_t segmentRows = innerR - logicalRow % innerR;
+            if (segmentRows > rows - done) {
+                segmentRows = rows - done;
+            }
+            AscendC::DataCopyExtParams ext;
+            ext.blockCount = static_cast<uint16_t>(segmentRows);
+            ext.blockLen = static_cast<uint32_t>(blockBytes);
+            ext.srcStride = (tSi_ - rowLen) * elemBytes;
+            ext.dstStride = (tPitch_ * elemBytes - ubOccupiedBytes) / 32;
+            ext.rsv = 0;
+            AscendC::DataCopyPad(pre[done * tPitch_], gmX_[base + TileFullROffset(logicalRow)], ext, pad);
+            done += segmentRows;
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
+    }
+
+    __aicore__ inline void TileDmaOutRows(int64_t outerAIdx, int64_t rowStart, int64_t colStart, int64_t rows,
+                                          int64_t rowLen)
+    {
+        const int64_t base = TileABase(outerAIdx, colStart);
+        if (axisNum_ == 3) {
+            TileDmaOut(base + rowStart * tSi_, rows, rowLen);
+            return;
+        }
+        AscendC::LocalTensor<D_T> pre = preBuf_.Get<D_T>();
+        const int64_t elemBytes = static_cast<int64_t>(sizeof(D_T));
+        const int64_t blockBytes = rowLen * elemBytes;
+        const int64_t ubOccupiedBytes = ((blockBytes + 31) / 32) * 32;
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+        const int64_t innerR = axisShape_[axisNum_ - 2];
+        for (int64_t done = 0; done < rows;) {
+            const int64_t logicalRow = rowStart + done;
+            int64_t segmentRows = innerR - logicalRow % innerR;
+            if (segmentRows > rows - done) {
+                segmentRows = rows - done;
+            }
+            AscendC::DataCopyExtParams ext;
+            ext.blockCount = static_cast<uint16_t>(segmentRows);
+            ext.blockLen = static_cast<uint32_t>(blockBytes);
+            ext.srcStride = (tPitch_ * elemBytes - ubOccupiedBytes) / 32;
+            ext.dstStride = (tSi_ - rowLen) * elemBytes;
+            ext.rsv = 0;
+            AscendC::DataCopyPad(gmY_[base + TileFullROffset(logicalRow)], pre[done * tPitch_], ext);
+            done += segmentRows;
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
+    }
+
+    __aicore__ inline void InitBins(AscendC::LocalTensor<F> stats, int64_t count)
+    {
+        for (int64_t b = 0; b < TILE_A_BIN_COUNT; ++b) {
+            AscendC::Duplicate(stats[(TS_BIN_BASE + b) * tPitch_], 0.0f, static_cast<int32_t>(count));
+            AscendC::Duplicate(stats[(TS_BIN_COMP_BASE + b) * tPitch_], 0.0f, static_cast<int32_t>(count));
+        }
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    // Row-expanded constant for the 8-row block path: eight pitch-strided copies of
+    // `value` so one 64-float elementwise op covers eight rows lane-identically.
+    __aicore__ inline void ExpandConstRows(AscendC::LocalTensor<F> exp, AscendC::LocalTensor<F> value, int64_t count)
+    {
+        for (int64_t g = 0; g < 8; ++g) {
+            AscendC::Copy<F>(exp[g * tPitch_], value, static_cast<uint32_t>(count));
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+    }
+
+    __aicore__ inline void AccumulateBin(AscendC::LocalTensor<F> stats, AscendC::LocalTensor<F> value,
+                                         AscendC::LocalTensor<F> tmp, AscendC::LocalTensor<F> next, int64_t logicalRow,
+                                         int64_t count)
+    {
+        const int64_t bin = logicalRow & (TILE_A_BIN_COUNT - 1);
+        AscendC::LocalTensor<F> sumBin = stats[(TS_BIN_BASE + bin) * tPitch_];
+        AscendC::LocalTensor<F> compBin = stats[(TS_BIN_COMP_BASE + bin) * tPitch_];
+        AscendC::Sub(tmp, value, compBin, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(next, sumBin, tmp, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sub(compBin, next, sumBin, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sub(compBin, compBin, tmp, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Copy<F>(sumBin, next, static_cast<uint32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void ReduceBins(AscendC::LocalTensor<F> stats, AscendC::LocalTensor<F> dst, int64_t count)
+    {
+        for (int64_t b = 0; b < TILE_A_BIN_COUNT; ++b) {
+            AscendC::LocalTensor<F> sumBin = stats[(TS_BIN_BASE + b) * tPitch_];
+            AscendC::LocalTensor<F> compBin = stats[(TS_BIN_COMP_BASE + b) * tPitch_];
+            AscendC::Sub(sumBin, sumBin, compBin, count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        for (int64_t stride = 1; stride < TILE_A_BIN_COUNT; stride *= 2) {
+            for (int64_t b = 0; b < TILE_A_BIN_COUNT; b += 2 * stride) {
+                AscendC::LocalTensor<F> lhs = stats[(TS_BIN_BASE + b) * tPitch_];
+                AscendC::LocalTensor<F> rhs = stats[(TS_BIN_BASE + b + stride) * tPitch_];
+                AscendC::Add(lhs, lhs, rhs, count);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+        }
+        AscendC::Copy<F>(dst, stats[TS_BIN_BASE * tPitch_], static_cast<uint32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void InitBinsFp16(AscendC::LocalTensor<F> stats, int64_t count)
+    {
+        for (int64_t b = 0; b < FP16_BIN_COUNT; ++b) {
+            AscendC::Duplicate(stats[(TS_BIN_BASE + b) * tPitch_], 0.0f, static_cast<int32_t>(count));
+            AscendC::Duplicate(stats[(TS_BIN_COMP_BASE + b) * tPitch_], 0.0f, static_cast<int32_t>(count));
+        }
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void AccumulateBinFp16(AscendC::LocalTensor<F> stats, AscendC::LocalTensor<F> value,
+                                             AscendC::LocalTensor<F> tmp, AscendC::LocalTensor<F> next,
+                                             int64_t logicalRow, int64_t count)
+    {
+        const int64_t bin = logicalRow & 63;
+        AscendC::LocalTensor<F> sumBin = stats[(TS_BIN_BASE + bin) * tPitch_];
+        AscendC::LocalTensor<F> compBin = stats[(TS_BIN_COMP_BASE + bin) * tPitch_];
+        AscendC::Sub(tmp, value, compBin, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(next, sumBin, tmp, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sub(compBin, next, sumBin, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sub(compBin, compBin, tmp, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Copy<F>(sumBin, next, static_cast<uint32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void ReduceBinsFp16(AscendC::LocalTensor<F> stats, AscendC::LocalTensor<F> dst, int64_t count)
+    {
+        for (int64_t b = 0; b < FP16_BIN_COUNT; ++b) {
+            AscendC::LocalTensor<F> sumBin = stats[(TS_BIN_BASE + b) * tPitch_];
+            AscendC::LocalTensor<F> compBin = stats[(TS_BIN_COMP_BASE + b) * tPitch_];
+            AscendC::Sub(sumBin, sumBin, compBin, count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        for (int64_t stride = 1; stride < FP16_BIN_COUNT; stride *= 2) {
+            for (int64_t b = 0; b < FP16_BIN_COUNT; b += 2 * stride) {
+                AscendC::LocalTensor<F> lhs = stats[(TS_BIN_BASE + b) * tPitch_];
+                AscendC::LocalTensor<F> rhs = stats[(TS_BIN_BASE + b + stride) * tPitch_];
+                AscendC::Add(lhs, lhs, rhs, count);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+        }
+        AscendC::Copy<F>(dst, stats[TS_BIN_BASE * tPitch_], static_cast<uint32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    template <int32_t OP>
+    __aicore__ inline void TileBroadcastRows(AscendC::LocalTensor<F> data, AscendC::LocalTensor<F> value, int64_t rows,
+                                             int64_t count)
+    {
+        AscendC::BinaryRepeatParams params{
+            1, 1, 1, static_cast<uint8_t>(tPitch_ / 8), static_cast<uint8_t>(tPitch_ / 8), 0};
+        for (int64_t col = 0; col < count; col += VL_F32) {
+            const int64_t colCount = (count - col > VL_F32) ? VL_F32 : count - col;
+            for (int64_t done = 0; done < rows;) {
+                const uint8_t repeats = static_cast<uint8_t>((rows - done > 255) ? 255 : rows - done);
+                if constexpr (OP == 0) {
+                    AscendC::Mul(data[done * tPitch_ + col], data[done * tPitch_ + col], value[col], colCount, repeats,
+                                 params);
+                } else if constexpr (OP == 1) {
+                    AscendC::Sub(data[done * tPitch_ + col], data[done * tPitch_ + col], value[col], colCount, repeats,
+                                 params);
+                } else {
+                    AscendC::Div(data[done * tPitch_ + col], data[done * tPitch_ + col], value[col], colCount, repeats,
+                                 params);
+                }
+                AscendC::PipeBarrier<PIPE_V>();
+                done += repeats;
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessTileSmallRFp16(int64_t outerAIdx, int64_t colChunkIdx)
+    {
+        const int64_t colStart = colChunkIdx * tCols_;
+        int64_t count = tSi_ - colStart;
+        if (count > tCols_) {
+            count = tCols_;
+        }
+        const int64_t matrixElems = tRi_ * tPitch_;
+        AscendC::LocalTensor<D_T> pre = preBuf_.Get<D_T>();
+        AscendC::LocalTensor<F> work = tmpBuf0_.Get<F>();
+        AscendC::LocalTensor<uint8_t> shared = tmpBuf1_.Get<uint8_t>();
+        AscendC::LocalTensor<F> stats = cacheBuf_.Get<F>();
+        AscendC::LocalTensor<F> sum = stats[TS_SUM * tPitch_];
+        AscendC::LocalTensor<F> origin = stats[TS_MEANFULL * tPitch_];
+        AscendC::LocalTensor<F> mean = stats[TS_MEAN * tPitch_];
+        AscendC::LocalTensor<F> var = stats[TS_VAR * tPitch_];
+        AscendC::LocalTensor<F> denom = stats[TS_DENOM * tPitch_];
+
+        TileDmaInRows(outerAIdx, 0, colStart, tRi_, count);
+        AscendC::Cast(work, pre, AscendC::RoundMode::CAST_NONE, matrixElems);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Copy<F>(origin, work, static_cast<uint32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+        TileBroadcastRows<1>(work, origin, tRi_, count);
+        uint32_t shape[2] = {static_cast<uint32_t>(tRi_), static_cast<uint32_t>(tPitch_)};
+        AscendC::ReduceSum<F, AscendC::Pattern::Reduce::RA, false>(sum, work, shared, shape, false);
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+        AscendC::Muls(mean, sum, invRTotal_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        AscendC::Cast(work, pre, AscendC::RoundMode::CAST_NONE, matrixElems);
+        AscendC::PipeBarrier<PIPE_V>();
+        TileBroadcastRows<1>(work, origin, tRi_, count);
+        TileBroadcastRows<1>(work, mean, tRi_, count);
+        AscendC::Mul(work, work, work, matrixElems);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::ReduceSum<F, AscendC::Pattern::Reduce::RA, false>(var, work, shared, shape, false);
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+        AscendC::Muls(var, var, invRTotal_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sqrt(denom, var, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Adds(denom, denom, eps_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Cast(work, pre, AscendC::RoundMode::CAST_NONE, matrixElems);
+        AscendC::PipeBarrier<PIPE_V>();
+        TileBroadcastRows<1>(work, origin, tRi_, count);
+        TileBroadcastRows<1>(work, mean, tRi_, count);
+        TileBroadcastRows<2>(work, denom, tRi_, count);
+        AscendC::Cast(pre, work, AscendC::RoundMode::CAST_RINT, matrixElems);
+        AscendC::PipeBarrier<PIPE_V>();
+        TileDmaOutRows(outerAIdx, 0, colStart, tRi_, count);
+    }
+
+    __aicore__ inline void ProcessTileSmallR(int64_t outerAIdx, int64_t colChunkIdx)
+    {
+        constexpr F MIN_NORMAL_F32 = 1.1754943508222875e-38f;
+        const int64_t colStart = colChunkIdx * tCols_;
+        int64_t count = tSi_ - colStart;
+        if (count > tCols_) {
+            count = tCols_;
+        }
+        AscendC::LocalTensor<F> stats = cacheBuf_.Get<F>();
+        AscendC::LocalTensor<F> invScale = stats[TS_INVSCALE * tPitch_];
+        AscendC::LocalTensor<F> sum = stats[TS_SUM * tPitch_];
+        AscendC::LocalTensor<F> origin = stats[TS_MEANFULL * tPitch_];
+        AscendC::LocalTensor<F> mean = stats[TS_MEAN * tPitch_];
+        AscendC::LocalTensor<F> meanLow = stats[TS_MEANLOW * tPitch_];
+        AscendC::LocalTensor<F> var = stats[TS_VAR * tPitch_];
+        AscendC::LocalTensor<F> denom = stats[TS_DENOM * tPitch_];
+        AscendC::LocalTensor<uint8_t> meanMask = stats[TS_MASK * tPitch_].ReinterpretCast<uint8_t>();
+        AscendC::LocalTensor<F> work = tmpBuf0_.Get<F>();
+        AscendC::LocalTensor<F> work2 = tmpBuf1_.Get<F>();
+        AscendC::LocalTensor<F> pre = preBuf_.Get<F>();
+        TileDmaInRows(outerAIdx, 0, colStart, tRi_, count);
+
+        const int64_t countAlign = ((count + 7) / 8) * 8;
+        // Initialize the aligned tail as well so reused UB cannot affect later vector operations.
+        constexpr F F32_MAX = 3.402823466e38f;
+        AscendC::Duplicate(origin, F32_MAX, static_cast<int32_t>(countAlign));
+        AscendC::Duplicate(mean, -F32_MAX, static_cast<int32_t>(countAlign));
+        AscendC::PipeBarrier<PIPE_V>();
+        for (int64_t r = 0; r < tRi_; ++r) {
+            AscendC::Min(origin, origin, pre[r * tPitch_], count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Max(mean, mean, pre[r * tPitch_], count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        AscendC::Muls(origin, origin, 0.5f, count);
+        AscendC::Muls(mean, mean, 0.5f, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(origin, origin, mean, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Duplicate(sum, 0.0f, static_cast<int32_t>(countAlign));
+        AscendC::PipeBarrier<PIPE_V>();
+        for (int64_t r = 0; r < tRi_; ++r) {
+            AscendC::Sub(work, pre[r * tPitch_], origin, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Abs(work, work, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Max(sum, sum, work, count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        // Normalize every column independently. A tile-global switch would let one
+        // FLT_MAX column disable underflow protection for unrelated tiny columns.
+        AscendC::Maxs(work, sum, MIN_NORMAL_F32, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Reciprocal(invScale, work, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mul(work2, work, invScale, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Muls(work2, work2, -1.0f, count);
+        AscendC::Adds(work2, work2, 2.0f, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mul(invScale, invScale, work2, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Maxs(invScale, invScale, MIN_NORMAL_F32, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mins(invScale, invScale, InvScaleCap(), count);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        if (tRi_ == 3) {
+            const uint16_t repeats = static_cast<uint16_t>((count + VL_F32 - 1) / VL_F32);
+            asc_vf_call<Mvnv2R3EftVf<F>>((__ubuf__ F*)pre.GetPhyAddr(), (__ubuf__ F*)pre[tPitch_].GetPhyAddr(),
+                                         (__ubuf__ F*)pre[2 * tPitch_].GetPhyAddr(), (__ubuf__ F*)origin.GetPhyAddr(),
+                                         (__ubuf__ F*)invScale.GetPhyAddr(), eps_, static_cast<uint32_t>(count), VL_F32,
+                                         repeats);
+            AscendC::PipeBarrier<PIPE_V>();
+            TileDmaOutRows(outerAIdx, 0, colStart, tRi_, count);
+            return;
+        }
+
+        AscendC::Duplicate(sum, 0.0f, static_cast<int32_t>(count));
+        AscendC::Duplicate(mean, 0.0f, static_cast<int32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+        for (int64_t r = 0; r < tRi_; ++r) {
+            AscendC::Copy<F>(work, pre[r * tPitch_], static_cast<uint32_t>(count));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(work, work, origin, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(work, work, invScale, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Add(var, sum, work, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Abs(denom, sum, count);
+            AscendC::Abs(meanLow, work, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Compare(meanMask, denom, meanLow, AscendC::CMPMODE::GE, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(work2, sum, var, count);
+            AscendC::Add(work2, work2, work, count);
+            AscendC::Sub(denom, work, var, count);
+            AscendC::Add(denom, denom, sum, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Select(work2, meanMask, work2, denom, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(mean, mean, work2, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Copy<F>(sum, var, static_cast<uint32_t>(count));
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        AscendC::Copy<F>(var, mean, static_cast<uint32_t>(count));
+        AscendC::Muls(mean, sum, invRTotal_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Muls(work2, mean, static_cast<F>(tRi_), count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sub(meanLow, sum, work2, count);
+        AscendC::Sub(meanLow, meanLow, var, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Muls(meanLow, meanLow, invRTotal_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        AscendC::Duplicate(var, 0.0f, static_cast<int32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+        for (int64_t r = 0; r < tRi_; ++r) {
+            AscendC::Copy<F>(work, pre[r * tPitch_], static_cast<uint32_t>(count));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(work, work, origin, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(work, work, invScale, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(work, work, mean, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(work, work, meanLow, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(work, work, work, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Add(var, var, work, count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        AscendC::Muls(var, var, invRTotal_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sqrt(denom, var, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Duplicate(work2, eps_, static_cast<int32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mul(work2, work2, invScale, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(denom, denom, work2, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        for (int64_t r = 0; r < tRi_; ++r) {
+            AscendC::LocalTensor<F> row = pre[r * tPitch_];
+            AscendC::Sub(row, row, origin, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(row, row, invScale, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(row, row, mean, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(row, row, meanLow, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Div(row, row, denom, count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        TileDmaOutRows(outerAIdx, 0, colStart, tRi_, count);
+    }
+
+    __aicore__ inline void ProcessTileR2Fp16(int64_t outerAIdx, int64_t colChunkIdx)
+    {
+        const int64_t colStart = colChunkIdx * tCols_;
+        int64_t count = tSi_ - colStart;
+        if (count > tCols_) {
+            count = tCols_;
+        }
+        AscendC::LocalTensor<D_T> pre = preBuf_.Get<D_T>();
+        AscendC::LocalTensor<F> x0 = tmpBuf0_.Get<F>();
+        AscendC::LocalTensor<F> x1 = tmpBuf1_.Get<F>();
+        AscendC::LocalTensor<F> stats = cacheBuf_.Get<F>();
+        AscendC::LocalTensor<F> residual = stats[TS_MEAN * tPitch_];
+        AscendC::LocalTensor<F> denom = stats[TS_DENOM * tPitch_];
+        TileDmaInRows(outerAIdx, 0, colStart, 2, count);
+        AscendC::Cast(x0, pre, AscendC::RoundMode::CAST_NONE, count);
+        AscendC::Cast(x1, pre[tPitch_], AscendC::RoundMode::CAST_NONE, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sub(residual, x0, x1, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Muls(residual, residual, 0.5f, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Abs(denom, residual, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Adds(denom, denom, eps_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Div(x0, residual, denom, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::LocalTensor<uint8_t> zeroMask = stats.ReinterpretCast<uint8_t>();
+        AscendC::CompareScalar(zeroMask, x0, 0.0f, AscendC::CMPMODE::EQ, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Duplicate(residual, 0.0f, static_cast<int32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Select(x0, zeroMask, residual, x0, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Muls(x1, x0, -1.0f, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Select(x1, zeroMask, residual, x1, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Cast(pre, x0, AscendC::RoundMode::CAST_RINT, count);
+        AscendC::Cast(pre[tPitch_], x1, AscendC::RoundMode::CAST_RINT, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        TileDmaOutRows(outerAIdx, 0, colStart, 2, count);
+    }
+
+    __aicore__ inline void ProcessTileWorkItem(int64_t outerAIdx, int64_t colChunkIdx)
+    {
+        if constexpr (!std::is_same_v<D_T, F>) {
+            if (tRi_ == 2) {
+                ProcessTileR2Fp16(outerAIdx, colChunkIdx);
+                return;
+            }
+            if (tRi_ <= 64) {
+                ProcessTileSmallRFp16(outerAIdx, colChunkIdx);
+                return;
+            }
+        }
+        if constexpr (std::is_same_v<D_T, F>) {
+            if (tRi_ <= 64) {
+                ProcessTileSmallR(outerAIdx, colChunkIdx);
+                return;
+            }
+        }
+        constexpr F MIN_NORMAL_F32 = 1.1754943508222875e-38f;
+        const int64_t colStart = colChunkIdx * tCols_;
+        int64_t rowLen = tSi_ - colStart;
+        if (rowLen > tCols_) {
+            rowLen = tCols_;
+        }
+        const int64_t count = rowLen;
+        const int64_t totalRows = tRi_;
+        AscendC::LocalTensor<F> stats = cacheBuf_.Get<F>();
+        AscendC::LocalTensor<F> scale = stats[TS_SCALE * tPitch_];
+        AscendC::LocalTensor<F> invScale = stats[TS_INVSCALE * tPitch_];
+        AscendC::LocalTensor<F> sum = stats[TS_SUM * tPitch_];
+        AscendC::LocalTensor<F> origin = stats[TS_MEANFULL * tPitch_];
+        AscendC::LocalTensor<F> mean = stats[TS_MEAN * tPitch_];
+        AscendC::LocalTensor<F> meanLow = stats[TS_MEANLOW * tPitch_];
+        AscendC::LocalTensor<F> var = stats[TS_VAR * tPitch_];
+        AscendC::LocalTensor<F> denom = stats[TS_DENOM * tPitch_];
+        AscendC::LocalTensor<F> work = tmpBuf0_.Get<F>();
+        AscendC::LocalTensor<F> work2 = tmpBuf1_.Get<F>();
+        AscendC::LocalTensor<D_T> pre = preBuf_.Get<D_T>();
+        // 8-row block mode (FP32, single R axis, pitch 8, block-aligned tiles): rows
+        // r..r+7 form one contiguous 64-float span and their bins (128-bin table, r
+        // multiple of 8) are contiguous without wrap, so each per-row elementwise/Kahan
+        // step runs once per block with lane 8*g+j holding row r+g column j -- the same
+        // per-lane operation sequence as the row loop, hence bit-identical accumulators.
+        // Padding lanes (j >= count) carry garbage that no count-wide read ever consumes.
+        // Block scratch and row-expanded constants live in the stats slack region
+        // [268*pitch, 268*pitch+384) reserved by the host (TILE_A_BLOCK_STAT_SLACK).
+        const bool blockMode = std::is_same_v<D_T, F> && axisNum_ == 3 && tPitch_ == 8 && totalRows >= 8 &&
+                               (totalRows <= tRows_ || tRows_ % 8 == 0);
+        const int64_t blkElems = 8 * tPitch_;
+        AscendC::LocalTensor<F> blockNext = stats[(TS_BIN_COMP_BASE + TILE_A_BIN_COUNT) * tPitch_];
+        AscendC::LocalTensor<F> originExp = blockNext[64];
+        AscendC::LocalTensor<F> invScaleExp = originExp[64];
+        AscendC::LocalTensor<F> meanLowExp = invScaleExp[64];
+        AscendC::LocalTensor<F> meanExp = meanLowExp[64];
+        AscendC::LocalTensor<F> denomExp = meanExp[64];
+
+        bool needScale = false;
+        if constexpr (std::is_same_v<D_T, F>) {
+            AscendC::Duplicate(scale, 0.0f, static_cast<int32_t>(tPitch_));
+            AscendC::PipeBarrier<PIPE_V>();
+            for (int64_t lin = 0; lin < totalRows;) {
+                int64_t rows = totalRows - lin;
+                if (rows > tRows_) {
+                    rows = tRows_;
+                }
+                TileDmaInRows(outerAIdx, lin, colStart, rows, rowLen);
+                for (int64_t r = 0; r < rows; ++r) {
+                    if (blockMode && r % 8 == 0 && r + 8 <= rows) {
+                        AscendC::Abs(work, pre[r * tPitch_], static_cast<int32_t>(blkElems));
+                        AscendC::PipeBarrier<PIPE_V>();
+                        for (int64_t g = 0; g < 8; ++g) {
+                            AscendC::Max(scale, scale, work[g * tPitch_], count);
+                            AscendC::PipeBarrier<PIPE_V>();
+                        }
+                        r += 7;
+                        continue;
+                    }
+                    AscendC::Abs(work, pre[r * tPitch_], static_cast<int32_t>(count));
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Max(scale, scale, work, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
+                lin += rows;
+            }
+            const int64_t countAlign = ((count + 7) / 8) * 8;
+            uint32_t shape[2] = {1, static_cast<uint32_t>(countAlign)};
+            AscendC::ReduceMax<F, AscendC::Pattern::Reduce::AR, true>(work2, scale, shape, true);
+            AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            const float amaxGlobal = work2.GetValue(0);
+            // Two-sided normalization; see ProcessTileSmallR for why the underflow side matters.
+            const bool scaleUp = amaxGlobal < SCALE_UNDERFLOW_GUARD;
+            needScale = (amaxGlobal > 1.0f) || scaleUp;
+            AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
+            AscendC::Maxs(work, scale, scaleUp ? MIN_NORMAL_F32 : 1.0f, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Reciprocal(invScale, work, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Maxs(invScale, invScale, MIN_NORMAL_F32, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mins(invScale, invScale, InvScaleCap(), count);
+            AscendC::PipeBarrier<PIPE_V>();
+            if (blockMode) {
+                ExpandConstRows(invScaleExp, invScale, count);
+            }
+        } else {
+            AscendC::Duplicate(invScale, 1.0f, static_cast<int32_t>(count));
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+
+        if constexpr (std::is_same_v<D_T, F>) {
+            InitBins(stats, count);
+        } else {
+            InitBinsFp16(stats, count);
+        }
+        for (int64_t lin = 0; lin < totalRows;) {
+            int64_t rows = totalRows - lin;
+            if (rows > tRows_) {
+                rows = tRows_;
+            }
+            TileDmaInRows(outerAIdx, lin, colStart, rows, rowLen);
+            for (int64_t r = 0; r < rows; ++r) {
+                if constexpr (std::is_same_v<D_T, F>) {
+                    AscendC::LocalTensor<F> row = pre[r * tPitch_];
+                    if (blockMode && r % 8 == 0 && r + 8 <= rows) {
+                        if (needScale) {
+                            AscendC::Mul(work, row, invScaleExp, static_cast<int32_t>(blkElems));
+                            AscendC::PipeBarrier<PIPE_V>();
+                            if (lin + r == 0) {
+                                AscendC::Copy<F>(origin, work, static_cast<uint32_t>(count));
+                                AscendC::PipeBarrier<PIPE_V>();
+                                ExpandConstRows(originExp, origin, count);
+                            }
+                            AscendC::Sub(work2, work, originExp, static_cast<int32_t>(blkElems));
+                            AscendC::PipeBarrier<PIPE_V>();
+                        } else {
+                            if (lin + r == 0) {
+                                AscendC::Copy<F>(origin, row, static_cast<uint32_t>(count));
+                                AscendC::PipeBarrier<PIPE_V>();
+                                ExpandConstRows(originExp, origin, count);
+                            }
+                            AscendC::Sub(work2, row, originExp, static_cast<int32_t>(blkElems));
+                            AscendC::PipeBarrier<PIPE_V>();
+                        }
+                        AccumulateBin(stats, work2, work, blockNext, TileStableBinRow(lin + r), blkElems);
+                        r += 7;
+                        continue;
+                    }
+                    if (needScale) {
+                        AscendC::Mul(row, row, invScale, count);
+                        AscendC::PipeBarrier<PIPE_V>();
+                    }
+                    if (lin + r == 0) {
+                        AscendC::Copy<F>(origin, row, static_cast<uint32_t>(count));
+                        AscendC::PipeBarrier<PIPE_V>();
+                    }
+                    AscendC::Sub(row, row, origin, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AccumulateBin(stats, row, work, work2, TileStableBinRow(lin + r), count);
+                } else {
+                    AscendC::Cast(work, pre[r * tPitch_], AscendC::RoundMode::CAST_NONE, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    if (lin + r == 0) {
+                        AscendC::Copy<F>(origin, work, static_cast<uint32_t>(count));
+                        AscendC::PipeBarrier<PIPE_V>();
+                    }
+                    AscendC::Sub(work, work, origin, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AccumulateBinFp16(stats, work, work2, scale, TileStableBinRow(lin + r), count);
+                }
+            }
+            lin += rows;
+        }
+        if constexpr (std::is_same_v<D_T, F>) {
+            ReduceBins(stats, sum, count);
+        } else {
+            ReduceBinsFp16(stats, sum, count);
+        }
+        if constexpr (std::is_same_v<D_T, F>) {
+            AscendC::Muls(meanLow, sum, invRTotal_, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Copy<F>(mean, origin, static_cast<uint32_t>(count));
+            AscendC::PipeBarrier<PIPE_V>();
+            if (blockMode) {
+                ExpandConstRows(meanLowExp, meanLow, count);
+            }
+
+            for (int32_t correctionPass = 0; correctionPass < 1; ++correctionPass) {
+                InitBins(stats, count);
+                for (int64_t lin = 0; lin < totalRows;) {
+                    int64_t rows = totalRows - lin;
+                    if (rows > tRows_) {
+                        rows = tRows_;
+                    }
+                    TileDmaInRows(outerAIdx, lin, colStart, rows, rowLen);
+                    for (int64_t r = 0; r < rows; ++r) {
+                        AscendC::LocalTensor<F> row = pre[r * tPitch_];
+                        if (blockMode && r % 8 == 0 && r + 8 <= rows) {
+                            if (needScale) {
+                                AscendC::Mul(work, row, invScaleExp, static_cast<int32_t>(blkElems));
+                                AscendC::PipeBarrier<PIPE_V>();
+                                AscendC::Sub(work, work, originExp, static_cast<int32_t>(blkElems));
+                                AscendC::PipeBarrier<PIPE_V>();
+                            } else {
+                                AscendC::Sub(work, row, originExp, static_cast<int32_t>(blkElems));
+                                AscendC::PipeBarrier<PIPE_V>();
+                            }
+                            AscendC::Sub(work, work, meanLowExp, static_cast<int32_t>(blkElems));
+                            AscendC::PipeBarrier<PIPE_V>();
+                            AccumulateBin(stats, work, work2, blockNext, TileStableBinRow(lin + r), blkElems);
+                            r += 7;
+                            continue;
+                        }
+                        if (needScale) {
+                            AscendC::Mul(row, row, invScale, count);
+                            AscendC::PipeBarrier<PIPE_V>();
+                        }
+                        AscendC::Sub(row, row, origin, count);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Sub(row, row, meanLow, count);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AccumulateBin(stats, row, work, work2, TileStableBinRow(lin + r), count);
+                    }
+                    lin += rows;
+                }
+                ReduceBins(stats, var, count);
+                AscendC::Muls(var, var, invRTotal_, count);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Add(meanLow, meanLow, var, count);
+                AscendC::PipeBarrier<PIPE_V>();
+                if (blockMode) {
+                    ExpandConstRows(meanLowExp, meanLow, count);
+                }
+            }
+        } else {
+            AscendC::Muls(mean, sum, invRTotal_, count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+
+        if constexpr (std::is_same_v<D_T, F>) {
+            InitBins(stats, count);
+        } else {
+            InitBinsFp16(stats, count);
+        }
+        AscendC::Duplicate(work2, 0.0f, static_cast<int32_t>(count));
+        AscendC::PipeBarrier<PIPE_V>();
+        for (int64_t lin = 0; lin < totalRows;) {
+            int64_t rows = totalRows - lin;
+            if (rows > tRows_) {
+                rows = tRows_;
+            }
+            TileDmaInRows(outerAIdx, lin, colStart, rows, rowLen);
+            for (int64_t r = 0; r < rows; ++r) {
+                const uint16_t repeat = static_cast<uint16_t>((count + VL_F32 - 1) / VL_F32);
+                if constexpr (std::is_same_v<D_T, F>) {
+                    AscendC::LocalTensor<F> row = pre[r * tPitch_];
+                    if (blockMode && r % 8 == 0 && r + 8 <= rows) {
+                        if (needScale) {
+                            AscendC::Mul(work, row, invScaleExp, static_cast<int32_t>(blkElems));
+                            AscendC::PipeBarrier<PIPE_V>();
+                            AscendC::Sub(work, work, originExp, static_cast<int32_t>(blkElems));
+                            AscendC::PipeBarrier<PIPE_V>();
+                        } else {
+                            AscendC::Sub(work, row, originExp, static_cast<int32_t>(blkElems));
+                            AscendC::PipeBarrier<PIPE_V>();
+                        }
+                        asc_vf_call<Mvnv2SubSquareVf<F>>((__ubuf__ F*)work.GetPhyAddr(), (__ubuf__ F*)work.GetPhyAddr(),
+                                                         (__ubuf__ F*)meanLowExp.GetPhyAddr(),
+                                                         static_cast<uint32_t>(blkElems), VL_F32,
+                                                         static_cast<uint16_t>(blkElems / VL_F32));
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AccumulateBin(stats, work, work2, blockNext, TileStableBinRow(lin + r), blkElems);
+                        r += 7;
+                        continue;
+                    }
+                    if (needScale) {
+                        AscendC::Mul(row, row, invScale, count);
+                        AscendC::PipeBarrier<PIPE_V>();
+                    }
+                    AscendC::Sub(work, row, origin, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    asc_vf_call<Mvnv2SubSquareVf<F>>((__ubuf__ F*)work.GetPhyAddr(), (__ubuf__ F*)work.GetPhyAddr(),
+                                                     (__ubuf__ F*)meanLow.GetPhyAddr(), static_cast<uint32_t>(count),
+                                                     VL_F32, repeat);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AccumulateBin(stats, work, work2, scale, TileStableBinRow(lin + r), count);
+                } else {
+                    AscendC::Cast(work, pre[r * tPitch_], AscendC::RoundMode::CAST_NONE, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Sub(work, work, origin, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Sub(work, work, mean, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    asc_vf_call<Mvnv2SubSquareVf<F>>((__ubuf__ F*)work.GetPhyAddr(), (__ubuf__ F*)work.GetPhyAddr(),
+                                                     (__ubuf__ F*)work2.GetPhyAddr(), static_cast<uint32_t>(count),
+                                                     VL_F32, repeat);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AccumulateBinFp16(stats, work, scale, sum, TileStableBinRow(lin + r), count);
+                }
+            }
+            lin += rows;
+        }
+        if constexpr (std::is_same_v<D_T, F>) {
+            ReduceBins(stats, var, count);
+        } else {
+            ReduceBinsFp16(stats, var, count);
+        }
+        AscendC::Muls(var, var, invRTotal_, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Maxs(var, var, 0.0f, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sqrt(denom, var, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        if (eps_ != 0.0f) {
+            AscendC::Muls(work, invScale, eps_, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Add(denom, denom, work, count);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        if (blockMode) {
+            ExpandConstRows(meanExp, mean, count);
+            ExpandConstRows(denomExp, denom, count);
+        }
+        for (int64_t lin = 0; lin < totalRows;) {
+            int64_t rows = totalRows - lin;
+            if (rows > tRows_) {
+                rows = tRows_;
+            }
+            TileDmaInRows(outerAIdx, lin, colStart, rows, rowLen);
+            for (int64_t r = 0; r < rows; ++r) {
+                AscendC::LocalTensor<D_T> row = pre[r * tPitch_];
+                if constexpr (std::is_same_v<D_T, F>) {
+                    const uint16_t repeat = static_cast<uint16_t>((count + VL_F32 - 1) / VL_F32);
+                    if (blockMode && r % 8 == 0 && r + 8 <= rows) {
+                        const uint16_t blockRepeat = static_cast<uint16_t>(blkElems / VL_F32);
+                        if (eps_ > 0.0f) {
+                            asc_vf_call<Mvnv2ResidualDivTensorVf<F, true>>(
+                                (__ubuf__ F*)row.GetPhyAddr(), (__ubuf__ F*)row.GetPhyAddr(),
+                                (__ubuf__ F*)meanExp.GetPhyAddr(), (__ubuf__ F*)invScaleExp.GetPhyAddr(),
+                                (__ubuf__ F*)meanLowExp.GetPhyAddr(), (__ubuf__ F*)denomExp.GetPhyAddr(),
+                                static_cast<uint32_t>(blkElems), VL_F32, blockRepeat);
+                        } else {
+                            asc_vf_call<Mvnv2ResidualDivTensorVf<F, false>>(
+                                (__ubuf__ F*)row.GetPhyAddr(), (__ubuf__ F*)row.GetPhyAddr(),
+                                (__ubuf__ F*)meanExp.GetPhyAddr(), (__ubuf__ F*)invScaleExp.GetPhyAddr(),
+                                (__ubuf__ F*)meanLowExp.GetPhyAddr(), (__ubuf__ F*)denomExp.GetPhyAddr(),
+                                static_cast<uint32_t>(blkElems), VL_F32, blockRepeat);
+                        }
+                        AscendC::PipeBarrier<PIPE_V>();
+                        r += 7;
+                        continue;
+                    }
+                    if (eps_ > 0.0f) {
+                        asc_vf_call<Mvnv2ResidualDivTensorVf<F, true>>(
+                            (__ubuf__ F*)row.GetPhyAddr(), (__ubuf__ F*)row.GetPhyAddr(),
+                            (__ubuf__ F*)mean.GetPhyAddr(), (__ubuf__ F*)invScale.GetPhyAddr(),
+                            (__ubuf__ F*)meanLow.GetPhyAddr(), (__ubuf__ F*)denom.GetPhyAddr(),
+                            static_cast<uint32_t>(count), VL_F32, repeat);
+                    } else {
+                        asc_vf_call<Mvnv2ResidualDivTensorVf<F, false>>(
+                            (__ubuf__ F*)row.GetPhyAddr(), (__ubuf__ F*)row.GetPhyAddr(),
+                            (__ubuf__ F*)mean.GetPhyAddr(), (__ubuf__ F*)invScale.GetPhyAddr(),
+                            (__ubuf__ F*)meanLow.GetPhyAddr(), (__ubuf__ F*)denom.GetPhyAddr(),
+                            static_cast<uint32_t>(count), VL_F32, repeat);
+                    }
+                } else {
+                    AscendC::Cast(work, row, AscendC::RoundMode::CAST_NONE, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Sub(work, work, origin, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Sub(work, work, mean, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    const uint16_t repeat = static_cast<uint16_t>((count + VL_F32 - 1) / VL_F32);
+                    asc_vf_call<Mvnv2DivVf<F>>((__ubuf__ F*)work.GetPhyAddr(), (__ubuf__ F*)work.GetPhyAddr(),
+                                               (__ubuf__ F*)denom.GetPhyAddr(), static_cast<uint32_t>(count), VL_F32,
+                                               repeat);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Cast(row, work, AscendC::RoundMode::CAST_RINT, count);
+                }
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+            TileDmaOutRows(outerAIdx, lin, colStart, rows, rowLen);
+            lin += rows;
+        }
+    }
+
+public:
     __aicore__ inline void ProcessGroup2D()
     {
         int64_t blockIdx = AscendC::GetBlockIdx();
         if (blockIdx >= usedCoreNum_) {
-            AscendC::SyncAll();
+            constexpr int32_t baseBarriers = 6;
+            const bool flatGroup = axisNum_ == 2 && realGroups_ == 1 && axisStride_[1] == 1;
+            const int32_t correctionBarriers = std::is_same_v<D_T, F> && !flatGroup ? 4 : 0;
+            for (int32_t i = 0; i < baseBarriers + correctionBarriers; ++i) {
+                AscendC::SyncAll();
+            }
+            return;
+        }
+        if (axisNum_ == 2 && realGroups_ == 1 && axisStride_[1] == 1) {
+            ProcessFlatRGroup();
             return;
         }
         int64_t aLoopIdx = blockIdx % aLoopCntTotal_;
         int64_t rGroupIdx = blockIdx / aLoopCntTotal_;
-        // Only rGroupIdx == 0 does the work; others just SyncAll.
+        int64_t splitChunkIdx = aLoopIdx % aSplitChunkCnt_;
+        int64_t outerAFlat = aLoopIdx / aSplitChunkCnt_;
+        int64_t aOff = splitChunkIdx * aUbFactor_;
+        int64_t aLen = aUbFactor_;
+        if (aOff + aLen > aSplitShape_) {
+            aLen = aSplitShape_ - aOff;
+        }
+        if (aLen < 0) {
+            aLen = 0;
+        }
+        int64_t gBase = outerAFlat * aSplitShape_ * innerAProd_;
+        int64_t gStart = gBase + aOff * innerAProd_;
+        int64_t gCount = aLen * innerAProd_;
+        if (gStart + gCount > realGroups_) {
+            gCount = realGroups_ - gStart;
+        }
+        if (gCount < 0) {
+            gCount = 0;
+        }
+        const int64_t rBegin = PartitionStart(rLoopCntTotal_, rGroupIdx, rGroupCnt_);
+        const int64_t rEnd = PartitionStart(rLoopCntTotal_, rGroupIdx + 1, rGroupCnt_);
+
+        constexpr F F32_MAX = 3.402823466e38f;
+        constexpr F MIN_NORMAL_F32 = 1.1754943508222875e-38f;
+        for (int64_t i = 0; i < gCount; ++i) {
+            const int64_t g = gStart + i;
+            F minValue = F32_MAX;
+            F maxValue = -F32_MAX;
+            F acc = 0.0f;
+            F comp = 0.0f;
+            LoopRRangeStats(GroupGmBase(g), rBegin, rEnd, minValue, maxValue, acc, comp);
+            StoreWorkspaceScalar(GroupPartialSlot(g, rGroupIdx, 0), minValue);
+            StoreWorkspaceScalar(GroupPartialSlot(g, rGroupIdx, 1), maxValue);
+        }
+        AscendC::SyncAll();
+
         if (rGroupIdx == 0) {
-            // Decode aLoopIdx → (outerAFlat, splitChunkIdx)
-            int64_t splitChunkIdx = aLoopIdx % aSplitChunkCnt_;
-            int64_t outerAFlat = aLoopIdx / aSplitChunkCnt_;
-            // Chunk range along split axis
-            int64_t aOff = splitChunkIdx * aUbFactor_;
-            int64_t aLen = aUbFactor_;
-            if (aOff + aLen > aSplitShape_)
-                aLen = aSplitShape_ - aOff;
-            if (aLen < 1)
-                aLen = 1;
-            // Iterate all A-groups within this chunk
-            int64_t gBase = outerAFlat * aSplitShape_ * innerAProd_;
-            int64_t gStart = gBase + aOff * innerAProd_;
-            int64_t gCount = aLen * innerAProd_;
             for (int64_t i = 0; i < gCount; ++i) {
-                int64_t g = gStart + i;
-                if (g < realGroups_) {
-                    ProcessGroup(g);
+                const int64_t g = gStart + i;
+                F minValue = F32_MAX;
+                F maxValue = -F32_MAX;
+                for (int64_t r = 0; r < rGroupCnt_; ++r) {
+                    const F partMin = LoadWorkspaceScalar(GroupPartialSlot(g, r, 0));
+                    const F partMax = LoadWorkspaceScalar(GroupPartialSlot(g, r, 1));
+                    minValue = partMin < minValue ? partMin : minValue;
+                    maxValue = partMax > maxValue ? partMax : maxValue;
                 }
+                F invScale = 1.0f;
+                if constexpr (std::is_same_v<D_T, F>) {
+                    const F minAbs = minValue < 0.0f ? -minValue : minValue;
+                    const F maxAbs = maxValue < 0.0f ? -maxValue : maxValue;
+                    const F scale = minAbs > maxAbs ? minAbs : maxAbs;
+                    if (NeedsOverflowScaling(scale)) {
+                        invScale = 1.0f / scale;
+                    } else if (scale > 0.0f && scale < SCALE_UNDERFLOW_GUARD) {
+                        invScale = 1.0f / (scale > MIN_NORMAL_F32 ? scale : MIN_NORMAL_F32);
+                    }
+                    invScale = invScale > MIN_NORMAL_F32 ? invScale : MIN_NORMAL_F32;
+                    const F invScaleCap = InvScaleCap();
+                    invScale = invScale < invScaleCap ? invScale : invScaleCap;
+                }
+                const bool finiteRange = minValue >= -F32_MAX && maxValue <= F32_MAX;
+                const F origin = finiteRange ? 0.5f * minValue + 0.5f * maxValue : 0.0f;
+                StoreWorkspaceScalar(GroupGlobalSlot(g, 0), invScale);
+                StoreWorkspaceScalar(GroupGlobalSlot(g, 1), origin);
+                StoreWorkspaceScalar(GroupGlobalSlot(g, 5), finiteRange && minValue == maxValue ? 1.0f : 0.0f);
             }
         }
         AscendC::SyncAll();
+
+        for (int64_t i = 0; i < gCount; ++i) {
+            const int64_t g = gStart + i;
+            const F invScale = LoadWorkspaceScalar(GroupGlobalSlot(g, 0));
+            const F origin = LoadWorkspaceScalar(GroupGlobalSlot(g, 1));
+            F acc = 0.0f;
+            F comp = 0.0f;
+            LoopRRangePass1(GroupGmBase(g), rBegin, rEnd, invScale, origin, acc, comp);
+            StoreWorkspaceScalar(GroupPartialSlot(g, rGroupIdx, 0), acc - comp);
+        }
+        AscendC::SyncAll();
+
+        if (rGroupIdx == 0) {
+            for (int64_t i = 0; i < gCount; ++i) {
+                const int64_t g = gStart + i;
+                F acc = 0.0f;
+                F comp = 0.0f;
+                for (int64_t r = 0; r < rGroupCnt_; ++r) {
+                    NeumaierAccumulateScalar(LoadWorkspaceScalar(GroupPartialSlot(g, r, 0)), acc, comp);
+                }
+                const F total = acc - comp;
+                const F mean = total * invRTotal_;
+                const F meanLow = (total - mean * static_cast<F>(reduceSize_)) * invRTotal_;
+                StoreWorkspaceScalar(GroupGlobalSlot(g, 2), mean);
+                StoreWorkspaceScalar(GroupGlobalSlot(g, 3), meanLow);
+            }
+        }
+        AscendC::SyncAll();
+
+        if constexpr (std::is_same_v<D_T, F>) {
+            for (int32_t correctionPass = 0; correctionPass < 2; ++correctionPass) {
+                for (int64_t i = 0; i < gCount; ++i) {
+                    const int64_t g = gStart + i;
+                    const F invScale = LoadWorkspaceScalar(GroupGlobalSlot(g, 0));
+                    const F origin = LoadWorkspaceScalar(GroupGlobalSlot(g, 1));
+                    const F mean = LoadWorkspaceScalar(GroupGlobalSlot(g, 2));
+                    const F meanLow = LoadWorkspaceScalar(GroupGlobalSlot(g, 3));
+                    F acc = 0.0f;
+                    F comp = 0.0f;
+                    LoopRRangeCorrection(GroupGmBase(g), rBegin, rEnd, invScale, origin, mean, meanLow, acc, comp);
+                    StoreWorkspaceScalar(GroupPartialSlot(g, rGroupIdx, 0), acc - comp);
+                }
+                AscendC::SyncAll();
+                if (rGroupIdx == 0) {
+                    for (int64_t i = 0; i < gCount; ++i) {
+                        const int64_t g = gStart + i;
+                        F acc = 0.0f;
+                        F comp = 0.0f;
+                        for (int64_t r = 0; r < rGroupCnt_; ++r) {
+                            KahanAccumulateScalar(LoadWorkspaceScalar(GroupPartialSlot(g, r, 0)), acc, comp);
+                        }
+                        const F meanLow = LoadWorkspaceScalar(GroupGlobalSlot(g, 3));
+                        StoreWorkspaceScalar(GroupGlobalSlot(g, 3), meanLow + (acc - comp) * invRTotal_);
+                    }
+                }
+                AscendC::SyncAll();
+            }
+        }
+
+        for (int64_t i = 0; i < gCount; ++i) {
+            const int64_t g = gStart + i;
+            const F invScale = LoadWorkspaceScalar(GroupGlobalSlot(g, 0));
+            const F origin = LoadWorkspaceScalar(GroupGlobalSlot(g, 1));
+            const F mean = LoadWorkspaceScalar(GroupGlobalSlot(g, 2));
+            const F meanLow = LoadWorkspaceScalar(GroupGlobalSlot(g, 3));
+            F acc = 0.0f;
+            F comp = 0.0f;
+            LoopRRangePass2(GroupGmBase(g), rBegin, rEnd, invScale, origin, mean, meanLow, acc, comp);
+            StoreWorkspaceScalar(GroupPartialSlot(g, rGroupIdx, 0), acc - comp);
+        }
+        AscendC::SyncAll();
+
+        if (rGroupIdx == 0) {
+            for (int64_t i = 0; i < gCount; ++i) {
+                const int64_t g = gStart + i;
+                F acc = 0.0f;
+                F comp = 0.0f;
+                for (int64_t r = 0; r < rGroupCnt_; ++r) {
+                    KahanAccumulateScalar(LoadWorkspaceScalar(GroupPartialSlot(g, r, 0)), acc, comp);
+                }
+                F variance = (acc - comp) * invRTotal_;
+                variance = variance > 0.0f ? variance : 0.0f;
+                const F invScale = LoadWorkspaceScalar(GroupGlobalSlot(g, 0));
+                AscendC::LocalTensor<F> scalar = cacheBuf_.Get<F>();
+                scalar.SetValue(0, variance);
+                AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
+                AscendC::Sqrt(scalar, scalar, 1);
+                AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+                F stdEps = scalar.GetValue(0) + eps_ * invScale;
+                if (eps_ > 0.0f && LoadWorkspaceScalar(GroupGlobalSlot(g, 5)) != 0.0f) {
+                    stdEps = 1.0f;
+                }
+                StoreWorkspaceScalar(GroupGlobalSlot(g, 4), stdEps);
+            }
+        }
+        AscendC::SyncAll();
+
+        for (int64_t i = 0; i < gCount; ++i) {
+            const int64_t g = gStart + i;
+            const F invScale = LoadWorkspaceScalar(GroupGlobalSlot(g, 0));
+            const F origin = LoadWorkspaceScalar(GroupGlobalSlot(g, 1));
+            const F mean = LoadWorkspaceScalar(GroupGlobalSlot(g, 2));
+            const F meanLow = LoadWorkspaceScalar(GroupGlobalSlot(g, 3));
+            const F stdEps = LoadWorkspaceScalar(GroupGlobalSlot(g, 4));
+            LoopRRangePost(GroupGmBase(g), rBegin, rEnd, invScale, origin, mean, meanLow, stdEps);
+        }
     }
 
 private:
+    __aicore__ inline void StoreWorkspaceScalar(int64_t slot, F value)
+    {
+        AscendC::LocalTensor<F> scalar = cacheBuf_.Get<F>();
+        scalar.SetValue(0, value);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(EVENT_ID0);
+        AscendC::DataCopy(gmWorkspace_[slot * WS_SLOT_ELEMS], scalar, WS_SLOT_ELEMS);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
+    }
+
+    __aicore__ inline F LoadWorkspaceScalar(int64_t slot)
+    {
+        AscendC::LocalTensor<F> scalar = cacheBuf_.Get<F>();
+        AscendC::DataCopy(scalar, gmWorkspace_[slot * WS_SLOT_ELEMS], WS_SLOT_ELEMS);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(EVENT_ID0);
+        return scalar.GetValue(0);
+    }
+
+    __aicore__ inline int64_t GroupPartialSlot(int64_t g, int64_t rGroup, int64_t bank)
+    {
+        return g * (2 * rGroupCnt_ + 8) + bank * rGroupCnt_ + rGroup;
+    }
+
+    __aicore__ inline int64_t GroupGlobalSlot(int64_t g, int64_t index)
+    {
+        return g * (2 * rGroupCnt_ + 8) + 2 * rGroupCnt_ + index;
+    }
+
+    __aicore__ inline void ProcessFlatRGroup()
+    {
+        constexpr F MIN_NORMAL_F32 = 1.1754943508222875e-38f;
+        constexpr F F32_MAX = 3.402823466e38f;
+        const int64_t blockIdx = AscendC::GetBlockIdx();
+        const int64_t groupCnt = rGroupCnt_;
+        const int64_t globalBase = 2 * groupCnt;
+        const int64_t start = PartitionStart(reduceSize_, blockIdx, groupCnt);
+        const int64_t end = PartitionStart(reduceSize_, blockIdx + 1, groupCnt);
+
+        F acc = 0.0f;
+        F comp = 0.0f;
+        F minValue = F32_MAX;
+        F maxValue = -F32_MAX;
+        for (int64_t offset = start; offset < end;) {
+            const int64_t len = rUbFactor_ < end - offset ? rUbFactor_ : end - offset;
+            F blockSum = 0.0f;
+            F blockMin = 0.0f;
+            F blockMax = 0.0f;
+            ProcessRBlockStats(offset, len, blockSum, blockMin, blockMax);
+            minValue = blockMin < minValue ? blockMin : minValue;
+            maxValue = blockMax > maxValue ? blockMax : maxValue;
+            KahanAccumulateScalar(blockSum, acc, comp);
+            offset += len;
+        }
+        StoreWorkspaceScalar(blockIdx, minValue);
+        StoreWorkspaceScalar(groupCnt + blockIdx, maxValue);
+        AscendC::SyncAll();
+
+        F invScale = 1.0f;
+        if (blockIdx == 0) {
+            minValue = F32_MAX;
+            maxValue = -F32_MAX;
+            for (int64_t i = 0; i < groupCnt; ++i) {
+                const F coreMin = LoadWorkspaceScalar(i);
+                const F coreMax = LoadWorkspaceScalar(groupCnt + i);
+                minValue = coreMin < minValue ? coreMin : minValue;
+                maxValue = coreMax > maxValue ? coreMax : maxValue;
+            }
+            const bool finiteRange = minValue >= -F32_MAX && maxValue <= F32_MAX;
+            StoreWorkspaceScalar(globalBase + 4, finiteRange && minValue == maxValue ? 1.0f : 0.0f);
+        }
+        if constexpr (std::is_same_v<D_T, F>) {
+            if (blockIdx == 0) {
+                const F minAbs = minValue < 0.0f ? -minValue : minValue;
+                const F maxAbs = maxValue < 0.0f ? -maxValue : maxValue;
+                const F scale = minAbs > maxAbs ? minAbs : maxAbs;
+                F globalInvScale = 1.0f;
+                if (NeedsOverflowScaling(scale)) {
+                    globalInvScale = 1.0f / scale;
+                } else if (scale > 0.0f && scale < SCALE_UNDERFLOW_GUARD) {
+                    globalInvScale = 1.0f / (scale > MIN_NORMAL_F32 ? scale : MIN_NORMAL_F32);
+                }
+                globalInvScale = globalInvScale > MIN_NORMAL_F32 ? globalInvScale : MIN_NORMAL_F32;
+                const F invScaleCap = InvScaleCap();
+                globalInvScale = globalInvScale < invScaleCap ? globalInvScale : invScaleCap;
+                StoreWorkspaceScalar(globalBase + 3, globalInvScale);
+                const bool finiteRange = minValue >= -F32_MAX && maxValue <= F32_MAX;
+                const F origin = finiteRange ? 0.5f * minValue + 0.5f * maxValue : 0.0f;
+                StoreWorkspaceScalar(globalBase + 2, origin);
+            }
+            AscendC::SyncAll();
+            invScale = LoadWorkspaceScalar(globalBase + 3);
+        } else {
+            if (blockIdx == 0) {
+                const bool finiteRange = minValue >= -F32_MAX && maxValue <= F32_MAX;
+                const F origin = finiteRange ? 0.5f * minValue + 0.5f * maxValue : 0.0f;
+                StoreWorkspaceScalar(globalBase + 2, origin);
+            }
+            AscendC::SyncAll();
+        }
+        const F origin = LoadWorkspaceScalar(globalBase + 2);
+
+        acc = 0.0f;
+        comp = 0.0f;
+        for (int64_t offset = start; offset < end;) {
+            const int64_t len = rUbFactor_ < end - offset ? rUbFactor_ : end - offset;
+            NeumaierAccumulateScalar(ProcessRBlockPass1(offset, len, invScale, origin), acc, comp);
+            offset += len;
+        }
+        StoreWorkspaceScalar(blockIdx, acc - comp);
+        AscendC::SyncAll();
+
+        if (blockIdx == 0) {
+            acc = 0.0f;
+            comp = 0.0f;
+            for (int64_t i = 0; i < groupCnt; ++i) {
+                KahanAccumulateScalar(LoadWorkspaceScalar(i), acc, comp);
+            }
+            StoreWorkspaceScalar(globalBase, (acc - comp) * invRTotal_);
+        }
+        AscendC::SyncAll();
+        const F mean = LoadWorkspaceScalar(globalBase);
+
+        acc = 0.0f;
+        comp = 0.0f;
+        for (int64_t offset = start; offset < end;) {
+            const int64_t len = rUbFactor_ < end - offset ? rUbFactor_ : end - offset;
+            KahanAccumulateScalar(ProcessRBlockPass2(offset, len, invScale, origin, mean, 0.0f), acc, comp);
+            offset += len;
+        }
+        StoreWorkspaceScalar(blockIdx, acc - comp);
+        AscendC::SyncAll();
+
+        if (blockIdx == 0) {
+            acc = 0.0f;
+            comp = 0.0f;
+            for (int64_t i = 0; i < groupCnt; ++i) {
+                KahanAccumulateScalar(LoadWorkspaceScalar(i), acc, comp);
+            }
+            F variance = (acc - comp) * invRTotal_;
+            variance = variance > 0.0f ? variance : 0.0f;
+            AscendC::LocalTensor<F> scalar = cacheBuf_.Get<F>();
+            scalar.SetValue(0, variance);
+            AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
+            AscendC::Sqrt(scalar, scalar, 1);
+            AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            F stdEps = scalar.GetValue(0) + eps_ * invScale;
+            if (eps_ > 0.0f && LoadWorkspaceScalar(globalBase + 4) != 0.0f) {
+                stdEps = 1.0f;
+            }
+            StoreWorkspaceScalar(globalBase + 1, stdEps);
+        }
+        AscendC::SyncAll();
+
+        const F stdEps = LoadWorkspaceScalar(globalBase + 1);
+        for (int64_t offset = start; offset < end;) {
+            const int64_t len = rUbFactor_ < end - offset ? rUbFactor_ : end - offset;
+            ProcessRBlockPost(offset, len, invScale, origin, mean, 0.0f, stdEps);
+            offset += len;
+        }
+    }
+
     __aicore__ inline int64_t GroupGmBase(int64_t g)
     {
         int64_t innerFlat = (innerAProd_ > 0) ? (g % innerAProd_) : 0;
@@ -445,12 +2173,23 @@ private:
         return dst.GetValue(0);
     }
 
-    __aicore__ inline F ReduceMaxAbsR(int64_t rLen)
+    __aicore__ inline F ReduceMinR(int64_t rLen)
     {
         AscendC::LocalTensor<F> src = tmpBuf0_.Get<F>();
         AscendC::LocalTensor<F> dst = tmpBuf1_.Get<F>();
-        AscendC::Abs(src, src, static_cast<int32_t>(rLen));
-        AscendC::PipeBarrier<PIPE_V>();
+        constexpr int64_t alignElem = 32 / sizeof(F);
+        int64_t rLenPadded = ((rLen + alignElem - 1) / alignElem) * alignElem;
+        uint32_t sh[2] = {1, static_cast<uint32_t>(rLenPadded)};
+        AscendC::ReduceMin<F, AscendC::Pattern::Reduce::AR, true>(dst, src, sh, true);
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+        return dst.GetValue(0);
+    }
+
+    __aicore__ inline F ReduceMaxR(int64_t rLen)
+    {
+        AscendC::LocalTensor<F> src = tmpBuf0_.Get<F>();
+        AscendC::LocalTensor<F> dst = tmpBuf1_.Get<F>();
         constexpr int64_t alignElem = 32 / sizeof(F);
         int64_t rLenPadded = ((rLen + alignElem - 1) / alignElem) * alignElem;
         uint32_t sh[2] = {1, static_cast<uint32_t>(rLenPadded)};
@@ -476,6 +2215,35 @@ private:
         acc = t;
     }
 
+    __aicore__ inline void NeumaierAccumulateScalar(F value, F& acc, F& comp)
+    {
+        const F t = acc + value;
+        const F accAbs = acc < 0.0f ? -acc : acc;
+        const F valueAbs = value < 0.0f ? -value : value;
+        const F recovered = accAbs >= valueAbs ? (acc - t) + value : (value - t) + acc;
+        comp -= recovered;
+        acc = t;
+    }
+
+    __aicore__ inline F CompensatedReduceTmpBuf0(int64_t count)
+    {
+        const uint16_t repeats = static_cast<uint16_t>(
+            AscendC::CeilDivision(static_cast<int64_t>(count), static_cast<int64_t>(VL_F32)));
+        asc_vf_call<Mvnv2CompensatedLaneSumVf<F>>((__ubuf__ F*)tmpBuf1_.Get<F>().GetPhyAddr(),
+                                                  (__ubuf__ F*)tmpBuf0_.Get<F>().GetPhyAddr(),
+                                                  static_cast<uint32_t>(count), VL_F32, repeats);
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+        AscendC::LocalTensor<F> values = tmpBuf1_.Get<F>();
+        F acc = 0.0f;
+        F comp = 0.0f;
+        const int64_t laneCount = count < VL_F32 ? count : VL_F32;
+        for (int64_t i = 0; i < laneCount; ++i) {
+            NeumaierAccumulateScalar(values.GetValue(i), acc, comp);
+        }
+        return acc - comp;
+    }
+
     // Cast tmpBuf0 (fp32) → preBuf (D_T), rLen elements.
     __aicore__ inline void CastOutD_T(int64_t rLen)
     {
@@ -488,44 +2256,73 @@ private:
         }
     }
 
-    // Process one R block: CopyIn → Cast → (optional SubSquare) → ReduceSum → Kahan
-    __aicore__ inline F ProcessRBlockScale(int64_t gmOff, int64_t blockElems)
+    __aicore__ inline void ProcessRBlockStats(int64_t gmOff, int64_t blockElems, F& blockSum, F& blockMin, F& blockMax)
     {
+        constexpr F F32_MAX = 3.402823466e38f;
+        constexpr int64_t alignElem = 32 / sizeof(F);
+        const int64_t padded = ((blockElems + alignElem - 1) / alignElem) * alignElem;
         CopyInBlock(gmOff, blockElems);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
+
         ZeroPadTmpBuf0(blockElems);
         CastInToF32(blockElems);
         AscendC::PipeBarrier<PIPE_V>();
-        return ReduceMaxAbsR(blockElems);
+        if (blockElems == 1) {
+            AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
+            blockSum = tmpBuf0_.Get<F>().GetValue(0);
+            blockMin = blockSum;
+            blockMax = blockSum;
+            return;
+        }
+        blockSum = ReduceSumR(blockElems);
+
+        AscendC::Duplicate(tmpBuf0_.Get<F>(), F32_MAX, padded);
+        AscendC::PipeBarrier<PIPE_V>();
+        CastInToF32(blockElems);
+        AscendC::PipeBarrier<PIPE_V>();
+        blockMin = ReduceMinR(blockElems);
+
+        AscendC::Duplicate(tmpBuf0_.Get<F>(), -F32_MAX, padded);
+        AscendC::PipeBarrier<PIPE_V>();
+        CastInToF32(blockElems);
+        AscendC::PipeBarrier<PIPE_V>();
+        blockMax = ReduceMaxR(blockElems);
     }
 
-    __aicore__ inline F ProcessRBlockPass1(int64_t gmOff, int64_t blockElems, F invScale)
+    __aicore__ inline F ProcessRBlockPass1(int64_t gmOff, int64_t blockElems, F invScale, F origin)
     {
         CopyInBlock(gmOff, blockElems);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         ZeroPadTmpBuf0(blockElems);
         CastInToF32(blockElems);
+        AscendC::Adds(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), -origin, static_cast<int32_t>(blockElems));
+        AscendC::PipeBarrier<PIPE_V>();
         if (invScale != 1.0f) {
             AscendC::Muls(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), invScale, static_cast<int32_t>(blockElems));
         }
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
-        return ReduceSumR(blockElems);
+        return CompensatedReduceTmpBuf0(blockElems);
     }
 
-    __aicore__ inline F ProcessRBlockCorrection(int64_t gmOff, int64_t blockElems, F invScale, F mean, F meanLow)
+    __aicore__ inline F ProcessRBlockCorrection(int64_t gmOff, int64_t blockElems, F invScale, F origin, F mean,
+                                                F meanLow)
     {
         CopyInBlock(gmOff, blockElems);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         ZeroPadTmpBuf0(blockElems);
         CastInToF32(blockElems);
+        AscendC::Adds(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), -origin, static_cast<int32_t>(blockElems));
+        AscendC::PipeBarrier<PIPE_V>();
         if (invScale != 1.0f) {
             AscendC::Muls(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), invScale, static_cast<int32_t>(blockElems));
         }
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
         AscendC::Duplicate(tmpBuf1_.Get<F>(), mean, blockElems);
@@ -539,16 +2336,19 @@ private:
         return ReduceSumR(blockElems);
     }
 
-    __aicore__ inline F ProcessRBlockPass2(int64_t gmOff, int64_t blockElems, F invScale, F mean, F meanLow)
+    __aicore__ inline F ProcessRBlockPass2(int64_t gmOff, int64_t blockElems, F invScale, F origin, F mean, F meanLow)
     {
         CopyInBlock(gmOff, blockElems);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         ZeroPadTmpBuf0(blockElems);
         CastInToF32(blockElems);
+        AscendC::Adds(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), -origin, static_cast<int32_t>(blockElems));
+        AscendC::PipeBarrier<PIPE_V>();
         if (invScale != 1.0f) {
             AscendC::Muls(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), invScale, static_cast<int32_t>(blockElems));
         }
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
         AscendC::Duplicate(tmpBuf1_.Get<F>(), mean, blockElems);
@@ -566,37 +2366,45 @@ private:
         return ReduceSumR(blockElems);
     }
 
-    __aicore__ inline void ProcessRBlockPost(int64_t gmOff, int64_t blockElems, bool isConst, F invScale, F mean,
-                                             F meanLow, F stdEps)
+    __aicore__ inline void ProcessRBlockPost(int64_t gmOff, int64_t blockElems, F invScale, F origin, F mean, F meanLow,
+                                             F stdEps)
     {
         CopyInBlock(gmOff, blockElems);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         ZeroPadTmpBuf0(blockElems);
         CastInToF32(blockElems);
+        AscendC::Adds(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), -origin, static_cast<int32_t>(blockElems));
+        AscendC::PipeBarrier<PIPE_V>();
         if (invScale != 1.0f) {
             AscendC::Muls(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), invScale, static_cast<int32_t>(blockElems));
             AscendC::PipeBarrier<PIPE_V>();
         }
 
-        if (isConst && eps_ != 0.0f) {
-            AscendC::Duplicate(tmpBuf0_.Get<F>(), (F)0.0f, static_cast<int64_t>(blockElems));
+        if constexpr (std::is_same_v<D_T, F>) {
+            // Preserve the compensated low mean bits through the FP32 subtraction.
+            AscendC::Duplicate(tmpBuf1_.Get<F>(), mean, blockElems);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), tmpBuf1_.Get<F>(), static_cast<int64_t>(blockElems));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Duplicate(tmpBuf1_.Get<F>(), meanLow, blockElems);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Sub(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), tmpBuf1_.Get<F>(), static_cast<int64_t>(blockElems));
             AscendC::PipeBarrier<PIPE_V>();
         } else {
-            // Normal path: compute (x - mean) / (std + eps).
             AscendC::Duplicate(tmpBuf1_.Get<F>(), mean + meanLow, blockElems);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Sub(tmpBuf0_.Get<F>(), tmpBuf0_.Get<F>(), tmpBuf1_.Get<F>(), static_cast<int64_t>(blockElems));
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Duplicate(tmpBuf1_.Get<F>(), stdEps, blockElems);
-            AscendC::PipeBarrier<PIPE_V>();
-            uint16_t rep = static_cast<uint16_t>(
-                AscendC::CeilDivision(static_cast<int64_t>(blockElems), static_cast<int64_t>(VL_F32)));
-            asc_vf_call<Mvnv2DivVf<F>>(
-                (__ubuf__ F*)tmpBuf0_.Get<F>().GetPhyAddr(), (__ubuf__ F*)tmpBuf0_.Get<F>().GetPhyAddr(),
-                (__ubuf__ F*)tmpBuf1_.Get<F>().GetPhyAddr(), static_cast<uint32_t>(blockElems), VL_F32, rep);
-            AscendC::PipeBarrier<PIPE_V>();
         }
+        AscendC::Duplicate(tmpBuf1_.Get<F>(), stdEps, blockElems);
+        AscendC::PipeBarrier<PIPE_V>();
+        uint16_t rep = static_cast<uint16_t>(
+            AscendC::CeilDivision(static_cast<int64_t>(blockElems), static_cast<int64_t>(VL_F32)));
+        asc_vf_call<Mvnv2DivVf<F>>(
+            (__ubuf__ F*)tmpBuf0_.Get<F>().GetPhyAddr(), (__ubuf__ F*)tmpBuf0_.Get<F>().GetPhyAddr(),
+            (__ubuf__ F*)tmpBuf1_.Get<F>().GetPhyAddr(), static_cast<uint32_t>(blockElems), VL_F32, rep);
+        AscendC::PipeBarrier<PIPE_V>();
         CastOutD_T(blockElems);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
@@ -605,87 +2413,179 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
     }
 
-    // Iterate R blocks for Pass 1 (mean): CopyIn → Cast → ReduceSum → Kahan
-    __aicore__ inline void LoopRBlocksScale(int64_t gmBase, int64_t outerROffset, int64_t rChunkStart, int64_t rLen,
-                                            F& scale)
+    __aicore__ inline void LoopRBlocksStats(int64_t gmBase, int64_t outerROffset, int64_t rChunkStart, int64_t rLen,
+                                            F& minValue, F& maxValue, F& acc, F& comp)
     {
         int64_t rSplitStride = axisStride_[rSplitAxisIdx_];
         if (rSplitStride == 1) {
             int64_t gmOff = gmBase + outerROffset + rChunkStart;
-            F blockScale = ProcessRBlockScale(gmOff, rLen);
-            scale = blockScale > scale ? blockScale : scale;
+            F blockSum = 0.0f;
+            F blockMin = 0.0f;
+            F blockMax = 0.0f;
+            ProcessRBlockStats(gmOff, rLen, blockSum, blockMin, blockMax);
+            minValue = blockMin < minValue ? blockMin : minValue;
+            maxValue = blockMax > maxValue ? blockMax : maxValue;
+            KahanAccumulateScalar(blockSum, acc, comp);
         } else {
             int64_t blockSize = innerRContig_ ? innerRSize_ : 1;
             for (int64_t r = 0; r < rLen; ++r) {
                 int64_t gmOff = gmBase + outerROffset + (rChunkStart + r) * rSplitStride;
-                F blockScale = ProcessRBlockScale(gmOff, blockSize);
-                scale = blockScale > scale ? blockScale : scale;
+                F blockSum = 0.0f;
+                F blockMin = 0.0f;
+                F blockMax = 0.0f;
+                ProcessRBlockStats(gmOff, blockSize, blockSum, blockMin, blockMax);
+                minValue = blockMin < minValue ? blockMin : minValue;
+                maxValue = blockMax > maxValue ? blockMax : maxValue;
+                KahanAccumulateScalar(blockSum, acc, comp);
             }
         }
     }
 
     __aicore__ inline void LoopRBlocksPass1(int64_t gmBase, int64_t outerROffset, int64_t rChunkStart, int64_t rLen,
-                                            F invScale, F& acc, F& comp)
+                                            F invScale, F origin, F& acc, F& comp)
     {
         int64_t rSplitStride = axisStride_[rSplitAxisIdx_];
         if (rSplitStride == 1) {
             int64_t gmOff = gmBase + outerROffset + rChunkStart;
-            KahanAccumulateScalar(ProcessRBlockPass1(gmOff, rLen, invScale), acc, comp);
+            NeumaierAccumulateScalar(ProcessRBlockPass1(gmOff, rLen, invScale, origin), acc, comp);
         } else {
             int64_t blockSize = innerRContig_ ? innerRSize_ : 1;
             for (int64_t r = 0; r < rLen; ++r) {
                 int64_t gmOff = gmBase + outerROffset + (rChunkStart + r) * rSplitStride;
-                KahanAccumulateScalar(ProcessRBlockPass1(gmOff, blockSize, invScale), acc, comp);
+                NeumaierAccumulateScalar(ProcessRBlockPass1(gmOff, blockSize, invScale, origin), acc, comp);
             }
         }
     }
 
     __aicore__ inline void LoopRBlocksCorrection(int64_t gmBase, int64_t outerROffset, int64_t rChunkStart,
-                                                 int64_t rLen, F invScale, F mean, F meanLow, F& acc, F& comp)
+                                                 int64_t rLen, F invScale, F origin, F mean, F meanLow, F& acc, F& comp)
     {
         int64_t rSplitStride = axisStride_[rSplitAxisIdx_];
         if (rSplitStride == 1) {
             int64_t gmOff = gmBase + outerROffset + rChunkStart;
-            KahanAccumulateScalar(ProcessRBlockCorrection(gmOff, rLen, invScale, mean, meanLow), acc, comp);
+            KahanAccumulateScalar(ProcessRBlockCorrection(gmOff, rLen, invScale, origin, mean, meanLow), acc, comp);
         } else {
             int64_t blockSize = innerRContig_ ? innerRSize_ : 1;
             for (int64_t r = 0; r < rLen; ++r) {
                 int64_t gmOff = gmBase + outerROffset + (rChunkStart + r) * rSplitStride;
-                KahanAccumulateScalar(ProcessRBlockCorrection(gmOff, blockSize, invScale, mean, meanLow), acc, comp);
+                KahanAccumulateScalar(ProcessRBlockCorrection(gmOff, blockSize, invScale, origin, mean, meanLow), acc,
+                                      comp);
             }
         }
     }
 
     // Iterate R blocks for Pass 2 (var)
     __aicore__ inline void LoopRBlocksPass2(int64_t gmBase, int64_t outerROffset, int64_t rChunkStart, int64_t rLen,
-                                            F invScale, F mean, F meanLow, F& acc, F& comp)
+                                            F invScale, F origin, F mean, F meanLow, F& acc, F& comp)
     {
         int64_t rSplitStride = axisStride_[rSplitAxisIdx_];
         if (rSplitStride == 1) {
             int64_t gmOff = gmBase + outerROffset + rChunkStart;
-            KahanAccumulateScalar(ProcessRBlockPass2(gmOff, rLen, invScale, mean, meanLow), acc, comp);
+            KahanAccumulateScalar(ProcessRBlockPass2(gmOff, rLen, invScale, origin, mean, meanLow), acc, comp);
         } else {
             int64_t blockSize = innerRContig_ ? innerRSize_ : 1;
             for (int64_t r = 0; r < rLen; ++r) {
                 int64_t gmOff = gmBase + outerROffset + (rChunkStart + r) * rSplitStride;
-                KahanAccumulateScalar(ProcessRBlockPass2(gmOff, blockSize, invScale, mean, meanLow), acc, comp);
+                KahanAccumulateScalar(ProcessRBlockPass2(gmOff, blockSize, invScale, origin, mean, meanLow), acc, comp);
             }
         }
     }
 
     // Iterate R blocks for Post (normalize + CopyOut)
     __aicore__ inline void LoopRBlocksPost(int64_t gmBase, int64_t outerROffset, int64_t rChunkStart, int64_t rLen,
-                                           bool isConst, F invScale, F mean, F meanLow, F stdEps)
+                                           F invScale, F origin, F mean, F meanLow, F stdEps)
     {
         int64_t rSplitStride = axisStride_[rSplitAxisIdx_];
         if (rSplitStride == 1) {
             int64_t gmOff = gmBase + outerROffset + rChunkStart;
-            ProcessRBlockPost(gmOff, rLen, isConst, invScale, mean, meanLow, stdEps);
+            ProcessRBlockPost(gmOff, rLen, invScale, origin, mean, meanLow, stdEps);
         } else {
             int64_t blockSize = innerRContig_ ? innerRSize_ : 1;
             for (int64_t r = 0; r < rLen; ++r) {
                 int64_t gmOff = gmBase + outerROffset + (rChunkStart + r) * rSplitStride;
-                ProcessRBlockPost(gmOff, blockSize, isConst, invScale, mean, meanLow, stdEps);
+                ProcessRBlockPost(gmOff, blockSize, invScale, origin, mean, meanLow, stdEps);
+            }
+        }
+    }
+
+    __aicore__ inline bool DecodeRLoop(int64_t rIdx, int64_t& outerROffset, int64_t& rChunkStart, int64_t& rLen)
+    {
+        const int64_t rSplitShape = axisShape_[rSplitAxisIdx_];
+        const int64_t innerChunks = (rSplitShape + rUbFactor_ - 1) / rUbFactor_;
+        const int64_t innerChunkIdx = rIdx % innerChunks;
+        const int64_t outerRFlat = rIdx / innerChunks;
+        rChunkStart = innerChunkIdx * rUbFactor_;
+        rLen = rUbFactor_;
+        if (rChunkStart + rLen > rSplitShape) {
+            rLen = rSplitShape - rChunkStart;
+        }
+        outerROffset = DecodeOuterR(outerRFlat);
+        return rLen > 0;
+    }
+
+    __aicore__ inline void LoopRRangeStats(int64_t gmBase, int64_t rBegin, int64_t rEnd, F& minValue, F& maxValue,
+                                           F& acc, F& comp)
+    {
+        for (int64_t rIdx = rBegin; rIdx < rEnd; ++rIdx) {
+            int64_t outerROffset = 0;
+            int64_t rChunkStart = 0;
+            int64_t rLen = 0;
+            if (!DecodeRLoop(rIdx, outerROffset, rChunkStart, rLen)) {
+                continue;
+            }
+            LoopRBlocksStats(gmBase, outerROffset, rChunkStart, rLen, minValue, maxValue, acc, comp);
+        }
+    }
+
+    __aicore__ inline void LoopRRangePass1(int64_t gmBase, int64_t rBegin, int64_t rEnd, F invScale, F origin, F& acc,
+                                           F& comp)
+    {
+        for (int64_t rIdx = rBegin; rIdx < rEnd; ++rIdx) {
+            int64_t outerROffset = 0;
+            int64_t rChunkStart = 0;
+            int64_t rLen = 0;
+            if (DecodeRLoop(rIdx, outerROffset, rChunkStart, rLen)) {
+                LoopRBlocksPass1(gmBase, outerROffset, rChunkStart, rLen, invScale, origin, acc, comp);
+            }
+        }
+    }
+
+    __aicore__ inline void LoopRRangeCorrection(int64_t gmBase, int64_t rBegin, int64_t rEnd, F invScale, F origin,
+                                                F mean, F meanLow, F& acc, F& comp)
+    {
+        for (int64_t rIdx = rBegin; rIdx < rEnd; ++rIdx) {
+            int64_t outerROffset = 0;
+            int64_t rChunkStart = 0;
+            int64_t rLen = 0;
+            if (DecodeRLoop(rIdx, outerROffset, rChunkStart, rLen)) {
+                LoopRBlocksCorrection(gmBase, outerROffset, rChunkStart, rLen, invScale, origin, mean, meanLow, acc,
+                                      comp);
+            }
+        }
+    }
+
+    __aicore__ inline void LoopRRangePass2(int64_t gmBase, int64_t rBegin, int64_t rEnd, F invScale, F origin, F mean,
+                                           F meanLow, F& acc, F& comp)
+    {
+        for (int64_t rIdx = rBegin; rIdx < rEnd; ++rIdx) {
+            int64_t outerROffset = 0;
+            int64_t rChunkStart = 0;
+            int64_t rLen = 0;
+            if (DecodeRLoop(rIdx, outerROffset, rChunkStart, rLen)) {
+                LoopRBlocksPass2(gmBase, outerROffset, rChunkStart, rLen, invScale, origin, mean, meanLow, acc, comp);
+            }
+        }
+    }
+
+    __aicore__ inline void LoopRRangePost(int64_t gmBase, int64_t rBegin, int64_t rEnd, F invScale, F origin, F mean,
+                                          F meanLow, F stdEps)
+    {
+        for (int64_t rIdx = rBegin; rIdx < rEnd; ++rIdx) {
+            int64_t outerROffset = 0;
+            int64_t rChunkStart = 0;
+            int64_t rLen = 0;
+            if (DecodeRLoop(rIdx, outerROffset, rChunkStart, rLen)) {
+                LoopRBlocksPost(gmBase, outerROffset, rChunkStart, rLen, invScale, origin, mean, meanLow, stdEps);
             }
         }
     }
@@ -700,27 +2600,9 @@ private:
         if (innerChunks < 1)
             innerChunks = 1;
 
-        F invScale = 1.0f;
-        if constexpr (std::is_same_v<D_T, F>) {
-            F scale = 0.0f;
-            for (int64_t rIdx = 0; rIdx < rLoopCntTotal_; ++rIdx) {
-                int64_t innerChunkIdx = rIdx % innerChunks;
-                int64_t outerRFlat = rIdx / innerChunks;
-                int64_t rChunkStart = innerChunkIdx * rUbFactor_;
-                int64_t rLen = rUbFactor_;
-                if (rChunkStart + rLen > rSplitShape)
-                    rLen = rSplitShape - rChunkStart;
-                if (rLen <= 0)
-                    break;
-                int64_t outerROffset = DecodeOuterR(outerRFlat);
-                LoopRBlocksScale(gmBase, outerROffset, rChunkStart, rLen, scale);
-            }
-            if (scale > 1.0e18f && scale <= 3.4028235e38f) {
-                invScale = 1.0f / scale;
-            }
-        }
-
-        // Pass 1: mean
+        constexpr F F32_MAX = 3.402823466e38f;
+        F minValue = F32_MAX;
+        F maxValue = -F32_MAX;
         F acc = 0.0f;
         F comp = 0.0f;
         for (int64_t rIdx = 0; rIdx < rLoopCntTotal_; ++rIdx) {
@@ -733,34 +2615,55 @@ private:
             if (rLen <= 0)
                 break;
             int64_t outerROffset = DecodeOuterR(outerRFlat);
-            LoopRBlocksPass1(gmBase, outerROffset, rChunkStart, rLen, invScale, acc, comp);
+            LoopRBlocksStats(gmBase, outerROffset, rChunkStart, rLen, minValue, maxValue, acc, comp);
         }
+        const bool finiteConst = minValue == maxValue && minValue >= -F32_MAX && maxValue <= F32_MAX;
+        F invScale = 1.0f;
+        if constexpr (std::is_same_v<D_T, F>) {
+            const F minAbs = minValue < 0.0f ? -minValue : minValue;
+            const F maxAbs = maxValue < 0.0f ? -maxValue : maxValue;
+            const F scale = minAbs > maxAbs ? minAbs : maxAbs;
+            // Two-sided normalization; see ProcessFlatRGroup for why the underflow side matters.
+            constexpr F MIN_NORMAL_F32 = 1.1754943508222875e-38f;
+            if (kernelMode_ != IEEE_EPS_MODE && NeedsOverflowScaling(scale)) {
+                invScale = 1.0f / scale;
+                if (invScale < MIN_NORMAL_F32) {
+                    invScale = MIN_NORMAL_F32;
+                }
+            } else if (kernelMode_ != IEEE_EPS_MODE && scale > 0.0f && scale < SCALE_UNDERFLOW_GUARD) {
+                invScale = 1.0f / (scale > MIN_NORMAL_F32 ? scale : MIN_NORMAL_F32);
+                const F invScaleCap = InvScaleCap();
+                if (invScale > invScaleCap) {
+                    invScale = invScaleCap;
+                }
+            }
+        }
+
+        const bool finiteRange = minValue >= -F32_MAX && maxValue <= F32_MAX;
+        const F origin = finiteRange ? 0.5f * minValue + 0.5f * maxValue : 0.0f;
+        acc = 0.0f;
+        comp = 0.0f;
+        for (int64_t rIdx = 0; rIdx < rLoopCntTotal_; ++rIdx) {
+            int64_t innerChunkIdx = rIdx % innerChunks;
+            int64_t outerRFlat = rIdx / innerChunks;
+            int64_t rChunkStart = innerChunkIdx * rUbFactor_;
+            int64_t rLen = rUbFactor_;
+            if (rChunkStart + rLen > rSplitShape)
+                rLen = rSplitShape - rChunkStart;
+            if (rLen <= 0)
+                break;
+            int64_t outerROffset = DecodeOuterR(outerRFlat);
+            LoopRBlocksPass1(gmBase, outerROffset, rChunkStart, rLen, invScale, origin, acc, comp);
+        }
+
+        // Pass 1: mean
         F mean = acc * invRTotal_;
         F meanLow = ((acc - mean * static_cast<F>(reduceSize_)) - comp) * invRTotal_;
         AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
 
-        // Two centered residual iterations recover the low mean bits needed by FP32 near-zero outputs.
-        if constexpr (std::is_same_v<D_T, F>) {
-            for (int correctionPass = 0; correctionPass < 2; ++correctionPass) {
-                acc = 0.0f;
-                comp = 0.0f;
-                for (int64_t rIdx = 0; rIdx < rLoopCntTotal_; ++rIdx) {
-                    int64_t innerChunkIdx = rIdx % innerChunks;
-                    int64_t outerRFlat = rIdx / innerChunks;
-                    int64_t rChunkStart = innerChunkIdx * rUbFactor_;
-                    int64_t rLen = rUbFactor_;
-                    if (rChunkStart + rLen > rSplitShape)
-                        rLen = rSplitShape - rChunkStart;
-                    if (rLen <= 0)
-                        break;
-                    int64_t outerROffset = DecodeOuterR(outerRFlat);
-                    LoopRBlocksCorrection(gmBase, outerROffset, rChunkStart, rLen, invScale, mean, meanLow, acc, comp);
-                }
-                meanLow += acc * invRTotal_ + comp * invRTotal_;
-            }
-        }
-
+        // The compensated Pass1 sum already carries the low mean bits. A residual
+        // correction would lose meanLow again when subtracting it from large lanes.
         // Pass 2: var
         acc = 0.0f;
         comp = 0.0f;
@@ -774,9 +2677,10 @@ private:
             if (rLen <= 0)
                 break;
             int64_t outerROffset = DecodeOuterR(outerRFlat);
-            LoopRBlocksPass2(gmBase, outerROffset, rChunkStart, rLen, invScale, mean, meanLow, acc, comp);
+            LoopRBlocksPass2(gmBase, outerROffset, rChunkStart, rLen, invScale, origin, mean, meanLow, acc, comp);
         }
-        F varVal = acc * invRTotal_;
+        F varVal = (acc - comp) * invRTotal_;
+        varVal = varVal > 0.0f ? varVal : 0.0f;
         cache.SetValue(ACC_OFF, varVal);
         AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
@@ -788,11 +2692,13 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID0);
         F stdEps = cache.GetValue(STDEPS_OFF);
+        // For a finite constant group the origin-shifted numerator is exactly zero. Any positive
+        // scaled denominator is equivalent, while eps * invScale may underflow for |x| near FLT_MAX.
+        if (finiteConst && eps_ > 0.0f) {
+            stdEps = 1.0f;
+        }
         AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
-
-        // isConst: var==0 fast path (resid=0).
-        bool isConst = (varVal == 0.0f);
 
         for (int64_t rIdx = 0; rIdx < rLoopCntTotal_; ++rIdx) {
             int64_t innerChunkIdx = rIdx % innerChunks;
@@ -804,7 +2710,7 @@ private:
             if (rLen <= 0)
                 break;
             int64_t outerROffset = DecodeOuterR(outerRFlat);
-            LoopRBlocksPost(gmBase, outerROffset, rChunkStart, rLen, isConst, invScale, mean, meanLow, stdEps);
+            LoopRBlocksPost(gmBase, outerROffset, rChunkStart, rLen, invScale, origin, mean, meanLow, stdEps);
         }
     }
 };
@@ -845,5 +2751,264 @@ __simd_vf__ inline void Mvnv2DivVf(__ubuf__ T* dstAddr, __ubuf__ T* src0Addr, __
         AscendC::Reg::LoadAlign(s1, src1Addr, ar);
         AscendC::Reg::Div(d, s0, s1, mask);
         AscendC::Reg::StoreAlign(dstAddr, d, ar, mask);
+    }
+}
+
+template <typename T>
+__simd_vf__ inline void Mvnv2CompensatedLaneSumVf(__ubuf__ T* dstAddr, __ubuf__ T* srcAddr, uint32_t count,
+                                                  uint32_t oneRepeatSize, uint16_t repeatTimes)
+{
+    using namespace AscendC::Reg;
+    RegTensor<T> sum, comp, value, total, z, residual, tmp, compNext;
+    MaskReg mask;
+    AddrReg ar;
+    Duplicate(sum, static_cast<T>(0));
+    Duplicate(comp, static_cast<T>(0));
+    for (uint16_t i = 0; i < repeatTimes; ++i) {
+        const uint32_t offset = static_cast<uint32_t>(i) * oneRepeatSize;
+        uint32_t remaining = count - offset;
+        mask = UpdateMask<T>(remaining);
+        ar = CreateAddrReg<T>(i, oneRepeatSize);
+        LoadAlign(value, srcAddr, ar);
+        Add(total, sum, value, mask);
+        Sub(z, total, sum, mask);
+        Sub(tmp, total, z, mask);
+        Sub(tmp, sum, tmp, mask);
+        Sub(residual, value, z, mask);
+        Add(residual, tmp, residual, mask);
+        Add(compNext, comp, residual, mask);
+        Select(comp, compNext, comp, mask);
+        Select(sum, total, sum, mask);
+    }
+    uint32_t fullCount = oneRepeatSize;
+    MaskReg fullMask = UpdateMask<T>(fullCount);
+    Add(sum, sum, comp, fullMask);
+    StoreAlign(dstAddr, sum, fullMask);
+}
+
+template <typename T>
+__simd_callee__ inline void Mvnv2SumError(AscendC::Reg::RegTensor<T>& error, AscendC::Reg::RegTensor<T>& a,
+                                          AscendC::Reg::RegTensor<T>& b, AscendC::Reg::RegTensor<T>& sum,
+                                          AscendC::Reg::MaskReg& mask)
+{
+    AscendC::Reg::RegTensor<T> z, x, y;
+    AscendC::Reg::Sub(z, sum, a, mask);
+    AscendC::Reg::Sub(x, sum, z, mask);
+    AscendC::Reg::Sub(x, a, x, mask);
+    AscendC::Reg::Sub(y, b, z, mask);
+    AscendC::Reg::Add(error, x, y, mask);
+}
+
+template <typename T>
+__simd_callee__ inline void Mvnv2TwoDiff(AscendC::Reg::RegTensor<T>& high, AscendC::Reg::RegTensor<T>& low,
+                                         AscendC::Reg::RegTensor<T>& a, AscendC::Reg::RegTensor<T>& b,
+                                         AscendC::Reg::MaskReg& mask)
+{
+    AscendC::Reg::RegTensor<T> virtualB, virtualA, deltaA, deltaB;
+    AscendC::Reg::Sub(high, a, b, mask);
+    AscendC::Reg::Sub(virtualB, a, high, mask);
+    AscendC::Reg::Add(virtualA, high, virtualB, mask);
+    AscendC::Reg::Sub(deltaB, virtualB, b, mask);
+    AscendC::Reg::Sub(deltaA, a, virtualA, mask);
+    AscendC::Reg::Add(low, deltaA, deltaB, mask);
+}
+
+template <typename T>
+__simd_callee__ inline void Mvnv2DdAdd(AscendC::Reg::RegTensor<T>& outHigh, AscendC::Reg::RegTensor<T>& outLow,
+                                       AscendC::Reg::RegTensor<T>& aHigh, AscendC::Reg::RegTensor<T>& aLow,
+                                       AscendC::Reg::RegTensor<T>& bHigh, AscendC::Reg::RegTensor<T>& bLow,
+                                       AscendC::Reg::MaskReg& mask)
+{
+    AscendC::Reg::RegTensor<T> sum, error, low;
+    AscendC::Reg::Add(sum, aHigh, bHigh, mask);
+    Mvnv2SumError(error, aHigh, bHigh, sum, mask);
+    AscendC::Reg::Add(low, aLow, bLow, mask);
+    AscendC::Reg::Add(low, low, error, mask);
+    AscendC::Reg::Add(outHigh, sum, low, mask);
+    Mvnv2SumError(outLow, sum, low, outHigh, mask);
+}
+
+template <typename T>
+__simd_callee__ inline void Mvnv2DdMul(AscendC::Reg::RegTensor<T>& outHigh, AscendC::Reg::RegTensor<T>& outLow,
+                                       AscendC::Reg::RegTensor<T>& aHigh, AscendC::Reg::RegTensor<T>& aLow,
+                                       AscendC::Reg::RegTensor<T>& b, AscendC::Reg::MaskReg& mask)
+{
+    AscendC::Reg::RegTensor<T> productLow, negProduct, lowProduct, sum, error;
+    AscendC::Reg::Mul(outHigh, aHigh, b, mask);
+    AscendC::Reg::Neg(negProduct, outHigh, mask);
+    productLow = aHigh;
+    AscendC::Reg::FusedMulDstAdd(productLow, b, negProduct, mask);
+    lowProduct = aLow;
+    AscendC::Reg::FusedMulDstAdd(lowProduct, b, productLow, mask);
+    productLow = lowProduct;
+    AscendC::Reg::Add(sum, outHigh, productLow, mask);
+    Mvnv2SumError(error, outHigh, productLow, sum, mask);
+    outHigh = sum;
+    outLow = error;
+}
+
+template <typename T>
+__simd_callee__ inline void Mvnv2DdSquare(AscendC::Reg::RegTensor<T>& outHigh, AscendC::Reg::RegTensor<T>& outLow,
+                                          AscendC::Reg::RegTensor<T>& high, AscendC::Reg::RegTensor<T>& low,
+                                          AscendC::Reg::MaskReg& mask)
+{
+    AscendC::Reg::RegTensor<T> productLow, negProduct, twiceLow, lowSquare, sum, error;
+    AscendC::Reg::Mul(outHigh, high, high, mask);
+    AscendC::Reg::Neg(negProduct, outHigh, mask);
+    productLow = high;
+    AscendC::Reg::FusedMulDstAdd(productLow, high, negProduct, mask);
+    AscendC::Reg::Muls(twiceLow, low, static_cast<T>(2), mask);
+    AscendC::Reg::FusedMulDstAdd(twiceLow, high, productLow, mask);
+    lowSquare = low;
+    AscendC::Reg::FusedMulDstAdd(lowSquare, low, twiceLow, mask);
+    productLow = lowSquare;
+    AscendC::Reg::Add(sum, outHigh, productLow, mask);
+    Mvnv2SumError(error, outHigh, productLow, sum, mask);
+    outHigh = sum;
+    outLow = error;
+}
+
+template <typename T, bool PRESERVE_ZERO>
+__simd_vf__ inline void Mvnv2ResidualDivTensorVf(__ubuf__ T* dst, __ubuf__ T* src, __ubuf__ T* originAddr,
+                                                 __ubuf__ T* invScaleAddr, __ubuf__ T* meanLowAddr,
+                                                 __ubuf__ T* denominatorAddr, uint32_t count, uint32_t oneRepeatSize,
+                                                 uint16_t repeatTimes)
+{
+    using namespace AscendC::Reg;
+    RegTensor<T> x, origin, invScale, meanLow, denominator;
+    RegTensor<T> residualHigh, residualLow, scaled, finalHigh, finalLow, numerator, result, zero;
+    MaskReg mask, zeroMask;
+    if constexpr (PRESERVE_ZERO) {
+        Duplicate(zero, static_cast<T>(0));
+    }
+    uint32_t remaining = count;
+    for (uint16_t i = 0; i < repeatTimes; ++i) {
+        const uint32_t offset = static_cast<uint32_t>(i) * oneRepeatSize;
+        mask = UpdateMask<T>(remaining);
+        LoadAlign(x, src + offset);
+        LoadAlign(origin, originAddr + offset);
+        LoadAlign(invScale, invScaleAddr + offset);
+        LoadAlign(meanLow, meanLowAddr + offset);
+        LoadAlign(denominator, denominatorAddr + offset);
+        Mul(scaled, x, invScale, mask);
+        Mvnv2TwoDiff(residualHigh, residualLow, scaled, origin, mask);
+        Mvnv2TwoDiff(finalHigh, finalLow, residualHigh, meanLow, mask);
+        Add(residualLow, residualLow, finalLow, mask);
+        Add(numerator, finalHigh, residualLow, mask);
+        Div(result, numerator, denominator, mask);
+        if constexpr (PRESERVE_ZERO) {
+            Compares<T, AscendC::CMPMODE::EQ>(zeroMask, finalHigh, static_cast<T>(0), mask);
+            Select(result, zero, result, zeroMask);
+        }
+        StoreAlign(dst + offset, result, mask);
+        remaining = remaining > oneRepeatSize ? remaining - oneRepeatSize : 0;
+    }
+}
+
+template <typename T>
+__simd_vf__ inline void Mvnv2R3EftVf(__ubuf__ T* row0, __ubuf__ T* row1, __ubuf__ T* row2, __ubuf__ T* originAddr,
+                                     __ubuf__ T* invScaleAddr, T epsilon, uint32_t count, uint32_t oneRepeatSize,
+                                     uint16_t repeatTimes)
+{
+    using namespace AscendC::Reg;
+    RegTensor<T> x0, x1, x2, origin, invScale, oneThird, two, epsilonReg;
+    RegTensor<T> d0h, d0l, d1h, d1l, d2h, d2l, t0h, t0l, t1h, t1l;
+    RegTensor<T> meanHigh, meanLow, negMeanHigh, negMeanLow;
+    RegTensor<T> r0h, r0l, r1h, r1l, r2h, r2l;
+    RegTensor<T> s0h, s0l, s1h, s1l, s2h, s2l, varHigh, varLow;
+    RegTensor<T> denomHigh, denomLow, epsHigh, epsLow, sqrtError, zero;
+    RegTensor<T> q, remainder, correction, negQ, result;
+    MaskReg mask, nonzeroVariance;
+    Duplicate(oneThird, static_cast<T>(1.0f / 3.0f));
+    Duplicate(two, static_cast<T>(2));
+    Duplicate(epsilonReg, epsilon);
+    Duplicate(zero, static_cast<T>(0));
+    uint32_t remaining = count;
+    for (uint16_t i = 0; i < repeatTimes; ++i) {
+        const uint32_t offset = static_cast<uint32_t>(i) * oneRepeatSize;
+        mask = UpdateMask<T>(remaining);
+        LoadAlign(x0, row0 + offset);
+        LoadAlign(x1, row1 + offset);
+        LoadAlign(x2, row2 + offset);
+        LoadAlign(origin, originAddr + offset);
+        LoadAlign(invScale, invScaleAddr + offset);
+
+        Mvnv2TwoDiff(d0h, d0l, x0, origin, mask);
+        Mvnv2TwoDiff(d1h, d1l, x1, origin, mask);
+        Mvnv2TwoDiff(d2h, d2l, x2, origin, mask);
+        Mvnv2DdMul(t0h, t0l, d0h, d0l, invScale, mask);
+        d0h = t0h;
+        d0l = t0l;
+        Mvnv2DdMul(t0h, t0l, d1h, d1l, invScale, mask);
+        d1h = t0h;
+        d1l = t0l;
+        Mvnv2DdMul(t0h, t0l, d2h, d2l, invScale, mask);
+        d2h = t0h;
+        d2l = t0l;
+
+        Mvnv2DdAdd(t0h, t0l, d0h, d0l, d1h, d1l, mask);
+        Mvnv2DdAdd(t1h, t1l, t0h, t0l, d2h, d2l, mask);
+        Mvnv2DdMul(meanHigh, meanLow, t1h, t1l, oneThird, mask);
+        Neg(negMeanHigh, meanHigh, mask);
+        Neg(negMeanLow, meanLow, mask);
+        Mvnv2DdAdd(r0h, r0l, d0h, d0l, negMeanHigh, negMeanLow, mask);
+        Mvnv2DdAdd(r1h, r1l, d1h, d1l, negMeanHigh, negMeanLow, mask);
+        Mvnv2DdAdd(r2h, r2l, d2h, d2l, negMeanHigh, negMeanLow, mask);
+
+        Mvnv2DdSquare(s0h, s0l, r0h, r0l, mask);
+        Mvnv2DdSquare(s1h, s1l, r1h, r1l, mask);
+        Mvnv2DdSquare(s2h, s2l, r2h, r2l, mask);
+        Mvnv2DdAdd(t0h, t0l, s0h, s0l, s1h, s1l, mask);
+        Mvnv2DdAdd(t1h, t1l, t0h, t0l, s2h, s2l, mask);
+        Mvnv2DdMul(varHigh, varLow, t1h, t1l, oneThird, mask);
+
+        Sqrt(denomHigh, varHigh, mask);
+        Neg(t0h, varHigh, mask);
+        sqrtError = denomHigh;
+        FusedMulDstAdd(sqrtError, denomHigh, t0h, mask);
+        Neg(sqrtError, sqrtError, mask);
+        Add(sqrtError, sqrtError, varLow, mask);
+        Mul(t0h, two, denomHigh, mask);
+        Div(denomLow, sqrtError, t0h, mask);
+        Compares<T, AscendC::CMPMODE::NE>(nonzeroVariance, denomHigh, static_cast<T>(0), mask);
+        Select(denomLow, denomLow, zero, nonzeroVariance);
+
+        Mvnv2DdMul(epsHigh, epsLow, invScale, zero, epsilonReg, mask);
+        Mvnv2DdAdd(t0h, t0l, denomHigh, denomLow, epsHigh, epsLow, mask);
+        denomHigh = t0h;
+        denomLow = t0l;
+
+        Div(q, r0h, denomHigh, mask);
+        Neg(negQ, q, mask);
+        remainder = negQ;
+        FusedMulDstAdd(remainder, denomHigh, r0h, mask);
+        correction = negQ;
+        FusedMulDstAdd(correction, denomLow, remainder, mask);
+        Add(remainder, correction, r0l, mask);
+        Div(correction, remainder, denomHigh, mask);
+        Add(result, q, correction, mask);
+        StoreAlign(row0 + offset, result, mask);
+
+        Div(q, r1h, denomHigh, mask);
+        Neg(negQ, q, mask);
+        remainder = negQ;
+        FusedMulDstAdd(remainder, denomHigh, r1h, mask);
+        correction = negQ;
+        FusedMulDstAdd(correction, denomLow, remainder, mask);
+        Add(remainder, correction, r1l, mask);
+        Div(correction, remainder, denomHigh, mask);
+        Add(result, q, correction, mask);
+        StoreAlign(row1 + offset, result, mask);
+
+        Div(q, r2h, denomHigh, mask);
+        Neg(negQ, q, mask);
+        remainder = negQ;
+        FusedMulDstAdd(remainder, denomHigh, r2h, mask);
+        correction = negQ;
+        FusedMulDstAdd(correction, denomLow, remainder, mask);
+        Add(remainder, correction, r2l, mask);
+        Div(correction, remainder, denomHigh, mask);
+        Add(result, q, correction, mask);
+        StoreAlign(row2 + offset, result, mask);
     }
 }

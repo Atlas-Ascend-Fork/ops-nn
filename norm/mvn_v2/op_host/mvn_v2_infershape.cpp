@@ -16,6 +16,7 @@
  */
 
 #include "register/op_impl_registry.h"
+#include "exe_graph/runtime/infer_datatype_context.h"
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "op_common/log/log.h"
 #include "util/shape_util.h"
@@ -39,6 +40,13 @@ static ge::graphStatus InferShape4MVNV2(gert::InferShapeContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
-IMPL_OP_INFERSHAPE(MVNV2).InferShape(InferShape4MVNV2);
+static ge::graphStatus InferDataType4MVNV2(gert::InferDataTypeContext* context)
+{
+    OP_CHECK_NULL_WITH_CONTEXT(context, context);
+    context->SetOutputDataType(0, context->GetInputDataType(0));
+    return ge::GRAPH_SUCCESS;
+}
+
+IMPL_OP_INFERSHAPE(MVNV2).InferShape(InferShape4MVNV2).InferDataType(InferDataType4MVNV2);
 
 } // namespace ops

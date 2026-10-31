@@ -21,7 +21,7 @@
 #include <cstdint>
 
 constexpr int32_t MAX_PATTERN_RANK = 9;
-constexpr int32_t MAX_INPUT_RANK = 8;
+constexpr int32_t MAX_INPUT_RANK = 4;
 
 struct MVNV2TilingData {
     int32_t axisNum = 0;
@@ -30,9 +30,10 @@ struct MVNV2TilingData {
 
     int64_t aLoopCntTotal = 0;
     int64_t aSplitChunkCnt = 0;
-    int64_t aBigCoreLoopCnt = 0;
-    int64_t aSmallCoreLoopCnt = 0;
-    int32_t aBigCoreCnt = 0;
+    // ABI-reserved slots retained to keep the serialized layout stable.
+    int64_t reservedCoreLoop0 = 0;
+    int64_t reservedCoreLoop1 = 0;
+    int32_t reservedCoreCount = 0;
     int32_t usedCoreNum = 0;
 
     int32_t aSplitAxisIdx = 0;
@@ -40,16 +41,16 @@ struct MVNV2TilingData {
     int64_t aUbFactor = 0;
     int64_t aUbFactorAlign = 0;
     int64_t rUbFactor = 0;
-    int64_t rUbFactorAlign = 0;
+    int64_t reservedRUbFactorAlign = 0;
     int64_t innerAProd = 0;
-    int64_t innerAProdAlign = 0;
+    int64_t reservedInnerAProdAlign = 0;
     int64_t innerRProd = 0;
-    int64_t innerRProdAlign = 0;
+    int64_t reservedInnerRProdAlign = 0;
 
     int64_t rLoopCntTotal = 0;
 
     int64_t preReduceUbSize = 0;
-    int64_t postReduceUbSize = 0;
+    int64_t reservedPostReduceUbSize = 0;
     int64_t tmpBufUbSize = 0;
     int64_t cacheBufUbSize = 0;
 

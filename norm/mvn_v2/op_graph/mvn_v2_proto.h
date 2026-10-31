@@ -29,16 +29,19 @@ namespace ge {
 * @brief Mean Variance Normalization V2: y = (x - mean) / (std + eps).
 *   Reduces mean and variance along specified axes, then normalizes.
 
-* @par Inputs:
-* @li x: An ND tensor of type float16/float32, describing the input feature map.
+ * @par Inputs:
+ * @li x: A 4-D NCHW tensor of type float16/float32, describing the input feature map.
 
-* @par Attributes:
-* @li eps: An optional float32, small value added to std to avoid dividing by zero. Defaults to 1e-9.
-* @li axes: An optional list int, reduction axes. Elements must be in [0, rank(x)). Defaults to [0, 2, 3].
+ * @par Attributes:
+ * @li eps: An optional float32 value added to std. Defaults to 1e-9. Negative and non-finite values
+ *     are accepted for compatibility and follow IEEE floating-point propagation.
+ * @li axes: An optional list int, reduction axes. Elements must be in [-4, 4); negative values are
+ *     normalized by adding 4. An absent or empty list selects the default axes [0, 2, 3]. Axes use
+ *     set semantics: duplicates are ignored and order does not affect the result.
 
-* @par Outputs:
-* @li y: An ND tensor of the same dtype and shape as input x, describing the normalized result.
-*/
+ * @par Outputs:
+ * @li y: A 4-D NCHW tensor of the same dtype and shape as input x, describing the normalized result.
+ */
 #ifndef OPS_PROTO_DEF_MVNV2
 #define OPS_PROTO_DEF_MVNV2
 
