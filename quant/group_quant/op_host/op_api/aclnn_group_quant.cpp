@@ -161,11 +161,12 @@ static bool CheckDim(const aclTensor* x, const aclTensor* scale, const aclTensor
     //  groupIndex(E)
     //  offset(1)
     if (offsetOptional != nullptr) {
-        OP_CHECK(
-            offsetOptional->GetViewShape().GetShapeSize() == 1,
-            OP_LOGE_FOR_INVALID_SHAPESIZE("aclnnGroupQuant", "offsetOptional",
-                                          std::to_string(offsetOptional->GetViewShape().GetShapeSize()).c_str(), "1"),
-            return false);
+        const auto offsetShape = offsetOptional->GetViewShape();
+        OP_CHECK(offsetShape.GetDimNum() == 0 || (offsetShape.GetDimNum() == 1 && offsetShape.GetDim(0) == 1),
+                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnGroupQuant", "offsetOptional",
+                                                          std::to_string(offsetShape.GetDimNum()).c_str(),
+                                                          "offsetOptional only supports scalar or shape [1]"),
+                 return false);
     }
 
     auto xShape = x->GetViewShape();
