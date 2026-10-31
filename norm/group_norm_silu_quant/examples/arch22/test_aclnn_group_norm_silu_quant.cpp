@@ -180,36 +180,32 @@ int main()
 
     // 接收meanOut结果
     size = GetShapeSize(meanOutShape);
-    std::vector<uint16_t> meanResultData(size, 0);
+    std::vector<aclFloat16> meanResultData(size, 0);
     ret = aclrtMemcpy(meanResultData.data(),
-                      meanResultData.size() * sizeof(uint16_t), // 2字节
+                      meanResultData.size() * sizeof(aclFloat16), // 2字节
                       meanOutDeviceAddr,
-                      size * sizeof(uint16_t), // 2字节
+                      size * sizeof(aclFloat16), // 2字节
                       ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy meanOut from device to host failed. ERROR: %d\n", ret); return ret);
 
     // 接收rstdOut结果
     size = GetShapeSize(rstdOutShape);
-    std::vector<uint16_t> rstdResultData(size, 0);
+    std::vector<aclFloat16> rstdResultData(size, 0);
     ret = aclrtMemcpy(rstdResultData.data(),
-                      rstdResultData.size() * sizeof(uint16_t), // 2字节
+                      rstdResultData.size() * sizeof(aclFloat16), // 2字节
                       rstdOutDeviceAddr,
-                      size * sizeof(uint16_t), // 2字节
+                      size * sizeof(aclFloat16), // 2字节
                       ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy rstdOut from device to host failed. ERROR: %d\n", ret); return ret);
 
-    // 打印结果（转换为float便于阅读）
+    // 打印结果（转换为float便于阅读）。不使用__fp16：它是ARM编译器专有类型，x86主机上g++不认识；
+    // 这里用CANN自带的aclFloat16 + aclFloat16ToFloat，跨平台且符合examples既有惯例
     for (int64_t i = 0; i < meanResultData.size(); i++) {
-        // 简单转换：将FP16位模式转换为float
-        __fp16 fp16_val = *reinterpret_cast<__fp16*>(&meanResultData[i]);
-        float fp32_val = static_cast<float>(fp16_val);
-        LOG_PRINT("meanResultData[%ld] is: %f\n", i, fp32_val);
+        LOG_PRINT("meanResultData[%ld] is: %f\n", i, aclFloat16ToFloat(meanResultData[i]));
     }
 
     for (int64_t i = 0; i < rstdResultData.size(); i++) {
-        __fp16 fp16_val = *reinterpret_cast<__fp16*>(&rstdResultData[i]);
-        float fp32_val = static_cast<float>(fp16_val);
-        LOG_PRINT("rstdResultData[%ld] is: %f\n", i, fp32_val);
+        LOG_PRINT("rstdResultData[%ld] is: %f\n", i, aclFloat16ToFloat(rstdResultData[i]));
     }
 
     // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
