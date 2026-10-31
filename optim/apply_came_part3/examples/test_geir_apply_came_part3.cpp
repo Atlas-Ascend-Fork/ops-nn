@@ -33,7 +33,6 @@
 #include "tensor.h"
 #include "types.h"
 #include "../op_graph/apply_came_part3_proto.h"
-#include "../op_graph/apply_came_part3_graph_infer.cpp"
 
 namespace {
 constexpr int kFailed = -1;

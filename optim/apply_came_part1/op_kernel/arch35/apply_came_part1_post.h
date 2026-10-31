@@ -18,6 +18,7 @@
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "apply_came_part1_common.h"
+#include "apply_came_part1_c_reduce_copy_out.h"
 
 namespace ApplyCamePart1 {
 
@@ -397,26 +398,6 @@ __aicore__ inline void ApplyCamePart1Post<T>::ReduceWorkspaceRC()
 }
 
 template <typename T>
-__aicore__ inline void CopyOutApplyCamePart1C(GlobalTensor<float>& output, LocalTensor<float> input, uint64_t offset,
-                                              uint64_t count, LocalTensor<float> scratch, bool accumulate)
-{
-    (void)scratch;
-    (void)accumulate;
-    event_t eventIdVToS = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
-    SetFlag<HardEvent::V_S>(eventIdVToS);
-    WaitFlag<HardEvent::V_S>(eventIdVToS);
-    for (uint64_t i = 0; i < count; ++i) {
-        AtomicAdd(output.GetPhyAddr(offset + i), input.GetValue(i));
-    }
-    event_t eventIdSToMte3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_MTE3));
-    SetFlag<HardEvent::S_MTE3>(eventIdSToMte3);
-    WaitFlag<HardEvent::S_MTE3>(eventIdSToMte3);
-    event_t eventIdSToMte2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_MTE2));
-    SetFlag<HardEvent::S_MTE2>(eventIdSToMte2);
-    WaitFlag<HardEvent::S_MTE2>(eventIdSToMte2);
-}
-
-template <typename T>
 __aicore__ inline void ApplyCamePart1Post<T>::CopyWorkspaceCChunk(LocalTensor<float> inputLocal, uint64_t rowBase,
                                                                   uint64_t rowCount, uint64_t gmOffsets, uint64_t calM)
 {
@@ -455,8 +436,7 @@ __aicore__ inline void ApplyCamePart1Post<T>::Pre_Core_Compute(uint64_t gmOffset
         WaitFlag<HardEvent::MTE2_V>(eventIdMte2ToV);
         ReduceAdd(inputLocal, pre_loop_n, cal_m);
         const uint64_t outputCount = (M - gmOffsets < base_m) ? M - gmOffsets : base_m;
-        CopyOutApplyCamePart1C<T>(gmSumGradC_, inputLocal, batchIdx_ * M + gmOffsets, outputCount,
-                                  outputScratchBuf_.Get<float>(), i != 0);
+        CopyOutCReduceResult(gmSumGradC_, inputLocal, batchIdx_ * M + gmOffsets, outputCount);
     }
 
     constexpr float scalarValue = 0;
@@ -470,8 +450,7 @@ __aicore__ inline void ApplyCamePart1Post<T>::Pre_Core_Compute(uint64_t gmOffset
     WaitFlag<HardEvent::MTE2_V>(eventIdMte2ToV);
     ReduceAdd(inputLocal, pre_loop_n, cal_m);
     const uint64_t outputCount = (M - gmOffsets < base_m) ? M - gmOffsets : base_m;
-    CopyOutApplyCamePart1C<T>(gmSumGradC_, inputLocal, batchIdx_ * M + gmOffsets, outputCount,
-                              outputScratchBuf_.Get<float>(), loop_time != 1);
+    CopyOutCReduceResult(gmSumGradC_, inputLocal, batchIdx_ * M + gmOffsets, outputCount);
 }
 
 template <typename T>
