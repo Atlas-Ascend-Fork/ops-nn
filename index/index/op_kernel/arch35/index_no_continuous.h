@@ -196,7 +196,7 @@ __aicore__ inline void KernelIndexNoContiguous<T, F, P, T2>::ComputeParameter(In
     for (int32_t i = inputDimNum_ - 1; i >= 0; --i) {
         if (i < indexedSizesNum_ && indexedSizeGm_(i) != 0) {
             firstIndexedDim_ = i;
-            if (i == tilingData.inputDimNum - 1 || (i > indexedSizesNum_) || !indexedSizeGm_(i + 1)) {
+            if (i == tilingData.inputDimNum - 1 || (i + 1 >= indexedSizesNum_) || !indexedSizeGm_(i + 1)) {
                 ++nonContinueNum;
             }
         }

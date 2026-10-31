@@ -312,7 +312,7 @@ __aicore__ inline void KernelIndexBroadcast<T, F, P, T2>::ComputeStrides(IndexBr
             calcParamsPtr_->indexedDimStride_[indexedNum - 1] = currentStride;
             --indexedNum;
             firstIndexedDim = i;
-            if (i == tilingData.inputDimNum - 1 || (i > indexedSizesNum_) || !indexedDim_(i + 1)) {
+            if (i == tilingData.inputDimNum - 1 || (i + 1 >= indexedSizesNum_) || !indexedDim_(i + 1)) {
                 ++nonContinueNum;
             }
         }

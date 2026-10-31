@@ -330,7 +330,7 @@ __aicore__ inline void KernelIndex<T, F, P, T2>::ComputeStrides(IndexSimtTilingD
             calcParamsPtr_->indexedDimStride_[indexedNum - 1] = currentStride;
             --indexedNum;
             firstIndexedDim = i;
-            if (i == tilingData.inputDimNum - 1 || (i > indexedSizesNum_) || !indexedDim_(i + 1)) {
+            if (i == tilingData.inputDimNum - 1 || (i + 1 >= indexedSizesNum_) || !indexedDim_(i + 1)) {
                 ++nonContinueNum;
             }
         }
