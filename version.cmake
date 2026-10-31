@@ -25,5 +25,5 @@ set_cann_run_dependencies(asc-tools ">=8.5")
 set_cann_run_dependencies(metadef ">=8.5")
 set_cann_run_dependencies(ge-executor ">=8.5")
 
-set_cann_run_dependencies(ops_legacy ">=8.5")
-set_cann_run_dependencies(ops_math ">=8.5")
+set_cann_run_dependencies(ops-legacy ">=8.5")
+set_cann_run_dependencies(ops-math ">=8.5")
