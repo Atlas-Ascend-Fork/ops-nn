@@ -58,6 +58,7 @@ private:
     MatMulV3L0C2Out l0C2Out_{MatMulV3L0C2Out::ON_THE_FLY};
     MatMulV3Model model_{MatMulV3Model::STREAM_K};
     bool isSplitK_{false};
+    bool basicApi_{false};
 };
 } // namespace matmul_v3_advanced
 } // namespace optiling

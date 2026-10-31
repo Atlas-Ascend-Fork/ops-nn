@@ -59,6 +59,7 @@ uint64_t FusedMatMulBatchAswBasicApiTiling::GetTilingKey() const
     const auto* attrs = context_->GetAttrs();
     OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
     const std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
+    // ScaleAdd单独设置tilingKey
     if (opType == "scale_add") {
         return GET_TPL_TILING_KEY(MAT_MUL_TENSOR_LEVEL, F_NO_TRANS, MAT_MUL_FOR_FUSED_BATCH, MAT_MUL_BASIC,
                                   MAT_MUL_NO_FULL_LOAD, MAT_MUL_1V2_ND_ALIG_FIXPIPE, F_OPTYPE_SCALE_ADD,
@@ -66,12 +67,15 @@ uint64_t FusedMatMulBatchAswBasicApiTiling::GetTilingKey() const
     }
     MatMulV3TilingKey tmp = MatMulV3TilingKey();
     MatMulV3TilingKey& tilingKey = tilingKeyObj == nullptr ? tmp : *tilingKeyObj;
+    MatMulV3ApiLevel apiLevel = ((opType == "relu" || opType == "") && compileInfo_.npuArch != NpuArch::DAV_RESV) ?
+                                    MatMulV3ApiLevel::TENSOR_LEVEL :
+                                    MatMulV3ApiLevel::BASIC_LEVEL;
     return tilingKey.SetTrans(args_.isATrans, args_.isBTrans)
         .SetModel(MatMulV3Model::BASIC)
         .SetBatchModel(MatMulV3BatchModel::FUSED_BATCH_MODEL)
         .SetFullLoad(MatMulV3FullLoad::NONE_FULL_LOAD)
         .SetL0C2Out(MatMulV3L0C2Out::ON_THE_FLY)
-        .SetApiLevel(MatMulV3ApiLevel::BASIC_LEVEL)
+        .SetApiLevel(apiLevel)
         .GetTilingKey();
 }
 

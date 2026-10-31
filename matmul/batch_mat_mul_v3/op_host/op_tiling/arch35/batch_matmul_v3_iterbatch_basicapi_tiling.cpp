@@ -238,9 +238,10 @@ ge::graphStatus BatchMatMulV3IterBatchBasicApiTiling::DoOpTiling()
 
     CheckTensorApiSupport();
 
-    OP_LOGI(args_.opName, "In IterBatchBasicApi module, temp iterBatchL0A is %lu, temp iterBatchL0B is %lu, \
-            temp iterBatchL0C is %lu, temp iterBatchL1 is %lu, after calculation actual runInfo_.iterBatchL0 is %lu, \
-            runInfo_.iterBatchL1 is %lu, runInfo_.baseM is %lu, runInfo_.baseN is %lu",
+    OP_LOGI(args_.opName,
+            "In IterBatchBasicApi module, temp iterBatchL0A is %lu, temp iterBatchL0B is %lu, "
+            "temp iterBatchL0C is %lu, temp iterBatchL1 is %lu, after calculation actual runInfo_.iterBatchL0 is %lu, "
+            "runInfo_.iterBatchL1 is %lu, runInfo_.baseM is %lu, runInfo_.baseN is %lu",
             iterBatchL0A_, iterBatchL0B_, iterBatchL0C_, iterBatchL1_, runInfo_.iterBatchL0, runInfo_.iterBatchL1,
             runInfo_.baseM, runInfo_.baseN);
     return ge::GRAPH_SUCCESS;

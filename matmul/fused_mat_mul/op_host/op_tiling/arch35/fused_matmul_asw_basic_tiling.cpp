@@ -276,11 +276,19 @@ uint64_t FusedMatMulAswBasicApiTiling::GetTilingKey() const
 {
     MatMulV3TilingKey tmp = MatMulV3TilingKey();
     MatMulV3TilingKey& tilingKey = tilingKeyObj == nullptr ? tmp : *tilingKeyObj;
+    auto attrs = context_->GetAttrs();
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
+    MatMulV3ApiLevel apiLevel = MatMulV3ApiLevel::BASIC_LEVEL;
+    if ((opType == "relu" || opType == "") && compileInfo_.npuArch != NpuArch::DAV_RESV) {
+        apiLevel = MatMulV3ApiLevel::TENSOR_LEVEL;
+    }
+
     return tilingKey.SetTrans(args_.isATrans, args_.isBTrans)
         .SetFullLoad(fullLoad_)
         .SetModel(MatMulV3Model::BASIC)
         .SetL0C2Out(l0C2Out_)
-        .SetApiLevel(MatMulV3ApiLevel::BASIC_LEVEL)
+        .SetApiLevel(apiLevel)
         .GetTilingKey();
 }
 

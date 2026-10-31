@@ -438,9 +438,20 @@ ge::graphStatus MatMulV3BasicStreamKTiling::DoOpTiling()
         runInfo_.stepKb = NUM_THREE; // reserve L1 space for bias
         runInfo_.stepKa = NUM_THREE;
     }
-    // fusedMatMul do not checkout to tensor api
-    bool basicApi = std::string_view(context_->GetNodeType()) == "FusedMatMul" || args_.isAvoidTensorApi;
-    isSplitK_ = MatMulV3TilingHelper::IsSplitSingleCoreK(compileInfo_, args_, !basicApi, runInfo_.singleCoreK);
+    bool isFusedMatMul = std::string_view(context_->GetNodeType()) == "FusedMatMul";
+    bool isFusedMatMulBlaze = false;
+    if (isFusedMatMul) {
+        auto attrs = context_->GetAttrs();
+        if (attrs != nullptr) {
+            constexpr size_t FUSED_MATMUL_OP_TYPE_IDX = 3UL;
+            std::string opType = attrs->GetAttrPointer<char>(FUSED_MATMUL_OP_TYPE_IDX);
+            isFusedMatMulBlaze = ((opType == "relu" || opType == "") && compileInfo_.npuArch != NpuArch::DAV_RESV);
+        }
+    }
+    // fusedMatMul(empty + relu) checkout to tensor api
+    basicApi_ = (isFusedMatMul && !isFusedMatMulBlaze) || args_.isAvoidTensorApi;
+    isSplitK_ = MatMulV3TilingHelper::IsSplitSingleCoreK(compileInfo_, args_, !basicApi_ && !isFusedMatMul,
+                                                         runInfo_.singleCoreK);
     if (isSplitK_) {
         model_ = MatMulV3Model::SK_SPLIT_K;
         runInfo_.splitKBase = MatMulV3TilingHelper::SelectSplitKBase(context_, args_.mValue, args_.nValue,
@@ -465,12 +476,10 @@ uint64_t MatMulV3BasicStreamKTiling::GetTilingKey() const
 {
     MatMulV3TilingKey tmp = MatMulV3TilingKey();
     MatMulV3TilingKey& tilingKey = tilingKeyObj == nullptr ? tmp : *tilingKeyObj;
-    // fusedMatMul do not checkout to tensor api
-    bool basicApi = std::string_view(context_->GetNodeType()) == "FusedMatMul" || args_.isAvoidTensorApi;
     return tilingKey.SetTrans(args_.isATrans, args_.isBTrans)
         .SetModel(model_)
         .SetL0C2Out(l0C2Out_)
-        .SetApiLevel(basicApi ? MatMulV3ApiLevel::BASIC_LEVEL : MatMulV3ApiLevel::TENSOR_LEVEL)
+        .SetApiLevel(basicApi_ ? MatMulV3ApiLevel::BASIC_LEVEL : MatMulV3ApiLevel::TENSOR_LEVEL)
         .GetTilingKey();
 }
 
