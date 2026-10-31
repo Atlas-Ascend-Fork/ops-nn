@@ -38,8 +38,8 @@ const int32_t INPUT_1 = 1;
 const int32_t INPUT_2 = 2;
 const int32_t INPUT_3 = 3;
 const int32_t INPUT_4 = 4;
-// maxSize 依赖的 buffer 系数（B/elem）：updateQue(BN=2,fp32)=8（第一、二阶段复用）+
-// varInQue(BN=2,fp32)=8 + accumBuf(BN=1,fp32)=4 + outQue(BN=2,T=fp16)=4 = 24 B/elem → BUF_CNT = 24/4 = 6
+// maxSize 依赖的 buffer 系数（B/elem）：updateQue(BN=4,T)=8（第一、二阶段复用）+
+// varInQue(BN=4,T)=8 + accumBuf(BN=1,fp32)=4 + outQue(BN=2,T)=4 = 24 B/elem → BUF_CNT = 24/4 = 6
 const int32_t BUF_CNT = 6;
 const int32_t BLOCK_SIZE = 32;
 const int32_t ELEMENTS_PER_BLOCK = BLOCK_SIZE / SIZE_OF_FP16;

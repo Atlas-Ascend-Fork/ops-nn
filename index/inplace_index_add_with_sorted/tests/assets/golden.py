@@ -18,33 +18,30 @@ __golden__ = {
     "kernel": {"inplace_index_add_with_sorted": "inplace_index_add_with_sorted_golden"}
 }
 
-
-def _np_to_torch(arr):
-    """numpy -> torch，兼容 bfloat16（torch.from_numpy 不直接支持 ml_dtypes.bfloat16）。"""
-    if arr is None:
-        return None
-    if "bfloat16" in str(arr.dtype):
-        return torch.from_numpy(np.ascontiguousarray(arr).view(np.int16)).view(
-            torch.bfloat16
-        )
-    return torch.from_numpy(np.ascontiguousarray(arr))
+_LOW_PRECISION = {"fp16", "bf16", "float16", "bfloat16"}
+_DTYPE_TOKENS = {"fp16", "bf16", "float16", "bfloat16", "float32"}
+_declared_dtype_cache = {}
 
 
-def _torch_to_np(t, ori_dtype):
-    """把 torch tensor 转回 numpy，并还原原始 dtype（含 bfloat16）。"""
-    if "bfloat16" in ori_dtype:
-        import ml_dtypes
+def _declared_dtype(testcase_name):
+    """按 testcase_name 还原用例声明的输出 dtype 名（fp16 / bf16 / float32）。
 
-        return (
-            t.to(torch.bfloat16)
-            .view(torch.int16)
-            .cpu()
-            .numpy()
-            .view(ml_dtypes.bfloat16)
-        )
-    if "float16" in ori_dtype:
-        return t.to(torch.float16).cpu().numpy()
-    return t.cpu().numpy()
+    本算子走 mix_tolerance（浮点族默认判据），会触发 golden_mode=Promote：
+    TTK 把 fp16/bf16 输入抬到 fp32 再交给 golden，并把 kwargs["output_dtypes"]
+    同步抬成 fp32，因此无法从入参数组还原用例声明的类型，只能从 testcase_name
+    兜底解析（用例命名规范为 IASorted_{fp16|bf16}_...）。
+    """
+    if testcase_name in _declared_dtype_cache:
+        return _declared_dtype_cache[testcase_name]
+    resolved = None
+    for seg in str(testcase_name).split("_"):
+        if seg in _DTYPE_TOKENS:
+            resolved = seg
+            break
+    if resolved is None:
+        resolved = "float32"
+    _declared_dtype_cache[testcase_name] = resolved
+    return resolved
 
 
 def inplace_index_add_with_sorted_golden(
@@ -66,6 +63,15 @@ def inplace_index_add_with_sorted_golden(
         out = var.clone()
         out.index_add_(axis, sorted_indices, value[pos], alpha=alpha)
 
+    精度说明：
+        在高精度域（float64）累加、结束时只做一次 RNE 舍入回声明 dtype。
+        - 直接用 fp16/bf16 调用 torch 会在中间结果处提前溢出（inf + x 恒为
+          inf），即使最终数学和并未越过该类型上界。
+        - 返回类型必须与用例声明一致（fp16/bf16），否则 TTK 会按
+          finfo.max(65504) 重新裁 inf，把 (65504, 65520) 这段本应舍入回
+          65504 的值误判为溢出——这正是极值用例
+          (var=65504 + alpha*value) 精度误报的根因。
+
     Args:
         var: numpy.ndarray, tensor to be accumulated into (in-place semantics).
         value: numpy.ndarray, update tensor whose rows are referenced by pos.
@@ -80,19 +86,33 @@ def inplace_index_add_with_sorted_golden(
     Returns:
         Output tensor (numpy.ndarray) of the same shape and dtype as var.
     """
-    # 统一升 fp32 计算：既规避 torch.from_numpy 不支持 bfloat16，也避免 fp16/bf16 累加精度损失
-    var_t = _np_to_torch(var).to(torch.float32)
-    value_t = _np_to_torch(value).to(torch.float32)
-    idx_t = _np_to_torch(sorted_indices).to(torch.int64)
-    pos_t = _np_to_torch(pos).to(torch.int64)
+    dtype_name = _declared_dtype(kwargs.get("testcase_name"))
+    # 高精度域累加、末尾单次 RNE 舍入到声明 dtype。
+    acc_dtype = np.float64 if dtype_name in _LOW_PRECISION else np.asarray(var).dtype
+
+    var_t = torch.from_numpy(np.asarray(var, dtype=acc_dtype))
+    value_t = torch.from_numpy(np.asarray(value, dtype=acc_dtype))
+    idx_t = torch.from_numpy(np.asarray(sorted_indices)).to(torch.int64)
+    pos_t = torch.from_numpy(np.asarray(pos)).to(torch.int64)
 
     alpha_val = 1.0
     if alpha is not None:
-        alpha_val = float(_np_to_torch(alpha).item())
+        alpha_val = float(np.asarray(alpha).item())
 
     # 按 pos 重排 value，再按 sorted_indices 累加到 var
     value_reordered = value_t[pos_t] * alpha_val
     out = var_t.clone()
     out.index_add_(axis, idx_t, value_reordered)
 
-    return _torch_to_np(out, str(var.dtype))
+    # 结束时仅舍入一次；fp16 下 |x| >= 65520 才溢出为 inf，其余（含 65504 附近的
+    # 小增量）RNE 回 65504，与 NPU fp16 累加语义一致。
+    with np.errstate(over="ignore"):
+        if dtype_name in ("bf16", "bfloat16"):
+            import ml_dtypes
+
+            result_np = out.numpy().astype(ml_dtypes.bfloat16)
+        elif dtype_name in ("fp16", "float16"):
+            result_np = out.numpy().astype(np.float16)
+        else:
+            result_np = out.numpy().astype(np.dtype(dtype_name))
+    return result_np

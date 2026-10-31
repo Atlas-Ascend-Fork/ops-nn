@@ -31,12 +31,14 @@
 
 using namespace AscendC;
 
-constexpr int64_t LB_BUFFER_NUM = 2;
+constexpr int64_t LB_BUFFER_NUM = 2;    // outQue_ 双缓冲
+constexpr int64_t LB_IN_BUFFER_NUM = 4; // updateQue_ / varInQue_ 4-buffer
 constexpr int64_t LB_BLOCK_SIZE = 32;
 constexpr int64_t LB_NUM_TWO = 2;
 constexpr int64_t LB_INDEX_UB_NUM = 1536;
-constexpr int64_t LB_WS_ROWS_PER_CORE = 2; // 每核 workspace 行数：前哨兵 + 后哨兵
-constexpr int32_t LB_WS_INVALID = -1;      // workspace index 段无效标记
+constexpr int64_t LB_WS_ROWS_PER_CORE = 2;                           // 每核 workspace 行数：前哨兵 + 后哨兵
+constexpr int32_t LB_WS_INVALID = -1;                                // workspace index 段无效标记
+constexpr int64_t LB_F32_BLOCK_ELEM = LB_BLOCK_SIZE / sizeof(float); // = 8 个 fp32 / 32B
 constexpr uint32_t LB_B32_REP_SIZE = platform::GetVRegSize() / sizeof(float); // = 64
 
 constexpr MicroAPI::CastTrait castTraitB162B32Lb = {
@@ -49,92 +51,123 @@ constexpr MicroAPI::CastTrait castTraitB162B32Lb = {
 __aicore__ inline int64_t CeilAlignLb(int64_t val, int64_t align) { return ((val + align - 1) / align) * align; }
 
 // ============================================================================
-// MicroAPI VF helpers（pure float32, DIST_NORM）
+// MicroAPI VF helpers
+//   Stage A：value/var 以 T 载入（DIST_UNPACK_B16），在寄存器内 Cast 到 fp32 后累加，
+//            省掉外层 staging 的 Cast VF 一遍读写；
+//   Stage B：workspace data 本身是 fp32，使用独立的纯 fp32 VF，不得复用 T 融合 VF。
+//   一个 repeat 消费一个 VL 的 T 元素（128 B）并展开成 64 个 fp32 lane，
+//   因此 T 元素偏移与 fp32 lane 偏移同为 r × oneRepeat。
 // ============================================================================
 template <typename T>
-__simd_vf__ inline void LbAccumInitVf(__ubuf__ float* accumUb, __ubuf__ float* valueUb, uint32_t count,
-                                      uint32_t oneRepeat, uint16_t repeat)
+__simd_vf__ inline void LbAccumInitVf(__ubuf__ float* accumUb, __ubuf__ T* valueUb, uint32_t count, uint32_t oneRepeat,
+                                      uint16_t repeat)
 {
-    // accum := value （组首行初始化，无 alpha）
+    // accum := value （组首行初始化，无 alpha；value 以 T 载入，寄存器内 Cast 到 fp32）
+    MicroAPI::RegTensor<T> valueRegT;
     MicroAPI::RegTensor<float> valueReg;
     MicroAPI::MaskReg mask;
+    uint32_t sreg = count;
     for (uint16_t r = 0; r < repeat; ++r) {
         uint32_t offset = r * oneRepeat;
-        uint32_t curCount = (r == repeat - 1) ? (count - r * oneRepeat) : oneRepeat;
-        mask = MicroAPI::UpdateMask<float>(curCount);
-        MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(valueReg, valueUb + offset);
+        mask = MicroAPI::UpdateMask<float>(sreg);
+        MicroAPI::LoadAlign<T, MicroAPI::LoadDist::DIST_UNPACK_B16>(valueRegT, valueUb + offset);
+        MicroAPI::Cast<float, T, castTraitB162B32Lb>(valueReg, valueRegT, mask);
         MicroAPI::StoreAlign<float, MicroAPI::StoreDist::DIST_NORM>(accumUb + offset, valueReg, mask);
     }
 }
 
 template <typename T>
-__simd_vf__ inline void LbAccumInitAlphaVf(__ubuf__ float* accumUb, __ubuf__ float* valueUb, uint32_t count,
+__simd_vf__ inline void LbAccumInitAlphaVf(__ubuf__ float* accumUb, __ubuf__ T* valueUb, uint32_t count,
                                            uint32_t oneRepeat, uint16_t repeat, float alphaVal)
 {
-    // accum := α × value （组首行初始化，带 alpha）
+    // accum := α × value （组首行初始化，带 alpha；accum 无有效旧值，仍用 Muls）
+    MicroAPI::RegTensor<T> valueRegT;
     MicroAPI::RegTensor<float> valueReg, scaledReg;
     MicroAPI::MaskReg mask;
+    uint32_t sreg = count;
     for (uint16_t r = 0; r < repeat; ++r) {
         uint32_t offset = r * oneRepeat;
-        uint32_t curCount = (r == repeat - 1) ? (count - r * oneRepeat) : oneRepeat;
-        mask = MicroAPI::UpdateMask<float>(curCount);
-        MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(valueReg, valueUb + offset);
+        mask = MicroAPI::UpdateMask<float>(sreg);
+        MicroAPI::LoadAlign<T, MicroAPI::LoadDist::DIST_UNPACK_B16>(valueRegT, valueUb + offset);
+        MicroAPI::Cast<float, T, castTraitB162B32Lb>(valueReg, valueRegT, mask);
         MicroAPI::Muls(scaledReg, valueReg, alphaVal, mask);
         MicroAPI::StoreAlign<float, MicroAPI::StoreDist::DIST_NORM>(accumUb + offset, scaledReg, mask);
     }
 }
 
 template <typename T>
-__simd_vf__ inline void LbAccumAddVf(__ubuf__ float* accumUb, __ubuf__ float* valueUb, uint32_t count,
-                                     uint32_t oneRepeat, uint16_t repeat)
+__simd_vf__ inline void LbAccumAddVf(__ubuf__ float* accumUb, __ubuf__ T* valueUb, uint32_t count, uint32_t oneRepeat,
+                                     uint16_t repeat)
 {
-    // accum += value （组内累加，无 alpha）
+    // accum += value （组内累加，无 alpha；value 以 T 载入，寄存器内 Cast 到 fp32）
+    MicroAPI::RegTensor<T> valueRegT;
     MicroAPI::RegTensor<float> accumReg, valueReg;
     MicroAPI::MaskReg mask;
+    uint32_t sreg = count;
     for (uint16_t r = 0; r < repeat; ++r) {
         uint32_t offset = r * oneRepeat;
-        uint32_t curCount = (r == repeat - 1) ? (count - r * oneRepeat) : oneRepeat;
-        mask = MicroAPI::UpdateMask<float>(curCount);
+        mask = MicroAPI::UpdateMask<float>(sreg);
+        MicroAPI::LoadAlign<T, MicroAPI::LoadDist::DIST_UNPACK_B16>(valueRegT, valueUb + offset);
+        MicroAPI::Cast<float, T, castTraitB162B32Lb>(valueReg, valueRegT, mask);
         MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(accumReg, accumUb + offset);
-        MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(valueReg, valueUb + offset);
         MicroAPI::Add(accumReg, accumReg, valueReg, mask);
         MicroAPI::StoreAlign<float, MicroAPI::StoreDist::DIST_NORM>(accumUb + offset, accumReg, mask);
     }
 }
 
 template <typename T>
-__simd_vf__ inline void LbAccumAddAlphaVf(__ubuf__ float* accumUb, __ubuf__ float* valueUb, uint32_t count,
+__simd_vf__ inline void LbAccumAddAlphaVf(__ubuf__ float* accumUb, __ubuf__ T* valueUb, uint32_t count,
                                           uint32_t oneRepeat, uint16_t repeat, float alphaVal)
 {
-    // accum += α × value （组内累加，带 alpha）
-    MicroAPI::RegTensor<float> accumReg, valueReg, scaledReg;
+    // accum += α × value （组内累加，带 alpha；Axpy 等价于 Muls + Add，少一条向量指令）
+    MicroAPI::RegTensor<T> valueRegT;
+    MicroAPI::RegTensor<float> accumReg, valueReg;
     MicroAPI::MaskReg mask;
+    uint32_t sreg = count;
     for (uint16_t r = 0; r < repeat; ++r) {
         uint32_t offset = r * oneRepeat;
-        uint32_t curCount = (r == repeat - 1) ? (count - r * oneRepeat) : oneRepeat;
-        mask = MicroAPI::UpdateMask<float>(curCount);
+        mask = MicroAPI::UpdateMask<float>(sreg);
+        MicroAPI::LoadAlign<T, MicroAPI::LoadDist::DIST_UNPACK_B16>(valueRegT, valueUb + offset);
+        MicroAPI::Cast<float, T, castTraitB162B32Lb>(valueReg, valueRegT, mask);
         MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(accumReg, accumUb + offset);
-        MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(valueReg, valueUb + offset);
-        MicroAPI::Muls(scaledReg, valueReg, alphaVal, mask);
-        MicroAPI::Add(accumReg, accumReg, scaledReg, mask);
+        MicroAPI::Axpy(accumReg, valueReg, alphaVal, mask); // accum = value × alpha + accum
         MicroAPI::StoreAlign<float, MicroAPI::StoreDist::DIST_NORM>(accumUb + offset, accumReg, mask);
     }
 }
 
 template <typename T>
-__simd_vf__ inline void LbAddVarVf(__ubuf__ float* accumUb, __ubuf__ float* varUb, uint32_t count, uint32_t oneRepeat,
+__simd_vf__ inline void LbAddVarVf(__ubuf__ float* accumUb, __ubuf__ T* varUb, uint32_t count, uint32_t oneRepeat,
                                    uint16_t repeat)
 {
-    // accum += var （DIRECT 闭组时单次加 var）
+    // accum += var （DIRECT / workspace 闭组时单次加 var；var 以 T 载入，寄存器内 Cast 到 fp32）
+    MicroAPI::RegTensor<T> varRegT;
     MicroAPI::RegTensor<float> accumReg, varReg;
     MicroAPI::MaskReg mask;
+    uint32_t sreg = count;
     for (uint16_t r = 0; r < repeat; ++r) {
         uint32_t offset = r * oneRepeat;
-        uint32_t curCount = (r == repeat - 1) ? (count - r * oneRepeat) : oneRepeat;
-        mask = MicroAPI::UpdateMask<float>(curCount);
+        mask = MicroAPI::UpdateMask<float>(sreg);
+        MicroAPI::LoadAlign<T, MicroAPI::LoadDist::DIST_UNPACK_B16>(varRegT, varUb + offset);
+        MicroAPI::Cast<float, T, castTraitB162B32Lb>(varReg, varRegT, mask);
         MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(accumReg, accumUb + offset);
-        MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(varReg, varUb + offset);
         MicroAPI::Add(accumReg, accumReg, varReg, mask);
+        MicroAPI::StoreAlign<float, MicroAPI::StoreDist::DIST_NORM>(accumUb + offset, accumReg, mask);
+    }
+}
+
+// Stage B 专用：workspace data 已是 fp32，直接累加，不做 Cast
+__simd_vf__ inline void LbAccumAddFp32Vf(__ubuf__ float* accumUb, __ubuf__ float* dataUb, uint32_t count,
+                                         uint32_t oneRepeat, uint16_t repeat)
+{
+    MicroAPI::RegTensor<float> accumReg, dataReg;
+    MicroAPI::MaskReg mask;
+    uint32_t sreg = count;
+    for (uint16_t r = 0; r < repeat; ++r) {
+        uint32_t offset = r * oneRepeat;
+        mask = MicroAPI::UpdateMask<float>(sreg);
+        MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(accumReg, accumUb + offset);
+        MicroAPI::LoadAlign<float, MicroAPI::LoadDist::DIST_NORM>(dataReg, dataUb + offset);
+        MicroAPI::Add(accumReg, accumReg, dataReg, mask);
         MicroAPI::StoreAlign<float, MicroAPI::StoreDist::DIST_NORM>(accumUb + offset, accumReg, mask);
     }
 }
@@ -212,10 +245,13 @@ public:
         // ===== 单 TPipe：一次 InitBuffer 分配所有 buffer =====
         pipe_->InitBuffer(wsIndexBuf_, wsIndexBufSize_);                                 // B1: 动态
         pipe_->InitBuffer(indexQue_, 1, LB_NUM_TWO * LB_INDEX_UB_NUM * sizeof(int32_t)); // B4+B5 合并
-        pipe_->InitBuffer(updateQue_, LB_BUFFER_NUM, maxSize_ * sizeof(float));          // B6: NK9 fp32
-        pipe_->InitBuffer(varInQue_, LB_BUFFER_NUM, maxSize_ * sizeof(float));           // B7: NK9 fp32
-        pipe_->InitBuffer(accumBuf_, maxSize_ * sizeof(float));                          // B8: 累加器
-        pipe_->InitBuffer(outQue_, LB_BUFFER_NUM, maxSize_ * sizeof(T));                 // B10: T 类型
+        pipe_->InitBuffer(updateQue_, LB_IN_BUFFER_NUM, maxSize_ * sizeof(T));           // B6: T，4-buffer
+        pipe_->InitBuffer(varInQue_, LB_IN_BUFFER_NUM, maxSize_ * sizeof(T));            // B7: T，4-buffer
+        pipe_->InitBuffer(accumBuf_, maxSize_ * sizeof(float));                          // B8: 累加器（fp32）
+        pipe_->InitBuffer(outQue_, LB_BUFFER_NUM, maxSize_ * sizeof(T));                 // B10: T，双缓冲
+
+        // Stage B 复用 updateQue_ 的 T 单槽作 fp32 视图，单次可处理的最大长度即该视图容量
+        lbSbNum_ = (maxSize_ * static_cast<int64_t>(sizeof(T))) / sizeof(float); // 10048 时 = 5024
 
         // Publish index metadata through MTE3 so Stage B observes it after SyncAll.
         WriteWorkspaceIndex(0, LB_WS_INVALID);
@@ -307,11 +343,11 @@ private:
     __aicore__ inline void AccumInit(int32_t pos, int64_t dLoop)
     {
         CopyValueIn(pos, dLoop, currentEachNum_);
-        auto valueLocal = updateQue_.template DeQue<float>();
+        auto valueLocal = updateQue_.template DeQue<T>();
 
         auto accumLocal = accumBuf_.Get<float>();
         __ubuf__ float* accumUb = reinterpret_cast<__ubuf__ float*>(accumLocal.GetPhyAddr());
-        __ubuf__ float* valueUb = reinterpret_cast<__ubuf__ float*>(valueLocal.GetPhyAddr());
+        __ubuf__ T* valueUb = reinterpret_cast<__ubuf__ T*>(valueLocal.GetPhyAddr());
         DoAccum(accumUb, valueUb, currentEachNumAlign_, /*isInit=*/true);
         // 等 VF_CALL 读完 valueUb，再释放，避免下次 CopyValueIn 的 MTE2 覆盖
         PipeBarrier<PIPE_V>();
@@ -322,18 +358,18 @@ private:
     __aicore__ inline void AccumAdd(int32_t pos, int64_t dLoop)
     {
         CopyValueIn(pos, dLoop, currentEachNum_);
-        auto valueLocal = updateQue_.template DeQue<float>();
+        auto valueLocal = updateQue_.template DeQue<T>();
 
         auto accumLocal = accumBuf_.Get<float>();
         __ubuf__ float* accumUb = reinterpret_cast<__ubuf__ float*>(accumLocal.GetPhyAddr());
-        __ubuf__ float* valueUb = reinterpret_cast<__ubuf__ float*>(valueLocal.GetPhyAddr());
+        __ubuf__ T* valueUb = reinterpret_cast<__ubuf__ T*>(valueLocal.GetPhyAddr());
         DoAccum(accumUb, valueUb, currentEachNumAlign_, /*isInit=*/false);
         // 等 VF_CALL 读完 valueUb，再释放，避免下次 CopyValueIn 的 MTE2 覆盖
         PipeBarrier<PIPE_V>();
         updateQue_.FreeTensor(valueLocal);
     }
 
-    __aicore__ inline void DoAccum(__ubuf__ float* accumUb, __ubuf__ float* valueUb, int64_t count, bool isInit)
+    __aicore__ inline void DoAccum(__ubuf__ float* accumUb, __ubuf__ T* valueUb, int64_t count, bool isInit)
     {
         uint32_t cnt = static_cast<uint32_t>(count);
         uint16_t repeat = static_cast<uint16_t>(AscendC::CeilDivision(cnt, LB_B32_REP_SIZE));
@@ -383,10 +419,10 @@ private:
     {
         // 加 var（仅 DIRECT 路径加 var）
         CopyVarIn(idx, dLoop, currentEachNum_);
-        auto varLocal = varInQue_.template DeQue<float>();
+        auto varLocal = varInQue_.template DeQue<T>();
 
         __ubuf__ float* accumUb = reinterpret_cast<__ubuf__ float*>(accumBuf_.Get<float>().GetPhyAddr());
-        __ubuf__ float* varUb = reinterpret_cast<__ubuf__ float*>(varLocal.GetPhyAddr());
+        __ubuf__ T* varUb = reinterpret_cast<__ubuf__ T*>(varLocal.GetPhyAddr());
         uint32_t cnt = static_cast<uint32_t>(currentEachNumAlign_);
         uint16_t repeat = static_cast<uint16_t>(AscendC::CeilDivision(cnt, LB_B32_REP_SIZE));
         AscendC::VF_CALL<LbAddVarVf<T>>(accumUb, varUb, cnt, LB_B32_REP_SIZE, repeat);
@@ -447,68 +483,26 @@ private:
         WaitFlag<HardEvent::MTE3_S>(eventIDMTE3ToS);
     }
 
-    // ---- NK9 Cast-in-place：T → fp32（对齐 fix.h CopyValueIn）----
+    // ---- value 直接按 T 搬入（Cast 下沉到 Stage A 的融合 VF）----
     __aicore__ inline void CopyValueIn(int32_t pos, int64_t progress, int64_t dataLen)
     {
-        auto valueLocal = updateQue_.template AllocTensor<float>();
-        LocalTensor<T> valueLocalT = valueLocal.template ReinterpretCast<T>();
-        int64_t valueOffset = CeilAlignLb(dataLen, BLOCK_UB_SIZE_);
+        auto valueLocal = updateQue_.template AllocTensor<T>();
 
         DataCopyPadExtParams<T> tPadParams = {false, 0, 0, static_cast<T>(0)};
         DataCopyExtParams extParams = {(uint16_t)1, static_cast<uint32_t>(dataLen * sizeof(T)), 0, 0, 0};
-        DataCopyPad(valueLocalT[valueOffset], valueGm_[pos * updatesOneTime_ + progress * maxSize_], extParams,
-                    tPadParams);
-
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-        SetFlag<HardEvent::MTE2_V>(eventId);
-        WaitFlag<HardEvent::MTE2_V>(eventId);
-
-        CastT2Fp32(valueLocal, valueLocalT, valueOffset, dataLen);
-        updateQue_.EnQue(valueLocal);
+        DataCopyPad(valueLocal, valueGm_[pos * updatesOneTime_ + progress * maxSize_], extParams, tPadParams);
+        updateQue_.EnQue(valueLocal); // EnQue / DeQue 已建立 MTE2 → V 依赖
     }
 
-    // ---- NK9 Cast-in-place：var T → fp32 ----
+    // ---- var 直接按 T 搬入（Cast 下沉到 LbAddVarVf）----
     __aicore__ inline void CopyVarIn(int32_t idx, int64_t progress, int64_t dataLen)
     {
-        auto varLocal = varInQue_.template AllocTensor<float>();
-        LocalTensor<T> varLocalT = varLocal.template ReinterpretCast<T>();
-        int64_t varOffset = CeilAlignLb(dataLen, BLOCK_UB_SIZE_);
+        auto varLocal = varInQue_.template AllocTensor<T>();
 
         DataCopyPadExtParams<T> tPadParams = {false, 0, 0, static_cast<T>(0)};
         DataCopyExtParams extParams = {(uint16_t)1, static_cast<uint32_t>(dataLen * sizeof(T)), 0, 0, 0};
-        DataCopyPad(varLocalT[varOffset], varGm_[idx * updatesOneTime_ + progress * maxSize_], extParams, tPadParams);
-
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-        SetFlag<HardEvent::MTE2_V>(eventId);
-        WaitFlag<HardEvent::MTE2_V>(eventId);
-
-        CastT2Fp32(varLocal, varLocalT, varOffset, dataLen);
-        varInQue_.EnQue(varLocal);
-    }
-
-    // ---- MicroAPI VF: T staging（后半）→ fp32（前半）----
-    __aicore__ inline void CastT2Fp32(LocalTensor<float>& dstLocal, LocalTensor<T>& srcLocalT, int64_t srcOffset,
-                                      int64_t dataLen)
-    {
-        int64_t count = CeilAlignLb(dataLen, BLOCK_UB_SIZE_);
-        uint16_t loops = AscendC::CeilDivision(count * sizeof(float), platform::GetVRegSize());
-        uint32_t loopsStride = platform::GetVRegSize() / sizeof(float);
-
-        __VEC_SCOPE__
-        {
-            __local_mem__ float* dst = reinterpret_cast<__local_mem__ float*>(dstLocal.GetPhyAddr());
-            __local_mem__ T* src = reinterpret_cast<__local_mem__ T*>(srcLocalT.GetPhyAddr()) + srcOffset;
-            uint32_t sreg = static_cast<uint32_t>(count);
-            MicroAPI::MaskReg mask;
-            MicroAPI::RegTensor<T> aReg;
-            MicroAPI::RegTensor<float> bReg;
-            for (uint16_t i = 0; i < loops; ++i) {
-                mask = MicroAPI::UpdateMask<float>(sreg);
-                MicroAPI::DataCopy<T, MicroAPI::LoadDist::DIST_UNPACK_B16>(aReg, src + i * loopsStride);
-                MicroAPI::Cast<float, T, castTraitB162B32Lb>(bReg, aReg, mask);
-                MicroAPI::DataCopy(dst + i * loopsStride, bReg, mask);
-            }
-        }
+        DataCopyPad(varLocal, varGm_[idx * updatesOneTime_ + progress * maxSize_], extParams, tPadParams);
+        varInQue_.EnQue(varLocal); // EnQue / DeQue 已建立 MTE2 → V 依赖
     }
 
     // ============ Stage B：跨核合并 ============
@@ -588,7 +582,7 @@ private:
         SetFlag<HardEvent::MTE2_V>(eventId);
         WaitFlag<HardEvent::MTE2_V>(eventId);
 
-        // 向后扫描相同 index 行累加
+        // 向后扫描相同 index 行累加；单次处理长度受 fp32 视图容量 lbSbNum_ 限制，需行内分块
         for (int64_t next = startRow + 1; next < totalWsRows; ++next) {
             int32_t nextIdx = wsIdx.GetValue(next);
             if (nextIdx == LB_WS_INVALID) {
@@ -598,21 +592,28 @@ private:
                 break;
             }
 
-            // Stage B starts after Stage A has drained updateQue_; reuse it for workspace data.
-            auto dataIn = updateQue_.template AllocTensor<float>();
-            DataCopyPad(dataIn, wsDataGm_[next * updatesOneTime_ + dLoop * maxSize_], extParams,
-                        {false, 0, 0, static_cast<float>(0)});
-            updateQue_.EnQue(dataIn);
-            auto dataLocal = updateQue_.template DeQue<float>();
+            // updateQue_ 在 Stage A 已排空，此处复用其 T 单槽作为 fp32 视图（容量 lbSbNum_）
+            for (int64_t chunkOffset = 0; chunkOffset < currentEachNum_; chunkOffset += lbSbNum_) {
+                int64_t chunkLen = (currentEachNum_ - chunkOffset < lbSbNum_) ? (currentEachNum_ - chunkOffset) :
+                                                                                lbSbNum_;
+                uint32_t chunkCnt = static_cast<uint32_t>(CeilAlignLb(chunkLen, LB_F32_BLOCK_ELEM));
+                uint16_t repeat = static_cast<uint16_t>(AscendC::CeilDivision(chunkCnt, LB_B32_REP_SIZE));
 
-            __ubuf__ float* accumUb = reinterpret_cast<__ubuf__ float*>(accumLocal.GetPhyAddr());
-            __ubuf__ float* dataUb = reinterpret_cast<__ubuf__ float*>(dataLocal.GetPhyAddr());
-            uint32_t cnt = static_cast<uint32_t>(currentEachNumAlign_);
-            uint16_t repeat = static_cast<uint16_t>(AscendC::CeilDivision(cnt, LB_B32_REP_SIZE));
-            AscendC::VF_CALL<LbAccumAddVf<T>>(accumUb, dataUb, cnt, LB_B32_REP_SIZE, repeat);
-            // 等 VF_CALL 读完 dataUb，再释放，避免下一行 MTE2 覆盖
-            PipeBarrier<PIPE_V>();
-            updateQue_.FreeTensor(dataLocal);
+                auto dataIn = updateQue_.template AllocTensor<float>();
+                DataCopyExtParams chunkParams = {(uint16_t)1, static_cast<uint32_t>(chunkLen * sizeof(float)), 0, 0, 0};
+                DataCopyPad(dataIn, wsDataGm_[next * updatesOneTime_ + dLoop * maxSize_ + chunkOffset], chunkParams,
+                            {false, 0, 0, static_cast<float>(0)});
+                updateQue_.EnQue(dataIn);
+                auto dataLocal = updateQue_.template DeQue<float>();
+
+                __ubuf__ float* accumUb = reinterpret_cast<__ubuf__ float*>(accumLocal.GetPhyAddr());
+                __ubuf__ float* dataUb = reinterpret_cast<__ubuf__ float*>(dataLocal.GetPhyAddr());
+                // workspace data 已是 fp32，使用独立 fp32 VF，不得使用 Stage A 的 T 融合 VF
+                AscendC::VF_CALL<LbAccumAddFp32Vf>(accumUb + chunkOffset, dataUb, chunkCnt, LB_B32_REP_SIZE, repeat);
+                // 等 VF_CALL 读完 dataUb，再释放，避免下一 chunk MTE2 覆盖
+                PipeBarrier<PIPE_V>();
+                updateQue_.FreeTensor(dataLocal);
+            }
         }
     }
 
@@ -620,11 +621,11 @@ private:
     {
         // 末尾单次加 var（workspace 路径 var 唯一累加点）
         CopyVarIn(curIdx, dLoop, currentEachNum_);
-        auto varLocal = varInQue_.template DeQue<float>();
+        auto varLocal = varInQue_.template DeQue<T>();
         auto accumLocal = accumBuf_.Get<float>();
 
         __ubuf__ float* accumUb = reinterpret_cast<__ubuf__ float*>(accumLocal.GetPhyAddr());
-        __ubuf__ float* varUb = reinterpret_cast<__ubuf__ float*>(varLocal.GetPhyAddr());
+        __ubuf__ T* varUb = reinterpret_cast<__ubuf__ T*>(varLocal.GetPhyAddr());
         uint32_t cnt = static_cast<uint32_t>(currentEachNumAlign_);
         uint16_t repeat = static_cast<uint16_t>(AscendC::CeilDivision(cnt, LB_B32_REP_SIZE));
         AscendC::VF_CALL<LbAddVarVf<T>>(accumUb, varUb, cnt, LB_B32_REP_SIZE, repeat);
@@ -678,6 +679,7 @@ private:
     // workspace 布局（Kernel 现算，不入 TilingData）
     int64_t wsIndexSize_;    // 段 1 大小 = 段 2 起始字节偏移
     int64_t wsIndexBufSize_; // B1 UB 大小
+    int64_t lbSbNum_;        // Stage B 单次最大处理长度 = updateQue_ T 单槽的 fp32 视图容量
 
     // 哨兵 / 标量
     int32_t frontSentinelIdx_;
@@ -685,12 +687,12 @@ private:
     float alphaScalar_;
 
     // Buffer（单 TPipe）
-    TBuf<> wsIndexBuf_;                                 // B1
-    TQue<QuePosition::VECIN, 1> indexQue_;              // B4+B5 合并（indices + pos）
-    TQue<QuePosition::VECIN, LB_BUFFER_NUM> updateQue_; // B6（Stage A updates / Stage B workspace data 复用）
-    TQue<QuePosition::VECIN, LB_BUFFER_NUM> varInQue_;  // B7
-    TBuf<> accumBuf_;                                   // B8
-    TQue<QuePosition::VECOUT, LB_BUFFER_NUM> outQue_;   // B10
+    TBuf<> wsIndexBuf_;                                    // B1
+    TQue<QuePosition::VECIN, 1> indexQue_;                 // B4+B5 合并（indices + pos）
+    TQue<QuePosition::VECIN, LB_IN_BUFFER_NUM> updateQue_; // B6: T 单槽 ×4（Stage B 复用为 fp32 视图）
+    TQue<QuePosition::VECIN, LB_IN_BUFFER_NUM> varInQue_;  // B7: T 单槽 ×4
+    TBuf<> accumBuf_;                                      // B8: fp32 累加器
+    TQue<QuePosition::VECOUT, LB_BUFFER_NUM> outQue_;      // B10: T 单槽 ×2
 
     // LocalTensor 句柄
     LocalTensor<int32_t> idxLocal_;
@@ -705,7 +707,7 @@ private:
     GlobalTensor<int32_t> wsIndexGm_;
     GlobalTensor<float> wsDataGm_;
 
-    static constexpr int64_t BLOCK_UB_SIZE_ = 32 / sizeof(T); // T 元素对齐（ReinterpretCast staging）
+    static constexpr int64_t BLOCK_UB_SIZE_ = 32 / sizeof(T); // T 元素对齐（32 B block，用于 currentEachNumAlign_）
 };
 
 #endif // INPLACE_INDEX_ADD_WITH_SORTED_ARCH35_LOAD_BALANCE_H_
