@@ -17,6 +17,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <utility>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -387,4 +388,108 @@ TEST_F(ForeachSubListTilingTest, test_tiling_bf16_001)
 
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
     ASSERT_EQ(tiling_context->GetTilingKey(), 3);
+}
+
+static ge::graphStatus RunValidationCase(gert::StorageShape inputShape, gert::StorageShape outputShape,
+                                         ge::DataType outputDtype, uint64_t ubSize, uint64_t tensorNum = 1)
+{
+    std::map<std::string, std::string> socInfos;
+    std::map<std::string, std::string> aicoreSpec;
+    std::map<std::string, std::string> intrinsics;
+    std::string compileInfoString = R"({"hardware_info":{"UB_SIZE":)" + std::to_string(ubSize) + R"(,"CORE_NUM":64}})";
+    GetPlatFormInfos(compileInfoString.c_str(), socInfos, aicoreSpec, intrinsics);
+    fe::PlatFormInfos platformInfo;
+    platformInfo.Init();
+    struct ForeachSubListCompileInfo {
+    } compileInfo;
+
+    std::string opType("ForeachSubList");
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    EXPECT_NE(opImpl, nullptr);
+    if (opImpl == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto tilingFunc = opImpl->tiling;
+
+    gert::StorageShape scalarShape = {{1}, {1}};
+    std::vector<gert::StorageShape*> inputShapes;
+    std::vector<gert::StorageShape*> outputShapes;
+    for (uint64_t i = 0; i < tensorNum; i++) {
+        inputShapes.push_back(&inputShape);
+    }
+    for (uint64_t i = 0; i < tensorNum; i++) {
+        inputShapes.push_back(&inputShape);
+    }
+    inputShapes.push_back(&scalarShape);
+    for (uint64_t i = 0; i < tensorNum; i++) {
+        outputShapes.push_back(&outputShape);
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    EXPECT_NE(param, nullptr);
+    if (param == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto workspaceSizeHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceSizeHolder.get());
+    gert::TilingContextFaker builder;
+    builder.NodeIoNum(3, 1)
+        .IrInstanceNum({tensorNum, tensorNum, 1})
+        .InputShapes(inputShapes)
+        .OutputShapes(outputShapes)
+        .CompileInfo(&compileInfo)
+        .PlatformInfo(reinterpret_cast<char*>(&platformInfo));
+    for (uint64_t i = 0; i < tensorNum * 2; i++) {
+        builder.NodeInputTd(i, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    builder.NodeInputTd(tensorNum * 2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    for (uint64_t i = 0; i < tensorNum; i++) {
+        builder.NodeOutputTd(i, outputDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto holder = std::move(builder).TilingData(param.get()).Workspace(wsSize).Build();
+    gert::TilingContext* context = holder.GetContext<gert::TilingContext>();
+    context->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    std::map<std::string, std::string> socVersionInfos = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+    context->GetPlatformInfo()->SetPlatformRes("version", socVersionInfos);
+    return tilingFunc(context);
+}
+
+TEST_F(ForeachSubListTilingTest, test_tiling_rejects_rank_nine)
+{
+    gert::StorageShape shape = {{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}};
+    EXPECT_EQ(RunValidationCase(shape, shape, ge::DT_FLOAT, 262144), ge::GRAPH_FAILED);
+}
+
+TEST_F(ForeachSubListTilingTest, test_tiling_rejects_output_shape_mismatch)
+{
+    gert::StorageShape inputShape = {{4, 4}, {4, 4}};
+    gert::StorageShape outputShape = {{2, 4}, {2, 4}};
+    EXPECT_EQ(RunValidationCase(inputShape, outputShape, ge::DT_FLOAT, 262144), ge::GRAPH_FAILED);
+}
+
+TEST_F(ForeachSubListTilingTest, test_tiling_rejects_output_dtype_mismatch)
+{
+    gert::StorageShape shape = {{4, 4}, {4, 4}};
+    EXPECT_EQ(RunValidationCase(shape, shape, ge::DT_BF16, 262144), ge::GRAPH_FAILED);
+}
+
+TEST_F(ForeachSubListTilingTest, test_tiling_rejects_negative_elements)
+{
+    gert::StorageShape shape = {{-1}, {-1}};
+    EXPECT_EQ(RunValidationCase(shape, shape, ge::DT_FLOAT, 262144), ge::GRAPH_FAILED);
+}
+
+TEST_F(ForeachSubListTilingTest, test_tiling_rejects_even_negative_dimensions)
+{
+    gert::StorageShape shape = {{-1, -1}, {-1, -1}};
+    EXPECT_EQ(RunValidationCase(shape, shape, ge::DT_FLOAT, 262144), ge::GRAPH_FAILED);
+}
+
+TEST_F(ForeachSubListTilingTest, test_tiling_rejects_insufficient_ub)
+{
+    gert::StorageShape shape = {{4, 4}, {4, 4}};
+    EXPECT_EQ(RunValidationCase(shape, shape, ge::DT_FLOAT, 131072), ge::GRAPH_FAILED);
 }

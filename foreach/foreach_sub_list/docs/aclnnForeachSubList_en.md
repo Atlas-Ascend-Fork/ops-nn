@@ -5,7 +5,7 @@
 ## Applicable Products
 
 <!-- npu="950" id1 -->
-- <term>Ascend 950PR&950DT products</term>: Not supported
+- <term>Ascend 950PR&950DT products</term>: Supported
 <!-- end id1 -->
 <!-- npu="A3" id2 -->
 - <term>Atlas A3 products</term>: Supported
@@ -48,7 +48,7 @@ aclnnStatus aclnnForeachSubListGetWorkspaceSize(
   const aclTensorList     *x1,
   const aclTensorList     *x2,
   const aclTensor         *alpha,
-  const aclTensorList     *out,
+  aclTensorList           *out,
   uint64_t                *workspaceSize,
   aclOpExecutor          **executor)
 ```
@@ -121,11 +121,11 @@ aclnnStatus aclnnForeachSubList(
       <td>out (aclTensorList*)</td>
       <td>Output</td>
       <td>Output tensor list of the subtraction operation, corresponding to `y` in the formula.</td>
-      <td><ul><li>Supports empty tensors.</li><li>All tensors in this parameter have the same data type.</li><li>The data type and data format are the same as those of input `x1`, and the shape size is greater than or equal to that of input `x1`.</li></ul></td>
+      <td><ul><li>Supports empty tensors.</li><li>All tensors in this parameter have the same data type.</li><li>The data type, data format, and shape of each tensor must be identical to those of the corresponding tensor in `x1`, and the tensor count must be the same as `x1` and `x2`.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16, INT32, INT16, INT8, UINT8</td>
       <td>ND</td>
       <td>0-8</td>
-      <td>×</td>
+      <td>√</td>
     </tr>
     <tr>
       <td>workspaceSize (uint64_t*)</td>
@@ -175,23 +175,18 @@ aclnnStatus aclnnForeachSubList(
       <td>The input x1, x2, alpha, or out is a null pointer.</td>
     </tr>
     <tr>
-      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="2">161002</td>
-      <td>The data type of x1, x2, alpha, or out is not in the supported range.</td>
+      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="4">161002</td>
+      <td>The data type of x1, x2, alpha, or out is not in the supported range, or the dtype constraints within or between lists are violated.</td>
     </tr>
     <tr>
-      <td>The data types of x1, x2, and out are inconsistent.</td></tr>
-    <tr>
-      <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="4">561002</td>
-      <td>The shapes of x1, x2, and out do not meet the constraints.</td>
+      <td>The shapes or tensor counts of x1, x2, and out do not meet the constraints.</td>
     </tr>
     <tr>
-      <td>The data types of tensors in x1, x2, or out are inconsistent.</td></tr>
+      <td>The dimensions of tensors in x1, x2, or out exceed 8.</td>
+    </tr>
     <tr>
-      <td>The dimensions of tensors in x1, x2, or out exceed 8.</td></tr>
-    <tr>
-      <td>The number of elements in alpha is not 1.</td>
+      <td>The number of elements in alpha is not 1 or its dimension exceeds 8.</td>
     </tr>
   </tbody>
   </table>
@@ -241,7 +236,10 @@ aclnnStatus aclnnForeachSubList(
 
 ## Constraints
 
-- Ascend 950PR&950DT products: INT16, INT8, and UINT8 are not supported.
+- The tensor counts of `x1`, `x2`, and `out` must be identical. On Ascend 950PR&950DT products, each tensor list supports at most 256 tensors.
+- When `x1`, `x2`, and `out` are all empty tensor lists, the API returns success without performing computation. Other tensor count mismatches return a parameter error.
+- The `-1` (dynamic dimension) and `-2` (dynamic rank) markers are handled by Host inference according to the framework conventions. Tiling requires concrete shapes and non-negative element counts.
+- Integer overflow wraps according to the bit width of the output data type.
 - Deterministic computation:
   - aclnnForeachSubList defaults to a deterministic implementation.
 

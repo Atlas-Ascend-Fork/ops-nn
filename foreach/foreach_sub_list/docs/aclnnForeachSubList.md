@@ -46,7 +46,7 @@ aclnnStatus aclnnForeachSubListGetWorkspaceSize(
   const aclTensorList     *x1,
   const aclTensorList     *x2,
   const aclTensor         *alpha,
-  const aclTensorList     *out,
+  aclTensorList           *out,
   uint64_t                *workspaceSize,
   aclOpExecutor          **executor)
 ```
@@ -119,7 +119,7 @@ aclnnStatus aclnnForeachSubList(
       <td>out（aclTensorList*）</td>
       <td>输出</td>
       <td>表示减法运算的输出张量列表，对应公式中的`y`。</td>
-      <td><ul><li>支持空tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape size大于等于入参`x1`的shape size。</li></ul></td>
+      <td><ul><li>支持空tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型、数据格式和shape与入参`x1`逐Tensor完全一致，且Tensor数量与`x1`、`x2`一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16、INT32、INT16、INT8、UINT8</td>
       <td>ND</td>
       <td>0-8</td>
@@ -173,23 +173,18 @@ aclnnStatus aclnnForeachSubList(
       <td>传入的x1、x2、alpha、out是空指针。</td>
     </tr>
     <tr>
-      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="2">161002</td>
-      <td>x1、x2、alpha、out的数据类型不在支持的范围之内。</td>
+      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="4">161002</td>
+      <td>x1、x2、alpha、out的数据类型不在支持的范围之内，或列表内及列表间数据类型不满足约束。</td>
     </tr>
     <tr>
-      <td>x1、x2、out的数据类型不一致。</td></tr>
-    <tr>
-      <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="4">561002</td>
-      <td>x1、x2、out的shape不满足约束。</td>
+      <td>x1、x2、out的shape或Tensor列表数量不满足约束。</td>
     </tr>
     <tr>
-      <td>x1、x2或out中的Tensor的数据类型不一致。</td></tr>
+      <td>x1、x2或out中的Tensor维度超过8维。</td>
+    </tr>
     <tr>
-      <td>x1、x2或out中的Tensor维度超过8维。</td></tr>
-    <tr>
-      <td>alpha元素个数不为1。</td>
+      <td>alpha元素个数不为1或维度超过8维。</td>
     </tr>
   </tbody>
   </table>
@@ -239,7 +234,10 @@ aclnnStatus aclnnForeachSubList(
 
 ## 约束说明
 
-- Ascend 950PR&950DT系列产品：不支持INT16、INT8、UINT8。
+- `x1`、`x2`、`out`的Tensor列表长度必须一致；Ascend 950PR&950DT系列产品单个Tensor列表中Tensor的数量不超过256个。
+- `x1`、`x2`、`out`均为空TensorList时，接口执行成功空操作；其他列表数量失配场景返回参数错误。
+- `-1`（动态维度）与`-2`（动态Rank）标记由Host推导阶段按框架约定处理；内核侧Tiling要求shape已具体化且元素数非负。
+- 整数计算结果溢出时按输出数据类型的位宽进行回绕。
 - 确定性计算：
   - aclnnForeachSubList默认确定性实现。
 

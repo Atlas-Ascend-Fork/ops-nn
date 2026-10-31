@@ -45,3 +45,42 @@ TEST_F(l2_foreach_sub_list_test, ascend910B2_foreach_sub_list_test_non_contiguou
     aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
 }
+
+TEST_F(l2_foreach_sub_list_test, ascend910B2_foreach_sub_list_test_out_list_too_short)
+{
+    auto x = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto alpha = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto x1List = TensorListDesc({x, x});
+    auto x2List = TensorListDesc({x, x});
+    auto outList = TensorListDesc({out});
+    auto ut = OP_API_UT(aclnnForeachSubList, INPUT(x1List, x2List, alpha), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_foreach_sub_list_test, ascend910B2_foreach_sub_list_test_out_list_too_long)
+{
+    auto x = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto alpha = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto x1List = TensorListDesc({x});
+    auto x2List = TensorListDesc({x});
+    auto outList = TensorListDesc({out, out});
+    auto ut = OP_API_UT(aclnnForeachSubList, INPUT(x1List, x2List, alpha), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_foreach_sub_list_test, ascend910B2_foreach_sub_list_test_invalid_alpha_element_count)
+{
+    auto x = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto alpha = TensorDesc({2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto x1List = TensorListDesc({x});
+    auto x2List = TensorListDesc({x});
+    auto outList = TensorListDesc({out});
+    auto ut = OP_API_UT(aclnnForeachSubList, INPUT(x1List, x2List, alpha), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}

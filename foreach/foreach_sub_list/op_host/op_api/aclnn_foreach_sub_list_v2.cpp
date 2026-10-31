@@ -43,6 +43,9 @@ static const std::initializer_list<ge::DataType> FOREACH_SCALAR_FLOAT16_SUPPORT_
 
 static const std::initializer_list<ge::DataType> FOREACH_SCALAR_INT_SUPPORT_LIST = {ge::DT_INT32, ge::DT_INT64};
 
+static const std::initializer_list<ge::DataType> FOREACH_SCALAR_SUPPORT_LIST = {
+    ge::DT_FLOAT, ge::DT_DOUBLE, ge::DT_FLOAT16, ge::DT_INT32, ge::DT_INT64};
+
 static const std::initializer_list<ge::DataType> EMPTY_LIST = {};
 
 static inline ge::DataType GetAlphaTensorDtype(ge::DataType selfDtype)
@@ -66,31 +69,21 @@ static inline bool CheckNotNull(const aclTensorList* self, const aclTensorList* 
     return true;
 }
 
-static inline bool CheckFormat(const aclTensorList* self, const aclTensorList* x2, const aclTensorList* out)
+static inline bool CheckTensorListSize(const aclTensorList* self, const aclTensorList* x2, const aclTensorList* out)
 {
-    for (uint64_t i = 0; i < self->Size(); i++) {
-        // self格式不能是私有格式
-        if (IsPrivateFormat((*self)[i]->GetStorageFormat()) || IsPrivateFormat((*x2)[i]->GetStorageFormat()) ||
-            IsPrivateFormat((*out)[i]->GetStorageFormat())) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s",
-                                   "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
-            REPORT_PREDEFINED_ERR_MSG(
-                "EZ0035", (std::vector<const char*>{"param_name", "op_name", "incorrect_format", "reason"}),
-                (std::vector<const char*>{
-                    std::string((IsPrivateFormat((*self)[i]->GetStorageFormat()) ?
-                                     "x1" :
-                                     (IsPrivateFormat((*x2)[i]->GetStorageFormat()) ? "x2" : "out")))
-                        .c_str(),
-                    "aclnnForeachSubListV2",
-                    (std::to_string(static_cast<int>(
-                         (IsPrivateFormat((*self)[i]->GetStorageFormat()) ?
-                              (*self)[i]->GetStorageFormat() :
-                              (IsPrivateFormat((*x2)[i]->GetStorageFormat()) ? (*x2)[i]->GetStorageFormat() :
-                                                                               (*out)[i]->GetStorageFormat())))))
-                        .c_str(),
-                    "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW."}));
-            return false;
-        }
+    if (self->Size() != x2->Size() || self->Size() != out->Size()) {
+        bool x2Mismatch = self->Size() != x2->Size();
+        auto parameter = x2Mismatch ? "x2" : "out";
+        auto actualSize = x2Mismatch ? x2->Size() : out->Size();
+        std::string reason = "Tensor lists must have the same number of tensors, got x1=" +
+                             std::to_string(self->Size()) + ", x2=" + std::to_string(x2->Size()) +
+                             ", out=" + std::to_string(out->Size());
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+        REPORT_PREDEFINED_ERR_MSG("EZ0038",
+                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
+                                  (std::vector<const char*>{parameter, "aclnnForeachSubListV2",
+                                                            (std::to_string(actualSize)).c_str(), reason.c_str()}));
+        return false;
     }
     return true;
 }
@@ -120,6 +113,7 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclTensorLis
                                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
         return false;
     }
+    OP_CHECK_DTYPE_NOT_SUPPORT(scalar, FOREACH_SCALAR_SUPPORT_LIST, return false);
     if (self->Size() == 0) {
         return true;
     }
@@ -154,18 +148,6 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclTensorLis
 
 static inline bool CheckShape(const aclTensorList* self, const aclTensorList* x2, const aclTensorList* out)
 {
-    // tensorlist size检查
-    if (self->Size() != x2->Size()) {
-        const std::string reason = (("Tensor lists must have the same number of tensors, got " +
-                                     std::to_string(self->Size()) + " and " + std::to_string(x2->Size())));
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
-        REPORT_PREDEFINED_ERR_MSG("EZ0038",
-                                  (std::vector<const char*>{"param_name", "op_name", "incorrect_size", "reason"}),
-                                  (std::vector<const char*>{"x2", "aclnnForeachSubListV2",
-                                                            (std::to_string(x2->Size())).c_str(), reason.c_str()}));
-        return false;
-    }
-
     // tensorlist中tensor shape一致性检查
     for (uint64_t i = 0; i < self->Size(); i++) {
         OP_CHECK_SHAPE_NOT_EQUAL((*self)[i], (*x2)[i], return false);
@@ -188,9 +170,10 @@ static inline aclnnStatus CheckParams(const aclTensorList* self, const aclTensor
 {
     // 1. 检查参数是否为空指针
     CHECK_RET(CheckNotNull(self, x2, scalar, out), ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(CheckTensorListSize(self, x2, out), ACLNN_ERR_PARAM_INVALID);
 
     // Check every entry in tensor lists is not null, to avoid null pointer
-    // dereference in CheckDtypeValid/CheckShape/CheckFormat.
+    // dereference in CheckDtypeValid/CheckShape.
     CHECK_RET(CheckTensorListNotNull(self, "self"), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckTensorListNotNull(x2, "x2"), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckTensorListNotNull(out, "out"), ACLNN_ERR_PARAM_INVALID);
@@ -199,8 +182,6 @@ static inline aclnnStatus CheckParams(const aclTensorList* self, const aclTensor
     CHECK_RET(CheckDtypeValid(self, x2, scalar, out), ACLNN_ERR_PARAM_INVALID);
     // 3. 检查shape是否满足约束
     CHECK_RET(CheckShape(self, x2, out), ACLNN_ERR_PARAM_INVALID);
-    // 4. 检查Format是否满足约束
-    CHECK_RET(CheckFormat(self, x2, out), ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 
@@ -237,6 +218,7 @@ static aclnnStatus ExecForeachSubListV2GetWorkspaceSize(const aclTensorList* x1,
     // sclar to tensor
     const aclTensor* otherTensor = uniqueExecutor.get()->ConvertToTensor(scalar,
                                                                          GetAlphaTensorDtype((*x1)[0]->GetDataType()));
+    CHECK_RET(otherTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     // 调用l0算子ForeachSubListV2进行计算，输出到连续buffer
     auto result = l0op::ForeachSubListV2(contiguousTensorsX1, contiguousTensorsX2, otherTensor, contiguousOut,

@@ -231,7 +231,7 @@ TEST_F(l2_foreach_sub_list_v2_test, ascend910B2_foreach_sub_list_v2_test_private
     auto ut = OP_API_UT(aclnnForeachSubListV2, INPUT(xList, x2List, scalar_desc), OUTPUT(outList));
     uint64_t workspaceSize = 0;
     aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
-    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
 }
 
 // support non-contiguous input and output
@@ -251,4 +251,30 @@ TEST_F(l2_foreach_sub_list_v2_test, ascend910B2_foreach_sub_list_v2_test_non_con
     uint64_t workspaceSize = 0;
     aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+TEST_F(l2_foreach_sub_list_v2_test, ascend910B2_foreach_sub_list_v2_test_out_list_too_short)
+{
+    auto x = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto scalarDesc = ScalarDesc(1.0);
+    auto x1List = TensorListDesc({x, x});
+    auto x2List = TensorListDesc({x, x});
+    auto outList = TensorListDesc({out});
+    auto ut = OP_API_UT(aclnnForeachSubListV2, INPUT(x1List, x2List, scalarDesc), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_foreach_sub_list_v2_test, ascend910B2_foreach_sub_list_v2_test_out_list_too_long)
+{
+    auto x = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto scalarDesc = ScalarDesc(1.0);
+    auto x1List = TensorListDesc({x});
+    auto x2List = TensorListDesc({x});
+    auto outList = TensorListDesc({out, out});
+    auto ut = OP_API_UT(aclnnForeachSubListV2, INPUT(x1List, x2List, scalarDesc), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
 }

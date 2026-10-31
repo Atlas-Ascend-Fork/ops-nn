@@ -71,7 +71,7 @@
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>表示进行相减运算的输出结果，对应公式中的`y`。该参数中所有Tensor的数据类型保持一致。数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape size大于等于入参`x1`的shape size。</td>
+      <td>表示进行相减运算的输出结果，对应公式中的`y`。该参数中所有Tensor的数据类型保持一致。数据类型、数据格式和shape与入参`x1`逐Tensor完全一致，且Tensor数量与`x1`、`x2`一致。</td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16、INT16、INT8、UINT8</td>
       <td>ND</td>
     </tr>
@@ -80,7 +80,11 @@
 ## 约束说明
 
 - <term>Kirin X90处理器系列产品</term>、<term>Kirin 9030处理器系列产品</term>：不支持BFLOAT16、INT16、INT8、UINT8。
-- 输出不支持非连续Tensor。
+- `x1`、`x2`、`y`的Tensor列表长度必须一致；Ascend 950PR&950DT系列产品单个Tensor列表中Tensor的数量不超过256个。
+- ACLNN接口在`x1`、`x2`、`out`均为空TensorList时执行成功空操作；其他列表数量失配场景返回参数错误。
+- `-1`（动态维度）与`-2`（动态Rank）标记由Host推导阶段按框架约定处理；内核侧Tiling要求shape已具体化且元素数非负。
+- 整数计算结果溢出时按输出数据类型的位宽进行回绕。
+- 输出支持非连续Tensor。
 
 ## 调用说明
 
@@ -88,3 +92,4 @@
 | ---------------- | --------------------------- | --------------------------------------------------- |
 | aclnn接口  | [test_aclnn_foreach_sub_list](examples/test_aclnn_foreach_sub_list.cpp) | 通过[aclnnForeachSubList](docs/aclnnForeachSubList.md)接口方式调用ForeachSubList算子。 |
 | aclnn接口  | [test_aclnn_foreach_sub_list_v2](examples/test_aclnn_foreach_sub_list_v2.cpp) | 通过[aclnnForeachSubListV2](docs/aclnnForeachSubListV2.md)接口方式调用ForeachSubList算子。 |
+| 图模式 | -  | 通过[算子IR](op_graph/foreach_sub_list_proto.h)构图方式调用ForeachSubList算子。         |

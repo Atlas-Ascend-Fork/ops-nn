@@ -26,7 +26,7 @@ namespace ge {
  * @li x2: Another tensor list containing multiple tensors
  * @li alpha: The elements in x2 should perform multipy with alpha which is a scalar
  * @par Outputs:
- * @li y: A tensor list which store the tensors whose value are sub by the scalars in scalar list
+ * @li y: A tensor list which stores the results of x1 minus alpha multiplied by x2
  */
 REG_OP(ForeachSubList)
     .DYNAMIC_INPUT(x1, TensorType({DT_FLOAT, DT_FLOAT16, DT_INT32, DT_BF16, DT_INT16, DT_INT8, DT_UINT8}))

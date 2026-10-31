@@ -15,6 +15,8 @@
  * \brief arch35 tiling implementation for foreach_sub_list
  */
 
+#include <limits>
+
 #include "log/log.h"
 #include "util/math_util.h"
 #include "util/platform_util.h"
@@ -32,8 +34,19 @@ constexpr int32_t INPUT_IDX_ALPHA = 2;
 constexpr uint32_t DCACHE_SIZE = 128 * 1024;
 constexpr int64_t MIN_PER_CORE = 1024;
 constexpr int32_t MAX_TENSOR_NUM = 256;
+constexpr uint32_t MAX_DIM_NUM = 8;
 
 struct ForeachSubListCompileInfo {};
+
+static bool HasNegativeDim(const gert::Shape& shape)
+{
+    for (size_t i = 0; i < shape.GetDimNum(); i++) {
+        if (shape.GetDim(i) < 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 static ge::DataType GetExpectedAlphaDtype(ge::DataType inputDtype)
 {
@@ -64,6 +77,10 @@ static ge::graphStatus CheckInputCompatibility(gert::TilingContext* context, uin
                 OP_LOGE(context, "x1 and x2 must contain the same number of tensors, but got %lu and %lu", tensorNum,
                         x2InstanceInfoPtr->GetInstanceNum()),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context->GetComputeNodeOutputNum() != tensorNum,
+                OP_LOGE(context, "x1 and y must contain the same number of tensors, but got %lu and %zu", tensorNum,
+                        context->GetComputeNodeOutputNum()),
+                return ge::GRAPH_FAILED);
 
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto x1Desc = context->GetDynamicInputDesc(INPUT_IDX_X1, i);
@@ -83,6 +100,30 @@ static ge::graphStatus CheckInputCompatibility(gert::TilingContext* context, uin
         OP_CHECK_IF(x1Shape->GetStorageShape() != x2Shape->GetStorageShape(),
                     OP_LOGE(context, "x1[%lu] and x2[%lu] must have the same storage shape", i, i),
                     return ge::GRAPH_FAILED);
+        OP_CHECK_IF(x1Shape->GetStorageShape().GetDimNum() > MAX_DIM_NUM ||
+                        x2Shape->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
+                    OP_LOGE(context, "x1[%lu] and x2[%lu] must have at most %u dimensions", i, i, MAX_DIM_NUM),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(HasNegativeDim(x1Shape->GetStorageShape()) || HasNegativeDim(x2Shape->GetStorageShape()),
+                    OP_LOGE(context, "x1[%lu] and x2[%lu] must have concrete non-negative dimensions", i, i),
+                    return ge::GRAPH_FAILED);
+
+        auto outputDesc = context->GetOutputDesc(i);
+        auto outputShape = context->GetOutputShape(i);
+        OP_CHECK_IF(outputDesc == nullptr || outputShape == nullptr,
+                    OP_LOGE(context, "output %lu desc or shape is null", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(outputDesc->GetDataType() != inputDtype,
+                    OP_LOGE(context, "y[%lu] dtype must be %d, but got %d", i, static_cast<int32_t>(inputDtype),
+                            static_cast<int32_t>(outputDesc->GetDataType())),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(outputShape->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
+                    OP_LOGE(context, "y[%lu] must have at most %u dimensions", i, MAX_DIM_NUM),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(HasNegativeDim(outputShape->GetStorageShape()),
+                    OP_LOGE(context, "y[%lu] must have concrete non-negative dimensions", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(outputShape->GetStorageShape() != x1Shape->GetStorageShape(),
+                    OP_LOGE(context, "y[%lu] must have the same storage shape as x1[%lu]", i, i),
+                    return ge::GRAPH_FAILED);
     }
 
     auto alphaDesc = context->GetRequiredInputDesc(INPUT_IDX_ALPHA);
@@ -96,6 +137,10 @@ static ge::graphStatus CheckInputCompatibility(gert::TilingContext* context, uin
 
     auto alphaShape = context->GetRequiredInputShape(INPUT_IDX_ALPHA);
     OP_CHECK_NULL_WITH_CONTEXT(context, alphaShape);
+    OP_CHECK_IF(alphaShape->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
+                OP_LOGE(context, "alpha must have at most %u dimensions", MAX_DIM_NUM), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(HasNegativeDim(alphaShape->GetStorageShape()),
+                OP_LOGE(context, "alpha must have concrete non-negative dimensions"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(alphaShape->GetStorageShape().GetShapeSize() != 1,
                 OP_LOGE(context, "alpha must contain exactly one element, but got %ld",
                         alphaShape->GetStorageShape().GetShapeSize()),
@@ -111,7 +156,8 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& u
     coreNum = ascendcPlatform.GetCoreNumAiv();
     OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
-    OP_CHECK_IF(ubSize == 0, OP_LOGE(context, "ubSize is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ubSize <= DCACHE_SIZE, OP_LOGE(context, "ubSize %lu must be greater than %u", ubSize, DCACHE_SIZE),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -127,6 +173,9 @@ static ge::graphStatus ForeachSubListTilingFunc(gert::TilingContext* context)
     auto x1InstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_X1);
     OP_CHECK_NULL_WITH_CONTEXT(context, x1InstanceInfoPtr);
     uint64_t tensorNum = x1InstanceInfoPtr->GetInstanceNum();
+    OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
+                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
+                return ge::GRAPH_FAILED);
 
     auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_X1, 0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
@@ -139,9 +188,6 @@ static ge::graphStatus ForeachSubListTilingFunc(gert::TilingContext* context)
     OP_CHECK_IF(memset_s(tiling, sizeof(ForeachSubListTilingData), 0, sizeof(ForeachSubListTilingData)) != EOK,
                 OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
-                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
-                return ge::GRAPH_FAILED);
     tiling->tensorCount = static_cast<int32_t>(tensorNum);
     int64_t totalElements = 0;
 
@@ -150,6 +196,9 @@ static ge::graphStatus ForeachSubListTilingFunc(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
         auto storageShape = shapePtr->GetStorageShape();
         int64_t numel = storageShape.GetShapeSize();
+        OP_CHECK_IF(numel < 0 || totalElements > std::numeric_limits<int64_t>::max() - numel,
+                    OP_LOGE(context, "tensor element count is negative or totalElements overflows at tensor %lu", i),
+                    return ge::GRAPH_FAILED);
         tiling->tensorElements[i] = numel;
         totalElements += numel;
     }
@@ -168,7 +217,14 @@ static ge::graphStatus ForeachSubListTilingFunc(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
     currentWorkspace[0] = WS_SYS_SIZE;
 
-    context->SetLocalMemorySize(static_cast<uint32_t>(ubSize - DCACHE_SIZE));
+    uint64_t localMemorySize = ubSize - DCACHE_SIZE;
+    OP_CHECK_IF(localMemorySize > std::numeric_limits<uint32_t>::max(),
+                OP_LOGE(context, "local memory size %lu exceeds uint32 range", localMemorySize),
+                return ge::GRAPH_FAILED);
+    auto setLocalMemoryResult = context->SetLocalMemorySize(static_cast<uint32_t>(localMemorySize));
+    OP_CHECK_IF(setLocalMemoryResult != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "SetLocalMemorySize failed with %d", static_cast<int32_t>(setLocalMemoryResult)),
+                return ge::GRAPH_FAILED);
 
     uint64_t tilingKey = 0;
     if (dataType == ge::DT_FLOAT) {

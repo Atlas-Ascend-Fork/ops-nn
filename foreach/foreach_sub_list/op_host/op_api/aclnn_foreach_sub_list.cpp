@@ -36,6 +36,9 @@ static const std::initializer_list<ge::DataType> FOREACH_SCALAR_FLOAT16_SUPPORT_
 
 static const std::initializer_list<ge::DataType> FOREACH_SCALAR_INT_SUPPORT_LIST = {ge::DT_INT32};
 
+static const std::initializer_list<ge::DataType> FOREACH_SCALAR_SUPPORT_LIST = {ge::DT_FLOAT, ge::DT_FLOAT16,
+                                                                                ge::DT_INT32};
+
 static const std::initializer_list<ge::DataType> EMPTY_LIST = {};
 
 static inline bool CheckNotNull(const aclTensorList* self, const aclTensorList* x2, const aclTensor* alpha,
@@ -48,15 +51,24 @@ static inline bool CheckNotNull(const aclTensorList* self, const aclTensorList* 
     return true;
 }
 
-static inline bool CheckFormat(const aclTensorList* self, const aclTensorList* x2, const aclTensorList* out)
+static inline bool CheckTensorListSize(const aclTensorList* self, const aclTensorList* x2, const aclTensorList* out)
 {
-    for (uint64_t i = 0; i < self->Size(); i++) {
-        // self格式不能是私有格式
-        if (IsPrivateFormat((*self)[i]->GetStorageFormat()) || IsPrivateFormat((*x2)[i]->GetStorageFormat()) ||
-            IsPrivateFormat((*out)[i]->GetStorageFormat())) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
-            return false;
-        }
+    if (self->Size() != x2->Size() || self->Size() != out->Size()) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "Tensor lists must have the same number of tensors, got x1=%lu, x2=%lu, out=%lu", self->Size(),
+                x2->Size(), out->Size());
+        return false;
+    }
+    return true;
+}
+
+static inline bool CheckAlpha(const aclTensor* alpha)
+{
+    OP_CHECK_DTYPE_NOT_SUPPORT(alpha, FOREACH_SCALAR_SUPPORT_LIST, return false);
+    OP_CHECK_MAX_DIM(alpha, MAX_SUPPORT_DIMS_NUMS, return false);
+    if (alpha->GetViewShape().GetShapeSize() != 1) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "alpha must contain exactly one element");
+        return false;
     }
     return true;
 }
@@ -115,13 +127,6 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclTensorLis
 
 static inline bool CheckShape(const aclTensorList* self, const aclTensorList* x2, const aclTensorList* out)
 {
-    // tensorlist size检查
-    if (self->Size() != x2->Size()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor lists must have the same number of tensors, got %lu and %lu",
-                self->Size(), x2->Size());
-        return false;
-    }
-
     // tensorlist中tensor shape一致性检查
     for (uint64_t i = 0; i < self->Size(); i++) {
         OP_CHECK_SHAPE_NOT_EQUAL((*self)[i], (*x2)[i], return false);
@@ -145,8 +150,11 @@ static inline aclnnStatus CheckParams(const aclTensorList* self, const aclTensor
     // 1. 检查参数是否为空指针
     CHECK_RET(CheckNotNull(self, x2, alpha, out), ACLNN_ERR_PARAM_NULLPTR);
 
+    CHECK_RET(CheckTensorListSize(self, x2, out), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckAlpha(alpha), ACLNN_ERR_PARAM_INVALID);
+
     // Check every entry in tensor lists is not null, to avoid null pointer
-    // dereference in CheckDtypeValid/CheckShape/CheckFormat.
+    // dereference in CheckDtypeValid/CheckShape.
     CHECK_RET(CheckTensorListNotNull(self, "self"), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckTensorListNotNull(x2, "x2"), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckTensorListNotNull(out, "out"), ACLNN_ERR_PARAM_INVALID);
@@ -155,8 +163,6 @@ static inline aclnnStatus CheckParams(const aclTensorList* self, const aclTensor
     CHECK_RET(CheckDtypeValid(self, x2, alpha, out), ACLNN_ERR_PARAM_INVALID);
     // 3. 检查shape是否满足约束
     CHECK_RET(CheckShape(self, x2, out), ACLNN_ERR_PARAM_INVALID);
-    // 4. 检查Format是否满足约束
-    CHECK_RET(CheckFormat(self, x2, out), ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 

@@ -31,13 +31,13 @@ extern "C" {
  * @domain aclnnop_math
  * 参数描述：
  * @param [in]   x1
- * 输入Tensor，数据类型支持FLOAT，FLOAT16，BFLOAT16，INT32。数据格式支持ND。
+ * 输入Tensor列表，数据类型支持FLOAT、FLOAT16、BFLOAT16、INT32、INT16、INT8、UINT8。
  * @param [in]   x2
- * 输入Tensor，数据类型支持FLOAT，FLOAT16，BFLOAT16，INT32。数据格式支持ND。
+ * 输入Tensor列表，数据类型支持FLOAT、FLOAT16、BFLOAT16、INT32、INT16、INT8、UINT8。
  * @param [in]   alpha
- * 输入Scalar，数据类型支持FLOAT、FLOAT16和INT32。数据格式支持ND。
+ * 输入Scalar，数据类型支持FLOAT、DOUBLE、FLOAT16、INT32、INT64，不涉及Tensor数据格式。
  * @param [in]   out
- * 输出Tensor，数据类型支持FLOAT，FLOAT16，BFLOAT16，INT32。数据格式支持ND。
+ * 输出Tensor列表，数据类型支持FLOAT、FLOAT16、BFLOAT16、INT32、INT16、INT8、UINT8。
  * @param [out]  workspaceSize   返回用户需要在npu device侧申请的workspace大小。
  * @param [out]  executor         返回op执行器，包含了算子计算流程。
  * @return       aclnnStatus      返回状态码
