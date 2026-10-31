@@ -9,6 +9,7 @@
  */
 
 #include "aclnn_logit_grad.h"
+#include <limits>
 #include "logit_grad_l0op.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
@@ -89,7 +90,14 @@ aclnnStatus aclnnLogitGradGetWorkspaceSize(const aclTensor* x, const aclTensor* 
     }
     CHECK_RET(kernelOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    auto result = l0op::LogitGrad(xContiguous, dyContiguous, static_cast<float>(eps), kernelOut, uniqueExecutor.get());
+    // Preserve no-clamp mode before narrowing; a negative double may become -0.0F.
+    float kernelEps = eps < 0.0 ? -1.0F : static_cast<float>(eps);
+    if (eps > 0.0 && kernelEps == 0.0F) {
+        // All supported input values lie on the float grid. Its smallest positive
+        // value preserves x >= eps here, while both upper bounds round to 1.
+        kernelEps = std::numeric_limits<float>::denorm_min();
+    }
+    auto result = l0op::LogitGrad(xContiguous, dyContiguous, kernelEps, kernelOut, uniqueExecutor.get());
     CHECK_RET(result != nullptr, ACLNN_ERR_INNER_NULLPTR);
     if (needsViewCopy) {
         CHECK_RET(l0op::ViewCopy(result, out, uniqueExecutor.get()) != nullptr, ACLNN_ERR_INNER_NULLPTR);

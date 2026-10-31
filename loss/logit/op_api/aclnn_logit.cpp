@@ -94,7 +94,9 @@ aclnnStatus aclnnLogitGetWorkspaceSize(const aclTensor* input, double eps, const
     }
     CHECK_RET(kernelOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    auto result = l0op::Logit(inputContiguous, static_cast<float>(eps), kernelOut, uniqueExecutor.get());
+    // Preserve the no-clamp mode when a negative double eps underflows to float zero.
+    const float kernelEps = eps < 0.0 ? -1.0F : static_cast<float>(eps);
+    auto result = l0op::Logit(inputContiguous, kernelEps, kernelOut, uniqueExecutor.get());
     CHECK_RET(result != nullptr, ACLNN_ERR_INNER_NULLPTR);
     if (needsViewCopy) {
         CHECK_RET(l0op::ViewCopy(result, out, uniqueExecutor.get()) != nullptr, ACLNN_ERR_INNER_NULLPTR);
