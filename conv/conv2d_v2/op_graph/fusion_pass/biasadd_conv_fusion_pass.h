@@ -15,13 +15,13 @@
 #ifndef BIASADD_CONV_FUSION_PASS_H
 #define BIASADD_CONV_FUSION_PASS_H
 
-#include <cstddef>
 #include <cstdint>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "ge/fusion/pass/pattern_fusion_pass.h"
+#include "../../conv/common/op_graph/fusion_pass/conv_fusion_base_pass.h"
+#include "graph/gnode.h"
 
 namespace Ops {
 namespace NN {
@@ -30,14 +30,23 @@ namespace BiasaddConvFusion {
 
 const std::string FUSION_NAME = "AABiasaddConvFusion";
 const std::string INTRINSIC_FIX_PIPE_L0C2OUT = "Intrinsic_fix_pipe_l0c2out";
-const std::string RESHAPE_SINGLE_OUTPUT_PATTERN = "AABiasaddConvFusion_Conv3D_Add_R_single_output";
-const std::string RESHAPE_DUAL_OUTPUT_PATTERN = "AABiasaddConvFusion_Conv3D_Add_R_dual_output";
-const std::string REVERSED_ADD_PATTERN_SUFFIX = "_Rev";
 
-constexpr int32_t CONV_CAPTURE = 0;
-constexpr int32_t ADD_CAPTURE = 1;
-constexpr int32_t RESHAPE_CAPTURE = 2;
-constexpr int32_t PATTERN_SHAPE_INPUT_INDEX = 3;
+const ge::AscendString ADD = "Add";
+const ge::AscendString BIASADD = "BiasAdd";
+const ge::AscendString RESHAPE = "Reshape";
+const ge::AscendString DATA = "Data";
+const ge::AscendString HAS_BIAS_ATTR = "has_bias";
+const ge::AscendString VARIABLE = "Variable";
+const ge::AscendString STREAM_SWITCH = "StreamSwitch";
+
+constexpr int32_t ADD_BIAS_INPUT_INDEX = 1;
+constexpr int32_t ADD_INPUT_NUMS = 2;
+constexpr int32_t ADD_CONV_INPUT_INDEX = 0;
+const std::string ATTR_PARENT_NODE_INDEX = "_parent_node_index";
+
+constexpr int32_t RESHAPE_BIAS_INPUT_INDEX = 0;
+constexpr int32_t RESHAPE_SHAPE_INPUT_INDEX = 1;
+constexpr size_t SINGLE_CONSUMER_COUNT = 1U;
 
 constexpr size_t NHWC_CHANNEL_AXIS = 3U;
 constexpr size_t HWCN_CHANNEL_AXIS = 2U;
@@ -49,15 +58,32 @@ const std::set<ge::DataType> supportedBiasDtypes = {ge::DataType::DT_FLOAT16, ge
                                                     ge::DataType::DT_BF16, ge::DataType::DT_INT32};
 
 const std::vector<std::string> convTypes = {"Conv2D", "DepthwiseConv2D", "Conv3D"};
-const std::vector<std::string> addTypes = {"Add", "BiasAdd"};
 
 } // namespace BiasaddConvFusion
 
-class __attribute__((visibility("default"))) AABiasaddConvFusion : public ge::fusion::PatternFusionPass {
+class __attribute__((visibility("default"))) AABiasaddConvFusion : public ConvFusionBasePass {
 protected:
-    std::vector<ge::fusion::PatternUniqPtr> Patterns() override;
-    bool MeetRequirements(const std::unique_ptr<ge::fusion::MatchResult>& matchResult) override;
-    std::unique_ptr<ge::Graph> Replacement(const std::unique_ptr<ge::fusion::MatchResult>& matchResult) override;
+    void InitMember() override;
+    bool CheckMatchStructure(const ge::GNode& matchNode) override;
+    bool MeetRequirements(const ge::GNode& convNode) override;
+    std::set<ge::AscendString> GetNodeTypes() const override;
+    void PrintGraphStructure() const override;
+    bool ConvFusionReplaceImpl(ge::GraphPtr& graph, ge::GNode& convNode, ge::CustomPassContext& passContext) override;
+
+private:
+    bool ResolveMatchStructure(const ge::AscendString& addType);
+    bool LinkBiasSourceToConv(ge::Graph& graph, ge::GNode& convNode);
+    bool RelinkAddConsumersToConv(ge::Graph& graph, ge::GNode& convNode);
+    bool MigrateStreamSwitchControlEdges(ge::Graph& graph, ge::GNode& convNode);
+
+    ge::GNodePtr addNode = nullptr;
+    ge::GNodePtr reshapeNode = nullptr;
+    std::string addNodeName;
+    int32_t convInputPortOfAdd = -1;
+    int32_t biasInputIndex = -1;
+    bool isReversedAdd = false;
+    bool isReshapeMode = false;
+    bool reshapeHasOtherConsumer = false;
 };
 
 } // namespace Conv
