@@ -95,7 +95,7 @@ aclnnStatus aclnnForeachAtan(
       <td>out（aclTensorList*）</td>
       <td>输出</td>
       <td>表示进行反正切运算的输出张量列表，对应公式中的`y`。</td>
-      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size大于等于入参`x`的shape size。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size等于入参`x`的shape size。</li><li>`out`的TensorList长度与`x`一致。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>0-8</td>

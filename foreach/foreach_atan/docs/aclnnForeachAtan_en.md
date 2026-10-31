@@ -97,7 +97,7 @@ aclnnStatus aclnnForeachAtan(
       <td>out (aclTensorList*)</td>
       <td>Output</td>
       <td>Represents the list of output tensors for the arctangent operation, corresponding to `y` in the formula.</td>
-      <td><ul><li>Empty tensors are supported.</li><li>All tensors in this parameter must have the same data type.</li><li>The data type and data format must be the same as those of input `x`, and the shape size must be greater than or equal to the shape size of input `x`.</li></ul></td>
+      <td><ul><li>Empty tensors are supported.</li><li>All tensors in this parameter must have the same data type.</li><li>The data type and data format must be the same as those of input `x`, and the shape size must be equal to the shape size of input `x`.</li><li>The TensorList length of `out` must be the same as that of `x`.</li></ul></td>
       <td>BFLOAT16, FLOAT16, FLOAT32</td>
       <td>ND</td>
       <td>0-8</td>
