@@ -8,7 +8,7 @@
 - <term>Ascend 950PR&950DT products</term>: Not supported
 <!-- end id1 -->
 <!-- npu="A3" id2 -->
-- <term>Atlas A3 products</term>: Not supported
+- <term>Atlas A3 products</term>: Supported
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
 - <term>Atlas A2 products</term>: Supported
@@ -177,7 +177,7 @@ aclnnStatus aclnnFastBatchNormBackward(
     <tr>
       <td>saveInvstd (aclTensor*)</td>
       <td>Input</td>
-      <td>Represents the saved reciprocal of the standard deviation, corresponding to the reciprocal of the square root of (Var(x) + eps) in the formula.</td>
+      <td>Indicates the saved input variance, corresponding to `Var(x)` in the formula.</td>
       <td><ul><li>Supports empty tensors.</li><li>Values are non-negative.</li><li>The shape length is equal to the channel axis length of the input parameter `input`.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>

@@ -175,7 +175,7 @@ aclnnStatus aclnnBatchNormBackward(
     <tr>
       <td>saveInvstd（aclTensor*）</td>
       <td>输入</td>
-      <td>表示保存的标准差的倒数，分别对应公式中的(Var(x) + eps)开平方的倒数。</td>
+      <td>表示保存的input方差或者input标准差倒数，分别对应公式中的`Var(x)`、(Var(x) + eps)开平方的倒数。</td>
       <td><ul><li>支持空Tensor。</li><li>数值为非负数。</li><li>shape长度与入参`input`中channel轴的长度相等，或在推理场景下长度为0。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -270,12 +270,14 @@ aclnnStatus aclnnBatchNormBackward(
     - 参数`gradOut`、`input`、`weight`、`runningMean`、`runningVar`、`saveMean`、`saveInvstd`、`gradInput`、`gradWeight`、`gradBias`的数据类型不支持BFLOAT16。
     - 参数`weight`、`runningMean`、`runningVar`、`saveMean`、`saveInvstd`、`gradWeight`、`gradBias`的数据类型与`gradOut`的保持一致。
     - 参数`gradOut`、`input`、`gradInput`的数据格式不支持NHWC、NDHWC。
+    - 参数`saveInvstd`表示input的方差。
   <!-- end id7 -->
 
   <!-- npu="A3,910b" id8 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     - 参数`weight`、`runningMean`、`runningVar`、`saveMean`、`saveInvstd`、`gradWeight`、`gradBias`的数据类型与`gradOut`的保持一致。
     - 参数`gradOut`、`input`、`gradInput`的数据格式不支持NHWC、NDHWC。
+    - 参数`saveInvstd`表示input的方差。
   <!-- end id8 -->
 
   <!-- npu="950" id9 -->
@@ -287,6 +289,7 @@ aclnnStatus aclnnBatchNormBackward(
     - `gradWeight`、`gradBias`的数据类型需要保持一致。
     - `runningVar`数据类型需要与`runningMean`的数据类型一致。
     - `saveInvstd`数据类型需要与`saveMean`的数据类型一致。
+    - 参数`saveInvstd`表示input标准差的倒数。
   <!-- end id9 -->
 
 - **返回值**

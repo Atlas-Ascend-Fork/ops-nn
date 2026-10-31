@@ -177,7 +177,7 @@ aclnnStatus aclnnBatchNormBackward(
     <tr>
       <td>saveInvstd (aclTensor*)</td>
       <td>Input</td>
-      <td>Saved reciprocal of the standard deviation, corresponding to the reciprocal of the square root of (Var(x) + eps) in the formula.</td>
+      <td>Output only in training scenarios. Indicates the saved input variance or the reciprocal of the input standard deviation, corresponding to `Var(x)` and the reciprocal of the square root of (Var(x) + eps) in the formula, respectively.</td>
       <td><ul><li>Supports empty tensors.</li><li>Values are non-negative.</li><li>The shape length is equal to the channel axis length in input `input`, or 0 in the inference scenario.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>
@@ -272,12 +272,14 @@ aclnnStatus aclnnBatchNormBackward(
     - The data type of the parameters `gradOut`, `input`, `weight`, `runningMean`, `runningVar`, `saveMean`, `saveInvstd`, `gradInput`, `gradWeight`, and `gradBias` does not support BFLOAT16.
     - The data types of `weight`, `runningMean`, `runningVar`, `saveMean`, `saveInvstd`, `gradWeight`, and `gradBias` must be consistent with that of `gradOut`.
     - The data format of the parameters `gradOut`, `input`, and `gradInput` does not support NHWC or NDHWC.
+    - The `saveInvstd` parameter represents the variance of input.
   <!-- end id7 -->
 
   <!-- npu="A3,910b" id8 -->
   - <term>Atlas A2 products</term>, <term>Atlas A3 products</term>:
     - The data types of `weight`, `runningMean`, `runningVar`, `saveMean`, `saveInvstd`, `gradWeight`, and `gradBias` must be consistent with that of `gradOut`.
     - The data format of the parameters `gradOut`, `input`, and `gradInput` does not support NHWC or NDHWC.
+    - The `saveInvstd` parameter represents the variance of input.
   <!-- end id8 -->
 
   <!-- npu="950" id9 -->
@@ -289,6 +291,7 @@ aclnnStatus aclnnBatchNormBackward(
     - The data types of `gradWeight` and `gradBias` must be consistent.
     - The data type of `runningVar` must be the same as that of `runningMean`.
     - The data type of `saveInvstd` must be the same as that of `saveMean`.
+    - The `saveInvstd` parameter represents the reciprocal of the standard deviation of input.
   <!-- end id9 -->
 
 - **Return Value**

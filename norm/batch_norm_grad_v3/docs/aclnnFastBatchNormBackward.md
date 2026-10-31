@@ -175,7 +175,7 @@ aclnnStatus aclnnFastBatchNormBackward(
     <tr>
       <td>saveInvstd（aclTensor*）</td>
       <td>输入</td>
-      <td>表示保存的标准差的倒数，分别对应公式中的(Var(x) + eps)开平方的倒数。</td>
+      <td>表示保存的input方差，对应公式中的`Var(x)`。</td>
       <td><ul><li>支持空Tensor。</li><li>数值为非负数。</li><li>shape长度与入参`input`中channel轴的长度相等。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
