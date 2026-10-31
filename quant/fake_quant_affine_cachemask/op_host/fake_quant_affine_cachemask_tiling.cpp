@@ -31,7 +31,7 @@ constexpr uint32_t BYTE_REPEAT = 256;                 // The amount of data that
 constexpr uint32_t SELECT_MODE_GE_ZERO_TMP_UB = 8000; // select mode 2 neead 8000B
 class FakeQuantAffineCachemaskTiling {
 public:
-    explicit FakeQuantAffineCachemaskTiling(gert::TilingContext* context) : tilingContext(context){};
+    explicit FakeQuantAffineCachemaskTiling(gert::TilingContext* context) : tilingContext(context) {};
     ge::graphStatus Init();
     ge::graphStatus RunKernelTiling();
     void TilingDataPrint() const;
@@ -110,7 +110,13 @@ ge::graphStatus FakeQuantAffineCachemaskTiling::Init()
     currentWorkSpace[0] = sysWorkspaceSize;
     auto xShape = tilingContext->GetInputShape(0)->GetStorageShape();
     totalLength = xShape.GetShapeSize();
-    headNum = xShape.GetDim(0);
+    // rank=0 is a scalar tensor: GetShapeSize() is 1, but GetDim(0) is invalid.
+    // Treat it as one "head" of one element so the kernel sees a valid 1-element tile.
+    if (xShape.GetDimNum() == 0) {
+        headNum = 1;
+    } else {
+        headNum = xShape.GetDim(0);
+    }
     if (headNum == 0) {
         return ge::GRAPH_FAILED;
     }
@@ -186,7 +192,10 @@ static ge::graphStatus TilingFakeQuantAffineCachemask(gert::TilingContext* conte
         return Tiling4FakeQuantAffineCachemaskArch35(context);
     }
     FakeQuantAffineCachemaskTiling tilingObject(context);
-    tilingObject.Init();
+    ge::graphStatus ret = tilingObject.Init();
+    if (ret != ge::GRAPH_SUCCESS) {
+        return ret;
+    }
     return tilingObject.RunKernelTiling();
 }
 

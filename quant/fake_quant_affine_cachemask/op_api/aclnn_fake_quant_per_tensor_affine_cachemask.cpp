@@ -17,6 +17,7 @@
 #include "fake_quant_affine_cachemask.h"
 #include "level0/broadcast_to.h"
 #include "level0/fill.h"
+#include "aclnn_kernels/reshape.h"
 #include "opdev/tensor_view_utils.h"
 #include "fake_quant_common.h"
 
@@ -157,7 +158,23 @@ aclnnStatus aclnnFakeQuantPerTensorAffineCachemaskGetWorkspaceSize(const aclTens
         return ACLNN_SUCCESS;
     }
 
-    const auto& [selfContiguous, scaleContiguous, zeroPointContiguous] = GetContiguousInput(self, scale, zeroPoint,
+    const aclTensor* selfForOp = self;
+    const aclTensor* outForCopy = out;
+    const aclTensor* maskForCopy = mask;
+    if (self->GetViewShape().GetDimNum() == 0) {
+        int64_t rankOneShape[1] = {1};
+        auto rankOneArray = uniqueExecutor->AllocIntArray(rankOneShape, 1);
+        CHECK_RET(rankOneArray != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        selfForOp = l0op::Reshape(self, rankOneArray, uniqueExecutor.get());
+        op::Shape rankOneViewShape;
+        rankOneViewShape.SetDimNum(1);
+        rankOneViewShape.SetDim(0, 1);
+        outForCopy = uniqueExecutor->CreateView(out, rankOneViewShape, out->GetViewOffset());
+        maskForCopy = uniqueExecutor->CreateView(mask, rankOneViewShape, mask->GetViewOffset());
+        CHECK_RET(selfForOp != nullptr && outForCopy != nullptr && maskForCopy != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    const auto& [selfContiguous, scaleContiguous, zeroPointContiguous] = GetContiguousInput(selfForOp, scale, zeroPoint,
                                                                                             uniqueExecutor.get());
     CHECK_RET(selfContiguous != nullptr && scaleContiguous != nullptr && zeroPointContiguous != nullptr,
               ACLNN_ERR_INNER_NULLPTR);
@@ -166,7 +183,7 @@ aclnnStatus aclnnFakeQuantPerTensorAffineCachemaskGetWorkspaceSize(const aclTens
     if (fakeQuantEnbled < 1.0) {
         // 将结果values_transpose进行transpose，转换成正确的shape
         fakeQuantOut = const_cast<aclTensor*>(selfContiguous);
-        fakeQuantMask = const_cast<aclTensor*>(GetOutputTensorWithValueTrue(out, uniqueExecutor.get()));
+        fakeQuantMask = const_cast<aclTensor*>(GetOutputTensorWithValueTrue(outForCopy, uniqueExecutor.get()));
     } else {
         int64_t dimNum = selfContiguous->GetViewShape().GetDimNum();
         int64_t tensorSize = (dimNum == 0) ? (int64_t)1 : (int64_t)(selfContiguous->GetViewShape().GetDim(0));
@@ -185,7 +202,8 @@ aclnnStatus aclnnFakeQuantPerTensorAffineCachemaskGetWorkspaceSize(const aclTens
         fakeQuantOut = std::get<0>(result);
         fakeQuantMask = std::get<1>(result);
     }
-    return FinalizeOutput(fakeQuantOut, fakeQuantMask, out, mask, workspaceSize, executor, uniqueExecutor);
+    return FinalizeOutput(fakeQuantOut, fakeQuantMask, outForCopy, maskForCopy, workspaceSize, executor,
+                          uniqueExecutor);
 }
 
 aclnnStatus aclnnFakeQuantPerTensorAffineCachemask(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor,

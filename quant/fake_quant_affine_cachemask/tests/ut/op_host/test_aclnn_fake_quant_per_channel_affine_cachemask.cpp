@@ -209,3 +209,26 @@ TEST_F(fake_quant_per_channel_affine_cachemask_test, case_quant_val)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_NE(aclRet, ACLNN_SUCCESS);
 }
+
+TEST_F(fake_quant_per_channel_affine_cachemask_test, case_rank0_invalid)
+{
+    auto selfDesc = TensorDesc({}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto scaleDesc = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto zeroPointDesc = TensorDesc({1}, ACL_INT32, ACL_FORMAT_ND);
+
+    auto outDesc = TensorDesc({}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto maskDesc = TensorDesc({}, ACL_BOOL, ACL_FORMAT_ND);
+
+    int64_t axis = 0;
+    int64_t quant_min = 0;
+    int64_t quant_max = 255;
+
+    auto ut = OP_API_UT(aclnnFakeQuantPerChannelAffineCachemask,
+                        INPUT(selfDesc, scaleDesc, zeroPointDesc, axis, quant_min, quant_max),
+                        OUTPUT(outDesc, maskDesc));
+
+    // per-channel needs a real channel axis; rank-0 is explicitly rejected (161002).
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}

@@ -96,11 +96,12 @@ static bool CheckShape(const aclTensor* self, const aclTensor* scale, const aclT
     }
 
     int64_t selfDimNum = static_cast<int64_t>(inputShape.GetDimNum());
-    if (selfDimNum == 0 && axis != 0 && axis != -1) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Dimension out of range (expected to be in range of [-1, 0], but got %ld)",
-                axis);
+    if (selfDimNum == 0) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "self of FakeQuantPerChannelAffineCachemask must have rank >= 1; rank-0 is not supported.");
         return false;
-    } else if (selfDimNum > 0 && (axis < -selfDimNum || axis >= selfDimNum)) {
+    }
+    if (axis < -selfDimNum || axis >= selfDimNum) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "Dimension out of range (expected to be in range of [-%ld, %ld],"
                 "but got %ld)",

@@ -102,7 +102,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
        <td>-</td>
        <td>FLOAT16、FLOAT32</td>
        <td>ND</td>
-       <td>0-8</td>
+       <td>1-8</td>
        <td>√</td>
       </tr>
       <tr>
@@ -162,7 +162,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
        <td>shape需要和`self`一致。</td>
        <td>FLOAT16、FLOAT32</td>
        <td>ND</td>
-       <td>0-8</td>
+       <td>1-8</td>
        <td>√</td>
       </tr>
       <tr>
@@ -172,7 +172,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
        <td>shape需要和`self`一致。</td>
        <td>BOOL</td>
        <td>ND</td>
-       <td>0-8</td>
+       <td>1-8</td>
        <td>√</td>
       </tr>
       <tr>

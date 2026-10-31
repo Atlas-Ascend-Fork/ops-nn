@@ -255,3 +255,27 @@ TEST_F(fake_quant_per_tensor_affine_cachemask_test, case_quant_val)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_NE(aclRet, ACLNN_SUCCESS);
 }
+
+TEST_F(fake_quant_per_tensor_affine_cachemask_test, case_rank0_scalar)
+{
+    auto selfDesc = TensorDesc({}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto scaleDesc = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto zeroPointDesc = TensorDesc({1}, ACL_INT32, ACL_FORMAT_ND);
+
+    auto outDesc = TensorDesc({}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto maskDesc = TensorDesc({}, ACL_BOOL, ACL_FORMAT_ND);
+
+    float fake_quant_enbled = 2.0;
+    int64_t quant_min = 0;
+    int64_t quant_max = 255;
+
+    auto ut = OP_API_UT(aclnnFakeQuantPerTensorAffineCachemask,
+                        INPUT(selfDesc, scaleDesc, zeroPointDesc, fake_quant_enbled, quant_min, quant_max),
+                        OUTPUT(outDesc, maskDesc));
+
+    // rank=0 must construct the [1] view graph successfully; the write-back path is
+    // additionally covered by the kernel UT and the NPU end-to-end check.
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
