@@ -38,13 +38,12 @@ constexpr size_t Y_INDEX = 2;
 constexpr size_t FILTER_INDEX = 0;
 constexpr size_t OUTPUT_BP_INDEX = 0;
 constexpr size_t FILTER_SIZE_INDEX = 1;
-const int32_t kFilterSizeDim = 1;
-const int32_t kConv3DbpDim = 5;
-const int32_t kPadsDim = 6;
-const int32_t strideIndex = 0;
-const int32_t dilationIndex = 2;
-const int32_t groupIndex = 3;
-const int32_t enabelHF32Index = 3;
+constexpr int32_t FILTER_SIZE_DIM = 1;
+constexpr int32_t CONV3D_BP_DIM = 5;
+constexpr int32_t STRIDE_INDEX = 0;
+constexpr int32_t DILATION_INDEX = 2;
+constexpr int32_t GROUPS_INDEX = 3;
+constexpr int32_t ENABLE_HF32_INDEX = 5;
 constexpr uint64_t AIV_AIC_RATIO_1 = 1;
 constexpr uint64_t AIV_AIC_RATIO_2 = 2;
 } // namespace
@@ -1377,10 +1376,10 @@ void Conv3DDWV2BasicBlockTilingArch35::PrintRunInfoData()
 
 bool Conv3DDWV2BasicBlockTilingArch35::PrintInputsAttrs(conv_bp_v2_kernel::TConv3DDwTiling& tiling)
 {
-    auto inputInfo = GetTensorInfo(context_, OUTPUT_BP_INDEX, true, kConv3DbpDim);
-    auto filterSizesInfo = GetTensorInfo(context_, FILTER_SIZE_INDEX, true, kFilterSizeDim); // dw filter_size dim 1
-    auto outBackpropInfo = GetTensorInfo(context_, Y_INDEX, true, kConv3DbpDim);
-    auto outputInfo = GetTensorInfo(context_, FILTER_INDEX, false, kConv3DbpDim);
+    auto inputInfo = GetTensorInfo(context_, OUTPUT_BP_INDEX, true, CONV3D_BP_DIM);
+    auto filterSizesInfo = GetTensorInfo(context_, FILTER_SIZE_INDEX, true, FILTER_SIZE_DIM); // dw filter_size dim 1
+    auto outBackpropInfo = GetTensorInfo(context_, Y_INDEX, true, CONV3D_BP_DIM);
+    auto outputInfo = GetTensorInfo(context_, FILTER_INDEX, false, CONV3D_BP_DIM);
 
     OP_LOGD(opName_,
             "input shape: %s, format: %s, dtype: %s; filter_sizes shape: %s, format: %s, dtype: %s; out_backprop "
@@ -1395,15 +1394,16 @@ bool Conv3DDWV2BasicBlockTilingArch35::PrintInputsAttrs(conv_bp_v2_kernel::TConv
             ge::TypeUtils::FormatToSerialString(outputInfo.format).c_str(),
             ge::TypeUtils::DataTypeToSerialString(outputInfo.dtype).c_str());
 
-    auto stridesShape = GetAttrVector(context_, strideIndex, kConv3DbpDim, "strides"); // stride idx 0
+    auto stridesShape = GetAttrVector(context_, STRIDE_INDEX, CONV3D_BP_DIM, "strides"); // stride idx 0
     // pads打印需要修改，可能从padding获取
     std::vector<int64_t> padsShape{tiling.padFront, tiling.padBack, tiling.padUp,
                                    tiling.padDown,  tiling.padLeft, tiling.padRight};
-    auto dilationsShape = GetAttrVector(context_, dilationIndex, kConv3DbpDim, "dilations"); // dilation idx 2
+    auto dilationsShape = GetAttrVector(context_, DILATION_INDEX, CONV3D_BP_DIM, "dilations"); // dilation idx 2
 
     auto attrs = context_->GetAttrs();
-    const auto groups = attrs->GetAttrPointer<int64_t>(groupIndex);       // groups idx 3
-    const auto enableHf32 = attrs->GetAttrPointer<bool>(enabelHF32Index); // enable_hf32 idx 5
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE(opName_, "get attrs from context fail."), return false);
+    const auto groups = attrs->GetAttrPointer<int64_t>(GROUPS_INDEX);       // groups idx 3
+    const auto enableHf32 = attrs->GetAttrPointer<bool>(ENABLE_HF32_INDEX); // enable_hf32 idx 5
     OP_CHECK_IF(groups == nullptr, OP_LOGE(opName_, "get groups from context fail."), return false);
 
     OP_LOGD(opName_, "Attrs stride: %s, pads: %s, dilation: %s, groups: %ld, enable_hf32: %d.",
