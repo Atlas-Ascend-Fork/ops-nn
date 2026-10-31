@@ -12,6 +12,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <limits>
 #include "util/math_util.h"
 #include "register/op_def_registry.h"
 #include "tiling/tiling_api.h"
@@ -29,6 +30,7 @@ constexpr int64_t ALIGN_SIZE = 32;
 constexpr int64_t INPUT_IDX_SELF = 0;
 constexpr int64_t INPUT_IDX_END = 1;
 constexpr int64_t INPUT_IDX_WEIGHT = 2;
+constexpr int32_t MAX_SUPPORT_DIMS_NUMS = 8;
 
 static ge::graphStatus GetTilingKeyByDtype(gert::TilingContext* context, ge::DataType dtype, uint64_t& tilingKey)
 {
@@ -70,12 +72,94 @@ static ge::graphStatus GetPlatformInfoFallback(gert::TilingContext* context, int
     return ge::GRAPH_FAILED;
 }
 
+// The kernel indexes x1/x2/weight with the same tensorId and interprets both x2 and weight with DTYPE_X1,
+// so all three tensor lists must have the same instance count, per-element dtype and storage shape, and x1
+// must stay within the supported dimension limit. The output y is also written with DTYPE_X1, so its
+// per-element dtype must equal the x1 dtype and its storage shape must equal the x1 storage shape;
+// otherwise the kernel writes elements with the x1 element width and layout into a y buffer declared as
+// another dtype or a different shape, producing misaligned garbage or out-of-bounds writes.
+// GE/IR tiling does not validate this by itself.
+static ge::graphStatus CheckForeachLerpListInputConsistency(gert::TilingContext* context)
+{
+    auto computeNodeInfoPtr = context->GetComputeNodeInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoPtr);
+    auto selfInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_SELF);
+    auto endInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_END);
+    auto weightInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_WEIGHT);
+    OP_CHECK_NULL_WITH_CONTEXT(context, selfInstanceInfoPtr);
+    OP_CHECK_NULL_WITH_CONTEXT(context, endInstanceInfoPtr);
+    OP_CHECK_NULL_WITH_CONTEXT(context, weightInstanceInfoPtr);
+
+    // Check the tensor list length here, before any per-element dtype/shape access and before tiling writes
+    // cumulativeOffsets[i]. That array is sized MAX_TENSOR_NUM_FOREACH_LERP_LIST_TILING, so a longer list
+    // would otherwise read out-of-range descriptors and overflow the tiling data. Doing it first also keeps
+    // the check in the single shared validation path, so GE/IR tiling cannot reach the loops unchecked.
+    uint64_t tensorNum = selfInstanceInfoPtr->GetInstanceNum();
+    OP_CHECK_IF((tensorNum > static_cast<uint64_t>(MAX_TENSOR_NUM_FOREACH_LERP_LIST_TILING)),
+                OP_LOGE(context, "tensorNum %lu exceeds max %d", tensorNum, MAX_TENSOR_NUM_FOREACH_LERP_LIST_TILING),
+                return ge::GRAPH_FAILED);
+
+    uint64_t endTensorNum = endInstanceInfoPtr->GetInstanceNum();
+    uint64_t weightTensorNum = weightInstanceInfoPtr->GetInstanceNum();
+    OP_CHECK_IF((endTensorNum != tensorNum),
+                OP_LOGE(context, "x2 tensor count %lu != x1 tensor count %lu", endTensorNum, tensorNum),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((weightTensorNum != tensorNum),
+                OP_LOGE(context, "weight tensor count %lu != x1 tensor count %lu", weightTensorNum, tensorNum),
+                return ge::GRAPH_FAILED);
+
+    ge::DataType refDtype = ge::DT_UNDEFINED;
+    for (uint64_t i = 0; i < tensorNum; i++) {
+        auto x1DescPtr = context->GetDynamicInputDesc(INPUT_IDX_SELF, i);
+        auto x2DescPtr = context->GetDynamicInputDesc(INPUT_IDX_END, i);
+        auto weightDescPtr = context->GetDynamicInputDesc(INPUT_IDX_WEIGHT, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x1DescPtr);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x2DescPtr);
+        OP_CHECK_NULL_WITH_CONTEXT(context, weightDescPtr);
+        if (i == 0) {
+            refDtype = x1DescPtr->GetDataType();
+        }
+        OP_CHECK_IF((x1DescPtr->GetDataType() != refDtype) || (x2DescPtr->GetDataType() != refDtype) ||
+                        (weightDescPtr->GetDataType() != refDtype),
+                    OP_LOGE(context, "dtype mismatch at index %lu among x1/x2/weight", i), return ge::GRAPH_FAILED);
+
+        auto yDescPtr = context->GetOutputDesc(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, yDescPtr);
+        OP_CHECK_IF((yDescPtr->GetDataType() != refDtype),
+                    OP_LOGE(context, "y[%lu] dtype %d != x1 dtype %d", i, static_cast<int32_t>(yDescPtr->GetDataType()),
+                            static_cast<int32_t>(refDtype)),
+                    return ge::GRAPH_FAILED);
+
+        auto x1ShapePtr = context->GetDynamicInputShape(INPUT_IDX_SELF, i);
+        auto x2ShapePtr = context->GetDynamicInputShape(INPUT_IDX_END, i);
+        auto weightShapePtr = context->GetDynamicInputShape(INPUT_IDX_WEIGHT, i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x1ShapePtr);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x2ShapePtr);
+        OP_CHECK_NULL_WITH_CONTEXT(context, weightShapePtr);
+        auto x1Shape = x1ShapePtr->GetStorageShape();
+        OP_CHECK_IF(
+            (x1Shape.GetDimNum() > static_cast<size_t>(MAX_SUPPORT_DIMS_NUMS)),
+            OP_LOGE(context, "x1[%lu] dim num %zu exceeds max %d", i, x1Shape.GetDimNum(), MAX_SUPPORT_DIMS_NUMS),
+            return ge::GRAPH_FAILED);
+        auto yShapePtr = context->GetOutputShape(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, yShapePtr);
+        OP_CHECK_IF((yShapePtr->GetStorageShape() != x1Shape),
+                    OP_LOGE(context, "y[%lu] storage shape != x1 storage shape", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF((x2ShapePtr->GetStorageShape() != x1Shape) || (weightShapePtr->GetStorageShape() != x1Shape),
+                    OP_LOGE(context, "shape mismatch at index %lu among x1/x2/weight", i), return ge::GRAPH_FAILED);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus ForeachLerpListTilingFunc(gert::TilingContext* context)
 {
     int64_t coreNum = 0;
     int64_t ubSize = 0;
     OP_CHECK_IF(GetPlatformInfoFallback(context, coreNum, ubSize) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "Failed to get platform info"), return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF(CheckForeachLerpListInputConsistency(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "ForeachLerpList input tensor list check failed"), return ge::GRAPH_FAILED);
 
     if (ubSize <= DCACHE_SIZE) {
         ubSize = DCACHE_SIZE + 128 * 1024;
@@ -87,10 +171,6 @@ static ge::graphStatus ForeachLerpListTilingFunc(gert::TilingContext* context)
     auto selfInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_SELF);
     OP_CHECK_NULL_WITH_CONTEXT(context, selfInstanceInfoPtr);
     uint64_t tensorNum = selfInstanceInfoPtr->GetInstanceNum();
-
-    OP_CHECK_IF((static_cast<int32_t>(tensorNum) > MAX_TENSOR_NUM_FOREACH_LERP_LIST_TILING),
-                OP_LOGE(context, "tensorNum %lu exceeds max %d", tensorNum, MAX_TENSOR_NUM_FOREACH_LERP_LIST_TILING),
-                return ge::GRAPH_FAILED);
 
     auto weightInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_WEIGHT);
     OP_CHECK_NULL_WITH_CONTEXT(context, weightInstanceInfoPtr);
@@ -114,6 +194,9 @@ static ge::graphStatus ForeachLerpListTilingFunc(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, tensorShapePtr);
         auto tensorShape = tensorShapePtr->GetStorageShape();
         int64_t numel = tensorShape.GetShapeSize();
+        OP_CHECK_IF(numel < 0 || totalElements > std::numeric_limits<int64_t>::max() - numel,
+                    OP_LOGE(context, "invalid or overflow element count %ld at tensor index %lu", numel, i),
+                    return ge::GRAPH_FAILED);
         totalElements += numel;
         tilingData->cumulativeOffsets[i] = totalElements;
 
@@ -127,8 +210,8 @@ static ge::graphStatus ForeachLerpListTilingFunc(gert::TilingContext* context)
         }
     }
 
-    int64_t perCoreElements = std::max(SINGLE_CORE_MIN_ELEMENTS, (totalElements + coreNum - 1) / coreNum);
-    perCoreElements = ((perCoreElements + ALIGN_SIZE - 1) / ALIGN_SIZE) * ALIGN_SIZE;
+    int64_t perCoreElements = std::max(SINGLE_CORE_MIN_ELEMENTS, Ops::Base::CeilDiv(totalElements, coreNum));
+    perCoreElements = Ops::Base::CeilAlign(perCoreElements, ALIGN_SIZE);
     int64_t needCoreNum = Ops::Base::CeilDiv(totalElements, perCoreElements);
     needCoreNum = std::max(needCoreNum, static_cast<int64_t>(1));
     needCoreNum = std::min(needCoreNum, coreNum);

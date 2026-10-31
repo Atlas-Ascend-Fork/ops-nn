@@ -13,15 +13,8 @@
 #include <iostream>
 #include <vector>
 #include <gtest/gtest.h>
-#include "log/log.h"
-#include "kernel_run_context_facker.h"
-
-#include "ut_op_util.h"
-#include "exe_graph/runtime/storage_format.h"
-#include "exe_graph/runtime/storage_shape.h"
-#include "platform/platform_infos_def.h"
-#include "test_cube_util.h"
-#include "../../../../../foreach_utils/op_host/foreach_tiling_def.h"
+#include "tiling_context_faker.h"
+#include "tiling_case_executor.h"
 #include "../../../../op_host/arch35/foreach_lerp_list_tiling.h"
 
 class ForeachLerpListArch35Tiling : public testing::Test {
@@ -31,186 +24,196 @@ protected:
     static void TearDownTestCase() { std::cout << "ForeachLerpListArch35Tiling TearDown" << std::endl; }
 };
 
-static string to_string(const std::stringstream& tiling_data)
-{
-    auto data = tiling_data.str();
-    string result;
-    int32_t tmp = 0;
-    for (size_t i = 0; i < data.length(); i += sizeof(int32_t)) {
-        memcpy(&tmp, data.c_str() + i, sizeof(tmp));
-        result += std::to_string(tmp);
-        result += " ";
-    }
-
-    return result;
-}
-
 TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_float16)
 {
-    std::string op_type("ForeachLerpList");
-    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
-    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
-    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
-
-    string compile_info_string = R"({
-                                        "hardware_info": {
-                                            "BT_SIZE": 0,
-                                            "load3d_constraints": "1",
-                                            "Intrinsic_fix_pipe_l0c2out": false,
-                                            "Intrinsic_data_move_l12ub": true,
-                                            "Intrinsic_data_move_l0c2ub": true,
-                                            "Intrinsic_data_move_out2l1_nd2nz": false,
-                                            "UB_SIZE": 196608,
-                                            "L2_SIZE": 33554432,
-                                            "L1_SIZE": 524288,
-                                            "L0A_SIZE": 65536,
-                                            "L0B_SIZE": 65536,
-                                            "L0C_SIZE": 131072,
-                                            "CORE_NUM": 48
-                                        }
-                                    })";
-    map<string, string> soc_infos;
-    map<string, string> aicore_spec;
-    map<string, string> intrinsics;
-    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
-
-    fe::PlatFormInfos platform_info;
-    platform_info.Init();
-
-    ForeachLerpListCompileInfo compile_info;
-    compile_info.coreNum = 0;
-    compile_info.ubSize = 0;
-
-    auto kernel_holder = gert::KernelRunContextFaker()
-                             .KernelIONum(2, 1)
-                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
-                                      reinterpret_cast<void*>(&platform_info)})
-                             .Outputs({&compile_info})
-                             .Build();
-
-    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
-    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
-    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
-    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
-    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
-                                                                                            intrinsics);
-
-    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
-
-    auto param = gert::TilingData::CreateCap(4096);
-    ASSERT_NE(param, nullptr);
-    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
-    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
-    gert::StorageShape inputs = {{3, 6, 5}, {3, 6, 5}};
-    gert::StorageShape scalar = {{3, 6, 5}, {3, 6, 5}};
-    auto holder = gert::TilingContextFaker()
-                      .NodeIoNum(3, 1)
-                      .IrInstanceNum({1, 1, 1})
-                      .InputShapes({&inputs, &scalar, &scalar})
-                      .OutputShapes({&inputs})
-                      .CompileInfo(&compile_info)
-                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
-                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .TilingData(param.get())
-                      .Workspace(ws_size)
-                      .Build();
-
-    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
-    ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
-
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    auto tiling_key = tiling_context->GetTilingKey();
-    ASSERT_EQ(tiling_key, 0);
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para("ForeachLerpList",
+                                 {
+                                     {{{3, 6, 5}, {3, 6, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                     {{{3, 6, 5}, {3, 6, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                     {{{3, 6, 5}, {3, 6, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                 },
+                                 {
+                                     {{{3, 6, 5}, {3, 6, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                 },
+                                 std::vector<uint32_t>{1, 1, 1}, std::vector<uint32_t>{1}, &compileInfo, 48, 196608,
+                                 4096);
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, 0, EMPTY_EXPECT_TILING_DATA, {0});
 }
 
 TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_float32)
 {
-    std::string op_type("ForeachLerpList");
-    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
-    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
-    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para("ForeachLerpList",
+                                 {
+                                     {{{3, 6, 5}, {3, 6, 5}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                     {{{3, 6, 5}, {3, 6, 5}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                     {{{3, 6, 5}, {3, 6, 5}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                 },
+                                 {
+                                     {{{3, 6, 5}, {3, 6, 5}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                 },
+                                 std::vector<uint32_t>{1, 1, 1}, std::vector<uint32_t>{1}, &compileInfo, 48, 196608,
+                                 4096);
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, 1, EMPTY_EXPECT_TILING_DATA, {0});
+}
 
-    string compile_info_string = R"({
-                                        "hardware_info": {
-                                            "BT_SIZE": 0,
-                                            "load3d_constraints": "1",
-                                            "Intrinsic_fix_pipe_l0c2out": false,
-                                            "Intrinsic_data_move_l12ub": true,
-                                            "Intrinsic_data_move_l0c2ub": true,
-                                            "Intrinsic_data_move_out2l1_nd2nz": false,
-                                            "UB_SIZE": 196608,
-                                            "L2_SIZE": 33554432,
-                                            "L1_SIZE": 524288,
-                                            "L0A_SIZE": 65536,
-                                            "L0B_SIZE": 65536,
-                                            "L0C_SIZE": 131072,
-                                            "CORE_NUM": 48
-                                        }
-                                    })";
-    map<string, string> soc_infos;
-    map<string, string> aicore_spec;
-    map<string, string> intrinsics;
-    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+// Positive control: a well-formed multi-instance (2 x1 / 2 x2 / 2 weight) tensor list passes tiling and
+// selects the FP16 kernel (key=0).
+TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_multi_instance_positive)
+{
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para("ForeachLerpList",
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x1[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x1[1]
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x2[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x2[1]
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // weight[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // weight[1]
+                                 },
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // y[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // y[1]
+                                 },
+                                 std::vector<uint32_t>{2, 2, 2}, std::vector<uint32_t>{2}, &compileInfo, 48, 196608,
+                                 4096);
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, 0, EMPTY_EXPECT_TILING_DATA, {0});
+}
 
-    fe::PlatFormInfos platform_info;
-    platform_info.Init();
+// Negative 1: x2 list has one instance while x1/weight have two -> instance-count check fails.
+TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_neg_x2_instance_num_mismatch)
+{
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para("ForeachLerpList",
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x1[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x1[1]
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x2[0]
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // weight[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // weight[1]
+                                 },
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // y[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // y[1]
+                                 },
+                                 std::vector<uint32_t>{2, 1, 2}, std::vector<uint32_t>{2}, &compileInfo, 48, 196608,
+                                 4096);
+    ExecuteTestCase(para, ge::GRAPH_FAILED, 0, std::vector<size_t>{});
+}
 
-    ForeachLerpListCompileInfo compile_info;
-    compile_info.coreNum = 0;
-    compile_info.ubSize = 0;
+// Negative 2: x2 dtype differs from x1/weight -> per-element dtype check fails.
+TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_neg_x2_dtype_mismatch)
+{
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para("ForeachLerpList",
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x1[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x1[1]
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT, ge::FORMAT_ND},   // x2[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT, ge::FORMAT_ND},   // x2[1]
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // weight[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // weight[1]
+                                 },
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // y[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // y[1]
+                                 },
+                                 std::vector<uint32_t>{2, 2, 2}, std::vector<uint32_t>{2}, &compileInfo, 48, 196608,
+                                 4096);
+    ExecuteTestCase(para, ge::GRAPH_FAILED, 0, std::vector<size_t>{});
+}
 
-    auto kernel_holder = gert::KernelRunContextFaker()
-                             .KernelIONum(2, 1)
-                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
-                                      reinterpret_cast<void*>(&platform_info)})
-                             .Outputs({&compile_info})
-                             .Build();
+// Negative 3: x2 storage shape differs from x1/weight at one position -> shape check fails.
+TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_neg_shape_mismatch)
+{
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para("ForeachLerpList",
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x1[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x1[1]
+                                     {{{2, 4}, {2, 4}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x2[0], differs from x1[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // x2[1]
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // weight[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // weight[1]
+                                 },
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // y[0]
+                                     {{{4, 5}, {4, 5}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // y[1]
+                                 },
+                                 std::vector<uint32_t>{2, 2, 2}, std::vector<uint32_t>{2}, &compileInfo, 48, 196608,
+                                 4096);
+    ExecuteTestCase(para, ge::GRAPH_FAILED, 0, std::vector<size_t>{});
+}
 
-    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
-    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
-    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
-    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
-    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
-                                                                                            intrinsics);
+// Negative 4: x1 tensor rank exceeds the supported maximum (8) -> dimension check fails.
+TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_neg_x1_rank_too_high)
+{
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para(
+        "ForeachLerpList",
+        {
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+        },
+        {
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+        },
+        std::vector<uint32_t>{1, 1, 1}, std::vector<uint32_t>{1}, &compileInfo, 48, 196608, 4096);
+    ExecuteTestCase(para, ge::GRAPH_FAILED, 0, std::vector<size_t>{});
+}
 
-    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+// Negative 5: y dtype differs from x1 -> must be rejected.
+TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_neg_y_dtype_mismatch)
+{
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para("ForeachLerpList",
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                 },
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                 },
+                                 std::vector<uint32_t>{1, 1, 1}, std::vector<uint32_t>{1}, &compileInfo, 48, 196608,
+                                 4096);
+    ExecuteTestCase(para, ge::GRAPH_FAILED, 0, std::vector<size_t>{});
+}
 
-    auto param = gert::TilingData::CreateCap(4096);
-    ASSERT_NE(param, nullptr);
-    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
-    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
-    gert::StorageShape inputs = {{3, 6, 5}, {3, 6, 5}};
-    gert::StorageShape scalar = {{3, 6, 5}, {3, 6, 5}};
-    auto holder = gert::TilingContextFaker()
-                      .NodeIoNum(3, 1)
-                      .IrInstanceNum({1, 1, 1})
-                      .InputShapes({&inputs, &scalar, &scalar})
-                      .OutputShapes({&inputs})
-                      .CompileInfo(&compile_info)
-                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
-                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .TilingData(param.get())
-                      .Workspace(ws_size)
-                      .Build();
+// Negative 6: y shape/element count differs from x1 -> must be rejected.
+TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_neg_y_shape_mismatch)
+{
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para("ForeachLerpList",
+                                 {
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                     {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                 },
+                                 {
+                                     {{{1, 1}, {1, 1}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // 1 element != x1's 6
+                                 },
+                                 std::vector<uint32_t>{1, 1, 1}, std::vector<uint32_t>{1}, &compileInfo, 48, 196608,
+                                 4096);
+    ExecuteTestCase(para, ge::GRAPH_FAILED, 0, std::vector<size_t>{});
+}
 
-    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
-    ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
-    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
-
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    auto tiling_key = tiling_context->GetTilingKey();
-    ASSERT_EQ(tiling_key, 1);
+// Negative 7: y has the same element count as x1 but a different storage shape -> must be rejected.
+TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_neg_y_same_numel_diff_shape)
+{
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    gert::TilingContextPara para(
+        "ForeachLerpList",
+        {
+            {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+            {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+            {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+        },
+        {
+            {{{1, 6}, {1, 6}}, ge::DT_FLOAT16, ge::FORMAT_ND}, // same 6 elements as x1, different shape
+        },
+        std::vector<uint32_t>{1, 1, 1}, std::vector<uint32_t>{1}, &compileInfo, 48, 196608, 4096);
+    ExecuteTestCase(para, ge::GRAPH_FAILED, 0, std::vector<size_t>{});
 }

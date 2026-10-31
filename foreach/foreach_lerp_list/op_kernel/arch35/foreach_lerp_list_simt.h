@@ -25,6 +25,19 @@ using namespace AscendC;
 template <typename IDX_T>
 static constexpr uint32_t THREAD_NUM_VF = (sizeof(IDX_T) == 4) ? 1024 : 512;
 
+template <typename IDX_T>
+struct ForeachLerpUnsignedIdx;
+
+template <>
+struct ForeachLerpUnsignedIdx<int32_t> {
+    using type = uint32_t;
+};
+
+template <>
+struct ForeachLerpUnsignedIdx<int64_t> {
+    using type = uint64_t;
+};
+
 template <typename T>
 struct ForeachLerpCalcType;
 
@@ -78,16 +91,16 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM_VF<IDX_T>) inline void OpForeachL
     __gm__ T* x2Ptr = SimtGetTensorAddr<T>(x2List, tensorId);
     __gm__ T* weightPtr = SimtGetTensorAddr<T>(weightList, tensorId);
     __gm__ T* yPtr = SimtGetTensorAddr<T>(yList, tensorId);
-    for (IDX_T localIdx = static_cast<IDX_T>(AscendC::Simt::GetBlockIdx() * AscendC::Simt::GetThreadNum() +
-                                             AscendC::Simt::GetThreadIdx());
-         localIdx < elementCount;
-         localIdx += static_cast<IDX_T>(AscendC::Simt::GetThreadNum() * AscendC::Simt::GetBlockNum())) {
+    using UIDX_T = typename ForeachLerpUnsignedIdx<IDX_T>::type;
+    UIDX_T stride = static_cast<UIDX_T>(AscendC::Simt::GetThreadNum() * AscendC::Simt::GetBlockNum());
+    UIDX_T startIdx = static_cast<UIDX_T>(AscendC::Simt::GetBlockIdx() * AscendC::Simt::GetThreadNum() +
+                                          AscendC::Simt::GetThreadIdx());
+    UIDX_T count = static_cast<UIDX_T>(elementCount);
+    for (UIDX_T localIdx = startIdx; localIdx < count; localIdx += stride) {
         CalcT x1Val = static_cast<CalcT>(x1Ptr[localIdx]);
         CalcT x2Val = static_cast<CalcT>(x2Ptr[localIdx]);
         CalcT weightVal = static_cast<CalcT>(weightPtr[localIdx]);
-
         CalcT resultVal = LerpCompute<CalcT>(x1Val, x2Val, weightVal);
-
         yPtr[localIdx] = static_cast<T>(resultVal);
     }
 }

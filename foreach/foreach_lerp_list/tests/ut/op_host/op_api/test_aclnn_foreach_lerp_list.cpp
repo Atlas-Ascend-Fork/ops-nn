@@ -87,3 +87,74 @@ TEST_F(l2_foreach_lerp_list_test, foreach_lerp_list_test_mixed_out_layouts)
     uint64_t workspaceSize = 0;
     EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACL_SUCCESS);
 }
+
+// out must match the corresponding x1 shape exactly; fewer elements are rejected with PARAM_INVALID.
+// x1/x2/weight are {2,4} while out is {2,3}, so the shapes (and element counts) differ.
+TEST_F(l2_foreach_lerp_list_test, foreach_lerp_list_test_smaller_out_shape_size)
+{
+    auto x1 = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto x2 = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(1, 2);
+    auto weight = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(1, 2);
+    auto out = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto x1List = TensorListDesc({x1});
+    auto x2List = TensorListDesc({x2});
+    auto weightList = TensorListDesc({weight});
+    auto outList = TensorListDesc({out});
+
+    auto ut = OP_API_UT(aclnnForeachLerpList, INPUT(x1List, x2List, weightList), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}
+
+// Regression guard for the strict shape contract restored by the "out >= x1" rollback:
+// out must match the corresponding x1 shape exactly, so more elements alone are not accepted.
+// x1/x2/weight are {2,4} (8 elements) while out is {2,5} (10 elements); the shapes differ.
+TEST_F(l2_foreach_lerp_list_test, foreach_lerp_list_test_larger_out_shape_size)
+{
+    auto x1 = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto x2 = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(1, 2);
+    auto weight = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(1, 2);
+    auto out = TensorDesc({2, 5}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto x1List = TensorListDesc({x1});
+    auto x2List = TensorListDesc({x2});
+    auto weightList = TensorListDesc({weight});
+    auto outList = TensorListDesc({out});
+
+    auto ut = OP_API_UT(aclnnForeachLerpList, INPUT(x1List, x2List, weightList), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}
+
+// TensorList length 256 is the tiling upper bound and must be accepted.
+TEST_F(l2_foreach_lerp_list_test, foreach_lerp_list_test_maximum_list_length)
+{
+    auto x1 = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto x2 = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto weight = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto x1List = TensorListDesc(256, x1);
+    auto x2List = TensorListDesc(256, x2);
+    auto weightList = TensorListDesc(256, weight);
+    auto outList = TensorListDesc(256, out);
+
+    auto ut = OP_API_UT(aclnnForeachLerpList, INPUT(x1List, x2List, weightList), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACL_SUCCESS);
+}
+
+// TensorList length 257 exceeds the tiling upper bound and must be rejected with TILING_ERROR.
+TEST_F(l2_foreach_lerp_list_test, foreach_lerp_list_test_excessive_list_length)
+{
+    auto x1 = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto x2 = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto weight = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto x1List = TensorListDesc(257, x1);
+    auto x2List = TensorListDesc(257, x2);
+    auto weightList = TensorListDesc(257, weight);
+    auto outList = TensorListDesc(257, out);
+
+    auto ut = OP_API_UT(aclnnForeachLerpList, INPUT(x1List, x2List, weightList), OUTPUT(outList));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_INNER_TILING_ERROR);
+}

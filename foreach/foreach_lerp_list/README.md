@@ -49,28 +49,28 @@
     <tr>
       <td>x1</td>
       <td>输入</td>
-      <td>表示进行线性插值计算的第一个输入张量列表，对应公式中的`x1`。该参数中所有Tensor的数据类型保持一致。</td>
+      <td>表示进行线性插值计算的第一个输入张量列表，对应公式中的`x1`。支持空Tensor。该参数中所有Tensor的数据类型保持一致。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>x2</td>
       <td>输入</td>
-      <td>表示进行线性插值计算的第二个输入张量列表，对应公式中的`x2`。数据类型、数据格式和shape与入参`x1`的数据类型、数据格式和shape一致。该参数中所有Tensor的数据类型保持一致。</td>
+      <td>表示进行线性插值计算的第二个输入张量列表，对应公式中的`x2`。支持空Tensor。数据类型、数据格式和shape与入参`x1`的数据类型、数据格式和shape一致。该参数中所有Tensor的数据类型保持一致。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>weight</td>
       <td>输入</td>
-      <td>表示进行线性插值计算的插值系数张量列表，对应公式中的`weight`。数据类型、数据格式和shape与入参`x1`的数据类型、数据格式和shape一致。该参数中所有Tensor的数据类型保持一致。</td>
+      <td>表示进行线性插值计算的插值系数张量列表，对应公式中的`weight`。支持空Tensor。数据类型、数据格式和shape与入参`x1`的数据类型、数据格式和shape一致。该参数中所有Tensor的数据类型保持一致。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>表示进行线性插值计算的输出张量列表，对应公式中的`y`。数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape size大于等于入参`x1`的shape size。该参数中所有Tensor的数据类型保持一致。</td>
+      <td>表示进行线性插值计算的输出张量列表，对应公式中的`y`。支持空Tensor。数据类型、数据格式、shape和shape size与入参`x1`的数据类型、数据格式、shape和shape size一致。该参数中所有Tensor的数据类型保持一致。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -80,7 +80,9 @@
 
 ## 约束说明
 
-- 输出不支持非连续Tensor。
+- 非连续Tensor：仅aclnn接口支持非连续输入与输出，接口内部先将非连续Tensor转为连续Tensor参与计算，输出结果再通过ViewCopy写回原输出视图；图模式（IR）与Kernel直调通路不支持非连续Tensor。
+- x1、x2、weight、y 的维度范围为 0-8。
+- TensorList 长度上限为 256。
 
 ## 调用说明
 

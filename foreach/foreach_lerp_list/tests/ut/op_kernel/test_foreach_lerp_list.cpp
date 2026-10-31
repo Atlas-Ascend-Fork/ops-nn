@@ -18,6 +18,7 @@
 #include <iostream>
 #include <string>
 #include <cstdint>
+#include <cstdlib>
 #include "gtest/gtest.h"
 #include "tikicpulib.h"
 #include "../../../../foreach_abs/tests/ut/op_kernel/foreach_abs_tiling_function.h"
@@ -38,7 +39,7 @@ TEST_F(foreach_lerp_list_test, test_case_float_1)
     system("cp -rf "
            "../../../../foreach/foreach_lerp_list/tests/ut/op_kernel/lerp_list_data ./");
     system("chmod -R 755 ./lerp_list_data/");
-    system("cd ./lerp_list_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'float32'");
+    EXPECT_EQ(system("cd ./lerp_list_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'float32'"), 0);
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
     uint32_t blockDim = 4;
     size_t sysWorkspaceSize = 16 * 1024 * 1024;
@@ -66,7 +67,7 @@ TEST_F(foreach_lerp_list_test, test_case_float_1)
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
 
-    system("cd ./lerp_list_data/ && python3 compare_data.py 'float32'");
+    EXPECT_EQ(system("cd ./lerp_list_data/ && python3 compare_data.py 'float32'"), 0);
 }
 
 TEST_F(foreach_lerp_list_test, test_case_float16_2)
@@ -75,7 +76,7 @@ TEST_F(foreach_lerp_list_test, test_case_float16_2)
     system("cp -rf "
            "../../../../foreach/foreach_lerp_list/tests/ut/op_kernel/lerp_list_data ./");
     system("chmod -R 755 ./lerp_list_data/");
-    system("cd ./lerp_list_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'float16'");
+    EXPECT_EQ(system("cd ./lerp_list_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'float16'"), 0);
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
     uint32_t blockDim = 4;
     size_t sysWorkspaceSize = 16 * 1024 * 1024;
@@ -103,7 +104,7 @@ TEST_F(foreach_lerp_list_test, test_case_float16_2)
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
 
-    system("cd ./lerp_list_data/ && python3 compare_data.py 'float16'");
+    EXPECT_EQ(system("cd ./lerp_list_data/ && python3 compare_data.py 'float16'"), 0);
 }
 
 TEST_F(foreach_lerp_list_test, test_case_bfloat16_3)
@@ -112,7 +113,8 @@ TEST_F(foreach_lerp_list_test, test_case_bfloat16_3)
     system("cp -rf "
            "../../../../foreach/foreach_lerp_list/tests/ut/op_kernel/lerp_list_data ./");
     system("chmod -R 755 ./lerp_list_data/");
-    system("cd ./lerp_list_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'bfloat16_t'");
+    EXPECT_EQ(system("cd ./lerp_list_data/ && python3 gen_data.py '{{128, 64}, {16, 128}, {32, 128}}' 'bfloat16_t'"),
+              0);
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
     uint32_t blockDim = 4;
     size_t sysWorkspaceSize = 16 * 1024 * 1024;
@@ -140,5 +142,5 @@ TEST_F(foreach_lerp_list_test, test_case_bfloat16_3)
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
 
-    system("cd ./lerp_list_data/ && python3 compare_data.py 'bfloat16_t'");
+    EXPECT_EQ(system("cd ./lerp_list_data/ && python3 compare_data.py 'bfloat16_t'"), 0);
 }

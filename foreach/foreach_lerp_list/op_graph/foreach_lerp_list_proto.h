@@ -19,12 +19,12 @@
 namespace ge {
 /**
  * @brief Apply lerp operation for each tensor in tensor list with tensors in another tensor list and
- * an additonal tensor in manner of element-wise
+ * a weight tensor list in manner of element-wise
  * @par Inputs:
  * Three inputs:
  * @li x1: A tensor list containing multiple tensors
  * @li x2: Another tensor list containing multiple tensors
- * @li weights: A tensor contain multiple elements
+ * @li weight: A tensor list containing multiple tensors
  * @par Outputs:
  * @li y: A tensor list which store the tensors whose value are produced by lerp
  */

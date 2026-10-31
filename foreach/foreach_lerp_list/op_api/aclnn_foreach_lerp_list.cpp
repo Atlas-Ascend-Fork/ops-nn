@@ -31,6 +31,8 @@ static const std::initializer_list<DataType> ASCEND910BC_TENSOR_DTYPE_DTYPE_SUPP
 
 static const std::initializer_list<DataType> EMPTY_LIST = {};
 
+static constexpr uint64_t MAX_TENSOR_COUNT = 256;
+
 static const std::initializer_list<DataType>& GetDtypeSupportList()
 {
     auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
@@ -149,6 +151,12 @@ static inline aclnnStatus CheckParams(const aclTensorList* x1, const aclTensorLi
             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out[%lu] is null.", i);
             return ACLNN_ERR_PARAM_INVALID;
         }
+    }
+
+    if (x1->Size() > MAX_TENSOR_COUNT) {
+        OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "TensorList length %lu exceeds the maximum of %lu.", x1->Size(),
+                MAX_TENSOR_COUNT);
+        return ACLNN_ERR_INNER_TILING_ERROR;
     }
 
     CHECK_RET(CheckDtypeValid(x1, x2, weight, out), ACLNN_ERR_PARAM_INVALID);
