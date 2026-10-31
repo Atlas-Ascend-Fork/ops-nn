@@ -70,10 +70,8 @@ InferResult RunInferShape(InferCase testCase)
     const size_t outputNum = 1U + static_cast<size_t>(testCase.hasBatchMean) +
                              static_cast<size_t>(testCase.hasBatchVariance);
     gert::InferShapeContextFaker faker;
-    faker.SetOpType("INInferV2")
-        .NodeIoNum(inputShapes.size(), outputNum)
-        .IrInstanceNum(inputInstanceNum, outputInstanceNum)
-        .InputShapes(inputShapes);
+    // IrInstanceNum supplies both the IR counts and the optional-instance layout.
+    faker.SetOpType("INInferV2").IrInstanceNum(inputInstanceNum, outputInstanceNum).InputShapes(inputShapes);
     for (size_t i = 0; i < inputShapes.size(); ++i) {
         faker.NodeInputTd(static_cast<int32_t>(i), i == 0 ? ge::DT_FLOAT16 : ge::DT_FLOAT, ge::FORMAT_ND,
                           ge::FORMAT_ND);
@@ -87,10 +85,12 @@ InferResult RunInferShape(InferCase testCase)
     auto* context = holder.GetContext<gert::InferShapeContext>();
     InferResult result;
     if (context == nullptr) {
+        ADD_FAILURE() << "Failed to build the INInferV2 shape-inference context.";
         return result;
     }
     const auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INInferV2");
     if (opImpl == nullptr || opImpl->infer_shape == nullptr) {
+        ADD_FAILURE() << "INInferV2 shape inference is not registered.";
         return result;
     }
     result.status = opImpl->infer_shape(context);

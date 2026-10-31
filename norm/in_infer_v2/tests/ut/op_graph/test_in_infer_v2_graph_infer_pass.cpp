@@ -23,7 +23,8 @@ void CheckDataTypes(const std::vector<uint32_t>& inputInstances, const std::vect
                     ge::graphStatus status = ge::GRAPH_SUCCESS)
 {
     gert::OpInferDataTypeContextBuilder builder;
-    builder.OpType("INInferV2").OpName("in_infer_v2_dtype").IONum(inputs.size(), expected.size());
+    builder.OpType("INInferV2").OpName("in_infer_v2_dtype");
+    // IOInstanceNum also sets the IR counts and is mutually exclusive with IONum.
     builder.IOInstanceNum(inputInstances, outputInstances);
     for (size_t i = 0; i < inputs.size(); ++i) {
         builder.InputTensorDesc(i, inputs[i], ge::FORMAT_ND, ge::FORMAT_ND);
@@ -34,6 +35,24 @@ void CheckDataTypes(const std::vector<uint32_t>& inputInstances, const std::vect
     auto holder = builder.Build();
     auto* context = holder.GetContext();
     ASSERT_NE(context, nullptr);
+    size_t inputStart = 0;
+    for (size_t i = 0; i < inputInstances.size(); ++i) {
+        const auto* instance = context->GetIrInputInstanceInfo(i);
+        ASSERT_NE(instance, nullptr);
+        ASSERT_EQ(instance->GetInstanceStart(), inputStart);
+        ASSERT_EQ(instance->GetInstanceNum(), inputInstances[i]);
+        inputStart += inputInstances[i];
+    }
+    ASSERT_EQ(inputStart, inputs.size());
+    size_t outputStart = 0;
+    for (size_t i = 0; i < outputInstances.size(); ++i) {
+        const auto* instance = context->GetIrOutputInstanceInfo(i);
+        ASSERT_NE(instance, nullptr);
+        ASSERT_EQ(instance->GetInstanceStart(), outputStart);
+        ASSERT_EQ(instance->GetInstanceNum(), outputInstances[i]);
+        outputStart += outputInstances[i];
+    }
+    ASSERT_EQ(outputStart, expected.size());
     ASSERT_EQ(ops::InferDataTypeForINInferV2(context), status);
     if (status == ge::GRAPH_SUCCESS) {
         for (size_t i = 0; i < expected.size(); ++i) {
