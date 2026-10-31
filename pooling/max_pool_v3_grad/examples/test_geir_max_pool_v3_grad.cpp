@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
+#include <cstring>
 #include <string.h>
 #include <stdint.h>
 #include <vector>
@@ -171,12 +172,27 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
     for (uint32_t i = 0; i < shapes.size(); i++) {
         size *= shapes[i];
     }
-    uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[data_len];
+    uint32_t data_type_size = GetDataTypeSize(data_type);
+    // 缓冲区按字节申请并由容器管理生命周期，Tensor 构造时完成数据拷贝；
+    // 逐元素按 dtype 实际字节宽度填充，保证 [0, size * data_type_size) 全部为确定性数据（含 INT64）
+    std::vector<uint8_t> data(size * data_type_size, 0);
     for (size_t i = 0; i < size; ++i) {
-        *(pData + i) = value;
+        uint8_t* dst = data.data() + i * data_type_size;
+        if (data_type_size == 1) {
+            int8_t elem = static_cast<int8_t>(value);
+            std::memcpy(dst, &elem, data_type_size);
+        } else if (data_type_size == 2) {
+            int16_t elem = static_cast<int16_t>(value);
+            std::memcpy(dst, &elem, data_type_size);
+        } else if (data_type_size == 4) {
+            int32_t elem = static_cast<int32_t>(value);
+            std::memcpy(dst, &elem, data_type_size);
+        } else if (data_type_size == 8) {
+            int64_t elem = static_cast<int64_t>(value);
+            std::memcpy(dst, &elem, data_type_size);
+        }
     }
-    input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
+    input_tensor = Tensor(input_tensor_desc, data);
     return SUCCESS;
 }
 
@@ -289,9 +305,19 @@ void PrintReport(const std::vector<CaseResult>& results)
 int main(int argc, char* argv[])
 {
     printf("%s - INFO - [XIR]: Start to initialize ge using ge global options\n", GetTime().c_str());
-    // 设置全局选项（deviceId=5: npu-smi 检测 device 5 健康 OK）
-    std::map<AscendString, AscendString> global_options = {
-        {"ge.exec.deviceId", "5"}, {"ge.graphRunMode", "0"}, {"ge.exec.precision_mode", "must_keep_origin_dtype"}};
+    // 设备号可配置：优先取命令行参数 argv[1]，其次取环境变量 GE_EXEC_DEVICE_ID，默认 0
+    std::string device_id = "0";
+    const char* env_device_id = std::getenv("GE_EXEC_DEVICE_ID");
+    if (env_device_id != nullptr && env_device_id[0] != '\0') {
+        device_id = env_device_id;
+    }
+    if (argc > 1 && argv[1] != nullptr && argv[1][0] != '\0') {
+        device_id = argv[1];
+    }
+    printf("%s - INFO - [XIR]: Use device id: %s\n", GetTime().c_str(), device_id.c_str());
+    std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", device_id.c_str()},
+                                                           {"ge.graphRunMode", "0"},
+                                                           {"ge.exec.precision_mode", "must_keep_origin_dtype"}};
     // 初始化图引擎
     Status ret = ge::GEInitialize(global_options);
     if (ret != SUCCESS) {
