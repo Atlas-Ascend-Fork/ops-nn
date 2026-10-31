@@ -186,6 +186,24 @@ TEST_F(l2_dynamic_quant_v2_test, ascend910B2_dynamic_quant_v2_moe_expert_num_mis
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
+// MoE 场景专家数超过 1024, 第一段应返回 161002 (锁定 7cb60e3ce 已修复的行为)
+TEST_F(l2_dynamic_quant_v2_test, ascend910B2_dynamic_quant_v2_moe_expert_num_exceed_1024_fail)
+{
+    TensorDesc x_desc = TensorDesc({16, 32}, ACL_FLOAT16, ACL_FORMAT_ND);
+    TensorDesc smooth_desc = TensorDesc({2048, 32}, ACL_FLOAT16, ACL_FORMAT_ND);
+    TensorDesc moe_desc = TensorDesc({2048}, ACL_INT32, ACL_FORMAT_ND);
+    TensorDesc y_desc = TensorDesc({16, 32}, ACL_INT8, ACL_FORMAT_ND);
+    TensorDesc scale_desc = TensorDesc({16}, ACL_FLOAT, ACL_FORMAT_ND);
+    TensorDesc offset_desc = TensorDesc({16}, ACL_FLOAT, ACL_FORMAT_ND);
+    int64_t dstType = 2;
+
+    auto ut = OP_API_UT(aclnnDynamicQuantV2, INPUT(x_desc, smooth_desc, moe_desc, dstType),
+                        OUTPUT(y_desc, scale_desc, offset_desc));
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
 // group_index 提供时, smooth_scales 必须非空
 TEST_F(l2_dynamic_quant_v2_test, ascend910B2_dynamic_quant_v2_group_without_smooth_fail)
 {
