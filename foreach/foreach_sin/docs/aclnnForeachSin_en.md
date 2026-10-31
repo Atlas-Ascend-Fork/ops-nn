@@ -103,11 +103,11 @@ aclnnStatus aclnnForeachSin(
       <td>out (aclTensorList*)</td>
       <td>Output</td>
       <td>Indicates the output tensor list for sine computation, corresponding to `y` in the formula.</td>
-      <td><ul><li>Supports empty tensors.</li><li>All tensors in this parameter must be of the same data type.</li><li>Data type and data format are the same as those of input parameter `x`, and shape size is greater than or equal to that of input parameter `x`.</li></ul></td>
+      <td><ul><li>Supports empty tensors.</li><li>All tensors in this parameter must be of the same data type.</li><li>Data type and data format are the same as those of input parameter `x`, and shape size is equal to that of input parameter `x`.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
-      <td>×</td>
+      <td>√</td>
     </tr>
     <tr>
       <td>workspaceSize(uint64_t*)</td>
@@ -157,21 +157,30 @@ aclnnStatus aclnnForeachSin(
       <td>The input x or out is a null pointer.</td>
     </tr>
     <tr>
-      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="2">161002</td>
+      <td rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="7">161002</td>
       <td>The data type of x or out is not supported.</td>
     </tr>
     <tr>
       <td>The data types of x and out are inconsistent.</td></tr>
     <tr>
-      <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="3">561002</td>
       <td>The shapes of x and out do not meet the constraint.</td>
     </tr>
     <tr>
       <td>The data types of the tensors in x or out are inconsistent.</td></tr>
     <tr>
       <td>The dimensions of the tensors in x or out exceed 8.</td>
+    </tr>
+    <tr>
+      <td>The tensor numbers of x and out are inconsistent.</td>
+    </tr>
+    <tr>
+      <td>There are null-pointer tensors in the x or out tensor list.</td>
+    </tr>
+    <tr>
+      <td>ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td>561002</td>
+      <td>The number of tensors in a single tensor list of x or out exceeds 256.</td>
     </tr>
   </tbody></table>
 
@@ -220,6 +229,8 @@ aclnnStatus aclnnForeachSin(
 
 ## Constraints
 
+- The number of tensors in a single x/out tensor list cannot exceed 256.
+- When the numbers of x and out are 0 (empty lists), the API directly returns success without performing computation.
 - When the input value range is within [-65504, 65504], the functional precision requirement is met. Precision cannot be guaranteed beyond this range.
 - Deterministic computation:
   - aclnnForeachSin defaults to a deterministic implementation.

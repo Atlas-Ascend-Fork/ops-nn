@@ -18,12 +18,12 @@
 #include "graph/operator_reg.h"
 namespace ge {
 /**
- * @brief Apply cos operation for each tensor in a tensor list in manner of element-wise
+ * @brief Apply sin operation for each tensor in a tensor list in manner of element-wise
  * @par Inputs:
  * One inputs:
  * @li x: A tensor list containing multiple tensors
  * @par Outputs:
- * @li y: A tensor list which store the tensors whose value are the cos value of the x
+ * @li y: A tensor list which store the tensors whose value are the sin value of the x
  */
 REG_OP(ForeachSin)
     .DYNAMIC_INPUT(x, TensorType({DT_FLOAT, DT_FLOAT16, DT_BF16}))
