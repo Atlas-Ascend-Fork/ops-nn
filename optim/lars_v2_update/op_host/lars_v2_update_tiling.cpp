@@ -34,6 +34,9 @@ constexpr int64_t RANK_THRESHOLD_8 = 8;
 
 // PadAndSqueeze: 1-prepending pad to max_rank, then squeeze dims
 // where every input/output is 1. 6 inputs / 1 output.
+// 空维传播：任一参与广播的 input/output 在该维为 0，则 maximum_bro_shape[d] = 0。
+// 0 是广播的湮灭元而非可广播的 1，若与标量补位的 1 一起取 max 会被吞掉，
+// 导致 tiling 按非空规模切分、kernel 向 0 元素输出越界写。
 bool PadAndSqueeze(const std::vector<std::vector<int64_t>>& input_shapes,
                    const std::vector<std::vector<int64_t>>& output_shapes, std::vector<int64_t>& maximum_bro_shape,
                    std::vector<std::vector<int64_t>>& normal_input_shapes,
@@ -64,19 +67,24 @@ bool PadAndSqueeze(const std::vector<std::vector<int64_t>>& input_shapes,
     normal_output_shapes.assign(num_outputs, std::vector<int64_t>());
     for (int64_t d = 0; d < max_rank; d++) {
         bool all_one = true;
+        bool has_zero = false;
         int64_t max_dim = 0;
         for (int64_t i = 0; i < num_inputs; i++) {
             if (padded_in[i][d] != 1)
                 all_one = false;
+            if (padded_in[i][d] == 0)
+                has_zero = true;
             max_dim = std::max(max_dim, padded_in[i][d]);
         }
         for (int64_t i = 0; i < num_outputs; i++) {
             if (padded_out[i][d] != 1)
                 all_one = false;
+            if (padded_out[i][d] == 0)
+                has_zero = true;
             max_dim = std::max(max_dim, padded_out[i][d]);
         }
         if (!all_one) {
-            maximum_bro_shape.push_back(max_dim);
+            maximum_bro_shape.push_back(has_zero ? 0 : max_dim);
             for (int64_t i = 0; i < num_inputs; i++)
                 normal_input_shapes[i].push_back(padded_in[i][d]);
             for (int64_t i = 0; i < num_outputs; i++)

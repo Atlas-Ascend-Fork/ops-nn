@@ -63,20 +63,35 @@ OraPadSqueeze OraPadAndSqueeze(const std::vector<std::vector<int64_t>>& in,
     r.normal_input_shapes.assign(ni, {});
     r.normal_output_shapes.assign(no, {});
     for (int64_t d = 0; d < mr; d++) {
-        bool all_one = true;
-        int64_t md = 0;
-        for (int64_t i = 0; i < ni; i++) {
-            if (pin[i][d] != 1)
-                all_one = false;
-            md = std::max(md, pin[i][d]);
+        // 独立按 numpy 广播语义推导该维结果，刻意不采用实现里的
+        // "running max + has_zero 标志" 结构，避免 oracle 与实现同构而失去差分能力：
+        //   1) 收集该维所有参与方（6 input + 1 output，已补 1）的取值
+        //   2) 全为 1 -> 该维被 squeeze
+        //   3) 否则取所有 != 1 的取值集合 S：
+        //        0 ∈ S      -> 结果为 0（0 是广播湮灭元：0 与 1 广播得 0）
+        //        S 只有一个值 v -> 结果为 v（1 可广播到 v）
+        //        S 有多个值   -> 非法广播，交由 CheckBroadcastShape 拒绝，此处取 -1 作哨兵
+        std::vector<int64_t> vals;
+        for (int64_t i = 0; i < ni; i++)
+            vals.push_back(pin[i][d]);
+        for (int64_t i = 0; i < no; i++)
+            vals.push_back(pout[i][d]);
+        std::vector<int64_t> nonOne;
+        for (int64_t v : vals) {
+            if (v == 1)
+                continue;
+            if (std::find(nonOne.begin(), nonOne.end(), v) == nonOne.end())
+                nonOne.push_back(v);
         }
-        for (int64_t i = 0; i < no; i++) {
-            if (pout[i][d] != 1)
-                all_one = false;
-            md = std::max(md, pout[i][d]);
-        }
-        if (!all_one) {
-            r.maximum_bro_shape.push_back(md);
+        if (!nonOne.empty()) {
+            int64_t resolved;
+            if (std::find(nonOne.begin(), nonOne.end(), 0) != nonOne.end())
+                resolved = 0;
+            else if (nonOne.size() == 1)
+                resolved = nonOne[0];
+            else
+                resolved = -1; // 非法广播哨兵
+            r.maximum_bro_shape.push_back(resolved);
             for (int64_t i = 0; i < ni; i++)
                 r.normal_input_shapes[i].push_back(pin[i][d]);
             for (int64_t i = 0; i < no; i++)
@@ -249,7 +264,76 @@ INSTANTIATE_TEST_SUITE_P(LarsV2Update, PadAndSqueezeTest,
                                          PadCase{"4d_conv", {64, 3, 7, 7}, {}},
                                          PadCase{"4d_conv2", {128, 128, 3, 3}, {}}, PadCase{"5d", {8, 8, 8, 8, 8}, {}},
                                          PadCase{"8d_max", {2, 2, 2, 2, 2, 2, 2, 2}, {}},
-                                         PadCase{"empty_0_3", {0, 3}, {}}, PadCase{"nonalign_4_7", {4, 7}, {}}));
+                                         PadCase{"empty_0_3", {0, 3}, {}}, PadCase{"nonalign_4_7", {4, 7}, {}},
+                                         // 空 tensor：0 维必须传播，不能被标量补位的 1 吞掉
+                                         PadCase{"empty_1d", {0}, {}}, PadCase{"empty_1d_s1", {0}, {1}},
+                                         PadCase{"empty_0_3_s1", {0, 3}, {1}}, PadCase{"empty_3_0", {3, 0}, {}},
+                                         PadCase{"empty_0_0", {0, 0}, {}}, PadCase{"empty_mid_dim", {2, 0, 3}, {}},
+                                         PadCase{"empty_all_ones_squeezed", {1, 0, 1, 0, 1}, {}},
+                                         PadCase{"empty_8d", {0, 2, 2, 2, 2, 2, 2, 2}, {}},
+                                         PadCase{"empty_zero_off_axis", {10, 0, 10, 10, 10, 10, 10, 10}, {}},
+                                         PadCase{"empty_large_inner", {0, 1024}, {}},
+                                         PadCase{"empty_multi_zero", {5, 0, 7, 0, 3}, {}}));
+
+// 空 tensor 端到端契约：PadAndSqueeze → FindSplitAxis → MultiCoreSplit 之后，
+// kernel 侧必须一个元素都不写（否则向 0 元素输出越界写）。
+// 复刻 kernel 的两道守卫：Process() 的 totalTiles==0 短路与 ProcessTile() 的 count<=0 跳过。
+struct EmptyCase {
+    const char* name;
+    std::vector<int64_t> w;
+};
+class EmptyTensorNoWriteTest : public testing::TestWithParam<EmptyCase> {};
+
+TEST_P(EmptyTensorNoWriteTest, KernelWritesNothing)
+{
+    const auto& p = GetParam();
+    std::vector<std::vector<int64_t>> in(6);
+    in[0] = p.w;
+    in[1] = p.w;
+    for (int64_t i = 2; i < 6; i++)
+        in[i] = {1};
+    std::vector<std::vector<int64_t>> out = {p.w};
+
+    std::vector<int64_t> mbs;
+    std::vector<std::vector<int64_t>> nin, nout;
+    ASSERT_TRUE(optiling::PadAndSqueeze(in, out, mbs, nin, nout));
+    // 前置断言：0 维必须保留在广播坐标系里，否则后续切分按非空规模进行
+    ASSERT_TRUE(std::find(mbs.begin(), mbs.end(), 0) != mbs.end()) << "empty dim was swallowed";
+
+    SplitResult split{};
+    ASSERT_TRUE(optiling::FindSplitAxis(mbs, 4, UB_256K, PHYS_NODES_ORACLE, split));
+    MultiCoreResult mc{};
+    ASSERT_TRUE(optiling::MultiCoreSplit(mbs, split, 72, mc));
+    ASSERT_GE(mc.num_cores, 1);
+    ASSERT_GE(split.a_o, 1);
+
+    // 复刻 kernel 写出量：totalTiles==0 整体短路，否则逐 tile 判 count<=0
+    int64_t written = 0;
+    if (mc.total_tiles != 0) {
+        int64_t effRank = (int64_t)mbs.size();
+        for (int64_t t = 0; t < mc.total_tiles; t++) {
+            int64_t innerCount = 1;
+            for (int64_t j = split.axis + 1; j < effRank; j++)
+                innerCount *= mbs[j];
+            int64_t aoOff = t % split.a_o;
+            int64_t aiSeg = (aoOff == split.a_o - 1) ? split.a_i_tail : split.a_i;
+            int64_t count = aiSeg * innerCount;
+            if (count <= 0)
+                continue;
+            written += count;
+        }
+    }
+    EXPECT_EQ(written, 0) << "kernel would write into a 0-element output buffer";
+}
+
+INSTANTIATE_TEST_SUITE_P(LarsV2Update, EmptyTensorNoWriteTest,
+                         testing::Values(EmptyCase{"e1d", {0}}, EmptyCase{"e_0_3", {0, 3}}, EmptyCase{"e_3_0", {3, 0}},
+                                         EmptyCase{"e_0_0", {0, 0}}, EmptyCase{"e_mid", {2, 0, 3}},
+                                         EmptyCase{"e_squeeze", {1, 0, 1, 0, 1}},
+                                         EmptyCase{"e_8d", {0, 2, 2, 2, 2, 2, 2, 2}},
+                                         EmptyCase{"e_zero_off_axis", {10, 0, 10, 10, 10, 10, 10, 10}},
+                                         EmptyCase{"e_large_inner", {0, 1024}},
+                                         EmptyCase{"e_multi_zero", {5, 0, 7, 0, 3}}));
 
 // =====================================================================
 // CheckBroadcastShape (w.shape==g.shape validation)
