@@ -13,11 +13,16 @@
  * \brief
  */
 #include "register/register.h"
+#include "framework/plugin_util.h" /* ShouldUseInplaceOpMapping */
 
 namespace domi {
-REGISTER_CUSTOM_OP("ApplyAdagradDA")
-    .FrameworkType(TENSORFLOW)
-    .OriginOpType(std::vector<ge::AscendString>{"ApplyAdagradDA", "ResourceApplyAdagradDA"})
-    .ParseParamsByOperatorFn(AutoMappingByOpFn)
-    .ImplyType(ImplyType::TVM);
+static bool gUseInplaceOpMapping = ShouldUseInplaceOpMapping();
+
+static OpReceiver registerApplyOp = OpRegistrationData(gUseInplaceOpMapping ? "InplaceApplyAdagradDA" :
+                                                                              "ApplyAdagradDA")
+                                        .FrameworkType(TENSORFLOW)
+                                        .OriginOpType(
+                                            std::vector<ge::AscendString>{"ApplyAdagradDA", "ResourceApplyAdagradDA"})
+                                        .ParseParamsByOperatorFn(AutoMappingByOpFn)
+                                        .ImplyType(ImplyType::TVM);
 } // namespace domi

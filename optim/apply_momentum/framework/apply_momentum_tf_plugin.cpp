@@ -13,12 +13,16 @@
  * \brief
  */
 #include "register/register.h"
+#include "framework/plugin_util.h" /* ShouldUseInplaceOpMapping */
 
 namespace domi {
 // ApplyMomentum maps directly from the TensorFlow op of the same name; auto operator mapping suffices.
-REGISTER_CUSTOM_OP("ApplyMomentum")
-    .FrameworkType(TENSORFLOW)
-    .OriginOpType("ApplyMomentum")
-    .ParseParamsByOperatorFn(AutoMappingByOpFn)
-    .ImplyType(ImplyType::TVM);
+static bool gUseInplaceOpMapping = ShouldUseInplaceOpMapping();
+
+static OpReceiver registerApplyOp = OpRegistrationData(gUseInplaceOpMapping ? "InplaceApplyMomentum" : "ApplyMomentum")
+                                        .FrameworkType(TENSORFLOW)
+                                        .OriginOpType(
+                                            std::vector<ge::AscendString>{"ApplyMomentum", "ResourceApplyMomentum"})
+                                        .ParseParamsByOperatorFn(AutoMappingByOpFn)
+                                        .ImplyType(ImplyType::TVM);
 } // namespace domi

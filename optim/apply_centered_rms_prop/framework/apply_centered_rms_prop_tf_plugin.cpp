@@ -13,12 +13,17 @@
  * \brief
  */
 #include "register/register.h"
+#include "framework/plugin_util.h" /* ShouldUseInplaceOpMapping */
 
 namespace domi {
 // ApplyCenteredRMSProp maps directly from the TensorFlow op of the same name; auto operator mapping suffices.
-REGISTER_CUSTOM_OP("ApplyCenteredRMSProp")
-    .FrameworkType(TENSORFLOW)
-    .OriginOpType("ApplyCenteredRMSProp")
-    .ParseParamsByOperatorFn(AutoMappingByOpFn)
-    .ImplyType(ImplyType::TVM);
+static bool gUseInplaceOpMapping = ShouldUseInplaceOpMapping();
+
+static OpReceiver registerApplyOp = OpRegistrationData(gUseInplaceOpMapping ? "InplaceApplyCenteredRMSProp" :
+                                                                              "ApplyCenteredRMSProp")
+                                        .FrameworkType(TENSORFLOW)
+                                        .OriginOpType(std::vector<ge::AscendString>{"ApplyCenteredRMSProp",
+                                                                                    "ResourceApplyCenteredRMSProp"})
+                                        .ParseParamsByOperatorFn(AutoMappingByOpFn)
+                                        .ImplyType(ImplyType::TVM);
 } // namespace domi

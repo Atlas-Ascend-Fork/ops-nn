@@ -13,12 +13,17 @@
  * \brief
  */
 #include "register/register.h"
+#include "framework/plugin_util.h" /* ShouldUseInplaceOpMapping */
 
 namespace domi {
 // ApplyProximalAdagrad maps directly from the TensorFlow op of the same name; auto operator mapping suffices.
-REGISTER_CUSTOM_OP("ApplyProximalAdagrad")
-    .FrameworkType(TENSORFLOW)
-    .OriginOpType("ApplyProximalAdagrad")
-    .ParseParamsByOperatorFn(AutoMappingByOpFn)
-    .ImplyType(ImplyType::TVM);
+static bool gUseInplaceOpMapping = ShouldUseInplaceOpMapping();
+
+static OpReceiver registerApplyOp = OpRegistrationData(gUseInplaceOpMapping ? "InplaceApplyProximalAdagrad" :
+                                                                              "ApplyProximalAdagrad")
+                                        .FrameworkType(TENSORFLOW)
+                                        .OriginOpType(std::vector<ge::AscendString>{"ApplyProximalAdagrad",
+                                                                                    "ResourceApplyProximalAdagrad"})
+                                        .ParseParamsByOperatorFn(AutoMappingByOpFn)
+                                        .ImplyType(ImplyType::TVM);
 } // namespace domi

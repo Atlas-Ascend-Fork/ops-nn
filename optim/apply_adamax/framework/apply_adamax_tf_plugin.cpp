@@ -13,12 +13,16 @@
  * \brief
  */
 #include "register/register.h"
+#include "framework/plugin_util.h" /* ShouldUseInplaceOpMapping */
 
 namespace domi {
 // ApplyAdaMax maps directly from the TensorFlow op of the same name; auto operator mapping suffices.
-REGISTER_CUSTOM_OP("ApplyAdaMax")
-    .FrameworkType(TENSORFLOW)
-    .OriginOpType("ApplyAdaMax")
-    .ParseParamsByOperatorFn(AutoMappingByOpFn)
-    .ImplyType(ImplyType::TVM);
+static bool gUseInplaceOpMapping = ShouldUseInplaceOpMapping();
+
+static OpReceiver registerApplyOp = OpRegistrationData(gUseInplaceOpMapping ? "InplaceApplyAdaMax" : "ApplyAdaMax")
+                                        .FrameworkType(TENSORFLOW)
+                                        .OriginOpType(
+                                            std::vector<ge::AscendString>{"ApplyAdaMax", "ResourceApplyAdaMax"})
+                                        .ParseParamsByOperatorFn(AutoMappingByOpFn)
+                                        .ImplyType(ImplyType::TVM);
 } // namespace domi

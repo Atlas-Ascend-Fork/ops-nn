@@ -13,12 +13,16 @@
  * \brief
  */
 #include "register/register.h"
+#include "framework/plugin_util.h" /* ShouldUseInplaceOpMapping */
 
 namespace domi {
 // ApplyKerasMomentum maps directly from the TensorFlow op of the same name; auto operator mapping suffices.
-REGISTER_CUSTOM_OP("ApplyKerasMomentum")
-    .FrameworkType(TENSORFLOW)
-    .OriginOpType("ResourceApplyKerasMomentum")
-    .ParseParamsByOperatorFn(AutoMappingByOpFn)
-    .ImplyType(ImplyType::TVM);
+static bool gUseInplaceOpMapping = ShouldUseInplaceOpMapping();
+
+static OpReceiver registerApplyOp = OpRegistrationData(gUseInplaceOpMapping ? "InplaceApplyKerasMomentum" :
+                                                                              "ApplyKerasMomentum")
+                                        .FrameworkType(TENSORFLOW)
+                                        .OriginOpType("ResourceApplyKerasMomentum")
+                                        .ParseParamsByOperatorFn(AutoMappingByOpFn)
+                                        .ImplyType(ImplyType::TVM);
 } // namespace domi

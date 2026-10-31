@@ -16,12 +16,15 @@
 #ifndef FRAMEWORK_PLUGIN_UTIL_H
 #define FRAMEWORK_PLUGIN_UTIL_H
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
+#include <set>
 #include <string>
 
 #include "log/log.h"
 #include "graph/ascend_string.h"
+#include "acl/acl_base_rt.h" /* aclrtGetSocName */
 
 namespace domi {
 
@@ -50,6 +53,22 @@ inline std::string GetOpName(const T& op)
         return op_name;
     }
     return op_ascend_name.GetString();
+}
+
+/**
+ * 判断是否应将TF算子映射到本仓Inplace实现（按SoC前缀白名单判定，查询失败视为否）
+ */
+inline bool ShouldUseInplaceOpMapping()
+{
+    const char* const socName = aclrtGetSocName();
+    if (socName == nullptr) { /* 查询失败保守回退 */
+        return false;
+    }
+    const std::string soc(socName);
+    const static std::set<std::string> inplaceSocPrefixes = {"Ascend950"};
+    return std::find_if(inplaceSocPrefixes.begin(), inplaceSocPrefixes.end(), [&soc](const auto& prefix) {
+               return soc.compare(0, prefix.size(), prefix) == 0;
+           }) != inplaceSocPrefixes.end();
 }
 
 } // namespace domi

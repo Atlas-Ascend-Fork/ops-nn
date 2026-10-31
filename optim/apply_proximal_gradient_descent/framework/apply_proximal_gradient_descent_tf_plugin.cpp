@@ -13,12 +13,17 @@
  * \brief
  */
 #include "register/register.h"
+#include "framework/plugin_util.h" /* ShouldUseInplaceOpMapping */
 
 namespace domi {
 // ApplyProximalGradientDescent maps directly from the TensorFlow op of the same name; auto operator mapping suffices.
-REGISTER_CUSTOM_OP("ApplyProximalGradientDescent")
-    .FrameworkType(TENSORFLOW)
-    .OriginOpType("ApplyProximalGradientDescent")
-    .ParseParamsByOperatorFn(AutoMappingByOpFn)
-    .ImplyType(ImplyType::TVM);
+static bool gUseInplaceOpMapping = ShouldUseInplaceOpMapping();
+
+static OpReceiver registerApplyOp = OpRegistrationData(gUseInplaceOpMapping ? "InplaceApplyProximalGradientDescent" :
+                                                                              "ApplyProximalGradientDescent")
+                                        .FrameworkType(TENSORFLOW)
+                                        .OriginOpType(std::vector<ge::AscendString>{
+                                            "ApplyProximalGradientDescent", "ResourceApplyProximalGradientDescent"})
+                                        .ParseParamsByOperatorFn(AutoMappingByOpFn)
+                                        .ImplyType(ImplyType::TVM);
 } // namespace domi

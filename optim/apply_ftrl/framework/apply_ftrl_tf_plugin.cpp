@@ -13,12 +13,15 @@
  * \brief
  */
 #include "register/register.h"
+#include "framework/plugin_util.h" /* ShouldUseInplaceOpMapping */
 
 namespace domi {
 // ApplyFtrl maps directly from the TensorFlow op of the same name; auto operator mapping suffices.
-REGISTER_CUSTOM_OP("ApplyFtrl")
-    .FrameworkType(TENSORFLOW)
-    .OriginOpType("ApplyFtrl")
-    .ParseParamsByOperatorFn(AutoMappingByOpFn)
-    .ImplyType(ImplyType::TVM);
+static bool gUseInplaceOpMapping = ShouldUseInplaceOpMapping();
+
+static OpReceiver registerApplyOp = OpRegistrationData(gUseInplaceOpMapping ? "InplaceApplyFtrl" : "ApplyFtrl")
+                                        .FrameworkType(TENSORFLOW)
+                                        .OriginOpType(std::vector<ge::AscendString>{"ApplyFtrl", "ResourceApplyFtrl"})
+                                        .ParseParamsByOperatorFn(AutoMappingByOpFn)
+                                        .ImplyType(ImplyType::TVM);
 } // namespace domi
