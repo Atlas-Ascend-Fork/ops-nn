@@ -14,69 +14,29 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
-#include "opdev/shape_utils.h"
 #include "quant_matmul_activation_quant.h"
-#include "util/math_util.h"
-#include "quant_matmul_activation_quant_util.h"
-#include <string>
 
 using namespace op;
-using namespace QBMMActivationQuant;
 
 namespace l0op {
 
 OP_TYPE_REGISTER(QuantMatmulActivationQuant);
-constexpr int64_t BLOCKSIZE = 32L;
 
 const std::array<aclTensor*, QUANT_MATMUL_ACTIVATION_QUANT_OUT_NUM> QuantMatmulActivationQuant(
     const aclTensor* x1, const aclTensor* x2, const aclTensor* bias, const aclTensor* x1Scale, const aclTensor* x2Scale,
     bool transposeX1, bool transposeX2, int64_t groupSize, const char* activationType, int64_t y_dtype,
     const char* quantMode, const char* roundMode, int64_t scaleAlg, double dstTypeMax, aclOpExecutor* executor)
 {
+    if (x1 == nullptr || x2 == nullptr || executor == nullptr) {
+        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR, "x1, x2 and executor must not be null.");
+        return {nullptr, nullptr};
+    }
+
     L0_DFX(QuantMatmulActivationQuant, x1, x2, bias, x1Scale, x2Scale, transposeX1, transposeX2, groupSize,
            activationType, y_dtype, quantMode, roundMode, scaleAlg, dstTypeMax);
 
-    Format format = Format::FORMAT_ND;
-    op::Shape x1Shape = x1->GetViewShape();
-    op::Shape x2Shape = x2->GetViewShape();
-    auto x1DimNum = x1Shape.GetDimNum();
-    auto x2DimNum = x2Shape.GetDimNum();
-    op::Shape yOutShape = (x1DimNum >= x2DimNum) ? x1Shape : x2Shape;
-    auto outDimNum = yOutShape.GetDimNum();
-
-    auto yOutDim0 = transposeX1 ? x1Shape.GetDim(x1DimNum - LAST_FIRST_DIM_INDEX) :
-                                  x1Shape.GetDim(x1DimNum - LAST_SECOND_DIM_INDEX);
-    auto yOutDim1 = transposeX2 ? x2Shape.GetDim(x2DimNum - LAST_SECOND_DIM_INDEX) :
-                                  x2Shape.GetDim(x2DimNum - LAST_FIRST_DIM_INDEX);
-    if (activationType != nullptr && std::string(activationType) == "swiglu") {
-        yOutDim1 /= SWIGLU_BRANCH_COUNT;
-    }
-
-    size_t x1BatchCount = (x1DimNum >= MX_X1_DIM) ? (x1DimNum - MX_X1_DIM) : 0;
-    size_t x2BatchCount = (x2DimNum >= MX_X2_DIM) ? (x2DimNum - MX_X2_DIM) : 0;
-    size_t batchDimNum = std::max(x1BatchCount, x2BatchCount);
-    for (size_t i = 0; i < batchDimNum; ++i) {
-        int64_t x1Idx = static_cast<int64_t>(i) - static_cast<int64_t>(batchDimNum - x1BatchCount);
-        int64_t x2Idx = static_cast<int64_t>(i) - static_cast<int64_t>(batchDimNum - x2BatchCount);
-        int64_t x1Dim = (x1Idx >= 0) ? x1Shape.GetDim(static_cast<size_t>(x1Idx)) : 1;
-        int64_t x2Dim = (x2Idx >= 0) ? x2Shape.GetDim(static_cast<size_t>(x2Idx)) : 1;
-        if (x1Dim != x2Dim && x1Dim != 1 && x2Dim != 1) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Batch dimensions are not broadcastable: x1=%lld, x2=%lld",
-                    static_cast<long long>(x1Dim), static_cast<long long>(x2Dim));
-            return {nullptr, nullptr};
-        }
-        yOutShape.SetDim(i, std::max(x1Dim, x2Dim));
-    }
-    yOutShape.SetDim(outDimNum - LAST_SECOND_DIM_INDEX, yOutDim0);
-    yOutShape.SetDim(outDimNum - LAST_FIRST_DIM_INDEX, yOutDim1);
-
-    op::Shape yScaleOutShape = yOutShape;
-    auto yScaleOutDim1 = (Ops::Base::CeilDiv(yOutDim1, BLOCKSIZE) + MXFP_MULTI_BASE_SIZE - 1) / MXFP_MULTI_BASE_SIZE;
-    yScaleOutShape.SetDim(outDimNum - LAST_FIRST_DIM_INDEX, yScaleOutDim1);
-    yScaleOutShape.AppendDim(MXFP_MULTI_BASE_SIZE);
-
-    auto yOut = executor->AllocTensor(yOutShape, static_cast<op::DataType>(y_dtype), format);
-    auto yScaleOut = executor->AllocTensor(yScaleOutShape, x1Scale->GetDataType(), format);
+    auto yOut = executor->AllocTensor(static_cast<op::DataType>(y_dtype), Format::FORMAT_ND, Format::FORMAT_ND);
+    auto yScaleOut = executor->AllocTensor(op::DataType::DT_FLOAT8_E8M0, Format::FORMAT_ND, Format::FORMAT_ND);
 
     if (yOut == nullptr || yScaleOut == nullptr) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Failed to allocate output tensors.");

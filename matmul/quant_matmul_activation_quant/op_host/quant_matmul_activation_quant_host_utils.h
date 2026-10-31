@@ -16,7 +16,8 @@
 #ifndef QUANT_MATMUL_ACTIVATION_QUANT_HOST_UTILS_H
 #define QUANT_MATMUL_ACTIVATION_QUANT_HOST_UTILS_H
 
-#include <map>
+#include <cstddef>
+#include <cstdint>
 
 namespace QuantMatmulActivationQuantTilingConstant {
 constexpr uint32_t X1_INDEX = 0;
@@ -47,7 +48,8 @@ constexpr size_t LAST_THIRD_DIM_INDEX = 3;
 constexpr uint32_t MX_X1_SCALE_DIM = 3;
 constexpr uint32_t MX_X2_SCALE_DIM = 3;
 constexpr uint64_t GROUP_MKN_BIT_SIZE = 0xFFFF;
-constexpr uint64_t MXFP_BASEK_FACTOR = 64UL;
+constexpr int64_t MX_SCALE_STORAGE_GROUP = 64L;
+constexpr uint64_t MXFP_BASEK_FACTOR = static_cast<uint64_t>(MX_SCALE_STORAGE_GROUP);
 constexpr uint64_t MXFP_MULTI_BASE_SIZE = 2UL;
 
 constexpr uint64_t MX_BASEN_ALIGN = 32UL;

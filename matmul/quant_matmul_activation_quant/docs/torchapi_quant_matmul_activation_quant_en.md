@@ -1,7 +1,5 @@
 # quant_matmul_activation_quant
 
-<!-- md-trans-meta sourceCommit=unknown translatedAt=2026-09-22T19:00:11.342Z -->
-
 ## Applicable Products
 
 <!-- npu="950" id1 -->
@@ -25,236 +23,262 @@
 
 ## Function
 
-- Description:
+- Description: This API fuses MX (Microscaling) quantized matrix multiplication, activation, and dynamic MX quantization to return the quantized result and its scales. Supported activations are GELU (Gaussian Error Linear Unit, tanh/erf forms), SiLU (Sigmoid Linear Unit), and SwiGLU (Swish Gated Linear Unit). x2 supports ND and FRACTAL_NZ. The returned tensors are `y` and `y_scale`.
 
-  Fuses quantized matrix multiplication, activation, and dynamic quantization, encapsulating `aclnnQuantMatmulActivationQuantWeightNz`. Currently, the gelu activation and MX quantization mode are supported. Inputs `x1` and `x2` are P8 quantized matrices. Required input `x2_scale` and optional input `x1_scale` are MX quantization scale factors, and `bias` is the bias term. The matrix multiplication result is dynamically quantized after passing through the activation function, outputting the quantized result `y` and quantization scale `y_scale`. The M/N/K dimensions and transpose flags are automatically derived from the last two dimensions of `x1` and `x2`; explicit passing is not required.
+- Computation: Perform MX matrix multiplication and add the bias, apply the activation, and then dynamically quantize the result in MX mode.
 
-- Formula:
+Batch indices are omitted below. $X_1$ and $X_2$ are the matrices used in the computation, with shapes $(M,K)$ and $(K,N)$, respectively. M is the row count of the left matrix, K is the shared reduction dimension, and N is the column count of the right matrix. Transposition is expressed through tensor views; see [Layout and Storage](#layout-and-storage).
 
-  - QuantMatmul MX quantization mode:
+### MX Quantized Matrix Multiplication
 
-    $$
-    matmulOut[m,n] = \sum_{j=0}^{kLoops-1} ((\sum_{k=0}^{gsK-1} (x1Slice * x2Slice))* (x1Scale[m/gsM, j] * x2Scale[j, n/gsN]))+bias[n]
-    $$
+Split the K axis into groups of 32 elements, multiply each partial matrix product by its input scales, and accumulate the results before adding the bias:
 
-    where gsM, gsN, and gsK denote groupSizeM, groupSizeN, and groupSizeK respectively; x1Slice denotes the vector of length groupSizeK in row m of x1, and x2Slice denotes the vector of length groupSizeK in column n of x2; slices on the K axis both start at j*groupSizeK, where j takes values in [0, kLoops), kLoops = ceil(K / groupSizeK), and K is the length of the K axis. The last slice can be shorter than groupSizeK.
+$$
+C_{m,n}=\sum_{j=0}^{L-1}\left[
+\left(\sum_{t=0}^{g_j-1}X_{1,m,jg_K+t}\,X_{2,jg_K+t,n}\right)
+S_{1,m,j}\,S_{2,j,n}\right]+b_n
+$$
 
-  - Activation formula:
+Here, $g_M$, $g_N$, and $g_K$ are the group sizes along M, N, and K. Only $(1,1,32)$ is supported; $L=\lceil K/g_K\rceil$ and $g_j=\min(g_K,K-jg_K)$. $S_1$ and $S_2$ are the scales for group $j$ in `x1_scale` and `x2_scale`. Their storage shapes are listed under Parameters and Constraints. Accumulation uses FP32. The bias is added before activation; $b_n=0$ when no bias is supplied.
 
-    - gelu_tanh (high-performance approximation):
-    $$
-    activationOut=GELU(matmulOut)=matmulOut × Φ(matmulOut)=0.5 * matmulOut * (1 + tanh( \sqrt{2 / \pi} * (matmulOut + 0.044715 * matmulOut^{3})))
-    $$
+### Activation
 
-    - gelu_erf:
-    $$
-    activationOut=GELU(matmulOut)=0.5 * matmulOut * (1 + erf(matmulOut / \sqrt{2}))
-    $$
+Apply the specified activation to $C$ to obtain $A$:
 
-  - Dynamic quantization formula:
+- `activation_type="gelu_tanh"`: The tanh approximation of GELU.
 
-    - **Use case 1: when scale_alg is 0**:
-      - Group the input activationOut along the last axis by $k = 32$ values. A group of k values $\{\{V_i\}_{i=1}^{k}\}$ is dynamically quantized into $\{mxscale1, \{P_i\}_{i=1}^{k}\}, k = 32$
+  $$
+  A=\frac{C}{2}\left[1+\tanh\left(\sqrt{\frac{2}{\pi}}\left(C+0.044715C^3\right)\right)\right]
+  $$
 
-      $$
-      shared\_exp = floor(log_2(max_i(|V_i|))) - emax \\
-      mxscale = 2^{shared\_exp}\\
-      P_i = cast\_to\_dst\_type(V_i/mxscale, round\_mode), \space i\space from\space 1\space to\space k\\
-      $$
+- `activation_type="gelu_erf"`: The erf form of GELU.
 
-      - The quantized $P_{i}$ values form the output yOut according to the corresponding positions of $V_{i}$, and mxscale is output as yScaleOut for each group along the last axis.
+  $$
+  A=\frac{C}{2}\left[1+\operatorname{erf}\left(\frac{C}{\sqrt{2}}\right)\right]
+  $$
 
-      - emax: The exponent of the largest normal number of the corresponding data type.
+- `activation_type="silu"`: Elementwise SiLU.
 
-          | DataType | Emax |
-          | :-----------: | :--: |
-          |  FLOAT4_E2M1  |  2   |
-          | FLOAT8_E4M3FN |  8   |
-          |  FLOAT8_E5M2  |  15  |
+  $$
+  A=\operatorname{SiLU}(C)=\frac{C}{1+e^{-C}}
+  $$
 
-    - **Scenario 2, when scale_alg is 1, only FP8 types are involved**:
-      - The input activationOut is divided into blocks of $k = 32$ elements along the tail axis, and a block scale factor $S_{fp32}^b$ is computed for each block separately. All elements in the block are then mapped to the target low-precision type FP8 using the same $S_{fp32}^b$. If the last block contains fewer than $k = 32$ elements, the missing values are treated as 0 and the block is processed as a complete block.
-      - Find the maximum absolute value of the values in the block:
+- `activation_type="swiglu"`: Split the last dimension of $C$ into equal left and right halves, $G$ and $U$. Apply SiLU to $G$ and multiply it elementwise by $U$.
 
-        $$
-        Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
-        $$
+  $$
+  C=[G\mid U],\qquad A=\operatorname{SiLU}(G)\odot U=\frac{G}{1+e^{-G}}\odot U
+  $$
 
-      - FP32 is mapped to within the range representable by the target data type FP8, where $Amax(DType)$ is the maximum value representable by the target precision:
+All activations are computed in FP32. Let $H$ be the output width after activation: $H=N$ for GELU and SiLU, and $H=N/2$ for SwiGLU.
 
-        $$
-        S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
-        $$
+### Dynamic MX Quantization
 
-      - The block scale factor $S_{fp32}^b$ is converted to the scale value $S_{ue8m0}^b$ representable in FP8 format
-      - Extract the unbiased exponent $E_{int}^b$ and the mantissa $M_{fixp}^b$ from the floating-point scale factor $S_{fp32}^b$ of the block
-      - To avoid overflow during quantization, the exponent is rounded up and kept within the range representable by FP8:
+Round the activation result to BF16 using round-to-nearest-even (RNE), then form groups of 32 elements along the last dimension. Zero-pad the final group when needed to calculate its scale; padding elements are not written to the output.
 
-        $$
-        E_{int}^b = \begin{cases} E_{int}^b + 1, & \text{ if} S_{fp32}^b \text{ is a normal number, and} E_{int}^b < 254 \text{ and} M_{fixp}^b > 0 \\ E_{int}^b + 1, & \text{ if} S_{fp32}^b \text{ is a subnormal number, and} M_{fixp}^b > 0.5 \\ E_{int}^b, & \text{ otherwise} \end{cases}
-        $$
+$$
+V_i=\operatorname{BF16}_{RNE}(A_i),\qquad a=\max_i|V_i|,\qquad s=2^e
+$$
 
-      - Calculate the block scale factor: $S_{ue8m0}^b=2^{E_{int}^b}$
-      - Calculate the block conversion factor: $R_{fp32}^b=\frac{1}{fp32(S_{ue8m0}^b)}$
-      - The final step applied to quantization: for each element in a block, $d^i = DType(d_{fp32}^i \cdot R_{fp32}^n)$, and the final quantized output is $\left(S^b, [d^i]_{i=1}^k\right)$, where $S^b$ denotes the scale factor of the block, that is, $S_{ue8m0}^b$, and $[d^i]_{i=1}^k$ denotes the quantized data in the block.
+Each group shares a scale $s$. Convert the normalized values to output type $D$ using `round_mode`:
 
-    - **Scenario 3: when scale_alg is 2, only the FP4_E2M1 type is involved**:
-      - When dstTypeMax = 0.0/6.0/7.0:
-        - The input x is grouped along the axis dimension in groups of k = blocksize elements, and each group of k numbers  $\{\{V_i\}_{i=1}^{k}\}$ is dynamically quantized to $\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = blocksize:
-        $$
-        shared\_exp = \begin{cases} ceil(log_2(max_i(|V_i|))) - emax, & \text{ if} the one or two bits preceding the high bit of the mantissa \text{ are 1, and the mantissa is not all 0} \\ floor(log_2(max_i(|V_i|))) - emax, & \text{ otherwise} \end{cases} \\
-        $$
-        $$
-        P_i = cast\_to\_dst\_type(V_i/mxscale, round\_mode), \space i\space from\space 1\space to\space blocksize\\
-        $$
-        - ​The quantized $P_{i}$ form the output yOut according to the positions of the corresponding $V_{i}$, and mxscale forms the output mxscaleOut according to the groups along the axis dimension.
-      - When dstTypeMax != 0.0/6.0/7.0:
-        - The long vector is divided into blocks, each with a length of k. A block scale factor $S_{fp32}^b$ is computed separately for each block, and then all elements in the block are mapped to the target low-precision type using the same $S_{fp32}^b$. If the last block has fewer than k elements, the missing values are treated as 0, and the block is processed as a complete one.
-        - Find the maximum absolute value in the block:
-        $$
-        Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
-        $$
-        - Map FP32 to within the range representable by the target data type, where if dst_max_value=0, $Amax(DType)$ is the maximum value representable by the target precision; if dst_max_value!=0, $Amax(DType)$ is the value passed in for dst_max_value.
-        $$
-        S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
-        $$
-        - Convert the block quantization scale factor $S_{fp32}^b$ to a scale value $S_{ue8m0}^b$ representable in the FP8 format.
-        - Extract the unbiased exponent $E_{int}^b$ and the mantissa $M_{fixp}^b$ from the floating-point quantization scale factor $S_{fp32}^b$ of the block.
-        - To ensure no overflow during quantization, round up the exponent and keep it within the representable range of FP8:
-          $$
-          E_{int}^b = \begin{cases} E_{int}^b + 1, & \text{ if} S_{fp32}^b \text{ is a normal number, and} E_{int}^b < 254 \text{ and} M_{fixp}^b > 0 \\ E_{int}^b, & \text{ otherwise} \end{cases}
-          $$
-        - Calculate the block scale factor: $S_{ue8m0}^b=2^{E_{int}^b}$
-        - Calculate the block conversion factor: $R_{fp32}^b=\frac{1}{fp32(S_{ue8m0}^b)}$
-        - Apply to the final quantization step. For each element within a block, $d^i = DType(d_{fp32}^i \cdot R_{fp32}^n)$. The final quantized output is $\left(S^b, [d^i]_{i=1}^k\right)$, where $S^b$ represents the block scale factor, i.e., $S_{ue8m0}^b$, and $[d^i]_{i=1}^k$ represents the quantized data within the block.
-        - ​The quantized $P_{i}$ are combined into the output yOut according to the positions of the corresponding $V_{i}$, and mxscale is combined into the output mxscaleOut according to the corresponding groupings along the axis dimension.
+$$
+Q_i=\begin{cases}
+\operatorname{FP32}(V_i/s), & D\text{ is FP8}\\
+\operatorname{BF16}_{RNE}(V_i/s), & D\text{ is FP4}
+\end{cases},\qquad y_i=\operatorname{Cast}_{D,\,\mathrm{round\_mode}}(Q_i)
+$$
+
+`y_scale` uses `torch.float8_e8m0fnu`. The scale for group $j$ is written to `y_scale[..., m, j // 2, j % 2]`; its shape is `(..., M, ceil(H/64), 2)`.
+
+For the scale algorithms and special-value handling, see [Scale Calculation](aclnnQuantMatmulActivationQuant_en.md#scale-calculation).
 
 ## Function Prototype
 
+Call `cann_ops_nn.quant_matmul_activation_quant`:
+
 ```python
-cann_ops_nn.quant_matmul_activation_quant(x1, x2, x2_scale, *, x1_scale=None, bias=None,
-    output_dtype=None, x1_dtype=None, x2_dtype=None, x1scale_dtype=None, x2scale_dtype=None,
-    group_sizes=None, activation_type="gelu_tanh", quant_mode="mx", round_mode="rint",
-    scale_alg=0, dst_type_max=0.0) -> (Tensor y, Tensor y_scale)
+cann_ops_nn.quant_matmul_activation_quant(
+    x1,
+    x2,
+    x2_scale,
+    *,
+    x1_scale=None,
+    bias=None,
+    output_dtype=None,
+    x1_dtype=None,
+    x2_dtype=None,
+    x1scale_dtype=None,
+    x2scale_dtype=None,
+    group_sizes=None,
+    activation_type="gelu_tanh",
+    quant_mode="mx",
+    round_mode="rint",
+    scale_alg=0,
+    dst_type_max=0.0
+) -> Tuple[Tensor, Tensor]
 ```
 
-## Mandatory
+## Parameters
 
-| Name | Type | Type | Description | Data Type | Dimension (Shape) |
+All tensors must be nonempty and reside on the same NPU device. Data types and shapes in the table describe the logical data; see [Layout and Storage](#layout-and-storage) for FP4 packing and actual tensor shapes. `batch1` and `batch2` denote the zero to four leading input batch dimensions; `batch` denotes the result of right-aligned broadcasting. Omit these parts when there are no batch dimensions. ceil rounds up to the nearest integer.
+
+| Parameter | Parameter Type | Optional/Required | Description | Data Type | Dimensions (Shape) |
 | --- | --- | --- | --- | --- | --- |
-| `x1` | Tensor | Required | Left matrix of the matrix multiplication operation. The data format is ND. The last two dimensions are `(M, K)` or `(K, M)`, determined by automatic derivation from matching with the dimensions of `x2`. | torch.float8_e4m3fn, torch.float8_e5m2, torch.float4_e2m1fn_x2 | 2-6 dimensions, `(..., M, K)` or `(..., K, M)` |
-| `x2` | Tensor | Required | Right matrix of the matrix multiplication operation. The data format is ND or FRACTAL_NZ. The last two dimensions are `(K, N)` or `(N, K)`, determined by automatic derivation from matching with the dimensions of `x1`. | torch.float8_e4m3fn, torch.float8_e5m2, torch.float4_e2m1fn_x2 | 2-6 dimensions, `(..., K, N)` or `(..., N, K)` |
-| `x2_scale` | Tensor | Required | MX quantization scale factor of x2 in the matrix multiplication computation. The data format is ND. The batch dimension must be the same as that of `x2`. | torch.float8_e8m0fnu | `(..., K//64, N, 2)` or `(..., N, K//64, 2)` (depending on the direction of `x2`) |
-| `x1_scale` | Tensor | Optional | MX quantization scale factor of x1 in the matrix multiplication computation. The data format is ND. The batch dimension must be the same as that of `x1`. | torch.float8_e8m0fnu | `(..., M, K//64, 2)` or `(..., K//64, M, 2)` (depending on the direction of `x1`) |
-| `bias` | Tensor | Optional | Bias accumulated after the matrix multiplication operation. The data format is ND. | float32 | `(N,)` |
-| `output_dtype` | int | Optional | Data type enumeration value of the output `y`. Supports torch.float8_e4m3fn, torch.float8_e5m2, torch.float4_e2m1fn_x2, etc. Default value: None (indicating the same type as `x1`). | int | - |
-| `x1_dtype` | int | Optional | Data type enumeration value of `x1`. When not passed in, determined by automatic derivation according to the scalar_type of `x1`. | int | - |
-| `x2_dtype` | int | Optional | Data type enumeration value of `x2`. When not passed in, determined by automatic derivation according to the scalar_type of `x2`. | int | - |
-| `x1scale_dtype` | int | Optional | Data type enumeration value of `x1_scale`. When not passed in, determined by automatic derivation according to the scalar_type of `x1_scale`. | int | - |
-| `x2scale_dtype` | int | Optional | Data type enumeration value of `x2_scale`. When not passed in, determined by automatic derivation according to the scalar_type of `x2_scale`. | int | - |
-| `group_sizes` | List[int] | Optional | Group quantization sizes `[groupSizeM, groupSizeN, groupSizeK]`. The value range of each element is [0, 65535]. | list | `(3,)` |
-| `activation_type` | str | Optional | Activation function type. Supports `"gelu_tanh"` and `"gelu_erf"`. Default value: `"gelu_tanh"`. | string | - |
-| `quant_mode` | str | Optional | Quantization mode. Currently supports `"mx"`. Default value: `"mx"`. | string | - |
-| `round_mode` | str | Optional | Rounding mode. If `output_dtype` is FLOAT4_E2M1, supported values are `"rint"`, `"floor"`, and `"round"`; if `output_dtype` is FLOAT8_E4M3FN/FLOAT8_E5M2, only `"rint"` is supported. Default value: `"rint"`. | string | - |
-| `scale_alg` | int | Optional | Scale algorithm. If `output_dtype` is FLOAT4_E2M1, supported values are 0 and 2; 0 indicates scenario 1, and 2 indicates scenario 3 (enabling `dst_type_max`); if `output_dtype` is FLOAT8_E4M3FN/FLOAT8_E5M2, supported values are 0 and 1; 0 indicates scenario 1, and 1 indicates scenario 2. Default value: 0. | int | - |
-| `dst_type_max` | float | Optional | Maximum value of the target data type, used for quantization range control. Does not take effect when `scale_alg` is 0 or 1; simply pass in 0.0. If `scale_alg` is 2, supported values are 0.0 and 6.0-12.0; 0.0 indicates using the default maximum value of the target type. Default value: 0.0. | float32 | - |
+| x1 | Tensor | Required | Left matrix, corresponding to $X_1$. Uses ND. | torch.float8_e4m3fn, torch.float8_e5m2, torch_npu.float4_e2m1fn_x2 | 2–6 dimensions, `(batch1,M,K)` |
+| x2 | Tensor | Required | Right matrix, corresponding to $X_2$. Uses ND or FRACTAL_NZ. NZ does not support torch.float8_e5m2. | torch.float8_e4m3fn, torch.float8_e5m2, torch_npu.float4_e2m1fn_x2 | 2–6 dimensions, `(batch2,K,N)` |
+| x2_scale | Tensor | Required | Group scales for x2, corresponding to $S_2$. Uses ND. | torch.float8_e8m0fnu | 3–7 dimensions, `(batch2,ceil(K/64),N,2)` |
+| x1_scale | Tensor | Optional | Group scales for x1, corresponding to $S_1$. Uses ND. Defaults to None; this API supports only MX mode, so a non-None tensor must be supplied when calling it. | torch.float8_e8m0fnu | 3–7 dimensions, `(batch1,M,ceil(K/64),2)` |
+| bias | Tensor | Optional | Bias added before activation, corresponding to $b$. Uses ND. Defaults to None (no bias). Supports `(N,)`; `(B,1,N)` is supported only when y is 3D, with B equal to the broadcast batch size. For SwiGLU, the bias length remains the pre-activation width N. | torch.float32 | `(N,)` or `(B,1,N)` |
+| output_dtype | int | Optional | Logical data type identifier for y. Defaults to None, which selects the logical type of x1. Accepts the same values as x1_dtype, and the specified type must match the logical type of x1. | - | - |
+| x1_dtype | int | Optional | Logical data type identifier for x1. Defaults to None (inferred from x1.dtype). FP8 can be specified explicitly with torch_npu.float8_e5m2 or torch_npu.float8_e4m3fn; FP4 requires torch_npu.float4_e2m1fn_x2. | - | - |
+| x2_dtype | int | Optional | Logical data type identifier for x2. Defaults to None (inferred from x2.dtype). Accepts the same values as x1_dtype, except that NZ does not support torch_npu.float8_e5m2; FP4 requires torch_npu.float4_e2m1fn_x2. | - | - |
+| x1scale_dtype | int | Optional | Logical data type identifier for x1_scale. Defaults to None (inferred from x1_scale.dtype). Use torch_npu.float8_e8m0fnu to specify it explicitly. | - | - |
+| x2scale_dtype | int | Optional | Logical data type identifier for x2_scale. Defaults to None (inferred from x2_scale.dtype). Use torch_npu.float8_e8m0fnu to specify it explicitly. | - | - |
+| group_sizes | List[int] | Optional | Input quantization group sizes along M, N, and K, ordered as `[groupSizeM,groupSizeN,groupSizeK]`. Defaults to None. Only None, an empty list, `[0,0,0]`, or `[1,1,32]` is supported; all select `[1,1,32]`. | - | - |
+| activation_type | str | Optional | Activation type. Supports "gelu_tanh", "gelu_erf", "silu", and "swiglu". Defaults to "gelu_tanh". | - | - |
+| quant_mode | str | Optional | Quantization mode. Only "mx" is supported. Defaults to "mx". | - | - |
+| round_mode | str | Optional | Rounding mode when converting to the output data type. Defaults to "rint": round to the nearest representable value, with ties to even. FP8 supports only this mode. FP4 also supports "floor" (round toward negative infinity) and "round" (round to the nearest representable value, with ties away from zero). | - | - |
+| scale_alg | int | Optional | Algorithm for calculating output scales: 0 uses the OCP (Open Compute Project) shared exponent; 1 uses the FP8 maximum finite value; 2 uses the range specified by dst_type_max. FP8 supports 0/1; FP4 supports 0/2. Defaults to 0; None also selects 0. | - | - |
+| dst_type_max | float | Optional | Reference maximum used to calculate output scales when scale_alg=2, corresponding to d in the quantization formulas. Defaults to 0.0, which selects 6.0; finite values in [6.0,12.0] are also supported. Ignored by the other algorithms. | - | - |
+
+The `torch_npu` constants used for type parameters are integer type identifiers. With native FP8 or E8M0 tensors, the corresponding parameters can remain None. An explicit input type changes how the data is interpreted; it does not perform a numeric conversion. The data must already use the corresponding representation.
 
 ## Return Values
 
-| Output | Output Type | Type | Description | Data Type | Dimension (Shape) |
+Returns `(y, y_scale)` on the same NPU device as x1. Data types below are logical types, while shapes are the actual shapes of the returned tensors. H is the logical width after activation: N for GELU/SiLU or N/2 for SwiGLU.
+
+| Parameter | Parameter Type | Optional/Required | Description | Data Type | Dimensions (Shape) |
 | --- | --- | --- | --- | --- | --- |
-| `y` | Tensor | Required | Matrix multiplication operation and activation computation result after dynamic quantization. | torch.float8_e4m3fn, torch.float8_e5m2, torch.float4_e2m1fn_x2 | `(..., M, N)`; |
-| `y_scale` | Tensor | Required | Quantization scale corresponding to each group after dynamic quantization. The last dimension is fixed to 2. | torch.float8_e8m0fnu | `(..., M, CeilDiv(N, 64), 2)` |
+| y | Tensor | Required | Dynamically quantized result, corresponding to $y$. Its logical type matches x1. The current extension returns FP4 output packed in torch.uint8. | torch.float8_e4m3fn, torch.float8_e5m2, torch_npu.float4_e2m1fn_x2 | FP8: `(batch,M,H)`; FP4: `(batch,M,H/2)` |
+| y_scale | Tensor | Required | One scale per 32 output elements, corresponding to $s$; two consecutive scales occupy the trailing dimension of size 2. | torch.float8_e8m0fnu | `(batch,M,ceil(H/64),2)` |
 
 ## Constraints
 
-- This API supports training and inference use cases.
-- This API supports calls in single-operator mode.
-- Empty tensors are not supported.
-- Contiguous tensors are supported. Non-contiguous tensors support only the use case where the last two dimensions are transposed.
-- `x1` supports 2-6 dimensions. When `x2` is in NZ format, it supports 4-8 dimensions; when `x2` is in ND format, it supports 2-6 dimensions.
-- When `x2` is in NZ format, only the data type torch.float8_e4m3fn is supported.
-- When `K` or `N` is 1, the weightNz feature cannot be used. This API does not support this use case.
-- The batch dimensions of `x1` and `x2` (dimensions other than the last two dimensions) support broadcasting (right-aligned). For example, if `x1=(1,M,K)` and `x2=(8,K,N)`, the output is `(8,M,N)`.
-- If `x1_scale` and `x2_scale` are passed in, the number of their batch dimensions (dimensions other than the last three dimensions) and the value of each dimension must be exactly the same as the corresponding `x1` and `x2`; if `x1` has no batch dimension (2D), `x1_scale` and `x2_scale` must be 3D.
-- The last dimension of `x1_scale` and `x2_scale` must be 2.
-- If `group_sizes` is passed in, it must contain three elements `[groupSizeM, groupSizeN, groupSizeK]`, each within the range [0, 65535]. Currently, only [0, 0, 0] and [1, 1, 32] are supported in MX scenarios.
-- The data type of `y` is determined by the data type of `x1`, and the two must be consistent.
-- The input and output support the following data type combinations:
+- This API performs quantized forward computation. The extension does not currently provide backward gradients for this operator.
+- This API supports single-operator invocation. The extension does not currently provide a TorchAir graph conversion adapter for this operator.
 
-  | x1 | x2 | x1_scale | x2_scale | Bias | y | y_scale |
-  |---------------|---------------|-------------|-------------|------------------|---------------------------|-------------|
-  | torch.float8_e4m3fn | torch.float8_e4m3fn | torch.float8_e8m0fnu | torch.float8_e8m0fnu | None/torch.float32  | torch.float8_e4m3fn | torch.float8_e8m0fnu |
-  | torch.float8_e5m2   | torch.float8_e4m3fn | torch.float8_e8m0fnu | torch.float8_e8m0fnu | None/torch.float32  | torch.float8_e5m2 | torch.float8_e8m0fnu |
-  | torch.float8_e5m2   | torch.float8_e5m2 | torch.float8_e8m0fnu | torch.float8_e8m0fnu | None/torch.float32  | torch.float8_e5m2 | torch.float8_e8m0fnu |
-  | torch.float8_e4m3fn | torch.float8_e5m2 | torch.float8_e8m0fnu | torch.float8_e8m0fnu | None/torch.float32  | torch.float8_e4m3fn | torch.float8_e8m0fnu |
-  | torch.float4_e2m1fn_x2 | torch.float4_e2m1fn_x2 | torch.float8_e8m0fnu | torch.float8_e8m0fnu | None/torch.float32  | torch.float4_e2m1fn_x2 | torch.float8_e8m0fnu |
+### Data Types and Shapes
 
-- MXFP4 scenario constraints (the actual data types of `x1`, `x2`, and `y` are all `torch.float4_e2m1fn_x2`):
-  - Currently, `x1`, `x2`, and `y` are all packed as uint8. The last axis of the shape before packing must be even.
-  - If `x2` is in NZ format, transposition is not supported for `x1`.
-  - `scale_alg` supports only the values 0 and 2.
-  - If `scale_alg` is 2, the supported values of `dst_type_max` are 0.0 and 6.0-12.0.
-  - `round_mode` supports `"rint"`, `"floor"`, and `"round"`.
+- x1 and x2 have 2 to 6 logical dimensions. K must match, and batch dimensions use right-aligned broadcasting. Each input scale's batch dimensions must exactly match those of its matrix.
+- Each logical dimension and the product of the broadcast batch dimensions must not exceed $2^{32}-1$. The number of output elements before activation must not exceed $2^{63}-1$.
+- Both input scales and the output scales use torch.float8_e8m0fnu.
 
-## Deterministic Computation
+Supported logical data type combinations are listed below.
 
-Defaults to a deterministic computation.
+| x1 | x2 | y | x2 Format |
+| --- | --- | --- | --- |
+| torch.float8_e4m3fn | torch.float8_e4m3fn | torch.float8_e4m3fn | ND, FRACTAL_NZ |
+| torch.float8_e5m2 | torch.float8_e4m3fn | torch.float8_e5m2 | ND, FRACTAL_NZ |
+| torch.float8_e4m3fn | torch.float8_e5m2 | torch.float8_e4m3fn | ND |
+| torch.float8_e5m2 | torch.float8_e5m2 | torch.float8_e5m2 | ND |
+| torch_npu.float4_e2m1fn_x2 | torch_npu.float4_e2m1fn_x2 | torch_npu.float4_e2m1fn_x2 | ND, FRACTAL_NZ |
+
+In the table below, FP8 refers to torch.float8_e4m3fn or torch.float8_e5m2, and FP4 refers to torch_npu.float4_e2m1fn_x2. The combinations must also satisfy the data type table above.
+
+| activation_type | Data Type | N Requirement | x1 Layout When x2 Is ND | x1 Layout When x2 Is NZ |
+| --- | --- | --- | --- | --- |
+| "gelu_tanh", "gelu_erf" | FP8 | N > 0 | Transpose views supported | Transpose views supported |
+| "gelu_tanh", "gelu_erf" | FP4 | Positive even integer | Transpose views supported | Transpose views not supported |
+| "silu" | FP8 | N > 0 | Transpose views supported | Transpose views not supported |
+| "swiglu" | FP8 | Positive multiple of 64 | Transpose views supported | Transpose views not supported |
+
+x2 supports transpose views for all combinations above. When x2 uses NZ, K and N must both exceed 1. FP4 supports GELU only and requires K > 2 and even N. For FP4 inputs, the innermost dimension of the contiguous layout before transposition must be even: K for non-transposed x1, M for transposed x1, N for non-transposed x2, and K for transposed x2. For FP4 with NZ weights, both K and N must be even.
+
+### Layout and Storage
+
+This API expresses transposition through tensor views. FP8 inputs are always passed with view shapes `x1=(batch1,M,K)` and `x2=(batch2,K,N)`. Scale shapes retain the axis order listed in the parameter table.
+
+For example, if x1 is stored as `(K,M)`, transpose the matrix's last two axes and the scale's third-last and second-last axes:
+
+```python
+# x1_base.shape=(K,M), x1_scale_base.shape=(ceil(K/64),M,2)
+x1 = x1_base.transpose(-1, -2)
+x1_scale = x1_scale_base.transpose(-3, -2)
+```
+
+The following uses `torch.uint8` to illustrate the packed FP4 input layout. Each byte contains two FP4 elements: the low four bits encode the first element, and the high four bits encode the second. Along the packed axis, each tensor element represents two logical elements, so the tensor dimension is half the logical dimension. The input byte layout, shape, strides, and storage offset must follow this convention.
+
+Set both `x1_dtype` and `x2_dtype` to `torch_npu.float4_e2m1fn_x2`; `output_dtype` may be omitted or set to the same constant. The tensor shapes for this packed layout are listed below, with batch dimensions omitted:
+
+| Input | Contiguous Layout | Transpose View |
+| --- | --- | --- |
+| x1 | `(M,K/2)` | Transpose `(K,M/2)` to obtain `(M/2,K)` |
+| x2 | `(K,N/2)` | Transpose `(N,K/2)` to obtain `(K/2,N)` |
+
+Calculate scale shapes using logical M, N, and K. Each group of 32 K elements has one input scale; scales for two consecutive groups occupy the trailing dimension of size 2. Scales use E8M0 and are not packed as FP4.
+
+ND inputs support [non-contiguous tensors](../../../docs/en/context/non_contiguous_tensor.md). Strides and storage offsets must be nonnegative, and all accesses must stay within the underlying storage. NZ weights support only complete matrices and views transposing their last two dimensions; slices selecting part of the NZ storage are not supported, and `storage_offset()` must be 0. Use `torch_npu.npu_format_cast` for NZ format conversion, as shown in the example below.
+
+## Determinism and Batch Consistency
+
+<!-- npu="950" id7 -->
+- <term>Ascend 950PR&950DT products</term>:
+  - Deterministic computation: Supported by default.
+  - Batch consistency: [Batch consistency](../../../docs/en/context/batch_consistency.md) is supported by default under the following conditions. In the same runtime environment, keep N, K, data types, layouts, and activation/quantization attributes unchanged. For a given token, keep its x1 and x1_scale data and the corresponding x2, x2_scale, and bias data unchanged. Changing only the batch size, M, or the positions or combinations of tokens preserves bitwise-identical y and y_scale values for that token. No additional switch is required.
+<!-- end id7 -->
 
 ## Example
 
-- Call in single-operator mode
+Install compatible `torch`, `torch_npu`, and the repository's PyTorch extension. See the [PyTorch Extension Guide](../../../torch_extension/README.md) for installation instructions.
 
-  - FP8 scenario example:
+### Single-Operator Invocation
 
-    ```python
-    import math
-    import torch
-    import torch_npu
-    import cann_ops_nn
+#### FP8
 
-    m, k, n = 5, 64, 128
-    group_size = 32
-    # x1 physical shape (M, K); x2 physical shape (K, N)
-    x1 = torch.randn(m, k, dtype=torch.float32).to(torch.float8_e4m3fn).npu()
-    x2 = torch.randn(k, n, dtype=torch.float32).to(torch.float8_e4m3fn).npu()
-    x2_nz = torch_npu.npu_format_cast(x2, 29) # 29 is the NZ format
-    x1_scale = torch.ones(m, math.ceil(k / group_size / 2), 2, dtype=torch.float8_e8m0fnu).npu()
-    x2_scale = torch.ones(math.ceil(k / group_size / 2), n, 2, dtype=torch.float8_e8m0fnu).npu()
+This example uses SwiGLU and NZ weights. Set `activation_type` to `"gelu_tanh"`, `"gelu_erf"`, or `"silu"` for other activations. To use ND weights, omit the `npu_format_cast` line.
 
-    y, y_scale = torch.ops.cann_ops_nn.quant_matmul_activation_quant(
-        x1, x2_nz, x2_scale, x1_scale=x1_scale, bias=None,
-        activation_type="gelu_tanh", quant_mode="mx", round_mode="rint",
-        scale_alg=0, dst_type_max=0.0)
-    print("y: ", y.cpu())
-    print("y_scale: ", y_scale.cpu())
-    ```
+```python
+import torch
+import torch_npu
+import cann_ops_nn
 
-  - FP4 scenario example:
+m, k, n = 5, 64, 128
+activation_type = "swiglu"
+x1 = torch.randn(m, k).to(torch.float8_e4m3fn).npu()
+x2 = torch.randn(k, n).to(torch.float8_e4m3fn).npu()
+x2 = torch_npu.npu_format_cast(x2, 29)  # FRACTAL_NZ
 
-    ```python
-    import math
-    import torch
-    import torch_npu
-    import cann_ops_nn
+scale_k = (k + 63) // 64
+# E8M0 byte 127 encodes scale=1.
+x1_scale = torch.full((m, scale_k, 2), 127, dtype=torch.uint8).view(torch.float8_e8m0fnu).npu()
+x2_scale = torch.full((scale_k, n, 2), 127, dtype=torch.uint8).view(torch.float8_e8m0fnu).npu()
+bias = torch.zeros(n, dtype=torch.float32).npu()
 
-    m, k, n = 5, 64, 128
-    group_size = 32
-    # x1 physical shape (M, K//2); x2 physical shape (K, N//2), FP4 dual-nibble packed into uint8, halving the last dimension
-    x1 = torch.randn(m, k // 2, dtype=torch.float32).to(torch.uint8).npu()
-    x2 = torch.randn(k, n // 2, dtype=torch.float32).to(torch.uint8).npu()
-    x2_nz = torch_npu.npu_format_cast(x2, 29) # 29 is the NZ format
-    x1_scale = torch.ones(m, math.ceil(k / group_size / 2), 2, dtype=torch.float8_e8m0fnu).npu()
-    x2_scale = torch.ones(math.ceil(k / group_size / 2), n, 2, dtype=torch.float8_e8m0fnu).npu()
+y, y_scale = cann_ops_nn.quant_matmul_activation_quant(
+    x1, x2, x2_scale, x1_scale=x1_scale, bias=bias,
+    activation_type=activation_type, scale_alg=1,
+)
+h = n // 2 if activation_type == "swiglu" else n
+assert tuple(y.shape) == (m, h)
+assert tuple(y_scale.shape) == (m, (h + 63) // 64, 2)
+print(y.cpu(), y_scale.cpu())
+```
 
-    y, y_scale = torch.ops.cann_ops_nn.quant_matmul_activation_quant(
-        x1, x2_nz, x2_scale, x1_scale=x1_scale, bias=None,
-        output_dtype=torch_npu.float4_e2m1fn_x2,
-        x1_dtype=torch_npu.float4_e2m1fn_x2,
-        x2_dtype=torch_npu.float4_e2m1fn_x2,
-        activation_type="gelu_tanh", quant_mode="mx", round_mode="rint",
-        scale_alg=0, dst_type_max=0.0)
-    # y physical shape (M, N//2), FP4 dual-nibble packed into uint8, halving the last dimension, y_scale physical shape(M, CeilDiv(N, 64), 2)
-    print("y: ", y.cpu())
-    print("y_scale: ", y_scale.cpu())
-    ```
+#### FP4
+
+This example uses ND weights and GELU, with packed FP4 inputs stored in torch.uint8. The current extension also returns FP4 output y packed in torch.uint8; the scale shape is calculated from the logical output width N.
+
+```python
+import torch
+import torch_npu
+import cann_ops_nn
+
+m, k, n = 5, 64, 128
+# 0x22 encodes two FP4 (E2M1) elements, both equal to 1.
+x1 = torch.full((m, k // 2), 0x22, dtype=torch.uint8).npu()
+x2 = torch.full((k, n // 2), 0x22, dtype=torch.uint8).npu()
+scale_k = (k + 63) // 64
+x1_scale = torch.full((m, scale_k, 2), 127, dtype=torch.uint8).view(torch.float8_e8m0fnu).npu()
+x2_scale = torch.full((scale_k, n, 2), 127, dtype=torch.uint8).view(torch.float8_e8m0fnu).npu()
+
+y, y_scale = cann_ops_nn.quant_matmul_activation_quant(
+    x1, x2, x2_scale, x1_scale=x1_scale,
+    x1_dtype=torch_npu.float4_e2m1fn_x2,
+    x2_dtype=torch_npu.float4_e2m1fn_x2,
+    output_dtype=torch_npu.float4_e2m1fn_x2,
+    activation_type="gelu_tanh", scale_alg=2, dst_type_max=6.0,
+)
+assert tuple(y.shape) == (m, n // 2)
+assert tuple(y_scale.shape) == (m, (n + 63) // 64, 2)
+print(y.cpu(), y_scale.cpu())
+```

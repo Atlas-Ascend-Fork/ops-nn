@@ -10,7 +10,7 @@
 
 #ifndef OP_API_INC_QUANT_MATMUL_ACTIVATION_QUANT_CHECKER_H
 #define OP_API_INC_QUANT_MATMUL_ACTIVATION_QUANT_CHECKER_H
-#include <map>
+#include <utility>
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/common_types.h"
@@ -32,18 +32,11 @@ static const int64_t NZ_K0_VALUE_INT8_TRANS = 32;
 static const int64_t NZ_K0_VALUE_INT4_TRANS = 64;
 static const int NZ_STORAGE_PENULTIMATE_DIM = 16;
 
-static constexpr size_t PENULTIMATE_DIM = 2;
-
-bool CheckSpecialCase(const aclTensor* tensor, int64_t firstLastDim, int64_t secondLastDim);
-bool GetTransposeAttrValue(const aclTensor* tensor, bool transpose);
 op::Shape GetWeightNzShape(const aclTensor* input, bool transpose);
 bool CheckWeightNzStorageShape(const op::Shape& nzShape, const op::Shape& storageShape);
-const aclTensor* SetTensorToNZFormat(const aclTensor* input, op::Shape& shape, aclOpExecutor* executor);
+bool NormalizeWeightNzView(const aclTensor*& input, bool& transpose, aclOpExecutor* executor);
 
 bool TensorContiguousProcess(const aclTensor*& contiguousTensor, bool& transpose, aclOpExecutor* executor);
-
-aclnnStatus WeightNZCaseProcess(const aclTensor*& x2, bool& transposeX2, aclOpExecutor* executor);
-aclnnStatus SetSpecilNZTensorToNormalNZFormat(const aclTensor*& input, aclOpExecutor* executor);
 
 const aclTensor* SetTensorToNDFormat(const aclTensor* input);
 

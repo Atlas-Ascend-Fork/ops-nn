@@ -46,9 +46,9 @@ int64_t CheckAndGetGroupSize(at::IntArrayRef group_size_list)
     int64_t group_m = static_cast<int64_t>(group_size_list[0]);
     int64_t group_n = static_cast<int64_t>(group_size_list[1]);
     int64_t group_k = static_cast<int64_t>(group_size_list[2]);
-    bool invalid_group_param = ((group_m <= GROUP_MAX && group_m >= 0) && (group_n <= GROUP_MAX && group_n >= 0) &&
-                                (group_k <= GROUP_MAX && group_k >= 0));
-    TORCH_CHECK(invalid_group_param, "group param value must conform to range [0, 65535]");
+    bool isValidGroupParam = ((group_m <= GROUP_MAX && group_m >= 0) && (group_n <= GROUP_MAX && group_n >= 0) &&
+                              (group_k <= GROUP_MAX && group_k >= 0));
+    TORCH_CHECK(isValidGroupParam, "group param value must conform to range [0, 65535]");
     groups = static_cast<int64_t>((static_cast<uint64_t>(group_m) << OFFSET_32_BITS) +
                                   (static_cast<uint64_t>(group_n) << OFFSET_16_BITS) + static_cast<uint64_t>(group_k));
     return groups;

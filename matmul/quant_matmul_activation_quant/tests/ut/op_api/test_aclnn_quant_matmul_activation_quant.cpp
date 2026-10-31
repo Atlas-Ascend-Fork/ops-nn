@@ -14,6 +14,7 @@
 #include "gtest/gtest.h"
 
 #include "../../../op_api/aclnn_quant_matmul_activation_quant.h"
+#include "../../../op_api/aclnn_quant_matmul_activation_quant_weight_nz.h"
 
 #include "op_api_ut_common/op_api_ut.h"
 #include "op_api_ut_common/tensor_desc.h"
@@ -204,6 +205,134 @@ TEST_P(QuantMatmulActivationQuantAclnnTest, CsvTest)
     const aclnnStatus aclRet = hasBias ? testWorkspaceSize(biasDesc) : testWorkspaceSize(nullptr);
 
     EXPECT_EQ(aclRet, expectRet) << "caseName=" << param.caseName;
+}
+
+TEST(QuantMatmulActivationQuantBias, StridedViewsKeepLogicalShapeForBothInterfaces)
+{
+    // These stride/offset combinations cannot be represented by the current CSV schema.
+    struct BiasViewCase {
+        std::vector<int64_t> strides;
+        std::vector<int64_t> storage;
+        int64_t offset;
+    };
+    const std::vector<BiasViewCase> cases{
+        {{64, 1, 1}, {128}, 0},    // Contiguous despite the singleton-axis stride; must stay [B,1,N].
+        {{1, 128, 2}, {128}, 0},   // Batch/N transpose view.
+        {{128, 128, 2}, {260}, 2}, // Nonzero-offset slice.
+        {{0, 64, 1}, {64}, 0},     // Broadcast over batch.
+    };
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND950);
+    for (bool weightNz : {false, true}) {
+        SCOPED_TRACE(weightNz ? "WeightNZ" : "ND");
+        const auto x1Desc = TensorDesc({2, 2, 128}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+        const auto x2Desc = weightNz ?
+                                TensorDesc({128, 64}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_FRACTAL_NZ, {}, 0, {2, 8, 16, 32}) :
+                                TensorDesc({128, 64}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+        const auto x1ScaleDesc = TensorDesc({2, 2, 2, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+        const auto x2ScaleDesc = TensorDesc({2, 64, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+        const auto outputs = OUTPUT(TensorDesc({2, 2, 64}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND),
+                                    TensorDesc({2, 2, 1, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND));
+        for (size_t i = 0; i < cases.size(); ++i) {
+            SCOPED_TRACE(i);
+            const auto& test = cases[i];
+            const auto biasDesc = TensorDesc({2, 1, 64}, ACL_FLOAT, ACL_FORMAT_ND, test.strides, test.offset,
+                                             test.storage);
+            char activationType[] = "gelu_tanh";
+            char quantMode[] = "mx";
+            char roundMode[] = "rint";
+            const auto inputs = INPUT(x1Desc, x2Desc, x1ScaleDesc, x2ScaleDesc, biasDesc, false, false, int64_t{0},
+                                      activationType, quantMode, roundMode, int64_t{0}, 0.0);
+            uint64_t workspaceSize = 0;
+            if (weightNz) {
+                auto ut = OP_API_UT(aclnnQuantMatmulActivationQuantWeightNz, inputs, outputs);
+                EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+            } else {
+                auto ut = OP_API_UT(aclnnQuantMatmulActivationQuant, inputs, outputs);
+                EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+            }
+        }
+    }
+}
+
+TEST(QuantMatmulActivationQuantOutputFormat, RejectsNzScaleForBothInterfaces)
+{
+    // The CSV has no yScale storage-shape column. Use a complete NZ descriptor so only the format is invalid.
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND950);
+    for (bool weightNz : {false, true}) {
+        SCOPED_TRACE(weightNz ? "WeightNZ" : "ND");
+        const auto x2Desc = weightNz ?
+                                TensorDesc({128, 64}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_FRACTAL_NZ, {}, 0, {2, 8, 16, 32}) :
+                                TensorDesc({128, 64}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+        char activationType[] = "gelu_tanh";
+        char quantMode[] = "mx";
+        char roundMode[] = "rint";
+        const auto inputs = INPUT(TensorDesc({2, 128}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND), x2Desc,
+                                  TensorDesc({2, 2, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND),
+                                  TensorDesc({2, 64, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND), nullptr, false, false,
+                                  int64_t{0}, activationType, quantMode, roundMode, int64_t{0}, 0.0);
+        const auto outputs = OUTPUT(
+            TensorDesc({2, 64}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND),
+            TensorDesc({2, 1, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_FRACTAL_NZ, {}, 0, {2, 1, 1, 16, 32}));
+        uint64_t workspaceSize = 0;
+        if (weightNz) {
+            auto ut = OP_API_UT(aclnnQuantMatmulActivationQuantWeightNz, inputs, outputs);
+            EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+        } else {
+            auto ut = OP_API_UT(aclnnQuantMatmulActivationQuant, inputs, outputs);
+            EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+        }
+    }
+}
+
+TEST(QuantMatmulActivationQuantSingletonView, SupportedModesKeepM1ForBothInterfaces)
+{
+    // Singleton-axis strides cannot be expressed in the CSV. Check API acceptance for the affected restrictions.
+    struct ModeCase {
+        aclDataType dtype;
+        const char* activation;
+    };
+    const std::vector<ModeCase> cases{{ACL_FLOAT4_E2M1, "gelu_tanh"},
+                                      {ACL_FLOAT8_E4M3FN, "gelu_tanh"},
+                                      {ACL_FLOAT8_E4M3FN, "silu"},
+                                      {ACL_FLOAT8_E4M3FN, "swiglu"}};
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND950);
+    for (bool weightNz : {false, true}) {
+        for (bool transposeX1 : {false, true}) {
+            for (const auto& test : cases) {
+                SCOPED_TRACE(weightNz ? "WeightNZ" : "ND");
+                SCOPED_TRACE(transposeX1);
+                SCOPED_TRACE(test.activation);
+                SCOPED_TRACE(test.dtype);
+                const bool fp4 = test.dtype == ACL_FLOAT4_E2M1;
+                const auto x1Shape = transposeX1 ? std::vector<int64_t>{128, 1} : std::vector<int64_t>{1, 128};
+                const auto x1Strides = transposeX1 ? std::vector<int64_t>{1, 128} : std::vector<int64_t>{1, 1};
+                const auto x1ScaleShape = transposeX1 ? std::vector<int64_t>{2, 1, 2} : std::vector<int64_t>{1, 2, 2};
+                const auto x2Storage = fp4 ? std::vector<int64_t>{1, 8, 16, 64} : std::vector<int64_t>{2, 8, 16, 32};
+                const auto x2Desc = weightNz ?
+                                        TensorDesc({128, 64}, test.dtype, ACL_FORMAT_FRACTAL_NZ, {}, 0, x2Storage) :
+                                        TensorDesc({128, 64}, test.dtype, ACL_FORMAT_ND);
+                std::string activationType(test.activation);
+                char quantMode[] = "mx";
+                char roundMode[] = "rint";
+                const auto inputs = INPUT(TensorDesc(x1Shape, test.dtype, ACL_FORMAT_ND, x1Strides), x2Desc,
+                                          TensorDesc(x1ScaleShape, ACL_FLOAT8_E8M0, ACL_FORMAT_ND),
+                                          TensorDesc({2, 64, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND), nullptr, transposeX1,
+                                          false, int64_t{0}, activationType.data(), quantMode, roundMode, int64_t{0},
+                                          0.0);
+                const int64_t outputN = activationType == "swiglu" ? 32 : 64;
+                const auto outputs = OUTPUT(TensorDesc({1, outputN}, test.dtype, ACL_FORMAT_ND),
+                                            TensorDesc({1, 1, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND));
+                uint64_t workspaceSize = 0;
+                if (weightNz) {
+                    auto ut = OP_API_UT(aclnnQuantMatmulActivationQuantWeightNz, inputs, outputs);
+                    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+                } else {
+                    auto ut = OP_API_UT(aclnnQuantMatmulActivationQuant, inputs, outputs);
+                    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+                }
+            }
+        }
+    }
 }
 
 static const auto kCsvCases = GetParams();

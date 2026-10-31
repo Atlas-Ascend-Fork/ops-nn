@@ -25,8 +25,8 @@ namespace ge {
 * @par Inputs:
  * @li x1: A matrix tensor. Must be one of the following types: float8_e5m2, float8_e4m3fn, float4_e2m1 \n
            when the data type is float8_e5m2, float8_e4m3fn, float4_e2m1, the format only supports ND format. \n
-           - In ND format, the shape ranges from 2D to 6D. When transpose_x2 is false, \n
-            the shape is (batch,k,n), where batch is optional. \n
+           - In ND format, the shape ranges from 2D to 6D. When transpose_x1 is false, \n
+            the shape is (batch,m,k); when true, it is (batch,k,m), where batch is optional. \n
  * @li x2: A matrix tensor. Must be one of the following types: float8_e4m3fn, float8_e5m2, float4_e2m1. \n
            when the data type is float8_e4m3fn or float4_e2m1, the format supports NZ and ND format. \n
            when the data type is float8_e5m2, the format only supports ND format. \n
@@ -34,63 +34,54 @@ namespace ge {
             the shape is (batch,k,n), where batch is optional. \n
           - In NZ (Ascend affinity) format, the shape ranges from 4D to 8D. \n
               - When transpose_x2 is true, the shape is (batch,x2_k1,x2_n1,x2_n0,x2_k0), where batch is optional, x2_k0
-= 32, and x2_n0 = 16. \n
+= 32 for float8_e4m3fn or 64 for float4_e2m1, and x2_n0 = 16 (in logical elements). \n
               - When transpose_x2 is false, the shape is (batch,x2_n1,x2_k1,x2_k0,x2_n0), where batch is optional, x2_k0
-= 16, and x2_n0 = 32. \n
+= 16, and x2_n0 = 32 for float8_e4m3fn or 64 for float4_e2m1 (in logical elements). \n
               - When x1 is ND format, k in the shape of x1 and the shape of x2 must meet the following requirement: \n
                     ceil(k / x2_k0) == x2_k1. \n
 * @li bias: An optional matrix tensor. Must be float32, supports ND format.
             The shape is 1D (t,) or 3D (batch, 1, n),
-            with t equal to n, where n is the same as that of x2. For SwiGLU,
+            with t equal to n, where n is the same as that of x2. The 3D bias form requires a 3D output.
+            For SwiGLU,
             bias is applied to the full pre-activation width before splitting.
-* @li x1_scale: An optional matrix tensor. The type supports float8_e8m0, supports ND format. \n
-                      - When the data type is float8_e8m0, the shape is 3D. When the shape of x1 is (m, k), scale is (m,
-z, 2), when the shape of x1 is (k, m), scale is (z, m, 2), where z = ceil(k / 64) and k is the reduce axis of x1. \n
-* @li x2_scale: A matrix tensor, quantization parameter,
-             Must be one of the following types: float8_e8m0, supports ND format. \n
-            - When the data type is float8_e8m0, the shape is 3D. When the shape of x2 is (n, k), scale is (n, z, 2),
-             when the shape of x2 is (k, n), scale is (z, n, 2), where z = ceil(k / 64) and k is the reduce axis of x2.
-\n
-
-
+* @li x1_scale: Required in MX mode. Uses float8_e8m0 and ND format, with rank 3 to 7.
+* Its batch dimensions must match x1. The last three dimensions are (m, z, 2) when transpose_x1 is false,
+* or (z, m, 2) when true, where z = ceil(k / 64). \n
+* @li x2_scale: Required in MX mode. Uses float8_e8m0 and ND format, with rank 3 to 7.
+* Its batch dimensions must match x2. The last three dimensions are (z, n, 2) when transpose_x2 is false,
+* or (n, z, 2) when true, where z = ceil(k / 64). \n
 * @par Attributes:
-* @li transpose_x1: A bool. If true, changes the shape of "x1" from [m, k] to [k, m] before multiplication.
+* @li transpose_x1: A bool. If true, x1 is stored as [..., k, m] and transposed to [..., m, k] for multiplication.
 * Default: false. For SwiGLU and SiLU, true is supported with ND x2; WeightNZ x2 requires false.
-* @li transpose_x2: A bool. If true, changes the shape of "x2" from [k, n] to [n, k] before multiplication.
+* @li transpose_x2: A bool. If true, x2 is stored as [..., n, k] and transposed to [..., k, n] for multiplication.
 * Default: false.
-* @li group_size: An optional Int. Indicating the ratio between pertoken_scale/scale and x1/x2 in group dequantization.
-* If the value of pertoken_scale along the k-dimension is n, one value in pertoken_scale can be used to dequantize n
-values in x1 along the k-dimension. \n
+* @li group_size: An optional Int encoding the input quantization group sizes along M, N and K. \n
 * The group_size is composed of the group_size_m, group_size_n, and group_size_k, total occupying 48 bits.
 * 0-15 bits of group_size indicate group_size_k, 16-31 bits indicate group_size_n, 32-47 bits indicate group_size_m,
-* 48-63 bits of group_size are noneffective. \n
-* If any of group_size_m, group_size_n, group_size_k calculated by group_size is 0, recalculate it by
-* input shape, eg: group_size_m = m / scale_m （m % scale_m must be 0). \n
+* 48-63 bits of group_size must be zero. \n
+* A group_size of 0 selects [group_size_m, group_size_n, group_size_k] = [1, 1, 32].
+* Otherwise, only the encoding 4295032864 for [1, 1, 32] is supported. \n
 * Final group_size_m, group_size_n, group_size_k should satisify following requirements: \n
 * In mx quantification, the supported final [group_size_m, group_size_n, group_size_k] combinations are [1, 1, 32]. \n
 * @li activation_type: An optional string. The activation algorithm to use: 'gelu_tanh', 'gelu_erf', 'swiglu' or
 'silu', default is 'gelu_tanh'.
-* @li y_dtype: A Int. Declare the output dtype.
+* @li y_dtype: An optional Int. The output dtype must match x1. Defaults to DT_FLOAT8_E4M3FN.
 * @li quant_mode: An optional string. Declare the quant mode.Support mx. Defaults to "mx".
 * @li round_mode: An optional string. Defaults to "rint".
 * @li scale_alg: An optional int.The algorithm for the scale in quantization.Default to 0.
-* Support MxFP8(OCP Microscaling Formats (Mx) Specification , count 0) or MxFP8(nvidia-cuBLAS , count 1).
-* @li dst_type_max: An optional Float.Max_dtype takes the maximum value of the quant_data_type, or the provided
-value.Defaults to 0.
+* Value 0 uses OCP Microscaling for MXFP8/MXFP4; value 1 uses the cuBLAS scale algorithm for MXFP8;
+* value 2 uses the dynamic dtype range (DYN_DTYPE_RANGE) algorithm for MXFP4.
+* @li dst_type_max: An optional Float used only when scale_alg is 2. Supports 0 or [6, 12]; 0 is equivalent to 6.
+* Defaults to 0.
 
 
 * @par Outputs:
  * @li y: A matrix tensor. The data type is float8_e5m2, float8_e4m3fn, float4_e2m1. The format supports ND.
  * The shape is (batch, m, n) for GELU and SiLU, or (batch, m, n / 2) for SwiGLU. \n
-* @li
-y_scale: An output tensor of type FLOAT8_E8M0. Shape needs to meet the following conditions: \n
-* - rank(mxscale) = rank(x) + 1.
-* - axis_change = -1.
-* - blocksize is 32.
-* - mxscale.shape[axis_change] = (ceil(x.shape[axis] / blocksize) + 2 - 1) / 2.
-* - mxscale.shape[rank(x)] = 2.
-* - Other dimensions match input x.
-* mxscale tensor is padded with zeros to ensure its size along the quantized axis is even.
+* @li y_scale: An ND tensor of type FLOAT8_E8M0, with shape (batch..., m, ceil(h / 64), 2).
+* Here h = n for GELU/SiLU and h = n / 2 for SwiGLU; batch dimensions match the broadcast output y.
+* Each scale represents 32 output elements, and two adjacent scales share the final dimension of size 2.
+* An unused scale slot is filled with byte encoding 0 (E8M0 value 2^-127).
 
 
 * @attention Constraints:
@@ -130,16 +121,17 @@ format.
 * | float8_e5m2   | float8_e4m3fn | null/float32 | float8_e8m0 | float8_e8m0 | float8_e5m2   | float8_e8m0 |
 * | float4_e2m1   | float4_e2m1   | null/float32 | float8_e8m0 | float8_e8m0 | float4_e2m1   | float8_e8m0 |
 *
-* - Ascend 950PR&950DT products with group_sizes scenarios, supported data type and shapes combinations:
+* - Logical input shapes in MX mode, where z = ceil(k / 64):
 *
-* | quantization | x1 type                   | x1_scale type | x1 shape      | x2 shape      | x2_scale shape       | x1_scale shape       | group_size |
-* | ------------ | ------------------------- | ------------- | ------------- | ------------- | -------------------- | -------------------- | ---------- |
-* | mx           | float8_e4m3fn/float8_e5m2 | float8_e8m0   | (batch, m, k) | (batch, n, k) | (n, ceil(k / 64), 2) | (m, ceil(k / 64), 2) | [1, 1, 32] |
-* | mx           | float8_e4m3fn/float8_e5m2 | float8_e8m0   | (batch, m, k) | (batch, k, n) | (ceil(k / 64), n, 2) | (m, ceil(k / 64), 2) | [1, 1, 32] |
-* | mx           | float8_e4m3fn/float8_e5m2 | float8_e8m0   | (batch, k, m) | (batch, k, n) | (ceil(k / 64), n, 2) | (ceil(k / 64), m, 2) | [1, 1, 32] |
-* | mx           | float8_e4m3fn/float8_e5m2 | float8_e8m0   | (batch, k, m) | (batch, n, k) | (n, ceil(k / 64), 2) | (ceil(k / 64), m, 2) | [1, 1, 32] |
-* | mx           | float4_e2m1               | float8_e8m0   | (batch, m, k) | (batch, k, n) | (ceil(k / 64), n, 2) | (m, ceil(k / 64), 2) | [1, 1, 32] |
-* | mx           | float4_e2m1               | float8_e8m0   | (batch, m, k) | (batch, n, k) | (n, ceil(k / 64), 2) | (m, ceil(k / 64), 2) | [1, 1, 32] |
+* | Input | Transpose false | Transpose true |
+* | ----- | --------------- | -------------- |
+* | x1 | (batch1..., m, k) | (batch1..., k, m) |
+* | x1_scale | (batch1..., m, z, 2) | (batch1..., z, m, 2) |
+* | x2 | (batch2..., k, n) | (batch2..., n, k) |
+* | x2_scale | (batch2..., z, n, 2) | (batch2..., n, z, 2) |
+*
+* batch1 and batch2 broadcast from the right. Input scales retain their corresponding input batch dimensions.
+* The FP4 and WeightNZ transpose restrictions above still apply.
 *
 */
 // clang-format on
@@ -147,6 +139,7 @@ REG_OP(QuantMatmulActivationQuant)
     .INPUT(x1, TensorType({DT_FLOAT8_E5M2, DT_FLOAT8_E4M3FN, DT_FLOAT4_E2M1}))
     .INPUT(x2, TensorType({DT_FLOAT8_E5M2, DT_FLOAT8_E4M3FN, DT_FLOAT4_E2M1}))
     .OPTIONAL_INPUT(bias, TensorType({DT_FLOAT32}))
+    // Keep optional registration for interface compatibility; both scales are mandatory in MX mode.
     .OPTIONAL_INPUT(x1_scale, TensorType({DT_FLOAT8_E8M0}))
     .OPTIONAL_INPUT(x2_scale, TensorType({DT_FLOAT8_E8M0}))
     .OUTPUT(y, TensorType({DT_FLOAT8_E5M2, DT_FLOAT8_E4M3FN, DT_FLOAT4_E2M1}))

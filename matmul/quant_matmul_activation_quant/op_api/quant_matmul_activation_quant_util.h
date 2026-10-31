@@ -10,21 +10,32 @@
 
 #ifndef OP_API_INC_QUANT_MATMUL_ACTIVATION_QUANT_UTIL_H
 #define OP_API_INC_QUANT_MATMUL_ACTIVATION_QUANT_UTIL_H
-#include "opdev/common_types.h"
+
+#include <algorithm>
+#include <initializer_list>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "aclnn_kernels/common/op_error_check.h"
-#include "opdev/op_log.h"
+#include "aclnn_kernels/contiguous.h"
+#include "base/err_msg.h"
+#include "opdev/common_types.h"
 #include "opdev/op_executor.h"
+#include "opdev/op_log.h"
+#include "opdev/platform.h"
+#include "log/log.h"
 #include "matmul/common/op_host/op_api/matmul_util.h"
 #include "matmul/common/op_host/log_format_util.h"
-#include "aclnn_kernels/contiguous.h"
+#include "quant_matmul_activation_quant.h"
 #include "quant_matmul_activation_quant_checker.h"
-#include "log/log.h"
 
 namespace QBMMActivationQuant {
 using namespace op;
 using Ops::NN::FormatString;
-using Ops::NN::SwapLastTwoDimValue;
-struct QuantMatmulActivationQuantWeightNzParams {
+
+struct QuantMatmulActivationQuantParams {
     const aclTensor* x1 = nullptr;
     const aclTensor* x2 = nullptr;
     const aclTensor* x1Scale = nullptr;
@@ -33,61 +44,17 @@ struct QuantMatmulActivationQuantWeightNzParams {
     aclTensor* y = nullptr;
     aclTensor* yScale = nullptr;
 
-    bool transposeX1;
-    bool transposeX2;
-    int64_t groupSize;
     const char* activationType;
-    int64_t y_dtype;
     const char* quantMode;
     const char* roundMode;
+
+    int64_t groupSize;
+    int64_t yDtype;
     int64_t scaleAlg;
     double dstTypeMax;
+    bool transposeX1;
+    bool transposeX2;
 };
-
-static const std::initializer_list<op::DataType> X1_DTYPE_SUPPORT_LIST = {
-    DataType::DT_FLOAT8_E4M3FN, DataType::DT_FLOAT8_E5M2, DataType::DT_FLOAT4_E2M1};
-static const std::initializer_list<op::DataType> X2_DTYPE_SUPPORT_LIST = {
-    DataType::DT_FLOAT8_E4M3FN, DataType::DT_FLOAT8_E5M2, DataType::DT_FLOAT4_E2M1};
-static const std::initializer_list<op::DataType> Y_DTYPE_SUPPORT_LIST = {
-    DataType::DT_FLOAT8_E4M3FN, DataType::DT_FLOAT8_E5M2, DataType::DT_FLOAT4_E2M1};
-
-constexpr uint32_t MX_X1_DIM = 2U;
-constexpr uint32_t MX_X1_DIM_MIN = 2U;
-constexpr uint32_t MX_X1_DIM_MAX = 6U;
-constexpr uint32_t MX_X2_DIM = 2U;
-constexpr uint32_t MX_X2_DIM_MIN = 4U;
-constexpr uint32_t MX_X2_DIM_MAX = 8U;
-constexpr uint32_t MX_X1_SCALE_DIM = 3U;
-constexpr uint32_t MX_X2_SCALE_DIM = 3U;
-constexpr size_t LAST_FIRST_DIM_INDEX = 1;
-constexpr size_t LAST_SECOND_DIM_INDEX = 2;
-constexpr size_t LAST_THIRD_DIM_INDEX = 3;
-constexpr int64_t MXFP_MULTI_BASE_SIZE = 2L;
-constexpr int64_t SWIGLU_BRANCH_COUNT = 2L;
-constexpr int64_t SPLIT_SIZE = 64L;
-static constexpr int PENULTIMATE_DIM = 2;
-
-static const int32_t GROUP_M_OFFSET = 32;
-static const int32_t GROUP_N_OFFSET = 16;
-static const uint64_t GROUP_MNK_BIT_SIZE = 0xFFFF;
-// bits above groupSizeM|groupSizeN|groupSizeK must be zero
-static const int32_t GROUP_RESERVED_BIT_OFFSET = 48;
-static const int64_t PERGROUP_GROUP_SIZE = 32L;
-static const size_t MX_SCALE_MAX_DIM = 3;
-static constexpr int64_t OUTPUT_INFER_FAIL = -1L;
-// two FLOAT4_E2M1 nibbles are packed into one byte
-static constexpr int64_t FP4_PACK_RATIO = 2L;
-// scaleAlg=2 (FP4 dynamic dtype range): 0 keeps the dtype default, otherwise [6, 12]
-static constexpr float DST_TYPE_MAX_DISABLED = 0.0F;
-static constexpr float DST_TYPE_MAX_MIN = 6.0F;
-static constexpr float DST_TYPE_MAX_MAX = 12.0F;
-
-static inline bool IsFloatEqual(float a, float b) { return std::abs(a - b) <= std::numeric_limits<float>::epsilon(); }
-
-static inline bool IsSwiGluActivation(const QuantMatmulActivationQuantWeightNzParams& params)
-{
-    return params.activationType != nullptr && std::string(params.activationType) == "swiglu";
-}
 
 struct MatmulShapeInfo {
     int64_t mDim;
@@ -95,7 +62,71 @@ struct MatmulShapeInfo {
     int64_t nDim;
 };
 
-static inline aclnnStatus CheckNotNull(const QuantMatmulActivationQuantWeightNzParams& params)
+static const std::initializer_list<op::DataType> X1_DTYPE_SUPPORT_LIST = {
+    DataType::DT_FLOAT8_E4M3FN, DataType::DT_FLOAT8_E5M2, DataType::DT_FLOAT4_E2M1};
+static const std::initializer_list<op::DataType> X2_DTYPE_SUPPORT_LIST = {
+    DataType::DT_FLOAT8_E4M3FN, DataType::DT_FLOAT8_E5M2, DataType::DT_FLOAT4_E2M1};
+
+constexpr uint32_t MATRIX_DIM_COUNT = 2U;
+constexpr uint32_t MIN_MATRIX_RANK = 2U;
+constexpr uint32_t MAX_MATRIX_RANK = 6U;
+constexpr uint32_t MIN_NZ_STORAGE_RANK = 4U;
+constexpr uint32_t MAX_NZ_STORAGE_RANK = 8U;
+constexpr uint32_t MX_SCALE_DIM_COUNT = 3U;
+constexpr size_t LAST_FIRST_DIM_INDEX = 1;
+constexpr size_t LAST_SECOND_DIM_INDEX = 2;
+constexpr size_t LAST_THIRD_DIM_INDEX = 3;
+constexpr int64_t MX_SCALE_STORAGE_GROUP = 64L;
+constexpr int64_t MX_SCALE_PAIR_SIZE = 2L;
+constexpr int64_t SWIGLU_BRANCH_COUNT = 2L;
+
+constexpr int32_t GROUP_M_OFFSET = 32;
+constexpr int32_t GROUP_N_OFFSET = 16;
+constexpr uint64_t GROUP_MNK_BIT_SIZE = 0xFFFF;
+// bits above groupSizeM|groupSizeN|groupSizeK must be zero
+constexpr int32_t GROUP_RESERVED_BIT_OFFSET = 48;
+constexpr int64_t PERGROUP_GROUP_SIZE = 32L;
+constexpr size_t MX_SCALE_MIN_RANK = 3;
+constexpr int64_t BATCH_INFER_FAILED = -1L;
+// two FLOAT4_E2M1 nibbles are packed into one byte
+constexpr int64_t FP4_PACK_RATIO = 2L;
+// scaleAlg=2 (FP4 dynamic dtype range): 0 keeps the dtype default, otherwise [6, 12]
+constexpr float DST_TYPE_MAX_DISABLED = 0.0F;
+constexpr float DST_TYPE_MAX_MIN = 6.0F;
+constexpr float DST_TYPE_MAX_MAX = 12.0F;
+
+static inline bool IsSwiGluActivation(const QuantMatmulActivationQuantParams& params)
+{
+    return params.activationType != nullptr && std::string(params.activationType) == "swiglu";
+}
+
+static inline aclnnStatus CheckPlatformAndInputs(const aclTensor* x1, const aclTensor* x2, const char* apiName)
+{
+    if (op::GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_3510) {
+        SocVersion socVersion = op::GetCurrentPlatformInfo().GetSocVersion();
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "SOC version %s is not supported",
+                               op::ToString(socVersion).GetString());
+        const std::string msg = std::string("SOC version ") + op::ToString(socVersion).GetString() +
+                                " is not supported";
+        const std::vector<const char*> msgKey = {"message"};
+        const std::vector<const char*> msgValue = {msg.c_str()};
+        REPORT_PREDEFINED_ERR_MSG("EZ1001", msgKey, msgValue);
+        return ACLNN_ERR_RUNTIME_ERROR;
+    }
+
+    if (x1 == nullptr) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "x1", "null", "x1 cannot be null");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (x2 == nullptr) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "x2", "null", "x2 cannot be null");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
+    return ACLNN_SUCCESS;
+}
+
+static inline aclnnStatus CheckNotNull(const QuantMatmulActivationQuantParams& params)
 {
     OP_CHECK_NULL(params.x1, return ACLNN_ERR_PARAM_NULLPTR);
     OP_CHECK_NULL(params.x2, return ACLNN_ERR_PARAM_NULLPTR);
@@ -103,6 +134,189 @@ static inline aclnnStatus CheckNotNull(const QuantMatmulActivationQuantWeightNzP
     OP_CHECK_NULL(params.x2Scale, return ACLNN_ERR_PARAM_NULLPTR);
     OP_CHECK_NULL(params.y, return ACLNN_ERR_PARAM_NULLPTR);
     OP_CHECK_NULL(params.yScale, return ACLNN_ERR_PARAM_NULLPTR);
+    return ACLNN_SUCCESS;
+}
+
+static inline aclnnStatus CheckOutputFormats(const QuantMatmulActivationQuantParams& params, const char* apiName)
+{
+    const std::initializer_list<op::Format> supportedFormats = {
+        Format::FORMAT_ND,    Format::FORMAT_NCHW,  Format::FORMAT_NHWC, Format::FORMAT_HWCN,
+        Format::FORMAT_NCDHW, Format::FORMAT_NDHWC, Format::FORMAT_NCL};
+    const std::pair<const aclTensor*, const char*> outputs[] = {{params.y, "y"}, {params.yScale, "yScale"}};
+    for (const auto& output : outputs) {
+        const auto format = output.first->GetStorageFormat();
+        if (std::find(supportedFormats.begin(), supportedFormats.end(), format) == supportedFormats.end()) {
+            OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+                apiName, output.second, op::ToString(format).GetString(),
+                "the output format must be ND or an ND-compatible base format; private formats are not supported");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+    }
+    return ACLNN_SUCCESS;
+}
+
+static inline aclnnStatus CheckFormats(const QuantMatmulActivationQuantParams& params, op::Format x2Format,
+                                       const char* apiName)
+{
+    if (params.x1->GetStorageFormat() != Format::FORMAT_ND) {
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(apiName, "x1", op::ToString(params.x1->GetStorageFormat()).GetString(),
+                                                "the format of x1 must be ND");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.x2->GetStorageFormat() != x2Format) {
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+            apiName, "x2", op::ToString(params.x2->GetStorageFormat()).GetString(),
+            x2Format == Format::FORMAT_ND ? "the format of x2 must be ND" : "the format of x2 must be FRACTAL_NZ");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.x1Scale->GetStorageFormat() != Format::FORMAT_ND) {
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(apiName, "x1Scale",
+                                                op::ToString(params.x1Scale->GetStorageFormat()).GetString(),
+                                                "the format of x1Scale must be ND");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.x2Scale->GetStorageFormat() != Format::FORMAT_ND) {
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(apiName, "x2Scale",
+                                                op::ToString(params.x2Scale->GetStorageFormat()).GetString(),
+                                                "the format of x2Scale must be ND");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.bias != nullptr && params.bias->GetStorageFormat() != Format::FORMAT_ND) {
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(apiName, "bias",
+                                                op::ToString(params.bias->GetStorageFormat()).GetString(),
+                                                "the format of bias must be ND");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    return CheckOutputFormats(params, apiName);
+}
+
+static inline bool GetPositiveShapeSize(const op::Shape& shape, int64_t& shapeSize)
+{
+    shapeSize = 1;
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        const auto dim = shape.GetDim(i);
+        if (dim <= 0 || shapeSize > std::numeric_limits<int64_t>::max() / dim) {
+            return false;
+        }
+        shapeSize *= dim;
+    }
+    return true;
+}
+
+static inline bool CheckViewRange(const aclTensor* tensor, int64_t storageSize)
+{
+    const auto& shape = tensor->GetViewShape();
+    const auto& strides = tensor->GetViewStrides();
+    const auto offset = tensor->GetViewOffset();
+    if (strides.size() != shape.GetDimNum() || offset < 0 || offset >= storageSize) {
+        return false;
+    }
+    if (static_cast<ge::Format>(ge::GetPrimaryFormat(tensor->GetStorageFormat())) == Format::FORMAT_FRACTAL_NZ) {
+        // NZ consumes the full padded physical shape, not an ND strided slice.
+        const auto& storageShape = tensor->GetStorageShape();
+        if (offset != 0 || shape.GetDimNum() < LAST_SECOND_DIM_INDEX ||
+            storageShape.GetDimNum() != shape.GetDimNum() + LAST_SECOND_DIM_INDEX) {
+            return false;
+        }
+        int64_t logicalBatchStride = 0;
+        if (!GetPositiveShapeSize(shape, logicalBatchStride)) {
+            return false;
+        }
+        int64_t physicalBatchStride = storageSize;
+        bool matchesLogicalStrides = true;
+        bool matchesPhysicalStrides = true;
+        for (size_t i = 0; i + LAST_SECOND_DIM_INDEX < shape.GetDimNum(); ++i) {
+            const auto batchDim = shape.GetDim(i);
+            if (batchDim != storageShape.GetDim(i) || strides[i] < 0) {
+                return false;
+            }
+            logicalBatchStride /= batchDim;
+            physicalBatchStride /= batchDim;
+            // A singleton batch axis does not advance the data address.
+            if (batchDim > 1) {
+                matchesLogicalStrides = matchesLogicalStrides && strides[i] == logicalBatchStride;
+                matchesPhysicalStrides = matchesPhysicalStrides && strides[i] == physicalBatchStride;
+            }
+        }
+        // PyTorch preserves logical strides during format cast. Also accept a complete physical-stride description.
+        return matchesLogicalStrides || matchesPhysicalStrides;
+    }
+    if (tensor->GetDataType() == DataType::DT_FLOAT4_E2M1 && offset % FP4_PACK_RATIO != 0) {
+        return false; // The data pointer must start at a whole byte.
+    }
+    int64_t remaining = storageSize - offset - 1;
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        if (shape.GetDim(i) <= 0 || strides[i] < 0) {
+            return false;
+        }
+        const auto extent = shape.GetDim(i) - 1;
+        // Check against the remaining address range before multiplying or adding.
+        if (extent != 0 && strides[i] > remaining / extent) {
+            return false;
+        }
+        remaining -= extent * strides[i];
+    }
+    return true;
+}
+
+static inline aclnnStatus CheckNotEmpty(const QuantMatmulActivationQuantParams& params, const char* apiName)
+{
+    // 空tensor 处理
+    if (params.x1->IsEmpty() || params.x2->IsEmpty() || (params.x1Scale != nullptr && params.x1Scale->IsEmpty()) ||
+        (params.x2Scale != nullptr && params.x2Scale->IsEmpty()) ||
+        (params.bias != nullptr && params.bias->IsEmpty()) || params.y->IsEmpty() || params.yScale->IsEmpty()) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            apiName, "x1, x2, x1Scale, x2Scale, bias, y, yScale",
+            Ops::NN::FormatString(
+                "%s, %s, %s, %s, %s, %s, %s", op::ToString(params.x1->GetViewShape()).GetString(),
+                op::ToString(params.x2->GetViewShape()).GetString(),
+                params.x1Scale != nullptr ? op::ToString(params.x1Scale->GetViewShape()).GetString() : "null",
+                op::ToString(params.x2Scale->GetViewShape()).GetString(),
+                params.bias != nullptr ? op::ToString(params.bias->GetViewShape()).GetString() : "null",
+                op::ToString(params.y->GetViewShape()).GetString(),
+                op::ToString(params.yScale->GetViewShape()).GetString())
+                .c_str(),
+            Ops::NN::FormatString("The shapes of %s cannot be %s", "x1, x2, x1Scale, x2Scale, bias, y, yScale", "empty")
+                .c_str());
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+
+    // Validate metadata before CreateView and contiguous-layout detection perform shape arithmetic.
+    for (const auto* input : {params.x1, params.x2, params.x1Scale, params.x2Scale, params.bias,
+                              static_cast<const aclTensor*>(params.y), static_cast<const aclTensor*>(params.yScale)}) {
+        if (input == nullptr) {
+            continue;
+        }
+        const auto& shape = input->GetViewShape();
+        for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+            if (shape.GetDim(i) <= 0 || shape.GetDim(i) > std::numeric_limits<uint32_t>::max()) {
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    apiName, "tensor", op::ToString(shape).GetString(),
+                    "tensor dimensions must be positive and fit the uint32 tiling range");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
+        }
+        int64_t viewSize = 0;
+        int64_t storageSize = 0;
+        if (!GetPositiveShapeSize(shape, viewSize) || !GetPositiveShapeSize(input->GetStorageShape(), storageSize)) {
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                apiName, "tensor view/storage",
+                FormatString("%s, %s", op::ToString(shape).GetString(),
+                             op::ToString(input->GetStorageShape()).GetString())
+                    .c_str(),
+                "view and storage dimensions must be positive and their element counts must fit int64");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!CheckViewRange(input, storageSize)) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                apiName, "tensor view metadata", "invalid",
+                "ND views must have matching stride rank, nonnegative strides and all addressed elements within "
+                "storage; FP4 offsets must be even; FRACTAL_NZ views require offset 0 and batch strides consistently "
+                "matching either the logical shape or the padded physical storage");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+    }
+
     return ACLNN_SUCCESS;
 }
 
@@ -138,99 +352,44 @@ static inline bool IsMxFp4Input(const aclTensor* x1, const aclTensor* x2, const 
            y->GetDataType() == op::DataType::DT_FLOAT4_E2M1 && yScale->GetDataType() == op::DataType::DT_FLOAT8_E8M0;
 }
 
-static inline bool IsMicroScaling(const aclTensor* x1Scale, const aclTensor* x2Scale)
-{
-    if (x1Scale == nullptr || x2Scale == nullptr) {
-        return false;
-    }
-    return x1Scale->GetDataType() == op::DataType::DT_FLOAT8_E8M0 &&
-           x2Scale->GetDataType() == op::DataType::DT_FLOAT8_E8M0;
-}
-
-static inline bool CheckSpecialCase(const aclTensor* tensor, int64_t firstLastDim, int64_t secondLastDim)
-{
-    if ((tensor->GetViewShape().GetDim(firstLastDim) == tensor->GetViewShape().GetDim(secondLastDim)) &&
-        (tensor->GetViewShape().GetDim(secondLastDim) == 1)) {
-        OP_LOGD("Special case: transpose attribute does not need to be set.");
-        return true;
-    }
-    return false;
-}
-
-static inline bool GetTransposeAttrValue(const aclTensor* tensor, bool transpose, bool checkSpecialCase = true)
-{
-    int64_t dim1 = tensor->GetViewShape().GetDimNum() - 1;
-    int64_t dim2 = tensor->GetViewShape().GetDimNum() - QuantMatmulActivationQuantAclnnCheck::PENULTIMATE_DIM;
-    // check if tensor is contiguous layout
-    if (tensor->GetViewStrides()[dim2] == 1 &&
-        (tensor->GetViewStrides()[dim1] == tensor->GetViewShape().GetDim(dim2))) {
-        OP_LOGD("Detected a transposed/non-contiguous tensor layout; swapping the last two dimensions.");
-        const_cast<aclTensor*>(tensor)->SetViewShape(SwapLastTwoDimValue(tensor->GetViewShape()));
-        if (!checkSpecialCase) {
-            return !transpose;
-        }
-        if (!CheckSpecialCase(tensor, dim1, dim2)) {
-            return !transpose;
-        }
-    }
-    return transpose;
-}
-
-static inline void GetTranspose(const QuantMatmulActivationQuantWeightNzParams& params, bool& transposeX1,
-                                bool& transposeX2)
-{
-    transposeX1 = GetTransposeAttrValue(params.x1, transposeX1, true);
-    transposeX2 = GetTransposeAttrValue(params.x2, transposeX2, true);
-    OP_LOGD("Resolved transpose attributes: transposeX1=%s, transposeX2=%s", transposeX1 ? "true" : "false",
-            transposeX2 ? "true" : "false");
-}
-
-static inline MatmulShapeInfo GetMatmulShapeInfo(const QuantMatmulActivationQuantWeightNzParams& params)
+static inline MatmulShapeInfo GetMatmulShapeInfo(const QuantMatmulActivationQuantParams& params)
 {
     int64_t x1DimNum = params.x1->GetViewShape().GetDimNum();
     int64_t x2DimNum = params.x2->GetViewShape().GetDimNum();
     return {
-        params.transposeX1 ?
-            params.x1->GetViewShape().GetDim(x1DimNum - LAST_FIRST_DIM_INDEX) :
-            params.x1->GetViewShape().GetDim(x1DimNum - QuantMatmulActivationQuantAclnnCheck::PENULTIMATE_DIM),
-        params.transposeX1 ?
-            params.x1->GetViewShape().GetDim(x1DimNum - QuantMatmulActivationQuantAclnnCheck::PENULTIMATE_DIM) :
-            params.x1->GetViewShape().GetDim(x1DimNum - LAST_FIRST_DIM_INDEX),
-        params.transposeX2 ?
-            params.x2->GetViewShape().GetDim(x2DimNum - QuantMatmulActivationQuantAclnnCheck::PENULTIMATE_DIM) :
-            params.x2->GetViewShape().GetDim(x2DimNum - LAST_FIRST_DIM_INDEX),
+        params.transposeX1 ? params.x1->GetViewShape().GetDim(x1DimNum - LAST_FIRST_DIM_INDEX) :
+                             params.x1->GetViewShape().GetDim(x1DimNum - LAST_SECOND_DIM_INDEX),
+        params.transposeX1 ? params.x1->GetViewShape().GetDim(x1DimNum - LAST_SECOND_DIM_INDEX) :
+                             params.x1->GetViewShape().GetDim(x1DimNum - LAST_FIRST_DIM_INDEX),
+        params.transposeX2 ? params.x2->GetViewShape().GetDim(x2DimNum - LAST_SECOND_DIM_INDEX) :
+                             params.x2->GetViewShape().GetDim(x2DimNum - LAST_FIRST_DIM_INDEX),
     };
 }
 
-static inline void GetExpectedScaleShape(const QuantMatmulActivationQuantWeightNzParams& params,
-                                         const MatmulShapeInfo& shapeInfo, op::Shape& x1ScaleExpectShape,
-                                         op::Shape& x2ScaleExpectShape)
+static inline void GetExpectedScaleShapes(const QuantMatmulActivationQuantParams& params,
+                                          const MatmulShapeInfo& shapeInfo, op::Shape& x1ScaleExpectShape,
+                                          op::Shape& x2ScaleExpectShape)
 {
-    if (!IsMicroScaling(params.x1Scale, params.x2Scale)) {
-        x1ScaleExpectShape = {1};
-        x2ScaleExpectShape = {1};
-        return;
-    }
-
+    // CheckDtype has already validated the mandatory E8M0 input scales.
     const auto& x1View = params.x1->GetViewShape();
     const auto& x2View = params.x2->GetViewShape();
     int64_t x1DimNum = static_cast<int64_t>(x1View.GetDimNum());
     int64_t x2DimNum = static_cast<int64_t>(x2View.GetDimNum());
-    int64_t x1BatchDimNum = std::max<int64_t>(x1DimNum - static_cast<int64_t>(MX_X1_DIM), 0);
-    int64_t x2BatchDimNum = std::max<int64_t>(x2DimNum - static_cast<int64_t>(MX_X2_DIM), 0);
+    int64_t x1BatchDimNum = std::max<int64_t>(x1DimNum - static_cast<int64_t>(MATRIX_DIM_COUNT), 0);
+    int64_t x2BatchDimNum = std::max<int64_t>(x2DimNum - static_cast<int64_t>(MATRIX_DIM_COUNT), 0);
 
     x1ScaleExpectShape = op::Shape();
     for (int64_t i = 0; i < x1BatchDimNum; ++i) {
         x1ScaleExpectShape.AppendDim(x1View.GetDim(i));
     }
     if (params.transposeX1) {
-        x1ScaleExpectShape.AppendDim(Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE));
+        x1ScaleExpectShape.AppendDim(Ops::Base::CeilDiv(shapeInfo.kDim, MX_SCALE_STORAGE_GROUP));
         x1ScaleExpectShape.AppendDim(shapeInfo.mDim);
     } else {
         x1ScaleExpectShape.AppendDim(shapeInfo.mDim);
-        x1ScaleExpectShape.AppendDim(Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE));
+        x1ScaleExpectShape.AppendDim(Ops::Base::CeilDiv(shapeInfo.kDim, MX_SCALE_STORAGE_GROUP));
     }
-    x1ScaleExpectShape.AppendDim(MXFP_MULTI_BASE_SIZE);
+    x1ScaleExpectShape.AppendDim(MX_SCALE_PAIR_SIZE);
 
     x2ScaleExpectShape = op::Shape();
     for (int64_t i = 0; i < x2BatchDimNum; ++i) {
@@ -238,110 +397,123 @@ static inline void GetExpectedScaleShape(const QuantMatmulActivationQuantWeightN
     }
     if (params.transposeX2) {
         x2ScaleExpectShape.AppendDim(shapeInfo.nDim);
-        x2ScaleExpectShape.AppendDim(Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE));
+        x2ScaleExpectShape.AppendDim(Ops::Base::CeilDiv(shapeInfo.kDim, MX_SCALE_STORAGE_GROUP));
     } else {
-        x2ScaleExpectShape.AppendDim(Ops::Base::CeilDiv(shapeInfo.kDim, SPLIT_SIZE));
+        x2ScaleExpectShape.AppendDim(Ops::Base::CeilDiv(shapeInfo.kDim, MX_SCALE_STORAGE_GROUP));
         x2ScaleExpectShape.AppendDim(shapeInfo.nDim);
     }
-    x2ScaleExpectShape.AppendDim(MXFP_MULTI_BASE_SIZE);
+    x2ScaleExpectShape.AppendDim(MX_SCALE_PAIR_SIZE);
 }
 
-static inline int64_t InferOutputShape(const QuantMatmulActivationQuantWeightNzParams& params, const char* apiName)
+static inline int64_t InferOutputBatchSize(const QuantMatmulActivationQuantParams& params, const char* apiName)
 {
-    int64_t inferredOutbatchValue = 1;
+    int64_t outputBatchSize = 1;
     auto x1DimNum = params.x1->GetViewShape().GetDimNum();
     auto x2DimNum = params.x2->GetViewShape().GetDimNum();
     auto outDimNum = std::max(x1DimNum, x2DimNum);
-    auto& longShapeTensor = x1DimNum > x2DimNum ? params.x1 : params.x2;
-    auto& shortShapeTensor = x1DimNum > x2DimNum ? params.x2 : params.x1;
-    size_t validOffset = outDimNum - std::min(x1DimNum, x2DimNum);
-    for (size_t i = 0; i + QuantMatmulActivationQuantAclnnCheck::PENULTIMATE_DIM < outDimNum; i++) {
-        auto shortDimValue = i < validOffset ? 1 : shortShapeTensor->GetViewShape().GetDim(i - validOffset);
-        auto longDimValue = longShapeTensor->GetViewShape().GetDim(i);
-        if (shortDimValue > 1 && longDimValue > 1 && shortDimValue != longDimValue) {
+    auto& higherRankTensor = x1DimNum > x2DimNum ? params.x1 : params.x2;
+    auto& lowerRankTensor = x1DimNum > x2DimNum ? params.x2 : params.x1;
+    size_t batchRankOffset = outDimNum - std::min(x1DimNum, x2DimNum);
+    for (size_t i = 0; i + LAST_SECOND_DIM_INDEX < outDimNum; i++) {
+        auto lowerRankDim = i < batchRankOffset ? 1 : lowerRankTensor->GetViewShape().GetDim(i - batchRankOffset);
+        auto higherRankDim = higherRankTensor->GetViewShape().GetDim(i);
+        if (lowerRankDim > 1 && higherRankDim > 1 && lowerRankDim != higherRankDim) {
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                 apiName, "x1/x2 batch dim",
-                FormatString("%lld, %lld", static_cast<long long>(shortDimValue), static_cast<long long>(longDimValue))
+                FormatString("%lld, %lld", static_cast<long long>(lowerRankDim), static_cast<long long>(higherRankDim))
                     .c_str(),
                 "the batch dimensions of x1 and x2 must be broadcastable");
-            return OUTPUT_INFER_FAIL;
+            return BATCH_INFER_FAILED;
         }
-        int64_t curBatchValue = static_cast<int64_t>(std::max(shortDimValue, longDimValue));
-        if (shortDimValue <= 0 || longDimValue <= 0 ||
-            inferredOutbatchValue > std::numeric_limits<uint32_t>::max() / curBatchValue) {
+        int64_t batchDim = static_cast<int64_t>(std::max(lowerRankDim, higherRankDim));
+        if (lowerRankDim <= 0 || higherRankDim <= 0 ||
+            outputBatchSize > std::numeric_limits<uint32_t>::max() / batchDim) {
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                 apiName, "x1/x2 batch dim",
-                FormatString("%lld, %lld", static_cast<long long>(shortDimValue), static_cast<long long>(longDimValue))
+                FormatString("%lld, %lld", static_cast<long long>(lowerRankDim), static_cast<long long>(higherRankDim))
                     .c_str(),
                 "the batch dimensions must be positive and the broadcast batch size must fit the uint32 tiling range");
-            return OUTPUT_INFER_FAIL;
+            return BATCH_INFER_FAILED;
         }
-        inferredOutbatchValue = inferredOutbatchValue * curBatchValue;
+        outputBatchSize = outputBatchSize * batchDim;
     }
-    return inferredOutbatchValue;
+    return outputBatchSize;
 }
 
-static inline bool MxScaleContiguousProcess(const aclTensor*& mxScaleTensor, aclOpExecutor* executor)
+static inline aclnnStatus CheckBiasShape(const QuantMatmulActivationQuantParams& params, int64_t nDim,
+                                         const char* apiName)
 {
-    if (mxScaleTensor == nullptr || mxScaleTensor->GetViewShape().GetDimNum() < MX_SCALE_MAX_DIM) {
-        OP_LOGD("MX scale tensor is absent or does not require contiguous conversion.");
-        return true;
+    if (params.bias == nullptr) {
+        return ACLNN_SUCCESS;
     }
-    auto transposeFlag = false;
-    int64_t dimNum = mxScaleTensor->GetViewShape().GetDimNum();
-    int64_t lastDim = mxScaleTensor->GetViewShape().GetDim(dimNum - 1);
-    int64_t lastSecondDim = mxScaleTensor->GetViewShape().GetDim(dimNum -
-                                                                 QuantMatmulActivationQuantAclnnCheck::PENULTIMATE_DIM);
-    int64_t lastThirdDim = mxScaleTensor->GetViewShape().GetDim(dimNum - 3); // 3: 倒数第3维
-    if (mxScaleTensor->GetViewStrides()[dimNum - 3] == lastDim &&            // 3： 倒数第3维
-        mxScaleTensor->GetViewStrides()[dimNum - QuantMatmulActivationQuantAclnnCheck::PENULTIMATE_DIM] ==
-            lastDim * lastThirdDim) {
-        int64_t tmpNxD = lastDim * lastSecondDim * lastThirdDim;
-        transposeFlag = true;
-        // 4：batch维度从倒数第4维起
-        for (int64_t batchDim = dimNum - 4; batchDim >= 0; batchDim--) {
-            if (mxScaleTensor->GetViewStrides()[batchDim] != tmpNxD) {
-                transposeFlag = false;
-                break;
-            }
-            tmpNxD *= mxScaleTensor->GetViewShape().GetDim(batchDim);
-        }
-        if (lastSecondDim == 1 && lastThirdDim == 1) {
-            transposeFlag = false;
-        }
+
+    auto biasDimNum = params.bias->GetViewShape().GetDimNum();
+    auto outDimNum = params.y->GetViewShape().GetDimNum();
+    if (biasDimNum != 1 && biasDimNum != 3) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(apiName, "bias", FormatString("%zuD", biasDimNum).c_str(),
+                                                 "the rank of bias must be 1 or 3");
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    if (transposeFlag) {
-        op::Shape swapedShape = mxScaleTensor->GetViewShape();
-        swapedShape.SetDim(dimNum - QuantMatmulActivationQuantAclnnCheck::PENULTIMATE_DIM, lastThirdDim);
-        swapedShape.SetDim(dimNum - 3, lastSecondDim); // 3： 倒数第3维
-        mxScaleTensor = executor->CreateView(mxScaleTensor, swapedShape, mxScaleTensor->GetViewOffset());
+    if (biasDimNum == 1) {
+        if (params.bias->GetViewShape().GetDim(0) != nDim) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                apiName, "bias", op::ToString(params.bias->GetViewShape()).GetString(),
+                FormatString("the shape of bias must be [%lld]", static_cast<long long>(nDim)).c_str());
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else {
-        mxScaleTensor = l0op::Contiguous(mxScaleTensor, executor);
+        if (outDimNum == 2 || outDimNum == 4 || outDimNum == 5 || outDimNum == 6) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                apiName, "bias", FormatString("%zuD", biasDimNum).c_str(),
+                FormatString("when output rank is %zu, only 1D bias is supported, but got 3D", outDimNum).c_str());
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.bias->GetViewShape().GetDim(1) != 1) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(apiName, "bias",
+                                                  op::ToString(params.bias->GetViewShape()).GetString(),
+                                                  "the 2nd dimension of bias must be 1");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.bias->GetViewShape().GetDim(2) != nDim) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                apiName, "bias", op::ToString(params.bias->GetViewShape()).GetString(),
+                FormatString("the 3rd dimension of bias must be %lld", static_cast<long long>(nDim)).c_str());
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        int64_t outputBatchSize = InferOutputBatchSize(params, apiName);
+        if (outputBatchSize == BATCH_INFER_FAILED) {
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.bias->GetViewShape().GetDim(0) != outputBatchSize) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                apiName, "bias", op::ToString(params.bias->GetViewShape()).GetString(),
+                FormatString("the 1st dimension of bias must be %lld", static_cast<long long>(outputBatchSize))
+                    .c_str());
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
-    if (mxScaleTensor == nullptr) {
-        return false;
-    }
-    return true;
+
+    return ACLNN_SUCCESS;
 }
 
-static inline aclnnStatus IsMxQuantDim(const QuantMatmulActivationQuantWeightNzParams& params, const char* apiName)
+static inline aclnnStatus CheckMxScaleRanks(const QuantMatmulActivationQuantParams& params, const char* apiName)
 {
     int64_t x1DimNum = static_cast<int64_t>(params.x1->GetViewShape().GetDimNum());
     int64_t x2DimNum = static_cast<int64_t>(params.x2->GetViewShape().GetDimNum());
-    int64_t x1BatchDimNum = std::max<int64_t>(x1DimNum - static_cast<int64_t>(MX_X1_DIM), 0);
-    int64_t x2BatchDimNum = std::max<int64_t>(x2DimNum - static_cast<int64_t>(MX_X2_DIM), 0);
+    int64_t x1BatchDimNum = std::max<int64_t>(x1DimNum - static_cast<int64_t>(MATRIX_DIM_COUNT), 0);
+    int64_t x2BatchDimNum = std::max<int64_t>(x2DimNum - static_cast<int64_t>(MATRIX_DIM_COUNT), 0);
 
     auto x1ScaleDimNum = params.x1Scale->GetViewShape().GetDimNum();
     auto x2ScaleDimNum = params.x2Scale->GetViewShape().GetDimNum();
-    int64_t expectedX1ScaleDimNum = x1BatchDimNum + static_cast<int64_t>(MX_X1_SCALE_DIM);
-    int64_t expectedX2ScaleDimNum = x2BatchDimNum + static_cast<int64_t>(MX_X2_SCALE_DIM);
+    int64_t expectedX1ScaleDimNum = x1BatchDimNum + static_cast<int64_t>(MX_SCALE_DIM_COUNT);
+    int64_t expectedX2ScaleDimNum = x2BatchDimNum + static_cast<int64_t>(MX_SCALE_DIM_COUNT);
     if (static_cast<int64_t>(x1ScaleDimNum) != expectedX1ScaleDimNum) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
             apiName, "x1Scale", FormatString("%zuD", x1ScaleDimNum).c_str(),
             FormatString("when the quantization mode is mx, the rank of x1Scale must be %lld "
                          "(x1 batch rank %lld + fixed rank %u)",
                          static_cast<long long>(expectedX1ScaleDimNum), static_cast<long long>(x1BatchDimNum),
-                         MX_X1_SCALE_DIM)
+                         MX_SCALE_DIM_COUNT)
                 .c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -351,7 +523,7 @@ static inline aclnnStatus IsMxQuantDim(const QuantMatmulActivationQuantWeightNzP
             FormatString("when the quantization mode is mx, the rank of x2Scale must be %lld "
                          "(x2 batch rank %lld + fixed rank %u)",
                          static_cast<long long>(expectedX2ScaleDimNum), static_cast<long long>(x2BatchDimNum),
-                         MX_X2_SCALE_DIM)
+                         MX_SCALE_DIM_COUNT)
                 .c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -359,8 +531,7 @@ static inline aclnnStatus IsMxQuantDim(const QuantMatmulActivationQuantWeightNzP
     return ACLNN_SUCCESS;
 }
 
-static inline aclnnStatus CheckInputDtypeValid(const QuantMatmulActivationQuantWeightNzParams& params,
-                                               const char* apiName)
+static inline aclnnStatus CheckInputDtypeValid(const QuantMatmulActivationQuantParams& params, const char* apiName)
 {
     if (!CheckType(params.x1->GetDataType(), X1_DTYPE_SUPPORT_LIST)) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(apiName, "x1", op::ToString(params.x1->GetDataType()).GetString(),
@@ -379,7 +550,7 @@ static inline aclnnStatus CheckInputDtypeValid(const QuantMatmulActivationQuantW
     return ACLNN_SUCCESS;
 }
 
-static inline aclnnStatus CheckDtype(const QuantMatmulActivationQuantWeightNzParams& params, const char* apiName)
+static inline aclnnStatus CheckDtype(const QuantMatmulActivationQuantParams& params, const char* apiName)
 {
     auto x1Dtype = params.x1->GetDataType();
     auto x2Dtype = params.x2->GetDataType();
@@ -394,7 +565,7 @@ static inline aclnnStatus CheckDtype(const QuantMatmulActivationQuantWeightNzPar
 
     if (IsMxFp8Input(params.x1, params.x2, params.y, params.yScale) ||
         IsMxFp4Input(params.x1, params.x2, params.y, params.yScale)) {
-        CHECK_RET(IsMxQuantDim(params, apiName) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+        CHECK_RET(CheckMxScaleRanks(params, apiName) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
         if (params.bias != nullptr && params.bias->GetDataType() != op::DataType::DT_FLOAT) {
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(apiName, "bias", op::ToString(params.bias->GetDataType()).GetString(),
                                                   "the dtype of bias must be FLOAT");
@@ -412,11 +583,11 @@ static inline aclnnStatus CheckDtype(const QuantMatmulActivationQuantWeightNzPar
                 "when the quantization mode is mx, the dtype of x2Scale must be FLOAT8_E8M0");
             return ACLNN_ERR_PARAM_INVALID;
         }
-        if (yDtype != static_cast<op::DataType>(params.y_dtype)) {
+        if (yDtype != static_cast<op::DataType>(params.yDtype)) {
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
                 apiName, "y", op::ToString(yDtype).GetString(),
                 FormatString("the dtype of y must be %s, which is the same as x1",
-                             op::ToString(static_cast<op::DataType>(params.y_dtype)).GetString())
+                             op::ToString(static_cast<op::DataType>(params.yDtype)).GetString())
                     .c_str());
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -440,7 +611,7 @@ static inline aclnnStatus CheckDtype(const QuantMatmulActivationQuantWeightNzPar
     }
 }
 
-static inline aclnnStatus CheckOptionalAlg(const QuantMatmulActivationQuantWeightNzParams& params, const char* apiName)
+static inline aclnnStatus CheckAttributes(const QuantMatmulActivationQuantParams& params, const char* apiName)
 {
     CHECK_RET(params.activationType != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     const std::string activationType(params.activationType);
@@ -493,45 +664,27 @@ static inline aclnnStatus CheckOptionalAlg(const QuantMatmulActivationQuantWeigh
         }
     }
     if (params.scaleAlg == 2) {
-        if (!IsFloatEqual(params.dstTypeMax, DST_TYPE_MAX_DISABLED) &&
+        if (params.dstTypeMax != DST_TYPE_MAX_DISABLED &&
             !(params.dstTypeMax >= DST_TYPE_MAX_MIN && params.dstTypeMax <= DST_TYPE_MAX_MAX)) {
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "dstTypeMax", std::to_string(params.dstTypeMax),
                                                   "when scaleAlg is 2, dstTypeMax must be 0.0 or in range [6.0, 12.0]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
-    auto yDtype = params.y->GetDataType();
-    if (yDtype == op::DataType::DT_FLOAT4_E2M1) {
-        if (roundMode != "rint" && roundMode != "floor" && roundMode != "round") {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                apiName, "roundMode", roundMode,
-                "when the dtype of y is FLOAT4_E2M1, roundMode must be rint, floor, or round");
-            return ACLNN_ERR_PARAM_INVALID;
-        }
-    } else {
-        if (roundMode != "rint") {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "roundMode", roundMode,
-                                                  "when the dtype of y is not FLOAT4_E2M1, roundMode must be rint");
-            return ACLNN_ERR_PARAM_INVALID;
-        }
-    }
-    if (!CheckType(params.y->GetDataType(), Y_DTYPE_SUPPORT_LIST) && params.scaleAlg == 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "scaleAlg", std::to_string(params.scaleAlg),
-                                              FormatString("scaleAlg cannot be 1 when the dtype of y is not in %s",
-                                                           op::ToString(Y_DTYPE_SUPPORT_LIST).GetString())
-                                                  .c_str());
+    if (!isMxFp4 && roundMode != "rint") {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "roundMode", roundMode,
+                                              "when the dtype of y is not FLOAT4_E2M1, roundMode must be rint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
 }
 
-static inline aclnnStatus CheckShapeInfoMatch(const QuantMatmulActivationQuantWeightNzParams& params,
-                                              const MatmulShapeInfo& shapeInfo, const char* apiName)
+static inline aclnnStatus CheckKDimensionsMatch(const QuantMatmulActivationQuantParams& params,
+                                                const MatmulShapeInfo& shapeInfo, const char* apiName)
 {
     int64_t x2DimNum = params.x2->GetViewShape().GetDimNum();
     int64_t x2KDim = params.transposeX2 ? params.x2->GetViewShape().GetDim(x2DimNum - LAST_FIRST_DIM_INDEX) :
-                                          params.x2->GetViewShape().GetDim(
-                                              x2DimNum - QuantMatmulActivationQuantAclnnCheck::PENULTIMATE_DIM);
+                                          params.x2->GetViewShape().GetDim(x2DimNum - LAST_SECOND_DIM_INDEX);
     if (shapeInfo.kDim != x2KDim) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             apiName, "x1 K, x2 K",
@@ -571,107 +724,66 @@ static inline bool CheckMKN(int64_t m, int64_t k, int64_t n, const char* apiName
     return true;
 }
 
-static inline aclnnStatus CheckMxScaleLastDim(const QuantMatmulActivationQuantWeightNzParams& params,
-                                              const char* apiName)
+static inline aclnnStatus CheckFp4Shape(const QuantMatmulActivationQuantParams& params,
+                                        const MatmulShapeInfo& shapeInfo, const char* apiName)
 {
-    if (!IsMicroScaling(params.x1Scale, params.x2Scale)) {
-        return ACLNN_SUCCESS;
+    if (shapeInfo.kDim <= 2) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            apiName, "K", std::to_string(shapeInfo.kDim).c_str(),
+            "when the dtypes of x1, x2 and y are FP4, the K dimension must be greater than 2");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    int64_t x1InnerAxis = params.transposeX1 ? shapeInfo.mDim : shapeInfo.kDim;
+    if (x1InnerAxis % FP4_PACK_RATIO != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            apiName, params.transposeX1 ? "x1 M" : "x1 K", std::to_string(x1InnerAxis).c_str(),
+            "when the dtypes of x1, x2 and y are FP4, the inner axis of x1 must be even");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    int64_t x2InnerAxis = params.transposeX2 ? shapeInfo.kDim : shapeInfo.nDim;
+    if (x2InnerAxis % FP4_PACK_RATIO != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            apiName, params.transposeX2 ? "x2 K" : "x2 N", std::to_string(x2InnerAxis).c_str(),
+            "when the dtypes of x1, x2 and y are FP4, the inner axis of x2 must be even");
+        return ACLNN_ERR_PARAM_INVALID;
     }
 
+    return ACLNN_SUCCESS;
+}
+
+static inline aclnnStatus CheckMxScaleLastDim(const QuantMatmulActivationQuantParams& params, const char* apiName)
+{
     auto scale1LastDimValue = params.x1Scale->GetViewShape().GetDim(params.x1Scale->GetViewShape().GetDimNum() - 1);
     auto scale2LastDimValue = params.x2Scale->GetViewShape().GetDim(params.x2Scale->GetViewShape().GetDimNum() - 1);
-    if (scale1LastDimValue != MXFP_MULTI_BASE_SIZE) {
+    if (scale1LastDimValue != MX_SCALE_PAIR_SIZE) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             apiName, "x1Scale", op::ToString(params.x1Scale->GetViewShape()).GetString(),
             FormatString("when the quantization mode is mx, the last dimension of x1Scale must be %lld",
-                         static_cast<long long>(MXFP_MULTI_BASE_SIZE))
+                         static_cast<long long>(MX_SCALE_PAIR_SIZE))
                 .c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (scale2LastDimValue != MXFP_MULTI_BASE_SIZE) {
+    if (scale2LastDimValue != MX_SCALE_PAIR_SIZE) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             apiName, "x2Scale", op::ToString(params.x2Scale->GetViewShape()).GetString(),
             FormatString("when the quantization mode is mx, the last dimension of x2Scale must be %lld",
-                         static_cast<long long>(MXFP_MULTI_BASE_SIZE))
+                         static_cast<long long>(MX_SCALE_PAIR_SIZE))
                 .c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
 }
 
-static inline aclnnStatus CheckExpectedShapes(const QuantMatmulActivationQuantWeightNzParams& params,
-                                              const MatmulShapeInfo& shapeInfo, const char* apiName)
+static inline aclnnStatus CheckInputScaleShapes(const QuantMatmulActivationQuantParams& params,
+                                                const MatmulShapeInfo& shapeInfo, const char* apiName)
 {
-    auto& x1View = params.x1->GetViewShape();
-    auto& x2View = params.x2->GetViewShape();
-    int64_t x1DimNum = x1View.GetDimNum();
-    int64_t x2DimNum = x2View.GetDimNum();
-
-    if (x1DimNum < static_cast<int64_t>(MX_X1_DIM) || x2DimNum < static_cast<int64_t>(MX_X2_DIM)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
-            apiName, "x1, x2",
-            FormatString("%lldD, %lldD", static_cast<long long>(x1DimNum), static_cast<long long>(x2DimNum)).c_str(),
-            "the ranks of x1 and x2 must be at least 2");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
-    if (InferOutputShape(params, apiName) == OUTPUT_INFER_FAIL) {
-        return ACLNN_ERR_PARAM_INVALID;
-    }
-
-    int64_t x1BatchCount = x1DimNum - static_cast<int64_t>(MX_X1_DIM);
-    int64_t x2BatchCount = x2DimNum - static_cast<int64_t>(MX_X2_DIM);
-    int64_t batchDimNum = std::max(x1BatchCount, x2BatchCount);
-    for (int64_t i = 0; i < batchDimNum; ++i) {
-        int64_t x1Idx = i - (batchDimNum - x1BatchCount);
-        int64_t x2Idx = i - (batchDimNum - x2BatchCount);
-        int64_t x1BatchDim = (x1Idx >= 0) ? x1View.GetDim(x1Idx) : 1;
-        int64_t x2BatchDim = (x2Idx >= 0) ? x2View.GetDim(x2Idx) : 1;
-        if (x1BatchDim != x2BatchDim && x1BatchDim != 1 && x2BatchDim != 1) {
-            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                apiName, "x1/x2 batch dim",
-                FormatString("dim %lld: %lld, %lld", static_cast<long long>(i), static_cast<long long>(x1BatchDim),
-                             static_cast<long long>(x2BatchDim))
-                    .c_str(),
-                "the batch dimensions of x1 and x2 must be broadcastable");
-            return ACLNN_ERR_PARAM_INVALID;
-        }
-    }
-
-    int64_t x1M = params.transposeX1 ? x1View.GetDim(x1DimNum - LAST_FIRST_DIM_INDEX) :
-                                       x1View.GetDim(x1DimNum - LAST_SECOND_DIM_INDEX);
-    int64_t x1K = params.transposeX1 ? x1View.GetDim(x1DimNum - LAST_SECOND_DIM_INDEX) :
-                                       x1View.GetDim(x1DimNum - LAST_FIRST_DIM_INDEX);
-    if (x1M != shapeInfo.mDim || x1K != shapeInfo.kDim) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-            apiName, "x1", op::ToString(x1View).GetString(),
-            FormatString("x1 last two dims must be [%lld, %lld], but got [%lld, %lld]",
-                         static_cast<long long>(params.transposeX1 ? shapeInfo.kDim : shapeInfo.mDim),
-                         static_cast<long long>(params.transposeX1 ? shapeInfo.mDim : shapeInfo.kDim),
-                         static_cast<long long>(x1View.GetDim(x1DimNum - LAST_SECOND_DIM_INDEX)),
-                         static_cast<long long>(x1View.GetDim(x1DimNum - LAST_FIRST_DIM_INDEX)))
-                .c_str());
-        return ACLNN_ERR_PARAM_INVALID;
-    }
-
-    int64_t x2K = params.transposeX2 ? x2View.GetDim(x2DimNum - LAST_FIRST_DIM_INDEX) :
-                                       x2View.GetDim(x2DimNum - LAST_SECOND_DIM_INDEX);
-    int64_t x2N = params.transposeX2 ? x2View.GetDim(x2DimNum - LAST_SECOND_DIM_INDEX) :
-                                       x2View.GetDim(x2DimNum - LAST_FIRST_DIM_INDEX);
-    if (x2K != shapeInfo.kDim || x2N != shapeInfo.nDim) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-            apiName, "x2", op::ToString(x2View).GetString(),
-            FormatString("x2 last two dims must be [%lld, %lld], but got [%lld, %lld]",
-                         static_cast<long long>(params.transposeX2 ? shapeInfo.nDim : shapeInfo.kDim),
-                         static_cast<long long>(params.transposeX2 ? shapeInfo.kDim : shapeInfo.nDim),
-                         static_cast<long long>(x2View.GetDim(x2DimNum - LAST_SECOND_DIM_INDEX)),
-                         static_cast<long long>(x2View.GetDim(x2DimNum - LAST_FIRST_DIM_INDEX)))
-                .c_str());
+    if (InferOutputBatchSize(params, apiName) == BATCH_INFER_FAILED) {
         return ACLNN_ERR_PARAM_INVALID;
     }
 
     op::Shape x1ScaleExpectShape;
     op::Shape x2ScaleExpectShape;
-    GetExpectedScaleShape(params, shapeInfo, x1ScaleExpectShape, x2ScaleExpectShape);
+    GetExpectedScaleShapes(params, shapeInfo, x1ScaleExpectShape, x2ScaleExpectShape);
 
     if (params.x1Scale->GetViewShape() != x1ScaleExpectShape) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
@@ -688,7 +800,7 @@ static inline aclnnStatus CheckExpectedShapes(const QuantMatmulActivationQuantWe
     return ACLNN_SUCCESS;
 }
 
-static inline aclnnStatus CheckOutputShape(const QuantMatmulActivationQuantWeightNzParams& params,
+static inline aclnnStatus CheckOutputShape(const QuantMatmulActivationQuantParams& params,
                                            const MatmulShapeInfo& shapeInfo, const char* apiName)
 {
     auto& yView = params.y->GetViewShape();
@@ -724,7 +836,7 @@ static inline aclnnStatus CheckOutputShape(const QuantMatmulActivationQuantWeigh
         }
     }
     const int64_t outputN = IsSwiGluActivation(params) ? shapeInfo.nDim / SWIGLU_BRANCH_COUNT : shapeInfo.nDim;
-    if (IsSwiGluActivation(params) && (shapeInfo.nDim <= 0 || shapeInfo.nDim % SPLIT_SIZE != 0)) {
+    if (IsSwiGluActivation(params) && (shapeInfo.nDim <= 0 || shapeInfo.nDim % MX_SCALE_STORAGE_GROUP != 0)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "x2 N", std::to_string(shapeInfo.nDim).c_str(),
                                               "SwiGLU requires positive pre-activation N divisible by 64");
         return ACLNN_ERR_PARAM_INVALID;
@@ -748,15 +860,15 @@ static inline aclnnStatus CheckOutputShape(const QuantMatmulActivationQuantWeigh
     }
 
     int64_t yScaleDimNum = yScaleView.GetDimNum();
-    int64_t expectedScaleN = Ops::Base::CeilDiv(outputN, SPLIT_SIZE);
+    int64_t expectedScaleN = Ops::Base::CeilDiv(outputN, MX_SCALE_STORAGE_GROUP);
     if (yScaleView.GetDim(yScaleDimNum - LAST_THIRD_DIM_INDEX) != shapeInfo.mDim ||
         yScaleView.GetDim(yScaleDimNum - LAST_SECOND_DIM_INDEX) != expectedScaleN ||
-        yScaleView.GetDim(yScaleDimNum - LAST_FIRST_DIM_INDEX) != MXFP_MULTI_BASE_SIZE) {
+        yScaleView.GetDim(yScaleDimNum - LAST_FIRST_DIM_INDEX) != MX_SCALE_PAIR_SIZE) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             apiName, "yScale", op::ToString(yScaleView).GetString(),
             FormatString("yScale last three dims must be [%lld, %lld, %lld], but got [%lld, %lld, %lld]",
                          static_cast<long long>(shapeInfo.mDim), static_cast<long long>(expectedScaleN),
-                         static_cast<long long>(MXFP_MULTI_BASE_SIZE),
+                         static_cast<long long>(MX_SCALE_PAIR_SIZE),
                          static_cast<long long>(yScaleView.GetDim(yScaleDimNum - LAST_THIRD_DIM_INDEX)),
                          static_cast<long long>(yScaleView.GetDim(yScaleDimNum - LAST_SECOND_DIM_INDEX)),
                          static_cast<long long>(yScaleView.GetDim(yScaleDimNum - LAST_FIRST_DIM_INDEX)))
@@ -767,7 +879,7 @@ static inline aclnnStatus CheckOutputShape(const QuantMatmulActivationQuantWeigh
     return ACLNN_SUCCESS;
 }
 
-static inline bool CheckGroupSize(QuantMatmulActivationQuantWeightNzParams& params, const char* apiName)
+static inline bool CheckGroupSize(QuantMatmulActivationQuantParams& params, const char* apiName)
 {
     auto groupSize = params.groupSize;
     if (groupSize < 0) {
@@ -780,7 +892,7 @@ static inline bool CheckGroupSize(QuantMatmulActivationQuantWeightNzParams& para
     uint64_t groupSizeK = static_cast<uint64_t>(groupSize) & GROUP_MNK_BIT_SIZE;
 
     if (groupSize == 0) {
-        params.groupSize = (1UL << GROUP_M_OFFSET) | (1UL << GROUP_N_OFFSET) |
+        params.groupSize = (uint64_t{1} << GROUP_M_OFFSET) | (uint64_t{1} << GROUP_N_OFFSET) |
                            static_cast<uint64_t>(PERGROUP_GROUP_SIZE);
     } else if ((static_cast<uint64_t>(groupSize) >> GROUP_RESERVED_BIT_OFFSET) != 0 ||
                groupSizeK != static_cast<uint64_t>(PERGROUP_GROUP_SIZE) || groupSizeM != 1UL || groupSizeN != 1UL) {
@@ -790,13 +902,114 @@ static inline bool CheckGroupSize(QuantMatmulActivationQuantWeightNzParams& para
                          static_cast<unsigned long long>(groupSizeM), static_cast<unsigned long long>(groupSizeN),
                          static_cast<unsigned long long>(groupSizeK))
                 .c_str(),
-            "when the quantization mode is mx, groupSize must be 4295032864 and Torch API group_sizes must be [1, "
-            "1, 32]");
+            "when the quantization mode is mx, groupSize must be 0 or 4295032864: "
+            "bits [32,47], [16,31] and [0,15] encode groupSizeM=1, groupSizeN=1 and groupSizeK=32; "
+            "bits [48,63] must be zero");
         return false;
     }
 
     OP_LOGD("Group-size validation succeeded.");
     return true;
 }
+
+// Preserve caller descriptors; all preprocessing metadata belongs to executor-owned views.
+static inline bool PrepareInputViews(QuantMatmulActivationQuantParams& params, aclOpExecutor* executor)
+{
+    CHECK_RET(executor != nullptr, false);
+    for (auto* input : {&params.x1, &params.x2, &params.x1Scale, &params.x2Scale, &params.bias}) {
+        if (*input == nullptr) {
+            continue;
+        }
+        // Clone the base-storage descriptor: Contiguous validates against the original capacity and applies
+        // the offset itself. Its result (or the transpose fast path) has compact storage for kernel launch.
+        // Do not create an offset-reduced explicit-stride view and then restore its original storage shape.
+        auto view = executor->CreateView(*input, (*input)->GetStorageShape(), 0);
+        CHECK_RET(view != nullptr, false);
+        view->SetViewShape((*input)->GetViewShape());
+        view->SetViewStrides((*input)->GetViewStrides());
+        view->SetViewOffset((*input)->GetViewOffset());
+        view->SetViewFormat((*input)->GetViewFormat());
+        view->SetStorageFormat((*input)->GetStorageFormat());
+        view->SetOriginalFormat((*input)->GetOriginalFormat());
+        view->SetOriginalShape((*input)->GetViewShape());
+        *input = view;
+    }
+    return true;
+}
+
+static inline bool MxScaleContiguousProcess(const aclTensor*& mxScaleTensor, bool transposeScale,
+                                            aclOpExecutor* executor)
+{
+    if (mxScaleTensor == nullptr || mxScaleTensor->GetViewShape().GetDimNum() < MX_SCALE_MIN_RANK) {
+        OP_LOGD("MX scale tensor is absent or does not require contiguous conversion.");
+        return true;
+    }
+    CHECK_RET(executor != nullptr, false);
+    if (transposeScale) {
+        // Scale axes follow the matrix view normalization, not the scale's own layout.
+        auto shape = mxScaleTensor->GetViewShape();
+        auto strides = mxScaleTensor->GetViewStrides();
+        const auto rowAxis = shape.GetDimNum() - LAST_THIRD_DIM_INDEX;
+        const auto columnAxis = shape.GetDimNum() - LAST_SECOND_DIM_INDEX;
+        const auto rowDim = shape.GetDim(rowAxis);
+        shape.SetDim(rowAxis, shape.GetDim(columnAxis));
+        shape.SetDim(columnAxis, rowDim);
+        std::swap(strides[rowAxis], strides[columnAxis]);
+        auto scaleView = executor->CreateView(mxScaleTensor, mxScaleTensor->GetStorageShape(), 0);
+        CHECK_RET(scaleView != nullptr, false);
+        scaleView->SetViewShape(shape);
+        scaleView->SetViewStrides(strides);
+        scaleView->SetViewOffset(mxScaleTensor->GetViewOffset());
+        scaleView->SetOriginalShape(shape);
+        mxScaleTensor = scaleView;
+    }
+    // Contiguous checks every stride, including the last scale-pair axis, before reusing storage.
+    mxScaleTensor = l0op::Contiguous(mxScaleTensor, executor);
+    return mxScaleTensor != nullptr;
+}
+
+// Prepare scales, bias and the left matrix; ND and WeightNZ handle x2 separately.
+static inline aclnnStatus PrepareCommonInputs(QuantMatmulActivationQuantParams& params, aclOpExecutor* executor)
+{
+    auto x2ScaleNd = QuantMatmulActivationQuantAclnnCheck::SetTensorToNDFormat(params.x2Scale);
+    CHECK_RET(x2ScaleNd != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    params.x2Scale = x2ScaleNd;
+    auto x1ScaleNd = QuantMatmulActivationQuantAclnnCheck::SetTensorToNDFormat(params.x1Scale);
+    CHECK_RET(x1ScaleNd != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    params.x1Scale = x1ScaleNd;
+
+    if (params.bias != nullptr) {
+        auto biasNd = QuantMatmulActivationQuantAclnnCheck::SetTensorToNDFormat(params.bias);
+        CHECK_RET(biasNd != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        params.bias = biasNd;
+    }
+
+    auto reformattedX1 = QuantMatmulActivationQuantAclnnCheck::SetTensorToNDFormat(params.x1);
+    CHECK_RET(reformattedX1 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    params.x1 = reformattedX1;
+    CHECK_RET(QuantMatmulActivationQuantAclnnCheck::TensorContiguousProcess(params.x1, params.transposeX1, executor),
+              ACLNN_ERR_INNER_NULLPTR);
+    if (params.bias != nullptr) {
+        params.bias = l0op::Contiguous(params.bias, executor);
+        CHECK_RET(params.bias != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    return ACLNN_SUCCESS;
+}
+
+static inline aclnnStatus AddQuantMatmulActivationQuantTasks(const QuantMatmulActivationQuantParams& params,
+                                                             aclOpExecutor* executor)
+{
+    auto [yResult, yScaleResult] = l0op::QuantMatmulActivationQuant(
+        params.x1, params.x2, params.bias, params.x1Scale, params.x2Scale, params.transposeX1, params.transposeX2,
+        params.groupSize, params.activationType, params.yDtype, params.quantMode, params.roundMode, params.scaleAlg,
+        params.dstTypeMax, executor);
+    CHECK_RET(yResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    CHECK_RET(yScaleResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    CHECK_RET(l0op::ViewCopy(yResult, params.y, executor) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    CHECK_RET(l0op::ViewCopy(yScaleResult, params.yScale, executor) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    return ACLNN_SUCCESS;
+}
+
 } // namespace QBMMActivationQuant
 #endif

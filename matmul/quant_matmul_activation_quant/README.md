@@ -3,301 +3,363 @@
 ## 产品支持情况
 
 | 产品 | 是否支持 |
-| ---- | :----:|
-|<term>Ascend 950PR&950DT系列产品</term>|√|
-|<term>Atlas A3系列产品</term>|×|
-|<term>Atlas A2系列产品</term>|×|
-|<term>Atlas 200I/500 A2推理产品</term>|×|
-|<term>Atlas推理系列产品</term>|×|
-|<term>Atlas训练系列产品</term>|×|
+| --- | :---: |
+| <term>Ascend 950PR&950DT系列产品</term> | √ |
+| <term>Atlas A3系列产品</term> | × |
+| <term>Atlas A2系列产品</term> | × |
+| <term>Atlas 200I/500 A2推理产品</term> | × |
+| <term>Atlas推理系列产品</term> | × |
+| <term>Atlas训练系列产品</term> | × |
 
 ## 功能说明
 
-- 算子功能：融合量化的矩阵乘、激活以及动态量化，当前支持激活为GELU、SwiGLU和SiLU、MX [量化模式](../../docs/zh/context/quant_mode_introduction.md)。支持FP8（FLOAT8_E4M3FN/FLOAT8_E5M2）和FP4（FLOAT4_E2M1）数据类型输入输出。x2支持ND和NZ两种数据格式，当x2为NZ格式时通过[aclnnQuantMatmulActivationQuantWeightNz](docs/aclnnQuantMatmulActivationQuantWeightNz.md)接口调用，当x2为ND格式时通过[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)接口调用。
+- 算子功能：融合MX（Microscaling，微缩放）量化矩阵乘、激活和动态MX量化，输出量化结果及对应的缩放因子（scale）。支持GELU（Gaussian Error Linear Unit，高斯误差线性单元）的tanh/erf形式、SiLU（Sigmoid Linear Unit，Sigmoid线性单元）及SwiGLU（Swish Gated Linear Unit，Swish门控线性单元）。数据类型及转置组合见[约束说明](#约束说明)，MX模式介绍见[量化模式](../../docs/zh/context/quant_mode_introduction.md)。
 
-各激活的数据类型、ND/WeightNZ格式、转置及输出形状限制见[激活能力对照表](#激活能力对照表)。
+- 计算流程：先完成MX量化矩阵乘及偏置相加，再计算激活，最后执行动态MX量化。各步骤的计算公式如下。
 
-- 计算公式：
+以下公式省略batch下标，$X_1$、$X_2$表示按转置状态解释后的矩阵，形状分别为$(M,K)$、$(K,N)$。M为左矩阵的行数，K为公共归约维度，N为右矩阵的列数。
 
-  - <term>Ascend 950PR&950DT系列产品</term>：
+### MX量化矩阵乘
 
-    - QuantMatmul MX量化模式：
+沿K轴每32个元素划为一组，每组矩阵乘结果乘以对应的输入scale，再与偏置累加，得到$C$：
 
-      $$
-      matmulOut[m,n] = \sum_{j=0}^{kLoops-1} ((\sum_{k=0}^{gsK-1} (x1Slice * x2Slice))* (x1Scale[m/gsM, j] * x2Scale[j, n/gsN]))+bias[n]
-      $$
+$$
+C_{m,n}=\sum_{j=0}^{L-1}\left[
+\left(\sum_{t=0}^{g_j-1}X_{1,m,jg_K+t}\,X_{2,jg_K+t,n}\right)
+S_{1,m,j}\,S_{2,j,n}\right]+b_n
+$$
 
-      其中，gsM，gsN和gsK分别代表groupSizeM，groupSizeN和groupSizeK；x1Slice代表x1第m行长度为groupSizeK的向量，x2Slice代表x2第n列长度为groupSizeK的向量；K轴均从j*groupSizeK起始切片，j的取值范围为[0, kLoops)，kLoops = ceil(K / groupSizeK)，K为K轴长度，支持最后的切片长度不足groupSizeK。
+其中，$g_M$、$g_N$、$g_K$分别为M、N、K方向的分组大小，当前固定为$(1,1,32)$；$L=\lceil K/g_K\rceil$，$g_j=\min(g_K,K-jg_K)$。$S_1$、$S_2$分别表示`x1_scale`、`x2_scale`中第$j$组的scale，实际存储形状见参数和约束说明。矩阵乘采用FP32累加，偏置在激活前相加；未传入偏置时，$b_n=0$。
 
-    - 激活计算公式：
+### 激活
 
-      - GELU（tanh，高性能近似）：
+对矩阵乘结果$C$应用指定的激活函数，得到$A$：
 
-        $$
-        activationOut=GELU(matmulOut)=matmulOut × Φ(matmulOut)=0.5 * matmulOut * (1 + tanh( \sqrt{2 / \pi} * (matmulOut + 0.044715 * matmulOut^{3})))
-        $$
+- `activation_type="gelu_tanh"`：GELU的tanh近似。
 
-      - GELU（erf）：
+  $$
+  A=\frac{C}{2}\left[1+\tanh\left(\sqrt{\frac{2}{\pi}}\left(C+0.044715C^3\right)\right)\right]
+  $$
 
-        $$
-        activationOut=GELU(matmulOut)=0.5 * matmulOut * (1 + erf(matmulOut / \sqrt{2}))
-        $$
+- `activation_type="gelu_erf"`：GELU的erf形式。
 
-      - SwiGLU：原始N必须为正数且是64的倍数。先在完整FP32矩阵乘结果上加bias，再沿尾轴按`matmulOut=[gate | linear]`连续等分：
+  $$
+  A=\frac{C}{2}\left[1+\operatorname{erf}\left(\frac{C}{\sqrt{2}}\right)\right]
+  $$
 
-        $$
-        activationOut=SiLU(gate) * linear
-        $$
+- `activation_type="silu"`：逐元素计算SiLU。
 
-        SwiGLU结果以RNE舍入为BF16后执行MX量化，输出宽度为原始N的二分之一。
+  $$
+  A=\operatorname{SiLU}(C)=\frac{C}{1+e^{-C}}
+  $$
 
-      - SiLU：在完整FP32矩阵乘结果上加bias，逐元素计算
-        `SiLU(matmulOut)`（`SiLU(x) = x * sigmoid(x)`），再以RNE舍入为BF16后执行MX量化。输出保留原始N列。
+- `activation_type="swiglu"`：将$C$沿最后一维等分为左半部分$G$和右半部分$U$，对$G$计算SiLU后与$U$逐元素相乘。
 
-    - 动态量化计算公式：
+  $$
+  C=[G\mid U],\qquad A=\operatorname{SiLU}(G)\odot U=\frac{G}{1+e^{-G}}\odot U
+  $$
 
-      - 场景1，当scaleAlg为0时：
-        - 将输入activationOut在尾轴上按$k = 32$个数分组，一组k个数 $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\},\space k = 32$
+上述激活均在FP32中计算。记激活后的输出宽度为$H$：GELU和SiLU的$H=N$，SwiGLU的$H=N/2$。
 
-        $$
-        shared\_exp = floor(log_2(max_i(|V_i|))) - emax \\
-        mxscale = 2^{shared\_exp}\\
-        P_i = cast\_to\_dst\_type(V_i/mxscale, round\_mode), \space i\space from\space 1\space to\space k\\
-        $$
+### 动态MX量化
 
-        - 量化后的 $P_{i}$ 按对应的 $V_{i}$ 的位置组成输出`y`，mxscale按尾轴上的分组组成输出`y_scale`。
+将激活结果按最近偶数舍入模式（RNE）转换为BF16，即舍入到最近的可表示值，中间值取尾数最低位为0的值，再沿最后一维每32个元素划为一组。最后一组不足32个元素时补0参与scale计算，补齐元素不写入输出。
 
-        - emax: 对应数据类型的最大正则数的指数位。
+$$
+V_i=\operatorname{BF16}_{RNE}(A_i),\qquad a=\max_i|V_i|,\qquad s=2^e
+$$
 
-            |   DataType    | emax |
-            | :-----------: | :--: |
-            |  FLOAT4_E2M1  |  2   |
-            |  FLOAT4_E1M2  |  0   |
-            | FLOAT8_E4M3FN |  8   |
-            |  FLOAT8_E5M2  |  15  |
+每组共用一个scale $s$，按`round_mode`转换为输出数据类型$D$：
 
-      - 场景2，当scaleAlg为1时，只涉及FP8类型：
-        - 将输入activationOut在尾轴上按$k = 32$个数分块，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型FP8。如果最后一块不足$k = 32$个元素，把缺失值视为0，按照完整块处理。
-        - 找到该块中数值的最大绝对值:
+$$
+Q_i=\begin{cases}
+\operatorname{FP32}(V_i/s), & D\text{为FP8}\\
+\operatorname{BF16}_{RNE}(V_i/s), & D\text{为FP4}
+\end{cases},\qquad y_i=\operatorname{Cast}_{D,\,\mathrm{round\_mode}}(Q_i)
+$$
 
-          $$
-          Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
-          $$
+`y_scale`使用FLOAT8_E8M0存储scale。第$j$组写入`y_scale[..., m, j // 2, j % 2]`，输出形状为`(..., M, ceil(H/64), 2)`。
 
-        - 将FP32映射到目标数据类型FP8可表示的范围内，其中$Amax(DType)$是目标精度能表示的最大值:
+#### scale的计算方法
 
-          $$
-          S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
-          $$
+以下公式适用于$a>0$且有限的情况，令$p=\lfloor\log_2a\rfloor$。
 
-        - 将块缩放因子$S_{fp32}^b$转换为FP8格式下可表示的缩放值$S_{ue8m0}^b$
-        - 从块的浮点缩放因子$S_{fp32}^b$中提取无偏指数$E_{int}^b$和尾数$M_{fixp}^b$
-        - 为保证量化时不溢出，对指数进行向上取整，且在FP8可表示的范围内：
+- `scale_alg=0`：OCP（Open Compute Project，开放计算项目）共享指数算法，支持FP8和FP4。
 
-          $$
-          E_{int}^b = \begin{cases} E_{int}^b + 1, & \text{如果} S_{fp32}^b \text{为正规数，且} E_{int}^b < 254 \text{且} M_{fixp}^b > 0 \\ E_{int}^b + 1, & \text{如果} S_{fp32}^b \text{为非正规数，且} M_{fixp}^b > 0.5 \\ E_{int}^b, & \text{否则} \end{cases}
-          $$
+  $$
+  e=\max(-127,p-e_{\max})
+  $$
 
-        - 计算块缩放因子：$S_{ue8m0}^b=2^{E_{int}^b}$
-        - 计算块转换因子：$R_{fp32}^b=\frac{1}{fp32(S_{ue8m0}^b)}$
-        - 应用到量化的最终步骤，对于每个块内元素，$d^i = DType(d_{fp32}^i \cdot R_{fp32}^b)$，最终输出的量化结果是$\left(S^b, [d^i]_{i=1}^k\right)$，其中$S^b$代表块的缩放因子，这里指$S_{ue8m0}^b$，$[d^i]_{i=1}^k$代表块内量化后的数据。
+  FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1的$e_{\max}$分别为8、15、2。
 
-      - 场景3，当scaleAlg为2时，只涉及FP4_E2M1类型：
-        - 当dstTypeMax = 0.0/6.0/7.0时：
-          - 将输入activationOut在尾轴上按$k = blocksize$个数分组，一组k个数 $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = blocksize：
+- `scale_alg=1`：按目标类型的最大有限值计算scale，仅支持FP8。
 
-          $$
-          shared\_exp = \begin{cases} ceil(log_2(max_i(|V_i|))) - emax, & \text{如果尾数位的高比特前一/两位为1，且尾数不全为0} \\ floor(log_2(max_i(|V_i|))) - emax, & \text{其它} \end{cases}
-          $$
+  $$
+  S=\operatorname{FP32}\left(a\cdot\operatorname{FP32}(1/F_{\max})\right),\qquad
+  e=\max(-127,\lceil\log_2S\rceil)
+  $$
 
-          $$
-          P_i = cast\_to\_dst\_type(V_i/mxscale, round\_mode), \space i\space from\space 1\space to\space blocksize
-          $$
+  FLOAT8_E4M3FN、FLOAT8_E5M2的$F_{\max}$分别为448、57344。
 
-          - 量化后的$P_{i}$按对应的$V_{i}$的位置组成输出`y`，mxscale按尾轴上的分组组成输出`y_scale`。
+- `scale_alg=2`：按`dst_type_max`指定的范围计算scale，仅支持FP4。令$d=\operatorname{FP32}(\mathrm{dst\_type\_max})$，传入0时取$d=6$。
 
-        - 当dstTypeMax != 0.0/6.0/7.0时：
-          - 将输入activationOut在尾轴上按$k = blocksize$个数分块，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型。如果最后一块不足$k$个元素，把缺失值视为0，按照完整块处理。
-          - 找到该块中数值的最大绝对值:
+  当$d=6$或$d=7$时：
 
-            $$
-            Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
-            $$
+  $$
+  e=\max\left(-127,\begin{cases}
+  p-1, & a>d\cdot2^{p-2}\\
+  p-2, & a\le d\cdot2^{p-2}
+  \end{cases}\right)
+  $$
 
-          - 将FP32映射到目标数据类型可表示的范围内，其中当dstTypeMax=0时，$Amax(DType)$是目标精度能表示的最大值；当dstTypeMax!=0时，$Amax(DType)$是dstTypeMax传入值。
+  当$d$为$[6,12]$内的其他值时：
 
-            $$
-            S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
-            $$
+  $$
+  S=\operatorname{FP32}\left(a\cdot\operatorname{FP32}(1/d)\right),\qquad
+  e=\max(-127,\lceil\log_2S\rceil)
+  $$
 
-          - 将块缩放因子$S_{fp32}^b$转换为FP8格式下可表示的缩放值$S_{ue8m0}^b$。
-          - 从块的浮点缩放因子$S_{fp32}^b$中提取无偏指数$E_{int}^b$和尾数$M_{fixp}^b$。
-          - 为保证量化时不溢出，对指数进行向上取整，且在FP8可表示的范围内：
+E8M0以字节值$e+127$编码$2^e$。特殊情况如下：
 
-            $$
-            E_{int}^b = \begin{cases} E_{int}^b + 1, & \text{如果} S_{fp32}^b \text{为正规数，且} E_{int}^b < 254 \text{且} M_{fixp}^b > 0 \\ E_{int}^b, & \text{否则} \end{cases}
-            $$
-
-          - 计算块缩放因子：$S_{ue8m0}^b=2^{E_{int}^b}$
-          - 计算块转换因子：$R_{fp32}^b=\frac{1}{fp32(S_{ue8m0}^b)}$
-          - 应用到量化的最终步骤，对于每个块内元素，$d^i = DType(d_{fp32}^i \cdot R_{fp32}^b)$，最终输出的量化结果是$\left(S^b, [d^i]_{i=1}^k\right)$，其中$S^b$代表块的缩放因子，这里指$S_{ue8m0}^b$，$[d^i]_{i=1}^k$代表块内量化后的数据。
-          - 量化后的$P_{i}$按对应的$V_{i}$的位置组成输出`y`，mxscale按尾轴上的分组组成输出`y_scale`。
-
-### FP8缩放算法选择
-
-- `scale_alg=0`使用OCP共享指数算法，与[DynamicMxQuant](../../quant/dynamic_mx_quant/README.md)、[SwigluMxQuant](../../quant/swiglu_mx_quant/README.md)的OCP语义一致。该算法按最大指数直接生成2的整数次幂scale，不会根据目标FP8最大有限值额外上调scale；归一化结果位于FP8表示边界外时，输出由底层FP8类型转换语义决定。
-- `scale_alg=1`使用BLAS算法，按目标FP8最大有限值计算scale并将E8M0指数向上取整，可降低边界值量化溢出的风险。输入可能触及FP8表示边界且业务要求有限输出时，建议使用该算法。
-- 在相同输出dtype、32元素分组和`scale_alg`下，融合算子只是在量化前增加矩阵乘和激活，scale生成方式以及FP8转换规则与拆分调用小算子保持一致。
-
-## 激活能力对照表
-
-以下均为MX量化模式，`N`表示矩阵乘的原始输出宽度，`H`表示激活后的输出宽度。GELU包含`gelu_tanh`和`gelu_erf`，SwiGLU、SiLU分别对应`swiglu`、`silu`。
-
-| 激活 | 输入/输出类型 | x2格式 | transposeX1 | transposeX2 | 原始N约束 | 输出宽度H | scaleAlg | roundMode |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| GELU | FP8 | ND | false/true | false/true | N > 0，无额外对齐要求 | N | 0/1 | rint |
-| GELU | FP8 | WeightNZ | false/true | false/true | N > 1，无额外对齐要求 | N | 0/1 | rint |
-| GELU | FP4 | ND | false/true | false/true | 正偶数 | N | 0/2 | rint/floor/round |
-| GELU | FP4 | WeightNZ | false | false/true | 正偶数 | N | 0/2 | rint/floor/round |
-| SwiGLU | FP8 | ND | false/true | false/true | 正数且为64的倍数 | N/2 | 0/1 | rint |
-| SwiGLU | FP8 | WeightNZ | false | false/true | 正数且为64的倍数 | N/2 | 0/1 | rint |
-| SiLU | FP8 | ND | false/true | false/true | N > 0，无额外对齐要求，可为65 | N | 0/1 | rint |
-| SiLU | FP8 | WeightNZ | false | false/true | N > 1，无额外对齐要求，可为65 | N | 0/1 | rint |
-
-- **SiLU逐元素计算，不做N/2 split，输出保留完整N列；SwiGLU的N为64倍数限制不适用于SiLU。SwiGLU和SiLU均不支持FP4。**
-- FP8场景中，`x1`和`y`同为FLOAT8_E4M3FN或同为FLOAT8_E5M2；ND的`x2`可为这两种类型，WeightNZ的`x2`仅支持FLOAT8_E4M3FN。FP4场景中，`x1`、`x2`、`y`均为FLOAT4_E2M1。所有场景的输入和输出scale均为E8M0。
-- 输出逻辑shape统一为`y=[..., M, H]`、`y_scale=[..., M, ceil(H/64), 2]`。因此SiLU的`y_scale=[..., M, ceil(N/64), 2]`，N=65时为`[..., M, 2, 2]`；FP4在PyTorch侧的`y`按uint8双元素打包，物理尾轴为H/2。
-- 表中的`transposeX1/X2`为ACLNN参数，对应算子属性`transpose_x1/x2`；PyTorch API通过Tensor及对应scale的转置视图表达。WeightNZ还要求K > 1；FP4还要求K > 2且x1、x2的内轴为偶数。
-
-ND和WeightNZ分别通过[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)和[aclnnQuantMatmulActivationQuantWeightNz](docs/aclnnQuantMatmulActivationQuantWeightNz.md)调用；[PyTorch API](docs/torchapi_quant_matmul_activation_quant.md)按x2格式选择接口。
+- 全零组的量化结果为0，scale的编码为0；输出scale中无对应数据分组的补齐位置也填入编码0。该编码表示$2^{-127}$。
+- $S=0$时取$e=-127$。算法0，以及算法2中$d=6$或$d=7$的分支，在scale编码为0时将该组量化结果置0。
+- 含NaN或Inf的组，scale的编码为255（NaN）。
 
 ## 参数说明
 
-<table class="tg" style="undefined;table-layout: fixed; width: 1166px"><colgroup>
-<col style="width: 81px">
-<col style="width: 121px">
-<col style="width: 430px">
-<col style="width: 390px">
-<col style="width: 144px">
+<table style="table-layout: fixed; width: 1370px">
+<colgroup>
+<col style="width: 180px">
+<col style="width: 140px">
+<col style="width: 600px">
+<col style="width: 300px">
+<col style="width: 150px">
 </colgroup>
 <thead>
   <tr>
-    <th class="tg-xbcz"><span style="font-weight:700;color:var(--theme-text);background-color:var(--theme-table-header-bg)">参数名</span></th>
-    <th class="tg-xbcz"><span style="font-weight:700;color:var(--theme-text);background-color:var(--theme-table-header-bg)">输入/输出/属性</span></th>
-    <th class="tg-xbcz"><span style="font-weight:700;color:var(--theme-text);background-color:var(--theme-table-header-bg)">描述</span></th>
-    <th class="tg-xbcz"><span style="font-weight:700;color:var(--theme-text);background-color:var(--theme-table-header-bg)">数据类型</span></th>
-    <th class="tg-xbcz"><span style="font-weight:700;color:var(--theme-text);background-color:var(--theme-table-header-bg)">数据格式</span></th>
-  </tr></thead>
+    <th>参数名</th>
+    <th>输入/输出/属性</th>
+    <th>描述</th>
+    <th>数据类型</th>
+    <th>数据格式</th>
+  </tr>
+</thead>
 <tbody>
   <tr>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">x1</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">输入</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">矩阵乘运算中的左矩阵。</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">FLOAT8_E4M3FN, FLOAT8_E5M2, FLOAT4_E2M1</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">ND</span></td>
+    <td>x1</td>
+    <td>输入</td>
+    <td>矩阵乘的左矩阵，对应公式中的X<sub>1</sub>。</td>
+    <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1</td>
+    <td>ND</td>
   </tr>
   <tr>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">x2</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">输入</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">矩阵乘运算中的右矩阵。</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">FLOAT8_E4M3FN, FLOAT8_E5M2, FLOAT4_E2M1</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">FRACTAL_NZ, ND</span></td>
+    <td>x2</td>
+    <td>输入</td>
+    <td>矩阵乘的右矩阵，对应公式中的X<sub>2</sub>。NZ不支持FLOAT8_E5M2。</td>
+    <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1</td>
+    <td>ND、FRACTAL_NZ</td>
   </tr>
   <tr>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">x1_scale_optional</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">可选输入</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">矩阵乘计算时，量化参数的缩放因子，对应公式的x1Scale。</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">FLOAT8_E8M0</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">ND</span></td>
+    <td>bias</td>
+    <td>可选输入</td>
+    <td><ul>
+      <li>在激活前相加的偏置，对应公式中的b。</li>
+      <li>未提供时不加偏置。</li>
+    </ul></td>
+    <td>FLOAT32</td>
+    <td>ND</td>
   </tr>
   <tr>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">x2_scale</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">输入</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">矩阵乘计算时，量化参数的缩放因子，对应公式的x2Scale。</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">FLOAT8_E8M0</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">ND</span></td>
+    <td>x1_scale</td>
+    <td>可选输入</td>
+    <td><ul>
+      <li>x1的分组scale，对应公式中的S<sub>1</sub>。</li>
+      <li>在算子原型中定义为可选输入；本算子仅支持MX模式，执行时必须提供。</li>
+    </ul></td>
+    <td>FLOAT8_E8M0</td>
+    <td>ND</td>
   </tr>
   <tr>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">bias_optional</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">可选输入</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">矩阵乘运算后累加的偏置，对应公式中的bias。</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">FLOAT32</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">ND</span></td>
+    <td>x2_scale</td>
+    <td>可选输入</td>
+    <td><ul>
+      <li>x2的分组scale，对应公式中的S<sub>2</sub>。</li>
+      <li>在算子原型中定义为可选输入；本算子仅支持MX模式，执行时必须提供。</li>
+    </ul></td>
+    <td>FLOAT8_E8M0</td>
+    <td>ND</td>
   </tr>
   <tr>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">y</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">输出</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">动态量化后的矩阵乘及激活计算结果。</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">FLOAT8_E4M3FN, FLOAT8_E5M2, FLOAT4_E2M1</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--devui-base-bg, #ffffff)">ND</span></td>
+    <td>y</td>
+    <td>输出</td>
+    <td>动态量化结果，对应公式中的y，数据类型须与x1一致。</td>
+    <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1</td>
+    <td>ND</td>
   </tr>
   <tr>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">y_scale</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">输出</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">动态量化后每个分组对应的量化尺度。</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">FLOAT8_E8M0</span></td>
-    <td class="tg-zgfj"><span style="color:var(--theme-aide-text);background-color:var(--theme-table-header-bg)">ND</span></td>
+    <td>y_scale</td>
+    <td>输出</td>
+    <td>每32个输出元素对应的scale，对应公式中的s。</td>
+    <td>FLOAT8_E8M0</td>
+    <td>ND</td>
   </tr>
-</tbody></table>
-
-### 属性说明
-
-| 属性名 | 描述 | 默认值 |
-| --- | --- | --- |
-| transpose_x1 | 表示x1的输入shape是否转置。 | false |
-| transpose_x2 | 表示x2的输入shape是否转置。 | false |
-| group_size | 用于输入m、n、k方向上的量化分组大小，由groupSizeM、groupSizeN、groupSizeK三个值拼接组成。当前MX场景仅支持[1, 1, 32]。 | 0 |
-| activation_type | 激活函数类型，支持"gelu_tanh"、"gelu_erf"、"swiglu"和"silu"。 | "gelu_tanh" |
-| y_dtype | 输出y的数据类型。 | DT_FLOAT8_E4M3FN |
-| quant_mode | 量化模式，当前支持"mx"。 | "mx" |
-| round_mode | 舍入模式。当y为FLOAT4_E2M1时支持"rint"、"floor"、"round"；当y为FLOAT8时仅支持"rint"。 | "rint" |
-| scale_alg | 缩放算法。当y为FLOAT4_E2M1时支持0和2；当y为FLOAT8时支持0和1。 | 0 |
-| dst_type_max | 目标数据类型最大值，用于量化范围控制。当scale_alg为0或1时不生效；当scale_alg为2时支持取值0.0和6.0-12.0。 | 0.0 |
+  <tr>
+    <td>transpose_x1</td>
+    <td>可选属性</td>
+    <td><ul>
+      <li>是否转置x1的最后两维：false表示不转置，true表示转置。</li>
+      <li>默认false。</li>
+    </ul></td>
+    <td>BOOL</td>
+    <td>-</td>
+  </tr>
+  <tr>
+    <td>transpose_x2</td>
+    <td>可选属性</td>
+    <td><ul>
+      <li>是否转置x2的最后两维：false表示不转置，true表示转置。</li>
+      <li>默认false。</li>
+    </ul></td>
+    <td>BOOL</td>
+    <td>-</td>
+  </tr>
+  <tr>
+    <td>group_size</td>
+    <td>可选属性</td>
+    <td><ul>
+      <li>输入量化在M、N、K方向的分组大小编码，仅支持0或4295032864，均表示[1,1,32]。</li>
+      <li>默认0。</li>
+    </ul></td>
+    <td>INT64</td>
+    <td>-</td>
+  </tr>
+  <tr>
+    <td>activation_type</td>
+    <td>可选属性</td>
+    <td><ul>
+      <li>激活类型，支持"gelu_tanh"、"gelu_erf"、"silu"、"swiglu"。</li>
+      <li>默认"gelu_tanh"。</li>
+    </ul></td>
+    <td>STRING</td>
+    <td>-</td>
+  </tr>
+  <tr>
+    <td>y_dtype</td>
+    <td>可选属性</td>
+    <td><ul>
+      <li>y的数据类型枚举，支持FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1对应的枚举值，所指定的数据类型须与x1一致。</li>
+      <li>默认为FLOAT8_E4M3FN对应的枚举值。</li>
+    </ul></td>
+    <td>INT64</td>
+    <td>-</td>
+  </tr>
+  <tr>
+    <td>quant_mode</td>
+    <td>可选属性</td>
+    <td><ul>
+      <li>量化模式，仅支持"mx"。</li>
+      <li>默认"mx"。</li>
+    </ul></td>
+    <td>STRING</td>
+    <td>-</td>
+  </tr>
+  <tr>
+    <td>round_mode</td>
+    <td>可选属性</td>
+    <td><ul>
+      <li>转换为输出数据类型时的舍入模式。FP8仅支持"rint"，表示舍入到最近的可表示值，中间值取尾数最低位为0的值。</li>
+      <li>FP4还支持"floor"（向负无穷方向舍入）和"round"（舍入到最近的可表示值，中间值向远离0的方向舍入）。</li>
+      <li>默认"rint"。</li>
+    </ul></td>
+    <td>STRING</td>
+    <td>-</td>
+  </tr>
+  <tr>
+    <td>scale_alg</td>
+    <td>可选属性</td>
+    <td><ul>
+      <li>输出scale的计算方法，FP8支持0、1，FP4支持0、2。</li>
+      <li>算法定义见<a href="#scale的计算方法">scale的计算方法</a>，默认0。</li>
+    </ul></td>
+    <td>INT64</td>
+    <td>-</td>
+  </tr>
+  <tr>
+    <td>dst_type_max</td>
+    <td>可选属性</td>
+    <td><ul>
+      <li>scale_alg=2时计算输出scale所用的参考上限，对应公式中的d。</li>
+      <li>支持0.0（等价于6.0）或[6.0,12.0]内的有限值。</li>
+      <li>默认0.0；其他算法忽略该属性。</li>
+    </ul></td>
+    <td>FLOAT32</td>
+    <td>-</td>
+  </tr>
+</tbody>
+</table>
 
 ## 约束说明
 
-- 不支持空tensor。
-- 支持连续tensor，[非连续tensor](../../docs/zh/context/non_contiguous_tensor.md)仅支持最后两根轴转置场景。
-- 输入和输出支持以下数据类型组合:
+以下为执行时的输入要求，具体ACLNN布局限制见对应接口文档。
 
-    | x1            | x2            | x1_scale    | x2_scale    | bias         | y                         | y_scale      |
-    |---------------|---------------|-------------|-------------|--------------|---------------------------|-------------|
-    | FLOAT8_E4M3FN | FLOAT8_E4M3FN | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT8_E4M3FN             | FLOAT8_E8M0 |
-    | FLOAT8_E5M2   | FLOAT8_E4M3FN | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT8_E5M2               | FLOAT8_E8M0 |
-    | FLOAT8_E5M2   | FLOAT8_E5M2   | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT8_E5M2               | FLOAT8_E8M0 |
-    | FLOAT8_E4M3FN | FLOAT8_E5M2   | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT8_E4M3FN             | FLOAT8_E8M0 |
-    | FLOAT4_E2M1   | FLOAT4_E2M1   | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT4_E2M1               | FLOAT8_E8M0 |
+- x1、x2的逻辑维数为2～6；不支持空Tensor，各维度须为正整数。
+- x1、x2的各逻辑维度及广播后的batch维乘积不超过$2^{32}-1$，激活前输出元素数不超过$2^{63}-1$。
+- 输入scale和输出scale均为FLOAT8_E8M0；bias传入时的数据类型须为FLOAT32。
 
-  - x2为FLOAT8_E5M2时仅支持ND格式，不支持NZ格式。
-  - GELU、SwiGLU和SiLU场景y的数据类型都由x1的数据类型决定，必须保持一致；SwiGLU和SiLU仅支持MXFP8，不支持MXFP4。
-  - MXFP4场景约束（x1、x2、y数据类型均为FLOAT4_E2M1）：
-    - scale_alg仅支持取值0和2。
-    - 当scale_alg为2时，dst_type_max支持取值0.0和6.0-12.0。
-    - round_mode支持"rint"、"floor"、"round"。
-    - x1和x2的内轴必须为偶数，且k必须大于2。
-    - y的N维度必须为偶数。
-    - 当x2为NZ格式时，x1不支持转置。
+矩阵和输出支持以下组合：
+
+| x1 | x2 | y | x2格式 |
+| --- | --- | --- | --- |
+| FLOAT8_E4M3FN | FLOAT8_E4M3FN | FLOAT8_E4M3FN | ND、FRACTAL_NZ |
+| FLOAT8_E5M2 | FLOAT8_E4M3FN | FLOAT8_E5M2 | ND、FRACTAL_NZ |
+| FLOAT8_E4M3FN | FLOAT8_E5M2 | FLOAT8_E4M3FN | ND |
+| FLOAT8_E5M2 | FLOAT8_E5M2 | FLOAT8_E5M2 | ND |
+| FLOAT4_E2M1 | FLOAT4_E2M1 | FLOAT4_E2M1 | ND、FRACTAL_NZ |
+
+### 激活与转置
+
+<a id="激活能力对照表"></a>
+
+下表中，FP8指FLOAT8_E4M3FN或FLOAT8_E5M2，FP4指FLOAT4_E2M1；同时须满足上方的数据类型组合要求。
+
+| activation_type | 数据类型 | 输出宽度H | N的要求 | x2为ND时的transpose_x1 | x2为NZ时的transpose_x1 |
+| --- | --- | --- | --- | --- | --- |
+| "gelu_tanh"、"gelu_erf" | FP8 | N | N > 0 | false、true | false、true |
+| "gelu_tanh"、"gelu_erf" | FP4 | N | 正偶数 | false、true | false |
+| "silu" | FP8 | N | N > 0 | false、true | false |
+| "swiglu" | FP8 | N/2 | 64的正整数倍 | false、true | false |
+
+`transpose_x2`均支持false、true。x2为NZ时，K、N均须大于1。
+
+FP4仅支持GELU，且K > 2、N为偶数。FP4输入x1和x2在连续存储布局下的最内轴须为偶数：x1不转置时检查K，转置时检查M；x2不转置时检查N，转置时检查K。
+
+### 形状
+
+`batch1`、`batch2`表示各输入前0～4个batch维，`batch`表示右对齐广播后的batch维；没有batch维时省略该部分。令`K64=ceil(K/64)`，其中ceil表示向上取整。以下均为逻辑形状，FP4的维度按4位元素计数：
+
+| 张量 | 不转置 | 转置 |
+| --- | --- | --- |
+| x1 | `(batch1, M, K)` | `(batch1, K, M)` |
+| x1_scale | `(batch1, M, K64, 2)` | `(batch1, K64, M, 2)` |
+| x2 | `(batch2, K, N)` | `(batch2, N, K)` |
+| x2_scale | `(batch2, K64, N, 2)` | `(batch2, N, K64, 2)` |
+
+- 两个输入的K必须相等；输入scale的batch维必须与对应矩阵逐维一致。
+- 每32个K元素对应一个输入scale，相邻两组scale按顺序存放在长度为2的末维中。
+- `y`的形状为`(batch, M, H)`，`y_scale`为`(batch, M, ceil(H/64), 2)`，H由激活类型决定。
+- bias的形状为`(N,)`；仅当输出为三维时，还支持`(B, 1, N)`，B须等于广播后的batch大小。SwiGLU的bias长度仍为激活前的N。
+
+`group_size`的非零值按`(groupSizeM << 32) | (groupSizeN << 16) | groupSizeK`编码，高16位为0；本算子的分组固定为`[1,1,32]`。
 
 ## 调用说明
 
-  | 调用方式   | 样例代码           | 说明                                         |
-  | ---------------- | --------------------------- | --------------------------------------------------- |
-  | ACLNN：GELU + MXQuant，ND权重 | [test_aclnn_quant_matmul_gelu_mx_quant](examples/arch35/test_aclnn_quant_matmul_gelu_mx_quant.cpp) | 使用[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)，激活为`gelu_tanh`，输出宽度为N。 |
-  | ACLNN：GELU + MXQuant，WeightNZ权重 | [test_aclnn_quant_matmul_gelu_mx_quant_weight_nz](examples/arch35/test_aclnn_quant_matmul_gelu_mx_quant_weight_nz.cpp) | 先转换权重，再调用[aclnnQuantMatmulActivationQuantWeightNz](docs/aclnnQuantMatmulActivationQuantWeightNz.md)，激活为`gelu_tanh`。 |
-  | ACLNN：SwiGLU + MXQuant，ND权重 | [test_aclnn_quant_matmul_swiglu_mx_quant](examples/arch35/test_aclnn_quant_matmul_swiglu_mx_quant.cpp) | 使用[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)，激活为`swiglu`，包含`[N]` FP32 bias，输出宽度为N/2。 |
-  | PyTorch API | - | 通过<br>[quant_matmul_activation_quant](docs/torchapi_quant_matmul_activation_quant.md)<br>调用QuantMatmulActivationQuant算子。 |
+| 调用方式 | 样例代码 | 说明 |
+| --- | --- | --- |
+| aclnn API | [GELU样例](examples/arch35/test_aclnn_quant_matmul_gelu_mx_quant.cpp)、[SwiGLU样例](examples/arch35/test_aclnn_quant_matmul_swiglu_mx_quant.cpp) | 通过[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)调用，x2使用ND格式。 |
+| aclnn API | [GELU的NZ权重样例](examples/arch35/test_aclnn_quant_matmul_gelu_mx_quant_weight_nz.cpp) | 通过[aclnnQuantMatmulActivationQuantWeightNz](docs/aclnnQuantMatmulActivationQuantWeightNz.md)调用，x2使用FRACTAL_NZ格式。 |
+| GE图模式 | - | 通过[QuantMatmulActivationQuant算子IR](op_graph/quant_matmul_activation_quant_proto.h)构图调用。 |
+| PyTorch API | [FP8和FP4调用示例](docs/torchapi_quant_matmul_activation_quant.md#调用示例) | 通过[cann_ops_nn.quant_matmul_activation_quant](docs/torchapi_quant_matmul_activation_quant.md)调用；扩展安装方法见[PyTorch扩展说明](../../torch_extension/README.md)。 |
 
-## SwiGLU支持范围
+## 参考资源
 
-`activation_type="swiglu"`在完整FP32矩阵乘结果加bias后，沿最后一维按`C=[gate | linear]`连续等分，计算`SiLU(gate) * linear`，将SwiGLU结果以RNE舍入为BF16后执行MX量化。
-
-- 原始`N`必须为正数且是64的倍数；输出宽度`N/2`可有32列尾块。
-- `x1`、`x2`为E4M3FN或E5M2，`y`的数据类型必须与`x1`一致；输入和输出scale为E8M0。
-- `x2`支持ND或WeightNZ，具体数据类型和转置组合见[激活能力对照表](#激活能力对照表)。
-- `bias`可为空；非空时为FP32`[N]`，三维输出场景还支持`[B,1,N]`。bias在split之前作用于完整原始N宽度，不接受`[N/2]`。
-- 输入rank为2～6，batch轴右对齐广播；scale的batch维必须与对应输入一致。
-- `quant_mode="mx"`、`round_mode="rint"`、`scale_alg=0/1`；group size为默认值或`[1,1,32]`。
-
-SwiGLU输出形状为`y=[...,M,N/2]`、`y_scale=[...,M,ceil((N/2)/64),2]`。GELU和SiLU输出宽度仍为N。两个32元素量化组构成一个64元素scale存储组，末尾不足的元素不写入y。
-
-ND与WeightNZ接口约束分别见[aclnnQuantMatmulActivationQuant](docs/aclnnQuantMatmulActivationQuant.md)和[aclnnQuantMatmulActivationQuantWeightNz](docs/aclnnQuantMatmulActivationQuantWeightNz.md)。
+- 测试运行方式见[测试说明](tests/README.md)。

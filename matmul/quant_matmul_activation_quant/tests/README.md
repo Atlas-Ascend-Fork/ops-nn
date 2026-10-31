@@ -1,42 +1,41 @@
 # QuantMatmulActivationQuant 测试
 
-覆盖 GELU（tanh/erf）的 MXFP8、MXFP4 通路，以及 SwiGLU、SiLU 的 MXFP8 通路。
+覆盖GELU（tanh/erf）的MXFP8、MXFP4计算，以及SwiGLU、SiLU的MXFP8计算。算子规格见[README](../README.md)。
 
-| 目录 | 内容 |
+| 目录 | 测试内容 |
 | --- | --- |
-| `ut/op_api` | ND、WeightNZ 接口测试 |
-| `ut/op_host` | InferShape、Host tiling 测试 |
-| `ut/op_kernel` | CSV 驱动的 Kernel UT |
-| `st/arch35` | TTK Kernel、ACLNN、E2E 用例 |
-| `assets` | Golden 与比较器 |
+| [ut/op_api](ut/op_api) | ND、NZ接口的参数和布局校验 |
+| [ut/op_host](ut/op_host) | 形状推导和Tiling |
+| [ut/op_kernel](ut/op_kernel) | CSV驱动的Kernel UT |
+| [st/arch35](st/arch35) | TTK Kernel、ACLNN、E2E测试 |
+| [assets/spec.py](assets/spec.py) | 参考计算（Golden）和精度比较器 |
 
-## 环境
+## 环境准备
 
-- Linux、Ascend950、配套 CANN 和 ops-tensor/Blaze；Kernel UT 需要 tikicpulib。
-- 安装当前版本的 Host/API 和 Kernel 算子包，参见[编译安装说明](../../../docs/zh/install/build.md)。
-- TTK 需要 `ml-dtypes`、`en-dtypes>=0.0.4`；ACLNN、E2E 和 NPU Golden 需要配套的 `torch`、`torch_npu`，E2E 还需要 TorchAir 和 `cann_ops_nn`。
-- TTK 需支持 WeightNZ 完整存储传递，以及非原生 dtype（FP4）的自定义 NPU Golden。
+- 使用Linux和Ascend 950，配置配套的CANN、ops-tensor/Blaze，并安装当前版本的Host/API及Kernel算子包，参见[编译安装说明](../../../docs/zh/install/build.md)。Kernel UT还需要tikicpulib。
+- TTK需要`ml-dtypes`、`en-dtypes>=0.0.4`。ACLNN、E2E和NPU Golden需要`torch`、`torch_npu`；E2E还需要`cann_ops_nn`。
+- 测试NZ或FP4时，TTK须支持完整NZ存储的传递，以及FP4自定义NPU Golden。
 
 ## Kernel UT
 
-在 ops-nn 根目录执行：
+在ops-nn根目录执行：
 
 ```bash
 bash build.sh -u --opkernel --ops=quant_matmul_activation_quant --soc=ascend950
 ```
 
-用例由 [CSV](ut/op_kernel/test_quant_matmul_activation_quant.csv) 驱动。修改输入或计算参数时，同步更新 `expectedY`、`expectedYScale`。
+用例见[Kernel UT CSV](ut/op_kernel/test_quant_matmul_activation_quant.csv)。修改输入或计算参数时，须同步更新期望值`expectedY`和`expectedYScale`。
 
 ## TTK ST
 
-| 通路 | 子命令 | 用例文件 | 融合算子设备耗时列 |
+| 测试入口 | 子命令 | 用例文件 | 融合算子的设备耗时列 |
 | --- | --- | --- | --- |
 | Kernel | `kernel` | [Kernel CSV](st/arch35/ttk_kernel_quant_matmul_activation_quant_st.csv) | `dyn_perf_us`（默认动态编译） |
 | ACLNN ND | `aclnn` | [ND CSV](st/arch35/ttk_aclnn_quant_matmul_activation_quant_st.csv) | `op_perf_us` |
-| ACLNN WeightNZ | `aclnn` | [WeightNZ CSV](st/arch35/ttk_aclnn_quant_matmul_activation_quant_weight_nz_st.csv) | `op_perf_us` |
+| ACLNN NZ | `aclnn` | [NZ CSV](st/arch35/ttk_aclnn_quant_matmul_activation_quant_weight_nz_st.csv) | `op_perf_us` |
 | E2E | `e2e` | [E2E CSV](st/arch35/ttk_e2e_quant_matmul_activation_quant_st.csv) | `eager_device_perf_us` |
 
-在 ops-test-kit 目录运行，例如 ACLNN ND：
+以ACLNN ND为例，在ops-test-kit目录运行：
 
 ```bash
 cd /path/to/ops-test-kit
@@ -46,28 +45,40 @@ python3 -m ttk aclnn \
   --plugin "$OP_TESTS/assets/spec.py" --seed 42
 ```
 
-其余通路按表替换子命令和 CSV。默认使用 CPU Golden，检查结果 CSV 的 `precision_status` 是否为 `PASS`。
+其他入口替换子命令和CSV即可。默认使用CPU Golden进行精度检查，结果CSV的`precision_status`应为`PASS`。
 
-用例配置约定：
+本算子的E2E交付和验收范围为PyTorch eager，仅验证单算子调用：
 
-- Kernel NZ：`input_shapes` 填物理形状，`input_ori_shapes` 填逻辑形状，`input_ori_formats` 填 `ND`。
-- ACLNN NZ：`tensor_view_shapes` 填逻辑形状，`tensor_storage_shapes` 显式填写完整物理形状。FP8 权重的逻辑形状为 `(*batch, R, C)` 时，物理形状为 `(*batch, ceil(C/32), ceil(R/16), 16, 32)`。
-- E2E：API 为 `cann_ops_nn.ops.quant_matmul_activation_quant`，张量顺序为 `x1,x2,x2_scale,x1_scale,bias`；矩阵视图保持 `(...,M,K)`、`(...,K,N)`。
-- 输出 dtype 属性：Kernel 使用 `y_dtype`，ACLNN 使用 `yDtype`，E2E 使用 `output_dtype`。E2E FP4 使用 `uint8` 打包，并设置 `output_dtype/x1_dtype/x2_dtype=296`。具体枚举及布局参考各通路 CSV。
+```bash
+python3 -m ttk e2e \
+  -i "$OP_TESTS/st/arch35/ttk_e2e_quant_matmul_activation_quant_st.csv" \
+  --plugin "$OP_TESTS/assets/spec.py" --golden-mode Enable --seed 42 \
+  --eager=true -c=false -d=false -o e2e_results.csv
+```
 
-## 拼接性能对比
+检查`eager_precision`有精度结果，且`precision_status`为`PASS`。静态图和动态图不在交付范围内。
 
-Kernel、ACLNN（含 WeightNZ）和 E2E 均可通过 `--golden-mode NPU` 测量以下拼接标杆：
+### 用例配置
 
-| 激活 | 量化类型 | 拼接标杆 |
+- Kernel NZ：`input_shapes`填写物理形状，`input_ori_shapes`填写逻辑形状，`input_ori_formats`填写`ND`。
+- ACLNN NZ：`tensor_view_shapes`填写逻辑形状，`tensor_storage_shapes`填写完整物理形状。例如FP8权重的逻辑形状为`(batch,R,C)`时，物理形状为`(batch,ceil(C/32),ceil(R/16),16,32)`。
+- E2E：CSV中的API名称为`cann_ops_nn.ops.quant_matmul_activation_quant`，Tensor顺序为`x1,x2,x2_scale,x1_scale,bias`；矩阵的逻辑视图为`(...,M,K)`、`(...,K,N)`。
+- 输出类型在Kernel CSV中使用`y_dtype`，ACLNN CSV中使用`yDtype`，E2E CSV中使用`output_dtype`。这些是测试配置字段；ACLNN接口本身通过输出Tensor描述数据类型。枚举值按对应CSV填写。
+- E2E FP4使用uint8打包，并设置`x1_dtype=x2_dtype=output_dtype=296`，布局见[PyTorch接口文档](../docs/torchapi_quant_matmul_activation_quant.md#布局与存储)。
+
+## 与独立算子组合的性能对比
+
+使用`--golden-mode NPU`，可测量以下参考组合。QBMM表示量化矩阵乘，括号内为该步骤的输出类型。
+
+| 激活 | 量化类型 | 参考组合 |
 | --- | --- | --- |
 | SiLU | MXFP8 | QBMM(FP32) → SiLU(FP32) → Cast(BF16) → DynamicMxQuant |
-| SwiGLU | MXFP8 | QBMM(BF16) → SwigluMxQuant（尾轴切分、左半激活、mode=0） |
+| SwiGLU | MXFP8 | QBMM(BF16) → SwigluMxQuant（沿尾轴等分，激活左半部分，mode=0） |
 | GELU（tanh/erf） | MXFP8、MXFP4 | QBMM(FP32) → GELU(FP32) → Cast(BF16) → DynamicMxQuant |
 
-Cast 计入标杆耗时。SwiGLU 需环境提供 `torch_npu.npu_swiglu_mx_quant`。MXFP8 支持 `scale_alg=0/1`、`round_mode="rint"`；MXFP4 支持 `scale_alg=0/2`、`round_mode="rint"/"floor"/"round"`，并传递 `dst_type_max`。
+Cast计入参考组合耗时。SwiGLU需要`torch_npu.npu_swiglu_mx_quant`。量化算法和舍入模式按用例参数执行。
 
-在上述环境中运行，例如：
+例如，测试ND SiLU：
 
 ```bash
 python3 -m ttk aclnn \
@@ -77,15 +88,14 @@ python3 -m ttk aclnn \
   --warmup true --run 1 --seed 42 -o silu_perf.csv
 ```
 
-测试 SwiGLU 或 GELU 时，可将 `-t` 改为 `swiglu_s0_y36`、`gelu_tanh_s0_y36` 或 `gelu_tanh_fp4_nd_rint`。其他通路按上表替换子命令、CSV，并选择对应激活的用例。
-保持预热开启，使 NZ 权重格式准备在预热阶段完成。
+测试其他激活时，`-t`可改为`swiglu_s0_y36`、`gelu_tanh_s0_y36`或`gelu_tanh_fp4_nd_rint`。保持预热开启，使NZ权重的格式准备在预热阶段完成。
 
-拼接耗时为 `golden_device_perf_us`，加速比为 **拼接耗时 / 融合算子设备耗时**。
-仅使用 `golden_source=npu` 且耗时为正的结果；`golden_kernel_details` 提供标杆各算子的耗时及调用次数。
-这些列统计设备执行时间。当前 NPU Golden 每例采样一次，`--run` 不增加其采样次数；可多次串行运行，分别保存结果后取中位数。
+结果中的`golden_device_perf_us`为参考组合的设备耗时；融合算子的耗时列见上表。加速比按“参考组合耗时 / 融合算子耗时”计算，仅使用`golden_source=npu`且耗时为正的结果。`golden_kernel_details`记录参考组合中各算子的耗时和调用次数。
 
-## Golden 与精度
+当前NPU Golden每例采样一次，`--run`不增加其采样次数。需要多次采样时，串行重复运行、分别保存结果并取中位数。
 
-精度验收使用 `--golden-mode Enable`（默认）的 CPU Golden，参考实现和比较器见 [assets/spec.py](assets/spec.py)。`NPU` 模式的精度结果基于拼接输出；SwiGLU 标杆在激活前舍入为 BF16，与融合实现的舍入位置不同。
+## 精度判定
 
-ST 对 `y` 和 `y_scale` 分别要求至少 99.9% 的元素误差不超过 1 ULP；形状和 dtype 必须一致，NaN 位置及 Inf 符号必须匹配，正负零视为相等。FP4 按解包后的元素比较。Kernel UT 对固定输入严格比较。
+精度验收使用默认的`--golden-mode Enable`，由CPU Golden计算期望值。NPU模式以独立算子的组合输出为参考；其中SwiGLU在激活前舍入为BF16，与融合算子的舍入位置不同，因此该模式用于性能对比。
+
+ST分别检查`y`和`y_scale`：形状和dtype一致，至少99.9%的元素误差不超过1 ULP，NaN位置及Inf符号匹配，正负零视为相等。FP4按解包后的元素比较。Kernel UT使用固定输入并严格比较期望结果。

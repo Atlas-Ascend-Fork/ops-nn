@@ -23,146 +23,125 @@
 
 ## 功能说明
 
-- 接口功能：融合量化的矩阵乘、激活以及动态量化计算。当前支持激活为GELU（tanh/erf）、SwiGLU及SiLU，量化模式为MX [量化模式](../../../docs/zh/context/quant_mode_introduction.md)。最小支持输入维度为2维，最大支持输入维度为6维。相似接口有aclnnMm（仅支持2维Tensor作为输入的矩阵乘）和aclnnBatchMatMul（仅支持三维的矩阵乘，其中第一维是Batch维度），本接口在其他接口的基础上融合了激活及动态MX量化，提高硬件计算效率。
+- 接口功能：融合MX（Microscaling，微缩放）量化矩阵乘、激活和动态MX量化，输出量化结果及对应的缩放因子（scale）。支持GELU（Gaussian Error Linear Unit，高斯误差线性单元）的tanh/erf形式、SiLU（Sigmoid Linear Unit，Sigmoid线性单元）及SwiGLU（Swish Gated Linear Unit，Swish门控线性单元）；x1为ND格式，x2为FRACTAL_NZ格式。数据类型及转置组合见[约束说明](#约束说明)。
 
-激活类型、FP8/FP4、ND/WeightNZ及转置组合的支持范围见[激活能力对照表](../README.md#激活能力对照表)，本接口对应其中的WeightNZ行。
+<!-- npu="950" id7 -->
 
-- 计算公式：
+- 计算流程：先完成MX量化矩阵乘及偏置相加，再计算激活，最后执行动态MX量化。
 
-  <!-- npu="950" id7 -->
-  - <term>Ascend 950PR&950DT系列产品</term>：
+以下公式省略batch下标，$X_1$、$X_2$表示按转置状态解释后的矩阵，形状分别为$(M,K)$、$(K,N)$。M为左矩阵的行数，K为公共归约维度，N为右矩阵的列数。
 
-    支持MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)，不同量化模式对应的输入输出数据类型组合参见[约束说明](#约束说明)。
+### MX量化矩阵乘
 
-    <details>
+沿K轴每32个元素划为一组，每组矩阵乘结果乘以对应的输入scale，再与偏置累加，得到$C$：
 
-    <summary><strong>QuantMatmul MX量化模式</strong></summary>
+$$
+C_{m,n}=\sum_{j=0}^{L-1}\left[
+\left(\sum_{t=0}^{g_j-1}X_{1,m,jg_K+t}\,X_{2,jg_K+t,n}\right)
+S_{1,m,j}\,S_{2,j,n}\right]+b_n
+$$
 
-      $$
-      matmulOut[m,n] = \sum_{j=0}^{kLoops-1} ((\sum_{k=0}^{gsK-1} (x1Slice * x2Slice))* (x1Scale[m/gsM, j] * x2Scale[j, n/gsN]))+bias[n]
-      $$
+其中，$g_M$、$g_N$、$g_K$分别为M、N、K方向的分组大小，当前固定为$(1,1,32)$；$L=\lceil K/g_K\rceil$，$g_j=\min(g_K,K-jg_K)$。$S_1$、$S_2$分别表示`x1ScaleOptional`、`x2Scale`中第$j$组的scale，实际存储形状见参数和约束说明。矩阵乘采用FP32累加，偏置在激活前相加；未传入偏置时，$b_n=0$。
 
-      其中，gsM，gsN和gsK分别代表groupSizeM，groupSizeN和groupSizeK；x1Slice代表x1第m行长度为groupSizeK的向量，x2Slice代表x2第n列长度为groupSizeK的向量；K轴均从j*groupSizeK起始切片，j的取值范围为[0, kLoops)，kLoops = ceil(K / groupSizeK)，K为K轴长度，支持最后的切片长度不足groupSizeK。仅MX量化模式下包含bias。
+### 激活
 
-    </details>
+对矩阵乘结果$C$应用指定的激活函数，得到$A$：
 
-    <details>
+- `activationType="gelu_tanh"`：GELU的tanh近似。
 
-    <summary><strong>激活计算公式</strong></summary>
+  $$
+  A=\frac{C}{2}\left[1+\tanh\left(\sqrt{\frac{2}{\pi}}\left(C+0.044715C^3\right)\right)\right]
+  $$
 
-      - GELU（tanh，高性能近似）：
+- `activationType="gelu_erf"`：GELU的erf形式。
 
-        $$
-        activationOut=GELU(matmulOut)=matmulOut × Φ(matmulOut)=0.5 * matmulOut * (1 + tanh( \sqrt{2 / \pi} * (matmulOut + 0.044715 * matmulOut^{3})))
-        $$
+  $$
+  A=\frac{C}{2}\left[1+\operatorname{erf}\left(\frac{C}{\sqrt{2}}\right)\right]
+  $$
 
-      - GELU（erf）：
+- `activationType="silu"`：逐元素计算SiLU。
 
-        $$
-        activationOut=GELU(matmulOut)=0.5 * matmulOut * (1 + erf(matmulOut / \sqrt{2}))
-        $$
+  $$
+  A=\operatorname{SiLU}(C)=\frac{C}{1+e^{-C}}
+  $$
 
-      - SwiGLU：原始N必须为正数且是64的倍数，先在完整FP32矩阵乘结果上加bias，再沿尾轴按`matmulOut=[gate | linear]`等分：
+- `activationType="swiglu"`：将$C$沿最后一维等分为左半部分$G$和右半部分$U$，对$G$计算SiLU后与$U$逐元素相乘。
 
-        $$
-        activationOut=SiLU(gate) * linear
-        $$
+  $$
+  C=[G\mid U],\qquad A=\operatorname{SiLU}(G)\odot U=\frac{G}{1+e^{-G}}\odot U
+  $$
 
-        激活结果以RNE舍入为BF16后执行MX量化。
+上述激活均在FP32中计算。记激活后的输出宽度为$H$：GELU和SiLU的$H=N$，SwiGLU的$H=N/2$。
 
-      - SiLU：逐元素计算`SiLU(matmulOut)`（`SiLU(x) = x * sigmoid(x)`），结果以RNE舍入为BF16后执行MX量化，输出保留原始N列。
+### 动态MX量化
 
-    </details>
+将激活结果按最近偶数舍入模式（RNE）转换为BF16，即舍入到最近的可表示值，中间值取尾数最低位为0的值，再沿最后一维每32个元素划为一组。最后一组不足32个元素时补0参与scale计算，补齐元素不写入输出。
 
-    <details>
+$$
+V_i=\operatorname{BF16}_{RNE}(A_i),\qquad a=\max_i|V_i|,\qquad s=2^e
+$$
 
-    <summary><strong>动态量化计算公式</strong></summary>
+每组共用一个scale $s$，按`roundMode`转换为输出数据类型$D$：
 
-      - 场景1，当scaleAlg为0时：
-        - 将输入activationOut在尾轴上按$k=32$个数分组，一组k个数 $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\},\space k = 32$
+$$
+Q_i=\begin{cases}
+\operatorname{FP32}(V_i/s), & D\text{为FP8}\\
+\operatorname{BF16}_{RNE}(V_i/s), & D\text{为FP4}
+\end{cases},\qquad (yOut)_i=\operatorname{Cast}_{D,\,\mathrm{roundMode}}(Q_i)
+$$
 
-        $$
-        shared\_exp = floor(log_2(max_i(|V_i|))) - emax \\
-        mxscale = 2^{shared\_exp}\\
-        P_i = cast\_to\_dst\_type(V_i/mxscale, round\_mode), \space i\space from\space 1\space to\space k\\
-        $$
+`yScaleOut`使用FLOAT8_E8M0存储scale。第$j$组写入`yScaleOut[..., m, j // 2, j % 2]`，输出形状为`(..., M, ceil(H/64), 2)`。
 
-        - 量化后的 $P_{i}$ 按对应的 $V_{i}$ 的位置组成输出`yOut`，mxscale按尾轴上的分组组成输出`yScaleOut`。
+#### scale的计算方法
 
-        - emax: 对应数据类型的最大正则数的指数位。
+以下公式适用于$a>0$且有限的情况，令$p=\lfloor\log_2a\rfloor$。
 
-            |   DataType    | emax |
-            | :-----------: | :--: |
-            |  FLOAT4_E2M1  |  2   |
-            | FLOAT8_E4M3FN |  8   |
-            |  FLOAT8_E5M2  |  15  |
+- `scaleAlg=0`：OCP（Open Compute Project，开放计算项目）共享指数算法，支持FP8和FP4。
 
-      - 场景2，当scaleAlg为1时，只涉及FP8类型：
-        - 将输入activationOut在尾轴上按$k = 32$个数分块，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型FP8。如果最后一块不足$k = 32$个元素，把缺失值视为0，按照完整块处理。
-        - 找到该块中数值的最大绝对值:
+  $$
+  e=\max(-127,p-e_{\max})
+  $$
 
-          $$
-          Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
-          $$
+  FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1的$e_{\max}$分别为8、15、2。
 
-        - 将FP32映射到目标数据类型FP8可表示的范围内，其中$Amax(DType)$是目标精度能表示的最大值:
+- `scaleAlg=1`：按目标类型的最大有限值计算scale，仅支持FP8。
 
-          $$
-          S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
-          $$
+  $$
+  S=\operatorname{FP32}\left(a\cdot\operatorname{FP32}(1/F_{\max})\right),\qquad
+  e=\max(-127,\lceil\log_2S\rceil)
+  $$
 
-        - 将块缩放因子$S_{fp32}^b$转换为FP8格式下可表示的缩放值$S_{ue8m0}^b$
-        - 从块的浮点缩放因子$S_{fp32}^b$中提取无偏指数$E_{int}^b$和尾数$M_{fixp}^b$
-        - 为保证量化时不溢出，对指数进行向上取整，且在FP8可表示的范围内：
+  FLOAT8_E4M3FN、FLOAT8_E5M2的$F_{\max}$分别为448、57344。
 
-          $$
-          E_{int}^b = \begin{cases} E_{int}^b + 1, & \text{如果} S_{fp32}^b \text{为正规数，且} E_{int}^b < 254 \text{且} M_{fixp}^b > 0 \\ E_{int}^b + 1, & \text{如果} S_{fp32}^b \text{为非正规数，且} M_{fixp}^b > 0.5 \\ E_{int}^b, & \text{否则} \end{cases}
-          $$
+- `scaleAlg=2`：按`dstTypeMax`指定的范围计算scale，仅支持FP4。令$d=\operatorname{FP32}(\mathrm{dstTypeMax})$，传入0时取$d=6$。
 
-        - 计算块缩放因子：$S_{ue8m0}^b=2^{E_{int}^b}$
-        - 计算块转换因子：$R_{fp32}^b=\frac{1}{fp32(S_{ue8m0}^b)}$
-        - 应用到量化的最终步骤，对于每个块内元素，$d^i = DType(d_{fp32}^i \cdot R_{fp32}^b)$，最终输出的量化结果是$\left(S^b, [d^i]_{i=1}^k\right)$，其中$S^b$代表块的缩放因子，这里指$S_{ue8m0}^b$，$[d^i]_{i=1}^k$代表块内量化后的数据。
+  当$d=6$或$d=7$时：
 
-      - 场景3，当scaleAlg为2时，只涉及FP4_E2M1类型：
-        - 当dstTypeMax = 0.0/6.0/7.0时：
-          - 将输入x在axis维度上按k = blocksize个数分组，一组k个数  $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = blocksize：
-          $$
-          shared\_exp = \begin{cases} ceil(log_2(max_i(|V_i|))) - emax, & \text{如果} 尾数位的高比特前一/两位 \text{为1，且尾数不全为0} \\ floor(log_2(max_i(|V_i|))) - emax, & \text{其它} \end{cases} \\
-          $$
-          $$
-          P_i = cast\_to\_dst\_type(V_i/mxscale, round\_mode), \space i\space from\space 1\space to\space blocksize\\
-          $$
-          - ​量化后的$P_{i}$按对应的$V_{i}$的位置组成输出`yOut`，mxscale按对应的axis维度上的分组组成输出`yScaleOut`。
-        - 当dstTypeMax != 0.0/6.0/7.0时：
-          - 将长向量按块分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型。如果最后一块不足k个元素，把缺失值视为0，按照完整块处理。
-          - 找到该块中数值的最大绝对值:
-          $$
-          Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
-          $$
-          - 将FP32映射到目标数据类型可表示的范围内，其中当dst_max_value=0时，$Amax(DType)$是目标精度能表示的最大值；当dst_max_value!=0时，$Amax(DType)$是dst_max_value传入值。
-          $$
-          S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
-          $$
-          - 将块缩放因子$S_{fp32}^b$转换为FP8格式下可表示的缩放值$S_{ue8m0}^b$。
-          - 从块的浮点缩放因子$S_{fp32}^b$中提取无偏指数$E_{int}^b$和尾数$M_{fixp}^b$。
-          - 为保证量化时不溢出，对指数进行向上取整，且在FP8可表示的范围内：
-            $$
-            E_{int}^b = \begin{cases} E_{int}^b + 1, & \text{如果} S_{fp32}^b \text{为正规数，且} E_{int}^b < 254 \text{且} M_{fixp}^b > 0 \\ E_{int}^b, & \text{否则} \end{cases}
-            $$
-          - 计算块缩放因子：$S_{ue8m0}^b=2^{E_{int}^b}$
-          - 计算块转换因子：$R_{fp32}^b=\frac{1}{fp32(S_{ue8m0}^b)}$
-          - 应用到量化的最终步骤，对于每个块内元素，$d^i = DType(d_{fp32}^i \cdot R_{fp32}^b)$，最终输出的量化结果是$\left(S^b, [d^i]_{i=1}^k\right)$，其中$S^b$代表块的缩放因子，这里指$S_{ue8m0}^b$，$[d^i]_{i=1}^k$代表块内量化后的数据。
-          - ​量化后的$P_{i}$按对应的$V_{i}$的位置组成输出`yOut`，mxscale按对应的axis维度上的分组组成输出`yScaleOut`。
+  $$
+  e=\max\left(-127,\begin{cases}
+  p-1, & a>d\cdot2^{p-2}\\
+  p-2, & a\le d\cdot2^{p-2}
+  \end{cases}\right)
+  $$
 
-    </details>
+  当$d$为$[6,12]$内的其他值时：
 
-    FP8输出的`scaleAlg=0`使用OCP共享指数算法，与[DynamicMxQuant](../../../quant/dynamic_mx_quant/docs/aclnnDynamicMxQuant.md)、[SwigluMxQuant](../../../quant/swiglu_mx_quant/docs/aclnnSwigluMxQuant.md)的OCP语义一致，不会根据目标FP8最大有限值额外上调scale；归一化结果位于FP8表示边界外时，输出由底层FP8类型转换语义决定。`scaleAlg=1`使用BLAS算法，按目标FP8最大有限值计算scale并将E8M0指数向上取整，可降低边界值量化溢出的风险。输入可能触及FP8表示边界且业务要求有限输出时，建议使用`scaleAlg=1`。
+  $$
+  S=\operatorname{FP32}\left(a\cdot\operatorname{FP32}(1/d)\right),\qquad
+  e=\max(-127,\lceil\log_2S\rceil)
+  $$
 
-  <!-- end id7 -->
+E8M0以字节值$e+127$编码$2^e$。特殊情况如下：
+
+- 全零组的量化结果为0，scale的编码为0；输出scale中无对应数据分组的补齐位置也填入编码0。该编码表示$2^{-127}$。
+- $S=0$时取$e=-127$。算法0，以及算法2中$d=6$或$d=7$的分支，在scale编码为0时将该组量化结果置0。
+- 含NaN或Inf的组，scale的编码为255（NaN）。
+
+<!-- end id7 -->
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnQuantMatmulActivationQuantWeightNz"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnQuantMatmulActivationQuantWeightNz”接口执行计算。
 
 ```cpp
 aclnnStatus aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize(
@@ -182,7 +161,7 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize(
   aclTensor       *yOut,
   aclTensor       *yScaleOut,
   uint64_t        *workspaceSize,
-  aclOpExecutor   **executor)
+  aclOpExecutor  **executor)
 ```
 
 ```cpp
@@ -197,694 +176,668 @@ aclnnStatus aclnnQuantMatmulActivationQuantWeightNz(
 
 - **参数说明**
 
-  <table style="table-layout: fixed; width: 1554px"><colgroup>
-  <col style="width: 248px">
-  <col style="width: 121px">
-  <col style="width: 210px">
-  <col style="width: 327px">
-  <col style="width: 250px">
-  <col style="width: 115px">
-  <col style="width: 138px">
-  <col style="width: 145px">
+  所有Tensor的数据均位于Device侧；除`biasOptional`可为nullptr外，Tensor参数均须提供且不能为空Tensor。
+
+  <table style="table-layout: fixed; width: 1550px">
+  <colgroup>
+  <col style="width: 260px">
+  <col style="width: 90px">
+  <col style="width: 180px">
+  <col style="width: 390px">
+  <col style="width: 240px">
+  <col style="width: 120px">
+  <col style="width: 130px">
+  <col style="width: 140px">
   </colgroup>
-    <thead>
-      <tr>
-        <th>参数名</th>
-        <th>输入/输出</th>
-        <th>描述</th>
-        <th>使用说明</th>
-        <th>数据类型</th>
-        <th>数据格式</th>
-        <th>维度(shape)</th>
-        <th>非连续Tensor</th>
-      </tr></thead>
-    <tbody>
-      <tr>
-        <td>x1</td>
-        <td>输入</td>
-        <td>公式中的输入x1。</td>
-        <td>
-          <ul>
-            <li>不支持空Tensor。</li>
-            <li>支持最后两根轴转置情况下的<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续的Tensor</a>，其他轴方向不支持非连续的Tensor。</li>
-            <li>transposeX1为false情况下x1各个维度表示：（batch, m, k），batch可不存在。</li>
-            <li>transposeX1为true情况下x1各个维度表示：（batch, k, m），batch可不存在。</li>
-            <li>当x1、x2、y的数据类型均为FLOAT4_E2M1时（MXFP4场景），x1不支持转置，即transposeX1不能为true。</li>
-            <li>activationType为"swiglu"或"silu"时，x1不支持转置，即transposeX1必须为false。</li>
-          </ul>
-        </td>
-        <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1</td>
-        <td>ND</td>
-        <td>2-6</td>
-        <td>✓</td>
-      </tr>
-      <tr>
-        <td>x2</td>
-        <td>输入</td>
-        <td>公式中的输入x2。</td>
-        <td>
-          <ul>
-            <li>不支持空Tensor。</li>
-            <li>NZ格式下，shape支持4-8维。</li>
-            <li>transposeX2为true时x2各个维度表示：（batch, k1, n1, n0, k0），batch可不存在，k0 = 32，n0 = 16。</li>
-            <li>transposeX2为false时x2各个维度表示：（batch, n1, k1, k0, n0），batch可不存在，k0 = 16，n0 = 32。</li>
-            <li>x1 shape中的k和x2 shape中的k1需要满足ceil(k / k0) = k1，x2 shape中的n1与y的n需要满足ceil(n / n0) = n1。</li>
-            <li>可使用aclnnCalculateMatmulWeightSizeV2接口以及aclnnTransMatmulWeight接口完成输入Format从ND到NZ格式的转换。</li>
-          </ul>
-        </td>
-        <td>FLOAT8_E4M3FN、FLOAT4_E2M1</td>
-        <td>NZ</td>
-        <td>4-8</td>
-        <td>✓</td>
-      </tr>
-      <tr>
-        <td>x1ScaleOptional</td>
-        <td>可选输入</td>
-        <td>公式中的输入x1Scale。</td>
-        <td>
-          <ul>
-            <li>不支持空Tensor。</li>
-            <li>当x1Scale为FLOAT8_E8M0时，x1Scale为3维，各个维度表示：transposeX1为false时为(m, ceil(k / 64), 2)，transposeX1为true时为(ceil(k / 64), m, 2)。</li>
-          </ul>
-        </td>
-        <td>FLOAT8_E8M0</td>
-        <td>ND</td>
-        <td>3-7</td>
-        <td>✓</td>
-      </tr>
-      <tr>
-        <td>x2Scale</td>
-        <td>输入</td>
-        <td>表示量化参数，公式中的输入x2Scale。</td>
-        <td>
-          <ul>
-            <li>不支持空Tensor。</li>
-            <li>当x2Scale为FLOAT8_E8M0时，x2Scale为3维，各个维度表示：transposeX2为false时为(ceil(k / 64), n, 2)，transposeX2为true时为(n, ceil(k / 64), 2)。</li>
-          </ul>
-        </td>
-        <td>FLOAT8_E8M0</td>
-        <td>ND</td>
-        <td>3-7</td>
-        <td>✓</td>
-      </tr>
-      <tr>
-        <td>biasOptional</td>
-        <td>可选输入</td>
-        <td>公式中的输入bias。</td>
-        <td>
-          <ul>
-            <li>不支持空Tensor。</li>
-            <li>shape支持1维(n,)或3维(batch, 1, n)，n与x2的n一致。</li>
-            <li>当y的shape为2、4、5、6维时，bias的shape只支持1维(n,)。</li>
-            <li>如果不使用该参数，传入nullptr。</li>
-          </ul>
-        </td>
-        <td>FLOAT32</td>
-        <td>ND</td>
-        <td>1、3</td>
-        <td>×</td>
-      </tr>
-      <tr>
-        <td>transposeX1</td>
-        <td>输入</td>
-        <td>表示x1的输入shape是否转置。</td>
-        <td>-</td>
-        <td>BOOL</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>transposeX2</td>
-        <td>输入</td>
-        <td>表示x2的输入shape是否转置。</td>
-        <td>-</td>
-        <td>BOOL</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>groupSize</td>
-        <td>可选输入</td>
-        <td>用于输入m、n、k方向上的量化分组大小。</td>
-        <td>由3个方向的groupSizeM，groupSizeN，groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（groupSize中的高16位的数值无效），计算公式见表格下方公式一。不支持groupSize的场景，传入0。</td>
-        <td>INT64</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>activationType</td>
-        <td>输入</td>
-        <td>激活的类型。</td>
-        <td>支持{"gelu_tanh", "gelu_erf", "swiglu", "silu"}。</td>
-        <td>STRING</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>quantMode</td>
-        <td>输入</td>
-        <td>量化的模式。</td>
-        <td>支持{"mx"}。</td>
-        <td>STRING</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>roundMode</td>
-        <td>输入</td>
-        <td>表示数据转换的模式，对应公式中的round_mode。</td>
-        <td>
-          <ul>
-            <li>当yDtype为FLOAT4_E2M1时，支持{"rint", "floor", "round"}。</li>
-            <li>当yDtype为FLOAT8_E4M3FN/FLOAT8_E5M2时，仅支持{"rint"}。</li>
-          </ul>
-        </td>
-        <td>STRING</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>scaleAlg</td>
-        <td>输入</td>
-        <td>表示yScaleOut的计算方法，对应公式中的scaleAlg。</td>
-        <td>
-          <ul>
-            <li>支持取值0、1、2，取值为0代表场景1，为1代表场景2，为2代表场景3。</li>
-            <li>当yDtype为FLOAT4_E2M1时仅支持取值为0和2。</li>
-            <li>当yDtype为FLOAT8_E4M3FN/FLOAT8_E5M2时支持取值为0和1。</li>
-          </ul>
-        </td>
-        <td>INT64</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>dstTypeMax</td>
-        <td>输入</td>
-        <td>表示maxType的取值，对应公式中的Amax(DType)。</td>
-        <td>
-          <ul>
-            <li>当scaleAlg为0或1时，dstTypeMax不生效，不作拦截，建议传入0.0。</li>
-            <li>当scaleAlg为2时，dstTypeMax支持取值0.0和6.0-12.0。取值为0.0表示使用目标类型的默认最大值，取值为6.0-12.0时使用指定值。</li>
-          </ul>
-        </td>
-        <td>DOUBLE</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-            <tr>
-        <td>yOut</td>
-        <td>输出</td>
-        <td>公式中的输出y，动态量化后的矩阵乘及激活计算结果。</td>
-        <td>
-          <ul>
-            <li>不支持空Tensor。</li>
-            <li>GELU和SiLU场景shape和矩阵乘计算结果一致，为(batch, m, n)；SwiGLU场景为(batch, m, n/2)。batch可不存在。</li>
-          </ul>
-        </td>
-        <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1</td>
-        <td>ND</td>
-        <td>2-6</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>yScaleOut</td>
-        <td>输出</td>
-        <td>动态量化后每个分组对应的量化尺度。</td>
-        <td>
-          <ul>
-            <li>不支持空Tensor。</li>
-            <li>shape在尾轴轴上为y对应轴的值除以32向上取整，并对其进行偶数pad，pad填充值为0。</li>
-            <li>yScale输出需要对每两行数据进行交织处理。</li>
-            <li>GELU和SiLU场景shape为(batch, m, ceil(n/64), 2)；SwiGLU场景shape为(batch, m, ceil((n/2)/64), 2)。batch可不存在。</li>
-          </ul>
-        </td>
-        <td>FLOAT8_E8M0</td>
-        <td>ND</td>
-        <td>3-7</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>workspaceSize</td>
-        <td>输出</td>
-        <td>返回需要在Device侧申请的workspace大小。</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td style="white-space: nowrap">executor</td>
-        <td>输出</td>
-        <td>返回op执行器，包含了算子计算流程。</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-  </tbody></table>
+  <thead>
+    <tr>
+      <th>参数名</th>
+      <th>输入/输出</th>
+      <th>描述</th>
+      <th>使用说明</th>
+      <th>数据类型</th>
+      <th>数据格式</th>
+      <th>维度(shape)</th>
+      <th>非连续Tensor</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>x1（const aclTensor*）</td>
+      <td>输入</td>
+      <td>矩阵乘的左矩阵，对应公式中的X<sub>1</sub>。</td>
+      <td><ul>
+        <li>不可为nullptr，不支持空Tensor。</li>
+        <li>shape及转置限制见<a href="#形状">形状</a>和<a href="#数据类型与激活">数据类型与激活</a>。</li>
+      </ul></td>
+      <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1</td>
+      <td>ND</td>
+      <td>2～6</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>x2（const aclTensor*）</td>
+      <td>输入</td>
+      <td>矩阵乘的右矩阵，对应公式中的X<sub>2</sub>。</td>
+      <td><ul>
+        <li>不可为nullptr，不支持空Tensor。</li>
+        <li>逻辑shape见<a href="#形状">形状</a>，存储要求见<a href="#布局与存储">布局与存储</a>。</li>
+        <li>仅支持完整NZ存储及其末两轴转置视图。</li>
+      </ul></td>
+      <td>FLOAT8_E4M3FN、FLOAT4_E2M1</td>
+      <td>FRACTAL_NZ</td>
+      <td>逻辑2～6；存储4～8</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>x1ScaleOptional（const aclTensor*）</td>
+      <td>输入</td>
+      <td>x1沿K轴的分组scale，对应公式中的S<sub>1</sub>。</td>
+      <td><ul>
+        <li>本接口仅支持MX模式，该输入必须提供，不可为nullptr。</li>
+        <li>不支持空Tensor，batch维与x1一致。</li>
+      </ul></td>
+      <td>FLOAT8_E8M0</td>
+      <td>ND</td>
+      <td>3～7</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>x2Scale（const aclTensor*）</td>
+      <td>输入</td>
+      <td>x2沿K轴的分组scale，对应公式中的S<sub>2</sub>。</td>
+      <td><ul>
+        <li>不可为nullptr，不支持空Tensor。</li>
+        <li>batch维与x2一致。</li>
+      </ul></td>
+      <td>FLOAT8_E8M0</td>
+      <td>ND</td>
+      <td>3～7</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>biasOptional（const aclTensor*）</td>
+      <td>可选输入</td>
+      <td>在激活前相加的偏置，对应公式中的b。</td>
+      <td><ul>
+        <li>shape为(N,)；三维输出还支持(B,1,N)。</li>
+        <li>不使用时传nullptr；传入时不支持空Tensor。</li>
+      </ul></td>
+      <td>FLOAT32</td>
+      <td>ND</td>
+      <td>1或3</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>transposeX1（bool）</td>
+      <td>输入</td>
+      <td>是否转置x1的最后两维。</td>
+      <td><ul>
+        <li>false表示不转置，true表示转置。</li>
+        <li>支持的类型与激活组合见<a href="#数据类型与激活">数据类型与激活</a>。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>transposeX2（bool）</td>
+      <td>输入</td>
+      <td>是否转置x2的最后两维。</td>
+      <td><ul>
+        <li>false表示不转置，true表示转置。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>groupSize（int64_t）</td>
+      <td>输入</td>
+      <td>输入量化在M、N、K方向的分组大小编码。</td>
+      <td><ul>
+        <li>仅支持0或4295032864，均表示[1,1,32]。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>activationType（char*）</td>
+      <td>输入</td>
+      <td>激活类型。</td>
+      <td><ul>
+        <li>支持"gelu_tanh"、"gelu_erf"、"silu"、"swiglu"。</li>
+        <li>不可为nullptr。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>quantMode（char*）</td>
+      <td>输入</td>
+      <td>量化模式。</td>
+      <td><ul>
+        <li>仅支持"mx"，不可为nullptr。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>roundMode（char*）</td>
+      <td>输入</td>
+      <td>输出量化的舍入模式。</td>
+      <td><ul>
+        <li>FP8仅支持"rint"，表示舍入到最近的可表示值，中间值取尾数最低位为0的值。</li>
+        <li>FP4还支持"floor"（向负无穷方向舍入）、"round"（舍入到最近的可表示值，中间值向远离0的方向舍入）。</li>
+        <li>不可为nullptr。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>scaleAlg（int64_t）</td>
+      <td>输入</td>
+      <td>输出scale的计算方法。</td>
+      <td><ul>
+        <li>FP8支持0、1，FP4支持0、2。</li>
+        <li>0为OCP共享指数算法，1按FP8最大有限值计算，2按dstTypeMax指定的范围计算。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>dstTypeMax（double）</td>
+      <td>输入</td>
+      <td>scaleAlg=2时计算输出scale所用的参考上限，对应公式中的d。</td>
+      <td><ul>
+        <li>仅scaleAlg=2时生效：支持0.0（等价于6.0）或[6.0,12.0]内的有限值。</li>
+        <li>其他算法忽略该参数。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>yOut（aclTensor*）</td>
+      <td>输出</td>
+      <td>动态量化结果，对应公式中的yOut。</td>
+      <td><ul>
+        <li>不可为nullptr，不支持空Tensor。</li>
+        <li>类型须与x1一致，shape为(batch,M,H)。</li>
+      </ul></td>
+      <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E2M1</td>
+      <td>ND（兼容格式见<a href="#布局与存储">布局与存储</a>）</td>
+      <td>2～6</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>yScaleOut（aclTensor*）</td>
+      <td>输出</td>
+      <td>输出的分组scale，对应公式中的s。</td>
+      <td><ul>
+        <li>不可为nullptr，不支持空Tensor。</li>
+        <li>shape为(batch,M,ceil(H/64),2)。</li>
+      </ul></td>
+      <td>FLOAT8_E8M0</td>
+      <td>ND（兼容格式见<a href="#布局与存储">布局与存储</a>）</td>
+      <td>3～7</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>workspaceSize（uint64_t*）</td>
+      <td>输出</td>
+      <td>返回需要在Device侧申请的workspace大小，单位为字节。</td>
+      <td><ul>
+        <li>不可为nullptr。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>executor（aclOpExecutor**）</td>
+      <td>输出</td>
+      <td>返回op执行器，包含了算子计算流程。</td>
+      <td><ul>
+        <li>不可为nullptr。</li>
+      </ul></td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+  </tbody>
+  </table>
 
-  - 注：可选输入是指可选的量化参数，支持传入空指针。
+  `groupSize`的非零值按`(groupSizeM << 32) | (groupSizeN << 16) | groupSizeK`编码，高16位为0；参与移位的分组值使用int64_t类型。
 
-  - 公式一：<a name='f1'></a>
-
-    $$
-    groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32
-    $$
-
-    - x2支持最后两根轴转置情况下的[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)，其他场景的[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)不支持。
-    - 支持groupSize传非0。
-
-- **返回值：**
+- **返回值**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
   第一段接口完成入参校验，出现以下场景时报错：
 
-  <table style="table-layout: fixed; width: 1149px"><colgroup>
-  <col style="width: 281px">
-  <col style="width: 119px">
-  <col style="width: 749px">
+  <table style="table-layout: fixed; width: 1000px">
+  <colgroup>
+  <col style="width: 300px">
+  <col style="width: 100px">
+  <col style="width: 600px">
   </colgroup>
   <thead>
-      <tr>
-        <th>返回值</th>
-        <th>错误码</th>
-        <th>描述</th>
-      </tr></thead>
-      <tbody>
-      <tr>
-        <td>ACLNN_ERR_PARAM_NULLPTR</td>
-        <td>161001</td>
-        <td>传入的x1、x2、x1Scale、x2Scale、yOut或yScaleOut是空指针。</td>
-      </tr>
-      <tr>
-        <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-        <td rowspan="4">161002</td>
-        <td>x1、x2、biasOptional、x1ScaleOptional、x2Scale、yOut或yScaleOut的数据类型和数据格式不在支持的范围之内。</td>
-      </tr>
-      <tr>
-        <td>x1、x2、biasOptional、x1ScaleOptional、x2Scale、yOut或yScaleOut的shape不满足校验条件。</td>
-      </tr>
-      <tr>
-        <td>x1、x2、biasOptional、x1ScaleOptional、x2Scale、yOut或yScaleOut是空tensor。</td>
-      </tr>
-      <tr>
-        <td>activationType、quantMode、roundMode、scaleAlg、dstTypeMax、groupSize、transposeX1的值不在支持范围之内。</td>
-      </tr>
-    </tbody></table>
+    <tr>
+      <th>返回码</th>
+      <th>码值</th>
+      <th>描述</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>ACLNN_ERR_PARAM_NULLPTR</td>
+      <td>161001</td>
+      <td>x1、x2、x1ScaleOptional、x2Scale、yOut、yScaleOut、workspaceSize或executor为空指针。</td>
+    </tr>
+    <tr>
+      <td>ACLNN_ERR_PARAM_INVALID</td>
+      <td>161002</td>
+      <td>Tensor的数据类型、格式、形状、广播关系、stride或访问范围不满足约束；或字符串参数为空指针、属性取值及组合不合法。</td>
+    </tr>
+  </tbody>
+  </table>
 
 ## aclnnQuantMatmulActivationQuantWeightNz
 
 - **参数说明**
 
-  <table style="table-layout: fixed; width: 1150px"><colgroup>
-  <col style="width: 168px">
-  <col style="width: 128px">
-  <col style="width: 854px">
+  <table style="table-layout: fixed; width: 1000px">
+  <colgroup>
+  <col style="width: 300px">
+  <col style="width: 100px">
+  <col style="width: 600px">
   </colgroup>
   <thead>
     <tr>
-    <th>参数名</th>
-    <th>输入/输出</th>
-    <th>描述</th>
-    </tr></thead>
+      <th>参数名</th>
+      <th>输入/输出</th>
+      <th>描述</th>
+    </tr>
+  </thead>
   <tbody>
-  <tr>
-    <td>workspace</td>
-    <td>输入</td>
-    <td>在Device侧申请的workspace内存地址。</td>
-  </tr>
-  <tr>
-    <td>workspaceSize</td>
-    <td>输入</td>
-    <td>在Device侧申请的workspace大小，由第一段接口aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize获取。</td>
-  </tr>
-  <tr>
-    <td>executor</td>
-    <td>输入</td>
-    <td>op执行器，包含了算子计算流程。</td>
-  </tr>
-  <tr>
-    <td>stream</td>
-    <td>输入</td>
-    <td>指定执行任务的Stream。</td>
-  </tr>
-    </tbody></table>
+    <tr>
+      <td>workspace</td>
+      <td>输入</td>
+      <td>在Device侧申请的workspace内存地址。</td>
+    </tr>
+    <tr>
+      <td>workspaceSize</td>
+      <td>输入</td>
+      <td>在Device侧申请的workspace大小，单位为字节，由第一段接口aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize获取。</td>
+    </tr>
+    <tr>
+      <td>executor</td>
+      <td>输入</td>
+      <td>op执行器，包含了算子计算流程。</td>
+    </tr>
+    <tr>
+      <td>stream</td>
+      <td>输入</td>
+      <td>指定执行任务的Stream。</td>
+    </tr>
+  </tbody>
+  </table>
 
-- **返回值：**
+- **返回值**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 
-- 确定性计算：
-  - aclnnQuantMatmulActivationQuantWeightNz默认确定性实现。
+- x1、x2的逻辑维数为2～6，各维度必须为已知正整数。
+- x1、x2的各逻辑维度及广播后的batch维乘积不超过$2^{32}-1$，激活前输出元素数不超过$2^{63}-1$。
 
-- **公共约束：**
-  <a id="公共约束"></a>
-  - x1仅支持ND格式，x2仅支持NZ格式。
-  - 当k或n为1时，无法使用weightNz特性，本接口不支持此种场景。
-  - 支持调用本接口前，通过[aclnnTransMatmulWeight](https://gitcode.com/cann/ops-math/blob/master/conversion/trans_data/docs/aclnnTransMatmulWeight.md)或[aclnnNpuFormatCast](https://gitcode.com/cann/ops-math/blob/master/conversion/npu_format_cast/docs/aclnnNpuFormatCast.md)对format为ND的x2处理得到NZ格式，在使用时必须使用0来填充以防引入脏数据。
-  - transposeX1为false时x1的shape：(batch, m, k)。transposeX1为true时x1的shape：(batch, k, m)。其中batch代表前0~4维，0维表示batch不存在。
-  - transposeX2为false时x2的shape：(batch, n1, k1, k0, n0)。transposeX2为true时x2的shape：(batch, k1, n1, n0, k0)。其中batch代表前0~4维，0维表示batch不存在。k与x1的shape中的k一致。
-  - x1、x2的转置状态由转置标记和stride共同决定，任改一处即可（两种方式等价，注意不要同时使用）：
-    - 方式一：将对应标记transposeX1/transposeX2置为true，shape按转置后传入（见上方true时shape的说明）。
-    - 方式二：标记保持为false，将Tensor以转置视图传入（shape仍为false时的形状，如x2为(batch, k, n)，stride倒数第二维为1），接口会自动按转置处理。
-  - x1Scale、x2Scale不携带转置标记，其shape需与x1、x2的转置方向保持一致（转置时x2Scale为(batch, n, ceil(k/64), 2)，非转置时为(batch, ceil(k/64), n, 2)）。
-  - 当x1最后两维相等（m = k）或x2最后两维相等（k = n）时，转置以transposeX1/transposeX2标记为准进行判断，不按stride进行转置判断。
-  - x1支持最后两根轴转置情况下的[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)，其他场景的[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)不支持。
-  - x2支持最后两根轴转置情况下的[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)，其他场景的[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)不支持。
-  - 当x1数据类型为FLOAT8_E5M2时，x2数据类型必须为FLOAT8_E4M3FN。
-  - bias相关约束：
-    - 可选参数，支持传入空指针, 不支持空tensor。
-    - 数据类型必须为FLOAT32。
-    - shape支持1维(n,)或3维(batch, 1, n)，n与x2的n一致。
-    - 当y的shape为2、4、5、6维时，bias的shape只支持1维(n,)。
-  - groupSize相关约束：
-    - 仅在MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)中生效。
-    - 传入的groupSize内部会按如下公式分解得到groupSizeM、groupSizeN、groupSizeK, 当前支持[0, 0, 0]或[1, 1, 32]的组合, [0, 0, 0]会自动推导为[1, 1, 32]。
+### 数据类型与激活
 
-    $$
-    groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32
-    $$
+输入scale和输出scale均为FLOAT8_E8M0。biasOptional传入时的数据类型须为FLOAT32；不使用偏置时传入nullptr。矩阵及输出支持以下组合：
 
-  - y的shape支持2~6维。GELU和SiLU场景为(batch, m, n)，SwiGLU场景为(batch, m, n/2)；batch可不存在，m与x1的m一致，原始n与x2的n一致。
+| x1 | x2 | yOut |
+| --- | --- | --- |
+| FLOAT8_E4M3FN | FLOAT8_E4M3FN | FLOAT8_E4M3FN |
+| FLOAT8_E5M2 | FLOAT8_E4M3FN | FLOAT8_E5M2 |
+| FLOAT4_E2M1 | FLOAT4_E2M1 | FLOAT4_E2M1 |
 
-  <details>
-    <summary><strong>MX量化场景约束：</strong></summary>
-    <a id="MX量化"></a>
+下表中，FP8指FLOAT8_E4M3FN或FLOAT8_E5M2，FP4指FLOAT4_E2M1；同时须满足上方的数据类型组合要求。
 
-    - 输入和输出支持以下数据类型组合：
-    <a id="输入和输出支持以下数据类型组合MX"></a>
+| activationType | 数据类型 | 输出宽度H | N的要求 | transposeX1 |
+| --- | --- | --- | --- | --- |
+| "gelu_tanh"、"gelu_erf" | FP8 | N | N > 1 | false、true |
+| "gelu_tanh"、"gelu_erf" | FP4 | N | 正偶数 | false |
+| "silu" | FP8 | N | N > 1 | false |
+| "swiglu" | FP8 | N/2 | 64的正整数倍 | false |
 
-        | x1            | x2            | x1Scale     | x2Scale     | bias         | y                         | yScale      |
-        |---------------|---------------|-------------|-------------|--------------|---------------------------|-------------|
-        | FLOAT8_E4M3FN | FLOAT8_E4M3FN | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT8_E4M3FN             | FLOAT8_E8M0 |
-        | FLOAT8_E5M2   | FLOAT8_E4M3FN | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT8_E5M2               | FLOAT8_E8M0 |
-        | FLOAT4_E2M1   | FLOAT4_E2M1   | FLOAT8_E8M0 | FLOAT8_E8M0 | null/FLOAT32 | FLOAT4_E2M1               | FLOAT8_E8M0 |
+`transposeX2`均支持false、true。本接口要求K、N均大于1。FP4仅支持GELU，x1不支持转置，K > 2且K、N均为偶数。
 
-    - GELU、SwiGLU和SiLU场景的y数据类型都必须与x1一致；SwiGLU和SiLU仅支持上述FP8组合，不支持MXFP4。
+### 形状
 
-    - x1数据类型、x2数据类型、x1、x2、x1Scale、x2Scale和groupSize的取值关系。为统一表示输出宽度，令h=n（GELU和SiLU）或h=n/2（SwiGLU）：
+`batch1`、`batch2`表示各输入前0～4个batch维，`batch`表示右对齐广播后的batch维；没有batch维时省略该部分。令`K64=ceil(K/64)`，其中ceil表示向上取整。以下均为逻辑形状，FP4的维度按4位元素计数：
 
-        |量化类型|x1数据类型|x2数据类型|x1 shape|x2 shape|x1Scale shape|x2Scale shape|bias shape|yScale shape|[gsM, gsN, gsK]|groupSize|
-        |-------|--------|--------|--------|--------|-------------|-------------|------------|---------------------------------------|--|--|
-        |MX全量化|FLOAT8_E4M3FN|FLOAT8_E4M3FN|<li>非转置：(batch_x1, m, k)</li>|<li>非转置：(batch_x2, k, n)</li><li>转置：(batch_x2, n, k)</li>|<li>非转置：(batch_x1, m, ceil(k / 64), 2)</li>|<li>非转置：(batch_x2, ceil(k / 64), n, 2)</li><li>转置：(batch_x2, n, ceil(k / 64), 2)</li>|(n,)或(batch_max, 1, n)|(batch_max, m, ceil(h / 64), 2)|[1, 1, 32]|4295032864|
-        |MX全量化|FLOAT8_E5M2|FLOAT8_E4M3FN|<li>非转置：(batch_x1, m, k)</li>|<li>非转置：(batch_x2, k, n)</li><li>转置：(batch_x2, n, k)</li>|<li>非转置：(batch_x1, m, ceil(k / 64), 2)</li>|<li>非转置：(batch_x2, ceil(k / 64), n, 2)</li><li>转置：(batch_x2, n, ceil(k / 64), 2)</li>|(n,)或(batch_max, 1, n)|(batch_max, m, ceil(h / 64), 2)|[1, 1, 32]|4295032864|
-        |MX全量化|FLOAT4_E2M1|FLOAT4_E2M1|<li>非转置：(batch_x1, m, k)</li>|<li>非转置：(batch_x2, k, n)</li><li>转置：(batch_x2, n, k)</li>|<li>非转置：(batch_x1, m, ceil(k / 64), 2)</li>|<li>非转置：(batch_x2, ceil(k / 64), n, 2)</li><li>转置：(batch_x2, n, ceil(k / 64), 2)</li>|(n,)或(batch_max, 1, n)|(batch_max, m, ceil(h / 64), 2)|[1, 1, 32]|4295032864|
+| 张量 | 不转置 | 转置 |
+| --- | --- | --- |
+| x1 | `(batch1, M, K)` | `(batch1, K, M)` |
+| x1ScaleOptional | `(batch1, M, K64, 2)` | `(batch1, K64, M, 2)` |
+| x2 | `(batch2, K, N)` | `(batch2, N, K)` |
+| x2Scale | `(batch2, K64, N, 2)` | `(batch2, N, K64, 2)` |
 
-    - 注：上表中gsM、gsK和gsN分别表示groupSizeM、groupSizeK和groupSizeN。
-    - MX量化场景下，x1和x1Scale的转置属性需要保持一致，x2和x2Scale的转置属性需要保持一致。
-    - SwiGLU和SiLU场景约束：
-      - 仅支持MXFP8，x1和y支持FLOAT8_E4M3FN/FLOAT8_E5M2，WeightNZ x2仅支持FLOAT8_E4M3FN。
-      - x1不支持转置，即transposeX1必须为false；x2支持转置和不转置。
-      - SwiGLU的原始N必须为正数且是64的倍数；bias按原始N传入，y的N维度为原始N/2。
-      - SiLU的原始N须大于1，无额外对齐要求；bias按原始N传入，y保留完整N列，不做N/2 split。
-      - scaleAlg仅支持取值0和1，roundMode仅支持{"rint"}。
-    - MXFP4场景约束（x1、x2、y数据类型均为FLOAT4_E2M1）：
-      - x1不支持转置，即transposeX1不能为true。
-      - scaleAlg仅支持取值0和2。
-      - 当scaleAlg为2时，dstTypeMax支持取值0.0和6.0-12.0。
-      - roundMode支持{"rint", "floor", "round"}。
-      - x1和x2的内轴必须为偶数，且k必须大于2。
-      - y的N维度必须为偶数。
-  </details>
+- 两个输入的K必须相等；输入scale的batch维必须与对应矩阵逐维一致。
+- 每32个K元素对应一个输入scale，相邻两组scale按顺序存放在长度为2的末维中。
+- `yOut`的形状为`(batch, M, H)`，`yScaleOut`为`(batch, M, ceil(H/64), 2)`，H由激活类型决定。
+- `biasOptional`的形状为`(N,)`；仅当输出为三维时，还支持`(B, 1, N)`，B须等于广播后的batch大小。SwiGLU的biasOptional长度仍为激活前的N。
+
+### 布局与存储
+
+- yOut和yScaleOut支持ND及与ND兼容的NCHW、NHWC、HWCN、NCDHW、NDHWC、NCL基础格式，不支持私有格式；输出shape仍须满足上述约定。
+- ND输入和输出的stride、offset须非负，shape、stride和offset确定的全部访问位置须位于storage内。支持满足上述条件的非零offset切片；FP4的offset以逻辑元素计数，须为偶数。
+- x1以及两个输入scale、biasOptional支持[非连续Tensor](../../../docs/zh/context/non_contiguous_tensor.md)。输出支持非连续Tensor。
+- 以末两轴的转置视图传入矩阵时，配套scale须交换倒数第3、倒数第2轴，末维2保持不变。若同时使用转置视图并将对应的transposeX1/transposeX2设为true，两次转置相互抵消；上表的转置限制按最终有效转置状态判断。
+
+对于NZ权重，须分别设置逻辑shape和物理storage shape。连续逻辑矩阵的尾两维为`(R,C)`时，物理形状为：
+
+$$
+(batch2,\lceil C/C_0\rceil,\lceil R/16\rceil,16,C_0)
+$$
+
+- FLOAT8_E4M3FN的$C_0=32$，FLOAT4_E2M1的$C_0=64$；所有维度均以逻辑元素计数。FP8存储字节数为物理shape各维乘积，FP4为该乘积的一半。
+- `transposeX2=false`时`(R,C)=(K,N)`；`transposeX2=true`时`(R,C)=(N,K)`。batch维须与逻辑shape逐维一致，storage shape须逐维匹配上述布局，补齐区域填0。
+- x2仅支持完整NZ存储，offset必须为0。矩阵stride支持`(C,1)`；转置视图的逻辑尾两维为`(R,C)`时，矩阵stride为`(1,R)`，其物理shape按转置前的矩阵计算。batch stride支持按逻辑shape计算的连续跨度（包括PyTorch格式转换后保留的逻辑stride），也兼容按物理NZ存储计算的跨度；所有非单例batch轴须使用同一套约定，不能混用。
+- 可通过`aclnnCalculateMatmulWeightSizeV2`和`aclnnTransMatmulWeight`将ND权重转换为NZ，调用过程见下方示例。
+
+### 确定性/Batch一致性
+
+<!-- npu="950" id8 -->
+- <term>Ascend 950PR&950DT系列产品</term>：
+  - 确定性说明：aclnnQuantMatmulActivationQuantWeightNz默认确定性实现。
+  - Batch一致性说明：默认[Batch一致性](../../../docs/zh/context/batch_consistency.md)实现：在相同运行环境下，保持N、K、数据类型、布局及激活/量化属性不变，且同一Token的x1、x1ScaleOptional及其对应的x2、x2Scale、biasOptional数据不变时，仅改变batch大小、M大小、Token的位置或组合，该Token对应的yOut和yScaleOut保持逐比特一致，无需额外开启开关。
+<!-- end id8 -->
 
 ## 调用示例
 
+以下示例使用FLOAT8_E4M3FN输入、GELU（tanh）激活和`scaleAlg=0`。x2先由ND转换为NZ格式。
+
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-x1为FLOAT8_E4M3FN，x2为FLOAT8_E4M3FN（NZ格式），x1Scale为FLOAT8_E8M0，x2Scale为FLOAT8_E8M0，激活为GELU（tanh），scaleAlg为0（场景1）。
+完整源文件见[NZ权重调用样例](../examples/arch35/test_aclnn_quant_matmul_gelu_mx_quant_weight_nz.cpp)。
 
-  ```cpp
-  #include <iostream>
-  #include <memory>
-  #include <cmath>
-  #include <vector>
-  #include "acl/acl.h"
-  #include "aclnnop/aclnn_cast.h"
-  #include "aclnnop/aclnn_quant_matmul_activation_quant_weight_nz.h"
-  #include "aclnnop/aclnn_trans_matmul_weight.h"
-  #define CHECK_RET(cond, return_expr) \
-      do {                             \
-          if (!(cond)) {               \
-              return_expr;             \
-          }                            \
-      } while (0)
-  #define CHECK_FREE_RET(cond, return_expr) \
-      do {                                  \
-          if (!(cond)) {                    \
-              Finalize(deviceId, stream);   \
-              return_expr;                  \
-          }                                 \
-      } while (0)
-  #define LOG_PRINT(message, ...)         \
-      do {                                \
-          printf(message, ##__VA_ARGS__); \
-      } while (0)
-  int64_t GetShapeSize(const std::vector<int64_t>& shape)
-  {
-      int64_t shapeSize = 1;
-      for (auto i : shape) {
-          shapeSize *= i;
-      }
-      return shapeSize;
-  }
-  int Init(int32_t deviceId, aclrtStream* stream)
-  {
-      // 固定写法，资源初始化
-      auto ret = aclInit(nullptr);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclInit failed. ERROR: %d\n", ret); return ret);
-      ret = aclrtSetDevice(deviceId);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); return ret);
-      ret = aclrtCreateStream(stream);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); return ret);
-      return 0;
-  }
-  template <typename T>
-  int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
+```cpp
+// Preprocess ND weights to WeightNZ, then run QuantMatmul + GELU(tanh) + MXFP8 quantization.
+#include <cstdint>
+#include <cstdio>
+#include <memory>
+#include <vector>
+#include "acl/acl.h"
+#include "aclnnop/aclnn_quant_matmul_activation_quant_weight_nz.h"
+#include "aclnnop/aclnn_trans_matmul_weight.h"
+#define CHECK_RET(cond, return_expr) \
+    do {                             \
+        if (!(cond)) {               \
+            return_expr;             \
+        }                            \
+    } while (0)
+#define LOG_PRINT(message, ...)         \
+    do {                                \
+        printf(message, ##__VA_ARGS__); \
+    } while (0)
+int64_t GetShapeSize(const std::vector<int64_t>& shape)
+{
+    int64_t shapeSize = 1;
+    for (auto i : shape) {
+        shapeSize *= i;
+    }
+    return shapeSize;
+}
+int Init(int32_t deviceId, aclrtStream* stream)
+{
+    // 初始化运行时资源。
+    auto ret = aclInit(nullptr);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclInit failed. ERROR: %d\n", ret); return ret);
+    ret = aclrtSetDevice(deviceId);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); aclFinalize(); return ret);
+    ret = aclrtCreateStream(stream);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); aclrtResetDevice(deviceId);
+              aclFinalize(); return ret);
+    return 0;
+}
+template <typename T>
+int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
+                    aclDataType dataType, aclTensor** tensor)
+{
+    auto size = GetShapeSize(shape) * sizeof(T);
+    // 调用aclrtMalloc申请device侧内存
+    auto ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
+    // 调用aclrtMemcpy将host侧数据拷贝到device侧内存上
+    ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
+    // 计算连续tensor的strides
+    std::vector<int64_t> strides(shape.size(), 1);
+    for (int64_t i = static_cast<int64_t>(shape.size()) - 2; i >= 0; i--) {
+        strides[i] = shape[i + 1] * strides[i + 1];
+    }
+    // 调用aclCreateTensor接口创建aclTensor
+    *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
+                              shape.data(), shape.size(), *deviceAddr);
+    CHECK_RET(*tensor != nullptr, LOG_PRINT("aclCreateTensor failed.\n"); return 1);
+    return 0;
+}
+void Finalize(int32_t deviceId, aclrtStream stream)
+{
+    aclrtDestroyStream(stream);
+    aclrtResetDevice(deviceId);
+    aclFinalize();
+}
+
+template <typename T>
+int CreateAclTensorX2(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
                       aclDataType dataType, aclTensor** tensor)
-  {
-      auto size = GetShapeSize(shape) * sizeof(T);
-      // 调用aclrtMalloc申请device侧内存
-      auto ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
-      // 调用aclrtMemcpy将host侧数据拷贝到device侧内存上
-      ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
-      // 计算连续tensor的strides
-      std::vector<int64_t> strides(shape.size(), 1);
-      for (int64_t i = shape.size() - 2; i >= 0; i--) {
-          strides[i] = shape[i + 1] * strides[i + 1];
-      }
-      // 调用aclCreateTensor接口创建aclTensor
-      *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
-                                shape.data(), shape.size(), *deviceAddr);
-      return 0;
-  }
-  void Finalize(int32_t deviceId, aclrtStream stream)
-  {
-      aclrtDestroyStream(stream);
-      aclrtResetDevice(deviceId);
-      aclFinalize();
-  }
+{
+    auto size = static_cast<uint64_t>(GetShapeSize(shape));
 
-  template <typename T>
-  int CreateAclTensorX2(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
-                        aclDataType dataType, aclTensor** tensor)
-  {
-      auto size = static_cast<uint64_t>(GetShapeSize(shape));
+    const aclIntArray* mat2Size = aclCreateIntArray(shape.data(), shape.size());
+    CHECK_RET(mat2Size != nullptr, LOG_PRINT("aclCreateIntArray failed.\n"); return 1);
+    std::unique_ptr<const aclIntArray, aclnnStatus (*)(const aclIntArray*)> mat2SizePtr(mat2Size, aclDestroyIntArray);
+    auto ret = aclnnCalculateMatmulWeightSizeV2(mat2Size, dataType, &size);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCalculateMatmulWeightSizeV2 failed. ERROR: %d\n", ret); return ret);
+    size *= sizeof(T);
 
-      const aclIntArray* mat2Size = aclCreateIntArray(shape.data(), shape.size());
-      std::unique_ptr<const aclIntArray, aclnnStatus (*)(const aclIntArray*)> mat2SizePtr(mat2Size, aclDestroyIntArray);
-      auto ret = aclnnCalculateMatmulWeightSizeV2(mat2Size, dataType, &size);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCalculateMatmulWeightSizeV2 failed. ERROR: %d\n", ret); return ret);
-      size *= sizeof(T);
+    // 调用aclrtMalloc申请device侧内存（对齐后的大小）
+    ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
+    // 只复制原始ND数据
+    auto originalSize = static_cast<size_t>(GetShapeSize(shape) * sizeof(T));
+    ret = aclrtMemcpy(*deviceAddr, originalSize, hostData.data(), originalSize, ACL_MEMCPY_HOST_TO_DEVICE);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
+    // 清零剩余区域，防止脏数据
+    if (size > originalSize) {
+        ret = aclrtMemset(static_cast<uint8_t*>(*deviceAddr) + originalSize, size - originalSize, 0,
+                          size - originalSize);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemset failed. ERROR: %d\n", ret); return ret);
+    }
 
-      // 调用aclrtMalloc申请device侧内存（对齐后的大小）
-      ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
-      // 只复制原始ND数据
-      auto originalSize = static_cast<size_t>(GetShapeSize(shape) * sizeof(T));
-      ret = aclrtMemcpy(*deviceAddr, originalSize, hostData.data(), originalSize, ACL_MEMCPY_HOST_TO_DEVICE);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
-      // 清零剩余区域，防止脏数据
-      if (size > originalSize) {
-          ret = aclrtMemset(static_cast<uint8_t*>(*deviceAddr) + originalSize, size - originalSize, 0, size - originalSize);
-          CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemset failed. ERROR: %d\n", ret); return ret);
-      }
+    // 计算连续tensor的strides
+    std::vector<int64_t> strides(shape.size(), 1);
+    for (int64_t i = static_cast<int64_t>(shape.size()) - 2; i >= 0; i--) {
+        strides[i] = shape[i + 1] * strides[i + 1];
+    }
 
-      // 计算连续tensor的strides
-      std::vector<int64_t> strides(shape.size(), 1);
-      for (int64_t i = shape.size() - 2; i >= 0; i--) {
-          strides[i] = shape[i + 1] * strides[i + 1];
-      }
+    std::vector<int64_t> storageShape;
+    storageShape.push_back(GetShapeSize(shape));
 
-      std::vector<int64_t> storageShape;
-      storageShape.push_back(GetShapeSize(shape));
+    // 调用aclCreateTensor接口创建aclTensor
+    *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
+                              storageShape.data(), storageShape.size(), *deviceAddr);
+    CHECK_RET(*tensor != nullptr, LOG_PRINT("aclCreateTensor failed.\n"); return 1);
+    return 0;
+}
 
-      // 调用aclCreateTensor接口创建aclTensor
-      *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
-                                storageShape.data(), storageShape.size(), *deviceAddr);
-      return 0;
-  }
+int AclnnQuantMatmulGeluMxQuantWeightNzTest(aclrtStream stream)
+{
+    int ret = ACL_SUCCESS;
+    // 2. 构造FLOAT8_E4M3FN输入、E8M0 scale和输出。
+    int64_t m = 5;
+    int64_t k = 64;
+    int64_t n = 128;
+    bool transposeX1 = false;
+    bool transposeX2 = true;
+    constexpr int64_t MX_SCALE_BLOCK_SIZE = 64; // scale块对齐大小，用于计算scale shape
+    std::vector<int64_t> x1Shape = {m, k};
+    std::vector<int64_t> x2Shape = {n, k};
+    std::vector<int64_t> x1ScaleShape = {m, (k + MX_SCALE_BLOCK_SIZE - 1) / MX_SCALE_BLOCK_SIZE, 2};
+    std::vector<int64_t> x2ScaleShape = {n, (k + MX_SCALE_BLOCK_SIZE - 1) / MX_SCALE_BLOCK_SIZE, 2};
+    std::vector<int64_t> outShape = {m, n};
+    std::vector<int64_t> outScaleShape = {m, (n + MX_SCALE_BLOCK_SIZE - 1) / MX_SCALE_BLOCK_SIZE, 2};
+    void* x1DeviceAddr = nullptr;
+    void* x2DeviceAddr = nullptr;
+    void* x1ScaleDeviceAddr = nullptr;
+    void* x2ScaleDeviceAddr = nullptr;
+    void* outDeviceAddr = nullptr;
+    void* outScaleDeviceAddr = nullptr;
+    aclTensor* x1 = nullptr;
+    aclTensor* x2 = nullptr;
+    aclTensor* x1Scale = nullptr;
+    aclTensor* x2Scale = nullptr;
+    aclTensor* bias = nullptr;
+    aclTensor* out = nullptr;
+    aclTensor* outScale = nullptr;
+    std::vector<uint8_t> x1HostData(m * k, 0b00111000); // float8_e4m3的1.0
+    std::vector<uint8_t> x2HostData(n * k, 0b00111000); // float8_e4m3的1.0
+    std::vector<uint8_t> x1ScaleHostData(GetShapeSize(x1ScaleShape),
+                                         0b01111111); // float8_e8m0的1.0
+    std::vector<uint8_t> x2ScaleHostData(GetShapeSize(x2ScaleShape),
+                                         0b01111111); // float8_e8m0的1.0
+    std::vector<uint8_t> outHostData(GetShapeSize(outShape), 0);
+    std::vector<uint8_t> outScaleHostData(GetShapeSize(outScaleShape), 0);
+    // 创建x1 aclTensor
+    ret = CreateAclTensor(x1HostData, x1Shape, &x1DeviceAddr, aclDataType::ACL_FLOAT8_E4M3FN, &x1);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x1TensorPtr(x1, aclDestroyTensor);
+    std::unique_ptr<void, aclError (*)(void*)> x1DeviceAddrPtr(x1DeviceAddr, aclrtFree);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    // 创建ND格式的x2，并为转换后的NZ数据预留足够空间。
+    ret = CreateAclTensorX2(x2HostData, x2Shape, &x2DeviceAddr, aclDataType::ACL_FLOAT8_E4M3FN, &x2);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x2TensorPtr(x2, aclDestroyTensor);
+    std::unique_ptr<void, aclError (*)(void*)> x2DeviceAddrPtr(x2DeviceAddr, aclrtFree);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    // 创建x1Scale aclTensor
+    ret = CreateAclTensor(x1ScaleHostData, x1ScaleShape, &x1ScaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0, &x1Scale);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x1ScaleTensorPtr(x1Scale, aclDestroyTensor);
+    std::unique_ptr<void, aclError (*)(void*)> x1ScaleDeviceAddrPtr(x1ScaleDeviceAddr, aclrtFree);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    // 创建x2Scale aclTensor
+    ret = CreateAclTensor(x2ScaleHostData, x2ScaleShape, &x2ScaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0, &x2Scale);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x2ScaleTensorPtr(x2Scale, aclDestroyTensor);
+    std::unique_ptr<void, aclError (*)(void*)> x2ScaleDeviceAddrPtr(x2ScaleDeviceAddr, aclrtFree);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    // 创建out aclTensor
+    ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT8_E4M3FN, &out);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> outTensorPtr(out, aclDestroyTensor);
+    std::unique_ptr<void, aclError (*)(void*)> outDeviceAddrPtr(outDeviceAddr, aclrtFree);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    // 创建mxscale aclTensor
+    ret = CreateAclTensor(outScaleHostData, outScaleShape, &outScaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0,
+                          &outScale);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> outScaleTensorPtr(outScale, aclDestroyTensor);
+    std::unique_ptr<void, aclError (*)(void*)> outScaleDeviceAddrPtr(outScaleDeviceAddr, aclrtFree);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    // 3. 转换NZ权重并调用算子的两段式接口。
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor = nullptr;
+    // 调用aclnnTransMatmulWeight第一段接口
+    ret = aclnnTransMatmulWeightGetWorkspaceSize(x2, &workspaceSize, &executor);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransMatmulWeightGetWorkspaceSize failed. ERROR: %d\n", ret);
+              return ret);
+    // 根据第一段接口计算出的workspaceSize申请device内存
+    void* workspaceTransAddr = nullptr;
+    std::unique_ptr<void, aclError (*)(void*)> workspaceTransAddrPtr(nullptr, aclrtFree);
+    if (workspaceSize > 0) {
+        ret = aclrtMalloc(&workspaceTransAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
+        workspaceTransAddrPtr.reset(workspaceTransAddr);
+    }
+    // 调用aclnnTransMatmulWeight第二段接口
+    ret = aclnnTransMatmulWeight(workspaceTransAddr, workspaceSize, executor, stream);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransMatmulWeight failed. ERROR: %d\n", ret); return ret);
 
-  int AclnnQuantMatmulWeightNzActivationQuantTest(int32_t deviceId, aclrtStream& stream)
-  {
-      auto ret = Init(deviceId, &stream);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
-      // 2. 构造输入与输出，需要根据API的接口自定义构造
-      int64_t m = 5;
-      int64_t k = 64;
-      int64_t n = 128;
-      bool transposeX1 = false;
-      bool transposeX2 = true;
-      constexpr int64_t MX_SCALE_BLOCK_SIZE = 64; // scale块对齐大小，用于计算scale shape
-      std::vector<int64_t> x1Shape = {m, k};
-      std::vector<int64_t> x2Shape = {n, k};
-      std::vector<int64_t> x1ScaleShape = {m, (k + MX_SCALE_BLOCK_SIZE - 1) / MX_SCALE_BLOCK_SIZE, 2};
-      std::vector<int64_t> x2ScaleShape = {n, (k + MX_SCALE_BLOCK_SIZE - 1) / MX_SCALE_BLOCK_SIZE, 2};
-      std::vector<int64_t> outShape = {m, n};
-      std::vector<int64_t> outScaleShape = {m, (n + MX_SCALE_BLOCK_SIZE - 1) / MX_SCALE_BLOCK_SIZE, 2};
-      void* x1DeviceAddr = nullptr;
-      void* x2DeviceAddr = nullptr;
-      void* x1ScaleDeviceAddr = nullptr;
-      void* x2ScaleDeviceAddr = nullptr;
-      void* outDeviceAddr = nullptr;
-      void* outScaleDeviceAddr = nullptr;
-      aclTensor* x1 = nullptr;
-      aclTensor* x2 = nullptr;
-      aclTensor* x1Scale = nullptr;
-      aclTensor* x2Scale = nullptr;
-      aclTensor* bias = nullptr;
-      aclTensor* out = nullptr;
-      aclTensor* outScale = nullptr;
-      std::vector<uint8_t> x1HostData(m * k, 0b00111000);                  // float8_e4m3的1.0
-      std::vector<uint8_t> x2HostData(n * k, 0b00111000);                  // float8_e4m3的1.0
-      std::vector<uint8_t> x1ScaleHostData(m * (k + MX_SCALE_BLOCK_SIZE - 1) / MX_SCALE_BLOCK_SIZE * 2, 0b01111111); // float8_e8m0的1.0
-      std::vector<uint8_t> x2ScaleHostData(n * (k + MX_SCALE_BLOCK_SIZE - 1) / MX_SCALE_BLOCK_SIZE * 2, 0b01111111); // float8_e8m0的1.0
-      std::vector<uint8_t> outHostData(m * n, 0);
-      std::vector<uint8_t> outScaleHostData(m * (n + MX_SCALE_BLOCK_SIZE - 1) / MX_SCALE_BLOCK_SIZE * 2, 0);
-      // 创建x1 aclTensor
-      ret = CreateAclTensor(x1HostData, x1Shape, &x1DeviceAddr, aclDataType::ACL_FLOAT8_E4M3FN, &x1);
-      std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x1TensorPtr(x1, aclDestroyTensor);
-      std::unique_ptr<void, aclError (*)(void*)> x1DeviceAddrPtr(x1DeviceAddr, aclrtFree);
-      CHECK_RET(ret == ACL_SUCCESS, return ret);
-      // 创建AI处理器亲和数据排布格式的x2 aclTensor
-      ret = CreateAclTensorX2(x2HostData, x2Shape, &x2DeviceAddr, aclDataType::ACL_FLOAT8_E4M3FN, &x2);
-      std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x2TensorPtr(x2, aclDestroyTensor);
-      std::unique_ptr<void, aclError (*)(void*)> x2DeviceAddrPtr(x2DeviceAddr, aclrtFree);
-      CHECK_RET(ret == ACL_SUCCESS, return ret);
-      // 创建x1Scale aclTensor
-      ret = CreateAclTensor(x1ScaleHostData, x1ScaleShape, &x1ScaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0, &x1Scale);
-      std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x1ScaleTensorPtr(x1Scale, aclDestroyTensor);
-      std::unique_ptr<void, aclError (*)(void*)> x1ScaleDeviceAddrPtr(x1ScaleDeviceAddr, aclrtFree);
-      CHECK_RET(ret == ACL_SUCCESS, return ret);
-      // 创建x2Scale aclTensor
-      ret = CreateAclTensor(x2ScaleHostData, x2ScaleShape, &x2ScaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0, &x2Scale);
-      std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> x2ScaleTensorPtr(x2Scale, aclDestroyTensor);
-      std::unique_ptr<void, aclError (*)(void*)> x2ScaleDeviceAddrPtr(x2ScaleDeviceAddr, aclrtFree);
-      CHECK_RET(ret == ACL_SUCCESS, return ret);
-      // 创建out aclTensor
-      ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT8_E4M3FN, &out);
-      std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> outTensorPtr(out, aclDestroyTensor);
-      std::unique_ptr<void, aclError (*)(void*)> outDeviceAddrPtr(outDeviceAddr, aclrtFree);
-      CHECK_RET(ret == ACL_SUCCESS, return ret);
-      // 创建mxscale aclTensor
-      ret = CreateAclTensor(outScaleHostData, outScaleShape, &outScaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0,
-                            &outScale);
-      std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> outScaleTensorPtr(outScale, aclDestroyTensor);
-      std::unique_ptr<void, aclError (*)(void*)> outScaleDeviceAddrPtr(outScaleDeviceAddr, aclrtFree);
-      CHECK_RET(ret == ACL_SUCCESS, return ret);
-      // 3. 调用CANN算子库API，需要修改为具体的Api名称
-      uint64_t workspaceSize = 0;
-      aclOpExecutor* executor = nullptr;
-      // 调用aclnnTransMatmulWeight第一段接口
-      ret = aclnnTransMatmulWeightGetWorkspaceSize(x2, &workspaceSize, &executor);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransMatmulWeightGetWorkspaceSize failed. ERROR: %d\n", ret);
-                return ret);
-      // 根据第一段接口计算出的workspaceSize申请device内存
-      void* workspaceTransAddr = nullptr;
-      std::unique_ptr<void, aclError (*)(void*)> workspaceTransAddrPtr(nullptr, aclrtFree);
-      if (workspaceSize > 0) {
-          ret = aclrtMalloc(&workspaceTransAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-          CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
-          workspaceTransAddrPtr.reset(workspaceTransAddr);
-      }
-      // 调用aclnnTransMatmulWeight第二段接口
-      ret = aclnnTransMatmulWeight(workspaceTransAddr, workspaceSize, executor, stream);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransMatmulWeight failed. ERROR: %d\n", ret); return ret);
+    workspaceSize = 0;
+    executor = nullptr;
+    int64_t groupSizeValue = 4295032864;
+    char activationType[] = "gelu_tanh";
+    char quantMode[] = "mx";
+    char roundMode[] = "rint";
+    ret = aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize(
+        x1, x2, x1Scale, x2Scale, bias, transposeX1, transposeX2, groupSizeValue, activationType, quantMode, roundMode,
+        0, 0.0, out, outScale, &workspaceSize, &executor);
+    CHECK_RET(ret == ACL_SUCCESS,
+              LOG_PRINT("aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize failed. ERROR: %d\n", ret);
+              return ret);
+    // 根据第一段接口计算出的workspaceSize申请device内存
+    void* workspaceAddr = nullptr;
+    std::unique_ptr<void, aclError (*)(void*)> workspaceAddrPtr(nullptr, aclrtFree);
+    if (workspaceSize > 0) {
+        ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
+        workspaceAddrPtr.reset(workspaceAddr);
+    }
+    // 调用aclnnQuantMatmulActivationQuantWeightNz第二段接口
+    ret = aclnnQuantMatmulActivationQuantWeightNz(workspaceAddr, workspaceSize, executor, stream);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnQuantMatmulActivationQuantWeightNz failed. ERROR: %d\n", ret);
+              return ret);
+    // 4. 同步等待任务执行结束。
+    ret = aclrtSynchronizeStream(stream);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+    // 5. 将量化结果及scale的原始字节拷贝回Host。
+    auto size = GetShapeSize(outShape);
+    std::vector<uint8_t> resultData(size, 0);
+    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), outDeviceAddr,
+                      size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
+    for (int64_t i = 0; i < size; i++) {
+        LOG_PRINT("result[%lld] (FP8 raw byte): %u\n", static_cast<long long>(i), static_cast<unsigned>(resultData[i]));
+    }
+    size = GetShapeSize(outScaleShape);
+    std::vector<uint8_t> scaleData(size, 0);
+    ret = aclrtMemcpy(scaleData.data(), scaleData.size() * sizeof(scaleData[0]), outScaleDeviceAddr,
+                      size * sizeof(scaleData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy scale result from device to host failed. ERROR: %d\n", ret);
+              return ret);
+    for (int64_t i = 0; i < size; i++) {
+        LOG_PRINT("scale[%lld] (E8M0 raw byte): %u\n", static_cast<long long>(i), static_cast<unsigned>(scaleData[i]));
+    }
+    return ACL_SUCCESS;
+}
 
-      workspaceSize = 0;
-      executor = nullptr;
-      int64_t groupSizeValue = 4295032864;
-      char activationType[] = "gelu_tanh";
-      char quantMode[] = "mx";
-      char roundMode[] = "rint";
-      ret = aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize(
-          x1, x2, x1Scale, x2Scale, bias, transposeX1, transposeX2, groupSizeValue, activationType, quantMode, roundMode,
-          0, 0.0, out, outScale, &workspaceSize, &executor);
-      CHECK_RET(ret == ACL_SUCCESS,
-                LOG_PRINT("aclnnQuantMatmulActivationQuantWeightNzGetWorkspaceSize failed. ERROR: %d\n", ret);
-                return ret);
-      // 根据第一段接口计算出的workspaceSize申请device内存
-      void* workspaceAddr = nullptr;
-      std::unique_ptr<void, aclError (*)(void*)> workspaceAddrPtr(nullptr, aclrtFree);
-      if (workspaceSize > 0) {
-          ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-          CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
-          workspaceAddrPtr.reset(workspaceAddr);
-      }
-      // 调用aclnnQuantMatmulActivationQuantWeightNz第二段接口
-      ret = aclnnQuantMatmulActivationQuantWeightNz(workspaceAddr, workspaceSize, executor, stream);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnQuantMatmulActivationQuantWeightNz failed. ERROR: %d\n", ret);
-                return ret);
-      // 4. （固定写法）同步等待任务执行结束
-      ret = aclrtSynchronizeStream(stream);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
-      // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
-      auto size = GetShapeSize(outShape);
-      std::vector<uint8_t> resultData(size, 0);
-      ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), outDeviceAddr,
-                        size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
-      for (int64_t i = 0; i < size; i++) {
-          LOG_PRINT("result[%ld] is: %d\n", i, resultData[i]);
-      }
-      size = GetShapeSize(outScaleShape);
-      std::vector<uint8_t> scaleData(size, 0);
-      ret = aclrtMemcpy(scaleData.data(), scaleData.size() * sizeof(scaleData[0]), outScaleDeviceAddr,
-                        size * sizeof(scaleData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
-      CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy scale result from device to host failed. ERROR: %d\n", ret);
-                return ret);
-      for (int64_t i = 0; i < size; i++) {
-          LOG_PRINT("scale[%ld] is: %d\n", i, scaleData[i]);
-      }
-      return ACL_SUCCESS;
-  }
-
-  int main()
-  {
-      // 1. （固定写法）device/stream初始化，参考acl API手册
-      // 根据自己的实际device填写deviceId
-      int32_t deviceId = 0;
-      aclrtStream stream;
-      auto ret = AclnnQuantMatmulWeightNzActivationQuantTest(deviceId, stream);
-      CHECK_FREE_RET(ret == ACL_SUCCESS,
-                    LOG_PRINT("AclnnQuantMatmulWeightNzActivationQuantTest failed. ERROR: %d\n", ret);
-                    return ret);
-      Finalize(deviceId, stream);
-      return 0;
-  }
-  ```
+int main()
+{
+    // 1. 初始化Device和Stream。
+    // 根据自己的实际device填写deviceId
+    int32_t deviceId = 0;
+    aclrtStream stream = nullptr;
+    auto ret = Init(deviceId, &stream);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    ret = AclnnQuantMatmulGeluMxQuantWeightNzTest(stream);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("AclnnQuantMatmulGeluMxQuantWeightNzTest failed. ERROR: %d\n", ret);
+    }
+    Finalize(deviceId, stream);
+    return ret;
+}
+```

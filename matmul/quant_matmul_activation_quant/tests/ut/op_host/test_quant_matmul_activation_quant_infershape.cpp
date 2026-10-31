@@ -193,9 +193,11 @@ TEST_P(TestQuantMatmulActivationQuantInferShape, InferShapeFromCsv)
     gert::StorageShape yScaleShape;
 
     // Input order: x1, x2, bias, x1Scale, x2Scale.
+    // Empty scale fields represent missing inputs; inference does not depend on input scales.
     bool hasBias = (param.bias.GetDimNum() > 0UL);
-    std::vector<gert::StorageShape*> inputShapes = {&x1Shape, &x2Shape, hasBias ? &biasShape : nullptr, &x1ScaleShape,
-                                                    &x2ScaleShape};
+    std::vector<gert::StorageShape*> inputShapes = {&x1Shape, &x2Shape, hasBias ? &biasShape : nullptr,
+                                                    param.x1Scale.GetDimNum() > 0UL ? &x1ScaleShape : nullptr,
+                                                    param.x2Scale.GetDimNum() > 0UL ? &x2ScaleShape : nullptr};
 
     std::vector<uint32_t> irInstanceNum(inputShapes.size(), 1U);
     auto contextHolder = gert::InferShapeContextFaker()
@@ -237,72 +239,43 @@ TEST_P(TestQuantMatmulActivationQuantInferShape, InferShapeFromCsv)
     }
 }
 
-static const std::vector<QuantMatmulActivationQuantInferShapeParam> kCasesParams950 = LoadParams("Ascend950");
-
-TEST(QuantMatmulActivationQuantInferDataType, SwiGluOutputMatchesX1)
+TEST_P(TestQuantMatmulActivationQuantInferShape, InferDataTypeFromCsv)
 {
+    // Output types follow y_dtype even when tiling rejects the input/attribute combination.
+    const auto& param = GetParam();
     const auto* implementation = gert::OpImplRegistry::GetInstance().GetOpImpl("QuantMatmulActivationQuant");
     ASSERT_NE(implementation, nullptr);
     ASSERT_NE(implementation->infer_datatype, nullptr);
-    for (const auto x1TypeValue : {ge::DT_FLOAT8_E4M3FN, ge::DT_FLOAT8_E5M2}) {
-        ge::DataType x1Type = x1TypeValue;
-        ge::DataType x2Type = ge::DT_FLOAT8_E5M2;
-        ge::DataType biasType = ge::DT_FLOAT;
-        ge::DataType scaleType = ge::DT_FLOAT8_E8M0;
-        ge::DataType yType = ge::DT_UNDEFINED;
-        ge::DataType yScaleType = ge::DT_UNDEFINED;
-        auto holder = gert::InferDataTypeContextFaker()
-                          .NodeIoNum(5, 2)
-                          .IrInstanceNum({1, 1, 1, 1, 1})
-                          .InputDataTypes({&x1Type, &x2Type, &biasType, &scaleType, &scaleType})
-                          .OutputDataTypes({&yType, &yScaleType})
-                          .NodeAttrs(
-                              {{"transpose_x1", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                               {"transpose_x2", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                               {"group_size", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
-                               {"activation_type", Ops::NN::AnyValue::CreateFrom<std::string>("swiglu")},
-                               {"y_dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(static_cast<int64_t>(x1TypeValue))},
-                               {"quant_mode", Ops::NN::AnyValue::CreateFrom<std::string>("mx")},
-                               {"round_mode", Ops::NN::AnyValue::CreateFrom<std::string>("rint")},
-                               {"scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
-                               {"dst_type_max", Ops::NN::AnyValue::CreateFrom<float>(0.0f)}})
-                          .Build();
-        auto* context = holder.GetContext<gert::InferDataTypeContext>();
-        ASSERT_EQ(implementation->infer_datatype(context), ge::GRAPH_SUCCESS);
-        EXPECT_EQ(context->GetOutputDataType(0), x1TypeValue);
-        EXPECT_EQ(context->GetOutputDataType(1), ge::DT_FLOAT8_E8M0);
-    }
-}
-
-TEST(QuantMatmulActivationQuantInferDataType, SwiGluRejectsOutputDifferentFromX1)
-{
-    const auto* implementation = gert::OpImplRegistry::GetInstance().GetOpImpl("QuantMatmulActivationQuant");
-    ASSERT_NE(implementation, nullptr);
-    ASSERT_NE(implementation->infer_datatype, nullptr);
-    ge::DataType x1Type = ge::DT_FLOAT8_E4M3FN;
-    ge::DataType x2Type = ge::DT_FLOAT8_E5M2;
-    ge::DataType biasType = ge::DT_FLOAT;
-    ge::DataType scaleType = ge::DT_FLOAT8_E8M0;
+    ge::DataType x1Type = param.x1Dtype;
+    ge::DataType x2Type = param.x2Dtype;
+    ge::DataType biasType = param.biasDtype;
+    ge::DataType x1ScaleType = param.x1ScaleDtype;
+    ge::DataType x2ScaleType = param.x2ScaleDtype;
     ge::DataType yType = ge::DT_UNDEFINED;
     ge::DataType yScaleType = ge::DT_UNDEFINED;
     auto holder = gert::InferDataTypeContextFaker()
                       .NodeIoNum(5, 2)
                       .IrInstanceNum({1, 1, 1, 1, 1})
-                      .InputDataTypes({&x1Type, &x2Type, &biasType, &scaleType, &scaleType})
+                      .InputDataTypes({&x1Type, &x2Type, &biasType, &x1ScaleType, &x2ScaleType})
                       .OutputDataTypes({&yType, &yScaleType})
-                      .NodeAttrs({{"transpose_x1", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                                  {"transpose_x2", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                                  {"group_size", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
-                                  {"activation_type", Ops::NN::AnyValue::CreateFrom<std::string>("swiglu")},
-                                  {"y_dtype",
-                                   Ops::NN::AnyValue::CreateFrom<int64_t>(static_cast<int64_t>(ge::DT_FLOAT8_E5M2))},
-                                  {"quant_mode", Ops::NN::AnyValue::CreateFrom<std::string>("mx")},
-                                  {"round_mode", Ops::NN::AnyValue::CreateFrom<std::string>("rint")},
-                                  {"scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
-                                  {"dst_type_max", Ops::NN::AnyValue::CreateFrom<float>(0.0f)}})
+                      .NodeAttrs(
+                          {{"transpose_x1", Ops::NN::AnyValue::CreateFrom<bool>(param.transposeX1)},
+                           {"transpose_x2", Ops::NN::AnyValue::CreateFrom<bool>(param.transposeX2)},
+                           {"group_size", Ops::NN::AnyValue::CreateFrom<int64_t>(param.groupSize)},
+                           {"activation_type", Ops::NN::AnyValue::CreateFrom<std::string>(param.activationType)},
+                           {"y_dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(static_cast<int64_t>(param.yDtype))},
+                           {"quant_mode", Ops::NN::AnyValue::CreateFrom<std::string>(param.quantMode)},
+                           {"round_mode", Ops::NN::AnyValue::CreateFrom<std::string>(param.roundMode)},
+                           {"scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(param.scaleAlg)},
+                           {"dst_type_max", Ops::NN::AnyValue::CreateFrom<float>(param.dstTypeMax)}})
                       .Build();
-    EXPECT_EQ(implementation->infer_datatype(holder.GetContext<gert::InferDataTypeContext>()), ge::GRAPH_FAILED);
+    auto* context = holder.GetContext<gert::InferDataTypeContext>();
+    ASSERT_EQ(implementation->infer_datatype(context), ge::GRAPH_SUCCESS) << "caseName=" << param.caseName;
+    EXPECT_EQ(context->GetOutputDataType(0), param.yDtype) << "caseName=" << param.caseName;
+    EXPECT_EQ(context->GetOutputDataType(1), ge::DT_FLOAT8_E8M0) << "caseName=" << param.caseName;
 }
+
+static const std::vector<QuantMatmulActivationQuantInferShapeParam> kCasesParams950 = LoadParams("Ascend950");
 
 TEST(QuantMatmulActivationQuantInferShapeCsv, ShouldLoadValidCases)
 {

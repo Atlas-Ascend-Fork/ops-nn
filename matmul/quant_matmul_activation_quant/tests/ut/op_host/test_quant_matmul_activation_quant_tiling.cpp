@@ -379,8 +379,9 @@ TEST_P(TestQuantMatmulActivationQuantTiling, generalTest)
                       .SetOpType(opType)
                       .NodeIoNum(5, 2)
                       .IrInstanceNum({1, 1, 1, 1, 1})
-                      .InputShapes(
-                          {&x1Shape, &x2Shape, param.hasBias ? &biasShape : nullptr, &x1ScaleShape, &x2ScaleShape})
+                      .InputShapes({&x1Shape, &x2Shape, param.hasBias ? &biasShape : nullptr,
+                                    param.x1ScaleShape.GetDimNum() > 0UL ? &x1ScaleShape : nullptr,
+                                    param.x2ScaleShape.GetDimNum() > 0UL ? &x2ScaleShape : nullptr})
                       .OutputShapes({&yShape, &yScaleShape})
                       .CompileInfo(&compileInfo)
                       .PlatformInfo(reinterpret_cast<char*>(&platformInfo))

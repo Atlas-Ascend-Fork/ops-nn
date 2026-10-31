@@ -24,8 +24,8 @@ extern "C" {
  * 算子功能：实现QuantMatmulActivationQuantWeightNz计算
  * @param [in] x1: matmul左矩阵，数据类型支持：float8_e4m3fn、float8_e5m2、float4_e2m1数据类型，数据格式支持ND。
  * @param [in] x2: matmul右矩阵，数据类型支持：float8_e4m3fn、float4_e2m1数据类型，数据格式支持NZ。
- * @param [in] x1ScaleOptional: x1的scale，数据类型支持：float8_e8m0。
- * @param [in] x2Scale: x2的scale，数据类型支持：float8_e8m0。
+ * @param [in] x1ScaleOptional: x1的scale，数据类型支持：float8_e8m0。当前MX模式必选，Optional为兼容保留命名。
+ * @param [in] x2Scale: x2的scale，数据类型支持：float8_e8m0。当前MX模式必选，不允许空指针。
  * @param [in] biasOptional: bias，数据类型支持：float32。
  * @param [in] transposeX1: x1是否转置。
  * @param [in] transposeX2: x2是否转置。

@@ -56,7 +56,7 @@ static ge::graphStatus QuantMatmulActivationQuantTilingFunc(gert::TilingContext*
     auto compileInfoPtr = context->GetCompileInfo<QuantBatchMatmulV3CompileInfo>();
     OP_LOGE_IF(compileInfoPtr == nullptr, ge::GRAPH_FAILED, opName, "compileInfoPtr is null.");
     if (!compileInfoPtr->supportL12BtBf16) {
-        OP_LOGD(opName, "Skip tiling: only Ascend 950PR and Ascend 950DT are supported.");
+        OP_LOGE(opName, "Tiling failed: only Ascend 950PR and Ascend 950DT are supported.");
         return ge::GRAPH_FAILED;
     }
 

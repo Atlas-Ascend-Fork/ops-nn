@@ -14,6 +14,7 @@
  */
 #include "quant_matmul_activation_quant_checker.h"
 #include "aclnn_kernels/transdata.h"
+#include "opdev/tensor_view_utils.h"
 
 namespace QuantMatmulActivationQuantAclnnCheck {
 
@@ -23,91 +24,76 @@ using Ops::Base::CeilDiv;
 using Ops::NN::IsTransposeLastTwoDims;
 using Ops::NN::SwapLastTwoDimValue;
 
-bool CheckSpecialCase(const aclTensor* tensor, int64_t firstLastDim, int64_t secondLastDim)
-{
-    if (tensor->GetViewShape().GetDim(firstLastDim) == tensor->GetViewShape().GetDim(secondLastDim)) {
-        OP_LOGD("Special case: transpose attribute does not need to be set.");
-        return true;
-    }
-    return false;
-}
-
-bool GetTransposeAttrValue(const aclTensor* tensor, bool transpose)
-{
-    int64_t dim1 = tensor->GetViewShape().GetDimNum() - 1;
-    int64_t dim2 = tensor->GetViewShape().GetDimNum() - PENULTIMATE_DIM;
-    // check if tensor is contiguous layout
-    if (tensor->GetViewStrides()[dim2] == 1 && tensor->GetViewStrides()[dim1] == tensor->GetViewShape().GetDim(dim2)) {
-        OP_LOGD("Detected a transposed/non-contiguous tensor layout; swapping the last two dimensions.");
-        const_cast<aclTensor*>(tensor)->SetViewShape(SwapLastTwoDimValue(tensor->GetViewShape()));
-        if (!CheckSpecialCase(tensor, dim1, dim2)) {
-            return !transpose;
-        }
-    }
-    return transpose;
-}
-
 op::Shape GetWeightNzShape(const aclTensor* input, bool transpose)
 {
-    size_t viewDimNum = input->GetViewShape().GetDimNum();
-    int64_t k = transpose ? input->GetViewShape().GetDim(viewDimNum - LAST_FIRST_DIM_INDEX) :
-                            input->GetViewShape().GetDim(viewDimNum - LAST_SECOND_DIM_INDEX);
-    int64_t n = transpose ? input->GetViewShape().GetDim(viewDimNum - LAST_SECOND_DIM_INDEX) :
-                            input->GetViewShape().GetDim(viewDimNum - LAST_FIRST_DIM_INDEX);
+    const size_t viewRank = input->GetViewShape().GetDimNum();
+    const int64_t k = transpose ? input->GetViewShape().GetDim(viewRank - LAST_FIRST_DIM_INDEX) :
+                                  input->GetViewShape().GetDim(viewRank - LAST_SECOND_DIM_INDEX);
+    const int64_t n = transpose ? input->GetViewShape().GetDim(viewRank - LAST_SECOND_DIM_INDEX) :
+                                  input->GetViewShape().GetDim(viewRank - LAST_FIRST_DIM_INDEX);
 
-    bool isMXFP4 = input->GetDataType() == DataType::DT_FLOAT4_E2M1;
-    int64_t nz_k0_value_trans = isMXFP4 ? NZ_K0_VALUE_INT4_TRANS : NZ_K0_VALUE_INT8_TRANS;
-    int64_t k1 = transpose ? CeilDiv(k, nz_k0_value_trans) : CeilDiv(k, NZ_K0_VALUE_BMM_BLOCK_NUM);
-    int64_t n1 = transpose ? CeilDiv(n, NZ_K0_VALUE_BMM_BLOCK_NUM) : CeilDiv(n, nz_k0_value_trans);
+    const bool isMxFp4 = input->GetDataType() == DataType::DT_FLOAT4_E2M1;
+    const int64_t innerBlockSize = isMxFp4 ? NZ_K0_VALUE_INT4_TRANS : NZ_K0_VALUE_INT8_TRANS;
+    const int64_t kBlockCount = transpose ? CeilDiv(k, innerBlockSize) : CeilDiv(k, NZ_K0_VALUE_BMM_BLOCK_NUM);
+    const int64_t nBlockCount = transpose ? CeilDiv(n, NZ_K0_VALUE_BMM_BLOCK_NUM) : CeilDiv(n, innerBlockSize);
 
     op::Shape weightNzShape;
-    for (size_t i = 0; i < viewDimNum - LAST_SECOND_DIM_INDEX; i++) {
+    for (size_t i = 0; i < viewRank - LAST_SECOND_DIM_INDEX; i++) {
         weightNzShape.AppendDim(input->GetViewShape().GetDim(i));
     }
     if (transpose) {
-        weightNzShape.AppendDim(k1);
-        weightNzShape.AppendDim(n1);
+        weightNzShape.AppendDim(kBlockCount);
+        weightNzShape.AppendDim(nBlockCount);
     } else {
-        weightNzShape.AppendDim(n1);
-        weightNzShape.AppendDim(k1);
+        weightNzShape.AppendDim(nBlockCount);
+        weightNzShape.AppendDim(kBlockCount);
     }
     weightNzShape.AppendDim(NZ_STORAGE_PENULTIMATE_DIM);
-    weightNzShape.AppendDim(nz_k0_value_trans);
+    weightNzShape.AppendDim(innerBlockSize);
     return weightNzShape;
 }
 
 bool CheckWeightNzStorageShape(const op::Shape& nzShape, const op::Shape& storageShape)
 {
-    uint64_t nzDimMultiply = 1;
-    uint64_t nzDimNum = nzShape.GetDimNum();
-    for (uint64_t i = 0; i < nzDimNum; i++) {
-        nzDimMultiply *= nzShape[i];
+    if (nzShape.GetDimNum() != storageShape.GetDimNum()) {
+        return false;
     }
-
-    uint64_t storageDimMultiply = 1;
-    uint64_t storageDimNum = storageShape.GetDimNum();
-    for (uint64_t i = 0; i < storageDimNum; i++) {
-        storageDimMultiply *= storageShape[i];
+    for (size_t i = 0; i < nzShape.GetDimNum(); ++i) {
+        if (nzShape.GetDim(i) != storageShape.GetDim(i)) {
+            return false;
+        }
     }
-
-    return nzDimMultiply == storageDimMultiply;
+    return true;
 }
 
-const aclTensor* SetTensorToNZFormat(const aclTensor* input, op::Shape& shape, aclOpExecutor* executor)
+bool NormalizeWeightNzView(const aclTensor*& input, bool& transpose, aclOpExecutor* executor)
 {
-    if (executor == nullptr) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "SetTensorToNZFormat failed: executor is null.");
-        return nullptr;
+    CHECK_RET(input != nullptr && executor != nullptr, false);
+    // NZ storage must describe the entire padded matrix starting at its base address.
+    CHECK_RET(input->GetViewOffset() == 0, false);
+    auto shape = input->GetViewShape();
+    auto strides = input->GetViewStrides();
+    CHECK_RET(shape.GetDimNum() >= LAST_SECOND_DIM_INDEX && strides.size() == shape.GetDimNum(), false);
+    const auto last = shape.GetDimNum() - LAST_FIRST_DIM_INDEX;
+    const auto penultimate = shape.GetDimNum() - LAST_SECOND_DIM_INDEX;
+    // NZ batch strides may include padding; only the matrix view strides determine transpose.
+    const bool transposeView = strides[penultimate] == 1 && strides[last] == shape.GetDim(penultimate) &&
+                               !(shape.GetDim(last) == 1 && shape.GetDim(penultimate) == 1);
+    if (transposeView) {
+        shape = SwapLastTwoDimValue(shape);
+        std::swap(strides[last], strides[penultimate]);
     }
-    auto formatTensor = executor->CreateView(input, shape, input->GetViewOffset());
-    if (formatTensor == nullptr) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "SetTensorToNZFormat failed: unable to create the formatted tensor.");
-        return nullptr;
-    }
+    auto formatTensor = executor->CreateView(input, input->GetStorageShape(), 0);
+    CHECK_RET(formatTensor != nullptr, false);
+    formatTensor->SetViewShape(shape);
+    formatTensor->SetViewStrides(strides);
     formatTensor->SetStorageFormat(op::Format::FORMAT_FRACTAL_NZ);
+    formatTensor->SetViewFormat(op::Format::FORMAT_ND);
     formatTensor->SetOriginalFormat(op::Format::FORMAT_ND);
-    formatTensor->SetViewShape(input->GetViewShape());
-    return formatTensor;
+    formatTensor->SetOriginalShape(shape);
+    input = formatTensor;
+    transpose = transpose != transposeView;
+    return true;
 }
 
 bool TensorContiguousProcess(const aclTensor*& contiguousTensor, bool& transpose, aclOpExecutor* executor)
@@ -116,70 +102,42 @@ bool TensorContiguousProcess(const aclTensor*& contiguousTensor, bool& transpose
         OP_LOGD("Input tensor is null; skipping contiguous conversion.");
         return true;
     }
-    bool isNZTensor = static_cast<ge::Format>(ge::GetPrimaryFormat(contiguousTensor->GetStorageFormat())) ==
-                      op::Format::FORMAT_FRACTAL_NZ;
-    auto storageShape = contiguousTensor->GetStorageShape();
-    auto transposeFlag = IsTransposeLastTwoDims(contiguousTensor);
+    CHECK_RET(executor != nullptr, false);
+    const bool isNzTensor = static_cast<ge::Format>(ge::GetPrimaryFormat(contiguousTensor->GetStorageFormat())) ==
+                            op::Format::FORMAT_FRACTAL_NZ;
+    const auto storageShape = contiguousTensor->GetStorageShape();
+    // A singleton-axis ND view may be both contiguous and transposed. Keep an untransposed
+    // contiguous view, while still allowing an existing transpose attribute to be eliminated.
+    const bool transposeFlag = IsTransposeLastTwoDims(contiguousTensor) &&
+                               (isNzTensor || transpose || !op::IsContiguous(contiguousTensor));
     // swap tensor if its viewshape not satisfy request shape without adding a transpose node
     if (transposeFlag) {
         contiguousTensor = executor->CreateView(contiguousTensor, SwapLastTwoDimValue(contiguousTensor->GetViewShape()),
                                                 contiguousTensor->GetViewOffset());
-        CHECK_RET(contiguousTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(contiguousTensor != nullptr, false);
         transpose = !transpose;
     } else {
         contiguousTensor = l0op::Contiguous(contiguousTensor, executor);
     }
     CHECK_RET(contiguousTensor != nullptr, false);
-    if (isNZTensor) {
+    if (isNzTensor) {
         contiguousTensor->SetStorageShape(storageShape); // 对NZ的场景需要用原NZshape刷新
         contiguousTensor->SetOriginalShape(storageShape);
     }
     return true;
 }
 
-aclnnStatus WeightNZCaseProcess(const aclTensor*& x2, bool& transposeX2, aclOpExecutor* executor)
-{
-    // if weight is already in nz format, no need to set contiguous
-    if (ge::GetPrimaryFormat(x2->GetStorageFormat()) == op::Format::FORMAT_FRACTAL_NZ ||
-        ge::GetPrimaryFormat(x2->GetStorageFormat()) == op::Format::FORMAT_FRACTAL_NZ_C0_32) {
-        x2->SetOriginalShape(x2->GetViewShape());
-        if (ge::GetPrimaryFormat(x2->GetStorageFormat()) == op::Format::FORMAT_FRACTAL_NZ_C0_32) {
-            CHECK_RET(SetSpecilNZTensorToNormalNZFormat(x2, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-        }
-    } else {
-        CHECK_RET(TensorContiguousProcess(x2, transposeX2, executor), ACLNN_ERR_INNER_NULLPTR);
-    }
-    return ACLNN_SUCCESS;
-}
-
 const aclTensor* SetTensorToNDFormat(const aclTensor* input)
 {
-    const aclTensor* output = nullptr;
     if (input == nullptr) {
-        return output;
+        return nullptr;
     }
     if (input->GetStorageFormat() != Format::FORMAT_FRACTAL_NZ) {
         OP_LOGD("Converting input tensor to ND format.");
-        output = l0op::ReFormat(input, op::Format::FORMAT_ND);
-    } else {
-        OP_LOGD("Input tensor already has the required storage format; no conversion needed.");
-        output = input;
+        return l0op::ReFormat(input, op::Format::FORMAT_ND);
     }
-    return output;
-}
-
-aclnnStatus SetSpecilNZTensorToNormalNZFormat(const aclTensor*& input, aclOpExecutor* executor)
-{
-    OP_LOGD("Converting special NZ format to standard NZ format.");
-    auto nzTensorTmp = executor->CreateView(input, input->GetViewShape(), input->GetViewOffset());
-    CHECK_RET(nzTensorTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    nzTensorTmp->SetViewFormat(op::Format::FORMAT_ND);
-    nzTensorTmp->SetOriginalFormat(op::Format::FORMAT_ND);
-    nzTensorTmp->SetStorageFormat(op::Format::FORMAT_FRACTAL_NZ);
-    nzTensorTmp->SetStorageShape(input->GetStorageShape());
-    nzTensorTmp->SetOriginalShape(input->GetOriginalShape());
-    input = nzTensorTmp;
-    return ACLNN_SUCCESS;
+    OP_LOGD("Input tensor already has the required storage format; no conversion needed.");
+    return input;
 }
 
 } // namespace QuantMatmulActivationQuantAclnnCheck
