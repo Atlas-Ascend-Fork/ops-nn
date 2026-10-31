@@ -77,6 +77,7 @@
 
 - axes为值依赖输入，图模式调用时需以`op::Const`注入；运行时通过placeholder Data注入将导致编译期无法推导输出shape与tiling。
 - axes元素必须落在[-rank(x), rank(x))范围内，且不允许重复。
+- axes为空张量（shape=(0,)）时表示无归约轴：输出shape与x相同，逐元素计算sqrt(x²)（对标TensorFlow `reduce_euclidean_norm` 的axis=[]行为）。
 - y的数据类型与x保持一致；当x为INT32时，输出仍为INT32（不做隐式类型提升），调用方需自行确保中间累加不溢出。
 
 ## 调用说明

@@ -192,11 +192,9 @@ static ge::graphStatus ParseAxesTensor(gert::TilingContext* context, EuclideanNo
     ctx.reduceAxes.clear();
 
     if (axesNum == 0) {
-        // axes=[] → axes=[0..xRank-1]，full reduce（对标 TF/PyTorch；与 NumPy axis=() identity 不同）
-        ctx.reduceAxes.reserve(xRank);
-        for (int64_t i = 0; i < xRank; ++i) {
-            ctx.reduceAxes.push_back(i);
-        }
+        // axes=[]（空张量）→ 无归约轴：y shape = x shape，逐元素 sqrt(x²)=|x|
+        // （对标 TF reduce_euclidean_norm：axis=[] 不做轴归约；纯 A pattern 由 PadRIfPureA 兜底）。
+        // 禁止展开为全归约：含 0 维的 x 会误判 EMPTY_R 而向 0 字节输出写标量（越界写）。
         return ge::GRAPH_SUCCESS;
     }
 
@@ -952,6 +950,20 @@ static ge::graphStatus FillEmptyTilingData(gert::TilingContext* context, const E
 // ─────────────────────────────────────────────────────────────────────────────
 static ge::graphStatus HandleEmptyTensor(gert::TilingContext* context, EuclideanNormCtx& ctx)
 {
+    // 纵深防御：EMPTY_R 会向 y 写 aTotalEmpty 个元素；若 numel(y) 不足（host 侧语义脱节，
+    // 如 infershape 与 tiling 对空 axes 理解不一致），DataCopyPad 将越界写穿输出尾部。
+    // 此时降级 EMPTY_A（usedCoreNum=0 全核早退、零写），宁可输出未定义也不越界。
+    if (ctx.emptyKind == EuclideanNormEmptyKind::EMPTY_R) {
+        const gert::StorageShape* yShape = context->GetOutputShape(kOutputYIdx);
+        const int64_t yNumel = (yShape == nullptr) ? -1 : yShape->GetStorageShape().GetShapeSize();
+        if (yNumel >= 0 && yNumel < ctx.aTotalEmpty) {
+            OP_LOGW(context->GetNodeName(),
+                    "numel(y)=%ld < aTotalEmpty=%ld, downgrade EMPTY_R to EMPTY_A (all-core early-exit) to avoid OOB",
+                    yNumel, ctx.aTotalEmpty);
+            ctx.emptyKind = EuclideanNormEmptyKind::EMPTY_A;
+        }
+    }
+
     if (ctx.emptyKind == EuclideanNormEmptyKind::EMPTY_R) {
         ComputeEmptyRTiling(ctx);
     } else {

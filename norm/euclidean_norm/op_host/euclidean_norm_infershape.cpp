@@ -13,7 +13,8 @@
  * \brief EuclideanNorm 算子的 output shape / dtype 推理。
  *
  *   - axes 是 const tensor（IndexNumberType：int32 / int64）；运行时未知 → 输出标 unknown rank
- *   - axes==[]（empty）→ 视为 full reduce，等价 axes=[0..rank-1]（对标 TF / PyTorch；与 NumPy axis=() identity 不同）
+ *   - axes==[]（empty）→ 无归约轴：y shape = x shape，逐元素 sqrt(x²)=|x|（对标 TF reduce_euclidean_norm
+ *     的 axis=[] 行为：不做轴归约；含 0 维的 x 保持 0 元素输出，不得误写标量）
  *   - 越界 / 重复 axes → GRAPH_FAILED（与 tiling 端 ParseAxesTensor 同步报错；
  *     重复 axes 在 keep_dims=true 下会让 shape 幂等地正确，但 tiling 仍会拒绝，
  *     infershape 端早拒绝免得后端做无用功）
@@ -44,17 +45,15 @@ constexpr bool kKeepDimsDefault = false; // op_def: Attr("keep_dims").AttrType(O
 } // namespace
 
 // 解析 axes tensor 内容到 int64 数组：
-//   axesNum == 0 时按 "all reduce" 展开 axes = [0..xRank-1]（与 tiling::ParseAxesTensor 一致）；
+//   axesNum == 0 时不归约（axesOut 为空，y shape = x shape，与 tiling::ParseAxesTensor 一致）；
 //   否则按 int32 / int64 dtype 读，归一化负数到 [0, xRank)，重复/越界报错（GRAPH_FAILED）。
 static bool LoadAxesFromTensor(const gert::Tensor* axesTensor, int64_t xRank, std::vector<int64_t>& axesOut,
                                std::string& errMsg)
 {
     const int64_t axesNum = axesTensor->GetShapeSize();
     if (axesNum == 0) {
-        axesOut.resize(static_cast<size_t>(xRank));
-        for (int64_t i = 0; i < xRank; ++i) {
-            axesOut[static_cast<size_t>(i)] = i;
-        }
+        // axes=[]（空张量）→ 无归约轴：y shape = x shape（ReduceDims* 对 axesSize=0 恒等），
+        // 与 tiling::ParseAxesTensor 语义一致；禁止展开为全归约（防止 0 元素输出被写标量）。
         return true;
     }
 
@@ -162,7 +161,7 @@ static ge::graphStatus InferShape4EuclideanNorm(gert::InferShapeContext* context
         return GRAPH_SUCCESS;
     }
 
-    // 4) axes 解析：empty → all reduce (axes=[0..xRank-1])；否则按 int32/int64 读 + 越界/重复检查
+    // 4) axes 解析：empty → 无归约轴（y shape = x shape）；否则按 int32/int64 读 + 越界/重复检查
     std::vector<int64_t> axes;
     std::string errMsg;
     if (!LoadAxesFromTensor(axesTensor, xRank, axes, errMsg)) {

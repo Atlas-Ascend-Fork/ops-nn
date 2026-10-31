@@ -23,6 +23,7 @@
 #include "ut_op_util.h"
 #include "ut_op_common.h"
 #include "platform/platform_infos_def.h"
+#include "../../../../op_kernel/arch35/euclidean_norm_tiling_data.h"
 
 using namespace ut_util;
 using namespace std;
@@ -378,10 +379,11 @@ TEST_F(EuclideanNormTiling, tiling_bf16_3d_reduce_middle)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 用例 7：axes=[] (full reduce) — 对标 TF/PyTorch，归一化为 axes=[0..rank-1]
-//   shape=(4, 64) fp32 axes=[] keep_dims=true → 等价 axes=[0,1] → 合轴后单 R 轴 → AR 路径
+// 用例 7：axes=[]（空张量）→ 无归约轴（恒等 shape，y=x）
+//   shape=(4, 64) fp32 axes=[] keep_dims=true → 全 A pattern → PadRIfPureA 前置 [A=1, R=1]
+//   → ARA（tail-A），R=1 归约产出逐元素 sqrt(x²)=|x|，输出 shape 保持 (4, 64)
 // ────────────────────────────────────────────────────────────────────────────
-TEST_F(EuclideanNormTiling, tiling_fp32_2d_empty_axes_full_reduce)
+TEST_F(EuclideanNormTiling, tiling_fp32_2d_empty_axes_no_reduce)
 {
     fe::PlatFormInfos platformInfo;
     map<string, string> socInfos, aicoreSpec, intrinsics;
@@ -391,7 +393,7 @@ TEST_F(EuclideanNormTiling, tiling_fp32_2d_empty_axes_full_reduce)
     SetupKernelHolder(platformInfo, compileInfo, socInfos, aicoreSpec, intrinsics, kernelHolder);
 
     gert::StorageShape xShape = {{4, 64}, {4, 64}};
-    gert::StorageShape yShape = {{1, 1}, {1, 1}}; // full reduce + keep_dims=true → (1, 1)
+    gert::StorageShape yShape = {{4, 64}, {4, 64}}; // 无归约轴：y = x
 
     auto axesHolder = MakeAxesConstTensor({}); // 空 axes
     // axes=[]需用1-D且dim=0的shape表达，标量shape(0-D)的GetShapeSize为1
@@ -426,4 +428,124 @@ TEST_F(EuclideanNormTiling, tiling_fp32_2d_empty_axes_full_reduce)
     auto* tilingContext = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(tilingContext, nullptr);
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+
+    auto* rawTilingData = tilingContext->GetRawTilingData();
+    ASSERT_NE(rawTilingData, nullptr);
+    const auto* td = reinterpret_cast<const EuclideanNormTilingData*>(rawTilingData->GetData());
+    // 全 A 合轴 A(256) → PadRIfPureA 前置 [A=1, R=1] → ARA tail-A
+    EXPECT_EQ(td->axisNum, 3);
+    EXPECT_EQ(td->axisShape[0], 1);
+    EXPECT_EQ(td->axisShape[1], 1);
+    EXPECT_EQ(td->axisShape[2], 256);
+    EXPECT_EQ(td->rUbFactor, 1); // R=1 逐元素归约
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 用例 8：axes=[] + 含 0 维的 x（issue #25 复刻，c_s_021）→ EMPTY_A 全核早退
+//   x=(1,0,1,1,1,1) fp16 axes=[]：0 维落在 A 轴 → EMPTY_A，usedCoreNum=0、零写，
+//   修复前误展开全归约 → EMPTY_R → 向 0 字节输出写 2 字节（越界写）
+// ────────────────────────────────────────────────────────────────────────────
+TEST_F(EuclideanNormTiling, tiling_fp16_zero_dim_empty_axes_empty_a)
+{
+    fe::PlatFormInfos platformInfo;
+    map<string, string> socInfos, aicoreSpec, intrinsics;
+    SetupPlatform(platformInfo, socInfos, aicoreSpec, intrinsics);
+    EuclideanNormCompileInfoForTest compileInfo;
+    gert::KernelRunContextHolder kernelHolder;
+    SetupKernelHolder(platformInfo, compileInfo, socInfos, aicoreSpec, intrinsics, kernelHolder);
+
+    gert::StorageShape xShape = {{1, 0, 1, 1, 1, 1}, {1, 0, 1, 1, 1, 1}};
+    gert::StorageShape yShape = {{1, 0, 1, 1, 1, 1}, {1, 0, 1, 1, 1, 1}}; // 恒等：0 元素输出
+
+    auto axesHolder = MakeAxesConstTensor({});
+    gert::StorageShape axesShape = {{0}, {0}};
+    std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> consts;
+    consts.emplace_back(1U, std::move(axesHolder));
+
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("EuclideanNorm")->tiling;
+    ASSERT_NE(tilingFunc, nullptr);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto* wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("EuclideanNorm")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&xShape, &axesShape})
+                      .OutputShapes({&yShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .ConstInput(consts)
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+    auto* tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext, nullptr);
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+
+    auto* rawTilingData = tilingContext->GetRawTilingData();
+    ASSERT_NE(rawTilingData, nullptr);
+    const auto* td = reinterpret_cast<const EuclideanNormTilingData*>(rawTilingData->GetData());
+    EXPECT_EQ(td->usedCoreNum, 0); // EMPTY_A 全核早退，kernel 零写
+    EXPECT_EQ(td->axisShape[0], 0);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 用例 9：axes=[] + 全 1 shape → DropSizeOneAxes 全退化 → [A=1] + 补 R=1 → AR（tail-R）
+//   x=(1, 1) fp16 axes=[]：输出保持 (1, 1)
+// ────────────────────────────────────────────────────────────────────────────
+TEST_F(EuclideanNormTiling, tiling_fp16_all_one_empty_axes_ar)
+{
+    fe::PlatFormInfos platformInfo;
+    map<string, string> socInfos, aicoreSpec, intrinsics;
+    SetupPlatform(platformInfo, socInfos, aicoreSpec, intrinsics);
+    EuclideanNormCompileInfoForTest compileInfo;
+    gert::KernelRunContextHolder kernelHolder;
+    SetupKernelHolder(platformInfo, compileInfo, socInfos, aicoreSpec, intrinsics, kernelHolder);
+
+    gert::StorageShape xShape = {{1, 1}, {1, 1}};
+    gert::StorageShape yShape = {{1, 1}, {1, 1}};
+
+    auto axesHolder = MakeAxesConstTensor({});
+    gert::StorageShape axesShape = {{0}, {0}};
+    std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> consts;
+    consts.emplace_back(1U, std::move(axesHolder));
+
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("EuclideanNorm")->tiling;
+    ASSERT_NE(tilingFunc, nullptr);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto* wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("EuclideanNorm")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&xShape, &axesShape})
+                      .OutputShapes({&yShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .ConstInput(consts)
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+    auto* tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext, nullptr);
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+
+    auto* rawTilingData = tilingContext->GetRawTilingData();
+    ASSERT_NE(rawTilingData, nullptr);
+    const auto* td = reinterpret_cast<const EuclideanNormTilingData*>(rawTilingData->GetData());
+    EXPECT_EQ(td->axisNum, 2); // A=1, R=1
+    EXPECT_EQ(td->axisShape[0], 1);
+    EXPECT_EQ(td->axisShape[1], 1);
 }
