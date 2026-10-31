@@ -34,14 +34,6 @@ is_op_in_kernel_dyn_whitelist() {
     return 1
 }
 
-# Check if CI_ONLINE_ST environment variable is set and enabled
-is_online_st_mode() {
-    [[ -n "${CI_ONLINE_ST:-}" ]] || return 1
-    local val_lower
-    val_lower=$(echo "${CI_ONLINE_ST}" | tr '[:upper:]' '[:lower:]')
-    [[ "${val_lower}" != "0" && "${val_lower}" != "false" ]]
-}
-
 dotted_line="----------------------------------------------------------------"
 
 # Print info message with timestamp to stderr
@@ -1130,10 +1122,6 @@ print_summary_table
 if [[ ${result_flag} -ne 0 || ${precision_flag} -ne 0 ]]; then
     print_reproduction_commands
     print_error "Some tests or precision checks failed. See reproduction commands above."
-    if is_online_st_mode; then
-        print_warning "CI_ONLINE_ST mode: exiting with 0 despite failures"
-        exit 0
-    fi
     exit 1
 else
     print_success "All tests and precision checks passed."

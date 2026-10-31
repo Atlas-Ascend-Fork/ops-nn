@@ -85,11 +85,11 @@ jobs:
         name: run_st_test
         identifier: st_test
         if: ${{ steps.check_950_pkg.outputs.need_st == 'yes' }}
+        timeout-minutes: 60
         run: |
           export WORKSPACE=${{ steps.process_checkout.outputs.path }}
           cd ${{ steps.process_checkout.outputs.path }}
           source /usr/local/Ascend/cann/bin/setenv.bash 2>/dev/null || true
-          export CI_ONLINE_ST=1
           pip3 install psutil openpyxl en-dtypes
           bash scripts/ci/ops_st_test.sh --pr_filelist=./pr_filelist.txt --soc_version=ascend950
       -
