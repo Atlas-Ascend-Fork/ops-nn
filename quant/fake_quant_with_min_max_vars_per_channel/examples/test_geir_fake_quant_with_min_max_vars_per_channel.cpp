@@ -114,10 +114,15 @@ int32_t GenRandomDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, Tenso
     }
     uint32_t data_len = size * sizeof(float);
     float* pData = new (std::nothrow) float[size];
+    if (pData == nullptr) {
+        printf("%s - ERROR - [XIR]: Allocate input data failed\n", GetTime().c_str());
+        return FAILED;
+    }
     for (size_t i = 0; i < size; ++i) {
         *(pData + i) = minVal + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * (maxVal - minVal);
     }
     input_tensor = Tensor(input_tensor_desc, (uint8_t*)pData, data_len);
+    delete[] pData; // ge::Tensor 已拷贝数据，释放临时缓冲
     return SUCCESS;
 }
 
@@ -130,16 +135,25 @@ int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorD
     }
     uint32_t data_len = size * sizeof(float);
     float* pData = new (std::nothrow) float[size];
+    if (pData == nullptr) {
+        printf("%s - ERROR - [XIR]: Allocate input data failed\n", GetTime().c_str());
+        return FAILED;
+    }
     for (size_t i = 0; i < size; ++i) {
         *(pData + i) = value;
     }
     input_tensor = Tensor(input_tensor_desc, (uint8_t*)pData, data_len);
+    delete[] pData; // ge::Tensor 已拷贝数据，释放临时缓冲
     return SUCCESS;
 }
 
 int32_t WriteDataToFile(string bin_file, uint64_t data_size, uint8_t* inputData)
 {
     FILE* fp = fopen(bin_file.c_str(), "w");
+    if (fp == nullptr) {
+        printf("%s - ERROR - [XIR]: Open output file %s failed\n", GetTime().c_str(), bin_file.c_str());
+        return FAILED;
+    }
     fwrite(inputData, sizeof(uint8_t), data_size, fp);
     fclose(fp);
     return SUCCESS;
@@ -191,6 +205,7 @@ int main(int argc, char* argv[])
     ret = CreateOppInGraph(inDtype, input, inputs, outputs, graph);
     if (ret != SUCCESS) {
         printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
+        GEFinalize();
         return FAILED;
     }
 
@@ -204,6 +219,7 @@ int main(int argc, char* argv[])
 
     if (session == nullptr) {
         printf("%s - ERROR - [XIR]: Create ir session using build options failed\n", GetTime().c_str());
+        GEFinalize();
         return FAILED;
     }
     printf("%s - INFO - [XIR]: Create ir session using build options success\n", GetTime().c_str());
@@ -212,11 +228,18 @@ int main(int argc, char* argv[])
     std::map<AscendString, AscendString> graph_options = {};
     uint32_t graph_id = 0;
     ret = session->AddGraph(graph_id, graph, graph_options);
-
+    if (ret != SUCCESS) {
+        printf("%s - ERROR - [XIR]: Session add ir compute graph to ir session failed\n", GetTime().c_str());
+        delete session;
+        GEFinalize();
+        return FAILED;
+    }
     printf("%s - INFO - [XIR]: Session add ir compute graph to ir session success\n", GetTime().c_str());
     printf("%s - INFO - [XIR]: dump graph to txt\n", GetTime().c_str());
     std::string file_path = "./dump";
-    aclgrphDumpGraph(graph, file_path.c_str(), file_path.length());
+    if (aclgrphDumpGraph(graph, file_path.c_str(), file_path.length()) != SUCCESS) {
+        printf("%s - WARNING - [XIR]: dump graph to txt failed, continue\n", GetTime().c_str());
+    }
     printf("%s - INFO - [XIR]: Start to run ir compute graph\n", GetTime().c_str());
     std::vector<ge::Tensor> output;
     ret = session->RunGraph(graph_id, input, output);
@@ -265,6 +288,8 @@ int main(int argc, char* argv[])
     std::string warning_str(warning_msg.GetString());
     std::cout << "Warning message: " << warning_str << std::endl;
     printf("%s - INFO - [XIR]: Start to finalize ir graph session\n", GetTime().c_str());
+    delete session;
+    session = nullptr;
     ret = ge::GEFinalize();
     if (ret != SUCCESS) {
         printf("%s - INFO - [XIR]: Finalize ir graph session failed\n", GetTime().c_str());

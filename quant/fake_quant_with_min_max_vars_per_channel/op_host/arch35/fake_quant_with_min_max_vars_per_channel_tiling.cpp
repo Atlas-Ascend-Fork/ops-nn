@@ -41,6 +41,7 @@ namespace optiling {
 constexpr int64_t kCacheLineBytes = 32; // ascend950 cacheLine
 constexpr int64_t kVL = 64;             // VL = 64 (fp32 = 256B)
 constexpr int64_t kBufNum = 2;          // Double Buffer
+constexpr size_t kMaxRank = 8U;         // README 约束：x rank ∈ [1, 8]
 // [v2.2 方案 A] RESERVED_UB 回调到 1 KB：取消 Select/Floor 高阶 API，无需 24 KB 预留
 constexpr int64_t kReservedUB = 1 * 1024;
 constexpr int64_t DEFAULT_UB_SIZE = 192 * 1024;
@@ -70,9 +71,33 @@ struct TilingResult {
 // ----------------------------------------------------------------------------
 // 通用工具
 // ----------------------------------------------------------------------------
-static inline int64_t CeilDiv(int64_t a, int64_t b) { return (b <= 0) ? 0 : (a + b - 1) / b; }
+// CeilDiv 用除法式实现（a/b + 余数进位），避免 (a+b-1) 在 a 接近 INT64_MAX 时的
+// 有符号溢出（P1-04：被除数侧运算前保护）
+static inline int64_t CeilDiv(int64_t a, int64_t b)
+{
+    if (b <= 0) {
+        return 0;
+    }
+    int64_t q = a / b;
+    return (a % b != 0) ? q + 1 : q;
+}
 
-static inline int64_t AlignUp(int64_t a, int64_t b) { return (b <= 0) ? a : ((a + b - 1) / b) * b; }
+// AlignUp 在向上取整会越过 INT64_MAX 时返回原值 a（对齐是性能提示，不静默产生
+// 溢出 UB；P1-04），b<=0 时维持原语义
+static inline int64_t AlignUp(int64_t a, int64_t b)
+{
+    if (b <= 0) {
+        return a;
+    }
+    int64_t r = a % b;
+    if (r == 0) {
+        return a;
+    }
+    if (a > INT64_MAX - (b - r)) {
+        return a;
+    }
+    return (a / b + 1) * b;
+}
 
 // GetCoreNum: 平衡核数（DESIGN §3.4.5）
 //   taskNum 个任务，分配到 coreNum 个核上时，实际活跃的核数
@@ -109,18 +134,32 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t* u
 // SelectMode（DESIGN §3.4.3）：校验 + 固定返回 PER_MODE=2
 // ----------------------------------------------------------------------------
 static int64_t SelectMode(gert::TilingContext* context, ge::DataType xDtype, const gert::Shape& xShape,
-                          const gert::Shape& minShape, const gert::Shape& maxShape, int32_t numBits)
+                          const gert::Shape& minShape, const gert::Shape& maxShape, int64_t numBits)
 {
     OP_CHECK_IF(xDtype != ge::DT_FLOAT,
                 OP_LOGE(context, "FakeQuantPC: only fp32 supported, got dtype=%d", static_cast<int>(xDtype)),
                 return -1);
 
     OP_CHECK_IF(xShape.GetDimNum() < 1, OP_LOGE(context, "FakeQuantPC: x rank must >= 1"), return -1);
+    OP_CHECK_IF(xShape.GetDimNum() > kMaxRank,
+                OP_LOGE(context, "FakeQuantPC: x rank %zu exceeds max %zu", xShape.GetDimNum(), kMaxRank), return -1);
+    // 未知维守卫：x 任一维为负（含 -1/-2 未知标记）时维度语义未定，不得当作 0/空张量
+    // 静默成功（否则 min/max 长度同为 -1 时可穿过相等校验，下发 blockFactor=0、
+    // tailDim=-1 的空计划且不报错，非空输入不会被写入）。
+    for (size_t i = 0; i < xShape.GetDimNum(); ++i) {
+        OP_CHECK_IF(xShape.GetDim(i) < 0,
+                    OP_LOGE(context, "FakeQuantPC: x dim[%zu]=%ld is not a concrete size (negative/unknown marker)", i,
+                            xShape.GetDim(i)),
+                    return -1);
+    }
     OP_CHECK_IF(minShape.GetDimNum() != 1,
                 OP_LOGE(context, "FakeQuantPC: min rank must be 1, got %zu", minShape.GetDimNum()), return -1);
     OP_CHECK_IF(maxShape.GetDimNum() != 1,
                 OP_LOGE(context, "FakeQuantPC: max rank must be 1, got %zu", maxShape.GetDimNum()), return -1);
     OP_CHECK_IF(minShape.GetDim(0) != maxShape.GetDim(0), OP_LOGE(context, "FakeQuantPC: min/max shape mismatch"),
+                return -1);
+    OP_CHECK_IF(minShape.GetDim(0) < 0,
+                OP_LOGE(context, "FakeQuantPC: min/max length %ld is not a concrete size", minShape.GetDim(0)),
                 return -1);
 
     int64_t xTail = xShape.GetDim(xShape.GetDimNum() - 1);
@@ -128,7 +167,7 @@ static int64_t SelectMode(gert::TilingContext* context, ge::DataType xDtype, con
                 OP_LOGE(context, "FakeQuantPC: min/max length (%ld) != x tail dim (%ld)", minShape.GetDim(0), xTail),
                 return -1);
 
-    OP_CHECK_IF(numBits < 2 || numBits > 16, OP_LOGE(context, "FakeQuantPC: num_bits must in [2,16], got %d", numBits),
+    OP_CHECK_IF(numBits < 2 || numBits > 16, OP_LOGE(context, "FakeQuantPC: num_bits must in [2,16], got %ld", numBits),
                 return -1);
 
     return 2;
@@ -137,18 +176,22 @@ static int64_t SelectMode(gert::TilingContext* context, ge::DataType xDtype, con
 // ----------------------------------------------------------------------------
 // MergeInputShape（DESIGN §3.4.4）：(..., d_last) → (M, N)
 // ----------------------------------------------------------------------------
-static void MergeInputShape(const gert::Shape& xShape, int64_t& M, int64_t& N)
+// 返回 false 表示前置维连乘溢出 INT64_MAX（P1-05：如 x=[3037000500,3037000500,8]
+// 各维合法但乘积越界），调用方必须拒绝而不是静默走空 tensor 分支
+static bool MergeInputShape(const gert::Shape& xShape, int64_t& M, int64_t& N)
 {
     size_t rank = xShape.GetDimNum();
     N = xShape.GetDim(rank - 1);
     M = 1;
     for (size_t i = 0; i + 1 < rank; ++i) {
         int64_t d = xShape.GetDim(i);
-        M *= (d > 0) ? d : 0;
+        d = (d > 0) ? d : 0;
+        if (M != 0 && d > INT64_MAX / M) {
+            return false;
+        }
+        M *= d;
     }
-    if (M < 0) {
-        M = 0;
-    }
+    return true;
 }
 
 // ----------------------------------------------------------------------------
@@ -290,7 +333,7 @@ static void CalcNativePCUB(TilingResult& res, uint64_t ubSize, int64_t dtypeSize
 // WriteTilingData（DESIGN §3.4.7）
 // ----------------------------------------------------------------------------
 static void WriteTilingData(FakeQuantWithMinMaxVarsPerChannelTilingData* td, const TilingResult& res, float quantMin,
-                            float quantMax, int32_t numBits, bool narrowRange)
+                            float quantMax, int64_t numBits, bool narrowRange)
 {
     td->numCore = res.numCore;
     td->blockAxis = res.blockAxis;
@@ -313,7 +356,8 @@ static void WriteTilingData(FakeQuantWithMinMaxVarsPerChannelTilingData* td, con
 
     td->quantMin = quantMin;
     td->quantMax = quantMax;
-    td->numBits = numBits;
+    // numBits 已在 SelectMode 校验为 [2,16]，此处收窄到 int32 存盘安全
+    td->numBits = static_cast<int32_t>(numBits);
     td->narrowRange = narrowRange ? 1 : 0;
 }
 
@@ -355,12 +399,28 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelTilingFunc(gert::TilingC
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     ge::DataType xDtype = xDesc->GetDataType();
 
+    // min/max 同样是输入，tiling 门独立校验其 dtype（不再只依赖 Host 侧或注册匹配）
+    auto minDesc = context->GetInputDesc(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, minDesc);
+    auto maxDesc = context->GetInputDesc(2);
+    OP_CHECK_NULL_WITH_CONTEXT(context, maxDesc);
+    OP_CHECK_IF(
+        minDesc->GetDataType() != ge::DT_FLOAT,
+        OP_LOGE(context, "FakeQuantPC: min must be fp32, got dtype=%d", static_cast<int>(minDesc->GetDataType())),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        maxDesc->GetDataType() != ge::DT_FLOAT,
+        OP_LOGE(context, "FakeQuantPC: max must be fp32, got dtype=%d", static_cast<int>(maxDesc->GetDataType())),
+        return ge::GRAPH_FAILED);
+
     auto attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
-    int32_t numBits = 8;
+    // num_bits 注册为 Int(int64)（op_graph/..._proto.h），必须按 int64 读取，
+    // 否则大值会被截断为 int32 而绕过下方 [2,16] 校验。
+    int64_t numBits = 8;
     bool narrowRange = false;
     if (attrs->GetAttrNum() >= 1) {
-        const int32_t* numBitsPtr = attrs->GetAttrPointer<int32_t>(0);
+        const int64_t* numBitsPtr = attrs->GetAttrPointer<int64_t>(0);
         if (numBitsPtr != nullptr) {
             numBits = *numBitsPtr;
         }
@@ -376,9 +436,21 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelTilingFunc(gert::TilingC
     int64_t perMode = SelectMode(context, xDtype, xShape, minShape, maxShape, numBits);
     OP_CHECK_IF(perMode != 2, OP_LOGE(context, "FakeQuantPC: SelectMode failed"), return ge::GRAPH_FAILED);
 
-    // 4. MergeInputShape
+    // 4. MergeInputShape（连乘溢出即拒绝，不静默走空 tensor 分支）
     int64_t M = 0, N = 0;
-    MergeInputShape(xShape, M, N);
+    OP_CHECK_IF(!MergeInputShape(xShape, M, N),
+                OP_LOGE(context, "FakeQuantPC: merged rows of x leading dims overflow int64"), return ge::GRAPH_FAILED);
+    // P1-1: 元素总数 M*N 也须在 int64 内（kernel 用 (baseRow+n)*tailDim_ 计算偏移，
+    // x=[8, 2^61] 时 M=8 通过检查但 M*N 偏移越界 INT64_MAX）
+    OP_CHECK_IF(M != 0 && N > INT64_MAX / M,
+                OP_LOGE(context, "FakeQuantPC: element count %ld*%ld overflows int64 row offset", M, N),
+                return ge::GRAPH_FAILED);
+    // P1-1(fix7)：Kernel Process 中 (myHeadRows_+baseN_-1) 先加后除，M 接近
+    // INT64_MAX 时加法越过 int64（单 AIV 配置 numCore=1 → blockFactor=M）。
+    // 给 M 留出 baseN 上界余量（kMaxBaseN=190，与 kernel UB 块行数一致）。
+    OP_CHECK_IF(M > INT64_MAX - 256,
+                OP_LOGE(context, "FakeQuantPC: merged rows %ld leaves no headroom for row-block arithmetic", M),
+                return ge::GRAPH_FAILED);
 
     // 5. TilingData 初始化
     FakeQuantWithMinMaxVarsPerChannelTilingData*

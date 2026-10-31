@@ -10,7 +10,7 @@
 
 /*!
  * \file fake_quant_with_min_max_vars_per_channel_def.cpp
- * \brief FakeQuantWithMinMaxVarsPerChannel 算子定义（仅 ascend950 / arch35）
+ * \brief FakeQuantWithMinMaxVarsPerChannel 算子定义（ascend950 / ascend350，arch35）
  *
  * 输入：x [..., C] (fp32)，min [C] (fp32)，max [C] (fp32)
  * 输出：y [..., C] (fp32)
@@ -59,7 +59,7 @@ public:
         this->Attr("num_bits").AttrType(OPTIONAL).Int(8);
         this->Attr("narrow_range").AttrType(OPTIONAL).Bool(false);
 
-        // 仅 ascend950 (arch35)
+        // ascend950 / ascend350 (arch35)
         OpAICoreConfig aicoreConfig950;
         aicoreConfig950.DynamicCompileStaticFlag(true)
             .DynamicFormatFlag(false)
@@ -68,6 +68,7 @@ public:
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true);
         this->AICore().AddConfig("ascend950", aicoreConfig950);
+        this->AICore().AddConfig("ascend350", aicoreConfig950);
     }
 };
 OP_ADD(FakeQuantWithMinMaxVarsPerChannel);

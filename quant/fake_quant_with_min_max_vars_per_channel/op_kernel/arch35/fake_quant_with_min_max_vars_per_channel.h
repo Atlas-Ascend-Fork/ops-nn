@@ -323,6 +323,11 @@ __aicore__ inline void FakeQuantPerChannelNativePC<T>::Compute(int64_t curLen, L
     const float qMin = quantMin_;
     const float qMax = quantMax_;
     const float qRange = quantMax_ - quantMin_; // 0-ULP Div 用：scale = (max-min)/qRange
+    // P1-03：分界取索引区间半程 qRange/2（原 (qMax+qMin)/2 在 narrow_range 时偏大 0.5，
+    // 使 (qRange/2, (qMax+qMin)/2] 内的整数索引误走低分支而乘积越界）
+    const float qHalf = (quantMax_ - quantMin_) * 0.5f;
+    // 倒数次正规判定界：scaleSafe > 1/FLT_MIN_NORMAL ⟺ 对应倒数落入次正规区（P1-01）
+    const float kInvSubScaleBound = 8.507059173023462e+37f;
     static constexpr AscendC::Reg::DivSpecificMode kDivMode = {AscendC::Reg::MaskMergeMode::ZEROING,
                                                                true}; // true = 0-ULP fp32 Div
 
@@ -337,13 +342,18 @@ __aicore__ inline void FakeQuantPerChannelNativePC<T>::Compute(int64_t curLen, L
         AscendC::Reg::RegTensor<float> vregOne;    // 全 1（Adds(zero, 1.0f)）
         AscendC::Reg::RegTensor<float> vregQRange; // 全 qMax-qMin（用作 0-ULP Div 的除数）
         AscendC::Reg::RegTensor<float> vregScale;
+        AscendC::Reg::RegTensor<float> vregScaleAlt; // 溢出通道防溢出分解 scale（CODE.11）
+        AscendC::Reg::RegTensor<float> vregScaleAltA;
+        AscendC::Reg::RegTensor<float> vregScaleAltB;
+        AscendC::Reg::RegTensor<float> vregInvScaleAlt;
         AscendC::Reg::RegTensor<float> vregScaleSafe;
         AscendC::Reg::RegTensor<float> vregDiffSaved;
+        AscendC::Reg::RegTensor<float> vregDiffSafe;
         AscendC::Reg::RegTensor<float> vregInvScaleSafe;
-        AscendC::Reg::RegTensor<float> vregAbsMin;
-        AscendC::Reg::RegTensor<float> vregAbsMax;
-        AscendC::Reg::RegTensor<float> vregAbsSum;
-        AscendC::Reg::RegTensor<float> vregBoth;
+        AscendC::Reg::RegTensor<float> vregKeep; // 1 = 非退化通道；0 = 退化通道（min==max 或 scale 次正规，输出全零）
+        AscendC::Reg::RegTensor<float> vregTiny;       // 1 = scale < FLT_MIN_NORMAL（含负值）
+        AscendC::Reg::RegTensor<float> vregNonNeg;     // 1 = scale >= 0
+        AscendC::Reg::RegTensor<float> vregDegenerate; // 1 = 0 <= scale < FLT_MIN_NORMAL（退化）
         AscendC::Reg::RegTensor<float> vregZpFromMin;
         AscendC::Reg::RegTensor<float> vregZpClipped;
         AscendC::Reg::RegTensor<int32_t> vregZpInt;
@@ -352,14 +362,57 @@ __aicore__ inline void FakeQuantPerChannelNativePC<T>::Compute(int64_t curLen, L
         AscendC::Reg::RegTensor<float> vregNudgedMax;
         // === 主公式 ===
         AscendC::Reg::RegTensor<float> vregClamped;
+        AscendC::Reg::RegTensor<float> vregNudgedTmp;  // CODE.11 ②nudge 收边临时
+        AscendC::Reg::RegTensor<float> vregScaledAltA; // CODE.11 ③scaled 分解
+        AscendC::Reg::RegTensor<float> vregScaledAltB;
+        AscendC::Reg::RegTensor<float> vregScaledAlt;
+        AscendC::Reg::RegTensor<float> vregIdxLo; // CODE.11 ④双侧重建
+        AscendC::Reg::RegTensor<float> vregOutLo;
+        AscendC::Reg::RegTensor<float> vregQMaxIdx;
+        AscendC::Reg::RegTensor<float> vregIdxHi;
+        AscendC::Reg::RegTensor<float> vregOutHi;
+        AscendC::Reg::RegTensor<float> vregOutAlt;
+        AscendC::Reg::RegTensor<float> vregOvfBound;   // CODE.11 溢出判定界（FLT_MAX+min）
+        AscendC::Reg::RegTensor<float> vregOvfDelta;   // CODE.11 溢出判定差（max-bound，恒有限）
+        AscendC::Reg::RegTensor<float> vregClampLo;    // P1-02 收边检测（nudgedMin+FLT_MAX）
+        AscendC::Reg::RegTensor<float> vregClampHi;    // P1-02 收边检测（nudgedMax-FLT_MAX）
+        AscendC::Reg::RegTensor<float> vregInvSubF;    // P1-01 倒数次正规标志（0/1）
+        AscendC::Reg::RegTensor<float> vregOvfF;       // 溢出标志（0/1，浮点域）
+        AscendC::Reg::RegTensor<float> vregReconFlag;  // 双侧重建标志（溢出∪倒数次正规）
+        AscendC::Reg::RegTensor<float> vregScaledDivA; // P1-01 除法先行 scaled
+        AscendC::Reg::RegTensor<float> vregScaledDivB;
+        AscendC::Reg::RegTensor<float> vregScaledDiv;
+        AscendC::Reg::RegTensor<float> vregQMaxB;    // qMax 广播（④高侧距离）
+        AscendC::Reg::RegTensor<float> vregOutOther; // P1-06 兜底另一分支
+        AscendC::Reg::RegTensor<float> vregChkPos;   // P1-06 越界检测
+        AscendC::Reg::RegTensor<float> vregChkNeg;
+        AscendC::Reg::RegTensor<float> vregPosF;
+        AscendC::Reg::RegTensor<float> vregNegF;
+        AscendC::Reg::RegTensor<float> vregBadF;
         AscendC::Reg::RegTensor<float> vregShift;
         AscendC::Reg::RegTensor<float> vregScaled;
         AscendC::Reg::RegTensor<int32_t> vregFlrInt;
         AscendC::Reg::RegTensor<float> vregFloored;
         AscendC::Reg::RegTensor<float> vregOut;
+        AscendC::Reg::RegTensor<float> vregNan;   // NaN 传播载体（仅在 NaN 车道有效）
+        AscendC::Reg::RegTensor<float> vregInf;   // K1: +inf 载体（FLT_MAX 加倍上溢构造）
+        AscendC::Reg::RegTensor<float> vregNanEq; // K1: 相等非零通道 NaN 注入载体（仅该类车道为 NaN）
         AscendC::Reg::MaskReg mask;
-        AscendC::Reg::MaskReg maskBoth;
-        AscendC::Reg::MaskReg maskScaleZero;
+        AscendC::Reg::MaskReg maskTiny;
+        AscendC::Reg::MaskReg maskNonNeg;
+        AscendC::Reg::MaskReg maskNeg;
+        AscendC::Reg::MaskReg maskOvf;
+        AscendC::Reg::MaskReg maskHighIdx;
+        AscendC::Reg::MaskReg maskClampLo;
+        AscendC::Reg::MaskReg maskClampHi;
+        AscendC::Reg::MaskReg maskInvSub;
+        AscendC::Reg::MaskReg maskRecon;
+        AscendC::Reg::MaskReg maskChkPos;
+        AscendC::Reg::MaskReg maskChkNeg;
+        AscendC::Reg::MaskReg maskBad;
+        AscendC::Reg::MaskReg maskEq;    // K1: min==max（diff==0）
+        AscendC::Reg::MaskReg maskMinNz; // K1: min!=0（diff==0 时即非全零通道）
+        AscendC::Reg::MaskReg maskEqNz;  // K1: min==max!=0 相等非零通道
 
         for (uint16_t i = 0; i < static_cast<uint16_t>(outerLoop); ++i) {
             mask = AscendC::Reg::UpdateMask<float>(remain);
@@ -379,6 +432,7 @@ __aicore__ inline void FakeQuantPerChannelNativePC<T>::Compute(int64_t curLen, L
             AscendC::Reg::Sub<float>(vregZero, vregMin, vregMin, mask);
             AscendC::Reg::Adds<float>(vregOne, vregZero, 1.0f, mask);
             AscendC::Reg::Adds<float>(vregQRange, vregZero, qRange, mask);
+            AscendC::Reg::Adds<float>(vregQMaxB, vregZero, qMax, mask);
 
             // 2.1 scale = (max - min) / qRange
             //     用 0-ULP Div 替代 (max-min)*invR：避免 invR=1/(qMax-qMin) 在 fp32 上的
@@ -388,24 +442,65 @@ __aicore__ inline void FakeQuantPerChannelNativePC<T>::Compute(int64_t curLen, L
             AscendC::Reg::Copy<float>(vregDiffSaved, vregScale, mask);
             AscendC::Reg::Div<float, &kDivMode>(vregScale, vregScale, vregQRange, mask);
 
-            // 2.2 bothZero = (|min| + |max| > 0) ? 1.0 : 0.0
-            AscendC::Reg::Abs<float, AscendC::Reg::MaskMergeMode::ZEROING>(vregAbsMin, vregMin, mask);
-            AscendC::Reg::Abs<float, AscendC::Reg::MaskMergeMode::ZEROING>(vregAbsMax, vregMax, mask);
-            AscendC::Reg::Add<float>(vregAbsSum, vregAbsMin, vregAbsMax, mask);
-            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskBoth, vregAbsSum, 0.0f, mask);
-            // Select: mask=1 → src0(vregOne); mask=0 → src1(vregZero)
-            AscendC::Reg::Select<float>(vregBoth, vregOne, vregZero, maskBoth);
+            // 2.1b 量程溢出防护（CODE.11）：min/max 异号且 |min|+|max| 超过 fp32 上限时
+            //     (max-min) 溢出为 +inf，后续 nudge 链（nudgedMin=(qMin-zp)*inf）产生 NaN，
+            //     整通道输出 NaN。此时改用防溢出分解 scale = max/qRange - min/qRange
+            //     （数学等价且各步有限）；溢出通道的 invScale 同步改用 1/scale。
+            //     正常通道不命中该分支，scale/invScale 逐位不变。
+            //     溢出判定不经过 (max-min)（其本身即溢出点，不同执行环境的饱和/inf
+            //     行为不一致），用等价无溢出条件 max > FLT_MAX + min：min<0 时右端
+            //     = FLT_MAX-|min|（有限），max>它 ⟺ max-min>FLT_MAX；min>=0 时
+            //     右端 >= FLT_MAX >= max 恒 false。各步有限、不依赖 inf 语义。
+            AscendC::Reg::Adds<float>(vregOvfBound, vregMin, 3.4028234663852886e+38f, mask);
+            // reg 对 reg 比较无 Compares 标量接口，用差值符号等价判定：
+            // max-(FLT_MAX+min) 恒有限（两端均在 [0, FLT_MAX]），>0 ⟺ max>bound ⟺ 溢出
+            AscendC::Reg::Sub<float>(vregOvfDelta, vregMax, vregOvfBound, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskOvf, vregOvfDelta, 0.0f, mask);
+            AscendC::Reg::Div<float, &kDivMode>(vregScaleAltA, vregMax, vregQRange, mask);
+            AscendC::Reg::Div<float, &kDivMode>(vregScaleAltB, vregMin, vregQRange, mask);
+            AscendC::Reg::Sub<float>(vregScaleAlt, vregScaleAltA, vregScaleAltB, mask);
+            AscendC::Reg::Select<float>(vregScale, vregScaleAlt, vregScale, maskOvf);
 
-            // 2.3 scale==0 兜底：vregScaleSafe = (scale==0) ? 1.0 : scale
-            AscendC::Reg::Compares<float, AscendC::CMPMODE::EQ>(maskScaleZero, vregScale, 0.0f, mask);
-            AscendC::Reg::Select<float>(vregScaleSafe, vregOne, vregScale, maskScaleZero);
+            // 2.2 退化通道判定（P1-01 补充：双侧次正规）：|scale| < FLT_MIN_NORMAL 即退化。
+            //     正侧覆盖 min==max（scale==0）与正次正规（FTZ/倒数坍缩）；
+            //     负侧覆盖反向区间×次正规量程（倒数溢出 ∓inf、int32 转换 UB——统一清零）。
+            //     正常量程的反向区间（scale 显著负）不判退化，保持回退行为。
+            //     正常通道 tiny*nonneg=0，keep/scaleSafe/diffSafe 与旧实现逐位一致。
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::LT>(maskTiny, vregScale, 1.17549435e-38f, mask);
+            AscendC::Reg::Select<float>(vregTiny, vregOne, vregZero, maskTiny);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskNeg, vregScale, -1.17549435e-38f, mask);
+            AscendC::Reg::Select<float>(vregNonNeg, vregOne, vregZero, maskNeg);
+            AscendC::Reg::Mul<float>(vregDegenerate, vregTiny, vregNonNeg, mask);
+            // keep = 1 - degenerate
+            AscendC::Reg::Sub<float>(vregKeep, vregOne, vregDegenerate, mask);
+
+            // 2.3 scaleSafe = scale*keep + degenerate：退化通道取 1.0（防止后续除法/倒数
+            //     溢出产生 NaN 经 out*keep 泄漏，NaN*0=NaN）；正常通道逐位等于 scale
+            AscendC::Reg::Mul<float>(vregScaleSafe, vregScale, vregKeep, mask);
+            AscendC::Reg::Add<float>(vregScaleSafe, vregScaleSafe, vregDegenerate, mask);
 
             // 2.3b invScaleSafe = qRange / diffSafe
             //      TF Nudge() 独立计算 inv_scale = (qMax-qMin)/(max-min)，
             //      而非 1/scale，避免 scale 的 fp32 舍入误差在取倒数时被放大。
-            //      diffSafe = (diff==0) ? 1.0 : diff（复用 maskScaleZero，因 scale==0 ⟺ diff==0）
-            AscendC::Reg::Select<float>(vregDiffSaved, vregOne, vregDiffSaved, maskScaleZero);
-            AscendC::Reg::Div<float, &kDivMode>(vregInvScaleSafe, vregQRange, vregDiffSaved, mask);
+            //      diffSafe = diff*keep + degenerate：退化通道取 1.0 防倒数上溢，
+            //      正常通道逐位等于 (max-min)
+            AscendC::Reg::Mul<float>(vregDiffSafe, vregDiffSaved, vregKeep, mask);
+            AscendC::Reg::Add<float>(vregDiffSafe, vregDiffSafe, vregDegenerate, mask);
+            AscendC::Reg::Div<float, &kDivMode>(vregInvScaleSafe, vregQRange, vregDiffSafe, mask);
+            // 溢出通道（2.1b）：diffSafe=inf 使 qRange/inf=0，改用 1/scale（scale 已是
+            // 防溢出分解值），保持 shift*invScale 的量化步进正确
+            AscendC::Reg::Div<float, &kDivMode>(vregInvScaleAlt, vregOne, vregScaleAlt, mask);
+            AscendC::Reg::Select<float>(vregInvScaleSafe, vregInvScaleAlt, vregInvScaleSafe, maskOvf);
+
+            // P1-01 倒数次正规检测：scaleSafe > 1/FLT_MIN ⟺ 对应倒数 qRange/(max-min)
+            // （或溢出通道的 1/scaleAlt）落入次正规区，设备 FTZ 将其清零会使整通道
+            // 坍缩到 nudgedMin。检测只依赖 scaleSafe（此类通道必为正常数，无 FTZ 风险）。
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskInvSub, vregScaleSafe, kInvSubScaleBound, mask);
+            AscendC::Reg::Select<float>(vregInvSubF, vregOne, vregZero, maskInvSub);
+            // 双侧重建适用通道 = 溢出 ∪ 倒数次正规（浮点域求并后转掩码）
+            AscendC::Reg::Select<float>(vregOvfF, vregOne, vregZero, maskOvf);
+            AscendC::Reg::Max<float>(vregReconFlag, vregOvfF, vregInvSubF, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskRecon, vregReconFlag, 0.5f, mask);
 
             // 2.4 zp_from_min = qMin - min / scaleSafe
             //     用 0-ULP Div：min/scaleSafe 在 zfm 落到 N+0.5 半整数边界时极易抖动 1 ULP，
@@ -433,6 +528,17 @@ __aicore__ inline void FakeQuantPerChannelNativePC<T>::Compute(int64_t curLen, L
             AscendC::Reg::Adds<float>(vregNudgedMax, vregNudgedMax, qMax, mask);
             AscendC::Reg::Mul<float>(vregNudgedMax, vregNudgedMax, vregScaleSafe, mask);
 
+            // CODE.11 ②nudge 收边（P1-02 修正）：仅当计算值越过 ±FLT_MAX（∓inf）时按原
+            // min/max 收边；有限计算值保持原值——zp 舍入可使有限 nudgedMin 低于 min 达
+            // 0.5 步长，无条件收边会平移量化网格。越界检测不经 inf 字面量：
+            // nudgedMin+FLT_MAX<0 ⟺ nudgedMin<-FLT_MAX（含 -inf）。
+            AscendC::Reg::Adds<float>(vregClampLo, vregNudgedMin, 3.4028234663852886e+38f, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::LT>(maskClampLo, vregClampLo, 0.0f, mask);
+            AscendC::Reg::Select<float>(vregNudgedMin, vregMin, vregNudgedMin, maskClampLo);
+            AscendC::Reg::Adds<float>(vregClampHi, vregNudgedMax, -3.4028234663852886e+38f, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskClampHi, vregClampHi, 0.0f, mask);
+            AscendC::Reg::Select<float>(vregNudgedMax, vregMax, vregNudgedMax, maskClampHi);
+
             // -----------------------------------------------------------------
             // 阶段 3：主公式
             // -----------------------------------------------------------------
@@ -447,14 +553,92 @@ __aicore__ inline void FakeQuantPerChannelNativePC<T>::Compute(int64_t curLen, L
             //        而非 shift/scale（二次舍入误差）
             AscendC::Reg::Mul<float>(vregScaled, vregShift, vregInvScaleSafe, mask);
             AscendC::Reg::Adds<float>(vregScaled, vregScaled, 0.5f, mask);
+            // CODE.11 ③溢出通道 scaled 分解：shift=(clamped-nudgedMin) 可达约 2×|nudgedMin|
+            // 超过 fp32（如 ±3e38 量程内的大幅 x）；改用分解
+            // scaledAlt = clamped*invScaleSafe - nudgedMin*invScaleSafe（各步 ≤ 量子数，
+            // 有限），仅溢出通道取用，正常通道逐位不变
+            AscendC::Reg::Mul<float>(vregScaledAltA, vregClamped, vregInvScaleSafe, mask);
+            AscendC::Reg::Mul<float>(vregScaledAltB, vregNudgedMin, vregInvScaleSafe, mask);
+            AscendC::Reg::Sub<float>(vregScaledAlt, vregScaledAltA, vregScaledAltB, mask);
+            AscendC::Reg::Adds<float>(vregScaledAlt, vregScaledAlt, 0.5f, mask);
+            AscendC::Reg::Select<float>(vregScaled, vregScaledAlt, vregScaled, maskOvf);
+            // P1-01 倒数次正规通道：scaled 改用除法先行 clamped/scaleSafe - nudgedMin/scaleSafe + 0.5
+            // （scaleSafe 为正常数，各步有限且不经过次正规倒数；对溢出通道的次正规
+            // 1/scaleAlt 同样生效，覆盖 ③ 乘法在设备上被 FTZ 清零的情形）
+            AscendC::Reg::Div<float, &kDivMode>(vregScaledDivA, vregClamped, vregScaleSafe, mask);
+            AscendC::Reg::Div<float, &kDivMode>(vregScaledDivB, vregNudgedMin, vregScaleSafe, mask);
+            AscendC::Reg::Sub<float>(vregScaledDiv, vregScaledDivA, vregScaledDivB, mask);
+            AscendC::Reg::Adds<float>(vregScaledDiv, vregScaledDiv, 0.5f, mask);
+            AscendC::Reg::Select<float>(vregScaled, vregScaledDiv, vregScaled, maskInvSub);
             // floor 语义：fp32 → int32 (CAST_FLOOR) → fp32 (UNKNOWN)
             AscendC::Reg::Cast<int32_t, float, kCastFp32ToInt32Floor>(vregFlrInt, vregScaled, mask);
             AscendC::Reg::Cast<float, int32_t, kCastInt32ToFp32>(vregFloored, vregFlrInt, mask);
             // out = floored * scaleSafe + nudgedMin
             AscendC::Reg::Mul<float>(vregOut, vregFloored, vregScaleSafe, mask);
             AscendC::Reg::Add<float>(vregOut, vregOut, vregNudgedMin, mask);
-            // out *= bothZero（兜底：当 |min|+|max|==0 时 out=0）
-            AscendC::Reg::Mul<float>(vregOut, vregOut, vregBoth, mask);
+            // CODE.11 ④溢出通道双侧重建：floored*scaleSafe 在大索引处可越过 +FLT_MAX
+            // （如 255×2.35e36）；i<=qRange/2 用 nMin+i*scale、i>qRange/2 用
+            // nMax-(qRange-i)*scale（各步 ≤ qRange/2×scale ≤ FLT_MAX，数学等价），
+            // 仅溢出通道取用
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskHighIdx, vregFloored, qHalf, mask);
+            AscendC::Reg::Mul<float>(vregIdxLo, vregFloored, vregScaleSafe, mask);
+            AscendC::Reg::Add<float>(vregOutLo, vregNudgedMin, vregIdxLo, mask);
+            // P1-2: 高侧距离用 qRange-floored（floored 的索引域是 [0, qRange]，
+            // narrow_range 时 qMax-floored 会多出 qMin=1 步）
+            AscendC::Reg::Sub<float>(vregQMaxIdx, vregQRange, vregFloored, mask);
+            AscendC::Reg::Mul<float>(vregIdxHi, vregQMaxIdx, vregScaleSafe, mask);
+            AscendC::Reg::Sub<float>(vregOutHi, vregNudgedMax, vregIdxHi, mask);
+            // floored>qHalf（mask=1）→ 取 src0=out_hi；否则取 src1=out_lo
+            AscendC::Reg::Select<float>(vregOutAlt, vregOutHi, vregOutLo, maskHighIdx);
+            AscendC::Reg::Select<float>(vregOut, vregOutAlt, vregOut, maskRecon);
+            // P1-06 兜底 1：|out|>FLT_MAX（±inf，检测不经 inf 字面量）→ 取另一分支
+            // （两侧乘积互补有限）；对称中点角落两分支可同时越界，交给兜底 2。
+            AscendC::Reg::Select<float>(vregOutOther, vregOutLo, vregOutHi, maskHighIdx);
+            AscendC::Reg::Adds<float>(vregChkPos, vregOut, -3.4028234663852886e+38f, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskChkPos, vregChkPos, 0.0f, mask);
+            AscendC::Reg::Select<float>(vregPosF, vregOne, vregZero, maskChkPos);
+            AscendC::Reg::Adds<float>(vregChkNeg, vregOut, 3.4028234663852886e+38f, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::LT>(maskChkNeg, vregChkNeg, 0.0f, mask);
+            AscendC::Reg::Select<float>(vregNegF, vregOne, vregZero, maskChkNeg);
+            AscendC::Reg::Max<float>(vregBadF, vregPosF, vregNegF, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskBad, vregBadF, 0.5f, mask);
+            AscendC::Reg::Select<float>(vregOut, vregOutOther, vregOut, maskBad);
+            // P1-06 兜底 2：另一分支仍越界（对称中点角落）→ 取 clamped（与真值差 ≤1
+            // 个量化步长，远好于 ±inf）
+            AscendC::Reg::Adds<float>(vregChkPos, vregOut, -3.4028234663852886e+38f, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskChkPos, vregChkPos, 0.0f, mask);
+            AscendC::Reg::Select<float>(vregPosF, vregOne, vregZero, maskChkPos);
+            AscendC::Reg::Adds<float>(vregChkNeg, vregOut, 3.4028234663852886e+38f, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::LT>(maskChkNeg, vregChkNeg, 0.0f, mask);
+            AscendC::Reg::Select<float>(vregNegF, vregOne, vregZero, maskChkNeg);
+            AscendC::Reg::Max<float>(vregBadF, vregPosF, vregNegF, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(maskBad, vregBadF, 0.5f, mask);
+            AscendC::Reg::Select<float>(vregOut, vregClamped, vregOut, maskBad);
+            // out *= keep（退化通道输出 0：min==max==0 全零通道，或量程极小使 fp32 scale
+            // 下溢为 0/次正规——min==max≠0 相等通道同样先清零，随后由下方 K1 块覆盖为 NaN）
+            AscendC::Reg::Mul<float>(vregOut, vregOut, vregKeep, mask);
+            // NaN 语义（README 功能说明 / DESIGN §6）：输入 x 为 NaN 时 y 必须为 NaN。
+            // 上方 floor 走 fp32→int32 取整会吞掉 NaN，故此处显式补回：
+            //   clamped 已天然携带 NaN（Min/Max 不消解 NaN）；自减后 NaN 车道为 NaN、有限车道为 0，
+            //   ±inf 输入经 clamp 后为有限值，不会误变为 NaN。全掩码加法，有限车道结果不变。
+            AscendC::Reg::Sub<float>(vregNan, vregClamped, vregClamped, mask);
+            AscendC::Reg::Add<float>(vregOut, vregOut, vregNan, mask);
+            // K1（Issue #101）：min==max≠0 相等通道输出 NaN（对齐 TF oracle：Nudge 的
+            // inv_scale = qRange/(max-min) = +inf → 0×inf = NaN，整通道 NaN）。
+            // 与 min==max==0 全零通道区分（TF functor 显式清零，维持上方 keep 清零）。
+            // 检测：diff==0（min==max）且 min≠0（diff==0 时 min≠0 ⟺ 非全零）。
+            // NaN 须显式注入——floor 的 Cast<int32> 会吞 NaN，0-ULP Div 对 0/0 走
+            // ZEROING 同样不产生 NaN，自然传播不可用；载体经 inf-inf 构造（inf 来自
+            // FLT_MAX 加倍上溢，与 2.1b 的 (max-min) 溢出同机制），按通道掩码注入，
+            // 避开 int cast 路径。次正规退化通道（diff≠0）与倒置通道不在此域，行为不变。
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::EQ>(maskEq, vregDiffSaved, 0.0f, mask);
+            AscendC::Reg::Compares<float, AscendC::CMPMODE::NE>(maskMinNz, vregMin, 0.0f, mask);
+            AscendC::Reg::MaskAnd(maskEqNz, maskEq, maskMinNz, mask);
+            AscendC::Reg::Adds<float>(vregInf, vregZero, 3.4028234663852886e+38f, mask);
+            AscendC::Reg::Adds<float>(vregInf, vregInf, 3.4028234663852886e+38f, mask);
+            AscendC::Reg::Sub<float>(vregNanEq, vregInf, vregInf, mask);
+            AscendC::Reg::Select<float>(vregNanEq, vregNanEq, vregZero, maskEqNz);
+            AscendC::Reg::Add<float>(vregOut, vregOut, vregNanEq, mask);
             // Store
             AscendC::Reg::StoreAlign<float, AscendC::Reg::StoreDist::DIST_NORM_B32>(yAddr + i * vfLen32, vregOut, mask);
         }

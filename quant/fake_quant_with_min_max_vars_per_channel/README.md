@@ -37,7 +37,7 @@
   y[..., c] = floor((clamped - nudgedMin[c]) \times scaleInv[c] + 0.5) \times scale[c] + nudgedMin[c]
   $$
 
-  - 当某通道 $|min[c]| + |max[c]| = 0$ 时，该通道输出全零（退化处理）。
+  - 当某通道 $min[c] = max[c]$ 且 $|min[c]| + |max[c]| \neq 0$ 时，该通道输出NaN（对齐TF竞品：$scaleInv$ 上溢为 $+\infty$ 后 $0 \times \infty = NaN$）；当 $|min[c]| + |max[c]| = 0$（即 $min[c] = max[c] = 0$）时，该通道为全零退化通道，输出全零。
   - 当输入`x`为NaN时，NaN经clamp/round后传播到输出`y`。
 
 ## 参数说明
@@ -63,7 +63,7 @@
       <td>输入</td>
       <td><ul><li>表示算子输入的Tensor，最后一轴为channel C；</li><li>rank范围[1, 8]；</li><li>shape与输出y一致。</li></ul></td>
       <td>FLOAT</td>
-      <td>ND</td>
+      <td>ND（rank-4经TF插件通路时按NHWC处理，最后一轴为channel C）</td>
     </tr>
     <tr>
       <td>min</td>
@@ -80,6 +80,13 @@
       <td>ND</td>
     </tr>
     <tr>
+      <td>y</td>
+      <td>输出</td>
+      <td><ul><li>表示per-channel假量化的计算输出；</li><li>shape和输入x完全一致。</li></ul></td>
+      <td>FLOAT</td>
+      <td>ND（rank-4经TF插件通路时与x同为NHWC）</td>
+    </tr>
+    <tr>
       <td>num_bits</td>
       <td>可选属性</td>
       <td><ul><li>表示量化位宽；</li><li>取值范围[2, 16]；</li><li>默认值为8。</li></ul></td>
@@ -93,27 +100,24 @@
       <td>BOOL</td>
       <td>-</td>
     </tr>
-    <tr>
-      <td>y</td>
-      <td>输出</td>
-      <td><ul><li>表示per-channel假量化的计算输出；</li><li>shape和输入x完全一致。</li></ul></td>
-      <td>FLOAT</td>
-      <td>ND</td>
-    </tr>
   </tbody>
-</table>
+  </table>
 
 ## 约束说明
 
 - 输入`x`与输出`y`的数据类型仅支持FLOAT32，shape必须完全一致。
 - 输入`min`、`max`必须为1-D Tensor（rank=1），且长度等于`x`最后一维的大小C。
 - `min`和`max`的长度必须一致。
+- `min`、`max`需满足`min[c] <= max[c]`（逐通道）；`min[c] > max[c]`（区间反向）不在支持范围内。
 - `num_bits`取值范围为[2, 16]。
 - `x`的rank范围必须为[1, 8]。
-- 当某通道`|min[c]| + |max[c]| = 0`时，该通道输出全零。
+- 当某通道`min[c] = max[c]`且`|min[c]| + |max[c]| ≠ 0`时，该通道输出NaN（对齐TF竞品：`inv_scale`上溢为`+inf`后`0×inf = NaN`，整通道NaN）；当`|min[c]| + |max[c]| = 0`（即`min[c] = max[c] = 0`）时，该通道为全零退化通道，输出全零。
+- 当某通道量化步长`(max[c] - min[c]) / (qMax - qMin)`小于FLOAT32最小正常数（约1.17549435e-38，含下溢为0及次正规区）时，该通道同样按退化通道处理，输出全零。次正规步长在设备侧按清零（FTZ）语义处理，与参考实现的退化规则一致。其中`qMin/qMax`为量化区间端点：`narrow_range=false`时为`0 / (2^num_bits - 1)`，`narrow_range=true`时为`1 / (2^num_bits - 1)`。
+- 退化通道的"输出全零"指对有限输入的输出；当`x`的对应元素为NaN时，该车道按NaN透传语义输出NaN（NaN语义优先于退化清零）。
+- `min[c] > max[c]`（区间反向）为不支持输入，本实现不做拒绝；其输出行为与TF竞品一致（回退到量化下界一侧），不构成精度承诺；比对golden的clamp顺序修复（先min后max，对齐TF与本实现）后，三方在该域输出一致。
 
 ## 调用说明
 
 | 调用方式 | 样例代码 | 说明 |
 | :--- | :--- | :--- |
-| GE图模式 | - | 通过GE IR构图方式调用FakeQuantWithMinMaxVarsPerChannel算子（[算子IR定义](op_graph/fake_quant_with_min_max_vars_per_channel_proto.h)）。min/max作为1-D tensor输入（per-channel可训练变量），num_bits/narrow_range作为属性。TF插件会将输入/输出format设为NHWC，使最后一轴对应channel。|
+| GE图模式 | [test_geir_fake_quant_with_min_max_vars_per_channel.cpp](examples/test_geir_fake_quant_with_min_max_vars_per_channel.cpp) | 通过GE IR构图方式调用FakeQuantWithMinMaxVarsPerChannel算子（[算子IR定义](op_graph/fake_quant_with_min_max_vars_per_channel_proto.h)）。min/max作为1-D tensor输入（per-channel可训练变量），num_bits/narrow_range作为属性。TF插件仅将 **rank-4** 张量的format设为NHWC（使最后一轴对应channel），其它rank保持ND。|
