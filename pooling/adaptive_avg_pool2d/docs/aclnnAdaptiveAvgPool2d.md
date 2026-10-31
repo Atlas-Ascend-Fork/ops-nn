@@ -127,6 +127,10 @@ aclnnStatus aclnnAdaptiveAvgPool2d(
    - <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：参数`self`、`out`的数据类型不支持BFLOAT16。
 
    <!-- end id7 -->
+   <!-- npu="950" id8 -->
+   - <term>Ascend 950PR&950DT系列产品</term>：参数`self`、`out`的数据类型不支持BFLOAT16。
+
+   <!-- end id8 -->
 
 - **返回值：**
 
@@ -168,7 +172,7 @@ aclnnStatus aclnnAdaptiveAvgPool2d(
       <td>outputSize的维度不等于2。</td>
     </tr>
     <tr>
-      <td>self或out的shape的除第一维度以外不大于0。</td>
+      <td>仅<term>Ascend 950PR&950DT系列产品</term>：self或out的shape的除第一维度以外不大于0。</td>
     </tr>
     <tr>
       <td>self和out维度不一致。</td>
