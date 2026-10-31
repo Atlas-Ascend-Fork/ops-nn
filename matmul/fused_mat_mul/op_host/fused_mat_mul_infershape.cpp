@@ -56,16 +56,16 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
 {
     OP_CHECK_IF(context == nullptr, CUBE_INNER_ERR_REPORT("FusedMatmul", "context is null"), return ge::GRAPH_FAILED);
     auto op_name = context->GetNodeName();
-    auto shape_a = context->GetInputShape(kMatMulX1Idx);
-    auto tensor_a = context->GetInputDesc(kMatMulX1Idx);
-    auto shape_b = context->GetInputShape(kMatMulX2Idx);
+    auto shape_x1 = context->GetInputShape(kMatMulX1Idx);
+    auto tensor_x1 = context->GetInputDesc(kMatMulX1Idx);
+    auto shape_x2 = context->GetInputShape(kMatMulX2Idx);
     auto shape_bias = context->GetOptionalInputShape(kMatMulX3Idx);
-    auto shape_c = context->GetOptionalInputShape(kFusedMatMulX3Idx);
+    auto shape_x3 = context->GetOptionalInputShape(kFusedMatMulX3Idx);
     auto shape_out = context->GetOutputShape(kOutputIdx);
     auto attrs = context->GetAttrs();
 
     OP_CHECK_IF(
-        shape_a == nullptr || shape_b == nullptr || shape_out == nullptr || attrs == nullptr || tensor_a == nullptr,
+        shape_x1 == nullptr || shape_x2 == nullptr || shape_out == nullptr || attrs == nullptr || tensor_x1 == nullptr,
         CUBE_INNER_ERR_REPORT(op_name, "shape or attrs is null"), return ge::GRAPH_FAILED);
     const bool* trans_a = attrs->GetAttrPointer<bool>(kMatMulX1Idx);
     const bool* trans_b = attrs->GetAttrPointer<bool>(kMatMulX2Idx);
@@ -79,7 +79,7 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
     OP_CHECK_IF(*inner_precise != INNER_PRECISE_HIGH_PRECISION && *inner_precise != INNER_PRECISE_HIGH_PERFORMANCE,
                 CUBE_INNER_ERR_REPORT(op_name, "inner_precise only supports 0 or 1"), return ge::GRAPH_FAILED);
 
-    ge::DataType dtype = tensor_a->GetDataType();
+    ge::DataType dtype = tensor_x1->GetDataType();
     OP_CHECK_IF(dtype == ge::DT_FLOAT && !(*enable_hf32),
                 CUBE_INNER_ERR_REPORT(op_name, "fusedmatmul is only supported bf16/fp16/hf32, do not support fp32."),
                 return ge::GRAPH_FAILED);
@@ -98,24 +98,24 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
     const bool is_quant_op = IsInSupportedOpTypes(fused_op_type, kQuantOpTypes);
     // 支持x3输入的OpType拦截x3为空
     if (IsInSupportedOpTypes(fused_op_type, kSupportedX3OpTypes)) {
-        OP_CHECK_IF(shape_c == nullptr || shape_c->GetDimNum() == 0,
+        OP_CHECK_IF(shape_x3 == nullptr || shape_x3->GetDimNum() == 0,
                     CUBE_INNER_ERR_REPORT(
-                        op_name, "shape c must be valid when fused_op_type is add/mul/quant/relu_quant/scale_add"),
+                        op_name, "shape x3 must be valid when fused_op_type is add/mul/quant/relu_quant/scale_add"),
                     return ge::GRAPH_FAILED);
     } else {
         // 不支持x3输入的OpType拦截x3为非空
-        OP_CHECK_IF(
-            shape_c != nullptr && shape_c->GetDimNum() != 0,
-            CUBE_INNER_ERR_REPORT(
-                op_name, "shape c must have no data when fused_op_type is ''/16cast32/gelu_tanh/gelu_erf/relu/sigmoid"),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(shape_x3 != nullptr && shape_x3->GetDimNum() != 0,
+                    CUBE_INNER_ERR_REPORT(
+                        op_name,
+                        "shape x3 must have no data when fused_op_type is ''/16cast32/gelu_tanh/gelu_erf/relu/sigmoid"),
+                    return ge::GRAPH_FAILED);
     }
     OP_LOGD(context->GetNodeName(), "a_shape: %s, b_shape: %s, transpose_a: %d, transpose_b: %d",
-            Shape2String(*shape_a).c_str(), Shape2String(*shape_b).c_str(), *trans_a, *trans_b);
+            Shape2String(*shape_x1).c_str(), Shape2String(*shape_x2).c_str(), *trans_a, *trans_b);
 
     OP_LOGD(op_name, "check the input shape length.");
-    int dim_a = shape_a->GetDimNum();
-    int dim_b = shape_b->GetDimNum();
+    int dim_a = shape_x1->GetDimNum();
+    int dim_b = shape_x2->GetDimNum();
     const bool is_empty = strcmp(fused_op_type, "") == 0;
     const bool is_sigmoid = strcmp(fused_op_type, "sigmoid") == 0;
     const bool support_broadcast_batch = IsInSupportedOpTypes(fused_op_type, kBroadcastBatchOpTypes);
@@ -129,12 +129,12 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
                 return ge::GRAPH_FAILED);
     if (!support_broadcast_batch && is_empty) {
         for (int i = 0; i < dim_a - kMatmulV2MinShapeSize; ++i) {
-            OP_CHECK_IF(shape_a->GetDim(i) != shape_b->GetDim(i),
+            OP_CHECK_IF(shape_x1->GetDim(i) != shape_x2->GetDim(i),
                         CUBE_INNER_ERR_REPORT(
                             op_name,
-                            "current fused op type only supports no-broadcast batch shape, but a batch dim[%d] "
-                            "is %ld, b batch dim[%d] is %ld",
-                            i, shape_a->GetDim(i), i, shape_b->GetDim(i)),
+                            "current fused op type only supports no-broadcast batch shape, but x1 batch dim[%d] "
+                            "is %ld, x2 batch dim[%d] is %ld",
+                            i, shape_x1->GetDim(i), i, shape_x2->GetDim(i)),
                         return ge::GRAPH_FAILED);
         }
     }
@@ -144,13 +144,13 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
     int idx_k_b = *trans_b ? 0 : 1;
     int idx_n = *trans_b ? 1 : 0;
 
-    int64_t a_m = shape_a->GetDim(dim_a - idx_m - 1);
-    int64_t b_n = shape_b->GetDim(dim_b - idx_n - 1);
-    int64_t a_k = shape_a->GetDim(dim_a - idx_k_a - 1);
-    int64_t b_k = shape_b->GetDim(dim_b - idx_k_b - 1);
+    int64_t a_m = shape_x1->GetDim(dim_a - idx_m - 1);
+    int64_t b_n = shape_x2->GetDim(dim_b - idx_n - 1);
+    int64_t a_k = shape_x1->GetDim(dim_a - idx_k_a - 1);
+    int64_t b_k = shape_x2->GetDim(dim_b - idx_k_b - 1);
 
     OP_CHECK_IF(a_k != b_k,
-                CUBE_INNER_ERR_REPORT(op_name, "The k-axis of a(%d) and b(%d) tensors must be the same", a_k, b_k),
+                CUBE_INNER_ERR_REPORT(op_name, "The k-axis of x1(%d) and x2(%d) tensors must be the same", a_k, b_k),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(is_sigmoid && a_k == 0,
                 CUBE_INNER_ERR_REPORT(op_name, "The K-axis of x1 and x2 must be greater than 0 for sigmoid op type"),
@@ -179,35 +179,35 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
         }
     }
 
-    if (shape_c != nullptr && shape_c->GetDimNum() != 0) {
+    if (shape_x3 != nullptr && shape_x3->GetDimNum() != 0) {
         if (is_quant_op) {
-            OP_CHECK_IF(shape_c->GetDimNum() != 1 || shape_c->GetShapeSize() != 1,
-                        CUBE_INNER_ERR_REPORT(op_name, "shape c must be [1] when fused_op_type is quant/relu_quant"),
+            OP_CHECK_IF(shape_x3->GetDimNum() != 1 || shape_x3->GetShapeSize() != 1,
+                        CUBE_INNER_ERR_REPORT(op_name, "shape x3 must be [1] when fused_op_type is quant/relu_quant"),
                         return ge::GRAPH_FAILED);
         } else {
-            int dim_c = shape_c->GetDimNum();
-            OP_LOGD(context->GetNodeName(), "c_shape: %s", Shape2String(*shape_c).c_str());
+            int dim_c = shape_x3->GetDimNum();
+            OP_LOGD(context->GetNodeName(), "c_shape: %s", Shape2String(*shape_x3).c_str());
             OP_CHECK_IF(dim_c < kMatmulV2MinShapeSize || dim_c > kMatmulV2MaxShapeSize,
                         CUBE_INNER_ERR_REPORT(op_name, "input dim num[%d] is illegal!", dim_c),
                         return ge::GRAPH_FAILED);
-            OP_CHECK_IF(dim_c == kMatmulV2MinShapeSize && (a_m != shape_c->GetDim(0) || b_n != shape_c->GetDim(1)),
+            OP_CHECK_IF(dim_c == kMatmulV2MinShapeSize && (a_m != shape_x3->GetDim(0) || b_n != shape_x3->GetDim(1)),
                         CUBE_INNER_ERR_REPORT(op_name, "The m(%d), n(%d) tensors must be the same c(%ld, %ld)", a_m,
-                                              b_n, shape_c->GetDim(0), shape_c->GetDim(1)),
+                                              b_n, shape_x3->GetDim(0), shape_x3->GetDim(1)),
                         return ge::GRAPH_FAILED);
             OP_CHECK_IF(dim_c == kMatmulV2MaxShapeSize &&
                             (dim_a != kMatmulV2MaxShapeSize ||
-                             (shape_c->GetDim(0) != 1 && shape_c->GetDim(0) != shape_a->GetDim(0)) ||
-                             a_m != shape_c->GetDim(1) || b_n != shape_c->GetDim(kMatMulX3Idx)),
-                        CUBE_INNER_ERR_REPORT(op_name, "The shape c(%ld, %ld, %ld) is illegal!", shape_c->GetDim(0),
-                                              shape_c->GetDim(1), shape_c->GetDim(kMatMulX3Idx)),
+                             (shape_x3->GetDim(0) != 1 && shape_x3->GetDim(0) != shape_x1->GetDim(0)) ||
+                             a_m != shape_x3->GetDim(1) || b_n != shape_x3->GetDim(kMatMulX3Idx)),
+                        CUBE_INNER_ERR_REPORT(op_name, "The shape x3(%ld, %ld, %ld) is illegal!", shape_x3->GetDim(0),
+                                              shape_x3->GetDim(1), shape_x3->GetDim(kMatMulX3Idx)),
                         return ge::GRAPH_FAILED);
         }
     }
     shape_out->SetDimNum(dim_out);
     if (support_broadcast_batch) {
         const int valid_offset = dim_out - std::min(dim_a, dim_b);
-        const Shape& shape_long = dim_a < dim_b ? *shape_b : *shape_a;
-        const Shape& shape_short = dim_a < dim_b ? *shape_a : *shape_b;
+        const Shape& shape_long = dim_a < dim_b ? *shape_x2 : *shape_x1;
+        const Shape& shape_short = dim_a < dim_b ? *shape_x1 : *shape_x2;
         for (int i = 0; i < valid_offset; ++i) {
             shape_out->SetDim(i, shape_long.GetDim(i));
         }
@@ -221,7 +221,7 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
         }
     } else {
         for (int i = 0; i < dim_out - kMatmulV2MinShapeSize; ++i) {
-            shape_out->SetDim(i, shape_a->GetDim(i));
+            shape_out->SetDim(i, shape_x1->GetDim(i));
         }
     }
     shape_out->SetDim(dim_out - DIM_SIZE_TWO, a_m);
