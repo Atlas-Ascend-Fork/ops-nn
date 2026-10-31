@@ -33,11 +33,11 @@
 #include "graph.h"
 #include "types.h"
 #include "tensor.h"
-#include "ge_error_codes.h"
+#include "graph/error_codes.h"
 #include "ge_api_types.h"
 #include "ge_api.h"
 #include "ge_ir_build.h"
-#include "array_ops.h"
+#include "ops_proto_legacy.h"
 
 #include "../op_graph/acts_ulq_input_grad_proto.h"
 
@@ -250,7 +250,7 @@ int main(int argc, char* argv[])
 
     // Compare NPU output with golden.
     const float rtol = 1.220703125e-04f;
-    const float atol = 1.220703125e-03f;
+    const float atol = 1.220703125e-04f; // spec fp32: rtol=atol=2^-13（量化计算类社区标准）
     bool all_pass = true;
 
     printf("\n=== Precision Comparison (FP32: rtol=%.4e, atol=%.4e) ===\n", rtol, atol);

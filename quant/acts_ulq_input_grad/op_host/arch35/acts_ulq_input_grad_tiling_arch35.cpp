@@ -205,14 +205,7 @@ static ge::graphStatus CalcTilingData(gert::TilingContext* context, ActsULQInput
     tiling->ubFormer = FloorAlign(maxElemNum, alignFactor);
     OP_CHECK_IF(tiling->ubFormer <= 0, OP_LOGE(context, "ubFormer computed as 0"), return ge::GRAPH_FAILED);
 
-    // former/tail 循环次数（区分首/尾 block）
-    tiling->ubLoopOfFormerBlock = CeilDiv(tiling->blockFormer, tiling->ubFormer);
-    tiling->ubTailOfFormerBlock = tiling->blockFormer - (tiling->ubLoopOfFormerBlock - 1) * tiling->ubFormer;
-
-    int64_t blockTail = totalIdx - (tiling->blockNum - 1) * tiling->blockFormer;
-    tiling->ubLoopOfTailBlock = CeilDiv(blockTail, tiling->ubFormer);
-    tiling->ubTailOfTailBlock = blockTail - (tiling->ubLoopOfTailBlock - 1) * tiling->ubFormer;
-
+    // UB 循环次数与尾块长度由 kernel 按 blockLength_/ubFormer_ 自行推导，不进 TilingData
     context->SetBlockDim(usedCoreNum);
     return ge::GRAPH_SUCCESS;
 }

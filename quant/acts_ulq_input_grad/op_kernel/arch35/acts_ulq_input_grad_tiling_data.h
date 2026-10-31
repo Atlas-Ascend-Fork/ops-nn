@@ -12,28 +12,24 @@
 
 /*!
  * \file acts_ulq_input_grad_tiling_data.h
- * \brief TilingData 结构体定义（DESIGN.md §3.3，1D 展平多核 + UB 双切分）
+ * \brief TilingData 结构体定义（1D 展平多核 + UB 切分）
  *
  * 使用标准 C++ struct 定义 TilingData
  * 禁止使用废弃的 BEGIN_TILING_DATA_DEF 宏
  *
- * 9 字段与 DESIGN.md §3.3 表格一一对应：
- *   dim0 / coreNum / blockFormer / blockNum / ubFormer /
- *   ubLoopOfFormerBlock / ubTailOfFormerBlock / ubLoopOfTailBlock / ubTailOfTailBlock
+ * 5 字段：dim0 / coreNum / blockFormer / blockNum / ubFormer。
+ * kernel 侧按 (blockLength_ + ubFormer_ - 1) / ubFormer_ 自行推导 UB 循环
+ * 与尾块长度，不在 TilingData 中冗余存放 ubLoop/ubTail 派生字段。
  */
 
 #ifndef _ACTS_ULQ_INPUT_GRAD_TILING_DATA_H_
 #define _ACTS_ULQ_INPUT_GRAD_TILING_DATA_H_
 
 struct ActsULQInputGradTilingData {
-    int64_t dim0 = 0;                // 元素总数量（三输入/输出全维度相乘，shape 完全一致）
-    int32_t coreNum = 0;             // 实际使用核数（运行时动态查询）
-    int64_t blockFormer = 0;         // 每核基础元素数（对齐 512 元素）
-    int64_t blockNum = 0;            // 虚拟 block 数量
-    int64_t ubFormer = 0;            // 每个 UB 块基础元素数（256B 对齐）
-    int64_t ubLoopOfFormerBlock = 0; // 首 block 的 UB 循环次数
-    int64_t ubTailOfFormerBlock = 0; // 首 block 的 UB 尾部元素数
-    int64_t ubLoopOfTailBlock = 0;   // 尾 block 的 UB 循环次数
-    int64_t ubTailOfTailBlock = 0;   // 尾 block 的 UB 尾部元素数
+    int64_t dim0 = 0;        // 元素总数量（三输入/输出全维度相乘，shape 完全一致）
+    int32_t coreNum = 0;     // 实际使用核数（运行时动态查询）
+    int64_t blockFormer = 0; // 每核基础元素数（对齐 512 元素）
+    int64_t blockNum = 0;    // 虚拟 block 数量（SetBlockDim 依据）
+    int64_t ubFormer = 0;    // 每个 UB 块基础元素数（256B 对齐）
 };
 #endif

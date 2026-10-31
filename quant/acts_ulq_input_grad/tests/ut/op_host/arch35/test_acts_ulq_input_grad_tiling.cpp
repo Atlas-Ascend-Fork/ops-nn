@@ -14,9 +14,10 @@
  *
  * 覆盖：
  *   - 4 dtype 组合（K1 fp16+bool / K2 fp16+fp16 / K3 fp32+bool / K4 fp32+fp32），
- *     各 dtype 走不同 bufferDivisor → ubFormer 分支，逐字段验证多核 + UB 双切分计算。
- *   - 多核切分（大 shape 打满 64 核）+ UB 双切分（首/尾块多次 UB 循环）。
- *   - 多核 + 首尾块 blockFormer/blockTail 不等。
+ *     各 dtype 走不同 bufferDivisor → ubFormer 分支，逐字段验证多核 + UB 切分计算（5 字段，
+     ubLoop/ubTail 派生量由 kernel 自行推导，不在 TilingData 中）。
+ *   - 多核切分（大 shape 打满 64 核）+ UB 切分（首/尾块多次 UB 循环场景经 ubFormer/blockFormer 覆盖）。
+ *   - 多核 + 首尾块 blockFormer 不等（blockTail 由 kernel 推导）。
  *   - rank-0 标量 [] → EnsureNotScalar → {1}。
  *   - 空 Tensor（含 0 维）短路分支。
  *   - 异常：三输入 shape 不一致 / 混合浮点非法组合 / 两 mask dtype 不一致 /
@@ -53,9 +54,10 @@ struct ActsULQInputGradCompileInfoStub {};
 ActsULQInputGradCompileInfoStub g_compileInfoStub;
 
 // 读回 TilingData 并逐字段断言（正向用例统一入口）
+// 字段集与 acts_ulq_input_grad_tiling_data.h 一致（5 字段）：
+// UB 循环次数/尾块长度由 kernel 自行推导，不在 TilingData 中。
 void ExpectTilingFields(const gert::TilingContextPara& ctx, int64_t dim0, int32_t coreNum, int64_t blockFormer,
-                        int64_t blockNum, int64_t ubFormer, int64_t ubLoopOfFormerBlock, int64_t ubTailOfFormerBlock,
-                        int64_t ubLoopOfTailBlock, int64_t ubTailOfTailBlock)
+                        int64_t blockNum, int64_t ubFormer)
 {
     TilingInfo info;
     ASSERT_TRUE(ExecuteTiling(ctx, info));
@@ -66,10 +68,6 @@ void ExpectTilingFields(const gert::TilingContextPara& ctx, int64_t dim0, int32_
     EXPECT_EQ(td->blockFormer, blockFormer);
     EXPECT_EQ(td->blockNum, blockNum);
     EXPECT_EQ(td->ubFormer, ubFormer);
-    EXPECT_EQ(td->ubLoopOfFormerBlock, ubLoopOfFormerBlock);
-    EXPECT_EQ(td->ubTailOfFormerBlock, ubTailOfFormerBlock);
-    EXPECT_EQ(td->ubLoopOfTailBlock, ubLoopOfTailBlock);
-    EXPECT_EQ(td->ubTailOfTailBlock, ubTailOfTailBlock);
     // SetBlockDim(usedCoreNum=blockNum)；workspace 声明 1 槽且为 0
     EXPECT_EQ(static_cast<int64_t>(info.blockNum), blockNum);
     ASSERT_EQ(info.workspaceSizes.size(), 1u);
@@ -91,8 +89,7 @@ TEST_F(ActsUlqInputGradTilingTest, k1_fp16_bool_1d_128)
                                 {{{{{128}, {128}}, DT_FLOAT16, FORMAT_ND}}}, &g_compileInfoStub);
     // totalIdx=128; elemBits=(2*2+2*1)*8=48; coreNum=CeilDiv(128*48,32768)=1
     // blockFormer=CeilAlign(128,512)=512; blockNum=1; ubFormer(K1)=20992
-    // ubLoopFmr=1, ubTailFmr=512; blockTail=128, ubLoopTail=1, ubTailTail=128
-    ExpectTilingFields(ctx, 128, 1, 512, 1, 20992, 1, 512, 1, 128);
+    ExpectTilingFields(ctx, 128, 1, 512, 1, 20992);
 }
 
 // K2: y_grad=fp16, mask=fp16，shape [4,8]
@@ -103,9 +100,8 @@ TEST_F(ActsUlqInputGradTilingTest, k2_fp16_fp16_2d_4x8)
                                   {{{4, 8}, {4, 8}}, DT_FLOAT16, FORMAT_ND},
                                   {{{4, 8}, {4, 8}}, DT_FLOAT16, FORMAT_ND}}},
                                 {{{{{4, 8}, {4, 8}}, DT_FLOAT16, FORMAT_ND}}}, &g_compileInfoStub);
-    // totalIdx=32; elemBits=(4+4)*8=64; coreNum=1; blockFormer=512; blockNum=1
-    // ubFormer(K2)=15872; ubLoopFmr=1,ubTailFmr=512; blockTail=32,ubLoopTail=1,ubTailTail=32
-    ExpectTilingFields(ctx, 32, 1, 512, 1, 15872, 1, 512, 1, 32);
+    // totalIdx=32; elemBits=(4+4)*8=64; coreNum=1; blockFormer=512; blockNum=1; blockTail=32
+    ExpectTilingFields(ctx, 32, 1, 512, 1, 15872);
 }
 
 // K3: y_grad=fp32, mask=bool，shape [32,3,5,5]
@@ -118,9 +114,7 @@ TEST_F(ActsUlqInputGradTilingTest, k3_fp32_bool_4d_32x3x5x5)
                                 {{{{{32, 3, 5, 5}, {32, 3, 5, 5}}, DT_FLOAT, FORMAT_ND}}}, &g_compileInfoStub);
     // totalIdx=2400; elemBits=(2*4+2*1)*8=80; coreNum=CeilDiv(2400*80,32768)=6
     // blockFormer=CeilAlign(CeilDiv(2400,6)=400,512)=512; blockNum=CeilDiv(2400,512)=5
-    // ubFormer(K3)=12544; ubLoopFmr=1,ubTailFmr=512
-    // blockTail=2400-4*512=352; ubLoopTail=1,ubTailTail=352
-    ExpectTilingFields(ctx, 2400, 6, 512, 5, 12544, 1, 512, 1, 352);
+    ExpectTilingFields(ctx, 2400, 6, 512, 5, 12544);
 }
 
 // K4: y_grad=fp32, mask=fp32，shape [32,3,5,5]
@@ -132,9 +126,8 @@ TEST_F(ActsUlqInputGradTilingTest, k4_fp32_fp32_4d_32x3x5x5)
                                   {{{32, 3, 5, 5}, {32, 3, 5, 5}}, DT_FLOAT, FORMAT_ND}}},
                                 {{{{{32, 3, 5, 5}, {32, 3, 5, 5}}, DT_FLOAT, FORMAT_ND}}}, &g_compileInfoStub);
     // totalIdx=2400; elemBits=(8+8)*8=128; coreNum=CeilDiv(2400*128,32768)=10
-    // blockFormer=CeilAlign(CeilDiv(2400,10)=240,512)=512; blockNum=5
-    // ubFormer(K4)=7936; ubLoopFmr=1,ubTailFmr=512; blockTail=352,ubLoopTail=1,ubTailTail=352
-    ExpectTilingFields(ctx, 2400, 10, 512, 5, 7936, 1, 512, 1, 352);
+    // blockFormer=CeilAlign(CeilDiv(2400,10)=240,512)=512; blockNum=5; blockTail=352
+    ExpectTilingFields(ctx, 2400, 10, 512, 5, 7936);
 }
 
 // -------------------- 多核 + UB 双切分（首/尾块多次 UB 循环） --------------------
@@ -149,9 +142,7 @@ TEST_F(ActsUlqInputGradTilingTest, k4_multicore_ub_multiloop)
                                 {{{{{4096, 1024}, {4096, 1024}}, DT_FLOAT, FORMAT_ND}}}, &g_compileInfoStub);
     // totalIdx=4194304; elemBits=128; coreNum=CeilDiv(4194304*128,32768)=16384 → 截断 64
     // blockFormer=CeilAlign(CeilDiv(4194304,64)=65536,512)=65536; blockNum=64
-    // ubFormer(K4)=7936; ubLoopFmr=CeilDiv(65536,7936)=9; ubTailFmr=65536-8*7936=2048
-    // blockTail=4194304-63*65536=65536; ubLoopTail=9; ubTailTail=2048
-    ExpectTilingFields(ctx, 4194304, 64, 65536, 64, 7936, 9, 2048, 9, 2048);
+    ExpectTilingFields(ctx, 4194304, 64, 65536, 64, 7936);
 }
 
 // K4 多核 + 首尾块大小不等（blockFormer != blockTail）
@@ -164,9 +155,7 @@ TEST_F(ActsUlqInputGradTilingTest, k4_multicore_former_tail_diff)
                                 {{{{{100000}, {100000}}, DT_FLOAT, FORMAT_ND}}}, &g_compileInfoStub);
     // totalIdx=100000; elemBits=128; coreNum=CeilDiv(100000*128,32768)=391 → 截断 64
     // blockFormer=CeilAlign(CeilDiv(100000,64)=1563,512)=2048; blockNum=CeilDiv(100000,2048)=49
-    // ubFormer(K4)=7936; ubLoopFmr=1,ubTailFmr=2048
-    // blockTail=100000-48*2048=1696; ubLoopTail=1,ubTailTail=1696
-    ExpectTilingFields(ctx, 100000, 64, 2048, 49, 7936, 1, 2048, 1, 1696);
+    ExpectTilingFields(ctx, 100000, 64, 2048, 49, 7936);
 }
 
 // -------------------- rank-0 标量 → EnsureNotScalar → {1} --------------------
@@ -176,9 +165,8 @@ TEST_F(ActsUlqInputGradTilingTest, scalar_rank0_ensure_not_scalar)
     gert::TilingContextPara ctx(
         kOpType, {{{{{}, {}}, DT_FLOAT16, FORMAT_ND}, {{{}, {}}, DT_BOOL, FORMAT_ND}, {{{}, {}}, DT_BOOL, FORMAT_ND}}},
         {{{{{}, {}}, DT_FLOAT16, FORMAT_ND}}}, &g_compileInfoStub);
-    // 标量 [] → {1}: totalIdx=1; elemBits=48; coreNum=1; blockFormer=512; blockNum=1
-    // ubFormer(K1)=20992; ubLoopFmr=1,ubTailFmr=512; blockTail=1,ubLoopTail=1,ubTailTail=1
-    ExpectTilingFields(ctx, 1, 1, 512, 1, 20992, 1, 512, 1, 1);
+    // 标量 [] → {1}: totalIdx=1; elemBits=48; coreNum=1; blockFormer=512; blockNum=1; blockTail=1
+    ExpectTilingFields(ctx, 1, 1, 512, 1, 20992);
 }
 
 // -------------------- 空 Tensor 短路分支（dim0=0） --------------------

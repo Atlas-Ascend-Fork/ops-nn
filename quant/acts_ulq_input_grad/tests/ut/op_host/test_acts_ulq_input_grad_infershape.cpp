@@ -121,3 +121,87 @@ TEST_F(ActsUlqInputGradInfershape, infershape_clamp_max_mask_mismatch)
                                      });
     ExecuteTestCase(para, ge::GRAPH_FAILED, {});
 }
+
+// -------------------- A2 对齐：动态/未知 rank 放宽分支 --------------------
+
+// 静态 y_grad + 动态掩码（含 -1）：编译期跳过逐维校验，输出跟随 y_grad（对齐 A2 is_dynamic 放宽）
+TEST_F(ActsUlqInputGradInfershape, infershape_static_y_with_dynamic_mask)
+{
+    gert::InfershapeContextPara para("ActsULQInputGrad",
+                                     {
+                                         {{{2, 3}, {2, 3}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                         {{{-1, -1}, {-1, -1}}, ge::DT_BOOL, ge::FORMAT_ND},
+                                         {{{2, 3}, {2, 3}}, ge::DT_BOOL, ge::FORMAT_ND},
+                                     },
+                                     {
+                                         {{{}, {}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                     });
+    std::vector<std::vector<int64_t>> expectOutputShape = {{2, 3}};
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, expectOutputShape);
+}
+
+// 未知 rank（-2）+ 已知 rank 掩码：跳过维数校验，输出透传 -2（对齐 A2 is_unknown_rank）
+TEST_F(ActsUlqInputGradInfershape, infershape_unknown_rank_with_known_mask)
+{
+    gert::InfershapeContextPara para("ActsULQInputGrad",
+                                     {
+                                         {{{-2}, {-2}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                         {{{3, 4}, {3, 4}}, ge::DT_BOOL, ge::FORMAT_ND},
+                                         {{{3, 4}, {3, 4}}, ge::DT_BOOL, ge::FORMAT_ND},
+                                     },
+                                     {
+                                         {{{}, {}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                     });
+    std::vector<std::vector<int64_t>> expectOutputShape = {{-2}};
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, expectOutputShape);
+}
+
+// 全静态但维数不同（rank 2 vs rank 1）：维数校验拦截
+TEST_F(ActsUlqInputGradInfershape, infershape_rank_mismatch)
+{
+    gert::InfershapeContextPara para("ActsULQInputGrad",
+                                     {
+                                         {{{8, 8}, {8, 8}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                         {{{64}, {64}}, ge::DT_BOOL, ge::FORMAT_ND},
+                                         {{{8, 8}, {8, 8}}, ge::DT_BOOL, ge::FORMAT_ND},
+                                     },
+                                     {
+                                         {{{}, {}}, ge::DT_FLOAT16, ge::FORMAT_ND},
+                                     });
+    ExecuteTestCase(para, ge::GRAPH_FAILED, {});
+}
+
+// -------------------- rank 范围校验（spec rank_range [0,8]） --------------------
+
+// rank=8（上界，合法）：三输入一致 → 通过，输出跟随
+TEST_F(ActsUlqInputGradInfershape, infershape_rank8_upper_bound)
+{
+    gert::InfershapeContextPara para(
+        "ActsULQInputGrad",
+        {
+            {{{2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2}}, ge::DT_FLOAT, ge::FORMAT_ND},
+            {{{2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2}}, ge::DT_BOOL, ge::FORMAT_ND},
+            {{{2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2}}, ge::DT_BOOL, ge::FORMAT_ND},
+        },
+        {
+            {{{}, {}}, ge::DT_FLOAT, ge::FORMAT_ND},
+        });
+    std::vector<std::vector<int64_t>> expectOutputShape = {{2, 2, 2, 2, 2, 2, 2, 2}};
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, expectOutputShape);
+}
+
+// rank=9（越界）：infershape 自身拦截，不依赖编译管线 para_check
+TEST_F(ActsUlqInputGradInfershape, infershape_rank9_exceed)
+{
+    gert::InfershapeContextPara para(
+        "ActsULQInputGrad",
+        {
+            {{{2, 2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2, 2}}, ge::DT_FLOAT, ge::FORMAT_ND},
+            {{{2, 2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2, 2}}, ge::DT_BOOL, ge::FORMAT_ND},
+            {{{2, 2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2, 2}}, ge::DT_BOOL, ge::FORMAT_ND},
+        },
+        {
+            {{{}, {}}, ge::DT_FLOAT, ge::FORMAT_ND},
+        });
+    ExecuteTestCase(para, ge::GRAPH_FAILED, {});
+}

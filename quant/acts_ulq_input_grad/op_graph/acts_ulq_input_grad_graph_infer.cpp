@@ -12,22 +12,52 @@
 
 /*!
  * \file acts_ulq_input_grad_graph_infer.cpp
- * \brief ActsULQInputGrad graph InferDataType implementation
+ * \brief ActsULQInputGrad graph InferDataType implementation + Verify 等价校验
+ *
+ * 与 A2（canndev op_proto/acts_ulq_input_grad.cc）对齐的两部分内容：
+ *   1. Verify 等价校验：A2 用 IMPLEMT_VERIFIER 注册 ActsULQInputGradVerify 校验
+ *      「clamp_min_mask 与 clamp_max_mask 的 dtype 必须一致」。新框架无独立 Verify 注册位
+ *      （ops-nn 全仓亦无算子使用 CheckSupport），故落在 InferDataType —— 同为图编译期执行，
+ *      且早于 GE 的类型转换（Cast）插入，拦截时机与 A2 Verify 一致。
+ *   2. 输出 dtype 推导：x_grad.dtype = y_grad.dtype（same_as_first_input），
+ *      对应 A2 的 OneInOneOutDynamicInfer 隐式推导。
+ * 注意：此处**不**校验 y_grad 与 mask 的 dtype 组合（4 组 profile 白名单在 Tiling 侧），
+ * 以便 GE 对交叉类型（如 y=fp16 + mask=fp32）自动插入 Cast 归一到合法组合后执行。
  */
 
 #include "log/log.h"
 #include "register/op_impl_registry.h"
+#include "exe_graph/runtime/infer_datatype_context.h"
 
 using namespace ge;
 
 namespace ops {
 
 static constexpr int64_t Y_GRAD_INDEX = 0;
+static constexpr int64_t CLAMP_MIN_MASK_INDEX = 1;
+static constexpr int64_t CLAMP_MAX_MASK_INDEX = 2;
 static constexpr int64_t X_GRAD_INDEX = 0;
+
+// Verify 等价校验（对齐 A2 ActsULQInputGradVerify）：两掩码 dtype 必须一致
+static ge::graphStatus Verify4ActsULQInputGrad(gert::InferDataTypeContext* context)
+{
+    const ge::DataType clampMinMaskType = context->GetInputDataType(CLAMP_MIN_MASK_INDEX);
+    const ge::DataType clampMaxMaskType = context->GetInputDataType(CLAMP_MAX_MASK_INDEX);
+    OP_CHECK_IF(clampMinMaskType != clampMaxMaskType,
+                OP_LOGE(context->GetNodeName(),
+                        "The type of clamp_min_mask must be same as clamp_max_mask, but got clamp_min_mask=%d, "
+                        "clamp_max_mask=%d.",
+                        static_cast<int>(clampMinMaskType), static_cast<int>(clampMaxMaskType)),
+                return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
 
 // x_grad.dtype = y_grad.dtype（same_as_first_input）
 static ge::graphStatus InferDataType4ActsULQInputGrad(gert::InferDataTypeContext* context)
 {
+    if (Verify4ActsULQInputGrad(context) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     const ge::DataType yGradDtype = context->GetInputDataType(Y_GRAD_INDEX);
     context->SetOutputDataType(X_GRAD_INDEX, yGradDtype);
     return ge::GRAPH_SUCCESS;

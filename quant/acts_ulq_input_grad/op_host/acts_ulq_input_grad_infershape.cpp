@@ -13,6 +13,19 @@
 /*!
  * \file acts_ulq_input_grad_infershape.cpp
  * \brief ActsULQInputGrad 形状推导：x_grad.shape = y_grad.shape
+ *
+ * 校验分层与 A2（canndev op_proto/acts_ulq_input_grad.cc 的 ActsULQInputGradInferShape）保持一致：
+ *   1. 任一输入为未知 rank（新框架表示为 1 维 [-2]）→ 跳过维数与逐维校验，输出按 [-2] 透传，
+ *      具体形状留待运行期由 Tiling 兜底校验（A2 的 is_unknown_rank 分支）；
+ *   2. 否则先校验 rank 在 spec `rank_range: [0, 8]` 内（对应 error_codes.shape_mismatch 的
+ *      「rank 越界」）。此校验此前仅由编译管线 para_check（RANK_LIMIT=8，E80012）提供，
+ *      算子自身无拦截；补到 infershape 后不依赖编译通道形态，报错也更早更明确；
+ *   3. 再校验三输入维数一致（A2 的 dim num 校验）；
+ *   4. 若任一输入含动态维（-1）→ 跳过逐维值校验（A2 的 is_dynamic 分支）；
+ *      全静态时逐维严格相等（不支持 broadcast）。
+ * 与 A2 的唯一有意差异：A2 的 is_dynamic 判定对两掩码用了不同 API
+ * （min 用 IsUnknownShape、max 用 IsUnknownDimNum，属笔误导致放宽条件不对称），
+ * 此处对三输入统一按「是否含 -1 维」判定。
  */
 
 #include "util/shape_util.h"
@@ -28,6 +41,27 @@ static constexpr int64_t Y_GRAD_INDEX = 0;
 static constexpr int64_t CLAMP_MIN_MASK_INDEX = 1;
 static constexpr int64_t CLAMP_MAX_MASK_INDEX = 2;
 static constexpr int64_t X_GRAD_INDEX = 0;
+static constexpr int64_t UNKNOWN_DIM_VALUE = -1; // 动态维
+static constexpr int64_t UNKNOWN_RANK_DIM = -2;  // 未知 rank（新框架以 1 维 [-2] 表示）
+static constexpr size_t UNKNOWN_RANK_DIM_NUM = 1;
+static constexpr size_t MAX_RANK = 8; // spec rank_range: [0, 8]
+
+// 未知 rank：新框架表示为 1 维且该维值为 -2
+static inline bool IsUnknownRank(const gert::Shape* shape)
+{
+    return shape->GetDimNum() == UNKNOWN_RANK_DIM_NUM && shape->GetDim(0) == UNKNOWN_RANK_DIM;
+}
+
+// 是否含动态维（-1）：含则编译期无法比较具体维值
+static inline bool HasUnknownDim(const gert::Shape* shape)
+{
+    for (size_t i = 0; i < shape->GetDimNum(); ++i) {
+        if (shape->GetDim(i) == UNKNOWN_DIM_VALUE) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // element-wise：三个输入 shape 必须一致，输出 shape = y_grad shape。
 static ge::graphStatus InferShape4ActsULQInputGrad(gert::InferShapeContext* context)
@@ -38,16 +72,43 @@ static ge::graphStatus InferShape4ActsULQInputGrad(gert::InferShapeContext* cont
     OP_CHECK_NULL_WITH_CONTEXT(context, clampMinMaskShape);
     const gert::Shape* clampMaxMaskShape = context->GetInputShape(CLAMP_MAX_MASK_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, clampMaxMaskShape);
-
-    OP_CHECK_IF(*yGradShape != *clampMinMaskShape,
-                OP_LOGE(context->GetNodeName(), "The shape of clamp_min_mask must be same as y_grad."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(*yGradShape != *clampMaxMaskShape,
-                OP_LOGE(context->GetNodeName(), "The shape of clamp_max_mask must be same as y_grad."),
-                return ge::GRAPH_FAILED);
-
     gert::Shape* xGradShape = context->GetOutputShape(X_GRAD_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xGradShape);
+
+    // 分支 1：未知 rank（-2）→ 跳过校验，输出透传未知 rank（对齐 A2 is_unknown_rank）
+    if (IsUnknownRank(yGradShape) || IsUnknownRank(clampMinMaskShape) || IsUnknownRank(clampMaxMaskShape)) {
+        xGradShape->SetDimNum(UNKNOWN_RANK_DIM_NUM);
+        xGradShape->SetDim(0, UNKNOWN_RANK_DIM);
+        OP_LOGI(context->GetNodeName(), "[InferShape] unknown rank input, output0 propagates rank -2.");
+        return ge::GRAPH_SUCCESS;
+    }
+
+    // 分支 2：rank 范围校验（spec rank_range [0,8]，对应 error_codes.shape_mismatch 的「rank 越界」）
+    const size_t yDimNum = yGradShape->GetDimNum();
+    OP_CHECK_IF(
+        yDimNum > MAX_RANK,
+        OP_LOGE(context->GetNodeName(), "The rank of y_grad should be in [0, %zu], but got %zu.", MAX_RANK, yDimNum),
+        return ge::GRAPH_FAILED);
+
+    // 分支 3：维数必须一致（对齐 A2 dim num 校验）
+    OP_CHECK_IF(yDimNum != clampMinMaskShape->GetDimNum() || yDimNum != clampMaxMaskShape->GetDimNum(),
+                OP_LOGE(context->GetNodeName(),
+                        "The dimension of clamp_min_mask and clamp_max_mask must be same as y_grad, "
+                        "but got y_grad=%zu, clamp_min_mask=%zu, clamp_max_mask=%zu.",
+                        yDimNum, clampMinMaskShape->GetDimNum(), clampMaxMaskShape->GetDimNum()),
+                return ge::GRAPH_FAILED);
+
+    // 分支 4：含动态维（-1）时跳过逐维值校验，留待运行期 Tiling 兜底（对齐 A2 is_dynamic）
+    const bool isDynamic = HasUnknownDim(yGradShape) || HasUnknownDim(clampMinMaskShape) ||
+                           HasUnknownDim(clampMaxMaskShape);
+    if (!isDynamic) {
+        OP_CHECK_IF(*yGradShape != *clampMinMaskShape,
+                    OP_LOGE(context->GetNodeName(), "The shape of clamp_min_mask must be same as y_grad."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(*yGradShape != *clampMaxMaskShape,
+                    OP_LOGE(context->GetNodeName(), "The shape of clamp_max_mask must be same as y_grad."),
+                    return ge::GRAPH_FAILED);
+    }
 
     *xGradShape = *yGradShape;
     OP_LOGI(context->GetNodeName(), "[InferShape] output0 shape=%s", Ops::Base::ToString(*xGradShape).c_str());
