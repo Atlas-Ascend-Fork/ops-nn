@@ -23,6 +23,20 @@ using namespace ADepthwiseFusion;
 using namespace ge;
 using namespace fusion;
 
+namespace {
+void RollbackOriginalEdge(const ReshapeEdgeInfo& edge)
+{
+    if (edge.graph.AddDataEdge(edge.src, edge.srcOutIdx, edge.dst, edge.dstInIdx) != GRAPH_SUCCESS) {
+        AscendString srcName;
+        AscendString dstName;
+        (void)edge.src.GetName(srcName);
+        (void)edge.dst.GetName(dstName);
+        OP_LOGE(FUSION_NAME, "rollback add edge %s->%s failed, graph may be corrupted.", srcName.GetString(),
+                dstName.GetString());
+    }
+}
+} // namespace
+
 void ADepthwiseFusionPass::InitMember()
 {
     npuArch = NpuArch::DAV_RESV;
@@ -258,33 +272,29 @@ bool ADepthwiseFusionPass::UpdateConsumerInputShape(GNode& consumer, int32_t con
 
 bool ADepthwiseFusionPass::InsertReshapeBetween(const ReshapeEdgeInfo& edge, const ReshapeDescInfo& descInfo)
 {
-    auto rollbackOriginalEdge = [&edge]() {
-        (void)edge.graph.AddDataEdge(edge.src, edge.srcOutIdx, edge.dst, edge.dstInIdx);
-    };
-
     FUSION_PASS_CHECK(edge.graph.RemoveEdge(edge.src, edge.srcOutIdx, edge.dst, edge.dstInIdx) != GRAPH_SUCCESS,
                       OP_LOGE(FUSION_NAME, "%s remove edge failed.", convDescInfo.nodeNameStr.c_str()), return false);
 
     AscendString srcName;
     if (edge.src.GetName(srcName) != GRAPH_SUCCESS) {
         OP_LOGE(FUSION_NAME, "%s get src node name failed.", convDescInfo.nodeNameStr.c_str());
-        rollbackOriginalEdge();
+        RollbackOriginalEdge(edge);
         return false;
     }
 
     GNode reshapeNode;
-    FUSION_PASS_CHECK_NOLOG(!CreateReshapeNode(edge.graph, srcName, descInfo, reshapeNode), rollbackOriginalEdge();
+    FUSION_PASS_CHECK_NOLOG(!CreateReshapeNode(edge.graph, srcName, descInfo, reshapeNode), RollbackOriginalEdge(edge);
                             return false);
 
     if (edge.graph.AddDataEdge(edge.src, edge.srcOutIdx, reshapeNode, RESHAPE_INPUT_INDEX) != GRAPH_SUCCESS) {
         OP_LOGE(FUSION_NAME, "%s add edge src->reshape failed.", convDescInfo.nodeNameStr.c_str());
-        rollbackOriginalEdge();
+        RollbackOriginalEdge(edge);
         return false;
     }
     if (edge.graph.AddDataEdge(reshapeNode, RESHAPE_OUTPUT_INDEX, edge.dst, edge.dstInIdx) != GRAPH_SUCCESS) {
         OP_LOGE(FUSION_NAME, "%s add edge reshape->dst failed.", convDescInfo.nodeNameStr.c_str());
         (void)edge.graph.RemoveEdge(edge.src, edge.srcOutIdx, reshapeNode, RESHAPE_INPUT_INDEX);
-        rollbackOriginalEdge();
+        RollbackOriginalEdge(edge);
         return false;
     }
     return true;

@@ -164,7 +164,9 @@ bool DepthwiseToConv2dFusionPass::SetConv2dAttrs(GNode& conv2dNode, const GNode&
 
     int64_t opImplModeEnum = 0;
     if (depthwiseNode.GetAttr(OP_IMPL_MODE_ENUM, opImplModeEnum) == GRAPH_SUCCESS) {
-        FUSION_PASS_CHECK_NOLOG(conv2dNode.SetAttr(OP_IMPL_MODE_ENUM, opImplModeEnum) != GRAPH_SUCCESS, return false);
+        FUSION_PASS_CHECK(conv2dNode.SetAttr(OP_IMPL_MODE_ENUM, opImplModeEnum) != GRAPH_SUCCESS,
+                          OP_LOGE(FUSION_NAME, "%s set op_impl_mode_enum failed.", convDescInfo.nodeNameStr.c_str()),
+                          return false);
     }
 
     return true;
