@@ -329,6 +329,18 @@ def tensorflow_inplace_add_golden(x, i, v, name=None, **kwargs):
     return [_inplace_add_golden_compute(x_array, indices_array, v_array)]
 
 
+def tensorflow_inplace_add_inputs(x, i, v, name=None, **kwargs):
+    """Apply the shared numerical input contract to TensorFlow E2E cases.
+
+    TF tensors are immutable, so return the customized arrays for TTK to write
+    back into its input storage before constructing the execution tensors.
+    """
+    del name
+    return InplaceAddKernelSpec.customize_inputs(
+        _to_numpy_array(x), _to_numpy_array(i), _to_numpy_array(v), **kwargs
+    )
+
+
 class _InplaceAddTfTorchCompose:
     def __call__(self, x, i, v, **kwargs):
         return _InplaceAddTorchCompose.__call__(self, x, i, v, **kwargs)
@@ -340,6 +352,7 @@ class InplaceAddTensorFlowSpec:
     # Use TTK's native TF CPU fallback: it promotes the saved raw inputs before
     # invoking the API. Its custom E2E plugin path receives unpromoted tensors.
     golden = None
+    customize_inputs = staticmethod(tensorflow_inplace_add_inputs)
     third_party = {"torch": _InplaceAddTfTorchCompose}
     tolerance = _TOL
 

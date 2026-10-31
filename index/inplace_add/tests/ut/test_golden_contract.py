@@ -116,3 +116,31 @@ def test_e2e_uses_native_ttk_promote_path():
     assert "e2e" not in _G.__golden__
     assert set(_G.InplaceAddTensorFlowSpec.third_party) == {"torch"}
     assert set(_G.InplaceAddKernelSpec.third_party) == {"torch"}
+
+
+@pytest.mark.parametrize("dtype", [np.int64, np.uint8, np.float16, np.float32])
+def test_e2e_customizes_unique_rows_without_changing_values(dtype):
+    x = np.arange(24, dtype=dtype).reshape(6, 4)
+    v = np.ones((4, 4), dtype=dtype)
+    indices = np.full(4, -1, dtype=np.int32)
+    out_x, out_i, out_v = _G.InplaceAddTensorFlowSpec.customize_inputs(
+        x, indices, v, testcase_name="InplaceAdd_L0_001"
+    )
+    np.testing.assert_array_equal(out_x, x)
+    np.testing.assert_array_equal(out_v, v)
+    assert out_i.dtype == indices.dtype
+    assert out_i.shape == indices.shape
+    assert np.unique(out_i % x.shape[0]).size == indices.size
+    np.testing.assert_array_equal(indices, np.full(4, -1, dtype=np.int32))
+
+
+def test_e2e_input_hook_preserves_invalid_shapes_and_k_greater_than_n():
+    x = np.zeros((2, 3), dtype=np.float32)
+    for indices, v in [
+        (np.array([0], dtype=np.int32), np.ones((1, 4), dtype=np.float32)),
+        (np.array([0, 0, 0], dtype=np.int32), np.ones((3, 3), dtype=np.float32)),
+    ]:
+        outputs = _G.InplaceAddTensorFlowSpec.customize_inputs(x, indices, v)
+        for output, original in zip(outputs, (x, indices, v)):
+            assert output.shape == original.shape
+            np.testing.assert_array_equal(output, original)
