@@ -89,7 +89,7 @@ aclnnStatus aclnnForeachPowList(
       <td>x1 (aclTensorList*)</td>
       <td>Input</td>
       <td>Tensor list of base values for the power operation, corresponding to `x1` in the formula.</td>
-      <td><ul><li>Empty tensors are supported.</li><li>All tensors in this parameter must have the same data type.</li><li>Shapes must be the same as the shapes of the input parameter `x2`.</li></ul></td>
+      <td><ul><li>Empty tensors are supported.</li><li>All tensors in this parameter must have the same data type.</li><li>The numbers of tensors in the x1, x2, and out tensor lists must be the same.</li><li>Shapes must be exactly the same as the shapes of the input parameter `x2`, meaning that each dimension must be equal.</li></ul></td>
       <td>FLOAT32, FLOAT16, INT32, BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -99,7 +99,7 @@ aclnnStatus aclnnForeachPowList(
       <td>x2 (aclTensorList*)</td>
       <td>Input</td>
       <td>Tensor list of exponent values for the power operation, corresponding to `x2` in the formula.</td>
-      <td><ul><li>Supports empty tensors.</li><li>All tensors in this parameter must have the same data type.</li><li>The data type, data format, and shape must be the same as those of input `x1`.</li><li>The absolute value must be less than or equal to (2^31-1).</li></ul></td>
+      <td><ul><li>Supports empty tensors.</li><li>All tensors in this parameter must have the same data type.</li><li>The numbers of tensors in the x1, x2, and out tensor lists must be the same.</li><li>The data type and data format must be the same as those of input `x1`, and the shape must be exactly the same as the shape of input `x1`, meaning that each dimension must be equal.</li></ul></td>
       <td>FLOAT32, FLOAT16, INT32, BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -109,11 +109,11 @@ aclnnStatus aclnnForeachPowList(
       <td>out (aclTensorList*)</td>
       <td>Output</td>
       <td>Indicates the output tensor list for the power operation, corresponding to `y` in the formula.</td>
-      <td><ul><li>Supports empty tensors.</li><li>All tensors in this parameter must have the same data type.</li><li>The data type and data format must be the same as those of input `x1`, and the shape size must be greater than or equal to the shape size of input `x1`.</li></ul></td>
+      <td><ul><li>Supports empty tensors.</li><li>All tensors in this parameter must have the same data type.</li><li>The numbers of tensors in the x1, x2, and out tensor lists must be the same.</li><li>The data type and data format must be the same as those of input `x1`, and the shape must be exactly the same as the shape of input `x1`.</li></ul></td>
       <td>FLOAT32, FLOAT16, INT32, BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
-      <td>×</td>
+      <td>√</td>
     </tr>
     <tr>
       <td>workspaceSize (uint64_t*)</td>
@@ -163,20 +163,18 @@ aclnnStatus aclnnForeachPowList(
       <td>x1, x2, or out is a null pointer.</td>
     </tr>
     <tr>
-      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="2">161002</td>
+      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="5">161002</td>
       <td>The data type of x1, x2, or out is not within the supported range.</td>
     </tr>
     <tr>
       <td>The data types of x1, x2, and out are inconsistent.</td>
     </tr>
     <tr>
-      <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="3">561002</td>
-      <td>The shapes of x1, x2, and out do not meet the constraints.</td>
+      <td>The data format of x1, x2, or out is not within the supported range.</td>
     </tr>
     <tr>
-      <td>The data types of tensors in x1, x2, or out are inconsistent.</td>
+      <td>The shapes of x1, x2, and out do not meet the constraints.</td>
     </tr>
     <tr>
       <td>The dimensions of tensors in x1, x2, or out exceed 8.</td>

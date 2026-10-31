@@ -63,7 +63,7 @@
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>表示进行幂运算的输出结果，对应公式中的`y`。该参数中所有Tensor的数据类型保持一致。数据类型与入参`x1`的数据类型一致，shape size大于等于入参`x1`的shape size。</td>
+      <td>表示进行幂运算的输出结果，对应公式中的`y`。该参数中所有Tensor的数据类型保持一致。x1、x2、y三个张量列表的长度必须一致。数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape与入参`x1`的shape完全一致。</td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>
     </tr>

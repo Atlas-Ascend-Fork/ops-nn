@@ -87,7 +87,7 @@ aclnnStatus aclnnForeachPowList(
       <td>x1（aclTensorList*）</td>
       <td>输入</td>
       <td>表示进行幂运算的底数张量列表，对应公式中的`x1`。</td>
-      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>shape与入参`x2`的shape一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>x1、x2、out三个张量列表的长度必须一致。</li><li>shape与入参`x2`的shape完全一致，即各维度逐维相等。</li></ul></td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -97,7 +97,7 @@ aclnnStatus aclnnForeachPowList(
       <td>x2（aclTensorList*）</td>
       <td>输入</td>
       <td>表示进行幂运算的指数张量列表，对应公式中的`x2`。</td>
-      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型、数据格式和shape与入参`x1`的数据类型、数据格式和shape一致。</li><li>取值的绝对值必须小于等于(2^31-1)。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>x1、x2、out三个张量列表的长度必须一致。</li><li>数据类型、数据格式与入参`x1`的数据类型、数据格式一致，shape与入参`x1`的shape完全一致，即各维度逐维相等。</li></ul></td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -107,7 +107,7 @@ aclnnStatus aclnnForeachPowList(
       <td>out（aclTensorList*）</td>
       <td>输出</td>
       <td>表示进行幂运算的输出张量列表，对应公式中的`y`。</td>
-      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape size大于等于入参`x1`的shape size。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>x1、x2、out三个张量列表的长度必须一致。</li><li>数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape与入参`x1`的shape完全一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -161,20 +161,18 @@ aclnnStatus aclnnForeachPowList(
       <td>传入的x1、x2、out是空指针。</td>
     </tr>
     <tr>
-      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="2">161002</td>
+      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="5">161002</td>
       <td>x1、x2、out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
       <td>x1、x2、out的数据类型不一致。</td>
     </tr>
     <tr>
-      <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="3">561002</td>
-      <td>x1、x2、out的shape不满足约束。</td>
+      <td>x1、x2、out的数据格式不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>x1、x2或out中的Tensor的数据类型不一致。</td>
+      <td>x1、x2、out的shape不满足约束。</td>
     </tr>
     <tr>
       <td>x1、x2或out中的Tensor维度超过8维。</td>
