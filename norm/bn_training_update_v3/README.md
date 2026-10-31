@@ -104,17 +104,10 @@
     </tr>
     <tr>
       <td>epsilon</td>
-      <td>必选属性</td>
+      <td>属性</td>
       <td><ul><li>表示添加到save_variance上的小量，以确保数值稳定，对应公式中的<code>ε</code>。</li><li>取值应大于0；传入0或负值且save_variance为负时，host不校验、将静默输出NaN。</li><li>本产品为必选属性、无默认值（其余产品TBE侧缺省1e-7）。</li></ul></td>
       <td>FLOAT32</td>
       <td>-</td>
-    </tr>
-    <tr>
-      <td>before_split_ori_shape / before_split_ori_format</td>
-      <td>不涉及（Ascend 950PR&950DT系列产品 与 Atlas A2系列产品、Atlas A3系列产品 差异点，历史背景说明）</td>
-      <td><ul><li><strong>Ascend 950PR&950DT系列产品：无此入参/属性。</strong>该两参数不属于算子原型输入，且与FFTS切分特性强相关——FFTS为已废弃特性，Ascend 950PR&950DT系列产品 代码与原型均不包含、不支持。</li><li>历史背景：Atlas A2系列产品、Atlas A3系列产品等将其注册为可选属性（LIST_LIST_INT/LIST_INT，默认[[]]/[]），用于BN FFTS切分场景按切分前原始shape/format计算num；该特性已废弃，Ascend 950PR&950DT系列产品 的num按实际输入shape计算，传入不生效（原型未注册，GE侧按未知属性忽略）。</li></ul></td>
-      <td>不涉及</td>
-      <td>不涉及</td>
     </tr>
     <tr>
       <td>y</td>
@@ -158,10 +151,11 @@
 **Ascend 950PR&950DT系列产品：**
 
 - 支持ND与NCHW格式（tiling对两者都放行；dim0=N、dim1=C、后导维为归一化轴R，rank 2~8；图模式下NCHW标签会被框架归一化下发，布局相同）。
-- 支持NHWC格式（x任意rank≥2，C=最后一维，num=numel/C；统计量仍按元素数=C校验）。NHWC下通道数C无上限：C为64的倍数时按向量窗口流式处理，C非64倍数且整行预算内按整行tile处理，超大C按c窗口流式处理（系数按窗重建，UB占用与C无关）。NC1HWC0/NDC1HWC0来源格式在本产品被tiling拒收（GRAPH_FAILED）——Atlas A2系列产品、Atlas A3系列产品 上按这些格式下发的BN图迁移到 Ascend 950PR&950DT系列产品 前需先转ND/NCHW/NHWC。
+- 支持NHWC格式（x任意rank≥2，C=最后一维，num=numel/C；统计量仍按元素数=C校验）。NHWC下通道数C无上限：C为64的倍数时按向量窗口流式处理，C非64倍数且整行预算内按整行tile处理，超大C按c窗口流式处理（系数按窗重建，UB占用与C无关）。NC1HWC0/NDC1HWC0来源格式在本产品被tiling拒收（GRAPH_FAILED）——迁移到 Ascend 950PR&950DT系列产品 前需先转ND/NCHW/NHWC。
 - x维度数须≥2；x为FLOAT16/FLOAT32/BFLOAT16。
+- 输入与输出均须为连续Tensor（数据按shape线性连续排布）：不支持转置/切片/带存储偏移等非连续视图，非连续输入需先转为连续后传入；输出由算子按shape全量写回，不支持非连续输出与原地修改；各输入与输出的存储区域不得重叠或别名。
 - tiling阶段要求shape全为确定正值：任一维为0拒绝（空tensor），任一维为负/未知动态维报"dynamic shape dim is not supported in tiling"拒绝。
-- 不支持BN FFTS切分场景（Ascend 950PR&950DT系列产品 与 Atlas A2系列产品、Atlas A3系列产品 差异点）：before_split_ori_shape/before_split_ori_format不属于算子原型输入，与FFTS切分特性强相关且该特性已废弃——Ascend 950PR&950DT系列产品 的代码与原型不包含这两个入参，num按实际输入shape计算。历史背景：Atlas A2系列产品、Atlas A3系列产品 侧将其注册为可选属性用于按切分前原始shape计算num，详见参数表该行说明。
+- 不支持BN FFTS切分场景。
 - sum/square_sum/scale/offset恒为FLOAT32，元素数必须等于通道数C（ND/NCHW布局下即x的dim1，NHWC布局下为x的最后一维；shape推荐为[C]，按元素数校验）。
 - batch_mean/batch_variance/reserve_1/reserve_2的shape与scale一致。
 - 不支持空tensor：x任一维为0时算子拒绝执行（num=N*R作为分母无法定义）。
@@ -179,4 +173,11 @@
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| 图模式调用 | [test_geir_bn_training_update_v3](./examples/arch35/test_geir_bn_training_update_v3.cpp) | 通过[算子IR](op_graph/bn_training_update_v3_proto.h)构图方式调用BNTrainingUpdateV3算子（含两组shape/epsilon用例）。 |
+| GE图模式 | [test_geir_bn_training_update_v3](./examples/arch35/test_geir_bn_training_update_v3.cpp) | 通过[算子IR](op_graph/bn_training_update_v3_proto.h)构图方式调用BNTrainingUpdateV3算子（含三组shape/epsilon用例）。 |
+
+样例的构建与运行依赖CANN开发环境与自定义算子包安装（详见仓库根README的环境准备章节）：
+
+1. 完成CANN Toolkit安装并`source`其`set_env`环境脚本；
+2. 在本仓执行`bash build.sh --pkg --soc=ascend950 --ops=bn_training_update_v3`构建自定义算子包并安装（`--install-path`指定安装路径），`source`安装后包内`bin/set_env.bash`；
+3. 构建并运行样例：`bash build.sh --run_example bn_training_update_v3 graph cust --soc=ascend950`（cust表示使用自定义算子包）；
+4. 预期输出：三组用例（ND ×2 + NHWC ×1）全部通过，打印`[CHECK] total fail: 0, PASS`。
