@@ -24,22 +24,24 @@ extern "C" {
  *
  * 算子功能：为矩阵x依次进行两次小矩阵乘法，然后针对矩阵乘的结果进行量化处理。
  *
- * @param [in] x: Device侧的aclTensor，shape为[K, M, N]。
- * 出参`out`的数据类型为INT32时，N必须是8的整数倍；出参`out`的数据类型为INT4时，N必须是偶数。
+ * @param [in] x: Device侧的aclTensor，shape为[M, N1, N2]，M为第一维大小，N1和N2分别为第二维和第三维大小。
+ * M不超过262144，N1和N2不超过256。
+ * 出参`out`的数据类型为INT32时，N2必须是8的整数倍；出参`out`的数据类型为INT4时，N2必须是偶数。
  * 支持非连续的Tensor，数据格式支持ND，数据类型支持FLOAT16、BFLOAT16。
- * @param [in] kroneckerP1: Device侧的aclTensor，shape为[M, M]，M与x中M维一致。
+ * @param [in] kroneckerP1: Device侧的aclTensor，shape为[N1, N1]，两维大小均与x的第二维大小N1一致。
  * 支持非连续的Tensor，数据格式支持ND，数据类型与入参`x`的数据类型一致，数据类型支持FLOAT16、BFLOAT16。
- * @param [in] kroneckerP2: Device侧的aclTensor，shape为[N, N]，N与x中N维一致。
+ * @param [in] kroneckerP2: Device侧的aclTensor，shape为[N2, N2]，两维大小均与x的第三维大小N2一致。
+ * 仅在perGroup场景下支持shape为[0,0]，表示算子不使用右矩阵计算，只进行左矩阵相乘。
  * 支持非连续的Tensor，数据格式支持ND，数据类型与入参`x`的数据类型一致，数据类型支持FLOAT16、BFLOAT16。
  * @param [in] clipRatio: Host侧的double型参数，用于控制量化的裁剪比例，输入数据范围为(0, 1]，默认值为1。
  * @param [out] out: Device侧的aclTensor，支持非连续的Tensor，数据格式支持ND。
  * 类型为INT32时，shape的最后一维是入参`x`最后一维的1/8，其余维度和x一致；类型为INT4时，shape与入参`x`一致。
- * 类型为FLOAT4_E2M1(mxfp4)时，shape为[K, M*N]（仅Ascend950/Ascend350/Ascend960系列支持）；
- * 类型为HIFLOAT4(hif4)时，shape为[K, M*N]（仅Ascend960DT/Ascend960PR(v121)支持）。
+ * 类型为FLOAT4_E2M1(mxfp4)时，shape为[M, N1*N2]（仅Ascend950/Ascend350/Ascend960系列支持）；
+ * 类型为HIFLOAT4(hif4)时，shape为[M, N1*N2]（仅Ascend960DT/Ascend960PR(v121)支持）。
  * @param [out] quantScale: Device侧的aclTensor，支持非连续的Tensor，数据格式支持ND。
- * 类型为INT4/INT32时，shape为[K]，K与x中K维一致，数据类型支持FLOAT32。
- * 类型为FLOAT4_E2M1(mxfp4)时，shape为[K, ceil(M*N/64), 2]，数据类型为FLOAT8_E8M0。
- * 类型为HIFLOAT4(hif4)时，shape为[K, ceil(M*N/64), 1]，数据类型为HIFLOAT4_SCALE。
+ * 类型为INT4/INT32时，shape为[M]，M与x中M维一致，数据类型支持FLOAT32。
+ * 类型为FLOAT4_E2M1(mxfp4)时，shape为[M, ceil(N1*N2/64), 2]，数据类型为FLOAT8_E8M0。
+ * 类型为HIFLOAT4(hif4)时，shape为[M, ceil(N1*N2/64), 1]，数据类型为HIFLOAT4_SCALE。
  * @param [out] workspaceSize: 返回用户需要在npu device侧申请的workspace大小。
  * @param [out] executor: 返回op执行器，包含算子计算流程。
  * @return aclnnStatus: 返回状态码。
