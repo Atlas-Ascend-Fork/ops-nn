@@ -221,6 +221,7 @@ void Conv2dBaseTiling::TranslateCachedApiTilingPartTwo()
     tilingData_.set_fixpParamsFullLoadFlag(cachedTilingData_.fixpParamsFullLoadFlag);
     tilingData_.set_hf32Enable(cachedTilingData_.hf32Enable);
     tilingData_.set_hf32TransMode(cachedTilingData_.hf32TransMode);
+    tilingData_.set_disContinuous(flagInfo_.disContinuousFlag);
     tilingData_.set_hasBias(cacheInputArgs_.biasFlag);
     tilingData_.set_hasScale(static_cast<uint8_t>(flagInfo_.quantFlag || flagInfo_.extendConvFlag));
     tilingData_.set_offsetx(attrInfo_.offsetx);

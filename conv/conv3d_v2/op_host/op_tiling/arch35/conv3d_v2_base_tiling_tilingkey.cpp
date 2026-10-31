@@ -28,8 +28,8 @@ ge::graphStatus Conv3dBaseTilingV2::SetTilingKey()
     conv3dV2BaseTilingKey.GetTemplateTilingKey(tilingKeyPara_);
 
     tilingKey_ = GET_TPL_TILING_KEY(tilingKeyPara_.fmpTiling, tilingKeyPara_.weightTiling, tilingKeyPara_.l1PingPong,
-                                    tilingKeyPara_.l0PingPong, tilingKeyPara_.outputOrder, tilingKeyPara_.iterOrder,
-                                    tilingKeyPara_.groupType, tilingKeyPara_.bigKernel);
+                                    tilingKeyPara_.l0PingPong, tilingKeyPara_.outputOrder, tilingKeyPara_.groupType,
+                                    tilingKeyPara_.bigKernel);
 
     OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: tiling key: %lu.", tilingKey_);
     return ge::GRAPH_SUCCESS;

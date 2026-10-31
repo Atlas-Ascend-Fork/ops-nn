@@ -49,7 +49,7 @@ __aicore__ inline void OptGroupCalcBL1LoadTimesHWMode(Intf* self)
             self->ctx.bL1LoadTimes *= self->ctx.singleCoreDo;
         }
     } else {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             self->ctx.bL1LoadTimes = self->ctx.ddr2l1LoopN;
         } else {
             self->ctx.bL1LoadTimes = self->ctx.ddr2l1LoopH * self->ctx.ddr2l1LoopW * self->ctx.ddr2l1LoopN *
@@ -73,7 +73,7 @@ __aicore__ inline void OptGroupCalcBL1LoadTimesMMode(Intf* self)
             self->ctx.bL1LoadTimes *= self->ctx.singleCoreDo;
         }
     } else {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             self->ctx.bL1LoadTimes = self->ctx.ddr2l1LoopN;
         } else {
             self->ctx.bL1LoadTimes = self->ctx.ddr2l1LoopN * self->ctx.ddr2l1LoopM * self->ctx.ddr2l1LoopBatch;
@@ -209,13 +209,13 @@ template <class Intf>
 __aicore__ inline void OptGroupInitIterValue(Intf* self)
 {
     if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::HW_MODE)) {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             OptGroupInitIterValueMfirstHWMode<Intf>(self);
         } else {
             OptGroupInitIterValueNfirstHWMode<Intf>(self);
         }
     } else if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE)) {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             OptGroupInitIterValueMfirstMMode<Intf>(self);
         } else {
             OptGroupInitIterValueNfirstMMode<Intf>(self);

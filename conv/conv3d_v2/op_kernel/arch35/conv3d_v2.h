@@ -26,7 +26,7 @@ using namespace conv3d;
 #define mDim hoDim
 
 template <int8_t FmapTiling, int8_t WeightTiling, int8_t L1PingPong, int8_t L0PingPong, int8_t OutputOrder,
-          int8_t IterOrder, int8_t GroupType, int8_t BigKernel>
+          int8_t GroupType, int8_t BigKernel>
 struct Conv3DV2Param : public Conv3dParam {
     __aicore__ inline Conv3DV2Param() {}
     constexpr static int8_t fmapTiling = FmapTiling;
@@ -34,7 +34,6 @@ struct Conv3DV2Param : public Conv3dParam {
     constexpr static int8_t l1PingPong = L1PingPong;
     constexpr static int8_t l0PingPong = L0PingPong;
     constexpr static int8_t outputOrder = OutputOrder;
-    constexpr static int8_t iterOrder = IterOrder;
     constexpr static int8_t groupType = GroupType;
     constexpr static int8_t bigKernel = BigKernel;
     constexpr static int8_t isExtendConv2d = false;
@@ -108,6 +107,7 @@ public:
     uint64_t outputOneBatchSize = 0;
 
     constexpr static ConvFormat A_FORMAT = FMAP_TYPE::format;
+    constexpr static bool isConv3D = true;
     constexpr static ConvFormat B_FORMAT = WEIGHT_TYPE::format;
     constexpr static ConvFormat C_FORMAT = OUTPUT_TYPE::format;
     constexpr static bool isMMode = CONV_CFG::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE);
@@ -115,7 +115,6 @@ public:
                                     (IsSameType<FMAP_T, fp8_e4m3fn_t>::value);
     constexpr static bool IS_OPTGROUP_PRELOAD = false;
     constexpr static bool IS_EXTEND_CONV2D = false;
-    constexpr static bool DIS_CONTINUOUS = false;
 };
 
 template <class FMAP_TYPE, class WEIGHT_TYPE, class OUTPUT_TYPE, class BIAS_TYPE, class SCALE_TYPE, class CONV_CFG>

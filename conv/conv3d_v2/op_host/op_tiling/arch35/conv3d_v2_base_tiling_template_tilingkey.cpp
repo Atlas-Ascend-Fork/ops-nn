@@ -176,7 +176,6 @@ void Conv3dV2BaseTilingKey::GetTemplateTilingKey(ConvTilingKeyPara& tilingKeyPar
     tilingKeyPara.l1PingPong = GetL1PingPongVal();
     tilingKeyPara.l0PingPong = GetL0PingPongVal();
     tilingKeyPara.outputOrder = GetOutputOrderVal();
-    tilingKeyPara.iterOrder = static_cast<uint64_t>(tilingData_.iterateMNOrder);
     tilingKeyPara.groupType = static_cast<uint64_t>(flagInfo_.convGroupType);
     tilingKeyPara.bigKernel = static_cast<uint64_t>(flagInfo_.isKernelSplit);
     ReSetTilingKeyPara(tilingKeyPara);

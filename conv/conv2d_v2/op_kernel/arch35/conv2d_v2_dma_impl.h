@@ -45,7 +45,7 @@ public:
 
         // In kAL1fullload scene, aL1 update when woL1 update.
         bool updateAL1Flag = false;
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             updateAL1Flag = self->ctx.woL0Iter == self->ctx.maxWoL0Iter &&
                             self->ctx.hoL0Iter == self->ctx.maxHoL0Iter && self->ctx.nL0Iter == self->ctx.maxNL0Iter;
         } else {
@@ -92,7 +92,7 @@ public:
             self->ctx.aL1LoadTimes = ddr2L0LoopN * ddr2L0LoopH * ddr2L0LoopW * self->ctx.ddr2l1LoopKA *
                                      self->ctx.ddr2l1LoopBatch;
         } else {
-            if constexpr (Intf::iterateMFirstFlag) {
+            if (self->iterateMFirstRT) {
                 self->ctx.aL1LoadTimes = self->ctx.ddr2l1LoopH * self->ctx.ddr2l1LoopW * self->ctx.ddr2l1LoopN *
                                          self->ctx.ddr2l1LoopBatch;
             } else {
@@ -168,7 +168,7 @@ public:
 
     __aicore__ inline void DmaInitIterValue(Intf* self)
     {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             self->ctx.nBL1Tail = self->ctx.singleCoreCo % self->ctx.convTilingData->nBL1;
             self->ctx.nBL1Tail = self->ctx.nBL1Tail == 0 ? self->ctx.convTilingData->nBL1 : self->ctx.nBL1Tail;
 
@@ -246,7 +246,7 @@ public:
             return;
         }
 
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             self->ctx.ddr2l1LoopTmp = self->ctx.nBL1Iter == self->ctx.maxNBL1Iter ?
                                           CeilDiv(self->ctx.nBL1Tail, self->ctx.convTilingData->nL0) :
                                           self->ctx.convTilingData->multiNBL1;
@@ -348,7 +348,7 @@ public:
             return true;
         }
 
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             self->ctx.nBL1Iter++;
             DmaUpdateLoopInner(self);
             if (self->ctx.nBL1Iter != self->ctx.ddr2l1LoopN) {

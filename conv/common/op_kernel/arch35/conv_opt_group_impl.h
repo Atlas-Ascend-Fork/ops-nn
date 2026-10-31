@@ -63,7 +63,7 @@ __aicore__ inline bool OptGroupUpdateBL1(Intf* self, const uint64_t& kIter)
     // In kBL1fullload scene, bL1 update when nBL1 update.
     bool updateBL1Flag = false;
     if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::HW_MODE)) {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             updateBL1Flag = self->ctx.woL0Iter == self->ctx.maxWoL0Iter &&
                             self->ctx.woAL1Iter == self->ctx.maxWoL1Iter &&
                             self->ctx.hoL0Iter == self->ctx.maxHoL0Iter &&
@@ -74,7 +74,7 @@ __aicore__ inline bool OptGroupUpdateBL1(Intf* self, const uint64_t& kIter)
                             self->ctx.woL0Iter == self->ctx.maxWoL0Iter;
         }
     } else if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE)) {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             updateBL1Flag = self->ctx.nL0Iter == self->ctx.maxNL0Iter && self->ctx.mL0Iter == self->ctx.maxML0Iter &&
                             self->ctx.mAL1Iter == self->ctx.maxMAL1Iter &&
                             self->ctx.batchIter == self->ctx.ddr2l1LoopBatch - 1;
@@ -83,8 +83,10 @@ __aicore__ inline bool OptGroupUpdateBL1(Intf* self, const uint64_t& kIter)
         }
     }
 
-    if constexpr (Intf::iterateMFirstFlag && Intf::isConv3D) {
-        updateBL1Flag = updateBL1Flag && self->ctx.dOutIter == self->ctx.ddr2l1LoopD - 1;
+    if constexpr (Intf::isConv3D) {
+        if (self->iterateMFirstRT) {
+            updateBL1Flag = updateBL1Flag && self->ctx.dOutIter == self->ctx.ddr2l1LoopD - 1;
+        }
     }
 
     return updateBL1Flag;
@@ -199,7 +201,7 @@ __aicore__ inline void OptGroupIterInit(Intf* self)
     self->ctx.loadUB2L1Iter = 0;
     self->ctx.pingPongFlag = self->ctx.vecId == 0 ? 0 : self->ctx.bL1LoadTimes % DOUBLE_BUF;
     OptGroupUpdateLoopN<Intf>(self);
-    if constexpr (Intf::iterateNFirstFlag) {
+    if (!self->iterateMFirstRT) {
         OptGroupUpdateLoopInner<Intf>(self);
     }
     self->ctx.ddr2l1LoopInner = self->ctx.ddr2l1LoopTmp * self->ctx.l12l0LoopN;
@@ -240,7 +242,7 @@ __aicore__ inline bool OptGroupUB2L1Iter(Intf* self)
         }
     }
 
-    if constexpr (Intf::iterateNFirstFlag) {
+    if (!self->iterateMFirstRT) {
         // Total iter merge after nBL1Iter.
         self->ctx.outerIter++;
         OptGroupUpdateLoopInner<Intf>(self);

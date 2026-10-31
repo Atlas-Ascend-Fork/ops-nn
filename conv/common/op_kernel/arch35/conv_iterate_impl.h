@@ -177,16 +177,18 @@ __aicore__ void Iterate<Intf, ImplType>::ReduceOneK(Intf* self, MmadParams& mmad
 template <class Intf, uint32_t ImplType>
 __aicore__ bool Iterate<Intf, ImplType>::UpdateCommonIters(Intf* self, TempIters& tempIters)
 {
-    if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE) && Intf::iterateMFirstFlag) {
-        return UpdateCommonItersMModeMFirst<Intf>(self, tempIters);
-    } else if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE) && Intf::iterateNFirstFlag) {
-        return UpdateCommonItersMModeNFirst<Intf>(self, tempIters);
-    } else if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::HW_MODE) &&
-                         Intf::iterateMFirstFlag) {
-        return UpdateCommonItersHWModeMFirst<Intf>(self, tempIters);
-    } else if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::HW_MODE) &&
-                         Intf::iterateNFirstFlag) {
-        return UpdateCommonItersHWModeNFirst<Intf>(self, tempIters);
+    if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE)) {
+        if (self->iterateMFirstRT) {
+            return UpdateCommonItersMModeMFirst<Intf>(self, tempIters);
+        } else {
+            return UpdateCommonItersMModeNFirst<Intf>(self, tempIters);
+        }
+    } else if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::HW_MODE)) {
+        if (self->iterateMFirstRT) {
+            return UpdateCommonItersHWModeMFirst<Intf>(self, tempIters);
+        } else {
+            return UpdateCommonItersHWModeNFirst<Intf>(self, tempIters);
+        }
     }
 }
 
@@ -1006,11 +1008,11 @@ __aicore__ bool Iterate<Intf, ImplType>::IterateImplHWMode(Intf* self, bool enPa
 {
     if (self->ctx.isFirstIterate) {
         FirstIterateImplHWMode<Intf>(self);
-    } else if constexpr (Intf::iterateMFirstFlag) {
+    } else if (self->iterateMFirstRT) {
         if (IterateMFirstHWMode<Intf>(self) == false) {
             return false;
         }
-    } else if constexpr (Intf::iterateNFirstFlag) {
+    } else {
         if (IterateNFirstHWMode<Intf>(self) == false) {
             return false;
         }
@@ -1028,11 +1030,11 @@ __aicore__ bool Iterate<Intf, ImplType>::IterateImplMMode(Intf* self, bool enPar
 {
     if (self->ctx.isFirstIterate) {
         FirstIterateImplMMode(self);
-    } else if constexpr (Intf::iterateMFirstFlag) {
+    } else if (self->iterateMFirstRT) {
         if (IterateMFirstMMode(self) == false) {
             return false;
         }
-    } else if constexpr (Intf::iterateNFirstFlag) {
+    } else {
         if (IterateNFirstMMode(self) == false) {
             return false;
         }

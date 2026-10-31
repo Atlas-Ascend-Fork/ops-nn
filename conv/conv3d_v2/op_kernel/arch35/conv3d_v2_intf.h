@@ -64,8 +64,8 @@ struct Conv3dIntf {
     constexpr static bool kPreLoadBFlag = false;
     constexpr static bool kPreLoadABFlag = false;
     constexpr static bool kPreLoadFlag = kPreLoadAFlag || kPreLoadBFlag || kPreLoadABFlag;
-    constexpr static bool iterateMFirstFlag = ConvParam::iterOrder == 0;
-    constexpr static bool iterateNFirstFlag = ConvParam::iterOrder == 1;
+    // IterOrder removed from tilingkey: read from tilingData->iterateMNOrder at runtime
+    bool iterateMFirstRT = true;
 
     constexpr static auto formatFmap = Config::formatFmap;
     constexpr static auto formatWeight = Config::formatWeight;

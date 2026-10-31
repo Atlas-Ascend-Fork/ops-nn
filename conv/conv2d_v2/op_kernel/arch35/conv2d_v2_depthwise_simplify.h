@@ -132,12 +132,10 @@ struct DefaultConvCfg {
     static constexpr int8_t weightTiling = 0; // FULLLOAD_BL1
     static constexpr int8_t l1PingPong = 3;   // ALL_OPEN
     static constexpr int8_t l0PingPong = 3;   // ALL_OPEN
-    static constexpr int8_t iterOrder = 0;
     static constexpr int8_t enableSmallChannel = 0;
     static constexpr int8_t weightUbTrans = 0;
     static constexpr int8_t fmapCopyMode = 0;
     static constexpr int8_t innerBatch = 0;
-    static constexpr int8_t disContinuous = 0;
 };
 
 template <class CONV_CFG = DefaultConvCfg, typename DTYPE = half, ConvFormat FmapFormat = ConvFormat::NCHW>

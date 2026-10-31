@@ -93,8 +93,9 @@ struct Conv2dIntf {
                                                  ConvParam::fmapTiling == static_cast<int8_t>(ConvFmapTiling::OTHER)) &&
                                                 ConvParam::l1PingPong == static_cast<int8_t>(ConvL1PingPong::ALL_OPEN);
 #endif
-    constexpr static bool iterateMFirstFlag = ConvParam::iterOrder == 0;
-    constexpr static bool iterateNFirstFlag = ConvParam::iterOrder == 1;
+    // IterOrder removed from tilingkey: runtime value read in Init (iterateMFirstRT)
+    bool iterateMFirstRT = true;
+    bool disContinuousRT = false;
 
     constexpr static auto formatFmap = Config::formatFmap;
     constexpr static auto formatWeight = Config::formatWeight;
@@ -140,8 +141,6 @@ struct Conv2dIntf {
     constexpr static bool preAllocateFlag = false;
 #endif
     constexpr static bool isDeQuantFlag = false;
-    constexpr static bool disContinuousFlag = ConvParam::disContinuous ==
-                                              static_cast<int8_t>(ConvDisContinuous::INPUT_HWNC);
 
     constexpr static uint8_t sizeOfFmap = sizeof(FmapT);
     constexpr static uint8_t sizeOfWeight = sizeof(WeightT);

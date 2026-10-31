@@ -141,7 +141,7 @@ public:
     __aicore__ inline void WeightUbTransInitIterValue(Intf* self)
     {
         if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE)) {
-            if constexpr (Intf::iterateMFirstFlag) {
+            if (self->iterateMFirstRT) {
                 uint64_t ddr2l0LoopM = CeilDiv(self->ctx.singleCoreM, self->ctx.mL0);
                 self->ctx.ddr2l1LoopTmp = ddr2l0LoopM * self->ctx.ddr2l1LoopBatch;
             } else {
@@ -155,7 +155,7 @@ public:
                 self->ctx.ddr2l1LoopOuter = self->ctx.ddr2l1LoopM * self->ctx.ddr2l1LoopBatch;
             }
         } else {
-            if constexpr (Intf::iterateMFirstFlag) {
+            if (self->iterateMFirstRT) {
                 WeightUbTransInitIterValueMfirstHWMode(self);
             } else {
                 WeightUbTransInitIterValueNfirstHWMode(self);
@@ -333,7 +333,7 @@ public:
 
         self->ctx.isFirstIterate = true;
 
-        if constexpr (Intf::iterateNFirstFlag) {
+        if (!self->iterateMFirstRT) {
             WeightUbTransUpdateLoopInner(self);
         }
         self->ctx.ddr2l1LoopInner = self->ctx.ddr2l1LoopTmp * self->ctx.l12l0LoopN;
@@ -394,7 +394,7 @@ public:
             return true;
         }
 
-        if constexpr (Intf::iterateNFirstFlag) {
+        if (!self->iterateMFirstRT) {
             // Total iter merge after nBL1Iter((M | HW) * batch).
             self->ctx.outerIter++;
             WeightUbTransUpdateLoopInner(self);

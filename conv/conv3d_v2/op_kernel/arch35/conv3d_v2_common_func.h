@@ -79,6 +79,8 @@ struct Init {
     static __aicore__ inline void call(Intf* self, const void* __restrict tiling)
     {
         self->ctx.convTilingData = (Ops::NN::Conv3dV2::Conv3DV2TilingDataV2*)tiling;
+        // IterOrder removed from tilingkey: read from tilingData at runtime
+        self->iterateMFirstRT = (self->ctx.convTilingData->iterateMNOrder == 0);
         self->ctx.ddr2l1LoopBatch = self->ctx.convTilingData->singleCoreBatch;
         if ASCEND_IS_AIC_CONV {
             InitTilingData(self, tiling);

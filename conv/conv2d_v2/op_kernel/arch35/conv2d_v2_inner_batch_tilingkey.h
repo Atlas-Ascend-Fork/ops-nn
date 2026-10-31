@@ -34,8 +34,6 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_OPEN),            \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                 \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_MULTI),                  \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE,             \
-                             CONV_DIS_CONTINUOUS_INPUT_HWNC),                                           \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)
 
 #define CONV2D_INNER_BATCH_WEIGHT_UB_ONLY_MN_FULLLOAD_SEL()                                                          \
@@ -45,8 +43,6 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN), \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST,                            \
-                             CONV_ITER_ORDER_NITER_FIRST),                                                           \
         CONV2D_COMMON_INNER_BATCH_WEIGHT_UB_SEL() CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV2D_INNER_BATCH_WEIGHT_UB_ONLY_AL1_FULLLOAD_SEL()                                                         \
@@ -56,7 +52,6 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_BL1_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_BL0_OPEN, CONV_L0_PINGPONG_ALL_OPEN), \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_HW_MODE, CONV_OUTPUT_ORDER_M_MODE), \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_NITER_FIRST),                           \
         CONV2D_COMMON_INNER_BATCH_WEIGHT_UB_SEL() CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV2D_INNER_BATCH_WEIGHT_UB_NO_FULLLOAD_AL0_OPEN_SEL()                                                      \
@@ -66,7 +61,6 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN), \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_AL0_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_HW_MODE, CONV_OUTPUT_ORDER_M_MODE), \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST),                           \
         CONV2D_COMMON_INNER_BATCH_WEIGHT_UB_SEL() CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV2D_INNER_BATCH_WEIGHT_UB_NO_FULLLOAD_BL0_OPEN_SEL()                                                      \
@@ -76,7 +70,6 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN), \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_BL0_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_HW_MODE, CONV_OUTPUT_ORDER_M_MODE), \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_NITER_FIRST),                           \
         CONV2D_COMMON_INNER_BATCH_WEIGHT_UB_SEL() CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV2D_INNER_BATCH_WEIGHT_UB_NO_FULLLOAD_ALL_OPEN_SEL()                                                      \
@@ -86,8 +79,6 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN), \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_HW_MODE, CONV_OUTPUT_ORDER_M_MODE), \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST,                            \
-                             CONV_ITER_ORDER_NITER_FIRST),                                                           \
         CONV2D_COMMON_INNER_BATCH_WEIGHT_UB_SEL() CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #else
@@ -105,7 +96,6 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                 \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,        \
                              CONV_INNER_BATCH_MULTI),                                                   \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),            \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)
 
 #define CONV_INNER_BATCH_ONLY_MN_FULLLOAD_SEL()                                                                      \
@@ -115,8 +105,6 @@ using namespace ConvKey;
                              CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST,                            \
-                             CONV_ITER_ORDER_NITER_FIRST),                                                           \
         CONV_COMMON_INNER_BATCH_SEL()                                                                                \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
@@ -127,7 +115,6 @@ using namespace ConvKey;
                              CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_AL0_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST),                           \
         CONV_COMMON_INNER_BATCH_SEL() CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV_INNER_BATCH_NO_FULLLOAD_BL0_OPEN_SEL()                                                                  \
@@ -137,7 +124,6 @@ using namespace ConvKey;
                              CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_BL0_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_NITER_FIRST),                           \
         CONV_COMMON_INNER_BATCH_SEL() CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV_INNER_BATCH_NO_FULLLOAD_ALL_OPEN_SEL()                                                                  \
@@ -147,8 +133,6 @@ using namespace ConvKey;
                              CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST,                            \
-                             CONV_ITER_ORDER_NITER_FIRST),                                                           \
         CONV_COMMON_INNER_BATCH_SEL() CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
 #define CONV_INNER_BATCH_ONLY_AL1_FULLLOAD_SEL()                                                                      \
@@ -157,7 +141,6 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_ALL_CLOSE, CONV_L1_PINGPONG_BL1_OPEN), \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_BL0_OPEN, CONV_L0_PINGPONG_ALL_OPEN),  \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                             \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_NITER_FIRST),                            \
         CONV_COMMON_INNER_BATCH_SEL() CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0)
 
 #define CONV_INNER_BATCH_ONLY_BL1_FULLLOAD_SEL()                                                                      \
@@ -167,7 +150,6 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_CLOSE, CONV_L0_PINGPONG_AL0_OPEN,  \
                              CONV_L0_PINGPONG_ALL_OPEN),                                                              \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                             \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST),                            \
         CONV_COMMON_INNER_BATCH_SEL()                                                                                 \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
@@ -176,21 +158,13 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(WeightTiling, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_TILING_FULLLOAD_BL1),                    \
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_ALL_CLOSE),                           \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_CLOSE, CONV_L0_PINGPONG_AL0_OPEN, \
-                             CONV_L0_PINGPONG_ALL_OPEN),                                                             \
+                             CONV_L0_PINGPONG_BL0_OPEN, CONV_L0_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST),                           \
         CONV_COMMON_INNER_BATCH_SEL()                                                                                \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
-#define CONV_INNER_BATCH_ABL1_FULLLOAD_N_FIRST_SEL()                                                                 \
-    ASCENDC_TPL_UINT_SEL(FmapTiling, ASCENDC_TPL_UI_LIST, CONV_FMAP_TILING_FULLLOAD_AL1),                            \
-        ASCENDC_TPL_UINT_SEL(WeightTiling, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_TILING_FULLLOAD_BL1),                    \
-        ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_ALL_CLOSE),                           \
-        ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_BL0_OPEN, CONV_L0_PINGPONG_ALL_OPEN), \
-        ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_NITER_FIRST),                           \
-        CONV_COMMON_INNER_BATCH_SEL()                                                                                \
-            CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
+// IterOrder moved to runtime: N_FIRST segment is merged into M_FIRST (union of L0 values)
+#define CONV_INNER_BATCH_ABL1_FULLLOAD_N_FIRST_SEL() CONV_INNER_BATCH_ABL1_FULLLOAD_M_FIRST_SEL()
 
 // C04 with innerbatch
 #if (!defined(ASCENDC_TPL_PRE) && !defined(ASCENDC_TPL_KERNEL)) || \
@@ -204,14 +178,12 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_ALL_CLOSE, CONV_L1_PINGPONG_AL1_OPEN), \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_CLOSE),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                             \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST),                            \
         ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV),                            \
         ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_OPEN),                \
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                               \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                      \
                              CONV_INNER_BATCH_MULTI),                                                                 \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                          \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                          \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
@@ -223,15 +195,12 @@ using namespace ConvKey;
                              CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST,                            \
-                             CONV_ITER_ORDER_NITER_FIRST),                                                           \
         ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV),                           \
         ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_OPEN),               \
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                        \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
@@ -243,14 +212,12 @@ using namespace ConvKey;
                              CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_AL0_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST),                           \
         ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV),                           \
         ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_OPEN),               \
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                        \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
@@ -262,14 +229,12 @@ using namespace ConvKey;
                              CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_BL0_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_NITER_FIRST),                           \
         ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV),                           \
         ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_OPEN),               \
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                        \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
@@ -281,15 +246,12 @@ using namespace ConvKey;
                              CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_OPEN),                            \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST,                            \
-                             CONV_ITER_ORDER_NITER_FIRST),                                                           \
         ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV),                           \
         ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_OPEN),               \
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                        \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT)
 
@@ -300,14 +262,12 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_ALL_CLOSE, CONV_L1_PINGPONG_BL1_OPEN), \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_BL0_OPEN, CONV_L0_PINGPONG_ALL_OPEN),  \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                             \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_NITER_FIRST),                            \
         ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV),                            \
         ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_OPEN),                \
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                               \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                      \
                              CONV_INNER_BATCH_MULTI),                                                                 \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                          \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                          \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
@@ -318,14 +278,12 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_ALL_CLOSE, CONV_L1_PINGPONG_AL1_OPEN), \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_AL0_OPEN, CONV_L0_PINGPONG_ALL_OPEN),  \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                             \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST),                            \
         ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV),                            \
         ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_OPEN),                \
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                               \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                      \
                              CONV_INNER_BATCH_MULTI),                                                                 \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                          \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                          \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
@@ -335,36 +293,18 @@ using namespace ConvKey;
         ASCENDC_TPL_UINT_SEL(WeightTiling, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_TILING_FULLLOAD_BL1),                    \
         ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_ALL_CLOSE),                           \
         ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_CLOSE, CONV_L0_PINGPONG_AL0_OPEN, \
-                             CONV_L0_PINGPONG_ALL_OPEN),                                                             \
+                             CONV_L0_PINGPONG_BL0_OPEN, CONV_L0_PINGPONG_ALL_OPEN),                                  \
         ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_MITER_FIRST),                           \
         ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV),                           \
         ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_OPEN),               \
         ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                        \
         ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
         ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
                              CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
         ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
             CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
 
-#define CONV_INNER_BATCH_ABL1_FULLLOAD_N_FIRST_ENABLE_C04_SEL()                                                      \
-    ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_AUTO),                                                           \
-        ASCENDC_TPL_UINT_SEL(FmapTiling, ASCENDC_TPL_UI_LIST, CONV_FMAP_TILING_FULLLOAD_AL1),                        \
-        ASCENDC_TPL_UINT_SEL(WeightTiling, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_TILING_FULLLOAD_BL1),                    \
-        ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_ALL_CLOSE),                           \
-        ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_BL0_OPEN, CONV_L0_PINGPONG_ALL_OPEN), \
-        ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_M_MODE),                            \
-        ASCENDC_TPL_UINT_SEL(IterOrder, ASCENDC_TPL_UI_LIST, CONV_ITER_ORDER_NITER_FIRST),                           \
-        ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV),                           \
-        ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_OPEN),               \
-        ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                        \
-        ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
-        ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_KERNEL_1X1_MULTI,                     \
-                             CONV_INNER_BATCH_MULTI),                                                                \
-        ASCENDC_TPL_UINT_SEL(DisContinuous, ASCENDC_TPL_UI_LIST, CONV_DIS_CONTINUOUS_CLOSE),                         \
-        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE)                                         \
-            CONV2D_SCALAR_OPT_SEL(CONV_NOT_SMALL_WEIGHT, CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0)
+#define CONV_INNER_BATCH_ABL1_FULLLOAD_N_FIRST_ENABLE_C04_SEL() CONV_INNER_BATCH_ABL1_FULLLOAD_M_FIRST_ENABLE_C04_SEL()
 
 #else
 #define CONV_INNER_BATCH_ONLY_WEIGHT_FULLLOAD_L0_ALLCLOSE_ENABLE_C04_SEL()

@@ -33,7 +33,7 @@ constexpr ConvFormat biasFormat = ConvFormat::ND;
 constexpr ConvFormat scaleFormat = ConvFormat::ND;
 
 template <typename inputT, typename filterT, typename biasT, typename scaleT, typename outputT, int8_t FmapTiling,
-          int8_t WeightTiling, int8_t L1PingPong, int8_t L0PingPong, int8_t OutputOrder, int8_t IterOrder>
+          int8_t WeightTiling, int8_t L1PingPong, int8_t L0PingPong, int8_t OutputOrder>
 __global__ __aicore__ void conv3dv2_template(GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_ADDR scale, GM_ADDR offset,
                                              GM_ADDR offset_w, GM_ADDR y, GM_ADDR workspace,
                                              Ops::NN::Conv3dV2::Conv3DV2TilingDataV2 tiling)
@@ -45,8 +45,9 @@ __global__ __aicore__ void conv3dv2_template(GM_ADDR x, GM_ADDR filter, GM_ADDR 
     using biasType = ConvType<TPosition::GM, biasFormat, biasT>;
     using scaleType = ConvType<TPosition::GM, scaleFormat, scaleT>;
 
+    // IterOrder moved to runtime: kernel reads tilingData->iterateMNOrder
     Conv3dV2Base<fmapType, weightType, outputType, biasType, scaleType,
-                 Conv3DV2Param<FmapTiling, WeightTiling, L1PingPong, L0PingPong, OutputOrder, IterOrder, 0, 0>>
+                 Conv3DV2Param<FmapTiling, WeightTiling, L1PingPong, L0PingPong, OutputOrder, 0, 0>>
         baseConv3d;
     baseConv3d.RunConv3dV2Kernel(x, filter, bias, y, tiling);
     return;

@@ -27,7 +27,6 @@ struct Conv2dParam : public ConvParam {
     constexpr static int8_t weightUbTrans = 0;
     constexpr static int8_t fmapCopyMode = 0;
     constexpr static int8_t isExtendConv2d = 0;
-    constexpr static int8_t disContinuous = 0;
 };
 
 template <class ConvDataType>

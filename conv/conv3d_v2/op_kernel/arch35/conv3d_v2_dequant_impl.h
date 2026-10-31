@@ -189,13 +189,13 @@ __aicore__ inline bool DeQuantIterUpdate(Intf* self)
     }
 
     if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE)) {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             return IterateMFirstMMode<Intf>(self);
         } else {
             return IterateNFirstMMode<Intf>(self);
         }
     } else {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             return IterateMFirstHWMode<Intf>(self);
         } else {
             return IterateNFirstHWMode<Intf>(self);
@@ -213,7 +213,7 @@ __aicore__ inline bool DeQuantVecImpl(Intf* self)
     while (DeQuantIterUpdate<Intf>(self)) {
         DeQuantUBParamsUpdate<Intf>(self);
 
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE)) {
                 loadParamsFlag = loadParamsFlag ||
                                  (self->ctx.isFirstIterate || (self->ctx.mUbIter == 0 && self->ctx.mL0Iter == 0));

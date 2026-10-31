@@ -68,6 +68,7 @@ constexpr uint32_t NUM_3 = 3;
 constexpr uint32_t NUM_4 = 4;
 constexpr uint32_t NUM_9 = 9;
 constexpr uint32_t NUM_10 = 10;
+constexpr uint32_t NUM_13 = 13;
 constexpr uint32_t NUM_14 = 14;
 constexpr uint32_t DTYPESIZE_2 = 2;
 constexpr uint32_t DTYPESIZE_4 = 4;

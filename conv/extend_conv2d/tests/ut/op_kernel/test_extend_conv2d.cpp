@@ -242,9 +242,9 @@ void TestSimpleKernel(const std::vector<uint64_t>& inputShape, const std::vector
     auto extend_conv2d_func = [](GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_ADDR offset_w, GM_ADDR scale0,
                                  GM_ADDR relu_weight0, GM_ADDR clip_value0, GM_ADDR scale1, GM_ADDR relu_weight1,
                                  GM_ADDR clip_value1, GM_ADDR y0, GM_ADDR y1, GM_ADDR workspace, GM_ADDR tiling) {
-        ::extend_conv2d<0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(
-            x, filter, bias, offset_w, scale0, relu_weight0, clip_value0, scale1, relu_weight1, clip_value1, y0, y1,
-            workspace, tiling);
+        ::extend_conv2d<0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(x, filter, bias, offset_w, scale0, relu_weight0,
+                                                                     clip_value0, scale1, relu_weight1, clip_value1, y0,
+                                                                     y1, workspace, tiling);
     };
     ICPU_RUN_KF(extend_conv2d_func, numBlocks, input, weight, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
                 nullptr, nullptr, output, nullptr, workspace, tiling);

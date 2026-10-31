@@ -147,6 +147,8 @@ void Conv2dBaseTiling::TranslateApiTiling(shared_ptr<tuningtiling::Conv2DV2Tunne
     tilingData_.set_offsetx(attrInfo_.offsetx);
     tilingData_.set_hf32Enable(convRepoTiling->hf32Enable);
     tilingData_.set_hf32TransMode(convRepoTiling->hf32TransMode);
+    // disContinuous derives from input view format, available in context: no need to store it in repo bank
+    tilingData_.set_disContinuous(flagInfo_.disContinuousFlag);
     tilingData_.set_roundMode(attrInfo_.roundMode);
     if (convRepoTiling->enlarge > 0) {
         tilingData_.set_enlarge(convRepoTiling->enlarge);

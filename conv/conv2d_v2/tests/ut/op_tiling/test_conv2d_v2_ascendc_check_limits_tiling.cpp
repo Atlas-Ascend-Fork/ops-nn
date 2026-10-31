@@ -172,7 +172,7 @@ void RunConv2DTiling(const CheckLimitsParams& params)
     }
 
     uint64_t tilingKey = tiling_context->GetTilingKey();
-    bool dma_flag = (tilingKey & 0x4000) >> NUM_14;
+    bool dma_flag = (tilingKey & 0x2000) >> NUM_13;
 
     if (params.expectDmaFallback) {
         EXPECT_TRUE(dma_flag) << "Case " << params.caseName << " expected DMA flag but it was not set";

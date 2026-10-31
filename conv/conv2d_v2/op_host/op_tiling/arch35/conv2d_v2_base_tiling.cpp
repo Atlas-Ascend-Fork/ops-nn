@@ -626,7 +626,7 @@ bool Conv2dBaseTiling::IsMNFullLoadKPartia()
            descInfo_.outFormat == ge::Format::FORMAT_NCHW && tilingKeyPara_.fmpTiling == ONLY_M_FULLLOAD_AL1_AL0 &&
            tilingKeyPara_.weightTiling == ONLY_N_FULLLOAD_BL1_BL0 && tilingKeyPara_.l1PingPong == L1_PB_ALL_OPEN &&
            tilingKeyPara_.l0PingPong == L0_PB_ALL_OPEN && flagInfo_.mSplitModeFlag && // OutputOrder
-           tilingKeyPara_.iterOrder == static_cast<uint64_t>(IterateMNOrder::ITER_M_FST) &&
+           tilingData_.get_iterateMNOrder() == static_cast<uint64_t>(IterateMNOrder::ITER_M_FST) &&
            tilingKeyPara_.groupType == static_cast<uint64_t>(ConvGroupType::NORMAL_CONV) &&
            !flagInfo_.enableC04Flag && // enableSmallChannel
            tilingKeyPara_.weightUbTrans == WEIGHT_UB_TRANS_CLOSE && tilingKeyPara_.fmapCppyMode == FMAP_LOAD3D_MODE &&

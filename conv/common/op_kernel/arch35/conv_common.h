@@ -246,7 +246,10 @@ __aicore__ __forceinline__ void ConvCommon<CONV, CONV_TILING>::CalcStartAddrMMod
 {
     CalcStartAddrCommon(din, dout);
 
-    if constexpr (CONV::DIS_CONTINUOUS) {
+    if constexpr (CONV::isConv3D) {
+        // conv3d has no HWNC (disContinuous) input
+        fmStartAddr = convOps->batchIdxStart * convOps->fmapOneBatchSize;
+    } else if (convTilingData->disContinuous != 0) {
         fmStartAddr = convOps->batchIdxStart * convTilingData->cin;
     } else {
         fmStartAddr = convOps->batchIdxStart * convOps->fmapOneBatchSize;
@@ -283,7 +286,11 @@ __aicore__ __forceinline__ void ConvCommon<CONV, CONV_TILING>::CalcStartAddrHWod
     int64_t hiStartPosTmp = static_cast<int64_t>(convOps->hoIdxStart * convTilingData->strideH) -
                             static_cast<int64_t>(convTilingData->padTop);
     convOps->singleCoreHiStartPos = hiStartPosTmp < 0 ? 0 : hiStartPosTmp;
-    if constexpr (CONV::DIS_CONTINUOUS) {
+    if constexpr (CONV::isConv3D) {
+        // conv3d has no HWNC (disContinuous) input
+        fmStartAddr = convOps->batchIdxStart * convOps->fmapOneBatchSize +
+                      convOps->singleCoreHiStartPos * convTilingData->win;
+    } else if (convTilingData->disContinuous != 0) {
         fmStartAddr = convOps->singleCoreHiStartPos * convTilingData->win * convTilingData->batch *
                           convTilingData->cin +
                       convOps->batchIdxStart * convTilingData->cin;
@@ -296,7 +303,10 @@ __aicore__ __forceinline__ void ConvCommon<CONV, CONV_TILING>::CalcStartAddrHWod
         int64_t wiStartPosTmp = static_cast<int64_t>(convOps->woIdxStart * convTilingData->strideW) -
                                 static_cast<int64_t>(convTilingData->padLeft);
         convOps->singleCoreWiStartPos = wiStartPosTmp < 0 ? 0 : wiStartPosTmp;
-        if constexpr (CONV::DIS_CONTINUOUS) {
+        if constexpr (CONV::isConv3D) {
+            // conv3d has no HWNC (disContinuous) input
+            fmStartAddr += convOps->singleCoreWiStartPos;
+        } else if (convTilingData->disContinuous != 0) {
             fmStartAddr += convOps->singleCoreWiStartPos * convTilingData->batch * convTilingData->cin;
         } else {
             fmStartAddr += convOps->singleCoreWiStartPos;

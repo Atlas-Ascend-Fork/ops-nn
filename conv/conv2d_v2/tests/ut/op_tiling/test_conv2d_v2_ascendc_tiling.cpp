@@ -115,6 +115,14 @@ struct TilingParam {
     uint32_t coutOpt;
     uint32_t groupOpt;
 
+    uint32_t mWindows;
+    uint32_t adaptBaseM;
+    uint32_t adaptBaseN;
+    uint32_t tailRegionCuts[3];
+    uint32_t tailRegionOrgM[3];
+    uint32_t tailRegionOrgN[3];
+    uint32_t tailRegionBatchTailNs[2];
+
     uint8_t iterateMNOrder;
     uint8_t biasFullLoadFlag;
     uint8_t fixpParamsFullLoadFlag;
@@ -129,9 +137,13 @@ struct TilingParam {
     uint8_t quantMode1;
     uint8_t reluMode1;
     uint8_t clipMode1;
+    uint8_t fixedShiftValue;
 
     int8_t offsetx;
     int8_t roundMode;
+    uint8_t disContinuous;
+    uint64_t total_shape_cout;
+    uint64_t strideWriteDstStride;
 };
 
 struct DtypeSize {
@@ -659,11 +671,11 @@ bool CheckValidTilingDataPartOne(TilingParam& tilingData, DtypeSize dtypeSize, s
     uint32_t weightDtyeSize = dtypeSize.weightDtypeSize;
     uint32_t featuremapDtyeSize = dtypeSize.fMapDtypeSize;
     bool isC04Flag = (tilingData.bUbNStep > 0 && tilingData.bUbKStep == 0) ? true : false;
-    bool dma_flag = (tilingKey & 0x4000) >> NUM_14;
+    bool dma_flag = (tilingKey & 0x2000) >> NUM_13;
     if (tilingData.groups > 1) {
         CheckGroupsTiling(tilingData, tilingKey);
         if (dma_flag) {
-            EXPECT_TRUE((tilingKey & 0x400) >> NUM_10);
+            EXPECT_TRUE((tilingKey & 0x200) >> NUM_9);
         }
     }
     uint64_t pBuffer = tilingData.pBufferFlag;
@@ -755,11 +767,10 @@ void CheckValidTilingData(TilingParam& tilingData, DtypeSize dtypeSize, std::vec
     bool mBasicBlockModeFlag = CheckValidTilingDataPartOne(tilingData, dtypeSize, pads, hasScale, tilingKey);
     uint64_t k0 = CUBE_C0_SIZE / dtypeSize.fMapDtypeSize;
     bool isC04Flag = (tilingData.bUbNStep > 0 && tilingData.bUbKStep == 0) ? true : false;
-    bool dma_flag = (tilingKey & 0x4000) >> NUM_14;
+    bool dma_flag = (tilingKey & 0x2000) >> NUM_13;
     bool isOptPreloadFlag = ((tilingKey >> NUM_2) & 0x3) == 0 && // WeightTiling == 0 (FULLLOAD_BL1)
                             ((tilingKey >> NUM_4) & 0x3) == 3 && // L1PingPong == 3 (ALL_OPEN)
-                            ((tilingKey >> NUM_9) & 0x1) == 0 && // IterOrder == 0 (MITER_FIRST)
-                            ((tilingKey >> NUM_10) & 0x3) == 2;  // GroupType == 2 (OPT_GROUP_CONV)
+                            ((tilingKey >> NUM_9) & 0x3) == 2;   // GroupType == 2 (OPT_GROUP_CONV)
     int32_t outputOrder = tilingData.singleCoreWo == 0 && tilingData.woL1 == 0;
     if (outputOrder == 1) {
         CheckMModeTilingDataValidForConv2d(tilingData, dtypeSize, mBasicBlockModeFlag, isOptPreloadFlag);
@@ -973,6 +984,10 @@ void Conv2DTestCase(const Conv2DParams& params)
     auto buf = reinterpret_cast<TilingParam*>(tiling_context->GetRawTilingData()->GetData());
     TilingParam tilingParam = *buf;
     uint64_t tilingKey = tiling_context->GetTilingKey();
+    // hf32Enable must always equal (fp32-in/fp32-out && attr enable_hf32), both on first run
+    // (computed from attrs) and on ConvTilingCache-hit runs (restored from snapshot)
+    uint8_t expectedHf32 = (params.dtype == ge::DT_FLOAT && params.enableHf32Mode) ? 1 : 0;
+    EXPECT_EQ(tilingParam.hf32Enable, expectedHf32) << "Case [" << params.fmShape.size() << "] hf32Enable mismatch";
     EXPECT_LE(tilingParam.batchDim * tilingParam.hoDim * tilingParam.nDim * tilingParam.groupDim, AIC_NUM);
     EXPECT_GE(tilingParam.batchDim, 1);
     EXPECT_GE(tilingParam.hoDim, 1);
@@ -1004,6 +1019,47 @@ TEST_F(Conv2dv2Tiling, run_conv2d_case_cache_1)
                                     1,
                                     0,
                                     false,
+                                    1,
+                                    "SPECIFIC",
+                                    false,
+                                    "NCHW"});
+    }
+}
+
+// fp32 input with enable_hf32=false: 2nd/3rd iterations hit ConvTilingCache,
+// hf32Enable must stay 0 on the cache-restore path (snapshot value == context value)
+TEST_F(Conv2dv2Tiling, run_conv2d_case_fp32_hf32off_cache_hit)
+{
+    for (int i = 0; i < 3; i++) {
+        Conv2DTestCase(Conv2DParams{{1, 16, 16, 16},
+                                    {32, 16, 3, 3},
+                                    {0, 0, 0, 0},
+                                    {1, 1},
+                                    {1, 1},
+                                    ge::DT_FLOAT,
+                                    1,
+                                    0,
+                                    false,
+                                    1,
+                                    "SPECIFIC",
+                                    false,
+                                    "NCHW"});
+    }
+}
+
+// fp32 input with enable_hf32=true: cache snapshot must keep hf32Enable=1 on restore
+TEST_F(Conv2dv2Tiling, run_conv2d_case_fp32_hf32on_cache_hit)
+{
+    for (int i = 0; i < 3; i++) {
+        Conv2DTestCase(Conv2DParams{{1, 16, 16, 16},
+                                    {32, 16, 3, 3},
+                                    {0, 0, 0, 0},
+                                    {1, 1},
+                                    {1, 1},
+                                    ge::DT_FLOAT,
+                                    1,
+                                    0,
+                                    true,
                                     1,
                                     "SPECIFIC",
                                     false,

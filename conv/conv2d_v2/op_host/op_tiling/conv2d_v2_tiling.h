@@ -129,6 +129,7 @@ TILING_DATA_FIELD_DEF(uint8_t, clipMode1);
 TILING_DATA_FIELD_DEF(uint8_t, fixedShiftValue);
 TILING_DATA_FIELD_DEF(int8_t, offsetx);
 TILING_DATA_FIELD_DEF(int8_t, roundMode);
+TILING_DATA_FIELD_DEF(uint8_t, disContinuous);
 TILING_DATA_FIELD_DEF(uint64_t, total_shape_cout);
 TILING_DATA_FIELD_DEF(uint64_t, strideWriteDstStride);
 END_TILING_DATA_DEF;

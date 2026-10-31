@@ -362,7 +362,7 @@ void Conv2dBaseTiling::ReSetTilingKeyPara()
     if (!flagInfo_.mSplitModeFlag) {
         sceneFlag = sceneFlag && tilingData_.get_woL1() == tilingData_.get_woL0();
     }
-    bool otherFlag = tilingKeyPara_.iterOrder == 0 && tilingKeyPara_.l1PingPong == L1_PB_ALL_OPEN;
+    bool otherFlag = tilingData_.get_iterateMNOrder() == 0 && tilingKeyPara_.l1PingPong == L1_PB_ALL_OPEN;
     if (sceneFlag && otherFlag) {
         bool updateFmapTilingFlag = true;
         if (flagInfo_.mSplitModeFlag) {
@@ -391,12 +391,10 @@ ge::graphStatus Conv2dBaseTiling::SetTilingKey()
     tilingKeyPara_.l1PingPong = GetL1PingPongVal();
     tilingKeyPara_.l0PingPong = GetL0PingPongVal();
     tilingKeyPara_.outputOrder = GetOutputOrderVal();
-    tilingKeyPara_.iterOrder = static_cast<uint64_t>(tilingData_.get_iterateMNOrder());
     tilingKeyPara_.enableSmallChannel = static_cast<uint64_t>(flagInfo_.enableC04Flag);
     tilingKeyPara_.weightUbTrans = GetWeightUbTrans();
     tilingKeyPara_.fmapCppyMode = GetFmapCopyMode();
     tilingKeyPara_.innerBatch = GetEnableInnerBatch();
-    tilingKeyPara_.disContinuous = static_cast<uint64_t>(flagInfo_.disContinuousFlag);
     tilingKeyPara_.isAswt = (opInfo_->npuArch == NpuArch::DAV_9201 || opInfo_->npuArch == NpuArch::DAV_9202) &&
                                     flagInfo_.isASWT ?
                                 CONV_ASWT_ENABLE :
@@ -411,28 +409,26 @@ ge::graphStatus Conv2dBaseTiling::SetTilingKey()
     if (IsWeightNZFormat(descInfo_.weightFormat)) {
         tilingKey_ = GET_TPL_TILING_KEY(
             tilingKeyPara_.fmpTiling, tilingKeyPara_.weightTiling, tilingKeyPara_.l1PingPong, tilingKeyPara_.l0PingPong,
-            tilingKeyPara_.outputOrder, tilingKeyPara_.iterOrder, tilingKeyPara_.groupType,
-            tilingKeyPara_.enableSmallChannel, tilingKeyPara_.weightUbTrans, tilingKeyPara_.fmapCppyMode,
-            tilingKeyPara_.innerBatch, tilingKeyPara_.disContinuous, tilingKeyPara_.batchOne, tilingKeyPara_.noPad,
-            tilingKeyPara_.smallWeight, tilingKeyPara_.smallKernel, tilingKeyPara_.isAswt);
+            tilingKeyPara_.outputOrder, tilingKeyPara_.groupType, tilingKeyPara_.enableSmallChannel,
+            tilingKeyPara_.weightUbTrans, tilingKeyPara_.fmapCppyMode, tilingKeyPara_.innerBatch,
+            tilingKeyPara_.batchOne, tilingKeyPara_.noPad, tilingKeyPara_.smallWeight, tilingKeyPara_.smallKernel,
+            tilingKeyPara_.isAswt);
     } else {
         tilingKey_ = GET_TPL_TILING_KEY(
             tilingKeyPara_.fmpTiling, tilingKeyPara_.weightTiling, tilingKeyPara_.l1PingPong, tilingKeyPara_.l0PingPong,
-            tilingKeyPara_.outputOrder, tilingKeyPara_.iterOrder, tilingKeyPara_.groupType,
-            tilingKeyPara_.enableSmallChannel, tilingKeyPara_.weightUbTrans, tilingKeyPara_.fmapCppyMode,
-            tilingKeyPara_.innerBatch, tilingKeyPara_.disContinuous, 0, 0, 0, tilingKeyPara_.smallKernel,
-            tilingKeyPara_.isAswt);
+            tilingKeyPara_.outputOrder, tilingKeyPara_.groupType, tilingKeyPara_.enableSmallChannel,
+            tilingKeyPara_.weightUbTrans, tilingKeyPara_.fmapCppyMode, tilingKeyPara_.innerBatch, 0, 0, 0,
+            tilingKeyPara_.smallKernel, tilingKeyPara_.isAswt);
     }
 
     OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: c04 mode status is: %d.", flagInfo_.enableC04Flag);
     std::stringstream ss;
     ss << "AscendC: tiling key: " << tilingKey_ << ". fmpTiling[" << tilingKeyPara_.fmpTiling << "], weightTiling["
        << tilingKeyPara_.weightTiling << "], l1PingPong[" << tilingKeyPara_.l1PingPong << "], l0PingPong["
-       << tilingKeyPara_.l0PingPong << "], outputOrder[" << tilingKeyPara_.outputOrder << "], iterOrder["
-       << tilingKeyPara_.iterOrder << "], groupType[" << tilingKeyPara_.groupType << "], enableSmallChannel["
-       << tilingKeyPara_.enableSmallChannel << "], weightUbTrans[" << tilingKeyPara_.weightUbTrans << "], fmapCppyMode["
-       << tilingKeyPara_.fmapCppyMode << "], innerBatch[" << tilingKeyPara_.innerBatch << "], disContinuous["
-       << tilingKeyPara_.disContinuous << "], batchOne[" << tilingKeyPara_.batchOne << "], noPad["
+       << tilingKeyPara_.l0PingPong << "], outputOrder[" << tilingKeyPara_.outputOrder << "], groupType["
+       << tilingKeyPara_.groupType << "], enableSmallChannel[" << tilingKeyPara_.enableSmallChannel
+       << "], weightUbTrans[" << tilingKeyPara_.weightUbTrans << "], fmapCppyMode[" << tilingKeyPara_.fmapCppyMode
+       << "], innerBatch[" << tilingKeyPara_.innerBatch << "], batchOne[" << tilingKeyPara_.batchOne << "], noPad["
        << tilingKeyPara_.noPad << "], smallWeight[" << tilingKeyPara_.smallWeight << "], smallKernel["
        << tilingKeyPara_.smallKernel << "], isAswt[" << tilingKeyPara_.isAswt << "].";
     OP_LOGD(paramInfo_.nodeType.c_str(), "%s", ss.str().c_str());

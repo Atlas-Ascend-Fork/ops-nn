@@ -125,6 +125,8 @@ struct Init {
     static __aicore__ inline void call(Intf* self, const void* __restrict convTiling)
     {
         self->ctx.convTilingData = (Conv2DTilingData*)convTiling;
+        self->iterateMFirstRT = (self->ctx.convTilingData->iterateMNOrder == 0);
+        self->disContinuousRT = (self->ctx.convTilingData->disContinuous != 0);
         self->ctx.singleCoreBatch = self->ctx.convTilingData->singleCoreBatch;
         InitBatchDirectionValue<Intf>(self);
         if ASCEND_IS_AIC_CONV {

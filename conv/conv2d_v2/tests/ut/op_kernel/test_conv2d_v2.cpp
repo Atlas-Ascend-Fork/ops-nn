@@ -243,7 +243,7 @@ void TestSimpleKernel(const std::vector<uint64_t>& inputShape, const std::vector
     auto conv2dv2_func = [](GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_ADDR offset_w, GM_ADDR y, GM_ADDR workspace,
                             GM_ADDR tiling) {
         // OutputOrder=1 (M_MODE): tiling uses hoL1>0 && woL1==0
-        ::conv2dv2<0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(x, filter, bias, offset_w, y, workspace, tiling);
+        ::conv2dv2<0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(x, filter, bias, offset_w, y, workspace, tiling);
     };
     ICPU_RUN_KF(conv2dv2_func, numBlocks, input, weight, nullptr, nullptr, output, workspace, tiling);
 
@@ -291,7 +291,7 @@ void TestStrideWriteKernel(const std::vector<uint64_t>& inputShape, const std::v
 
     auto conv2dv2_func = [](GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_ADDR offset_w, GM_ADDR y, GM_ADDR workspace,
                             GM_ADDR tiling) {
-        ::conv2dv2<0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(x, filter, bias, offset_w, y, workspace, tiling);
+        ::conv2dv2<0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(x, filter, bias, offset_w, y, workspace, tiling);
     };
     ICPU_RUN_KF(conv2dv2_func, numBlocks, input, weight, nullptr, nullptr, output, workspace, tiling);
 

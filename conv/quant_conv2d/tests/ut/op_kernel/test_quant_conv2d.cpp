@@ -247,8 +247,8 @@ void TestSimpleKernel(const std::vector<uint64_t>& inputShape, const std::vector
     auto quant_conv2dv2_func = [](GM_ADDR x, GM_ADDR filter, GM_ADDR scale, GM_ADDR bias, GM_ADDR offset_w, GM_ADDR y,
                                   GM_ADDR workspace, GM_ADDR tiling) {
         // OutputOrder=1 (M_MODE): tiling uses hoL1>0 && woL1==0
-        ::quant_conv2d<0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(x, filter, scale, bias, offset_w, y,
-                                                                          workspace, tiling);
+        ::quant_conv2d<0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(x, filter, scale, bias, offset_w, y, workspace,
+                                                                    tiling);
     };
     ICPU_RUN_KF(quant_conv2dv2_func, numBlocks, input, weight, scale, nullptr, nullptr, output, workspace, tiling);
 

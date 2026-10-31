@@ -38,7 +38,7 @@ public:
         // In kBL1fullload scene, bL1 update when nBL1 update.
         bool updateBL1Flag = false;
         if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::HW_MODE)) {
-            if constexpr (Intf::iterateMFirstFlag) {
+            if (self->iterateMFirstRT) {
                 updateBL1Flag = self->ctx.nL0Iter == self->ctx.maxNL0Iter &&
                                 self->ctx.woL0Iter == self->ctx.maxWoL0Iter &&
                                 self->ctx.hoL0Iter == self->ctx.maxHoL0Iter &&
@@ -51,7 +51,7 @@ public:
                                 self->ctx.hoL0Iter == self->ctx.maxHoL0Iter;
             }
         } else if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::M_MODE)) {
-            if constexpr (Intf::iterateMFirstFlag) {
+            if (self->iterateMFirstRT) {
                 updateBL1Flag = self->ctx.nL0Iter == self->ctx.maxNL0Iter &&
                                 self->ctx.mL0Iter == self->ctx.maxML0Iter &&
                                 self->ctx.mAL1Iter == self->ctx.maxMAL1Iter &&
@@ -92,7 +92,7 @@ public:
 
     __aicore__ inline void C04InitIterValue(Intf* self)
     {
-        if constexpr (Intf::iterateMFirstFlag) {
+        if (self->iterateMFirstRT) {
             self->ctx.bL1LoadTimes = self->ctx.ddr2l1LoopN;
         } else {
             if constexpr (Intf::outputOrder == static_cast<int8_t>(ConvOutputOrder::HW_MODE)) {
@@ -236,7 +236,7 @@ public:
             self->ctx.nBL1Iter = 0;
         }
 
-        if constexpr (Intf::iterateNFirstFlag) {
+        if (!self->iterateMFirstRT) {
             self->ctx.outerIter = 0;
         }
 
@@ -284,7 +284,7 @@ public:
             }
         }
 
-        if constexpr (Intf::iterateNFirstFlag) {
+        if (!self->iterateMFirstRT) {
             // Total iter merge after nBL1Iter((M | HW) * batch).
             self->ctx.outerIter++;
             if (self->ctx.outerIter != self->ctx.ddr2l1LoopOuter) {

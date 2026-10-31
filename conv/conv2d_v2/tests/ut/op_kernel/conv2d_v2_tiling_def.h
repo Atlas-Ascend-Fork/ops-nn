@@ -237,6 +237,7 @@ struct Conv2DTilingData {
     uint8_t fixedShiftValue = 0;
     int8_t offsetx = 0;
     int8_t roundMode = 0;
+    uint8_t disContinuous = 0;
 
     uint64_t total_shape_cout = 0;
     uint64_t strideWriteDstStride = 0;

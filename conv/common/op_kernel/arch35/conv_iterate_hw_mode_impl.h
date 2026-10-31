@@ -236,7 +236,7 @@ __aicore__ inline bool IterateHWL1(Intf* self)
             CalcWoDirectionVar<Intf>(self);
         } else {
             CalcWoDirectionVar<Intf>(self);
-            if constexpr (Intf::iterateMFirstFlag && !Intf::hasNL0IterFlag) {
+            if (self->iterateMFirstRT && !Intf::hasNL0IterFlag) {
                 self->ctx.loadBL0Flag = false;
             }
             return true;
@@ -250,7 +250,7 @@ __aicore__ inline bool IterateHWL1(Intf* self)
             CalcHoDirectionVar<Intf>(self);
         } else {
             CalcHoDirectionVar<Intf>(self);
-            if constexpr (Intf::iterateMFirstFlag && !Intf::hasNL0IterFlag) {
+            if (self->iterateMFirstRT && !Intf::hasNL0IterFlag) {
                 self->ctx.loadBL0Flag = false;
             }
             return true;

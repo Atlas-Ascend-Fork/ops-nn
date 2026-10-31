@@ -148,8 +148,8 @@ __aicore__ void L0PingPongAllClose(__gm__ uint8_t* input, __gm__ uint8_t* weight
                                    __gm__ uint8_t* output, const Conv3DV2TilingData& tilingData)
 {
     // BL1 bypass关闭 + M模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::ALL_CLOSE,
                                ConvBL1ByPass::BYPASS_OFF, GroupConvType::NoGroup_Conv, OutputOrder::M_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -157,8 +157,8 @@ __aicore__ void L0PingPongAllClose(__gm__ uint8_t* input, __gm__ uint8_t* weight
         return;
     }
     // BL1 bypass关闭 + HW模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::ALL_CLOSE,
                                ConvBL1ByPass::BYPASS_OFF, GroupConvType::NoGroup_Conv, OutputOrder::HW_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -166,8 +166,8 @@ __aicore__ void L0PingPongAllClose(__gm__ uint8_t* input, __gm__ uint8_t* weight
         return;
     }
     // BL1 bypass开启 + M模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::ALL_CLOSE,
                                ConvBL1ByPass::BYPASS_ON, GroupConvType::NoGroup_Conv, OutputOrder::M_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -175,8 +175,8 @@ __aicore__ void L0PingPongAllClose(__gm__ uint8_t* input, __gm__ uint8_t* weight
         return;
     }
     // BL1 bypass开启 + HW模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::ALL_CLOSE,
                                ConvBL1ByPass::BYPASS_ON, GroupConvType::NoGroup_Conv, OutputOrder::HW_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -206,8 +206,8 @@ __aicore__ void L0BPingPongOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight, _
                                 __gm__ uint8_t* output, const Conv3DV2TilingData& tilingData)
 {
     // BL1 bypass关闭 + M模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::L0B_OPEN,
                                ConvBL1ByPass::BYPASS_OFF, GroupConvType::NoGroup_Conv, OutputOrder::M_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -215,8 +215,8 @@ __aicore__ void L0BPingPongOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight, _
         return;
     }
     // BL1 bypass关闭 + HW模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::L0B_OPEN,
                                ConvBL1ByPass::BYPASS_OFF, GroupConvType::NoGroup_Conv, OutputOrder::HW_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -224,8 +224,8 @@ __aicore__ void L0BPingPongOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight, _
         return;
     }
     // BL1 bypass开启 + M模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::L0B_OPEN,
                                ConvBL1ByPass::BYPASS_ON, GroupConvType::NoGroup_Conv, OutputOrder::M_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -233,8 +233,8 @@ __aicore__ void L0BPingPongOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight, _
         return;
     }
     // BL1 bypass开启 + HW模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::L0B_OPEN,
                                ConvBL1ByPass::BYPASS_ON, GroupConvType::NoGroup_Conv, OutputOrder::HW_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -264,8 +264,8 @@ __aicore__ void L0APingPongOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight, _
                                 __gm__ uint8_t* output, const Conv3DV2TilingData& tilingData)
 {
     // BL1 bypass关闭 + M模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::L0A_OPEN,
                                ConvBL1ByPass::BYPASS_OFF, GroupConvType::NoGroup_Conv, OutputOrder::M_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -273,8 +273,8 @@ __aicore__ void L0APingPongOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight, _
         return;
     }
     // BL1 bypass关闭 + HW模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::L0A_OPEN,
                                ConvBL1ByPass::BYPASS_OFF, GroupConvType::NoGroup_Conv, OutputOrder::HW_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -282,8 +282,8 @@ __aicore__ void L0APingPongOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight, _
         return;
     }
     // BL1 bypass开启 + M模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::L0A_OPEN,
                                ConvBL1ByPass::BYPASS_ON, GroupConvType::NoGroup_Conv, OutputOrder::M_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -291,8 +291,8 @@ __aicore__ void L0APingPongOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight, _
         return;
     }
     // BL1 bypass开启 + HW模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::L0A_OPEN,
                                ConvBL1ByPass::BYPASS_ON, GroupConvType::NoGroup_Conv, OutputOrder::HW_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -322,8 +322,8 @@ __aicore__ void L0PingPongAllOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight,
                                   __gm__ uint8_t* output, const Conv3DV2TilingData& tilingData)
 {
     // BL1 bypass关闭 + M模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::ALL_OPEN,
                                ConvBL1ByPass::BYPASS_OFF, GroupConvType::NoGroup_Conv, OutputOrder::M_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -331,8 +331,8 @@ __aicore__ void L0PingPongAllOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight,
         return;
     }
     // BL1 bypass关闭 + HW模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_OFF) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::ALL_OPEN,
                                ConvBL1ByPass::BYPASS_OFF, GroupConvType::NoGroup_Conv, OutputOrder::HW_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -340,8 +340,8 @@ __aicore__ void L0PingPongAllOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight,
         return;
     }
     // BL1 bypass开启 + M模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::M_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::ALL_OPEN,
                                ConvBL1ByPass::BYPASS_ON, GroupConvType::NoGroup_Conv, OutputOrder::M_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -349,8 +349,8 @@ __aicore__ void L0PingPongAllOpen(__gm__ uint8_t* input, __gm__ uint8_t* weight,
         return;
     }
     // BL1 bypass开启 + HW模式输出
-    if (tilingData.conv3dApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
-        tilingData.conv3dApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
+    if (tilingData.convApiTiling.bl1BypassFlag == static_cast<uint8_t>(ConvBL1ByPass::BYPASS_ON) &&
+        tilingData.convApiTiling.outputOrder == static_cast<int8_t>(OutputOrder::HW_Mode)) {
         DispatchConv3DV2Kernel<InputType, WeightType, OutputType, BiasType, ConvL0PingPong::ALL_OPEN,
                                ConvBL1ByPass::BYPASS_ON, GroupConvType::NoGroup_Conv, OutputOrder::HW_Mode,
                                QuantType::NO_QUANT>(input, weight, bias, nullptr, nullptr, output, nullptr,
@@ -394,8 +394,8 @@ __global__ __aicore__ void Conv3dCustomKernel(__gm__ uint8_t* input, __gm__ uint
         using BiasType = ConvType<TPosition::GM, ConvFormat::ND, typename ToAscendBiasDtype<T>::Type>;
 
         // 检查L0A和L0B的ping-pong缓冲区标志
-        bool l0aDbFlag = tilingData.conv3dApiTiling.pBufferFlag & PBUFFERFLAG_L0A_DB_MASK;
-        bool l0bDbFlag = tilingData.conv3dApiTiling.pBufferFlag & PBUFFERFLAG_L0B_DB_MASK;
+        bool l0aDbFlag = tilingData.convApiTiling.pBufferFlag & PBUFFERFLAG_L0A_DB_MASK;
+        bool l0bDbFlag = tilingData.convApiTiling.pBufferFlag & PBUFFERFLAG_L0B_DB_MASK;
 
         // 根据ping-pong标志选择对应的kernel实现
         if (!l0aDbFlag && !l0bDbFlag) {
@@ -517,8 +517,8 @@ void Conv3dCustomApi(aclrtStream stream, const at::Tensor& input, const at::Tens
     }
 
     // 计算需要的AI Core数量
-    uint32_t numBlocks = tilingData.conv3dRunInfo.batchDim * tilingData.conv3dRunInfo.doDim *
-                         tilingData.conv3dRunInfo.mDim * tilingData.conv3dRunInfo.nDim;
+    uint32_t numBlocks = tilingData.convRunInfo.batchDim * tilingData.convRunInfo.doDim * tilingData.convRunInfo.mDim *
+                         tilingData.convRunInfo.nDim;
 
     // 调用Conv3dCustomKernel执行实际的3D卷积计算
     Conv3dCustomKernel<T><<<numBlocks, nullptr, stream>>>(input_ptr, weight_ptr, bias_ptr, output_ptr, tilingData);

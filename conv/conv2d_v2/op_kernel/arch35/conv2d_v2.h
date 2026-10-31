@@ -26,8 +26,8 @@ using namespace AscendC;
 using namespace conv2d;
 
 template <int8_t FmapTiling, int8_t WeightTiling, int8_t L1PingPong, int8_t L0PingPong, int8_t OutputOrder,
-          int8_t IterOrder, int8_t GroupType, int8_t EnableSmallChannel, int8_t WeightUbTrans, int8_t FmapCopyMode,
-          int8_t InnerBatch, int8_t DisContinuous = 0, int8_t BatchOne = 0, int8_t NoPad = 0, int8_t SmallWeight = 0,
+          int8_t GroupType, int8_t EnableSmallChannel, int8_t WeightUbTrans, int8_t FmapCopyMode, int8_t InnerBatch,
+          int8_t BatchOne = 0, int8_t NoPad = 0, int8_t SmallWeight = 0,
           IsExtendConv2D ExtendConv2DFlag = IsExtendConv2D::FALSE, typename Output1T = half, int8_t FmapDataSrc = 0>
 struct Conv2DV1Param : public Conv2dParam {
     __aicore__ inline Conv2DV1Param() {}
@@ -36,13 +36,11 @@ struct Conv2DV1Param : public Conv2dParam {
     constexpr static int8_t l1PingPong = L1PingPong;
     constexpr static int8_t l0PingPong = L0PingPong;
     constexpr static int8_t outputOrder = OutputOrder;
-    constexpr static int8_t iterOrder = IterOrder;
     constexpr static int8_t groupType = GroupType;
     constexpr static int8_t enableSmallChannel = EnableSmallChannel;
     constexpr static int8_t weightUbTrans = WeightUbTrans;
     constexpr static int8_t fmapCopyMode = FmapCopyMode;
     constexpr static int8_t innerBatch = InnerBatch;
-    constexpr static int8_t disContinuous = DisContinuous;
     constexpr static int8_t isBatchOne = BatchOne;
     constexpr static int8_t isNoPad = NoPad;
     constexpr static int8_t smallWeight = SmallWeight;
@@ -156,6 +154,7 @@ public:
                                     (IsSameType<FMAP_T, hifloat8_t>::value) ||
                                     (IsSameType<FMAP_T, fp8_e4m3fn_t>::value);
     constexpr static int8_t IS_EXTEND_CONV2D = CONV_CFG::isExtendConv2d;
+    constexpr static bool isConv3D = false;
 #if defined(__DAV_35_FAMILY__)
     constexpr static bool IS_OPTGROUP_PRELOAD = false;
 #else
@@ -168,8 +167,6 @@ public:
                                                     static_cast<int8_t>(ConvGroupType::OPT_GROUP_CONV) &&
                                                 CONV_CFG::l1PingPong == static_cast<int8_t>(ConvL1PingPong::ALL_OPEN);
 #endif
-    constexpr static bool DIS_CONTINUOUS = CONV_CFG::disContinuous ==
-                                           static_cast<int8_t>(ConvDisContinuous::INPUT_HWNC);
 
     constexpr static uint8_t k0 = SINGLE_BLOCK_SIZE / sizeof(WEIGHT_T);
 };

@@ -375,6 +375,7 @@ void Conv2dTiling::SetTilingData(optiling::Conv2DTilingData& tiling)
     tiling.set_hasBias(static_cast<uint8_t>(hasBias));
     tiling.set_hasScale(static_cast<uint8_t>(hasScale));
     tiling.set_iterateMNOrder(static_cast<uint8_t>(l1TilingInfo.iterateMNOrder));
+    tiling.set_disContinuous(static_cast<uint8_t>(this->disContinuousFlag));
     tiling.set_biasFullLoadFlag(static_cast<uint8_t>(l1TilingInfo.biasFullLoadFlag));
     tiling.set_fixpParamsFullLoadFlag(static_cast<uint8_t>(l1TilingInfo.fixpParamsFullLoadFlag));
     tiling.set_innerBatch(static_cast<uint32_t>(this->innerBatch));

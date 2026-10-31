@@ -132,7 +132,7 @@ public:
                 Load3DSetFMatrixCal(self_->ctx.innerBatch * hiLoadL1, self_->ctx.convTilingData->orgWi, padList);
             }
         }
-        if constexpr (Intf::disContinuousFlag) {
+        if (self_->disContinuousRT) {
             LoadAL1InputHWNC(kAL1Iter, mAL1Iter, batchIter);
         } else if constexpr (Intf::formatFmap == ConvFormat::NCHW) {
             uint64_t aL1GmOffset = 0;

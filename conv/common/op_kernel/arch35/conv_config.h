@@ -86,8 +86,6 @@ enum class ConvInnerBatch : std::uint8_t { SINGLE_BATCH = 0, KERNEL_1X1_MULTI_BA
 
 enum class IsExtendConv2D : std::uint8_t { FALSE = 0, TRUE };
 
-enum class ConvDisContinuous : std::uint8_t { CLOSE = 0, INPUT_HWNC };
-
 struct ConvParam {
     __aicore__ inline ConvParam(){};
     constexpr static int8_t fmapTiling = 0;
@@ -95,7 +93,6 @@ struct ConvParam {
     constexpr static int8_t l1PingPong = 0;
     constexpr static int8_t l0PingPong = 0;
     constexpr static int8_t outputOrder = static_cast<int8_t>(ConvOutputOrder::M_MODE);
-    constexpr static int8_t iterOrder = 0;
     constexpr static int8_t groupType = 0;
     constexpr static int8_t innerBatch = static_cast<int8_t>(ConvInnerBatch::SINGLE_BATCH);
     constexpr static int8_t batchOne = 0;

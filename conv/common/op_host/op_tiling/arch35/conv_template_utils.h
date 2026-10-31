@@ -441,13 +441,11 @@ struct ConvTilingKeyPara {
     uint64_t l1PingPong = 0;
     uint64_t l0PingPong = 0;
     uint64_t outputOrder = 0;
-    uint64_t iterOrder = 0;
     uint64_t groupType = 0;
     uint64_t enableSmallChannel = 0;
     uint64_t weightUbTrans = 0;
     uint64_t fmapCppyMode = 0;
     uint64_t innerBatch = 0;
-    uint64_t disContinuous = 0;
     uint64_t isAswt = 0;
     uint64_t batchOne = 0;
     uint64_t noPad = 0;
