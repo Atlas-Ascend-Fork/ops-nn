@@ -15,6 +15,7 @@
  * \brief Tiling implementation for max_pool_ext2 operator
  */
 
+#include <limits>
 #include <set>
 #include <string>
 #include "log/log.h"
@@ -70,6 +71,46 @@ static ge::graphStatus ValidateDtype(gert::TilingContext* context)
                     opName_, "x dtype", std::to_string(static_cast<int32_t>(dtype)).c_str(),
                     "dtype must be one of: float16, float32, int8, int16, int32, int64, uint8, uint16"),
                 return ge::GRAPH_FAILED);
+    // 输出 dtype 必须与输入一致：内核按输入 dtype 读写，输出不一致会越界写
+    auto outputDesc = context->GetOutputDesc(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
+    ge::DataType outDtype = outputDesc->GetDataType();
+    OP_CHECK_IF(outDtype != dtype,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "y dtype",
+                                                      std::to_string(static_cast<int32_t>(outDtype)).c_str(),
+                                                      "output dtype must be the same as input dtype"),
+                return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
+
+static ge::graphStatus ValidateFormat(gert::TilingContext* context)
+{
+    // 契约依据：def.cpp 注册 x/y 的 Format/UnknownShapeFormat 均仅为 FORMAT_ND，
+    // README 约束说明同。内核直编路径（不经 GE 图构图校验）需在此拦截越界 format；
+    // kernel 按 ND 连续布局对 GM 线性寻址，origin 与 storage format 都必须为 ND。
+    const char* opName_ = "MaxPoolExt2";
+    auto inputDesc = context->GetInputDesc(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+    ge::Format inOrigin = inputDesc->GetFormat().GetOriginFormat();
+    ge::Format inStorage = inputDesc->GetFormat().GetStorageFormat();
+    OP_CHECK_IF(inOrigin != ge::FORMAT_ND || inStorage != ge::FORMAT_ND,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "x format",
+                                                      (std::to_string(static_cast<int32_t>(inOrigin)) + "/" +
+                                                       std::to_string(static_cast<int32_t>(inStorage)))
+                                                          .c_str(),
+                                                      "origin and storage format must be ND"),
+                return ge::GRAPH_FAILED);
+    auto outputDesc = context->GetOutputDesc(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
+    ge::Format outOrigin = outputDesc->GetFormat().GetOriginFormat();
+    ge::Format outStorage = outputDesc->GetFormat().GetStorageFormat();
+    OP_CHECK_IF(outOrigin != ge::FORMAT_ND || outStorage != ge::FORMAT_ND,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "y format",
+                                                      (std::to_string(static_cast<int32_t>(outOrigin)) + "/" +
+                                                       std::to_string(static_cast<int32_t>(outStorage)))
+                                                          .c_str(),
+                                                      "origin and storage format must be ND"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -112,6 +153,22 @@ static ge::graphStatus ValidateAttrs(gert::TilingContext* context, size_t hDim, 
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "ksize[C_dim]", std::to_string(ksizeData[cDim]).c_str(),
                                                       "ksize[C_dim] must be 1"),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(kH <= 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "ksize[h_dim]", std::to_string(kH).c_str(),
+                                                      "ksize spatial dims must be greater than 0"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(kW <= 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "ksize[w_dim]", std::to_string(kW).c_str(),
+                                                      "ksize spatial dims must be greater than 0"),
+                return ge::GRAPH_FAILED);
+    // int64 溢出防护：空间维与步长上界钳制，保证后续乘加链（元素总数、SAME 填充、
+    // 索引偏移）在 int64 范围内不发生有符号溢出
+    constexpr int64_t MAX_SPATIAL_VAL = std::numeric_limits<int32_t>::max();
+    OP_CHECK_IF(kH > MAX_SPATIAL_VAL || kW > MAX_SPATIAL_VAL,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "ksize[h,w]",
+                                                      (std::to_string(kH) + ", " + std::to_string(kW)).c_str(),
+                                                      "ksize spatial dims exceed INT32_MAX"),
+                return ge::GRAPH_FAILED);
 
     // 校验 strides
     auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(EXT2_INDEX_STRIDES);
@@ -128,6 +185,11 @@ static ge::graphStatus ValidateAttrs(gert::TilingContext* context, size_t hDim, 
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "strides[h,w]",
                                                       (std::to_string(sH) + ", " + std::to_string(sW)).c_str(),
                                                       "strides must be greater than 0"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(sH > MAX_SPATIAL_VAL || sW > MAX_SPATIAL_VAL,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "strides[h,w]",
+                                                      (std::to_string(sH) + ", " + std::to_string(sW)).c_str(),
+                                                      "strides spatial dims exceed INT32_MAX"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(stridesData[DIM_N] != 1,
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "strides[0]", std::to_string(stridesData[DIM_N]).c_str(),
@@ -191,6 +253,11 @@ static ge::graphStatus Tiling4MaxPoolExt2(gert::TilingContext* context)
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "x", "invalid", "ValidateDtype error"),
                 return ge::GRAPH_FAILED);
 
+    // 2.1 校验输入/输出 format（契约：仅支持 ND）
+    OP_CHECK_IF(ValidateFormat(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "format", "invalid", "ValidateFormat error"),
+                return ge::GRAPH_FAILED);
+
     // 3. 获取输入 shape
     auto inputShapePtr = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputShapePtr);
@@ -199,12 +266,23 @@ static ge::graphStatus Tiling4MaxPoolExt2(gert::TilingContext* context)
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "input shape dim",
                                                       std::to_string(inputShape.GetDimNum()).c_str(), "must be 4"),
                 return ge::GRAPH_FAILED);
+    for (size_t di = 0; di < INSHAPE_DIM_NUM; di++) {
+        OP_CHECK_IF(inputShape.GetDim(di) < 0,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "input shape dim",
+                                                          std::to_string(inputShape.GetDim(di)).c_str(),
+                                                          "input shape dims must be non-negative"),
+                    return ge::GRAPH_FAILED);
+    }
 
     // 4. 从 data_format 属性确定 H/W 维度位置
     auto attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     auto dataFormat = attrs->GetAttrPointer<char>(EXT2_INDEX_DATA_FORMAT);
     std::string fmtStr = (dataFormat != nullptr) ? std::string(dataFormat) : "NHWC";
+    OP_CHECK_IF(fmtStr != "NHWC" && fmtStr != "NCHW",
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "data_format", fmtStr.c_str(),
+                                                      "data_format must be NHWC or NCHW"),
+                return ge::GRAPH_FAILED);
     bool isNHWC = (fmtStr == "NHWC");
     int64_t hDim = isNHWC ? DIM_H_NHWC : DIM_H_NCHW;
     int64_t wDim = isNHWC ? DIM_W_NHWC : DIM_W_NCHW;
@@ -213,6 +291,26 @@ static ge::graphStatus Tiling4MaxPoolExt2(gert::TilingContext* context)
     int64_t C = inputShape.GetDim(isNHWC ? DIM_C_NHWC : DIM_C_NCHW);
     int64_t H = inputShape.GetDim(hDim);
     int64_t W = inputShape.GetDim(wDim);
+
+    // int64 溢出防护：逐维按 INT64_MAX 上限做除法预检，再执行乘法。
+    // 多个 int64 维直接累乘时乘积可达 2^128，会先于比较发生 __int128 有符号溢出；
+    // 任一维为 0 时总元素数为 0，直接短路。
+    {
+        const int64_t maxElements = std::numeric_limits<int64_t>::max();
+        int64_t total = 1;
+        for (size_t di = 0; di < INSHAPE_DIM_NUM; di++) {
+            int64_t dim = inputShape.GetDim(di);
+            if (dim == 0) {
+                total = 0;
+                break;
+            }
+            OP_CHECK_IF(total > maxElements / dim,
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "input shape", "total elements overflow",
+                                                              "total elements exceed INT64_MAX"),
+                        return ge::GRAPH_FAILED);
+            total *= dim;
+        }
+    }
 
     // 5. 校验属性并提取 ksize/strides
     int64_t kH, kW, sH, sW;

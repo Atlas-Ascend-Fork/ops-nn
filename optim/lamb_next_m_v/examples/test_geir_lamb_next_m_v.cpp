@@ -25,6 +25,7 @@
 #include "ge_api_types.h"
 #include "ge_api.h"
 #include "ge_ir_build.h"
+#include "array_ops.h"
 #include "../op_graph/lamb_next_m_v_proto.h"
 
 #define FAILED (-1)
@@ -37,6 +38,10 @@ using std::vector;
     auto ph##idx = op::Data(std::string("ph") + #idx).set_attr_index(0);                  \
     TensorDesc ph##idx##_desc = TensorDesc(ge::Shape(ph##idx##_shape), FORMAT_ND, dtype); \
     float* d##idx = new (std::nothrow) float[1024];                                       \
+    if (d##idx == nullptr) {                                                              \
+        return FAILED;                                                                    \
+    }                                                                                     \
+    buffers.push_back(d##idx);                                                            \
     for (int i = 0; i < 1024; ++i) {                                                      \
         d##idx[i] = 1.0f;                                                                 \
     }                                                                                     \
@@ -49,7 +54,7 @@ using std::vector;
     inputs.push_back(ph##idx)
 
 int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vector<Operator>& inputs,
-                     std::vector<Operator>& outputs, Graph& graph)
+                     std::vector<Operator>& outputs, Graph& graph, std::vector<float*>& buffers)
 {
     auto op0 = op::LambNextMV("lamb_next_mv_0");
     std::vector<int64_t> fullShape = {2, 16};
@@ -75,31 +80,48 @@ int main(int argc, char* argv[])
 {
     Graph graph("test_lamb_next_m_v");
     std::vector<ge::Tensor> input;
+    std::vector<float*> buffers;
     std::map<AscendString, AscendString> global_options = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
     if (ge::GEInitialize(global_options) != SUCCESS) {
         return FAILED;
     }
     std::vector<Operator> inputs{}, outputs{};
     DataType inDtype = DT_FLOAT;
-    if (CreateOppInGraph(inDtype, input, inputs, outputs, graph) != SUCCESS) {
+    if (CreateOppInGraph(inDtype, input, inputs, outputs, graph, buffers) != SUCCESS) {
+        for (float* buf : buffers) {
+            delete[] buf;
+        }
+        ge::GEFinalize();
         return FAILED;
     }
     if (!inputs.empty() && !outputs.empty()) {
         graph.SetInputs(inputs).SetOutputs(outputs);
     }
-    ge::Session* session = new Session({});
+    // 两个非废弃构造/重载(std::map<std::string,...> 与 std::map<AscendString,...>)使裸 {} 产生二义,
+    // 必须显式给出 map 类型。
+    ge::Session* session = new Session(std::map<AscendString, AscendString>());
     if (session == nullptr) {
+        for (float* buf : buffers) {
+            delete[] buf;
+        }
+        ge::GEFinalize();
         return FAILED;
     }
     uint32_t graph_id = 0;
-    session->AddGraph(graph_id, graph, {});
+    session->AddGraph(graph_id, graph, std::map<AscendString, AscendString>());
     std::vector<ge::Tensor> output;
     if (session->RunGraph(graph_id, input, output) != SUCCESS) {
         delete session;
+        for (float* buf : buffers) {
+            delete[] buf;
+        }
         GEFinalize();
         return FAILED;
     }
     delete session;
+    for (float* buf : buffers) {
+        delete[] buf;
+    }
     ge::GEFinalize();
     return SUCCESS;
 }

@@ -14,6 +14,9 @@
  *
  * 只用于给 framework 定 raw tiling buffer 的容量; 实际下发由 host 侧
  * memcpy 整个 LambBrcTilingData<13, 4> POD 完成, 故字段与 POD 严格一一对应。
+ * 注意: BEGIN_TILING_DATA_DEF 的构造器会无条件在字段表末尾注入 8 字节占位
+ * (CheckAlignAndGenPlaceHolder("<class>PH", 8)), 因此注册容量 = 字段累加 + 8,
+ * 略大于 sizeof(POD), memcpy_s 以 POD 大小下发不受影响。
  */
 
 #ifndef LAMB_NEXT_M_V_TILING_DEF_H
@@ -37,6 +40,8 @@ TILING_DATA_FIELD_DEF(uint64_t, rowsPerCore);
 TILING_DATA_FIELD_DEF(uint32_t, tileLen);
 TILING_DATA_FIELD_DEF(uint32_t, blockLen);
 TILING_DATA_FIELD_DEF(uint32_t, rowsPerTile);
+TILING_DATA_FIELD_DEF(uint32_t, innerChunk);
+TILING_DATA_FIELD_DEF(uint32_t, innerChunkCnt);
 TILING_DATA_FIELD_DEF(uint32_t, usedCoreNum);
 TILING_DATA_FIELD_DEF(uint32_t, splitAxis);
 TILING_DATA_FIELD_DEF(uint32_t, collapsedRank);

@@ -37,6 +37,12 @@ extern "C" __global__ __aicore__ void lamb_next_mv(GM_ADDR input_mul3, GM_ADDR i
     GM_ADDR inAddr[13] = {input_mul3, input_mul2, input_realdiv1, input_mul1, input_mul0, input_realdiv0, input_mul4,
                           mul0_x,     mul1_sub,   mul2_x,         mul3_sub1,  mul4_x,     add2_y};
     GM_ADDR outAddr[4] = {y1, y2, y3, y4};
+    // 空进空出: 输出 0 元素时 host 未生成分片计划, tiling 全 0。此时必须跳过 Init/Process,
+    // 否则 tileLen=0 会得到 0 字节 UB 缓冲, FillScalarSlots 会对 0 元素输入做越界 GM 读并
+    // 向 0 字节缓冲 Duplicate, 触发 VECTOR_CORE_EXCEPTION。
+    if (tilingData.totalNum == 0) {
+        return;
+    }
     AscendC::TPipe pipe;
     if (TILING_KEY_IS(100)) {
         LambBrc::BrcElementwiseKernel<float, 13, 4, LambNextMVOp::LambNextMVVf<false>> op;

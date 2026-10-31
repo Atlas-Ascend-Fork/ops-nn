@@ -58,10 +58,10 @@ constexpr uint32_t OFF_NDIM = 16;
 constexpr uint32_t OFF_CDIM = 17;
 constexpr uint32_t PARAMS_UB_ELEMS = 24; // 24 * 8B = 192B, 32B aligned
 
-// half -FLT_MAX 位模式
-constexpr uint16_t FLOAT16_NEG_FLTMAX_BITS = 0xFBFF;
-// float -FLT_MAX 位模式
-constexpr uint32_t FLOAT32_NEG_FLTMAX_BITS = 0xFF7FFFFFu;
+// half -inf 位模式（全 -inf 输入窗口的归约初值必须为 -inf，输出 -inf 而非 -FLT_MAX）
+constexpr uint16_t FLOAT16_NEG_INF_BITS = 0xFC00;
+// float -inf 位模式
+constexpr uint32_t FLOAT32_NEG_INF_BITS = 0xFF800000u;
 
 // 各整数类型最小值（位宽感知）
 constexpr int8_t INT8_MIN_VAL = -128;
@@ -70,10 +70,10 @@ constexpr int32_t INT32_MIN_VAL = -2147483647 - 1;
 constexpr int64_t INT64_MIN_VAL = -9223372036854775807LL - 1;
 
 /*!
- * \brief 获取类型最小值（padding 填充值），确保不干扰 max 结果
- *        float/half 返回 -FLT_MAX，整数返回类型最小值，无符号返回 0
- *        使用 -FLT_MAX 而非 -inf，与 tf.nn.max_pool2d 行为一致：
- *        当输入全为 -inf 时，输出 -FLT_MAX 而非 -inf
+ * \brief 获取归约初值（窗口扫描哨兵），确保不干扰 max 结果
+ *        float/half 返回 -inf（IEEE max 归约恒等元），整数返回类型最小值，无符号返回 0
+ *        语义依据：README 特殊值声明与同族 max_pool_with_argmax 的 nan_prop 默认
+ *        （忽略 NaN）——全 NaN 窗口为空归约，结果为恒等元 -inf；全 -inf 窗口取最大值亦为 -inf
  */
 template <typename T>
 __simt_callee__ __aicore__ inline T GetNegInfValue()
@@ -83,14 +83,14 @@ __simt_callee__ __aicore__ inline T GetNegInfValue()
             uint32_t bits;
             float val;
         } u;
-        u.bits = FLOAT32_NEG_FLTMAX_BITS;
+        u.bits = FLOAT32_NEG_INF_BITS;
         return u.val;
     } else if constexpr (std::is_same_v<T, half>) {
         union {
             uint16_t bits;
             half val;
         } u;
-        u.bits = FLOAT16_NEG_FLTMAX_BITS;
+        u.bits = FLOAT16_NEG_INF_BITS;
         return u.val;
     } else if constexpr (std::is_same_v<T, int8_t>) {
         return static_cast<T>(INT8_MIN_VAL);
@@ -115,7 +115,7 @@ __simt_callee__ __aicore__ inline T GetNegInfValue()
  * \param c channel 维度坐标
  * \param oh 输出 H 维度坐标
  * \param ow 输出 W 维度坐标
- * \param initVal max 初始值（类型最小值）
+ * \param initVal max 初始值（浮点类型为 -inf，整数类型为类型最小值）
  */
 template <typename T, bool IS_NHWC>
 __simt_callee__ __aicore__ inline T ScanWindow(__gm__ T* xGm, __ubuf__ uint64_t* paramsUb, uint64_t n, uint64_t c,
@@ -154,7 +154,9 @@ __simt_callee__ __aicore__ inline T ScanWindow(__gm__ T* xGm, __ubuf__ uint64_t*
                            static_cast<uint64_t>(wIn);
             }
             T val = xGm[inOffset];
-            if (val > maxVal || isnan(val)) {
+            // NaN 语义对齐同族 max_pool_with_argmax 的 nan_prop 默认值（false=忽略 NaN）：
+            // NaN 不参与比较（NaN 与任意值比较为假），窗口内非 NaN 值正常取最大。
+            if (val > maxVal) {
                 maxVal = val;
             }
         }

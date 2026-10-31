@@ -157,6 +157,36 @@ uint32_t GetDataTypeSize(DataType dt)
     return dilation;
 }
 
+// 宿主缓冲注册表：Tensor 以外部缓冲构造时不接管所有权，注册后在进程退出时统一释放，
+// 覆盖正常与所有提前返回路径（修复输入缓冲泄漏）。
+// 释放逻辑与存储同为单一函数局部静态对象：构造/析构同序，避免分离守卫对象带来的
+// 静态析构顺序问题（守卫晚于注册表析构会访问已销毁容器，曾致间歇性退出段错误）。
+struct HostBuffer {
+    void* ptr;
+    void (*freeFn)(void*);
+};
+struct HostBufferRegistry {
+    std::vector<HostBuffer> buffers;
+    ~HostBufferRegistry()
+    {
+        for (auto& item : buffers) {
+            if (item.ptr != nullptr) {
+                item.freeFn(item.ptr);
+            }
+        }
+    }
+};
+static HostBufferRegistry& GetHostBufferRegistry()
+{
+    static HostBufferRegistry registry;
+    return registry;
+}
+template <typename T>
+static void RegisterHostBuffer(T* ptr)
+{
+    GetHostBufferRegistry().buffers.push_back({ptr, [](void* p) { delete[] static_cast<T*>(p); }});
+}
+
 int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& input_tensor_desc, float value)
 {
     input_tensor_desc.SetRealDimCnt(shapes.size());
@@ -175,6 +205,7 @@ int32_t GenOnesDataFloat32(vector<int64_t> shapes, Tensor& input_tensor, TensorD
     for (size_t i = 0; i < size; ++i) {
         *(pData + i) = value;
     }
+    RegisterHostBuffer(pData);
     input_tensor = Tensor(input_tensor_desc, (uint8_t*)pData, data_len);
     return SUCCESS;
 }
@@ -187,15 +218,18 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
     for (uint32_t i = 0; i < shapes.size(); i++) {
         size *= shapes[i];
     }
+    // data_len 为字节数：按 int32 元素数分配并完整初始化，避免 int64 等宽类型读到未初始化内存
     uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[data_len];
+    size_t elemCount = (data_len + sizeof(int32_t) - 1) / sizeof(int32_t);
+    int32_t* pData = new (std::nothrow) int32_t[elemCount];
     if (pData == nullptr) {
         printf("%s - ERROR - [XIR]: get pData failed\n", GetTime().c_str());
         return FAILED;
     }
-    for (size_t i = 0; i < size; ++i) {
+    for (size_t i = 0; i < elemCount; ++i) {
         *(pData + i) = value;
     }
+    RegisterHostBuffer(pData);
     input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
     return SUCCESS;
 }
@@ -342,7 +376,7 @@ int main(int argc, char* argv[])
     }
     printf("%s - INFO - [XIR]: Initialize ge using ge global options success\n", GetTime().c_str());
 
-    // dtype 矩阵（取自 reg_op.dtype_set）
+    // dtype 矩阵（取自 OpDef 交付的 dtype 子集；REG_OP 原型另声明 DOUBLE/QINT8，后端未实现，不纳入用例）
     struct DtypeEntry {
         DataType dt;
         std::string name;

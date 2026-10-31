@@ -37,7 +37,8 @@ protected:
 
 static void MaxPoolExt2TilingTestCase(std::initializer_list<int64_t> inputShape, ge::DataType dtype,
                                       ge::Format originFormat, vector<int64_t> ksize, vector<int64_t> strides,
-                                      const string& padding, const string& dataFormat, ge::graphStatus expectedStatus)
+                                      const string& padding, const string& dataFormat, ge::graphStatus expectedStatus,
+                                      ge::Format storageFormat = ge::FORMAT_ND)
 {
     gert::StorageShape shape = {inputShape, inputShape};
     std::map<std::string, std::string> soc_infos;
@@ -92,8 +93,8 @@ static void MaxPoolExt2TilingTestCase(std::initializer_list<int64_t> inputShape,
                       .OutputShapes({&shape})
                       .CompileInfo(&compile_info)
                       .PlatformInfo(reinterpret_cast<char*>(&platform_info))
-                      .NodeInputTd(0, dtype, originFormat, originFormat)
-                      .NodeOutputTd(0, dtype, originFormat, originFormat)
+                      .NodeInputTd(0, dtype, originFormat, storageFormat)
+                      .NodeOutputTd(0, dtype, originFormat, storageFormat)
                       .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<vector<int64_t>>(ksize)},
                                   {"strides", Ops::NN::AnyValue::CreateFrom<vector<int64_t>>(strides)},
                                   {"padding", Ops::NN::AnyValue::CreateFrom<string>(padding)},
@@ -118,87 +119,122 @@ static void MaxPoolExt2TilingTestCase(std::initializer_list<int64_t> inputShape,
 // NHWC SAME tests
 TEST_F(MaxPoolExt2TilingTest, nhwc_same_fp16_001)
 {
-    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_FLOAT16, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_FLOAT16, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
                               ge::GRAPH_SUCCESS);
 }
 TEST_F(MaxPoolExt2TilingTest, nhwc_same_fp32_002)
 {
-    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_FLOAT, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_FLOAT, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
                               ge::GRAPH_SUCCESS);
 }
 TEST_F(MaxPoolExt2TilingTest, nhwc_same_int8_003)
 {
-    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_INT8, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_INT8, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
                               ge::GRAPH_SUCCESS);
 }
 
 // NCHW VALID tests
 TEST_F(MaxPoolExt2TilingTest, nchw_valid_fp16_004)
 {
-    MaxPoolExt2TilingTestCase({1, 3, 8, 8}, ge::DT_FLOAT16, ge::FORMAT_NCHW, {1, 1, 2, 2}, {1, 1, 2, 2}, "VALID",
-                              "NCHW", ge::GRAPH_SUCCESS);
+    MaxPoolExt2TilingTestCase({1, 3, 8, 8}, ge::DT_FLOAT16, ge::FORMAT_ND, {1, 1, 2, 2}, {1, 1, 2, 2}, "VALID", "NCHW",
+                              ge::GRAPH_SUCCESS);
 }
 TEST_F(MaxPoolExt2TilingTest, nchw_valid_fp32_005)
 {
-    MaxPoolExt2TilingTestCase({1, 3, 8, 8}, ge::DT_FLOAT, ge::FORMAT_NCHW, {1, 1, 2, 2}, {1, 1, 2, 2}, "VALID", "NCHW",
+    MaxPoolExt2TilingTestCase({1, 3, 8, 8}, ge::DT_FLOAT, ge::FORMAT_ND, {1, 1, 2, 2}, {1, 1, 2, 2}, "VALID", "NCHW",
                               ge::GRAPH_SUCCESS);
 }
 
 // NHWC VALID tests
 TEST_F(MaxPoolExt2TilingTest, nhwc_valid_int32_006)
 {
-    MaxPoolExt2TilingTestCase({2, 6, 6, 4}, ge::DT_INT32, ge::FORMAT_NHWC, {1, 3, 3, 1}, {1, 2, 2, 1}, "VALID", "NHWC",
+    MaxPoolExt2TilingTestCase({2, 6, 6, 4}, ge::DT_INT32, ge::FORMAT_ND, {1, 3, 3, 1}, {1, 2, 2, 1}, "VALID", "NHWC",
                               ge::GRAPH_SUCCESS);
 }
 
 // NCHW SAME tests
 TEST_F(MaxPoolExt2TilingTest, nchw_same_int64_007)
 {
-    MaxPoolExt2TilingTestCase({1, 4, 10, 10}, ge::DT_INT64, ge::FORMAT_NCHW, {1, 1, 3, 3}, {1, 1, 2, 2}, "SAME", "NCHW",
+    MaxPoolExt2TilingTestCase({1, 4, 10, 10}, ge::DT_INT64, ge::FORMAT_ND, {1, 1, 3, 3}, {1, 1, 2, 2}, "SAME", "NCHW",
                               ge::GRAPH_SUCCESS);
 }
 
 // Large shape test
 TEST_F(MaxPoolExt2TilingTest, large_shape_008)
 {
-    MaxPoolExt2TilingTestCase({32, 3, 56, 56}, ge::DT_FLOAT, ge::FORMAT_NCHW, {1, 1, 2, 2}, {1, 1, 2, 2}, "SAME",
-                              "NCHW", ge::GRAPH_SUCCESS);
+    MaxPoolExt2TilingTestCase({32, 3, 56, 56}, ge::DT_FLOAT, ge::FORMAT_ND, {1, 1, 2, 2}, {1, 1, 2, 2}, "SAME", "NCHW",
+                              ge::GRAPH_SUCCESS);
 }
 
 // Empty tensor test
 TEST_F(MaxPoolExt2TilingTest, empty_tensor_009)
 {
-    MaxPoolExt2TilingTestCase({1, 3, 0, 8}, ge::DT_FLOAT16, ge::FORMAT_NCHW, {1, 1, 2, 2}, {1, 1, 2, 2}, "VALID",
-                              "NCHW", ge::GRAPH_SUCCESS);
+    MaxPoolExt2TilingTestCase({1, 3, 0, 8}, ge::DT_FLOAT16, ge::FORMAT_ND, {1, 1, 2, 2}, {1, 1, 2, 2}, "VALID", "NCHW",
+                              ge::GRAPH_SUCCESS);
 }
 
 // Small shape test
 TEST_F(MaxPoolExt2TilingTest, small_shape_010)
 {
-    MaxPoolExt2TilingTestCase({1, 1, 2, 2}, ge::DT_FLOAT, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2, 1}, "VALID", "NHWC",
+    MaxPoolExt2TilingTestCase({1, 1, 2, 2}, ge::DT_FLOAT, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 2, 2, 1}, "VALID", "NHWC",
                               ge::GRAPH_SUCCESS);
 }
 
 // Additional dtype coverage
 TEST_F(MaxPoolExt2TilingTest, nhwc_same_int16_011)
 {
-    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_INT16, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_INT16, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
                               ge::GRAPH_SUCCESS);
 }
 TEST_F(MaxPoolExt2TilingTest, nhwc_same_uint8_012)
 {
-    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_UINT8, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_UINT8, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
                               ge::GRAPH_SUCCESS);
 }
 TEST_F(MaxPoolExt2TilingTest, nhwc_same_uint16_013)
 {
-    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_UINT16, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_UINT16, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
                               ge::GRAPH_SUCCESS);
 }
 
 // Invalid strides test
 TEST_F(MaxPoolExt2TilingTest, invalid_strides_014)
 {
-    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_FLOAT, ge::FORMAT_NHWC, {1, 2, 2, 1}, {1, 0, 2, 1}, "SAME", "NHWC",
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_FLOAT, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 0, 2, 1}, "SAME", "NHWC",
+                              ge::GRAPH_FAILED);
+}
+
+// Format contract: origin format must be ND (def.cpp registration)
+TEST_F(MaxPoolExt2TilingTest, format_fractal_nz_origin_rejected_015)
+{
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_FLOAT16, ge::FORMAT_FRACTAL_NZ, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME",
+                              "NHWC", ge::GRAPH_FAILED);
+}
+
+// Format contract: storage format must be ND (kernel linear GM addressing)
+TEST_F(MaxPoolExt2TilingTest, format_fractal_nz_storage_rejected_016)
+{
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_FLOAT16, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME", "NHWC",
+                              ge::GRAPH_FAILED, ge::FORMAT_FRACTAL_NZ);
+}
+
+// int64 overflow guard: total elements exceed INT64_MAX
+TEST_F(MaxPoolExt2TilingTest, total_elements_overflow_rejected_017)
+{
+    MaxPoolExt2TilingTestCase({(1LL << 62), 2, 2, 2}, ge::DT_FLOAT16, ge::FORMAT_ND, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME",
+                              "NHWC", ge::GRAPH_FAILED);
+}
+
+// int64 overflow guard: ksize spatial dim exceeds INT32_MAX
+TEST_F(MaxPoolExt2TilingTest, ksize_upper_bound_rejected_018)
+{
+    MaxPoolExt2TilingTestCase({1, 8, 8, 3}, ge::DT_FLOAT16, ge::FORMAT_ND, {1, (1LL << 31), 2, 1}, {1, 2, 2, 1}, "SAME",
+                              "NHWC", ge::GRAPH_FAILED);
+}
+
+// Negative dim must be rejected before element-total overflow arithmetic
+TEST_F(MaxPoolExt2TilingTest, negative_dim_rejected_019)
+{
+    MaxPoolExt2TilingTestCase({1, 3, -1, 8}, ge::DT_FLOAT, ge::FORMAT_ND, {1, 1, 2, 2}, {1, 1, 2, 2}, "SAME", "NCHW",
                               ge::GRAPH_FAILED);
 }

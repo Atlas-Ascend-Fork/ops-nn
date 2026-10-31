@@ -160,7 +160,7 @@
     <tr>
       <td>y4</td>
       <td>输出</td>
-      <td>支持空Tensor。公式中的y4，shape取全部输入的broadcast结果。</td>
+      <td>支持空Tensor。公式中的y4（m_unbiased/(sqrt(v_unbiased)+eps)），shape取全部输入的broadcast结果。</td>
       <td>FLOAT16、FLOAT</td>
       <td>ND</td>
     </tr>
@@ -172,9 +172,40 @@
 - 所有输入及输出的维度数为0~8。当全部输入均为0维时，y1、y2、y3、y4的shape为(1,)。
 - 所有输入的数据类型必须一致，同为FLOAT16或同为FLOAT。
 - 各输出y1/y2/y3/y4的shape均取全部输入的broadcast结果。
+- 支持动态shape（-1，未知维度）与动态rank（-2）输入描述符：Host InferShape 接受并按broadcast规则传播（算子注册 DynamicShapeSupportFlag/DynamicRankSupportFlag）。
 
 ## 调用说明
 
-| 调用方式 | 调用样例 | 说明 |
+| 调用方式 | 样例代码 | 说明 |
 |---|---|---|
-| 图模式调用 | [test_geir_lamb_next_m_v](./examples/test_geir_lamb_next_m_v.cpp) | 通过算子IR构图方式调用LambNextMV算子。 |
+| `GE图模式` | [test_geir_lamb_next_m_v](./examples/test_geir_lamb_next_m_v.cpp) | 通过算子IR构图方式调用LambNextMV算子，算子IR定义见 [lamb_next_m_v_proto.h](./op_graph/lamb_next_m_v_proto.h)。 |
+
+### 样例依赖与构建
+
+- 样例依赖 GE（Graph Engine）开发头库，均来自 CANN 安装目录（`$ASCEND_HOME_PATH` 为 CANN 安装路径，x86_64 环境）：
+  - GE API 头文件（`graph.h`、`ge_api.h`、`ge_ir_build.h` 等）：`$ASCEND_HOME_PATH/x86_64-linux/include` 及其 `graph/`、`ge/` 子目录；
+  - 内置算子 IR 头文件（`array_ops.h`，提供 `ge::op::Data`）：`$ASCEND_HOME_PATH/opp/built-in/op_graph/inc`。
+- 样例未纳入算子 CMakeLists 构建体系，可单独编译（在算子目录 `optim/lamb_next_m_v` 下执行）：
+
+```bash
+# 编译（生成目标文件）
+g++ -std=c++17 -c examples/test_geir_lamb_next_m_v.cpp \
+    -I op_graph \
+    -I $ASCEND_HOME_PATH/x86_64-linux/include \
+    -I $ASCEND_HOME_PATH/x86_64-linux/include/graph \
+    -I $ASCEND_HOME_PATH/x86_64-linux/include/ge \
+    -I $ASCEND_HOME_PATH/opp/built-in/op_graph/inc \
+    -o test_geir_lamb_next_m_v.o
+# 链接（GE 初始化/会话接口位于 libge_runner）
+g++ test_geir_lamb_next_m_v.o -o test_geir_lamb_next_m_v \
+    -L $ASCEND_HOME_PATH/lib64 -lge_runner -Wl,-rpath,$ASCEND_HOME_PATH/lib64
+```
+
+- 运行前需已安装含 GE 服务的 CANN 环境（`source $ASCEND_HOME_PATH/set_env.sh`），并确保算子运行包已安装或在 `ASCEND_CUSTOM_OPP_PATH` 可见。
+- 运行：`./test_geir_lamb_next_m_v`（返回 0 表示构图与执行成功）。
+
+### 样例运行行为
+
+- 样例默认以 FLOAT 类型构图：全量输入 shape 为 `{2, 16}`，系数类输入 shape 为 `{1}`，输入数据固定填充 1.0。
+- 设备号固定为 `ge.exec.deviceId=0`，图运行模式为 `ge.graphRunMode=1`；如需在其他设备上运行，需修改样例源码中的 `global_options`。
+- 样例仅验证构图与执行返回码，不校验输出数值。

@@ -27,6 +27,8 @@ namespace ops {
 // 属声明宽松, 不作为支持面依据。
 constexpr size_t IN_NUM = 13;
 constexpr size_t OUT_NUM = 4;
+// 公开契约(README 约束说明): 所有输入及输出的维度数为 0~8。
+constexpr size_t MAX_RANK = 8;
 
 static ge::graphStatus InferShape4LambNextMV(gert::InferShapeContext* context)
 {
@@ -35,6 +37,11 @@ static ge::graphStatus InferShape4LambNextMV(gert::InferShapeContext* context)
     for (size_t i = 0; i < IN_NUM; i++) {
         auto in = context->GetInputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, in);
+        // rank 校验先于广播折叠执行, 保证 rank 拒绝不与广播不兼容耦合。
+        OP_CHECK_IF(in->GetDimNum() > MAX_RANK,
+                    OP_LOGE(context->GetNodeName(), "input %zu rank %zu exceeds max supported rank %zu", i,
+                            in->GetDimNum(), MAX_RANK),
+                    return ge::GRAPH_FAILED);
         inShapes.push_back(in);
     }
     gert::Shape bcShape;
@@ -70,14 +77,28 @@ static ge::graphStatus InferDataType4LambNextMV(gert::InferDataTypeContext* cont
         return ge::GRAPH_FAILED;
     }
     OP_LOGD(context->GetNodeName(), "InferDataType4LambNextMV enter");
+    // 公开契约(README 约束说明): 所有输入的数据类型必须一致, 同为 FLOAT16 或同为 FLOAT。
+    // 与 tiling 侧 GetShapeAttrsInfo 的校验保持同一口径, 使图模式在类型推导阶段即拒绝。
+    auto input0DType = context->GetInputDataType(0);
+    OP_CHECK_IF(input0DType != ge::DT_FLOAT && input0DType != ge::DT_FLOAT16,
+                OP_LOGE(context->GetNodeName(), "input_mul3 dtype %s is not supported, only float16 or float",
+                        ToString(input0DType).c_str()),
+                return ge::GRAPH_FAILED);
+    for (size_t i = 1; i < IN_NUM; i++) {
+        auto curDType = context->GetInputDataType(i);
+        OP_CHECK_IF(curDType != input0DType,
+                    OP_LOGE(context->GetNodeName(), "input %zu dtype %s is not consistent with input0 dtype %s", i,
+                            ToString(curDType).c_str(), ToString(input0DType).c_str()),
+                    return ge::GRAPH_FAILED);
+    }
     // y1 与 input_mul3 同类型
-    context->SetOutputDataType(0, context->GetInputDataType(0));
+    context->SetOutputDataType(0, input0DType);
     // y2 与 input_mul3 同类型
-    context->SetOutputDataType(1, context->GetInputDataType(0));
+    context->SetOutputDataType(1, input0DType);
     // y3 与 input_mul3 同类型
-    context->SetOutputDataType(2, context->GetInputDataType(0));
+    context->SetOutputDataType(2, input0DType);
     // y4 与 input_mul3 同类型
-    context->SetOutputDataType(3, context->GetInputDataType(0));
+    context->SetOutputDataType(3, input0DType);
     OP_LOGD(context->GetNodeName(), "InferDataType4LambNextMV end");
     return ge::GRAPH_SUCCESS;
 }

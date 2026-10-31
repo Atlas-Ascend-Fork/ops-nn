@@ -45,17 +45,9 @@ static ge::graphStatus ValidateKsizeAttrs(gert::InferShapeContext* context, size
 {
     const char* opName_ = "MaxPoolExt2";
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(
-        attrs == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     auto ksize = attrs->GetAttrPointer<gert::ContinuousVector>(EXT2_INDEX_KSIZE);
-    OP_CHECK_IF(
-        ksize == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ksize",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, ksize);
     if (static_cast<uint64_t>(ksize->GetSize()) != SHAPE_NHWC_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of ksize",
                                      std::to_string(static_cast<uint64_t>(ksize->GetSize())).c_str(), "4");
@@ -71,6 +63,40 @@ static ge::graphStatus ValidateKsizeAttrs(gert::InferShapeContext* context, size
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "ksize[C_dim]", std::to_string(ksizeData[cDim]).c_str(),
                                                       "ksize[C_dim] must be 1"),
                 return GRAPH_FAILED);
+    size_t wDim = hDim + 1;
+    OP_CHECK_IF(ksizeData[hDim] <= 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "ksize[h_dim]", std::to_string(ksizeData[hDim]).c_str(),
+                                                      "ksize spatial dims must be greater than 0"),
+                return GRAPH_FAILED);
+    OP_CHECK_IF(ksizeData[wDim] <= 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "ksize[w_dim]", std::to_string(ksizeData[wDim]).c_str(),
+                                                      "ksize spatial dims must be greater than 0"),
+                return GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
+
+static ge::graphStatus ValidateStridesAttrs(gert::InferShapeContext* context, size_t hDim)
+{
+    const char* opName_ = "MaxPoolExt2";
+    auto attrs = context->GetAttrs();
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(EXT2_INDEX_STRIDES);
+    OP_CHECK_NULL_WITH_CONTEXT(context, strides);
+    if (static_cast<uint64_t>(strides->GetSize()) != SHAPE_NHWC_SIZE) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of strides",
+                                     std::to_string(static_cast<uint64_t>(strides->GetSize())).c_str(), "4");
+        return GRAPH_FAILED;
+    }
+    auto stridesData = static_cast<const int64_t*>(strides->GetData());
+    OP_CHECK_IF(stridesData[0] != 1,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "strides[0]", std::to_string(stridesData[0]).c_str(),
+                                                      "strides[0] must be 1"),
+                return GRAPH_FAILED);
+    size_t cDim = (hDim == 1) ? 3 : 1;
+    OP_CHECK_IF(stridesData[cDim] != 1,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    opName_, "strides[C_dim]", std::to_string(stridesData[cDim]).c_str(), "strides[C_dim] must be 1"),
+                return GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -79,38 +105,23 @@ static int64_t SameUpdateDim(const int64_t ksize, const int64_t strides, int64_t
     if (dimSize == UNKNOWN_DIM_VALUE_) {
         return UNKNOWN_DIM_VALUE_;
     }
-    return (strides == 0) ? (dimSize - ksize + 1) : ((dimSize - ksize + strides) / strides);
+    return (strides == 0) ? std::max(int64_t(0), dimSize - ksize + 1) :
+                            std::max(int64_t(0), (dimSize - ksize + strides) / strides);
 }
 
 static ge::graphStatus InferShapePaddingValid(gert::InferShapeContext* context, size_t hDim, size_t wDim)
 {
     const char* opName_ = "MaxPoolExt2";
     auto inShape = context->GetInputShape(0);
-    OP_CHECK_IF(
-        inShape == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, inShape);
     auto outShape = context->GetOutputShape(0);
-    OP_CHECK_IF(outShape == nullptr,
-                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
-                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
-                                                                    "outShape is null; InferShape cannot continue"})),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
     *outShape = *inShape;
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(
-        attrs == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     auto ksize = attrs->GetAttrPointer<gert::ContinuousVector>(EXT2_INDEX_KSIZE);
-    OP_CHECK_IF(
-        ksize == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ksize",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, ksize);
     if (static_cast<uint64_t>(ksize->GetSize()) != SHAPE_NHWC_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of ksize",
                                      std::to_string(static_cast<uint64_t>(ksize->GetSize())).c_str(), "4");
@@ -121,11 +132,7 @@ static ge::graphStatus InferShapePaddingValid(gert::InferShapeContext* context, 
     int64_t wksizeData = ksizeData[wDim];
 
     auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(EXT2_INDEX_STRIDES);
-    OP_CHECK_IF(
-        strides == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "strides",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, strides);
     if (static_cast<uint64_t>(strides->GetSize()) != SHAPE_NHWC_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of strides",
                                      std::to_string(static_cast<uint64_t>(strides->GetSize())).c_str(), "4");
@@ -151,31 +158,15 @@ static ge::graphStatus InferShapePaddingSame(gert::InferShapeContext* context, s
 {
     const char* opName_ = "MaxPoolExt2";
     auto inShape = context->GetInputShape(0);
-    OP_CHECK_IF(
-        inShape == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, inShape);
     auto outShape = context->GetOutputShape(0);
-    OP_CHECK_IF(outShape == nullptr,
-                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
-                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
-                                                                    "outShape is null; InferShape cannot continue"})),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
     *outShape = *inShape;
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(
-        attrs == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(EXT2_INDEX_STRIDES);
-    OP_CHECK_IF(
-        strides == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "strides",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, strides);
     if (static_cast<uint64_t>(strides->GetSize()) != SHAPE_NHWC_SIZE) {
         OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of strides",
                                      std::to_string(static_cast<uint64_t>(strides->GetSize())).c_str(), "4");
@@ -207,17 +198,9 @@ static ge::graphStatus InferShape4MaxPoolExt2(gert::InferShapeContext* context)
 {
     const char* opName_ = "MaxPoolExt2";
     auto inShape = context->GetInputShape(0);
-    OP_CHECK_IF(
-        inShape == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, inShape);
     auto outShape = context->GetOutputShape(0);
-    OP_CHECK_IF(outShape == nullptr,
-                REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
-                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
-                                                                    "outShape is null; InferShape cannot continue"})),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
     if (Ops::Base::IsUnknownRank(*inShape)) {
         Ops::Base::SetUnknownShape(INSHAPE_DIM_NUM, *outShape);
         return ge::GRAPH_SUCCESS;
@@ -230,13 +213,13 @@ static ge::graphStatus InferShape4MaxPoolExt2(gert::InferShapeContext* context)
 
     // 从 data_format 属性确定 h_dim/w_dim
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(
-        attrs == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     auto dataFormat = attrs->GetAttrPointer<char>(EXT2_INDEX_DATA_FORMAT);
     std::string fmtStr = (dataFormat != nullptr) ? std::string(dataFormat) : "NHWC";
+    OP_CHECK_IF(fmtStr != "NHWC" && fmtStr != "NCHW",
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "data_format", fmtStr.c_str(),
+                                                      "data_format must be NHWC or NCHW"),
+                return GRAPH_FAILED);
     size_t hDim = (fmtStr == "NHWC") ? 1 : 2;
     size_t wDim = (fmtStr == "NHWC") ? 2 : 3;
 
@@ -244,12 +227,12 @@ static ge::graphStatus InferShape4MaxPoolExt2(gert::InferShapeContext* context)
     OP_CHECK_IF(ValidateKsizeAttrs(context, hDim) != ge::GRAPH_SUCCESS,
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "ksize", "invalid", "ValidateKsizeAttrs error"),
                 return GRAPH_FAILED);
+    // 校验 strides 属性
+    OP_CHECK_IF(ValidateStridesAttrs(context, hDim) != ge::GRAPH_SUCCESS,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "strides", "invalid", "ValidateStridesAttrs error"),
+                return GRAPH_FAILED);
     auto paddingMode = attrs->GetAttrPointer<char>(EXT2_INDEX_PADDING);
-    OP_CHECK_IF(
-        paddingMode == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "padding_mode",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, paddingMode);
     auto it = std::find_if(kFuncMap.begin(), kFuncMap.end(),
                            [&paddingMode](const std::pair<std::string, InferShapePaddingFunc>& item) -> bool {
                                return item.first == paddingMode;

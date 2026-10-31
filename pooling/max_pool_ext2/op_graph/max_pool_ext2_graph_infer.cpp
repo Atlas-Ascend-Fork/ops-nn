@@ -12,13 +12,13 @@
 
 /*!
  * \file max_pool_ext2_graph_infer.cpp
- * \brief MaxPoolExt2 operator graph infer (InferShape + InferDataType).
- *        Reads ksize/strides/padding/data_format from ATTR. No value dependency.
+ * \brief MaxPoolExt2 operator graph infer (InferDataType).
+ *        InferShape is registered by op_host/max_pool_ext2_infershape.cpp.
  */
 
 #include "register/op_impl_registry.h"
 #include "log/log.h"
-#include <algorithm>
+#include <set>
 #include <string>
 
 namespace ops {
@@ -28,9 +28,17 @@ static constexpr int64_t IDX_0 = 0;
 
 static ge::graphStatus InferDtype4MaxPoolExt2(gert::InferDataTypeContext* context)
 {
+    const char* opName_ = "MaxPoolExt2";
     auto inputDtype = context->GetInputDataType(IDX_0);
+    static const std::set<ge::DataType> supportedDtypes = {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT8,  ge::DT_INT16,
+                                                           ge::DT_INT32,   ge::DT_INT64, ge::DT_UINT8, ge::DT_UINT16};
+    OP_CHECK_IF(supportedDtypes.find(inputDtype) == supportedDtypes.end(),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    opName_, "x dtype", std::to_string(static_cast<int32_t>(inputDtype)).c_str(),
+                    "dtype must be one of: float16, float32, int8, int16, int32, int64, uint8, uint16"),
+                return ge::GRAPH_FAILED);
     context->SetOutputDataType(IDX_0, inputDtype);
-    return GRAPH_SUCCESS;
+    return ge::GRAPH_SUCCESS;
 }
 
 IMPL_OP(MaxPoolExt2).InferDataType(InferDtype4MaxPoolExt2);

@@ -22,7 +22,10 @@ namespace ge {
 *@brief A fusion operator for bert lamb (moment update + bias-corrected update). \n
 
 *@par Inputs:
-* Thirteen inputs (input_mul0/1/2/3/4 are full tensors; the rest are scalar coefficients):
+* Thirteen inputs; all are broadcastable ND tensors of 0-8 dims (shapes must satisfy pairwise broadcast rules, output
+shape is the broadcast result of all inputs). input_mul0/1/2/3/4 typically carry the full tensor shape, while the
+remaining coefficient inputs (beta1, 1-beta1, beta2, 1-beta2, weight_decay, epsilon, ...) are usually scalars (0-dim)
+but may also be broadcastable tensors:
 *@li input_mul3: g^2. @li input_mul2: v. @li input_realdiv1: 1-beta2^t.
 *@li input_mul1: g. @li input_mul0: m. @li input_realdiv0: 1-beta1^t. @li input_mul4: param.
 *@li mul0_x: beta1. @li mul1_sub: 1-beta1. @li mul2_x: beta2. @li mul3_sub1: 1-beta2.

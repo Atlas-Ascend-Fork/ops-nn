@@ -17,6 +17,7 @@
 #include <graph/utils/type_utils.h>
 #include <securec.h>
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 #include "log/log.h"
 #include "platform/platform_info.h"
@@ -35,6 +36,105 @@ constexpr static uint64_t TILING_KEY_FP32 = 100;
 constexpr static uint64_t TILING_KEY_FP16 = 200;
 constexpr static int32_t INPUT_NUM = 13;
 constexpr static int32_t OUTPUT_NUM = 4;
+
+namespace {
+// 形状边界/溢出防护(算子内)。
+// 这些校验原先写在共用头 optim/lamb_apply_common/op_host/arch35/lamb_brc_tiling_plan.h 内,
+// 会影响 lamb 族全部算子; 为把影响收敛在本算子目录内, 改为在 LambNextMV host 侧前置校验,
+// 仍沿用原公共接口 BuildLambBrcPlan<13,4>() 完成规划。折叠分组与共用实现保持一致, 逐轴校验:
+// rank 上限、uint32 表示域、折叠乘法 int64 不溢出、元素总数 uint64 不溢出; 任一越界即拒绝,
+// 避免 td.outShape/td.inShape 静默截断与有符号溢出 UB。
+ge::graphStatus CheckLambNextMVBrcBounds(gert::TilingContext* context, uint32_t nin)
+{
+    auto outShapePtr = context->GetOutputShape(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outShapePtr);
+    const gert::Shape& outShape = outShapePtr->GetStorageShape();
+    size_t rank = outShape.GetDimNum();
+    OP_CHECK_IF(
+        rank > LAMB_BRC_MAX_DIM,
+        OP_LOGE(context->GetNodeName(), "output rank %zu exceeds max supported rank %u", rank, LAMB_BRC_MAX_DIM),
+        return ge::GRAPH_FAILED);
+
+    std::vector<int64_t> rawOut(rank);
+    for (size_t d = 0; d < rank; d++) {
+        rawOut[d] = outShape.GetDim(d);
+        OP_CHECK_IF(rawOut[d] < 0 || static_cast<uint64_t>(rawOut[d]) > UINT32_MAX,
+                    OP_LOGE(context->GetNodeName(), "output dim %zu (%ld) exceeds uint32 range", d, rawOut[d]),
+                    return ge::GRAPH_FAILED);
+    }
+
+    std::vector<std::vector<int64_t>> rawIn(nin, std::vector<int64_t>(rank, 1));
+    for (uint32_t i = 0; i < nin; i++) {
+        auto sp = context->GetInputShape(i);
+        OP_CHECK_NULL_WITH_CONTEXT(context, sp);
+        const gert::Shape& s = sp->GetStorageShape();
+        size_t r = s.GetDimNum();
+        OP_CHECK_IF(r > rank, OP_LOGE(context->GetNodeName(), "input %u rank %zu exceeds output rank %zu", i, r, rank),
+                    return ge::GRAPH_FAILED);
+        for (size_t d = 0; d < r; d++) { // 右对齐补维
+            rawIn[i][rank - r + d] = s.GetDim(d);
+        }
+    }
+
+    std::vector<int64_t> co;
+    std::vector<std::vector<int64_t>> ci(nin);
+    for (size_t d = 0; d < rank; d++) {
+        if (rawOut[d] == 1) {
+            continue;
+        }
+        bool merge = !co.empty();
+        for (uint32_t i = 0; i < nin && merge; i++) {
+            merge = ((ci[i].back() == 1) == (rawIn[i][d] == 1));
+        }
+        if (merge) {
+            OP_CHECK_IF((rawOut[d] != 0 && co.back() > INT64_MAX / rawOut[d]) ||
+                            (co.back() != 0 && rawOut[d] > INT64_MAX / co.back()),
+                        OP_LOGE(context->GetNodeName(), "collapsed output dim (%ld x %ld) exceeds int64 range",
+                                co.back(), rawOut[d]),
+                        return ge::GRAPH_FAILED);
+            co.back() *= rawOut[d];
+            for (uint32_t i = 0; i < nin; i++) {
+                OP_CHECK_IF((rawIn[i][d] != 0 && ci[i].back() > INT64_MAX / rawIn[i][d]) ||
+                                (ci[i].back() != 0 && rawIn[i][d] > INT64_MAX / ci[i].back()),
+                            OP_LOGE(context->GetNodeName(), "collapsed input %u dim exceeds int64 range", i),
+                            return ge::GRAPH_FAILED);
+                ci[i].back() *= rawIn[i][d];
+            }
+        } else {
+            co.push_back(rawOut[d]);
+            for (uint32_t i = 0; i < nin; i++) {
+                ci[i].push_back(rawIn[i][d]);
+            }
+        }
+    }
+    if (co.empty()) { // 全 1 / 标量输出
+        co.push_back(1);
+        for (uint32_t i = 0; i < nin; i++) {
+            ci[i].push_back(1);
+        }
+    }
+
+    uint64_t total = 1;
+    for (size_t d = 0; d < co.size(); d++) {
+        OP_CHECK_IF(co[d] < 0 || static_cast<uint64_t>(co[d]) > UINT32_MAX,
+                    OP_LOGE(context->GetNodeName(), "collapsed output dim %zu (%ld) exceeds uint32 range", d, co[d]),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(total != 0 && static_cast<uint64_t>(co[d]) > UINT64_MAX / total,
+                    OP_LOGE(context->GetNodeName(), "total element count exceeds uint64 range"),
+                    return ge::GRAPH_FAILED);
+        total *= static_cast<uint64_t>(co[d]);
+    }
+    for (uint32_t i = 0; i < nin; i++) {
+        for (size_t d = 0; d < ci[i].size(); d++) {
+            OP_CHECK_IF(ci[i][d] < 0 || static_cast<uint64_t>(ci[i][d]) > UINT32_MAX,
+                        OP_LOGE(context->GetNodeName(), "collapsed dim %zu of input %u (%ld) exceeds uint32 range", d,
+                                i, ci[i][d]),
+                        return ge::GRAPH_FAILED);
+        }
+    }
+    return ge::GRAPH_SUCCESS;
+}
+} // namespace
 
 static ge::graphStatus TilingPrepareForLambNextMV(gert::TilingParseContext* context)
 {
@@ -115,6 +215,9 @@ ge::graphStatus LambNextMVTiling::DoOpTiling()
     // 空进空出: 输出 0 元素时 tiling 全 0, kernel 按 usedCoreNum=0 直接退出。
     auto outShape0 = context_->GetOutputShape(0);
     if (outShape0 == nullptr || outShape0->GetStorageShape().GetShapeSize() != 0) {
+        // 先做本算子内的形状边界/溢出前置校验(原共用头的校验迁移至此), 再走原公共规划接口。
+        OP_CHECK_IF(CheckLambNextMVBrcBounds(context_, static_cast<uint32_t>(INPUT_NUM)) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(context_->GetNodeName(), "broadcast shape bounds check failed"), return ge::GRAPH_FAILED);
         // 先取返回值再判: 模板实参里的逗号会被预处理器当成 OP_CHECK_IF 的参数分隔符。
         ge::graphStatus planRet = BuildLambBrcPlan<13, 4>(context_, coreNum_, ubSize_, dtSize, td_);
         OP_CHECK_IF(planRet != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "build broadcast plan failed"),
