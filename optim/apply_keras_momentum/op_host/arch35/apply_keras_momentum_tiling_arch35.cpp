@@ -50,6 +50,18 @@ static inline const gert::Shape EnsureNotScalar(const gert::Shape& in_shape)
     return in_shape;
 }
 
+static bool IsScalarShape(const gert::Shape& shape)
+{
+    if (shape.GetDimNum() == 0) {
+        return true;
+    }
+    if (shape.GetDimNum() > 1) {
+        return false;
+    }
+    const int64_t dim0 = shape.GetDim(0);
+    return dim0 < 0 || dim0 == 1;
+}
+
 static bool ShapeEqual(const gert::Shape& a, const gert::Shape& b)
 {
     if (a.GetDimNum() != b.GetDimNum()) {
@@ -125,6 +137,16 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     OP_CHECK_NULL_WITH_CONTEXT(context, momentumDesc);
     OP_CHECK_IF(momentumDesc->GetDataType() != ge::DT_FLOAT, OP_LOGE(context, "momentum only supports float32"),
                 return ge::GRAPH_FAILED);
+
+    auto lrShape = context->GetInputShape(2);
+    OP_CHECK_NULL_WITH_CONTEXT(context, lrShape);
+    OP_CHECK_IF(!IsScalarShape(lrShape->GetStorageShape()),
+                OP_LOGE(opName, "lr must be scalar tensor (shape [] or [1])"), return ge::GRAPH_FAILED);
+
+    auto momentumShape = context->GetInputShape(4);
+    OP_CHECK_NULL_WITH_CONTEXT(context, momentumShape);
+    OP_CHECK_IF(!IsScalarShape(momentumShape->GetStorageShape()),
+                OP_LOGE(opName, "momentum must be scalar tensor (shape [] or [1])"), return ge::GRAPH_FAILED);
 
     const bool* useNesterovAttr = context->GetAttrs()->GetAttrPointer<bool>(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, useNesterovAttr);

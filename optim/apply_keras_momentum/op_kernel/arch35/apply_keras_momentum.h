@@ -25,9 +25,11 @@
  *
  * PipeBarrier 说明:
  *   - CopyIn(SCH_MODE=1) PipeBarrier<PIPE_ALL>: half buf 无 EnQue/DeQue，需手动 MTE2→V 同步
- *   - CopyIn(SCH_MODE=1) 无 Cast 后 barrier: EnQue 自动处理 V→MTE2 事件，无需手动同步
+ *   - CopyIn(SCH_MODE=1) Cast 后需 V→MTE2 事件同步再释放 half 输入缓冲（WAR：下一 tile 的 MTE2 覆盖前，V 须读毕）
  *   - ComputeAndCopyOut PipeBarrier<PIPE_ALL>: V 计算后直接 DataCopyPad(MTE3)，需手动 V→MTE3 同步
- *   - Process 循环无需 barrier: ComputeAndCopyOut 末尾 PipeBarrier<PIPE_MTE3> 已排空所有管线
+ *   - ComputeAndCopyOut 末尾需 MTE3→MTE2 / MTE3→V 事件同步再释放缓冲：
+ *     PipeBarrier<PIPE_MTE3> 只约束 MTE3 自身，不能阻止下一 tile 的 MTE2/Vector 覆写正在搬出的数据
+ *     （否则会把下一 tile 的输入/结果写到当前 tile 的 GM 地址）
  */
 
 #ifndef APPLY_KERAS_MOMENTUM_H
@@ -220,6 +222,8 @@ __aicore__ inline void ApplyKerasMomentum<T, SCH_MODE>::CopyIn(int64_t progress,
         inGradBuf.EnQue(gF);
 
         AscendC::PipeBarrier<PIPE_MTE2>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
         inVarHalf.FreeTensor(vH);
         inAccumHalf.FreeTensor(aH);
         inGradHalf.FreeTensor(gH);
@@ -260,6 +264,12 @@ __aicore__ inline void ApplyKerasMomentum<T, SCH_MODE>::ComputeAndCopyOut(int64_
     if constexpr (SCH_MODE == 0) {
         AscendC::DataCopyPad(varOutGM[progress * ubLength_], var_fp32, copyParams);
         AscendC::DataCopyPad(accumGM[progress * ubLength_], accum_fp32, copyParams);
+        // WAR：释放/复用 UB 前必须等 MTE3 把本 tile 数据读完，否则下一 tile 的
+        // MTE2（输入搬运）/Vector 会覆写缓冲，导致把下一 tile 的数据写进当前 tile 的 GM。
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
     } else {
         auto vH = outVarHalf.AllocTensor<T>();
         auto aH = outAccumHalf.AllocTensor<T>();
@@ -271,12 +281,15 @@ __aicore__ inline void ApplyKerasMomentum<T, SCH_MODE>::ComputeAndCopyOut(int64_
         AscendC::DataCopyPad(varOutGM[progress * ubLength_], vH, copyParams);
         AscendC::DataCopyPad(accumGM[progress * ubLength_], aH, copyParams);
 
-        AscendC::PipeBarrier<PIPE_MTE3>();
+        // WAR：同上，MTE3 搬出完成前不能释放/复用 half 输出缓冲。
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
         outVarHalf.FreeTensor(vH);
         outAccumHalf.FreeTensor(aH);
     }
 
-    AscendC::PipeBarrier<PIPE_MTE3>();
     inVarBuf.FreeTensor(var_fp32);
     inAccumBuf.FreeTensor(accum_fp32);
     inGradBuf.FreeTensor(grad_fp32);

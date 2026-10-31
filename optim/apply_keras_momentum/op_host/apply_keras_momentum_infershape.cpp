@@ -25,11 +25,36 @@ using namespace ge;
 namespace ops {
 
 static constexpr size_t VAR_INDEX = 0;
+static constexpr size_t LR_INDEX = 2;
+static constexpr size_t MOMENTUM_INDEX = 4;
+
+static bool IsScalarInput(const gert::Shape* shape)
+{
+    if (shape->GetDimNum() == 0) {
+        return true;
+    }
+    if (shape->GetDimNum() > 1) {
+        return false;
+    }
+    const int64_t dim0 = shape->GetDim(0);
+    return dim0 < 0 || dim0 == 1;
+}
 
 static ge::graphStatus InferShape4ApplyKerasMomentum(gert::InferShapeContext* context)
 {
     const gert::Shape* varShape = context->GetInputShape(VAR_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
+
+    const gert::Shape* lrShape = context->GetInputShape(LR_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, lrShape);
+    OP_CHECK_IF(!IsScalarInput(lrShape), OP_LOGE(context->GetNodeName(), "lr must be scalar tensor (shape [] or [1])"),
+                return ge::GRAPH_FAILED);
+
+    const gert::Shape* momentumShape = context->GetInputShape(MOMENTUM_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, momentumShape);
+    OP_CHECK_IF(!IsScalarInput(momentumShape),
+                OP_LOGE(context->GetNodeName(), "momentum must be scalar tensor (shape [] or [1])"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape* varRefShape = context->GetOutputShape(VAR_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, varRefShape);

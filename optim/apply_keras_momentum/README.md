@@ -123,6 +123,6 @@
 
 ## 调用说明
 
-| 调用方式 | 调用样例                                                                   | 说明                                                           |
+| 调用方式 | 样例代码                                                                   | 说明                                                           |
 |--------------|------------------------------------------------------------------------|--------------------------------------------------------------|
-| 图模式 | [test_geir_apply_keras_momentum](./examples/arch35/test_geir_apply_keras_momentum.cpp) | 通过 [算子IR](./op_graph/apply_keras_momentum_proto.h) 构图方式调用 ApplyKerasMomentum 算子。 |
+| GE图模式 | [test_geir_apply_keras_momentum](./examples/arch35/test_geir_apply_keras_momentum.cpp) | 通过 [算子IR](./op_graph/apply_keras_momentum_proto.h) 构图方式调用 ApplyKerasMomentum 算子。 |
