@@ -152,9 +152,16 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
         size *= shapes[i];
     }
     uint32_t data_len = size * GetDataTypeSize(data_type);
-    int32_t* pData = new (std::nothrow) int32_t[data_len];
-    for (uint32_t i = 0; i < size; ++i) {
-        *(pData + i) = value;
+    // 按字节分配并清零，保证每个元素的所有字节都被初始化（避免 INT64 高 4 字节读到脏数据）
+    uint8_t* pData = new (std::nothrow) uint8_t[data_len]();
+    if (pData == nullptr) {
+        return FAILED;
+    }
+    uint32_t elemSize = GetDataTypeSize(data_type);
+    int64_t elemValue = value;
+    uint32_t copyLen = elemSize < sizeof(elemValue) ? elemSize : sizeof(elemValue);
+    for (size_t i = 0; i < size; ++i) {
+        memcpy(pData + i * elemSize, &elemValue, copyLen);
     }
     input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(pData), data_len);
     return SUCCESS;
@@ -176,8 +183,37 @@ int CreateOppInGraph(DataType inDtype, std::vector<ge::Tensor>& input, std::vect
     auto unsortedSegmentSum = op::UnsortedSegmentSum("unsortedSegmentSum");
     std::vector<int64_t> xShape = {4, 2};
     ADD_INPUT(1, x, inDtype, xShape);
-    ADD_CONST_INPUT(2, segment_ids, DT_INT64, {4});
-    ADD_CONST_INPUT(3, num_segments, DT_INT64, {1});
+
+    // segment_ids = {0, 1, 2, 0}，num_segments = 3，期望输出 [[4,4],[2,2],[2,2]]
+    std::vector<int64_t> placeholder2_shape = {4};
+    auto placeholder2 = op::Const("placeholder2");
+    TensorDesc placeholder2_desc = TensorDesc(ge::Shape(placeholder2_shape), FORMAT_ND, DT_INT64);
+    placeholder2_desc.SetPlacement(ge::kPlacementHost);
+    placeholder2_desc.SetFormat(FORMAT_ND);
+    std::vector<int64_t> segmentIdsData = {0, 1, 2, 0};
+    Tensor tensor_placeholder2(placeholder2_desc, reinterpret_cast<uint8_t*>(segmentIdsData.data()),
+                               segmentIdsData.size() * sizeof(int64_t));
+    placeholder2.SetAttr("value", tensor_placeholder2);
+    placeholder2.update_output_desc_y(placeholder2_desc);
+    graph.AddOp(placeholder2);
+    unsortedSegmentSum.set_input_segment_ids(placeholder2);
+    unsortedSegmentSum.update_input_desc_segment_ids(placeholder2_desc);
+    inputs.push_back(placeholder2);
+
+    std::vector<int64_t> placeholder3_shape = {1};
+    auto placeholder3 = op::Const("placeholder3");
+    TensorDesc placeholder3_desc = TensorDesc(ge::Shape(placeholder3_shape), FORMAT_ND, DT_INT64);
+    placeholder3_desc.SetPlacement(ge::kPlacementHost);
+    placeholder3_desc.SetFormat(FORMAT_ND);
+    std::vector<int64_t> numSegmentsData = {3};
+    Tensor tensor_placeholder3(placeholder3_desc, reinterpret_cast<uint8_t*>(numSegmentsData.data()),
+                               numSegmentsData.size() * sizeof(int64_t));
+    placeholder3.SetAttr("value", tensor_placeholder3);
+    placeholder3.update_output_desc_y(placeholder3_desc);
+    graph.AddOp(placeholder3);
+    unsortedSegmentSum.set_input_num_segments(placeholder3);
+    unsortedSegmentSum.update_input_desc_num_segments(placeholder3_desc);
+    inputs.push_back(placeholder3);
 
     outputs.push_back(unsortedSegmentSum);
     return SUCCESS;
