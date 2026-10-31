@@ -173,7 +173,7 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
       <td class="tg-0pky">softMaxOutOptional (aclTensor*)</td>
       <td class="tg-0pky">Output</td>
       <td class="tg-0pky">Intermediate variable, vocabParallelLogits in the formula.</td>
-      <td class="tg-0pky">Shape is consistent with vocabParallelLogitsOptional.</td>
+      <td class="tg-0pky">Shape is consistent with vocabParallelLogitsOptional; must be provided when vocabParallelLogitsOptional is not null, otherwise the first API returns 161001.</td>
       <td class="tg-0pky">FLOAT</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">2</td>
@@ -222,11 +222,11 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
     <tr>
       <td class="tg-0pky">ACLNN_ERR_PARAM_NULLPTR</td>
       <td class="tg-0pky">161001</td>
-      <td class="tg-0pky">logitsMax, sumExpLogits, predictedLogits, or lossOut is a null pointer.</td>
+      <td class="tg-0pky">logitsMax, sumExpLogits, predictedLogits, or lossOut is a null pointer; softMaxOutOptional is a null pointer while vocabParallelLogitsOptional is not null.</td>
     </tr>
     <tr>
-      <td class="tg-0pky" rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-      <td class="tg-0pky" rowspan="4">161002</td>
+      <td class="tg-0pky" rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
+      <td class="tg-0pky" rowspan="7">161002</td>
       <td class="tg-0pky">The data type of input and output is not within the supported range.</td>
     </tr>
     <tr>
@@ -234,6 +234,12 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
     </tr>
     <tr>
       <td class="tg-0pky">The dimensions of input and output do not meet the constraints.</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">Dim 0 of vocabParallelLogitsOptional is inconsistent with that of logitsMax.</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">The vocab dimension (last dim) of vocabParallelLogitsOptional is 0.</td>
     </tr>
     <tr>
       <td class="tg-0lax">labelSmoothing is not equal to 0.</td>

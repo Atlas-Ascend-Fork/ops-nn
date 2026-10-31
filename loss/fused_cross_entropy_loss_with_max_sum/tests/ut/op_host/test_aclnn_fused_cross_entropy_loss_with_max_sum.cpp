@@ -37,16 +37,14 @@ TEST_F(l2_fused_cross_entropy_loss_with_max_sum_test, case_0)
     auto logitsMax = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
     auto sumExpLogits = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
     auto predictedLogits = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
-    auto inputOptional = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
-    auto weightOptional = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
     auto vocabParallelLogitsOptional = TensorDesc({4, 2}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
     float labelSmoothing = 0.0f;
     auto lossOut = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
     auto softMaxOutOptional = TensorDesc({4, 2}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
-    auto ut = OP_API_UT(aclnnFusedCrossEntropyLossWithMaxSum,
-                        INPUT(logitsMax, sumExpLogits, predictedLogits, labelSmoothing, inputOptional, weightOptional,
-                              vocabParallelLogitsOptional),
-                        OUTPUT(lossOut, softMaxOutOptional));
+    auto ut = OP_API_UT(
+        aclnnFusedCrossEntropyLossWithMaxSum,
+        INPUT(logitsMax, sumExpLogits, predictedLogits, labelSmoothing, nullptr, nullptr, vocabParallelLogitsOptional),
+        OUTPUT(lossOut, softMaxOutOptional));
     uint64_t workspaceSize = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACL_SUCCESS);
@@ -67,4 +65,79 @@ TEST_F(l2_fused_cross_entropy_loss_with_max_sum_test, case_1)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACL_SUCCESS);
     // ut.TestPrecision();
+}
+
+// issue #7447：vocab第1维小于logitsMax第1维会被静默少写lossOut，应返回161002
+TEST_F(l2_fused_cross_entropy_loss_with_max_sum_test, vocab_row_less_than_logits_rejected)
+{
+    auto logitsMax = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto sumExpLogits = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto predictedLogits = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto vocabParallelLogitsOptional = TensorDesc({4, 8}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    float labelSmoothing = 0.0f;
+    auto lossOut = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto softMaxOutOptional = TensorDesc({4, 8}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto ut = OP_API_UT(
+        aclnnFusedCrossEntropyLossWithMaxSum,
+        INPUT(logitsMax, sumExpLogits, predictedLogits, labelSmoothing, nullptr, nullptr, vocabParallelLogitsOptional),
+        OUTPUT(lossOut, softMaxOutOptional));
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue #7447：vocab第1维大于logitsMax第1维会按vocab行数越界写lossOut，应返回161002
+TEST_F(l2_fused_cross_entropy_loss_with_max_sum_test, vocab_row_greater_than_logits_rejected)
+{
+    auto logitsMax = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto sumExpLogits = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto predictedLogits = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto vocabParallelLogitsOptional = TensorDesc({8, 8}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    float labelSmoothing = 0.0f;
+    auto lossOut = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto softMaxOutOptional = TensorDesc({8, 8}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto ut = OP_API_UT(
+        aclnnFusedCrossEntropyLossWithMaxSum,
+        INPUT(logitsMax, sumExpLogits, predictedLogits, labelSmoothing, nullptr, nullptr, vocabParallelLogitsOptional),
+        OUTPUT(lossOut, softMaxOutOptional));
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue #7446：词表维V=0属不支持形态，第一段应返回161002而非静默错值
+TEST_F(l2_fused_cross_entropy_loss_with_max_sum_test, vocab_zero_dim_rejected)
+{
+    auto logitsMax = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto sumExpLogits = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto predictedLogits = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto vocabParallelLogitsOptional = TensorDesc({4, 0}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    float labelSmoothing = 0.0f;
+    auto lossOut = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto softMaxOutOptional = TensorDesc({4, 0}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto ut = OP_API_UT(
+        aclnnFusedCrossEntropyLossWithMaxSum,
+        INPUT(logitsMax, sumExpLogits, predictedLogits, labelSmoothing, nullptr, nullptr, vocabParallelLogitsOptional),
+        OUTPUT(lossOut, softMaxOutOptional));
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// issue #7473：vocabParallelLogitsOptional非空时softMaxOutOptional必填，缺省返回161001
+TEST_F(l2_fused_cross_entropy_loss_with_max_sum_test, vocab_not_null_softmax_null_rejected)
+{
+    auto logitsMax = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto sumExpLogits = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto predictedLogits = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    auto vocabParallelLogitsOptional = TensorDesc({4, 8}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 5);
+    float labelSmoothing = 0.0f;
+    auto lossOut = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto ut = OP_API_UT(
+        aclnnFusedCrossEntropyLossWithMaxSum,
+        INPUT(logitsMax, sumExpLogits, predictedLogits, labelSmoothing, nullptr, nullptr, vocabParallelLogitsOptional),
+        OUTPUT(lossOut, nullptr));
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_NULLPTR);
 }

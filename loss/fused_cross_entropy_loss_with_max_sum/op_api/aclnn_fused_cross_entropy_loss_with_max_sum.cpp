@@ -29,6 +29,7 @@ using namespace op;
 extern "C" {
 #endif
 static const int64_t DIM0 = 0;
+static const int64_t DIM1 = 1;
 static const int64_t LOGISTS_MAX = 1;
 static const int64_t VOCAB_DIM = 2;
 
@@ -84,16 +85,25 @@ static inline bool CheckShape(const aclTensor* logitsMax, const aclTensor* sumEx
         OP_CHECK_MAX_DIM(vocabParallelLogitsOptional, VOCAB_DIM, return false);
         OP_CHECK_MIN_DIM(vocabParallelLogitsOptional, VOCAB_DIM, return false);
         OP_CHECK_SHAPE_NOT_EQUAL(vocabParallelLogitsOptional, softMaxOutOptional, return false);
+        // kernel按vocab第0维切行并外推lossOut行偏移，行数与logitsMax不一致会导致lossOut静默少写或越界写
+        if (vocabParallelLogitsOptional->GetViewShape().GetDim(DIM0) != logitsMax->GetViewShape().GetDim(DIM0)) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "vocabParallelLogitsOptional dim0 must be equal to logitsMax dim0.");
+            return false;
+        }
+        // 词表维为空（V=0）属不支持形态，kernel无法对空词表做softmax计算
+        if (vocabParallelLogitsOptional->GetViewShape().GetDim(DIM1) <= 0) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                    "vocabParallelLogitsOptional last dim (vocab size) must be greater than 0.");
+            return false;
+        }
     }
     return true;
 }
 
 static aclnnStatus CheckParams(const aclTensor* logitsMax, const aclTensor* sumExpLogits,
-                               const aclTensor* predictedLogits, float labelSmoothing,
-                               [[maybe_unused]] const aclTensor* inputOptional,
-                               [[maybe_unused]] const aclTensor* weightOptional,
-                               const aclTensor* vocabParallelLogitsOptional, aclTensor* lossOut,
-                               aclTensor* softMaxOutOptional)
+                               const aclTensor* predictedLogits, float labelSmoothing, const aclTensor* inputOptional,
+                               const aclTensor* weightOptional, const aclTensor* vocabParallelLogitsOptional,
+                               aclTensor* lossOut, aclTensor* softMaxOutOptional)
 {
     // 错误码等DFX方案细化后刷新，错误日志在check接口内打印
     // 1. 检查参数是否为空指针

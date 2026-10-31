@@ -171,7 +171,7 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
       <td class="tg-0pky">softMaxOutOptional（aclTensor*）</td>
       <td class="tg-0pky">输出</td>
       <td class="tg-0pky">中间变量，公式中的vocabParallelLogits。</td>
-      <td class="tg-0pky">shape与vocabParallelLogitsOptional一致。</td>
+      <td class="tg-0pky">shape与vocabParallelLogitsOptional一致；vocabParallelLogitsOptional非空时必须传入，否则第一段返回161001。</td>
       <td class="tg-0pky">FLOAT</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">2</td>
@@ -220,11 +220,11 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
     <tr>
       <td class="tg-0pky">ACLNN_ERR_PARAM_NULLPTR</td>
       <td class="tg-0pky">161001</td>
-      <td class="tg-0pky">logitsMax、sumExpLogits、predictedLogits、lossOut是空指针。</td>
+      <td class="tg-0pky">logitsMax、sumExpLogits、predictedLogits、lossOut是空指针；vocabParallelLogitsOptional非空时softMaxOutOptional是空指针。</td>
     </tr>
     <tr>
-      <td class="tg-0pky" rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-      <td class="tg-0pky" rowspan="4">161002</td>
+      <td class="tg-0pky" rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
+      <td class="tg-0pky" rowspan="7">161002</td>
       <td class="tg-0pky">输入和输出的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
@@ -232,6 +232,12 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
     </tr>
     <tr>
       <td class="tg-0pky">输入和输出维度不满足约束。</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">vocabParallelLogitsOptional第1维与logitsMax第1维不一致。</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">vocabParallelLogitsOptional词表维（最后一维）为0。</td>
     </tr>
     <tr>
       <td class="tg-0lax">labelSmoothing不等于0。</td>

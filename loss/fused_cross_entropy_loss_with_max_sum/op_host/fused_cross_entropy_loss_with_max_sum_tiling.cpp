@@ -101,6 +101,21 @@ ge::graphStatus FusedCrossEntropyLossWithMaxSumTiling::Init()
     uint32_t bt = static_cast<uint32_t>(tensor->GetStorageShape().GetDim(DIM_INDEX0));
     uint32_t v = static_cast<uint32_t>(tensor->GetStorageShape().GetDim(DIM_INDEX1));
 
+    // 与arch35 tiling同款兜底校验：空词表或空行不支持；bt行数必须与logitsMax对齐，
+    // 否则kernel按vocab行数切核会少写或越界写lossOut
+    auto logitsMaxTensor = tilingContext_->GetInputTensor(DIM_INDEX0);
+    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, logitsMaxTensor);
+    OP_CHECK_IF(bt == 0 || v == 0,
+                OP_LOGE(tilingContext_->GetNodeName(),
+                        "vocab_parallel_logits bt and v must be greater than 0, "
+                        "but bt is %u, v is %u",
+                        bt, v),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(bt != static_cast<uint32_t>(logitsMaxTensor->GetStorageShape().GetDim(DIM_INDEX0)),
+                OP_LOGE(tilingContext_->GetNodeName(),
+                        "vocab_parallel_logits dim0 must be equal to logits_max dim0, but vocab dim0 is %u", bt),
+                return ge::GRAPH_FAILED);
+
     formerCoreNum = bt % coreNum;
     latterbtCountLen = bt / coreNum;
     formerbtCountLen = latterbtCountLen + 1;
@@ -154,6 +169,10 @@ ge::graphStatus FusedCrossEntropyLossWithMaxSumTiling::TilingForMenory()
     auto tensor = tilingContext_->GetOptionalInputTensor(0);
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, tensor);
     uint32_t bt = static_cast<uint32_t>(tensor->GetStorageShape().GetDim(DIM_INDEX0));
+    // bt=0会使usedCoreNum为0进而导致后续对coreNum取模除零
+    OP_CHECK_IF(bt == 0,
+                OP_LOGE(tilingContext_->GetNodeName(), "logits_max dim0 must be greater than 0, but is %u", bt),
+                return ge::GRAPH_FAILED);
 
     auto usedCoreNum = CeilDiv(bt, TILING_ELEMENTS);
     coreNum = coreNum > usedCoreNum ? usedCoreNum : coreNum;

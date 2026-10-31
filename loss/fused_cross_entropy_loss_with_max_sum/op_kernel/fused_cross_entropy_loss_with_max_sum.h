@@ -137,10 +137,16 @@ private:
             logTensor = logQue_.AllocTensor<float>();
             softmaxLogitsTensor = softmaxLogitsQue_.AllocTensor<float>();
         } else {
+            // vLen<=0时loss计算路径仍会执行BtCompute，其中无条件搬运logitsMax并用logQue_做Log中间结果，
+            // 缺buffer会导致logitsMax数据踩踏相邻UB（log(sumExp)被算成log(logitsMax)），必须同步申请
+            pipe.InitBuffer(logitsMaxQue_, 1, CACEH_LINE);
             pipe.InitBuffer(sumExpLogitsQue_, 1, elementsNumber * sizeof(float));
             pipe.InitBuffer(predictedLogitsQue_, 1, elementsNumber * sizeof(float));
+            pipe.InitBuffer(logQue_, 1, CACEH_LINE);
+            logitsMaxTensor = logitsMaxQue_.AllocTensor<float>();
             sumExpLogitsTensor = sumExpLogitsQue_.AllocTensor<float>();
             predictedLogitsTensor = predictedLogitsQue_.AllocTensor<float>();
+            logTensor = logQue_.AllocTensor<float>();
         }
     }
 
