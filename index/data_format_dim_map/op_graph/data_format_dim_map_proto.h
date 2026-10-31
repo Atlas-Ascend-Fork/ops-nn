@@ -27,18 +27,23 @@ namespace ge {
  * the source data format.
  *
  *@par Inputs:
- * x: An ND or 5HD tensor. Support 1D~8D. Must be one of the following types:int32, int64.
+ * x: An ND tensor. Support 0D~8D. Must be one of the following types: int32, int64.
  *     A Tensor with each element as a dimension index in source data format.
- *     Must be in the range [-4, 4).
+ *     Must be in the range [-(format length), format length), where the format length
+ *     is the string length of src_format. A negative index -i is equivalent to
+ *     (format length - i), i.e., indices wrap around like Python style indexing.
  *
  *@par Attributes:
- *@li src_format: An optional string. Supports NHWC and NCHW, Defaults to NHWC.
- *     source data format. Must of length 4.
- *@li dst_format: An optional string. Supports NHWC and NCHW, Defaults to NCHW.
- *     destination data format. Must of length 4.
+ *@li src_format: An optional string. Source data format, e.g. "NHWC". Defaults to NHWC.
+ *     The string length must be 1~5, and src_format must contain the same character set
+ *     as dst_format (each dimension letter appears exactly once in both strings).
+ *@li dst_format: An optional string. Destination data format, e.g. "NCHW". Defaults to NCHW.
+ *     The string length must be 1~5, and dst_format must contain the same character set
+ *     as src_format.
  *
  *@par Outputs:
- * y: A tensor. Has the same type as "x". Must be in the range [0, 4).
+ * y: A tensor. Has the same type and shape as "x". Each element is the mapped dimension
+ *     index in the destination data format, in the range [0, format length).
  *
  *@par Third-party framework compatibility
  *Compatible with the TensorFlow operator DataFormatDimMap.

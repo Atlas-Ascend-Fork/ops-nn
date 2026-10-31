@@ -12,27 +12,32 @@
 
 /*!
  * \file apply_ftrl_v2.h
- * \brief ApplyFtrlV2 算子 Kernel 实现（双架构共享：DAV_2201 + DAV_3510）
+ * \brief ApplyFtrlV2 算子 Kernel 实现（arch35 / Ascend950，DAV_3510；
+ *        本 kernel 仅随 ascend950 注册构建，910B 族由 canndev 旧实现承接）
  *
  * 模板参数：
  *   T         - 数据类型 (float / half / bfloat16_t)
- *   SCH_MODE  - 调度模式 (0=FP32直算, 1=FP16/BF16升精度)
+ *   SCH_MODE  - 计算路径 (0=FP32直算, 1=FP16/BF16升精度)；
+ *               编译期由 kernel 入口的 SchModeTrait<DTYPE_VAR> 按 dtype
+ *               实例化选择，非运行时 TilingKey 派发（全仓无 SetTilingKey）
  *
- * Buffer 规划（详见 DESIGN.md §3.9）：
+ * UB Buffer 规划（fp32 元素容量均为 alignedLength = ceil(tileLength/64)*64）：
  *   fp32Buf0: var_fp32 → var_out
  *   fp32Buf1: accum_fp32 → accum_new
  *   fp32Buf2: linear_fp32 → linear_new
  *   fp32Buf3: grad_fp32 → grad_hat → x
- *   fp32Buf4: accum_new_safe → y
- *   fp32Buf5: accum_safe → pow_new (复用 accum_safe 消费后空间)
+ *   fp32Buf4: accum_new 副本 → y
+ *   fp32Buf5: accum 副本 → pow_new (复用副本消费后空间)
  *   fp32Buf6: pow_old (Power dst≠src 约束)
- *   fp32Buf7: sigma (独立 buffer，避免覆盖 grad_hat)
+ *   fp32Buf7: sigma
+ *   tmpPowerBuf: 通用 scratch，共 POWER_TMP_BUF_COUNT(=3) 组 fp32，
+ *               满足 Power 显式 sharedTmpBuffer 需求（12B/元素、384B 倍数）
  *
  * 计算顺序（避免 buffer 生命周期冲突）：
- *   1. accum_safe = |accum|           (先保存 |accum|，因 accum 即将被覆写)
+ *   1. accum 副本 → buf5              (先保存 accum，因 accum 即将被覆写)
  *   2. accum_new = accum + g²         (覆写 accum_fp32)
  *   3. grad_hat = grad + 2·λs·var    (覆写 grad_fp32)
- *   4. accum_new_safe = |accum_new|
+ *   4. accum_new 副本 → buf4
  *   5. pow_new, pow_old, sigma
  *   6. linear_new, x, y, var_out
  */
@@ -49,23 +54,30 @@ namespace NsApplyFtrlV2 {
 
 using namespace AscendC;
 
-template<typename T>
-struct SchModeTrait { static constexpr uint32_t value = 1; };
+template <typename T>
+struct SchModeTrait {
+    static constexpr uint32_t value = 1;
+};
 
-template<>
-struct SchModeTrait<float> { static constexpr uint32_t value = 0; };
+template <>
+struct SchModeTrait<float> {
+    static constexpr uint32_t value = 0;
+};
 
 static constexpr AscendC::PowerConfig kDoubleFloatPowerConfig = {AscendC::PowerAlgo::DOUBLE_FLOAT_TECH};
+
+// Power 显式 sharedTmpBuffer 所需空间：按 32 元素对齐分块、单块 3 组 float 数组
+// （12B/元素）。buffer 按 3×fp32Size 分配且 tileLength 为 64 倍数，天然满足
+// 12*ceil(calCount/32)*32 字节与 384B 倍数两个条件。
+static constexpr uint32_t POWER_TMP_BUF_COUNT = 3;
 
 template <typename T, uint32_t SCH_MODE>
 class ApplyFtrlV2 {
 public:
     __aicore__ inline ApplyFtrlV2() {}
-    __aicore__ inline void Init(GM_ADDR var, GM_ADDR accum, GM_ADDR linear, GM_ADDR grad,
-                                 GM_ADDR lr, GM_ADDR l1, GM_ADDR l2,
-                                 GM_ADDR l2Shrinkage, GM_ADDR lrPower,
-                                 GM_ADDR var_out,
-                                 const ApplyFtrlV2TilingData* tilingData);
+    __aicore__ inline void Init(GM_ADDR var, GM_ADDR accum, GM_ADDR linear, GM_ADDR grad, GM_ADDR lr, GM_ADDR l1,
+                                GM_ADDR l2, GM_ADDR l2Shrinkage, GM_ADDR lrPower, GM_ADDR var_out,
+                                const ApplyFtrlV2TilingData* tilingData);
     __aicore__ inline void Process();
 
 private:
@@ -73,7 +85,6 @@ private:
     __aicore__ inline void CopyIn(int64_t progress, int64_t K);
     __aicore__ inline void Compute(int64_t K);
     __aicore__ inline void CopyOut(int64_t progress, int64_t K);
-
 
     TPipe pipe;
 
@@ -85,17 +96,17 @@ private:
     GlobalTensor<T> varOutGM;
 
     // FP32 计算 buffer：输入队列 (MTE2 → Vector 同步)
-    TQue<TPosition::VECIN, 1> inVarBuf;      // fp32Buf0
-    TQue<TPosition::VECIN, 1> inAccumBuf;    // fp32Buf1
-    TQue<TPosition::VECIN, 1> inLinearBuf;   // fp32Buf2
-    TQue<TPosition::VECIN, 1> inGradBuf;     // fp32Buf3
+    TQue<TPosition::VECIN, 1> inVarBuf;    // fp32Buf0
+    TQue<TPosition::VECIN, 1> inAccumBuf;  // fp32Buf1
+    TQue<TPosition::VECIN, 1> inLinearBuf; // fp32Buf2
+    TQue<TPosition::VECIN, 1> inGradBuf;   // fp32Buf3
     // FP32 纯计算 buffer
-    TBuf<TPosition::VECCALC> fp32Buf4;    // accum_new_safe → y
-    TBuf<TPosition::VECCALC> fp32Buf5;    // accum_safe → pow_new
-    TBuf<TPosition::VECCALC> fp32Buf6;    // pow_old
-    TBuf<TPosition::VECCALC> fp32Buf7;    // sigma
+    TBuf<TPosition::VECCALC> fp32Buf4; // accum_new_safe → y
+    TBuf<TPosition::VECCALC> fp32Buf5; // accum 副本 → pow_new
+    TBuf<TPosition::VECCALC> fp32Buf6; // pow_old
+    TBuf<TPosition::VECCALC> fp32Buf7; // sigma
 
-    // FP16/BF16 路径専用 buffer
+    // FP16/BF16 路径专用 buffer
     TQue<TPosition::VECIN, 1> inVarHalf;
     TQue<TPosition::VECIN, 1> inAccumHalf;
     TQue<TPosition::VECIN, 1> inLinearHalf;
@@ -104,12 +115,12 @@ private:
     TQue<TPosition::VECOUT, 1> outAccumHalf;
     TQue<TPosition::VECOUT, 1> outLinearHalf;
 
-    // 臨時 buffer (纯计算，无 MTE 搬运)
+    // 临时 buffer (纯计算，无 MTE 搬运)
     TBuf<TPosition::VECCALC> tmpPowerBuf;
     TBuf<TPosition::VECCALC> cmpMaskBuf;
     // 标量读取 buffer (32B 对齐)
-    TBuf<TPosition::VECCALC> scalarBuf_;    // T 类型读入区
-    TBuf<TPosition::VECCALC> scalarFBuf_;   // float 类型结果区
+    TBuf<TPosition::VECCALC> scalarBuf_;  // T 类型读入区
+    TBuf<TPosition::VECCALC> scalarFBuf_; // float 类型结果区
 
     // Tiling 参数
     uint32_t totalElements_;
@@ -130,12 +141,10 @@ private:
 // Init
 // ============================================================================
 template <typename T, uint32_t SCH_MODE>
-__aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Init(
-    GM_ADDR var, GM_ADDR accum, GM_ADDR linear, GM_ADDR grad,
-    GM_ADDR lr, GM_ADDR l1, GM_ADDR l2,
-    GM_ADDR l2Shrinkage, GM_ADDR lrPower,
-    GM_ADDR var_out,
-    const ApplyFtrlV2TilingData* tilingData)
+__aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Init(GM_ADDR var, GM_ADDR accum, GM_ADDR linear, GM_ADDR grad,
+                                                      GM_ADDR lr, GM_ADDR l1, GM_ADDR l2, GM_ADDR l2Shrinkage,
+                                                      GM_ADDR lrPower, GM_ADDR var_out,
+                                                      const ApplyFtrlV2TilingData* tilingData)
 {
     totalElements_ = tilingData->totalElements;
     tileLength_ = tilingData->tileLength;
@@ -216,8 +225,6 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Init(
             lrPowerValue_ = sF.GetValue(0);
         }
     }
-    // lr<=0 时跳过更新：in-place 语义下输出=输入（不变），避免 1/lr 与 Divs(lr) 产生 Inf/NaN 传播
-    // （lr>0 为算子约束，此处为防御性兜底）
 
     uint32_t blockIdx = AscendC::GetBlockIdx();
     bool isLastBlock = (blockIdx == blockNum_ - 1);
@@ -225,9 +232,8 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Init(
     if (blockOffset >= static_cast<int64_t>(totalElements_)) {
         blockLength_ = 0;
     } else {
-        blockLength_ = isLastBlock
-            ? static_cast<int64_t>(totalElements_) - blockOffset
-            : static_cast<int64_t>(blockFormer_);
+        blockLength_ = isLastBlock ? static_cast<int64_t>(totalElements_) - blockOffset :
+                                     static_cast<int64_t>(blockFormer_);
     }
     ubLength_ = tileLength_;
 
@@ -241,7 +247,8 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Init(
     // 8 个 FP32 buffer (TQue 需要 num 参数)
     // CompareScalar/Select 要求 count * sizeof(float) 256B 对齐 → 最少 64 float 元素
     uint32_t alignedLength = (ubLength_ + 63) / 64 * 64;
-    if (alignedLength < 64) alignedLength = 64;
+    if (alignedLength < 64)
+        alignedLength = 64;
     uint32_t fp32Size = alignedLength * sizeof(float);
     pipe.InitBuffer(inVarBuf, 1, fp32Size);
     pipe.InitBuffer(inAccumBuf, 1, fp32Size);
@@ -264,12 +271,14 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Init(
         pipe.InitBuffer(outLinearHalf, 1, halfSize);
     }
 
-    // Power tmp buffer
-    pipe.InitBuffer(tmpPowerBuf, fp32Size);
+    // Power tmp buffer：3 组 fp32（显式 sharedTmpBuffer，见 POWER_TMP_BUF_COUNT 注释）；
+    // 同时作为 Compute 各步骤的通用 float scratch（每步先写后读，允许被 Power 覆写）
+    pipe.InitBuffer(tmpPowerBuf, POWER_TMP_BUF_COUNT * fp32Size);
 
     // Compare mask (uint8_t, bit-packed: alignedLength/8 bytes, 按 32B 对齐)
     uint32_t cmpSize = ((alignedLength + 255) / 256) * 32;
-    if (cmpSize < 32) cmpSize = 32;
+    if (cmpSize < 32)
+        cmpSize = 32;
     pipe.InitBuffer(cmpMaskBuf, cmpSize);
 }
 
@@ -279,15 +288,14 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Init(
 template <typename T, uint32_t SCH_MODE>
 __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Process()
 {
-    if (totalElements_ == 0) return;
-    // lr<=0 防御：跳过更新（in-place 输出保持输入不变，避免 Inf/NaN 传播）
-    if (lr_ <= 0.0f) return;
+    if (totalElements_ == 0)
+        return;
 
+    // 注：lr 等超参值域（lr>0 等）由调用方保证，kernel 不做值域拦截；
+    // 域外值（如 lr=0）按 IEEE 浮点规则传播 Inf/NaN。
     int64_t loopCount = (blockLength_ + ubLength_ - 1) / ubLength_;
     for (int64_t i = 0; i < loopCount; i++) {
-        int64_t currentK = (i == loopCount - 1)
-            ? (blockLength_ - ubLength_ * i)
-            : ubLength_;
+        int64_t currentK = (i == loopCount - 1) ? (blockLength_ - ubLength_ * i) : ubLength_;
         ProcessTile(i, currentK);
         AscendC::PipeBarrier<PIPE_ALL>();
     }
@@ -334,7 +342,7 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::CopyIn(int64_t progress, int64_
         AscendC::DataCopyPad(aH, accumGM[progress * ubLength_], copyParams, padParams);
         AscendC::DataCopyPad(lH, linearGM[progress * ubLength_], copyParams, padParams);
         AscendC::DataCopyPad(gH, gradGM[progress * ubLength_], copyParams, padParams);
-        AscendC::PipeBarrier<PIPE_ALL>();  // 确保 MTE2 写入 half buffer 完成
+        AscendC::PipeBarrier<PIPE_ALL>(); // 确保 MTE2 写入 half buffer 完成
 
         // Cast → FP32
         auto vF = inVarBuf.AllocTensor<float>();
@@ -345,7 +353,7 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::CopyIn(int64_t progress, int64_
         AscendC::Cast(aF, aH, AscendC::RoundMode::CAST_NONE, K);
         AscendC::Cast(lF, lH, AscendC::RoundMode::CAST_NONE, K);
         AscendC::Cast(gF, gH, AscendC::RoundMode::CAST_NONE, K);
-        AscendC::PipeBarrier<PIPE_ALL>();  // 确保 Vector Cast 写入 FP32 buffer 完成
+        AscendC::PipeBarrier<PIPE_ALL>(); // 确保 Vector Cast 写入 FP32 buffer 完成
         inVarBuf.EnQue(vF);
         inAccumBuf.EnQue(aF);
         inLinearBuf.EnQue(lF);
@@ -366,32 +374,35 @@ template <typename T, uint32_t SCH_MODE>
 __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Compute(int64_t K)
 {
     // DeQue FP32 输入（TQue 自带同步）
-    auto var_fp32    = inVarBuf.template DeQue<float>();     // fp32Buf0: w
-    auto accum_fp32  = inAccumBuf.template DeQue<float>();   // fp32Buf1: n
-    auto linear_fp32 = inLinearBuf.template DeQue<float>();   // fp32Buf2: z
-    auto grad_fp32   = inGradBuf.template DeQue<float>();     // fp32Buf3: g
+    auto var_fp32 = inVarBuf.template DeQue<float>();       // fp32Buf0: w
+    auto accum_fp32 = inAccumBuf.template DeQue<float>();   // fp32Buf1: n
+    auto linear_fp32 = inLinearBuf.template DeQue<float>(); // fp32Buf2: z
+    auto grad_fp32 = inGradBuf.template DeQue<float>();     // fp32Buf3: g
 
     // 分配中间计算 buffer（TBuf，无隐式同步，需手动 PipeBarrier）
-    auto buf4 = fp32Buf4.AllocTensor<float>();   // accum_new_safe → y
-    auto buf5 = fp32Buf5.AllocTensor<float>();   // accum_safe → pow_new
-    auto buf6 = fp32Buf6.AllocTensor<float>();   // pow_old
-    auto buf7 = fp32Buf7.AllocTensor<float>();   // sigma
+    auto buf4 = fp32Buf4.AllocTensor<float>();    // accum_new 副本 → y
+    auto buf5 = fp32Buf5.AllocTensor<float>();    // accum 副本 → pow_new
+    auto buf6 = fp32Buf6.AllocTensor<float>();    // pow_old
+    auto buf7 = fp32Buf7.AllocTensor<float>();    // sigma
     auto tmpP = tmpPowerBuf.AllocTensor<float>(); // Power/通用 tmp
+    auto tmpU8 = tmpPowerBuf.Get<uint8_t>();      // Power 显式 sharedTmpBuffer 视图（同一块内存）
 
     uint32_t uK = (uint32_t)K;
 
     // ========================================================================
-    // 步骤 A: accum_safe = |accum| → buf5
+    // 步骤 A: accum 副本 → buf5
+    //   （pow_old 需要更新前的 accum，而 accum_fp32 即将被步骤 B 覆写；
+    //     不取绝对值——负底数按 IEEE 产生 NaN/符号结果，与 TF pow 一致）
     // ========================================================================
-    AscendC::Abs(buf5, accum_fp32, uK);
+    AscendC::Adds(buf5, accum_fp32, 0.0f, uK);
     AscendC::PipeBarrier<PIPE_ALL>();
 
     // ========================================================================
     // 步骤 B: accum_new = accum + g²  (覆写 accum_fp32 = fp32Buf1)
     // ========================================================================
-    AscendC::Mul(tmpP, grad_fp32, grad_fp32, uK);   // tmp = g²
+    AscendC::Mul(tmpP, grad_fp32, grad_fp32, uK); // tmp = g²
     AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::Add(accum_fp32, accum_fp32, tmpP, uK);  // accum_fp32 = accum_new
+    AscendC::Add(accum_fp32, accum_fp32, tmpP, uK); // accum_fp32 = accum_new
     AscendC::PipeBarrier<PIPE_ALL>();
 
     // ========================================================================
@@ -400,26 +411,28 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Compute(int64_t K)
     float twoL2s = 2.0f * l2Shrinkage_;
     AscendC::Muls(tmpP, var_fp32, twoL2s, uK);
     AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::Add(grad_fp32, grad_fp32, tmpP, uK);    // grad_fp32 = grad_hat
+    AscendC::Add(grad_fp32, grad_fp32, tmpP, uK); // grad_fp32 = grad_hat
     AscendC::PipeBarrier<PIPE_ALL>();
 
     // ========================================================================
-    // 步骤 D: accum_new_safe = |accum_new| → buf4
+    // 步骤 D: accum_new 副本 → buf4（不取绝对值，语义同步骤 A）
     // ========================================================================
-    AscendC::Abs(buf4, accum_fp32, uK);
+    AscendC::Adds(buf4, accum_fp32, 0.0f, uK);
     AscendC::PipeBarrier<PIPE_ALL>();
 
     // ========================================================================
     // 步骤 E: pow_new, pow_old, sigma
     // ========================================================================
 
-    // E1: pow_old = accum_safe^(-lr_power) → buf6
-    //     accum_safe 在 buf5 中（步骤 A 写入，已有 barrier）
+    // E1: pow_old = accum^(-lr_power) → buf6
+    //     accum 副本在 buf5 中（步骤 A 写入，已有 barrier）
     //     使用 Sqrt + Mul 分解常用指数，精度远高于 exp(log) / Power API：
     //       0.25 → sqrt(sqrt(x)),  0.5 → sqrt(x),  0.75 → sqrt(x*sqrt(x))
     //       1.5  → x*sqrt(x),      3.0  → x*x*x
-    //     Sqrt 是硬件正确舍入指令，与 TF std::pow(double) 结果一致。
-    //     Sqrt(0)=0 天然处理零值，无需 epsilon。
+    //     Sqrt 是硬件正确舍入指令，与 TF std::pow(double) 结果一致；
+    //     负底数经 Sqrt 路径产生 NaN、经整幂路径保留符号，均与 TF pow 一致。
+    //     通用路径直接以 buf5 为底数调用 Power（无 abs/epsilon 防护，对齐 TF），
+    //     并显式传入 tmpU8 作临时区，避免隐式 tmp 弹出队列区尾部保留 UB 的越界写。
     {
         float negP = -lrPowerValue_;
         if (negP == 0.0f) {
@@ -449,15 +462,13 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Compute(int64_t K)
             AscendC::PipeBarrier<PIPE_ALL>();
             AscendC::Mul(buf6, tmpP, buf5, uK);
         } else {
-            AscendC::Adds(buf7, buf5, 1e-30f, uK);
-            AscendC::PipeBarrier<PIPE_ALL>();
-            AscendC::Power<float, false, kDoubleFloatPowerConfig>(buf6, buf7, negP, uK);
+            AscendC::Power<float, false, kDoubleFloatPowerConfig>(buf6, buf5, negP, tmpU8, uK);
         }
     }
     AscendC::PipeBarrier<PIPE_ALL>();
 
-    // E2: pow_new = accum_new_safe^(-lr_power) → buf5 (覆写 accum_safe)
-    //     accum_new_safe 在 buf4 中（步骤 D 写入，已有 barrier）
+    // E2: pow_new = accum_new^(-lr_power) → buf5 (覆写 accum 副本)
+    //     accum_new 副本在 buf4 中（步骤 D 写入，已有 barrier）
     {
         float negP = -lrPowerValue_;
         if (negP == 0.0f) {
@@ -487,110 +498,80 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::Compute(int64_t K)
             AscendC::PipeBarrier<PIPE_ALL>();
             AscendC::Mul(buf5, tmpP, buf4, uK);
         } else {
-            AscendC::Adds(buf7, buf4, 1e-30f, uK);
-            AscendC::PipeBarrier<PIPE_ALL>();
-            AscendC::Power<float, false, kDoubleFloatPowerConfig>(buf5, buf7, negP, uK);
+            AscendC::Power<float, false, kDoubleFloatPowerConfig>(buf5, buf4, negP, tmpU8, uK);
         }
     }
     AscendC::PipeBarrier<PIPE_ALL>();
 
-    // E3: sigma_lr = (pow_new - pow_old) → buf7 (不除以 lr，避免除法精度差异)
-    AscendC::Sub(buf7, buf5, buf6, uK);      // buf7 = pow_new - pow_old
+    // E3: sigma = (pow_new - pow_old) / lr → buf7
+    //     （先除后用，与 README 公式 σ=(n'^{-p}-n^{-p})/η 的运算顺序一致，
+    //       保证极小 lr 等边界下的溢出行为与 TF/golden 相同）
+    AscendC::Sub(buf7, buf5, buf6, uK); // buf7 = pow_new - pow_old
+    AscendC::PipeBarrier<PIPE_ALL>();
+    AscendC::Divs(buf7, buf7, lr_, uK); // buf7 = sigma
     AscendC::PipeBarrier<PIPE_ALL>();
 
     // ========================================================================
-    // 步骤 F: linear_new_lr = lr*(linear + grad_hat) - (pow_new - pow_old)*var
-    //   重构公式消除 lr 除法：所有中间计算用 Mul/Add/Sub（NPU==CPU），
-    //   只在最后输出 linear_new = linear_new_lr / lr 做一次除法。
+    // 步骤 F: linear_new = linear + grad_hat - sigma * var
+    //   （与 README 公式 z ← z + ĝ - σ·w 逐步对应）
     // ========================================================================
-    AscendC::Add(buf6, linear_fp32, grad_fp32, uK);  // buf6 = linear + grad_hat
+    AscendC::Mul(tmpP, buf7, var_fp32, uK); // tmp = sigma * var
     AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::Muls(buf6, buf6, lr_, uK);               // buf6 = lr * (linear + grad_hat)
+    AscendC::Add(buf6, linear_fp32, grad_fp32, uK); // buf6 = linear + grad_hat
     AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::Mul(tmpP, buf7, var_fp32, uK);            // tmp = (pow_new - pow_old) * var
-    AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::Sub(linear_fp32, buf6, tmpP, uK);         // linear_fp32 = linear_new_lr
-    AscendC::PipeBarrier<PIPE_ALL>();
-
-    // linear_new = linear_new_lr / lr (唯一一次 lr 除法，在最终结果上)
-    AscendC::Divs(linear_fp32, linear_fp32, lr_, uK);
+    AscendC::Sub(linear_fp32, buf6, tmpP, uK); // linear_fp32 = linear_new
     AscendC::PipeBarrier<PIPE_ALL>();
 
     // ========================================================================
     // 步骤 G: x = l1 * sign(linear_new) - linear_new → fp32Buf3
     // ========================================================================
-    auto x_buf = grad_fp32; // 复用 fp32Buf3
-    AscendC::Sign(buf7, linear_fp32, uK);            // sign(z) → buf7
+    auto x_buf = grad_fp32;               // 复用 fp32Buf3
+    AscendC::Sign(buf7, linear_fp32, uK); // sign(z) → buf7
     AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::Muls(x_buf, buf7, l1_, uK);             // x_buf = l1·sign(z)
+    AscendC::Muls(x_buf, buf7, l1_, uK); // x_buf = l1·sign(z)
     AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::Sub(x_buf, x_buf, linear_fp32, uK);     // x = l1·sign(z) - z
-    AscendC::PipeBarrier<PIPE_ALL>();
-
-    // ========================================================================
-    // 步骤 H: y = pow_new + 2*l2*lr → buf4 (无 lr 除法)
-    //   原公式 y = pow_new/lr + 2*l2，重构为 y_lr = pow_new + 2*l2*lr
-    //   var_out = x / y = x / (y_lr/lr) = x*lr / y_lr
-    // ========================================================================
-    auto y_buf = buf4; // 复用 fp32Buf4
-    float twoL2Lr = 2.0f * l2_ * lr_;
-    AscendC::Adds(y_buf, buf5, twoL2Lr, uK);          // y = pow_new + 2·l2·lr
-    AscendC::PipeBarrier<PIPE_ALL>();
-    // 防 y=0 除零：当 pow_new=0 且 l2=0 时 y_lr=0，加极小 epsilon
-    AscendC::Adds(y_buf, y_buf, 1e-30f, uK);
+    AscendC::Sub(x_buf, x_buf, linear_fp32, uK); // x = l1·sign(z) - z
     AscendC::PipeBarrier<PIPE_ALL>();
 
     // ========================================================================
-    // 步骤 I: var_out = |linear_new| > l1 ? x*lr/y : 0 → fp32Buf0
-    //   var_out = (l1·sign(z) - z) * lr / (pow_new + 2·l2·lr)
-    //   先算 x*lr，再除以 y_lr（唯一一次除法，不涉及 lr）
+    // 步骤 H: y = pow_new / lr + 2·l2 → buf4
+    //   （与 README 公式 y = n'^{-p}/η + 2·λ2 逐步对应；
+    //     不加 epsilon：pow_new=0 且 l2=0 的退化输入按 IEEE 除零得 ±Inf，
+    //     与 TF/golden 一致）
     // ========================================================================
-    constexpr int64_t kAlignElems = 256 / sizeof(float); // = 64
-    bool useArithmetic = (uK % kAlignElems != 0);
-
-    // x_buf = x * lr
-    AscendC::Muls(x_buf, x_buf, lr_, uK);             // x_buf = (l1·sign(z) - z) * lr
+    auto y_buf = buf4;                   // 复用 fp32Buf4
+    AscendC::Divs(y_buf, buf5, lr_, uK); // y = pow_new / lr
+    AscendC::PipeBarrier<PIPE_ALL>();
+    AscendC::Adds(y_buf, y_buf, 2.0f * l2_, uK); // y = pow_new/lr + 2·l2
     AscendC::PipeBarrier<PIPE_ALL>();
 
-    auto abs_z = buf6; // 复用 fp32Buf6
-    AscendC::Abs(abs_z, linear_fp32, uK);             // |z| → buf6
+    // ========================================================================
+    // 步骤 I: var_out = |linear_new| > l1 ? x / y : 0 → fp32Buf0
+    //   统一使用比较-选择语义（与 TF/np.where 一致：NaN 参与比较为假 → 输出 0），
+    //   不再用 Sign 算术门控（0·NaN=NaN 会使 NaN 输入传播到 var_out）。
+    //   CompareScalar/Select 要求 count*sizeof(float) 256B 对齐（64 元素倍数）：
+    //   尾块将计数向上取整到 64——多余 lane 读的是本 buffer 内未初始化数据，
+    //   计算逐 lane 独立，且 CopyOut 仅拷出 K 个元素，结果不受影响。
+    // ========================================================================
+    constexpr uint32_t kAlignElems = 256 / sizeof(float); // = 64
+    uint32_t uKSel = (uK + kAlignElems - 1) / kAlignElems * kAlignElems;
+
+    auto abs_z = buf6;                    // 复用 fp32Buf6
+    AscendC::Abs(abs_z, linear_fp32, uK); // |z| → buf6
+    AscendC::PipeBarrier<PIPE_ALL>();
+
+    auto div_buf = buf7; // 复用 fp32Buf7（sigma 已消费完毕）
+    AscendC::Div(div_buf, x_buf, y_buf, uK);
     AscendC::PipeBarrier<PIPE_ALL>();
 
     auto var_out = var_fp32; // 覆写 fp32Buf0
+    auto mask = cmpMaskBuf.AllocTensor<uint8_t>();
+    AscendC::CompareScalar(mask, abs_z, l1_, CMPMODE::GT, uKSel);
+    AscendC::PipeBarrier<PIPE_ALL>();
 
-    if (useArithmetic) {
-        // 算术方式：mask_float = max(|z| - l1, 0) > 0 ? 1.0 : 0.0
-        AscendC::Adds(abs_z, abs_z, -l1_, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-
-        auto tmp = buf7;
-        AscendC::Abs(tmp, abs_z, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::Add(abs_z, abs_z, tmp, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::Muls(abs_z, abs_z, 0.5f, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::Sign(abs_z, abs_z, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-
-        auto div_buf = buf7;
-        AscendC::Div(div_buf, x_buf, y_buf, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::Mul(var_out, abs_z, div_buf, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-    } else {
-        auto mask = cmpMaskBuf.AllocTensor<uint8_t>();
-        AscendC::CompareScalar(mask, abs_z, l1_, CMPMODE::GT, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-
-        auto div_buf = abs_z;
-        AscendC::Div(div_buf, x_buf, y_buf, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-
-        AscendC::Select(var_out, mask, div_buf, 0.0f, SELMODE::VSEL_TENSOR_SCALAR_MODE, uK);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        cmpMaskBuf.FreeTensor(mask);
-    }
+    AscendC::Select(var_out, mask, div_buf, 0.0f, SELMODE::VSEL_TENSOR_SCALAR_MODE, uKSel);
+    AscendC::PipeBarrier<PIPE_ALL>();
+    cmpMaskBuf.FreeTensor(mask);
 
     // ========================================================================
     // 写回准备：EnQue 输出
@@ -621,7 +602,7 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::CopyOut(int64_t progress, int64
 {
     AscendC::DataCopyExtParams copyParams{1, static_cast<uint32_t>(K * sizeof(T)), 0, 0, 0};
 
-    auto varOut   = inVarBuf.template DeQue<float>();
+    auto varOut = inVarBuf.template DeQue<float>();
     auto accumOut = inAccumBuf.template DeQue<float>();
     auto linearOut = inLinearBuf.template DeQue<float>();
 
@@ -631,7 +612,7 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::CopyOut(int64_t progress, int64
         AscendC::DataCopyPad(linearGM[progress * ubLength_], linearOut, copyParams);
     } else {
         // FP16/BF16 路径：Cast FP32 → T → 写回 GM (in-place 地址)
-        AscendC::PipeBarrier<PIPE_ALL>();  // 确保 DeQue FP32 数据可见
+        AscendC::PipeBarrier<PIPE_ALL>(); // 确保 DeQue FP32 数据可见
         auto vH = outVarHalf.AllocTensor<T>();
         auto aH = outAccumHalf.AllocTensor<T>();
         auto lH = outLinearHalf.AllocTensor<T>();
@@ -639,7 +620,7 @@ __aicore__ inline void ApplyFtrlV2<T, SCH_MODE>::CopyOut(int64_t progress, int64
         AscendC::Cast(vH, varOut, AscendC::RoundMode::CAST_ROUND, K);
         AscendC::Cast(aH, accumOut, AscendC::RoundMode::CAST_ROUND, K);
         AscendC::Cast(lH, linearOut, AscendC::RoundMode::CAST_ROUND, K);
-        AscendC::PipeBarrier<PIPE_ALL>();  // 确保 Cast 写入 half buffer 完成
+        AscendC::PipeBarrier<PIPE_ALL>(); // 确保 Cast 写入 half buffer 完成
 
         AscendC::DataCopyPad(varOutGM[progress * ubLength_], vH, copyParams);
         AscendC::DataCopyPad(accumGM[progress * ubLength_], aH, copyParams);

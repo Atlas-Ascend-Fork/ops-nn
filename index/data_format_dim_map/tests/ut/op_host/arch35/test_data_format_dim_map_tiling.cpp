@@ -44,6 +44,25 @@ static gert::TilingContextPara MakeTilingPara(std::initializer_list<int64_t> xSh
                                    tilingDataSize);
 }
 
+// Negative-case helper: 显式构造与输入 x 不一致的输出 y（dtype 或 shape 任一维度）
+static gert::TilingContextPara MakeTilingParaMismatchedY(std::initializer_list<int64_t> xShape,
+                                                         std::initializer_list<int64_t> yShape, ge::DataType xDtype,
+                                                         ge::DataType yDtype, const char* srcFormat,
+                                                         const char* dstFormat)
+{
+    gert::StorageShape xStorageShape = {xShape, xShape};
+    gert::StorageShape yStorageShape = {yShape, yShape};
+
+    std::vector<gert::TilingContextPara::TensorDescription> inputTensorDesc({{xStorageShape, xDtype, ge::FORMAT_ND}});
+    std::vector<gert::TilingContextPara::TensorDescription> outputTensorDesc({{yStorageShape, yDtype, ge::FORMAT_ND}});
+
+    std::vector<gert::TilingContextPara::OpAttr> attrs(
+        {{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string(srcFormat))},
+         {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string(dstFormat))}});
+
+    return gert::TilingContextPara(OP_NAME, inputTensorDesc, outputTensorDesc, attrs, &compileInfo, 20, 253952, 4096);
+}
+
 // Helper: build expected expanded table for verification
 static void BuildExpectedTable(const char* srcFormat, const char* dstFormat, int32_t* table, int32_t& formatLen)
 {
@@ -577,6 +596,33 @@ TEST_F(DataFormatDimMapTilingTest, test_invalid_format_partial_mismatch)
     auto para = MakeTilingPara({64}, ge::DT_INT32, "NHWC", "NCHX");
     TilingInfo tilingInfo;
     EXPECT_FALSE(ExecuteTiling(para, tilingInfo)) << "Should fail when dstFormat contains chars not in srcFormat";
+}
+
+// ============================================================================
+// P1: tiling 关口输出 y 一致性校验 —— 拦截 kernel 直调路径上 y 与 x 不一致的输入
+// ============================================================================
+
+// constraint_016 场景：x INT32 / y INT64 —— 修复前该组合静默产出错误数据（精度 20.04%）
+TEST_F(DataFormatDimMapTilingTest, test_reject_y_dtype_mismatch)
+{
+    auto para = MakeTilingParaMismatchedY({64}, {64}, ge::DT_INT32, ge::DT_INT64, "NHWC", "NCHW");
+    TilingInfo tilingInfo;
+    EXPECT_FALSE(ExecuteTiling(para, tilingInfo)) << "y dtype mismatch with x should be rejected at tiling gate";
+}
+
+TEST_F(DataFormatDimMapTilingTest, test_reject_y_shape_mismatch)
+{
+    auto para = MakeTilingParaMismatchedY({64}, {128}, ge::DT_INT32, ge::DT_INT32, "NHWC", "NCHW");
+    TilingInfo tilingInfo;
+    EXPECT_FALSE(ExecuteTiling(para, tilingInfo)) << "y shape mismatch with x should be rejected at tiling gate";
+}
+
+TEST_F(DataFormatDimMapTilingTest, test_reject_y_nonempty_while_x_empty)
+{
+    // x 空 tensor 而 y 非空：修复前该组合被放行且不写 y 即返回成功
+    auto para = MakeTilingParaMismatchedY({0}, {4}, ge::DT_INT32, ge::DT_INT32, "NHWC", "NCHW");
+    TilingInfo tilingInfo;
+    EXPECT_FALSE(ExecuteTiling(para, tilingInfo)) << "non-empty y with empty x should be rejected at tiling gate";
 }
 
 } // namespace DataFormatDimMapUT

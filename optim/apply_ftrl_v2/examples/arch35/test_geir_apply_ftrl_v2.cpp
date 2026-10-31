@@ -58,17 +58,28 @@ string GetTime()
 uint32_t GetDataTypeSize(DataType dt)
 {
     switch (dt) {
-        case ge::DT_FLOAT:   return 4;
-        case ge::DT_FLOAT16: return 2;
-        case ge::DT_BF16:    return 2;
-        case ge::DT_INT8:    return 1;
-        case ge::DT_INT16:   return 2;
-        case ge::DT_UINT16:  return 2;
-        case ge::DT_INT32:   return 4;
-        case ge::DT_UINT32:  return 4;
-        case ge::DT_INT64:   return 8;
-        case ge::DT_UINT64:  return 8;
-        default:             return 4;
+        case ge::DT_FLOAT:
+            return 4;
+        case ge::DT_FLOAT16:
+            return 2;
+        case ge::DT_BF16:
+            return 2;
+        case ge::DT_INT8:
+            return 1;
+        case ge::DT_INT16:
+            return 2;
+        case ge::DT_UINT16:
+            return 2;
+        case ge::DT_INT32:
+            return 4;
+        case ge::DT_UINT32:
+            return 4;
+        case ge::DT_INT64:
+            return 8;
+        case ge::DT_UINT64:
+            return 8;
+        default:
+            return 4;
     }
 }
 
@@ -76,10 +87,14 @@ int32_t GenFloat32Data(vector<int64_t> shapes, Tensor& tensor, TensorDesc& desc,
 {
     desc.SetRealDimCnt(shapes.size());
     size_t size = 1;
-    for (auto s : shapes) { size *= s; }
+    for (auto s : shapes) {
+        size *= s;
+    }
     uint32_t dataLen = size * sizeof(float);
     float* pData = new (std::nothrow) float[size];
-    for (size_t i = 0; i < size; ++i) { pData[i] = value; }
+    for (size_t i = 0; i < size; ++i) {
+        pData[i] = value;
+    }
     tensor = Tensor(desc, (uint8_t*)pData, dataLen);
     delete[] pData;
     return SUCCESS;
@@ -101,9 +116,12 @@ int32_t GenScalarConstData(Tensor& tensor, TensorDesc& desc, DataType dtype, flo
         uint32_t sign = (*fi >> 16) & 0x8000;
         uint32_t exp = ((*fi >> 23) & 0xFF) - 127 + 15;
         uint32_t mant = (*fi >> 13) & 0x3FF;
-        if (exp <= 0) v = sign;
-        else if (exp >= 31) v = sign | 0x7C00;
-        else v = sign | (exp << 10) | mant;
+        if (exp <= 0)
+            v = sign;
+        else if (exp >= 31)
+            v = sign | 0x7C00;
+        else
+            v = sign | (exp << 10) | mant;
         memcpy(pData, &v, sizeof(uint16_t));
     } else if (dtype == ge::DT_BF16) {
         // BF16 与 FP32 共享相同的 8-bit 指数（偏置 127），直接截断 FP32 低 16 位 mantissa
@@ -124,44 +142,51 @@ int32_t GenScalarConstData(Tensor& tensor, TensorDesc& desc, DataType dtype, flo
 int32_t WriteDataToFile(string binFile, uint64_t dataSize, uint8_t* data)
 {
     FILE* fp = fopen(binFile.c_str(), "w");
-    if (fp == nullptr) { return FAILED; }
+    if (fp == nullptr) {
+        return FAILED;
+    }
     fwrite(data, sizeof(uint8_t), dataSize, fp);
     fclose(fp);
     return SUCCESS;
 }
 
-#define ADD_TENSOR_INPUT(idx, inputName, inDtype, xShape, value, opInst)                          \
-    auto ph##idx = op::Data("placeholder" #idx).set_attr_index(idx - 1);                           \
-    TensorDesc ph##idx##Desc(ge::Shape(xShape), FORMAT_ND, inDtype);                               \
-    ph##idx##Desc.SetPlacement(ge::kPlacementHost);                                                \
-    Tensor t##idx;                                                                                 \
-    ret = GenFloat32Data(xShape, t##idx, ph##idx##Desc, value);                                    \
-    if (ret != SUCCESS) { LOG_PRINT("Gen " #inputName " data failed\n"); return FAILED; }             \
-    ph##idx.update_input_desc_x(ph##idx##Desc);                                                    \
-    ph##idx.update_output_desc_y(ph##idx##Desc);                                                   \
-    input.push_back(t##idx);                                                                       \
-    graph.AddOp(ph##idx);                                                                          \
-    opInst.set_input_##inputName(ph##idx);                                                         \
-    opInst.update_input_desc_##inputName(ph##idx##Desc);                                           \
+#define ADD_TENSOR_INPUT(idx, inputName, inDtype, xShape, value, opInst) \
+    auto ph##idx = op::Data("placeholder" #idx).set_attr_index(idx - 1); \
+    TensorDesc ph##idx##Desc(ge::Shape(xShape), FORMAT_ND, inDtype);     \
+    ph##idx##Desc.SetPlacement(ge::kPlacementHost);                      \
+    Tensor t##idx;                                                       \
+    ret = GenFloat32Data(xShape, t##idx, ph##idx##Desc, value);          \
+    if (ret != SUCCESS) {                                                \
+        LOG_PRINT("Gen " #inputName " data failed\n");                   \
+        return FAILED;                                                   \
+    }                                                                    \
+    ph##idx.update_input_desc_x(ph##idx##Desc);                          \
+    ph##idx.update_output_desc_y(ph##idx##Desc);                         \
+    input.push_back(t##idx);                                             \
+    graph.AddOp(ph##idx);                                                \
+    opInst.set_input_##inputName(ph##idx);                               \
+    opInst.update_input_desc_##inputName(ph##idx##Desc);                 \
     inputs.push_back(ph##idx)
 
-#define ADD_SCALAR_INPUT(idx, inputName, inDtype, scalarShape, value, opInst)                      \
-    auto ph##idx = op::Const("placeholder" #idx);                                                   \
-    TensorDesc ph##idx##Desc(ge::Shape(scalarShape), FORMAT_ND, inDtype);                           \
-    ph##idx##Desc.SetPlacement(ge::kPlacementHost);                                                \
-    Tensor t##idx;                                                                                 \
-    ret = GenScalarConstData(t##idx, ph##idx##Desc, inDtype, value);                               \
-    if (ret != SUCCESS) { LOG_PRINT("Gen " #inputName " data failed\n"); return FAILED; }             \
-    ph##idx.SetAttr("value", t##idx);                                                              \
-    ph##idx.update_output_desc_y(ph##idx##Desc);                                                   \
-    graph.AddOp(ph##idx);                                                                          \
-    opInst.set_input_##inputName(ph##idx);                                                         \
-    opInst.update_input_desc_##inputName(ph##idx##Desc);                                           \
+#define ADD_SCALAR_INPUT(idx, inputName, inDtype, scalarShape, value, opInst) \
+    auto ph##idx = op::Const("placeholder" #idx);                             \
+    TensorDesc ph##idx##Desc(ge::Shape(scalarShape), FORMAT_ND, inDtype);     \
+    ph##idx##Desc.SetPlacement(ge::kPlacementHost);                           \
+    Tensor t##idx;                                                            \
+    ret = GenScalarConstData(t##idx, ph##idx##Desc, inDtype, value);          \
+    if (ret != SUCCESS) {                                                     \
+        LOG_PRINT("Gen " #inputName " data failed\n");                        \
+        return FAILED;                                                        \
+    }                                                                         \
+    ph##idx.SetAttr("value", t##idx);                                         \
+    ph##idx.update_output_desc_y(ph##idx##Desc);                              \
+    graph.AddOp(ph##idx);                                                     \
+    opInst.set_input_##inputName(ph##idx);                                    \
+    opInst.update_input_desc_##inputName(ph##idx##Desc);                      \
     inputs.push_back(ph##idx)
 
-int CreateApplyFtrlV2Graph(
-    DataType inDtype, vector<ge::Tensor>& input, vector<Operator>& inputs,
-    vector<Operator>& outputs, Graph& graph)
+int CreateApplyFtrlV2Graph(DataType inDtype, vector<ge::Tensor>& input, vector<Operator>& inputs,
+                           vector<Operator>& outputs, Graph& graph)
 {
     Status ret = SUCCESS;
     auto applyFtrlV2 = op::ApplyFtrlV2("applyFtrlV2_1");
@@ -169,16 +194,16 @@ int CreateApplyFtrlV2Graph(
     vector<int64_t> xShape = {2, 30};
     vector<int64_t> scalarShape = {1};
 
-    ADD_TENSOR_INPUT(1, var,   inDtype, xShape, 1.0f, applyFtrlV2);
+    ADD_TENSOR_INPUT(1, var, inDtype, xShape, 1.0f, applyFtrlV2);
     ADD_TENSOR_INPUT(2, accum, inDtype, xShape, 1.0f, applyFtrlV2);
-    ADD_TENSOR_INPUT(3, linear,inDtype, xShape, 0.5f, applyFtrlV2);
-    ADD_TENSOR_INPUT(4, grad,  inDtype, xShape, 0.1f, applyFtrlV2);
+    ADD_TENSOR_INPUT(3, linear, inDtype, xShape, 0.5f, applyFtrlV2);
+    ADD_TENSOR_INPUT(4, grad, inDtype, xShape, 0.1f, applyFtrlV2);
 
-    ADD_SCALAR_INPUT(5, lr,           inDtype, scalarShape, 0.01f, applyFtrlV2);
-    ADD_SCALAR_INPUT(6, l1,           inDtype, scalarShape, 0.0f,  applyFtrlV2);
-    ADD_SCALAR_INPUT(7, l2,           inDtype, scalarShape, 0.0f,  applyFtrlV2);
-    ADD_SCALAR_INPUT(8, l2_shrinkage, inDtype, scalarShape, 0.0f,  applyFtrlV2);
-    ADD_SCALAR_INPUT(9, lr_power,     inDtype, scalarShape, -0.5f, applyFtrlV2);
+    ADD_SCALAR_INPUT(5, lr, inDtype, scalarShape, 0.01f, applyFtrlV2);
+    ADD_SCALAR_INPUT(6, l1, inDtype, scalarShape, 0.0f, applyFtrlV2);
+    ADD_SCALAR_INPUT(7, l2, inDtype, scalarShape, 0.0f, applyFtrlV2);
+    ADD_SCALAR_INPUT(8, l2_shrinkage, inDtype, scalarShape, 0.0f, applyFtrlV2);
+    ADD_SCALAR_INPUT(9, lr_power, inDtype, scalarShape, -0.5f, applyFtrlV2);
 
     TensorDesc outDesc(ge::Shape(xShape), FORMAT_ND, inDtype);
     applyFtrlV2.update_output_desc_var(outDesc);
@@ -194,9 +219,7 @@ int main(int argc, char* argv[])
     vector<ge::Tensor> input;
 
     LOG_PRINT("%s - INFO - Initialize GE\n", GetTime().c_str());
-    map<AscendString, AscendString> globalOptions = {
-        {"ge.exec.deviceId", "0"}
-    };
+    map<AscendString, AscendString> globalOptions = {{"ge.exec.deviceId", "0"}};
     Status ret = ge::GEInitialize(globalOptions);
     if (ret != SUCCESS) {
         LOG_PRINT("%s - ERROR - GEInitialize failed, ret=%d\n", GetTime().c_str(), (int)ret);
@@ -273,13 +296,15 @@ int main(int argc, char* argv[])
         uint32_t dataSize = shapeSize * GetDataTypeSize(output[i].GetTensorDesc().GetDataType());
         WriteDataToFile(file, dataSize, data);
         LOG_PRINT("=== %s (shape=%ld, dtype=%d) ===\n", outputNames[i], shapeSize,
-               (int)output[i].GetTensorDesc().GetDataType());
+                  (int)output[i].GetTensorDesc().GetDataType());
         if (output[i].GetTensorDesc().GetDataType() == DT_FLOAT && shapeSize > 0) {
             float* resultData = (float*)data;
             for (int64_t j = 0; j < shapeSize && j < 16; j++) {
                 LOG_PRINT("  [%ld] = %f\n", j, resultData[j]);
             }
-            if (shapeSize > 16) { LOG_PRINT("  ... (%ld more)\n", shapeSize - 16); }
+            if (shapeSize > 16) {
+                LOG_PRINT("  ... (%ld more)\n", shapeSize - 16);
+            }
         }
     }
 

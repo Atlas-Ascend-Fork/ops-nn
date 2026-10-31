@@ -127,7 +127,12 @@ __aicore__ inline void DataFormatDimMap<T>::Compute(int64_t currentNum)
     AscendC::LocalTensor<uint8_t> cmpLocal = cmpBuf.template Get<uint8_t>();
     AscendC::LocalTensor<float> resultLocal = resultBuf.template Get<float>();
 
-    int32_t count = static_cast<int32_t>(currentNum);
+    // Level-2 向量接口（Compares/Select）要求 count*sizeof(T) 为 256 字节整数倍；tiling 侧
+    // 已保证 ubFactor 按 64 元素对齐，向上对齐后的 count 不会越过缓冲区边界；仅 currentNum
+    // 个有效元素会被搬运，padding 泳道的计算结果不写出。
+    constexpr int64_t ALIGN_ELEM = 256 / static_cast<int64_t>(sizeof(float));
+    int64_t alignedNum = (currentNum + ALIGN_ELEM - 1) / ALIGN_ELEM * ALIGN_ELEM;
+    int32_t count = static_cast<int32_t>(alignedNum);
 
     // INT64 输入通过 int32 中转再到 float。算子语义为维度索引，取值范围 [-formatLen, formatLen)，
     // formatLen <= 5，恒不溢出 int32，因此该中转无精度损失。

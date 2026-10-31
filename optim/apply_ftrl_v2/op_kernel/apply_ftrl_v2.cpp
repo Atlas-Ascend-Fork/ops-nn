@@ -18,7 +18,9 @@
  *   all inputs -> all outputs -> workspace -> tiling
  *
  * DTYPE_X is injected by the framework per def.cpp dtype list (opFile path).
- * SCH_MODE is selected by numeric TilingKey: 0 = FP32 native, 1 = FP16/BF16 upcast.
+ * SCH_MODE is selected at compile time by SchModeTrait<DTYPE_VAR>
+ * (0 = FP32 native, 1 = FP16/BF16 upcast); no runtime TilingKey dispatch
+ * is used (the tiling function does not call SetTilingKey).
  *
  * fp16 / bf16 inputs are cast to fp32 inside the kernel template
  * (see arch35/apply_ftrl_v2.h Compute()) and cast back on output.
@@ -30,12 +32,11 @@
 // CPU UT 入口：保留单一非模板 extern "C" 符号，dtype 通过编译期宏
 // `DTYPE_VAR` 注入（见 tests/ut/op_kernel/CMakeLists.txt 的 `AddOpTestCase`）。
 // SCH_MODE 固化为 0 (FP32 直算)，因 UT 用例仅测 float。
-// 输出仅 var（in-place），accum/linear 直接写回输入地址。
-extern "C" __global__ __aicore__ void apply_ftrl_v2(
-    GM_ADDR var, GM_ADDR accum, GM_ADDR linear, GM_ADDR grad,
-    GM_ADDR lr, GM_ADDR l1, GM_ADDR l2, GM_ADDR l2_shrinkage, GM_ADDR lr_power,
-    GM_ADDR var_out,
-    GM_ADDR workspace, GM_ADDR tiling)
+// 输出仅 var（独立输出缓冲），accum/linear 由 kernel 直接写回输入地址。
+extern "C" __global__ __aicore__ void apply_ftrl_v2(GM_ADDR var, GM_ADDR accum, GM_ADDR linear, GM_ADDR grad,
+                                                    GM_ADDR lr, GM_ADDR l1, GM_ADDR l2, GM_ADDR l2_shrinkage,
+                                                    GM_ADDR lr_power, GM_ADDR var_out, GM_ADDR workspace,
+                                                    GM_ADDR tiling)
 {
     GET_TILING_DATA_WITH_STRUCT(ApplyFtrlV2TilingData, tilingData, tiling);
     NsApplyFtrlV2::ApplyFtrlV2<DTYPE_VAR, 0> op;
@@ -43,11 +44,10 @@ extern "C" __global__ __aicore__ void apply_ftrl_v2(
     op.Process();
 }
 #else
-extern "C" __global__ __aicore__ void apply_ftrl_v2(
-    GM_ADDR var, GM_ADDR accum, GM_ADDR linear, GM_ADDR grad,
-    GM_ADDR lr, GM_ADDR l1, GM_ADDR l2, GM_ADDR l2_shrinkage, GM_ADDR lr_power,
-    GM_ADDR var_out,
-    GM_ADDR workspace, GM_ADDR tiling)
+extern "C" __global__ __aicore__ void apply_ftrl_v2(GM_ADDR var, GM_ADDR accum, GM_ADDR linear, GM_ADDR grad,
+                                                    GM_ADDR lr, GM_ADDR l1, GM_ADDR l2, GM_ADDR l2_shrinkage,
+                                                    GM_ADDR lr_power, GM_ADDR var_out, GM_ADDR workspace,
+                                                    GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(ApplyFtrlV2TilingData);
     GET_TILING_DATA_WITH_STRUCT(ApplyFtrlV2TilingData, tilingData, tiling);

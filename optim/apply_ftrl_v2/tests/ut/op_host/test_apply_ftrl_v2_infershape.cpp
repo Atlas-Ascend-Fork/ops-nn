@@ -18,15 +18,9 @@
 
 class ApplyFtrlV2 : public testing::Test {
 protected:
-    static void SetUpTestCase()
-    {
-        std::cout << "ApplyFtrlV2 SetUp" << std::endl;
-    }
+    static void SetUpTestCase() { std::cout << "ApplyFtrlV2 SetUp" << std::endl; }
 
-    static void TearDownTestCase()
-    {
-        std::cout << "ApplyFtrlV2 TearDown" << std::endl;
-    }
+    static void TearDownTestCase() { std::cout << "ApplyFtrlV2 TearDown" << std::endl; }
 };
 
 TEST_F(ApplyFtrlV2, ApplyFtrlV2_infershape_3d_fp32)
@@ -45,12 +39,12 @@ TEST_F(ApplyFtrlV2, ApplyFtrlV2_infershape_3d_fp32)
     gert::StorageShape lrPowerShape = {{1}, {1}};
 
     auto holder = gert::InferShapeContextFaker()
-        .NodeIoNum(9, 1)
-        .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1})
-        .InputShapes({&varShape, &accumShape, &linearShape, &gradShape,
-                      &lrShape, &l1Shape, &l2Shape, &l2ShrinkageShape, &lrPowerShape})
-        .OutputShapes({&varShape})
-        .Build();
+                      .NodeIoNum(9, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&varShape, &accumShape, &linearShape, &gradShape, &lrShape, &l1Shape, &l2Shape,
+                                    &l2ShrinkageShape, &lrPowerShape})
+                      .OutputShapes({&varShape})
+                      .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
 }
@@ -71,12 +65,12 @@ TEST_F(ApplyFtrlV2, ApplyFtrlV2_infershape_2d_fp16)
     gert::StorageShape lrPowerShape = {{1}, {1}};
 
     auto holder = gert::InferShapeContextFaker()
-        .NodeIoNum(9, 1)
-        .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1})
-        .InputShapes({&varShape, &accumShape, &linearShape, &gradShape,
-                      &lrShape, &l1Shape, &l2Shape, &l2ShrinkageShape, &lrPowerShape})
-        .OutputShapes({&varShape})
-        .Build();
+                      .NodeIoNum(9, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&varShape, &accumShape, &linearShape, &gradShape, &lrShape, &l1Shape, &l2Shape,
+                                    &l2ShrinkageShape, &lrPowerShape})
+                      .OutputShapes({&varShape})
+                      .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
 }
@@ -97,12 +91,12 @@ TEST_F(ApplyFtrlV2, ApplyFtrlV2_infershape_1d_bf16)
     gert::StorageShape lrPowerShape = {{1}, {1}};
 
     auto holder = gert::InferShapeContextFaker()
-        .NodeIoNum(9, 1)
-        .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1})
-        .InputShapes({&varShape, &accumShape, &linearShape, &gradShape,
-                      &lrShape, &l1Shape, &l2Shape, &l2ShrinkageShape, &lrPowerShape})
-        .OutputShapes({&varShape})
-        .Build();
+                      .NodeIoNum(9, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&varShape, &accumShape, &linearShape, &gradShape, &lrShape, &l1Shape, &l2Shape,
+                                    &l2ShrinkageShape, &lrPowerShape})
+                      .OutputShapes({&varShape})
+                      .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
 }

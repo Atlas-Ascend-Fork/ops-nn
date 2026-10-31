@@ -88,6 +88,8 @@ int32_t GenTensorData(const vector<int64_t>& shapes, Tensor& input_tensor, Tenso
         data[i] = values[i];
     }
     input_tensor = Tensor(input_tensor_desc, reinterpret_cast<uint8_t*>(data), size * sizeof(T));
+    // Tensor 构造不接管调用方缓冲区所有权，此处释放本函数申请的主机内存
+    delete[] data;
     return SUCCESS;
 }
 
@@ -124,24 +126,24 @@ void SaveInputOutput(vector<ge::Tensor>& input, vector<ge::Tensor>& output)
     }
 }
 
-#define ADD_INPUT(input_index, input_name, input_dtype, input_shape, input_data)                                  \
-    do {                                                                                                          \
-        auto placeholder = op::Data("placeholder" + std::to_string(input_index)).set_attr_index((input_index)-1); \
-        TensorDesc desc(ge::Shape(input_shape), FORMAT_ND, input_dtype);                                          \
-        desc.SetPlacement(ge::kPlacementHost);                                                                    \
-        desc.SetFormat(FORMAT_ND);                                                                                \
-        Tensor tensor;                                                                                            \
-        ret = GenTensorData(input_shape, tensor, desc, input_data);                                               \
-        if (ret != SUCCESS) {                                                                                     \
-            printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                        \
-            return FAILED;                                                                                        \
-        }                                                                                                         \
-        placeholder.update_input_desc_x(desc);                                                                    \
-        placeholder.update_output_desc_y(desc);                                                                   \
-        input.push_back(tensor);                                                                                  \
-        graph.AddOp(placeholder);                                                                                 \
-        data_format_dim_map.set_input_##input_name(placeholder);                                                  \
-        inputs.push_back(placeholder);                                                                            \
+#define ADD_INPUT(input_index, input_name, input_dtype, input_shape, input_data)                                    \
+    do {                                                                                                            \
+        auto placeholder = op::Data("placeholder" + std::to_string(input_index)).set_attr_index((input_index) - 1); \
+        TensorDesc desc(ge::Shape(input_shape), FORMAT_ND, input_dtype);                                            \
+        desc.SetPlacement(ge::kPlacementHost);                                                                      \
+        desc.SetFormat(FORMAT_ND);                                                                                  \
+        Tensor tensor;                                                                                              \
+        ret = GenTensorData(input_shape, tensor, desc, input_data);                                                 \
+        if (ret != SUCCESS) {                                                                                       \
+            printf("%s - ERROR - [XIR]: Generate input data failed\n", GetTime().c_str());                          \
+            return FAILED;                                                                                          \
+        }                                                                                                           \
+        placeholder.update_input_desc_x(desc);                                                                      \
+        placeholder.update_output_desc_y(desc);                                                                     \
+        input.push_back(tensor);                                                                                    \
+        graph.AddOp(placeholder);                                                                                   \
+        data_format_dim_map.set_input_##input_name(placeholder);                                                    \
+        inputs.push_back(placeholder);                                                                              \
     } while (0)
 
 int CreateOppInGraph(std::vector<ge::Tensor>& input, std::vector<Operator>& inputs, std::vector<Operator>& outputs,

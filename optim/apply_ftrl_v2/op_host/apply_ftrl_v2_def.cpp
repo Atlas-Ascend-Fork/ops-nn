@@ -12,7 +12,9 @@
 
 /*!
  * \file apply_ftrl_v2_def.cpp
- * \brief ApplyFtrlV2 operator definition: 9 inputs (4 tensor + 5 scalar) + 3 outputs
+ * \brief ApplyFtrlV2 operator definition: 9 inputs (4 tensor + 5 scalar)
+ *        + 1 explicit output (var); accum/linear are updated in-place by
+ *        the kernel via their input addresses and are not exposed as outputs.
  */
 
 #include "register/op_def_registry.h"

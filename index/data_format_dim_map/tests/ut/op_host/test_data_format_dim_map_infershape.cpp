@@ -14,6 +14,7 @@
  */
 
 #include <iostream>
+#include <string>
 #include <gtest/gtest.h>
 #include "register/op_impl_registry.h"
 #include "kernel_run_context_facker.h"
@@ -42,6 +43,8 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_1d)
                       .NodeIoNum(1, 1)
                       .IrInputNum(1)
                       .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
                       .InputShapes({&x_shape})
                       .OutputShapes({&out_shape})
                       .Build();
@@ -64,6 +67,8 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_2d)
                       .NodeIoNum(1, 1)
                       .IrInputNum(1)
                       .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
                       .InputShapes({&x_shape})
                       .OutputShapes({&out_shape})
                       .Build();
@@ -87,6 +92,8 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_4d)
                       .NodeIoNum(1, 1)
                       .IrInputNum(1)
                       .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
                       .InputShapes({&x_shape})
                       .OutputShapes({&out_shape})
                       .Build();
@@ -112,6 +119,8 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_5d)
                       .NodeIoNum(1, 1)
                       .IrInputNum(1)
                       .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
                       .InputShapes({&x_shape})
                       .OutputShapes({&out_shape})
                       .Build();
@@ -133,6 +142,8 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_scalar)
                       .NodeIoNum(1, 1)
                       .IrInputNum(1)
                       .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
                       .InputShapes({&x_shape})
                       .OutputShapes({&out_shape})
                       .Build();
@@ -154,6 +165,8 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_int64)
                       .NodeIoNum(1, 1)
                       .IrInputNum(1)
                       .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
                       .InputShapes({&x_shape})
                       .OutputShapes({&out_shape})
                       .Build();
@@ -177,6 +190,8 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_large_ten
                       .NodeIoNum(1, 1)
                       .IrInputNum(1)
                       .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
                       .InputShapes({&x_shape})
                       .OutputShapes({&out_shape})
                       .Build();
@@ -200,6 +215,8 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_8d)
                       .NodeIoNum(1, 1)
                       .IrInputNum(1)
                       .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
                       .InputShapes({&x_shape})
                       .OutputShapes({&out_shape})
                       .Build();
@@ -207,4 +224,117 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_8d)
     auto context = holder.GetContext<gert::InferShapeContext>();
     EXPECT_EQ(infer_shape_func(context), ge::GRAPH_SUCCESS);
     EXPECT_EQ(context->GetOutputShape(0)->GetDimNum(), 8);
+}
+
+// ============================================================================
+// Rank limit and unknown rank handling
+// ============================================================================
+
+TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_9d_rejected)
+{
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("DataFormatDimMap"), nullptr);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("DataFormatDimMap")->infer_shape;
+    ASSERT_NE(infer_shape_func, nullptr);
+
+    gert::StorageShape x_shape = {{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}};
+    gert::StorageShape out_shape = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInputNum(1)
+                      .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
+                      .InputShapes({&x_shape})
+                      .OutputShapes({&out_shape})
+                      .Build();
+
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    EXPECT_EQ(infer_shape_func(context), ge::GRAPH_FAILED);
+}
+
+TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_unknown_rank)
+{
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("DataFormatDimMap"), nullptr);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("DataFormatDimMap")->infer_shape;
+    ASSERT_NE(infer_shape_func, nullptr);
+
+    // 未知 rank 标记 (-2)：输出同为未知 rank，返回成功
+    gert::StorageShape x_shape = {{-2}, {-2}};
+    gert::StorageShape out_shape = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInputNum(1)
+                      .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NHWC"))},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(std::string("NCHW"))}})
+                      .InputShapes({&x_shape})
+                      .OutputShapes({&out_shape})
+                      .Build();
+
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    EXPECT_EQ(infer_shape_func(context), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(context->GetOutputShape(0)->GetDimNum(), 1);
+    EXPECT_EQ(context->GetOutputShape(0)->GetDim(0), -2);
+}
+
+// ============================================================================
+// Format string validation at the InferShape gate
+// ============================================================================
+
+static void RunInferShapeWithAttrs(gert::StorageShape& xShape, ge::DataType dtype, const std::string& srcFormat,
+                                   const std::string& dstFormat, ge::graphStatus expectRet)
+{
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("DataFormatDimMap"), nullptr);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("DataFormatDimMap")->infer_shape;
+    ASSERT_NE(infer_shape_func, nullptr);
+
+    gert::StorageShape out_shape = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInputNum(1)
+                      .NodeInputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"src_format", Ops::NN::AnyValue::CreateFrom<std::string>(srcFormat)},
+                                  {"dst_format", Ops::NN::AnyValue::CreateFrom<std::string>(dstFormat)}})
+                      .InputShapes({&xShape})
+                      .OutputShapes({&out_shape})
+                      .Build();
+
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    EXPECT_EQ(infer_shape_func(context), expectRet);
+}
+
+TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_attr_len_too_long)
+{
+    gert::StorageShape x_shape = {{8}, {8}};
+    RunInferShapeWithAttrs(x_shape, ge::DT_INT32, "NCHWDN", "NCHWDN", ge::GRAPH_FAILED);
+}
+
+TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_attr_len_empty)
+{
+    gert::StorageShape x_shape = {{8}, {8}};
+    RunInferShapeWithAttrs(x_shape, ge::DT_INT32, "", "NCHW", ge::GRAPH_FAILED);
+}
+
+TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_attr_len_mismatch)
+{
+    gert::StorageShape x_shape = {{8}, {8}};
+    RunInferShapeWithAttrs(x_shape, ge::DT_INT32, "NC", "NCHWDN", ge::GRAPH_FAILED);
+}
+
+TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_attr_charset_mismatch)
+{
+    gert::StorageShape x_shape = {{8}, {8}};
+    RunInferShapeWithAttrs(x_shape, ge::DT_INT32, "N", "C", ge::GRAPH_FAILED);
+}
+
+TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_attr_duplicate_char)
+{
+    gert::StorageShape x_shape = {{8}, {8}};
+    RunInferShapeWithAttrs(x_shape, ge::DT_INT32, "NHHW", "NHWC", ge::GRAPH_FAILED);
+}
+
+TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_attr_valid_format)
+{
+    gert::StorageShape x_shape = {{8}, {8}};
+    RunInferShapeWithAttrs(x_shape, ge::DT_INT32, "NDHWC", "NCDHW", ge::GRAPH_SUCCESS);
 }

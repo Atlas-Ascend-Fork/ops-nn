@@ -14,12 +14,14 @@
  * \file apply_ftrl_v2_tiling_arch35.cpp
  * \brief ApplyFtrlV2 Host 侧 Tiling 实现 (arch35 / Ascend950)
  *
- * TilingKey 编码：0 = FP32 直算, 1 = FP16/BF16 升精度
- * dtype 由 def 文件驱动（DTYPE_X 宏），tiling_key 仅编码计算路径
+ * 计算路径（SCH_MODE 0=FP32 直算 / 1=FP16/BF16 升精度）由 kernel 入口按
+ * dtype 编译期实例化选择（SchModeTrait<DTYPE_VAR>），本 tiling 不设置
+ * TilingKey。
  */
 
 #include "register/op_def_registry.h"
 #include <graph/utils/type_utils.h>
+#include <string>
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/math_util.h"
 #include "op_common/op_host/util/platform_util.h"
@@ -47,7 +49,7 @@ constexpr size_t MAX_TENSOR_RANK = 8;                   // Tensor 最大支持�
 constexpr uint32_t FP32_BUF_COUNT = 8;         // 4 TQue 输入 + 4 TBuf 计算
 constexpr uint32_t HALF_IN_BUF_COUNT = 4;      // FP16/BF16 路径输入 half buffer
 constexpr uint32_t HALF_OUT_BUF_COUNT = 3;     // FP16/BF16 路径输出 half buffer
-constexpr uint32_t POWER_TMP_BUF_COUNT = 1;    // tmpPowerBuf（FP32）
+constexpr uint32_t POWER_TMP_BUF_COUNT = 3;    // Power 显式 sharedTmpBuffer：3 组 fp32（12B/元素）
 constexpr uint32_t CMP_MASK_BITS_PER_ELEM = 1; // bit-packed 比较掩码：每元素 1 bit
 
 constexpr uint32_t UB_UTILIZATION_NUM = 90; // UB 利用率上限分子（90%）
@@ -87,60 +89,131 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t* u
     return ge::GRAPH_SUCCESS;
 }
 
+// 9 路输入的注册名（日志按参数名上报，与 def.cpp 注册一致）
+static const char* const K_INPUT_NAMES[9] = {"var", "accum", "linear",       "grad",    "lr",
+                                             "l1",  "l2",    "l2_shrinkage", "lr_power"};
+
+static std::string ShapeToString(const gert::Shape& s)
+{
+    std::string str = "(";
+    for (size_t d = 0; d < s.GetDimNum(); d++) {
+        if (d > 0) {
+            str += ",";
+        }
+        str += std::to_string(s.GetDim(d));
+    }
+    str += ")";
+    return str;
+}
+
 // 获取 shape/dtype 信息
 static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* totalElements, ge::DataType* dataType)
 {
     auto inputVar = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputVar);
-    OP_CHECK_IF(inputVar->GetStorageShape().GetDimNum() > MAX_TENSOR_RANK,
-                OP_LOGE(context, "ApplyFtrlV2: var rank=%zu exceeds max supported rank %zu",
-                        inputVar->GetStorageShape().GetDimNum(), MAX_TENSOR_RANK),
-                return ge::GRAPH_FAILED);
+    if (inputVar->GetStorageShape().GetDimNum() > MAX_TENSOR_RANK) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "var",
+                                                 std::to_string(inputVar->GetStorageShape().GetDimNum()).c_str(),
+                                                 "rank exceeds the max supported rank 8");
+        return ge::GRAPH_FAILED;
+    }
     auto varShape = EnsureNotScalar(inputVar->GetStorageShape());
     *totalElements = varShape.GetShapeSize();
+
+    // 拒绝负元素总数（-1 未知维乘积或维度乘积溢出哨兵）与超出 uint32 安全表示范围的规模：
+    // TilingData 计数字段为 uint32，超限输入必须显式报错而非静默截断。
+    // 上界扣除 ELEM_ALIGN_FACTOR，保证后续 CeilAlign(total, 512) 不越过 uint32 边界。
+    if (*totalElements < 0) {
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "var",
+                                                  std::to_string(static_cast<long>(*totalElements)).c_str(),
+                                                  "negative shape product (unresolved dynamic dim or int64 overflow)");
+        return ge::GRAPH_FAILED;
+    }
+    constexpr int64_t MAX_TOTAL_ELEMENTS = 0xFFFFFFFFLL - static_cast<int64_t>(ELEM_ALIGN_FACTOR);
+    if (*totalElements > MAX_TOTAL_ELEMENTS) {
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            context->GetNodeName(), "var", std::to_string(static_cast<long>(*totalElements)).c_str(),
+            "exceeds the supported max totalElements 4294966784 (uint32 tiling counter limit)");
+        return ge::GRAPH_FAILED;
+    }
 
     auto inputDesc = context->GetInputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     *dataType = inputDesc->GetDataType();
 
     const std::set<ge::DataType> supportedDtypes = {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16};
-    OP_CHECK_IF(supportedDtypes.count(*dataType) == 0, OP_LOGE(context, "Unsupported dtype"), return ge::GRAPH_FAILED);
+    if (supportedDtypes.count(*dataType) == 0) {
+        OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "var",
+                                  ge::TypeUtils::DataTypeToSerialString(*dataType).c_str(), "float16, float, bfloat16");
+        return ge::GRAPH_FAILED;
+    }
 
     // 检查输入 dtype 一致性（var/accum/linear/grad/lr/l1/l2/l2_shrinkage/lr_power 必须同 dtype）
     for (size_t i = 1; i < 9; i++) {
         auto desc = context->GetInputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, desc);
         auto dt = desc->GetDataType();
-        OP_CHECK_IF(dt != *dataType,
-                    OP_LOGE(context, "ApplyFtrlV2: dtype mismatch, var=%s, input%zu=%s",
-                            ge::TypeUtils::DataTypeToSerialString(*dataType).c_str(), i,
-                            ge::TypeUtils::DataTypeToSerialString(dt).c_str()),
-                    return ge::GRAPH_FAILED);
+        if (dt != *dataType) {
+            std::string paramNames = std::string(K_INPUT_NAMES[i]) + " and var";
+            std::string incorrectDtypes = ge::TypeUtils::DataTypeToSerialString(dt) + " and " +
+                                          ge::TypeUtils::DataTypeToSerialString(*dataType);
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), paramNames.c_str(), incorrectDtypes.c_str(),
+                                                   "dtypes of all 9 inputs must be identical");
+            return ge::GRAPH_FAILED;
+        }
     }
 
-    // 检查 var/accum/linear/grad shape 一致性
+    // 检查 var/accum/linear/grad shape 一致性（逐维比较，防止同元素数不同布局混入；
+    // 日志携带两侧 shape 与首个不一致维度，便于直接定位）
     auto varOriginShape = inputVar->GetStorageShape();
+    auto varDimNum = varOriginShape.GetDimNum();
     for (size_t i = 1; i < 4; i++) {
         auto inputShape = context->GetInputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, inputShape);
-        OP_CHECK_IF(inputShape->GetStorageShape().GetDimNum() > MAX_TENSOR_RANK,
-                    OP_LOGE(context, "ApplyFtrlV2: input%zu rank=%zu exceeds max supported rank %zu", i,
-                            inputShape->GetStorageShape().GetDimNum(), MAX_TENSOR_RANK),
-                    return ge::GRAPH_FAILED);
         auto& s = inputShape->GetStorageShape();
-        OP_CHECK_IF(s.GetDimNum() != varOriginShape.GetDimNum() || s.GetShapeSize() != varOriginShape.GetShapeSize(),
-                    OP_LOGE(context, "ApplyFtrlV2: shape mismatch, var and input%zu", i), return ge::GRAPH_FAILED);
+        if (s.GetDimNum() > MAX_TENSOR_RANK) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), K_INPUT_NAMES[i],
+                                                     std::to_string(s.GetDimNum()).c_str(),
+                                                     "rank exceeds the max supported rank 8");
+            return ge::GRAPH_FAILED;
+        }
+        bool sameShape = (s.GetDimNum() == varDimNum);
+        size_t mismatchDim = varDimNum;
+        for (size_t d = 0; d < varDimNum && d < s.GetDimNum(); d++) {
+            if (s.GetDim(d) != varOriginShape.GetDim(d)) {
+                mismatchDim = d;
+                break;
+            }
+        }
+        if (!sameShape || mismatchDim < varDimNum) {
+            std::string reason = "shapes of var/accum/linear/grad must be identical; " + std::string(K_INPUT_NAMES[i]) +
+                                 " shape " + ShapeToString(s) + " vs var shape " + ShapeToString(varOriginShape);
+            if (sameShape) {
+                reason += ", first mismatched dim[" + std::to_string(mismatchDim) +
+                          "]: var=" + std::to_string(varOriginShape.GetDim(mismatchDim)) + ", " + K_INPUT_NAMES[i] +
+                          "=" + std::to_string(s.GetDim(mismatchDim));
+            }
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), (std::string(K_INPUT_NAMES[i]) + " and var").c_str(),
+                (ShapeToString(s) + " and " + ShapeToString(varOriginShape)).c_str(), reason.c_str());
+            return ge::GRAPH_FAILED;
+        }
     }
 
-    // 检查 lr/l1/l2/l2_shrinkage/lr_power 为 scalar（0-d 或 shapeSize<=1）
+    // 检查 lr/l1/l2/l2_shrinkage/lr_power 为标量：0-d 或恰好 1 个元素
+    // （与同仓 ApplyFtrl V1 的 CheckScalarShape 语义一致：0D 或 size==1）。
+    // 拒绝空标量（shape 含 0 元素，kernel 会越界读元素 0）与多元素张量
+    // （旧实现静默取元素 0、其余被忽略）；size==1 的任意 rank（如 [1,1]）
+    // kernel 取元素 0 结果正确，保持放行，不缩小既有支持范围。
     for (size_t i = 4; i < 9; i++) {
         auto inputShape = context->GetInputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, inputShape);
         auto& s = inputShape->GetStorageShape();
-        OP_CHECK_IF(s.GetShapeSize() != 1,
-                    OP_LOGE(context, "ApplyFtrlV2: input%zu must be scalar, but shapeSize=%ld", i,
-                            static_cast<int64_t>(s.GetShapeSize())),
-                    return ge::GRAPH_FAILED);
+        if (s.GetDimNum() != 0 && s.GetShapeSize() != 1) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), K_INPUT_NAMES[i], ShapeToString(s).c_str(),
+                                                  "must be a scalar (0-d or exactly 1 element)");
+            return ge::GRAPH_FAILED;
+        }
     }
 
     return ge::GRAPH_SUCCESS;
@@ -155,7 +228,7 @@ static ge::graphStatus GetWorkspaceSize(gert::TilingContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
-// UB 切分：计算 tileLength / ubFormer（先于多核切分，用于限制 blockFormer 上限）
+// UB 切分：计算 tileLength（单轮 UB 处理元素数，也是 blockFormer 的软上限参考）
 static void CalcUbTiling(uint64_t ubSize, uint32_t minDtypeBits, ge::DataType dataType, ApplyFtrlV2TilingData* tiling,
                          gert::TilingContext* context)
 {
@@ -176,10 +249,12 @@ static void CalcUbTiling(uint64_t ubSize, uint32_t minDtypeBits, ge::DataType da
         tiling->tileLength = alignFactor;
         OP_LOGW(context, "tileLength clamped to alignFactor=%u", alignFactor);
     }
-    tiling->ubFormer = tiling->tileLength;
 }
 
-// 多核切分：计算 blockFormer / blockNum / blockDim（blockFormer 上限 = tileLength，确保单 UB 循环）
+// 多核切分：计算 blockFormer / blockNum（blockDim）
+// blockNum 始终封顶在核数内（blockFormer ≥ ceil(total/calcCoreNum) ⇒
+// blockNum ≤ calcCoreNum ≤ coreNum）：超大张量由 kernel 按
+// ceil(blockLength / tileLength) 的多轮 UB 循环承接，禁止超核数 blockDim。
 static void CalcBlockTiling(int64_t totalElements, uint32_t minDtypeBits, int64_t coreNum,
                             ApplyFtrlV2TilingData* tiling)
 {
@@ -193,26 +268,9 @@ static void CalcBlockTiling(int64_t totalElements, uint32_t minDtypeBits, int64_
     tiling->blockFormer = CeilAlign(
         static_cast<int64_t>(CeilDiv(static_cast<int64_t>(totalElements), static_cast<int64_t>(calcCoreNum))),
         static_cast<int64_t>(ELEM_ALIGN_FACTOR));
-    if (tiling->blockFormer > tiling->tileLength) {
-        tiling->blockFormer = (tiling->tileLength / ELEM_ALIGN_FACTOR) * ELEM_ALIGN_FACTOR;
-        if (tiling->blockFormer == 0)
-            tiling->blockFormer = ELEM_ALIGN_FACTOR;
-    }
     tiling->blockNum = static_cast<uint32_t>(
         CeilDiv(static_cast<int64_t>(totalElements), static_cast<int64_t>(tiling->blockFormer)));
-    tiling->blockDim = tiling->blockNum;
-}
-
-// 循环次数计算：ubLoop / ubTail（former block & tail block）
-static void CalcUbLoops(int64_t totalElements, ApplyFtrlV2TilingData* tiling)
-{
-    tiling->ubLoopOfFormerBlock = CeilDiv(static_cast<int64_t>(tiling->blockFormer),
-                                          static_cast<int64_t>(tiling->ubFormer));
-    tiling->ubTailOfFormerBlock = tiling->blockFormer - (tiling->ubLoopOfFormerBlock - 1) * tiling->ubFormer;
-
-    uint32_t blockTail = static_cast<uint32_t>(totalElements) - (tiling->blockNum - 1) * tiling->blockFormer;
-    tiling->ubLoopOfTailBlock = CeilDiv(static_cast<int64_t>(blockTail), static_cast<int64_t>(tiling->ubFormer));
-    tiling->ubTailOfTailBlock = blockTail - (tiling->ubLoopOfTailBlock - 1) * tiling->ubFormer;
+    // blockFormer ≥ ceil(total/calcCoreNum) ⇒ blockNum ≤ calcCoreNum ≤ coreNum，数学恒成立，无需二次钳制
 }
 
 // Tiling 分发入口
@@ -243,8 +301,7 @@ static ge::graphStatus ApplyFtrlV2TilingFunc(gert::TilingContext* context)
                 OP_LOGE(context, "memset tiling error"), return ge::GRAPH_FAILED);
 
     // 5. dtype 相关参数
-    uint32_t dtypeSize = (dataType == ge::DT_FLOAT) ? BYTES_PER_FP32 : BYTES_PER_HALF;
-    uint32_t minDtypeBits = dtypeSize * BITS_PER_BYTE;
+    uint32_t minDtypeBits = ((dataType == ge::DT_FLOAT) ? BYTES_PER_FP32 : BYTES_PER_HALF) * BITS_PER_BYTE;
 
     // 空 Tensor 快速返回
     if (totalElements == 0) {
@@ -256,19 +313,14 @@ static ge::graphStatus ApplyFtrlV2TilingFunc(gert::TilingContext* context)
     // 6. UB 切分
     CalcUbTiling(ubSize, minDtypeBits, dataType, tiling, context);
 
-    // 7. 多核切分
+    // 7. 多核切分（blockNum 封顶核数，超大张量由 kernel 多轮 UB 循环承接）
     CalcBlockTiling(totalElements, minDtypeBits, coreNum, tiling);
 
-    // 8. 循环次数计算
-    CalcUbLoops(totalElements, tiling);
-
-    // 9. 标量参数（lr/l1/l2/l2_shrinkage/lr_power 由 kernel 从 GM_ADDR 读取，
-    //    tiling data 中保留字段但置 0，避免 tiling 阶段无法读 0-d tensor 数据）
+    // 8. 元素总数（负数/超上限已在 GetShapeAttrsInfo 中拒绝，此处可安全窄化）
     tiling->totalElements = static_cast<uint32_t>(totalElements);
-    tiling->dtypeSize = static_cast<uint8_t>(dtypeSize);
 
-    // 10. 设置 BlockDim 和 TilingKey
-    context->SetBlockDim(tiling->blockDim);
+    // 9. 设置 BlockDim（标量超参由 kernel 从 GM 读取，不经 TilingData 传递）
+    context->SetBlockDim(tiling->blockNum);
 
     return ge::GRAPH_SUCCESS;
 }
