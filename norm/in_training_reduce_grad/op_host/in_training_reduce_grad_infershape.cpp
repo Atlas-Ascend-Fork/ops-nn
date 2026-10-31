@@ -16,7 +16,7 @@
  *
  * pd_x.shape = x.shape（对齐 canndev runtime CopyShapeInput2OutputWithIdx），
  * 推导前按公开约束独立校验（InferShape 与 Tiling 双关口）：
- *   dy/x rank=4（NCHW/NHWC）、x 与 dy 同 shape、无零长维（含 H*W=0 空 Tensor）、
+ *   dy/x rank=4（NCHW/NHWC）、x 与 dy 同 shape、不支持任一维度为 0 的输入（含 H*W=0 空 Tensor）、
  *   通道张量（variance/mean/res_gamma/res_beta/gamma）符合 [N,C,1,1]/[N,1,1,C]、
  *   声明输出 shape 与推导结果一致；未知维（-1）与未知秩（-2）跳过对应比较。
  */
@@ -95,19 +95,6 @@ bool MatchesChannelPattern(const gert::Shape* param, const gert::Shape* dy)
     return false;
 }
 
-bool IsFullyKnown(const gert::Shape* shape)
-{
-    if (shape->GetDimNum() == 0) {
-        return false;
-    }
-    for (size_t i = 0; i < shape->GetDimNum(); ++i) {
-        if (!IsKnownDim(shape->GetDim(i))) {
-            return false;
-        }
-    }
-    return true;
-}
-
 } // namespace
 
 static ge::graphStatus InferShape4INTrainingReduceGrad(gert::InferShapeContext* context)
@@ -169,7 +156,12 @@ static ge::graphStatus InferShape4INTrainingReduceGrad(gert::InferShapeContext* 
         }
     }
 
-    if (!IsUnknownRank(xShape) && IsFullyKnown(pdXShape) && !KnownDimsEqual(pdXShape, xShape)) {
+    // 声明输出 shape 一致性校验：门控为「rank 已声明」（DimNum>0 且非 [-2]）——
+    // 部分未知但已知维冲突（如 pd_x=(2,-1,8,999) vs x=(2,4,8,34)）拒绝；
+    // 未预置（DimNum==0）或未知秩 [-2] 的声明输出跳过比较（合法透传语义）；
+    // KnownDimsEqual 对未知维（-1）按通配放行。
+    const bool pdRankDeclared = pdXShape->GetDimNum() != 0 && !IsUnknownRank(pdXShape);
+    if (!IsUnknownRank(xShape) && pdRankDeclared && !KnownDimsEqual(pdXShape, xShape)) {
         OP_LOGE(context->GetNodeName(), "Declared pd_x shape must be the same as x shape.");
         return ge::GRAPH_FAILED;
     }

@@ -13,6 +13,7 @@
 #include <iostream>
 #include "infershape_test_util.h"
 #include "ut_op_common.h"
+#include "op_common/log/log.h"
 #include "../../../op_graph/in_training_reduce_grad_proto.h"
 // ophost UT 只链接 tiling/infershape 静态库，不含 op_graph 编译产物；
 // InferDataType 注册（IMPL_OP）需随本用例 TU 编入，否则
@@ -28,7 +29,9 @@ protected:
 TEST_F(INTrainingReduceGradInferShape, infershape_case_0)
 {
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad"), nullptr);
-    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    ASSERT_NE(opImpl, nullptr); // impl 缺失时单用例失败，而非进程崩溃
+    auto inferShapeFunc = opImpl->infer_shape;
     ASSERT_NE(inferShapeFunc, nullptr);
 
     gert::StorageShape tensorShape = {{2, 4, 8, 8}, {2, 4, 8, 8}};
@@ -47,7 +50,9 @@ TEST_F(INTrainingReduceGradInferShape, infershape_case_0)
 
 TEST_F(INTrainingReduceGradInferShape, infershape_rank_4_nhwc)
 {
-    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    ASSERT_NE(opImpl, nullptr); // impl 缺失时单用例失败，而非进程崩溃
+    auto inferShapeFunc = opImpl->infer_shape;
     ASSERT_NE(inferShapeFunc, nullptr);
 
     gert::StorageShape tensorShape = {{2, 8, 8, 4}, {2, 8, 8, 4}};
@@ -66,7 +71,9 @@ TEST_F(INTrainingReduceGradInferShape, infershape_rank_4_nhwc)
 
 TEST_F(INTrainingReduceGradInferShape, infershape_unknown_rank_propagate)
 {
-    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    ASSERT_NE(opImpl, nullptr); // impl 缺失时单用例失败，而非进程崩溃
+    auto inferShapeFunc = opImpl->infer_shape;
     ASSERT_NE(inferShapeFunc, nullptr);
 
     gert::StorageShape unknownRankShape = {{ge::UNKNOWN_DIM_NUM}, {ge::UNKNOWN_DIM_NUM}};
@@ -85,7 +92,11 @@ TEST_F(INTrainingReduceGradInferShape, infershape_unknown_rank_propagate)
 static ge::graphStatus RunInferShape(gert::StorageShape& dyShape, gert::StorageShape& xShape,
                                      gert::StorageShape& channelShape, gert::StorageShape& outShape)
 {
-    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    if (opImpl == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto inferShapeFunc = opImpl->infer_shape;
     if (inferShapeFunc == nullptr) {
         return ge::GRAPH_FAILED;
     }
@@ -149,7 +160,9 @@ TEST_F(INTrainingReduceGradInferShape, infershape_reject_channel_crossmode_incon
 {
     // 五通道张量各自匹配某一模式（mean 为 NHWC 形态、其余为 NCHW 形态），
     // 但不存在使全部通道合法的单一张量形态，Host 关口必须拒绝
-    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    ASSERT_NE(opImpl, nullptr); // impl 缺失时单用例失败，而非进程崩溃
+    auto inferShapeFunc = opImpl->infer_shape;
     ASSERT_NE(inferShapeFunc, nullptr);
 
     gert::StorageShape tensorShape = {{2, 4, 8, 8}, {2, 4, 8, 8}};
@@ -177,7 +190,9 @@ TEST_F(INTrainingReduceGradInferShape, infershape_reject_channel_crossmode_incon
 
 TEST_F(INTrainingReduceGradInferShape, infershape_reject_declared_output_mismatch)
 {
-    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_shape;
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    ASSERT_NE(opImpl, nullptr); // impl 缺失时单用例失败，而非进程崩溃
+    auto inferShapeFunc = opImpl->infer_shape;
     ASSERT_NE(inferShapeFunc, nullptr);
 
     gert::StorageShape tensorShape = {{2, 4, 8, 8}, {2, 4, 8, 8}};
@@ -210,9 +225,73 @@ TEST_F(INTrainingReduceGradInferShape, infershape_reject_declared_output_mismatc
     ASSERT_EQ(inferShapeFunc(context2), ge::GRAPH_FAILED);
 }
 
+TEST_F(INTrainingReduceGradInferShape, infershape_declared_output_partial_unknown_conflict)
+{
+    // 门控为「rank 已声明」：部分未知但已知维冲突（999≠34）必须拒绝（检视 03 补漏）。
+    // 注：faker 的 OutputShapes() 为空实现（出参槽由 builder 独立分配），声明输出须
+    // 经 GetOutputShape(0) 写入；下方防别名断言锁定该语义——若 faker 行为变化导致
+    // 输出槽与输入别名，本用例将显式失败而非静默见证错误路径。
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    ASSERT_NE(opImpl, nullptr); // impl 缺失时单用例失败，而非进程崩溃（检视 P3）
+    auto inferShapeFunc = opImpl->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+
+    gert::StorageShape tensorShape = {{2, 4, 8, 34}, {2, 4, 8, 34}};
+    gert::StorageShape channelShape = {{2, 4, 1, 1}, {2, 4, 1, 1}};
+    gert::StorageShape outSlot = {{2, 4, 8, 34}, {2, 4, 8, 34}};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(7, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&tensorShape, &tensorShape, &channelShape, &channelShape, &channelShape,
+                                    &channelShape, &channelShape})
+                      .OutputShapes({&outSlot})
+                      .Build();
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    gert::Shape* outShape = context->GetOutputShape(0);
+    ASSERT_NE(outShape, nullptr);
+    *outShape = gert::Shape({2, -1, 8, 999});
+    // 防别名见证：写声明输出不得污染输入（否则后续断言的见证路径失效）
+    ASSERT_STREQ(Ops::Base::ToString(*context->GetInputShape(0)).c_str(), "[2, 4, 8, 34]");
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_FAILED);
+
+    // 通配一致（-1 对应维放行）仍通过
+    auto holder2 = gert::InferShapeContextFaker()
+                       .NodeIoNum(7, 1)
+                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                       .InputShapes({&tensorShape, &tensorShape, &channelShape, &channelShape, &channelShape,
+                                     &channelShape, &channelShape})
+                       .OutputShapes({&outSlot})
+                       .Build();
+    auto context2 = holder2.GetContext<gert::InferShapeContext>();
+    gert::Shape* outShape2 = context2->GetOutputShape(0);
+    ASSERT_NE(outShape2, nullptr);
+    *outShape2 = gert::Shape({2, -1, 8, 34});
+    ASSERT_STREQ(Ops::Base::ToString(*context2->GetInputShape(0)).c_str(), "[2, 4, 8, 34]");
+    ASSERT_EQ(inferShapeFunc(context2), ge::GRAPH_SUCCESS);
+
+    // 声明输出为未知秩 [-2] 跳过比较（合法透传语义，防字面修法回归）；
+    // dy 保持已知秩 [2,4,8,34]，SUCCESS 不经由 dy 未知秩早退分支
+    auto holder3 = gert::InferShapeContextFaker()
+                       .NodeIoNum(7, 1)
+                       .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                       .InputShapes({&tensorShape, &tensorShape, &channelShape, &channelShape, &channelShape,
+                                     &channelShape, &channelShape})
+                       .OutputShapes({&outSlot})
+                       .Build();
+    auto context3 = holder3.GetContext<gert::InferShapeContext>();
+    gert::Shape* outShape3 = context3->GetOutputShape(0);
+    ASSERT_NE(outShape3, nullptr);
+    *outShape3 = gert::Shape({-2});
+    ASSERT_STREQ(Ops::Base::ToString(*context3->GetInputShape(0)).c_str(), "[2, 4, 8, 34]");
+    ASSERT_EQ(inferShapeFunc(context3), ge::GRAPH_SUCCESS);
+}
+
 TEST_F(INTrainingReduceGradInferShape, inferdatatype_case_0)
 {
-    auto inferDataTypeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_datatype;
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    ASSERT_NE(opImpl, nullptr); // impl 缺失时单用例失败，而非进程崩溃
+    auto inferDataTypeFunc = opImpl->infer_datatype;
     ASSERT_NE(inferDataTypeFunc, nullptr);
 
     if (inferDataTypeFunc != nullptr) {
@@ -236,7 +315,11 @@ TEST_F(INTrainingReduceGradInferShape, inferdatatype_case_0)
 
 static ge::graphStatus RunInferDataType(const std::vector<ge::DataType>& inputDtypes, ge::DataType outDtype)
 {
-    auto inferDataTypeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_datatype;
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    if (opImpl == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto inferDataTypeFunc = opImpl->infer_datatype;
     if (inferDataTypeFunc == nullptr) {
         return ge::GRAPH_SUCCESS;
     }
@@ -254,7 +337,9 @@ static ge::graphStatus RunInferDataType(const std::vector<ge::DataType>& inputDt
 
 TEST_F(INTrainingReduceGradInferShape, inferdatatype_reject_invalid_dtype)
 {
-    auto inferDataTypeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad")->infer_datatype;
+    auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingReduceGrad");
+    ASSERT_NE(opImpl, nullptr); // impl 缺失时单用例失败，而非进程崩溃
+    auto inferDataTypeFunc = opImpl->infer_datatype;
 
     if (inferDataTypeFunc != nullptr) {
         const std::vector<ge::DataType> valid = {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT,

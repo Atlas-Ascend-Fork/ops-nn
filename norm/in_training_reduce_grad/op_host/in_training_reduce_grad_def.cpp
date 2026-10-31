@@ -16,7 +16,7 @@
  *
  * 7 输入 (dy, x: FP16/FP32; variance, mean, res_gamma, res_beta, gamma: FP32), 1 输出 (pd_x: 同 dy dtype)
  * 4 组 dtype+format 组合: fp16+NCHW, fp16+NHWC, fp32+NCHW, fp32+NHWC
- * 仅支持 ascend950 (arch35)
+ * 仅支持 ascend950/ascend350 (arch35，dav_3510 架构共享内核)
  */
 
 #include "register/op_def_registry.h"
@@ -68,6 +68,10 @@ public:
             .Format({ge::FORMAT_NCHW, ge::FORMAT_NHWC, ge::FORMAT_NCHW, ge::FORMAT_NHWC});
 
         OpAICoreConfig aicoreConfig;
+        // DynamicRankSupportFlag=true 表示编译期允许未知秩（[-2]）描述符注册与透传
+        // （二进制 shape:[-2]、InferShape 的 IsUnknownRank 透传分支，UT 见
+        // infershape_unknown_rank_propagate）；4D 仅为运行期约束（已知 rank≠4 时
+        // InferShape/Tiling 双关口拒绝），两者不矛盾。
         aicoreConfig.DynamicCompileStaticFlag(true)
             .DynamicFormatFlag(false)
             .DynamicRankSupportFlag(true)
