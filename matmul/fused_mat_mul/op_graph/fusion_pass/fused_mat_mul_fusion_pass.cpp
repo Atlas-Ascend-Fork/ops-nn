@@ -1268,9 +1268,9 @@ Status FusedMatMulFusionPass::Run(GraphPtr& graph, CustomPassContext& passContex
     return GRAPH_NOT_CHANGED;
 }
 
-#if GE_COMPILER_VERSION_NUM >= GE_COMPILER_TARGET_VERSION_NUM
-REG_FUSION_PASS(FusedMatMulFusionPass)
-    .Stage(IsTargetVersion() ? CustomPassStage::kCompatibleInherited : CustomPassStage::kAfterInferShape);
-#endif
+// #if GE_COMPILER_VERSION_NUM >= GE_COMPILER_TARGET_VERSION_NUM
+// REG_FUSION_PASS(FusedMatMulFusionPass)
+//     .Stage(IsTargetVersion() ? CustomPassStage::kCompatibleInherited : CustomPassStage::kAfterInferShape);
+// #endif
 
 } // namespace ops
