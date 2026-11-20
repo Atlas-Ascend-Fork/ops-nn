@@ -260,11 +260,16 @@ aclnnStatus aclnnSituGluGrad(
       <td>gradY, x, or out is a null pointer.</td>
     </tr>
     <tr>
-      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="5">161002</td>
+      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="2">161002</td>
       <td>The data type of gradY, x, or out is not supported.</td>
     </tr>
     <tr>
+      <td>The data type of gradY does not match that of x.</td>
+    </tr>
+    <tr>
+      <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="3">561002</td>
       <td>The shape dimension of gradY, x, or out is not supported.</td>
     </tr>
     <tr>
@@ -272,9 +277,6 @@ aclnnStatus aclnnSituGluGrad(
     </tr>
     <tr>
       <td>The number of dimensions of gradY is inconsistent with that of x, or the size of gradY along the dimension specified by dim is not half of that of x.</td>
-    </tr>
-    <tr>
-      <td>The data type of gradY does not match that of x.</td>
     </tr>
   </tbody></table>
 
