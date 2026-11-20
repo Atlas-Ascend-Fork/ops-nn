@@ -4575,10 +4575,20 @@
     <td>✓</td>
     <td>✗</td>
     <td>✓</td>
-    <td>AI Core</td>
-    <td>ApplyAdagrad是自适应梯度算法的核心更新操作，主要用于在优化器（如随机梯度下降）中更新模型参数。</td>
-  </tr>
+     <td>AI Core</td>
+     <td>ApplyAdagrad是自适应梯度算法的核心更新操作，主要用于在优化器（如随机梯度下降）中更新模型参数。</td>
+   </tr>
   <tr>
+    <td>optim</td>
+    <td><a href="../../optim/apply_adagrad/README.md">apply_adagrad</a></td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>AI Core</td>
+     <td>ApplyAdagrad自Ascend 950起由InplaceApplyAdagrad替代，当前仅保留GEIR原型与图推导；GEIR通路调用时经ApplyAdagradToInplaceFusionPass在图编译期改写为InplaceApplyAdagrad，实际调用InplaceApplyAdagrad的实现（tiling与AICore kernel复用）；其余产品由内置实现支持。</td>
+  </tr>
+   <tr>
     <td>optim</td>
     <td><a href="../../optim/inplace_apply_adagrad/README.md">inplace_apply_adagrad</a></td>
     <td>✓</td>
