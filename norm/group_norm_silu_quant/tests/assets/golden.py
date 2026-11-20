@@ -594,12 +594,6 @@ class GroupNormSiluQuantSpec:
     会被大面积误判为失败——实测新配额集 211 例里 26 例"失败"全部是 |diff|==1(最小那例 dump:
     32 个元素中 6 个差 1、最大 |diff|=1)。quant 标准的判定是 |out-golden|>1 才计错, 且 ptol 默认 0
     (一个都不许超), 既不放水也不误杀。
-
-    浮点输出(mean/rstd)声明 CANN 开源精度标准 `stat_rel_err`(mere < th 且 mare < 10*th, th 按 dtype 取
-    2^-8/2^-10/2^-13)。**不能沿用 TTK 默认的 isclose**:其 atol=1e-8 低于 fp32/bf16 在常见量级上的分辨率
-    (bf16 尾数仅 8 位, 1 ULP 的相对误差就有 ~0.4%), 等价于要求逐位相等。实测 case00603_rg(2,5120,7) bf16:
-    2560 个 mean 元素里 10 个不相等, **每一个都恰好差 1 ULP**(ULP 倍数 max=1.0000, 超 1 ULP 的 0 个)
-    —— 内核 fp32 累加后舍入到 bf16 与 torch 求和次序不同, 边界值差一格, 任何实现都做不到更好。
     """
 
     @staticmethod
@@ -631,9 +625,9 @@ class GroupNormSiluQuantSpec:
 
     tolerance = {
         "int8": {"standard": "quant"},
-        "float32": {"standard": "stat_rel_err"},
-        "float16": {"standard": "stat_rel_err"},
-        "bfloat16": {"standard": "stat_rel_err"},
+        "float32": {"standard": "cross_check", "level": "L1"},
+        "float16": {"standard": "cross_check", "level": "L1"},
+        "bfloat16": {"standard": "cross_check", "level": "L1"},
     }
 
     @staticmethod
@@ -664,7 +658,7 @@ class _AclnnCompose:
 class AclnnGroupNormSiluQuantSpec(GroupNormSiluQuantSpec):
     """aclnn 通路 Spec。
 
-    **与 kernel/geir Spec 的唯一差别是接参方式**:aclnn 通路 golden **按 aclnn 头文件的参数
+    aclnn 通路 golden **按 aclnn 头文件的参数
     位置**接位置参数, 而不是按 def.cpp 的名字。头文件顺序(docs/aclnnGroupNormSiluQuant.md:59-71):
 
         aclnnGroupNormSiluQuantGetWorkspaceSize(
@@ -673,10 +667,16 @@ class AclnnGroupNormSiluQuantSpec(GroupNormSiluQuantSpec):
             out, meanOut, rstdOut, ...)                      <- 3 个输出
 
     属性在 aclnn 侧叫 group/activateSilu, 在 def.cpp 侧叫 num_groups/activate_silu ——
-    `_ATTR_ALIAS` 两套都认, 所以判据与第三方标杆可以整份复用父类, 不另起一套(避免两边漂移)。
+    `_ATTR_ALIAS` 两套都认。
     """
 
     third_party = {"torch": _AclnnCompose}
+    tolerance = {
+        "int8": {"standard": "quant"},
+        "float32": {"standard": "cross_check", "level": "L1"},
+        "float16": {"standard": "cross_check", "level": "L1"},
+        "bfloat16": {"standard": "cross_check", "level": "L1"},
+    }
 
     @staticmethod
     def golden(self, gammaOptional, betaOptional, quantScale, *args, **kwargs):
@@ -688,9 +688,6 @@ class AclnnGroupNormSiluQuantSpec(GroupNormSiluQuantSpec):
             kwargs.setdefault("eps", pos[1])
         if len(pos) > 2:
             kwargs.setdefault("activate_silu", pos[2])
-        # aclnn 通路收 torch.Tensor 且本算子 tolerance(quant/stat_rel_err)不触发
-        # Promote: bf16 原样送达, _golden_impl 的 np.asarray 对 torch bf16 直接
-        # 抛 TypeError(实测 L0_002 GOLDEN_FAILURE), 入口先统一转 numpy
         return _golden_impl(
             _to_np(self),
             _to_np(gammaOptional),
