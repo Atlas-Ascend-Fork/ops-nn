@@ -120,6 +120,7 @@ ge::graphStatus DeformableConv2dTiling::RunBigKernelTiling()
     int32_t inputTensorNum = hasBias ? INPUT_TENSOR_NUM + 1 : INPUT_TENSOR_NUM;
     for (int i = 0; i < inputTensorNum; i++) {
         auto temp = tilingContext->GetInputDesc(i);
+        OP_CHECK_NULL_WITH_CONTEXT(tilingContext, temp);
         if (dataType == ge::DT_UNDEFINED) {
             dataType = temp->GetDataType();
         } else if (dataType != temp->GetDataType()) {
@@ -135,6 +136,7 @@ ge::graphStatus DeformableConv2dTiling::RunBigKernelTiling()
     // 预留workspace
     dataTypeSize = GetDataTypeSize();
     size_t* workspaces = tilingContext->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(tilingContext, workspaces);
     workspaces[0] = (n * outH * outW * kH * kW * inC) * dataTypeSize + WORK_SPACE_SIZE;
 
     auto compileInfo = static_cast<const DeformableConv2dCompileInfo*>(tilingContext->GetCompileInfo());
