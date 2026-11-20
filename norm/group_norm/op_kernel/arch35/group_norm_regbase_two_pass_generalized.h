@@ -118,7 +118,7 @@ private:
                                    static_cast<uint64_t>(i) * batchFactor;
                 uint64_t chanStart = gbStart % static_cast<uint64_t>(numGroups); // shapeD==1
                 spanSingle = chanStart + numPerCoreProcess <= static_cast<uint64_t>(shapeC);
-                degenerateBatch = slotsAligned && (spanSingle || BUFFER_NUM >= 2);
+                degenerateBatch = slotsAligned && (spanSingle || BUFFER_NUM > 1);
             }
             if (degenerateBatch) {
                 CopyX2UB<T1>(xGm[xGmOffset], xTensor[xUbOffset], 1, numPerCoreProcess);
@@ -619,7 +619,7 @@ private:
             if (totalBytes <= ubSize || batchFactor <= 1) {
                 break;
             }
-            batchFactor /= 2;
+            batchFactor /= HALF;
             int64_t maxBatchTmp = batchFactor < numPerCore ? batchFactor : numPerCore;
             maxBatch = maxBatchTmp < innerNumPerCore ? maxBatchTmp : innerNumPerCore;
         }

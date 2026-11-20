@@ -94,3 +94,25 @@ TEST_F(SwiGluTest, SwiGlu_infershape_diff_test_dynamic_input_negative_two)
     std::vector<int64_t> expected_output_shape = {-2};
     EXPECT_EQ(output_y_desc.GetShape().GetDims(), expected_output_shape);
 }
+
+TEST_F(SwiGluTest, SwiGlu_infershape_dim0_even_split_success)
+{
+    ge::op::SwiGlu op;
+    op.UpdateInputDesc("x", create_desc({4, 6}, ge::DT_FLOAT16));
+    op.SetAttr("dim", 0);
+    Runtime2TestParam param{{"dim"}, {}, {}};
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_SUCCESS);
+
+    auto output_y_desc = op.GetOutputDesc(0);
+    std::vector<int64_t> expected_output_shape = {2, 6};
+    EXPECT_EQ(output_y_desc.GetShape().GetDims(), expected_output_shape);
+}
+
+TEST_F(SwiGluTest, SwiGlu_infershape_dim0_odd_split_failed)
+{
+    ge::op::SwiGlu op;
+    op.UpdateInputDesc("x", create_desc({5, 3}, ge::DT_FLOAT16));
+    op.SetAttr("dim", 0);
+    Runtime2TestParam param{{"dim"}, {}, {}};
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+}

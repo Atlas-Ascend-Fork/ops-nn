@@ -52,6 +52,7 @@ constexpr size_t DEFAULT_WORKSPACE_SIZE = 0;
 const int64_t WORKSPACE_BUFFER = static_cast<int64_t>(16 * 1024 * 1024);
 
 const int64_t INPUT_OUTPUT_IDX = 0;
+const int64_t GLU_SPLIT_NUM = 2;
 const int64_t TILING_KEY_EMPTY = 100;
 
 template <typename T>
@@ -624,13 +625,13 @@ ge::graphStatus Tiling4SwiGlu(gert::TilingContext* context)
                 break;
             }
         }
-        int64_t expectedOutNum = inShape.GetShapeSize() / 2;
+        int64_t expectedOutNum = inShape.GetShapeSize() / GLU_SPLIT_NUM;
         if (!hasUnknownDim && outOriginShape.GetShapeSize() != expectedOutNum) {
-            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
-                context->GetNodeName(), "out, x",
-                (std::to_string(outOriginShape.GetShapeSize()) + ", " + std::to_string(inShape.GetShapeSize() / 2))
-                    .c_str(),
-                "The element count of out must be half of the element count of x");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "out, x",
+                                                   (std::to_string(outOriginShape.GetShapeSize()) + ", " +
+                                                    std::to_string(inShape.GetShapeSize() / GLU_SPLIT_NUM))
+                                                       .c_str(),
+                                                   "The element count of out must be half of the element count of x");
             return ge::GRAPH_FAILED;
         }
     }
