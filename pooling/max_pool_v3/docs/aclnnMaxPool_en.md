@@ -31,13 +31,13 @@ Performs max pooling on input tensors with dim=3 or dim=4.
   - When ceilMode=False, the formula for deriving the H and W dimensions of the output tensor shape:
 
     $$
-    [H_{out}, W_{out}]=[\lfloor{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - {dilation\_size \times(k_h - 1) - 1}}{s_h}}\rfloor + 1,\lfloor{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - {dilation\_size \times(k_w - 1) - 1}}{s_w}}\rfloor + 1]
+    [H_{out}, W_{out}]=[\lfloor{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - dilation\_size \times(k_h - 1) - 1}{s_h}}\rfloor + 1,\lfloor{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - dilation\_size \times(k_w - 1) - 1}{s_w}}\rfloor + 1]
     $$
 
   - When ceilMode is set to True, the derivation formula for the H and W dimensions in the shape of the out tensor is as follows:
 
     $$
-    [H_{out}, W_{out}]=[\lceil{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - {dilation\_size \times(k_h - 1) - 1}}{s_h}}\rceil + 1,\lceil{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - {dilation\_size \times(k_w - 1) - 1}}{s_w}}\rceil + 1]
+    [H_{out}, W_{out}]=[\lceil{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - dilation\_size \times(k_h - 1) - 1}{s_h}}\rceil + 1,\lceil{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - dilation\_size \times(k_w - 1) - 1}{s_w}}\rceil + 1]
     $$
 
     - When the top-left corner of the sliding window is on the bottom or right padding region or outside the boundary (no valid value can be obtained), the result of that sliding window is discarded, and the corresponding spatial axis shape is reduced by 1 based on the above derivation formula:

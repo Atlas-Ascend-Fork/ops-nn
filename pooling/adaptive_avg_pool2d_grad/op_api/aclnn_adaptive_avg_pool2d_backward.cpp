@@ -460,6 +460,24 @@ aclnnStatus aclnnAdaptiveAvgPool2dBackwardGetWorkspaceSize(const aclTensor* grad
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
     if (self->IsEmpty() || gradOutput->IsEmpty()) {
+        // gradOutput为空但out非空时，需要显式将out写0，保证输出确定性
+        if (!out->IsEmpty()) {
+            auto outContiguous = l0op::Contiguous(out, uniqueExecutor.get());
+            CHECK_RET(outContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            auto zeroScalar = uniqueExecutor->AllocScalar(0);
+            auto zeroTensor = uniqueExecutor->ConvertToTensor(zeroScalar, outContiguous->GetDataType());
+            CHECK_RET(zeroTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            auto fillShape = op::ToShapeVector(outContiguous->GetViewShape());
+            aclIntArray* shapeArray = uniqueExecutor->AllocIntArray(fillShape.data(), fillShape.size());
+            CHECK_RET(shapeArray != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            const aclTensor* dims = uniqueExecutor->ConvertToTensor(fillShape.data(), fillShape.size(),
+                                                                    op::DataType::DT_INT64);
+            CHECK_RET(dims != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            auto fillResult = l0op::Fill(dims, zeroTensor, shapeArray, uniqueExecutor.get());
+            CHECK_RET(fillResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            auto viewCopyResult = l0op::ViewCopy(fillResult, out, uniqueExecutor.get());
+            CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
         *workspaceSize = 0;
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;

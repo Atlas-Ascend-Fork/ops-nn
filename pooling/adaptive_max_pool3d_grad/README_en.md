@@ -53,7 +53,7 @@ English | [简体中文](./README.md)
       <td>argmax</td>
       <td>Input</td>
       <td>Input parameter for the AdaptiveMaxPool3DGrad computation. It denotes the index positions of the maximum elements in the forward input. The data format and shape are consistent with those of input parameter `grad`.</td>
-      <td>INT32</td>
+      <td>INT32 (Atlas A3 Training Series/Atlas A2 Training series support INT32 only; Ascend 950PR/Ascend 950DT support INT32 and INT64)</td>
       <td>NCDHW</td>
     </tr>
     <tr>

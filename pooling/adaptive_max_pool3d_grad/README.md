@@ -51,7 +51,7 @@
       <td>argmax</td>
       <td>输入</td>
       <td>待进行AdaptiveMaxPool3DGrad计算的入参。表示正向输入中最大元素的索引位置。数据格式、shape与入参`grad`的保持一致。</td>
-      <td>INT32</td>
+      <td>INT32（Atlas A3 训练系列产品/Atlas A2 训练系列产品仅支持INT32；Ascend 950PR/Ascend 950DT支持INT32、INT64）</td>
       <td>NCDHW</td>
     </tr>
     <tr>

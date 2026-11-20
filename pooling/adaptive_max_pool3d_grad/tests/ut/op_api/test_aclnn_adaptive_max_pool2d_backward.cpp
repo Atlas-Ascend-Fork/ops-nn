@@ -1,12 +1,11 @@
 /**
- * This program is free software, you can redistribute it and/or modify.
  * Copyright (c) 2025 Huawei Technologies Co., Ltd.
- * This file is a part of the CANN Open Software.
- * Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING
- * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
- * the software repository for the full text of the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include <vector>
 #include <array>
@@ -344,4 +343,46 @@ TEST_F(l2_adaptive_max_pool2d_backward_test, ascend910B2_4d_shape_over_range)
     uint64_t workspace_size = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// 空gradOutput场景：gradOutput为空但gradInput非空时，显式写0并返回成功
+TEST_F(l2_adaptive_max_pool2d_backward_test, ascend910B2_4d_empty_gradOutput)
+{
+    vector<int64_t> self_dims = {1, 1, 32, 16};
+    vector<int64_t> out_dims = {1, 1, 0, 16};
+    vector<int64_t> indices_dims = {1, 1, 0, 16};
+
+    auto tensor_gradOutput = TensorDesc(out_dims, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto tensor_self = TensorDesc(self_dims, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto indices_tensor_desc = TensorDesc(indices_dims, ACL_INT32, ACL_FORMAT_NCHW);
+    auto gradInput_tensor_desc = TensorDesc(self_dims, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto ut = OP_API_UT(aclnnAdaptiveMaxPool2dBackward, INPUT(tensor_gradOutput, tensor_self, indices_tensor_desc),
+                        OUTPUT(gradInput_tensor_desc));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+    EXPECT_EQ(workspace_size, 0);
+}
+
+// 空self场景：self为空时提前返回成功
+TEST_F(l2_adaptive_max_pool2d_backward_test, ascend910B2_4d_empty_self)
+{
+    vector<int64_t> self_dims = {1, 1, 0, 16};
+    vector<int64_t> out_dims = {1, 1, 0, 16};
+    vector<int64_t> indices_dims = {1, 1, 0, 16};
+
+    auto tensor_gradOutput = TensorDesc(out_dims, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto tensor_self = TensorDesc(self_dims, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto indices_tensor_desc = TensorDesc(indices_dims, ACL_INT32, ACL_FORMAT_NCHW);
+    auto gradInput_tensor_desc = TensorDesc(self_dims, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto ut = OP_API_UT(aclnnAdaptiveMaxPool2dBackward, INPUT(tensor_gradOutput, tensor_self, indices_tensor_desc),
+                        OUTPUT(gradInput_tensor_desc));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+    EXPECT_EQ(workspace_size, 0);
 }

@@ -13,6 +13,8 @@
 #include "pooling/common/op_api/max_pool3d_grad_with_argmax.h"
 #include "level0/unsqueeze.h"
 #include "level0/squeeze.h"
+#include "level0/fill.h"
+#include "opdev/fast_vector.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/transdata.h"
@@ -134,6 +136,24 @@ aclnnStatus aclnnAdaptiveMaxPool2dBackwardGetWorkspaceSize(const aclTensor* grad
     CHECK_RET(CheckSelfShapeSupport(self), ACLNN_ERR_PARAM_INVALID);
 
     if (gradOutput->IsEmpty() || self->IsEmpty() || indices->IsEmpty()) {
+        // 输入为空但gradInput非空时，需要显式将gradInput写0，保证输出确定性
+        if (!gradInput->IsEmpty()) {
+            auto gradInputContiguous = l0op::Contiguous(gradInput, uniqueExecutor.get());
+            CHECK_RET(gradInputContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            auto zeroScalar = uniqueExecutor->AllocScalar(0);
+            auto zeroTensor = uniqueExecutor->ConvertToTensor(zeroScalar, gradInputContiguous->GetDataType());
+            CHECK_RET(zeroTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            auto fillShape = op::ToShapeVector(gradInputContiguous->GetViewShape());
+            aclIntArray* shapeArray = uniqueExecutor->AllocIntArray(fillShape.data(), fillShape.size());
+            CHECK_RET(shapeArray != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            const aclTensor* dims = uniqueExecutor->ConvertToTensor(fillShape.data(), fillShape.size(),
+                                                                    op::DataType::DT_INT64);
+            CHECK_RET(dims != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            auto fillResult = l0op::Fill(dims, zeroTensor, shapeArray, uniqueExecutor.get());
+            CHECK_RET(fillResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            auto viewCopyResult = l0op::ViewCopy(fillResult, gradInput, uniqueExecutor.get());
+            CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
         *workspaceSize = 0;
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;

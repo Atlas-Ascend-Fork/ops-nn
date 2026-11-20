@@ -30,12 +30,12 @@ Backward propagation of forward max pooling [aclnnMaxPool2dWithIndices](../../ma
 - Derivation formula for input tensor:
   - When ceilMode is set to False, the derivation formula for the H and W dimensions in the shape of the indices tensor is as follows:
     $$
-    [H_{out}, W_{out}]=[\lfloor{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - {dilation\_size \times(k_h - 1) - 1}}{s_h}}\rfloor + 1,\lfloor{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - {dilation\_size \times(k_w - 1) - 1}}{s_w}}\rfloor + 1]
+    [H_{out}, W_{out}]=[\lfloor{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - dilation\_size \times(k_h - 1) - 1}{s_h}}\rfloor + 1,\lfloor{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - dilation\_size \times(k_w - 1) - 1}{s_w}}\rfloor + 1]
     $$
 
   - When ceilMode is set to True, the derivation formula for the H and W dimensions in the shape of the out tensor is as follows:
     $$
-    [H_{out}, W_{out}]=[\lceil{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - {dilation\_size \times(k_h - 1) - 1}}{s_h}}\rceil + 1,\lceil{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - {dilation\_size \times(k_w - 1) - 1}}{s_w}}\rceil + 1]
+    [H_{out}, W_{out}]=[\lceil{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - dilation\_size \times(k_h - 1) - 1}{s_h}}\rceil + 1,\lceil{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - dilation\_size \times(k_w - 1) - 1}{s_w}}\rceil + 1]
     $$
 
   - If the top-left starting position of a sliding window falls within the bottom or right padding area, or lies outside the image (where no valid value can be obtained), the result of that sliding window is discarded. In this case, the shape of the corresponding spatial axis is reduced by 1 based on the derivation formula above:

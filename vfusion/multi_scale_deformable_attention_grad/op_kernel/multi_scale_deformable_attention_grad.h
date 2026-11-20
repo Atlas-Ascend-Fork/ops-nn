@@ -444,6 +444,15 @@ private:
         levelStartId = offsetLocal.GetValue(level);
         h = shapesLocal.GetValue(level * TWO);
         w = shapesLocal.GetValue(level * TWO + 1);
+        if (h <= 0 || w <= 0 || levelStartId > numKeys ||
+            levelStartId + static_cast<uint64_t>(h) * static_cast<uint64_t>(w) > numKeys) {
+            ascendc_assert(false,
+                           "MSDA grad invalid spatial shape at level %u: H=%d, W=%d, levelStartId=%u, "
+                           "H*W=%d, numKeys=%u\n",
+                           level, h, w, levelStartId, h * w, numKeys);
+            Trap();
+            return;
+        }
         offsetGrad = batch * gradOutStride2 + nqloop * maxUbNum * gradOutStride1 + head * gradOutStride0;
         offsetWeight = batch * weightStride3 + head * weightStride2 + level * weightStride1 + point * weightStride0;
         offsetLocation = TWO * offsetWeight;
