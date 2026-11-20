@@ -53,16 +53,9 @@ except ImportError:  # pragma: no cover
 # ── 判据 tolerance ──
 # kernel/GEIR：浮点输出 cross_check L1（golden 自动 Promote：fp16/bf16→fp32、fp32→fp64）。
 _TOL = {
-    "float32": {"standard": "mix_tolerance"},
-    "float16": {"standard": "mix_tolerance"},
-    "bfloat16": {"standard": "mix_tolerance"},
-}
-
-# aclnn 通路三方免检 → 本机判（红线：TTK aclnn 三方 party down 会全假失败）。
-_TOL_LOCAL = {
-    "float32": {"standard": "mix_tolerance"},
-    "float16": {"standard": "mix_tolerance"},
-    "bfloat16": {"standard": "mix_tolerance"},
+    "float32": {"standard": "cross_check", "level": "L1"},
+    "float16": {"standard": "cross_check", "level": "L1"},
+    "bfloat16": {"standard": "cross_check", "level": "L1"},
 }
 
 _REDUCTION_STR_TO_CODE = {"none": 0, "mean": 1, "sum": 2}
@@ -182,7 +175,7 @@ class MseLossGradV2AclnnSpec:
 
     # 【预留】aclnn 通路三方：TTK 版本支持即自动生效，不生效也无副作用。
     third_party = {"torch": _TorchRef}
-    tolerance = _TOL_LOCAL
+    tolerance = _TOL
 
 
 class MseLossGradV2E2ESpec:
@@ -196,4 +189,4 @@ class MseLossGradV2E2ESpec:
         outs = _compute(self, target, grad_output, reduction)
         return outs
 
-    tolerance = _TOL_LOCAL
+    tolerance = _TOL
