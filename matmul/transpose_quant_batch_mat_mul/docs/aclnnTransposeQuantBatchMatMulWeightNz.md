@@ -128,7 +128,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>
           <ul>
             <li>MX量化场景：shape要求为(M, B, K/64, 2)。</li>
-            <li>Atlas A2/A3 的 INT8 W8A8 K-C：shape为[M, B]，数据类型为FLOAT32。</li>
+            <li>INT8 W8A8 K-C：shape为[M, B]，数据类型为FLOAT32。</li>
             <li>HIFP8量化场景：可选输入，若传入则shape要求为(1,)。</li>
           </ul>
         </td>
@@ -144,7 +144,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>
           <ul>
             <li>MX量化场景：permX2为[0, 1, 2]时，shape要求为(B, K/64, N, 2)；permX2为[0, 2, 1]时，shape要求为(B, N, K/64, 2)。</li>
-            <li>Atlas A2/A3 的 INT8 W8A8 K-C：shape为[B, N]，数据类型为FLOAT32，permX2仅支持[0, 1, 2]。</li>
+            <li>INT8 W8A8 K-C：shape为[B, N]，数据类型为FLOAT32，permX2仅支持[0, 1, 2]。</li>
             <li>HIFP8量化场景：shape要求为(N,)，元素为float32位模式（低32位有效），dtype按UINT64承载。</li>
           </ul>
         </td>
@@ -160,7 +160,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>
         <ul>
           <li>取值为1,表示输出矩阵类型为FLOAT16。</li>
-          <li>取值为27,表示输出矩阵类型为BFLOAT16。Atlas A2/A3 的 INT8 W8A8 仅支持该取值。</li>
+          <li>取值为27,表示输出矩阵类型为BFLOAT16。INT8 W8A8 仅支持该取值。</li>
           <li>取值为34,表示输出矩阵类型为HIFLOAT8（仅HIFP8量化场景支持，需用户自行按HIFLOAT8解析）。</li>
         </ul>
         </td>
@@ -188,7 +188,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>支持[1, 0, 2]。</td>
         <td>INT64</td>
         <td>-</td>
-        <td>1</td>
+        <td>元素个数3</td>
         <td>-</td>
       </tr>
       <tr>
@@ -200,7 +200,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         </td>
         <td>INT64</td>
         <td>-</td>
-        <td>1</td>
+        <td>元素个数3</td>
         <td>-</td>
       </tr>
       <tr>
@@ -210,7 +210,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>支持[1, 0, 2]。</td>
         <td>INT64</td>
         <td>-</td>
-        <td>1</td>
+        <td>元素个数3</td>
         <td>-</td>
       </tr>
       <tr>
@@ -280,7 +280,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的x1、x2、out、x1Scale、x2Scale、permX1、permX2、permY是空指针。</td>
+      <td>传入的x1、x2、out、x2Scale、permX1、permX2、permY是空指针；HIFP8量化场景下x1Scale允许为空指针，其他量化场景下x1Scale为空指针时报错。</td>
     </tr>
     <tr>
       <td rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
@@ -354,9 +354,11 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
 
 - 确定性说明： aclnnTransposeQuantBatchMatMulWeightNz默认确定性实现。
 
+<!-- npu="A3,910b" id7 -->
 - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：仅支持 INT8 W8A8 K-C。x1 为 INT8 ND，形状 [M, B, K]；x2 为 INT8 FRACTAL_NZ，逻辑形状 [B, K, N]。x1Scale、x2Scale 为 FLOAT32，x1Scale 为 [M, B]，x2Scale 为 [B, N]，y 为 BF16 [M, B, N]。permX1、permY 为 [1, 0, 2]，permX2 为 [0, 1, 2]。K 为 32 的倍数，N 为 16 的倍数，batchSplitFactor 为 1。A2 上 B*K 小于 65536。dtype 仅支持 27（BF16）。
+<!-- end id7 -->
 
-<!-- npu="950" id7 -->
+<!-- npu="950" id8 -->
 - <term>Ascend 950PR&950DT系列产品</term>：
   - x1只支持3维，x2只支持昇腾私有格式，调用此接口之前，必须完成x2从ND到昇腾私有格式的转换。
   - MX量化场景：K仅支持64的倍数。groupSize的groupSizeM和groupSizeN仅支持0或1，groupSizeK仅支持32。
@@ -369,7 +371,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
   groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32
   $$
 
-<!-- end id7 -->
+<!-- end id8 -->
 
 ## 调用示例
 

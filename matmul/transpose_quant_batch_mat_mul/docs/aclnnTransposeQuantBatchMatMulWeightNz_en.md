@@ -92,7 +92,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>First matrix of the matrix multiplication.</td>
         <td>          The data type must comply with the data type deduction rule with x2 (see <a href="../../../docs/en/context/deduction_relationship.md">deduction relationship</a> and <a href="#constraints">Constraints</a>).
         </td>
-        <td>FLOAT8_E4M3FN, FLOAT4_E2M1, INT8</td>
+        <td>FLOAT8_E4M3FN, FLOAT4_E2M1, HIFLOAT8, INT8</td>
         <td>ND</td>
         <td>3</td>
         <td>√</td>
@@ -106,7 +106,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
             <li>The k dimension of x2 must be of the same size as the K dimension of x1.</li>
         </ul>
         </td>
-        <td>FLOAT8_E4M3FN, FLOAT4_E2M1, INT8</td>
+        <td>FLOAT8_E4M3FN, FLOAT4_E2M1, HIFLOAT8, INT8</td>
         <td>NZ</td>
         <td>5</td>
         <td>√</td>
@@ -125,33 +125,42 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
       <td>x1Scale (aclTensor*)</td>
         <td>Input</td>
         <td>Represents the quantization scale of the left matrix.</td>
-        <td>          The shape must be (M, B, K/64, 2) in the MX scenario. For INT8 W8A8 K-C on Atlas A2/A3, the shape is [M, B] and the data type is FLOAT32.
+        <td>
+          <ul>
+            <li>MX scenario: the shape must be (M, B, K/64, 2).</li>
+            <li>INT8 W8A8 K-C scenario: the shape is [M, B] and the data type is FLOAT32.</li>
+            <li>HIFP8 scenario: optional input. If provided, the shape must be (1,).</li>
+          </ul>
         </td>
-        <td>FLOAT8_E8M0, FLOAT32</td>
+        <td>FLOAT8_E8M0, UINT64, FLOAT32</td>
         <td>ND</td>
-        <td>4 or 2</td>
+        <td>4, 2, or 1</td>
         <td>√</td>
       </tr>
       <tr>
       <td>x2Scale (aclTensor*)</td>
         <td>Input</td>
         <td>Represents the quantization scale of the right matrix.</td>
-        <td>          <li>If permX2 is [0, 1, 2], the shape must be (B, K/64, N, 2)</li>
-          <li>If permX2 is [0, 2, 1], the shape must be (B, N, K/64, 2)</li>
-          <li>For INT8 W8A8 K-C on Atlas A2/A3, the shape is [B, N], the data type is FLOAT32, and permX2 supports only [0, 1, 2].</li>
+        <td>
+          <ul>
+            <li>MX scenario: if permX2 is [0, 1, 2], the shape must be (B, K/64, N, 2); if permX2 is [0, 2, 1], the shape must be (B, N, K/64, 2).</li>
+            <li>INT8 W8A8 K-C scenario: the shape is [B, N], the data type is FLOAT32, and permX2 supports only [0, 1, 2].</li>
+            <li>HIFP8 scenario: the shape must be (N,). Each element is a float32 bit pattern in the lower 32 bits and is carried as UINT64.</li>
+          </ul>
         </td>
-        <td>FLOAT8_E8M0, FLOAT32</td>
+        <td>FLOAT8_E8M0, UINT64, FLOAT32</td>
         <td>ND</td>
-        <td>4 or 2</td>
+        <td>4, 2, or 1</td>
         <td>√</td>
       </tr>
       <tr>
         <td>dtype (int32_t)</td>
         <td>Input</td>
-        <td>Used to specify the data type of the output matrix. Supported values: 1 and 27.</td>
+        <td>Used to specify the data type of the output matrix. Supported values: 1, 27, and 34.</td>
         <td>        <ul>
           <li>If the value is 1, the output matrix type is FLOAT16.</li>
-          <li>If the value is 27, the output matrix type is BFLOAT16. INT8 W8A8 on Atlas A2/A3 supports only this value.</li>
+          <li>If the value is 27, the output matrix type is BFLOAT16. INT8 W8A8 supports only this value.</li>
+          <li>If the value is 34, the output matrix type is HIFLOAT8 (supported only in the HIFP8 scenario; the user must interpret the output as HIFLOAT8).</li>
         </ul>
         </td>
         <td>INT32</td>
@@ -176,7 +185,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>Supported: [1, 0, 2].</td>
         <td>INT64</td>
         <td>-</td>
-        <td>1</td>
+        <td>3 elements</td>
         <td>-</td>
       </tr>
       <tr>
@@ -187,7 +196,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         </td>
         <td>INT64</td>
         <td>-</td>
-        <td>1</td>
+        <td>3 elements</td>
         <td>-</td>
       </tr>
       <tr>
@@ -197,7 +206,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>Supported: [1, 0, 2].</td>
         <td>INT64</td>
         <td>-</td>
-        <td>1</td>
+        <td>3 elements</td>
         <td>-</td>
       </tr>
       <tr>
@@ -216,7 +225,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>Output matrix of the matrix multiplication, corresponding to out in the formula.</td>
         <td>        Empty tensors are not supported.
         </td>
-        <td>BFLOAT16, FLOAT16</td>
+        <td>BFLOAT16, FLOAT16, HIFLOAT8 (HIFP8 only)</td>
         <td>ND</td>
         <td>3</td>
         <td>√</td>
@@ -266,7 +275,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>The input x1, x2, out, x1Scale, x2Scale, permX1, permX2, or permY is a null pointer.</td>
+      <td>The input x1, x2, out, x2Scale, permX1, permX2, or permY is a null pointer. In the HIFP8 quantization scenario, x1Scale is allowed to be a null pointer; in other quantization scenarios, an error is reported when x1Scale is a null pointer.</td>
     </tr>
     <tr>
       <td rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
@@ -340,12 +349,15 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
 
 - Deterministic computation: aclnnTransposeQuantBatchMatMulWeightNz defaults to a deterministic implementation.
 
+<!-- npu="A3,910b" id7 -->
 - <term>Atlas A2 products</term>, <term>Atlas A3 products</term>: Only INT8 W8A8 K-C is supported. x1 is INT8 ND with shape [M, B, K]. x2 is INT8 FRACTAL_NZ with logical shape [B, K, N]. x1Scale and x2Scale are FLOAT32, x1Scale is [M, B], x2Scale is [B, N], and y is BF16 [M, B, N]. permX1 and permY are [1, 0, 2], and permX2 is [0, 1, 2]. K is a multiple of 32, N is a multiple of 16, and batchSplitFactor is 1. On A2, B*K must be less than 65536. dtype supports only 27 (BF16).
+<!-- end id7 -->
 
-<!-- npu="950" id7 -->
+<!-- npu="950" id8 -->
 - <term>Ascend 950PR&950DT products</term>:
   - x1 supports only 3 dimensions, and x2 supports only the Ascend proprietary format. Before calling this API, complete the conversion of x2 from ND format to the Ascend proprietary format.
-  - K supports only multiples of 64. groupSizeM and groupSizeN of groupSize support only 0 or 1, and groupSizeK supports only 32.
+  - MX scenario: K supports only multiples of 64. groupSizeM and groupSizeN of groupSize support only 0 or 1, and groupSizeK supports only 32.
+  - HIFP8 scenario: x1 and x2 are HIFLOAT8. x1Scale is optional (empty or (1,)). x2Scale is UINT64 with shape (N,). groupSize is 0, and K and N only need to be positive (no alignment requirement). When dtype is 34, the output is HIFLOAT8 (T-C scenario), and the user must interpret it as HIFLOAT8.
   - Constraints on groupSize:
     - Takes effect only in the MX quantization use case.
     - The passed-in groupSize is internally decomposed into groupSizeM, groupSizeN, and groupSizeK according to the following formula. If one or more of them is 0, groupSizeM, groupSizeN, and groupSizeK are reset based on the input shapes of x1/x2/x1Scale/x2Scale for computation. Principle: If groupSizeM=0, the quantization group value along the M dimension is inferred by the API. The inference formula is groupSizeM = M / scaleM (M must be divisible by scaleM), where M is the same as M in the x1 shape, and scaleM is the same as M in the x1Scale shape.
@@ -354,7 +366,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
   groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32
   $$
 
-<!-- end id7 -->
+<!-- end id8 -->
 
 ## Example
 

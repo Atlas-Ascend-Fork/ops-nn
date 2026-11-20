@@ -23,26 +23,25 @@
 
 ## 功能说明
 
-- 接口功能：完成张量x1与张量x2的量化矩阵乘计算，底层封装aclnnTransposeQuantBatchMatMul；当x2为FRACTAL_NZ格式时，封装aclnnTransposeQuantBatchMatMulWeightNz。该接口支持五种量化模式：**MX量化**（MXFP8与MXFP4）、**FP8量化**（K-C场景）、**HIFP8量化**、**HIFP4量化**、**INT8 W8A8 K-C**（仅 Atlas A2/A3）。
-- 五种量化模式说明：
+- 接口功能：完成张量x1与张量x2的量化矩阵乘计算，底层封装aclnnTransposeQuantBatchMatMul；当x2为FRACTAL_NZ格式时，封装aclnnTransposeQuantBatchMatMulWeightNz。该接口支持四种量化模式：**MX量化**（MXFP8与MXFP4）、**FP8量化**（K-C场景）、**HIFP8量化**、**INT8 W8A8 K-C**。
+- 四种量化模式说明：
 
   | 量化模式 | x1/x2数据类型 | x1_scale | x2_scale | K/N约束 |
   | --- | --- | --- | --- | --- |
   | MX | torch.float8_e4m3fn（MXFP8）或torch.uint8（MXFP4，x1_dtype/x2_dtype指定为float4_e2m1fn_x2） | torch.float8_e8m0fnu，4维 | torch.float8_e8m0fnu，4维 | K为64的倍数，N无限制 |
   | FP8（K-C） | torch.float8_e4m3fn与torch.float8_e5m2（可任意组合） | torch.float32，1维(M,) | torch.float32，1维(N,) | K=512，N=128 |
   | HIFP8 | torch.uint8（hifloat8存储，x1_dtype/x2_dtype指定为torch_npu.hifloat8） | 不传（None） | torch.uint64或torch.int64（按位解释，低32位为float32位模式），1维(N,)，per-channel FIXPIPE反量化缩放因子 | K、N无限制，均为正数 |
-  | HIFP4 | torch.uint8（hifloat4 4-bit拼包存储，x1_dtype/x2_dtype指定为hifloat4） | torch.float32（4字节，x1_scale_dtype指定为hifloat4_scale），4维 | torch.float32（4字节，x2_scale_dtype指定为hifloat4_scale），4维 | K为64的倍数；仅Ascend 960PR/DT、CANN 9.3.0+ |
-  | INT8 W8A8（K-C，仅 Atlas A2/A3） | torch.int8 | torch.float32，2维(M, B) | torch.float32，2维(B, N) | K为32的倍数，N为16的倍数；A2上B*K小于65536 |
+  | INT8 W8A8（K-C） | torch.int8 | torch.float32，2维(M, B) | torch.float32，2维(B, N) | K为32的倍数，N为16的倍数 |
 
 - 计算公式（以batch维的每个切片为例）：
 
   - MX量化：
 
     $$
-    y[m, n] = \sum_{j=0}^{K/32-1} \left(\left(\sum_{k=0}^{31} x1[m, j \times 32 + k] \cdot x2[j \times 32 + k, n]\right) \cdot x1Scale[m, j] \cdot x2Scale[j, n]\right)
+    y[m, n] = \sum_{j=0}^{K/64-1} \sum_{s=0}^{1} \left(\left(\sum_{k=0}^{31} x1[m, j \times 64 + s \times 32 + k] \cdot x2^{(p)}[j \times 64 + s \times 32 + k, n]\right) \cdot x1Scale[m, j, s] \cdot x2Scale^{(p)}[j, n, s]\right)
     $$
 
-    其中K为矩阵乘的K轴长度，x1Scale、x2Scale为torch.float8_e8m0fnu编码的MX量化缩放因子，矩阵乘中间结果按K轴每32个元素一组进行缩放累加。
+    其中K为矩阵乘的K轴长度，x1Scale、x2Scale为torch.float8_e8m0fnu编码的MX量化缩放因子，最后一维s取0或1，对应K/64组内两个32元素子块。$x2^{(p)}$ 和 $x2Scale^{(p)}$ 的索引按perm_x2取值：perm_x2为[0, 1, 2]时，$x2^{(p)}[j \times 64 + s \times 32 + k, n]$ 对应 $x2[j \times 64 + s \times 32 + k, n]$，$x2Scale^{(p)}[j, n, s]$ 对应 $x2Scale[j, n, s]$；perm_x2为[0, 2, 1]时，$x2^{(p)}[j \times 64 + s \times 32 + k, n]$ 对应 $x2[n, j \times 64 + s \times 32 + k]$，$x2Scale^{(p)}[j, n, s]$ 对应 $x2Scale[n, j, s]$。
 
   - FP8（K-C）量化：
 
@@ -58,21 +57,13 @@
 
     其中x1、x2为HIFLOAT8数据，x2Scale为Fixpipe per-channel 反量化缩放因子。
 
-  - INT8 W8A8（K-C，仅 Atlas A2/A3）：
+  - INT8 W8A8（K-C）：
 
     $$
     y[m, b, n] = \mathrm{bf16}\left(\mathrm{fp32}\left(\sum_{k} x1[m, b, k] \cdot x2[b, k, n]\right) \cdot x1Scale[m, b] \cdot x2Scale[b, n]\right)
     $$
 
     dtype 仅支持 27（torch.bfloat16）。perm_x2 仅支持 [0, 1, 2]。
-
-  - HIFP4量化：
-
-    $$
-    y[m, n] = \sum_{j=0}^{K/64-1} \left(\left(\sum_{k=0}^{63} x1[m, j \times 64 + k] \cdot x2[j \times 64 + k, n]\right) \cdot x1Scale[m, j] \cdot x2Scale[j, n]\right)
-    $$
-
-    其中K为矩阵乘的K轴长度，x1Scale/x2Scale为hifloat4_scale编码的三层缩放因子；仅支持Ascend 960PR/DT，K需为64的倍数。
 
 - 示例：假设x1的shape是(M, B, K)，x2的shape是(B, K, N)，输出y的shape是(M, B, N)。
 
@@ -105,13 +96,13 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
 | --- | --- | --- | --- | --- | --- |
 | x1 | Tensor | 必选 | 矩阵乘运算中的左矩阵，shape为(M, B, K)。MXFP4场景Tensor最后一维为FP4拼包后的物理长度K/2；HIFP8场景存储类型为torch.uint8，通过x1_dtype指定为HIFLOAT8。 | torch.float8_e4m3fn/torch.float8_e5m2/torch.int8；MXFP4、HIFP8场景为实际存储类型（如torch.uint8），并通过x1_dtype指定逻辑类型 | 3维，(M, B, K) |
 | x2 | Tensor | 必选 | 矩阵乘运算中的右矩阵，数据类型与x1一致，K轴长度与x1一致。perm_x2为[0, 1, 2]时shape为(B, K, N)；perm_x2为[0, 2, 1]时shape为(B, N, K)。MXFP4场景Tensor最后一维为FP4拼包后的物理长度（N/2或K/2）。 | 同x1 | 3维 |
-| dtype | int | 必选 | 输出y的数据类型枚举值：1表示torch.float16，27表示torch.bfloat16，34表示HIFLOAT8（仅T-C量化支持，torch侧以torch.uint8承载）。Atlas A2/A3 的 INT8 W8A8 仅支持 27。 | int64 | - |
+| dtype | int | 必选 | 输出y的数据类型枚举值：1表示torch.float16，27表示torch.bfloat16，34表示HIFLOAT8（仅T-C量化支持，torch侧以torch.uint8承载）。INT8 W8A8 仅支持 27。 | int64 | - |
 | bias | Tensor | 可选 | 矩阵乘运算后累加的偏置。预留参数，当前暂不支持，必须传入None。 | - | - |
 | x1_scale | Tensor | 可选 | x1的量化缩放因子。MX场景必选；FP8（K-C）场景必选，为per-token缩放因子；INT8 W8A8必选，shape为(M, B)；HIFP8场景不参与计算，传入None。 | MX：torch.float8_e8m0fnu；FP8、INT8 W8A8：torch.float32 | MX：4维，(M, B, K/64, 2)；FP8：1维，(M,)；INT8 W8A8：2维，(M, B) |
 | x2_scale | Tensor | 可选 | x2的量化缩放因子。MX场景必选；FP8（K-C）场景必选，为per-channel缩放因子；INT8 W8A8必选，shape为(B, N)；HIFP8场景必选，为per-channel FIXPIPE缩放因子。 | MX：torch.float8_e8m0fnu；FP8、INT8 W8A8：torch.float32；HIFP8：torch.uint64或torch.int64（按位解释为uint64） | MX：4维，perm_x2为[0, 1, 2]时为(B, K/64, N, 2)，perm_x2为[0, 2, 1]时为(B, N, K/64, 2)；FP8：1维，(N,)；INT8 W8A8：2维，(B, N)；HIFP8：1维，(N,) |
 | group_sizes | List[int] | 可选 | 量化分组大小[groupSizeM, groupSizeN, groupSizeK]，每个元素取值范围为[0, 65535]。MX量化场景groupSizeM和groupSizeN仅支持0或1（取值为0时由接口根据scale的shape推断），groupSizeK仅支持32；FP8（K-C）场景固定传[0, 0, 0]；HIFP8场景传[0, 0, 0]。 | int64 | - |
 | perm_x1 | List[int] | 可选 | x1的转置序列，仅支持[1, 0, 2]，默认值[1, 0, 2]。 | int64 | - |
-| perm_x2 | List[int] | 可选 | x2的转置序列，支持[0, 1, 2]和[0, 2, 1]，默认值[0, 1, 2]。FP8（K-C）与 Atlas A2/A3 的 INT8 W8A8 仅支持[0, 1, 2]。 | int64 | - |
+| perm_x2 | List[int] | 可选 | x2的转置序列，支持[0, 1, 2]和[0, 2, 1]，默认值[0, 1, 2]。FP8（K-C）与 INT8 W8A8 仅支持[0, 1, 2]。 | int64 | - |
 | perm_y | List[int] | 可选 | 输出矩阵的转置序列，仅支持[1, 0, 2]，默认值[1, 0, 2]。 | int64 | - |
 | batch_split_factor | int | 可选 | 输出矩阵B维的切分大小，当前仅支持取值1，默认值1。 | int64 | - |
 | x1_dtype | int | 可选 | x1的数据类型枚举值，不传入时根据x1的数据类型自动推导。MXFP4场景必须传入该参数指定为torch_npu.float4_e2m1fn_x2；HIFP8场景必须传入该参数指定为torch_npu.hifloat8。 | int64 | - |
@@ -119,7 +110,6 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
 | x1_scale_dtype | int | 可选 | x1_scale的数据类型枚举值，不传入时根据x1_scale的数据类型自动推导。 | int64 | - |
 | x2_scale_dtype | int | 可选 | x2_scale的数据类型枚举值，不传入时根据x2_scale的数据类型自动推导。 | int64 | - |
 
-> HIFP4 场景：x1/x2 以 torch.uint8 承载 4-bit 拼包数据，x1_dtype/x2_dtype 传 hifloat4；x1_scale/x2_scale 以 torch.float32 承载，x1_scale_dtype/x2_scale_dtype 传 hifloat4_scale；x1Scale shape 为 `(M, B, ceil(K/64), 1)`，x2Scale shape 在 perm_x2=[0,1,2] 时为 `(B, ceil(K/64), N, 1)`、perm_x2=[0,2,1] 时为 `(B, N, ceil(K/64), 1)`；输出仅支持 float16/bfloat16。
 
 ## 返回值说明
 
@@ -130,7 +120,7 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
 ## 约束说明
 
 - 该接口支持单算子模式和TorchAir图模式调用。
-- 图模式（TorchAir）下四种量化模式复用同一个GE Converter，按输入/scale数据类型自动分派：MXFP8（torch.float8_e4m3fn + torch.float8_e8m0fnu scale）与MXFP4（torch.uint8 + x1_dtype/x2_dtype指定float4_e2m1fn_x2 + torch.float8_e8m0fnu scale）可以在同一个图中同时使用；FP8（K-C，torch.float32 scale）、HIFP8（x1_dtype/x2_dtype指定hifloat8 + torch.uint64/int64 scale）与HIFP4（x1_dtype/x2_dtype指定hifloat4 + hifloat4_scale）同样由该Converter支持。图模式下MXFP4、HIFP8、HIFP4仍需传入x1_dtype/x2_dtype，其语义与单算子模式一致。
+- 图模式（TorchAir）下三种量化模式复用同一个GE Converter，按输入/scale数据类型自动分派：MXFP8（torch.float8_e4m3fn + torch.float8_e8m0fnu scale）与MXFP4（torch.uint8 + x1_dtype/x2_dtype指定float4_e2m1fn_x2 + torch.float8_e8m0fnu scale）可以在同一个图中同时使用；FP8（K-C，torch.float32 scale）与HIFP8（x1_dtype/x2_dtype指定hifloat8 + torch.uint64/int64 scale）同样由该Converter支持。图模式下MXFP4、HIFP8仍需传入x1_dtype/x2_dtype，其语义与单算子模式一致。图模式不含 INT8 W8A8 K-C，该模式仅支持单算子模式。
 - x1、x2必须是NPU Tensor；x1_scale、x2_scale按量化模式要求传入（见下文"各量化模式的差异化约束"）。
 - 仅支持3维Tensor：x1的shape为(M, B, K)，x2的shape为(B, K, N)或(B, N, K)，x1与x2的batch轴和K轴必须一致，不支持batch轴广播。
 - perm_x1仅支持[1, 0, 2]；perm_y仅支持[1, 0, 2]；perm_x2支持[0, 1, 2]和[0, 2, 1]（FP8（K-C）量化模式仅支持[0, 1, 2]）。
@@ -162,12 +152,15 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
   - x2支持FRACTAL_NZ格式（与MXFP8一致，x2的NZ转换为viewshape视角下shape不变，仅物理排布不同）。
   - dtype支持1（fp16）、27（bf16）、34（HIFLOAT8）；dtype=34（T-C）时输出HIFLOAT8，torch侧以torch.uint8承载，需自行按HIFLOAT8解析；x2是否NZ均支持。
   - group_sizes传[0, 0, 0]。
-- **INT8 W8A8（K-C，仅 Atlas A2/A3）**：
+<!-- npu="A3,910b" id7 -->
+- **INT8 W8A8（K-C）**：
+  - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>支持。
   - x1与x2的数据类型为torch.int8。
   - x1_scale、x2_scale的数据类型必须为torch.float32。x1_scale的shape为(M, B)，x2_scale的shape为(B, N)。
   - K为32的倍数，N为16的倍数。Atlas A2 上 B*K 小于 65536。
   - perm_x2仅支持[0, 1, 2]。batch_split_factor为1。bias必须为None。
   - dtype仅支持27（torch.bfloat16）。x2为FRACTAL_NZ时走WeightNz接口。
+<!-- end id7 -->
 
 ## 确定性计算
 

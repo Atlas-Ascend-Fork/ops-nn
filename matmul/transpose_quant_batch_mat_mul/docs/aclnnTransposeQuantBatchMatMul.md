@@ -92,7 +92,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
         <td>
           <ul>
             <li>数据类型需要与x2满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。</li>
-            <li>数据类型当前支持FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、HIFLOAT8；Atlas A2/A3 另支持 INT8。</li>
+            <li>数据类型当前支持FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、HIFLOAT8、INT8。</li>
           </ul>
         </td>
         <td>FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、HIFLOAT8、INT8</td>
@@ -108,7 +108,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
         <ul>
             <li>数据类型需要与x1满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。</li>
             <li>x2的k维度需要与x1的k维度大小相等。</li>
-            <li>数据类型当前支持FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、HIFLOAT8；Atlas A2/A3 另支持 INT8。</li>
+            <li>数据类型当前支持FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、HIFLOAT8、INT8。</li>
         </ul>
         </td>
         <td>FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、HIFLOAT8、INT8</td>
@@ -133,14 +133,14 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
         <td>
         <ul>
           <li>K-C量化场景，shape支持一维且需要等于[m]。</li>
-          <li>Atlas A2/A3 的 INT8 W8A8 K-C，shape为[M, B]。</li>
+          <li>INT8 W8A8 K-C场景，shape为[M, B]。</li>
           <li>MX量化场景，shape支持四维。</li>
           <li>T-C量化场景，shape支持为空，非空场景支持1维且需要等于[1]。</li>
         </ul>
         </td>
         <td>FLOAT32、FLOAT8_E8M0、UINT64、INT64</td>
         <td>ND</td>
-        <td>-</td>
+        <td>1、2、4或空</td>
         <td>√</td>
       </tr>
       <tr>
@@ -150,13 +150,13 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
         <td>
         <ul>
           <li>K-C、T-C量化场景，shape支持一维且需要等于[n]。</li>
-          <li>Atlas A2/A3 的 INT8 W8A8 K-C，shape为[B, N]。</li>
+          <li>INT8 W8A8 K-C场景，shape为[B, N]。</li>
           <li>MX量化场景，shape支持四维。</li>
         </ul>
         </td>
         <td>FLOAT32、FLOAT8_E8M0、UINT64、INT64</td>
         <td>ND</td>
-        <td>-</td>
+        <td>1、2或4</td>
         <td>√</td>
       </tr>
       <tr>
@@ -166,7 +166,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
         <td>
         <ul>
           <li>取值为1, 表示输出矩阵类型为FLOAT16。</li>
-          <li>取值为27, 表示输出矩阵类型为BFLOAT16。Atlas A2/A3 的 INT8 W8A8 仅支持该取值。</li>
+          <li>取值为27, 表示输出矩阵类型为BFLOAT16。INT8 W8A8 仅支持该取值。</li>
           <li>取值为34, 表示输出矩阵类型为HIFLOAT8(仅在T-C量化支持)。</li>
         </ul>
         </td>
@@ -194,7 +194,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
         <td>支持[1, 0, 2]。</td>
         <td>INT64</td>
         <td>-</td>
-        <td>1</td>
+        <td>元素个数3</td>
         <td>-</td>
       </tr>
       <tr>
@@ -209,7 +209,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
         </td>
         <td>INT64</td>
         <td>-</td>
-        <td>1</td>
+        <td>元素个数3</td>
         <td>-</td>
       </tr>
       <tr>
@@ -219,7 +219,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
         <td>支持[1, 0, 2]。</td>
         <td>INT64</td>
         <td>-</td>
-        <td>1</td>
+        <td>元素个数3</td>
         <td>-</td>
       </tr>
       <tr>
@@ -289,18 +289,21 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的x1、x2、out、x2Scale、permX1、permX2、permY是空指针；除T-C量化场景外，x1Scale是空指针。</td>
+      <td>传入的x1、x2、out、x2Scale、permX1、permX2、permY是空指针；T-C量化场景下x1Scale允许为空指针，其他量化场景下x1Scale为空指针时报错。</td>
     </tr>
     <tr>
-      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="5">161002</td>
+      <td rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="6">161002</td>
       <td>x1、x2、x1Scale、x2Scale或out的数据类型不在支持的范围内。</td>
     </tr>
     <tr>
       <td>x1、x2、x1Scale、x2Scale或out的shape不满足校验条件。</td>
     </tr>
     <tr>
-      <td>x1、x2、permX1、permX2、permY的维度大小不等于3。</td>
+      <td>x1、x2的维度大小不等于3。</td>
+    </tr>
+    <tr>
+      <td>permX1、permX2、permY的元素个数不等于3。</td>
     </tr>
     <tr>
       <td>batchSplitFactor不在支持的范围内。</td>
@@ -360,9 +363,11 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
 
 - 确定性说明： aclnnTransposeQuantBatchMatMul默认确定性实现。
 
+<!-- npu="A3,910b" id7 -->
 - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：仅支持 INT8 W8A8 K-C。x1、x2 为 INT8 ND，x1Scale、x2Scale 为 FLOAT32，y 为 BF16。x1 为 [M, B, K]，x2 为 [B, K, N]，x1Scale 为 [M, B]，x2Scale 为 [B, N]，y 为 [M, B, N]。permX1、permY 为 [1, 0, 2]，permX2 为 [0, 1, 2]。K 为 32 的倍数，N 为 16 的倍数，batchSplitFactor 为 1。A2 上 B*K 小于 65536。dtype 仅支持 27（BF16）。x2 为 FRACTAL_NZ 时走 [aclnnTransposeQuantBatchMatMulWeightNz](aclnnTransposeQuantBatchMatMulWeightNz.md)。
+<!-- end id7 -->
 
-<!-- npu="950" id7 -->
+<!-- npu="950" id8 -->
 - <term>Ascend 950PR&950DT系列产品</term>：
   - K-C[量化模式](../../../docs/zh/context/quant_mode_introduction.md)，K仅支持512，N仅支持128。x1Scale和x2Scale仅支持1维，并且x1Scale要求shape为(M,), x2Scale要求shape为(N,)，groupSize仅支持配置为0，其他取值不生效。x1/x2输入支持FLOAT8_E5M2、FLOAT8_E4M3FN两种类型，x1Scale/x2Scale仅支持FLOAT32类型。
   - MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)，支持MXFP8和MXFP4两种数据类型。K仅支持64的倍数。x1Scale和x2Scale仅支持4维，并且x1Scale要求shape为(M, B, K/64, 2)，当permX2为[0, 1, 2]时，x2Scale要求shape为(B, K/64, N, 2)；当permX2为[0, 2, 1]时，x2Scale要求shape为(B, N, K/64, 2)。groupSize的groupSizeM和groupSizeN仅支持0或1，groupSizeK仅支持32。x1/x2输入支持FLOAT8_E4M3FN、FLOAT4_E2M1数据类型，x1Scale/x2Scale仅支持FLOAT8_E8M0类型。
@@ -375,7 +380,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMul(
     groupSize = groupSizeK | groupSizeN << 16 | groupSizeM << 32
     $$
 
-<!-- end id7 -->
+<!-- end id8 -->
 
 ## 调用示例
 
