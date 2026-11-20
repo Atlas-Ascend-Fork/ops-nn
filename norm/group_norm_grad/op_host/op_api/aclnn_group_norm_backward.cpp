@@ -696,8 +696,17 @@ aclnnStatus aclnnGroupNormBackwardGetWorkspaceSize(const aclTensor* gradOut, con
     auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
     // 空tensor在kernel中支持，非91095场景
     if ((gradOut->IsEmpty() || input->IsEmpty()) && !Ops::NN::AclnnUtil::IsRegbase(npuArch)) {
-        // 根据实际支持情况补充
-        *workspaceSize = 0UL;
+        // 空输入(N=0等)时gradInput为空无需回写；gradGammaOut/gradBetaOut形状为[C]非空，空集求和结果为0，
+        // 需填充0后再返回，避免把未初始化显存留给调用方（与Regbase分支ComputeGroupNormBackwardEmptyInput行为对齐）
+        if ((*outputMask)[AXIS_ONE] && gradGammaOut != nullptr && !gradGammaOut->IsEmpty()) {
+            ret = op::ProcessEmptyTensorWithValue(gradGammaOut, 0, uniqueExecutor.get());
+            CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        }
+        if ((*outputMask)[AXIS_TWO] && gradBetaOut != nullptr && !gradBetaOut->IsEmpty()) {
+            ret = op::ProcessEmptyTensorWithValue(gradBetaOut, 0, uniqueExecutor.get());
+            CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        }
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
     }

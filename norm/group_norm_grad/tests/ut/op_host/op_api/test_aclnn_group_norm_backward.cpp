@@ -794,3 +794,31 @@ TEST_F(l2_group_norm_backward_test, Ascend950PR_9599_case_bfloat16_normal_4)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
     EXPECT_EQ(aclRet, ACL_SUCCESS);
 }
+
+// 空输入(N=0)时gradGammaOut/gradBetaOut形状为[C]非空，空集求和结果应为0：
+// 非Regbase平台走空输入早退分支，需对两个输出下发填0后返回成功，不应留未初始化显存
+TEST_F(l2_group_norm_backward_test, case_empty_input_dgamma_dbeta_fill_zero)
+{
+    const int64_t N = 0;
+    const int64_t C = 4;
+    const int64_t HxW = 4;
+    const int64_t group = 2;
+    auto grad_out_desc = TensorDesc({N, C, HxW}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto input_desc = TensorDesc({N, C, HxW}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gamma_desc = TensorDesc({C}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto mean_desc = TensorDesc({N, group}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto rstd_desc = TensorDesc({N, group}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto grad_input_desc = TensorDesc({N, C, HxW}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto dgamma_desc = TensorDesc({C}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto dbeta_desc = TensorDesc({C}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(
+        aclnnGroupNormBackward,
+        INPUT(grad_out_desc, input_desc, mean_desc, rstd_desc, gamma_desc, N, C, HxW, group, output_mask),
+        OUTPUT(grad_input_desc, dgamma_desc, dbeta_desc));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+}
