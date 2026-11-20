@@ -11,5 +11,5 @@
 
 # 手写 aclnn（ACLNNTYPE aclnn_exclude）+ arch35 tiling（950/350/960 共用）
 add_modules_sources(HOSTNAME ${OPHOST_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR} OPTYPE assert_async
-                    ACLNNTYPE aclnn_exclude COMPUTE_UNIT ascend950 ascend350 ascend960dt ascend960pr
-                    TILING_DIR arch35 arch35 arch35 arch35)
+                    ACLNNTYPE aclnn_exclude COMPUTE_UNIT dav_3510 dav_9201 dav_9202
+                    TILING_DIR arch35 arch35 arch35)
