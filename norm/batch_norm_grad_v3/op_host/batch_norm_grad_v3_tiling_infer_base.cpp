@@ -326,15 +326,14 @@ ge::graphStatus BatchNormGradV3InferBase::CheckInputValid()
                     (std::to_string(dyDimNum_) + " and " + std::to_string(dxDimNum_)).c_str(),
                     "The shape dims of dy and dx must be the same"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(
-        !(weightDimLen_ == runningVarDimLen_ && weightDimLen_ == fusedALen_),
-        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
-            context_->GetNodeName(), "weight, running_var and dy",
-            (std::to_string(dyDimNum_) + ", " + std::to_string(dxDimNum_) + " and " + std::to_string(dyDimNum_))
-                .c_str(),
-            "The number of elements of weight and running_var must be the same as the C-dimension of parameter dy, "
-            "where C is the 1st axis of dy"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!(weightDimLen_ == runningVarDimLen_ && weightDimLen_ == fusedALen_),
+                OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+                    context_->GetNodeName(), "weight, running_var and dy",
+                    ("(weight=" + std::to_string(weightDimLen_) + ", running_var=" + std::to_string(runningVarDimLen_) +
+                     ", dy channel=" + std::to_string(fusedALen_) + ")")
+                        .c_str(),
+                    "The lengths of weight and running_var must equal the channel dimension of dy"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

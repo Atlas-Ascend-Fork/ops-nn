@@ -103,6 +103,63 @@ static int GetEZCodeCount()
     return static_cast<int>(g_ezCodes.size());
 }
 
+static void ExpectChannelSizeDiagnostic(gert::StorageShape dataShape, ge::Format format, const char* soc,
+                                        const char* arch, bool training)
+{
+    SCOPED_TRACE(soc);
+    InitErrMgr();
+    gert::StorageShape weightShape = {{2}, {2}};
+    gert::StorageShape runningVarShape = {{4}, {4}};
+    gert::StorageShape channelShape = {{3}, {3}};
+    fe::PlatFormInfos platform;
+    ASSERT_TRUE(platform.Init());
+    std::map<std::string, std::string> version = {{"Short_SoC_version", soc}, {"NpuArch", arch}};
+    platform.SetPlatformRes("version", version);
+    optiling::BatchNormGradV3CompileInfo compileInfo = {};
+    auto data = gert::TilingData::CreateCap(4096);
+    auto workspace = gert::ContinuousVector::Create<size_t>(1);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("BatchNormGradV3")
+                      .NodeIoNum(7, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&dataShape, &dataShape, &weightShape, &channelShape, &runningVarShape,
+                                    &channelShape, &channelShape})
+                      .OutputShapes({&dataShape, &channelShape, &channelShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform))
+                      .NodeInputTd(0, ge::DT_FLOAT, format, format)
+                      .NodeInputTd(1, ge::DT_FLOAT, format, format)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, format, format)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"is_training", Ops::NN::AnyValue::CreateFrom<bool>(training)},
+                                  {"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-5F)}})
+                      .TilingData(data.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                      .Build();
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("BatchNormGradV3");
+    ASSERT_NE(impl, nullptr);
+    EXPECT_EQ(impl->tiling(holder.GetContext<gert::TilingContext>()), ge::GRAPH_FAILED);
+
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_STREQ(errors.front().error_id.get(), "EZ0016");
+    ASSERT_NE(errors.front().error_message, nullptr);
+    EXPECT_NE(std::string(errors.front().error_message.get()).find("(weight=2, running_var=4, dy channel=3)"),
+              std::string::npos);
+}
+
+TEST_F(BatchNormGradV3Tiling, reports_actual_channel_sizes_on_mismatch)
+{
+    ExpectChannelSizeDiagnostic({{2, 3, 4, 5}, {2, 3, 4, 5}}, ge::FORMAT_NCHW, "Ascend910B", "2201", true);
+    ExpectChannelSizeDiagnostic({{2, 4, 5, 3}, {2, 4, 5, 3}}, ge::FORMAT_NHWC, "Ascend950", "3510", false);
+}
+
 TEST_F(BatchNormGradV3Tiling, batch_norm_grad_v3_full_load_fp32)
 {
     gert::StorageShape dy_shape = {{4, 2048, 15, 15}, {4, 2048, 15, 15}};
