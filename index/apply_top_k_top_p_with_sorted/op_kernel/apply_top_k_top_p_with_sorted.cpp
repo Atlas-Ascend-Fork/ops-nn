@@ -15,6 +15,8 @@
 
 #if __CCE_AICORE__ == 200
 #include "arch20/apply_top_k_top_p_with_sorted.h"
+#include "apply_top_k_top_p_opt.h"
+using namespace ApplyTopKTopPOptOp;
 #else
 #include "apply_top_k_top_p_with_sorted.h"
 #include "apply_top_p_with_sorted.h"
@@ -53,6 +55,7 @@ extern "C" __global__ __aicore__ void apply_top_k_top_p_with_sorted(GM_ADDR sort
         op.InitTilingData(tilingData, sorted_value, sorted_indices, p, k, logits, out, workSpace);
         op.InitBuffer(&pipe);
         op.ProcessTopP();
+#endif
     } else if (TILING_KEY_IS(3)) {
         ApplyTopKTopPOptOp::ApplyTopKTopPOpt<DTYPE_OUT, float, DTYPE_OUT> op;
         op.InitTilingData(tilingData, sorted_value, sorted_indices, p, k, logits, out, workSpace);
@@ -68,6 +71,5 @@ extern "C" __global__ __aicore__ void apply_top_k_top_p_with_sorted(GM_ADDR sort
         op.InitTilingData(tilingData, sorted_value, sorted_indices, p, k, logits, out, workSpace);
         op.InitBuffer(&pipe);
         op.ProcessTopPOpt();
-#endif
     }
 }

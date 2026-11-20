@@ -84,6 +84,10 @@ struct ApplyTopKTopPWithSortedTilingTestParam {
     string case_name;
     ge::DataType fp_dtype = DT_FLOAT16;
     ge::DataType int_dtype = DT_FLOAT16;
+    // Empty means the optional logits input is absent, which keeps the operator on the scatter
+    // path. A non-empty shape makes the opt path reachable and exercises the 310P gate below.
+    std::initializer_list<int64_t> logits_shape;
+    const char* npu_arch = "";
 
     std::initializer_list<int64_t> sorted_value_shape;
     std::initializer_list<int64_t> sorted_indices_shape;
@@ -124,6 +128,8 @@ TEST_P(ApplyTopKTopPWithSortedTilingTest, test_case_apply_top_k_top_p_with_sorte
     gert::StorageShape p_shape = {param.p_shape, param.p_shape};
     gert::StorageShape k_shape = {param.k_shape, param.k_shape};
     gert::StorageShape out_shape = {param.out_shape, param.out_shape};
+    gert::StorageShape logits_shape = {param.logits_shape, param.logits_shape};
+    const bool hasLogits = param.logits_shape.size() != 0;
 
     string op_type("ApplyTopKTopPWithSorted");
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
@@ -162,6 +168,11 @@ TEST_P(ApplyTopKTopPWithSortedTilingTest, test_case_apply_top_k_top_p_with_sorte
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
                                                                                             intrinsics);
+    map<string, string> npuarchs;
+    if (param.npu_arch[0] != '\0') {
+        npuarchs = {{"NpuArch", param.npu_arch}};
+        kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", npuarchs);
+    }
     ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
     // tilingFunc simulate
@@ -170,21 +181,25 @@ TEST_P(ApplyTopKTopPWithSortedTilingTest, test_case_apply_top_k_top_p_with_sorte
     auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
     ASSERT_NE(tiling_data, nullptr);
 
-    auto holder = gert::TilingContextFaker()
-                      .NodeIoNum(4, 1)
-                      .IrInstanceNum({1, 1, 1, 1})
-                      .InputShapes({&sorted_value_shape, &sorted_indices_shape, &p_shape, &k_shape})
-                      .OutputShapes({&out_shape})
-                      .CompileInfo(&compile_info)
-                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
-                      .NodeInputTd(0, param.fp_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(1, param.int_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(2, param.fp_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(3, param.int_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(0, param.fp_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .TilingData(tiling_data.get())
-                      .Workspace(ws_size)
-                      .Build();
+    gert::TilingContextFaker faker;
+    faker.NodeIoNum(hasLogits ? 5 : 4, 1)
+        .IrInstanceNum(hasLogits ? std::vector<uint32_t>{1, 1, 1, 1, 1} : std::vector<uint32_t>{1, 1, 1, 1})
+        .CompileInfo(&compile_info)
+        .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+        .NodeInputTd(0, param.fp_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, param.int_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(2, param.fp_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(3, param.int_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(0, param.fp_dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .TilingData(tiling_data.get())
+        .Workspace(ws_size);
+    if (hasLogits) {
+        faker.InputShapes({&sorted_value_shape, &sorted_indices_shape, &p_shape, &k_shape, &logits_shape})
+            .NodeInputTd(4, param.fp_dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    } else {
+        faker.InputShapes({&sorted_value_shape, &sorted_indices_shape, &p_shape, &k_shape});
+    }
+    auto holder = faker.OutputShapes({&out_shape}).Build();
 
     gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
@@ -192,6 +207,9 @@ TEST_P(ApplyTopKTopPWithSortedTilingTest, test_case_apply_top_k_top_p_with_sorte
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    if (param.npu_arch[0] != '\0') {
+        holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", npuarchs);
+    }
 
     // workspaces nullptr return failed
     ResetErrorReports();
@@ -206,8 +224,12 @@ TEST_P(ApplyTopKTopPWithSortedTilingTest, test_case_apply_top_k_top_p_with_sorte
         ASSERT_EQ(tiling_key, param.expected_tiling_key);
         auto block_dim = tiling_context->GetBlockDim();
         ASSERT_EQ(block_dim, param.expected_block_dim);
-        auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-        ASSERT_EQ(tiling_data_result, param.expected_tiling_data);
+        // An empty expectation means the case only pins the tilingKey/blockDim, not the full
+        // tiling buffer.
+        if (!param.expected_tiling_data.empty()) {
+            auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
+            ASSERT_EQ(tiling_data_result, param.expected_tiling_data);
+        }
     }
 }
 
@@ -215,6 +237,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_float32_succ",
      ge::DT_FLOAT,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152064},
      {4, 152064},
      {4},
@@ -227,6 +251,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_float16_succ",
      ge::DT_FLOAT16,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152064},
      {4, 152064},
      {4},
@@ -239,6 +265,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_bfloat16_succ",
      ge::DT_BF16,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152064},
      {4, 152064},
      {4},
@@ -251,6 +279,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_sorted_value_one_dim_failed",
      ge::DT_FLOAT,
      ge::DT_INT32,
+     {},
+     "",
      {4},
      {4, 152064},
      {4},
@@ -263,6 +293,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_sorted_indices_one_dim_failed",
      ge::DT_FLOAT,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152064},
      {4},
      {4},
@@ -275,6 +307,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_p_two_dim_failed",
      ge::DT_FLOAT,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152064},
      {4, 152064},
      {4, 1},
@@ -287,6 +321,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_k_two_dim_failed",
      ge::DT_FLOAT,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152064},
      {4, 152064},
      {4},
@@ -299,6 +335,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_sorted_value_shape_not_equal_sorted_indices_shape_failed",
      ge::DT_FLOAT,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152061},
      {4, 152064},
      {4},
@@ -311,6 +349,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_p_shape_invalid_failed",
      ge::DT_FLOAT,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152064},
      {4, 152064},
      {3},
@@ -323,6 +363,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_k_shape_invalid_failed",
      ge::DT_FLOAT,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152064},
      {4, 152064},
      {4},
@@ -335,6 +377,8 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
     {"test_case_float32_topP_succ",
      ge::DT_FLOAT,
      ge::DT_INT32,
+     {},
+     "",
      {4, 152064},
      {4, 152064},
      {4},
@@ -344,6 +388,81 @@ static ApplyTopKTopPWithSortedTilingTestParam cases[] = {
      40,
      2,
      "4 152064 0 4 40 1024 1024 1024 1024 512 512 196608 18 0 "},
+    // --- opt path reachability on 310P ---
+    // With logits present the opt path is selected on architectures that support it.
+    {"test_case_float32_logits_opt_succ",
+     ge::DT_FLOAT,
+     ge::DT_INT32,
+     {4, 152064},
+     "",
+     {4, 152064},
+     {4, 152064},
+     {4},
+     {4},
+     {4, 152064},
+     ge::GRAPH_SUCCESS,
+     4,
+     3,
+     ""},
+    // 310P (DAV_2002) must reach the opt path too, as long as the vocabulary is block aligned.
+    {"test_case_310p_float32_logits_opt_succ",
+     ge::DT_FLOAT,
+     ge::DT_INT32,
+     {4, 152064},
+     "2002",
+     {4, 152064},
+     {4, 152064},
+     {4},
+     {4},
+     {4, 152064},
+     ge::GRAPH_SUCCESS,
+     4,
+     3,
+     ""},
+    {"test_case_310p_float16_logits_opt_succ",
+     ge::DT_FLOAT16,
+     ge::DT_INT32,
+     {4, 152064},
+     "2002",
+     {4, 152064},
+     {4, 152064},
+     {4},
+     {4},
+     {4, 152064},
+     ge::GRAPH_SUCCESS,
+     4,
+     3,
+     ""},
+    // A vocabulary that is not a multiple of the 32B block cannot be written with DataCopy on
+    // 310P, so the opt path must stay disabled and the scatter path (tilingKey 0) is used.
+    {"test_case_310p_float32_logits_vocab_unaligned_fallback",
+     ge::DT_FLOAT,
+     ge::DT_INT32,
+     {4, 152065},
+     "2002",
+     {4, 152065},
+     {4, 152065},
+     {4},
+     {4},
+     {4, 152065},
+     ge::GRAPH_SUCCESS,
+     40,
+     0,
+     ""},
+    {"test_case_310p_float16_logits_vocab_unaligned_fallback",
+     ge::DT_FLOAT16,
+     ge::DT_INT32,
+     {4, 152063},
+     "2002",
+     {4, 152063},
+     {4, 152063},
+     {4},
+     {4},
+     {4, 152063},
+     ge::GRAPH_SUCCESS,
+     40,
+     0,
+     ""},
 };
 
 INSTANTIATE_TEST_CASE_P(ApplyTopKTopPWithSorted, ApplyTopKTopPWithSortedTilingTest, testing::ValuesIn(cases));

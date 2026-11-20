@@ -26,6 +26,7 @@ constexpr uint32_t FLOAT_BYTES = 4;
 constexpr uint32_t SOFTMAX_UB_NUM = 2;
 constexpr uint32_t CMP_ALIGN_BYTES = 256;
 constexpr uint32_t SCATTER_PART_LENGTH = 1024;
+constexpr uint32_t COPY_CHUNK_BYTES = 16 * 1024;
 
 template <typename inputT, typename calT, typename outputT>
 class ApplyTopKTopPOpt {
@@ -55,6 +56,108 @@ private:
     __aicore__ inline void FillNegInfAndScatterTopK(int64_t batchGmBase, int64_t sortedBase, uint32_t kthStartIdx);
     __aicore__ inline uint32_t FindKthStartIdx(int64_t sortedBase, int32_t kValue);
     __aicore__ inline uint32_t CeilDiv(uint32_t x, uint32_t y) { return y == 0 ? x : (x + y - 1) / y; }
+
+    // 310P has no usable DataCopyPad (it writes zeros at runtime), so all copies go through plain
+    // DataCopy, which requires both sides to be 32B aligned. The Kogge-Stone prefix sum walks the
+    // GM buffer at offsets 1/2/4/... and at dataTail, so the address itself has to be inspected:
+    // aligned runs use DataCopy, misaligned ones fall back to scalar access.
+    template <typename T>
+    __aicore__ inline uint32_t MisalignElems(const GlobalTensor<T>& t)
+    {
+        return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(t.GetPhyAddr()) % BLOCK_BYTES) / sizeof(T);
+    }
+
+    template <typename T>
+    __aicore__ inline void SafeCopyIn(LocalTensor<T> dst, const GlobalTensor<T>& src, uint32_t count)
+    {
+#if __CCE_AICORE__ != 200
+        // Other architectures have a working DataCopyPad, which handles arbitrary lengths and
+        // offsets without the alignment workarounds below.
+        DataCopyPad(dst, src, {1, static_cast<uint32_t>(count * sizeof(T)), 0, 0, 0}, {false, 0, 0, 0});
+#else
+        constexpr uint32_t elemsPerBlock = BLOCK_BYTES / sizeof(T);
+        constexpr uint32_t maxElems = COPY_CHUNK_BYTES / sizeof(T);
+        uint32_t aligned = AscendC::AlignUp(count, elemsPerBlock);
+        if (MisalignElems(src) == 0) {
+            for (uint32_t off = 0; off < aligned; off += maxElems) {
+                uint32_t len = (aligned - off) < maxElems ? (aligned - off) : maxElems;
+                DataCopy(dst[off], src[off], len);
+            }
+            return;
+        }
+        PipeBarrier<PIPE_ALL>();
+        for (uint32_t i = 0; i < count; i++) {
+            dst.SetValue(i, src.GetValue(i));
+        }
+        PipeBarrier<PIPE_ALL>();
+#endif
+    }
+
+    // Partial 32B block write: read the whole block, overlay `len` elements, write it back. Both
+    // DataCopy operands must be 32B aligned, so the read starts at the enclosing block boundary,
+    // which is `back` elements before `dst`. Going through MTE2/MTE3 keeps every GM access
+    // vectorised: scalar SetValue writes would land in the per-core data cache, and a
+    // clean+invalidate of a line shared with another core would overwrite that core's output.
+    template <typename T>
+    __aicore__ inline void RmwBlock(GlobalTensor<T> dst, uint32_t back, LocalTensor<T> src, uint32_t srcOff,
+                                    uint32_t dstOff, uint32_t len)
+    {
+        constexpr uint32_t elemsPerBlock = BLOCK_BYTES / sizeof(T);
+        LocalTensor<T> stage = rmwStage.template ReinterpretCast<T>();
+        GlobalTensor<T> block;
+        uintptr_t blockAddr = reinterpret_cast<uintptr_t>(dst.GetPhyAddr()) - back * sizeof(T);
+        block.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(blockAddr), elemsPerBlock);
+        MTE3ToMTE2Sync();
+        DataCopy(stage, block, elemsPerBlock);
+        MTE2ToSSync();
+        for (uint32_t i = 0; i < len; i++) {
+            stage.SetValue(dstOff + i, src.GetValue(srcOff + i));
+        }
+        SToMTE3Sync();
+        DataCopy(block, stage, elemsPerBlock);
+        MTE3ToMTE2Sync();
+    }
+
+    // DataCopy requires both sides to be 32B aligned. The leading and trailing partial blocks are
+    // written with a 32B read-modify-write; only whole blocks in between go through DataCopy.
+    template <typename T>
+    __aicore__ inline void SafeCopyOut(GlobalTensor<T> dst, LocalTensor<T> src, uint32_t count)
+    {
+#if __CCE_AICORE__ != 200
+        // Other architectures have a working DataCopyPad, which handles arbitrary lengths and
+        // offsets without the alignment workarounds below.
+        DataCopyPad(dst, src, {1, static_cast<uint32_t>(count * sizeof(T)), 0, 0, 0});
+#else
+        constexpr uint32_t elemsPerBlock = BLOCK_BYTES / sizeof(T);
+        constexpr uint32_t maxElems = COPY_CHUNK_BYTES / sizeof(T);
+        // MisalignElems returns the offset inside the current block, so the distance to the next
+        // boundary is elemsPerBlock - head, not head itself.
+        uint32_t head = MisalignElems(dst);
+        if (head != 0) {
+            // After the leading partial block the body would have to read from src[elemsPerBlock -
+            // head], which is not a multiple of the block size, so the UB operand would be
+            // misaligned. Tiling keeps vocabSize block aligned, so this path is not reached in
+            // practice; write block by block to stay correct anyway.
+            uint32_t done = 0;
+            while (done < count) {
+                uint32_t dstOff = (done == 0) ? head : 0;
+                uint32_t room = elemsPerBlock - dstOff;
+                uint32_t len = room < (count - done) ? room : (count - done);
+                RmwBlock(dst[done], dstOff, src, done, dstOff, len);
+                done += len;
+            }
+            return;
+        }
+        uint32_t body = count / elemsPerBlock * elemsPerBlock;
+        for (uint32_t off = 0; off < body; off += maxElems) {
+            uint32_t len = (body - off) < maxElems ? (body - off) : maxElems;
+            DataCopy(dst[off], src[off], len);
+        }
+        if (body < count) {
+            RmwBlock(dst[body], 0, src, body, 0, count - body);
+        }
+#endif
+    }
 
     __aicore__ inline void SToMTE3Sync()
     {
@@ -154,6 +257,7 @@ private:
     LocalTensor<int32_t> scatterIdxLocal;
     LocalTensor<inputT> scatterAlignedLocal;
     LocalTensor<float> cumsumLocal;
+    LocalTensor<uint8_t> rmwStage;
 
     float negMaxValue = 0;
     float pValue = 0;
@@ -184,6 +288,12 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::InitTilingData(
     }
     uint32_t maxSfLen = (calUbSize_ - RESERVED_UB) / SOFTMAX_UB_NUM / FLOAT_BYTES;
     softmaxLength = maxSfLen < vocabSize_ ? maxSfLen : vocabSize_;
+    // Keep the tile a whole number of 32B blocks so that every prefix-sum chunk and every softmax
+    // write is block aligned instead of relying on the UB size happening to be a multiple of 32B.
+    constexpr uint32_t sfBlockElems = BLOCK_BYTES / FLOAT_BYTES;
+    if (softmaxLength >= sfBlockElems) {
+        softmaxLength = softmaxLength / sfBlockElems * sfBlockElems;
+    }
     lineSfLoopTimes = CeilDiv(vocabSize_, softmaxLength);
     softmaxLengthTail = vocabSize_ - (lineSfLoopTimes - 1) * softmaxLength;
 
@@ -220,6 +330,8 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::InitBuffer(TPipe
     cumsumLocal = totalUb[scatterLength * (FLOAT_BYTES + sizeof(inputT))].ReinterpretCast<float>();
     uint32_t alignedOff = scatterLength * (SOFTMAX_UB_NUM * FLOAT_BYTES + sizeof(inputT));
     scatterAlignedLocal = totalUb[alignedOff].ReinterpretCast<inputT>();
+    // cmpSelTileLength reserves one trailing block, so the last block is free for the RMW stage.
+    rmwStage = totalUb[calUbSize_ - BLOCK_BYTES];
 
     constexpr uint32_t CMP_ALIGN_ELEMS = CMP_ALIGN_BYTES / sizeof(inputT);
     uint32_t cmpAvail = calUbSize_ - RESERVED_UB - BLOCK_BYTES;
@@ -272,28 +384,24 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ComputeSoftmaxSu
 
         if (tileStart >= kthStartIdx) {
             if constexpr (!IsSameType<inputT, float>::value) {
-                DataCopyPad(sfLocalInput, mGmSortedValue_[gmIdx],
-                            {1, static_cast<uint32_t>(loopDataNum * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(sfLocalInput, mGmSortedValue_[gmIdx], loopDataNum);
                 MTE2ToVSync();
                 Cast(sfLocalFp32, sfLocalInput, RoundMode::CAST_NONE, loopDataNum);
                 PipeBarrier<PIPE_V>();
             } else {
-                DataCopyPad(sfLocalFp32, mGmSortedValue_[gmIdx],
-                            {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(sfLocalFp32, mGmSortedValue_[gmIdx], loopDataNum);
                 MTE2ToVSync();
             }
         } else {
             uint32_t localOffset = kthStartIdx - tileStart;
             const uint32_t partialTileDataNum = loopDataNum;
             if constexpr (!IsSameType<inputT, float>::value) {
-                DataCopyPad(sfLocalInput, mGmSortedValue_[gmIdx],
-                            {1, static_cast<uint32_t>(partialTileDataNum * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(sfLocalInput, mGmSortedValue_[gmIdx], partialTileDataNum);
                 MTE2ToVSync();
                 Cast(sfLocalFp32, sfLocalInput, RoundMode::CAST_NONE, partialTileDataNum);
                 PipeBarrier<PIPE_V>();
             } else {
-                DataCopyPad(sfLocalFp32, mGmSortedValue_[gmIdx],
-                            {1, static_cast<uint32_t>(partialTileDataNum * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(sfLocalFp32, mGmSortedValue_[gmIdx], partialTileDataNum);
                 MTE2ToVSync();
             }
             Duplicate(sfLocalFp32, -1.0e30f, localOffset);
@@ -333,21 +441,18 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::WriteSoftmaxToGm
         if (tileEnd <= kthStartIdx) {
             Duplicate(sfResLocal, 0.0f, loopDataNum);
             VToMTE3Sync();
-            DataCopyPad(softMaxGm[sfGmIdx], sfResLocal,
-                        {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0});
+            SafeCopyOut(softMaxGm[sfGmIdx], sfResLocal, loopDataNum);
             MTE3ToMTE2Sync();
             continue;
         }
 
         if constexpr (!IsSameType<inputT, float>::value) {
-            DataCopyPad(sfLocalInput, mGmSortedValue_[sortedGmIdx],
-                        {1, static_cast<uint32_t>(loopDataNum * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+            SafeCopyIn(sfLocalInput, mGmSortedValue_[sortedGmIdx], loopDataNum);
             MTE2ToVSync();
             Cast(sfLocalFp32, sfLocalInput, RoundMode::CAST_NONE, loopDataNum);
             PipeBarrier<PIPE_V>();
         } else {
-            DataCopyPad(sfLocalFp32, mGmSortedValue_[sortedGmIdx],
-                        {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
+            SafeCopyIn(sfLocalFp32, mGmSortedValue_[sortedGmIdx], loopDataNum);
             MTE2ToVSync();
         }
 
@@ -363,54 +468,73 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::WriteSoftmaxToGm
         PipeBarrier<PIPE_V>();
         Muls(sfResLocal, sfResLocal, reduceSumValueInvert, loopDataNum);
         VToMTE3Sync();
-        DataCopyPad(softMaxGm[sfGmIdx], sfResLocal, {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0});
+        SafeCopyOut(softMaxGm[sfGmIdx], sfResLocal, loopDataNum);
         MTE3ToMTE2Sync();
     }
 }
 
-// --- CumsumKoggleStone: iterative parallel prefix sum on softMaxGm ---
+// --- CumsumKoggleStone: chunked prefix sum, done inside UB ---
+// The original implementation ran the Kogge-Stone passes directly on GM at offsets 1/2/4/...,
+// which are not 32B aligned. On 310P that forces scalar access plus cache flushes for every pass.
+// Here each chunk is scanned in UB (where element offsets are free) and only aligned chunks are
+// written back, with the running total carried across chunks.
 template <typename inputT, typename calT, typename outputT>
 __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::CumsumKoggleStone(int64_t sfGmBase, uint32_t dataLen)
 {
-    uint32_t localIterTimes = 0;
-    uint32_t tmp = 1;
-    while (tmp < dataLen) {
-        tmp <<= 1;
-        localIterTimes++;
+    constexpr uint32_t elemsPerBlock = BLOCK_BYTES / sizeof(float);
+    // The chunk must not exceed dataLen, otherwise the vector loop below never runs and the whole
+    // prefix sum degrades to a serial scalar chain. That is the common case for fp16/bf16 on medium
+    // vocabularies, where dataLen is halfLen and can be far below softmaxLength.
+    uint32_t maxChunk = softmaxLength < dataLen ? softmaxLength : dataLen;
+    uint32_t chunkLen = maxChunk / elemsPerBlock * elemsPerBlock;
+    if (chunkLen == 0) {
+        chunkLen = elemsPerBlock;
     }
-    int64_t iteratOffset = 1;
-    for (uint32_t iterateTime = 0; iterateTime < localIterTimes; iterateTime++) {
-        uint32_t addLength = dataLen - static_cast<uint32_t>(iteratOffset);
-        uint32_t innerLoopNum = addLength / softmaxLength;
-        uint32_t dataTail = addLength - innerLoopNum * softmaxLength;
-        uint32_t loopDataNum = softmaxLength;
-        for (uint32_t innerLoopIdx = 0; innerLoopIdx < innerLoopNum; innerLoopIdx++) {
-            int64_t loopInnerOffset = dataTail + (innerLoopNum - 1 - innerLoopIdx) * softmaxLength;
-            DataCopyPad(sfLocalFp32, softMaxGm[sfGmBase + loopInnerOffset],
-                        {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
-            DataCopyPad(sfResLocal, softMaxGm[sfGmBase + loopInnerOffset + iteratOffset],
-                        {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
-            MTE2ToVSync();
-            Add(sfLocalFp32, sfLocalFp32, sfResLocal, loopDataNum);
-            VToMTE3Sync();
-            DataCopyPad(softMaxGm[sfGmBase + loopInnerOffset + iteratOffset], sfLocalFp32,
-                        {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0});
-            MTE3ToMTE2Sync();
+
+    float running = 0.0f;
+    uint32_t done = 0;
+    for (; done + chunkLen <= dataLen; done += chunkLen) {
+        SafeCopyIn(sfLocalFp32, softMaxGm[sfGmBase + done], chunkLen);
+        MTE2ToVSync();
+
+        LocalTensor<float> src = sfLocalFp32;
+        LocalTensor<float> dst = sfResLocal;
+        for (uint32_t offset = 1; offset < chunkLen; offset <<= 1) {
+            Adds(dst, src, 0.0f, offset);
+            PipeBarrier<PIPE_V>();
+            Add(dst[offset], src[offset], src, chunkLen - offset);
+            PipeBarrier<PIPE_V>();
+            LocalTensor<float> tmp = src;
+            src = dst;
+            dst = tmp;
         }
-        if (dataTail > 0) {
-            loopDataNum = dataTail;
-            DataCopyPad(sfLocalFp32, softMaxGm[sfGmBase],
-                        {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
-            DataCopyPad(sfResLocal, softMaxGm[sfGmBase + iteratOffset],
-                        {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
-            MTE2ToVSync();
-            Add(sfLocalFp32, sfLocalFp32, sfResLocal, loopDataNum);
-            VToMTE3Sync();
-            DataCopyPad(softMaxGm[sfGmBase + iteratOffset], sfLocalFp32,
-                        {1, static_cast<uint32_t>(loopDataNum * sizeof(float)), 0, 0, 0});
-            MTE3ToMTE2Sync();
+        if (running != 0.0f) {
+            Adds(src, src, running, chunkLen);
+            PipeBarrier<PIPE_V>();
         }
-        iteratOffset *= 2;
+        VToMTE3Sync();
+        SafeCopyOut(softMaxGm[sfGmBase + done], src, chunkLen);
+        MTE3ToMTE2Sync();
+
+        VToSSync();
+        running = src.GetValue(chunkLen - 1);
+        SToVSync();
+    }
+
+    // Tail shorter than one chunk: scan it in UB and write it back through SafeCopyOut. Scalar
+    // stores to GM would sit in the per-core data cache, and flushing a line that is shared with
+    // the neighbouring batch row would overwrite that row's output.
+    if (done < dataLen) {
+        uint32_t tail = dataLen - done;
+        SafeCopyIn(sfLocalFp32, softMaxGm[sfGmBase + done], tail);
+        MTE2ToSSync();
+        for (uint32_t i = 0; i < tail; i++) {
+            running += sfLocalFp32.GetValue(i);
+            sfLocalFp32.SetValue(i, running);
+        }
+        SToMTE3Sync();
+        SafeCopyOut(softMaxGm[sfGmBase + done], sfLocalFp32, tail);
+        MTE3ToMTE2Sync();
     }
 }
 
@@ -427,8 +551,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::FindFirstIndex(i
     for (uint32_t sIdx = 0; sIdx < searchTimes && !found; sIdx++) {
         uint32_t curLen = (sIdx == searchTimes - 1) ? searchTail : scatterLength;
         int64_t gmOff = sfGmBase + sIdx * scatterLength;
-        DataCopyPad(cumsumLocal, softMaxGm[gmOff], {1, static_cast<uint32_t>(curLen * sizeof(float)), 0, 0, 0},
-                    {false, 0, 0, 0});
+        SafeCopyIn(cumsumLocal, softMaxGm[gmOff], curLen);
         MTE2ToSSync();
         if (cumsumLocal.GetValue(curLen - 1) <= threshold) {
             continue;
@@ -495,8 +618,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessCumsumAnd
             return;
         }
 
-        DataCopyPad(cumsumLocal, softMaxGm[sfGmBase + halfLen - 1], {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0},
-                    {false, 0, 0, 0});
+        SafeCopyIn(cumsumLocal, softMaxGm[sfGmBase + halfLen - 1], 1);
         MTE2ToSSync();
         float firstHalfCumsum = cumsumLocal.GetValue(0);
 
@@ -511,8 +633,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessCumsumAnd
         }
 
         if (vocabSize_ & 1u) {
-            DataCopyPad(cumsumLocal, softMaxGm[sfGmBase + halfLen - 1],
-                        {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
+            SafeCopyIn(cumsumLocal, softMaxGm[sfGmBase + halfLen - 1], 1);
             MTE2ToSSync();
             float secondHalfCumsum = cumsumLocal.GetValue(0);
             float totalEvenCumsum = firstHalfCumsum + secondHalfCumsum;
@@ -541,8 +662,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::CompareSelectOnL
         uint32_t curLenAligned = CeilDiv(curLen, CMP_ALIGN_ELEMS) * CMP_ALIGN_ELEMS;
         int64_t gmOff = batchGmBase + static_cast<int64_t>(tIdx) * cmpSelTileLength;
 
-        DataCopyPad(cmpLogitsLocal, mGmLogits_[gmOff], {1, static_cast<uint32_t>(curLen * sizeof(inputT)), 0, 0, 0},
-                    {false, 0, 0, 0});
+        SafeCopyIn(cmpLogitsLocal, mGmLogits_[gmOff], curLen);
         MTE2ToVSync();
 
         if constexpr (IsSameType<inputT, float>::value) {
@@ -575,7 +695,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::CompareSelectOnL
                    SELMODE::VSEL_TENSOR_TENSOR_MODE, curLenAligned);
         }
         VToMTE3Sync();
-        DataCopyPad(mGmOut_[gmOff], cmpLogitsLocal, {1, static_cast<uint32_t>(curLen * sizeof(inputT)), 0, 0, 0});
+        SafeCopyOut(mGmOut_[gmOff], cmpLogitsLocal, curLen);
         MTE3ToMTE2Sync();
     }
 }
@@ -623,10 +743,8 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ScatterBoundary(
     for (uint32_t ci = 0; ci < copyTimes; ci++) {
         uint32_t curLen = (ci == copyTimes - 1) ? copyTail : scatterLength;
         int64_t gmOff = sortedBase + firstIdx + ci * scatterLength;
-        DataCopyPad(scatterIdxLocal, mGmSortedIndices_[gmOff],
-                    {1, static_cast<uint32_t>(curLen * sizeof(int32_t)), 0, 0, 0}, {false, 0, 0, 0});
-        DataCopyPad(scatterValLocal, mGmSortedValue_[gmOff],
-                    {1, static_cast<uint32_t>(curLen * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+        SafeCopyIn(scatterIdxLocal, mGmSortedIndices_[gmOff], curLen);
+        SafeCopyIn(scatterValLocal, mGmSortedValue_[gmOff], curLen);
         MTE2ToVSync();
         MTE2ToSSync();
 
@@ -645,8 +763,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ScatterBoundary(
 
         for (uint32_t idx = 0; idx < curLen; idx++) {
             int32_t lineIndex = scatterIdxLocal.GetValue(idx);
-            DataCopyPad(mGmOut_[batchGmBase + lineIndex], scatterAlignedLocal[idx * DATA_PER_BLOCK],
-                        {1, (uint32_t)(sizeof(outputT)), 0, 0, 0});
+            SafeCopyOut(mGmOut_[batchGmBase + lineIndex], scatterAlignedLocal[idx * DATA_PER_BLOCK], 1);
         }
         MTE3ToSSync();
     }
@@ -658,13 +775,11 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::CopyOutLast(int6
 {
     constexpr uint32_t DATA_PER_BLOCK = BLOCK_BYTES / sizeof(inputT);
     int64_t lastOff = sortedBase + vocabSize_ - 1;
-    DataCopyPad(scatterAlignedLocal, mGmSortedValue_[lastOff], {1, static_cast<uint32_t>(sizeof(inputT)), 0, 0, 0},
-                {false, 0, 0, 0});
+    SafeCopyIn(scatterAlignedLocal, mGmSortedValue_[lastOff], 1);
     int32_t lineIndex = mGmSortedIndices_.GetValue(lastOff);
     MTE2ToSSync();
     SToMTE3Sync();
-    DataCopyPad(mGmOut_[batchGmBase + lineIndex], scatterAlignedLocal.template ReinterpretCast<outputT>(),
-                {1, (uint32_t)(sizeof(outputT)), 0, 0, 0});
+    SafeCopyOut(mGmOut_[batchGmBase + lineIndex], scatterAlignedLocal.template ReinterpretCast<outputT>(), 1);
     MTE3ToSSync();
 }
 
@@ -686,8 +801,7 @@ __aicore__ inline uint32_t ApplyTopKTopPOpt<inputT, calT, outputT>::FindKthStart
     while (kthStartIdx > 0) {
         uint32_t chunkLen = (kthStartIdx > scatterLength) ? scatterLength : kthStartIdx;
         uint32_t chunkStart = kthStartIdx - chunkLen;
-        DataCopyPad(scatterValLocal, mGmSortedValue_[sortedBase + chunkStart],
-                    {1, static_cast<uint32_t>(chunkLen * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+        SafeCopyIn(scatterValLocal, mGmSortedValue_[sortedBase + chunkStart], chunkLen);
         MTE2ToSSync();
         bool foundBoundary = false;
         for (int32_t i = static_cast<int32_t>(chunkLen) - 1; i >= 0; i--) {
@@ -738,7 +852,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::FillNegInfAndSca
             Duplicate(cmpLogitsLocal.template ReinterpretCast<uint16_t>(), BF16_NEG_INF, curLen);
         }
         VToMTE3Sync();
-        DataCopyPad(mGmOut_[gmOff], cmpLogitsLocal, {1, static_cast<uint32_t>(curLen * sizeof(inputT)), 0, 0, 0});
+        SafeCopyOut(mGmOut_[gmOff], cmpLogitsLocal, curLen);
         MTE3ToMTE2Sync();
     }
 
@@ -750,10 +864,8 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::FillNegInfAndSca
     for (uint32_t ci = 0; ci < copyTimes; ci++) {
         uint32_t curLen = (ci == copyTimes - 1) ? copyTail : scatterLength;
         int64_t gmOff = topKStart + ci * scatterLength;
-        DataCopyPad(scatterValLocal, mGmSortedValue_[gmOff],
-                    {1, static_cast<uint32_t>(curLen * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
-        DataCopyPad(scatterIdxLocal, mGmSortedIndices_[gmOff],
-                    {1, static_cast<uint32_t>(curLen * sizeof(int32_t)), 0, 0, 0}, {false, 0, 0, 0});
+        SafeCopyIn(scatterValLocal, mGmSortedValue_[gmOff], curLen);
+        SafeCopyIn(scatterIdxLocal, mGmSortedIndices_[gmOff], curLen);
         MTE2ToVSync();
         MTE2ToSSync();
 
@@ -772,8 +884,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::FillNegInfAndSca
 
         for (uint32_t idx = 0; idx < curLen; idx++) {
             int32_t lineIndex = scatterIdxLocal.GetValue(idx);
-            DataCopyPad(mGmOut_[batchGmBase + lineIndex], scatterAlignedLocal[idx * DATA_PER_BLOCK],
-                        {1, (uint32_t)(sizeof(outputT)), 0, 0, 0});
+            SafeCopyOut(mGmOut_[batchGmBase + lineIndex], scatterAlignedLocal[idx * DATA_PER_BLOCK], 1);
         }
         MTE3ToSSync();
     }
@@ -807,12 +918,10 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopKTopPO
                 for (uint32_t tIdx = 0; tIdx < tileTimes; tIdx++) {
                     uint32_t curLen = (tIdx == tileTimes - 1) ? tileTail : cmpSelTileLength;
                     int64_t gmOff = batchGmBase + static_cast<int64_t>(tIdx) * cmpSelTileLength;
-                    DataCopyPad(cmpLogitsLocal, mGmLogits_[gmOff],
-                                {1, static_cast<uint32_t>(curLen * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+                    SafeCopyIn(cmpLogitsLocal, mGmLogits_[gmOff], curLen);
                     MTE2ToVSync();
                     VToMTE3Sync();
-                    DataCopyPad(mGmOut_[gmOff], cmpLogitsLocal,
-                                {1, static_cast<uint32_t>(curLen * sizeof(inputT)), 0, 0, 0});
+                    SafeCopyOut(mGmOut_[gmOff], cmpLogitsLocal, curLen);
                     MTE3ToMTE2Sync();
                 }
             } else {
@@ -857,14 +966,12 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopKTopPO
             int64_t topKStart = sortedBase + kthStartIdx;
 
             if constexpr (!IsSameType<inputT, float>::value) {
-                DataCopyPad(sfLocalInput, mGmSortedValue_[topKStart],
-                            {1, static_cast<uint32_t>(topKActual * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(sfLocalInput, mGmSortedValue_[topKStart], topKActual);
                 MTE2ToVSync();
                 Cast(sfLocalFp32, sfLocalInput, RoundMode::CAST_NONE, topKActual);
                 PipeBarrier<PIPE_V>();
             } else {
-                DataCopyPad(sfLocalFp32, mGmSortedValue_[topKStart],
-                            {1, static_cast<uint32_t>(topKActual * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(sfLocalFp32, mGmSortedValue_[topKStart], topKActual);
                 MTE2ToVSync();
             }
             Adds(sfResLocal, sfLocalFp32, negMaxValue, topKActual);
@@ -906,8 +1013,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopKTopPO
                     Duplicate(cmpLogitsLocal.template ReinterpretCast<uint16_t>(), BF16_NEG_INF, outputTileLen);
                 }
                 VToMTE3Sync();
-                DataCopyPad(mGmOut_[outputGmOffset], cmpLogitsLocal,
-                            {1, static_cast<uint32_t>(outputTileLen * sizeof(inputT)), 0, 0, 0});
+                SafeCopyOut(mGmOut_[outputGmOffset], cmpLogitsLocal, outputTileLen);
                 MTE3ToMTE2Sync();
             }
 
@@ -917,10 +1023,8 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopKTopPO
                 uint32_t curScLen = (sci == scCopyTimes - 1) ? scCopyTail : scatterLength;
                 int64_t scGmOff = scatterGmStart + sci * scatterLength;
 
-                DataCopyPad(scatterValLocal, mGmSortedValue_[scGmOff],
-                            {1, static_cast<uint32_t>(curScLen * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
-                DataCopyPad(scatterIdxLocal, mGmSortedIndices_[scGmOff],
-                            {1, static_cast<uint32_t>(curScLen * sizeof(int32_t)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(scatterValLocal, mGmSortedValue_[scGmOff], curScLen);
+                SafeCopyIn(scatterIdxLocal, mGmSortedIndices_[scGmOff], curScLen);
                 MTE2ToVSync();
                 MTE2ToSSync();
 
@@ -939,8 +1043,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopKTopPO
 
                 for (uint32_t idx = 0; idx < curScLen; idx++) {
                     int32_t lineIndex = scatterIdxLocal.GetValue(idx);
-                    DataCopyPad(mGmOut_[batchGmBase + lineIndex], scatterAlignedLocal[idx * DATA_PER_BLOCK],
-                                {1, (uint32_t)(sizeof(outputT)), 0, 0, 0});
+                    SafeCopyOut(mGmOut_[batchGmBase + lineIndex], scatterAlignedLocal[idx * DATA_PER_BLOCK], 1);
                 }
                 MTE3ToSSync();
             }
@@ -977,8 +1080,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopKTopPO
             while (searchPos > 0 && !exDone) {
                 uint32_t chunkLen = (searchPos > scatterLength) ? scatterLength : searchPos;
                 uint32_t chunkStart = searchPos - chunkLen;
-                DataCopyPad(scatterValLocal, mGmSortedValue_[sortedBase + chunkStart],
-                            {1, static_cast<uint32_t>(chunkLen * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(scatterValLocal, mGmSortedValue_[sortedBase + chunkStart], chunkLen);
                 MTE2ToSSync();
                 for (int32_t i = static_cast<int32_t>(chunkLen) - 1; i >= 0; i--) {
                     float val;
@@ -1006,8 +1108,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopKTopPO
             for (uint32_t wi = 0; wi < writeTimes; wi++) {
                 uint32_t curLen = (wi == writeTimes - 1) ? writeTail : scatterLength;
                 int64_t idxGmOff = sortedBase + excludeStart + wi * scatterLength;
-                DataCopyPad(scatterIdxLocal, mGmSortedIndices_[idxGmOff],
-                            {1, static_cast<uint32_t>(curLen * sizeof(int32_t)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(scatterIdxLocal, mGmSortedIndices_[idxGmOff], curLen);
                 MTE2ToSSync();
                 if constexpr (IsSameType<inputT, float>::value) {
                     scatterAlignedLocal.template ReinterpretCast<int32_t>().SetValue(0, FLOAT32_NEG_INF);
@@ -1019,9 +1120,8 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopKTopPO
                 SToMTE3Sync();
                 for (uint32_t ei = 0; ei < curLen; ei++) {
                     int32_t lineIndex = scatterIdxLocal.GetValue(ei);
-                    DataCopyPad(mGmOut_[batchGmBase + lineIndex],
-                                scatterAlignedLocal.template ReinterpretCast<outputT>(),
-                                {1, (uint32_t)(sizeof(outputT)), 0, 0, 0});
+                    SafeCopyOut(mGmOut_[batchGmBase + lineIndex],
+                                scatterAlignedLocal.template ReinterpretCast<outputT>(), 1);
                 }
                 MTE3ToSSync();
             }
@@ -1047,12 +1147,10 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopKOpt()
                 uint32_t logitsCopyLen = (logitsCopyTileIdx == logitsCopyTileTimes - 1) ? logitsCopyTileTail :
                                                                                           cmpSelTileLength;
                 int64_t logitsCopyGmOffset = batchGmBase + static_cast<int64_t>(logitsCopyTileIdx) * cmpSelTileLength;
-                DataCopyPad(cmpLogitsLocal, mGmLogits_[logitsCopyGmOffset],
-                            {1, static_cast<uint32_t>(logitsCopyLen * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(cmpLogitsLocal, mGmLogits_[logitsCopyGmOffset], logitsCopyLen);
                 MTE2ToVSync();
                 VToMTE3Sync();
-                DataCopyPad(mGmOut_[logitsCopyGmOffset], cmpLogitsLocal,
-                            {1, static_cast<uint32_t>(logitsCopyLen * sizeof(inputT)), 0, 0, 0});
+                SafeCopyOut(mGmOut_[logitsCopyGmOffset], cmpLogitsLocal, logitsCopyLen);
                 MTE3ToMTE2Sync();
             }
             continue;
@@ -1103,12 +1201,10 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopPOpt()
                                                  cmpSelTileLength;
                 int64_t topPLogitsCopyGmOffset = batchGmBase +
                                                  static_cast<int64_t>(topPLogitsCopyTileIdx) * cmpSelTileLength;
-                DataCopyPad(cmpLogitsLocal, mGmLogits_[topPLogitsCopyGmOffset],
-                            {1, static_cast<uint32_t>(topPLogitsCopyLen * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(cmpLogitsLocal, mGmLogits_[topPLogitsCopyGmOffset], topPLogitsCopyLen);
                 MTE2ToVSync();
                 VToMTE3Sync();
-                DataCopyPad(mGmOut_[topPLogitsCopyGmOffset], cmpLogitsLocal,
-                            {1, static_cast<uint32_t>(topPLogitsCopyLen * sizeof(inputT)), 0, 0, 0});
+                SafeCopyOut(mGmOut_[topPLogitsCopyGmOffset], cmpLogitsLocal, topPLogitsCopyLen);
                 MTE3ToMTE2Sync();
             }
             continue;
@@ -1140,8 +1236,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopPOpt()
             while (searchPos > 0 && !exDone) {
                 uint32_t chunkLen = (searchPos > scatterLength) ? scatterLength : searchPos;
                 uint32_t chunkStart = searchPos - chunkLen;
-                DataCopyPad(scatterValLocal, mGmSortedValue_[sortedBase + chunkStart],
-                            {1, static_cast<uint32_t>(chunkLen * sizeof(inputT)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(scatterValLocal, mGmSortedValue_[sortedBase + chunkStart], chunkLen);
                 MTE2ToSSync();
                 for (int32_t i = static_cast<int32_t>(chunkLen) - 1; i >= 0; i--) {
                     float val;
@@ -1169,8 +1264,7 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopPOpt()
             for (uint32_t wi = 0; wi < writeTimes; wi++) {
                 uint32_t curLen = (wi == writeTimes - 1) ? writeTail : scatterLength;
                 int64_t idxGmOff = sortedBase + excludeStart + wi * scatterLength;
-                DataCopyPad(scatterIdxLocal, mGmSortedIndices_[idxGmOff],
-                            {1, static_cast<uint32_t>(curLen * sizeof(int32_t)), 0, 0, 0}, {false, 0, 0, 0});
+                SafeCopyIn(scatterIdxLocal, mGmSortedIndices_[idxGmOff], curLen);
                 MTE2ToSSync();
                 if constexpr (IsSameType<inputT, float>::value) {
                     scatterAlignedLocal.template ReinterpretCast<int32_t>().SetValue(0, FLOAT32_NEG_INF);
@@ -1182,9 +1276,8 @@ __aicore__ inline void ApplyTopKTopPOpt<inputT, calT, outputT>::ProcessTopPOpt()
                 SToMTE3Sync();
                 for (uint32_t ei = 0; ei < curLen; ei++) {
                     int32_t lineIndex = scatterIdxLocal.GetValue(ei);
-                    DataCopyPad(mGmOut_[batchGmBase + lineIndex],
-                                scatterAlignedLocal.template ReinterpretCast<outputT>(),
-                                {1, (uint32_t)(sizeof(outputT)), 0, 0, 0});
+                    SafeCopyOut(mGmOut_[batchGmBase + lineIndex],
+                                scatterAlignedLocal.template ReinterpretCast<outputT>(), 1);
                 }
                 MTE3ToSSync();
             }
