@@ -294,12 +294,8 @@ static graphStatus InferShapeForAvgPoolV2(InferShapeContext* context)
                         "stride values must not be 0"),
                     return GRAPH_FAILED);
         if (*ceilModeFlag) {
-            inputs.outH = (inputs.inH - inputs.windowH + inputs.padtop + inputs.padbottom + inputs.strideH - 1) /
-                              inputs.strideH +
-                          1;
-            inputs.outW = (inputs.inW - inputs.windowW + inputs.padleft + inputs.padright + inputs.strideW - 1) /
-                              inputs.strideW +
-                          1;
+            inputs.outH = (inputs.inH - inputs.windowH + inputs.strideH - 1) / inputs.strideH + 1;
+            inputs.outW = (inputs.inW - inputs.windowW + inputs.strideW - 1) / inputs.strideW + 1;
         } else {
             inputs.outH = (inputs.inH - inputs.windowH + inputs.strideH) / inputs.strideH;
             inputs.outW = (inputs.inW - inputs.windowW + inputs.strideW) / inputs.strideW;
