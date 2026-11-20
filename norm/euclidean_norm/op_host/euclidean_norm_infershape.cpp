@@ -50,7 +50,7 @@ constexpr int32_t kMinAxisNum = 2;       // 与 tiling::kMinAxisNum 一致
 //   axesNum == 0 时不归约（axesOut 为空，y shape = x shape，与 tiling::ParseAxesTensor 一致）；
 //   否则按 int32 / int64 dtype 读，归一化负数到 [0, xRank)，重复/越界报错（GRAPH_FAILED）。
 static bool LoadAxesFromTensor(const gert::Tensor* axesTensor, int64_t xRank, std::vector<int64_t>& axesOut,
-                               std::string& errMsg)
+                               bool& dataNotAvailable, std::string& errMsg)
 {
     const int64_t axesNum = axesTensor->GetShapeSize();
     if (axesNum == 0) {
@@ -78,27 +78,28 @@ static bool LoadAxesFromTensor(const gert::Tensor* axesTensor, int64_t xRank, st
     const ge::DataType dt = axesTensor->GetDataType();
     if (dt == ge::DT_INT32) {
         const int32_t* data = axesTensor->GetData<int32_t>();
-        if (data == nullptr) {
-            errMsg = "axes data ptr is null (int32)";
-            return false;
-        }
-        axesOut.reserve(static_cast<size_t>(axesNum));
-        for (int64_t i = 0; i < axesNum; ++i) {
-            if (!pushOne(static_cast<int64_t>(data[i]), i)) {
-                return false;
+        if (data != nullptr) {
+            axesOut.reserve(static_cast<size_t>(axesNum));
+            for (int64_t i = 0; i < axesNum; ++i) {
+                if (!pushOne(static_cast<int64_t>(data[i]), i)) {
+                    return false;
+                }
             }
+        } else {
+            // axes 为动态输入时编译期无数据，输出置 unknown rank，由运行时按真实数据推导
+            dataNotAvailable = true;
         }
     } else if (dt == ge::DT_INT64) {
         const int64_t* data = axesTensor->GetData<int64_t>();
-        if (data == nullptr) {
-            errMsg = "axes data ptr is null (int64)";
-            return false;
-        }
-        axesOut.reserve(static_cast<size_t>(axesNum));
-        for (int64_t i = 0; i < axesNum; ++i) {
-            if (!pushOne(data[i], i)) {
-                return false;
+        if (data != nullptr) {
+            axesOut.reserve(static_cast<size_t>(axesNum));
+            for (int64_t i = 0; i < axesNum; ++i) {
+                if (!pushOne(data[i], i)) {
+                    return false;
+                }
             }
+        } else {
+            dataNotAvailable = true;
         }
     } else {
         errMsg = "axes dtype " + std::to_string(static_cast<int>(dt)) + " is not int32/int64";
@@ -242,13 +243,21 @@ static ge::graphStatus InferShape4EuclideanNorm(gert::InferShapeContext* context
         return GRAPH_SUCCESS;
     }
 
-    // 4) axes 解析：empty → 无归约轴（y shape = x shape）；否则按 int32/int64 读 + 越界/重复检查
+    // 4) axes 解析：empty → 无归约轴（y shape = x shape）；否则按 int32/int64 读 + 越界/重复检查；
+    //    动态输入编译期无数据 → 输出置 unknown rank（与 axesTensor 缺失分支同兜底）
     std::vector<int64_t> axes;
     std::string errMsg;
-    if (!LoadAxesFromTensor(axesTensor, xRank, axes, errMsg)) {
+    bool axesDataNotAvailable = false;
+    if (!LoadAxesFromTensor(axesTensor, xRank, axes, axesDataNotAvailable, errMsg)) {
         OP_LOGE(context->GetNodeName(), "%s; xRank=%ld, axes size=%ld", errMsg.c_str(), xRank,
                 axesTensor->GetShapeSize());
         return GRAPH_FAILED;
+    }
+    if (axesDataNotAvailable) {
+        Ops::Base::SetUnknownRank(*yShape);
+        OP_LOGI(context->GetNodeName(), "EuclideanNorm output shape: %s.", Ops::Base::ToString(*yShape).c_str());
+        OP_LOGW(context->GetNodeName(), "axes data is not ready at infer time, set output as unknown rank");
+        return GRAPH_SUCCESS;
     }
 
     // 4b) FR-09 两门一致化：pattern 轴数上限与 tiling 门（MAX_PATTERN_RANK）一致，
