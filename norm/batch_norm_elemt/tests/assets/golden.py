@@ -37,6 +37,7 @@ import torch
 
 __spec__ = {
     "aclnnBatchNormElemt": "BatchNormElemtAclnnSpec",
+    "torch.ops.aten.batch_norm_elemt.default": "TorchBatchNormElemtSpec",  # E2E
 }
 
 _TOLERANCE = {
@@ -76,6 +77,47 @@ def _to_orig_form(y, input):
     return [y.to(t_dt).numpy().astype(arr.dtype, copy=False)]
 
 
+def _elemt_core(input, weight, bias, mean, invstd, fmt):
+    """公共计算核：y = (x - mean) * invstd * weight + bias（float64，含末维通道感知）。"""
+    x = _to_torch(input)
+    last_is_c = fmt in ("NDHWC", "NHWC")
+
+    def view64(t):
+        # 末维通道：一维 (C,) 直接广播到末维；其余：按 dim1 广播
+        t = _to_torch(t).to(torch.float64)
+        return t.view(-1) if last_is_c else t.view([1, -1] + [1] * (x.dim() - 2))
+
+    m = view64(mean)
+    s_ = view64(invstd)
+    w = view64(weight) if weight is not None else 1.0
+    b = view64(bias) if bias is not None else 0.0
+    return (x.to(torch.float64) - m) * s_ * w + b
+
+
+def batch_norm_elemt_golden(
+    input, weight=None, bias=None, mean=None, invstd=None, eps=1e-5, **kwargs
+):
+    """E2E golden：torch.ops.aten.batch_norm_elemt，torch 入/出，单输出 y。
+
+    参数位置跟随 aten schema 形参序（input/weight/bias/mean/invstd/eps，
+    无输出占位）；eps 同样不参与计算。
+
+    通道固定按 dim=1 广播：torch 的 channels_last/channels_last_3d 仅改变
+    步长（物理布局），逻辑 shape 恒为 (N,C,...)，不因 tensor_formats 标注
+    的存储格式改变逻辑通道位置。这与 aclnn 入口不同——aclnn 通路中
+    NDHWC/NHWC 存储格式的 view shape 通道确实在末维。
+    """
+    y = _elemt_core(input, weight, bias, mean, invstd, None)
+    return _to_orig_form(y, input)
+
+
+class TorchBatchNormElemtSpec:
+    """e2e 流程：torch 入/出，单输出 y（对齐 batch_norm_v3 的 Torch*Spec 惯例）。"""
+
+    golden = staticmethod(batch_norm_elemt_golden)
+    tolerance = _TOLERANCE
+
+
 class BatchNormElemtAclnnSpec:
     """按 CSV api_name "aclnnBatchNormElemt" 注册，参数按 aclnn C 头文件签名顺序
     （input, weight, bias, mean, invstd, eps, output），weight/bias/output 由调用方填充，
@@ -92,21 +134,8 @@ class BatchNormElemtAclnnSpec:
         output=None,
         **kwargs,
     ):
-        x = _to_torch(input)
         fmts = kwargs.get("tensor_formats") or ()
-        fmt = fmts[0] if fmts else None
-        last_is_c = fmt in ("NDHWC", "NHWC")
-
-        def view64(t):
-            # 末维通道：一维 (C,) 直接广播到末维；其余：按 dim1 广播
-            t = _to_torch(t).to(torch.float64)
-            return t.view(-1) if last_is_c else t.view([1, -1] + [1] * (x.dim() - 2))
-
-        m = view64(mean)
-        s = view64(invstd)
-        w = view64(weight) if weight is not None else 1.0
-        b = view64(bias) if bias is not None else 0.0
-        y = (x.to(torch.float64) - m) * s * w + b
+        y = _elemt_core(input, weight, bias, mean, invstd, fmts[0] if fmts else None)
         return _to_orig_form(y, input)
 
     tolerance = _TOLERANCE
