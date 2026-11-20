@@ -61,7 +61,7 @@ public:
         tBufPool.InitBuffer(yQue, DOUBLE_BUFFER_NUM,
                             tilingData->rowFactor * RoundUp<T1>(tilingData->dFactor) * sizeof(T1));
         // scale 在ub内连续写，拷出时采用Compact模式进行搬出
-        int64_t scaleColNum = CeilDiv(tilingData->dFactor, PER_MX_FP16);
+        int64_t scaleColNum = CeilDiv(CeilDiv(tilingData->dFactor, PER_MX_FP16), 2) * 2;
         tBufPool.InitBuffer(scaleQue, DOUBLE_BUFFER_NUM, RoundUp<T2>(tilingData->rowFactor * scaleColNum) * sizeof(T2));
 
         tBufPool.InitBuffer(yFp32Buf, tilingData->rowFactor * RoundUp<float>(tilingData->dFactor) * sizeof(float));
@@ -94,7 +94,8 @@ public:
         int64_t x0GmBaseOffset = curBlockIdx * rowOfFormerBlock * tilingData->d;
         int64_t x1GmBaseOffset = x0GmBaseOffset + tilingData->splitD;
         int64_t yGmBaseOffset = curBlockIdx * rowOfFormerBlock * tilingData->splitD;
-        int64_t scaleGmBaseOffset = curBlockIdx * rowOfFormerBlock * tilingData->scaleCol;
+        int64_t scaleColGm = CeilDiv(tilingData->scaleCol, 2) * 2;
+        int64_t scaleGmBaseOffset = curBlockIdx * rowOfFormerBlock * scaleColGm;
         int64_t weightGmBaseOffset = curBlockIdx * rowOfFormerBlock;
         for (int64_t rowOuterIdx = 0; rowOuterIdx < rowOuterLoop; rowOuterIdx++) {
             int64_t curRowFactor = (rowOuterIdx == rowOuterLoop - 1) ? tailRowFactor : tilingData->rowFactor;
@@ -111,6 +112,7 @@ public:
                 int64_t curDFactor = (dLoopIdx == tilingData->dLoop - 1) ? tilingData->tailDFactor :
                                                                            tilingData->dFactor;
                 int64_t scaleDFactor = CeilDiv(curDFactor, PER_MX_FP16);
+                int64_t scaleCopyCols = CeilDiv(scaleDFactor, 2) * 2;
                 int64_t xBaseOffset = rowOuterIdx * tilingData->rowFactor * tilingData->d +
                                       dLoopIdx * tilingData->dFactor;
                 x0Local = x0Que.template AllocTensor<T0>();
@@ -170,9 +172,9 @@ public:
                 scaleLocal = scaleQue.template DeQue<T2>();
                 CopyOut<T2, AscendC::PaddingMode::Compact>(
                     scaleLocal,
-                    scaleGm[scaleGmBaseOffset + rowOuterIdx * tilingData->rowFactor * tilingData->scaleCol +
+                    scaleGm[scaleGmBaseOffset + rowOuterIdx * tilingData->rowFactor * scaleColGm +
                             dLoopIdx * CeilDiv(tilingData->dFactor, PER_MX_FP16)],
-                    curRowFactor, scaleDFactor, tilingData->scaleCol - scaleDFactor);
+                    curRowFactor, scaleCopyCols, scaleColGm - scaleCopyCols);
                 scaleQue.template FreeTensor(scaleLocal);
 
                 // copy yOrigin to gm
@@ -214,7 +216,8 @@ private:
     TBuf<QuePosition::VECCALC> groupIndexSumBuf;
     TBuf<QuePosition::VECCALC> yFp32Buf;
     TBuf<QuePosition::VECCALC> invScaleBuf;
-    static constexpr uint8_t TBUF_POOL_SIZE = 12;
+    // Six double-buffered queues plus the FP32 and inverse-scale buffers.
+    static constexpr uint8_t TBUF_POOL_SIZE = 14;
     TBufPool<QuePosition::VECCALC, TBUF_POOL_SIZE> tBufPool;
 
     LocalTensor<T0> x0Local;

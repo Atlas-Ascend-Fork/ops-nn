@@ -9,6 +9,7 @@
  */
 
 #include <iostream>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <string>
@@ -50,6 +51,7 @@ struct TilingCase {
     bool outputOrigin = false;
     float alpha = 1.0f;
     float bias = 0.0f;
+    int64_t groupListType = 1;
     uint64_t tilingKey = 0;
     bool hasWeight = false;
     bool hasGroupIndex = false;
@@ -154,7 +156,8 @@ void ExecuteTilingCase(const TilingCase& tc)
                     {"dst_type_max", Ops::NN::AnyValue::CreateFrom<float>(tc.dstTypeMax)},
                     {"output_origin", Ops::NN::AnyValue::CreateFrom<bool>(tc.outputOrigin)},
                     {"alpha", Ops::NN::AnyValue::CreateFrom<float>(tc.alpha)},
-                    {"bias", Ops::NN::AnyValue::CreateFrom<float>(tc.bias)}})
+                    {"bias", Ops::NN::AnyValue::CreateFrom<float>(tc.bias)},
+                    {"group_list_type", Ops::NN::AnyValue::CreateFrom<int64_t>(tc.groupListType)}})
         .TilingData(tilingData.get())
         .Workspace(workspaceSizes);
     if (tc.hasWeight) {
@@ -193,6 +196,26 @@ void ExecuteTilingCase(const TilingCase& tc)
             EXPECT_EQ(workspace[0], 0U);
         }
     }
+    if (status == ge::GRAPH_SUCCESS && tc.quantMode != 5) {
+        // groupListType is appended to both serialized tiling layouts.
+        int64_t groupListType = 0;
+        const auto* raw = static_cast<const uint8_t*>(tilingContext->GetRawTilingData()->GetData());
+        const size_t size = tilingContext->GetRawTilingData()->GetDataSize();
+        ASSERT_GE(size, sizeof(groupListType));
+        std::memcpy(&groupListType, raw + size - sizeof(groupListType), sizeof(groupListType));
+        EXPECT_EQ(groupListType, tc.groupListType);
+        if (tc.hasGroupIndex && tc.groupListType == 2 && tc.quantMode < 2) {
+            // The block/MX tiling ends in the seven int64 group-index fields.
+            struct GroupTilingTail {
+                int64_t g, ubSize, gLoop, gFactor, tailGFactor, coreNum, groupListType;
+            } data{};
+            ASSERT_GE(size, sizeof(data));
+            std::memcpy(&data, raw + size - sizeof(data), sizeof(data));
+            EXPECT_EQ(data.g, 2 * tc.groupIndexShape.GetStorageShape().GetDim(0));
+            EXPECT_EQ(data.gFactor % 2, 0);
+            EXPECT_EQ(data.tailGFactor % 2, 0);
+        }
+    }
     if (status == ge::GRAPH_SUCCESS && tc.tilingKey != 0) {
         EXPECT_EQ(tilingContext->GetTilingKey(), tc.tilingKey);
     }
@@ -228,6 +251,57 @@ TEST_F(SwigluGroupQuantTilingTest, tiling_mx_fp8)
     tc.roundScale = true;
     tc.tilingKey = 2000;
     ExecuteTilingCase(tc);
+}
+
+TEST_F(SwigluGroupQuantTilingTest, tiling_mx_64_aligned_tail)
+{
+    for (const auto dtype : {ge::DT_FLOAT8_E4M3FN, ge::DT_FLOAT8_E5M2, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT4_E1M2}) {
+        for (const int64_t d : {64, 128, 192, 256, 320, 448, 512, 576, 49216}) {
+            for (const int64_t groupListType : {1, 2}) {
+                SCOPED_TRACE(::testing::Message()
+                             << "dtype=" << dtype << ", D=" << d << ", groupListType=" << groupListType);
+                TilingCase tc;
+                const int64_t h = d / 2;
+                tc.xDtype = ge::DT_BF16;
+                tc.yOriginDtype = ge::DT_BF16;
+                tc.xShape = {{192, d}, {192, d}};
+                tc.weightShape = {{192}, {192}};
+                tc.yShape = {{192, h}, {192, h}};
+                tc.yOriginShape = tc.yShape;
+                tc.scaleShape = {{192, (h + 63) / 64, 2}, {192, (h + 63) / 64, 2}};
+                tc.yDtype = dtype;
+                tc.dstType = dtype;
+                tc.scaleDtype = ge::DT_FLOAT8_E8M0;
+                tc.quantMode = 1;
+                tc.roundScale = true;
+                tc.outputOrigin = true;
+                tc.hasWeight = true;
+                tc.hasGroupIndex = true;
+                tc.groupListType = groupListType;
+                tc.groupIndexShape = groupListType == 1 ? gert::StorageShape({{2}, {2}}) :
+                                                          gert::StorageShape({{2, 2}, {2, 2}});
+                tc.tilingKey = dtype == ge::DT_FLOAT8_E4M3FN || dtype == ge::DT_FLOAT8_E5M2 ? 2100 : 3100;
+                ExecuteTilingCase(tc);
+            }
+        }
+    }
+}
+
+TEST_F(SwigluGroupQuantTilingTest, tiling_mx_rejects_tail_not_64_aligned)
+{
+    for (const int64_t d : {32, 96, 160, 224}) {
+        TilingCase tc;
+        const int64_t h = d / 2;
+        tc.xShape = {{3, d}, {3, d}};
+        tc.yShape = {{3, h}, {3, h}};
+        tc.yOriginShape = tc.yShape;
+        tc.scaleShape = {{3, (h + 63) / 64, 2}, {3, (h + 63) / 64, 2}};
+        tc.scaleDtype = ge::DT_FLOAT8_E8M0;
+        tc.quantMode = 1;
+        tc.roundScale = true;
+        tc.status = ge::GRAPH_FAILED;
+        ExecuteTilingCase(tc);
+    }
 }
 
 TEST_F(SwigluGroupQuantTilingTest, tiling_hif4_fp16)
@@ -892,4 +966,84 @@ TEST_F(SwigluGroupQuantTilingTest, tiling_error_invalid_y_origin_shape)
     tc.status = ge::GRAPH_FAILED;
     ExecuteTilingCase(tc);
 }
+TEST_F(SwigluGroupQuantTilingTest, group_list_type_pair_block_and_mx)
+{
+    for (int64_t mode : {0, 1}) {
+        for (int64_t groups : {3, 15875, 15877, 100001}) {
+            TilingCase tc;
+            tc.quantMode = mode;
+            tc.roundScale = mode == 1;
+            tc.groupListType = 2;
+            tc.hasGroupIndex = true;
+            tc.groupIndexShape = {{groups, 2}, {groups, 2}};
+            if (mode == 1) {
+                tc.scaleDtype = ge::DT_FLOAT8_E8M0;
+                tc.scaleShape = {{8, 128, 64, 2}, {8, 128, 64, 2}};
+            }
+            ExecuteTilingCase(tc);
+        }
+    }
+}
+
+TEST_F(SwigluGroupQuantTilingTest, group_list_type_pair_hifp8)
+{
+    for (int64_t mode : {2, 3}) {
+        TilingCase tc;
+        tc.quantMode = mode;
+        tc.yDtype = ge::DT_HIFLOAT8;
+        tc.groupListType = 2;
+        tc.hasGroupIndex = true;
+        tc.hasScale = mode == 2;
+        tc.groupIndexShape = {{3, 2}, {3, 2}};
+        tc.scaleShape = {{3}, {3}};
+        ExecuteTilingCase(tc);
+    }
+}
+
+TEST_F(SwigluGroupQuantTilingTest, group_list_type_invalid_value)
+{
+    for (int64_t mode : {0, 1, 2, 3, 5}) {
+        for (int64_t type : {-1, 0, 3}) {
+            TilingCase tc;
+            tc.quantMode = mode;
+            tc.groupListType = type;
+            tc.status = ge::GRAPH_FAILED;
+            ExecuteTilingCase(tc);
+        }
+    }
+}
+
+TEST_F(SwigluGroupQuantTilingTest, group_list_type_pair_requires_input)
+{
+    for (int64_t mode : {0, 1, 2, 3}) {
+        TilingCase tc;
+        tc.quantMode = mode;
+        tc.yDtype = mode >= 2 ? ge::DT_HIFLOAT8 : ge::DT_FLOAT8_E4M3FN;
+        tc.groupListType = 2;
+        tc.status = ge::GRAPH_FAILED;
+        ExecuteTilingCase(tc);
+    }
+}
+
+TEST_F(SwigluGroupQuantTilingTest, group_list_type_pair_invalid_shape)
+{
+    for (int64_t mode : {0, 2, 3}) {
+        for (const std::vector<int64_t>& shape : {std::vector<int64_t>{3}, {3, 1}, {3, 3}, {0, 2}, {2, 2, 2}}) {
+            TilingCase tc;
+            tc.quantMode = mode;
+            tc.yDtype = mode >= 2 ? ge::DT_HIFLOAT8 : ge::DT_FLOAT8_E4M3FN;
+            tc.groupListType = 2;
+            tc.hasGroupIndex = true;
+            for (auto* target : {&tc.groupIndexShape.MutableStorageShape(), &tc.groupIndexShape.MutableOriginShape()}) {
+                target->SetDimNum(shape.size());
+                for (size_t i = 0; i < shape.size(); ++i) {
+                    target->SetDim(i, shape[i]);
+                }
+            }
+            tc.status = ge::GRAPH_FAILED;
+            ExecuteTilingCase(tc);
+        }
+    }
+}
+
 } // namespace

@@ -47,6 +47,7 @@ struct SwigluGroupQuantTilingData {
     int64_t gFactor;
     int64_t tailGFactor;
     int64_t coreNum;
+    int64_t groupListType;
 };
 
 struct SwigluGroupQuantMxExtendTilingData {
@@ -77,6 +78,7 @@ struct SwigluGroupQuantHifp8TilingData {
     int64_t tokensPerCore;
     int64_t groupNum;
     int64_t tileLength;
+    int64_t groupListType;
 };
 
 template <typename T>

@@ -109,6 +109,11 @@ ge::graphStatus SwigluGroupQuantHifp8Tiling::GetAttr()
 {
     auto* attrs = context_->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    auto groupListTypeAttr = attrs->GetAttrPointer<int64_t>(ATTR_INDEX_GROUP_LIST_TYPE);
+    groupListType_ = groupListTypeAttr == nullptr ? GROUP_LIST_TYPE_COUNT : *groupListTypeAttr;
+    OP_CHECK_IF(groupListType_ != GROUP_LIST_TYPE_COUNT && groupListType_ != GROUP_LIST_TYPE_PAIR,
+                OP_LOGE(context_->GetNodeName(), "group_list_type only supports 1 or 2, got %ld.", groupListType_),
+                return ge::GRAPH_FAILED);
 
     auto quantModePtr = attrs->GetAttrPointer<int64_t>(ATTR_INDEX_QUANT_MODE);
     if (quantModePtr != nullptr) {
@@ -153,12 +158,17 @@ ge::graphStatus SwigluGroupQuantHifp8Tiling::CheckGroupIndexInfo()
     if (groupIndexShape == nullptr) {
         isGroup_ = false;
         groupNum_ = 0;
+        OP_CHECK_IF(groupListType_ == GROUP_LIST_TYPE_PAIR,
+                    OP_LOGE(context_->GetNodeName(), "group_index is required when group_list_type is 2."),
+                    return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
     isGroup_ = true;
     auto groupIndexStorageShape = groupIndexShape->GetStorageShape();
     size_t giDimNum = groupIndexStorageShape.GetDimNum();
-    OP_CHECK_IF((giDimNum != 1), OP_LOGE(context_->GetNodeName(), "group_index must be 1D, got %zu dims.", giDimNum),
+    const bool isPair = groupListType_ == GROUP_LIST_TYPE_PAIR;
+    OP_CHECK_IF(isPair ? (giDimNum != 2 || groupIndexStorageShape.GetDim(1) != GROUP_INDEX_PAIR_COLS) : (giDimNum != 1),
+                OP_LOGE(context_->GetNodeName(), "group_index must be [G] for type 1 or [E, 2] for type 2."),
                 return ge::GRAPH_FAILED);
     groupNum_ = groupIndexStorageShape.GetDim(0);
     OP_CHECK_IF((groupNum_ <= 0),
@@ -387,6 +397,7 @@ void SwigluGroupQuantHifp8Tiling::SetTilingData()
     tilingData_.set_tokensPerCore(tokensPerCore_);
     tilingData_.set_groupNum(groupNum_);
     tilingData_.set_tileLength(tileLength_);
+    tilingData_.set_groupListType(groupListType_);
 }
 
 void SwigluGroupQuantHifp8Tiling::SetTilingKey()

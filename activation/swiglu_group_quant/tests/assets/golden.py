@@ -7,16 +7,13 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
+"""CPU reference for the Torch-supported quantization modes 0, 1, 2, 3 and 5."""
+
 import numpy as np
 
 from ttk.utilities.dtypes import (
-    numpy_bfloat16,
-    numpy_float4_e1m2,
-    numpy_float4_e2m1,
-    numpy_float8_e4m3fn,
-    numpy_float8_e5m2,
-    numpy_float8_e8m0,
     numpy_to_torch_tensor,
+    resolve_numpy_dtype,
     torch_to_numpy_tensor,
 )
 
@@ -24,6 +21,7 @@ from ttk.utilities.dtypes import (
 __golden__ = {
     "aclnn": {
         "aclnnSwigluGroupQuant": "aclnn_swiglu_group_quant_golden",
+        "aclnnSwigluGroupQuantV3": "aclnn_swiglu_group_quant_v3_golden",
     },
     "kernel": {
         "swiglu_group_quant": "swiglu_group_quant_golden",
@@ -33,6 +31,7 @@ __golden__ = {
 __input__ = {
     "aclnn": {
         "aclnnSwigluGroupQuant": "aclnn_swiglu_group_quant_input",
+        "aclnnSwigluGroupQuantV3": "aclnn_swiglu_group_quant_v3_input",
     },
     "kernel": {
         "swiglu_group_quant": "swiglu_group_quant_input",
@@ -44,7 +43,10 @@ DT_FLOAT8_E5M2 = 35
 DT_FLOAT8_E4M3FN = 36
 DT_FLOAT4_E2M1 = 40
 DT_FLOAT4_E1M2 = 41
+TORCH_NPU_DTYPE_OFFSET = 256
 DEFAULT_CLAMP_LIMIT = -1.0
+GROUP_LIST_TYPE_COUNT = 1
+GROUP_LIST_TYPE_PAIR = 2
 
 FP8_MAX_VALUE = {
     DT_FLOAT8_E5M2: np.float32(57344.0),
@@ -89,8 +91,10 @@ def _write_tensor(tensor, value):
 
 
 def _dtype_to_int(dst_type):
-    if isinstance(dst_type, int):
-        return dst_type
+    if isinstance(dst_type, (int, np.integer)):
+        if dst_type >= TORCH_NPU_DTYPE_OFFSET:
+            return dst_type - TORCH_NPU_DTYPE_OFFSET
+        return {23: DT_FLOAT8_E5M2, 24: DT_FLOAT8_E4M3FN}.get(dst_type, dst_type)
     text = str(dst_type)
     if text.endswith("float8_e5m2"):
         return DT_FLOAT8_E5M2
@@ -105,9 +109,9 @@ def _dtype_to_int(dst_type):
 
 def _fp8_dtype(dst_type):
     if dst_type == DT_FLOAT8_E5M2:
-        return numpy_float8_e5m2()
+        return resolve_numpy_dtype("float8_e5m2")
     if dst_type == DT_FLOAT8_E4M3FN:
-        return numpy_float8_e4m3fn()
+        return resolve_numpy_dtype("float8_e4m3fn")
     raise ValueError(f"Unsupported fp8 dst_type: {dst_type}")
 
 
@@ -117,9 +121,9 @@ def _fp8_info(dst_type):
 
 def _fp4_dtype(dst_type):
     if dst_type == DT_FLOAT4_E2M1:
-        return numpy_float4_e2m1()
+        return resolve_numpy_dtype("float4_e2m1")
     if dst_type == DT_FLOAT4_E1M2:
-        return numpy_float4_e1m2()
+        return resolve_numpy_dtype("float4_e1m2")
     raise ValueError(f"Unsupported fp4 dst_type: {dst_type}")
 
 
@@ -139,10 +143,14 @@ def _use_clamp(clamp_limit):
     return clamp_limit is not None and float(clamp_limit) != DEFAULT_CLAMP_LIMIT
 
 
-def _compute_swiglu(x, weight=None, clamp_limit=None):
-    x = _to_numpy(x).astype(np.float32)
+def _compute_swiglu(
+    x, weight=None, clamp_limit=None, *, mx_v2=False, alpha=1.0, bias=0.0
+):
+    x = _to_numpy(x)
+    input_dtype = x.dtype
+    x = x.astype(np.float32)
     orig_shape = x.shape
-    x = x.reshape(-1, orig_shape[-1])
+    x = x.reshape(_token_num(x), orig_shape[-1])
     hidden = orig_shape[-1] // 2
     x0 = x[:, :hidden]
     x1 = x[:, hidden:]
@@ -152,11 +160,17 @@ def _compute_swiglu(x, weight=None, clamp_limit=None):
         x0 = np.minimum(x0, limit)
         x1 = np.minimum(limit, np.maximum(x1, -limit))
 
-    y_origin = _silu(x0) * x1
+    if mx_v2:
+        gate = x0 * _sigmoid(np.float32(alpha) * x0)
+        y_origin = (gate * (x1 + np.float32(bias))).astype(input_dtype)
+    else:
+        y_origin = _silu(x0) * x1
     y_weighted = y_origin
     weight = _to_numpy(weight)
     if weight is not None:
         y_weighted = y_origin * weight.reshape(-1, 1).astype(np.float32)
+        if mx_v2:
+            y_weighted = y_weighted.astype(input_dtype)
     y_origin = y_origin.reshape(*orig_shape[:-1], hidden)
     y_weighted = y_weighted.reshape(*orig_shape[:-1], hidden)
     return y_origin, y_weighted
@@ -167,13 +181,31 @@ def _token_num(x):
     return int(np.prod(x_np.shape[:-1]))
 
 
-def _real_token_num(x, group_index):
-    token_num = _token_num(x)
-    group_index_np = _to_numpy(group_index)
-    if group_index_np is None:
-        return token_num
-    real_bs = int(group_index_np.reshape(-1).astype(np.int64).sum())
-    return min(max(real_bs, 0), token_num)
+def _group_counts(group_index, group_list_type, quant_mode):
+    if group_list_type not in (GROUP_LIST_TYPE_COUNT, GROUP_LIST_TYPE_PAIR):
+        raise ValueError(f"group_list_type must be 1 or 2, got {group_list_type}")
+    if quant_mode == 5 and (
+        group_list_type != GROUP_LIST_TYPE_COUNT or group_index is not None
+    ):
+        raise ValueError("quant_mode=5 requires group_list_type=1 and group_index=None")
+    group_index = _to_numpy(group_index)
+    if group_index is None:
+        if group_list_type == GROUP_LIST_TYPE_PAIR:
+            raise ValueError("group_index is required when group_list_type=2")
+        return None
+    if group_list_type == GROUP_LIST_TYPE_PAIR:
+        if group_index.ndim != 2 or group_index.shape[1] != 2:
+            raise ValueError(
+                "group_index must have shape [E, 2] when group_list_type=2"
+            )
+        if group_index.shape[0] == 0:
+            raise ValueError("group_index must not be empty when group_list_type=2")
+        if group_index.dtype != np.int64:
+            raise ValueError("group_index must be int64 when group_list_type=2")
+        return group_index[:, 1]
+    if group_index.ndim != 1:
+        raise ValueError("group_index must be 1D when group_list_type=1")
+    return group_index
 
 
 def _merge_output_buffer(value, output_tensor, token_num, real_bs):
@@ -181,7 +213,10 @@ def _merge_output_buffer(value, output_tensor, token_num, real_bs):
         return None
     if output_tensor is not None:
         merged = _to_numpy(output_tensor).copy()
-        merged.reshape(token_num, -1)[:real_bs] = value.reshape(token_num, -1)[:real_bs]
+        if real_bs > 0:
+            merged.reshape(token_num, -1)[:real_bs] = value.reshape(token_num, -1)[
+                :real_bs
+            ]
         return merged
     if real_bs < token_num:
         value = value.copy()
@@ -219,24 +254,31 @@ def _amax_mx_fp8(y_block):
 
 
 def _quantize_fp8(y_origin, dst_type, quant_mode, round_scale):
-    if quant_mode == 1 and not round_scale:
-        raise ValueError("quant_mode 1 only supports round_scale=True")
+    if quant_mode in (1, 5) and not round_scale:
+        raise ValueError(f"quant_mode={quant_mode} only supports round_scale=True")
 
     fp8_type, fp8_max, inv_fp8_max = _fp8_info(dst_type)
     block_size = PER_BLOCK_FP16 if quant_mode == 0 else PER_MX_FP16
     y_shape = y_origin.shape
     hidden = y_shape[-1]
-    y_2d = y_origin.reshape(-1, hidden).astype(np.float32)
-    num_tokens = y_2d.shape[0]
+    num_tokens = _token_num(y_origin)
+    y_2d = y_origin.reshape(num_tokens, hidden).astype(np.float32)
     num_blocks = _ceil_div(hidden, block_size)
     pad_hidden = num_blocks * block_size
     y_pad = np.pad(y_2d, ((0, 0), (0, pad_hidden - hidden)), mode="constant")
     y_block = y_pad.reshape(num_tokens, num_blocks, block_size)
 
-    amax = _amax_block_fp8(y_block) if quant_mode == 0 else _amax_mx_fp8(y_block)
+    if quant_mode == 0:
+        amax = _amax_block_fp8(y_block)
+    elif quant_mode == 5:
+        amax = np.max(np.abs(y_block), axis=-1)
+    else:
+        amax = _amax_mx_fp8(y_block)
     if round_scale:
         y_scale_e8m0, inv_scale, pos_scale = _round_pow2(amax * inv_fp8_max)
-        y_scale = y_scale_e8m0 if quant_mode == 1 else pos_scale
+        y_scale = pos_scale if quant_mode == 0 else y_scale_e8m0
+        if quant_mode == 5:
+            inv_scale[amax == 0] = 0
     else:
         y_scale = (amax * inv_fp8_max).astype(np.float32)
         inv_scale = (fp8_max / amax).astype(np.float32)
@@ -251,14 +293,14 @@ def _quantize_fp8(y_origin, dst_type, quant_mode, round_scale):
     else:
         if num_blocks % 2 != 0:
             y_scale = np.pad(y_scale, ((0, 0), (0, 1)), mode="constant")
-        scale = y_scale.view(numpy_float8_e8m0()).reshape(
+        scale = y_scale.view(resolve_numpy_dtype("float8_e8m0")).reshape(
             *y_shape[:-1], _ceil_div(num_blocks, MX_SCALE_ALIGN), 2
         )
     return y_fp8.reshape(y_shape), scale
 
 
 def _float32_to_bf16_bits(value):
-    return value.astype(numpy_bfloat16()).view(np.uint16)
+    return value.astype(resolve_numpy_dtype("bfloat16")).view(np.uint16)
 
 
 def _quantize_e1m2_nibble(y_scaled):
@@ -271,8 +313,8 @@ def _quantize_fp4(y_origin, dst_type, pack=True):
     block_size = 32
     y_shape = y_origin.shape
     hidden = y_shape[-1]
-    y_2d = y_origin.reshape(-1, hidden).astype(np.float32)
-    num_tokens = y_2d.shape[0]
+    num_tokens = _token_num(y_origin)
+    y_2d = y_origin.reshape(num_tokens, hidden).astype(np.float32)
     if hidden % block_size != 0:
         raise ValueError("MxFp4 golden only supports hidden divisible by 32")
 
@@ -305,7 +347,7 @@ def _quantize_fp4(y_origin, dst_type, pack=True):
 
     if num_blocks % 2 != 0:
         e8m0 = np.pad(e8m0, ((0, 0), (0, 1)), mode="constant")
-    scale = e8m0.view(numpy_float8_e8m0()).reshape(
+    scale = e8m0.view(resolve_numpy_dtype("float8_e8m0")).reshape(
         *y_shape[:-1], _ceil_div(num_blocks, 2), 2
     )
     if not pack:
@@ -321,8 +363,6 @@ def _quantize_fp4(y_origin, dst_type, pack=True):
 
 def _cast_y_origin(y_origin, x):
     x_np = _to_numpy(x)
-    if x_np.dtype.name == "bfloat16":
-        return y_origin.astype(numpy_bfloat16())
     return y_origin.astype(x_np.dtype, copy=False)
 
 
@@ -331,9 +371,113 @@ def _maybe_to_torch(value, use_torch):
         return value
     if value is None or not isinstance(value, np.ndarray):
         return value
-    if value.dtype.name in ("float4_e2m1", "float4_e1m2", "float8_e8m0"):
+    if value.dtype.name in ("float4_e2m1", "float4_e1m2", "float8_e8m0", "hifloat8"):
         return value
     return numpy_to_torch_tensor(value)
+
+
+def _quantize_hifloat8(y_weighted, counts, scale, quant_mode, dst_type_max, scale_out):
+    hidden = y_weighted.shape[-1]
+    values = y_weighted.reshape(-1, hidden)
+    group_sizes = [len(values)] if counts is None else [int(count) for count in counts]
+    if any(count < 0 for count in group_sizes) or sum(group_sizes) > len(values):
+        raise ValueError("HiFloat8 requires nonnegative counts with sum <= token count")
+
+    if quant_mode == 2:
+        inverse_scales = _to_numpy(scale)
+        if inverse_scales is None or inverse_scales.shape != (len(group_sizes),):
+            raise ValueError("quant_mode=2 requires one inverse scale per group")
+        y_scale = (
+            np.empty(0, dtype=np.float32)
+            if scale_out is None
+            else _to_numpy(scale_out).copy()
+        )
+    else:
+        maximum = np.float32(dst_type_max)
+        if not np.isfinite(maximum) or maximum <= 0:
+            raise ValueError("quant_mode=3 requires a positive finite dst_type_max")
+        y_scale = (
+            np.zeros(len(group_sizes), dtype=np.float32)
+            if scale_out is None
+            else _to_numpy(scale_out).copy()
+        )
+        if y_scale.shape != (len(group_sizes),):
+            raise ValueError("quant_mode=3 requires one output scale per group")
+
+    hifloat8 = resolve_numpy_dtype("hifloat8")
+    y = np.zeros(values.shape, dtype=hifloat8)
+    start = 0
+    for group, count in enumerate(group_sizes):
+        if not count:
+            continue
+        stop = start + count
+        group_values = values[start:stop]
+        if quant_mode == 2:
+            inverse_scale = np.float32(inverse_scales[group])
+        else:
+            amax = np.maximum(np.max(np.abs(group_values)), np.float32(1e-8))
+            y_scale[group] = amax / maximum
+            inverse_scale = (
+                np.float32(1) / y_scale[group] if counts is None else maximum / amax
+            )
+        y[start:stop] = (group_values * inverse_scale).astype(hifloat8)
+        start = stop
+    return y.reshape(y_weighted.shape), y_scale
+
+
+def _swiglu_group_quant_reference(
+    x,
+    weight,
+    group_index,
+    scale,
+    dst_type,
+    quant_mode,
+    round_scale,
+    clamp_limit,
+    dst_type_max,
+    output_origin,
+    group_list_type,
+    *,
+    alpha=1.0,
+    bias=0.0,
+    y_out=None,
+    scale_out=None,
+    origin_out=None,
+    pack_fp4=True,
+):
+    quant_mode = int(quant_mode)
+    if quant_mode not in (0, 1, 2, 3, 5):
+        raise ValueError(f"Unsupported quant_mode={quant_mode}")
+    counts = _group_counts(group_index, group_list_type, quant_mode)
+    token_num = _token_num(x)
+    y_origin, y_weighted = _compute_swiglu(
+        x, weight, clamp_limit, mx_v2=quant_mode == 5, alpha=alpha, bias=bias
+    )
+    y_origin = _cast_y_origin(y_origin, x) if output_origin else None
+
+    if quant_mode in (2, 3):
+        y, y_scale = _quantize_hifloat8(
+            y_weighted, counts, scale, quant_mode, dst_type_max, scale_out
+        )
+        return y, y_scale, y_origin
+
+    dst_type = _dtype_to_int(dst_type)
+    if dst_type in (DT_FLOAT4_E2M1, DT_FLOAT4_E1M2):
+        # ACLNN test buffers can use either logical FP4 values or packed bytes.
+        if y_out is not None and y_out.shape[-1] == y_weighted.shape[-1]:
+            pack_fp4 = False
+        y, y_scale = _quantize_fp4(y_weighted, dst_type, pack=pack_fp4)
+    else:
+        y, y_scale = _quantize_fp8(y_weighted, dst_type, quant_mode, bool(round_scale))
+
+    real_bs = (
+        token_num if counts is None else min(max(sum(map(int, counts)), 0), token_num)
+    )
+    return (
+        _merge_output_buffer(y, y_out, token_num, real_bs),
+        _merge_output_buffer(y_scale, scale_out, token_num, real_bs),
+        _merge_output_buffer(y_origin, origin_out, token_num, real_bs),
+    )
 
 
 def aclnn_swiglu_group_quant_golden(
@@ -351,33 +495,74 @@ def aclnn_swiglu_group_quant_golden(
     yOut,
     yScaleOut,
     yOriginOut,
+    *,
+    groupListType=GROUP_LIST_TYPE_COUNT,
+    alpha=1.0,
+    bias=0.0,
     **kwargs,
 ):
-    del scaleOptional, blockSize, dstTypeMax
+    del blockSize
     use_torch = kwargs.get("use_torch", False)
-    dst_type = _dtype_to_int(dstType)
-    quant_mode = int(quantMode)
-    token_num = _token_num(x)
-    real_bs = _real_token_num(x, groupIndexOptional)
-    y_origin, y_quant = _compute_swiglu(x, weightOptional, clampLimit)
-
-    if dst_type in (DT_FLOAT4_E2M1, DT_FLOAT4_E1M2):
-        y, y_scale = _quantize_fp4(y_quant, dst_type)
-    else:
-        y, y_scale = _quantize_fp8(y_quant, dst_type, quant_mode, bool(roundScale))
-
-    y_origin = _cast_y_origin(y_origin, x)
-    y = _merge_output_buffer(y, yOut, token_num, real_bs)
-    y_scale = _merge_output_buffer(y_scale, yScaleOut, token_num, real_bs)
-    y_origin = (
-        _merge_output_buffer(y_origin, yOriginOut, token_num, real_bs)
-        if outputOrigin
-        else None
+    values = _swiglu_group_quant_reference(
+        x,
+        weightOptional,
+        groupIndexOptional,
+        scaleOptional,
+        dstType,
+        quantMode,
+        roundScale,
+        clampLimit,
+        dstTypeMax,
+        outputOrigin,
+        groupListType,
+        alpha=alpha,
+        bias=bias,
+        y_out=yOut,
+        scale_out=yScaleOut,
+        origin_out=yOriginOut,
     )
-    return (
-        _maybe_to_torch(y, use_torch),
-        _maybe_to_torch(y_scale, use_torch),
-        _maybe_to_torch(y_origin, use_torch),
+    return tuple(_maybe_to_torch(value, use_torch) for value in values)
+
+
+def aclnn_swiglu_group_quant_v3_golden(
+    x,
+    weightOptional,
+    groupIndexOptional,
+    scaleOptional,
+    dstType,
+    quantMode,
+    blockSize,
+    roundScale,
+    clampLimit,
+    dstTypeMax,
+    outputOrigin,
+    alpha,
+    bias,
+    groupListType,
+    yOut,
+    yScaleOut,
+    yOriginOut,
+    **kwargs,
+):
+    return aclnn_swiglu_group_quant_golden(
+        x,
+        weightOptional,
+        groupIndexOptional,
+        scaleOptional,
+        dstType,
+        quantMode,
+        blockSize,
+        roundScale,
+        clampLimit,
+        dstTypeMax,
+        outputOrigin,
+        yOut,
+        yScaleOut,
+        yOriginOut,
+        groupListType=groupListType,
+        alpha=alpha,
+        bias=bias,
+        **kwargs,
     )
 
 
@@ -396,11 +581,13 @@ def aclnn_swiglu_group_quant_input(
     yOut,
     yScaleOut,
     yOriginOut,
+    *,
+    groupListType=GROUP_LIST_TYPE_COUNT,
     **kwargs,
 ):
-    del quantMode, blockSize, roundScale
+    del blockSize, roundScale
     del scaleOptional, clampLimit, dstTypeMax, outputOrigin, yOut, yScaleOut, yOriginOut
-    dst_type = _dtype_to_int(dstType)
+    dst_type = _dtype_to_int(dstType) if quantMode == 1 else None
     if dst_type in (DT_FLOAT4_E2M1, DT_FLOAT4_E1M2):
         x_np = _to_numpy(x)
         hidden = x_np.shape[-1] // 2
@@ -408,29 +595,69 @@ def aclnn_swiglu_group_quant_input(
         sign_pattern = np.where(np.arange(hidden) % 2 == 0, 1.0, -1.0).astype(
             np.float32
         )
-        stable_x.reshape(-1, x_np.shape[-1])[:, hidden:] = sign_pattern
+        stable_x[..., hidden:] = sign_pattern
         _write_tensor(x, stable_x)
         if weightOptional is not None:
             _write_tensor(
                 weightOptional,
                 np.ones(_to_numpy(weightOptional).shape, dtype=np.float32),
             )
-    if groupIndexOptional is None:
+    group_index = _to_numpy(groupIndexOptional)
+    if group_index is not None:
+        group_index = group_index.copy()
+    counts = _group_counts(group_index, groupListType, quantMode)
+    if counts is None or counts.size == 0:
         return
-    token_num = int(np.prod(_to_numpy(x).shape[:-1]))
-    group_index = _to_numpy(groupIndexOptional).reshape(-1)
-    group_index[...] = 0
-    if group_index.size == 1:
-        group_index[0] = token_num
+    token_num = _token_num(x)
+    counts[...] = 0
+    if groupListType == GROUP_LIST_TYPE_PAIR:
+        group_index[:, 0] = np.arange(counts.size)
+    if counts.size == 1:
+        counts[0] = token_num
     else:
-        group_index[0] = token_num // 2
-        group_index[1] = token_num - group_index[0]
-    if isinstance(groupIndexOptional, np.ndarray):
-        return
-    import torch
+        counts[0] = token_num // 2
+        counts[1] = token_num - counts[0]
+    _write_tensor(groupIndexOptional, group_index)
 
-    groupIndexOptional.copy_(
-        torch.as_tensor(group_index, device=groupIndexOptional.device)
+
+def aclnn_swiglu_group_quant_v3_input(
+    x,
+    weightOptional,
+    groupIndexOptional,
+    scaleOptional,
+    dstType,
+    quantMode,
+    blockSize,
+    roundScale,
+    clampLimit,
+    dstTypeMax,
+    outputOrigin,
+    alpha,
+    bias,
+    groupListType,
+    yOut,
+    yScaleOut,
+    yOriginOut,
+    **kwargs,
+):
+    del alpha, bias
+    return aclnn_swiglu_group_quant_input(
+        x,
+        weightOptional,
+        groupIndexOptional,
+        scaleOptional,
+        dstType,
+        quantMode,
+        blockSize,
+        roundScale,
+        clampLimit,
+        dstTypeMax,
+        outputOrigin,
+        yOut,
+        yScaleOut,
+        yOriginOut,
+        groupListType=groupListType,
+        **kwargs,
     )
 
 
@@ -445,29 +672,29 @@ def swiglu_group_quant_golden(
     round_scale=False,
     clamp_limit=DEFAULT_CLAMP_LIMIT,
     output_origin=False,
+    group_list_type=GROUP_LIST_TYPE_COUNT,
+    dst_type_max=15.0,
+    alpha=1.0,
+    bias=0.0,
     **kwargs,
 ):
-    del scale, block_size, kwargs
-    dst_type = _dtype_to_int(dst_type)
-    quant_mode = int(quant_mode)
-    token_num = _token_num(x)
-    real_bs = _real_token_num(x, group_index)
-    y_origin, y_quant = _compute_swiglu(x, weight, clamp_limit)
-
-    if dst_type in (DT_FLOAT4_E2M1, DT_FLOAT4_E1M2):
-        y, y_scale = _quantize_fp4(y_quant, dst_type, pack=False)
-    else:
-        y, y_scale = _quantize_fp8(y_quant, dst_type, quant_mode, bool(round_scale))
-
-    y_origin = _cast_y_origin(y_origin, x) if output_origin else None
-    y = _merge_output_buffer(y, None, token_num, real_bs)
-    y_scale = _merge_output_buffer(y_scale, None, token_num, real_bs)
-    y_origin = (
-        _merge_output_buffer(y_origin, None, token_num, real_bs)
-        if output_origin
-        else None
+    del block_size, kwargs
+    return _swiglu_group_quant_reference(
+        x,
+        weight,
+        group_index,
+        scale,
+        dst_type,
+        quant_mode,
+        round_scale,
+        clamp_limit,
+        dst_type_max,
+        output_origin,
+        group_list_type,
+        alpha=alpha,
+        bias=bias,
+        pack_fp4=False,
     )
-    return y, y_scale, y_origin
 
 
 def swiglu_group_quant_input(
@@ -481,6 +708,7 @@ def swiglu_group_quant_input(
     round_scale=False,
     clamp_limit=DEFAULT_CLAMP_LIMIT,
     output_origin=False,
+    group_list_type=GROUP_LIST_TYPE_COUNT,
     **kwargs,
 ):
     del kwargs
@@ -499,5 +727,6 @@ def swiglu_group_quant_input(
         None,
         None,
         None,
+        groupListType=group_list_type,
     )
     return x, weight, group_index, scale

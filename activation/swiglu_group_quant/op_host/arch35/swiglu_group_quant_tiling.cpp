@@ -47,7 +47,7 @@ int64_t RoundUp(int64_t x, int64_t y) { return CeilDiv(x, y) * y; }
 constexpr int64_t BLOCK_SIZE = 32;
 constexpr int64_t REPEAT_SIZE = 256;
 constexpr int64_t D_LIMIT = 256;
-constexpr int64_t MX_QUANT_EXTEND_D_LIMIT = 64;
+constexpr int64_t MX_QUANT_D_LIMIT = 64;
 constexpr int64_t DOUBLE_BUFFER = 2;
 constexpr int64_t FP8_BYTES = 1;
 constexpr int64_t B16_BYTES = 2;
@@ -182,6 +182,11 @@ ge::graphStatus SwigluGroupQuantTiling::GetAttr()
 {
     auto* attrs = context_->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    auto groupListTypeAttr = attrs->GetAttrPointer<int64_t>(ATTR_INDEX_GROUP_LIST_TYPE);
+    groupListType_ = groupListTypeAttr == nullptr ? GROUP_LIST_TYPE_COUNT : *groupListTypeAttr;
+    OP_CHECK_IF(groupListType_ != GROUP_LIST_TYPE_COUNT && groupListType_ != GROUP_LIST_TYPE_PAIR,
+                OP_LOGE(context_->GetNodeName(), "group_list_type only supports 1 or 2, got %ld.", groupListType_),
+                return ge::GRAPH_FAILED);
 
     auto quantModeAttr = attrs->GetAttrPointer<int64_t>(ATTR_INDEX_QUANT_MODE);
     quantMode_ = quantModeAttr == nullptr ? BLOCK_QUANT : *quantModeAttr;
@@ -325,11 +330,12 @@ ge::graphStatus SwigluGroupQuantTiling::CheckGroupIndexInfo()
         if (groupIndexShape != nullptr) {
             auto groupIndexStorageShape = groupIndexShape->GetStorageShape();
             auto groupIndexDimNum = groupIndexStorageShape.GetDimNum();
-            OP_CHECK_IF(
-                (groupIndexDimNum != 1),
-                OP_LOGE(context_->GetNodeName(), "input group_index dim num should be 1, got %zu.", groupIndexDimNum),
-                return ge::GRAPH_FAILED);
-            g_ = groupIndexStorageShape.GetDim(0);
+            const bool isPair = groupListType_ == GROUP_LIST_TYPE_PAIR;
+            OP_CHECK_IF(isPair ? (groupIndexDimNum != 2 || groupIndexStorageShape.GetDim(1) != GROUP_INDEX_PAIR_COLS) :
+                                 (groupIndexDimNum != 1),
+                        OP_LOGE(context_->GetNodeName(), "group_index must be [G] for type 1 or [E, 2] for type 2."),
+                        return ge::GRAPH_FAILED);
+            g_ = ShapeElementNum(groupIndexStorageShape);
             // Empty tensor is not supported: a passed group_index must have a positive element count.
             OP_CHECK_IF((g_ <= 0),
                         OP_LOGE(context_->GetNodeName(),
@@ -338,6 +344,9 @@ ge::graphStatus SwigluGroupQuantTiling::CheckGroupIndexInfo()
             hasGroupIndex_ = true;
         }
     }
+    OP_CHECK_IF(groupListType_ == GROUP_LIST_TYPE_PAIR && !hasGroupIndex_,
+                OP_LOGE(context_->GetNodeName(), "group_index is required when group_list_type is 2."),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -531,9 +540,8 @@ ge::graphStatus SwigluGroupQuantTiling::GetShapeAttrsInfoInner()
                 return ge::GRAPH_FAILED);
 
     // Get Attrs
-    // Resolve the mode before applying geometry rules. Legacy modes retain the
-    // existing 256-element contract; mode 5 shares the dual-axis route-1
-    // contract and therefore accepts D = 2H in 64-element units.
+    // Resolve the mode before applying geometry rules. MX modes 1/5 accept
+    // D = 2H in 64-element units; block and HIF4 modes retain the 256-element contract.
     if (GetAttr() == ge::GRAPH_FAILED) {
         OP_LOGE(context_->GetNodeName(), "Get attr failed.");
         return ge::GRAPH_FAILED;
@@ -567,7 +575,7 @@ ge::graphStatus SwigluGroupQuantTiling::GetShapeAttrsInfoInner()
     d_ = xStorageShape.GetDim(xDimNum - 1);
     // An empty x (last dim 0) is supported by legacy block/MX/HIF4 modes; otherwise the last dim must be
     // greater than or equal to and divisible by the mode-specific D limit. Mode 5 does not support empty x.
-    const int64_t dLimit = quantMode_ == MX_QUANT_EXTEND ? MX_QUANT_EXTEND_D_LIMIT : D_LIMIT;
+    const int64_t dLimit = (quantMode_ == MX_QUANT || quantMode_ == MX_QUANT_EXTEND) ? MX_QUANT_D_LIMIT : D_LIMIT;
     const bool supportsEmpty = quantMode_ == BLOCK_QUANT || quantMode_ == MX_QUANT || quantMode_ == HIF4_QUANT;
     OP_CHECK_IF(((d_ == 0 && !supportsEmpty) || (d_ != 0 && (d_ < dLimit || d_ % dLimit != 0))),
                 OP_LOGE(context_->GetNodeName(),
@@ -623,6 +631,9 @@ ge::graphStatus SwigluGroupQuantTiling::CalcGroupIndexTiling()
     int64_t maxBase = std::max(g_, base);
     while (base <= maxBase) {
         gFactor_ = CeilDiv(g_, base);
+        if (groupListType_ == GROUP_LIST_TYPE_PAIR) {
+            gFactor_ = std::max(DownAlign(gFactor_, GROUP_INDEX_PAIR_COLS), GROUP_INDEX_PAIR_COLS);
+        }
         groupIndexSize = RoundUp(gFactor_, BLOCK_SIZE / sizeof(int64_t)) * DOUBLE_BUFFER * sizeof(int64_t);
         if (groupIndexSize + groupIndexSumSize < static_cast<int64_t>(ubSize_)) {
             break;
@@ -681,7 +692,7 @@ int64_t SwigluGroupQuantTiling::AddYOriginSize(int64_t totalSize, int64_t rowFac
 
 int64_t SwigluGroupQuantTiling::CalcMxQuantTotalSize(int64_t rowFactor, int64_t dFactor) const
 {
-    int64_t tryScaleCol = CeilDiv(dFactor, splitFactor_);
+    int64_t tryScaleCol = RoundUp(CeilDiv(dFactor, splitFactor_), MX_SCALE_ALIGN_FACTOR);
     int64_t x0Size = rowFactor * RoundUp(dFactor, B16_ALIGN_NUM) * B16_BYTES * DOUBLE_BUFFER;
     int64_t x1Size = rowFactor * RoundUp(dFactor, B16_ALIGN_NUM) * B16_BYTES * DOUBLE_BUFFER;
     int64_t ySize = rowFactor * RoundUp(dFactor, FP8_ALIGN_NUM) * FP8_BYTES * DOUBLE_BUFFER;
@@ -907,6 +918,7 @@ void SwigluGroupQuantTiling::SetBaseTilingData(TilingDataType& tilingData) const
     tilingData.set_gFactor(gFactor_);
     tilingData.set_tailGFactor(tailGFactor_);
     tilingData.set_coreNum(coreNum_);
+    tilingData.set_groupListType(groupListType_);
 }
 
 void SwigluGroupQuantTiling::SetTilingData()

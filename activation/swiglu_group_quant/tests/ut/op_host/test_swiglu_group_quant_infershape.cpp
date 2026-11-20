@@ -22,7 +22,7 @@
 
 namespace {
 const Runtime2TestParam kRuntimeParam{{"dst_type", "quant_mode", "block_size", "round_scale", "clamp_limit",
-                                       "dst_type_max", "output_origin", "alpha", "bias"}};
+                                       "dst_type_max", "output_origin", "alpha", "bias", "group_list_type"}};
 
 void UpdateInputX(ge::op::SwigluGroupQuant& op, const std::vector<int64_t>& dims, ge::DataType dtype)
 {
@@ -264,4 +264,58 @@ TEST_F(SwigluGroupQuantInferShapeTest, infer_shape_legacy_float_weight_origin)
     EXPECT_EQ(InferShapeTest(op, kRuntimeParam), ge::GRAPH_SUCCESS);
     EXPECT_EQ(op.GetOutputDesc(2).GetShape().GetDims(), std::vector<int64_t>({8, 64}));
 }
+
+void CheckPairInferShape(gert::StorageShape groupShape, ge::graphStatus expected)
+{
+    gert::StorageShape xShape = {{8, 256}, {8, 256}};
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType("SwigluGroupQuant")
+                      .NodeIoNum(2, 3)
+                      .IrInstanceNum({1, 0, 1, 0}, {1, 1, 1})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .InputShapes({&xShape, &groupShape})
+                      .Attr("dst_type", static_cast<int64_t>(ge::DT_HIFLOAT8))
+                      .Attr("quant_mode", static_cast<int64_t>(3))
+                      .Attr("block_size", static_cast<int64_t>(0))
+                      .Attr("round_scale", false)
+                      .Attr("clamp_limit", -1.0f)
+                      .Attr("dst_type_max", 15.0f)
+                      .Attr("output_origin", false)
+                      .Attr("alpha", 1.0f)
+                      .Attr("bias", 0.0f)
+                      .Attr("group_list_type", static_cast<int64_t>(2))
+                      .Build();
+    auto* funcs = gert::OpImplRegistry::GetInstance().GetOpImpl("SwigluGroupQuant");
+    ASSERT_NE(funcs, nullptr);
+    auto* context = holder.GetContext<gert::InferShapeContext>();
+    EXPECT_EQ(funcs->infer_shape(context), expected);
+    if (expected == ge::GRAPH_SUCCESS) {
+        const auto* scaleShape = context->GetOutputShape(1);
+        ASSERT_NE(scaleShape, nullptr);
+        ASSERT_EQ(scaleShape->GetDimNum(), 1U);
+        EXPECT_EQ(scaleShape->GetDim(0), 3);
+    }
+}
+
+TEST_F(SwigluGroupQuantInferShapeTest, infer_shape_group_list_type_pair)
+{
+    CheckPairInferShape({{3, 2}, {3, 2}}, ge::GRAPH_SUCCESS);
+}
+
+TEST_F(SwigluGroupQuantInferShapeTest, infer_shape_invalid_group_list_type)
+{
+    for (int64_t type : {0, 3}) {
+        ge::op::SwigluGroupQuant op;
+        UpdateInputX(op, {8, 256}, ge::DT_FLOAT16);
+        op.SetAttr("group_list_type", type);
+        EXPECT_EQ(InferShapeTest(op, kRuntimeParam), ge::GRAPH_FAILED);
+    }
+}
+
+TEST_F(SwigluGroupQuantInferShapeTest, infer_shape_pair_rejects_count_list)
+{
+    CheckPairInferShape({{3}, {3}}, ge::GRAPH_FAILED);
+}
+
 } // namespace

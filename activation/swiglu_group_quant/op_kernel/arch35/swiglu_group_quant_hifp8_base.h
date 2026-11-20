@@ -37,6 +37,11 @@ public:
     __aicore__ inline void Process();
 
 protected:
+    __aicore__ inline int64_t GetGroupCount(int64_t group) const
+    {
+        const int64_t offset = tilingData_->groupListType == 2 ? group * 2 + 1 : group;
+        return groupIndexGm_.GetValue(offset);
+    }
     __aicore__ inline void CalcCoreGroupDistribution();
     __aicore__ inline void CalcMinLoadCoreIdx();
     __aicore__ inline void CalcNonGroupTokenRange();
@@ -145,7 +150,7 @@ __aicore__ inline void SwigluGroupQuantHifp8KernelBase<Derived, T>::CalcMinLoadC
     for (int64_t core = 0; core < usedCoreNum_; core++) {
         int64_t coreLoad = 0;
         for (int64_t gg = coreGroupStartArr_[core]; gg < coreGroupStartArr_[core] + coreGroupCountArr_[core]; gg++) {
-            coreLoad += groupIndexGm_.GetValue(gg);
+            coreLoad += GetGroupCount(gg);
         }
         if (coreLoad < minLoad) {
             minLoad = coreLoad;
@@ -181,12 +186,12 @@ __aicore__ inline void SwigluGroupQuantHifp8KernelBase<Derived, T>::ForEachGroup
     if (groupCount > 0) {
         int64_t tokenStart = 0;
         for (int64_t g = 0; g < groupStart; g++) {
-            tokenStart += groupIndexGm_.GetValue(g);
+            tokenStart += GetGroupCount(g);
         }
 
         for (int64_t g = 0; g < groupCount; g++) {
             int64_t groupIdx = groupStart + g;
-            int64_t tokensInGroup = groupIndexGm_.GetValue(groupIdx);
+            int64_t tokensInGroup = GetGroupCount(groupIdx);
             if (tokensInGroup == 0) {
                 continue;
             }
@@ -223,7 +228,7 @@ __aicore__ inline void SwigluGroupQuantHifp8KernelBase<Derived, T>::CalcCoreGrou
 
     int64_t totalGroupTokens = 0;
     for (int64_t g = 0; g < groupNum; g++) {
-        totalGroupTokens += groupIndexGm_.GetValue(g);
+        totalGroupTokens += GetGroupCount(g);
     }
     int64_t targetLoad = CeilDiv(totalGroupTokens, usedCoreNum_);
 
@@ -240,7 +245,7 @@ __aicore__ inline void SwigluGroupQuantHifp8KernelBase<Derived, T>::CalcCoreGrou
                 if (remainingGroups <= remainingCores) {
                     break;
                 }
-                coreLoad += groupIndexGm_.GetValue(g);
+                coreLoad += GetGroupCount(g);
                 g++;
                 if (coreLoad >= targetLoad) {
                     break;

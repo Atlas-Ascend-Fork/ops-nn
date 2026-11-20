@@ -29,19 +29,23 @@ namespace ge {
  * quant_mode 2/3. The rank must be in [2, 8] ([2, 7] for quant_mode 1); quant_mode 5 only supports a
  * two-dimensional [T, 2H] tensor. Empty tensors are supported for quant_mode 0/1 and not supported for
  * quant_mode 2/3/5. The last dimension is split into two equal parts for SwiGLU. For non-empty tensors,
- * quant_mode 5 requires the last dimension to be at least 64 and divisible by 64; legacy modes require it
- * to be at least 256 and divisible by 256.
+ * quant_mode 1/5 require the last dimension to be at least 64 and divisible by 64; quant_mode 0 requires
+ * it to be at least 256 and divisible by 256. quant_mode 2/3 require a positive even last dimension.
  * @li weight: Optional float32 tensor for quant_mode 0/1/2/3 and optional float16, bfloat16 or float32 tensor
  * for quant_mode 5. Per-token weight multiplied into the SwiGLU result before quantization. The rank must be
  * in [1, 8], empty tensors are supported for quant_mode 0/1 and not supported for quant_mode 2/3/5, and the
  * element count must equal the product of all x dims except the last one.
- * @li group_index: Optional int64 tensor. Count-mode group token numbers. It must be 1D, its element
- * values must be greater than or equal to 0, group_index cannot be an empty tensor on its own for
+ * @li group_index: Optional int64 tensor. group_list_type=1 uses a 1D count list [G];
+ * group_list_type=2 requires a contiguous [E, 2] table of [group_id, count] pairs. Only counts
+ * participate in computation; group_id is ignored. Counts must be non-negative.
+ * group_index cannot be an empty tensor on its own for
  * quant_mode 0/1, and empty tensors are not supported for quant_mode 2/3.
  * @li scale: Optional float32 tensor. Static quantization input (invScale) used by quant_mode 2. Its
  * shape must be [G] when group_index is present and [1] otherwise, and empty tensors are not supported.
  *
  * @par Attributes:
+ * @li group_list_type: Optional int, default 1. Supports 1 (counts) and 2 ([group_id, count] pairs).
+ * Type 2 requires group_index. Type 0 (cumulative boundaries) and other values are unsupported.
  * @li dst_type: Optional int. Target quantized dtype. It is only effective for quant_mode 0/1/5, and
  * supports 35 (FLOAT8_E5M2), 36 (FLOAT8_E4M3FN), 40 (FLOAT4_E2M1) and 41 (FLOAT4_E1M2). quant_mode 1
  * is required when dst_type is 40 or 41. quant_mode 2/3 always quantize to HIFLOAT8 and ignore this
@@ -91,6 +95,7 @@ REG_OP(SwigluGroupQuant)
     .ATTR(output_origin, Bool, false)
     .ATTR(alpha, Float, 1.0f)
     .ATTR(bias, Float, 0.0f)
+    .ATTR(group_list_type, Int, 1)
     .OP_END_FACTORY_REG(SwigluGroupQuant)
 
 } // namespace ge

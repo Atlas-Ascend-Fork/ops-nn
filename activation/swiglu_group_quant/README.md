@@ -521,7 +521,7 @@ $$
     <tr>
       <td>x</td>
       <td>输入</td>
-      <td>SwiGLU输入。quantMode为5时shape仅支持[T,D]二维；其他模式shape为[...,D]，维度为2-8维（quantMode为1时为2-7维）。quantMode为5时D必须大于等于64且能被64整除；其他模式的非空输入D必须大于等于256且能被256整除。quantMode为0或1时支持空Tensor；quantMode为2或3时不支持空Tensor。quantMode为0、1或5时仅支持FLOAT16、BFLOAT16；quantMode为2或3时支持FLOAT、FLOAT16、BFLOAT16。</td>
+      <td>SwiGLU输入。quantMode为5时shape仅支持[T,D]二维；其他模式shape为[...,D]，维度为2-8维（quantMode为1时为2-7维）。quantMode为1或5时，非空输入D必须大于等于64且能被64整除；quantMode为0时，非空输入D必须大于等于256且能被256整除；quantMode为2或3时D必须为正偶数。quantMode为0或1时支持空Tensor；quantMode为2或3时不支持空Tensor。quantMode为0、1或5时仅支持FLOAT16、BFLOAT16；quantMode为2或3时支持FLOAT、FLOAT16、BFLOAT16。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -535,7 +535,7 @@ $$
     <tr>
       <td>group_index</td>
       <td>输入（可选）</td>
-      <td>count模式的group token数。quantMode为0或1时不支持单独为空Tensor；quantMode为2或3不支持空Tensor。不为空时，数据类型为INT64，shape为[G]。</td>
+      <td>分组token数。group_list_type=1时为一维count列表[G]；group_list_type=2时为[E, 2]的[group_id, count]列表，group_id不参与计算。quantMode为0或1时不支持单独为空Tensor；quantMode为2或3不支持空Tensor。不为空时，数据类型为INT64。</td>
       <td>INT64</td>
       <td>ND</td>
     </tr>
@@ -596,6 +596,13 @@ $$
       <td>-</td>
     </tr>
     <tr>
+      <td>group_list_type</td>
+      <td>属性</td>
+      <td>group_index的列表格式，默认值为1。支持1（一维count列表[G]）和2（连续的[E, 2]二元组[group_id, count]，仅count列参与计算）。取2时必须提供group_index；0（cumsum模式）及其他值不支持。quantMode为5时仅支持取1，且不支持传入group_index。</td>
+      <td>INT64</td>
+      <td>-</td>
+    </tr>
+    <tr>
       <td>y</td>
       <td>输出</td>
       <td>量化输出。quantMode为0、1或5时数据类型与dstType一致；quantMode为2或3时数据类型为HIFLOAT8。shape均为[...,D/2]。quantMode为0或1时支持空Tensor；quantMode为2或3时不支持空Tensor。</td>
@@ -644,3 +651,7 @@ $$
 |aclnn调用|[test_aclnn_swiglu_group_quant](./examples/test_aclnn_swiglu_group_quant.cpp)|通过[aclnnSwigluGroupQuant](./docs/aclnnSwigluGroupQuant.md)接口调用SwigluGroupQuant算子。|
 |aclnn V2调用|[test_aclnn_swiglu_group_quant_v2](./examples/test_aclnn_swiglu_group_quant_v2.cpp)|通过[aclnnSwigluGroupQuantV2](./docs/aclnnSwigluGroupQuantV2.md)接口调用SwigluGroupQuant算子的quant_mode=5。|
 |图模式调用|-|通过[算子IR](./op_graph/swiglu_group_quant_proto.h)构图方式调用SwigluGroupQuant算子。|
+
+## 分组列表类型与 ACLNN V3
+
+`group_list_type` 默认值为 `1`，支持 `1`（count 列表）和 `2`（`[group_id, count]` 二元组），不支持 `0` 及其他值。类型 `2` 必须提供 `[E, 2]` 的 group_index，只读取第二列 count。`quant_mode=5` 仍不支持 group_index。[ACLNN V3](docs/aclnnSwigluGroupQuantV3.md) 和 [Torch 接口](docs/torchapi_swiglu_group_quant.md) 均支持此参数。

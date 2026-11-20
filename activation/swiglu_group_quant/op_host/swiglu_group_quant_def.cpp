@@ -24,6 +24,7 @@ constexpr float DEFAULT_DST_TYPE_MAX = 15.0f;
 constexpr float DEFAULT_ALPHA = 1.0f;
 constexpr float DEFAULT_BIAS = 0.0f;
 constexpr uint32_t SWIGLU_GROUP_QUANT_VERSION_TWO = 2;
+constexpr uint32_t SWIGLU_GROUP_QUANT_VERSION_THREE = 3;
 
 #if defined(METADEF_VERSION_NUM) && METADEF_VERSION_NUM >= 90300000
 static const std::vector<ge::DataType> xDataType960dt = {
@@ -124,7 +125,8 @@ public:
                                  ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
                                  ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
                                  ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
-                                 ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
+                                 ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
+            .AutoContiguous();
         this->Input("scale")
             .ParamType(OPTIONAL)
             .DataType({ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
@@ -199,6 +201,7 @@ public:
         this->Attr("output_origin").AttrType(OPTIONAL).Bool(false);
         this->Attr("alpha").AttrType(OPTIONAL).Version(SWIGLU_GROUP_QUANT_VERSION_TWO).Float(DEFAULT_ALPHA);
         this->Attr("bias").AttrType(OPTIONAL).Version(SWIGLU_GROUP_QUANT_VERSION_TWO).Float(DEFAULT_BIAS);
+        this->Attr("group_list_type").AttrType(OPTIONAL).Version(SWIGLU_GROUP_QUANT_VERSION_THREE).Int(1);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)
@@ -228,7 +231,8 @@ public:
             .ParamType(OPTIONAL)
             .DataType(groupIndexDataType960dt)
             .Format(formatNd960dt)
-            .UnknownShapeFormat(formatNd960dt);
+            .UnknownShapeFormat(formatNd960dt)
+            .AutoContiguous();
         config960dt.Input("scale")
             .ParamType(OPTIONAL)
             .DataType(scaleDataType960dt)

@@ -21,6 +21,8 @@ MX_QUANT_V2_MODE = 5
 BLOCK_FP8_BLOCK_SIZE = 128
 MX_BLOCK_SIZE = 32
 MX_SCALE_ALIGN = 2
+GROUP_LIST_TYPE_COUNT = 1
+GROUP_LIST_TYPE_PAIR = 2
 TORCH_FLOAT8_E5M2 = 23
 TORCH_FLOAT8_E4M3FN = 24
 FLOAT8_E5M2 = 291
@@ -67,13 +69,47 @@ def _quant_output_shape(x, dst_type, quant_mode):
     return shape
 
 
+def _check_group_index(group_index, group_list_type, quant_mode):
+    torch._check(
+        group_list_type in (GROUP_LIST_TYPE_COUNT, GROUP_LIST_TYPE_PAIR),
+        lambda: f"group_list_type must be 1 or 2, got {group_list_type}",
+    )
+    if quant_mode == MX_QUANT_V2_MODE:
+        torch._check(
+            group_list_type == GROUP_LIST_TYPE_COUNT and group_index is None,
+            lambda: "quant_mode=5 requires group_list_type=1 and group_index=None",
+        )
+    if group_index is None:
+        torch._check(
+            group_list_type == GROUP_LIST_TYPE_COUNT,
+            lambda: "group_index is required when group_list_type=2",
+        )
+        return
+
+    torch._check(group_index.dtype == torch.int64, lambda: "group_index must be int64")
+    if group_list_type == GROUP_LIST_TYPE_PAIR:
+        torch._check(
+            group_index.dim() == 2 and group_index.size(1) == 2,
+            lambda: "group_index must have shape [E, 2] when group_list_type=2",
+        )
+        torch._check(
+            group_index.size(0) > 0,
+            lambda: "group_index must not be empty when group_list_type=2",
+        )
+    else:
+        torch._check(
+            group_index.dim() == 1,
+            lambda: "group_index must be 1D when group_list_type=1",
+        )
+
+
 def _scale_shape(x, group_index, quant_mode):
     swiglu_last_dim = x.size(x.dim() - 1) // 2
     if quant_mode == STATIC_HIFP8_QUANT_MODE:
         return [0]
     if quant_mode == DYNAMIC_HIFP8_QUANT_MODE:
         if group_index is not None:
-            return list(group_index.shape)
+            return [group_index.size(0)]
         return [1]
 
     shape = list(x.shape[:-1])
@@ -98,7 +134,7 @@ class SwigluGroupQuantOpBuilder(OpBuilder):
             "swiglu_group_quant(Tensor x, Tensor? weight=None, Tensor? group_index=None, Tensor? scale=None, *, "
             "int dst_type=291, int quant_mode=0, int block_size=0, bool round_scale=False, "
             "float clamp_limit=-1.0, float dst_type_max=15.0, bool output_origin=False, "
-            "float alpha=1.0, float bias=0.0) -> (Tensor, Tensor, Tensor)"
+            "float alpha=1.0, float bias=0.0, int group_list_type=1) -> (Tensor, Tensor, Tensor)"
         )
 
     def register_meta(self):
@@ -118,7 +154,9 @@ class SwigluGroupQuantOpBuilder(OpBuilder):
             output_origin=False,
             alpha=1.0,
             bias=0.0,
+            group_list_type=GROUP_LIST_TYPE_COUNT,
         ):
+            _check_group_index(group_index, group_list_type, quant_mode)
             y = x.new_empty(
                 _quant_output_shape(x, dst_type, quant_mode),
                 dtype=_quant_output_dtype(dst_type, quant_mode),
@@ -155,7 +193,9 @@ def _swiglu_group_quant_npu(
     output_origin=False,
     alpha=1.0,
     bias=0.0,
+    group_list_type=GROUP_LIST_TYPE_COUNT,
 ):
+    _check_group_index(group_index, group_list_type, quant_mode)
     use_v2 = quant_mode == MX_QUANT_V2_MODE
     if use_v2 and (x.requires_grad or (weight is not None and weight.requires_grad)):
         raise RuntimeError(
@@ -175,6 +215,7 @@ def _swiglu_group_quant_npu(
         output_origin,
         alpha,
         bias,
+        group_list_type,
     )
     if use_v2:
         return tuple(output.detach() for output in outputs)
@@ -197,6 +238,7 @@ def swiglu_group_quant(
     output_origin=False,
     alpha=1.0,
     bias=0.0,
+    group_list_type=GROUP_LIST_TYPE_COUNT,
 ):
     return torch.ops.cann_ops_nn.swiglu_group_quant.default(
         x,
@@ -212,6 +254,7 @@ def swiglu_group_quant(
         output_origin=output_origin,
         alpha=alpha,
         bias=bias,
+        group_list_type=group_list_type,
     )
 
 
@@ -221,8 +264,11 @@ def _swiglu_group_quant_backward_autograd(ctx, grad_y, grad_y_scale, grad_y_orig
         return None, None, None, None
     if saved_weight is None:
         y_origin = None
+    if ctx.group_list_type == GROUP_LIST_TYPE_PAIR:
+        # SwigluGroupQuantGrad takes a contiguous 1D list of counts.
+        saved_group_index = saved_group_index.select(1, 1).contiguous()
     grad_x, grad_weight = torch.ops.cann_ops_nn.swiglu_group_quant_backward(
-        grad_y_origin,
+        grad_y_origin.contiguous(),
         saved_x,
         weight=saved_weight,
         y_origin=y_origin,
@@ -238,6 +284,7 @@ def _swiglu_group_quant_setup_context(ctx, inputs, keyword_only_inputs, output):
     _, _, y_origin = output
     ctx.save_for_backward(x, weight, group_index, y_origin)
     ctx.clamp_limit = keyword_only_inputs["clamp_limit"]
+    ctx.group_list_type = keyword_only_inputs["group_list_type"]
     ctx.set_materialize_grads(False)
 
 

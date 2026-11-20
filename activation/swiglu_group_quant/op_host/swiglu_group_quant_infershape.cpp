@@ -33,6 +33,7 @@ constexpr size_t OUTPUT_IDX_Y_ORIGIN = 2;
 constexpr size_t ATTR_INDEX_DST_TYPE = 0;
 constexpr size_t ATTR_INDEX_QUANT_MODE = 1;
 constexpr size_t ATTR_INDEX_OUTPUT_ORIGIN = 6;
+constexpr size_t ATTR_INDEX_GROUP_LIST_TYPE = 9;
 constexpr int64_t UNKNOWN_DIM_VALUE = -1;
 constexpr int64_t NUM_TWO = 2;
 constexpr int64_t PER_BLOCK_FP16 = 128;
@@ -151,6 +152,24 @@ graphStatus InferShape4SwigluGroupQuant(gert::InferShapeContext* context)
     auto attrsPtr = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrsPtr);
     const int64_t* quantModeAttr = attrsPtr->GetAttrPointer<int64_t>(ATTR_INDEX_QUANT_MODE);
+    const auto* groupListTypeAttr = attrsPtr->GetAttrPointer<int64_t>(ATTR_INDEX_GROUP_LIST_TYPE);
+    const int64_t groupListType = groupListTypeAttr == nullptr ? 1 : *groupListTypeAttr;
+    OP_CHECK_IF(groupListType != 1 && groupListType != 2,
+                OP_LOGE(context->GetNodeName(), "group_list_type only supports 1 or 2, got %ld.", groupListType),
+                return ge::GRAPH_FAILED);
+    const auto* groupShape = context->GetOptionalInputShape(INPUT_IDX_GROUP_INDEX);
+    OP_CHECK_IF(groupListType == 2 && groupShape == nullptr,
+                OP_LOGE(context->GetNodeName(), "group_index is required when group_list_type is 2."),
+                return ge::GRAPH_FAILED);
+    if (groupShape != nullptr && !Ops::Base::IsUnknownRank(*groupShape)) {
+        const size_t rank = groupShape->GetDimNum();
+        const bool badShape = groupListType == 1 ? rank != 1 :
+                                                   (rank != 2 || (groupShape->GetDim(1) != 2 &&
+                                                                  groupShape->GetDim(1) != UNKNOWN_DIM_VALUE));
+        OP_CHECK_IF(badShape,
+                    OP_LOGE(context->GetNodeName(), "group_index must be [G] for type 1 or [E, 2] for type 2."),
+                    return ge::GRAPH_FAILED);
+    }
     const bool isMxQuantV2 = IsMxQuantV2Mode(quantModeAttr);
     const bool* outputOriginAttr = attrsPtr->GetAttrPointer<bool>(ATTR_INDEX_OUTPUT_ORIGIN);
 

@@ -481,7 +481,7 @@ aclnnStatus aclnnSwigluGroupQuant(
       <td>x (aclTensor*)</td>
       <td>Input</td>
       <td>SwiGLU input.</td>
-      <td><ul><li>The shape is [...,D].</li><li>D must be divisible by 256.</li><li>The number of dimensions must be 2 to 8, or 2 to 7 when quantMode is 1.</li><li>Supports only FLOAT16 and BFLOAT16 when quantMode is 0 or 1. Supports FLOAT, FLOAT16, and BFLOAT16 when quantMode is 2 or 3.</li><li>Empty tensors are supported when quantMode is 0 or 1, but not supported when quantMode is 2 or 3.</li></ul></td>
+      <td><ul><li>The shape is [...,D].</li><li>For non-empty inputs, D must be at least 64 and divisible by 64 for quantMode=1, at least 256 and divisible by 256 for quantMode=0, and a positive even number for quantMode=2/3.</li><li>The number of dimensions must be 2 to 8, or 2 to 7 when quantMode is 1.</li><li>Supports only FLOAT16 and BFLOAT16 when quantMode is 0 or 1. Supports FLOAT, FLOAT16, and BFLOAT16 when quantMode is 2 or 3.</li><li>Empty tensors are supported when quantMode is 0 or 1, but not supported when quantMode is 2 or 3.</li></ul></td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
       <td>2-8</td>

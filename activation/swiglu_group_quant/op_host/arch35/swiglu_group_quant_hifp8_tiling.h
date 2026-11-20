@@ -70,6 +70,7 @@ private:
     int64_t tokensPerCore_ = 0;
     int64_t tileTokens_ = 0;
     int64_t tileLength_ = 0;
+    int64_t groupListType_ = GROUP_LIST_TYPE_COUNT;
     int64_t quantMode_ = 3;
 };
 

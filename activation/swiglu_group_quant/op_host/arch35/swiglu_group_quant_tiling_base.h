@@ -47,6 +47,10 @@ struct SwigluGroupQuantCompileInfo {
 };
 
 constexpr int64_t MAX_CORE_COUNT = 64;
+constexpr size_t ATTR_INDEX_GROUP_LIST_TYPE = 9;
+constexpr int64_t GROUP_LIST_TYPE_COUNT = 1;
+constexpr int64_t GROUP_LIST_TYPE_PAIR = 2;
+constexpr int64_t GROUP_INDEX_PAIR_COLS = 2;
 
 BEGIN_TILING_DATA_DEF(SwigluGroupQuantTilingData)
 TILING_DATA_FIELD_DEF(int64_t, bs);
@@ -73,6 +77,7 @@ TILING_DATA_FIELD_DEF(int64_t, gLoop);
 TILING_DATA_FIELD_DEF(int64_t, gFactor);
 TILING_DATA_FIELD_DEF(int64_t, tailGFactor);
 TILING_DATA_FIELD_DEF(int64_t, coreNum);
+TILING_DATA_FIELD_DEF(int64_t, groupListType);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(SwigluGroupQuant, SwigluGroupQuantTilingData)
@@ -109,6 +114,7 @@ TILING_DATA_FIELD_DEF(int64_t, usedCoreNum);
 TILING_DATA_FIELD_DEF(int64_t, tokensPerCore);
 TILING_DATA_FIELD_DEF(int64_t, groupNum);
 TILING_DATA_FIELD_DEF(int64_t, tileLength);
+TILING_DATA_FIELD_DEF(int64_t, groupListType);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(SwigluGroupQuant_4000, SwigluGroupQuantHifp8TilingData)

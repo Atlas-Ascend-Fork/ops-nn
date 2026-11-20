@@ -121,6 +121,7 @@ if _TORCHAIR_AVAILABLE:
         output_origin: bool = False,
         alpha: float = 1.0,
         bias: float = 0.0,
+        group_list_type: int = 1,
         meta_outputs: TensorSpec = None,
     ):
         if quant_mode in (STATIC_HIFP8_QUANT_MODE, DYNAMIC_HIFP8_QUANT_MODE) and (
@@ -152,6 +153,7 @@ if _TORCHAIR_AVAILABLE:
                 "output_origin": attr.Bool(output_origin),
                 "alpha": attr.Float(alpha),
                 "bias": attr.Float(bias),
+                "group_list_type": attr.Int(group_list_type),
             },
             outputs=["y", "y_scale", "y_origin"],
             ir=IrDef("SwigluGroupQuant")
@@ -168,6 +170,7 @@ if _TORCHAIR_AVAILABLE:
             .attr("output_origin", attr.Bool(False))
             .attr("alpha", attr.Float(1.0))
             .attr("bias", attr.Float(0.0))
+            .attr("group_list_type", attr.Int(1))
             .output(
                 "y",
                 "DT_FLOAT8_E4M3FN, DT_FLOAT8_E5M2, DT_FLOAT4_E2M1, DT_FLOAT4_E1M2, DT_HIFLOAT8",

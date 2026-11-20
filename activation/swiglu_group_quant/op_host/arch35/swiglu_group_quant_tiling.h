@@ -88,6 +88,7 @@ private:
     int64_t dLoop_ = 0;
     int64_t dFactor_ = 0;
     int64_t tailDFactor_ = 0;
+    int64_t groupListType_ = GROUP_LIST_TYPE_COUNT;
     int64_t quantMode_ = 0;
     int64_t splitFactor_ = 0;
     ge::DataType dstType_ = ge::DT_FLOAT8_E4M3FN;

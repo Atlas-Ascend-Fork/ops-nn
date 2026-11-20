@@ -25,7 +25,7 @@
 
 - 接口功能：
 
-  对输入`x`执行SwiGLU后进行分组低比特量化，支持Block FP8、MX FP8、HiFloat8静态量化和HiFloat8动态量化。`quant_mode=5`底层封装`aclnnSwigluGroupQuantV2`，其余模式封装`aclnnSwigluGroupQuant`。
+  对输入`x`执行SwiGLU后进行分组低比特量化，支持Block FP8、MX FP8、HiFloat8静态量化和HiFloat8动态量化。`group_list_type=2`底层调用`aclnnSwigluGroupQuantV3`。默认`group_list_type=1`时，`quant_mode=5`调用`aclnnSwigluGroupQuantV2`，其余模式调用`aclnnSwigluGroupQuant`。
 
 - 计算流程：
 
@@ -52,6 +52,7 @@ cann_ops_nn.swiglu_group_quant(
     output_origin=False,
     alpha=1.0,
     bias=0.0,
+    group_list_type=1,
 ) -> (Tensor, Tensor, Tensor)
 ```
 
@@ -61,7 +62,7 @@ cann_ops_nn.swiglu_group_quant(
 | --- | --- | --- | --- | --- | --- |
 | `x` | Tensor | 必选 | SwiGLU输入，最后一维会被均分为两部分。 | `torch.float16`、`torch.bfloat16`（quant_mode为2/3时额外支持`torch.float32`） | quant_mode=5仅支持2维；其他模式为2-8维（quant_mode为1时为2-7维） |
 | `weight` | Tensor | 可选 | 逐token权重，非空时乘到SwiGLU结果上，加权后的结果用于量化。 | quant_mode=5支持`torch.float16`、`torch.bfloat16`、`torch.float32`，其他模式仅支持`torch.float32` | 1-8维，元素个数等于`x`除最后一维外的元素个数 |
-| `group_index` | Tensor | 可选 | count模式分组token数。 | `torch.int64` | 1维 |
+| `group_index` | Tensor | 可选 | 每组的token数。二元组格式只读取第二列count。 | `torch.int64` | `[G]`或`[E, 2]` |
 | `scale` | Tensor | 可选 | HiFloat8静态量化使用的scale，仅quant_mode为2时使用。 | `torch.float32` | 1维 |
 | `dst_type` | int | 可选 | 目标量化类型的torch dtype编码，默认`291`。 | - | - |
 | `quant_mode` | int | 可选 | 量化模式，支持`0`、`1`、`2`、`3`、`5`。其中`1`为原MX公式，`5`为MX V2公式。 | - | - |
@@ -72,6 +73,7 @@ cann_ops_nn.swiglu_group_quant(
 | `output_origin` | bool | 可选 | 是否返回weight加权前的SwiGLU结果。 | - | - |
 | `alpha` | float | 可选 | Sigmoid输入的缩放系数，默认值为`1.0`，仅`quant_mode=5`生效。 | - | - |
 | `bias` | float | 可选 | SwiGLU第二分支的加法偏置，默认值为`0.0`，仅`quant_mode=5`生效。 | - | - |
+| `group_list_type` | int | 可选 | `1`（默认）使用一维count列表`[G]`。`2`要求传入`[E, 2]`的`[group_id, count]`二元组。 | - | - |
 
 ### quant_mode 与 dst_type
 
@@ -100,7 +102,7 @@ cann_ops_nn.swiglu_group_quant(
 | 参数名 | 参数类型 | 描述 | 数据类型 | 维度（shape） |
 | --- | --- | --- | --- | --- |
 | `y` | Tensor | 量化输出。 | 参见`quant_mode 与 dst_type` | `x.shape[:-1] + [D/2]` |
-| `y_scale` | Tensor | 量化scale输出。 | 参见`quant_mode 与 dst_type` | `quant_mode=0`为`x.shape[:-1] + [ceil((D/2)/128)]`；`quant_mode=1/5`为`x.shape[:-1] + [ceil(ceil((D/2)/32)/2), 2]`；`quant_mode=2`为`[0]`；`quant_mode=3`为`group_index.shape`或`[1]` |
+| `y_scale` | Tensor | 量化scale输出。 | 参见`quant_mode 与 dst_type` | `quant_mode=0`为`x.shape[:-1] + [ceil((D/2)/128)]`；`quant_mode=1/5`为`x.shape[:-1] + [ceil(ceil((D/2)/32)/2), 2]`；`quant_mode=2`为`[0]`；`quant_mode=3`为`[group_index.shape[0]]`或`[1]` |
 | `y_origin` | Tensor | weight加权前的SwiGLU结果或占位Tensor。 | 与`x`相同 | `output_origin=True`时为`x.shape[:-1] + [D/2]`，否则为`[0]` |
 
 其中`D = x.shape[-1]`。
@@ -113,16 +115,16 @@ cann_ops_nn.swiglu_group_quant(
 - `dst_type`支持FP8和HiFloat8对应的torch dtype编码，详见`dst_type 编码说明`。
 - `quant_mode=0`时仅支持FP8输出，`dst_type`支持`23`、`24`、`291`、`292`，`block_size`支持`0`或`128`。
 - `quant_mode=1`时支持FP8输出，`dst_type`支持`23`、`24`、`291`、`292`，`block_size`支持`0`或`32`，`round_scale`必须为`True`。
-- `quant_mode=5`时使用MX V2量化公式，仅支持FP8输出；`block_size`支持`0`或`32`，`round_scale`必须为`True`，不支持`group_index`和`scale`输入。
+- `quant_mode=5`时使用MX V2量化公式，仅支持FP8输出；`block_size`支持`0`或`32`，`round_scale`必须为`True`，要求`group_list_type=1`且`group_index`和`scale`为`None`。
 - `quant_mode=2`时支持HiFloat8静态量化输出，需传入`scale`，`dst_type`、`block_size`和`round_scale`不生效，实际下发HiFloat8。
 - `quant_mode=3`时支持HiFloat8动态量化输出，不使用`scale`，`dst_type`、`block_size`和`round_scale`不生效，实际下发HiFloat8。
 - `y_scale`的数据类型必须与`quant_mode`匹配：Block FP8为`torch.float32`，MX为`torch.float8_e8m0fnu`，HiFloat8为`torch.float32`。
-- `quant_mode=3`时，`group_index`可用于MoE场景的分组动态量化；`y_scale`的shape为`group_index.shape`，未传`group_index`时为`[1]`。
+- `quant_mode=3`时，每组输出一个scale，按`group_index`的行顺序排列。未传`group_index`时，`y_scale`的shape为`[1]`。
 - `clamp_limit`不启用时使用默认占位值`-1.0`；启用时必须大于0。`quant_mode=5`时还必须为有限值。
 - 所有支持的`quant_mode`均可通过`output_origin=True`输出weight加权前的`y_origin`。
-- `group_index`中的元素值须大于等于0。
+- `group_index`中的count须大于等于0。`group_id`不参与计算。
 - quant_mode为0、1时，x、weight支持为空Tensor，group_index不支持单独为空Tensor；quant_mode为2、3时不支持空Tensor。
-- 输入`x`和`weight`支持非连续Tensor；`group_index`和`scale`不支持非连续Tensor。
+- 输入`x`和`weight`支持非连续Tensor。单算子模式下，`group_list_type=2`的`group_index`也支持非连续Tensor。`group_list_type=1`的`group_index`和`scale`须连续。
 
 ## 确定性计算
 

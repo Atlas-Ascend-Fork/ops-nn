@@ -62,7 +62,7 @@ public:
         // fp4 output is packed 2 elements per byte: per-row valid bytes = CeilDiv(dFactor, FP4_PACK_NUM)
         tBufPool.InitBuffer(
             yQue, DOUBLE_BUFFER_NUM,
-            tilingData->rowFactor * RoundUp<int8_t>(CeilDiv(tilingData->dFactor, FP4_PACK_NUM)) * sizeof(T1));
+            tilingData->rowFactor * RoundUp<int8_t>(CeilDiv(tilingData->dFactor, FP4_PACK_NUM)) * sizeof(int8_t));
         scaleColNum = CeilDiv(tilingData->dFactor, PER_MX_FP16);
         tBufPool.InitBuffer(scaleQue, DOUBLE_BUFFER_NUM, tilingData->rowFactor * RoundUp<T2>(scaleColNum) * sizeof(T2));
 
@@ -92,7 +92,8 @@ public:
         int64_t x0GmBaseOffset = curBlockIdx * rowOfFormerBlock * tilingData->d;
         int64_t x1GmBaseOffset = x0GmBaseOffset + tilingData->splitD;
         int64_t yGmBaseOffset = curBlockIdx * rowOfFormerBlock * (tilingData->splitD / FP4_PACK_NUM);
-        int64_t scaleGmBaseOffset = curBlockIdx * rowOfFormerBlock * tilingData->scaleCol;
+        int64_t scaleColGm = CeilDiv(tilingData->scaleCol, 2) * 2;
+        int64_t scaleGmBaseOffset = curBlockIdx * rowOfFormerBlock * scaleColGm;
         int64_t topkWeightGmBaseOffset = curBlockIdx * rowOfFormerBlock;
         for (int64_t rowOuterIdx = 0; rowOuterIdx < rowOuterLoop; rowOuterIdx++) {
             int64_t curRowFactor = (rowOuterIdx == rowOuterLoop - 1) ? tailRowFactor : tilingData->rowFactor;
@@ -108,6 +109,8 @@ public:
                 int64_t curDFactor = (dLoopIdx == tilingData->dLoop - 1) ? tilingData->tailDFactor :
                                                                            tilingData->dFactor;
                 int64_t scaleDFactor = CeilDiv(curDFactor, PER_MX_FP16);
+                bool padScale = dLoopIdx == tilingData->dLoop - 1 && scaleColGm != tilingData->scaleCol;
+                int64_t scaleCopyCols = scaleDFactor + (padScale ? 1 : 0);
                 int64_t xBaseOffset = rowOuterIdx * tilingData->rowFactor * tilingData->d +
                                       dLoopIdx * tilingData->dFactor;
                 xLocal = xQue.template AllocTensor<T0>();
@@ -149,16 +152,17 @@ public:
                 VFComputeScaleMXFP4(maxExpLocal, scaleLocal.template ReinterpretCast<uint16_t>(), invScaleLocal,
                                     curRowFactor, curDFactor, maxValue);
 
+                if (padScale) {
+                    VFPadMxFp4Scale(scaleLocal.template ReinterpretCast<uint8_t>(), curRowFactor, scaleDFactor);
+                }
                 scaleQue.template EnQue(scaleLocal);
                 scaleLocal = scaleQue.template DeQue<T2>();
-                // e8m0 scale is written contiguously (packed, scaleDFactor bytes/row, not 32B-aligned) in UB,
-                // so it must be copied out with PaddingMode::Compact (same as the fp8-mx path). Default
-                // (Normal) mode assumes each row starts at a 32B UB block boundary and misreads rows > 0.
+                // Scale rows are compact in UB, including the zero partner in the final D chunk.
                 CopyOut<T2, AscendC::PaddingMode::Compact>(
                     scaleLocal,
-                    scaleGm[scaleGmBaseOffset + rowOuterIdx * tilingData->rowFactor * tilingData->scaleCol +
+                    scaleGm[scaleGmBaseOffset + rowOuterIdx * tilingData->rowFactor * scaleColGm +
                             dLoopIdx * CeilDiv(tilingData->dFactor, PER_MX_FP16)],
-                    curRowFactor, scaleDFactor, tilingData->scaleCol - scaleDFactor);
+                    curRowFactor, scaleCopyCols, scaleColGm - scaleCopyCols);
                 scaleQue.template FreeTensor(scaleLocal);
 
                 yLocal = yQue.template AllocTensor<T1>();
@@ -180,11 +184,12 @@ public:
                 // CopyOut must be addressed in BYTES (int8): fp4x2_e2m1_t/fp4x2_e1m2_t have sizeof()==2, so
                 // indexing yGm as T1 would double every offset/length and overrun adjacent rows. The
                 // official swiglu_mx_quant uses a uint8 y GM for exactly this reason.
-                CopyOut(yLocal.template ReinterpretCast<int8_t>(),
-                        yGm[yGmBaseOffset + rowOuterIdx * tilingData->rowFactor * (tilingData->splitD / FP4_PACK_NUM) +
-                            dLoopIdx * (tilingData->dFactor / FP4_PACK_NUM)],
-                        curRowFactor, CeilDiv(curDFactor, FP4_PACK_NUM),
-                        tilingData->splitD / FP4_PACK_NUM - CeilDiv(curDFactor, FP4_PACK_NUM));
+                CopyOut<int8_t, AscendC::PaddingMode::Compact>(
+                    yLocal.template ReinterpretCast<int8_t>(),
+                    yGm[yGmBaseOffset + rowOuterIdx * tilingData->rowFactor * (tilingData->splitD / FP4_PACK_NUM) +
+                        dLoopIdx * (tilingData->dFactor / FP4_PACK_NUM)],
+                    curRowFactor, CeilDiv(curDFactor, FP4_PACK_NUM),
+                    tilingData->splitD / FP4_PACK_NUM - CeilDiv(curDFactor, FP4_PACK_NUM));
                 yQue.template FreeTensor(yLocal);
 
                 // copy yOrigin to gm

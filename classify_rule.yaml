@@ -687,11 +687,7 @@ activation-c@ops-nn:
         - ops/ops-nn/activation/swish_grad/op_graph/
         - ops/ops-nn/activation/swish_grad/op_host/swish_grad_def.cpp
         - ops/ops-nn/activation/swish_grad/op_host/swish_grad_infershape.cpp
-        - ops/ops-nn/activation/swiglu_group_quant/op_host/arch35/swiglu_group_quant_hifp8_tiling.cpp
-        - ops/ops-nn/activation/swiglu_group_quant/op_host/arch35/swiglu_group_quant_hifp8_tiling.h
-        - ops/ops-nn/activation/swiglu_group_quant/op_kernel/arch35/swiglu_dynamic_group_quant_hifp8.h
-        - ops/ops-nn/activation/swiglu_group_quant/op_kernel/arch35/swiglu_group_quant_hifp8_base.h
-        - ops/ops-nn/activation/swiglu_group_quant/op_kernel/arch35/swiglu_static_group_quant_hifp8.h
+        - ops/ops-nn/activation/swiglu_group_quant/
         - ops/ops-nn/activation/threshold/
         - ops/ops-nn/activation/threshold_grad_v2_d/op_api/
         - ops/ops-nn/activation/threshold_v2/op_api/

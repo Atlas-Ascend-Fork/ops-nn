@@ -523,7 +523,7 @@ where `cast_fp8_rint` is the type conversion from FP32 to FP8, using the **RINT 
     <tr>
       <td>x</td>
       <td>Input</td>
-      <td>SwiGLU input. When quantMode is 5, the shape supports only the 2D [T,D]; in other modes, the shape is [...,D] with 2 to 8 dimensions (2 to 7 dimensions when quantMode is 1). When quantMode is 5, D must be greater than or equal to 64 and divisible by 64; in other modes, D of a non-empty input must be greater than or equal to 256 and divisible by 256. When quantMode is 0 or 1, an empty tensor is supported; when quantMode is 2 or 3, an empty tensor is not supported. When quantMode is 0, 1, or 5, only FLOAT16 and BFLOAT16 are supported; when quantMode is 2 or 3, FLOAT, FLOAT16, and BFLOAT16 are supported.</td>
+      <td>SwiGLU input. When quantMode is 5, the shape supports only the 2D [T,D]; in other modes, the shape is [...,D] with 2 to 8 dimensions (2 to 7 dimensions when quantMode is 1). When quantMode is 1 or 5, D of a non-empty input must be at least 64 and divisible by 64; when quantMode is 0, it must be at least 256 and divisible by 256; when quantMode is 2 or 3, D must be a positive even number. When quantMode is 0 or 1, an empty tensor is supported; when quantMode is 2 or 3, an empty tensor is not supported. When quantMode is 0, 1, or 5, only FLOAT16 and BFLOAT16 are supported; when quantMode is 2 or 3, FLOAT, FLOAT16, and BFLOAT16 are supported.</td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -537,7 +537,7 @@ where `cast_fp8_rint` is the type conversion from FP32 to FP8, using the **RINT 
     <tr>
       <td>group_index</td>
       <td>Input (optional)</td>
-      <td>Number of group tokens in count mode. When quantMode is 0 or 1, it does not support being an empty tensor alone; when quantMode is 2 or 3, an empty tensor is not supported. When it is not empty, the data type is INT64 and the shape is [G].</td>
+      <td>Group token counts: group_list_type=1 uses a count list [G]; group_list_type=2 uses [E, 2] pairs of [group_id, count], ignoring group_id. When quantMode is 0 or 1, it does not support being an empty tensor alone; when quantMode is 2 or 3, an empty tensor is not supported. When it is not empty, the data type is INT64.</td>
       <td>INT64</td>
       <td>ND</td>
     </tr>
@@ -598,6 +598,13 @@ where `cast_fp8_rint` is the type conversion from FP32 to FP8, using the **RINT 
       <td>-</td>
     </tr>
     <tr>
+      <td>group_list_type</td>
+      <td>Attribute</td>
+      <td>List format of group_index. The default value is 1. Supported values are 1 (a one-dimensional count list [G]) and 2 (a contiguous [E, 2] table of [group_id, count] pairs, where only the count column participates in computation). Type 2 requires group_index. Type 0 (cumsum mode) and other values are unsupported. When quantMode is 5, only type 1 is supported and group_index must not be provided.</td>
+      <td>INT64</td>
+      <td>-</td>
+    </tr>
+    <tr>
       <td>y</td>
       <td>Output</td>
       <td>Quantization output. When quantMode is 0, 1, or 5, the data type is the same as dstType; when quantMode is 2 or 3, the data type is HIFLOAT8. The shape is [...,D/2] in all cases. When quantMode is 0 or 1, an empty tensor is supported; when quantMode is 2 or 3, an empty tensor is not supported.</td>
@@ -646,3 +653,7 @@ where `cast_fp8_rint` is the type conversion from FP32 to FP8, using the **RINT 
 |aclnn invocation|[test_aclnn_swiglu_group_quant](./examples/test_aclnn_swiglu_group_quant.cpp)|Calls the SwigluGroupQuant operator through the [aclnnSwigluGroupQuant](./docs/aclnnSwigluGroupQuant_en.md) interface.|
 |aclnn V2 invocation|[test_aclnn_swiglu_group_quant_v2](./examples/test_aclnn_swiglu_group_quant_v2.cpp)|Calls quant_mode=5 of the SwigluGroupQuant operator through the [aclnnSwigluGroupQuantV2](./docs/aclnnSwigluGroupQuantV2.md) interface.|
 |Graph-mode invocation|-|Calls the SwigluGroupQuant operator by constructing a graph through the [operator IR](./op_graph/swiglu_group_quant_proto.h).|
+
+## Group list types and ACLNN V3
+
+`group_list_type` defaults to `1`. Supported values are `1` (counts) and `2` (`[group_id, count]` pairs). Type `2` requires a `[E, 2]` group_index and only reads the count column. Type `0` and other values are unsupported. `quant_mode=5` still rejects group_index. Both [ACLNN V3](docs/aclnnSwigluGroupQuantV3.md) and the [Torch API](docs/torchapi_swiglu_group_quant_en.md) expose this parameter.

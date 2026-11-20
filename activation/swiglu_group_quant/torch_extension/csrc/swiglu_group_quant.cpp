@@ -24,6 +24,7 @@ constexpr int64_t kBlockFp8BlockSize = 128;
 constexpr int64_t kMxBlockSize = 32;
 constexpr int64_t kMxScaleAlign = 2;
 constexpr int64_t kFp4InByte = 2;
+constexpr int64_t kGroupListTypePair = 2;
 
 void CheckNpuTensor(const at::Tensor& tensor, const char* name)
 {
@@ -108,9 +109,10 @@ c10::SymDimVector GetScaleShape(const at::Tensor& x, const c10::optional<at::Ten
     }
     if (quantMode == kDynamicHifp8QuantMode) {
         if (groupIndex.has_value() && groupIndex.value().defined()) {
-            return c10::SymDimVector(groupIndex.value().sym_sizes());
+            scaleShape.emplace_back(groupIndex.value().sym_size(0));
+        } else {
+            scaleShape.emplace_back(1);
         }
-        scaleShape.emplace_back(1);
         return scaleShape;
     }
 
@@ -146,7 +148,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> swiglu_group_quant(
     const at::Tensor& x, const c10::optional<at::Tensor>& weight, const c10::optional<at::Tensor>& group_index,
     const c10::optional<at::Tensor>& scale, int64_t dst_type, const c10::optional<int64_t>& quant_mode,
     const c10::optional<int64_t>& block_size, const c10::optional<bool>& round_scale, double clamp_limit,
-    double dst_type_max, bool output_origin, double alpha, double bias)
+    double dst_type_max, bool output_origin, double alpha, double bias, int64_t group_list_type)
 {
     CheckNpuTensor(x, "x");
     CheckOptionalNpuTensor(weight, "weight");
@@ -184,7 +186,13 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> swiglu_group_quant(
     TensorWrapper yWrapper{y, yAclType};
     TensorWrapper yScaleWrapper{yScale, yScaleAclType};
     TensorWrapper yOriginWrapper{yOrigin, ConvertToAclDataType(yOrigin.scalar_type())};
-    if (useV2) {
+    if (group_list_type == kGroupListTypePair) {
+        const at::Tensor groupPairs = group_index.value().contiguous();
+        const int64_t dstType = yAclType;
+        ACLNN_CMD(aclnnSwigluGroupQuantV3, x, weight, groupPairs, scale, dstType, resolvedQuantMode, resolvedBlockSize,
+                  resolvedRoundScale, clamp_limit, dst_type_max, output_origin, resolvedAlpha, resolvedBias,
+                  group_list_type, yWrapper, yScaleWrapper, yOriginWrapper);
+    } else if (useV2) {
         ACLNN_CMD(aclnnSwigluGroupQuantV2, x, weight, group_index, scale, yAclType, resolvedQuantMode,
                   resolvedBlockSize, resolvedRoundScale, clamp_limit, dst_type_max, output_origin, resolvedAlpha,
                   resolvedBias, yWrapper, yScaleWrapper, yOriginWrapper);

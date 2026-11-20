@@ -479,7 +479,7 @@ aclnnStatus aclnnSwigluGroupQuant(
       <td>x（aclTensor*）</td>
       <td>输入</td>
       <td>SwiGLU输入。</td>
-      <td><ul><li>shape为[...,D]。</li><li>D须能被256整除。</li><li>维度需为2-8维，其中quantMode为1时为2-7维。</li><li>quantMode为0或1时，仅支持FLOAT16、BFLOAT16；quantMode为2或3时，支持FLOAT、FLOAT16、BFLOAT16。</li><li>quantMode为0或1时支持空Tensor；quantMode为2或3不支持空Tensor。</li></ul></td>
+      <td><ul><li>shape为[...,D]。</li><li>非空输入：quantMode=1时D须大于等于64且能被64整除；quantMode=0时D须大于等于256且能被256整除；quantMode=2/3时D须为正偶数。</li><li>维度需为2-8维，其中quantMode为1时为2-7维。</li><li>quantMode为0或1时，仅支持FLOAT16、BFLOAT16；quantMode为2或3时，支持FLOAT、FLOAT16、BFLOAT16。</li><li>quantMode为0或1时支持空Tensor；quantMode为2或3不支持空Tensor。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2-8</td>

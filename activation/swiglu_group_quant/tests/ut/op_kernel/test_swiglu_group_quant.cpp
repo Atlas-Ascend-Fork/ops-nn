@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <cstring>
 #include "gtest/gtest.h"
 #include "tikicpulib.h"
 
@@ -27,9 +28,10 @@ protected:
     static void TearDownTestCase() { std::cout << "SwigluGroupQuantKernelTest TearDown" << std::endl; }
 };
 
-void RunKernelWithTilingKey(uint64_t tilingKey, bool outputOrigin, bool hasWeight = false)
+void RunKernelWithTilingKey(uint64_t tilingKey, bool outputOrigin, bool hasWeight = false, int64_t groupListType = 1,
+                            int64_t validTokens = -1)
 {
-    constexpr int64_t bs = 2;
+    const int64_t bs = validTokens >= 0 ? 8 : 2;
     constexpr int64_t d = 256;
     constexpr int64_t splitD = d / 2;
     constexpr int64_t scaleCol = 1;
@@ -76,14 +78,53 @@ void RunKernelWithTilingKey(uint64_t tilingKey, bool outputOrigin, bool hasWeigh
     tilingData->gFactor = 0;
     tilingData->tailGFactor = 0;
     tilingData->coreNum = blockDim;
+    tilingData->groupListType = 1;
+
+    uint8_t* groupIndex = nullptr;
+    if (validTokens >= 0) {
+        constexpr int64_t groups = 37;
+        const int64_t elements = groups * groupListType;
+        groupIndex = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(elements * sizeof(int64_t)));
+        auto* values = reinterpret_cast<int64_t*>(groupIndex);
+        for (int64_t i = 0; i < groups; ++i) {
+            int64_t count = i == groups - 1 ? validTokens : 0;
+            if (validTokens >= 3) {
+                count = (i == 0 || i == 17) ? 1 : (i == groups - 1 ? validTokens - 2 : 0);
+            }
+            if (groupListType == 2) {
+                values[2 * i] = (1LL << 40) + groups - i; // IDs must never affect the token count.
+                values[2 * i + 1] = count;
+            } else {
+                values[i] = count;
+            }
+        }
+        tilingData->groupListType = groupListType;
+        tilingData->g = elements;
+        tilingData->gFactor = 16 * groupListType;
+        tilingData->gLoop = 3;
+        tilingData->tailGFactor = 5 * groupListType;
+        std::fill_n(reinterpret_cast<half*>(x), bs * d, static_cast<half>(1.0f));
+        std::fill_n(reinterpret_cast<half*>(yOrigin), bs * splitD, static_cast<half>(-9.0f));
+    }
 
     ICPU_SET_TILING_KEY(tilingKey);
     auto swigluGroupQuantKernel = [](GM_ADDR x, GM_ADDR weight, GM_ADDR groupIndex, GM_ADDR scale, GM_ADDR y,
                                      GM_ADDR yScale, GM_ADDR yOrigin, GM_ADDR workspace, GM_ADDR tiling) {
         ::swiglu_group_quant(x, weight, groupIndex, scale, y, yScale, yOrigin, workspace, tiling);
     };
-    ICPU_RUN_KF(swigluGroupQuantKernel, blockDim, x, weight, nullptr, nullptr, y, yScale, yOrigin, workspace, tiling);
+    ICPU_RUN_KF(swigluGroupQuantKernel, blockDim, x, weight, groupIndex, nullptr, y, yScale, yOrigin, workspace,
+                tiling);
 
+    if (validTokens >= 0) {
+        const int64_t realTokens = std::min(validTokens, bs);
+        for (int64_t row = 0; row < bs; ++row) {
+            const float expected = row < realTokens ? 1.0f / (1.0f + std::exp(-1.0f)) : -9.0f;
+            for (int64_t col = 0; col < splitD; ++col) {
+                EXPECT_NEAR(static_cast<float>(reinterpret_cast<half*>(yOrigin)[row * splitD + col]), expected, 1e-3f);
+            }
+        }
+        AscendC::GmFree(groupIndex);
+    }
     AscendC::GmFree(x);
     AscendC::GmFree(y);
     AscendC::GmFree(yScale);
@@ -150,6 +191,7 @@ void RunMxKernelWithTilingKey(uint64_t tilingKey, bool outputOrigin, bool hasWei
     tilingData->gFactor = 0;
     tilingData->tailGFactor = 0;
     tilingData->coreNum = blockDim;
+    tilingData->groupListType = 1;
 
     ICPU_SET_TILING_KEY(tilingKey);
     auto swigluGroupQuantKernel = [](GM_ADDR x, GM_ADDR weight, GM_ADDR groupIndex, GM_ADDR scale, GM_ADDR y,
@@ -225,6 +267,7 @@ void RunMxFp4KernelWithTilingKey(uint64_t tilingKey, bool outputOrigin, bool has
     tilingData->gFactor = 0;
     tilingData->tailGFactor = 0;
     tilingData->coreNum = blockDim;
+    tilingData->groupListType = 1;
 
     ICPU_SET_TILING_KEY(tilingKey);
     auto swigluGroupQuantKernel = [](GM_ADDR x, GM_ADDR weight, GM_ADDR groupIndex, GM_ADDR scale, GM_ADDR y,
@@ -293,6 +336,7 @@ void RunHifp8KernelWithTilingKey(uint64_t tilingKey, bool hasScale, bool outputO
     tilingData->tokensPerCore = tokensPerCore;
     tilingData->groupNum = groupNum;
     tilingData->tileLength = tileLength;
+    tilingData->groupListType = 1;
 
     ICPU_SET_TILING_KEY(tilingKey);
     auto swigluGroupQuantKernel = [](GM_ADDR x, GM_ADDR weight, GM_ADDR groupIndex, GM_ADDR scale, GM_ADDR y,
@@ -325,12 +369,12 @@ TEST_F(SwigluGroupQuantKernelTest, hifp8_dynamic_output_origin) { RunHifp8Kernel
 
 float HostSilu(float v) { return v / (1.0f + std::exp(-v)); }
 
-void RunHifp8YOriginWeightVerify(uint64_t tilingKey, bool isDynamic)
+void RunHifp8YOriginWeightVerify(uint64_t tilingKey, bool isDynamic, int64_t groupListType = 0)
 {
     constexpr int64_t totalTokens = 4;
     constexpr int64_t dimH = 128;
     constexpr int64_t dim2H = 2 * dimH;
-    constexpr int64_t groupNum = 1;
+    const int64_t groupNum = groupListType == 0 ? 1 : 2;
     constexpr int64_t usedCoreNum = 2;
     constexpr int64_t tokensPerCore = totalTokens / usedCoreNum;
     constexpr int64_t tileLength = tokensPerCore * dimH;
@@ -369,7 +413,7 @@ void RunHifp8YOriginWeightVerify(uint64_t tilingKey, bool isDynamic)
         weightFp32[t] = weightVals[t];
     }
     if (!isDynamic) {
-        reinterpret_cast<float*>(scale)[0] = 1.0f;
+        std::fill_n(reinterpret_cast<float*>(scale), groupNum, 1.0f);
     }
 
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
@@ -377,7 +421,7 @@ void RunHifp8YOriginWeightVerify(uint64_t tilingKey, bool isDynamic)
     tilingData->totalTokens = totalTokens;
     tilingData->dim2H = dim2H;
     tilingData->dimH = dimH;
-    tilingData->isGroup = 0;
+    tilingData->isGroup = groupListType != 0;
     tilingData->hasWeight = 1;
     tilingData->hasClamp = 0;
     tilingData->outputOrigin = 1;
@@ -388,13 +432,28 @@ void RunHifp8YOriginWeightVerify(uint64_t tilingKey, bool isDynamic)
     tilingData->tokensPerCore = tokensPerCore;
     tilingData->groupNum = groupNum;
     tilingData->tileLength = tileLength;
+    tilingData->groupListType = groupListType == 0 ? 1 : groupListType;
 
+    uint8_t* groupIndex = nullptr;
+    if (groupListType != 0) {
+        groupIndex = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(groupNum * groupListType * sizeof(int64_t)));
+        auto* values = reinterpret_cast<int64_t*>(groupIndex);
+        if (groupListType == 1) {
+            values[0] = 1;
+            values[1] = 2;
+        } else {
+            values[0] = 999;
+            values[1] = 1;
+            values[2] = 123;
+            values[3] = 2;
+        }
+    }
     ICPU_SET_TILING_KEY(tilingKey);
     auto swigluGroupQuantKernel = [](GM_ADDR x, GM_ADDR weight, GM_ADDR groupIndex, GM_ADDR scale, GM_ADDR y,
                                      GM_ADDR yScale, GM_ADDR yOrigin, GM_ADDR workspace, GM_ADDR tiling) {
         ::swiglu_group_quant(x, weight, groupIndex, scale, y, yScale, yOrigin, workspace, tiling);
     };
-    ICPU_RUN_KF(swigluGroupQuantKernel, blockDim, x, weight, nullptr, scale, y, yScale, yOrigin, workspace, tiling);
+    ICPU_RUN_KF(swigluGroupQuantKernel, blockDim, x, weight, groupIndex, scale, y, yScale, yOrigin, workspace, tiling);
 
     // yOrigin excludes weight: yOrigin = silu(gate) * up
     auto* yOriginHalf = reinterpret_cast<half*>(yOrigin);
@@ -407,13 +466,23 @@ void RunHifp8YOriginWeightVerify(uint64_t tilingKey, bool isDynamic)
 
     // dynamic scale is derived from amax of weight-multiplied values: yScale = amax(w * silu(gate) * up) / dstTypeMax
     if (isDynamic) {
-        float amax = 0.0f;
-        for (int64_t t = 0; t < totalTokens; t++) {
-            amax = std::max(amax, std::fabs(HostSilu(gateVals[t]) * upVals[t] * weightVals[t]));
+        for (int64_t group = 0; group < groupNum; ++group) {
+            const int64_t start = groupListType == 0 || group == 0 ? 0 : 1;
+            const int64_t end = groupListType == 0 ? totalTokens : (group == 0 ? 1 : 3);
+            float amax = 0.0f;
+            for (int64_t t = start; t < end; ++t) {
+                amax = std::max(amax, std::fabs(HostSilu(gateVals[t]) * upVals[t] * weightVals[t]));
+            }
+            EXPECT_NEAR(reinterpret_cast<float*>(yScale)[group], amax / dstTypeMax, 2e-3f);
         }
-        EXPECT_NEAR(reinterpret_cast<float*>(yScale)[0], amax / dstTypeMax, 2e-3f);
     }
 
+    if (groupIndex != nullptr) {
+        for (int64_t j = 0; j < dimH; ++j) {
+            EXPECT_EQ(y[3 * dimH + j], 0); // count sum is 3; IDs must not expand the valid prefix.
+        }
+        AscendC::GmFree(groupIndex);
+    }
     AscendC::GmFree(x);
     AscendC::GmFree(weight);
     if (!isDynamic) {
@@ -431,4 +500,21 @@ void RunHifp8YOriginWeightVerify(uint64_t tilingKey, bool isDynamic)
 TEST_F(SwigluGroupQuantKernelTest, hifp8_static_y_origin_excludes_weight) { RunHifp8YOriginWeightVerify(4100, false); }
 
 TEST_F(SwigluGroupQuantKernelTest, hifp8_dynamic_y_origin_excludes_weight) { RunHifp8YOriginWeightVerify(4000, true); }
+TEST_F(SwigluGroupQuantKernelTest, group_list_type_count_and_pair_valid_prefix)
+{
+    for (int64_t type : {1, 2}) {
+        for (int64_t tokens : {0, 1, 4, 10}) {
+            RunKernelWithTilingKey(1100, true, false, type, tokens);
+        }
+    }
+}
+
+TEST_F(SwigluGroupQuantKernelTest, group_list_type_hifp8_static_and_dynamic)
+{
+    for (int64_t type : {1, 2}) {
+        RunHifp8YOriginWeightVerify(4100, false, type);
+        RunHifp8YOriginWeightVerify(4000, true, type);
+    }
+}
+
 } // namespace
