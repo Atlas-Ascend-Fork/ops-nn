@@ -26,6 +26,7 @@
 #include "arch35/batch_norm_grad_v3_infer_channel_last.h"
 #include "arch35/batch_norm_grad_v3_infer.h"
 #include "arch35/batch_norm_grad_v3_rar_split_core_r1.h"
+#include "arch35/batch_norm_grad_v3_reduce_empty.h"
 
 using namespace BatchNormGradV3;
 using namespace BNGV3RARRecomputeSplitR0;
@@ -41,6 +42,7 @@ using namespace BNGV3RARRecomputeSplitR0;
 #define BATCH_NORM_GRAD_V3_RA_SPLIT_R_FUSED_PAIR 52000000UL
 #define BATCH_NORM_GRAD_V3_RA_SPLIT_R_PACKED 53000000UL
 #define BATCH_NORM_GRAD_V3_RAR_SPLIT_CORE_R1 1000UL
+#define BATCH_NORM_GRAD_V3_REDUCE_EMPTY 60000000UL
 static constexpr int DOUBLE_BUFFER = 2;
 
 // inference
@@ -55,7 +57,12 @@ extern "C" __global__ __aicore__ void batch_norm_grad_v3(GM_ADDR dy, GM_ADDR x, 
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
     TPipe pipe;
     GM_ADDR usrWorkspace = workspace;
-    if (TILING_KEY_IS(BATCH_NORM_GRAD_V3_RAR_FULL_LOAD)) {
+    if (TILING_KEY_IS(BATCH_NORM_GRAD_V3_REDUCE_EMPTY)) {
+        GET_TILING_DATA_WITH_STRUCT(BatchNormGradV3ReduceEmptyTilingData, tilingData, tiling);
+        FillEmptyReductionGradients<DTYPE_WEIGHT>(dweight, dbias, tilingData.baseTilingData.aDim,
+                                                  tilingData.baseTilingData.formerBlockDim, tilingData.tileChannels,
+                                                  tilingData.outputMask, pipe);
+    } else if (TILING_KEY_IS(BATCH_NORM_GRAD_V3_RAR_FULL_LOAD)) {
         GET_TILING_DATA_WITH_STRUCT(BatchNormGradV3RARFullLoadTilingData, tilingDataIn, tiling);
         const BatchNormGradV3RARFullLoadTilingData* __restrict tilingData = &tilingDataIn;
         BatchNormGradV3RARFullLoad<DTYPE_DY, DTYPE_WEIGHT, DOUBLE_BUFFER> op(&pipe);

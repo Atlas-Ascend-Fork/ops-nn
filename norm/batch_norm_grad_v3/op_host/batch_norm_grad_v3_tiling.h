@@ -345,6 +345,14 @@ END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(BatchNormGradV3_1000, BatchNormGradV3RARSplitCoreR1TilingData);
 
+BEGIN_TILING_DATA_DEF(BatchNormGradV3ReduceEmptyTilingData)
+TILING_DATA_FIELD_DEF_STRUCT(BatchNormGradV3BaseTilingData, baseTilingData);
+TILING_DATA_FIELD_DEF(int64_t, tileChannels);
+TILING_DATA_FIELD_DEF(int64_t, outputMask);
+END_TILING_DATA_DEF;
+
+REGISTER_TILING_DATA_CLASS(BatchNormGradV3_60000000, BatchNormGradV3ReduceEmptyTilingData);
+
 struct BatchNormGradV3CompileInfo {
     int32_t coreNum;
     int64_t ubSize;

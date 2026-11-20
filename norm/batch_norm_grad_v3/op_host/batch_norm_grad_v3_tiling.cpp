@@ -17,6 +17,7 @@
 #include "batch_norm_grad_v3_tiling.h"
 #include "op_api/op_util.h"
 #include "op_host/tiling_templates_registry.h"
+#include "op_host/tiling_util.h"
 
 using namespace AscendC;
 
@@ -562,6 +563,14 @@ ge::graphStatus BatchNormGradV3TilingBase::CheckBigShapesValid()
                                    "NCHW, NHWC, NCDHW or NDHWC");
     }
 
+    if (dyStorageShape.GetShapeSize() == 0) {
+        OP_TILING_CHECK(!Ops::NN::OpTiling::IsRegbaseSocVersion(context_),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context_->GetNodeName(), "dy", Ops::Base::ToString(dyStorageShape).c_str(),
+                            "Non-Regbase tiling requires all axes of dy to be positive"),
+                        return ge::GRAPH_FAILED);
+    }
+
     // 校验shape的dims相同
     for (int64_t i = 0; i < dyDimNum; i++) {
         OP_TILING_CHECK(
@@ -573,10 +582,10 @@ ge::graphStatus BatchNormGradV3TilingBase::CheckBigShapesValid()
                     .c_str(),
                 "The shapes of dy, x and dx must be the same"),
             return ge::GRAPH_FAILED);
-        OP_TILING_CHECK(dyStorageShape.GetDim(i) <= 0,
+        OP_TILING_CHECK(dyStorageShape.GetDim(i) < 0,
                         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "dy",
                                                               Ops::Base::ToString(dyStorageShape).c_str(),
-                                                              "All axes of dy must be positive numbers"),
+                                                              "All axes of dy must be non-negative"),
                         return ge::GRAPH_FAILED);
     }
 
@@ -621,6 +630,7 @@ ge::graphStatus BatchNormGradV3TilingBase::GetShapesAndCheckValid()
     auto dyFormat = dyDesc->GetFormat().GetStorageFormat();
     auto dyShape = context_->GetInputShape(INDEX_0);
     auto dyStorageShape = EnsureNotScalar(dyShape->GetStorageShape());
+
     if (dyFormat == ge::FORMAT_NCHW) {
         r1Dim = dyStorageShape.GetDim(INDEX_0);
         aDim = dyStorageShape.GetDim(INDEX_1);
@@ -667,9 +677,10 @@ ge::graphStatus BatchNormGradV3TilingBase::GetShapeAttrsInfo()
     OP_TILING_CHECK(isTraining == false, OP_LOGI(context_->GetNodeName(), "This node only support training."),
                     return ge::GRAPH_PARAM_INVALID);
 
-    OP_TILING_CHECK(GetShapesAndCheckValid() != ge::GRAPH_SUCCESS,
-                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Input shapes are invalid."),
-                    return ge::GRAPH_FAILED);
+    const auto shapeStatus = GetShapesAndCheckValid();
+    if (shapeStatus != ge::GRAPH_SUCCESS) {
+        return shapeStatus;
+    }
 
     OP_TILING_CHECK(GetDtypesAndCheckValid() != ge::GRAPH_SUCCESS,
                     OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Input dtypes are invalid."),

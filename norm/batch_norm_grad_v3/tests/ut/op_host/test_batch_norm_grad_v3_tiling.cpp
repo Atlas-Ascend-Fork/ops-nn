@@ -2742,6 +2742,73 @@ TEST_P(BatchNormGradV3LegacyTiling, batch_norm_grad_v3_legacy_train_split_load_c
         "0 0 0 5 0 10 0 40 0 925353388 0 ");
 }
 
+TEST_F(BatchNormGradV3Tiling, TrainingEmptyReduction)
+{
+    constexpr int64_t channels = 65537;
+    gert::StorageShape feature = {{2, channels, 0, 4}, {2, channels, 0, 4}};
+    gert::StorageShape parameter = {{channels}, {channels}};
+    optiling::BatchNormGradV3CompileInfo compileInfo{};
+    compileInfo.coreNum = 2;
+    compileInfo.blockSize = 32;
+    fe::PlatFormInfos platform;
+    ASSERT_TRUE(platform.Init());
+    std::map<std::string, std::string> version{{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+    std::map<std::string, std::string> socInfo{{"ai_core_cnt", "2"}, {"core_type_list", "AICore"}};
+    std::map<std::string, std::string> aicoreSpec{{"ub_size", "253952"}};
+    platform.SetPlatformRes("version", version);
+    platform.SetPlatformRes("SoCInfo", socInfo);
+    platform.SetPlatformRes("AICoreSpec", aicoreSpec);
+    platform.SetCoreNumByCoreType("AICore");
+
+    auto rawData = gert::TilingData::CreateCap(4096);
+    auto workspace = gert::ContinuousVector::Create<size_t>(1);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("BatchNormGradV3")
+                      .NodeIoNum(7, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&feature, &feature, &parameter, &parameter, &parameter, &parameter, &parameter})
+                      .OutputShapes({&feature, &parameter, &parameter})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(&platform)
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs(
+                          {{"is_training", Ops::NN::AnyValue::CreateFrom<bool>(true)},
+                           {"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-5f)},
+                           {"output_mask", Ops::NN::AnyValue::CreateFrom<std::vector<bool>>({false, false, true})}})
+                      .TilingData(rawData.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                      .Build();
+    auto* context = holder.GetContext<gert::TilingContext>();
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("BatchNormGradV3");
+    ASSERT_NE(context, nullptr);
+    ASSERT_NE(impl, nullptr);
+    ASSERT_EQ(impl->tiling(context), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(context->GetTilingKey(), 60000000);
+    EXPECT_EQ(context->GetBlockDim(), 2);
+    EXPECT_EQ(context->GetWorkspaceSizes(1)[0], 0);
+
+    const auto* tilingData = context->GetRawTilingData();
+    optiling::BatchNormGradV3ReduceEmptyTilingData expected;
+    expected.baseTilingData.set_aDim(channels);
+    expected.baseTilingData.set_formerBlockDim(32776);
+    expected.baseTilingData.set_blockNum(2);
+    expected.set_tileChannels(31744);
+    expected.set_outputMask(4); // Only dbias is requested.
+    std::vector<uint8_t> expectedBytes(expected.GetDataSize());
+    expected.SaveToBuffer(expectedBytes.data(), expectedBytes.size());
+    ASSERT_EQ(tilingData->GetDataSize(), expectedBytes.size());
+    EXPECT_EQ(std::memcmp(tilingData->GetData(), expectedBytes.data(), expectedBytes.size()), 0);
+}
+
 // ra_split_r fused 路径 tilingKey 派发与合计 UB 兜底用例(NCHW (N,C,1,1) HW=1×1)
 // 50000000 generic / 51000000 fused-single / 52000000 fused-pair
 namespace {
