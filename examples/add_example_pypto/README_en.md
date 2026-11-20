@@ -58,10 +58,25 @@ instead of `compile_op`, which performs codegen by tiling key and reuses the Asc
 
 ## Chip and arch
 
-The codegen arch of PyPTO is derived automatically by the platform (`a2`/`a3`/`a5`). This operator registers only `ascend950`(a5), consistent with the arch
-automatically derived by the current toolkit. When the kernel binary is compiled, cmake exports `PYPTO_JIT_ARCH` according to the soc being built
-(`ascend910b`/`ascend910_93` → `a3`, `ascend950` → `a5`), preventing `pypto_compile_op` from falling back to the default `a5`
-and generating instructions not supported by the target chip.
+The codegen arch of PyPTO is derived automatically by the platform, and pypto-pro only supports the `dav-3510` arch (the canonical token is
+the `__NPU_ARCH__` version number `3510`). This operator registers only `ascend950`, consistent with the arch automatically derived by the current
+toolkit. When the kernel binary is compiled, cmake exports `PYPTOPRO_JIT_ARCH` according to the soc being built
+(`ascend950` → `3510`), explicitly pinning the codegen arch to the target chip.
+
+## Running and Verification
+
+```bash
+# Compile (only ascend950 is supported)
+bash build.sh --pkg --soc=ascend950 --ops=add_example_pypto -j16
+
+# Install
+./build_out/cann-ops-nn-*linux*.run
+
+# Run the sample (the run method is the same as that for standard operators)
+bash build.sh --run_example add_example_pypto eager cust --vendor_name=custom --soc=ascend950
+```
+
+Expected output: when `first input` is 1 and `second input` is 2, `result` is 3, indicating that the operator has been successfully deployed and executed correctly.
 
 ## Invocation Description
 
@@ -82,18 +97,3 @@ The aclnn interface of AddExamplePypto is generated automatically from the opera
   </tr>
 </tbody>
 </table>
-
-Compile, install, and run the sample:
-
-```bash
-# Compile (only ascend950 is supported)
-bash build.sh --pkg --soc=ascend950 --ops=add_example_pypto -j16
-
-# Install
-./build_out/cann-ops-nn-*linux*.run
-
-# Run the sample (the run method is the same as that for standard operators)
-bash build.sh --run_example add_example_pypto eager cust --vendor_name=custom --soc=ascend950
-```
-
-Expected output: when `first input` is 1 and `second input` is 2, `result` is 3, indicating that the operator has been successfully deployed and executed correctly.

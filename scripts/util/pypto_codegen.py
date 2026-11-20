@@ -47,15 +47,10 @@ def _disable_bytecode_writes():
     sys.dont_write_bytecode = True
 
 
-# soc (ASCEND_COMPUTE_UNIT, lowercased) -> pypto arch token used by PYPTO_JIT_ARCH.
-# Sole authoritative source: cmake/func.cmake's pypto_soc_to_arch() consumes this via --print-arch-map,
-# so the two sides cannot drift again. Mirrors build.sh's SOC_TO_ARCH: 2201 -> a3 (ascend910b/ascend910_93),
-# 3510 -> a5 (ascend950/ascend350).
+# soc (ASCEND_COMPUTE_UNIT, lowercased) -> pypto arch token used by PYPTOPRO_JIT_ARCH.
+# pypto-pro only supports the dav-3510 arch; its canonical token is "3510".
 _ARCH_MAP = {
-    "ascend910b": "a3",
-    "ascend910_93": "a3",
-    "ascend950": "a5",
-    "ascend350": "a5",
+    "ascend950": "3510",
 }
 
 
@@ -121,10 +116,10 @@ def main():
     if arch is None:
         # Failing loudly beats shipping a kernel whose arch pypto auto-detected differently.
         raise SystemExit(
-            f"[pypto_codegen] no PYPTO_JIT_ARCH mapping for soc '{soc}'; "
+            f"[pypto_codegen] no PYPTOPRO_JIT_ARCH mapping for soc '{soc}'; "
             f"supported: {sorted(_ARCH_MAP)}"
         )
-    os.environ["PYPTO_JIT_ARCH"] = arch  # pypto reads this during compile
+    os.environ["PYPTOPRO_JIT_ARCH"] = arch  # pypto reads this during compile
 
     py_file = Path(args.py_file).resolve()
     if not py_file.is_file():

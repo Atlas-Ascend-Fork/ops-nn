@@ -56,10 +56,25 @@ host 与 kernel 因此共享同一份 tiling 布局与 tiling key 位分配，�
 
 ## 芯片与 arch
 
-PyPTO 的 codegen arch 由平台自动推导（`a2`/`a3`/`a5`）。本算子只注册了 `ascend950`(a5)，与当前 toolkit
-自动推导的 arch 一致。编译 kernel 二进制时，cmake 会按所编 soc 导出 `PYPTO_JIT_ARCH`
-（`ascend910b`/`ascend910_93` → `a3`，`ascend950` → `a5`），避免 `pypto_compile_op` 回退到默认的 `a5`
-而产生目标芯片不支持的指令。
+PyPTO 的 codegen arch 由平台自动推导，pypto-pro 仅支持 `dav-3510` arch（canonical token 为
+`__NPU_ARCH__` 版本号 `3510`）。本算子只注册了 `ascend950`，与当前 toolkit 自动推导的 arch 一致。
+编译 kernel 二进制时，cmake 会按所编 soc 导出 `PYPTOPRO_JIT_ARCH`（`ascend950` → `3510`），
+将 codegen arch 显式固定为目标芯片。
+
+## 运行验证
+
+```bash
+# 编译（仅支持ascend950）
+bash build.sh --pkg --soc=ascend950 --ops=add_example_pypto -j16
+
+# 安装
+./build_out/cann-ops-nn-*linux*.run
+
+# 运行样例（运行方式与标准算子一致）
+bash build.sh --run_example add_example_pypto eager cust --vendor_name=custom --soc=ascend950
+```
+
+预期输出：`first input` 为 1、`second input` 为 2，则 `result` 为 3，表明算子已成功部署并正确执行。
 
 ## 调用说明
 
@@ -80,18 +95,3 @@ AddExamplePypto 的 aclnn 接口由算子定义自动生成，**无需在 `op_ho
   </tr>
 </tbody>
 </table>
-
-编译、安装并运行该样例：
-
-```bash
-# 编译（仅支持ascend950）
-bash build.sh --pkg --soc=ascend950 --ops=add_example_pypto -j16
-
-# 安装
-./build_out/cann-ops-nn-*linux*.run
-
-# 运行样例（运行方式与标准算子一致）
-bash build.sh --run_example add_example_pypto eager cust --vendor_name=custom --soc=ascend950
-```
-
-预期输出：`first input` 为 1、`second input` 为 2，则 `result` 为 3，表明算子已成功部署并正确执行。

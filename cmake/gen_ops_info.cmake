@@ -394,7 +394,7 @@ function(prepare_compile_from_config)
   # add Environment Variable Configurations of python & ccache
   set(_ASCENDC_ENV_VAR)
   list(APPEND _ASCENDC_ENV_VAR export HI_PYTHON=${ASCEND_PYTHON_EXECUTABLE} &&)
-  # pypto-pro ops: pin the codegen arch to the soc being built (pypto_compile_op defaults to a5).
+  # pypto-pro ops: pin the codegen arch to the soc being built (pypto_compile_op defaults to 3510).
   pypto_jit_arch_env("${CONFCMP_COMPUTE_UNIT}" _pypto_arch_env)
   if(_pypto_arch_env)
     list(APPEND _ASCENDC_ENV_VAR ${_pypto_arch_env})
@@ -483,7 +483,7 @@ function(compile_from_config)
   cmake_parse_arguments(CONFCMP "" "${oneValueArgs}" "" ${ARGN})
   set(_ASCENDC_ENV_VAR)
   list(APPEND _ASCENDC_ENV_VAR export HI_PYTHON=${ASCEND_PYTHON_EXECUTABLE} &&)
-  # pypto-pro ops: pin the codegen arch to the soc being built (pypto_compile_op defaults to a5).
+  # pypto-pro ops: pin the codegen arch to the soc being built (pypto_compile_op defaults to 3510).
   pypto_jit_arch_env("${CONFCMP_COMPUTE_UNIT}" _pypto_arch_env)
   if(_pypto_arch_env)
     list(APPEND _ASCENDC_ENV_VAR ${_pypto_arch_env})

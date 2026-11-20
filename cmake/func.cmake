@@ -626,7 +626,7 @@ endfunction()
 
 # ------------------------------------------------------------------------------------------------------------
 # pypto_soc_to_arch(<soc> <out_var>)
-#   Resolve a soc to the pypto PYPTO_JIT_ARCH token. The authoritative mapping lives in
+#   Resolve a soc to the pypto PYPTOPRO_JIT_ARCH token. The authoritative mapping lives in
 #   scripts/util/pypto_codegen.py (single source of truth, queried once per configure via --print-arch-map)
 #   so the two sides cannot drift. Unknown socs fail the configure instead of silently producing a
 #   kernel whose arch pypto auto-detected differently.
@@ -659,7 +659,7 @@ function(pypto_soc_to_arch soc out_var)
   endforeach()
 
   message(FATAL_ERROR "pypto: no arch mapping for soc '${soc}'; update _ARCH_MAP in "
-                      "scripts/util/pypto_codegen.py (see build.sh SOC_TO_ARCH).")
+                      "scripts/util/pypto_codegen.py.")
 endfunction()
 
 # ------------------------------------------------------------------------------------------------------------
@@ -671,7 +671,7 @@ function(pypto_jit_arch_env soc out_var)
   if(NOT _pypto_ops)
     return()
   endif()
-  # Only socs that actually compile a pypto kernel need PYPTO_JIT_ARCH; other socs in the same build
+  # Only socs that actually compile a pypto kernel need PYPTOPRO_JIT_ARCH; other socs in the same build
   # (e.g. a regular AscendC op's compile unit) must stay untouched.
   get_property(_pypto_cus GLOBAL PROPERTY PYPTO_ENABLED_COMPUTE_UNITS)
   string(TOLOWER "${soc}" _soc)
@@ -680,7 +680,7 @@ function(pypto_jit_arch_env soc out_var)
     return()
   endif()
   pypto_soc_to_arch("${soc}" _arch)
-  set(${out_var} export PYPTO_JIT_ARCH=${_arch} && PARENT_SCOPE)
+  set(${out_var} export PYPTOPRO_JIT_ARCH=${_arch} && PARENT_SCOPE)
 endfunction()
 
 # ------------------------------------------------------------------------------------------------------------
