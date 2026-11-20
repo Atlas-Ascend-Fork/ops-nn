@@ -114,6 +114,9 @@ private:
     {
         // stage 0： 核内二分累加dbeta/dgamma
         Stage0InitBuffer();
+        if constexpr (MODE == MODE_PACKED) {
+            AscendC::NdDmaDci();
+        }
         CalcDbetaDgammaInCore();
         // stage 1: 计算核间dbeta/dgamma
         // 同步①:每核 stage0 只算了自己那段 R 的部分 dbeta/dgamma 并写入 workspace,
@@ -128,6 +131,10 @@ private:
         // 所有核必须等它写完才能读来算 dx,否则会用到未更新的旧值。
         SyncAll();
         Stage2InitBuffer();
+        if constexpr (MODE == MODE_PACKED) {
+            // The reduction core rewrote the GM workspace consumed by the NDDMA loads below.
+            AscendC::NdDmaDci();
+        }
         ProcessDX();
     }
 

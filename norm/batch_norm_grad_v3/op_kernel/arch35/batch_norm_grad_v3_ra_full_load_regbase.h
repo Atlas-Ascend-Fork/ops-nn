@@ -134,6 +134,9 @@ public:
         if (GetBlockIdx() >= numBlocks) {
             return;
         }
+        if constexpr (PACKED) {
+            AscendC::NdDmaDci();
+        }
         for (int64_t idx = 0; idx < aLoopCount; ++idx) {
             ProcessBlock(idx * aLoopFactor, aLoopFactor, aLoopFactorAligned);
         }
