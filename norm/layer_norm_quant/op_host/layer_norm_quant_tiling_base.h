@@ -67,7 +67,13 @@ inline __attribute__((always_inline)) ge::graphStatus PostLayerNormPtrFunc(T* ti
     for (size_t i = 0; i < dimsSize - 1; i++) {
         OP_CHECK_IF(
             x_shape->GetStorageShape().GetDim(i) <= 0 || tmpNumRow > UINT_MAX / x_shape->GetStorageShape().GetDim(i),
-            OP_LOGE(context->GetNodeName(), "tmpNumRow is invalid!"), return ge::GRAPH_FAILED);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x",
+                                                  Ops::Base::ToString(x_shape->GetStorageShape()),
+                                                  "Dimension " + std::to_string(i) +
+                                                      " must be positive, and the product of dims up to this dimension "
+                                                      "must not exceed " +
+                                                      std::to_string(UINT_MAX)),
+            return ge::GRAPH_FAILED);
         tmpNumRow *= x_shape->GetStorageShape().GetDim(i);
     }
 
@@ -75,7 +81,10 @@ inline __attribute__((always_inline)) ge::graphStatus PostLayerNormPtrFunc(T* ti
     tilingDataPtr->set_numFirstDim(ptrCon.numRow);
     OP_CHECK_IF(x_shape->GetStorageShape().GetDim(dimsSize - 1) <= 0 ||
                     x_shape->GetStorageShape().GetDim(dimsSize - 1) > UINT_MAX,
-                OP_LOGE(context->GetNodeName(), "numCol is invalid!"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "x", Ops::Base::ToString(x_shape->GetStorageShape()),
+                    "The last dimension must be in [1, " + std::to_string(UINT_MAX) + "]"),
+                return ge::GRAPH_FAILED);
     ptrCon.numCol = static_cast<uint32_t>(x_shape->GetStorageShape().GetDim(dimsSize - 1));
 
     tilingDataPtr->set_numLastDim(ptrCon.numCol);

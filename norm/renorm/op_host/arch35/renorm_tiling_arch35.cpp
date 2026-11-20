@@ -266,11 +266,16 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
     OP_CHECK_NULL_WITH_CONTEXT(context, inputShape);
     auto storageShape = inputShape->GetStorageShape();
     int64_t dimNum = static_cast<int64_t>(storageShape.GetDimNum());
-    OP_CHECK_IF(dimNum < 2, OP_LOGE(context, "Renorm: dim num must be >= 2, got %lld", dimNum),
+    OP_CHECK_IF(dimNum < 2,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("Renorm", "input", (std::to_string(dimNum) + "D").c_str(),
+                                                         "the number of dims should be >= 2"),
                 return ge::GRAPH_FAILED);
 
     totalElements = storageShape.GetShapeSize();
-    OP_CHECK_IF(totalElements <= 0, OP_LOGE(context, "Renorm: totalElements must be > 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(totalElements <= 0,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("Renorm", "input", Ops::Base::ToString(storageShape).c_str(),
+                                                      "input cannot be an empty tensor"),
+                return ge::GRAPH_FAILED);
 
     // 获取 attrs: p (float), dim (int64_t), maxnorm (float)
     auto attrs = context->GetAttrs();
@@ -286,12 +291,19 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
         dim += dimNum;
     }
     OP_CHECK_IF(dim < 0 || dim >= dimNum,
-                OP_LOGE(context, "Renorm: dim out of range, dim=%lld, dimNum=%lld", dim, dimNum),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    "Renorm", "dim", std::to_string(*dimPtr).c_str(),
+                    ("dim should be in the range [" + std::to_string(-dimNum) + ", " + std::to_string(dimNum - 1) + "]")
+                        .c_str()),
                 return ge::GRAPH_FAILED);
     dimPositive = dim;
 
     sliceCount = storageShape.GetDim(dim);
-    OP_CHECK_IF(sliceCount <= 0, OP_LOGE(context, "Renorm: sliceCount must be > 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(sliceCount <= 0,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    "Renorm", "input", Ops::Base::ToString(storageShape).c_str(),
+                    ("the " + std::to_string(dim) + " dim of input should be greater than 0").c_str()),
+                return ge::GRAPH_FAILED);
 
     // blockSize = prod(shape[dim+1:])
     blockSize = 1;
@@ -318,7 +330,8 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
 
     const std::set<ge::DataType> supportedDtype = {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16};
     if (supportedDtype.count(dataType) == 0) {
-        OP_LOGE(context, "Renorm: unsupported dtype");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("Renorm", "input", Ops::Base::ToString(dataType),
+                                              "dtype should be one of float, float16, bfloat16");
         return ge::GRAPH_FAILED;
     }
 
@@ -337,8 +350,13 @@ static ge::graphStatus GetScalarParams(gert::TilingContext* context, float& p, f
     p = *pPtr;
     maxNorm = *maxnormPtr;
 
-    OP_CHECK_IF(p < 0.0f, OP_LOGE(context, "Renorm: p must be >= 0, got %f", p), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(maxNorm < 0.0f, OP_LOGE(context, "Renorm: maxNorm must be >= 0, got %f", maxNorm),
+    OP_CHECK_IF(p < 0.0f,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("Renorm", "p", std::to_string(p).c_str(),
+                                                      "p should be greater than or equal to 0"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(maxNorm < 0.0f,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("Renorm", "maxNorm", std::to_string(maxNorm).c_str(),
+                                                      "maxNorm should be greater than or equal to 0"),
                 return ge::GRAPH_FAILED);
 
     // 确定 normMode
@@ -614,7 +632,7 @@ static ge::graphStatus RenormTilingFunc(gert::TilingContext* context)
     uint64_t ubSize;
     int64_t coreNum;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     int64_t totalElements;
     int64_t dimPositive;
@@ -624,13 +642,13 @@ static ge::graphStatus RenormTilingFunc(gert::TilingContext* context)
     ge::DataType dataType;
     OP_CHECK_IF(GetShapeAttrsInfo(context, totalElements, dimPositive, sliceCount, blockSize, numBlocks, dataType) !=
                     ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
 
     float p;
     float maxNorm;
     int32_t normMode;
     OP_CHECK_IF(GetScalarParams(context, p, maxNorm, normMode) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetScalarParams error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetScalarParams error"), return ge::GRAPH_FAILED);
 
     const RenormShape shape{dataType, normMode, p, sliceCount, blockSize, numBlocks, totalElements};
 
@@ -748,7 +766,7 @@ static ge::graphStatus RenormTilingFunc(gert::TilingContext* context)
                 static_cast<long long>(usedCoreNum), static_cast<long long>(blocksPerCore),
                 static_cast<long long>(tileLenG));
         OP_CHECK_IF(GetWorkspaceSize(context, workspaceSize) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
         RenormTilingData* tilingG = context->GetTilingData<RenormTilingData>();
         OP_CHECK_NULL_WITH_CONTEXT(context, tilingG);
         OP_CHECK_IF(memset_s(tilingG, sizeof(RenormTilingData), 0, sizeof(RenormTilingData)) != EOK,
@@ -823,7 +841,7 @@ static ge::graphStatus RenormTilingFunc(gert::TilingContext* context)
             return ge::GRAPH_FAILED;
         }
         OP_CHECK_IF(GetWorkspaceSize(context, workspaceSize) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
         RenormTilingData* tilingG = context->GetTilingData<RenormTilingData>();
         OP_CHECK_NULL_WITH_CONTEXT(context, tilingG);
         OP_CHECK_IF(memset_s(tilingG, sizeof(RenormTilingData), 0, sizeof(RenormTilingData)) != EOK,
@@ -1967,7 +1985,7 @@ static ge::graphStatus RenormTilingFunc(gert::TilingContext* context)
 
     // 设置 workspace (Template C 需要 workspace)
     OP_CHECK_IF(GetWorkspaceSize(context, workspaceSize) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
 
     RenormTilingData* tiling = context->GetTilingData<RenormTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);

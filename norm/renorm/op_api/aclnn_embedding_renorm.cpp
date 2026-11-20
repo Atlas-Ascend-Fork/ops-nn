@@ -25,6 +25,10 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#ifndef OP_LOG_LIBOPAPI_ONLY
+#define OP_LOG_LIBOPAPI_ONLY
+#endif
+#include "log/log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
@@ -82,12 +86,16 @@ static const std::initializer_list<op::DataType> DTYPE_SUPPORT_LIST_INDICES = {o
 // 算子支持的维度
 static const size_t DIM_SUPPORT_ONLY = 2;
 
+// EZ码细化：单参 dtype 不支持由泛化上报细化为 EZ0020，期望维数不符由泛化上报细化为 EZ0011，
+// rank 超上限由泛化上报细化为 EZ0012，多参 format 不一致由泛化上报细化为 EZ0018，校验条件均保持不变
+
 // CheckDim，检查self维度是否为2维，不是则报错
 static bool CheckSelfDim(const aclTensor* self)
 {
     if (self->GetViewShape().GetDimNum() != DIM_SUPPORT_ONLY) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Embedding_Renorm: Except 2-dimension Tensor but got [%s]-dimension Tensor.",
-                op::ToString(self->GetViewShape()).GetString());
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnEmbeddingRenorm", "self",
+                                     (std::to_string(self->GetViewShape().GetDimNum()) + "D").c_str(),
+                                     (std::to_string(DIM_SUPPORT_ONLY) + "D").c_str());
         return false;
     }
     return true;
@@ -97,7 +105,12 @@ static bool CheckSelfDim(const aclTensor* self)
 static bool CheckIndicesDimension(const aclTensor* tensor)
 {
     // indices的维度不能超过8
-    OP_CHECK_MAX_DIM(tensor, MAX_DIM_LEN, return false);
+    if (tensor->GetViewShape().GetDimNum() > MAX_DIM_LEN) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnEmbeddingRenorm", "indices", (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot exceed " + std::to_string(MAX_DIM_LEN)).c_str());
+        return false;
+    }
     return true;
 }
 
@@ -122,10 +135,21 @@ static bool CheckDtypeValid(const aclTensor* self, const aclTensor* indices)
 {
     auto supportList = GetDtypeSupportList();
     // 检查self的数据类型是否在embedding_renorm支持的算子库内
-    OP_CHECK_DTYPE_NOT_SUPPORT(self, supportList, return false);
+    if (!CheckType(self->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnEmbeddingRenorm", "self", op::ToString(self->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
 
     // 检查indices的数据类型是否在embedding_renorm支持的算子库内
-    OP_CHECK_DTYPE_NOT_SUPPORT(indices, DTYPE_SUPPORT_LIST_INDICES, return false);
+    if (!CheckType(indices->GetDataType(), DTYPE_SUPPORT_LIST_INDICES)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnEmbeddingRenorm", "indices", op::ToString(indices->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(DTYPE_SUPPORT_LIST_INDICES).GetString()))
+                .c_str());
+        return false;
+    }
     return true;
 }
 
@@ -134,9 +158,11 @@ static bool CheckFormatValid(const aclTensor* self, const aclTensor* indices)
     // 检查self和indices的format是否不为NZ
     if (self->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ ||
         indices->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Input and output format only support [ND]. Actual: self:[%s], indices:[%s].",
-                op::ToString(self->GetStorageFormat()).GetString(),
-                op::ToString(indices->GetStorageFormat()).GetString());
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON("aclnnEmbeddingRenorm", "self,indices",
+                                                (std::string(op::ToString(self->GetStorageFormat()).GetString()) +
+                                                 ", " + op::ToString(indices->GetStorageFormat()).GetString())
+                                                    .c_str(),
+                                                "FRACTAL_NZ storage format is not supported");
         return false;
     } else {
         return true;

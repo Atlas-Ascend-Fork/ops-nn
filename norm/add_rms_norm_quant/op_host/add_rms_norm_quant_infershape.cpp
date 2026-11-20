@@ -77,8 +77,9 @@ static graphStatus InferDataType4AddRmsNormQuant(gert::InferDataTypeContext* con
             int32_t v2DstDtype = *v2DstTypePtr;
             v2YDtype = static_cast<ge::DataType>(v2DstDtype);
             OP_CHECK_IF(std::find(OUT_TYPE_LIST.begin(), OUT_TYPE_LIST.end(), v2YDtype) == OUT_TYPE_LIST.end(),
-                        OP_LOGE(context,
-                                "attr dst_type only support 2(int8), 34(hifloat8), 35(float8_e5m2), 36(float8_e4m3fn)"),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            context->GetNodeName(), "dst_type", std::to_string(v2DstDtype),
+                            "Supported values are 2 (int8), 34 (hifloat8), 35 (float8_e5m2), and 36 (float8_e4m3fn)"),
                         return ge::GRAPH_FAILED);
         }
     }
@@ -133,8 +134,9 @@ static graphStatus InferDataType4AddRmsNormQuantV2(gert::InferDataTypeContext* c
             int32_t dstDtype = *pDstDtype;
             yDtype = static_cast<ge::DataType>(dstDtype);
             OP_CHECK_IF(std::find(OUT_TYPE_LIST.begin(), OUT_TYPE_LIST.end(), yDtype) == OUT_TYPE_LIST.end(),
-                        OP_LOGE(context,
-                                "attr dst_type only support 2(int8), 34(hifloat8), 35(float8_e5m2), 36(float8_e4m3fn)"),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            context->GetNodeName(), "dst_type", std::to_string(dstDtype),
+                            "Supported values are 2 (int8), 34 (hifloat8), 35 (float8_e5m2), and 36 (float8_e4m3fn)"),
                         return ge::GRAPH_FAILED);
         }
     }

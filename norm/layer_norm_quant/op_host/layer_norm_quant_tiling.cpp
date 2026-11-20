@@ -188,8 +188,8 @@ static ge::graphStatus CanUseRegbase(gert::TilingContext* context, bool& useRegb
 static ge::graphStatus Tiling4LayerNormQuant(gert::TilingContext* context)
 {
     bool useRegbase = false;
-    OP_CHECK_IF(CanUseRegbase(context, useRegbase) != ge::GRAPH_SUCCESS, OP_LOGE(context, "Check SocInfo Failed"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CanUseRegbase(context, useRegbase) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "Check SocInfo Failed"), return ge::GRAPH_FAILED);
 
     if (useRegbase) {
         LayerNormQuantRegTiling Regobject(context);

@@ -14,6 +14,10 @@
 #include "opdev/format_utils.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#ifndef OP_LOG_LIBOPAPI_ONLY
+#define OP_LOG_LIBOPAPI_ONLY
+#endif
+#include "log/log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
@@ -191,26 +195,29 @@ static bool CheckDimNumValid(const aclTensor* x1, const aclTensor* y1Out, const 
 {
     auto x1DimNum = x1->GetViewShape().GetDimNum();
     OP_CHECK(x1DimNum >= MIN_X_DIM_NUM && x1DimNum <= MAX_X_DIM_NUM,
-             OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "x1 dim num should be between %zu and %zu, but got %zu.",
-                     MIN_X_DIM_NUM, MAX_X_DIM_NUM, x1DimNum),
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                 "aclnnAddRmsNormDynamicQuantV2", "x1", std::to_string(x1DimNum) + "D",
+                 "The rank must be between " + std::to_string(MIN_X_DIM_NUM) + " and " + std::to_string(MAX_X_DIM_NUM)),
              return false);
 
     if (processOut1) {
         auto y1DimNum = y1Out->GetViewShape().GetDimNum();
-        OP_CHECK(y1DimNum >= MIN_X_DIM_NUM && y1DimNum <= MAX_X_DIM_NUM,
-                 OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR,
-                         "The active y1Out dim num should be between %zu and %zu, but got %zu.", MIN_X_DIM_NUM,
-                         MAX_X_DIM_NUM, y1DimNum),
-                 return false);
+        OP_CHECK(
+            y1DimNum >= MIN_X_DIM_NUM && y1DimNum <= MAX_X_DIM_NUM,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                "aclnnAddRmsNormDynamicQuantV2", "y1Out", std::to_string(y1DimNum) + "D",
+                "The rank must be between " + std::to_string(MIN_X_DIM_NUM) + " and " + std::to_string(MAX_X_DIM_NUM)),
+            return false);
     }
 
     if (processOut2) {
         auto y2DimNum = y2Out->GetViewShape().GetDimNum();
-        OP_CHECK(y2DimNum >= MIN_X_DIM_NUM && y2DimNum <= MAX_X_DIM_NUM,
-                 OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR,
-                         "The active y2Out dim num should be between %zu and %zu, but got %zu.", MIN_X_DIM_NUM,
-                         MAX_X_DIM_NUM, y2DimNum),
-                 return false);
+        OP_CHECK(
+            y2DimNum >= MIN_X_DIM_NUM && y2DimNum <= MAX_X_DIM_NUM,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                "aclnnAddRmsNormDynamicQuantV2", "y2Out", std::to_string(y2DimNum) + "D",
+                "The rank must be between " + std::to_string(MIN_X_DIM_NUM) + " and " + std::to_string(MAX_X_DIM_NUM)),
+            return false);
     }
     return true;
 }

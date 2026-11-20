@@ -154,6 +154,19 @@ TEST_F(l2_renorm_test, case_dtype_dim9)
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
+TEST_F(l2_renorm_test, case_rank_checks_keep_original_priority)
+{
+    auto self = TensorDesc({1, 1, 1, 1, 1, 1, 1, 1, 1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto out = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto p = ScalarDesc(1.0f);
+    auto maxNorm = ScalarDesc(5.0f);
+    int64_t dim = 0;
+
+    auto ut = OP_API_UT(aclnnRenorm, INPUT(self, p, dim, maxNorm), OUTPUT(out));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}
+
 TEST_F(l2_renorm_test, case_dtype_not_contiguous)
 {
     auto self = TensorDesc({1, 3, 4}, ACL_FLOAT16, ACL_FORMAT_ND, {12, 1, 3}, 0, {1, 4, 3}).ValueRange(0, 5);

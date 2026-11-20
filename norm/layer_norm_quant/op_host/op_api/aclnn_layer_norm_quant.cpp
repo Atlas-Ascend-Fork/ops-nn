@@ -20,6 +20,10 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#ifndef OP_LOG_LIBOPAPI_ONLY
+#define OP_LOG_LIBOPAPI_ONLY
+#endif
+#include "log/log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/platform.h"
@@ -48,6 +52,58 @@ static const std::initializer_list<DataType> DTYPE_SUPPORT_REGBASE_LIST = {DataT
                                                                            DataType::DT_BF16};
 static const std::initializer_list<DataType> DTYPE_SUPPORT_910B_LIST = {DataType::DT_FLOAT16, DataType::DT_BF16};
 static const std::initializer_list<DataType> DTYPE_SUPPORT_310P_LIST = {DataType::DT_FLOAT16};
+
+// EZ码细化：dtype 不在支持列表由泛化上报细化为 EZ0020，多参 dtype 不一致由泛化上报细化为 EZ0021，
+// dtype 与期望值不符由泛化上报细化为 EZ0020，rank 超上限由泛化上报细化为 EZ0012，
+// shape 关系不匹配由泛化上报细化为 EZ0010，shape 值不符由泛化上报细化为 EZ0009，
+// 维数关系不符由泛化上报细化为 EZ0013，参数值非法由泛化上报细化为 EZ0023，校验条件均保持不变
+static bool CheckDtypeInList(const aclTensor* tensor, const char* tensorName,
+                             const std::initializer_list<DataType>& supportList)
+{
+    if (!CheckType(tensor->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnLayerNormQuant", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetDataType() != tensor2->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnLayerNormQuant", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetDataType()).GetString()) + ", " +
+             op::ToString(tensor2->GetDataType()).GetString())
+                .c_str(),
+            (std::string("dtype of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeMatchValue(const aclTensor* tensor, DataType expectedDtype, const char* tensorName)
+{
+    if (tensor->GetDataType() != expectedDtype) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnLayerNormQuant", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            (std::string("dtype of ") + tensorName + " must be " + op::ToString(expectedDtype).GetString()).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMax(const aclTensor* tensor, const char* tensorName, size_t maxDim)
+{
+    if (tensor->GetViewShape().GetDimNum() > maxDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnLayerNormQuant", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot exceed " + std::to_string(maxDim)).c_str());
+        return false;
+    }
+    return true;
+}
 
 static const std::initializer_list<DataType>& GetDtypeSupportList()
 {
@@ -97,7 +153,9 @@ static inline bool CheckOptInputDtype(const aclTensor* tensorPtr, op::DataType d
     if (tensorPtr == nullptr) {
         return true;
     }
-    OP_CHECK_DTYPE_NOT_MATCH(tensorPtr, dtype, return false);
+    if (!CheckDtypeMatchValue(tensorPtr, dtype, "zeroPointsOptional")) {
+        return false;
+    }
     return true;
 }
 
@@ -105,15 +163,27 @@ static bool CheckDtype(const aclTensor* x, const aclTensor* gamma, const aclTens
                        const aclTensor* zeroPointsOptional, const aclTensor* res, const aclTensor* scaleOut)
 {
     // 检查 x 的数据类型是否在 AddLayerNormQuant 算子的支持列表内
-    OP_CHECK_DTYPE_NOT_SUPPORT(x, GetDtypeSupportList(), return false);
-    OP_CHECK_DTYPE_NOT_MATCH(gamma, x->GetDataType(), return false);
-    OP_CHECK_DTYPE_NOT_MATCH(beta, x->GetDataType(), return false);
-    OP_CHECK_DTYPE_NOT_MATCH(scale, x->GetDataType(), return false);
+    if (!CheckDtypeInList(x, "x", GetDtypeSupportList())) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(x, gamma, "x", "gamma")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(x, beta, "x", "beta")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(x, scale, "x", "scale")) {
+        return false;
+    }
 
     CHECK_RET(CheckOptInputDtype(zeroPointsOptional, op::DataType::DT_INT8), false);
 
-    OP_CHECK_DTYPE_NOT_MATCH(res, op::DataType::DT_INT8, return false);
-    OP_CHECK_DTYPE_NOT_MATCH(scaleOut, op::DataType::DT_FLOAT, return false);
+    if (!CheckDtypeMatchValue(res, op::DataType::DT_INT8, "res")) {
+        return false;
+    }
+    if (!CheckDtypeMatchValue(scaleOut, op::DataType::DT_FLOAT, "scaleOut")) {
+        return false;
+    }
     return true;
 }
 
@@ -121,46 +191,87 @@ static bool CheckShape(const aclTensor* x, const aclTensor* gamma, const aclTens
                        const aclTensor* zeroPointsOptional, int quantMode, const aclTensor* res,
                        const aclTensor* scaleOut)
 {
-    OP_CHECK_MAX_DIM(x, MAX_DIM_LEN, return false);
-    OP_CHECK_MAX_DIM(gamma, GAMMA_STATIC_DIM, return false);
+    if (!CheckDimNumMax(x, "x", MAX_DIM_LEN)) {
+        return false;
+    }
+    if (!CheckDimNumMax(gamma, "gamma", GAMMA_STATIC_DIM)) {
+        return false;
+    }
 
     size_t xDimNums = x->GetViewShape().GetDimNum();
     size_t gammaDimNums = gamma->GetViewShape().GetDimNum();
 
     // 当前只支持quantMode = 0
-    OP_CHECK((quantMode == 0),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Only support static mode quant currently, quantMode should be 0"),
-             return false);
+    OP_CHECK(
+        (quantMode == 0),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnLayerNormQuant", "quantMode", std::to_string(quantMode).c_str(),
+                                              "Only support static mode quant currently, quantMode should be 0"),
+        return false);
 
     OP_CHECK((x->GetViewShape().GetDim(xDimNums - 1) == gamma->GetViewShape().GetDim(gammaDimNums - 1)),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Shape of gamma should be equal to last dims of shape x"), return false);
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnLayerNormQuant", "gamma and x",
+                                                    (std::string(op::ToString(gamma->GetViewShape()).GetString()) +
+                                                     ", " + op::ToString(x->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "the last dim of gamma should be equal to the last dim of x"),
+             return false);
     OP_CHECK((gamma->GetViewShape() == beta->GetViewShape()),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Shape of beta should same as gamma"), return false);
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnLayerNormQuant", "gamma and beta",
+                                                    (std::string(op::ToString(gamma->GetViewShape()).GetString()) +
+                                                     ", " + op::ToString(beta->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shape of beta should be the same as shape of gamma"),
+             return false);
     // quantMode为0时gamma支持2维且第一维为1，避免仅读取第一行导致其余行被静默丢弃
     if (!gamma->IsEmpty() && gammaDimNums == GAMMA_STATIC_DIM) {
         OP_CHECK((gamma->GetViewShape().GetDim(0) == 1),
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "First dim of gamma should be 1 when gamma is 2d"), return false);
+                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnLayerNormQuant", "gamma",
+                                                       op::ToString(gamma->GetViewShape()).GetString(),
+                                                       "First dim of gamma should be 1 when gamma is 2d"),
+                 return false);
     }
 
     size_t scaleDimNums = scale->GetViewShape().GetDimNum();
     OP_CHECK((scaleDimNums == 1 && scale->GetViewShape().GetDim(0) == 1),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Shape of scale should be equal to [1]"), return false);
+             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnLayerNormQuant", "scale",
+                                                   op::ToString(scale->GetViewShape()).GetString(),
+                                                   "Shape of scale should be equal to [1]"),
+             return false);
     // zeroPointsOptional的shape需要与scale保持一致（即[1]），避免仅读取首个元素导致其余元素被静默丢弃
     if (!zeroPointsOptional->IsEmpty()) {
-        OP_CHECK((zeroPointsOptional->GetViewShape() == scale->GetViewShape()),
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Shape of zeroPointsOptional should be same as scale"), return false);
+        OP_CHECK(
+            (zeroPointsOptional->GetViewShape() == scale->GetViewShape()),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnLayerNormQuant", "scale and zeroPointsOptional",
+                                                   (std::string(op::ToString(scale->GetViewShape()).GetString()) +
+                                                    ", " + op::ToString(zeroPointsOptional->GetViewShape()).GetString())
+                                                       .c_str(),
+                                                   "Shape of zeroPointsOptional should be same as scale"),
+            return false);
     }
 
     OP_CHECK((x->GetViewShape() == res->GetViewShape()),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Shape of res should same as x"), return false);
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnLayerNormQuant", "x and res",
+                                                    (std::string(op::ToString(x->GetViewShape()).GetString()) + ", " +
+                                                     op::ToString(res->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shape of res should be the same as shape of x"),
+             return false);
 
     // scaleOut的shape为x的shape剔除最后一维
     size_t scaleOutDimNums = scaleOut->GetViewShape().GetDimNum();
     OP_CHECK((scaleOutDimNums + 1 == xDimNums),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Shape of scaleOut should be x shape without last dim"), return false);
+             OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                 "aclnnLayerNormQuant", "x and scaleOut",
+                 (std::to_string(xDimNums) + "D and " + std::to_string(scaleOutDimNums) + "D").c_str(),
+                 "the dim num of scaleOut should be the dim num of x minus 1"),
+             return false);
     for (size_t i = 0; i < scaleOutDimNums; i++) {
         OP_CHECK((scaleOut->GetViewShape().GetDim(i) == x->GetViewShape().GetDim(i)),
-                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Shape of scaleOut should be x shape without last dim"),
+                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnLayerNormQuant", "x and scaleOut",
+                                                        (std::string(op::ToString(x->GetViewShape()).GetString()) +
+                                                         ", " + op::ToString(scaleOut->GetViewShape()).GetString())
+                                                            .c_str(),
+                                                        "Shape of scaleOut should be x shape without last dim"),
                  return false);
     }
 

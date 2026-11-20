@@ -115,8 +115,10 @@ bool AddRmsNormDynamicQuantV2TilingHelper::DoTiling()
 {
     OP_CHECK_IF((nullptr == context_),
                 OP_LOGE("AddRmsNormDynamicQuantV2Tiling", "Helper context_ get nullptr, return failed."), return false);
-    OP_CHECK_IF(!GetBaseInfo(), OP_LOGE(context_->GetNodeName(), "GetBaseInfo failed, return false"), return false);
-    OP_CHECK_IF(!GetShapeInfo(), OP_LOGE(context_->GetNodeName(), "GetShapeInfo failed, return false"), return false);
+    OP_CHECK_IF(!GetBaseInfo(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetBaseInfo failed, return false"),
+                return false);
+    OP_CHECK_IF(!GetShapeInfo(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetShapeInfo failed, return false"),
+                return false);
     OP_CHECK_IF(!DoBlockTiling(), OP_LOGE(context_->GetNodeName(), "DoBlockTiling failed, return false"), return false);
     OP_CHECK_IF(!DoUbTiling(), OP_LOGE(context_->GetNodeName(), "DoUbTiling failed, return false"), return false);
     return true;
@@ -152,7 +154,9 @@ bool AddRmsNormDynamicQuantV2TilingHelper::GetBaseInfo()
     if (epsPtr != nullptr) {
         this->eps_ = *epsPtr;
     }
-    OP_CHECK_IF(this->eps_ <= 0, OP_LOGE(context_->GetNodeName(), "Epsilon less or equal than zero, please check."),
+    OP_CHECK_IF(this->eps_ <= 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "epsilon", std::to_string(this->eps_),
+                                                      "epsilon must be greater than zero"),
                 return false);
     OP_CHECK_IF((this->ubSize_ <= 0), OP_LOGE(context_->GetNodeName(), "ubSize less or equal than zero, please check."),
                 return false);
@@ -166,8 +170,8 @@ bool AddRmsNormDynamicQuantV2TilingHelper::GetBaseInfo()
 
 bool AddRmsNormDynamicQuantV2TilingHelper::GetShapeInfo()
 {
-    OP_CHECK_IF(CheckInputOutputShape() == false, OP_LOGE(context_->GetNodeName(), "Check tensor shape failed."),
-                return false);
+    OP_CHECK_IF(CheckInputOutputShape() == false,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Check tensor shape failed."), return false);
     // no fp32 allowed here
     this->dtSize_ = SIZEOF_B16;
     auto xShape = context_->GetInputShape(X1_IDX)->GetStorageShape();
@@ -184,11 +188,22 @@ bool AddRmsNormDynamicQuantV2TilingHelper::GetShapeInfo()
     this->smoothNum_ += (smooth2Exist) ? 1 : 0;
 
     OP_CHECK_IF((!smooth1Exist) && (smooth2Exist),
-                OP_LOGE(context_->GetNodeName(), "Smooth2 exist but smooth1 not exist, bad input."), return false);
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    context_->GetNodeName(), "smooth_scale1,smooth_scale2", "absent or empty, non-empty",
+                    "Provide a non-empty smooth_scale1 when smooth_scale2 is non-empty"),
+                return false);
     OP_CHECK_IF((smooth1Exist && smooth1Shape->GetStorageShape() != gammaShape),
-                OP_LOGE(context_->GetNodeName(), "GammaShape is not same to smooth1Shape."), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context_->GetNodeName(), "gamma,smooth_scale1",
+                    Ops::Base::ToString(gammaShape) + ", " + Ops::Base::ToString(smooth1Shape->GetStorageShape()),
+                    "smooth_scale1 must have the same shape as gamma"),
+                return false);
     OP_CHECK_IF((smooth2Exist && smooth2Shape->GetStorageShape() != gammaShape),
-                OP_LOGE(context_->GetNodeName(), "GammaShape is not same to smooth2Shape."), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context_->GetNodeName(), "gamma,smooth_scale2",
+                    Ops::Base::ToString(gammaShape) + ", " + Ops::Base::ToString(smooth2Shape->GetStorageShape()),
+                    "smooth_scale2 must have the same shape as gamma"),
+                return false);
 
     uint64_t numRowV2 = 1;
     uint64_t numColV2 = 1;
@@ -280,7 +295,7 @@ ge::graphStatus Tiling4AddRmsNormDynamicQuantV2(gert::TilingContext* context)
 
     AddRmsNormDynamicQuantV2TilingHelper instanceNormV3TilingHelper(context);
     bool status = instanceNormV3TilingHelper.DoTiling();
-    OP_CHECK_IF(!status, OP_LOGE(context, "DoTiling Failed, return Failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!status, OP_LOGE_WITHOUT_REPORT(context, "DoTiling Failed, return Failed."), return ge::GRAPH_FAILED);
 
     instanceNormV3TilingHelper.SetTilingDataAndTilingKeyAndWorkSpace(&tiling);
 
@@ -339,16 +354,19 @@ bool AddRmsNormDynamicQuantV2TilingHelper::CheckInputOutputShape()
             scale2DimNum);
 
     bool hasZeroDimTensor = x1DimNum <= 0 || x2DimNum <= 0 || gammaDimNum <= 0;
-    OP_CHECK_IF(
-        (hasZeroDimTensor),
-        OP_LOGE(this->context_->GetNodeName(),
-                "Input x1/x2/y1//x/scale1DimNum shape invalid, dim num should not be smaller or equal to zero."),
-        return false);
-    OP_CHECK_IF(((x1DimNum != x2DimNum)),
-                OP_LOGE(this->context_->GetNodeName(), "Input x1/x2 shape dims not equal. Tiling failed. "),
+    OP_CHECK_IF((hasZeroDimTensor),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(),
+                                                         x1DimNum == 0 ? "x1" : (x2DimNum == 0 ? "x2" : "gamma"), "0D",
+                                                         "The rank must be greater than zero"),
                 return false);
+    OP_CHECK_IF(
+        ((x1DimNum != x2DimNum)),
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context_->GetNodeName(), "x1,x2", std::to_string(x1DimNum) + "D" + ", " + std::to_string(x2DimNum) + "D",
+            "x1 and x2 must have the same rank"),
+        return false);
     OP_CHECK_IF(((gammaDimNum != 1)),
-                OP_LOGE(this->context_->GetNodeName(), "gamma shape dims not equal to 1. Tiling failed."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), "gamma", std::to_string(gammaDimNum) + "D", "1D"),
                 return false);
     return true;
 }

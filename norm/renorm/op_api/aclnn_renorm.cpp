@@ -14,6 +14,10 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#ifndef OP_LOG_LIBOPAPI_ONLY
+#define OP_LOG_LIBOPAPI_ONLY
+#endif
+#include "log/log.h"
 #include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "op_api/op_api_def_nn.h"
@@ -41,6 +45,71 @@ static const std::initializer_list<op::DataType> ASCEND910_DTYPE_SUPPORT_LIST = 
 static const std::initializer_list<op::DataType> ASCEND910B_DTYPE_SUPPORT_LIST = {
     op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16, op::DataType::DT_BF16};
 
+// EZ码细化：dtype 不在支持列表由泛化上报细化为 EZ0020，多参 dtype 不一致由泛化上报细化为 EZ0021，
+// rank 超上下限由泛化上报细化为 EZ0012，多参 shape 不一致由泛化上报细化为 EZ0010，
+// 多参 format 不一致由泛化上报细化为 EZ0018，参数值非法由泛化上报细化为 EZ0023，校验条件均保持不变
+static bool CheckDtypeInList(const aclTensor* tensor, const char* tensorName,
+                             const std::initializer_list<op::DataType>& supportList)
+{
+    if (!CheckType(tensor->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnRenorm", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetDataType() != tensor2->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnRenorm", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetDataType()).GetString()) + ", " +
+             op::ToString(tensor2->GetDataType()).GetString())
+                .c_str(),
+            (std::string("dtype of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMin(const aclTensor* tensor, const char* tensorName, size_t minDim)
+{
+    if (tensor->GetViewShape().GetDimNum() < minDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnRenorm", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot be less than " + std::to_string(minDim)).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMax(const aclTensor* tensor, const char* tensorName, size_t maxDim)
+{
+    if (tensor->GetViewShape().GetDimNum() > maxDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnRenorm", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot exceed " + std::to_string(maxDim)).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckShapeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetViewShape() != tensor2->GetViewShape()) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnRenorm", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetViewShape()).GetString()) + ", " +
+             op::ToString(tensor2->GetViewShape()).GetString())
+                .c_str(),
+            (std::string("shape of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
 static inline bool CheckNotNull(const aclTensor* self, const aclScalar* p, const aclScalar* maxNorm,
                                 const aclTensor* out)
 {
@@ -59,9 +128,15 @@ static inline bool CheckDtypeValid(const aclTensor* self, const aclTensor* out)
                                                                                 SocVersion::ASCEND910B ?
                                                                             ASCEND910B_DTYPE_SUPPORT_LIST :
                                                                             ASCEND910_DTYPE_SUPPORT_LIST;
-    OP_CHECK_DTYPE_NOT_SUPPORT(self, currentDtypeSupportList, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(out, currentDtypeSupportList, return false);
-    OP_CHECK_DTYPE_NOT_MATCH(self, out->GetDataType(), return false);
+    if (!CheckDtypeInList(self, "self", currentDtypeSupportList)) {
+        return false;
+    }
+    if (!CheckDtypeInList(out, "out", currentDtypeSupportList)) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(self, out, "self", "out")) {
+        return false;
+    }
 
     return true;
 }
@@ -70,8 +145,11 @@ static inline bool CheckRenormFormat(const aclTensor* self, const aclTensor* out
 {
     // 需要根据算子实际情况添加校验
     if (self->GetViewFormat() != out->GetViewFormat()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format of input and output should be equal, self [%s], out [%s].",
-                op::ToString(self->GetViewFormat()).GetString(), op::ToString(out->GetViewFormat()).GetString());
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON("aclnnRenorm", "self,out",
+                                                (std::string(op::ToString(self->GetViewFormat()).GetString()) + ", " +
+                                                 op::ToString(out->GetViewFormat()).GetString())
+                                                    .c_str(),
+                                                "Format of input and output should be equal");
         return false;
     }
 
@@ -80,11 +158,21 @@ static inline bool CheckRenormFormat(const aclTensor* self, const aclTensor* out
 
 static inline bool CheckRenormShape(const aclTensor* self, const aclTensor* out)
 {
-    OP_CHECK_MIN_DIM(self, SELF_SUPPORT_MIN_DIMS, return false);
-    OP_CHECK_MIN_DIM(out, SELF_SUPPORT_MIN_DIMS, return false);
-    OP_CHECK_MAX_DIM(self, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(out, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_SHAPE_NOT_EQUAL(self, out, return false);
+    if (!CheckDimNumMin(self, "self", SELF_SUPPORT_MIN_DIMS)) {
+        return false;
+    }
+    if (!CheckDimNumMin(out, "out", SELF_SUPPORT_MIN_DIMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(self, "self", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(out, "out", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckShapeSamePair(self, out, "self", "out")) {
+        return false;
+    }
 
     return true;
 }
@@ -102,7 +190,8 @@ static bool CheckValue(const aclTensor* self, const aclScalar* p, int64_t dim, c
 {
     // 检查p的取值是否在范围内
     if (!IsSupportPValue(p)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "p only support non-negative values, but now p is [%f].", p->ToFloat());
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnRenorm", "p", std::to_string(p->ToFloat()).c_str(),
+                                              "p only support non-negative values");
         return false;
     }
 
@@ -111,14 +200,16 @@ static bool CheckValue(const aclTensor* self, const aclScalar* p, int64_t dim, c
     auto dimMax = tensorDimSize - 1;
     auto dimMin = -1 * tensorDimSize;
     if (dim < dimMin || dim > dimMax) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dim range only support [-dimNum, dimNum - 1], but now dim is [%ld].", dim);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            "aclnnRenorm", "dim", std::to_string(dim).c_str(),
+            ("dim range only support [" + std::to_string(dimMin) + ", " + std::to_string(dimMax) + "]").c_str());
         return false;
     }
 
     // 检查maxNorm是否在[0, +∞]范围内
     if (maxNorm->ToFloat() < 0.0f) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "maxNorm should be greater than 0, but now maxNorm is [%f].",
-                maxNorm->ToFloat());
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnRenorm", "maxNorm", std::to_string(maxNorm->ToFloat()).c_str(),
+                                              "maxNorm should be greater than or equal to 0");
         return false;
     }
 

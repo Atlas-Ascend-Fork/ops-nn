@@ -38,6 +38,16 @@ using namespace ge;
 using namespace Ops::Base;
 
 namespace ops {
+static void ReportQuantModeReadFailure(const char* opName)
+{
+    constexpr const char*
+        reason = "InferShape could not read quant_mode; check attribute materialization and the operator definition";
+    const char* name = opName != nullptr ? opName : "AddLayerNormQuant";
+    OP_LOGE_WITHOUT_REPORT(name, "%s", reason);
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {name, reason};
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values);
+}
 
 static bool InferReduceShape(const gert::Shape* xShape, const gert::Shape* gammaShape, gert::Shape* reduceShape)
 {
@@ -46,6 +56,9 @@ static bool InferReduceShape(const gert::Shape* xShape, const gert::Shape* gamma
 
     OP_LOGD("InferShape4AddLayerNormQuant", "xDimNum = %zu, gammaDimNum = %zu", xDimNum, gammaDimNum);
     if (xDimNum < gammaDimNum) {
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            "AddLayerNormQuant", "x1,gamma", std::to_string(xDimNum) + "D" + ", " + std::to_string(gammaDimNum) + "D",
+            "The rank of x1 must be at least the rank of gamma");
         return false;
     }
     reduceShape->SetDimNum(xDimNum - gammaDimNum);
@@ -76,9 +89,17 @@ static inline bool CheckDynOptInput(const gert::Shape* scale1Shape, const gert::
 {
     OP_LOGD("InferShape4AddLayerNormQuant", "Dynamic AddLayerNormQuant");
     OP_CHECK_IF((nullptr != zeroPoint1Shape || nullptr != zeroPoint2Shape),
-                OP_LOGE("CheckDynOptInput", "Dynamic AddLayerNormQuant Not support zeroPoints now."), return false);
-    OP_CHECK_IF((nullptr == scale1Shape && nullptr != scale2Shape),
-                OP_LOGE("CheckDynOptInput", "Dynamic AddLayerNormQuant Not support only have scale2."), return false);
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON("AddLayerNormQuant", "quant_mode,zero_points1,zero_points2",
+                                                       std::string("dynamic, ") +
+                                                           (zeroPoint1Shape != nullptr ? "present" : "absent") + ", " +
+                                                           (zeroPoint2Shape != nullptr ? "present" : "absent"),
+                                                       "Omit zero_points1 and zero_points2 in dynamic mode"),
+                return false);
+    OP_CHECK_IF(
+        (nullptr == scale1Shape && nullptr != scale2Shape),
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON("AddLayerNormQuant", "quant_mode,scales1,scales2",
+                                               "dynamic, absent, present", "Provide scales1 when scales2 is present"),
+        return false);
     return true;
 }
 
@@ -106,8 +127,7 @@ static ge::graphStatus InferShape4AddLayerNormQuant(gert::InferShapeContext* con
     const gert::RuntimeAttrs* attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const char* qms = attrs->GetAttrPointer<char>(QUANT_MODE_IDX);
-    OP_CHECK_IF(nullptr == qms, OP_LOGE(context, "Get required attr quantMode failed, infershape failed. "),
-                return GRAPH_FAILED);
+    OP_CHECK_IF(nullptr == qms, ReportQuantModeReadFailure(context->GetNodeName()), return GRAPH_FAILED);
     OP_LOGD("InferShape4AddLayerNormQuant", "quantMode: %s", qms);
     std::string quantModeStr = qms;
 
@@ -117,7 +137,7 @@ static ge::graphStatus InferShape4AddLayerNormQuant(gert::InferShapeContext* con
     const gert::Shape* zeroPoint2Shape = context->GetOptionalInputShape(ZERO_POINT2_IDX);
     if (quantModeStr == "dynamic") {
         OP_CHECK_IF(!CheckDynOptInput(scale1Shape, scale2Shape, zeroPoint1Shape, zeroPoint2Shape),
-                    OP_LOGE(context, "Bad opt inputs."), return GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context, "CheckDynOptInput failed."), return GRAPH_FAILED);
         // unknown rank
         if (IsUnknownRank(*x1Shape) || IsUnknownRank(*gammaShape)) {
             SetUnknownRank(*outScale1Shape);
@@ -131,8 +151,8 @@ static ge::graphStatus InferShape4AddLayerNormQuant(gert::InferShapeContext* con
             OP_LOGD(context, "End to do InferShape4AddLayerNormQuant with unknown rank.");
             return GRAPH_SUCCESS;
         }
-        OP_CHECK_IF(!InferReduceShape(x1Shape, gammaShape, outScale1Shape), OP_LOGE(context, "Bad opt inputs."),
-                    return GRAPH_FAILED);
+        OP_CHECK_IF(!InferReduceShape(x1Shape, gammaShape, outScale1Shape),
+                    OP_LOGE_WITHOUT_REPORT(context, "InferReduceShape failed."), return GRAPH_FAILED);
         if (nullptr != scale2Shape) {
             *y2Shape = *x1Shape;
             *outScale2Shape = *outScale1Shape;
@@ -142,7 +162,10 @@ static ge::graphStatus InferShape4AddLayerNormQuant(gert::InferShapeContext* con
         }
     } else {
         OP_LOGD("InferShape4AddLayerNormQuant", "Static AddLayerNormQuant");
-        OP_CHECK_IF((nullptr == scale1Shape), OP_LOGE(context, "Static AddLayerNormQuant Not support scale1 is None."),
+        OP_CHECK_IF((nullptr == scale1Shape),
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "quant_mode,scales1",
+                                                           quantModeStr + ", absent",
+                                                           "Provide scales1 for the non-dynamic quantization path"),
                     return GRAPH_FAILED);
         *outScale1Shape = gert::Shape({1});
         *outScale2Shape = gert::Shape({1});

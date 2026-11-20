@@ -456,7 +456,8 @@ inline void RunAddLayerNormGradPlatformTest(gert::StorageShape& input_dy_shape, 
                                             gert::StorageShape& input_xsum_shape, gert::StorageShape& out_dx_shape,
                                             gert::StorageShape& out_dgamma_shape, gert::StorageShape& out_dbeta_shape,
                                             ge::DataType data_type, uint32_t tiling_key_expect,
-                                            uint32_t block_dim_expect, const string& compile_info_json)
+                                            uint32_t block_dim_expect, const string& compile_info_json,
+                                            ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS)
 {
     auto compile_info_string = std::make_shared<string>(compile_info_json);
     std::vector<char> compile_info_buf(compile_info_string->begin(), compile_info_string->end());
@@ -512,7 +513,10 @@ inline void RunAddLayerNormGradPlatformTest(gert::StorageShape& input_dy_shape, 
     ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
     SetPlatformResource(*compile_info_string, *tiling_context->GetPlatformInfo());
 
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(tiling_func(tiling_context), expectedStatus);
+    if (expectedStatus != ge::GRAPH_SUCCESS) {
+        return;
+    }
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, tiling_key_expect);
     ASSERT_EQ(tiling_context->GetBlockDim(), block_dim_expect);
@@ -588,4 +592,26 @@ TEST_F(AddLayerNormGradTiling, add_layer_norm_grad_tiling_910b_preserves_max_blo
     RunAddLayerNormGradPlatformTest(input_dy_shape, input_x1_shape, input_x2_shape, input_rstd_shape, input_mean_shape,
                                     input_gamma_shape, input_xsum_shape, out_dx_shape, out_dgamma_shape,
                                     out_dbeta_shape, ge::DT_FLOAT16, 21, 40, Build910BCompileInfoString());
+}
+
+TEST_F(AddLayerNormGradTiling, add_layer_norm_grad_tiling_rank_limits)
+{
+    gert::StorageShape dy = {{8}, {8}};
+    gert::StorageShape x1 = {{8}, {8}};
+    gert::StorageShape x2 = dy;
+    gert::StorageShape mean = {{1}, {1}};
+    gert::StorageShape rstd = mean;
+    gert::StorageShape gamma = dy;
+    gert::StorageShape dsum = dy;
+    gert::StorageShape dx = dy;
+    gert::StorageShape dgamma = gamma;
+    gert::StorageShape dbeta = gamma;
+    gert::StorageShape rank9 = {{1, 1, 1, 1, 1, 1, 1, 1, 8}, {1, 1, 1, 1, 1, 1, 1, 1, 8}};
+
+    for (const auto& compileInfo : {Build910BCompileInfoString(), Build950CompileInfoString()}) {
+        RunAddLayerNormGradPlatformTest(dy, rank9, x2, rstd, mean, gamma, dsum, dx, dgamma, dbeta, ge::DT_FLOAT16, 0, 0,
+                                        compileInfo, ge::GRAPH_FAILED);
+        RunAddLayerNormGradPlatformTest(dy, x1, x2, rstd, mean, rank9, dsum, dx, dgamma, dbeta, ge::DT_FLOAT16, 0, 0,
+                                        compileInfo, ge::GRAPH_FAILED);
+    }
 }

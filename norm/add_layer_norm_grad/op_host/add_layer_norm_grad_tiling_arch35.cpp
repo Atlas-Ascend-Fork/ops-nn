@@ -219,11 +219,15 @@ void AddLayerNormGradGetTilingKey(GetTilingKeyParam& tilingKeyParam, const Tilin
 
 static bool CheckDimNumLimit(size_t x1DimNum, size_t gammaDimNum)
 {
-    OP_CHECK_IF(x1DimNum > MAX_DIM_NUM || x1DimNum < MIN_DIM_X,
-                OP_LOGE("CheckDimNumLimit", "Input x1's dim num should not greater than 8 or smaller than 1."),
-                return false);
+    OP_CHECK_IF(
+        x1DimNum > MAX_DIM_NUM || x1DimNum < MIN_DIM_X,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("AddLayerNormGrad", "x1", (std::to_string(x1DimNum) + "D").c_str(),
+                                                 "the number of dims of x1 should be between 1 and 8"),
+        return false);
     OP_CHECK_IF(gammaDimNum > MAX_DIM_NUM || gammaDimNum < MIN_DIM_GAMMA,
-                OP_LOGE("CheckDimNumLimit", "Input gamma's dim num should not greater than 8 or smaller than 1."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("AddLayerNormGrad", "gamma",
+                                                         (std::to_string(gammaDimNum) + "D").c_str(),
+                                                         "the number of dims of gamma should be between 1 and 8"),
                 return false);
     return true;
 }
@@ -256,8 +260,9 @@ static inline bool CheckEqualsAll(std::initializer_list<T> eleList)
 static inline bool HasNoZero(const gert::StorageShape* shapePtr, size_t shapeDim)
 {
     for (uint32_t i = 0; i < shapeDim; i++) {
-        OP_CHECK_IF(shapePtr->GetStorageShape().GetDim(i) == 0,
-                    OP_LOGE("HasNoZero", "Invaild shape which have zero dim."), return false);
+        if (shapePtr->GetStorageShape().GetDim(i) == 0) {
+            return false;
+        }
     }
     return true;
 }
@@ -268,16 +273,34 @@ static inline bool CheckDyGammaMean(const gert::StorageShape* dyShape, const ger
     for (uint32_t i = 0; i < gammaDimNum; i++) {
         OP_CHECK_IF(
             gammaShape->GetStorageShape().GetDim(i) != dyShape->GetStorageShape().GetDim(dyDimNum - gammaDimNum + i),
-            OP_LOGE("CheckAddLn", "Gamma shape invaild, gamma shape is not equal dy last few dim."), return false);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                "AddLayerNormGrad", "gamma and dy",
+                (Ops::Base::ToString(gammaShape->GetStorageShape()) + " and " +
+                 Ops::Base::ToString(dyShape->GetStorageShape()))
+                    .c_str(),
+                ("The " + std::to_string(i) + " dim of gamma should be equal to the " +
+                 std::to_string(dyDimNum - gammaDimNum + i) + " dim of dy")
+                    .c_str()),
+            return false);
     }
     for (uint32_t i = 0; i < dyDimNum; i++) {
         if (i < dyDimNum - gammaDimNum) {
             OP_CHECK_IF(meanShape->GetStorageShape().GetDim(i) != dyShape->GetStorageShape().GetDim(i),
-                        OP_LOGE("CheckAddLn", "Output mean/rstd reduce dim is not equal dy first few dim."),
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            "AddLayerNormGrad", "mean and dy",
+                            (Ops::Base::ToString(meanShape->GetStorageShape()) + " and " +
+                             Ops::Base::ToString(dyShape->GetStorageShape()))
+                                .c_str(),
+                            ("The " + std::to_string(i) + " dim of mean should be equal to the " + std::to_string(i) +
+                             " dim of dy")
+                                .c_str()),
                         return false);
         } else {
             OP_CHECK_IF(meanShape->GetStorageShape().GetDim(i) != 1,
-                        OP_LOGE("CheckAddLn", "Output mean/rstd reduce dim is not equal 1."), return false);
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            "AddLayerNormGrad", "mean", Ops::Base::ToString(meanShape->GetStorageShape()).c_str(),
+                            ("The " + std::to_string(i) + " dim of mean should be equal to 1").c_str()),
+                        return false);
         }
     }
     return true;
@@ -305,29 +328,76 @@ static bool CheckInputOutputShape(const gert::TilingContext* context)
     size_t meanDimNum = meanShape->GetStorageShape().GetDimNum();
     size_t rstdDimNum = rstdShape->GetStorageShape().GetDimNum();
 
-    OP_CHECK_IF(!CheckDimNumLimit(x1DimNum, gammaDimNum), OP_LOGE("CheckShape", "Bad x1/gamma dim"), return false);
-    OP_CHECK_IF(!CheckEqualsAll<size_t>({dyDimNum, rstdDimNum, meanDimNum}),
-                OP_LOGE("CheckShape", "Dim num of dy/mean/rstd not same."), return false);
-    OP_CHECK_IF(!CheckEqualsAll<size_t>({dgammaDimNum, gammaDimNum, dbetaDimNum}),
-                OP_LOGE("CheckShape", "Dim num of gamma/dgamma/dbeta not same."), return false);
+    OP_CHECK_IF(!CheckDimNumLimit(x1DimNum, gammaDimNum), OP_LOGE_WITHOUT_REPORT("CheckShape", "Bad x1/gamma dim"),
+                return false);
+    OP_CHECK_IF(
+        !CheckEqualsAll<size_t>({dyDimNum, rstdDimNum, meanDimNum}),
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(context->GetNodeName(), "dy, mean and rstd",
+                                                  (std::to_string(dyDimNum) + "D, " + std::to_string(meanDimNum) +
+                                                   "D and " + std::to_string(rstdDimNum) + "D")
+                                                      .c_str(),
+                                                  "The shape dims of dy, mean and rstd should be the same"),
+        return false);
+    OP_CHECK_IF(
+        !CheckEqualsAll<size_t>({dgammaDimNum, gammaDimNum, dbetaDimNum}),
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(context->GetNodeName(), "gamma, dgamma and dbeta",
+                                                  (std::to_string(gammaDimNum) + "D, " + std::to_string(dgammaDimNum) +
+                                                   "D and " + std::to_string(dbetaDimNum) + "D")
+                                                      .c_str(),
+                                                  "The shape dims of gamma, dgamma and dbeta should be the same"),
+        return false);
     OP_CHECK_IF(dyDimNum < gammaDimNum,
-                OP_LOGE("CheckShape", "Input gamma shape invaild, dim num bigger than dy dim num."), return false);
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "gamma and dy",
+                    (std::to_string(gammaDimNum) + "D and " + std::to_string(dyDimNum) + "D").c_str(),
+                    "The dim num of gamma should not be greater than the dim num of dy"),
+                return false);
     bool x1NoZeroDim = HasNoZero(x1Shape, x1DimNum);
     bool meanNoZeroDim = HasNoZero(meanShape, meanDimNum);
-    OP_CHECK_IF(!(x1NoZeroDim && meanNoZeroDim), OP_LOGE("CheckShape", "Bad x1/mean which have 0 dim."), return false);
+    OP_CHECK_IF(!(x1NoZeroDim && meanNoZeroDim),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "x1 and mean",
+                                                       (Ops::Base::ToString(x1Shape->GetStorageShape()) + " and " +
+                                                        Ops::Base::ToString(meanShape->GetStorageShape()))
+                                                           .c_str(),
+                                                       "x1 and mean cannot be empty tensors which have zero dim"),
+                return false);
     bool x1x2dydxEqs = CheckEqualsAll<const gert::StorageShape>({*(dyShape), *(x1Shape), *(x2Shape), *(dxShape)});
     bool meanRstdEqs = CheckEqualsAll<const gert::StorageShape>({*(meanShape), *(rstdShape)});
-    OP_CHECK_IF(!(x1x2dydxEqs && meanRstdEqs),
-                OP_LOGE("CheckShape", "Tensor x1/x2/dy/dx OR mean/rstd should have same shape."), return false);
+    OP_CHECK_IF(!x1x2dydxEqs,
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "x1, x2, dy and dx",
+                                                       (Ops::Base::ToString(x1Shape->GetStorageShape()) + ", " +
+                                                        Ops::Base::ToString(x2Shape->GetStorageShape()) + ", " +
+                                                        Ops::Base::ToString(dyShape->GetStorageShape()) + " and " +
+                                                        Ops::Base::ToString(dxShape->GetStorageShape()))
+                                                           .c_str(),
+                                                       "The shape dims of x1, x2, dy and dx should be the same"),
+                return false);
+    OP_CHECK_IF(!meanRstdEqs,
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "mean and rstd",
+                                                       (Ops::Base::ToString(meanShape->GetStorageShape()) + " and " +
+                                                        Ops::Base::ToString(rstdShape->GetStorageShape()))
+                                                           .c_str(),
+                                                       "The shape dims of mean and rstd should be the same"),
+                return false);
     bool checkDyGammaMean = CheckDyGammaMean(dyShape, gammaShape, meanShape, dyDimNum, gammaDimNum);
-    OP_CHECK_IF(!checkDyGammaMean, OP_LOGE("CheckShape", "Tensor dy/gamma/mean have bad rels."), return false);
+    OP_CHECK_IF(!checkDyGammaMean, OP_LOGE_WITHOUT_REPORT("CheckShape", "Tensor dy/gamma/mean have bad rels."),
+                return false);
     for (uint32_t i = 0; i < gammaDimNum; i++) {
         int64_t gammaDimValue = gammaShape->GetStorageShape().GetDim(i);
         int64_t dgammaDimValue = dgammaShape->GetStorageShape().GetDim(i);
         int64_t dyDimValue = dyShape->GetStorageShape().GetDim(dyDimNum - gammaDimNum + i);
         int64_t dbetaDimValue = dbetaShape->GetStorageShape().GetDim(i);
         OP_CHECK_IF(!CheckEqualsAll<int64_t>({gammaDimValue, dgammaDimValue, dyDimValue, dbetaDimValue}),
-                    OP_LOGE("CheckShape", "Shape of gamma/dgamma/dbeta should equal to dy last few dim."),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), "gamma, dgamma, dbeta and dy",
+                        (Ops::Base::ToString(gammaShape->GetStorageShape()) + ", " +
+                         Ops::Base::ToString(dgammaShape->GetStorageShape()) + ", " +
+                         Ops::Base::ToString(dbetaShape->GetStorageShape()) + " and " +
+                         Ops::Base::ToString(dyShape->GetStorageShape()))
+                            .c_str(),
+                        ("The " + std::to_string(i) + " dim of gamma/dgamma/dbeta should be equal to the " +
+                         std::to_string(dyDimNum - gammaDimNum + i) + " dim of dy")
+                            .c_str()),
                     return false);
     }
     return true;
@@ -353,7 +423,12 @@ bool BasicCheck(const gert::TilingContext* context, TilingStruct& tilingStruct, 
         const int64_t dim = gammaShape->GetStorageShape().GetDim(i);
         if (dim < 0 ||
             (numLastDim != 0 && static_cast<uint64_t>(dim) > std::numeric_limits<uint32_t>::max() / numLastDim)) {
-            OP_LOGE(context, "The number of elements in gamma exceeds the uint32_t range.");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "gamma",
+                                                  Ops::Base::ToString(gammaShape->GetStorageShape()),
+                                                  "Dimension " + std::to_string(i) +
+                                                      " must be non-negative, and the product of dims up to this "
+                                                      "dimension must not exceed " +
+                                                      std::to_string(std::numeric_limits<uint32_t>::max()));
             return false;
         }
         numLastDim *= static_cast<uint64_t>(dim);
@@ -362,7 +437,7 @@ bool BasicCheck(const gert::TilingContext* context, TilingStruct& tilingStruct, 
     OP_LOGI(context, "[AddLayerNormGrad-CheckShape] gammaDims=%u dyDimNum=%u numLastDim=%u", gammaDims, dyDimNum,
             tilingStruct.numLastDim);
     if (tilingStruct.numLastDim == 0) {
-        OP_LOGE(context, "numLastDim is 0");
+        OP_LOGE_FOR_INVALID_SHAPESIZE(context->GetNodeName(), "gamma", "0", "greater than 0");
         return false;
     }
 
@@ -500,7 +575,8 @@ static inline bool CheckAndSetDtype(ge::DataType dyDataType, uint32_t& dtypeKey,
         dtypeKey = BFLOAT16_DTYPE_KEY;
         blockNumberTdtype = BLOCK_ALIGN / SIZE_OF_BF16_FP16;
     } else {
-        OP_LOGE("CheckAndSetDtype", "dtype is not support");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("AddLayerNormGrad", "dy", Ops::Base::ToString(dyDataType),
+                                              "dtype should be float, float16 or bfloat16");
         return false;
     }
     return true;
@@ -529,9 +605,10 @@ ge::graphStatus Tiling4AddLayerNormGrad(gert::TilingContext* context)
     OP_LOGD(context, "Begin to do Tiling4AddLayerNormGrad");
     context->SetScheduleMode(SCHEDULE_MODE);
     bool hasDxInput = false;
-    OP_CHECK_IF(!BasicCheck(context, tilingStruct, hasDxInput), OP_LOGE(context, "Basic check is Invaild."),
+    OP_CHECK_IF(!BasicCheck(context, tilingStruct, hasDxInput), OP_LOGE_WITHOUT_REPORT(context, "BasicCheck failed."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputOutputShape(context), OP_LOGE(context, "Input shape is Invaild."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!CheckInputOutputShape(context), OP_LOGE_WITHOUT_REPORT(context, "CheckInputOutputShape failed."),
+                return ge::GRAPH_FAILED);
     const gert::StorageShape* dyShape = context->GetInputShape(0);
     const gert::StorageShape* rstdShape = context->GetInputShape(3);
     const gert::StorageShape* gammaShape = context->GetInputShape(5);
@@ -539,19 +616,29 @@ ge::graphStatus Tiling4AddLayerNormGrad(gert::TilingContext* context)
     auto dyDataType = dyTensor->GetDataType();
     uint32_t dtypeKey = 0;
     uint32_t blockNumberTdtype = 0;
-    OP_CHECK_IF(!CheckAndSetDtype(dyDataType, dtypeKey, blockNumberTdtype), OP_LOGE(context, "Dtype is not support."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!CheckAndSetDtype(dyDataType, dtypeKey, blockNumberTdtype),
+                OP_LOGE_WITHOUT_REPORT(context, "CheckAndSetDtype failed."), return ge::GRAPH_FAILED);
     uint64_t numFirstDimValue = 1;
     uint32_t gammaDims = gammaShape->GetStorageShape().GetDimNum();
     uint32_t dyDimNum = dyShape->GetStorageShape().GetDimNum();
-    OP_CHECK_IF(dyDimNum < gammaDims, OP_LOGE(context, "The rank of gamma cannot exceed the rank of dy."),
+    OP_CHECK_IF(dyDimNum < gammaDims,
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "gamma and dy",
+                    (std::to_string(gammaDims) + "D and " + std::to_string(dyDimNum) + "D").c_str(),
+                    "The rank of gamma cannot exceed the rank of dy"),
                 return ge::GRAPH_FAILED);
     // numFirstDim = product(dy[:-gammaDims])，与 CPU 的 dy.reshape(-1, product(gamma)) 一致
     for (uint32_t i = 0; i < dyDimNum - gammaDims; i++) {
         const int64_t dim = dyShape->GetStorageShape().GetDim(i);
         OP_CHECK_IF(dim < 0 || (numFirstDimValue != 0 &&
                                 static_cast<uint64_t>(dim) > std::numeric_limits<uint32_t>::max() / numFirstDimValue),
-                    OP_LOGE(context, "The number of rows exceeds the uint32_t range."), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "dy",
+                                                          Ops::Base::ToString(dyShape->GetStorageShape()),
+                                                          "Leading dimension " + std::to_string(i) +
+                                                              " must be non-negative, and the product of "
+                                                              "leading dims up to this dimension must not exceed " +
+                                                              std::to_string(std::numeric_limits<uint32_t>::max())),
+                    return ge::GRAPH_FAILED);
         numFirstDimValue *= static_cast<uint64_t>(dim);
     }
     uint32_t numFirstDim = static_cast<uint32_t>(numFirstDimValue);

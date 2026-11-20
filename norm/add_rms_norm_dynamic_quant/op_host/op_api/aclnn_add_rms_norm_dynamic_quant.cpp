@@ -14,6 +14,10 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#ifndef OP_LOG_LIBOPAPI_ONLY
+#define OP_LOG_LIBOPAPI_ONLY
+#endif
+#include "log/log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/platform.h"
@@ -123,26 +127,34 @@ static bool CheckShapeValid(const aclTensor* x1, const aclTensor* x2, const aclT
     auto x1Shape = x1->GetViewShape();
     auto x2Shape = x2->GetViewShape();
     if (x1Shape != x2Shape) {
-        OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "x1 and x2 shape mismatch.");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnAddRmsNormDynamicQuant", "x1,x2",
+            std::string(op::ToString(x1Shape).GetString()) + ", " + op::ToString(x2Shape).GetString(),
+            "x1 and x2 must have identical shapes");
         return false;
     }
 
     auto x1DimNum = x1Shape.GetDimNum();
     OP_CHECK(x1DimNum >= MIN_X_DIM_NUM && x1DimNum <= MAX_X_DIM_NUM,
-             OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "x1 dim num should be between %zu and %zu, but got %zu.",
-                     MIN_X_DIM_NUM, MAX_X_DIM_NUM, x1DimNum),
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                 "aclnnAddRmsNormDynamicQuant", "x1", std::to_string(x1DimNum) + "D",
+                 "The rank must be between " + std::to_string(MIN_X_DIM_NUM) + " and " + std::to_string(MAX_X_DIM_NUM)),
              return false);
 
     // 检查 gamma shape 是否为1维
     auto gammaShape = gamma->GetViewShape();
     if (gammaShape.GetDimNum() != 1) {
-        OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "gamma shape dim num should be 1.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAddRmsNormDynamicQuant", "gamma",
+                                     std::to_string(gammaShape.GetDimNum()) + "D", "1D");
         return false;
     }
 
     // 检查 gammaShape 是否与 x1 最后一维一致
     if (x1Shape.GetDim(x1DimNum - 1) != gammaShape.GetDim(0)) {
-        OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "gammaShape isn't consistent with the last dimension of x1.");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnAddRmsNormDynamicQuant", "x1,gamma",
+            std::string(op::ToString(x1Shape).GetString()) + ", " + op::ToString(gammaShape).GetString(),
+            "The length of gamma must equal the last dimension of x1");
         return false;
     }
 
@@ -150,14 +162,20 @@ static bool CheckShapeValid(const aclTensor* x1, const aclTensor* x2, const aclT
     if (smoothScale1Optional != nullptr) {
         auto smooth1Shape = smoothScale1Optional->GetViewShape();
         if (smooth1Shape != gammaShape) {
-            OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "smoothScale1 shape mismatch with gamma.");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                "aclnnAddRmsNormDynamicQuant", "smoothScale1Optional,gamma",
+                std::string(op::ToString(smooth1Shape).GetString()) + ", " + op::ToString(gammaShape).GetString(),
+                "smoothScale1Optional must have the same shape as gamma");
             return false;
         }
     }
     if (smoothScale2Optional != nullptr) {
         auto smooth2Shape = smoothScale2Optional->GetViewShape();
         if (smooth2Shape != gammaShape) {
-            OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "smoothScale2 shape mismatch with gamma.");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                "aclnnAddRmsNormDynamicQuant", "smoothScale2Optional,gamma",
+                std::string(op::ToString(smooth2Shape).GetString()) + ", " + op::ToString(gammaShape).GetString(),
+                "smoothScale2Optional must have the same shape as gamma");
             return false;
         }
     }

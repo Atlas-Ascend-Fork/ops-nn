@@ -68,7 +68,10 @@ static ge::graphStatus InferShape4AddLayerNorm(gert::InferShapeContext* context)
         return GRAPH_SUCCESS;
     }
     if (x1_shape->GetDimNum() < gamma_shape->GetDimNum()) {
-        OP_LOGE(context, "Dim num of x1 should be no less than dim num of gamma.");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context->GetNodeName(), "x1,gamma",
+            std::to_string(x1_shape->GetDimNum()) + "D" + ", " + std::to_string(gamma_shape->GetDimNum()) + "D",
+            "The rank of x1 must be at least the rank of gamma");
         return GRAPH_FAILED;
     }
     auto shape(*x1_shape);

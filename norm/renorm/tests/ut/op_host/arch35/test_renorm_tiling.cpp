@@ -50,7 +50,7 @@ static string TilingData2Str(const gert::TilingData* tiling_data)
     return result;
 }
 
-TEST_F(RenormDavidTiling, renorm_david_tiling1_p1)
+static void RunRenormDavidTilingP1(int64_t dim, ge::graphStatus expectedStatus)
 {
     gert::StorageShape x_shape = {{2, 2, 2}, {2, 2, 2}};
     gert::StorageShape y_shape = {{2, 2, 2}, {2, 2, 2}};
@@ -123,7 +123,7 @@ TEST_F(RenormDavidTiling, renorm_david_tiling1_p1)
                           .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                           .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
                           .NodeAttrs({{"p", Ops::NN::AnyValue::CreateFrom<float>(1.0)},
-                                      {"dim", Ops::NN::AnyValue::CreateFrom<int64_t>(2)},
+                                      {"dim", Ops::NN::AnyValue::CreateFrom<int64_t>(dim)},
                                       {"maxnorm", Ops::NN::AnyValue::CreateFrom<float>(0)}})
                           .TilingData(param.get())
                           .Workspace(ws_size)
@@ -138,10 +138,13 @@ TEST_F(RenormDavidTiling, renorm_david_tiling1_p1)
                                                                                     intrinsics);
         holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", npuarchs);
 
-        // workspaces nullptr return failed
-        EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+        EXPECT_EQ(tiling_func(tiling_context), expectedStatus);
     }
 }
+
+TEST_F(RenormDavidTiling, renorm_david_tiling1_p1) { RunRenormDavidTilingP1(2, ge::GRAPH_SUCCESS); }
+
+TEST_F(RenormDavidTiling, renorm_david_tiling_dim_out_of_range) { RunRenormDavidTilingP1(-4, ge::GRAPH_FAILED); }
 
 TEST_F(RenormDavidTiling, renorm_david_tiling2_p2)
 {

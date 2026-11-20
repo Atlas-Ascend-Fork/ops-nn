@@ -26,7 +26,8 @@ constexpr size_t INPUT_SCALE_IDX = 3;
 constexpr size_t INPUT_OFFSET_IDX = 4;
 constexpr size_t OUTPUT_RESULT_IDX = 0;
 
-static graphStatus InferShape4LayerNormQuant(gert::InferShapeContext* context) {
+static graphStatus InferShape4LayerNormQuant(gert::InferShapeContext* context)
+{
     OP_LOGD(context, "Begin to do LayerNormQuantInferShape");
 
     const gert::Shape* gammaShape = context->GetInputShape(INPUT_GAMMA_IDX);
@@ -39,22 +40,33 @@ static graphStatus InferShape4LayerNormQuant(gert::InferShapeContext* context) {
     OP_CHECK_NULL_WITH_CONTEXT(context, offsetShape);
 
     if (gammaShape->GetDimNum() != betaShape->GetDimNum()) {
-        OP_LOGE(context, "intput_gamma_shape are not equal to intput_beta_shape");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            "LayerNormQuant", "gamma and beta",
+            (std::to_string(gammaShape->GetDimNum()) + "D and " + std::to_string(betaShape->GetDimNum()) + "D").c_str(),
+            "The shape dims of gamma and beta should be the same");
         return GRAPH_FAILED;
     }
     for (size_t i = 0; i < gammaShape->GetDimNum(); i++) {
         if (gammaShape->GetDim(i) != betaShape->GetDim(i)) {
-            OP_LOGE(context, "intput_gamma_shape dim are not equal to intput_beta_shape dim.");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                "LayerNormQuant", "gamma and beta",
+                (Ops::Base::ToString(*gammaShape) + " and " + Ops::Base::ToString(*betaShape)).c_str(),
+                ("The " + std::to_string(i) + " dim of gamma should be equal to the " + std::to_string(i) +
+                 " dim of beta")
+                    .c_str());
             return GRAPH_FAILED;
         }
     }
 
     if (scaleShape->GetShapeSize() != 1) {
-        OP_LOGE(context, "InputScale shape is not [1]");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("LayerNormQuant", "inputScale", Ops::Base::ToString(*scaleShape).c_str(),
+                                              "inputScale should have one element");
         return GRAPH_FAILED;
     }
     if (offsetShape->GetShapeSize() != 1) {
-        OP_LOGE(context, "InputOffset shape is not [1]");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("LayerNormQuant", "inputOffset",
+                                              Ops::Base::ToString(*offsetShape).c_str(),
+                                              "inputOffset should have one element");
         return GRAPH_FAILED;
     }
 
@@ -68,14 +80,13 @@ static graphStatus InferShape4LayerNormQuant(gert::InferShapeContext* context) {
     return GRAPH_SUCCESS;
 }
 
-static graphStatus InferDataType4LayerNormQuant(gert::InferDataTypeContext* context) {
+static graphStatus InferDataType4LayerNormQuant(gert::InferDataTypeContext* context)
+{
     OP_LOGD(context, "Begin to do InferDataType4LayerNormQuant");
     context->SetOutputDataType(OUTPUT_RESULT_IDX, DT_INT8);
     OP_LOGD(context, "End to do InferDataType4LayerNormQuant");
     return GRAPH_SUCCESS;
 }
 
-IMPL_OP_INFERSHAPE(LayerNormQuant)
-    .InferShape(InferShape4LayerNormQuant)
-    .InferDataType(InferDataType4LayerNormQuant);
+IMPL_OP_INFERSHAPE(LayerNormQuant).InferShape(InferShape4LayerNormQuant).InferDataType(InferDataType4LayerNormQuant);
 } // namespace ops
