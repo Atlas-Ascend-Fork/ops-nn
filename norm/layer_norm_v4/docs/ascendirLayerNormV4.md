@@ -74,7 +74,7 @@ REG_OP(LayerNormV4)
 
 | 参数名 | 输入/属性/输出 | 描述 | 使用说明 | 数据类型 | 数据格式 | 维度(shape) |
 | --- | --- | --- | --- | --- | --- | --- |
-| x (Tensor) | 必选输入 | 待归一化的输入张量，对应公式中的`x`。 | 不支持空Tensor，各维度大小必须大于0。 | float32、float16、bfloat16 | ND | 至少1维，形状为[A1,...,Ai,R1,...,Rj] |
+| x (Tensor) | 必选输入 | 待归一化的输入张量，对应公式中的`x`。 | - | float32、float16、bfloat16 | ND | 至少1维，形状为[A1,...,Ai,R1,...,Rj] |
 | normalized_shape (Tensor) | 必选输入 | 表示需要进行norm计算的维度，值为[R1,...,Rj]。 | 长度小于等于输入`x`的shape长度，不支持为空；支持标量Tensor，标量时`j=1`，表示对`x`的最后一维进行归一化。 | int32、int64 | ND | 0维或1维 |
 | gamma (Tensor) | 可选输入 | 缩放权重，对应公式中的`w`。 | 存在时，shape必须为[R1,...,Rj]；未提供时按相同shape的全1张量处理。 | float32、float16、bfloat16 | ND | 存在时至少1维，形状为[R1,...,Rj] |
 | beta (Tensor) | 可选输入 | 偏移量，对应公式中的`b`。 | 存在时，shape必须为[R1,...,Rj]；未提供时按相同shape的全0张量处理。 | float32、float16、bfloat16 | ND | 存在时至少1维，形状为[R1,...,Rj] |

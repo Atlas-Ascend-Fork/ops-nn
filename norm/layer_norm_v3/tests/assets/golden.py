@@ -44,6 +44,8 @@ def layer_norm_v3_golden(
     axes = _check_axes_and_params(x, gamma, beta, begin_norm_axis, begin_params_axis)
     x_fp64 = x.astype(np.float64)
     mean = np.mean(x_fp64, axis=axes, keepdims=True)
+    if any(x.shape[axis] == 0 for axis in axes):
+        mean.fill(0)
     variance = np.mean(np.square(x_fp64 - mean), axis=axes, keepdims=True)
     rstd = np.reciprocal(np.sqrt(variance + float(epsilon)))
     y = (x_fp64 - mean) * rstd * gamma.astype(np.float64) + beta.astype(np.float64)
@@ -69,6 +71,8 @@ class LayerNormV3TorchThirdParty:
         dtype = torch.float32 if x.dtype in (torch.float16, torch.bfloat16) else x.dtype
         x_t = x.to(dtype)
         variance, mean = torch.var_mean(x_t, dim=axes, unbiased=False, keepdim=True)
+        if any(x.shape[axis] == 0 for axis in axes):
+            mean.zero_()
         rstd = torch.rsqrt(variance + float(epsilon))
         y = (x_t - mean) * rstd * gamma.to(dtype) + beta.to(dtype)
         return [y.to(x.dtype), mean.to(gamma.dtype), rstd.to(gamma.dtype)]

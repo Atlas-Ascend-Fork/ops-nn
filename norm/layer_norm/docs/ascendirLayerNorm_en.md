@@ -67,7 +67,7 @@ REG_OP(LayerNorm)
 
 | Parameter name | Input/Attribute/Output | Description | Usage instructions | Data type | Data format | Dimensions (shape) |
 | --- | --- | --- | --- | --- | --- | --- |
-| x (Tensor) | Required input | Input to be normalized, corresponding to `x` in the formula. | The normalization range is specified by `begin_norm_axis`; empty tensors are not supported. | float32, float16, bfloat16 | ND | At least 1 dimension, with the shape [A1,...,Ai,R1,...,Rj] |
+| x (Tensor) | Required input | Input to be normalized, corresponding to `x` in the formula. | The normalization range is specified by `begin_norm_axis`. | float32, float16, bfloat16 | ND | At least 1 dimension, with the shape [A1,...,Ai,R1,...,Rj] |
 | gamma (Tensor) | Required input | Scaling weight, corresponding to `w` in the formula. | Must be provided. The shape must be consistent with the shape of `x` from `begin_params_axis` to the last dimension, and the type must be consistent with `x` or be float32. | float32, float16, bfloat16 | ND | Suffix shape of `x` starting from `begin_params_axis` |
 | beta (Tensor) | Required input | Offset, corresponding to `b` in the formula. | Must be provided. The shape and type are the same as those of `gamma`. | float32, float16, bfloat16 | ND | Same as `gamma` |
 | begin_norm_axis (int) | Optional attribute | Axis where the normalization computation starts. | The default value is 0. Negative indexes are supported, and the value range is [-rank(`x`), rank(`x`)-1]. | - | - | - |
@@ -79,6 +79,7 @@ REG_OP(LayerNorm)
 
 ## Constraints
 
+- Empty Tensor support: <term>Ascend 950PR&950DT products</term> support empty Tensors.
 - `gamma` and `beta` are both required inputs. Their data types must be the same and be the data type of `x` or float32. The data type of `y` is the same as that of `x`, and the data types of `mean` and `variance` are the same as that of `gamma`.
 - The shapes of `gamma` and `beta` must be the same. After `begin_params_axis` is converted to a non-negative index, the shape of `gamma` must be equal to the shape of `x` from that axis to the last dimension, that is, `begin_params_axis + rank(gamma) = rank(x)` must be satisfied.
 - The shapes of `mean` and `variance` are determined by `begin_norm_axis`: the dimensions before this axis are consistent with `x`, and the dimensions from this axis onwards are all 1.

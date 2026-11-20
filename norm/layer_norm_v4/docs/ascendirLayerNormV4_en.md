@@ -74,7 +74,7 @@ REG_OP(LayerNormV4)
 
 | Parameter name | Input/Attribute/Output | Description | Usage instructions | Data type | Data format | Dimensions (shape) |
 | --- | --- | --- | --- | --- | --- | --- |
-| x (Tensor) | Required input | Input tensor to be normalized, corresponding to `x` in the formula. | Empty tensors are not supported; the size of each dimension must be greater than 0. | float32, float16, bfloat16 | ND | At least 1 dimension, with the shape [A1,...,Ai,R1,...,Rj] |
+| x (Tensor) | Required input | Input tensor to be normalized, corresponding to `x` in the formula. | - | float32, float16, bfloat16 | ND | At least 1 dimension, with the shape [A1,...,Ai,R1,...,Rj] |
 | normalized_shape (Tensor) | Required input | Denotes the dimensions on which the norm computation is performed, with the values [R1,...,Rj]. | The length is less than or equal to the shape length of input `x`, and it cannot be empty; a scalar tensor is supported, in which case `j=1`, indicating normalization over the last dimension of `x`. | int32, int64 | ND | 0 or 1 dimension |
 | gamma (Tensor) | Optional input | Scaling weight, corresponding to `w` in the formula. | When it exists, the shape must be [R1,...,Rj]; when it is not provided, it is processed as an all-1 tensor of the same shape. | float32, float16, bfloat16 | ND | At least 1 dimension when it exists, with the shape [R1,...,Rj] |
 | beta (Tensor) | Optional input | Offset, corresponding to `b` in the formula. | When it exists, the shape must be [R1,...,Rj]; when it is not provided, it is processed as an all-0 tensor of the same shape. | float32, float16, bfloat16 | ND | At least 1 dimension when it exists, with the shape [R1,...,Rj] |

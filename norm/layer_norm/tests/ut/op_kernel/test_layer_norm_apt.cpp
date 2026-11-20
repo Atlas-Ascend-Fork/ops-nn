@@ -42,7 +42,7 @@ protected:
     static void TearDownTestCase() { cout << "layer_norm_test TearDown\n" << endl; }
 };
 
-std::string Shape2Str(const std::vector<int64_t>& shape)
+static std::string Shape2Str(const std::vector<int64_t>& shape)
 {
     std::ostringstream oss;
     oss << "[";
@@ -65,8 +65,8 @@ static inline int64_t GetShapeSize(const std::vector<int64_t>& shape)
     return shapeSize;
 }
 
-void ExcuteTestCase(const std::vector<int64_t>& xShape, const std::vector<int64_t>& gammaShape,
-                    const std::string& dtype, int64_t tilingKey, uint32_t blockNum, uint8_t* tiling)
+static void ExcuteTestCase(const std::vector<int64_t>& xShape, const std::vector<int64_t>& gammaShape,
+                           const std::string& dtype, int64_t tilingKey, uint32_t blockNum, uint8_t* tiling)
 {
     uint32_t typeSize = 4;
     uint32_t fp32TypeSize = 4;

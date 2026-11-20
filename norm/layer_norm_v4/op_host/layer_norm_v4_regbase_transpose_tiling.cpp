@@ -21,7 +21,7 @@ constexpr uint64_t BFP32_SIZE = sizeof(float);
 constexpr uint64_t B16_SIZE = BFP32_SIZE / NUM_TWO;
 constexpr uint64_t TRANSPOSE_R_LIMIT = 16;
 constexpr uint64_t TRANSPOSE_MIN_VL_PER_CORE = 8;
-constexpr uint64_t PACK_OUTPUT_MIN_A = 150000;
+constexpr uint64_t PACK_OUTPUT_MIN_VL_PER_CORE = 39;
 constexpr uint64_t TRANSPOSE_ROWS = 16;
 constexpr uint64_t TRANSPOSE_BLOCK_BYTES = 32;
 constexpr uint64_t TRANSPOSE_MAX_REPEATS = 255;
@@ -56,9 +56,11 @@ ge::graphStatus LayerNormV4RegBaseTransposeTiling::DoOpTiling()
     const uint64_t rAlignment = TRANSPOSE_BLOCK_BYTES / xBytes;
     const uint64_t rAlign = CeilAlign(r, rAlignment);
     const uint64_t paramAlign = CeilAlign(r * paramBytes, blockBytes) / paramBytes;
+    const uint64_t rowsPerCore = CeilDiv(commonParams.colSize, commonParams.coreNum);
+    const bool packOutput = (r == 1 || r == NUM_TWO) && rowsPerCore > PACK_OUTPUT_MIN_VL_PER_CORE * commonParams.vlFp32;
     uint64_t aAlignment = commonParams.vlFp32;
     uint64_t tempBytesPerA = rAlign * BFP32_SIZE;
-    if ((r == 1 || r == NUM_TWO) && commonParams.colSize >= PACK_OUTPUT_MIN_A) {
+    if (packOutput) {
         // Align both the packed group length and each 5HD source address.
         aAlignment = TRANSPOSE_ROWS * std::max(TRANSPOSE_ROWS / r, rAlignment);
         tempBytesPerA = r * (BFP32_SIZE + xBytes);
@@ -68,7 +70,6 @@ ge::graphStatus LayerNormV4RegBaseTransposeTiling::DoOpTiling()
     const uint64_t bytesPerA = BUFFER_COUNT * (r * BFP32_SIZE + rAlign * xBytes) + tempBytesPerA +
                                NUM_TWO * BUFFER_COUNT * BFP32_SIZE;
     const uint64_t paramsSize = NUM_TWO * paramAlign * paramBytes;
-    const uint64_t rowsPerCore = CeilDiv(commonParams.colSize, commonParams.coreNum);
     const uint64_t maxTileA = std::min((commonParams.ubSizePlatForm - paramsSize) / bytesPerA,
                                        TRANSPOSE_ROWS * TRANSPOSE_MAX_REPEATS);
     const uint64_t tileA = std::min(maxTileA / aAlignment * aAlignment, CeilAlign(rowsPerCore, aAlignment));
@@ -82,6 +83,7 @@ ge::graphStatus LayerNormV4RegBaseTransposeTiling::DoOpTiling()
     td_.set_rAlign(rAlign);
     td_.set_paramAlign(paramAlign);
     td_.set_usedCoreNum(CeilDiv(commonParams.colSize, rowsPerCore));
+    td_.set_packOutput(packOutput ? 1U : 0U);
     td_.set_nullptrGamma(commonParams.gammaNullPtr);
     td_.set_nullptrBeta(commonParams.betaNullPtr);
     td_.set_epsilon(commonParams.eps);

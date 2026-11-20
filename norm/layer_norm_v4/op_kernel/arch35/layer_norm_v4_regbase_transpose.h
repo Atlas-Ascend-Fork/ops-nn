@@ -22,9 +22,7 @@ using NormCommon::NormCommonRegbase::StoreRegForDtype;
 template <typename T, typename U>
 class LayerNormV4RegbaseTranspose {
     static constexpr uint32_t TRANSPOSE_SIZE = NCHW_CONV_ADDR_LIST_SIZE;
-    static constexpr uint32_t B16_PER_B32 = sizeof(float) / sizeof(uint16_t);
-    static constexpr uint32_t B32_TRANSPOSE_COLS = TRANSPOSE_SIZE / B16_PER_B32;
-    static constexpr uint64_t PACK_OUTPUT_MIN_A = 150000;
+    static constexpr uint32_t B32_TRANSPOSE_COLS = TRANSPOSE_SIZE / NUM_TWO;
 
 public:
     __aicore__ inline LayerNormV4RegbaseTranspose(const LayerNormV4TilingDataRegBaseTranspose* tiling, TPipe* pipe)
@@ -47,7 +45,7 @@ public:
         paramAlign_ = td_->paramAlign;
         hasGamma_ = td_->nullptrGamma == 0;
         hasBeta_ = td_->nullptrBeta == 0;
-        packOutput_ = (r_ == 1 || r_ == NUM_TWO) && td_->a >= PACK_OUTPUT_MIN_A;
+        packOutput_ = td_->packOutput != 0;
 
         pipe_->InitBuffer(xQueue_, DOUBLE_BUFFER, tileA_ * r_ * sizeof(float));
         pipe_->InitBuffer(yQueue_, DOUBLE_BUFFER, tileA_ * rAlign_ * sizeof(T));
@@ -260,18 +258,38 @@ private:
         const float powerOfTwo = powerOfTwo_;
         const float reduceNum = static_cast<float>(r_);
         const float epsilon = td_->epsilon;
+        const float scaleFactor = powerOfTwo / reduceNum;
+        const float negativeDivisor = -reduceNum / powerOfTwo;
+        const bool needsRescale = powerOfTwo != reduceNum;
+        if (!CALC_RSTD && !needsRescale) {
+            return;
+        }
+        const float maxFinite = AscendC::NumericLimits<float>::Max();
         uint32_t maskCount = curA;
         __VEC_SCOPE__
         {
-            MaskReg mask;
-            RegTensor<float> resultReg, rReg, rstdReg;
+            MaskReg mask, finiteQuotient;
+            RegTensor<float> resultReg, rstdReg;
+            RegTensor<float> quotientReg, correctedReg, scaleReg, negativeDivisorReg;
+            if (needsRescale) {
+                Duplicate(scaleReg, scaleFactor);
+                Duplicate(negativeDivisorReg, negativeDivisor);
+            }
             for (uint16_t a = 0; a < aLoops; ++a) {
                 mask = UpdateMask<float>(maskCount);
                 const uint32_t aOffset = a * VL_B32;
                 LoadAlign(resultReg, resultAddr + aOffset);
-                Duplicate(rReg, reduceNum, mask);
-                Muls(resultReg, resultReg, powerOfTwo, mask);
-                Div(resultReg, resultReg, rReg, mask);
+                if (needsRescale) {
+                    Muls(quotientReg, resultReg, scaleFactor, mask);
+                    AscendC::Reg::Move(correctedReg, quotientReg);
+                    // e = fma(q, -R/P, sum); corrected = fma(e, P/R, q).
+                    MulDstAdd(correctedReg, negativeDivisorReg, resultReg, mask);
+                    MulDstAdd(correctedReg, scaleReg, quotientReg, mask);
+                    // Preserve NaN/Inf from the original rescaling operation.
+                    AscendC::Reg::Abs(resultReg, quotientReg, mask);
+                    AscendC::Reg::Compares<float, AscendC::CMPMODE::LE>(finiteQuotient, resultReg, maxFinite, mask);
+                    AscendC::Reg::Select(resultReg, correctedReg, quotientReg, finiteQuotient);
+                }
                 if constexpr (CALC_RSTD) {
                     NormCommon::ComputeRstdNewtonRaphsonReg<false>(resultReg, rstdReg, mask, epsilon);
                     StoreAlign(resultAddr + aOffset, rstdReg, mask);
@@ -343,8 +361,8 @@ private:
                     srcList[j] = src[srcOffset];
                     srcList[j + B32_TRANSPOSE_COLS] = src[srcOffset + B32_TRANSPOSE_COLS];
                     const uint32_t dstOffset = r * B32_TRANSPOSE_COLS + rAlign_ * j;
-                    dstList[j * B16_PER_B32] = dst[dstOffset];
-                    dstList[j * B16_PER_B32 + 1] = dst[dstOffset + rAlign_ * B32_TRANSPOSE_COLS];
+                    dstList[j * NUM_TWO] = dst[dstOffset];
+                    dstList[j * NUM_TWO + 1] = dst[dstOffset + rAlign_ * B32_TRANSPOSE_COLS];
                 }
             } else {
                 for (uint32_t j = 0; j < TRANSPOSE_SIZE; ++j) {
@@ -372,8 +390,8 @@ private:
             for (uint32_t group = 0; group < TRANSPOSE_SIZE; ++group) {
                 srcList[group] = (uint64_t)(srcAddr + r * tileA_ + group * groupRows);
                 if constexpr (IsSameType<T, float>::value) {
-                    dstList[group] = (uint64_t)(dstAddr + (group / B16_PER_B32 * r_ + r) * TRANSPOSE_SIZE +
-                                                group % B16_PER_B32 * B32_TRANSPOSE_COLS);
+                    dstList[group] = (uint64_t)(dstAddr + (group / NUM_TWO * r_ + r) * TRANSPOSE_SIZE +
+                                                group % NUM_TWO * B32_TRANSPOSE_COLS);
                 } else {
                     dstList[group] = (uint64_t)(dstAddr + (group * r_ + r) * TRANSPOSE_SIZE);
                 }
@@ -398,8 +416,8 @@ private:
             for (uint32_t idx = 0; idx < TRANSPOSE_SIZE; ++idx) {
                 srcList[idx] = (uint64_t)(srcAddr + idx * TRANSPOSE_SIZE + part * B32_TRANSPOSE_COLS);
                 if constexpr (IsSameType<T, float>::value) {
-                    dstList[idx] = (uint64_t)(dstAddr + (part * B32_TRANSPOSE_COLS + idx / B16_PER_B32) * groupLen +
-                                              (idx % B16_PER_B32) * B32_TRANSPOSE_COLS);
+                    dstList[idx] = (uint64_t)(dstAddr + (part * B32_TRANSPOSE_COLS + idx / NUM_TWO) * groupLen +
+                                              (idx % NUM_TWO) * B32_TRANSPOSE_COLS);
                 } else {
                     dstList[idx] = (uint64_t)(dstAddr + idx * groupLen);
                 }

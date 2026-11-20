@@ -344,18 +344,14 @@ ge::graphStatus LayerNormV3TilingBase::GetShapeAttrsInfo()
     commonParams.normToParamsSize = normToParamsSize;
     commonParams.paramsToNormSize = paramsToNormSize;
 
-    OP_CHECK_IF(
-        colSize <= 0,
-        OP_LOGE(context_->GetNodeName(), "colSize must be greater than 0, colSize: %u", static_cast<uint32_t>(colSize)),
-        return ge::GRAPH_FAILED);
-    OP_CHECK_IF(
-        rowSize <= 0,
-        OP_LOGE(context_->GetNodeName(), "rowSize must be greater than 0, rowSize: %u", static_cast<uint32_t>(rowSize)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(colSize <= 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "non-normalized size A",
+                                                      std::to_string(colSize).c_str(), "A must be greater than zero"),
+                return ge::GRAPH_FAILED);
 
     commonParams.colSize = colSize;
     commonParams.rowSize = rowSize;
-    commonParams.coefficient = static_cast<float>(1.0) / static_cast<float>(commonParams.rowSize);
+    commonParams.coefficient = rowSize == 0 ? 0.0f : 1.0f / static_cast<float>(rowSize);
     uint64_t alignment = 16;
     uint64_t gammaBetaAlignment = 16;
     const uint64_t blockSize = Ops::Base::GetUbBlockSize(context_);
@@ -390,6 +386,10 @@ ge::graphStatus LayerNormV3TilingBase::GetCommonPlatformInfo(const LayerNormV3Co
     commonParams.isAscend310P = compileInfo->isAscend310P;
     commonParams.isRegBase = compileInfo->isRegBase;
     commonParams.vlFp32 = compileInfo->vectorLength / sizeof(float);
+    OP_CHECK_IF(commonParams.rowSize == 0 && !commonParams.isRegBase,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "reduction size R", "0",
+                                                      "Empty reduction requires a regbase platform"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

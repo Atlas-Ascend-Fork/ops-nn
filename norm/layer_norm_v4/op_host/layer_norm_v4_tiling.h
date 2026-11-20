@@ -163,6 +163,7 @@ TILING_DATA_FIELD_DEF(uint32_t, nullptrGamma);
 TILING_DATA_FIELD_DEF(uint32_t, nullptrBeta);
 TILING_DATA_FIELD_DEF(float, epsilon);
 TILING_DATA_FIELD_DEF(uint32_t, usedCoreNum);
+TILING_DATA_FIELD_DEF(uint32_t, packOutput);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(LayerNormV4_800, LayerNormV4TilingDataRegBaseTranspose)

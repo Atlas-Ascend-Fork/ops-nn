@@ -156,6 +156,28 @@ struct LayerNormV3TilingDataWelfordMultiParams {
 
 #pragma pack()
 
+struct LayerNormV3TilingDataRegBaseTranspose {
+    uint64_t a;
+    uint64_t aBlockFactor;
+    uint32_t tileA;
+    uint32_t r;
+    uint32_t rAlign;
+    uint32_t paramAlign;
+    float epsilon;
+    uint32_t usedCoreNum;
+    uint64_t paramRows;
+    uint32_t paramR;
+    uint32_t paramStride;
+    uint32_t paramMode;
+};
+
+struct LayerNormV3TilingDataRegBaseReduceEmpty {
+    uint64_t rows;
+    uint64_t rowsPerCore;
+    uint32_t rowsPerTile;
+    uint32_t usedCoreNum;
+};
+
 template <typename T>
 inline void InitTilingData(uint8_t* tiling, T* const_data)
 {

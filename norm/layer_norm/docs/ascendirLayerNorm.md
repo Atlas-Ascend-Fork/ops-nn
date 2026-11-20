@@ -67,7 +67,7 @@ REG_OP(LayerNorm)
 
 | 参数名 | 输入/属性/输出 | 描述 | 使用说明 | 数据类型 | 数据格式 | 维度(shape) |
 | --- | --- | --- | --- | --- | --- | --- |
-| x (Tensor) | 必选输入 | 待归一化的输入，对应公式中的 `x`。 | 归一化范围由 `begin_norm_axis` 指定；不支持空Tensor。 | float32、float16、bfloat16 | ND | 至少1维，形状为[A1,...,Ai,R1,...,Rj] |
+| x (Tensor) | 必选输入 | 待归一化的输入，对应公式中的 `x`。 | 归一化范围由 `begin_norm_axis` 指定。 | float32、float16、bfloat16 | ND | 至少1维，形状为[A1,...,Ai,R1,...,Rj] |
 | gamma (Tensor) | 必选输入 | 缩放权重，对应公式中的`w`。 | 必须提供；shape与 `x` 从 `begin_params_axis` 到最后一维的shape一致，类型与 `x` 一致或为float32。 | float32、float16、bfloat16 | ND | `x` 从 `begin_params_axis` 开始的后缀shape |
 | beta (Tensor) | 必选输入 | 偏移量，对应公式中的`b`。 | 必须提供；shape和类型与 `gamma` 相同。 | float32、float16、bfloat16 | ND | 与 `gamma` 一致 |
 | begin_norm_axis (int) | 可选属性 | 开始执行归一化计算的轴。 | 默认值为0；支持负数索引，取值范围为[-rank(`x`), rank(`x`)-1]。 | - | - | - |
@@ -79,6 +79,7 @@ REG_OP(LayerNorm)
 
 ## 约束说明
 
+- 是否支持空Tensor：<term>Ascend 950PR&950DT系列产品</term>支持空Tensor。
 - `gamma`与`beta`均为必选输入，数据类型必须相同，并且为`x`的数据类型或float32；`y`的数据类型与`x`相同，`mean`和`variance`的数据类型与`gamma`相同。
 - `gamma`与`beta`的shape必须相同。将`begin_params_axis`换算为非负索引后，`gamma`的shape必须等于`x`从该轴到最后一维的shape，即满足`begin_params_axis + rank(gamma) = rank(x)`。
 - `mean`和`variance`的shape由`begin_norm_axis`决定：该轴之前的维度与`x`一致，该轴及之后的维度均为1。

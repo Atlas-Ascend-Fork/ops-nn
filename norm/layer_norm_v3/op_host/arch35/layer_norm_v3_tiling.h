@@ -244,6 +244,42 @@ REGISTER_TILING_DATA_CLASS(LayerNorm_911, LayerNormV3TilingDataWelfordMultiParam
 REGISTER_TILING_DATA_CLASS(LayerNorm_920, LayerNormV3TilingDataWelfordMultiParams)
 REGISTER_TILING_DATA_CLASS(LayerNorm_922, LayerNormV3TilingDataWelfordMultiParams)
 
+BEGIN_TILING_DATA_DEF(LayerNormV3TilingDataRegBaseTranspose)
+TILING_DATA_FIELD_DEF(uint64_t, a);
+TILING_DATA_FIELD_DEF(uint64_t, aBlockFactor);
+TILING_DATA_FIELD_DEF(uint32_t, tileA);
+TILING_DATA_FIELD_DEF(uint32_t, r);
+TILING_DATA_FIELD_DEF(uint32_t, rAlign);
+TILING_DATA_FIELD_DEF(uint32_t, paramAlign);
+TILING_DATA_FIELD_DEF(float, epsilon);
+TILING_DATA_FIELD_DEF(uint32_t, usedCoreNum);
+TILING_DATA_FIELD_DEF(uint64_t, paramRows);
+TILING_DATA_FIELD_DEF(uint32_t, paramR);
+TILING_DATA_FIELD_DEF(uint32_t, paramStride);
+TILING_DATA_FIELD_DEF(uint32_t, paramMode);
+END_TILING_DATA_DEF;
+
+REGISTER_TILING_DATA_CLASS(LayerNormV3_1000, LayerNormV3TilingDataRegBaseTranspose)
+REGISTER_TILING_DATA_CLASS(LayerNormV3_1010, LayerNormV3TilingDataRegBaseTranspose)
+REGISTER_TILING_DATA_CLASS(LayerNormV3_1011, LayerNormV3TilingDataRegBaseTranspose)
+REGISTER_TILING_DATA_CLASS(LayerNormV3_1020, LayerNormV3TilingDataRegBaseTranspose)
+REGISTER_TILING_DATA_CLASS(LayerNormV3_1022, LayerNormV3TilingDataRegBaseTranspose)
+REGISTER_TILING_DATA_CLASS(LayerNorm_1000, LayerNormV3TilingDataRegBaseTranspose)
+REGISTER_TILING_DATA_CLASS(LayerNorm_1010, LayerNormV3TilingDataRegBaseTranspose)
+REGISTER_TILING_DATA_CLASS(LayerNorm_1011, LayerNormV3TilingDataRegBaseTranspose)
+REGISTER_TILING_DATA_CLASS(LayerNorm_1020, LayerNormV3TilingDataRegBaseTranspose)
+REGISTER_TILING_DATA_CLASS(LayerNorm_1022, LayerNormV3TilingDataRegBaseTranspose)
+
+BEGIN_TILING_DATA_DEF(LayerNormV3TilingDataRegBaseReduceEmpty)
+TILING_DATA_FIELD_DEF(uint64_t, rows);
+TILING_DATA_FIELD_DEF(uint64_t, rowsPerCore);
+TILING_DATA_FIELD_DEF(uint32_t, rowsPerTile);
+TILING_DATA_FIELD_DEF(uint32_t, usedCoreNum);
+END_TILING_DATA_DEF;
+
+REGISTER_TILING_DATA_CLASS(LayerNormV3_1100, LayerNormV3TilingDataRegBaseReduceEmpty)
+REGISTER_TILING_DATA_CLASS(LayerNorm_1100, LayerNormV3TilingDataRegBaseReduceEmpty)
+
 struct ParamsLayerNomrV3 {
     uint64_t coreNum;
     uint64_t ubSizePlatForm;
@@ -306,6 +342,13 @@ enum class LayerNormV3TilingKey : int64_t {
     LAYER_NORM_REGBASE_WELFORD_MULTI_PARAMS_FLOAT16_FLOAT16 = 911,
     LAYER_NORM_REGBASE_WELFORD_MULTI_PARAMS_BFLOAT16_FLOAT32 = 920,
     LAYER_NORM_REGBASE_WELFORD_MULTI_PARAMS_BFLOAT16_BFLOAT16 = 922,
+    // Small-R transpose and empty reduction
+    LAYER_NORM_REGBASE_TRANSPOSE_FLOAT32_FLOAT32 = 1000,
+    LAYER_NORM_REGBASE_TRANSPOSE_FLOAT16_FLOAT32 = 1010,
+    LAYER_NORM_REGBASE_TRANSPOSE_FLOAT16_FLOAT16 = 1011,
+    LAYER_NORM_REGBASE_TRANSPOSE_BFLOAT16_FLOAT32 = 1020,
+    LAYER_NORM_REGBASE_TRANSPOSE_BFLOAT16_BFLOAT16 = 1022,
+    LAYER_NORM_REGBASE_REDUCE_EMPTY = 1100,
 };
 
 enum class LNTemplateKey : int {
@@ -494,6 +537,34 @@ protected:
 
 private:
     bool IsValidTileLength(int64_t tileLength);
+};
+
+class LayerNormV3RegBaseTransposeTiling : public LayerNormV3TilingBase {
+public:
+    explicit LayerNormV3RegBaseTransposeTiling(gert::TilingContext* context) : LayerNormV3TilingBase(context) {}
+
+protected:
+    bool IsCapable() override;
+    uint64_t GetTilingKey() const override;
+    ge::graphStatus DoOpTiling() override;
+    ge::graphStatus PostTiling() override;
+
+private:
+    LayerNormV3TilingDataRegBaseTranspose td_;
+};
+
+class LayerNormV3RegBaseReduceEmptyTiling : public LayerNormV3TilingBase {
+public:
+    explicit LayerNormV3RegBaseReduceEmptyTiling(gert::TilingContext* context) : LayerNormV3TilingBase(context) {}
+
+protected:
+    bool IsCapable() override;
+    uint64_t GetTilingKey() const override;
+    ge::graphStatus DoOpTiling() override;
+    ge::graphStatus PostTiling() override;
+
+private:
+    LayerNormV3TilingDataRegBaseReduceEmpty td_;
 };
 
 ge::graphStatus Tiling4LayerNormV3ForAscendC(gert::TilingContext* context);

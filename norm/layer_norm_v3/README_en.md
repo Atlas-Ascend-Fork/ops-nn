@@ -65,14 +65,14 @@ English | [简体中文](./README.md)
     <tr>
       <td>gamma</td>
       <td>Input</td>
-      <td>Represents the weight for the normalization computation, the input w in the formula. gamma is a required input and does not support being empty. The data type is consistent with the input x or is FLOAT, and is the same as the data type of beta. The shape is [R1,...,Rj], [Rn,...,Rj], or [Am,...,Ai,R1,...,Rj] (1 < n ≤ j, 1 ≤ m ≤ i), the same as the shape of the consecutive dimensions of the input x starting from begin_params_axis.</td>
+      <td>Represents the weight for the normalization computation, the input w in the formula. gamma is a required input. The data type is consistent with the input x or is FLOAT, and is the same as the data type of beta. The shape is [R1,...,Rj], [Rn,...,Rj], or [Am,...,Ai,R1,...,Rj] (1 < n ≤ j, 1 ≤ m ≤ i), the same as the shape of the consecutive dimensions of the input x starting from begin_params_axis.</td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>beta</td>
       <td>Input</td>
-      <td>Represents the offset for the normalization computation, the input b in the formula. beta is a required input and does not support being empty. The data type is consistent with the input x or is FLOAT, and is the same as the data type of gamma. The shape is the same as the shape of gamma.</td>
+      <td>Represents the offset for the normalization computation, the input b in the formula. beta is a required input. The data type is consistent with the input x or is FLOAT, and is the same as the data type of gamma. The shape is the same as the shape of gamma.</td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
     </tr>
@@ -122,7 +122,7 @@ English | [简体中文](./README.md)
 
 ## Constraints
 
-None
+- Empty Tensor support: <term>Ascend 950PR&950DT products</term> support empty Tensors.
 
 ## Invocation Description
 

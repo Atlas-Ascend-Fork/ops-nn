@@ -67,9 +67,9 @@ REG_OP(LayerNormV3)
 
 | Parameter name | Input/Attribute/Output | Description | Usage instructions | Data type | Data format | Dimensions (shape) |
 | --- | --- | --- | --- | --- | --- | --- |
-| x (Tensor) | Mandatory input | Input tensor to be normalized, corresponding to `x` in the formula. | Empty tensors are not supported, and the size of each dimension must be greater than 0. | float32, float16, bfloat16 | ND | At least 1 dimension, with the shape [A1,...,Ai,R1,...,Rj] |
-| gamma (Tensor) | Mandatory input | Scaling weight, corresponding to `w` in the formula. | Empty tensors are not supported; its shape must be consistent with the dimensions of `x` from `begin_params_axis` to the end. | float32, float16, bfloat16 | ND | At least 1 dimension, with the shape [R1,...,Rj] |
-| beta (Tensor) | Mandatory input | Offset, corresponding to `b` in the formula. | Empty tensors are not supported; the shape and data type must be consistent with `gamma`. | float32, float16, bfloat16 | ND | Consistent with `gamma` |
+| x (Tensor) | Mandatory input | Input tensor to be normalized, corresponding to `x` in the formula. | - | float32, float16, bfloat16 | ND | At least 1 dimension, with the shape [A1,...,Ai,R1,...,Rj] |
+| gamma (Tensor) | Mandatory input | Scaling weight, corresponding to `w` in the formula. | Must be provided. Its shape must be consistent with the dimensions of `x` from `begin_params_axis` to the end. | float32, float16, bfloat16 | ND | At least 1 dimension, with the shape [R1,...,Rj] |
+| beta (Tensor) | Mandatory input | Offset, corresponding to `b` in the formula. | Must be provided. The shape and data type must be consistent with `gamma`. | float32, float16, bfloat16 | ND | Consistent with `gamma` |
 | begin_norm_axis (int) | Optional attribute | Specifies the axis where the normalization computation starts. | The default value is 0; negative indexing is supported, and the value range is [-rank(`x`), rank(`x`)-1]. | - | - | - |
 | begin_params_axis (int) | Optional attribute | Specifies the starting axis of `x` that `gamma` and `beta` correspond to. | The default value is 0; negative indexing is supported, and the value range is [-rank(`x`), rank(`x`)-1]. | - | - | - |
 | epsilon (float) | Optional attribute | Value added to the variance to ensure numerical stability, corresponding to `eps` in the formula. | The default value is 0.00001. | - | - | - |
@@ -79,6 +79,7 @@ REG_OP(LayerNormV3)
 
 ## Constraints
 
+- Empty Tensor support: <term>Ascend 950PR&950DT products</term> support empty Tensors.
 - The data types of `gamma` and `beta` must be the same and must be the data type of `x` or float32; the data type of `y` is the same as `x`, and the data types of `mean` and `rstd` are the same as `gamma`.
 - The shapes of `gamma` and `beta` must be the same and have at least 1 dimension. After converting `begin_params_axis` to a non-negative index, the shape of `gamma` must equal the shape of `x` from that axis to the last dimension, that is, `begin_params_axis + rank(gamma) = rank(x)` must hold.
 - The shapes of `mean` and `rstd` are determined by `begin_norm_axis`: the dimensions before that axis are consistent with `x`, and that axis and all subsequent dimensions are 1.

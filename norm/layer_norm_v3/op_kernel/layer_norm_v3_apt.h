@@ -24,6 +24,8 @@
 #include "arch35/layer_norm_v3_norm_not_equal_params.h"
 #include "arch35/layer_norm_v3_welford_multi_reduce.h"
 #include "arch35/layer_norm_v3_welford_multi_params.h"
+#include "arch35/layer_norm_v3_regbase_transpose.h"
+#include "arch35/layer_norm_v3_regbase_reduce_empty.h"
 
 using namespace LayerNormV3;
 using AscendC::AIC;
@@ -69,6 +71,13 @@ using AscendC::AIC;
 #define LNV3_REGBASE_WELFORD_MULTI_PARAMS_HALF_HALF 911
 #define LNV3_REGBASE_WELFORD_MULTI_PARAMS_BF16_FLOAT 920
 #define LNV3_REGBASE_WELFORD_MULTI_PARAMS_BF16_BF16 922
+
+#define LNV3_REGBASE_TRANSPOSE_FLOAT_FLOAT 1000
+#define LNV3_REGBASE_TRANSPOSE_HALF_FLOAT 1010
+#define LNV3_REGBASE_TRANSPOSE_HALF_HALF 1011
+#define LNV3_REGBASE_TRANSPOSE_BF16_FLOAT 1020
+#define LNV3_REGBASE_TRANSPOSE_BF16_BF16 1022
+#define LNV3_REGBASE_REDUCE_EMPTY 1100
 
 template <typename Tfm, typename Tweight, typename Tmean, bool IsOutRstd>
 __aicore__ inline void RegbaseNoReduceImpl(GM_ADDR x, GM_ADDR gamma, GM_ADDR beta, GM_ADDR y, GM_ADDR mean,
@@ -151,6 +160,44 @@ __aicore__ inline void RegbaseWelfordMultiParamsImpl(GM_ADDR x, GM_ADDR gamma, G
     op.Process();
 }
 
+template <typename Tfm, typename Tweight, typename Tmean, bool IsOutRstd, uint32_t PARAM_MODE>
+__aicore__ inline void RunRegbaseTranspose(GM_ADDR x, GM_ADDR gamma, GM_ADDR beta, GM_ADDR y, GM_ADDR mean,
+                                           GM_ADDR lastout, const LayerNormV3TilingDataRegBaseTranspose* tiling,
+                                           TPipe* pipe)
+{
+    LayerNormV3RegbaseTranspose<Tfm, Tweight, Tmean, IsOutRstd, PARAM_MODE> op(tiling, pipe);
+    op.Init(x, gamma, beta, y, mean, lastout);
+    op.Process();
+}
+
+template <typename Tfm, typename Tweight, typename Tmean, bool IsOutRstd>
+__aicore__ inline void RegbaseTransposeImpl(GM_ADDR x, GM_ADDR gamma, GM_ADDR beta, GM_ADDR y, GM_ADDR mean,
+                                            GM_ADDR lastout, GM_ADDR tiling)
+{
+    TPipe pipe;
+    GET_TILING_DATA_WITH_STRUCT(LayerNormV3TilingDataRegBaseTranspose, tilingData, tiling);
+    switch (tilingData.paramMode) {
+        case TRANSPOSE_PARAM_SAME:
+            RunRegbaseTranspose<Tfm, Tweight, Tmean, IsOutRstd, TRANSPOSE_PARAM_SAME>(x, gamma, beta, y, mean, lastout,
+                                                                                      &tilingData, &pipe);
+            break;
+        case TRANSPOSE_PARAM_BRC_P:
+            RunRegbaseTranspose<Tfm, Tweight, Tmean, IsOutRstd, TRANSPOSE_PARAM_BRC_P>(x, gamma, beta, y, mean, lastout,
+                                                                                       &tilingData, &pipe);
+            break;
+        case TRANSPOSE_PARAM_FULL_PARAMS:
+            RunRegbaseTranspose<Tfm, Tweight, Tmean, IsOutRstd, TRANSPOSE_PARAM_FULL_PARAMS>(
+                x, gamma, beta, y, mean, lastout, &tilingData, &pipe);
+            break;
+        case TRANSPOSE_PARAM_TILE_PARAMS:
+            RunRegbaseTranspose<Tfm, Tweight, Tmean, IsOutRstd, TRANSPOSE_PARAM_TILE_PARAMS>(
+                x, gamma, beta, y, mean, lastout, &tilingData, &pipe);
+            break;
+        default:
+            break;
+    }
+}
+
 template <bool IsOutRstd>
 static __aicore__ inline void layer_norm_impl(GM_ADDR x, GM_ADDR gamma, GM_ADDR beta, GM_ADDR y, GM_ADDR mean,
                                               GM_ADDR lastout, GM_ADDR workspace, GM_ADDR tiling)
@@ -159,6 +206,33 @@ static __aicore__ inline void layer_norm_impl(GM_ADDR x, GM_ADDR gamma, GM_ADDR 
         return;
     }
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
+    if (TILING_KEY_IS(LNV3_REGBASE_REDUCE_EMPTY)) {
+        GET_TILING_DATA_WITH_STRUCT(LayerNormV3TilingDataRegBaseReduceEmpty, tilingData, tiling);
+        LayerNormV3RegbaseReduceEmpty<DTYPE_MEAN> op(&tilingData);
+        op.Init(mean, lastout);
+        op.Process();
+        return;
+    }
+    if (TILING_KEY_IS(LNV3_REGBASE_TRANSPOSE_FLOAT_FLOAT)) {
+        RegbaseTransposeImpl<float, float, DTYPE_MEAN, IsOutRstd>(x, gamma, beta, y, mean, lastout, tiling);
+        return;
+    }
+    if (TILING_KEY_IS(LNV3_REGBASE_TRANSPOSE_HALF_FLOAT)) {
+        RegbaseTransposeImpl<half, float, DTYPE_MEAN, IsOutRstd>(x, gamma, beta, y, mean, lastout, tiling);
+        return;
+    }
+    if (TILING_KEY_IS(LNV3_REGBASE_TRANSPOSE_HALF_HALF)) {
+        RegbaseTransposeImpl<half, half, DTYPE_MEAN, IsOutRstd>(x, gamma, beta, y, mean, lastout, tiling);
+        return;
+    }
+    if (TILING_KEY_IS(LNV3_REGBASE_TRANSPOSE_BF16_FLOAT)) {
+        RegbaseTransposeImpl<bfloat16_t, float, DTYPE_MEAN, IsOutRstd>(x, gamma, beta, y, mean, lastout, tiling);
+        return;
+    }
+    if (TILING_KEY_IS(LNV3_REGBASE_TRANSPOSE_BF16_BF16)) {
+        RegbaseTransposeImpl<bfloat16_t, bfloat16_t, DTYPE_MEAN, IsOutRstd>(x, gamma, beta, y, mean, lastout, tiling);
+        return;
+    }
     if (TILING_KEY_IS(LNV3_REGBASE_TWO_PASS_FLOAT_FLOAT)) {
         RegbaseTwoPassImpl<float, float, DTYPE_MEAN, IsOutRstd>(x, gamma, beta, y, mean, lastout, tiling);
         return;
