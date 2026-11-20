@@ -320,7 +320,8 @@ static aclnnStatus CopyResultTensorToDst(const aclTensor* runningMeanOutput, con
                                          const aclTensor* runningMeanDst, const aclTensor* runningVarDst,
                                          aclOpExecutor* executor)
 {
-    if (runningMeanDst == nullptr) {
+    // runningMean/runningVar为成对可选参数：任一为空指针即视为不需要更新running统计，整体跳过回写
+    if (runningMeanDst == nullptr || runningVarDst == nullptr) {
         return ACLNN_SUCCESS;
     }
     const int64_t appendDims[1] = {0};
@@ -347,7 +348,8 @@ static aclnnStatus CopyRunningTensorToDst(aclTensor* runningMeanDst, aclTensor* 
                                           const aclTensor* meanAllOutput, const aclTensor* runningMeanMid,
                                           const aclTensor* runningVarOutput, double momentum, aclOpExecutor* executor)
 {
-    if (runningMeanDst == nullptr) {
+    // runningMean/runningVar为成对可选参数：任一为空指针即视为不需要更新running统计，整体跳过回写
+    if (runningMeanDst == nullptr || runningVarDst == nullptr) {
         return ACLNN_SUCCESS;
     }
     const int64_t appendDims[1] = {0};

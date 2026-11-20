@@ -260,6 +260,48 @@ TEST_F(l2BatchNormGatherStatsWithCountsTest, l2_batch_norm_gather_stats_with_cou
     // ut.TestPrecision();
 }
 
+TEST_F(l2BatchNormGatherStatsWithCountsTest, l2_batch_norm_gather_stats_with_counts_float32_2d_runningvar_nullptr_only)
+{
+    auto selfDesc = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4, 5, 6, 7, 8});
+    auto meanDesc = TensorDesc({5, 4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4, 1, 2, 3, 4, 5, 6,
+                                                                                     7, 8, 5, 6, 7, 8, 5, 6, 7, 8});
+    auto invstdDesc = TensorDesc({5, 4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4, 1, 2, 3, 4, 5, 6,
+                                                                                       7, 8, 5, 6, 7, 8, 5, 6, 7, 8});
+    auto runningMeanDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4});
+    auto countsDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4, 5});
+
+    auto meanAllDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto invstdAllDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnBatchNormGatherStatsWithCounts,
+                        INPUT(selfDesc, meanDesc, invstdDesc, runningMeanDesc, nullptr, 1e-2, 1e-4, countsDesc),
+                        OUTPUT(meanAllDesc, invstdAllDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+TEST_F(l2BatchNormGatherStatsWithCountsTest, l2_batch_norm_gather_stats_with_counts_float32_2d_runningmean_nullptr_only)
+{
+    auto selfDesc = TensorDesc({2, 4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4, 5, 6, 7, 8});
+    auto meanDesc = TensorDesc({5, 4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4, 1, 2, 3, 4, 5, 6,
+                                                                                     7, 8, 5, 6, 7, 8, 5, 6, 7, 8});
+    auto invstdDesc = TensorDesc({5, 4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4, 1, 2, 3, 4, 5, 6,
+                                                                                       7, 8, 5, 6, 7, 8, 5, 6, 7, 8});
+    auto runningVarDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4});
+    auto countsDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 2, 3, 4, 5});
+
+    auto meanAllDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto invstdAllDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnBatchNormGatherStatsWithCounts,
+                        INPUT(selfDesc, meanDesc, invstdDesc, nullptr, runningVarDesc, 1e-2, 1e-4, countsDesc),
+                        OUTPUT(meanAllDesc, invstdAllDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
 TEST_F(l2BatchNormGatherStatsWithCountsTest, l2_batch_norm_gather_stats_with_counts_null_tensor)
 {
     auto selfDesc = TensorDesc({0, 4, 2}, ACL_FLOAT, ACL_FORMAT_ND)
