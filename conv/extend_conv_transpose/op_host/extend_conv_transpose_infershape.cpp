@@ -89,8 +89,9 @@ static bool GetConv3DXShape(const InferShapeContext* context, size_t x_idx, Form
         shapes.ic = x_shape->GetDim(idx++);
         shapes.in = x_shape->GetDim(idx++);
     } else {
-        OP_LOGE(context->GetNodeName(), "The format of input x not support format %s.",
-                ge::TypeUtils::FormatToAscendString(x_format).GetString());
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "x",
+                                               ge::TypeUtils::FormatToAscendString(x_format).GetString(),
+                                               "the format of input x is not supported.");
         return false;
     }
 
@@ -332,10 +333,6 @@ static bool SetOutputShape(gert::InferShapeContext* context, const Conv3DInputSh
         y_shape->AppendDim(output_h);
         y_shape->AppendDim(output_w);
         y_shape->AppendDim(shapes.kc * attrs.groups);
-    } else {
-        OP_LOGE(context->GetNodeName(), "The format of output y not support format %s.",
-                ge::TypeUtils::FormatToAscendString(x_format).GetString());
-        return false;
     }
     return true;
 }

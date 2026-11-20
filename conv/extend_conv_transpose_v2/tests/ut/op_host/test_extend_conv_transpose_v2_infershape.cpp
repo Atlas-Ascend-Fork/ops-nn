@@ -18,6 +18,7 @@
 #include "kernel_run_context_facker.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
+#include "base/err_mgr.h"
 
 class ExtendConvTransposeV2ProtoTest : public testing::Test {
 protected:
@@ -425,4 +426,69 @@ TEST_F(ExtendConvTransposeV2ProtoTest, compute_from_scratch_groups_2)
     ASSERT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
     auto output = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
     ASSERT_EQ(Ops::Base::ToString(*output), "[1, 6, 4, 4, 4]");
+}
+
+// 覆盖GetConv3DXShape的else分支（L91-L95）：input_size（input 0）desc origin format为NCHW时，
+// x format既不是NCDHW也不是NDHWC，上报EZ0035错误码（param_name=x，reason提示格式不支持）并返回失败
+TEST_F(ExtendConvTransposeV2ProtoTest, unsupportedXFormatNchwFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage(); // 清空缓存的首错信息，避免其它用例干扰
+
+    vector<int64_t> strides({1, 1, 1, 1, 1});
+    vector<int64_t> pads({0, 0, 0, 0, 0, 0});
+    vector<int64_t> dilations({1, 1, 1, 1, 1});
+    int64_t groups = 1;
+    string data_format("NCHW");
+    vector<int64_t> output_padding({0, 0, 0, 0, 0});
+
+    // input_size全0使y输出为全0 shape，进入CheckOutputAllZero后的format校验分支
+    vector<int64_t> input_size = {0, 0, 0, 0, 0};
+    gert::StorageShape input_size_shape = {{4, 256, 1, 40, 32}, {4, 256, 1, 40, 32}};
+    gert::StorageShape x_shape = {{4, 512, 1, 20, 16}, {4, 512, 1, 20, 16}};
+    gert::StorageShape filter_shape = {{512, 256, 1, 2, 2}, {512, 256, 1, 2, 2}};
+    gert::StorageShape output_shape = {{}, {}};
+    gert::StorageShape output_shape_y1 = {{}, {}};
+
+    size_t total_size = 0;
+    auto tensor_holder = gert::Tensor::CreateFollowing(input_size_shape.GetStorageShape().GetDimNum(), ge::DT_INT64,
+                                                       total_size);
+    auto tensor = reinterpret_cast<gert::Tensor*>(tensor_holder.get());
+    tensor->MutableStorageShape().AppendDim(input_size_shape.GetStorageShape().GetDimNum());
+    tensor->MutableOriginShape().AppendDim(input_size_shape.GetOriginShape().GetDimNum());
+    tensor->SetOriginFormat(ge::FORMAT_NCHW);
+    tensor->SetStorageFormat(ge::FORMAT_NCHW);
+    (void)memcpy_s(tensor->GetData<uint8_t>(), total_size - sizeof(gert::Tensor), input_size.data(),
+                   input_size.size() * sizeof(int64_t));
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(3, 2)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({tensor, &x_shape, &filter_shape})
+                      .OutputShapes({&output_shape, &output_shape_y1})
+                      .NodeAttrs(
+                          {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(strides)},
+                           {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(pads)},
+                           {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(dilations)},
+                           {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(groups)},
+                           {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>(data_format)},
+                           {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(output_padding)}})
+                      .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeOutputTd(1, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .Build();
+
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("ExtendConvTransposeV2")->infer_shape;
+    ASSERT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    std::string msg = errMsg.get();
+    std::cout << "[unsupportedXFormatNchwFail] error msg: " << msg << std::endl;
+    EXPECT_TRUE(msg.find("EZ0035") != std::string::npos) << msg;
+    EXPECT_TRUE(msg.find("Parameter x of") != std::string::npos) << msg;
+    EXPECT_TRUE(msg.find("incorrect format NCHW") != std::string::npos) << msg;
+    EXPECT_TRUE(msg.find("the format of input x is not supported.") != std::string::npos) << msg;
 }

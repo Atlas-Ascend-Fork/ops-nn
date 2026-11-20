@@ -63,10 +63,10 @@ static ge::graphStatus CheckOutBackpropShapeForDepthwiseConv2DBackpropFilter(ger
     const int64_t outBackpropH = outBackpropShape->GetDim(hIndex);
     const int64_t outBackpropW = outBackpropShape->GetDim(wIndex);
     if (outBackpropH < 0 || outBackpropW < 0) {
-        OP_LOGE(context->GetNodeName(),
-                "out_backprop shape h = %ld, w = %ld should be positive when filter_size is const and input shape is "
-                "static.",
-                outBackpropH, outBackpropW);
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            context->GetNodeName(), "out_backprop",
+            ("h = " + std::to_string(outBackpropH) + ", w = " + std::to_string(outBackpropW)).c_str(),
+            "h and w should be positive when filter_size is const and input shape is static.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

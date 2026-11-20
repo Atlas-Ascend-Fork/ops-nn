@@ -37,14 +37,17 @@ static ge::graphStatus CheckShapeForDepthwiseConv2DBackpropInput(gert::InferShap
     OP_CHECK_IF(filterShape == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get filter shape."),
                 return ge::GRAPH_FAILED);
     if (Ops::Base::IsUnknownRank(*filterShape)) {
-        OP_LOGE(context->GetNodeName(), "filter shape = [-2] is not supported.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "filter", Ops::Base::ToString(*filterShape),
+                                              "[-2] is not supported.");
         return ge::GRAPH_FAILED;
     }
     for (size_t idx = 0; idx < filterShape->GetDimNum(); ++idx) {
         const int64_t filterDim = filterShape->GetDim(idx);
         if (filterDim < 0) {
-            OP_LOGE(context->GetNodeName(), "filter shape dim[%zu] = %ld should be positive, -1 is not supported.", idx,
-                    filterDim);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "filter", Ops::Base::ToString(*filterShape),
+                                                  ("dim[" + std::to_string(idx) + "] = " + std::to_string(filterDim) +
+                                                   " should be positive, -1 is not supported.")
+                                                      .c_str());
             return ge::GRAPH_FAILED;
         }
     }
@@ -65,7 +68,9 @@ static ge::graphStatus CheckShapeForDepthwiseConv2DBackpropInput(gert::InferShap
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get out_backprop shape."),
                 return ge::GRAPH_FAILED);
     if (Ops::Base::IsUnknownRank(*outBackpropShape)) {
-        OP_LOGE(context->GetNodeName(), "out_backprop shape = [-2] is not supported when input_size is const.");
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "out_backprop",
+                                                  std::to_string(outBackpropShape->GetShapeSize()).c_str(),
+                                                  "shape = [-2] is not supported when input_size is const.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
