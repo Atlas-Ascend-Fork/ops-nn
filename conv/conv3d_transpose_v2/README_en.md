@@ -38,10 +38,10 @@ English | [简体中文](./README.md)
 | <div style="width:120px">Parameter name</div>  | <div style="width:120px">Input/Output/Attribute</div>  | <div style="width:380px">Description</div> | <div style="width:350px">Data type</div>  | <div style="width:220px">Data format</div> |
 | ------------------| ------------------ | ------------------------------------------------------------------------------------------------- | ----------------- | --------------------- |
 | input_size | Input  | <ul><li>1D tensor that indicates the shape of the input tensor.</li></ul> | INT32, INT64 | - |
-| x  | Input | <ul><li>Feature map, corresponding to ($N,C_{in},D_{in},H_{in},W_{in}$) in the formula.</li><li>A tensor whose data format is the same as that of 'y'.</li></ul> | FLOAT16, FLOAT32, BFLOAT16, HIFLOAT8, FLOAT8_E4M3FN| NDHWC, NCDHW |
-| filter | Input | <ul><li>A 5D tensor that represents the convolution kernel size, corresponding to kernelSize[0], kernelSize[1], and kernelSize[2] in the formula.</li></ul> | FLOAT16, BFLOAT16, FLOAT32, HIFLOAT8, FLOAT8_E4M3FN | NCDHW, NDHWC, DHWCN |
-| bias | Optional attribute | <ul><li>A 1D tensor. Currently, this parameter is not enabled.</li></ul> | FLOAT16, FLOAT32 | - |
-| offset_w | Optional attribute | <ul><li>A 1D tensor used for quantized deconvolution. Currently, this parameter is not enabled.</li></ul> | INT8 | - |
+| x  | Input | <ul><li>Feature map, corresponding to ($N,C_{in},D_{in},H_{in},W_{in}$) in the formula.</li><li>A tensor whose data format is the same as that of 'y'.</li><li>Only <term>Ascend 950PR&950DT products</term> support the HIFLOAT8 and FLOAT8_E4M3FN data types.</li></ul> | FLOAT16, FLOAT32, BFLOAT16, HIFLOAT8, FLOAT8_E4M3FN| NDHWC, NCDHW |
+| filter | Input | <ul><li>A 5D tensor that represents the convolution kernel size, corresponding to kernelSize[0], kernelSize[1], and kernelSize[2] in the formula.</li><li>Only <term>Ascend 950PR&950DT products</term> support the HIFLOAT8 and FLOAT8_E4M3FN data types.</li></ul> | FLOAT16, BFLOAT16, FLOAT32, HIFLOAT8, FLOAT8_E4M3FN | NCDHW, NDHWC, DHWCN |
+| bias | Optional input | <ul><li>A 1D tensor. Currently, this parameter is not enabled.</li></ul> | FLOAT16, FLOAT32 | - |
+| offset_w | Optional input | <ul><li>A 1D tensor used for quantized deconvolution. Currently, this parameter is not enabled.</li></ul> | INT8 | - |
 | strides | Required attribute | <ul><li>A tuple or list of 5 integers that specifies the stride of the sliding window along each dimension of input tensor 'x'.</li><li>The axis order is consistent with the feature map format.</li></ul>  | - | - |
 | pads | Required attribute | <ul><li>A tuple or list of 6 integers that specifies the padding amount in each direction, corresponding to padding[0], padding[1], and padding[2] in the formula.</li></ul> | - | - |
 | dilations | Optional attribute | <ul><li>A tuple or list of 5 integers that indicates the dilation (hole) factor of each dimension of the input, corresponding to dilation[0], dilation[1], and dilation[2] in the formula</li><li>Default value: [1,1,1,1,1].</li><li>The axis order is consistent with the feature map format.</li></ul>| - | - |
@@ -49,7 +49,8 @@ English | [简体中文](./README.md)
 | data_format | Optional attribute | <ul><li>A string. The value must be one of ["NDHWC","NCDHW"], with a default value of "NDHWC". The correspondence is batch (N), depth (D), height (H), width (W), and channels (C).</li><li>Specifies the data layout format of 'x' and 'y'.</li></ul> | STRING | - |
 | output_padding | Optional attribute | <ul><li>Additional size added to the end of the output shape. Default value: [0,0,0,0,0].</li><li>Corresponding to output_padding[0], output_padding[1], and output_padding[2] in the formula.</li></ul> | - | - |
 | offset_x  | Optional attribute | <ul><li>Default value: 0. Reserved field.</li></ul> | INT | - |
-| y | Output | <ul><li>Corresponding to ($N,C_{out},D_{out},H_{out},W_{out}$) in the formula.</li><li>The data format is the same as that of 'x'.</li></ul> | FLOAT16, BFLOAT16, FLOAT32, HIFLOAT8, FLOAT8_E4M3FN | NDHWC, NCDHW |
+| enable_hf32 | Optional attribute | <ul><li>A Boolean value. Default value: false. Controls whether to enable the HF32 computation mode.</li><li>Takes effect only when the input data type is FLOAT32.</li></ul> | BOOL | - |
+| y | Output | <ul><li>Corresponding to ($N,C_{out},D_{out},H_{out},W_{out}$) in the formula.</li><li>The data format is the same as that of 'x'.</li><li>Only <term>Ascend 950PR&950DT products</term> support the HIFLOAT8 and FLOAT8_E4M3FN data types.</li></ul> | FLOAT16, BFLOAT16, FLOAT32, HIFLOAT8, FLOAT8_E4M3FN | NDHWC, NCDHW |
 
 - Description of combinations of different groups values and dtype
 
@@ -79,10 +80,14 @@ English | [简体中文](./README.md)
         - [batch, in_channels, in_depth, in_height, in_width]
 * x
     - The values of the N, C, D, H, and W dimensions must be in the range [1,2147483647].
+    - Only <term>Ascend 950PR&950DT products</term> support the HIFLOAT8 and FLOAT8_E4M3FN data types.
 * filter
+    - Only <term>Ascend 950PR&950DT products</term> support the HIFLOAT8 and FLOAT8_E4M3FN data types.
     - When the data format is DHWCN or NDHWC, HIFLOAT8 and FLOAT8_E4M3FN are not supported.
     - The values of the N (out_channels), C (in_channels), and D dimensions must be in the range [1,2147483647].
     - The values of the H and W dimensions must be in the range [1,511].
+* y
+    - Only <term>Ascend 950PR&950DT products</term> support the HIFLOAT8 and FLOAT8_E4M3FN data types.
 * strides
     - The N and C dimensions must be 1.
     - Ascend 950PR&950DT products: The values of the D, H, and W dimensions must be in the range [1,2147483647].

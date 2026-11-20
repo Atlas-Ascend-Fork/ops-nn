@@ -96,9 +96,9 @@ bool ConvTbcBackwardChecker::CheckTbcShape()
     // input(TBC1) weigth(LC1C0) bias(C0):
     OP_CHECK(
         inputTensor_.input->GetViewShape().GetDim(2) == inputTensor_.weight->GetViewShape().GetDim(1),
-        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(ACLNN_CONV_TBC_BACKWARD_NAME, "Input[2] , weight[1]",
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(ACLNN_CONV_TBC_BACKWARD_NAME, "Input[2], weight[1]",
                                                   (std::to_string(inputTensor_.input->GetViewShape().GetDim(2)) + "," +
-                                                   std::to_string(inputTensor_.weight->GetViewShape().GetDim(2)))
+                                                   std::to_string(inputTensor_.weight->GetViewShape().GetDim(1)))
                                                       .c_str(),
                                                   "the dim of Input[2] and the dim of weight[1] must be the same"),
         return false);
