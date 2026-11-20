@@ -12,6 +12,7 @@
  * \file init_embedding_hash_table_tiling_arch35.cpp
  * \brief InitEmbeddingHashTable tiling impl
  */
+#include <string>
 #include <vector>
 
 #include "init_embedding_hash_table_tiling_arch35.h"
@@ -24,6 +25,15 @@ namespace optiling {
 using namespace Ops::Base;
 
 namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+
 constexpr uint32_t MAX_THREAD = 512;
 constexpr uint64_t ADDR_ALING_FACTOR = 8;
 
@@ -90,7 +100,10 @@ ge::graphStatus Tiling4InitEmbeddingHashTable(gert::TilingContext* context)
     if (strcmp(initializerMode, "random") == 0) {
         mode = RANDOM_MODE;
         auto sampledValuesShapePtr = context->GetOptionalInputShape(OPTIONAL_INPUT_SAMPLED_VALUES_IDX);
-        OP_CHECK_NULL_WITH_CONTEXT(context, sampledValuesShapePtr);
+        OP_CHECK_IF(sampledValuesShapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "sampled_values",
+                                                             "The shape of sampled_values is required in random mode"),
+                    return ge::GRAPH_FAILED);
         auto sampledValuesShape = sampledValuesShapePtr->GetStorageShape();
         int64_t sampledValuesShapeSize = sampledValuesShape.GetShapeSize();
         OP_CHECK_IF(static_cast<int64_t>(*embeddingDim) * static_cast<int64_t>(*bucketSize) != sampledValuesShapeSize,
@@ -147,7 +160,10 @@ static ge::graphStatus TilingPrepare4InitEmbeddingHashTable(gert::TilingParseCon
     OP_CHECK_IF((compileInfo->coreNum <= 0), OP_LOGE(context->GetNodeName(), "The core num is invalid."),
                 return ge::GRAPH_FAILED);
     compileInfo->maxThread = GetSimtMaxThreadNum(context);
-    OP_CHECK_IF((compileInfo->maxThread <= 0), OP_LOGE(context->GetNodeName(), "The Thread num is invalid."),
+    OP_CHECK_IF((compileInfo->maxThread <= 0),
+                ReportTilingFailure(context->GetNodeName(),
+                                    "The thread num is invalid: " + std::to_string(compileInfo->maxThread) +
+                                        ", check the platform information."),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

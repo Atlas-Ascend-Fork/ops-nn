@@ -18,6 +18,18 @@
 
 namespace optiling {
 using namespace Ops::NN::OpTiling;
+
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
+
 constexpr int32_t SCALE_GRADS_INDEX = 0;
 constexpr int32_t INV_SCALE_INDEX_OFFSET = 1;
 
@@ -89,7 +101,7 @@ private:
 ge::graphStatus ForeachNonFiniteCheckAndUnscaleRegbaseTiling::DoOpTiling()
 {
     if (RunBigKernelTiling() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Run big kernel tiling return failed.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Run big kernel tiling return failed.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -112,7 +124,10 @@ ge::graphStatus ForeachNonFiniteCheckAndUnscaleRegbaseTiling::GetShapeAttrsInfo(
     totalDataCountAligned_ = 0;
     for (int16_t i = 0; i < totalTensorCount_; i++) {
         auto descPtr = context_->GetDynamicInputDesc(SCALE_GRADS_INDEX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, descPtr);
+        OP_CHECK_IF(descPtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName_.c_str(), "scaled_grads",
+                                                             "The descriptor of scaled_grads is unavailable"),
+                    return ge::GRAPH_FAILED);
         auto tempDtype = descPtr->GetDataType();
         // Determine whether all data types are consistent.
         if (i == 0) {
@@ -134,7 +149,10 @@ ge::graphStatus ForeachNonFiniteCheckAndUnscaleRegbaseTiling::GetShapeAttrsInfo(
             return ge::GRAPH_FAILED;
         }
         auto shapePtr = context_->GetDynamicInputShape(SCALE_GRADS_INDEX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, shapePtr);
+        OP_CHECK_IF(shapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName_.c_str(), "scaled_grads",
+                                                             "The shape of scaled_grads is unavailable"),
+                    return ge::GRAPH_FAILED);
         tensorDataCountList_[i] = shapePtr->GetStorageShape().GetShapeSize();
         totalDataCount_ += tensorDataCountList_[i];
         // Make a 32-byte alignment for each Tensor
@@ -177,7 +195,8 @@ ge::graphStatus ForeachNonFiniteCheckAndUnscaleRegbaseTiling::RunBigKernelTiling
 
     uint32_t needCoreNum = std::min<uint32_t>(GetNeedCoreNum(platformInfo->GetCoreNum()), MAX_CORE_COUNT_REGBASE);
     OP_LOGD(nodeName_, "ubSizePlatForm:%lu, needCoreNum:%u", ubSizePlatForm, needCoreNum);
-    OP_CHECK_IF(ubSizePlatForm == 0, OP_LOGE(nodeName_, "Param needCoreNum or ubSizePlatForm is zero."),
+    OP_CHECK_IF(ubSizePlatForm == 0,
+                ReportTilingFailure(nodeName_.c_str(), "ubSizePlatForm is zero, check the platform information."),
                 return ge::GRAPH_FAILED);
 
     if (totalDataCount_ == 0) {

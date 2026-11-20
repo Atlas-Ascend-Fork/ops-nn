@@ -386,7 +386,9 @@ static void SetBlockTiling(const gert::TilingContext* context, GroupNormSiluTili
     auto xDtype = context->GetInputDesc(INPUT_IDX_X)->GetDataType();
     uint64_t xDtypeSize = ge::GetSizeByDataType(xDtype);
     if (xDtypeSize == 0) {
-        OP_LOGE(context, "Division by zero!");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x",
+                                              ge::TypeUtils::DataTypeToSerialString(xDtype).c_str(),
+                                              "The dtype size of input x must be greater than 0");
         return;
     }
     auto compileInfo = context->GetCompileInfo<GroupNormSiluCompileInfo>();
@@ -464,7 +466,9 @@ static void SetTiling(const gert::TilingContext* context, GroupNormSiluTilingDat
     auto xDtype = context->GetInputDesc(INPUT_IDX_X)->GetDataType();
     uint64_t xDtypeSize = ge::GetSizeByDataType(xDtype);
     if (xDtypeSize == 0) {
-        OP_LOGE(context, "Division by zero!");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x",
+                                              ge::TypeUtils::DataTypeToSerialString(xDtype).c_str(),
+                                              "The dtype size of input x must be greater than 0");
         return;
     }
     auto gammaDtype = context->GetInputDesc(INPUT_IDX_GAMMA)->GetDataType();

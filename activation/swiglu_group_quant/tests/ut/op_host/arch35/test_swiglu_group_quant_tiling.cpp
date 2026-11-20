@@ -725,6 +725,24 @@ TEST_F(SwigluGroupQuantTilingTest, tiling_hifp8_static)
     ExecuteTilingCase(tc);
 }
 
+TEST_F(SwigluGroupQuantTilingTest, tiling_error_hifp8_y_last_dim)
+{
+    TilingCase tc;
+    tc.xDtype = ge::DT_FLOAT16;
+    tc.yDtype = ge::DT_HIFLOAT8;
+    tc.scaleDtype = ge::DT_FLOAT;
+    tc.yOriginDtype = ge::DT_FLOAT16;
+    tc.xShape = {{8, 128, 8192}, {8, 128, 8192}};
+    tc.yShape = {{8, 128, 1024}, {8, 128, 1024}};
+    tc.scaleShape = {{1}, {1}};
+    tc.yOriginShape = {{8, 128, 4096}, {8, 128, 4096}};
+    tc.dstType = ge::DT_HIFLOAT8;
+    tc.quantMode = 2;
+    tc.hasScale = true;
+    tc.status = ge::GRAPH_FAILED;
+    ExecuteTilingCase(tc);
+}
+
 TEST_F(SwigluGroupQuantTilingTest, tiling_hifp8_static_group)
 {
     TilingCase tc;

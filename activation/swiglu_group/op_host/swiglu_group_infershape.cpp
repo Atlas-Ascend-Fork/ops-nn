@@ -13,6 +13,7 @@
  * \brief Shape and dtype inference for SwigluGroup.
  */
 
+#include <string>
 #include "graph/utils/type_utils.h"
 #include "log/log.h"
 #include "register/op_impl_registry.h"
@@ -41,7 +42,8 @@ graphStatus InferShape4SwigluGroup(gert::InferShapeContext* context)
 
     int64_t xRank = static_cast<int64_t>(xShape->GetDimNum());
     OP_CHECK_IF(xRank < 1,
-                OP_LOGE(context->GetNodeName(), "The rank of x should be greater than 0, but is %ld.", xRank),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xRank),
+                                                         "The shape dim of input x must be greater than 0"),
                 return ge::GRAPH_FAILED);
     int64_t splitDim = xRank - 1;
 
@@ -51,9 +53,9 @@ graphStatus InferShape4SwigluGroup(gert::InferShapeContext* context)
     }
 
     OP_CHECK_IF(xShape->GetDim(splitDim) < 0 || xShape->GetDim(splitDim) % NUM_TWO != 0,
-                OP_LOGE(context->GetNodeName(),
-                        "The last dimension of x should be non-negative and divisible by 2, but got %ld.",
-                        xShape->GetDim(splitDim)),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "x", Ops::Base::ToString(*xShape),
+                    "The last dim of input x must be non-negative and divisible by " + std::to_string(NUM_TWO)),
                 return ge::GRAPH_FAILED);
 
     yShape->SetDim(splitDim, xShape->GetDim(splitDim) / NUM_TWO);

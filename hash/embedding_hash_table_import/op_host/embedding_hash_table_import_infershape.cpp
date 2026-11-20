@@ -86,13 +86,25 @@ ge::graphStatus Infershape4EmbeddingHashTableImport(gert::InferShapeContext* con
 
     for (uint32_t i = 0; i < keysInstanceNum; i++) {
         auto keysShape = context->GetDynamicInputShape(KEYS_IDX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, keysShape);
+        OP_CHECK_IF(keysShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "keys",
+                                                             "The shape of dynamic input keys is unavailable"),
+                    return ge::GRAPH_FAILED);
         auto countersShape = context->GetDynamicInputShape(COUNTERS_IDX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, countersShape);
+        OP_CHECK_IF(countersShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "counters",
+                                                             "The shape of dynamic input counters is unavailable"),
+                    return ge::GRAPH_FAILED);
         auto filterFlagsShape = context->GetDynamicInputShape(FILTER_FLAGS_IDX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, filterFlagsShape);
+        OP_CHECK_IF(filterFlagsShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "filter_flags",
+                                                             "The shape of dynamic input filter_flags is unavailable"),
+                    return ge::GRAPH_FAILED);
         auto valuesShape = context->GetDynamicInputShape(VALUES_IDX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, valuesShape);
+        OP_CHECK_IF(valuesShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "values",
+                                                             "The shape of dynamic input values is unavailable"),
+                    return ge::GRAPH_FAILED);
 
         int64_t keysNum = keysShape->GetShapeSize();
         if (keysNum > 0) {
@@ -125,8 +137,9 @@ ge::graphStatus InferDataType4EmbeddingHashTableImport(gert::InferDataTypeContex
     OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfo);
     int64_t totalInNum = computeNodeInfo->GetIrInputsNum();
     if (!(totalInNum == INPUT_NODE_NUM)) {
-        OP_LOGE(context->GetNodeName(), "Check input nums failed, expected InputNum is %ld, but got %ld",
-                static_cast<int64_t>(INPUT_NODE_NUM), totalInNum);
+        OP_LOGE_FOR_INVALID_TENSORNUMS_WITH_REASON(
+            context->GetNodeName(), "inputs", std::to_string(totalInNum),
+            "The number of inputs of EmbeddingHashTableImport must be " + std::to_string(INPUT_NODE_NUM));
         return GRAPH_FAILED;
     }
     auto tableHandleDtype = context->GetInputDataType(TABLE_HANDLES_IDX); // table_handle

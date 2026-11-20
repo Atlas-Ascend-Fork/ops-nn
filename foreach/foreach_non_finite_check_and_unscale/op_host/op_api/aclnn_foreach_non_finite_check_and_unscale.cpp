@@ -10,6 +10,7 @@
 
 #include "aclnn_foreach_non_finite_check_and_unscale.h"
 #include <initializer_list>
+#include <string>
 #include "foreach_non_finite_check_and_unscale.h"
 #include "foreach_contiguous_helper.h"
 #include "foreach_null_check_helper.h"
@@ -20,9 +21,11 @@
 #include "opdev/op_dfx.h"
 #include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
+#include "log/log.h"
 
 using namespace op;
 
+static constexpr const char* ACLNN_OP_NAME = "aclnnForeachNonFiniteCheckAndUnscale";
 static constexpr uint64_t MAX_TENSOR_COUNT = 256;
 static const std::initializer_list<DataType> TENSOR_DTYPE_SUPPORT_LIST = {DataType::DT_FLOAT, DataType::DT_FLOAT16,
                                                                           DataType::DT_BF16};
@@ -56,7 +59,9 @@ static aclnnStatus CheckTensorShapeAndFormat(const aclTensor* tensor, const char
 {
     OP_CHECK_MAX_DIM(tensor, MAX_SUPPORT_DIMS_NUMS, return ACLNN_ERR_INNER_TILING_ERROR);
     if (IsPrivateFormat(tensor->GetStorageFormat())) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Private formats are not supported for %s.", name);
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(ACLNN_OP_NAME, name,
+                                               op::ToString(tensor->GetStorageFormat()).GetString(),
+                                               "Private formats are not supported");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -75,7 +80,9 @@ static aclnnStatus CheckParams(const aclTensorList* scaledGrads, const aclTensor
     OP_CHECK_DTYPE_NOT_MATCH(invScale, DataType::DT_FLOAT, return ACLNN_ERR_PARAM_INVALID);
 
     if (scaledGrads->Size() == 0 || scaledGrads->Size() > MAX_TENSOR_COUNT) {
-        OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "scaledGrads must contain between 1 and 256 tensors.");
+        OP_LOGE_FOR_INVALID_TENSORNUMS_WITH_REASON(
+            ACLNN_OP_NAME, "scaledGrads", std::to_string(scaledGrads->Size()),
+            "The number of tensors in scaledGrads must be in the range [1, " + std::to_string(MAX_TENSOR_COUNT) + "]");
         return ACLNN_ERR_INNER_TILING_ERROR;
     }
     auto dtype = (*scaledGrads)[0]->GetDataType();
@@ -87,8 +94,16 @@ static aclnnStatus CheckParams(const aclTensorList* scaledGrads, const aclTensor
         CHECK_RET(ret == ACLNN_SUCCESS, ret);
     }
 
-    if (foundInf->GetViewShape().GetShapeSize() != 1 || invScale->GetViewShape().GetShapeSize() != 1) {
-        OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "foundInf and invScale must each contain exactly one element.");
+    if (foundInf->GetViewShape().GetShapeSize() != 1) {
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(ACLNN_OP_NAME, "foundInf",
+                                                   std::to_string(foundInf->GetViewShape().GetShapeSize()),
+                                                   "foundInf must contain exactly one element");
+        return ACLNN_ERR_INNER_TILING_ERROR;
+    }
+    if (invScale->GetViewShape().GetShapeSize() != 1) {
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(ACLNN_OP_NAME, "invScale",
+                                                   std::to_string(invScale->GetViewShape().GetShapeSize()),
+                                                   "invScale must contain exactly one element");
         return ACLNN_ERR_INNER_TILING_ERROR;
     }
     auto ret = CheckTensorShapeAndFormat(foundInf, "foundInf");

@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include "graph/utils/type_utils.h"
 #include "log/log.h"
 #include "register/op_impl_registry.h"
@@ -87,14 +88,16 @@ graphStatus CheckMxQuantV2InputShape(gert::InferShapeContext* context, const ger
         return ge::GRAPH_SUCCESS;
     }
     OP_CHECK_IF(xRank != 2,
-                OP_LOGE(context->GetNodeName(), "The rank of x should be 2 when quant_mode is 5, but is %ld.", xRank),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xRank),
+                                                         "The shape dim of input x must be 2 when quant_mode is 5"),
                 return ge::GRAPH_FAILED);
     const gert::Shape* weightShape = context->GetOptionalInputShape(INPUT_IDX_WEIGHT);
     if (weightShape != nullptr) {
         const size_t weightRank = weightShape->GetDimNum();
         OP_CHECK_IF(weightRank < 1 || weightRank > 8,
-                    OP_LOGE(context->GetNodeName(),
-                            "The rank of weight should be in [1, 8] when quant_mode is 5, but is %zu.", weightRank),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        context->GetNodeName(), "weight", std::to_string(weightRank),
+                        "The shape dim of input weight must be in the range [1, 8] when quant_mode is 5"),
                     return ge::GRAPH_FAILED);
     }
     int64_t rows = 1;
@@ -105,10 +108,11 @@ graphStatus CheckMxQuantV2InputShape(gert::InferShapeContext* context, const ger
         }
         int64_t next = 0;
         OP_CHECK_IF(!CheckedMul(rows, extent, next),
-                    OP_LOGE(context->GetNodeName(),
-                            "The shape of x exceeds int64 range or contains a non-positive dim[%ld] %ld with "
-                            "accumulated product %ld when quant_mode is 5.",
-                            i, extent, rows),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "x", Ops::Base::ToString(xShape),
+                        "The shape of input x exceeds the int64 range or contains a non-positive dim[" +
+                            std::to_string(i) + "] " + std::to_string(extent) +
+                            " when quant_mode is 5, accumulated product is " + std::to_string(rows)),
                     return ge::GRAPH_FAILED);
         rows = next;
     }
@@ -121,10 +125,9 @@ graphStatus CheckMxQuantV2LastDim(gert::InferShapeContext* context, int64_t last
         return ge::GRAPH_SUCCESS;
     }
     OP_CHECK_IF(lastDim < 64 || lastDim % 64 != 0,
-                OP_LOGE(context->GetNodeName(),
-                        "The last dimension of x should be at least 64 and divisible by 64 when quant_mode is 5, "
-                        "but got %ld.",
-                        lastDim),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "x", std::to_string(lastDim),
+                    "The last dim of input x must be at least 64 and divisible by 64 when quant_mode is 5"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -186,7 +189,8 @@ graphStatus InferShape4SwigluGroupQuant(gert::InferShapeContext* context)
 
     int64_t xRank = static_cast<int64_t>(xShape->GetDimNum());
     OP_CHECK_IF(xRank < 1,
-                OP_LOGE(context->GetNodeName(), "The rank of x should be greater than 0, but is %ld.", xRank),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xRank),
+                                                         "The shape dim of input x must be greater than 0"),
                 return ge::GRAPH_FAILED);
     if (CheckMxQuantV2InputShape(context, *xShape, xRank, isMxQuantV2) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
@@ -210,9 +214,9 @@ graphStatus InferShape4SwigluGroupQuant(gert::InferShapeContext* context)
     }
 
     OP_CHECK_IF(xShape->GetDim(splitDim) < 0 || xShape->GetDim(splitDim) % NUM_TWO != 0,
-                OP_LOGE(context->GetNodeName(),
-                        "The last dimension of x should be non-negative and divisible by 2, but got %ld.",
-                        xShape->GetDim(splitDim)),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "x", Ops::Base::ToString(*xShape),
+                    "The last dim of input x must be non-negative and divisible by " + std::to_string(NUM_TWO)),
                 return ge::GRAPH_FAILED);
     if (CheckMxQuantV2LastDim(context, xShape->GetDim(splitDim), isMxQuantV2) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
@@ -282,13 +286,12 @@ graphStatus InferDtype4SwigluGroupQuant(gert::InferDataTypeContext* context)
                                (isHif4Quant ? Ops::NN::DT_HIFLOAT4 :
                                               (dstTypePtr == nullptr ? ge::DT_FLOAT8_E4M3FN :
                                                                        static_cast<ge::DataType>(*dstTypePtr)));
-    OP_CHECK_IF(
-        std::find(Y_SUPPORT_DTYPE_SET.begin(), Y_SUPPORT_DTYPE_SET.end(), dstType) == Y_SUPPORT_DTYPE_SET.end(),
-        OP_LOGE(context->GetNodeName(),
-                "dst_type is illegal, only supports FLOAT8_E4M3FN, FLOAT8_E5M2, FLOAT4_E2M1, FLOAT4_E1M2, HIFLOAT8 or "
-                "HIFLOAT4, but got %d(%s).",
-                static_cast<int32_t>(dstType), ge::TypeUtils::DataTypeToAscendString(dstType).GetString()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(std::find(Y_SUPPORT_DTYPE_SET.begin(), Y_SUPPORT_DTYPE_SET.end(), dstType) == Y_SUPPORT_DTYPE_SET.end(),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "dst_type", std::to_string(static_cast<int32_t>(dstType)),
+                    "The value of attr dst_type must be one of FLOAT8_E4M3FN, FLOAT8_E5M2, FLOAT4_E2M1, FLOAT4_E1M2, "
+                    "HIFLOAT8 or HIFLOAT4"),
+                return ge::GRAPH_FAILED);
     if (context->SetOutputDataType(OUTPUT_IDX_Y, dstType) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }

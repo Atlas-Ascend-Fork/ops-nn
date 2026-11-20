@@ -312,7 +312,10 @@ static uint64_t GetOptionalInputTensorSize(const gert::TilingContext* context,
     }
 
     auto storageShape = context->GetOptionalInputShape(index);
-    OP_CHECK_NULL_WITH_CONTEXT(context, storageShape);
+    OP_CHECK_IF(storageShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "gamma or beta",
+                                                         "The shape of the optional input is unavailable"),
+                return 0);
     auto shape = storageShape->GetStorageShape();
     uint64_t num = 1;
     for (uint64_t i = 0; i < shape.GetDimNum(); i++) {
@@ -323,7 +326,10 @@ static uint64_t GetOptionalInputTensorSize(const gert::TilingContext* context,
     if (hwNum <= NDDMA_MAX_SIZE && useNddma) {
         int32_t xDtype = ge::GetSizeByDataType(context->GetInputDesc(INPUT_IDX_X)->GetDataType());
         if (xDtype == 0) {
-            OP_LOGE(context, "GetOptionalInputTensorSize: xDtype is zero.");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                context->GetNodeName(), "x",
+                ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+                "The dtype size of input x must be greater than 0");
             return 0;
         }
         int64_t eleNumAlign = RoundUp(tilingData.get_elemNum(), blockSize / xDtype);
@@ -396,7 +402,10 @@ static void SetTilingKey4Regbase(const gert::TilingContext* context, uint64_t& m
 
     ubRemain = ubSize <= otherUbSize ? 0 : ubSize - otherUbSize;
     if (xDtypeSize == 0) {
-        OP_LOGE(context, "SetTilingKey4Regbase: xDtypeSize is zero.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "x",
+            ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+            "The dtype size of input x must be greater than 0");
         return;
     }
     maxReduceCount = (ubRemain / (DOUBLE_BUFFER * BUFFER_NUM)) / xDtypeSize;
@@ -495,7 +504,10 @@ static void SetWelfordParallelN(const gert::TilingContext* context, uint64_t xDt
                                 GroupNormSiluRegbaseTilingData& tilingData)
 {
     if (xDtypeSize == 0) {
-        OP_LOGE(context, "SetWelfordParallelN: xDtypeSize is zero.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "x",
+            ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+            "The dtype size of input x must be greater than 0");
         return;
     }
     auto compileInfo = context->GetCompileInfo<GroupNormSiluCompileInfo>();
@@ -539,13 +551,17 @@ static void SetUbTiling4TwoPass(const gert::TilingContext* context, GroupNormSil
     uint32_t blockSize = compileInfo->blockSizePlatform;
     uint64_t elemNum = tilingData.get_elemNum();
     if (xDtypeSize == 0) {
-        OP_LOGE(context, "SetUbTiling4TwoPass: xDtypeSize is zero.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "x",
+            ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+            "The dtype size of input x must be greater than 0");
         return;
     }
     uint64_t elemNumAlign = RoundUp(elemNum, blockSize / xDtypeSize);
     SetDichotomyAddParams(context, tilingData);
     if (elemNumAlign == 0) {
-        OP_LOGE(context, "SetUbTiling4TwoPass: elemNumAlign is zero.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "x", std::to_string(elemNum),
+                                              "The element number of input x must be greater than 0");
         return;
     }
     uint64_t count = maxReduceCount / elemNumAlign;
@@ -566,12 +582,16 @@ static void SetUbTiling4WelfordPerf(const gert::TilingContext* context, GroupNor
     uint64_t innerLoopTail = 0;
     uint64_t hwNum = tilingData.get_hwNum();
     if (xDtypeSize == 0) {
-        OP_LOGE(context, "SetUbTiling4WelfordPerf: xDtypeSize is zero.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "x",
+            ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+            "The dtype size of input x must be greater than 0");
         return;
     }
     uint64_t hwNumAlign = RoundUp(hwNum, blockSize / xDtypeSize);
     if (hwNumAlign == 0) {
-        OP_LOGE(context, "SetUbTiling4WelfordPerf: hwNumAlign is zero.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "x", std::to_string(hwNum),
+                                              "The H/W number of input x must be greater than 0");
         return;
     }
     uint64_t count = maxReduceCount / hwNumAlign;
@@ -607,13 +627,17 @@ static void SetUbTiling4WelfordGeneralized(const gert::TilingContext* context,
     uint64_t innerLoopTail = 0;
     uint64_t hwNum = tilingData.get_hwNum();
     if (xDtypeSize == 0) {
-        OP_LOGE(context, "SetUbTiling4WelfordGeneralized: xDtypeSize is zero.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "x",
+            ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+            "The dtype size of input x must be greater than 0");
         return;
     }
     uint64_t hwNumAlign = RoundUp(hwNum, blockSize / xDtypeSize);
     uint64_t maxReduceCount = (ubRemain / (DOUBLE_BUFFER * BUFFER_NUM)) / xDtypeSize;
     if (hwNumAlign == 0) {
-        OP_LOGE(context, "SetUbTiling4WelfordGeneralized: hwNumAlign is zero.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "x", std::to_string(hwNum),
+                                              "The H/W number of input x must be greater than 0");
         return;
     }
     uint64_t count = maxReduceCount / hwNumAlign;
@@ -760,9 +784,9 @@ ge::graphStatus Tiling4GroupNormSiluRegBase(gert::TilingContext* context)
     OP_LOGD(context->GetNodeName(), "Start running Tiling4GroupNormSilu.");
     // check input && attrs params
     OP_CHECK_IF((CheckInputParams(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "InputParams is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InputParams is invalid."), return ge::GRAPH_FAILED);
     OP_CHECK_IF((CheckAttrParams(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "AttrParams is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "AttrParams is invalid."), return ge::GRAPH_FAILED);
     auto xInputShape = context->GetInputShape(INPUT_IDX_X);
     OP_CHECK_NULL_WITH_CONTEXT(context, xInputShape);
     uint64_t xShapeSize = xInputShape->GetStorageShape().GetShapeSize();
@@ -778,7 +802,7 @@ ge::graphStatus Tiling4GroupNormSiluRegBase(gert::TilingContext* context)
     // ub tiling
     SetTilingForRegbase(context, tilingData);
     OP_CHECK_IF(GroupNormSiluSetTilingData(context, tilingData) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "GroupNormSiluSetTilingData set tiling data fail."),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GroupNormSiluSetTilingData set tiling data fail."),
                 return ge::GRAPH_FAILED);
     OP_LOGI(context->GetNodeName(),
             "tilingData is numGroups:%ld, hwNum:%ld, elemNum:%ld, shapeN:%ld, shapeC:%ld, shapeD:%ld, realCoreNum:%ld, \

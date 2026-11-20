@@ -12,6 +12,7 @@
  * \file group_norm_infershape.cpp
  * \brief
  */
+#include <string>
 #include "log/log.h"
 #include "error_util.h"
 #include "register/op_impl_registry.h"
@@ -35,9 +36,11 @@ static ge::graphStatus GroupNormInferShape(gert::InferShapeContext* context)
 {
     const gert::Shape* xShape = context->GetInputShape(INPUT_X);
     OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
-    OP_CHECK_IF(xShape->GetDimNum() < 2 && !IsUnknownRank(xShape),
-                OP_LOGE(context->GetNodeName(), "The rank of x must be at least 2, got %zu", xShape->GetDimNum()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        xShape->GetDimNum() < 2 && !IsUnknownRank(xShape),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xShape->GetDimNum()),
+                                                 "The shape dim of input x must be at least 2"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* yShape = context->GetOutputShape(OUTPUT_Y);
     gert::Shape* meanShape = context->GetOutputShape(OUTPUT_MEAN);

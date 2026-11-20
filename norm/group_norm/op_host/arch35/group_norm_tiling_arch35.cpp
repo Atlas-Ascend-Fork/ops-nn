@@ -17,11 +17,27 @@
 #include "error_util.h"
 #include <nlohmann/json.hpp>
 #include "op_host/tiling_templates_registry.h"
+#include <vector>
 
 using namespace ge;
 using namespace std;
 
 namespace optiling {
+
+namespace {
+// REPORT_PREDEFINED_ERR_MSG performs the single formal report of the structured EZ1008 error code.
+// OP_LOGE_WITHOUT_REPORT only writes the readable log without reporting again, so the same root cause
+// is not reported twice.
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
+
 static const int32_t DIM_0 = 0;
 static const int32_t DIM_1 = 1;
 static const int32_t MIN_LEN = 2;
@@ -47,7 +63,8 @@ static const float DEFAULT_EPS = 1e-4F;
 inline std::unique_ptr<nlohmann::json> GetCompileInfoJson(gert::TilingParseContext* context)
 {
     auto json_str = context->GetCompiledJson();
-    OP_CHECK_IF(json_str == nullptr, OP_LOGE(context->GetNodeName(), "json_str is nullptr!"), return nullptr);
+    OP_CHECK_IF(json_str == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "json_str is nullptr!"),
+                return nullptr);
     std::unique_ptr<nlohmann::json> parsed_object_cinfo = std::make_unique<nlohmann::json>(
         nlohmann::json::parse(json_str));
     return parsed_object_cinfo;
@@ -209,7 +226,8 @@ static ge::graphStatus CheckAttrParams(const gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, numGroups);
     const float* epsilon = attrs->GetAttrPointer<float>(INDEX_EPSILON);
     OP_CHECK_IF(epsilon != nullptr && !(*epsilon > 0.0F),
-                OP_LOGE(context->GetNodeName(), "eps must be greater than 0, got %f", *epsilon),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "eps", std::to_string(*epsilon),
+                                                      "The value of attr eps must be greater than 0"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         (*numGroups <= 0),
@@ -241,7 +259,10 @@ static int64_t GetOptionalInputTensorSize(const gert::TilingContext* context, in
     }
 
     auto storageShape = context->GetInputShape(index);
-    OP_CHECK_NULL_WITH_CONTEXT(context, storageShape);
+    OP_CHECK_IF(storageShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "gamma or beta",
+                                                         "The shape of the optional input is unavailable"),
+                return 0);
     auto shape = storageShape->GetStorageShape();
     int64_t num = 1;
     for (size_t i = 0; i < shape.GetDimNum(); i++) {
@@ -396,7 +417,12 @@ static void SetTilingKey4Ascend950(const gert::TilingContext* context, int64_t& 
     otherUbSize += dichotomyAddExtraSize;
 
     ubRemain = ubSize <= otherUbSize ? 0 : ubSize - otherUbSize;
-    OP_CHECK_IF((xDtypeSize == 0), OP_LOGE(context->GetNodeName(), "xDtypeSize is zero."), return);
+    OP_CHECK_IF((xDtypeSize == 0),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context->GetNodeName(), "x",
+                    ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+                    "The dtype size of input x must be greater than 0"),
+                return);
     maxReduceCount = (ubRemain / (DOUBLE_BUFFER * BUFFER_NUM)) / xDtypeSize;
 
     if (TrySetFullLoadTiling(context, tilingData, ubSize, xDtypeSize, reduceCount, gammaUbSize, betaUbSize, otherUbSize,
@@ -435,7 +461,12 @@ static void SetWelfordParallelN(const gert::TilingContext* context, int64_t xDty
     tilingData.set_parallelN(0);
     auto compileInfo = context->GetCompileInfo<GroupNormCompileInfo>();
     int64_t blockSize = compileInfo->blockSize;
-    OP_CHECK_IF((xDtypeSize <= 0), OP_LOGE(context->GetNodeName(), "xDtypeSize must be positive."), return);
+    OP_CHECK_IF((xDtypeSize <= 0),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context->GetNodeName(), "x",
+                    ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+                    "The dtype size of input x must be greater than 0"),
+                return);
     int64_t coeff = FLOAT32_BYTES / xDtypeSize;
     int64_t totalNum = BUFFER_NUM * (coeff + 1);
     int64_t welfordBase = blockSize / xDtypeSize;
@@ -465,8 +496,11 @@ static void SetWelfordParallelN(const gert::TilingContext* context, int64_t xDty
 
     if (maxParallelN > tilingData.get_elemNum()) {
         maxParallelN = tilingData.get_elemNum();
-        OP_CHECK_IF((maxParallelN <= 0),
-                    OP_LOGE(context->GetNodeName(), "Element count must be positive for Welford tiling."), return);
+        OP_CHECK_IF(
+            (maxParallelN <= 0),
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "elem_num", std::to_string(maxParallelN),
+                                                  "The element count of input x must be positive for Welford tiling"),
+            return);
         GetDichotomyAddParams(context, maxParallelN, dichotomyAddPower, dichotomyAddK, dichotomyAddExtraSize,
                               dichotomyAddLastNum);
     }
@@ -482,10 +516,19 @@ static void SetUbTiling4TwoPass(const gert::TilingContext* context, GroupNormTil
     auto compileInfo = context->GetCompileInfo<GroupNormCompileInfo>();
     int64_t blockSize = compileInfo->blockSize;
     int64_t elemNum = tilingData.get_elemNum();
-    OP_CHECK_IF((xDtypeSize == 0), OP_LOGE(context->GetNodeName(), "xDtypeSize is zero."), return);
+    OP_CHECK_IF((xDtypeSize == 0),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context->GetNodeName(), "x",
+                    ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+                    "The dtype size of input x must be greater than 0"),
+                return);
     int64_t elemNumAlign = RoundUp(elemNum, blockSize / xDtypeSize);
     SetDichotomyAddParams(context, tilingData);
-    OP_CHECK_IF((elemNumAlign == 0), OP_LOGE(context->GetNodeName(), "ElemNumAlign is zero."), return);
+    OP_CHECK_IF(
+        (elemNumAlign == 0),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "elem_num_align", std::to_string(elemNumAlign),
+                                              "The aligned element count of input x must be greater than 0"),
+        return);
     int64_t count = maxReduceCount / elemNumAlign;
     int64_t processSize = count * elemNumAlign;
     tilingData.set_processSize(processSize);
@@ -497,9 +540,15 @@ static WelfordTilingInitResult InitWelfordTilingCommon(const gert::TilingContext
 {
     WelfordTilingInitResult result{};
     result.hwNum = tilingData.get_hwNum();
-    OP_CHECK_IF((xDtypeSize == 0), OP_LOGE(context->GetNodeName(), "xDtypeSize is zero."), return result);
+    OP_CHECK_IF((xDtypeSize == 0),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context->GetNodeName(), "x",
+                    ge::TypeUtils::DataTypeToSerialString(context->GetInputDesc(INPUT_IDX_X)->GetDataType()).c_str(),
+                    "The dtype size of input x must be greater than 0"),
+                return result);
     result.hwNumAlign = RoundUp(result.hwNum, blockSize / xDtypeSize);
-    OP_CHECK_IF((result.hwNumAlign == 0), OP_LOGE(context->GetNodeName(), "HwNumAlign is zero."), return result);
+    OP_CHECK_IF((result.hwNumAlign == 0), OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "HwNumAlign is zero."),
+                return result);
     result.checkResult = true;
     return result;
 }
@@ -511,8 +560,8 @@ static void SetUbTiling4WelfordPerf(const gert::TilingContext* context, GroupNor
     int64_t blockSize = compileInfo->blockSize;
     SetWelfordParallelN(context, xDtypeSize, ubRemain, tilingData);
     WelfordTilingInitResult result = InitWelfordTilingCommon(context, tilingData, blockSize, xDtypeSize);
-    OP_CHECK_IF((result.checkResult == false), OP_LOGE(context->GetNodeName(), "InitWelfordTilingCommon Failed."),
-                return);
+    OP_CHECK_IF((result.checkResult == false),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InitWelfordTilingCommon Failed."), return);
     int64_t count = maxReduceCount / result.hwNumAlign;
     if (count >= 1) {
         result.loopNum = CeilDiv(tilingData.get_shapeD(), count);
@@ -539,8 +588,8 @@ static void SetUbTiling4WelfordGeneralized(const gert::TilingContext* context, G
     auto compileInfo = context->GetCompileInfo<GroupNormCompileInfo>();
     int64_t blockSize = compileInfo->blockSize;
     WelfordTilingInitResult result = InitWelfordTilingCommon(context, tilingData, blockSize, xDtypeSize);
-    OP_CHECK_IF((result.checkResult == false), OP_LOGE(context->GetNodeName(), "InitWelfordTilingCommon Failed."),
-                return);
+    OP_CHECK_IF((result.checkResult == false),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InitWelfordTilingCommon Failed."), return);
     int64_t maxReduceCount = (ubRemain / (DOUBLE_BUFFER * BUFFER_NUM)) / xDtypeSize;
     int64_t count = maxReduceCount / result.hwNumAlign;
     int64_t gammaRealSize = GetOptionalInputTensorSize(context, INPUT_IDX_GAMMA, count);
@@ -610,7 +659,9 @@ static ge::graphStatus SetTilingForAscend950(const gert::TilingContext* context,
     SetTilingKey4Ascend950(context, maxReduceCount, ubRemain, reduceFullLoad, tilingData);
     SetUbTiling4Ascend950(context, maxReduceCount, ubRemain, reduceFullLoad, tilingData);
     OP_CHECK_IF((!reduceFullLoad && tilingData.get_parallelN() <= 0),
-                OP_LOGE(context->GetNodeName(), "Failed to calculate Welford parallel tiling."),
+                ReportTilingFailure(context->GetNodeName(),
+                                    "Failed to calculate Welford parallel tiling, the UB size is insufficient for "
+                                    "the current input."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF((tilingData.get_processSize() <= 0),
                 OP_LOGE(context->GetNodeName(), "Failed to calculate a positive process size."),
@@ -637,13 +688,13 @@ ge::graphStatus SetGroupNormTilingData(gert::TilingContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Start running Tiling4GroupNorm.");
     OP_CHECK_IF((CheckInputParams(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "InputParams is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InputParams is invalid."), return ge::GRAPH_FAILED);
     OP_CHECK_IF((CheckAttrParams(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "AttrParams is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "AttrParams is invalid."), return ge::GRAPH_FAILED);
 
     GroupNormTilingData tilingData;
     OP_CHECK_IF((SetAttrParams(context, tilingData) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "Set attrParams failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Set attrParams failed."), return ge::GRAPH_FAILED);
     auto xTensor = context->GetInputTensor(INPUT_IDX_X);
     OP_CHECK_NULL_WITH_CONTEXT(context, xTensor);
     const gert::Shape& xShape = xTensor->GetStorageShape();
@@ -656,14 +707,15 @@ ge::graphStatus SetGroupNormTilingData(gert::TilingContext* context)
         return SetEmptyBatchTilingData(context, tilingData);
     }
     OP_CHECK_IF((SetTilingParams(context, tilingData) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "Set tilingParams failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Set tilingParams failed."), return ge::GRAPH_FAILED);
     OP_CHECK_IF((SetBlockTiling(context, tilingData) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "Set blockTiling failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Set blockTiling failed."), return ge::GRAPH_FAILED);
     SetUbTiling(tilingData);
     OP_CHECK_IF(SetTilingForAscend950(context, tilingData) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetTilingForAscend950 failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SetTilingForAscend950 failed."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(GroupNormSetTilingData(context, tilingData) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeType(), "GroupNormSetTilingData set tiling data fail."),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GroupNormSetTilingData set tiling data fail."),
                 return ge::GRAPH_FAILED);
     context->SetBlockDim(tilingData.get_realCoreNum());
     context->SetTilingKey(tilingData.get_tilingKey());
@@ -680,7 +732,9 @@ static ge::graphStatus Tiling4GroupNorm(gert::TilingContext* context)
 
     // 获取输入shape并校验最小维数。
     auto input_first = context->GetInputShape(0);
-    OP_CHECK_IF(input_first == nullptr, OP_LOGE(context->GetNodeName(), "get input_first failed."),
+    OP_CHECK_IF(input_first == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                         "The shape of required input x is unavailable"),
                 return ge::GRAPH_FAILED);
     const gert::Shape& input_shape = input_first->GetStorageShape();
 
@@ -711,23 +765,30 @@ static ge::graphStatus TilingPrepare4GroupNorm(gert::TilingParseContext* context
         auto ascendc_platform = platform_ascendc::PlatformAscendC(platform_info);
         compile_info->coreNum = ascendc_platform.GetCoreNumAiv();
         OP_CHECK_IF((compile_info->coreNum <= 0),
-                    OP_LOGE(context->GetNodeName(), "Get coreNum failed, coreNum: %d", compile_info->coreNum),
+                    ReportTilingFailure(context->GetNodeName(),
+                                        "Failed to get coreNum: " + std::to_string(compile_info->coreNum) +
+                                            ", check the platform information."),
                     return ge::GRAPH_FAILED);
         uint64_t ubSize;
         ascendc_platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
         compile_info->ubSize = static_cast<int64_t>(ubSize);
         OP_CHECK_IF((compile_info->ubSize <= 0),
-                    OP_LOGE(context->GetNodeName(), "Get ubSize failed, ubSize: %ld", compile_info->ubSize),
+                    ReportTilingFailure(context->GetNodeName(),
+                                        "Failed to get ubSize: " + std::to_string(compile_info->ubSize) +
+                                            ", check the platform information."),
                     return ge::GRAPH_FAILED);
         compile_info->blockSize = Ops::Base::GetUbBlockSize(context);
         OP_CHECK_IF((compile_info->blockSize <= 0),
-                    OP_LOGE(context->GetNodeName(), "Get blockSize failed, blockSize: %ld", compile_info->blockSize),
+                    ReportTilingFailure(context->GetNodeName(),
+                                        "Failed to get blockSize: " + std::to_string(compile_info->blockSize) +
+                                            ", check the platform information."),
                     return ge::GRAPH_FAILED);
         compile_info->vectorLength = Ops::Base::GetVRegSize(context);
-        OP_CHECK_IF(
-            (compile_info->vectorLength <= 0),
-            OP_LOGE(context->GetNodeName(), "Get vectorLength failed, vectorLength: %ld", compile_info->vectorLength),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF((compile_info->vectorLength <= 0),
+                    ReportTilingFailure(context->GetNodeName(),
+                                        "Failed to get vectorLength: " + std::to_string(compile_info->vectorLength) +
+                                            ", check the platform information."),
+                    return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
     return ge::GRAPH_FAILED;

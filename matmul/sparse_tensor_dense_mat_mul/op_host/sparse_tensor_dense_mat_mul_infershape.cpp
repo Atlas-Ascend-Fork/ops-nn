@@ -14,6 +14,7 @@
  */
 
 #include <algorithm>
+#include <string>
 #include "runtime/infer_shape_context.h"
 #include "register/op_impl_registry.h"
 #include "error_util.h"
@@ -61,23 +62,45 @@ static ge::graphStatus ValidShapeCheck(const gert::InferShapeContext* context, c
                                        const gert::Shape* x1ValuesShape, const gert::Shape* x1ShapeShape,
                                        const gert::Shape* x2Shape)
 {
-    OP_CHECK_IF(x2Shape->GetDimNum() != SPARSETENSORDENSEMATMUL_NUM_TWO,
-                OP_LOGE(context->GetNodeName(), "Tensor x2 is not a matrix."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        x2Shape->GetDimNum() != SPARSETENSORDENSEMATMUL_NUM_TWO,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x2", std::to_string(x2Shape->GetDimNum()),
+                                                 "The shape dim of input x2 must be 2, because x2 must be a matrix"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(x1ShapeShape->GetDimNum() != SPARSETENSORDENSEMATMUL_NUM_ONE,
-                OP_LOGE(context->GetNodeName(), "Tensor x1_shape is not a vector."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "x1_shape", std::to_string(x1ShapeShape->GetDimNum()),
+                    "The shape dim of input x1_shape must be 1, because x1_shape must be a vector"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(x1ShapeShape->GetDim(0) != SPARSETENSORDENSEMATMUL_NUM_TWO,
-                OP_LOGE(context->GetNodeName(), "Tensor x1_shape must have 2 elements."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "x1_shape",
+                                                          std::to_string(x1ShapeShape->GetDim(0)),
+                                                          "The shape size of input x1_shape must be 2"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(x1ValuesShape->GetDimNum() != SPARSETENSORDENSEMATMUL_NUM_ONE,
-                OP_LOGE(context->GetNodeName(), "Tensor x1_values is not a vector."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "x1_values", std::to_string(x1ValuesShape->GetDimNum()),
+                    "The shape dim of input x1_values must be 1, because x1_values must be a vector"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(x1IndicesShape->GetDimNum() != SPARSETENSORDENSEMATMUL_NUM_TWO,
-                OP_LOGE(context->GetNodeName(), "Tensor x1_indices is not a matrix."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "x1_indices", std::to_string(x1IndicesShape->GetDimNum()),
+                    "The shape dim of input x1_indices must be 2, because x1_indices must be a matrix"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         x1ValuesShape->GetDim(0) != x1IndicesShape->GetDim(0),
-        OP_LOGE(context->GetNodeName(), "Number of rows of x1_indices does not match number of entries in x1_values."),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "x1_indices and x1_values",
+            (std::to_string(x1IndicesShape->GetDim(0)) + " and " + std::to_string(x1ValuesShape->GetDim(0))).c_str(),
+            "The number of rows of input x1_indices must be equal to the number of entries in input x1_values"),
         return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         x1IndicesShape->GetDim(1) != SPARSETENSORDENSEMATMUL_NUM_TWO,
-        OP_LOGE(context->GetNodeName(), "Number of columns of x1_indices does not match number of entries in x1_shape"),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "x1_indices and x1_shape",
+            (std::to_string(x1IndicesShape->GetDim(1)) + " and " + std::to_string(SPARSETENSORDENSEMATMUL_NUM_TWO))
+                .c_str(),
+            "The number of columns of input x1_indices must be equal to the number of entries in input x1_shape"),
         return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -86,7 +109,10 @@ static ge::graphStatus GetX1ShapeValue(const gert::InferShapeContext* context, c
                                        std::vector<int64_t>& x1ShapeValue)
 {
     auto x1ShapeDtype = x1ShapeTensor->GetDataType();
-    OP_CHECK_IF(x1ShapeDtype != ge::DT_INT64, OP_LOGE(context->GetNodeName(), "Tensor x1_shape only support int64"),
+    OP_CHECK_IF(x1ShapeDtype != ge::DT_INT64,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x1_shape",
+                                                      ge::TypeUtils::DataTypeToSerialString(x1ShapeDtype).c_str(),
+                                                      "The dtype of input x1_shape only supports int64"),
                 return ge::GRAPH_FAILED);
     const int64_t* constDataPtr = x1ShapeTensor->GetData<int64_t>();
     if (constDataPtr) {
@@ -140,7 +166,7 @@ static ge::graphStatus InferShape4SparseTensorDenseMatMul(gert::InferShapeContex
         return ge::GRAPH_SUCCESS;
     }
     OP_CHECK_IF(ValidShapeCheck(context, x1IndicesShape, x1ValuesShape, x1ShapeShape, x2Shape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "ValidShapeCheck failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "ValidShapeCheck failed."), return ge::GRAPH_FAILED);
     auto x1ShapeTensor = context->GetInputTensor(SPARSETENSORDENSEMATMUL_IDX_X1_SHAPE);
     OPS_CHECK_NULL_WITH_CONTEXT(context, x1ShapeTensor);
     std::vector<int64_t> x1ShapeValue = {0, 0};
@@ -154,11 +180,13 @@ static ge::graphStatus InferShape4SparseTensorDenseMatMul(gert::InferShapeContex
     const int64_t innerRight = (*adjointPointB) ? x2ShapeDims[1] : x2ShapeDims[0];
     const int64_t outerRight = (*adjointPointB) ? x2ShapeDims[0] : x2ShapeDims[1];
     OP_CHECK_IF(innerRight != innerLeft,
-                OP_LOGE(context->GetNodeName(),
-                        "Cannot multiply x1 and x2 because contraction dimension does not match: %ld vs %ld. Did you "
-                        "forget a transpose? "
-                        "Dimension of x1:(%ld, %ld), Dimensions of x2: (%ld, %ld).",
-                        innerLeft, innerRight, x1ShapeValue[0], x1ShapeValue[1], x2ShapeDims[0], x2ShapeDims[1]),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "x1 and x2",
+                    (std::to_string(innerLeft) + " and " + std::to_string(innerRight)).c_str(),
+                    "The contraction dimension of input x1 and input x2 must be the same. Dimension of x1 is (" +
+                        std::to_string(x1ShapeValue[0]) + ", " + std::to_string(x1ShapeValue[1]) +
+                        "), dimensions of x2 is (" + std::to_string(x2ShapeDims[0]) + ", " +
+                        std::to_string(x2ShapeDims[1]) + "). Check whether a transpose is missing"),
                 return ge::GRAPH_FAILED);
     SetOutputShape(context, yShape, outerLeft, outerRight);
     return ge::GRAPH_SUCCESS;

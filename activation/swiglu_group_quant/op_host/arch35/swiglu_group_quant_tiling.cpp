@@ -17,6 +17,8 @@
 #include <cmath>
 #include <sstream>
 #include <limits>
+#include <string>
+#include <vector>
 #include <graph/utils/type_utils.h>
 #include "../../../../common/inc/op_host/op_const_def_nn.h"
 #include "../../../swiglu_group_quant_with_dual_axis/op_host/arch35/swiglu_group_quant_mx_tiling.h"
@@ -28,6 +30,36 @@ using namespace ge;
 namespace optiling {
 namespace {
 constexpr uint64_t DEFAULT_WORKSPACE_SIZE = 0;
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+void ReportUnsupportedQuantMode(const char* opName, const char* paramName, const std::string& actual,
+                                const std::string& reason)
+{
+    const std::string fullReason = std::string("Parameter ") + paramName + ": " + reason + ", but got quant_mode " +
+                                   actual;
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, fullReason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1009", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", fullReason.c_str());
+}
+std::string ShapeToString(const gert::Shape& shape)
+{
+    std::string result = "[";
+    for (size_t i = 0; i < shape.GetDimNum(); i++) {
+        if (i != 0) {
+            result += ", ";
+        }
+        result += std::to_string(shape.GetDim(i));
+    }
+    result += "]";
+    return result;
+}
 int64_t CeilDiv(int64_t x, int64_t y)
 {
     if (y != 0) {
@@ -127,7 +159,8 @@ ge::graphStatus SwigluGroupQuantTiling::GetPlatformInfoCommon(const gert::Tiling
     auto platformInfo = context->GetPlatformInfo();
     if (platformInfo == nullptr) {
         auto compileInfoPtr = context->GetCompileInfo<SwigluGroupQuantCompileInfo>();
-        OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context->GetNodeName(), "compile info is null"),
+        OP_CHECK_IF(compileInfoPtr == nullptr,
+                    ReportTilingFailure(context->GetNodeName(), "Get compile info failed, it is null."),
                     return ge::GRAPH_FAILED);
         coreNum = compileInfoPtr->coreNum;
         ubSize = compileInfoPtr->ubSize;
@@ -138,9 +171,11 @@ ge::graphStatus SwigluGroupQuantTiling::GetPlatformInfoCommon(const gert::Tiling
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
         ubSize = ubSizePlatForm;
     }
-    OP_CHECK_IF((coreNum == 0 || ubSize == 0),
-                OP_LOGE(context->GetNodeName(), "GetPlatformInfo failed, coreNum=%lu, ubSize=%lu.", coreNum, ubSize),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (coreNum == 0 || ubSize == 0),
+        ReportTilingFailure(context->GetNodeName(), "Get platform info failed, coreNum=" + std::to_string(coreNum) +
+                                                        ", ubSize=" + std::to_string(ubSize) + "."),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -162,14 +197,16 @@ ge::graphStatus SwigluGroupQuantTiling::GetClampLimitAttr(const gert::RuntimeAtt
     auto clampLimitAttr = attrs->GetAttrPointer<float>(ATTR_INDEX_CLAMP_LIMIT);
     if (clampLimitAttr != nullptr) {
         OP_CHECK_IF(quantMode_ == MX_QUANT_EXTEND && !std::isfinite(*clampLimitAttr),
-                    OP_LOGE(context_->GetNodeName(), "attr clamp_limit should be finite when quant_mode is 5, got %f.",
-                            *clampLimitAttr),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context_->GetNodeName(), "clamp_limit", std::to_string(*clampLimitAttr),
+                        "The value of attr clamp_limit must be finite when quant_mode is 5"),
                     return ge::GRAPH_FAILED);
         // DEFAULT_CLAMP_LIMIT means user did not pass clamp_limit.
         if (std::fabs(*clampLimitAttr - DEFAULT_CLAMP_LIMIT) > FLOAT_COMPARE_EPSILON) {
             OP_CHECK_IF(!(*clampLimitAttr > 0.0f),
-                        OP_LOGE(context_->GetNodeName(), "attr clamp_limit should be greater than 0.0, got %f.",
-                                *clampLimitAttr),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "clamp_limit",
+                                                              std::to_string(*clampLimitAttr),
+                                                              "The value of attr clamp_limit must be greater than 0.0"),
                         return ge::GRAPH_FAILED);
             clampLimit_ = *clampLimitAttr;
             hasClampLimit_ = 1;
@@ -199,28 +236,28 @@ ge::graphStatus SwigluGroupQuantTiling::GetAttr()
     } else {
         auto dstTypeAttr = attrs->GetAttrPointer<int64_t>(ATTR_INDEX_DST_TYPE);
         dstType_ = dstTypeAttr == nullptr ? ge::DT_FLOAT8_E4M3FN : static_cast<ge::DataType>(*dstTypeAttr);
-        OP_CHECK_IF(
-            (dstType_ != ge::DT_FLOAT8_E4M3FN && dstType_ != ge::DT_FLOAT8_E5M2 && dstType_ != ge::DT_FLOAT4_E2M1 &&
-             dstType_ != ge::DT_FLOAT4_E1M2),
-            OP_LOGE(context_->GetNodeName(),
-                    "attr dst_type only support (FLOAT8_E4M3FN, FLOAT8_E5M2, FLOAT4_E2M1, FLOAT4_E1M2), got %s.",
-                    ge::TypeUtils::DataTypeToSerialString(dstType_).c_str()),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF((dstType_ != ge::DT_FLOAT8_E4M3FN && dstType_ != ge::DT_FLOAT8_E5M2 &&
+                     dstType_ != ge::DT_FLOAT4_E2M1 && dstType_ != ge::DT_FLOAT4_E1M2),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context_->GetNodeName(), "dst_type", std::to_string(static_cast<int64_t>(dstType_)),
+                        "The value of attr dst_type must be one of (FLOAT8_E4M3FN, FLOAT8_E5M2, FLOAT4_E2M1, "
+                        "FLOAT4_E1M2)"),
+                    return ge::GRAPH_FAILED);
     }
     isMxFp4Quant_ = dstType_ == ge::DT_FLOAT4_E2M1 || dstType_ == ge::DT_FLOAT4_E1M2;
 
-    OP_CHECK_IF(
-        (quantMode_ != BLOCK_QUANT && quantMode_ != MX_QUANT && quantMode_ != HIF4_QUANT &&
-         quantMode_ != MX_QUANT_EXTEND),
-        OP_LOGE(context_->GetNodeName(),
-                "attr quant_mode only supports 0(block_quant), 1(mx_quant), 4(hif4_quant) or 5(mx_quant_v2), got %ld.",
-                quantMode_),
-        return ge::GRAPH_FAILED);
-    OP_CHECK_IF(
-        (isMxFp4Quant_ && quantMode_ != MX_QUANT),
-        OP_LOGE(context_->GetNodeName(),
-                "attr quant_mode must be 1(mx_quant) when dst_type is FLOAT4_E2M1/FLOAT4_E1M2, got %ld.", quantMode_),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((quantMode_ != BLOCK_QUANT && quantMode_ != MX_QUANT && quantMode_ != HIF4_QUANT &&
+                 quantMode_ != MX_QUANT_EXTEND),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "quant_mode", std::to_string(quantMode_),
+                    "The value of attr quant_mode must be one of 0 (block_quant), 1 (mx_quant), 4 (hif4_quant) or 5 "
+                    "(mx_quant_v2)"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((isMxFp4Quant_ && quantMode_ != MX_QUANT),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "quant_mode", std::to_string(quantMode_),
+                    "The value of attr quant_mode must be 1 (mx_quant) when dst_type is FLOAT4_E2M1 or FLOAT4_E1M2"),
+                return ge::GRAPH_FAILED);
 
     if (isHif4Quant) {
         // quant_mode=4 uses the fixed HIF4 group size and ignores block_size/round_scale.
@@ -229,11 +266,12 @@ ge::graphStatus SwigluGroupQuantTiling::GetAttr()
         auto blockSizeAttr = attrs->GetAttrPointer<int64_t>(ATTR_INDEX_BLOCK_SIZE);
         int64_t blockSize = blockSizeAttr == nullptr ? 0 : *blockSizeAttr;
         int64_t expectedBlockSize = isMxQuant ? PER_MX_FP16 : PER_BLOCK_FP16;
-        OP_CHECK_IF(
-            (blockSize != 0 && blockSize != expectedBlockSize),
-            OP_LOGE(context_->GetNodeName(), "attr block_size should be 0 or %ld when quant_mode is %ld, got %ld.",
-                    expectedBlockSize, quantMode_, blockSize),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF((blockSize != 0 && blockSize != expectedBlockSize),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context_->GetNodeName(), "block_size", std::to_string(blockSize),
+                        "The value of attr block_size must be 0 or " + std::to_string(expectedBlockSize) +
+                            " when quant_mode is " + std::to_string(quantMode_)),
+                    return ge::GRAPH_FAILED);
         splitFactor_ = expectedBlockSize;
     }
 
@@ -242,7 +280,9 @@ ge::graphStatus SwigluGroupQuantTiling::GetAttr()
         roundScale_ = (*roundScaleAttr) ? 1 : 0;
     }
     OP_CHECK_IF((isMxQuant && roundScale_ != 1),
-                OP_LOGE(context_->GetNodeName(), "attr round_scale should be true when quant_mode is %ld.", quantMode_),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "round_scale", std::to_string(roundScale_),
+                    "The value of attr round_scale must be true when quant_mode is " + std::to_string(quantMode_)),
                 return ge::GRAPH_FAILED);
 
     auto outputOriginAttr = attrs->GetAttrPointer<bool>(ATTR_INDEX_OUTPUT_ORIGIN);
@@ -259,18 +299,21 @@ ge::graphStatus SwigluGroupQuantTiling::GetAttr()
     alpha_ = alphaAttr == nullptr ? DEFAULT_ALPHA : *alphaAttr;
     bias_ = biasAttr == nullptr ? DEFAULT_BIAS : *biasAttr;
     if (quantMode_ == MX_QUANT_EXTEND) {
-        OP_CHECK_IF(!std::isfinite(alpha_) || alpha_ <= 0.0f || !std::isfinite(bias_),
-                    OP_LOGE(context_->GetNodeName(),
-                            "attr alpha should be finite and greater than 0.0 and bias should be finite, got alpha %f, "
-                            "bias %f.",
-                            alpha_, bias_),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            !std::isfinite(alpha_) || alpha_ <= 0.0f || !std::isfinite(bias_),
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                context_->GetNodeName(), "alpha and bias", std::to_string(alpha_) + " and " + std::to_string(bias_),
+                "The value of attr alpha must be finite and greater than 0.0, and the value of attr bias must "
+                "be finite"),
+            return ge::GRAPH_FAILED);
     } else {
-        OP_CHECK_IF(alpha_ != DEFAULT_ALPHA || bias_ != DEFAULT_BIAS,
-                    OP_LOGE(context_->GetNodeName(),
-                            "attr alpha/bias only support quant_mode=5, got quant_mode %ld, alpha %f, bias %f.",
-                            quantMode_, alpha_, bias_),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            alpha_ != DEFAULT_ALPHA || bias_ != DEFAULT_BIAS,
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                context_->GetNodeName(), "alpha and bias", std::to_string(alpha_) + " and " + std::to_string(bias_),
+                "The attrs alpha and bias are only supported when quant_mode is 5, but quant_mode is " +
+                    std::to_string(quantMode_)),
+            return ge::GRAPH_FAILED);
     }
 
     return ge::GRAPH_SUCCESS;
@@ -281,32 +324,36 @@ ge::graphStatus SwigluGroupQuantTiling::CheckWeightInfo()
     auto weightDesc = context_->GetOptionalInputDesc(INPUT_INDEX_WEIGHT);
     if (weightDesc != nullptr) {
         auto weightDtype = weightDesc->GetDataType();
-        OP_CHECK_IF(
-            (weightDtype != ge::DT_FLOAT16 && weightDtype != ge::DT_BF16 && weightDtype != ge::DT_FLOAT),
-            OP_LOGE(context_->GetNodeName(), "input weight dtype should be FLOAT16, BFLOAT16 or FLOAT32, got %s.",
-                    ge::TypeUtils::DataTypeToSerialString(weightDtype).c_str()),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF((weightDtype != ge::DT_FLOAT16 && weightDtype != ge::DT_BF16 && weightDtype != ge::DT_FLOAT),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        context_->GetNodeName(), "weight", ge::TypeUtils::DataTypeToSerialString(weightDtype).c_str(),
+                        "The dtype of input weight only supports float16, bfloat16 or float32"),
+                    return ge::GRAPH_FAILED);
         auto weightShape = context_->GetOptionalInputShape(INPUT_INDEX_WEIGHT);
         if (weightShape != nullptr) {
             auto weightStorageShape = weightShape->GetStorageShape();
             auto weightDimNum = weightStorageShape.GetDimNum();
-            OP_CHECK_IF((weightDimNum < 1 || weightDimNum > MAX_DIM_NUM),
-                        OP_LOGE(context_->GetNodeName(), "input weight dim num should be in [1, %zu], got %zu.",
-                                MAX_DIM_NUM, weightDimNum),
-                        return ge::GRAPH_FAILED);
+            OP_CHECK_IF(
+                (weightDimNum < 1 || weightDimNum > MAX_DIM_NUM),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context_->GetNodeName(), "weight", std::to_string(weightDimNum),
+                    "The shape dim of input weight must be in the range [1, " + std::to_string(MAX_DIM_NUM) + "]"),
+                return ge::GRAPH_FAILED);
             auto weightElementNum = ShapeElementNum(weightStorageShape);
             OP_CHECK_IF((weightElementNum != bs_),
-                        OP_LOGE(context_->GetNodeName(),
-                                "input weight element num should be equal to the product of input x dims except the "
-                                "last one, got %ld, expected %ld.",
-                                weightElementNum, bs_),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context_->GetNodeName(), "weight", ShapeToString(weightStorageShape),
+                            "The number of elements of input weight must be equal to the product of input x dims "
+                            "except the last one (" +
+                                std::to_string(bs_) + "), but got " + std::to_string(weightElementNum)),
                         return ge::GRAPH_FAILED);
             weightType_ = weightDtype;
             if (weightDtype != ge::DT_FLOAT) {
-                OP_CHECK_IF(quantMode_ != MX_QUANT_EXTEND,
-                            OP_LOGE(context_->GetNodeName(),
-                                    "input low-precision weight only supports quant_mode=5, got %ld.", quantMode_),
-                            return ge::GRAPH_FAILED);
+                OP_CHECK_IF(
+                    quantMode_ != MX_QUANT_EXTEND,
+                    ReportUnsupportedQuantMode(context_->GetNodeName(), "weight", std::to_string(quantMode_),
+                                               "A low-precision input weight is only supported when quant_mode is 5"),
+                    return ge::GRAPH_FAILED);
             }
             hasWeight_ = true;
         }
@@ -319,13 +366,16 @@ ge::graphStatus SwigluGroupQuantTiling::CheckGroupIndexInfo()
     auto groupIndexDesc = context_->GetOptionalInputDesc(INPUT_INDEX_GROUP_INDEX);
     if (groupIndexDesc != nullptr) {
         OP_CHECK_IF(quantMode_ == MX_QUANT_EXTEND,
-                    OP_LOGE(context_->GetNodeName(), "input group_index is not supported when quant_mode is 5."),
+                    ReportUnsupportedQuantMode(context_->GetNodeName(), "group_index", std::to_string(quantMode_),
+                                               "The input group_index is not supported when quant_mode is 5"),
                     return ge::GRAPH_FAILED);
         auto groupIndexDtype = groupIndexDesc->GetDataType();
-        OP_CHECK_IF((groupIndexDtype != ge::DT_INT64),
-                    OP_LOGE(context_->GetNodeName(), "input group_index dtype should be INT64, got %s.",
-                            ge::TypeUtils::DataTypeToSerialString(groupIndexDtype).c_str()),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            (groupIndexDtype != ge::DT_INT64),
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "group_index",
+                                                  ge::TypeUtils::DataTypeToSerialString(groupIndexDtype).c_str(),
+                                                  "The dtype of input group_index must be int64"),
+            return ge::GRAPH_FAILED);
         auto groupIndexShape = context_->GetOptionalInputShape(INPUT_INDEX_GROUP_INDEX);
         if (groupIndexShape != nullptr) {
             auto groupIndexStorageShape = groupIndexShape->GetStorageShape();
@@ -333,13 +383,17 @@ ge::graphStatus SwigluGroupQuantTiling::CheckGroupIndexInfo()
             const bool isPair = groupListType_ == GROUP_LIST_TYPE_PAIR;
             OP_CHECK_IF(isPair ? (groupIndexDimNum != 2 || groupIndexStorageShape.GetDim(1) != GROUP_INDEX_PAIR_COLS) :
                                  (groupIndexDimNum != 1),
-                        OP_LOGE(context_->GetNodeName(), "group_index must be [G] for type 1 or [E, 2] for type 2."),
+                        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                            context_->GetNodeName(), "group_index", std::to_string(groupIndexDimNum),
+                            "The shape dim of input group_index must be 1 for group_list_type 1, or 2 with the "
+                            "second dim equal to 2 for group_list_type 2"),
                         return ge::GRAPH_FAILED);
             g_ = ShapeElementNum(groupIndexStorageShape);
             // Empty tensor is not supported: a passed group_index must have a positive element count.
             OP_CHECK_IF((g_ <= 0),
-                        OP_LOGE(context_->GetNodeName(),
-                                "input group_index is empty tensor, which is not supported, got element num %ld.", g_),
+                        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                            context_->GetNodeName(), "group_index", std::to_string(g_),
+                            "An empty input group_index is not supported, the shape size must be greater than 0"),
                         return ge::GRAPH_FAILED);
             hasGroupIndex_ = true;
         }
@@ -355,12 +409,12 @@ ge::graphStatus SwigluGroupQuantTiling::CheckOutputInfo(ge::DataType xDtype, con
     auto yDesc = context_->GetOutputDesc(OUTPUT_INDEX_Y);
     OP_CHECK_NULL_WITH_CONTEXT(context_, yDesc);
     auto yDtype = yDesc->GetDataType();
-    OP_CHECK_IF(
-        (yDtype != dstType_),
-        OP_LOGE(context_->GetNodeName(), "output y dtype should be same as dst_type, got y dtype %s, dst_type %s.",
-                ge::TypeUtils::DataTypeToSerialString(yDtype).c_str(),
-                ge::TypeUtils::DataTypeToSerialString(dstType_).c_str()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((yDtype != dstType_),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "y",
+                                                      ge::TypeUtils::DataTypeToSerialString(yDtype).c_str(),
+                                                      "The dtype of output y must be the same as dst_type (" +
+                                                          ge::TypeUtils::DataTypeToSerialString(dstType_) + ")"),
+                return ge::GRAPH_FAILED);
 
     auto yScaleDesc = context_->GetOutputDesc(OUTPUT_INDEX_Y_SCALE);
     OP_CHECK_NULL_WITH_CONTEXT(context_, yScaleDesc);
@@ -372,20 +426,22 @@ ge::graphStatus SwigluGroupQuantTiling::CheckOutputInfo(ge::DataType xDtype, con
     } else {
         expectedYScaleDtype = isMxQuant ? ge::DT_FLOAT8_E8M0 : ge::DT_FLOAT;
     }
-    OP_CHECK_IF((yScaleDtype != expectedYScaleDtype),
-                OP_LOGE(context_->GetNodeName(), "output y_scale dtype should be %s when quant_mode is %ld, got %s.",
-                        ge::TypeUtils::DataTypeToSerialString(expectedYScaleDtype).c_str(), quantMode_,
-                        ge::TypeUtils::DataTypeToSerialString(yScaleDtype).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (yScaleDtype != expectedYScaleDtype),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context_->GetNodeName(), "y_scale", ge::TypeUtils::DataTypeToSerialString(yScaleDtype).c_str(),
+            "The dtype of output y_scale must be " + ge::TypeUtils::DataTypeToSerialString(expectedYScaleDtype) +
+                " when quant_mode is " + std::to_string(quantMode_)),
+        return ge::GRAPH_FAILED);
 
     auto yOriginDesc = context_->GetOutputDesc(OUTPUT_INDEX_Y_ORIGIN);
     OP_CHECK_NULL_WITH_CONTEXT(context_, yOriginDesc);
     auto yOriginDtype = yOriginDesc->GetDataType();
     OP_CHECK_IF((yOriginDtype != xDtype),
-                OP_LOGE(context_->GetNodeName(),
-                        "output y_origin dtype should be same as input x, got y_origin dtype %s, x dtype %s.",
-                        ge::TypeUtils::DataTypeToSerialString(yOriginDtype).c_str(),
-                        ge::TypeUtils::DataTypeToSerialString(xDtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "y_origin",
+                                                      ge::TypeUtils::DataTypeToSerialString(yOriginDtype).c_str(),
+                                                      "The dtype of output y_origin must be the same as input x (" +
+                                                          ge::TypeUtils::DataTypeToSerialString(xDtype) + ")"),
                 return ge::GRAPH_FAILED);
 
     int64_t xDimNum = static_cast<int64_t>(xStorageShape.GetDimNum());
@@ -395,24 +451,24 @@ ge::graphStatus SwigluGroupQuantTiling::CheckOutputInfo(ge::DataType xDtype, con
     OP_CHECK_NULL_WITH_CONTEXT(context_, yShape);
     auto yStorageShape = yShape->GetStorageShape();
     OP_CHECK_IF((yStorageShape.GetDimNum() != static_cast<size_t>(xDimNum)),
-                OP_LOGE(context_->GetNodeName(),
-                        "output y dim num should be same as input x, got y dim num %zu, "
-                        "x dim num %zu.",
-                        yStorageShape.GetDimNum(), xStorageShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context_->GetNodeName(), "y", std::to_string(yStorageShape.GetDimNum()),
+                    "The shape dim of output y must be the same as input x (" + std::to_string(xDimNum) + ")"),
                 return ge::GRAPH_FAILED);
     for (int64_t i = 0; i < xDimNum - 1; ++i) {
         OP_CHECK_IF((yStorageShape.GetDim(i) != xStorageShape.GetDim(i)),
-                    OP_LOGE(context_->GetNodeName(),
-                            "output y dim[%ld] should be equal to input x dim[%ld], got y "
-                            "dim %ld, x dim %ld.",
-                            i, i, yStorageShape.GetDim(i), xStorageShape.GetDim(i)),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context_->GetNodeName(), "y", ShapeToString(yStorageShape),
+                        "The dim[" + std::to_string(i) + "] of output y must be equal to the dim[" + std::to_string(i) +
+                            "] of input x (" + std::to_string(xStorageShape.GetDim(i)) + ")"),
                     return ge::GRAPH_FAILED);
     }
     int64_t expectedYLastDim = splitD_;
     OP_CHECK_IF((yStorageShape.GetDim(xDimNum - 1) != expectedYLastDim),
-                OP_LOGE(context_->GetNodeName(), "output y last dim should be %ld when dst_type is %s, got %ld.",
-                        expectedYLastDim, ge::TypeUtils::DataTypeToSerialString(dstType_).c_str(),
-                        yStorageShape.GetDim(xDimNum - 1)),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y", ShapeToString(yStorageShape),
+                                                      "The last dim of output y must be " +
+                                                          std::to_string(expectedYLastDim) + " when dst_type is " +
+                                                          ge::TypeUtils::DataTypeToSerialString(dstType_)),
                 return ge::GRAPH_FAILED);
 
     // Check y_scale shape.
@@ -422,74 +478,73 @@ ge::graphStatus SwigluGroupQuantTiling::CheckOutputInfo(ge::DataType xDtype, con
     if (isMxQuant) {
         // [..., ceil(ceil((D/2)/32)/2), 2]
         OP_CHECK_IF((yScaleStorageShape.GetDimNum() != static_cast<size_t>(xDimNum + 1)),
-                    OP_LOGE(context_->GetNodeName(),
-                            "output y_scale dim num should be %ld when quant_mode is %ld, "
-                            "got %zu.",
-                            xDimNum + 1, quantMode_, yScaleStorageShape.GetDimNum()),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        context_->GetNodeName(), "y_scale", std::to_string(yScaleStorageShape.GetDimNum()),
+                        "The shape dim of output y_scale must be " + std::to_string(xDimNum + 1) +
+                            " when quant_mode is " + std::to_string(quantMode_)),
                     return ge::GRAPH_FAILED);
         for (int64_t i = 0; i < xDimNum - 1; ++i) {
             OP_CHECK_IF((yScaleStorageShape.GetDim(i) != xStorageShape.GetDim(i)),
-                        OP_LOGE(context_->GetNodeName(),
-                                "output y_scale dim[%ld] should be equal to input x "
-                                "dim[%ld], got y_scale dim %ld, x dim %ld.",
-                                i, i, yScaleStorageShape.GetDim(i), xStorageShape.GetDim(i)),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context_->GetNodeName(), "y_scale", ShapeToString(yScaleStorageShape),
+                            "The dim[" + std::to_string(i) + "] of output y_scale must be equal to the dim[" +
+                                std::to_string(i) + "] of input x (" + std::to_string(xStorageShape.GetDim(i)) + ")"),
                         return ge::GRAPH_FAILED);
         }
         int64_t expectedMxTailDim = CeilDiv(scaleCol_, MX_SCALE_ALIGN_FACTOR);
-        OP_CHECK_IF((yScaleStorageShape.GetDim(xDimNum - 1) != expectedMxTailDim ||
-                     yScaleStorageShape.GetDim(xDimNum) != MX_SCALE_ALIGN_FACTOR),
-                    OP_LOGE(context_->GetNodeName(),
-                            "output y_scale last two dims should be [%ld, %ld] when "
-                            "quant_mode is %ld, got [%ld, %ld].",
-                            expectedMxTailDim, MX_SCALE_ALIGN_FACTOR, quantMode_,
-                            yScaleStorageShape.GetDim(xDimNum - 1), yScaleStorageShape.GetDim(xDimNum)),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            (yScaleStorageShape.GetDim(xDimNum - 1) != expectedMxTailDim ||
+             yScaleStorageShape.GetDim(xDimNum) != MX_SCALE_ALIGN_FACTOR),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                context_->GetNodeName(), "y_scale", ShapeToString(yScaleStorageShape),
+                "The last two dims of output y_scale must be [" + std::to_string(expectedMxTailDim) + ", " +
+                    std::to_string(MX_SCALE_ALIGN_FACTOR) + "] when quant_mode is " + std::to_string(quantMode_)),
+            return ge::GRAPH_FAILED);
     } else if (quantMode_ == HIF4_QUANT) {
         // [..., ceil((D/2)/64), 1]
-        OP_CHECK_IF((yScaleStorageShape.GetDimNum() != static_cast<size_t>(xDimNum + 1)),
-                    OP_LOGE(context_->GetNodeName(),
-                            "output y_scale dim num should be %ld when quant_mode is 4, "
-                            "got %zu.",
-                            xDimNum + 1, yScaleStorageShape.GetDimNum()),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            (yScaleStorageShape.GetDimNum() != static_cast<size_t>(xDimNum + 1)),
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                context_->GetNodeName(), "y_scale", std::to_string(yScaleStorageShape.GetDimNum()),
+                "The shape dim of output y_scale must be " + std::to_string(xDimNum + 1) + " when quant_mode is 4"),
+            return ge::GRAPH_FAILED);
         for (int64_t i = 0; i < xDimNum - 1; ++i) {
             OP_CHECK_IF((yScaleStorageShape.GetDim(i) != xStorageShape.GetDim(i)),
-                        OP_LOGE(context_->GetNodeName(),
-                                "output y_scale dim[%ld] should be equal to input x "
-                                "dim[%ld], got y_scale dim %ld, x dim %ld.",
-                                i, i, yScaleStorageShape.GetDim(i), xStorageShape.GetDim(i)),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context_->GetNodeName(), "y_scale", ShapeToString(yScaleStorageShape),
+                            "The dim[" + std::to_string(i) + "] of output y_scale must be equal to the dim[" +
+                                std::to_string(i) + "] of input x (" + std::to_string(xStorageShape.GetDim(i)) + ")"),
                         return ge::GRAPH_FAILED);
         }
         int64_t expectedHif4TailDim = CeilDiv(splitD_, PER_HIF4);
         OP_CHECK_IF(
             (yScaleStorageShape.GetDim(xDimNum - 1) != expectedHif4TailDim || yScaleStorageShape.GetDim(xDimNum) != 1),
-            OP_LOGE(context_->GetNodeName(),
-                    "output y_scale last two dims should be [%ld, 1] when "
-                    "quant_mode is 4, got [%ld, %ld].",
-                    expectedHif4TailDim, yScaleStorageShape.GetDim(xDimNum - 1), yScaleStorageShape.GetDim(xDimNum)),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "y_scale", ShapeToString(yScaleStorageShape),
+                                                  "The last two dims of output y_scale must be [" +
+                                                      std::to_string(expectedHif4TailDim) +
+                                                      ", 1] when quant_mode is 4"),
             return ge::GRAPH_FAILED);
     } else {
         // [..., ceil((D/2)/128)]
         OP_CHECK_IF((yScaleStorageShape.GetDimNum() != static_cast<size_t>(xDimNum)),
-                    OP_LOGE(context_->GetNodeName(),
-                            "output y_scale dim num should be %ld when quant_mode is 0, "
-                            "got %zu.",
-                            xDimNum, yScaleStorageShape.GetDimNum()),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        context_->GetNodeName(), "y_scale", std::to_string(yScaleStorageShape.GetDimNum()),
+                        "The shape dim of output y_scale must be " + std::to_string(xDimNum) + " when quant_mode is 0"),
                     return ge::GRAPH_FAILED);
         for (int64_t i = 0; i < xDimNum - 1; ++i) {
             OP_CHECK_IF((yScaleStorageShape.GetDim(i) != xStorageShape.GetDim(i)),
-                        OP_LOGE(context_->GetNodeName(),
-                                "output y_scale dim[%ld] should be equal to input x "
-                                "dim[%ld], got y_scale dim %ld, x dim %ld.",
-                                i, i, yScaleStorageShape.GetDim(i), xStorageShape.GetDim(i)),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context_->GetNodeName(), "y_scale", ShapeToString(yScaleStorageShape),
+                            "The dim[" + std::to_string(i) + "] of output y_scale must be equal to the dim[" +
+                                std::to_string(i) + "] of input x (" + std::to_string(xStorageShape.GetDim(i)) + ")"),
                         return ge::GRAPH_FAILED);
         }
-        OP_CHECK_IF((yScaleStorageShape.GetDim(xDimNum - 1) != scaleCol_),
-                    OP_LOGE(context_->GetNodeName(),
-                            "output y_scale last dim should be %ld when quant_mode is 0, "
-                            "got %ld.",
-                            scaleCol_, yScaleStorageShape.GetDim(xDimNum - 1)),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            (yScaleStorageShape.GetDim(xDimNum - 1) != scaleCol_),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                context_->GetNodeName(), "y_scale", ShapeToString(yScaleStorageShape),
+                "The last dim of output y_scale must be " + std::to_string(scaleCol_) + " when quant_mode is 0"),
+            return ge::GRAPH_FAILED);
     }
 
     if (outputOrigin_) {
@@ -497,23 +552,24 @@ ge::graphStatus SwigluGroupQuantTiling::CheckOutputInfo(ge::DataType xDtype, con
         auto yOriginShape = context_->GetOutputShape(OUTPUT_INDEX_Y_ORIGIN);
         OP_CHECK_NULL_WITH_CONTEXT(context_, yOriginShape);
         auto yOriginStorageShape = yOriginShape->GetStorageShape();
-        OP_CHECK_IF((yOriginStorageShape.GetDimNum() != static_cast<size_t>(xDimNum)),
-                    OP_LOGE(context_->GetNodeName(),
-                            "output y_origin dim num should be same as input x, got y_origin "
-                            "dim num %zu, x dim num %zu.",
-                            yOriginStorageShape.GetDimNum(), xStorageShape.GetDimNum()),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            (yOriginStorageShape.GetDimNum() != static_cast<size_t>(xDimNum)),
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                context_->GetNodeName(), "y_origin", std::to_string(yOriginStorageShape.GetDimNum()),
+                "The shape dim of output y_origin must be the same as input x (" + std::to_string(xDimNum) + ")"),
+            return ge::GRAPH_FAILED);
         for (int64_t i = 0; i < xDimNum - 1; ++i) {
             OP_CHECK_IF((yOriginStorageShape.GetDim(i) != xStorageShape.GetDim(i)),
-                        OP_LOGE(context_->GetNodeName(),
-                                "output y_origin dim[%ld] should be equal to input x dim[%ld], "
-                                "got y_origin dim %ld, x dim %ld.",
-                                i, i, yOriginStorageShape.GetDim(i), xStorageShape.GetDim(i)),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context_->GetNodeName(), "y_origin", ShapeToString(yOriginStorageShape),
+                            "The dim[" + std::to_string(i) + "] of output y_origin must be equal to the dim[" +
+                                std::to_string(i) + "] of input x (" + std::to_string(xStorageShape.GetDim(i)) + ")"),
                         return ge::GRAPH_FAILED);
         }
         OP_CHECK_IF((yOriginStorageShape.GetDim(xDimNum - 1) != splitD_),
-                    OP_LOGE(context_->GetNodeName(), "output y_origin last dim should be %ld, got %ld.", splitD_,
-                            yOriginStorageShape.GetDim(xDimNum - 1)),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context_->GetNodeName(), "y_origin", ShapeToString(yOriginStorageShape),
+                        "The last dim of output y_origin must be " + std::to_string(splitD_)),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -530,25 +586,29 @@ ge::graphStatus SwigluGroupQuantTiling::GetShapeAttrsInfoInner()
     OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
     auto xDtype = xDesc->GetDataType();
     OP_CHECK_IF((xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16),
-                OP_LOGE(context_->GetNodeName(), "input x dtype only supports FLOAT16 or BFLOAT16, got %s.",
-                        ge::TypeUtils::DataTypeToSerialString(xDtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x",
+                                                      ge::TypeUtils::DataTypeToSerialString(xDtype).c_str(),
+                                                      "The dtype of input x only supports float16 or bfloat16"),
                 return ge::GRAPH_FAILED);
     auto xDimNum = xStorageShape.GetDimNum();
     OP_CHECK_IF((xDimNum < MIN_X_DIM_NUM || xDimNum > MAX_DIM_NUM),
-                OP_LOGE(context_->GetNodeName(), "input x dim num should be in [%zu, %zu], got %zu.", MIN_X_DIM_NUM,
-                        MAX_DIM_NUM, xDimNum),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "x", std::to_string(xDimNum),
+                                                         "The shape dim of input x must be in the range [" +
+                                                             std::to_string(MIN_X_DIM_NUM) + ", " +
+                                                             std::to_string(MAX_DIM_NUM) + "]"),
                 return ge::GRAPH_FAILED);
 
     // Get Attrs
     // Resolve the mode before applying geometry rules. MX modes 1/5 accept
     // D = 2H in 64-element units; block and HIF4 modes retain the 256-element contract.
     if (GetAttr() == ge::GRAPH_FAILED) {
-        OP_LOGE(context_->GetNodeName(), "Get attr failed.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Get attr failed.");
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF((quantMode_ == MX_QUANT_EXTEND && xDimNum != MIN_X_DIM_NUM),
-                OP_LOGE(context_->GetNodeName(), "input x dim num should be %zu when quant_mode is 5, got %zu.",
-                        MIN_X_DIM_NUM, xDimNum),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context_->GetNodeName(), "x", std::to_string(xDimNum),
+                    "The shape dim of input x must be " + std::to_string(MIN_X_DIM_NUM) + " when quant_mode is 5"),
                 return ge::GRAPH_FAILED);
     bs_ = 1;
     for (size_t i = 0; i < xDimNum - 1; i++) {
@@ -556,10 +616,11 @@ ge::graphStatus SwigluGroupQuantTiling::GetShapeAttrsInfoInner()
         if (quantMode_ == MX_QUANT_EXTEND) {
             int64_t next = 0;
             OP_CHECK_IF(!CheckedMul(bs_, extent, next),
-                        OP_LOGE(context_->GetNodeName(),
-                                "input x shape exceeds int64 range or contains a non-positive dim[%zu] %ld with "
-                                "accumulated product %ld when quant_mode is 5.",
-                                i, extent, bs_),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context_->GetNodeName(), "x", ShapeToString(xStorageShape),
+                            "The shape of input x exceeds the int64 range or contains a non-positive dim[" +
+                                std::to_string(i) + "] " + std::to_string(extent) +
+                                " when quant_mode is 5, accumulated product is " + std::to_string(bs_)),
                         return ge::GRAPH_FAILED);
             bs_ = next;
         } else {
@@ -568,24 +629,27 @@ ge::graphStatus SwigluGroupQuantTiling::GetShapeAttrsInfoInner()
     }
     // Empty tensor is supported: when bs is 0 the input and outputs are all empty and no data
     // needs to be processed, so only negative dims (unknown dim leaked in) are rejected here.
-    OP_CHECK_IF((bs_ < 0),
-                OP_LOGE(context_->GetNodeName(),
-                        "the product of input x dims except the last one should be non-negative, but is %ld.", bs_),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (bs_ < 0),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context_->GetNodeName(), "x", ShapeToString(xStorageShape),
+            "The product of input x dims except the last one must be non-negative (" + std::to_string(bs_) + ")"),
+        return ge::GRAPH_FAILED);
     d_ = xStorageShape.GetDim(xDimNum - 1);
     // An empty x (last dim 0) is supported by legacy block/MX/HIF4 modes; otherwise the last dim must be
     // greater than or equal to and divisible by the mode-specific D limit. Mode 5 does not support empty x.
     const int64_t dLimit = (quantMode_ == MX_QUANT || quantMode_ == MX_QUANT_EXTEND) ? MX_QUANT_D_LIMIT : D_LIMIT;
     const bool supportsEmpty = quantMode_ == BLOCK_QUANT || quantMode_ == MX_QUANT || quantMode_ == HIF4_QUANT;
     OP_CHECK_IF(((d_ == 0 && !supportsEmpty) || (d_ != 0 && (d_ < dLimit || d_ % dLimit != 0))),
-                OP_LOGE(context_->GetNodeName(),
-                        "input x last dim should be 0 for an empty supported mode or greater than or equal to %ld "
-                        "and divisible by %ld, got %ld.",
-                        dLimit, dLimit, d_),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context_->GetNodeName(), "x", ShapeToString(xStorageShape),
+                    "The last dim of input x must be 0 for an empty supported mode or greater than or equal to " +
+                        std::to_string(dLimit) + " and divisible by " + std::to_string(dLimit)),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(quantMode_ == MX_QUANT_EXTEND && context_->GetOptionalInputDesc(INPUT_INDEX_SCALE) != nullptr,
-                OP_LOGE(context_->GetNodeName(), "input scale is not supported when quant_mode is 5."),
+                ReportUnsupportedQuantMode(context_->GetNodeName(), "scale", std::to_string(quantMode_),
+                                           "The input scale is not supported when quant_mode is 5"),
                 return ge::GRAPH_FAILED);
 
     if (CheckWeightInfo() == ge::GRAPH_FAILED || CheckGroupIndexInfo() == ge::GRAPH_FAILED) {
@@ -595,11 +659,12 @@ ge::graphStatus SwigluGroupQuantTiling::GetShapeAttrsInfoInner()
     // y_scale has one more dim than x in MX mode and HIF4 mode, and y_scale dim num must be in [1, 8],
     // so x dim num is limited to [2, 7] when quant_mode is 1 or 4.
     if (quantMode_ == MX_QUANT || quantMode_ == HIF4_QUANT) {
-        OP_CHECK_IF(
-            (xDimNum > MAX_DIM_NUM - 1),
-            OP_LOGE(context_->GetNodeName(), "input x dim num should be in [%zu, %zu] when quant_mode is %ld, got %zu.",
-                    MIN_X_DIM_NUM, MAX_DIM_NUM - 1, quantMode_, xDimNum),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF((xDimNum > MAX_DIM_NUM - 1),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        context_->GetNodeName(), "x", std::to_string(xDimNum),
+                        "The shape dim of input x must be in the range [" + std::to_string(MIN_X_DIM_NUM) + ", " +
+                            std::to_string(MAX_DIM_NUM - 1) + "] when quant_mode is " + std::to_string(quantMode_)),
+                    return ge::GRAPH_FAILED);
     }
 
     splitD_ = d_ / SWIGLU_SPLIT_FACTOR;
@@ -835,9 +900,9 @@ ge::graphStatus SwigluGroupQuantTiling::CalcMxQuantExtendOpTiling()
     const int64_t plannedBytes = inputBytes + activationBytes + yBytes + scaleBytes + reciprocalBytes + scratchBytes +
                                  weightBytes + originBytes;
     OP_CHECK_IF(plannedBytes > static_cast<int64_t>(ubSize_),
-                OP_LOGE(context_->GetNodeName(),
-                        "quant_mode=5 planned UB bytes should not exceed available UB size, got %ld, %lu.",
-                        plannedBytes, ubSize_),
+                ReportTilingFailure(context_->GetNodeName(), "The planned UB bytes " + std::to_string(plannedBytes) +
+                                                                 " exceed the available UB size " +
+                                                                 std::to_string(ubSize_) + " when quant_mode is 5."),
                 return ge::GRAPH_FAILED);
     SetTilingData();
     return ge::GRAPH_SUCCESS;
