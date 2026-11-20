@@ -54,6 +54,11 @@ static const std::initializer_list<op::DataType> REGBASE_DTYPE_SUPPORT_LIST_ZERO
 static const std::initializer_list<op::DataType> REGBASE_DTYPE_SUPPORT_LIST_Y = {
     op::DataType::DT_FLOAT8_E4M3FN, op::DataType::DT_FLOAT8_E5M2, op::DataType::DT_HIFLOAT8, op::DataType::DT_INT8};
 
+// 非 RegBase（A2/A3/310P）资料约束：入参 x1/x2/gamma 与出参 xOut 仅支持 FLOAT16、BFLOAT16
+// （md「入参x1、x2、gamma和出参xOut仅支持FLOAT16、BFLOAT16」）；RegBase 白名单含 FLOAT 供 Ascend 950 使用
+static const std::initializer_list<op::DataType> NON_REGBASE_DTYPE_SUPPORT_LIST_X_SCALE = {op::DataType::DT_FLOAT16,
+                                                                                           op::DataType::DT_BF16};
+
 static bool CheckNotNull(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma, const aclTensor* scales1,
                          aclTensor* y1Out, aclTensor* y2Out, const aclTensor* xOut)
 {
@@ -144,8 +149,14 @@ static bool CheckDtypeValid(const aclTensor* x1, const aclTensor* x2, const aclT
     OP_CHECK_DTYPE_NOT_SUPPORT(xOut, REGBASE_DTYPE_SUPPORT_LIST_X_SCALE, return false);
 
     if (!Ops::NN::AclnnUtil::IsRegbase()) {
-        // 非 RegBase（A2/A3/310P）：kernel 按 x1 的 dtype 消费 x2/gamma/xOut，不一致会静默产出错误结果，
-        // 必须在此拦截（161002）；RegBase（A5）沿用原有校验路径，行为保持不变
+        // 非 RegBase（A2/A3/310P）：除跨参数一致性外，x 侧逐 Tensor 白名单按资料收窄——
+        // 修复前 x1/x2/gamma/xOut 全 FLOAT32 组合因沿用 RegBase 白名单（含 FLOAT）在首段放行，
+        // 执行段以资料外内部码 561000 失败，须按资料白名单在首段以 161002 拒绝（issue #8379）；
+        // RegBase（A5）沿用原有校验路径，行为保持不变
+        OP_CHECK_DTYPE_NOT_SUPPORT(x1, NON_REGBASE_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+        OP_CHECK_DTYPE_NOT_SUPPORT(x2, NON_REGBASE_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+        OP_CHECK_DTYPE_NOT_SUPPORT(gamma, NON_REGBASE_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+        OP_CHECK_DTYPE_NOT_SUPPORT(xOut, NON_REGBASE_DTYPE_SUPPORT_LIST_X_SCALE, return false);
         OP_CHECK_DTYPE_NOT_SAME(x1, x2, return false);
         OP_CHECK_DTYPE_NOT_SAME(x1, gamma, return false);
         OP_CHECK_DTYPE_NOT_SAME(x1, xOut, return false);

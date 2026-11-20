@@ -306,7 +306,7 @@ aclnnStatus aclnnAddLayerNormQuantV2(
       <td>y2Out（aclTensor*）</td>
       <td>输出</td>
       <td>表示LayerNorm的结果输出y被第二路量化算子量化后的结果。对应公式中的y2Out。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape需要与输入x1/x2一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>当scales2Optional为空指针时，y2Out为占位输出，不会被写入，不校验shape。</li><li>其他场景，shape需要与输入x1/x2一致。</li></ul></td>
       <td>INT8</td>
       <td>ND</td>
       <td>1-8</td>

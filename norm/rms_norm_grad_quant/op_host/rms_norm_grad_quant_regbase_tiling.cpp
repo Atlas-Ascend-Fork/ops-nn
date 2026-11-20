@@ -58,6 +58,10 @@ constexpr uint32_t LOG_2 = 2;
 constexpr int64_t RETAINED_SIZE_1K = 1024;
 constexpr int64_t MIN_DIMS_DY_X_DX = 2;
 constexpr int64_t MAX_DIMS_DY_X_DX = 8;
+// 文档约束：rstd_shape = x_shape[0:n]，gamma_shape = x_shape[n:]，n < x_shape.dims()，
+// x维度数为2-8，因此rstd/gamma维度数均为1-7。
+constexpr int64_t MIN_DIMS_RSTD_GAMMA = 1;
+constexpr int64_t MAX_DIMS_RSTD_GAMMA = 7;
 
 const std::string OP_NAME = "RmsNormGradQuant";
 
@@ -189,6 +193,15 @@ ge::graphStatus RmsNormGradQuantRegbaseTiling::CheckRstdGammaAndScalesShapes(ger
         return ge::GRAPH_FAILED;
     }
 
+    auto rstdDimNum = static_cast<int64_t>(rstdShape.GetDimNum());
+    OP_CHECK_IF(rstdDimNum < MIN_DIMS_RSTD_GAMMA || rstdDimNum > MAX_DIMS_RSTD_GAMMA,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context_->GetNodeName(), "rstd", std::to_string(rstdDimNum).c_str(),
+                    ("the dim num of rstd must be in range [" + std::to_string(MIN_DIMS_RSTD_GAMMA) + ", " +
+                     std::to_string(MAX_DIMS_RSTD_GAMMA) + "]")
+                        .c_str()),
+                return ge::GRAPH_FAILED);
+
     // check gamma
     inputShape = context_->GetInputShape(INPUT_INDEX_3);
     OP_CHECK_IF(inputShape == nullptr,
@@ -204,6 +217,15 @@ ge::graphStatus RmsNormGradQuantRegbaseTiling::CheckRstdGammaAndScalesShapes(ger
             "The shape of input gamma can not be an empty tensor or an invalid tensor with a negative dim");
         return ge::GRAPH_FAILED;
     }
+
+    auto gammaDimNum = static_cast<int64_t>(gammaShape.GetDimNum());
+    OP_CHECK_IF(gammaDimNum < MIN_DIMS_RSTD_GAMMA || gammaDimNum > MAX_DIMS_RSTD_GAMMA,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context_->GetNodeName(), "gamma", std::to_string(gammaDimNum).c_str(),
+                    ("the dim num of gamma must be in range [" + std::to_string(MIN_DIMS_RSTD_GAMMA) + ", " +
+                     std::to_string(MAX_DIMS_RSTD_GAMMA) + "]")
+                        .c_str()),
+                return ge::GRAPH_FAILED);
 
     // check scalesX (required input)
     inputShape = context_->GetInputShape(INPUT_INDEX_4);
@@ -242,14 +264,8 @@ ge::graphStatus RmsNormGradQuantRegbaseTiling::CheckRelationShapes(const gert::S
                                                                    const gert::Shape& rstdShape,
                                                                    const gert::Shape& gammaShape)
 {
-    rows_ = 1;
-    cols_ = 1;
-    for (size_t i = 0; i < dyShape.GetDimNum() - gammaShape.GetDimNum(); i++) {
-        rows_ *= dyShape.GetDim(i);
-    }
-    for (size_t i = 0; i < gammaShape.GetDimNum(); i++) {
-        cols_ *= gammaShape.GetDim(i);
-    }
+    // 维度数关系校验必须先于rows_/cols_计算：gamma维度数大于x维度数时
+    // dyShape.GetDimNum() - gammaShape.GetDimNum()为size_t下溢，rows_循环会近乎死循环导致tiling挂死。
     OP_CHECK_IF(dyShape.GetDimNum() != rstdShape.GetDimNum() + gammaShape.GetDimNum(),
                 OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
                     context_->GetNodeName(), "x, rstd, gamma",
@@ -265,6 +281,23 @@ ge::graphStatus RmsNormGradQuantRegbaseTiling::CheckRelationShapes(const gert::S
                     (std::to_string(rstdShape.GetDimNum()) + ", " + std::to_string(dyShape.GetDimNum())).c_str(),
                     "the dim num of rstd must not exceed the dim num of x"),
                 return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF(gammaShape.GetDimNum() > dyShape.GetDimNum(),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context_->GetNodeName(), "gamma, x",
+                    (std::to_string(gammaShape.GetDimNum()) + ", " + std::to_string(dyShape.GetDimNum())).c_str(),
+                    "the dim num of gamma must not exceed the dim num of x"),
+                return ge::GRAPH_FAILED);
+
+    rows_ = 1;
+    cols_ = 1;
+    for (size_t i = 0; i < dyShape.GetDimNum() - gammaShape.GetDimNum(); i++) {
+        rows_ *= dyShape.GetDim(i);
+    }
+    for (size_t i = 0; i < gammaShape.GetDimNum(); i++) {
+        cols_ *= gammaShape.GetDim(i);
+    }
+
     for (size_t i = 0; i < rstdShape.GetDimNum(); i++) {
         OP_CHECK_IF(rstdShape.GetDim(i) != dyShape.GetDim(i),
                     OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
@@ -272,12 +305,7 @@ ge::graphStatus RmsNormGradQuantRegbaseTiling::CheckRelationShapes(const gert::S
                         "each dim of rstd must be equal to the corresponding dim of x"),
                     return ge::GRAPH_FAILED);
     }
-    OP_CHECK_IF(gammaShape.GetDimNum() > dyShape.GetDimNum(),
-                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
-                    context_->GetNodeName(), "gamma, x",
-                    (std::to_string(gammaShape.GetDimNum()) + ", " + std::to_string(dyShape.GetDimNum())).c_str(),
-                    "the dim num of gamma must not exceed the dim num of x"),
-                return ge::GRAPH_FAILED);
+
     size_t offset = dyShape.GetDimNum() - gammaShape.GetDimNum();
     for (size_t i = 0; i < gammaShape.GetDimNum(); i++) {
         OP_CHECK_IF(gammaShape.GetDim(i) != dyShape.GetDim(offset + i),

@@ -55,49 +55,56 @@ static bool IsRegbase() { return Ops::NN::AclnnUtil::IsRegbase(); }
 static bool CheckDtypeValid(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma,
                             const aclTensor* smoothScale1Optional, const aclTensor* smoothScale2Optional,
                             const aclTensor* betaOptional, const aclTensor* y1Out, const aclTensor* y2Out,
-                            const aclTensor* xOut, const aclTensor* scale1Out, const aclTensor* scale2Out)
+                            const aclTensor* xOut, const aclTensor* scale1Out, const aclTensor* scale2Out,
+                            bool processOut1, bool processOut2)
 {
     OP_CHECK_DTYPE_NOT_SUPPORT(gamma, ASCEND910B_DTYPE_SUPPORT_LIST_X_SCALE, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(x1, ASCEND910B_DTYPE_SUPPORT_LIST_X_SCALE, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(x2, ASCEND910B_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+    // 资料对 x 族一致性为无条件约束（md「shape和数据类型需要与x1/gamma保持一致」），
+    // 一致性检查不得被 IsRegbase 门控：非 RegBase（A2/A3）混配 dtype 修复前首段放行、
+    // 执行段以资料外内部码 561000 失败，须在首段按 161002 拒绝（issue #8730）。
     const bool isRegbase = IsRegbase();
-    if (isRegbase) {
-        OP_CHECK_DTYPE_NOT_SAME(x1, x2, return false);
-        OP_CHECK_DTYPE_NOT_SAME(x1, gamma, return false);
-    }
+    OP_CHECK_DTYPE_NOT_SAME(x1, x2, return false);
+    OP_CHECK_DTYPE_NOT_SAME(x1, gamma, return false);
     if (nullptr != betaOptional) {
         OP_CHECK_DTYPE_NOT_SUPPORT(betaOptional, ASCEND910B_DTYPE_SUPPORT_LIST_X_SCALE, return false); // 校验可选beta
-        if (isRegbase) {
-            OP_CHECK_DTYPE_NOT_SAME(x1, betaOptional, return false);
-        }
+        OP_CHECK_DTYPE_NOT_SAME(x1, betaOptional, return false);
     }
 
     if (nullptr != smoothScale1Optional) {
         OP_CHECK_DTYPE_NOT_SUPPORT(smoothScale1Optional, ASCEND910B_DTYPE_SUPPORT_LIST_X_SCALE, return false);
-        if (isRegbase) {
-            OP_CHECK_DTYPE_NOT_SAME(x1, smoothScale1Optional, return false);
-        }
+        OP_CHECK_DTYPE_NOT_SAME(x1, smoothScale1Optional, return false);
     }
 
     if (nullptr != smoothScale2Optional) {
         OP_CHECK_DTYPE_NOT_SUPPORT(smoothScale2Optional, ASCEND910B_DTYPE_SUPPORT_LIST_X_SCALE, return false);
-        if (isRegbase) {
-            OP_CHECK_DTYPE_NOT_SAME(x1, smoothScale2Optional, return false);
+        OP_CHECK_DTYPE_NOT_SAME(x1, smoothScale2Optional, return false);
+    }
+    // y 侧 dtype 校验按 outputMask/smoothScale 路由的有效性门控（资料 :328 一致性约束限定
+    // 「y1Out和y2Out都为有效输出时」；:223/:233 对无效输出仅约束 shape=[1]，占位 dtype
+    // 不受 y 侧白名单与一致性约束，与 Compute 的条件版一致性检查对齐，issue #8728）
+    if (isRegbase) {
+        if (processOut2) {
+            OP_CHECK_DTYPE_NOT_SUPPORT(y2Out, ASCEND950_DTYPE_SUPPORT_LIST_Y_SCALE, return false); // Mandatory output
+        }
+        if (processOut1) {
+            OP_CHECK_DTYPE_NOT_SUPPORT(y1Out, ASCEND950_DTYPE_SUPPORT_LIST_Y_SCALE, return false);
+        }
+    } else {
+        if (processOut2) {
+            OP_CHECK_DTYPE_NOT_SUPPORT(y2Out, ASCEND910B_DTYPE_SUPPORT_LIST_Y_SCALE, return false); // Mandatory output
+        }
+        if (processOut1) {
+            OP_CHECK_DTYPE_NOT_SUPPORT(y1Out, ASCEND910B_DTYPE_SUPPORT_LIST_Y_SCALE, return false);
         }
     }
-    if (Ops::NN::AclnnUtil::IsRegbase()) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(y2Out, ASCEND950_DTYPE_SUPPORT_LIST_Y_SCALE, return false); // Mandatory output
-        OP_CHECK_DTYPE_NOT_SUPPORT(y1Out, ASCEND950_DTYPE_SUPPORT_LIST_Y_SCALE, return false);
-    } else {
-        OP_CHECK_DTYPE_NOT_SUPPORT(y2Out, ASCEND910B_DTYPE_SUPPORT_LIST_Y_SCALE, return false); // Mandatory output
-        OP_CHECK_DTYPE_NOT_SUPPORT(y1Out, ASCEND910B_DTYPE_SUPPORT_LIST_Y_SCALE, return false);
+    if (processOut1 && processOut2) {
+        OP_CHECK_DTYPE_NOT_SAME(y1Out, y2Out, return false);
     }
-    OP_CHECK_DTYPE_NOT_SAME(y1Out, y2Out, return false);
 
     OP_CHECK_DTYPE_NOT_SUPPORT(xOut, ASCEND910B_DTYPE_SUPPORT_LIST_X_SCALE, return false);
-    if (isRegbase) {
-        OP_CHECK_DTYPE_NOT_SAME(x1, xOut, return false);
-    }
+    OP_CHECK_DTYPE_NOT_SAME(x1, xOut, return false);
 
     OP_CHECK_DTYPE_NOT_MATCH(scale1Out, op::DataType::DT_FLOAT, return false);
     OP_CHECK_DTYPE_NOT_MATCH(scale2Out, op::DataType::DT_FLOAT, return false);
@@ -220,6 +227,26 @@ static bool CheckInt4Compatibility(const aclTensor* outTensor, int64_t xLastDim)
              return false);
     return true;
 }
+
+// INT4 原生输出按 2 个 INT4/字节打包，奇数尾轴必然产生无法成对的尾半字节，取值无契约保证；
+// 资料 :143 明确约束「当输出y1Out或y2Out的数据类型为INT4时，x1的尾轴必须能被2整除」，
+// 修复前该约束在 host 侧无对应实现，违约形态被完整放行并返回成功（issue #8732）。
+static bool CheckInt4LastDimEven(const aclTensor* x1, const aclTensor* y1Out, const aclTensor* y2Out, bool processOut1,
+                                 bool processOut2)
+{
+    bool hasInt4Output = (processOut1 && y1Out->GetDataType() == op::DataType::DT_INT4) ||
+                         (processOut2 && y2Out->GetDataType() == op::DataType::DT_INT4);
+    if (!hasInt4Output) {
+        return true;
+    }
+    auto x1Shape = x1->GetViewShape();
+    int64_t xLastDim = x1Shape.GetDim(x1Shape.GetDimNum() - 1);
+    OP_CHECK(xLastDim % 2 == 0,
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                     "When y1Out or y2Out dtype is INT4, x1 last dim must be divisible by 2, but got %ld.", xLastDim),
+             return false);
+    return true;
+}
 } // namespace AddRmsNormDynamicQuantV2ACLNN
 
 static aclnnStatus AddRmsNormDynamicQuantV2Int42Int32PackedTensor(bool processOut, aclTensor*& y,
@@ -243,16 +270,24 @@ static aclnnStatus AddRmsNormDynamicQuantV2Int42Int32PackedTensor(bool processOu
 static aclnnStatus CopyAddRmsNormV2Results(aclTensor* y1ComputeOut, aclTensor* y2ComputeOut, aclTensor* xComputeOut,
                                            aclTensor* scale1ComputeOut, aclTensor* scale2ComputeOut, aclTensor* y1Out,
                                            aclTensor* y2Out, aclTensor* xOut, aclTensor* scale1Out,
-                                           aclTensor* scale2Out, aclOpExecutor* executor)
+                                           aclTensor* scale2Out, aclOpExecutor* executor, bool processOut1,
+                                           bool processOut2)
 {
-    auto viewCopyY1Result = l0op::ViewCopy(y1ComputeOut, y1Out, executor);
-    CHECK_RET(viewCopyY1Result != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    // 无效输出为占位（资料对占位仅约束 shape、不约束 dtype），不得向其拷贝计算结果：
+    // 占位 dtype/shape 与计算结果不一致时 ViewCopy 会失败（561103）或错写，
+    // 故 y1/y2 的回写按 outputMask/smoothScale 路由的有效性跳过（PR #14629 检视意见）。
+    if (processOut1) {
+        auto viewCopyY1Result = l0op::ViewCopy(y1ComputeOut, y1Out, executor);
+        CHECK_RET(viewCopyY1Result != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
 
     auto viewCopyScale1Result = l0op::ViewCopy(scale1ComputeOut, scale1Out, executor);
     CHECK_RET(viewCopyScale1Result != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    auto viewCopyY2Result = l0op::ViewCopy(y2ComputeOut, y2Out, executor);
-    CHECK_RET(viewCopyY2Result != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (processOut2) {
+        auto viewCopyY2Result = l0op::ViewCopy(y2ComputeOut, y2Out, executor);
+        CHECK_RET(viewCopyY2Result != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
 
     auto viewCopyScale2Result = l0op::ViewCopy(scale2ComputeOut, scale2Out, executor);
     CHECK_RET(viewCopyScale2Result != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -296,6 +331,8 @@ static aclnnStatus ComputeAddRmsNormDynamicQuantV2(const aclTensor* x1, const ac
     } else {
         CHECK_RET(AddRmsNormDynamicQuantV2ACLNN::CheckShapeValid(x1, y1Out, y2Out, processOut1, processOut2),
                   ACLNN_ERR_INNER_TILING_ERROR);
+        CHECK_RET(AddRmsNormDynamicQuantV2ACLNN::CheckInt4LastDimEven(x1, y1Out, y2Out, processOut1, processOut2),
+                  ACLNN_ERR_PARAM_INVALID);
     }
     auto addRmsNormQuantOuts = l0op::AddRmsNormDynamicQuant(x1, x2, gamma, smoothScale1Optional, smoothScale2Optional,
                                                             betaOptional, epsilon, outputMask, dstType, xOut, scale1Out,
@@ -318,9 +355,10 @@ static aclnnStatus ComputeAddRmsNormDynamicQuantV2(const aclTensor* x1, const ac
     }
 
     // 将结果拷贝到输出tensor
-    CHECK_RET(CopyAddRmsNormV2Results(y1ComputeOut, y2ComputeOut, xComputeOut, scale1ComputeOut, scale2ComputeOut,
-                                      y1Out, y2Out, xOut, scale1Out, scale2Out, executor) == ACLNN_SUCCESS,
-              ACLNN_ERR_INNER_NULLPTR);
+    CHECK_RET(
+        CopyAddRmsNormV2Results(y1ComputeOut, y2ComputeOut, xComputeOut, scale1ComputeOut, scale2ComputeOut, y1Out,
+                                y2Out, xOut, scale1Out, scale2Out, executor, processOut1, processOut2) == ACLNN_SUCCESS,
+        ACLNN_ERR_INNER_NULLPTR);
 
     return ACLNN_SUCCESS;
 }
@@ -353,20 +391,22 @@ aclnnStatus aclnnAddRmsNormDynamicQuantV2GetWorkspaceSize(
     CHECK_RET(AddRmsNormDynamicQuantV2ACLNN::CheckNotNull(x1, x2, gamma, y1Out, y2Out, xOut, scale1Out, scale2Out),
               ACLNN_ERR_PARAM_NULLPTR);
 
-    // CheckDtype: validate dtype
-    CHECK_RET(AddRmsNormDynamicQuantV2ACLNN::CheckDtypeValid(x1, x2, gamma, smoothScale1Optional, smoothScale2Optional,
-                                                             betaOptional, y1Out, y2Out, xOut, scale1Out, scale2Out),
-              ACLNN_ERR_PARAM_INVALID);
-
-    // CheckFlag: validate outputMask parameter
+    // CheckFlag: validate outputMask parameter（须先于 processOut 计算执行，保证 outputMask
+    // 长度合法后才可安全下标访问）
     CHECK_RET(AddRmsNormDynamicQuantV2ACLNN::CheckFlag(smoothScale1Optional, smoothScale2Optional, outputMask),
               ACLNN_ERR_PARAM_INVALID);
 
-    // Compute output flags
+    // Compute output flags（前移至 dtype 校验前：y 侧校验需按输出有效性门控，issue #8728）
     const bool processOut1 = (outputMask == nullptr) ? true : (*outputMask)[0];
     const bool processOut2 = (outputMask == nullptr) ?
                                  (smoothScale1Optional != nullptr && smoothScale2Optional != nullptr) :
                                  (*outputMask)[1];
+
+    // CheckDtype: validate dtype
+    CHECK_RET(AddRmsNormDynamicQuantV2ACLNN::CheckDtypeValid(x1, x2, gamma, smoothScale1Optional, smoothScale2Optional,
+                                                             betaOptional, y1Out, y2Out, xOut, scale1Out, scale2Out,
+                                                             processOut1, processOut2),
+              ACLNN_ERR_PARAM_INVALID);
 
     CHECK_RET(AddRmsNormDynamicQuantV2ACLNN::CheckDimNumValid(x1, y1Out, y2Out, processOut1, processOut2),
               ACLNN_ERR_INNER_TILING_ERROR);
@@ -375,8 +415,11 @@ aclnnStatus aclnnAddRmsNormDynamicQuantV2GetWorkspaceSize(
     if (isRegbase && gamma->IsEmpty()) {
         // A5 norm axis empty: go through kernel empty template, do not return early
     } else {
-        // A2/A3 any empty or A5 non-norm axis empty: return directly
-        if (x1->IsEmpty() || x2->IsEmpty() || gamma->IsEmpty() || y2Out->IsEmpty()) {
+        // 输入侧任一为空：整体 no-op 早退。y2Out->IsEmpty() 不再参与判据（issue #8729）：
+        // y2Out 为无效输出占位传空时应继续计算其余有效输出，而非静默跳过全部写出；
+        // y2Out 为有效输出却传空则放行到后续 shape 校验（y2Shape != x1Shape → 561002），
+        // 与 y1Out 空的既有行为对称。
+        if (x1->IsEmpty() || x2->IsEmpty() || gamma->IsEmpty()) {
             OP_LOGW("Got empty tensor in aclnnAddRmsNormQuantV2!");
             *workspaceSize = 0;
             uniqueExecutor.ReleaseTo(executor);

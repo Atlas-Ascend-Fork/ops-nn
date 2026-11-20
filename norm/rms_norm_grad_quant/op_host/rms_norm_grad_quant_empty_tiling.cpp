@@ -42,6 +42,9 @@ static constexpr int64_t TWO = 2;
 static constexpr int64_t BUFFER_NUM = 2;
 static constexpr int64_t FLOATBYTESIZE = 4;
 static constexpr int64_t MAX_CORE_COLS = 8192;
+// 文档约束：rstd/gamma维度数为1-7（rstd_shape = x_shape[0:n]，gamma_shape = x_shape[n:]，n < x_shape.dims()）。
+static constexpr int64_t MIN_DIMS_RSTD_GAMMA = 1;
+static constexpr int64_t MAX_DIMS_RSTD_GAMMA = 7;
 static constexpr uint32_t EMPTY_TENSOR_KEY = 8000;
 static const gert::Shape g_vec_1_shape = {1};
 
@@ -164,6 +167,14 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckRstdGammaShapes(gert::Shape& g
             "The shape of input rstd can not be an invalid tensor with a negative dim");
         return ge::GRAPH_FAILED;
     }
+    OP_CHECK_IF(static_cast<int64_t>(storageShape2.GetDimNum()) < MIN_DIMS_RSTD_GAMMA ||
+                    static_cast<int64_t>(storageShape2.GetDimNum()) > MAX_DIMS_RSTD_GAMMA,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context_->GetNodeName(), "rstd", std::to_string(storageShape2.GetDimNum()).c_str(),
+                    ("the dim num of rstd must be in range [" + std::to_string(MIN_DIMS_RSTD_GAMMA) + ", " +
+                     std::to_string(MAX_DIMS_RSTD_GAMMA) + "]")
+                        .c_str()),
+                return ge::GRAPH_FAILED);
 
     // check gamma
     inputShape = context_->GetInputShape(INPUT_INDEX_3);
@@ -180,6 +191,14 @@ ge::graphStatus RmsNormGradQuantEmptyTiling::CheckRstdGammaShapes(gert::Shape& g
             "The shape of input gamma can not be an invalid tensor with a negative dim");
         return ge::GRAPH_FAILED;
     }
+    OP_CHECK_IF(static_cast<int64_t>(gammaStorage.GetDimNum()) < MIN_DIMS_RSTD_GAMMA ||
+                    static_cast<int64_t>(gammaStorage.GetDimNum()) > MAX_DIMS_RSTD_GAMMA,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context_->GetNodeName(), "gamma", std::to_string(gammaStorage.GetDimNum()).c_str(),
+                    ("the dim num of gamma must be in range [" + std::to_string(MIN_DIMS_RSTD_GAMMA) + ", " +
+                     std::to_string(MAX_DIMS_RSTD_GAMMA) + "]")
+                        .c_str()),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

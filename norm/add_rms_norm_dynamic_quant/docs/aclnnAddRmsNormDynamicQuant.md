@@ -195,7 +195,7 @@ aclnnStatus aclnnAddRmsNormDynamicQuant(
       <td>epsilon（double）</td>
       <td>输入</td>
       <td>表示用于防止除0错误，对应公式中的`epsilon`。</td>
-      <td>建议传入较小正数，如1e-6。</td>
+      <td>建议传入较小正数，如1e-6。该参数实际按float32精度承载，绝对值小于约1.18e-38的数值会下溢为±0（此时与传入0.0的行为一致）。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -205,7 +205,7 @@ aclnnStatus aclnnAddRmsNormDynamicQuant(
       <td>y1Out（aclTensor*）</td>
       <td>输出</td>
       <td>表示量化输出Tensor，对应公式中的`y1Out`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape需要与输入`x1`/`x2`一致，或者是二维并且第一维等于`x1`除了最后一维的维度乘积，第二维等于`x1`的最后一维。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape需要与输入`x1`/`x2`一致。</li></ul></td>
       <td>INT8、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN</td>
       <td>ND</td>
       <td>2-8</td>

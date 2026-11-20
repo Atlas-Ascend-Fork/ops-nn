@@ -2269,4 +2269,33 @@ TEST(RmsNormTemplatesTiling, NonRegbaseRstdNumelMustEqualRows)
                                     ge::DT_FLOAT, 0, "GemmaRmsNorm", 64, 253952, "Ascend910B", "2201");
     EXPECT_EQ(goodGemma.status, ge::GRAPH_SUCCESS);
 }
+
+TEST(RmsNormTemplatesTiling, RstdDimNumOutOfRangeIsRejected)
+{
+    // rstdOut 维度数此前缺少上限校验：x 为 8 维时传入 9 维 rstdOut（多余维为 1）可绕过逐维
+    // 检查静默成功，超出文档声明的 1-8 维范围，tiling 应失败。
+    // 9 维 rstdOut 的元素数等于归一化行数（8），保证失败仅来自维度数校验而非 numel 校验。
+    const gert::StorageShape x = {{8, 128}, {8, 128}};
+    const gert::StorageShape gamma = {{128}, {128}};
+    const gert::StorageShape rstdDim9 = {{8, 1, 1, 1, 1, 1, 1, 1, 1}, {8, 1, 1, 1, 1, 1, 1, 1, 1}};
+    for (const char* opType : {"RmsNorm", "GemmaRmsNorm"}) {
+        EXPECT_EQ(RunShapeTiling(x, gamma, rstdDim9, ge::DT_FLOAT16, ge::DT_FLOAT, 0, opType, 64, 253952, "Ascend910B",
+                                 "2201")
+                      .status,
+                  ge::GRAPH_FAILED);
+    }
+    // 合法 8 维 rstdOut 不被维度数上限误伤：x 与 rstdOut 同为 8 维，同时满足既有前置约束
+    // （rstd rank ≤ x rank、非归一化前缀维相等、归约维为 1），仅验证上限校验不误伤合法边界。
+    const gert::StorageShape xDim8 = {{8, 1, 1, 1, 1, 1, 1, 128}, {8, 1, 1, 1, 1, 1, 1, 128}};
+    const gert::StorageShape rstdDim8 = {{8, 1, 1, 1, 1, 1, 1, 1}, {8, 1, 1, 1, 1, 1, 1, 1}};
+    EXPECT_EQ(RunShapeTiling(xDim8, gamma, rstdDim8, ge::DT_FLOAT16, ge::DT_FLOAT, 0, "RmsNorm", 64, 253952,
+                             "Ascend910B", "2201")
+                  .status,
+              ge::GRAPH_SUCCESS);
+    // RmsNorm 950 regbase 空归约的 0 维标量 rstdOut 场景不受影响。
+    const gert::StorageShape scalar = {{}, {}};
+    for (const auto& [dx, dg] : DTYPES) {
+        EXPECT_EQ(RunShapeTiling({{0}, {0}}, {{0}, {0}}, scalar, dx, dg).status, ge::GRAPH_SUCCESS);
+    }
+}
 } // namespace

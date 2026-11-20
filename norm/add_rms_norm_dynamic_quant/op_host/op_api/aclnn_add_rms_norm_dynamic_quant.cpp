@@ -99,18 +99,19 @@ static bool CheckDtypeValid(const aclTensor* x1, const aclTensor* x2, const aclT
     OP_CHECK_DTYPE_NOT_MATCH(scale1Out, op::DataType::DT_FLOAT, return false);
     OP_CHECK_DTYPE_NOT_MATCH(scale2Out, op::DataType::DT_FLOAT, return false);
 
-    // Additional consistency checks apply only to the regbase product path.
-    if (Ops::NN::AclnnUtil::IsRegbase()) {
-        OP_CHECK_DTYPE_NOT_SAME(x1, x2, return false);
-        OP_CHECK_DTYPE_NOT_SAME(x1, gamma, return false);
-        if (smoothScale1Optional != nullptr) {
-            OP_CHECK_DTYPE_NOT_SAME(x1, smoothScale1Optional, return false);
-        }
-        if (smoothScale2Optional != nullptr) {
-            OP_CHECK_DTYPE_NOT_SAME(x1, smoothScale2Optional, return false);
-        }
-        OP_CHECK_DTYPE_NOT_SAME(x1, xOut, return false);
+    // 资料对 x 族一致性为无条件约束（md :157 x2「shape和数据类型需要与x1保持一致」、
+    // :166 gamma「数据类型需要与x1保持一致」、:228 xOut，错误码表 :309 声明违约束返回 161002）。
+    // 修复前整段被 IsRegbase 门控：A2（910B）混配 dtype 首段放行、执行段以资料外内部码
+    // 561000 失败，与同函数内 y1Out/y2Out 的无条件同款检查不对称（issue #8695）。
+    OP_CHECK_DTYPE_NOT_SAME(x1, x2, return false);
+    OP_CHECK_DTYPE_NOT_SAME(x1, gamma, return false);
+    if (smoothScale1Optional != nullptr) {
+        OP_CHECK_DTYPE_NOT_SAME(x1, smoothScale1Optional, return false);
     }
+    if (smoothScale2Optional != nullptr) {
+        OP_CHECK_DTYPE_NOT_SAME(x1, smoothScale2Optional, return false);
+    }
+    OP_CHECK_DTYPE_NOT_SAME(x1, xOut, return false);
 
     return true;
 }
@@ -177,7 +178,15 @@ static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, const a
                               scale2Out),
               ACLNN_ERR_PARAM_INVALID);
 
-    // 3. 检查输入 shape 是否合法
+    // 3. smoothScale2Optional 必须与 smoothScale1Optional 配套使用（资料 :188「必须与
+    //    smoothScale1Optional配套使用」）。修复前首段无配套检查，s2-only 放行到 tiling
+    //    （arch22 :402-407）才失败，错误以资料外内部码 561103 透出（issue #8696）
+    if (smoothScale2Optional != nullptr && smoothScale1Optional == nullptr) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "smoothScale2Optional must be used together with smoothScale1Optional.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+
+    // 4. 检查输入 shape 是否合法
     CHECK_RET(CheckShapeValid(x1, x2, gamma, smoothScale1Optional, smoothScale2Optional), ACLNN_ERR_INNER_TILING_ERROR);
 
     return ACLNN_SUCCESS;

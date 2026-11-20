@@ -103,7 +103,7 @@ aclnnStatus aclnnRmsNorm(
       <td>epsilon（double）</td>
       <td>输入</td>
       <td>表示添加到方差中的值，以避免出现除以零的情况。对应公式中的`epsilon`。</td>
-      <td>缺省值为1e-6。</td>
+      <td>缺省值为1e-6。该参数实际按float32精度承载，绝对值小于约1.18e-38的数值会下溢为±0（此时与传入0.0的行为一致）。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

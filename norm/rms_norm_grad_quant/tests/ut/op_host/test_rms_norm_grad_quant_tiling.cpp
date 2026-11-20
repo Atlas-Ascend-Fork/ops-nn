@@ -1163,6 +1163,97 @@ TEST_F(RmsNormGradQuantTilingTest, rms_norm_grad_quant_shape_dgammaout_mismatch)
     EXPECT_EQ(RunRmsNormGradQuantTiling(inputs, outputs, inputDtypes, outputDtypes, irInstanceNum, true, tilingKey),
               ge::GRAPH_FAILED);
 }
+
+TEST_F(RmsNormGradQuantTilingTest, rms_norm_grad_quant_shape_rstd_gamma_dim8_hang_rejected)
+{
+    // 回归：x为2维而rstd/gamma均为8维时，原实现在CheckRelationShapes中先计算rows_，
+    // dyDimNum - gammaDimNum为size_t下溢，循环近乎死循环导致tiling挂死；现应直接返回GRAPH_FAILED。
+    gert::StorageShape dy_shape = {{8, 64}, {8, 64}};
+    gert::StorageShape x_shape = {{8, 64}, {8, 64}};
+    gert::StorageShape rstd_shape = {{2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2}};  // dimNum=8, invalid
+    gert::StorageShape gamma_shape = {{2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2}}; // dimNum=8, invalid
+    gert::StorageShape scales_x_shape = {{1}, {1}};
+    gert::StorageShape dx_out_shape = {{8, 64}, {8, 64}};
+    gert::StorageShape dgamma_out_shape = {{2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2}};
+
+    std::vector<gert::StorageShape*> inputs = {&dy_shape, &x_shape, &rstd_shape, &gamma_shape, &scales_x_shape};
+    std::vector<gert::StorageShape*> outputs = {&dx_out_shape, &dgamma_out_shape};
+    std::vector<ge::DataType> inputDtypes = {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    std::vector<ge::DataType> outputDtypes = {ge::DT_HIFLOAT8, ge::DT_FLOAT};
+    std::vector<uint32_t> irInstanceNum = {1, 1, 1, 1, 1, 0};
+
+    uint64_t tilingKey = 0;
+    EXPECT_EQ(RunRmsNormGradQuantTiling(inputs, outputs, inputDtypes, outputDtypes, irInstanceNum, true, tilingKey),
+              ge::GRAPH_FAILED);
+}
+
+TEST_F(RmsNormGradQuantTilingTest, rms_norm_grad_quant_shape_gamma_dim_gt_x_dim_rejected)
+{
+    // 回归：gamma维度数(7维，文档范围内)大于x维度数(2维)时，原实现在rows_计算中
+    // dyDimNum - gammaDimNum为size_t下溢导致挂死；现由前移的维度数关系校验直接拦截。
+    gert::StorageShape dy_shape = {{8, 64}, {8, 64}};
+    gert::StorageShape x_shape = {{8, 64}, {8, 64}};
+    gert::StorageShape rstd_shape = {{8}, {8}};
+    gert::StorageShape gamma_shape = {{2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2}}; // dimNum=7 > x.dimNum=2
+    gert::StorageShape scales_x_shape = {{1}, {1}};
+    gert::StorageShape dx_out_shape = {{8, 64}, {8, 64}};
+    gert::StorageShape dgamma_out_shape = {{2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2}};
+
+    std::vector<gert::StorageShape*> inputs = {&dy_shape, &x_shape, &rstd_shape, &gamma_shape, &scales_x_shape};
+    std::vector<gert::StorageShape*> outputs = {&dx_out_shape, &dgamma_out_shape};
+    std::vector<ge::DataType> inputDtypes = {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    std::vector<ge::DataType> outputDtypes = {ge::DT_HIFLOAT8, ge::DT_FLOAT};
+    std::vector<uint32_t> irInstanceNum = {1, 1, 1, 1, 1, 0};
+
+    uint64_t tilingKey = 0;
+    EXPECT_EQ(RunRmsNormGradQuantTiling(inputs, outputs, inputDtypes, outputDtypes, irInstanceNum, true, tilingKey),
+              ge::GRAPH_FAILED);
+}
+
+TEST_F(RmsNormGradQuantTilingTest, rms_norm_grad_quant_shape_rstd_dim8_scalar_gamma_rejected)
+{
+    // rstd维度数=8超出文档声明的1-7范围（gamma为0维标量时维度数关系校验可绕过），
+    // 新增的rstd/gamma维度数范围校验应直接拦截。
+    gert::StorageShape dy_shape = {{2, 2, 2, 2, 2, 2, 2, 64}, {2, 2, 2, 2, 2, 2, 2, 64}};
+    gert::StorageShape x_shape = {{2, 2, 2, 2, 2, 2, 2, 64}, {2, 2, 2, 2, 2, 2, 2, 64}};
+    gert::StorageShape rstd_shape = {{2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2}}; // dimNum=8, invalid
+    gert::StorageShape gamma_shape = {{}, {}};                                            // 标量gamma
+    gert::StorageShape scales_x_shape = {{1}, {1}};
+    gert::StorageShape dx_out_shape = {{2, 2, 2, 2, 2, 2, 2, 64}, {2, 2, 2, 2, 2, 2, 2, 64}};
+    gert::StorageShape dgamma_out_shape = {{}, {}};
+
+    std::vector<gert::StorageShape*> inputs = {&dy_shape, &x_shape, &rstd_shape, &gamma_shape, &scales_x_shape};
+    std::vector<gert::StorageShape*> outputs = {&dx_out_shape, &dgamma_out_shape};
+    std::vector<ge::DataType> inputDtypes = {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    std::vector<ge::DataType> outputDtypes = {ge::DT_HIFLOAT8, ge::DT_FLOAT};
+    std::vector<uint32_t> irInstanceNum = {1, 1, 1, 1, 1, 0};
+
+    uint64_t tilingKey = 0;
+    EXPECT_EQ(RunRmsNormGradQuantTiling(inputs, outputs, inputDtypes, outputDtypes, irInstanceNum, true, tilingKey),
+              ge::GRAPH_FAILED);
+}
+
+TEST_F(RmsNormGradQuantTilingTest, rms_norm_grad_quant_shape_max_dims_success)
+{
+    // 边界放行：x为8维、rstd为7维、gamma为1维（文档允许的最大维度数组合）不应被误伤。
+    gert::StorageShape dy_shape = {{2, 2, 2, 2, 2, 2, 2, 64}, {2, 2, 2, 2, 2, 2, 2, 64}};
+    gert::StorageShape x_shape = {{2, 2, 2, 2, 2, 2, 2, 64}, {2, 2, 2, 2, 2, 2, 2, 64}};
+    gert::StorageShape rstd_shape = {{2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2}};
+    gert::StorageShape gamma_shape = {{64}, {64}};
+    gert::StorageShape scales_x_shape = {{1}, {1}};
+    gert::StorageShape dx_out_shape = {{2, 2, 2, 2, 2, 2, 2, 64}, {2, 2, 2, 2, 2, 2, 2, 64}};
+    gert::StorageShape dgamma_out_shape = {{64}, {64}};
+
+    std::vector<gert::StorageShape*> inputs = {&dy_shape, &x_shape, &rstd_shape, &gamma_shape, &scales_x_shape};
+    std::vector<gert::StorageShape*> outputs = {&dx_out_shape, &dgamma_out_shape};
+    std::vector<ge::DataType> inputDtypes = {ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    std::vector<ge::DataType> outputDtypes = {ge::DT_HIFLOAT8, ge::DT_FLOAT};
+    std::vector<uint32_t> irInstanceNum = {1, 1, 1, 1, 1, 0};
+
+    uint64_t tilingKey = 0;
+    EXPECT_EQ(RunRmsNormGradQuantTiling(inputs, outputs, inputDtypes, outputDtypes, irInstanceNum, true, tilingKey),
+              ge::GRAPH_SUCCESS);
+}
 // namespace error_message
 
 // Global listener: after each test, verify no EZ9999 was captured

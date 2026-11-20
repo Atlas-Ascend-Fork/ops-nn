@@ -649,3 +649,26 @@ TEST_F(l2_add_rms_norm_quant_test, ascend910B_x2_shape_mismatch)
     uint64_t workspace_size = 0;
     EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
 }
+
+// A2 上 x1/x2/gamma/xOut 同为 FLOAT32 应在首段按资料白名单返回 161002：
+// 资料明确「入参x1、x2、gamma和出参xOut仅支持FLOAT16、BFLOAT16」，修复前沿用 RegBase 白名单
+// （含 FLOAT）首段放行，执行段以资料外内部码 561000 失败（issue #8379）
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_dtype_whitelist_fp32_rejected)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e-5, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}

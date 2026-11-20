@@ -803,6 +803,17 @@ static ge::graphStatus CheckGemmaRstdShape(const gert::TilingContext* context)
 static ge::graphStatus Tiling4GemmaRmsNorm(gert::TilingContext* context)
 {
     platform_ascendc::SocVersion curSocVersion;
+    // rstd 逐维校验只约束维度值（1 或等于 x 对应维），维度数本身缺少上限约束：
+    // 9 维 rstdOut（多余维为 1）可绕过逐维检查静默成功，按文档声明拦截上限越界。
+    // Tiling4RmsNorm 入口已有同款校验（仅护 RmsNorm），GemmaRmsNorm 路径在此补齐
+    // （下界不拦截：950 regbase 空归约允许 0 维标量 rstd）。
+    const gert::StorageShape* rstdShapeGemma = context->GetOutputShape(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, rstdShapeGemma);
+    const size_t rstdDimNumGemma = rstdShapeGemma->GetStorageShape().GetDimNum();
+    OP_TILING_CHECK(rstdDimNumGemma > MAX_DIM_NUM,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "rstd",
+                                                 std::to_string(rstdDimNumGemma).c_str(), "not greater than 8"),
+                    return ge::GRAPH_FAILED);
     OP_TILING_CHECK(!CheckInputShape4RmsNorm(context), OP_LOGE_WITHOUT_REPORT(context, "Input shape invalid."),
                     return ge::GRAPH_FAILED);
     OP_TILING_CHECK(CheckGemmaRstdShape(context) != ge::GRAPH_SUCCESS,
