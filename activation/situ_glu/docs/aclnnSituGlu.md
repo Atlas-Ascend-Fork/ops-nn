@@ -246,12 +246,15 @@ aclnnStatus aclnnSituGlu(
       <td>out的数据类型与x不一致。</td>
     </tr>
     <tr>
-      <td rowspan="2">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="2">561002</td>
+      <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="3">561002</td>
       <td>dim不在指定的取值范围内或x在dim对应维度上不能被2整除。</td>
     </tr>
     <tr>
       <td>out的维度数与x不一致，或out在dim对应维度上的大小不等于x的一半。</td>
+    </tr>
+    <tr>
+      <td>out在除dim对应维度外的其他维度上的大小与x不一致。</td>
     </tr>
   </tbody></table>
 

@@ -240,8 +240,8 @@ aclnnStatus aclnnSituGlu(
       <td>x or out is a null pointer.</td>
     </tr>
     <tr>
-      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="5">161002</td>
+      <td rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="6">161002</td>
       <td>The data type of x or out is not within the supported range.</td>
     </tr>
     <tr>
@@ -252,6 +252,9 @@ aclnnStatus aclnnSituGlu(
     </tr>
     <tr>
       <td>The number of dimensions of out is inconsistent with that of x, or the size of out on the dimension corresponding to dim is not equal to half of x.</td>
+    </tr>
+    <tr>
+      <td>The size of out on dimensions other than the dimension corresponding to dim is inconsistent with that of x.</td>
     </tr>
     <tr>
       <td>The data type of out does not match that of x.</td>

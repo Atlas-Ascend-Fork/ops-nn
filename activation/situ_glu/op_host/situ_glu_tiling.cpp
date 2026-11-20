@@ -268,6 +268,29 @@ ge::graphStatus SituGluTiling::CheckY() const
             ("y[dim] should be equal to x[dim] divided by 2, but get " + std::to_string(inputShapeY.GetDim(cutDim_)) +
              ", expected " + std::to_string(cutDimSize_ / SWI_FACTOR) + ".")),
         return ge::GRAPH_FAILED);
+    // 除dim外的其余维度必须与x逐维一致（文档：out的shape在dim对应维度上为x的一半，
+    // 其他维度与x一致）。否则内核按x的合轴几何写出，out小于x一半几何时越界写、
+    // 大于时部分元素留脏，且两段接口静默返回0（issue #8984，#8265回归）。
+    const gert::StorageShape* shapeX = context_->GetInputShape(X_INDEX);
+    OP_CHECK_IF(
+        shapeX == nullptr,
+        OP_LOGE_WITH_INVALID_INPUT(
+            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "situ_glu" : (context_)->GetNodeName()),
+            "x"),
+        return ge::GRAPH_FAILED);
+    const gert::Shape& inputShapeX = shapeX->GetStorageShape();
+    for (int64_t i = 0; i < yDims; ++i) {
+        if (i == cutDim_) {
+            continue;
+        }
+        OP_CHECK_IF(
+            inputShapeY.GetDim(i) != inputShapeX.GetDim(i),
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                context_->GetNodeName(), "y", std::to_string(inputShapeY.GetDim(i)),
+                ("y[" + std::to_string(i) + "] should be equal to x[" + std::to_string(i) + "], expected " +
+                 std::to_string(inputShapeX.GetDim(i)) + ", but get " + std::to_string(inputShapeY.GetDim(i)) + ".")),
+            return ge::GRAPH_FAILED);
+    }
     OP_CHECK_IF((yDtype != xDtype_),
                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "x,y",
                                                        std::to_string(static_cast<int>(xDtype_)) + "," +

@@ -24,7 +24,8 @@ struct TilingCase {
     const char* name;
     int64_t rows;
     int64_t columns;
-    int64_t otherColumns;
+    int64_t outRows;
+    int64_t outColumns;
     int64_t dim;
     ge::DataType dtype;
     ge::DataType otherDtype;
@@ -55,7 +56,7 @@ TEST_P(SituGluTilingTest, ValidatesInputsAndWritesTilingData)
     platform.SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
     gert::StorageShape xShape = {{test.rows, test.columns}, {test.rows, test.columns}};
-    gert::StorageShape otherShape = {{test.rows, test.otherColumns}, {test.rows, test.otherColumns}};
+    gert::StorageShape otherShape = {{test.outRows, test.outColumns}, {test.outRows, test.outColumns}};
     optiling::SituGluCompileInfo compileInfo{};
     compileInfo.coreNum = 40;
     compileInfo.ubSize = 196608;
@@ -92,10 +93,21 @@ TEST_P(SituGluTilingTest, ValidatesInputsAndWritesTilingData)
 
 INSTANTIATE_TEST_SUITE_P(
     InputValidation, SituGluTilingTest,
-    testing::Values(TilingCase{"Valid", 4, 8, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true},
-                    TilingCase{"DimOutOfRange", 4, 8, 4, 2, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    TilingCase{"OddSplit", 4, 7, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    TilingCase{"UnsupportedInputDtype", 4, 8, 4, -1, ge::DT_INT32, ge::DT_INT32, false},
-                    TilingCase{"OutputSplitMismatch", 4, 8, 3, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false}),
+    testing::Values(TilingCase{"Valid", 4, 8, 4, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true},
+                    TilingCase{"ValidDimZero", 4, 8, 2, 8, 0, ge::DT_FLOAT16, ge::DT_FLOAT16, true},
+                    TilingCase{"EmptyXEmptyOut", 0, 8, 0, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true},
+                    TilingCase{"DimOutOfRange", 4, 8, 4, 4, 2, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
+                    TilingCase{"OddSplit", 4, 7, 4, 3, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
+                    TilingCase{"UnsupportedInputDtype", 4, 8, 4, 4, -1, ge::DT_INT32, ge::DT_INT32, false},
+                    TilingCase{"OutputDtypeMismatch", 4, 8, 4, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT, false},
+                    TilingCase{"OutputSplitMismatch", 4, 8, 4, 3, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
+                    // issue #8984：非切分维小于x（out[0]=3 < x[0]=4），此前放行导致内核留脏
+                    TilingCase{"NonSplitDimMismatchSmaller", 4, 8, 3, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
+                    // issue #8984：非切分维大于x（out[0]=5 > x[0]=4），此前放行导致内核越界写
+                    TilingCase{"NonSplitDimMismatchBigger", 4, 8, 5, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
+                    // issue #8984：dim=0时非切分维（第1维）不符，切分维校验通过但其余维不符
+                    TilingCase{"NonSplitDimMismatchDimZero", 4, 8, 2, 7, 0, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
+                    // issue #8984：空x必须空out——out在切分维及非切分维均与x不一致
+                    TilingCase{"EmptyXNonEmptyOut", 0, 8, 1, 8, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false}),
     [](const testing::TestParamInfo<TilingCase>& info) { return info.param.name; });
 } // namespace
