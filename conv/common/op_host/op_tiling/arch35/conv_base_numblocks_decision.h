@@ -23,8 +23,6 @@ namespace optiling {
 namespace conv_ops_tiling {
 using namespace std;
 
-uint32_t Gcd(uint32_t i, uint32_t j);
-
 uint64_t ConvCeilDiv(uint64_t a, uint64_t b);
 void ConvCalcCommFactor(const uint64_t num, const uint32_t numMax, vector<uint32_t>& reslist);
 uint32_t ConvAlignB(uint32_t a, uint32_t b);

@@ -21,8 +21,6 @@
 namespace optiling {
 namespace conv_ops_tiling {
 
-uint32_t Gcd(uint32_t i, uint32_t j) { return j > 0 ? Gcd(j, i % j) : i; }
-
 uint64_t ConvCeilDiv(uint64_t a, uint64_t b)
 {
     if (b == 0) {

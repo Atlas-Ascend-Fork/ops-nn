@@ -687,7 +687,7 @@ void ConvTilingAlgorithmBBmode::GetKL0() const
 {
     uint64_t kAL1 = tilingIns_->l1TilingInfo.kAL1;
     uint64_t kBL1 = tilingIns_->l1TilingInfo.kBL1;
-    uint64_t kL1 = min(kAL1, kBL1) / tilingIns_->cubeInfo.k0;
+    uint64_t kL1 = Gcd(kAL1, kBL1) / tilingIns_->cubeInfo.k0;
     uint64_t l0ASize = tilingIns_->platformInfo.l0ASize;
     uint64_t l0BSize = tilingIns_->platformInfo.l0BSize;
     uint64_t kL0Max = min(l0ASize / fMapDTypeSize / DOUBLE_BUFFER_NUM / basicBlockInfoPtr->mTile /

@@ -47,7 +47,7 @@ uint64_t FloorAlign(uint64_t a, uint64_t b)
 
 uint64_t Gcd(uint64_t a, uint64_t b)
 {
-    if (b == 0) {
+    if (a == 0 || b == 0) {
         return 0;
     }
 

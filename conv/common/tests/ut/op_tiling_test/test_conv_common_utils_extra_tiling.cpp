@@ -25,6 +25,7 @@
 #include "conv/common/op_host/op_tiling/conv_platform_util.h"
 #include "conv/common/op_host/op_tiling/convbp_tiling_debug_util.h"
 #include "conv/common/op_host/op_tiling/arch35/conv_base_numblocks_decision.h"
+#include "conv/common/op_host/op_tiling/arch35/conv_api_tiling_util.h"
 #include "conv/common/op_host/op_tiling/arch35/conv_cache_tiling.h"
 #include "conv/common/op_host/op_tiling/arch35/conv_basic_block.h"
 #include "conv/common/op_host/op_tiling/arch35/conv2d_basic_block_strategy.h"
@@ -322,8 +323,8 @@ TEST_F(ConvCommonUtilsTest, NumBlocksDecisionInstructionLimits)
 
 TEST_F(ConvCommonUtilsTest, NumBlocksUtilFunctions)
 {
-    EXPECT_EQ(Gcd(12, 18), 6);
-    EXPECT_EQ(Gcd(0, 7), 7);
+    EXPECT_EQ(conv_tiling::Gcd(12, 18), 6);
+    EXPECT_EQ(conv_tiling::Gcd(0, 7), 0);
     EXPECT_EQ(ConvCeilDiv(10, 3), 4);
     EXPECT_EQ(ConvCeilDiv(10, 0), 0);
     EXPECT_EQ(ConvAlignB(10, 16), 16);
