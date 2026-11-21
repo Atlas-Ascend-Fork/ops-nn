@@ -28,18 +28,17 @@ def linear_index_v2_golden(indices_list, stride, value_size, **kwargs):
     Returns:
         Output tensor
     """
-    stride_val = int(stride[0])
-    size_val = int(value_size[0])
-
     indices_dtype = indices_list[0].dtype
-    output = np.zeros_like(indices_list[0], dtype=np.int32)
+    output = np.zeros(indices_list[0].shape, dtype=np.int64)
 
-    for indices in indices_list:
-        indices_float = indices.astype(np.float32)
+    for i, indices in enumerate(indices_list):
+        stride_val = int(stride[i])
+        size_val = int(value_size[i])
+        a = indices.astype(np.int64)
         if size_val == 0:
-            remain = indices_float
+            remain = a
         else:
-            remain = indices_float - np.floor(indices_float / size_val) * size_val
-        output = output + remain.astype(np.int32) * stride_val
+            remain = a - np.floor_divide(a, size_val) * size_val
+        output = output + remain * stride_val
 
     return output.astype(indices_dtype, copy=False)
