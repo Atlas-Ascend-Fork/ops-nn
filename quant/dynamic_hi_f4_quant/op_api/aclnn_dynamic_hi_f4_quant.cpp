@@ -12,6 +12,8 @@
 #include "dynamic_hi_f4_quant.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/common/op_error_check.h"
+#include "log/log.h"
+#include <string>
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
 #include "opdev/format_utils.h"
@@ -49,11 +51,14 @@ static bool CheckDtypeValid(const aclTensor* x, const aclTensor* y, const aclTen
 {
     OP_CHECK_DTYPE_NOT_SUPPORT(x, X_DTYPE_SUPPORT_LIST, return false);
     if (static_cast<int64_t>(y->GetDataType()) != DT_HIFLOAT4) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out(y) data type must be HIFLOAT4.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnDynamicHiF4Quant", "y", op::ToString(y->GetDataType()).GetString(),
+                                              "supported dtype is HIFLOAT4");
         return false;
     }
     if (static_cast<int64_t>(scale->GetDataType()) != DT_HIFLOAT4_SCALE) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out(scale) data type must be HIFLOAT4_SCALE.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnDynamicHiF4Quant", "scale",
+                                              op::ToString(scale->GetDataType()).GetString(),
+                                              "supported dtype is HIFLOAT4_SCALE");
         return false;
     }
     return true;
@@ -101,7 +106,8 @@ aclnnStatus aclnnDynamicHiF4QuantGetWorkspaceSize(const aclTensor* x, int64_t ax
     CHECK_RET(viewCopyY != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     if (!IsContiguous(scale)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "scale must be contiguous.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnDynamicHiF4Quant", "scale", "non-contiguous",
+                                              "scale must be contiguous");
         return ACLNN_ERR_PARAM_INVALID;
     }
     auto viewCopyScale = l0op::ViewCopy(scaleOut, scale, uniqueExecutor.get());

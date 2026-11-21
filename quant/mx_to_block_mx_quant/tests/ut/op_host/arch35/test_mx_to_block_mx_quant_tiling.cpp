@@ -48,15 +48,16 @@ static string to_string(void* buf, size_t size)
 static void ExecuteTestCase(ge::DataType inDtype, ge::DataType outDtype, gert::StorageShape xShape,
                             gert::StorageShape mxScaleShape, gert::StorageShape yShape, gert::StorageShape scale1Shape,
                             gert::StorageShape scale2Shape, int64_t dstType, string expectTilingData,
-                            ge::graphStatus status = ge::GRAPH_SUCCESS)
+                            ge::graphStatus status = ge::GRAPH_SUCCESS, uint32_t coreNum = 64, uint32_t ubSize = 253952)
 {
     string compile_info_string = R"({
          "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
                            "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true, "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
-                           "UB_SIZE": 253952, "L2_SIZE": 33554432, "L1_SIZE": 524288,
-                           "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
-                           "CORE_NUM": 64}
-                           })";
+                           "UB_SIZE": )" +
+                                 std::to_string(ubSize) +
+                                 R"(, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                           "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072, "CORE_NUM": )" +
+                                 std::to_string(coreNum) + "}}";
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
@@ -236,4 +237,60 @@ TEST_F(MxToBlockMxQuantTiling, MxToBlockMxQuant_tiling_error_y_shape_mismatch)
 
     ExecuteTestCase(ge::DT_FLOAT4_E2M1, ge::DT_FLOAT8_E5M2, xShape, mxScaleShape, yShape, scale1Shape, scale2Shape,
                     dstType, "", ge::GRAPH_FAILED);
+}
+
+// Error case 5: second last dim is not positive
+TEST_F(MxToBlockMxQuantTiling, MxToBlockMxQuant_tiling_error_second_last_dim_non_positive)
+{
+    gert::StorageShape xShape = {{0, 64}, {0, 64}};
+    gert::StorageShape mxScaleShape = {{0, 1, 2}, {0, 1, 2}};
+    gert::StorageShape yShape = {{0, 64}, {0, 64}};
+    gert::StorageShape scale1Shape = {{0, 1, 2}, {0, 1, 2}};
+    gert::StorageShape scale2Shape = {{1, 64, 2}, {1, 64, 2}};
+    int64_t dstType = 35;
+
+    ExecuteTestCase(ge::DT_FLOAT4_E2M1, ge::DT_FLOAT8_E5M2, xShape, mxScaleShape, yShape, scale1Shape, scale2Shape,
+                    dstType, "", ge::GRAPH_FAILED);
+}
+
+// Error case 5b: last dim is odd
+TEST_F(MxToBlockMxQuantTiling, MxToBlockMxQuant_tiling_error_last_dim_odd)
+{
+    gert::StorageShape xShape = {{64, 63}, {64, 63}};
+    gert::StorageShape mxScaleShape = {{64, 1, 2}, {64, 1, 2}};
+    gert::StorageShape yShape = {{64, 63}, {64, 63}};
+    gert::StorageShape scale1Shape = {{64, 1, 2}, {64, 1, 2}};
+    gert::StorageShape scale2Shape = {{1, 63, 2}, {1, 63, 2}};
+    int64_t dstType = 35;
+
+    ExecuteTestCase(ge::DT_FLOAT4_E2M1, ge::DT_FLOAT8_E5M2, xShape, mxScaleShape, yShape, scale1Shape, scale2Shape,
+                    dstType, "", ge::GRAPH_FAILED);
+}
+
+// Error case 6: failed to get core num from platform
+TEST_F(MxToBlockMxQuantTiling, MxToBlockMxQuant_tiling_error_zero_core_num)
+{
+    gert::StorageShape xShape = {{64, 64}, {64, 64}};
+    gert::StorageShape mxScaleShape = {{64, 1, 2}, {64, 1, 2}};
+    gert::StorageShape yShape = {{64, 64}, {64, 64}};
+    gert::StorageShape scale1Shape = {{64, 1, 2}, {64, 1, 2}};
+    gert::StorageShape scale2Shape = {{1, 64, 2}, {1, 64, 2}};
+    int64_t dstType = 35;
+
+    ExecuteTestCase(ge::DT_FLOAT4_E2M1, ge::DT_FLOAT8_E5M2, xShape, mxScaleShape, yShape, scale1Shape, scale2Shape,
+                    dstType, "", ge::GRAPH_FAILED, 0);
+}
+
+// Error case 7: failed to get ub size from platform
+TEST_F(MxToBlockMxQuantTiling, MxToBlockMxQuant_tiling_error_zero_ub_size)
+{
+    gert::StorageShape xShape = {{64, 64}, {64, 64}};
+    gert::StorageShape mxScaleShape = {{64, 1, 2}, {64, 1, 2}};
+    gert::StorageShape yShape = {{64, 64}, {64, 64}};
+    gert::StorageShape scale1Shape = {{64, 1, 2}, {64, 1, 2}};
+    gert::StorageShape scale2Shape = {{1, 64, 2}, {1, 64, 2}};
+    int64_t dstType = 35;
+
+    ExecuteTestCase(ge::DT_FLOAT4_E2M1, ge::DT_FLOAT8_E5M2, xShape, mxScaleShape, yShape, scale1Shape, scale2Shape,
+                    dstType, "", ge::GRAPH_FAILED, 64, 0);
 }

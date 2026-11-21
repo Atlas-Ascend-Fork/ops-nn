@@ -15,6 +15,8 @@
 #include "dynamic_hi_f4_quant_tiling_arch35.h"
 #include "../../op_kernel/arch35/dynamic_hi_f4_quant_tilingdata.h"
 #include <cmath>
+#include <string>
+#include <vector>
 #include "log/log.h"
 #include "platform/platform_info.h"
 #include "util/math_util.h"
@@ -29,6 +31,16 @@ using namespace ge;
 using namespace AscendC;
 using namespace DynamicHiF4QuantOp;
 namespace optiling {
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 constexpr int64_t SECOND_LAST = -2;
 constexpr int64_t INDEX_ATTR_AXIS = 0;
 constexpr int64_t INDEX_ATTR_SCALE_ALG = 1;
@@ -111,7 +123,10 @@ ge::graphStatus DynamicHiF4QuantTiling::GetAttr()
     auto xShape = xShapePtr->GetStorageShape();
     tilingParams.axis = tilingParams.axis < 0 ? tilingParams.axis : tilingParams.axis - xShape.GetDimNum();
     OP_CHECK_IF(tilingParams.axis != -1 && tilingParams.axis != -2,
-                OP_LOGE(context_->GetNodeName(), "The axis should be -1/-2, please check."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "axis",
+                                                      std::to_string(tilingParams.axis).c_str(),
+                                                      "supported values are -1 and -2"),
+                return ge::GRAPH_FAILED);
 
     auto* attrScaleAlg = attrs->GetAttrPointer<int64_t>(INDEX_ATTR_SCALE_ALG);
     int64_t scaleAlg = 0;
@@ -119,7 +134,8 @@ ge::graphStatus DynamicHiF4QuantTiling::GetAttr()
         scaleAlg = *attrScaleAlg;
     }
     OP_CHECK_IF((scaleAlg != 0 && scaleAlg != 1),
-                OP_LOGE(context_->GetNodeName(), "invalid scale_alg:%ld; scale_alg should be 0 or 1", scaleAlg),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "scale_alg",
+                                                      std::to_string(scaleAlg).c_str(), "supported values are 0 and 1"),
                 return ge::GRAPH_FAILED);
     tilingParams.scaleAlg = scaleAlg;
     OP_LOGD(context_->GetNodeName(), "The attr scale_alg is %ld", scaleAlg);
@@ -132,28 +148,26 @@ ge::graphStatus DynamicHiF4QuantTiling::CheckDtype() const
     OP_CHECK_NULL_WITH_CONTEXT(context_, inputXPtr);
     auto xDtype = inputXPtr->GetDataType();
     OP_CHECK_IF(INPUT_SUPPORT_DTYPE_SET.count(xDtype) == 0,
-                OP_LOGE(context_->GetNodeName(),
-                        "Input x's data type only support FLOAT16 and BFLOAT16 currently, but x is [%s], please check.",
-                        Ops::Base::ToString(xDtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", Ops::Base::ToString(xDtype).c_str(),
+                                                      "supported dtypes are FLOAT16/BFLOAT16"),
                 return ge::GRAPH_FAILED);
 
     auto outputYPtr = context_->GetOutputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context_, outputYPtr);
     auto yDtype = outputYPtr->GetDataType();
-    OP_CHECK_IF(
-        Y_SUPPORT_DTYPE_SET.count(yDtype) == 0,
-        OP_LOGE(context_->GetNodeName(), "Output y's data type only support HIFLOAT4, but y is [%s], please check.",
-                Ops::Base::ToString(yDtype).c_str()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(Y_SUPPORT_DTYPE_SET.count(yDtype) == 0,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yDtype).c_str(),
+                                                      "supported dtype is HIFLOAT4"),
+                return ge::GRAPH_FAILED);
 
     auto outputScalePtr = context_->GetOutputDesc(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, outputScalePtr);
     auto scaleDtype = outputScalePtr->GetDataType();
-    OP_CHECK_IF(OUTPUT_SUPPORT_DTYPE_SET.count(scaleDtype) == 0,
-                OP_LOGE(context_->GetNodeName(),
-                        "Output scale's data type only support FLOAT32 currently, but scale is [%s], please check.",
-                        Ops::Base::ToString(scaleDtype).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        OUTPUT_SUPPORT_DTYPE_SET.count(scaleDtype) == 0,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "scale", Ops::Base::ToString(scaleDtype).c_str(),
+                                              "supported dtypes are FLOAT32/HIFLOAT4_SCALE"),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -164,19 +178,19 @@ ge::graphStatus DynamicHiF4QuantTiling::CheckShape() const
     OP_CHECK_NULL_WITH_CONTEXT(context_, xShapePtr);
     auto xShape = xShapePtr->GetStorageShape();
 
-    OP_CHECK_IF(
-        xShape.GetDimNum() < 2 || xShape.GetDimNum() > MAX_DIM_NUM,
-        OP_LOGE(context_->GetNodeName(), "The shape is invalid, Input x rank[%ld] should be in [2, 7], please check.",
-                static_cast<int64_t>(xShape.GetDimNum())),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(xShape.GetDimNum() < 2 || xShape.GetDimNum() > MAX_DIM_NUM,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "x",
+                                                         std::to_string(xShape.GetDimNum()).c_str(),
+                                                         "The rank of x must be in range [2, 7]"),
+                return ge::GRAPH_FAILED);
 
     auto outputYPtr = context_->GetOutputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context_, outputYPtr);
     auto yDtype = outputYPtr->GetDataType();
 
     OP_CHECK_IF(xShape.GetDim(xShape.GetDimNum() - 1) % DIGIT_TWO != 0 && Y_SUPPORT_DTYPE_FP4_SET.count(yDtype) != 0,
-                OP_LOGE(context_->GetNodeName(),
-                        "When output y's data type is HIFLOAT4, the last axis must be a multiple of 64, please check."),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x", Shape2String(xShape).c_str(),
+                                                      "when the dtype of y is HIFLOAT4, the last axis must be even"),
                 return ge::GRAPH_FAILED);
 
     auto yShapePtr = context_->GetOutputShape(0);
@@ -184,9 +198,9 @@ ge::graphStatus DynamicHiF4QuantTiling::CheckShape() const
     auto yShape = yShapePtr->GetStorageShape();
 
     OP_CHECK_IF(xShape != yShape,
-                OP_LOGE(context_->GetNodeName(),
-                        "The shape of output y[%s] must be same with shape of input x[%s], please check.",
-                        Shape2String(yShape).c_str(), Shape2String(xShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context_->GetNodeName(), "x, y", (Shape2String(yShape) + " vs " + Shape2String(xShape)).c_str(),
+                    "the shape of output y must be the same with the shape of input x"),
                 return ge::GRAPH_FAILED);
 
     auto ScaleShapePtr = context_->GetOutputShape(1);
@@ -201,36 +215,38 @@ ge::graphStatus DynamicHiF4QuantTiling::CheckShape() const
                              Ops::Base::CeilDiv(xShape.GetDim(xShape.GetDimNum() - 1), DIGIT_64));
         newScaleShape.AppendDim(DIGIT_ONE);
         OP_CHECK_IF(newScaleShape != ScaleShape,
-                    OP_LOGE(context_->GetNodeName(),
-                            "The shape of output scale [%s] is incorrect, correct shape is [%s], please check.",
-                            Shape2String(ScaleShape).c_str(), Shape2String(newScaleShape).c_str()),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context_->GetNodeName(), "scale", Shape2String(ScaleShape).c_str(),
+                        ("expected shape is " + Shape2String(newScaleShape) +
+                         " (when the quantization axis is the last axis, scale.shape[-2] = x.shape[-1] / 64, "
+                         "scale.shape[-1] = 1)")
+                            .c_str()),
                     return ge::GRAPH_FAILED);
 
         OP_CHECK_IF(
             lastDim % DIGIT_64 != 0,
-            OP_LOGE(context_->GetNodeName(),
-                    "When the quantization axis is the last axis, the size of the last axis must be a multiple of 64."
-                    "The current last axis size is [%ld] please check.",
-                    lastDim),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x", Shape2String(xShape).c_str(),
+                                                  "when the quantization axis is the last axis, the size of the last "
+                                                  "axis must be a multiple of 64"),
             return ge::GRAPH_FAILED);
     } else if (tilingParams.axis == SECOND_LAST) {
         newScaleShape.SetDim(xShape.GetDimNum() - DIGIT_TWO,
                              Ops::Base::CeilDiv(xShape.GetDim(xShape.GetDimNum() - DIGIT_TWO), DIGIT_64));
         newScaleShape.AppendDim(DIGIT_ONE);
         OP_CHECK_IF(newScaleShape != ScaleShape,
-                    OP_LOGE(context_->GetNodeName(),
-                            "The shape of output scale [%s] is incorrect, correct shape is [%s], please check.",
-                            Shape2String(ScaleShape).c_str(), Shape2String(newScaleShape).c_str()),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context_->GetNodeName(), "scale", Shape2String(ScaleShape).c_str(),
+                        ("expected shape is " + Shape2String(newScaleShape) +
+                         " (when the quantization axis is axis -2, scale.shape[-3] = x.shape[-2] / 64, "
+                         "scale.shape[-1] = 1)")
+                            .c_str()),
                     return ge::GRAPH_FAILED);
 
         OP_CHECK_IF(
             lastDim % DIGIT_64 != 0 || nonLastDim % DIGIT_64 != 0,
-            OP_LOGE(
-                context_->GetNodeName(),
-                "When the quantization axis is axis -2, the sizes of both axis -2 and the last axis must be multiples "
-                "of 64."
-                "The current axis -1 is [%ld] and axis -2 is [%ld], please check.",
-                lastDim, nonLastDim),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x", Shape2String(xShape).c_str(),
+                                                  "when the quantization axis is axis -2, the sizes of both axis -2 "
+                                                  "and the last axis must be multiples of 64"),
             return ge::GRAPH_FAILED);
     } else {
         return ge::GRAPH_FAILED;
@@ -246,12 +262,12 @@ ge::graphStatus DynamicHiF4QuantTiling::GetPlatformInfo()
     OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     tilingParams.totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((tilingParams.totalCoreNum <= 0), OP_LOGE(context_->GetNodeName(), "Failed to core num."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((tilingParams.totalCoreNum <= 0),
+                ReportTilingFailure(context_->GetNodeName(), "Failed to get core num."), return ge::GRAPH_FAILED);
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     tilingParams.ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((tilingParams.ubSize <= 0), OP_LOGE(context_->GetNodeName(), "Failed to get ub size."),
+    OP_CHECK_IF((tilingParams.ubSize <= 0), ReportTilingFailure(context_->GetNodeName(), "Failed to get ub size."),
                 return ge::GRAPH_FAILED);
     tilingParams.workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
@@ -297,12 +313,12 @@ ge::graphStatus DynamicHiF4QuantTiling::SetTilingParamsNeg2()
 
     MergeAxis();
 
-    OP_CHECK_IF(
-        tilingParams.ubSize < HIFP4_NEG2_BASIC_BLOCK_UB_BYTES,
-        OP_LOGE(context_->GetNodeName(),
-                "Ub size %ld is too small for hif4 quant axis -2, at least %ld bytes are required, please check.",
-                tilingParams.ubSize, HIFP4_NEG2_BASIC_BLOCK_UB_BYTES),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingParams.ubSize < HIFP4_NEG2_BASIC_BLOCK_UB_BYTES,
+                ReportTilingFailure(context_->GetNodeName(), "Ub size " + std::to_string(tilingParams.ubSize) +
+                                                                 " is too small for hif4 quant axis -2, at least " +
+                                                                 std::to_string(HIFP4_NEG2_BASIC_BLOCK_UB_BYTES) +
+                                                                 " bytes are required"),
+                return ge::GRAPH_FAILED);
 
     tilingParams.blockSize = BLOCK_SIZE;
     SplitCore(tilingParams.blockSize);
@@ -357,10 +373,12 @@ ge::graphStatus DynamicHiF4QuantTiling::SetTilingParamsNeg1()
     tilingParams.groupNum = static_cast<int64_t>(Ops::Base::CeilDiv(totalshape, static_cast<uint64_t>(DIGIT_64)));
     tilingParams.ubFormer = HiF4GetUbFormerNeg1();
     OP_CHECK_IF(tilingParams.ubFormer <= 0,
-                OP_LOGE(context_->GetNodeName(),
-                        "Ub size %ld is too small for hif4 quant, at least %ld bytes are required, please check.",
-                        tilingParams.ubSize,
-                        RESERVED_UB_SIZE + HIFP4_ONE_GROUP_CCE_UB_BYTES * HIFP4_OUTPUT_SCALE_REG_ONELOOP_GROUP_NUM),
+                ReportTilingFailure(
+                    context_->GetNodeName(),
+                    "Ub size " + std::to_string(tilingParams.ubSize) + " is too small for hif4 quant, at least " +
+                        std::to_string(RESERVED_UB_SIZE +
+                                       HIFP4_ONE_GROUP_CCE_UB_BYTES * HIFP4_OUTPUT_SCALE_REG_ONELOOP_GROUP_NUM) +
+                        " bytes are required"),
                 return ge::GRAPH_FAILED);
 
     // 按 tile 均分核(借鉴 cce :334-344): 头部 headCoreNum 个核各多 1 个 tile, 各核 tile 区间连续衔接;
@@ -378,26 +396,30 @@ ge::graphStatus DynamicHiF4QuantTiling::DoTiling()
 {
     OP_LOGD(context_->GetNodeName(), "Enter DynamicHiF4QuantTiling DoTiling.");
 
-    OP_CHECK_IF(GetPlatformInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The platforminfo get failed"),
+    OP_CHECK_IF(GetPlatformInfo() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The platforminfo get failed"),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckDtype() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The data type check failed."),
+    OP_CHECK_IF(CheckDtype() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The data type check failed."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The attr get failed."),
+    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The attr get failed."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The shape check failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The shape check failed."), return ge::GRAPH_FAILED);
 
     if (tilingParams.axis == -1) {
         OP_CHECK_IF(SetTilingParamsNeg1() != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context_->GetNodeName(), "The tiling params of axis -1 set failed."),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The tiling params of axis -1 set failed."),
                     return ge::GRAPH_FAILED);
         SetTilingKey();
         SetTilingDataNeg1();
     } else {
-        SetTilingParamsNeg2();
+        OP_CHECK_IF(SetTilingParamsNeg2() != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The tiling params of axis -2 set failed."),
+                    return ge::GRAPH_FAILED);
         SetTilingKey();
         SetTilingDataNeg2();
     }
@@ -409,7 +431,7 @@ ge::graphStatus DynamicHiF4QuantTiling::DoTiling()
     errno_t ret = memcpy_s(rawTilingData->GetData(), rawTilingData->GetCapacity(), reinterpret_cast<void*>(&tilingData),
                            tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret = %d", ret);
+        ReportTilingFailure(context_->GetNodeName(), "memcpy_s failed, ret = " + std::to_string(ret));
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);

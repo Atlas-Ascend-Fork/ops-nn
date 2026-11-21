@@ -14,6 +14,8 @@
  */
 
 #include "anti_hi_f4_quant_tiling_arch35.h"
+#include <string>
+#include <vector>
 #include "op_common/op_host/util/platform_util.h"
 #include "error_util.h"
 #include "util/math_util.h"
@@ -27,6 +29,16 @@ using namespace AscendC;
 using namespace AntiHiF4QuantOp;
 
 namespace optiling {
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 
 constexpr int64_t BLOCK_SIZE = 64;
 constexpr int64_t NUM_TWO = 2;
@@ -79,7 +91,8 @@ ge::graphStatus AntiHiF4QuantNotTailTiling::DoTiling()
     tilingParams_.headCoreNum = tilingParams_.totalTaskNum % tilingParams_.usedCoreNum;
     tilingParams_.taskNumPerBatch = tilingParams_.splitBlockColNum * tilingParams_.splitBlockRowNum;
 
-    OP_CHECK_IF(SetTilingData() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The tilingData_ set failed."),
+    OP_CHECK_IF(SetTilingData() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The tilingData_ set failed."),
                 return ge::GRAPH_FAILED);
 
     PrintTilingData();
@@ -122,7 +135,7 @@ ge::graphStatus AntiHiF4QuantNotTailTiling::SetTilingData()
     errno_t ret = memcpy_s(rawTilingData->GetData(), rawTilingData->GetCapacity(),
                            reinterpret_cast<void*>(&tilingData_), tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret = %d", ret);
+        ReportTilingFailure(context_->GetNodeName(), "memcpy_s failed, ret = " + std::to_string(ret));
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);

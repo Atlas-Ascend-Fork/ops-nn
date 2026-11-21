@@ -12,6 +12,8 @@
 #include "anti_hi_f4_quant.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/common/op_error_check.h"
+#include "log/log.h"
+#include <string>
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
 #include "opdev/format_utils.h"
@@ -50,7 +52,8 @@ static inline bool CheckNotNull(const aclTensor* x, const aclTensor* scale, cons
 static bool CheckAttrValid(int64_t dstType)
 {
     if (dstType != DT_NUM_FLOAT16 && dstType != DT_NUM_BFLOAT16) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dstType must be 1(FLOAT16) or 27(BF16), but got %ld.", dstType);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnAntiHiF4Quant", "dst_type", std::to_string(dstType).c_str(),
+                                              "supported values are 1(FLOAT16) and 27(BFLOAT16)");
         return false;
     }
     return true;
@@ -59,16 +62,22 @@ static bool CheckAttrValid(int64_t dstType)
 static bool CheckDtypeValid(const aclTensor* x, const aclTensor* scale, const aclTensor* y, int64_t dstType)
 {
     if (static_cast<int64_t>(x->GetDataType()) != DT_HIFLOAT4) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x dtype must be HIFLOAT4.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnAntiHiF4Quant", "x", op::ToString(x->GetDataType()).GetString(),
+                                              "supported dtype is HIFLOAT4");
         return false;
     }
     if (static_cast<int64_t>(scale->GetDataType()) != DT_HIFLOAT4_SCALE) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "scale dtype must be HIFLOAT4_SCALE.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnAntiHiF4Quant", "scale",
+                                              op::ToString(scale->GetDataType()).GetString(),
+                                              "supported dtype is HIFLOAT4_SCALE");
         return false;
     }
     OP_CHECK_DTYPE_NOT_SUPPORT(y, Y_DTYPE_SUPPORT_LIST, return false);
     if (static_cast<int64_t>(y->GetDataType()) != dstType) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out(y) data type must be the same as dstType.");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnAntiHiF4Quant", "y, dst_type",
+            (std::string(op::ToString(y->GetDataType()).GetString()) + ", " + std::to_string(dstType)).c_str(),
+            "the dtype of y and dst_type must correspond");
         return false;
     }
     return true;
@@ -106,11 +115,13 @@ aclnnStatus aclnnAntiHiF4QuantGetWorkspaceSize(const aclTensor* x, const aclTens
     }
 
     if (!IsContiguous(x)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "When the data type of x is HIFLOAT4, it must be contiguous");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnAntiHiF4Quant", "x", "non-contiguous",
+                                              "when the dtype of x is HIFLOAT4, x must be contiguous");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!IsContiguous(scale)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "When the data type of scale is HIFLOAT4_SCALE, it must be contiguous");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnAntiHiF4Quant", "scale", "non-contiguous",
+                                              "when the dtype of scale is HIFLOAT4_SCALE, scale must be contiguous");
         return ACLNN_ERR_PARAM_INVALID;
     }
 

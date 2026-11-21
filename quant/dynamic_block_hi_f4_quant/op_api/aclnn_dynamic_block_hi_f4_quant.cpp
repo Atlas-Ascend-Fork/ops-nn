@@ -13,6 +13,7 @@
 #include <string>
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/common/op_error_check.h"
+#include "log/log.h"
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
 #include "opdev/format_utils.h"
@@ -43,7 +44,8 @@ static inline bool CheckNotNull(const aclTensor* x, const char* roundMode, const
 {
     OP_CHECK_NULL(x, return false);
     if (roundMode == nullptr) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "roundMode cannot be nullptr");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnDynamicBlockHiF4Quant", "round_mode", "nullptr",
+                                              "round_mode must not be nullptr");
         return false;
     }
     OP_CHECK_NULL(y, return false);
@@ -56,12 +58,18 @@ static bool CheckDtypeValid(const aclTensor* x, const aclTensor* y, const aclTen
 {
     OP_CHECK_DTYPE_NOT_SUPPORT(x, X_DTYPE_SUPPORT_LIST, return false);
     if (static_cast<int64_t>(y->GetDataType()) != DT_HIFLOAT4) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out(y) data type must be HIFLOAT4.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnDynamicBlockHiF4Quant", "y",
+                                              op::ToString(y->GetDataType()).GetString(),
+                                              "supported dtype is HIFLOAT4");
         return false;
     }
     if (static_cast<int64_t>(scale1->GetDataType()) != DT_HIFLOAT4_SCALE ||
         static_cast<int64_t>(scale2->GetDataType()) != DT_HIFLOAT4_SCALE) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out(scale1/scale2) data type must be HIFLOAT4_SCALE.");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON("aclnnDynamicBlockHiF4Quant", "scale1, scale2",
+                                               (std::string(op::ToString(scale1->GetDataType()).GetString()) + ", " +
+                                                op::ToString(scale2->GetDataType()).GetString())
+                                                   .c_str(),
+                                               "supported dtype is HIFLOAT4_SCALE");
         return false;
     }
     return true;

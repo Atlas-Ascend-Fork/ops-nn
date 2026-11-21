@@ -73,7 +73,9 @@ graphStatus InferShapeForDynamicBlockHiF4Quant(gert::InferShapeContext* context)
     }
 
     OP_CHECK_IF(xShape->GetDimNum() < MIN_DIM_NUM || xShape->GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(context->GetNodeName(), "Input x rank[%lu] should be in [2, 7].", xShape->GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x",
+                                                         std::to_string(xShape->GetDimNum()).c_str(),
+                                                         "The rank of x must be in range [2, 7]"),
                 return ge::GRAPH_FAILED);
 
     // y.shape = x.shape

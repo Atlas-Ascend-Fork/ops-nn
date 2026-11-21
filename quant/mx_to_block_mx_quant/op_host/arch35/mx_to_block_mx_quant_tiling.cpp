@@ -16,6 +16,8 @@
 #include "mx_to_block_mx_quant_tiling.h"
 #include "quant/mx_to_block_mx_quant/op_kernel/arch35/mx_to_block_mx_quant_tilingdata.h"
 #include "quant/mx_to_block_mx_quant/op_kernel/arch35/mx_to_block_mx_quant_struct.h"
+#include <string>
+#include <vector>
 #include "op_common/op_host/util/platform_util.h"
 #include "platform/platform_info.h"
 #include "tiling/platform/platform_ascendc.h"
@@ -32,6 +34,16 @@ using namespace Ops::Base;
 using namespace MxToBlockMxQuantOp;
 
 namespace optiling {
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 
 constexpr int64_t INDEX_ATTR_DST_TYPE = 0;
 constexpr int64_t DIGIT_ONE = 1;
@@ -71,28 +83,43 @@ static ge::graphStatus CheckDtype(const gert::TilingContext* context)
     OP_LOGD(context->GetNodeName(), "CheckDtype begin.");
     auto inputXPtr = context->GetInputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputXPtr);
-    OP_CHECK_IF(INPUT_SUPPORT_DTYPE_SET.count(inputXPtr->GetDataType()) == 0,
-                OP_LOGE(context->GetNodeName(), "Input x dtype not supported."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        INPUT_SUPPORT_DTYPE_SET.count(inputXPtr->GetDataType()) == 0,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", ToString(inputXPtr->GetDataType()).c_str(),
+                                              "supported dtypes are FLOAT4_E2M1/FLOAT4_E1M2"),
+        return ge::GRAPH_FAILED);
 
     auto inputMxscalePtr = context->GetInputDesc(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputMxscalePtr);
     OP_CHECK_IF(MXSCALE_SUPPORT_DTYPE_SET.count(inputMxscalePtr->GetDataType()) == 0,
-                OP_LOGE(context->GetNodeName(), "Input mxscale dtype not supported."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "mxscale",
+                                                      ToString(inputMxscalePtr->GetDataType()).c_str(),
+                                                      "supported dtype is FLOAT8_E8M0"),
+                return ge::GRAPH_FAILED);
 
     auto outputYPtr = context->GetOutputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputYPtr);
-    OP_CHECK_IF(Y_SUPPORT_DTYPE_SET.count(outputYPtr->GetDataType()) == 0,
-                OP_LOGE(context->GetNodeName(), "Output y dtype not supported."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        Y_SUPPORT_DTYPE_SET.count(outputYPtr->GetDataType()) == 0,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "y", ToString(outputYPtr->GetDataType()).c_str(),
+                                              "supported dtypes are FLOAT8_E5M2/FLOAT8_E4M3FN"),
+        return ge::GRAPH_FAILED);
 
     auto outputScale1Ptr = context->GetOutputDesc(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputScale1Ptr);
     OP_CHECK_IF(SCALE_SUPPORT_DTYPE_SET.count(outputScale1Ptr->GetDataType()) == 0,
-                OP_LOGE(context->GetNodeName(), "Output scale1 dtype not supported."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "scale1",
+                                                      ToString(outputScale1Ptr->GetDataType()).c_str(),
+                                                      "supported dtype is FLOAT8_E8M0"),
+                return ge::GRAPH_FAILED);
 
     auto outputScale2Ptr = context->GetOutputDesc(2);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputScale2Ptr);
     OP_CHECK_IF(SCALE_SUPPORT_DTYPE_SET.count(outputScale2Ptr->GetDataType()) == 0,
-                OP_LOGE(context->GetNodeName(), "Output scale2 dtype not supported."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "scale2",
+                                                      ToString(outputScale2Ptr->GetDataType()).c_str(),
+                                                      "supported dtype is FLOAT8_E8M0"),
+                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -112,16 +139,17 @@ static ge::graphStatus GetAttr(const gert::TilingContext* context, MxToBlockMxQu
     auto yDtype = outputYPtr->GetDataType();
 
     OP_CHECK_IF(DST_TYPE_SUPPORT_SET.count(tilingParam.dstType) == 0,
-                OP_LOGE(context->GetNodeName(), "dst_type[%ld] only supports 35 (FLOAT8_E5M2) or 36 (FLOAT8_E4M3FN).",
-                        tilingParam.dstType),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dst_type",
+                                                      std::to_string(tilingParam.dstType).c_str(),
+                                                      "supported values are 35(FLOAT8_E5M2) and 36(FLOAT8_E4M3FN)"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF((yDtype == ge::DT_FLOAT8_E5M2 && tilingParam.dstType != 35) ||
                     (yDtype == ge::DT_FLOAT8_E4M3FN && tilingParam.dstType != 36),
-                OP_LOGE(context->GetNodeName(),
-                        "y's data type [%s] and dst_type [%ld] do not correspond. "
-                        "FLOAT8_E5M2 / FLOAT8_E4M3FN map to dst_type 35 / 36 respectively, please check.",
-                        Ops::Base::ToString(static_cast<ge::DataType>(yDtype)).c_str(), tilingParam.dstType),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "y, dst_type",
+                    (ToString(static_cast<ge::DataType>(yDtype)) + ", " + std::to_string(tilingParam.dstType)).c_str(),
+                    "the dtype of y and dst_type must correspond: FLOAT8_E5M2/FLOAT8_E4M3FN map to dst_type 35/36"),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -135,18 +163,23 @@ static ge::graphStatus CheckShape(const gert::TilingContext* context)
     auto xShape = xShapePtr->GetStorageShape();
 
     OP_CHECK_IF(xShape.GetDimNum() < MIN_DIM_NUM || xShape.GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(context->GetNodeName(), "Input x rank[%zu] should be in [2, 3].", xShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x",
+                                                         std::to_string(xShape.GetDimNum()).c_str(),
+                                                         "The rank of x must be in range [2, 3]"),
                 return ge::GRAPH_FAILED);
 
     if (xShape.GetDim(xShape.GetDimNum() - 1) % DIGIT_TWO != 0) {
-        OP_LOGE(context->GetNodeName(), "The last dimension must be even.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", Shape2String(xShape).c_str(),
+                                              "the last dimension must be even");
         return ge::GRAPH_FAILED;
     }
 
     // 放宽-2轴约束：原要求secondLastDim%64==0，现允许任意正整数。
     // 不对齐场景（M%64!=0）由rowMode=1(NOT_ALIGNED)兜底切分模板处理。
     int64_t secondLastDim = xShape.GetDim(xShape.GetDimNum() - DIGIT_TWO);
-    OP_CHECK_IF(secondLastDim <= 0, OP_LOGE(context->GetNodeName(), "The -2 dim[%ld] must be positive.", secondLastDim),
+    OP_CHECK_IF(secondLastDim <= 0,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", Shape2String(xShape).c_str(),
+                                                      "the -2 dim must be positive"),
                 return ge::GRAPH_FAILED);
 
     auto mxScaleShapePtr = context->GetInputShape(1);
@@ -157,44 +190,59 @@ static ge::graphStatus CheckShape(const gert::TilingContext* context)
     int64_t mxScaleAxisDim = (CeilDiv(xShape.GetDim(xShape.GetDimNum() - 1), BLOCK_SIZE) + DIGIT_ONE) / DIGIT_TWO;
     expectedMxScaleShape.SetDim(xShape.GetDimNum() - 1, mxScaleAxisDim);
     expectedMxScaleShape.AppendDim(DIGIT_TWO);
-    OP_CHECK_IF(expectedMxScaleShape != mxScaleShape,
-                OP_LOGE(context->GetNodeName(), "Input mxscale shape %s incorrect, expected %s.",
-                        Shape2String(mxScaleShape).c_str(), Shape2String(expectedMxScaleShape).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        expectedMxScaleShape != mxScaleShape,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "mxscale", Shape2String(mxScaleShape).c_str(),
+                                              ("expected shape is " + Shape2String(expectedMxScaleShape)).c_str()),
+        return ge::GRAPH_FAILED);
 
     auto yShapePtr = context->GetOutputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, yShapePtr);
     OP_CHECK_IF(yShapePtr->GetStorageShape() != xShape,
-                OP_LOGE(context->GetNodeName(), "Output y shape must be same with input x shape."),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "x, y",
+                    (Shape2String(yShapePtr->GetStorageShape()) + " vs " + Shape2String(xShape)).c_str(),
+                    "the shape of output y must be the same with the shape of input x"),
                 return ge::GRAPH_FAILED);
 
     auto scale1ShapePtr = context->GetOutputShape(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, scale1ShapePtr);
     auto scale1Shape = scale1ShapePtr->GetStorageShape();
     OP_CHECK_IF(scale1Shape.GetDimNum() != xShape.GetDimNum() + 1,
-                OP_LOGE(context->GetNodeName(), "Output scale1 rank incorrect."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(scale1Shape != mxScaleShape,
-                OP_LOGE(context->GetNodeName(), "Output scale1 shape %s incorrect, expected %s.",
-                        Shape2String(scale1Shape).c_str(), Shape2String(mxScaleShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "scale1",
+                                                         std::to_string(scale1Shape.GetDimNum()).c_str(),
+                                                         "the rank of scale1 must be the rank of x plus 1"),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        scale1Shape != mxScaleShape,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "scale1", Shape2String(scale1Shape).c_str(),
+                                              ("expected shape is " + Shape2String(mxScaleShape)).c_str()),
+        return ge::GRAPH_FAILED);
 
     auto scale2ShapePtr = context->GetOutputShape(2);
     OP_CHECK_NULL_WITH_CONTEXT(context, scale2ShapePtr);
     auto scale2Shape = scale2ShapePtr->GetStorageShape();
     OP_CHECK_IF(scale2Shape.GetDimNum() != xShape.GetDimNum() + 1,
-                OP_LOGE(context->GetNodeName(), "Output scale2 rank incorrect."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "scale2",
+                                                         std::to_string(scale2Shape.GetDimNum()).c_str(),
+                                                         "the rank of scale2 must be the rank of x plus 1"),
+                return ge::GRAPH_FAILED);
     int64_t expectedScale2Dim3 = ((CeilDiv(xShape.GetDim(xShape.GetDimNum() - DIGIT_TWO), BLOCK_SIZE) + DIGIT_ONE) /
                                   DIGIT_TWO) *
                                  DIGIT_TWO / DIGIT_TWO;
     int64_t expectedScale2Dim2 = xShape.GetDim(xShape.GetDimNum() - DIGIT_ONE);
     OP_CHECK_IF(xShape.GetDimNum() == 3 && scale2Shape.GetDim(0) != xShape.GetDim(0),
-                OP_LOGE(context->GetNodeName(), "Output scale2 shape %s incorrect.", Shape2String(scale2Shape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "scale2", Shape2String(scale2Shape).c_str(),
+                    ("when x is 3-D, scale2.shape[0] must be " + std::to_string(xShape.GetDim(0))).c_str()),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(scale2Shape.GetDim(scale2Shape.GetDimNum() - DIM_OFFSET_3) != expectedScale2Dim3 ||
-                    scale2Shape.GetDim(scale2Shape.GetDimNum() - DIGIT_TWO) != expectedScale2Dim2 ||
-                    scale2Shape.GetDim(scale2Shape.GetDimNum() - 1) != DIGIT_TWO,
-                OP_LOGE(context->GetNodeName(), "Output scale2 shape %s incorrect.", Shape2String(scale2Shape).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        scale2Shape.GetDim(scale2Shape.GetDimNum() - DIM_OFFSET_3) != expectedScale2Dim3 ||
+            scale2Shape.GetDim(scale2Shape.GetDimNum() - DIGIT_TWO) != expectedScale2Dim2 ||
+            scale2Shape.GetDim(scale2Shape.GetDimNum() - 1) != DIGIT_TWO,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "scale2", Shape2String(scale2Shape).c_str(),
+                                              "the last three dims of scale2 are incorrect"),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -207,29 +255,26 @@ static ge::graphStatus GetPlatInfo(const gert::TilingContext* context, MxToBlock
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
 
     tilingParam.totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF(tilingParam.totalCoreNum <= 0, OP_LOGE(context->GetNodeName(), "Failed to get core num."),
+    OP_CHECK_IF(tilingParam.totalCoreNum <= 0, ReportTilingFailure(context->GetNodeName(), "Failed to get core num."),
                 return ge::GRAPH_FAILED);
 
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     tilingParam.ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF(tilingParam.ubSize <= 0, OP_LOGE(context->GetNodeName(), "Failed to get ub size."),
+    OP_CHECK_IF(tilingParam.ubSize <= 0, ReportTilingFailure(context->GetNodeName(), "Failed to get ub size."),
                 return ge::GRAPH_FAILED);
 
     tilingParam.vfLen = Ops::Base::GetVRegSize(context);
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus DoTiling(const gert::TilingContext* context, MxToBlockMxQuantTilingParam& tilingParam)
+static void DoTiling(const gert::TilingContext* context, MxToBlockMxQuantTilingParam& tilingParam)
 {
     OP_LOGD(context->GetNodeName(), "DoTiling begin.");
 
-    auto xShapePtr = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShapePtr);
-    auto xShape = xShapePtr->GetStorageShape();
-    auto mxscaleShapePtr = context->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, mxscaleShapePtr);
-    auto mxscaleShape = mxscaleShapePtr->GetStorageShape();
+    // 入参指针合法性已由 Tiling 主流程的 CheckShape/GetPlatInfo 前置校验保证，此处不再重复检查。
+    auto xShape = context->GetInputShape(0)->GetStorageShape();
+    auto mxscaleShape = context->GetInputShape(1)->GetStorageShape();
 
     // 取单batch的M/B/K：M为行数，B为batch数，K为列数。
     int64_t M = xShape.GetDim(xShape.GetDimNum() - DIGIT_TWO);
@@ -269,8 +314,6 @@ static ge::graphStatus DoTiling(const gert::TilingContext* context, MxToBlockMxQ
 
     tilingParam.colScaleNum = mxscaleShape.GetDim(mxscaleShape.GetDimNum() - 1) *
                               mxscaleShape.GetDim(mxscaleShape.GetDimNum() - DIGIT_TWO);
-
-    return ge::GRAPH_SUCCESS;
 }
 
 inline static ge::graphStatus SetTilingKeyParam(gert::TilingContext* context,
@@ -283,8 +326,7 @@ inline static ge::graphStatus SetTilingKeyParam(gert::TilingContext* context,
     return ge::GRAPH_SUCCESS;
 }
 
-inline static ge::graphStatus SetTilingData(MxToBlockMxQuantTilingData* tilingData,
-                                            const MxToBlockMxQuantTilingParam& tilingParam)
+inline static void SetTilingData(MxToBlockMxQuantTilingData* tilingData, const MxToBlockMxQuantTilingParam& tilingParam)
 {
     tilingData->ubSize = tilingParam.ubSize;
     tilingData->dstType = tilingParam.dstType;
@@ -304,7 +346,6 @@ inline static ge::graphStatus SetTilingData(MxToBlockMxQuantTilingData* tilingDa
     tilingData->tailCoreBlockNum = tilingParam.tailCoreBlockNum;
     tilingData->headCoreNum = tilingParam.headCoreNum;
     tilingData->tailCoreNum = tilingParam.tailCoreNum;
-    return ge::GRAPH_SUCCESS;
 }
 
 inline static void PrintTilingData(const gert::TilingContext* context, const MxToBlockMxQuantTilingData* tilingData)
@@ -329,16 +370,16 @@ ge::graphStatus Tiling4MxToBlockMxQuant(gert::TilingContext* context)
     MxToBlockMxQuantTilingParam tilingParam;
 
     OP_CHECK_IF(CheckDtype(context) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "The data type check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "The data type check failed."), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(GetAttr(context, tilingParam) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "The attr get failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "The attr get failed."), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckShape(context) != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "The shape check failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckShape(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "The shape check failed."), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(GetPlatInfo(context, tilingParam) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "GetPlatInfo failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetPlatInfo failed."), return ge::GRAPH_FAILED);
 
     // 按M是否64倍数选择模板：rowMode=0走对齐模板，rowMode=1走非对齐模板。
     // 两套模板共用同一套切分与搬运，仅Compute路径不同。
@@ -348,16 +389,14 @@ ge::graphStatus Tiling4MxToBlockMxQuant(gert::TilingContext* context)
     int64_t MForMode = xShapeForMode.GetDim(xShapeForMode.GetDimNum() - DIGIT_TWO);
     tilingParam.rowMode = (MForMode % (BLOCK_SIZE * DIGIT_TWO) == 0) ? TPL_ROW_ALIGNED : TPL_ROW_NOT_ALIGNED;
 
-    OP_CHECK_IF(DoTiling(context, tilingParam) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "DoTiling failed."), return ge::GRAPH_FAILED);
+    DoTiling(context, tilingParam);
 
     SetTilingKeyParam(context, tilingParam);
 
     auto* tilingData = context->GetTilingData<MxToBlockMxQuantTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tilingData);
 
-    OP_CHECK_IF(SetTilingData(tilingData, tilingParam) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetTilingData set tiling data fail."), return ge::GRAPH_FAILED);
+    SetTilingData(tilingData, tilingParam);
 
     context->SetBlockDim(tilingData->usedCoreNum);
     size_t* workspaces = context->GetWorkspaceSizes(1);

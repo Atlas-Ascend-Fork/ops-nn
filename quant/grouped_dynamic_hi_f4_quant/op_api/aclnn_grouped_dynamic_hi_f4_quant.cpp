@@ -12,6 +12,8 @@
 #include "grouped_dynamic_hi_f4_quant.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/common/op_error_check.h"
+#include "log/log.h"
+#include <string>
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
 #include "opdev/format_utils.h"
@@ -51,15 +53,21 @@ static bool CheckDtypeValid(const aclTensor* x, const aclTensor* groupIndex, con
 {
     OP_CHECK_DTYPE_NOT_SUPPORT(x, X_DTYPE_SUPPORT_LIST, return false);
     if (groupIndex->GetDataType() != op::DataType::DT_INT32) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "group_index data type must be INT32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnGroupedDynamicHiF4Quant", "group_index",
+                                              op::ToString(groupIndex->GetDataType()).GetString(),
+                                              "supported dtype is INT32");
         return false;
     }
     if (static_cast<int64_t>(y->GetDataType()) != DT_HIFLOAT4) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out(y) data type must be HIFLOAT4.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnGroupedDynamicHiF4Quant", "y",
+                                              op::ToString(y->GetDataType()).GetString(),
+                                              "supported dtype is HIFLOAT4");
         return false;
     }
     if (static_cast<int64_t>(scale->GetDataType()) != DT_HIFLOAT4_SCALE) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "out(scale) data type must be HIFLOAT4_SCALE.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnGroupedDynamicHiF4Quant", "scale",
+                                              op::ToString(scale->GetDataType()).GetString(),
+                                              "supported dtype is HIFLOAT4_SCALE");
         return false;
     }
     return true;
@@ -92,7 +100,8 @@ aclnnStatus aclnnGroupedDynamicHiF4QuantGetWorkspaceSize(const aclTensor* x, con
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     if (group_index->IsEmpty()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "group_index does not support empty values.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnGroupedDynamicHiF4Quant", "group_index", "empty",
+                                              "group_index does not support empty tensor");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (x->IsEmpty()) {

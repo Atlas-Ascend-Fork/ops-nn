@@ -60,7 +60,9 @@ graphStatus InferShapeForMxToBlockMxQuant(gert::InferShapeContext* context)
     }
 
     OP_CHECK_IF(xShape->GetDimNum() < MIN_DIM_NUM || xShape->GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(context->GetNodeName(), "Input x rank[%lu] should be in [2, 3].", xShape->GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x",
+                                                         std::to_string(xShape->GetDimNum()).c_str(),
+                                                         "The rank of x must be in range [2, 3]"),
                 return ge::GRAPH_FAILED);
 
     // Output y has the same shape as input x
@@ -98,10 +100,9 @@ ge::graphStatus InferDataTypeForMxToBlockMxQuant(gert::InferDataTypeContext* con
     ge::DataType outDtype = static_cast<ge::DataType>(*dstDtype);
     OP_CHECK_IF(
         std::find(Y_SUPPORT_DTYPE_SET.begin(), Y_SUPPORT_DTYPE_SET.end(), outDtype) == Y_SUPPORT_DTYPE_SET.end(),
-        OP_LOGE(
-            context->GetNodeName(),
-            "dst_type is illegal, only supports 35(FLOAT8_E5M2) or 36(FLOAT8_E4M3FN), but got %ld(%s), please check.",
-            *dstDtype, ge::TypeUtils::DataTypeToAscendString(outDtype).GetString()),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dst_type",
+                                              ge::TypeUtils::DataTypeToAscendString(outDtype).GetString(),
+                                              "dst_type only supports 35(FLOAT8_E5M2) or 36(FLOAT8_E4M3FN)"),
         return ge::GRAPH_FAILED);
     // y dtype is determined by dst_type attribute
     context->SetOutputDataType(0, outDtype);

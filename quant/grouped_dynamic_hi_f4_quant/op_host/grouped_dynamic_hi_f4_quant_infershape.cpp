@@ -67,10 +67,14 @@ graphStatus InferShapeForGroupedDynamicHiF4Quant(gert::InferShapeContext* contex
     size_t xShapeSize = xShape->GetDimNum();
     size_t groupIdxShapeSize = groupIdxShape->GetDimNum();
     OP_CHECK_IF(groupIdxShapeSize != 1,
-                OP_LOGE(context->GetNodeName(), "group_index's shape must be 1D, but is %lu", groupIdxShapeSize),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "group_index",
+                                                         std::to_string(groupIdxShapeSize).c_str(),
+                                                         "The rank of group_index must be 1"),
                 return ge::GRAPH_FAILED);
     int64_t groupIdxDim0 = groupIdxShape->GetDim(0);
-    OP_CHECK_IF(groupIdxDim0 == 0, OP_LOGE(context->GetNodeName(), "group_index does not support empty tensor"),
+    OP_CHECK_IF(groupIdxDim0 == 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "group_index", "empty",
+                                                      "group_index does not support empty tensor"),
                 return ge::GRAPH_FAILED);
 
     // dynamic -2 (input x)
@@ -81,7 +85,8 @@ graphStatus InferShapeForGroupedDynamicHiF4Quant(gert::InferShapeContext* contex
     } else {
         OP_CHECK_IF(
             xShapeSize != 2,
-            OP_LOGE(context->GetNodeName(), "input x is not UnknownRank, shape must be 2D, but is %lu", xShapeSize),
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xShapeSize).c_str(),
+                                                     "when x is not UnknownRank, the rank of x must be 2"),
             return ge::GRAPH_FAILED);
     }
 

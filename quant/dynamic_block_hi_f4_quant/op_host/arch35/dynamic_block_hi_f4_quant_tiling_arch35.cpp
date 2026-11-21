@@ -16,6 +16,8 @@
 #include "dynamic_block_hi_f4_quant_tiling_arch35.h"
 #include "../../op_kernel/arch35/dynamic_block_hi_f4_quant_tilingdata.h"
 #include <cmath>
+#include <string>
+#include <vector>
 #include "log/log.h"
 #include "platform/platform_info.h"
 #include "util/math_util.h"
@@ -30,6 +32,16 @@ using namespace ge;
 using namespace AscendC;
 using namespace DynamicBlockHiF4QuantOp;
 namespace optiling {
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 
 constexpr int64_t INDEX_ATTR_ROUND_MODE = 0;
 constexpr int64_t INDEX_ATTR_SCALE_ALG = 1;
@@ -89,8 +101,8 @@ ge::graphStatus DynamicBlockHiF4QuantTiling::GetAttr()
     std::string roundModeStr = attrRoundMode;
     RoundModeList roundMode = GetRoundMode(roundModeStr);
     OP_CHECK_IF((roundMode == RoundModeList::MODE_UNDEFINED),
-                OP_LOGE(context_->GetNodeName(), "invalid round_mode:%s; round_mode should be one of {rint, trunc}",
-                        attrRoundMode),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "round_mode", attrRoundMode,
+                                                      "supported values are rint and trunc"),
                 return ge::GRAPH_FAILED);
     tilingParams.roundMode = static_cast<int64_t>(roundMode);
     OP_LOGD(context_->GetNodeName(), "The attr round_mode is %s, roundMode enum is %ld", roundModeStr.c_str(),
@@ -102,7 +114,8 @@ ge::graphStatus DynamicBlockHiF4QuantTiling::GetAttr()
         scaleAlg = *attrScaleAlg;
     }
     OP_CHECK_IF((scaleAlg != 0 && scaleAlg != 1),
-                OP_LOGE(context_->GetNodeName(), "invalid scale_alg:%ld; scale_alg should be 0 or 1", scaleAlg),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "scale_alg",
+                                                      std::to_string(scaleAlg).c_str(), "supported values are 0 and 1"),
                 return ge::GRAPH_FAILED);
     tilingParams.scaleAlg = scaleAlg;
     OP_LOGD(context_->GetNodeName(), "The attr scale_alg is %ld", scaleAlg);
@@ -115,36 +128,34 @@ ge::graphStatus DynamicBlockHiF4QuantTiling::CheckDtype() const
     OP_CHECK_NULL_WITH_CONTEXT(context_, inputXPtr);
     auto xDtype = inputXPtr->GetDataType();
     OP_CHECK_IF(INPUT_SUPPORT_DTYPE_SET.count(xDtype) == 0,
-                OP_LOGE(context_->GetNodeName(),
-                        "Input x's data type only support FLOAT16 and BFLOAT16 currently, but x is [%s], please check.",
-                        Ops::Base::ToString(xDtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", Ops::Base::ToString(xDtype).c_str(),
+                                                      "supported dtypes are FLOAT16/BFLOAT16"),
                 return ge::GRAPH_FAILED);
 
     auto outputYPtr = context_->GetOutputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context_, outputYPtr);
     auto yDtype = outputYPtr->GetDataType();
-    OP_CHECK_IF(
-        Y_SUPPORT_DTYPE_SET.count(yDtype) == 0,
-        OP_LOGE(context_->GetNodeName(), "Output y's data type only support HIFLOAT4, but y is [%s], please check.",
-                Ops::Base::ToString(yDtype).c_str()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(Y_SUPPORT_DTYPE_SET.count(yDtype) == 0,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "y", Ops::Base::ToString(yDtype).c_str(),
+                                                      "supported dtype is HIFLOAT4"),
+                return ge::GRAPH_FAILED);
 
     auto outputScale1Ptr = context_->GetOutputDesc(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, outputScale1Ptr);
     auto scale1Dtype = outputScale1Ptr->GetDataType();
     OP_CHECK_IF(SCALE_SUPPORT_DTYPE_SET.count(scale1Dtype) == 0,
-                OP_LOGE(context_->GetNodeName(),
-                        "Output scale1's data type only support HIFLOAT4_SCALE, but scale1 is [%s], please check.",
-                        Ops::Base::ToString(scale1Dtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "scale1",
+                                                      Ops::Base::ToString(scale1Dtype).c_str(),
+                                                      "supported dtype is HIFLOAT4_SCALE"),
                 return ge::GRAPH_FAILED);
 
     auto outputScale2Ptr = context_->GetOutputDesc(2);
     OP_CHECK_NULL_WITH_CONTEXT(context_, outputScale2Ptr);
     auto scale2Dtype = outputScale2Ptr->GetDataType();
     OP_CHECK_IF(SCALE_SUPPORT_DTYPE_SET.count(scale2Dtype) == 0,
-                OP_LOGE(context_->GetNodeName(),
-                        "Output scale2's data type only support HIFLOAT4_SCALE, but scale2 is [%s], please check.",
-                        Ops::Base::ToString(scale2Dtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "scale2",
+                                                      Ops::Base::ToString(scale2Dtype).c_str(),
+                                                      "supported dtype is HIFLOAT4_SCALE"),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -157,32 +168,32 @@ ge::graphStatus DynamicBlockHiF4QuantTiling::CheckShape() const
     auto xShape = xShapePtr->GetStorageShape();
     size_t xSizeNum = xShape.GetShapeSize();
     if (xSizeNum == 0ULL) {
-        OP_LOGE(context_->GetNodeName(), "dynamic_block_hi_f4_quant does not support empty tensor.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "x", "empty",
+                                              "dynamic_block_hi_f4_quant does not support empty tensor");
         return ge::GRAPH_FAILED;
     }
 
-    OP_CHECK_IF(
-        xShape.GetDimNum() < MIN_DIM_NUM || xShape.GetDimNum() > MAX_DIM_NUM,
-        OP_LOGE(context_->GetNodeName(), "The shape is invalid, Input x rank[%zu] should be in [2, 7], please check.",
-                static_cast<int64_t>(xShape.GetDimNum())),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(xShape.GetDimNum() < MIN_DIM_NUM || xShape.GetDimNum() > MAX_DIM_NUM,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "x",
+                                                         std::to_string(xShape.GetDimNum()).c_str(),
+                                                         "The rank of x must be in range [2, 7]"),
+                return ge::GRAPH_FAILED);
 
     int64_t lastDim = xShape.GetDim(xShape.GetDimNum() - 1);
     int64_t nonLastDim = xShape.GetDim(xShape.GetDimNum() - 2);
-    OP_CHECK_IF(lastDim % DIGIT_64 != 0 || nonLastDim % DIGIT_64 != 0,
-                OP_LOGE(context_->GetNodeName(),
-                        "Both the -1 axis and -2 axis of input x must be multiples of 64. "
-                        "The current axis -1 is [%lld] and axis -2 is [%lld], please check.",
-                        lastDim, nonLastDim),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        lastDim % DIGIT_64 != 0 || nonLastDim % DIGIT_64 != 0,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x", Shape2String(xShape).c_str(),
+                                              "both the -1 axis and -2 axis of input x must be multiples of 64"),
+        return ge::GRAPH_FAILED);
 
     auto yShapePtr = context_->GetOutputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context_, yShapePtr);
     auto yShape = yShapePtr->GetStorageShape();
     OP_CHECK_IF(xShape != yShape,
-                OP_LOGE(context_->GetNodeName(),
-                        "The shape of output y[%s] must be same with shape of input x[%s], please check.",
-                        Shape2String(yShape).c_str(), Shape2String(xShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context_->GetNodeName(), "x, y", (Shape2String(yShape) + " vs " + Shape2String(xShape)).c_str(),
+                    "the shape of output y must be the same with the shape of input x"),
                 return ge::GRAPH_FAILED);
 
     // scale1: rank = rank(x)+1, scale1.shape[:-2]=x.shape[:-1],
@@ -194,9 +205,11 @@ ge::graphStatus DynamicBlockHiF4QuantTiling::CheckShape() const
     newScale1Shape.SetDim(xShape.GetDimNum() - 1, Ops::Base::CeilDiv(xShape.GetDim(xShape.GetDimNum() - 1), DIGIT_64));
     newScale1Shape.AppendDim(DIGIT_ONE);
     OP_CHECK_IF(newScale1Shape != scale1Shape,
-                OP_LOGE(context_->GetNodeName(),
-                        "The shape of output scale1[%s] is incorrect, correct shape is [%s], please check.",
-                        Shape2String(scale1Shape).c_str(), Shape2String(newScale1Shape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context_->GetNodeName(), "scale1", Shape2String(scale1Shape).c_str(),
+                    ("expected shape is " + Shape2String(newScale1Shape) +
+                     " (rank = rank(x) + 1, scale1.shape[-2] = x.shape[-1] / 64, scale1.shape[-1] = 1)")
+                        .c_str()),
                 return ge::GRAPH_FAILED);
 
     // scale2: rank = rank(x)+1, scale2.shape[:-3]=x.shape[:-2],
@@ -209,9 +222,11 @@ ge::graphStatus DynamicBlockHiF4QuantTiling::CheckShape() const
                           Ops::Base::CeilDiv(xShape.GetDim(xShape.GetDimNum() - DIGIT_TWO), DIGIT_64));
     newScale2Shape.AppendDim(DIGIT_ONE);
     OP_CHECK_IF(newScale2Shape != scale2Shape,
-                OP_LOGE(context_->GetNodeName(),
-                        "The shape of output scale2[%s] is incorrect, correct shape is [%s], please check.",
-                        Shape2String(scale2Shape).c_str(), Shape2String(newScale2Shape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context_->GetNodeName(), "scale2", Shape2String(scale2Shape).c_str(),
+                    ("expected shape is " + Shape2String(newScale2Shape) +
+                     " (rank = rank(x) + 1, scale2.shape[-3] = x.shape[-2] / 64, scale2.shape[-1] = 1)")
+                        .c_str()),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -225,12 +240,12 @@ ge::graphStatus DynamicBlockHiF4QuantTiling::GetPlatformInfo()
     OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     tilingParams.totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((tilingParams.totalCoreNum <= 0), OP_LOGE(context_->GetNodeName(), "Failed to get core num."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((tilingParams.totalCoreNum <= 0),
+                ReportTilingFailure(context_->GetNodeName(), "Failed to get core num."), return ge::GRAPH_FAILED);
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     tilingParams.ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((tilingParams.ubSize <= 0), OP_LOGE(context_->GetNodeName(), "Failed to get ub size."),
+    OP_CHECK_IF((tilingParams.ubSize <= 0), ReportTilingFailure(context_->GetNodeName(), "Failed to get ub size."),
                 return ge::GRAPH_FAILED);
     tilingParams.workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
@@ -297,20 +312,22 @@ ge::graphStatus DynamicBlockHiF4QuantTiling::DoTiling()
 {
     OP_LOGD(context_->GetNodeName(), "Enter DynamicBlockHiF4QuantTiling DoTiling.");
 
-    OP_CHECK_IF(GetPlatformInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The platforminfo get failed"),
+    OP_CHECK_IF(GetPlatformInfo() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The platforminfo get failed"),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckDtype() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The data type check failed."),
+    OP_CHECK_IF(CheckDtype() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The data type check failed."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The attr get failed."),
+    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The attr get failed."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The shape check failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The shape check failed."), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(SetTilingParams() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "DynamicBlockHiF4QuantTiling SetTilingParams failed"),
+                ReportTilingFailure(context_->GetNodeName(), "DynamicBlockHiF4QuantTiling SetTilingParams failed"),
                 return ge::GRAPH_FAILED);
 
     SetTilingKey();
@@ -326,7 +343,7 @@ ge::graphStatus DynamicBlockHiF4QuantTiling::DoTiling()
     errno_t ret = memcpy_s(rawTilingData->GetData(), rawTilingData->GetCapacity(), reinterpret_cast<void*>(&tilingData),
                            tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "Tiling DataSize Greater than capacity, please check.");
+        ReportTilingFailure(context_->GetNodeName(), "Tiling DataSize Greater than capacity");
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);
