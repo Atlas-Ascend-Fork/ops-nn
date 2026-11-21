@@ -8,7 +8,6 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "aclnn_threshold_backward.h"
-#include "../../relu_grad/op_api/relu_grad.h"
 #include "threshold_grad.h"
 #include "../../threshold_grad_v2/op_api/threshold_grad_v2.h"
 #include "aclnn_kernels/contiguous.h"
@@ -26,7 +25,6 @@
 #include "op_api/op_api_def_nn.h"
 #include "op_api/aclnn_util.h"
 #include "op_common/op_host/util/op_const_def.h"
-#include <cmath>
 
 using namespace op;
 #ifdef __cplusplus
@@ -54,25 +52,22 @@ static bool CheckPtrValid(const aclTensor* gradOutput, const aclTensor* self)
     return true;
 }
 
-static const std::initializer_list<DataType>& GetDtypeSupportList(float thresholdVal)
+static const std::initializer_list<DataType>& GetDtypeSupportList()
 {
     auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    if (curArch == Ops::Base::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(curArch)) {
-        if (Ops::NN::AclnnUtil::IsRegbase(curArch) && std::fpclassify(thresholdVal) == FP_ZERO) {
-            // relugrad 支持int64
-            return REGBASE_DTYPE_DTYPE_SUPPORT_LIST;
-        } else {
-            return ASCEND910B_DTYPE_DTYPE_SUPPORT_LIST;
-        }
+    if (Ops::NN::AclnnUtil::IsRegbase(curArch)) {
+        // ThresholdGradV2 支持int64
+        return REGBASE_DTYPE_DTYPE_SUPPORT_LIST;
+    } else if (curArch == Ops::Base::DAV_2201) {
+        return ASCEND910B_DTYPE_DTYPE_SUPPORT_LIST;
     } else {
         return ASCEND910_DTYPE_DTYPE_SUPPORT_LIST;
     }
 }
 
-static bool CheckDtypeValid(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* out,
-                            float thresholdVal)
+static bool CheckDtypeValid(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* out)
 {
-    const auto& supportList = GetDtypeSupportList(thresholdVal);
+    const auto& supportList = GetDtypeSupportList();
     // 检查gradOutput和self数据类型是否在ThresholdBackward算子的支持列表内
     OP_CHECK_DTYPE_NOT_SUPPORT(gradOutput, supportList, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(self, supportList, return false);
@@ -88,15 +83,14 @@ static bool CheckShape(const aclTensor* gradOutput, const aclTensor* self)
     return true;
 }
 
-static aclnnStatus CheckParams(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* out,
-                               float thresholdVal)
+static aclnnStatus CheckParams(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* out)
 {
     // 错误码等DFX方案细化后刷新，错误日志在check接口内打印
     // 1. 检查参数是否为空指针
     CHECK_RET(CheckPtrValid(gradOutput, self), ACLNN_ERR_PARAM_NULLPTR);
 
     // 2. 检查输入的数据类型是否在API支持的数据类型范围之内，需要根据api定义校验
-    CHECK_RET(CheckDtypeValid(gradOutput, self, out, thresholdVal), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckDtypeValid(gradOutput, self, out), ACLNN_ERR_PARAM_INVALID);
 
     // 3.输入维度校验
     CHECK_RET(CheckShape(gradOutput, self), ACLNN_ERR_PARAM_INVALID);
@@ -118,7 +112,7 @@ aclnnStatus aclnnThresholdBackwardGetWorkspaceSize(const aclTensor* gradOutput, 
     const float thresholdVal = threshold->ToFloat();
     CHECK_RET(out != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    auto ret = CheckParams(gradOutput, self, out, thresholdVal);
+    auto ret = CheckParams(gradOutput, self, out);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
     // 校验输入shape是否可broadcast
     op::Shape broadcastShape;
@@ -145,14 +139,9 @@ aclnnStatus aclnnThresholdBackwardGetWorkspaceSize(const aclTensor* gradOutput, 
     auto selfContiguous = l0op::Contiguous(self, uniqueExecutor.get());
     CHECK_RET(selfContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    // 调用 ReluGrad or ThresholdGradV2D 算子kernel
+    // 调用 ThresholdGradV2 or ThresholdGradV2D 算子kernel
     const aclTensor* opOut;
-
-    // threshold是host侧标量，判零须精确比较：容差判零会把|threshold|<=FLT_EPSILON的非零阈值静默当作0，
-    // 丢弃threshold走ReluGrad分支，与资料公式 self(i) > threshold 不符（issue #8230）
-    if (std::fpclassify(thresholdVal) == FP_ZERO) {
-        opOut = l0op::ReluGrad(gradOutputContiguous, selfContiguous, uniqueExecutor.get());
-    } else if (Ops::NN::AclnnUtil::IsRegbase()) {
+    if (Ops::NN::AclnnUtil::IsRegbase()) {
         auto thresholdTensor = uniqueExecutor->ConvertToTensor(threshold, selfContiguous->GetDataType());
         CHECK_RET(thresholdTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
         opOut = l0op::ThresholdGradV2(gradOutputContiguous, selfContiguous, thresholdTensor, uniqueExecutor.get());

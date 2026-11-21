@@ -4,3 +4,5 @@ aclnn_relugrad_fuzz_2,aclnnThresholdBackward,"('float16', 'float16', 'float16')"
 aclnn_relugrad_fuzz_3,aclnnThresholdBackward,"('int32', 'int32', 'int32')","('ND',)","((19, 2, 5, 8), (19, 2, 5, 8), (19, 2, 5, 8))","((-1000, 1000),)","(-1,)","('int32',)",('float32'),"(0, 0)",0.0001
 aclnn_relugrad_fuzz_4,aclnnThresholdBackward,"('int8', 'int8', 'int8')","('ND',)","((19, 2, 5, 8), (19, 2, 5, 8), (19, 2, 5, 8))","((-1000, 1000),)","(-1,)","('int8',)",('float32'),"(0, 0)",0.0001
 aclnn_relugrad_fuzz_5,aclnnThresholdBackward,"('uint8', 'uint8', 'uint8')","('ND',)","((19, 2, 5, 8), (19, 2, 5, 8), (19, 2, 5, 8))","((-1000, 1000),)","(-1,)","('uint8',)",('float32'),"(0, 0)",0.0001
+aclnn_threshold_grad_v2_int64_th0,aclnnThresholdBackward,"('int64', 'int64', 'int64')","('ND',)","((19, 2, 5, 8), (19, 2, 5, 8), (19, 2, 5, 8))","((-1000, 1000),)","(-1,)","('int64',)",('float32'),"(0, 0)",0.0001
+aclnn_threshold_grad_v2_int64_th5,aclnnThresholdBackward,"('int64', 'int64', 'int64')","('ND',)","((19, 2, 5, 8), (19, 2, 5, 8), (19, 2, 5, 8))","((-1000, 1000),)","(-1,)","('int64',)",('float32'),"(5, 5)",0.0001

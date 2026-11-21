@@ -32,10 +32,8 @@ def threshold_grad_v2_golden(gradients, features, threshold, **kwargs):
     gradients_t, features_t, threshold_t = torch.broadcast_tensors(
         gradients_t, features_t, threshold_t
     )
-    output_dtype = gradients_t.dtype
-    # The kernel promotes every supported dtype to float32 for comparison and
-    # selection, then casts the selected gradient back to the output dtype.
-    gradients_f32 = gradients_t.to(torch.float32)
-    mask = features_t.to(torch.float32) > threshold_t.to(torch.float32)
-    result = torch.where(mask, gradients_f32, torch.zeros_like(gradients_f32))
-    return torch_to_numpy_tensor(result.to(output_dtype).cpu())
+    # The kernel compares and selects in the native dtype without promotion,
+    # so the golden must not round-trip through float32 (lossy for int64).
+    mask = features_t > threshold_t
+    result = torch.where(mask, gradients_t, torch.zeros_like(gradients_t))
+    return torch_to_numpy_tensor(result.cpu())

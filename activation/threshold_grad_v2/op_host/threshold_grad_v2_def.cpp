@@ -12,7 +12,7 @@
 
 /*!
  * \file threshold_grad_v2_def.cpp
- * \brief ThresholdGradV2 算子定义：gradients/features/threshold -> backprops，fp16/fp32/bf16/int32/int8/uint8
+ * \brief ThresholdGradV2 算子定义：gradients/features/threshold -> backprops，fp16/fp32/bf16/int32/int64/int8/uint8
  *        threshold 为输入 tensor，与 gradients/features 广播。backprops = features>threshold ? gradients : 0
  */
 #include "register/op_def_registry.h"
@@ -25,34 +25,43 @@ public:
     {
         this->Input("gradients")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_INT32, ge::DT_INT8, ge::DT_UINT8})
-            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat(
-                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
+            .DataType(
+                {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_INT32, ge::DT_INT64, ge::DT_INT8, ge::DT_UINT8})
+            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                     ge::FORMAT_ND})
+            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                                 ge::FORMAT_ND, ge::FORMAT_ND})
             .AutoContiguous();
         this->Input("features")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_INT32, ge::DT_INT8, ge::DT_UINT8})
-            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat(
-                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
+            .DataType(
+                {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_INT32, ge::DT_INT64, ge::DT_INT8, ge::DT_UINT8})
+            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                     ge::FORMAT_ND})
+            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                                 ge::FORMAT_ND, ge::FORMAT_ND})
             .AutoContiguous();
         this->Input("threshold")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_INT32, ge::DT_INT8, ge::DT_UINT8})
-            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat(
-                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
+            .DataType(
+                {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_INT32, ge::DT_INT64, ge::DT_INT8, ge::DT_UINT8})
+            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                     ge::FORMAT_ND})
+            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                                 ge::FORMAT_ND, ge::FORMAT_ND})
             .AutoContiguous();
         this->Output("backprops")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_INT32, ge::DT_INT8, ge::DT_UINT8})
-            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat(
-                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
+            .DataType(
+                {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_INT32, ge::DT_INT64, ge::DT_INT8, ge::DT_UINT8})
+            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                     ge::FORMAT_ND})
+            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                                 ge::FORMAT_ND, ge::FORMAT_ND})
             .AutoContiguous();
 
-        // 目标芯片为 Ascend950PR/DT、Ascend350（arch35）。6 dtype（含 int8/uint8）依赖 arch35 矢量 ISA，arch22 不支持。
+        // 目标芯片为 Ascend950PR/DT、Ascend350（arch35）。7 dtype（含 int8/uint8/int64）依赖 arch35 矢量 ISA，arch22
+        // 不支持。
         OpAICoreConfig aiCoreConfig;
         aiCoreConfig.DynamicCompileStaticFlag(true)
             .DynamicFormatFlag(false)

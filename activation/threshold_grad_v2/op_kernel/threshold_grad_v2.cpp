@@ -44,6 +44,9 @@ __global__ __aicore__ void threshold_grad_v2(GM_ADDR gradients, GM_ADDR features
     } else if constexpr (dtype == static_cast<uint64_t>(THRESHOLD_GRAD_V2_TPL_UINT8)) {
         BroadcastSch<schMode, ThresholdGradV2Dag<uint8_t>::OpDag> sch(tiling);
         sch.Process(gradients, features, threshold, backprops);
+    } else if constexpr (dtype == static_cast<uint64_t>(THRESHOLD_GRAD_V2_TPL_INT64)) {
+        BroadcastSch<schMode, ThresholdGradV2Dag<int64_t>::OpDag> sch(tiling);
+        sch.Process(gradients, features, threshold, backprops);
     }
     return;
 }

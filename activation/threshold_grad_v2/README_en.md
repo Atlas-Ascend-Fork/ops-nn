@@ -51,28 +51,28 @@ English | [简体中文](./README.md)
       <td>gradients</td>
       <td>Input</td>
       <td>Upstream gradient, broadcast-compatible with features and threshold.</td>
-      <td>FLOAT16, FLOAT, BF16, INT32, INT8, UINT8</td>
+      <td>FLOAT16, FLOAT, BF16, INT32, INT64, INT8, UINT8</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>features</td>
       <td>Input</td>
       <td>Forward input, which determines the gating mask.</td>
-      <td>FLOAT16, FLOAT, BF16, INT32, INT8, UINT8</td>
+      <td>FLOAT16, FLOAT, BF16, INT32, INT64, INT8, UINT8</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>threshold</td>
       <td>Input</td>
       <td>Threshold tensor, broadcast-compatible with gradients and features.</td>
-      <td>FLOAT16, FLOAT, BF16, INT32, INT8, UINT8</td>
+      <td>FLOAT16, FLOAT, BF16, INT32, INT64, INT8, UINT8</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>backprops</td>
       <td>Output</td>
       <td>Backward gradient. Its dtype is consistent with gradients, and its shape is the shape after broadcasting the three.</td>
-      <td>FLOAT16, FLOAT, BF16, INT32, INT8, UINT8</td>
+      <td>FLOAT16, FLOAT, BF16, INT32, INT64, INT8, UINT8</td>
       <td>ND</td>
     </tr>
   </tbody>

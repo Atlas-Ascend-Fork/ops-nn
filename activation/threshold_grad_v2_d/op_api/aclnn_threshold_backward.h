@@ -30,7 +30,7 @@ extern "C" {
  * ```mermaid
  * graph LR
  * A[(self)] --> B([l0op::Contiguous])
- * B --> C([l0op::ThresholdGradV2D or l0op::ReluGrad])
+ * B --> C([l0op::ThresholdGradV2 or l0op::ThresholdGradV2D])
  * D[(grad_output)] -->  E([l0op::Contiguous])
  * E  --> C
  * F[(threshold)] --> C

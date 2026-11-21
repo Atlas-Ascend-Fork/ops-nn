@@ -237,8 +237,6 @@ aclnnStatus aclnnThresholdBackward(
 
 - 确定性计算：
   - aclnnThresholdBackward默认确定性实现。
-- gradOutput,self,out的dtype约束说明：
-  - 只有当threshold等于0.0时,gradOutput,self,out才支持int64类型。
 
 ## 调用示例
 

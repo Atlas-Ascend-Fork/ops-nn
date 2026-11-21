@@ -49,28 +49,28 @@
       <td>gradients</td>
       <td>输入</td>
       <td>上游梯度，与features、threshold广播兼容。</td>
-      <td>FLOAT16、FLOAT、BF16、INT32、INT8、UINT8</td>
+      <td>FLOAT16、FLOAT、BF16、INT32、INT64、INT8、UINT8</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>features</td>
       <td>输入</td>
       <td>正向输入，决定门控掩码。</td>
-      <td>FLOAT16、FLOAT、BF16、INT32、INT8、UINT8</td>
+      <td>FLOAT16、FLOAT、BF16、INT32、INT64、INT8、UINT8</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>threshold</td>
       <td>输入</td>
       <td>阈值tensor，与gradients、features广播兼容。</td>
-      <td>FLOAT16、FLOAT、BF16、INT32、INT8、UINT8</td>
+      <td>FLOAT16、FLOAT、BF16、INT32、INT64、INT8、UINT8</td>
       <td>ND</td>
     </tr>
     <tr>
       <td>backprops</td>
       <td>输出</td>
       <td>反向梯度，dtype与gradients一致，shape为三者广播后形状。</td>
-      <td>FLOAT16、FLOAT、BF16、INT32、INT8、UINT8</td>
+      <td>FLOAT16、FLOAT、BF16、INT32、INT64、INT8、UINT8</td>
       <td>ND</td>
     </tr>
   </tbody>

@@ -175,6 +175,15 @@ TEST_F(ThresholdGradV2TilingTest, tiling_uint8_2d)
     DoThresholdGradV2TilingCase(gradientsShape, featuresShape, thresholdShape, outputShape, ge::DT_UINT8);
 }
 
+TEST_F(ThresholdGradV2TilingTest, tiling_int64_2d)
+{
+    std::initializer_list<int64_t> gradientsShape = {2, 128};
+    std::initializer_list<int64_t> featuresShape = {2, 128};
+    std::initializer_list<int64_t> thresholdShape = {2, 128};
+    std::initializer_list<int64_t> outputShape = {2, 128};
+    DoThresholdGradV2TilingCase(gradientsShape, featuresShape, thresholdShape, outputShape, ge::DT_INT64);
+}
+
 TEST_F(ThresholdGradV2TilingTest, tiling_fp32_4d)
 {
     std::initializer_list<int64_t> gradientsShape = {2, 4, 8, 16};

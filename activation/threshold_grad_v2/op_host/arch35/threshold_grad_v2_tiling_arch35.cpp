@@ -111,10 +111,17 @@ ge::graphStatus ThresholdGradV2Tiling::DoOpTiling()
             OP_LOGE(context_->GetNodeName(), "BroadcastBaseTiling<ThresholdGradV28BDag<uint8_t>::OpDag> failed"),
             return ge::GRAPH_FAILED);
         tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode(), THRESHOLD_GRAD_V2_TPL_UINT8);
+    } else if (gradientsDType == ge::DT_INT64) {
+        BroadcastBaseTiling<ThresholdGradV2Dag<int64_t>::OpDag> brcBaseTiling(context_);
+        baseTilingResult = brcBaseTiling.DoTiling();
+        OP_CHECK_IF(baseTilingResult == ge::GRAPH_FAILED,
+                    OP_LOGE(context_->GetNodeName(), "BroadcastBaseTiling<ThresholdGradV2Dag<int64_t>::OpDag> failed"),
+                    return ge::GRAPH_FAILED);
+        tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode(), THRESHOLD_GRAD_V2_TPL_INT64);
     } else {
         OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "gradients, features, threshold",
                                   ge::TypeUtils::DataTypeToSerialString(gradientsDType),
-                                  "DT_FLOAT16, DT_BF16, DT_FLOAT,DT_INT32, DT_INT8, DT_UINT8");
+                                  "DT_FLOAT16, DT_BF16, DT_FLOAT,DT_INT32, DT_INT64, DT_INT8, DT_UINT8");
         return ge::GRAPH_FAILED;
     }
 

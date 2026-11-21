@@ -25,7 +25,7 @@ namespace ge {
 
  * @par Inputs:
  * Three inputs, including:
- * @li gradients: A tensor of type int8, uint8, int32, float16, bfloat16 or float.
+ * @li gradients: A tensor of type int8, uint8, int32, int64, float16, bfloat16 or float.
  * @li features: A tensor of the same type as "gradients", broadcast compatible with "gradients".
  * @li threshold: A tensor of the same type as "gradients", broadcast compatible with "gradients". \n
 
@@ -35,10 +35,10 @@ namespace ge {
 #ifndef OPS_PROTO_DEF_THRESHOLDGRADV2
 #define OPS_PROTO_DEF_THRESHOLDGRADV2
 REG_OP(ThresholdGradV2)
-    .INPUT(gradients, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_FLOAT16, DT_BF16, DT_FLOAT}))
-    .INPUT(features, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_FLOAT16, DT_BF16, DT_FLOAT}))
-    .INPUT(threshold, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_FLOAT16, DT_BF16, DT_FLOAT}))
-    .OUTPUT(backprops, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_FLOAT16, DT_BF16, DT_FLOAT}))
+    .INPUT(gradients, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_INT64, DT_FLOAT16, DT_BF16, DT_FLOAT}))
+    .INPUT(features, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_INT64, DT_FLOAT16, DT_BF16, DT_FLOAT}))
+    .INPUT(threshold, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_INT64, DT_FLOAT16, DT_BF16, DT_FLOAT}))
+    .OUTPUT(backprops, TensorType({DT_INT8, DT_UINT8, DT_INT32, DT_INT64, DT_FLOAT16, DT_BF16, DT_FLOAT}))
     .OP_END_FACTORY_REG(ThresholdGradV2)
 #endif
 
