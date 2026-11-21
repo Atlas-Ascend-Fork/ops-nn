@@ -10,13 +10,14 @@
 
 /*!
  * \file situ_glu_group_tiling_arch35.cpp
- * \brief Tiling implementation for SituGluGroup Arch35 (Ascend 950), with optional weight / group_index.
+ * \brief Tiling implementation for SituGluGroup Arch35 (Ascend 950/350), with optional weight / group_index.
  * Tiling structure mirrors SwigluGroup.
  */
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <string>
 #include <vector>
 #include <graph/utils/type_utils.h>
@@ -36,9 +37,12 @@ constexpr int64_t DIM_ATTR_INDEX = 0;
 constexpr int64_t BETA_ATTR_INDEX = 1;
 constexpr int64_t LINEAR_BETA_ATTR_INDEX = 2;
 constexpr int64_t ACTIVATE_LEFT_ATTR_INDEX = 3;
+constexpr int64_t GROUP_LIST_TYPE_ATTR_INDEX = 4;
 
 constexpr int64_t BLOCK_SIZE = 32;
 constexpr int64_t NUM_TWO = 2;
+// FP32 vector length on arch35 (one full vector register).
+constexpr int64_t VECTOR_LANES_FP32 = 64;
 // Halving step of the row-factor binary search. Kept separate from NUM_TWO (the GLU split factor)
 // so the two semantics can evolve independently.
 constexpr int64_t BISECT_HALF = 2;
@@ -46,7 +50,7 @@ constexpr int64_t DOUBLE_BUFFER = 2;
 constexpr int64_t B16_BYTES = 2;
 constexpr int64_t B32_BYTES = 4;
 constexpr int64_t B32_ALIGN_NUM = BLOCK_SIZE / B32_BYTES;
-// Ascend950 cacheline size is 512B. Split d-factor by one cacheline so each chunk is cacheline
+// Arch35 (Ascend 950/350) cacheline size is 512B. Split d-factor by one cacheline so each chunk is cacheline
 // aligned; the element count per cacheline depends on the x dtype size.
 constexpr int64_t ASCEND950_CACHE_LINE_BYTES = 512;
 // The group_index groupIndexFactor is aligned down to this many elements (16 * 8B = 128B).
@@ -66,6 +70,11 @@ constexpr float LINEAR_BETA_DEFAULT = 0.0f;
 
 constexpr int64_t INT64_MAX_VALUE = std::numeric_limits<int64_t>::max();
 constexpr int64_t UINT32_MAX_VALUE = std::numeric_limits<uint32_t>::max();
+// The group_index count-mode sum is accumulated in int64 vector registers (256B / 8B = 32 lanes)
+// and the kernel saturates every lane at bs before the cross-lane reduction, so the widest
+// intermediate is 32 * bs. Keep that representable; 2 * lanes leaves margin for the saturating add.
+constexpr int64_t GROUP_INDEX_VF_LANES = 32;
+constexpr int64_t MAX_GROUP_INDEX_BS = INT64_MAX_VALUE / (2 * GROUP_INDEX_VF_LANES);
 
 // The Tiling layer is the only layer that observes these platform facts, so it owns the
 // single formal first report instead of only writing a PLOG. EZ1008 is Execution_Error
@@ -178,6 +187,7 @@ private:
     float beta_ = BETA_DEFAULT;
     float linearBeta_ = LINEAR_BETA_DEFAULT;
     int64_t activateLeft_ = 1;
+    int64_t groupListType_ = 0;
     bool hasWeight_ = false;
     bool hasGroupIndex_ = false;
     int64_t groupIndexElemNum_ = 0;
@@ -246,6 +256,17 @@ ge::graphStatus SituGluGroupArch35Tiling::GetShapeAttrsInfo()
     linearBeta_ = attrLinearBeta == nullptr ? LINEAR_BETA_DEFAULT : *attrLinearBeta;
     auto* attrActivateLeft = attrs->GetAttrPointer<bool>(ACTIVATE_LEFT_ATTR_INDEX);
     activateLeft_ = (attrActivateLeft == nullptr || *attrActivateLeft) ? 1 : 0;
+    // group_list_type: 0=cumsum (each element is a cumulative row end offset), 1=count (each
+    // element is a per-group row count). Both modes are supported; the semantics only change how
+    // the kernel derives realBs from group_index, not the tiling itself.
+    auto* attrGroupListType = attrs->GetAttrPointer<int64_t>(GROUP_LIST_TYPE_ATTR_INDEX);
+    groupListType_ = (attrGroupListType != nullptr) ? static_cast<int64_t>(*attrGroupListType) : 0;
+    OP_CHECK_IF(
+        (groupListType_ != 0 && groupListType_ != 1),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context_->GetNodeName(), "group_list_type", std::to_string(groupListType_),
+            ("Invalid group_list_type: " + std::to_string(groupListType_) + ", only 0(cumsum), 1(count) supported.")),
+        return ge::GRAPH_FAILED);
     // beta is a divisor in the SiTU formula (beta * tanh(gate / beta)); 0 would divide by zero
     // and produce inf/NaN, so reject it explicitly instead of silently degrading the output.
     // NaN/Inf must also be rejected: 1/inf folds to 0 and 0*inf yields NaN downstream.
@@ -406,6 +427,13 @@ ge::graphStatus SituGluGroupArch35Tiling::CheckGroupIndexInfo()
                                                                   std::to_string(groupIndexElemNum_),
                                                                   "group_index must be non-empty"),
                         return ge::GRAPH_FAILED);
+            // A row count this large cannot be materialized, but reject it explicitly so the
+            // kernel's saturating sum never has to rely on an unstated platform bound.
+            OP_CHECK_IF(
+                (bs_ > MAX_GROUP_INDEX_BS),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "x row count", std::to_string(bs_),
+                                                      "row count exceeds the group_index reduce limit"),
+                return ge::GRAPH_FAILED);
             hasGroupIndex_ = true;
         }
     }
@@ -476,21 +504,27 @@ ge::graphStatus SituGluGroupArch35Tiling::CalcGroupIndexTiling()
         return ge::GRAPH_SUCCESS;
     }
 
-    int64_t base = MIN_GROUP_INDEX_SPLIT_FACTOR;
-    int64_t maxBase = std::max(groupIndexElemNum_, base);
-    while (base <= maxBase) {
-        groupIndexFactor_ = CeilDiv(groupIndexElemNum_, base);
-        groupIndexSize = SaturatingMul(SaturatingMul(RoundUp(groupIndexFactor_, int64Align), DOUBLE_BUFFER),
-                                       static_cast<int64_t>(sizeof(int64_t)));
-        if (SaturatingAdd(groupIndexSize, groupIndexSumSize) < static_cast<int64_t>(ubSize_)) {
-            break;
+    // groupIndexFactor_ = ceil(groupIndexElemNum_ / base) is non-increasing in `base`, so the
+    // "fits in UB" predicate is monotone. Bisect for the smallest fitting base instead of the
+    // previous linear scan, which could iterate O(groupIndexElemNum_ / factor) times for a very
+    // long group_index.
+    int64_t lo = MIN_GROUP_INDEX_SPLIT_FACTOR;
+    int64_t hi = std::max(groupIndexElemNum_, lo);
+    int64_t bestBase = hi;
+    while (lo <= hi) {
+        int64_t mid = lo + (hi - lo) / 2;
+        int64_t tryFactor = CeilDiv(groupIndexElemNum_, mid);
+        int64_t trySize = SaturatingMul(SaturatingMul(RoundUp(tryFactor, int64Align), DOUBLE_BUFFER),
+                                        static_cast<int64_t>(sizeof(int64_t)));
+        if (SaturatingAdd(trySize, groupIndexSumSize) <= static_cast<int64_t>(ubSize_)) {
+            bestBase = mid;
+            hi = mid - 1;
+        } else {
+            lo = mid + 1;
         }
-        if (base >= maxBase) {
-            break;
-        }
-        base++;
     }
-    groupIndexFactor_ = std::max(groupIndexFactor_, static_cast<int64_t>(1));
+    // bestBase == hi == max(elementNum, 2) gives factor 1, whose buffer always fits the UB budget.
+    groupIndexFactor_ = std::max(CeilDiv(groupIndexElemNum_, bestBase), static_cast<int64_t>(1));
     if (groupIndexFactor_ > GROUP_INDEX_ALIGN_ELEMS) {
         groupIndexFactor_ = DownAlign(groupIndexFactor_, GROUP_INDEX_ALIGN_ELEMS);
         groupIndexFactor_ = std::max(groupIndexFactor_, static_cast<int64_t>(1));
@@ -541,6 +575,19 @@ int64_t SituGluGroupArch35Tiling::CalcTotalSize(int64_t rowFactor, int64_t dFact
     bufBytes = SaturatingMul(bufBytes, xElemBytes_);
     bufBytes = SaturatingMul(bufBytes, DOUBLE_BUFFER);
     int64_t totalSize = SaturatingMul(bufBytes, UB_BUFFER_NUM); // gate + up + y
+    // 16-bit narrow_f32 path (splitD >= 2): the whole row tile (rowFactor * d) is converted to a
+    // float UB copy before the packed gather, so reserve that buffer in the budget. Only reserve it
+    // when the kernel can actually pick that path (same alignment rule as the kernel): the y store
+    // offsets stay 32B aligned only when rowsPerIter * splitD is a multiple of blockElems.
+    if (xElemBytes_ == B16_BYTES && splitD_ >= NUM_TWO && splitD_ * B16_BYTES < BLOCK_SIZE) {
+        const int64_t blockElems = BLOCK_SIZE / B16_BYTES;
+        const int64_t maxRows = VECTOR_LANES_FP32 / splitD_;
+        const int64_t alignRows = blockElems / std::gcd(splitD_, blockElems);
+        if (alignRows <= maxRows) {
+            const int64_t f32Bytes = SaturatingMul(SaturatingMul(rowFactor, d_), B32_BYTES);
+            totalSize = SaturatingAdd(totalSize, f32Bytes);
+        }
+    }
     return AddWeightSize(totalSize, rowFactor);
 }
 
@@ -596,10 +643,8 @@ void SituGluGroupArch35Tiling::SetEmptyTiling()
 {
     // Zero workload: one core is launched whose row loop count is 0, so the kernel returns without
     // touching global memory. rowFactor/dFactor stay positive to keep kernel queue buffers valid.
-    // Group-index tiling (groupIndexFactor/groupIndexLoop) is still computed by CalcGroupIndexTiling so the kernel
-    // derives realBs = min(sum(group_index), bs) = 0 and exits from the group path as well. The
-    // kernel also returns directly when splitD is 0, which covers d == 0 with a non-empty
-    // group_index (realBs > 0 recomputes non-zero row loops in that path).
+    // The kernel also returns directly from ProcessGroupIndexTiling when bs <= 0 or splitD <= 0, so
+    // an empty output never reads group_index or derives a row plan from it.
     rowOfFormerBlock_ = 0;
     rowFactor_ = 1;
     dLoop_ = 1;
@@ -653,8 +698,10 @@ void SituGluGroupArch35Tiling::FillTilingData()
     tilingData_.set_groupIndexLoop(groupIndexLoop_);
     tilingData_.set_groupIndexFactor(groupIndexFactor_);
     tilingData_.set_tailGroupIndexFactor(tailGroupIndexFactor_);
+    tilingData_.set_groupIndexElemNum(groupIndexElemNum_);
     tilingData_.set_hasWeight(hasWeight_ ? 1 : 0);
     tilingData_.set_hasGroupIndex(hasGroupIndex_ ? 1 : 0);
+    tilingData_.set_groupListType(groupListType_);
 }
 
 void SituGluGroupArch35Tiling::PrintTilingInfo()
@@ -672,8 +719,9 @@ void SituGluGroupArch35Tiling::PrintTilingInfo()
             "SituGluGroupArch35Tiling groupIndexTiling: groupIndexLoop:%ld, groupIndexFactor:%ld, "
             "tailGroupIndexFactor:%ld, coreNum:%lu, ubSize:%luB.",
             groupIndexLoop_, groupIndexFactor_, tailGroupIndexFactor_, coreNum_, ubSize_);
-    OP_LOGD(context_->GetNodeName(), "SituGluGroupArch35Tiling attrs: beta:%f, linearBeta:%f, activateLeft:%ld.", beta_,
-            linearBeta_, activateLeft_);
+    OP_LOGD(context_->GetNodeName(),
+            "SituGluGroupArch35Tiling attrs: beta:%f, linearBeta:%f, activateLeft:%ld, groupListType:%ld.", beta_,
+            linearBeta_, activateLeft_, groupListType_);
 }
 
 ge::graphStatus SituGluGroupArch35Tiling::DoTiling()
@@ -690,11 +738,12 @@ ge::graphStatus SituGluGroupArch35Tiling::DoTiling()
     // The mode axis is a compile-time template argument (no hardcoded TilingKey branch in the
     // kernel); the data type is not part of the key, the build registers DTYPE_X per binary.
     context_->SetTilingKey(GET_TPL_TILING_KEY(SITU_GLU_GROUP_TPL_SCH_MODE_0));
-    if (hasGroupIndex_) {
-        context_->SetBlockDim(coreNum_);
-    } else {
-        context_->SetBlockDim(usedCoreNums_);
-    }
+    // Row-only parallelism leaves most cores idle when bs is small (dim=0 or a 1-D input makes
+    // bs == 1, and group_index truncation can also cut realBs below coreNum). The kernel is the
+    // only layer that knows realBs, so it owns the row/column task split: launch the whole AIV
+    // budget here and let blockIdx map to (row block, column block). Blocks without work return
+    // immediately, so an over-provisioned launch only costs the block entry.
+    context_->SetBlockDim((bs_ == 0 || d_ == 0) ? 1 : coreNum_);
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
     workspaces[0] = workspaceSize_;
@@ -704,7 +753,7 @@ ge::graphStatus SituGluGroupArch35Tiling::DoTiling()
     rawTilingData->SetDataSize(tilingData_.GetDataSize());
 
     OP_LOGD(context_->GetNodeName(), "SituGluGroupArch35Tiling done: blockDim:%lu, workspaceSize:%ldB.",
-            hasGroupIndex_ ? coreNum_ : usedCoreNums_, workspaceSize_);
+            (bs_ == 0 || d_ == 0) ? 1UL : coreNum_, workspaceSize_);
     return ge::GRAPH_SUCCESS;
 }
 } // namespace

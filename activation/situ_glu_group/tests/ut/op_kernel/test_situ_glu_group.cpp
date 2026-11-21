@@ -9,10 +9,14 @@
  */
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <limits>
+#include <vector>
 #include "gtest/gtest.h"
 #include "tikicpulib.h"
+#include "../../../op_kernel/arch35/situ_glu_group_tiling_data.h"
 
 // The kernel entry is templated on schMode; the data type comes from DTYPE_X (half in this UT).
 template <uint64_t schMode>
@@ -28,7 +32,7 @@ protected:
 };
 
 void FillSituGluGroupTiling(SituGluGroupTilingData* tilingData, int64_t bs, int64_t d, uint32_t coreNum, float beta,
-                            float linearBeta, int64_t activateLeft)
+                            float linearBeta, int64_t activateLeft, int64_t groupListType = 1)
 {
     int64_t splitD = d / 2;
     (void)coreNum; // row tiling is recomputed from GetBlockNum() inside the kernel
@@ -48,8 +52,10 @@ void FillSituGluGroupTiling(SituGluGroupTilingData* tilingData, int64_t bs, int6
     tilingData->groupIndexLoop = 0;
     tilingData->groupIndexFactor = 0;
     tilingData->tailGroupIndexFactor = 0;
+    tilingData->groupIndexElemNum = 0;
     tilingData->hasWeight = 0;
     tilingData->hasGroupIndex = 0;
+    tilingData->groupListType = groupListType;
 }
 
 // Run situ_glu_group (arch35) with optional weight / group_index, one row per core.
@@ -82,6 +88,7 @@ void RunKernel(int64_t bs, int64_t d, bool withWeight, int64_t gLen, float beta,
         tilingData->groupIndexLoop = 1;
         tilingData->groupIndexFactor = gLen;
         tilingData->tailGroupIndexFactor = gLen;
+        tilingData->groupIndexElemNum = gLen;
         tilingData->hasGroupIndex = 1;
     }
 
@@ -199,6 +206,7 @@ void RunKernelPartialGroup(int64_t bs, int64_t d, bool withWeight, bool hasLinea
     tilingData->groupIndexLoop = 1;
     tilingData->groupIndexFactor = gLen;
     tilingData->tailGroupIndexFactor = gLen;
+    tilingData->groupIndexElemNum = gLen;
     tilingData->hasGroupIndex = 1;
 
     ICPU_SET_TILING_KEY(0); // schMode == SITU_GLU_GROUP_TPL_SCH_MODE_0
@@ -265,6 +273,7 @@ void RunKernelGroupTail(int64_t bs, int64_t d, int64_t gLen, int64_t realBs)
     tilingData->groupIndexLoop = 1;
     tilingData->groupIndexFactor = gLen;
     tilingData->tailGroupIndexFactor = gLen;
+    tilingData->groupIndexElemNum = gLen;
     tilingData->hasGroupIndex = 1;
 
     ICPU_SET_TILING_KEY(0); // schMode == SITU_GLU_GROUP_TPL_SCH_MODE_0
@@ -283,6 +292,68 @@ void RunKernelGroupTail(int64_t bs, int64_t d, int64_t gLen, int64_t realBs)
         for (int64_t c = 0; c < splitD; c++) {
             EXPECT_FLOAT_EQ(static_cast<float>(yH[r * splitD + c]), static_cast<float>(kSentinelH))
                 << "gLen=" << gLen << " wrote row " << r << " beyond realBs=" << realBs;
+        }
+    }
+
+    AscendC::GmFree(x);
+    AscendC::GmFree(y);
+    AscendC::GmFree(groupIndex);
+    AscendC::GmFree(tiling);
+}
+
+// count-mode group_index with an explicit value list. Covers the saturating accumulator: a true
+// sum that overflows int64 must saturate at bs, so every row is produced. y is pre-filled with a
+// sentinel, so an under-count (rows left untouched) also fails the golden comparison.
+void RunKernelGroupSaturate(int64_t bs, int64_t d, const std::vector<int64_t>& giValues)
+{
+    const int64_t splitD = d / 2;
+    const uint32_t blockDim = static_cast<uint32_t>(bs);
+    const float beta = 2.0f;
+    const float linearBeta = 3.0f;
+    const float kSentinel = 12345.0f;
+    const half kSentinelH = half(kSentinel);
+    const int64_t gLen = static_cast<int64_t>(giValues.size());
+
+    uint8_t* x = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * d * sizeof(half)));
+    uint8_t* y = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * splitD * sizeof(half)));
+    uint8_t* groupIndex = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(gLen * sizeof(int64_t)));
+    uint8_t* workspace = nullptr;
+    uint8_t* tiling = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(sizeof(SituGluGroupTilingData)));
+
+    auto* xH = reinterpret_cast<half*>(x);
+    for (int64_t i = 0; i < bs * d; i++) {
+        xH[i] = half(static_cast<float>((i % 37) - 18) * 0.125f);
+    }
+    auto* yH = reinterpret_cast<half*>(y);
+    for (int64_t i = 0; i < bs * splitD; i++) {
+        yH[i] = kSentinelH;
+    }
+    auto* gi = reinterpret_cast<int64_t*>(groupIndex);
+    for (int64_t i = 0; i < gLen; i++) {
+        gi[i] = giValues[static_cast<std::size_t>(i)];
+    }
+
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    auto* tilingData = reinterpret_cast<SituGluGroupTilingData*>(tiling);
+    FillSituGluGroupTiling(tilingData, bs, d, blockDim, beta, linearBeta, 1);
+    tilingData->hasWeight = 0;
+    tilingData->groupIndexLoop = 1;
+    tilingData->groupIndexFactor = gLen;
+    tilingData->tailGroupIndexFactor = gLen;
+    tilingData->groupIndexElemNum = gLen;
+    tilingData->hasGroupIndex = 1;
+
+    ICPU_SET_TILING_KEY(0); // schMode == SITU_GLU_GROUP_TPL_SCH_MODE_0
+    ICPU_RUN_KF((situ_glu_group<0>), blockDim, x, nullptr, groupIndex, y, workspace, tiling);
+
+    // realBs saturates at bs, so all rows must be written and match the CPU golden.
+    for (int64_t r = 0; r < bs; r++) {
+        for (int64_t c = 0; c < splitD; c++) {
+            const float gate = static_cast<float>(xH[r * d + c]);
+            const float up = static_cast<float>(xH[r * d + splitD + c]);
+            const float expected = RefSituGroup(gate, up, beta, linearBeta, 1.0f);
+            EXPECT_NEAR(static_cast<float>(yH[r * splitD + c]), expected, 1e-2)
+                << "gLen=" << gLen << " row " << r << " col " << c;
         }
     }
 
@@ -339,6 +410,7 @@ void RunKernelMultiChunkTail()
     tilingData->groupIndexLoop = 3;
     tilingData->groupIndexFactor = groupIndexFactor;
     tilingData->tailGroupIndexFactor = tailGroupIndexFactor;
+    tilingData->groupIndexElemNum = gLen;
     tilingData->hasGroupIndex = 1;
 
     ICPU_SET_TILING_KEY(0); // schMode == SITU_GLU_GROUP_TPL_SCH_MODE_0
@@ -356,6 +428,144 @@ void RunKernelMultiChunkTail()
         for (int64_t c = 0; c < splitD; c++) {
             EXPECT_FLOAT_EQ(static_cast<float>(yH[r * splitD + c]), static_cast<float>(kSentinelH))
                 << "wrote row " << r << " beyond realBs=" << realBs;
+        }
+    }
+
+    AscendC::GmFree(x);
+    AscendC::GmFree(y);
+    AscendC::GmFree(groupIndex);
+    AscendC::GmFree(tiling);
+}
+
+// cumsum mode: group_index elements are cumulative row end offsets, so realBs = last element.
+// The values are non-decreasing and end at realBs; a count-mode interpretation (sum) would be much
+// larger, so this also proves the kernel took the cumsum branch instead of summing.
+void RunKernelGroupCumsum(int64_t bs, int64_t d, int64_t gLen, int64_t realBs)
+{
+    const int64_t splitD = d / 2;
+    const uint32_t blockDim = static_cast<uint32_t>(bs);
+    const float beta = 2.0f;
+    const float linearBeta = 3.0f;
+    const float kSentinel = 12345.0f;
+    const half kSentinelH = half(kSentinel);
+
+    uint8_t* x = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * d * sizeof(half)));
+    uint8_t* y = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * splitD * sizeof(half)));
+    uint8_t* groupIndex = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(gLen * sizeof(int64_t)));
+    uint8_t* workspace = nullptr;
+    uint8_t* tiling = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(sizeof(SituGluGroupTilingData)));
+
+    auto* xH = reinterpret_cast<half*>(x);
+    for (int64_t i = 0; i < bs * d; i++) {
+        xH[i] = half(static_cast<float>((i % 37) - 18) * 0.125f);
+    }
+    auto* yH = reinterpret_cast<half*>(y);
+    for (int64_t i = 0; i < bs * splitD; i++) {
+        yH[i] = kSentinelH;
+    }
+
+    auto* gi = reinterpret_cast<int64_t*>(groupIndex);
+    for (int64_t i = 0; i < gLen; i++) {
+        gi[i] = (i + 1 == gLen) ? realBs : (realBs * (i + 1)) / gLen;
+    }
+
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    auto* tilingData = reinterpret_cast<SituGluGroupTilingData*>(tiling);
+    FillSituGluGroupTiling(tilingData, bs, d, blockDim, beta, linearBeta, 1, 0);
+    tilingData->hasWeight = 0;
+    tilingData->groupIndexLoop = 1;
+    tilingData->groupIndexFactor = gLen;
+    tilingData->tailGroupIndexFactor = gLen;
+    tilingData->groupIndexElemNum = gLen;
+    tilingData->hasGroupIndex = 1;
+
+    ICPU_SET_TILING_KEY(0); // schMode == SITU_GLU_GROUP_TPL_SCH_MODE_0
+    ICPU_RUN_KF((situ_glu_group<0>), blockDim, x, nullptr, groupIndex, y, workspace, tiling);
+
+    for (int64_t r = 0; r < realBs; r++) {
+        for (int64_t c = 0; c < splitD; c++) {
+            const float gate = static_cast<float>(xH[r * d + c]);
+            const float up = static_cast<float>(xH[r * d + splitD + c]);
+            const float expected = RefSituGroup(gate, up, beta, linearBeta, 1.0f);
+            EXPECT_NEAR(static_cast<float>(yH[r * splitD + c]), expected, 1e-2)
+                << "gLen=" << gLen << " row " << r << " col " << c;
+        }
+    }
+    for (int64_t r = realBs; r < bs; r++) {
+        for (int64_t c = 0; c < splitD; c++) {
+            EXPECT_FLOAT_EQ(static_cast<float>(yH[r * splitD + c]), static_cast<float>(kSentinelH))
+                << "cumsum wrote row " << r << " beyond realBs=" << realBs;
+        }
+    }
+
+    AscendC::GmFree(x);
+    AscendC::GmFree(y);
+    AscendC::GmFree(groupIndex);
+    AscendC::GmFree(tiling);
+}
+
+// cumsum mode with groupIndexLoop > 1: the last cumulative offset lives in the tail chunk, so this
+// covers the tilingData->groupIndexElemNum -> lastIndex path across recycled double buffers.
+void RunKernelGroupCumsumMultiChunk()
+{
+    const int64_t bs = 140;
+    const int64_t d = 256;
+    const int64_t splitD = d / 2;
+    const int64_t groupIndexFactor = 64;
+    const int64_t tailGroupIndexFactor = 33;
+    const int64_t gLen = 2 * groupIndexFactor + tailGroupIndexFactor;
+    const int64_t realBs = 130;
+    const uint32_t blockDim = static_cast<uint32_t>(bs);
+    const float beta = 2.0f;
+    const float linearBeta = 3.0f;
+    const float kSentinel = 12345.0f;
+    const half kSentinelH = half(kSentinel);
+
+    uint8_t* x = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * d * sizeof(half)));
+    uint8_t* y = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * splitD * sizeof(half)));
+    uint8_t* groupIndex = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(gLen * sizeof(int64_t)));
+    uint8_t* workspace = nullptr;
+    uint8_t* tiling = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(sizeof(SituGluGroupTilingData)));
+
+    auto* xH = reinterpret_cast<half*>(x);
+    for (int64_t i = 0; i < bs * d; i++) {
+        xH[i] = half(static_cast<float>((i % 37) - 18) * 0.125f);
+    }
+    auto* yH = reinterpret_cast<half*>(y);
+    for (int64_t i = 0; i < bs * splitD; i++) {
+        yH[i] = kSentinelH;
+    }
+
+    auto* gi = reinterpret_cast<int64_t*>(groupIndex);
+    for (int64_t i = 0; i < gLen; i++) {
+        gi[i] = (i + 1 == gLen) ? realBs : (realBs * (i + 1)) / gLen;
+    }
+
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    auto* tilingData = reinterpret_cast<SituGluGroupTilingData*>(tiling);
+    FillSituGluGroupTiling(tilingData, bs, d, blockDim, beta, linearBeta, 1, 0);
+    tilingData->hasWeight = 0;
+    tilingData->groupIndexLoop = 3;
+    tilingData->groupIndexFactor = groupIndexFactor;
+    tilingData->tailGroupIndexFactor = tailGroupIndexFactor;
+    tilingData->groupIndexElemNum = gLen;
+    tilingData->hasGroupIndex = 1;
+
+    ICPU_SET_TILING_KEY(0); // schMode == SITU_GLU_GROUP_TPL_SCH_MODE_0
+    ICPU_RUN_KF((situ_glu_group<0>), blockDim, x, nullptr, groupIndex, y, workspace, tiling);
+
+    for (int64_t r = 0; r < realBs; r++) {
+        for (int64_t c = 0; c < splitD; c++) {
+            const float gate = static_cast<float>(xH[r * d + c]);
+            const float up = static_cast<float>(xH[r * d + splitD + c]);
+            const float expected = RefSituGroup(gate, up, beta, linearBeta, 1.0f);
+            EXPECT_NEAR(static_cast<float>(yH[r * splitD + c]), expected, 1e-2) << "row " << r << " col " << c;
+        }
+    }
+    for (int64_t r = realBs; r < bs; r++) {
+        for (int64_t c = 0; c < splitD; c++) {
+            EXPECT_FLOAT_EQ(static_cast<float>(yH[r * splitD + c]), static_cast<float>(kSentinelH))
+                << "cumsum multichunk wrote row " << r << " beyond realBs=" << realBs;
         }
     }
 
@@ -412,6 +622,7 @@ void RunKernelLimitedBlocks()
     tilingData->groupIndexLoop = 1;
     tilingData->groupIndexFactor = gLen;
     tilingData->tailGroupIndexFactor = gLen;
+    tilingData->groupIndexElemNum = gLen;
     tilingData->hasGroupIndex = 1;
 
     ICPU_SET_TILING_KEY(0); // schMode == SITU_GLU_GROUP_TPL_SCH_MODE_0
@@ -433,7 +644,137 @@ void RunKernelLimitedBlocks()
     AscendC::GmFree(tiling);
 }
 
+// group_index total == 0 must return normally (no Trap) and write no row:
+//   count  (group_list_type=1): sum(group_index) == 0 -> every element is 0
+//   cumsum (group_list_type=0): group_index[-1] == 0  -> only the last element matters
+// y is pre-filled with a sentinel; any write (or an abnormal termination) fails the test.
+void RunKernelZeroTotal(int64_t groupListType)
+{
+    const int64_t bs = 8;
+    const int64_t d = 256;
+    const int64_t splitD = 128;
+    const int64_t gLen = 4;
+    const uint32_t blockDim = static_cast<uint32_t>(bs);
+    const float beta = 2.0f;
+    const float linearBeta = 3.0f;
+    const float kSentinel = 12345.0f;
+    const half kSentinelH = half(kSentinel);
+
+    uint8_t* x = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * d * sizeof(half)));
+    uint8_t* y = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * splitD * sizeof(half)));
+    uint8_t* groupIndex = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(gLen * sizeof(int64_t)));
+    uint8_t* workspace = nullptr;
+    uint8_t* tiling = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(sizeof(SituGluGroupTilingData)));
+
+    auto* xH = reinterpret_cast<half*>(x);
+    for (int64_t i = 0; i < bs * d; i++) {
+        xH[i] = half(static_cast<float>((i % 37) - 18) * 0.125f);
+    }
+    auto* yH = reinterpret_cast<half*>(y);
+    for (int64_t i = 0; i < bs * splitD; i++) {
+        yH[i] = kSentinelH;
+    }
+    auto* gi = reinterpret_cast<int64_t*>(groupIndex);
+    for (int64_t i = 0; i < gLen; i++) {
+        // cumsum: non-zero intermediate values but the last one is 0 (only the last is used).
+        // count : every element is 0, so the sum is 0.
+        gi[i] = (groupListType == 0 && i < gLen - 1) ? (i + 1) : 0;
+    }
+
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    auto* tilingData = reinterpret_cast<SituGluGroupTilingData*>(tiling);
+    FillSituGluGroupTiling(tilingData, bs, d, blockDim, beta, linearBeta, 1, groupListType);
+    tilingData->hasWeight = 0;
+    tilingData->groupIndexLoop = 1;
+    tilingData->groupIndexFactor = gLen;
+    tilingData->tailGroupIndexFactor = gLen;
+    tilingData->groupIndexElemNum = gLen;
+    tilingData->hasGroupIndex = 1;
+
+    ICPU_SET_TILING_KEY(0); // schMode == SITU_GLU_GROUP_TPL_SCH_MODE_0
+    ICPU_RUN_KF((situ_glu_group<0>), blockDim, x, nullptr, groupIndex, y, workspace, tiling);
+
+    for (int64_t i = 0; i < bs * splitD; i++) {
+        EXPECT_FLOAT_EQ(static_cast<float>(yH[i]), static_cast<float>(kSentinelH))
+            << "group_list_type=" << groupListType << " wrote element " << i << " with realBs=0";
+    }
+
+    AscendC::GmFree(x);
+    AscendC::GmFree(y);
+    AscendC::GmFree(groupIndex);
+    AscendC::GmFree(tiling);
+}
+
+// d == 2 (splitD == 1) now always uses the two-buffer SPLIT path: the DIST_DINTLV variant was
+// removed because its 16-bit unpack and per-row weight layouts were incorrect on device. This
+// covers activate_left (gate/up half selection) and the per-row weight at splitD == 1.
+void RunKernelSplitD1(bool activateLeft, bool withWeight)
+{
+    const int64_t bs = 32;
+    const int64_t d = 2;
+    const int64_t splitD = 1;
+    const uint32_t blockDim = 4; // 8 rows per core
+    const int64_t rowFactor = 8;
+    const float beta = 2.0f;
+    const float linearBeta = 3.0f;
+
+    uint8_t* x = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * d * sizeof(half)));
+    uint8_t* y = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * splitD * sizeof(half)));
+    uint8_t* weight = withWeight ? reinterpret_cast<uint8_t*>(AscendC::GmAlloc(bs * sizeof(float))) : nullptr;
+    uint8_t* workspace = nullptr;
+    uint8_t* tiling = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(sizeof(SituGluGroupTilingData)));
+
+    auto* xH = reinterpret_cast<half*>(x);
+    for (int64_t i = 0; i < bs * d; i++) {
+        xH[i] = half(static_cast<float>((i % 37) - 18) * 0.125f);
+    }
+    auto* w = reinterpret_cast<float*>(weight);
+    if (withWeight) {
+        for (int64_t r = 0; r < bs; r++) {
+            w[r] = 0.5f + 0.25f * static_cast<float>(r);
+        }
+    }
+
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    auto* tilingData = reinterpret_cast<SituGluGroupTilingData*>(tiling);
+    FillSituGluGroupTiling(tilingData, bs, d, blockDim, beta, linearBeta, activateLeft ? 1 : 0);
+    tilingData->rowFactor = rowFactor;
+    tilingData->hasWeight = withWeight ? 1 : 0;
+
+    ICPU_SET_TILING_KEY(0); // schMode == SITU_GLU_GROUP_TPL_SCH_MODE_0
+    ICPU_RUN_KF((situ_glu_group<0>), blockDim, x, weight, nullptr, y, workspace, tiling);
+
+    auto* yH = reinterpret_cast<half*>(y);
+    for (int64_t r = 0; r < bs; r++) {
+        const int64_t gateIdx = activateLeft ? (r * d) : (r * d + splitD);
+        const int64_t upIdx = activateLeft ? (r * d + splitD) : (r * d);
+        const float gate = static_cast<float>(xH[gateIdx]);
+        const float up = static_cast<float>(xH[upIdx]);
+        const float expected = RefSituGroup(gate, up, beta, linearBeta, withWeight ? w[r] : 1.0f);
+        EXPECT_NEAR(static_cast<float>(yH[r * splitD]), expected, 1e-2)
+            << "activateLeft=" << activateLeft << " row " << r;
+    }
+
+    AscendC::GmFree(x);
+    AscendC::GmFree(y);
+    if (weight != nullptr) {
+        AscendC::GmFree(weight);
+    }
+    AscendC::GmFree(tiling);
+}
+
 TEST_F(SituGluGroupKernelTest, basic_fp16) { RunKernel(2, 256, false, 0, 1.0f, 0.0f, 1); }
+
+// total == 0 must return normally and leave every row untouched (no Trap).
+TEST_F(SituGluGroupKernelTest, group_zero_total_count) { RunKernelZeroTotal(1); }
+TEST_F(SituGluGroupKernelTest, group_zero_total_cumsum) { RunKernelZeroTotal(0); }
+
+// splitD == 1 (d == 2): gate/up selection for both activate_left layouts, with and without the
+// per-row weight, on the SPLIT path (multi-row tiles via rowFactor == 8).
+TEST_F(SituGluGroupKernelTest, split_d1_activate_left) { RunKernelSplitD1(true, false); }
+TEST_F(SituGluGroupKernelTest, split_d1_activate_right) { RunKernelSplitD1(false, false); }
+TEST_F(SituGluGroupKernelTest, split_d1_activate_left_weight) { RunKernelSplitD1(true, true); }
+TEST_F(SituGluGroupKernelTest, split_d1_activate_right_weight) { RunKernelSplitD1(false, true); }
 
 TEST_F(SituGluGroupKernelTest, weight_group_fp16) { RunKernel(4, 256, true, 8, 4.0f, 25.0f, 1); }
 
@@ -468,8 +809,35 @@ TEST_F(SituGluGroupKernelTest, group_index_tail_97) { RunKernelGroupTail(8, 256,
 // together with a 1-element tail.
 TEST_F(SituGluGroupKernelTest, group_index_tail_257) { RunKernelGroupTail(8, 256, 257, 5); }
 
+// count-mode int64 saturation. True totals:
+//   (2^63-1) + (2^63-1) + 6 = 2^64 + 4  -> wraps to +4 without saturation (silent partial write)
+//   (2^63-1) + (2^63-1)     = 2^64 - 2  -> wraps negative without saturation (Trap)
+//   [100, 100]              = 200 > bs  -> exercises the ordinary min(sum, bs) clamp
+TEST_F(SituGluGroupKernelTest, group_index_count_saturate_2pow64_plus_4)
+{
+    const int64_t int64Max = std::numeric_limits<int64_t>::max();
+    RunKernelGroupSaturate(8, 256, {int64Max, int64Max, 6});
+}
+
+TEST_F(SituGluGroupKernelTest, group_index_count_saturate_2pow64_minus_2)
+{
+    const int64_t int64Max = std::numeric_limits<int64_t>::max();
+    RunKernelGroupSaturate(8, 256, {int64Max, int64Max});
+}
+
+TEST_F(SituGluGroupKernelTest, group_index_count_clamp_above_rows) { RunKernelGroupSaturate(8, 256, {100, 100}); }
+
 // groupIndexLoop = 3 with a 33-element tail (double-buffer recycle path, withUbReduce=true).
 TEST_F(SituGluGroupKernelTest, group_index_multichunk_tail) { RunKernelMultiChunkTail(); }
+
+// cumsum mode (group_list_type=0): realBs is the last cumulative offset, not the sum.
+TEST_F(SituGluGroupKernelTest, group_cumsum_truncation) { RunKernelGroupCumsum(8, 256, 4, 5); }
+TEST_F(SituGluGroupKernelTest, group_cumsum_full) { RunKernelGroupCumsum(8, 256, 4, 8); }
+TEST_F(SituGluGroupKernelTest, group_cumsum_single_element) { RunKernelGroupCumsum(8, 256, 1, 3); }
+// 97 elements exercises the four-unfold int64 reduce path together with cumsum semantics.
+TEST_F(SituGluGroupKernelTest, group_cumsum_large_seq) { RunKernelGroupCumsum(8, 256, 97, 5); }
+// groupIndexLoop=3: the last cumulative offset is in the 33-element tail chunk.
+TEST_F(SituGluGroupKernelTest, group_cumsum_multichunk) { RunKernelGroupCumsumMultiChunk(); }
 
 // blockDim (2) < host tiling core count (8): the row split must follow the launched block count.
 TEST_F(SituGluGroupKernelTest, group_index_limited_blocks) { RunKernelLimitedBlocks(); }

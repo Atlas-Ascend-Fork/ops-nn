@@ -10,7 +10,7 @@
 
 /*!
  * \file situ_glu_group_tiling_arch35.h
- * \brief SituGluGroup tiling data and entry declarations (arch35 / Ascend 950 only).
+ * \brief SituGluGroup tiling data and entry declarations (arch35 / Ascend 950 and Ascend 350).
  */
 #ifndef AIR_CXX_RUNTIME_V2_OP_IMPL_SITU_GLU_GROUP_TILING_ARCH35_H_
 #define AIR_CXX_RUNTIME_V2_OP_IMPL_SITU_GLU_GROUP_TILING_ARCH35_H_
@@ -37,11 +37,15 @@ TILING_DATA_FIELD_DEF(int64_t, ubSize);
 TILING_DATA_FIELD_DEF(int64_t, groupIndexLoop);
 TILING_DATA_FIELD_DEF(int64_t, groupIndexFactor);
 TILING_DATA_FIELD_DEF(int64_t, tailGroupIndexFactor);
+// Total group_index element count, so the kernel never re-derives it from loop/factor/tail.
+TILING_DATA_FIELD_DEF(int64_t, groupIndexElemNum);
 // Presence flags decided by Tiling. The kernel must follow these instead of only testing the
 // input pointers: if an optional descriptor exists but its shape is null, Tiling treats it as
 // absent and excludes it from the UB budget, so the kernel must not enter that path either.
 TILING_DATA_FIELD_DEF(int64_t, hasWeight);
 TILING_DATA_FIELD_DEF(int64_t, hasGroupIndex);
+// group_index semantics used by the kernel: 0 = cumsum (cumulative end offsets), 1 = count.
+TILING_DATA_FIELD_DEF(int64_t, groupListType);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(SituGluGroup, SituGluGroupTilingData)

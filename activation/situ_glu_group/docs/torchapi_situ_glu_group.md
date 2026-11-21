@@ -81,7 +81,7 @@
      y[i] = y[i] \cdot weight[i]
      $$
 
-  6. 可选：当传入`group_index`时，仅前`realBs`行参与计算并写出，`realBs = min(sum(group_index), 行数)`。
+  6. 可选：当传入`group_index`时，按其语义（由`group_list_type`指定）确定有效行数`realBs`。`group_list_type=1`（count模式）时`realBs = min(sum(group_index), 行数)`；`group_list_type=0`（cumsum模式）时仅最后一个元素生效，`realBs = min(group_index[-1], 行数)`（中间元素不参与计算，不要求单调）。仅前`realBs`行参与计算并写出。
 
   7. 输出张量`y`的维度与`x`一致，`dim`轴上的大小为`x`的一半，其他维度与`x`相同。
 
@@ -96,7 +96,8 @@ cann_ops_nn.situ_glu_group(
     dim=-1,
     beta=1.0,
     linear_beta=0.0,
-    activate_left=True
+    activate_left=True,
+    group_list_type=0
 ) -> Tensor
 ```
 
@@ -106,11 +107,12 @@ cann_ops_nn.situ_glu_group(
 | --- | --- | --- | --- | --- | --- |
 | `x` | Tensor | 必选 | SiTU输入，`dim`维度会被均分为门控（gate）与上路径（up）两部分。 | float16、float32、bfloat16 | 1-8维，`dim`维度为偶数 |
 | `weight` | Tensor | 可选 | 逐行权重标量，乘到SiTU激活结果上。元素个数等于`x`在`dim`轴之前各维的乘积；`dim=-1`时等于除最后一维外各维的乘积。 | float32 | 1-8维 |
-| `group_index` | Tensor | 可选 | count模式的分组token数，1维非空，元素值必须大于等于0且`sum(group_index) > 0`。传入时仅前`min(sum(group_index), 行数)`行参与计算并写出，其余行不写出（内容未定义），调用方需自行掩码。 | int64 | 1维 |
+| `group_index` | Tensor | 可选 | 分组token数，语义由`group_list_type`决定。1维非空，元素值必须大于等于0。count模式（1）下`sum(group_index)`为有效行数；cumsum模式（0）下仅最后一个元素为有效行数，中间元素不参与计算（不要求单调）。总量为0时`realBs`为0，不写出任何行，输出内容全部未定义；总量超过行数时按行数截断。传入时仅前`realBs`行参与计算并写出，其余行不写出（内容未定义），调用方需自行掩码。 | int64 | 1维 |
 | `dim` | int | 可选 | 切分维度，取值范围`[-x.dim(), x.dim()-1]`，默认`-1`。 | - | - |
 | `beta` | float | 可选 | SiTU门控部分的缩放系数，控制tanh非线性强度。必须为非零值，传入0会返回参数校验失败，默认`1.0`。 | - | - |
 | `linear_beta` | float | 可选 | up路径线性tanh的缩放系数。大于0时对up施加有界化变换；小于等于0时up直接透传。默认`0.0`。 | - | - |
 | `activate_left` | bool | 可选 | 切分`x`时gate是否为前半部分。`True`表示gate为前半、up为后半；`False`表示gate为后半、up为前半。默认`True`。 | - | - |
+| `group_list_type` | int | 可选 | `group_index`的语义。`1`为count模式（每元素是该组行数，取总和）；`0`为cumsum模式（每元素是该组在行轴上的累计结尾偏移，仅末元素生效）。默认`0`，支持`0`和`1`；不传`group_index`时无影响。 | - | - |
 
 ## 返回值说明
 
@@ -124,7 +126,10 @@ cann_ops_nn.situ_glu_group(
 - 该接口支持单算子模式和TorchAir图模式调用。
 - `beta`必须为非零值，传入0会返回参数校验失败。
 - `weight`、`group_index`为可选输入，元素个数/形状约束见参数说明。
-- `group_index`传入时，元素值必须大于等于0且`sum(group_index) > 0`；仅前realBs行写出，其余行内容未定义，调用方需自行掩码。
+- `group_index`传入时，元素值必须大于等于0：count模式下总量为`sum(group_index)`，cumsum模式下总量为`group_index[-1]`（中间元素不参与计算，不要求单调）。总量为0时`realBs`为0，不写出任何行，输出内容全部未定义；总量超过行数时按行数截断。仅前realBs行写出，其余行内容未定义，调用方需自行掩码。
+- `group_list_type`支持`0`（cumsum模式）和`1`（count模式），默认`0`；不传`group_index`时无影响，传count语义数据时须显式传`1`；传入其他值返回参数校验失败。
+- 本算子同时支持Ascend 950与Ascend 350（两者共用arch35实现，支持情况相同）。
+- count模式下`sum(group_index)`按行数饱和累加，不会发生int64溢出；`group_index`含负值时算子内部报错终止。
 
 ## 确定性计算
 
@@ -141,18 +146,22 @@ cann_ops_nn.situ_glu_group(
 
   x = torch.randn(2, 32, dtype=torch.float32).npu()
 
-  # 默认参数调用
+  # 默认参数调用（group_list_type 默认 0，即 cumsum 模式）
   y = cann_ops_nn.situ_glu_group(x)
   print(y.shape, y.dtype)  # torch.Size([2, 16]) torch.float32
 
   # 指定全部参数
-  y = cann_ops_nn.situ_glu_group(x, dim=-1, beta=1.0, linear_beta=0.0, activate_left=True)
+  y = cann_ops_nn.situ_glu_group(
+      x, dim=-1, beta=1.0, linear_beta=0.0, activate_left=True, group_list_type=1
+  )
   print(y.shape, y.dtype)
 
   # 传入可选输入 weight / group_index
   weight = torch.rand(x.shape[0], dtype=torch.float32).npu()
   group_index = torch.tensor([2], dtype=torch.int64).npu()
-  y = cann_ops_nn.situ_glu_group(x, weight=weight, group_index=group_index)
+  y = cann_ops_nn.situ_glu_group(
+      x, weight=weight, group_index=group_index, group_list_type=1
+  )
   print(y.shape, y.dtype)
   ```
 
@@ -174,6 +183,7 @@ cann_ops_nn.situ_glu_group(
               beta=1.0,
               linear_beta=0.0,
               activate_left=True,
+              group_list_type=1,
           )
 
   model = torch.compile(Model().npu(), backend=torchair.get_npu_backend(), dynamic=False)

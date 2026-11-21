@@ -59,7 +59,7 @@
      y[i] = y[i] \cdot weight[i]
      $$
 
-  6. 可选：当传入group_index时，仅前realBs行参与计算并写出，realBs = min(sum(group_index), 行数)。
+  6. 可选：当传入group_index时，按其语义（由group_list_type指定）确定有效行数realBs。group_list_type=1（count模式）时realBs = min(sum(group_index), 行数)；group_list_type=0（cumsum模式）时仅最后一个元素生效，realBs = min(group_index[-1], 行数)（中间元素不参与计算，不要求单调）。仅前realBs行参与计算并写出。
 
   7. 重塑输出张量y的维度数量与合轴前的x的维度数量一致，dim轴上的大小为x的一半，其他维度与x相同。
 
@@ -117,6 +117,13 @@
       <td>-</td>
     </tr>
     <tr>
+      <td>group_list_type</td>
+      <td>属性</td>
+      <td><ul><li>group_index的语义。</li><li>1为count模式（每元素是该组行数，取总和）；0为cumsum模式（每元素是该组在行轴上的累计结尾偏移，仅末元素生效）。</li><li>默认值为0，支持0和1。</li></ul></td>
+      <td>INT64</td>
+      <td>-</td>
+    </tr>
+    <tr>
       <td>weight</td>
       <td>可选输入</td>
       <td><ul><li>逐行权重标量，乘到SiTU激活结果上。</li><li>元素个数等于x在dim轴之前各维的乘积；dim为-1时等于除最后一维外各维的乘积。</li></ul></td>
@@ -126,7 +133,7 @@
     <tr>
       <td>group_index</td>
       <td>可选输入</td>
-      <td><ul><li>count模式的分组token数。1维非空Tensor，元素值必须大于等于0，且sum(group_index)必须大于0。</li><li>传入时仅前min(sum(group_index), 行数)行参与计算并写出，其余行不写出（内容未定义），调用方需自行掩码。</li></ul></td>
+      <td><ul><li>分组token数，语义由group_list_type决定。1维非空Tensor，元素值必须大于等于0。</li><li>count模式（1）：sum(group_index)为有效行数；cumsum模式（0）：仅最后一个元素为有效行数，中间元素不参与计算（不要求单调）。</li><li>传入时仅前realBs行参与计算并写出，其余行不写出（内容未定义），调用方需自行掩码；realBs超过行数时按行数截断。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
     </tr>
@@ -143,7 +150,10 @@
 
 - 支持非连续Tensor。
 - weight与group_index为可选输入。
-- group_index传入时，元素值必须大于等于0且sum(group_index)必须大于0；仅前realBs行写出，其余行内容未定义，调用方需自行掩码。
+- group_index传入时，元素值必须大于等于0：count模式下总量为sum(group_index)，cumsum模式下总量为最后一个元素（中间元素不参与计算，不要求单调）。总量为0时realBs=0，不写出任何行，输出内容全部未定义；总量大于行数时按行数截断。仅前realBs行写出，其余行内容未定义，调用方需自行掩码。
+- group_list_type支持0（cumsum模式）和1（count模式），默认0；不传group_index时该属性无影响，传入count语义数据时必须显式传1。传入其他值会返回参数校验失败。
+- 本算子同时支持Ascend 950与Ascend 350（两者共用arch35实现，支持情况相同）。
+- count模式下sum(group_index)按行数饱和累加，不会发生int64溢出；group_index含负值时算子内部报错终止。
 - beta必须为非零值，传入0会返回参数校验失败。
 
 ## 调用说明

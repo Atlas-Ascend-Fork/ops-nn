@@ -31,10 +31,12 @@ void CheckOptionalNpuTensor(const c10::optional<at::Tensor>& tensor, const char*
     }
 }
 
-void CheckSiTuGroupAttrs(const double beta, const double linearBeta)
+void CheckSiTuGroupAttrs(const double beta, const double linearBeta, const int64_t groupListType)
 {
     TORCH_CHECK(std::isfinite(beta) && beta != 0.0, "beta must be finite and non-zero, but got ", beta);
     TORCH_CHECK(std::isfinite(linearBeta), "linear_beta must be finite, but got ", linearBeta);
+    TORCH_CHECK(groupListType == 0 || groupListType == 1,
+                "group_list_type must be 0 (cumsum mode) or 1 (count mode), but got ", groupListType);
 }
 
 c10::SmallVector<int64_t, op_infer::SIZE> GetSituGluGroupOutputShape(const at::Tensor& x, const int64_t dim)
@@ -57,16 +59,16 @@ c10::SmallVector<int64_t, op_infer::SIZE> GetSituGluGroupOutputShape(const at::T
 
 at::Tensor situ_glu_group(const at::Tensor& x, const c10::optional<at::Tensor>& weight,
                           const c10::optional<at::Tensor>& group_index, const int64_t dim, const double beta,
-                          const double linear_beta, const bool activate_left)
+                          const double linear_beta, const bool activate_left, const int64_t group_list_type)
 {
     CheckNpuTensor(x, "x");
     CheckOptionalNpuTensor(weight, "weight");
     CheckOptionalNpuTensor(group_index, "group_index");
-    CheckSiTuGroupAttrs(beta, linear_beta);
+    CheckSiTuGroupAttrs(beta, linear_beta, group_list_type);
 
     at::Tensor y = at::empty(GetSituGluGroupOutputShape(x, dim), x.options());
 
-    ACLNN_CMD(aclnnSituGluGroup, x, weight, group_index, dim, beta, linear_beta, activate_left, y);
+    ACLNN_CMD(aclnnSituGluGroup, x, weight, group_index, dim, beta, linear_beta, activate_left, group_list_type, y);
     return y;
 }
 

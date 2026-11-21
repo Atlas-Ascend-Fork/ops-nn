@@ -10,7 +10,7 @@
 
 /*!
  * \file arch35/situ_glu_group.cpp
- * \brief Kernel entry for SituGluGroup Arch35 (Ascend 950)
+ * \brief Kernel entry for SituGluGroup Arch35 (Ascend 950/350)
  */
 
 #include "kernel_operator.h"
@@ -27,6 +27,7 @@ template <uint64_t schMode = SITU_GLU_GROUP_TPL_SCH_MODE_0>
 __global__ __aicore__ void situ_glu_group(GM_ADDR x, GM_ADDR weight, GM_ADDR groupIndex, GM_ADDR y, GM_ADDR workspace,
                                           GM_ADDR tiling)
 {
+    REGISTER_TILING_DEFAULT(SituGluGroupTilingData);
     GET_TILING_DATA_WITH_STRUCT(SituGluGroupTilingData, tilingDataIn, tiling);
     const SituGluGroupTilingData* __restrict__ tilingData = &tilingDataIn;
     TPipe pipe;

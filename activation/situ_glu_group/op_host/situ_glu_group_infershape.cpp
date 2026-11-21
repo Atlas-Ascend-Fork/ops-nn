@@ -47,16 +47,16 @@ static ge::graphStatus InferShapeForSituGluGroup(gert::InferShapeContext* contex
     // GetDimNum() returns size_t; convert once so the negative-dim normalization and the range
     // message never rely on unsigned wraparound.
     const int64_t xDimNum = static_cast<int64_t>(xShape->GetDimNum());
-    auto splitDim = *splitDimPtr;
-    if (splitDim < 0) {
-        splitDim += xDimNum;
-    }
-    if (splitDim < 0 || splitDim >= xDimNum) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dim", std::to_string(splitDim),
+    const int64_t originSplitDim = *splitDimPtr;
+    // Validate the external int64 before negating/normalizing it: originSplitDim == INT64_MIN would
+    // make originSplitDim + xDimNum a signed overflow (UB). Tiling performs the same pre-add check.
+    if (originSplitDim < -xDimNum || originSplitDim >= xDimNum) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dim", std::to_string(originSplitDim),
                                               "The value of dim must be in the range [-" + std::to_string(xDimNum) +
                                                   ", " + std::to_string(xDimNum - 1) + "]");
         return GRAPH_FAILED;
     }
+    const auto splitDim = originSplitDim < 0 ? originSplitDim + xDimNum : originSplitDim;
     OP_LOGD(context->GetNodeName(), "Start generating yShape");
     *yShape = *xShape;
     // Dynamic shape.

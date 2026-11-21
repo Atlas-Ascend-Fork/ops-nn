@@ -85,7 +85,7 @@
      y[i] = y[i] \cdot weight[i]
      $$
 
-  6. 可选：当传入groupIndexOptional时，仅前realBs行参与计算并写出，realBs = min(sum(groupIndex), 行数)。
+  6. 可选：当传入groupIndexOptional时，按其语义（由groupListType指定）确定有效行数realBs。groupListType=1（count模式）时realBs = min(sum(groupIndex), 行数)；groupListType=0（cumsum模式）时仅最后一个元素生效，realBs = min(groupIndex[-1], 行数)（中间元素不参与计算，不要求单调）。仅前realBs行参与计算并写出。
 
   7. 重塑输出张量y的维度数量与合轴前的x的维度数量一致，dim轴上的大小为x的一半，其他维度与x相同。
 
@@ -102,6 +102,7 @@ aclnnStatus aclnnSituGluGroupGetWorkspaceSize(
     double           beta,
     double           linearBeta,
     bool             activateLeft,
+    int64_t          groupListType,
     const aclTensor *out,
     uint64_t        *workspaceSize,
     aclOpExecutor   **executor)
@@ -164,8 +165,8 @@ aclnnStatus aclnnSituGluGroup(
     <tr>
       <td>groupIndexOptional（aclTensor*）</td>
       <td>输入</td>
-      <td>公式中的可选输入group_index，count模式的分组token数。传入时仅前min(sum(group_index), 行数)行参与计算并写出，其余行不写出（内容未定义）。不传时置nullptr。</td>
-      <td><ul><li>必须为1维非空Tensor，元素值必须大于等于0，且sum(group_index)必须大于0。</li></ul></td>
+      <td>公式中的可选输入group_index，分组的token数，语义由groupListType指定。传入时仅前realBs行参与计算并写出，其余行不写出（内容未定义）。不传时置nullptr。</td>
+      <td><ul><li>必须为1维非空Tensor，元素值必须大于等于0。</li><li>groupListType=1（count模式）时sum(group_index)即有效行数；groupListType=0（cumsum模式）时仅最后一个元素即有效行数，中间元素不参与计算（不要求单调）。realBs超过行数时按行数截断。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>1</td>
@@ -206,6 +207,16 @@ aclnnStatus aclnnSituGluGroup(
       <td>输入</td>
       <td>公式中的输入activateLeft，表示切分x时gate是否为前半部分。</td>
       <td>true表示gate为前半、up为后半；false表示gate为后半、up为前半。</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>groupListType（int64_t）</td>
+      <td>输入</td>
+      <td>groupIndexOptional的语义。0为cumsum模式（元素为累计结尾偏移，仅末元素生效），1为count模式（元素为每组行数，取总和）。</td>
+      <td>支持0和1，默认0；不传groupIndexOptional时无影响，传count语义数据时须显式传1；传入其他值会返回参数校验失败。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -268,8 +279,8 @@ aclnnStatus aclnnSituGluGroup(
       <td>x、out存在空指针。</td>
     </tr>
     <tr>
-      <td rowspan="8">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="8">161002</td>
+      <td rowspan="9">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="9">161002</td>
       <td>x或out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
@@ -292,6 +303,9 @@ aclnnStatus aclnnSituGluGroup(
     </tr>
     <tr>
       <td>group_index的数据类型不为INT64、维度不为1或为空Tensor。</td>
+    </tr>
+    <tr>
+      <td>groupListType不为0或1。</td>
     </tr>
   </tbody></table>
 
@@ -342,7 +356,10 @@ aclnnStatus aclnnSituGluGroup(
 
 - 确定性说明：aclnnSituGluGroup默认确定性实现。
 - beta必须为非零值，传入0会返回参数校验失败；weightOptional、groupIndexOptional为可选输入，不传时置nullptr。
-- groupIndexOptional传入时，元素值必须大于等于0且sum必须大于0；仅前realBs行写出，其余行内容未定义，调用方需自行掩码。若传入负值或sum溢出int64，行为未定义：接口不返回错误，可能整次调用不写出任何行。
+- groupListType支持0（cumsum模式）和1（count模式），默认0；传入其他值会返回参数校验失败。
+- groupIndexOptional传入时，元素值必须大于等于0：count模式下总量为sum(group_index)，cumsum模式下总量为group_index[-1]（中间元素不参与计算，不要求单调）。总量为0时realBs=0，不写出任何行，输出内容全部未定义；总量大于行数时按行数截断。仅前realBs行写出，其余行内容未定义，调用方需自行掩码。
+- 本算子同时支持Ascend 950与Ascend 350（两者共用arch35实现，支持情况相同）。
+- count模式下`sum(group_index)`按行数饱和累加，不会发生int64溢出；`group_index`含负值时算子内部报错终止。
 
 ## 调用示例
 
@@ -437,6 +454,8 @@ int main()
     double beta = 1.0;
     double linear_beta = 0.0;
     bool activate_left = true;
+    // group_list_type: 0为cumsum模式，1为count模式。
+    int64_t group_list_type = 1;
     // 创建x aclTensor
     ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_FLOAT, &x);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -448,8 +467,8 @@ int main()
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // 调用aclnnSituGluGroup第一段接口
-    ret = aclnnSituGluGroupGetWorkspaceSize(x, nullptr, nullptr, dim, beta, linear_beta, activate_left, out,
-                                            &workspaceSize, &executor);
+    ret = aclnnSituGluGroupGetWorkspaceSize(x, nullptr, nullptr, dim, beta, linear_beta, activate_left,
+                                            group_list_type, out, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSituGluGroupGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
     void* workspaceAddr = nullptr;

@@ -81,7 +81,7 @@
      y[i] = y[i] \cdot weight[i]
      $$
 
-  6. Optional: when `group_index` is passed, only the first `realBs` rows are computed and written, where `realBs = min(sum(group_index), number of rows)`.
+  6. Optional: when `group_index` is passed, the number of valid rows `realBs` is determined by its semantics (specified by `group_list_type`). In count mode (`group_list_type=1`), `realBs = min(sum(group_index), number of rows)`; in cumsum mode (`group_list_type=0`), only the last element is consumed, `realBs = min(group_index[-1], number of rows)` (intermediate elements are not used and monotonicity is not required). Only the first `realBs` rows are computed and written.
 
   7. The dimensions of output tensor `y` are the same as those of `x`, the size on the `dim` axis is half of that of `x`, and the other dimensions are the same as `x`.
 
@@ -96,7 +96,8 @@ cann_ops_nn.situ_glu_group(
     dim=-1,
     beta=1.0,
     linear_beta=0.0,
-    activate_left=True
+    activate_left=True,
+    group_list_type=0
 ) -> Tensor
 ```
 
@@ -106,11 +107,12 @@ cann_ops_nn.situ_glu_group(
 | --- | --- | --- | --- | --- | --- |
 | `x` | Tensor | Required | SiTU input. The `dim` dimension is evenly split into the gate part and the up part. | float16, float32, bfloat16 | 1 to 8 dimensions; the `dim` dimension must be an even number |
 | `weight` | Tensor | Optional | Per-row weight scalar, multiplied into the SiTU activation result. The number of elements equals the product of the dimensions of `x` before the `dim` axis; when `dim=-1`, it equals the product of all dimensions except the last one. | float32 | 1 to 8 dimensions |
-| `group_index` | Tensor | Optional | Number of grouped tokens in count mode. A 1-D non-empty tensor whose elements must be greater than or equal to 0 and `sum(group_index) > 0`. When passed, only the first `min(sum(group_index), number of rows)` rows are computed and written; the remaining rows are not written (their content is undefined), and the caller must apply masking. | int64 | 1 dimension |
+| `group_index` | Tensor | Optional | Grouped token numbers whose semantics are selected by `group_list_type`. A 1-D non-empty tensor whose elements must be greater than or equal to 0. In count mode (1), `sum(group_index)` is the number of valid rows; in cumsum mode (0), only the last element is used as the number of valid rows; intermediate elements are not used and monotonicity is not required. A zero total means `realBs = 0`: no row is written and the whole output is undefined. If the total exceeds the row count, `realBs` is clamped to the row count. When passed, only the first `realBs` rows are computed and written; the remaining rows are not written (their content is undefined), and the caller must apply masking. | int64 | 1 dimension |
 | `dim` | int | Optional | Dimension along which the input is split. Value range: `[-x.dim(), x.dim()-1]`. Default: `-1`. | - | - |
 | `beta` | float | Optional | Scaling factor of the gate part in SiTU, which controls the intensity of the tanh nonlinearity. It must be a non-zero value; passing 0 returns a parameter validation failure. Default: `1.0`. | - | - |
 | `linear_beta` | float | Optional | Scaling factor for the linear tanh of the up path. If the value is greater than 0, a bounded transformation is applied to up; if the value is less than or equal to 0, up is passed through directly. Default: `0.0`. | - | - |
 | `activate_left` | bool | Optional | Specifies whether gate is the first half when `x` is split. `True` indicates that gate is the first half and up is the second half; `False` indicates that gate is the second half and up is the first half. Default: `True`. | - | - |
+| `group_list_type` | int | Optional | Semantics of `group_index`. `1` is count mode (each element is the row count of that group; the sum is used); `0` is cumsum mode (each element is the cumulative end offset of that group on the row axis; only the last element is used). Default: `0`; both `0` and `1` are supported; it has no effect when `group_index` is not passed. | - | - |
 
 ## Return Values
 
@@ -124,7 +126,10 @@ cann_ops_nn.situ_glu_group(
 - This API can be called in both single-operator mode and TorchAir graph mode.
 - `beta` must be a non-zero value; passing 0 returns a parameter validation failure.
 - `weight` and `group_index` are optional inputs. For their element count and shape constraints, see the parameter description.
-- When `group_index` is passed, its elements must be greater than or equal to 0 and `sum(group_index) > 0`. Only the first realBs rows are written; the content of the remaining rows is undefined, and the caller must apply masking.
+- When `group_index` is passed, its elements must be greater than or equal to 0: the total is `sum(group_index)` in count mode, and `group_index[-1]` in cumsum mode (intermediate elements are not used and monotonicity is not required). A zero total means `realBs = 0`: no row is written and the whole output is undefined. If the total exceeds the row count, `realBs` is clamped to the row count. Only the first realBs rows are written; the content of the remaining rows is undefined, and the caller must apply masking.
+- `group_list_type` supports `0` (cumsum mode) and `1` (count mode); the default is `0`. It has no effect when `group_index` is not passed; callers passing count-semantics data must explicitly pass `1`. Any other value returns a parameter validation failure.
+- This operator supports both Ascend 950 and Ascend 350 (they share the same arch35 implementation and have identical support).
+- In count mode, `sum(group_index)` is accumulated with saturation at the row count and cannot overflow int64; negative elements make the operator terminate with an error.
 
 ## Deterministic Computation
 
@@ -141,18 +146,22 @@ cann_ops_nn.situ_glu_group(
 
   x = torch.randn(2, 32, dtype=torch.float32).npu()
 
-  # Call with default parameters.
+  # Call with default parameters (group_list_type defaults to 0, cumsum mode).
   y = cann_ops_nn.situ_glu_group(x)
   print(y.shape, y.dtype)  # torch.Size([2, 16]) torch.float32
 
   # Specify all parameters.
-  y = cann_ops_nn.situ_glu_group(x, dim=-1, beta=1.0, linear_beta=0.0, activate_left=True)
+  y = cann_ops_nn.situ_glu_group(
+      x, dim=-1, beta=1.0, linear_beta=0.0, activate_left=True, group_list_type=1
+  )
   print(y.shape, y.dtype)
 
   # Pass the optional inputs weight / group_index.
   weight = torch.rand(x.shape[0], dtype=torch.float32).npu()
   group_index = torch.tensor([2], dtype=torch.int64).npu()
-  y = cann_ops_nn.situ_glu_group(x, weight=weight, group_index=group_index)
+  y = cann_ops_nn.situ_glu_group(
+      x, weight=weight, group_index=group_index, group_list_type=1
+  )
   print(y.shape, y.dtype)
   ```
 
@@ -174,6 +183,7 @@ cann_ops_nn.situ_glu_group(
               beta=1.0,
               linear_beta=0.0,
               activate_left=True,
+              group_list_type=1,
           )
 
   model = torch.compile(Model().npu(), backend=torchair.get_npu_backend(), dynamic=False)

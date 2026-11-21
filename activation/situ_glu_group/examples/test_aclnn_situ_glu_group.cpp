@@ -56,11 +56,15 @@ bool CheckHardwareSupport()
     }
 
     LOG_PRINT("Current SOC: %s\n", socName);
-    if (strstr(socName, "Ascend950") != nullptr || strstr(socName, "ascend950") != nullptr) {
+    // The operator is registered through ArchConfigHelper::DAV_3510, i.e. both Ascend950 and
+    // Ascend350 share the same arch35 kernel.
+    if (strstr(socName, "Ascend950") != nullptr || strstr(socName, "ascend950") != nullptr ||
+        strstr(socName, "Ascend350") != nullptr || strstr(socName, "ascend350") != nullptr) {
         return true;
     }
 
-    LOG_PRINT("Warning: SituGluGroup only supports Ascend950, current SOC '%s' is not supported. Skip test.\n",
+    LOG_PRINT("Warning: SituGluGroup only supports Ascend950/Ascend350, current SOC '%s' is not supported. "
+              "Skip test.\n",
               socName);
     return false;
 }
@@ -123,6 +127,8 @@ int main()
     double beta = 1.0;
     double linear_beta = 0.0;
     bool activate_left = true;
+    // group_list_type: 0=cumsum, 1=count.
+    int64_t group_list_type = 1;
     // 创建x aclTensor
     ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_FLOAT, &x);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -134,8 +140,8 @@ int main()
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // 调用aclnnSituGluGroup第一段接口
-    ret = aclnnSituGluGroupGetWorkspaceSize(x, nullptr, nullptr, dim, beta, linear_beta, activate_left, out,
-                                            &workspaceSize, &executor);
+    ret = aclnnSituGluGroupGetWorkspaceSize(x, nullptr, nullptr, dim, beta, linear_beta, activate_left, group_list_type,
+                                            out, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSituGluGroupGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
     void* workspaceAddr = nullptr;

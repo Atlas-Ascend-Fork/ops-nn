@@ -8,6 +8,6 @@
 
 add_kernel_sources(
     KERNEL_SRC arch35/situ_glu_group.cpp
-    COMPUTE_UNITS ascend950
+    COMPUTE_UNITS dav_3510
     AUTO_SYNC false
 )

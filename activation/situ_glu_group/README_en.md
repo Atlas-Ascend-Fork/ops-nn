@@ -61,7 +61,7 @@ English | [简体中文](./README.md)
      y[i] = y[i] \cdot weight[i]
      $$
 
-  6. Optional: when group_index is passed, only the first realBs rows are computed and written, where realBs = min(sum(group_index), number of rows).
+  6. Optional: when group_index is passed, the number of valid rows realBs is determined by its semantics (specified by group_list_type). In count mode (group_list_type=1), realBs = min(sum(group_index), number of rows); in cumsum mode (group_list_type=0), only the last element is consumed, realBs = min(group_index[-1], number of rows) (intermediate elements are not used and monotonicity is not required). Only the first realBs rows are computed and written.
 
   7. Reshapes the output tensor y so that the number of dimensions is the same as that of x before folding, the size on the dim axis is half of x, and the other dimensions are the same as x.
 
@@ -119,6 +119,13 @@ English | [简体中文](./README.md)
       <td>-</td>
     </tr>
     <tr>
+      <td>group_list_type</td>
+      <td>Attribute</td>
+      <td><ul><li>Semantics of group_index.</li><li>1 is count mode (each element is the row count of that group; the sum is used); 0 is cumsum mode (each element is the cumulative end offset of that group on the row axis; only the last element is used).</li><li>The default value is 0; both 0 and 1 are supported.</li></ul></td>
+      <td>INT64</td>
+      <td>-</td>
+    </tr>
+    <tr>
       <td>weight</td>
       <td>Optional input</td>
       <td><ul><li>Per-row weight scalar, multiplied into the SiTU activation result.</li><li>The number of elements equals the product of the dimensions of x before the dim axis; when dim is -1, it equals the product of all dimensions except the last one.</li></ul></td>
@@ -128,7 +135,7 @@ English | [简体中文](./README.md)
     <tr>
       <td>group_index</td>
       <td>Optional input</td>
-      <td><ul><li>Number of grouped tokens in count mode. A 1-D non-empty tensor whose elements must be greater than or equal to 0, and sum(group_index) must be greater than 0.</li><li>When passed, only the first min(sum(group_index), number of rows) rows are computed and written; the remaining rows are not written (their content is undefined), and the caller must apply masking.</li></ul></td>
+      <td><ul><li>Grouped token numbers whose semantics are selected by group_list_type. A 1-D non-empty tensor whose elements must be greater than or equal to 0.</li><li>count mode (1): sum(group_index) is the number of valid rows; cumsum mode (0): only the last element is used as the number of valid rows; intermediate elements are not used and monotonicity is not required.</li><li>When passed, only the first realBs rows are computed and written; the remaining rows are not written (their content is undefined), and the caller must apply masking. If realBs exceeds the row count, it is clamped to the row count.</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
     </tr>
@@ -145,7 +152,10 @@ English | [简体中文](./README.md)
 
 - Non-contiguous tensors are supported.
 - weight and group_index are optional inputs.
-- When group_index is passed, its elements must be greater than or equal to 0 and sum(group_index) must be greater than 0. Only the first realBs rows are written; the content of the remaining rows is undefined, and the caller must apply masking.
+- When group_index is passed, its elements must be greater than or equal to 0: the total is sum(group_index) in count mode, and the last element in cumsum mode (intermediate elements are not used and monotonicity is not required). A zero total means realBs = 0: no row is written and the whole output is undefined. If the total exceeds the row count, realBs is clamped to the row count. Only the first realBs rows are written; the content of the remaining rows is undefined, and the caller must apply masking.
+- group_list_type supports 0 (cumsum mode) and 1 (count mode); the default is 0. It has no effect when group_index is not passed; callers passing count-semantics data must explicitly pass 1. Any other value returns a parameter validation failure.
+- This operator supports both Ascend 950 and Ascend 350 (they share the same arch35 implementation and have identical support).
+- In count mode, sum(group_index) is accumulated with saturation at the row count and cannot overflow int64; negative elements make the operator terminate with an error.
 - beta must be a non-zero value; passing 0 returns a parameter validation failure.
 
 ## Invocation Description

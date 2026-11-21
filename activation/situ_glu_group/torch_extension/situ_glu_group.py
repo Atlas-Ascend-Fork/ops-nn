@@ -9,6 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
+import torch
 from torch.library import impl
 
 from cann_ops_nn.op_builder import OpBuilder, get_as_library
@@ -42,7 +43,7 @@ class SituGluGroupOpBuilder(OpBuilder):
     def schema(self):
         return (
             "situ_glu_group(Tensor x, *, Tensor? weight=None, Tensor? group_index=None, int dim=-1, "
-            "float beta=1.0, float linear_beta=0.0, bool activate_left=True) -> Tensor"
+            "float beta=1.0, float linear_beta=0.0, bool activate_left=True, int group_list_type=0) -> Tensor"
         )
 
     def register_meta(self):
@@ -56,7 +57,13 @@ class SituGluGroupOpBuilder(OpBuilder):
             beta=1.0,
             linear_beta=0.0,
             activate_left=True,
+            group_list_type=0,
         ):
+            torch._check(
+                group_list_type in (0, 1),
+                lambda: "group_list_type must be 0 (cumsum mode) or 1 (count mode), "
+                f"but got {group_list_type}",
+            )
             return x.new_empty(_situ_glu_group_shape(x, dim))
 
 
@@ -74,8 +81,9 @@ def situ_glu_group(
     beta=1.0,
     linear_beta=0.0,
     activate_left=True,
+    group_list_type=0,
 ):
     op_module = builder.load()
     return op_module.situ_glu_group(
-        x, weight, group_index, dim, beta, linear_beta, activate_left
+        x, weight, group_index, dim, beta, linear_beta, activate_left, group_list_type
     )

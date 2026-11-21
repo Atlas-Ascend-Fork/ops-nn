@@ -38,6 +38,7 @@ struct SituGluGroupTilingCase {
     float beta = 1.0f;
     float linearBeta = 0.0f;
     bool activateLeft = true;
+    int64_t groupListType = 1;
     bool hasWeight = false;
     bool hasGroupIndex = false;
     ge::graphStatus status = ge::GRAPH_SUCCESS;
@@ -124,7 +125,8 @@ void ExecuteTilingCase(const SituGluGroupTilingCase& tc)
         .NodeAttrs({{"dim", Ops::NN::AnyValue::CreateFrom<int64_t>(tc.dim)},
                     {"beta", Ops::NN::AnyValue::CreateFrom<float>(tc.beta)},
                     {"linear_beta", Ops::NN::AnyValue::CreateFrom<float>(tc.linearBeta)},
-                    {"activate_left", Ops::NN::AnyValue::CreateFrom<bool>(tc.activateLeft)}})
+                    {"activate_left", Ops::NN::AnyValue::CreateFrom<bool>(tc.activateLeft)},
+                    {"group_list_type", Ops::NN::AnyValue::CreateFrom<int64_t>(tc.groupListType)}})
         .TilingData(tilingData.get())
         .Workspace(workspaceSizes);
     int32_t inputTdIndex = 1;
@@ -208,6 +210,20 @@ TEST_F(SituGluGroupTilingTest, tiling_error_empty_group_index)
     SituGluGroupTilingCase tc;
     tc.hasGroupIndex = true;
     tc.groupIndexShape = {{0}, {0}};
+    tc.status = ge::GRAPH_FAILED;
+    ExecuteTilingCase(tc);
+}
+
+TEST_F(SituGluGroupTilingTest, tiling_error_group_index_bs_too_large)
+{
+    // With group_index present, bs is capped at INT64_MAX/64 so the kernel's saturating int64 sum
+    // and its 32-lane reduction can never overflow. bs = 2^58, d = 2 keeps bs*d representable.
+    constexpr int64_t bs2pow58 = 1LL << 58;
+    SituGluGroupTilingCase tc;
+    tc.hasGroupIndex = true;
+    tc.groupIndexShape = {{8}, {8}};
+    tc.xShape = {{bs2pow58, 2}, {bs2pow58, 2}};
+    tc.yShape = {{bs2pow58, 1}, {bs2pow58, 1}};
     tc.status = ge::GRAPH_FAILED;
     ExecuteTilingCase(tc);
 }
@@ -305,6 +321,23 @@ TEST_F(SituGluGroupTilingTest, tiling_error_invalid_y_shape)
     // y's cut dim must be half of x's; 100 is invalid for 8192.
     SituGluGroupTilingCase tc;
     tc.yShape = {{8, 128, 100}, {8, 128, 100}};
+    tc.status = ge::GRAPH_FAILED;
+    ExecuteTilingCase(tc);
+}
+
+TEST_F(SituGluGroupTilingTest, tiling_group_list_type_cumsum_valid)
+{
+    // 0=cumsum is a supported mode now; tiling only validates the range.
+    SituGluGroupTilingCase tc;
+    tc.groupListType = 0;
+    tc.hasGroupIndex = true;
+    ExecuteTilingCase(tc);
+}
+
+TEST_F(SituGluGroupTilingTest, tiling_error_group_list_type_out_of_range)
+{
+    SituGluGroupTilingCase tc;
+    tc.groupListType = 2;
     tc.status = ge::GRAPH_FAILED;
     ExecuteTilingCase(tc);
 }

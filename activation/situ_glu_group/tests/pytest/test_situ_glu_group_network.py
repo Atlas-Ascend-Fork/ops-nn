@@ -83,6 +83,7 @@ def test_situ_glu_group_network(shape, dtype):
         beta=NET_BETA,
         linear_beta=NET_LINEAR_BETA,
         activate_left=NET_ACTIVATE_LEFT,
+        group_list_type=1,
     )
     y_cpu = situ_glu_group_cpu(
         x.cpu(),
@@ -100,6 +101,15 @@ def test_situ_glu_group_invalid_beta(beta):
     x = _make_x((4, 64), torch.float32)
     with pytest.raises(RuntimeError, match="beta must be finite and non-zero"):
         cann_ops_nn.situ_glu_group(x, beta=beta)
+
+
+@pytest.mark.parametrize("group_list_type", [2, -1])
+def test_situ_glu_group_invalid_group_list_type(group_list_type):
+    x = _make_x((4, 64), torch.float32)
+    with pytest.raises(
+        RuntimeError, match="group_list_type must be 0 \\(cumsum mode\\) or 1"
+    ):
+        cann_ops_nn.situ_glu_group(x, group_list_type=group_list_type)
 
 
 @pytest.mark.parametrize("linear_beta", [float("inf"), float("nan")])
@@ -126,6 +136,7 @@ def test_situ_glu_group_weight_group(dtype):
         beta=4.0,
         linear_beta=25.0,
         activate_left=True,
+        group_list_type=1,
     )
     y_cpu = situ_glu_group_cpu(
         x.cpu(),
@@ -137,3 +148,58 @@ def test_situ_glu_group_weight_group(dtype):
     )
     assert y.dtype == x.dtype
     compare_results(y, y_cpu, dtype, name=f"situ_glu_group_weight_group_{dtype}")
+
+
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_situ_glu_group_group_cumsum(dtype):
+    # cumsum mode: group_index holds cumulative row end offsets, so realBs = last element.
+    shape = (4, 64)
+    x = _make_x(shape, dtype)
+    weight = torch.rand(shape[0], dtype=torch.float32).npu()
+    group_index = torch.tensor([1, 3, 4], dtype=torch.int64).npu()
+
+    y = cann_ops_nn.situ_glu_group(
+        x,
+        weight=weight,
+        group_index=group_index,
+        dim=-1,
+        beta=4.0,
+        linear_beta=25.0,
+        activate_left=True,
+        group_list_type=0,
+    )
+    y_cpu = situ_glu_group_cpu(
+        x.cpu(),
+        dim=-1,
+        beta=4.0,
+        linear_beta=25.0,
+        activate_left=True,
+        weight=weight.cpu(),
+    )
+    assert y.dtype == x.dtype
+    compare_results(y, y_cpu, dtype, name=f"situ_glu_group_group_cumsum_{dtype}")
+
+
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_situ_glu_group_group_cumsum_truncation(dtype):
+    # last cumulative offset (2) < rows (4): only the first 2 rows are guaranteed written.
+    shape = (4, 64)
+    x = _make_x(shape, dtype)
+    group_index = torch.tensor([1, 2, 2], dtype=torch.int64).npu()
+
+    y = cann_ops_nn.situ_glu_group(
+        x,
+        group_index=group_index,
+        dim=-1,
+        beta=1.0,
+        linear_beta=0.0,
+        activate_left=True,
+        group_list_type=0,
+    )
+    y_cpu = situ_glu_group_cpu(
+        x.cpu(), dim=-1, beta=1.0, linear_beta=0.0, activate_left=True
+    )
+    assert y.dtype == x.dtype
+    compare_results(
+        y[:2], y_cpu[:2], dtype, name=f"situ_glu_group_group_cumsum_trunc_{dtype}"
+    )

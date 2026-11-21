@@ -35,6 +35,7 @@ if _TORCHAIR_AVAILABLE:
         beta: float = 1.0,
         linear_beta: float = 0.0,
         activate_left: bool = True,
+        group_list_type: int = 0,
         meta_outputs: TensorSpec = None,
     ):
         inputs = {"x": x}
@@ -50,6 +51,7 @@ if _TORCHAIR_AVAILABLE:
                 "beta": attr.Float(beta),
                 "linear_beta": attr.Float(linear_beta),
                 "activate_left": attr.Bool(activate_left),
+                "group_list_type": attr.Int(group_list_type),
             },
             outputs=["y"],
             ir=IrDef("SituGluGroup")
@@ -60,6 +62,7 @@ if _TORCHAIR_AVAILABLE:
             .attr("beta", attr.Float(1.0))
             .attr("linear_beta", attr.Float(0.0))
             .attr("activate_left", attr.Bool(True))
+            .attr("group_list_type", attr.Int(0))
             .output("y", "DT_FLOAT16, DT_BF16, DT_FLOAT"),
         )
 else:

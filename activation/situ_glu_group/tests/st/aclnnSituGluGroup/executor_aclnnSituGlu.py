@@ -84,10 +84,12 @@ class AclnnSituGluGroupApi(AclnnBaseApi):
         kw = dict(input_data.kwargs) if input_data.kwargs else {}
         input_args = list(input_args)
         # The generated aclnn signature is
-        #   (x, weightOptional, groupIndexOptional, dim, beta, linearBeta, activateLeft, out, ...)
-        # but this op's atk cases only carry x + attributes (5 args), so insert null pointers for
-        # the two optional tensors. weight / group_index coverage lives in the TTK cases instead.
-        if len(input_args) == 5:
+        #   (x, weightOptional, groupIndexOptional, dim, beta, linearBeta, activateLeft,
+        #    groupListType, out, ...)
+        # but this op's atk cases only carry x + attributes (4 or 5 attrs), so insert null
+        # pointers for the two optional tensors. weight / group_index coverage lives in the TTK
+        # cases instead.
+        if len(input_args) in (5, 6):
             from atk.tasks.backends.lib_interface.acl_wrapper import AclTensor
 
             null_tensor_ptr = ctypes.cast(
@@ -98,6 +100,13 @@ class AclnnSituGluGroupApi(AclnnBaseApi):
         # Attribute positions after the optional tensors: dim=3, beta=4, linearBeta=5.
         input_args[4] = ctypes.c_double(float(kw.get("beta", 1.0)))
         input_args[5] = ctypes.c_double(float(kw.get("linearBeta", 0.0)))
+        # group_list_type selects the group_index semantics (0=cumsum, 1=count). Cases may omit it,
+        # so default to the operator default (0=cumsum) to stay consistent with the aclnn API docs.
+        group_list_type = ctypes.c_int64(int(kw.get("groupListType", 0)))
+        if len(input_args) < 8:
+            input_args.append(group_list_type)
+        else:
+            input_args[7] = group_list_type
         return input_args, output_packages
 
     @classmethod
@@ -111,6 +120,7 @@ class AclnnSituGluGroupApi(AclnnBaseApi):
             "double beta, "
             "double linearBeta, "
             "bool activateLeft, "
+            "int64_t groupListType, "
             "const aclTensor* out, "
             "uint64_t* workspaceSize, "
             "aclOpExecutor** executor)"

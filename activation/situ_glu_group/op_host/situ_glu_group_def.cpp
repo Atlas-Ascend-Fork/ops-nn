@@ -10,9 +10,10 @@
 
 /*!
  * \file situ_glu_group_def.cpp
- * \brief OpDef registration for SituGluGroup (x/weight/group_index -> y, ascend950).
+ * \brief OpDef registration for SituGluGroup (x/weight/group_index -> y, DAV_3510).
  */
 #include <register/op_def_registry.h>
+#include "op_common/op_host/util/op_arch_helper.h"
 
 namespace ops {
 constexpr float DEFAULT_BETA = 1.0;
@@ -51,6 +52,9 @@ public:
         this->Attr("beta").AttrType(OPTIONAL).Float(DEFAULT_BETA);
         this->Attr("linear_beta").AttrType(OPTIONAL).Float(DEFAULT_LINEAR_BETA);
         this->Attr("activate_left").AttrType(OPTIONAL).Bool(true);
+        // group_list_type: 0=cumsum mode (each element is a cumulative end offset),
+        // 1=count mode (each element is a per-group row count). Default 0.
+        this->Attr("group_list_type").AttrType(OPTIONAL).Int(0);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)
@@ -59,7 +63,7 @@ public:
             .DynamicShapeSupportFlag(true)
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true);
-        this->AICore().AddConfig("ascend950", aicoreConfig);
+        opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_3510, aicoreConfig);
     }
 };
 OP_ADD(SituGluGroup);

@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 #include <cstdint>
+#include <limits>
 #include <vector>
 #include "infer_shape_context_faker.h"
 #include "register/op_impl_registry.h"
@@ -72,6 +73,8 @@ INSTANTIATE_TEST_SUITE_P(
     InputValidation, SituGluGroupInferShapeTest,
     testing::Values(InferCase{"ValidNegativeDim", {4, 8}, -1, true}, InferCase{"ValidNonLastDim", {2, 8, 16}, 1, true},
                     InferCase{"DimAtUpperBound", {4, 8}, 2, false}, InferCase{"DimBelowLowerBound", {4, 8}, -3, false},
+                    // INT64_MIN must be rejected before the negative-dim normalization can overflow.
+                    InferCase{"DimInt64Min", {4, 8}, std::numeric_limits<int64_t>::min(), false},
                     InferCase{"OddSplitDimension", {4, 7}, -1, false},
                     InferCase{"DynamicSplitDimension", {4, -1}, -1, true}, InferCase{"UnknownRank", {-2}, -1, true}),
     [](const testing::TestParamInfo<InferCase>& info) { return info.param.name; });

@@ -23,13 +23,17 @@
   up'    = linear_beta > 0 ? linear_beta * tanh(up / linear_beta) : up
   y      = situ_a * up'
   可选 weight（逐行标量，元素数 = dim 之前各维乘积）：y[i] = y[i] * weight[i]
-  可选 group_index（count 模式，int64，1D 非空）：仅前 realBs = min(sum(group_index), 行数) 行写出。
+  可选 group_index（int64，1D 非空）：realBs 由 group_list_type 决定——
+    count 模式（1）：realBs = min(sum(group_index), 行数)；
+    cumsum 模式（0）：realBs = min(group_index[-1], 行数)（最后一个累计结尾偏移）。
+  仅前 realBs 行写出。
 
 group_index 的处理：
-  - 默认（用例名不含 giclamp/trunc）：customize_inputs 把 sum 填成行数，realBs == 行数，
+  - count 模式写每组行数、cumsum 模式写其前缀和，两种模式下"总量"的语义一致：
+  - 默认（用例名不含 giclamp/trunc）：总量填成行数，realBs == 行数，
     golden 按全量行计算，整 tensor 比对。
-  - giclamp：sum 填成 2 倍行数，验证 min(sum, bs) 的截断上限。
-  - trunc：sum 填成小于行数的值（默认行数的一半，含 trunc1 时填 1），真实触发
+  - giclamp：总量填成 2 倍行数，验证 min(总量, bs) 的截断上限。
+  - trunc：总量填成小于行数的值（默认行数的一半，含 trunc1 时填 1），真实触发
     realBs < 行数的截断路径；golden 只返回前 realBs 行，pre_compare 把 NPU 输出裁到
     同样行数后再比对。
   - 模式来源：优先使用 `group_index_mode` 入参（sum_equals_rows / clamp / trunc /
@@ -128,7 +132,11 @@ def _ref(x, weight, dim, beta, linear_beta, activate_left, target):
         # 空输入（任一轴为 0，含最后一维为 0）：infershape 仍给出 last=cut//2 的空输出，
         # 这里必须显式返回该形状，不能依赖 np.split/reshape 的边界行为。
         return _empty_like_shape(x_np, d, target)
-    xf = x_np.astype(np.float32)
+    # 参考计算统一用 float64：cross_check/mix_tolerance 会把 golden 走 Promote
+    # （fp16/bf16→fp32、fp32→fp64），这里若降回 float32 就等于把框架抬上去的精度
+    # 又砍回来（kernel/golden.py:793-799 明确点名的反模式）；最终由 _cast_out 降到
+    # 目标 dtype。
+    xf = x_np.astype(np.float64)
     h = xf.shape[d] // 2
     first, second = np.split(xf, [h], axis=d)
     gate, up = (first, second) if activate_left else (second, first)
@@ -142,15 +150,18 @@ def _ref(x, weight, dim, beta, linear_beta, activate_left, target):
     w = _to_np(weight)
     if w is not None:
         wshape = tuple(xf.shape[:d]) + (1,) * (nd - d)
-        y = y * w.astype(np.float32).reshape(wshape)
+        y = y * w.astype(np.float64).reshape(wshape)
 
     return [_cast_out(y, target)]
 
 
+GROUP_LIST_TYPE_CUMSUM = 0  # group_index[i] is a cumulative row end offset
+GROUP_LIST_TYPE_COUNT = 1  # group_index[i] is a per-group row count
+
 GROUP_INDEX_MODE_SUM_EQUALS_ROWS = "sum_equals_rows"
-GROUP_INDEX_MODE_CLAMP = "clamp"  # sum == 2 * rows, kernel clamps realBs to rows
-GROUP_INDEX_MODE_TRUNC = "trunc"  # sum == rows // 2, real truncation
-GROUP_INDEX_MODE_TRUNC_ONE = "trunc_one"  # sum == 1, real truncation down to one row
+GROUP_INDEX_MODE_CLAMP = "clamp"  # total == 2 * rows, kernel clamps realBs to rows
+GROUP_INDEX_MODE_TRUNC = "trunc"  # total == rows // 2, real truncation
+GROUP_INDEX_MODE_TRUNC_ONE = "trunc_one"  # total == 1, real truncation down to one row
 _GROUP_INDEX_MODES = (
     GROUP_INDEX_MODE_SUM_EQUALS_ROWS,
     GROUP_INDEX_MODE_CLAMP,
@@ -158,20 +169,49 @@ _GROUP_INDEX_MODES = (
     GROUP_INDEX_MODE_TRUNC_ONE,
 )
 
+
+def _resolve_group_list_type(value):
+    """Normalize group_list_type; only 0 (cumsum) and 1 (count) are supported."""
+    if value is None:
+        return GROUP_LIST_TYPE_CUMSUM
+    mode = int(value)
+    if mode not in (GROUP_LIST_TYPE_CUMSUM, GROUP_LIST_TYPE_COUNT):
+        raise ValueError(
+            f"group_list_type must be 0 (cumsum) or 1 (count), but got {value}"
+        )
+    return mode
+
+
+def _real_bs(group_index_np, group_list_type, rows):
+    """Number of rows the operator writes, per group_index semantics.
+
+    count  : total = sum(group_index)
+    cumsum : total = group_index[-1] (the last cumulative end offset)
+    The total is accumulated in Python integers (an int64 sum would wrap) and clamped to [0, rows];
+    the kernel saturates at `rows`, so this mirrors its result for every non-negative input.
+    """
+    gi = np.asarray(group_index_np).reshape(-1)
+    if gi.size == 0:
+        return 0
+    if group_list_type == GROUP_LIST_TYPE_CUMSUM:
+        total = int(gi[-1])
+    else:
+        # Accumulate in Python integers: np.int64 wraps for a total >= 2^63, while the kernel
+        # saturates at `rows`, so a wrapping sum would make the golden reject valid operator output.
+        total = sum(int(v) for v in gi.reshape(-1))
+    return max(0, min(total, rows))
+
+
 # 三方标杆（GPU 小算子拼接 + torch.compile）的验收档。tanh/sigmoid 在不同实现里
 # 的末位舍入不同，且 weight/group 截断只比前缀，取 L1（elementwise 有超越函数，
 # 比 L0 更贴近真实跨平台差异）。
-# 不覆盖 small_value/small_value_atol，直接用 TTK 默认档：本算子近零点由小因子
-# 乘积得到，绝对误差随 |y| 同比缩小，实测最大 ~7.6e-10，低于 fp32 默认
-# small_value_atol=2^-30；放宽反而会让小值桶失去区分度。若后续真出现近零点
-# 计数失败，再只针对 fp32 配 small_value_atol=1e-6（≈1 fp32 ULP 量级）即可。
+# 不覆盖 small_value/small_value_atol，直接用 TTK 默认档（fp32 small_value=2^-14、
+# small_value_atol=2^-30）：本算子近零点由小因子乘积得到，绝对误差随 |y| 同比
+# 缩小，实测最大 ~7.6e-10，低于 fp32 默认 small_value_atol=2^-30。small_value 同时
+# 是三比值的安全分母下限，放宽它会让小值桶与比值判据一起失去区分度。若后续真
+# 出现近零点计数失败，再只针对 fp32 配 small_value_atol=1e-6（≈1 fp32 ULP 量级）。
 _TOL_CROSS_CHECK = {
-    "float32": {
-        "standard": "cross_check",
-        "level": "L1",
-        "small_value": 1e-3,
-        "small_value_atol": 1e-6,
-    },
+    "float32": {"standard": "cross_check", "level": "L1"},
     "float16": {"standard": "cross_check", "level": "L1"},
     "bfloat16": {"standard": "cross_check", "level": "L1"},
 }
@@ -202,13 +242,22 @@ def _group_index_mode(testcase_name="", explicit=None):
     return GROUP_INDEX_MODE_SUM_EQUALS_ROWS
 
 
-def _fill_group_index(x, group_index, dim, testcase_name="", mode=None):
-    """按用例语义填 group_index 的 count 值。
+def _fill_group_index(
+    x,
+    group_index,
+    dim,
+    testcase_name="",
+    mode=None,
+    group_list_type=GROUP_LIST_TYPE_COUNT,
+):
+    """按用例语义填 group_index 的值。
 
+    count 模式（group_list_type=1）下写入每组行数：
     - sum_equals_rows：sum == 行数，所有行都产出，可整 tensor 比对；
     - clamp          ：sum == 2 * 行数，验证 min(sum, 行数) 的上钳制；
     - trunc          ：sum == max(1, 行数 // 2)，触发真实截断；
     - trunc_one      ：sum == 1，触发最小截断。
+    cumsum 模式（group_list_type=0）下把相同分布写成前缀和，最后一个元素即目标行数。
     """
     if group_index is None:
         return
@@ -235,6 +284,8 @@ def _fill_group_index(x, group_index, dim, testcase_name="", mode=None):
     base = target // n
     gi[:] = base
     gi[-1] = target - base * (n - 1)
+    if _resolve_group_list_type(group_list_type) == GROUP_LIST_TYPE_CUMSUM:
+        np.cumsum(gi, out=gi)
     if hasattr(group_index, "copy_"):
         import torch
 
@@ -243,7 +294,9 @@ def _fill_group_index(x, group_index, dim, testcase_name="", mode=None):
         np.copyto(group_index, gi.reshape(group_index.shape))
 
 
-def _apply_group_truncation(result, x, group_index, dim):
+def _apply_group_truncation(
+    result, x, group_index, dim, group_list_type=GROUP_LIST_TYPE_COUNT
+):
     """realBs < 行数时只保留 golden 的前 realBs 行；其余行算子不写出，不参与比对。
 
     kernel 的 [bs, splitD] 合并视图在 numpy 侧就是行主序，因此"前 realBs 行"等价于
@@ -260,9 +313,8 @@ def _apply_group_truncation(result, x, group_index, dim):
     gi = _to_np(group_index).reshape(-1)
     if gi.size == 0:
         return result
-    real_bs = int(np.sum(gi.astype(np.int64)))
-    real_bs = max(0, min(real_bs, rows))
-    if real_bs <= 0 or real_bs >= rows or rows <= 0:
+    real_bs = _real_bs(gi, group_list_type, rows)
+    if rows <= 0 or real_bs >= rows:
         return result
     y = result[0]
     split_d = y.size // rows
@@ -270,6 +322,8 @@ def _apply_group_truncation(result, x, group_index, dim):
         # cut 轴为 0（如最后一维为 0）时输出本身为空，没有可截断的前缀；
         # 返回原空张量，避免 reshape(-1, 0) 的歧义报错。
         return result
+    # real_bs == 0（总量为 0）时前缀为空：算子不写出任何行，输出内容全部未定义，
+    # pre_compare 会跳过比对（golden 侧同样给空张量，保持语义一致）。
     if d == nd - 1:
         return [y.reshape(rows, split_d)[:real_bs]]
     return [y.reshape(-1)[: real_bs * split_d]]
@@ -296,7 +350,10 @@ def _group_trunc_pre_compare(npu_out, golden_out):
     b = _to_np_output(golden_out)
     if a is None or b is None:
         return None
-    if a.size == b.size or b.size == 0 or a.size < b.size:
+    if b.size == 0:
+        # 总量为 0：算子不写出任何行，golden 给空前缀，比较 0 个元素。
+        return [a.reshape(-1)[:0].reshape(b.shape), b]
+    if a.size == b.size or a.size < b.size:
         return None
     return [a.reshape(-1)[: b.size].reshape(b.shape), b]
 
@@ -313,12 +370,19 @@ class _SituGluGroupTorchCompose:
     异常污染耗时。截断用例与 golden 一致只返回前 realBs 行。
     """
 
-    _DEFAULTS = {"dim": -1, "beta": 1.0, "linear_beta": 0.0, "activate_left": True}
+    _DEFAULTS = {
+        "dim": -1,
+        "beta": 1.0,
+        "linear_beta": 0.0,
+        "activate_left": True,
+        "group_list_type": GROUP_LIST_TYPE_CUMSUM,
+    }
     _ALIASES = {
         "weightOptional": "weight",
         "groupIndexOptional": "group_index",
         "linearBeta": "linear_beta",
         "activateLeft": "activate_left",
+        "groupListType": "group_list_type",
     }
 
     def __init__(self, *args, **kwargs):
@@ -340,6 +404,11 @@ class _SituGluGroupTorchCompose:
         xf = x.float()
         nd = xf.dim()
         d = dim % nd
+        if xf.numel() == 0:
+            out_shape = (
+                tuple(xf.shape[:d]) + (xf.shape[d] // 2,) + tuple(xf.shape[d + 1 :])
+            )
+            return torch.empty(out_shape, dtype=x.dtype, device=x.device)
         h = xf.shape[d] // 2
         first, second = torch.split(xf, h, dim=d)
         gate, up = (first, second) if activate_left else (second, first)
@@ -352,10 +421,8 @@ class _SituGluGroupTorchCompose:
         return y.to(x.dtype)
 
     @staticmethod
-    def _truncate(y, x, group_index, dim):
+    def _truncate(y, x, group_index, dim, group_list_type):
         """行主序前缀裁剪：与 golden 的 _apply_group_truncation 语义一致。"""
-        import torch
-
         if group_index is None:
             return y
         gi = group_index.reshape(-1)
@@ -366,13 +433,19 @@ class _SituGluGroupTorchCompose:
             rows *= int(s)
         if rows <= 0:
             return y
-        real_bs = int(torch.clamp(gi.sum(), 0, rows).item())
-        if real_bs <= 0 or real_bs >= rows:
+        if group_list_type == GROUP_LIST_TYPE_CUMSUM:
+            real_bs = int(gi[-1].item())
+        else:
+            # Same reason as _real_bs: sum in Python integers, not in int64 (which would wrap).
+            real_bs = sum(int(v) for v in gi.tolist())
+        real_bs = max(0, min(real_bs, rows))
+        if real_bs >= rows:
             return y
         split_d = y.numel() // rows
         if split_d == 0:
             # cut 轴为 0：输出本身为空，无前缀可截断（同 golden 侧守卫）。
             return y
+        # real_bs == 0（总量为 0）时返回空前缀：算子不写出任何行。
         if dim % x.dim() == x.dim() - 1:
             return y.reshape(rows, split_d)[:real_bs]
         return y.reshape(-1)[: real_bs * split_d]
@@ -399,6 +472,7 @@ class _SituGluGroupTorchCompose:
         beta=None,
         linear_beta=None,
         activate_left=None,
+        group_list_type=None,
         out=None,
         *args,
         **kwargs,
@@ -410,6 +484,7 @@ class _SituGluGroupTorchCompose:
         group_index = kwargs.pop("groupIndexOptional", group_index)
         linear_beta = kwargs.pop("linearBeta", linear_beta)
         activate_left = kwargs.pop("activateLeft", activate_left)
+        group_list_type = kwargs.pop("groupListType", group_list_type)
         kwargs.pop("out", None)
         if kwargs:
             self._merge(kwargs)
@@ -422,6 +497,12 @@ class _SituGluGroupTorchCompose:
             attrs["linear_beta"] = float(linear_beta)
         if activate_left is not None:
             attrs["activate_left"] = bool(activate_left)
+        if group_list_type is not None:
+            attrs["group_list_type"] = _resolve_group_list_type(group_list_type)
+        else:
+            attrs["group_list_type"] = _resolve_group_list_type(
+                attrs["group_list_type"]
+            )
         del kwargs
 
         if weight is not None:
@@ -446,7 +527,9 @@ class _SituGluGroupTorchCompose:
         except Exception:  # pragma: no cover - 编译失败永久回落 eager
             self._compiled = self._forward
             y = self._forward(*call_args)
-        return [self._truncate(y, x, group_index, attrs["dim"])]
+        return [
+            self._truncate(y, x, group_index, attrs["dim"], attrs["group_list_type"])
+        ]
 
 
 class SituGluGroupKernelSpec:
@@ -457,12 +540,15 @@ class SituGluGroupKernelSpec:
         beta = float(kwargs.get("beta", 1.0))
         linear_beta = float(kwargs.get("linear_beta", 0.0))
         activate_left = bool(kwargs.get("activate_left", True))
+        group_list_type = _resolve_group_list_type(
+            kwargs.get("group_list_type", GROUP_LIST_TYPE_CUMSUM)
+        )
         od = kwargs.get("output_dtypes") or []
         target = od[0] if len(od) > 0 else str(np.asarray(x).dtype)
         if isinstance(target, (list, tuple)):
             target = target[0]
         y = _ref(x, weight, dim, beta, linear_beta, activate_left, target)
-        return _apply_group_truncation(y, x, group_index, dim)
+        return _apply_group_truncation(y, x, group_index, dim, group_list_type)
 
     def customize_inputs(x, weight=None, group_index=None, **kwargs):
         _fill_group_index(
@@ -471,6 +557,9 @@ class SituGluGroupKernelSpec:
             int(kwargs.get("dim", -1)),
             kwargs.get("testcase_name", ""),
             kwargs.get("group_index_mode"),
+            _resolve_group_list_type(
+                kwargs.get("group_list_type", GROUP_LIST_TYPE_CUMSUM)
+            ),
         )
         return (x, weight, group_index)
 
@@ -492,10 +581,12 @@ class SituGluGroupAclnnSpec:
         beta=1.0,
         linearBeta=0.0,
         activateLeft=True,
+        groupListType=GROUP_LIST_TYPE_CUMSUM,
         out=None,
         **kwargs,
     ):
-        del out  # 输出由框架分配/回填，golden 只算数值
+        del out  # 输出由框架分配/回填
+        group_list_type = _resolve_group_list_type(groupListType)
         x_np = _to_np(x)
         y = _ref(
             x_np,
@@ -506,7 +597,9 @@ class SituGluGroupAclnnSpec:
             bool(activateLeft),
             x_np.dtype,
         )
-        return _apply_group_truncation(y, x_np, groupIndexOptional, int(dim))
+        return _apply_group_truncation(
+            y, x_np, groupIndexOptional, int(dim), group_list_type
+        )
 
     def customize_inputs(
         x,
@@ -516,6 +609,7 @@ class SituGluGroupAclnnSpec:
         beta=1.0,
         linearBeta=0.0,
         activateLeft=True,
+        groupListType=GROUP_LIST_TYPE_CUMSUM,
         out=None,
         **kwargs,
     ):
@@ -525,6 +619,7 @@ class SituGluGroupAclnnSpec:
             int(dim),
             kwargs.get("testcase_name", ""),
             kwargs.get("group_index_mode"),
+            _resolve_group_list_type(groupListType),
         )
         return (x, weightOptional, groupIndexOptional)
 
@@ -546,9 +641,11 @@ class SituGluGroupE2ESpec:
         beta=1.0,
         linear_beta=0.0,
         activate_left=True,
+        group_list_type=GROUP_LIST_TYPE_CUMSUM,
         **kwargs,
     ):
         target = x.dtype if hasattr(x, "dtype") else _to_np(x).dtype
+        group_list_type = _resolve_group_list_type(group_list_type)
         y = _ref(
             x,
             weight,
@@ -558,7 +655,7 @@ class SituGluGroupE2ESpec:
             bool(activate_left),
             target,
         )
-        return _apply_group_truncation(y, x, group_index, int(dim))
+        return _apply_group_truncation(y, x, group_index, int(dim), group_list_type)
 
     def customize_inputs(
         x,
@@ -568,6 +665,7 @@ class SituGluGroupE2ESpec:
         beta=1.0,
         linear_beta=0.0,
         activate_left=True,
+        group_list_type=GROUP_LIST_TYPE_CUMSUM,
         **kwargs,
     ):
         del beta, linear_beta, activate_left
@@ -577,6 +675,7 @@ class SituGluGroupE2ESpec:
             int(dim),
             kwargs.get("testcase_name", ""),
             kwargs.get("group_index_mode"),
+            _resolve_group_list_type(group_list_type),
         )
         return (x, weight, group_index)
 
@@ -585,3 +684,119 @@ class SituGluGroupE2ESpec:
 
     third_party = {"torch": _SituGluGroupTorchCompose}
     tolerance = _TOL_CROSS_CHECK
+
+
+# TTK 3.0.0 的 kernel/aclnn 通路通过 __golden__/__input__ 解析标杆（与 swiglu_group 等兄弟算子
+# 一致）；上面的 __spec__ 保留给较新的 spec 通路。缺少这两个注册时 TTK 会把 golden 判为
+# UNSUPPORTED，且不会调用 customize_inputs 填充 group_index（cumsum 用随机数据会直接触发
+# 非法输入 trap）。
+def situ_glu_group_kernel_golden(
+    x,
+    weight=None,
+    group_index=None,
+    dim=-1,
+    beta=1.0,
+    linear_beta=0.0,
+    activate_left=True,
+    group_list_type=GROUP_LIST_TYPE_CUMSUM,
+    **kwargs,
+):
+    kwargs.update(
+        dim=dim,
+        beta=beta,
+        linear_beta=linear_beta,
+        activate_left=activate_left,
+        group_list_type=group_list_type,
+    )
+    return SituGluGroupKernelSpec.golden(x, weight, group_index, **kwargs)[0]
+
+
+def situ_glu_group_kernel_input(
+    x,
+    weight=None,
+    group_index=None,
+    dim=-1,
+    beta=1.0,
+    linear_beta=0.0,
+    activate_left=True,
+    group_list_type=GROUP_LIST_TYPE_CUMSUM,
+    **kwargs,
+):
+    kwargs.update(
+        dim=dim,
+        beta=beta,
+        linear_beta=linear_beta,
+        activate_left=activate_left,
+        group_list_type=group_list_type,
+    )
+    return list(
+        SituGluGroupKernelSpec.customize_inputs(x, weight, group_index, **kwargs)
+    )
+
+
+def aclnn_situ_glu_group_golden(
+    x,
+    weightOptional=None,
+    groupIndexOptional=None,
+    dim=-1,
+    beta=1.0,
+    linearBeta=0.0,
+    activateLeft=True,
+    groupListType=GROUP_LIST_TYPE_CUMSUM,
+    out=None,
+    yOut=None,
+    **kwargs,
+):
+    del yOut
+    return SituGluGroupAclnnSpec.golden(
+        x,
+        weightOptional,
+        groupIndexOptional,
+        dim,
+        beta,
+        linearBeta,
+        activateLeft,
+        groupListType,
+        out,
+        **kwargs,
+    )[0]
+
+
+def aclnn_situ_glu_group_input(
+    x,
+    weightOptional=None,
+    groupIndexOptional=None,
+    dim=-1,
+    beta=1.0,
+    linearBeta=0.0,
+    activateLeft=True,
+    groupListType=GROUP_LIST_TYPE_CUMSUM,
+    out=None,
+    yOut=None,
+    **kwargs,
+):
+    del yOut, out
+    return list(
+        SituGluGroupAclnnSpec.customize_inputs(
+            x,
+            weightOptional,
+            groupIndexOptional,
+            dim,
+            beta,
+            linearBeta,
+            activateLeft,
+            groupListType,
+            None,
+            **kwargs,
+        )
+    )
+
+
+__golden__ = {
+    "kernel": {"situ_glu_group": "situ_glu_group_kernel_golden"},
+    "aclnn": {"aclnnSituGluGroup": "aclnn_situ_glu_group_golden"},
+}
+__input__ = {
+    "kernel": {"situ_glu_group": "situ_glu_group_kernel_input"},
+    "aclnn": {"aclnnSituGluGroup": "aclnn_situ_glu_group_input"},
+}

@@ -85,7 +85,7 @@
      y[i] = y[i] \cdot weight[i]
      $$
 
-  6. Optional: when groupIndexOptional is passed, only the first realBs rows are computed and written, where realBs = min(sum(groupIndex), number of rows).
+  6. Optional: when groupIndexOptional is passed, the number of valid rows realBs is determined by its semantics (specified by groupListType). In count mode (groupListType=1), realBs = min(sum(groupIndex), number of rows); in cumsum mode (groupListType=0), only the last element is consumed, realBs = min(groupIndex[-1], number of rows) (intermediate elements are not used and monotonicity is not required). Only the first realBs rows are computed and written.
 
   7. Reshape the output tensor y to have the same number of dimensions as x before folding, with the size on the dim axis being half of that of x, and other dimensions identical to x.
 
@@ -102,6 +102,7 @@ aclnnStatus aclnnSituGluGroupGetWorkspaceSize(
     double           beta,
     double           linearBeta,
     bool             activateLeft,
+    int64_t          groupListType,
     const aclTensor *out,
     uint64_t        *workspaceSize,
     aclOpExecutor   **executor)
@@ -164,8 +165,8 @@ aclnnStatus aclnnSituGluGroup(
     <tr>
       <td>groupIndexOptional (aclTensor*)</td>
       <td>Input</td>
-      <td>The optional input group_index in the formula, the number of grouped tokens in count mode. When passed, only the first min(sum(group_index), number of rows) rows are computed and written; the remaining rows are not written (their content is undefined). Set to nullptr if not passed.</td>
-      <td><ul><li>Must be a 1-D non-empty tensor; elements must be greater than or equal to 0, and sum(group_index) must be greater than 0.</li></ul></td>
+      <td>The optional input group_index in the formula, the grouped token numbers whose semantics are selected by groupListType. When passed, only the first realBs rows are computed and written; the remaining rows are not written (their content is undefined). Set to nullptr if not passed.</td>
+      <td><ul><li>Must be a 1-D non-empty tensor; elements must be greater than or equal to 0.</li><li>groupListType=1 (count mode): sum(group_index) is the number of valid rows; groupListType=0 (cumsum mode): only the last element is used as the number of valid rows; intermediate elements are not used and monotonicity is not required. If realBs exceeds the row count, it is clamped to the row count.</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>1</td>
@@ -206,6 +207,16 @@ aclnnStatus aclnnSituGluGroup(
       <td>Input</td>
       <td>Input activateLeft in the formula. Indicates whether gate is the first half when x is split.</td>
       <td>true indicates that gate is the first half and up is the second half; false indicates that gate is the second half and up is the first half.</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>groupListType (int64_t)</td>
+      <td>Input</td>
+      <td>Semantics of groupIndexOptional. 0 is cumsum mode (each element is a cumulative end offset; only the last element is used); 1 is count mode (each element is a per-group row count; the sum is used).</td>
+      <td>0 and 1 are supported; default 0. It has no effect when groupIndexOptional is not passed; callers passing count-semantics data must explicitly pass 1. Any other value returns a parameter validation failure.</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -268,8 +279,8 @@ aclnnStatus aclnnSituGluGroup(
       <td>x or out is a null pointer.</td>
     </tr>
     <tr>
-      <td rowspan="8">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="8">161002</td>
+      <td rowspan="9">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="9">161002</td>
       <td>The data type of x or out is not within the supported range.</td>
     </tr>
     <tr>
@@ -292,6 +303,9 @@ aclnnStatus aclnnSituGluGroup(
     </tr>
     <tr>
       <td>The data type of group_index is not INT64, its dimension is not 1, or it is an empty tensor.</td>
+    </tr>
+    <tr>
+      <td>groupListType is not 0 or 1.</td>
     </tr>
   </tbody></table>
 
@@ -342,7 +356,10 @@ aclnnStatus aclnnSituGluGroup(
 
 - Deterministic computation: aclnnSituGluGroup defaults to a deterministic implementation.
 - beta must be a non-zero value; passing 0 returns a parameter validation failure. weightOptional and groupIndexOptional are optional inputs; set them to nullptr if not passed.
-- When groupIndexOptional is passed, its elements must be greater than or equal to 0 and the sum must be greater than 0. Only the first realBs rows are written; the content of the remaining rows is undefined, and the caller must apply masking. If a negative value is passed or the sum overflows int64, the behavior is undefined: the API does not return an error, and no row may be written for the entire call.
+- groupListType supports 0 (cumsum mode) and 1 (count mode); the default is 0. Any other value returns a parameter validation failure.
+- When groupIndexOptional is passed, its elements must be greater than or equal to 0: the total is sum(group_index) in count mode, and group_index[-1] in cumsum mode (intermediate elements are not used and monotonicity is not required). A zero total means realBs = 0: no row is written and the whole output is undefined. If the total exceeds the row count, realBs is clamped to the row count. Only the first realBs rows are written; the content of the remaining rows is undefined, and the caller must apply masking.
+- This operator supports both Ascend 950 and Ascend 350 (they share the same arch35 implementation and have identical support).
+- In count mode, `sum(group_index)` is accumulated with saturation at the row count and cannot overflow int64; negative elements make the operator terminate with an error.
 
 ## Example
 
@@ -437,6 +454,8 @@ int main()
     double beta = 1.0;
     double linear_beta = 0.0;
     bool activate_left = true;
+    // group_list_type: 0 is cumsum mode; 1 is count mode.
+    int64_t group_list_type = 1;
     // Create the x aclTensor.
     ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_FLOAT, &x);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -448,8 +467,8 @@ int main()
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // Call the first-phase API of aclnnSituGluGroup.
-    ret = aclnnSituGluGroupGetWorkspaceSize(x, nullptr, nullptr, dim, beta, linear_beta, activate_left, out,
-                                            &workspaceSize, &executor);
+    ret = aclnnSituGluGroupGetWorkspaceSize(x, nullptr, nullptr, dim, beta, linear_beta, activate_left,
+                                            group_list_type, out, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSituGluGroupGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     // Allocate device memory according to the workspaceSize calculated by the first-phase API
     void* workspaceAddr = nullptr;
