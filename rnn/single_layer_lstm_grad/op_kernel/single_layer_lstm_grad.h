@@ -52,6 +52,8 @@ constexpr int64_t OFFSET_O = 3;
 constexpr int64_t SEQ_FP32_OFFSET = 10;
 constexpr int64_t DH_FP32_OFFSET = 14;
 constexpr int64_t DOUBLE = 2;
+// AccurateDxhMatmul 的逐帧误差在长序列上经 BPTT 递归复利放大，仅短序列启用
+constexpr int64_t ACCURATE_DXH_TIMESTEP_LIMIT = 128;
 constexpr int64_t MAX_COPY_LINES = 4095;
 
 struct TRnnOffsets {
@@ -197,7 +199,7 @@ public:
                 // AccurateDxhMatmul 的逐帧误差在长序列上经 BPTT 递归复利放大（T>=256 时 dx mare
                 // 恶化 2~4 倍），短序列则显著收敛 dw 边界用例（实测收益区 T<=15）。按 timeStep
                 // 分域启用：所有核读到同一 tiling.timeStep，同步参与保持一致。
-                if (tiling.timeStep <= 128) {
+                if (tiling.timeStep <= ACCURATE_DXH_TIMESTEP_LIMIT) {
                     ProcessAccurateDxhMatmul(actTIdx);
                 }
                 CrossCoreSync();

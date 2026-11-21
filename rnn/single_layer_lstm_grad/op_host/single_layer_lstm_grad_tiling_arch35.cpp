@@ -39,6 +39,7 @@ constexpr int64_t SMALL_M_BLOCK = 64;
 constexpr int64_t SMALL_MAX_CORES = 16;
 constexpr int64_t SMALL_UB_RESERVE = 16 * 1024; // TPipe meta + safety margin
 constexpr int64_t BIAS_COMPONENT_COUNT = 2;
+constexpr int64_t RECURRENT_STATE_PLANE_NUM = 2; // 每核私有 recurrent-state 平面数（h / c）
 constexpr int64_t GATE_COUNT = 4;
 constexpr int64_t FP32_ELEMENT_BYTES = 4;
 constexpr int64_t NARROW_ELEMENT_BYTES = 2;
@@ -337,7 +338,7 @@ ge::graphStatus TilingSingleLayerLstmGrad4RegbaseSmall(gert::TilingContext* cont
                                       (inputSize + hidden + 1);
     uint64_t stateFloats = 0;
     if (dtypeSize != static_cast<int64_t>(sizeof(float))) {
-        stateFloats = 2;
+        stateFloats = RECURRENT_STATE_PLANE_NUM;
         for (int64_t extent : {usedCores, batch, hidden}) {
             if (stateFloats > std::numeric_limits<size_t>::max() / sizeof(float) / extent) {
                 OP_LOGE(context->GetNodeName(), "Recurrent state workspace size overflow.");
