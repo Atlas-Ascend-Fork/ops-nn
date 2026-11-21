@@ -289,7 +289,9 @@ bool AddLayerNormQuantRegbaseTiling::GetShapeInfo()
                 return false);
     OP_CHECK_IF((!CheckOptionalTensor()), OP_LOGE(context_->GetNodeName(), "Check optional tensor shape failed."),
                 return false);
-    this->dataTypeX1_ = context_->GetInputTensor(X1_IDX)->GetDataType();
+    const gert::Tensor* x1Tensor = context_->GetInputTensor(X1_IDX);
+    OP_CHECK_IF(x1Tensor == nullptr, OP_LOGE(context_->GetNodeName(), "x1Tensor is nullptr!"), return false);
+    this->dataTypeX1_ = x1Tensor->GetDataType();
     this->dtSizeX1_ = GetSizeByDataType(this->dataTypeX1_);
     auto xShape = context_->GetInputShape(X1_IDX)->GetStorageShape();
     auto gammaShape = context_->GetInputShape(GAMMA_IDX)->GetStorageShape();
