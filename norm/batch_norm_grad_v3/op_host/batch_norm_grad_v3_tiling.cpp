@@ -650,6 +650,10 @@ ge::graphStatus BatchNormGradV3TilingBase::GetShapesAndCheckValid()
         r0Dim = 1;
     }
 
+    if (aDim == 0 && dyStorageShape.GetShapeSize() == 0) {
+        return ge::GRAPH_FAILED;
+    }
+
     // 小shape 校验
     OP_TILING_CHECK(CheckSmallShapesValid() != ge::GRAPH_SUCCESS,
                     OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Input small shapes are invalid."),
