@@ -185,11 +185,26 @@ static ge::graphStatus CheckShapeC1(gert::TilingContext* context, const gert::St
     OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
 
     OP_CHECK_IF(!ShapeEqual(varShape->GetStorageShape(), msShape->GetStorageShape()),
-                OP_LOGE(context, "C1 shape mismatch: shape(var) != shape(ms)"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "var and ms",
+                                                       (Ops::Base::ToString(varShape->GetStorageShape()) + " and " +
+                                                        Ops::Base::ToString(msShape->GetStorageShape()))
+                                                           .c_str(),
+                                                       "state tensors must have identical shapes"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(!ShapeEqual(varShape->GetStorageShape(), momShape->GetStorageShape()),
-                OP_LOGE(context, "C1 shape mismatch: shape(var) != shape(mom)"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "var and mom",
+                                                       (Ops::Base::ToString(varShape->GetStorageShape()) + " and " +
+                                                        Ops::Base::ToString(momShape->GetStorageShape()))
+                                                           .c_str(),
+                                                       "state tensors must have identical shapes"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(!ShapeEqual(varShape->GetStorageShape(), gradShape->GetStorageShape()),
-                OP_LOGE(context, "C1 shape mismatch: shape(var) != shape(grad)"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "var and grad",
+                                                       (Ops::Base::ToString(varShape->GetStorageShape()) + " and " +
+                                                        Ops::Base::ToString(gradShape->GetStorageShape()))
+                                                           .c_str(),
+                                                       "var and grad must have identical shapes"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -204,13 +219,25 @@ static ge::graphStatus CheckScalarsC3(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, momentumShape);
     auto epsShape = context->GetInputShape(kIdxEpsilon);
     OP_CHECK_NULL_WITH_CONTEXT(context, epsShape);
-    OP_CHECK_IF(!IsScalarShape(lrShape->GetStorageShape()), OP_LOGE(context, "C3: lr must be a 1-element Tensor"),
+    OP_CHECK_IF(!IsScalarShape(lrShape->GetStorageShape()),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "lr",
+                                                      Ops::Base::ToString(lrShape->GetStorageShape()).c_str(),
+                                                      "scalar parameter must have shape {1}"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!IsScalarShape(rhoShape->GetStorageShape()), OP_LOGE(context, "C3: rho must be a 1-element Tensor"),
+    OP_CHECK_IF(!IsScalarShape(rhoShape->GetStorageShape()),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "rho",
+                                                      Ops::Base::ToString(rhoShape->GetStorageShape()).c_str(),
+                                                      "scalar parameter must have shape {1}"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsScalarShape(momentumShape->GetStorageShape()),
-                OP_LOGE(context, "C3: momentum must be a 1-element Tensor"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!IsScalarShape(epsShape->GetStorageShape()), OP_LOGE(context, "C3: epsilon must be a 1-element Tensor"),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "momentum",
+                                                      Ops::Base::ToString(momentumShape->GetStorageShape()).c_str(),
+                                                      "scalar parameter must have shape {1}"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!IsScalarShape(epsShape->GetStorageShape()),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "epsilon",
+                                                      Ops::Base::ToString(epsShape->GetStorageShape()).c_str(),
+                                                      "scalar parameter must have shape {1}"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -223,7 +250,9 @@ static ge::graphStatus GetShapeAndDataType(gert::TilingContext* context, int64_t
     constexpr size_t kMaxRank = 8;
     const size_t varRank = varShape->GetStorageShape().GetDimNum();
     // FR-17 fix: rank-0（标量 var）为合法输入（对齐 TensorFlow ApplyRMSProp 语义），仅拒绝 rank > 8。
-    OP_CHECK_IF(varRank > kMaxRank, OP_LOGE(context, "var rank must be in [0, 8], got %zu", varRank),
+    OP_CHECK_IF(varRank > kMaxRank,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "var", std::to_string(varRank).c_str(),
+                                                         "rank must be in [0, 8]"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(CheckShapeC1(context, varShape) != ge::GRAPH_SUCCESS, OP_LOGE(context, "CheckShapeC1 failed"),
@@ -239,12 +268,15 @@ static ge::graphStatus GetShapeAndDataType(gert::TilingContext* context, int64_t
     for (size_t i = 0; i < varRank; ++i) {
         const int64_t dim = varShape->GetStorageShape().GetDim(i);
         OP_CHECK_IF(dim < 0,
-                    OP_LOGE(context, "var shape must be concrete: dim %zu is unknown (%ld)", i, static_cast<long>(dim)),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "var", Ops::Base::ToString(varShape->GetStorageShape()).c_str(),
+                        ("dim " + std::to_string(i) + " is unknown (" + std::to_string(dim) + ")").c_str()),
                     return ge::GRAPH_FAILED);
     }
     OP_CHECK_IF(totalNum < 0,
-                OP_LOGE(context, "var shape must be concrete (unknown dims are rejected), got %ld",
-                        static_cast<long>(totalNum)),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "var", Ops::Base::ToString(varShape->GetStorageShape()).c_str(),
+                    ("runtime storage shape must be concrete, got " + std::to_string(totalNum)).c_str()),
                 return ge::GRAPH_FAILED);
     auto varDesc = context->GetInputDesc(kIdxVar);
     OP_CHECK_NULL_WITH_CONTEXT(context, varDesc);
@@ -257,14 +289,18 @@ static ge::graphStatus GetShapeAndDataType(gert::TilingContext* context, int64_t
         auto desc = context->GetInputDesc(kCheckIndices[i]);
         OP_CHECK_NULL_WITH_CONTEXT(context, desc);
         OP_CHECK_IF(desc->GetDataType() != dataType,
-                    OP_LOGE(context, "ApplyRMSProp: dtype mismatch, %s != var dtype", kCheckNames[i]),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context->GetNodeName(), (std::string(kCheckNames[i]) + " and var").c_str(),
+                        (Ops::Base::ToString(desc->GetDataType()) + " and " + Ops::Base::ToString(dataType)).c_str(),
+                        "all inputs must have the same dtype"),
                     return ge::GRAPH_FAILED);
     }
     // OP-03 fix: var dtype 白名单。TilingKey/Kernel 模板只覆盖 FLOAT/FLOAT16/BF16，
     // 其他 dtype（如 double/int32 经 NumberType() 放行时）不得静默映射为 FP32。
     OP_CHECK_IF(
         dataType != ge::DT_FLOAT && dataType != ge::DT_FLOAT16 && dataType != ge::DT_BF16,
-        OP_LOGE(context, "ApplyRMSProp: var dtype must be FLOAT/FLOAT16/BFLOAT16, got %d", static_cast<int>(dataType)),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "var", Ops::Base::ToString(dataType).c_str(),
+                                              "dtype must be float, float16, or bfloat16"),
         return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

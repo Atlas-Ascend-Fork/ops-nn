@@ -82,6 +82,7 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
+#include "base/err_mgr.h"
 
 using namespace ut_util;
 using namespace std;
@@ -270,6 +271,37 @@ static ApplyRMSPropTilingResult DoApplyRMSPropValidCase(const std::initializer_l
     return DoApplyRMSPropTilingCase(args);
 }
 
+static void ResetErrMgr()
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
+}
+
+static bool HasEZCode(const std::string& code)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    for (const auto& e : errors) {
+        if (e.error_id != nullptr && code == e.error_id.get()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+class ApplyRMSPropErrMgrReset : public testing::EmptyTestEventListener {
+public:
+    void OnTestStart(const testing::TestInfo& test_info) override
+    {
+        if (std::string(test_info.test_suite_name()) == "TestApplyRMSPropTiling") {
+            ResetErrMgr();
+        }
+    }
+};
+static const auto _inst_apply_rms_prop_err_mgr = []() {
+    testing::UnitTest::GetInstance()->listeners().Append(new ApplyRMSPropErrMgrReset());
+    return 0;
+}();
+
 // =====================================================================
 // T01 FP32 single buffer (totalNum <= 1024) -> key 0
 // =====================================================================
@@ -406,6 +438,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_c1_ms_shape_mismatch)
                                 /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0010"));
 }
 
 // =====================================================================
@@ -418,6 +451,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_c1_mom_shape_mismatch)
                                 /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0010"));
 }
 
 // =====================================================================
@@ -430,6 +464,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_c1_grad_shape_mismatch)
                                 /*grad=*/{1024}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0010"));
 }
 
 // =====================================================================
@@ -442,6 +477,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_c3_lr_not_scalar)
                                 /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0009"));
 }
 
 // =====================================================================
@@ -454,6 +490,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_c3_rho_not_scalar)
                                 /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0009"));
 }
 
 // =====================================================================
@@ -466,6 +503,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_c3_momentum_not_scalar)
                                 /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0009"));
 }
 
 // =====================================================================
@@ -478,6 +516,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_c3_epsilon_not_scalar)
                                 /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0009"));
 }
 
 // =====================================================================
@@ -495,6 +534,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_dtype_mismatch_ms_fp16)
     args.msDtype = ge::DT_FLOAT16; // var=fp32 but ms=fp16 -> reject
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0021"));
 }
 
 // =====================================================================
@@ -509,6 +549,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_dtype_mismatch_epsilon_bf16)
     args.epsilonDtype = ge::DT_BF16; // var=fp32 but epsilon=bf16 -> reject
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0021"));
 }
 
 // =====================================================================
@@ -561,6 +602,7 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_rank_9_invalid)
                                 /*useLocking=*/false};
     auto result = DoApplyRMSPropTilingCase(args);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0012"));
 }
 
 // =====================================================================
@@ -607,4 +649,28 @@ TEST_F(TestApplyRMSPropTiling, apply_rms_prop_large_shape_total_num)
     ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
     ASSERT_EQ(result.tilingKey, TILING_KEY_FP32_DOUBLE);
     EXPECT_EQ(result.totalNum, 2048L * 1024);
+}
+
+// =====================================================================
+// T28 var shape contains unresolved dimensions (-1) -> EZ0009.
+// =====================================================================
+TEST_F(TestApplyRMSPropTiling, apply_rms_prop_unknown_dim_invalid)
+{
+    ApplyRMSPropTilingArgs args{/*var=*/{-1, -1}, /*ms=*/{-1, -1},     /*mom=*/{-1, -1},
+                                /*lr=*/{1},       /*rho=*/{1},         /*momentum=*/{1},
+                                /*epsilon=*/{1},  /*grad=*/{-1, -1},   ge::DT_FLOAT,
+                                ge::FORMAT_ND,    /*useLocking=*/false};
+    auto result = DoApplyRMSPropTilingCase(args);
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0009"));
+}
+
+// =====================================================================
+// T29 var dtype outside {FLOAT, FLOAT16, BFLOAT16} -> EZ0020.
+// =====================================================================
+TEST_F(TestApplyRMSPropTiling, apply_rms_prop_unsupported_var_dtype)
+{
+    auto result = DoApplyRMSPropValidCase({2048}, ge::DT_INT32, /*useLocking=*/false);
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0020"));
 }

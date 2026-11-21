@@ -51,6 +51,7 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
+#include "base/err_mgr.h"
 
 using namespace ut_util;
 using namespace std;
@@ -124,6 +125,8 @@ struct ApplyCenteredRMSPropTilingArgs {
     std::initializer_list<int64_t> momentumStorageShape;
     std::initializer_list<int64_t> epsilonStorageShape;
     int32_t lockingAttr = LOCKING_ATTR_ABSENT;
+    ge::DataType mgDtype = ge::DT_UNDEFINED;
+    ge::DataType outputDtype = ge::DT_UNDEFINED;
 };
 
 // Build a StorageShape whose storage shape is overridden when the caller supplied
@@ -185,16 +188,18 @@ static ApplyCenteredRMSPropTilingResult DoTilingCase(const ApplyCenteredRMSPropT
         .OutputShapes({&varStorage})
         .CompileInfo(&compileInfo)
         .PlatformInfo(reinterpret_cast<char*>(&platFormInfo))
-        .NodeInputTd(0, args.tensorDtype, args.inputFormat, args.inputFormat)   // var
-        .NodeInputTd(1, args.tensorDtype, args.inputFormat, args.inputFormat)   // mg
-        .NodeInputTd(2, args.tensorDtype, args.inputFormat, args.inputFormat)   // ms
-        .NodeInputTd(3, args.tensorDtype, args.inputFormat, args.inputFormat)   // mom
-        .NodeInputTd(4, args.tensorDtype, args.inputFormat, args.inputFormat)   // lr
-        .NodeInputTd(5, args.tensorDtype, args.inputFormat, args.inputFormat)   // rho
-        .NodeInputTd(6, args.tensorDtype, args.inputFormat, args.inputFormat)   // momentum
-        .NodeInputTd(7, args.tensorDtype, args.inputFormat, args.inputFormat)   // epsilon
-        .NodeInputTd(8, args.tensorDtype, args.inputFormat, args.inputFormat)   // grad
-        .NodeOutputTd(0, args.tensorDtype, args.inputFormat, args.inputFormat); // var
+        .NodeInputTd(0, args.tensorDtype, args.inputFormat, args.inputFormat) // var
+        .NodeInputTd(1, args.mgDtype == ge::DT_UNDEFINED ? args.tensorDtype : args.mgDtype, args.inputFormat,
+                     args.inputFormat)                                        // mg
+        .NodeInputTd(2, args.tensorDtype, args.inputFormat, args.inputFormat) // ms
+        .NodeInputTd(3, args.tensorDtype, args.inputFormat, args.inputFormat) // mom
+        .NodeInputTd(4, args.tensorDtype, args.inputFormat, args.inputFormat) // lr
+        .NodeInputTd(5, args.tensorDtype, args.inputFormat, args.inputFormat) // rho
+        .NodeInputTd(6, args.tensorDtype, args.inputFormat, args.inputFormat) // momentum
+        .NodeInputTd(7, args.tensorDtype, args.inputFormat, args.inputFormat) // epsilon
+        .NodeInputTd(8, args.tensorDtype, args.inputFormat, args.inputFormat) // grad
+        .NodeOutputTd(0, args.outputDtype == ge::DT_UNDEFINED ? args.tensorDtype : args.outputDtype, args.inputFormat,
+                      args.inputFormat); // var
     if (args.lockingAttr != LOCKING_ATTR_ABSENT) {
         faker.NodeAttrs({{"use_locking", Ops::NN::AnyValue::CreateFrom<bool>(args.lockingAttr == LOCKING_ATTR_TRUE)}});
     }
@@ -260,6 +265,37 @@ static ApplyCenteredRMSPropTilingResult DoUniformScalarCase(const std::initializ
     return DoScalarCase(tensorShape, scalarOrigin, scalarStorage, scalarStorage, scalarStorage, scalarStorage,
                         lockingAttr, tensorDtype);
 }
+
+static void ResetErrMgr()
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
+}
+
+static bool HasEZCode(const std::string& code)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    for (const auto& e : errors) {
+        if (e.error_id != nullptr && code == e.error_id.get()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+class ApplyCenteredRMSPropErrMgrReset : public testing::EmptyTestEventListener {
+public:
+    void OnTestStart(const testing::TestInfo& test_info) override
+    {
+        if (std::string(test_info.test_suite_name()) == "TestApplyCenteredRMSPropTiling") {
+            ResetErrMgr();
+        }
+    }
+};
+static const auto _inst_apply_centered_rms_prop_err_mgr = []() {
+    testing::UnitTest::GetInstance()->listeners().Append(new ApplyCenteredRMSPropErrMgrReset());
+    return 0;
+}();
 
 // T01 FP32 small shape
 TEST_F(TestApplyCenteredRMSPropTiling, apply_centered_rms_prop_fp32_small)
@@ -338,6 +374,7 @@ TEST_F(TestApplyCenteredRMSPropTiling, apply_centered_rms_prop_mg_mismatch)
         /*var=*/{2048},  /*mg=*/{1024}, /*ms=*/{2048}, /*mom=*/{2048}, {}, {}, {}, {},
         /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND};
     EXPECT_EQ(DoTilingCase(args).status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0037"));
 }
 
 TEST_F(TestApplyCenteredRMSPropTiling, apply_centered_rms_prop_ms_mismatch)
@@ -556,4 +593,29 @@ TEST_F(TestApplyCenteredRMSPropTiling, apply_centered_rms_prop_single_unknown_di
 {
     auto r = DoValidCase({256, -1}, ge::DT_FLOAT);
     EXPECT_EQ(r.status, ge::GRAPH_FAILED);
+}
+
+// T37 mg dtype differs from var: the combined dtype/shape contract reports
+// EZ0037 with the parameter relation in the message.
+TEST_F(TestApplyCenteredRMSPropTiling, apply_centered_rms_prop_mg_dtype_mismatch)
+{
+    ApplyCenteredRMSPropTilingArgs args{
+        /*var=*/{2048},  /*mg=*/{2048}, /*ms=*/{2048}, /*mom=*/{2048}, {}, {}, {}, {},
+        /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND};
+    args.mgDtype = ge::DT_FLOAT16;
+    auto r = DoTilingCase(args);
+    EXPECT_EQ(r.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0037"));
+}
+
+// T38 output dtype differs from the inputs -> EZ0020.
+TEST_F(TestApplyCenteredRMSPropTiling, apply_centered_rms_prop_output_dtype_mismatch)
+{
+    ApplyCenteredRMSPropTilingArgs args{
+        /*var=*/{2048},  /*mg=*/{2048}, /*ms=*/{2048}, /*mom=*/{2048}, {}, {}, {}, {},
+        /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND};
+    args.outputDtype = ge::DT_FLOAT16;
+    auto r = DoTilingCase(args);
+    EXPECT_EQ(r.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0020"));
 }

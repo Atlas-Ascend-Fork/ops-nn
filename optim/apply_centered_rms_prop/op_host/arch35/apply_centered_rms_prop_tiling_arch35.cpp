@@ -101,7 +101,9 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         auto desc = context->GetInputDesc(idx);
         OP_CHECK_NULL_WITH_CONTEXT(context, desc);
         OP_CHECK_IF(desc->GetDataType() != *dataType || shape != varShape,
-                    OP_LOGE(context, "var and input[%d] must have identical dtype and shape", idx),
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(),
+                                                             (std::string("var and ") + inputNames[idx]).c_str(),
+                                                             "dtype and shape must be identical to var"),
                     return ge::GRAPH_FAILED);
         if (shape != varShape) {
             const std::string paramName = std::string("var and ") + inputNames[idx];
@@ -153,7 +155,10 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     auto outputDesc = context->GetOutputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
     OP_CHECK_IF(outputDesc->GetDataType() != *dataType,
-                OP_LOGE(context, "output var must have the same dtype as all inputs"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "var",
+                                                      Ops::Base::ToString(outputDesc->GetDataType()).c_str(),
+                                                      "output dtype must be the same as all inputs"),
+                return ge::GRAPH_FAILED);
     const auto* attrs = context->GetAttrs();
     if (attrs != nullptr) {
         // use_locking is a TensorFlow scheduling hint only ("if True, the variables are
