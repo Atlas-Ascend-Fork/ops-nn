@@ -23,7 +23,7 @@ namespace ge {
  * @brief SquaredRelu first applies ReLU to the input tensor x, and then squares the result of the ReLU operation.
  *
  * @par Inputs:
- * x: A tensor of type float, bf16 or bfloat16. Shape support 0D ~ 8D.
+ * x: A tensor of type float16, float32 or bfloat16. Shape support 0D ~ 8D.
  * The format must be ND.
  *
  * @par Outputs:
