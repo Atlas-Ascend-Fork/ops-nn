@@ -12,8 +12,10 @@
 
 #include <iostream>
 #include <fstream>
+#include <initializer_list>
 #include <vector>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "ut_op_util.h"
 #include "platform/platform_infos_def.h"
@@ -454,4 +456,166 @@ TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_insufficient_ub)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+}
+
+static void ResetErrorReports() { (void)ErrorManager::GetInstance().GetRawErrorMessages(); }
+
+static void ExpectSingleErrorReport(const string& expectedCode, const std::initializer_list<string>& messageParts,
+                                    const std::initializer_list<string>& forbiddenParts = {})
+{
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, expectedCode);
+    for (const auto& part : messageParts) {
+        EXPECT_NE(errors[0].error_message.find(part), string::npos) << errors[0].error_message;
+    }
+    for (const auto& part : forbiddenParts) {
+        EXPECT_EQ(errors[0].error_message.find(part), string::npos) << errors[0].error_message;
+    }
+}
+
+static ge::graphStatus RunAddRowRangesTiling(gert::StorageShape xShape, gert::StorageShape srcShape,
+                                             gert::StorageShape indicesShape, ge::DataType xDtype,
+                                             ge::DataType srcDtype, ge::DataType indicesDtype)
+{
+    gert::StorageShape outputShape = xShape;
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    map<string, string> soc_version;
+    GetPlatFormInfos(kCompileInfoString.c_str(), soc_infos, aicore_spec, intrinsics, soc_version);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    optiling::AddRowRangesCompileInfo compile_info;
+    std::string op_type("AddRowRanges");
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(kCompileInfoString.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+
+    if (!kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init()) {
+        return ge::GRAPH_FAILED;
+    }
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_version);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    if (tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("AddRowRanges")
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&xShape, &srcShape, &indicesShape})
+                      .OutputShapes({&outputShape})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, srcDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, indicesDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    return tiling_func(tiling_context);
+}
+
+TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_invalid_x_rank)
+{
+    ResetErrorReports();
+    EXPECT_EQ(RunAddRowRangesTiling({{7, 7, 7}, {7, 7, 7}}, {{11, 7}, {11, 7}}, {{7, 2}, {7, 2}}, ge::DT_FLOAT,
+                                    ge::DT_FLOAT, ge::DT_INT32),
+              ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ0011", {"x", "incorrect shape dim 3D. It should be 2D"});
+}
+
+TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_invalid_src_rank)
+{
+    ResetErrorReports();
+    EXPECT_EQ(RunAddRowRangesTiling({{7, 7}, {7, 7}}, {{11, 7, 1}, {11, 7, 1}}, {{7, 2}, {7, 2}}, ge::DT_FLOAT,
+                                    ge::DT_FLOAT, ge::DT_INT32),
+              ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ0011", {"src", "incorrect shape dim 3D. It should be 2D"});
+}
+
+TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_invalid_indices_rank)
+{
+    ResetErrorReports();
+    EXPECT_EQ(RunAddRowRangesTiling({{7, 7}, {7, 7}}, {{11, 7}, {11, 7}}, {{7, 2, 1}, {7, 2, 1}}, ge::DT_FLOAT,
+                                    ge::DT_FLOAT, ge::DT_INT32),
+              ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ0011", {"indices", "incorrect shape dim 3D. It should be 2D"});
+}
+
+TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_src_last_dim_mismatch)
+{
+    ResetErrorReports();
+    EXPECT_EQ(RunAddRowRangesTiling({{7, 7}, {7, 7}}, {{11, 8}, {11, 8}}, {{7, 2}, {7, 2}}, ge::DT_FLOAT, ge::DT_FLOAT,
+                                    ge::DT_INT32),
+              ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ0010", {"src, x", "[11, 8], [7, 7]", "src.shape[1] must equal x.shape[1]"});
+}
+
+TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_indices_first_dim_mismatch)
+{
+    ResetErrorReports();
+    EXPECT_EQ(RunAddRowRangesTiling({{7, 7}, {7, 7}}, {{11, 7}, {11, 7}}, {{8, 2}, {8, 2}}, ge::DT_FLOAT, ge::DT_FLOAT,
+                                    ge::DT_INT32),
+              ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ0010", {"indices, x", "[8, 2], [7, 7]", "indices.shape[0] must equal x.shape[0]"});
+}
+
+TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_indices_second_dim_not_two)
+{
+    ResetErrorReports();
+    EXPECT_EQ(RunAddRowRangesTiling({{7, 7}, {7, 7}}, {{11, 7}, {11, 7}}, {{7, 3}, {7, 3}}, ge::DT_FLOAT, ge::DT_FLOAT,
+                                    ge::DT_INT32),
+              ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ0009", {"indices", "incorrect shape", "7, 3", "indices.shape[1] must be 2"}, {"[["});
+}
+
+TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_x_src_dtype_mismatch)
+{
+    ResetErrorReports();
+    EXPECT_EQ(RunAddRowRangesTiling({{7, 7}, {7, 7}}, {{11, 7}, {11, 7}}, {{7, 2}, {7, 2}}, ge::DT_FLOAT16,
+                                    ge::DT_FLOAT, ge::DT_INT32),
+              ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ0021", {"x, src", "DT_FLOAT16, DT_FLOAT", "same dtype"});
+}
+
+TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_unsupported_x_dtype)
+{
+    ResetErrorReports();
+    EXPECT_EQ(RunAddRowRangesTiling({{7, 7}, {7, 7}}, {{11, 7}, {11, 7}}, {{7, 2}, {7, 2}}, ge::DT_INT32, ge::DT_INT32,
+                                    ge::DT_INT32),
+              ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ0020", {"x", "DT_INT32", "float32 or float16"});
+}
+
+TEST_F(AddRowRangesTilingTest, add_row_ranges_tiling_unsupported_indices_dtype)
+{
+    ResetErrorReports();
+    EXPECT_EQ(RunAddRowRangesTiling({{7, 7}, {7, 7}}, {{11, 7}, {11, 7}}, {{7, 2}, {7, 2}}, ge::DT_FLOAT, ge::DT_FLOAT,
+                                    ge::DT_INT64),
+              ge::GRAPH_FAILED);
+    ExpectSingleErrorReport("EZ0020", {"indices", "DT_INT64", "int32"});
 }

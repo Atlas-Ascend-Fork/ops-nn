@@ -63,15 +63,18 @@ static ge::graphStatus InferShapeAddRowRanges(gert::InferShapeContext* context)
 
     // shape 校验：所有输入必须是 2D
     if (xShape->GetDimNum() != 2) {
-        OP_LOGE(context, "x must be 2D tensor, got dim=%zu", xShape->GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "x", (std::to_string(xShape->GetDimNum()) + "D").c_str(),
+                                     "2D");
         return GRAPH_FAILED;
     }
     if (srcShape->GetDimNum() != 2) {
-        OP_LOGE(context, "src must be 2D tensor, got dim=%zu", srcShape->GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "src",
+                                     (std::to_string(srcShape->GetDimNum()) + "D").c_str(), "2D");
         return GRAPH_FAILED;
     }
     if (indicesShape->GetDimNum() != 2) {
-        OP_LOGE(context, "indices must be 2D tensor, got dim=%zu", indicesShape->GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "indices",
+                                     (std::to_string(indicesShape->GetDimNum()) + "D").c_str(), "2D");
         return GRAPH_FAILED;
     }
 
@@ -80,17 +83,26 @@ static ge::graphStatus InferShapeAddRowRanges(gert::InferShapeContext* context)
     // 约束校验：src.shape[1] == x.shape[1]
     if (srcShape->GetDim(1) != UNKNOWN_DIM && xShape->GetDim(1) != UNKNOWN_DIM &&
         srcShape->GetDim(1) != xShape->GetDim(1)) {
-        OP_LOGE(context, "src.shape[1]=%ld must equal x.shape[1]=%ld", srcShape->GetDim(1), xShape->GetDim(1));
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "src, x",
+            (Ops::Base::ToString(*srcShape) + ", " + Ops::Base::ToString(*xShape)).c_str(),
+            "src.shape[1] must equal x.shape[1]");
         return GRAPH_FAILED;
     }
     // 约束校验：indices.shape == (M, 2)
     if (indicesShape->GetDim(0) != UNKNOWN_DIM && xShape->GetDim(0) != UNKNOWN_DIM &&
         indicesShape->GetDim(0) != xShape->GetDim(0)) {
-        OP_LOGE(context, "indices.shape[0]=%ld must equal x.shape[0]=%ld", indicesShape->GetDim(0), xShape->GetDim(0));
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "indices, x",
+            (Ops::Base::ToString(*indicesShape) + ", " + Ops::Base::ToString(*xShape)).c_str(),
+            "indices.shape[0] must equal x.shape[0]");
         return GRAPH_FAILED;
     }
     if (indicesShape->GetDim(1) != UNKNOWN_DIM && indicesShape->GetDim(1) != 2) {
-        OP_LOGE(context, "indices.shape[1] must be 2, got %ld", indicesShape->GetDim(1));
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "indices",
+            (std::to_string(indicesShape->GetDim(0)) + ", " + std::to_string(indicesShape->GetDim(1))).c_str(),
+            "indices.shape[1] must be 2");
         return GRAPH_FAILED;
     }
 
@@ -107,15 +119,20 @@ static ge::graphStatus InferShapeAddRowRanges(gert::InferShapeContext* context)
     auto indicesDtype = indicesDesc->GetDataType();
 
     if (xDtype != srcDtype) {
-        OP_LOGE(context, "x and src must have same dtype");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "x, src",
+            (Ops::Base::ToString(xDtype) + ", " + Ops::Base::ToString(srcDtype)).c_str(),
+            "x and src must have the same dtype");
         return GRAPH_FAILED;
     }
     if (xDtype != DT_FLOAT && xDtype != DT_FLOAT16) {
-        OP_LOGE(context, "x dtype must be float32 or float16");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(xDtype).c_str(),
+                                              "x dtype must be float32 or float16");
         return GRAPH_FAILED;
     }
     if (indicesDtype != DT_INT32) {
-        OP_LOGE(context, "indices dtype must be int32");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "indices",
+                                              Ops::Base::ToString(indicesDtype).c_str(), "indices dtype must be int32");
         return GRAPH_FAILED;
     }
 

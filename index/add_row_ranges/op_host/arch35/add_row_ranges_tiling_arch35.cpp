@@ -61,12 +61,17 @@ static ge::graphStatus GetAndValidateShapes(gert::TilingContext* context, int64_
     OP_CHECK_NULL_WITH_CONTEXT(context, indicesInput);
     auto indicesShape = EnsureNotScalar(indicesInput->GetStorageShape());
 
-    OP_CHECK_IF(xShape.GetDimNum() != 2, OP_LOGE(context, "x must be 2D tensor, got dim=%zu", xShape.GetDimNum()),
+    OP_CHECK_IF(xShape.GetDimNum() != 2,
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "x",
+                                             (std::to_string(xShape.GetDimNum()) + "D").c_str(), "2D"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(srcShape.GetDimNum() != 2, OP_LOGE(context, "src must be 2D tensor, got dim=%zu", srcShape.GetDimNum()),
+    OP_CHECK_IF(srcShape.GetDimNum() != 2,
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "src",
+                                             (std::to_string(srcShape.GetDimNum()) + "D").c_str(), "2D"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(indicesShape.GetDimNum() != 2,
-                OP_LOGE(context, "indices must be 2D tensor, got dim=%zu", indicesShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "indices",
+                                             (std::to_string(indicesShape.GetDimNum()) + "D").c_str(), "2D"),
                 return ge::GRAPH_FAILED);
 
     M = xShape.GetDim(0);
@@ -74,13 +79,22 @@ static ge::graphStatus GetAndValidateShapes(gert::TilingContext* context, int64_
     K = srcShape.GetDim(0);
 
     OP_CHECK_IF(srcShape.GetDim(1) != N,
-                OP_LOGE(context, "src.shape[1]=%ld must equal x.shape[1]=%ld", srcShape.GetDim(1), N),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "src, x",
+                    (Ops::Base::ToString(srcShape) + ", " + Ops::Base::ToString(xShape)).c_str(),
+                    "src.shape[1] must equal x.shape[1]"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(indicesShape.GetDim(0) != M,
-                OP_LOGE(context, "indices.shape[0]=%ld must equal x.shape[0]=%ld", indicesShape.GetDim(0), M),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "indices, x",
+                    (Ops::Base::ToString(indicesShape) + ", " + Ops::Base::ToString(xShape)).c_str(),
+                    "indices.shape[0] must equal x.shape[0]"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(indicesShape.GetDim(1) != 2,
-                OP_LOGE(context, "indices.shape[1] must be 2, got %ld", indicesShape.GetDim(1)),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "indices",
+                    (std::to_string(indicesShape.GetDim(0)) + ", " + std::to_string(indicesShape.GetDim(1))).c_str(),
+                    "indices.shape[1] must be 2"),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -99,10 +113,21 @@ static ge::graphStatus GetAndValidateDtypes(gert::TilingContext* context)
     auto srcDtype = srcDesc->GetDataType();
     auto indicesDtype = indicesDesc->GetDataType();
 
-    OP_CHECK_IF(xDtype != srcDtype, OP_LOGE(context, "x and src must have same dtype"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(xDtype != srcDtype,
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "x, src",
+                    (Ops::Base::ToString(xDtype) + ", " + Ops::Base::ToString(srcDtype)).c_str(),
+                    "x and src must have the same dtype"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(xDtype != ge::DT_FLOAT && xDtype != ge::DT_FLOAT16,
-                OP_LOGE(context, "x dtype must be float32 or float16"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(indicesDtype != ge::DT_INT32, OP_LOGE(context, "indices dtype must be int32"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(xDtype).c_str(),
+                                                      "x dtype must be float32 or float16"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        indicesDtype != ge::DT_INT32,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "indices",
+                                              Ops::Base::ToString(indicesDtype).c_str(), "indices dtype must be int32"),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -113,16 +138,16 @@ static ge::graphStatus AddRowRangesTilingFunc(gert::TilingContext* context)
     uint64_t ubSize = 0;
     int64_t coreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     int64_t M = 0;
     int64_t N = 0;
     int64_t K = 0;
     OP_CHECK_IF(GetAndValidateShapes(context, M, N, K) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetAndValidateShapes error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetAndValidateShapes error"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(GetAndValidateDtypes(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetAndValidateDtypes error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetAndValidateDtypes(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetAndValidateDtypes error"), return ge::GRAPH_FAILED);
 
     int64_t totalElements = M * N;
     OP_CHECK_IF(totalElements > static_cast<int64_t>(INT32_MAX),
