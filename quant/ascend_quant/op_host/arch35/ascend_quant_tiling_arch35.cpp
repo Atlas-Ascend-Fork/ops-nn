@@ -63,9 +63,11 @@ inline static const gert::Shape& EnsureNotScalar(const gert::Shape& in_shape)
 ge::graphStatus AscendQuantRegbase::DoAscendQuantTiling()
 {
     OP_CHECK_IF((GetPlatform() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoAscendQuantTiling GetPlatform Failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoAscendQuantTiling GetPlatform Failed."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF((GetOpParam() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoAscendQuantTiling GetOpParam Failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoAscendQuantTiling GetOpParam Failed."),
+                return ge::GRAPH_FAILED);
 
     CalcTiling();
     CalcTilingKey();
@@ -260,13 +262,15 @@ ge::graphStatus AscendQuantRegbase::GetOpParam()
     }
 
     OP_CHECK_IF((CheckDtype() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "check input/output dtype failed."), return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF((CheckAttrs() != ge::GRAPH_SUCCESS), OP_LOGE(context_->GetNodeName(), "op attrs is invalid."),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check input/output dtype failed."),
                 return ge::GRAPH_FAILED);
 
+    OP_CHECK_IF((CheckAttrs() != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "op attrs is invalid."), return ge::GRAPH_FAILED);
+
     OP_CHECK_IF((CheckShape(xInputShape, yOutputShape) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "input/output shape is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "input/output shape is invalid."),
+                return ge::GRAPH_FAILED);
 
     MergeInputShape(xInputShape);
 

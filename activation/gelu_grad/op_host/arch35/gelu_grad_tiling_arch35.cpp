@@ -81,24 +81,24 @@ ge::graphStatus GeluGradTiling::DoOpTiling()
         BroadcastBaseTiling<GeluGradDAG<half>::OpDag> brcBaseTiling(context_);
         baseTilingResult = brcBaseTiling.DoTiling();
         OP_CHECK_IF(baseTilingResult == ge::GRAPH_FAILED,
-                    OP_LOGE(context_->GetNodeName(), "BroadcastBaseTiling failed, dy dtype: %s.",
-                            ge::TypeUtils::DataTypeToSerialString(dyInputDtype).c_str()),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "BroadcastBaseTiling failed, dy dtype: %s.",
+                                           ge::TypeUtils::DataTypeToSerialString(dyInputDtype).c_str()),
                     return ge::GRAPH_FAILED);
         tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode());
     } else if (dyInputDtype == ge::DT_BF16) {
         BroadcastBaseTiling<GeluGradDAG<bfloat16_t>::OpDag> brcBaseTiling(context_);
         baseTilingResult = brcBaseTiling.DoTiling();
         OP_CHECK_IF(baseTilingResult == ge::GRAPH_FAILED,
-                    OP_LOGE(context_->GetNodeName(), "BroadcastBaseTiling failed, dy dtype: %s.",
-                            ge::TypeUtils::DataTypeToSerialString(dyInputDtype).c_str()),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "BroadcastBaseTiling failed, dy dtype: %s.",
+                                           ge::TypeUtils::DataTypeToSerialString(dyInputDtype).c_str()),
                     return ge::GRAPH_FAILED);
         tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode());
     } else if (dyInputDtype == ge::DT_FLOAT) {
         BroadcastBaseTiling<GeluGradDAG<float>::OpDag> brcBaseTiling(context_);
         baseTilingResult = brcBaseTiling.DoTiling();
         OP_CHECK_IF(baseTilingResult == ge::GRAPH_FAILED,
-                    OP_LOGE(context_->GetNodeName(), "BroadcastBaseTiling failed, dy dtype: %s.",
-                            ge::TypeUtils::DataTypeToSerialString(dyInputDtype).c_str()),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "BroadcastBaseTiling failed, dy dtype: %s.",
+                                           ge::TypeUtils::DataTypeToSerialString(dyInputDtype).c_str()),
                     return ge::GRAPH_FAILED);
         tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode());
     } else {

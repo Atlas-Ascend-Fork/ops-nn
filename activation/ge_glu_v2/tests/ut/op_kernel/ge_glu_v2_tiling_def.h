@@ -27,11 +27,12 @@ struct GeGluV2TilingData {
     int64_t splitSize;
     int64_t realCoreNum;
     int64_t numPerCore;
-    int64_t tilingKey;
     int64_t blockSize;
+    int64_t tilingKey;
     int64_t activateLeft;
     int64_t ny;
     int64_t approximate;
+    int64_t bufSize;
 };
 
 #pragma pack()

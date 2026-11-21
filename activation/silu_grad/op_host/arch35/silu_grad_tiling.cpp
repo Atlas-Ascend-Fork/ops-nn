@@ -181,7 +181,7 @@ ge::graphStatus SiluGradTiling::DoOpTiling()
     Ops::Base::BroadcastTilingData broadcastTilingData;
     ge::graphStatus status = BroadcastTiling(broadcastTilingParams, broadcastTilingData);
     if (status != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "broadcast tiling failed, opKey: %lu.", opKey);
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "broadcast tiling failed, opKey: %lu.", opKey);
         return ge::GRAPH_FAILED;
     }
 

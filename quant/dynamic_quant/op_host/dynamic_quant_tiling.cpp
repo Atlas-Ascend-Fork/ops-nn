@@ -221,7 +221,7 @@ ge::graphStatus DynamicQuantTiling::CheckOpInputShape(const gert::TilingContext*
     auto smoothShape = context->GetOptionalInputShape(SMOOTH_INDEX);
     if (smoothShape != nullptr) {
         OP_CHECK_IF((CheckSmoothShape(context, xDimLast) != ge::GRAPH_SUCCESS),
-                    OP_LOGE(context, "smooth shape check failed!"), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context, "smooth shape check failed!"), return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -319,11 +319,11 @@ ge::graphStatus DynamicQuantTiling::CheckOpOutputShape(const gert::TilingContext
 
 ge::graphStatus DynamicQuantTiling::CheckOpShape(const gert::TilingContext* context)
 {
-    OP_CHECK_IF((CheckOpInputShape(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "input shape check failed!"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckOpInputShape(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "input shape check failed!"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((CheckOpOutputShape(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "output shape check failed!"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckOpOutputShape(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "output shape check failed!"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -422,16 +422,16 @@ ge::graphStatus DynamicQuantTiling::CheckAttrs(const gert::TilingContext* contex
 ge::graphStatus DynamicQuantTiling::CheckOpParams(const gert::TilingContext* context)
 {
     OP_CHECK_IF((CheckInputDtype(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context, "x or smooth_scales dtype is invalid"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "x or smooth_scales dtype is invalid"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((CheckOutputDtype(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "op output dtype is invalid"),
+    OP_CHECK_IF((CheckOutputDtype(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "op output dtype is invalid"), return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF((CheckAttrs(context) != ge::GRAPH_SUCCESS), OP_LOGE_WITHOUT_REPORT(context, "op attrs is invalid."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((CheckAttrs(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "op attrs is invalid."),
-                return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF((CheckOpShape(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "input or output shape is invalid"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckOpShape(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "input or output shape is invalid"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -694,13 +694,17 @@ ge::graphStatus DynamicQuantTiling::RunFusionKernelTiling(gert::TilingContext* c
 {
     ResetLargeTilingParams();
     OP_CHECK_IF((GetCompileInfo(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context, "RunFusionKernelTiling GetCompileInfo failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "RunFusionKernelTiling GetCompileInfo failed."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF((CheckOpParams(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context, "RunFusionKernelTiling CheckOpParams failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "RunFusionKernelTiling CheckOpParams failed."),
+                return ge::GRAPH_FAILED);
     const gert::StorageShape* xShape = context->GetInputShape(X_INDEX);
 
     rowLen = xShape->GetStorageShape().GetDim(xShape->GetStorageShape().GetDimNum() - 1);
-    OP_CHECK_IF((rowLen == 0), OP_LOGE(context, "RunFusionKernelTiling CheckOpParams failed."),
+    OP_CHECK_IF((rowLen == 0),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", "0",
+                                                         "the last dim of x must be greater than 0"),
                 return ge::GRAPH_FAILED);
     size_t dimNum = xShape->GetStorageShape().GetDimNum() - 1;
     uint64_t tempHeadCoreNum = 1;

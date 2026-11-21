@@ -146,11 +146,11 @@ ge::graphStatus ReluV2Tiling::CalcOutputDtype()
 ge::graphStatus ReluV2Tiling::RunTiling()
 {
     ElewiseBaseTiling elewiseBaseTiling(tilingContext);
-    OP_CHECK_IF(CalcInputDtype() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "Get input dtype failed"),
+    OP_CHECK_IF(CalcInputDtype() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "CalcInputDtype failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "Get output dtype failed"),
+    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "CalcOutputDtype failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "Check shape failed"),
+    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "CheckShape failed"),
                 return ge::GRAPH_FAILED);
 
     tiling = tilingContext->GetTilingData<ReluV2TilingData>();
@@ -186,8 +186,8 @@ ge::graphStatus ReluV2Tiling::RunTiling()
     }
 
     OP_CHECK_IF(res == ge::GRAPH_FAILED,
-                OP_LOGE(tilingContext->GetNodeName(), "DoTiling failed, output dtype: %s.",
-                        ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "DoTiling failed, output dtype: %s.",
+                                       ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
                 return ge::GRAPH_FAILED);
     return SetTilingData();
 }

@@ -128,7 +128,9 @@ ge::graphStatus InferDataTypeForDynamicMxQuantWithDualAxis(gert::InferDataTypeCo
 
     OP_CHECK_IF(
         std::find(Y_SUPPORT_DTYPE_SET.begin(), Y_SUPPORT_DTYPE_SET.end(), outDtype) == Y_SUPPORT_DTYPE_SET.end(),
-        CUBE_INNER_ERR_REPORT(context->GetNodeName(), "%s", errMsg.c_str()), return ge::GRAPH_FAILED);
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dst_type", Ops::Base::ToString(outDtype).c_str(),
+                                              "only supports FLOAT4_E2M1, FLOAT4_E1M2, FLOAT8_E4M3FN or FLOAT8_E5M2"),
+        return ge::GRAPH_FAILED);
     context->SetOutputDataType(INDEX_OUTPUT_Y1, outDtype);
     context->SetOutputDataType(INDEX_OUTPUT_SCALE1, ge::DT_FLOAT8_E8M0);
     context->SetOutputDataType(INDEX_OUTPUT_Y2, outDtype);

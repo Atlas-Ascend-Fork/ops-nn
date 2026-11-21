@@ -287,11 +287,11 @@ ge::graphStatus DynamicQuantRegbaseTiling::CheckOpOutputShape(const gert::Tiling
 // 检查算子全部变量的shape
 ge::graphStatus DynamicQuantRegbaseTiling::CheckOpShape(const gert::TilingContext* context)
 {
-    OP_CHECK_IF((CheckOpInputShape(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "input shape check failed!"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckOpInputShape(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "input shape check failed!"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((CheckOpOutputShape(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "output shape check failed!"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckOpOutputShape(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "output shape check failed!"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -437,16 +437,16 @@ ge::graphStatus DynamicQuantRegbaseTiling::CheckAttrs(const gert::TilingContext*
 ge::graphStatus DynamicQuantRegbaseTiling::CheckOpParams(const gert::TilingContext* context)
 {
     OP_CHECK_IF((CheckInputDtype(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context, "x or smooth_scales dtype is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "x or smooth_scales dtype is invalid."), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((CheckOutputDtype(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "op output dtype is invalid."),
+    OP_CHECK_IF((CheckOutputDtype(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "op output dtype is invalid."), return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF((CheckAttrs(context) != ge::GRAPH_SUCCESS), OP_LOGE_WITHOUT_REPORT(context, "op attrs is invalid."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((CheckAttrs(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "op attrs is invalid."),
-                return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF((CheckOpShape(context) != ge::GRAPH_SUCCESS), OP_LOGE(context, "input or output shape is invalid."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckOpShape(context) != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context, "input or output shape is invalid."), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -916,9 +916,11 @@ ge::graphStatus DynamicQuantRegbaseTiling::RunFusionKernelTiling(gert::TilingCon
     isSymmetrical_ = (context->GetComputeNodeOutputNum() != OUTPUT_NUM_DYNAMIC_QUANT_V2);
 
     OP_CHECK_IF((GetCompileInfo(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context, "RunFusionKernelTiling GetCompileInfo failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "RunFusionKernelTiling GetCompileInfo failed."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF((CheckOpParams(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context, "RunFusionKernelTiling CheckOpParams failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "RunFusionKernelTiling CheckOpParams failed."),
+                return ge::GRAPH_FAILED);
 
     if (isEmptyTensor) {
         return DoEmptyTensorTiling(context);

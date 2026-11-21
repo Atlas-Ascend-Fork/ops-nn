@@ -65,8 +65,8 @@ ge::graphStatus LeakyReluGradTiling::DoOpTiling()
         BroadcastBaseTiling<LeakyReluGradDag<half>::OpDag> brcBaseTiling(context_);
         baseTilingResult = brcBaseTiling.DoTiling();
         OP_CHECK_IF(baseTilingResult == ge::GRAPH_FAILED,
-                    OP_LOGE(context_->GetNodeName(), "BroadcastBaseTiling failed, input dtype: %s.",
-                            ge::TypeUtils::DataTypeToSerialString(input0DType).c_str()),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "BroadcastBaseTiling failed, input dtype: %s.",
+                                           ge::TypeUtils::DataTypeToSerialString(input0DType).c_str()),
                     return ge::GRAPH_FAILED);
         tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode(), LEAKY_RELU_GRAD_TPL_FP16);
         brcBaseTiling.SetScalar<float>(negativeSlope);
@@ -74,8 +74,8 @@ ge::graphStatus LeakyReluGradTiling::DoOpTiling()
         BroadcastBaseTiling<LeakyReluGradDag<bfloat16_t>::OpDag> brcBaseTiling(context_);
         baseTilingResult = brcBaseTiling.DoTiling();
         OP_CHECK_IF(baseTilingResult == ge::GRAPH_FAILED,
-                    OP_LOGE(context_->GetNodeName(), "BroadcastBaseTiling failed, input dtype: %s.",
-                            ge::TypeUtils::DataTypeToSerialString(input0DType).c_str()),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "BroadcastBaseTiling failed, input dtype: %s.",
+                                           ge::TypeUtils::DataTypeToSerialString(input0DType).c_str()),
                     return ge::GRAPH_FAILED);
         tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode(), LEAKY_RELU_GRAD_TPL_BF16);
         brcBaseTiling.SetScalar<float>(negativeSlope);
@@ -83,8 +83,8 @@ ge::graphStatus LeakyReluGradTiling::DoOpTiling()
         BroadcastBaseTiling<LeakyReluGradDag<float>::OpDag> brcBaseTiling(context_);
         baseTilingResult = brcBaseTiling.DoTiling();
         OP_CHECK_IF(baseTilingResult == ge::GRAPH_FAILED,
-                    OP_LOGE(context_->GetNodeName(), "BroadcastBaseTiling failed, input dtype: %s.",
-                            ge::TypeUtils::DataTypeToSerialString(input0DType).c_str()),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "BroadcastBaseTiling failed, input dtype: %s.",
+                                           ge::TypeUtils::DataTypeToSerialString(input0DType).c_str()),
                     return ge::GRAPH_FAILED);
         tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode(), LEAKY_RELU_GRAD_TPL_FP32);
         brcBaseTiling.SetScalar<float>(negativeSlope);

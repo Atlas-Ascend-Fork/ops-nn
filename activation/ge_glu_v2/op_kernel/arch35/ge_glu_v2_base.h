@@ -21,6 +21,8 @@
 namespace GeGluV2 {
 using namespace AscendC;
 
+constexpr ErfConfig kGeGluV2ErfConfig = {ErfAlgo::SUBSECTION_POLYNOMIAL_APPROXIMATION};
+
 constexpr uint32_t VF_VL_FP32 = 64;
 
 constexpr AscendC::Reg::CastTrait castTraitB162B32Even = {
@@ -372,8 +374,7 @@ __aicore__ inline void GeGluV2Base<T>::ComputeGeluErf(LocalTensor<float>& gelu_o
                                                       LocalTensor<float>& tmpBuf2, const int64_t length)
 {
     AscendC::Muls(tmpBuf1, ubx2_fp32, ERF_SQRT_TWO_REC, length);
-    static constexpr ErfConfig config = {ErfAlgo::SUBSECTION_POLYNOMIAL_APPROXIMATION};
-    AscendC::Erf<float, false, config>(tmpBuf2, tmpBuf1, length);
+    AscendC::Erf<float, false, kGeGluV2ErfConfig>(tmpBuf2, tmpBuf1, length);
     AscendC::Adds(tmpBuf1, tmpBuf2, ERF_ONE, length);
     AscendC::Muls(tmpBuf2, tmpBuf1, ERF_DOT_FIVE, length);
 

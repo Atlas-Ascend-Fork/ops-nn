@@ -381,21 +381,20 @@ ge::graphStatus DynamicMxQuantWithDualAxisTiling::SetTilingParams()
 
 ge::graphStatus DynamicMxQuantWithDualAxisTiling::DoTiling()
 {
-    OP_CHECK_IF(GetPlatformInfo() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The platforminfo get failed"),
+    OP_CHECK_IF(GetPlatformInfo() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "platforminfo failed"), return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF(CheckDtype() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "data type check failed"), return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "attr get failed"),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckDtype() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The data type check failed."),
-                return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF(GetAttr() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The attr get failed."),
-                return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The shape check failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "shape check failed"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(SetTilingParams() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "DynamicMxQuantWithDualAxisTiling SetTilingParams failed"),
-                return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "SetTilingParams failed"), return ge::GRAPH_FAILED);
 
     SetTilingKey();
 

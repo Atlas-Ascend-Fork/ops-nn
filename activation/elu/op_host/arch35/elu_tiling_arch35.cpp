@@ -108,9 +108,9 @@ ge::graphStatus EluTiling::CheckShape()
 ge::graphStatus EluTiling::RunTiling()
 {
     ElewiseBaseTiling elewiseBaseTiling(tilingContext);
-    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "get output dtype failed"),
+    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "get output dtype failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "check shape failed"),
+    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "check shape failed"),
                 return ge::GRAPH_FAILED);
 
     tiling = tilingContext->GetTilingData<EluTilingData>();
@@ -132,8 +132,8 @@ ge::graphStatus EluTiling::RunTiling()
     }
 
     OP_CHECK_IF(res != ge::GRAPH_SUCCESS,
-                OP_LOGE(tilingContext->GetNodeName(), "DoTiling failed, output dtype: %s.",
-                        ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "DoTiling failed, output dtype: %s.",
+                                       ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
                 return ge::GRAPH_FAILED);
 
     auto runtimeAttrs = tilingContext->GetAttrs();

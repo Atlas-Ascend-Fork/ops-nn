@@ -68,8 +68,9 @@ ge::graphStatus ErfinvTiling::CalcInputDtype()
     this->inputDtype = inputDesc->GetDataType();
     OP_CHECK_IF(
         this->inputDtype != ge::DT_FLOAT16 && this->inputDtype != ge::DT_BF16 && this->inputDtype != ge::DT_FLOAT,
-        OP_LOGE(tilingContext->GetNodeName(), "input x dtype[%s] not support",
-                ge::TypeUtils::DataTypeToSerialString(this->inputDtype).c_str()),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(tilingContext->GetNodeName(), "x",
+                                              Ops::Base::ToString(this->inputDtype).c_str(),
+                                              "supported dtypes are float16, bfloat16 and float32"),
         return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -86,7 +87,11 @@ ge::graphStatus ErfinvTiling::CheckShape() const
     const gert::Shape& outputYShape = Ops::Base::EnsureNotScalar(outputStorageShape->GetStorageShape());
 
     OP_CHECK_IF(inputXShape != outputYShape,
-                OP_LOGE(tilingContext->GetNodeName(), "input x and output y shape not same"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    tilingContext->GetNodeName(), "x, y",
+                    (Ops::Base::ToString(inputXShape) + ", " + Ops::Base::ToString(outputYShape)).c_str(),
+                    "the shape of y must equal the shape of x"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -97,7 +102,11 @@ ge::graphStatus ErfinvTiling::CalcOutputDtype()
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext, outputDesc);
     this->outputDtype = outputDesc->GetDataType();
     OP_CHECK_IF(this->outputDtype != this->inputDtype,
-                OP_LOGE(tilingContext->GetNodeName(), "output y dtype not same as input x"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    tilingContext->GetNodeName(), "x, y",
+                    (Ops::Base::ToString(this->inputDtype) + ", " + Ops::Base::ToString(this->outputDtype)).c_str(),
+                    "the dtype of y must equal the dtype of x"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -105,11 +114,11 @@ ge::graphStatus ErfinvTiling::RunTiling()
 {
     OP_LOGD(tilingContext->GetNodeName(), "ErfinvTiling RunTiling enter.");
     ElewiseBaseTiling elewiseBaseTiling(tilingContext);
-    OP_CHECK_IF(CalcInputDtype() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "get input dtype failed"),
+    OP_CHECK_IF(CalcInputDtype() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "get input dtype failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "get output dtype failed"),
+    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "get output dtype failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "check shape failed"),
+    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "check shape failed"),
                 return ge::GRAPH_FAILED);
 
     tiling = tilingContext->GetTilingData<EleBaseTilingDataV2>();
@@ -129,11 +138,13 @@ ge::graphStatus ErfinvTiling::RunTiling()
         baseTilingResult = elewiseBaseTiling.DoTiling<ErfinvOp::ErfinvDAG<float>::OpDag>(
             *tiling, ASCEND_API_BUFFER + DCACHE_SIZE);
     } else {
-        OP_LOGE(tilingContext->GetNodeName(), "output dtype not support");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(tilingContext->GetNodeName(), "y",
+                                              Ops::Base::ToString(this->outputDtype).c_str(),
+                                              "supported dtypes are float16, bfloat16 and float32");
         return ge::GRAPH_FAILED;
     }
-    OP_CHECK_IF(baseTilingResult != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext, "elewiseBaseTiling failed"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(baseTilingResult != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(tilingContext, "elewiseBaseTiling failed"), return ge::GRAPH_FAILED);
 
     return SetTilingData();
 }

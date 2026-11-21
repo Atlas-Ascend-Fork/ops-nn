@@ -59,19 +59,19 @@ const std::set<ge::DataType> OUTPUT_Y_SUPPORT_DTYPE_SET = {ge::DT_UINT8,    ge::
 ge::graphStatus Quantize::DoQuantizeTiling()
 {
     OP_CHECK_IF((GetCompileInfo() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoQuantizeTiling GetCompileInfo Failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetCompileInfo failed"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF((GetOpParam() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoQuantizeTiling GetOpParam Failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetOpParam failed"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF((CheckDtype() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoQuantizeTiling CheckDtype Failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "CheckDtype failed"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF((CheckAttrs() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoQuantizeTiling CheckAttrs Failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "CheckAttrs failed"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF((CheckShape() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoQuantizeTiling CheckShape Failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "CheckShape failed"), return ge::GRAPH_FAILED);
 
     SelectMode();
     MergeInputShape();

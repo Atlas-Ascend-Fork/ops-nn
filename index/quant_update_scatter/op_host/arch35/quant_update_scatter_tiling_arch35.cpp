@@ -650,19 +650,21 @@ void QuantUpdateScatterRegbaseTiling::PrintDebugInfo()
 ge::graphStatus QuantUpdateScatterRegbaseTiling::DoTiling()
 {
     OP_CHECK_IF(PrepareTilingParams() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "PrepareTilingParams failed!"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(VerifyNullTenosr() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "VerifyNullTenosr failed!"),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "PrepareTilingParams failed!"),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(VerifyNullTenosr() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "VerifyNullTenosr failed!"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(VerifyParamsDtype() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "VerifyParamsDtype return failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "VerifyParamsDtype failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(VerifyTilingQuantParams() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "VerifyTilingQuantParams return failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "VerifyTilingQuantParams failed"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(VerifyTilingParams() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "VerifyTilingParams failed!"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(MergeDims() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "MergeDims failed!"),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "VerifyTilingParams failed!"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(MergeDims() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "MergeDims failed!"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(GetTilingParam() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "GetTilingParam failed!"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetTilingParam() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetTilingParam failed!"), return ge::GRAPH_FAILED);
     tilingKey_ = GET_TPL_TILING_KEY(splitMode_, zeroPointsType_, divMode_, castRoundMode_);
     PrintDebugInfo();
 

@@ -116,13 +116,14 @@ ge::graphStatus SwishTiling::RunTiling()
 {
     ElewiseBaseTiling elewiseBaseTiling(tilingContext);
 
-    OP_CHECK_IF(CalcInputDtype() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "get input dtype failed"),
+    OP_CHECK_IF(CalcInputDtype() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "CalcInputDtype failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "get output dtype failed"),
+    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "CalcOutputDtype failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "check shape failed"),
+    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "CheckShape failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(SetAttr() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "set Attr failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(SetAttr() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "SetAttr failed"),
+                return ge::GRAPH_FAILED);
 
     ge::graphStatus baseTilingResult = ge::GRAPH_FAILED;
     if (this->outputDtype == ge::DT_FLOAT16) {
@@ -156,8 +157,8 @@ ge::graphStatus SwishTiling::RunTiling()
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(baseTilingResult == ge::GRAPH_FAILED,
-                OP_LOGE(tilingContext->GetNodeName(), "elewiseBaseTiling failed, output dtype: %s.",
-                        ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "elewiseBaseTiling failed, output dtype: %s.",
+                                       ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
                 return ge::GRAPH_FAILED);
     elewiseBaseTiling.SetScalar<float>(attrScale);
     size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);

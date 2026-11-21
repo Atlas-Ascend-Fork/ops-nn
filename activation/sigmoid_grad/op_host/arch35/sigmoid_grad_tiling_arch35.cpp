@@ -144,7 +144,8 @@ ge::graphStatus SigmoidGradTiling::DoOpTiling()
     Ops::Base::ElewiseTilingData elewiseTilingData;
     auto status = Ops::Base::ElewiseTiling(elewiseTilingParams, elewiseTilingData);
     OP_CHECK_IF((status == ge::GRAPH_FAILED),
-                OP_LOGE(context_->GetNodeName(), "elewise tiling failed, opKey: %lu.", opKey), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "elewise tiling failed, opKey: %lu.", opKey),
+                return ge::GRAPH_FAILED);
 
     tilingKey_ = GenerateTilingKey(elewiseTilingData.innerKey);
     blockNum = elewiseTilingData.blockNum;

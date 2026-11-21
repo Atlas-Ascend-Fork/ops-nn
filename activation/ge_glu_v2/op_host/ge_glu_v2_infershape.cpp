@@ -126,7 +126,8 @@ static ge::graphStatus InferShapeForGeGluV2(gert::InferShapeContext* context)
         return GRAPH_SUCCESS;
     }
     OP_CHECK_IF(split_dim_value < 0 || split_dim_value % SPLIT_NUM != 0,
-                OP_LOGE("GEGLUV2", "The length of the split dimension [%ld] must be an even number.", split_dim_value),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("GEGLUV2", "x", std::to_string(split_dim_value).c_str(),
+                                                         "the length of the split dim must be an even number"),
                 return GRAPH_FAILED);
     outShapeY->SetDim(split_dim, split_dim_value / SPLIT_NUM);
     outShapeYGlu->SetDim(split_dim, split_dim_value / SPLIT_NUM);

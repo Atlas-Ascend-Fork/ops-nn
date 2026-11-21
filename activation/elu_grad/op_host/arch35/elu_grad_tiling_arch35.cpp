@@ -111,11 +111,14 @@ ge::graphStatus EluGradTiling::RunTiling()
     // 获取tiling计算所需的参数
     ge::graphStatus status = ge::GRAPH_FAILED;
     status = CalcInputDtype();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "Get input dtype failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "Get input dtype failed"),
+                return ge::GRAPH_FAILED);
     status = CalcOutputDtype();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "Get output dtype failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "Get output dtype failed"),
+                return ge::GRAPH_FAILED);
     status = CheckShape();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "Check shape failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "Check shape failed"),
+                return ge::GRAPH_FAILED);
 
     auto tiling = tilingContext->GetTilingData<EleBaseTilingDataV2>();
     OP_CHECK_IF((tiling == nullptr), OP_LOGE(tilingContext->GetNodeName(), "Get EluGradTiling from GE context failed"),
@@ -137,8 +140,8 @@ ge::graphStatus EluGradTiling::RunTiling()
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(status == ge::GRAPH_FAILED,
-                OP_LOGE(tilingContext->GetNodeName(), "ElewiseBaseTiling failed, output dtype: %s.",
-                        ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "ElewiseBaseTiling failed, output dtype: %s.",
+                                       ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
                 return ge::GRAPH_FAILED);
 
     const uint64_t tilingKey = GET_TPL_TILING_KEY(tiling->scheMode, dType);

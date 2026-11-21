@@ -268,23 +268,23 @@ ge::graphStatus Tiling4MapIndex(gert::TilingContext* context)
     MapIndexTilingParam tilingParam;
 
     OP_CHECK_IF(CheckDtype(context, tilingParam) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "The data type check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "data type check failed"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(CheckShape(context, tilingParam) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "The shape check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "shape check failed"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(GetPlatInfo(context, tilingParam) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "GetPlatInfo failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetPlatInfo failed."), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(DoTiling(context, tilingParam) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "DoTiling failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "DoTiling failed."), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(CheckAttr(context) != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "check attr failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckAttr(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "check attr failed."), return ge::GRAPH_FAILED);
 
     MapIndexTilingData tilingData;
     OP_CHECK_IF(SetTilingData(context, tilingParam, tilingData) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "SetContext failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SetContext failed."), return ge::GRAPH_FAILED);
 
     PrintTilingData(context, tilingData);
     return ge::GRAPH_SUCCESS;

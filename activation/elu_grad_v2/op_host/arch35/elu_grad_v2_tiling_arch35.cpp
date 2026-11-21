@@ -178,15 +178,20 @@ ge::graphStatus EluGradV2Tiling::RunTiling()
     OP_CHECK_IF((tiling == nullptr), OP_LOGE(tilingContext, "Get EleBaseTilingData from context failed"),
                 return ge::GRAPH_FAILED);
     status = CalcInputDtype();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "Get input dtype failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "Get input dtype failed"),
+                return ge::GRAPH_FAILED);
     status = CalcOutputDtype();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "Get output dtype failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "Get output dtype failed"),
+                return ge::GRAPH_FAILED);
     status = CheckShape();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "Check shape failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "Check shape failed"),
+                return ge::GRAPH_FAILED);
     status = SetAttr();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "SetAttr failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "SetAttr failed"),
+                return ge::GRAPH_FAILED);
     status = SetTilingData(this->isResult);
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "SetTilingData failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "SetTilingData failed"),
+                return ge::GRAPH_FAILED);
     if (dType == static_cast<uint64_t>(EluGradV2_TPL_FP16)) {
         status = elewiseBaseTiling.DoTiling<EluGradV2IsResultOp<half>::OpDag>(tiling->baseTiling);
     } else if (dType == static_cast<uint64_t>(EluGradV2_TPL_BF16)) {
@@ -206,8 +211,8 @@ ge::graphStatus EluGradV2Tiling::RunTiling()
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(status == ge::GRAPH_FAILED,
-                OP_LOGE(tilingContext->GetNodeName(), "elewiseBaseTiling failed, output dtype: %s.",
-                        ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "elewiseBaseTiling failed, output dtype: %s.",
+                                       ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
                 return ge::GRAPH_FAILED);
     schMode = tiling->baseTiling.scheMode;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(schMode, dType);

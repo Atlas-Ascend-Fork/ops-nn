@@ -74,10 +74,11 @@ ge::graphStatus ReluGradTiling::DoOpTiling()
         return ge::GRAPH_FAILED;
     }
 
-    OP_CHECK_IF(status != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "BroadcastBaseTiling do tiling failed, input dtype: %s.",
-                        ge::TypeUtils::DataTypeToSerialString(inputDtype).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        status != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "BroadcastBaseTiling do tiling failed, input dtype: %s.",
+                               ge::TypeUtils::DataTypeToSerialString(inputDtype).c_str()),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

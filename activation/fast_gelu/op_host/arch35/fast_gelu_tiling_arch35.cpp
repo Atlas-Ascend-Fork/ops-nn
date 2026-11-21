@@ -100,11 +100,14 @@ ge::graphStatus FastGeluTiling::RunTiling()
     // 获取tiling计算所需的参数
     ge::graphStatus status = ge::GRAPH_FAILED;
     status = CalcInputDtype();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "get input dtype failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "get input dtype failed"),
+                return ge::GRAPH_FAILED);
     status = CalcOutputDtype();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "get output dtype failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "get output dtype failed"),
+                return ge::GRAPH_FAILED);
     status = CheckShape();
-    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "check shape failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(status == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "check shape failed"),
+                return ge::GRAPH_FAILED);
 
     auto tiling = tilingContext->GetTilingData<EleBaseTilingDataV2>();
     OP_CHECK_IF((tiling == nullptr), OP_LOGE(tilingContext->GetNodeName(), "Get FastGeluTiling from GE context failed"),
@@ -126,8 +129,9 @@ ge::graphStatus FastGeluTiling::RunTiling()
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(status == ge::GRAPH_FAILED,
-                OP_LOGE(tilingContext->GetNodeName(), "elewiseBaseTiling failed, output dtype: %s.",
-                        ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(this->outputDtype)).c_str()),
+                OP_LOGE_WITHOUT_REPORT(
+                    tilingContext->GetNodeName(), "elewiseBaseTiling failed, output dtype: %s.",
+                    ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(this->outputDtype)).c_str()),
                 return ge::GRAPH_FAILED);
     const uint64_t tilingKey = GET_TPL_TILING_KEY(tiling->scheMode, dType);
     OP_LOGD(tilingContext->GetNodeName(), "[TilingData] : tilingKey=%ld.", tilingKey);

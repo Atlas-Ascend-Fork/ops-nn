@@ -437,7 +437,8 @@ static ge::graphStatus CheckInputParams(gert::TilingContext* context)
     int32_t typeSize = ge::GetSizeByDataType(dtype);
 
     OP_CHECK_IF(dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT,
-                OP_LOGE(context, "input dtype only support fp16, fp32, bf16 currently, please check."),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(dtype).c_str(),
+                                                      "supported dtypes are float16, bfloat16 and float32"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF((typeSize <= 0), OP_LOGE(context, "typeSize is invalid %d, please check.", typeSize),
@@ -531,14 +532,19 @@ static size_t GetAttrSplitDim(const gert::TilingContext* context)
     size_t splitDimU = splitDim < 0 ? splitDim + inputShapeSize : splitDim;
 
     OP_CHECK_IF((splitDimU >= inputShapeSize),
-                OP_LOGE(context, "The value of attr [dim] must be in the range [-%zu, %zu], but got [%zu].",
-                        inputShapeSize, inputShapeSize, splitDimU),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dim", std::to_string(splitDimU).c_str(),
+                                                      ("dim must be in the range [-" + std::to_string(inputShapeSize) +
+                                                       ", " + std::to_string(inputShapeSize) + "]")
+                                                          .c_str()),
                 return SPLIT_ERROR_STATUS);
 
-    OP_CHECK_IF((inputShape.GetDim(splitDimU) % SPLIT_FACTOR != 0),
-                OP_LOGE(context, "The dim of: %zu can not be split with factor: %u on value %ld.", splitDimU,
-                        SPLIT_FACTOR, inputShape.GetDim(splitDimU)),
-                return SPLIT_ERROR_STATUS);
+    OP_CHECK_IF(
+        (inputShape.GetDim(splitDimU) % SPLIT_FACTOR != 0),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            context->GetNodeName(), "x", std::to_string(inputShape.GetDim(splitDimU)).c_str(),
+            ("the split dim " + std::to_string(splitDimU) + " must be divisible by " + std::to_string(SPLIT_FACTOR))
+                .c_str()),
+        return SPLIT_ERROR_STATUS);
 
     return splitDimU;
 }
@@ -572,7 +578,8 @@ static ge::graphStatus GetTilingAttr(const gert::TilingContext* context, TilingP
     auto approximate = static_cast<int64_t>(*attrApproximate);
     OP_CHECK_IF(
         (approximate != 0 && approximate != 1),
-        OP_LOGE(context, "The value of attr [approximate] must be in the enum [0, 1], but got [%ld].", approximate),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "approximate",
+                                              std::to_string(approximate).c_str(), "supported values are 0 and 1"),
         return ge::GRAPH_FAILED);
     tilingParam.approximate = approximate;
 
@@ -599,7 +606,10 @@ static ge::graphStatus GetTillingParam(const gert::TilingContext* context, Tilin
         }
     }
     int64_t ny = n * y;
-    OP_CHECK_IF((x == 0 || ny == 0), OP_LOGE(context, "Get input tensor is empty."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (x == 0 || ny == 0),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "x", "0", "x must not be an empty tensor"),
+        return ge::GRAPH_FAILED);
 
     auto compileInfo = context->GetCompileInfo<GeGluV2CompileInfo>();
     tilingParam.x = x;
