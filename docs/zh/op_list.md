@@ -659,6 +659,16 @@
   </tr>
   <tr>
     <td>activation</td>
+    <td><a href="../../activation/situ_glu_group_grad/README.md">situ_glu_group_grad</a></td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>AI Core</td>
+    <td>SiTU门控线性单元激活函数的反向梯度计算(含分组与路由权重)，支持可选的weight/group_index输入与必选的grad_weight输出。</td>
+  </tr>
+  <tr>
+    <td>activation</td>
     <td><a href="../../activation/softmax_cross_entropy_with_logits/README.md">softmax_cross_entropy_with_logits</a></td>
     <td>✓</td>
     <td>✓</td>

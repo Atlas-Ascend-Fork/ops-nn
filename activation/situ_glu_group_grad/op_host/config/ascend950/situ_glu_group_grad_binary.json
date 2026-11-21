@@ -1,0 +1,287 @@
+{
+  "op_type": "SituGluGroupGrad",
+  "op_list": [
+    {
+      "bin_filename": "SituGluGroupGrad_fp32",
+      "inputs": [
+        {
+          "name": "grad_y",
+          "index": 0,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "x",
+          "index": 1,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "weight",
+          "index": 2,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "optional",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "group_index",
+          "index": 3,
+          "dtype": "int64",
+          "format": "ND",
+          "paramType": "optional",
+          "shape": [
+            -2
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "grad_x",
+          "index": 0,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "grad_weight",
+          "index": 1,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        }
+      ],
+      "attrs": [
+        {
+          "name": "dim",
+          "dtype": "int64",
+          "value": -1
+        },
+        {
+          "name": "beta",
+          "dtype": "float32",
+          "value": 1.0
+        },
+        {
+          "name": "linear_beta",
+          "dtype": "float32",
+          "value": 0.0
+        },
+        {
+          "name": "activate_left",
+          "dtype": "bool",
+          "value": true
+        },
+        {
+          "name": "group_list_type",
+          "dtype": "int64",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "bin_filename": "SituGluGroupGrad_fp16",
+      "inputs": [
+        {
+          "name": "grad_y",
+          "index": 0,
+          "dtype": "float16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "x",
+          "index": 1,
+          "dtype": "float16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "weight",
+          "index": 2,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "optional",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "group_index",
+          "index": 3,
+          "dtype": "int64",
+          "format": "ND",
+          "paramType": "optional",
+          "shape": [
+            -2
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "grad_x",
+          "index": 0,
+          "dtype": "float16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "grad_weight",
+          "index": 1,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        }
+      ],
+      "attrs": [
+        {
+          "name": "dim",
+          "dtype": "int64",
+          "value": -1
+        },
+        {
+          "name": "beta",
+          "dtype": "float32",
+          "value": 1.0
+        },
+        {
+          "name": "linear_beta",
+          "dtype": "float32",
+          "value": 0.0
+        },
+        {
+          "name": "activate_left",
+          "dtype": "bool",
+          "value": true
+        },
+        {
+          "name": "group_list_type",
+          "dtype": "int64",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "bin_filename": "SituGluGroupGrad_bf16",
+      "inputs": [
+        {
+          "name": "grad_y",
+          "index": 0,
+          "dtype": "bfloat16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "x",
+          "index": 1,
+          "dtype": "bfloat16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "weight",
+          "index": 2,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "optional",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "group_index",
+          "index": 3,
+          "dtype": "int64",
+          "format": "ND",
+          "paramType": "optional",
+          "shape": [
+            -2
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "grad_x",
+          "index": 0,
+          "dtype": "bfloat16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        },
+        {
+          "name": "grad_weight",
+          "index": 1,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ]
+        }
+      ],
+      "attrs": [
+        {
+          "name": "dim",
+          "dtype": "int64",
+          "value": -1
+        },
+        {
+          "name": "beta",
+          "dtype": "float32",
+          "value": 1.0
+        },
+        {
+          "name": "linear_beta",
+          "dtype": "float32",
+          "value": 0.0
+        },
+        {
+          "name": "activate_left",
+          "dtype": "bool",
+          "value": true
+        },
+        {
+          "name": "group_list_type",
+          "dtype": "int64",
+          "value": 0
+        }
+      ]
+    }
+  ]
+}

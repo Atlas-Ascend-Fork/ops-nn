@@ -2152,6 +2152,7 @@ VC1@ops-nn:
         - ops/ops-nn/activation/swish/
         - ops/ops-nn/activation/swish_grad/
         - ops/ops-nn/activation/situ_glu_group/
+        - ops/ops-nn/activation/situ_glu_group_grad/
         - ops/ops-nn/quant/ascend_quant/
         - ops/ops-nn/quant/ascend_quant_v2/framework/
         - ops/ops-nn/quant/ascend_quant_v2/op_graph/
@@ -2266,6 +2267,8 @@ VC1@ops-nn:
         - ops/ops-nn/activation/swish_grad/tests/
         - ops/ops-nn/activation/situ_glu_group/tests/
         - ops/ops-nn/activation/situ_glu_group/examples/
+        - ops/ops-nn/activation/situ_glu_group_grad/tests/
+        - ops/ops-nn/activation/situ_glu_group_grad/examples/
         - ops/ops-nn/quant/ascend_quant/tests/
         - ops/ops-nn/quant/ascend_quant_v2/examples/
         - ops/ops-nn/quant/ascend_quant_v2/tests/

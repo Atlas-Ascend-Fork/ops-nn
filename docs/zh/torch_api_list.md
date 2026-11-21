@@ -32,6 +32,7 @@
 |[situ_glu](../../activation/situ_glu/docs/torchapi_situ_glu.md)|SiTU门控线性单元激活函数，对输入张量沿指定维度切分为门控与上路径两半，按SiTU公式计算输出。|默认支持确定性计算|默认支持确定性计算|
 |[situ_glu_grad](../../activation/situ_glu_grad/docs/torchapi_situ_glu_grad.md)|SiTU门控线性单元激活函数的反向梯度计算，根据上游梯度和前向输入计算输入梯度。|默认支持确定性计算|默认支持确定性计算|
 |[situ_glu_group](../../activation/situ_glu_group/docs/torchapi_situ_glu_group.md)|SiTU门控线性单元激活函数，支持可选的逐行权重weight与分组索引group_index。|-|默认支持确定性计算|
+|[situ_glu_group_grad](../../activation/situ_glu_group_grad/docs/torchapi_situ_glu_group_grad.md)|SiTU门控线性单元激活函数的反向梯度计算(含分组和路由权重)，支持>可选的weight/group_index输入与必选的grad_weight输出。|-|默认支持确定性计算|
 |[swiglu_group](../../activation/swiglu_group/docs/torchapi_swiglu_group.md)|SwiGLU分组激活算子，对输入张量按最后一维拆分为两部分，分别进行clamp和sigmoid操作后相乘，支持可选的权重和分组索引。|-|默认支持确定性计算|
 |[cla_gate_quant](../../activation/cla_gate_quant/docs/torchapi_cla_gate_quant.md)|融合CLA两路head-wise gate加权与MX动态块量化，支持FP8/FP4单轴或双轴量化输出。|-|默认支持确定性计算|
 |[cla_gate_backward](../../activation/cla_gate_backward/docs/torchapi_cla_gate_backward.md)|对应cla_gate_quant反向算子，不做梯度量化。|-|默认支持确定性计算|

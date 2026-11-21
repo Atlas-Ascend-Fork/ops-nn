@@ -73,6 +73,7 @@ __all__ = [
         "situ_glu",
         "situ_glu_grad",
         "situ_glu_group",
+        "situ_glu_group_grad",
         "swiglu_group",
         "swiglu_group_grad",
         "swiglu_group_backward",
