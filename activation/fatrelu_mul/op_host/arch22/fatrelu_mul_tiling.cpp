@@ -23,6 +23,18 @@
 
 namespace optiling {
 
+namespace {
+const char* GetTilingNodeName(const gert::TilingContext* context)
+{
+    return (context == nullptr || context->GetNodeName() == nullptr) ? "fatrelu_mul" : context->GetNodeName();
+}
+
+void ReportInvalidInput(const gert::TilingContext* context, const char* paramName)
+{
+    OP_LOGE_WITH_INVALID_INPUT(GetTilingNodeName(context), paramName);
+}
+} // namespace
+
 constexpr int32_t MAX_ELEMENT_NUM_EACH_CORE = 10 * 1024;
 constexpr int32_t ONE_BLOCK_SIZE = 32;
 
@@ -42,6 +54,8 @@ public:
 
 private:
     void GetTilingKey();
+    ge::graphStatus CheckYShape(size_t inputShapeDim);
+    ge::graphStatus CheckInputShapeValidation();
     ge::DataType dataType = ge::DT_UNDEFINED;
     gert::TilingContext* tilingContext = nullptr;
     gert::Shape inputShape;
@@ -98,60 +112,19 @@ void FatreluMulTiling::GetTilingKey()
     }
 }
 
-ge::graphStatus FatreluMulTiling::RunBigKernelTiling()
+ge::graphStatus FatreluMulTiling::CheckInputShapeValidation()
 {
-    // 获取输入矩阵
-    auto srcTensor = tilingContext->GetInputTensor(0);
-    OP_CHECK_IF(srcTensor == nullptr,
-                OP_LOGE_WITH_INVALID_INPUT(((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ?
-                                                "fatrelu_mul" :
-                                                (tilingContext)->GetNodeName()),
-                                           "x"),
-                return ge::GRAPH_FAILED);
-    // 获取数据类型
-    auto temp = tilingContext->GetInputDesc(0);
-    OP_CHECK_IF(temp == nullptr,
-                OP_LOGE_WITH_INVALID_INPUT(((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ?
-                                                "fatrelu_mul" :
-                                                (tilingContext)->GetNodeName()),
-                                           "x"),
-                return ge::GRAPH_FAILED);
-    dataType = tilingContext->GetInputDesc(0)->GetDataType();
-    GetTilingKey();
-    tilingContext->SetTilingKey(tilingKey);
-    // 获取输入的shape
-    auto srcShape = tilingContext->GetInputShape(0);
-    inputShape = srcShape->GetOriginShape();
-    size_t inputShapeDim = inputShape.GetDimNum();
-    OP_CHECK_IF(
-        (inputShapeDim < static_cast<size_t>(SIZE_2)),
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(tilingContext->GetNodeName(), "x", std::to_string(inputShapeDim),
-                                                 "Input shape dim should be no less than 2."),
-        return ge::GRAPH_FAILED);
-    lastDimSize = inputShape.GetDim(inputShapeDim - 1);
-    inputShapeSize = inputShape.GetShapeSize();
-    OP_CHECK_IF(
-        (lastDimSize == 0),
-        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "x", std::to_string(lastDimSize),
-                                                  "Last dim elements can not be zero."),
-        return ge::GRAPH_FAILED);
-    batchSize = inputShapeSize / lastDimSize;
     auto thresholdShape = tilingContext->GetInputShape(1)->GetStorageShape();
     OP_CHECK_IF((thresholdShape.GetShapeSize() != 1),
                 OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "threshold",
                                                           std::to_string(thresholdShape.GetShapeSize()),
                                                           "Threshold elements can only be one."),
                 return ge::GRAPH_FAILED);
-    auto platformInfo = platform_ascendc::PlatformAscendC(tilingContext->GetPlatformInfo());
-    uint32_t needCoreNum = GetNeedCoreNum(platformInfo.GetCoreNumAiv());
-    size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
-    currentWorkspace[0] = workspaceSize_;
     OP_CHECK_IF(
         (lastDimSize > LENGTH_1024),
         OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "x", std::to_string(lastDimSize),
                                                   "Last dim size should be no more than 1024."),
         return ge::GRAPH_FAILED);
-
     OP_CHECK_IF((lastDimSize % SIZE_2 == 1),
                 OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "x",
                                                           std::to_string(lastDimSize), "Last dim size should be even."),
@@ -160,7 +133,11 @@ ge::graphStatus FatreluMulTiling::RunBigKernelTiling()
                 OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "x", std::to_string(batchSize),
                                                           "Batch dim size should be no more than 200000."),
                 return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
 
+ge::graphStatus FatreluMulTiling::CheckYShape(size_t inputShapeDim)
+{
     auto yShapePtr = tilingContext->GetOutputShape(0);
     OP_CHECK_IF(yShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(tilingContext->GetNodeName(), "out"),
                 return ge::GRAPH_FAILED);
@@ -182,6 +159,49 @@ ge::graphStatus FatreluMulTiling::RunBigKernelTiling()
                         std::to_string(yShape.GetDim(i)) + ", " + std::to_string(inputShape.GetDim(i)),
                         "Output shape dim should be the same as input x dim."),
                     return ge::GRAPH_FAILED);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus FatreluMulTiling::RunBigKernelTiling()
+{
+    // 获取输入矩阵
+    auto srcTensor = tilingContext->GetInputTensor(0);
+    OP_CHECK_IF(srcTensor == nullptr, ReportInvalidInput(tilingContext, "x"), return ge::GRAPH_FAILED);
+    // 获取数据类型
+    auto temp = tilingContext->GetInputDesc(0);
+    OP_CHECK_IF(temp == nullptr, ReportInvalidInput(tilingContext, "x"), return ge::GRAPH_FAILED);
+    dataType = tilingContext->GetInputDesc(0)->GetDataType();
+    GetTilingKey();
+    tilingContext->SetTilingKey(tilingKey);
+    // 获取输入的shape
+    auto srcShape = tilingContext->GetInputShape(0);
+    inputShape = srcShape->GetOriginShape();
+    size_t inputShapeDim = inputShape.GetDimNum();
+    OP_CHECK_IF(
+        (inputShapeDim < static_cast<size_t>(SIZE_2)),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(tilingContext->GetNodeName(), "x", std::to_string(inputShapeDim),
+                                                 "Input shape dim should be no less than 2."),
+        return ge::GRAPH_FAILED);
+    lastDimSize = inputShape.GetDim(inputShapeDim - 1);
+    inputShapeSize = inputShape.GetShapeSize();
+    OP_CHECK_IF(
+        (lastDimSize == 0),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "x", std::to_string(lastDimSize),
+                                                  "Last dim elements can not be zero."),
+        return ge::GRAPH_FAILED);
+    batchSize = inputShapeSize / lastDimSize;
+    auto platformInfo = platform_ascendc::PlatformAscendC(tilingContext->GetPlatformInfo());
+    uint32_t needCoreNum = GetNeedCoreNum(platformInfo.GetCoreNumAiv());
+    size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
+    currentWorkspace[0] = workspaceSize_;
+
+    if (CheckInputShapeValidation() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    if (CheckYShape(inputShapeDim) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
     }
 
     tilingData.set_lastDimSize(lastDimSize);

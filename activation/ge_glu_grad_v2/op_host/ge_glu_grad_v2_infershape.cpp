@@ -31,6 +31,51 @@ constexpr size_t GE_GLU_ATTR_DIM = 0;
 constexpr int64_t GE_GLU_NUM_TWO = 2;
 constexpr int64_t UNKNOWN_DIM_VALUE_ = -1LL;
 
+namespace {
+const char* GetInferShapeNodeName(const gert::InferShapeContext* context)
+{
+    return (context == nullptr || context->GetNodeName() == nullptr) ? "ge_glu_grad_v2" : context->GetNodeName();
+}
+
+void ReportInferShapeError(gert::InferShapeContext* context, const std::string& msgReason)
+{
+    const std::string msgOpName = std::string(GetInferShapeNodeName(context));
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+}
+
+ge::graphStatus GetInferShapeInputs(gert::InferShapeContext* context, const gert::Shape*& dyShape,
+                                    const gert::Shape*& xShape, const gert::Shape*& geluShape,
+                                    const int64_t*& splitDimPtr)
+{
+    dyShape = context->GetInputShape(GE_GLU_GRAD_IN_DY);
+    OP_CHECK_IF(dyShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(GetInferShapeNodeName(context), "dy"),
+                return ge::GRAPH_FAILED);
+    xShape = context->GetInputShape(GE_GLU_GRAD_IN_X);
+    OP_CHECK_IF(xShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(GetInferShapeNodeName(context), "x"),
+                return ge::GRAPH_FAILED);
+    geluShape = context->GetInputShape(GE_GLU_GRAD_IN_GELU);
+    OP_CHECK_IF(geluShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(GetInferShapeNodeName(context), "gelu"),
+                return ge::GRAPH_FAILED);
+
+    auto attrs = context->GetAttrs();
+    if (attrs == nullptr) {
+        ReportInferShapeError(context,
+                              "InferShape framework object attrs is unavailable; check the operator registration and "
+                              "context construction.");
+        return ge::GRAPH_FAILED;
+    };
+    splitDimPtr = attrs->GetAttrPointer<int64_t>(GE_GLU_ATTR_DIM);
+    if (splitDimPtr == nullptr) {
+        ReportInferShapeError(context, "InferShape framework object split_dim_ptr is unavailable; check the operator "
+                                       "registration and context construction.");
+        return ge::GRAPH_FAILED;
+    };
+    return ge::GRAPH_SUCCESS;
+}
+} // namespace
+
 ge::graphStatus CopyShapeInput2OutputWithIdx(gert::InferShapeContext* context, int64_t input_idx, int64_t output_idx)
 {
     auto in_shape = context->GetInputShape(input_idx);
@@ -129,59 +174,18 @@ static ge::graphStatus CheckDimValuesConsistency(const gert::Shape* x_shape, con
 
 static ge::graphStatus InferShapeForGeGluGradV2(gert::InferShapeContext* context)
 {
-    auto dy_shape = context->GetInputShape(GE_GLU_GRAD_IN_DY);
-    OP_CHECK_IF(
-        dy_shape == nullptr,
-        OP_LOGE_WITH_INVALID_INPUT(
-            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_grad_v2" : (context)->GetNodeName()),
-            "dy"),
-        return ge::GRAPH_FAILED);
-    auto x_shape = context->GetInputShape(GE_GLU_GRAD_IN_X);
-    OP_CHECK_IF(
-        x_shape == nullptr,
-        OP_LOGE_WITH_INVALID_INPUT(
-            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_grad_v2" : (context)->GetNodeName()),
-            "x"),
-        return ge::GRAPH_FAILED);
-    auto gelu_shape = context->GetInputShape(GE_GLU_GRAD_IN_GELU);
-    OP_CHECK_IF(
-        gelu_shape == nullptr,
-        OP_LOGE_WITH_INVALID_INPUT(
-            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_grad_v2" : (context)->GetNodeName()),
-            "gelu"),
-        return ge::GRAPH_FAILED);
-
-    auto attrs = context->GetAttrs();
-    if (attrs == nullptr) {
-        const std::string msgOpName = std::string((
-            (context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_grad_v2" : (context)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "InferShape framework object attrs is unavailable; check the operator registration and "
-                               "context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
-                                                         "operator registration and context construction."}));
+    const gert::Shape* dyShape = nullptr;
+    const gert::Shape* xShape = nullptr;
+    const gert::Shape* geluShape = nullptr;
+    const int64_t* splitDimPtr = nullptr;
+    if (GetInferShapeInputs(context, dyShape, xShape, geluShape, splitDimPtr) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
-    };
-    auto split_dim_ptr = attrs->GetAttrPointer<int64_t>(GE_GLU_ATTR_DIM);
-    if (split_dim_ptr == nullptr) {
-        const std::string msgOpName = std::string((
-            (context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_grad_v2" : (context)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "InferShape framework object split_dim_ptr is unavailable; check the operator "
-                               "registration and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object split_dim_ptr is unavailable; "
-                                                         "check the operator registration and context construction."}));
-        return ge::GRAPH_FAILED;
-    };
+    }
 
-    auto split_dim = *split_dim_ptr;
-    size_t dy_dim_num = dy_shape->GetDimNum();
-    size_t x_dim_num = x_shape->GetDimNum();
-    size_t gelu_dim_num = gelu_shape->GetDimNum();
+    auto split_dim = *splitDimPtr;
+    size_t dy_dim_num = dyShape->GetDimNum();
+    size_t x_dim_num = xShape->GetDimNum();
+    size_t gelu_dim_num = geluShape->GetDimNum();
     OP_CHECK_IF(x_dim_num == 0 || dy_dim_num == 0 || gelu_dim_num == 0,
                 OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
                     "GEGLUGRADV2", "x,dy,gelu",
@@ -189,10 +193,10 @@ static ge::graphStatus InferShapeForGeGluGradV2(gert::InferShapeContext* context
                     "scalar inputs are not supported, check failed"),
                 return GRAPH_FAILED);
 
-    OP_CHECK_IF(Ops::Base::IsUnknownRank(*x_shape) || Ops::Base::IsUnknownRank(*dy_shape) ||
-                    Ops::Base::IsUnknownRank(*gelu_shape),
-                OP_LOGD("GEGLUGRADV2", "inputs have unknown rank, no need check."),
-                return CopyShapeInput2OutputWithIdx(context, 1, 0));
+    OP_CHECK_IF(
+        Ops::Base::IsUnknownRank(*xShape) || Ops::Base::IsUnknownRank(*dyShape) || Ops::Base::IsUnknownRank(*geluShape),
+        OP_LOGD("GEGLUGRADV2", "inputs have unknown rank, no need check."),
+        return CopyShapeInput2OutputWithIdx(context, 1, 0));
 
     OP_CHECK_IF(
         x_dim_num != dy_dim_num || x_dim_num != gelu_dim_num,
@@ -212,7 +216,7 @@ static ge::graphStatus InferShapeForGeGluGradV2(gert::InferShapeContext* context
                                                   ", " + std::to_string(x_dim_num - 1) + "]"),
         return GRAPH_FAILED);
 
-    auto status = CheckDimValuesConsistency(x_shape, dy_shape, gelu_shape, split_dim);
+    auto status = CheckDimValuesConsistency(xShape, dyShape, geluShape, split_dim);
     OP_CHECK_IF(status != GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT("GEGLUGRADV2", "CheckDimValuesConsistency failed."),
                 return GRAPH_FAILED);
     return CopyShapeInput2OutputWithIdx(context, 1, 0);

@@ -66,6 +66,8 @@ protected:
     ge::graphStatus CheckAndGetXAndAttrs();
     ge::graphStatus CheckY() const;
     ge::graphStatus CountMaxPair();
+    void ParseAttrs(const gert::RuntimeAttrs* attrs);
+    void MergeXToTwoDims(const gert::Shape& inputShapeX);
 
 private:
     uint64_t tilingKey_ = 0;

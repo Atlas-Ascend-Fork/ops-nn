@@ -77,6 +77,8 @@ public:
     ge::graphStatus ProcessRequiredInfo();
     ge::graphStatus ProcessOptionalScaleInfo();
     ge::graphStatus ProcessOptionalOffsetInfo();
+    ge::graphStatus CheckScaleTensorShape(const gert::StorageShape* scaleInputShapePtr);
+    ge::graphStatus CheckOffsetTensorShape(const gert::StorageShape* offsetInputShapePtr);
     ge::graphStatus GetPlatformInfo();
     ge::graphStatus DoTiling();
     ge::graphStatus DoStaticQuantTiling();

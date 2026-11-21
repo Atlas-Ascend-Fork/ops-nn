@@ -21,6 +21,35 @@
 using Ops::NN::Optiling::TilingRegistry;
 using namespace ge;
 namespace optiling {
+namespace {
+template <typename T>
+const char* GetTilingNodeName(const T* context)
+{
+    return (context == nullptr || context->GetNodeName() == nullptr) ? "clipped_swiglu_grad" : context->GetNodeName();
+}
+
+template <typename T>
+void ReportTilingError(const T* context, const std::string& msgReason)
+{
+    const std::string msgOpName = std::string(GetTilingNodeName(context));
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+}
+
+void ReportTilingErrorOpInfo(const gert::TilingContext* context, const std::string& msgReason)
+{
+    const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+}
+
+void ReportInvalidInput(const gert::TilingContext* context, const char* paramName)
+{
+    OP_LOGE_WITH_INVALID_INPUT(GetTilingNodeName(context), paramName);
+}
+} // namespace
 constexpr int64_t Y_GRAD_INDEX = 0;
 constexpr int64_t X_INDEX = 1;
 constexpr int64_t GROUP_INDEX_INDEX = 2;
@@ -65,10 +94,7 @@ ge::graphStatus ClippedSwigluGradTiling::GetPlatformInfo()
     if (platformInfo == nullptr) {
         auto compileInfoPtr = context_->GetCompileInfo<ClippedSwigluGradCompileInfo>();
         if (compileInfoPtr == nullptr) {
-            const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context_));
-            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "compile info is null");
-            REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
-                                      (std::vector<const char*>{msgOpName.c_str(), "compile info is null"}));
+            ReportTilingErrorOpInfo(context_, "compile info is null");
             return ge::GRAPH_FAILED;
         };
         coreNumAll_ = compileInfoPtr->coreNum;
@@ -249,12 +275,7 @@ ge::graphStatus ClippedSwigluGradTiling::CheckGradYInfo()
     OP_CHECK_NULL_WITH_CONTEXT(context_, shapeX);
     const gert::Shape& inputShapeX = shapeX->GetStorageShape();
     auto shapeGradY = context_->GetInputShape(Y_GRAD_INDEX);
-    OP_CHECK_IF(shapeGradY == nullptr,
-                OP_LOGE_WITH_INVALID_INPUT(
-                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "clipped_swiglu_grad" :
-                                                                                     (context_)->GetNodeName()),
-                    "grad_y"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(shapeGradY == nullptr, ReportInvalidInput(context_, "grad_y"), return ge::GRAPH_FAILED);
     const gert::Shape& inputShapeGradY = shapeGradY->GetStorageShape();
     OP_CHECK_IF((inputShapeGradY.GetDimNum() != xDims_),
                 OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
@@ -283,12 +304,7 @@ ge::graphStatus ClippedSwigluGradTiling::CheckGradYInfo()
         }
     }
     auto descGradY = context_->GetInputDesc(Y_GRAD_INDEX);
-    OP_CHECK_IF(descGradY == nullptr,
-                OP_LOGE_WITH_INVALID_INPUT(
-                    ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "clipped_swiglu_grad" :
-                                                                                     (context_)->GetNodeName()),
-                    "grad_y"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(descGradY == nullptr, ReportInvalidInput(context_, "grad_y"), return ge::GRAPH_FAILED);
     OP_CHECK_IF((descGradY->GetDataType() != xDtype_),
                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "x,grad_y",
                                                        std::to_string(static_cast<int>(xDtype_)) + "," +
@@ -468,43 +484,23 @@ ge::graphStatus TilingPrepareForClippedSwigluGrad(gert::TilingParseContext* cont
     OP_LOGD(context, "TilingPrepareForClippedSwigluGrad enter.");
     auto compileInfo = context->GetCompiledInfo<ClippedSwigluGradCompileInfo>();
     if (compileInfo == nullptr) {
-        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
-                                                       "clipped_swiglu_grad" :
-                                                       (context)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object compileInfo is unavailable; check the operator registration "
-                               "and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
-                                                         "the operator registration and context construction."}));
+        ReportTilingError(context,
+                          "Tiling framework object compileInfo is unavailable; check the operator registration and "
+                          "context construction.");
         return ge::GRAPH_FAILED;
     };
     auto platformInfo = context->GetPlatformInfo();
     if (platformInfo == nullptr) {
-        const std::string msgOpName = std::string(((context) == nullptr || (context)->GetNodeName() == nullptr ?
-                                                       "clipped_swiglu_grad" :
-                                                       (context)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object platformInfo is unavailable; check the operator registration "
-                               "and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
-                                                         "the operator registration and context construction."}));
+        ReportTilingError(context,
+                          "Tiling framework object platformInfo is unavailable; check the operator registration and "
+                          "context construction.");
         return ge::GRAPH_FAILED;
     };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
     if ((compileInfo->coreNum <= 0)) {
-        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
-                                           "clipped_swiglu_grad" :
-                                           context->GetNodeName());
-        const std::string msgReason = std::string(
-            ("Get core num failed, core num: " + std::to_string(static_cast<uint32_t>(compileInfo->coreNum))));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
-        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
-                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        ReportTilingError(
+            context, "Get core num failed, core num: " + std::to_string(static_cast<uint32_t>(compileInfo->coreNum)));
         return ge::GRAPH_FAILED;
     };
 
@@ -512,14 +508,8 @@ ge::graphStatus TilingPrepareForClippedSwigluGrad(gert::TilingParseContext* cont
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = ubSize;
     if ((compileInfo->ubSize <= 0)) {
-        const std::string msgOpName = (context == nullptr || context->GetNodeName() == nullptr ?
-                                           "clipped_swiglu_grad" :
-                                           context->GetNodeName());
-        const std::string msgReason = std::string(
-            ("Get ub size failed, ub size: " + std::to_string(static_cast<uint32_t>(compileInfo->ubSize))));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
-        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
-                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        ReportTilingError(context,
+                          "Get ub size failed, ub size: " + std::to_string(static_cast<uint32_t>(compileInfo->ubSize)));
         return ge::GRAPH_FAILED;
     };
 

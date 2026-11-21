@@ -30,6 +30,29 @@ namespace optiling {
 using Ops::NN::OpTiling::IsRegbaseSocVersion;
 using namespace glu_common;
 
+namespace {
+const char* GetTilingNodeName(const gert::TilingParseContext* context)
+{
+    return (context == nullptr || context->GetNodeName() == nullptr) ? "glu" : context->GetNodeName();
+}
+
+void ReportTilingError(const gert::TilingParseContext* context, const std::string& msgReason)
+{
+    const std::string msgOpName = std::string(GetTilingNodeName(context));
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+}
+
+void ReportTilingErrorOpInfo(const gert::TilingParseContext* context, const std::string& msgReason)
+{
+    const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+}
+} // namespace
+
 static const int64_t COMMON_BUFFER_SIZE = 8 * 1024;
 static const int64_t SINGLE_BUFFER_SIZE = 6 * 1024;
 
@@ -39,39 +62,23 @@ static ge::graphStatus TilingPrepare4Glu(gert::TilingParseContext* context)
 
     auto compileInfo = context->GetCompiledInfo<GluCompileInfo>();
     if (compileInfo == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object compileInfo is unavailable; check the operator registration "
-                               "and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
-                                                         "the operator registration and context construction."}));
+        ReportTilingError(context,
+                          "Tiling framework object compileInfo is unavailable; check the operator registration and "
+                          "context construction.");
         return ge::GRAPH_FAILED;
     };
     auto platformInfo = context->GetPlatformInfo();
     if (platformInfo == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object platformInfo is unavailable; check the operator registration "
-                               "and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object platformInfo is unavailable; check "
-                                                         "the operator registration and context construction."}));
+        ReportTilingError(context,
+                          "Tiling framework object platformInfo is unavailable; check the operator registration and "
+                          "context construction.");
         return ge::GRAPH_FAILED;
     };
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     OP_LOGD(context, "Tiling totalCoreNum: %d", compileInfo->totalCoreNum);
     if ((compileInfo->totalCoreNum <= 0)) {
-        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "TilingPrepare4Glu Failed to get core num.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "TilingPrepare4Glu Failed to get core num."}));
+        ReportTilingErrorOpInfo(context, "TilingPrepare4Glu Failed to get core num.");
         return ge::GRAPH_FAILED;
     };
 
@@ -79,11 +86,7 @@ static ge::graphStatus TilingPrepare4Glu(gert::TilingParseContext* context)
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
     if ((compileInfo->ubSizePlatForm <= 0)) {
-        const std::string msgOpName = std::string(Ops::Base::GetOpInfo(context));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "TilingPrepare4Glu Failed to get ub size.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "TilingPrepare4Glu Failed to get ub size."}));
+        ReportTilingErrorOpInfo(context, "TilingPrepare4Glu Failed to get ub size.");
         return ge::GRAPH_FAILED;
     };
 

@@ -93,6 +93,20 @@ static inline bool CheckDimInRange(int64_t dim, int64_t selfDimNum)
     return true;
 }
 
+namespace {
+void ReportGradOutputDimsMismatch(const aclTensor* gradOutput, const aclTensor* self, const std::string& reason)
+{
+    OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
+    REPORT_PREDEFINED_ERR_MSG(
+        "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
+        (std::vector<const char*>{"gradOutput,self", "aclnnGeGluBackward",
+                                  (std::string(op::ToString(gradOutput->GetViewShape()).GetString()) + "," +
+                                   op::ToString(self->GetViewShape()).GetString())
+                                      .c_str(),
+                                  reason.c_str()}));
+}
+} // namespace
+
 static inline bool CheckGradOutputDims(const aclTensor* gradOutput, const aclTensor* self, size_t splitDim,
                                        size_t selfDimNum)
 {
@@ -102,14 +116,7 @@ static inline bool CheckGradOutputDims(const aclTensor* gradOutput, const aclTen
                                          std::string(op::ToString(gradOutput->GetViewShape()).GetString()) +
                                          " and self: " + std::string(op::ToString(self->GetViewShape()).GetString()) +
                                          " must equal"));
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
-            REPORT_PREDEFINED_ERR_MSG(
-                "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
-                (std::vector<const char*>{"gradOutput,self", "aclnnGeGluBackward",
-                                          (std::string(op::ToString(gradOutput->GetViewShape()).GetString()) + "," +
-                                           op::ToString(self->GetViewShape()).GetString())
-                                              .c_str(),
-                                          reason.c_str()}));
+            ReportGradOutputDimsMismatch(gradOutput, self, reason);
             return false;
         }
     }
@@ -119,14 +126,7 @@ static inline bool CheckGradOutputDims(const aclTensor* gradOutput, const aclTen
             "the last dimension of gradOutput: " + std::string(op::ToString(gradOutput->GetViewShape()).GetString()) +
             " must be the half of the last dimension of self: " +
             std::string(op::ToString(self->GetViewShape()).GetString())));
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
-            (std::vector<const char*>{"gradOutput,self", "aclnnGeGluBackward",
-                                      (std::string(op::ToString(gradOutput->GetViewShape()).GetString()) + "," +
-                                       op::ToString(self->GetViewShape()).GetString())
-                                          .c_str(),
-                                      reason.c_str()}));
+        ReportGradOutputDimsMismatch(gradOutput, self, reason);
         return false;
     }
 
@@ -136,14 +136,7 @@ static inline bool CheckGradOutputDims(const aclTensor* gradOutput, const aclTen
                                          std::string(op::ToString(gradOutput->GetViewShape()).GetString()) +
                                          " and self: " + std::string(op::ToString(self->GetViewShape()).GetString()) +
                                          " must equal"));
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
-            REPORT_PREDEFINED_ERR_MSG(
-                "EZ0010", (std::vector<const char*>{"param_names", "op_name", "incorrect_shapes", "reason"}),
-                (std::vector<const char*>{"gradOutput,self", "aclnnGeGluBackward",
-                                          (std::string(op::ToString(gradOutput->GetViewShape()).GetString()) + "," +
-                                           op::ToString(self->GetViewShape()).GetString())
-                                              .c_str(),
-                                          reason.c_str()}));
+            ReportGradOutputDimsMismatch(gradOutput, self, reason);
             return false;
         }
     }

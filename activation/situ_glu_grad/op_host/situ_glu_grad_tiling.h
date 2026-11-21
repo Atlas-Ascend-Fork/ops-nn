@@ -68,6 +68,7 @@ protected:
     ge::graphStatus CheckAndGetXAndAttrs();
     ge::graphStatus CheckGradY() const;
     ge::graphStatus CountMaxPair();
+    void ParseAttrs(const gert::RuntimeAttrs* attrs);
 
 private:
     uint64_t tilingKey_ = 0;

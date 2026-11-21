@@ -25,6 +25,26 @@
 
 namespace optiling {
 
+namespace {
+const char* GetTilingNodeName(const gert::TilingContext* context)
+{
+    return (context == nullptr || context->GetNodeName() == nullptr) ? "gelu_mul" : context->GetNodeName();
+}
+
+void ReportInvalidInput(const gert::TilingContext* context, const char* paramName)
+{
+    OP_LOGE_WITH_INVALID_INPUT(GetTilingNodeName(context), paramName);
+}
+
+void ReportTilingError(const gert::TilingContext* context, const std::string& msgReason)
+{
+    const std::string msgOpName = std::string(GetTilingNodeName(context));
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+}
+} // namespace
+
 constexpr int32_t UB_SIZE = 192 * 1024;
 constexpr int32_t ONE_BLOCK_SIZE = 32;
 constexpr int32_t ERF_BUF_NUM = 8;
@@ -49,6 +69,8 @@ public:
 private:
     ge::graphStatus ShapeCheck();
     ge::graphStatus OutShapeCheck();
+    ge::graphStatus ParseApproximate(int32_t& approximateMode);
+    ge::graphStatus FillTilingData(int32_t approximateMode, int32_t needCoreNum);
     ge::DataType dataType = ge::DT_UNDEFINED;
     gert::TilingContext* tilingContext = nullptr;
     gert::Shape inputShape;
@@ -164,34 +186,9 @@ ge::graphStatus GeluMulTiling::OutShapeCheck()
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus GeluMulTiling::RunBigKernelTiling()
+ge::graphStatus GeluMulTiling::ParseApproximate(int32_t& approximateMode)
 {
-    // 获取输入矩阵
-    auto srcTensor = tilingContext->GetInputTensor(0);
-    OP_CHECK_IF(srcTensor == nullptr,
-                OP_LOGE_WITH_INVALID_INPUT(((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ?
-                                                "gelu_mul" :
-                                                (tilingContext)->GetNodeName()),
-                                           "input"),
-                return ge::GRAPH_FAILED);
-    // 获取输入的参数
-    const gert::RuntimeAttrs* attrs = tilingContext->GetAttrs();
-    if (attrs == nullptr) {
-        const std::string msgOpName = std::string(
-            ((tilingContext) == nullptr || (tilingContext)->GetNodeName() == nullptr ? "gelu_mul" :
-                                                                                       (tilingContext)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(
-            msgOpName.c_str(), "%s",
-            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
-                                                         "operator registration and context construction."}));
-        return ge::GRAPH_FAILED;
-    };
-    const std::string approximate = static_cast<std::string>(attrs->GetStr(0));
-
-    int32_t approximateMode = 0;
+    const std::string approximate = static_cast<std::string>(tilingContext->GetAttrs()->GetStr(0));
     if (approximate == "none") {
         approximateMode = 0;
         PPMaxCalNum = UB_SIZE / ERF_BUF_NUM / static_cast<int32_t>(sizeof(float));
@@ -203,6 +200,45 @@ ge::graphStatus GeluMulTiling::RunBigKernelTiling()
                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext->GetNodeName(), "approximate", approximate,
                                                       "Approximate can only be 'tanh' or 'none'."),
                 return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus GeluMulTiling::FillTilingData(int32_t approximateMode, int32_t needCoreNum)
+{
+    size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
+    currentWorkspace[0] = static_cast<size_t>(workspaceSize_);
+    tilingData.set_lastDimSize(lastDimSize);
+    tilingData.set_batchSize(batchSize);
+    tilingData.set_approximateMode(approximateMode);
+    tilingData.set_PPMaxCalNum(PPMaxCalNum);
+    tilingData.set_needCoreNum(needCoreNum);
+
+    tilingData.SaveToBuffer(tilingContext->GetRawTilingData()->GetData(),
+                            tilingContext->GetRawTilingData()->GetCapacity());
+    tilingContext->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
+
+    tilingContext->SetBlockDim(needCoreNum);
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus GeluMulTiling::RunBigKernelTiling()
+{
+    // 获取输入矩阵
+    auto srcTensor = tilingContext->GetInputTensor(0);
+    OP_CHECK_IF(srcTensor == nullptr, ReportInvalidInput(tilingContext, "input"), return ge::GRAPH_FAILED);
+    // 获取输入的参数
+    const gert::RuntimeAttrs* attrs = tilingContext->GetAttrs();
+    if (attrs == nullptr) {
+        ReportTilingError(tilingContext,
+                          "Tiling framework object attrs is unavailable; check the operator registration and context "
+                          "construction.");
+        return ge::GRAPH_FAILED;
+    };
+
+    int32_t approximateMode = 0;
+    if (ParseApproximate(approximateMode) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     FillTilingKey();
     // 获取输入的shape
     auto srcShape = tilingContext->GetInputShape(0);
@@ -232,20 +268,7 @@ ge::graphStatus GeluMulTiling::RunBigKernelTiling()
     auto platformInfo = platform_ascendc::PlatformAscendC(tilingContext->GetPlatformInfo());
     int32_t needCoreNum = GetNeedCoreNum(platformInfo.GetCoreNumAiv());
 
-    size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);
-    currentWorkspace[0] = static_cast<size_t>(workspaceSize_);
-    tilingData.set_lastDimSize(lastDimSize);
-    tilingData.set_batchSize(batchSize);
-    tilingData.set_approximateMode(approximateMode);
-    tilingData.set_PPMaxCalNum(PPMaxCalNum);
-    tilingData.set_needCoreNum(needCoreNum);
-
-    tilingData.SaveToBuffer(tilingContext->GetRawTilingData()->GetData(),
-                            tilingContext->GetRawTilingData()->GetCapacity());
-    tilingContext->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
-
-    tilingContext->SetBlockDim(needCoreNum);
-    return ge::GRAPH_SUCCESS;
+    return FillTilingData(approximateMode, needCoreNum);
 }
 
 ge::graphStatus GeluMulTiling::FillTilingKey()

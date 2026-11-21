@@ -67,6 +67,8 @@ protected:
     void DumpTilingInfo() override;
     ge::graphStatus GetShapeAttrsInfoInner();
     ge::graphStatus CheckAndGetXAndAttrs();
+    void ParseAttrs(const gert::RuntimeAttrs* attrs);
+    void MergeXToTwoDims(const gert::Shape& inputShapeX);
     ge::graphStatus CheckAndGetGroupIndex();
     ge::graphStatus CheckAndGetAttrs();
     ge::graphStatus CheckY();

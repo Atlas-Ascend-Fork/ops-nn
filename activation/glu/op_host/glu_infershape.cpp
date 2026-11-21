@@ -26,55 +26,59 @@ constexpr size_t GLU_IN_X = 0;
 constexpr size_t GLU_OUT_Y = 0;
 constexpr size_t GLU_ATTR_DIM = 0;
 const size_t SPLIT_NUM = 2;
+
+const char* GetInferShapeNodeName(const gert::InferShapeContext* context)
+{
+    return (context == nullptr || context->GetNodeName() == nullptr) ? "glu" : context->GetNodeName();
+}
+
+void ReportInferShapeError(gert::InferShapeContext* context, const std::string& msgReason)
+{
+    const std::string msgOpName = std::string(GetInferShapeNodeName(context));
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+}
+
+bool NormalizeAndCheckSplitDim(int64_t& splitDim, size_t xDimNum, int64_t rawSplitDim)
+{
+    if (splitDim < 0) {
+        splitDim += xDimNum;
+    }
+    OP_CHECK_IF((splitDim < 0 || splitDim >= static_cast<int64_t>(xDimNum)),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    "GLU", "dim", std::to_string(rawSplitDim),
+                    ("The value of attr [dim] must be in the range [-" + std::to_string(xDimNum) + ", " +
+                     std::to_string(xDimNum - 1) + "], but got [" + std::to_string(splitDim) + "].")),
+                return false);
+    return true;
+}
 } // namespace
 
 namespace ops {
 static ge::graphStatus InferShapeForGlu(gert::InferShapeContext* context)
 {
     auto x_shape = context->GetInputShape(GLU_IN_X);
-    OP_CHECK_IF(
-        x_shape == nullptr,
-        OP_LOGE_WITH_INVALID_INPUT(
-            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()), "x"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(x_shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(GetInferShapeNodeName(context), "x"),
+                return ge::GRAPH_FAILED);
     auto out_shape_y = context->GetOutputShape(GLU_ATTR_DIM);
     if (out_shape_y == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "InferShape framework object out_shape_y is unavailable; check the operator "
-                               "registration and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object out_shape_y is unavailable; "
-                                                         "check the operator registration and context construction."}));
+        ReportInferShapeError(context, "InferShape framework object out_shape_y is unavailable; check the operator "
+                                       "registration and context construction.");
         return ge::GRAPH_FAILED;
     };
     auto attrs = context->GetAttrs();
     if (attrs == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "InferShape framework object attrs is unavailable; check the operator registration and "
-                               "context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object attrs is unavailable; check the "
-                                                         "operator registration and context construction."}));
+        ReportInferShapeError(context,
+                              "InferShape framework object attrs is unavailable; check the operator registration and "
+                              "context construction.");
         return ge::GRAPH_FAILED;
     };
 
     auto split_dim_ptr = attrs->GetAttrPointer<int64_t>(GLU_ATTR_DIM);
     if (split_dim_ptr == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "InferShape framework object split_dim_ptr is unavailable; check the operator "
-                               "registration and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1014", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "InferShape framework object split_dim_ptr is unavailable; "
-                                                         "check the operator registration and context construction."}));
+        ReportInferShapeError(context, "InferShape framework object split_dim_ptr is unavailable; check the operator "
+                                       "registration and context construction.");
         return ge::GRAPH_FAILED;
     };
 
@@ -91,16 +95,9 @@ static ge::graphStatus InferShapeForGlu(gert::InferShapeContext* context)
     OP_CHECK_IF(Ops::Base::IsUnknownRank(*x_shape), OP_LOGD("GLU", "input x is unknown rank, no need check."),
                 return GRAPH_SUCCESS);
 
-    if (split_dim < 0) {
-        split_dim += x_dim_num;
+    if (!NormalizeAndCheckSplitDim(split_dim, x_dim_num, *split_dim_ptr)) {
+        return GRAPH_FAILED;
     }
-
-    OP_CHECK_IF((split_dim < 0 || split_dim >= static_cast<int64_t>(x_dim_num)),
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                    "GLU", "dim", std::to_string(*split_dim_ptr),
-                    ("The value of attr [dim] must be in the range [-" + std::to_string(x_dim_num) + ", " +
-                     std::to_string(x_dim_num - 1) + "], but got [" + std::to_string(split_dim) + "].")),
-                return GRAPH_FAILED);
 
     // 动态shape场景split_dim_value传入-1不做处理
     auto split_dim_value = x_shape->GetDim(split_dim);

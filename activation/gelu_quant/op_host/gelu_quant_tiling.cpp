@@ -30,19 +30,33 @@
 namespace optiling {
 using namespace Ops::NN::OpTiling;
 
+namespace {
+const char* GetTilingNodeName(const gert::TilingContext* context)
+{
+    return (context == nullptr || context->GetNodeName() == nullptr) ? "gelu_quant" : context->GetNodeName();
+}
+
+void ReportTilingError(const gert::TilingContext* context, const std::string& msgReason)
+{
+    const std::string msgOpName = std::string(GetTilingNodeName(context));
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", msgReason.c_str());
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                              (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+}
+
+void ReportInvalidInput(const gert::TilingContext* context, const char* paramName)
+{
+    OP_LOGE_WITH_INVALID_INPUT(GetTilingNodeName(context), paramName);
+}
+} // namespace
+
 ge::graphStatus GeluQuantTiling::GetPlatformInfo()
 {
     auto compileInfo = reinterpret_cast<const GeluQuantCompileInfo*>(context_->GetCompileInfo());
     if (compileInfo == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object compileInfo is unavailable; check the operator registration "
-                               "and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object compileInfo is unavailable; check "
-                                                         "the operator registration and context construction."}));
+        ReportTilingError(context_,
+                          "Tiling framework object compileInfo is unavailable; check the operator registration and "
+                          "context construction.");
         return ge::GRAPH_FAILED;
     };
     baseInfoOp.vectorCoreNum = compileInfo->vectorCoreNum;
@@ -67,29 +81,17 @@ ge::graphStatus GeluQuantTiling::ProcessAttrsInfo()
 {
     auto attrs = context_->GetAttrs();
     if (attrs == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(
-            msgOpName.c_str(), "%s",
-            "Tiling framework object attrs is unavailable; check the operator registration and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
-                                                         "operator registration and context construction."}));
+        ReportTilingError(context_,
+                          "Tiling framework object attrs is unavailable; check the operator registration and context "
+                          "construction.");
         return ge::GRAPH_FAILED;
     };
 
     const char* approximate = attrs->GetAttrPointer<char>(APPROXIMATE_ATTR_INDEX);
     if (approximate == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object approximate is unavailable; check the operator registration "
-                               "and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object approximate is unavailable; check "
-                                                         "the operator registration and context construction."}));
+        ReportTilingError(context_,
+                          "Tiling framework object approximate is unavailable; check the operator registration and "
+                          "context construction.");
         return ge::GRAPH_FAILED;
     };
     if (strcmp(approximate, "none") == 0) {
@@ -105,15 +107,9 @@ ge::graphStatus GeluQuantTiling::ProcessAttrsInfo()
 
     const char* quantMode = attrs->GetAttrPointer<char>(QUANT_MODE_ATTR_INDEX);
     if (quantMode == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object quantMode is unavailable; check the operator registration and "
-                               "context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object quantMode is unavailable; check the "
-                                                         "operator registration and context construction."}));
+        ReportTilingError(context_,
+                          "Tiling framework object quantMode is unavailable; check the operator registration and "
+                          "context construction.");
         return ge::GRAPH_FAILED;
     };
     if (strcmp(quantMode, "static") == 0) {
@@ -134,12 +130,7 @@ ge::graphStatus GeluQuantTiling::ProcessRequiredInfo()
 {
     // x
     auto xInputDesc = context_->GetInputDesc(X_INPUT_INDEX);
-    OP_CHECK_IF(
-        xInputDesc == nullptr,
-        OP_LOGE_WITH_INVALID_INPUT(
-            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()),
-            "x"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(xInputDesc == nullptr, ReportInvalidInput(context_, "x"), return ge::GRAPH_FAILED);
     baseInfoOp.xInputDtype = xInputDesc->GetDataType();
     OP_CHECK_IF((baseInfoOp.xInputDtype != ge::DT_FLOAT && baseInfoOp.xInputDtype != ge::DT_FLOAT16 &&
                  baseInfoOp.xInputDtype != ge::DT_BF16),
@@ -148,12 +139,7 @@ ge::graphStatus GeluQuantTiling::ProcessRequiredInfo()
                 return ge::GRAPH_FAILED);
 
     auto xInputShapePtr = context_->GetInputShape(X_INPUT_INDEX);
-    OP_CHECK_IF(
-        xInputShapePtr == nullptr,
-        OP_LOGE_WITH_INVALID_INPUT(
-            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()),
-            "x"),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(xInputShapePtr == nullptr, ReportInvalidInput(context_, "x"), return ge::GRAPH_FAILED);
     auto xInputShape = xInputShapePtr->GetStorageShape();
     baseInfoOp.xDimNum = xInputShape.GetDimNum();
     OP_CHECK_IF((baseInfoOp.xDimNum > INPUT_MAX_DIMENSIONS),
@@ -177,15 +163,8 @@ ge::graphStatus GeluQuantTiling::ProcessRequiredInfo()
     // y
     auto yOutputShapePtr = context_->GetOutputShape(Y_OUTPUT_INDEX);
     if (yOutputShapePtr == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object yOutputShapePtr is unavailable; check the operator "
-                               "registration and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object yOutputShapePtr is unavailable; "
-                                                         "check the operator registration and context construction."}));
+        ReportTilingError(context_, "Tiling framework object yOutputShapePtr is unavailable; check the operator "
+                                    "registration and context construction.");
         return ge::GRAPH_FAILED;
     };
     auto yOutputShape = yOutputShapePtr->GetStorageShape();
@@ -212,15 +191,8 @@ ge::graphStatus GeluQuantTiling::ProcessOptionalOffsetInfo()
 
     auto offsetInputDesc = context_->GetOptionalInputDesc(OFFSET_INPUT_INDEX);
     if (offsetInputDesc == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object offsetInputDesc is unavailable; check the operator "
-                               "registration and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object offsetInputDesc is unavailable; "
-                                                         "check the operator registration and context construction."}));
+        ReportTilingError(context_, "Tiling framework object offsetInputDesc is unavailable; check the operator "
+                                    "registration and context construction.");
         return ge::GRAPH_FAILED;
     };
     baseInfoOp.offsetInputDtype = offsetInputDesc->GetDataType();
@@ -241,24 +213,31 @@ ge::graphStatus GeluQuantTiling::ProcessOptionalOffsetInfo()
             return ge::GRAPH_FAILED);
     } else {
         baseInfoOp.inputOffsetType = NORMAL_TENSOR;
-        OP_CHECK_IF(
-            (baseInfoOp.inputScaleType != NORMAL_TENSOR),
-            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(nodeName_, "input_scale, input_offset", "scalar, normal",
-                                                   "The shapes of input_scale and input_offset must be the same"),
-            return ge::GRAPH_FAILED);
-        auto offsetInputDimNum = offsetInputShapePtr->GetStorageShape().GetDimNum();
-        OP_CHECK_IF((offsetInputDimNum != 1),
-                    OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName_, "input_offset", std::to_string(offsetInputDimNum), "1"),
-                    return ge::GRAPH_FAILED);
-        auto offsetInputDim0 = offsetInputShapePtr->GetStorageShape().GetDim(0);
-        OP_CHECK_IF((offsetInputDim0 != baseInfoOp.endAxisLen),
-                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
-                        nodeName_, "input_offset,x",
-                        std::to_string(offsetInputDim0) + "," + std::to_string(baseInfoOp.endAxisLen),
-                        "Shape[0] of input_offset must be equal to shape[-1] of x"),
-                    return ge::GRAPH_FAILED);
+        if (CheckOffsetTensorShape(offsetInputShapePtr) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
     }
 
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus GeluQuantTiling::CheckOffsetTensorShape(const gert::StorageShape* offsetInputShapePtr)
+{
+    OP_CHECK_IF((baseInfoOp.inputScaleType != NORMAL_TENSOR),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(nodeName_, "input_scale, input_offset", "scalar, normal",
+                                                       "The shapes of input_scale and input_offset must be the same"),
+                return ge::GRAPH_FAILED);
+    auto offsetInputDimNum = offsetInputShapePtr->GetStorageShape().GetDimNum();
+    OP_CHECK_IF((offsetInputDimNum != 1),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName_, "input_offset", std::to_string(offsetInputDimNum), "1"),
+                return ge::GRAPH_FAILED);
+    auto offsetInputDim0 = offsetInputShapePtr->GetStorageShape().GetDim(0);
+    OP_CHECK_IF(
+        (offsetInputDim0 != baseInfoOp.endAxisLen),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            nodeName_, "input_offset,x", std::to_string(offsetInputDim0) + "," + std::to_string(baseInfoOp.endAxisLen),
+            "Shape[0] of input_offset must be equal to shape[-1] of x"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -277,15 +256,9 @@ ge::graphStatus GeluQuantTiling::ProcessOptionalScaleInfo()
 
     auto scaleInputDesc = context_->GetOptionalInputDesc(SCALE_INPUT_INDEX);
     if (scaleInputDesc == nullptr) {
-        const std::string msgOpName = std::string(
-            ((context_) == nullptr || (context_)->GetNodeName() == nullptr ? "gelu_quant" : (context_)->GetNodeName()));
-        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
-                               "Tiling framework object scaleInputDesc is unavailable; check the operator registration "
-                               "and context construction.");
-        REPORT_PREDEFINED_ERR_MSG(
-            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
-            (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object scaleInputDesc is unavailable; check "
-                                                         "the operator registration and context construction."}));
+        ReportTilingError(context_,
+                          "Tiling framework object scaleInputDesc is unavailable; check the operator registration "
+                          "and context construction.");
         return ge::GRAPH_FAILED;
     };
     baseInfoOp.scaleInputDtype = scaleInputDesc->GetDataType();
@@ -309,18 +282,25 @@ ge::graphStatus GeluQuantTiling::ProcessOptionalScaleInfo()
         baseInfoOp.inputScaleType = SCALAR_TENSOR;
     } else {
         baseInfoOp.inputScaleType = NORMAL_TENSOR;
-        auto scaleInputDimNum = scaleInputShapePtr->GetStorageShape().GetDimNum();
-        OP_CHECK_IF((scaleInputDimNum != 1),
-                    OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName_, "input_scale", std::to_string(scaleInputDimNum), "1"),
-                    return ge::GRAPH_FAILED);
-        auto scaleInputDim0 = scaleInputShapePtr->GetStorageShape().GetDim(0);
-        OP_CHECK_IF(
-            (scaleInputDim0 != baseInfoOp.endAxisLen),
-            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName_, "input_scale", std::to_string(scaleInputDim0),
-                                                     "The last dim of input_scale must equal the last dim of x"),
-            return ge::GRAPH_FAILED);
+        if (CheckScaleTensorShape(scaleInputShapePtr) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
     }
 
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus GeluQuantTiling::CheckScaleTensorShape(const gert::StorageShape* scaleInputShapePtr)
+{
+    auto scaleInputDimNum = scaleInputShapePtr->GetStorageShape().GetDimNum();
+    OP_CHECK_IF((scaleInputDimNum != 1),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(nodeName_, "input_scale", std::to_string(scaleInputDimNum), "1"),
+                return ge::GRAPH_FAILED);
+    auto scaleInputDim0 = scaleInputShapePtr->GetStorageShape().GetDim(0);
+    OP_CHECK_IF((scaleInputDim0 != baseInfoOp.endAxisLen),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName_, "input_scale", std::to_string(scaleInputDim0),
+                                                         "The last dim of input_scale must equal the last dim of x"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
