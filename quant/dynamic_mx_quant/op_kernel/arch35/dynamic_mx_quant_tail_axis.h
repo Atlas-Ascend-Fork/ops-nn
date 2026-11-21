@@ -1563,7 +1563,10 @@ __aicore__ inline void DynamicMxQuantTailAxis<T, U, SCALE_ALG>::Compute(int64_t 
         ComputeOcp(xLocalAddr, maxExpLocalAddr, scaleLocalAddr, yLocalAddr, recipScaleLocalAddr, loopNum2VF, loopNum1VF,
                    loopNumHalfVF, totalBlockNum);
     } else if constexpr (ops::IsSame<U, fp4x2_e2m1_t>::value && SCALE_ALG == DIGIT_TWO) {
-        if (dstTypeMax_ == DIGIT_ZERO_FLOAT || dstTypeMax_ == DIGIT_SIX_FLOAT || dstTypeMax_ == DIGIT_SEVEN_FLOAT) {
+        // BF16 input can use the fast exponent calculation. FP16/FP32 input
+        // must keep the full-precision maximum when selecting the scale.
+        if (ops::IsSame<T, bfloat16_t>::value &&
+            (dstTypeMax_ == DIGIT_ZERO_FLOAT || dstTypeMax_ == DIGIT_SIX_FLOAT || dstTypeMax_ == DIGIT_SEVEN_FLOAT)) {
             ComputeCeilAlgFp4Opti(xLocalAddr, maxExpLocalAddr, scaleLocalAddr, yLocalAddr, recipScaleLocalAddr,
                                   loopNum2VF, loopNum1VF, loopNumHalfVF, totalBlockNum);
         } else {

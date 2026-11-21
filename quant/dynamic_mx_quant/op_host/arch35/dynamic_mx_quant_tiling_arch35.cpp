@@ -452,7 +452,10 @@ static ge::graphStatus SetCalcMode(const gert::TilingContext* context, DynamicMx
         if (Ops::Base::IsFloatEqual(tilingParam.dstTypeMax, DST_TYPE_DEFAULT) ||
             Ops::Base::IsFloatEqual(tilingParam.dstTypeMax, NUM_SIX_FLOAT) ||
             Ops::Base::IsFloatEqual(tilingParam.dstTypeMax, NUM_SEVEN_FLOAT)) {
-            tilingParam.calcMode = MODE_TWO;
+            // The optimized scale-2 implementation reduces FP16/FP32 maxima to
+            // BF16 precision before selecting the UE8M0 exponent. Keep it only
+            // for BF16 input, whose source precision already matches that path.
+            tilingParam.calcMode = tilingParam.isBf16Input ? MODE_TWO : MODE_THREE;
         } else {
             tilingParam.calcMode = MODE_THREE;
         }
@@ -593,6 +596,7 @@ static ge::graphStatus DoTiling(const gert::TilingContext* context, DynamicMxQua
     OP_CHECK_NULL_WITH_CONTEXT(context, inputXPtr);
     auto inDtype = inputXPtr->GetDataType();
     tilingParam.isFp32Input = (inDtype == DT_FLOAT);
+    tilingParam.isBf16Input = (inDtype == DT_BF16);
     tilingParam.inputDtypeSize = tilingParam.isFp32Input ? DIGIT_FOUR : DIGIT_TWO;
     CalcTilingKey(inDtype, tilingParam);
     OP_CHECK_IF(SetCalcMode(context, tilingParam) != ge::GRAPH_SUCCESS,
@@ -738,6 +742,7 @@ ge::graphStatus Tiling4DynamicMxQuant(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, inputXPtrEarly);
     auto inDtypeEarly = inputXPtrEarly->GetDataType();
     tilingParam.isFp32Input = (inDtypeEarly == DT_FLOAT);
+    tilingParam.isBf16Input = (inDtypeEarly == DT_BF16);
     tilingParam.inputDtypeSize = tilingParam.isFp32Input ? DIGIT_FOUR : DIGIT_TWO;
 
     OP_CHECK_IF(BaseCalc(context, tilingParam) != ge::GRAPH_SUCCESS,

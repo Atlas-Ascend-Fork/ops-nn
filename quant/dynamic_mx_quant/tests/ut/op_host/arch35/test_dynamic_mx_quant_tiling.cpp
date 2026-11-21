@@ -60,7 +60,8 @@ static void ExecuteTestCase(ge::DataType inDtype, ge::DataType outDtype, gert::S
                             gert::StorageShape scaleShape, int64_t axis, int64_t blockSize, string expectTilingData,
                             ge::graphStatus status = ge::GRAPH_SUCCESS, int64_t scaleAlg = 0,
                             const string& roundMode = "rint", float maxLowBound = 0.0f, float dstTypeMax = 0.0f,
-                            ge::Format inputFormat = ge::FORMAT_ND)
+                            ge::Format inputFormat = ge::FORMAT_ND, int64_t expectedCalcMode = -1,
+                            bool expectOptimized = false)
 {
     string compile_info_string = R"({
          "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -164,6 +165,22 @@ static void ExecuteTestCase(ge::DataType inDtype, ge::DataType outDtype, gert::S
         EXPECT_GT(data->maxUbBlockNum, 0);
         EXPECT_EQ((data->rowTileNum - 1) * data->rowNormalBlockNum + data->rowTailLen, data->rowNum);
         EXPECT_EQ((data->colTileNum - 1) * data->colNormalBlockNum * 256 + data->colTailLen, data->colNum);
+        return;
+    }
+    if (expectedCalcMode >= 0) {
+        if (expectOptimized) {
+            // The optimized non-tail path encodes calcMode in the tiling key.
+            // optiMode occupies bits [0,4]; the calcMode value uses bits [5,7].
+            EXPECT_EQ(tiling_key & 0x1fU, 4U); // small-tail optimized template
+            EXPECT_EQ((tiling_key >> 5) & 0x7U, static_cast<uint64_t>(expectedCalcMode + 1));
+        } else {
+            EXPECT_EQ(tiling_key & 0x1fU, 3U); // small trailing dimension in the generic path
+            ASSERT_GE(raw_tiling_data->GetDataSize(), sizeof(DynamicMxQuantTilingData));
+            const auto* data = reinterpret_cast<const DynamicMxQuantTilingData*>(raw_tiling_data->GetData());
+            EXPECT_EQ(data->scaleAlg, scaleAlg);
+            EXPECT_EQ(data->calcMode, expectedCalcMode);
+            EXPECT_FLOAT_EQ(data->dstTypeMax, dstTypeMax);
+        }
         return;
     }
     auto tiling_data_result = to_string<int64_t>(raw_tiling_data->GetData(), raw_tiling_data->GetDataSize());
@@ -526,4 +543,34 @@ TEST_F(DynamicMxQuantTiling, DynamicMxQuant_tiling_ascendc_float32_fp8e4m3fn_opt
     string expectTilingData = "64 60 32 0 32 292 64 32 64 2 1 1 0 300 4 600 8 75 0 0 1 0 0 0 0 0 0 0 0 0";
 
     ExecuteTestCase(ge::DT_FLOAT, ge::DT_FLOAT8_E4M3FN, shape, scaleShape, axis, blockSize, expectTilingData);
+}
+
+TEST_F(DynamicMxQuantTiling, ScaleAlg2UsesInputPrecisionOnNormalNonTailPath)
+{
+    // The short quantization axis shrinks the effective block below 32, selecting the normal path.
+    gert::StorageShape shape = {{2, 16, 32}, {2, 16, 32}};
+    gert::StorageShape scaleShape = {{2, 1, 32, 2}, {2, 1, 32, 2}};
+    for (float dstTypeMax : {0.0f, 6.0f, 7.0f}) {
+        for (auto dtype : {ge::DT_BF16, ge::DT_FLOAT16}) {
+            SCOPED_TRACE(::testing::Message() << "dtype=" << dtype << " dstTypeMax=" << dstTypeMax);
+            const int64_t expectedMode = dtype == ge::DT_BF16 ? 2 : 3;
+            ExecuteTestCase(dtype, ge::DT_FLOAT4_E2M1, shape, scaleShape, -2, 32, "", ge::GRAPH_SUCCESS, 2, "rint",
+                            0.0f, dstTypeMax, ge::FORMAT_ND, expectedMode);
+        }
+    }
+}
+
+TEST_F(DynamicMxQuantTiling, ScaleAlg2UsesInputPrecisionOnOptimizedNonTailPath)
+{
+    // A short trailing dimension with blocksize=32 selects small-tail optimization.
+    gert::StorageShape shape = {{1, 300, 64, 32}, {1, 300, 64, 32}};
+    gert::StorageShape scaleShape = {{1, 300, 1, 32, 2}, {1, 300, 1, 32, 2}};
+    for (float dstTypeMax : {0.0f, 6.0f, 7.0f}) {
+        for (auto dtype : {ge::DT_BF16, ge::DT_FLOAT16, ge::DT_FLOAT}) {
+            SCOPED_TRACE(::testing::Message() << "dtype=" << dtype << " dstTypeMax=" << dstTypeMax);
+            const int64_t expectedMode = dtype == ge::DT_BF16 ? 2 : 3;
+            ExecuteTestCase(dtype, ge::DT_FLOAT4_E2M1, shape, scaleShape, 2, 32, "", ge::GRAPH_SUCCESS, 2, "rint", 0.0f,
+                            dstTypeMax, ge::FORMAT_ND, expectedMode, true);
+        }
+    }
 }

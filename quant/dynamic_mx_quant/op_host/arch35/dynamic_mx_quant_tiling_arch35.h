@@ -109,6 +109,7 @@ struct DynamicMxQuantTilingParam {
     // 输入 dtype 字节数：bf16/fp16=2, fp32=4。
     int64_t inputDtypeSize{2};
     bool isFp32Input{false};
+    bool isBf16Input{false};
 };
 
 enum class RoundModeList {

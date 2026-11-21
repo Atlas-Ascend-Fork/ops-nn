@@ -147,7 +147,10 @@ ge::graphStatus DynamicMxQuantOptimzieTiling::SetCalcMode()
         if (Ops::Base::IsFloatEqual(tilingParam_.dstTypeMax, DST_TYPE_DEFAULT) ||
             Ops::Base::IsFloatEqual(tilingParam_.dstTypeMax, NUM_SIX_FLOAT) ||
             Ops::Base::IsFloatEqual(tilingParam_.dstTypeMax, NUM_SEVEN_FLOAT)) {
-            tilingParam_.calcMode = MODE_TWO;
+            // The optimized scale-2 implementation reduces FP16/FP32 maxima to
+            // BF16 precision before selecting the UE8M0 exponent. Keep it only
+            // for BF16 input, whose source precision already matches that path.
+            tilingParam_.calcMode = tilingParam_.isBf16Input ? MODE_TWO : MODE_THREE;
         } else {
             tilingParam_.calcMode = MODE_THREE;
         }
