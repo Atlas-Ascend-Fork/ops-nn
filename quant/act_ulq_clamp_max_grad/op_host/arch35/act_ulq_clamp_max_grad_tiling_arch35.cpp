@@ -171,28 +171,41 @@ static ge::graphStatus GetShapeAndDtype(gert::TilingContext* context, Ctx& ctx)
 
     // 三输入 shape 必须完全相同（broadcast.kind: none）
     OP_CHECK_IF(yS.GetDimNum() != mS.GetDimNum() || yS.GetDimNum() != xS.GetDimNum(),
-                OP_LOGE(context, "ActULQClampMaxGrad: three inputs must have same rank"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "y_grad, clamp_max_mask, x_clamped_loss",
+                    (std::to_string(yS.GetDimNum()) + "D, " + std::to_string(mS.GetDimNum()) + "D, " +
+                     std::to_string(xS.GetDimNum()) + "D")
+                        .c_str(),
+                    "the three inputs must have the same rank"),
+                return ge::GRAPH_FAILED);
     // 输入 rank 上限 8（不支持 9 维及以上 Tensor）
-    OP_CHECK_IF(
-        yS.GetDimNum() > 8,
-        OP_LOGE(context, "ActULQClampMaxGrad: input rank %zu exceeds 8 (9D+ tensor not supported)", yS.GetDimNum()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(yS.GetDimNum() > 8,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "y_grad",
+                                                         (std::to_string(yS.GetDimNum()) + "D").c_str(),
+                                                         "input rank must be in [0, 8]"),
+                return ge::GRAPH_FAILED);
     for (size_t i = 0; i < yS.GetDimNum(); ++i) {
-        OP_CHECK_IF(yS.GetDim(i) != mS.GetDim(i) || yS.GetDim(i) != xS.GetDim(i),
-                    OP_LOGE(context, "ActULQClampMaxGrad: three inputs shape mismatch at dim %zu", i),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            yS.GetDim(i) != mS.GetDim(i) || yS.GetDim(i) != xS.GetDim(i),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "y_grad, clamp_max_mask, x_clamped_loss",
+                (Ops::Base::ToString(yS) + ", " + Ops::Base::ToString(mS) + ", " + Ops::Base::ToString(xS)).c_str(),
+                "the three inputs must have identical shape (no broadcast)"),
+            return ge::GRAPH_FAILED);
     }
 
     const size_t rank = yS.GetDimNum();
+    const std::string yShapeStr = Ops::Base::ToString(yS);
     ctx.inShape.clear();
     if (rank == 0) {
         ctx.inShape.push_back(1); // scalar → 1-element
     } else {
         for (size_t i = 0; i < rank; ++i) {
-            OP_CHECK_IF(
-                yS.GetDim(i) < 0,
-                OP_LOGE(context, "y_grad dim[%zu]=%ld negative (dynamic shape not allowed at tiling)", i, yS.GetDim(i)),
-                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(yS.GetDim(i) < 0,
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context->GetNodeName(), "y_grad", yShapeStr.substr(1U, yShapeStr.size() - 2U).c_str(),
+                            "dynamic shape is not allowed at tiling; every dimension must be concrete"),
+                        return ge::GRAPH_FAILED);
             ctx.inShape.push_back(yS.GetDim(i));
         }
     }
@@ -200,25 +213,29 @@ static ge::graphStatus GetShapeAndDtype(gert::TilingContext* context, Ctx& ctx)
     auto yDesc = context->GetInputDesc(kInputYGradIdx);
     OP_CHECK_NULL_WITH_CONTEXT(context, yDesc);
     ctx.dtype = yDesc->GetDataType();
-    OP_CHECK_IF(ctx.dtype != ge::DT_FLOAT16 && ctx.dtype != ge::DT_FLOAT,
-                OP_LOGE(context, "unsupported y_grad dtype %d (expect fp16/fp32)", static_cast<int>(ctx.dtype)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        ctx.dtype != ge::DT_FLOAT16 && ctx.dtype != ge::DT_FLOAT,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "y_grad", Ops::Base::ToString(ctx.dtype).c_str(),
+                                              "y_grad dtype must be FLOAT16 or FLOAT32"),
+        return ge::GRAPH_FAILED);
 
     auto maskDesc = context->GetInputDesc(kInputMaskIdx);
     OP_CHECK_NULL_WITH_CONTEXT(context, maskDesc);
     const ge::DataType maskDtype = maskDesc->GetDataType();
-    OP_CHECK_IF(
-        maskDtype != ge::DT_BOOL && maskDtype != ge::DT_FLOAT16 && maskDtype != ge::DT_FLOAT,
-        OP_LOGE(context, "unsupported clamp_max_mask dtype %d (expect bool/fp16/fp32)", static_cast<int>(maskDtype)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(maskDtype != ge::DT_BOOL && maskDtype != ge::DT_FLOAT16 && maskDtype != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "clamp_max_mask",
+                                                      Ops::Base::ToString(maskDtype).c_str(),
+                                                      "clamp_max_mask dtype must be BOOL, FLOAT16 or FLOAT32"),
+                return ge::GRAPH_FAILED);
 
     auto xLossDesc = context->GetInputDesc(kInputXLossIdx);
     OP_CHECK_NULL_WITH_CONTEXT(context, xLossDesc);
     const ge::DataType xLossDtype = xLossDesc->GetDataType();
-    OP_CHECK_IF(
-        xLossDtype != ge::DT_FLOAT16 && xLossDtype != ge::DT_FLOAT,
-        OP_LOGE(context, "unsupported x_clamped_loss dtype %d (expect fp16/fp32)", static_cast<int>(xLossDtype)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(xLossDtype != ge::DT_FLOAT16 && xLossDtype != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x_clamped_loss",
+                                                      Ops::Base::ToString(xLossDtype).c_str(),
+                                                      "x_clamped_loss dtype must be FLOAT16 or FLOAT32"),
+                return ge::GRAPH_FAILED);
 
     // 4 组合法 dtype 组合（与 def.cpp profile 列 + README 约束一致）：
     //   mask 为浮点型 → 三输入须同浮点型；mask 为 bool → y_grad 与 x_clamped_loss 须同型
@@ -226,10 +243,13 @@ static ge::graphStatus GetShapeAndDtype(gert::TilingContext* context, Ctx& ctx)
     const bool comboValid = maskIsFloat ? (maskDtype == ctx.dtype && xLossDtype == ctx.dtype) :
                                           (xLossDtype == ctx.dtype);
     OP_CHECK_IF(!comboValid,
-                OP_LOGE(context,
-                        "illegal dtype combination: y_grad=%d, mask=%d, x_clamped_loss=%d "
-                        "(legal: fp16/fp16/fp16, fp32/fp32/fp32, fp16/bool/fp16, fp32/bool/fp32)",
-                        static_cast<int>(ctx.dtype), static_cast<int>(maskDtype), static_cast<int>(xLossDtype)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "y_grad, clamp_max_mask, x_clamped_loss",
+                    (Ops::Base::ToString(ctx.dtype) + ", " + Ops::Base::ToString(maskDtype) + ", " +
+                     Ops::Base::ToString(xLossDtype))
+                        .c_str(),
+                    "legal combinations are FLOAT16/FLOAT16/FLOAT16, FLOAT32/FLOAT32/FLOAT32, "
+                    "FLOAT16/BOOL/FLOAT16 and FLOAT32/BOOL/FLOAT32"),
                 return ge::GRAPH_FAILED);
 
     ctx.dtypeSize = static_cast<int64_t>(ge::GetSizeByDataType(ctx.dtype));

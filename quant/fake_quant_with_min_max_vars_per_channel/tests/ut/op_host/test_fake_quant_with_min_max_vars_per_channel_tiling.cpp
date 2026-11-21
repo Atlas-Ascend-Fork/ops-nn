@@ -32,6 +32,7 @@
 #include <vector>
 #include <gtest/gtest.h>
 
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "platform/platform_infos_def.h"
 #include "ut_op_util.h"
@@ -297,4 +298,212 @@ TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, tiling_3d_merge_shape)
     EXPECT_EQ(td->dim1, 16);
     EXPECT_EQ(td->headNum, 6);
     EXPECT_EQ(td->tailDim, 16);
+}
+
+// ---------------------------------------------------------------------------
+// 错误码负向用例
+// ---------------------------------------------------------------------------
+struct FakeQuantCase {
+    gert::StorageShape xShape;
+    gert::StorageShape minShape;
+    gert::StorageShape maxShape;
+    gert::StorageShape yShape;
+    ge::DataType xDtype = ge::DT_FLOAT;
+    ge::DataType minDtype = ge::DT_FLOAT;
+    ge::DataType maxDtype = ge::DT_FLOAT;
+    int64_t numBits = 8;
+    bool narrowRange = false;
+};
+
+static ge::graphStatus RunFakeQuantTiling(FakeQuantCase& c)
+{
+    fe::PlatFormInfos platform_info;
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(kCompileInfoStr, soc_infos, aicore_spec, intrinsics);
+    platform_info.Init();
+
+    std::string op_type("FakeQuantWithMinMaxVarsPerChannel");
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str());
+    if (impl == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto tiling_func = impl->tiling;
+    auto tiling_parse_func = impl->tiling_parse;
+
+    FakeQuantWithMinMaxVarsPerChannelCompileInfo compile_info;
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(kCompileInfoStr), reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+    if (!kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init()) {
+        return ge::GRAPH_FAILED;
+    }
+    auto parse_ctx = kernel_holder.GetContext<gert::TilingParseContext>();
+    parse_ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    parse_ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    parse_ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    parse_ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    if (tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    if (param == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto holder = gert::TilingContextFaker()
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&c.xShape, &c.minShape, &c.maxShape})
+                      .OutputShapes({&c.yShape})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, c.xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, c.minDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, c.maxDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"num_bits", Ops::NN::AnyValue::CreateFrom<int64_t>(c.numBits)},
+                                  {"narrow_range", Ops::NN::AnyValue::CreateFrom<bool>(c.narrowRange)}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+    auto* context = holder.GetContext<gert::TilingContext>();
+    if (context == nullptr || context->GetPlatformInfo() == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    context->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    return tiling_func(context);
+}
+
+static void ExpectSingleError(const std::string& code, const std::initializer_list<std::string>& parts)
+{
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    std::string dump;
+    for (const auto& error : errors) {
+        dump += error.error_id + " | " + error.error_message + "\n";
+    }
+    ASSERT_EQ(errors.size(), 1U) << dump;
+    EXPECT_EQ(errors[0].error_id, code) << dump;
+    for (const auto& part : parts) {
+        EXPECT_NE(errors[0].error_message.find(part), std::string::npos) << errors[0].error_message;
+    }
+}
+
+TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, error_x_dtype_not_float)
+{
+    FakeQuantCase c;
+    c.xShape = {{2, 4}, {2, 4}};
+    c.minShape = {{4}, {4}};
+    c.maxShape = {{4}, {4}};
+    c.yShape = {{2, 4}, {2, 4}};
+    c.xDtype = ge::DT_BF16;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunFakeQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0020", {"x", "DT_BFLOAT16"});
+}
+
+TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, error_x_rank_zero)
+{
+    FakeQuantCase c;
+    c.xShape = {{}, {}};
+    c.minShape = {{1}, {1}};
+    c.maxShape = {{1}, {1}};
+    c.yShape = {{}, {}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunFakeQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0012", {"x", "0D", "[1, 8]"});
+}
+
+TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, error_x_rank_nine)
+{
+    FakeQuantCase c;
+    c.xShape = {{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}};
+    c.minShape = {{1}, {1}};
+    c.maxShape = {{1}, {1}};
+    c.yShape = c.xShape;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunFakeQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0012", {"x", "9D", "[1, 8]"});
+}
+
+TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, error_min_rank_not_one)
+{
+    FakeQuantCase c;
+    c.xShape = {{2, 4}, {2, 4}};
+    c.minShape = {{1, 4}, {1, 4}};
+    c.maxShape = {{4}, {4}};
+    c.yShape = {{2, 4}, {2, 4}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunFakeQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0011", {"min", "2D", "1D"});
+}
+
+TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, error_max_rank_not_one)
+{
+    FakeQuantCase c;
+    c.xShape = {{2, 4}, {2, 4}};
+    c.minShape = {{4}, {4}};
+    c.maxShape = {{1, 4}, {1, 4}};
+    c.yShape = {{2, 4}, {2, 4}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunFakeQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0011", {"max", "2D", "1D"});
+}
+
+TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, error_min_max_shape_mismatch)
+{
+    FakeQuantCase c;
+    c.xShape = {{2, 4}, {2, 4}};
+    c.minShape = {{4}, {4}};
+    c.maxShape = {{5}, {5}};
+    c.yShape = {{2, 4}, {2, 4}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunFakeQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0010", {"min, max", "[4], [5]"});
+}
+
+TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, error_min_max_length_not_x_tail)
+{
+    FakeQuantCase c;
+    c.xShape = {{2, 4}, {2, 4}};
+    c.minShape = {{5}, {5}};
+    c.maxShape = {{5}, {5}};
+    c.yShape = {{2, 4}, {2, 4}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunFakeQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0010", {"min, max, x", "last dim of x"});
+}
+
+TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, error_min_dtype_not_float)
+{
+    FakeQuantCase c;
+    c.xShape = {{2, 4}, {2, 4}};
+    c.minShape = {{4}, {4}};
+    c.maxShape = {{4}, {4}};
+    c.yShape = {{2, 4}, {2, 4}};
+    c.minDtype = ge::DT_BF16;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunFakeQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0020", {"min", "DT_BFLOAT16"});
+}
+
+TEST_F(FakeQuantWithMinMaxVarsPerChannelTiling, error_max_dtype_not_float)
+{
+    FakeQuantCase c;
+    c.xShape = {{2, 4}, {2, 4}};
+    c.minShape = {{4}, {4}};
+    c.maxShape = {{4}, {4}};
+    c.yShape = {{2, 4}, {2, 4}};
+    c.maxDtype = ge::DT_BF16;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunFakeQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0020", {"max", "DT_BFLOAT16"});
 }

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "platform/platform_infos_def.h"
 #include "ut_op_util.h"
@@ -1128,4 +1129,299 @@ TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_tiling_950_error_Float_4)
     tiling_context->GetPlatformInfo()->SetPlatformRes("version", npuarchs);
 
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+}
+
+// ---------------------------------------------------------------------------
+// 错误码负向用例：复用同一套 faker，按需配置 dtype/shape/attr。
+// ---------------------------------------------------------------------------
+struct AntiQuantCase {
+    gert::StorageShape xShape;
+    gert::StorageShape scaleShape;
+    gert::StorageShape offsetShape;
+    gert::StorageShape yShape;
+    ge::DataType xDtype = ge::DT_INT8;
+    ge::DataType scaleDtype = ge::DT_FLOAT;
+    ge::DataType offsetDtype = ge::DT_FLOAT;
+    ge::DataType yDtype = ge::DT_FLOAT16;
+    int64_t dstType = 1;
+    bool sqrtMode = false;
+    bool hasOffset = true;
+};
+
+static ge::graphStatus RunAntiQuantTiling(AntiQuantCase& c)
+{
+    fe::PlatFormInfos platform_info;
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    InitPlatForm(platform_info, soc_infos, aicore_spec, intrinsics);
+    map<string, string> socversions = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+
+    AscendAntiQuantV2CompileInfo compile_info;
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("AscendAntiQuantV2");
+    if (impl == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto tiling_func = impl->tiling;
+    auto tiling_parse_func = impl->tiling_parse;
+
+    string compile_info_string = R"({
+        "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                          "Intrinsic_fix_pipe_l0c2out": false,
+                          "Intrinsic_data_move_l12ub": true,
+                          "Intrinsic_data_move_l0c2ub": true,
+                          "Intrinsic_data_move_out2l1_nd2nz": false,
+                          "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                          "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                          "CORE_NUM": 48}
+                          })";
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+    if (!kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init()) {
+        return ge::GRAPH_FAILED;
+    }
+    auto parse_ctx = kernel_holder.GetContext<gert::TilingParseContext>();
+    parse_ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    parse_ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    parse_ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    parse_ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    if (tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(16 * 1024 * 1024);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    if (param == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+
+    std::vector<gert::StorageShape*> input_shapes = {&c.xShape, &c.scaleShape};
+    if (c.hasOffset) {
+        input_shapes.push_back(&c.offsetShape);
+    }
+    gert::TilingContextFaker builder;
+    builder.NodeIoNum(3, 1)
+        .IrInstanceNum({1, 1, c.hasOffset ? 1 : 0})
+        .InputShapes(input_shapes)
+        .OutputShapes({&c.yShape})
+        .CompileInfo(&compile_info)
+        .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+        .NodeInputTd(0, c.xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, c.scaleDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    if (c.hasOffset) {
+        builder.NodeInputTd(2, c.offsetDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    builder.NodeOutputTd(0, c.yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeAttrs({{"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(c.dstType)},
+                    {"sqrt_mode", Ops::NN::AnyValue::CreateFrom<bool>(c.sqrtMode)}})
+        .TilingData(param.get())
+        .Workspace(ws_size);
+    auto holder = builder.Build();
+    auto* context = holder.GetContext<gert::TilingContext>();
+    if (context == nullptr || context->GetPlatformInfo() == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    context->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    context->GetPlatformInfo()->SetPlatformRes("version", socversions);
+    return tiling_func(context);
+}
+
+static void ExpectSingleError(const std::string& code, const std::initializer_list<std::string>& parts)
+{
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    std::string dump;
+    for (const auto& error : errors) {
+        dump += error.error_id + " | " + error.error_message + "\n";
+    }
+    ASSERT_EQ(errors.size(), 1U) << dump;
+    EXPECT_EQ(errors[0].error_id, code) << dump;
+    for (const auto& part : parts) {
+        EXPECT_NE(errors[0].error_message.find(part), std::string::npos) << errors[0].error_message;
+    }
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_scale_offset_dtype_mismatch)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 10}, {4, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{10}, {10}};
+    c.yShape = {{4, 10}, {4, 10}};
+    c.offsetDtype = ge::DT_BF16;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0021", {"scale, offset", "DT_FLOAT, DT_BFLOAT16"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_float8_scale_dtype)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 10}, {4, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{10}, {10}};
+    c.yShape = {{4, 10}, {4, 10}};
+    c.xDtype = ge::DT_FLOAT8_E5M2;
+    c.scaleDtype = ge::DT_BF16;
+    c.offsetDtype = ge::DT_BF16;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0020", {"scale", "DT_BFLOAT16"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_scale_dim_mismatch)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 2, 10}, {4, 2, 10}};
+    c.scaleShape = {{2, 10}, {2, 10}};
+    c.offsetShape = {{2, 10}, {2, 10}};
+    c.yShape = {{4, 2, 10}, {4, 2, 10}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0010", {"scale, x", "the dimension of scale must be the same as x or 1"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_x_y_shape_mismatch)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 2, 10}, {4, 2, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{10}, {10}};
+    c.yShape = {{4, 1, 10}, {4, 1, 10}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0010", {"x, y", "the shape of x and y must be the same"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_scale_offset_shape_mismatch)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 10}, {4, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{1}, {1}};
+    c.yShape = {{4, 10}, {4, 10}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0010", {"scale, offset", "the shape of scale and offset must be the same"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_invalid_dst_type)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 10}, {4, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{10}, {10}};
+    c.yShape = {{4, 10}, {4, 10}};
+    c.dstType = 2;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0026", {"dst_type", "2"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_dst_type_mismatch)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 10}, {4, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{10}, {10}};
+    c.yShape = {{4, 10}, {4, 10}};
+    c.dstType = 27;
+    c.yDtype = ge::DT_FLOAT16;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0021", {"dst_type, y", "DT_BFLOAT16, DT_FLOAT16"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_int4_odd_tail)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 3}, {4, 3}};
+    c.scaleShape = {{3}, {3}};
+    c.offsetShape = {{3}, {3}};
+    c.yShape = {{4, 3}, {4, 3}};
+    c.xDtype = ge::DT_INT4;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0009", {"x", "4, 3", "divisible by 2"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_sqrt_mode_with_float8)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 10}, {4, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{10}, {10}};
+    c.yShape = {{4, 10}, {4, 10}};
+    c.xDtype = ge::DT_FLOAT8_E5M2;
+    c.sqrtMode = true;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0026", {"sqrt_mode", "1"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_empty_tensor)
+{
+    AntiQuantCase c;
+    c.xShape = {{0, 10}, {0, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{10}, {10}};
+    c.yShape = {{0, 10}, {0, 10}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0016", {"x, scale", "empty tensor is not supported"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_x_rank1_scale_shape)
+{
+    AntiQuantCase c;
+    c.xShape = {{4}, {4}};
+    c.scaleShape = {{5}, {5}};
+    c.offsetShape = {{5}, {5}};
+    c.yShape = {{4}, {4}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0010", {"scale, x", "when the dim of x is 1"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_scale_1d_not_match_x)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 2, 10}, {4, 2, 10}};
+    c.scaleShape = {{7}, {7}};
+    c.offsetShape = {{7}, {7}};
+    c.yShape = {{4, 2, 10}, {4, 2, 10}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0010", {"scale, x", "match the -1 or -2 dim of x"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_x_y_rank_mismatch)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 10}, {4, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{10}, {10}};
+    c.yShape = {{4, 1, 10}, {4, 1, 10}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0010", {"x, y", "the dimension of x and y must be the same"});
+}
+
+TEST_F(AscendAntiQuantV2Tiling, ascend_anti_quant_v2_error_scale_offset_rank_mismatch)
+{
+    AntiQuantCase c;
+    c.xShape = {{4, 10}, {4, 10}};
+    c.scaleShape = {{10}, {10}};
+    c.offsetShape = {{1, 10}, {1, 10}};
+    c.yShape = {{4, 10}, {4, 10}};
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(RunAntiQuantTiling(c), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0010", {"scale, offset", "the shape of scale and offset must be the same"});
 }

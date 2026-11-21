@@ -63,10 +63,10 @@ const gert::Shape& AscendAntiQuantV2Regbase::EnsureYNotScalar(const gert::Shape&
 ge::graphStatus AscendAntiQuantV2Regbase::DoAscendAntiQuantV2Tiling()
 {
     OP_CHECK_IF((GetCompileInfo() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoAscendAntiQuantV2Tiling GetCompileInfo Failed."),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoAscendAntiQuantV2Tiling GetCompileInfo Failed."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF((GetOpParam() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "DoAscendAntiQuantV2Tiling GetOpParam Failed."),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "DoAscendAntiQuantV2Tiling GetOpParam Failed."),
                 return ge::GRAPH_FAILED);
 
     CalcTiling();
@@ -108,15 +108,18 @@ ge::graphStatus AscendAntiQuantV2Regbase::CheckInputDtype()
         auto offsetDtype = offsetInputDesc->GetDataType();
 
         OP_CHECK_IF(scaleDtype_ != offsetDtype,
-                    OP_LOGE(context_->GetNodeName(), "input scale dtype %s is not same as input offset dtype %s",
-                            Ops::Base::ToString(scaleDtype_).c_str(), Ops::Base::ToString(offsetDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context_->GetNodeName(), "scale, offset",
+                        (Ops::Base::ToString(scaleDtype_) + ", " + Ops::Base::ToString(offsetDtype)).c_str(),
+                        "scale and offset must have the same dtype"),
                     return ge::GRAPH_FAILED);
     }
 
     if (xDtype_ == ge::DT_HIFLOAT8 || xDtype_ == ge::DT_FLOAT8_E5M2 || xDtype_ == ge::DT_FLOAT8_E4M3FN) {
         OP_CHECK_IF(scaleDtype_ != ge::DT_FLOAT,
-                    OP_LOGE(context_->GetNodeName(), "when x is of type %s, the scale must be type FP32",
-                            Ops::Base::ToString(xDtype_).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        context_->GetNodeName(), "scale", Ops::Base::ToString(scaleDtype_).c_str(),
+                        "scale must be FLOAT32 when x is HIFLOAT8, FLOAT8_E4M3 or FLOAT8_E5M2"),
                     return ge::GRAPH_FAILED);
     }
 
@@ -130,23 +133,29 @@ ge::graphStatus AscendAntiQuantV2Regbase::CheckInputValid(const gert::Shape& inp
     size_t input2DimNum = input2.GetDimNum();
     if (static_cast<int32_t>(input1DimNum) != static_cast<int32_t>(input2DimNum) &&
         static_cast<int32_t>(input2DimNum) != 1) {
-        OP_LOGE(context_->GetNodeName(), "the dimension(%zu) of %s is invalid, should be same as x(%zu) or 1",
-                input2DimNum, param.c_str(), input1DimNum);
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context_->GetNodeName(), (param + ", x").c_str(),
+            (Ops::Base::ToString(input2) + ", " + Ops::Base::ToString(input1)).c_str(),
+            ("the dimension of " + param + " must be the same as x or 1").c_str());
         return ge::GRAPH_FAILED;
     }
 
     if (input1DimNum == static_cast<size_t>(1) && input2.GetDim(0) != 1 && input2.GetDim(0) != input1.GetDim(0)) {
-        OP_LOGE(context_->GetNodeName(), "when the dim of x is 1, the shape of %s must be either 1 or the same as x",
-                param.c_str());
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context_->GetNodeName(), (param + ", x").c_str(),
+            (Ops::Base::ToString(input2) + ", " + Ops::Base::ToString(input1)).c_str(),
+            ("when the dim of x is 1, the shape of " + param + " must be either 1 or the same as x").c_str());
         return ge::GRAPH_FAILED;
     }
 
     if (input1DimNum > 1) {
         if (input2DimNum == static_cast<size_t>(1) && input2.GetDim(0) != input1.GetDim(input1DimNum - 1) &&
             input2.GetDim(0) != input1.GetDim(input1DimNum - SECOND_LAST_DIM_OFFSET) && input2.GetDim(0) != 1) {
-            OP_LOGE(context_->GetNodeName(),
-                    "when the dim of %s is 1, its shape must be either 1, or match the -1 or -2 dim of x",
-                    param.c_str());
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context_->GetNodeName(), (param + ", x").c_str(),
+                (Ops::Base::ToString(input2) + ", " + Ops::Base::ToString(input1)).c_str(),
+                ("when the dim of " + param + " is 1, its shape must be either 1, or match the -1 or -2 dim of x")
+                    .c_str());
             return ge::GRAPH_FAILED;
         }
         if (input2DimNum > static_cast<size_t>(1)) {
@@ -167,12 +176,20 @@ ge::graphStatus AscendAntiQuantV2Regbase::CheckOutputValid(const gert::Shape& in
 {
     size_t inputDimNum = input.GetDimNum();
     size_t outputDimNum = output.GetDimNum();
-    OP_CHECK_IF(inputDimNum != outputDimNum, OP_LOGE(context_->GetNodeName(), "x dim and y dim must be same."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        inputDimNum != outputDimNum,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context_->GetNodeName(), "x, y", (Ops::Base::ToString(input) + ", " + Ops::Base::ToString(output)).c_str(),
+            "the dimension of x and y must be the same"),
+        return ge::GRAPH_FAILED);
 
     for (uint32_t i = 0; i < inputDimNum; i++) {
         OP_CHECK_IF(input.GetDim(i) != output.GetDim(i),
-                    OP_LOGE(context_->GetNodeName(), "x shape and y shape must be same."), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context_->GetNodeName(), "x, y",
+                        (Ops::Base::ToString(input) + ", " + Ops::Base::ToString(output)).c_str(),
+                        "the shape of x and y must be the same"),
+                    return ge::GRAPH_FAILED);
     }
 
     return ge::GRAPH_SUCCESS;
@@ -182,11 +199,18 @@ ge::graphStatus AscendAntiQuantV2Regbase::CheckShapeEqual(const gert::Shape& sha
 {
     size_t x1DimNum = shape1.GetDimNum();
     size_t x2DimNum = shape2.GetDimNum();
-    OP_CHECK_IF(x1DimNum != x2DimNum, OP_LOGE(context_->GetNodeName(), "scale shape and offset shape must be same."),
+    OP_CHECK_IF(x1DimNum != x2DimNum,
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context_->GetNodeName(), "scale, offset",
+                    (Ops::Base::ToString(shape1) + ", " + Ops::Base::ToString(shape2)).c_str(),
+                    "the shape of scale and offset must be the same"),
                 return ge::GRAPH_FAILED);
     for (uint32_t i = 0; i < x1DimNum; i++) {
         OP_CHECK_IF(shape1.GetDim(i) != shape2.GetDim(i),
-                    OP_LOGE(context_->GetNodeName(), "scale shape and offset shape must be same."),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context_->GetNodeName(), "scale, offset",
+                        (Ops::Base::ToString(shape1) + ", " + Ops::Base::ToString(shape2)).c_str(),
+                        "the shape of scale and offset must be the same"),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -206,27 +230,32 @@ ge::graphStatus AscendAntiQuantV2Regbase::CheckAttrs(const gert::Shape& xShape)
     sqrtMode_ = static_cast<int16_t>(*sqrtMode);
 
     int32_t xDimNum = static_cast<int32_t>(xShape.GetDimNum());
+    const std::string xShapeStr = Ops::Base::ToString(xShape);
 
     // check dstType and output dtype, must be same
     if (dstType_ != ge::DT_FLOAT16 && dstType_ != ge::DT_BF16) {
-        OP_LOGE(context_->GetNodeName(), "dst type:%s is invalid",
-                Ops::Base::ToString(static_cast<ge::DataType>(dstType_)).c_str());
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "dst_type", std::to_string(dstType_).c_str(),
+                                              "dst_type must be 1 (FLOAT16) or 27 (BFLOAT16)");
         return ge::GRAPH_FAILED;
     }
     if (dstType_ != yDtype_) {
-        OP_LOGE(context_->GetNodeName(), "dst type:%s not equal output y dtype:%s",
-                Ops::Base::ToString(static_cast<ge::DataType>(dstType_)).c_str(), Ops::Base::ToString(yDtype_).c_str());
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context_->GetNodeName(), "dst_type, y",
+            (Ops::Base::ToString(static_cast<ge::DataType>(dstType_)) + ", " + Ops::Base::ToString(yDtype_)).c_str(),
+            "dst_type must match output y dtype");
         return ge::GRAPH_FAILED;
     }
     if (xDtype_ == ge::DT_INT4 && (xShape.GetDim(xDimNum - 1) % INT4_NUMS_IN_INT8_SPACE)) {
-        OP_LOGE(context_->GetNodeName(), "if xDtype represents DT_INT4, x last dim:%ld must be divisible by 2",
-                xShape.GetDim(xDimNum - 1));
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x",
+                                              xShapeStr.substr(1U, xShapeStr.size() - 2U).c_str(),
+                                              "the last dim of x must be divisible by 2 when x dtype is INT4");
         return ge::GRAPH_FAILED;
     }
     if (xDtype_ == ge::DT_HIFLOAT8 || xDtype_ == ge::DT_FLOAT8_E5M2 || xDtype_ == ge::DT_FLOAT8_E4M3FN) {
         OP_CHECK_IF(sqrtMode_ != 0,
-                    OP_LOGE(context_->GetNodeName(), "when x is of type %s, sqrtMode must be False",
-                            Ops::Base::ToString(xDtype_).c_str()),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context_->GetNodeName(), "sqrt_mode", std::to_string(sqrtMode_).c_str(),
+                        "sqrt_mode must be false when x is HIFLOAT8, FLOAT8_E4M3 or FLOAT8_E5M2"),
                     return ge::GRAPH_FAILED);
     }
 
@@ -285,35 +314,39 @@ ge::graphStatus AscendAntiQuantV2Regbase::GetOpParam()
     size_t xSizeNum = xInput->GetStorageShape().GetShapeSize();
     size_t scaleSizeNum = scaleInput->GetStorageShape().GetShapeSize();
     if (xSizeNum == 0ULL || scaleSizeNum == 0ULL) {
-        OP_LOGE(context_->GetNodeName(), "ascend_anti_quant_v2 tiling does not support empty tensor.");
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context_->GetNodeName(), "x, scale",
+            (std::to_string(xSizeNum) + ", " + std::to_string(scaleSizeNum)).c_str(), "empty tensor is not supported");
         return ge::GRAPH_FAILED;
     }
 
-    OP_CHECK_IF((CheckInputDtype() != ge::GRAPH_SUCCESS), OP_LOGE(context_->GetNodeName(), "check input dtype failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckInputDtype() != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "check input dtype failed."), return ge::GRAPH_FAILED);
 
     const gert::Shape& xInputShape = EnsureXAndScaleNotScalar(xInput->GetStorageShape());
     const gert::Shape& scaleInputShape = EnsureXAndScaleNotScalar(scaleInput->GetStorageShape());
     const gert::Shape& yInputShape = EnsureYNotScalar(yOut->GetStorageShape());
     OP_CHECK_IF((CheckAttrs(xInputShape) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "op attrs is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "op attrs is invalid."), return ge::GRAPH_FAILED);
 
     // check the shape of the y is valid
     OP_CHECK_IF((CheckOutputValid(xInputShape, yInputShape) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "x and y is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "x and y is invalid."), return ge::GRAPH_FAILED);
 
     // check the shape of the scale is valid
     OP_CHECK_IF((CheckInputValid(xInputShape, scaleInputShape, "scale") != ge::GRAPH_SUCCESS),
-                OP_LOGE(context_->GetNodeName(), "x and scale is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "x and scale is invalid."), return ge::GRAPH_FAILED);
     // if offset is not null, check the shape of the offset
     if (hasOffset_) {
         const gert::Shape& offsetInputShape = EnsureXAndScaleNotScalar(offsetInput->GetStorageShape());
         // check scale and offset is same
         OP_CHECK_IF((CheckShapeEqual(scaleInputShape, offsetInputShape) != ge::GRAPH_SUCCESS),
-                    OP_LOGE(context_->GetNodeName(), "scale and offset is invalid."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "scale and offset is invalid."),
+                    return ge::GRAPH_FAILED);
         // check the shape of the offset is valid
         OP_CHECK_IF((CheckInputValid(xInputShape, offsetInputShape, "offset") != ge::GRAPH_SUCCESS),
-                    OP_LOGE(context_->GetNodeName(), "x and offset is invalid."), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "x and offset is invalid."),
+                    return ge::GRAPH_FAILED);
     }
     // check excute mode
     int32_t xDimNum = static_cast<int32_t>(xInputShape.GetDimNum());

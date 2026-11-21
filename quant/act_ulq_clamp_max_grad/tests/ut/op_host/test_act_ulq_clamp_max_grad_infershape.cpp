@@ -31,11 +31,26 @@
 
 #include <gtest/gtest.h>
 #include <iostream>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "infershape_case_executor.h"
 
 namespace ActULQClampMaxGradUT {
 
 static const std::string OP_NAME = "ActULQClampMaxGrad";
+
+static void ExpectSingleError(const std::string& code, const std::initializer_list<std::string>& parts)
+{
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    std::string dump;
+    for (const auto& error : errors) {
+        dump += error.error_id + " | " + error.error_message + "\n";
+    }
+    ASSERT_EQ(errors.size(), 1U) << dump;
+    EXPECT_EQ(errors[0].error_id, code) << dump;
+    for (const auto& part : parts) {
+        EXPECT_NE(errors[0].error_message.find(part), std::string::npos) << errors[0].error_message;
+    }
+}
 
 class ActULQClampMaxGradInferShapeTest : public testing::Test {
 protected:
@@ -152,7 +167,27 @@ TEST_F(ActULQClampMaxGradInferShapeTest, infershape_shape_mismatch_fail)
                                      {
                                          {{{}, {}}, ge::DT_FLOAT, ge::FORMAT_ND},
                                      });
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     ExecuteTestCase(para, ge::GRAPH_FAILED, {});
+    ExpectSingleError("EZ0010", {"y_grad, clamp_max_mask, x_clamped_loss", "identical shape"});
+}
+
+// [IS-6b] rank 9 超上界 → GRAPH_FAILED + EZ0012
+TEST_F(ActULQClampMaxGradInferShapeTest, infershape_rank9_fail_reports_ez0012)
+{
+    gert::InfershapeContextPara para(
+        OP_NAME,
+        {
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+        },
+        {
+            {{{}, {}}, ge::DT_FLOAT, ge::FORMAT_ND},
+        });
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    ExecuteTestCase(para, ge::GRAPH_FAILED, {});
+    ExpectSingleError("EZ0012", {"y_grad", "9D"});
 }
 
 // [IS-7] unknown rank([-2]) 透传 → 输出标 unknown rank [-2]

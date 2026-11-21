@@ -49,15 +49,18 @@ static ge::graphStatus InferShape4FakeQuantWithMinMaxVarsPerChannel(gert::InferS
     const bool xUnknownRank = Ops::Base::IsUnknownRank(*xShape);
     const size_t xRank = xShape->GetDimNum();
     if (!xUnknownRank && (xRank < 1U || xRank > kMaxRank)) {
-        OP_LOGE(context, "FakeQuantPC: x rank %zu out of range [1, %zu]", xRank, kMaxRank);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", (std::to_string(xRank) + "D").c_str(),
+                                                 "x rank must be in [1, 8]");
         return ge::GRAPH_FAILED;
     }
     // min/max 是否 1-D 与 x 的 rank 是否未知无关，可判定即必须校验
     const bool minUnknown = Ops::Base::IsUnknownRank(*minShape);
     const bool maxUnknown = Ops::Base::IsUnknownRank(*maxShape);
     if ((!minUnknown && minShape->GetDimNum() != 1U) || (!maxUnknown && maxShape->GetDimNum() != 1U)) {
-        OP_LOGE(context, "FakeQuantPC: min/max must be 1-D, got min rank %zu max rank %zu", minShape->GetDimNum(),
-                maxShape->GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context->GetNodeName(), "min, max",
+            (std::to_string(minShape->GetDimNum()) + "D, " + std::to_string(maxShape->GetDimNum()) + "D").c_str(),
+            "min and max must be 1-D");
         return ge::GRAPH_FAILED;
     }
     // P1-2(fix7)：min/max 等长校验只要求 min/max 长度可判定（!minUnknown && !maxUnknown），
@@ -103,8 +106,9 @@ static ge::graphStatus InferDataType4FakeQuantWithMinMaxVarsPerChannel(gert::Inf
     for (size_t index = 0U; index < 3U; ++index) {
         const ge::DataType dtype = context->GetInputDataType(index);
         if (dtype != ge::DT_UNDEFINED && dtype != ge::DT_FLOAT) {
-            OP_LOGE(context, "FakeQuantPC: input %zu dtype %d is not supported, only float32", index,
-                    static_cast<int>(dtype));
+            const char* paramName = (index == 0U) ? "x" : ((index == 1U) ? "min" : "max");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), paramName, Ops::Base::ToString(dtype).c_str(),
+                                                  "only FLOAT32 is supported");
             return ge::GRAPH_FAILED;
         }
     }

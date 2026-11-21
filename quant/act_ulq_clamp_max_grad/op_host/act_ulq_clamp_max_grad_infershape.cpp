@@ -82,13 +82,19 @@ static ge::graphStatus InferShape4ActULQClampMaxGrad(gert::InferShapeContext* co
 
     // 输入 rank 上限 8（不支持 9 维及以上 Tensor）
     OP_CHECK_IF(yGradShape->GetDimNum() > 8,
-                OP_LOGE(context, "ActULQClampMaxGrad: input rank %zu exceeds 8 (9D+ tensor not supported)",
-                        yGradShape->GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "y_grad",
+                                                         (std::to_string(yGradShape->GetDimNum()) + "D").c_str(),
+                                                         "input rank must be in [0, 8]"),
                 return ge::GRAPH_FAILED);
 
     // 校验三输入 shape 完全相同（broadcast.kind: none）
     OP_CHECK_IF(!ShapeEqual(*yGradShape, *maskShape) || !ShapeEqual(*yGradShape, *xLossShape),
-                OP_LOGE(context, "ActULQClampMaxGrad: three inputs must have identical shape (no broadcast)"),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "y_grad, clamp_max_mask, x_clamped_loss",
+                    (Ops::Base::ToString(*yGradShape) + ", " + Ops::Base::ToString(*maskShape) + ", " +
+                     Ops::Base::ToString(*xLossShape))
+                        .c_str(),
+                    "the three inputs must have identical shape (no broadcast)"),
                 return ge::GRAPH_FAILED);
 
     // 全轴归约 → 输出 0 维标量 shape=()

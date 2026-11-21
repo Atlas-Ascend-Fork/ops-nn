@@ -23,10 +23,25 @@
 #include <iostream>
 #include <vector>
 
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "infershape_test_util.h"
 #include "ut_op_common.h"
 #include "log/log.h"
 #include "../../../op_graph/fake_quant_with_min_max_vars_per_channel_proto.h"
+
+static void ExpectSingleError(const std::string& code, const std::initializer_list<std::string>& parts)
+{
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    std::string dump;
+    for (const auto& error : errors) {
+        dump += error.error_id + " | " + error.error_message + "\n";
+    }
+    ASSERT_EQ(errors.size(), 1U) << dump;
+    EXPECT_EQ(errors[0].error_id, code) << dump;
+    for (const auto& part : parts) {
+        EXPECT_NE(errors[0].error_message.find(part), std::string::npos) << errors[0].error_message;
+    }
+}
 
 class FakeQuantWithMinMaxVarsPerChannelInferShapeTest : public testing::Test {
 protected:
@@ -135,7 +150,23 @@ TEST_F(FakeQuantWithMinMaxVarsPerChannelInferShapeTest, infer_shape_x_rank_over_
     op.UpdateInputDesc("max", create_desc({1}, ge::DT_FLOAT));
 
     Runtime2TestParam param;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0012", {"x", "9D"});
+}
+
+// 负向：x rank 0 低于下界（README 约束 x rank∈[1,8]）
+TEST_F(FakeQuantWithMinMaxVarsPerChannelInferShapeTest, infer_shape_x_rank_zero_failed)
+{
+    ge::op::FakeQuantWithMinMaxVarsPerChannel op;
+    op.UpdateInputDesc("x", create_desc({}, ge::DT_FLOAT));
+    op.UpdateInputDesc("min", create_desc({1}, ge::DT_FLOAT));
+    op.UpdateInputDesc("max", create_desc({1}, ge::DT_FLOAT));
+
+    Runtime2TestParam param;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0012", {"x", "0D"});
 }
 
 // 负向：min/max 长度 != x 末维 C
@@ -159,7 +190,9 @@ TEST_F(FakeQuantWithMinMaxVarsPerChannelInferShapeTest, infer_shape_min_max_rank
     op.UpdateInputDesc("max", create_desc({1, 4}, ge::DT_FLOAT));
 
     Runtime2TestParam param;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0013", {"min, max", "2D"});
 }
 
 // 负向：num_bits=17 越界（README 约束 [2,16]）
@@ -200,5 +233,7 @@ TEST_F(FakeQuantWithMinMaxVarsPerChannelInferShapeTest, infer_dtype_non_float_fa
                               .Build();
     auto context = context_holder.GetContext<gert::InferDataTypeContext>();
     ASSERT_NE(context, nullptr);
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     EXPECT_EQ(infer_dtype_func(context), ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0020", {"x", "DT_BFLOAT16"});
 }

@@ -37,6 +37,7 @@
 
 #include <iostream>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "tiling_context_faker.h"
 #include "tiling_case_executor.h"
 #include "../../../../op_host/arch35/act_ulq_clamp_max_grad_tiling_arch35.h"
@@ -86,6 +87,20 @@ static bool RunTiling(const gert::TilingContextPara& para, TilingInfo& info, con
     EXPECT_GE(info.tilingDataSize, sizeof(ActULQClampMaxGradTilingData));
     td = reinterpret_cast<const ActULQClampMaxGradTilingData*>(info.tilingData.get());
     return true;
+}
+
+static void ExpectSingleError(const std::string& code, const std::initializer_list<std::string>& parts)
+{
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    std::string dump;
+    for (const auto& error : errors) {
+        dump += error.error_id + " | " + error.error_message + "\n";
+    }
+    ASSERT_EQ(errors.size(), 1U) << dump;
+    EXPECT_EQ(errors[0].error_id, code) << dump;
+    for (const auto& part : parts) {
+        EXPECT_NE(errors[0].error_message.find(part), std::string::npos) << errors[0].error_message;
+    }
 }
 
 class ActULQClampMaxGradTilingTest : public testing::Test {
@@ -318,6 +333,108 @@ TEST_F(ActULQClampMaxGradTilingTest, fail_shape_mismatch)
     std::vector<gert::TilingContextPara::OpAttr> attrs;
     gert::TilingContextPara para(OP_NAME, inputs, outputs, attrs, &g_compileInfo, kCoreNum, kUbSize, kTilingDataSize);
     ExecuteTestCase(para, ge::GRAPH_FAILED, 0, std::string(""), {});
+}
+
+// ---------------------------------------------------------------------------
+// 错误码负向用例
+// ---------------------------------------------------------------------------
+static gert::TilingContextPara MakeParaShapes(const std::vector<int64_t>& yShape, const std::vector<int64_t>& mShape,
+                                              const std::vector<int64_t>& xShape, ge::DataType yGradDt,
+                                              ge::DataType maskDt, ge::DataType xLossDt)
+{
+    auto buildShape = [](const std::vector<int64_t>& dims) {
+        gert::StorageShape s;
+        for (int64_t d : dims) {
+            s.MutableOriginShape().AppendDim(d);
+            s.MutableStorageShape().AppendDim(d);
+        }
+        return s;
+    };
+    gert::StorageShape ys = buildShape(yShape);
+    gert::StorageShape ms = buildShape(mShape);
+    gert::StorageShape xs = buildShape(xShape);
+    std::vector<gert::TilingContextPara::TensorDescription> inputs({
+        {ys, yGradDt, ge::FORMAT_ND},
+        {ms, maskDt, ge::FORMAT_ND},
+        {xs, xLossDt, ge::FORMAT_ND},
+    });
+    std::vector<gert::TilingContextPara::TensorDescription> outputs({
+        {gert::StorageShape{{}, {}}, yGradDt, ge::FORMAT_ND},
+    });
+    std::vector<gert::TilingContextPara::OpAttr> attrs;
+    return gert::TilingContextPara(OP_NAME, inputs, outputs, attrs, &g_compileInfo, kCoreNum, kUbSize, kTilingDataSize);
+}
+
+TEST_F(ActULQClampMaxGradTilingTest, error_rank_mismatch_reports_ez0013)
+{
+    auto para = MakeParaShapes({2, 2}, {2, 2, 2}, {2, 2}, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT);
+    TilingInfo info;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, info));
+    ExpectSingleError("EZ0013", {"y_grad, clamp_max_mask, x_clamped_loss", "same rank"});
+}
+
+TEST_F(ActULQClampMaxGradTilingTest, error_rank_nine_reports_ez0012)
+{
+    auto para = MakePara({1, 1, 1, 1, 1, 1, 1, 1, 1}, ge::DT_FLOAT, ge::DT_FLOAT);
+    TilingInfo info;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, info));
+    ExpectSingleError("EZ0012", {"y_grad", "9D"});
+}
+
+TEST_F(ActULQClampMaxGradTilingTest, error_shape_mismatch_reports_ez0010)
+{
+    auto para = MakeParaShapes({8, 8}, {8, 4}, {8, 8}, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT);
+    TilingInfo info;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, info));
+    ExpectSingleError("EZ0010", {"y_grad, clamp_max_mask, x_clamped_loss", "identical shape"});
+}
+
+TEST_F(ActULQClampMaxGradTilingTest, error_negative_dim_reports_ez0009)
+{
+    auto para = MakePara({-1, 8}, ge::DT_FLOAT, ge::DT_FLOAT);
+    TilingInfo info;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, info));
+    ExpectSingleError("EZ0009", {"y_grad", "-1, 8", "dynamic shape"});
+}
+
+TEST_F(ActULQClampMaxGradTilingTest, error_y_grad_dtype_reports_ez0020)
+{
+    auto para = MakePara({8, 8}, ge::DT_INT32, ge::DT_FLOAT);
+    TilingInfo info;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, info));
+    ExpectSingleError("EZ0020", {"y_grad", "DT_INT32"});
+}
+
+TEST_F(ActULQClampMaxGradTilingTest, error_mask_dtype_reports_ez0020)
+{
+    auto para = MakePara({8, 8}, ge::DT_FLOAT, ge::DT_INT8);
+    TilingInfo info;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, info));
+    ExpectSingleError("EZ0020", {"clamp_max_mask", "DT_INT8"});
+}
+
+TEST_F(ActULQClampMaxGradTilingTest, error_x_loss_dtype_reports_ez0020)
+{
+    auto para = MakeParaShapes({8, 8}, {8, 8}, {8, 8}, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_INT8);
+    TilingInfo info;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, info));
+    ExpectSingleError("EZ0020", {"x_clamped_loss", "DT_INT8"});
+}
+
+TEST_F(ActULQClampMaxGradTilingTest, error_dtype_combination_reports_ez0021)
+{
+    auto para = MakeParaShapes({8, 8}, {8, 8}, {8, 8}, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT16);
+    TilingInfo info;
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, info));
+    ExpectSingleError("EZ0021", {"y_grad, clamp_max_mask, x_clamped_loss", "DT_FLOAT16, DT_FLOAT, DT_FLOAT16"});
 }
 
 } // namespace ActULQClampMaxGradUT

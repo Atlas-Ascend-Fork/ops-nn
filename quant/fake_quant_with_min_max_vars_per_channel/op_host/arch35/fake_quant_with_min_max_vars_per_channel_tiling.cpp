@@ -137,12 +137,18 @@ static int64_t SelectMode(gert::TilingContext* context, ge::DataType xDtype, con
                           const gert::Shape& minShape, const gert::Shape& maxShape, int64_t numBits)
 {
     OP_CHECK_IF(xDtype != ge::DT_FLOAT,
-                OP_LOGE(context, "FakeQuantPC: only fp32 supported, got dtype=%d", static_cast<int>(xDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(xDtype).c_str(),
+                                                      "only FLOAT32 is supported"),
                 return -1);
 
-    OP_CHECK_IF(xShape.GetDimNum() < 1, OP_LOGE(context, "FakeQuantPC: x rank must >= 1"), return -1);
+    OP_CHECK_IF(xShape.GetDimNum() < 1,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", "0D", "x rank must be in [1, 8]"),
+                return -1);
     OP_CHECK_IF(xShape.GetDimNum() > kMaxRank,
-                OP_LOGE(context, "FakeQuantPC: x rank %zu exceeds max %zu", xShape.GetDimNum(), kMaxRank), return -1);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x",
+                                                         (std::to_string(xShape.GetDimNum()) + "D").c_str(),
+                                                         "x rank must be in [1, 8]"),
+                return -1);
     // 未知维守卫：x 任一维为负（含 -1/-2 未知标记）时维度语义未定，不得当作 0/空张量
     // 静默成功（否则 min/max 长度同为 -1 时可穿过相等校验，下发 blockFactor=0、
     // tailDim=-1 的空计划且不报错，非空输入不会被写入）。
@@ -153,19 +159,32 @@ static int64_t SelectMode(gert::TilingContext* context, ge::DataType xDtype, con
                     return -1);
     }
     OP_CHECK_IF(minShape.GetDimNum() != 1,
-                OP_LOGE(context, "FakeQuantPC: min rank must be 1, got %zu", minShape.GetDimNum()), return -1);
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "min",
+                                             (std::to_string(minShape.GetDimNum()) + "D").c_str(), "1D"),
+                return -1);
     OP_CHECK_IF(maxShape.GetDimNum() != 1,
-                OP_LOGE(context, "FakeQuantPC: max rank must be 1, got %zu", maxShape.GetDimNum()), return -1);
-    OP_CHECK_IF(minShape.GetDim(0) != maxShape.GetDim(0), OP_LOGE(context, "FakeQuantPC: min/max shape mismatch"),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "max",
+                                             (std::to_string(maxShape.GetDimNum()) + "D").c_str(), "1D"),
+                return -1);
+    OP_CHECK_IF(minShape.GetDim(0) != maxShape.GetDim(0),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "min, max",
+                    (Ops::Base::ToString(minShape) + ", " + Ops::Base::ToString(maxShape)).c_str(),
+                    "min and max must have the same shape"),
                 return -1);
     OP_CHECK_IF(minShape.GetDim(0) < 0,
                 OP_LOGE(context, "FakeQuantPC: min/max length %ld is not a concrete size", minShape.GetDim(0)),
                 return -1);
 
     int64_t xTail = xShape.GetDim(xShape.GetDimNum() - 1);
-    OP_CHECK_IF(minShape.GetDim(0) != xTail,
-                OP_LOGE(context, "FakeQuantPC: min/max length (%ld) != x tail dim (%ld)", minShape.GetDim(0), xTail),
-                return -1);
+    OP_CHECK_IF(
+        minShape.GetDim(0) != xTail,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "min, max, x",
+            (Ops::Base::ToString(minShape) + ", " + Ops::Base::ToString(maxShape) + ", " + Ops::Base::ToString(xShape))
+                .c_str(),
+            "the length of min and max must be equal to the last dim of x"),
+        return -1);
 
     OP_CHECK_IF(numBits < 2 || numBits > 16, OP_LOGE(context, "FakeQuantPC: num_bits must in [2,16], got %ld", numBits),
                 return -1);
@@ -404,14 +423,16 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelTilingFunc(gert::TilingC
     OP_CHECK_NULL_WITH_CONTEXT(context, minDesc);
     auto maxDesc = context->GetInputDesc(2);
     OP_CHECK_NULL_WITH_CONTEXT(context, maxDesc);
-    OP_CHECK_IF(
-        minDesc->GetDataType() != ge::DT_FLOAT,
-        OP_LOGE(context, "FakeQuantPC: min must be fp32, got dtype=%d", static_cast<int>(minDesc->GetDataType())),
-        return ge::GRAPH_FAILED);
-    OP_CHECK_IF(
-        maxDesc->GetDataType() != ge::DT_FLOAT,
-        OP_LOGE(context, "FakeQuantPC: max must be fp32, got dtype=%d", static_cast<int>(maxDesc->GetDataType())),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(minDesc->GetDataType() != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "min",
+                                                      Ops::Base::ToString(minDesc->GetDataType()).c_str(),
+                                                      "min dtype must be FLOAT32"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(maxDesc->GetDataType() != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "max",
+                                                      Ops::Base::ToString(maxDesc->GetDataType()).c_str(),
+                                                      "max dtype must be FLOAT32"),
+                return ge::GRAPH_FAILED);
 
     auto attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
@@ -434,7 +455,8 @@ static ge::graphStatus FakeQuantWithMinMaxVarsPerChannelTilingFunc(gert::TilingC
 
     // 3. SelectMode
     int64_t perMode = SelectMode(context, xDtype, xShape, minShape, maxShape, numBits);
-    OP_CHECK_IF(perMode != 2, OP_LOGE(context, "FakeQuantPC: SelectMode failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(perMode != 2, OP_LOGE_WITHOUT_REPORT(context, "FakeQuantPC: SelectMode failed"),
+                return ge::GRAPH_FAILED);
 
     // 4. MergeInputShape（连乘溢出即拒绝，不静默走空 tensor 分支）
     int64_t M = 0, N = 0;
