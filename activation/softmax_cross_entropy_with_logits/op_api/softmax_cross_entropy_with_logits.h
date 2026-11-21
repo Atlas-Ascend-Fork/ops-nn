@@ -22,4 +22,4 @@ std::tuple<aclTensor*, aclTensor*> SoftmaxCrossEntropyWithLogits(const aclTensor
                                                                  aclOpExecutor* executor);
 } // namespace l0op
 
-#endif // OP_API_INC_LEVEL0_GELU_H_
+#endif // OP_API_INC_LEVEL0_SOFTMAX_CROSS_ENTROPY_WITH_H_

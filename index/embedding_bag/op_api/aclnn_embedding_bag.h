@@ -67,4 +67,4 @@ ACLNN_API aclnnStatus aclnnEmbeddingBag(void* workspace, uint64_t workspaceSize,
 }
 #endif
 
-#endif // OP_API_INC_INDEX_COPY_H_
+#endif // OP_API_INC_EMBEDDING_BAG_H_
