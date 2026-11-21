@@ -39,6 +39,7 @@ constexpr size_t ATTR_INDEX_CEIL_MODE = 6;
 
 constexpr size_t EXPECTED_RANK = 4;
 constexpr size_t ATTR_LIST_SIZE = 4;
+constexpr int64_t UNKNOWN_DIM_VALUE = -1;
 
 static ge::graphStatus CheckAttrsValid(const gert::InferShapeContext* context)
 {
@@ -214,11 +215,15 @@ static bool IsDimCompatible(int64_t leftDim, int64_t rightDim)
     return leftDim < 0 || rightDim < 0 || leftDim == rightDim;
 }
 
-// -1 表示未知维，-2 表示未知 Rank，只有小于 -2 的维度值才非法
-static bool HasIllegalDimValue(const gert::Shape& shape)
+// 对齐 canndev VerifyMaxPoolV3GradShapeValid：
+// -1 表示未知维；-2 仅允许作为 unknown rank 的占位（[-2]），不能出现在已知 rank 的 shape 中。
+static bool HasIllegalDimValue(const gert::Shape& shape, bool unknownRank)
 {
+    if (unknownRank) {
+        return false;
+    }
     for (size_t i = 0; i < shape.GetDimNum(); ++i) {
-        if (shape.GetDim(i) < -2) {
+        if (shape.GetDim(i) < UNKNOWN_DIM_VALUE) {
             return true;
         }
     }
@@ -233,8 +238,15 @@ static ge::graphStatus HandleShape(const gert::InferShapeContext* context, const
     const bool origOutputUnknownRank = Ops::Base::IsUnknownRank(*origOutputShape);
     const bool gradUnknownRank = Ops::Base::IsUnknownRank(*gradShape);
 
+    // unknown rank 优先放行：此时无法用 4D/维度规则校验，输出直接置为 unknown rank。
+    if (origInputUnknownRank) {
+        Ops::Base::SetUnknownRank(*outGradShape);
+        OP_LOGD(context->GetNodeName(), "MaxPoolV3Grad infershape handle unknown rank.");
+        return ge::GRAPH_SUCCESS;
+    }
+
     // 已知 rank 的输入必须为 4D；含 -1 的 rank=3/5 仍非法，只有真正的 unknown rank([-2]) 放行
-    if (!origInputUnknownRank && origInputShape->GetDimNum() != EXPECTED_RANK) {
+    if (origInputShape->GetDimNum() != EXPECTED_RANK) {
         OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "orig_input",
                                      std::to_string(origInputShape->GetDimNum()).c_str(), "4");
         return ge::GRAPH_FAILED;
@@ -250,28 +262,25 @@ static ge::graphStatus HandleShape(const gert::InferShapeContext* context, const
         return ge::GRAPH_FAILED;
     }
 
-    // 必须在 unknown rank 提前返回之前拦截，避免非法动态维度被误放行
-    if (HasIllegalDimValue(*origInputShape) || HasIllegalDimValue(*origOutputShape) || HasIllegalDimValue(*gradShape)) {
+    // unknown rank 已在上面提前返回；这里只校验已知 rank 的维度不能小于 -1。
+    // 对齐 canndev VerifyMaxPoolV3GradShapeValid。
+    if (HasIllegalDimValue(*origInputShape, origInputUnknownRank) ||
+        HasIllegalDimValue(*origOutputShape, origOutputUnknownRank) ||
+        HasIllegalDimValue(*gradShape, gradUnknownRank)) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             context->GetNodeName(), "orig_input, orig_output, grad",
             (Ops::Base::ToString(*origInputShape) + ", " + Ops::Base::ToString(*origOutputShape) + ", " +
              Ops::Base::ToString(*gradShape))
                 .c_str(),
-            "dimension values must be at least -2");
+            "known-rank dimension values must be at least -1");
         return ge::GRAPH_FAILED;
     }
 
-    // out_grad 始终由 orig_input 决定：仅 orig_input 为 unknown rank 时输出才为 unknown rank
-    if (origInputUnknownRank) {
-        Ops::Base::SetUnknownRank(*outGradShape);
-        OP_LOGD(context->GetNodeName(), "MaxPoolV3Grad infershape handle unknown rank.");
-        return ge::GRAPH_SUCCESS;
-    }
-
+    // out_grad 始终由 orig_input 决定
     *outGradShape = *origInputShape;
 
+    const size_t channelIndex = dataFormat == "NCHW" ? 1 : 3;
     if (!origOutputUnknownRank) {
-        const size_t channelIndex = dataFormat == "NCHW" ? 1 : 3;
         if (!IsDimCompatible(origInputShape->GetDim(0), origOutputShape->GetDim(0)) ||
             !IsDimCompatible(origInputShape->GetDim(channelIndex), origOutputShape->GetDim(channelIndex))) {
             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
@@ -292,6 +301,17 @@ static ge::graphStatus HandleShape(const gert::InferShapeContext* context, const
                 }
             }
         }
+    }
+
+    // 对齐 canndev VerifyMaxPoolV3GradTensor：始终校验 orig_input 与 grad 的 N/C 维度。
+    // 即使 orig_output 的 N/C 为 -1，input 与 grad 已知的 N/C 也必须一致。
+    if (!gradUnknownRank && (!IsDimCompatible(origInputShape->GetDim(0), gradShape->GetDim(0)) ||
+                             !IsDimCompatible(origInputShape->GetDim(channelIndex), gradShape->GetDim(channelIndex)))) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "orig_input, grad",
+            (Ops::Base::ToString(*origInputShape) + ", " + Ops::Base::ToString(*gradShape)).c_str(),
+            "known N/C dimensions must match");
+        return ge::GRAPH_FAILED;
     }
 
     // ho/wo 输出尺寸公式由 Tiling 统一校验，InferShape 不重复推导
@@ -320,11 +340,6 @@ ge::graphStatus InferShapeMaxPoolV3Grad(gert::InferShapeContext* context)
         return ge::GRAPH_FAILED;
     }
 
-    ge::graphStatus ret = CheckAttrsValid(context);
-    if (ret != ge::GRAPH_SUCCESS) {
-        return ret;
-    }
-
     const gert::Shape* origInputShape = context->GetInputShape(ORIG_INPUT_INDEX);
     const gert::Shape* origOutputShape = context->GetInputShape(ORIG_OUTPUT_INDEX);
     const gert::Shape* gradShape = context->GetInputShape(GRAD_INDEX);
@@ -351,6 +366,18 @@ ge::graphStatus InferShapeMaxPoolV3Grad(gert::InferShapeContext* context)
                                                             "outGradShape is null; InferShape cannot continue"})),
         return ge::GRAPH_FAILED);
 
+    // unknownRank 优先于 attr 校验：unknown rank 输入无法用 4D/属性规则做进一步推导。
+    if (Ops::Base::IsUnknownRank(*origInputShape)) {
+        Ops::Base::SetUnknownRank(*outGradShape);
+        OP_LOGD(context->GetNodeName(), "MaxPoolV3Grad infershape handle unknown rank.");
+        return ge::GRAPH_SUCCESS;
+    }
+
+    ge::graphStatus ret = CheckAttrsValid(context);
+    if (ret != ge::GRAPH_SUCCESS) {
+        return ret;
+    }
+
     auto attrs = context->GetAttrs();
     OP_CHECK_IF(
         attrs == nullptr,
@@ -367,6 +394,9 @@ ge::graphStatus InferShapeMaxPoolV3Grad(gert::InferShapeContext* context)
     return HandleShape(context, std::string(dataFormatAttr), origInputShape, origOutputShape, gradShape, outGradShape);
 }
 
+// InferDataType 唯一实现与注册位于
+// op_graph/max_pool_v3_grad_graph_infer.cpp(IMPL_OP(MaxPoolV3Grad).InferDataType(...)), 含 dtype
+// 白名单与三输入一致性校验; op_host 仅保留 InferShape 注册。
 IMPL_OP_INFERSHAPE(MaxPoolV3Grad).InferShape(InferShapeMaxPoolV3Grad);
 
 } // namespace ops

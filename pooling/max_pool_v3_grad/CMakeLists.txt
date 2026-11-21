@@ -16,4 +16,4 @@ set(SUPPORT_TILING_DIR "arch35" "arch35" "arch35")
 add_modules_sources(HOSTNAME ${OPHOST_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR}
                     OPTYPE max_pool_v3_grad ACLNNTYPE aclnn_exclude
                     COMPUTE_UNIT ${SUPPORT_COMPUTE_UNIT} TILING_DIR ${SUPPORT_TILING_DIR}
-                    DISABLE_IN_OPP TRUE DEPENDENCIES pool_grad_common)
+                    DISABLE_IN_OPP TRUE DEPENDENCIES pool_grad_common pool_3d_common pool_utils)

@@ -102,7 +102,9 @@ public:
         }
     }
 
-private:
+    // 整型大核模板(PoolGradNCHWBigKernelV3)复用本类的前向/后向编排骨架与数据搬运,
+    // 相关成员开放为protected(仅访问权限调整, float路径行为不变)
+protected:
     TBufPool<TPosition::VECCALC> forwardBufPool_;
     TBufPool<TPosition::VECCALC> backwardBufPool_;
     TQue<QuePosition::VECIN, BK_BUFFER_NUM> inputQue_;
@@ -113,7 +115,7 @@ private:
     int64_t maxCount_ = 1;
     int64_t totalStageBufferSize_ = 0;
 
-private:
+protected:
     __aicore__ inline void InitForwardStageBuffers()
     {
         forwardBufPool_.InitBuffer(inputQue_, BK_BUFFER_NUM, static_cast<uint32_t>(Base::inputBufferSize_));

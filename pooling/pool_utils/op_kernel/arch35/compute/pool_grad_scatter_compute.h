@@ -85,6 +85,29 @@ __aicore__ inline void FilterMask(AscendC::Reg::MaskReg& preg, AscendC::Reg::Reg
     AscendC::Reg::MaskAnd(preg, preg, gtMask, allMask);
 }
 
+/*
+ * 功能：FilterMask 的 VF 可调用版本，按 T 泛化（int16_t/int32_t），内部完成边界常量准备。
+ * 说明：__simd_vf__ 内不能直接调用 __aicore__ 的 FilterMask，故单独提供 __simd_callee__ 版本。
+ */
+template <typename T>
+__simd_callee__ inline void FilterMaskVF(AscendC::Reg::MaskReg& preg, AscendC::Reg::RegTensor<T>& hIndexReg,
+                                         AscendC::Reg::RegTensor<T>& wIndexReg, T hMax, T wMax)
+{
+    AscendC::Reg::RegTensor<T> zeroConstReg;
+    AscendC::Reg::RegTensor<T> wMaxReg;
+    AscendC::Reg::RegTensor<T> hMaxReg;
+    AscendC::Reg::MaskReg gtMask = AscendC::Reg::CreateMask<T, AscendC::Reg::MaskPattern::ALL>();
+    AscendC::Reg::MaskReg allMask = AscendC::Reg::CreateMask<T, AscendC::Reg::MaskPattern::ALL>();
+    AscendC::Reg::Duplicate(zeroConstReg, T(0));
+    AscendC::Reg::Duplicate(hMaxReg, hMax);
+    AscendC::Reg::Duplicate(wMaxReg, wMax);
+    AscendC::Reg::Compare<T, AscendC::CMPMODE::GE>(gtMask, hIndexReg, zeroConstReg, gtMask);
+    AscendC::Reg::Compare<T, AscendC::CMPMODE::GT>(gtMask, hMaxReg, hIndexReg, gtMask);
+    AscendC::Reg::Compare<T, AscendC::CMPMODE::GE>(gtMask, wIndexReg, zeroConstReg, gtMask);
+    AscendC::Reg::Compare<T, AscendC::CMPMODE::GT>(gtMask, wMaxReg, wIndexReg, gtMask);
+    AscendC::Reg::MaskAnd(preg, preg, gtMask, allMask);
+}
+
 template <typename T>
 __aicore__ inline void GradientAcc(__local_mem__ computeType* yAddr, AscendC::Reg::RegTensor<computeType>& gradReg,
                                    AscendC::Reg::RegTensor<T>& argmaxReg, AscendC::Reg::MaskReg& pregArgmax)

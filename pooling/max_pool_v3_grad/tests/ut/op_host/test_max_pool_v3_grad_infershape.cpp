@@ -190,3 +190,129 @@ TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_unknown_dim_c_skip_compare)
     RunInfershape({1, -1, 4, 4}, {1, 2, 2, 2}, {1, 2, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
                   {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_SUCCESS, "[1, -1, 4, 4]");
 }
+
+namespace {
+void RunInferDataType(ge::DataType inputDtype, ge::DataType outputDtype, ge::DataType gradDtype,
+                      ge::graphStatus expectResult, ge::DataType expectOutputDtype = ge::DT_UNDEFINED)
+{
+    ge::DataType resultDtype = ge::DT_UNDEFINED;
+    auto holder = gert::InferDataTypeContextFaker()
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .NodeInputTd(0, inputDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, outputDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, gradDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, inputDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .InputDataTypes({&inputDtype, &outputDtype, &gradDtype})
+                      .OutputDataTypes({&resultDtype})
+                      .Build();
+    auto inferDtypeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3Grad")->infer_datatype;
+    ASSERT_NE(inferDtypeFunc, nullptr);
+    auto context = holder.GetContext<gert::InferDataTypeContext>();
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(inferDtypeFunc(context), expectResult);
+    if (expectResult == ge::GRAPH_SUCCESS) {
+        EXPECT_EQ(context->GetOutputDataType(0), expectOutputDtype);
+    }
+}
+} // namespace
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_nhwc_shape)
+{
+    RunInfershape({1, 4, 4, 2}, {1, 2, 2, 2}, {1, 2, 2, 2}, ge::DT_FLOAT, {1, 2, 2, 1}, {1, 2, 2, 1}, "CALCULATED",
+                  {0, 0, 0, 0}, "NHWC", false, false, ge::GRAPH_SUCCESS, "[1, 4, 4, 2]");
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_3d_orig_output)
+{
+    RunInfershape({1, 1, 4, 4}, {1, 2, 2}, {1, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_3d_grad)
+{
+    RunInfershape({1, 1, 4, 4}, {1, 1, 2, 2}, {1, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_illegal_dim)
+{
+    RunInfershape({1, 1, -3, 4}, {1, 1, 2, 2}, {1, 1, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_nc_mismatch)
+{
+    RunInfershape({2, 1, 4, 4}, {1, 1, 2, 2}, {1, 1, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_grad_output_mismatch)
+{
+    RunInfershape({1, 1, 4, 4}, {1, 1, 2, 2}, {1, 1, 2, 3}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_invalid_data_format)
+{
+    RunInfershape({1, 1, 4, 4}, {1, 1, 2, 2}, {1, 1, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCDHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_invalid_padding_mode)
+{
+    RunInfershape({1, 1, 4, 4}, {1, 1, 2, 2}, {1, 1, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "INVALID",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_invalid_stride)
+{
+    RunInfershape({1, 1, 4, 4}, {1, 1, 2, 2}, {1, 1, 2, 2}, ge::DT_FLOAT, {2, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_invalid_ksize)
+{
+    RunInfershape({1, 1, 4, 4}, {1, 1, 2, 2}, {1, 1, 2, 2}, ge::DT_FLOAT, {2, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_pads_negative)
+{
+    RunInfershape({1, 1, 4, 4}, {1, 1, 2, 2}, {1, 1, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {-1, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_pads_ge_ksize)
+{
+    RunInfershape({1, 1, 4, 4}, {1, 1, 2, 2}, {1, 1, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {2, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_known_rank_with_unknown_rank_dim)
+{
+    // -2 只能作为 unknown rank 的占位（[-2]），不能出现在已知 4D shape 中。
+    RunInfershape({-2, 1, 4, 4}, {1, 1, 2, 2}, {1, 1, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_unknown_rank_orig_output_grad_nc_mismatch)
+{
+    // 对齐 canndev VerifyMaxPoolV3GradTensor：orig_output 为 unknown rank 时仍需校验 input/grad 的 N/C。
+    RunInfershape({1, 2, 4, 4}, {-2}, {2, 2, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_unknown_output_n_input_grad_mismatch)
+{
+    // orig_output N 为 -1 时，input 与 grad 已知的 N 仍需一致。
+    RunInfershape({1, 2, 4, 4}, {-1, 2, 2, 2}, {2, 2, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3GradInfershapeTest, max_pool_v3_grad_fail_unknown_output_c_input_grad_mismatch)
+{
+    // orig_output C 为 -1 时，input 与 grad 已知的 C 仍需一致。
+    RunInfershape({1, 2, 4, 4}, {1, -1, 2, 2}, {1, 3, 2, 2}, ge::DT_FLOAT, {1, 1, 2, 2}, {1, 1, 2, 2}, "CALCULATED",
+                  {0, 0, 0, 0}, "NCHW", false, false, ge::GRAPH_FAILED);
+}

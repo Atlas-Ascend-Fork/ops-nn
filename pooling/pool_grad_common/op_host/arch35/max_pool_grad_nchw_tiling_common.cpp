@@ -72,7 +72,10 @@ void MaxPoolGradNCHWTilingCommon::DoBufferCalculate()
     splitData.inputBufferSize = splitData.highAxisInner * inputPlaneSizeHW * baseData.inputBytes;
     splitData.gradBufferSize = splitData.highAxisInner * inputPlaneSizeHW * baseData.inputBytes;
     splitData.argmaxBufferSize = splitData.highAxisInner * inputPlaneSizeHW * baseData.indexBytes;
-    splitData.outputBufferSize = splitData.highAxisInner * outputPlaneSizeHW * FLOAT32_SIZE;
+    const bool isFpCompute = inputData->inputDtype == ge::DT_FLOAT || inputData->inputDtype == ge::DT_FLOAT16 ||
+                             inputData->inputDtype == ge::DT_BF16;
+    const int64_t outputBytes = isFpCompute ? FLOAT32_SIZE : baseData.inputBytes;
+    splitData.outputBufferSize = splitData.highAxisInner * outputPlaneSizeHW * outputBytes;
 
     int64_t tmpTotalBufferSize = splitData.outputBufferSize + splitData.gradBufferSize + splitData.argmaxBufferSize;
     splitData.totalBufferSize = tmpTotalBufferSize * DOUBLE_BUFFER;
@@ -103,7 +106,7 @@ void MaxPoolGradNCHWTilingCommon::SplitUnalignHW()
 {
     PoolGradTiling::PoolGradNchwDims dims = GetNchwDims();
     PoolGradTiling::SplitUnalignHw(splitData, dims, baseData.isPad, baseData.isOverlap, baseData.proDataNumInOneBeatT2,
-                                   *this);
+                                   *this, GetMinTileArea());
 }
 
 void MaxPoolGradNCHWTilingCommon::SearchBestTiling()
@@ -161,13 +164,25 @@ void MaxPoolGradNCHWTilingCommon::AdjustInnerSplitForMultiCore()
         return;
     }
 
-    SearchOuterSingle(splitData.hOutputInner, splitData.isStrideAligned ? inputData->hStride : 1);
-    if (splitData.usedCoreNum >= baseData.totalCoreNum) {
-        DoBufferCalculate();
-        return;
+    const int64_t hStep = splitData.isStrideAligned ? inputData->hStride : 1;
+    const int64_t wStep = splitData.isStrideAligned ? inputData->wStride : 1;
+    const int64_t minTileArea = GetMinTileArea();
+    // 优先收缩边界重复代价更小的轴；hPro/wPro 越大，切该轴产生的重复 argmax 越多。
+    if (PreferHSplitFirst()) {
+        SearchOuterSingle(splitData.hOutputInner, hStep, splitData.wOutputInner, minTileArea);
+        if (splitData.usedCoreNum >= baseData.totalCoreNum) {
+            DoBufferCalculate();
+            return;
+        }
+        SearchOuterSingle(splitData.wOutputInner, wStep, splitData.hOutputInner, minTileArea);
+    } else {
+        SearchOuterSingle(splitData.wOutputInner, wStep, splitData.hOutputInner, minTileArea);
+        if (splitData.usedCoreNum >= baseData.totalCoreNum) {
+            DoBufferCalculate();
+            return;
+        }
+        SearchOuterSingle(splitData.hOutputInner, hStep, splitData.wOutputInner, minTileArea);
     }
-
-    SearchOuterSingle(splitData.wOutputInner, splitData.isStrideAligned ? inputData->wStride : 1);
     DoBufferCalculate();
 }
 

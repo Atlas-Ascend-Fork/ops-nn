@@ -18,6 +18,8 @@
 using namespace AscendC;
 using MaxPoolGradWithArgmaxNHWCNameSpace::MaxPoolGradWithArgmaxNCHWTilingCommonData;
 using MaxPoolGradWithArgmaxNHWCNameSpace::MaxPoolGradWithArgmaxSimtTilingCommonData;
+// 共享 TPL 声明(MaxPoolGrad)的 NHWC SEL 引用该结构, 生成代码会取其 sizeof
+using MaxPoolV3GradNHWCNameSpace::MaxPoolV3GradNHWCTilingData;
 using namespace PoolGradNameSpace;
 using namespace MaxPoolGradNCHWBigKernelNameSpace;
 using namespace MaxPoolGradNCHWSmallKernelNameSpace;

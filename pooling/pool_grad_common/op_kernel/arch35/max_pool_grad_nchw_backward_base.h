@@ -11,6 +11,8 @@
 #ifndef MAX_POOL_GRAD_NCHW_BACKWARD_BASE_H_
 #define MAX_POOL_GRAD_NCHW_BACKWARD_BASE_H_
 
+#include <type_traits>
+
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "max_pool_grad_struct.h"
@@ -34,8 +36,8 @@ using MaxPoolGradNCHWNameSpace::GenInitial3DIndicesNchw;
 
 constexpr int32_t BK_BUFFER_NUM = 2;
 constexpr int64_t RATIO = 2;
-constexpr int32_t HELP_BUFFER = 4096;
 constexpr uint32_t DOUBLE = 2;
+constexpr uint32_t NCHW_INT_INDEX_LANES = 64;
 
 template <typename T1, const uint32_t IS_CHECK_RANGE>
 class MaxPoolGradNCHWBackwardBase : protected MaxPoolGradNCHWCommonNameSpace::MaxPoolGradNchwCommonFields {
@@ -50,6 +52,16 @@ protected:
     __aicore__ inline void ProcessNoArgmaxBlock();
     __aicore__ inline void BackwardCompute(__local_mem__ computeType* yAddr, __local_mem__ T1* gradAddr,
                                            __local_mem__ int32_t* argmaxAddr);
+    __aicore__ inline void BackwardComputeDispatch(__local_mem__ int32_t* argmaxAddr);
+    __aicore__ inline void BackwardComputeInt(__local_mem__ T1* yAddr, __local_mem__ T1* gradAddr,
+                                              __local_mem__ int32_t* argmaxAddr);
+    template <const bool IS_OVERLAP>
+    __simd_vf__ inline void BackwardComputeIntSimdVf(__ubuf__ T1* yAddr, __ubuf__ T1* gradAddr,
+                                                     __ubuf__ int32_t* argmaxAddr, uint16_t hArgmax, uint16_t wArgmax,
+                                                     int32_t wArgmaxAligned, uint16_t highAxis, uint16_t wPro,
+                                                     uint16_t rowResidues, int32_t wFull, int32_t wOutAligned,
+                                                     int32_t wOutActual, int32_t hOutActual, int32_t curH, int32_t curW,
+                                                     int32_t ncStride, uint32_t wDivMagic, uint32_t wDivShift);
     template <const bool IS_OVERLAP>
     __aicore__ inline void singleLineProcessVF(__local_mem__ computeType* yAddr, __local_mem__ T1* gradAddr,
                                                __local_mem__ int32_t* argmaxAddr, __local_mem__ uint32_t* helpAddr);
@@ -75,7 +87,8 @@ protected:
 
     constexpr static int32_t BLOCK_SIZE = platform::GetUbBlockSize();
     constexpr static int32_t V_REG_SIZE = platform::GetVRegSize();
-    constexpr static int64_t MAX_DATA_NUM_IN_ONE_BLOCK = BLOCK_SIZE / sizeof(T1);
+    constexpr static int64_t MAX_DATA_NUM_IN_ONE_BLOCK =
+        BLOCK_SIZE / sizeof(T1) > BLOCK_SIZE / sizeof(int32_t) ? BLOCK_SIZE / sizeof(T1) : BLOCK_SIZE / sizeof(int32_t);
     constexpr static uint16_t vlArgmax_ = platform::GetVRegSize() / sizeof(int32_t);
 };
 
@@ -181,6 +194,36 @@ __aicore__ inline void MaxPoolGradNCHWBackwardBase<T1, IS_CHECK_RANGE>::Backward
         } else {
             multipleLineProcessVF2<false>(yAddr, gradAddr, argmaxAddr, helpAddr);
         }
+    }
+}
+
+template <typename T1, const uint32_t IS_CHECK_RANGE>
+__aicore__ inline void MaxPoolGradNCHWBackwardBase<T1, IS_CHECK_RANGE>::BackwardComputeDispatch(
+    __local_mem__ int32_t* argmaxAddr)
+{
+    uint32_t calCount = static_cast<uint32_t>(highAxisActual_ * hOutputActual_ * wOutputAligned_);
+
+    if constexpr (std::is_integral<T1>::value) {
+        LocalTensor<T1> yLocal = outputQue_.template AllocTensor<T1>();
+        Duplicate(yLocal, T1(0), calCount);
+        LocalTensor<T1> gradLocal = gradQue_.template DeQue<T1>();
+        __local_mem__ T1* yAddr = (__local_mem__ T1*)yLocal.GetPhyAddr();
+        __local_mem__ T1* gradAddr = (__local_mem__ T1*)gradLocal.GetPhyAddr();
+        BackwardComputeInt(yAddr, gradAddr, argmaxAddr);
+        outputQue_.EnQue(yLocal);
+        gradQue_.FreeTensor(gradLocal);
+    } else {
+        LocalTensor<computeType> yLocal = outputQue_.template AllocTensor<computeType>();
+        Duplicate(yLocal, computeType(0), calCount);
+        LocalTensor<T1> gradLocal = gradQue_.template DeQue<T1>();
+        __local_mem__ computeType* yAddr = (__local_mem__ computeType*)yLocal.GetPhyAddr();
+        __local_mem__ T1* gradAddr = (__local_mem__ T1*)gradLocal.GetPhyAddr();
+        BackwardCompute(yAddr, gradAddr, argmaxAddr);
+        if constexpr (!std::is_same<T1, float>::value) {
+            Cast(yLocal.ReinterpretCast<T1>(), yLocal, RoundMode::CAST_RINT, calCount);
+        }
+        outputQue_.EnQue(yLocal);
+        gradQue_.FreeTensor(gradLocal);
     }
 }
 
@@ -792,6 +835,181 @@ __aicore__ inline void MaxPoolGradNCHWBackwardBase<T1, IS_CHECK_RANGE>::multiple
                     yAddr, gradAddr, argmaxAddr, parallelRegIndex, parallelRegGrad, mask7, wOutputConstReg, curHIndex,
                     curWIndex, wOutputAligned, highOutputOffset, zeroConstReg, wMaxReg, hMaxReg, highOutputPlaneActual,
                     1);
+            }
+        }
+    }
+}
+
+template <typename T1, const uint32_t IS_CHECK_RANGE>
+__aicore__ inline void MaxPoolGradNCHWBackwardBase<T1, IS_CHECK_RANGE>::BackwardComputeInt(
+    __local_mem__ T1* yAddr, __local_mem__ T1* gradAddr, __local_mem__ int32_t* argmaxAddr)
+{
+    // 整数累加按原 dtype 位宽回绕，等价于先 int64 累加再截断到原 dtype。
+    const uint16_t hArgmax = static_cast<uint16_t>(hArgmaxActual_);
+    const uint16_t wArgmax = static_cast<uint16_t>(wArgmaxActual_);
+    const int64_t wArgmaxAligned = wArgmaxAligned_;
+    const uint16_t highAxis = static_cast<uint16_t>(highAxisActual_);
+    const uint16_t wPro = static_cast<uint16_t>(curWProBatchSize_ > 0 ? curWProBatchSize_ : 1);
+    // r 的实际处理行数在 AICore 侧算好，VF 内只做固定边界遍历。
+    const uint16_t rowResidues = wPro < wArgmax ? wPro : wArgmax;
+    const bool isOverlap = isOverlap_;
+    const int32_t wFull = static_cast<int32_t>(wOutput_);
+    const int32_t wOutAligned = static_cast<int32_t>(wOutputAligned_);
+    const int32_t wOutActual = static_cast<int32_t>(wOutputActual_);
+    const int32_t hOutActual = static_cast<int32_t>(hOutputActual_);
+    const int32_t curH = static_cast<int32_t>(hAxisIndex_ * hOutputInner_);
+    const int32_t curW = static_cast<int32_t>(wAxisIndex_ * wOutputInner_);
+    const int32_t ncStride = hOutActual * wOutAligned;
+
+    uint32_t wDivMagic = 0;
+    uint32_t wDivShift = 0;
+    GetUintDivMagicAndShift<uint32_t>(wDivMagic, wDivShift, static_cast<uint32_t>(wFull));
+
+    if (isOverlap) {
+        this->template BackwardComputeIntSimdVf<true>(yAddr, gradAddr, argmaxAddr, hArgmax, wArgmax, wArgmaxAligned,
+                                                      highAxis, wPro, rowResidues, wFull, wOutAligned, wOutActual,
+                                                      hOutActual, curH, curW, ncStride, wDivMagic, wDivShift);
+    } else {
+        this->template BackwardComputeIntSimdVf<false>(yAddr, gradAddr, argmaxAddr, hArgmax, wArgmax, wArgmaxAligned,
+                                                       highAxis, wPro, rowResidues, wFull, wOutAligned, wOutActual,
+                                                       hOutActual, curH, curW, ncStride, wDivMagic, wDivShift);
+    }
+}
+
+template <typename T1, const uint32_t IS_CHECK_RANGE>
+template <const bool IS_OVERLAP>
+__simd_vf__ inline void MaxPoolGradNCHWBackwardBase<T1, IS_CHECK_RANGE>::BackwardComputeIntSimdVf(
+    __ubuf__ T1* yAddr, __ubuf__ T1* gradAddr, __ubuf__ int32_t* argmaxAddr, uint16_t hArgmax, uint16_t wArgmax,
+    int32_t wArgmaxAligned, uint16_t highAxis, uint16_t wPro, uint16_t rowResidues, int32_t wFull, int32_t wOutAligned,
+    int32_t wOutActual, int32_t hOutActual, int32_t curH, int32_t curW, int32_t ncStride, uint32_t wDivMagic,
+    uint32_t wDivShift)
+{
+    Reg::RegTensor<int32_t> laneIdx;
+    Reg::RegTensor<int32_t> wLocal;
+    Reg::RegTensor<int32_t> argOff;
+    Reg::RegTensor<int32_t> gradOff;
+    Reg::RegTensor<int32_t> targetIdx;
+    Reg::RegTensor<int32_t> wIdx;
+    Reg::RegTensor<int32_t> hLocal;
+    Reg::RegTensor<int32_t> wLocalIn;
+    Reg::RegTensor<int32_t> yOff;
+    Reg::RegTensor<uint32_t> divResult;
+    Reg::RegTensor<uint32_t> wDivMagicReg;
+    Reg::MaskReg allMask = Reg::CreateMask<int32_t, Reg::MaskPattern::ALL>();
+    Reg::Duplicate(wDivMagicReg, wDivMagic);
+
+    for (uint16_t nc = 0; nc < highAxis; nc++) {
+        const int64_t argBase = static_cast<int64_t>(nc) * hArgmax * wArgmax;
+        const int64_t gradBase = static_cast<int64_t>(nc) * hArgmax * wArgmaxAligned;
+        for (uint16_t h = 0; h < hArgmax; h++) {
+            const int64_t argRowBase = argBase + static_cast<int64_t>(h) * wArgmax;
+            const int64_t gradRowBase = gradBase + static_cast<int64_t>(h) * wArgmaxAligned;
+            for (uint16_t r = 0; r < rowResidues; r++) {
+                // 同一余数组内各 chunk 的目标地址互不重叠，屏障只需在组间/行间切换时插入。
+                // 统一按 IS_OVERLAP 模板参数无条件执行，避免 VF 内出现运行时 if；首轮多一次屏障不影响正确性。
+                if constexpr (IS_OVERLAP) {
+                    Reg::LocalMemBar<Reg::MemType::VEC_STORE, Reg::MemType::VEC_LOAD>();
+                }
+                const uint16_t cols = static_cast<uint16_t>((wArgmax - r + wPro - 1) / wPro);
+                const uint16_t chunks = static_cast<uint16_t>((cols + NCHW_INT_INDEX_LANES - 1) / NCHW_INT_INDEX_LANES);
+                for (uint16_t chunk = 0; chunk < chunks; chunk++) {
+                    const uint16_t c0 = static_cast<uint16_t>(chunk * NCHW_INT_INDEX_LANES);
+                    Reg::Arange(laneIdx, static_cast<int32_t>(0));
+                    Reg::Adds(laneIdx, laneIdx, static_cast<int32_t>(c0), allMask);
+                    Reg::Muls(wLocal, laneIdx, static_cast<int32_t>(wPro), allMask);
+                    Reg::Adds(wLocal, wLocal, static_cast<int32_t>(r), allMask);
+                    Reg::Adds(argOff, wLocal, static_cast<int32_t>(argRowBase), allMask);
+                    Reg::Adds(gradOff, wLocal, static_cast<int32_t>(gradRowBase), allMask);
+
+                    // 用向量比较生成有效 lane 掩码，替代标量 count/UpdateMask。
+                    Reg::MaskReg mask32;
+                    Reg::Compares<int32_t, CMPMODE::LT>(mask32, laneIdx, static_cast<int32_t>(cols), allMask);
+                    Reg::DataCopyGather(targetIdx, argmaxAddr, (Reg::RegTensor<uint32_t>&)argOff, mask32);
+
+                    // argmax 中是全局 h/w 扁平偏移，用 fast-div 换算到当前 block 的 y 缓冲布局。
+                    PoolUtils::Index::FastDivImplVF(divResult, (Reg::RegTensor<uint32_t>&)targetIdx, wDivMagicReg,
+                                                    static_cast<int16_t>(wDivShift), mask32);
+                    Reg::Muls(wIdx, (Reg::RegTensor<int32_t>&)divResult, wFull, mask32);
+                    Reg::Sub(wIdx, targetIdx, wIdx, mask32);
+                    Reg::Adds(hLocal, (Reg::RegTensor<int32_t>&)divResult, -curH, mask32);
+                    Reg::Adds(wLocalIn, wIdx, -curW, mask32);
+                    Reg::Muls(yOff, hLocal, wOutAligned, mask32);
+                    Reg::Add(yOff, yOff, wLocalIn, mask32);
+                    Reg::Adds(yOff, yOff, static_cast<int32_t>(nc) * ncStride, mask32);
+
+                    if constexpr (sizeof(T1) == 1) {
+                        Reg::RegTensor<uint16_t> yOffU16;
+                        Reg::RegTensor<uint16_t> gradOffU16;
+                        Reg::Pack(yOffU16, yOff);
+                        Reg::Pack(gradOffU16, gradOff);
+                        // Preserve the b32 lane validity when narrowing indices. The upper
+                        // half of a packed register does not contain additional input lanes.
+                        Reg::MaskReg mask16;
+                        Reg::Pack(mask16, mask32);
+                        if constexpr (IS_CHECK_RANGE == 1) {
+                            Reg::RegTensor<uint16_t> hLocU16;
+                            Reg::RegTensor<uint16_t> wLocU16;
+                            Reg::Pack(hLocU16, hLocal);
+                            Reg::Pack(wLocU16, wLocalIn);
+                            PoolUtils::Compute::FilterMaskVF<int16_t>(
+                                mask16, (Reg::RegTensor<int16_t>&)hLocU16, (Reg::RegTensor<int16_t>&)wLocU16,
+                                static_cast<int16_t>(hOutActual), static_cast<int16_t>(wOutActual));
+                        }
+                        Reg::RegTensor<int16_t> yReg;
+                        Reg::RegTensor<int16_t> gradReg;
+                        Reg::DataCopyGather(yReg, yAddr, yOffU16, mask16);
+                        Reg::DataCopyGather(gradReg, gradAddr, gradOffU16, mask16);
+                        // b8 的 scatter 按 b16 掩码取每个 lane 的低字节写回，等价于模 256 回绕，
+                        // 无需 Cast/Pack 改变 lane 映射。
+                        Reg::Add(yReg, yReg, gradReg, mask16);
+                        Reg::DataCopyScatter((__local_mem__ int8_t*)yAddr, (Reg::RegTensor<int8_t>&)yReg, yOffU16,
+                                             mask16);
+                    } else if constexpr (sizeof(T1) == 2) {
+                        Reg::RegTensor<uint16_t> yOffU16;
+                        Reg::RegTensor<uint16_t> gradOffU16;
+                        Reg::Pack(yOffU16, yOff);
+                        Reg::Pack(gradOffU16, gradOff);
+                        // Preserve the b32 lane validity when narrowing indices. The upper
+                        // half of a packed register does not contain additional input lanes.
+                        Reg::MaskReg mask16;
+                        Reg::Pack(mask16, mask32);
+                        if constexpr (IS_CHECK_RANGE == 1) {
+                            Reg::RegTensor<uint16_t> hLocU16;
+                            Reg::RegTensor<uint16_t> wLocU16;
+                            Reg::Pack(hLocU16, hLocal);
+                            Reg::Pack(wLocU16, wLocalIn);
+                            PoolUtils::Compute::FilterMaskVF<int16_t>(
+                                mask16, (Reg::RegTensor<int16_t>&)hLocU16, (Reg::RegTensor<int16_t>&)wLocU16,
+                                static_cast<int16_t>(hOutActual), static_cast<int16_t>(wOutActual));
+                        }
+                        Reg::RegTensor<T1> yReg;
+                        Reg::RegTensor<T1> gradReg;
+                        Reg::DataCopyGather(yReg, yAddr, yOffU16, mask16);
+                        Reg::DataCopyGather(gradReg, gradAddr, gradOffU16, mask16);
+                        Reg::Add(yReg, yReg, gradReg, mask16);
+                        Reg::DataCopyScatter(yAddr, yReg, yOffU16, mask16);
+                    } else if constexpr (sizeof(T1) == 4) {
+                        if constexpr (IS_CHECK_RANGE == 1) {
+                            PoolUtils::Compute::FilterMaskVF<int32_t>(mask32, hLocal, wLocalIn, hOutActual, wOutActual);
+                        }
+                        Reg::RegTensor<T1> yReg;
+                        Reg::RegTensor<T1> gradReg;
+                        Reg::DataCopyGather(yReg, yAddr, (Reg::RegTensor<uint32_t>&)yOff, mask32);
+                        Reg::DataCopyGather(gradReg, gradAddr, (Reg::RegTensor<uint32_t>&)gradOff, mask32);
+                        Reg::Add(yReg, yReg, gradReg, mask32);
+                        Reg::DataCopyScatter(yAddr, yReg, (Reg::RegTensor<uint32_t>&)yOff, mask32);
+                    } else {
+                        if constexpr (IS_CHECK_RANGE == 1) {
+                            PoolUtils::Compute::FilterMaskVF<int32_t>(mask32, hLocal, wLocalIn, hOutActual, wOutActual);
+                        }
+                        Reg::RegTensor<T1, Reg::RegTraitNumTwo> yReg;
+                        Reg::RegTensor<T1, Reg::RegTraitNumTwo> gradReg;
+                        Reg::DataCopyGather(yReg, yAddr, (Reg::RegTensor<uint32_t>&)yOff, mask32);
+                        Reg::DataCopyGather(gradReg, gradAddr, (Reg::RegTensor<uint32_t>&)gradOff, mask32);
+                        Reg::Add(yReg, yReg, gradReg, mask32);
+                        Reg::DataCopyScatter(yAddr, yReg, (Reg::RegTensor<uint32_t>&)yOff, mask32);
+                    }
+                }
             }
         }
     }

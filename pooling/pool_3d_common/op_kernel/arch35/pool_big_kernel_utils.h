@@ -204,5 +204,116 @@ __aicore__ inline void ReduceMaxWithIndex(Reg::RegTensor<T>& dst, Reg::RegTensor
     Reg::Select(dstIndex, nanIndex, dstIndex, notNanMaskReg);
 }
 
+/*
+ * 功能：以下为上方工具的 __simd_vf__ 可调用版本（VF 变体），仅标记不同、函数体逐行一致。
+ * 说明：__simd_vf__ 内不能直接调用 __aicore__ 函数，故按惯例提供 __simd_callee__ 变体
+ *       （与 FilterMaskVF/GenInitial1DIndicesVF 同一模式），原函数及其余调用方不受影响。
+ */
+template <typename T, typename U, typename StorageT = T>
+__simd_callee__ inline void StoreOneElementVF(__ubuf__ StorageT* output, Reg::RegTensor<U>& src, Reg::MaskReg& preg,
+                                              uint32_t offset)
+{
+    // 强类型存储: 缓冲按StorageT声明, 单元素按T域写入; 跨域组合经模板实参显式声明, 类型不匹配在编译期暴露。
+    // b32分支的(__ubuf__ float*)为int32等32位域对b32搬运通道的位型复用, 非跨域 reinterpret。
+    __ubuf__ T* dstAddr = (__ubuf__ T*)(output) + offset;
+    if constexpr (IsSameType<T, half>::value) {
+        Reg::RegTensor<half> xFp16;
+        Reg::Cast<half, float, castTraitB322B16>(xFp16, src, preg);
+        Reg::StoreAlign<half, Reg::StoreDist::DIST_FIRST_ELEMENT_B16>(dstAddr, xFp16, preg);
+    } else if constexpr (IsSameType<T, bfloat16_t>::value) {
+        Reg::RegTensor<bfloat16_t> xBf16;
+        Reg::Cast<bfloat16_t, float, castTraitB322B16>(xBf16, src, preg);
+        Reg::StoreAlign<bfloat16_t, Reg::StoreDist::DIST_FIRST_ELEMENT_B16>(dstAddr, xBf16, preg);
+    } else if constexpr (sizeof(T) == FOUR) {
+        Reg::StoreAlign<float, Reg::StoreDist::DIST_FIRST_ELEMENT_B32>((__ubuf__ float*)dstAddr,
+                                                                       (Reg::RegTensor<float>&)src, preg);
+    } else {
+        Reg::UnalignRegForStore u0;
+        Reg::StoreUnAlign(dstAddr, src, u0, 1);
+        Reg::StoreUnAlignPost(dstAddr, u0, 0);
+    }
+}
+
+template <typename T, typename U, typename StorageT = T>
+__simd_callee__ inline void LoadOneElementVF(const __ubuf__ StorageT* input, Reg::RegTensor<U>& dst, Reg::MaskReg& preg,
+                                             uint32_t offset)
+{
+    // 强类型加载: 缓冲按StorageT声明, 单元素按T域读取; 跨域组合经模板实参显式声明, 类型不匹配在编译期暴露。
+    __ubuf__ T* srcAddr = (__ubuf__ T*)(input) + offset;
+    if constexpr (IsSameType<T, half>::value) {
+        Reg::RegTensor<half> xFp16;
+        Reg::LoadAlign<half, Reg::LoadDist::DIST_BRC_B16>(xFp16, srcAddr);
+        Reg::Cast<float, half, castTraitB162B32>(dst, xFp16, preg);
+    } else if constexpr (IsSameType<T, bfloat16_t>::value) {
+        Reg::RegTensor<bfloat16_t> xBf16;
+        Reg::LoadAlign<bfloat16_t, Reg::LoadDist::DIST_BRC_B16>(xBf16, srcAddr);
+        Reg::Cast<float, bfloat16_t, castTraitB162B32>(dst, xBf16, preg);
+    } else if constexpr (sizeof(T) == FOUR) {
+        Reg::LoadAlign<T, Reg::LoadDist::DIST_BRC_B32>(dst, srcAddr);
+    } else {
+        Reg::UnalignRegForLoad u0;
+        Reg::LoadUnAlignPre(u0, srcAddr);
+        Reg::LoadUnAlign(dst, u0, srcAddr, 1);
+    }
+}
+
+template <typename T, bool SPLITKW>
+__simd_callee__ inline void CalcRealIndexVF(Reg::RegTensor<T>& resIndex, Reg::RegTensor<int32_t>& index, int64_t curKw,
+                                            int64_t inputW, int64_t offset)
+{
+    Reg::MaskReg pregOneIndex = Reg::CreateMask<int32_t, Reg::MaskPattern::VL1>();
+
+    Reg::RegTensor<T> indexCast;
+    if constexpr (IsSameType<T, int64_t>::value) {
+        Reg::Cast<int64_t, int32_t, castTraitB322B64>(indexCast, index, pregOneIndex);
+    } else {
+        Reg::Move(indexCast, index, pregOneIndex);
+    }
+    if constexpr (SPLITKW) {
+        Reg::Adds(resIndex, indexCast, static_cast<T>(offset), pregOneIndex);
+    } else {
+        Reg::RegTensor<T> wLen;
+        Reg::RegTensor<T> v0;
+        Reg::RegTensor<T> v1;
+        Reg::Duplicate(wLen, static_cast<T>(curKw), pregOneIndex);
+        Reg::Div(v0, indexCast, wLen, pregOneIndex);
+        Reg::Muls(resIndex, v0, inputW, pregOneIndex);
+        Reg::Adds(resIndex, resIndex, static_cast<T>(offset), pregOneIndex);
+        Reg::Mul(wLen, wLen, v0, pregOneIndex);
+        Reg::Sub(v0, indexCast, wLen, pregOneIndex);
+        Reg::Add(resIndex, resIndex, v0, pregOneIndex);
+    }
+}
+
+template <typename T>
+__simd_callee__ inline void ReduceMaxWithIndexVF(Reg::RegTensor<T>& dst, Reg::RegTensor<int32_t>& dstIndex,
+                                                 Reg::RegTensor<T>& src, Reg::RegTensor<int32_t>& srcIndex,
+                                                 int32_t indexPadValue)
+{
+    Reg::MaskReg maskAll = Reg::CreateMask<T, Reg::MaskPattern::ALL>();
+    Reg::MaskReg notNanMaskReg;
+    Reg::MaskReg nanMaskReg;
+    Reg::RegTensor<T> vd1;
+    Reg::RegTensor<T> vd2;
+    Reg::RegTensor<int32_t> nanIndex;
+    Reg::Duplicate(nanIndex, indexPadValue);
+    Reg::Compare<T, CMPMODE::NE>(nanMaskReg, src, src, maskAll);
+    Reg::Not(notNanMaskReg, nanMaskReg, maskAll);
+    Reg::Select(nanIndex, srcIndex, nanIndex, nanMaskReg);
+    Reg::Reduce<Reg::ReduceType::MAX>(nanIndex, nanIndex, maskAll);
+    Reg::Reduce<Reg::ReduceType::MAX>(vd1, src, notNanMaskReg);
+    Reg::Duplicate(vd2, vd1, maskAll);
+    Reg::Compare<T, CMPMODE::EQ>(notNanMaskReg, src, vd2, maskAll);
+    Reg::Reduce<Reg::ReduceType::MIN>(dstIndex, srcIndex, notNanMaskReg);
+    Reg::Compares<int32_t, CMPMODE::NE>(nanMaskReg, nanIndex, indexPadValue, maskAll);
+    Reg::Select(dstIndex, nanIndex, dstIndex, nanMaskReg);
+    Reg::Duplicate(dstIndex, dstIndex, maskAll);
+    Reg::Compare<int32_t, CMPMODE::EQ>(notNanMaskReg, dstIndex, srcIndex, maskAll);
+    Reg::Reduce<Reg::ReduceType::MAX>(dst, src, notNanMaskReg);
+    Reg::Compares<int32_t, CMPMODE::EQ>(notNanMaskReg, dstIndex, indexPadValue, maskAll);
+    Reg::Duplicate(nanIndex, static_cast<int32_t>(0));
+    Reg::Select(dstIndex, nanIndex, dstIndex, notNanMaskReg);
+}
+
 } // namespace PoolBigKernelUtils
 #endif // POOL_BIG_KERNEL_UTILS_H_

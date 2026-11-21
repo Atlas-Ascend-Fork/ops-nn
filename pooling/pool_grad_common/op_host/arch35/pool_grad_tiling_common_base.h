@@ -68,7 +68,7 @@ protected:
     {
         baseData.vRegSize = Ops::Base::GetVRegSize(context);
         baseData.ubBlockSize = Ops::Base::GetUbBlockSize(context);
-        baseData.inputBytes = inputData->inputDtype == ge::DT_FLOAT ? FLOAT32_SIZE : FLOAT16_SIZE;
+        baseData.inputBytes = ge::GetSizeByDataType(inputData->inputDtype);
         baseData.indexBytes = inputData->indexDtype == ge::DT_INT32 ? INT32_SIZE : INT64_SIZE;
         baseData.availableUb = ubSize - UB_RESVERVED_SIZE;
         baseData.totalCoreNum = coreNum;
@@ -90,23 +90,53 @@ protected:
         baseData.isOverlap = (baseData.hProBatchSize != 1 || baseData.wProBatchSize != 1) ? 1 : 0;
     }
 
-    void SearchOuterSingle(int64_t& inner, int64_t step)
+    /*
+     * 功能：在保持 normalCoreProcessNum 不增加的前提下，二分搜索最小的 inner。
+     * 说明：inner 越小 totalBaseBlockNum 越大，normalCoreProcessNum 单调不减，
+     *       因此可二分查找最后一个不增加 normalCoreProcessNum 的收缩步数，
+     *       替代原先逐步递减的线性搜索。
+     * otherInner/minArea 用于限制 tile 最小面积，避免小 shape 被切成 1×1。
+     */
+    void SearchOuterSingle(int64_t& inner, int64_t step, int64_t otherInner = 0, int64_t minArea = 1)
     {
-        int64_t lastNormal = splitData.normalCoreProcessNum;
-        while (inner > step) {
-            inner -= step;
-            DoBlockTiling();
-            int64_t newNormal = splitData.normalCoreProcessNum;
-            if (newNormal > lastNormal) {
-                inner += step;
-                DoBlockTiling();
-                break;
-            }
-            lastNormal = newNormal;
+        if (step <= 0) {
+            return;
         }
+        int64_t minInner = step;
+        if (otherInner > 0 && minArea > 1) {
+            const int64_t minByArea = Ops::Base::CeilDiv(minArea, otherInner);
+            minInner = std::max(minInner, Ops::Base::CeilDiv(minByArea, step) * step);
+        }
+        if (inner <= minInner) {
+            return;
+        }
+
+        const int64_t initialInner = inner;
+        const int64_t initialNormal = splitData.normalCoreProcessNum;
+        const int64_t maxSteps = (initialInner - minInner) / step;
+        int64_t low = 0;
+        int64_t high = maxSteps;
+        int64_t bestSteps = 0;
+        while (low <= high) {
+            const int64_t mid = low + (high - low) / 2;
+            inner = initialInner - mid * step;
+            DoBlockTiling();
+            if (splitData.normalCoreProcessNum <= initialNormal) {
+                bestSteps = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        inner = initialInner - bestSteps * step;
+        DoBlockTiling();
     }
 
     virtual void AdjustInnerSplitForMultiCore() = 0;
+    // 最小 tile 面积（元素数）；默认 1 表示保持原行为。
+    virtual int64_t GetMinTileArea() const { return 1; }
+    // H/W 都受限时优先收缩 H；默认保持原顺序。
+    virtual bool PreferHSplitFirst() const { return true; }
     virtual void DoBufferCalculate() = 0;
     virtual void DoUBTiling() = 0;
     virtual void DoBlockTiling() = 0;

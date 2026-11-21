@@ -123,7 +123,7 @@ def _select_index(window, floating):
     return index
 
 
-def _tf_max_pool_grad(orig_input, orig_output, grad, pool_params):
+def _tf_max_pool_grad(orig_input, orig_output, grad, pool_params, reverse_order=False):
     kernel_h, kernel_w, stride_h, stride_w, pad_top, pad_left, output_h, output_w = (
         pool_params
     )
@@ -145,13 +145,17 @@ def _tf_max_pool_grad(orig_input, orig_output, grad, pool_params):
     batch_index = np.arange(batch)[:, np.newaxis]
     channel_index = np.arange(channels)[np.newaxis, :]
 
-    for output_h_index in range(output_h):
+    # 反向遍历只改变重叠窗口的累加顺序，用于构造与 golden 不完全相同的三方结果。
+    # 每个窗口内部的 argmax 仍是 first-wins，窗口选择逻辑与正向完全一致。
+    h_range = range(output_h - 1, -1, -1) if reverse_order else range(output_h)
+    w_range = range(output_w - 1, -1, -1) if reverse_order else range(output_w)
+    for output_h_index in h_range:
         raw_h_start = output_h_index * stride_h - pad_top
         h_start = max(raw_h_start, 0)
         h_end = min(raw_h_start + kernel_h, input_h)
         if h_start >= h_end:
             continue
-        for output_w_index in range(output_w):
+        for output_w_index in w_range:
             raw_w_start = output_w_index * stride_w - pad_left
             w_start = max(raw_w_start, 0)
             w_end = min(raw_w_start + kernel_w, input_w)
@@ -170,7 +174,7 @@ def _tf_max_pool_grad(orig_input, orig_output, grad, pool_params):
     return tf.convert_to_tensor(result, dtype=orig_input.dtype)
 
 
-def _golden(orig_input, orig_output, grad, params):
+def _golden(orig_input, orig_output, grad, params, reverse_order=False):
     input_tensor, output_tensor, grad_tensor = (
         _tensor(orig_input),
         _tensor(orig_output),
@@ -189,7 +193,9 @@ def _golden(orig_input, orig_output, grad, params):
         return tf.zeros_like(input_tensor).numpy()
 
     pool_params = _pool_params(input_nhwc, output_nhwc, params, data_format)
-    result = _tf_max_pool_grad(input_nhwc, output_nhwc, grad_nhwc, pool_params)
+    result = _tf_max_pool_grad(
+        input_nhwc, output_nhwc, grad_nhwc, pool_params, reverse_order
+    )
     if data_format == "NCHW":
         result = tf.transpose(result, [0, 3, 1, 2])
     return tf.cast(result, input_tensor.dtype).numpy()
@@ -205,7 +211,15 @@ class MaxPoolV3GradKernelSpec:
             self.params = kwargs
 
         def __call__(self, orig_input, orig_output, grad, **kwargs):
-            return [_golden(orig_input, orig_output, grad, self.params)]
+            return [
+                _golden(
+                    orig_input,
+                    orig_output,
+                    grad,
+                    self.params,
+                    reverse_order=True,
+                )
+            ]
 
     third_party = {"tf": ThirdPartyImpl}
     tolerance = {

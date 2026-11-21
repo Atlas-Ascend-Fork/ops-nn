@@ -52,7 +52,8 @@ __aicore__ inline void GenInitial2DIndices(AscendC::Reg::RegTensor<T>& indexReg,
 }
 
 template <typename T>
-__aicore__ inline void Gen2DIndexOne(AscendC::Reg::RegTensor<T>& indexReg, int64_t rowGenRate, int64_t colNumAligned)
+__simd_callee__ inline void Gen2DIndexOne(AscendC::Reg::RegTensor<T>& indexReg, int64_t rowGenRate,
+                                          int64_t colNumAligned)
 {
     AscendC::Reg::Arange(indexReg, 0);
     AscendC::Reg::MaskReg preg = AscendC::Reg::CreateMask<T, AscendC::Reg::MaskPattern::ALL>();

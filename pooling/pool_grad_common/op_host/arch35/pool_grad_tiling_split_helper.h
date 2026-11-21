@@ -185,7 +185,7 @@ bool TrySplitAlignW(SplitInfo& splitData, const PoolGradNchwDims& d, TilingClass
  */
 template <typename SplitInfo, typename TilingClass>
 void SplitUnalignHw(SplitInfo& splitData, const PoolGradNchwDims& d, int64_t isPad, int64_t isOverlap,
-                    int64_t proDataNumInOneBeat, TilingClass& tiling)
+                    int64_t proDataNumInOneBeat, TilingClass& tiling, int64_t minTileArea = 1)
 {
     splitData.highAxisInner = 1;
     if (isPad == 0 && isOverlap == 0) {
@@ -200,6 +200,12 @@ void SplitUnalignHw(SplitInfo& splitData, const PoolGradNchwDims& d, int64_t isP
     splitData.hOutputOuter = Ops::Base::CeilDiv(d.hX, splitData.hOutputInner);
 
     while (splitData.hOutputInner != 1 || splitData.wOutputInner > proDataNumInOneBeat) {
+        // 面积已到下限且 UB 可容纳时停止继续切小，接受少量核利用率损失，
+        // 避免小 shape 被切成 1×1 导致向量 lane 严重浪费。
+        if (minTileArea > 1 && splitData.hOutputInner * splitData.wOutputInner <= minTileArea &&
+            splitData.wOutputInner <= proDataNumInOneBeat && tiling.IsMeetUBSize()) {
+            break;
+        }
         if (!tiling.IsMeetTargetCoreNum() || !tiling.IsMeetUBSize()) {
             tiling.DynamicAdjustmentWH();
         } else {
@@ -207,7 +213,11 @@ void SplitUnalignHw(SplitInfo& splitData, const PoolGradNchwDims& d, int64_t isP
         }
     }
 
-    splitData.wOutputInner = std::min(d.wX, proDataNumInOneBeat);
+    // 仅在 H 已切到 1 时才能把 W 放回整行；minTileArea 提前 break 时
+    // hOutputInner 可能仍 >1，此时放大会绕过 UB 校验。
+    if (splitData.hOutputInner == 1) {
+        splitData.wOutputInner = std::min(d.wX, proDataNumInOneBeat);
+    }
     return;
 }
 

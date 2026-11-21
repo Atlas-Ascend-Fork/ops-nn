@@ -23,8 +23,9 @@
 namespace PoolUtils {
 namespace Compute {
 
-__aicore__ inline void FastDivImpl(AscendC::Reg::RegTensor<uint32_t>& res, AscendC::Reg::RegTensor<uint32_t>& src,
-                                   AscendC::Reg::RegTensor<uint32_t>& magic, int16_t shift, AscendC::Reg::MaskReg& mask)
+__simd_callee__ inline void FastDivImpl(AscendC::Reg::RegTensor<uint32_t>& res, AscendC::Reg::RegTensor<uint32_t>& src,
+                                        AscendC::Reg::RegTensor<uint32_t>& magic, int16_t shift,
+                                        AscendC::Reg::MaskReg& mask)
 {
     AscendC::Reg::RegTensor<uint32_t> tmp;
     AscendC::Reg::Mull(tmp, res, src, magic, mask);
