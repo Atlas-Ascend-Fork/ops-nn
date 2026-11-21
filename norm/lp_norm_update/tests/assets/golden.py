@@ -98,6 +98,6 @@ class LpNormUpdateTestSpec:
 
     third_party = {"torch": TorchLpNormUpdate}
     tolerance = {
-        "float16": {"standard": "mix_tolerance"},
-        "float32": {"standard": "mix_tolerance"},
+        "float16": {"standard": "cross_check", "level": "L0"},
+        "float32": {"standard": "cross_check", "level": "L0"},
     }

@@ -64,10 +64,14 @@ static constexpr int32_t P_POS_INF = 2147483647;  // INT_MAX → +inf
 static constexpr int32_t P_NEG_INF = -2147483648; // INT_MIN → -inf
 
 // p 特殊值（V1 原型 p 为 int，直接用 int 比较，避免窄化为 float 后边界值误判）
-static constexpr int32_t P_ZERO = 0;     // p=0 → 恒等路径
-static constexpr int32_t P_ONE = 1;      // p=1 → 恒等路径
-static constexpr int32_t P_TWO = 2;      // p=2 → Sqrt 快速路径
-static constexpr float INV_P_TWO = 0.5f; // 1/p when p=2
+static constexpr int32_t P_ZERO = 0;            // p=0 → 恒等路径
+static constexpr int32_t P_ONE = 1;             // p=1 → 恒等路径
+static constexpr int32_t P_TWO = 2;             // p=2 → Sqrt 快速路径
+static constexpr int32_t P_MINUS_ONE = -1;      // p=-1 → Reciprocal 快速路径
+static constexpr int32_t P_MINUS_TWO = -2;      // p=-2 → Rsqrt 快速路径
+static constexpr float INV_P_TWO = 0.5f;        // 1/p when p=2
+static constexpr float INV_P_MINUS_ONE = -1.0f; // 1/p when p=-1
+static constexpr float INV_P_MINUS_TWO = -0.5f; // 1/p when p=-2
 
 // 判断 p 是否为 ±inf（经 INT_MAX/INT_MIN 映射）
 static bool IsPosInf(int32_t p) { return p == P_POS_INF; }
@@ -182,7 +186,17 @@ static int32_t CalcTilingKey(int32_t p, float* invP)
         *invP = P_ZERO;
         return TILING_KEY_IDENTITY;
     }
-    // 其他有限非零 p（含负值）→ Power 路径
+    if (p == P_MINUS_TWO) {
+        // p == -2 → Rsqrt 快速路径（1/sqrt(x)）
+        *invP = INV_P_MINUS_TWO;
+        return TILING_KEY_RSQRT;
+    }
+    if (p == P_MINUS_ONE) {
+        // p == -1 → Reciprocal 快速路径（1/x）
+        *invP = INV_P_MINUS_ONE;
+        return TILING_KEY_RECIPROCAL;
+    }
+    // 其他有限非零 p → Power 路径
     *invP = 1.0f / static_cast<float>(p);
     return TILING_KEY_POWER;
 }
@@ -218,11 +232,13 @@ static ge::graphStatus CalcTilingSplit(gert::TilingContext* context, int64_t tot
     result.blockFactor = CeilAlign(CeilDiv(totalNum, usedCoreNum), ELEM_ALIGN_FACTOR);
     usedCoreNum = CeilDiv(totalNum, result.blockFactor);
 
-    // UB 切分
-    int64_t bufferNum = 1;
+    // UB 切分（双缓冲：input/output 队列各 2 块）
+    int64_t bufferNum = 2;
     int64_t bufferDivisor;
     if (dataType == ge::DT_FLOAT16) {
-        bufferDivisor = bufferNum * 2 * elemBytes + FP16_CAST_BUFFER_COUNT * FP32_TYPE_SIZE;
+        // IDENTITY 直接在 half 上做 Maxs，无需升精度 buffer
+        int64_t castBuffers = (tilingKey == TILING_KEY_IDENTITY) ? 0 : FP16_CAST_BUFFER_COUNT * FP32_TYPE_SIZE;
+        bufferDivisor = bufferNum * 2 * elemBytes + castBuffers;
     } else {
         int64_t bufferCount = (tilingKey == TILING_KEY_IDENTITY) ? FP32_BASE_BUFFER_COUNT : FP32_EXTRA_BUFFER_COUNT;
         bufferDivisor = bufferNum * bufferCount * elemBytes;

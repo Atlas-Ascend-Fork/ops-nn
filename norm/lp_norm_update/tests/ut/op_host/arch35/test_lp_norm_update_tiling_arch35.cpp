@@ -107,9 +107,11 @@ static constexpr int32_t P_TWO = 2;      // p=2 → Sqrt 快速路径
 static constexpr float INV_P_TWO = 0.5f; // 1/p when p=2
 
 // TilingKey 值（从 lp_norm_update_tiling_key.h 复制，独立编译不依赖 CANN 头文件）
-static constexpr int32_t TILING_KEY_IDENTITY = 0; // 恒等路径
-static constexpr int32_t TILING_KEY_SQRT = 1;     // Sqrt 快速路径
-static constexpr int32_t TILING_KEY_POWER = 2;    // Power 通用路径
+static constexpr int32_t TILING_KEY_IDENTITY = 0;   // 恒等路径
+static constexpr int32_t TILING_KEY_SQRT = 1;       // Sqrt 快速路径
+static constexpr int32_t TILING_KEY_POWER = 2;      // Power 通用路径
+static constexpr int32_t TILING_KEY_RSQRT = 3;      // Rsqrt 快速路径
+static constexpr int32_t TILING_KEY_RECIPROCAL = 4; // Reciprocal 快速路径
 
 // 判断 p 是否为 +inf（经 INT_MAX 映射）
 static bool IsPosInf(int32_t p) { return p == P_POS_INF; }
@@ -123,7 +125,9 @@ static bool IsNegInf(int32_t p) { return p == P_NEG_INF; }
  * 按 p 值分派计算路径：
  *   p ∈ {1, ±inf} → 恒等路径（TilingKey=0）
  *   p == 2        → Sqrt 快速路径（TilingKey=1）
- *   其他有限非零 p（含负值）→ Power 路径（TilingKey=2）
+ *   p == -2       → Rsqrt 快速路径（TilingKey=3）
+ *   p == -1       → Reciprocal 快速路径（TilingKey=4）
+ *   其他有限非零 p → Power 路径（TilingKey=2）
  *   p == 0        → 恒等路径（TilingKey=0）
  */
 static int32_t CalcTilingKey(int32_t p, float* invP)
@@ -139,6 +143,14 @@ static int32_t CalcTilingKey(int32_t p, float* invP)
     if (p == P_ZERO) {
         *invP = P_ZERO;
         return TILING_KEY_IDENTITY;
+    }
+    if (p == -2) {
+        *invP = -0.5f;
+        return TILING_KEY_RSQRT;
+    }
+    if (p == -1) {
+        *invP = -1.0f;
+        return TILING_KEY_RECIPROCAL;
     }
     *invP = 1.0f / static_cast<float>(p);
     return TILING_KEY_POWER;
@@ -170,7 +182,9 @@ static int64_t CalcBufferDivisor(LocalDataType dataType, int32_t tilingKey, int6
     int64_t elemBytes = (dataType == DT_FLOAT16) ? FP16_TYPE_SIZE : FP32_TYPE_SIZE;
     int64_t bufferDivisor;
     if (dataType == DT_FLOAT16) {
-        bufferDivisor = bufferNum * 2 * elemBytes + FP16_CAST_BUFFER_COUNT * FP32_TYPE_SIZE;
+        // IDENTITY 直接在 half 上做 Maxs，无需升精度 buffer
+        int64_t castBuffers = (tilingKey == TILING_KEY_IDENTITY) ? 0 : FP16_CAST_BUFFER_COUNT * FP32_TYPE_SIZE;
+        bufferDivisor = bufferNum * 2 * elemBytes + castBuffers;
     } else {
         int64_t bufferCount = (tilingKey == TILING_KEY_IDENTITY) ? FP32_BASE_BUFFER_COUNT : FP32_EXTRA_BUFFER_COUNT;
         bufferDivisor = bufferNum * bufferCount * elemBytes;
@@ -276,22 +290,22 @@ void test_tiling_key_p4()
 
 void test_tiling_key_p_neg1()
 {
-    TEST_BEGIN("tiling_key_p_neg1_power");
-    // 有限负 p=-1 → Power 路径，invP = -1.0
-    float invP = -1.0f;
+    TEST_BEGIN("tiling_key_p_neg1_reciprocal");
+    // p=-1 → Reciprocal 快速路径，invP = -1.0
+    float invP = 0.0f;
     int32_t tk = CalcTilingKey(-1, &invP);
-    ASSERT_EQ(tk, TILING_KEY_POWER);
+    ASSERT_EQ(tk, TILING_KEY_RECIPROCAL);
     ASSERT_FLOAT_EQ(invP, -1.0f);
     TEST_END();
 }
 
 void test_tiling_key_p_neg2()
 {
-    TEST_BEGIN("tiling_key_p_neg2_power");
-    // 有限负 p=-2 → Power 路径，invP = -0.5
-    float invP = -1.0f;
+    TEST_BEGIN("tiling_key_p_neg2_rsqrt");
+    // p=-2 → Rsqrt 快速路径，invP = -0.5
+    float invP = 0.0f;
     int32_t tk = CalcTilingKey(-2, &invP);
-    ASSERT_EQ(tk, TILING_KEY_POWER);
+    ASSERT_EQ(tk, TILING_KEY_RSQRT);
     ASSERT_FLOAT_EQ(invP, -0.5f);
     TEST_END();
 }
@@ -415,9 +429,17 @@ void test_eps_eff_fp32_small()
 void test_buffer_divisor_fp16()
 {
     TEST_BEGIN("buffer_divisor_fp16");
-    // FP16: bufferDivisor = bufferNum * 2 * elemBytes + FP16_CAST_BUFFER_COUNT * FP32_TYPE_SIZE
-    // = 1 * 2 * 2 + 3 * 4 = 4 + 12 = 16
+    // FP16 IDENTITY 不升精度：bufferDivisor = bufferNum * 2 * elemBytes = 1 * 2 * 2 = 4
     int64_t bd = CalcBufferDivisor(DT_FLOAT16, TILING_KEY_IDENTITY, 1);
+    ASSERT_EQ(bd, 4);
+    TEST_END();
+}
+
+void test_buffer_divisor_fp16_sqrt()
+{
+    TEST_BEGIN("buffer_divisor_fp16_sqrt");
+    // FP16 Sqrt/Rsqrt/Reciprocal/Power 需升精度：4 + 12 = 16
+    int64_t bd = CalcBufferDivisor(DT_FLOAT16, TILING_KEY_SQRT, 1);
     ASSERT_EQ(bd, 16);
     TEST_END();
 }
@@ -540,7 +562,7 @@ void test_ub_formula_fp32_tk1()
 void test_ub_formula_fp16_tk0()
 {
     TEST_BEGIN("ub_formula_fp16_tk0_no_times8");
-    // FP16, TK0: totalDivisor = 16, powerExtraSize = 0
+    // FP16 IDENTITY 不升精度: totalDivisor = 4, powerExtraSize = 0
     int64_t ubSize = 196608;
     int64_t bufferDivisor = CalcBufferDivisor(DT_FLOAT16, TILING_KEY_IDENTITY, 1);
     int64_t totalDivisor = bufferDivisor;
@@ -548,9 +570,9 @@ void test_ub_formula_fp16_tk0()
 
     int64_t maxElemNum = CalcUbMaxElemNum(ubSize, totalDivisor, powerExtraSize);
 
-    // FP16 TK0: bufferDivisor = 1*2*2 + 3*4 = 16 bytes/elem
-    ASSERT_EQ(totalDivisor, 16);
-    ASSERT_EQ(maxElemNum, (196608 - 8192) / 16);
+    // FP16 TK0: bufferDivisor = 1*2*2 = 4 bytes/elem
+    ASSERT_EQ(totalDivisor, 4);
+    ASSERT_EQ(maxElemNum, (196608 - 8192) / 4);
     TEST_END();
 }
 
@@ -620,6 +642,7 @@ int main()
 
     printf("\n--- bufferDivisor 计算 ---\n");
     test_buffer_divisor_fp16();
+    test_buffer_divisor_fp16_sqrt();
     test_buffer_divisor_fp32_tk0();
     test_buffer_divisor_fp32_tk1();
     test_buffer_divisor_fp32_tk2();

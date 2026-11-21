@@ -33,11 +33,11 @@
 namespace NsLpNormUpdate {
 
 using namespace AscendC;
-static constexpr PowerConfig kPowerHighPrecisionConfig = {PowerAlgo::DOUBLE_FLOAT_TECH};
+static constexpr PowerConfig kPowerConfig = {PowerAlgo::INTRINSIC};
 
 template <typename T, int TILING_KEY>
 class LpNormUpdate {
-    static constexpr int32_t BUFFER_NUM = 1;
+    static constexpr int32_t BUFFER_NUM = 2;
     static constexpr float ZERO_F = 0.0f; // 防御性兜底：Sqrt/Power 前将负值夹紧到 0
 
 public:
@@ -53,8 +53,8 @@ private:
 
 private:
     TPipe pipe;
-    TQue<QuePosition::VECIN, 1> inputQueueX;
-    TQue<QuePosition::VECOUT, 1> outputQueueY;
+    TQue<QuePosition::VECIN, BUFFER_NUM> inputQueueX;
+    TQue<QuePosition::VECOUT, BUFFER_NUM> outputQueueY;
 
     // 中间 buffer（TilingKey=1/2 用于 Sqrt/Power 结果）
     TBuf<TPosition::VECCALC> tBuf;
@@ -101,10 +101,12 @@ __aicore__ inline void LpNormUpdate<T, TILING_KEY>::Init(GM_ADDR x, GM_ADDR y, c
 
     // 初始化中间 buffer
     if constexpr (std::is_same_v<T, half>) {
-        // FP16 升精度路径：xFp32 + tFp32 + yFp32（K=3）
-        pipe.InitBuffer(xFp32Buf, ubLength_ * sizeof(float));
-        pipe.InitBuffer(tFp32Buf, ubLength_ * sizeof(float));
-        pipe.InitBuffer(yFp32Buf, ubLength_ * sizeof(float));
+        // FP16 升精度路径（IDENTITY 直接在 half 上做 Maxs，无需升精度 buffer）
+        if constexpr (TILING_KEY != TILING_KEY_IDENTITY) {
+            pipe.InitBuffer(xFp32Buf, ubLength_ * sizeof(float));
+            pipe.InitBuffer(tFp32Buf, ubLength_ * sizeof(float));
+            pipe.InitBuffer(yFp32Buf, ubLength_ * sizeof(float));
+        }
     } else {
         // FP32 原生路径：TilingKey=1/2 需要 tBuf 中间 buffer
         if constexpr (TILING_KEY != TILING_KEY_IDENTITY) {
@@ -138,7 +140,10 @@ __aicore__ inline void LpNormUpdate<T, TILING_KEY>::Compute(int64_t currentNum)
     AscendC::LocalTensor<T> xLocal = inputQueueX.template DeQue<T>();
     AscendC::LocalTensor<T> yLocal = outputQueueY.template AllocTensor<T>();
 
-    if constexpr (std::is_same_v<T, half>) {
+    if constexpr (std::is_same_v<T, half> && TILING_KEY == TILING_KEY_IDENTITY) {
+        // Half Maxs with round_f16(eps) is bit-identical to upcast-then-round for y = max(x, eps).
+        Maxs(yLocal, xLocal, static_cast<half>(epsEff_), static_cast<int32_t>(currentNum));
+    } else if constexpr (std::is_same_v<T, half>) {
         // ===== FP16 升精度路径：half → float → 计算 → float → half =====
         auto xFp32 = xFp32Buf.template Get<float>();
         auto tFp32 = tFp32Buf.template Get<float>();
@@ -155,13 +160,23 @@ __aicore__ inline void LpNormUpdate<T, TILING_KEY>::Compute(int64_t currentNum)
             Maxs(tFp32, xFp32, ZERO_F, currentNum);
             Sqrt(tFp32, tFp32, currentNum);
             Maxs(yFp32, tFp32, epsEff_, currentNum);
+        } else if constexpr (TILING_KEY == TILING_KEY_RSQRT) {
+            // Rsqrt 路径：1/sqrt(x)
+            Maxs(tFp32, xFp32, ZERO_F, currentNum);
+            Sqrt(tFp32, tFp32, currentNum);
+            Reciprocal(tFp32, tFp32, currentNum);
+            Maxs(yFp32, tFp32, epsEff_, currentNum);
+        } else if constexpr (TILING_KEY == TILING_KEY_RECIPROCAL) {
+            // Reciprocal 路径：1/x
+            Maxs(tFp32, xFp32, ZERO_F, currentNum);
+            Reciprocal(yFp32, tFp32, currentNum);
+            Maxs(yFp32, yFp32, epsEff_, currentNum);
         } else {
             // Power 路径：先防御性兜底，再 Power，再 Maxs(., eps_eff)
             // Power 不支持 src/dst 地址重叠，使用 yFp32 作为 Power 输出
             Maxs(tFp32, xFp32, ZERO_F, currentNum);
             auto sharedTmp = sharedTmpBuf.template Get<uint8_t>();
-            Power<float, false, kPowerHighPrecisionConfig>(yFp32, tFp32, invP_, sharedTmp,
-                                                           static_cast<uint32_t>(currentNum));
+            Power<float, false, kPowerConfig>(yFp32, tFp32, invP_, sharedTmp, static_cast<uint32_t>(currentNum));
             Maxs(yFp32, yFp32, epsEff_, currentNum);
         }
 
@@ -178,13 +193,25 @@ __aicore__ inline void LpNormUpdate<T, TILING_KEY>::Compute(int64_t currentNum)
             Maxs(tLocal, xLocal, ZERO_F, currentNum);
             Sqrt(tLocal, tLocal, currentNum);
             Maxs(yLocal, tLocal, epsEff_, currentNum);
+        } else if constexpr (TILING_KEY == TILING_KEY_RSQRT) {
+            // Rsqrt 路径：1/sqrt(x)
+            auto tLocal = tBuf.template Get<float>();
+            Maxs(tLocal, xLocal, ZERO_F, currentNum);
+            Sqrt(tLocal, tLocal, currentNum);
+            Reciprocal(tLocal, tLocal, currentNum);
+            Maxs(yLocal, tLocal, epsEff_, currentNum);
+        } else if constexpr (TILING_KEY == TILING_KEY_RECIPROCAL) {
+            // Reciprocal 路径：1/x
+            auto tLocal = tBuf.template Get<float>();
+            Maxs(tLocal, xLocal, ZERO_F, currentNum);
+            Reciprocal(yLocal, tLocal, currentNum);
+            Maxs(yLocal, yLocal, epsEff_, currentNum);
         } else {
             // Power 路径（Power 不支持 src/dst 重叠，用 yLocal 作为输出）
             auto tLocal = tBuf.template Get<float>();
             Maxs(tLocal, xLocal, ZERO_F, currentNum);
             auto sharedTmp = sharedTmpBuf.template Get<uint8_t>();
-            Power<float, false, kPowerHighPrecisionConfig>(yLocal, tLocal, invP_, sharedTmp,
-                                                           static_cast<uint32_t>(currentNum));
+            Power<float, false, kPowerConfig>(yLocal, tLocal, invP_, sharedTmp, static_cast<uint32_t>(currentNum));
             Maxs(yLocal, yLocal, epsEff_, currentNum);
         }
     }
@@ -214,9 +241,14 @@ __aicore__ inline void LpNormUpdate<T, TILING_KEY>::Process()
         return;
     }
     int64_t loopCount = (blockLength_ + ubLength_ - 1) / ubLength_;
+    // Ping-pong pipeline: issue the next copy-in before computing the current tile.
+    CopyIn(0, (loopCount == 1) ? blockLength_ : ubLength_);
     for (int64_t i = 0; i < loopCount; i++) {
+        if (i + 1 < loopCount) {
+            int64_t nextNum = (i + 1 == loopCount - 1) ? (blockLength_ - ubLength_ * (i + 1)) : ubLength_;
+            CopyIn(i + 1, nextNum);
+        }
         int64_t currentNum = (i == (loopCount - 1)) ? (blockLength_ - ubLength_ * i) : ubLength_;
-        CopyIn(i, currentNum);
         Compute(currentNum);
         CopyOut(i, currentNum);
     }

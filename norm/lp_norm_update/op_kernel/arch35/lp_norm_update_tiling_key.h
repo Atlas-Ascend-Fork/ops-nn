@@ -20,7 +20,9 @@
  * TilingKey 划分（按计算路径）：
  *   0 = 恒等路径（p ∈ {0, 1, ±inf}）
  *   1 = Sqrt 路径（p == 2.0）
- *   2 = Power 路径（其他有限正 p）
+ *   2 = Power 路径（其他有限 p）
+ *   3 = Rsqrt 路径（p == -2.0）
+ *   4 = Reciprocal 路径（p == -1.0）
  */
 
 #ifndef __LP_NORM_UPDATE_TILING_KEY_H__
@@ -30,12 +32,14 @@
 
 // TilingKey 值（与 ASCENDC_TPL_UINT_DECL 的可选值 0/1/2 一致）
 // Host 侧 CalcTilingKey 返回，Kernel 侧 if constexpr 分发使用
-static constexpr int32_t TILING_KEY_IDENTITY = 0; // 恒等路径（p ∈ {0, 1, ±inf}）
-static constexpr int32_t TILING_KEY_SQRT = 1;     // Sqrt 快速路径（p == 2.0）
-static constexpr int32_t TILING_KEY_POWER = 2;    // Power 通用路径（其他有限正 p）
+static constexpr int32_t TILING_KEY_IDENTITY = 0;   // 恒等路径（p ∈ {0, 1, ±inf}）
+static constexpr int32_t TILING_KEY_SQRT = 1;       // Sqrt 快速路径（p == 2.0）
+static constexpr int32_t TILING_KEY_POWER = 2;      // Power 通用路径（其他有限 p）
+static constexpr int32_t TILING_KEY_RSQRT = 3;      // Rsqrt 快速路径（p == -2.0）
+static constexpr int32_t TILING_KEY_RECIPROCAL = 4; // Reciprocal 快速路径（p == -1.0）
 
-ASCENDC_TPL_ARGS_DECL(LpNormUpdate, ASCENDC_TPL_UINT_DECL(TILING_KEY, 8, ASCENDC_TPL_UI_LIST, 0, 1, 2));
+ASCENDC_TPL_ARGS_DECL(LpNormUpdate, ASCENDC_TPL_UINT_DECL(TILING_KEY, 8, ASCENDC_TPL_UI_LIST, 0, 1, 2, 3, 4));
 
-ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(TILING_KEY, ASCENDC_TPL_UI_LIST, 0, 1, 2)));
+ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(TILING_KEY, ASCENDC_TPL_UI_LIST, 0, 1, 2, 3, 4)));
 
 #endif
