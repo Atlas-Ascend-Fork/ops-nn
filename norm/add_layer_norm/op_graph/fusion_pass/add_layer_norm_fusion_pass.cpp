@@ -173,6 +173,16 @@ bool IsSameNode(const GNode& lhs, const GNode& rhs)
 
 GNodePtr Producer(const GNode& node, const int32_t index) { return node.GetInDataNodesAndPortIndexs(index).first; }
 
+GNodePtr Producer(const GNode& node, const int32_t port, const char* inputName)
+{
+    auto queryNode = node;
+    int32_t index = -1;
+    if (queryNode.GetInputIndexByName(AscendString(inputName), index) != GRAPH_SUCCESS || index != port) {
+        return nullptr;
+    }
+    return Producer(node, port);
+}
+
 bool GetInputDesc(const GNode& node, const int32_t index, TensorDesc& desc)
 {
     return node.GetInputDesc(index, desc) == GRAPH_SUCCESS;
@@ -287,8 +297,8 @@ bool PrepareScaleInputs(Candidate& candidate, const bool allowMixPrecision)
 {
     const int32_t gammaPort = candidate.isV4 ? kGamma : 1;
     const int32_t betaPort = candidate.isV4 ? kBeta : 2;
-    const GNodePtr gammaProducer = Producer(candidate.layerNorm, gammaPort);
-    const GNodePtr betaProducer = Producer(candidate.layerNorm, betaPort);
+    const GNodePtr gammaProducer = Producer(candidate.layerNorm, gammaPort, "gamma");
+    const GNodePtr betaProducer = Producer(candidate.layerNorm, betaPort, "beta");
 
     candidate.fillGamma = candidate.isV4 && gammaProducer == nullptr;
     candidate.fillBeta = candidate.isV4 && betaProducer == nullptr;
@@ -707,14 +717,14 @@ bool TryMakeGeneralCandidate(const GNode& layerNorm, const bool isTrain, const b
         }
     }
 
-    if (NodeType(candidate.gamma.inside.node) == "Cast") {
+    if (!candidate.fillGamma && NodeType(candidate.gamma.inside.node) == "Cast") {
         candidate.internalNodes.push_back(candidate.gamma.inside.node);
         if (ExternalConsumerCount(candidate.gamma.inside.node, 0, {layerNorm}) > 0U &&
             !AddOutput(candidate, candidate.gamma.inside.node, 0, OutputKind::GAMMA)) {
             return false;
         }
     }
-    if (NodeType(candidate.beta.inside.node) == "Cast") {
+    if (!candidate.fillBeta && NodeType(candidate.beta.inside.node) == "Cast") {
         candidate.internalNodes.push_back(candidate.beta.inside.node);
         if (ExternalConsumerCount(candidate.beta.inside.node, 0, {layerNorm}) > 0U &&
             !AddOutput(candidate, candidate.beta.inside.node, 0, OutputKind::BETA)) {
@@ -1182,6 +1192,7 @@ Status AddLayerNormFusionPass::Run(GraphPtr& graph, CustomPassContext& passConte
         std::string type;
         std::string name;
         std::string outputCastName;
+        bool replaced = false;
     };
     std::vector<ScheduledNorm> norms;
     for (const GNode& node : graph->GetDirectNode()) {
@@ -1207,7 +1218,10 @@ Status AddLayerNormFusionPass::Run(GraphPtr& graph, CustomPassContext& passConte
             }
             return lhs.type != rhs.type ? lhs.type < rhs.type : lhs.name < rhs.name;
         });
-        for (const ScheduledNorm& scheduled : norms) {
+        for (ScheduledNorm& scheduled : norms) {
+            if (scheduled.replaced) {
+                continue;
+            }
             const GNode& node = scheduled.node;
             // Earlier replacements may invalidate this node or change its
             // producers/consumers. Never reuse a Candidate captured beforehand.
@@ -1237,6 +1251,7 @@ Status AddLayerNormFusionPass::Run(GraphPtr& graph, CustomPassContext& passConte
                 OPS_LOG_E(kPassName.c_str(), "Failed to replace candidate %s.", NodeName(node).c_str());
                 return status;
             }
+            scheduled.replaced = true;
             changed = true;
         }
     }

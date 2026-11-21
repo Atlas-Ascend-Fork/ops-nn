@@ -43,10 +43,15 @@ inline std::string Type(const GNode& node)
     ge::AscendString type;
     return node.GetType(type) == ge::GRAPH_SUCCESS && type.GetString() != nullptr ? type.GetString() : "";
 }
-inline bool HasInput(const GNode& node, int index)
+inline bool HasInput(const GNode& node, int port, const char* input_name)
 {
-    // Check whether the input port is connected.
-    return index >= 0 && node.GetInDataNodesAndPortIndexs(index).first != nullptr;
+    auto query_node = node;
+    int32_t index = -1;
+    if (query_node.GetInputIndexByName(ge::AscendString(input_name), index) != ge::GRAPH_SUCCESS || index < 0 ||
+        index != port) {
+        return false;
+    }
+    return node.GetInDataNodesAndPortIndexs(port).first != nullptr;
 }
 inline ge::DataType InputType(const GNode& node, int index)
 {
@@ -60,15 +65,26 @@ struct Captures {
 };
 inline bool Capture(const MatchResult& match, Captures& nodes)
 {
+    size_t quant_count = 0;
+    for (const auto& node : match.GetPatternGraph().GetDirectNode()) {
+        const auto type = Type(node);
+        if (type == "Quantize" || type == "AscendQuantV2" || type == "DynamicQuant") {
+            ++quant_count;
+        }
+    }
+    if (quant_count == 0 || quant_count > 2) {
+        return false;
+    }
     NodeIo io;
     if (match.GetCapturedTensor(0, io) != ge::SUCCESS) {
         return false;
     }
     nodes.norm = io.node;
-    for (size_t i = 1; i <= 2; ++i) {
-        if (match.GetCapturedTensor(i, io) == ge::SUCCESS) {
-            nodes.quant.push_back(io.node);
+    for (size_t i = 1; i <= quant_count; ++i) {
+        if (match.GetCapturedTensor(i, io) != ge::SUCCESS) {
+            return false;
         }
+        nodes.quant.push_back(io.node);
     }
     return !nodes.quant.empty();
 }
@@ -96,7 +112,7 @@ inline bool CheckNorm(const GNode& node, const std::string& pass)
         OPS_LOG_D(pass.c_str(), "guard_rejected : unsupported normalization dtype.");
         return false;
     }
-    for (int i = 1; i < (HasInput(node, 4) ? 5 : 4); ++i) {
+    for (int i = 1; i < (HasInput(node, 4, "bias") ? 5 : 4); ++i) {
         if (InputType(node, i) != dtype) {
             OPS_LOG_D(pass.c_str(), "guard_rejected : mixed normalization input dtype.");
             return false;

@@ -97,8 +97,10 @@ bool QuantizeAddLayerNormPass::MeetRequirements(const std::unique_ptr<MatchResul
     if (nodes.quant.size() == 2) {
         const auto& q0 = nodes.quant[0];
         const auto& q1 = nodes.quant[1];
-        if (HasInput(q0, 2) != HasInput(q1, 2) || InputType(q0, 1) != InputType(q1, 1) ||
-            (HasInput(q0, 2) && InputType(q0, 2) != InputType(q1, 2))) {
+        const bool has_offset0 = HasInput(q0, 2, Type(q0) == "Quantize" ? "zero_points" : "offset");
+        const bool has_offset1 = HasInput(q1, 2, Type(q1) == "Quantize" ? "zero_points" : "offset");
+        if (has_offset0 != has_offset1 || InputType(q0, 1) != InputType(q1, 1) ||
+            (has_offset0 && InputType(q0, 2) != InputType(q1, 2))) {
             OPS_LOG_D(kPass.c_str(), "guard_rejected : dual quant optional inputs/dtypes differ.");
             return false;
         }

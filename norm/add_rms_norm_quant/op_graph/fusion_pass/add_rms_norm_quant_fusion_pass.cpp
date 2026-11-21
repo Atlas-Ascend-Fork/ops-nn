@@ -169,7 +169,10 @@ bool CheckQuant(const GNode& norm, const GNode& quant)
         OPS_LOG_D(kPass.c_str(), "guard_rejected : scales size differs from gamma.");
         return false;
     }
-    if (quant.GetInDataNodesAndPortIndexs(2).first != nullptr) {
+    auto query_quant = quant;
+    int32_t zero_points_index = -1;
+    if (query_quant.GetInputIndexByName(ge::AscendString("zero_points"), zero_points_index) == ge::GRAPH_SUCCESS &&
+        zero_points_index == 2 && quant.GetInDataNodesAndPortIndexs(2).first != nullptr) {
         TensorDesc zero_points;
         if (quant.GetInputDesc(2, zero_points) != ge::GRAPH_SUCCESS) {
             OPS_LOG_D(kPass.c_str(), "guard_rejected : cannot read zero_points descriptor.");

@@ -108,7 +108,16 @@ std::string Type(const GNode& node)
     ge::AscendString value;
     return node.GetType(value) == ge::GRAPH_SUCCESS && value.GetString() ? value.GetString() : "";
 }
-bool HasInput(const GNode& node, int port) { return node.GetInDataNodesAndPortIndexs(port).first != nullptr; }
+bool HasInput(const GNode& node, int port)
+{
+    const ge::AscendString input_name(port == 1 ? "smooth_scales" : "group_index");
+    int32_t index = -1;
+    auto query_node = node;
+    if (query_node.GetInputIndexByName(input_name, index) != ge::GRAPH_SUCCESS || index != port) {
+        return false;
+    }
+    return node.GetInDataNodesAndPortIndexs(port).first != nullptr;
+}
 bool InferenceMode(const ge::CustomPassContext& context)
 {
 #if defined(GE_COMPILER_VERSION_NUM) && (GE_COMPILER_VERSION_NUM >= 90000000)

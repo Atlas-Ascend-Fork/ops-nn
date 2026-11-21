@@ -70,7 +70,7 @@ bool AddLayerNormDynamicQuantFusionPass::MeetRequirements(const std::unique_ptr<
     const auto dtype = InputType(nodes.norm, 0);
     for (const auto& q : nodes.quant) {
         auto source = q.GetInDataNodesAndPortIndexs(0).first;
-        if (source && Type(*source) == "Mul" && HasInput(q, 1)) {
+        if (source && Type(*source) == "Mul" && HasInput(q, 1, "smooth_scales")) {
             OPS_LOG_D(kPass.c_str(), "guard_rejected : quant after Mul has smooth input.");
             return false;
         }
@@ -78,7 +78,7 @@ bool AddLayerNormDynamicQuantFusionPass::MeetRequirements(const std::unique_ptr<
             OPS_LOG_D(kPass.c_str(), "guard_rejected : quant input dtype differs from normalization dtype.");
             return false;
         }
-        if (HasInput(q, 1) && InputType(q, 1) != dtype) {
+        if (HasInput(q, 1, "smooth_scales") && InputType(q, 1) != dtype) {
             OPS_LOG_D(kPass.c_str(), "guard_rejected : smooth dtype differs from normalization dtype.");
             return false;
         }
