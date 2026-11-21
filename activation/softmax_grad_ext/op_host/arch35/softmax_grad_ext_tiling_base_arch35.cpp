@@ -77,19 +77,18 @@ ge::graphStatus SoftmaxGradExtTilingBase::GetAndCheckDtypes()
     yDtype_ = yDesc->GetDataType();
 
     OP_TILING_CHECK(xDtype_ != yDtype_ || xDtype_ != xDtype1 || xDtype_ != xDtype2,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        context_->GetNodeName(),
-                        "Input0 dtype [%s], Input1 dtype [%s], Input2 dtype [%s] and Output dtype [%s] should be same.",
-                        ge::TypeUtils::DataTypeToSerialString(xDtype_).c_str(),
-                        ge::TypeUtils::DataTypeToSerialString(xDtype1).c_str(),
-                        ge::TypeUtils::DataTypeToSerialString(xDtype2).c_str(),
-                        ge::TypeUtils::DataTypeToSerialString(yDtype_).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "grad, x1, x2 and y",
+                                                           (ge::TypeUtils::DataTypeToSerialString(xDtype_) + ", " +
+                                                            ge::TypeUtils::DataTypeToSerialString(xDtype1) + ", " +
+                                                            ge::TypeUtils::DataTypeToSerialString(xDtype2) + " and " +
+                                                            ge::TypeUtils::DataTypeToSerialString(yDtype_))
+                                                               .c_str(),
+                                                           "all inputs and output must have the same dtype"),
                     return ge::GRAPH_FAILED);
     OP_TILING_CHECK(xDtype_ != ge::DT_FLOAT16 && xDtype_ != ge::DT_FLOAT && xDtype_ != ge::DT_BF16,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        context_->GetNodeName(),
-                        "Input dtype is [%s], only support dtype ge::DT_FLOAT16, ge::DT_FLOAT or ge::DT_BF16.",
-                        ge::TypeUtils::DataTypeToSerialString(xDtype_).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "grad",
+                                                          ge::TypeUtils::DataTypeToSerialString(xDtype_).c_str(),
+                                                          "only FLOAT16, FLOAT and BFLOAT16 are supported"),
                     return ge::GRAPH_FAILED);
 
     if (xDtype_ == ge::DT_FLOAT) {
@@ -123,10 +122,10 @@ ge::graphStatus SoftmaxGradExtTilingBase::GetDimsAndCheckShapeValid()
     OP_CHECK_NULL_WITH_CONTEXT(context_, yShape);
     auto yStorageShape = Ops::Base::EnsureNotScalar(yShape->GetStorageShape());
 
-    OP_TILING_CHECK(
-        xShapeSize_ > MAX_DIMS, // 超过支持的最大维度数
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Input dim size [%ld] is larger than 6.", xShapeSize_),
-        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(xShapeSize_ > MAX_DIMS, // 超过支持的最大维度数
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        context_->GetNodeName(), "grad", std::to_string(xShapeSize_).c_str(), "rank must be in [1, 6]"),
+                    return ge::GRAPH_FAILED);
     OP_TILING_CHECK(
         xShapeSize_ == CONST_ZERO, // 检查输入的维度是否为0
         VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Input dim size is zero, not support empty tensor."),
@@ -137,12 +136,13 @@ ge::graphStatus SoftmaxGradExtTilingBase::GetDimsAndCheckShapeValid()
         for (int i = 0; i < xShapeSize_; i++) {
             OP_TILING_CHECK(xStorageShape.GetDim(i) != yStorageShape.GetDim(i) ||
                                 xStorageShape.GetDim(i) != xStorageShape1.GetDim(i),
-                            VECTOR_INNER_ERR_REPORT_TILIING(
-                                context_->GetNodeName(),
-                                "Input0 dim[%d]: %ld, Input1 dim[%d]: %ld and Output dim[%d]: %ld should be "
-                                "same. Input2 dim[0]: %ld. ",
-                                i, xStorageShape.GetDim(i), i, xStorageShape1.GetDim(i), i, yStorageShape.GetDim(i),
-                                xStorageShape2.GetDim(0)),
+                            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                                context_->GetNodeName(), "grad, x1, x2 and y",
+                                ("grad dim[" + std::to_string(i) + "]=" + std::to_string(xStorageShape.GetDim(i)) +
+                                 ", x1 dim[" + std::to_string(i) + "]=" + std::to_string(xStorageShape1.GetDim(i)) +
+                                 ", y dim[" + std::to_string(i) + "]=" + std::to_string(yStorageShape.GetDim(i)))
+                                    .c_str(),
+                                "the shapes of grad, x1, x2 and y must be identical"),
                             return ge::GRAPH_FAILED);
             OP_TILING_CHECK(xStorageShape.GetDim(i) <= CONST_ZERO,
                             VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Not support input dim[%d]: %ld.",
@@ -279,8 +279,10 @@ static ge::graphStatus SoftmaxGradExtDSLTiling(gert::TilingContext* context,
             reduceAxis = axisListPtr->GetData()[i];
             OP_TILING_CHECK(
                 (reduceAxis < -xShapeSize || reduceAxis > xShapeSize - CONST_ONE),
-                VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "Dimension is: %ld, out of range [-%ld, %ld]",
-                                                reduceAxis, xShapeSize, xShapeSize - CONST_ONE),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "axes", std::to_string(reduceAxis).c_str(),
+                    ("must be in [" + std::to_string(-xShapeSize) + ", " + std::to_string(xShapeSize - CONST_ONE) + "]")
+                        .c_str()),
                 return ge::GRAPH_FAILED);
 
             reduceAxis = reduceAxis < CONST_ZERO ? reduceAxis + xShapeSize : reduceAxis;

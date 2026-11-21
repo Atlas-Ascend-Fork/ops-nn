@@ -78,8 +78,13 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
                 return ge::GRAPH_FAILED);
 
     // Shape 校验：输入输出元素数一致
-    OP_CHECK_IF(inputShapeX.GetShapeSize() != outShapeY.GetShapeSize(),
-                OP_LOGE(context, "Relu6: input and output shape size mismatch"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        inputShapeX.GetShapeSize() != outShapeY.GetShapeSize(),
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+            context->GetNodeName(), "x and y",
+            (std::to_string(inputShapeX.GetShapeSize()) + " and " + std::to_string(outShapeY.GetShapeSize())).c_str(),
+            "input and output must have the same shape size"),
+        return ge::GRAPH_FAILED);
 
     totalNum = inputShapeX.GetShapeSize();
 
@@ -89,7 +94,8 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     dataType = inputDesc->GetDataType();
     if (supportedDtype.count(dataType) == 0) {
-        OP_LOGE(context, "invalid dtype");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(dataType).c_str(),
+                                              "dtype must be FLOAT16, FLOAT, INT32 or BFLOAT16");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

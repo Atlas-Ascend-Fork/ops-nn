@@ -24,6 +24,7 @@
 #include "activation/softmax_grad_ext/op_host/arch35/softmax_grad_ext_tiling.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
+#include "base/err_mgr.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 
@@ -45,6 +46,37 @@ protected:
         setenv("ASCEND_GLOBAL_LOG_LEVEL", "1", true);
     }
 };
+
+static void ResetErrMgr()
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
+}
+
+static bool HasEZCode(const std::string& code)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    for (const auto& e : errors) {
+        if (e.error_id != nullptr && code == e.error_id.get()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+class SoftmaxGradExtErrMgrReset : public testing::EmptyTestEventListener {
+public:
+    void OnTestStart(const testing::TestInfo& test_info) override
+    {
+        if (std::string(test_info.test_suite_name()) == "SoftmaxGradExtTiling") {
+            ResetErrMgr();
+        }
+    }
+};
+static const auto _inst_softmax_grad_ext_err_mgr = []() {
+    testing::UnitTest::GetInstance()->listeners().Append(new SoftmaxGradExtErrMgrReset());
+    return 0;
+}();
 
 TEST_F(SoftmaxGradExtTiling, softmax_grad_ext_float32_ar_base)
 {
@@ -446,13 +478,18 @@ gert::StorageShape MakeAraStorageShape(const std::vector<int64_t>& dims)
 }
 
 // x2ShapeIn 为空表示 x2 与 grad/x1 同 shape；否则按传入 shape（如 (1,) 标量分支）
-SoftmaxGradExtTilingResult RunSoftmaxGradExtAraTiling(const std::vector<int64_t>& shape,
-                                                      const std::vector<int64_t>& x2ShapeIn, const ge::DataType dtype,
-                                                      const int64_t axes)
+SoftmaxGradExtTilingResult RunSoftmaxGradExtAraTiling(
+    const std::vector<int64_t>& shape, const std::vector<int64_t>& x2ShapeIn, const ge::DataType dtype,
+    const int64_t axes, const std::vector<int64_t>& x1ShapeOverride = {},
+    const std::vector<int64_t>& yShapeOverride = {}, const ge::DataType x1Dtype = ge::DT_UNDEFINED,
+    const ge::DataType x2Dtype = ge::DT_UNDEFINED, const ge::DataType yDtype = ge::DT_UNDEFINED)
 {
     SoftmaxGradExtTilingResult result;
     gert::StorageShape xShape = MakeAraStorageShape(shape);
-    gert::StorageShape yShape = MakeAraStorageShape(shape);
+    gert::StorageShape x1Shape = x1ShapeOverride.empty() ? MakeAraStorageShape(shape) :
+                                                           MakeAraStorageShape(x1ShapeOverride);
+    gert::StorageShape yShape = yShapeOverride.empty() ? MakeAraStorageShape(shape) :
+                                                         MakeAraStorageShape(yShapeOverride);
     gert::StorageShape x2Shape = x2ShapeIn.empty() ? MakeAraStorageShape(shape) : MakeAraStorageShape(x2ShapeIn);
 
     const std::string compileInfoString = R"({
@@ -512,14 +549,14 @@ SoftmaxGradExtTilingResult RunSoftmaxGradExtAraTiling(const std::vector<int64_t>
                       .SetOpType(opType)
                       .NodeIoNum(3, 1)
                       .IrInstanceNum({1, 1, 1})
-                      .InputShapes({&xShape, &xShape, &x2Shape})
+                      .InputShapes({&xShape, &x1Shape, &x2Shape})
                       .OutputShapes({&yShape})
                       .CompileInfo(&compileInfo)
                       .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
                       .NodeInputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(1, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(2, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, x1Dtype == ge::DT_UNDEFINED ? dtype : x1Dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, x2Dtype == ge::DT_UNDEFINED ? dtype : x2Dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, yDtype == ge::DT_UNDEFINED ? dtype : yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"axes", Ops::NN::AnyValue::CreateFrom<int64_t>(axes)},
                                   {"keep_dims", Ops::NN::AnyValue::CreateFrom<bool>(keepDims)}})
                       .TilingData(param.get())
@@ -920,4 +957,36 @@ TEST_F(SoftmaxGradExtTiling, softmax_grad_ext_ara_axes_out_of_range)
     EXPECT_EQ(resUpper.status, ge::GRAPH_FAILED) << "axes == dim is out of range and must be rejected";
     const auto resLower = RunSoftmaxGradExtAraTiling({2, 65536, 64}, {}, ge::DT_FLOAT16, -4);
     EXPECT_EQ(resLower.status, ge::GRAPH_FAILED) << "axes < -dim is out of range and must be rejected";
+}
+
+// U15: grad/x1/x2/y dtype 不一致 -> EZ0021。
+TEST_F(SoftmaxGradExtTiling, softmax_grad_ext_dtype_mismatch)
+{
+    const auto res = RunSoftmaxGradExtAraTiling({3, 64, 100}, {}, ge::DT_FLOAT, 1, {}, {}, ge::DT_FLOAT16);
+    EXPECT_EQ(res.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0021"));
+}
+
+// U16: dtype 不在 FLOAT16/FLOAT/BFLOAT16 白名单 -> EZ0020。
+TEST_F(SoftmaxGradExtTiling, softmax_grad_ext_unsupported_dtype)
+{
+    const auto res = RunSoftmaxGradExtAraTiling({3, 64, 100}, {}, ge::DT_INT8, 1);
+    EXPECT_EQ(res.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0020"));
+}
+
+// U17: rank 超过 6 -> EZ0012。
+TEST_F(SoftmaxGradExtTiling, softmax_grad_ext_rank7_invalid)
+{
+    const auto res = RunSoftmaxGradExtAraTiling({1, 1, 1, 1, 1, 1, 2}, {}, ge::DT_FLOAT, 1);
+    EXPECT_EQ(res.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0012"));
+}
+
+// U18: grad/x1/y 维度不一致（x2 为标量分支）-> EZ0010。
+TEST_F(SoftmaxGradExtTiling, softmax_grad_ext_shape_mismatch)
+{
+    const auto res = RunSoftmaxGradExtAraTiling({2, 3}, {1}, ge::DT_FLOAT, 1, {2, 4});
+    EXPECT_EQ(res.status, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0010"));
 }

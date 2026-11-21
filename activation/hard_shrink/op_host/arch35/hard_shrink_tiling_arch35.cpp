@@ -93,8 +93,9 @@ static ge::graphStatus GetInputInfo(gert::TilingContext* context, HardShrinkInpu
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     info.dataType = inputDesc->GetDataType();
     if (info.dataType != ge::DT_FLOAT16 && info.dataType != ge::DT_FLOAT && info.dataType != ge::DT_BF16) {
-        OP_LOGE(context, "HardShrink: unsupported dtype=%d, expected FLOAT16/FLOAT/BF16",
-                static_cast<int>(info.dataType));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "input_x",
+                                              Ops::Base::ToString(info.dataType).c_str(),
+                                              "dtype must be FLOAT16, FLOAT or BFLOAT16");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

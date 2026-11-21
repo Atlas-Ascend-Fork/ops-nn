@@ -16,6 +16,7 @@
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
+#include "base/err_mgr.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "platform/platform_infos_def.h"
@@ -36,10 +37,43 @@ protected:
     static void TearDownTestCase() { std::cout << "Relu6TilingTest TearDown" << std::endl; }
 };
 
+static void ResetErrMgr()
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
+}
+
+static bool HasEZCode(const std::string& code)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    for (const auto& e : errors) {
+        if (e.error_id != nullptr && code == e.error_id.get()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+class Relu6ErrMgrReset : public testing::EmptyTestEventListener {
+public:
+    void OnTestStart(const testing::TestInfo& test_info) override
+    {
+        if (std::string(test_info.test_suite_name()) == "Relu6TilingTest") {
+            ResetErrMgr();
+        }
+    }
+};
+static const auto _inst_relu6_err_mgr = []() {
+    testing::UnitTest::GetInstance()->listeners().Append(new Relu6ErrMgrReset());
+    return 0;
+}();
+
 static void Relu6TilingTestCase(std::initializer_list<int64_t> inputShape, ge::DataType dtype,
-                                ge::graphStatus expectedStatus)
+                                ge::graphStatus expectedStatus, std::initializer_list<int64_t> outputShape = {})
 {
     gert::StorageShape shape = {inputShape, inputShape};
+    gert::StorageShape diffShape = {outputShape, outputShape};
+    gert::StorageShape* outShape = outputShape.size() == 0 ? &shape : &diffShape;
     std::map<std::string, std::string> soc_infos;
     std::map<std::string, std::string> aicore_spec;
     std::map<std::string, std::string> intrinsics;
@@ -92,7 +126,7 @@ static void Relu6TilingTestCase(std::initializer_list<int64_t> inputShape, ge::D
                       .NodeIoNum(1, 1)
                       .IrInstanceNum({1})
                       .InputShapes({&shape})
-                      .OutputShapes({&shape})
+                      .OutputShapes({outShape})
                       .CompileInfo(&compile_info)
                       .PlatformInfo(reinterpret_cast<char*>(&platform_info))
                       .NodeInputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -141,6 +175,13 @@ TEST_F(Relu6TilingTest, test_tiling_empty_tensor_009)
 TEST_F(Relu6TilingTest, test_tiling_unsupported_dtype_010)
 {
     Relu6TilingTestCase({1, 64, 2, 64}, ge::DT_INT8, ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0020"));
+}
+
+TEST_F(Relu6TilingTest, test_tiling_shape_size_mismatch_014)
+{
+    Relu6TilingTestCase({2, 3}, ge::DT_FLOAT, ge::GRAPH_FAILED, {2, 4});
+    EXPECT_TRUE(HasEZCode("EZ0016"));
 }
 
 TEST_F(Relu6TilingTest, test_tiling_5d_shape_011)
