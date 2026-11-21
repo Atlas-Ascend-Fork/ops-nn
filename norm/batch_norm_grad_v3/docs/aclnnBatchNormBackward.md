@@ -23,36 +23,53 @@
 
 ## 功能说明
 
-- 接口功能：[aclnnBatchNorm](../../batch_norm_v3/docs/aclnnBatchNorm.md)的反向传播。用于计算输入张量的梯度，以便在反向传播过程中更新模型参数。
+- 接口功能：计算[aclnnBatchNorm](../../batch_norm_v3/docs/aclnnBatchNorm.md)反向传播中的输入梯度、缩放参数梯度和偏置参数梯度。
 
 - 计算公式：
 
-  - 当training为true时：
+  每个通道的元素数`n`为除通道轴外各维长度的乘积。$x_i$、$\mathrm{gradOut}_i$分别为该通道的输入元素和上游梯度元素，$i=0,\ldots,n-1$。
+
+  - 当`training`为true时：
+
+    `rstd`为计算中使用的标准差倒数。
+
+    <!-- npu="A3,910b,910" id12 -->
+    - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>、<term>Atlas训练系列产品</term>：`saveInvstd`传入保存的方差，算子计算$\mathrm{rstd}=1/\sqrt{\mathrm{saveInvstd}+\mathrm{eps}}$。
+    <!-- end id12 -->
+    <!-- npu="950" id13 -->
+    - <term>Ascend 950PR&950DT系列产品</term>：`saveInvstd`传入前向保存的标准差倒数，直接作为`rstd`使用。
+    <!-- end id13 -->
 
     $$
-    gradInput = \frac{weight}{ n{\sqrt{saveVar + eps}} }(n * gradOut - \sum^m_{i=0}{gradOut} - \frac{x-saveMean}{\sqrt{saveVar + eps}} \sum^m_{i=0}({gradOut} *\frac{x-saveMean}{ \sqrt{saveVar + eps} } ))
-    $$
-
-    $$
-    gradWeight = \sum^m_{i=0}[{gradOut} * (x - saveMean)] * \frac{1}{ \sqrt{saveVar + eps} }
-    $$
-
-    $$
-    gradBias = \sum^m_{i=0}{gradOut}
-    $$
-
-  - 当training为false时：
-
-    $$
-    gradInput = gradOut * \frac{1}{ \sqrt{runningVar + eps} } * weight
-    $$
-
-    $$
-    gradWeight = \sum^m_{i=0}[{gradOut} * (x - runningMean)] * \frac{1}{ \sqrt{runningVar + eps} }
+    \mathrm{gradInput}_i=
+    \frac{\mathrm{weight}\,\mathrm{rstd}}{n}
+    \left(n\,\mathrm{gradOut}_i-\mathrm{gradBias}
+    -(x_i-\mathrm{saveMean})\,\mathrm{rstd}\,\mathrm{gradWeight}\right)
     $$
 
     $$
-    gradBias = \sum^m_{i=0}{gradOut}
+    \mathrm{gradWeight}=\mathrm{rstd}\sum_{i=0}^{n-1}
+    \mathrm{gradOut}_i(x_i-\mathrm{saveMean})
+    $$
+
+    $$
+    \mathrm{gradBias}=\sum_{i=0}^{n-1}\mathrm{gradOut}_i
+    $$
+
+  - 当`training`为false时：
+
+    $$
+    \mathrm{gradInput}_i=\mathrm{gradOut}_i\,
+    \frac{\mathrm{weight}}{\sqrt{\mathrm{runningVar}+\mathrm{eps}}}
+    $$
+
+    $$
+    \mathrm{gradWeight}=\frac{1}{\sqrt{\mathrm{runningVar}+\mathrm{eps}}}
+    \sum_{i=0}^{n-1}\mathrm{gradOut}_i(x_i-\mathrm{runningMean})
+    $$
+
+    $$
+    \mathrm{gradBias}=\sum_{i=0}^{n-1}\mathrm{gradOut}_i
     $$
 
 ## 函数原型
@@ -116,7 +133,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>gradOut（aclTensor*）</td>
       <td>输入</td>
       <td>表示梯度Tensor，对应公式中的`gradOut`。</td>
-      <td><ul><li>支持空Tensor。</li><li>支持的shape和格式有：2维（对应的格式为NC），3维（对应的格式为NCL），4维（对应的格式为NCHW、NHWC），5维（对应的格式为NCDHW、NDHWC），6-8维（对应的格式为ND，其中第2维固定为channel轴）。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>支持的shape和格式有：2维（对应的格式为NC），3维（对应的格式为NCL），4维（对应的格式为NCHW、NHWC），5维（对应的格式为NCDHW、NDHWC），6-8维（对应的格式为ND）。</li><li>NHWC、NDHWC的通道轴为最后一维，其余所列格式的通道轴为第2维。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>NC、NCL、NCHW、NHWC、NCDHW、NDHWC、ND</td>
       <td>2-8</td>
@@ -134,9 +151,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>weight（aclTensor*）</td>
-      <td>输入</td>
+      <td>可选输入</td>
       <td>表示权重Tensor，对应公式中的`weight`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape长度与入参`input`中channel轴的长度相等。</li></ul></td>
+      <td><ul><li>可选。传空指针时，各通道使用1。</li><li>主输入非空时，传入的张量Shape为[C]，其中C为通道数。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -144,9 +161,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>runningMean（aclTensor*）</td>
-      <td>输入</td>
+      <td>可选输入</td>
       <td>表示训练期间计算的平均值，对应公式中的`runningMean`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape长度与入参`input`中channel轴的长度相等。</li></ul></td>
+      <td><ul><li>可选。传空指针时，各通道使用0。</li><li>主输入非空时，传入的张量Shape为[C]，其中C为通道数。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -154,9 +171,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>runningVar（aclTensor*）</td>
-      <td>输入</td>
+      <td>可选输入</td>
       <td>表示训练期间计算的方差，对应公式中的`runningVar`。</td>
-      <td><ul><li>支持空Tensor。</li><li>数值为非负数。</li><li>shape长度与入参`input`中channel轴的长度相等。</li></ul></td>
+      <td><ul><li>可选。传空指针时，各通道使用1。</li><li>主输入非空时，传入的张量Shape为[C]，其中C为通道数。</li><li>请传入有限非负值。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -164,9 +181,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>saveMean（aclTensor*）</td>
-      <td>输入</td>
+      <td>可选输入</td>
       <td>表示保存的均值，对应公式中的`saveMean`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape长度与入参`input`中channel轴的长度相等，或在推理场景下长度为0。</li></ul></td>
+      <td><ul><li>可选。传空指针时，各通道使用0。</li><li>训练且主输入非空时，传入的张量Shape为[C]。推理时该统计量不参与计算，也可传Shape为[0]的张量。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -174,9 +191,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>saveInvstd（aclTensor*）</td>
-      <td>输入</td>
-      <td>表示保存的input方差或者input标准差倒数，对应公式中的`Var(x)`、(Var(x) + eps)开平方的倒数。</td>
-      <td><ul><li>支持空Tensor。</li><li>数值为非负数。</li><li>shape长度与入参`input`中channel轴的长度相等，或在推理场景下长度为0。</li></ul></td>
+      <td>可选输入</td>
+      <td>训练时使用的保存方差或标准差倒数，取决于产品。参见训练公式和产品约束。</td>
+      <td><ul><li>可选。传空指针时，各通道使用1。</li><li>训练且主输入非空时，传入的张量Shape为[C]。推理时该统计量不参与计算，也可传Shape为[0]的张量。</li><li>请传入有限非负值。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -196,7 +213,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>eps（double）</td>
       <td>输入</td>
       <td>表示添加到方差中的值，以避免出现除以零的情况。对应公式中的`eps`。</td>
-      <td>-</td>
+      <td>必填，由调用方指定。建议使用有限正数，例如示例中的1e-5。训练时的用法参见计算公式。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -206,7 +223,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>outputMask（aclBoolArray*）</td>
       <td>输入</td>
       <td>表示输出的掩码。</td>
-      <td>size为3。分别表示是否输出`gradInput`、`gradWeight`、`gradBias`，若为true则输出，否则输出对应位置返回空。</td>
+      <td>传入长度为3的非空指针，元素顺序为gradInput、gradWeight、gradBias。对应元素为true时，需要传入对应的输出Tensor。为false时跳过该结果，可传空指针。</td>
       <td>BoolArray</td>
       <td>-</td>
       <td>-</td>
@@ -289,7 +306,7 @@ aclnnStatus aclnnBatchNormBackward(
     - `gradWeight`、`gradBias`的数据类型需要保持一致。
     - `runningVar`数据类型需要与`runningMean`的数据类型一致。
     - `saveInvstd`数据类型需要与`saveMean`的数据类型一致。
-    - 参数`saveInvstd`表示input标准差的倒数。
+    - 参数`saveInvstd`为前向保存的标准差倒数，已包含epsilon。
   <!-- end id9 -->
 
 - **返回值**
@@ -312,9 +329,12 @@ aclnnStatus aclnnBatchNormBackward(
   </thead>
   <tbody>
     <tr>
-      <td rowspan="4">ACLNN_ERR_PARAM_NULLPTR</td>
-      <td rowspan="4">161001</td>
+      <td rowspan="5">ACLNN_ERR_PARAM_NULLPTR</td>
+      <td rowspan="5">161001</td>
       <td>传入的gradOut、input指针是空指针。</td>
+    </tr>
+    <tr>
+      <td>当gradOut和input均为非空Tensor时，传入的outputMask是空指针。</td>
     </tr>
     <tr>
       <td>当outputMask[0]为true，传入的gradInput是空指针时。</td>
@@ -334,7 +354,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>weight，runningMean，runningVar，saveMean，saveInvstd非空时，数据类型、数据格式和shape不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>outputMask的长度不为3。</td>
+      <td>outputMask的长度为0。</td>
     </tr>
     <tr>
       <td>当outputMask[0]为true，gradInput数据类型、数据格式和shape不在支持的范围之内时。</td>
@@ -358,6 +378,10 @@ aclnnStatus aclnnBatchNormBackward(
       <td>input、gradOut、gradInput（非空时）的shape不一致，或者shape的维度大于8维或者小于2维。</td>
     </tr>
   </tbody></table>
+
+  <!-- npu="950" id14 -->
+  - <term>Ascend 950PR&950DT系列产品</term>：当gradOut和input均为非空Tensor时，outputMask的长度必须为3，否则返回ACLNN_ERR_PARAM_INVALID（161002）。
+  <!-- end id14 -->
 
 ## aclnnBatchNormBackward
 
@@ -403,6 +427,9 @@ aclnnStatus aclnnBatchNormBackward(
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
+
+- ACLNN接口接收具体的Tensor shape。`-1`（未知维）和`[-2]`（未知秩）属于GE图定义，应在执行前具体化。参见[图算子约束](../README.md#约束说明)。
+- 当`input`或`gradOut`是零元素Tensor时，第一段接口跳过常规参数校验。执行时会将掩码已启用且提供了非空Tensor的`gradWeight`、`gradBias`置零。
 
 - 确定性计算：
 

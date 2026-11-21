@@ -14,7 +14,7 @@
 //     -I$ASCEND_HOME_PATH/include -L$ASCEND_HOME_PATH/lib64 \
 //     -I$ASCEND_HOME_PATH/opp/built-in/op_graph/inc \
 //     -lgraph -lgraph_base -lge_runner -lascendcl
-// Run on device 0: ./test_geir_batch_norm_grad_v3 [--infer | --empty-infer]
+// Run all three scenarios on device 0: ./test_geir_batch_norm_grad_v3
 // Training checks all three gradients. Nonempty inference checks dx.
 // Empty inference checks that GE infers all three output shapes as empty.
 
@@ -164,28 +164,35 @@ bool RunExample(bool training, bool emptyInference)
 }
 } // namespace
 
-int main(int argc, char* argv[])
+int main()
 {
-    const std::string mode = argc > 1 ? argv[1] : "";
-    if (argc > 2 || (argc == 2 && mode != "--infer" && mode != "--empty-infer")) {
-        std::cerr << "Usage: " << argv[0] << " [--infer | --empty-infer]\n";
-        return 1;
-    }
-    const bool training = argc == 1;
-    const bool emptyInference = mode == "--empty-infer";
     const std::map<ge::AscendString, ge::AscendString> options = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
     const auto status = ge::GEInitialize(options);
     if (status != ge::SUCCESS) {
         std::cerr << "GEInitialize failed: " << status << '\n';
         return 1;
     }
-    // RunExample destroys the Session before GEFinalize, including failure paths.
-    const bool passed = RunExample(training, emptyInference);
+    struct Scenario {
+        const char* name;
+        bool training;
+        bool emptyInference;
+    };
+    const Scenario scenarios[] = {
+        {"training", true, false}, {"inference", false, false}, {"empty inference", false, true}};
+    bool passed = true;
+    for (const auto& scenario : scenarios) {
+        std::cout << "Running " << scenario.name << '\n';
+        // RunExample destroys each Session before the next case and GEFinalize, including failure paths.
+        if (RunExample(scenario.training, scenario.emptyInference)) {
+            std::cout << "PASS BatchNormGradV3 GEIR " << scenario.name << '\n';
+        } else {
+            std::cerr << "FAIL BatchNormGradV3 GEIR " << scenario.name << '\n';
+            passed = false;
+        }
+    }
     const auto finalizeStatus = ge::GEFinalize();
     if (!passed || finalizeStatus != ge::SUCCESS) {
         return 1;
     }
-    const char* scenario = emptyInference ? "empty inference" : (training ? "training" : "inference");
-    std::cout << "PASS BatchNormGradV3 GEIR " << scenario << '\n';
     return 0;
 }

@@ -25,36 +25,53 @@
 
 ## Function
 
-- Description: Backward propagation of [aclnnBatchNorm](../../batch_norm_v3/docs/aclnnBatchNorm.md). Calculates gradients of the input tensor for updating model parameters during backward propagation.
+- Description: Computes the input, scale, and bias gradients for the backward pass of [aclnnBatchNorm](../../batch_norm_v3/docs/aclnnBatchNorm_en.md).
 
 - Formula:
 
-  - When training is true:
+  For each channel, `n` is the product of the sizes of all non-channel axes. $x_i$ and $\mathrm{gradOut}_i$ are elements of the input and upstream gradient in that channel, with $i=0,\ldots,n-1$.
+
+  - When `training` is true:
+
+    `rstd` is the reciprocal standard deviation used in the computation.
+
+    <!-- npu="A3,910b,910" id12 -->
+    - <term>Atlas A2 products</term>, <term>Atlas A3 products</term>, and <term>Atlas training products</term>: Pass the saved variance as `saveInvstd`. The operator computes $\mathrm{rstd}=1/\sqrt{\mathrm{saveInvstd}+\mathrm{eps}}$.
+    <!-- end id12 -->
+    <!-- npu="950" id13 -->
+    - <term>Ascend 950PR&950DT products</term>: `saveInvstd` is the reciprocal standard deviation saved by the forward pass and is used directly as `rstd`.
+    <!-- end id13 -->
 
     $$
-    gradInput = \frac{weight}{ n{\sqrt{saveVar + eps}} }(n * gradOut - \sum^m_{i=0}{gradOut} - \frac{x-saveMean}{\sqrt{saveVar + eps}} \sum^m_{i=0}({gradOut} *\frac{x-saveMean}{ \sqrt{saveVar + eps} } ))
-    $$
-
-    $$
-    gradWeight = \sum^m_{i=0}[{gradOut} * (x - saveMean)] * \frac{1}{ \sqrt{saveVar + eps} }
-    $$
-
-    $$
-    gradBias = \sum^m_{i=0}{gradOut}
-    $$
-
-  - When training is false:
-
-    $$
-    gradInput = gradOut * \frac{1}{ \sqrt{runningVar + eps} } * weight
-    $$
-
-    $$
-    gradWeight = \sum^m_{i=0}[{gradOut} * (x - runningMean)] * \frac{1}{ \sqrt{runningVar + eps} }
+    \mathrm{gradInput}_i=
+    \frac{\mathrm{weight}\,\mathrm{rstd}}{n}
+    \left(n\,\mathrm{gradOut}_i-\mathrm{gradBias}
+    -(x_i-\mathrm{saveMean})\,\mathrm{rstd}\,\mathrm{gradWeight}\right)
     $$
 
     $$
-    gradBias = \sum^m_{i=0}{gradOut}
+    \mathrm{gradWeight}=\mathrm{rstd}\sum_{i=0}^{n-1}
+    \mathrm{gradOut}_i(x_i-\mathrm{saveMean})
+    $$
+
+    $$
+    \mathrm{gradBias}=\sum_{i=0}^{n-1}\mathrm{gradOut}_i
+    $$
+
+  - When `training` is false:
+
+    $$
+    \mathrm{gradInput}_i=\mathrm{gradOut}_i\,
+    \frac{\mathrm{weight}}{\sqrt{\mathrm{runningVar}+\mathrm{eps}}}
+    $$
+
+    $$
+    \mathrm{gradWeight}=\frac{1}{\sqrt{\mathrm{runningVar}+\mathrm{eps}}}
+    \sum_{i=0}^{n-1}\mathrm{gradOut}_i(x_i-\mathrm{runningMean})
+    $$
+
+    $$
+    \mathrm{gradBias}=\sum_{i=0}^{n-1}\mathrm{gradOut}_i
     $$
 
 ## Function Prototype
@@ -118,7 +135,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>gradOut (aclTensor*)</td>
       <td>Input</td>
       <td>Represents the gradient tensor, corresponding to `gradOut` in the formula.</td>
-      <td><ul><li>Supports empty tensors.</li><li>Supported shapes and formats: 2D (format: NC), 3D (format: NCL), 4D (formats: NCHW, NHWC), 5D (formats: NCDHW, NDHWC), and 6D to 8D (format: ND, where the second dimension is fixed to the channel axis).</li></ul></td>
+      <td><ul><li>Supports empty tensors.</li><li>Supported shapes and formats: 2D (format: NC), 3D (format: NCL), 4D (formats: NCHW, NHWC), 5D (formats: NCDHW, NDHWC), and 6D to 8D (format: ND).</li><li>The channel axis is the last dimension for NHWC and NDHWC and the second dimension for the other listed formats.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>NC, NCL, NCHW, NHWC, NCDHW, NDHWC, ND</td>
       <td>2-8</td>
@@ -136,9 +153,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>weight (aclTensor*)</td>
-      <td>Input</td>
+      <td>Optional input</td>
       <td>Represents the weight tensor, corresponding to `weight` in the formula.</td>
-      <td><ul><li>Supports empty tensors.</li><li>Shape length is equal to the channel axis length in input parameter `input`.</li></ul></td>
+      <td><ul><li>Optional. A null pointer supplies the value 1 for each channel.</li><li>For nonempty main inputs, pass a tensor of shape [C], where C is the number of channels.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -146,9 +163,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>runningMean (aclTensor*)</td>
-      <td>Input</td>
+      <td>Optional input</td>
       <td>Represents the mean calculated during training, corresponding to `runningMean` in the formula.</td>
-      <td><ul><li>Supports empty tensors.</li><li>The shape length is equal to the channel axis length in the `input` parameter.</li></ul></td>
+      <td><ul><li>Optional. A null pointer supplies the value 0 for each channel.</li><li>For nonempty main inputs, pass a tensor of shape [C], where C is the number of channels.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -156,9 +173,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>runningVar (aclTensor*)</td>
-      <td>Input</td>
+      <td>Optional input</td>
       <td>Represents the variance computed during training, corresponding to `runningVar` in the corresponding formula.</td>
-      <td><ul><li>Supports empty tensors.</li><li>Values are non-negative.</li><li>The shape length is equal to the channel axis length of the input parameter `input`.</li></ul></td>
+      <td><ul><li>Optional. A null pointer supplies the value 1 for each channel.</li><li>For nonempty main inputs, pass a tensor of shape [C], where C is the number of channels.</li><li>Use finite, non-negative values.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -166,9 +183,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>saveMean (aclTensor*)</td>
-      <td>Input</td>
+      <td>Optional input</td>
       <td>Saved mean, corresponding to `saveMean` in the formula.</td>
-      <td><ul><li>Supports empty tensors.</li><li>The shape length is equal to the channel axis length of input parameter `input`, or is 0 in the inference scenario.</li></ul></td>
+      <td><ul><li>Optional. A null pointer supplies the value 0 for each channel.</li><li>In training with nonempty main inputs, pass a tensor of shape [C]. In inference, this saved statistic is unused and a tensor of shape [0] is also accepted.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -176,9 +193,9 @@ aclnnStatus aclnnBatchNormBackward(
     </tr>
     <tr>
       <td>saveInvstd (aclTensor*)</td>
-      <td>Input</td>
-      <td>Output only in training scenarios. Indicates the saved input variance or the reciprocal of the input standard deviation, corresponding to `Var(x)` and the reciprocal of the square root of (Var(x) + eps) in the formula, respectively.</td>
-      <td><ul><li>Supports empty tensors.</li><li>Values are non-negative.</li><li>The shape length is equal to the channel axis length in input `input`, or 0 in the inference scenario.</li></ul></td>
+      <td>Optional input</td>
+      <td>Saved variance or reciprocal standard deviation used in training, depending on the product. See the training formula and the product-specific requirements.</td>
+      <td><ul><li>Optional. A null pointer supplies the value 1 for each channel.</li><li>In training with nonempty main inputs, pass a tensor of shape [C]. In inference, this saved statistic is unused and a tensor of shape [0] is also accepted.</li><li>Use finite, non-negative values.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -198,7 +215,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>eps (double)</td>
       <td>Input</td>
       <td>Value added to the variance to avoid division by zero. Corresponds to `eps` in the corresponding formula.</td>
-      <td>-</td>
+      <td>Required. The caller supplies this value. A finite positive value such as 1e-5 is recommended. The training formula specifies how the value is used on each product.</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -208,7 +225,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>outputMask (aclBoolArray*)</td>
       <td>Input</td>
       <td>Mask of the outputs.</td>
-      <td>The size is 3. The elements indicate whether to output `gradInput`, `gradWeight`, and `gradBias` respectively. If true, the output is generated; otherwise, the output at the corresponding position is empty.</td>
+      <td>Pass a non-null array of length 3 in the order gradInput, gradWeight, gradBias. If an element is true, pass the corresponding output tensor. If it is false, the corresponding result is skipped and a null output pointer is accepted.</td>
       <td>BoolArray</td>
       <td>-</td>
       <td>-</td>
@@ -285,13 +302,13 @@ aclnnStatus aclnnBatchNormBackward(
   <!-- npu="950" id9 -->
   - <term>Ascend 950PR&950DT products</term>:
     - When gradOut is FLOAT32, weight, runningMean, runningVar, saveMean, and saveInvstd must be FLOAT32.
-    - When gradOut is FLOAT16, weight, terrunningMean, runningVar, saveMean, and saveInvstd must be FLOAT16 or FLOAT32.
+    - When gradOut is FLOAT16, weight, runningMean, runningVar, saveMean, and saveInvstd must be FLOAT16 or FLOAT32.
     - When gradOut is BFLOAT16, weight, runningMean, runningVar, saveMean, and saveInvstd must be BFLOAT16 or FLOAT32.
     - When weight is FLOAT32, gradWeight must be FLOAT32; when weight is FLOAT16, gradWeight must be FLOAT16 or FLOAT32; when weight is BFLOAT16, gradWeight must be BFLOAT16 or FLOAT32.
     - The data types of `gradWeight` and `gradBias` must be consistent.
     - The data type of `runningVar` must be the same as that of `runningMean`.
     - The data type of `saveInvstd` must be the same as that of `saveMean`.
-    - The `saveInvstd` parameter represents the reciprocal of the standard deviation of input.
+    - The `saveInvstd` parameter is the reciprocal standard deviation saved by the forward pass, with epsilon already included.
   <!-- end id9 -->
 
 - **Return Value**
@@ -314,9 +331,12 @@ aclnnStatus aclnnBatchNormBackward(
   </thead>
   <tbody>
     <tr>
-      <td rowspan="4">ACLNN_ERR_PARAM_NULLPTR</td>
-      <td rowspan="4">161001</td>
+      <td rowspan="5">ACLNN_ERR_PARAM_NULLPTR</td>
+      <td rowspan="5">161001</td>
       <td>The passed-in gradOut or input pointer is a null pointer.</td>
+    </tr>
+    <tr>
+      <td>outputMask is a null pointer and both main input tensors contain elements.</td>
     </tr>
     <tr>
       <td>When outputMask[0] is true, the passed-in gradInput is a null pointer.</td>
@@ -336,7 +356,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>When weight, runningMean, runningVar, saveMean, and saveInvstd are non-empty, their data type, data format, or shape is not within the supported range.</td>
     </tr>
     <tr>
-      <td>The length of outputMask is not 3.</td>
+      <td>outputMask has length 0.</td>
     </tr>
     <tr>
       <td>outputMask[0] is true and the data type, data format, or shape of gradInput is not within the supported range.</td>
@@ -360,6 +380,10 @@ aclnnStatus aclnnBatchNormBackward(
       <td>input, gradOut, and gradInput (when non-empty) have inconsistent shapes, or the shape dimension is greater than 8 or less than 2.</td>
     </tr>
   </tbody></table>
+
+  <!-- npu="950" id14 -->
+  - <term>Ascend 950PR&950DT products</term>: When gradOut and input both contain elements, outputMask must have length 3. Otherwise, the API returns ACLNN_ERR_PARAM_INVALID (161002).
+  <!-- end id14 -->
 
 ## aclnnBatchNormBackward
 
@@ -405,6 +429,9 @@ aclnnStatus aclnnBatchNormBackward(
   aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../docs/en/context/aclnn_return_code.md).
 
 ## Constraints
+
+- The ACLNN interface takes concrete tensor shapes. The `-1` (unknown dimension) and `[-2]` (unknown rank) markers belong to GE graph definitions. See the [graph operator constraints](../README_en.md#constraints).
+- If `input` or `gradOut` has zero elements, the first-stage API skips its normal parameter validation. The execution sets `gradWeight` and `gradBias` to zero when the corresponding mask bit is enabled and a nonempty output tensor is provided.
 
 - Deterministic computation:
 
