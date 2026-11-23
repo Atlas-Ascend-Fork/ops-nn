@@ -54,6 +54,7 @@ struct Conv3DBpFilterV2CovParam {
     string padding;
     bool enable_hf32;
     bool tiling_result;
+    std::vector<int64_t> output_padding{0, 0, 0, 0, 0};
 };
 
 const string DW_COV_CI_950 = R"({"_pattern": "Conv3d_backprop_filter_v2", "tiling_type": "binary",
@@ -145,8 +146,8 @@ static void TestOneFilterCovCase(const Conv3DBpFilterV2CovParam& param)
                                   {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(param.groups)},
                                   {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>(param.data_format)},
                                   {"enable_hf32", Ops::NN::AnyValue::CreateFrom<bool>(param.enable_hf32)},
-                                  {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(
-                                                         std::vector<int64_t>{0, 0, 0, 0, 0})},
+                                  {"output_padding",
+                                   Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(param.output_padding)},
                                   {"padding", Ops::NN::AnyValue::CreateFrom<std::string>(param.padding)}})
                       .NodeInputTd(0, dtype, param.fmap_ori_format, param.fmap_format)
                       .NodeInputTd(1, ge::DT_INT32, param.filter_ori_format, param.filter_format)
@@ -612,6 +613,78 @@ static Conv3DBpFilterV2CovParam dw_cov_cases[] = {
                              "",
                              false,
                              true},
+    // transposed conv (output_padding) valid: output_padding_w=1 < stride_w=2
+    Conv3DBpFilterV2CovParam{"cov_dw_output_padding_valid",
+                             "float16",
+                             {1, 64, 1, 16, 16},
+                             {1, 64, 1, 16, 16},
+                             {2048, 64, 1, 3, 3},
+                             {2048, 64, 1, 3, 3},
+                             {1, 2048, 1, 8, 8},
+                             {1, 2048, 1, 8, 8},
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             {1, 1, 1, 2, 2},
+                             {0, 0, 1, 1, 1, 1},
+                             {1, 1, 1, 1, 1},
+                             1,
+                             "NCDHW",
+                             "",
+                             false,
+                             true,
+                             {0, 0, 0, 0, 1}},
+    // output_padding_w=2 >= stride_w=2 must be rejected
+    Conv3DBpFilterV2CovParam{"cov_dw_output_padding_w_invalid",
+                             "float16",
+                             {1, 64, 1, 16, 16},
+                             {1, 64, 1, 16, 16},
+                             {2048, 64, 1, 3, 3},
+                             {2048, 64, 1, 3, 3},
+                             {1, 2048, 1, 8, 8},
+                             {1, 2048, 1, 8, 8},
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             {1, 1, 1, 2, 2},
+                             {0, 0, 1, 1, 1, 1},
+                             {1, 1, 1, 1, 1},
+                             1,
+                             "NCDHW",
+                             "",
+                             false,
+                             false,
+                             {0, 0, 0, 0, 2}},
+    // output_padding_d=1 >= stride_d=1 must be rejected
+    Conv3DBpFilterV2CovParam{"cov_dw_output_padding_d_invalid",
+                             "float16",
+                             {1, 64, 1, 16, 16},
+                             {1, 64, 1, 16, 16},
+                             {2048, 64, 1, 3, 3},
+                             {2048, 64, 1, 3, 3},
+                             {1, 2048, 1, 8, 8},
+                             {1, 2048, 1, 8, 8},
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             ge::FORMAT_NCDHW,
+                             {1, 1, 1, 2, 2},
+                             {0, 0, 1, 1, 1, 1},
+                             {1, 1, 1, 1, 1},
+                             1,
+                             "NCDHW",
+                             "",
+                             false,
+                             false,
+                             {0, 0, 1, 0, 0}},
 };
 
 INSTANTIATE_TEST_SUITE_P(Conv3DBpFilterV2Cov, Conv3DBpFilterV2CovSuite, testing::ValuesIn(dw_cov_cases));

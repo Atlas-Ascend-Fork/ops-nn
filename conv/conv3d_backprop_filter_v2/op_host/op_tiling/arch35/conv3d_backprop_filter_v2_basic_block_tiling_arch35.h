@@ -147,6 +147,8 @@ protected:
 
     bool CheckKernelSize();
 
+    bool CheckOutputPadding();
+
     bool GetTbeTilingDavid();
 
     void PrintTilingData();

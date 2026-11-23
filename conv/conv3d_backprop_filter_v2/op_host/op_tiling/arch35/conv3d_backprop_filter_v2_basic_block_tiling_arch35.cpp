@@ -145,6 +145,10 @@ ge::graphStatus Conv3DDWV2BasicBlockTilingArch35::GetShapeAttrsInfo()
         return ge::GRAPH_FAILED;
     }
 
+    if (!CheckOutputPadding()) {
+        return ge::GRAPH_FAILED;
+    }
+
     isHiF8Flag_ = runInfo_.a_dtype == ge::DT_HIFLOAT8 && runInfo_.b_dtype == ge::DT_HIFLOAT8 &&
                   runInfo_.c_dtype == ge::DT_FLOAT;
     if (!CheckAttrs() || !CheckFormat() || !CheckKernelSize()) {
@@ -173,6 +177,35 @@ ge::graphStatus Conv3DDWV2BasicBlockTilingArch35::GetShapeAttrsInfo()
     InitTilingValue(tilingParams);
     SetTilingValue(dwt, tilingParams);
     return ge::GRAPH_SUCCESS;
+}
+
+bool Conv3DDWV2BasicBlockTilingArch35::CheckOutputPadding()
+{
+    OP_CHECK_IF(runInfo_.output_padding.output_padding_d >= runInfo_.stride_d &&
+                    runInfo_.output_padding.output_padding_d >= runInfo_.dilation_d,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    opName_, "output_padding_d", std::to_string(runInfo_.output_padding.output_padding_d).c_str(),
+                    FormatString("The value of output_padding_d must be smaller than dilation_d[%d] or stride_d[%d]",
+                                 runInfo_.dilation_d, runInfo_.stride_d)
+                        .c_str()),
+                return false);
+    OP_CHECK_IF(runInfo_.output_padding.output_padding_h >= runInfo_.stride_h &&
+                    runInfo_.output_padding.output_padding_h >= runInfo_.dilation_h,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    opName_, "output_padding_h", std::to_string(runInfo_.output_padding.output_padding_h).c_str(),
+                    FormatString("The value of output_padding_h must be smaller than dilation_h[%d] or stride_h[%d]",
+                                 runInfo_.dilation_h, runInfo_.stride_h)
+                        .c_str()),
+                return false);
+    OP_CHECK_IF(runInfo_.output_padding.output_padding_w >= runInfo_.stride_w &&
+                    runInfo_.output_padding.output_padding_w >= runInfo_.dilation_w,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    opName_, "output_padding_w", std::to_string(runInfo_.output_padding.output_padding_w).c_str(),
+                    FormatString("The value of output_padding_w must be smaller than dilation_w[%d] or stride_w[%d]",
+                                 runInfo_.dilation_w, runInfo_.stride_w)
+                        .c_str()),
+                return false);
+    return true;
 }
 
 int32_t Conv3DDWV2BasicBlockTilingArch35::CalcRealGroupMagFactor(int32_t groups)
