@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+if(UT_TEST_ALL OR OP_GRAPH_UT)
+    add_modules_ut_sources(HOSTNAME ${OP_GRAPH_MODULE_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_library(index_by_tensor_graph_registry_ut SHARED
+        ${OPS_NN_DIR}/index/index/op_graph/index_graph_infer.cpp)
+    target_link_libraries(index_by_tensor_graph_registry_ut PRIVATE
+        $<BUILD_INTERFACE:intf_llt_pub_asan_cxx17> register graph exe_graph
+        -Wl,--whole-archive rt2_registry_static -Wl,--no-whole-archive -Wl,-Bsymbolic)
+    target_include_directories(index_by_tensor_graph_registry_ut PRIVATE ${ASCEND_DIR}/include)
+    target_compile_definitions(${OP_GRAPH_MODULE_NAME}_cases_obj PRIVATE
+        INDEX_BY_TENSOR_GRAPH_REGISTRY_SO="$<TARGET_FILE:index_by_tensor_graph_registry_ut>")
+    add_dependencies(${OP_GRAPH_MODULE_NAME}_cases_obj index_by_tensor_graph_registry_ut)
+endif()

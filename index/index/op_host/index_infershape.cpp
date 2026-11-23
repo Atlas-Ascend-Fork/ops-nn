@@ -289,16 +289,5 @@ static ge::graphStatus InferShape4Index(gert::InferShapeContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus InferDataType4Index(gert::InferDataTypeContext* context)
-{
-    OP_LOGI(context->GetNodeName(), "index inferdataType begins");
-    auto input_value_dtype = context->GetInputDataType(0);
-    context->SetOutputDataType(0, input_value_dtype);
-    return GRAPH_SUCCESS;
-}
-
-IMPL_OP_INFERSHAPE(Index)
-    .InferDataType(InferDataType4Index)
-    .InferShape(InferShape4Index)
-    .InputsDataDependency({IDX_SIZES});
+IMPL_OP_INFERSHAPE(Index).InferShape(InferShape4Index).InputsDataDependency({IDX_SIZES});
 } // namespace ops

@@ -10,4 +10,14 @@ file(GLOB CURRENT_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOUR
 if(UT_TEST_ALL OR OP_GRAPH_UT)
     message("zxx ${OP_GRAPH_MODULE_NAME}")
     add_modules_ut_sources(HOSTNAME ${OP_GRAPH_MODULE_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_library(index_graph_registry_ut SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_graph/index_graph_infer.cpp)
+    target_link_libraries(index_graph_registry_ut PRIVATE
+        $<BUILD_INTERFACE:intf_llt_pub_asan_cxx17> register graph exe_graph
+        -Wl,--whole-archive rt2_registry_static -Wl,--no-whole-archive -Wl,-Bsymbolic)
+    target_include_directories(index_graph_registry_ut PRIVATE ${ASCEND_DIR}/include)
+    target_compile_definitions(${OP_GRAPH_MODULE_NAME}_cases_obj PRIVATE
+        INDEX_GRAPH_REGISTRY_SO="$<TARGET_FILE:index_graph_registry_ut>")
+    add_dependencies(${OP_GRAPH_MODULE_NAME}_cases_obj index_graph_registry_ut)
 endif()

@@ -306,37 +306,3 @@ TEST_F(IndexTest, index_infershape_broadcast_03)
         {1, 1, 1, 2}, {1});
     ExecuteTestCase(infershapeContextPara, ge::GRAPH_FAILED);
 }
-
-TEST_F(IndexTest, index_inferdtype_success_01)
-{
-    fe::PlatformInfo platformInfo;
-    fe::OptionalInfo optiCompilationInfo;
-    platformInfo.soc_info.ai_core_cnt = 64;
-    platformInfo.str_info.short_soc_version = "Ascend950";
-    optiCompilationInfo.soc_version = "Ascend950PR_9589";
-    fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950PR_9589"] = platformInfo;
-    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
-
-    auto inferDtypeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("Index")->infer_datatype;
-
-    ge::DataType x_dtype = ge::DT_FLOAT16;
-    ge::DataType y_dtype = ge::DT_FLOAT16;
-    ge::DataType argmax_dtype = ge::DT_INT32;
-    ge::DataType expect_output_dtype = ge::DT_FLOAT16;
-
-    auto holder = gert::InferDataTypeContextFaker()
-                      .NodeIoNum(4, 1)
-                      .IrInstanceNum({1, 1, 1, 1})
-                      .InputDataTypes({&x_dtype, &x_dtype, &x_dtype, &x_dtype})
-                      .OutputDataTypes({&y_dtype})
-                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(2, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(3, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .Build();
-    auto context = holder.GetContext<gert::InferDataTypeContext>();
-    ASSERT_EQ(inferDtypeFunc(context), ge::GRAPH_SUCCESS);
-    ASSERT_NE(context, nullptr);
-    EXPECT_EQ(context->GetOutputDataType(0), expect_output_dtype);
-}

@@ -20,6 +20,7 @@ import numpy as np
 
 __spec__ = {
     "index": "IndexKernelSpec",
+    "index_by_tensor": "IndexByTensorSpec",
     "aclnnIndex": "AclnnIndexSpec",
 }
 
@@ -90,6 +91,21 @@ class IndexKernelSpec:
     """Kernel / GEIR 流程 — golden 收到 numpy.ndarray，参数按位置对齐 index_def.cpp 形参。"""
 
     golden = staticmethod(index_golden)
+
+
+class IndexByTensorSpec:
+    """GEIR reference preserving tensor-index axis order and the input dtype."""
+
+    @staticmethod
+    def golden(x, indices, indices_mask, **kwargs):
+        # Keep scalar tensors in the advanced-indexing group when mixed with vectors.
+        index_iter = iter(indices)
+        index_tuple = tuple(
+            np.asarray(next(index_iter), dtype=np.int64) if selected else slice(None)
+            for selected in indices_mask
+        )
+        # The empty tuple also handles no indices, including a scalar input.
+        return np.asarray(x[index_tuple]).copy()
 
 
 class AclnnIndexSpec:
