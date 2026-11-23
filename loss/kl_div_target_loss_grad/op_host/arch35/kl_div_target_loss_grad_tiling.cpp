@@ -22,6 +22,8 @@
 #include <map>
 
 #include "log/log.h"
+#include "base/err_msg.h"
+#include "util/shape_util.h"
 #include "register/op_impl_registry.h"
 #include "register/tilingdata_base.h"
 #include "op_host/tiling_templates_registry.h"
@@ -52,32 +54,32 @@ ge::graphStatus KlDivTargetLossGradTiling::CalcInputDtype()
     auto inputGradDesc = context_->GetInputDesc(INPUT_GRAD_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, inputGradDesc);
     this->inputGradDtype = inputGradDesc->GetDataType();
-    OP_CHECK_IF(
-        this->inputGradDtype != ge::DT_FLOAT16 && this->inputGradDtype != ge::DT_BF16 &&
-            this->inputGradDtype != ge::DT_FLOAT,
-        OP_LOGE(context_->GetNodeName(), "input Grad dtype allow {float16, bfloat16, float32} ,but not support %s",
-                ge::TypeUtils::DataTypeToSerialString(this->inputGradDtype).c_str()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(this->inputGradDtype != ge::DT_FLOAT16 && this->inputGradDtype != ge::DT_BF16 &&
+                    this->inputGradDtype != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "grad",
+                                          ge::TypeUtils::DataTypeToSerialString(this->inputGradDtype).c_str(),
+                                          "The dtype of grad must be DT_FLOAT16, DT_BF16 or DT_FLOAT"),
+                return ge::GRAPH_FAILED);
 
     auto inputInputDesc = context_->GetInputDesc(INPUT_INPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, inputInputDesc);
     this->inputInputDtype = inputInputDesc->GetDataType();
-    OP_CHECK_IF(
-        this->inputInputDtype != ge::DT_FLOAT16 && this->inputInputDtype != ge::DT_BF16 &&
-            this->inputInputDtype != ge::DT_FLOAT,
-        OP_LOGE(context_->GetNodeName(), "input Input dtype allow {float16, bfloat16, float32} ,but not support %s",
-                ge::TypeUtils::DataTypeToSerialString(this->inputInputDtype).c_str()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(this->inputInputDtype != ge::DT_FLOAT16 && this->inputInputDtype != ge::DT_BF16 &&
+                    this->inputInputDtype != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "input",
+                                          ge::TypeUtils::DataTypeToSerialString(this->inputInputDtype).c_str(),
+                                          "The dtype of input must be DT_FLOAT16, DT_BF16 or DT_FLOAT"),
+                return ge::GRAPH_FAILED);
 
     auto inputTargetDesc = context_->GetInputDesc(INPUT_TARGET_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, inputTargetDesc);
     this->inputTargetDtype = inputTargetDesc->GetDataType();
-    OP_CHECK_IF(
-        this->inputTargetDtype != ge::DT_FLOAT16 && this->inputTargetDtype != ge::DT_BF16 &&
-            this->inputTargetDtype != ge::DT_FLOAT,
-        OP_LOGE(context_->GetNodeName(), "input Target dtype allow {float16, bfloat16, float32} ,but not support %s",
-                ge::TypeUtils::DataTypeToSerialString(this->inputTargetDtype).c_str()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(this->inputTargetDtype != ge::DT_FLOAT16 && this->inputTargetDtype != ge::DT_BF16 &&
+                    this->inputTargetDtype != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "target",
+                                          ge::TypeUtils::DataTypeToSerialString(this->inputTargetDtype).c_str(),
+                                          "The dtype of target must be DT_FLOAT16, DT_BF16 or DT_FLOAT"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -96,23 +98,32 @@ ge::graphStatus KlDivTargetLossGradTiling::CalcDiffDtype()
     this->inputInputDtype = inputDesc->GetDataType();
     this->inputTargetDtype = targetDesc->GetDataType();
     this->outputYDtype = outputYDesc->GetDataType();
-    OP_CHECK_IF(this->inputGradDtype != this->inputInputDtype,
-                OP_LOGE(context_->GetNodeName(), "dtype of grad[%s] and dtype of input[%s] not same",
-                        ge::TypeUtils::DataTypeToSerialString(this->inputGradDtype).c_str(),
-                        ge::TypeUtils::DataTypeToSerialString(this->inputInputDtype).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        this->inputGradDtype != this->inputInputDtype,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "grad and input",
+                                               (ge::TypeUtils::DataTypeToSerialString(this->inputGradDtype) + " and " +
+                                                ge::TypeUtils::DataTypeToSerialString(this->inputInputDtype))
+                                                   .c_str(),
+                                               "The dtypes of grad and input must be the same"),
+        return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(this->inputGradDtype != this->inputTargetDtype,
-                OP_LOGE(context_->GetNodeName(), "dtype of grad[%s] and dtype of target[%s] not same",
-                        ge::TypeUtils::DataTypeToSerialString(this->inputGradDtype).c_str(),
-                        ge::TypeUtils::DataTypeToSerialString(this->inputTargetDtype).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        this->inputGradDtype != this->inputTargetDtype,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "grad and target",
+                                               (ge::TypeUtils::DataTypeToSerialString(this->inputGradDtype) + " and " +
+                                                ge::TypeUtils::DataTypeToSerialString(this->inputTargetDtype))
+                                                   .c_str(),
+                                               "The dtypes of grad and target must be the same"),
+        return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(this->inputGradDtype != this->outputYDtype,
-                OP_LOGE(context_->GetNodeName(), "dtype of grad[%s] and dtype of y[%s] not same",
-                        ge::TypeUtils::DataTypeToSerialString(this->inputGradDtype).c_str(),
-                        ge::TypeUtils::DataTypeToSerialString(this->outputYDtype).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        this->inputGradDtype != this->outputYDtype,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "grad and y",
+                                               (ge::TypeUtils::DataTypeToSerialString(this->inputGradDtype) + " and " +
+                                                ge::TypeUtils::DataTypeToSerialString(this->outputYDtype))
+                                                   .c_str(),
+                                               "The dtypes of grad and y must be the same"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -123,11 +134,20 @@ ge::graphStatus KlDivTargetLossGradTiling::CalcOutputDtype()
     this->outputYDtype = outputYDesc->GetDataType();
     OP_CHECK_IF(
         this->outputYDtype != ge::DT_FLOAT16 && this->outputYDtype != ge::DT_BF16 && this->outputYDtype != ge::DT_FLOAT,
-        OP_LOGE(context_->GetNodeName(), "output Y dtype allow {float16, bfloat16, float32} ,but not support %s",
-                ge::TypeUtils::DataTypeToSerialString(this->outputYDtype).c_str()),
+        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "y",
+                                  ge::TypeUtils::DataTypeToSerialString(this->outputYDtype).c_str(),
+                                  "The dtype of y must be DT_FLOAT16, DT_BF16 or DT_FLOAT"),
         return ge::GRAPH_FAILED);
     OP_CHECK_IF(this->outputYDtype != this->inputGradDtype,
-                OP_LOGE(context_->GetNodeName(), "output Y dtype is not same as inputs"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context_->GetNodeName(), "grad, input, target and y",
+                    (ge::TypeUtils::DataTypeToSerialString(this->inputGradDtype) + ", " +
+                     ge::TypeUtils::DataTypeToSerialString(this->inputInputDtype) + ", " +
+                     ge::TypeUtils::DataTypeToSerialString(this->inputTargetDtype) + " and " +
+                     ge::TypeUtils::DataTypeToSerialString(this->outputYDtype))
+                        .c_str(),
+                    "The dtype of y must be the same as the dtypes of grad, input and target"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -152,7 +172,9 @@ float KlDivTargetLossGradTiling::CalcReductionCof(const gert::Shape& inputLabelS
             if (inputLabelShape.GetDim(i) != 0) {
                 dimVal = dimVal * inputLabelShape.GetDim(i);
             } else {
-                OP_LOGE(context_->GetNodeName(), "The  [%u]  axis of the input is 0, which is not supported", i);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context_->GetNodeName(), "input", Ops::Base::ToString(inputLabelShape).c_str(),
+                    ("The shape of input must not contain 0, but dim " + std::to_string(i) + " is 0").c_str());
                 return negReductionCof;
             }
         }
@@ -160,7 +182,9 @@ float KlDivTargetLossGradTiling::CalcReductionCof(const gert::Shape& inputLabelS
         if (inputLabelShape.GetDim(0) != 0) {
             dimVal = dimVal * inputLabelShape.GetDim(0);
         } else {
-            OP_LOGE(context_->GetNodeName(), "The 0 axis of the input is 0, which is not supported");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "input",
+                                                  Ops::Base::ToString(inputLabelShape).c_str(),
+                                                  "The shape of input must not contain 0, but dim 0 is 0");
             return negReductionCof;
         }
     }
@@ -204,7 +228,9 @@ ge::graphStatus KlDivTargetLossGradTiling::DoOpTiling()
     OP_CHECK_NULL_WITH_CONTEXT(context_, inputShape);
     auto inputLabelShape = EnsureNotScalar(inputShape->GetStorageShape());
     this->reducationCof_ = CalcReductionCof(inputLabelShape);
-    OP_CHECK_IF(this->reducationCof_ < 0.0f, OP_LOGE(context_->GetNodeName(), "reducationCof must > 0"),
+    OP_CHECK_IF(this->reducationCof_ < 0.0f,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "%s",
+                                       "reduction coefficient is invalid, see the previously reported error"),
                 return ge::GRAPH_FAILED);
     if (input0DType == ge::DT_FLOAT16 || input0DType == ge::DT_BF16) {
         OP_CHECK_IF(RunFp16BroadcastTiling(this->reducationCof_) == ge::GRAPH_FAILED,
@@ -213,8 +239,9 @@ ge::graphStatus KlDivTargetLossGradTiling::DoOpTiling()
         OP_CHECK_IF(RunFp32BroadcastTiling(this->reducationCof_) == ge::GRAPH_FAILED,
                     OP_LOGE(context_->GetNodeName(), "get input dtype failed"), return ge::GRAPH_FAILED);
     } else {
-        OP_LOGE(context_->GetNodeName(), "input dtype is only support float16, bfloat16, float32, while got %s!",
-                ge::TypeUtils::DataTypeToSerialString(input0DType).c_str());
+        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "grad",
+                                  ge::TypeUtils::DataTypeToSerialString(input0DType).c_str(),
+                                  "The dtype of grad must be DT_FLOAT16, DT_BF16 or DT_FLOAT");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
