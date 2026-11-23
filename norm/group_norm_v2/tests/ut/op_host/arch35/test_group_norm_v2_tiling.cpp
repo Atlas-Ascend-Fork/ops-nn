@@ -13,6 +13,11 @@
  * \brief
  */
 
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
+#include "exe_graph/runtime/kernel_context.h"
+#include "tiling_context_faker.h"
+#include "exe_graph/runtime/tiling_data.h"
+#include "exe_graph/runtime/continuous_vector.h"
 #include <iostream>
 #include <vector>
 #include "log/log.h"
@@ -335,3 +340,60 @@ TEST_F(GroupNormV2Tiling, GroupNormV2_tiling_3)
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 1111);
 }
+
+namespace optiling {
+ge::graphStatus SetTilingData(gert::TilingContext*);
+}
+namespace {
+class GroupNormV2MetadataError : public testing::TestWithParam<int> {};
+TEST_P(GroupNormV2MetadataError, MetadataGuardFailsBeforeByteBudgetAndReportsOnce)
+{
+    gert::StorageShape x = {{2, 4, 2}, {2, 4, 2}};
+    gert::StorageShape a = {{4}, {4}};
+    auto f = gert::TilingContextFaker();
+    f.SetOpType("GroupNormV2").NodeIoNum(3, 3).IrInstanceNum({1, 1, 1}, {1, 1, 1});
+    for (int i = 0; i < 3; ++i) {
+        f.NodeInputTd(i, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+        f.NodeOutputTd(i, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    f.InputShapes(std::vector<gert::StorageShape*>{&x, &a, &a})
+        .OutputShapes(std::vector<gert::StorageShape*>{&x, &a, &a});
+    fe::PlatFormInfos platform;
+    platform.Init();
+    optiling::GroupNormV2CompileInfo compileInfo{};
+    auto data = gert::TilingData::CreateCap(10240);
+    auto workspace = gert::ContinuousVector::Create<size_t>(4096);
+    f.CompileInfo(&compileInfo)
+        .PlatformInfo(&platform)
+        .TilingData(data.get())
+        .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()));
+    auto h = f.Build();
+    auto* c = h.GetContext<gert::TilingContext>();
+    ASSERT_NE(c, nullptr);
+    const int index = GetParam();
+    ASSERT_NE(c->GetInputDesc(index), nullptr);
+    ASSERT_NE(c->GetInputShape(index), nullptr);
+    auto* chain = reinterpret_cast<gert::KernelContext*>(c)->MutableInput(index);
+    ASSERT_NE(chain, nullptr);
+    void*& slot = chain->GetValue<void*>();
+    void* saved = slot;
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    slot = nullptr;
+    EXPECT_EQ(c->GetInputShape(index), nullptr);
+    const auto status = optiling::SetTilingData(c);
+    slot = saved;
+    const auto errors = manager.GetRawErrorMessages();
+    EXPECT_EQ(status, ge::GRAPH_FAILED);
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1008");
+    const auto& fields = errors[0].args_map;
+    ASSERT_EQ(fields.count("opName"), 1U);
+    EXPECT_EQ(fields.at("opName"), c->GetNodeName());
+    ASSERT_EQ(fields.count("reason"), 1U);
+    EXPECT_NE(fields.at("reason").find("shape metadata is missing"), std::string::npos);
+    EXPECT_NE(fields.at("reason").find(index == 1 ? "gamma" : "beta"), std::string::npos);
+}
+INSTANTIATE_TEST_SUITE_P(GammaBeta, GroupNormV2MetadataError, testing::Values(1, 2));
+} // namespace

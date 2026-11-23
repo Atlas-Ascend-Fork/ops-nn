@@ -15,6 +15,7 @@
 #include "group_norm_v2_tiling_arch35.h"
 #include "op_api/runtime2_util_nn.h"
 #include "error_util.h"
+#include "norm/norm_common/op_host/norm_error_report.h"
 #include <nlohmann/json.hpp>
 #include "op_host/tiling_templates_registry.h"
 
@@ -152,7 +153,9 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
 
     // check gamma and beta
     auto gammaShapePtr = context->GetInputShape(INPUT_IDX_GAMMA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gammaShapePtr);
+    OP_CHECK_IF(gammaShapePtr == nullptr,
+                Ops::NN::ErrorReport::TilingFailure(context->GetNodeName(), "gamma shape metadata is missing"),
+                return ge::GRAPH_FAILED);
     auto gammaShape = gammaShapePtr->GetStorageShape();
     uint64_t gammaSizes = gammaShape.GetDim(DIM_0);
     OP_CHECK_IF(gammaShape.GetDimNum() != 1,
@@ -169,7 +172,9 @@ static ge::graphStatus CheckInputParams(const gert::TilingContext* context)
                         .c_str()),
                 return ge::GRAPH_FAILED);
     auto betaShapePtr = context->GetInputShape(INPUT_IDX_BETA);
-    OP_CHECK_NULL_WITH_CONTEXT(context, betaShapePtr);
+    OP_CHECK_IF(betaShapePtr == nullptr,
+                Ops::NN::ErrorReport::TilingFailure(context->GetNodeName(), "beta shape metadata is missing"),
+                return ge::GRAPH_FAILED);
     auto betaShape = betaShapePtr->GetStorageShape();
     int64_t betaSizes = betaShape.GetDim(DIM_0);
     OP_CHECK_IF((betaShape.GetDimNum() != 1 || betaSizes != channel),
@@ -625,7 +630,7 @@ ge::graphStatus SetTilingData(gert::TilingContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Start running Tiling4GroupNormV2.");
     OP_CHECK_IF((CheckInputParams(context) != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "InputParams is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InputParams is invalid."), return ge::GRAPH_FAILED);
     OP_CHECK_IF((CheckAttrParams(context) != ge::GRAPH_SUCCESS),
                 OP_LOGE(context->GetNodeName(), "AttrParams is invalid."), return ge::GRAPH_FAILED);
 

@@ -13,6 +13,11 @@
  * \brief
  */
 
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
+#include "exe_graph/runtime/kernel_context.h"
+#include "tiling_context_faker.h"
+#include "exe_graph/runtime/tiling_data.h"
+#include "exe_graph/runtime/continuous_vector.h"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -780,3 +785,79 @@ TEST_F(BatchNormTilingTest, batch_norm_tiling_welford_parallel_n_below_vl_arch35
     gert::StorageShape ndShape = {{256, 512, 8}, {256, 512, 8}};
     RunBatchNormTrainingTilingForTest(ndShape, ge::FORMAT_ND, 512, 0, nullptr, 2752, true);
 }
+
+namespace {
+class InferProbe : public optiling::BatchNormTilingInferBase {
+public:
+    explicit InferProbe(gert::TilingContext* c) : BatchNormTilingInferBase(c) {}
+    using BatchNormTilingInferBase::GetShapeAttrsInfo;
+};
+class TrainProbe : public optiling::BatchNormRegbaseTilingBase {
+public:
+    explicit TrainProbe(gert::TilingContext* c) : BatchNormRegbaseTilingBase(c) {}
+    using BatchNormRegbaseTilingBase::GetShapeAttrsInfo;
+};
+struct MetadataCase {
+    bool training;
+    int missing;
+};
+class BatchNormMetadataError : public testing::TestWithParam<MetadataCase> {};
+TEST_P(BatchNormMetadataError, ReportsOneFormalErrorThroughCaller)
+{
+    const auto p = GetParam();
+    const bool training = p.training;
+    gert::StorageShape x = {{2, 4, 2}, {2, 4, 2}};
+    gert::StorageShape a = {{4}, {4}};
+    gert::StorageShape reserve = {{1}, {1}};
+    auto f = gert::TilingContextFaker();
+    f.SetOpType("BatchNorm").NodeIoNum(5, 6).IrInstanceNum({1, 1, 1, 1U, 1U}, {1, 1, 1, 1, 1, 1});
+    for (int i = 0; i < 5; ++i)
+        f.NodeInputTd(i, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    for (int i = 0; i < 6; ++i)
+        f.NodeOutputTd(i, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    std::vector<gert::StorageShape*> in = {&x, &a, &a, &a, &a};
+    f.InputShapes(in)
+        .OutputShapes(std::vector<gert::StorageShape*>{&x, &a, &a, &a, &a, &reserve})
+        .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-5f)},
+                    {"exponential_avg_factor", Ops::NN::AnyValue::CreateFrom<float>(0.1f)},
+                    {"is_training", Ops::NN::AnyValue::CreateFrom<bool>(training)}});
+    static fe::PlatFormInfos platform;
+    platform.Init();
+    static optiling::BatchNormCompileInfo compileInfo{};
+    static auto data = gert::TilingData::CreateCap(10240);
+    static auto workspace = gert::ContinuousVector::Create<size_t>(4096);
+    f.CompileInfo(&compileInfo)
+        .PlatformInfo(&platform)
+        .TilingData(data.get())
+        .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()));
+    auto h = f.Build();
+    auto* c = h.GetContext<gert::TilingContext>();
+    ASSERT_NE(c, nullptr);
+    ASSERT_NE(c->GetOptionalInputDesc(p.missing), nullptr);
+    ASSERT_NE(c->GetOptionalInputShape(p.missing), nullptr);
+    auto* chain = reinterpret_cast<gert::KernelContext*>(c)->MutableInput(p.missing);
+    ASSERT_NE(chain, nullptr);
+    void*& slot = chain->GetValue<void*>();
+    void* saved = slot;
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    // Internal context fault injection; restore ownership before checking the result.
+    slot = nullptr;
+    const auto status = p.training ? TrainProbe(c).GetShapeAttrsInfo() : InferProbe(c).GetShapeAttrsInfo();
+    slot = saved;
+    const auto errors = manager.GetRawErrorMessages();
+    EXPECT_EQ(status, ge::GRAPH_FAILED);
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1008");
+    const auto& fields = errors[0].args_map;
+    ASSERT_EQ(fields.count("opName"), 1U);
+    EXPECT_EQ(fields.at("opName"), c->GetNodeName());
+    ASSERT_EQ(fields.count("reason"), 1U);
+    EXPECT_NE(fields.at("reason").find("shape metadata is missing"), std::string::npos);
+    EXPECT_NE(fields.at("reason").find(p.missing == 3 ? "mean" : "variance"), std::string::npos);
+}
+INSTANTIATE_TEST_SUITE_P(TrainingAndInference, BatchNormMetadataError,
+                         testing::Values(MetadataCase{true, 3}, MetadataCase{true, 4}, MetadataCase{false, 3},
+                                         MetadataCase{false, 4}));
+} // namespace

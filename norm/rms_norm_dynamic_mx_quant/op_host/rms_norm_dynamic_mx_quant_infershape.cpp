@@ -14,6 +14,8 @@
  */
 
 #include <sstream>
+#include <vector>
+#include "base/err_msg.h"
 #include "graph/utils/type_utils.h"
 #include "runtime/infer_shape_context.h"
 #include "register/op_impl_registry.h"
@@ -65,7 +67,14 @@ graphStatus InferShapeForRmsNormDynamicMxQuant(gert::InferShapeContext* context)
     bool hasOutputRstd = (outputRstdPtr != nullptr) ? *outputRstdPtr : false;
 
     const gert::Shape* xShape = context->GetInputShape(INPUT_X_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    if (xShape == nullptr) {
+        const char* opName = context->GetNodeName();
+        const char* reason = "InferShape context is missing required input x shape metadata; check graph input binding";
+        OP_LOGE_WITHOUT_REPORT(opName, "%s", reason);
+        REPORT_PREDEFINED_ERR_MSG("EZ1014", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{opName, reason}));
+        return ge::GRAPH_FAILED;
+    }
     OP_CHECK_IF(xShape->GetDimNum() < 1 || xShape->GetDimNum() > INPUT_MAX_DIM_NUM,
                 OP_LOGE(context->GetNodeName(), "Input x rank[%lu] should be in [1, 7].", xShape->GetDimNum()),
                 return ge::GRAPH_FAILED);

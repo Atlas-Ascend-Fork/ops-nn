@@ -12,6 +12,7 @@
  * \file batch_norm_tiling_base.cpp
  * \brief
  */
+#include "norm/norm_common/op_host/norm_error_report.h"
 #include "batch_norm_tiling.h"
 
 using namespace ge;
@@ -179,7 +180,12 @@ ge::graphStatus BatchNormTilingBase::CheckSmallShapesValid(int64_t aDimLen)
         }
 
         auto shape = context_->GetOptionalInputShape(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context_, shape);
+        OP_CHECK_IF(
+            shape == nullptr,
+            Ops::NN::ErrorReport::TilingFailure(
+                context_->GetNodeName(),
+                std::string("Optional input descriptor exists but shape metadata is missing: ") + inputParamNames[i]),
+            return ge::GRAPH_FAILED);
         auto storageShape = Ops::NN::OpTiling::EnsureNotScalar(shape->GetStorageShape());
         OP_CHECK_IF(storageShape.GetDimNum() != 1,
                     OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeName(), inputParamNames[i],
@@ -354,8 +360,8 @@ ge::graphStatus BatchNormTilingInferBase::GetShapeAttrsInfo()
         fusedALen_ = xStorageShape.GetDim(DIM_1);
         fusedB1Len_ = xStorageShape.GetShapeSize() / fusedB0Len_ / fusedALen_;
     }
-    OP_CHECK_IF(CheckSmallShapesValid(fusedALen_) != ge::GRAPH_SUCCESS, OP_LOGE(opName, "CheckSmallShapesValid failed"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckSmallShapesValid(fusedALen_) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(opName, "CheckSmallShapesValid failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(GetDtypesAndCheckValid() != ge::GRAPH_SUCCESS, OP_LOGE(opName, "GetDtypesAndCheckValid failed"),
                 return ge::GRAPH_FAILED);
 
@@ -400,8 +406,8 @@ ge::graphStatus BatchNormRegbaseTilingBase::GetShapeAttrsInfo()
         a_ = xStorageShape.GetDim(DIM_1);
         r0_ = xStorageShape.GetShapeSize() / r1_ / a_;
     }
-    OP_CHECK_IF(CheckSmallShapesValid(a_) != ge::GRAPH_SUCCESS, OP_LOGE(opName, "CheckSmallShapesValid failed"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckSmallShapesValid(a_) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(opName, "CheckSmallShapesValid failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(GetDtypesAndCheckValid() != ge::GRAPH_SUCCESS, OP_LOGE(opName, "GetDtypesAndCheckValid failed"),
                 return ge::GRAPH_FAILED);
 

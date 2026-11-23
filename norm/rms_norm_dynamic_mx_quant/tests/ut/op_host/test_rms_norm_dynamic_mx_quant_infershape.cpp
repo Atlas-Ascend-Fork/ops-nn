@@ -8,6 +8,10 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
+#include "exe_graph/runtime/kernel_context.h"
+#include "infer_shape_context_faker.h"
+#include "op_impl_registry.h"
 #include <gtest/gtest.h>
 #include <iostream>
 #include "infershape_test_util.h"
@@ -570,4 +574,54 @@ TEST_F(RmsNormDynamicMxQuantInfershape, RmsNormDynamicMxQuant_infershape_debug_l
     EXPECT_EQ(context->GetOutputShape(1)->GetDim(2), 2);
 
     setenv("ASCEND_GLOBAL_LOG_LEVEL", "3", true);
+}
+
+TEST(RmsNormDynamicMxQuantMetadataError, MissingXMetadataReportsExecutionErrorOnce)
+{
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("RmsNormDynamicMxQuant");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    gert::StorageShape x = {{2, 64}, {2, 64}};
+    gert::StorageShape gamma = {{64}, {64}};
+    auto faker = gert::InferShapeContextFaker();
+    faker.SetOpType("RmsNormDynamicMxQuant")
+        .NodeIoNum(3, 3)
+        .IrInstanceNum({1, 1, 1}, {1, 1, 1})
+        .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(0, ge::DT_FLOAT4_E2M1, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(1, ge::DT_FLOAT8_E8M0, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .InputShapes(std::vector<gert::StorageShape*>{&x, &gamma, &gamma})
+        .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-6f)},
+                    {"scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                    {"round_mode", Ops::NN::AnyValue::CreateFrom<std::string>("rint")},
+                    {"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(40)},
+                    {"output_rstd", Ops::NN::AnyValue::CreateFrom<bool>(false)}});
+    auto holder = faker.Build();
+    auto* ctx = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_NE(ctx->GetInputShape(0), nullptr);
+    // Internal-context fault injection, not a claim that a user empty tensor yields nullptr.
+    auto* kernel = reinterpret_cast<gert::KernelContext*>(ctx);
+    auto* chain = kernel->MutableInput(0);
+    ASSERT_NE(chain, nullptr);
+    void*& slot = chain->GetValue<void*>();
+    void* saved = slot;
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    slot = nullptr;
+    const auto status = impl->infer_shape(ctx);
+    slot = saved; // Preserve holder ownership and deleter.
+    const auto errors = manager.GetRawErrorMessages();
+    EXPECT_EQ(status, ge::GRAPH_FAILED);
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1014");
+    const auto& fields = errors[0].args_map;
+    ASSERT_EQ(fields.count("opName"), 1U);
+    EXPECT_EQ(fields.at("opName"), ctx->GetNodeName());
+    ASSERT_EQ(fields.count("reason"), 1U);
+    EXPECT_NE(fields.at("reason").find("input x shape metadata"), std::string::npos);
 }
