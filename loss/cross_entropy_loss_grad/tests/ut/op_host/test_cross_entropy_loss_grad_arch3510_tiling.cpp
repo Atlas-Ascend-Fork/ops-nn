@@ -74,7 +74,8 @@ static void DoCELossGradRegbaseNoWeightTilingCase(std::initializer_list<int64_t>
                                                   std::initializer_list<int64_t>& inputShape3,
                                                   std::initializer_list<int64_t>& outputShape, ge::DataType inputDtype,
                                                   ge::DataType targetDtype, std::string& reduction, int64_t ignore,
-                                                  float labelSmooth, std::string& expectStr)
+                                                  float labelSmooth, std::string& expectStr,
+                                                  ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS)
 {
     // init platform
     fe::PlatFormInfos platFormInfo;
@@ -151,7 +152,10 @@ static void DoCELossGradRegbaseNoWeightTilingCase(std::initializer_list<int64_t>
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", socVersion);
 
     // workspaces nullptr return failed
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tiling_func(tiling_context), expectedStatus);
+    if (expectedStatus != ge::GRAPH_SUCCESS) {
+        return;
+    }
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
     EXPECT_EQ(tiling_data_result, expectStr);
@@ -163,7 +167,8 @@ static void DoCELossGradRegbaseHasWeightTilingCase(std::initializer_list<int64_t
                                                    std::initializer_list<int64_t>& inputShape4,
                                                    std::initializer_list<int64_t>& outputShape, ge::DataType inputDtype,
                                                    ge::DataType targetDtype, std::string& reduction, int64_t ignore,
-                                                   float labelSmooth, std::string& expectStr)
+                                                   float labelSmooth, std::string& expectStr,
+                                                   ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS)
 {
     // init platform
     fe::PlatFormInfos platFormInfo;
@@ -242,7 +247,10 @@ static void DoCELossGradRegbaseHasWeightTilingCase(std::initializer_list<int64_t
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", socVersion);
 
     // workspaces nullptr return failed
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tiling_func(tiling_context), expectedStatus);
+    if (expectedStatus != ge::GRAPH_SUCCESS) {
+        return;
+    }
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
     EXPECT_EQ(tiling_data_result, expectStr);
@@ -483,4 +491,83 @@ TEST_F(CrossEntropyLossGradRegbaseTiling, cross_entropy_loss_grad_empty)
     DoCELossGradRegbaseHasWeightTilingCase(inputShape1, inputShape2, inputShape3, inputShape4, outputShape,
                                            ge::DT_FLOAT /*inputdtype*/, ge::DT_INT32 /*targetdtype*/, reduction,
                                            ignoreIdx, labelSmoothing, expectStr);
+}
+
+TEST_F(CrossEntropyLossGradRegbaseTiling, test_tiling_int32_target_ignore_index_exceed_int32_max)
+{
+    std::initializer_list<int64_t> inputShape1 = {1};
+    std::initializer_list<int64_t> inputShape2 = {2048, 16384};
+    std::initializer_list<int64_t> inputShape3 = {2048};
+    std::initializer_list<int64_t> outputShape = {2048, 16384};
+    std::string reduction = "mean";
+    int64_t ignoreIdx = 4294967296LL;
+    float labelSmoothing = 0.0;
+    std::string expectStr = "";
+    DoCELossGradRegbaseNoWeightTilingCase(inputShape1, inputShape2, inputShape3, outputShape,
+                                          ge::DT_FLOAT /*inputdtype*/, ge::DT_INT32 /*targetdtype*/, reduction,
+                                          ignoreIdx, labelSmoothing, expectStr, ge::GRAPH_FAILED);
+}
+
+TEST_F(CrossEntropyLossGradRegbaseTiling, test_tiling_int32_target_ignore_index_below_int32_min)
+{
+    std::initializer_list<int64_t> inputShape1 = {1};
+    std::initializer_list<int64_t> inputShape2 = {2048, 16384};
+    std::initializer_list<int64_t> inputShape3 = {2048};
+    std::initializer_list<int64_t> outputShape = {2048, 16384};
+    std::string reduction = "mean";
+    int64_t ignoreIdx = -4294967296LL;
+    float labelSmoothing = 0.0;
+    std::string expectStr = "2048 16384 1 -4294967296 0 64 64 0 32 32 16384 1 0 16384 128 128 128 0 128 0 32 256 0 0 0 "
+                            "0 0 0 ";
+    DoCELossGradRegbaseNoWeightTilingCase(inputShape1, inputShape2, inputShape3, outputShape,
+                                          ge::DT_FLOAT /*inputdtype*/, ge::DT_INT32 /*targetdtype*/, reduction,
+                                          ignoreIdx, labelSmoothing, expectStr);
+}
+
+TEST_F(CrossEntropyLossGradRegbaseTiling, test_tiling_int32_target_ignore_index_int32_max_boundary)
+{
+    std::initializer_list<int64_t> inputShape1 = {1};
+    std::initializer_list<int64_t> inputShape2 = {2048, 16384};
+    std::initializer_list<int64_t> inputShape3 = {2048};
+    std::initializer_list<int64_t> outputShape = {2048, 16384};
+    std::string reduction = "mean";
+    int64_t ignoreIdx = 2147483647LL;
+    float labelSmoothing = 0.0;
+    std::string expectStr = "2048 16384 1 2147483647 0 64 64 0 32 32 16384 1 0 16384 128 128 128 0 128 0 32 256 0 0 0 "
+                            "0 0 0 ";
+    DoCELossGradRegbaseNoWeightTilingCase(inputShape1, inputShape2, inputShape3, outputShape,
+                                          ge::DT_FLOAT /*inputdtype*/, ge::DT_INT32 /*targetdtype*/, reduction,
+                                          ignoreIdx, labelSmoothing, expectStr);
+}
+
+TEST_F(CrossEntropyLossGradRegbaseTiling, test_tiling_int32_target_ignore_index_int32_min_boundary)
+{
+    std::initializer_list<int64_t> inputShape1 = {1};
+    std::initializer_list<int64_t> inputShape2 = {2048, 16384};
+    std::initializer_list<int64_t> inputShape3 = {2048};
+    std::initializer_list<int64_t> outputShape = {2048, 16384};
+    std::string reduction = "mean";
+    int64_t ignoreIdx = -2147483648LL;
+    float labelSmoothing = 0.0;
+    std::string expectStr = "2048 16384 1 -2147483648 0 64 64 0 32 32 16384 1 0 16384 128 128 128 0 128 0 32 256 0 0 0 "
+                            "0 0 0 ";
+    DoCELossGradRegbaseNoWeightTilingCase(inputShape1, inputShape2, inputShape3, outputShape,
+                                          ge::DT_FLOAT /*inputdtype*/, ge::DT_INT32 /*targetdtype*/, reduction,
+                                          ignoreIdx, labelSmoothing, expectStr);
+}
+
+TEST_F(CrossEntropyLossGradRegbaseTiling, test_tiling_int64_target_ignore_index_exceed_int32)
+{
+    std::initializer_list<int64_t> inputShape1 = {1};
+    std::initializer_list<int64_t> inputShape2 = {2048, 16384};
+    std::initializer_list<int64_t> inputShape3 = {2048};
+    std::initializer_list<int64_t> outputShape = {2048, 16384};
+    std::string reduction = "mean";
+    int64_t ignoreIdx = 4294967296LL;
+    float labelSmoothing = 0.0;
+    std::string expectStr = "2048 16384 1 4294967296 0 64 64 0 32 32 16384 1 0 16384 256 128 128 0 128 0 32 256 0 0 0 "
+                            "0 0 0 ";
+    DoCELossGradRegbaseNoWeightTilingCase(inputShape1, inputShape2, inputShape3, outputShape,
+                                          ge::DT_FLOAT /*inputdtype*/, ge::DT_INT64 /*targetdtype*/, reduction,
+                                          ignoreIdx, labelSmoothing, expectStr);
 }

@@ -388,6 +388,9 @@ aclnnStatus aclnnCrossEntropyLossGrad(
 ## Constraints
 
   - target supports only class label indices, not probability inputs.
+  <!-- npu="950" id7 -->
+  - <term>Ascend 950PR&950DT products</term>: When target is of the int32 type, the value of ignoreIndex must not be greater than 2147483647. Otherwise, parameter validation fails.
+  <!-- end id7 -->
   - gradLoss, logProb, gradZlossOptional, lseForZlossOptional, and xGradOut must have the same data type.
   - The zloss function is currently not supported. Passing related inputs, i.e., gradZlossOptional, lseForZlossOptional, and lseSquareScaleForZloss, will not take effect.
 

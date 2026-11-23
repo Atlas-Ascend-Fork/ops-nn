@@ -487,11 +487,12 @@ __aicore__ inline void CELossGradFullLoad<T1, T2, reductionKey, isWeight, labelS
     uint16_t tailLoopTimes = tailNum == 0 ? 0 : 1;
     auto targetUbAddr = (__ubuf__ T2*)targetLocal.GetPhyAddr();
     auto ignoreMaskUbAddr = (__ubuf__ float*)this->ignoreSelect.GetPhyAddr();
-    int32_t ignore = this->ignoreIndex;
+    T2 ignore = static_cast<T2>(this->ignoreIndex);
     __VEC_SCOPE__
     {
         Reg::MaskReg preg;
         Reg::MaskReg dstMask;
+        Reg::MaskReg ignoreMask;
         Reg::RegTensor<T2> srcReg;
         Reg::RegTensor<float> dstReg1;
         Reg::RegTensor<float> srcReg0;
@@ -503,6 +504,7 @@ __aicore__ inline void CELossGradFullLoad<T1, T2, reductionKey, isWeight, labelS
         Reg::RegTensor<int32_t> targetB32TmpReg;
         Reg::MaskReg regAll;
         Reg::MaskReg regAllFp32 = Reg::CreateMask<float, Reg::MaskPattern::ALL>();
+        Reg::MaskReg regAllT = Reg::CreateMask<T2, Reg::MaskPattern::ALL>();
         Reg::Duplicate(dstReg1, 1.0f, regAllFp32);
         Reg::Duplicate(dstReg0, 0.0f, regAllFp32);
         preg = Reg::UpdateMask<int32_t>(tailNum);
@@ -511,15 +513,21 @@ __aicore__ inline void CELossGradFullLoad<T1, T2, reductionKey, isWeight, labelS
             Reg::AddrReg addrReg = Reg::CreateAddrReg<float>(loop, vfLen);
             if constexpr (sizeof(T2) == sizeof(int64_t)) {
                 Reg::LoadAlign(srcReg, targetUbAddr, srcOffset);
+                if constexpr (isIgnore == 1) {
+                    Reg::Compares<T2, CMPMODE::EQ>(ignoreMask, srcReg, ignore, regAllT);
+                    Reg::Pack(dstMask, ignoreMask);
+                }
                 Reg::Cast<int32_t, T2, castS642S32>(targetB32TmpReg, srcReg, regAllFp32);
                 Reg::Pack((RegTensor<uint32_t>&)targetB32Reg, (RegTensor<uint64_t>&)targetB32TmpReg);
                 regAll = Reg::CreateMask<float, Reg::MaskPattern::H>();
             } else {
                 Reg::LoadAlign(targetB32Reg, targetUbAddr, srcOffset);
+                if constexpr (isIgnore == 1) {
+                    Reg::Compares<T2, CMPMODE::EQ>(dstMask, targetB32Reg, ignore, regAllT);
+                }
                 regAll = Reg::CreateMask<float, Reg::MaskPattern::ALL>();
             }
             if constexpr (isIgnore == 1) {
-                Reg::Compares<int32_t, CMPMODE::EQ>(dstMask, targetB32Reg, ignore, regAllFp32);
                 Reg::Select(dstIgReg, dstReg0, dstReg1, dstMask);
                 Reg::StoreAlign(ignoreMaskUbAddr, dstIgReg, addrReg, regAll);
             }
@@ -537,13 +545,19 @@ __aicore__ inline void CELossGradFullLoad<T1, T2, reductionKey, isWeight, labelS
         for (uint16_t t = 0; t < tailLoopTimes; t++) {
             if constexpr (sizeof(T2) == sizeof(int64_t)) {
                 Reg::LoadAlign(srcReg, targetUbAddr + vfLen * repeatTimes);
+                if constexpr (isIgnore == 1) {
+                    Reg::Compares<T2, CMPMODE::EQ>(ignoreMask, srcReg, ignore, regAllT);
+                    Reg::Pack(dstMask, ignoreMask);
+                }
                 Reg::Cast<int32_t, T2, castS642S32>(targetB32TmpReg, srcReg, regAllFp32);
                 Reg::Pack((RegTensor<uint32_t>&)targetB32Reg, (RegTensor<uint64_t>&)targetB32TmpReg);
             } else {
                 Reg::LoadAlign(targetB32Reg, targetUbAddr + vfLen * repeatTimes);
+                if constexpr (isIgnore == 1) {
+                    Reg::Compares<T2, CMPMODE::EQ>(dstMask, targetB32Reg, ignore, preg);
+                }
             }
             if constexpr (isIgnore == 1) {
-                Reg::Compares<int32_t, CMPMODE::EQ>(dstMask, targetB32Reg, ignore, preg);
                 Reg::Select(dstIgReg, dstReg0, dstReg1, dstMask);
                 Reg::StoreAlign(ignoreMaskUbAddr + vfLen * repeatTimes, dstIgReg, preg);
             }

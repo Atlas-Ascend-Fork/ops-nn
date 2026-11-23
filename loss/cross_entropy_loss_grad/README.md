@@ -206,6 +206,7 @@
 ## 约束说明
 
   - target仅支持类标签索引，不支持概率输入。
+  - <term>Ascend 950PR&950DT系列产品</term>：当target为int32类型时，ignoreIndex取值不能大于2147483647，超出时返回校验失败。
   - gradLoss、logProb、gradZlossOptional、lseForZlossOptional、xGradOut数据类型需保持一致。
   - 当前暂不支持zloss功能，传入相关输入，即gradZlossOptional、lseForZlossOptional、lseSquareScaleForZloss，不会生效。
 

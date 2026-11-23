@@ -208,6 +208,7 @@ English | [简体中文](./README.md)
 ## Constraints
 
   - target supports only class label indexes, and probability inputs are not supported.
+  - <term>Ascend 950PR&950DT products</term>: When target is of the int32 type, the value of ignoreIndex must not be greater than 2147483647. Otherwise, validation fails.
   - The data types of gradLoss, logProb, gradZlossOptional, lseForZlossOptional, and xGradOut must be the same.
   - The zloss function is currently not supported yet. Passing the related inputs, that is, gradZlossOptional, lseForZlossOptional, and lseSquareScaleForZloss, does not take effect.
 
