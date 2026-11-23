@@ -109,42 +109,54 @@ def _run_tf_ftrl_v2(
 ):
     """Run tf.raw_ops.ResourceSparseApplyFtrlV2 on already-prepared arrays."""
     import tensorflow as tf
+    from tensorflow.python.eager import context as tf_context
 
     def to_idx(arr):
         return tf.constant(arr, dtype=tf.int32 if arr.dtype == np.int32 else tf.int64)
 
-    v_var = tf.Variable(var, name="var")
-    v_accum = tf.Variable(accum, name="accum")
-    v_linear = tf.Variable(linear, name="linear")
+    # Pin the reference computation to the CPU. After npu_device.open() the
+    # process-default device is the NPU, so without an explicit placement these
+    # reference variables and the raw op would be dispatched to the NPU. A
+    # golden running with a dtype the operator does not register (e.g. a
+    # precision-promoted float64 var) then fails inside the graph engine and
+    # leaves the shared GE session unusable, making every later case in the same
+    # batch process fail with a bogus var-dtype error. tf.device is intercepted
+    # by npu_device.as_default(); the context-level device primitive is not.
+    with tf_context.device("/CPU:0"):
+        v_var = tf.Variable(var, name="var")
+        v_accum = tf.Variable(accum, name="accum")
+        v_linear = tf.Variable(linear, name="linear")
 
-    lr_val = lr.item() if hasattr(lr, "item") else float(lr)
-    l1_val = l1.item() if hasattr(l1, "item") else float(l1)
-    l2_val = l2.item() if hasattr(l2, "item") else float(l2)
-    l2s_val = (
-        l2_shrinkage.item() if hasattr(l2_shrinkage, "item") else float(l2_shrinkage)
-    )
-    lrp_val = lr_power.item() if hasattr(lr_power, "item") else float(lr_power)
+        lr_val = lr.item() if hasattr(lr, "item") else float(lr)
+        l1_val = l1.item() if hasattr(l1, "item") else float(l1)
+        l2_val = l2.item() if hasattr(l2, "item") else float(l2)
+        l2s_val = (
+            l2_shrinkage.item()
+            if hasattr(l2_shrinkage, "item")
+            else float(l2_shrinkage)
+        )
+        lrp_val = lr_power.item() if hasattr(lr_power, "item") else float(lr_power)
 
-    tf.raw_ops.ResourceSparseApplyFtrlV2(
-        var=v_var.handle,
-        accum=v_accum.handle,
-        linear=v_linear.handle,
-        lr=lr_val,
-        l1=l1_val,
-        l2=l2_val,
-        l2_shrinkage=l2s_val,
-        lr_power=lrp_val,
-        grad=tf.constant(grad),
-        indices=to_idx(indices),
-        use_locking=use_locking,
-        multiply_linear_by_lr=False,
-    )
+        tf.raw_ops.ResourceSparseApplyFtrlV2(
+            var=v_var.handle,
+            accum=v_accum.handle,
+            linear=v_linear.handle,
+            lr=lr_val,
+            l1=l1_val,
+            l2=l2_val,
+            l2_shrinkage=l2s_val,
+            lr_power=lrp_val,
+            grad=tf.constant(grad),
+            indices=to_idx(indices),
+            use_locking=use_locking,
+            multiply_linear_by_lr=False,
+        )
 
-    return (
-        v_var.read_value().numpy(),
-        v_accum.read_value().numpy(),
-        v_linear.read_value().numpy(),
-    )
+        return (
+            v_var.read_value().numpy(),
+            v_accum.read_value().numpy(),
+            v_linear.read_value().numpy(),
+        )
 
 
 def sparse_apply_ftrl_v2_golden(
