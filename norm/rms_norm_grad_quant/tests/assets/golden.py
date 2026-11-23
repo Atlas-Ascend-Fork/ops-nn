@@ -66,12 +66,10 @@ def rms_norm_grad_quant_golden(
     x_shape, gamma_shape = tuple(x.shape), tuple(gamma.shape)
     rows, cols = int(np.prod(rstd.shape)), int(np.prod(gamma_shape))
     if rows == 0 or cols == 0:
-        # This fused operator explicitly emits NaN for nonempty dgamma in
-        # EmptyDgamma::VFDuplicateRows, rather than evaluating an empty sum.
-        # Empty gamma is handled by the ACLNN early-return path.
+        # The gradient reduction over an empty batch is an empty sum: zero.
         return [
             _quantize(np.empty(x_shape, dtype=np.float64), dst_type),
-            np.full(gamma_shape, np.nan, dtype=np.float64),
+            np.zeros(gamma_shape, dtype=np.float64),
         ]
 
     x_value = _as_float64(x).reshape(rows, cols)

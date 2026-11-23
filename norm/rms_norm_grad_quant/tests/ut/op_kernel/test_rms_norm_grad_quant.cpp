@@ -239,6 +239,11 @@ TEST_F(rms_norm_grad_quant_test, test_dgamma_empty)
     uint8_t* workspace = (uint8_t*)AscendC::GmAlloc(16 * 2);
     uint8_t* tiling = (uint8_t*)AscendC::GmAlloc(tilingDataSize);
 
+    auto* dgammaData = reinterpret_cast<DTYPE_DGAMMA*>(dgamma);
+    for (uint64_t i = 0; i < cols; ++i) {
+        dgammaData[i] = 1.0f;
+    }
+
     RmsNormGradQuantRegbaseEmptyTilingData* tilingData = reinterpret_cast<RmsNormGradQuantRegbaseEmptyTilingData*>(
         tiling);
 
@@ -263,6 +268,10 @@ TEST_F(rms_norm_grad_quant_test, test_dgamma_empty)
                                                      tiling);
     };
     ICPU_RUN_KF(wrapper, blockDim, dy, x, rstd, gamma, scales_x, offset_x, dx, dgamma, workspace, (uint8_t*)tilingData);
+
+    for (uint64_t i = 0; i < cols; ++i) {
+        EXPECT_EQ(dgammaData[i], 0.0f) << "dgamma index " << i;
+    }
 
     AscendC::GmFree(dy);
     AscendC::GmFree(x);
