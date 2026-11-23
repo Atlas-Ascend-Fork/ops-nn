@@ -390,7 +390,7 @@ static ge::graphStatus InferShapeForExtendConvTransposeV2(gert::InferShapeContex
             GetConv3DTransposeOutputPadding(context, x_format, output_padding,
                                             sizeof(output_padding) / sizeof(int64_t))) {
             if (!SetOutputShape(context, shapes, attrs, output_padding, sizeof(output_padding) / sizeof(int64_t))) {
-                return false;
+                return ge::GRAPH_FAILED;
             }
 
             OP_LOGD(context->GetNodeName(), "y_shape: %s", Ops::Base::ToString(*y_shape).c_str());
