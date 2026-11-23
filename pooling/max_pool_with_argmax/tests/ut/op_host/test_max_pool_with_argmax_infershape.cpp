@@ -289,10 +289,10 @@ TEST_F(MaxPoolWithArgmaxInfer, infer_shape_null_context)
     ASSERT_EQ(inferShapeFunc(nullptr), ge::GRAPH_FAILED);
 }
 
-TEST_F(MaxPoolWithArgmaxInfer, fail_invalid_targmax)
+TEST_F(MaxPoolWithArgmaxInfer, success_invalid_targmax_default_int64)
 {
     ExecuteMaxPoolWithArgmaxInfershapeTest({{4, 3, 8, 8}, {}}, ge::FORMAT_NCHW, ge::DT_FLOAT, {1, 1, 2, 2},
-                                           {1, 1, 2, 2}, "SAME", 5, "NCHW", ge::GRAPH_FAILED);
+                                           {1, 1, 2, 2}, "SAME", 5, "NCHW", ge::GRAPH_SUCCESS);
 }
 
 TEST_F(MaxPoolWithArgmaxInfer, success_targmax_int64)

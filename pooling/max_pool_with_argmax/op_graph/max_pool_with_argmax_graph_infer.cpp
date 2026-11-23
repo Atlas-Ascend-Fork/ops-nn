@@ -14,11 +14,12 @@
 #include "register/op_impl_registry.h"
 
 namespace ops {
-constexpr size_t INPUT_INDEX = 0U;
-constexpr size_t OUTPUT_Y_INDEX = 0U;
-constexpr size_t OUTPUT_ARGMAX_INDEX = 1U;
-constexpr size_t ATTR_TARGMAX_INDEX = 3U;
-constexpr int64_t TARGMAX_INT32 = 3;
+static constexpr size_t INPUT_INDEX = 0U;
+static constexpr size_t OUTPUT_Y_INDEX = 0U;
+static constexpr size_t OUTPUT_ARGMAX_INDEX = 1U;
+static constexpr size_t ATTR_TARGMAX_INDEX = 3U;
+static constexpr int64_t TARGMAX_INT32 = 3;
+static constexpr int64_t TARGMAX_INT64 = 9;
 
 ge::graphStatus InferDataTypeForMaxPoolWithArgmaxGraph(gert::InferDataTypeContext* context)
 {
@@ -34,11 +35,8 @@ ge::graphStatus InferDataTypeForMaxPoolWithArgmaxGraph(gert::InferDataTypeContex
         return ge::GRAPH_FAILED;
     }
     const int64_t* targmax = attrs->GetAttrPointer<int64_t>(ATTR_TARGMAX_INDEX);
-    if (targmax == nullptr) {
-        OP_LOGE("MaxPoolWithArgmax", "Graph infer-dtype attr Targmax is null.");
-        return ge::GRAPH_FAILED;
-    }
-    context->SetOutputDataType(OUTPUT_ARGMAX_INDEX, *targmax == TARGMAX_INT32 ? ge::DT_INT32 : ge::DT_INT64);
+    const int64_t targmaxValue = targmax == nullptr ? TARGMAX_INT64 : *targmax;
+    context->SetOutputDataType(OUTPUT_ARGMAX_INDEX, targmaxValue == TARGMAX_INT32 ? ge::DT_INT32 : ge::DT_INT64);
     return ge::GRAPH_SUCCESS;
 }
 

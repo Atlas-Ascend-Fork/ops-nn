@@ -26,7 +26,6 @@ namespace ops {
 static constexpr size_t INDEX_KSIZE = 0;
 static constexpr size_t INDEX_STRIDES = 1;
 static constexpr size_t INDEX_PADS = 2;
-static constexpr size_t INDEX_DTYPE = 3;
 static constexpr size_t INDEX_DATA_FORMAT = 5;
 static constexpr size_t ATTR_LIST_SHAPE_SIZE = 4;
 static constexpr size_t INDEX_OUT_MAX = 0;
@@ -35,8 +34,6 @@ static constexpr size_t PARAM_H_DIM = 0;
 static constexpr size_t PARAM_W_DIM = 1;
 static constexpr size_t SHAPE_H_DIM = 1;
 static constexpr size_t SHAPE_W_DIM = 2;
-static constexpr size_t INT32_DTYPE = 3;
-constexpr size_t INT64_DTYPE = 9;
 static constexpr size_t INDEX_ZERO = 0;
 static constexpr size_t INDEX_ONE = 1;
 static constexpr size_t INDEX_TWO = 2;
@@ -164,17 +161,6 @@ ge::graphStatus InferShapeForMaxPoolWithArgmax(gert::InferShapeContext* context)
     std::string padStr(paddingPtr);
     if (padStr != "SAME" && padStr != "VALID") {
         OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "padding", padStr.c_str(), "SAME or VALID");
-        return GRAPH_FAILED;
-    }
-
-    auto targmaxPtr = attrs->GetAttrPointer<int64_t>(INDEX_DTYPE);
-    OP_CHECK_IF(targmaxPtr == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "Targmax",
-                                                         "required parameter Targmax is missing"),
-                return ge::GRAPH_FAILED);
-    if (*targmaxPtr != static_cast<int64_t>(INT32_DTYPE) && *targmaxPtr != static_cast<int64_t>(INT64_DTYPE)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Targmax", std::to_string(*targmaxPtr).c_str(),
-                                              "Targmax only supports 3(int32) or 9(int64)");
         return GRAPH_FAILED;
     }
 

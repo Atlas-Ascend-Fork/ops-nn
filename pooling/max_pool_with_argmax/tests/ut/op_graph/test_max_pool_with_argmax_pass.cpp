@@ -51,4 +51,9 @@ TEST(MaxPoolWithArgmaxGraphInfer, InferDataTypeFloatTargmaxInt64)
 {
     RunMaxPoolWithArgmaxGraphInferDataType(ge::DT_FLOAT, 9, ge::DT_INT64);
 }
+
+TEST(MaxPoolWithArgmaxGraphInfer, InferDataTypeInvalidTargmaxDefaultsInt64)
+{
+    RunMaxPoolWithArgmaxGraphInferDataType(ge::DT_FLOAT, 5, ge::DT_INT64);
+}
 } // namespace
