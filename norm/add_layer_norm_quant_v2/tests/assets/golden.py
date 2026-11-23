@@ -23,29 +23,21 @@ __spec__ = {
     "aclnnAddLayerNormQuantV2": "AddLayerNormQuantV2AclnnSpec",
 }
 
+import logging
+
 import numpy as np
 import torch
 
-# kernel 通路：三方 cross_check（有 GPU 时生效）
-_TOL_KERNEL = {
+# 两条通路（kernel / aclnn）共用同一套判据：浮点 cross_check L1、int8 quant。
+# cross_check 依赖 third_party（两个 Spec 都挂 torch 参考）；三方不可用时浮点判 GOLDEN_FAILURE。
+_TOL = {
     "float32": {"standard": "cross_check", "level": "L1"},
     "float16": {"standard": "cross_check", "level": "L1"},
     "bfloat16": {"standard": "cross_check", "level": "L1"},
-    "int8": {"standard": "quant"},  # 量化输出判据：绝对误差 <= 1 LSB
-}
-
-# aclnn 通路：TTK 当前不取用 third_party，三方一律免检 → 本机判。
-# 浮点用 stat_rel_err（按 dtype 阈值），int8 显式 quant（|out-golden| <= 1）。
-# 不用 cross_check：它会连远端 party，party down 时浮点输出全 GOLDEN_FAILURE 假失败。
-_TOL_ACLNN = {
-    # 本机无 GPU，aclnn 通路三方免检 → 本机判。浮点用 mix_tolerance（|a-b| <= atol + rtol*|b|，
-    # 99% 元素满足即过）：纯 stat_rel_err 的 mare 在近零元素上会被 ULP 噪声放大
-    # （实测 9 例 fp16/fp32 单元素 |diff|~1e-8 而 mare 0.02 > 10*th → 假失败），
-    # 该口径与 verification §5 的「联合绝对+相对」真 bug 判据一致。int8 用 quant（|diff| <= 1）。
-    "float32": {"standard": "mix_tolerance"},
-    "float16": {"standard": "mix_tolerance"},
-    "bfloat16": {"standard": "mix_tolerance"},
-    "int8": {"standard": "quant"},
+    # 量化输出判据：绝对误差 <= 1 LSB。ptol 取 0.1%（TTK 文档中 PerTokenQuant 的推荐值）：
+    # 量化末步是阶跃函数，x 与 mean 在 fp32 上恰好相等时 (x-mean) 精确为 0 而参考侧非 0，
+    # 量化后必然 0 vs ±127，任何 fp32 实现都无法规避（实测 L0_119 约 39M 元素里有 3 个）。
+    "int8": {"standard": "quant", "ptol": 0.001},
 }
 
 
@@ -65,6 +57,66 @@ def _attr(kwargs, name, default, *aliases):
                     return v0.strip().strip('"').strip("'")
             return v0
     return default
+
+
+def _quant_mode(kwargs):
+    """quant_mode 归一化（CSV 属性名 kernel 用 quant_mode、aclnn 用 quantMode）。"""
+    return (
+        str(_attr(kwargs, "quant_mode", "dynamic", "quantMode"))
+        .strip()
+        .strip('"')
+        .strip("'")
+        .lower()
+    )
+
+
+def _validate_contract(x1, gamma, quant_mode):
+    """入口契约校验：dynamic 只支持 perChannel，perTensor 形状一律拒。
+
+    依据（算子契约，非本文件的实现选择）：
+      · README.md「约束说明」：`quant_mode="dynamic"` **仅**支持 perChannel 模式；
+        「形状约束」：gamma 的 shape 需等于 x1 的后 gammaDimNum 维，
+        dynamic 时 `out_scales1/2` 为「x1 去掉 gamma 所占尾维后的前缀」。
+      · op_api/aclnn_add_layer_norm_quant_v2.cpp `CheckShapeRelV2Regbase`：dynamic 分支
+        `x1DimNums >= 2` 且逐维校验 outScales 前缀 == x1 前缀、gamma 尾维逐维相等；
+        `gamma=[1,N]` 这类 perTensor 形状被当场拒绝（实测报
+        "Shape of gamma should be equal to the last 2 dims of x1"）。
+
+    此前 golden 不做该校验，非法域会以两种形式失败：x1/gamma 秩相同则静默产出
+    错口径 out_scales，秩更高则 `os_shape = x.shape[:-gamma.dim()]` 与 `os_` 元素数
+    对不上 → `RuntimeError: shape ... is invalid for input of size ...`，把"用例
+    非法"误报成"golden 崩了"。
+    ⚠ 不要用 `x1.shape[:-1]` 之类的写法绕过：那会违反 tiling
+    （norm/add_layer_norm_quant/op_host/add_layer_norm_quant_v2_tiling_arch35.cpp
+    dynamic 分支 outScales 前缀逐维校验）与 aclnn 的同一套校验。
+    """
+    if quant_mode != "dynamic" or x1 is None or gamma is None:
+        return
+    x_shape = tuple(x1.shape)
+    g_shape = tuple(gamma.shape)
+    if len(g_shape) < 1:
+        # rank-0 gamma 会被 tail==g_shape 静默放行，但 tiling 拒（0 == weightDimNum）
+        raise ValueError(
+            "AddLayerNormQuantV2: gamma must have rank >= 1 "
+            f"(got gamma.shape={list(g_shape)}). Ref: README.md 形状约束「gamma 的 shape 需等于 "
+            "x1 的后 gammaDimNum 维」."
+        )
+    if len(x_shape) < 2:
+        raise ValueError(
+            "AddLayerNormQuantV2: quant_mode='dynamic' requires x1.dim() >= 2 "
+            f"(got x1.shape={list(x_shape)}). "
+            'Ref: README.md 约束说明「quant_mode="dynamic"时，x1 的维数需不小于2」.'
+        )
+    tail = x_shape[len(x_shape) - len(g_shape) :]
+    if tail != g_shape:
+        raise ValueError(
+            "AddLayerNormQuantV2: quant_mode='dynamic' only supports perChannel gamma; "
+            f"gamma.shape must equal x1.shape[-gamma.dim():], got gamma{list(g_shape)} vs "
+            f"x1{list(x_shape)} (last dims are {list(tail)}). "
+            'Ref: README.md 约束说明「quant_mode="dynamic"仅支持perChannel模式」+ 形状约束'
+            "「gamma 的 shape 需等于 x1 的后 gammaDimNum 维」. "
+            "perTensor 量化（gamma=[1,N]、scales1/zp 为 [1]）请改用 quant_mode='static'."
+        )
 
 
 def _as_tensor(a):
@@ -88,13 +140,15 @@ def _as_tensor(a):
     return torch.from_numpy(np.ascontiguousarray(arr))
 
 
-def _empty_outputs(x, gamma, quant_mode, has_scales2):
+def _empty_outputs(x, gamma, quant_mode, has_scales2, additional_output):
     """空 tensor 语义（A5 口径，与 V1 对齐）：y1/y2/x/layernorm_res 为空；
     dynamic 且归一化轴为 0（cols==0 && rows!=0）时，走 empty-input kernel，out_scales 填 -inf。
 
     aclnn 判据：dynamic 且 outScales1 为空 → no-op；static 且 x1 为空 → no-op；
     其余空 tensor 继续下发，由 empty kernel（key=9）写 dynamic 的 out_scales。
     注意 A2/A3 无 empty kernel，一律 no-op，out_scales 内容未定义。
+
+    契约上「无实际意义」的输出返回 None（TTK 判 SUPPRESSED→PASS，不参与比对）。
     """
     dev = x.device
     x_shape = tuple(x.shape)
@@ -102,24 +156,20 @@ def _empty_outputs(x, gamma, quant_mode, has_scales2):
     g_rank = gamma.dim() if gamma is not None else 1
     prefix = tuple(x_shape[: len(x_shape) - g_rank]) if len(x_shape) > g_rank else ()
     y1 = torch.zeros(x_shape, dtype=torch.int8, device=dev)
-    y2 = (
-        torch.zeros(x_shape, dtype=torch.int8, device=dev)
-        if has_scales2
-        else torch.zeros((1,), dtype=torch.int8, device=dev)
+    y2 = torch.zeros(x_shape, dtype=torch.int8, device=dev) if has_scales2 else None
+    xo = (
+        torch.zeros(x_shape, dtype=base_dtype, device=dev)
+        if additional_output
+        else None
     )
-    xo = torch.zeros(x_shape, dtype=base_dtype, device=dev)
     ln = torch.zeros(x_shape, dtype=base_dtype, device=dev)
     if quant_mode == "dynamic":
         os_shape = prefix if prefix else (1,)
         os1 = torch.full(os_shape, float("-inf"), dtype=torch.float32, device=dev)
-        os2 = (
-            os1.clone()
-            if has_scales2
-            else torch.zeros((1,), dtype=torch.float32, device=dev)
-        )
+        os2 = os1.clone() if has_scales2 else None
     else:
-        os1 = torch.zeros((1,), dtype=torch.float32, device=dev)
-        os2 = torch.zeros((1,), dtype=torch.float32, device=dev)
+        os1 = None
+        os2 = None
     return [y1, y2, xo, ln, os1, os2]
 
 
@@ -129,34 +179,62 @@ def _compute(*tensors, **kwargs):
     t = list(tensors) + [None] * 9
     x1, x2, gamma, beta, bias, scales1, scales2, zp1, zp2 = t[:9]
 
-    quant_mode = (
-        str(_attr(kwargs, "quant_mode", "dynamic", "quantMode"))
-        .strip()
-        .strip('"')
-        .strip("'")
-    )
+    quant_mode = _quant_mode(kwargs)
     epsilon = float(_attr(kwargs, "epsilon", 1e-5))
     div_mode = bool(_attr(kwargs, "div_mode", True, "divMode"))
 
+    # 无意义输出判定之一：x 是否写出（def.cpp `additional_output` 默认 false）。
+    # 取不到属性时按 True（参与比对）：宁可多一条假失败，也不静默跳过真实失败。
+    additional_output = _attr(kwargs, "additionalOutput", None, "additional_output")
+    if additional_output is None:
+        logging.warning(
+            "AddLayerNormQuantV2 golden: additionalOutput not found; "
+            "falling back to True (compare the x slot) to avoid silently skipping a real failure."
+        )
+        additional_output = True
+    additional_output = bool(additional_output)
+
+    # 非法域先于任何计算显式报错（dynamic+perTensor），避免以 reshape 崩溃呈现
+    _validate_contract(x1, gamma, quant_mode)
+
     x = x1 + x2 if bias is None else x1 + x2 + bias
     if x.numel() == 0 or gamma.numel() == 0:
-        return _empty_outputs(x, gamma, quant_mode, scales2 is not None)
+        return _empty_outputs(
+            x, gamma, quant_mode, scales2 is not None, additional_output
+        )
 
     row = int(gamma.reshape(-1).numel())
     xf = x.reshape(-1, row)
-    x_mean = xf.mean(dim=-1, keepdim=True)
-    x_var = xf.var(dim=-1, unbiased=False, keepdim=True)
+    # 统计量按「先除后求和」两遍归约（与内核 VFCalcMeanVar 及三方参考同算法）：
+    # 直接 xf.mean() 是先求和再除，x1 接近 dtype 上界时 n*|x1| 会在 fp32 里溢出成 inf，
+    # 继而使 (x-mean)=nan、整行输出失真（实测 L0_005: x1≡3.39e38、row=286 → 820624/820624 行 inf）。
+    # 先减去行首元素 x0 再归约（与内核同一中心化口径）：x 量级远大于行内波动时（实测 L0_126
+    # x1≡-65504、波动 ~1e-3），x-mean 的减法会在 x 的量级上舍入，误差盖过波动本身。
+    nf = float(row)
+    xd = xf - xf[:, :1]
+    # 统计量取「fp64 精确行和 → 窄回 fp32」：与 kernel 侧 welford 补偿累加 / full-load 精化同口径
+    # 先除以行宽再精确求和（与 kernel 的 Div→Reduce 同口径）：累加原始和会在行值接近 dtype
+    # 上限时于 fp32 溢出（n*|x| > FLT_MAX）
+    x_mean = _exact_row_sum(xd / nf).to(torch.float32)
+    x_dev = xd - x_mean
+    x_var = _exact_row_sum((x_dev * x_dev) / nf).to(torch.float32)
     g = gamma.reshape(1, -1).to(xf.dtype)
     b = beta.reshape(1, -1).to(xf.dtype)
-    y = (xf - x_mean) / torch.sqrt(x_var + epsilon) * g + b
+    y = x_dev / torch.sqrt(x_var + epsilon) * g + b
     y = y.reshape(x.shape)
+    # layernorm_res 出口饱和（kernel 同口径）：仅钳有限值，±inf/NaN 原样保留
+    y = _saturate_finite_inplace(y, _ln_res_sat_kwargs(kwargs))
 
     layernorm_res = y
 
     def _round_i8(v):
-        return torch.clamp(torch.round(v), -128, 127).to(torch.int8)
+        # NaN → 0（与 kernel `Round2Int8` 的「先清 NaN 再 RINT+窄回」同口径）：
+        # 全行 NaN 的输入（bias≡nan → x≡nan）下，硬件与 torch 对 NaN→int8 的结果不同，
+        # 兄弟算子 add_rms_norm_quant 的参考也按 nan_to_num(nan=0) 处理。
+        return torch.clamp(torch.round(torch.nan_to_num(v, nan=0.0)), -128, 127).to(
+            torch.int8
+        )
 
-    dev = x1.device
     os_shape = tuple(x.shape[: -gamma.dim()]) if gamma.dim() < x.dim() else ()
 
     if quant_mode == "static":
@@ -175,10 +253,10 @@ def _compute(*tensors, **kwargs):
                 else _round_i8(y * s2 + (0.0 if zp2 is None else zp2))
             )
         else:
-            y2 = torch.zeros((1,), dtype=torch.int8, device=dev)
-        # static 下 out_scales 无实际意义（内核不写），返回占位 1
-        out_scale1 = torch.ones((1,), dtype=torch.float32, device=dev)
-        out_scale2 = torch.ones((1,), dtype=torch.float32, device=dev)
+            y2 = None  # scales2 缺省：y2 无实际意义
+        # static 下 out_scales1/2 无实际意义（README.md:27）
+        out_scale1 = None
+        out_scale2 = None
     else:
         yf = y.reshape(-1, row)
 
@@ -192,7 +270,8 @@ def _compute(*tensors, **kwargs):
                 # 必须同步展平，否则多维 gamma 会按尾部维广播失败（实测 2x2x2x2x2x2x4x64）。
                 tmp = yf * sc.reshape(-1).to(yf.dtype)
             m = torch.abs(tmp).amax(dim=-1)
-            os_ = (m / 127.0).to(torch.float32)
+            # 与内核同算法走乘法（Muls 1/127.0），不是除法：除法会差 ≤1 ULP
+            os_ = (m * (1.0 / 127.0)).to(torch.float32)
             # 全零行（row_max=0）在核心里是 0/0；这里置 0 避免 NaN 污染，正常数据不会命中
             denom = os_.reshape(-1, 1).clone()
             denom[denom == 0] = 1.0
@@ -203,10 +282,12 @@ def _compute(*tensors, **kwargs):
         if scales2 is not None:
             y2, out_scale2 = _dyn(scales2)
         else:
-            y2 = torch.zeros((1,), dtype=torch.int8, device=dev)
-            out_scale2 = torch.zeros((1,), dtype=torch.float32, device=dev)
+            y2 = None  # scales2 缺省：y2 无实际意义
+            out_scale2 = None  # scales2 缺省：out_scales2 无实际意义
 
-    return [y1, y2, x, layernorm_res, out_scale1, out_scale2]
+    # x 仅在 additional_output=true 时写出；false 时输出为脏数据（算子不写）
+    x_out = x if additional_output else None
+    return [y1, y2, x_out, layernorm_res, out_scale1, out_scale2]
 
 
 _TORCH_DTYPE = {
@@ -223,14 +304,103 @@ _TORCH_DTYPE = {
 
 
 def _od(kwargs):
+    """输出 dtype 列表（dtype 名字符串）。
+
+    TTK 下发的 tensor_dtypes / output_dtypes 有两种形态：CSV 写 `(a,b,c)` 时是**扁平字符串序列**，
+    写 `((a,),(b,))` 时是嵌套单元素。旧实现只按嵌套取 `d[0]`，遇到扁平序列会把 'bfloat16'
+    取成首字母 'b' —— 于是 `_cast_out*` 的窄回和出口饱和**整体静默失效**（实测：内核已饱和而
+    golden 未饱和，rowmax 一个有限一个 inf，int8 量化输出整片超差、百万级 exceed_count）。
+    """
     od = kwargs.get("output_dtypes") or []
-    return [d[0] if isinstance(d, (list, tuple)) else str(d) for d in od]
+    res = []
+    for d in od:
+        if isinstance(d, (list, tuple)):
+            d = d[0] if d else ""
+        res.append(str(d))
+    return res
+
+
+def _ln_res_sat_kwargs(kwargs):
+    """layernorm_res 出口的窄回饱和上限（dtype 名）。
+
+    layernorm_res 的 dtype 与 x1 声明 dtype 相同（见 docs 数据类型表）。取两者中更窄的一个，
+    这样即使框架把 output_dtypes 抬成 Promote 档（fp32），也不会漏掉算子声明 dtype
+    （bf16/fp16）的上溢钳位。
+    """
+    od = _od(kwargs)
+    idt = kwargs.get("input_dtypes") or []
+    cands = []
+    if len(od) > 3 and od[3] in _TORCH_DTYPE:
+        cands.append(od[3])
+    if idt and not isinstance(idt, str):
+        d0 = idt[0]
+        if isinstance(d0, (list, tuple)):
+            d0 = d0[0] if d0 else ""
+        d0 = str(d0)
+        if d0 in _TORCH_DTYPE:
+            cands.append(d0)
+    cands = [c for c in cands if _TORCH_DTYPE[c].is_floating_point]
+    if not cands:
+        return None
+    return min(cands, key=lambda c: torch.finfo(_TORCH_DTYPE[c]).max)
+
+
+def _saturate_finite_inplace(v, sat_dtype):
+    """窄回到 sat_dtype 时的饱和：有限值钳到 ±finfo.max，±inf/NaN 原样保留。
+
+    kernel 侧 `SaturateFiniteToOutputRange<X1_TYPE>` 与之逐位一致（同 mask、同上下界、同 NaN/Inf 语义）。
+    动机：y 依赖行统计量，kernel 与参考的归约次序不同（实测相对差 ~1e-5），恰压在输出 dtype
+    上溢点上的元素会在 inf / max 之间翻转；TTK 的 NaN/Inf 判据对「NPU 与 golden、竞品都不一致」
+    直接判 FAIL（实测 L0_146 有 1288/221109120 个元素）。钳位幂等：两侧都钳到同一 ±max，
+    翻转消失；真正的 ±inf/NaN 语义不变（mask 取 |v| < +inf，NaN 与 ±inf 都被排除）。
+    """
+    if (
+        not isinstance(v, torch.Tensor)
+        or not v.is_floating_point()
+        or sat_dtype is None
+    ):
+        return v
+    return _saturate_finite_torch(v, _TORCH_DTYPE[sat_dtype])
+
+
+def _saturate_finite_torch(v, tgt):
+    """`_saturate_finite_inplace` 的 torch.dtype 版（三方竞品腿按 out_dtype 调用）。"""
+    if (
+        not isinstance(v, torch.Tensor)
+        or not v.is_floating_point()
+        or not isinstance(tgt, torch.dtype)
+        or not tgt.is_floating_point
+    ):
+        return v
+    fmax = torch.finfo(tgt).max
+    if fmax >= torch.finfo(v.dtype).max:
+        return v
+    # torch.clamp：±inf → ±fmax，NaN 原样透传（与 kernel 侧「y==y」掩码 + Mins/Maxs 逐位一致）
+    return torch.clamp(v, -fmax, fmax)
+
+
+def _exact_row_sum(v):
+    """按行（最后一维）求**精确和**：fp64 分块累加，避免整行 fp64 临时量。
+
+    用途：让参考侧的 mean/var 等于 `fl32(精确和/n)`（正确舍入），与 kernel
+    `VFRefineMeanFromAcc` / welford 补偿累加得到的 mean 逐位一致。这一步是必要的：
+    y = (x-mean)*rstd*gamma 在 |gamma|≈dtype上限时会把 mean 最后一位的 1ULP 差异放大到
+    1e31 量级（实测 L0_055），只有两侧 mean 完全相同，亚 ULP 偏差元素的判定才稳定。
+    """
+    acc = torch.zeros(v.shape[0], 1, dtype=torch.float64, device=v.device)
+    step = 1 << 18
+    for k in range(0, v.shape[1], step):
+        acc += v[:, k : k + step].double().sum(dim=-1, keepdim=True)
+    return acc
 
 
 def _cast_out(outs, od):
-    """KernelSpec 出口：按【下发】的 output_dtypes 窄回，返 numpy。"""
+    """KernelSpec 出口：按【下发】的 output_dtypes 窄回，返 numpy；None 槽原样透传。"""
     res = []
     for i, o in enumerate(outs):
+        if o is None:
+            res.append(None)
+            continue
         arr = o.detach().cpu().numpy()
         if i < len(od) and od[i]:
             arr = arr.astype(od[i])
@@ -246,6 +416,9 @@ def _cast_out_tensor(outs, od):
     """
     res = []
     for i, o in enumerate(outs):
+        if o is None:
+            res.append(None)
+            continue
         if not isinstance(o, torch.Tensor):
             o = torch.as_tensor(o)
         if i < len(od) and od[i] and od[i] in _TORCH_DTYPE:
@@ -289,12 +462,23 @@ class _AddLayerNormQuantV2Compose:
         epsilon=1e-5,
         additional_output=False,
         div_mode=True,
+        quantMode=None,
+        additionalOutput=None,
+        divMode=None,
         **kwargs,
     ):
         def _one(v):
             if isinstance(v, (list, tuple)) and v:
                 return v[0]
             return v
+
+        # 属性别名：TTK 按算子接口名下发（quantMode/additionalOutput/divMode）
+        if quantMode is not None:
+            quant_mode = quantMode
+        if additionalOutput is not None:
+            additional_output = additionalOutput
+        if divMode is not None:
+            div_mode = divMode
 
         qm = _one(quant_mode)
         self.quant_mode = (
@@ -323,8 +507,21 @@ class _AddLayerNormQuantV2Compose:
         zero_points2=None,
         input_dtypes=None,
         output_dtypes=None,
+        # TTK 按算子接口的参数名下发（xxxOptional），与本地 C 顺序签名并用：
+        # 远端三方腿只按名字绑定，不做位置兜底，故两种命名都要接。
+        biasOptional=None,
+        scales1Optional=None,
+        scales2Optional=None,
+        zeroPoints1Optional=None,
+        zeroPoints2Optional=None,
         **kwargs,
     ):
+        # 别名归一：位置名优先，缺失时取 xxxOptional 形式
+        bias = bias if bias is not None else biasOptional
+        scales1 = scales1 if scales1 is not None else scales1Optional
+        scales2 = scales2 if scales2 is not None else scales2Optional
+        zero_points1 = zero_points1 if zero_points1 is not None else zeroPoints1Optional
+        zero_points2 = zero_points2 if zero_points2 is not None else zeroPoints2Optional
         # 声明 dtype 窄回目标：三方腿收到的是 **Promote 后**的 fp32 输入（TTK 现状），
         # 若只按 x1.dtype 窄回会漏掉算子声明的低精度输出（bf16/fp16）。若框架下发了
         # input_dtypes/output_dtypes（逻辑 dtype），优先用它；否则退回 x1.dtype。
@@ -371,8 +568,9 @@ class _AddLayerNormQuantV2Compose:
             xo = torch.zeros(x.shape, dtype=out_dtype, device=x.device)
             ln = torch.zeros(x.shape, dtype=out_dtype, device=x.device)
             if self.quant_mode == "static":
-                os1 = torch.ones((1,), dtype=torch.float32, device=x.device)
-                os2 = torch.ones((1,), dtype=torch.float32, device=x.device)
+                # static 的 out_scales 无实际意义（见 _compute 同位置注释）：占位统一 0
+                os1 = torch.zeros((1,), dtype=torch.float32, device=x.device)
+                os2 = torch.zeros((1,), dtype=torch.float32, device=x.device)
             else:
                 os_shape = prefix if prefix else (1,)
                 os1 = torch.full(
@@ -386,17 +584,26 @@ class _AddLayerNormQuantV2Compose:
             return [y1, y2, xo, ln, os1, os2]
 
         # ---- LayerNorm：mean-centered 两遍归约（fp32，逐元素先除 cols 再求和）----
+        # 竞品腿刻意保持「与 golden 同阶的 fp32 归约」而不是精确归约：它只用于 cross_check 的
+        # ratios/计数分母，若做得比 NPU 明显更准，小值域 ErrorCount 比值会被放大成假红
+        # （实测 exact 版：L0_057 cnt_third=0 → ratio 1.3e4；L0_149 全量 2.6e8）。
+        # 内核侧 mean 已改为正确舍入，参考侧（_compute）也是精确统计量，竞品这条腿无需再拔高。
         xf = x.reshape(-1, n)
         nf = float(n)
-        mean = (xf / nf).sum(dim=-1, keepdim=True)
-        var = (((xf - mean) ** 2) / nf).sum(dim=-1, keepdim=True)
+        xd = xf - xf[:, :1]
+
+        mean = (xd / nf).sum(dim=-1, keepdim=True)
+        dev = xd - mean
+        var = ((dev * dev) / nf).sum(dim=-1, keepdim=True)
         rstd = torch.rsqrt(var + self.epsilon)
-        y = ((xf - mean) * rstd * gamma.reshape(1, -1) + beta.reshape(1, -1)).reshape(
-            x.shape
-        )
+        y = (dev * rstd * gamma.reshape(1, -1) + beta.reshape(1, -1)).reshape(x.shape)
+        # 与 kernel/golden 同口径的 layernorm_res 出口饱和（仅钳有限值）
+        y = _saturate_finite_torch(y, out_dtype)
 
         def _i8(v):
-            return torch.clamp(torch.round(v), -128, 127).to(torch.int8)
+            return torch.clamp(torch.round(torch.nan_to_num(v, nan=0.0)), -128, 127).to(
+                torch.int8
+            )
 
         if self.quant_mode == "static":
             sc1 = (
@@ -432,8 +639,9 @@ class _AddLayerNormQuantV2Compose:
                 y2 = _i8(y / sc2 + off2) if self.div_mode else _i8(y * sc2 + off2)
             else:
                 y2 = torch.zeros((1,), dtype=torch.int8, device=x.device)
-            os1 = torch.ones((1,), dtype=torch.float32, device=x.device)
-            os2 = torch.ones((1,), dtype=torch.float32, device=x.device)
+            # static 的 out_scales 无实际意义（见 _compute 同位置注释）：占位统一 0
+            os1 = torch.zeros((1,), dtype=torch.float32, device=x.device)
+            os2 = torch.zeros((1,), dtype=torch.float32, device=x.device)
         else:
             yf = y.reshape(-1, n)
 
@@ -469,21 +677,15 @@ class AddLayerNormQuantV2KernelSpec:
         outs = _compute(*t, **kwargs)
         return _cast_out(outs, od)
 
-    # 三方竞品标杆（kernel/GEIR 通路取用；aclnn 见下方预留注释）
+    # 三方竞品标杆（kernel/GEIR 通路取用；aclnn 与 kernel 共用同一 torch 参考）
     third_party = {"torch": _AddLayerNormQuantV2Compose}
-    tolerance = _TOL_KERNEL
-
-
-# golden → pre_compare 之间的单例标记（每 case 顺序执行：golden 先于 compare）。
-# additional_output=False 时 x 由内核决定不写出（def 默认 false），x 属 undefined 输出。
-_LAST_ADDITIONAL_OUTPUT = True
+    tolerance = _TOL
 
 
 class AddLayerNormQuantV2AclnnSpec:
     """aclnn；golden 收已 H2D 的 torch.Tensor，【直接返 Tensor】（规范 §6 / 模板要求）。"""
 
     def golden(*inputs, **kwargs):
-        global _LAST_ADDITIONAL_OUTPUT
         # ⚠ TTK aclnn 按 C 头**参数顺序**把标量属性 positional 传入（不是 kwargs）：
         #   [0..8] 9 个输入 tensor / [9] quantMode / [10] epsilon / [11] additionalOutput /
         #   [12] divMode / [13..18] 6 个输出 tensor / [19] workspaceSize / [20] executor。
@@ -505,9 +707,6 @@ class AddLayerNormQuantV2AclnnSpec:
         td = merged.get("tensor_dtypes")
         if td and len(td) >= n_in + 6 and not merged.get("output_dtypes"):
             merged["output_dtypes"] = list(td)[n_in : n_in + 6]
-        _LAST_ADDITIONAL_OUTPUT = bool(
-            merged.get("additionalOutput", merged.get("additional_output", True))
-        )
         od = _od(merged)
         # fp16/bf16 输入抬到 fp32 再算（与 KernelSpec 的 _as_tensor 一致）：仅向上兜底，不向下 cast；
         # 镜像 NPU 内核的加宽行为（VF 全程 fp32、出口才窄回）。Promote 开启时输入已被 TTK 抬过 → no-op。
@@ -521,40 +720,10 @@ class AddLayerNormQuantV2AclnnSpec:
         outs = _compute(*t, **merged)
         return _cast_out_tensor(outs, od)
 
-    tolerance = _TOL_ACLNN
+    tolerance = _TOL
 
-    # 契约上 undefined 的输出（scales2 缺省时的 y2/out_scales2）内核不写，整块比对会把
-    # HBM 脏数据算进去。kernel 通路用 absolute_precision=1e9 跳过；aclnn 通路由 pre_compare
-    # 把 NPU 缓冲对齐到 golden（等价"这两路不判"）。y2 的形状编码 scales2 是否存在，
-    # 因此无需属性即可判定（存在 = x1 形状；缺省 = [1] 占位）。
-    # 注：static 的 out_scales1/2 实测 NPU 侧恒为 1.0（与 golden 的 ones(1) 一致），无需屏蔽。
-    def pre_compare(*arrays):
-        n = len(arrays) // 2
-        if n < 6:
-            return
-        outs, golds = arrays[:n], arrays[n:]
-        try:
-            y2 = golds[1]
-            dual = (y2.numel() if hasattr(y2, "numel") else np.asarray(y2).size) > 1
-        except Exception:
-            dual = True
-        if not dual:
-            try:
-                outs[5][:] = golds[5][:]
-            except Exception:
-                pass
-        # additional_output=False：x 不写出（kernel `if (outputX_)` 守写；aclnn 契约称 xOut 为脏数据），
-        # 对齐到 golden 即"不判这一路"。layernorm_res 不受该属性影响，仍正常比对。
-        if not _LAST_ADDITIONAL_OUTPUT:
-            try:
-                outs[2][:] = golds[2][:]
-            except Exception:
-                pass
-
-    # 【预留】TTK aclnn 通路当前不取用 third_party（仅 kernel/GEIR 取用），
-    # 写在此处不生效也无副作用；待该通路支持三方后自动接上，无需改动本文件。
-    # 注：三方取数走 remote/client.py，当前以 op_name 查 spec，届时注册名需对齐。
-    # third_party = {"torch": _compose_torch}
+    # 三方标杆：复用 kernel 通路同一 torch 参考；浮点已用 cross_check，会实际走三方比对。
+    third_party = {"torch": _AddLayerNormQuantV2Compose}
 
 
 # 【不适用】geir 通路：本算子未注册 AddLayerNormQuantV2 infershape（arch910b/canndev/built-in 三处均无，
