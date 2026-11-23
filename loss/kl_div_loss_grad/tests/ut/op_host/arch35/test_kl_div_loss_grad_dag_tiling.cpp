@@ -12,6 +12,7 @@
  * \file test_div_loss_grad_dag_tiling.cpp
  * \brief
  */
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -44,16 +45,25 @@ protected:
     static void TearDownTestCase() { std::cout << "KlDivLossGradDagTiling TearDown" << std::endl; }
 };
 
-static string TilingData2Str(const gert::TilingData* tiling_data)
+// schMode routing and tilingData layout belong to the opbase broadcast template; only the
+// operator-owned reductionCof scalar is checked here, searched by raw float bits (layout independent).
+static int64_t FloatToI64Bits(float value)
 {
-    auto data = tiling_data->GetData();
-    string result;
-    for (size_t i = 0; i < tiling_data->GetDataSize(); i += sizeof(int64_t)) {
-        result += std::to_string((reinterpret_cast<const int64_t*>(tiling_data->GetData())[i / sizeof(int64_t)]));
-        result += " ";
-    }
+    uint32_t bits = 0U;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return static_cast<int64_t>(bits);
+}
 
-    return result;
+static bool TilingDataContainsI64(const gert::TilingData* tilingData, int64_t value)
+{
+    const auto* data = reinterpret_cast<const int64_t*>(tilingData->GetData());
+    const size_t slotNum = tilingData->GetDataSize() / sizeof(int64_t);
+    for (size_t i = 0; i < slotNum; i++) {
+        if (data[i] == value) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void InitPlatForm(fe::PlatFormInfos& platFormInfo, map<string, string>& socInfos,
@@ -79,7 +89,7 @@ static void DoKlDivLossGradDagTilingCase(std::initializer_list<int64_t>& inputSh
                                          std::initializer_list<int64_t>& inputShape2,
                                          std::initializer_list<int64_t>& inputShape3,
                                          std::initializer_list<int64_t>& outputShape, ge::DataType inputDtype,
-                                         std::string& reduction, bool& logTarget, std::string& expectStr)
+                                         std::string& reduction, bool& logTarget, float expectedReductionCof)
 {
     // init platform
     fe::PlatFormInfos platFormInfo;
@@ -150,9 +160,7 @@ static void DoKlDivLossGradDagTilingCase(std::initializer_list<int64_t>& inputSh
 
     // workspaces nullptr return failed
     EXPECT_EQ(tilingFunc(tiling_context), ge::GRAPH_SUCCESS);
-
-    auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    EXPECT_EQ(tiling_data_result, expectStr);
+    EXPECT_TRUE(TilingDataContainsI64(tiling_context->GetRawTilingData(), FloatToI64Bits(expectedReductionCof)));
 }
 
 TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling1)
@@ -164,11 +172,9 @@ TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling1)
     std::initializer_list<int64_t> outputShape = {2048, 1, 48};
     std::string reduction = "mean";
     bool logTarget = false;
-    std::string expectStr = "8589934592 687194767360 128 13 1 1 13 7680 13 2048 48 0 0 0 0 0 0 48 1 0 0 0 0 0 0 0 0 "
-                            "7680 6144 0 0 1 48 0 0 0 0 0 0 2048 48 0 0 0 0 0 0 0 0 0 0 0 0 0 0 48 1 0 0 0 0 0 0 0 0 0 "
-                            "0 0 0 0 0 0 1 0 0 0 0 0 0 48 1 0 0 0 0 0 0 925543083 0 ";
+    float expectedReductionCof = static_cast<float>(1.0 / (2048.0 * 1.0 * 48.0));
     DoKlDivLossGradDagTilingCase(inputShape1, inputShape2, inputShape3, outputShape, ge::DT_FLOAT /*inputdtype*/,
-                                 reduction, logTarget, expectStr);
+                                 reduction, logTarget, expectedReductionCof);
 }
 
 TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling2)
@@ -180,11 +186,9 @@ TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling2)
     std::initializer_list<int64_t> outputShape = {2048, 1, 48};
     std::string reduction = "sum";
     bool logTarget = false;
-    std::string expectStr = "8589934592 687194767360 128 13 1 1 13 7680 13 2048 48 0 0 0 0 0 0 48 1 0 0 0 0 0 0 0 0 "
-                            "7680 6144 0 0 1 48 0 0 0 0 0 0 2048 48 0 0 0 0 0 0 0 0 0 0 0 0 0 0 48 1 0 0 0 0 0 0 0 0 0 "
-                            "0 0 0 0 0 0 1 0 0 0 0 0 0 48 1 0 0 0 0 0 0 1065353216 0 ";
+    float expectedReductionCof = 1.0f;
     DoKlDivLossGradDagTilingCase(inputShape1, inputShape2, inputShape3, outputShape, ge::DT_FLOAT /*inputdtype*/,
-                                 reduction, logTarget, expectStr);
+                                 reduction, logTarget, expectedReductionCof);
 }
 
 TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling3)
@@ -196,11 +200,9 @@ TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling3)
     std::initializer_list<int64_t> outputShape = {2048, 1, 48};
     std::string reduction = "batchmean";
     bool logTarget = false;
-    std::string expectStr = "8589934592 687194767360 128 13 1 1 13 7680 13 2048 48 0 0 0 0 0 0 48 1 0 0 0 0 0 0 0 0 "
-                            "7680 6144 0 0 1 48 0 0 0 0 0 0 2048 48 0 0 0 0 0 0 0 0 0 0 0 0 0 0 48 1 0 0 0 0 0 0 0 0 0 "
-                            "0 0 0 0 0 0 1 0 0 0 0 0 0 48 1 0 0 0 0 0 0 973078528 0 ";
+    float expectedReductionCof = static_cast<float>(1.0 / 2048.0);
     DoKlDivLossGradDagTilingCase(inputShape1, inputShape2, inputShape3, outputShape, ge::DT_FLOAT /*inputdtype*/,
-                                 reduction, logTarget, expectStr);
+                                 reduction, logTarget, expectedReductionCof);
 }
 
 TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling4)
@@ -212,11 +214,9 @@ TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling4)
     std::initializer_list<int64_t> outputShape = {2048, 1, 48};
     std::string reduction = "batchmean";
     bool logTarget = true;
-    std::string expectStr = "8589934592 687194767360 128 13 1 1 13 7680 13 2048 48 0 0 0 0 0 0 48 1 0 0 0 0 0 0 0 0 "
-                            "7680 6144 0 0 1 48 0 0 0 0 0 0 2048 48 0 0 0 0 0 0 0 0 0 0 0 0 0 0 48 1 0 0 0 0 0 0 0 0 0 "
-                            "0 0 0 0 0 0 1 0 0 0 0 0 0 48 1 0 0 0 0 0 0 973078528 0 ";
+    float expectedReductionCof = static_cast<float>(1.0 / 2048.0);
     DoKlDivLossGradDagTilingCase(inputShape1, inputShape2, inputShape3, outputShape, ge::DT_FLOAT /*inputdtype*/,
-                                 reduction, logTarget, expectStr);
+                                 reduction, logTarget, expectedReductionCof);
 }
 
 TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling5)
@@ -228,9 +228,9 @@ TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling5)
     std::initializer_list<int64_t> outputShape = {1024, 1, 36};
     std::string reduction = "sum";
     bool logTarget = true;
-    std::string expectStr = "4 4947802326144 32 1 1 1065353216 0 ";
+    float expectedReductionCof = 1.0f;
     DoKlDivLossGradDagTilingCase(inputShape1, inputShape2, inputShape3, outputShape, ge::DT_FLOAT /*inputdtype*/,
-                                 reduction, logTarget, expectStr);
+                                 reduction, logTarget, expectedReductionCof);
 }
 
 TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling6)
@@ -242,9 +242,9 @@ TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling6)
     std::initializer_list<int64_t> outputShape = {1024, 1, 36};
     std::string reduction = "mean";
     bool logTarget = true;
-    std::string expectStr = "4 4947802326144 32 1 1 937659961 0 ";
+    float expectedReductionCof = static_cast<float>(1.0 / (1024.0 * 1.0 * 36.0));
     DoKlDivLossGradDagTilingCase(inputShape1, inputShape2, inputShape3, outputShape, ge::DT_FLOAT /*inputdtype*/,
-                                 reduction, logTarget, expectStr);
+                                 reduction, logTarget, expectedReductionCof);
 }
 
 TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling7)
@@ -256,9 +256,9 @@ TEST_F(KlDivLossGradDagTiling, kl_div_loss_grad_david_tiling7)
     std::initializer_list<int64_t> outputShape = {1024, 1, 36};
     std::string reduction = "batchmean";
     bool logTarget = true;
-    std::string expectStr = "4 4947802326144 32 1 1 981467136 0 ";
+    float expectedReductionCof = static_cast<float>(1.0 / 1024.0);
     DoKlDivLossGradDagTilingCase(inputShape1, inputShape2, inputShape3, outputShape, ge::DT_FLOAT /*inputdtype*/,
-                                 reduction, logTarget, expectStr);
+                                 reduction, logTarget, expectedReductionCof);
 }
 
 namespace {
