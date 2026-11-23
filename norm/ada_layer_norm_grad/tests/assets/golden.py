@@ -136,8 +136,7 @@ def _compute(dy, x, rstd, mean, scale, gamma, beta):
     return [pd_x, pd_scale, pd_shift, pd_gamma, pd_beta]
 
 
-# 判据：kernel / geir 三方 cross_check L1（NPU 误差 / 竞品误差比值）。
-# aclnn/e2e 当前 TTK 不取用三方，tolerance 仅占位、不影响本地 golden 判定。
+# kernel、geir 和 aclnn 共用 L1 三方精度判据。
 _TOL = {
     "float32": {"standard": "cross_check", "level": "L1"},
     "float16": {"standard": "cross_check", "level": "L1"},
@@ -187,6 +186,55 @@ class AdaLayerNormGradKernelSpec:
 
     third_party = {"torch": _Compose}
     tolerance = _TOL
+
+
+def _fill_affine(input, weight, bias, grad_weight_dtype, grad_bias_dtype):
+    dtype = next(
+        (t.dtype for t in (weight, bias) if isinstance(t, torch.Tensor)),
+        grad_weight_dtype or grad_bias_dtype or torch.float32,
+    )
+    if weight is None:
+        weight = torch.ones(input.shape[-1:], dtype=dtype, device=input.device)
+    if bias is None:
+        bias = torch.zeros(input.shape[-1:], dtype=dtype, device=input.device)
+    return weight, bias
+
+
+class _AclnnCompose(_Compose):
+    def __call__(
+        self,
+        gradOut,
+        input,
+        rstd,
+        mean,
+        scale,
+        weightOptional=None,
+        biasOptional=None,
+        xpu_output_dtypes=None,
+    ):
+        if xpu_output_dtypes is None:
+            if (
+                weightOptional is None
+                and biasOptional is None
+                and input.dtype != torch.float32
+            ):
+                raise ValueError(
+                    "ACLNN optional affine dtype requires TTK xpu_output_dtypes metadata"
+                )
+            output_types = [None] * 5
+        else:
+            output_types = [
+                _TORCH_DTYPE[d] if d is not None else None for d in xpu_output_dtypes
+            ]
+        _, _, _, grad_weight_dtype, grad_bias_dtype = output_types
+        weight, bias = _fill_affine(
+            input, weightOptional, biasOptional, grad_weight_dtype, grad_bias_dtype
+        )
+        outs = super().__call__(gradOut, input, rstd, mean, scale, weight, bias)
+        return [
+            out.to(dtype) if dtype is not None else out
+            for out, dtype in zip(outs, output_types)
+        ]
 
 
 class AdaLayerNormGradAclnnSpec:
@@ -263,22 +311,13 @@ class AdaLayerNormGradAclnnSpec:
                 )
             od = [_dtype_name(d) for d in td[-5:]]
 
-        def _infer_fill_dtype():
-            """与 C++ infer_dtype() 同序：weight > bias > gradWeightOut > gradBiasOut > fp32。"""
-            for tensor in (weightOptional, biasOptional, gradWeightOut, gradBiasOut):
-                if isinstance(tensor, torch.Tensor):
-                    return tensor.dtype
-            return torch.float32
-
-        fill_dtype = _infer_fill_dtype()
-        if weightOptional is None:
-            weightOptional = torch.ones(
-                input.shape[-1:], dtype=fill_dtype, device=input.device
-            )
-        if biasOptional is None:
-            biasOptional = torch.zeros(
-                input.shape[-1:], dtype=fill_dtype, device=input.device
-            )
+        weightOptional, biasOptional = _fill_affine(
+            input,
+            weightOptional,
+            biasOptional,
+            gradWeightOut.dtype if isinstance(gradWeightOut, torch.Tensor) else None,
+            gradBiasOut.dtype if isinstance(gradBiasOut, torch.Tensor) else None,
+        )
         # 先提升到计算精度再算（Promote 用 fp64，否则 fp32）：直接按 b16 算会在
         # pd_gamma/pd_beta 的抵消处放大舍入误差而必然 FAIL。
         operands = [gradOut, input, rstd, mean, scale, weightOptional, biasOptional]
@@ -299,8 +338,8 @@ class AdaLayerNormGradAclnnSpec:
         # 全部输出均为 None 是合法用例状态（如 L2_exc_dtype_007），不得回填或报错。
         return [o if m is not None else None for o, m in zip(cast_outs, masks)]
 
-    # 【预留】TTK aclnn 通路当前不取用 third_party（仅 kernel/geir 取用）；写在此处不生效也无副作用。
-    third_party = {"torch": _Compose}
+    xpu_output_dtypes = True
+    third_party = {"torch": _AclnnCompose}
     tolerance = _TOL
 
 
