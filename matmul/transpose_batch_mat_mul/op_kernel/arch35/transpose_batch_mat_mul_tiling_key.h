@@ -16,7 +16,6 @@
 
 #include "ascendc/host_api/tiling/template_argument.h"
 #include "transpose_batch_mat_mul_tiling_key_public.h"
-#include "transpose_batch_mat_mul_tiling_data.h"
 
 ASCENDC_TPL_ARGS_DECL(
     TransposeBatchMatMul,

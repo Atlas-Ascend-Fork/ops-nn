@@ -14,6 +14,10 @@
  */
 #pragma once
 
+#ifndef __CCE_AICORE__
+#include <cstdint>
+#endif
+
 #if defined(__CCE_AICORE__)
 #include "../../mat_mul_v3/arch35/mat_mul_tiling_data.h"
 #else
