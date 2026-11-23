@@ -257,6 +257,141 @@ TEST_F(apply_adam_w_quant_test, test_case_float32_tilingkey300_true)
     AscendC::GmFree(tiling);
 }
 
+#if !defined(__CCE_AICORE__) || (__CCE_AICORE__ != 350)
+TEST_F(apply_adam_w_quant_test, a2_fp32_quant_and_unaligned_tail)
+{
+    constexpr uint32_t blockDim = 1;
+    constexpr uint32_t blockSize = 256;
+    constexpr uint32_t blockCount = 16;
+    constexpr uint32_t elementCount = (blockCount - 1) * blockSize + 1;
+    constexpr uint32_t guardSize = 32;
+    constexpr uint32_t absmaxCount = blockCount;
+
+    auto* var = reinterpret_cast<float*>(AscendC::GmAlloc(elementCount * sizeof(float)));
+    auto* grad = reinterpret_cast<float*>(AscendC::GmAlloc(elementCount * sizeof(float)));
+    auto* stateM = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(elementCount * sizeof(uint8_t)));
+    auto* stateV = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(elementCount * sizeof(uint8_t)));
+    auto* qmapM = reinterpret_cast<float*>(AscendC::GmAlloc(blockSize * sizeof(float)));
+    auto* qmapV = reinterpret_cast<float*>(AscendC::GmAlloc(blockSize * sizeof(float)));
+    auto* absmaxM = reinterpret_cast<float*>(AscendC::GmAlloc(absmaxCount * sizeof(float)));
+    auto* absmaxV = reinterpret_cast<float*>(AscendC::GmAlloc(absmaxCount * sizeof(float)));
+    auto* step = reinterpret_cast<int64_t*>(AscendC::GmAlloc(sizeof(int64_t)));
+    auto* varOut = reinterpret_cast<float*>(AscendC::GmAlloc(elementCount * sizeof(float)));
+    auto* stateMOut = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(elementCount + guardSize));
+    auto* stateVOut = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(elementCount + guardSize));
+    auto* absmaxMOut = reinterpret_cast<float*>(AscendC::GmAlloc(absmaxCount * sizeof(float)));
+    auto* absmaxVOut = reinterpret_cast<float*>(AscendC::GmAlloc(absmaxCount * sizeof(float)));
+    auto* workspace = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(16 * 1024 * 1024));
+    auto* tiling = reinterpret_cast<ApplyAdamWQuantTilingDataTest*>(
+        AscendC::GmAlloc(sizeof(ApplyAdamWQuantTilingDataTest)));
+
+    ASSERT_NE(var, nullptr);
+    ASSERT_NE(grad, nullptr);
+    ASSERT_NE(stateM, nullptr);
+    ASSERT_NE(stateV, nullptr);
+    ASSERT_NE(qmapM, nullptr);
+    ASSERT_NE(qmapV, nullptr);
+    ASSERT_NE(absmaxM, nullptr);
+    ASSERT_NE(absmaxV, nullptr);
+    ASSERT_NE(step, nullptr);
+    ASSERT_NE(varOut, nullptr);
+    ASSERT_NE(stateMOut, nullptr);
+    ASSERT_NE(stateVOut, nullptr);
+    ASSERT_NE(absmaxMOut, nullptr);
+    ASSERT_NE(absmaxVOut, nullptr);
+    ASSERT_NE(workspace, nullptr);
+    ASSERT_NE(tiling, nullptr);
+
+    for (uint32_t i = 0; i < elementCount; ++i) {
+        var[i] = 1.0f;
+        grad[i] = 0.001f;
+        stateM[i] = 0;
+        stateV[i] = 0;
+        varOut[i] = 0.0f;
+    }
+    for (uint32_t b = 0; b < blockCount; ++b) {
+        grad[b * blockSize] = 1.0f / static_cast<float>(b + 1);
+    }
+
+    for (uint32_t i = 0; i < 128; ++i) {
+        qmapM[i] = -1.0f + 0.999f * static_cast<float>(i) / 127.0f;
+    }
+    for (uint32_t i = 128; i < blockSize; ++i) {
+        qmapM[i] = 0.1f + 0.9f * static_cast<float>(i - 128) / 127.0f;
+    }
+    for (uint32_t i = 0; i < blockSize; ++i) {
+        qmapV[i] = static_cast<float>(i) / 255.0f;
+    }
+
+    for (uint32_t b = 0; b < absmaxCount; ++b) {
+        absmaxM[b] = 1.0f;
+        absmaxV[b] = 1.0f;
+    }
+    step[0] = 0;
+    std::memset(stateMOut, 0xA5, elementCount + guardSize);
+    std::memset(stateVOut, 0xA5, elementCount + guardSize);
+
+    tiling->use_num_core = 1;
+    tiling->last_pre_core_row_work = 1;
+    tiling->not_last_core_num = 0;
+    tiling->not_last_pre_core_row_work = 2;
+    tiling->last_core_last_block = blockCount;
+    tiling->lr = 0.0f;
+    tiling->beta1 = 0.0f;
+    tiling->beta2 = 0.0f;
+    tiling->weight_decay = 0.0f;
+    tiling->eps = 1e-8f;
+    tiling->gnorm_scale = 1.0f;
+    tiling->block_size = blockSize;
+    tiling->one_core_do_block_num_per_row = blockCount;
+    tiling->tiling_key = 100;
+    tiling->last_block_size = 1;
+
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
+    ICPU_SET_TILING_KEY(100);
+    ICPU_RUN_KF(apply_adam_w_quant, blockDim, reinterpret_cast<uint8_t*>(var), reinterpret_cast<uint8_t*>(grad), stateM,
+                stateV, reinterpret_cast<uint8_t*>(qmapM), reinterpret_cast<uint8_t*>(qmapV),
+                reinterpret_cast<uint8_t*>(absmaxM), reinterpret_cast<uint8_t*>(absmaxV),
+                reinterpret_cast<uint8_t*>(step), reinterpret_cast<uint8_t*>(varOut), stateMOut, stateVOut,
+                reinterpret_cast<uint8_t*>(absmaxMOut), reinterpret_cast<uint8_t*>(absmaxVOut), workspace,
+                reinterpret_cast<uint8_t*>(tiling));
+
+    for (uint32_t b = 0; b < blockCount; ++b) {
+        EXPECT_EQ(stateMOut[b * blockSize], 255) << "block=" << b;
+        EXPECT_EQ(stateVOut[b * blockSize], 255) << "block=" << b;
+        EXPECT_NEAR(absmaxMOut[b], 1.0f / static_cast<float>(b + 1), 1e-6f) << "block=" << b;
+        EXPECT_NEAR(absmaxVOut[b], 1.0f / static_cast<float>((b + 1) * (b + 1)), 1e-6f) << "block=" << b;
+        if (b + 1 < blockCount) {
+            EXPECT_EQ(stateMOut[b * blockSize + 1], 128) << "block=" << b;
+            EXPECT_EQ(stateVOut[b * blockSize + 1], 0) << "block=" << b;
+        }
+    }
+    EXPECT_EQ(stateMOut[elementCount - 1], 255);
+    EXPECT_EQ(stateVOut[elementCount - 1], 255);
+    for (uint32_t i = elementCount; i < elementCount + guardSize; ++i) {
+        EXPECT_EQ(stateMOut[i], 0xA5) << "m guard index=" << i;
+        EXPECT_EQ(stateVOut[i], 0xA5) << "v guard index=" << i;
+    }
+
+    AscendC::GmFree(var);
+    AscendC::GmFree(grad);
+    AscendC::GmFree(stateM);
+    AscendC::GmFree(stateV);
+    AscendC::GmFree(qmapM);
+    AscendC::GmFree(qmapV);
+    AscendC::GmFree(absmaxM);
+    AscendC::GmFree(absmaxV);
+    AscendC::GmFree(step);
+    AscendC::GmFree(varOut);
+    AscendC::GmFree(stateMOut);
+    AscendC::GmFree(stateVOut);
+    AscendC::GmFree(absmaxMOut);
+    AscendC::GmFree(absmaxVOut);
+    AscendC::GmFree(workspace);
+    AscendC::GmFree(tiling);
+}
+#endif
+
 #if defined(__CCE_AICORE__) && (__CCE_AICORE__ == 350)
 TEST_F(apply_adam_w_quant_test, arch35_fp32_quant_and_unaligned_tail)
 {

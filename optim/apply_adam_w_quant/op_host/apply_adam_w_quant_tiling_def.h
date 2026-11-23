@@ -35,6 +35,7 @@ TILING_DATA_FIELD_DEF(float, gnorm_scale);
 TILING_DATA_FIELD_DEF(int64_t, block_size);
 TILING_DATA_FIELD_DEF(uint64_t, one_core_do_block_num_per_row);
 TILING_DATA_FIELD_DEF(uint64_t, tiling_key);
+TILING_DATA_FIELD_DEF(uint64_t, last_block_size); // 最后一个量化block的有效元素数
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ApplyAdamWQuant, ApplyAdamWQuantTilingData)
@@ -46,6 +47,7 @@ struct ApplyAdamWQuantTilingParam {
     uint64_t not_last_pre_core_row_work; // 非尾核一个核循环的个数
     uint64_t last_core_last_block;       // 最后一个个最后一次循环的block个数
     uint64_t per_core_do_block_num;
+    uint64_t last_block_size; // 最后一个量化block的有效元素数
     float lr;
     float beta1;
     float beta2;

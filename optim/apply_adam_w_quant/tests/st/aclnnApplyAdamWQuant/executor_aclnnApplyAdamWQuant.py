@@ -264,7 +264,7 @@ class FunctionApi(BaseApi):
                 adamw_8bit_blockwise_step(params)
             )
 
-            return updated_params
+            return updated_params, updated_m, updated_v, new_absmax_m, new_absmax_v
 
     def init_by_input_data(self, input_data: InputDataset, with_output: bool = False):
         # print("before----------------------------------------------------")
@@ -294,5 +294,15 @@ class ApplyAdamWQuantAclnnApi(AclnnBaseApi):
     def init_by_input_data(self, input_data: InputDataset):
         input_args, output_packages = super().init_by_input_data(input_data)
         input_args.pop()
-        output_packages[:] = [input_args[0]]
+        input_args.pop()
+        input_args.pop()
+        input_args.pop()
+        input_args.pop()
+        output_packages[:] = [
+            input_args[0],
+            input_args[2],
+            input_args[3],
+            input_args[6],
+            input_args[7],
+        ]
         return input_args, output_packages

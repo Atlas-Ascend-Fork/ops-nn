@@ -79,6 +79,7 @@ static void PrintTilingData(ApplyAdamWQuantTilingData& tilingData)
     OP_LOGI("ApplyAdamWQuant", "not_last_core_num: %ld", tilingData.get_not_last_core_num());
     OP_LOGI("ApplyAdamWQuant", "not_last_pre_core_row_work: %ld", tilingData.get_not_last_pre_core_row_work());
     OP_LOGI("ApplyAdamWQuant", "last_core_last_block: %ld", tilingData.get_last_core_last_block());
+    OP_LOGI("ApplyAdamWQuant", "last_block_size: %ld", tilingData.get_last_block_size());
     OP_LOGI("ApplyAdamWQuant", "lr: %f", tilingData.get_lr());
     OP_LOGI("ApplyAdamWQuant", "beta1: %f", tilingData.get_beta1());
     OP_LOGI("ApplyAdamWQuant", "beta2: %f", tilingData.get_beta2());
@@ -293,6 +294,7 @@ static ge::graphStatus DoTiling(const gert::TilingContext* context, ApplyAdamWQu
     uint64_t last_pre_core_row_work = total_use_num_core / use_num_core;
     uint64_t not_last_core_num = total_use_num_core - last_pre_core_row_work * use_num_core;
     uint64_t not_last_pre_core_row_work = last_pre_core_row_work + 1;
+    uint64_t last_block_size = totalDataNum - (block_num - 1) * tilingParam.block_size;
 
     tilingParam.use_num_core = use_num_core;
     tilingParam.last_pre_core_row_work = last_pre_core_row_work;
@@ -300,6 +302,7 @@ static ge::graphStatus DoTiling(const gert::TilingContext* context, ApplyAdamWQu
     tilingParam.not_last_pre_core_row_work = not_last_pre_core_row_work;
     tilingParam.last_core_last_block = last_core_last_block;
     tilingParam.per_core_do_block_num = per_core_do_block_num;
+    tilingParam.last_block_size = last_block_size;
     return ge::GRAPH_SUCCESS;
 }
 
@@ -318,6 +321,7 @@ static void GetTilingData(ApplyAdamWQuantTilingData& tilingData, const ApplyAdam
     tilingData.set_gnorm_scale(tilingParam.gnorm_scale);
     tilingData.set_block_size(tilingParam.block_size);
     tilingData.set_one_core_do_block_num_per_row(tilingParam.per_core_do_block_num);
+    tilingData.set_last_block_size(tilingParam.last_block_size);
 }
 
 ge::graphStatus Tiling4ApplyAdamWQuant(gert::TilingContext* context)
