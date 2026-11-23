@@ -512,7 +512,10 @@ ge::graphStatus TilingPrepareForCrossEntropySumExpAndIndexLogit(gert::TilingPars
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context, "Failed to get ub size."),
+    OP_CHECK_IF((compileInfo->ubSizePlatForm <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "ubSizePlatForm",
+                                                      std::to_string(compileInfo->ubSizePlatForm).c_str(),
+                                                      "Failed to get ub size"),
                 return ge::GRAPH_FAILED);
     OP_LOGD(context, "ub_size_platform is %lu.", compileInfo->ubSizePlatForm);
     OP_LOGD(context, "TilingPrepareForCrossEntropySumExpAndIndexLogit end.");

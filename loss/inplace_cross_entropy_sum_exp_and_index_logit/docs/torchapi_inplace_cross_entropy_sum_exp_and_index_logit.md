@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：本算子为vocab并行（Tensor Parallel）场景下CrossEntropy本地计算段的融合算子（原地更新版）。对按vocab维切分后的TP rank本地logits，在`all_reduce(MAX)`之后、`predicted_logits` / `sum_exp_logits`的`all_reduce(SUM)`之前，一次性完成logits平移（减全局最大值）、target越界mask判定、本地target offset计算、target对应logit的gather，以及`exp`与沿vocab维的本地求和。与[cross_entropy_sum_exp_and_index_logit](../../cross_entropy_sum_exp_and_index_logit/docs/torchapi_cross_entropy_sum_exp_and_index_logit.md)的区别在于`exp_logits`不再作为独立输出返回，而是就地覆盖入参`vocab_parallel_logits`，降低中间tensor materialization开销。面向超大词表大模型训练场景。
+- 接口功能：本算子为vocab并行（Tensor Parallelism）场景下CrossEntropy本地计算段的融合算子（原地更新版）。对按vocab维切分后的TP rank本地logits，在`all_reduce(MAX)`之后、`predicted_logits` / `sum_exp_logits`的`all_reduce(SUM)`之前，一次性完成logits平移（减全局最大值）、target越界mask判定、本地target offset计算、target对应logit的gather，以及`exp`与沿vocab维的本地求和。与[cross_entropy_sum_exp_and_index_logit](../../cross_entropy_sum_exp_and_index_logit/docs/torchapi_cross_entropy_sum_exp_and_index_logit.md)的区别在于`exp_logits`不再作为独立输出返回，而是就地覆盖入参`vocab_parallel_logits`，降低中间tensor materialization开销。面向超大词表大模型训练场景。
 
 - 计算公式：
 

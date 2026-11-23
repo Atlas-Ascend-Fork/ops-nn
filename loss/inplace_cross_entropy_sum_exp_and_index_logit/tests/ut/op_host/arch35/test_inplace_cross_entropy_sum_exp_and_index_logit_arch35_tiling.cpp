@@ -398,6 +398,100 @@ TEST_F(InplaceCrossEntropySumExpAndIndexLogitTilingArch35, inplace_out_mask_dtyp
               ge::GRAPH_FAILED);
 }
 
+// ==================== TilingPrepare（tilingParse）阶段校验 ====================
+// 仅执行 TilingPrepareForInplaceCrossEntropySumExpAndIndexLogit，返回 compileInfo 填充结果
+// 注入 UB_SIZE 异常（0/缺失）时应走 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON 失败分支
+static ge::graphStatus RunTilingPrepare(const std::string& compileInfoString, uint64_t& totalCoreNum,
+                                        int64_t& ubSizePlatForm)
+{
+    const std::string opType("InplaceCrossEntropySumExpAndIndexLogit");
+    const auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    if (opImpl == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto tilingParseFunc = opImpl->tiling_parse;
+
+    map<string, string> socInfos;
+    map<string, string> aicoreSpec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compileInfoString.c_str(), socInfos, aicoreSpec, intrinsics);
+
+    fe::PlatFormInfos platformInfo;
+    platformInfo.Init();
+    InplaceCrossEntropySumExpAndIndexLogitCompileInfo compileInfo;
+
+    auto kernelHolder = gert::KernelRunContextFaker()
+                            .KernelIONum(2, 1)
+                            .Inputs(
+                                {const_cast<char*>(compileInfoString.c_str()), reinterpret_cast<void*>(&platformInfo)})
+                            .Outputs({&compileInfo})
+                            .Build();
+    auto* parseContext = kernelHolder.GetContext<gert::TilingParseContext>();
+    if (parseContext->GetPlatformInfo() == nullptr || !parseContext->GetPlatformInfo()->Init()) {
+        return ge::GRAPH_FAILED;
+    }
+    parseContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    parseContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    parseContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    parseContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    ge::graphStatus status = tilingParseFunc(kernelHolder.GetContext<gert::KernelContext>());
+    totalCoreNum = static_cast<uint64_t>(compileInfo.totalCoreNum);
+    ubSizePlatForm = static_cast<int64_t>(compileInfo.ubSizePlatForm);
+    return status;
+}
+
+// 平台信息正常：TilingPrepare 成功，compileInfo 正确填充（coreNum=64、ubSize=UB_SIZE）
+TEST_F(InplaceCrossEntropySumExpAndIndexLogitTilingArch35, inplace_tiling_prepare_success)
+{
+    const std::string normalInfo = R"({"hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                                                        "Intrinsic_fix_pipe_l0c2out": false,
+                                                        "Intrinsic_data_move_l12ub": true,
+                                                        "Intrinsic_data_move_l0c2ub": true,
+                                                        "Intrinsic_data_move_out2l1_nd2nz": false,
+                                                        "UB_SIZE": 253952, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                                                        "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                                                        "CORE_NUM": 64}})";
+    uint64_t totalCoreNum = 0;
+    int64_t ubSizePlatForm = -1;
+    ASSERT_EQ(RunTilingPrepare(normalInfo, totalCoreNum, ubSizePlatForm), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(totalCoreNum, 64u);
+    EXPECT_EQ(ubSizePlatForm, 253952);
+}
+
+// 平台信息异常：UB_SIZE=0 时 ubSizePlatForm<=0，TilingPrepare 走
+// OP_LOGE_FOR_INVALID_VALUE_WITH_REASON 分支返回 GRAPH_FAILED（回归本提交的错误日志增强路径）
+TEST_F(InplaceCrossEntropySumExpAndIndexLogitTilingArch35, inplace_tiling_prepare_ub_size_invalid)
+{
+    const std::string invalidInfo = R"({"hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                                                        "Intrinsic_fix_pipe_l0c2out": false,
+                                                        "Intrinsic_data_move_l12ub": true,
+                                                        "Intrinsic_data_move_l0c2ub": true,
+                                                        "Intrinsic_data_move_out2l1_nd2nz": false,
+                                                        "UB_SIZE": 0, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                                                        "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                                                        "CORE_NUM": 64}})";
+    uint64_t totalCoreNum = 0;
+    int64_t ubSizePlatForm = -1;
+    EXPECT_EQ(RunTilingPrepare(invalidInfo, totalCoreNum, ubSizePlatForm), ge::GRAPH_FAILED);
+}
+
+// 平台信息缺失 UB_SIZE 字段：GetCoreMemSize 无法取到有效值，同样应失败返回
+TEST_F(InplaceCrossEntropySumExpAndIndexLogitTilingArch35, inplace_tiling_prepare_ub_size_missing)
+{
+    const std::string missingInfo = R"({"hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                                                        "Intrinsic_fix_pipe_l0c2out": false,
+                                                        "Intrinsic_data_move_l12ub": true,
+                                                        "Intrinsic_data_move_l0c2ub": true,
+                                                        "Intrinsic_data_move_out2l1_nd2nz": false,
+                                                        "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                                                        "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                                                        "CORE_NUM": 64}})";
+    uint64_t totalCoreNum = 0;
+    int64_t ubSizePlatForm = -1;
+    EXPECT_EQ(RunTilingPrepare(missingInfo, totalCoreNum, ubSizePlatForm), ge::GRAPH_FAILED);
+}
+
 // ==================== 空 tensor 校验 ====================
 TEST_F(InplaceCrossEntropySumExpAndIndexLogitTilingArch35, inplace_logits_empty_tensor)
 {

@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：本算子为vocab并行（Tensor Parallel）场景下CrossEntropy本地计算段的融合算子。对按vocab维切分后的TP rank本地logits，在`all_reduce(MAX)`之后、`predicted_logits` / `sum_exp_logits`的`all_reduce(SUM)`之前，一次性完成logits平移（减全局最大值）、target越界mask判定、本地target offset计算、target对应logit的gather，以及`exp`与沿vocab维的本地求和，降低小算子launch、GM读写和中间tensor materialization开销。面向超大词表大模型训练场景。
+- 接口功能：本算子为vocab并行（Tensor Parallelism）场景下CrossEntropy本地计算段的融合算子。对按vocab维切分后的TP rank本地logits，在`all_reduce(MAX)`之后、`predicted_logits` / `sum_exp_logits`的`all_reduce(SUM)`之前，一次性完成logits平移（减全局最大值）、target越界mask判定、本地target offset计算、target对应logit的gather，以及`exp`与沿vocab维的本地求和，降低小算子launch、GM读写和中间tensor materialization开销。面向超大词表大模型训练场景。
 
 - 计算公式：
 

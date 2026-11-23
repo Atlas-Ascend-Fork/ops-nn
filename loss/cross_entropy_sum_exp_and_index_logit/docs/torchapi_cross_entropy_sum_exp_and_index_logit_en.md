@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: This operator is a fused operator for the local computation stage of CrossEntropy in the vocab parallel (Tensor Parallel) use case. For the local logits of a TP rank split along the vocab dimension, after `all_reduce(MAX)` and before the `all_reduce(SUM)` of `predicted_logits` / `sum_exp_logits`, it completes in one pass the logits shift (subtracting the global maximum), target out-of-bounds mask determination, local target offset computation, gather of the logit corresponding to the target, and `exp` with local summation along the vocab dimension, reducing the overhead of small operator launch, GM read/write, and intermediate tensor materialization. It is designed for the large-vocabulary large-model training task.
+- Description: This operator is a fused operator for the local computation stage of CrossEntropy in the vocab parallel (Tensor Parallelism) use case. For the local logits of a TP rank split along the vocab dimension, after `all_reduce(MAX)` and before the `all_reduce(SUM)` of `predicted_logits` / `sum_exp_logits`, it completes in one pass the logits shift (subtracting the global maximum), target out-of-bounds mask determination, local target offset computation, gather of the logit corresponding to the target, and `exp` with local summation along the vocab dimension, reducing the overhead of small operator launch, GM read/write, and intermediate tensor materialization. It is designed for the large-vocabulary large-model training task.
 
 - Formula:
 
