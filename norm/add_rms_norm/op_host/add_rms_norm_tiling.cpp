@@ -116,21 +116,23 @@ static bool CheckNullptr(const gert::TilingContext* context)
     const gert::StorageShape* rstd_shape = context->GetOutputShape(RMS_OUTPUT_RSTD_INDEX);
     const gert::StorageShape* x_shape = context->GetOutputShape(RMS_OUTPUT_X_INDEX);
 
-    OP_CHECK_IF(
-        x1_shape == nullptr || x2_shape == nullptr || gamma_shape == nullptr || y_shape == nullptr ||
-            rstd_shape == nullptr || x_shape == nullptr,
-        Ops::NN::ErrorReport::TilingFailure(
-            context->GetNodeName(), std::string("Missing shape metadata:") + (x1_shape == nullptr ? " x1" : "") +
-                                        (x2_shape == nullptr ? " x2" : "") + (gamma_shape == nullptr ? " gamma" : "") +
-                                        (y_shape == nullptr ? " y" : "") + (rstd_shape == nullptr ? " rstd" : "") +
-                                        (x_shape == nullptr ? " x" : "")),
-        return false);
-
     norm_key = RMS_NORM_KEY;
     if (rstd_shape->GetOriginShape().GetShapeSize() <= 0 && x_shape->GetOriginShape().GetShapeSize() <= 0) {
         norm_key = POST_RMS_NORM;
     } else if (rstd_shape->GetOriginShape().GetShapeSize() <= 0 && x_shape->GetOriginShape().GetShapeSize() > 0) {
         norm_key = PRE_RMS_NORM;
+    }
+
+    OP_CHECK_NULL_WITH_CONTEXT(context, x1_shape);
+    OP_CHECK_NULL_WITH_CONTEXT(context, x2_shape);
+    OP_CHECK_NULL_WITH_CONTEXT(context, gamma_shape);
+    OP_CHECK_NULL_WITH_CONTEXT(context, y_shape);
+
+    if (norm_key == RMS_NORM_KEY) {
+        OP_CHECK_NULL_WITH_CONTEXT(context, rstd_shape);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
+    } else if (norm_key == PRE_RMS_NORM) {
+        OP_CHECK_NULL_WITH_CONTEXT(context, x_shape);
     }
     return true;
 }
