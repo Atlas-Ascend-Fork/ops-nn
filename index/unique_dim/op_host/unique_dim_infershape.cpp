@@ -13,6 +13,8 @@
  * \brief Shape / dtype / shape-range inference for UniqueDim
  */
 
+#include <string>
+
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "util/shape_util.h"
@@ -34,7 +36,7 @@ static ge::graphStatus InferShape4UniqueDim(gert::InferShapeContext* context)
     if (attrs != nullptr && attrs->GetAttrNum() >= 1) {
         const int64_t* dim = attrs->GetAttrPointer<int64_t>(0);
         if (dim != nullptr && *dim != 0) {
-            OP_LOGE(context->GetNodeName(), "UniqueDim only supports dim=0, got dim=%ld", *dim);
+            OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "dim", std::to_string(*dim).c_str(), "0");
             return GRAPH_FAILED;
         }
     }

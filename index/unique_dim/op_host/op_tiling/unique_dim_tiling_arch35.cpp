@@ -8,6 +8,9 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <string>
+#include <vector>
+
 #include "unique_dim_tiling_arch35.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "log/log.h"
@@ -17,6 +20,17 @@
 namespace optiling {
 
 using namespace Ops::Base;
+
+namespace {
+ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> keys = {"opName", "reason"};
+    const std::vector<const char*> values = {opName, reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    return ge::GRAPH_FAILED;
+}
+} // namespace
 
 constexpr int64_t TILE_SIZE = 512;
 constexpr int64_t BLOCK_DIM_X = 256;
@@ -36,7 +50,7 @@ bool UniqueDimTilingHelper::DoTiling()
 {
     OP_CHECK_IF(!GetPlatformInfo(), OP_LOGE(context_->GetNodeName(), "GetPlatformInfo failed."), return false);
     OP_CHECK_IF(!GetShapeInfo(), OP_LOGE(context_->GetNodeName(), "GetShapeInfo failed."), return false);
-    OP_CHECK_IF(!ReadAttrs(), OP_LOGE(context_->GetNodeName(), "ReadAttrs failed."), return false);
+    OP_CHECK_IF(!ReadAttrs(), ReportTilingFailure(context_->GetNodeName(), "ReadAttrs failed."), return false);
     OP_CHECK_IF(!DoBlockTiling(), OP_LOGE(context_->GetNodeName(), "DoBlockTiling failed."), return false);
     OP_CHECK_IF(!ComputeWorkspaces(), OP_LOGE(context_->GetNodeName(), "ComputeWorkspaces failed."), return false);
     return true;
@@ -70,7 +84,8 @@ bool UniqueDimTilingHelper::GetShapeInfo()
     int64_t dimNum = inputShape.GetDimNum();
 
     OP_CHECK_IF(dimNum > 8,
-                OP_LOGE(context_->GetNodeName(), "UniqueDim only supports up to 8 dimensions, got %ld.", dimNum),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "x", std::to_string(dimNum).c_str(),
+                                                         "the rank of input x must be at most 8"),
                 return false);
 
     // Read dim from attrs (attr index 0)
