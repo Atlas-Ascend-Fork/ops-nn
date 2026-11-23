@@ -17,18 +17,22 @@ BLOCK_FP8_QUANT_MODE = 0
 MX_QUANT_MODE = 1
 STATIC_HIFP8_QUANT_MODE = 2
 DYNAMIC_HIFP8_QUANT_MODE = 3
+HIF4_QUANT_MODE = 4
 MX_QUANT_V2_MODE = 5
 BLOCK_FP8_BLOCK_SIZE = 128
 MX_BLOCK_SIZE = 32
 MX_SCALE_ALIGN = 2
 GROUP_LIST_TYPE_COUNT = 1
 GROUP_LIST_TYPE_PAIR = 2
+HIF4_BLOCK_SIZE = 64
 TORCH_FLOAT8_E5M2 = 23
 TORCH_FLOAT8_E4M3FN = 24
 FLOAT8_E5M2 = 291
 FLOAT8_E4M3FN = 292
 FP4_E2M1 = 296
 FP4_E1M2 = 297
+HIFLOAT4 = 298
+HIFLOAT4_SCALE = 299
 
 
 def _ceil_div(value, factor):
@@ -48,8 +52,18 @@ def _is_fp4_dtype(dst_type):
     return dst_type in (FP4_E2M1, FP4_E1M2)
 
 
+def _is_hif4_quant_mode(quant_mode):
+    return quant_mode == HIF4_QUANT_MODE
+
+
+def _is_hifp8_quant_mode(quant_mode):
+    return quant_mode in (STATIC_HIFP8_QUANT_MODE, DYNAMIC_HIFP8_QUANT_MODE)
+
+
 def _quant_output_dtype(dst_type, quant_mode):
-    if quant_mode in (STATIC_HIFP8_QUANT_MODE, DYNAMIC_HIFP8_QUANT_MODE):
+    if _is_hif4_quant_mode(quant_mode):
+        return torch.uint8
+    if _is_hifp8_quant_mode(quant_mode):
         return torch.uint8
     if dst_type in (TORCH_FLOAT8_E5M2, FLOAT8_E5M2):
         return torch.float8_e5m2
@@ -64,8 +78,11 @@ def _quant_output_dtype(dst_type, quant_mode):
 
 def _quant_output_shape(x, dst_type, quant_mode):
     shape = _swiglu_shape(x)
-    if quant_mode == MX_QUANT_MODE and _is_fp4_dtype(dst_type):
-        shape[-1] = _ceil_div(shape[-1], 2)
+    swiglu_last_dim = shape[-1]
+    if _is_hif4_quant_mode(quant_mode):
+        shape[-1] = _ceil_div(swiglu_last_dim, 2)
+    elif quant_mode == MX_QUANT_MODE and _is_fp4_dtype(dst_type):
+        shape[-1] = _ceil_div(swiglu_last_dim, 2)
     return shape
 
 
@@ -117,6 +134,8 @@ def _scale_shape(x, group_index, quant_mode):
         tail_dim = _ceil_div(swiglu_last_dim, MX_BLOCK_SIZE)
         tail_dim = _ceil_div(tail_dim, MX_SCALE_ALIGN)
         shape.extend([tail_dim, MX_SCALE_ALIGN])
+    elif _is_hif4_quant_mode(quant_mode):
+        shape.extend([_ceil_div(swiglu_last_dim, HIF4_BLOCK_SIZE), 1])
     else:
         shape.append(_ceil_div(swiglu_last_dim, BLOCK_FP8_BLOCK_SIZE))
     return shape

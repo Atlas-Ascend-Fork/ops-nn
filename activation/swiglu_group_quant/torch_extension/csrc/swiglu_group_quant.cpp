@@ -19,12 +19,18 @@ constexpr int64_t kBlockFp8QuantMode = 0;
 constexpr int64_t kMxQuantMode = 1;
 constexpr int64_t kStaticHifp8QuantMode = 2;
 constexpr int64_t kDynamicHifp8QuantMode = 3;
+constexpr int64_t kHif4QuantMode = 4;
 constexpr int64_t kMxQuantV2Mode = 5;
 constexpr int64_t kBlockFp8BlockSize = 128;
 constexpr int64_t kMxBlockSize = 32;
 constexpr int64_t kMxScaleAlign = 2;
+constexpr int64_t kHif4BlockSize = 64;
 constexpr int64_t kFp4InByte = 2;
 constexpr int64_t kGroupListTypePair = 2;
+// Use the numeric aliases from aclnn_common.h because old CANN headers do not
+// declare the HiFloat4 enum names.
+constexpr aclDataType kAclHiFloat4 = ACL_HIFLOAT4_NUM;
+constexpr aclDataType kAclHiFloat4Scale = ACL_HIFLOAT4_SCALE_NUM;
 
 void CheckNpuTensor(const at::Tensor& tensor, const char* name)
 {
@@ -71,13 +77,15 @@ at::ScalarType GetQuantOutputScalarType(aclDataType dtype)
 
 bool IsSupportedOutputDtype(aclDataType dtype)
 {
-    return IsFp8Dtype(dtype) || IsFp4Dtype(dtype) || dtype == ACL_HIFLOAT8;
+    return IsFp8Dtype(dtype) || IsFp4Dtype(dtype) || dtype == ACL_HIFLOAT8 || dtype == kAclHiFloat4;
 }
 
 bool IsHifp8QuantMode(int64_t quantMode)
 {
     return quantMode == kStaticHifp8QuantMode || quantMode == kDynamicHifp8QuantMode;
 }
+
+bool IsHif4QuantMode(int64_t quantMode) { return quantMode == kHif4QuantMode; }
 
 c10::SymDimVector GetSwigluShape(const at::Tensor& x)
 {
@@ -92,8 +100,11 @@ c10::SymDimVector GetSwigluShape(const at::Tensor& x)
 c10::SymDimVector GetQuantOutputShape(const at::Tensor& x, aclDataType yAclType, int64_t quantMode)
 {
     auto yShape = GetSwigluShape(x);
-    if (quantMode == kMxQuantMode && IsFp4Dtype(yAclType)) {
-        yShape[x.dim() - 1] = CeilDiv(yShape[x.dim() - 1], kFp4InByte);
+    const c10::SymInt swigluLastDim = yShape[x.dim() - 1];
+    if (IsHif4QuantMode(quantMode)) {
+        yShape[x.dim() - 1] = CeilDiv(swigluLastDim, kFp4InByte);
+    } else if (quantMode == kMxQuantMode && IsFp4Dtype(yAclType)) {
+        yShape[x.dim() - 1] = CeilDiv(swigluLastDim, kFp4InByte);
     }
     return yShape;
 }
@@ -124,6 +135,9 @@ c10::SymDimVector GetScaleShape(const at::Tensor& x, const c10::optional<at::Ten
         tailDim = CeilDiv(tailDim, kMxScaleAlign);
         scaleShape.emplace_back(tailDim);
         scaleShape.emplace_back(kMxScaleAlign);
+    } else if (IsHif4QuantMode(quantMode)) {
+        scaleShape.emplace_back(CeilDiv(swigluLastDim, kHif4BlockSize));
+        scaleShape.emplace_back(1);
     } else {
         scaleShape.emplace_back(CeilDiv(swigluLastDim, kBlockFp8BlockSize));
     }
@@ -134,6 +148,9 @@ aclDataType GetOutputAclType(int64_t dstType, int64_t quantMode)
 {
     if (IsHifp8QuantMode(quantMode)) {
         return ACL_HIFLOAT8;
+    }
+    if (IsHif4QuantMode(quantMode)) {
+        return kAclHiFloat4;
     }
 
     aclDataType yAclType = GetAclDataType(dstType);
@@ -171,8 +188,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> swiglu_group_quant(
     at::Tensor y = at::empty_symint(GetQuantOutputShape(x, yAclType, resolvedQuantMode),
                                     x.options().dtype(GetQuantOutputScalarType(yAclType)));
 
+    const bool isHif4Quant = IsHif4QuantMode(resolvedQuantMode);
     const bool isMxQuant = resolvedQuantMode == kMxQuantMode || resolvedQuantMode == kMxQuantV2Mode;
-    const aclDataType yScaleAclType = isMxQuant ? ACL_FLOAT8_E8M0 : ACL_FLOAT;
+    const aclDataType yScaleAclType = isHif4Quant ? kAclHiFloat4Scale : (isMxQuant ? ACL_FLOAT8_E8M0 : ACL_FLOAT);
     const at::ScalarType yScaleScalarType = isMxQuant ? GetFp8ScalarType(ACL_FLOAT8_E8M0) : at::ScalarType::Float;
     at::Tensor yScale = at::empty_symint(GetScaleShape(x, group_index, resolvedQuantMode),
                                          x.options().dtype(yScaleScalarType));

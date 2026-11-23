@@ -28,14 +28,23 @@ try:
         register_fx_node_ge_converter,
     )
 
+    # Older TorchAir releases do not expose the HiFloat4 enum. Keep the
+    # converter importable for those releases and only advertise HIF4 when the
+    # graph runtime can represent it.
+    _HIFLOAT4_GE_DTYPE = getattr(DataType, "DT_HIFLOAT4", None)
+    _HIFLOAT4_SCALE_GE_DTYPE = getattr(DataType, "DT_HIFLOAT4_SCALE", None)
+
     _TORCHAIR_AVAILABLE = True
 except ImportError:
+    _HIFLOAT4_GE_DTYPE = None
+    _HIFLOAT4_SCALE_GE_DTYPE = None
     _TORCHAIR_AVAILABLE = False
 
 BLOCK_FP8_QUANT_MODE = 0
 MX_QUANT_MODE = 1
 STATIC_HIFP8_QUANT_MODE = 2
 DYNAMIC_HIFP8_QUANT_MODE = 3
+HIF4_QUANT_MODE = 4
 MX_QUANT_V2_MODE = 5
 FLOAT8_E5M2 = 291
 GE_DTYPE_FLOAT8_E4M3FN = 36
@@ -47,13 +56,18 @@ def _resolve_dst_type(dst_type, quant_mode):
         MX_QUANT_MODE,
         STATIC_HIFP8_QUANT_MODE,
         DYNAMIC_HIFP8_QUANT_MODE,
+        HIF4_QUANT_MODE,
         MX_QUANT_V2_MODE,
     ):
         raise RuntimeError(
-            f"quant_mode should be 0, 1, 2, 3 or 5, but got {quant_mode}"
+            f"quant_mode should be 0, 1, 2, 3, 4 or 5, but got {quant_mode}"
         )
     if quant_mode in (STATIC_HIFP8_QUANT_MODE, DYNAMIC_HIFP8_QUANT_MODE):
         return DataType.DT_HIFLOAT8
+    if quant_mode == HIF4_QUANT_MODE:
+        if _HIFLOAT4_GE_DTYPE is None:
+            raise RuntimeError("current torchair does not support HIFP4")
+        return _HIFLOAT4_GE_DTYPE
 
     try:
         resolved = torch_dtype_value_to_ge_type(dst_type)
@@ -77,13 +91,18 @@ def _resolve_dst_type(dst_type, quant_mode):
 
 
 def _resolve_output_proto_dtype(dst_type, y_dtype):
-    if y_dtype == DataType.DT_HIFLOAT8:
+    if y_dtype == DataType.DT_HIFLOAT8 or (
+        _HIFLOAT4_GE_DTYPE is not None and y_dtype == _HIFLOAT4_GE_DTYPE
+    ):
         return _ge_dtype_to_ge_proto_dtype(y_dtype)
     return torch_dtype_value_to_ge_proto_type(dst_type)
 
 
 def _is_fp4_dtype(y_dtype):
-    return y_dtype in (DataType.DT_FLOAT4_E2M1, DataType.DT_FLOAT4_E1M2)
+    return y_dtype in (
+        DataType.DT_FLOAT4_E2M1,
+        DataType.DT_FLOAT4_E1M2,
+    ) or (_HIFLOAT4_GE_DTYPE is not None and y_dtype == _HIFLOAT4_GE_DTYPE)
 
 
 def _pack_fp4_output_to_uint8(y, rank):
@@ -104,6 +123,10 @@ def _pack_fp4_output_to_uint8(y, rank):
 
 
 if _TORCHAIR_AVAILABLE:
+    _HIFLOAT4_IR = ", DT_HIFLOAT4" if _HIFLOAT4_GE_DTYPE is not None else ""
+    _HIFLOAT4_SCALE_IR = (
+        ", DT_HIFLOAT4_SCALE" if _HIFLOAT4_SCALE_GE_DTYPE is not None else ""
+    )
 
     @register_fx_node_ge_converter(torch.ops.cann_ops_nn.swiglu_group_quant.default)
     def convert_swiglu_group_quant(
@@ -124,9 +147,11 @@ if _TORCHAIR_AVAILABLE:
         group_list_type: int = 1,
         meta_outputs: TensorSpec = None,
     ):
-        if quant_mode in (STATIC_HIFP8_QUANT_MODE, DYNAMIC_HIFP8_QUANT_MODE) and (
-            alpha != 1.0 or bias != 0.0
-        ):
+        if quant_mode in (
+            STATIC_HIFP8_QUANT_MODE,
+            DYNAMIC_HIFP8_QUANT_MODE,
+            HIF4_QUANT_MODE,
+        ) and (alpha != 1.0 or bias != 0.0):
             raise RuntimeError(
                 "alpha/bias only support quant_mode=5, got " + str(quant_mode)
             )
@@ -173,18 +198,23 @@ if _TORCHAIR_AVAILABLE:
             .attr("group_list_type", attr.Int(1))
             .output(
                 "y",
-                "DT_FLOAT8_E4M3FN, DT_FLOAT8_E5M2, DT_FLOAT4_E2M1, DT_FLOAT4_E1M2, DT_HIFLOAT8",
+                "DT_FLOAT8_E4M3FN, DT_FLOAT8_E5M2, DT_FLOAT4_E2M1, DT_FLOAT4_E1M2, DT_HIFLOAT8"
+                + _HIFLOAT4_IR,
             )
-            .output("y_scale", "DT_FLOAT, DT_FLOAT8_E8M0")
+            .output("y_scale", "DT_FLOAT, DT_FLOAT8_E8M0" + _HIFLOAT4_SCALE_IR)
             .output("y_origin", "DT_FLOAT16, DT_BF16, DT_FLOAT"),
         )
 
         y.desc.dtype = _resolve_output_proto_dtype(dst_type, y_dtype)
-        y_scale_dtype = (
-            DataType.DT_FLOAT8_E8M0
-            if quant_mode in (MX_QUANT_MODE, MX_QUANT_V2_MODE)
-            else DataType.DT_FLOAT
-        )
+        if quant_mode in (MX_QUANT_MODE, MX_QUANT_V2_MODE):
+            y_scale_dtype = DataType.DT_FLOAT8_E8M0
+        elif quant_mode == HIF4_QUANT_MODE:
+            # _resolve_dst_type above has already checked the HIF4 data type.
+            if _HIFLOAT4_SCALE_GE_DTYPE is None:
+                raise RuntimeError("current torchair does not support HIFP4 scale")
+            y_scale_dtype = _HIFLOAT4_SCALE_GE_DTYPE
+        else:
+            y_scale_dtype = DataType.DT_FLOAT
         y_scale.desc.dtype = _ge_dtype_to_ge_proto_dtype(y_scale_dtype)
         if output_origin:
             y_origin.desc.dtype = x.desc.dtype
