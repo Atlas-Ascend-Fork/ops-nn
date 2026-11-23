@@ -19,6 +19,7 @@
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
+#include "level0/fill.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
@@ -381,6 +382,26 @@ static std::string getModeStr(const int64_t mode)
     return modeStr;
 }
 
+static bool FillEmptyBagOutput(aclTensor* output, aclOpExecutor* executor)
+{
+    if (output->IsEmpty()) {
+        return true;
+    }
+    const auto dims = op::ToShapeVector(output->GetViewShape());
+    auto shape = executor->AllocIntArray(dims.data(), dims.size());
+    auto scalar = executor->AllocScalar(int64_t{0});
+    if (shape == nullptr || scalar == nullptr) {
+        return false;
+    }
+    const auto shapeTensor = executor->ConvertToTensor(shape, DataType::DT_INT64);
+    const auto valueTensor = executor->ConvertToTensor(scalar, output->GetDataType());
+    if (shapeTensor == nullptr || valueTensor == nullptr) {
+        return false;
+    }
+    const auto filled = l0op::Fill(shapeTensor, valueTensor, shape, executor);
+    return filled != nullptr && l0op::ViewCopy(filled, output, executor) != nullptr;
+}
+
 aclnnStatus aclnnEmbeddingBagGetWorkspaceSize(const aclTensor* weight, const aclTensor* indices,
                                               const aclTensor* offsets, bool scaleGradByFreq, int64_t mode, bool sparse,
                                               const aclTensor* perSampleWeights, bool includeLastOffset,
@@ -413,7 +434,18 @@ aclnnStatus aclnnEmbeddingBagGetWorkspaceSize(const aclTensor* weight, const acl
     }
 
     if (weight->IsEmpty() || indices->IsEmpty() || offsets->IsEmpty()) {
-        *workspaceSize = 0;
+        // Only A2/A3 initialize the empty bag outputs; retain the legacy path on other architectures.
+        if (indices->IsEmpty() && GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
+            if (!FillEmptyBagOutput(output, uniqueExecutor.get()) ||
+                !FillEmptyBagOutput(bagSize, uniqueExecutor.get()) ||
+                !FillEmptyBagOutput(maxIndices, uniqueExecutor.get())) {
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Failed to initialize the empty bag outputs.");
+                return ACLNN_ERR_INNER_NULLPTR;
+            }
+            *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+        } else {
+            *workspaceSize = 0;
+        }
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
     }

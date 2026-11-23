@@ -314,7 +314,7 @@ aclnnStatus aclnnTopKTopPSample(
         <td>logitsTopKPSelect</td>
         <td>Output</td>
         <td>Indicates the remaining unfiltered logits in the input logits after the topK-topP computation process.</td>
-        <td><ul><li>Does not support empty tensors.</li><li>The shape needs to be consistent with the first n-1 dimensions of `logits`.</li></ul></td>
+        <td><ul><li>Does not support empty tensors.</li><li>The shape must match logits.</li></ul></td>
         <td>FLOAT32</td>
         <td>ND</td>
         <td>2</td>
@@ -365,21 +365,29 @@ aclnnStatus aclnnTopKTopPSample(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>Any of the input parameters logits, topK, or topP is a null pointer.</td>
+      <td>Any required input logits, topK, or topP, or output logitsSelectIdx or logitsTopKPSelect is a null pointer.</td>
     </tr>
     <tr>
-      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="4">161002</td>
-      <td>The data type of logits, topK, topP, or q is not within the supported range.</td>
-    </tr>
-    <tr>
-      <td>The dimensions or sizes of logits and q are inconsistent.</td>
-    </tr>
-    <tr>
-      <td>The dimensions of topK and topP are inconsistent with the first n-1 dimensions of logits.</td>
+      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="2">161002</td>
+      <td>The data type of logits, topK, topP, logitsSelectIdx, or logitsTopKPSelect is not supported.</td>
     </tr>
     <tr>
       <td>The data types of logits and topP are inconsistent.</td>
+    </tr>
+    <tr>
+      <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="4">561002</td>
+      <td>logits is one-dimensional, or its vocabulary length exceeds 1048576.</td>
+    </tr>
+    <tr>
+      <td>The data type of q is not FLOAT32, or the dimensions or sizes of q and logits are inconsistent.</td>
+    </tr>
+    <tr>
+      <td>The dimensions or sizes of topK or topP do not match the first n-1 dimensions of logits.</td>
+    </tr>
+    <tr>
+      <td>The shape of logitsSelectIdx or logitsTopKPSelect does not satisfy the constraints.</td>
     </tr>
   </tbody></table>
 

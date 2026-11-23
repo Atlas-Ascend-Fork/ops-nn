@@ -104,7 +104,7 @@ ACLNN_API aclnnStatus aclnnRepeatInterleaveWithDim(void* workspace, uint64_t wor
  * @param [in] self: npu
  * device侧的aclTensor，数据类型支持UINT8、INT8、INT16、INT32、INT64、BOOL、FLOAT16、FLOAT32、BFLOAT16类型。
  * 支持空tensor, 支持非连续的tensor。数据格式支持ND。
- * @param [in] repeats: 重复的次数。数据类型为INT64。repeats的值必须为自然数。
+ * @param [in] repeats: 重复的次数。数据类型为INT64。repeats的值必须为非负整数。
  * @param [in] outputSize: 进行重复后的tensor最终大小。数据类型为INT64。outputSize必须等于self的元素个数 * repeats的值。
  * @param [in] out: npu device侧的aclTensor，数据类型支持UINT8、INT8、INT16、INT32、INT64、BOOL、FLOAT16、FLOAT32类型。
  * 数据类型需要与self一致。
@@ -139,7 +139,7 @@ ACLNN_API aclnnStatus aclnnRepeatInterleaveInt(void* workspace, uint64_t workspa
  * @param [in] self: npu
  * device侧的aclTensor，数据类型支持UINT8、INT8、INT16、INT32、INT64、BOOL、FLOAT16、FLOAT32、BFLOAT16类型。
  * 支持空tensor， 支持非连续的tensor。数据格式支持ND。
- * @param [in] repeats: 重复的次数。数据类型为INT64。repeats的值必须为自然数。
+ * @param [in] repeats: 重复的次数。数据类型为INT64。repeats的值必须为非负整数。
  * @param [in] dim: 进行重复的维度，数据类型为INT64。范围为[-self的维度数量, self的维度数量-1]。
  * @param [in] outputSize: dim维度再进行重复后的最终大小。数据类型为INT64。outputSize值必须为repeats *
  * self的dim维度size。

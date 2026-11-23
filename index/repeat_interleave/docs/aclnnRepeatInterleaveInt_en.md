@@ -174,7 +174,7 @@ aclnnStatus aclnnRepeatInterleaveInt(
         <td>The data types of self and out are inconsistent.</td>
       </tr>
       <tr>
-        <td>repeats is not a natural number.</td>
+        <td>repeats is negative, or repeats is zero and outputSize or the output shape is invalid.</td>
       </tr>
       <tr>
         <td>The number of dimensions of self exceeds 8.</td>

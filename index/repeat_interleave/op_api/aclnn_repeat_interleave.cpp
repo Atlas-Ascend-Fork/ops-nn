@@ -9,6 +9,7 @@
  */
 
 #include "aclnn_repeat_interleave.h"
+#include "log/log.h"
 #include "level0/arange.h"
 #include "level0/broadcast_to.h"
 #include "aclnn_kernels/cast.h"
@@ -22,6 +23,7 @@
 #include "op_api/aclnn_util.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
+#include "opdev/format_utils.h"
 
 using namespace op;
 #ifdef __cplusplus
@@ -148,11 +150,31 @@ static inline const aclIntArray* GetFlattenShape(const aclTensor* self, aclOpExe
     return reshapePerm;
 }
 
-// 检查int repeats的取值是否为自然数
+// 检查int repeats的取值是否为非负整数
 static bool CheckIntRepeatsRange(int64_t repeats)
 {
     if (repeats < 0) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "repeats %ld can not be negative.", repeats);
+        return false;
+    }
+    return true;
+}
+
+static bool CheckZeroRepeatsOutput(const aclTensor* out, int64_t outputSize, const op::Shape& expectedShape,
+                                   const char* apiName)
+{
+    if (outputSize != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(apiName, "outputSize", std::to_string(outputSize).c_str(),
+                                              "repeats is 0, so outputSize must be 0. Set outputSize to 0");
+        return false;
+    }
+    if (out->GetViewShape() != expectedShape) {
+        const std::string reason = std::string("repeats is 0; actual out format ") +
+                                   op::ToString(out->GetStorageFormat()).GetString() + "; expected ND out shape " +
+                                   op::ToString(expectedShape).GetString() +
+                                   ". Provide an ND output tensor with this shape";
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(apiName, "out", op::ToString(out->GetViewShape()).GetString(),
+                                              reason.c_str());
         return false;
     }
     return true;
@@ -374,7 +396,7 @@ static aclnnStatus CheckParamsInt(const aclTensor* self, int64_t repeats, const 
     OP_CHECK_DTYPE_NOT_SUPPORT(self, inputDtypeSupportList, return ACLNN_ERR_PARAM_INVALID);
     OP_CHECK_DTYPE_NOT_MATCH(out, self->GetDataType(), return ACLNN_ERR_PARAM_INVALID);
 
-    // 3. 检查repeats必须为自然数
+    // 3. 检查repeats必须为非负整数
     CHECK_RET(CheckIntRepeatsRange(repeats), ACLNN_ERR_PARAM_INVALID);
 
     // 4. 检查self不能超过8维
@@ -395,7 +417,7 @@ static aclnnStatus CheckParamsDimInt(const aclTensor* self, int64_t repeats, int
     OP_CHECK_DTYPE_NOT_SUPPORT(self, inputDtypeSupportList, return ACLNN_ERR_PARAM_INVALID);
     OP_CHECK_DTYPE_NOT_MATCH(out, self->GetDataType(), return ACLNN_ERR_PARAM_INVALID);
 
-    // 3. 检查repeats必须为自然数
+    // 3. 检查repeats必须为非负整数
     CHECK_RET(CheckIntRepeatsRange(repeats), ACLNN_ERR_PARAM_INVALID);
 
     // 4. 检查dims的大小必须处于 [-N, N-1] 之间。0维场景不允许传入dims
@@ -584,8 +606,13 @@ aclnnStatus aclnnRepeatInterleaveIntGetWorkspaceSize(const aclTensor* self, int6
     auto ret = CheckParamsInt(self, repeats, out);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
-    // 空tensor场景，直接返回
-    if (self->IsEmpty() || out->IsEmpty()) {
+    if (repeats == 0) {
+        const op::Shape expectedShape{0};
+        CHECK_RET(CheckZeroRepeatsOutput(out, outputSize, expectedShape, "aclnnRepeatInterleaveInt"),
+                  ACLNN_ERR_PARAM_INVALID);
+    }
+
+    if (repeats == 0 || self->IsEmpty() || out->IsEmpty()) {
         *workspaceSize = 0;
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
@@ -649,8 +676,14 @@ aclnnStatus aclnnRepeatInterleaveIntWithDimGetWorkspaceSize(const aclTensor* sel
     auto ret = CheckParamsDimInt(self, repeats, dim, out);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
-    // 空tensor场景 + 【self非空但是repeats为0】场景，直接返回
-    if (self->IsEmpty() || outputSize == 0) {
+    if (repeats == 0) {
+        op::Shape expectedShape = self->GetViewShape();
+        expectedShape.SetDim(WrapDim(dim, GetTensorDimNum(self)), 0);
+        CHECK_RET(CheckZeroRepeatsOutput(out, outputSize, expectedShape, "aclnnRepeatInterleaveIntWithDim"),
+                  ACLNN_ERR_PARAM_INVALID);
+    }
+
+    if (repeats == 0 || self->IsEmpty() || outputSize == 0) {
         *workspaceSize = 0;
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;

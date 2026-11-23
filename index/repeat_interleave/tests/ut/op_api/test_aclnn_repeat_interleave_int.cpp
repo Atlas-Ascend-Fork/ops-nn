@@ -97,3 +97,16 @@ TEST_F(l2_repeat_interleave_int_test, l2_repeat_interleave_int_test_12)
     getWorkspaceResult = ut2.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_NULLPTR);
 }
+
+TEST_F(l2_repeat_interleave_int_test, zero_repeats)
+{
+    test_run({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, 0, {0}, ACL_FLOAT, ACL_FORMAT_ND);
+}
+
+TEST_F(l2_repeat_interleave_int_test, zero_repeats_invalid_output)
+{
+    test_run_invalid({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, 3, {0}, ACL_FLOAT, ACL_FORMAT_ND);
+    test_run_invalid({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, -1, {0}, ACL_FLOAT, ACL_FORMAT_ND);
+    test_run_invalid({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, 0, {0, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    test_run_invalid({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, 0, {4}, ACL_FLOAT, ACL_FORMAT_ND);
+}

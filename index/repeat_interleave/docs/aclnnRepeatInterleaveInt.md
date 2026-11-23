@@ -172,7 +172,7 @@ aclnnStatus aclnnRepeatInterleaveInt(
         <td>self、out 的数据类型不一致。</td>
       </tr>
       <tr>
-        <td>repeats 不为自然数。</td>
+        <td>repeats 为负数，或 repeats 为 0 时 outputSize 或输出形状不符合要求。</td>
       </tr>
       <tr>
         <td>self 的维度数超过8。</td>

@@ -276,3 +276,17 @@ TEST_F(l2_repeat_interleave_dim_int_test, ascend960_bfloat16_scalar_repeats)
         test_run({2, 3}, ACL_BF16, ACL_FORMAT_ND, {-2, 2}, 2, 1, 6, {2, 6}, ACL_BF16, ACL_FORMAT_ND);
     }
 }
+
+TEST_F(l2_repeat_interleave_dim_int_test, zero_repeats)
+{
+    test_run({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, 0, 0, {0, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    test_run({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, -1, 0, {2, 0}, ACL_FLOAT, ACL_FORMAT_ND);
+}
+
+TEST_F(l2_repeat_interleave_dim_int_test, zero_repeats_invalid_output)
+{
+    test_run_invalid({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, 0, 3, {0, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    test_run_invalid({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, 0, -1, {0, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    test_run_invalid({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, -1, 0, {0, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    test_run_invalid({2, 4}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 0, 0, 0, {4, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+}

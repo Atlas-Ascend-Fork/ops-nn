@@ -101,3 +101,83 @@ TEST_F(l2_embedding_bag_test, case_2)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACL_SUCCESS);
 }
+
+TEST_F(l2_embedding_bag_test, empty_indices_supported_on_a2_a3)
+{
+    for (auto soc : {SocVersion::ASCEND910B, SocVersion::ASCEND910_93}) {
+        SocVersionManager manager(soc);
+        for (int64_t mode : {0, 1, 2}) {
+            for (bool last : {false, true}) {
+                auto weight = TensorDesc({4, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+                auto indices = TensorDesc({0}, ACL_INT32, ACL_FORMAT_ND);
+                auto offsets = TensorDesc({last ? 3 : 2}, ACL_INT32, ACL_FORMAT_ND);
+                auto output = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+                auto offset2bag = TensorDesc({0}, ACL_INT32, ACL_FORMAT_ND);
+                auto bagSize = TensorDesc({2}, ACL_INT32, ACL_FORMAT_ND);
+                auto maxIndices = TensorDesc(mode == 2 ? vector<int64_t>{2, 3} : vector<int64_t>{2}, ACL_INT32,
+                                             ACL_FORMAT_ND);
+                auto ut = OP_API_UT(
+                    aclnnEmbeddingBag,
+                    INPUT(weight, indices, offsets, false, mode, false, (aclTensor*)nullptr, last, int64_t{-1}),
+                    OUTPUT(output, offset2bag, bagSize, maxIndices));
+                uint64_t workspaceSize = 0;
+                EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+            }
+        }
+    }
+}
+
+TEST_F(l2_embedding_bag_test, empty_optional_weights_supported_for_sum)
+{
+    for (auto soc : {SocVersion::ASCEND910B, SocVersion::ASCEND910_93}) {
+        SocVersionManager manager(soc);
+        auto weight = TensorDesc({4, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+        auto indices = TensorDesc({0}, ACL_INT32, ACL_FORMAT_ND);
+        auto offsets = TensorDesc({2}, ACL_INT32, ACL_FORMAT_ND);
+        auto sampleWeights = TensorDesc({0}, ACL_FLOAT, ACL_FORMAT_ND);
+        auto output = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+        auto offset2bag = TensorDesc({0}, ACL_INT32, ACL_FORMAT_ND);
+        auto bagSize = TensorDesc({2}, ACL_INT32, ACL_FORMAT_ND);
+        auto maxIndices = TensorDesc({2}, ACL_INT32, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(
+            aclnnEmbeddingBag,
+            INPUT(weight, indices, offsets, false, int64_t{0}, false, sampleWeights, false, int64_t{-1}),
+            OUTPUT(output, offset2bag, bagSize, maxIndices));
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+    }
+}
+
+TEST_F(l2_embedding_bag_test, a5_empty_inputs_keep_legacy_fast_return)
+{
+    SocVersionManager manager(SocVersion::ASCEND950);
+    for (int emptyInput = 0; emptyInput < 4; ++emptyInput) {
+        for (int64_t mode : {0, 1, 2}) {
+            for (bool last : {false, true}) {
+                if (emptyInput == 3 && last) {
+                    continue;
+                }
+                SCOPED_TRACE(emptyInput);
+                const int64_t dim = emptyInput == 1 ? 0 : 3;
+                const int64_t indicesCount = emptyInput == 2 ? 0 : 4;
+                const int64_t offsetsCount = emptyInput == 3 ? 0 : last ? 3 : 2;
+                const int64_t bags = offsetsCount - static_cast<int64_t>(last);
+                auto weight = TensorDesc({emptyInput == 0 ? 0 : 4, dim}, ACL_FLOAT, ACL_FORMAT_ND);
+                auto indices = TensorDesc({indicesCount}, ACL_INT32, ACL_FORMAT_ND);
+                auto offsets = TensorDesc({offsetsCount}, ACL_INT32, ACL_FORMAT_ND);
+                auto output = TensorDesc({bags, dim}, ACL_FLOAT, ACL_FORMAT_ND);
+                auto offset2bag = TensorDesc({indicesCount}, ACL_INT32, ACL_FORMAT_ND);
+                auto bagSize = TensorDesc({offsetsCount}, ACL_INT32, ACL_FORMAT_ND);
+                auto maxIndices = TensorDesc(mode == 2 ? vector<int64_t>{bags, dim} : vector<int64_t>{0}, ACL_INT32,
+                                             ACL_FORMAT_ND);
+                auto ut = OP_API_UT(
+                    aclnnEmbeddingBag,
+                    INPUT(weight, indices, offsets, false, mode, false, (aclTensor*)nullptr, last, int64_t{-1}),
+                    OUTPUT(output, offset2bag, bagSize, maxIndices));
+                uint64_t workspaceSize = 123;
+                EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+                EXPECT_EQ(workspaceSize, 0);
+            }
+        }
+    }
+}

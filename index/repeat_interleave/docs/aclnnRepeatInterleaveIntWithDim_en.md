@@ -186,7 +186,7 @@ aclnnStatus aclnnRepeatInterleaveIntWithDim(
         <td>The data types of self and out are different.</td>
       </tr>
       <tr>
-        <td>repeats is not a natural number.</td>
+        <td>repeats is negative, or repeats is zero and outputSize or the output shape is invalid.</td>
       </tr>
       <tr>
         <td>dim is not in the range [-number of dimensions of self, number of dimensions of self - 1].</td>

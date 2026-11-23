@@ -312,7 +312,7 @@ aclnnStatus aclnnTopKTopPSample(
         <td>logitsTopKPSelect</td>
         <td>输出</td>
         <td>表示经过topK-topP计算流程后，输入logits中剩余未被过滤的logits。</td>
-        <td><ul><li>不支持空Tensor。</li><li>shape需要与`logits`前n-1维一致。</li></ul></td>
+        <td><ul><li>不支持空Tensor。</li><li>shape 需要与 `logits` 一致。</li></ul></td>
         <td>FLOAT32</td>
         <td>ND</td>
         <td>2</td>
@@ -363,21 +363,29 @@ aclnnStatus aclnnTopKTopPSample(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>入参logits、topK、topP中任一是空指针。</td>
+      <td>入参logits、topK、topP或输出logitsSelectIdx、logitsTopKPSelect中任一是空指针。</td>
     </tr>
     <tr>
-      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="4">161002</td>
-      <td>logits、topK、topP、q的数据类型不在支持的范围之内。</td>
-    </tr>
-    <tr>
-      <td>logits与q维度或尺寸不一致。</td>
-    </tr>
-    <tr>
-      <td>topK、topP的维度与logits的前n-1维不一致。</td>
+      <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="2">161002</td>
+      <td>logits、topK、topP、logitsSelectIdx、logitsTopKPSelect的数据类型不在支持范围之内。</td>
     </tr>
     <tr>
       <td>logits与topP的数据类型不一致。</td>
+    </tr>
+    <tr>
+      <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="4">561002</td>
+      <td>logits为1维，或词表长度超过1048576。</td>
+    </tr>
+    <tr>
+      <td>q的数据类型不是FLOAT32，或q与logits的维度、尺寸不一致。</td>
+    </tr>
+    <tr>
+      <td>topK、topP的维度或尺寸与logits的前n-1维不一致。</td>
+    </tr>
+    <tr>
+      <td>logitsSelectIdx或logitsTopKPSelect的shape不符合约束。</td>
     </tr>
   </tbody></table>
 

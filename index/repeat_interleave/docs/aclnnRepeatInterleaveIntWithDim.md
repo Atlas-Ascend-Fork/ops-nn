@@ -184,7 +184,7 @@ aclnnStatus aclnnRepeatInterleaveIntWithDim(
         <td>self、out的数据类型不一样。</td>
       </tr>
       <tr>
-        <td>repeats不为自然数。</td>
+        <td>repeats 为负数，或 repeats 为 0 时 outputSize 或输出形状不符合要求。</td>
       </tr>
       <tr>
         <td>dim的值不在[-self的维度数量， self的维度数量-1]之间。</td>
