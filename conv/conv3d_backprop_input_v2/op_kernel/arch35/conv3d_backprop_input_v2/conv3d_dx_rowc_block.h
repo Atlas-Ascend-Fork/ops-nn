@@ -112,6 +112,11 @@ public:
             return;
         }
 
+        if (GetAicBlockIdx() >= this->usedCoreNum_) {
+            ProcessForUnUsedCore();
+            return;
+        }
+
         CalBasicBlock();
         this->dedx_.End();
     }
@@ -191,10 +196,15 @@ protected:
         this->totalCnt_ = static_cast<uint64_t>(tiling->batch) * static_cast<uint64_t>(tiling->group) * this->dinCnt_ *
                           this->mCnt_ * this->nCnt_;
 
-        this->usedCoreNum_ = tiling->coreNum;
+        uint64_t blockNum = GetBlockNum();
+        if (this->totalCnt_ < blockNum) {
+            this->usedCoreNum_ = this->totalCnt_;
+        } else {
+            this->usedCoreNum_ = blockNum;
+        }
 
-        this->calRound_ = this->totalCnt_ / this->usedCoreNum_;
-        this->tailCnt_ = this->totalCnt_ - this->calRound_ * this->usedCoreNum_;
+        this->calRound_ = this->usedCoreNum_ == 0 ? 0 : this->totalCnt_ / this->usedCoreNum_;
+        this->tailCnt_ = this->usedCoreNum_ == 0 ? 0 : this->totalCnt_ - this->calRound_ * this->usedCoreNum_;
     }
 
     __aicore__ inline void InitBasicBlockLoopDirect()
