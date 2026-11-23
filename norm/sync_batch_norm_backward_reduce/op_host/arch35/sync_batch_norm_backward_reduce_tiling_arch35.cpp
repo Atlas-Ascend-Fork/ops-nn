@@ -156,7 +156,7 @@ ge::graphStatus SyncBatchNormBackwardReduceTiling::RunTiling()
     }
 
     OP_CHECK_IF(res == ge::GRAPH_FAILED,
-                OP_LOGE(tilingContext, "SyncBatchNormBackwardReduce DoTiling failed",
+                OP_LOGE(tilingContext, "SyncBatchNormBackwardReduce DoTiling failed, outputDtype=%s",
                         ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
                 return ge::GRAPH_FAILED);
 
