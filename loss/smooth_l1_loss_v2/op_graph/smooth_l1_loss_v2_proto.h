@@ -32,8 +32,9 @@ namespace ge {
 * specifying the target value. \n
 
 * @par Attributes:
-* @li sigma: An optional float. Specifies the threshold of loss. The value must be positive number. Defaults
-* to "1.0". \n
+* @li sigma: An optional float. Specifies the threshold of loss. The value must be
+* non-negative (>= 0). When sigma is 0, the element-wise loss degenerates to the
+* pure L1 term |x - y|. Defaults to "1.0". \n
 * @li reduction: An optional string. Specifies the reduction to apply to
 * the output: 'none' | 'mean' | 'sum'. 'none': no reduction will be applied;
 * 'mean': the sum of the output will be divided by the number of elements in
@@ -44,7 +45,6 @@ namespace ge {
 and target value.
 * When reduction is "none", it has the same dimensions as "predict"; when reduction is "mean" or "sum", it is a scalar.
 \n
-
 * @par Third-party framework compatibility
 * Compatible with the Pytorch operator smooth_l1_loss. \n
 */

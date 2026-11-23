@@ -143,7 +143,7 @@ aclnnStatus aclnnSmoothL1Loss(
       <td class="tg-0lax">result（aclTensor*）</td>
       <td class="tg-0lax">输出</td>
       <td class="tg-0lax">公式中输出的损失函数ℓ(self,target)。</td>
-      <td class="tg-0lax">当reduction为none时，shape与self和target的<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>结果一致，当reduction为mean或sum时为[1]，数据类型为self和target推导后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。当reduction为mean或sum时，result的数据格式须为ND。当result为DOUBLE类型时，输出为计算结果按<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>转换（Cast）后的DOUBLE值。</td>
+      <td class="tg-0lax">当reduction为none时，shape与self和target的<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>结果一致，当reduction为mean或sum时result为rank-0标量（0维张量），数据类型为self和target推导后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。当reduction为mean或sum时，result的数据格式须为ND。当result为DOUBLE类型时，输出为计算结果按<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>转换（Cast）后的DOUBLE值。</td>
       <td class="tg-0lax">FLOAT、FLOAT16、BFLOAT16、DOUBLE</td>
       <td class="tg-0lax">ND、NCL、NCHW、NHWC</td>
       <td class="tg-0lax">0-8</td>
@@ -267,10 +267,18 @@ aclnnStatus aclnnSmoothL1Loss(
 
 - 确定性计算：
     - aclnnSmoothL1Loss默认确定性实现。
+- format与rank匹配约束：
+    - self、target、result的数据格式声明为固定维格式（NCL、NCHW、NHWC）时，该格式的维度语义须与tensor的实际rank一致（如NCHW要求rank为4）。
+    - rank与固定维格式不匹配的输入，在第一段接口入参校验或后续格式转换阶段被拒绝，错误码为161002（ACLNN_ERR_PARAM_INVALID）或其映射码。
+- 空Tensor语义：
+    - self或target为空Tensor时，按reduction差异化处理：reduction为0(none)时直接返回成功；reduction为1(mean)时result填充NaN；reduction为2(sum)时result填充0。
+- 特殊值行为：
+    - 输入中的NaN会按计算公式逐元素传播到对应输出。
+    - Inf及极值输入在FLOAT16、BFLOAT16等低精度类型下，输出可能饱和为该数据类型的最大有限值（与高精度参考计算的inf结果存在差异），属已知精度行为。
 
 ## 调用示例
 
-示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
+示例代码如下，仅供参考；该示例仅演示接口调用流程，不做数值正确性验证，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
 ```Cpp
 #include <iostream>
