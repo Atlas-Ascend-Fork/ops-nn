@@ -41,7 +41,9 @@ public:
                                 GM_ADDR y, const DeepNormTilingData* tilingData);
     __aicore__ inline void Process();
 
-private:
+protected:
+    __aicore__ inline void InitShared(GM_ADDR x, GM_ADDR gx, GM_ADDR beta, GM_ADDR gamma, GM_ADDR mean, GM_ADDR rstd,
+                                      GM_ADDR y, const DeepNormTilingData* tilingData, uint32_t scalarElements);
     __aicore__ inline LocalTensor<T> CopyInTensor(TQue<QuePosition::VECIN, 1>& queue, GlobalTensor<T>& gm,
                                                   uint64_t offset, uint32_t count);
     __aicore__ inline void CopyOutTensor(GlobalTensor<T>& gm, LocalTensor<T>& local, uint64_t offset, uint32_t count);
@@ -58,7 +60,7 @@ private:
                                     uint32_t count);
     __aicore__ inline void ProcessRow(uint64_t row);
 
-private:
+protected:
     TPipe pipe_;
     TQue<QuePosition::VECIN, 1> xQue_;
     TQue<QuePosition::VECIN, 1> gxQue_;
@@ -93,12 +95,6 @@ template <typename T>
 __aicore__ inline void DeepNormPartialLoad<T>::Init(GM_ADDR x, GM_ADDR gx, GM_ADDR beta, GM_ADDR gamma, GM_ADDR mean,
                                                     GM_ADDR rstd, GM_ADDR y, const DeepNormTilingData* tilingData)
 {
-    numCol_ = tilingData->numCol;
-    tileLength_ = tilingData->tileLength;
-    eps_ = tilingData->eps;
-    alpha_ = tilingData->alpha;
-    avgFactor_ = tilingData->avgFactor;
-
     uint32_t rowPerCore = tilingData->rowPerCore;
     uint32_t numRow = tilingData->numRow;
     uint64_t rowStart = static_cast<uint64_t>(GetBlockIdx()) * rowPerCore;
@@ -108,6 +104,20 @@ __aicore__ inline void DeepNormPartialLoad<T>::Init(GM_ADDR x, GM_ADDR gx, GM_AD
     rowStart_ = static_cast<uint32_t>(rowStart);
     uint32_t remain = numRow - rowStart_;
     rowWork_ = remain > rowPerCore ? rowPerCore : remain;
+
+    InitShared(x, gx, beta, gamma, mean, rstd, y, tilingData, DEEP_NORM_BLK_B32);
+}
+
+template <typename T>
+__aicore__ inline void DeepNormPartialLoad<T>::InitShared(GM_ADDR x, GM_ADDR gx, GM_ADDR beta, GM_ADDR gamma,
+                                                          GM_ADDR mean, GM_ADDR rstd, GM_ADDR y,
+                                                          const DeepNormTilingData* tilingData, uint32_t scalarElements)
+{
+    numCol_ = tilingData->numCol;
+    tileLength_ = tilingData->tileLength;
+    eps_ = tilingData->eps;
+    alpha_ = tilingData->alpha;
+    avgFactor_ = tilingData->avgFactor;
 
     xGm_.SetGlobalBuffer((__gm__ T*)x);
     gxGm_.SetGlobalBuffer((__gm__ T*)gx);
@@ -124,8 +134,8 @@ __aicore__ inline void DeepNormPartialLoad<T>::Init(GM_ADDR x, GM_ADDR gx, GM_AD
     pipe_.InitBuffer(gammaQue_, 1, dtypeBytes);
     pipe_.InitBuffer(betaQue_, 1, dtypeBytes);
     pipe_.InitBuffer(yQue_, 1, dtypeBytes);
-    pipe_.InitBuffer(meanQue_, 1, DEEP_NORM_BLOCK_SIZE);
-    pipe_.InitBuffer(rstdQue_, 1, DEEP_NORM_BLOCK_SIZE);
+    pipe_.InitBuffer(meanQue_, 1, scalarElements * sizeof(float));
+    pipe_.InitBuffer(rstdQue_, 1, scalarElements * sizeof(float));
     pipe_.InitBuffer(calcBuf_, fp32Bytes);
     pipe_.InitBuffer(tileSumBuf_, DEEP_NORM_BLOCK_SIZE);
     pipe_.InitBuffer(binarySumBuf_, DEEP_NORM_BINARY_LEVELS * DEEP_NORM_BLOCK_SIZE);

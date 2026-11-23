@@ -21,6 +21,8 @@
 
 #include "deep_norm.h"
 #include "deep_norm_partial_load.h"
+#include "deep_norm_short_rows.h"
+#include "deep_norm_split_row.h"
 
 using namespace AscendC;
 
@@ -43,6 +45,15 @@ extern "C" __global__ __aicore__ void deep_norm(GM_ADDR x, GM_ADDR gx, GM_ADDR b
     } else if (TILING_KEY_IS(2)) {
         NsDeepNorm::DeepNormReduceEmpty op;
         op.Init(mean, rstd, tilingData);
+        op.Process();
+    } else if (TILING_KEY_IS(3)) {
+        NsDeepNorm::DeepNormShortRows<DTYPE_X> op;
+        op.Init(x, gx, beta, gamma, mean, rstd, y, tilingData);
+        op.Process();
+    } else if (TILING_KEY_IS(4)) {
+        KERNEL_TASK_TYPE(4, KERNEL_TYPE_MIX_AIV_1_0);
+        NsDeepNorm::DeepNormSplitRow<DTYPE_X> op;
+        op.Init(x, gx, beta, gamma, mean, rstd, y, GetUserWorkspace(workspace), tilingData);
         op.Process();
     }
 }

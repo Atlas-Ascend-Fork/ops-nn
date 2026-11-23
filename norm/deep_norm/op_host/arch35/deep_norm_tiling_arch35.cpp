@@ -157,7 +157,8 @@ static bool IsEmptyTensor(const gert::TilingContext* context)
 
 static ge::graphStatus SetTilingData(gert::TilingContext* context, int64_t usedCoreNum, int64_t numCol, int64_t numRow,
                                      int64_t rowPerCore, int64_t numColAlign, int64_t powerSplit, float eps,
-                                     float alpha, uint32_t tileLength, uint64_t tilingKey);
+                                     float alpha, uint32_t tileLength, uint64_t tilingKey,
+                                     uint64_t workspaceSize = WS_SYS_SIZE, uint32_t splitTilesPerCore = 0);
 
 // The normal kernels require a positive reduce length.  For an empty input,
 // y is empty and no x/gx/gamma/beta access is valid; if the reduced axis is
@@ -281,6 +282,28 @@ static uint64_t CalcFullLoadUbRequired(uint64_t numColAlign, uint64_t dtypeSize)
     return tensorBytes + reduceTmpElems * sizeof(float) + scalarBytes;
 }
 
+static uint32_t CalcShortRowBatch(int64_t numRow, int64_t numCol, uint64_t ubSize, uint64_t dtypeSize)
+{
+    constexpr int64_t minRows = 4096;
+    constexpr int64_t maxColumns = 32;
+    constexpr uint64_t maxBatchElements = 8192;
+    constexpr uint64_t maxBatchRows = 1024;
+    const uint64_t affineBytes = 2 * VL_FP32 * (sizeof(float) + dtypeSize);
+    if (numRow < minRows || numCol <= 0 || numCol > maxColumns || ubSize <= affineBytes) {
+        return 0;
+    }
+    uint64_t bytesPerElement = 3 * dtypeSize; // X, GX and Y.
+    if (numCol > 1) {
+        bytesPerElement += sizeof(float); // H.
+        if (dtypeSize != sizeof(float)) {
+            bytesPerElement += sizeof(float); // Scatter before the output cast.
+        }
+    }
+    const uint64_t bytesPerRow = numCol * bytesPerElement + 2 * sizeof(float);
+    const uint64_t rows = std::min({maxBatchRows, maxBatchElements / numCol, (ubSize - affineBytes) / bytesPerRow});
+    return static_cast<uint32_t>(rows / VL_FP32 * VL_FP32);
+}
+
 static ge::graphStatus CalcPartialTileLength(const gert::TilingContext* context, uint64_t ubSize, uint64_t dtypeSize,
                                              uint32_t& tileLength)
 {
@@ -300,14 +323,52 @@ static ge::graphStatus CalcPartialTileLength(const gert::TilingContext* context,
     return ge::GRAPH_SUCCESS;
 }
 
+struct SplitRowPlan {
+    uint32_t cores = 0;
+    uint32_t tilesPerCore = 0;
+    uint64_t userWorkspace = 0;
+};
+
+static SplitRowPlan PlanSplitRows(int64_t numRow, int64_t numCol, int64_t coreNum, uint32_t tileLength, uint64_t ubSize,
+                                  uint64_t dtypeSize)
+{
+    constexpr int64_t maxRows = 4;
+    constexpr int64_t minColumns = 131072;
+    if (numRow > maxRows || numCol < minColumns || coreNum <= 1 ||
+        (numRow > 1 && numCol % (BLOCK_SIZE / dtypeSize) != 0)) {
+        return {};
+    }
+    const uint64_t tiles = CeilDiv(static_cast<uint64_t>(numCol), static_cast<uint64_t>(tileLength));
+    const uint64_t quota = CeilDiv(tiles, static_cast<uint64_t>(coreNum));
+    uint64_t tilesPerCore = 1;
+    uint64_t levels = 0;
+    while (tilesPerCore < quota) {
+        tilesPerCore *= POWER_TWO_FOLD;
+        ++levels;
+    }
+    const uint64_t cores = CeilDiv(tiles, tilesPerCore);
+    const uint64_t rowAlign = CeilAlign(static_cast<uint64_t>(numRow), static_cast<uint64_t>(BLK_B32));
+    const uint64_t statsCapacity = CeilAlign(static_cast<uint64_t>(numRow), static_cast<uint64_t>(VL_FP32));
+    const uint64_t phaseElements = (tiles / tilesPerCore + (tiles % tilesPerCore == 0 ? 0 : levels)) * rowAlign;
+    const uint64_t extraElements = 2 * (statsCapacity - BLK_B32) + std::max<uint64_t>(1, levels) * rowAlign +
+                                   CeilAlign(phaseElements, static_cast<uint64_t>(VL_FP32));
+    const uint64_t required = tileLength * (UB_QUEUE_COUNT * dtypeSize + sizeof(float)) + PARTIAL_RESERVED_SIZE +
+                              extraElements * sizeof(float);
+    if (cores <= static_cast<uint64_t>(numRow) || required > ubSize) {
+        return {};
+    }
+    return {static_cast<uint32_t>(cores), static_cast<uint32_t>(tilesPerCore), 2 * phaseElements * sizeof(float)};
+}
+
 // Sets workspace size and writes the computed values into the tiling data / block dim / tiling key.
 static ge::graphStatus SetTilingData(gert::TilingContext* context, int64_t usedCoreNum, int64_t numCol, int64_t numRow,
                                      int64_t rowPerCore, int64_t numColAlign, int64_t powerSplit, float eps,
-                                     float alpha, uint32_t tileLength, uint64_t tilingKey)
+                                     float alpha, uint32_t tileLength, uint64_t tilingKey, uint64_t workspaceSize,
+                                     uint32_t splitTilesPerCore)
 {
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
-    currentWorkspace[0] = WS_SYS_SIZE;
+    currentWorkspace[0] = workspaceSize;
 
     DeepNormTilingData* tiling = context->GetTilingData<DeepNormTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
@@ -326,6 +387,7 @@ static ge::graphStatus SetTilingData(gert::TilingContext* context, int64_t usedC
     tiling->alpha = alpha;
     tiling->avgFactor = numCol == 0 ? 0.0f : 1.0f / static_cast<float>(numCol);
     tiling->tileLength = tileLength;
+    tiling->splitTilesPerCore = splitTilesPerCore;
 
     context->SetBlockDim(static_cast<uint32_t>(usedCoreNum));
     context->SetTilingKey(tilingKey);
@@ -388,12 +450,33 @@ static ge::graphStatus DeepNormTilingFunc(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
 
+    const uint32_t shortBatch = CalcShortRowBatch(numRow, numCol, ubSize, dtypeSize);
+    const int64_t alignedRowsPerCore = CeilAlign(rowPerCore, static_cast<int64_t>(BLOCK_SIZE / sizeof(uint16_t)));
+    if (shortBatch > 0 && alignedRowsPerCore <= UINT32_MAX) {
+        // Align boundaries for both T output and the FP32 row statistics.
+        return SetTilingData(context, CeilDiv(numRow, alignedRowsPerCore), numCol, numRow, alignedRowsPerCore,
+                             numColAlign, powerSplit, eps, alpha, shortBatch, 3U);
+    }
+
     uint32_t fullLoadLimit = dtypeSize == sizeof(float) ? FP32_FULL_LOAD_LIMIT : FP16_BF16_FULL_LOAD_LIMIT;
     bool useFullLoad = static_cast<uint64_t>(numCol) <= fullLoadLimit &&
                        CalcFullLoadUbRequired(static_cast<uint64_t>(numColAlign), dtypeSize) <= ubSize;
     uint32_t tileLength = 0;
     if (!useFullLoad && CalcPartialTileLength(context, ubSize, dtypeSize, tileLength) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
+    }
+    if (!useFullLoad) {
+        const auto split = PlanSplitRows(numRow, numCol, coreNum, tileLength, ubSize, dtypeSize);
+        if (split.cores != 0) {
+            auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+            const uint64_t workspace = platform.GetLibApiWorkSpaceSize() + split.userWorkspace;
+            OP_CHECK_IF(context->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "schedule mode", "1",
+                                                              "split-row scheduling is unavailable"),
+                        return ge::GRAPH_FAILED);
+            return SetTilingData(context, split.cores, numCol, numRow, rowPerCore, numColAlign, powerSplit, eps, alpha,
+                                 tileLength, 4U, workspace, split.tilesPerCore);
+        }
     }
     uint64_t tilingKey = useFullLoad ? 0U : 1U;
 

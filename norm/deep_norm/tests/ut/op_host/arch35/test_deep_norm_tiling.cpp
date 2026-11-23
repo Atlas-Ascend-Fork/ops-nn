@@ -25,6 +25,7 @@
 #include "log/log.h"
 #include "ut_op_util.h"
 #include "platform/platform_infos_def.h"
+#include "tiling/platform/platform_ascendc.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -48,6 +49,12 @@ constexpr uint64_t UB_SIZE_240K = 245760;
 constexpr uint64_t UB_SIZE_64K = 65536;
 constexpr uint64_t UB_SIZE_NO_PARTIAL_TILE = 3583;
 
+struct LaunchInfo {
+    uint32_t blockDim;
+    size_t workspace;
+    size_t libWorkspace;
+};
+
 // Builds a StorageShape (storage == origin) from a dim vector.
 static gert::StorageShape MakeShape(const std::vector<int64_t>& dims)
 {
@@ -66,7 +73,7 @@ static ge::graphStatus RunDeepNormArch35TilingShapes(
     const std::vector<int64_t>& xDims, const std::vector<int64_t>& gxDims, const std::vector<int64_t>& betaDims,
     const std::vector<int64_t>& gammaDims, const std::vector<int64_t>& meanDims, const std::vector<int64_t>& rstdDims,
     const std::vector<int64_t>& yDims, ge::DataType dt, uint64_t ubSize, int64_t& tilingKey,
-    DeepNormTilingData* tilingResult = nullptr)
+    DeepNormTilingData* tilingResult = nullptr, LaunchInfo* launch = nullptr)
 {
     std::string compile_info_string = R"({
         "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -75,7 +82,7 @@ static ge::graphStatus RunDeepNormArch35TilingShapes(
                           "UB_SIZE": )" +
                                       std::to_string(ubSize) + R"(, "L2_SIZE": 33554432, "L1_SIZE": 524288,
                           "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
-                          "CORE_NUM": 24}
+                          "CORE_NUM": 24, "vector_core_cnt": 24}
                           })";
     map<string, string> soc_infos = {{"Short_SoC_version", "Ascend950"}};
     map<string, string> aicore_spec;
@@ -159,6 +166,15 @@ static ge::graphStatus RunDeepNormArch35TilingShapes(
     auto status = tiling_func(tiling_context);
     if (status == ge::GRAPH_SUCCESS) {
         tilingKey = tiling_context->GetTilingKey();
+        if (launch != nullptr) {
+            if (ws_size->GetSize() != 1 || ws_size->GetData() == nullptr) {
+                return ge::GRAPH_FAILED;
+            }
+            auto platform = platform_ascendc::PlatformAscendC(tiling_context->GetPlatformInfo());
+            launch->blockDim = tiling_context->GetBlockDim();
+            launch->workspace = *reinterpret_cast<const size_t*>(ws_size->GetData());
+            launch->libWorkspace = platform.GetLibApiWorkSpaceSize();
+        }
         if (tilingResult != nullptr) {
             auto rawTilingData = tiling_context->GetRawTilingData();
             if (rawTilingData == nullptr || rawTilingData->GetData() == nullptr ||
@@ -175,7 +191,7 @@ static ge::graphStatus RunDeepNormArch35TilingShapes(
 // gamma/beta = [D]; mean/rstd = leadingDims + [1].
 static ge::graphStatus RunDeepNormArch35Tiling(const std::vector<int64_t>& leadingDims, int64_t D, ge::DataType dt,
                                                uint64_t ubSize, int64_t& tilingKey,
-                                               DeepNormTilingData* tilingResult = nullptr)
+                                               DeepNormTilingData* tilingResult = nullptr, LaunchInfo* launch = nullptr)
 {
     std::vector<int64_t> xDims = leadingDims;
     xDims.push_back(D);
@@ -183,9 +199,71 @@ static ge::graphStatus RunDeepNormArch35Tiling(const std::vector<int64_t>& leadi
     scalarDims.push_back(1);
     std::vector<int64_t> gammaDims = {D};
     return RunDeepNormArch35TilingShapes(xDims, xDims, gammaDims, gammaDims, scalarDims, scalarDims, xDims, dt, ubSize,
-                                         tilingKey, tilingResult);
+                                         tilingKey, tilingResult, launch);
 }
 } // namespace
+
+TEST_F(DeepNormTilingArch35, ShortRowsTailBatch)
+{
+    for (auto dt : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
+        SCOPED_TRACE(static_cast<int>(dt));
+        int64_t key = -1;
+        DeepNormTilingData tiling{};
+        LaunchInfo launch{};
+        ASSERT_EQ(RunDeepNormArch35Tiling({4097}, 3, dt, UB_SIZE_240K, key, &tiling, &launch), ge::GRAPH_SUCCESS);
+        EXPECT_EQ(key, 3);
+        EXPECT_EQ(launch.blockDim, 24U);
+        EXPECT_EQ(tiling.numCore, launch.blockDim);
+        EXPECT_EQ(tiling.rowPerCore, 176U);
+        EXPECT_EQ(tiling.tileLength, 1024U);
+        EXPECT_EQ(tiling.splitTilesPerCore, 0U);
+        EXPECT_EQ(launch.workspace, 0U);
+    }
+}
+
+TEST_F(DeepNormTilingArch35, SplitRowTailTile)
+{
+    for (auto dt : {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16}) {
+        SCOPED_TRACE(static_cast<int>(dt));
+        int64_t key = -1;
+        DeepNormTilingData tiling{};
+        LaunchInfo launch{};
+        ASSERT_EQ(RunDeepNormArch35Tiling({1}, 131073, dt, UB_SIZE_240K, key, &tiling, &launch), ge::GRAPH_SUCCESS);
+        EXPECT_EQ(key, 4);
+        EXPECT_EQ(tiling.tileLength, 4096U);
+        EXPECT_EQ(tiling.splitTilesPerCore, 2U);
+        EXPECT_EQ(launch.blockDim, 17U); // 16 pairs of full tiles and a one-element tail.
+        EXPECT_EQ(tiling.numCore, launch.blockDim);
+        // Each of the two reduction phases stores 17 partials, each padded to eight floats.
+        EXPECT_EQ(launch.workspace, launch.libWorkspace + 2 * 17 * 8 * sizeof(float));
+    }
+}
+
+TEST_F(DeepNormTilingArch35, OptimizedPathsFallBackAtBoundaries)
+{
+    struct Case {
+        int64_t rows;
+        int64_t cols;
+        uint64_t ubSize;
+        int64_t expectedKey;
+    };
+    const Case cases[] = {
+        {4095, 32, UB_SIZE_240K, 0},  {4096, 33, UB_SIZE_240K, 0},  {4096, 32, 32768, 0},
+        {1, 131071, UB_SIZE_240K, 1}, {5, 131072, UB_SIZE_240K, 1}, {2, 131073, UB_SIZE_240K, 1},
+        {1, 131073, UB_SIZE_64K, 1},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(testing::Message() << c.rows << " x " << c.cols << ", UB " << c.ubSize);
+        int64_t key = -1;
+        DeepNormTilingData tiling{};
+        LaunchInfo launch{};
+        ASSERT_EQ(RunDeepNormArch35Tiling({c.rows}, c.cols, ge::DT_FLOAT, c.ubSize, key, &tiling, &launch),
+                  ge::GRAPH_SUCCESS);
+        EXPECT_EQ(key, c.expectedKey);
+        EXPECT_EQ(tiling.splitTilesPerCore, 0U);
+        EXPECT_EQ(launch.workspace, 0U);
+    }
+}
 
 // (1) non-64-aligned D produces a valid tiling (key 0), covers numColAlign rounding.
 TEST_F(DeepNormTilingArch35, deep_norm_arch35_fp16_unaligned_d)
