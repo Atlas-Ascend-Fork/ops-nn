@@ -60,34 +60,40 @@ ge::graphStatus PReluGradUpdateTiling::CalcInputDtype()
     OPS_ERR_IF(
         this->inputFeturesDtype != ge::DT_FLOAT16 && this->inputFeturesDtype != ge::DT_BF16 &&
             this->inputFeturesDtype != ge::DT_FLOAT,
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                        "input features dtype allow {float16, bfloat16, float32} ,but not support %s",
-                                        ge::TypeUtils::DataTypeToSerialString(this->inputFeturesDtype).c_str()),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "features",
+                                              ge::TypeUtils::DataTypeToSerialString(this->inputFeturesDtype).c_str(),
+                                              "only support float16, bfloat16 and float32"),
         return ge::GRAPH_FAILED);
 
     auto inputWeightsDesc = context_->GetInputDesc(INPUT_WEIGHT_INDEX);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, inputWeightsDesc);
     this->inputWeightsDtype = inputWeightsDesc->GetDataType();
-    OPS_ERR_IF(this->inputWeightsDtype != ge::DT_FLOAT16 && this->inputWeightsDtype != ge::DT_BF16 &&
-                   this->inputWeightsDtype != ge::DT_FLOAT,
-               VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                               "input weights dtype {float16, bfloat16, float32} ,but not support %s",
-                                               ge::TypeUtils::DataTypeToSerialString(this->inputWeightsDtype).c_str()),
-               return ge::GRAPH_FAILED);
+    OPS_ERR_IF(
+        this->inputWeightsDtype != ge::DT_FLOAT16 && this->inputWeightsDtype != ge::DT_BF16 &&
+            this->inputWeightsDtype != ge::DT_FLOAT,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "weights",
+                                              ge::TypeUtils::DataTypeToSerialString(this->inputWeightsDtype).c_str(),
+                                              "only support float16, bfloat16 and float32"),
+        return ge::GRAPH_FAILED);
 
     auto inputGradientsDesc = context_->GetInputDesc(INPUT_GRADIENT_INDEX);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, inputGradientsDesc);
     this->inputGradientsDtype = inputGradientsDesc->GetDataType();
-    OPS_ERR_IF(this->inputGradientsDtype != ge::DT_FLOAT16 && this->inputGradientsDtype != ge::DT_BF16 &&
-                   this->inputGradientsDtype != ge::DT_FLOAT,
-               VECTOR_INNER_ERR_REPORT_TILIING(
-                   context_->GetNodeName(), "input gradients dtype {float16, bfloat16, float32} ,but not support %s",
-                   ge::TypeUtils::DataTypeToSerialString(this->inputGradientsDtype).c_str()),
-               return ge::GRAPH_FAILED);
+    OPS_ERR_IF(
+        this->inputGradientsDtype != ge::DT_FLOAT16 && this->inputGradientsDtype != ge::DT_BF16 &&
+            this->inputGradientsDtype != ge::DT_FLOAT,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "grads",
+                                              ge::TypeUtils::DataTypeToSerialString(this->inputGradientsDtype).c_str(),
+                                              "only support float16, bfloat16 and float32"),
+        return ge::GRAPH_FAILED);
     OPS_ERR_IF(
         this->inputGradientsDtype != this->inputWeightsDtype || this->inputGradientsDtype != this->inputFeturesDtype,
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                        "input gradients features weights dtype are not the same"),
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "grads,weights,features",
+                                               (ge::TypeUtils::DataTypeToSerialString(this->inputGradientsDtype) + "," +
+                                                ge::TypeUtils::DataTypeToSerialString(this->inputWeightsDtype) + "," +
+                                                ge::TypeUtils::DataTypeToSerialString(this->inputFeturesDtype))
+                                                   .c_str(),
+                                               "the dtypes of grads, weights and features must be the same"),
         return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -109,11 +115,12 @@ ge::graphStatus PReluGradUpdateTiling::CheckAndInferShape(std::vector<gert::Shap
     OPS_CHECK_NULL_WITH_CONTEXT(context_, inputStorageGradientShape);
     const gert::Shape& inputGradientShape = Ops::Base::EnsureNotScalar(inputStorageGradientShape->GetStorageShape());
 
-    //检查weight的元素个数是否等于1或者features的通道数
+    // 检查weight的元素个数是否等于1或者features的通道数
     int64_t weightSize = inputWeightShape.GetShapeSize();
     OP_TILING_CHECK(
         weightSize != 1 && weightSize != inputFeatureShape.GetDim(1),
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "weight shape size must be 1 or features dim1 size"),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context_->GetNodeName(), "weights", std::to_string(weightSize),
+                                                  "weight shape size must be 1 or features dim1 size"),
         return ge::GRAPH_FAILED);
 
     inputShapes.push_back(inputGradientShape);
@@ -145,18 +152,26 @@ ge::graphStatus PReluGradUpdateTiling::CalcOutputDtype()
     auto outputDxDesc = context_->GetOutputDesc(OUT_BACKPROPS_DX_INDEX);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, outputDxDesc);
     this->outputBackpropsDxDtype = outputDxDesc->GetDataType();
-    OPS_ERR_IF(this->outputBackpropsDxDtype != this->inputFeturesDtype,
-               VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                               "output backprops dx dtype not same as input features"),
-               return ge::GRAPH_FAILED);
+    OPS_ERR_IF(
+        this->outputBackpropsDxDtype != this->inputFeturesDtype,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "dx,features",
+                                               (ge::TypeUtils::DataTypeToSerialString(this->outputBackpropsDxDtype) +
+                                                "," + ge::TypeUtils::DataTypeToSerialString(this->inputFeturesDtype))
+                                                   .c_str(),
+                                               "the dtype of output dx must be the same as input features"),
+        return ge::GRAPH_FAILED);
 
     auto outputDaDesc = context_->GetOutputDesc(OUT_BACKPROPS_DA_INDEX);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, outputDaDesc);
     this->outputBackpropsDaDtype = outputDaDesc->GetDataType();
-    OPS_ERR_IF(this->outputBackpropsDaDtype != this->inputFeturesDtype,
-               VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                               "output backprops da dtype not same as input features"),
-               return ge::GRAPH_FAILED);
+    OPS_ERR_IF(
+        this->outputBackpropsDaDtype != this->inputFeturesDtype,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "da,features",
+                                               (ge::TypeUtils::DataTypeToSerialString(this->outputBackpropsDaDtype) +
+                                                "," + ge::TypeUtils::DataTypeToSerialString(this->inputFeturesDtype))
+                                                   .c_str(),
+                                               "the dtype of output da must be the same as input features"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -196,9 +211,9 @@ ge::graphStatus PReluGradUpdateTiling::DoOpTiling()
         OP_LOGD("DoOpTiling", "DT_FLOAT GetSchMode: %lu", brcBaseTiling.GetSchMode());
         OP_LOGD("DoOpTiling", "DT_FLOAT tiling key: %lu", tilingKey);
     } else {
-        VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(),
-                                        "Input dtype only support fp16, bf16, fp32 currently is %s.",
-                                        ge::TypeUtils::DataTypeToSerialString(inputDtype).c_str());
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "features",
+                                              ge::TypeUtils::DataTypeToSerialString(inputDtype).c_str(),
+                                              "only support float16, bfloat16 and float32");
         return ge::GRAPH_FAILED;
     }
 

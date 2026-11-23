@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <set>
 #include <cmath>
+#include <string>
 #include "../../op_kernel/arch35/relu6_d_tiling_data.h"
 
 namespace optiling {
@@ -88,19 +89,21 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     // 输入 x shape → 展平为 dim0（rank=0 → 1，空 Tensor → 0）
     auto inputX = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputX);
-    OP_CHECK_IF(inputX->GetStorageShape().GetDimNum() > MAX_SUPPORTED_RANK,
-                OP_LOGE(context, "Relu6D: input rank %zu exceeds supported range [0, 8]; input name=x",
-                        inputX->GetStorageShape().GetDimNum()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        inputX->GetStorageShape().GetDimNum() > MAX_SUPPORTED_RANK,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Relu6D"), "x",
+            std::to_string(inputX->GetStorageShape().GetDimNum()).c_str(), "the rank of x must be within 0D-8D"),
+        return ge::GRAPH_FAILED);
     auto inputShapeX = EnsureNotScalar(inputX->GetStorageShape());
     *dim0 = inputShapeX.GetShapeSize();
     // GetShapeSize() 在元素乘积溢出 int64 时返回负的溢出哨兵（kInvalidDimValue=INT64_MIN）。
     // 负值会绕过下方 dim0==0 的空 Tensor 短路并进入切分算术，必须在此显式拒绝。
     OP_CHECK_IF(*dim0 < 0,
-                OP_LOGE(context,
-                        "Relu6D: flattened element count is invalid (%ld): the shape product overflows int64; "
-                        "input name=x",
-                        static_cast<long>(*dim0)),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Relu6D"),
+                    "x", std::to_string(*dim0).c_str(),
+                    "the shape size of x must be non-negative; a negative value indicates a shape product overflow"),
                 return ge::GRAPH_FAILED);
 
     // dtype 校验（全 4 dtype）
@@ -109,35 +112,36 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     const auto inputFormat = inputDesc->GetFormat().GetStorageFormat();
     OP_CHECK_IF(inputFormat != ge::FORMAT_ND,
-                OP_LOGE(context, "Relu6D: input[0] format %d is unsupported; input name=x, legal format=ND",
-                        static_cast<int>(inputFormat)),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Relu6D"),
+                    "x", Ops::Base::ToString(inputFormat).c_str(), "the format of x only supports ND"),
                 return ge::GRAPH_FAILED);
 
     auto outputDesc = context->GetOutputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
     const auto outputFormat = outputDesc->GetFormat().GetStorageFormat();
     OP_CHECK_IF(outputFormat != ge::FORMAT_ND,
-                OP_LOGE(context, "Relu6D: output[0] format %d is unsupported; output name=y, legal format=ND",
-                        static_cast<int>(outputFormat)),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Relu6D"),
+                    "y", Ops::Base::ToString(outputFormat).c_str(), "the format of y only supports ND"),
                 return ge::GRAPH_FAILED);
 
     *dataType = inputDesc->GetDataType();
     OP_CHECK_IF(supportedDtype.count(*dataType) == 0,
-                OP_LOGE(context,
-                        "Relu6D: unsupported dtype %d (supports FLOAT16/BF16/FLOAT/INT32); input name=x, legal "
-                        "dtypes={FLOAT16,BF16,FLOAT,INT32}",
-                        static_cast<int>(*dataType)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Relu6D"),
+                    "x", Ops::Base::ToString(*dataType).c_str(), "supported dtypes are FLOAT16, BF16, FLOAT and INT32"),
                 return ge::GRAPH_FAILED);
 
     // 元素总量上界：保证 dim0 * minDtypeBits + (MIN_TILING_BITS_SIZE_PER_CORE - 1) 不溢出 int64，
     // 供 ComputeTilingParams 的核数切分乘法使用（乘法前置保护）。
     const int64_t minDtypeBits = static_cast<int64_t>(ge::GetSizeByDataType(*dataType)) * 8;
-    OP_CHECK_IF(*dim0 > (INT64_MAX - MIN_TILING_BITS_SIZE_PER_CORE) / minDtypeBits,
-                OP_LOGE(context,
-                        "Relu6D: flattened element count %ld with %ld bits per element overflows the int64 "
-                        "per-core budget; input name=x",
-                        static_cast<long>(*dim0), static_cast<long>(minDtypeBits)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        *dim0 > (INT64_MAX - MIN_TILING_BITS_SIZE_PER_CORE) / minDtypeBits,
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Relu6D"), "x",
+            std::to_string(*dim0).c_str(), "the shape size of x is too large and overflows the int64 per-core budget"),
+        return ge::GRAPH_FAILED);
 
     // 属性 scale（Float，index 0，默认 1.0）—— 上界阈值 = 6*scale
     const auto* attrs = context->GetAttrs();
@@ -147,7 +151,11 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     } else {
         *scale = DEFAULT_SCALE;
     }
-    OP_CHECK_IF(!std::isfinite(*scale), OP_LOGE(context, "Relu6D: scale must be finite"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!std::isfinite(*scale),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Relu6D"),
+                    "scale", std::to_string(*scale).c_str(), "scale must be finite"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -202,18 +210,18 @@ static ge::graphStatus Relu6DTilingFunc(gert::TilingContext* context)
     uint64_t ubSize;
     int64_t availableCoreNum;
     OP_CHECK_IF(GetPlatformInfo(context, &ubSize, &availableCoreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     // 2. shape / dtype / 属性
     int64_t dim0;
     ge::DataType dataType;
     float scale;
     OP_CHECK_IF(GetShapeAttrsInfo(context, &dim0, &dataType, &scale) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
 
     // 3. workspace 声明
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
 
     // 4. TilingData 初始化
     Relu6DTilingData* tiling = context->GetTilingData<Relu6DTilingData>();
@@ -226,10 +234,10 @@ static ge::graphStatus Relu6DTilingFunc(gert::TilingContext* context)
     // int32：kernel 以 static_cast<int32_t>(upperThreshold) 消费该阈值，越界转换属未定义行为，
     // 须在下发前校验其落在 int32 可表示范围内（截断向零：[INT32_MIN, INT32_MAX]）。
     OP_CHECK_IF(dataType == ge::DT_INT32 && (upperThreshold >= 2147483648.0f || upperThreshold < -2147483648.0f),
-                OP_LOGE(context,
-                        "Relu6D: int32 upper threshold 6*scale=%f is outside the int32 range "
-                        "(requires -2147483648 <= 6*scale < 2147483648); scale=%f",
-                        static_cast<double>(upperThreshold), static_cast<double>(scale)),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Relu6D"),
+                    "scale", std::to_string(scale).c_str(),
+                    "for int32 input, 6*scale must be within the int32 range [-2147483648, 2147483648)"),
                 return ge::GRAPH_FAILED);
     tiling->upperThreshold = upperThreshold;
     tiling->dim0 = dim0;

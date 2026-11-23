@@ -24,6 +24,7 @@
 #include "../../op_kernel/arch35/shrink_tiling_key.h"
 
 #include <cmath>
+#include <string>
 
 namespace optiling {
 
@@ -72,8 +73,12 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
     auto outShape = EnsureNotScalar(output->GetStorageShape());
 
     OP_CHECK_IF(inputShape.GetShapeSize() != outShape.GetShapeSize(),
-                OP_LOGE(context, "Shrink: shape size mismatch: input=%ld, out=%ld", inputShape.GetShapeSize(),
-                        outShape.GetShapeSize()),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Shrink"),
+                    "output_y", std::to_string(outShape.GetShapeSize()).c_str(),
+                    ("shape size of output_y must be equal to that of input_x; input_x shape size is " +
+                     std::to_string(inputShape.GetShapeSize()))
+                        .c_str()),
                 return ge::GRAPH_FAILED);
 
     totalIdx = inputShape.GetShapeSize();
@@ -83,7 +88,9 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     dataType = inputDesc->GetDataType();
     if (supportedDtype.count(dataType) == 0) {
-        OP_LOGE(context, "Shrink: invalid dtype %d", static_cast<int>(dataType));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "Shrink"),
+            "input_x", Ops::Base::ToString(dataType).c_str(), "supported dtypes are float16 and float32");
         return ge::GRAPH_FAILED;
     }
 
@@ -146,17 +153,17 @@ static ge::graphStatus ShrinkTilingFunc(gert::TilingContext* context)
     uint64_t ubSize = 0;
     int64_t coreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     int64_t totalIdx;
     ge::DataType dataType;
     float lambd;
     float bias;
     OP_CHECK_IF(GetShapeAttrsInfo(context, totalIdx, dataType, lambd, bias) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
 
     ShrinkTilingData* tiling = context->GetTilingData<ShrinkTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);

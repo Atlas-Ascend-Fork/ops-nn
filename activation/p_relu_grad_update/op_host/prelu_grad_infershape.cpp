@@ -71,12 +71,16 @@ static ge::graphStatus InferShape4PReluGradUpdate(gert::InferShapeContext* conte
     OP_CHECK_NULL_WITH_CONTEXT(context, updateShape);
 
     OP_CHECK_IF(!Ops::Base::BroadcastShape(gradsShape, featuresShape, dxShape),
-                OP_LOGE(context->GetNodeName(), "grads shape %s and features shape %s cannot broadcast.",
-                        Ops::Base::ToString(*gradsShape).c_str(), Ops::Base::ToString(*featuresShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "grads,features",
+                    (Ops::Base::ToString(*gradsShape) + "," + Ops::Base::ToString(*featuresShape)).c_str(),
+                    "the shapes of grads and features cannot be broadcast"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!Ops::Base::BroadcastShape(gradsShape, featuresShape, updateShape),
-                OP_LOGE(context->GetNodeName(), "grads shape %s and features shape %s cannot broadcast.",
-                        Ops::Base::ToString(*gradsShape).c_str(), Ops::Base::ToString(*featuresShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "grads,features",
+                    (Ops::Base::ToString(*gradsShape) + "," + Ops::Base::ToString(*featuresShape)).c_str(),
+                    "the shapes of grads and features cannot be broadcast"),
                 return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "InferShape4PReluGradUpdate end");
     return ge::GRAPH_SUCCESS;

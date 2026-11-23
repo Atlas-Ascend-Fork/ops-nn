@@ -39,17 +39,24 @@ static ge::graphStatus SmoothL1LossInferShapeFunc(gert::InferShapeContext* conte
         auto predictDimNum = predict->GetDimNum();
         auto labelDimNum = label->GetDimNum();
         if (predictDimNum != labelDimNum) {
-            OP_LOGE(context->GetNodeName(), "Input[predict]'s shape is not equal to Input[label]'s.");
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+                "label", std::to_string(labelDimNum) + "D", "dim num of label must be the same as predict");
             return GRAPH_FAILED;
         }
         for (size_t i = 0; i < predictDimNum; i++) {
             if (predict->GetDim(i) < UNKNOWN_DIM_VALUE_ || label->GetDim(i) < UNKNOWN_DIM_VALUE_) {
-                OP_LOGE(context->GetNodeName(), "Input dim must be non-negative or -1 (unknown dim).");
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+                    "predict,label", Ops::Base::ToString(*predict) + "," + Ops::Base::ToString(*label),
+                    "input dims must not be less than -1 (only -1 means unknown dim)");
                 return GRAPH_FAILED;
             }
             if (predict->GetDim(i) != UNKNOWN_DIM_VALUE_ && label->GetDim(i) != UNKNOWN_DIM_VALUE_ &&
                 predict->GetDim(i) != label->GetDim(i)) {
-                OP_LOGE(context->GetNodeName(), "Input[predict]'s shape is not equal to Input[label]'s.");
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+                    "label", Ops::Base::ToString(*label), "shape of label must be the same as predict");
                 return GRAPH_FAILED;
             }
         }

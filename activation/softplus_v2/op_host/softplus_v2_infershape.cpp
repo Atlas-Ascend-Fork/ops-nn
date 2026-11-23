@@ -41,8 +41,10 @@ static ge::graphStatus InferShape4SoftplusV2(gert::InferShapeContext* context)
     // Public contract (consistent with aclnn CheckShape): rank must be <= 8.
     OP_CHECK_IF(
         inputShape->GetDimNum() > MAX_DIM_NUM,
-        OP_LOGE(context->GetNodeName(), "[InferShape] the dim num of x must be less than or equal to %zu, but got %zu",
-                MAX_DIM_NUM, inputShape->GetDimNum()),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "SoftplusV2"),
+            "x", (std::to_string(inputShape->GetDimNum()) + "D").c_str(),
+            "the dim num of x must be less than or equal to 8"),
         return ge::GRAPH_FAILED);
 
     *outputShape = *inputShape;

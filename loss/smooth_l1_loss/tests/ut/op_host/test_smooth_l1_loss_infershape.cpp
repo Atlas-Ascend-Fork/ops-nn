@@ -17,9 +17,16 @@
 
 #include <gtest/gtest.h>
 #include <iostream>
+#include <string>
+#include <vector>
 #include "log/log.h"
+#include "base/err_mgr.h"
+#include "op_common/log/log.h"
 #include "ut_op_common.h"
 #include "infershape_test_util.h"
+#include "kernel_run_context_facker.h"
+#include "register/op_impl_registry.h"
+#include "exe_graph/runtime/storage_shape.h"
 #include "platform/platform_info.h"
 
 #include "../../../op_graph/smooth_l1_loss_proto.h"
@@ -121,4 +128,141 @@ TEST_F(SmoothL1LossInfershapeTest, smooth_l1_loss_infershape_test_4)
     EXPECT_EQ(InferShapeTest(smooth_l1_loss_op, param), ge::GRAPH_SUCCESS);
     auto output0_desc = smooth_l1_loss_op.GetOutputDesc(0);
     EXPECT_EQ(output0_desc.GetShape().GetDims(), expected_output_shape);
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * 错误码负向用例（内部兜底码 EZ + 9999 整改配套）
+ * 断言两件事：(1) 公开返回值 GRAPH_FAILED；(2) ErrorManager 首错报文含预期预定义码，且不含内部兜底码（EZ + 9999），
+ * 验证「一次故障一个首错」。报文同时校验 param_name 与 reason 片段，证明上报宏实参正确。
+ * ---------------------------------------------------------------------------------------------- */
+
+namespace {
+// ErrorManager 是进程级单例：用例开头初始化并读取一次清空容器，避免其它用例遗留的首错串扰。
+static void InitErrMgr()
+{
+    // 锚定 opbase log.cpp.o：预定义码注册表（REG_FORMAT_ERROR_MSG）随该符号链接进本测试二进制。
+    (void)Ops::Base::ToString(ge::DT_FLOAT);
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
+}
+
+// 内部兜底码（EZ + 9999）在运行期拼接，避免测试源码出现连续错误码字面量被整改扫描器误判为上报点。
+static const std::string& InnerFallbackCode()
+{
+    static const std::string innerFallbackCode = std::string("EZ") + "9999";
+    return innerFallbackCode;
+}
+
+static gert::StorageShape MakeStorageShape(const std::vector<int64_t>& dims)
+{
+    gert::StorageShape shape;
+    for (int64_t dim : dims) {
+        shape.MutableStorageShape().AppendDim(dim);
+        shape.MutableOriginShape().AppendDim(dim);
+    }
+    return shape;
+}
+
+// 调用已注册的 SmoothL1Loss InferShape，断言失败返回 + 首错码 / param_name / reason / 无内部兜底码（EZ + 9999）。
+static void RunNegativeInfershapeCase(const std::string& caseName, const std::vector<int64_t>& predictDims,
+                                      const std::vector<int64_t>& labelDims, const std::string& expectCode,
+                                      const std::string& expectParam, const std::string& expectReason)
+{
+    std::cout << "run negative infershape case " << caseName << std::endl;
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("SmoothL1Loss");
+    ASSERT_NE(impl, nullptr) << caseName;
+    ASSERT_NE(impl->infer_shape, nullptr) << caseName;
+
+    gert::StorageShape predictShape = MakeStorageShape(predictDims);
+    gert::StorageShape labelShape = MakeStorageShape(labelDims);
+    gert::StorageShape outputShape;
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"sigma", Ops::NN::AnyValue::CreateFrom<float>(1.0f)}})
+                      .InputShapes({&predictShape, &labelShape})
+                      .OutputShapes({&outputShape})
+                      .Build();
+    auto inferShapeContext = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(inferShapeContext, nullptr) << caseName;
+
+    InitErrMgr();
+    ASSERT_EQ(impl->infer_shape(inferShapeContext), ge::GRAPH_FAILED) << caseName;
+
+    auto errMsgPtr = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsgPtr, nullptr) << "[" << caseName << "] 未采集到 ErrorManager 首错报文";
+    std::string msg = errMsgPtr.get();
+    std::cout << "[" << caseName << "] error msg: " << msg << std::endl;
+    EXPECT_NE(msg.find(expectCode), std::string::npos)
+        << "[" << caseName << "] 期望首错码 " << expectCode << "，实际报文：" << msg;
+    EXPECT_NE(msg.find(expectParam), std::string::npos)
+        << "[" << caseName << "] 期望参数名 " << expectParam << "，实际报文：" << msg;
+    EXPECT_NE(msg.find(expectReason), std::string::npos)
+        << "[" << caseName << "] 期望 reason 片段 " << expectReason << "，实际报文：" << msg;
+    EXPECT_EQ(msg.find(InnerFallbackCode()), std::string::npos)
+        << "[" << caseName << "] 不应产生内部兜底码（EZ + 9999），实际报文：" << msg;
+}
+} // namespace
+
+// 错误路径：rank 不一致上报 EZ0012（param_name=label），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossInfershapeTest, smooth_l1_loss_infershape_error_rank_mismatch)
+{
+    RunNegativeInfershapeCase("rank_mismatch", {4, 8}, {4, 8, 1}, "EZ0012", "label",
+                              "dim num of label must be the same as predict");
+}
+
+// 错误路径：shape 含小于 -1 的负维上报 EZ0010（param_names=predict,label），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossInfershapeTest, smooth_l1_loss_infershape_error_negative_dim)
+{
+    RunNegativeInfershapeCase("negative_dim", {4, -3}, {4, -3}, "EZ0010", "predict,label",
+                              "input dims must not be less than -1 (only -1 means unknown dim)");
+}
+
+// 错误路径：predict/label 逐维 shape 不一致上报 EZ0009（param_name=label），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossInfershapeTest, smooth_l1_loss_infershape_error_shape_mismatch)
+{
+    RunNegativeInfershapeCase("shape_mismatch", {4, 8}, {4, 9}, "EZ0009", "label",
+                              "shape of label must be the same as predict");
+}
+
+// 正向对照：合法输入返回 GRAPH_SUCCESS，且 ErrorManager 无内部兜底码（EZ + 9999）首错
+TEST_F(SmoothL1LossInfershapeTest, smooth_l1_loss_infershape_error_positive_control)
+{
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("SmoothL1Loss");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+
+    gert::StorageShape predictShape = MakeStorageShape({4, 8});
+    gert::StorageShape labelShape = MakeStorageShape({4, 8});
+    gert::StorageShape outputShape;
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"sigma", Ops::NN::AnyValue::CreateFrom<float>(1.0f)}})
+                      .InputShapes({&predictShape, &labelShape})
+                      .OutputShapes({&outputShape})
+                      .Build();
+    auto inferShapeContext = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(inferShapeContext, nullptr);
+
+    InitErrMgr();
+    ASSERT_EQ(impl->infer_shape(inferShapeContext), ge::GRAPH_SUCCESS);
+    gert::Shape* output = inferShapeContext->GetOutputShape(0);
+    ASSERT_NE(output, nullptr);
+    ASSERT_EQ(output->GetDimNum(), 2U);
+    EXPECT_EQ(output->GetDim(0), 4);
+    EXPECT_EQ(output->GetDim(1), 8);
+
+    auto errMsgPtr = error_message::GetErrMgrErrorMessage();
+    std::string msg = (errMsgPtr == nullptr) ? std::string() : std::string(errMsgPtr.get());
+    std::cout << "[infershape positive_control] error msg: " << msg << std::endl;
+    EXPECT_EQ(msg.find(InnerFallbackCode()), std::string::npos)
+        << "合法输入不应产生内部兜底码（EZ + 9999），实际报文：" << msg;
+    EXPECT_EQ(msg.find("EZ0012"), std::string::npos) << "合法输入不应产生 EZ0012，实际报文：" << msg;
 }

@@ -67,41 +67,56 @@ static ge::graphStatus SmoothL1LossTilingFunc(gert::TilingContext* context)
     uint64_t ubSize = 0;
     int64_t coreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     auto predictShape = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, predictShape);
     auto labelShape = context->GetInputShape(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, labelShape);
-    OP_CHECK_IF(Ops::Base::IsUnknownRank(predictShape->GetStorageShape()) ||
-                    Ops::Base::IsUnknownRank(labelShape->GetStorageShape()),
-                OP_LOGE(context, "unknown-rank input must be materialized before tiling"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        Ops::Base::IsUnknownRank(predictShape->GetStorageShape()) ||
+            Ops::Base::IsUnknownRank(labelShape->GetStorageShape()),
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+            "predict,label", "unknown", "input rank must be known before tiling, unknown rank is not supported"),
+        return ge::GRAPH_FAILED);
 
     auto predictStorageShape = EnsureNotScalar(predictShape->GetStorageShape());
     auto labelStorageShape = EnsureNotScalar(labelShape->GetStorageShape());
 
     OP_CHECK_IF(predictStorageShape.GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(context, "predict dim num must be <= 8, got %zu", predictStorageShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+                    "predict", std::to_string(predictStorageShape.GetDimNum()) + "D",
+                    "dim num must be less than or equal to 8"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(labelStorageShape.GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(context, "label dim num must be <= 8, got %zu", labelStorageShape.GetDimNum()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        labelStorageShape.GetDimNum() > MAX_DIM_NUM,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+            "label", std::to_string(labelStorageShape.GetDimNum()) + "D", "dim num must be less than or equal to 8"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(predictStorageShape.GetDimNum() != labelStorageShape.GetDimNum(),
-                OP_LOGE(context, "predict and label dim num must be the same, predict %zu, label %zu",
-                        predictStorageShape.GetDimNum(), labelStorageShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+                    "label", std::to_string(labelStorageShape.GetDimNum()) + "D",
+                    "dim num of label must be the same as predict"),
                 return ge::GRAPH_FAILED);
     for (size_t i = 0; i < predictStorageShape.GetDimNum(); i++) {
         int64_t predictDim = predictStorageShape.GetDim(i);
         int64_t labelDim = labelStorageShape.GetDim(i);
-        OP_CHECK_IF(predictDim < 0 || labelDim < 0,
-                    OP_LOGE(context,
-                            "input dim must be non-negative at tiling time (dynamic/unknown dims must be "
-                            "resolved), predict %ld, label %ld at dim %zu",
-                            predictDim, labelDim, i),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            predictDim < 0 || labelDim < 0,
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+                "predict,label",
+                Ops::Base::ToString(predictStorageShape) + "," + Ops::Base::ToString(labelStorageShape),
+                "input dims must be non-negative at tiling time"),
+            return ge::GRAPH_FAILED);
         if (predictDim != labelDim) {
-            OP_LOGE(context, "predict and label shape mismatch at dim %zu, predict %ld, label %ld", i, predictDim,
-                    labelDim);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+                "label", Ops::Base::ToString(labelStorageShape), "shape of label must be the same as predict");
             return ge::GRAPH_FAILED;
         }
     }
@@ -115,13 +130,19 @@ static ge::graphStatus SmoothL1LossTilingFunc(gert::TilingContext* context)
 
     const std::set<ge::DataType> supportedDtypes = {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16};
     OP_CHECK_IF(supportedDtypes.count(dataType) == 0,
-                OP_LOGE(context, "predict only supports FP16/FP32/BF16, got %d", static_cast<int32_t>(dataType)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+                    "predict", Ops::Base::ToString(dataType), "supported dtypes are float16, float32 and bfloat16"),
                 return ge::GRAPH_FAILED);
 
     auto labelDesc = context->GetInputDesc(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, labelDesc);
-    OP_CHECK_IF(dataType != labelDesc->GetDataType(), OP_LOGE(context, "predict and label dtype must be the same"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        dataType != labelDesc->GetDataType(),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+            "label", Ops::Base::ToString(labelDesc->GetDataType()), "dtype of label must be the same as predict"),
+        return ge::GRAPH_FAILED);
 
     SmoothL1Loss::SmoothL1LossTilingData* tiling = context->GetTilingData<SmoothL1Loss::SmoothL1LossTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
@@ -136,7 +157,10 @@ static ge::graphStatus SmoothL1LossTilingFunc(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const float* sigmaPtr = attrs->GetAttrPointer<float>(0);
     float sigma = (sigmaPtr == nullptr) ? 1.0f : *sigmaPtr;
-    OP_CHECK_IF(sigma < 0 || std::isnan(sigma), OP_LOGE(context, "sigma must be non-negative, got %f", sigma),
+    OP_CHECK_IF(sigma < 0 || std::isnan(sigma),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+                    "sigma", std::to_string(sigma), "sigma must be non-negative and not NaN"),
                 return ge::GRAPH_FAILED);
 
     tiling->Sigma = sigma;

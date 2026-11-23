@@ -16,6 +16,7 @@
 #include "non_zero_with_value_tiling_arch35.h"
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "log/log.h"
@@ -71,7 +72,10 @@ public:
         OP_CHECK_NULL_WITH_CONTEXT(context_, transposePtr);
         // ascend950 仅支持 transpose=true(坐标主序);false 不支持(见 01 §6.2)
         OP_CHECK_IF(!(*transposePtr),
-                    OP_LOGE(context_->GetNodeName(), "NonZeroWithValue ascend950 only supports transpose=true."),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        (context_ != nullptr && context_->GetNodeName() != nullptr ? context_->GetNodeName() :
+                                                                                     "NonZeroWithValue"),
+                        "transpose", "false", "NonZeroWithValue ascend950 only supports transpose=true"),
                     return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
@@ -86,17 +90,28 @@ public:
         auto xDesc = context_->GetInputDesc(INPUT_X_IDX);
         OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
         valueDtypeSize_ = static_cast<int64_t>(ge::GetSizeByDataType(xDesc->GetDataType()));
-        OP_CHECK_IF(valueDtypeSize_ <= 0, OP_LOGE(context_->GetNodeName(), "invalid x dtype size."),
+        OP_CHECK_IF(valueDtypeSize_ <= 0,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        (context_ != nullptr && context_->GetNodeName() != nullptr ? context_->GetNodeName() :
+                                                                                     "NonZeroWithValue"),
+                        "x", Ops::Base::ToString(xDesc->GetDataType()).c_str(), "invalid x dtype size"),
                     return ge::GRAPH_FAILED);
 
         // 严格 2D
         OP_CHECK_IF(xShape.GetDimNum() != INPUT_RANK_2D,
-                    OP_LOGE(context_->GetNodeName(), "NonZeroWithValue requires 2D input."), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        (context_ != nullptr && context_->GetNodeName() != nullptr ? context_->GetNodeName() :
+                                                                                     "NonZeroWithValue"),
+                        "x", std::to_string(xShape.GetDimNum()).c_str(), "NonZeroWithValue requires 2D input"),
+                    return ge::GRAPH_FAILED);
         row_ = xShape.GetDim(DIM_ROW);
         col_ = xShape.GetDim(DIM_COL);
         // 整数乘法溢出守卫(红线规范):row*col 不得溢出 int64
         OP_CHECK_IF(row_ > 0 && col_ > 0 && col_ > (INT64_MAX / row_),
-                    OP_LOGE(context_->GetNodeName(), "numel overflow: row * col exceeds int64 range."),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        (context_ != nullptr && context_->GetNodeName() != nullptr ? context_->GetNodeName() :
+                                                                                     "NonZeroWithValue"),
+                        "x", Ops::Base::ToString(xShape).c_str(), "numel overflow: row * col exceeds int64 range"),
                     return ge::GRAPH_FAILED);
         numel_ = row_ * col_;
 
@@ -106,9 +121,17 @@ public:
         // int32 索引不变量:index/count 输出恒为 int32,线性 idx 与 count 上限均为 numel,
         // 故 numel 必须 ≤ INT32_MAX,否则 general.h 的 Arange(int32)截断、base.h 的 uint32 count 前缀和回绕。
         OP_CHECK_IF(numel_ > INT32_MAX,
-                    OP_LOGE(context_->GetNodeName(), "numel exceeds int32 index capacity (INT32_MAX)."),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        (context_ != nullptr && context_->GetNodeName() != nullptr ? context_->GetNodeName() :
+                                                                                     "NonZeroWithValue"),
+                        "x", std::to_string(numel_).c_str(),
+                        "numel exceeds int32 index capacity (INT32_MAX) because index and count outputs are int32"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(col_ <= 0, OP_LOGE(context_->GetNodeName(), "col must be > 0 for quick-div."),
+        OP_CHECK_IF(col_ <= 0,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        (context_ != nullptr && context_->GetNodeName() != nullptr ? context_->GetNodeName() :
+                                                                                     "NonZeroWithValue"),
+                        "x", Ops::Base::ToString(xShape).c_str(), "col must be > 0 for quick-div"),
                     return ge::GRAPH_FAILED);
         CalcColQuickDiv();
 
@@ -261,10 +284,18 @@ static ge::graphStatus Tiling4NonZeroWithValue(gert::TilingContext* context)
     auto compileInfo = reinterpret_cast<const NonZeroWithValueCompileInfo*>(context->GetCompileInfo());
     OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
     NonZeroWithValueTiling tiling(context);
-    OP_CHECK_IF(tiling.Init(compileInfo) != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "Tiling init failed."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.DoTiling() != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "DoTiling failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        tiling.Init(compileInfo) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(
+            (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "NonZeroWithValue"),
+            "Tiling init failed."),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        tiling.DoTiling() != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(
+            (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "NonZeroWithValue"),
+            "DoTiling failed."),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

@@ -13,7 +13,10 @@
  * \brief SoftplusV2 op_host UT - InferShape unit tests
  */
 
+#include <cstdint>
 #include <iostream>
+#include <string>
+#include <vector>
 #include <gtest/gtest.h>
 #include "ut_op_util.h"
 #include "infershape_test_util.h"
@@ -23,6 +26,70 @@
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "platform/platform_info.h"
+#include "base/err_mgr.h"
+
+namespace {
+// ErrorManager 上下文隔离方式与 rnn/gru_grad/tests/ut/op_host/test_gru_grad_tiling.cpp 一致：
+// 用独立 work_stream_id 记录，避免共享 Host UT 进程内的用例串扰。
+class ScopedErrorContext {
+public:
+    ScopedErrorContext() : savedContext_(error_message::GetErrMgrContext())
+    {
+        auto context = savedContext_;
+        context.work_stream_id = reinterpret_cast<std::uintptr_t>(this);
+        error_message::SetErrMgrContext(context);
+        (void)error_message::GetErrMgrRawErrorMessages();
+    }
+
+    ~ScopedErrorContext()
+    {
+        (void)error_message::GetErrMgrRawErrorMessages();
+        error_message::SetErrMgrContext(savedContext_);
+    }
+
+    ScopedErrorContext(const ScopedErrorContext&) = delete;
+    ScopedErrorContext& operator=(const ScopedErrorContext&) = delete;
+
+private:
+    error_message::ErrorManagerContext savedContext_;
+};
+
+struct CapturedError {
+    size_t count = 0;
+    std::string code;
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+};
+
+CapturedError CaptureError()
+{
+    CapturedError captured;
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    captured.count = errors.size();
+    if (errors.empty()) {
+        return captured;
+    }
+    const auto& error = errors.back();
+    captured.code = error.error_id == nullptr ? "" : error.error_id.get();
+    for (const auto& key : error.args_key) {
+        captured.keys.emplace_back(key == nullptr ? "" : key.get());
+    }
+    for (const auto& value : error.args_value) {
+        captured.values.emplace_back(value == nullptr ? "" : value.get());
+    }
+    return captured;
+}
+
+std::string ErrorValue(const CapturedError& error, const std::string& key)
+{
+    for (size_t i = 0; i < error.keys.size() && i < error.values.size(); ++i) {
+        if (error.keys[i] == key) {
+            return error.values[i];
+        }
+    }
+    return "<missing:" + key + ">";
+}
+} // namespace
 
 class SoftplusV2Infershape : public testing::Test {
 protected:
@@ -52,4 +119,37 @@ TEST_F(SoftplusV2Infershape, infershape_1d)
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
     auto output = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
     ASSERT_EQ(Ops::Base::ToString(*output), Ops::Base::ToString(expected_output_shape));
+}
+
+// infershape rank 9 > MAX_DIM_NUM(8) → EZ0012（OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON）
+TEST_F(SoftplusV2Infershape, infershape_rank_gt_8_reports_ez0012)
+{
+    gert::StorageShape x_shape;
+    for (int64_t i = 0; i < 9; ++i) {
+        x_shape.MutableOriginShape().AppendDim(1);
+        x_shape.MutableStorageShape().AppendDim(1);
+    }
+    gert::Shape y_shape = {};
+
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("SoftplusV2")->infer_shape;
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType("SoftplusV2")
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .InputShapes({&x_shape})
+                      .OutputShapes({&y_shape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    ScopedErrorContext errorContext;
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+
+    EXPECT_EQ(error.count, 1U) << "expected exactly one first error, actual code=" << error.code;
+    EXPECT_EQ(error.code, "EZ0012");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "x");
+    EXPECT_EQ(ErrorValue(error, "op_name"), "SoftplusV2");
+    EXPECT_EQ(ErrorValue(error, "incorrect_dim"), "9D");
+    EXPECT_EQ(ErrorValue(error, "reason"), "the dim num of x must be less than or equal to 8");
 }

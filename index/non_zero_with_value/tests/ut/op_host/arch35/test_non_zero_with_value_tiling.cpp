@@ -8,7 +8,9 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <cstdint>
 #include <iostream>
+#include <string>
 #include <vector>
 #include <gtest/gtest.h>
 #include "ut_op_util.h"
@@ -17,9 +19,70 @@
 #include "kernel_run_context_facker.h"
 #include "log/log.h"
 #include "register/op_impl_registry.h"
+#include "base/err_mgr.h"
 
 using namespace ge;
 using namespace ut_util;
+
+namespace nzv_ut {
+// 每个用例独占一个 ErrorManager 上下文（work_stream_id 取本对象地址），生命周期内记录只落在该
+// 上下文中；析构时先 drain 掉本次记录，再恢复进入前的上下文，避免同一 Host UT 进程内跨用例串扰。
+// 对齐 rnn/gru_grad/tests/ut/op_host/test_gru_grad_tiling.cpp 的同名实现。
+class ScopedErrorContext {
+public:
+    ScopedErrorContext() : savedContext_(error_message::GetErrMgrContext())
+    {
+        auto context = savedContext_;
+        context.work_stream_id = reinterpret_cast<std::uintptr_t>(this);
+        error_message::SetErrMgrContext(context);
+        (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+        (void)error_message::GetErrMgrRawErrorMessages();
+    }
+
+    ~ScopedErrorContext()
+    {
+        (void)error_message::GetErrMgrRawErrorMessages();
+        error_message::SetErrMgrContext(savedContext_);
+    }
+
+    ScopedErrorContext(const ScopedErrorContext&) = delete;
+    ScopedErrorContext& operator=(const ScopedErrorContext&) = delete;
+
+private:
+    error_message::ErrorManagerContext savedContext_;
+};
+
+struct CapturedError {
+    size_t count = 0;
+    std::string code;
+    std::vector<std::string> ids;
+};
+
+inline CapturedError CaptureError()
+{
+    CapturedError captured;
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    captured.count = errors.size();
+    for (const auto& error : errors) {
+        captured.ids.emplace_back(error.error_id == nullptr ? std::string() : std::string(error.error_id.get()));
+    }
+    if (!captured.ids.empty()) {
+        captured.code = captured.ids.back();
+    }
+    return captured;
+}
+
+inline int CountErrorId(const CapturedError& captured, const std::string& errorId)
+{
+    int count = 0;
+    for (const auto& id : captured.ids) {
+        if (id == errorId) {
+            ++count;
+        }
+    }
+    return count;
+}
+} // namespace nzv_ut
 
 class NonZeroWithValueTilingTest : public testing::Test {
 protected:
@@ -135,10 +198,63 @@ TEST_F(NonZeroWithValueTilingTest, null_empty_2d)
     EXPECT_EQ(tilingKey, 1000);
 }
 
-// transpose=false 不支持 → 失败
+// transpose=false 不支持 → 失败；仅上报 1 条 EZ0026（L74 首报 + L264 WITHOUT_REPORT 去重，不得出现 EZ9999）
 TEST_F(NonZeroWithValueTilingTest, transpose_false_fail)
 {
     gert::StorageShape xShape = {{4, 8}, {4, 8}};
     int64_t tilingKey = -1;
+    nzv_ut::ScopedErrorContext errorContext;
     EXPECT_EQ(RunTiling(xShape, false, tilingKey), ge::GRAPH_FAILED);
+    const auto error = nzv_ut::CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0026");
+    EXPECT_EQ(nzv_ut::CountErrorId(error, std::string("EZ") + "9999"), 0);
+}
+
+// 3D 输入 → 失败；仅上报 1 条 EZ0012（L94 首报 + L266 WITHOUT_REPORT 去重）
+TEST_F(NonZeroWithValueTilingTest, input_3d_fail_ez0012)
+{
+    gert::StorageShape xShape = {{2, 3, 4}, {2, 3, 4}};
+    int64_t tilingKey = -1;
+    nzv_ut::ScopedErrorContext errorContext;
+    EXPECT_EQ(RunTiling(xShape, true, tilingKey), ge::GRAPH_FAILED);
+    const auto error = nzv_ut::CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0012");
+}
+
+// numel 超过 INT32_MAX（65536*65536=2^32）→ 失败；上报 EZ0015（L109）
+TEST_F(NonZeroWithValueTilingTest, numel_exceeds_int32_fail_ez0015)
+{
+    gert::StorageShape xShape = {{65536, 65536}, {65536, 65536}};
+    int64_t tilingKey = -1;
+    nzv_ut::ScopedErrorContext errorContext;
+    EXPECT_EQ(RunTiling(xShape, true, tilingKey), ge::GRAPH_FAILED);
+    const auto error = nzv_ut::CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0015");
+}
+
+// col <= 0 → 失败；上报 EZ0009（L111）
+TEST_F(NonZeroWithValueTilingTest, col_non_positive_fail_ez0009)
+{
+    gert::StorageShape xShape = {{2, -1}, {2, -1}};
+    int64_t tilingKey = -1;
+    nzv_ut::ScopedErrorContext errorContext;
+    EXPECT_EQ(RunTiling(xShape, true, tilingKey), ge::GRAPH_FAILED);
+    const auto error = nzv_ut::CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0009");
+}
+
+// 正例：合法 2D 输入 tiling 成功且不产生任何错误记录（无回归）
+TEST_F(NonZeroWithValueTilingTest, valid_2d_success_no_error)
+{
+    gert::StorageShape xShape = {{4, 8}, {4, 8}};
+    int64_t tilingKey = -1;
+    nzv_ut::ScopedErrorContext errorContext;
+    EXPECT_EQ(RunTiling(xShape, true, tilingKey), ge::GRAPH_SUCCESS);
+    const auto error = nzv_ut::CaptureError();
+    EXPECT_EQ(error.count, 0U);
+    EXPECT_EQ(tilingKey, 1020);
 }

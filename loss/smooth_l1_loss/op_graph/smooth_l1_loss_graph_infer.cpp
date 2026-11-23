@@ -32,11 +32,16 @@ ge::graphStatus InferDataTypeSmoothL1Loss(gert::InferDataTypeContext* context)
     OP_LOGD(context->GetNodeName(), "Begin to do InferDataTypeSmoothL1Loss");
     ge::DataType predictDtype = context->GetInputDataType(IDX_PREDICT);
     if (predictDtype != ge::DT_FLOAT && predictDtype != ge::DT_FLOAT16 && predictDtype != ge::DT_BF16) {
-        OP_LOGE(context->GetNodeName(), "predict only supports float, float16 and bfloat16");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+            "predict", Ops::Base::ToString(predictDtype), "supported dtypes are float16, float32 and bfloat16");
         return ge::GRAPH_FAILED;
     }
     if (context->GetInputDataType(IDX_LABEL) != predictDtype) {
-        OP_LOGE(context->GetNodeName(), "predict and label dtype must be the same");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            (context != nullptr && context->GetNodeName() != nullptr ? context->GetNodeName() : "SmoothL1Loss"),
+            "label", Ops::Base::ToString(context->GetInputDataType(IDX_LABEL)),
+            "dtype of label must be the same as predict");
         return ge::GRAPH_FAILED;
     }
     context->SetOutputDataType(IDX_LOSS, predictDtype);

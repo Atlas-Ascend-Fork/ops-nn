@@ -174,10 +174,13 @@ static ge::graphStatus GetInputInfo(gert::TilingContext* context, int64_t& total
 {
     auto inputX = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputX);
-    OP_CHECK_IF(inputX->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(context, "the dim num of x must be less than or equal to %zu, but got %zu", MAX_DIM_NUM,
-                        inputX->GetStorageShape().GetDimNum()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        inputX->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "SoftplusV2"),
+            "x", (std::to_string(inputX->GetStorageShape().GetDimNum()) + "D").c_str(),
+            "the dim num of x must be less than or equal to 8"),
+        return ge::GRAPH_FAILED);
     auto inputShapeX = EnsureNotScalar(inputX->GetStorageShape());
     // Reject out-of-range axes up front: a dim product that overflows int64 is
     // reported by GetShapeSize() as the negative kInvalidDimValue sentinel, and
@@ -192,13 +195,23 @@ static ge::graphStatus GetInputInfo(gert::TilingContext* context, int64_t& total
             OP_LOGE(context, "dim[%zu] of x is %ld (unresolved dynamic marker); tiling requires a concrete shape", i,
                     dim),
             return ge::GRAPH_FAILED);
-        OP_CHECK_IF(dim > kMaxSingleDim, OP_LOGE(context, "dim[%zu] of x is %ld, exceeding INT32_MAX", i, dim),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            dim > kMaxSingleDim,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "SoftplusV2"),
+                "x", Ops::Base::ToString(inputShapeX).c_str(),
+                ("dim[" + std::to_string(i) + "] of x is " + std::to_string(dim) + ", exceeding INT32_MAX (2147483647)")
+                    .c_str()),
+            return ge::GRAPH_FAILED);
     }
     totalLength = inputShapeX.GetShapeSize();
-    OP_CHECK_IF(totalLength < 0,
-                OP_LOGE(context, "element count of x overflows int64 (GetShapeSize returned %ld)", totalLength),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        totalLength < 0,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "SoftplusV2"),
+            "x", Ops::Base::ToString(inputShapeX).c_str(),
+            "the element count of x overflows int64 (GetShapeSize returned the kInvalidDimValue sentinel)"),
+        return ge::GRAPH_FAILED);
 
     auto inputDesc = context->GetInputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
@@ -220,8 +233,8 @@ static ge::graphStatus GetInputInfo(gert::TilingContext* context, int64_t& total
 static ge::graphStatus HandleEmptyTensor(gert::TilingContext* context, ge::DataType dataType, float beta,
                                          float threshold)
 {
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
     SoftplusV2TilingData* tiling = context->GetTilingData<SoftplusV2TilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     OP_CHECK_IF(memset_s(tiling, sizeof(SoftplusV2TilingData), 0, sizeof(SoftplusV2TilingData)) != EOK,
@@ -299,14 +312,14 @@ static ge::graphStatus SoftplusV2TilingFunc(gert::TilingContext* context)
     uint64_t ubSize;
     int64_t coreNum;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     // 2. Input info (shape, dtype, attrs)
     int64_t totalLength;
     ge::DataType dataType;
     float beta, threshold;
     OP_CHECK_IF(GetInputInfo(context, totalLength, dataType, beta, threshold) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetInputInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetInputInfo error"), return ge::GRAPH_FAILED);
 
     // 3. Empty tensor early return
     if (totalLength == 0) {
@@ -314,14 +327,14 @@ static ge::graphStatus SoftplusV2TilingFunc(gert::TilingContext* context)
     }
 
     // 4. Workspace
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
 
     // 5. Compute tileLength and multi-core split
     uint32_t tileLength = ComputeTileLength(dataType, ubSize);
     int64_t usedCoreNum = 0;
     OP_CHECK_IF(ComputeUsedCoreNum(context, totalLength, dataType, coreNum, usedCoreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "ComputeUsedCoreNum error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "ComputeUsedCoreNum error"), return ge::GRAPH_FAILED);
 
     // 6. Fill TilingData and set BlockDim/TilingKey
     return FillTilingData(context, totalLength, usedCoreNum, tileLength, dataType, beta, threshold);

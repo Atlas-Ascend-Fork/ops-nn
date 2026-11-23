@@ -15,10 +15,15 @@
  * \brief
  */
 
+#include <cmath>
 #include <iostream>
+#include <string>
 #include <vector>
 #include "log/log.h"
 #include <gtest/gtest.h>
+#include "base/err_mgr.h"
+#include "op_common/log/log.h"
+#include "op_common/op_host/util/shape_util.h"
 #include "register/op_impl_registry.h"
 #include "array_ops.h"
 #include "ut_op_util.h"
@@ -194,4 +199,330 @@ TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_empty_tensor)
     float sigma = 1.0;
 
     DoSmoothL1LossTilingCase(predictShape, labelShape, outputShape, ge::DT_FLOAT, sigma, 0, 1, 0);
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * 错误码负向用例（内部兜底码 EZ + 9999 整改配套）
+ * 断言两件事：(1) 公开返回值 GRAPH_FAILED；(2) ErrorManager 首错报文含预期预定义码（EZ0009/EZ0010/
+ * EZ0012/EZ0013/EZ0020/EZ0026），且不含内部兜底码（EZ + 9999），验证「一次故障一个首错」。报文同时校验 param_name
+ * 与 reason 片段，证明上报宏实参正确。
+ * ---------------------------------------------------------------------------------------------- */
+
+namespace {
+// ErrorManager 是进程级单例：用例开头初始化并读取一次清空容器，避免其它用例遗留的首错串扰。
+static void InitErrMgr()
+{
+    // 锚定 opbase log.cpp.o：预定义码注册表（REG_FORMAT_ERROR_MSG）随该符号链接进本测试二进制。
+    (void)Ops::Base::ToString(ge::DT_FLOAT);
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
+}
+
+// 内部兜底码（EZ + 9999）在运行期拼接，避免测试源码出现连续错误码字面量被整改扫描器误判为上报点。
+static const std::string& InnerFallbackCode()
+{
+    static const std::string innerFallbackCode = std::string("EZ") + "9999";
+    return innerFallbackCode;
+}
+
+static gert::StorageShape MakeStorageShape(const std::vector<int64_t>& dims, bool unknownRank = false)
+{
+    gert::StorageShape shape;
+    if (unknownRank) {
+        Ops::Base::SetUnknownRank(shape.MutableStorageShape());
+        Ops::Base::SetUnknownRank(shape.MutableOriginShape());
+        return shape;
+    }
+    for (int64_t dim : dims) {
+        shape.MutableStorageShape().AppendDim(dim);
+        shape.MutableOriginShape().AppendDim(dim);
+    }
+    return shape;
+}
+
+struct NegativeTilingCase {
+    std::string caseName;
+    std::vector<int64_t> predictDims;
+    std::vector<int64_t> labelDims;
+    ge::DataType predictDtype = ge::DT_FLOAT;
+    ge::DataType labelDtype = ge::DT_FLOAT;
+    bool predictUnknownRank = false;
+    bool labelUnknownRank = false;
+    float sigma = 1.0f;
+    std::string expectCode;
+    std::string expectParam;
+    std::string expectReason;
+};
+
+// 构造 TilingContext（不依赖 tiling_parse：本算子 TilingParse 不产出状态），返回失败后校验 ErrorManager 首错。
+static void RunNegativeTilingCase(const NegativeTilingCase& tc)
+{
+    std::cout << "run negative tiling case " << tc.caseName << std::endl;
+    fe::PlatFormInfos platFormInfo;
+    map<string, string> socInfos;
+    map<string, string> aicoreSpec;
+    map<string, string> intrinsics;
+    map<string, string> socVersion = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+    InitPlatForm(platFormInfo, socInfos, aicoreSpec, intrinsics, socVersion);
+
+    optiling::SmoothL1LossCompileInfo compileInfo;
+    compileInfo.coreNum = 64;
+    compileInfo.ubSize = 253952;
+
+    std::string opType("SmoothL1Loss");
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    ASSERT_NE(impl, nullptr) << tc.caseName;
+    ASSERT_NE(impl->tiling, nullptr) << tc.caseName;
+
+    gert::StorageShape predictShape = MakeStorageShape(tc.predictDims, tc.predictUnknownRank);
+    gert::StorageShape labelShape = MakeStorageShape(tc.labelDims, tc.labelUnknownRank);
+    gert::StorageShape outputShape = MakeStorageShape(tc.predictDims, tc.predictUnknownRank);
+
+    auto workspaceSizeHoler = gert::ContinuousVector::Create<size_t>(16 * 4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceSizeHoler.get());
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr) << tc.caseName;
+
+    auto holder = gert::TilingContextFaker()
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&predictShape, &labelShape})
+                      .OutputShapes({&outputShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platFormInfo))
+                      .NodeInputTd(0, tc.predictDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, tc.labelDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, tc.predictDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"sigma", Ops::NN::AnyValue::CreateFrom<float>(tc.sigma)}})
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+
+    auto tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext, nullptr) << tc.caseName;
+    ASSERT_NE(tilingContext->GetPlatformInfo(), nullptr) << tc.caseName;
+    tilingContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tilingContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("version", socVersion);
+
+    InitErrMgr();
+    ASSERT_EQ(impl->tiling(tilingContext), ge::GRAPH_FAILED) << tc.caseName;
+
+    auto errMsgPtr = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsgPtr, nullptr) << "[" << tc.caseName << "] 未采集到 ErrorManager 首错报文";
+    std::string msg = errMsgPtr.get();
+    std::cout << "[" << tc.caseName << "] error msg: " << msg << std::endl;
+    EXPECT_NE(msg.find(tc.expectCode), std::string::npos)
+        << "[" << tc.caseName << "] 期望首错码 " << tc.expectCode << "，实际报文：" << msg;
+    EXPECT_NE(msg.find(tc.expectParam), std::string::npos)
+        << "[" << tc.caseName << "] 期望参数名 " << tc.expectParam << "，实际报文：" << msg;
+    EXPECT_NE(msg.find(tc.expectReason), std::string::npos)
+        << "[" << tc.caseName << "] 期望 reason 片段 " << tc.expectReason << "，实际报文：" << msg;
+    EXPECT_EQ(msg.find(InnerFallbackCode()), std::string::npos)
+        << "[" << tc.caseName << "] 不应产生内部兜底码（EZ + 9999），实际报文：" << msg;
+}
+} // namespace
+
+// 错误路径：predict rank > 8 上报 EZ0012（param_name=predict），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_predict_rank_over_8)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "predict_rank_over_8";
+    tc.predictDims = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+    tc.labelDims = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+    tc.expectCode = "EZ0012";
+    tc.expectParam = "predict";
+    tc.expectReason = "dim num must be less than or equal to 8";
+    RunNegativeTilingCase(tc);
+}
+
+// 错误路径：label rank > 8 上报 EZ0012（param_name=label），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_label_rank_over_8)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "label_rank_over_8";
+    tc.predictDims = {8, 8};
+    tc.labelDims = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+    tc.expectCode = "EZ0012";
+    tc.expectParam = "label";
+    tc.expectReason = "dim num must be less than or equal to 8";
+    RunNegativeTilingCase(tc);
+}
+
+// 错误路径：predict/label rank 不一致上报 EZ0012（param_name=label），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_rank_mismatch)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "rank_mismatch";
+    tc.predictDims = {4, 8};
+    tc.labelDims = {4, 8, 1};
+    tc.expectCode = "EZ0012";
+    tc.expectParam = "label";
+    tc.expectReason = "dim num of label must be the same as predict";
+    RunNegativeTilingCase(tc);
+}
+
+// 错误路径：shape 含负维上报 EZ0010（param_names=predict,label），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_negative_dim)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "negative_dim";
+    tc.predictDims = {4, -3};
+    tc.labelDims = {4, -3};
+    tc.expectCode = "EZ0010";
+    tc.expectParam = "predict,label";
+    tc.expectReason = "input dims must be non-negative at tiling time";
+    RunNegativeTilingCase(tc);
+}
+
+// 错误路径：predict/label 逐维 shape 不一致上报 EZ0009（param_name=label），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_shape_mismatch)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "shape_mismatch";
+    tc.predictDims = {4, 8};
+    tc.labelDims = {4, 9};
+    tc.expectCode = "EZ0009";
+    tc.expectParam = "label";
+    tc.expectReason = "shape of label must be the same as predict";
+    RunNegativeTilingCase(tc);
+}
+
+// 错误路径：predict dtype 不在 {FP16,FP32,BF16} 上报 EZ0020（param_name=predict），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_predict_dtype_unsupported)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "predict_dtype_unsupported";
+    tc.predictDims = {4, 8};
+    tc.labelDims = {4, 8};
+    tc.predictDtype = ge::DT_INT32;
+    tc.labelDtype = ge::DT_INT32;
+    tc.expectCode = "EZ0020";
+    tc.expectParam = "predict";
+    tc.expectReason = "supported dtypes are float16, float32 and bfloat16";
+    RunNegativeTilingCase(tc);
+}
+
+// 错误路径：predict 与 label dtype 不一致上报 EZ0020（param_name=label），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_dtype_mismatch)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "dtype_mismatch";
+    tc.predictDims = {4, 8};
+    tc.labelDims = {4, 8};
+    tc.predictDtype = ge::DT_FLOAT;
+    tc.labelDtype = ge::DT_FLOAT16;
+    tc.expectCode = "EZ0020";
+    tc.expectParam = "label";
+    tc.expectReason = "dtype of label must be the same as predict";
+    RunNegativeTilingCase(tc);
+}
+
+// 错误路径：sigma < 0 上报 EZ0026（param_name=sigma），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_sigma_negative)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "sigma_negative";
+    tc.predictDims = {4, 8};
+    tc.labelDims = {4, 8};
+    tc.sigma = -1.0f;
+    tc.expectCode = "EZ0026";
+    tc.expectParam = "sigma";
+    tc.expectReason = "sigma must be non-negative and not NaN";
+    RunNegativeTilingCase(tc);
+}
+
+// 错误路径：sigma = NaN 上报 EZ0026（param_name=sigma），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_sigma_nan)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "sigma_nan";
+    tc.predictDims = {4, 8};
+    tc.labelDims = {4, 8};
+    tc.sigma = std::nanf("");
+    tc.expectCode = "EZ0026";
+    tc.expectParam = "sigma";
+    tc.expectReason = "sigma must be non-negative and not NaN";
+    RunNegativeTilingCase(tc);
+}
+
+// 错误路径：unknown rank 上报 EZ0013（param_names=predict,label），不产生内部兜底码（EZ + 9999）
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_unknown_rank)
+{
+    NegativeTilingCase tc;
+    tc.caseName = "unknown_rank";
+    tc.predictUnknownRank = true;
+    tc.labelDims = {4, 8};
+    tc.expectCode = "EZ0013";
+    tc.expectParam = "predict,label";
+    tc.expectReason = "input rank must be known before tiling, unknown rank is not supported";
+    RunNegativeTilingCase(tc);
+}
+
+// 正向对照：合法输入返回 GRAPH_SUCCESS，且 ErrorManager 无内部兜底码（EZ + 9999）首错
+TEST_F(SmoothL1LossTiling, smooth_l1_loss_tiling_error_positive_control)
+{
+    fe::PlatFormInfos platFormInfo;
+    map<string, string> socInfos;
+    map<string, string> aicoreSpec;
+    map<string, string> intrinsics;
+    map<string, string> socVersion = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+    InitPlatForm(platFormInfo, socInfos, aicoreSpec, intrinsics, socVersion);
+
+    optiling::SmoothL1LossCompileInfo compileInfo;
+    compileInfo.coreNum = 64;
+    compileInfo.ubSize = 253952;
+
+    std::string opType("SmoothL1Loss");
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling, nullptr);
+
+    std::initializer_list<int64_t> predictDims = {64, 128};
+    std::initializer_list<int64_t> labelDims = {64, 128};
+    std::initializer_list<int64_t> outDims = {64, 128};
+    gert::StorageShape predictShape = {predictDims, predictDims};
+    gert::StorageShape labelShape = {labelDims, labelDims};
+    gert::StorageShape outputShape = {outDims, outDims};
+
+    auto workspaceSizeHoler = gert::ContinuousVector::Create<size_t>(16 * 4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceSizeHoler.get());
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+
+    auto holder = gert::TilingContextFaker()
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&predictShape, &labelShape})
+                      .OutputShapes({&outputShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platFormInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"sigma", Ops::NN::AnyValue::CreateFrom<float>(1.0f)}})
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+
+    auto tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext, nullptr);
+    ASSERT_NE(tilingContext->GetPlatformInfo(), nullptr);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tilingContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("version", socVersion);
+
+    InitErrMgr();
+    ASSERT_EQ(impl->tiling(tilingContext), ge::GRAPH_SUCCESS);
+
+    auto errMsgPtr = error_message::GetErrMgrErrorMessage();
+    std::string msg = (errMsgPtr == nullptr) ? std::string() : std::string(errMsgPtr.get());
+    std::cout << "[positive_control] error msg: " << msg << std::endl;
+    EXPECT_EQ(msg.find(InnerFallbackCode()), std::string::npos)
+        << "合法输入不应产生内部兜底码（EZ + 9999），实际报文：" << msg;
+    EXPECT_EQ(msg.find("EZ0012"), std::string::npos) << "合法输入不应产生 EZ0012，实际报文：" << msg;
 }
