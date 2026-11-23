@@ -190,9 +190,11 @@ TEST_F(TestApplyFtrlTiling, apply_ftrl_testcase_float32)
     std::initializer_list<int64_t> inputShape = {16, 26, 16, 19};
     auto inputDtype = ge::DT_FLOAT;
     auto inputFormat = ge::FORMAT_ND;
-    // The promoted tensor DAG changes UB planning: ubFormer=2560, while the
-    // 31-block partition and total coverage remain unchanged (checked above).
-    std::string expectStr = "126464 10995116277791 4096 31 2 2 1536 1024 2560 1 ";
+    // The hand-written VF fusions shrink the per-tile UB footprint, and
+    // DoTiling now reserves one extra buffer so the per-slot stride stays
+    // 512B-aligned; with this fixture (UB=245760) the plan is ubFormer=3200
+    // with a 62-block partition; total coverage remains unchanged.
+    std::string expectStr = "126464 13743895347264 2048 62 1 1 2048 1536 3200 1 ";
     DoApplyFtrlTilingCase(inputShape, inputDtype, inputFormat, expectStr);
 }
 
@@ -212,7 +214,7 @@ TEST_F(TestApplyFtrlTiling, apply_ftrl_testcase_bfloat16)
     std::initializer_list<int64_t> inputShape = {7, 2, 7, 8, 10};
     auto inputDtype = ge::DT_BF16;
     auto inputFormat = ge::FORMAT_ND;
-    std::string expectStr = "7840 10995116277762 4096 2 2 2 1536 1184 2560 1 ";
+    std::string expectStr = "7840 10995116277764 2048 4 1 1 2048 1696 2560 1 ";
     DoApplyFtrlTilingCase(inputShape, inputDtype, inputFormat, expectStr);
 }
 // Exercise validation before platform-dependent tiling, including malformed contexts.

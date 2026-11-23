@@ -203,12 +203,21 @@ ge::graphStatus ApplyFtrlRegbaseTiling::DoElewiseTiling()
                 return ge::GRAPH_FAILED);
     ge::DataType varDType = varDesc->GetDataType();
     ge::graphStatus ret = ge::GRAPH_FAILED;
+    // The VF fusions removed the uint8 compare nodes, so the tiling alignment
+    // granularity dropped to 256B per fp32 slot. Reserving one extra buffer
+    // keeps the per-slot stride (ubFormer * MaxDtypeBytes) 512B-aligned, e.g.
+    // 3520*4B=14080B (27.5 lines) shrinks to 3328*4B=13312B (26 lines) on
+    // Ascend950PR; misaligned MTE2/MTE3 bursts degrade bandwidth.
+    constexpr int64_t EXTRA_BUFFER_NUM = 1;
     if (varDType == ge::DT_FLOAT) {
-        ret = eleBaseTiling.DoTiling<ApplyFtrlOp::ApplyFtrlDag<float, float>::OpDag>(tiling_->elewiseTiling);
+        ret = eleBaseTiling.DoTiling<ApplyFtrlOp::ApplyFtrlDag<float, float>::OpDag>(tiling_->elewiseTiling,
+                                                                                     /*extraSize=*/0, EXTRA_BUFFER_NUM);
     } else if (varDType == ge::DT_FLOAT16) {
-        ret = eleBaseTiling.DoTiling<ApplyFtrlOp::ApplyFtrlDag<half, float>::OpDag>(tiling_->elewiseTiling);
+        ret = eleBaseTiling.DoTiling<ApplyFtrlOp::ApplyFtrlDag<half, float>::OpDag>(tiling_->elewiseTiling,
+                                                                                    /*extraSize=*/0, EXTRA_BUFFER_NUM);
     } else if (varDType == ge::DT_BF16) {
-        ret = eleBaseTiling.DoTiling<ApplyFtrlOp::ApplyFtrlDag<bfloat16_t, float>::OpDag>(tiling_->elewiseTiling);
+        ret = eleBaseTiling.DoTiling<ApplyFtrlOp::ApplyFtrlDag<bfloat16_t, float>::OpDag>(
+            tiling_->elewiseTiling, /*extraSize=*/0, EXTRA_BUFFER_NUM);
     } else {
         OP_LOGE_FOR_INVALID_DTYPE(tilingContext_->GetNodeName(), "var",
                                   ge::TypeUtils::DataTypeToSerialString(varDType).c_str(), "fp32, fp16 or bf16");
