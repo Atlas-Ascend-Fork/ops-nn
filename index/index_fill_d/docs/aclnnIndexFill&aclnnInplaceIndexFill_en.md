@@ -78,7 +78,7 @@
 
   ```Cpp
   aclnnStatus aclnnInplaceIndexFillGetWorkspaceSize(
-   aclTensor*       self,
+   aclTensor*       selfRef,
    int64_t          dim,
    const aclTensor* index,
    const aclScalar* value,
@@ -308,7 +308,7 @@
       </tr></thead>
     <tbody>
       <tr>
-        <td>self</td>
+        <td>selfRef</td>
         <td>input</td>
         <td>Tensor whose values at specified positions are replaced with value.</td>
         <td>-</td>
@@ -320,8 +320,8 @@
       <tr>
         <td>dim</td>
         <td>input</td>
-        <td>Specifies the dimension along which self is filled.</td>
-        <td>When self is 1-8 dimensional, the value range of dim is [-self.dim(), self.dim()). When self is 0-dimensional, the value range of dim is [-1, 1).</td>
+        <td>Specifies the dimension along which selfRef is filled.</td>
+        <td>When selfRef is 1-8 dimensional, the value range of dim is [-selfRef.dim(), selfRef.dim()). When selfRef is 0-dimensional, the value range of dim is [-1, 1).</td>
         <td>int64</td>
         <td>-</td>
         <td>-</td>
@@ -330,8 +330,8 @@
       <tr>
         <td>index</td>
         <td>input</td>
-        <td>Specifies the indices used to fill self along the dim dimension.</td>
-        <td>Each element value is smaller than the size of the dim dimension in self. Negative values are supported. Values that exceed the dimension size are supported and skipped directly. When index is an empty array (array length is 0), no position is filled and the output is the same as the input.</td>
+        <td>Specifies the indices used to fill selfRef along the dim dimension.</td>
+        <td>Each element value is smaller than the size of the dim dimension in selfRef. Negative values are supported. Values that exceed the dimension size are supported and skipped directly. When index is an empty array (array length is 0), no position is filled and the output is the same as the input.</td>
         <td>INT32, INT64</td>
         <td>-</td>
         <td>-</td>
@@ -342,7 +342,7 @@
         <td>input</td>
         <td>Specifies the data value to fill.</td>
         <td>-</td>
-        <td>Same data type range as self</td>
+        <td>Same data type range as selfRef</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -396,15 +396,15 @@
       <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>Null pointer passed for self, index, or value.</td>
+      <td>Null pointer passed for selfRef, index, or value.</td>
       </tr>
       <tr>
       <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="2">161002</td>
-      <td>The data type of self, index, or value is not within the supported range.</td>
+      <td>The data type of selfRef, index, or value is not within the supported range.</td>
       </tr>
       <tr>
-      <td>The absolute value of dim exceeds the maximum dim value of self or exceeds 8 dimensions.</td>
+      <td>The absolute value of dim exceeds the maximum dim value of selfRef or exceeds 8 dimensions.</td>
       </tr>
     </tbody>
     </table>

@@ -306,7 +306,7 @@
       </tr></thead>
     <tbody>
       <tr>
-        <td>self</td>
+        <td>selfRef</td>
         <td>输入</td>
         <td>待被在指定位置的值用value替换的张量。</td>
         <td>-</td>
@@ -318,8 +318,8 @@
       <tr>
         <td>dim</td>
         <td>输入</td>
-        <td>指定了self将要填充的维度。</td>
-        <td>当self为1-8维时，dim的取值范围在[-self.dim(), self.dim())，当self为0维时，dim的取值范围在[-1, 1)。</td>
+        <td>指定了selfRef将要填充的维度。</td>
+        <td>当selfRef为1-8维时，dim的取值范围在[-selfRef.dim(), selfRef.dim())，当selfRef为0维时，dim的取值范围在[-1, 1)。</td>
         <td>int64</td>
         <td>-</td>
         <td>-</td>
@@ -328,8 +328,8 @@
       <tr>
         <td>index</td>
         <td>输入</td>
-        <td>指定self在dim维度将要填充的下标。</td>
-        <td>其中的元素值小于self对应dim的维度大小，支持负数，支持越界，对于越界值会直接跳过。当index为空数组（数组长度为0）时，不填充任何位置，输出与输入一致。</td>
+        <td>指定selfRef在dim维度将要填充的下标。</td>
+        <td>其中的元素值小于selfRef对应dim的维度大小，支持负数，支持越界，对于越界值会直接跳过。当index为空数组（数组长度为0）时，不填充任何位置，输出与输入一致。</td>
         <td>INT32、INT64</td>
         <td>-</td>
         <td>-</td>
@@ -340,7 +340,7 @@
         <td>输入</td>
         <td>指定填充的数据值。</td>
         <td>-</td>
-        <td>与self数据类型范围一致</td>
+        <td>与selfRef数据类型范围一致</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -394,15 +394,15 @@
       <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的self、index、value是空指针。</td>
+      <td>传入的selfRef、index、value是空指针。</td>
       </tr>
       <tr>
       <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="2">161002</td>
-      <td>self、index、value的数据类型不在支持的范围之内。</td>
+      <td>selfRef、index、value的数据类型不在支持的范围之内。</td>
       </tr>
       <tr>
-      <td>dim的绝对值超出self的dim最大值或超出8维。</td>
+      <td>dim的绝对值超出selfRef的dim最大值或超出8维。</td>
       </tr>
     </tbody>
     </table>
