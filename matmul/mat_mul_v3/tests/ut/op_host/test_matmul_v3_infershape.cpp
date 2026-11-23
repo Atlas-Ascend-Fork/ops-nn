@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <limits>
 #include <gtest/gtest.h>
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
@@ -703,5 +704,31 @@ TEST_F(TestMatMulV3InferShape, X1OneDimWithBias)
     ASSERT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
     auto output = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
     ASSERT_EQ(Ops::Base::ToString(*output), Ops::Base::ToString(expect_output_shape));
+}
+
+// ====== 覆盖 input_size 溢出保护分支 (mat_mul_v3_infershape.cpp:146-153) ======
+// input_size 超过 INT64_MAX-16+1（对齐计算 (input_size+15)/16*16 会溢出）时提前报错返回 GRAPH_FAILED
+TEST_F(TestMatMulV3InferShape, PrivateAttrInputSizeOverflow)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MatMulV3")->infer_shape;
+
+    gert::Shape x1_shape = {32, 64};
+    gert::Shape x2_shape = {64, 128};
+    gert::Shape output_shape = {};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&x1_shape, &x2_shape})
+                      .OutputShapes({&output_shape})
+                      .NodeAttrs(
+                          {{"transpose_x1", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                           {"transpose_x2", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                           {"offset_x", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                           {"input_size", Ops::NN::AnyValue::CreateFrom<int64_t>(std::numeric_limits<int64_t>::max())},
+                           {"hidden_size", Ops::NN::AnyValue::CreateFrom<int64_t>(256)}})
+                      .Build();
+
+    ASSERT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
 } // namespace

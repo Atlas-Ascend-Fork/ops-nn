@@ -21,9 +21,11 @@
 #include "platform/platform_infos_def.h"
 #include "test_cube_util.h"
 #include "../../../../op_host/op_tiling/matmul_v3_compile_info.h"
+#include "../../../../op_host/op_tiling/matmul_v3_base_tiling.h"
 #include "../../../../op_host/op_tiling/arch35/matmul_v3_tiling_advanced.h"
 #include "../../../../op_host/op_tiling/arch35/matmul_v3_basic_streamk_tiling.h"
 #include "../../../../op_host/op_tiling/arch35/matmul_v3_k_equal_zero_tiling.h"
+#include "../../../../op_host/op_tiling/arch35/matmul_v3_to_mul_tiling.h"
 #include "op_common/op_host/util/op_const_def.h"
 
 using namespace std;
@@ -4152,8 +4154,412 @@ static TilingTestParam dav9202_cases_params[] = {
      {229678},
      {229678},
      DT_FLOAT},
+    {"MatMulV3_dav9202_matmul_to_mul_trans_b",
+     "MatMulV3",
+     R"({"_pattern": "MatMul", "attrs":{"transpose_a":false,"transpose_b":true},
+      "binary_attrs":{"bias_flag":false, "nd_flag":true, "split_k_flag":false, "zero_flag":false, "weight_nz": false, "l2_size":134217728},"binary_mode_flag":true,
+      "block_dim":{"CORE_NUM":64, "vector_core_cnt": 64},"corerect_range_flag":null,"dynamic_mode":"dynamic_mkn", "fused_double_operand_num": 0,
+      "hardware_info": {"BT_SIZE": 4096, "load3d_constraints": "unknown", "Intrinsic_fix_pipe_l0c2out": true, "Intrinsic_data_move_l12ub": false, "Intrinsic_data_move_l0c2ub": false, "Intrinsic_data_move_l12bt": true, "Intrinsic_data_move_out2l1_nd2nz": true, "UB_SIZE": 393216, "L2_SIZE": 134217728, "L1_SIZE": 524288, "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 262144, "CORE_NUM": 64, "vector_core_cnt": 64, "npuArch": "dav9202" },
+      "format_a":"ND","format_b":"ND","repo_range":{},"repo_seeds":{}})",
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     false,
+     true,
+     0,
+     4,
+     {1, 4096},
+     {4096, 4096},
+     {1, 4096},
+     {1, 4096},
+     {4096, 4096},
+     {1, 4096},
+     false,
+     0,
+     0,
+     64,
+     12353UL,
+     "64 64 1 4096 4096 64 0 304 144 14 0 ",
+     ge::DT_FLOAT,
+     ge::DT_FLOAT},
+    {"MatMulV3_dav9202_matmul_to_mul_trans_b_bias",
+     "MatMulV3",
+     R"({"_pattern": "MatMul", "attrs":{"transpose_a":false,"transpose_b":true},
+      "binary_attrs":{"bias_flag":true, "nd_flag":true, "split_k_flag":false, "zero_flag":false, "weight_nz": false, "l2_size":134217728},"binary_mode_flag":true,
+      "block_dim":{"CORE_NUM":64, "vector_core_cnt": 64},"corerect_range_flag":null,"dynamic_mode":"dynamic_mkn", "fused_double_operand_num": 0,
+      "hardware_info": {"BT_SIZE": 4096, "load3d_constraints": "unknown", "Intrinsic_fix_pipe_l0c2out": true, "Intrinsic_data_move_l12ub": false, "Intrinsic_data_move_l0c2ub": false, "Intrinsic_data_move_l12bt": true, "Intrinsic_data_move_out2l1_nd2nz": true, "UB_SIZE": 393216, "L2_SIZE": 134217728, "L1_SIZE": 524288, "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 262144, "CORE_NUM": 64, "vector_core_cnt": 64, "npuArch": "dav9202" },
+      "format_a":"ND","format_b":"ND","repo_range":{},"repo_seeds":{}})",
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     false,
+     true,
+     0,
+     4,
+     {1, 4096},
+     {4096, 4096},
+     {1, 4096},
+     {1, 4096},
+     {4096, 4096},
+     {1, 4096},
+     false,
+     0,
+     0,
+     64,
+     12353UL,
+     "64 64 1 4096 4096 64 0 304 144 14 0 ",
+     ge::DT_FLOAT,
+     ge::DT_FLOAT,
+     {},
+     {},
+     {},
+     true,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     {4096},
+     {4096},
+     DT_FLOAT},
 };
 INSTANTIATE_TEST_CASE_P(MatMulV3Dav9202, MatMulV3TilingRuntime, testing::ValuesIn(dav9202_cases_params));
+
+// =================================================================================================
+// matmul_v3_base_tiling.cpp / arch35/matmul_v3_to_mul_tiling.cpp 防御分支白盒直调用例（新增段）
+// 覆盖目标（op_host/op_tiling/matmul_v3_base_tiling.cpp）：
+//   L194-199    GetPlatformInfo          compileInfo_.aicNum==0 报错分支
+//   L360-364    OpSpecificCheck          MatMulV3 x1 origin 非2D 报错分支
+//   L366-369    OpSpecificCheck          MatMulV3 x2 origin 非2D 报错分支
+//   L415-440    OpSpecificCheck          不支持 dtype 组合错误信息拼装分支（hasBias=false）
+//   L463-466    SetMatmulDimensions      y 维度数<2 报错分支
+//   L505-510    GetShape/GetInputDims    x1 storage 维度数<2 报错分支
+//   L512-517    GetShape/GetInputDims    x2 storage 维度数<2 报错分支
+//   L1521-1524  FormulateBasicBlockDavid mCore==0 防御分支（内部状态损坏才可达，直调覆盖）
+//   L1531-1534  FormulateBasicBlockDavid nCore==0 防御分支（内部状态损坏才可达，直调覆盖）
+//   L1547-1550  CalcTailBasicBlock       aicNum==0 防御分支（内部状态损坏才可达，直调覆盖）
+// 覆盖目标（op_host/op_tiling/arch35/matmul_v3_to_mul_tiling.cpp）：
+//   L70-74      DoOpTiling               tmpMN==0 防御分支（前置校验必拦截m/n>0，直调覆盖）
+// 触达方式：沿用本仓既有范式——TilingContextFaker 构造上下文 + ForTest 派生类暴露 protected 入口；
+//   GetShapeAttrsInfo/GetPlatformInfo 经 DoTiling 完整前置流程自然触达，
+//   防御分支按本文件 L269-270 直调先例以损坏状态直调覆盖（CeilDiv 除0返回被除数，无UB）。
+// =================================================================================================
+class MatmulV3BaseTilingForTest : public optiling::matmul_v3::MatmulV3BaseTiling {
+public:
+    using MatmulV3BaseTiling::MatmulV3BaseTiling;
+
+    ge::graphStatus GetShapeAttrsInfoPublic() { return GetShapeAttrsInfo(); }
+
+    ge::graphStatus GetPlatformInfoPublic() { return GetPlatformInfo(); }
+
+    void FormulateBasicBlockDavidPublic() { FormulateBasicBlockDavid(); }
+
+    void CalcTailBasicBlockPublic() { CalcTailBasicBlock(); }
+
+    optiling::MatmulV3CompileInfo& CompileInfoRef() { return compileInfo_; }
+
+    optiling::matmul_v3::MatmulV3Args& ArgsRef() { return args_; }
+
+    optiling::matmul_v3::MatmulV3RunInfo& RunInfoRef() { return runInfo_; }
+};
+
+class MatMulV3BaseTilingDirectTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        platformInfo_.Init();
+        compileInfo_.aicNum = 8UL;
+        compileInfo_.aivNum = 16UL;
+        compileInfo_.ubSize = 253952UL;
+    }
+
+    // 构造2输入+1输出全ND的TilingContext，attrs与base流程CheckArgs/GetDtype读取的4属性对齐
+    void BuildContext(const gert::StorageShape& x1, ge::DataType x1Type, const gert::StorageShape& x2,
+                      ge::DataType x2Type, const gert::StorageShape& y, ge::DataType yType)
+    {
+        x1Shape_ = x1;
+        x2Shape_ = x2;
+        yShape_ = y;
+        yRefs_ = {&yShape_};
+        holder_ = gert::TilingContextFaker()
+                      .SetOpType("MatMulV3")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&x1Shape_, &x2Shape_})
+                      .OutputShapes(yRefs_)
+                      .NodeAttrs({{"adj_x1", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"adj_x2", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"offset_x", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"opImplMode", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}})
+                      .NodeInputTd(0, x1Type, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, x2Type, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, yType, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .CompileInfo(&compileInfo_)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo_))
+                      .Build();
+        context_ = holder_.GetContext<gert::TilingContext>();
+        ASSERT_NE(context_, nullptr);
+    }
+
+    std::unique_ptr<MatmulV3BaseTilingForTest> CreateTiling()
+    {
+        return std::make_unique<MatmulV3BaseTilingForTest>(context_);
+    }
+
+    gert::KernelRunContextHolder holder_;
+    gert::TilingContext* context_ = nullptr;
+    fe::PlatFormInfos platformInfo_;
+    optiling::MatmulV3CompileInfo compileInfo_;
+    gert::StorageShape x1Shape_ = {{2, 3}, {2, 3}};
+    gert::StorageShape x2Shape_ = {{3, 4}, {3, 4}};
+    gert::StorageShape yShape_ = {{2, 4}, {2, 4}};
+    std::vector<void*> yRefs_;
+};
+
+// 对照用例：合法2D/ND/fp16输入时GetShapeAttrsInfo完整链路返回SUCCESS
+TEST_F(MatMulV3BaseTilingDirectTest, GetShapeAttrsInfo_AllValid_Success)
+{
+    BuildContext(x1Shape_, DT_FLOAT16, x2Shape_, DT_FLOAT16, yShape_, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    EXPECT_EQ(tiling->GetShapeAttrsInfoPublic(), ge::GRAPH_SUCCESS);
+}
+
+// L360-364：MatMulV3 x1 origin为3维时OpSpecificCheck报错（k两侧一致，前置GetShape校验全部通过）
+TEST_F(MatMulV3BaseTilingDirectTest, OpSpecificCheck_X1OriginNot2D_Fail)
+{
+    gert::StorageShape x1 = {{2, 3, 4}, {2, 3, 4}};
+    gert::StorageShape x2 = {{4, 5}, {4, 5}};
+    gert::StorageShape y = {{3, 5}, {3, 5}};
+    BuildContext(x1, DT_FLOAT16, x2, DT_FLOAT16, y, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoTiling(), ge::GRAPH_FAILED);
+    // 精确断言：失败点在入参校验阶段（GetShapeAttrsInfo内部OpSpecificCheck）
+    EXPECT_EQ(tiling->GetShapeAttrsInfoPublic(), ge::GRAPH_FAILED);
+}
+
+// L366-369：MatMulV3 x2 origin为3维时OpSpecificCheck报错（k两侧一致，x1 origin为合法2D）
+TEST_F(MatMulV3BaseTilingDirectTest, OpSpecificCheck_X2OriginNot2D_Fail)
+{
+    gert::StorageShape x1 = {{2, 6}, {2, 6}};
+    gert::StorageShape x2 = {{6, 6, 5}, {6, 6, 5}};
+    gert::StorageShape y = {{2, 5}, {2, 5}};
+    BuildContext(x1, DT_FLOAT16, x2, DT_FLOAT16, y, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoTiling(), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling->GetShapeAttrsInfoPublic(), ge::GRAPH_FAILED);
+}
+
+// L415-440：全INT8 dtype组合不在支持列表，走错误信息拼装分支（无bias臂）后返回FAILED
+TEST_F(MatMulV3BaseTilingDirectTest, OpSpecificCheck_UnsupportedDtypeCombination_Fail)
+{
+    BuildContext(x1Shape_, DT_INT8, x2Shape_, DT_INT8, yShape_, DT_INT8);
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoTiling(), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling->GetShapeAttrsInfoPublic(), ge::GRAPH_FAILED);
+}
+
+// L463-466：y origin/storage为1维（<2）时SetMatmulDimensions报错
+TEST_F(MatMulV3BaseTilingDirectTest, SetMatmulDimensions_YDimLessThanTwo_Fail)
+{
+    gert::StorageShape y = {{8}, {8}};
+    BuildContext(x1Shape_, DT_FLOAT16, x2Shape_, DT_FLOAT16, y, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoTiling(), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling->GetShapeAttrsInfoPublic(), ge::GRAPH_FAILED);
+}
+
+// L505-510：ND格式下x1 storage为1维时GetInputDims失败（origin保持2维，仅storage压平）
+TEST_F(MatMulV3BaseTilingDirectTest, GetInputDims_X1StorageDimLessThanTwo_Fail)
+{
+    gert::StorageShape x1 = {{2, 3}, {6}};
+    BuildContext(x1, DT_FLOAT16, x2Shape_, DT_FLOAT16, yShape_, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoTiling(), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling->GetShapeAttrsInfoPublic(), ge::GRAPH_FAILED);
+}
+
+// L512-517：ND格式下x2 storage为1维时GetInputDims失败（x1合法形成对照）
+TEST_F(MatMulV3BaseTilingDirectTest, GetInputDims_X2StorageDimLessThanTwo_Fail)
+{
+    gert::StorageShape x2 = {{3, 4}, {12}};
+    BuildContext(x1Shape_, DT_FLOAT16, x2, DT_FLOAT16, yShape_, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoTiling(), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling->GetShapeAttrsInfoPublic(), ge::GRAPH_FAILED);
+}
+
+// L194-199：入参校验通过但compileInfo_.aicNum==0时GetPlatformInfo报错
+// （GetShapeAttrsInfo成功、GetPlatformInfo从context拷贝compile info后命中校验）
+TEST_F(MatMulV3BaseTilingDirectTest, GetPlatformInfo_AicNumZero_Fail)
+{
+    BuildContext(x1Shape_, DT_FLOAT16, x2Shape_, DT_FLOAT16, yShape_, DT_FLOAT16);
+    compileInfo_.aicNum = 0UL;
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoTiling(), ge::GRAPH_FAILED);
+    // 精确断言：GetShapeAttrsInfo通过，失败点在平台信息校验
+    EXPECT_EQ(tiling->GetShapeAttrsInfoPublic(), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tiling->GetPlatformInfoPublic(), ge::GRAPH_FAILED);
+}
+
+// L1521-1524：mValue==0（生产路径SetMatmulDimensions必拦截）导致mCore重算后为0，防御分支提前return
+// 佐证：baseK哨兵值未被重算（正常路径L1539-1540会覆盖baseK），且baseM被对齐为0
+TEST_F(MatMulV3BaseTilingDirectTest, FormulateBasicBlockDavid_MCoreZero_EarlyReturn)
+{
+    BuildContext(x1Shape_, DT_FLOAT16, x2Shape_, DT_FLOAT16, yShape_, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    tiling->ArgsRef().opName = "MatMulV3BaseDavidUT";
+    tiling->ArgsRef().mValue = 0UL;
+    tiling->ArgsRef().nValue = 64UL;
+    tiling->ArgsRef().kValue = 64UL;
+    tiling->RunInfoRef().baseM = 16UL;
+    tiling->RunInfoRef().baseN = 16UL;
+    tiling->RunInfoRef().usedCoreNum = 8UL;
+    tiling->RunInfoRef().baseK = 99UL; // 哨兵值：命中防御分支则保持不变
+    tiling->FormulateBasicBlockDavidPublic();
+    EXPECT_EQ(tiling->RunInfoRef().baseM, 0UL);
+    EXPECT_EQ(tiling->RunInfoRef().baseK, 99UL);
+}
+
+// L1531-1534：nValue==0导致nCore重算后为0，防御分支提前return（mCore>nCore走else臂）
+TEST_F(MatMulV3BaseTilingDirectTest, FormulateBasicBlockDavid_NCoreZero_EarlyReturn)
+{
+    BuildContext(x1Shape_, DT_FLOAT16, x2Shape_, DT_FLOAT16, yShape_, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    tiling->ArgsRef().opName = "MatMulV3BaseDavidUT";
+    tiling->ArgsRef().mValue = 64UL;
+    tiling->ArgsRef().nValue = 0UL;
+    tiling->ArgsRef().kValue = 64UL;
+    tiling->RunInfoRef().baseM = 16UL;
+    tiling->RunInfoRef().baseN = 16UL;
+    tiling->RunInfoRef().usedCoreNum = 8UL;
+    tiling->RunInfoRef().baseK = 99UL; // 哨兵值：命中防御分支则保持不变
+    tiling->FormulateBasicBlockDavidPublic();
+    EXPECT_EQ(tiling->RunInfoRef().baseN, 0UL);
+    EXPECT_EQ(tiling->RunInfoRef().baseK, 99UL);
+}
+
+// L1547-1550：CalcTailBasicBlock中compileInfo_.aicNum==0防御分支提前return
+// 佐证：l2Info.mTile哨兵值未被置1（正常路径L1554会重置mTile=1）
+TEST_F(MatMulV3BaseTilingDirectTest, CalcTailBasicBlock_AicNumZero_EarlyReturn)
+{
+    BuildContext(x1Shape_, DT_FLOAT16, x2Shape_, DT_FLOAT16, yShape_, DT_FLOAT16);
+    auto tiling = CreateTiling();
+    tiling->ArgsRef().opName = "MatMulV3BaseDavidUT";
+    tiling->ArgsRef().mValue = 64UL;
+    tiling->ArgsRef().nValue = 64UL;
+    tiling->ArgsRef().kValue = 64UL;
+    tiling->CompileInfoRef().aicNum = 0UL;
+    tiling->RunInfoRef().baseM = 16UL;
+    tiling->RunInfoRef().baseN = 16UL;
+    tiling->RunInfoRef().l2Info.mTile = 99UL; // 哨兵值：命中防御分支则保持不变
+    tiling->CalcTailBasicBlockPublic();
+    EXPECT_EQ(tiling->RunInfoRef().l2Info.mTile, 99UL);
+}
+
+class MatMulV3ToMulTilingForTest : public optiling::matmul_v3_advanced::MatMulV3ToMulTiling {
+public:
+    using MatMulV3ToMulTiling::MatMulV3ToMulTiling;
+
+    ge::graphStatus DoOpTilingPublic() { return DoOpTiling(); }
+
+    optiling::matmul_v3_advanced::MatMulV3RunInfo& RunInfoRef() { return runInfo_; }
+};
+
+class MatMulV3ToMulTilingDirectTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        platformInfo_.Init();
+        compileInfo_.aicNum = 8UL;
+        compileInfo_.aivNum = 16UL;
+        compileInfo_.ubSize = 253952UL;
+        compileInfo_.npuArch = Ops::Base::DAV_3510;
+        args_.opName = "MatMulV3ToMulDirectUT";
+        args_.aType = ge::DT_FLOAT;
+        args_.bType = ge::DT_FLOAT;
+        args_.cType = ge::DT_FLOAT;
+        args_.aDtypeSize = sizeof(float);
+        args_.bDtypeSize = sizeof(float);
+        args_.aFormat = ge::FORMAT_ND;
+        args_.bFormat = ge::FORMAT_ND;
+        args_.outFormat = ge::FORMAT_ND;
+        BuildContext();
+    }
+
+    void BuildContext()
+    {
+        x1Shape_ = gert::StorageShape({static_cast<int64_t>(args_.mValue), static_cast<int64_t>(args_.kValue)},
+                                      {static_cast<int64_t>(args_.mValue), static_cast<int64_t>(args_.kValue)});
+        x2Shape_ = gert::StorageShape({static_cast<int64_t>(args_.kValue), static_cast<int64_t>(args_.nValue)},
+                                      {static_cast<int64_t>(args_.kValue), static_cast<int64_t>(args_.nValue)});
+        yShape_ = gert::StorageShape({static_cast<int64_t>(args_.mValue), static_cast<int64_t>(args_.nValue)},
+                                     {static_cast<int64_t>(args_.mValue), static_cast<int64_t>(args_.nValue)});
+        holder_ = gert::TilingContextFaker()
+                      .SetOpType("MatMulV3")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&x1Shape_, &x2Shape_})
+                      .OutputShapes({&yShape_})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .CompileInfo(&compileInfo_)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo_))
+                      .Build();
+        context_ = holder_.GetContext<gert::TilingContext>();
+        ASSERT_NE(context_, nullptr);
+    }
+
+    std::unique_ptr<MatMulV3ToMulTilingForTest> CreateTiling()
+    {
+        cfg_ = std::make_unique<optiling::MatMulTilingCfg>(false, &compileInfo_, &args_, nullptr);
+        return std::make_unique<MatMulV3ToMulTilingForTest>(context_, *cfg_);
+    }
+
+    gert::KernelRunContextHolder holder_;
+    gert::TilingContext* context_ = nullptr;
+    fe::PlatFormInfos platformInfo_;
+    optiling::MatmulV3CompileInfo compileInfo_;
+    optiling::matmul_v3_advanced::MatMulV3Args args_;
+    std::unique_ptr<optiling::MatMulTilingCfg> cfg_;
+    gert::StorageShape x1Shape_;
+    gert::StorageShape x2Shape_;
+    gert::StorageShape yShape_;
+};
+
+// 对照用例：m=1且不转置时dataCopyMode=true正常路径，DoOpTiling返回SUCCESS
+// （tmpMN=CeilDiv(128,16)=8、baseMN=8、baseK=(63488-8)/5/8=1586，均非0）
+TEST_F(MatMulV3ToMulTilingDirectTest, DoOpTiling_DataCopyMode_Success)
+{
+    args_.mValue = 1UL;
+    args_.nValue = 128UL;
+    args_.kValue = 64UL;
+    BuildContext();
+    auto tiling = CreateTiling();
+    EXPECT_EQ(tiling->DoOpTilingPublic(), ge::GRAPH_SUCCESS);
+    EXPECT_TRUE(tiling->RunInfoRef().mmToMulInfo.dataCopyMode);
+    EXPECT_EQ(tiling->RunInfoRef().mmToMulInfo.baseMN, 8UL);
+    EXPECT_EQ(tiling->RunInfoRef().usedCoreNum, 16UL); // tileNum=CeilDiv(128,8)=16>=aivNum
+}
+
+// L70-74：mValue==0（生产路径前置校验必拦截m>0）时shapeMN=0、dataCopyMode=false，
+// tmpMN=CeilDiv(0, aivNum)=0命中防御分支返回FAILED
+TEST_F(MatMulV3ToMulTilingDirectTest, DoOpTiling_TmpMNZero_Fail)
+{
+    args_.mValue = 0UL;
+    args_.nValue = 128UL;
+    args_.kValue = 64UL;
+    args_.isATrans = false;
+    args_.isBTrans = false;
+    BuildContext();
+    auto tiling = CreateTiling();
+    tiling->RunInfoRef().mmToMulInfo.baseMN = 99UL; // 哨兵值：命中防御分支提前return则保持不变
+    EXPECT_EQ(tiling->DoOpTilingPublic(), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling->RunInfoRef().mmToMulInfo.baseMN, 99UL);
+}
 
 static std::string GetPlatformConfigKey(const std::string& compile_info)
 {

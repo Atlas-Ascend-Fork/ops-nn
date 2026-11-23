@@ -29,6 +29,7 @@
 #include "matmul/common/op_host/math_util_nn.h"
 #include "matmul/common/op_host/op_tiling/debug_tiling.h"
 #include "platform/platform_infos_def.h"
+#include "graph/utils/type_utils.h"
 
 using namespace optiling::matmul_v3;
 using Ops::NN::GenTiling;
@@ -191,7 +192,9 @@ ge::graphStatus MatmulV3BaseTiling::GetPlatformInfo() // 检查平台信息是�
         compileInfo_ = *compileInfoPtr;
     }
     if (compileInfo_.aicNum == 0) {
-        OP_LOGE(context_->GetNodeName(), "compileInfo.aicNum is zero.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "aicNum",
+                                              std::to_string(compileInfo_.aicNum).c_str(),
+                                              "the value of aicNum must be greater than 0");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -353,9 +356,16 @@ static ge::graphStatus OpSpecificCheck(const gert::TilingContext& context, const
     // check input dim num equals to 2
     if (isMatMulV3) {
         auto isMatrix = [](const gert::Shape& oriShape) { return oriShape.GetDimNum() == TWO_BATCH_DIM; };
-        if (!isMatrix(context.GetInputShape(0)->GetOriginShape()) ||
-            !isMatrix(context.GetInputShape(1)->GetOriginShape())) {
-            OP_LOGE(args.opName, "invalid input dim num");
+        if (!isMatrix(context.GetInputShape(0)->GetOriginShape())) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                args.opName, "x1", Ops::Base::ToString(context.GetInputShape(0)->GetOriginShape()).c_str(),
+                "the input rank must be 2D");
+            return ge::GRAPH_FAILED;
+        }
+        if (!isMatrix(context.GetInputShape(1)->GetOriginShape())) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                args.opName, "x2", Ops::Base::ToString(context.GetInputShape(1)->GetOriginShape()).c_str(),
+                "the input rank must be 2D");
             return ge::GRAPH_FAILED;
         }
     }
@@ -373,7 +383,9 @@ static ge::graphStatus OpSpecificCheck(const gert::TilingContext& context, const
         const gert::Shape& biasShape = context.GetInputShape(BIAS_IDX)->GetOriginShape();
         const int64_t biasValue = biasShape[biasShape.GetDimNum() - 1];
         if (args.nOriValue != static_cast<uint64_t>(biasValue)) {
-            OP_LOGE(args.opName, "illegal value: bias[%ld], n[%lu]", biasValue, args.nOriValue);
+            const std::string reason = "the value must be equal to n (" + std::to_string(args.nOriValue) + ")";
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(args.opName, "bias", std::to_string(biasValue).c_str(),
+                                                  reason.c_str());
             return ge::GRAPH_FAILED;
         }
     }
@@ -400,8 +412,31 @@ static ge::graphStatus OpSpecificCheck(const gert::TilingContext& context, const
                 return ge::GRAPH_SUCCESS;
             }
         }
-        OP_LOGE(args.opName, "Unsupported data type: x1[%d], x2[%d], y[%d], bias[%d], hasBias[%d]", args.aType,
-                args.bType, args.cType, args.biasType, args.hasBias);
+        std::string paramNames = "x1, x2, y";
+        std::string dtypeStr = ge::TypeUtils::DataTypeToSerialString(args.aType) + ", " +
+                               ge::TypeUtils::DataTypeToSerialString(args.bType) + ", " +
+                               ge::TypeUtils::DataTypeToSerialString(args.cType);
+        if (args.hasBias) {
+            paramNames += ", bias";
+            dtypeStr += ", " + ge::TypeUtils::DataTypeToSerialString(args.biasType);
+        }
+        std::string supportedStr;
+        for (const auto& supported : dtypeSuportList) {
+            if (!supportedStr.empty()) {
+                supportedStr += "; ";
+            }
+            supportedStr += "(";
+            const size_t supportedNum = args.hasBias ? supported.size() : supported.size() - 1;
+            for (size_t i = 0; i < supportedNum; ++i) {
+                if (i != 0) {
+                    supportedStr += ", ";
+                }
+                supportedStr += ge::TypeUtils::DataTypeToSerialString(supported[i]);
+            }
+            supportedStr += ")";
+        }
+        const std::string reason = "the supported dtype combinations are: " + supportedStr;
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(args.opName, paramNames.c_str(), dtypeStr.c_str(), reason.c_str());
         return ge::GRAPH_FAILED;
     };
     return isValidDtype(dtype);
@@ -412,7 +447,10 @@ static ge::graphStatus SetMatmulDimensions(const gert::TilingContext& context, M
 {
     auto isValidDimValue = [](int64_t dim) -> bool { return (dim > 0) && (dim <= INT32_MAX); };
     if (!isValidDimValue(m) || !isValidDimValue(k) || !isValidDimValue(n)) {
-        OP_LOGE(args.opName, "illegal value: m[%ld], k[%ld], n[%ld]", m, k, n);
+        const std::string shapesStr = Ops::Base::ToString(context.GetInputShape(0)->GetOriginShape()) + ", " +
+                                      Ops::Base::ToString(context.GetInputShape(1)->GetOriginShape());
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(args.opName, "x1, x2", shapesStr.c_str(),
+                                               "the m, k, n of x1, x2 must be within the range (0, INT32_MAX]");
         return ge::GRAPH_FAILED;
     }
     args.mValue = static_cast<uint64_t>(m);
@@ -423,7 +461,8 @@ static ge::graphStatus SetMatmulDimensions(const gert::TilingContext& context, M
     const gert::Shape& cShape = context.GetOutputShape(0)->GetOriginShape();
     const size_t cDimNum = cShape.GetDimNum();
     if (cDimNum < TWO_BATCH_DIM) {
-        OP_LOGE(args.opName, "illegal value: output dim num (%zu)", cDimNum);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(args.opName, "y", std::to_string(cDimNum).c_str(),
+                                                 "the shape dim of y must be at least 2");
         return ge::GRAPH_FAILED;
     }
     args.nOriValue = cShape[cDimNum - LAST_DIM];
@@ -460,9 +499,22 @@ static ge::graphStatus GetShape(const gert::TilingContext& context, MatmulV3Args
     // get (m, k, n)
     int64_t mkDims[TWO_BATCH_DIM];
     int64_t knDims[TWO_BATCH_DIM];
-    if ((GetInputDims(context.GetInputShape(0)->GetStorageShape(), args.aFormat, mkDims) != ge::GRAPH_SUCCESS) ||
-        (GetInputDims(context.GetInputShape(1)->GetStorageShape(), args.bFormat, knDims) != ge::GRAPH_SUCCESS)) {
-        OP_LOGE(args.opName, "invalid input dim num");
+    const gert::Shape& x1StorageShape = context.GetInputShape(0)->GetStorageShape();
+    const gert::Shape& x2StorageShape = context.GetInputShape(1)->GetStorageShape();
+    if (GetInputDims(x1StorageShape, args.aFormat, mkDims) != ge::GRAPH_SUCCESS) {
+        const std::string reason = args.aFormat == ge::FORMAT_ND ?
+                                       "the shape dim of x1 must be at least 2 for ND format" :
+                                       "the shape dim of x1 must be at least 4 for NZ format";
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(args.opName, "x1", Ops::Base::ToString(x1StorageShape).c_str(),
+                                              reason.c_str());
+        return ge::GRAPH_FAILED;
+    }
+    if (GetInputDims(x2StorageShape, args.bFormat, knDims) != ge::GRAPH_SUCCESS) {
+        const std::string reason = args.bFormat == ge::FORMAT_ND ?
+                                       "the shape dim of x2 must be at least 2 for ND format" :
+                                       "the shape dim of x2 must be at least 4 for NZ format";
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(args.opName, "x2", Ops::Base::ToString(x2StorageShape).c_str(),
+                                              reason.c_str());
         return ge::GRAPH_FAILED;
     }
     int64_t kDimsIndex = args.isATrans ? 0 : 1;
@@ -482,7 +534,9 @@ static ge::graphStatus GetShape(const gert::TilingContext& context, MatmulV3Args
         kRight = knDims[dimIndex];
     }
     if (k != kRight) {
-        OP_LOGE(args.opName, "unequal input kDim values: k_left[%ld], k_right[%ld]", k, kRight);
+        const std::string reason = "the k-axis of x2 must be equal to the k-axis of x1 (" + std::to_string(k) + ")";
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            args.opName, "x2", Ops::Base::ToString(context.GetInputShape(1)->GetOriginShape()).c_str(), reason.c_str());
         return ge::GRAPH_FAILED;
     }
     int64_t mDimsIndex = args.isATrans ? 1 : 0;
@@ -1465,7 +1519,8 @@ void MatmulV3BaseTiling::FormulateBasicBlockDavid()
         runInfo_.baseM = ops::CeilAlign(MathUtil::CeilDivision(args_.mValue, mCore), BASIC_BLOCK_SIZE_16);
         mCore = MathUtil::CeilDivision(args_.mValue, runInfo_.baseM);
         if (mCore == 0) {
-            OP_LOGE(args_.opName, "mCore is zero.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(args_.opName, "mCore", std::to_string(mCore).c_str(),
+                                                  "the value of mCore must be greater than 0");
             return;
         }
         nCore = runInfo_.usedCoreNum / mCore;
@@ -1474,7 +1529,8 @@ void MatmulV3BaseTiling::FormulateBasicBlockDavid()
         runInfo_.baseN = ops::CeilAlign(MathUtil::CeilDivision(args_.nValue, nCore), BASIC_BLOCK_SIZE_16);
         nCore = MathUtil::CeilDivision(args_.nValue, runInfo_.baseN);
         if (nCore == 0) {
-            OP_LOGE(args_.opName, "nCore is zero.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(args_.opName, "nCore", std::to_string(nCore).c_str(),
+                                                  "the value of nCore must be greater than 0");
             return;
         }
         mCore = runInfo_.usedCoreNum / nCore;
@@ -1489,7 +1545,8 @@ void MatmulV3BaseTiling::CalcTailBasicBlock()
     uint64_t mCnt = MathUtil::CeilDivision(args_.mValue, runInfo_.baseM);
     uint64_t nCnt = MathUtil::CeilDivision(args_.nValue, runInfo_.baseN);
     if (compileInfo_.aicNum == 0) {
-        OP_LOGE(args_.opName, "aicNum is zero.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(args_.opName, "aicNum", std::to_string(compileInfo_.aicNum).c_str(),
+                                              "the value of aicNum must be greater than 0");
         return;
     }
     uint64_t tailCnt = mCnt * nCnt % compileInfo_.aicNum;

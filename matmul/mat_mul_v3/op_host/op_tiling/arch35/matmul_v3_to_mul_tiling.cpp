@@ -68,13 +68,22 @@ ge::graphStatus MatMulV3ToMulTiling::DoOpTiling()
         baseK = (ubCount - baseMN - biasCount) / NUM_FIVE / baseMN;
     } else { // (m, k) || (n, k)
         biasCount = args_.hasBias ? tmpMN : 0;
-        OP_CHECK_IF(tmpMN == 0, OP_LOGE(args_.opName, "tmpMN is 0"), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(tmpMN == 0,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(args_.opName, "tmpMN", std::to_string(tmpMN).c_str(),
+                                                          "the value of tmpMN must be greater than 0"),
+                    return ge::GRAPH_FAILED);
         uint64_t tmpK = ubCount <= (tmpMN + biasCount) ? 0 : (ubCount - tmpMN - biasCount) / NUM_FIVE / tmpMN;
         baseK = std::max(ops::FloorAlign(tmpK, ALIGN_NUM), BASE_K);
         biasCount = args_.hasBias ? 1 : 0;
         baseMN = std::min(tmpMN, ubCount / (NUM_FIVE * baseK + biasCount + 1));
     }
-    OP_CHECK_IF(baseMN == 0 || baseK == 0, OP_LOGE(args_.opName, "baseMN/baseK is 0, ubSize:%lu", compileInfo_.ubSize),
+    OP_CHECK_IF(baseMN == 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(args_.opName, "baseMN", std::to_string(baseMN).c_str(),
+                                                      "the value of baseMN must be greater than 0"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(baseK == 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(args_.opName, "baseK", std::to_string(baseK).c_str(),
+                                                      "the value of baseK must be greater than 0"),
                 return ge::GRAPH_FAILED);
     // 尾核需要处理的MN方向个数
     uint64_t tailMN = shapeMN % baseMN;

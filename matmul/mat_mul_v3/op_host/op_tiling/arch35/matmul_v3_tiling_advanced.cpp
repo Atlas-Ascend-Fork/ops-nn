@@ -120,22 +120,48 @@ ge::graphStatus MatMulV3Tiling::InitContext()
 ge::graphStatus MatMulV3Tiling::ValidateInputsNotNull()
 {
     auto attrs = context_->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_TILING_CHECK(attrs == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "attrs", "the attrs must not be null"),
+                    return ge::GRAPH_FAILED);
     size_t idx = 0;
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs->GetAttrPointer<bool>(idx));
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(idx));
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(idx));
+    OP_TILING_CHECK(attrs->GetAttrPointer<bool>(idx) == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "transpose_x1",
+                                                             "the attr transpose_x1 must not be null"),
+                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(context_->GetInputDesc(idx) == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "x1", "the input desc must not be null"),
+                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(context_->GetInputShape(idx) == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "x1", "the input shape must not be null"),
+                    return ge::GRAPH_FAILED);
     idx++;
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs->GetAttrPointer<bool>(idx));
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(idx));
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(idx));
+    OP_TILING_CHECK(attrs->GetAttrPointer<bool>(idx) == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "transpose_x2",
+                                                             "the attr transpose_x2 must not be null"),
+                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(context_->GetInputDesc(idx) == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "x2", "the input desc must not be null"),
+                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(context_->GetInputShape(idx) == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "x2", "the input shape must not be null"),
+                    return ge::GRAPH_FAILED);
     idx++;
     if (attrs->GetAttrNum() >= HF32_ATTR_NUM) {
-        OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs->GetAttrPointer<int64_t>(HF32_ATTR_INDEX - 1));
-        OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs->GetAttrPointer<bool>(HF32_ATTR_INDEX));
+        OP_TILING_CHECK(attrs->GetAttrPointer<int64_t>(HF32_ATTR_INDEX - 1) == nullptr,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "cube_math_type",
+                                                                 "the attr cube_math_type must not be null"),
+                        return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(
+            attrs->GetAttrPointer<bool>(HF32_ATTR_INDEX) == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "hf32", "the attr hf32 must not be null"),
+            return ge::GRAPH_FAILED);
     }
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOutputDesc(0));
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOutputShape(0));
+    OP_TILING_CHECK(context_->GetOutputDesc(0) == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "y", "the output desc must not be null"),
+                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(context_->GetOutputShape(0) == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "y", "the output shape must not be null"),
+                    return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -143,7 +169,10 @@ ge::graphStatus MatMulV3Tiling::ValidateInputsNotNull()
 ge::graphStatus MatMulV3Tiling::DetectOptionalInputs()
 {
     if (context_->GetOptionalInputDesc(BIAS_IDX) != nullptr) {
-        OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOptionalInputShape(BIAS_IDX));
+        OP_TILING_CHECK(
+            context_->GetOptionalInputShape(BIAS_IDX) == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "bias", "the bias shape must not be null"),
+            return ge::GRAPH_FAILED);
         args_.hasBias = true;
     }
     return ge::GRAPH_SUCCESS;
@@ -412,7 +441,10 @@ ge::graphStatus MatMulV3Tiling::DoTiling()
         return ge::GRAPH_FAILED;
     }
     MatMulTilingCfg tilingCfg(false, context_->GetCompileInfo(), reinterpret_cast<void*>(&args_), GetTilingKeyObj());
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, tilingCfg.compileInfo);
+    OP_TILING_CHECK(
+        tilingCfg.compileInfo == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(args_.opName, "compileInfo", "the compile info must not be null"),
+        return ge::GRAPH_FAILED);
     NpuArch npuArch = reinterpret_cast<const MatmulV3CompileInfo*>(tilingCfg.compileInfo)->npuArch;
     MMRegisterCfg registerCfg{GetRegistryOpType(), npuArch, GetRegistryPriorities(npuArch)};
     return MMTilingRegistry::GetInstance().DoTilingImpl(context_, tilingCfg, registerCfg);

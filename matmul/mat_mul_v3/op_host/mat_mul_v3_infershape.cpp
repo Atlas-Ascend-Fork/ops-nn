@@ -82,10 +82,13 @@ bool UpdateOutputShapeByBias(const std::string& op_name, gert::Shape* shape_out,
         UpdateUnknownDimNumToUnknownRank(shape_bias_new);
         int64_t bias_dim = shape_bias_new.GetDimNum();
         if (shape_bias_new.GetDim(bias_dim - 1) != UNKNOWN_DIM && shape_out->GetDim(1) != UNKNOWN_DIM) {
-            OP_CHECK_IF(shape_bias_new.GetDim(bias_dim - 1) != shape_out->GetDim(1),
-                        OP_LOGE(op_name, "The dimension of n [%ld] and bias [%ld] tensors must be the same",
-                                shape_out->GetDim(1), shape_bias_new.GetDim(bias_dim - 1)),
-                        return false);
+            if (shape_bias_new.GetDim(bias_dim - 1) != shape_out->GetDim(1)) {
+                const std::string reason = "the last dimension of bias must be equal to n (" +
+                                           std::to_string(shape_out->GetDim(1)) + ")";
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(op_name, "bias", Ops::Base::ToString(shape_bias_new).c_str(),
+                                                      reason.c_str());
+                return false;
+            }
         }
         if (shape_bias_new.GetDim(bias_dim - 1) != UNKNOWN_DIM && shape_out->GetDim(1) == UNKNOWN_DIM) {
             shape_out->SetDim(1, shape_bias_new.GetDim(bias_dim - 1));
@@ -140,9 +143,14 @@ static ge::graphStatus InferShapeForMatMulV3(InferShapeContext* context)
         if (input_size != nullptr && hidden_size != nullptr && *input_size > 0 && *hidden_size > 0) {
             OP_LOGD(op_name, "get private attr, input_size: %ld, hidden_size: %ld", *input_size, *hidden_size);
             shape_x2_new.SetDim(1, shape_x1_new.GetDim(1));
-            OP_CHECK_IF(*input_size > std::numeric_limits<int64_t>::max() - BLOCK_SIZE + 1,
-                        OP_LOGE(op_name, "input_size %ld is too large and will cause overflow of int64.", *input_size),
-                        return ge::GRAPH_FAILED);
+            if (*input_size > std::numeric_limits<int64_t>::max() - BLOCK_SIZE + 1) {
+                const std::string reason = "the value must not exceed " +
+                                           std::to_string(std::numeric_limits<int64_t>::max() - BLOCK_SIZE + 1) +
+                                           " to avoid int64 overflow";
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(op_name, "input_size", std::to_string(*input_size).c_str(),
+                                                      reason.c_str());
+                return ge::GRAPH_FAILED;
+            }
             int64_t align_dim = (*input_size + BLOCK_SIZE - 1) / BLOCK_SIZE * BLOCK_SIZE +
                                 (*hidden_size + BLOCK_SIZE - 1) / BLOCK_SIZE * BLOCK_SIZE;
             shape_x2_new.SetDim(0, align_dim);
