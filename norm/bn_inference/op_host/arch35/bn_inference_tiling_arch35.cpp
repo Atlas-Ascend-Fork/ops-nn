@@ -196,7 +196,8 @@ ge::graphStatus BNInferenceTiling::GetPlatformInfo()
         return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         vectorLength_ % FP32_BYTES != 0,
-        OP_LOGE(context_, "BNInference: vector length %" PRId64 " is not divisible by fp32 bytes", vectorLength_),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "x", std::to_string(vectorLength_).c_str(),
+                                              "The vector length of x must be divisible by 4"),
         return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

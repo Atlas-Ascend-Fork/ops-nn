@@ -67,7 +67,8 @@ ge::graphStatus FakeQuantWithMinMaxArgsTiling::GetOpParam()
         totalLen_ *= shape.GetDim(i);
     }
     if (totalLen_ < 0) {
-        OP_LOGE(context_->GetNodeName(), "Invalid input shape, total len %ld.", totalLen_);
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context_->GetNodeName(), "x", std::to_string(totalLen_).c_str(),
+                                                  "The shape size of x must be non-negative");
         return ge::GRAPH_FAILED;
     }
 
@@ -75,7 +76,7 @@ ge::graphStatus FakeQuantWithMinMaxArgsTiling::GetOpParam()
     auto xDesc = context_->GetInputDesc(INPUT_X_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
     OP_CHECK_IF((xDesc->GetDataType() != ge::DT_FLOAT),
-                OP_LOGE(context_->GetNodeName(), "FakeQuantWithMinMaxArgs only supports float32 input."),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", "not FLOAT32", "FLOAT"),
                 return ge::GRAPH_FAILED);
 
     // Attrs.
@@ -93,8 +94,9 @@ ge::graphStatus FakeQuantWithMinMaxArgsTiling::GetOpParam()
     narrowRange_ = (attrNarrowRange != nullptr) ? *attrNarrowRange : false;
 
     OP_CHECK_IF((std::isnan(fMin_) || std::isnan(fMax_) || std::isinf(fMin_) || std::isinf(fMax_)),
-                OP_LOGE(context_->GetNodeName(), "FakeQuantWithMinMaxArgs requires finite min/max, got min=%f max=%f.",
-                        fMin_, fMax_),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "min/max",
+                                                      (std::to_string(fMin_) + ", " + std::to_string(fMax_)).c_str(),
+                                                      "The values of min/max must be finite"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF((fMin_ >= fMax_),
                 OP_LOGE(context_->GetNodeName(), "FakeQuantWithMinMaxArgs requires min < max, got min=%f max=%f.",
@@ -110,7 +112,8 @@ ge::graphStatus FakeQuantWithMinMaxArgsTiling::GetOpParam()
         return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         (numBits_ < 2 || numBits_ > 16),
-        OP_LOGE(context_->GetNodeName(), "FakeQuantWithMinMaxArgs num_bits must be in [2,16], got %ld.", numBits_),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "num_bits", std::to_string(numBits_).c_str(),
+                                              "The value of num_bits must be in [2, 16]"),
         return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;

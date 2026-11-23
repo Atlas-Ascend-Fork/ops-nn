@@ -60,8 +60,11 @@ static ge::graphStatus ValidateInputs(gert::TilingContext* context, int64_t N, i
 
     // x 维度 1D~8D
     int32_t xDimNum = static_cast<int32_t>(xInput->GetStorageShape().GetDimNum());
-    OP_CHECK_IF(xDimNum < 1 || xDimNum > MAX_DIMS, OP_LOGE(context, "x dimNum=%d not in [1, %d]", xDimNum, MAX_DIMS),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        xDimNum < 1 || xDimNum > MAX_DIMS,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xDimNum).c_str(),
+                                                 "The rank of x must be in [1, " + std::to_string(MAX_DIMS) + "]"),
+        return ge::GRAPH_FAILED);
 
     // updates.shape[0] == indices.shape[0] (M)
     int64_t updatesM = updatesInput->GetStorageShape().GetDim(0);
@@ -70,14 +73,19 @@ static ge::graphStatus ValidateInputs(gert::TilingContext* context, int64_t N, i
 
     // updates.shape[1:] == x.shape[1:]
     int32_t updatesDimNum = static_cast<int32_t>(updatesInput->GetStorageShape().GetDimNum());
-    OP_CHECK_IF(updatesDimNum != xDimNum, OP_LOGE(context, "updates dimNum=%d != x dimNum=%d", updatesDimNum, xDimNum),
+    OP_CHECK_IF(updatesDimNum != xDimNum,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x, updates",
+                                                         std::to_string(updatesDimNum).c_str(),
+                                                         "The rank of updates must equal the rank of x"),
                 return ge::GRAPH_FAILED);
     for (int32_t i = 1; i < xDimNum; i++) {
         int64_t xDim = xInput->GetStorageShape().GetDim(i);
         int64_t updatesDim = updatesInput->GetStorageShape().GetDim(i);
-        OP_CHECK_IF(xDim != updatesDim,
-                    OP_LOGE(context, "updates.shape[%d]=%ld != x.shape[%d]=%ld", i, updatesDim, i, xDim),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            xDim != updatesDim,
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "updates", std::to_string(updatesDim).c_str(),
+                                                  "Each dim of updates must equal the corresponding dim of x"),
+            return ge::GRAPH_FAILED);
     }
     (void)D;
     (void)N;
@@ -89,11 +97,17 @@ static ge::graphStatus ValidateInputs(gert::TilingContext* context, int64_t N, i
     OP_CHECK_NULL_WITH_CONTEXT(context, indicesDesc);
     const auto* updatesDesc = context->GetInputDesc(2);
     OP_CHECK_NULL_WITH_CONTEXT(context, updatesDesc);
-    OP_CHECK_IF(xDesc->GetDataType() != ge::DT_FLOAT, OP_LOGE(context, "x.dtype must be DT_FLOAT"),
+    OP_CHECK_IF(xDesc->GetDataType() != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x",
+                                                      Ops::Base::ToString(xDesc->GetDataType()).c_str(), "FLOAT"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(indicesDesc->GetDataType() != ge::DT_INT32, OP_LOGE(context, "indices.dtype must be DT_INT32"),
+    OP_CHECK_IF(indicesDesc->GetDataType() != ge::DT_INT32,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "indices",
+                                                      Ops::Base::ToString(indicesDesc->GetDataType()).c_str(), "INT32"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(updatesDesc->GetDataType() != ge::DT_FLOAT, OP_LOGE(context, "updates.dtype must be DT_FLOAT"),
+    OP_CHECK_IF(updatesDesc->GetDataType() != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "updates",
+                                                      Ops::Base::ToString(updatesDesc->GetDataType()).c_str(), "FLOAT"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -141,7 +155,9 @@ static ge::graphStatus ScatterMaxWithArgmaxTilingFunc(gert::TilingContext* conte
     int64_t N = xShape.GetDimNum() > 0 ? xShape.GetDim(0) : 0;
     int64_t M = indicesInput->GetStorageShape().GetShapeSize();
     OP_CHECK_IF(M < 0 || M > static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
-                OP_LOGE(context, "indices element count M=%ld is outside [0, INT32_MAX]", M), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "indices", std::to_string(M).c_str(),
+                                                          "The element count of indices must be in [0, INT32_MAX]"),
+                return ge::GRAPH_FAILED);
     int64_t D = 1;
     for (size_t i = 1; i < xShape.GetDimNum(); i++) {
         D *= xShape.GetDim(i);

@@ -273,13 +273,13 @@ ge::graphStatus BNInferGradTiling::ValidateInputTensorDescs(ge::DataType (&input
         inputDtypes[0] != ge::DT_FLOAT16 && inputDtypes[0] != ge::DT_FLOAT && inputDtypes[0] != ge::DT_BF16,
         OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: grads dtype %d is not supported", static_cast<int>(inputDtypes[0])),
         return ge::GRAPH_FAILED);
-    OP_CHECK_IF(
-        inputDtypes[1] != ge::DT_FLOAT,
-        OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: scale dtype %d must be DT_FLOAT", static_cast<int>(inputDtypes[1])),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(inputDtypes[1] != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_->GetNodeName(), "scale",
+                                                      Ops::Base::ToString(inputDtypes[1]).c_str(), "FLOAT"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(inputDtypes[2] != ge::DT_FLOAT,
-                OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: batch_variance dtype %d must be DT_FLOAT",
-                        static_cast<int>(inputDtypes[2])),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_->GetNodeName(), "batch_variance",
+                                                      Ops::Base::ToString(inputDtypes[2]).c_str(), "FLOAT"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -290,8 +290,9 @@ ge::graphStatus BNInferGradTiling::ValidateOutputTensorDesc(ge::DataType gradsDt
     OP_CHECK_NULL_WITH_CONTEXT(ctx_, outputDesc);
     (void)gradsFormat;
     OP_CHECK_IF(outputDesc->GetDataType() != gradsDtype,
-                OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: x_backprop dtype %d must equal grads dtype %d",
-                        static_cast<int>(outputDesc->GetDataType()), static_cast<int>(gradsDtype)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(ctx_->GetNodeName(), "grads, x_backprop",
+                                                       Ops::Base::ToString(outputDesc->GetDataType()).c_str(),
+                                                       "The dtype of x_backprop must match the dtype of grads"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -321,17 +322,20 @@ ge::graphStatus BNInferGradTiling::GetShapeInfo()
     OP_CHECK_NULL_WITH_CONTEXT(ctx_, gradsShapePtr);
     gert::Shape gradsShape = gradsShapePtr->GetStorageShape();
     int64_t grads_rank = (int64_t)gradsShape.GetDimNum();
-    OP_CHECK_IF(grads_rank < 2 || grads_rank > 5,
-                OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: grads rank %ld out of [2,5]", grads_rank),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        grads_rank < 2 || grads_rank > 5,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_->GetNodeName(), "grads", std::to_string(grads_rank).c_str(),
+                                                 "The rank of grads must be in [2, 5]"),
+        return ge::GRAPH_FAILED);
 
     std::vector<int64_t> grads_dims;
     for (int64_t d = 0; d < grads_rank; d++) {
         const int64_t dim = gradsShape.GetDim(d);
-        OP_CHECK_IF(
-            dim < 0 || dim > kMaxDimSize,
-            OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: grads dim %ld value %ld out of [0,%ld]", d, dim, kMaxDimSize),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(dim < 0 || dim > kMaxDimSize,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        ctx_->GetNodeName(), "grads", std::to_string(dim).c_str(),
+                        "Each dim of grads must be in [0, " + std::to_string(kMaxDimSize) + "]"),
+                    return ge::GRAPH_FAILED);
         grads_dims.push_back(dim);
     }
 
@@ -361,25 +365,28 @@ ge::graphStatus BNInferGradTiling::GetShapeInfo()
     const gert::Shape scaleShape = scalePtr->GetStorageShape();
     const gert::Shape varianceShape = variancePtr->GetStorageShape();
     OP_CHECK_IF(scaleShape.GetDimNum() != 1,
-                OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: scale must be rank 1, got rank %zu", scaleShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_->GetNodeName(), "scale",
+                                                         std::to_string(scaleShape.GetDimNum()).c_str(),
+                                                         "The rank of scale must be 1"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(varianceShape.GetDimNum() != 1,
-                OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: batch_variance must be rank 1, got rank %zu",
-                        varianceShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_->GetNodeName(), "batch_variance",
+                                                         std::to_string(varianceShape.GetDimNum()).c_str(),
+                                                         "The rank of batch_variance must be 1"),
                 return ge::GRAPH_FAILED);
 
     const int64_t gradsChannels = grads_dims[channelAxis];
     const int64_t scaleChannels = scaleShape.GetDim(0);
     const int64_t varianceChannels = varianceShape.GetDim(0);
-    OP_CHECK_IF(scaleChannels < 0 || scaleChannels > kMaxDimSize || scaleChannels != gradsChannels,
-                OP_LOGE(ctx_->GetNodeName(),
-                        "BNInferGrad: scale length %ld must be in [0,%ld] and equal grads channel count %ld",
-                        scaleChannels, kMaxDimSize, gradsChannels),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        scaleChannels < 0 || scaleChannels > kMaxDimSize || scaleChannels != gradsChannels,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_->GetNodeName(), "scale", std::to_string(scaleChannels).c_str(),
+                                              "The length of scale must equal the channel count of grads"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(varianceChannels < 0 || varianceChannels > kMaxDimSize || varianceChannels != gradsChannels,
-                OP_LOGE(ctx_->GetNodeName(),
-                        "BNInferGrad: batch_variance length %ld must be in [0,%ld] and equal grads channel count %ld",
-                        varianceChannels, kMaxDimSize, gradsChannels),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ctx_->GetNodeName(), "batch_variance", std::to_string(varianceChannels).c_str(),
+                    "The length of batch_variance must equal the channel count of grads"),
                 return ge::GRAPH_FAILED);
 
     std::vector<int64_t> scale_dims = makeChannelShape(scaleChannels);
@@ -395,19 +402,22 @@ ge::graphStatus BNInferGradTiling::GetShapeInfo()
     OP_CHECK_NULL_WITH_CONTEXT(ctx_, outShapePtr);
     gert::Shape outShape = outShapePtr->GetStorageShape();
     OP_CHECK_IF(outShape.GetDimNum() != gradsShape.GetDimNum(),
-                OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: x_backprop rank %zu must equal grads rank %zu",
-                        outShape.GetDimNum(), gradsShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_->GetNodeName(), "grads, x_backprop",
+                                                         std::to_string(outShape.GetDimNum()).c_str(),
+                                                         "The rank of x_backprop must equal the rank of grads"),
                 return ge::GRAPH_FAILED);
     for (size_t d = 0; d < gradsShape.GetDimNum(); ++d) {
         const int64_t outDim = outShape.GetDim(d);
         OP_CHECK_IF(outDim < 0 || outDim > kMaxDimSize,
-                    OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: x_backprop dim %zu value %ld out of [0,%ld]", d, outDim,
-                            kMaxDimSize),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        ctx_->GetNodeName(), "x_backprop", std::to_string(outDim).c_str(),
+                        "Each dim of x_backprop must be in [0, " + std::to_string(kMaxDimSize) + "]"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(outDim != gradsShape.GetDim(d),
-                    OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: x_backprop dim %zu value %ld must equal grads value %ld",
-                            d, outDim, gradsShape.GetDim(d)),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            outDim != gradsShape.GetDim(d),
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_->GetNodeName(), "x_backprop", std::to_string(outDim).c_str(),
+                                                  "Each dim of x_backprop must equal the corresponding dim of grads"),
+            return ge::GRAPH_FAILED);
     }
     std::vector<int64_t> out_dims;
     for (size_t d = 0; d < outShape.GetDimNum(); d++)
@@ -430,7 +440,8 @@ ge::graphStatus BNInferGradTiling::GetShapeInfo()
     else if (dtype == ge::DT_BF16)
         dtype_size_ = 4; // 强制按 FP32 分配
     else {
-        OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: unsupported dtype %d", (int)dtype);
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_->GetNodeName(), "grads", Ops::Base::ToString(dtype).c_str(),
+                                              "FLOAT16, FLOAT or BF16");
         return ge::GRAPH_FAILED;
     }
 
@@ -442,7 +453,8 @@ ge::graphStatus BNInferGradTiling::GetShapeInfo()
     // 必须显式拒绝非有限值：NaN <= 0 与 +inf <= 0 均为 false，仅比较大小会放行
     // NaN/+inf，随后进入 tiling/kernel 产生 NaN/Inf 输出。
     OP_CHECK_IF(!std::isfinite(epsilon_) || epsilon_ <= 0.0f,
-                OP_LOGE(ctx_->GetNodeName(), "BNInferGrad: epsilon %f must be finite and greater than 0", epsilon_),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_->GetNodeName(), "epsilon", std::to_string(epsilon_).c_str(),
+                                                      "The value of epsilon must be finite and greater than 0"),
                 return ge::GRAPH_FAILED);
 
     // 归一化：去 size-1 维 + 前补 1

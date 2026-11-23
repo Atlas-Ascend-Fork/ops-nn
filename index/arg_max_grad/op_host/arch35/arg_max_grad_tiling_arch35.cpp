@@ -205,10 +205,11 @@ ge::graphStatus ArgMaxGradTiling::CheckAttrAndSplitLayout()
     if (dimension < 0) {
         dimension += static_cast<int64_t>(rank);
     }
-    OP_CHECK_IF(
-        (dimension < 0 || dimension >= static_cast<int64_t>(rank)),
-        OP_LOGE(context_->GetNodeName(), "dimension %ld is out of range [-%zu, %zu)", *dimensionPtr, rank, rank),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((dimension < 0 || dimension >= static_cast<int64_t>(rank)),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "dimension", std::to_string(*dimensionPtr).c_str(),
+                    "The value of dimension must be in [-" + std::to_string(rank) + ", " + std::to_string(rank) + ")"),
+                return ge::GRAPH_FAILED);
 
     // 与 A2 IsArgMaxGradCheckPass 对齐: indices 逐维等于 var 去掉 dimension 轴后的形状。
     // rank 关系已在 CheckShape 校验, 此处只处理 rank(var)>1(rank(var)==1 时 indices 只有 (1,), 由元素数校验覆盖)。

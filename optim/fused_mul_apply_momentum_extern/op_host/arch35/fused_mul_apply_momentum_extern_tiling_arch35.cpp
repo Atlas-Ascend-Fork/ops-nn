@@ -76,7 +76,8 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
 
     OP_CHECK_IF(varShape->GetStorageShape().GetDimNum() == 0 || accumShape->GetStorageShape().GetDimNum() == 0 ||
                     x1Shape->GetStorageShape().GetDimNum() == 0 || varCopyShape->GetStorageShape().GetDimNum() == 0,
-                OP_LOGE(context, "FusedMulApplyMomentumExtern: 0D scalar not supported, use [1] instead"),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "var, accum, x1, var_copy", "0D",
+                                                      "0D scalar is not supported, use [1] instead"),
                 return ge::GRAPH_FAILED);
 
     int64_t varSize = varShape->GetStorageShape().GetShapeSize();
@@ -85,16 +86,16 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     int64_t varCopySize = varCopyShape->GetStorageShape().GetShapeSize();
     // var/accum/x1/var_copy 四张量必须同 shape（逐元素运算，张量间无 broadcast）
     OP_CHECK_IF(accumSize != varSize || x1Size != varSize || varCopySize != varSize,
-                OP_LOGE(context,
-                        "FusedMulApplyMomentumExtern: var/accum/x1/var_copy shape size mismatch: "
-                        "var=%ld accum=%ld x1=%ld var_copy=%ld",
-                        varSize, accumSize, x1Size, varCopySize),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "var, accum, x1, var_copy",
+                                                          std::to_string(varSize).c_str(),
+                                                          "The shape size of var/accum/x1/var_copy must be equal"),
                 return ge::GRAPH_FAILED);
     *dim0 = varSize;
 
     OP_CHECK_IF(varShape->GetStorageShape().GetDimNum() > 8,
-                OP_LOGE(context, "FusedMulApplyMomentumExtern: rank %zu exceeds max 8",
-                        varShape->GetStorageShape().GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "var", std::to_string(varShape->GetStorageShape().GetDimNum()).c_str(),
+                    "The rank of var must be <= 8"),
                 return ge::GRAPH_FAILED);
 
     // lr/momentum/x2 必须同 shape；允许 0D/多元素/动态，
@@ -107,15 +108,15 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         OP_CHECK_NULL_WITH_CONTEXT(context, scalarShape);
         const auto& storage = scalarShape->GetStorageShape();
         OP_CHECK_IF(storage.GetShapeSize() == 0,
-                    OP_LOGE(context, "FusedMulApplyMomentumExtern: %s must not be an empty scalar, got %s",
-                            scalarNames[i], Ops::Base::ToString(storage).c_str()),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), scalarNames[i], "0",
+                                                              "The scalar must not be empty"),
                     return ge::GRAPH_FAILED);
         scalarShapes[i] = &storage;
     }
     OP_CHECK_IF(*scalarShapes[0] != *scalarShapes[1] || *scalarShapes[0] != *scalarShapes[2],
-                OP_LOGE(context, "FusedMulApplyMomentumExtern: lr/momentum/x2 shapes must be equal, got %s, %s, %s",
-                        Ops::Base::ToString(*scalarShapes[0]).c_str(), Ops::Base::ToString(*scalarShapes[1]).c_str(),
-                        Ops::Base::ToString(*scalarShapes[2]).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "lr, momentum, x2",
+                                                       Ops::Base::ToString(*scalarShapes[0]).c_str(),
+                                                       "The shapes of lr/momentum/x2 must be equal"),
                 return ge::GRAPH_FAILED);
 
     // dtype 校验：var 恒 FP32；accum/lr/x1/momentum/x2 须同 dtype（FP32/FP16）；
@@ -125,20 +126,21 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     ge::DataType varDtype = varDesc->GetDataType();
     const std::set<ge::DataType> supportedDtype = {ge::DT_FLOAT, ge::DT_FLOAT16};
     OP_CHECK_IF(supportedDtype.count(varDtype) == 0,
-                OP_LOGE(context, "FusedMulApplyMomentumExtern: var dtype %d not supported", static_cast<int>(varDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "var",
+                                                      Ops::Base::ToString(varDtype).c_str(), "FLOAT or FLOAT16"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(
-        varDtype != ge::DT_FLOAT,
-        OP_LOGE(context, "FusedMulApplyMomentumExtern: var must be FP32, got dtype %d", static_cast<int>(varDtype)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(varDtype != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "var",
+                                                      Ops::Base::ToString(varDtype).c_str(), "FLOAT"),
+                return ge::GRAPH_FAILED);
 
     auto accumDesc = context->GetInputDesc(IDX_ACCUM);
     OP_CHECK_NULL_WITH_CONTEXT(context, accumDesc);
     ge::DataType accumDtype = accumDesc->GetDataType();
-    OP_CHECK_IF(
-        supportedDtype.count(accumDtype) == 0,
-        OP_LOGE(context, "FusedMulApplyMomentumExtern: accum dtype %d not supported", static_cast<int>(accumDtype)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(supportedDtype.count(accumDtype) == 0,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "accum",
+                                                      Ops::Base::ToString(accumDtype).c_str(), "FLOAT or FLOAT16"),
+                return ge::GRAPH_FAILED);
 
     const char* sameDtypeInputs[] = {"lr", "x1", "momentum", "x2"};
     constexpr size_t sameDtypeIndices[] = {2, 3, 4, 5};
@@ -147,22 +149,24 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         OP_CHECK_NULL_WITH_CONTEXT(context, desc);
         auto dt = desc->GetDataType();
         OP_CHECK_IF(supportedDtype.count(dt) == 0,
-                    OP_LOGE(context, "FusedMulApplyMomentumExtern: %s dtype %d not supported", sameDtypeInputs[i],
-                            static_cast<int32_t>(dt)),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), sameDtypeInputs[i],
+                                                          Ops::Base::ToString(dt).c_str(), "FLOAT or FLOAT16"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(dt != accumDtype,
-                    OP_LOGE(context, "FusedMulApplyMomentumExtern: %s dtype %d mismatch with accum dtype %d",
-                            sameDtypeInputs[i], static_cast<int32_t>(dt), static_cast<int32_t>(accumDtype)),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            dt != accumDtype,
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), "accum, " + std::string(sameDtypeInputs[i]), Ops::Base::ToString(dt).c_str(),
+                "The dtype of " + std::string(sameDtypeInputs[i]) + " must match the dtype of accum"),
+            return ge::GRAPH_FAILED);
     }
 
     auto varCopyDesc = context->GetInputDesc(IDX_VAR_COPY);
     OP_CHECK_NULL_WITH_CONTEXT(context, varCopyDesc);
     ge::DataType varCopyDtype = varCopyDesc->GetDataType();
-    OP_CHECK_IF(
-        varCopyDtype != ge::DT_FLOAT16,
-        OP_LOGE(context, "FusedMulApplyMomentumExtern: var_copy dtype %d must be FP16", static_cast<int>(varCopyDtype)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(varCopyDtype != ge::DT_FLOAT16,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "var_copy",
+                                                      Ops::Base::ToString(varCopyDtype).c_str(), "FLOAT16"),
+                return ge::GRAPH_FAILED);
 
     // 属性：use_nesterov（0=标准, 1=Nesterov，编译期特化 USE_NESTEROV 模板参数）；
     //       use_locking 读取但不参与 TilingKey/Data（无数值副作用）。

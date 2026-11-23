@@ -55,17 +55,17 @@ static ge::graphStatus InferShape4FusedMulApplyMomentumExtern(gert::InferShapeCo
 
     OP_CHECK_IF(varShape->GetDimNum() == 0 || accumShape->GetDimNum() == 0 || x1Shape->GetDimNum() == 0 ||
                     varCopyShape->GetDimNum() == 0,
-                OP_LOGE(context, "FusedMulApplyMomentumExtern: 0D scalar not supported, use [1] instead"),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "var, accum, x1, var_copy", "0D",
+                                                      "0D scalar is not supported, use [1] instead"),
                 return ge::GRAPH_FAILED);
 
     // var/accum/x1/var_copy 四张量必须同 shape（逐元素运算，张量间无 broadcast）
     int64_t varSize = varShape->GetShapeSize();
     OP_CHECK_IF(accumShape->GetShapeSize() != varSize || x1Shape->GetShapeSize() != varSize ||
                     varCopyShape->GetShapeSize() != varSize,
-                OP_LOGE(context,
-                        "FusedMulApplyMomentumExtern: var/accum/x1/var_copy shape size mismatch: "
-                        "var=%ld accum=%ld x1=%ld var_copy=%ld",
-                        varSize, accumShape->GetShapeSize(), x1Shape->GetShapeSize(), varCopyShape->GetShapeSize()),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "var, accum, x1, var_copy",
+                                                          std::to_string(varSize).c_str(),
+                                                          "The shape size of var/accum/x1/var_copy must be equal"),
                 return ge::GRAPH_FAILED);
 
     // lr/momentum/x2 必须同 shape；允许 0D/多元素/动态，

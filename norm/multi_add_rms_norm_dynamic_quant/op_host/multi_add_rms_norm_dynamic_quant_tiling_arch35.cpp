@@ -317,7 +317,8 @@ ge::graphStatus MultiAddRmsNormDynamicQuantRegbaseTiling::SetInputParams()
                 return ge::GRAPH_FAILED);
     int64_t x1Num = x1InstanceInfo->GetInstanceNum();
     OP_CHECK_IF((x1Num <= 0 || x1Num > static_cast<int64_t>(MAX_X1_NUM)),
-                OP_LOGE(nodeName.c_str(), "x1 must be a tensor list whose length is within [1, 5], got %ld.", x1Num),
+                OP_LOGE_FOR_INVALID_TENSORNUMS_WITH_REASON(nodeName.c_str(), "x1", std::to_string(x1Num).c_str(),
+                                                           "The tensor count of x1 must be in [1, 5]"),
                 return ge::GRAPH_FAILED);
     tilingParams.x1Num = static_cast<uint32_t>(x1Num);
     // Set input dim(必需输入 gamma 位于 x1 列表之后,按 x1Num 偏移)
@@ -402,19 +403,31 @@ ge::graphStatus MultiAddRmsNormDynamicQuantRegbaseTiling::GetShapeAttrsInfo()
                 return ge::GRAPH_FAILED);
     int64_t x1Num = x1InstanceInfo->GetInstanceNum();
     OP_CHECK_IF((x1Num <= 0 || x1Num > static_cast<int64_t>(MAX_X1_NUM)),
-                OP_LOGE(nodeName.c_str(), "x1 must be a tensor list whose length is within [1, 5], got %ld.", x1Num),
+                OP_LOGE_FOR_INVALID_TENSORNUMS_WITH_REASON(nodeName.c_str(), "x1", std::to_string(x1Num).c_str(),
+                                                           "The tensor count of x1 must be in [1, 5]"),
                 return ge::GRAPH_FAILED);
     tilingParams.x1Num = static_cast<uint32_t>(x1Num);
     OP_CHECK_IF(!CheckShapeNull(), OP_LOGE(nodeName.c_str(), "The not optional input is null."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckOptionalInput(), OP_LOGE(nodeName.c_str(), "The optional input is invalid."),
+    OP_CHECK_IF(!CheckOptionalInput(),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(nodeName.c_str(), "smooth_scale1",
+                                                         "smooth_scale1 is required when smooth_scale2 is set"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputShapeDim(), OP_LOGE(nodeName.c_str(), "The input shape dim is invalid."),
+    OP_CHECK_IF(!CheckInputShapeDim(),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName.c_str(), "x1", "invalid",
+                                                         "The rank of each tensor in x1 must be in [1, 8]"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputShapeValue(), OP_LOGE(nodeName.c_str(), "The input shape relationship is invalid."),
+    OP_CHECK_IF(!CheckInputShapeValue(),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(nodeName.c_str(), "x1, x2, gamma, y1, y", "",
+                                                       "The shapes of related inputs/outputs must be consistent"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputDtype(), OP_LOGE(nodeName.c_str(), "The input dtype is invalid."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckOutputDtype(), OP_LOGE(nodeName.c_str(), "The output dtype is invalid."),
+    OP_CHECK_IF(!CheckInputDtype(),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(nodeName.c_str(), "x1, x2, gamma", "",
+                                                       "The dtypes of inputs must be FLOAT16/BF16 and consistent"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!CheckOutputDtype(),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(nodeName.c_str(), "y1, y2, x, y, scale1, scale2", "",
+                                                       "The dtypes of outputs must follow the output contract"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(ge::GRAPH_SUCCESS != SetInputParams(), OP_LOGE(nodeName.c_str(), "Set input shape failed."),
                 return ge::GRAPH_FAILED);

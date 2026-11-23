@@ -66,7 +66,8 @@ ge::graphStatus CheckReduction(gert::TilingContext* context, const char* reducti
     std::transform(red.begin(), red.end(), red.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (red != "none") {
-        OP_LOGE(context->GetNodeName(), "attr reduction only supports none, got %s", reduction);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "reduction", reduction,
+                                              "The value of reduction must be none");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

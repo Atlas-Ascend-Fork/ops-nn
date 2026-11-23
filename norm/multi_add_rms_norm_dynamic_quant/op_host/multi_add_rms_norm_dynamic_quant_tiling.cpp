@@ -216,8 +216,11 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::GetBaseInfo()
     OP_CHECK_IF(epsPtr == nullptr, OP_LOGE(context_->GetNodeName(), "Epsilon is null, please check."), return false);
     this->eps_ = *epsPtr;
 
-    OP_CHECK_IF(this->eps_ <= 0, OP_LOGE(context_->GetNodeName(), "Epsilon less or equal than zero, please check."),
-                return false);
+    OP_CHECK_IF(
+        this->eps_ <= 0,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "epsilon", std::to_string(this->eps_).c_str(),
+                                              "The value of epsilon must be greater than zero"),
+        return false);
     OP_CHECK_IF((this->ubSize_ <= 0), OP_LOGE(context_->GetNodeName(), "ubSize less or equal than zero, please check."),
                 return false);
     OP_CHECK_IF((this->socCoreNums_ <= 0),
@@ -237,7 +240,9 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::GetShapeInfo()
     int64_t x1Num = x1InstanceInfo->GetInstanceNum();
     OP_LOGI("GetShapeInfo", "x1Num: %lu", x1Num);
     OP_CHECK_IF((x1Num <= 0 || x1Num > 5),
-                OP_LOGE(context_->GetNodeName(), "x1 must be a tensor list that's length within [1, 5]"), return false);
+                OP_LOGE_FOR_INVALID_TENSORNUMS_WITH_REASON(context_->GetNodeName(), "x1", std::to_string(x1Num).c_str(),
+                                                           "The tensor count of x1 must be in [1, 5]"),
+                return false);
     // record x1 length
     this->x1Num_ = x1Num;
 
@@ -266,19 +271,33 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::GetShapeInfo()
 
     // check optional inputs
     OP_CHECK_IF((!smooth1Exist) && (smooth2Exist),
-                OP_LOGE(context_->GetNodeName(), "Smooth2 exist but smooth1 not exist, bad input."), return false);
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "smooth_scale1",
+                                                         "smooth_scale1 is required when smooth_scale2 is set"),
+                return false);
     OP_CHECK_IF((smooth1Exist && smooth1Shape->GetStorageShape() != gammaShape),
-                OP_LOGE(context_->GetNodeName(), "GammaShape is not same to smooth1Shape."), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context_->GetNodeName(), "gamma, smooth_scale1",
+                                                       Ops::Base::ToString(gammaShape).c_str(),
+                                                       "The shape of smooth_scale1 must match the shape of gamma"),
+                return false);
 
     auto smooth1DType = smooth1Exist ? context_->GetInputDesc(SMOOTH1_IDX)->GetDataType() : ge::DT_UNDEFINED;
     auto smooth2DType = smooth2Exist ? context_->GetInputDesc(SMOOTH2_IDX)->GetDataType() : ge::DT_UNDEFINED;
 
     OP_CHECK_IF((smooth1Exist && smooth1DType != gammaDType),
-                OP_LOGE(context_->GetNodeName(), "GammaDType is not same to smooth1DType."), return false);
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "gamma, smooth_scale1",
+                                                       Ops::Base::ToString(smooth1DType).c_str(),
+                                                       "The dtype of smooth_scale1 must match the dtype of gamma"),
+                return false);
     OP_CHECK_IF((smooth2Exist && smooth2Shape->GetStorageShape() != gammaShape),
-                OP_LOGE(context_->GetNodeName(), "GammaShape is not same to smooth2Shape."), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context_->GetNodeName(), "gamma, smooth_scale2",
+                                                       Ops::Base::ToString(gammaShape).c_str(),
+                                                       "The shape of smooth_scale2 must match the shape of gamma"),
+                return false);
     OP_CHECK_IF((smooth2Exist && smooth2DType != gammaDType),
-                OP_LOGE(context_->GetNodeName(), "GammaDType is not same to smooth2DType."), return false);
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "gamma, smooth_scale2",
+                                                       Ops::Base::ToString(smooth2DType).c_str(),
+                                                       "The dtype of smooth_scale2 must match the dtype of gamma"),
+                return false);
 
     // flatten x to [N, D], record numFirstDim_ / numLastDim_
     uint64_t numRow = 1;
@@ -305,8 +324,11 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::CheckInputOutputShape()
     auto xaShape = context_->GetDynamicInputShape(0, 0)->GetStorageShape();
     int64_t xaDimNum = xaShape.GetDimNum();
     OP_LOGI("GetShapeInfo", "xaDimNum: %lu", xaDimNum);
-    OP_CHECK_IF((xaDimNum < 1 || xaDimNum > 8),
-                OP_LOGE(this->context_->GetNodeName(), "Input xa shape dimnum must be within [1, 8]."), return false);
+    OP_CHECK_IF(
+        (xaDimNum < 1 || xaDimNum > 8),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(this->context_->GetNodeName(), "x1", std::to_string(xaDimNum).c_str(),
+                                                 "The rank of each tensor in x1 must be in [1, 8]"),
+        return false);
 
     // walk the rest of x1
     for (uint64_t i = 1; i < this->x1Num_; i++) {
@@ -315,10 +337,16 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::CheckInputOutputShape()
         int64_t xiDimNum = xiShape.GetDimNum();
         OP_LOGI("GetShapeInfo", "x%luDimNum: %lu", i, xaDimNum);
         OP_CHECK_IF((xaDimNum != xiDimNum),
-                    OP_LOGE(this->context_->GetNodeName(), "Input x1-0/x1-%lu shape dims not equal", i), return false);
+                    OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                        this->context_->GetNodeName(), "x1-0, x1-" + std::to_string(i),
+                        std::to_string(xiDimNum).c_str(), "The rank of each tensor in x1 must be equal"),
+                    return false);
 
         OP_CHECK_IF((xiShape != xaShape),
-                    OP_LOGE(this->context_->GetNodeName(), "Input x1-0/x1-%lu shape not equal", i), return false);
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        this->context_->GetNodeName(), "x1-0, x1-" + std::to_string(i),
+                        Ops::Base::ToString(xiShape).c_str(), "The shape of each tensor in x1 must be equal"),
+                    return false);
     }
 
     const gert::StorageShape* x2Shape = this->context_->GetInputShape(X2_IDX + this->x1Num_ - 1);
@@ -355,14 +383,18 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::CheckInputOutputShape()
             "y1.dim=%zu, y2.dim=%zu, x.dim=%zu, y.dim=%zu, scale1.dim=%zu, scale2.dim=%zu",
             xaDimNum, x2DimNum, gammaDimNum, y1DimNum, y2DimNum, xDimNum, yDimNum, scale1DimNum, scale2DimNum);
 
-    OP_CHECK_IF(((gammaDimNum != 1)),
-                OP_LOGE(this->context_->GetNodeName(), "gamma shape dims not equal to 1. Tiling failed."),
-                return false);
+    OP_CHECK_IF(
+        ((gammaDimNum != 1)),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(this->context_->GetNodeName(), "gamma",
+                                                 std::to_string(gammaDimNum).c_str(), "The rank of gamma must be 1"),
+        return false);
     // calc xa [N, D]
     int64_t xaDLastDim = xaShape.GetDim(xaDimNum - 1);
     OP_LOGI("CheckInputOutputShape", "xaDLastDim: %lld", xaDLastDim);
     OP_CHECK_IF((xaDLastDim != gammaShape->GetStorageShape().GetDim(0)),
-                OP_LOGE(context_->GetNodeName(), "gammaShape isn't consistent with the last dimension of x1."),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context_->GetNodeName(), "gamma, x1",
+                                                       std::to_string(gammaShape->GetStorageShape().GetDim(0)).c_str(),
+                                                       "The size of gamma must match the last dim of x1"),
                 return false);
     int64_t xaNFormerDimsMul = 1;
     for (int64_t j = 0; j < xaDimNum - 1; j++) {
@@ -371,9 +403,15 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::CheckInputOutputShape()
 
     // check if x1, x2, x shapes are consistent
     OP_CHECK_IF((xaShape != x2Shape->GetStorageShape()),
-                OP_LOGE(this->context_->GetNodeName(), "Input x1/x2 shape not equal"), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(this->context_->GetNodeName(), "x1, x2",
+                                                       Ops::Base::ToString(xaShape).c_str(),
+                                                       "The shape of x2 must match the shape of x1"),
+                return false);
     OP_CHECK_IF((xaShape != xShape->GetStorageShape()),
-                OP_LOGE(this->context_->GetNodeName(), "Output x shape not equal with that of x1"), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(this->context_->GetNodeName(), "x1, x",
+                                                       Ops::Base::ToString(xaShape).c_str(),
+                                                       "The shape of x must match the shape of x1"),
+                return false);
     // check if y1 shape is consistent with xa, to figure if has reshaped y
     bool reshapeFlag = false;
     OP_CHECK_IF((xaShape != y1Shape->GetStorageShape()),
@@ -381,29 +419,46 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::CheckInputOutputShape()
     // check if y1 shape is consistent with xa's [N, D]. N is considered 1 when x is 1 dim.
     OP_CHECK_IF((reshapeFlag && (y1DimNum != 2 || xaNFormerDimsMul != y1Shape->GetStorageShape().GetDim(0) ||
                                  xaDLastDim != y1Shape->GetStorageShape().GetDim(1))),
-                OP_LOGE(this->context_->GetNodeName(), "y1 shape is not consistent with xa's [N, D]"), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(this->context_->GetNodeName(), "x1, y1",
+                                                       Ops::Base::ToString(y1Shape->GetStorageShape()).c_str(),
+                                                       "The shape of y1 must be consistent with x1's [N, D]"),
+                return false);
     // check if y shape is consistent with y1
     OP_CHECK_IF((y1Shape->GetStorageShape() != yShape->GetStorageShape()),
-                OP_LOGE(this->context_->GetNodeName(), "Output y shape is not consistent with that of y1"),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(this->context_->GetNodeName(), "y1, y",
+                                                       Ops::Base::ToString(yShape->GetStorageShape()).c_str(),
+                                                       "The shape of y must match the shape of y1"),
                 return false);
 
     // check if scale1 is (1,) when xaDimNum == 1, if smoothScale1 exist
     OP_CHECK_IF((xaDimNum == 1 && this->smoothNum_ >= 1 &&
                  (1 != scale1DimNum || 1 != scale1Shape->GetStorageShape().GetDim(0))),
-                OP_LOGE(this->context_->GetNodeName(), "scale1 shape is not consistent with y1's N"), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(this->context_->GetNodeName(), "scale1, y1",
+                                                       Ops::Base::ToString(scale1Shape->GetStorageShape()).c_str(),
+                                                       "The shape of scale1 must be (1,) when x1 is 1-dim"),
+                return false);
     // else, check if scale1 shape is consistent with y1's N, if smoothScale1 exist
     for (int64_t j = 0; j < (int64_t)y1DimNum - 1; j++) {
         OP_CHECK_IF((xaDimNum > 1 && this->smoothNum_ >= 1 &&
                      (y1Shape->GetStorageShape().GetDim(j) != scale1Shape->GetStorageShape().GetDim(j))),
-                    OP_LOGE(this->context_->GetNodeName(), "scale1 shape is not consistent with y1's N"), return false);
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(this->context_->GetNodeName(), "scale1, y1",
+                                                           Ops::Base::ToString(scale1Shape->GetStorageShape()).c_str(),
+                                                           "The shape of scale1 must match the leading dims of y1"),
+                    return false);
     }
 
     // check y2 if smoothScale2 exist
     OP_CHECK_IF((this->smoothNum_ == 2 && y1Shape->GetStorageShape() != y2Shape->GetStorageShape()),
-                OP_LOGE(this->context_->GetNodeName(), "Output y1/y2 shape not equal"), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(this->context_->GetNodeName(), "y1, y2",
+                                                       Ops::Base::ToString(y2Shape->GetStorageShape()).c_str(),
+                                                       "The shape of y2 must match the shape of y1"),
+                return false);
     // check scale2 if smoothScale2 exist
     OP_CHECK_IF((this->smoothNum_ == 2 && scale1Shape->GetStorageShape() != scale2Shape->GetStorageShape()),
-                OP_LOGE(this->context_->GetNodeName(), "Output scale1/scales2 shape not equal"), return false);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(this->context_->GetNodeName(), "scale1, scale2",
+                                                       Ops::Base::ToString(scale2Shape->GetStorageShape()).c_str(),
+                                                       "The shape of scale2 must match the shape of scale1"),
+                return false);
     return true;
 }
 
@@ -413,8 +468,11 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::CheckInputOutputDType()
     OP_CHECK_NULL_WITH_CONTEXT(context_, xaInputDesc);
     auto xaDtype = xaInputDesc->GetDataType();
 
-    OP_CHECK_IF((xaDtype != ge::DT_FLOAT16 && xaDtype != ge::DT_BF16),
-                OP_LOGE(context_->GetNodeName(), "x1 must be float16 or bfloat16."), return false);
+    OP_CHECK_IF(
+        (xaDtype != ge::DT_FLOAT16 && xaDtype != ge::DT_BF16),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x1", Ops::Base::ToString(xaDtype).c_str(),
+                                              "The dtype of x1 must be FLOAT16 or BF16"),
+        return false);
 
     auto x2Desc = this->context_->GetInputDesc(X2_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, x2Desc);
@@ -444,37 +502,64 @@ bool MultiAddRmsNormDynamicQuantTilingHelper::CheckInputOutputDType()
 
     OP_CHECK_IF((x2Dtype == ge::DT_UNDEFINED || gammaDType == ge::DT_UNDEFINED || y1DType == ge::DT_UNDEFINED ||
                  xDType == ge::DT_UNDEFINED || yDType == ge::DT_UNDEFINED || scale1DType == ge::DT_UNDEFINED),
-                OP_LOGE(context_->GetNodeName(), "dtype error."), return false);
-    OP_CHECK_IF((this->smoothNum_ == 2 && (y2DType == ge::DT_UNDEFINED || scale2DType == ge::DT_UNDEFINED)),
-                OP_LOGE(context_->GetNodeName(), "dtype error."), return false);
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "x2, gamma, y1, x, y, scale1",
+                                                       "DT_UNDEFINED", "The dtype of each output must be set"),
+                return false);
+    OP_CHECK_IF(
+        (this->smoothNum_ == 2 && (y2DType == ge::DT_UNDEFINED || scale2DType == ge::DT_UNDEFINED)),
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "y2, scale2", "DT_UNDEFINED",
+                                               "The dtype of each output must be set when smooth_scale2 is set"),
+        return false);
 
     for (uint64_t i = 1; i < this->x1Num_; i++) {
         auto x1iInputDesc = context_->GetDynamicInputDesc(X1_IDX, i);
         OP_CHECK_NULL_WITH_CONTEXT(context_, x1iInputDesc);
         auto x1iDType = x1iInputDesc->GetDataType();
 
-        OP_CHECK_IF((xaDtype != x1iDType), OP_LOGE(context_->GetNodeName(), "x1 items' dtype do not consist."),
-                    return false);
+        OP_CHECK_IF(
+            (xaDtype != x1iDType),
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "x1", Ops::Base::ToString(x1iDType).c_str(),
+                                                   "The dtype of each tensor in x1 must be consistent"),
+            return false);
     }
-    OP_CHECK_IF((xaDtype != x2Dtype), OP_LOGE(this->context_->GetNodeName(), "x2DType is not same to x1DType."),
+    OP_CHECK_IF((xaDtype != x2Dtype),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(this->context_->GetNodeName(), "x1, x2",
+                                                       Ops::Base::ToString(x2Dtype).c_str(),
+                                                       "The dtype of x2 must match the dtype of x1"),
                 return false);
-    OP_CHECK_IF((xaDtype != gammaDType), OP_LOGE(this->context_->GetNodeName(), "GammaDType is not same to x1DType."),
+    OP_CHECK_IF((xaDtype != gammaDType),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(this->context_->GetNodeName(), "x1, gamma",
+                                                       Ops::Base::ToString(gammaDType).c_str(),
+                                                       "The dtype of gamma must match the dtype of x1"),
                 return false);
-    OP_CHECK_IF((xaDtype != xDType), OP_LOGE(this->context_->GetNodeName(), "xDType is not same to x1DType."),
+    OP_CHECK_IF((xaDtype != xDType),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(this->context_->GetNodeName(), "x1, x",
+                                                       Ops::Base::ToString(xDType).c_str(),
+                                                       "The dtype of x must match the dtype of x1"),
                 return false);
-    OP_CHECK_IF((xaDtype != yDType), OP_LOGE(this->context_->GetNodeName(), "yDType is not same to x1DType."),
+    OP_CHECK_IF((xaDtype != yDType),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(this->context_->GetNodeName(), "x1, y",
+                                                       Ops::Base::ToString(yDType).c_str(),
+                                                       "The dtype of y must match the dtype of x1"),
                 return false);
-    OP_CHECK_IF((y1DType != ge::DT_INT8), OP_LOGE(this->context_->GetNodeName(), "y1DType must be int8."),
-                return false);
-    OP_CHECK_IF((this->smoothNum_ == 2 && y2DType != ge::DT_INT8),
-                OP_LOGE(this->context_->GetNodeName(), "y2DType must be int8 when has smoothScaleOptional2 input."),
-                return false);
-    OP_CHECK_IF((scale1DType != ge::DT_FLOAT), OP_LOGE(this->context_->GetNodeName(), "scale1DType must be float32."),
+    OP_CHECK_IF((y1DType != ge::DT_INT8),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(this->context_->GetNodeName(), "y1",
+                                                      Ops::Base::ToString(y1DType).c_str(), "INT8"),
                 return false);
     OP_CHECK_IF(
-        (this->smoothNum_ == 2 && scale2DType != ge::DT_FLOAT),
-        OP_LOGE(this->context_->GetNodeName(), "scale2DType must be float32 when has smoothScaleOptional2 input."),
+        (this->smoothNum_ == 2 && y2DType != ge::DT_INT8),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(this->context_->GetNodeName(), "y2", Ops::Base::ToString(y2DType).c_str(),
+                                              "INT8 when smooth_scale2 is set"),
         return false);
+    OP_CHECK_IF((scale1DType != ge::DT_FLOAT),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(this->context_->GetNodeName(), "scale1",
+                                                      Ops::Base::ToString(scale1DType).c_str(), "FLOAT"),
+                return false);
+    OP_CHECK_IF((this->smoothNum_ == 2 && scale2DType != ge::DT_FLOAT),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(this->context_->GetNodeName(), "scale2",
+                                                      Ops::Base::ToString(scale2DType).c_str(),
+                                                      "FLOAT when smooth_scale2 is set"),
+                return false);
     return true;
 }
 
