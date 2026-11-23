@@ -135,9 +135,9 @@ private:
         uint32_t vl = VECTOR_REG_WIDTH / dtypeSize;
         uint16_t loopNum = static_cast<uint16_t>(ops::CeilDiv(static_cast<uint32_t>(blockLength), vl));
 
-        __local_mem__ float* varLocal = (__local_mem__ float*)varLocalTensor.GetPhyAddr();
-        __local_mem__ float* accumLocal = (__local_mem__ float*)accumLocalTensor.GetPhyAddr();
-        __local_mem__ float* gradLocal = (__local_mem__ float*)gradLocalRes.GetPhyAddr();
+        __ubuf__ float* varLocal = (__ubuf__ float*)varLocalTensor.GetPhyAddr();
+        __ubuf__ float* accumLocal = (__ubuf__ float*)accumLocalTensor.GetPhyAddr();
+        __ubuf__ float* gradLocal = (__ubuf__ float*)gradLocalRes.GetPhyAddr();
 
         if (updateSlots) {
             __VEC_SCOPE__
@@ -164,18 +164,18 @@ private:
                 uint32_t sreg0 = blockLength;
                 for (uint16_t i = 0; i < loopNum; i++) {
                     preg0 = AscendC::MicroAPI::UpdateMask<float>(sreg0);
-                    AscendC::MicroAPI::DataCopy(gradReg, gradLocal + i * vl);
-                    AscendC::MicroAPI::DataCopy(varReg, varLocal + i * vl);
-                    AscendC::MicroAPI::DataCopy(accumReg, accumLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(gradReg, gradLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(varReg, varLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(accumReg, accumLocal + i * vl);
                     AscendC::MicroAPI::Mul(gradSquareReg, gradReg, gradReg, preg0);
                     AscendC::MicroAPI::Add(accumAddReg, gradSquareReg, accumReg, preg0);
-                    AscendC::MicroAPI::DataCopy(accumLocal + i * vl, accumAddReg, preg0);
+                    AscendC::MicroAPI::StoreAlign<float>(accumLocal + i * vl, accumAddReg, preg0);
                     AscendC::MicroAPI::Sqrt(accumSqrtReg, accumAddReg, preg0);
                     AscendC::MicroAPI::Add(accumSqrtEpsilonReg, accumSqrtReg, epsilonReg, preg0);
                     AscendC::MicroAPI::Mul(lrMulReg, gradReg, lrReg, preg0);
                     AscendC::MicroAPI::Div(gradDivReg, lrMulReg, accumSqrtEpsilonReg, preg0);
                     AscendC::MicroAPI::Sub(varSubReg, varReg, gradDivReg, preg0);
-                    AscendC::MicroAPI::DataCopy(varLocal + i * vl, varSubReg, preg0);
+                    AscendC::MicroAPI::StoreAlign<float>(varLocal + i * vl, varSubReg, preg0);
                 }
             }
         } else {
@@ -201,15 +201,15 @@ private:
                 uint32_t sreg0 = blockLength;
                 for (uint16_t i = 0; i < loopNum; i++) {
                     preg0 = AscendC::MicroAPI::UpdateMask<float>(sreg0);
-                    AscendC::MicroAPI::DataCopy(gradReg, gradLocal + i * vl);
-                    AscendC::MicroAPI::DataCopy(varReg, varLocal + i * vl);
-                    AscendC::MicroAPI::DataCopy(accumReg, accumLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(gradReg, gradLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(varReg, varLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(accumReg, accumLocal + i * vl);
                     AscendC::MicroAPI::Sqrt(accumSqrtReg, accumReg, preg0);
                     AscendC::MicroAPI::Add(accumSqrtEpsilonReg, accumSqrtReg, epsilonReg, preg0);
                     AscendC::MicroAPI::Mul(lrMulReg, gradReg, lrReg, preg0);
                     AscendC::MicroAPI::Div(gradDivReg, lrMulReg, accumSqrtEpsilonReg, preg0);
                     AscendC::MicroAPI::Sub(varSubReg, varReg, gradDivReg, preg0);
-                    AscendC::MicroAPI::DataCopy(varLocal + i * vl, varSubReg, preg0);
+                    AscendC::MicroAPI::StoreAlign<float>(varLocal + i * vl, varSubReg, preg0);
                 }
             }
         }

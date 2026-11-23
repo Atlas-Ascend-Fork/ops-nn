@@ -71,14 +71,14 @@ __aicore__ inline void SigmoidCrossEntropyWithLogitsGradV2Impl(LocalTensor<float
         Reg::MaskReg mask;
         for (uint16_t loopIdx = 0; loopIdx < loopNum; loopIdx++) {
             mask = Reg::UpdateMask<float, Reg::RegTraitNumOne>(count);
-            Reg::DataCopy<float, Reg::PostLiteral::POST_MODE_UPDATE>(predictReg, predictAddr, vlSize);
-            Reg::DataCopy<float, Reg::PostLiteral::POST_MODE_UPDATE>(targetReg, targetAddr, vlSize);
-            Reg::DataCopy<float, Reg::PostLiteral::POST_MODE_UPDATE>(doutReg, doutAddr, vlSize);
+            Reg::LoadAlign<float, Reg::PostLiteral::POST_MODE_UPDATE>(predictReg, predictAddr, vlSize);
+            Reg::LoadAlign<float, Reg::PostLiteral::POST_MODE_UPDATE>(targetReg, targetAddr, vlSize);
+            Reg::LoadAlign<float, Reg::PostLiteral::POST_MODE_UPDATE>(doutReg, doutAddr, vlSize);
             if constexpr (HAS_WEIGHT) {
-                Reg::DataCopy<float, Reg::PostLiteral::POST_MODE_UPDATE>(weightReg, weightAddr, vlSize);
+                Reg::LoadAlign<float, Reg::PostLiteral::POST_MODE_UPDATE>(weightReg, weightAddr, vlSize);
             }
             if constexpr (HAS_POS_WEIGHT) {
-                Reg::DataCopy<float, Reg::PostLiteral::POST_MODE_UPDATE>(posWeightReg, posWeightAddr, vlSize);
+                Reg::LoadAlign<float, Reg::PostLiteral::POST_MODE_UPDATE>(posWeightReg, posWeightAddr, vlSize);
             }
 
             SigmoidCustomImpl(gradientReg, predictReg, oneReg, mask);
@@ -103,7 +103,7 @@ __aicore__ inline void SigmoidCrossEntropyWithLogitsGradV2Impl(LocalTensor<float
                 Reg::Muls(gradientReg, gradientReg, scale, mask);
             }
 
-            Reg::DataCopy<float, Reg::PostLiteral::POST_MODE_UPDATE>(dstAddr, gradientReg, vlSize, mask);
+            Reg::StoreAlign<float, Reg::PostLiteral::POST_MODE_UPDATE>(dstAddr, gradientReg, vlSize, mask);
         }
     }
 #endif

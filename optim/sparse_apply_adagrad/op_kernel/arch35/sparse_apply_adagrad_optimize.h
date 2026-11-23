@@ -175,12 +175,12 @@ private:
         LocalTensor<float> varOutLocalTensor = varOutQueue_.AllocTensor<float>();
         LocalTensor<float> accumOutLocalTensor = accumOutQueue_.AllocTensor<float>();
 
-        __local_mem__ float* varLocal = (__local_mem__ float*)varLocalRes.GetPhyAddr();
-        __local_mem__ float* accumLocal = (__local_mem__ float*)accumLocalRes.GetPhyAddr();
-        __local_mem__ float* gradLocal = (__local_mem__ float*)gradLocalRes.GetPhyAddr();
+        __ubuf__ float* varLocal = (__ubuf__ float*)varLocalRes.GetPhyAddr();
+        __ubuf__ float* accumLocal = (__ubuf__ float*)accumLocalRes.GetPhyAddr();
+        __ubuf__ float* gradLocal = (__ubuf__ float*)gradLocalRes.GetPhyAddr();
 
-        __local_mem__ float* varOutLocal = (__local_mem__ float*)varOutLocalTensor.GetPhyAddr();
-        __local_mem__ float* accumOutLocal = (__local_mem__ float*)accumOutLocalTensor.GetPhyAddr();
+        __ubuf__ float* varOutLocal = (__ubuf__ float*)varOutLocalTensor.GetPhyAddr();
+        __ubuf__ float* accumOutLocal = (__ubuf__ float*)accumOutLocalTensor.GetPhyAddr();
 
         if (updateSlots) {
             __VEC_SCOPE__
@@ -207,18 +207,18 @@ private:
                 uint32_t sreg0 = ubBlockLength;
                 for (uint16_t i = 0; i < loopNum; i++) {
                     preg0 = AscendC::MicroAPI::UpdateMask<float>(sreg0);
-                    AscendC::MicroAPI::DataCopy(gradReg, gradLocal + i * vl);
-                    AscendC::MicroAPI::DataCopy(varReg, varLocal + i * vl);
-                    AscendC::MicroAPI::DataCopy(accumReg, accumLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(gradReg, gradLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(varReg, varLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(accumReg, accumLocal + i * vl);
                     AscendC::MicroAPI::Mul(gradSquareReg, gradReg, gradReg, preg0);
                     AscendC::MicroAPI::Add(accumAddReg, gradSquareReg, accumReg, preg0);
-                    AscendC::MicroAPI::DataCopy(accumOutLocal + i * vl, accumAddReg, preg0);
+                    AscendC::MicroAPI::StoreAlign<float>(accumOutLocal + i * vl, accumAddReg, preg0);
                     AscendC::MicroAPI::Sqrt(accumSqrtReg, accumAddReg, preg0);
                     AscendC::MicroAPI::Add(accumSqrtEpsilonReg, accumSqrtReg, epsilonReg, preg0);
                     AscendC::MicroAPI::Mul(lrMulReg, gradReg, lrReg, preg0);
                     AscendC::MicroAPI::Div(gradDivReg, lrMulReg, accumSqrtEpsilonReg, preg0);
                     AscendC::MicroAPI::Sub(varSubReg, varReg, gradDivReg, preg0);
-                    AscendC::MicroAPI::DataCopy(varOutLocal + i * vl, varSubReg, preg0);
+                    AscendC::MicroAPI::StoreAlign<float>(varOutLocal + i * vl, varSubReg, preg0);
                 }
             }
         } else {
@@ -244,16 +244,16 @@ private:
                 uint32_t sreg0 = ubBlockLength;
                 for (uint16_t i = 0; i < loopNum; i++) {
                     preg0 = AscendC::MicroAPI::UpdateMask<float>(sreg0);
-                    AscendC::MicroAPI::DataCopy(gradReg, gradLocal + i * vl);
-                    AscendC::MicroAPI::DataCopy(varReg, varLocal + i * vl);
-                    AscendC::MicroAPI::DataCopy(accumReg, accumLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(gradReg, gradLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(varReg, varLocal + i * vl);
+                    AscendC::MicroAPI::LoadAlign<float>(accumReg, accumLocal + i * vl);
                     AscendC::MicroAPI::Sqrt(accumSqrtReg, accumReg, preg0);
                     AscendC::MicroAPI::Add(accumSqrtEpsilonReg, accumSqrtReg, epsilonReg, preg0);
                     AscendC::MicroAPI::Mul(lrMulReg, gradReg, lrReg, preg0);
                     AscendC::MicroAPI::Div(gradDivReg, lrMulReg, accumSqrtEpsilonReg, preg0);
                     AscendC::MicroAPI::Sub(varSubReg, varReg, gradDivReg, preg0);
-                    AscendC::MicroAPI::DataCopy(varOutLocal + i * vl, varSubReg, preg0);
-                    AscendC::MicroAPI::DataCopy(accumOutLocal + i * vl, accumReg, preg0);
+                    AscendC::MicroAPI::StoreAlign<float>(varOutLocal + i * vl, varSubReg, preg0);
+                    AscendC::MicroAPI::StoreAlign<float>(accumOutLocal + i * vl, accumReg, preg0);
                 }
             }
         }
