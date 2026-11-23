@@ -79,8 +79,9 @@ static ge::graphStatus InferShapeFracZ(gert::InferShapeContext* context, const g
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(kFromX1 != kFromX2,
-                OP_LOGE(opName, "FRACTAL_Z infershape K mismatch: x1 K=%ld, x2 K=%ld (dim0=%ld * 64)", kFromX1, kFromX2,
-                        x2Dims.GetDim(0)),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(opName, "x1 K, x2 K",
+                                                       std::to_string(kFromX1) + ", " + std::to_string(kFromX2),
+                                                       "the K dimension of x1 must be equal to the K dimension of x2"),
                 return ge::GRAPH_FAILED);
 
     auto* shape_out = context->GetOutputShape(0);

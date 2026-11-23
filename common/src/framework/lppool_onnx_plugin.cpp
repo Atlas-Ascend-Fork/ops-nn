@@ -161,7 +161,8 @@ static Status ParseParamsLpPool(const Message* op_src, ge::Operator& op_dest)
 
     int64_t dims = node_attr.kernel_shape.size();
     if (dims != 1 && dims != 2 && dims != 3) {
-        OP_LOGE(op_dest.GetName().c_str(), "Only support 1D/2D/3D, but the length of kernel_shape is %ld", dims);
+        OP_LOGE_WITHOUT_REPORT(op_dest.GetName().c_str(),
+                               "Only support 1D/2D/3D, but the length of kernel_shape is %ld", dims);
         return FAILED;
     }
     if (!node_attr.pads.empty() && node_attr.pads.size() != static_cast<size_t>(dims) * 2) {

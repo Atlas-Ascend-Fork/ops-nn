@@ -196,9 +196,9 @@ static std::vector<Sparse4to2QuantMatmulTilingTestParam> GetParams(const std::st
     }
 
     map<string, ge::DataType> dtypeMap = {
-        {"FLOAT16", ge::DT_FLOAT16}, {"FLOAT", ge::DT_FLOAT}, {"BF16", ge::DT_BF16},
-        {"INT8", ge::DT_INT8},       {"INT4", ge::DT_INT4},   {"UINT64", ge::DT_UINT64},
-        {"INT32", ge::DT_INT32},     {"INT64", ge::DT_INT64}, {"UINT8", ge::DT_UINT8},
+        {"FLOAT16", ge::DT_FLOAT16}, {"FLOAT", ge::DT_FLOAT},    {"BF16", ge::DT_BF16},   {"INT8", ge::DT_INT8},
+        {"INT4", ge::DT_INT4},       {"UINT64", ge::DT_UINT64},  {"INT32", ge::DT_INT32}, {"INT64", ge::DT_INT64},
+        {"UINT8", ge::DT_UINT8},     {"NULL", ge::DT_UNDEFINED},
     };
 
     std::string line;
@@ -342,7 +342,9 @@ void Sparse4to2QuantMatmulTilingTestParam::InvokeTilingFunc(Sparse4to2QuantMatmu
     cout << "run case " << prefix << std::endl;
 
     xShape.MutableOriginShape() = gert::Shape({m, k});
+    xShape.MutableOriginShape().SetDimNum(x1Dim);
     sparseWeightShape.MutableOriginShape() = gert::Shape({n, k / 2});
+    sparseWeightShape.MutableOriginShape().SetDimNum(x2Dim);
     indexShape.MutableOriginShape() = gert::Shape({(n + 63) / 64 * 64, (k + 15) / 16 * 16, 16, 8});
     xScaleShape.MutableStorageShape() = gert::Shape({m});
     sparseWeightscaleShape.MutableStorageShape() = gert::Shape({n});
@@ -366,19 +368,27 @@ void Sparse4to2QuantMatmulTilingTestParam::InvokeTilingFunc(Sparse4to2QuantMatmu
     ASSERT_NE(rawTilingData, nullptr);
     auto workspaceHolder = gert::ContinuousVector::Create<size_t>(4096);
     auto workspace = reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get());
-    auto holder = gert::TilingContextFaker()
-                      .NodeIoNum(6, 1)
-                      .IrInstanceNum({1, 1, 1, 1, 1, 1})
-                      .InputShapes(
-                          {&xShape, &sparseWeightShape, &indexShape, &xScaleShape, &sparseWeightscaleShape, &biasShape})
+    const bool hasXScale = xScaleDtype != ge::DT_UNDEFINED;
+    const bool hasWeightScale = sparseWeightScaleDtype != ge::DT_UNDEFINED;
+    gert::TilingContextFaker faker;
+    faker.IrInstanceNum({1, 1, 1, hasXScale, hasWeightScale, 1}, {1})
+        .NodeInputTd(0, xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, sparseWeightDtype, ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ)
+        .NodeInputTd(2, indexDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    std::vector<gert::StorageShape*> shapes{&xShape, &sparseWeightShape, &indexShape};
+    if (hasXScale) {
+        faker.NodeInputTd(shapes.size(), xScaleDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+        shapes.push_back(&xScaleShape);
+    }
+    if (hasWeightScale) {
+        faker.NodeInputTd(shapes.size(), sparseWeightScaleDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+        shapes.push_back(&sparseWeightscaleShape);
+    }
+    faker.NodeInputTd(shapes.size(), biasDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    shapes.push_back(&biasShape);
+    auto holder = faker.InputShapes(shapes)
                       .CompileInfo(&compileInfo)
                       .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
-                      .NodeInputTd(0, xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(1, sparseWeightDtype, ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ)
-                      .NodeInputTd(2, indexDtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(3, xScaleDtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(4, sparseWeightScaleDtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(5, biasDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(0, yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(yDtype)}})
                       .TilingData(rawTilingData.get())

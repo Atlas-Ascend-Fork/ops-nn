@@ -106,8 +106,8 @@ static Status ParseParamsBoundingBoxDecodeV2(const ge::Operator& op_src, ge::Ope
                     if (attr.contains("f")) {
                         std::string value_str = attr["f"];
                         if (!StrToFloat(value_str, attr_map[attr_name])) {
-                            OP_LOGE(GetOpName(op_dest).c_str(), "invalid %s value: %s", attr_name.c_str(),
-                                    value_str.c_str());
+                            OP_LOGE_WITHOUT_REPORT(GetOpName(op_dest).c_str(), "invalid %s value: %s",
+                                                   attr_name.c_str(), value_str.c_str());
                             return FAILED;
                         }
                     } else {

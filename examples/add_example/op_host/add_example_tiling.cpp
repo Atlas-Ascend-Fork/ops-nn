@@ -17,6 +17,7 @@
  */
 
 #include "log/log.h"
+#include "graph/utils/type_utils.h"
 #include "util/math_util.h"
 #include "util/platform_util.h"
 #include "op_host/tiling_util.h"
@@ -128,8 +129,11 @@ ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& totalId
     // shape校验：确保所有张量都是4维
     OP_CHECK_IF(inputShapeX.GetDimNum() != DIMS_LIMIT || inputShapeY.GetDimNum() != DIMS_LIMIT ||
                     outShapeZ.GetDimNum() != DIMS_LIMIT,
-                OP_LOGE(context, "AddExample: inputx,inputy,outputz shape dim = %zu, %zu, %zu, should be equal 4",
-                        inputShapeX.GetDimNum(), inputShapeY.GetDimNum(), outShapeZ.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(context->GetNodeName(), "x1, x2, y",
+                                                          std::to_string(inputShapeX.GetDimNum()) + "D, " +
+                                                              std::to_string(inputShapeY.GetDimNum()) + "D, " +
+                                                              std::to_string(outShapeZ.GetDimNum()) + "D",
+                                                          "the shape dims of x1, x2 and y must be 4D"),
                 return ge::GRAPH_FAILED);
 
     // 获取shape的维度值
@@ -142,7 +146,9 @@ ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& totalId
     dataType = inputDesc->GetDataType();
 
     if (supportedDtype.count(dataType) == 0) {
-        OP_LOGE(context, "invalid dtype");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x1",
+                                              ge::TypeUtils::DataTypeToSerialString(dataType).c_str(),
+                                              "the dtype of x1 must be FLOAT or INT32");
         return ge::GRAPH_FAILED;
     }
 
@@ -195,7 +201,7 @@ static ge::graphStatus AddExampleTilingFunc(gert::TilingContext* context)
     ge::DataType dataType;
 
     OP_CHECK_IF(GetShapeAttrsInfo(context, totalIdx, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
 
     // 3、获取WorkspaceSize信息
     OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
@@ -235,7 +241,9 @@ static ge::graphStatus AddExampleTilingFunc(gert::TilingContext* context)
         tilingKey = GET_TPL_TILING_KEY(ELEMENTWISE_TPL_SCH_MODE_1);
         context->SetTilingKey(tilingKey);
     } else {
-        OP_LOGE(context, "get dtype error");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x1",
+                                              ge::TypeUtils::DataTypeToSerialString(dataType).c_str(),
+                                              "the dtype of x1 must be FLOAT or INT32");
         return ge::GRAPH_FAILED;
     }
 

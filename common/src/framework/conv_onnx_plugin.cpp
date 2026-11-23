@@ -96,7 +96,8 @@ static Status SetAttrToOp(const ge::onnx::NodeProto* node, ge::Operator& op)
 
     if (!is_have_kernel_shape) {
         if (strides_list.size() == 2 && dilations_list.size() == 2 && pad_list.empty()) {
-            OP_LOGE(GetOpName(op).c_str(), "node must have attr (kernel_shape,pads,strides,dilations) at least one");
+            OP_LOGE_WITHOUT_REPORT(GetOpName(op).c_str(),
+                                   "node must have attr (kernel_shape,pads,strides,dilations) at least one");
             return FAILED;
         }
         dim_size = (strides_list.size() == 5 || pad_list.size() == 6 || dilations_list.size() == 5) ? 5 : 4;
@@ -124,7 +125,7 @@ static Status ParseParamsConv(const Message* op_src, ge::Operator& op)
     op.SetAttr("original_type", "ai.onnx::11::Conv");
 
     if (SetAttrToOp(node, op) != SUCCESS) {
-        OP_LOGE("Conv", "set attr to operator failed");
+        OP_LOGE_WITHOUT_REPORT("Conv", "set attr to operator failed");
         return FAILED;
     }
 

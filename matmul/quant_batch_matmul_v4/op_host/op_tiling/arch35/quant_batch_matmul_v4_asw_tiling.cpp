@@ -124,7 +124,10 @@ bool AdaptiveSlidingWindowTilingV4::AnalyzeDtype()
     inputParams_.x2TableDtype = x2TableDesc != nullptr ? x2TableDesc->GetDataType() : inputParams_.x2TableDtype;
 
     // 当前AdaptiveSlidingWindowTilingV4仅支持LUT场景，x2Table必须存在
-    OP_TILING_CHECK(x2TableDesc == nullptr, OP_LOGE(inputParams_.opName, "X2Table does not exist."), return false);
+    OP_TILING_CHECK(
+        x2TableDesc == nullptr,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "x2Table", "null", "x2Table must not be null"),
+        return false);
     inputParams_.isLut = true;
 
     inputParams_.cDtype = context_->GetOutputDesc(0)->GetDataType();

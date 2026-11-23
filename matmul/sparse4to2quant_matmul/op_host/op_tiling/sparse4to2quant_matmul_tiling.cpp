@@ -129,7 +129,9 @@ bool Sparse4to2QuantMatmulTiling::AnalyzeDtype()
     auto bias = context_->GetOptionalInputDesc(BIAS_INDEX);
     inputParams_.cDtype = context_->GetOutputDesc(0)->GetDataType();
     if (xScale == nullptr || weightScale == nullptr) {
-        OP_LOGE(inputParams_.opName, "XScale and weightScale can not be null.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(inputParams_.opName, "x_scale, sparse_weight_scale", "null",
+                                               "XScale and weightScale can not be null");
+        return false;
     }
     if (xScale != nullptr) {
         inputParams_.perTokenScaleDtype = xScale->GetDataType();
@@ -140,16 +142,37 @@ bool Sparse4to2QuantMatmulTiling::AnalyzeDtype()
     if (bias != nullptr) {
         inputParams_.biasDtype = bias->GetDataType();
     }
-    OP_TILING_CHECK(inputParams_.aDtype != ge::DT_INT8 || inputParams_.bDtype != ge::DT_INT8,
-                    OP_LOGE(inputParams_.opName, "X1 and x2 dtype should be int8."), return false);
+    OP_TILING_CHECK(
+        inputParams_.aDtype != ge::DT_INT8 || inputParams_.bDtype != ge::DT_INT8,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(inputParams_.opName, "x, sparse_weight",
+                                               (ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype) + ", " +
+                                                ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype))
+                                                   .c_str(),
+                                               "the dtypes of x and sparse_weight must be INT8"),
+        return false);
 
     OP_TILING_CHECK(inputParams_.perTokenScaleDtype != ge::DT_FLOAT,
-                    OP_LOGE(inputParams_.opName, "Xscale dtype should be float."), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(inputParams_.scaleDtype != ge::DT_FLOAT,
-                    OP_LOGE(inputParams_.opName, "SparseWeightScale dtype should be float."), return false);
-    OP_TILING_CHECK((bias != nullptr && inputParams_.biasDtype != ge::DT_BF16),
-                    OP_LOGE(inputParams_.opName, "Bias dtype should be bfloat16."), return false);
-    OP_TILING_CHECK(inputParams_.cDtype != ge::DT_BF16, OP_LOGE(inputParams_.opName, "Y dtype should be bfloat16."),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "x_scale",
+                        ge::TypeUtils::DataTypeToSerialString(inputParams_.perTokenScaleDtype).c_str(),
+                        "the dtype of x_scale must be FLOAT"),
+                    return false);
+    OP_TILING_CHECK(
+        inputParams_.scaleDtype != ge::DT_FLOAT,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "sparse_weight_scale",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype).c_str(),
+                                              "the dtype of sparse_weight_scale must be FLOAT"),
+        return false);
+    OP_TILING_CHECK(
+        (bias != nullptr && inputParams_.biasDtype != ge::DT_BF16),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "bias",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype).c_str(),
+                                              "the dtype of bias must be BFLOAT16"),
+        return false);
+    OP_TILING_CHECK(inputParams_.cDtype != ge::DT_BF16,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "y", ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str(),
+                        "the dtype of y must be BFLOAT16"),
                     return false);
     return true;
 }
@@ -170,10 +193,9 @@ bool Sparse4to2QuantMatmulTiling::AnalyzeInputs()
     auto x2ShapeLen = x2Shape.GetDimNum();
     OP_TILING_CHECK(
         x1ShapeLen != INPUT_DIM_ND || x2ShapeLen != INPUT_DIM_ND,
-        CUBE_INNER_ERR_REPORT(
-            inputParams_.opName,
-            "Invalid inputs shape, shape dimension of x(value is %zu) and sparseWeight(value is %zu) must be 2.",
-            x1ShapeLen, x2ShapeLen),
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(inputParams_.opName, "x, sparse_weight",
+                                                  std::to_string(x1ShapeLen) + "D, " + std::to_string(x2ShapeLen) + "D",
+                                                  "the shape dims of x and sparse_weight must be 2D"),
         return false);
     auto x1Inner = x1Shape.GetDim(x1ShapeLen - 1);
     auto x1Outer = x1Shape.GetDim(x1ShapeLen - INPUT_DIM_ND); // 2维的shape
@@ -187,18 +209,20 @@ bool Sparse4to2QuantMatmulTiling::AnalyzeInputs()
     inputParams_.weightScaleDim = wScale != nullptr ? wScale->GetOriginShape().GetDim(0) : 0;
     inputParams_.xScaleDim = pertokenScale != nullptr ? pertokenScale->GetOriginShape().GetDim(0) : 0;
     uint64_t x1InnerAlign = ops::CeilAlign(static_cast<uint64_t>(x1Inner), SPARSE_ATOMIC_SIZE);
-    OP_TILING_CHECK(
-        x1InnerAlign != static_cast<uint64_t>(x2Inner + x2Inner),
-        CUBE_INNER_ERR_REPORT(
-            inputParams_.opName,
-            "Invalid inputs, k axis of input x(8 aligned value is %lu) must double that of sparseWeight(value is %ld).",
-            x1InnerAlign, x2Inner),
-        return false);
-    OP_TILING_CHECK(
-        inputParams_.mSize == 0UL || inputParams_.kaSize == 0UL || inputParams_.kbSize == 0UL ||
-            inputParams_.nSize == 0UL,
-        CUBE_INNER_ERR_REPORT(inputParams_.opName, "Invalid inputs, input shape of x and sparseWeight have 0."),
-        return false);
+    OP_TILING_CHECK(x1InnerAlign != static_cast<uint64_t>(x2Inner + x2Inner),
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                        inputParams_.opName, "x K (aligned to 8), sparse_weight K",
+                        std::to_string(x1InnerAlign) + ", " + std::to_string(x2Inner),
+                        "the 8-aligned K dimension of x must be double the K dimension of sparse_weight"),
+                    return false);
+    OP_TILING_CHECK(inputParams_.mSize == 0UL || inputParams_.kaSize == 0UL || inputParams_.kbSize == 0UL ||
+                        inputParams_.nSize == 0UL,
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                        inputParams_.opName, "m, k, n",
+                        std::to_string(inputParams_.mSize) + ", " + std::to_string(inputParams_.kaSize) + ", " +
+                            std::to_string(inputParams_.nSize),
+                        "the shape sizes of x and sparse_weight must be greater than 0"),
+                    return false);
     return true;
 }
 
@@ -233,11 +257,11 @@ ge::graphStatus Sparse4to2QuantMatmulTiling::GetShapeAttrsInfo()
 {
     inputParams_.opName = context_->GetNodeName();
     OP_LOGD(inputParams_.opName, "TilingContext: %s", Ops::NN::DebugTilingContext(context_).c_str());
-    OP_TILING_CHECK(CheckContext() != ge::GRAPH_SUCCESS, CUBE_INNER_ERR_REPORT(inputParams_.opName, "Invalid context."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(CheckContext() != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Invalid context."), return ge::GRAPH_FAILED);
 
     OP_TILING_CHECK(!AnalyzeDtype() || !AnalyzeInputs(),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "Fail to analyze context info."),
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Fail to analyze context info."),
                     return ge::GRAPH_FAILED);
     auto hasBiasStr = inputParams_.hasBias ? "true" : "false";
     OP_LOGD(inputParams_.opName, "Input params: MKN[%ld, %ld, %ld], bias[%s].", inputParams_.mSize, inputParams_.kaSize,
@@ -652,7 +676,7 @@ bool Sparse4to2QuantMatmulTiling::SetBase(const std::vector<uint64_t>& mBases, c
         }
     }
     OP_TILING_CHECK(!GetBaseK(basicTiling_.baseM, basicTiling_.baseN),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "GetBaseK failed"), return false);
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "GetBaseK failed"), return false);
     return true;
 }
 
@@ -709,7 +733,7 @@ bool Sparse4to2QuantMatmulTiling::CalcL0Tiling()
 {
     bool ret = false;
     ret = SetBase(ALL_BASE, INNER_AXIS_ALIGN_NZ_BASE);
-    OP_TILING_CHECK(!ret, CUBE_INNER_ERR_REPORT(inputParams_.opName, "Set L0 base failed"), return false);
+    OP_TILING_CHECK(!ret, OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Set L0 base failed"), return false);
     // calc db for l0c
     if (CheckDbL0c()) {
         basicTiling_.dbL0c = NUM_DB;
@@ -756,7 +780,7 @@ bool Sparse4to2QuantMatmulTiling::CalcL1Tiling()
     basicTiling_.stepKa = basicTiling_.depthA1 / NUM_DB;
     basicTiling_.stepKb = basicTiling_.depthB1 / NUM_DB;
     OP_TILING_CHECK(!GetStepK(basicTiling_.stepKa, basicTiling_.stepKb),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "GetStepK failed"), return false);
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "GetStepK failed"), return false);
     basicTiling_.depthA1 = basicTiling_.stepKa * NUM_DB;
     basicTiling_.depthB1 = basicTiling_.stepKb * NUM_DB;
     return true;
@@ -896,8 +920,8 @@ bool Sparse4to2QuantMatmulTiling::DoBasicTiling()
 {
     OP_LOGD(inputParams_.opName, "Do basic tiling.");
     ResetBase(compileInfo_.l0cSize);
-    OP_TILING_CHECK(!CalcL0Tiling(), CUBE_INNER_ERR_REPORT(inputParams_.opName, "CalcL0Tiling failed"), return false);
-    OP_TILING_CHECK(!CalcL1Tiling(), CUBE_INNER_ERR_REPORT(inputParams_.opName, "CalcL1Tiling failed"), return false);
+    OP_TILING_CHECK(!CalcL0Tiling(), OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "CalcL0Tiling failed"), return false);
+    OP_TILING_CHECK(!CalcL1Tiling(), OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "CalcL1Tiling failed"), return false);
 
     // 基本块与L2切分融合
     basicTiling_.mTileCntl2 = 1;

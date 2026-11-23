@@ -203,7 +203,7 @@ bool QuantBatchMatmulV3Checker::CheckScalesDtype() const
     if (context_->GetOptionalInputDesc(GetPertokenIdx()) != nullptr &&
         context_->GetOptionalInputShape(GetPertokenIdx()) != nullptr) {
         OP_TILING_CHECK(!CheckScaleDtypeWithPertoken(),
-                        CUBE_INNER_ERR_REPORT(inputParams_.opName, "Failed to check scale dtype with pertokenScale."),
+                        OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Failed to check scale dtype with pertokenScale."),
                         return false);
     } else {
         OP_TILING_CHECK(
@@ -920,15 +920,15 @@ bool QuantBatchMatmulV3Checker::CheckInputValidInMxPerGroupMode(const gert::Shap
         return false;
     }
     OP_TILING_CHECK(!MxPertokenScaleShapeCheck(pertokenShape),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "The perTokenScale shape check failed."), return false);
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "The perTokenScale shape check failed."), return false);
     OP_TILING_CHECK(!MxScaleShapeCheck(scaleShape),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "The scale shape check failed."), return false);
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "The scale shape check failed."), return false);
     OP_TILING_CHECK(!CheckBatchValidInMxPerGroupMode(scaleShape, pertokenShape->GetStorageShape(), x1Shape, x2Shape),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "The mx batch check failed."), return false);
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "The mx batch check failed."), return false);
     bool isFp4Input = inputParams_.aDtype == ge::DT_FLOAT4_E2M1;
     if (isFp4Input) {
         OP_TILING_CHECK(!CheckMXFP4Constraints(dimValueOfMKN),
-                        CUBE_INNER_ERR_REPORT(inputParams_.opName, "CheckMXFP4Constraints failed."), return false);
+                        OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "CheckMXFP4Constraints failed."), return false);
     }
     return true;
 }
@@ -1151,7 +1151,7 @@ bool QuantBatchMatmulV3Checker::CheckDimValue(const gert::Shape& scaleShape, con
                     return false);
     if (pertokenShape != nullptr) {
         OP_TILING_CHECK(!PerTokenDimValueCheck(scaleShape, pertokenShape),
-                        CUBE_INNER_ERR_REPORT(inputParams_.opName, "Failed to check perTokenScale shape."),
+                        OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Failed to check perTokenScale shape."),
                         return false);
     }
 
