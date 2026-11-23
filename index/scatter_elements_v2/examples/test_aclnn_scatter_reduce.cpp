@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -209,15 +211,16 @@ int RunReduceCase(const ReduceCase& reduceCase, aclrtStream stream)
     return matchesExpected ? 0 : 1;
 }
 
-int main()
+int RunReduceCases(aclrtStream stream)
 {
-    int32_t deviceId = 0;
-    aclrtStream stream;
-    auto ret = Init(deviceId, &stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
+    const char* socName = aclrtGetSocName();
+    CHECK_RET(socName != nullptr, LOG_PRINT("aclrtGetSocName failed.\n"); return 1);
+    std::string soc(socName);
+    std::transform(soc.begin(), soc.end(), soc.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    const bool isAtlasA2OrA3 = soc.rfind("ascend910b", 0) == 0 || soc.rfind("ascend910_93", 0) == 0;
 
     const std::vector<int64_t> indexHostData = {0, 1, 2, 1, 0, 1, 2, 0, 2, 2, 1, 0};
-    // Sum and max expose both include_self values on Atlas A2/A3.
     const std::vector<ReduceCase> cases = {
         {"scatter_reduce_add",
          kReduceAdd,
@@ -250,17 +253,26 @@ int main()
     };
 
     for (const auto& reduceCase : cases) {
-        ret = RunReduceCase(reduceCase, stream);
-        if (ret != ACL_SUCCESS) {
-            aclrtDestroyStream(stream);
-            aclrtResetDevice(deviceId);
-            aclFinalize();
-            return ret;
+        if (!isAtlasA2OrA3 && (reduceCase.reduce == kReduceMax || !reduceCase.includeSelf)) {
+            LOG_PRINT("Skip %s on %s. This case requires Atlas A2/A3.\n", reduceCase.name.c_str(), socName);
+            continue;
         }
+        const auto ret = RunReduceCase(reduceCase, stream);
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
     }
+    return ACL_SUCCESS;
+}
 
+int main()
+{
+    int32_t deviceId = 0;
+    aclrtStream stream;
+    auto ret = Init(deviceId, &stream);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
+
+    ret = RunReduceCases(stream);
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
     aclFinalize();
-    return 0;
+    return ret;
 }
