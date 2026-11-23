@@ -431,7 +431,7 @@ aclnnStatus aclnnConvolution(
      <th scope="row">cubeMathType</th>
      <td>
         <ul>
-          <li>为0（KEEP_DTYPE）时，当输入是FLOAT暂不支持。</li>
+          <li>为0（KEEP_DTYPE）时，不做输入数据类型转换。</li>
           <li>为1（ALLOW_FP32_DOWN_PRECISION）时，当输入是FLOAT允许转换为HFLOAT32计算。</li>
           <li>为2（USE_FP16）时，当输入是BFLOAT16不支持该选项。</li>
           <li>为3（USE_HF32）时，当输入是FLOAT转换为HFLOAT32计算。</li>
@@ -439,7 +439,7 @@ aclnnStatus aclnnConvolution(
      </td>
      <td>
         <ul>
-          <li>为0(KEEP_DTYPE)时，当输入是FLOAT暂不支持。</li>
+          <li>为0(KEEP_DTYPE)时，不做输入数据类型转换。</li>
           <li>为1(ALLOW_FP32_DOWN_PRECISION)时，当输入是FLOAT允许转换为HFLOAT32计算。</li>
           <li>为2(USE_FP16)时，当输入是BFLOAT16不支持该选项。</li>
           <li>为3(USE_HF32)时，当输入是FLOAT转换为HFLOAT32计算。</li>
