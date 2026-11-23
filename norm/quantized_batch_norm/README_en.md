@@ -89,7 +89,7 @@ English | [简体中文](./README.md)
     <tr>
       <td>input_zero_point</td>
       <td>Input</td>
-      <td>An input scalar, the offset of the model input data, corresponding to `inputZeroPoint` in the formula. The passed-in value must not exceed the upper and lower bounds of the data type of input, for example the bounds of INT8 are [-128,127].</td>
+      <td>An input scalar, the offset of the model input data, corresponding to `inputZeroPoint` in the formula. The operator converts it to FLOAT32 for computation. For standard quantization, use the range of the `input` data type as a guideline, for example [-128,127] for INT8.</td>
       <td>INT32</td>
       <td>ND</td>
     </tr>
@@ -103,7 +103,7 @@ English | [简体中文](./README.md)
     <tr>
       <td>output_zero_point</td>
       <td>Input</td>
-      <td>An input scalar, the offset of the model output data, corresponding to `outputZeroPoint` in the formula. The passed-in value must not exceed the upper and lower bounds of the data type of input, for example the bounds of INT8 are [-128,127].</td>
+      <td>An input scalar, the offset of the model output data, corresponding to `outputZeroPoint` in the formula. The operator converts it to FLOAT32 for computation. For standard quantization, use the range of the `output` data type as a guideline, for example [-128,127] for INT8.</td>
       <td>INT32</td>
       <td>ND</td>
     </tr>

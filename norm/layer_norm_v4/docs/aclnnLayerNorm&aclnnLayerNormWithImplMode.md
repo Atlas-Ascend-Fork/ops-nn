@@ -160,7 +160,7 @@ aclnnStatus aclnnLayerNormWithImplMode(
       <td>eps（double）</td>
       <td>输入</td>
       <td>表示添加到分母中的值，以确保数值稳定。对应公式中的`eps`。</td>
-      <td>-</td>
+      <td>转换为FLOAT32后参与计算。极小正值转换后若为0，方差为0时归一化结果可能为NaN，标准差倒数可能为Inf。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -180,7 +180,7 @@ aclnnStatus aclnnLayerNormWithImplMode(
       <td>meanOutOptional（aclTensor*）</td>
       <td>输出</td>
       <td>可选输出，表示进行归一化后的均值。对应公式中的`meanOutOptional`。</td>
-      <td><ul><li>支持空Tensor。</li><li>当`rstdOutOptional`存在时与`rstdOutOptional`的shape相同，shape为[A1,...,Ai,1,...,1]，Ai后共有j个1，与需要norm的轴长度保持相同。</li></ul></td>
+      <td><ul><li>传入`nullptr`可省略该输出。</li><li>传入Tensor时，shape为[A1,...,Ai,1,...,1]，末尾包含j个1。预期shape含0时，支持对应shape的空Tensor。</li><li>同时传入`rstdOutOptional`时，两者shape相同。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
@@ -190,7 +190,7 @@ aclnnStatus aclnnLayerNormWithImplMode(
       <td>rstdOutOptional（aclTensor*）</td>
       <td>输出</td>
       <td>可选输出，表示进行归一化后的标准差倒数。对应公式中的`rstdOutOptional`。</td>
-      <td><ul><li>支持空Tensor。</li><li>当`meanOutOptional`存在时与`meanOutOptional`的shape相同，shape为[A1,...,Ai,1,...,1]，Ai后共有j个1，与需要norm的轴长度保持相同。</li></ul></td>
+      <td><ul><li>传入`nullptr`可省略该输出。</li><li>传入Tensor时，shape为[A1,...,Ai,1,...,1]，末尾包含j个1。预期shape含0时，支持对应shape的空Tensor。</li><li>同时传入`meanOutOptional`时，两者shape相同。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
@@ -388,7 +388,7 @@ aclnnStatus aclnnLayerNormWithImplMode(
       <td>eps（double）</td>
       <td>输入</td>
       <td>表示添加到分母中的值，以确保数值稳定。对应公式中的`eps`。</td>
-      <td>-</td>
+      <td>转换为FLOAT32后参与计算。极小正值转换后若为0，方差为0时归一化结果可能为NaN，标准差倒数可能为Inf。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -408,7 +408,7 @@ aclnnStatus aclnnLayerNormWithImplMode(
       <td>meanOutOptional（aclTensor*）</td>
       <td>输出</td>
       <td>可选输出，表示进行归一化后的均值。对应公式中的`meanOutOptional`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape为[A1,...,Ai,1,...,1]，Ai后共有j个1，与需要norm的轴长度保持相同。</li></ul></td>
+      <td><ul><li>传入`nullptr`可省略该输出。</li><li>传入Tensor时，shape为[A1,...,Ai,1,...,1]，末尾包含j个1。预期shape含0时，支持对应shape的空Tensor。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
@@ -418,7 +418,7 @@ aclnnStatus aclnnLayerNormWithImplMode(
       <td>rstdOutOptional（aclTensor*）</td>
       <td>输出</td>
       <td>可选输出，表示进行归一化后的标准差倒数。对应公式中的`rstdOutOptional`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape为[A1,...,Ai,1,...,1]，Ai后共有j个1，与需要norm的轴长度保持相同。</li></ul></td>
+      <td><ul><li>传入`nullptr`可省略该输出。</li><li>传入Tensor时，shape为[A1,...,Ai,1,...,1]，末尾包含j个1。预期shape含0时，支持对应shape的空Tensor。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>

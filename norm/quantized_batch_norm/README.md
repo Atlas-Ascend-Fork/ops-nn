@@ -87,7 +87,7 @@
     <tr>
       <td>input_zero_point</td>
       <td>输入</td>
-      <td>输入标量，模型输入数据的偏置，对应公式中的`inputZeroPoint`。传入值不能超过input对应数据类型的上下边界，例如INT8上下边界为[-128,127]。</td>
+      <td>输入标量，模型输入数据的偏置，对应公式中的`inputZeroPoint`。转换为FLOAT32后参与计算。常规量化时，建议在`input`数据类型的表示范围内选取零点，例如INT8为[-128,127]。</td>
       <td>INT32</td>
       <td>ND</td>
     </tr>
@@ -101,7 +101,7 @@
     <tr>
       <td>output_zero_point</td>
       <td>输入</td>
-      <td>输入标量，模型输出数据的偏置，对应公式中的`outputZeroPoint`。传入值不能超过input对应数据类型的上下边界，例如INT8上下边界为[-128,127]。</td>
+      <td>输入标量，模型输出数据的偏置，对应公式中的`outputZeroPoint`。转换为FLOAT32后参与计算。常规量化时，建议在`output`数据类型的表示范围内选取零点，例如INT8为[-128,127]。</td>
       <td>INT32</td>
       <td>ND</td>
     </tr>

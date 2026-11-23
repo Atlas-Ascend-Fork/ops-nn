@@ -107,7 +107,7 @@ aclnnStatus aclnnFastLayerNorm(
       <td>normalizedShape（aclIntArray*）</td>
       <td>输入</td>
       <td>表示需要进行norm计算的维度。</td>
-      <td>值为[R1,...,Rj]，长度小于等于输入input的shape长度，不支持为空。且R1*R2*...*Rj小于等于583705600。</td>
+      <td>值为[R1,...,Rj]，长度为1至`input`的维度数。归一化维度乘积的上限见约束说明。</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -137,7 +137,7 @@ aclnnStatus aclnnFastLayerNorm(
       <td>eps（double）</td>
       <td>输入</td>
       <td>表示添加到分母中的值，以确保数值稳定。对应公式中的`eps`。</td>
-      <td>-</td>
+      <td>转换为FLOAT32后参与计算。极小正值转换后若为0，方差为0时归一化结果可能为NaN，标准差倒数可能为Inf。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -252,11 +252,6 @@ aclnnStatus aclnnFastLayerNorm(
     <tr>
       <td>meanOutOptional（非空时）或rstdOutOptional（非空时）的shape不是[A1,...,Ai,1,...,1]。</td>
     </tr>
-    <tr>
-      <td>ACLNN_ERR_INNER_NULLPTR</td>
-      <td>561103</td>
-      <td>normalizedShape的值为[R1,...,Rj]时，R1*R2*...*Rj的值大于583705600。</td>
-    </tr>
   </tbody></table>
 
 ## aclnnFastLayerNorm
@@ -302,6 +297,8 @@ aclnnStatus aclnnFastLayerNorm(
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
+  对于非空输入，归一化维度的乘积超出所选tiling模板支持的上限时，错误码ACLNN_ERR_INNER_NULLPTR（561103）可能在第二段接口返回。调用方需检查两段接口的返回值。
+
 ## 约束说明
 
 <!-- npu="A3,910b" id7 -->
@@ -309,6 +306,7 @@ aclnnStatus aclnnFastLayerNorm(
 <!-- end id7 -->
 
 - input、normalizedShape、weightOptional（非空时）、biasOptional（非空时）、out、meanOutOptional（非空时）或rstdOutOptional（非空时）的shape不超过8维。
+- 对于非空输入，归一化维度乘积的上限取决于所选tiling模板及平台的片上缓冲区（UB）容量。例如，Common模板获取的UB容量为196352字节时，乘积上限为583705600。
 - 确定性计算：
   - aclnnFastLayerNorm默认确定性实现。
 

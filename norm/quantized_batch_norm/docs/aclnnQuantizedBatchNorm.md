@@ -147,7 +147,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
       <td>inputZeroPoint（aclScalar*）</td>
       <td>输入</td>
       <td>表示模型输入数据的偏置，对应公式中的`inputZeroPoint`。</td>
-      <td>传入值不能超过`input`对应数据类型的上下边界，例如INT8上下边界为[-128,127]。</td>
+      <td>转换为FLOAT32后参与反量化计算。常规量化时，建议在`input`数据类型的表示范围内选取零点，例如INT8为[-128,127]。</td>
       <td>INT32</td>
       <td>ND</td>
       <td>-</td>
@@ -167,7 +167,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
       <td>outputZeroPoint（aclScalar*）</td>
       <td>输入</td>
       <td>表示模型输出数据的偏置，对应公式中的`outputZeroPoint`。</td>
-      <td>传入值不能超过`input`对应数据类型的上下边界，例如INT8上下边界为[-128,127]。</td>
+      <td>转换为FLOAT32后参与量化计算。常规量化时，建议在`output`数据类型的表示范围内选取零点，例如INT8为[-128,127]。</td>
       <td>INT32</td>
       <td>ND</td>
       <td>-</td>
@@ -263,7 +263,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
     <tr>
       <td>ACLNN_ERR_PARAM_INVALID</td>
       <td>161002</td>
-      <td>数据类型不在支持的范围之内，或者参数不满足上述约束。</td>
+      <td>Tensor或标量的数据类型，或Tensor的shape、元素个数、格式未通过参数校验。</td>
     </tr>
   </tbody></table>
 
@@ -315,6 +315,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
 ## 约束说明
 
 - input和output仅支持NCHW格式。传入ND或NHWC等不支持的格式时，错误码可能在第二段接口返回，调用方需检查两段接口的返回值。
+- INT32零点超出对应量化数据类型的表示范围时，仍按公式计算。计算结果受零点转换为FLOAT32时的精度及输出数据类型影响。
 
 - 确定性计算：
   - aclnnQuantizedBatchNorm默认确定性实现。
