@@ -64,4 +64,28 @@ TEST_F(l2_ada_layer_norm_quant_test, ascend910B2_param_invalid)
     CommonTest({4, 16, 128}, {4, 128}, {512}, {4, 16, 128}, {4, 16}, ACL_FLOAT16, ACLNN_ERR_PARAM_INVALID);
     CommonTest({4, 16, 128}, {4, 128}, {128}, {4, 4, 128}, {4, 16}, ACL_FLOAT16, ACLNN_ERR_PARAM_INVALID);
     CommonTest({4, 16, 128}, {4, 128}, {128}, {4, 16, 128}, {4, 4}, ACL_FLOAT16, ACLNN_ERR_PARAM_INVALID);
+    // rank of x less than 2
+    CommonTest({16}, {16}, {128}, {16}, {4}, ACL_FLOAT16, ACLNN_ERR_PARAM_INVALID);
+    // rank of x exceeds 8
+    CommonTest({2, 2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2}, {2}, {2, 2, 2, 2, 2, 2, 2, 2, 2},
+               {2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT16, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_ada_layer_norm_quant_test, ascend910B2_param_invalid_dtype_mismatch)
+{
+    // dtype of scale is not the same as x
+    auto x = TensorDesc({4, 16, 128}, ACL_FLOAT16, ACL_FORMAT_NCL);
+    auto scale = TensorDesc({4, 128}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto shift = TensorDesc({4, 128}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto weight = TensorDesc({128}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto bias = TensorDesc({128}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto smoothScales = TensorDesc({128}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto out = TensorDesc({4, 16, 128}, ACL_INT8, ACL_FORMAT_NCL);
+    auto quantScale = TensorDesc({4, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    const char* quantMode = "dynamic";
+    uint64_t workspace_size = 0;
+    auto ut = OP_API_UT(aclnnAdaLayerNormQuant, INPUT(x, scale, shift, weight, bias, smoothScales, 0.00001, quantMode),
+                        OUTPUT(out, quantScale, (aclTensor*)nullptr));
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }

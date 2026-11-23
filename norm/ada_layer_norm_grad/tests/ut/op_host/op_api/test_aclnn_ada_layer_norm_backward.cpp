@@ -496,6 +496,35 @@ TEST_F(l2_ada_layer_norm_backward_test, ascend910B2_aclnnAdaLayerNormBackward_di
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
+// input rank exceeds MAX_DIM_LEN (8)
+TEST_F(l2_ada_layer_norm_backward_test, ascend910B2_aclnnAdaLayerNormBackward_error_rank_exceed_max)
+{
+    auto gradOutDesc = TensorDesc({1, 1, 1, 1, 1, 1, 2, 6, 6}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto inputDesc = gradOutDesc;
+    auto normalizedShape = IntArrayDesc(vector<int64_t>{6});
+    auto meanDesc = TensorDesc({1, 1, 1, 1, 1, 1, 2, 6, 1}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto rstdDesc = TensorDesc({1, 1, 1, 1, 1, 1, 2, 6, 1}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(1, 2);
+    auto scaleDesc = TensorDesc({2, 6, 6}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto shiftDesc = TensorDesc({2, 6, 6}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto gradInputOutDesc = TensorDesc({1, 1, 1, 1, 1, 1, 2, 6, 6}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradScaleOutDesc = TensorDesc({2, 6, 6}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradShiftOutDesc = TensorDesc({2, 6, 6}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradWeightOutDesc = TensorDesc({6}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradBiasOutDesc = TensorDesc({6}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto weightDesc = TensorDesc({6}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto biasDesc = TensorDesc({6}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2);
+
+    auto ut = OP_API_UT(
+        aclnnAdaLayerNormBackward,
+        INPUT(gradOutDesc, inputDesc, normalizedShape, rstdDesc, meanDesc, scaleDesc, shiftDesc, weightDesc, biasDesc),
+        OUTPUT(gradInputOutDesc, gradScaleOutDesc, gradShiftOutDesc, gradWeightOutDesc, gradBiasOutDesc));
+    // SAMPLE: only test GetWorkspaceSize
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
 // nullptr
 TEST_F(l2_ada_layer_norm_backward_test, ascend910B2_aclnnAdaLayerNormBackward_nullptr)
 {

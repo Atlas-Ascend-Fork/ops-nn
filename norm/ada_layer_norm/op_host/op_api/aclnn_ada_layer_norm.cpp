@@ -47,6 +47,34 @@ static constexpr int32_t MAX_X_DIM = 8;
 static const std::initializer_list<op::DataType> DTYPE_SUPPORT_LIST = {op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16,
                                                                        op::DataType::DT_BF16};
 
+// EZ码细化：dtype 不在支持列表由泛化 EZ1001 细化为 EZ0020，dtype 不一致由泛化 EZ1001 细化为 EZ0021，
+// 校验条件保持不变
+static bool CheckDtypeInList(const aclTensor* tensor, const char* tensorName,
+                             const std::initializer_list<op::DataType>& supportList)
+{
+    if (!CheckType(tensor->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnAdaLayerNorm", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetDataType() != tensor2->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnAdaLayerNorm", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetDataType()).GetString()) + ", " +
+             op::ToString(tensor2->GetDataType()).GetString())
+                .c_str(),
+            (std::string("dtype of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
 static bool CheckNotNull(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLayerNormOutputTensor& outputTensor)
 {
     OP_CHECK(inputTensor.x != nullptr, ReportNullPointerError(__func__, "inputTensor.x"), return false);
@@ -58,29 +86,48 @@ static bool CheckNotNull(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLa
 
 static bool CheckDtypeValid(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLayerNormOutputTensor& outputTensor)
 {
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.x, DTYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_MATCH(inputTensor.scale, inputTensor.x->GetDataType(), return false);
-    OP_CHECK_DTYPE_NOT_MATCH(inputTensor.shift, inputTensor.x->GetDataType(), return false);
+    if (!CheckDtypeInList(inputTensor.x, "x", DTYPE_SUPPORT_LIST)) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(inputTensor.x, inputTensor.scale, "x", "scale")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(inputTensor.x, inputTensor.shift, "x", "shift")) {
+        return false;
+    }
     if (inputTensor.weightOptional != nullptr && inputTensor.biasOptional != nullptr) {
         // weight和bias都不为空时，数据类型保持一致
-        OP_CHECK_DTYPE_NOT_MATCH(inputTensor.weightOptional, inputTensor.biasOptional->GetDataType(), return false);
+        if (!CheckDtypeSamePair(inputTensor.biasOptional, inputTensor.weightOptional, "biasOptional",
+                                "weightOptional")) {
+            return false;
+        }
     }
     if (inputTensor.weightOptional != nullptr) {
         if (!outputTensor.useV2 || inputTensor.weightOptional->GetDataType() != op::DataType::DT_FLOAT) {
-            OP_CHECK_DTYPE_NOT_MATCH(inputTensor.weightOptional, inputTensor.x->GetDataType(), return false);
+            if (!CheckDtypeSamePair(inputTensor.x, inputTensor.weightOptional, "x", "weightOptional")) {
+                return false;
+            }
         }
     }
     if (inputTensor.biasOptional != nullptr) {
         if (!outputTensor.useV2 || inputTensor.biasOptional->GetDataType() != op::DataType::DT_FLOAT) {
-            OP_CHECK_DTYPE_NOT_MATCH(inputTensor.biasOptional, inputTensor.x->GetDataType(), return false);
+            if (!CheckDtypeSamePair(inputTensor.x, inputTensor.biasOptional, "x", "biasOptional")) {
+                return false;
+            }
         }
     }
-    OP_CHECK_DTYPE_NOT_MATCH(outputTensor.out, inputTensor.x->GetDataType(), return false);
+    if (!CheckDtypeSamePair(inputTensor.x, outputTensor.out, "x", "out")) {
+        return false;
+    }
     if (outputTensor.meanOutOptional != nullptr) {
-        OP_CHECK_DTYPE_NOT_MATCH(outputTensor.meanOutOptional, inputTensor.x->GetDataType(), return false);
+        if (!CheckDtypeSamePair(inputTensor.x, outputTensor.meanOutOptional, "x", "meanOutOptional")) {
+            return false;
+        }
     }
     if (outputTensor.rstdOutOptional != nullptr) {
-        OP_CHECK_DTYPE_NOT_MATCH(outputTensor.rstdOutOptional, inputTensor.x->GetDataType(), return false);
+        if (!CheckDtypeSamePair(inputTensor.x, outputTensor.rstdOutOptional, "x", "rstdOutOptional")) {
+            return false;
+        }
     }
     return true;
 }
@@ -88,8 +135,10 @@ static bool CheckDtypeValid(l0op::AdaLayerNormInputTensor& inputTensor, l0op::Ad
 static bool CheckShape(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLayerNormOutputTensor& outputTensor)
 {
     int64_t xDim = inputTensor.x->GetViewShape().GetDimNum();
+    // EZ码细化：rank 越界由 EZ0011 细化为 EZ0012，校验条件保持不变
     OP_CHECK(xDim >= MIN_X_DIM && xDim <= MAX_X_DIM,
-             OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAdaLayerNorm", "x", std::to_string(xDim).c_str(), "between 2 and 8"),
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAdaLayerNorm", "x", (std::to_string(xDim) + "D").c_str(),
+                                                      "the number of dims of x should be between 2 and 8"),
              return false);
 
     op::Shape xShape = inputTensor.x->GetViewShape();
@@ -114,10 +163,23 @@ static bool CheckShape(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLaye
 
     op::Shape scaleShape = inputTensor.scale->GetViewShape();
     op::Shape shiftShape = inputTensor.shift->GetViewShape();
+    // 上报通道补齐：scale/shift shape 关系校验失败此前静默返回，补齐 EZ0010 上报，校验条件保持不变
     if (scaleShape != expectShape1 && scaleShape != expectShape2) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnAdaLayerNorm", "x,scale",
+            (std::string(op::ToString(inputTensor.x->GetViewShape()).GetString()) + ", " +
+             op::ToString(scaleShape).GetString())
+                .c_str(),
+            "shape of scale should be [B..., H] or [B..., 1, H] matching the leading dims of x");
         return false;
     }
     if (shiftShape != expectShape1 && shiftShape != expectShape2) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnAdaLayerNorm", "x,shift",
+            (std::string(op::ToString(inputTensor.x->GetViewShape()).GetString()) + ", " +
+             op::ToString(shiftShape).GetString())
+                .c_str(),
+            "shape of shift should be [B..., H] or [B..., 1, H] matching the leading dims of x");
         return false;
     }
     if (inputTensor.weightOptional != nullptr) {
@@ -138,26 +200,35 @@ static bool CheckShape(l0op::AdaLayerNormInputTensor& inputTensor, l0op::AdaLaye
                      "shape of inputTensor.biasOptional should be the same as biasExpectShape"),
                  return false);
     }
-    OP_CHECK(outputTensor.out->GetViewShape() == xShape,
-             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnAdaLayerNorm", "outputTensor.out",
-                                                   op::ToString(outputTensor.out->GetViewShape()).GetString(),
-                                                   "shape of outputTensor.out should be the same as xShape"),
-             return false);
+    // EZ码细化：out/meanOutOptional/rstdOutOptional 与 x 的 shape 关系由 EZ0009（单参）细化为 EZ0010（多参关系），
+    // 校验条件保持不变
+    OP_CHECK(
+        outputTensor.out->GetViewShape() == xShape,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnAdaLayerNorm", "x,out",
+                                               (std::string(op::ToString(inputTensor.x->GetViewShape()).GetString()) +
+                                                ", " + op::ToString(outputTensor.out->GetViewShape()).GetString())
+                                                   .c_str(),
+                                               "shape of out should be the same as x"),
+        return false);
     xShape[xDim - 1] = 1;
     if (outputTensor.meanOutOptional != nullptr) {
         OP_CHECK(outputTensor.meanOutOptional->GetViewShape() == xShape,
-                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                     "aclnnAdaLayerNorm", "outputTensor.meanOutOptional",
-                     op::ToString(outputTensor.meanOutOptional->GetViewShape()).GetString(),
-                     "shape of outputTensor.meanOutOptional should be the same as xShape"),
+                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                     "aclnnAdaLayerNorm", "x,meanOutOptional",
+                     (std::string(op::ToString(inputTensor.x->GetViewShape()).GetString()) + ", " +
+                      op::ToString(outputTensor.meanOutOptional->GetViewShape()).GetString())
+                         .c_str(),
+                     "shape of meanOutOptional should be the same as x except that the last dim should be 1"),
                  return false);
     }
     if (outputTensor.rstdOutOptional != nullptr) {
         OP_CHECK(outputTensor.rstdOutOptional->GetViewShape() == xShape,
-                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                     "aclnnAdaLayerNorm", "outputTensor.rstdOutOptional",
-                     op::ToString(outputTensor.rstdOutOptional->GetViewShape()).GetString(),
-                     "shape of outputTensor.rstdOutOptional should be the same as xShape"),
+                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                     "aclnnAdaLayerNorm", "x,rstdOutOptional",
+                     (std::string(op::ToString(inputTensor.x->GetViewShape()).GetString()) + ", " +
+                      op::ToString(outputTensor.rstdOutOptional->GetViewShape()).GetString())
+                         .c_str(),
+                     "shape of rstdOutOptional should be the same as x except that the last dim should be 1"),
                  return false);
     }
     return true;

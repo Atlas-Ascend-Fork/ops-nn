@@ -78,6 +78,70 @@ TEST_F(l2_rms_norm_quant_test, case_fp16_001)
     EXPECT_EQ(aclRet, ACL_SUCCESS);
 }
 
+TEST_F(l2_rms_norm_quant_test, ascend910b_param_invalid_dtype_and_rank)
+{
+    // x dtype 不在支持列表（INT32）→ 161002
+    {
+        auto x = TensorDesc({8, 64}, ACL_INT32, ACL_FORMAT_ND);
+        auto gamma = TensorDesc({64}, ACL_INT32, ACL_FORMAT_ND);
+        auto beta = TensorDesc({64}, ACL_INT32, ACL_FORMAT_ND);
+        auto scale = TensorDesc({1}, ACL_INT32, ACL_FORMAT_ND);
+        auto offset = TensorDesc({1}, ACL_INT8, ACL_FORMAT_ND);
+        auto y = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnRmsNormQuant, INPUT(x, gamma, beta, scale, offset, 1e-6, y), OUTPUT());
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    }
+    // x=FLOAT16, gamma=FLOAT32 dtype 不一致 → 161002
+    {
+        auto x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto gamma = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+        auto beta = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto scale = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto offset = TensorDesc({1}, ACL_INT8, ACL_FORMAT_ND);
+        auto y = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnRmsNormQuant, INPUT(x, gamma, beta, scale, offset, 1e-6, y), OUTPUT());
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    }
+    // offset dtype 与期望 INT8 不符 → 161002
+    {
+        auto x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto beta = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto scale = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto offset = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto y = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnRmsNormQuant, INPUT(x, gamma, beta, scale, offset, 1e-6, y), OUTPUT());
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    }
+    // x rank=9 超上限 → 161002
+    {
+        auto x = TensorDesc({1, 1, 1, 1, 1, 1, 1, 1, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto beta = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto scale = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto offset = TensorDesc({1}, ACL_INT8, ACL_FORMAT_ND);
+        auto y = TensorDesc({1, 1, 1, 1, 1, 1, 1, 1, 64}, ACL_INT8, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnRmsNormQuant, INPUT(x, gamma, beta, scale, offset, 1e-6, y), OUTPUT());
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    }
+    // gamma rank=3 超上限 → 161002
+    {
+        auto x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto gamma = TensorDesc({1, 1, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto beta = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto scale = TensorDesc({1}, ACL_FLOAT16, ACL_FORMAT_ND);
+        auto offset = TensorDesc({1}, ACL_INT8, ACL_FORMAT_ND);
+        auto y = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnRmsNormQuant, INPUT(x, gamma, beta, scale, offset, 1e-6, y), OUTPUT());
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    }
+}
+
 TEST_F(l2_rms_norm_quant_test, case_bf16_002)
 {
     auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_BF16, ACL_FORMAT_ND);

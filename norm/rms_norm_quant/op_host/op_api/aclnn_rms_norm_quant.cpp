@@ -75,6 +75,67 @@ static const std::initializer_list<op::DataType> ZP_REG_BASE_DTYPE_SUPPORT_LIST 
     op::DataType::DT_INT32, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16, op::DataType::DT_BF16,
     op::DataType::DT_INT8};
 
+// EZ码细化：dtype 不在支持列表由泛化 EZ1001 细化为 EZ0020，dtype 不一致由泛化 EZ1001 细化为 EZ0021，
+// rank 超上下限由泛化 EZ1001 细化为 EZ0012，校验条件均保持不变
+static bool CheckDtypeInList(const aclTensor* tensor, const char* tensorName,
+                             const std::initializer_list<op::DataType>& supportList)
+{
+    if (!CheckType(tensor->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnRmsNormQuant", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetDataType() != tensor2->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnRmsNormQuant", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetDataType()).GetString()) + ", " +
+             op::ToString(tensor2->GetDataType()).GetString())
+                .c_str(),
+            (std::string("dtype of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeMatchValue(const aclTensor* tensor, const char* tensorName, op::DataType expectDtype)
+{
+    if (tensor->GetDataType() != expectDtype) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnRmsNormQuant", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype of " + std::string(tensorName) + " must be " + op::ToString(expectDtype).GetString()).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMax(const aclTensor* tensor, const char* tensorName, size_t maxDim)
+{
+    if (tensor->GetViewShape().GetDimNum() > maxDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnRmsNormQuant", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot exceed " + std::to_string(maxDim)).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMin(const aclTensor* tensor, const char* tensorName, size_t minDim)
+{
+    if (tensor->GetViewShape().GetDimNum() < minDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnRmsNormQuant", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot be less than " + std::to_string(minDim)).c_str());
+        return false;
+    }
+    return true;
+}
+
 struct RmsNormQuantInputTensor {
     const aclTensor* x;
     const aclTensor* gamma;
@@ -162,15 +223,29 @@ static const std::initializer_list<DataType>& GetOutDtypeSupportList()
 
 static bool CheckDtypeValid(RmsNormQuantInputTensor& inputTensor, const aclTensor* y)
 {
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.x, GetInDtypeSupportList(), return false);
-    OP_CHECK_DTYPE_NOT_SAME(inputTensor.gamma, inputTensor.x, return false);
-    OP_CHECK_DTYPE_NOT_SAME(inputTensor.beta, inputTensor.x, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(y, GetOutDtypeSupportList(), return false);
+    if (!CheckDtypeInList(inputTensor.x, "x", GetInDtypeSupportList())) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(inputTensor.x, inputTensor.gamma, "x", "gamma")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(inputTensor.x, inputTensor.beta, "x", "beta")) {
+        return false;
+    }
+    if (!CheckDtypeInList(y, "y", GetOutDtypeSupportList())) {
+        return false;
+    }
     if (!Ops::NN::AclnnUtil::IsRegbase()) {
-        OP_CHECK_DTYPE_NOT_SAME(inputTensor.scale, inputTensor.x, return false);
-        OP_CHECK_DTYPE_NOT_MATCH(inputTensor.offset, op::DataType::DT_INT8, return false);
+        if (!CheckDtypeSamePair(inputTensor.x, inputTensor.scale, "x", "scale")) {
+            return false;
+        }
+        if (!CheckDtypeMatchValue(inputTensor.offset, "offset", op::DataType::DT_INT8)) {
+            return false;
+        }
     } else {
-        OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.offset, ZP_REG_BASE_DTYPE_SUPPORT_LIST, return false);
+        if (!CheckDtypeInList(inputTensor.offset, "offset", ZP_REG_BASE_DTYPE_SUPPORT_LIST)) {
+            return false;
+        }
         if (inputTensor.x->GetDataType() == op::DataType::DT_FLOAT) {
             OP_CHECK(inputTensor.scale->GetDataType() == op::DataType::DT_FLOAT &&
                          inputTensor.offset->GetDataType() == op::DataType::DT_FLOAT,
@@ -246,15 +321,31 @@ bool CheckShapeDimWithFrontN(const op::Shape& shape1, const op::Shape& shape2, s
 
 static bool CheckShapeDim(RmsNormQuantInputTensor& inputTensor, const aclTensor* y)
 {
-    OP_CHECK_MAX_DIM(inputTensor.x, MAX_DIM_LEN, return false);
-    OP_CHECK_MAX_DIM(inputTensor.gamma, DIMS_TWO_NUMS, return false);
-    OP_CHECK_MAX_DIM(inputTensor.beta, DIMS_TWO_NUMS, return false);
-    OP_CHECK_MAX_DIM(y, MAX_DIM_LEN, return false);
+    if (!CheckDimNumMax(inputTensor.x, "x", MAX_DIM_LEN)) {
+        return false;
+    }
+    if (!CheckDimNumMax(inputTensor.gamma, "gamma", DIMS_TWO_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(inputTensor.beta, "beta", DIMS_TWO_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(y, "y", MAX_DIM_LEN)) {
+        return false;
+    }
 
-    OP_CHECK_MIN_DIM(inputTensor.x, DIMS_ONE_NUMS, return false);
-    OP_CHECK_MIN_DIM(inputTensor.gamma, DIMS_ONE_NUMS, return false);
-    OP_CHECK_MIN_DIM(inputTensor.beta, DIMS_ONE_NUMS, return false);
-    OP_CHECK_MIN_DIM(y, DIMS_ONE_NUMS, return false);
+    if (!CheckDimNumMin(inputTensor.x, "x", DIMS_ONE_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMin(inputTensor.gamma, "gamma", DIMS_ONE_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMin(inputTensor.beta, "beta", DIMS_ONE_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMin(y, "y", DIMS_ONE_NUMS)) {
+        return false;
+    }
 
     int64_t scaleDimNum = static_cast<int64_t>(inputTensor.scale->GetViewShape().GetDimNum());
     if (scaleDimNum != 1) {

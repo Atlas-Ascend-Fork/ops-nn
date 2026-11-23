@@ -60,3 +60,27 @@ TEST_F(l2_ada_layer_norm_test, ascend910B2_param_invalid)
     CommonTest({4, 16, 128}, {4, 128}, {512}, {4, 16, 128}, ACL_FLOAT, ACLNN_ERR_PARAM_INVALID);
     CommonTest({4, 16, 128}, {4, 128}, {128}, {4, 4, 128}, ACL_FLOAT, ACLNN_ERR_PARAM_INVALID);
 }
+
+TEST_F(l2_ada_layer_norm_test, ascend910B2_param_invalid_rank)
+{
+    // rank=1, less than min 2
+    CommonTest({128}, {128}, {128}, {128}, ACL_FLOAT, ACLNN_ERR_PARAM_INVALID);
+    // rank=9, greater than max 8
+    CommonTest({1, 1, 1, 1, 1, 1, 1, 1, 128}, {128}, {128}, {1, 1, 1, 1, 1, 1, 1, 1, 128}, ACL_FLOAT,
+               ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_ada_layer_norm_test, ascend910B2_param_invalid_dtype_mismatch)
+{
+    // x=FLOAT, scale/shift=FLOAT16, dtype mismatch
+    auto x = TensorDesc({4, 16, 128}, ACL_FLOAT, ACL_FORMAT_NCL);
+    auto scale = TensorDesc({4, 128}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto shift = TensorDesc({4, 128}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto weight = TensorDesc({128}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto bias = TensorDesc({128}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto out = TensorDesc({4, 16, 128}, ACL_FLOAT, ACL_FORMAT_NCL);
+    uint64_t workspace_size = 0;
+    auto ut = OP_API_UT(aclnnAdaLayerNorm, INPUT(x, scale, shift, weight, bias, 0.00001), OUTPUT(out));
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}

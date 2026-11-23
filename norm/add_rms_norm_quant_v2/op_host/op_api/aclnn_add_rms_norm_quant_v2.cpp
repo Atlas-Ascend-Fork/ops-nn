@@ -117,6 +117,82 @@ static bool IsSocVersion910BC_310P()
 
 static bool IsRegbase() { return Ops::NN::AclnnUtil::IsRegbase(); }
 
+// EZ码细化：dtype 不在支持列表由泛化上报细化为 EZ0020，dtype 不一致由泛化上报细化为 EZ0021，
+// dtype 与期望值不符由泛化上报细化为 EZ0020，rank 超上下限由泛化上报细化为 EZ0012，
+// shape 不一致由泛化上报细化为 EZ0010，校验条件均保持不变
+static bool CheckDtypeInList(const aclTensor* tensor, const char* tensorName,
+                             const std::initializer_list<op::DataType>& supportList)
+{
+    if (!CheckType(tensor->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnAddRmsNormQuantV2", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetDataType() != tensor2->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnAddRmsNormQuantV2", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetDataType()).GetString()) + ", " +
+             op::ToString(tensor2->GetDataType()).GetString())
+                .c_str(),
+            (std::string("dtype of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeMatchValue(const aclTensor* tensor, op::DataType expectedDtype, const char* tensorName)
+{
+    if (tensor->GetDataType() != expectedDtype) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnAddRmsNormQuantV2", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            (std::string("dtype of ") + tensorName + " must be " + op::ToString(expectedDtype).GetString()).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMax(const aclTensor* tensor, const char* tensorName, size_t maxDim)
+{
+    if (tensor->GetViewShape().GetDimNum() > maxDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnAddRmsNormQuantV2", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot exceed " + std::to_string(maxDim)).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMin(const aclTensor* tensor, const char* tensorName, size_t minDim)
+{
+    if (tensor->GetViewShape().GetDimNum() < minDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnAddRmsNormQuantV2", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot be less than " + std::to_string(minDim)).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckShapeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetViewShape() != tensor2->GetViewShape()) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnAddRmsNormQuantV2", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetViewShape()).GetString()) + ", " +
+             op::ToString(tensor2->GetViewShape()).GetString())
+                .c_str(),
+            (std::string("shape of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
 static bool CheckInputNotNull(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma,
                               const aclTensor* scales1)
 {
@@ -142,41 +218,67 @@ static bool CheckOutputNotNull(aclTensor* y1Out, aclTensor* y2Out, const aclTens
 static bool CheckInputDtypeValid(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma,
                                  const aclTensor* scales1)
 {
-    OP_CHECK_DTYPE_NOT_SUPPORT(gamma, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(x1, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(scales1, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(x2, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+    if (!CheckDtypeInList(gamma, "gamma", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+        return false;
+    }
+    if (!CheckDtypeInList(x1, "x1", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+        return false;
+    }
+    if (!CheckDtypeInList(scales1, "scales1", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+        return false;
+    }
+    if (!CheckDtypeInList(x2, "x2", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+        return false;
+    }
     return true;
 }
 
 static bool CheckXDtypeValid910BC(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma,
                                   const aclTensor* betaOptional, const aclTensor* xOut)
 {
-    OP_CHECK_DTYPE_NOT_SUPPORT(gamma, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(x1, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(x2, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
-    if (nullptr != betaOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(betaOptional, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
+    if (!CheckDtypeInList(gamma, "gamma", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+        return false;
     }
-    OP_CHECK_DTYPE_NOT_SUPPORT(xOut, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
+    if (!CheckDtypeInList(x1, "x1", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+        return false;
+    }
+    if (!CheckDtypeInList(x2, "x2", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+        return false;
+    }
+    if (nullptr != betaOptional) {
+        if (!CheckDtypeInList(betaOptional, "betaOptional", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+            return false;
+        }
+    }
+    if (!CheckDtypeInList(xOut, "xOut", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+        return false;
+    }
     return true;
 }
 
 static bool CheckScalesZerosDtypeValid910BC(const aclTensor* scales1Optional, const aclTensor* scales2Optional,
                                             const aclTensor* zeroPoints1Optional, const aclTensor* zeroPoints2Optional)
 {
-    OP_CHECK_DTYPE_NOT_SUPPORT(scales1Optional, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_SCALE, return false);
+    if (!CheckDtypeInList(scales1Optional, "scales1", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_SCALE)) {
+        return false;
+    }
     if (nullptr != zeroPoints2Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(zeroPoints2Optional, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_ZEROPOINT,
-                                   return false);
+        if (!CheckDtypeInList(zeroPoints2Optional, "zeroPoints2Optional",
+                              ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_ZEROPOINT)) {
+            return false;
+        }
     }
     if (nullptr != zeroPoints1Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(zeroPoints1Optional, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_ZEROPOINT,
-                                   return false);
+        if (!CheckDtypeInList(zeroPoints1Optional, "zeroPoints1Optional",
+                              ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_ZEROPOINT)) {
+            return false;
+        }
     }
 
     if (nullptr != scales2Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(scales2Optional, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_SCALE, return false);
+        if (!CheckDtypeInList(scales2Optional, "scales2Optional", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_SCALE)) {
+            return false;
+        }
     }
     return true;
 }
@@ -185,54 +287,93 @@ static bool CheckOptionalParamDtypeValid(const aclTensor* scales2Optional, const
                                          const aclTensor* zeroPoints2Optional, const aclTensor* betaOptional)
 {
     if (nullptr != zeroPoints2Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(zeroPoints2Optional, ASCEND950_DTYPE_SUPPORT_LIST_ZEROPOINT, return false);
+        if (!CheckDtypeInList(zeroPoints2Optional, "zeroPoints2Optional", ASCEND950_DTYPE_SUPPORT_LIST_ZEROPOINT)) {
+            return false;
+        }
     }
     if (nullptr != zeroPoints1Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(zeroPoints1Optional, ASCEND950_DTYPE_SUPPORT_LIST_ZEROPOINT, return false);
+        if (!CheckDtypeInList(zeroPoints1Optional, "zeroPoints1Optional", ASCEND950_DTYPE_SUPPORT_LIST_ZEROPOINT)) {
+            return false;
+        }
     }
 
     if (nullptr != scales2Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(scales2Optional, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+        if (!CheckDtypeInList(scales2Optional, "scales2Optional", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+            return false;
+        }
     }
 
     if (nullptr != betaOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(betaOptional, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+        if (!CheckDtypeInList(betaOptional, "betaOptional", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+            return false;
+        }
     }
     return true;
 }
 
 static bool CheckOutputDtypeValid(const aclTensor* y1Out, const aclTensor* y2Out, const aclTensor* xOut)
 {
-    OP_CHECK_DTYPE_NOT_SUPPORT(xOut, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+    if (!CheckDtypeInList(xOut, "xOut", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+        return false;
+    }
     if (IsRegbase()) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(y2Out, ASCEND950_DTYPE_SUPPORT_LIST_Y, return false);
-        OP_CHECK_DTYPE_NOT_SUPPORT(y1Out, ASCEND950_DTYPE_SUPPORT_LIST_Y, return false);
+        if (!CheckDtypeInList(y2Out, "y2Out", ASCEND950_DTYPE_SUPPORT_LIST_Y)) {
+            return false;
+        }
+        if (!CheckDtypeInList(y1Out, "y1Out", ASCEND950_DTYPE_SUPPORT_LIST_Y)) {
+            return false;
+        }
     } else {
-        OP_CHECK_DTYPE_NOT_MATCH(y2Out, op::DataType::DT_INT8, return false);
-        OP_CHECK_DTYPE_NOT_MATCH(y1Out, op::DataType::DT_INT8, return false);
+        if (!CheckDtypeMatchValue(y2Out, op::DataType::DT_INT8, "y2Out")) {
+            return false;
+        }
+        if (!CheckDtypeMatchValue(y1Out, op::DataType::DT_INT8, "y1Out")) {
+            return false;
+        }
     }
     return true;
 }
 
 static bool CheckOutputDtypeValid910BC(const aclTensor* y1Out, const aclTensor* y2Out)
 {
-    OP_CHECK_DTYPE_NOT_MATCH(y2Out, op::DataType::DT_INT8, return false); // Mandatory output
-    OP_CHECK_DTYPE_NOT_MATCH(y1Out, op::DataType::DT_INT8, return false);
+    // Mandatory output
+    if (!CheckDtypeMatchValue(y2Out, op::DataType::DT_INT8, "y2Out")) {
+        return false;
+    }
+    if (!CheckDtypeMatchValue(y1Out, op::DataType::DT_INT8, "y1Out")) {
+        return false;
+    }
     return true;
 }
 
 static bool CheckInputShapeDim(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma,
                                const aclTensor* scales1)
 {
-    OP_CHECK_MAX_DIM(x2, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(x1, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(scales1, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(gamma, MAX_SUPPORT_DIMS_NUMS, return false);
+    if (!CheckDimNumMax(x2, "x2", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(x1, "x1", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(scales1, "scales1", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(gamma, "gamma", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
 
-    OP_CHECK_MIN_DIM(x2, MIN_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MIN_DIM(x1, MIN_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MIN_DIM(scales1, MIN_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MIN_DIM(gamma, MIN_SUPPORT_DIMS_NUMS, return false);
+    if (!CheckDimNumMin(x2, "x2", MIN_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMin(x1, "x1", MIN_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMin(scales1, "scales1", MIN_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMin(gamma, "gamma", MIN_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
 
     CHECK_RET(CheckDims(x2), false);
     CHECK_RET(CheckDims(x1), false);
@@ -245,23 +386,39 @@ static bool CheckOptionalParamShapeDim(const aclTensor* scales2Optional, const a
                                        const aclTensor* zeroPoints2Optional, const aclTensor* betaOptional)
 {
     if (nullptr != zeroPoints2Optional) {
-        OP_CHECK_MAX_DIM(zeroPoints2Optional, MAX_SUPPORT_DIMS_NUMS, return false);
-        OP_CHECK_MIN_DIM(zeroPoints2Optional, MIN_SUPPORT_DIMS_NUMS, return false);
+        if (!CheckDimNumMax(zeroPoints2Optional, "zeroPoints2Optional", MAX_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
+        if (!CheckDimNumMin(zeroPoints2Optional, "zeroPoints2Optional", MIN_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
         CHECK_RET(CheckDims(zeroPoints2Optional), false);
     }
     if (nullptr != zeroPoints1Optional) {
-        OP_CHECK_MAX_DIM(zeroPoints1Optional, MAX_SUPPORT_DIMS_NUMS, return false);
-        OP_CHECK_MIN_DIM(zeroPoints1Optional, MIN_SUPPORT_DIMS_NUMS, return false);
+        if (!CheckDimNumMax(zeroPoints1Optional, "zeroPoints1Optional", MAX_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
+        if (!CheckDimNumMin(zeroPoints1Optional, "zeroPoints1Optional", MIN_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
         CHECK_RET(CheckDims(zeroPoints1Optional), false);
     }
     if (nullptr != scales2Optional) {
-        OP_CHECK_MAX_DIM(scales2Optional, MAX_SUPPORT_DIMS_NUMS, return false);
-        OP_CHECK_MIN_DIM(scales2Optional, MIN_SUPPORT_DIMS_NUMS, return false);
+        if (!CheckDimNumMax(scales2Optional, "scales2Optional", MAX_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
+        if (!CheckDimNumMin(scales2Optional, "scales2Optional", MIN_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
         CHECK_RET(CheckDims(scales2Optional), false);
     }
     if (nullptr != betaOptional) {
-        OP_CHECK_MAX_DIM(betaOptional, MAX_SUPPORT_DIMS_NUMS, return false);
-        OP_CHECK_MIN_DIM(betaOptional, MIN_SUPPORT_DIMS_NUMS, return false);
+        if (!CheckDimNumMax(betaOptional, "betaOptional", MAX_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
+        if (!CheckDimNumMin(betaOptional, "betaOptional", MIN_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
         CHECK_RET(CheckDims(betaOptional), false);
     }
     return true;
@@ -269,13 +426,25 @@ static bool CheckOptionalParamShapeDim(const aclTensor* scales2Optional, const a
 
 static bool CheckOutputShapeDim(aclTensor* y1Out, aclTensor* y2Out, aclTensor* xOut)
 {
-    OP_CHECK_MAX_DIM(xOut, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(y2Out, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(y1Out, MAX_SUPPORT_DIMS_NUMS, return false);
+    if (!CheckDimNumMax(xOut, "xOut", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(y2Out, "y2Out", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(y1Out, "y1Out", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
 
-    OP_CHECK_MIN_DIM(xOut, MIN_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MIN_DIM(y2Out, MIN_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MIN_DIM(y1Out, MIN_SUPPORT_DIMS_NUMS, return false);
+    if (!CheckDimNumMin(xOut, "xOut", MIN_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMin(y2Out, "y2Out", MIN_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMin(y1Out, "y1Out", MIN_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
 
     CHECK_RET(CheckDims(xOut), false);
     CHECK_RET(CheckDims(y1Out), false);
@@ -286,10 +455,18 @@ static bool CheckOutputShapeDim(aclTensor* y1Out, aclTensor* y2Out, aclTensor* x
 static bool CheckShapeSameWithX(const aclTensor* x1, const aclTensor* x2, const aclTensor* y1Out,
                                 const aclTensor* y2Out, const aclTensor* xOut)
 {
-    OP_CHECK_SHAPE_NOT_EQUAL(x1, x2, return false);
-    OP_CHECK_SHAPE_NOT_EQUAL(x1, y1Out, return false);
-    OP_CHECK_SHAPE_NOT_EQUAL(x1, y2Out, return false);
-    OP_CHECK_SHAPE_NOT_EQUAL(x1, xOut, return false);
+    if (!CheckShapeSamePair(x1, x2, "x1", "x2")) {
+        return false;
+    }
+    if (!CheckShapeSamePair(x1, y1Out, "x1", "y1Out")) {
+        return false;
+    }
+    if (!CheckShapeSamePair(x1, y2Out, "x1", "y2Out")) {
+        return false;
+    }
+    if (!CheckShapeSamePair(x1, xOut, "x1", "xOut")) {
+        return false;
+    }
 
     return true;
 }
@@ -297,15 +474,23 @@ static bool CheckShapeSameWithX(const aclTensor* x1, const aclTensor* x2, const 
 static bool CheckShapeSameWithGamma(const aclTensor* gamma, const aclTensor* scales1, const aclTensor* scales2Optional,
                                     const aclTensor* zeroPoints1Optional, const aclTensor* zeroPoints2Optional)
 {
-    OP_CHECK_SHAPE_NOT_EQUAL(gamma, scales1, return false);
+    if (!CheckShapeSamePair(gamma, scales1, "gamma", "scales1")) {
+        return false;
+    }
     if (nullptr != scales2Optional) {
-        OP_CHECK_SHAPE_NOT_EQUAL(gamma, scales2Optional, return false);
+        if (!CheckShapeSamePair(gamma, scales2Optional, "gamma", "scales2Optional")) {
+            return false;
+        }
     }
     if (nullptr != zeroPoints1Optional) {
-        OP_CHECK_SHAPE_NOT_EQUAL(gamma, zeroPoints1Optional, return false);
+        if (!CheckShapeSamePair(gamma, zeroPoints1Optional, "gamma", "zeroPoints1Optional")) {
+            return false;
+        }
     }
     if (nullptr != zeroPoints2Optional) {
-        OP_CHECK_SHAPE_NOT_EQUAL(gamma, zeroPoints2Optional, return false);
+        if (!CheckShapeSamePair(gamma, zeroPoints2Optional, "gamma", "zeroPoints2Optional")) {
+            return false;
+        }
     }
     return true;
 }
@@ -319,7 +504,7 @@ static inline bool CheckGammaShapeX(const aclTensor* x1, const op::Shape& gammaS
     // gamma的dim必须小于x的dim
     if (formerDimNum < 0) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-            "aclnnAddRmsNormQuantV2", "gamma", std::to_string(gammaDimNum).c_str(),
+            "aclnnAddRmsNormQuantV2", "gamma", (std::to_string(gammaDimNum) + "D").c_str(),
             ("the gamma tensor's dim count must not exceed x1 tensor's dim count " + std::to_string(xDimNum)).c_str());
         return false;
     }
@@ -390,7 +575,8 @@ static aclnnStatus CheckParams(AddRmsNormQuantV2InputTensor& inputTensor, AddRms
                                           inputTensor.zeroPoints1Optional, inputTensor.zeroPoints2Optional),
                   ACLNN_ERR_PARAM_INVALID);
         if (nullptr != inputTensor.betaOptional) {
-            OP_CHECK_SHAPE_NOT_EQUAL(inputTensor.gamma, inputTensor.betaOptional, return ACLNN_ERR_PARAM_INVALID);
+            CHECK_RET(CheckShapeSamePair(inputTensor.gamma, inputTensor.betaOptional, "gamma", "betaOptional"),
+                      ACLNN_ERR_PARAM_INVALID);
         }
         // 检查x和gamma的shape关系
         CHECK_RET(CheckShapeGammaX(inputTensor.x1, inputTensor.gamma), ACLNN_ERR_PARAM_INVALID);
@@ -410,10 +596,12 @@ static aclnnStatus CheckParams(AddRmsNormQuantV2InputTensor& inputTensor, AddRms
                   ACLNN_ERR_PARAM_INVALID);
         CHECK_RET(CheckShapeGammaX(inputTensor.x1, inputTensor.gamma), ACLNN_ERR_PARAM_INVALID);
         if (nullptr != inputTensor.betaOptional) {
-            OP_CHECK_SHAPE_NOT_EQUAL(inputTensor.gamma, inputTensor.betaOptional, return ACLNN_ERR_PARAM_INVALID);
+            CHECK_RET(CheckShapeSamePair(inputTensor.gamma, inputTensor.betaOptional, "gamma", "betaOptional"),
+                      ACLNN_ERR_PARAM_INVALID);
         }
         if (nullptr != outputTensor.resOut) {
-            OP_CHECK_SHAPE_NOT_EQUAL(inputTensor.x1, outputTensor.resOut, return ACLNN_ERR_PARAM_INVALID);
+            CHECK_RET(CheckShapeSamePair(inputTensor.x1, outputTensor.resOut, "x1", "rmsNormOut"),
+                      ACLNN_ERR_PARAM_INVALID);
         }
     }
     return ACLNN_SUCCESS;
@@ -436,23 +624,40 @@ static bool SimpleCheckNotNull(AddRmsNormQuantV2InputTensor& inputTensor, AddRms
 static bool CheckCommonDtypeRelationV2(const AddRmsNormQuantV2InputTensor& inputTensor,
                                        const AddRmsNormQuantV2OutputTensor& outputTensor)
 {
-    OP_CHECK_DTYPE_NOT_SAME(inputTensor.x1, inputTensor.x2, return false);
-    OP_CHECK_DTYPE_NOT_SAME(inputTensor.x1, inputTensor.gamma, return false);
-    OP_CHECK_DTYPE_NOT_SAME(outputTensor.y1Out, outputTensor.y2Out, return false);
+    if (!CheckDtypeSamePair(inputTensor.x1, inputTensor.x2, "x1", "x2")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(inputTensor.x1, inputTensor.gamma, "x1", "gamma")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(outputTensor.y1Out, outputTensor.y2Out, "y1Out", "y2Out")) {
+        return false;
+    }
     if (inputTensor.betaOptional != nullptr) {
-        OP_CHECK_DTYPE_NOT_SAME(inputTensor.x1, inputTensor.betaOptional, return false);
+        if (!CheckDtypeSamePair(inputTensor.x1, inputTensor.betaOptional, "x1", "betaOptional")) {
+            return false;
+        }
     }
     if (inputTensor.scales2Optional != nullptr) {
-        OP_CHECK_DTYPE_NOT_SAME(inputTensor.scales1, inputTensor.scales2Optional, return false);
+        if (!CheckDtypeSamePair(inputTensor.scales1, inputTensor.scales2Optional, "scales1", "scales2Optional")) {
+            return false;
+        }
     }
     if (inputTensor.zeroPoints1Optional != nullptr && inputTensor.zeroPoints2Optional != nullptr) {
-        OP_CHECK_DTYPE_NOT_SAME(inputTensor.zeroPoints1Optional, inputTensor.zeroPoints2Optional, return false);
+        if (!CheckDtypeSamePair(inputTensor.zeroPoints1Optional, inputTensor.zeroPoints2Optional, "zeroPoints1Optional",
+                                "zeroPoints2Optional")) {
+            return false;
+        }
     }
     if (outputTensor.xOut != nullptr) {
-        OP_CHECK_DTYPE_NOT_SAME(inputTensor.x1, outputTensor.xOut, return false);
+        if (!CheckDtypeSamePair(inputTensor.x1, outputTensor.xOut, "x1", "xOut")) {
+            return false;
+        }
     }
     if (outputTensor.resOut != nullptr) {
-        OP_CHECK_DTYPE_NOT_SAME(inputTensor.x1, outputTensor.resOut, return false);
+        if (!CheckDtypeSamePair(inputTensor.x1, outputTensor.resOut, "x1", "rmsNormOut")) {
+            return false;
+        }
     }
     return true;
 }
@@ -465,9 +670,14 @@ static bool CheckRegbaseDtypeCombinationV2(const aclTensor* x1, const aclTensor*
     const aclTensor* zeroPoints = zeroPoints1Optional != nullptr ? zeroPoints1Optional : zeroPoints2Optional;
 
     if (xDtype == op::DataType::DT_FLOAT) {
-        OP_CHECK_DTYPE_NOT_MATCH(scales1, op::DataType::DT_FLOAT, return false);
+        if (!CheckDtypeMatchValue(scales1, op::DataType::DT_FLOAT, "scales1")) {
+            return false;
+        }
         if (zeroPoints != nullptr) {
-            OP_CHECK_DTYPE_NOT_MATCH(zeroPoints, op::DataType::DT_FLOAT, return false);
+            const char* zeroPointsName = zeroPoints1Optional != nullptr ? "zeroPoints1Optional" : "zeroPoints2Optional";
+            if (!CheckDtypeMatchValue(zeroPoints, op::DataType::DT_FLOAT, zeroPointsName)) {
+                return false;
+            }
         }
         return true;
     }
@@ -490,7 +700,10 @@ static bool CheckRegbaseDtypeCombinationV2(const aclTensor* x1, const aclTensor*
                      "when scales1 is FLOAT32, the zeroPoints tensor must be FLOAT32 or INT32 on Ascend 950"),
                  return false);
     } else {
-        OP_CHECK_DTYPE_NOT_MATCH(zeroPoints, xDtype, return false);
+        const char* zeroPointsName = zeroPoints1Optional != nullptr ? "zeroPoints1Optional" : "zeroPoints2Optional";
+        if (!CheckDtypeMatchValue(zeroPoints, xDtype, zeroPointsName)) {
+            return false;
+        }
     }
     return true;
 }
@@ -542,28 +755,53 @@ aclnnStatus ComputeAddRmsNormQuantV1(AddRmsNormQuantV2InputTensor& inputTensor,
 static bool CheckDtypeValidV2For910BAnd310P(AddRmsNormQuantV2InputTensor& inputTensor,
                                             AddRmsNormQuantV2OutputTensor& outputTensor)
 {
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.x1, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.x2, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.gamma, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.scales1, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_SCALE, return false);
+    if (!CheckDtypeInList(inputTensor.x1, "x1", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+        return false;
+    }
+    if (!CheckDtypeInList(inputTensor.x2, "x2", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+        return false;
+    }
+    if (!CheckDtypeInList(inputTensor.gamma, "gamma", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+        return false;
+    }
+    if (!CheckDtypeInList(inputTensor.scales1, "scales1", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_SCALE)) {
+        return false;
+    }
     if (nullptr != inputTensor.betaOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.betaOptional, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
+        if (!CheckDtypeInList(inputTensor.betaOptional, "betaOptional", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+            return false;
+        }
     }
     if (nullptr != inputTensor.zeroPoints1Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.zeroPoints1Optional, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_ZEROPOINT,
-                                   return false);
+        if (!CheckDtypeInList(inputTensor.zeroPoints1Optional, "zeroPoints1Optional",
+                              ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_ZEROPOINT)) {
+            return false;
+        }
     }
 
-    OP_CHECK_DTYPE_NOT_SAME(inputTensor.x1, inputTensor.x2, return false);
-    OP_CHECK_DTYPE_NOT_SAME(inputTensor.x1, inputTensor.gamma, return false);
+    if (!CheckDtypeSamePair(inputTensor.x1, inputTensor.x2, "x1", "x2")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(inputTensor.x1, inputTensor.gamma, "x1", "gamma")) {
+        return false;
+    }
 
-    OP_CHECK_DTYPE_NOT_MATCH(outputTensor.y1Out, op::DataType::DT_INT8, return false);
-    OP_CHECK_DTYPE_NOT_MATCH(outputTensor.y2Out, op::DataType::DT_INT8, return false); // Mandatory output
+    if (!CheckDtypeMatchValue(outputTensor.y1Out, op::DataType::DT_INT8, "y1Out")) {
+        return false;
+    }
+    // Mandatory output
+    if (!CheckDtypeMatchValue(outputTensor.y2Out, op::DataType::DT_INT8, "y2Out")) {
+        return false;
+    }
     if (nullptr != outputTensor.resOut) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(outputTensor.resOut, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
+        if (!CheckDtypeInList(outputTensor.resOut, "rmsNormOut", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+            return false;
+        }
     }
     if (nullptr != outputTensor.xOut) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(outputTensor.xOut, ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X, return false);
+        if (!CheckDtypeInList(outputTensor.xOut, "xOut", ASCEND910BC_AND_310P_DTYPE_SUPPORT_LIST_X)) {
+            return false;
+        }
     }
     return true;
 }
@@ -573,31 +811,55 @@ static bool CheckDtypeValidV2(AddRmsNormQuantV2InputTensor& inputTensor, AddRmsN
     if (!IsRegbase()) {
         return CheckDtypeValidV2For910BAnd310P(inputTensor, outputTensor);
     }
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.x1, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.x2, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.gamma, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.scales1, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+    if (!CheckDtypeInList(inputTensor.x1, "x1", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+        return false;
+    }
+    if (!CheckDtypeInList(inputTensor.x2, "x2", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+        return false;
+    }
+    if (!CheckDtypeInList(inputTensor.gamma, "gamma", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+        return false;
+    }
+    if (!CheckDtypeInList(inputTensor.scales1, "scales1", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+        return false;
+    }
     if (nullptr != inputTensor.betaOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.betaOptional, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+        if (!CheckDtypeInList(inputTensor.betaOptional, "betaOptional", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+            return false;
+        }
     }
     if (nullptr != inputTensor.zeroPoints1Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.zeroPoints1Optional, ASCEND950_DTYPE_SUPPORT_LIST_ZEROPOINT,
-                                   return false);
+        if (!CheckDtypeInList(inputTensor.zeroPoints1Optional, "zeroPoints1Optional",
+                              ASCEND950_DTYPE_SUPPORT_LIST_ZEROPOINT)) {
+            return false;
+        }
     }
     if (nullptr != inputTensor.scales2Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.scales2Optional, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+        if (!CheckDtypeInList(inputTensor.scales2Optional, "scales2Optional", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+            return false;
+        }
     }
     if (nullptr != inputTensor.zeroPoints2Optional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.zeroPoints2Optional, ASCEND950_DTYPE_SUPPORT_LIST_ZEROPOINT,
-                                   return false);
+        if (!CheckDtypeInList(inputTensor.zeroPoints2Optional, "zeroPoints2Optional",
+                              ASCEND950_DTYPE_SUPPORT_LIST_ZEROPOINT)) {
+            return false;
+        }
     }
-    OP_CHECK_DTYPE_NOT_SUPPORT(outputTensor.y1Out, ASCEND950_DTYPE_SUPPORT_LIST_Y, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(outputTensor.y2Out, ASCEND950_DTYPE_SUPPORT_LIST_Y, return false);
+    if (!CheckDtypeInList(outputTensor.y1Out, "y1Out", ASCEND950_DTYPE_SUPPORT_LIST_Y)) {
+        return false;
+    }
+    if (!CheckDtypeInList(outputTensor.y2Out, "y2Out", ASCEND950_DTYPE_SUPPORT_LIST_Y)) {
+        return false;
+    }
     if (nullptr != outputTensor.resOut) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(outputTensor.resOut, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+        if (!CheckDtypeInList(outputTensor.resOut, "rmsNormOut", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+            return false;
+        }
     }
     if (nullptr != outputTensor.xOut) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(outputTensor.xOut, ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE, return false);
+        if (!CheckDtypeInList(outputTensor.xOut, "xOut", ASCEND950_DTYPE_SUPPORT_LIST_X_SCALE)) {
+            return false;
+        }
     }
     CHECK_RET(CheckCommonDtypeRelationV2(inputTensor, outputTensor), false);
     CHECK_RET(CheckRegbaseDtypeCombinationV2(inputTensor.x1, inputTensor.scales1, inputTensor.zeroPoints1Optional,
@@ -608,28 +870,55 @@ static bool CheckDtypeValidV2(AddRmsNormQuantV2InputTensor& inputTensor, AddRmsN
 
 static bool CheckShapeDimV2(AddRmsNormQuantV2InputTensor& inputTensor, AddRmsNormQuantV2OutputTensor& outputTensor)
 {
-    OP_CHECK_MAX_DIM(inputTensor.x1, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(inputTensor.x2, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(inputTensor.gamma, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_MAX_DIM(inputTensor.scales1, MAX_SUPPORT_DIMS_NUMS, return false);
+    if (!CheckDimNumMax(inputTensor.x1, "x1", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(inputTensor.x2, "x2", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(inputTensor.gamma, "gamma", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+    if (!CheckDimNumMax(inputTensor.scales1, "scales1", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
     if (nullptr != inputTensor.betaOptional) {
-        OP_CHECK_MAX_DIM(inputTensor.betaOptional, MAX_SUPPORT_DIMS_NUMS, return false);
+        if (!CheckDimNumMax(inputTensor.betaOptional, "betaOptional", MAX_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
     }
     if (nullptr != inputTensor.zeroPoints1Optional) {
-        OP_CHECK_MAX_DIM(inputTensor.zeroPoints1Optional, MAX_SUPPORT_DIMS_NUMS, return false);
+        if (!CheckDimNumMax(inputTensor.zeroPoints1Optional, "zeroPoints1Optional", MAX_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
     }
-    OP_CHECK_MAX_DIM(outputTensor.y1Out, MAX_SUPPORT_DIMS_NUMS, return false);
-    OP_CHECK_SHAPE_NOT_EQUAL(inputTensor.x1, outputTensor.y1Out, return false);
+    if (!CheckDimNumMax(outputTensor.y1Out, "y1Out", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
+
+    if (!CheckShapeSamePair(inputTensor.x1, outputTensor.y1Out, "x1", "y1Out")) {
+        return false;
+    }
     if (nullptr != outputTensor.y2Out) {
-        OP_CHECK_SHAPE_NOT_EQUAL(inputTensor.x1, outputTensor.y2Out, return false);
+        if (!CheckShapeSamePair(inputTensor.x1, outputTensor.y2Out, "x1", "y2Out")) {
+            return false;
+        }
     }
     if (nullptr != outputTensor.resOut) {
-        OP_CHECK_MAX_DIM(outputTensor.resOut, MAX_SUPPORT_DIMS_NUMS, return false);
-        OP_CHECK_SHAPE_NOT_EQUAL(inputTensor.x1, outputTensor.resOut, return false);
+        if (!CheckDimNumMax(outputTensor.resOut, "rmsNormOut", MAX_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
+        if (!CheckShapeSamePair(inputTensor.x1, outputTensor.resOut, "x1", "rmsNormOut")) {
+            return false;
+        }
     }
     if (nullptr != outputTensor.xOut) {
-        OP_CHECK_MAX_DIM(outputTensor.xOut, MAX_SUPPORT_DIMS_NUMS, return false);
-        OP_CHECK_SHAPE_NOT_EQUAL(inputTensor.x1, outputTensor.xOut, return false);
+        if (!CheckDimNumMax(outputTensor.xOut, "xOut", MAX_SUPPORT_DIMS_NUMS)) {
+            return false;
+        }
+        if (!CheckShapeSamePair(inputTensor.x1, outputTensor.xOut, "x1", "xOut")) {
+            return false;
+        }
     }
     return true;
 }

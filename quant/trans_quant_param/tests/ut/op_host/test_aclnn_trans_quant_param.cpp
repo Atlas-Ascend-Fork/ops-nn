@@ -170,7 +170,8 @@ TEST_F(l2_trans_quant_param_test, ascend910B2_test_abnormal_input_Size)
     uint64_t* result = nullptr;
     uint64_t resultSize = 0;
     aclnnStatus aclRet = aclnnTransQuantParam(scaleArray, scaleSize, offsetArray, offsetSize, &result, &resultSize);
-    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+    // scaleArray空指针返回161001, 与EZ1011空指针上报语义一致(不再被外层覆盖为161002)
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_NULLPTR);
 }
 
 TEST_F(l2_trans_quant_param_test, ascend910B2_test_abnormal_input_scaleSize_with_nullptr)

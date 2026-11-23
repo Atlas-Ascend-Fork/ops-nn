@@ -52,6 +52,72 @@ TEST_F(l2BatchNormElemtTest, l2_batch_norm_elemt_float16_4d)
     // ut.TestPrecision();
 }
 
+TEST_F(l2BatchNormElemtTest, l2_batch_norm_elemt_input_nullptr)
+{
+    auto MeanDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 4, 5});
+    auto InvstdDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 4, 5});
+    auto outDesc = TensorDesc({3, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnBatchNormElemt, INPUT(nullptr, nullptr, nullptr, MeanDesc, InvstdDesc, 1e-5),
+                        OUTPUT(outDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_NULLPTR);
+}
+
+TEST_F(l2BatchNormElemtTest, l2_batch_norm_elemt_mean_nullptr)
+{
+    auto selfDesc = TensorDesc({3, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 12);
+    auto InvstdDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 4, 5});
+    auto outDesc = TensorDesc({3, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnBatchNormElemt, INPUT(selfDesc, nullptr, nullptr, nullptr, InvstdDesc, 1e-5),
+                        OUTPUT(outDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_NULLPTR);
+}
+
+TEST_F(l2BatchNormElemtTest, l2_batch_norm_elemt_invstd_nullptr)
+{
+    auto selfDesc = TensorDesc({3, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 12);
+    auto MeanDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 4, 5});
+    auto outDesc = TensorDesc({3, 4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnBatchNormElemt, INPUT(selfDesc, nullptr, nullptr, MeanDesc, nullptr, 1e-5),
+                        OUTPUT(outDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_NULLPTR);
+}
+
+TEST_F(l2BatchNormElemtTest, l2_batch_norm_elemt_output_nullptr)
+{
+    auto selfDesc = TensorDesc({3, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 12);
+    auto MeanDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 4, 5});
+    auto InvstdDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 4, 5});
+    auto ut = OP_API_UT(aclnnBatchNormElemt, INPUT(selfDesc, nullptr, nullptr, MeanDesc, InvstdDesc, 1e-5),
+                        OUTPUT(nullptr));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_NULLPTR);
+}
+
+TEST_F(l2BatchNormElemtTest, l2_batch_norm_elemt_output_dtype_mismatch)
+{
+    auto selfDesc = TensorDesc({3, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 12);
+    auto MeanDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 4, 5});
+    auto InvstdDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 4, 5});
+    auto outDesc = TensorDesc({3, 4}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnBatchNormElemt, INPUT(selfDesc, nullptr, nullptr, MeanDesc, InvstdDesc, 1e-5),
+                        OUTPUT(outDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+}
+
 // Ascend 950 及后续 Regbase 芯片：invstd 为负时符号语义参与计算，eps 不参与计算
 TEST_F(l2BatchNormElemtTest, l2_batch_norm_elemt_ascend950_negative_invstd)
 {

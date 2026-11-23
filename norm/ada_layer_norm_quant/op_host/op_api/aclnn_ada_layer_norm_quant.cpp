@@ -70,6 +70,34 @@ static const std::initializer_list<op::DataType> OUT_DTYPE_SUPPORT_LIST_REGBASE 
 
 static const std::initializer_list<op::DataType> SCALE_DTYPE_SUPPORT_LIST = {op::DataType::DT_FLOAT};
 
+// EZ码细化：dtype 不在支持列表由泛化 EZ1001 细化为 EZ0020，多参 dtype 不一致由泛化 EZ1001 细化为 EZ0021，
+// 校验条件保持不变
+static bool CheckDtypeInList(const aclTensor* tensor, const char* tensorName,
+                             const std::initializer_list<op::DataType>& supportList)
+{
+    if (!CheckType(tensor->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnAdaLayerNormQuant", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetDataType() != tensor2->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnAdaLayerNormQuant", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetDataType()).GetString()) + ", " +
+             op::ToString(tensor2->GetDataType()).GetString())
+                .c_str(),
+            (std::string("dtype of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
 static bool CheckNotNull(AdaLayerNormQuantInputTensor& inputTensor, AdaLayerNormQuantOutputTensor& outputTensor)
 {
     OP_CHECK(inputTensor.x != nullptr, ReportNullPointerError(__func__, "inputTensor.x"), return false);
@@ -83,24 +111,42 @@ static bool CheckNotNull(AdaLayerNormQuantInputTensor& inputTensor, AdaLayerNorm
 
 static bool CheckDtypeValid(AdaLayerNormQuantInputTensor& inputTensor, AdaLayerNormQuantOutputTensor& outputTensor)
 {
-    OP_CHECK_DTYPE_NOT_SUPPORT(inputTensor.x, X_DTYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_MATCH(inputTensor.scale, inputTensor.x->GetDataType(), return false);
-    OP_CHECK_DTYPE_NOT_MATCH(inputTensor.shift, inputTensor.x->GetDataType(), return false);
+    if (!CheckDtypeInList(inputTensor.x, "x", X_DTYPE_SUPPORT_LIST)) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(inputTensor.x, inputTensor.scale, "x", "scale")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(inputTensor.x, inputTensor.shift, "x", "shift")) {
+        return false;
+    }
     if (inputTensor.weightOptional != nullptr) {
-        OP_CHECK_DTYPE_NOT_MATCH(inputTensor.weightOptional, inputTensor.x->GetDataType(), return false);
+        if (!CheckDtypeSamePair(inputTensor.x, inputTensor.weightOptional, "x", "weightOptional")) {
+            return false;
+        }
     }
     if (inputTensor.biasOptional != nullptr) {
-        OP_CHECK_DTYPE_NOT_MATCH(inputTensor.biasOptional, inputTensor.x->GetDataType(), return false);
+        if (!CheckDtypeSamePair(inputTensor.x, inputTensor.biasOptional, "x", "biasOptional")) {
+            return false;
+        }
     }
     if (inputTensor.smoothScalesOptional != nullptr) {
-        OP_CHECK_DTYPE_NOT_MATCH(inputTensor.smoothScalesOptional, inputTensor.x->GetDataType(), return false);
+        if (!CheckDtypeSamePair(inputTensor.x, inputTensor.smoothScalesOptional, "x", "smoothScalesOptional")) {
+            return false;
+        }
     }
     if (Ops::NN::AclnnUtil::IsRegbase()) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(outputTensor.out, OUT_DTYPE_SUPPORT_LIST_REGBASE, return false);
+        if (!CheckDtypeInList(outputTensor.out, "out", OUT_DTYPE_SUPPORT_LIST_REGBASE)) {
+            return false;
+        }
     } else {
-        OP_CHECK_DTYPE_NOT_SUPPORT(outputTensor.out, OUT_DTYPE_SUPPORT_LIST, return false);
+        if (!CheckDtypeInList(outputTensor.out, "out", OUT_DTYPE_SUPPORT_LIST)) {
+            return false;
+        }
     }
-    OP_CHECK_DTYPE_NOT_SUPPORT(outputTensor.quantScale, SCALE_DTYPE_SUPPORT_LIST, return false);
+    if (!CheckDtypeInList(outputTensor.quantScale, "quantScale", SCALE_DTYPE_SUPPORT_LIST)) {
+        return false;
+    }
     if (outputTensor.quantOffsetOptional != nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnAdaLayerNormQuant", "quantOffsetOptional",
                                                  "quantOffsetOptional should be nullptr");
@@ -112,9 +158,12 @@ static bool CheckDtypeValid(AdaLayerNormQuantInputTensor& inputTensor, AdaLayerN
 static bool CheckShape(AdaLayerNormQuantInputTensor& inputTensor, AdaLayerNormQuantOutputTensor& outputTensor)
 {
     int64_t xDim = inputTensor.x->GetViewShape().GetDimNum();
+    // EZ码细化：rank 越界由 EZ0011（带正确 dim）细化为 EZ0012（带 reason），诊断取值与其他算子统一为 ND 形式，
+    // 校验条件保持不变
     OP_CHECK(
         xDim >= MIN_X_DIM && xDim <= MAX_X_DIM,
-        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAdaLayerNormQuant", "x", std::to_string(xDim).c_str(), "between 2 and 8"),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAdaLayerNormQuant", "x", (std::to_string(xDim) + "D").c_str(),
+                                                 "the number of dims of x should be between 2 and 8"),
         return false);
 
     op::Shape xShape = inputTensor.x->GetViewShape();
@@ -142,10 +191,19 @@ static bool CheckShape(AdaLayerNormQuantInputTensor& inputTensor, AdaLayerNormQu
 
     op::Shape scaleShape = inputTensor.scale->GetViewShape();
     op::Shape shiftShape = inputTensor.shift->GetViewShape();
+    // EZ码细化：scale/shift 与 x 的 shape 关系缺失上报通道，补齐为 EZ0010，校验条件保持不变
     if (scaleShape != expectShape1 && scaleShape != expectShape2) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnAdaLayerNormQuant", "x,scale",
+            (std::string(op::ToString(xShape).GetString()) + ", " + op::ToString(scaleShape).GetString()).c_str(),
+            "shape of scale should match x, with the last two dims being [1, H] or [H]");
         return false;
     }
     if (shiftShape != expectShape1 && shiftShape != expectShape2) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnAdaLayerNormQuant", "x,shift",
+            (std::string(op::ToString(xShape).GetString()) + ", " + op::ToString(shiftShape).GetString()).c_str(),
+            "shape of shift should match x, with the last two dims being [1, H] or [H]");
         return false;
     }
     op::Shape expectShape = {H};
@@ -173,16 +231,22 @@ static bool CheckShape(AdaLayerNormQuantInputTensor& inputTensor, AdaLayerNormQu
                      "shape of inputTensor.smoothScalesOptional should be the same as expectShape"),
                  return false);
     }
+    // EZ码细化：out/quantScale 与 x 的 shape 关系由 EZ0009（单参）细化为 EZ0010（多参关系），校验条件保持不变
     OP_CHECK(outputTensor.out->GetViewShape() == xShape,
-             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON("aclnnAdaLayerNormQuant", "outputTensor.out",
-                                                   op::ToString(outputTensor.out->GetViewShape()).GetString(),
-                                                   "shape of outputTensor.out should be the same as xShape"),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("aclnnAdaLayerNormQuant", "x,out",
+                                                    (std::string(op::ToString(xShape).GetString()) + ", " +
+                                                     op::ToString(outputTensor.out->GetViewShape()).GetString())
+                                                        .c_str(),
+                                                    "shape of out should be the same as x"),
              return false);
     OP_CHECK(outputTensor.quantScale->GetViewShape() == scaleExpectShape,
-             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                 "aclnnAdaLayerNormQuant", "outputTensor.quantScale",
-                 op::ToString(outputTensor.quantScale->GetViewShape()).GetString(),
-                 "shape of outputTensor.quantScale should be the same as scaleExpectShape"),
+             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                 "aclnnAdaLayerNormQuant", "quantScale",
+                 (std::string(op::ToString(scaleExpectShape).GetString()) + ", " +
+                  op::ToString(outputTensor.quantScale->GetViewShape()).GetString())
+                     .c_str(),
+                 "shape of quantScale should match the leading dims of x; the first reported shape is the expected "
+                 "shape derived from x, and the second is the actual shape of quantScale"),
              return false);
     return true;
 }

@@ -164,11 +164,27 @@ static bool CheckShape(const aclTensor* input, const aclTensor* weight, const ac
     return true;
 }
 
+static bool CheckOutputDtypeConsistency(const aclTensor* input, const aclTensor* output)
+{
+    // 补齐 output 与 input dtype 一致性校验（EZ0021）：原由下游拦截返回 561103，前移至第一段返回 161002，拒绝集不变
+    if (output->GetDataType() != input->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON("aclnnBatchNormElemt", "input,output",
+                                               (std::string(op::ToString(input->GetDataType()).GetString()) + ", " +
+                                                std::string(op::ToString(output->GetDataType()).GetString()))
+                                                   .c_str(),
+                                               "dtype of output should be the same as input");
+        return false;
+    }
+    return true;
+}
+
 static aclnnStatus CheckBatchNormElemtParams(const aclTensor* input, const aclTensor* weight, const aclTensor* bias,
                                              aclTensor* mean, aclTensor* invstd, const aclTensor* output)
 {
-    CHECK_RET(CheckNotNull(input, mean, invstd, output), ACLNN_ERR_PARAM_INVALID);
+    // 返回码归类修正：必选 Tensor 空指针由 161002 修正为 161001，与 IsNullptr 内上报的 EZ1001 对齐，校验条件保持不变
+    CHECK_RET(CheckNotNull(input, mean, invstd, output), ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(CheckDtypeValid(input, weight, bias, mean, invstd, output), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckOutputDtypeConsistency(input, output), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckFormat(input, output), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(input, weight, bias, mean, invstd, output), ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;

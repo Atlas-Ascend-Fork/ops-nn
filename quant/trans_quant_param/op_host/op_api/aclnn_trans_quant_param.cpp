@@ -81,8 +81,11 @@ static aclnnStatus CheckQuantParam(const float* offsetArray, uint64_t offsetSize
 aclnnStatus aclnnTransQuantParam(const float* scaleArray, uint64_t scaleSize, const float* offsetArray,
                                  uint64_t offsetSize, uint64_t** quantParam, uint64_t* quantParamSize)
 {
-    CHECK_RET(CheckQuantParam(offsetArray, offsetSize, scaleArray, scaleSize) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    // 空指针等内部失败码透传, 不被外层统一覆盖为161002, 保证返回码与EZ1011上报语义一致
+    aclnnStatus ret = CheckQuantParam(offsetArray, offsetSize, scaleArray, scaleSize);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
     OP_CHECK(quantParam != nullptr, ReportNullPointerError(__func__, "quantParam"), return ACLNN_ERR_PARAM_NULLPTR);
     OP_CHECK(quantParamSize != nullptr, ReportNullPointerError(__func__, "quantParamSize"),
              return ACLNN_ERR_PARAM_NULLPTR);

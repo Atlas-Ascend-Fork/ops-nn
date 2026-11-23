@@ -390,6 +390,48 @@ TEST_F(l2_add_rms_norm_quant_v2_test, ascend950_rejects_unsupported_dtype_combin
     EXPECT_EQ(RunAscend950DtypeCase(testCase), ACLNN_ERR_PARAM_INVALID);
 }
 
+// error input rank exceeds max supported dims
+TEST_F(l2_add_rms_norm_quant_v2_test, ascend950_rejects_input_rank_exceed_max)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND950);
+    auto x1 = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto x2 = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto gamma = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto scales1 = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto beta = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto y1 = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_INT8, ACL_FORMAT_ND);
+    auto y2 = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_INT8, ACL_FORMAT_ND);
+    auto xOut = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnAddRmsNormQuantV2,
+                        INPUT(x1, x2, gamma, scales1, (aclTensor*)nullptr, (aclTensor*)nullptr, (aclTensor*)nullptr,
+                              beta, -1L, 1e-5, true),
+                        OUTPUT(y1, y2, xOut, (aclTensor*)nullptr));
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// error y1Out shape mismatch with x1
+TEST_F(l2_add_rms_norm_quant_v2_test, ascend950_rejects_y1_shape_mismatch)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND950);
+    auto x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto scales1 = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto beta = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto y1 = TensorDesc({8, 63}, ACL_INT8, ACL_FORMAT_ND);
+    auto y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto xOut = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnAddRmsNormQuantV2,
+                        INPUT(x1, x2, gamma, scales1, (aclTensor*)nullptr, (aclTensor*)nullptr, (aclTensor*)nullptr,
+                              beta, -1L, 1e-5, true),
+                        OUTPUT(y1, y2, xOut, (aclTensor*)nullptr));
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
 // Ascend 950 supports zeroPoints2 without scales2; the second-path scale defaults to 1.
 TEST_F(l2_add_rms_norm_quant_v2_test, ascend950_zero_points2_only_no_scales2)
 {

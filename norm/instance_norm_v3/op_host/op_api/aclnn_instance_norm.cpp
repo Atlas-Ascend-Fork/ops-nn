@@ -60,6 +60,45 @@ constexpr int DIM_NUM_GAMMA = 1;
 static const std::initializer_list<op::DataType> ASCEND310P_DTYPE_SUPPORT_LIST = {op::DataType::DT_FLOAT,
                                                                                   op::DataType::DT_FLOAT16};
 
+// EZ码细化：dtype 不在支持列表由泛化 EZ1001 细化为 EZ0020，dtype 不一致由泛化 EZ1001 细化为 EZ0021，
+// rank 超上限由泛化 EZ1001 细化为 EZ0012，校验条件保持不变
+static bool CheckDtypeInList(const aclTensor* tensor, const char* tensorName,
+                             const std::initializer_list<op::DataType>& supportList)
+{
+    if (!CheckType(tensor->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnInstanceNorm", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetDataType() != tensor2->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnInstanceNorm", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetDataType()).GetString()) + ", " +
+             op::ToString(tensor2->GetDataType()).GetString())
+                .c_str(),
+            (std::string("dtype of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMax(const aclTensor* tensor, const char* tensorName, size_t maxDim)
+{
+    if (tensor->GetViewShape().GetDimNum() > maxDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnInstanceNorm", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot exceed " + std::to_string(maxDim)).c_str());
+        return false;
+    }
+    return true;
+}
+
 static bool CheckNotNull(const aclTensor* x, const aclTensor* gamma, const aclTensor* beta, const aclTensor* y,
                          const aclTensor* mean, const aclTensor* variance, const char* dataFormat)
 {
@@ -69,7 +108,8 @@ static bool CheckNotNull(const aclTensor* x, const aclTensor* gamma, const aclTe
     OP_CHECK(y != nullptr, ReportNullPointerError(__func__, "y"), return false);
     OP_CHECK(mean != nullptr, ReportNullPointerError(__func__, "mean"), return false);
     OP_CHECK(variance != nullptr, ReportNullPointerError(__func__, "variance"), return false);
-    CHECK_RET(dataFormat != nullptr, false);
+    // 上报通道补齐：dataFormat 空指针此前静默返回，按本文件空指针统一出口补齐 EZ1011 上报，校验条件保持不变
+    OP_CHECK(dataFormat != nullptr, ReportNullPointerError(__func__, "dataFormat"), return false);
     return true;
 }
 
@@ -81,6 +121,11 @@ static bool CheckParamValid(const char* dataFormat)
             strncmp(dataFormat, "NCHW", strlen("NCHW")));
     bool isValidDataFormat = strncmp(dataFormat, "NHWC", strlen("NHWC")) == 0 ||
                              strncmp(dataFormat, "NCHW", strlen("NCHW")) == 0;
+    // 上报通道补齐：dataFormat 值域校验失败此前静默返回，补齐 EZ0026 上报，校验条件保持不变
+    if (!isValidDataFormat) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnInstanceNorm", "dataFormat", dataFormat,
+                                              "dataFormat should be NCHW or NHWC");
+    }
     return isValidDataFormat;
 }
 
@@ -101,18 +146,32 @@ static bool CheckDtypeValid(const aclTensor* x, const aclTensor* gamma, const ac
                             const aclTensor* mean, const aclTensor* variance)
 {
     // 检查 x 的数据类型是否在 InstanceNorm 算子的支持列表内
-    OP_CHECK_DTYPE_NOT_SUPPORT(x, ASCEND310P_DTYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_MATCH(gamma, x->GetDataType(), return false);
-    OP_CHECK_DTYPE_NOT_MATCH(beta, x->GetDataType(), return false);
-    OP_CHECK_DTYPE_NOT_MATCH(y, x->GetDataType(), return false);
-    OP_CHECK_DTYPE_NOT_MATCH(mean, x->GetDataType(), return false);
-    OP_CHECK_DTYPE_NOT_MATCH(variance, x->GetDataType(), return false);
+    if (!CheckDtypeInList(x, "x", ASCEND310P_DTYPE_SUPPORT_LIST)) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(x, gamma, "x", "gamma")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(x, beta, "x", "beta")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(x, y, "x", "y")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(x, mean, "x", "mean")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(x, variance, "x", "variance")) {
+        return false;
+    }
     return true;
 }
 
 static bool CheckShape(const aclTensor* x)
 {
-    OP_CHECK_MAX_DIM(x, MAX_SUPPORT_DIMS_NUMS, return false);
+    if (!CheckDimNumMax(x, "x", MAX_SUPPORT_DIMS_NUMS)) {
+        return false;
+    }
     return true;
 }
 

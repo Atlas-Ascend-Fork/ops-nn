@@ -66,6 +66,68 @@ constexpr int64_t MAX_GRAD_REDUCE_AXIS = 4096;
 static const std::initializer_list<DataType> DTYPE_SUPPORT_LIST = {DataType::DT_FLOAT16, DataType::DT_FLOAT,
                                                                    DataType::DT_BF16};
 
+// EZ码细化：dtype 不在支持列表由泛化 EZ1001 细化为 EZ0020，dtype 不一致由泛化 EZ1001 细化为 EZ0021，
+// rank 超上限由泛化 EZ1001 细化为 EZ0012，rank 低于下限由泛化 EZ1001 细化为 EZ0012，
+// rank 与期望维数不符由泛化 EZ1001 细化为 EZ0011，校验条件均保持不变
+static bool CheckDtypeInList(const aclTensor* tensor, const char* tensorName,
+                             const std::initializer_list<DataType>& supportList)
+{
+    if (!CheckType(tensor->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnAdaLayerNormBackward", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeSamePair(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetDataType() != tensor2->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnAdaLayerNormBackward", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetDataType()).GetString()) + ", " +
+             op::ToString(tensor2->GetDataType()).GetString())
+                .c_str(),
+            (std::string("dtype of ") + name2 + " should be the same as " + name1).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMax(const aclTensor* tensor, const char* tensorName, size_t maxDim)
+{
+    if (tensor->GetViewShape().GetDimNum() > maxDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnAdaLayerNormBackward", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot exceed " + std::to_string(maxDim)).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMin(const aclTensor* tensor, const char* tensorName, size_t minDim)
+{
+    if (tensor->GetViewShape().GetDimNum() < minDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnAdaLayerNormBackward", tensorName, (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+            ("the number of dims cannot be less than " + std::to_string(minDim)).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDimNumMatch(const aclTensor* tensor, const char* tensorName, size_t expectDim)
+{
+    if (tensor->GetViewShape().GetDimNum() != expectDim) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnAdaLayerNormBackward", tensorName,
+                                     (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+                                     (std::to_string(expectDim) + "D").c_str());
+        return false;
+    }
+    return true;
+}
+
 inline static bool CheckNotNull(const aclTensor* gradOut, const aclTensor* input, const aclIntArray* normalizedShape,
                                 const aclTensor* mean, const aclTensor* rstd, const aclTensor* scale,
                                 const aclTensor* shift)
@@ -87,24 +149,36 @@ inline static bool CheckOptionalOutDtype(const aclTensor* input, const aclTensor
 {
     if (gradWeightOut) {
         if (weightOptional) {
-            OP_CHECK_DTYPE_NOT_SAME(gradWeightOut, weightOptional, return false);
+            if (!CheckDtypeSamePair(gradWeightOut, weightOptional, "gradWeightOut", "weightOptional")) {
+                return false;
+            }
         } else if (biasOptional) {
-            OP_CHECK_DTYPE_NOT_SAME(gradWeightOut, biasOptional, return false);
+            if (!CheckDtypeSamePair(gradWeightOut, biasOptional, "gradWeightOut", "biasOptional")) {
+                return false;
+            }
         } else {
             if (gradWeightOut->GetDataType() != DataType::DT_FLOAT) {
-                OP_CHECK_DTYPE_NOT_SAME(gradWeightOut, input, return false);
+                if (!CheckDtypeSamePair(gradWeightOut, input, "gradWeightOut", "input")) {
+                    return false;
+                }
             }
         }
     }
 
     if (gradBiasOut) {
         if (weightOptional) {
-            OP_CHECK_DTYPE_NOT_SAME(gradBiasOut, weightOptional, return false);
+            if (!CheckDtypeSamePair(gradBiasOut, weightOptional, "gradBiasOut", "weightOptional")) {
+                return false;
+            }
         } else if (biasOptional) {
-            OP_CHECK_DTYPE_NOT_SAME(gradBiasOut, biasOptional, return false);
+            if (!CheckDtypeSamePair(gradBiasOut, biasOptional, "gradBiasOut", "biasOptional")) {
+                return false;
+            }
         } else {
             if (gradBiasOut->GetDataType() != DataType::DT_FLOAT) {
-                OP_CHECK_DTYPE_NOT_SAME(gradBiasOut, input, return false);
+                if (!CheckDtypeSamePair(gradBiasOut, input, "gradBiasOut", "input")) {
+                    return false;
+                }
             }
         }
     }
@@ -155,37 +229,65 @@ static bool CheckDtype(const aclTensor* gradOut, const aclTensor* input, const a
                        const aclTensor* biasOptional, const aclTensor* gradInputOut, const aclTensor* gradScaleOut,
                        const aclTensor* gradShiftOut, const aclTensor* gradWeightOut, const aclTensor* gradBiasOut)
 {
-    OP_CHECK_DTYPE_NOT_SUPPORT(gradOut, DTYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SAME(input, gradOut, return false);
-    OP_CHECK_DTYPE_NOT_SAME(rstd, gradOut, return false);
-    OP_CHECK_DTYPE_NOT_SAME(mean, gradOut, return false);
-    OP_CHECK_DTYPE_NOT_SAME(scale, gradOut, return false);
-    OP_CHECK_DTYPE_NOT_SAME(shift, gradOut, return false);
+    if (!CheckDtypeInList(gradOut, "gradOut", DTYPE_SUPPORT_LIST)) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(gradOut, input, "gradOut", "input")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(gradOut, rstd, "gradOut", "rstd")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(gradOut, mean, "gradOut", "mean")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(gradOut, scale, "gradOut", "scale")) {
+        return false;
+    }
+    if (!CheckDtypeSamePair(gradOut, shift, "gradOut", "shift")) {
+        return false;
+    }
 
     if (weightOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(weightOptional, DTYPE_SUPPORT_LIST, return false);
+        if (!CheckDtypeInList(weightOptional, "weightOptional", DTYPE_SUPPORT_LIST)) {
+            return false;
+        }
         if (weightOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_CHECK_DTYPE_NOT_SAME(weightOptional, input, return false);
+            if (!CheckDtypeSamePair(input, weightOptional, "input", "weightOptional")) {
+                return false;
+            }
         }
     }
     if (biasOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(biasOptional, DTYPE_SUPPORT_LIST, return false);
+        if (!CheckDtypeInList(biasOptional, "biasOptional", DTYPE_SUPPORT_LIST)) {
+            return false;
+        }
         if (biasOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_CHECK_DTYPE_NOT_SAME(biasOptional, input, return false);
+            if (!CheckDtypeSamePair(input, biasOptional, "input", "biasOptional")) {
+                return false;
+            }
         }
     }
     if (biasOptional != nullptr && weightOptional != nullptr) {
-        OP_CHECK_DTYPE_NOT_SAME(weightOptional, biasOptional, return false);
+        if (!CheckDtypeSamePair(weightOptional, biasOptional, "weightOptional", "biasOptional")) {
+            return false;
+        }
     }
     // 检查输出类型
     if (gradInputOut) {
-        OP_CHECK_DTYPE_NOT_SAME(gradInputOut, input, return false);
+        if (!CheckDtypeSamePair(input, gradInputOut, "input", "gradInputOut")) {
+            return false;
+        }
     }
     if (gradScaleOut) {
-        OP_CHECK_DTYPE_NOT_SAME(gradScaleOut, scale, return false);
+        if (!CheckDtypeSamePair(scale, gradScaleOut, "scale", "gradScaleOut")) {
+            return false;
+        }
     }
     if (gradShiftOut) {
-        OP_CHECK_DTYPE_NOT_SAME(gradShiftOut, shift, return false);
+        if (!CheckDtypeSamePair(shift, gradShiftOut, "shift", "gradShiftOut")) {
+            return false;
+        }
     }
     if (!CheckOptionalOutDtype(input, weightOptional, biasOptional, gradWeightOut, gradBiasOut)) {
         return false;
@@ -207,9 +309,20 @@ static bool CheckShapeEqual(const aclTensor* input, const aclIntArray* normalize
         if (normDim == inputDim)
             continue;
 
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnAdaLayerNormBackward", "normalizedShape",
-                                                 std::to_string(normDim).c_str(),
-                                                 "dims of normalizedShape must match the trailing dims of input");
+        // EZ码细化：normalizedShape 与 input 的维值关系由 EZ0012（单参）细化为 EZ0010（多参关系），
+        // 校验条件保持不变
+        std::string normShapeStr = "[";
+        for (size_t i = 0; i < normLen; i++) {
+            if (i > 0) {
+                normShapeStr += ", ";
+            }
+            normShapeStr += std::to_string(*(normalizedShape->GetData() + i));
+        }
+        normShapeStr += "]";
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "aclnnAdaLayerNormBackward", "input,normalizedShape",
+            (std::string(op::ToString(inputShape).GetString()) + ", " + normShapeStr).c_str(),
+            "dims of normalizedShape must match the trailing dims of input");
         return false;
     }
     return true;
@@ -219,12 +332,20 @@ static bool CheckShapeCompatibility(const aclTensor* weightOptional, const aclTe
                                     const aclIntArray* normalizedShape)
 {
     if (weightOptional) {
-        OP_CHECK_MAX_DIM(weightOptional, MAX_DIM_LEN, return false);
-        OP_CHECK_WRONG_DIMENSION(weightOptional, normalizedShape->Size(), return false);
+        if (!CheckDimNumMax(weightOptional, "weightOptional", MAX_DIM_LEN)) {
+            return false;
+        }
+        if (!CheckDimNumMatch(weightOptional, "weightOptional", normalizedShape->Size())) {
+            return false;
+        }
     }
     if (biasOptional) {
-        OP_CHECK_MAX_DIM(biasOptional, MAX_DIM_LEN, return false);
-        OP_CHECK_WRONG_DIMENSION(biasOptional, normalizedShape->Size(), return false);
+        if (!CheckDimNumMax(biasOptional, "biasOptional", MAX_DIM_LEN)) {
+            return false;
+        }
+        if (!CheckDimNumMatch(biasOptional, "biasOptional", normalizedShape->Size())) {
+            return false;
+        }
     }
     return true;
 }
@@ -273,27 +394,49 @@ static inline bool CheckAllTensorsMaxDim(const aclTensor* gradOut, const aclTens
                                          const aclTensor* gradShiftOut, const aclTensor* gradWeightOut,
                                          const aclTensor* gradBiasOut)
 {
-    OP_CHECK_MAX_DIM(gradOut, MAX_DIM_LEN, return false);
-    OP_CHECK_MAX_DIM(input, MAX_DIM_LEN, return false);
-    OP_CHECK_MAX_DIM(mean, MAX_DIM_LEN, return false);
-    OP_CHECK_MAX_DIM(rstd, MAX_DIM_LEN, return false);
-    OP_CHECK_MAX_DIM(scale, MAX_DIM_LEN, return false);
-    OP_CHECK_MAX_DIM(shift, MAX_DIM_LEN, return false);
+    if (!CheckDimNumMax(gradOut, "gradOut", MAX_DIM_LEN)) {
+        return false;
+    }
+    if (!CheckDimNumMax(input, "input", MAX_DIM_LEN)) {
+        return false;
+    }
+    if (!CheckDimNumMax(mean, "mean", MAX_DIM_LEN)) {
+        return false;
+    }
+    if (!CheckDimNumMax(rstd, "rstd", MAX_DIM_LEN)) {
+        return false;
+    }
+    if (!CheckDimNumMax(scale, "scale", MAX_DIM_LEN)) {
+        return false;
+    }
+    if (!CheckDimNumMax(shift, "shift", MAX_DIM_LEN)) {
+        return false;
+    }
 
     if (gradInputOut) {
-        OP_CHECK_MAX_DIM(gradInputOut, MAX_DIM_LEN, return false);
+        if (!CheckDimNumMax(gradInputOut, "gradInputOut", MAX_DIM_LEN)) {
+            return false;
+        }
     }
     if (gradScaleOut) {
-        OP_CHECK_MAX_DIM(gradScaleOut, MAX_DIM_LEN, return false);
+        if (!CheckDimNumMax(gradScaleOut, "gradScaleOut", MAX_DIM_LEN)) {
+            return false;
+        }
     }
     if (gradShiftOut) {
-        OP_CHECK_MAX_DIM(gradShiftOut, MAX_DIM_LEN, return false);
+        if (!CheckDimNumMax(gradShiftOut, "gradShiftOut", MAX_DIM_LEN)) {
+            return false;
+        }
     }
     if (gradWeightOut) {
-        OP_CHECK_MAX_DIM(gradWeightOut, MAX_DIM_LEN, return false);
+        if (!CheckDimNumMax(gradWeightOut, "gradWeightOut", MAX_DIM_LEN)) {
+            return false;
+        }
     }
     if (gradBiasOut) {
-        OP_CHECK_MAX_DIM(gradBiasOut, MAX_DIM_LEN, return false);
+        if (!CheckDimNumMax(gradBiasOut, "gradBiasOut", MAX_DIM_LEN)) {
+            return false;
+        }
     }
 
     return true;
@@ -375,7 +518,9 @@ static bool CheckShape(const aclTensor* gradOut, const aclTensor* input, const a
     }
 
     // 检查维度约束
-    OP_CHECK_MIN_DIM(input, NORMALIZED_SHAPE_LEN + 1, return false);
+    if (!CheckDimNumMin(input, "input", NORMALIZED_SHAPE_LEN + 1)) {
+        return false;
+    }
 
     // 检查shape相等性
     if (!CheckShapeEqual(input, normalizedShape))

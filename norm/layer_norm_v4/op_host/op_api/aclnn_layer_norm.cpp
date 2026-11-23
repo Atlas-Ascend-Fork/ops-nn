@@ -135,37 +135,76 @@ static bool CheckMeanRstdOutputShape(const aclTensor* input, const aclIntArray* 
 
 static bool IsArch3510() { return Ops::NN::AclnnUtil::IsRegbase(); }
 
-static bool CheckInputDtype(const aclTensor* input, const aclTensor* weightOptional, const aclTensor* biasOptional)
+// EZ码细化：dtype 非支持列表由泛化 EZ1001 细化为 EZ0020，dtype 不一致由泛化 EZ1001 细化为 EZ0021，校验条件保持不变
+static bool CheckDtypeInSupportList(const aclTensor* tensor, const char* tensorName)
 {
     const auto& supportList = GetDtypeSupportList();
-    OP_CHECK_DTYPE_NOT_SUPPORT(input, supportList, return false);
+    if (!CheckType(tensor->GetDataType(), supportList)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "aclnnLayerNorm", tensorName, op::ToString(tensor->GetDataType()).GetString(),
+            ("dtype should be in support list " + std::string(op::ToString(supportList).GetString())).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckDtypeSame(const aclTensor* tensor1, const aclTensor* tensor2, const char* name1, const char* name2)
+{
+    if (tensor1->GetDataType() != tensor2->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "aclnnLayerNorm", (std::string(name1) + "," + name2).c_str(),
+            (std::string(op::ToString(tensor1->GetDataType()).GetString()) + ", " +
+             op::ToString(tensor2->GetDataType()).GetString())
+                .c_str(),
+            (std::string("dtype of ") + name1 + " should be the same as " + name2).c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool CheckInputDtype(const aclTensor* input, const aclTensor* weightOptional, const aclTensor* biasOptional)
+{
+    if (!CheckDtypeInSupportList(input, "input")) {
+        return false;
+    }
     if (weightOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(weightOptional, supportList, return false);
+        if (!CheckDtypeInSupportList(weightOptional, "weightOptional")) {
+            return false;
+        }
         if (weightOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_CHECK_DTYPE_NOT_SAME(weightOptional, input, return false);
+            if (!CheckDtypeSame(weightOptional, input, "weightOptional", "input")) {
+                return false;
+            }
         }
     }
     if (biasOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(biasOptional, supportList, return false);
+        if (!CheckDtypeInSupportList(biasOptional, "biasOptional")) {
+            return false;
+        }
         if (biasOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_CHECK_DTYPE_NOT_SAME(biasOptional, input, return false);
+            if (!CheckDtypeSame(biasOptional, input, "biasOptional", "input")) {
+                return false;
+            }
         }
     }
     if (weightOptional && biasOptional) {
-        OP_CHECK_DTYPE_NOT_SAME(weightOptional, biasOptional, return false);
+        if (!CheckDtypeSame(weightOptional, biasOptional, "weightOptional", "biasOptional")) {
+            return false;
+        }
     }
     return true;
 }
 
 static bool CheckOutputDtype(const aclTensor* out, const aclTensor* meanOutOptional, const aclTensor* rstdOutOptional)
 {
-    const auto& supportList = GetDtypeSupportList();
-    OP_CHECK_DTYPE_NOT_SUPPORT(out, supportList, return false);
-    if (meanOutOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(meanOutOptional, supportList, return false);
+    if (!CheckDtypeInSupportList(out, "out")) {
+        return false;
     }
-    if (rstdOutOptional) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(rstdOutOptional, supportList, return false);
+    if (meanOutOptional && !CheckDtypeInSupportList(meanOutOptional, "meanOutOptional")) {
+        return false;
+    }
+    if (rstdOutOptional && !CheckDtypeInSupportList(rstdOutOptional, "rstdOutOptional")) {
+        return false;
     }
     return true;
 }
@@ -181,27 +220,44 @@ inline static bool CheckArrayLen(const aclIntArray* normalizedShape)
     return true;
 }
 
+// EZ码细化：rank 超 8 维由泛化 EZ1001 细化为 EZ0012，校验条件保持不变
+static bool CheckDimNumNotExceed(const aclTensor* tensor, const char* tensorName)
+{
+    if (tensor->GetViewShape().GetDimNum() > MAX_DIM_LEN) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnLayerNorm", tensorName,
+                                                 (std::to_string(tensor->GetViewShape().GetDimNum()) + "D").c_str(),
+                                                 "the number of dims cannot exceed 8");
+        return false;
+    }
+    return true;
+}
+
 static bool CheckLen(const aclTensor* input, const aclIntArray* normalizedShape, const aclTensor* weightOptional,
                      const aclTensor* biasOptional, const aclTensor* out, const aclTensor* meanOutOptional,
                      const aclTensor* rstdOutOptional)
 {
-    OP_CHECK_MAX_DIM(input, MAX_DIM_LEN, return false);
-    OP_CHECK_MAX_DIM(out, MAX_DIM_LEN, return false);
-    if (weightOptional) {
-        OP_CHECK_MAX_DIM(weightOptional, MAX_DIM_LEN, return false);
+    if (!CheckDimNumNotExceed(input, "input")) {
+        return false;
     }
-    if (biasOptional) {
-        OP_CHECK_MAX_DIM(biasOptional, MAX_DIM_LEN, return false);
+    if (!CheckDimNumNotExceed(out, "out")) {
+        return false;
     }
-    if (meanOutOptional) {
-        OP_CHECK_MAX_DIM(meanOutOptional, MAX_DIM_LEN, return false);
+    if (weightOptional && !CheckDimNumNotExceed(weightOptional, "weightOptional")) {
+        return false;
     }
-    if (rstdOutOptional) {
-        OP_CHECK_MAX_DIM(rstdOutOptional, MAX_DIM_LEN, return false);
+    if (biasOptional && !CheckDimNumNotExceed(biasOptional, "biasOptional")) {
+        return false;
+    }
+    if (meanOutOptional && !CheckDimNumNotExceed(meanOutOptional, "meanOutOptional")) {
+        return false;
+    }
+    if (rstdOutOptional && !CheckDimNumNotExceed(rstdOutOptional, "rstdOutOptional")) {
+        return false;
     }
     return CheckArrayLen(normalizedShape);
 }
 
+// EZ码细化：input/weight/bias 与 normalizedShape 的 shape 关系校验由单参 EZ0012 细化为多参 EZ0010，校验条件保持不变
 static bool CheckNormalizedShapeMatch(const aclTensor* input, const aclIntArray* normalizedShape,
                                       const aclTensor* weightOptional, const aclTensor* biasOptional)
 {
@@ -212,8 +268,9 @@ static bool CheckNormalizedShapeMatch(const aclTensor* input, const aclIntArray*
         int64_t normDim = *(normalizedShape->GetData() + index);
         int64_t inputDim = inputShape.GetDim(index + beginAxis);
         if (normDim != inputDim) {
-            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-                "aclnnLayerNorm", "input", std::to_string(inputDim).c_str(),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                "aclnnLayerNorm", "input,normalizedShape",
+                (std::to_string(inputDim) + ", " + std::to_string(normDim)).c_str(),
                 ("normalizedShape[" + std::to_string(index) + "] with value " + std::to_string(normDim) +
                  " must match input dim[" + std::to_string(index + beginAxis) + "]")
                     .c_str());
@@ -223,9 +280,10 @@ static bool CheckNormalizedShapeMatch(const aclTensor* input, const aclIntArray*
         if (weightOptional) {
             int64_t weightDim = weightOptional->GetViewShape().GetDim(index);
             if (normDim != weightDim) {
-                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnLayerNorm", "weightOptional",
-                                                         std::to_string(weightDim).c_str(),
-                                                         "dims of weight should match normalizedShape");
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    "aclnnLayerNorm", "weightOptional,normalizedShape",
+                    (std::to_string(weightDim) + ", " + std::to_string(normDim)).c_str(),
+                    "dims of weight should match normalizedShape");
                 return false;
             }
         }
@@ -233,8 +291,9 @@ static bool CheckNormalizedShapeMatch(const aclTensor* input, const aclIntArray*
         if (biasOptional) {
             int64_t biasDim = biasOptional->GetViewShape().GetDim(index);
             if (normDim != biasDim) {
-                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-                    "aclnnLayerNorm", "biasOptional", std::to_string(biasDim).c_str(),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    "aclnnLayerNorm", "biasOptional,normalizedShape",
+                    (std::to_string(biasDim) + ", " + std::to_string(normDim)).c_str(),
                     ("normalizedShape[" + std::to_string(index) + "] with value " + std::to_string(normDim) +
                      " must match biasOptional dim[" + std::to_string(index) + "]")
                         .c_str());
@@ -261,14 +320,27 @@ static bool CheckShape(const aclTensor* input, const aclIntArray* normalizedShap
         return false;
     }
     // 3.检查input维度是否不小于normalizedShape的长度
-    OP_CHECK_MIN_DIM(input, normalizedShape->Size(), return false);
+    // EZ码细化：input 维度数下界校验由泛化 EZ1001 细化为 EZ0012，校验条件保持不变
+    if (input->GetViewShape().GetDimNum() < normalizedShape->Size()) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "aclnnLayerNorm", "input", (std::to_string(input->GetViewShape().GetDimNum()) + "D").c_str(),
+            "the number of dims of input cannot be less than the size of normalizedShape");
+        return false;
+    }
     // 4.校验weight存在时与normalizedShape长度是否相同
-    if (weightOptional) {
-        OP_CHECK_WRONG_DIMENSION(weightOptional, normalizedShape->Size(), return false);
+    // EZ码细化：维度数精确匹配校验由泛化 EZ1001 细化为 EZ0011，校验条件保持不变
+    if (weightOptional && weightOptional->GetViewShape().GetDimNum() != normalizedShape->Size()) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnLayerNorm", "weightOptional",
+                                     (std::to_string(weightOptional->GetViewShape().GetDimNum()) + "D").c_str(),
+                                     (std::to_string(normalizedShape->Size()) + "D").c_str());
+        return false;
     }
     // 5.校验bias存在时与normalizedShape长度是否相同
-    if (biasOptional) {
-        OP_CHECK_WRONG_DIMENSION(biasOptional, normalizedShape->Size(), return false);
+    if (biasOptional && biasOptional->GetViewShape().GetDimNum() != normalizedShape->Size()) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM("aclnnLayerNorm", "biasOptional",
+                                     (std::to_string(biasOptional->GetViewShape().GetDimNum()) + "D").c_str(),
+                                     (std::to_string(normalizedShape->Size()) + "D").c_str());
+        return false;
     }
 
     // 6.检查输入与normalizedShape间的关系
@@ -291,7 +363,11 @@ static bool CheckImplMode(const aclTensor* input, const aclTensor* weightOptiona
                           int32_t implMode)
 {
     if (implMode != HIGH_PRECISION && implMode != HIGH_PERFORMANCE && implMode != KEEP_FP16) {
-        OP_LOGE_FOR_INVALID_VALUE("aclnnLayerNorm", "implMode", std::to_string(implMode).c_str(), "0, 1 or 2");
+        // EZ码细化：implMode 值域校验由 EZ0024（带正确值）调整为 EZ0026（带 reason），值域信息移入
+        // reason，校验条件保持不变
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            "aclnnLayerNorm", "implMode", std::to_string(implMode).c_str(),
+            "implMode should be 0 (high precision), 1 (high performance) or 2 (keep fp16)");
         return false;
     }
     if (implMode == KEEP_FP16) {

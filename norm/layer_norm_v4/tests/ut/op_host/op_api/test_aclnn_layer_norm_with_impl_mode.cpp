@@ -1,12 +1,11 @@
 /**
- * This program is free software, you can redistribute it and/or modify.
  * Copyright (c) 2025 Huawei Technologies Co., Ltd.
- * This file is a part of the CANN Open Software.
- * Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING
- * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
- * the software repository for the full text of the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
  */
 
 #include <array>
@@ -695,4 +694,61 @@ TEST_F(l2_layer_norm_test_with_impl_mode, ascend910B2_aclnnLayerNormWithImplMode
     uint64_t workspaceSize = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACL_SUCCESS);
+}
+
+TEST_F(l2_layer_norm_test_with_impl_mode, ascend910B2_aclnnLayerNormWithImplMode_error_input_rank_exceed_max)
+{
+    auto inputDesc = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto normalizedShape = IntArrayDesc(vector<int64_t>{2, 2, 2});
+    auto weightDesc = TensorDesc({2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto biasDesc = TensorDesc({2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2);
+    double eps = 1e-5;
+    auto outputDesc = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto meanDesc = TensorDesc({2, 1, 1, 1, 1, 1, 1, 1, 1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto rstdDesc = TensorDesc({2, 1, 1, 1, 1, 1, 1, 1, 1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    int32_t implMode = 0;
+    auto ut = OP_API_UT(aclnnLayerNormWithImplMode, INPUT(inputDesc, normalizedShape, weightDesc, biasDesc, eps),
+                        OUTPUT(outputDesc, meanDesc, rstdDesc), implMode);
+    // SAMPLE: only test GetWorkspaceSize
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_layer_norm_test_with_impl_mode, ascend910B2_aclnnLayerNormWithImplMode_error_weight_dim_num)
+{
+    auto inputDesc = TensorDesc({2, 6, 5, 6}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto normalizedShape = IntArrayDesc(vector<int64_t>{6, 5, 6});
+    auto weightDesc = TensorDesc({2, 6, 5, 6}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto biasDesc = TensorDesc({6, 5, 6}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2);
+    double eps = 1e-5;
+    auto outputDesc = TensorDesc({2, 6, 5, 6}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto meanDesc = TensorDesc({2, 1, 1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto rstdDesc = TensorDesc({2, 1, 1}, ACL_FLOAT16, ACL_FORMAT_ND);
+    int32_t implMode = 0;
+    auto ut = OP_API_UT(aclnnLayerNormWithImplMode, INPUT(inputDesc, normalizedShape, weightDesc, biasDesc, eps),
+                        OUTPUT(outputDesc, meanDesc, rstdDesc), implMode);
+    // SAMPLE: only test GetWorkspaceSize
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_layer_norm_test_with_impl_mode, ascend910B2_aclnnLayerNormWithImplMode_error_input_dim_less_than_norm)
+{
+    auto inputDesc = TensorDesc({2, 6}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto normalizedShape = IntArrayDesc(vector<int64_t>{6, 5, 6});
+    auto weightDesc = TensorDesc({6, 5, 6}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto biasDesc = TensorDesc({6, 5, 6}, ACL_FLOAT16, ACL_FORMAT_ND).ValueRange(-2, 2);
+    double eps = 1e-5;
+    auto outputDesc = TensorDesc({2, 6}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto meanDesc = TensorDesc({2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto rstdDesc = TensorDesc({2}, ACL_FLOAT16, ACL_FORMAT_ND);
+    int32_t implMode = 0;
+    auto ut = OP_API_UT(aclnnLayerNormWithImplMode, INPUT(inputDesc, normalizedShape, weightDesc, biasDesc, eps),
+                        OUTPUT(outputDesc, meanDesc, rstdDesc), implMode);
+    // SAMPLE: only test GetWorkspaceSize
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
