@@ -22,7 +22,7 @@
 #include "level0/fill.h"
 #include "level0/mul.h"
 #include "matmul/common/op_host/op_api/matmul_v2tov3.h"
-#include "matmul/transpose_batch_mat_mul/op_api/transpose_batch_mat_mul.h"
+#include "matmul/common/op_host/op_api/transpose_batch_mat_mul.h"
 #include "aclnn_kernels/transdata.h"
 #include "cube_util.h"
 #include "matmul_util.h"

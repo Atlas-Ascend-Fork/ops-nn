@@ -31,7 +31,7 @@
 #include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transdata.h"
 #include "level0/unsqueeze.h"
-#include "transpose_batch_mat_mul.h"
+#include "matmul/common/op_host/op_api/transpose_batch_mat_mul.h"
 
 #include "matmul/common/op_host/op_api/cube_util.h"
 #include "matmul/common/op_host/op_api/matmul_util.h"

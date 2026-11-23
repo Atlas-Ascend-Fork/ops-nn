@@ -12,7 +12,7 @@
  * \file transpose_batch_mat_mul.cpp
  * \brief
  */
-#include "transpose_batch_mat_mul.h"
+#include "transpose_batch_mat_mul_kernel.h"
 #include "pp_matmul_ein_sum_kernel.h"
 #include "transpose_batch_mat_mul_tiling_key.h"
 using namespace TransposeBatchMatmulSpace;
