@@ -77,7 +77,7 @@ TEST_F(logit_grad_test, test_logit_grad_float_0)
     AscendC::GmFree((void*)dx);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
-    system("cd ./logit_grad_data/ && python3 compare_data.py 'float32'");
+    ASSERT_EQ(system("cd ./logit_grad_data/ && python3 compare_data.py 'float32'"), 0);
 }
 
 TEST_F(logit_grad_test, test_logit_grad_float16_1)
@@ -128,7 +128,7 @@ TEST_F(logit_grad_test, test_logit_grad_float16_1)
     AscendC::GmFree((void*)dx);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
-    system("cd ./logit_grad_data/ && python3 compare_data.py 'float16'");
+    ASSERT_EQ(system("cd ./logit_grad_data/ && python3 compare_data.py 'float16'"), 0);
 }
 
 TEST_F(logit_grad_test, test_logit_grad_bfloat16_2)
@@ -179,5 +179,5 @@ TEST_F(logit_grad_test, test_logit_grad_bfloat16_2)
     AscendC::GmFree((void*)dx);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
-    system("cd ./logit_grad_data/ && python3 compare_data.py 'bfloat16_t'");
+    ASSERT_EQ(system("cd ./logit_grad_data/ && python3 compare_data.py 'bfloat16_t'"), 0);
 }

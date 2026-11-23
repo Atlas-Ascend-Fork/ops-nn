@@ -82,7 +82,7 @@ TEST_F(heaviside_test, test_heaviside_float_0)
     AscendC::GmFree((void*)y);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
-    kernel_ut::RunCompareData("./heaviside_data", {"'float32'"});
+    ASSERT_TRUE(kernel_ut::RunCompareData("./heaviside_data", {"'float32'"}));
 }
 
 TEST_F(heaviside_test, test_heaviside_float16_1)
@@ -131,7 +131,7 @@ TEST_F(heaviside_test, test_heaviside_float16_1)
     AscendC::GmFree((void*)y);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
-    kernel_ut::RunCompareData("./heaviside_data", {"'float16'"});
+    ASSERT_TRUE(kernel_ut::RunCompareData("./heaviside_data", {"'float16'"}));
 }
 
 TEST_F(heaviside_test, test_heaviside_bfloat16_2)
@@ -180,5 +180,5 @@ TEST_F(heaviside_test, test_heaviside_bfloat16_2)
     AscendC::GmFree((void*)y);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
-    kernel_ut::RunCompareData("./heaviside_data", {"'bfloat16_t'"});
+    ASSERT_TRUE(kernel_ut::RunCompareData("./heaviside_data", {"'bfloat16_t'"}));
 }

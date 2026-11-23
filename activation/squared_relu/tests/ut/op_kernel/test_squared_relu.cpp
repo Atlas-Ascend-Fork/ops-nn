@@ -75,7 +75,7 @@ TEST_F(squared_relu_test, test_squared_relu_float_0)
     AscendC::GmFree((void*)y);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
-    kernel_ut::RunCompareData("./squared_relu_data", {"'float32'"});
+    ASSERT_TRUE(kernel_ut::RunCompareData("./squared_relu_data", {"'float32'"}));
 }
 
 TEST_F(squared_relu_test, test_squared_relu_float16_1)
@@ -117,7 +117,7 @@ TEST_F(squared_relu_test, test_squared_relu_float16_1)
     AscendC::GmFree((void*)y);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
-    kernel_ut::RunCompareData("./squared_relu_data", {"'float16'"});
+    ASSERT_TRUE(kernel_ut::RunCompareData("./squared_relu_data", {"'float16'"}));
 }
 
 TEST_F(squared_relu_test, test_squared_relu_bfloat16_2)
@@ -159,5 +159,5 @@ TEST_F(squared_relu_test, test_squared_relu_bfloat16_2)
     AscendC::GmFree((void*)y);
     AscendC::GmFree((void*)workspace);
     AscendC::GmFree((void*)tiling);
-    kernel_ut::RunCompareData("./squared_relu_data", {"'bfloat16_t'"});
+    ASSERT_TRUE(kernel_ut::RunCompareData("./squared_relu_data", {"'bfloat16_t'"}));
 }
