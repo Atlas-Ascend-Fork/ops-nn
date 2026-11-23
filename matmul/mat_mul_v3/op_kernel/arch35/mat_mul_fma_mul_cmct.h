@@ -9,7 +9,7 @@
  */
 
 /* !
- * \file mat_mul_to_multi_mul_cmct.h
+ * \file mat_mul_fma_mul_cmct.h
  * \brief
  */
 
@@ -17,16 +17,15 @@
 
 #include "cmct/block/block_scheduler_policy.h"
 #include "cmct/block/block_scheduler_utils.h"
-#include "cmct/kernel/kernel_matmul_to_multi_mul.h"
-#include "block_scheduler_multi_mul.h"
+#include "cmct/kernel/kernel_matmul_fma_mul.h"
+#include "block_scheduler_fma.h"
 
 namespace MatmulV3Advanced {
 using namespace Cmct;
 using namespace Cmct::Gemm;
 template <class A_TYPE, class B_TYPE, class C_TYPE, class BIAS_TYPE, class A_LAYOUT, class B_LAYOUT, class C_LAYOUT>
-__aicore__ inline void MatMulToVectorActKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR biasGM, GM_ADDR yGM,
-                                               GM_ADDR workspaceGM, const MatMulToVectorBasicTilingData& tilingData,
-                                               int64_t batch = 0)
+__aicore__ inline void MatMulFmaMulActKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR biasGM, GM_ADDR yGM, GM_ADDR workspaceGM,
+                                             const MatMulFmaTilingData& tilingData, int64_t batch = 0)
 {
     // 定义L1和L0的TileShape
     using L1TileShape = AscendC::Shape<_0, _0, _0>;
@@ -43,11 +42,11 @@ __aicore__ inline void MatMulToVectorActKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR
     using LayoutC = C_LAYOUT;
 
     // 定义scheduler类型 来自block_scheduler_policy.h
-    using BlockScheduler = BuiltInVectorScheduler;
+    using BlockScheduler = BuiltInFmaScheduler;
 
     // 定义MMAD类型
     using BlockMmad = Block::BlockMmadBuilder<AType, LayoutA, BType, LayoutB, OutType, LayoutC, BiasType, LayoutC,
-                                              L1TileShape, L0TileShape, BlockScheduler, MatmulToVector<>>;
+                                              L1TileShape, L0TileShape, BlockScheduler, MatmulFmaMul<>>;
 
     // 定义BlockEpilogue类型
     using BlockEpilogue = Block::BlockEpilogueEmpty;
@@ -56,12 +55,12 @@ __aicore__ inline void MatMulToVectorActKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR
     using ProblemShape = MatmulShape;
 
     // 定义Kernel类型
-    using MatmulKernel = Kernel::KernelMatmulToVector<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
+    using MatmulKernel = Kernel::KernelMatmulFmaMul<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
     using Params = typename MatmulKernel::Params;
-    Params params = {{tilingData.m, tilingData.n, tilingData.k, batch}, // shape
-                     {aGM, bGM, yGM, biasGM},                           // gm addr
-                     {},                                                // epilogue and fusion args
-                     {&tilingData}};
+    Params params = {{tilingData.m, tilingData.n, tilingData.k, batch},          // shape
+                     {aGM, bGM, yGM, biasGM},                                    // gm addr
+                     {},                                                         // epilogue and fusion args
+                     {&tilingData, tilingData.mTileFull, tilingData.baseMTail}}; // schParams(含尾波均摊)
 
     MatmulKernel mm;
     mm(params);

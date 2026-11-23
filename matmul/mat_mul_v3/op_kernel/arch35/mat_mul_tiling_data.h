@@ -223,8 +223,15 @@ struct MatMulToMulBasicTilingData {
 };
 #pragma pack(pop)
 
+// FMA专用tilingdata: 基础切分字段 + 计算体模板参数;
+// MR/NS由host的tiling策略产出下发(kernel按其分发到编译期模板实例, 多n-tile的尾tile由kernel按tailN裁剪NS):
+// baseN=64 -> (MR=8, NS=1); baseN=128/192/256 -> MR=4, NS=baseN/64;
+// 尾波均摊: 满波tile[0, mTileFull)行数=baseM(buffer尺寸, UB按其分配), 其后尾波tile行数=baseMTail(末tile为余量),
+// 由host计算baseMTail=ceil(剩余行数/核数)填满尾波所有核; mTileFull=0且baseMTail=baseM时退化为uniform切分;
+// 分块累加链长singleCoreK: 单C缓冲相邻两次flush间累计的k元素数, host按sqrt(K)选优下发(误差界(K/L+L)*eps
+// 在L=sqrt(K)最小), kernel按布局折算flush周期(transB为L/baseK组, 非transB为2L/baseK组)
 #pragma pack(push, 8)
-struct MatMulToVectorBasicTilingData {
+struct MatMulFmaTilingData {
     uint32_t usedCoreNum = 1;
     uint32_t m = 1;
     uint32_t n = 1;
@@ -232,5 +239,10 @@ struct MatMulToVectorBasicTilingData {
     uint32_t baseM = 0;
     uint32_t baseN = 0;
     uint32_t baseK = 0;
+    uint32_t mr = 4;
+    uint32_t ns = 1;
+    uint32_t mTileFull = 0;
+    uint32_t baseMTail = 0;
+    uint32_t singleCoreK = 0;
 };
 #pragma pack(pop)

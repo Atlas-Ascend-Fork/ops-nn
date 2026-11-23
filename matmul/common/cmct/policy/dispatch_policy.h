@@ -35,7 +35,7 @@ struct KernelMixWithWeightPrologue {};
 struct KernelMatMulToMul {};
 struct KernelFlatQuant {};
 struct KernelRotateQuant {};
-struct KernelMatmulToVector {};
+struct KernelMatmulFmaMul {};
 
 enum class MatMulL0C2Out : std::uint8_t { ON_THE_FLY = 0, ND_FIXPIPE_1_1 = 1, ND_FIXPIPE_1_2 = 2 };
 
@@ -361,13 +361,14 @@ struct MatmulToMul {
 };
 
 /**
- * @struct MatmulToVector
- * @brief Matrix multiplication policy for converting a matmul operation to vector (when BTrans)
+ * @struct MatmulFmaMul
+ * @brief Matrix multiplication policy for fp32 high precision mode, computing C[i][j:j+64] +=
+ *        A[i][k] * B[k][j:j+64] with vector FMA (MulAddDst) on regbase
  * @param [in] SingleCoreShape: the shape of a single core, default is AscendC::Shape<_0, _0, _0, _0>
  */
 template <class SingleCoreShape = AscendC::Shape<_0, _0, _0, _0>>
-struct MatmulToVector {
-    using ScheduleType = KernelMatmulToVector;
+struct MatmulFmaMul {
+    using ScheduleType = KernelMatmulFmaMul;
     using SingleShape = SingleCoreShape;
 };
 

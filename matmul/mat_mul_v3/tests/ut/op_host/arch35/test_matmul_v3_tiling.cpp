@@ -24,6 +24,7 @@
 #include "../../../../op_host/op_tiling/matmul_v3_base_tiling.h"
 #include "../../../../op_host/op_tiling/arch35/matmul_v3_tiling_advanced.h"
 #include "../../../../op_host/op_tiling/arch35/matmul_v3_basic_streamk_tiling.h"
+#include "../../../../op_host/op_tiling/arch35/matmul_v3_fma_tiling.h"
 #include "../../../../op_host/op_tiling/arch35/matmul_v3_k_equal_zero_tiling.h"
 #include "../../../../op_host/op_tiling/arch35/matmul_v3_to_mul_tiling.h"
 #include "op_common/op_host/util/op_const_def.h"
@@ -1623,7 +1624,7 @@ static TilingTestParam dav3510_cases_params[] = {
      {135021},
      {135021},
      DT_FLOAT16},
-    {"MatMulV3_dav3510_matmul_to_multi_mul",
+    {"MatMulV3_dav3510_matmul_fma",
      "MatMulV3",
      R"({"_pattern": "MatMul", "attrs":{"transpose_a":false,"transpose_b":true},
       "binary_attrs":{"bias_flag":false, "nd_flag":true, "split_k_flag":false, "zero_flag":false, "weight_nz": false, "l2_size":134217728},"binary_mode_flag":true,
@@ -1649,9 +1650,9 @@ static TilingTestParam dav3510_cases_params[] = {
      false,
      0,
      0,
-     64,
+     10,
      16449UL,
-     "64 10 192 4096 5 6 64 ",
+     "10 10 192 4096 72 192 64 4 3 0 1 64 ",
      ge::DT_FLOAT,
      ge::DT_FLOAT},
     {"MatMulV3_dav3510_4buffer_bias",
@@ -2883,7 +2884,7 @@ static TilingTestParam dav9201_cases_params[] = {
      {135021},
      {135021},
      DT_FLOAT16},
-    {"MatMulV3_dav9201_matmul_to_multi_mul",
+    {"MatMulV3_dav9201_matmul_fma",
      "MatMulV3",
      R"({"_pattern": "MatMul", "attrs":{"transpose_a":false,"transpose_b":true},
       "binary_attrs":{"bias_flag":false, "nd_flag":true, "split_k_flag":false, "zero_flag":false, "weight_nz": false, "l2_size":134217728},"binary_mode_flag":true,
@@ -2909,9 +2910,9 @@ static TilingTestParam dav9201_cases_params[] = {
      false,
      0,
      0,
-     64,
+     10,
      16449UL,
-     "64 10 192 4096 5 6 64 ",
+     "10 10 192 4096 72 192 64 4 3 0 1 64 ",
      ge::DT_FLOAT,
      ge::DT_FLOAT},
     {"MatMulV3_dav9201_4buffer_bias",
@@ -4083,7 +4084,7 @@ static TilingTestParam dav9202_cases_params[] = {
      {135021},
      {135021},
      DT_FLOAT16},
-    {"MatMulV3_dav9202_matmul_to_multi_mul",
+    {"MatMulV3_dav9202_matmul_fma",
      "MatMulV3",
      R"({"_pattern": "MatMul", "attrs":{"transpose_a":false,"transpose_b":true},
       "binary_attrs":{"bias_flag":false, "nd_flag":true, "split_k_flag":false, "zero_flag":false, "weight_nz": false, "l2_size":134217728},"binary_mode_flag":true,
@@ -4109,9 +4110,9 @@ static TilingTestParam dav9202_cases_params[] = {
      false,
      0,
      0,
-     64,
+     10,
      16449UL,
-     "64 10 192 4096 5 6 64 ",
+     "10 10 192 4096 72 192 64 4 3 0 1 64 ",
      ge::DT_FLOAT,
      ge::DT_FLOAT},
     {"MatMulV3_dav9202_4buffer_bias",
@@ -7645,5 +7646,365 @@ TEST_F(MatMulV3TilingAdvancedDirectTest, GetFormat_NzB)
     EXPECT_EQ(tiling->GetAFormat(), ge::FORMAT_ND);
     EXPECT_EQ(tiling->GetBFormat(), ge::FORMAT_FRACTAL_NZ);
     EXPECT_EQ(tiling->GetOutFormat(), ge::FORMAT_ND);
+}
+
+// =================================================================================================
+// MatMulV3FmaTiling 白盒直调用例（append-only 新增段）
+// 覆盖目标（op_host/op_tiling/arch35/matmul_v3_fma_tiling.cpp）：
+//   IsCapable: forceGrpAcc/连续/ND/fp32 bias/fp32 dtype 守卫与通过路径
+//   DoOpTiling: NN布局baseN档(MR/NS)、UB满波baseM、baseK/singleCoreK、尾波均摊与核数
+//   GetTilingKey/GetTilingData: FMA_MUL model 与 MatMulFmaTilingData 字段回填
+// 触达方式：沿用本仓白盒直调范式，TilingContextFaker 构造上下文 + ForTest 派生类暴露 protected 入口。
+// =================================================================================================
+class MatMulV3FmaTilingForTest : public optiling::matmul_v3_advanced::MatMulV3FmaTiling {
+public:
+    using MatMulV3FmaTiling::MatMulV3FmaTiling;
+
+    bool IsCapablePublic() { return IsCapable(); }
+
+    ge::graphStatus DoOpTilingPublic() { return DoOpTiling(); }
+
+    uint64_t GetTilingKeyPublic() const { return GetTilingKey(); }
+
+    ge::graphStatus GetTilingDataPublic(optiling::TilingResult& tiling) const { return GetTilingData(tiling); }
+
+    uint64_t GetRunInfoBaseM() const { return runInfo_.baseM; }
+
+    uint64_t GetRunInfoBaseN() const { return runInfo_.baseN; }
+
+    uint64_t GetRunInfoBaseK() const { return runInfo_.baseK; }
+
+    uint64_t GetRunInfoSingleCoreK() const { return runInfo_.singleCoreK; }
+
+    uint64_t GetRunInfoMr() const { return runInfo_.mr; }
+
+    uint64_t GetRunInfoNs() const { return runInfo_.ns; }
+
+    uint64_t GetRunInfoMTileFull() const { return runInfo_.mTileFull; }
+
+    uint64_t GetRunInfoBaseMTail() const { return runInfo_.baseMTail; }
+
+    uint64_t GetRunInfoUsedCoreNum() const { return runInfo_.usedCoreNum; }
+};
+
+class MatMulV3FmaTilingDirectTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        platformInfo_.Init();
+        compileInfo_.aicNum = 8UL;
+        compileInfo_.aivNum = 16UL;
+        compileInfo_.l1Size = 524288UL;
+        compileInfo_.l0ASize = 65536UL;
+        compileInfo_.l0BSize = 65536UL;
+        compileInfo_.l0CSize = 262144UL;
+        compileInfo_.l2Size = 134217728UL;
+        compileInfo_.ubSize = 253952UL;
+        compileInfo_.btSize = 4096UL;
+        compileInfo_.npuArch = Ops::Base::DAV_3510;
+        args_.opName = "MatMulV3FmaDirectUT";
+        args_.aType = ge::DT_FLOAT;
+        args_.bType = ge::DT_FLOAT;
+        args_.cType = ge::DT_FLOAT;
+        args_.aFormat = ge::FORMAT_ND;
+        args_.bFormat = ge::FORMAT_ND;
+        args_.outFormat = ge::FORMAT_ND;
+        args_.aDtypeSize = 4UL;
+        args_.bDtypeSize = 4UL;
+        args_.isForceGrpAccForFp32 = true;
+        SetShape(128UL, 256UL, 4096UL);
+        RebuildContext();
+    }
+
+    void SetShape(uint64_t m, uint64_t n, uint64_t k)
+    {
+        args_.mValue = m;
+        args_.nValue = n;
+        args_.kValue = k;
+    }
+
+    void RebuildContext()
+    {
+        aShape_ = gert::StorageShape({static_cast<int64_t>(args_.mValue), static_cast<int64_t>(args_.kValue)},
+                                     {static_cast<int64_t>(args_.mValue), static_cast<int64_t>(args_.kValue)});
+        bShape_ = gert::StorageShape({static_cast<int64_t>(args_.kValue), static_cast<int64_t>(args_.nValue)},
+                                     {static_cast<int64_t>(args_.kValue), static_cast<int64_t>(args_.nValue)});
+        yShape_ = gert::StorageShape({static_cast<int64_t>(args_.mValue), static_cast<int64_t>(args_.nValue)},
+                                     {static_cast<int64_t>(args_.mValue), static_cast<int64_t>(args_.nValue)});
+        tilingDataBuf_ = gert::TilingData::CreateCap(2048);
+        workspaceBuf_ = gert::ContinuousVector::Create<size_t>(4096);
+        holder_ = gert::TilingContextFaker()
+                      .SetOpType("MatMulV3")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&aShape_, &bShape_})
+                      .OutputShapes({&yShape_})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .DeterministicLevelInfo(0)
+                      .CompileInfo(&compileInfo_)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo_))
+                      .TilingData(reinterpret_cast<gert::TilingData*>(tilingDataBuf_.get()))
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspaceBuf_.get()))
+                      .Build();
+        context_ = holder_.GetContext<gert::TilingContext>();
+        ASSERT_NE(context_, nullptr);
+    }
+
+    std::unique_ptr<MatMulV3FmaTilingForTest> CreateTiling()
+    {
+        cfg_ = std::make_unique<optiling::MatMulTilingCfg>(false, &compileInfo_, &args_, nullptr);
+        return std::make_unique<MatMulV3FmaTilingForTest>(context_, *cfg_);
+    }
+
+    gert::KernelRunContextHolder holder_;
+    gert::TilingContext* context_ = nullptr;
+    fe::PlatFormInfos platformInfo_;
+    optiling::MatmulV3CompileInfo compileInfo_;
+    optiling::matmul_v3_advanced::MatMulV3Args args_;
+    std::unique_ptr<optiling::MatMulTilingCfg> cfg_;
+    gert::StorageShape aShape_;
+    gert::StorageShape bShape_;
+    gert::StorageShape yShape_;
+    std::unique_ptr<uint8_t[]> tilingDataBuf_;
+    std::unique_ptr<uint8_t[]> workspaceBuf_;
+};
+
+// 高精度fp32 + ND + 连续 + m/n/k>1：IsCapable通过
+TEST_F(MatMulV3FmaTilingDirectTest, IsCapable_ForceGrpAccFp32Nd_ReturnTrue)
+{
+    auto tiling = CreateTiling();
+    EXPECT_TRUE(tiling->IsCapablePublic());
+}
+
+// 未使能高精度模式：拦截
+TEST_F(MatMulV3FmaTilingDirectTest, IsCapable_NoForceGrpAcc_ReturnFalse)
+{
+    args_.isForceGrpAccForFp32 = false;
+    auto tiling = CreateTiling();
+    EXPECT_FALSE(tiling->IsCapablePublic());
+}
+
+// 低精度布局仅支持ND；B为NZ时路由至cube模板
+TEST_F(MatMulV3FmaTilingDirectTest, IsCapable_NonNdFormat_ReturnFalse)
+{
+    args_.bFormat = ge::FORMAT_FRACTAL_NZ;
+    auto tiling = CreateTiling();
+    EXPECT_FALSE(tiling->IsCapablePublic());
+}
+
+// bias仅支持fp32，bias为fp16时拦截
+TEST_F(MatMulV3FmaTilingDirectTest, IsCapable_NonFp32Bias_ReturnFalse)
+{
+    args_.hasBias = true;
+    args_.biasType = ge::DT_FLOAT16;
+    auto tiling = CreateTiling();
+    EXPECT_FALSE(tiling->IsCapablePublic());
+}
+
+// fp32 bias可通过
+TEST_F(MatMulV3FmaTilingDirectTest, IsCapable_Fp32Bias_ReturnTrue)
+{
+    args_.hasBias = true;
+    args_.biasType = ge::DT_FLOAT;
+    auto tiling = CreateTiling();
+    EXPECT_TRUE(tiling->IsCapablePublic());
+}
+
+// A/B非fp32：拦截
+TEST_F(MatMulV3FmaTilingDirectTest, IsCapable_NonFp32Input_ReturnFalse)
+{
+    args_.aType = ge::DT_FLOAT16;
+    args_.aDtypeSize = 2UL;
+    auto tiling = CreateTiling();
+    EXPECT_FALSE(tiling->IsCapablePublic());
+}
+
+// MULTI模板删除后，FMA对NT/TT转置税场景仍capable（含bias），由优先级直接承接
+TEST_F(MatMulV3FmaTilingDirectTest, IsCapable_TransposedTax_ReturnTrue)
+{
+    args_.isATrans = true;
+    args_.isBTrans = true;
+    args_.hasBias = true;
+    args_.biasType = ge::DT_FLOAT;
+    SetShape(128UL, 300UL, 128UL);
+    RebuildContext();
+    auto tiling = CreateTiling();
+    EXPECT_TRUE(tiling->IsCapablePublic());
+}
+
+// DoOpTiling：NN(m=128,n=256,k=4096) baseN档=256/MR=4/NS=4，UB满波baseM=32，
+// baseK=64，singleCoreK=64，无满波(mTileFull=0)，尾波128行均摊到16核(baseMTail=8)
+TEST_F(MatMulV3FmaTilingDirectTest, DoOpTiling_NnShape_TilingParams)
+{
+    auto tiling = CreateTiling();
+    ASSERT_TRUE(tiling->IsCapablePublic());
+    ASSERT_EQ(tiling->DoOpTilingPublic(), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tiling->GetRunInfoBaseN(), 256UL);
+    EXPECT_EQ(tiling->GetRunInfoMr(), 4UL);
+    EXPECT_EQ(tiling->GetRunInfoNs(), 4UL);
+    EXPECT_EQ(tiling->GetRunInfoBaseM(), 32UL);
+    EXPECT_EQ(tiling->GetRunInfoBaseK(), 64UL);
+    EXPECT_EQ(tiling->GetRunInfoSingleCoreK(), 64UL);
+    EXPECT_EQ(tiling->GetRunInfoMTileFull(), 0UL);
+    EXPECT_EQ(tiling->GetRunInfoBaseMTail(), 8UL);
+    EXPECT_EQ(tiling->GetRunInfoUsedCoreNum(), 16UL);
+}
+
+// tilingKey：model=FMA_MUL，trans/batch/api/fullLoad/L0C2Out与模板设定一致
+TEST_F(MatMulV3FmaTilingDirectTest, GetTilingKey_FmaMulModel)
+{
+    auto tiling = CreateTiling();
+    uint64_t expectedKey = optiling::matmul_v3_advanced::MatMulV3TilingKey()
+                               .SetTrans(false, false)
+                               .SetApiLevel(MatMulV3ApiLevel::BASIC_LEVEL)
+                               .SetBatchModel(MatMulV3BatchModel::BATCH_MODEL)
+                               .SetModel(MatMulV3Model::FMA_MUL)
+                               .SetFullLoad(MatMulV3FullLoad::NONE_FULL_LOAD)
+                               .SetL0C2Out(MatMulV3L0C2Out::ON_THE_FLY)
+                               .GetTilingKey();
+    EXPECT_EQ(tiling->GetTilingKeyPublic(), expectedKey);
+    EXPECT_EQ(optiling::matmul_v3_advanced::MatMulV3TilingKey::GetModel(tiling->GetTilingKeyPublic()),
+              MatMulV3Model::FMA_MUL);
+    EXPECT_EQ(optiling::matmul_v3_advanced::MatMulV3TilingKey::GetApiLevel(tiling->GetTilingKeyPublic()),
+              MatMulV3ApiLevel::BASIC_LEVEL);
+}
+
+// GetTilingData：MatMulFmaTilingData字段由runInfo_/args_回填
+TEST_F(MatMulV3FmaTilingDirectTest, GetTilingData_FillsFmaTilingData)
+{
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoOpTilingPublic(), ge::GRAPH_SUCCESS);
+    optiling::TilingResult tilingResult{};
+    ASSERT_EQ(tiling->GetTilingDataPublic(tilingResult), ge::GRAPH_SUCCESS);
+    ASSERT_NE(tilingResult.tilingData, nullptr);
+    EXPECT_EQ(tilingResult.tilingDataSize, sizeof(MatMulFmaTilingData));
+    auto* fmaData = static_cast<MatMulFmaTilingData*>(tilingResult.tilingData.get());
+    EXPECT_EQ(fmaData->usedCoreNum, 16U);
+    EXPECT_EQ(fmaData->m, 128U);
+    EXPECT_EQ(fmaData->n, 256U);
+    EXPECT_EQ(fmaData->k, 4096U);
+    EXPECT_EQ(fmaData->baseM, 32U);
+    EXPECT_EQ(fmaData->baseN, 256U);
+    EXPECT_EQ(fmaData->baseK, 64U);
+    EXPECT_EQ(fmaData->mr, 4U);
+    EXPECT_EQ(fmaData->ns, 4U);
+    EXPECT_EQ(fmaData->mTileFull, 0U);
+    EXPECT_EQ(fmaData->baseMTail, 8U);
+    EXPECT_EQ(fmaData->singleCoreK, 64U);
+}
+
+// =================================================================================================
+// MatMulV3模板优先级路由用例（append-only 新增段）
+// 覆盖策略表顺序（K_EQUAL_ZERO→TO_MUL→TO_FMA_MUL→BASIC_STREAM_K→BASIC_ASWT）：
+//   fp32高精度vector路径：m/n=1由TO_MUL承接，其余(含NT/TT转置税、bias)均由FMA承接
+// =================================================================================================
+class MatMulV3FmaRoutingTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        platformInfo_.Init();
+        compileInfo_.aicNum = 8UL;
+        compileInfo_.aivNum = 16UL;
+        compileInfo_.l1Size = 524288UL;
+        compileInfo_.l0ASize = 65536UL;
+        compileInfo_.l0BSize = 65536UL;
+        compileInfo_.l0CSize = 262144UL;
+        compileInfo_.l2Size = 134217728UL;
+        compileInfo_.ubSize = 253952UL;
+        compileInfo_.btSize = 4096UL;
+        compileInfo_.npuArch = Ops::Base::DAV_3510;
+    }
+
+    ge::graphStatus RunTiling(bool transA, bool transB, bool hasBias, uint64_t m, uint64_t n, uint64_t k,
+                              uint64_t& tilingKey)
+    {
+        gert::StorageShape aShape({static_cast<int64_t>(transA ? k : m), static_cast<int64_t>(transA ? m : k)},
+                                  {static_cast<int64_t>(transA ? k : m), static_cast<int64_t>(transA ? m : k)});
+        gert::StorageShape bShape({static_cast<int64_t>(transB ? n : k), static_cast<int64_t>(transB ? k : n)},
+                                  {static_cast<int64_t>(transB ? n : k), static_cast<int64_t>(transB ? k : n)});
+        gert::StorageShape yShape({static_cast<int64_t>(m), static_cast<int64_t>(n)},
+                                  {static_cast<int64_t>(m), static_cast<int64_t>(n)});
+        gert::StorageShape biasShape({static_cast<int64_t>(n)}, {static_cast<int64_t>(n)});
+        std::vector<void*> outputs{&yShape};
+        auto tilingData = gert::TilingData::CreateCap(2048);
+        auto workspaceHolder = gert::ContinuousVector::Create<size_t>(4096);
+        gert::TilingContextFaker faker;
+        faker.SetOpType("MatMulV3")
+            .NodeIoNum(hasBias ? 3 : 2, 1)
+            .IrInstanceNum(hasBias ? std::vector<uint32_t>{1, 1, 1} : std::vector<uint32_t>{1, 1}, {1})
+            .OutputShapes(outputs)
+            .NodeAttrs({{"adj_x1", Ops::NN::AnyValue::CreateFrom<bool>(transA)},
+                        {"adj_x2", Ops::NN::AnyValue::CreateFrom<bool>(transB)},
+                        {"offset_x", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                        {"opImplMode", Ops::NN::AnyValue::CreateFrom<int64_t>(0x4)}})
+            .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+            .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+            .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+            .DeterministicLevelInfo(0)
+            .CompileInfo(&compileInfo_)
+            .PlatformInfo(reinterpret_cast<char*>(&platformInfo_))
+            .TilingData(tilingData.get())
+            .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get()));
+        if (hasBias) {
+            faker.InputShapes({&aShape, &bShape, &biasShape})
+                .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+        } else {
+            faker.InputShapes({&aShape, &bShape});
+        }
+        auto holder = faker.Build();
+        auto context = holder.GetContext<gert::TilingContext>();
+        if (context == nullptr) {
+            return ge::GRAPH_FAILED;
+        }
+        optiling::matmul_v3_advanced::MatMulV3Tiling tiling(context);
+        ge::graphStatus ret = tiling.DoTiling();
+        tilingKey = context->GetTilingKey();
+        return ret;
+    }
+
+    fe::PlatFormInfos platformInfo_;
+    optiling::MatmulV3CompileInfo compileInfo_;
+};
+
+// m=1：TO_MUL排在FMA前，m/n=1场景由TO_MUL承接
+TEST_F(MatMulV3FmaRoutingTest, MEqual1_SelectsToMul)
+{
+    uint64_t tilingKey = 0UL;
+    ASSERT_EQ(RunTiling(false, false, false, 1UL, 300UL, 128UL, tilingKey), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(optiling::matmul_v3_advanced::MatMulV3TilingKey::GetModel(tilingKey), MatMulV3Model::TO_MUL);
+}
+
+// 带bias + NT + 转置税：MULTI模板已删除，FMA直接承接
+TEST_F(MatMulV3FmaRoutingTest, BiasNtTransTax_SelectsFmaMul)
+{
+    uint64_t tilingKey = 0UL;
+    ASSERT_EQ(RunTiling(false, true, true, 128UL, 300UL, 128UL, tilingKey), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(optiling::matmul_v3_advanced::MatMulV3TilingKey::GetModel(tilingKey), MatMulV3Model::FMA_MUL);
+}
+
+// 带bias + TT + 转置税：FMA承接
+TEST_F(MatMulV3FmaRoutingTest, BiasTtTransTax_SelectsFmaMul)
+{
+    uint64_t tilingKey = 0UL;
+    ASSERT_EQ(RunTiling(true, true, true, 128UL, 300UL, 128UL, tilingKey), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(optiling::matmul_v3_advanced::MatMulV3TilingKey::GetModel(tilingKey), MatMulV3Model::FMA_MUL);
+}
+
+// 无bias + NT + 转置税：MULTI模板已删除，FMA承接
+TEST_F(MatMulV3FmaRoutingTest, NoBiasNtTransTax_SelectsFmaMul)
+{
+    uint64_t tilingKey = 0UL;
+    ASSERT_EQ(RunTiling(false, true, false, 128UL, 300UL, 128UL, tilingKey), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(optiling::matmul_v3_advanced::MatMulV3TilingKey::GetModel(tilingKey), MatMulV3Model::FMA_MUL);
+}
+
+// 无bias + NN：非m/n=1，FMA承接
+TEST_F(MatMulV3FmaRoutingTest, NoBiasNn_SelectsFmaMul)
+{
+    uint64_t tilingKey = 0UL;
+    ASSERT_EQ(RunTiling(false, false, false, 128UL, 320UL, 128UL, tilingKey), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(optiling::matmul_v3_advanced::MatMulV3TilingKey::GetModel(tilingKey), MatMulV3Model::FMA_MUL);
 }
 } // namespace

@@ -39,7 +39,11 @@ bool MatMulV3ToMulTiling::IsCapable()
     if (args_.mValue != 1UL && args_.nValue != 1UL) {
         return false;
     }
-    if (args_.aDtypeSize != sizeof(float) || args_.bDtypeSize != sizeof(float)) {
+    // 仅支持fp32 bias
+    if (args_.hasBias && args_.biasType != ge::DT_FLOAT) {
+        return false;
+    }
+    if (args_.aType != ge::DT_FLOAT || args_.bType != ge::DT_FLOAT) {
         return false;
     }
     return true;

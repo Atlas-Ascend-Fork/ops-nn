@@ -758,6 +758,39 @@ TEST_F(l2_matmul_test, cubeMathType_4_fp32_fp32)
     EXPECT_EQ(aclRet, ACL_SUCCESS);
 }
 
+// fp32高精度 + TT：原先会走预转置+multi_mul，现由FMA直接承接，aclnn通路需正常完成
+TEST_F(l2_matmul_test, dav3510_cubeMathType_4_fp32_tt)
+{
+    op::NpuArchManager archManager(Ops::Base::DAV_3510);
+    op::SetCubeCoreNum(32U);
+    auto tensor_1_desc = TensorDesc({1448, 3759}, ACL_FLOAT, ACL_FORMAT_ND, {1, 1448}, 0, {3759, 1448})
+                             .ValueRange(-2, 2);
+    auto tensor_2_desc = TensorDesc({3759, 560}, ACL_FLOAT, ACL_FORMAT_ND, {1, 3759}, 0, {560, 3759}).ValueRange(-2, 2);
+    auto out_tensor_desc = TensorDesc({1448, 560}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2).Precision(0.005, 0.005);
+    int8_t cube_math_type = op::USE_FP32_ADD;
+    auto ut = OP_API_UT(aclnnMatmul, INPUT(tensor_1_desc, tensor_2_desc), OUTPUT(out_tensor_desc), cube_math_type);
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+}
+
+// fp32高精度 + NT：转置税场景不再预转置，由FMA承接
+TEST_F(l2_matmul_test, dav3510_cubeMathType_4_fp32_nt)
+{
+    op::NpuArchManager archManager(Ops::Base::DAV_3510);
+    op::SetCubeCoreNum(32U);
+    auto tensor_1_desc = TensorDesc({1448, 3759}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2);
+    auto tensor_2_desc = TensorDesc({3759, 560}, ACL_FLOAT, ACL_FORMAT_ND, {1, 3759}, 0, {560, 3759}).ValueRange(-2, 2);
+    auto out_tensor_desc = TensorDesc({1448, 560}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2).Precision(0.005, 0.005);
+    int8_t cube_math_type = op::USE_FP32_ADD;
+    auto ut = OP_API_UT(aclnnMatmul, INPUT(tensor_1_desc, tensor_2_desc), OUTPUT(out_tensor_desc), cube_math_type);
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+}
+
 // TEST_F(l2_matmul_test, cubeMathType_3_fp32_fp32)
 // {
 //     auto tensor_1_desc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-2, 2);
@@ -1373,16 +1406,6 @@ aclTensor* MakeTensor(aclOpExecutor* executor, const std::initializer_list<int64
     return executor->AllocTensor(op::Shape(dims), dtype, format);
 }
 
-const aclTensor* MakeViewTensor(aclOpExecutor* executor, op::DataType dtype, const op::Shape& storageShape,
-                                const op::Shape& viewShape, const op::Strides& strides)
-{
-    auto* storage = executor->AllocTensor(storageShape, dtype, op::Format::FORMAT_ND);
-    if (storage == nullptr) {
-        return nullptr;
-    }
-    return executor->CreateView(storage, viewShape, storageShape, strides, 0);
-}
-
 bool CheckAscendCScenario2Case(
     const std::initializer_list<int64_t>& x1Dims, const std::initializer_list<int64_t>& x2Dims,
     op::DataType x1Dtype = op::DataType::DT_FLOAT16, op::DataType x2Dtype = op::DataType::DT_FLOAT16,
@@ -1532,109 +1555,9 @@ bool IsSliceCase(const std::initializer_list<int64_t>& storageDims, const std::i
     return matmul_util_whitebox::Ops::NN::IsSliceNonContiguous(self, mat2, cubeMathType);
 }
 
-bool IsCapableContiguousCase(const std::initializer_list<int64_t>& selfDims,
-                             const std::initializer_list<int64_t>& mat2Dims,
-                             op::DataType selfDtype = op::DataType::DT_FLOAT,
-                             op::DataType mat2Dtype = op::DataType::DT_FLOAT,
-                             op::Format selfFormat = op::Format::FORMAT_ND,
-                             op::Format mat2Format = op::Format::FORMAT_ND, bool hasBias = false,
-                             int8_t cubeMathType = op::USE_FP32_ADD)
-{
-    auto uniqueExecutor = CREATE_EXECUTOR();
-    if (uniqueExecutor.get() == nullptr) {
-        ADD_FAILURE() << "CREATE_EXECUTOR failed";
-        return false;
-    }
-    auto* executor = uniqueExecutor.get();
-    const aclTensor* self = MakeTensor(executor, selfDims, selfDtype, selfFormat);
-    const aclTensor* mat2 = MakeTensor(executor, mat2Dims, mat2Dtype, mat2Format);
-    const aclTensor* bias = hasBias ? MakeTensor(executor, {4}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND) :
-                                      nullptr;
-    if (self == nullptr || mat2 == nullptr || (hasBias && bias == nullptr)) {
-        ADD_FAILURE() << "AllocTensor failed";
-        return false;
-    }
-    return matmul_util_whitebox::Ops::NN::IsCapableForMultiMul(self, mat2, bias, cubeMathType);
-}
-
-bool IsCapableViewCase(const std::initializer_list<int64_t>& selfStorageDims,
-                       const std::initializer_list<int64_t>& selfViewDims, const op::Strides& selfStrides,
-                       const std::initializer_list<int64_t>& mat2StorageDims,
-                       const std::initializer_list<int64_t>& mat2ViewDims, const op::Strides& mat2Strides)
-{
-    auto uniqueExecutor = CREATE_EXECUTOR();
-    if (uniqueExecutor.get() == nullptr) {
-        ADD_FAILURE() << "CREATE_EXECUTOR failed";
-        return false;
-    }
-    auto* executor = uniqueExecutor.get();
-    auto* selfStorage = executor->AllocTensor(op::Shape(selfStorageDims), op::DataType::DT_FLOAT,
-                                              op::Format::FORMAT_ND);
-    auto* mat2Storage = executor->AllocTensor(op::Shape(mat2StorageDims), op::DataType::DT_FLOAT,
-                                              op::Format::FORMAT_ND);
-    if (selfStorage == nullptr || mat2Storage == nullptr) {
-        ADD_FAILURE() << "AllocTensor failed";
-        return false;
-    }
-    const aclTensor* self = executor->CreateView(selfStorage, op::Shape(selfViewDims), op::Shape(selfStorageDims),
-                                                 selfStrides, 0);
-    const aclTensor* mat2 = executor->CreateView(mat2Storage, op::Shape(mat2ViewDims), op::Shape(mat2StorageDims),
-                                                 mat2Strides, 0);
-    if (self == nullptr || mat2 == nullptr) {
-        ADD_FAILURE() << "CreateView failed";
-        return false;
-    }
-    return matmul_util_whitebox::Ops::NN::IsCapableForMultiMul(self, mat2, nullptr, op::USE_FP32_ADD);
-}
-
 } // namespace
 
 class MatmulUtilWhiteboxTest : public testing::Test {};
-
-TEST_F(MatmulUtilWhiteboxTest, MultiMulTranspose_NoTransposeNeeded)
-{
-    auto uniqueExecutor = CREATE_EXECUTOR();
-    ASSERT_NE(uniqueExecutor.get(), nullptr);
-    auto* executor = uniqueExecutor.get();
-    const aclTensor* self = MakeTensor(executor, {4, 8}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
-    const aclTensor* mat2 = MakeViewTensor(executor, op::DataType::DT_FLOAT, {4, 8}, {8, 4}, op::Strides{1, 8});
-    ASSERT_NE(self, nullptr);
-    ASSERT_NE(mat2, nullptr);
-    bool transposeX2 = false;
-
-    EXPECT_TRUE(matmul_util_whitebox::Ops::NN::MultiMulTranspose(self, mat2, transposeX2, executor));
-    EXPECT_FALSE(transposeX2);
-}
-
-TEST_F(MatmulUtilWhiteboxTest, MultiMulTranspose_ATransposeOnly)
-{
-    auto uniqueExecutor = CREATE_EXECUTOR();
-    ASSERT_NE(uniqueExecutor.get(), nullptr);
-    auto* executor = uniqueExecutor.get();
-    const aclTensor* self = MakeViewTensor(executor, op::DataType::DT_FLOAT, {4, 8}, {8, 4}, op::Strides{1, 8});
-    const aclTensor* mat2 = MakeViewTensor(executor, op::DataType::DT_FLOAT, {4, 8}, {8, 4}, op::Strides{1, 8});
-    ASSERT_NE(self, nullptr);
-    ASSERT_NE(mat2, nullptr);
-    bool transposeX2 = false;
-
-    EXPECT_TRUE(matmul_util_whitebox::Ops::NN::MultiMulTranspose(self, mat2, transposeX2, executor));
-    EXPECT_FALSE(transposeX2);
-}
-
-TEST_F(MatmulUtilWhiteboxTest, MultiMulTranspose_BNotTransposed)
-{
-    auto uniqueExecutor = CREATE_EXECUTOR();
-    ASSERT_NE(uniqueExecutor.get(), nullptr);
-    auto* executor = uniqueExecutor.get();
-    const aclTensor* self = MakeTensor(executor, {4, 8}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
-    const aclTensor* mat2 = MakeTensor(executor, {8, 4}, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
-    ASSERT_NE(self, nullptr);
-    ASSERT_NE(mat2, nullptr);
-    bool transposeX2 = false;
-
-    EXPECT_TRUE(matmul_util_whitebox::Ops::NN::MultiMulTranspose(self, mat2, transposeX2, executor));
-    EXPECT_TRUE(transposeX2);
-}
 
 TEST_F(MatmulUtilWhiteboxTest, CheckAscendCScenario2_ScSplitKAl1FullLoad_Hit)
 {
@@ -2352,46 +2275,6 @@ TEST_F(MatmulUtilWhiteboxTest, IsSliceNonContiguous_ValidateRejects)
     EXPECT_FALSE(IsSliceCase({4, 57}, {4, 32}, op::Strides{64, 1}));
     EXPECT_FALSE(IsSliceCase({4, 4, 64}, {2, 4, 32}, op::Strides{256, 64, 1}));
     EXPECT_FALSE(IsSliceCase({3, 64}, {4, 32}, op::Strides{64, 1}));
-}
-
-TEST_F(MatmulUtilWhiteboxTest, IsCapableForMultiMul_Rejects)
-{
-    {
-        NpuArchManager archManager(NpuArch::DAV_3510);
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT,
-                                             op::Format::FORMAT_ND, op::Format::FORMAT_ND, false, kCubeMathKeepDtype));
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT,
-                                             op::Format::FORMAT_ND, op::Format::FORMAT_ND, true));
-        EXPECT_FALSE(IsCapableContiguousCase({0, 8}, {8, 4}));
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 0}));
-        EXPECT_FALSE(IsCapableContiguousCase({2, 4, 8}, {8, 4}));
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {2, 8, 4}));
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT,
-                                             op::Format::FORMAT_FRACTAL_NZ, op::Format::FORMAT_ND));
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT,
-                                             op::Format::FORMAT_ND, op::Format::FORMAT_FRACTAL_NZ));
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT16, op::DataType::DT_FLOAT));
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}, op::DataType::DT_FLOAT, op::DataType::DT_FLOAT16));
-        EXPECT_FALSE(IsCapableContiguousCase({1, 8}, {8, 4}));
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 1}));
-        EXPECT_FALSE(IsCapableContiguousCase({4, 1}, {1, 4}));
-    }
-    {
-        NpuArchManager archManager(NpuArch::DAV_2201);
-        EXPECT_FALSE(IsCapableContiguousCase({4, 8}, {8, 4}));
-    }
-}
-
-TEST_F(MatmulUtilWhiteboxTest, IsCapableForMultiMul_True)
-{
-    NpuArchManager archManager(NpuArch::DAV_3510);
-    EXPECT_TRUE(IsCapableContiguousCase({4, 8}, {8, 4}));
-}
-
-TEST_F(MatmulUtilWhiteboxTest, IsCapableForMultiMul_Transposed_True)
-{
-    NpuArchManager archManager(NpuArch::DAV_3510);
-    EXPECT_TRUE(IsCapableViewCase({4, 8}, {8, 4}, op::Strides{1, 8}, {8, 4}, {4, 8}, op::Strides{1, 4}));
 }
 
 TEST_F(MatmulUtilWhiteboxTest, L0_MatMulNdFp162Fp32)

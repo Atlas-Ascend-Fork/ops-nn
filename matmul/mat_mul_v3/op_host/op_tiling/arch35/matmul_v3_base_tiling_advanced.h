@@ -579,15 +579,16 @@ protected:
         return ge::GRAPH_SUCCESS;
     }
 
-    virtual ge::graphStatus GetTilingDataProcess(MatMulToVectorBasicTilingData& matmulToVectorBasicData) const
+    // FMA模板: 基础切分字段 + MR/NS等计算体参数由FmaTiling覆写追加
+    virtual ge::graphStatus GetTilingDataProcess(MatMulFmaTilingData& matmulFmaData) const
     {
-        matmulToVectorBasicData.usedCoreNum = runInfo_.usedCoreNum;
-        matmulToVectorBasicData.m = args_.mValue;
-        matmulToVectorBasicData.n = args_.nValue;
-        matmulToVectorBasicData.k = args_.kValue;
-        matmulToVectorBasicData.baseM = runInfo_.baseM;
-        matmulToVectorBasicData.baseN = runInfo_.baseN;
-        matmulToVectorBasicData.baseK = runInfo_.baseK;
+        matmulFmaData.usedCoreNum = runInfo_.usedCoreNum;
+        matmulFmaData.m = args_.mValue;
+        matmulFmaData.n = args_.nValue;
+        matmulFmaData.k = args_.kValue;
+        matmulFmaData.baseM = runInfo_.baseM;
+        matmulFmaData.baseN = runInfo_.baseN;
+        matmulFmaData.baseK = runInfo_.baseK;
         return ge::GRAPH_SUCCESS;
     }
 

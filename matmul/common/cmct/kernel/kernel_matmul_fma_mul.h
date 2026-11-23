@@ -9,8 +9,8 @@
  */
 
 /*!
- * \file kernel_matmul_to_multi_mul.h
- * \brief
+ * \file kernel_matmul_fma_mul.h
+ * \brief fp32高精度模式vector FMA矩阵乘kernel
  */
 
 #pragma once
@@ -28,7 +28,7 @@
 #include "../utils/coord_utils.h"
 #include "../utils/tensor_utils.h"
 #include "../utils/status_utils.h"
-#include "../block/block_mmad_to_multi_mul.h"
+#include "../block/block_mmad_fma_mul.h"
 #include "../block/block_mmad_builder.h"
 #include "../block/block_scheduler_utils.h"
 #include "../block/block_scheduler_policy.h"
@@ -40,17 +40,17 @@ namespace Kernel {
 
 template <class ProblemShape_, class BlockMmadBuilder_, class BlockEpilogue_, class BlockScheduler_,
           typename Enable_ = void>
-class KernelMatmulToVector {
+class KernelMatmulFmaMul {
     static_assert(AscendC::Std::always_false_v<BlockEpilogue_>,
-                  "KernelMatmulToVector is not implemented for this BlockEpilogue");
+                  "KernelMatmulFmaMul is not implemented for this BlockEpilogue");
 };
 
 template <class ProblemShape_, class BlockMmadBuilder_, class BlockEpilogue_, class BlockScheduler_>
-class KernelMatmulToVector<ProblemShape_, BlockMmadBuilder_, BlockEpilogue_, BlockScheduler_,
-                           std::enable_if_t<std::is_same_v<BlockEpilogue_, Block::BlockEpilogueEmpty>>> {
+class KernelMatmulFmaMul<ProblemShape_, BlockMmadBuilder_, BlockEpilogue_, BlockScheduler_,
+                         std::enable_if_t<std::is_same_v<BlockEpilogue_, Block::BlockEpilogueEmpty>>> {
 public:
-    __aicore__ inline KernelMatmulToVector() {}
-    __aicore__ inline ~KernelMatmulToVector() {}
+    __aicore__ inline KernelMatmulFmaMul() {}
+    __aicore__ inline ~KernelMatmulFmaMul() {}
 
     using BlockMmadBuilder = BlockMmadBuilder_;
     using ProblemShape = ProblemShape_;
@@ -153,13 +153,11 @@ public:
         int64_t realBlockNum = bs.GetRealBlockNum();
         TupleShape blockInfo = bs.GetBlockInfo();
         TupleShape tailInfo = bs.GetTailInfo();
-        uint64_t baseM = Get<MNK_M>(blockInfo);
         uint64_t baseN = Get<MNK_N>(blockInfo);
         // 获取m分块数
         uint64_t mTileNum = Get<2>(blockInfo);
         // 获取n分块数
         uint64_t nTileNum = Get<3>(blockInfo);
-        uint64_t tailM = Get<MNK_M>(tailInfo);
         uint64_t tailN = Get<MNK_N>(tailInfo);
         // 获取k方向尾块大小
         uint64_t tailK = Get<MNK_K>(tailInfo);
@@ -168,25 +166,39 @@ public:
         if (curBlockIdx >= realBlockNum) {
             return;
         }
-        blockMmadOp.Init(problemShape_, blockInfo, tailK, loopK, hasBias_);
+        blockMmadOp.Init(problemShape_, blockInfo, tailK, params.schParams.tilingData->baseK, loopK, hasBias_,
+                         params.schParams.tilingData->mr, params.schParams.tilingData->ns,
+                         params.schParams.tilingData->singleCoreK);
         int64_t tileNum = bs.GetTileNum();
         for (int64_t tileIdx = curBlockIdx; tileIdx < tileNum; tileIdx += blockNum) {
             int64_t tileIdxN = tileIdx % nTileNum;
             int64_t tileIdxM = tileIdx / nTileNum;
-            if (tileIdxM == mTileNum - 1) {
-                blockMmadOp.SetTailM(tailM);
-            } else {
-                blockMmadOp.SetTailM(baseM);
-            }
+            // 尾波均摊: tile行数/行偏移按调度器查表(满波tile=baseM, 尾波tile=baseMTail, 末tile=余量)
+            blockMmadOp.SetTailM(bs.TileRows(tileIdxM));
             if (tileIdxN == nTileNum - 1) {
                 blockMmadOp.SetTailN(tailN);
             } else {
                 blockMmadOp.SetTailN(baseN);
             }
-            int64_t offsetA = tileIdxM * baseM * k_;
-            int64_t offsetB = tileIdxN * baseN * k_;
-            int64_t offsetC = tileIdxM * baseM * n_ + tileIdxN * baseN;
-            blockMmadOp(cGlobal_[offsetC], aGlobal_[offsetA], bGlobal_[offsetB]);
+            const int64_t rowOff = bs.TileRowOffset(tileIdxM);
+            int64_t offsetA;
+            int64_t offsetB;
+            if constexpr (transA) {
+                // A为[k, m]行优先, m分块为列偏移(k分块行偏移由BlockMmad内CopyInA计算)
+                offsetA = rowOff;
+            } else {
+                offsetA = rowOff * k_;
+            }
+            if constexpr (transB) {
+                // B为[n, k]行优先, n分块为行偏移(k分块行内偏移由BlockMmad内CopyInB计算)
+                offsetB = tileIdxN * baseN * k_;
+            } else {
+                // B为(k, n)行优先, n分块仅为行内偏移
+                offsetB = tileIdxN * baseN;
+            }
+            int64_t offsetC = rowOff * n_ + tileIdxN * baseN;
+            blockMmadOp(cGlobal_[offsetC], aGlobal_[offsetA], bGlobal_[offsetB],
+                        hasBias_ ? biasGlobal_[tileIdxN * baseN] : biasGlobal_);
         }
     }
 

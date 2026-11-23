@@ -36,7 +36,7 @@
 
 #include "mat_mul_pingpong_basic_cmct.h"
 #include "mat_mul_to_mul_cmct.h"
-#include "mat_mul_to_multi_mul_cmct.h"
+#include "mat_mul_fma_mul_cmct.h"
 
 using namespace Cmct;
 using namespace Cmct::Gemm;
@@ -215,10 +215,10 @@ __global__ __aicore__ void mat_mul_v3(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR biasGM, 
         MatmulV3Advanced::MatMulToMulActKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, aLayout, bLayout,
                                                layout::RowMajor>(aGM, bGM, biasGM, cGM, workspaceGM, tilingData);
     } else if constexpr (API_LEVEL == MAT_MUL_BASIC_LEVEL && FULL_LOAD == MAT_MUL_NO_FULL_LOAD &&
-                         MODEL == MAT_MUL_TO_MULTI_MUL && L0C2OUT_MODEL == MAT_MUL_ON_THE_FLY) {
-        GET_TILING_DATA_WITH_STRUCT(MatMulToVectorBasicTilingData, tilingData, tilingGM);
-        MatmulV3Advanced::MatMulToVectorActKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, aLayout, bLayout,
-                                                  layout::RowMajor>(aGM, bGM, biasGM, cGM, workspaceGM, tilingData);
+                         MODEL == MAT_MUL_FMA_MUL && L0C2OUT_MODEL == MAT_MUL_ON_THE_FLY) {
+        GET_TILING_DATA_WITH_STRUCT(MatMulFmaTilingData, tilingData, tilingGM);
+        MatmulV3Advanced::MatMulFmaMulActKernel<DTYPE_X1, DTYPE_X2, DTYPE_Y, DTYPE_BIAS, aLayout, bLayout,
+                                                layout::RowMajor>(aGM, bGM, biasGM, cGM, workspaceGM, tilingData);
 #endif
     }
 }

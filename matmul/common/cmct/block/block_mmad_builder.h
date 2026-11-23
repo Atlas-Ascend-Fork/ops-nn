@@ -165,7 +165,7 @@ class BlockMmadBuilder<
                                    BlockMatmulPolicy_> ||
         AscendC::Std::is_base_of_v<BatchMatmulToMul<>, BlockMatmulPolicy_> ||
         AscendC::Std::is_base_of_v<MatmulToMul<>, BlockMatmulPolicy_> ||
-        AscendC::Std::is_base_of_v<MatmulToVector<>, BlockMatmulPolicy_>>> {
+        AscendC::Std::is_base_of_v<MatmulFmaMul<>, BlockMatmulPolicy_>>> {
 public:
     using AType = AType_;
     using BType = BType_;

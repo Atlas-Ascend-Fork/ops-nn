@@ -170,6 +170,12 @@ struct MatMulV3RunInfo {
     // basic模板L1内M/N轴切分值，baseM/baseN计算完成后同步；0表示模板未使能，tiling下发时按baseM/baseN推算
     uint64_t mL1 = 0UL;
     uint64_t nL1 = 0UL;
+    // FMA模板专用: 计算体模板参数(经MatMulFmaTilingData下发), baseN=64为(MR=8,NS=1), 其余MR=4/NS=baseN/64
+    uint64_t mr = 4UL;
+    uint64_t ns = 1UL;
+    // FMA尾波均摊: 满波tile数/尾波tile行数(经MatMulFmaTilingData下发)
+    uint64_t mTileFull = 0UL;
+    uint64_t baseMTail = 0UL;
     uint64_t stepKa = 1UL;
     uint64_t stepKb = 1UL;
     uint64_t depthA1 = 1UL;
