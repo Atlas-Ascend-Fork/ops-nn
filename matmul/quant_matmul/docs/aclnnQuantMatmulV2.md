@@ -413,7 +413,7 @@ int aclnnQuantMatmulV2Test(int32_t deviceId, aclrtStream &stream) {
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnTransQuantParam failed. ERROR: %d\n", ret); return ret);
 
   std::vector<uint64_t> deqScaleVector(deqScaleArray, deqScaleArray + deqScaleSize);
-  std::vector<int64_t> deqScaleShape = {deqScaleSize};
+  std::vector<int64_t> deqScaleShape = {static_cast<int64_t>(deqScaleSize)};
   void* deqScaleDeviceAddr = nullptr;
   aclTensor* deqScale = nullptr;
   ret = CreateAclTensor(deqScaleVector, deqScaleShape, &deqScaleDeviceAddr, aclDataType::ACL_UINT64, &deqScale);
