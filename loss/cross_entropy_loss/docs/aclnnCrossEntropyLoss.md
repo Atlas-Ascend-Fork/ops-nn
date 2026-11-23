@@ -291,7 +291,7 @@ aclnnStatus aclnnCrossEntropyLoss(
         <td>传入的input、target、weightOptional的shape不在支持范围内，或lossOut/zlossOut的shape与reductionOptional不自洽（reductionOptional为"none"时应与input第0维一致，否则应为[1]）。</td>
       </tr>
       <tr>
-        <td>传入的reductionOptional、labelSmoothing的值不在支持范围内。</td>
+        <td>传入的reductionOptional、labelSmoothing、ignoreIndex的值不在支持范围内。</td>
       </tr>
     </tbody>
     </table>
@@ -342,6 +342,10 @@ aclnnStatus aclnnCrossEntropyLoss(
 
   - target仅支持类标签索引，不支持概率输入。
   - 当前暂不支持zloss相关功能。传入相关输入，即lseSquareScaleForZloss、returnZloss，不会生效。
+
+  <!-- npu="950" id8 -->
+  - <term>Ascend 950PR&950DT系列产品</term>：当target为int32类型时，ignoreIndex取值不能大于2147483647，超出时返回参数校验失败。
+  <!-- end id8 -->
 
   - 确定性计算：
     - aclnnCrossEntropyLoss默认确定性实现。

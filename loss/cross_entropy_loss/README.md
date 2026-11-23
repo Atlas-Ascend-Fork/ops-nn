@@ -143,6 +143,7 @@
 ## 约束说明
 
   - target仅支持类标签索引，不支持概率输入。
+  - 在<term>Ascend 950PR&950DT系列产品</term>上，当target为int32类型时，ignoreIndex取值不能大于2147483647，超出时返回校验失败。
   - 当前暂不支持zloss相关功能。传入相关输入，即lseSquareScaleForZloss、returnZloss，不会生效。
 
 ## 调用说明

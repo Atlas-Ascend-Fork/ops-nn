@@ -69,8 +69,8 @@ static void DoCrossEntropyLossTilingCase(std::initializer_list<int64_t>& inputSh
                                          std::initializer_list<int64_t>& targetShape,
                                          std::initializer_list<int64_t>& weightShape,
                                          std::initializer_list<int64_t>& lossShape, ge::DataType inputDtype,
-                                         ge::DataType tDtype, std::string reduction, int ignore_index,
-                                         float label_smoothing)
+                                         ge::DataType tDtype, std::string reduction, int64_t ignore_index,
+                                         float label_smoothing, ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS)
 {
     // init platform
     fe::PlatFormInfos platFormInfo;
@@ -152,7 +152,10 @@ static void DoCrossEntropyLossTilingCase(std::initializer_list<int64_t>& inputSh
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_version_infos);
 
     // workspaces nullptr return failed
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tiling_func(tiling_context), expectedStatus);
+    if (expectedStatus != ge::GRAPH_SUCCESS) {
+        return;
+    }
     // todo check tiling result
     auto tiling_key = tiling_context->GetTilingKey();
     auto block_dim = tiling_context->GetBlockDim();
@@ -352,6 +355,81 @@ TEST_F(CrossEntropyLossRegBaseTiling, test_tiling_bfp16_int32_none_full_load)
     string reduction = "none";
     int ignore_index = 1;
     float label_smoothing = 1.0f;
+    DoCrossEntropyLossTilingCase(inputShape, targetShape, weightShape, lossShape, inputDtype, tDtype, reduction,
+                                 ignore_index, label_smoothing);
+}
+
+TEST_F(CrossEntropyLossRegBaseTiling, test_tiling_int32_target_ignore_index_exceed_int32_max)
+{
+    std::initializer_list<int64_t> inputShape = {4096, 1035};
+    std::initializer_list<int64_t> targetShape = {4096};
+    std::initializer_list<int64_t> weightShape = {1035};
+    std::initializer_list<int64_t> lossShape = {4096};
+    ge::DataType inputDtype = ge::DT_FLOAT;
+    ge::DataType tDtype = ge::DT_INT32;
+    string reduction = "none";
+    int64_t ignore_index = 4294967296LL;
+    float label_smoothing = 0.0f;
+    DoCrossEntropyLossTilingCase(inputShape, targetShape, weightShape, lossShape, inputDtype, tDtype, reduction,
+                                 ignore_index, label_smoothing, ge::GRAPH_FAILED);
+}
+
+TEST_F(CrossEntropyLossRegBaseTiling, test_tiling_int32_target_ignore_index_below_int32_min)
+{
+    std::initializer_list<int64_t> inputShape = {4096, 1035};
+    std::initializer_list<int64_t> targetShape = {4096};
+    std::initializer_list<int64_t> weightShape = {1035};
+    std::initializer_list<int64_t> lossShape = {4096};
+    ge::DataType inputDtype = ge::DT_FLOAT;
+    ge::DataType tDtype = ge::DT_INT32;
+    string reduction = "none";
+    int64_t ignore_index = -4294967296LL;
+    float label_smoothing = 0.0f;
+    DoCrossEntropyLossTilingCase(inputShape, targetShape, weightShape, lossShape, inputDtype, tDtype, reduction,
+                                 ignore_index, label_smoothing);
+}
+
+TEST_F(CrossEntropyLossRegBaseTiling, test_tiling_int32_target_ignore_index_int32_max_boundary)
+{
+    std::initializer_list<int64_t> inputShape = {4096, 1035};
+    std::initializer_list<int64_t> targetShape = {4096};
+    std::initializer_list<int64_t> weightShape = {1035};
+    std::initializer_list<int64_t> lossShape = {4096};
+    ge::DataType inputDtype = ge::DT_FLOAT;
+    ge::DataType tDtype = ge::DT_INT32;
+    string reduction = "none";
+    int64_t ignore_index = 2147483647LL;
+    float label_smoothing = 0.0f;
+    DoCrossEntropyLossTilingCase(inputShape, targetShape, weightShape, lossShape, inputDtype, tDtype, reduction,
+                                 ignore_index, label_smoothing);
+}
+
+TEST_F(CrossEntropyLossRegBaseTiling, test_tiling_int32_target_ignore_index_int32_min_boundary)
+{
+    std::initializer_list<int64_t> inputShape = {4096, 1035};
+    std::initializer_list<int64_t> targetShape = {4096};
+    std::initializer_list<int64_t> weightShape = {1035};
+    std::initializer_list<int64_t> lossShape = {4096};
+    ge::DataType inputDtype = ge::DT_FLOAT;
+    ge::DataType tDtype = ge::DT_INT32;
+    string reduction = "none";
+    int64_t ignore_index = -2147483648LL;
+    float label_smoothing = 0.0f;
+    DoCrossEntropyLossTilingCase(inputShape, targetShape, weightShape, lossShape, inputDtype, tDtype, reduction,
+                                 ignore_index, label_smoothing);
+}
+
+TEST_F(CrossEntropyLossRegBaseTiling, test_tiling_int64_target_ignore_index_exceed_int32)
+{
+    std::initializer_list<int64_t> inputShape = {4096, 1035};
+    std::initializer_list<int64_t> targetShape = {4096};
+    std::initializer_list<int64_t> weightShape = {1035};
+    std::initializer_list<int64_t> lossShape = {4096};
+    ge::DataType inputDtype = ge::DT_FLOAT;
+    ge::DataType tDtype = ge::DT_INT64;
+    string reduction = "none";
+    int64_t ignore_index = 4294967296LL;
+    float label_smoothing = 0.0f;
     DoCrossEntropyLossTilingCase(inputShape, targetShape, weightShape, lossShape, inputDtype, tDtype, reduction,
                                  ignore_index, label_smoothing);
 }

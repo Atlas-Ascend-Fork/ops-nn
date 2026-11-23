@@ -698,18 +698,20 @@ __aicore__ inline void CrossEntropyLossFullLoad<T1, T2, reduction, isWeight, lab
     auto lossOutAddr = (__ubuf__ float*)lossOutLocal.GetPhyAddr();
     auto smoothSumAddr = (__ubuf__ float*)sumUbLocal.GetPhyAddr();
     auto smoothLossAddr = (__ubuf__ float*)smoothLossLocal.GetPhyAddr();
-    int32_t ignoreData = static_cast<int32_t>(tilingData_->ignoreIndex);
+    T2 ignoreData = static_cast<T2>(tilingData_->ignoreIndex);
     int64_t rAlign = tilingData_->cOnceNum;
     __VEC_SCOPE__
     {
         AscendC::Reg::MaskReg preg;
         AscendC::Reg::MaskReg dstMask;
+        AscendC::Reg::MaskReg ignoreMask;
         AscendC::Reg::RegTensor<T2> srcReg;
         preg = AscendC::Reg::UpdateMask<uint32_t>(tailNum);
         AscendC::Reg::RegTensor<int32_t> tempReg;
         AscendC::Reg::RegTensor<int32_t> targetReg;
         AscendC::Reg::MaskReg regGather;
         AscendC::Reg::MaskReg regAll = AscendC::Reg::CreateMask<int32_t, AscendC::Reg::MaskPattern::ALL>();
+        AscendC::Reg::MaskReg regAllT = AscendC::Reg::CreateMask<T2, AscendC::Reg::MaskPattern::ALL>();
         AscendC::Reg::RegTensor<float> reg0;
         AscendC::Reg::RegTensor<float> reg1;
         AscendC::Reg::Duplicate(reg0, 0.0f);
@@ -731,14 +733,16 @@ __aicore__ inline void CrossEntropyLossFullLoad<T1, T2, reduction, isWeight, lab
         for (uint16_t i = 0; i < repeatTimes; i++) {
             if constexpr (sizeof(T2) == sizeof(int64_t)) {
                 Reg::LoadAlign(srcReg, targetUbAddr + i * vfLen);
+                Reg::Compares<T2, CMPMODE::EQ>(ignoreMask, srcReg, ignoreData, regAllT);
+                Reg::Pack(dstMask, ignoreMask);
                 Reg::Cast<int32_t, T2, castTrait1>(tempReg, srcReg, regAll);
                 Reg::Pack((RegTensor<uint32_t>&)targetReg, (RegTensor<uint64_t>&)tempReg);
                 regGather = AscendC::Reg::CreateMask<int32_t, AscendC::Reg::MaskPattern::H>();
             } else {
                 Reg::LoadAlign(targetReg, targetUbAddr + i * vfLen);
+                Reg::Compares<T2, CMPMODE::EQ>(dstMask, targetReg, ignoreData, regAllT);
                 regGather = AscendC::Reg::CreateMask<int32_t, AscendC::Reg::MaskPattern::ALL>();
             }
-            Reg::Compares<int32_t, CMPMODE::EQ>(dstMask, targetReg, ignoreData, regAll);
 
             if constexpr (isWeight == 1) {
                 Reg::Gather(weightGatherReg, weightAddr, (Reg::RegTensor<uint32_t>&)targetReg, regGather);
@@ -763,12 +767,14 @@ __aicore__ inline void CrossEntropyLossFullLoad<T1, T2, reduction, isWeight, lab
         for (uint16_t k = 0; k < tailLoop; k++) {
             if constexpr (sizeof(T2) == sizeof(int64_t)) {
                 Reg::LoadAlign(srcReg, targetUbAddr + repeatTimes * vfLen);
+                Reg::Compares<T2, CMPMODE::EQ>(ignoreMask, srcReg, ignoreData, regAllT);
+                Reg::Pack(dstMask, ignoreMask);
                 Reg::Cast<int32_t, T2, castTrait1>(tempReg, srcReg, regAll);
                 Reg::Pack((RegTensor<uint32_t>&)targetReg, (RegTensor<uint64_t>&)tempReg);
             } else {
                 Reg::LoadAlign(targetReg, targetUbAddr + repeatTimes * vfLen);
+                Reg::Compares<T2, CMPMODE::EQ>(dstMask, targetReg, ignoreData, regAllT);
             }
-            Reg::Compares<int32_t, CMPMODE::EQ>(dstMask, targetReg, ignoreData, regAll);
 
             if constexpr (isWeight == 1) {
                 Reg::Gather(weightGatherReg, weightAddr, (Reg::RegTensor<uint32_t>&)targetReg, preg);

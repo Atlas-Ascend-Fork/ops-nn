@@ -305,6 +305,14 @@ ge::graphStatus CrossEntropyLossRegbaseTiling::GetAttrTilingData()
     int64_t ignoreIndex = DEFAULT_IGNORE_INDEX;
     const int64_t* ignoreIndexAttr = attrs->GetAttrPointer<int64_t>(ATTR_IGNORE_INDEX_IDX);
     ignoreIndex = ignoreIndexAttr == nullptr ? DEFAULT_IGNORE_INDEX : *ignoreIndexAttr;
+    auto targetDesc = context_->GetInputDesc(INPUT_TARGET_IDX);
+    if (targetDesc->GetDataType() == ge::DT_INT32) {
+        OP_CHECK_IF(
+            ignoreIndex > 2147483647LL,
+            OP_LOGE_FOR_INVALID_VALUE(context_->GetNodeName(), "ignore_index", std::to_string(ignoreIndex).c_str(),
+                                      "not greater than the maximum value that the target data type can represent"),
+            return ge::GRAPH_FAILED);
+    }
     BaseTiling_.ignoreIndex = ignoreIndex;
     ignorex = ignoreIndex >= 0 ? static_cast<uint64_t>(1) : static_cast<uint64_t>(0);
     float labelSmoothing = 0.0;

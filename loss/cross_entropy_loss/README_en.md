@@ -145,6 +145,7 @@ English | [简体中文](./README.md)
 ## Constraints
 
   - target supports only class label indices, and probability inputs are not supported.
+  - On the <term>Ascend 950PR&950DT products</term>, when target is of the int32 type, the value of ignoreIndex must not be greater than 2147483647. Otherwise, validation fails.
   - Currently, zloss-related functions are not supported. Passing the related inputs, namely lseSquareScaleForZloss and returnZloss, has no effect.
 
 ## Invocation Description

@@ -126,7 +126,7 @@ aclnnStatus aclnnCrossEntropyLoss(
     <td>Input</td>
     <td>Indicates the label, y in the formula.</td>
     <td>-</td>
-    <td>INT32, INT64</td>
+    <td>INT32<span><sup>2</sup></span>, INT64</td>
     <td>ND</td>
     <td>(N)<br>N is the same as the 0th dimension of input. The value range is [0, C). When ignoreIndex is specified, the value of target can also be equal to ignoreIndex.</td>
     <td>√</td>
@@ -287,7 +287,7 @@ aclnnStatus aclnnCrossEntropyLoss(
         <td>The shapes of input, target, or weightOptional are not in the supported range, or the shapes of lossOut/zlossOut are inconsistent with reductionOptional (they should match dim 0 of input when reductionOptional is "none", otherwise be [1]).</td>
       </tr>
       <tr>
-        <td>The values of reductionOptional and labelSmoothing are not in the supported range.</td>
+        <td>The values of reductionOptional, labelSmoothing, or ignoreIndex are not in the supported range.</td>
       </tr>
     </tbody>
     </table>
@@ -330,6 +330,12 @@ aclnnStatus aclnnCrossEntropyLoss(
       </tbody>
     </table>
 
+  <!-- npu="A3,910b" id7 -->
+  - <term>Atlas A2 products</term>, <term>Atlas A3 products</term>:
+    - The superscript <span title="Not supported by Atlas A3/A2"><sup>2</sup></span> in the data type column of the preceding table indicates the data type not supported by these product series.
+    - INT32 is not supported for target.
+  <!-- end id7 -->
+
 - **Return Value**
 
   aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../docs/en/context/aclnn_return_code.md).
@@ -338,6 +344,10 @@ aclnnStatus aclnnCrossEntropyLoss(
 
   - target supports only class label indices, not probability inputs.
   - zloss-related features are currently not supported. Passing related inputs, i.e., lseSquareScaleForZloss and returnZloss, will not take effect.
+
+  <!-- npu="950" id8 -->
+  - <term>Ascend 950PR&950DT products</term>: When target is of the int32 type, the value of ignoreIndex must not be greater than 2147483647. Otherwise, parameter validation fails.
+  <!-- end id8 -->
 
   - Deterministic computation:
     - aclnnCrossEntropyLoss defaults to a deterministic implementation.
