@@ -445,6 +445,7 @@ aclnnStatus aclnnBatchNormBackward(
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
 ```Cpp
+#include <cmath>
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
@@ -471,6 +472,27 @@ int64_t GetShapeSize(const std::vector<int64_t>& shape)
     return shapeSize;
 }
 
+bool CheckOutput(void* deviceAddr, const std::vector<float>& expected, const char* name)
+{
+    std::vector<float> actual(expected.size());
+    const size_t bytes = actual.size() * sizeof(float);
+    const auto ret = aclrtMemcpy(actual.data(), bytes, deviceAddr, bytes, ACL_MEMCPY_DEVICE_TO_HOST);
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("Copy %s failed. ERROR: %d\n", name, ret);
+        return false;
+    }
+    constexpr float tolerance = 1e-4f;
+    for (size_t i = 0; i < expected.size(); ++i) {
+        if (!std::isfinite(actual[i]) ||
+            std::abs(actual[i] - expected[i]) > tolerance * (1.0f + std::abs(expected[i]))) {
+            LOG_PRINT("%s[%zu]: expected %f, got %f\n", name, i, expected[i], actual[i]);
+            return false;
+        }
+    }
+    LOG_PRINT("PASS %s\n", name);
+    return true;
+}
+
 int Init(int32_t deviceId, aclrtStream* stream)
 {
     // 固定写法，资源初始化
@@ -479,16 +501,14 @@ int Init(int32_t deviceId, aclrtStream* stream)
     ret = aclrtSetDevice(deviceId);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); aclFinalize(); return ret);
     ret = aclrtCreateStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS,
-        LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret);
-        aclrtResetDevice(deviceId); aclFinalize(); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); aclrtResetDevice(deviceId);
+              aclFinalize(); return ret);
     return 0;
 }
 
 template <typename T>
-int CreateAclTensor(
-    const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr, aclDataType dataType,
-    aclTensor** tensor)
+int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
+                    aclDataType dataType, aclTensor** tensor)
 {
     auto size = GetShapeSize(shape) * sizeof(T);
     // 调用aclrtMalloc申请Device侧内存
@@ -506,9 +526,8 @@ int CreateAclTensor(
     }
 
     // 调用aclCreateTensor接口创建aclTensor
-    *tensor = aclCreateTensor(
-        shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND, shape.data(), shape.size(),
-        *deviceAddr);
+    *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
+                              shape.data(), shape.size(), *deviceAddr);
     return 0;
 }
 
@@ -540,7 +559,6 @@ int main()
     void* rVarDeviceAddr = nullptr;
     void* sMeanDeviceAddr = nullptr;
     void* sVarDeviceAddr = nullptr;
-    void* outMaskDeviceAddr = nullptr;
     void* gradInDeviceAddr = nullptr;
     void* gradWeightDeviceAddr = nullptr;
     void* gradBiasDeviceAddr = nullptr;
@@ -596,8 +614,8 @@ int main()
     ret = CreateAclTensor(gradInHostData, gradInShape, &gradInDeviceAddr, aclDataType::ACL_FLOAT, &gradIn);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建gradWeight aclTensor
-    ret = CreateAclTensor(
-        gradWeightHostData, gradWeightShape, &gradWeightDeviceAddr, aclDataType::ACL_FLOAT, &gradWeight);
+    ret = CreateAclTensor(gradWeightHostData, gradWeightShape, &gradWeightDeviceAddr, aclDataType::ACL_FLOAT,
+                          &gradWeight);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建gradBias aclTensor
     ret = CreateAclTensor(gradBiasHostData, gradBiasShape, &gradBiasDeviceAddr, aclDataType::ACL_FLOAT, &gradBias);
@@ -609,9 +627,8 @@ int main()
     // aclnnBatchNormBackward接口调用示例
     // 3. 调用CANN算子库API，需要修改为具体的API名称
     // 调用aclnnBatchNormBackward第一段接口
-    ret = aclnnBatchNormBackwardGetWorkspaceSize(
-        gradOut, self, weight, rMean, rVar, sMean, sVar, training, eps, outMask, gradIn, gradWeight, gradBias,
-        &workspaceSize, &executor);
+    ret = aclnnBatchNormBackwardGetWorkspaceSize(gradOut, self, weight, rMean, rVar, sMean, sVar, training, eps,
+                                                 outMask, gradIn, gradWeight, gradBias, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnBatchNormBackwardGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
@@ -628,16 +645,12 @@ int main()
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
-    // 5. 获取输出的值，将Device侧内存上的结果拷贝至Host侧，需要根据具体API的接口定义修改
-    auto size = GetShapeSize(gradInShape);
-    std::vector<float> resultData(size, 0);
-    ret = aclrtMemcpy(
-        resultData.data(), resultData.size() * sizeof(resultData[0]), gradInDeviceAddr, size * sizeof(resultData[0]),
-        ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
-    for (int64_t i = 0; i < size; i++) {
-        LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
-    }
+    // 5. Check all three outputs against the supplied mean=0 and invstd=1.
+    // Per channel: dbias=sum(dy), dweight=sum(dy*x), dx=dy-(dbias+x*dweight)/4.
+    const bool dxOk = CheckOutput(gradInDeviceAddr, {-1.5f, -4.0f, -6.5f, -9.0f, -127.5f, -158.0f, -188.5f, -219.0f},
+                                  "dx");
+    const bool weightOk = CheckOutput(gradWeightDeviceAddr, {14.0f, 126.0f}, "dweight");
+    const bool biasOk = CheckOutput(gradBiasDeviceAddr, {6.0f, 22.0f}, "dbias");
 
     // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
     aclDestroyTensor(gradOut);
@@ -669,6 +682,6 @@ int main()
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
     aclFinalize();
-    return 0;
+    return dxOk && weightOk && biasOk ? 0 : 1;
 }
 ```
