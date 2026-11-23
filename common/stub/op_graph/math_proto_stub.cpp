@@ -165,6 +165,15 @@ REG_OP(Shape)
     .ATTR(dtype, Int, DT_INT32)
     .OP_END_FACTORY_REG(Shape);
 
+// Shape/Slice/Fill constructs a unit gamma for a dynamic reduction tail.
+// Preserve the real Slice input order; offsets and size are index tensors.
+REG_OP(Slice)
+    .INPUT(x, TensorType({BasicType()}))
+    .INPUT(offsets, TensorType::IndexNumberType())
+    .INPUT(size, TensorType::IndexNumberType())
+    .OUTPUT(y, TensorType({BasicType()}))
+    .OP_END_FACTORY_REG(Slice);
+
 /**
  * @brief Gather slices from "params" according to "indices"."indices" must be
  *     an integer tensor of any dimension(usually 0-D or 1-D).
@@ -522,5 +531,52 @@ REG_OP(Div)
     .OUTPUT(y, TensorType({DT_FLOAT, DT_FLOAT16, DT_INT8, DT_UINT8, DT_INT32, DT_DOUBLE, DT_INT64, DT_UINT16, DT_INT16,
                            DT_COMPLEX64, DT_COMPLEX128, DT_BF16, DT_COMPLEX32}))
     .OP_END_FACTORY_REG(Div);
+
+// IR definitions required by the RMSNorm fusion graph tests.
+REG_OP(ReduceSum)
+    .INPUT(x, TensorType::NumberType())
+    .INPUT(axes, TensorType::IndexNumberType())
+    .OUTPUT(y, TensorType::NumberType())
+    .ATTR(keep_dims, Bool, false)
+    .ATTR(noop_with_empty_axes, Bool, true)
+    .OP_END_FACTORY_REG(ReduceSum);
+
+REG_OP(Unsqueeze)
+    .INPUT(x, TensorType::ALL())
+    .OUTPUT(y, TensorType::ALL())
+    .ATTR(axes, ListInt, {})
+    .OP_END_FACTORY_REG(Unsqueeze);
+
+REG_OP(UnsqueezeV2)
+    .INPUT(x, TensorType::ALL())
+    .OUTPUT(y, TensorType::ALL())
+    .ATTR(axis, ListInt, {})
+    .OP_END_FACTORY_REG(UnsqueezeV2);
+
+REG_OP(ExpandDims)
+    .INPUT(x, TensorType::ALL())
+    .INPUT(axis, TensorType({DT_INT32, DT_INT64}))
+    .OUTPUT(y, TensorType::ALL())
+    .OP_END_FACTORY_REG(ExpandDims);
+
+REG_OP(Reciprocal)
+    .INPUT(x, TensorType({DT_FLOAT, DT_DOUBLE, DT_FLOAT16, DT_COMPLEX64, DT_COMPLEX128, DT_BF16}))
+    .OUTPUT(y, TensorType({DT_FLOAT, DT_DOUBLE, DT_FLOAT16, DT_COMPLEX64, DT_COMPLEX128, DT_BF16}))
+    .OP_END_FACTORY_REG(Reciprocal);
+
+REG_OP(Adds)
+    .INPUT(x, TensorType({DT_FLOAT, DT_INT16, DT_INT32, DT_FLOAT16, DT_BF16, DT_INT64}))
+    .OUTPUT(y, TensorType({DT_FLOAT, DT_INT16, DT_INT32, DT_FLOAT16, DT_BF16, DT_INT64}))
+    .REQUIRED_ATTR(value, Float)
+    .OP_END_FACTORY_REG(Adds);
+
+REG_OP(AddV2)
+    .INPUT(x1, TensorType({DT_FLOAT, DT_INT32, DT_INT64, DT_FLOAT16, DT_INT16, DT_INT8, DT_UINT8, DT_DOUBLE,
+                           DT_COMPLEX64, DT_BF16, DT_COMPLEX128}))
+    .INPUT(x2, TensorType({DT_FLOAT, DT_INT32, DT_INT64, DT_FLOAT16, DT_INT16, DT_INT8, DT_UINT8, DT_DOUBLE,
+                           DT_COMPLEX64, DT_BF16, DT_COMPLEX128}))
+    .OUTPUT(y, TensorType({DT_FLOAT, DT_INT32, DT_INT64, DT_FLOAT16, DT_INT16, DT_INT8, DT_UINT8, DT_DOUBLE,
+                           DT_COMPLEX64, DT_BF16, DT_COMPLEX128}))
+    .OP_END_FACTORY_REG(AddV2);
 
 } // namespace ge
