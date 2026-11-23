@@ -11,6 +11,7 @@
 #define OPS_NORM_CENTRALIZATION_GENERIC_H_
 #include "kernel_operator.h"
 #include "../../norm_common/reduce_common_regbase.h"
+#include "centralization_compensated_sum.h"
 #include "centralization_tiling_data.h"
 
 namespace Centralization {
@@ -43,6 +44,8 @@ public:
         eventVToS_ = pipe_->FetchEventID(HardEvent::V_S);
         eventSToMte3_ = pipe_->FetchEventID(HardEvent::S_MTE3);
         eventMte3ToMte2_ = pipe_->FetchEventID(HardEvent::MTE3_MTE2);
+        eventSToV_ = pipe_->FetchEventID(HardEvent::S_V);
+        eventVToMte3_ = pipe_->FetchEventID(HardEvent::V_MTE3);
     }
 
     __aicore__ inline int64_t GroupBase(int64_t group) const
@@ -93,12 +96,24 @@ public:
             ProcessLarge(core, cores);
             return;
         }
+        if (tiling_->groupVector != 0) {
+            ProcessGroupVector(core, cores);
+            return;
+        }
+        if (tiling_->meanCache != 0) {
+            ComputeMeanCache(core, cores);
+            SyncAll();
+            ProcessOutputBlocks(core, cores, true);
+            return;
+        }
         ProcessOutputBlocks(core, cores, false);
     }
 
 private:
     static constexpr int64_t kLargeChunkElements = 256;
+    static constexpr int64_t kOutputTileBytes = 2048;
     static constexpr uint16_t kMaxAccSlots = 16;
+    bool localMeanTable_ = false;
     static constexpr int64_t kMaxIrregularScalarKeepTile = 16;
 
     __aicore__ inline int64_t Min(int64_t lhs, int64_t rhs) const { return lhs < rhs ? lhs : rhs; }
@@ -107,6 +122,15 @@ private:
     {
         constexpr int64_t blockElements = 32 / sizeof(T);
         return (elements + blockElements - 1) / blockElements * blockElements;
+    }
+
+    // 窄列行距：valid < 64 lane 时从向量对齐（64 元素）压到 32B 块对齐（4-16 元素），
+    // UB 密度提升 4-16x——每批多处理 4-16x 行，队列操作次数同比例减少。
+    // AccumulateRowsSmallInnerKahan / CentralizeRowsSmallInnerHiLo 的掩码向量加载
+    // 不依赖 64-lane 对齐（preg 按 activeCount 截断），仅要求地址可寻址。
+    __aicore__ inline int64_t OptimalRowStride(int64_t validElements) const
+    {
+        return validElements < V_LENGTH ? AlignToBlock(validElements) : AlignToVector(validElements);
     }
 
     __aicore__ inline int64_t AlignToVector(int64_t elements) const
@@ -559,26 +583,35 @@ private:
         outQueue_.FreeTensor(output);
     }
 
-    __aicore__ inline void CopyInRowsPadded(int64_t offset, int64_t rowCount, int64_t rowElements, int64_t rowStride)
+    // gmRowStride > 0 表示 GM 侧相邻行按该元素步进排布（多 inner tile 时行间有缝）；
+    // 0 表示 GM 行连续（整行搬运）。DataCopyPad 的 GM 侧 stride 单位是字节（CopyGmToUbufAlignV2
+    // 的 unitOfBytes=1），UB 侧仍是 32B 单位——两侧换算不同，勿混。
+    __aicore__ inline void CopyInRowsPadded(int64_t offset, int64_t rowCount, int64_t rowElements, int64_t rowStride,
+                                            int64_t gmRowStride = 0)
     {
         LocalTensor<T> input = inQueue_.AllocTensor<T>();
         const int64_t copyAlignedElements = AlignToBlock(rowElements);
         const uint32_t dstStride = static_cast<uint32_t>((rowStride - copyAlignedElements) * sizeof(T) / 32);
-        DataCopyExtParams copy{static_cast<uint16_t>(rowCount), static_cast<uint32_t>(rowElements * sizeof(T)), 0,
-                               dstStride, 0};
+        const int64_t gmAdvance = gmRowStride > 0 ? gmRowStride : rowElements;
+        const uint32_t srcStride = static_cast<uint32_t>((gmAdvance - rowElements) * sizeof(T));
+        DataCopyExtParams copy{static_cast<uint16_t>(rowCount), static_cast<uint32_t>(rowElements * sizeof(T)),
+                               srcStride, dstStride, 0};
         DataCopyPadExtParams<T> pad{true, 0, static_cast<uint8_t>(copyAlignedElements - rowElements),
                                     static_cast<T>(0)};
         DataCopyPad(input, xGm_[static_cast<uint64_t>(offset)], copy, pad);
         inQueue_.EnQue(input);
     }
 
-    __aicore__ inline void CopyOutRowsPadded(int64_t offset, int64_t rowCount, int64_t rowElements, int64_t rowStride)
+    __aicore__ inline void CopyOutRowsPadded(int64_t offset, int64_t rowCount, int64_t rowElements, int64_t rowStride,
+                                             int64_t gmRowStride = 0)
     {
         LocalTensor<T> output = outQueue_.DeQue<T>();
         const int64_t copyAlignedElements = AlignToBlock(rowElements);
         const uint32_t srcStride = static_cast<uint32_t>((rowStride - copyAlignedElements) * sizeof(T) / 32);
+        const int64_t gmAdvance = gmRowStride > 0 ? gmRowStride : rowElements;
+        const uint32_t dstStride = static_cast<uint32_t>((gmAdvance - rowElements) * sizeof(T));
         DataCopyExtParams copy{static_cast<uint16_t>(rowCount), static_cast<uint32_t>(rowElements * sizeof(T)),
-                               srcStride, 0, 0};
+                               srcStride, dstStride, 0};
         DataCopyPad(yGm_[static_cast<uint64_t>(offset)], output, copy);
         outQueue_.FreeTensor(output);
     }
@@ -637,9 +670,38 @@ private:
         }
     }
 
+    __aicore__ inline void CentralizeSegmentHiLo(LocalTensor<T>& input, LocalTensor<T>& output, int64_t validElements,
+                                                 float meanHi, float meanLo, int64_t inputOffset = 0,
+                                                 int64_t outputOffset = 0)
+    {
+        __local_mem__ T* inputAddr = (__local_mem__ T*)input.GetPhyAddr();
+        __local_mem__ T* outputAddr = (__local_mem__ T*)output.GetPhyAddr();
+        const uint16_t loops = static_cast<uint16_t>((validElements + V_LENGTH - 1) / V_LENGTH);
+        __VEC_SCOPE__
+        {
+            RegTensor<float> xReg;
+            RegTensor<float> hiReg;
+            RegTensor<float> loReg;
+            MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
+            for (uint16_t loop = 0; loop < loops; ++loop) {
+                const uint32_t offset = static_cast<uint32_t>(loop) * V_LENGTH;
+                const uint32_t remaining = static_cast<uint32_t>(validElements) - offset;
+                uint32_t activeCount = remaining < V_LENGTH ? remaining : V_LENGTH;
+                MaskReg pregLoop = activeCount == V_LENGTH ? pregFull : UpdateMask<float>(activeCount);
+                LoadRegForDtype<T>(inputAddr, xReg, pregLoop, static_cast<uint32_t>(inputOffset) + offset);
+                Duplicate(hiReg, meanHi, pregLoop);
+                Duplicate(loReg, meanLo, pregLoop);
+                Sub(xReg, xReg, hiReg, pregLoop);
+                Sub(xReg, xReg, loReg, pregLoop);
+                StoreRegForDtype<T>(outputAddr, xReg, pregLoop, static_cast<uint32_t>(outputOffset) + offset);
+            }
+        }
+    }
+
 #include "centralization_generic_contiguous_impl.h"
-#include "centralization_generic_irregular_impl.h"
 #include "centralization_generic_large_impl.h"
+#include "centralization_generic_irregular_impl.h"
+#include "centralization_generic_group_vector_impl.h"
 
     TPipe* pipe_;
     const CentralizationTilingData* tiling_;
@@ -653,6 +715,8 @@ private:
     TEventID eventVToS_{};
     TEventID eventSToMte3_{};
     TEventID eventMte3ToMte2_{};
+    TEventID eventSToV_{};
+    TEventID eventVToMte3_{};
 };
 } // namespace Centralization
 #endif

@@ -15,35 +15,29 @@ English | [简体中文](./README.md)
 
 ## Function
 
-- Operator function: Computes the mean of the input tensor on the specified axes and elementwise subtracts it from the corresponding elements of the input.
-- Formula:
+For each element of `x`, Centralization subtracts the corresponding mean computed over the axes specified by `axes`.
 
-  $$
-  y = x - mean(x, axes)
-  $$
+$$
+y = x - \operatorname{mean}(x, \mathrm{axes})
+$$
 
 ## Parameters
 
-| Parameter name | Input/Output/Attribute | Description | Data type | Data format |
+| Name | Input/Output/Attribute | Description | Data type | Data format |
 | :--- | :--- | :--- | :--- | :--- |
-| x | Input | Tensor to be centralized. | FLOAT, FLOAT16 | ND |
-| axes | Attribute | Mean reduction axes, LIST_INT. Negative axes are supported, and the axes must be unique and within `[-rank, rank)`; whether the parameter is optional and its default value are described in the constraints. | LIST_INT | - |
-| y | Output | Has the same shape and dtype as x. | FLOAT, FLOAT16 | ND |
+| `x` | Input | Tensor to center, with rank 1 to 8. | FLOAT, FLOAT16 | ND |
+| `axes` | Attribute | List of reduction axes. Each axis must be in `[-rank(x), rank(x))`. Repeated axes count once. GE graphs use the last axis by default when this attribute is omitted. | LIST_INT | - |
+| `y` | Output | Centered tensor with the same shape and data type as `x`. | FLOAT, FLOAT16 | ND |
+
+Passing `axes=[]` explicitly gives `x - x`. The result is zero for finite elements and NaN for NaN or infinite elements.
 
 ## Constraints
 
-- <term>Ascend 950PR&950DT products</term>:
-  - The input and output support the FLOAT and FLOAT16 data types and the ND format, and the shape and dtype must be the same.
-  - The input rank is 1 to 8. Dynamic shape/rank graph building is supported, and each dimension must already be determined at execution time.
-  - Each execution-time dimension and the total number of input elements must not exceed 9223372036854775807 (the int64 upper limit; actually constrained by the device memory).
-  - `axes` is optional, with the default value `{-1}`; when it is not set or is set to empty, the last axis is used.
-  - Empty tensors are supported, and the output keeps the same shape and dtype as the input.
+<term>Ascend 950PR&950DT products</term> support empty tensors and allow dynamic shapes or ranks at graph construction. All input dimensions must be known at execution time.
 
 ## Invocation Description
 
 | Invocation method | Sample code | Description |
 | :--- | :--- | :--- |
-| Graph-mode invocation | [test_geir_centralization](examples/test_geir_centralization.cpp) | Calls the Centralization operator by building a graph through the operator IR. The IR definition is in [centralization_proto.h](op_graph/centralization_proto.h). |
-| TensorFlow parsing path | - | Executed through GE parsing with the TensorFlow custom operator `Centralization` (OriginOpType=Centralization). The parameters are the same as those of the operator IR (x input, axes optional attribute, and y output). |
-
-Currently, the GE graph mode and the TensorFlow parsing path are supported, and no dedicated aclnn, PyTorch, or ONNX interface is provided. This operator supports only the ND format and does not support FRACTAL_NZ, FRACTAL_Z, or other formats.
+| GE graph | [test_geir_centralization](examples/test_geir_centralization.cpp) | Build the graph with `ge::op::Centralization`. |
+| TensorFlow graph | - | Use the custom op `Centralization` and pass `axes` as a list-of-integers attribute. |

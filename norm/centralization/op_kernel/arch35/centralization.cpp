@@ -11,11 +11,13 @@
 #include "kernel_operator.h"
 #include "centralization_tiling_data.h"
 #include "centralization_empty.h"
+#include "centralization_zero_fill.h"
 #include "centralization_fast.h"
 #include "centralization_generic.h"
 #include "centralization_large_trailing.h"
 
 #define CENTRALIZATION_EMPTY_TILING_KEY 8000
+#define CENTRALIZATION_ZERO_FILL_TILING_KEY 9000
 #define CENTRALIZATION_FAST_TILING_KEY 7000
 #define CENTRALIZATION_LARGE_TILING_KEY 7020
 #define CENTRALIZATION_LARGE_TRAILING_TILING_KEY 7030
@@ -32,6 +34,10 @@ extern "C" __global__ __aicore__ void centralization(GM_ADDR x, GM_ADDR y, GM_AD
     if (TILING_KEY_IS(CENTRALIZATION_EMPTY_TILING_KEY)) {
         Centralization::Empty<DTYPE_X> op;
         op.Init(y);
+        op.Process();
+    } else if (TILING_KEY_IS(CENTRALIZATION_ZERO_FILL_TILING_KEY)) {
+        Centralization::ZeroFill<DTYPE_X> op(&pipe, tilingData);
+        op.Init(x, y, userWorkspace);
         op.Process();
     } else if (TILING_KEY_IS(CENTRALIZATION_FAST_TILING_KEY)) {
         Centralization::Fast<DTYPE_X> op(&pipe, tilingData);

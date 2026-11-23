@@ -250,19 +250,21 @@ TEST(CentralizationTiling, UbBudgetPathMatrix)
         const char* name;
     };
     const std::vector<Case> cases = {
-        {{2, 512, 1}, {1}, ge::DT_FLOAT, 0, 0, 1, 1, "small_mode1_fp32"},
+        // FP32 trailing widths above 64 use LargeTrailing when its buffers fit.
+        {{2, 512, 1}, {1}, ge::DT_FLOAT, 7030, 0, 1, 16, "normalized_trailing_512_fp32"},
         {{2, 64, 4}, {1}, ge::DT_FLOAT, 0, 0, 1, 16, "small_mode2_fp32"},
         {{2, 300, 8}, {1}, ge::DT_FLOAT, 0, 0, 1, 16, "contiguous_fp32"},
         {{64, 20000, 8}, {1}, ge::DT_FLOAT, 0, 320, 1, 1, "lcsi_fp32"},
         {{64, 20000, 8}, {1}, ge::DT_FLOAT16, 0, 640, 1, 1, "lcsi_fp16"},
-        {{64, 20000, 1}, {1}, ge::DT_FLOAT, 7020, 0, 1, 16, "large_7020_row_parallel_fp32"},
+        // 布局归一后 (64,20000,1)->[K64,R20000] 尾轴 LargeTrailing（原 7020 行并行）
+        {{64, 20000, 1}, {1}, ge::DT_FLOAT, 7030, 0, 1, 16, "trailing_one_lifted_to_large_trailing_fp32"},
         {{20000, 8}, {0}, ge::DT_FLOAT, 7020, 0, 1, 16, "large_7020_reduce_parallel_fp32"},
         {{4, 8, 16, 32}, {0, 2}, ge::DT_FLOAT, 0, 0, 1, 1, "irregular_fp32"},
         {{8, 20000}, {1}, ge::DT_FLOAT, 7030, 0, 1, 16, "large_trailing_fp32"},
         {{128, 20000}, {1}, ge::DT_FLOAT, 7030, 0, 1, 16, "large_trailing_row_parallel_fp32"},
-        {{8, 4096}, {1}, ge::DT_FLOAT, 7000, 0, 3, 1, "fast_fp32"},
+        {{8, 4096}, {1}, ge::DT_FLOAT, 7030, 0, 1, 16, "large_trailing_4096_fp32"},
         {{8, 4096}, {1}, ge::DT_FLOAT16, 7000, 0, 7, 1, "fast_fp16"},
-        {{2, 2000, 1}, {1}, ge::DT_FLOAT, 0, 0, 1, 16, "scalar_fp32"},
+        {{2, 2000, 1}, {1}, ge::DT_FLOAT, 7030, 0, 1, 16, "normalized_trailing_2000_fp32"},
         {{2, 0, 4}, {1}, ge::DT_FLOAT, 8000, 0, 1, 1, "empty_fp32"},
     };
     for (const auto& c : cases) {
@@ -295,7 +297,8 @@ TEST(CentralizationTiling, UbBudgetFallbackMatrix)
         {{8, 4096}, {1}, ge::DT_FLOAT, 65536, 7030, 0, "fast_to_large_trailing_fp32"},
         {{8, 4096}, {1}, ge::DT_FLOAT, 32768, 7020, 0, "fast_to_generic_large_fp32"},
         {{8, 20000}, {1}, ge::DT_FLOAT, 32768, 7020, 0, "large_trailing_to_generic_fp32"},
-        {{2, 512, 1}, {1}, ge::DT_FLOAT, 12288, 0, 0, "small_to_scalar_fp32"},
+        // 布局归一后 (2,512,1) 是尾轴：FP32 宽归约不走 Fast；小 UB 放不下 LargeTrailing 时走 7020
+        {{2, 512, 1}, {1}, ge::DT_FLOAT, 12288, 7020, 0, "trailing_one_to_large_7020_fp32"},
         {{2, 64, 4}, {1}, ge::DT_FLOAT, 24576, 0, 0, "small_to_contiguous_fp32"},
         {{64, 20000, 8}, {1}, ge::DT_FLOAT, 16384, 0, 10, "lcsi_tiny_ub_fp32"},
         {{4, 8, 16, 32}, {0, 2}, ge::DT_FLOAT, 16384, 0, 0, "irregular_tiny_ub_fp32"},
@@ -380,15 +383,11 @@ TEST(CentralizationTiling, UbBudgetFallbackFlags)
     EXPECT_EQ(c.td.rowParallel, 0);
     EXPECT_EQ(c.td.coresPerRow, 8);
 
+    // 布局归一后 (2,512,1) 的 FP32 尾轴宽度超过 64，小 UB 下使用 7020（rowParallel）
     auto d = RunTilingWithUb({2, 512, 1}, ge::DT_FLOAT, {1}, 12288);
     ASSERT_TRUE(d.ok);
-    EXPECT_EQ(d.key, 0);
-    EXPECT_EQ(d.td.largePath, 0);
-    EXPECT_EQ(d.td.contiguousGeneric, 0);
-    EXPECT_EQ(d.td.smallContiguous, 0);
-    EXPECT_EQ(d.td.largeContiguousSmallInner, 0);
-    EXPECT_EQ(d.td.irregularVectorizable, 0);
-    EXPECT_EQ(d.workspace, 0UL);
+    checkLargeFallback(d, 7020);
+    EXPECT_EQ(d.td.rowParallel, 1);
 }
 
 TEST(CentralizationTiling, DuplicateAxesDeduplicated)
@@ -404,9 +403,76 @@ TEST(CentralizationTiling, LongAxisListDeduplicated)
 {
     auto r = RunTiling({2, 3, 4}, ge::DT_FLOAT, {0, 1, 2, 0});
     ASSERT_TRUE(r.ok);
-    EXPECT_EQ(r.td.reduceRank, 3);
+    // 布局归一：[R2,R3,R4] 相邻同类合并为单个 reduce 段
+    EXPECT_EQ(r.td.reduceRank, 1);
     EXPECT_EQ(r.td.reduceCount, 24);
     EXPECT_EQ(r.td.groupCount, 1);
+}
+
+// ── 布局归一专项 ──────────────────────────────────────────────────────────
+// 归一规则：长度 1 的维度吸收；物理连续的相邻同类维度合并；原始 shape 只用于输出。
+
+TEST(CentralizationTiling, LayoutNormalizeTrailingOneUsesLargeTrailing)
+{
+    // Removing the final singleton makes the 2000-element FP32 reduction trailing.
+    auto r = RunTiling({2, 2000, 1}, ge::DT_FLOAT, {1});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.td.reduceRank, 1);
+    EXPECT_EQ(r.td.reduceCount, 2000);
+    EXPECT_EQ(r.td.groupCount, 2);
+    EXPECT_EQ(r.key, 7030U);
+}
+
+TEST(CentralizationTiling, LayoutNormalizeSingletonReduceAbsorbed)
+{
+    // The singleton reduction is absorbed; Fast still evaluates x - x.
+    auto r = RunTiling({4, 1, 8}, ge::DT_FLOAT, {1});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.td.reduceRank, 0);
+    EXPECT_EQ(r.td.reduceCount, 1);
+    EXPECT_EQ(r.td.groupCount, 32);
+    EXPECT_EQ(r.key, 7000U);
+}
+
+TEST(CentralizationTiling, LayoutNormalizeKeepOneBridgesReduceSegments)
+{
+    // [K,R,K1,R,K] -> [K,R,K]：桥接 1 维使两段 reduce 合并，复用 contiguous 路径
+    // （原 axes {1,3} 非连续 -> irregular 路径）
+    auto r = RunTiling({2, 30, 1, 50, 8}, ge::DT_FLOAT, {1, 3});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.td.reduceRank, 1);
+    EXPECT_EQ(r.td.reduceCount, 1500);
+    EXPECT_EQ(r.td.groupCount, 16);
+    EXPECT_EQ(r.td.contiguousOuterCount, 2);
+    EXPECT_EQ(r.td.contiguousInnerCount, 8);
+    EXPECT_EQ(r.td.contiguousGeneric, 1);
+    EXPECT_EQ(r.key, 0U);
+}
+
+TEST(CentralizationTiling, LayoutNormalizeAdjacentReduceMerged)
+{
+    // [K,R,R,K] -> [K,R,K]：相邻同类 reduce 合并为一个 reduce 段
+    auto r = RunTiling({2, 30, 50, 8}, ge::DT_FLOAT, {1, 2});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.td.reduceRank, 1);
+    EXPECT_EQ(r.td.reduceCount, 1500);
+    EXPECT_EQ(r.td.groupCount, 16);
+    EXPECT_EQ(r.td.contiguousOuterCount, 2);
+    EXPECT_EQ(r.td.contiguousInnerCount, 8);
+}
+
+TEST(CentralizationTiling, LayoutNormalizeMultiSegmentStaysIrregular)
+{
+    // [R,K,R,K]：真多段 reduce 仍走 irregular，段描述建立在归一条目上
+    auto r = RunTiling({4, 8, 16, 32}, ge::DT_FLOAT, {0, 2});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.td.reduceRank, 2);
+    EXPECT_EQ(r.td.reduceCount, 64);
+    EXPECT_EQ(r.td.groupCount, 256);
+    EXPECT_EQ(r.td.irregularVectorInnerCount, 32);
+    EXPECT_EQ(r.td.irregularKeepOuterRank, 1);
+    EXPECT_EQ(r.td.irregularVectorizable, 1);
+    EXPECT_EQ(r.key, 0U);
 }
 
 TEST(CentralizationTiling, EmptyAxesNoReduce)
@@ -454,4 +520,16 @@ TEST(CentralizationTiling, AxesOmittedEqualsExplicitMinusOne)
     EXPECT_EQ(empty.td.reduceCount, 1);
     EXPECT_EQ(empty.td.groupCount, 6);
     EXPECT_EQ(empty.key, 7000U);
+}
+
+TEST(CentralizationTiling, SingleElementReductionsUseFast)
+{
+    // Both layouts reduce one element per group and use the same Fast path.
+    auto a = RunTiling({2, 3, 4}, ge::DT_FLOAT, {});
+    ASSERT_TRUE(a.ok);
+    EXPECT_EQ(a.key, 7000U);
+
+    auto b = RunTiling({4, 1, 8}, ge::DT_FLOAT, {1});
+    ASSERT_TRUE(b.ok);
+    EXPECT_EQ(b.key, 7000U);
 }

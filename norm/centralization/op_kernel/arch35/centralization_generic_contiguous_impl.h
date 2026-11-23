@@ -62,15 +62,70 @@ __aicore__ inline void ProcessSmallWholeBlockTask(int64_t outer)
     CopyOutSmallPadded(base, rowElements, rowStride);
 }
 
+__aicore__ inline void ProcessSmallWholeBlockBatchTask(int64_t outerStart, int64_t outerCount)
+{
+    const int64_t reduceCount = tiling_->reduceCount;
+    const int64_t innerCount = tiling_->contiguousInnerCount;
+    const int64_t blockElements = reduceCount * innerCount;
+    const int64_t totalElements = outerCount * blockElements;
+    const int64_t base = ContiguousBase(outerStart, 0);
+    CopyInContiguous(base, totalElements);
+    LocalTensor<T> input = inQueue_.DeQue<T>();
+    SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+    WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+    LocalTensor<T> output = outQueue_.AllocTensor<T>();
+    for (int64_t outer = 0; outer < outerCount; ++outer) {
+        const int64_t outerBase = outer * blockElements;
+        for (int64_t inner = 0; inner < innerCount; ++inner) {
+            LargeCompensatedSum sum{0.0f, 0.0f};
+            for (int64_t r = 0; r < reduceCount; ++r) {
+                AddLargeCompensated(sum, static_cast<float>(input.GetValue(outerBase + r * innerCount + inner)));
+            }
+            const MeanHiLo mean = FinalizeMeanHiLo(sum, reduceCount);
+            for (int64_t r = 0; r < reduceCount; ++r) {
+                const float value = static_cast<float>(input.GetValue(outerBase + r * innerCount + inner));
+                output.SetValue(outerBase + r * innerCount + inner, static_cast<T>((value - mean.hi) - mean.lo));
+            }
+        }
+    }
+    SetFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    WaitFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    outQueue_.EnQue(output);
+    inQueue_.FreeTensor(input);
+    CopyOutContiguous(base, totalElements);
+}
+
 __aicore__ inline void ProcessSmallContiguous(uint32_t core, uint32_t cores)
 {
-    const int64_t taskCount = tiling_->contiguousOuterCount;
-    for (int64_t task = core; task < taskCount; task += cores) {
-        if (tiling_->smallContiguousMode == 1) {
+    if (tiling_->smallContiguousMode == 1) {
+        const int64_t taskCount = tiling_->contiguousOuterCount;
+        for (int64_t task = core; task < taskCount; task += cores) {
             ProcessSmallInnerOneTask(task);
-        } else {
-            ProcessSmallWholeBlockTask(task);
         }
+        return;
+    }
+    const int64_t blockElements = tiling_->smallContiguousBlockElements;
+    const int64_t bufferElements = blockElements > 0 ?
+                                       static_cast<int64_t>(tiling_->genericInputBufferBytes / sizeof(T)) :
+                                       0;
+    constexpr int64_t kBatchTargetBytes = 16 * 1024;
+    const int64_t targetElements = kBatchTargetBytes / static_cast<int64_t>(sizeof(T));
+    int64_t maxBatch = blockElements > 0 ? bufferElements / blockElements : 0;
+    if (maxBatch < 1) {
+        maxBatch = 1;
+    }
+    int64_t targetBatch = blockElements > 0 ? targetElements / blockElements : 1;
+    if (targetBatch < 1) {
+        targetBatch = 1;
+    } else if (targetBatch > maxBatch) {
+        targetBatch = maxBatch;
+    }
+    const int64_t outerBatch = targetBatch;
+    const int64_t taskCount = (tiling_->contiguousOuterCount + outerBatch - 1) / outerBatch;
+    for (int64_t task = core; task < taskCount; task += cores) {
+        const int64_t outerStart = task * outerBatch;
+        const int64_t outerCount = Min(outerBatch, tiling_->contiguousOuterCount - outerStart);
+        ProcessSmallWholeBlockBatchTask(outerStart, outerCount);
     }
 }
 
@@ -120,9 +175,11 @@ __aicore__ inline void CentralizeRowsSmallInner(LocalTensor<T>& input, LocalTens
     }
 }
 
+// colOffset：行内列起始偏移（宽 tile >64 列时按 64-lane 列块轮转调用，
+// 寄存器驻留 Neumaier 覆盖全行分块，替代逐行慢路径）。每列的行序不变，结果逐位相同。
 __aicore__ inline void AccumulateRowsSmallInnerKahan(LocalTensor<T>& input, LocalTensor<float>& sum, int64_t sumOffset,
                                                      int64_t corrOffset, int64_t validRows, int64_t innerCount,
-                                                     int64_t rowStride)
+                                                     int64_t rowStride, int64_t colOffset = 0)
 {
     __local_mem__ T* inputAddr = (__local_mem__ T*)input.GetPhyAddr();
     __local_mem__ float* sumAddr = (__local_mem__ float*)sum.GetPhyAddr();
@@ -148,7 +205,7 @@ __aicore__ inline void AccumulateRowsSmallInnerKahan(LocalTensor<T>& input, Loca
         LoadRegForDtype<float>(sumAddr, sumReg, preg, static_cast<uint32_t>(sumOffset));
         LoadRegForDtype<float>(sumAddr, corrReg, preg, static_cast<uint32_t>(corrOffset));
         for (uint16_t r = 0; r < rowLoops; ++r) {
-            LoadRegForDtype<T>(inputAddr, xReg, preg, static_cast<uint32_t>(r * rowStride));
+            LoadRegForDtype<T>(inputAddr, xReg, preg, static_cast<uint32_t>(colOffset + r * rowStride));
             Add(tReg, sumReg, xReg, preg);
             Abs(absSum, sumReg, preg);
             Abs(absX, xReg, preg);
@@ -169,9 +226,11 @@ __aicore__ inline void AccumulateRowsSmallInnerKahan(LocalTensor<T>& input, Loca
     }
 }
 
+// colOffset 同上：宽 tile 中心化按 64-lane 列块轮转
 __aicore__ inline void CentralizeRowsSmallInnerHiLo(LocalTensor<T>& input, LocalTensor<T>& output,
                                                     LocalTensor<float>& mean, int64_t meanOffset, int64_t meanLowOffset,
-                                                    int64_t validRows, int64_t innerCount, int64_t rowStride)
+                                                    int64_t validRows, int64_t innerCount, int64_t rowStride,
+                                                    int64_t colOffset = 0)
 {
     __local_mem__ T* inputAddr = (__local_mem__ T*)input.GetPhyAddr();
     __local_mem__ T* outputAddr = (__local_mem__ T*)output.GetPhyAddr();
@@ -188,7 +247,7 @@ __aicore__ inline void CentralizeRowsSmallInnerHiLo(LocalTensor<T>& input, Local
         LoadRegForDtype<float>(meanAddr, hiReg, preg, static_cast<uint32_t>(meanOffset));
         LoadRegForDtype<float>(meanAddr, loReg, preg, static_cast<uint32_t>(meanLowOffset));
         for (uint16_t r = 0; r < rowLoops; ++r) {
-            const uint32_t rowOffset = static_cast<uint32_t>(r * rowStride);
+            const uint32_t rowOffset = static_cast<uint32_t>(colOffset + r * rowStride);
             LoadRegForDtype<T>(inputAddr, xReg, preg, rowOffset);
             Sub(xReg, xReg, hiReg, preg);
             Sub(xReg, xReg, loReg, preg);
@@ -201,8 +260,8 @@ __aicore__ inline void ProcessLargeContiguousSmallInnerTask(int64_t outer)
 {
     const int64_t innerCount = tiling_->contiguousInnerCount;
     const int64_t reduceTile = tiling_->largeContiguousReduceTile;
-    const int64_t rowStride = AlignToVector(innerCount);
-    const int64_t base = ContiguousBase(outer, 0);
+    const int64_t rowStride = OptimalRowStride(innerCount);
+    const int64_t planeBase = outer * tiling_->reduceCount * innerCount;
     LocalTensor<float> sum = sumBuf_.Get<float>();
     const int64_t corrOffset = AlignToVector(innerCount);
     ZeroSumTile(sum, innerCount);
@@ -211,7 +270,7 @@ __aicore__ inline void ProcessLargeContiguousSmallInnerTask(int64_t outer)
 
     for (int64_t reduceOffset = 0; reduceOffset < tiling_->reduceCount; reduceOffset += reduceTile) {
         const int64_t validRows = Min(reduceTile, tiling_->reduceCount - reduceOffset);
-        CopyInRowsPadded(base + reduceOffset * innerCount, validRows, innerCount, rowStride);
+        CopyInRowsPadded(planeBase + reduceOffset * innerCount, validRows, innerCount, rowStride);
         LocalTensor<T> input = inQueue_.DeQue<T>();
         AccumulateRowsSmallInnerKahan(input, sum, 0, corrOffset, validRows, innerCount, rowStride);
         PipeBarrier<PIPE_V>();
@@ -223,7 +282,7 @@ __aicore__ inline void ProcessLargeContiguousSmallInnerTask(int64_t outer)
 
     for (int64_t reduceOffset = 0; reduceOffset < tiling_->reduceCount; reduceOffset += reduceTile) {
         const int64_t validRows = Min(reduceTile, tiling_->reduceCount - reduceOffset);
-        const int64_t gmOffset = base + reduceOffset * innerCount;
+        const int64_t gmOffset = planeBase + reduceOffset * innerCount;
         CopyInRowsPadded(gmOffset, validRows, innerCount, rowStride);
         LocalTensor<T> input = inQueue_.DeQue<T>();
         LocalTensor<T> output = outQueue_.AllocTensor<T>();
@@ -243,6 +302,47 @@ __aicore__ inline void ProcessLargeContiguousSmallInner(uint32_t core, uint32_t 
     }
 }
 
+// 行批累加：一次队列周期处理多行。
+//   validElements <= V_LENGTH：寄存器驻留 Neumaier（复用 lcsi 的行级实现，sum/corr 全程在寄存器，
+//     仅批首 load / 批尾 store），槽位按批轮转——批内为补偿链，批间靠槽位折叠缩短链长；
+//   宽列按 V_LENGTH 分块，所有列块处理完后再轮转当前批次的累加槽。
+__aicore__ inline void AccumulateContiguousRows(LocalTensor<T>& input, LocalTensor<float>& sum, uint16_t numSlots,
+                                                int64_t sumStride, int64_t corrBase, int64_t rows,
+                                                int64_t validElements, int64_t rowStride, uint16_t& slot)
+{
+    const int64_t sumOffset = static_cast<int64_t>(slot) * sumStride;
+    if (validElements <= V_LENGTH) {
+        AccumulateRowsSmallInnerKahan(input, sum, sumOffset, corrBase + sumOffset, rows, validElements, rowStride);
+        slot = static_cast<uint16_t>((slot + 1 == numSlots) ? 0 : (slot + 1));
+        return;
+    }
+    // 宽 tile：按 64-lane 列块轮转寄存器驻留累加（每列行序不变，结果与逐行路径逐位相同）
+    const int64_t colChunks = (validElements + V_LENGTH - 1) / V_LENGTH;
+    for (int64_t cc = 0; cc < colChunks; ++cc) {
+        const int64_t chunkValid = Min(V_LENGTH, validElements - cc * V_LENGTH);
+        AccumulateRowsSmallInnerKahan(input, sum, sumOffset + cc * V_LENGTH, corrBase + sumOffset + cc * V_LENGTH, rows,
+                                      chunkValid, rowStride, cc * V_LENGTH);
+    }
+    slot = static_cast<uint16_t>((slot + 1 == numSlots) ? 0 : (slot + 1));
+}
+
+// 行批中心化：窄列寄存器驻留（复用 lcsi 实现），宽列按 64-lane 列块轮转。
+__aicore__ inline void CentralizeContiguousRows(LocalTensor<T>& input, LocalTensor<T>& output, LocalTensor<float>& mean,
+                                                int64_t meanOffset, int64_t meanLowOffset, int64_t rows,
+                                                int64_t validElements, int64_t rowStride)
+{
+    if (validElements <= V_LENGTH) {
+        CentralizeRowsSmallInnerHiLo(input, output, mean, meanOffset, meanLowOffset, rows, validElements, rowStride);
+        return;
+    }
+    const int64_t colChunks = (validElements + V_LENGTH - 1) / V_LENGTH;
+    for (int64_t cc = 0; cc < colChunks; ++cc) {
+        const int64_t chunkValid = Min(V_LENGTH, validElements - cc * V_LENGTH);
+        CentralizeRowsSmallInnerHiLo(input, output, mean, meanOffset + cc * V_LENGTH, meanLowOffset + cc * V_LENGTH,
+                                     rows, chunkValid, rowStride, cc * V_LENGTH);
+    }
+}
+
 __aicore__ inline void ProcessContiguousTask(int64_t outer, int64_t innerOffset, int64_t validElements)
 {
     LocalTensor<float> sum = sumBuf_.Get<float>();
@@ -256,15 +356,37 @@ __aicore__ inline void ProcessContiguousTask(int64_t outer, int64_t innerOffset,
     PipeBarrier<PIPE_V>();
 
     const int64_t base = ContiguousBase(outer, innerOffset);
+    const int64_t innerCount = tiling_->contiguousInnerCount;
+    const int64_t rowStride = OptimalRowStride(validElements);
+    const int64_t bufferElements = static_cast<int64_t>(tiling_->genericInputBufferBytes / sizeof(T));
+    // 行批条件：UB 能放下整行即可。GM 侧行缝用字节粒度 srcStride 表达（DataCopyPad
+    // GM 侧单位为字节，无对齐约束）；UB 侧 gap 由 rowStride(64 元素对齐)保证 32B 整除。
+    const bool batchRows = bufferElements >= rowStride;
+    constexpr int64_t kMaxAbiRows = 65535;
+    const int64_t rowsPerBatch = batchRows ? Min(Min(bufferElements / rowStride, kMaxAbiRows), tiling_->reduceCount) :
+                                             1;
+
     uint16_t slot = 0;
-    for (int64_t r = 0; r < tiling_->reduceCount; ++r) {
-        CopyInContiguous(base + r * tiling_->contiguousInnerCount, validElements);
+    for (int64_t reduceOffset = 0; reduceOffset < tiling_->reduceCount; reduceOffset += rowsPerBatch) {
+        const int64_t rows = Min(rowsPerBatch, tiling_->reduceCount - reduceOffset);
+        const int64_t gmOffset = base + reduceOffset * innerCount;
+        if (batchRows) {
+            CopyInRowsPadded(gmOffset, rows, validElements, rowStride, innerCount);
+        } else {
+            CopyInContiguous(gmOffset, validElements);
+        }
         LocalTensor<T> input = inQueue_.DeQue<T>();
-        AccumulateContiguousNeumaierAt(input, sum, static_cast<int64_t>(slot) * sumStride,
-                                       corrBase + static_cast<int64_t>(slot) * sumStride, validElements);
-        PipeBarrier<PIPE_V>();
-        inQueue_.FreeTensor(input);
-        slot = static_cast<uint16_t>((slot + 1 == numSlots) ? 0 : (slot + 1));
+        if (batchRows) {
+            AccumulateContiguousRows(input, sum, numSlots, sumStride, corrBase, rows, validElements, rowStride, slot);
+            PipeBarrier<PIPE_V>();
+            inQueue_.FreeTensor(input);
+        } else {
+            AccumulateContiguousNeumaierAt(input, sum, static_cast<int64_t>(slot) * sumStride,
+                                           corrBase + static_cast<int64_t>(slot) * sumStride, validElements);
+            PipeBarrier<PIPE_V>();
+            inQueue_.FreeTensor(input);
+            slot = static_cast<uint16_t>((slot + 1 == numSlots) ? 0 : (slot + 1));
+        }
     }
 
     FoldAccumulatorSlotsNeumaier(sum, numSlots, sumStride, corrBase, validElements);
@@ -272,16 +394,29 @@ __aicore__ inline void ProcessContiguousTask(int64_t outer, int64_t innerOffset,
     FinalizeMeanHiLoAt(sum, 0, corrBase, validElements);
     PipeBarrier<PIPE_V>();
 
-    for (int64_t r = 0; r < tiling_->reduceCount; ++r) {
-        const int64_t offset = base + r * tiling_->contiguousInnerCount;
-        CopyInContiguous(offset, validElements);
+    for (int64_t reduceOffset = 0; reduceOffset < tiling_->reduceCount; reduceOffset += rowsPerBatch) {
+        const int64_t rows = Min(rowsPerBatch, tiling_->reduceCount - reduceOffset);
+        const int64_t gmOffset = base + reduceOffset * innerCount;
+        if (batchRows) {
+            CopyInRowsPadded(gmOffset, rows, validElements, rowStride, innerCount);
+        } else {
+            CopyInContiguous(gmOffset, validElements);
+        }
         LocalTensor<T> input = inQueue_.DeQue<T>();
         LocalTensor<T> output = outQueue_.AllocTensor<T>();
-        CentralizeContiguousHiLoAt(input, output, sum, 0, corrBase, validElements);
+        if (batchRows) {
+            CentralizeContiguousRows(input, output, sum, 0, corrBase, rows, validElements, rowStride);
+        } else {
+            CentralizeContiguousHiLoAt(input, output, sum, 0, corrBase, validElements);
+        }
         PipeBarrier<PIPE_V>();
         outQueue_.EnQue(output);
         inQueue_.FreeTensor(input);
-        CopyOutContiguous(offset, validElements);
+        if (batchRows) {
+            CopyOutRowsPadded(gmOffset, rows, validElements, rowStride, innerCount);
+        } else {
+            CopyOutContiguous(gmOffset, validElements);
+        }
     }
 }
 

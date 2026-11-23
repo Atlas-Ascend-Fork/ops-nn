@@ -10,6 +10,8 @@
 #ifndef OPS_NORM_CENTRALIZATION_LARGE_TRAILING_H_
 #define OPS_NORM_CENTRALIZATION_LARGE_TRAILING_H_
 #include "kernel_operator.h"
+#include "../../norm_common/reduce_common_regbase.h"
+#include "centralization_compensated_sum.h"
 #include "centralization_tiling_data.h"
 
 namespace Centralization {
@@ -52,7 +54,6 @@ public:
 
 private:
     static constexpr int64_t kTileElements = 1024;
-    static constexpr int64_t kReduceLayerElements = 256;
     static constexpr int64_t kWorkspaceElements = 32 / sizeof(float);
     static constexpr uint16_t kMaxAccSlots = 16;
     static constexpr bool kUseCompensatedReduce = IsSameType<T, float>::value || IsSameType<T, half>::value;
@@ -103,6 +104,11 @@ private:
     __aicore__ inline void AddCompensated(CompensatedSum& acc, float value) const
     {
         const float next = acc.sum + value;
+        if (!(Abs(next) <= 3.4028235e38f)) {
+            acc.sum = next;
+            acc.correction = 0.0f;
+            return;
+        }
         if (Abs(acc.sum) >= Abs(value)) {
             acc.correction += (acc.sum - next) + value;
         } else {
@@ -111,7 +117,32 @@ private:
         acc.sum = next;
     }
 
-    __aicore__ inline float TotalCompensated(const CompensatedSum& acc) const { return acc.sum + acc.correction; }
+    struct MeanHiLo {
+        float hi;
+        float lo;
+    };
+
+    __aicore__ inline MeanHiLo FinalizeMeanHiLo(const CompensatedSum& acc, int64_t count) const
+    {
+        const float n = static_cast<float>(count);
+        MeanHiLo out;
+        out.hi = (acc.sum + acc.correction) / n;
+        constexpr float kMaxFinite = 3.4028235e38f;
+        if (!(out.hi <= kMaxFinite && out.hi >= -kMaxFinite)) {
+            out.lo = 0.0f;
+            return out;
+        }
+        constexpr float kLowMeanLimit = 1.0e20f;
+        if (!(out.hi <= kLowMeanLimit && out.hi >= -kLowMeanLimit)) {
+            out.lo = 0.0f;
+            return out;
+        }
+        const float r = MeanProductResidual(out.hi, n, acc.sum);
+        // Recover the low part of the integer divisor after FP32 rounding.
+        const float countLo = static_cast<float>(count - static_cast<int64_t>(n));
+        out.lo = ((r + acc.correction) - out.hi * countLo) / n;
+        return out;
+    }
 
     __aicore__ inline int64_t RowBase(int64_t row) const { return row * tiling_->reduceCount; }
 
@@ -179,16 +210,12 @@ private:
         Muls(calc, calc, inputScale_, static_cast<uint32_t>(alignedElements));
         PipeBarrier<PIPE_V>();
         LocalTensor<float> sum = sumBuf_.Get<float>();
-        CompensatedSum partial{0.0f, 0.0f};
-        for (int64_t layer = 0; layer < validElements; layer += kReduceLayerElements) {
-            const int64_t layerElements = Min(kReduceLayerElements, validElements - layer);
-            const int64_t alignedLayerElements = AlignToBlock(layerElements);
-            uint32_t srcShape[2] = {1, static_cast<uint32_t>(alignedLayerElements)};
-            ReduceSum<float, Pattern::Reduce::AR, true>(sum, calc[static_cast<uint32_t>(layer)], srcShape, true);
-            SetFlag<HardEvent::V_S>(eventVToS_);
-            WaitFlag<HardEvent::V_S>(eventVToS_);
-            AddCompensated(partial, sum.GetValue(0));
-        }
+        ReduceTileWithResidual(calc, sum, static_cast<uint32_t>(validElements));
+        SetFlag<HardEvent::V_S>(eventVToS_);
+        WaitFlag<HardEvent::V_S>(eventVToS_);
+        const float high = sum.GetValue(0);
+        const float low = Abs(high) <= 3.4028235e38f ? sum.GetValue(kWorkspaceElements) : 0.0f;
+        const CompensatedSum partial{high, low};
         inQueue_.FreeTensor(input);
         return partial;
     }
@@ -222,7 +249,7 @@ private:
         return slots[0] / static_cast<float>(tiling_->reduceCount);
     }
 
-    __aicore__ inline float ReduceRowSingleCoreCompensated(int64_t row)
+    __aicore__ inline MeanHiLo ReduceRowSingleCoreCompensated(int64_t row)
     {
         const int64_t chunkCount = (tiling_->reduceCount + kTileElements - 1) / kTileElements;
         const int64_t rowBase = RowBase(row);
@@ -248,7 +275,7 @@ private:
                 AddCompensated(slots[g], slots[g + half].correction);
             }
         }
-        return TotalCompensated(slots[0]) / static_cast<float>(tiling_->reduceCount);
+        return FinalizeMeanHiLo(slots[0], tiling_->reduceCount);
     }
 
     __aicore__ inline void CopyInTile(int64_t offset, int64_t validElements)
@@ -258,7 +285,7 @@ private:
         inQueue_.EnQue(input);
     }
 
-    __aicore__ inline void ComputeTile(int64_t validElements, float mean)
+    __aicore__ inline void ComputeTile(int64_t validElements, float meanHi, float meanLo)
     {
         const int64_t alignedElements = AlignToBlock(validElements);
         LocalTensor<T> input = inQueue_.DeQue<T>();
@@ -277,10 +304,12 @@ private:
         PipeBarrier<PIPE_V>();
 
         LocalTensor<float> meanTensor = meanBuf_.Get<float>();
-        Duplicate(meanTensor, mean, static_cast<int32_t>(alignedElements));
-
+        Duplicate(meanTensor, meanHi, static_cast<int32_t>(alignedElements));
         PipeBarrier<PIPE_V>();
-
+        Sub(calc, calc, meanTensor, static_cast<uint32_t>(alignedElements));
+        PipeBarrier<PIPE_V>();
+        Duplicate(meanTensor, meanLo, static_cast<int32_t>(alignedElements));
+        PipeBarrier<PIPE_V>();
         Sub(calc, calc, meanTensor, static_cast<uint32_t>(alignedElements));
         PipeBarrier<PIPE_V>();
         Muls(calc, calc, outputScale_, static_cast<uint32_t>(alignedElements));
@@ -306,7 +335,7 @@ private:
         outQueue_.FreeTensor(output);
     }
 
-    __aicore__ inline void SubtractRowSingleCore(int64_t row, float mean)
+    __aicore__ inline void SubtractRowSingleCore(int64_t row, float meanHi, float meanLo)
     {
         const int64_t chunkCount = (tiling_->reduceCount + kTileElements - 1) / kTileElements;
         const int64_t rowBase = RowBase(row);
@@ -321,7 +350,7 @@ private:
                 const int64_t chunk = stage - 1;
                 const int64_t col = chunk * kTileElements;
                 const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
-                ComputeTile(validElements, mean);
+                ComputeTile(validElements, meanHi, meanLo);
             }
             if (stage >= 2 && (stage - 2) < chunkCount) {
                 const int64_t chunk = stage - 2;
@@ -408,20 +437,23 @@ private:
         return input;
     }
 
-    __aicore__ inline float LoadWorkspaceValue(int64_t row, int64_t slot = 0)
-    {
-        LocalTensor<float> input = LoadWorkspaceTensor(row, slot);
-        const float value = input.GetValue(0);
-        inQueue_.FreeTensor(input);
-        return value;
-    }
-
     __aicore__ inline CompensatedSum LoadWorkspaceCompensated(int64_t row, int64_t slot)
     {
         LocalTensor<float> input = LoadWorkspaceTensor(row, slot);
         const CompensatedSum value{input.GetValue(0), input.GetValue(1)};
         inQueue_.FreeTensor(input);
         return value;
+    }
+
+    __aicore__ inline void StoreWorkspaceMean(int64_t row, MeanHiLo mean)
+    {
+        StoreWorkspaceCompensated(row, 0, CompensatedSum{mean.hi, mean.lo});
+    }
+
+    __aicore__ inline MeanHiLo LoadWorkspaceMean(int64_t row)
+    {
+        const CompensatedSum value = LoadWorkspaceCompensated(row, 0);
+        return MeanHiLo{value.sum, value.correction};
     }
 
     __aicore__ inline void FinalizeMeanRow(int64_t row)
@@ -438,7 +470,7 @@ private:
         SetFlag<HardEvent::V_S>(eventVToS_);
         WaitFlag<HardEvent::V_S>(eventVToS_);
         const float mean = sum.GetValue(0) / static_cast<float>(tiling_->reduceCount);
-        StoreWorkspaceValue(row, 0, mean);
+        StoreWorkspaceMean(row, MeanHiLo{mean, 0.0f});
     }
 
     __aicore__ inline void FinalizeMeanRowCompensated(int64_t row)
@@ -449,57 +481,75 @@ private:
             AddCompensated(partial, slotPartial.sum);
             AddCompensated(partial, slotPartial.correction);
         }
-        const float mean = TotalCompensated(partial) / static_cast<float>(tiling_->reduceCount);
-        StoreWorkspaceValue(row, 0, mean);
+        StoreWorkspaceMean(row, FinalizeMeanHiLo(partial, tiling_->reduceCount));
     }
 
     __aicore__ inline void ProcessRowParallel(uint32_t core, uint32_t cores)
     {
         for (int64_t row = core; row < tiling_->groupCount; row += cores) {
             if constexpr (kUseCompensatedReduce) {
-                const float mean = ReduceRowSingleCoreCompensated(row);
-                SubtractRowSingleCore(row, mean);
+                const MeanHiLo mean = ReduceRowSingleCoreCompensated(row);
+                SubtractRowSingleCore(row, mean.hi, mean.lo);
             } else {
                 const float mean = ReduceRowSingleCore(row);
-                SubtractRowSingleCore(row, mean);
+                SubtractRowSingleCore(row, mean, 0.0f);
             }
         }
     }
 
-    __aicore__ inline void ProcessMultiCoreReduce(uint32_t core, uint32_t /*cores*/)
+    // 修正存量 bug：原实现无任务循环，假设 blockDim == groupCount*coresPerRow
+    // 恰好相等（core/coresPerRow 直接当行号）。taskCount 超过核数时 blockDim 被
+    // clamp，尾部 (row, localCore) 整组静默丢失、输出保持全零（如 72 核上
+    // (64,200000)：taskCount=128>72，行 36-63 全零）。三阶段均改为按 task 轮转。
+    __aicore__ inline void ProcessMultiCoreReduce(uint32_t core, uint32_t cores)
     {
         const uint32_t coresPerRow = static_cast<uint32_t>(tiling_->coresPerRow);
-        const int64_t row = static_cast<int64_t>(core) / static_cast<int64_t>(coresPerRow);
-        if (row >= tiling_->groupCount) {
-            return;
-        }
-        const uint32_t localCore = core % coresPerRow;
+        const int64_t taskCount = tiling_->groupCount * static_cast<int64_t>(coresPerRow);
+        const int64_t nCores = static_cast<int64_t>(cores);
         if constexpr (kUseCompensatedReduce) {
-            const CompensatedSum partial = PartialReduceRowCompensated(static_cast<int64_t>(row), localCore,
-                                                                       coresPerRow);
-            StoreWorkspaceCompensated(static_cast<int64_t>(row), static_cast<int64_t>(localCore), partial);
-            SyncAll();
-            if (localCore == 0) {
-                FinalizeMeanRowCompensated(static_cast<int64_t>(row));
+            for (int64_t task = static_cast<int64_t>(core); task < taskCount; task += nCores) {
+                const uint32_t localCore = static_cast<uint32_t>(task % static_cast<int64_t>(coresPerRow));
+                const CompensatedSum partial = PartialReduceRowCompensated(task / static_cast<int64_t>(coresPerRow),
+                                                                           localCore, coresPerRow);
+                StoreWorkspaceCompensated(task / static_cast<int64_t>(coresPerRow), static_cast<int64_t>(localCore),
+                                          partial);
             }
             SyncAll();
-            SubtractRow(static_cast<int64_t>(row), localCore, coresPerRow);
+            for (int64_t task = static_cast<int64_t>(core); task < taskCount; task += nCores) {
+                if (task % static_cast<int64_t>(coresPerRow) == 0) {
+                    FinalizeMeanRowCompensated(task / static_cast<int64_t>(coresPerRow));
+                }
+            }
+            SyncAll();
+            for (int64_t task = static_cast<int64_t>(core); task < taskCount; task += nCores) {
+                const uint32_t localCore = static_cast<uint32_t>(task % static_cast<int64_t>(coresPerRow));
+                SubtractRow(task / static_cast<int64_t>(coresPerRow), localCore, coresPerRow);
+            }
         } else {
-            const float partial = PartialReduceRow(static_cast<int64_t>(row), localCore, coresPerRow);
-            StoreWorkspaceValue(static_cast<int64_t>(row), static_cast<int64_t>(localCore), partial);
-            SyncAll();
-            if (localCore == 0) {
-                FinalizeMeanRow(static_cast<int64_t>(row));
+            for (int64_t task = static_cast<int64_t>(core); task < taskCount; task += nCores) {
+                const uint32_t localCore = static_cast<uint32_t>(task % static_cast<int64_t>(coresPerRow));
+                const float partial = PartialReduceRow(task / static_cast<int64_t>(coresPerRow), localCore,
+                                                       coresPerRow);
+                StoreWorkspaceValue(task / static_cast<int64_t>(coresPerRow), static_cast<int64_t>(localCore), partial);
             }
             SyncAll();
-            SubtractRow(static_cast<int64_t>(row), localCore, coresPerRow);
+            for (int64_t task = static_cast<int64_t>(core); task < taskCount; task += nCores) {
+                if (task % static_cast<int64_t>(coresPerRow) == 0) {
+                    FinalizeMeanRow(task / static_cast<int64_t>(coresPerRow));
+                }
+            }
+            SyncAll();
+            for (int64_t task = static_cast<int64_t>(core); task < taskCount; task += nCores) {
+                const uint32_t localCore = static_cast<uint32_t>(task % static_cast<int64_t>(coresPerRow));
+                SubtractRow(task / static_cast<int64_t>(coresPerRow), localCore, coresPerRow);
+            }
         }
     }
 
     __aicore__ inline void SubtractRow(int64_t row, uint32_t localCore, uint32_t coresPerRow)
     {
         const int64_t chunkCount = (tiling_->reduceCount + kTileElements - 1) / kTileElements;
-        const float mean = LoadWorkspaceValue(row);
+        const MeanHiLo mean = LoadWorkspaceMean(row);
         const int64_t rowBase = RowBase(row);
         const int64_t tileCount = (chunkCount - static_cast<int64_t>(localCore) + static_cast<int64_t>(coresPerRow) -
                                    1) /
@@ -520,7 +570,7 @@ private:
                 const int64_t chunk = static_cast<int64_t>(localCore) + localTile * static_cast<int64_t>(coresPerRow);
                 const int64_t col = chunk * kTileElements;
                 const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
-                ComputeTile(validElements, mean);
+                ComputeTile(validElements, mean.hi, mean.lo);
             }
             if (stage >= 2 && (stage - 2) < tileCount) {
                 const int64_t localTile = stage - 2;

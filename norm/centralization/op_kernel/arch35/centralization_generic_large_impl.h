@@ -12,6 +12,10 @@
 
 __aicore__ inline void ProcessLarge(uint32_t core, uint32_t cores)
 {
+    if (tiling_->largePlane != 0) {
+        ProcessLargePlane(core, cores);
+        return;
+    }
     if (tiling_->rowParallel != 0) {
         ProcessLargeRowParallel(core, cores);
         return;
@@ -27,39 +31,130 @@ __aicore__ inline void ProcessLargeRowParallel(uint32_t core, uint32_t cores)
     for (int64_t group = core; group < tiling_->groupCount; group += cores) {
         const int64_t base = GroupBase(group);
         const MeanHiLo m = CalculateMeanFromBase(base);
-        StoreWorkspace(WorkspaceSlot(group, 0), m.hi);
-        StoreWorkspace(WorkspaceSlot(group, 1), m.lo);
+        StoreWorkspacePair(WorkspaceSlot(group, 0), m.hi, m.lo);
     }
     SyncAll();
     ProcessOutputBlocks(core, cores, true);
 }
 
-__aicore__ inline void ProcessLargeMultiCoreReduce(uint32_t core, uint32_t /*cores*/)
+__aicore__ inline void ProcessLargeMultiCoreReduce(uint32_t core, uint32_t cores)
 {
     const uint32_t coresPerRow = static_cast<uint32_t>(tiling_->coresPerRow);
-    const int64_t group = static_cast<int64_t>(core) / static_cast<int64_t>(coresPerRow);
-    if (group >= tiling_->groupCount) {
-        return;
-    }
-    const uint32_t localCore = core % coresPerRow;
-    const int64_t base = GroupBase(group);
-    LargeCompensatedSum partial{0.0f, 0.0f};
-    for (int64_t r = static_cast<int64_t>(localCore); r < tiling_->reduceCount;
-         r += static_cast<int64_t>(coresPerRow)) {
-        AddLargeCompensated(partial, LoadInput(base + ReduceOffset(r)));
-    }
-    StoreWorkspace(WorkspaceSlot(static_cast<int64_t>(group), static_cast<int64_t>(localCore)),
-                   TotalLargeCompensated(partial));
-    SyncAll();
-    if (localCore == 0) {
-        float sum = 0.0f;
-        for (uint32_t c = 0; c < coresPerRow; ++c) {
-            sum += LoadWorkspace(WorkspaceSlot(static_cast<int64_t>(group), static_cast<int64_t>(c)));
+    const int64_t taskCount = tiling_->groupCount * static_cast<int64_t>(coresPerRow);
+    for (int64_t task = static_cast<int64_t>(core); task < taskCount; task += static_cast<int64_t>(cores)) {
+        const int64_t group = task / static_cast<int64_t>(coresPerRow);
+        const uint32_t localCore = static_cast<uint32_t>(task % static_cast<int64_t>(coresPerRow));
+        const int64_t base = GroupBase(group);
+        LargeCompensatedSum partial{0.0f, 0.0f};
+        const int64_t lastReduceDim = tiling_->reduceDims[tiling_->reduceRank - 1];
+        if (lastReduceDim > 1 && tiling_->reduceStrides[tiling_->reduceRank - 1] == 1) {
+            const int64_t outerCount = tiling_->reduceCount / lastReduceDim;
+            for (int64_t outer = static_cast<int64_t>(localCore); outer < outerCount;
+                 outer += static_cast<int64_t>(coresPerRow)) {
+                const int64_t offset = base + ReduceOffset(outer * lastReduceDim);
+                for (int64_t col = 0; col < lastReduceDim; col += kLargeChunkElements) {
+                    const int64_t validElements = Min(kLargeChunkElements, lastReduceDim - col);
+                    CopyInContiguous(offset + col, validElements);
+                    LocalTensor<T> input = inQueue_.DeQue<T>();
+                    AddLargeCompensated(partial, ReduceSegmentToScalar(input, validElements));
+                    inQueue_.FreeTensor(input);
+                }
+            }
+        } else {
+            constexpr int64_t kBatch = 8;
+            float batchValues[kBatch] = {};
+            const int64_t chunk = (tiling_->reduceCount + static_cast<int64_t>(coresPerRow) - 1) /
+                                  static_cast<int64_t>(coresPerRow);
+            const int64_t begin = static_cast<int64_t>(localCore) * chunk;
+            const int64_t end = Min(begin + chunk, tiling_->reduceCount);
+            int64_t reduceCoords[8] = {};
+            int64_t beginValue = begin;
+            for (int64_t i = 0; i < tiling_->reduceRank; ++i) {
+                reduceCoords[i] = beginValue / tiling_->reduceIndexStrides[i];
+                beginValue %= tiling_->reduceIndexStrides[i];
+            }
+            int64_t currentOffset = ReduceOffset(begin);
+            for (int64_t batchStart = begin; batchStart < end; batchStart += kBatch) {
+                const int64_t batchCount = Min(kBatch, end - batchStart);
+                int64_t batchOffsets[kBatch] = {};
+                for (int64_t i = 0; i < batchCount; ++i) {
+                    batchOffsets[i] = currentOffset;
+                    AdvanceReduceOffset(currentOffset, reduceCoords, tiling_->reduceRank);
+                }
+                LoadInputBatch(base, batchOffsets, batchCount, batchValues);
+                for (int64_t i = 0; i < batchCount; ++i) {
+                    AddLargeCompensated(partial, batchValues[i]);
+                }
+            }
         }
-        StoreWorkspace(WorkspaceSlot(static_cast<int64_t>(group), 0), sum / static_cast<float>(tiling_->reduceCount));
+        StoreWorkspacePair(WorkspaceSlot(static_cast<int64_t>(group), static_cast<int64_t>(localCore)), partial.sum,
+                           partial.correction);
+    }
+    SyncAll();
+    for (int64_t task = static_cast<int64_t>(core); task < taskCount; task += static_cast<int64_t>(cores)) {
+        const int64_t group = task / static_cast<int64_t>(coresPerRow);
+        const uint32_t localCore = static_cast<uint32_t>(task % static_cast<int64_t>(coresPerRow));
+        if (localCore != 0) {
+            continue;
+        }
+        LargeCompensatedSum total{0.0f, 0.0f};
+        for (uint32_t c = 0; c < coresPerRow; ++c) {
+            float partialSum = 0.0f;
+            float partialCorrection = 0.0f;
+            LoadWorkspacePair(WorkspaceSlot(group, static_cast<int64_t>(c)), partialSum, partialCorrection);
+            AddLargeCompensated(total, partialSum);
+            AddLargeCompensated(total, partialCorrection);
+        }
+        const MeanHiLo m = FinalizeMeanHiLo(total, tiling_->reduceCount);
+        StoreWorkspacePair(WorkspaceSlot(group, 0), m.hi, m.lo);
     }
     SyncAll();
     ProcessOutputBlocks(core, GetBlockNum(), true);
+}
+
+__aicore__ inline void LoadInputBatch(int64_t base, const int64_t* offsets, int64_t count, float* values)
+{
+    constexpr int64_t kBlockBytes = 32;
+    constexpr int64_t kBlockElements = kBlockBytes / sizeof(T);
+    int64_t lanes[8] = {};
+    int64_t slots[8] = {};
+    int64_t blockOffsets[8] = {};
+    int64_t slotCount = 0;
+    LocalTensor<T> input = inQueue_.AllocTensor<T>();
+    for (int64_t i = 0; i < count; ++i) {
+        const int64_t offset = base + offsets[i];
+        const int64_t alignedOffset = offset / kBlockElements * kBlockElements;
+        lanes[i] = offset - alignedOffset;
+        int64_t slot = 0;
+        while (slot < slotCount && blockOffsets[slot] != alignedOffset) {
+            ++slot;
+        }
+        if (slot == slotCount) {
+            blockOffsets[slotCount] = alignedOffset;
+            const int64_t validElements = (tiling_->totalCount - alignedOffset < kBlockElements) ?
+                                              tiling_->totalCount - alignedOffset :
+                                              kBlockElements;
+            LocalTensor<T> dst = input[slotCount * kBlockElements];
+            if (validElements == kBlockElements) {
+                DataCopy(dst, xGm_[static_cast<uint64_t>(alignedOffset)], static_cast<uint32_t>(kBlockElements));
+            } else {
+                DataCopyExtParams copy{1, static_cast<uint32_t>(validElements * sizeof(T)), 0, 0, 0};
+                DataCopyPadExtParams<T> pad{true, 0, static_cast<uint8_t>(kBlockElements - validElements),
+                                            static_cast<T>(0)};
+                DataCopyPad(dst, xGm_[static_cast<uint64_t>(alignedOffset)], copy, pad);
+            }
+            ++slotCount;
+        }
+        slots[i] = slot;
+    }
+    inQueue_.EnQue(input);
+    input = inQueue_.DeQue<T>();
+    SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+    WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+    for (int64_t i = 0; i < count; ++i) {
+        values[i] = static_cast<float>(input.GetValue(slots[i] * kBlockElements + lanes[i]));
+    }
+    inQueue_.FreeTensor(input);
 }
 
 __aicore__ inline float LoadInput(int64_t offset)
@@ -119,47 +214,6 @@ __aicore__ inline void AddLargeCompensated(LargeCompensatedSum& acc, float value
     acc.sum = next;
 }
 
-__aicore__ inline float TotalLargeCompensated(const LargeCompensatedSum& acc) const { return acc.sum + acc.correction; }
-
-// Dekker 拆分：a = hi + lo，hi 保留高 12 位尾数。
-__aicore__ inline void SplitFloat(float a, float& hi, float& lo) const
-{
-    // Dekker 拆分 (2^12+1) 会临时把指数抬高 12 位；|a| > FLT_MAX/4097 时 4097*a 会溢出成 inf，
-    // 进而 hi = inf-inf = NaN。先按 2 的幂缩放到安全区间，拆分后再精确放大回去（缩放不引入误差）。
-    constexpr float kSplitSafe = 8.0e34f; // < FLT_MAX/4097
-    float scale = 1.0f;
-    float value = a;
-    float absValue = value < 0.0f ? -value : value;
-    while (absValue > kSplitSafe) {
-        value *= 0.5f;
-        absValue *= 0.5f;
-        scale *= 2.0f;
-    }
-    volatile float c = 4097.0f * value; // 2^12 + 1
-    const float h = c - (c - value);
-    hi = h * scale;
-    lo = (value - h) * scale;
-}
-
-// 精确计算 acc - a*b（Dekker 两积）。设备端无 fmaf，用它替代 FMA 得到无舍入的乘法。
-__aicore__ inline float ExactSubProduct(float a, float b, float acc) const
-{
-    float aHi = 0.0f;
-    float aLo = 0.0f;
-    float bHi = 0.0f;
-    float bLo = 0.0f;
-    SplitFloat(a, aHi, aLo);
-    SplitFloat(b, bHi, bLo);
-    volatile float p = a * b;
-    volatile float t1 = aHi * bHi - p;
-    volatile float t2 = aHi * bLo;
-    volatile float t3 = aLo * bHi;
-    volatile float t4 = aLo * bLo;
-    const float e = ((t1 + t2) + t3) + t4;
-    // a*b == p + e（无舍入）
-    return (acc - p) - e;
-}
-
 // 双 FP32 均值：sum + correction ≈ Σx（Neumaier）。
 //   mean  = sum / N
 //   r     = sum - mean*N（精确，Dekker） // 除法本身的舍入残差
@@ -175,7 +229,7 @@ __aicore__ inline MeanHiLo FinalizeMeanHiLo(const LargeCompensatedSum& acc, int6
         out.lo = 0.0f;
         return out;
     }
-    const float r = ExactSubProduct(out.hi, n, acc.sum);
+    const float r = MeanProductResidual(out.hi, n, acc.sum);
     out.lo = (r + acc.correction) / n;
     return out;
 }
@@ -229,13 +283,13 @@ __aicore__ inline int64_t GroupFromOffset(int64_t offset) const
 }
 
 __aicore__ inline int64_t BuildMeanCache(int64_t blockOffset, int64_t validElements, uint32_t /*cores*/,
-                                         bool useWorkspace, int64_t* cachedGroups, float* cachedMeans,
-                                         float* cachedMeansLow)
+                                         bool useWorkspace, const int64_t* laneGroups, int64_t* cachedGroups,
+                                         float* cachedMeans, float* cachedMeansLow)
 {
     constexpr int64_t kBlockElements = 32 / sizeof(T);
     int64_t cachedCount = 0;
     for (int64_t lane = 0; lane < validElements; ++lane) {
-        const int64_t group = GroupFromOffset(blockOffset + lane);
+        const int64_t group = laneGroups[lane];
         bool found = false;
         for (int64_t i = 0; i < cachedCount; ++i) {
             if (cachedGroups[i] == group) {
@@ -245,15 +299,19 @@ __aicore__ inline int64_t BuildMeanCache(int64_t blockOffset, int64_t validEleme
         }
         if (!found && cachedCount < kBlockElements) {
             cachedGroups[cachedCount] = group;
-            if (tiling_->rowParallel != 0) {
-                // 行并行：slot0/1 分别保存 hi/lo，完整保留低位
-                cachedMeans[cachedCount] = LoadWorkspace(WorkspaceSlot(group, 0));
-                cachedMeansLow[cachedCount] = LoadWorkspace(WorkspaceSlot(group, 1));
+            if (localMeanTable_) {
+                const LocalTensor<float> table = sumBuf_.Get<float>();
+                cachedMeans[cachedCount] = table.GetValue(group * 2);
+                cachedMeansLow[cachedCount] = table.GetValue(group * 2 + 1);
+            } else if (tiling_->meanCache != 0) {
+                LoadWorkspaceMeanCompact(group, cachedMeans[cachedCount], cachedMeansLow[cachedCount]);
+            } else if (useWorkspace) {
+                // workspace 的 slot0 保存均值 hi/lo，两步相减保留低位
+                LoadWorkspacePair(WorkspaceSlot(group, 0), cachedMeans[cachedCount], cachedMeansLow[cachedCount]);
             } else {
-                // 多核归约：workspace 只存 hi
-                cachedMeans[cachedCount] = useWorkspace ? LoadWorkspace(WorkspaceSlot(group, 0)) :
-                                                          CalculateMean(group).hi;
-                cachedMeansLow[cachedCount] = 0.0f;
+                const MeanHiLo m = CalculateMean(group);
+                cachedMeans[cachedCount] = m.hi;
+                cachedMeansLow[cachedCount] = m.lo;
             }
             ++cachedCount;
         }
@@ -264,11 +322,18 @@ __aicore__ inline int64_t BuildMeanCache(int64_t blockOffset, int64_t validEleme
 __aicore__ inline void ProcessBlock(int64_t blockOffset, int64_t validElements, uint32_t cores, bool useWorkspace)
 {
     constexpr int64_t kBlockElements = 32 / sizeof(T);
+    int64_t laneGroups[kBlockElements] = {};
     int64_t cachedGroups[kBlockElements] = {};
     float cachedMeans[kBlockElements] = {};
     float cachedMeansLow[kBlockElements] = {};
-    const int64_t cachedCount = BuildMeanCache(blockOffset, validElements, cores, useWorkspace, cachedGroups,
-                                               cachedMeans, cachedMeansLow);
+    for (int64_t lane = 0; lane < validElements; ++lane) {
+        laneGroups[lane] = GroupFromOffset(blockOffset + lane);
+    }
+    int64_t cachedCount = 0;
+    if (!localMeanTable_) {
+        cachedCount = BuildMeanCache(blockOffset, validElements, cores, useWorkspace, laneGroups, cachedGroups,
+                                     cachedMeans, cachedMeansLow);
+    }
 
     LocalTensor<T> input = inQueue_.AllocTensor<T>();
     DataCopyExtParams copy{1, static_cast<uint32_t>(validElements * sizeof(T)), 0, 0, 0};
@@ -279,15 +344,21 @@ __aicore__ inline void ProcessBlock(int64_t blockOffset, int64_t validElements, 
     SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
     WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
     LocalTensor<T> output = outQueue_.AllocTensor<T>();
+    const LocalTensor<float> table = sumBuf_.Get<float>();
     for (int64_t lane = 0; lane < validElements; ++lane) {
-        const int64_t group = GroupFromOffset(blockOffset + lane);
+        const int64_t group = laneGroups[lane];
         float mean = 0.0f;
         float meanLow = 0.0f;
-        for (int64_t i = 0; i < cachedCount; ++i) {
-            if (cachedGroups[i] == group) {
-                mean = cachedMeans[i];
-                meanLow = cachedMeansLow[i];
-                break;
+        if (localMeanTable_) {
+            mean = table.GetValue(group * 2);
+            meanLow = table.GetValue(group * 2 + 1);
+        } else {
+            for (int64_t i = 0; i < cachedCount; ++i) {
+                if (cachedGroups[i] == group) {
+                    mean = cachedMeans[i];
+                    meanLow = cachedMeansLow[i];
+                    break;
+                }
             }
         }
         // 两步相减，避免均值低阶在单次减法中被丢弃
@@ -305,11 +376,121 @@ __aicore__ inline void ProcessBlock(int64_t blockOffset, int64_t validElements, 
     inQueue_.FreeTensor(input);
 }
 
+__aicore__ inline void StoreWorkspaceMeanCompact(int64_t group, float hi, float lo)
+{
+    LocalTensor<float> output = outQueue_.AllocTensor<float>();
+    output.SetValue(0, hi);
+    output.SetValue(1, lo);
+    outQueue_.EnQue(output);
+    output = outQueue_.DeQue<float>();
+    SetFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    WaitFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    DataCopyExtParams copy{1, static_cast<uint32_t>(2 * sizeof(float)), 0, 0, 0};
+    DataCopyPad(workspaceGm_[static_cast<uint64_t>(group * 2)], output, copy);
+    SetFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+    WaitFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+    outQueue_.FreeTensor(output);
+}
+
+__aicore__ inline void LoadWorkspaceMeanCompact(int64_t group, float& hi, float& lo)
+{
+    LocalTensor<float> input = inQueue_.AllocTensor<float>();
+    DataCopyExtParams copy{1, static_cast<uint32_t>(2 * sizeof(float)), 0, 0, 0};
+    DataCopyPadExtParams<float> pad{false, 0, 0, 0};
+    DataCopyPad(input, workspaceGm_[static_cast<uint64_t>(group * 2)], copy, pad);
+    inQueue_.EnQue(input);
+    input = inQueue_.DeQue<float>();
+    SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+    WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+    hi = input.GetValue(0);
+    lo = input.GetValue(1);
+    inQueue_.FreeTensor(input);
+}
+
+__aicore__ inline void ComputeMeanCache(uint32_t core, uint32_t cores)
+{
+    for (int64_t group = core; group < tiling_->groupCount; group += cores) {
+        const MeanHiLo m = CalculateMean(group);
+        StoreWorkspaceMeanCompact(group, m.hi, m.lo);
+    }
+}
+
+__aicore__ inline void PreloadMeanTable()
+{
+    LocalTensor<float> table = sumBuf_.Get<float>();
+    for (int64_t group = 0; group < tiling_->groupCount; ++group) {
+        float hi = 0.0f;
+        float lo = 0.0f;
+        LoadWorkspacePair(WorkspaceSlot(group, 0), hi, lo);
+        table.SetValue(group * 2, hi);
+        table.SetValue(group * 2 + 1, lo);
+    }
+}
+
+__aicore__ inline void ProcessLargeOutputTile(int64_t offset, int64_t validElements)
+{
+    LocalTensor<T> input = inQueue_.AllocTensor<T>();
+    DataCopyExtParams copy{1, static_cast<uint32_t>(validElements * sizeof(T)), 0, 0, 0};
+    const int64_t alignedElements = AlignToBlock(validElements);
+    DataCopyPadExtParams<T> pad{true, 0, static_cast<uint8_t>(alignedElements - validElements), static_cast<T>(0)};
+    DataCopyPad(input, xGm_[static_cast<uint64_t>(offset)], copy, pad);
+    inQueue_.EnQue(input);
+    input = inQueue_.DeQue<T>();
+    SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+    WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+    LocalTensor<T> output = outQueue_.AllocTensor<T>();
+    const LocalTensor<float> table = sumBuf_.Get<float>();
+    for (int64_t lane = 0; lane < validElements; ++lane) {
+        const int64_t group = GroupFromOffset(offset + lane);
+        const float mean = table.GetValue(group * 2);
+        const float meanLow = table.GetValue(group * 2 + 1);
+        output.SetValue(lane, static_cast<T>((static_cast<float>(input.GetValue(lane)) - mean) - meanLow));
+    }
+    outQueue_.EnQue(output);
+    output = outQueue_.DeQue<T>();
+    DataCopyExtParams copyOut{1, static_cast<uint32_t>(validElements * sizeof(T)), 0, 0, 0};
+    SetFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    WaitFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    DataCopyPad(yGm_[static_cast<uint64_t>(offset)], output, copyOut);
+    SetFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+    WaitFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+    outQueue_.FreeTensor(output);
+    inQueue_.FreeTensor(input);
+}
+
 __aicore__ inline void ProcessOutputBlocks(uint32_t core, uint32_t cores, bool useWorkspace)
 {
     constexpr int64_t kBlockElements = 32 / sizeof(T);
+    const int64_t meanTableBytes = tiling_->groupCount * static_cast<int64_t>(2 * sizeof(float));
+    if (useWorkspace && tiling_->largePath != 0 && meanTableBytes > 0 &&
+        meanTableBytes <= static_cast<int64_t>(tiling_->genericSumBufferBytes)) {
+        PreloadMeanTable();
+        localMeanTable_ = true;
+    }
+    if (localMeanTable_) {
+        int64_t tileBytes = kOutputTileBytes;
+        tileBytes = Min(tileBytes, static_cast<int64_t>(tiling_->genericInputBufferBytes));
+        tileBytes = Min(tileBytes, static_cast<int64_t>(tiling_->genericOutputBufferBytes));
+        int64_t tileElements = tileBytes / static_cast<int64_t>(sizeof(T));
+        if (tileElements < 1) {
+            tileElements = 1;
+        }
+        const int64_t tileCount = (tiling_->totalCount + tileElements - 1) / tileElements;
+        const int64_t tilesPerCore = (tileCount + static_cast<int64_t>(cores) - 1) / static_cast<int64_t>(cores);
+        const int64_t tileBegin = static_cast<int64_t>(core) * tilesPerCore;
+        const int64_t tileEnd = Min(tileBegin + tilesPerCore, tileCount);
+        for (int64_t tile = tileBegin; tile < tileEnd; ++tile) {
+            const int64_t offset = tile * tileElements;
+            const int64_t validElements = Min(tileElements, tiling_->totalCount - offset);
+            ProcessLargeOutputTile(offset, validElements);
+        }
+        return;
+    }
     const int64_t blockCount = (tiling_->totalCount + kBlockElements - 1) / kBlockElements;
-    for (int64_t block = core; block < blockCount; block += cores) {
+    const int64_t blocksPerCore = (blockCount + static_cast<int64_t>(cores) - 1) / static_cast<int64_t>(cores);
+    const int64_t begin = static_cast<int64_t>(core) * blocksPerCore;
+    const int64_t end = Min(begin + blocksPerCore, blockCount);
+    for (int64_t block = begin; block < end; ++block) {
         const int64_t blockOffset = block * kBlockElements;
         const int64_t validElements = (tiling_->totalCount - blockOffset < kBlockElements) ?
                                           tiling_->totalCount - blockOffset :
@@ -318,7 +499,7 @@ __aicore__ inline void ProcessOutputBlocks(uint32_t core, uint32_t cores, bool u
     }
 }
 
-__aicore__ inline float LoadWorkspace(int64_t offset)
+__aicore__ inline void LoadWorkspacePair(int64_t offset, float& first, float& second)
 {
     constexpr int64_t kWorkspaceElements = 32 / sizeof(float);
     LocalTensor<float> input = inQueue_.AllocTensor<float>();
@@ -328,19 +509,20 @@ __aicore__ inline float LoadWorkspace(int64_t offset)
     input = inQueue_.DeQue<float>();
     SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
     WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
-    const float value = input.GetValue(0);
+    first = input.GetValue(0);
+    second = input.GetValue(1);
     inQueue_.FreeTensor(input);
-    return value;
 }
 
-__aicore__ inline void StoreWorkspace(int64_t offset, float value)
+__aicore__ inline void StoreWorkspacePair(int64_t offset, float first, float second)
 {
     constexpr int64_t kWorkspaceElements = 32 / sizeof(float);
     LocalTensor<float> output = outQueue_.AllocTensor<float>();
     for (int64_t i = 0; i < kWorkspaceElements; ++i) {
         output.SetValue(i, 0.0f);
     }
-    output.SetValue(0, value);
+    output.SetValue(0, first);
+    output.SetValue(1, second);
     outQueue_.EnQue(output);
     output = outQueue_.DeQue<float>();
     SetFlag<HardEvent::S_MTE3>(eventSToMte3_);
@@ -350,6 +532,345 @@ __aicore__ inline void StoreWorkspace(int64_t offset, float value)
     SetFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
     WaitFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
     outQueue_.FreeTensor(output);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Plane 模式（largePlane=1，key 7020 向量子路径）：单 reduce 段、inner ∈ (1,256]，
+// 布局 [K_outer, R, K_inner]——归一化后固定 outer 的 R×inner 平面 GM 连续。
+// 三阶段（SyncAll 分隔）：
+//   1. partial 归约：task=(outer, localCore)，localCore 按 reduce 行切片，
+//      行批搬运 + 列向补偿累加，partial 按 (outer, localCore) 落 workspace；
+//   2. 合并：按 outer 轮转折叠 coresPerRow 份 partial，得 (outer,i) 的
+//      hi/lo 均值，按 outer 分块落 workspace；
+//   3. 输出：task=(outer, rowChunk) 全核轮转，均值按 outer 缓存复用，
+//      行批中心化后整批写回（替代逐元素 32B 标量 gather/写）。
+// workspace（float 偏移）：partial [(o*coresPerRow+c)*2*inner]{sum,corr}；
+//   mean [o*2*inner]{hi[0..inner), lo[0..inner)}。
+// ─────────────────────────────────────────────────────────────────────────
+__aicore__ inline int64_t PlaneAlignedFloats(int64_t floats) const
+{
+    return (floats * static_cast<int64_t>(sizeof(float)) + 31) / 32 * (32 / static_cast<int64_t>(sizeof(float)));
+}
+
+__aicore__ inline int64_t PlanePartialStride(int64_t inner) const { return PlaneAlignedFloats(2 * inner); }
+
+// Reusing the same lane pattern for reduction and output requires each vector to start at column zero.
+// Of the supported widths up to four, only 1, 2 and 4 divide the 64-lane vector.
+__aicore__ inline bool PlaneSubBlock(int64_t inner) const { return inner == 1 || inner == 2 || inner == 4; }
+
+// 子块归约：slice 的 flat 范围 [begin*inner, end*inner) 按 chunk 连续搬运，
+// 每列经 pattern 分离后 Reg Reduce，chunk 末标量 Neumaier 折叠。
+// sumBuf 布局：pattern [0, inner*V_LENGTH)；scratch 每列占 8 个 float，自 inner*V_LENGTH 起。
+__aicore__ inline void ReduceSubBlockSlice(int64_t planeBase, int64_t begin, int64_t end, int64_t inner,
+                                           LargeCompensatedSum* accs)
+{
+    LocalTensor<float> sum = sumBuf_.Get<float>();
+    const int64_t patternBase = 0;
+    // scratch 每列占 8 float（32B）：StoreRegForDtype 的目标地址必须 32B 对齐
+    const int64_t scratchBase = inner * V_LENGTH;
+    for (int64_t i = 0; i < inner; ++i) {
+        for (int64_t lane = 0; lane < V_LENGTH; ++lane) {
+            sum.SetValue(patternBase + i * V_LENGTH + lane, (lane % inner) == i ? 1.0f : 0.0f);
+        }
+        accs[i] = LargeCompensatedSum{0.0f, 0.0f};
+    }
+    SetFlag<HardEvent::S_V>(eventSToV_);
+    WaitFlag<HardEvent::S_V>(eventSToV_);
+    const int64_t bufferElements = static_cast<int64_t>(tiling_->genericInputBufferBytes / sizeof(T));
+    const int64_t chunkElems = bufferElements > 0 ? bufferElements : 1;
+    for (int64_t off = begin * inner; off < end * inner; off += chunkElems) {
+        const int64_t valid = Min(chunkElems, end * inner - off);
+        CopyInContiguous(planeBase + off, valid);
+        LocalTensor<T> input = inQueue_.DeQue<T>();
+        __local_mem__ T* inputAddr = (__local_mem__ T*)input.GetPhyAddr();
+        __local_mem__ float* sumAddr = (__local_mem__ float*)sum.GetPhyAddr();
+        const uint16_t loops = static_cast<uint16_t>((valid + V_LENGTH - 1) / V_LENGTH);
+        __VEC_SCOPE__
+        {
+            RegTensor<float> xReg;
+            RegTensor<float> patReg;
+            RegTensor<float> selected;
+            RegTensor<float> zero;
+            RegTensor<float> partialReg;
+            RegTensor<float> colReg;
+            MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
+            MaskReg pregOne = CreateMask<float, MaskPattern::VL1>();
+            Duplicate(zero, 0.0f, pregFull);
+            for (uint16_t i = 0; i < static_cast<uint16_t>(inner); ++i) {
+                Duplicate(colReg, static_cast<float>(0.0f), pregOne);
+                LoadRegForDtype<float>(sumAddr, patReg, pregFull, static_cast<uint32_t>(patternBase + i * V_LENGTH));
+                MaskReg column;
+                Compares<float, CMPMODE::EQ>(column, patReg, 1.0f, pregFull);
+                for (uint16_t loop = 0; loop < loops; ++loop) {
+                    const uint32_t offset = static_cast<uint32_t>(loop) * V_LENGTH;
+                    const uint32_t remaining = static_cast<uint32_t>(valid) - offset;
+                    uint32_t activeCount = remaining < V_LENGTH ? remaining : V_LENGTH;
+                    MaskReg pregLoop = activeCount == V_LENGTH ? pregFull : UpdateMask<float>(activeCount);
+                    LoadRegForDtype<T>(inputAddr, xReg, pregLoop, offset);
+                    Select(selected, xReg, zero, column);
+                    AscendC::Reg::Reduce<AscendC::Reg::ReduceType::SUM>(partialReg, selected, pregLoop);
+                    Add(colReg, colReg, partialReg, pregOne);
+                }
+                StoreRegForDtype<float>(sumAddr, colReg, pregOne, static_cast<uint32_t>(scratchBase + i * 8));
+            }
+        }
+        SetFlag<HardEvent::V_S>(eventVToS_);
+        WaitFlag<HardEvent::V_S>(eventVToS_);
+        for (uint16_t i = 0; i < static_cast<uint16_t>(inner); ++i) {
+            AddLargeCompensated(accs[i], sum.GetValue(scratchBase + static_cast<int64_t>(i) * 8));
+        }
+        inQueue_.FreeTensor(input);
+    }
+}
+
+// 子块输出：把 (hi,lo) 按 lane%inner 展开成 64-lane 向量（S 域构造 + S_V 同步）
+__aicore__ inline void BuildSubBlockMeanVec(LocalTensor<float>& sum, LocalTensor<float>& meanTensor, int64_t inner,
+                                            int64_t rowStride)
+{
+    for (int64_t lane = 0; lane < V_LENGTH; ++lane) {
+        const int64_t col = lane % inner;
+        sum.SetValue(lane, meanTensor.GetValue(col));
+        sum.SetValue(V_LENGTH + lane, meanTensor.GetValue(rowStride + col));
+    }
+    SetFlag<HardEvent::S_V>(eventSToV_);
+    WaitFlag<HardEvent::S_V>(eventSToV_);
+}
+
+// 子块中心化：flat 块两次 Sub（hi/lo 向量在 sumBuf [0..V_LENGTH) 和 [V_LENGTH..2*V_LENGTH)）
+__aicore__ inline void CentralizeSubBlockChunk(LocalTensor<T>& input, LocalTensor<T>& output,
+                                               LocalTensor<float>& meanVec, int64_t valid)
+{
+    __local_mem__ T* inputAddr = (__local_mem__ T*)input.GetPhyAddr();
+    __local_mem__ T* outputAddr = (__local_mem__ T*)output.GetPhyAddr();
+    __local_mem__ float* meanAddr = (__local_mem__ float*)meanVec.GetPhyAddr();
+    const uint16_t loops = static_cast<uint16_t>((valid + V_LENGTH - 1) / V_LENGTH);
+    __VEC_SCOPE__
+    {
+        RegTensor<float> xReg;
+        RegTensor<float> hiReg;
+        RegTensor<float> loReg;
+        MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
+        LoadRegForDtype<float>(meanAddr, hiReg, pregFull, 0);
+        LoadRegForDtype<float>(meanAddr, loReg, pregFull, V_LENGTH);
+        for (uint16_t loop = 0; loop < loops; ++loop) {
+            const uint32_t offset = static_cast<uint32_t>(loop) * V_LENGTH;
+            const uint32_t remaining = static_cast<uint32_t>(valid) - offset;
+            uint32_t activeCount = remaining < V_LENGTH ? remaining : V_LENGTH;
+            MaskReg pregLoop = activeCount == V_LENGTH ? pregFull : UpdateMask<float>(activeCount);
+            LoadRegForDtype<T>(inputAddr, xReg, pregLoop, offset);
+            Sub(xReg, xReg, hiReg, pregLoop);
+            Sub(xReg, xReg, loReg, pregLoop);
+            StoreRegForDtype<T>(outputAddr, xReg, pregLoop, offset);
+        }
+    }
+}
+
+__aicore__ inline int64_t PlaneMeanFloatOffset(int64_t o, int64_t rowStride, int64_t outer, int64_t inner,
+                                               int64_t coresPerRow) const
+{
+    // partial 区共 outer*coresPerRow*PlanePartialStride(inner) 个 float；
+    // mean 块按 outer 分块，块内 [hi @0, lo @rowStride]（lo 起点保持 32B 对齐，VEC LoadReg 要求）
+    return outer * coresPerRow * PlanePartialStride(inner) + o * 2 * rowStride;
+}
+
+// partial 块 {sum[0..inner), corr[0..inner)}（步进 PlanePartialStride）：S 域 SetValue 组装 + MTE3 落 workspace
+__aicore__ inline void StorePlanePartials(int64_t o, int64_t localCore, LocalTensor<float>& sum, int64_t corrOffset,
+                                          int64_t inner, int64_t coresPerRow)
+{
+    const int64_t floatOffset = (o * coresPerRow + localCore) * PlanePartialStride(inner);
+    const int64_t alignedFloats = PlanePartialStride(inner);
+    LocalTensor<float> output = outQueue_.AllocTensor<float>();
+    for (int64_t i = 0; i < alignedFloats; ++i) {
+        output.SetValue(i, 0.0f);
+    }
+    for (int64_t i = 0; i < inner; ++i) {
+        output.SetValue(i, sum.GetValue(i));
+        output.SetValue(inner + i, sum.GetValue(corrOffset + i));
+    }
+    outQueue_.EnQue(output);
+    output = outQueue_.DeQue<float>();
+    SetFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    WaitFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    DataCopy(workspaceGm_[static_cast<uint64_t>(floatOffset)], output, static_cast<uint32_t>(alignedFloats));
+    SetFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+    WaitFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+    outQueue_.FreeTensor(output);
+}
+
+// 合并 plane o 的 coresPerRow 份 partial，写 hi/lo 均值块到 workspace。
+// 块布局 [hi @0, lo @rowStride]：lo 起点对齐到 AlignToVector(inner)，VEC 读取要求 32B 对齐。
+__aicore__ inline void MergePlaneMeans(int64_t o, int64_t inner, int64_t coresPerRow, int64_t rc)
+{
+    LocalTensor<float> sum = sumBuf_.Get<float>();
+    const int64_t rowStride = OptimalRowStride(inner);
+    const int64_t corrOffset = rowStride;
+    const int64_t partialFloats = PlanePartialStride(inner);
+    const int64_t meanFloats = PlaneAlignedFloats(2 * rowStride);
+    for (int64_t i = 0; i < inner; ++i) {
+        sum.SetValue(i, 0.0f);
+        sum.SetValue(corrOffset + i, 0.0f);
+    }
+    for (int64_t c = 0; c < coresPerRow; ++c) {
+        const int64_t floatOffset = (o * coresPerRow + c) * partialFloats;
+        LocalTensor<float> input = inQueue_.AllocTensor<float>();
+        DataCopy(input, workspaceGm_[static_cast<uint64_t>(floatOffset)], static_cast<uint32_t>(partialFloats));
+        inQueue_.EnQue(input);
+        input = inQueue_.DeQue<float>();
+        SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+        WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+        for (int64_t i = 0; i < inner; ++i) {
+            LargeCompensatedSum acc{sum.GetValue(i), sum.GetValue(corrOffset + i)};
+            AddLargeCompensated(acc, input.GetValue(i));
+            AddLargeCompensated(acc, input.GetValue(inner + i));
+            sum.SetValue(i, acc.sum);
+            sum.SetValue(corrOffset + i, acc.correction);
+        }
+        inQueue_.FreeTensor(input);
+    }
+    LocalTensor<float> output = outQueue_.AllocTensor<float>();
+    for (int64_t i = 0; i < meanFloats; ++i) {
+        output.SetValue(i, 0.0f);
+    }
+    for (int64_t i = 0; i < inner; ++i) {
+        const LargeCompensatedSum acc{sum.GetValue(i), sum.GetValue(corrOffset + i)};
+        const MeanHiLo m = FinalizeMeanHiLo(acc, rc);
+        output.SetValue(i, m.hi);
+        output.SetValue(rowStride + i, m.lo);
+    }
+    outQueue_.EnQue(output);
+    output = outQueue_.DeQue<float>();
+    SetFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    WaitFlag<HardEvent::S_MTE3>(eventSToMte3_);
+    DataCopy(workspaceGm_[static_cast<uint64_t>(
+                 PlaneMeanFloatOffset(o, rowStride, tiling_->contiguousOuterCount, inner, coresPerRow))],
+             output, static_cast<uint32_t>(meanFloats));
+    SetFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+    WaitFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+    outQueue_.FreeTensor(output);
+}
+
+__aicore__ inline void ProcessLargePlane(uint32_t core, uint32_t cores)
+{
+    const int64_t outer = tiling_->contiguousOuterCount;
+    const int64_t inner = tiling_->contiguousInnerCount;
+    const int64_t rc = tiling_->reduceCount;
+    const int64_t coresPerRow = tiling_->coresPerRow;
+    const int64_t rowStride = OptimalRowStride(inner);
+    const int64_t bufferElements = static_cast<int64_t>(tiling_->genericInputBufferBytes / sizeof(T));
+    constexpr int64_t kMaxAbiRows = 65535;
+    const int64_t rowBudget = bufferElements / rowStride > 0 ? bufferElements / rowStride : 1;
+    const int64_t rowsPerBatch = Min(rowBudget, Min(kMaxAbiRows, rc));
+    const int64_t rowsPerCore = (rc + coresPerRow - 1) / coresPerRow;
+    const int64_t nCores = static_cast<int64_t>(cores);
+
+    // ---- 阶段 1：partial 归约（task = (outer, localCore)）----
+    const int64_t planeTasks = outer * coresPerRow;
+    const bool subBlock = PlaneSubBlock(inner);
+    for (int64_t task = static_cast<int64_t>(core); task < planeTasks; task += nCores) {
+        const int64_t o = task / coresPerRow;
+        const int64_t localCore = task - o * coresPerRow;
+        const int64_t begin = localCore * rowsPerCore;
+        const int64_t end = Min(begin + rowsPerCore, rc);
+        if (begin >= end) {
+            continue;
+        }
+        LocalTensor<float> sum = sumBuf_.Get<float>();
+        const int64_t corrOffset = rowStride;
+        const int64_t planeBase = o * rc * inner;
+        if (subBlock) {
+            // 子块域：flat 连续块 + pattern 列分离（pattern 与行批互斥使用 sumBuf）
+            LargeCompensatedSum accs[16];
+            ReduceSubBlockSlice(planeBase, begin, end, inner, accs);
+            for (int64_t i = 0; i < inner; ++i) {
+                sum.SetValue(i, accs[i].sum);
+                sum.SetValue(corrOffset + i, accs[i].correction);
+            }
+            StorePlanePartials(o, localCore, sum, corrOffset, inner, coresPerRow);
+            continue;
+        }
+        ZeroSumTileAt(sum, 0, inner);
+        ZeroSumTileAt(sum, corrOffset, inner);
+        PipeBarrier<PIPE_V>();
+        uint16_t slot = 0;
+        for (int64_t rOff = begin; rOff < end; rOff += rowsPerBatch) {
+            const int64_t rows = Min(rowsPerBatch, end - rOff);
+            CopyInRowsPadded(planeBase + rOff * inner, rows, inner, rowStride);
+            LocalTensor<T> input = inQueue_.DeQue<T>();
+            AccumulateContiguousRows(input, sum, 1, rowStride, corrOffset, rows, inner, rowStride, slot);
+            PipeBarrier<PIPE_V>();
+            inQueue_.FreeTensor(input);
+        }
+        // partial 前的 VEC store 需 V→S 可见
+        SetFlag<HardEvent::V_S>(eventVToS_);
+        WaitFlag<HardEvent::V_S>(eventVToS_);
+        StorePlanePartials(o, localCore, sum, corrOffset, inner, coresPerRow);
+    }
+    SyncAll();
+
+    // ---- 阶段 2：合并均值（按 outer 轮转）----
+    for (int64_t o = static_cast<int64_t>(core); o < outer; o += nCores) {
+        MergePlaneMeans(o, inner, coresPerRow, rc);
+    }
+    SyncAll();
+
+    // ---- 阶段 3：输出（task = (outer, rowChunk)，均值按 outer 缓存）----
+    const int64_t outChunkElems = subBlock ? bufferElements : rowsPerBatch;
+    const int64_t outTotal = subBlock ? rc * inner : rc;
+    const int64_t chunksPerPlane = (outTotal + outChunkElems - 1) / outChunkElems;
+    LocalTensor<float> meanTensor;
+    int64_t cachedO = -1;
+    const int64_t outTasks = outer * chunksPerPlane;
+    for (int64_t task = static_cast<int64_t>(core); task < outTasks; task += nCores) {
+        const int64_t o = task / chunksPerPlane;
+        const int64_t chunk = task - o * chunksPerPlane;
+        if (o != cachedO) {
+            if (cachedO >= 0) {
+                inQueue_.FreeTensor(meanTensor);
+            }
+            meanTensor = inQueue_.AllocTensor<float>();
+            DataCopy(meanTensor,
+                     workspaceGm_[static_cast<uint64_t>(
+                         PlaneMeanFloatOffset(o, rowStride, tiling_->contiguousOuterCount, inner, coresPerRow))],
+                     static_cast<uint32_t>(PlaneAlignedFloats(2 * rowStride)));
+            inQueue_.EnQue(meanTensor);
+            meanTensor = inQueue_.DeQue<float>();
+            cachedO = o;
+            if (subBlock) {
+                // 标量读 meanTensor 前补 MTE2→S 同步（队列只保证 VEC 可见）
+                SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+                WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+                LocalTensor<float> sum = sumBuf_.Get<float>();
+                BuildSubBlockMeanVec(sum, meanTensor, inner, rowStride);
+            }
+        }
+        const int64_t chunkBegin = chunk * outChunkElems;
+        const int64_t planeBase = o * rc * inner;
+        if (subBlock) {
+            const int64_t valid = Min(outChunkElems, rc * inner - chunkBegin);
+            CopyInContiguous(planeBase + chunkBegin, valid);
+            LocalTensor<T> input = inQueue_.DeQue<T>();
+            LocalTensor<T> output = outQueue_.AllocTensor<T>();
+            LocalTensor<float> sum = sumBuf_.Get<float>();
+            CentralizeSubBlockChunk(input, output, sum, valid);
+            PipeBarrier<PIPE_V>();
+            outQueue_.EnQue(output);
+            inQueue_.FreeTensor(input);
+            CopyOutContiguous(planeBase + chunkBegin, valid);
+            continue;
+        }
+        const int64_t rows = Min(rowsPerBatch, rc - chunkBegin);
+        CopyInRowsPadded(planeBase + chunkBegin * inner, rows, inner, rowStride);
+        LocalTensor<T> input = inQueue_.DeQue<T>();
+        LocalTensor<T> output = outQueue_.AllocTensor<T>();
+        CentralizeContiguousRows(input, output, meanTensor, 0, rowStride, rows, inner, rowStride);
+        PipeBarrier<PIPE_V>();
+        outQueue_.EnQue(output);
+        inQueue_.FreeTensor(input);
+        CopyOutRowsPadded(planeBase + chunkBegin * inner, rows, inner, rowStride);
+    }
+    if (cachedO >= 0) {
+        inQueue_.FreeTensor(meanTensor);
+    }
 }
 
 #endif

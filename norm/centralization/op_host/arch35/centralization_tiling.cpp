@@ -313,8 +313,11 @@ static ge::graphStatus ConfigureBufferBytes(gert::TilingContext* context, Centra
         tiling->irregularVectorTileElements = tile;
         tiling->irregularVectorTileCount = CeilDiv(tiling->irregularVectorInnerCount, tile);
         inputElements = tile;
-        sumElements = kGenericContiguousTileElements;
-        sumFactor = 1;
+        const bool irregularVector = tiling->irregularVectorizable == 1;
+        sumElements = irregularVector ?
+                          kGenericContiguousTileElements * std::max<int64_t>(1, tiling->irregularKeepTileElements) :
+                          1;
+        sumFactor = irregularVector ? 2 : 1; // Neumaier: sum + correction
     } else {
         // large（7020）与 generic scalar：ProcessBlock 固定按 32B block 搬运
         inputElements = std::max<int64_t>(
@@ -373,7 +376,7 @@ static int64_t CalcCoresPerRow(int64_t groupCount, int64_t coreNum, int64_t chun
     if (groupCount <= 0) {
         return 1;
     }
-    int64_t coresPerRow = coreNum / groupCount;
+    int64_t coresPerRow = (coreNum + groupCount - 1) / groupCount;
     if (coresPerRow < 1) {
         coresPerRow = 1;
     }
@@ -466,16 +469,6 @@ static ge::graphStatus ValidateInputs(gert::TilingContext* context, int64_t& ran
     return GRAPH_SUCCESS;
 }
 
-static bool IsContinuousAxes(const std::vector<int64_t>& axes)
-{
-    for (size_t i = 1; i < axes.size(); ++i) {
-        if (axes[i] != axes[i - 1] + 1) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static int64_t CalcReduceOffset(const CentralizationTilingData* tiling, int64_t reduced, int64_t rank)
 {
     int64_t offset = 0;
@@ -515,15 +508,20 @@ static ge::graphStatus CalcIrregularKeepOuterCount(gert::TilingContext* context,
 static void ConfigureIrregularOffsetTable(CentralizationTilingData* tiling)
 {
     const bool reduceSuffixMode = tiling->irregularVectorInnerCount <= 1 && tiling->irregularReduceSuffixElements > 1;
-    const int64_t segmentCount = reduceSuffixMode ? tiling->irregularReduceOuterCount : tiling->reduceCount;
+    // 向量模式（inner > 1）：表收窄为外层 reduce 坐标偏移——归一化布局末条目 R_last 的
+    // stride == innerCount，固定外层坐标后 R_last×inner GM 连续，kernel 按行批处理，
+    // 表只需覆盖外层坐标（覆盖面从 reduceCount 提升为 reduceCount/R_last）。
+    const int64_t lastDim = tiling->reduceDims[tiling->reduceRank - 1];
+    const int64_t segmentCount = reduceSuffixMode ? tiling->irregularReduceOuterCount : tiling->reduceCount / lastDim;
     tiling->reduceSegmentCount = segmentCount;
     tiling->useReduceOffsetTable = segmentCount <= kMaxReduceSegmentOffsets ? 1 : 0;
     if (tiling->useReduceOffsetTable == 0) {
         return;
     }
     for (int64_t i = 0; i < segmentCount; ++i) {
+        // 外层坐标 i（c_last=0 的 reduce 扁平索引 = i*lastDim）的元素偏移
         tiling->reduceSegmentOffsets[i] = reduceSuffixMode ? CalcReduceOuterOffset(tiling, i) :
-                                                             CalcReduceOffset(tiling, i, tiling->reduceRank);
+                                                             CalcReduceOffset(tiling, i * lastDim, tiling->reduceRank);
     }
 }
 
@@ -604,98 +602,149 @@ static ge::graphStatus ConfigureIrregularKeepTile(gert::TilingContext* context, 
     return GRAPH_SUCCESS;
 }
 
-static ge::graphStatus BuildTilingData(gert::TilingContext* context, const gert::Shape& shape, int64_t rank,
-                                       const std::vector<int64_t>& axes, CentralizationTilingData* tiling,
-                                       int64_t& totalCount)
+struct LayoutEntry {
+    int64_t dim = 0;
+    int64_t stride = 0; // 元素为单位（ND 连续模型）
+    bool reduce = false;
+};
+
+// 归一化布局（只用于规划计算与内核索引；输出 shape 仍由原始 shape 决定）：
+//   1) 按归一后的 axes 给每个维度标记 keep / reduce；
+//   2) 长度为 1 的维度坐标恒为 0、不改变偏移空间，直接吸收；
+//   3) ND 连续模型下相邻同类维度物理连续，合并为一个维度；被吸收的 1 维
+//      不产生位移，其两侧同类维度同样视为相邻连续。
+// 效果：[K,R,R,K] -> [K,R,K]；[K,R,K1] -> [K,R]（尾部 1 不再把用例挤进
+// scalar fallback）；[K,R1,K] -> [K]（单元素归约按 x - x 计算）。
+// 同一种物理访问模式（段序列）复用同一条路径。
+static ge::graphStatus BuildLayoutEntries(gert::TilingContext* context, const gert::Shape& shape, int64_t rank,
+                                          const std::vector<int64_t>& axes, std::vector<LayoutEntry>& entries)
 {
     std::array<bool, kMaxRank> isReduce{};
     for (auto axis : axes) {
         isReduce[static_cast<size_t>(axis)] = true;
     }
+    int64_t strides[kMaxRank] = {};
+    int64_t stride = 1;
+    for (int64_t i = rank - 1; i >= 0; --i) {
+        strides[i] = stride;
+        if (CheckedProductAppend(context, "original stride", shape.GetDim(i), stride) != GRAPH_SUCCESS) {
+            return GRAPH_FAILED;
+        }
+    }
+    for (int64_t i = 0; i < rank; ++i) {
+        const int64_t dim = shape.GetDim(i);
+        if (dim == 1) {
+            continue; // 长度 1：坐标恒 0，吸收进物理访问模式
+        }
+        if (!entries.empty() && entries.back().reduce == isReduce[static_cast<size_t>(i)]) {
+            int64_t merged = 0;
+            if (CheckedMul(context, "merged layout dim", entries.back().dim, dim, kMaxShapeElements, merged) !=
+                GRAPH_SUCCESS) {
+                return GRAPH_FAILED;
+            }
+            entries.back().dim = merged;
+            entries.back().stride = strides[i];
+        } else {
+            entries.push_back(LayoutEntry{dim, strides[i], isReduce[static_cast<size_t>(i)]});
+        }
+    }
+    return GRAPH_SUCCESS;
+}
+
+static ge::graphStatus BuildTilingData(gert::TilingContext* context, const gert::Shape& shape, int64_t rank,
+                                       const std::vector<int64_t>& axes, CentralizationTilingData* tiling,
+                                       int64_t& totalCount, bool& trailing, bool& continuousAxes)
+{
     *tiling = CentralizationTilingData{};
-    tiling->reduceRank = static_cast<int64_t>(axes.size());
     tiling->groupCount = 1;
     tiling->reduceCount = 1;
     totalCount = 1;
 
     bool isEmpty = false;
     for (int64_t i = 0; i < rank; ++i) {
-        tiling->dims[i] = shape.GetDim(i);
-        if (ValidateRuntimeDim(context, tiling->dims[i]) != GRAPH_SUCCESS) {
+        const int64_t dim = shape.GetDim(i);
+        if (ValidateRuntimeDim(context, dim) != GRAPH_SUCCESS) {
             return GRAPH_FAILED;
         }
-        isEmpty = isEmpty || tiling->dims[i] == 0;
+        isEmpty = isEmpty || dim == 0;
     }
     if (isEmpty) {
         totalCount = 0;
         tiling->totalCount = 0;
+        trailing = true; // 空张量走 Empty key，两个模式布尔不参与路径选择
+        continuousAxes = true;
         return GRAPH_SUCCESS;
     }
 
-    int64_t originalStrides[kMaxRank] = {};
-    int64_t stride = 1;
-    for (int64_t i = rank - 1; i >= 0; --i) {
-        originalStrides[i] = stride;
-        if (CheckedProductAppend(context, "original stride", tiling->dims[i], stride) != GRAPH_SUCCESS) {
-            return GRAPH_FAILED;
-        }
+    std::vector<LayoutEntry> entries;
+    if (BuildLayoutEntries(context, shape, rank, axes, entries) != GRAPH_SUCCESS) {
+        return GRAPH_FAILED;
     }
+    const int64_t normRank = static_cast<int64_t>(entries.size());
     int64_t keepIndex = 0;
     int64_t reduceIndex = 0;
-    for (int64_t i = 0; i < rank; ++i) {
-        if (CheckedProductAppend(context, "total element count", tiling->dims[i], totalCount) != GRAPH_SUCCESS) {
+    int64_t lastReducePos = -1;
+    for (int64_t i = 0; i < normRank; ++i) {
+        const LayoutEntry& entry = entries[static_cast<size_t>(i)];
+        if (CheckedProductAppend(context, "total element count", entry.dim, totalCount) != GRAPH_SUCCESS) {
             return GRAPH_FAILED;
         }
-        if (isReduce[static_cast<size_t>(i)]) {
+        tiling->dims[i] = entry.dim;
+        if (entry.reduce) {
+            // 归一化保证同类相邻已合并，每个 reduce 条目自成一个段
             tiling->reduceMask[i] = 1;
-            tiling->reduceDims[reduceIndex] = tiling->dims[i];
-            tiling->reduceStrides[reduceIndex++] = originalStrides[i];
+            tiling->reduceDims[reduceIndex] = entry.dim;
+            tiling->reduceStrides[reduceIndex++] = entry.stride;
+            lastReducePos = i;
         } else {
-            tiling->keepDims[keepIndex] = tiling->dims[i];
-            tiling->keepStrides[keepIndex++] = originalStrides[i];
-            if (CheckedProductAppend(context, "keep element count", tiling->dims[i], tiling->groupCount) !=
-                GRAPH_SUCCESS) {
+            tiling->keepDims[keepIndex] = entry.dim;
+            tiling->keepStrides[keepIndex++] = entry.stride;
+            if (CheckedProductAppend(context, "keep element count", entry.dim, tiling->groupCount) != GRAPH_SUCCESS) {
                 return GRAPH_FAILED;
             }
         }
     }
     tiling->totalCount = totalCount;
     tiling->keepRank = keepIndex;
-    for (size_t i = 0; i < axes.size(); ++i) {
+    tiling->reduceRank = reduceIndex;
+    for (int64_t i = 0; i < reduceIndex; ++i) {
         if (CheckedProductAppend(context, "reduce element count", tiling->reduceDims[i], tiling->reduceCount) !=
             GRAPH_SUCCESS) {
             return GRAPH_FAILED;
         }
     }
-    // 空 axes：reduceRank=0、reduceCount=1，路径选择会走 Fast，按单元素归约得到 y = x - x = 0。
-    if (!axes.empty() && IsContinuousAxes(axes)) {
-        const int64_t reduceStart = axes.front();
-        const int64_t reduceEnd = axes.back();
+    // 空 axes 或全部 reduce 维为长度 1：reduceRank=0、reduceCount=1，
+    // 路径选择走 Fast，按单元素归约计算 y = x - x。
+    // 归一化后的模式判定（替代原始 axes 视角的 IsTrailingAxes / IsContinuousAxes）：
+    //   至多一个 reduce 段 = 连续（contiguous 家族可用）；唯一 reduce 段位于末尾 = 尾轴。
+    continuousAxes = reduceIndex <= 1;
+    trailing = reduceIndex == 0 || (reduceIndex == 1 && lastReducePos == normRank - 1);
+
+    if (reduceIndex == 1) {
         tiling->contiguousOuterCount = 1;
-        for (int64_t i = 0; i < reduceStart; ++i) {
-            if (CheckedProductAppend(context, "contiguous outer count", tiling->dims[i],
+        for (int64_t i = 0; i < lastReducePos; ++i) {
+            if (CheckedProductAppend(context, "contiguous outer count", entries[static_cast<size_t>(i)].dim,
                                      tiling->contiguousOuterCount) != GRAPH_SUCCESS) {
                 return GRAPH_FAILED;
             }
         }
         tiling->contiguousInnerCount = 1;
-        for (int64_t i = reduceEnd + 1; i < rank; ++i) {
-            if (CheckedProductAppend(context, "contiguous inner count", tiling->dims[i],
+        for (int64_t i = lastReducePos + 1; i < normRank; ++i) {
+            if (CheckedProductAppend(context, "contiguous inner count", entries[static_cast<size_t>(i)].dim,
                                      tiling->contiguousInnerCount) != GRAPH_SUCCESS) {
                 return GRAPH_FAILED;
             }
         }
     }
-    if (!IsContinuousAxes(axes)) {
-        const int64_t lastReduceAxis = axes.back();
+    if (reduceIndex >= 2) {
+        // 不规则布局描述（在归一化条目上重建，字段语义与内核消费契约一致）
+        const int64_t suffixRank = normRank - 1 - lastReducePos;
         tiling->irregularVectorInnerCount = 1;
-        int64_t suffixRank = 0;
-        for (int64_t i = lastReduceAxis + 1; i < rank; ++i) {
-            if (CheckedProductAppend(context, "irregular vector inner count", tiling->dims[i],
+        for (int64_t i = lastReducePos + 1; i < normRank; ++i) {
+            if (CheckedProductAppend(context, "irregular vector inner count", entries[static_cast<size_t>(i)].dim,
                                      tiling->irregularVectorInnerCount) != GRAPH_SUCCESS) {
                 return GRAPH_FAILED;
             }
-            ++suffixRank;
         }
         tiling->irregularKeepOuterRank = keepIndex - suffixRank;
         int64_t keepOuterStride = 1;
@@ -707,8 +756,8 @@ static ge::graphStatus BuildTilingData(gert::TilingContext* context, const gert:
             }
         }
         int64_t reduceSuffixRank = 0;
-        for (int64_t axis = rank - 1; axis >= 0 && isReduce[static_cast<size_t>(axis)]; --axis) {
-            if (CheckedProductAppend(context, "irregular reduce suffix elements", tiling->dims[axis],
+        for (int64_t i = normRank - 1; i >= 0 && entries[static_cast<size_t>(i)].reduce; --i) {
+            if (CheckedProductAppend(context, "irregular reduce suffix elements", entries[static_cast<size_t>(i)].dim,
                                      tiling->irregularReduceSuffixElements) != GRAPH_SUCCESS) {
                 return GRAPH_FAILED;
             }
@@ -745,20 +794,10 @@ static ge::graphStatus BuildTilingData(gert::TilingContext* context, const gert:
             return GRAPH_FAILED;
         }
     }
-    if (!IsContinuousAxes(axes)) {
+    if (reduceIndex >= 2) {
         ConfigureIrregularOffsetTable(tiling);
     }
     return GRAPH_SUCCESS;
-}
-
-static bool IsTrailingAxes(const std::vector<int64_t>& axes, int64_t rank)
-{
-    for (size_t i = 0; i < axes.size(); ++i) {
-        if (axes[i] != rank - static_cast<int64_t>(axes.size()) + static_cast<int64_t>(i)) {
-            return false;
-        }
-    }
-    return true;
 }
 
 static ge::graphStatus CalcLargeWorkspaceBytes(gert::TilingContext* context, int64_t groupCount,
@@ -785,6 +824,20 @@ static ge::graphStatus ConfigureLargePath(gert::TilingContext* context, Centrali
                                           uint32_t& key, uint32_t& blockDim)
 {
     key = trailing ? kLargeTrailingKey : kLargeKey;
+    // 7030 行并行偏好（仅 trailing：7020 generic large 的 row-parallel 是标量实现，
+    // 且其多核路径已有任务循环；此处不得触碰 largeRowParallel——它还门控 lcsi 资格，
+    // ConfigurePath 层改它会抢走 plane 的 shape）。
+    // 判定：多核分片轮数 ceil(taskCount/coreNum) >= coresPerRow 时，分片不再缩短分
+    // 带来并行收益（每核串行时长回到整行），改行并行省 workspace 往返与两次 SyncAll。
+    // （如 72 核 (64,200000)：C=2、128 任务 2 轮=2×行/2=整行 -> 行并行；
+    //   (32,200000)：C=3、96 任务 2 轮 < 3 -> 保留多核，2/3 行时长更优。）
+    if (trailing && largeCoresPerRow > 1) {
+        const int64_t taskCount = tiling->groupCount * largeCoresPerRow;
+        const int64_t rounds = CeilDiv(taskCount, coreNum);
+        if (rounds >= largeCoresPerRow) {
+            largeCoresPerRow = 1;
+        }
+    }
     const int64_t coresPerRow = largeCoresPerRow;
     tiling->coresPerRow = coresPerRow;
     tiling->alignedCoresPerRow = AlignToVectorElements(coresPerRow);
@@ -812,6 +865,62 @@ static ge::graphStatus ConfigureLargePath(gert::TilingContext* context, Centrali
         // SyncAll requires every launched core to be co-resident.
         context->SetScheduleMode(1);
     }
+    tiling->rowsPerLoop = 1;
+    tiling->rowsPerBatch = 1;
+    return GRAPH_SUCCESS;
+}
+
+// Plane 模式可行性：行缓冲能放下一个对齐行。活节点数与 generic 一致
+// （in/out 各 depth=2 + sum），按 5 均分 UB 预算。
+static bool LargePlaneRowFits(uint64_t ubSize, size_t elementBytes, int64_t inner)
+{
+    const size_t perBuffer = AlignDownBytes(UbUsableBytes(ubSize) / 5);
+    return perBuffer >= static_cast<size_t>(AlignToVectorElements(inner)) * elementBytes;
+}
+
+// Plane 模式（key 7020 的向量子路径，largePlane=1）：布局 [K_outer, R, K_inner]，
+// 固定 outer 后 R×inner 平面 GM 连续，按行批归约/输出替代逐元素 gather。
+// task = (outer, localCore)：localCore 按 reduce 行分片（每核 >=1 行批切片）。
+// workspace（float 偏移）：partial [(o*coresPerRow+c)*2*inner]{sum,corr}；
+// mean [o*2*inner]{hi[0..inner),lo[0..inner)}（按 outer 分块，输出单次加载）。
+static ge::graphStatus ApplyLargePlanePath(gert::TilingContext* context, CentralizationTilingData* tiling,
+                                           int64_t coreNum, size_t* workspace, uint32_t& key, uint32_t& blockDim)
+{
+    constexpr int64_t kPlaneMinRowsPerCore = 1024;
+    key = kLargeKey;
+    tiling->largePath = 1;
+    tiling->largePlane = 1;
+    tiling->rowParallel = 0;
+    const int64_t outer = tiling->contiguousOuterCount;
+    const int64_t inner = tiling->contiguousInnerCount;
+    int64_t coresPerRow = std::min(coreNum, std::max<int64_t>(1, CeilDiv(tiling->reduceCount, kPlaneMinRowsPerCore)));
+    tiling->coresPerRow = coresPerRow;
+    tiling->alignedCoresPerRow = AlignToVectorElements(coresPerRow);
+    int64_t taskCount = 0;
+    if (CheckedMul(context, "large plane task count", outer, coresPerRow, kMaxShapeElements, taskCount) !=
+        GRAPH_SUCCESS) {
+        return GRAPH_FAILED;
+    }
+    blockDim = static_cast<uint32_t>(std::max<int64_t>(1, std::min<int64_t>(coreNum, taskCount)));
+    // workspace（float）：partial 块 = {sum,corr} 各 inner 个 + 32B 补齐；
+    // mean 块 = [hi @0, lo @AlignToVector(inner)]（lo 起点 32B 对齐，VEC 读取要求）
+    const int64_t partialBlockFloats = CeilDiv(inner * 2, static_cast<int64_t>(32 / sizeof(float))) *
+                                       static_cast<int64_t>(32 / sizeof(float));
+    int64_t groupCount = 0;
+    int64_t partialFloats = 0;
+    int64_t meanFloats = 0;
+    if (CheckedMul(context, "large plane group count", outer, inner, kMaxShapeElements, groupCount) != GRAPH_SUCCESS ||
+        CheckedMul(context, "large plane partial floats", outer * coresPerRow, partialBlockFloats, kMaxShapeElements,
+                   partialFloats) != GRAPH_SUCCESS ||
+        CheckedMul(context, "large plane mean floats", outer * 2, AlignToVectorElements(inner), kMaxShapeElements,
+                   meanFloats) != GRAPH_SUCCESS) {
+        return GRAPH_FAILED;
+    }
+    const int64_t totalFloats = partialFloats + meanFloats;
+    const int64_t userBytes = totalFloats * static_cast<int64_t>(sizeof(float));
+    workspace[0] = kSystemWorkspaceBytes + static_cast<size_t>(CeilDiv(userBytes, static_cast<int64_t>(32)) * 32);
+    // SyncAll requires every launched core to be co-resident.
+    context->SetScheduleMode(1);
     tiling->rowsPerLoop = 1;
     tiling->rowsPerBatch = 1;
     return GRAPH_SUCCESS;
@@ -876,14 +985,15 @@ static void ApplyIrregularVectorPath(CentralizationTilingData* tiling, int64_t c
                                      uint32_t& key, uint32_t& blockDim)
 {
     key = kGenericKey;
-    blockDim = static_cast<uint32_t>(
-        std::max<int64_t>(1, std::min<int64_t>(coreNum, tiling->irregularVectorTaskCount)));
-    workspace[0] = 0;
     tiling->largePath = 0;
     tiling->irregularVectorizable = (tiling->irregularVectorInnerCount > 1) ? 1 : 2;
     tiling->smallContiguous = 0;
     tiling->rowsPerLoop = 1;
     tiling->rowsPerBatch = 1;
+    tiling->irregularReduceChunks = 1;
+    const int64_t taskCount = tiling->irregularVectorTaskCount;
+    blockDim = static_cast<uint32_t>(std::max<int64_t>(1, std::min<int64_t>(coreNum, taskCount)));
+    workspace[0] = 0;
 }
 
 static bool SmallContiguousFitsUb(const CentralizationTilingData* tiling, int64_t blockElements, size_t elementBytes,
@@ -931,12 +1041,16 @@ static bool ContiguousUbFits(const CentralizationTilingData* tiling, size_t elem
 
 static bool IrregularUbFits(const CentralizationTilingData* tiling, size_t elementBytes, uint64_t ubSize)
 {
-    // depth=2：in/out 各 2 份 + sum 1 份；不规则 vector 的 sum 固定按 256 元素分配
+    // depth=2：in/out 各 2 份 + sum 1 份；不规则 vector 的 sum 按 keepTile 的 sum/correction 双区分配
     const size_t perBuffer = AlignDownBytes(UbUsableBytes(ubSize) / 5);
     const int64_t tile = std::max<int64_t>(
         1, std::min<int64_t>(tiling->irregularVectorTileElements, kGenericContiguousTileElements));
+    if (tiling->irregularVectorInnerCount <= 1) {
+        return perBuffer >= static_cast<size_t>(tile) * elementBytes;
+    }
+    const int64_t keepTile = std::max<int64_t>(1, tiling->irregularKeepTileElements);
     return perBuffer >= static_cast<size_t>(tile) * elementBytes &&
-           perBuffer >= static_cast<size_t>(kGenericContiguousTileElements) * sizeof(float);
+           perBuffer >= static_cast<size_t>(keepTile) * kGenericContiguousTileElements * sizeof(float) * 2;
 }
 
 static bool FastUbFits(const CentralizationTilingData* tiling, size_t elementBytes, uint64_t ubSize,
@@ -982,13 +1096,37 @@ static void ApplyFastPath(CentralizationTilingData* tiling, int64_t coreNum, siz
     tiling->rowsPerBatch = rows;
 }
 
-static void ApplyGenericScalarPath(CentralizationTilingData* tiling, uint32_t& blockDim)
+static bool CanVectorGroups(const CentralizationTilingData* tiling)
 {
-    // Generic scalar traversal must not interleave output elements across cores.
-    blockDim = 1;
+    return tiling->keepRank > 0 && tiling->keepStrides[tiling->keepRank - 1] == 1 &&
+           tiling->keepDims[tiling->keepRank - 1] >= 8;
+}
+
+static void ApplyGenericScalarPath(CentralizationTilingData* tiling, uint32_t& blockDim, int64_t coreNum,
+                                   ge::DataType dtype, size_t* workspace)
+{
+    // Scalar traversal still writes disjoint 32B output blocks; parallelize by block instead of serializing.
+    const int64_t elementBytes = dtype == DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
+    const int64_t blockElements = static_cast<int64_t>(32 / elementBytes);
+    const int64_t blockCount = CeilDiv(tiling->totalCount, blockElements);
+    const bool canVectorGroups = CanVectorGroups(tiling);
+    // Large keep fan-out with tiny reduce: vectorize across the contiguous last keep dimension.
+    const int64_t scalarCores = canVectorGroups ? coreNum : (tiling->groupCount > 1000000 ? 1 : coreNum);
+    blockDim = static_cast<uint32_t>(std::max<int64_t>(1, std::min<int64_t>(scalarCores, blockCount)));
     tiling->rowsPerLoop = 1;
     tiling->rowsPerBatch = 1;
     tiling->smallContiguous = 0;
+    tiling->irregularVectorizable = 0;
+    tiling->groupVector = canVectorGroups ? 1 : 0;
+    constexpr int64_t kMaxMeanCacheGroups = 128LL * 1024LL * 1024LL;
+    if (!canVectorGroups && tiling->groupCount > 256 && tiling->reduceCount >= 4 &&
+        tiling->groupCount <= kMaxMeanCacheGroups) {
+        const int64_t cacheBytes = tiling->groupCount * static_cast<int64_t>(2 * sizeof(float));
+        if (cacheBytes <= std::numeric_limits<int64_t>::max() - static_cast<int64_t>(kSystemWorkspaceBytes)) {
+            tiling->meanCache = 1;
+            workspace[0] = kSystemWorkspaceBytes + static_cast<size_t>(cacheBytes);
+        }
+    }
 }
 
 static ge::graphStatus ConfigurePath(gert::TilingContext* context, CentralizationTilingData* tiling, ge::DataType dtype,
@@ -1018,6 +1156,24 @@ static ge::graphStatus ConfigurePath(gert::TilingContext* context, Centralizatio
     tiling->contiguousGeneric = 0;
     tiling->contiguousInnerTileElements = kGenericContiguousTileElements;
     tiling->contiguousInnerTileCount = CeilDiv(tiling->contiguousInnerCount, kGenericContiguousTileElements);
+    // 欠并行时收窄 inner tile 提高任务数：行批化后 GM 流量与 tile 无关（每任务只读
+    // 自己的列带），outer 少 × inner 大的形态由此从少数核扩展到满核（如 (2,20000,1024)
+    // 原 8 任务）。tile 下限 = 32B 行宽；已满并行（任务数 >= coreNum）则保持 256。
+    {
+        const int64_t minTileElements = 32 / static_cast<int64_t>(DataTypeBytes(dtype));
+        int64_t baseContiguousTasks = 0;
+        if (tiling->contiguousInnerCount > minTileElements &&
+            CheckedMul(context, "contiguous base task count", tiling->contiguousOuterCount,
+                       tiling->contiguousInnerTileCount, kMaxShapeElements, baseContiguousTasks) == GRAPH_SUCCESS &&
+            baseContiguousTasks < coreNum) {
+            const int64_t tilesNeeded = CeilDiv(coreNum, tiling->contiguousOuterCount);
+            const int64_t desired = CeilDiv(tiling->contiguousInnerCount, tilesNeeded);
+            const int64_t tile = std::min<int64_t>(kGenericContiguousTileElements,
+                                                   std::max<int64_t>(minTileElements, desired));
+            tiling->contiguousInnerTileElements = tile;
+            tiling->contiguousInnerTileCount = CeilDiv(tiling->contiguousInnerCount, tile);
+        }
+    }
     tiling->largeContiguousSmallInner = 0;
     tiling->largeContiguousReduceTile = 0;
     tiling->irregularVectorizable = 0;
@@ -1064,7 +1220,8 @@ static ge::graphStatus ConfigurePath(gert::TilingContext* context, Centralizatio
                                       (tiling->largePath == 0 ||
                                        contiguousTaskCount >= std::max<int64_t>(1, coreNum / 2) || largeRowParallel) &&
                                       (contiguousFits || lcsiFits);
-    const bool useIrregularVector = !trailing && tiling->contiguousGeneric == 0 && tiling->largePath == 0 &&
+    // 满足向量布局和 UB 预算的多段归约可按 irregular 任务处理。
+    const bool useIrregularVector = !trailing && tiling->contiguousGeneric == 0 &&
                                     ((tiling->irregularVectorInnerCount > 1 && tiling->irregularVectorTaskCount > 0) ||
                                      tiling->irregularReduceSuffixElements > 1) &&
                                     irregularFits;
@@ -1078,15 +1235,24 @@ static ge::graphStatus ConfigurePath(gert::TilingContext* context, Centralizatio
     } else if (tiling->largePath) {
         // LargeTrailing 的 tile 固定 1024 元素；放不下时回退到 Generic large（7020）。
         const bool useLargeTrailing = trailing && LargeTrailingUbFits(elementBytes, ubSize);
-        if (ConfigureLargePath(context, tiling, coreNum, useLargeTrailing, largeCoresPerRow, workspace, key,
-                               blockDim) != GRAPH_SUCCESS) {
+        // Plane：单 reduce 段且 inner ∈ (1,256]，平面连续可行批，优先于标量 gather。
+        const bool useLargePlane = !trailing && continuousAxes && tiling->contiguousInnerCount > 1 &&
+                                   tiling->contiguousInnerCount <= kGenericContiguousTileElements &&
+                                   LargePlaneRowFits(ubSize, elementBytes, tiling->contiguousInnerCount);
+        if (useLargePlane) {
+            if (ApplyLargePlanePath(context, tiling, coreNum, workspace, key, blockDim) != GRAPH_SUCCESS) {
+                return GRAPH_FAILED;
+            }
+        } else if (ConfigureLargePath(context, tiling, coreNum, useLargeTrailing, largeCoresPerRow, workspace, key,
+                                      blockDim) != GRAPH_SUCCESS) {
             return GRAPH_FAILED;
         }
     } else if (trailing && tiling->reduceCount <= kFastReduceLimit) {
-        if (FastUbFits(tiling, elementBytes, ubSize, fastPerBufferBytes)) {
+        if ((dtype != DT_FLOAT || tiling->reduceCount <= kRegbaseVectorElements) &&
+            FastUbFits(tiling, elementBytes, ubSize, fastPerBufferBytes)) {
             ApplyFastPath(tiling, coreNum, workspace, key, blockDim, fastPerBufferBytes, elementBytes);
         } else {
-            // Fast 的列宽不能切分，放不下时回退到按 reduce 分块的 LargeTrailing / Generic large。
+            // FP32 宽度超过一个向量或 Fast 缓冲区放不下时，改用分块归约。
             tiling->largePath = 1;
             tiling->ubFactor = 0; // 清理 Fast 残留配置，最终路径不消费这两个字段
             tiling->alignedReduce = 0;
@@ -1097,7 +1263,18 @@ static ge::graphStatus ConfigurePath(gert::TilingContext* context, Centralizatio
             }
         }
     } else {
-        ApplyGenericScalarPath(tiling, blockDim);
+        ApplyGenericScalarPath(tiling, blockDim, coreNum, dtype, workspace);
+        if (tiling->meanCache != 0) {
+            context->SetScheduleMode(1);
+        }
+    }
+    if (key == kLargeKey && tiling->largePath != 0 && tiling->largePlane == 0 && tiling->groupCount >= coreNum &&
+        CanVectorGroups(tiling)) {
+        tiling->groupVector = 1;
+        tiling->largePath = 0;
+        tiling->meanCache = 0;
+        workspace[0] = 0;
+        blockDim = static_cast<uint32_t>(coreNum);
     }
     return FinalizePath(context, tiling, dtype, key, blockDim, ubSize);
 }
@@ -1118,8 +1295,10 @@ static ge::graphStatus CentralizationTilingFunc(gert::TilingContext* context)
     CentralizationTilingData* tiling = context->GetTilingData<CentralizationTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     int64_t totalCount = 1;
-    if (BuildTilingData(context, context->GetInputShape(0)->GetStorageShape(), rank, axes, tiling, totalCount) !=
-        GRAPH_SUCCESS) {
+    bool trailing = true;
+    bool continuousAxes = true;
+    if (BuildTilingData(context, context->GetInputShape(0)->GetStorageShape(), rank, axes, tiling, totalCount, trailing,
+                        continuousAxes) != GRAPH_SUCCESS) {
         return GRAPH_FAILED;
     }
     uint64_t ubSize = 0;
@@ -1127,8 +1306,8 @@ static ge::graphStatus CentralizationTilingFunc(gert::TilingContext* context)
     if (GetPlatform(context, ubSize, coreNum) != GRAPH_SUCCESS) {
         return GRAPH_FAILED;
     }
-    return ConfigurePath(context, tiling, dtype, coreNum, ubSize, IsTrailingAxes(axes, rank), IsContinuousAxes(axes),
-                         totalCount);
+    // Singleton reductions use the normal one-column path, including x - x for nonfinite inputs.
+    return ConfigurePath(context, tiling, dtype, coreNum, ubSize, trailing, continuousAxes, totalCount);
 }
 
 static ge::graphStatus CentralizationTilingParse(gert::TilingParseContext* context)

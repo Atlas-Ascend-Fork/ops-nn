@@ -31,7 +31,7 @@ def _centralize(x, axes):
     compute = x.double()
     normalized = _normalized_axes(axes, x.dim())
     if len(normalized) == 0:
-        # 空axes表示no-reduce：mean(x, [])==x，结果恒为0。
+        # 空 axes 表示不归约：有限输入得到 0，NaN 和无穷输入得到 NaN。
         return (compute - compute).to(x.dtype)
     result = compute - torch.mean(compute, dim=normalized, keepdim=True)
     return result.to(x.dtype)

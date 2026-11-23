@@ -23,11 +23,14 @@ struct CentralizationTilingData {
     int64_t ubFactor = 0;
     int64_t bufNum = 2;
     int64_t largePath = 0;
+    int64_t largePlane = 0;
     int64_t rowParallel = 0;
     int64_t coresPerRow = 1;
     int64_t alignedCoresPerRow = 1;
     int64_t alignedReduce = 0;
     int64_t contiguousGeneric = 0;
+    int64_t meanCache = 0;
+    int64_t groupVector = 0;
     int64_t contiguousOuterCount = 1;
     int64_t contiguousInnerCount = 1;
     int64_t contiguousInnerTileElements = 0;
@@ -42,6 +45,8 @@ struct CentralizationTilingData {
     int64_t largeContiguousSmallInner = 0;
     int64_t largeContiguousReduceTile = 0;
     int64_t irregularVectorizable = 0;
+    int64_t irregularReduceChunks = 1;
+    int64_t irregularPartialStride = 0;
     int64_t irregularKeepOuterRank = 0;
     int64_t irregularVectorInnerCount = 1;
     int64_t irregularVectorTileElements = 0;

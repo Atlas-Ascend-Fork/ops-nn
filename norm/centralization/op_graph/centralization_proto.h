@@ -21,18 +21,18 @@
 namespace ge {
 /**
  * @brief Computes Centralization. result = x - mean(x, axes).
-
+ *
  * @par Inputs:
  * x: An ND tensor of type float16 or float32, with rank in [1, 8].
-
+ *
  * @par Attributes:
  * axes: The dimensions to reduce, in the range [-rank(x), rank(x)). Negative dimensions are accepted.
  * Duplicate dimensions are deduplicated. When unset, the last axis is reduced (default {-1}).
- * An empty list means no reduction (output is zero).
-
+ * An empty list means no reduction (x - x, which is zero for finite inputs).
+ *
  * @par Outputs:
  * y: A tensor with the same shape and type as x.
-
+ *
  */
 #ifndef OPS_PROTO_DEF_CENTRALIZATION
 #define OPS_PROTO_DEF_CENTRALIZATION
