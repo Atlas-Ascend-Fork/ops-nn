@@ -213,9 +213,127 @@ TEST_F(MaxPoolV3UT, InferShapeNhwc)
                       .Build();
 
     EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto output_shape = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+    ASSERT_NE(output_shape, nullptr);
+    ASSERT_EQ(output_shape->GetDimNum(), 4);
+    EXPECT_EQ(output_shape->GetDim(0), 1);
+    EXPECT_EQ(output_shape->GetDim(1), 4);
+    EXPECT_EQ(output_shape->GetDim(2), 4);
+    EXPECT_EQ(output_shape->GetDim(3), 3);
+}
+
+TEST_F(MaxPoolV3UT, InferShapeNhwcWithNhwcInput)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
+    gert::StorageShape x_shape = {{1, 8, 8, 3}, {1, 8, 8, 3}};
+    std::vector<gert::StorageShape> output_shapes(1);
+    std::vector<void*> output_shapes_ref(1);
+    output_shapes_ref[0] = &output_shapes[0];
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                      .InputShapes({&x_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 2, 2, 1})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 2, 2, 1})},
+                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("VALID")},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NHWC")},
+                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    auto output_shape = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+    ASSERT_NE(output_shape, nullptr);
+    ASSERT_EQ(output_shape->GetDimNum(), 4);
+    EXPECT_EQ(output_shape->GetDim(0), 1);
+    EXPECT_EQ(output_shape->GetDim(1), 4);
+    EXPECT_EQ(output_shape->GetDim(2), 4);
+    EXPECT_EQ(output_shape->GetDim(3), 3);
 }
 
 // ======================== Failure Cases ========================
+
+TEST_F(MaxPoolV3UT, InferShapeFailInvalidDataFormat)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
+    gert::StorageShape x_shape = {{1, 3, 8, 8}, {1, 3, 8, 8}};
+    std::vector<gert::StorageShape> output_shapes(1);
+    std::vector<void*> output_shapes_ref(1);
+    output_shapes_ref[0] = &output_shapes[0];
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .InputShapes({&x_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
+                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("VALID")},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("ABCD")},
+                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3UT, InferShapeFailNchwInputWithNhwcDataFormat)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
+    gert::StorageShape x_shape = {{1, 3, 8, 8}, {1, 3, 8, 8}};
+    std::vector<gert::StorageShape> output_shapes(1);
+    std::vector<void*> output_shapes_ref(1);
+    output_shapes_ref[0] = &output_shapes[0];
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .InputShapes({&x_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
+                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("VALID")},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NHWC")},
+                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3UT, InferShapeFailNhwcInputWithNchwDataFormat)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
+    gert::StorageShape x_shape = {{1, 8, 8, 3}, {1, 8, 8, 3}};
+    std::vector<gert::StorageShape> output_shapes(1);
+    std::vector<void*> output_shapes_ref(1);
+    output_shapes_ref[0] = &output_shapes[0];
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                      .InputShapes({&x_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 2, 2, 1})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 2, 2, 1})},
+                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("VALID")},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
 
 TEST_F(MaxPoolV3UT, InferShapeFailInvalidPadding)
 {
@@ -267,6 +385,56 @@ TEST_F(MaxPoolV3UT, InferShapeFailKsizeLength)
     EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
 
+TEST_F(MaxPoolV3UT, InferShapeFailKsizeNNotOne)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
+    gert::StorageShape x_shape = {{1, 3, 8, 8}, {1, 3, 8, 8}};
+    std::vector<gert::StorageShape> output_shapes(1);
+    std::vector<void*> output_shapes_ref(1);
+    output_shapes_ref[0] = &output_shapes[0];
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .InputShapes({&x_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({2, 1, 2, 2})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
+                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("CALCULATED")},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3UT, InferShapeFailKsizeCNotOne)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
+    gert::StorageShape x_shape = {{1, 3, 8, 8}, {1, 3, 8, 8}};
+    std::vector<gert::StorageShape> output_shapes(1);
+    std::vector<void*> output_shapes_ref(1);
+    output_shapes_ref[0] = &output_shapes[0];
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .InputShapes({&x_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 2, 2, 2})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
+                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("CALCULATED")},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
 TEST_F(MaxPoolV3UT, InferShapeFailStridesLength)
 {
     auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
@@ -285,6 +453,82 @@ TEST_F(MaxPoolV3UT, InferShapeFailStridesLength)
                                   {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("CALCULATED")},
                                   {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
                                   {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3UT, InferShapeFailStridesNNotOne)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
+    gert::StorageShape x_shape = {{1, 3, 8, 8}, {1, 3, 8, 8}};
+    std::vector<gert::StorageShape> output_shapes(1);
+    std::vector<void*> output_shapes_ref(1);
+    output_shapes_ref[0] = &output_shapes[0];
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .InputShapes({&x_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({2, 1, 2, 2})},
+                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("CALCULATED")},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3UT, InferShapeFailStridesCNotOne)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
+    gert::StorageShape x_shape = {{1, 3, 8, 8}, {1, 3, 8, 8}};
+    std::vector<gert::StorageShape> output_shapes(1);
+    std::vector<void*> output_shapes_ref(1);
+    output_shapes_ref[0] = &output_shapes[0];
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .InputShapes({&x_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 2, 2, 2})},
+                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("CALCULATED")},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(MaxPoolV3UT, InferShapeFailNhwcStridesCNotOne)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
+    gert::StorageShape x_shape = {{1, 8, 8, 3}, {1, 8, 8, 3}};
+    std::vector<gert::StorageShape> output_shapes(1);
+    std::vector<void*> output_shapes_ref(1);
+    output_shapes_ref[0] = &output_shapes[0];
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                      .InputShapes({&x_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 2, 2, 1})},
+                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 2, 2, 2})},
+                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("CALCULATED")},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NHWC")},
                                   {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
                                   {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
                       .Build();
@@ -367,83 +611,6 @@ TEST_F(MaxPoolV3UT, InferShapeCalculatedWithPadDivRtn)
                       .Build();
 
     EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
-}
-
-// ======================== ksize and ceil_mode constraints ========================
-
-TEST_F(MaxPoolV3UT, InferShapeFailKsizeNcNotOne)
-{
-    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
-    gert::StorageShape x_shape = {{1, 3, 8, 8}, {1, 3, 8, 8}};
-    std::vector<gert::StorageShape> output_shapes(1);
-    std::vector<void*> output_shapes_ref(1);
-    output_shapes_ref[0] = &output_shapes[0];
-
-    auto holder = gert::InferShapeContextFaker()
-                      .NodeIoNum(1, 1)
-                      .IrInstanceNum({1})
-                      .InputShapes({&x_shape})
-                      .OutputShapes(output_shapes_ref)
-                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 2, 3, 3})},
-                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
-                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("CALCULATED")},
-                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
-                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
-                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
-                      .Build();
-
-    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
-}
-
-TEST_F(MaxPoolV3UT, InferShapeFailKsizeHwProductOver255)
-{
-    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
-    gert::StorageShape x_shape = {{1, 3, 8, 8}, {1, 3, 8, 8}};
-    std::vector<gert::StorageShape> output_shapes(1);
-    std::vector<void*> output_shapes_ref(1);
-    output_shapes_ref[0] = &output_shapes[0];
-
-    auto holder = gert::InferShapeContextFaker()
-                      .NodeIoNum(1, 1)
-                      .IrInstanceNum({1})
-                      .InputShapes({&x_shape})
-                      .OutputShapes(output_shapes_ref)
-                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 16, 16})},
-                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
-                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("CALCULATED")},
-                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
-                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
-                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
-                      .Build();
-
-    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
-}
-
-TEST_F(MaxPoolV3UT, InferShapeFailCeilModeWithSame)
-{
-    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MaxPoolV3")->infer_shape;
-    gert::StorageShape x_shape = {{1, 3, 8, 8}, {1, 3, 8, 8}};
-    std::vector<gert::StorageShape> output_shapes(1);
-    std::vector<void*> output_shapes_ref(1);
-    output_shapes_ref[0] = &output_shapes[0];
-
-    auto holder = gert::InferShapeContextFaker()
-                      .NodeIoNum(1, 1)
-                      .IrInstanceNum({1})
-                      .InputShapes({&x_shape})
-                      .OutputShapes(output_shapes_ref)
-                      .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 3, 3})},
-                                  {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})},
-                                  {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("SAME")},
-                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
-                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
-                                  {"global_pooling", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                                  {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(true)}})
-                      .Build();
-
-    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
 
 } // namespace

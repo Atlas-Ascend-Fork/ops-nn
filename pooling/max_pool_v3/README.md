@@ -60,7 +60,7 @@
       <td>输入</td>
       <td>4维输入tensor。</td>
       <td>FLOAT16、BF16、FLOAT32、DOUBLE、INT32、INT64、UINT8、INT16、INT8、UINT16、QINT8</td>
-      <td>NHWC、NCHW</td>
+      <td>ND</td>
     </tr>
     <tr>
       <td>ksize</td>
@@ -123,7 +123,7 @@
 ## 约束说明
 
 - **值域限制说明：**
-  - ksize：长度为4的列表。H和W维度的ksize必须大于0，N和C维度的ksize必须为1。H和W维度的ksize乘积应小于等于255。
+  - ksize：长度为4的列表。H和W维度的ksize必须大于0，N和C维度的ksize必须为1。
   - strides：长度为4的列表。N和C维度的stride必须为1，H和W维度的stride必须大于0。
   - padding_mode：支持"SAME"、"VALID"、"CALCULATED"三种模式。
   - pads：长度为4，按[top, bottom, left, right]指定填充量，仅在padding_mode为"CALCULATED"时生效。pads应大于等于0且小于对应的kernel size。

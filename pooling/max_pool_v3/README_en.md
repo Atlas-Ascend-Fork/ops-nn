@@ -62,7 +62,7 @@ Performs max pooling on input tensors of 3 or 4 dimensions.
       <td>Input</td>
       <td>4D input tensor.</td>
       <td>FLOAT16, BF16, FLOAT32, DOUBLE, INT32, INT64, UINT8, INT16, INT8, UINT16, QINT8</td>
-      <td>NHWC, NCHW</td>
+      <td>ND</td>
     </tr>
     <tr>
       <td>ksize</td>
@@ -125,7 +125,7 @@ Performs max pooling on input tensors of 3 or 4 dimensions.
 ## Constraints
 
 - **Value range restrictions:**
-  - ksize: a list of length 4. ksize in the H and W dimensions must be greater than 0, and ksize in the N and C dimensions must be 1. The product of ksize in the H and W dimensions should be less than or equal to 255.
+  - ksize: a list of length 4. ksize in the H and W dimensions must be greater than 0, and ksize in the N and C dimensions must be 1.
   - strides: a list of length 4. stride in the N and C dimensions must be 1, and stride in the H and W dimensions must be greater than 0.
   - padding_mode: the three modes "SAME", "VALID", and "CALCULATED" are supported.
   - pads: length 4, specifying the padding amounts by [top, bottom, left, right]. It takes effect only when padding_mode is "CALCULATED". pads should be greater than or equal to 0 and less than the corresponding kernel size.

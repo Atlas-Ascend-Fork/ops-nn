@@ -36,7 +36,6 @@ constexpr size_t PAD_BOTTOM = 1;
 constexpr size_t PAD_LEFT = 2;
 constexpr size_t PAD_RIGHT = 3;
 constexpr size_t DIM_N = 0;
-constexpr int64_t MAX_KSIZE_HW_PRODUCT = 255LL;
 
 using InferShapePaddingFunc = ge::graphStatus (*)(gert::InferShapeContext*, size_t, size_t, const gert::RuntimeAttrs*);
 
@@ -288,7 +287,20 @@ static ge::graphStatus InferShapePaddingSame(gert::InferShapeContext* context, s
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus CheckKsizeConstraints(gert::InferShapeContext* context, const gert::RuntimeAttrs* attrs)
+static ge::graphStatus GetDataFormat(const gert::RuntimeAttrs* attrs, std::string& dataFormat)
+{
+    const char* dataFormatPtr = attrs->GetAttrPointer<char>(INDEX_DATA_FORMAT);
+    dataFormat = dataFormatPtr == nullptr ? "NCHW" : dataFormatPtr;
+    if (dataFormat != "NCHW" && dataFormat != "NHWC") {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("MaxPoolV3", "data_format", dataFormat.c_str(),
+                                              "must be in (NCHW, NHWC)");
+        return ge::GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+static ge::graphStatus CheckKsizeConstraints(gert::InferShapeContext* context, const gert::RuntimeAttrs* attrs,
+                                             const std::string& data_format)
 {
     const char* opName_ = "MaxPoolV3";
     auto ksize = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_KSIZE);
@@ -302,8 +314,6 @@ static ge::graphStatus CheckKsizeConstraints(gert::InferShapeContext* context, c
         return GRAPH_FAILED;
     }
     auto ksize_data = static_cast<const int64_t*>(ksize->GetData());
-    const char* data_format_ptr = attrs->GetAttrPointer<char>(INDEX_DATA_FORMAT);
-    std::string data_format = data_format_ptr == nullptr ? "NCHW" : data_format_ptr;
     size_t cDim = data_format == "NHWC" ? 3 : 1;
     size_t hDim = data_format == "NHWC" ? 1 : 2;
     size_t wDim = data_format == "NHWC" ? 2 : 3;
@@ -320,12 +330,6 @@ static ge::graphStatus CheckKsizeConstraints(gert::InferShapeContext* context, c
             "ksize of H and W dimensions should be greater than 0");
         return GRAPH_FAILED;
     }
-    if (ksize_data[hDim] * ksize_data[wDim] > MAX_KSIZE_HW_PRODUCT) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            opName_, "ksize[h,w]", (std::to_string(ksize_data[hDim]) + ", " + std::to_string(ksize_data[wDim])).c_str(),
-            "the product of ksize in H and W dimensions should be less than or equal to 255");
-        return GRAPH_FAILED;
-    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -334,6 +338,32 @@ static const std::vector<std::pair<std::string, InferShapePaddingFunc>> kFuncMap
     {"SAME", InferShapePaddingSame},
     {"VALID", InferShapePaddingValid},
 };
+
+static ge::graphStatus CheckStridesConstraints(gert::InferShapeContext* context, const gert::RuntimeAttrs* attrs,
+                                               const std::string& data_format)
+{
+    const char* opName_ = "MaxPoolV3";
+    auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_STRIDES);
+    OP_CHECK_IF(
+        strides == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "strides",
+                                                 "required input, descriptor, attribute or attribute data is missing"),
+        return ge::GRAPH_FAILED);
+    if (strides->GetSize() != SHAPE_NHWC_SIZE) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(opName_, "Length of strides", std::to_string(strides->GetSize()).c_str(), "4");
+        return GRAPH_FAILED;
+    }
+    auto strides_data = static_cast<const int64_t*>(strides->GetData());
+    size_t cDim = data_format == "NHWC" ? 3 : 1;
+    if (strides_data[DIM_N] != 1 || strides_data[cDim] != 1) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            opName_, "strides[N,C]",
+            (std::to_string(strides_data[DIM_N]) + ", " + std::to_string(strides_data[cDim])).c_str(),
+            "strides of N and C dimensions should be 1");
+        return GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
 
 static ge::graphStatus InferShape4MaxPoolV3(gert::InferShapeContext* context)
 {
@@ -361,16 +391,18 @@ static ge::graphStatus InferShape4MaxPoolV3(gert::InferShapeContext* context)
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "x",
                                                  "required input, descriptor, attribute or attribute data is missing"),
         return ge::GRAPH_FAILED);
-    auto input_format = src_td->GetOriginFormat();
-    size_t h_dim = input_format == FORMAT_NHWC ? 1 : 2;
-    size_t w_dim = input_format == FORMAT_NHWC ? 2 : 3;
-
     auto attrs = context->GetAttrs();
     OP_CHECK_IF(
         attrs == nullptr,
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "attributes",
                                                  "required input, descriptor, attribute or attribute data is missing"),
         return ge::GRAPH_FAILED);
+    std::string data_format;
+    if (GetDataFormat(attrs, data_format) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    size_t h_dim = data_format == "NHWC" ? 1 : 2;
+    size_t w_dim = data_format == "NHWC" ? 2 : 3;
     const bool* global_pooling = attrs->GetAttrPointer<bool>(INDEX_GLOBAL_POOLING);
     OP_CHECK_IF(
         global_pooling == nullptr,
@@ -397,20 +429,11 @@ static ge::graphStatus InferShape4MaxPoolV3(gert::InferShapeContext* context)
         return GRAPH_FAILED;
     }
 
-    if (CheckKsizeConstraints(context, attrs) != ge::GRAPH_SUCCESS) {
+    if (CheckKsizeConstraints(context, attrs, data_format) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
-
-    auto ceil_mode = attrs->GetAttrPointer<bool>(INDEX_CEIL_MODE);
-    OP_CHECK_IF(
-        ceil_mode == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context).c_str(), "ceil_mode",
-                                                 "required input, descriptor, attribute or attribute data is missing"),
-        return ge::GRAPH_FAILED);
-    if (*ceil_mode && it->first != "CALCULATED") {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "ceil_mode", "true",
-                                              "ceil_mode only supports false when padding_mode is SAME or VALID");
-        return GRAPH_FAILED;
+    if (CheckStridesConstraints(context, attrs, data_format) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
     }
 
     // when padding_mode in (CALCULATED, VALID, SAME)
