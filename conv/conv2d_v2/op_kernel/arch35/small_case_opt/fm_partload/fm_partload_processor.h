@@ -85,9 +85,13 @@ struct FmPartloadProcessor {
         SetFlag<HardEvent::M_MTE1>(static_cast<event_t>(1));
         SetFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF0);
         SetFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF1);
+        SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
+        SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
 
         Process(blockCtx, tiling, state, x, filter, bias, y, ep);
 
+        WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
+        WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF0);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF1);
         WaitFlag<HardEvent::M_MTE1>(static_cast<event_t>(0));
@@ -103,7 +107,6 @@ private:
     {
         GM_ADDR y1 = (tiling.dualOutput != 0) ? ep->y1 : y;
         bool needLoadBias = true;
-        SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
         for (uint32_t groupIter = 0; groupIter < scheme_.GroupIters(blockCtx); groupIter++) {
             GroupPlan groupPlan = scheme_.GroupAt(blockCtx, tiling, groupIter);
             if (!groupPlan.valid) {
@@ -126,6 +129,7 @@ private:
             }
             loadBiasScale_(blockCtx, tiling, biasGm, scale0Gm, scale1Gm, reluWeight0Gm, reluWeight1Gm, state.l1);
             LocalTensor<WeightT> bl1Full(TPosition::B1, state.l1.bl1OffBytes, state.l1.bl1ElemCount);
+            WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
             loadWeight_(blockCtx, tiling, state.filterGm, bl1Full);
 
             SetFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_DONE);
@@ -148,9 +152,9 @@ private:
             if (tiling.hasBias && tiling.nL0 < tiling.nBL1) {
                 SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
+            SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
             needLoadBias = true;
         }
-        WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
     }
 };
 
