@@ -33,7 +33,7 @@ static const std::initializer_list<op::DataType> DTYPE_SUPPORT_REGBASE_LIST = {
 static const int DTYPE_INT32 = 3;
 static const int DTYPE_INT64 = 9;
 
-static const inline std::initializer_list<op::DataType> GetDtypeSupportListBySocVersion()
+static const inline std::initializer_list<op::DataType> GetDtypeSupportListByNpuArch()
 {
     auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
     switch (curArch) {
@@ -49,7 +49,7 @@ static const inline std::initializer_list<op::DataType> GetDtypeSupportListBySoc
 // 根据芯片类型、dtype判断算子是否支持走aicore
 static inline bool IsAiCoreSupport(const aclTensor* self)
 {
-    const std::initializer_list<op::DataType> dtypeSupportList = GetDtypeSupportListBySocVersion();
+    const std::initializer_list<op::DataType> dtypeSupportList = GetDtypeSupportListByNpuArch();
     if (!CheckType(self->GetDataType(), dtypeSupportList)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "self dtype not supported. support list is %s",
                 op::ToString(dtypeSupportList).GetString());

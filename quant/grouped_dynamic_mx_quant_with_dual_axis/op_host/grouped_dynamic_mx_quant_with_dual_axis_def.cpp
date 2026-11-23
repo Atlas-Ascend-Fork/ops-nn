@@ -74,6 +74,7 @@ public:
         // AICore().AddConfig 为 per-soc 注册点：ascend960dt 复用 ascend950 的同一份配置
         opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_3510, aicoreConfig);
         opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_9201, aicoreConfig);
+        opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_9202, aicoreConfig);
     }
 };
 

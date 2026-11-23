@@ -28,10 +28,11 @@ const aclTensor* ScatterAddWithSorted(const aclTensor* self, const aclTensor* va
 {
     L0_DFX(ScatterAddWithSorted, self, value, sorted_index, pos);
     // ASCEND950平台支持DT_FLOAT, DT_FLOAT16, DT_INT32, DT_BF16
-    auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
-    if (socVersion != SocVersion::ASCEND910B && socVersion != SocVersion::ASCEND910_93 &&
-        !Ops::NN::AclnnUtil::IsRegbase()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "[ScatterAddWithSorted] only support ASCEND910B, ASCEND910_93 and ASCEND950");
+    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (npuArch != NpuArch::DAV_2201 && !Ops::NN::AclnnUtil::IsRegbase(npuArch)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "[ScatterAddWithSorted] only support ASCEND910B, ASCEND910_93 and RegBase platforms(Ascend950, "
+                "Ascend960DT, Ascend960PR)");
         return nullptr;
     }
 

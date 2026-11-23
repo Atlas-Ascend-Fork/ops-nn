@@ -22,6 +22,7 @@
 #include "opdev/format_utils.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/platform.h"
+#include "op_api/aclnn_util.h"
 #include "opdev/framework_op.h"
 #include "pooling/pool_3d_common/op_api/pool_3d_util.h"
 #include "adaptive_max_pool_common.h"
@@ -55,22 +56,16 @@ bool CheckNotNullPtr(const aclTensor* gradOutput, const aclTensor* self, const a
 }
 const std::initializer_list<op::DataType> GetDtypeSupportListBySocVersion()
 {
-    auto socVersion = GetCurrentPlatformInfo().GetSocVersion();
-    if (Ops::NN::AclnnUtil::IsRegbase()) {
+    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    // RegBase 架构（Ascend950/Ascend960DT/Ascend960PR 等）支持完整 dtype 列表
+    if (Ops::NN::AclnnUtil::IsRegbase(npuArch)) {
         return GRAD_DTYPE_SUPPORT_LIST;
     }
-    switch (socVersion) {
-        case SocVersion::ASCEND910_93:
-        case SocVersion::ASCEND910B: {
-            return GRAD_DTYPE_SUPPORT_LIST;
-        }
-        case SocVersion::ASCEND910: {
-            return NULL_DTYPE_SUPPORT_LIST;
-        }
-        default: {
-            return NULL_DTYPE_SUPPORT_LIST;
-        }
+    // ASCEND910_93/ASCEND910B 均对应 DAV_2201
+    if (npuArch == NpuArch::DAV_2201) {
+        return GRAD_DTYPE_SUPPORT_LIST;
     }
+    return NULL_DTYPE_SUPPORT_LIST;
 }
 
 bool CheckShapeSame(const aclTensor* gradOutput, const aclTensor* self, const aclTensor* indices,

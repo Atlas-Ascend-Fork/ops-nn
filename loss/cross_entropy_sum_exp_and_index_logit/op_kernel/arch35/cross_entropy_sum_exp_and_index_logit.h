@@ -135,7 +135,7 @@ private:
         pI.blockLen = static_cast<uint32_t>(curN * sizeof(int32_t));
         pI.srcStride = 0;
         pI.dstStride = 0;
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
         DataCopyPad(tgt, targetGm_[baseRow], pI, padI, true); // target[curN] → UB，开启pre-allocation
 #else
         DataCopyPad(tgt, targetGm_[baseRow], pI, padI); // target[curN] → UB
@@ -148,7 +148,7 @@ private:
             pD.blockLen = static_cast<uint32_t>(curN * sizeof(T));
             pD.srcStride = 0;
             pD.dstStride = 0;
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
             DataCopyPad(gmaxIn, globalMaxGm_[baseRow], pD, padD, true); // global_max(BF16) → UB，开启pre-allocation
 #else
             DataCopyPad(gmaxIn, globalMaxGm_[baseRow], pD, padD); // global_max(BF16) → UB
@@ -163,7 +163,7 @@ private:
             pD.blockLen = static_cast<uint32_t>(curN * sizeof(float));
             pD.srcStride = 0;
             pD.dstStride = 0;
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
             DataCopyPad(gmax, globalMaxGm_[baseRow], pD, padD, true); // global_max(FP32) → UB，开启pre-allocation
 #else
             DataCopyPad(gmax, globalMaxGm_[baseRow], pD, padD); // global_max(FP32) → UB

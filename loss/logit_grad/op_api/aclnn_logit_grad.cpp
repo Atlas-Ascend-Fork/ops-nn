@@ -21,6 +21,7 @@
 #include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include "op_api/aclnn_util.h"
 
 using namespace op;
 
@@ -31,15 +32,14 @@ const std::initializer_list<DataType> DTYPE_SUPPORT_LIST = {DataType::DT_BF16, D
 
 bool CheckSocVersion()
 {
-    switch (GetCurrentPlatformInfo().GetSocVersion()) {
-        case SocVersion::ASCEND910B:
-        case SocVersion::ASCEND910_93:
-        case SocVersion::ASCEND950:
-            return true;
-        default:
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "LogitGrad only supports Ascend 910B, 910_93 and 950.");
-            return false;
+    auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    // ASCEND910B/ASCEND910_93 对应 DAV_2201；Ascend950/Ascend960DT/Ascend960PR 均为 RegBase 架构
+    if (npuArch == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(npuArch)) {
+        return true;
     }
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+            "LogitGrad only supports Ascend 910B, 910_93, Ascend950, Ascend960DT and Ascend960PR.");
+    return false;
 }
 
 aclnnStatus CheckParams(const aclTensor* x, const aclTensor* dy, const aclTensor* out)

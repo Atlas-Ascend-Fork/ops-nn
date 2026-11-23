@@ -11,7 +11,7 @@
 # dav_9201 复用 arch35 kernel（RegBase / __NPU_ARCH__ == 3510 分支）
 add_kernel_sources(
     KERNEL_SRC grouped_dynamic_mx_quant_with_dual_axis.cpp
-    COMPUTE_UNITS dav_3510 dav_9201
+    COMPUTE_UNITS dav_3510 dav_9201 dav_9202
     SIMPLIFIED_KEY None
     AUTO_SYNC false
 )

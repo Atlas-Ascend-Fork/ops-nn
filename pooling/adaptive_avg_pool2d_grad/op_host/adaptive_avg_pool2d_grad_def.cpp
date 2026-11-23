@@ -41,6 +41,7 @@ public:
             .PrecisionReduceFlag(true);
         opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_3510, aiCoreConfig);
         opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_9201, aiCoreConfig);
+        opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_9202, aiCoreConfig);
     }
 };
 OP_ADD(AdaptiveAvgPool2dGrad);

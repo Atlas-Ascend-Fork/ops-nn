@@ -159,7 +159,7 @@ ge::graphStatus AdaptiveMaxPool3dGradTilingBaseV35::GetShapeAttrsInfo()
     auto nodeName = context_->GetNodeName();
     OP_LOGD(nodeName, "GetShapeAttrsInfo begin 950, arch:%d.", npuArch);
 
-    if (npuArch != Ops::Base::DAV_3510 && npuArch != Ops::Base::DAV_9201) {
+    if (npuArch != Ops::Base::DAV_3510 && npuArch != Ops::Base::DAV_9201 && npuArch != Ops::Base::DAV_9202) {
         return ge::GRAPH_PARAM_INVALID;
     }
     OP_LOGD(nodeName, "GetShapeAttrsInfo begin.");

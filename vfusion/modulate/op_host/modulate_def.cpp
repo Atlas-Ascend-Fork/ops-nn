@@ -74,6 +74,8 @@ public:
             .DynamicRankSupportFlag(true)
             .DynamicShapeSupportFlag(true);
         this->AICore().AddConfig("ascend950", regbaseConfig);
+        this->AICore().AddConfig("ascend960dt", regbaseConfig);
+        this->AICore().AddConfig("ascend960pr", regbaseConfig);
     }
 };
 
