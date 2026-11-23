@@ -6,7 +6,6 @@
 
 | 产品 | 是否支持 |
 |---|:---:|
-| <term>Ascend 960PR&960DT系列产品</term> | × |
 | <term>Ascend 950PR&950DT系列产品</term> | √ |
 | <term>Atlas A3系列产品</term> | √ |
 | <term>Atlas A2系列产品</term> | √ |
@@ -16,73 +15,112 @@
 
 ## 功能说明
 
-将同一请求内相邻query显式选择的逻辑KV块合并为升序去重并集，输出并集索引、块数及逐token位掩码，保留每个query原有的选择关系。
+- 算子功能：将同一请求内的多行KV（Key/Value，键和值）块列表合并为升序去重并集，同时给出并集块数和逐KV位置的查询位掩码，用于稀疏注意力元数据预处理。
+
+- 计算公式：
+
+设每组查询数为$W$、KV块大小为$Y$。各请求按有效查询长度连续分组，每组最多$W$个查询，不跨请求合并。
+
+以下公式描述单个稀疏头的一组查询。组内有$n$个有效查询，请求$b$的有效查询长度和有效KV长度分别为$Q_b$、$V_b$；$q_i$是组内查询$i$在该请求内从0开始的位置。掩码类型$m$决定查询$i$可见KV位置的右边界$E_i$，该边界本身不包含在可见范围内：
+
+| 掩码类型$m$ | 可见边界$E_i$ |
+|---|---|
+| 0：非因果 | $E_i=V_b$ |
+| 1：右下对齐因果 | $E_i=V_b-Q_b+q_i+1$ |
+
+每个查询按逐行块数读取输入前缀，长度限制在[0,K]内，$K$为每行块索引容量；负编号和完全超出有效KV范围的块编号不参与计算。块编号相对于该请求的KV起点。选中块集合$S_i$还受尾块模式$R$控制：
+
+| 尾块模式$R$ | 选中块集合$S_i$ |
+|---|---|
+| 0：显式列表 | 保留全部合法显式块，因果掩码全为0的块也保留。 |
+| 1：自动补尾 | 显式块只保留编号小于$\lfloor\max(E_i,0)/Y\rfloor$的完整可见块；当$E_i>0$且$E_i$不能被$Y$整除时，再加入尾块$\lfloor E_i/Y\rfloor$。 |
+
+升序去重并集$D$及实际并集块数$C$为：
+
+$$
+D=\operatorname{sort}\left(\bigcup_{i=0}^{n-1}S_i\right),\qquad C=|D|.
+$$
+
+设$d_r=D[r]$，块内偏移$t$对应的KV位置为$p=Yd_r+t$，其中$0\le r<C$、$0\le t<Y$。按并集块顺序展开的查询位掩码$M$为：
+
+$$
+M[rY+t]=\sum_{i=0}^{n-1}2^i\,\mathbf{1}[d_r\in S_i]\,\mathbf{1}[p<E_i].
+$$
+
+$\mathbf{1}[\cdot]$表示条件成立取1，否则取0。因此，$M$的第$i$位表示查询$i$是否选择且可见该KV位置。非因果模式同样保留查询选择关系和有效KV边界；因果边界不大于0时，对应查询位均为0。尾块模式为0时，两种掩码类型不改变块并集和块数；模式为1时，可见边界也参与选块，因而可能改变并集和块数。
+
+输入shape分别为[H,T,K]和[H,T]，其中$H$为稀疏头数，$T$为查询存储行数，$B$为请求数。输出shape依次为[H,G,U]、[H,G]和[H,G,UY]。公共Torch入口根据CPU长度计算输出组数$G$、最大逻辑块数$L_{\max}$和每组输出容量$U$：
+
+$$
+\begin{aligned}
+G&=\sum_{b=0}^{B-1}\left\lceil\frac{Q_b}{W}\right\rceil,\\
+L_{\max}&=\max\left(1,\left\lceil\frac{V_0}{Y}\right\rceil,\ldots,\left\lceil\frac{V_{B-1}}{Y}\right\rceil\right),\\
+U&=\min\bigl(W(K+R),L_{\max}\bigr).
+\end{aligned}
+$$
+
+无请求时$G=0$、$L_{\max}=1$。ACLNN直调使用调用方预分配的输出，并按约束说明校验$G$和$U$。GE图模式根据输入shape和属性推导$G$和$U$。每组只在前$C$个位置写入$D$，其余块索引填-1；额外输出组的count及未使用、越界KV位置的掩码填0。有效长度的来源和组合要求见约束说明。
 
 ## 参数说明
 
-下表使用算子原型中的参数名和Tensor类型。ACLNN的驼峰参数名、Torch公共入口的长度Tensor转换约定见各自接口文档。
+下表对应算子原型。ACLNN和PyTorch调用层的长度输入与几何参数要求见各自接口文档。
 
 | 参数名 | 输入/输出/属性 | 描述 | 数据类型 | 数据格式 |
 |---|---|---|---|---|
-| sparse_block_idx | 输入 | [H,T,K]，每行显式选择的逻辑KV块ID。 | INT32 | ND |
-| sparse_block_count | 输入 | [H,T]，每行有效前缀长度。 | INT32 | ND |
-| cu_sqlen_q | 可选输入 | [B+1]，Q存储位置前缀和。 | INT64 | ND |
-| cu_sqlen_kv | 可选输入 | [B+1]，KV存储长度前缀和。 | INT64 | ND |
-| seq_used_q | 可选输入 | [B]，各请求的有效Q长度。 | INT32 | ND |
-| seq_used_kv | 可选输入 | [B]，各请求的有效KV长度。 | INT32 | ND |
-| union_sparse_idx | 输出 | [H,G,U]，升序去重并集，padding为-1。 | INT32 | ND |
-| union_sparse_count | 输出 | [H,G]，各组实际并集块数。 | INT32 | ND |
-| exact_mask | 输出 | [H,G,U×Y]，逐token的query位掩码，padding为0。 | INT32 | ND |
-| block_shape | 属性 | Q/KV块粒度，默认[1,128]，支持[1,Y]，Y∈{4,8,16,128}。 | ListInt | - |
-| union_size | 属性 | 每组query数，默认且仅支持8。 | INT64 | - |
-| mask_type | 属性 | 0为非因果，1为右下对齐causal，默认0。 | INT64 | - |
-| max_q_seqlen | 属性 | 默认-1；有任意Q长度Tensor时忽略，否则为非负定长Q长度。 | INT64 | - |
-| max_kv_seqlen | 属性 | 默认-1；有任意KV长度Tensor时忽略，否则为非负定长KV长度。 | INT64 | - |
-| layout_sparse_pattern | 属性 | 稀疏模式布局，默认且仅支持4。 | INT64 | - |
-| is_input_idx_sorted | 属性 | 有效前缀有序承诺，默认true；false允许无序输入。 | BOOL | - |
-| residual_block_mode | 属性 | 默认0；1补入不完整可见尾块，参与索引、count及掩码。 | INT64 | - |
-| totalq_union_num | 属性 | G 提示；tiling 中 -1 使用输出 G，其他值必须与输出 G 相等。 | INT64 | - |
-| max_logical_blocks | 属性 | 排序/成员表上限 L：-1 自动推导，正值须在 [1, INT32_MAX] 内；图模式正值同时作为 U。 | INT64 | - |
+| sparse_block_idx | 输入 | 用于构造选中块集合$S_i$的块索引，shape为[H,T,K]。 | INT32 | ND |
+| sparse_block_count | 输入 | 构造$S_i$时读取的有效前缀长度，shape为[H,T]。 | INT32 | ND |
+| cu_sqlen_q | 可选输入 | 查询存储前缀和，shape为[B+1]；用于查询存储定位，未提供实际查询长度时还决定$Q_b$。 | INT64 | ND |
+| cu_sqlen_kv | 可选输入 | KV存储前缀和，shape为[B+1]；未提供实际KV长度时决定$V_b$。 | INT64 | ND |
+| seq_used_q | 可选输入 | 实际查询长度$Q_b$，shape为[B]，优先于查询前缀和差分。 | INT32 | ND |
+| seq_used_kv | 可选输入 | 实际KV长度$V_b$，shape为[B]，优先于KV前缀和差分。 | INT32 | ND |
+| union_sparse_idx | 输出 | 升序去重块并集$D$，shape为[H,G,U]，补齐值为-1。 | INT32 | ND |
+| union_sparse_count | 输出 | 并集块数$C$，shape为[H,G]。 | INT32 | ND |
+| exact_mask | 输出 | 逐KV位置的查询位掩码$M$，shape为[H,G,UY]，补齐值为0。 | INT32 | ND |
+| block_shape | 可选属性 | 查询/KV块大小，默认[1,128]，支持[1,Y]，Y为4、8、16或128；第二个元素对应$Y$。 | ListInt | - |
+| union_size | 可选属性 | 对应$W$，默认8且仅支持8。 | INT64 | - |
+| mask_type | 可选属性 | 对应$m$，默认0；支持0（非因果）和1（右下对齐因果）。 | INT64 | - |
+| totalq_union_num | 可选属性 | 输出组数$G$提示。默认-1，tiling使用输出$G$；其他值须与输出$G$一致。 | INT64 | - |
+| max_logical_blocks | 可选属性 | 排序及成员表的逻辑块上限$L$。默认-1，按KV长度来源推导$L$；有效正值在GE中同时用于确定$U$。 | INT64 | - |
+| max_q_seqlen | 可选属性 | 默认-1；提供Q长度Tensor时忽略，否则作为定长Q槽宽，组合要求见约束说明。 | INT64 | - |
+| max_kv_seqlen | 可选属性 | 默认-1；提供KV长度Tensor时忽略，否则作为每个请求的有效KV长度$V_b$。 | INT64 | - |
+| layout_sparse_pattern | 可选属性 | 稀疏模式布局，默认4且仅支持4，表示输入采用[H,T,K]布局。 | INT64 | - |
+| is_input_idx_sorted | 可选属性 | 有效输入前缀的排序承诺，默认True；False允许无序输入。 | BOOL | - |
+| residual_block_mode | 可选属性 | 对应$R$，默认0；支持0（显式列表）或1（筛选完整可见块并补尾）。 | INT64 | - |
 
 ## 约束说明
 
-- 支持[1,Y]块（Y∈{4,8,16,128}）、8行分组、有序/无序输入、mask类型0/1与residual模式0/1。输入允许重复。
+- 支持block_shape=[1,Y]，Y为4、8、16或128；union_size=8、mask_type为0或1、layout_sparse_pattern=4、is_input_idx_sorted为True或False、residual_block_mode为0或1。块形状恰有两个元素。
+- 稀疏输入为[H,T,K]和[H,T]；H>0、K>0，维度非负。块编号相对于请求的KV起点；负编号和超出有效KV逻辑域的编号忽略。声明有序时有效前缀须非降序；无序输入同样支持重复编号。
+- 输入、输出元素个数、字节数及访问地址范围均须能由INT64表示。尾块、mask与padding规则见功能说明。
 
-Q、KV 独立选择长度来源：seqUsed 优先，其次为 cu 相邻差分；对应 cu、seqUsed 任意一个非空时，max 的任意 int64 值均被忽略。两者均为空时才使用 max 作为每个请求的定长有效长度，要求 max≥0。
+- 块索引、块数、实际长度及输出为INT32，前缀为INT64，所有Tensor采用ND格式。ACLNN非空Tensor均位于同一设备；输入支持非连续Tensor，输出支持各元素存储位置不重叠的非连续Tensor。调用方提供正确的stride、storageOffset和足够的底层存储，算子按输出视图回写。
 
-| cuX | seqUsedX | 有效长度 | maxX |
+Q、KV独立选择长度来源。下表中的cu、seqUsed、max分别表示对应侧的前缀和、实际长度及max属性；提供长度Tensor时，max的任意int64值均被忽略。
+
+| cu | seqUsed | 有效长度 | max |
 |---|---|---|---|
-| 传入 | 传入 | seqUsedX[b]，不得超过 cuX 差分容量 | 完全忽略 |
-| 传入 | nullptr | cuX[b+1]−cuX[b] | 完全忽略 |
-| nullptr | 传入 | seqUsedX[b] | 完全忽略 |
-| nullptr | nullptr | Q=min(maxQ,剩余Q行)，KV=maxKV | 定长槽宽/长度，必须非负 |
+| 提供 | 提供 | seqUsed[b]，不得超过cu相邻差分 | 忽略 |
+| 提供 | 省略 | cu相邻差分 | 忽略 |
+| 省略 | 提供 | seqUsed[b] | 忽略 |
+| 省略 | 省略 | Q取max与剩余查询行数的较小值；KV取max | 必须非负 |
 
-Q 有 cu 时通过前缀定位。Q 只有 seqUsed 时，B 由其长度确定，要求 T%B=0，slot=T/B，请求 b 从 b×slot 开始，seqUsedQ[b]≤slot。Q 两个长度 Tensor 都为空时，slot=maxQ，B=ceil(T/slot)，请求 b 从 b×slot 开始，有效Q=min(slot,T-b×slot)，允许最后一槽不足 slot。KV 只有 seqUsed 时不受 Q slot 限制。所有已传长度 Tensor 必须具有相同 B；cu 形状为 [B+1]，seqUsed 为 [B]。四个 Tensor 均为空时，正 maxQ 通过 ceil(T/maxQ) 确定 B，最后不足一槽也计为一个 batch；maxQ=0 时必须 T=0，并按空 batch 处理。有 KV 长度 Tensor 时可确定非空 B，允许 maxQ=0、T=0。B=0 时 T=0、实际组数为0；显式提供额外输出组时全部填充为空。定长 KV 要求 ceil(maxKV/Y)≤INT32_MAX；不要求 KV≥Q。默认 max=-1 仅在被忽略时合法。
+- Q有前缀和时，前缀从0开始、非降序、末项为T，请求起点为cu[b]。KV前缀同样从0开始、非降序；KV长度不受Q槽宽限制。
+- Q只有seqUsed时，由其shape确定B；B>0时要求T能被B整除，槽宽为T/B，请求b从b×槽宽开始，seqUsedQ[b]不得超过槽宽。
+- Q两个长度Tensor均省略且maxQ>0时，槽宽为maxQ，B=ceil(T/maxQ)，请求b的有效Q为min(maxQ,T-b×maxQ)，允许末槽不足。maxQ=0时必须T=0；若有KV长度Tensor则沿用其B，否则B=0。
+- 所有已传长度Tensor须对应相同B，cu为[B+1]，seqUsed为[B]；定长Q的B还须与KV长度描述符一致。B=0时必须T=0，实际有效组数为0。
+- 有效长度非负；实际长度与前缀同时提供时不得超过对应差分容量。定长KV须满足ceil(maxKV/Y)不大于INT32_MAX。不要求有效KV长度大于或等于有效Q长度。默认max=-1仅在被忽略时合法。
 
-## 输出形状
-
-图模式的 InferShape 只读取 Host 上的 shape 和属性，不访问长度 Tensor 数据，也不执行 Host/Device 同步。令输入为 `[H,T,K]`（即 `[kvN,totalqBlockNum,maxKvBlockNum]`），输出为 `[H,G,U]`、`[H,G]`、`[H,G,U*Y]`：
-
-- `totalq_union_num>0` 时 `G=totalq_union_num`；否则 `G=(T+7*B)//8`。
-- `max_logical_blocks>0` 时 `U=max_logical_blocks`；否则 `U=(K+residual)*union_size`，不再按 KV 逻辑域裁剪容量。
-- B 由长度 Tensor 的 shape 推导；定长 Q 使用 `ceil(T/ceil(maxQSeqlen/block_shape[0]))`。当前 blockX=1，允许最后一槽不足 maxQ；maxQ=0 时只允许 T=0，并沿用空 batch/已传 KV 长度 Tensor 的 B 规则。
-- 实际有效组数仍为 `sum(ceil(effectiveQ/8))`。额外的输出组填 `idx=-1,count=0,mask=0`。调用方必须保证 G 覆盖全部实际有效组；G 不足不保证报错，可能导致部分有效组未被处理。
-- U 必须覆盖每组实际并集。kernel 检查到实际并集超过 U 后触发设备错误，而不是静默截断该并集。错误可能在执行或流同步时暴露，不能保证在 `aclnnUnionSparseGenGetWorkspaceSize` 阶段拒绝。该检查不校验 G，也不代表所有输出容量不足都会自动报错。
-- 默认 `U=(K+residual)*union_size` 在 residual=1 时为每个 query 额外预留一个尾块候选；maskType=0 也沿用该安全上界。
-
-`maxLogicalBlocks` 支持 `-1` 或 `[1, INT32_MAX]`：正值作为排序及成员表规划上限 L，须覆盖有效 KV 逻辑域；`-1` 时，变长 KV 使用 `INT32_MAX`，定长 KV 使用 `max(1, ceil(maxKvSeqlen/Y))`。Host 不回读 Device 长度。
-
-`totalqUnionNum=-1` 使用输出 G，其他值必须等于 `unionSparseIdx.shape[1]`。ACLNN 按 `U=min(unionSize*(K+residualBlockMode),L)` 校验输出 `[H,G,U]`、`[H,G]`、`[H,G,U*Y]`，不匹配时在 GetWorkspaceSize 阶段报错，G=0 也执行校验。
-
-U 是存储容量。非法块编号（负数或超出请求有效 KV 逻辑域）会被过滤。
-
-Torch 适配层保持原有计算：`G=sum(ceil(effectiveQ/8))`，`L=max(1,max(ceil(effectiveKV/Y)))`，`U=min(8*(K+residual),L)`；它传入 G/L 并预分配该 U 的输出，ACLNN 按这些输出执行。Torch 的低层与 Meta 入口仍要求显式 G/L，尚未切换到上述 GE 自动形状规则。CPU 标杆仍计算精确有效输出；图模式测试只对其结果补齐到 G/U，并检查没有丢弃有效块。
-
-- idx/count及输出为INT32，cu前缀为INT64。调用方提供合法的 Device 长度和足够的输出容量，接口不回读 Device 长度。
+- 公共Torch入口使用功能说明中的G、Lmax、U公式，按实际长度分配输出；低层Torch及Fake/Meta仍须显式提供准确的G和Lmax，几何默认值-1仅用于检测遗漏，不请求自动推导。
+- ACLNN直调以 `unionSparseIdx.shape[1]` 为输出组数 $G$。`totalqUnionNum=-1` 时使用该组数，其他值须等于 $G$。
+- `maxLogicalBlocks` 为排序及成员表规划上限 $L$。正值须在 `[1, INT32_MAX]` 内并覆盖有效KV逻辑域。取 `-1` 时，提供KV长度Tensor则使用 `INT32_MAX`，定长KV使用 `max(1, ceil(maxKvSeqlen/Y))`。
+- ACLNN按 `U=min(W*(K+R),L)` 在GetWorkspaceSize阶段校验预分配的三个输出形状 `[H,G,U]`、`[H,G]`、`[H,G,U*Y]`，包括 $G=0$ 的情况。$U$ 表示输出存储容量。
+- GE图模式的InferShape只读取Host上的输入shape和属性，不读取长度Tensor内容，不引入Device到Host同步。totalq_union_num>0时直接作为G，否则G=floor((T+7B)/8)；max_logical_blocks>0时直接作为U，否则U=W(K+R)。B由长度Tensor的shape或定长Q规则确定。GE的 `max_logical_blocks` 正值同时用作 $U$ 和规划上限 $L$。传入 `-1` 时，$U$ 使用上述默认公式，$L$ 按变长或定长KV规则推导。tiling使用输出 $G$ 处理 `totalq_union_num=-1`，其他取值须与输出 $G$ 一致。
+- G须覆盖全部实际有效组，U须覆盖每组实际并集。额外输出组填idx=-1、count=0、mask=0。G不足不保证报错，可能遗漏有效组；kernel检测到实际并集超过U时触发设备错误，可能在执行或流同步时暴露，不能保证在GetWorkspaceSize阶段拦截。该检查不校验G。
 
 ## 调用说明
 
 | 调用方式 | 样例代码 | 说明 |
 |---|---|---|
-| aclnn API | [test_aclnn_union_sparse_gen](./examples/test_aclnn_union_sparse_gen.cpp) | 通过[aclnnUnionSparseGen](./docs/aclnnUnionSparseGen.md)调用。 |
-| PyTorch扩展 | - | 通过[Torch接口](./docs/torchapi_union_sparse_gen.md)调用。 |
+| aclnn API | [test_aclnn_union_sparse_gen](./examples/test_aclnn_union_sparse_gen.cpp) | 通过[aclnnUnionSparseGen](./docs/aclnnUnionSparseGen.md)接口调用算子。 |
+| GE图模式 | - | 通过[算子IR](./op_graph/union_sparse_gen_proto.h)构图。 |
+| PyTorch API | - | 通过[union_sparse_gen](./docs/torchapi_union_sparse_gen.md)接口调用算子。 |

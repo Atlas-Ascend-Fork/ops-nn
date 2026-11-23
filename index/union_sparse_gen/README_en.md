@@ -6,7 +6,6 @@ English | [简体中文](./README.md)
 
 | Product | Support |
 |---|:---:|
-| <term>Ascend 960PR&960DT products</term> | × |
 | <term>Ascend 950PR&950DT products</term> | √ |
 | <term>Atlas A3 products</term> | √ |
 | <term>Atlas A2 products</term> | √ |
@@ -84,5 +83,5 @@ The Torch adapter retains its existing formulas: G=sum(ceil(effectiveQ/8)), L=ma
 
 | Invocation method | Sample | Description |
 |---|---|---|
-| aclnn API | [test_aclnn_union_sparse_gen](./examples/test_aclnn_union_sparse_gen.cpp) | [aclnnUnionSparseGen](./docs/aclnnUnionSparseGen_en.md). |
-| PyTorch extension | - | [Torch API](./docs/torchapi_union_sparse_gen_en.md). |
+| aclnn API | [test_aclnn_union_sparse_gen](./examples/test_aclnn_union_sparse_gen.cpp) | [aclnnUnionSparseGen](./docs/aclnnUnionSparseGen.md). |
+| PyTorch extension | - | [Torch API](./docs/torchapi_union_sparse_gen.md). |
