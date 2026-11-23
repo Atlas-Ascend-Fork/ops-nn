@@ -5540,6 +5540,16 @@
   </tr>
   <tr>
     <td>quant</td>
+    <td><a href="../../quant/situ_glu_group_quant/README.md">situ_glu_group_quant</a></td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>AI Core</td>
+    <td>将SiTU门控激活与分组MX量化融合，实现输入x的分组SituGluGroupQuant计算，支持FP8量化输出，支持可选weight逐token缩放与group_index变长分组。</td>
+  </tr>
+  <tr>
+    <td>quant</td>
     <td><a href="../../quant/situ_mx_quant/README.md">situ_mx_quant</a></td>
     <td>✓</td>
     <td>✓</td>

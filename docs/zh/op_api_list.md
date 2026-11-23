@@ -127,6 +127,7 @@
 | [aclnnSwigluGroup](../../activation/swiglu_group/docs/aclnnSwigluGroup.md) | 执行SwiGLU激活，实现x的SwiGlu计算，输出与x相同数据类型的激活结果。 | - | 默认确定性实现 |
 | [aclnnSwigluMxQuant](../../quant/swiglu_mx_quant/docs/aclnnSwigluMxQuant.md) | 在Swish门控线性单元激活函数后添加DynamicMxQuant操作，实现x的SwigluMxQuant计算。 | - | 默认确定性实现 |
 | [aclnnSituMxQuant](../../quant/situ_mx_quant/docs/aclnnSituMxQuant.md) | 将Situ激活函数与动态MX量化融合，实现x的SituMxQuant计算。 | - | 默认确定性实现 |
+| [aclnnSituGluGroupQuant](../../quant/situ_glu_group_quant/docs/aclnnSituGluGroupQuant.md) | 将SiTU门控激活与分组MX量化融合，面向MoE分组场景，实现x的SituGluGroupQuant计算，支持可选的逐行权重weight与分组索引group_index。 | - | 默认确定性实现 |
 | [aclnnSwigluMxQuantWithDualAxis](../../quant/swiglu_mx_quant_with_dual_axis/docs/aclnnSwigluMxQuantWithDualAxis.md) | 在Swish门控线性单元激活函数后添加GroupDynamicMxQuant操作，根据传入的分组索引的起始值，对swiglu后的数据进行分组的-1轴和-2轴同时动态量化。 | - | 默认确定性实现 |
 | [aclnnSwigluBackwardMxQuantWithDualAxis](../../quant/swiglu_backward_mx_quant_with_dual_axis/docs/aclnnSwigluBackwardMxQuantWithDualAxis.md) | 在Swish门控线性单元激活的反向计算函数后添加GroupDynamicMxQuant操作，根据传入的分组索引的起始值，对swiglu后的数据进行分组的-1轴和-2轴同时动态量化。 | - | 默认确定性实现 |
 | [aclnnGroupedDynamicMxQuant](../../quant/grouped_dynamic_mx_quant/docs/aclnnGroupedDynamicMxQuant.md) | 根据传入的分组索引的起始值，对传入的数据进行分组的float8的动态量化。 | - | 默认确定性实现 |

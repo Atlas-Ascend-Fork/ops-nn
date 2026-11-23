@@ -53,6 +53,7 @@
 |[mx_to_block_mx_quant](../../quant/mx_to_block_mx_quant/docs/torchapi_mx_to_block_mx_quant.md)| 将调用 npu_dynamic_mx_quant 量化得到的 FLOAT4 的 Tensor 结合 FLOAT8_E8M0 缩放系数，转换为 FLOAT8 分块量化格式，同时输出 -1 轴和 -2 轴方向的量化尺度。|-| 默认确定性实现 |
 |[dequant_situ_quant](../../quant/dequant_situ_quant/docs/torchapi_dequant_situ_quant.md)|在Situ激活函数前后添加dequant和quant操作，实现x的DequantSituQuant计算。|默认支持确定性计算|-|
 |[situ_mx_quant](../../quant/situ_mx_quant/docs/torchapi_situ_mx_quant.md)|将Situ激活函数与动态MX量化融合，实现x的SituMxQuant计算，支持FP8量化输出。|-|默认支持确定性计算|
+|[situ_glu_group_quant](../../quant/situ_glu_group_quant/docs/torchapi_situ_glu_group_quant.md)|将SiTU门控激活与分组MX量化融合，面向MoE分组场景，实现x的SituGluGroupQuant计算，支持可选的逐行权重weight与分组索引group_index。|-|默认支持确定性计算|
 |[fused_matmul](../../matmul/fused_mat_mul/docs/torchapi_fused_matmul.md)|矩阵乘与通用向量计算融合。|-|默认支持确定性计算|
 |[confidence_head_fused](../../matmul/confidence_head_fused/docs/torchapi_confidence_head_fused.md)|将hidden与可选markov_emb逻辑拼接后做矩阵向量乘，融合逐行bias、温度缩放、可选截断与Sigmoid，输出FP32置信度。|-|默认支持确定性计算|
 |[transpose_quant_batch_mat_mul](../../matmul/transpose_quant_batch_mat_mul/docs/torchapi_transpose_quant_batch_mat_mul.md)|完成张量x1与x2的量化矩阵乘计算，支持MX（MXFP8/MXFP4）、FP8（K-C、FLOAT8_E5M2/E4M3FN+float32 scale）与HIFP8（HIFLOAT8+uint64 scale）三种量化模式，输出FLOAT16/BFLOAT16结果。|-|默认支持确定性计算|
