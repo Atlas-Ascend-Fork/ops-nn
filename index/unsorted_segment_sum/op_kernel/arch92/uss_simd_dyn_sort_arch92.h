@@ -255,14 +255,13 @@ __aicore__ inline void USSKernelSimdDynSort<X_T, IDS_T, CAST_T, castType>::CopyR
 
     SetAtomicAdd<X_T>();
     for (uint32_t i = 0; i < static_cast<uint32_t>(arNum); i++) {
-        uint64_t dstIdx = sortedKeyLocal(tmpIndex);
-        if (dstIdx < 0 || dstIdx >= td_->outputOuterDim) {
+        int64_t dstIdx = static_cast<int64_t>(sortedKeyLocal(tmpIndex));
+        tmpIndex = tmpIndex + noDupRes(i);
+        if (dstIdx < 0 || dstIdx >= static_cast<int64_t>(td_->outputOuterDim)) {
             continue;
         }
 
-        uint64_t offset = dstIdx * td_->innerDim + ubOffset;
-        tmpIndex = tmpIndex + noDupRes(i);
-
+        uint64_t offset = static_cast<uint64_t>(dstIdx) * td_->innerDim + ubOffset;
         CopyOut(yGm_, resLocal[i * colsAlign], offset, 1, cols);
     }
     SetAtomicNone();
