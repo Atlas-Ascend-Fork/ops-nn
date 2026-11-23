@@ -128,20 +128,35 @@ inline bool IsDepthwise(const Conv3dBpInputV2RunInfo& runInfo)
     return runInfo.groups == runInfo.dedy_cout && runInfo.groups == runInfo.dedx_cin;
 }
 
+// 空间维度/步长/膨胀/核 非平凡时走非 polyphase 路径
+inline bool HasNonTrivialSpatialParams(const Conv3dBpInputV2RunInfo& runInfo)
+{
+    return runInfo.dedy_d != 1 || runInfo.dedy_h != 1 || runInfo.dedx_d != 1 || runInfo.dedx_h != 1 ||
+           runInfo.kernel_d != 1 || runInfo.kernel_h != 1 || runInfo.stride_d != 1 || runInfo.stride_h != 1 ||
+           runInfo.dilation_d != 1 || runInfo.dilation_h != 1;
+}
+
+// pad 或数据格式非 NCDHW 时走非 polyphase 路径
+inline bool HasNonTrivialPadOrFormat(const Conv3dBpInputV2RunInfo& runInfo)
+{
+    return runInfo.pad_h != 0 || runInfo.pad_t != 0 || runInfo.pad_u != 0 || runInfo.pad_d != 0 || runInfo.pad_l < 0 ||
+           runInfo.pad_r < 0 || runInfo.outBackpropFormat != ge::FORMAT_NCDHW ||
+           runInfo.filterFormat != ge::FORMAT_NCDHW || runInfo.yFormat != ge::FORMAT_NCDHW;
+}
+
+inline bool HasQuantOrActFlags(const Conv3dBpInputV2RunInfo& runInfo)
+{
+    return runInfo.hf32_flag != 0 || runInfo.enRelu0 != 0U || runInfo.enRelu1 != 0U || runInfo.quantMode0 != 0U ||
+           runInfo.quantMode1 != 0U || runInfo.offsetX != 0 || runInfo.fixedShiftVal != 0U;
+}
+
 inline bool IsPolyphaseInput(const gert::TilingContext* context, const Conv3dBpInputV2RunInfo& runInfo)
 {
-    if (runInfo.dedy_d != 1 || runInfo.dedy_h != 1 || runInfo.dedx_d != 1 || runInfo.dedx_h != 1 ||
-        runInfo.kernel_d != 1 || runInfo.kernel_h != 1 || runInfo.stride_d != 1 || runInfo.stride_h != 1 ||
-        runInfo.dilation_d != 1 || runInfo.dilation_h != 1 || runInfo.pad_h != 0 || runInfo.pad_t != 0 ||
-        runInfo.pad_u != 0 || runInfo.pad_d != 0 || runInfo.pad_l < 0 || runInfo.pad_r < 0 ||
-        runInfo.outBackpropFormat != ge::FORMAT_NCDHW || runInfo.filterFormat != ge::FORMAT_NCDHW ||
-        runInfo.yFormat != ge::FORMAT_NCDHW || runInfo.hf32_flag != 0 || runInfo.enRelu0 != 0U ||
-        runInfo.enRelu1 != 0U || runInfo.quantMode0 != 0U || runInfo.quantMode1 != 0U || runInfo.offsetX != 0 ||
-        runInfo.fixedShiftVal != 0U) {
+    if (HasNonTrivialSpatialParams(runInfo) || HasNonTrivialPadOrFormat(runInfo) || HasQuantOrActFlags(runInfo)) {
         return false;
     }
     const auto* yDesc = context->GetOutputDesc(0U);
-    if (yDesc->GetDataType() != ge::DT_BF16 && yDesc->GetDataType() != ge::DT_FLOAT16) {
+    if (yDesc == nullptr || (yDesc->GetDataType() != ge::DT_BF16 && yDesc->GetDataType() != ge::DT_FLOAT16)) {
         return false;
     }
     return true;

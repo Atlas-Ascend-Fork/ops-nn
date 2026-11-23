@@ -22,6 +22,7 @@
 #include <register/tilingdata_base.h>
 #include <tiling/tiling_api.h>
 #include "op_host/tiling_base.h"
+#include "conv/common/op_host/op_tiling/conv3d_op_type_v2.h"
 #include "conv3d_backprop_input_v2_common.h"
 #include "../common/conv_backprop_input_tuning_tiling.h"
 #include "../common/conv_backprop_input_context_utils.h"
@@ -44,6 +45,7 @@ constexpr int32_t BLOCK_CUBE = 16;
 constexpr uint32_t FP32_DATA_SIZE = 4;
 constexpr int32_t FMAP_H_NUM = 2;
 constexpr int32_t BUFFER_NUM_DB = 2;
+constexpr uint64_t TAIL_ROUND_HALF_DIVISOR = 2; // 尾轮核数分段阈值: 尾轮核数不超过总核数一半时放宽轮次
 
 // DataCopyPad 硬件约束
 // 详情见：https://asc.gitcode.com/api/SIMD-API/basic_api/cube_compute_ISASI/cube_compute_load/DataCopyPad_GMToL1.html

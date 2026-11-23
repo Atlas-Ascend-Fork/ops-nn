@@ -25,6 +25,8 @@ namespace Ops {
 namespace NN {
 namespace Conv {
 
+constexpr uint32_t SMALL_DEDX_W_THRESHOLD = 32; // 经验阈值: wi 较小时转置及输出重排性能较差
+
 struct KernelSplitPara {
     uint64_t splitHkWkC0;
     uint64_t subSplitHkWkC0;

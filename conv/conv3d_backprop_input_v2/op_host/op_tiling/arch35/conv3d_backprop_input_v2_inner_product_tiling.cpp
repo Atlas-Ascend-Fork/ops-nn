@@ -2312,7 +2312,7 @@ void Conv3DDXV2InnerProductTiling::SearchOptimalBaseMN(uint32_t& baseM, uint32_t
     // 允许搜索通过缩小基本块多跑一轮，换取更均衡的分核；单轮方案不拆分
     if (initTotalIter > 0 && initTasksPerCore > 1) {
         uint64_t tailRoundCores = initTotalIter - (initTasksPerCore - 1) * static_cast<uint64_t>(coreNum_);
-        if (tailRoundCores <= static_cast<uint64_t>(coreNum_) / 2) {
+        if (tailRoundCores <= static_cast<uint64_t>(coreNum_) / TAIL_ROUND_HALF_DIVISOR) {
             maxTasksPerCore = initTasksPerCore + 1;
         }
     }

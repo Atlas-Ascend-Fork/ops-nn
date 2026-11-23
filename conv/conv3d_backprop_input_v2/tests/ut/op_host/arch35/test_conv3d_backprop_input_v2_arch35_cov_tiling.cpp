@@ -86,6 +86,18 @@ const string COV_CI_950_1CORE = R"({"_pattern": "Conv3d_backprop_input_v2", "til
                           "cube_core_cnt": 1, "vector_core_cnt": 2, "core_type_list": "CubeCore,VectorCore"}
                           })";
 
+const string COV_CI_960 = R"({"_pattern": "Conv3d_backprop_input_v2", "tiling_type": "binary",
+                          "hardware_info": {"BT_SIZE": 4096, "load3d_constraints": "0",
+                          "Intrinsic_fix_pipe_l0c2out": true, "Intrinsic_data_move_l12ub": true,
+                          "intrinsic_fix_pipe_l0c2out_f322bf16": true,
+                          "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": true,
+                          "Intrinsic_fix_pipe_pre_conv_cast": true,
+                          "Intrinsic_data_move_l12bt": true,
+                          "UB_SIZE": 196608, "L2_SIZE": 134217728, "L1_SIZE": 524288,
+                          "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 262144, "CORE_NUM": 48,
+                          "cube_core_cnt": 48, "vector_core_cnt": 48, "core_type_list": "CubeCore,VectorCore"}
+                          })";
+
 static ge::DataType CovDtype(const string& dtype)
 {
     if (dtype == "bfloat16") {
@@ -106,7 +118,8 @@ static ge::DataType CovDtype(const string& dtype)
     return ge::DT_FLOAT16;
 }
 
-static void TestOneCovCase(const Conv3DBpInputV2CovParam& param, const string& compileInfoStr)
+static void TestOneCovCase(const Conv3DBpInputV2CovParam& param, const string& compileInfoStr,
+                           const string& socVersion = "3510")
 {
     std::cout << "run case " << param.case_name << std::endl;
     gert::StorageShape input_size = {param.input_size, param.input_size};
@@ -132,8 +145,9 @@ static void TestOneCovCase(const Conv3DBpInputV2CovParam& param, const string& c
     map<string, string> intrinsics;
     map<string, string> soc_version;
     GetPlatFormInfos(compileInfoStr.c_str(), soc_infos, aicore_spec, intrinsics, soc_version);
-    map<string, string> soc_version_infos = {{"SoC_version", "3510"}, {"Short_SoC_version", "3510"}};
-    map<string, string> npuarchs = {{"SoC_version", "3510"}, {"Short_SoC_version", "3510"}, {"NpuArch", "3510"}};
+    map<string, string> soc_version_infos = {{"SoC_version", socVersion}, {"Short_SoC_version", socVersion}};
+    map<string, string> npuarchs = {
+        {"SoC_version", socVersion}, {"Short_SoC_version", socVersion}, {"NpuArch", socVersion}};
 
     std::string op_type("Conv3DBackpropInputV2");
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
@@ -985,4 +999,38 @@ static Conv3DBpInputV2CovParam dx_cov_cases[] = {
 };
 
 INSTANTIATE_TEST_SUITE_P(Conv3DBpInputV2Cov, Conv3DBpInputV2CovSuite, testing::ValuesIn(dx_cov_cases));
+
+// soc960(DAV_9201) 覆盖率补充: 覆盖 SearchOptimalBaseMN 的 960 专属多轮搜索分支
+TEST(Conv3DBpInputV2CovSuite, cov_ip_960_multiround)
+{
+    Conv3DBpInputV2CovParam p = {"cov_ip_960_multiround",
+                                 "float16",
+                                 "float16",
+                                 "float16",
+                                 {5},
+                                 {256, 128, 1, 1, 1},
+                                 {256, 128, 1, 1, 1},
+                                 {1, 256, 9, 128, 600},
+                                 {1, 256, 9, 128, 600},
+                                 {1, 128, 9, 128, 600},
+                                 {1, 128, 9, 128, 600},
+                                 ge::FORMAT_ND,
+                                 ge::FORMAT_NCDHW,
+                                 ge::FORMAT_NCDHW,
+                                 ge::FORMAT_NCDHW,
+                                 ge::FORMAT_NCDHW,
+                                 ge::FORMAT_NCDHW,
+                                 ge::FORMAT_NCDHW,
+                                 {1, 1, 1, 1, 1},
+                                 {0, 0, 0, 0, 0, 0},
+                                 {1, 1, 1, 1, 1},
+                                 1,
+                                 "NCDHW",
+                                 false,
+                                 "",
+                                 0,
+                                 true,
+                                 false};
+    TestOneCovCase(p, COV_CI_960, "9201");
+}
 } // namespace

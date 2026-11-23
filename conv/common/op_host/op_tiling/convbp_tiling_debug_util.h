@@ -52,9 +52,9 @@ inline void DebugShape(const gert::TilingContext* context, const int64_t index, 
     OP_CHECK_IF(geShapePtr == nullptr,
                 OP_LOGE(context->GetNodeName(), "get shape from context fail, index=%ld.", index), return);
     auto geShape = geShapePtr->GetStorageShape();
-    int32_t dimNum = geShape.GetDimNum();
+    size_t dimNum = geShape.GetDimNum();
     shape.reserve(dimNum);
-    for (int i = 0; i < dimNum; ++i) {
+    for (size_t i = 0; i < dimNum; ++i) {
         shape.push_back(geShape.GetDim(i));
     }
 }

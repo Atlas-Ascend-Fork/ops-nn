@@ -319,7 +319,7 @@ bool Conv3DDXV2KernelSplitTiling::CheckKernelSplitHEnable(const uint32_t bestBas
     // 32 : 经验阈值 cin cout wi较小时，转置及输出重排性能较差, kenrel拆分性能差
     // 性能模型判 H 优时放宽 wi 门禁(小 wi 的性能风险已由模型条件覆盖)
     if (runInfo_.dedx_cin_g < BLOCK_CUBE || runInfo_.dedy_cout_g < BLOCK_CUBE ||
-        (runInfo_.dedx_w < 32 && !relaxSmallShapeGate)) {
+        (runInfo_.dedx_w < SMALL_DEDX_W_THRESHOLD && !relaxSmallShapeGate)) {
         return false;
     }
 
@@ -337,19 +337,6 @@ bool Conv3DDXV2KernelSplitTiling::CheckKernelSplitHEnable(const uint32_t bestBas
     return true;
 }
 
-// H 与 HW 拆分模式选择: 比较两模式各管道的引擎周期(总量口径, 核数两侧同除抵消,
-// 频率在比值中消去), 时长由最慢管道决定, H 优于 HW 当且仅当其最慢管道严格更快。
-//   HW: 输出经 workspace 中转, L0C->workspace(fixpipe) -> workspace->UB(MTE2) -> UB->GM(MTE2)
-//       共 3 趟串行搬运;
-//   H:  直出 L0C->GM 仅 1 趟, 但 K 轴含全部 kw 个 tap(kernel==stride 时 kw=stride_w),
-//       计算/A 侧各管道时间放大 kw 倍。
-// 管道口径:
-//   计算      = outVol×cout×kd / 每周期 MAC 数;
-//   A 的 GM 装载 = batchDepth×(ho×wo)×cout×kd×dtypeA / MTE2 带宽(原生直搬无 im2col);
-//   A 的 L0 装载 = 计算量/nValue×dtypeA / L0 装载带宽(每 (m,n) 任务装载 baseM×kValue 展开);
-//   输出搬运  = outVol×dtypeL0c×趟数 / MTE2 带宽。
-// 时长由最慢管道决定, H 优于 HW 当且仅当 H 的最慢管道严格更快。
-// 收益下限: 每核至少一个标准基本块(256*256)的输出搬运节省, 低于此固定开销占比过高。
 bool Conv3DDXV2KernelSplitTiling::IsPreferKernelSplitHOverHW()
 {
     if (!IsSocVersion960() || runInfo_.groups != 1) {
