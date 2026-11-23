@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Adds elements in two tensor lists one by one, and the addition coefficient can be adjusted through the alpha parameter. Compared with [aclnnForeachAddList](aclnnForeachAddList.md), this API changes the type of the input parameter alpha from aclTensor to aclScalar. Select an appropriate API based on actual requirements.
+- Description: Adds elements in two tensor lists one by one, and the addition coefficient can be adjusted through the alpha parameter. Compared with [aclnnForeachAddList](aclnnForeachAddList_en.md), this API changes the type of the input parameter alpha from aclTensor to aclScalar. Select an appropriate API based on actual requirements.
 - Formula:
 
   $$
