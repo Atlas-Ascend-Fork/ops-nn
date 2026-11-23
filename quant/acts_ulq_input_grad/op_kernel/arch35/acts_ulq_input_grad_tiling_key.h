@@ -35,7 +35,7 @@
  * ============================================================================
  * 说明：算子 def / 生成框架采用 trans_bool_to_s8=False（不把 bool 归一化为 int8），
  *       Host Tiling 直接把 DT_BOOL 传入。Kernel 内 bool(1B) reinterpret 为 int8_t*
- *       后走 DIST_UNPACK4_B8 加载 + 两步 cast（穿刺 K4 实证，bool/int8 对 {0,1} 位相同）。
+ *       后走DIST_UNPACK4_B8加载+两步cast（bool/int8对{0,1}位相同）。
  */
 
 #ifndef __ACTS_ULQ_INPUT_GRAD_TILING_KEY_H__

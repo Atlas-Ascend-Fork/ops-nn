@@ -12,40 +12,38 @@
 
 /*!
  * \file acts_ulq_input_grad.h
- * \brief ActsULQInputGrad 算子 kernel 类定义（arch35 / DAV_3510 RegBase）
+ * \brief ActsULQInputGrad算子kernel类定义（arch35 / DAV_3510 RegBase）
  *
  * 计算：x_grad = y_grad * clamp_min_mask * clamp_max_mask（逐元素门控乘法）
- *   signal = Mul(clamp_min_mask', clamp_max_mask')   （两掩码先 cast 到 y_grad dtype）
+ *   signal = Mul(clamp_min_mask', clamp_max_mask')   （两掩码先cast到y_grad dtype）
  *   x_grad = Mul(y_grad, signal)
  *
- * 模板参数（与 acts_ulq_input_grad_tiling_key.h ASCENDC_TPL_ARGS_DECL 对应）：
- *   - T:  y_grad / x_grad 数据类型（half / float）
- *   - MT: clamp 掩码数据类型（int8_t(bool) / half / float）
+ * 模板参数（与acts_ulq_input_grad_tiling_key.h ASCENDC_TPL_ARGS_DECL对应）：
+ *   - T:  y_grad / x_grad数据类型（half / float）
+ *   - MT: clamp掩码数据类型（int8_t(bool) / half / float）
  *   - BUFFER_MODE: 缓冲模式（0=单缓冲, 1=双缓冲）
  *
- * ============================================================================
- * 全 4 dtype 组合（K1-K4，对应 spec.yaml v2.0 dtype_policy.supported_combinations）
- * v2.0：mask 浮点须与 y_grad 同 dtype 或为 bool；混合浮点组合（原 fp16+fp32、fp32+fp16）已移除。
- * ============================================================================
- * | Key | T(yGrad) | MT(mask)       | 计算域 | 关键处理                                   |
- * | K1  | half     | int8_t(bool)   | fp32   | mask int8→half→fp32（DIST_UNPACK4_B8）      |
- * | K2  | half     | half           | half   | 直算，免 cast（GateMulHalfVF）              |
- * | K3  | float    | int8_t(bool)   | fp32   | mask int8→half→fp32（DIST_UNPACK4_B8，穿刺）|
- * | K4  | float    | float          | fp32   | 直算，免 cast（穿刺 UB 最坏）               |
+ * dtype组合（K1-K4，对应spec.yaml v2.0 dtype_policy.supported_combinations；
+ * mask浮点须与y_grad同dtype或为bool，不支持混合浮点）：
+ * | Key | T(yGrad) | MT(mask)     | 计算域 | 关键处理                       |
+ * | K1  | half     | int8_t(bool) | fp32   | mask int8→half→fp32            |
+ * | K2  | half     | half         | half   | 直算，免cast（GateMulHalfVF）  |
+ * | K3  | float    | int8_t(bool) | fp32   | mask int8→half→fp32            |
+ * | K4  | float    | float        | fp32   | 直算，免cast                   |
  *
- * RegBase 分层：
- *   - Kernel 外壳：DataCopyPad(GM↔UB) 搬运 + Buffer/BufferID 同步
- *   - VF 函数体：AscendC::Reg::LoadAlign/Cast/Mul/StoreAlign（UB↔寄存器），指针停留 __ubuf__
+ * RegBase分层：
+ *   - Kernel外壳：DataCopyPad(GM↔UB)搬运 + Buffer/BufferID同步
+ *   - VF函数体：AscendC::Reg::LoadAlign/Cast/Mul/StoreAlign（UB↔寄存器），指针停留__ubuf__
  *
- * 统一计算策略（依据 SDK 参考算子 load_store_utils.h：ops_cv / ops_oam）：
- *   - 除 K2（全 half 直算）外，一律在 fp32 域计算（loop 由 fp32 VL 驱动，UpdateMask<float>）：
- *     · fp16 输入 → LoadAlign<DIST_UNPACK_B16> → Cast(fp16→fp32, castTraitB162B32)
- *     · fp32 输入 → LoadAlign<DIST_NORM>（默认）
- *     · int8 掩码 → LoadAlign<DIST_UNPACK4_B8> → Cast(int8→half→fp32)（穿刺 K4 实证）
- *     · fp16 输出 → Cast(fp32→fp16, castTraitB322B16) → StoreAlign<DIST_PACK_B32>
- *     · fp32 输出 → StoreAlign<DIST_NORM>
- *   窄 dtype（int8/fp16）UB→Reg 加载须用对应 UNPACK LoadDist，使 lane 与 fp32 lane 对齐，
- *   否则默认 DIST_NORM 会导致元素错位（穿刺 K4 实证；load_store_utils.h 一致）。
+ * 统一计算策略（依据SDK参考算子load_store_utils.h：ops_cv / ops_oam）：
+ *   - 除K2（全half直算）外，一律在fp32域计算（loop由fp32 VL驱动，UpdateMask<float>）：
+ *     · fp16输入 → LoadAlign<DIST_UNPACK_B16> → Cast(fp16→fp32, castTraitB162B32)
+ *     · fp32输入 → LoadAlign<DIST_NORM>（默认）
+ *     · int8掩码 → LoadAlign<DIST_UNPACK4_B8> → Cast(int8→half→fp32)
+ *     · fp16输出 → Cast(fp32→fp16, castTraitB322B16) → StoreAlign<DIST_PACK_B32>
+ *     · fp32输出 → StoreAlign<DIST_NORM>
+ *   窄dtype（int8/fp16）UB→Reg加载须用对应UNPACK LoadDist，使lane与fp32 lane对齐，
+ *   否则默认DIST_NORM会导致元素错位。
  */
 #ifndef ACTS_ULQ_INPUT_GRAD_H
 #define ACTS_ULQ_INPUT_GRAD_H
@@ -60,24 +58,23 @@ namespace NsActsULQInputGrad {
 using namespace AscendC;
 
 // ---------------------------------------------------------------------------
-// CastTrait（file-scope static constexpr，穿刺 K4 实证：trait 为 const CastTrait&
-// 非类型模板实参，须静态链接；VF 内局部 constexpr 会编译报错）。
-// 注意（穿刺 K4 命名空间陷阱）：RegLayout / SatMode / MaskMergeMode 在 AscendC::Reg；
-//   RoundMode 在 AscendC（非 AscendC::Reg）。
-// trait 常量与 SDK 参考算子 load_store_utils.h（ops_cv）一致。
+// CastTrait（file-scope static constexpr）：trait为const CastTrait&非类型模板实参，
+// 须静态链接；VF内局部constexpr会编译报错。
+// 命名空间注意：RegLayout / SatMode / MaskMergeMode在AscendC::Reg；RoundMode在AscendC。
+// trait常量与SDK参考算子load_store_utils.h（ops_cv）一致。
 // ---------------------------------------------------------------------------
-// int8→half / half→fp32 升精度（无舍入，CAST_NONE）。
+// int8→half / half→fp32升精度（无舍入，CAST_NONE）。
 static constexpr AscendC::Reg::CastTrait g_castTraitUp = {AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::UNKNOWN,
                                                           AscendC::Reg::MaskMergeMode::ZEROING,
                                                           AscendC::RoundMode::CAST_NONE};
-// fp32→half 下转（就近舍入 CAST_RINT，与 SDK castTraitB322B16 一致）。
+// fp32→half下转（就近舍入CAST_RINT，与SDK castTraitB322B16一致）。
 static constexpr AscendC::Reg::CastTrait g_castTraitDown = {
     AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::NO_SAT, AscendC::Reg::MaskMergeMode::ZEROING,
     AscendC::RoundMode::CAST_RINT};
 
-// --------- VF 计算面：单块门控乘法，按 dtype 组合静态选择 load/cast/store ---------
+// --------- VF计算面：单块门控乘法，按dtype组合静态选择load/cast/store ---------
 
-// K2 专用：全 half 直算（免 cast，路径最短，与迭代一骨架/穿刺一致）。
+// K2专用：全half直算（免cast，路径最短）。
 __simd_vf__ inline void GateMulHalfVF(__ubuf__ half* dstAddr, __ubuf__ half* yGradAddr, __ubuf__ half* minMaskAddr,
                                       __ubuf__ half* maxMaskAddr, uint32_t count, uint32_t oneRepeatSize,
                                       uint16_t repeatTimes)
@@ -95,11 +92,11 @@ __simd_vf__ inline void GateMulHalfVF(__ubuf__ half* dstAddr, __ubuf__ half* yGr
     }
 }
 
-// --------- fp32 域统一计算 VF：T=yGrad dtype，MT=mask dtype ---------
-// loop 由 fp32 VL 驱动（oneRepeatSize = VECTOR_REG_WIDTH / sizeof(float)），
-// UpdateMask<float>（较大 dtype 筛选，单一 mask 原则，穿刺 K3 实证）。
-// v2.0 覆盖 K1(fp16+bool) / K3(fp32+bool) / K4(fp32+fp32)（K2 fp16+fp16 走 GateMulHalfVF）。
-// 模板泛型保留 MT==half 分支以自证通用性，但 v2.0 4 组不再实例化该分支（混合浮点已移除）。
+// --------- fp32域统一计算VF：T=yGrad dtype，MT=mask dtype ---------
+// loop由fp32 VL驱动（oneRepeatSize = VECTOR_REG_WIDTH / sizeof(float)），
+// UpdateMask<float>（较大dtype筛选，单一mask原则）。
+// v2.0覆盖K1(fp16+bool) / K3(fp32+bool) / K4(fp32+fp32)（K2 fp16+fp16走GateMulHalfVF）。
+// 模板泛型保留MT==half分支以自证通用性，但v2.0 4组不再实例化该分支（混合浮点已移除）。
 template <typename T, typename MT>
 __simd_vf__ inline void GateMulF32VF(__ubuf__ T* dstAddr, __ubuf__ T* yGradAddr, __ubuf__ MT* minMaskAddr,
                                      __ubuf__ MT* maxMaskAddr, uint32_t count, uint32_t oneRepeatSize,
@@ -112,7 +109,7 @@ __simd_vf__ inline void GateMulF32VF(__ubuf__ T* dstAddr, __ubuf__ T* yGradAddr,
         mask = AscendC::Reg::UpdateMask<float>(count);
         uint32_t off = i * oneRepeatSize;
 
-        // ---- 载入 y_grad → fp32 寄存器 ----
+        // ---- 载入y_grad → fp32寄存器 ----
         if constexpr (std::is_same_v<T, float>) {
             AscendC::Reg::LoadAlign(yF, yGradAddr + off);
         } else { // half
@@ -122,7 +119,7 @@ __simd_vf__ inline void GateMulF32VF(__ubuf__ T* dstAddr, __ubuf__ T* yGradAddr,
             AscendC::Reg::Cast<float, half, g_castTraitUp>(yF, yH, mask);
         }
 
-        // ---- 载入两掩码 → fp32 寄存器 ----
+        // ---- 载入两掩码 → fp32寄存器 ----
         if constexpr (std::is_same_v<MT, float>) {
             AscendC::Reg::LoadAlign(minF, minMaskAddr + off);
             AscendC::Reg::LoadAlign(maxF, maxMaskAddr + off);
@@ -134,7 +131,7 @@ __simd_vf__ inline void GateMulF32VF(__ubuf__ T* dstAddr, __ubuf__ T* yGradAddr,
                 maxH, reinterpret_cast<__ubuf__ half*>(maxMaskAddr) + off);
             AscendC::Reg::Cast<float, half, g_castTraitUp>(minF, minH, mask);
             AscendC::Reg::Cast<float, half, g_castTraitUp>(maxF, maxH, mask);
-        } else { // int8_t (bool) → half → fp32（两步，穿刺 K4 实证）
+        } else { // int8_t (bool) → half → fp32（两步升精度，无舍入）
             AscendC::Reg::RegTensor<int8_t> minI8, maxI8;
             AscendC::Reg::RegTensor<half> minH, maxH;
             AscendC::Reg::LoadAlign<int8_t, AscendC::Reg::LoadDist::DIST_UNPACK4_B8>(
@@ -147,14 +144,14 @@ __simd_vf__ inline void GateMulF32VF(__ubuf__ T* dstAddr, __ubuf__ T* yGradAddr,
             AscendC::Reg::Cast<float, half, g_castTraitUp>(maxF, maxH, mask);
         }
 
-        // ---- 门控乘法（fp32 域） ----
+        // ----门控乘法（fp32域） ----
         AscendC::Reg::Mul(signalF, minF, maxF, mask); // signal = min * max
         AscendC::Reg::Mul(dstF, yF, signalF, mask);   // x_grad = y_grad * signal
 
-        // ---- 写回 x_grad ----
+        // ----写回x_grad ----
         if constexpr (std::is_same_v<T, float>) {
             AscendC::Reg::StoreAlign(dstAddr + off, dstF, mask);
-        } else { // fp32 → half → PACK 存回
+        } else { // fp32 → half → PACK存回
             AscendC::Reg::RegTensor<half> dstH;
             AscendC::Reg::Cast<half, float, g_castTraitDown>(dstH, dstF, mask);
             AscendC::Reg::StoreAlign<half, AscendC::Reg::StoreDist::DIST_PACK_B32>(
@@ -166,7 +163,7 @@ __simd_vf__ inline void GateMulF32VF(__ubuf__ T* dstAddr, __ubuf__ T* yGradAddr,
 template <typename T, typename MT, int BUFFER_MODE>
 class ActsULQInputGrad {
     static constexpr int32_t BUFFER_NUM = BUFFER_MODE ? 2 : 1;
-    // K2（全 half 直算）单独判定：T==MT==half 时走 half 域，否则 fp32 域统一计算。
+    // K2（全half直算）单独判定：T==MT==half时走half域，否则fp32域统一计算。
     static constexpr bool DIRECT_HALF = std::is_same_v<T, half> && std::is_same_v<MT, half>;
 
 public:
@@ -194,7 +191,7 @@ private:
     GlobalTensor<T> xGradGM;
 
     int64_t blockLength_ = 0; // 本核实际处理元素数
-    int64_t ubFormer_ = 0;    // 每个 UB 块基础元素数
+    int64_t ubFormer_ = 0;    // 每个UB块基础元素数
 };
 
 template <typename T, typename MT, int BUFFER_MODE>
@@ -202,7 +199,7 @@ __aicore__ inline void ActsULQInputGrad<T, MT, BUFFER_MODE>::Init(GM_ADDR yGrad,
                                                                   GM_ADDR clampMaxMask, GM_ADDR xGrad,
                                                                   const ActsULQInputGradTilingData* tilingData)
 {
-    // 本核 GM 偏移（按 blockFormer 均分；尾块 blockLength_ 可能小于 blockFormer）
+    // 本核GM偏移（按blockFormer均分；尾块blockLength_可能小于blockFormer）
     int64_t blockOffset = tilingData->blockFormer * AscendC::GetBlockIdx();
     int64_t remainderLength = tilingData->dim0 - blockOffset;
     blockLength_ = (remainderLength > tilingData->blockFormer) ? tilingData->blockFormer : remainderLength;
@@ -226,7 +223,7 @@ __aicore__ inline void ActsULQInputGrad<T, MT, BUFFER_MODE>::CopyIn(int64_t prog
     AscendC::LocalTensor<MT> minMaskLocal = inQueueMinMask.template AllocTensor<MT>();
     AscendC::LocalTensor<MT> maxMaskLocal = inQueueMaxMask.template AllocTensor<MT>();
 
-    // 尾块 / 非 32B 对齐统一走 DataCopyPad（DESIGN.md §2.3 / §3.5）
+    // 尾块 /非32B对齐统一走DataCopyPad（DESIGN.md §2.3 / §3.5）
     AscendC::DataCopyExtParams yGradParams;
     yGradParams.blockCount = 1;
     yGradParams.blockLen = currentNum * sizeof(T);
@@ -258,14 +255,14 @@ __aicore__ inline void ActsULQInputGrad<T, MT, BUFFER_MODE>::Compute(int64_t cur
     AscendC::LocalTensor<T> xGradLocal = outQueueXGrad.template AllocTensor<T>();
 
     if constexpr (DIRECT_HALF) {
-        // K2：全 half 直算，loop 由 half VL 驱动。
+        // K2：全half直算，loop由half VL驱动。
         constexpr uint32_t oneRepeatSize = AscendC::GetVecLen() / sizeof(half);
         uint16_t repeatTimes = AscendC::CeilDivision(static_cast<uint32_t>(currentNum), oneRepeatSize);
         asc_vf_call<GateMulHalfVF>((__ubuf__ half*)xGradLocal.GetPhyAddr(), (__ubuf__ half*)yGradLocal.GetPhyAddr(),
                                    (__ubuf__ half*)minMaskLocal.GetPhyAddr(), (__ubuf__ half*)maxMaskLocal.GetPhyAddr(),
                                    static_cast<uint32_t>(currentNum), oneRepeatSize, repeatTimes);
     } else {
-        // K1/K3/K4：fp32 域统一计算，loop 由 fp32 VL 驱动。
+        // K1/K3/K4：fp32域统一计算，loop由fp32 VL驱动。
         constexpr uint32_t oneRepeatSize = AscendC::GetVecLen() / sizeof(float);
         uint16_t repeatTimes = AscendC::CeilDivision(static_cast<uint32_t>(currentNum), oneRepeatSize);
         asc_vf_call<GateMulF32VF<T, MT>>((__ubuf__ T*)xGradLocal.GetPhyAddr(), (__ubuf__ T*)yGradLocal.GetPhyAddr(),
@@ -297,7 +294,7 @@ __aicore__ inline void ActsULQInputGrad<T, MT, BUFFER_MODE>::CopyOut(int64_t pro
 template <typename T, typename MT, int BUFFER_MODE>
 __aicore__ inline void ActsULQInputGrad<T, MT, BUFFER_MODE>::Process()
 {
-    // 空 Tensor / 本核无数据：提前返回，避免 ubFormer_ 为 0 时除零（与 tiling 空 Tensor 短路双保险）
+    // 空Tensor /本核无数据：提前返回，避免ubFormer_为0时除零（与tiling空Tensor短路双保险）
     if (blockLength_ == 0 || ubFormer_ == 0) {
         return;
     }

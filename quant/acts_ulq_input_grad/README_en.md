@@ -23,7 +23,7 @@ English | [简体中文](./README.md)
   x\_grad = y\_grad \times clamp\_min\_mask \times clamp\_max\_mask
   $$
 
-  That is, a gradient is passed through only when the element falls within both the quantization lower bound and upper bound (both masks are 1); otherwise it is set to zero.
+  That is, a gradient is passed through only when the element falls within both the quantization lower bound and upper bound (both masks are 1); otherwise it is set to zero (premised on y_grad being finite). When y_grad contains non-finite values, IEEE 754 multiplication semantics apply: with all masks 1, inf/nan pass through unchanged; when a mask contains a 0 at that position, inf×0=nan and nan×0=nan (no gated zeroing).
 
 ## Parameters
 
@@ -47,6 +47,7 @@ English | [简体中文](./README.md)
   | FLOAT | FLOAT | FLOAT |
 
 - The shapes of the three inputs and the output must be exactly the same (no broadcasting), and empty tensors are supported.
+- The number of dimensions (rank) of each input/output tensor must be in the range 0 to 8: rank 0 (scalar) is valid; a rank greater than 8 is rejected at graph compilation (E80012, with the actual dimension count and valid range reported).
 
 ## Invocation Description
 
