@@ -36,6 +36,11 @@ constexpr uint64_t BYTE_64 = 64;
 constexpr uint32_t MAX_BASE_MN = 1024;
 constexpr uint32_t MAX_BASE_MN_A16W8 = 512;
 constexpr uint32_t HUGE_M_MIN_BLOCK_PER_CORE = 8; // 海量M判定: baseM=512 时每核至少保留的 M 块数
+// 内积模板跨核负载均衡: 空闲块占比阈值(分母)。1x1/小kernel 触发阈值为 5%(1/20),
+// 较大kernel 为 10%(1/10); 采纳候选时要求空闲占比 <= 5%(利用率 >= 95%, 1/20)。
+constexpr uint32_t N_BALANCE_TRIGGER_IDLE_DENOM_1X1 = 20;
+constexpr uint32_t N_BALANCE_TRIGGER_IDLE_DENOM_GENERAL = 10;
+constexpr uint32_t N_BALANCE_ACCEPT_IDLE_DENOM = 20;
 constexpr uint32_t BASIC_BLOCK_SIZE_512 = 512;
 constexpr uint32_t BASIC_BLOCK_SIZE_256 = 256;
 constexpr uint32_t BASIC_BLOCK_SIZE_128 = 128;

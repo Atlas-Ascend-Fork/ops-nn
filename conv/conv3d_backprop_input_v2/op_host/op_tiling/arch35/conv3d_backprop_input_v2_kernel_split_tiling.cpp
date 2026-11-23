@@ -958,18 +958,23 @@ void Conv3DDXV2KernelSplitTiling::SetSingleCoreInfo(CoreTilingParams& coreParams
         uint32_t splitWi = Ops::Base::CeilDiv(runInfo_.dedx_w, runInfo_.stride_w);
 
         // KernelSplit(SPLIT_HW) 下 cube 侧总块数不足核数时, 核间并行度不足导致 cube 利用率≈块数/核数较低。
-        // 通过细分 M/N 基本块提升并行度: M方向按 splitWi 与 m0 的公倍数(LCM)缩小保证子窗输出重排完整,
-        // N方向按 n0 缩小。仅命中 totalCnt<coreNum 的用例, 分核充分的场景不进入, 不改变其它用例行为。
+        // 通过细分 M 基本块提升并行度: baseM 按 splitWi 与 m0 的公倍数(LCM)缩小, 保证子窗输出重排完整。
+        // 仅命中 totalCnt<coreNum 的用例, 分核充分的场景不进入, 不改变其它用例行为。
         // 仅当cube侧是真正瓶颈(核间并行度不足)时才扩核。1x1 kernel无vector transpose必然安全;
         // kernel>1且cout较大(如1280)时走vector/workspace路径,扩核收益被AIV掩盖且会扰动tiling, 不处理。
         // 该策略基于独立(非耦合)arch35平台实测调参; 耦合(fuse)平台分核极小时下方已有独立的 baseM 回缩逻辑,
         // 为避免两套策略叠加扰动tiling, 此处仅对非耦合平台生效, 其余芯片版本经实测后再放开。
+        // 准入收紧: 原提交同时按 n0 细分 baseN(产生 nCnt>1 的 N 分块形态), 但 SPLIT_HW 模板 kernel 侧
+        // 尚未完成 nCnt>1 的正确性适配(输出通道后段 n 块计算错误), 故此处仅保留安全的 M 方向细分,
+        // 不再缩小 baseN, 保持 nCnt==1 旧形态以确保正确性。
         if (!IsSocVersionFuse(context_) && kernelSplitMode_ == KERNEL_SPLIT_HW &&
             totalCnt < static_cast<uint64_t>(coreNum_) && runInfo_.dedx_w > 0 && runInfo_.stride_w > 0 &&
             (kernelSplitPara_.maxSplitKw == 1U || runInfo_.dedy_cout_g <= BASIC_BLOCK_SIZE_512)) {
             const uint64_t targetMNCnt = Ops::Base::CeilDiv(static_cast<uint64_t>(coreNum_), batchDepth * groupCnt);
             const uint32_t m0 = static_cast<uint32_t>(tilingRunInfo_.m0);
-            const uint32_t n0 = static_cast<uint32_t>(tilingRunInfo_.n0);
+            // 记录细分前基准, 用于下方最慢核负载校验与回退
+            const uint32_t origBaseM = l0Params.baseM;
+            const uint64_t origMCnt = mCnt;
             // M方向: 保证 baseM 同时是 splitWi 与 m0 的倍数, 以 LCM 为步进递减(仅当 baseM 有下调空间, 绝不增大 baseM)
             const uint32_t stepM = static_cast<uint32_t>(
                 MathUtil::Lcm(static_cast<int32_t>(splitWi), static_cast<int32_t>(m0)));
@@ -978,22 +983,23 @@ void Conv3DDXV2KernelSplitTiling::SetSingleCoreInfo(CoreTilingParams& coreParams
                 alignedBaseM = std::max(alignedBaseM, stepM);
                 l0Params.baseM = alignedBaseM;
                 mCnt = Ops::Base::CeilDiv(kernelSplitPara_.splitHiWi, static_cast<uint64_t>(l0Params.baseM));
-                totalCnt = batchDepth * groupCnt * mCnt * nCnt;
                 while (mCnt * nCnt < targetMNCnt && l0Params.baseM > stepM) {
                     l0Params.baseM -= stepM;
                     mCnt = Ops::Base::CeilDiv(kernelSplitPara_.splitHiWi, static_cast<uint64_t>(l0Params.baseM));
-                    totalCnt = batchDepth * groupCnt * mCnt * nCnt;
                 }
+                totalCnt = batchDepth * groupCnt * mCnt * nCnt;
             }
-            // N方向: 按 n0 步进缩小, 提高 nCnt
-            uint32_t alignedBaseN = static_cast<uint32_t>((l0Params.baseN / n0) * n0);
-            alignedBaseN = std::max(alignedBaseN, n0);
-            l0Params.baseN = alignedBaseN;
-            nCnt = Ops::Base::CeilDiv(tilingRunInfo_.nValue, static_cast<uint64_t>(l0Params.baseN));
-            totalCnt = batchDepth * groupCnt * mCnt * nCnt;
-            while (mCnt * nCnt < targetMNCnt && l0Params.baseN > n0) {
-                l0Params.baseN -= n0;
-                nCnt = Ops::Base::CeilDiv(tilingRunInfo_.nValue, static_cast<uint64_t>(l0Params.baseN));
+
+            // 仅按块数凑足核数可能使最慢核分到「整块+尾块」, M 负载反而升高(如 splitHiWi=208 细分后
+            // 最忙核由 1 个 208 块变为 2 个 192 块)。以「每核最多分到的块数 × baseM」作为最慢核 M 负载
+            // 上界, 细分后上界超过细分前即回退, 保证不劣化最慢核。
+            const uint64_t coreU = static_cast<uint64_t>(coreNum_);
+            const uint64_t worstMCntBefore = Ops::Base::CeilDiv(batchDepth * groupCnt * origMCnt * nCnt, coreU);
+            const uint64_t worstMCntAfter = Ops::Base::CeilDiv(totalCnt, coreU);
+            if (worstMCntAfter * static_cast<uint64_t>(l0Params.baseM) >
+                worstMCntBefore * static_cast<uint64_t>(origBaseM)) {
+                l0Params.baseM = origBaseM;
+                mCnt = origMCnt;
                 totalCnt = batchDepth * groupCnt * mCnt * nCnt;
             }
         }

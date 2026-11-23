@@ -2024,7 +2024,7 @@ void Conv3DDXV2InnerProductTiling::InitBaseMNK(L0TilingParams& l0Params)
     AdjustBaseKForSplitK(l0Params, tilingRunInfo_);
 }
 
-uint32_t Conv3DDXV2InnerProductTiling::CalculateMaxBaseM(uint32_t baseN)
+uint32_t Conv3DDXV2InnerProductTiling::CalculateMaxBaseM(uint32_t baseN, const L0TilingParams& l0Params)
 {
     if (enableLocalWSplit_) {
         return MAX_BASE_MN;
@@ -2034,7 +2034,7 @@ uint32_t Conv3DDXV2InnerProductTiling::CalculateMaxBaseM(uint32_t baseN)
     }
     if (baseN <= tilingRunInfo_.n0) {
         // 海量M + 小N(in) 标量长杆: 放宽 baseM 的 512 上限, 减少 M 块数以缓解标量开销
-        if (IsHugeMTinyNBaseMExpand()) {
+        if (IsHugeMTinyNBaseMExpand(l0Params)) {
             return MAX_BASE_MN;
         }
         return BASIC_BLOCK_SIZE_512;
@@ -2042,7 +2042,7 @@ uint32_t Conv3DDXV2InnerProductTiling::CalculateMaxBaseM(uint32_t baseN)
     return MAX_BASE_MN;
 }
 
-bool Conv3DDXV2InnerProductTiling::IsHugeMTinyNBaseMExpand() const
+bool Conv3DDXV2InnerProductTiling::IsHugeMTinyNBaseMExpand(const L0TilingParams& l0Params) const
 {
     // 仅在纯 InnerProduct 主路径触发, 其余路径/形状返回 false, 保持原 512 行为。
     // KernelSplit/SmallKernel 走独立 tiling 不经过此处; FullLoad/SmallShape 复用本路径,
@@ -2058,7 +2058,24 @@ bool Conv3DDXV2InnerProductTiling::IsHugeMTinyNBaseMExpand() const
     const uint64_t hwi = static_cast<uint64_t>(runInfo_.dedx_h) * runInfo_.dedx_w;
     const uint64_t hugeMThreshold = static_cast<uint64_t>(BASIC_BLOCK_SIZE_512) * HUGE_M_MIN_BLOCK_PER_CORE *
                                     static_cast<uint64_t>(coreNum_);
-    return hwi >= hugeMThreshold;
+    if (hwi < hugeMThreshold) {
+        return false;
+    }
+    // 准入收紧: 放宽 baseM 到 MAX_BASE_MN 后 L1 兜底有两条救援链——
+    //   1) ShrinkBaseK: 需 baseK > k0 才有"16→8"降档重算空间, 若 baseK 已跌至 k0 则该链失效;
+    //   2) ShrinkBaseMN: 下缩 baseM 的下限为 minBaseM=max(dedx_w, m0), 若 dedx_w >= MAX_BASE_MN
+    //      (即不小于放宽后的 baseM), 则该链同样无 M 可缩。
+    // 两条救援链同时断裂时(CalculateOptimalBaseK 推导的 baseK 已到 k0, 且 dedx_w 不小于放宽后的
+    // baseM), 对齐的 stepK 解(如 (9,9)+pbufA=1)无法被搜索到, 最终报 L1 超限。仅此类组合不放宽,
+    // 其余海量M用例(baseK 仍有再缩余量, 或 dedx_w < MAX_BASE_MN 可由 ShrinkBaseMN 下缩救援)仍放宽,
+    // 性能不回退。
+    const uint32_t l0abMaxNum = platformInfo_.l0_ab_size / l0Params.al0Pbuffer / dtypeByteL0a_;
+    const bool baseKNoShrinkRoom = (l0abMaxNum / MAX_BASE_MN / tilingRunInfo_.k0 <= ONE_U32);
+    const bool mnNoShrinkRoom = (static_cast<uint64_t>(runInfo_.dedx_w) >= static_cast<uint64_t>(MAX_BASE_MN));
+    if (baseKNoShrinkRoom && mnNoShrinkRoom) {
+        return false;
+    }
+    return true;
 }
 
 void Conv3DDXV2InnerProductTiling::AdjustBaseMWhenSmallN(uint32_t& baseM, uint32_t baseN,
@@ -2068,7 +2085,7 @@ void Conv3DDXV2InnerProductTiling::AdjustBaseMWhenSmallN(uint32_t& baseM, uint32
     uint32_t l0cMaxNum = std::min(platformInfo_.l0_c_size / l0Params.cl0Pbuffer / ge::GetSizeByDataType(ge::DT_FLOAT),
                                   SMALL_BLOCK_SIZE_LIMIT);
     uint64_t alignedMValue = Ops::Base::CeilAlign(tilingRunInfo.mValue, static_cast<uint64_t>(tilingRunInfo_.m0));
-    uint32_t maxBaseM = CalculateMaxBaseM(baseN);
+    uint32_t maxBaseM = CalculateMaxBaseM(baseN, l0Params);
     int64_t bpPadRight = runInfo_.dedx_w - (static_cast<int64_t>(runInfo_.dedy_w - 1) * runInfo_.stride_w + 1) +
                          (runInfo_.kernel_w - 1) * runInfo_.dilation_w - runInfo_.backprop_pad_l;
     int64_t bpPadDown = runInfo_.dedx_h - (static_cast<int64_t>(runInfo_.dedy_h - 1) * runInfo_.stride_h + 1) +
@@ -3190,7 +3207,8 @@ void Conv3DDXV2InnerProductTiling::SetSingleCoreInfoCore(CoreTilingParams& coreP
             const uint64_t waveEffNum = Ops::Base::CeilDiv(totalCnt, coreU) * coreU;
             const uint64_t idleBlocksNow = waveEffNum > totalCnt ? waveEffNum - totalCnt : 0;
             // 1x1/小kernel 用 5% 阈值，较大 kernel 用 10%(避免误伤标量/访存主导场景)
-            const uint64_t idleThreshold = (kernelDHW == 1) ? (waveEffNum / 20) : (waveEffNum / 10);
+            const uint64_t idleThreshold = (kernelDHW == 1) ? (waveEffNum / N_BALANCE_TRIGGER_IDLE_DENOM_1X1) :
+                                                              (waveEffNum / N_BALANCE_TRIGGER_IDLE_DENOM_GENERAL);
             if (idleThreshold > 0 && idleBlocksNow >= idleThreshold) {
                 // 从当前块数往上枚举目标 nCnt(desiredNCnt), 对应候选 baseN(alignedBaseN) 按 n0 对齐后逐档下降,
                 // 直至找到核间空转足够小(利用率>=95%)的最小细分粒度。
@@ -3207,7 +3225,7 @@ void Conv3DDXV2InnerProductTiling::SetSingleCoreInfoCore(CoreTilingParams& coreP
                     uint64_t newWaveEffNum = Ops::Base::CeilDiv(newTotalCnt, coreU) * coreU;
                     uint64_t newIdleBlocks = newWaveEffNum > newTotalCnt ? newWaveEffNum - newTotalCnt : 0;
                     // 均衡足够好(eff >= 95%)即采纳(与KB验证一致), 避免 baseN 缩得过小损害tile效率
-                    if (newIdleBlocks * 20 <= newWaveEffNum) {
+                    if (newIdleBlocks * N_BALANCE_ACCEPT_IDLE_DENOM <= newWaveEffNum) {
                         l0Params.baseN = alignedBaseN;
                         nCnt = actualNCnt;
                         totalCnt = newTotalCnt;

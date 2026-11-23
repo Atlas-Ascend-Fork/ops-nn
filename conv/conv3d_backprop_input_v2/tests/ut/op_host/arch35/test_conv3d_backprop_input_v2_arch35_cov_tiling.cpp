@@ -907,7 +907,8 @@ static Conv3DBpInputV2CovParam dx_cov_cases[] = {
      true,
      true},
     // inner_product 海量M+小N: IsHugeMTinyNBaseMExpand=true (CalculateMaxBaseM 放宽到 MAX_BASE_MN)。
-    // w>512 规避 FullLoad, expectedMaxCnt>=80 规避 SmallShape, cin<=n0 且 hwi>=512*8*coreNum 命中海量M分支
+    // w 取 [512,1024) 区间: w>512 规避 FullLoad, w<MAX_BASE_MN 规避 baseK 塌缩后的 mnNoShrinkRoom 回退;
+    // expectedMaxCnt>=80 规避 SmallShape, cin<=n0 且 hwi>=512*8*coreNum 命中海量M分支
     {"cov_ip_huge_m_tiny_n",
      "bfloat16",
      "bfloat16",
@@ -915,10 +916,10 @@ static Conv3DBpInputV2CovParam dx_cov_cases[] = {
      {5},
      {512, 16, 1, 1, 1},
      {512, 16, 1, 1, 1},
-     {1, 512, 1, 512, 1024},
-     {1, 512, 1, 512, 1024},
-     {1, 16, 1, 512, 1024},
-     {1, 16, 1, 512, 1024},
+     {1, 512, 1, 512, 640},
+     {1, 512, 1, 512, 640},
+     {1, 16, 1, 512, 640},
+     {1, 16, 1, 512, 640},
      ge::FORMAT_ND,
      ge::FORMAT_NCDHW,
      ge::FORMAT_NCDHW,
