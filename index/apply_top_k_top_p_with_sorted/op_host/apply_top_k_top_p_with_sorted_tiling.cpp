@@ -192,12 +192,12 @@ ge::graphStatus ApplyTopKTopPWithSortedTiling::CheckShape()
     auto logitsShapePtr = tilingcontext->GetOptionalInputShape(LOGITS_INPUT_INDEX);
     bool logitsAvailable = (logitsShapePtr != nullptr && logitsShapePtr->GetStorageShape().GetDimNum() > 0 &&
                             batchSize_ > 0 && vocabSize_ > 0);
-    // The opt kernel writes through DataCopy, which needs 32B-aligned GM addresses. Rows of a
-    // vocabSize that is not a multiple of the 32B block would start mid-block and the write would
-    // spill into the neighbouring row, so such shapes stay on the scalar scatter path.
-    uint32_t inputElemBytes = DATATYPE_LEN_MAP[tilingcontext->GetInputDesc(SORTED_VALUE_INPUT_INDEX)->GetDataType()];
-    bool vocabBlockAligned = (vocabSize_ % (BLOCK_BYTES / inputElemBytes)) == 0;
-    optKey_ = (logitsAvailable && vocabBlockAligned) ? OPT_TOP_K_TOP_P_KEY : 0;
+    if (socVersion_ == NpuArch::DAV_2002) {
+        // 310P: DataCopyPad 不可用（运行写 0），opt 路径依赖 DataCopyPad，必须强制走 scatter 旧路径
+        optKey_ = 0;
+    } else {
+        optKey_ = logitsAvailable ? OPT_TOP_K_TOP_P_KEY : 0;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
