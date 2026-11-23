@@ -229,7 +229,7 @@ int main()
     uint64_t* result = nullptr;
     uint64_t resultSize = 0;
     const auto ret = aclnnTransQuantParam(scaleArray, scaleSize, offsetArray, offsetSize, &result, &resultSize);
-    if (ret != ACLNN_SUCCESS) {
+    if (ret != ACL_SUCCESS) {
         std::cerr << "aclnnTransQuantParam failed. ERROR: " << ret << '\n';
         return 1;
     }
