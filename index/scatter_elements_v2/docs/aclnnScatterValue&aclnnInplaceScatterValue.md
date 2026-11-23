@@ -436,7 +436,7 @@
       <td>selfRef、index的维度数不一致</td>
     </tr>
     <tr>
-      <td rowspan="2">self、index的shape不符合以下限制：<br>对于每一个维度d，如果d != dim,有index.size(d) <= selfRef.size(d)的限制。<br></td>
+      <td rowspan="2">selfRef、index的shape不符合以下限制：<br>对于每一个维度d，如果d != dim,有index.size(d) <= selfRef.size(d)的限制。<br></td>
     </tr>
     <tr>
     </tr>
