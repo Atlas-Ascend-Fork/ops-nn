@@ -68,7 +68,10 @@ static constexpr int16_t CONST_SIXTY_FOUR = 64;
 bool SyncBatchNormGatherStatsTiling::TotalSumShapeCheck()
 {
     auto totalSumDesc = context_->GetInputDesc(INPUT_IDX_TOTAL_SUM);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, totalSumDesc);
+    OP_CHECK_IF(totalSumDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "total_sum",
+                                                         "The descriptor of input total_sum is unavailable"),
+                return false);
     totalSumDType_ = totalSumDesc->GetDataType();
     OP_CHECK_IF(
         (totalSumDType_ != ge::DT_BF16 && totalSumDType_ != ge::DT_FLOAT16 && totalSumDType_ != ge::DT_FLOAT),
@@ -77,7 +80,10 @@ bool SyncBatchNormGatherStatsTiling::TotalSumShapeCheck()
         return false);
 
     auto totalSumStorageShape = context_->GetInputShape(INPUT_IDX_TOTAL_SUM);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, totalSumStorageShape);
+    OP_CHECK_IF(
+        totalSumStorageShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "total_sum", "The shape of input total_sum is unavailable"),
+        return false);
     totalSumShape_ = totalSumStorageShape->GetStorageShape();
     auto totalSumDims = totalSumShape_.GetDimNum();
     OP_CHECK_IF((static_cast<uint16_t>(totalSumDims) != TOTAL_SUMS_SHAPE_SIZE),
@@ -99,7 +105,10 @@ bool SyncBatchNormGatherStatsTiling::TotalSumShapeCheck()
 bool SyncBatchNormGatherStatsTiling::TotalSquareSumShapeCheck()
 {
     auto totalSquareSumDesc = context_->GetInputDesc(INPUT_IDX_TOTAL_SQUARE_SUM);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, totalSquareSumDesc);
+    OP_CHECK_IF(totalSquareSumDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "total_square_sum",
+                                                         "The descriptor of input total_square_sum is unavailable"),
+                return false);
     totalSquareSumDType_ = totalSquareSumDesc->GetDataType();
     OP_CHECK_IF((totalSquareSumDType_ != ge::DT_BF16 && totalSquareSumDType_ != ge::DT_FLOAT16 &&
                  totalSquareSumDType_ != ge::DT_FLOAT),
@@ -109,7 +118,10 @@ bool SyncBatchNormGatherStatsTiling::TotalSquareSumShapeCheck()
                 return false);
 
     auto totalSquareSumStorageShape = context_->GetInputShape(INPUT_IDX_TOTAL_SQUARE_SUM);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, totalSquareSumStorageShape);
+    OP_CHECK_IF(totalSquareSumStorageShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "total_square_sum",
+                                                         "The shape of input total_square_sum is unavailable"),
+                return false);
     totalSquareSumShape_ = totalSquareSumStorageShape->GetStorageShape();
     auto totalSquareSumDims = totalSquareSumShape_.GetDimNum();
     OP_CHECK_IF((static_cast<uint16_t>(totalSquareSumDims) != TOTAL_SQUARE_SUMS_SHAPE_SIZE),
@@ -132,7 +144,10 @@ bool SyncBatchNormGatherStatsTiling::TotalSquareSumShapeCheck()
 bool SyncBatchNormGatherStatsTiling::SampleCountShapeCheck()
 {
     auto sampleCountDesc = context_->GetInputDesc(INPUT_IDX_SAMPLE_COUNT);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, sampleCountDesc);
+    OP_CHECK_IF(sampleCountDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "sample_count",
+                                                         "The descriptor of input sample_count is unavailable"),
+                return false);
     sampleCountDType_ = sampleCountDesc->GetDataType();
     OP_CHECK_IF((sampleCountDType_ != ge::DT_INT32),
                 OP_LOGE_FOR_INVALID_DTYPE(opName, "sample_count",
@@ -140,7 +155,10 @@ bool SyncBatchNormGatherStatsTiling::SampleCountShapeCheck()
                 return false);
 
     auto sampleCountStorageShape = context_->GetInputShape(INPUT_IDX_SAMPLE_COUNT);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, sampleCountStorageShape);
+    OP_CHECK_IF(sampleCountStorageShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "sample_count",
+                                                         "The shape of input sample_count is unavailable"),
+                return false);
     sampleCountShape_ = sampleCountStorageShape->GetStorageShape();
     auto sampleCountDims = sampleCountShape_.GetDimNum();
     OP_CHECK_IF((static_cast<uint16_t>(sampleCountDims) != SAMPLE_COUNT_SHAPE_SIZE),
@@ -162,7 +180,9 @@ bool SyncBatchNormGatherStatsTiling::SampleCountShapeCheck()
 bool SyncBatchNormGatherStatsTiling::MeanShapeCheck()
 {
     auto meanDesc = context_->GetInputDesc(INPUT_IDX_MEAN);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, meanDesc);
+    OP_CHECK_IF(meanDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "mean", "The descriptor of input mean is unavailable"),
+                return false);
     meanDType_ = meanDesc->GetDataType();
     OP_CHECK_IF((meanDType_ != ge::DT_BF16 && meanDType_ != ge::DT_FLOAT16 && meanDType_ != ge::DT_FLOAT),
                 OP_LOGE_FOR_INVALID_DTYPE(opName, "mean", ge::TypeUtils::DataTypeToSerialString(meanDType_).c_str(),
@@ -170,7 +190,9 @@ bool SyncBatchNormGatherStatsTiling::MeanShapeCheck()
                 return false);
 
     auto meanStorageShape = context_->GetInputShape(INPUT_IDX_MEAN);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, meanStorageShape);
+    OP_CHECK_IF(meanStorageShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "mean", "The shape of input mean is unavailable"),
+                return false);
     meanShape_ = meanStorageShape->GetStorageShape();
     auto meanDims = meanShape_.GetDimNum();
     OP_CHECK_IF((static_cast<uint16_t>(meanDims) != MEAN_SHAPE_SIZE),
@@ -191,7 +213,10 @@ bool SyncBatchNormGatherStatsTiling::MeanShapeCheck()
 bool SyncBatchNormGatherStatsTiling::VarShapeCheck()
 {
     auto varDesc = context_->GetInputDesc(INPUT_IDX_VAR);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, varDesc);
+    OP_CHECK_IF(
+        varDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "variance", "The descriptor of input variance is unavailable"),
+        return false);
     varDType_ = varDesc->GetDataType();
     OP_CHECK_IF((varDType_ != ge::DT_BF16 && varDType_ != ge::DT_FLOAT16 && varDType_ != ge::DT_FLOAT),
                 OP_LOGE_FOR_INVALID_DTYPE(opName, "variance", ge::TypeUtils::DataTypeToSerialString(varDType_).c_str(),
@@ -199,7 +224,10 @@ bool SyncBatchNormGatherStatsTiling::VarShapeCheck()
                 return false);
 
     auto varStorageShape = context_->GetInputShape(INPUT_IDX_VAR);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, varStorageShape);
+    OP_CHECK_IF(
+        varStorageShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "variance", "The shape of input variance is unavailable"),
+        return false);
     varShape_ = varStorageShape->GetStorageShape();
     auto varDims = varShape_.GetDimNum();
     OP_CHECK_IF((static_cast<uint16_t>(varDims) != VAR_SHAPE_SIZE),
@@ -220,7 +248,10 @@ bool SyncBatchNormGatherStatsTiling::VarShapeCheck()
 bool SyncBatchNormGatherStatsTiling::BatchMeanCheck()
 {
     auto batchMeanDesc = context_->GetOutputDesc(INPUT_IDX_TOTAL_SUM);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, batchMeanDesc);
+    OP_CHECK_IF(batchMeanDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "batch_mean",
+                                                         "The descriptor of output batch_mean is unavailable"),
+                return false);
     batchMeanDType_ = batchMeanDesc->GetDataType();
     OP_CHECK_IF(
         (batchMeanDType_ != ge::DT_BF16 && batchMeanDType_ != ge::DT_FLOAT16 && batchMeanDType_ != ge::DT_FLOAT),
@@ -229,7 +260,10 @@ bool SyncBatchNormGatherStatsTiling::BatchMeanCheck()
         return false);
 
     auto batchMeanStorageShape = context_->GetOutputShape(INPUT_IDX_TOTAL_SUM);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, batchMeanStorageShape);
+    OP_CHECK_IF(
+        batchMeanStorageShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "batch_mean", "The shape of output batch_mean is unavailable"),
+        return false);
     batchMeanShape_ = batchMeanStorageShape->GetStorageShape();
     auto batchMeanDims = batchMeanShape_.GetDimNum();
     OP_CHECK_IF((static_cast<uint16_t>(batchMeanDims) != MEAN_SHAPE_SIZE),
@@ -251,7 +285,10 @@ bool SyncBatchNormGatherStatsTiling::BatchMeanCheck()
 bool SyncBatchNormGatherStatsTiling::BatchInvstdCheck()
 {
     auto batchInvStdDesc = context_->GetOutputDesc(INPUT_IDX_TOTAL_SQUARE_SUM);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, batchInvStdDesc);
+    OP_CHECK_IF(batchInvStdDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "batch_invstd",
+                                                         "The descriptor of output batch_invstd is unavailable"),
+                return false);
     batchInvStdDType_ = batchInvStdDesc->GetDataType();
     OP_CHECK_IF(
         (batchInvStdDType_ != ge::DT_BF16 && batchInvStdDType_ != ge::DT_FLOAT16 && batchInvStdDType_ != ge::DT_FLOAT),
@@ -261,7 +298,10 @@ bool SyncBatchNormGatherStatsTiling::BatchInvstdCheck()
         return false);
 
     auto batchInvStdStorageShape = context_->GetOutputShape(INPUT_IDX_TOTAL_SQUARE_SUM);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, batchInvStdStorageShape);
+    OP_CHECK_IF(batchInvStdStorageShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "batch_invstd",
+                                                         "The shape of output batch_invstd is unavailable"),
+                return false);
     batchInvStdShape_ = batchInvStdStorageShape->GetStorageShape();
     auto batchInvStdDims = batchInvStdShape_.GetDimNum();
     OP_CHECK_IF((static_cast<uint16_t>(batchInvStdDims) != MEAN_SHAPE_SIZE),
@@ -283,7 +323,10 @@ bool SyncBatchNormGatherStatsTiling::BatchInvstdCheck()
 bool SyncBatchNormGatherStatsTiling::RunningMeanCheck()
 {
     auto runningMeanDesc = context_->GetOutputDesc(INPUT_IDX_SAMPLE_COUNT);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runningMeanDesc);
+    OP_CHECK_IF(
+        runningMeanDesc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "mean", "The descriptor of output mean is unavailable"),
+        return false);
     runningMeanDType_ = runningMeanDesc->GetDataType();
     OP_CHECK_IF(
         (runningMeanDType_ != ge::DT_BF16 && runningMeanDType_ != ge::DT_FLOAT16 && runningMeanDType_ != ge::DT_FLOAT),
@@ -292,7 +335,9 @@ bool SyncBatchNormGatherStatsTiling::RunningMeanCheck()
         return false);
 
     auto runningMeanStorageShape = context_->GetOutputShape(INPUT_IDX_SAMPLE_COUNT);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runningMeanStorageShape);
+    OP_CHECK_IF(runningMeanStorageShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "mean", "The shape of output mean is unavailable"),
+                return false);
     runningMeanShape_ = runningMeanStorageShape->GetStorageShape();
     auto runningMeanDims = runningMeanShape_.GetDimNum();
     OP_CHECK_IF((static_cast<uint16_t>(runningMeanDims) != MEAN_SHAPE_SIZE),
@@ -313,7 +358,10 @@ bool SyncBatchNormGatherStatsTiling::RunningMeanCheck()
 bool SyncBatchNormGatherStatsTiling::RunningVarCheck()
 {
     auto runningVarDesc = context_->GetOutputDesc(INPUT_IDX_MEAN);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runningVarDesc);
+    OP_CHECK_IF(runningVarDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "variance",
+                                                         "The descriptor of output variance is unavailable"),
+                return false);
     runningVarDType_ = runningVarDesc->GetDataType();
     OP_CHECK_IF(
         (runningVarDType_ != ge::DT_BF16 && runningVarDType_ != ge::DT_FLOAT16 && runningVarDType_ != ge::DT_FLOAT),
@@ -322,7 +370,10 @@ bool SyncBatchNormGatherStatsTiling::RunningVarCheck()
         return false);
 
     auto runningVarStorageShape = context_->GetOutputShape(INPUT_IDX_MEAN);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, runningVarStorageShape);
+    OP_CHECK_IF(
+        runningVarStorageShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "variance", "The shape of output variance is unavailable"),
+        return false);
     runningVarShape_ = runningVarStorageShape->GetStorageShape();
     auto runningVarDims = runningVarShape_.GetDimNum();
     OP_CHECK_IF((static_cast<uint16_t>(runningVarDims) != MEAN_SHAPE_SIZE),
