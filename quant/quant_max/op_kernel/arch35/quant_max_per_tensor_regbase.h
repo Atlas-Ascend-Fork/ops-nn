@@ -169,6 +169,9 @@ __aicore__ inline void QuantMaxPerTensorRegbase<T, U, RoundMode>::Compute(int64_
         AscendC::Reg::RegTensor<U> vregY;
 
         AscendC::Reg::MaskReg mask = AscendC::Reg::CreateMask<float>();
+        AscendC::Reg::MaskReg maskAll = AscendC::Reg::CreateMask<float>();
+        uint32_t countOne = 1;
+        AscendC::Reg::MaskReg maskOne = AscendC::Reg::UpdateMask<float>(countOne);
         AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_NORM>(vregTileMaxFp32, tileMaxLocalAddr);
 
         AscendC::Reg::Duplicate<float>(vregS, scaleValue_, mask);
@@ -212,8 +215,9 @@ __aicore__ inline void QuantMaxPerTensorRegbase<T, U, RoundMode>::Compute(int64_
             }
         }
 
-        AscendC::Reg::Reduce<AscendC::Reg::ReduceType::MAX>(vregTileMaxFp32, vregTileMaxFp32, mask);
-        AscendC::Reg::StoreAlign<float, AscendC::Reg::StoreDist::DIST_NORM>(tileMaxLocalAddr, vregTileMaxFp32, mask);
+        AscendC::Reg::Reduce<AscendC::Reg::ReduceType::MAX>(vregTileMaxFp32, vregTileMaxFp32, maskAll);
+        AscendC::Reg::StoreAlign<float, AscendC::Reg::StoreDist::DIST_FIRST_ELEMENT_B32>(tileMaxLocalAddr,
+                                                                                         vregTileMaxFp32, maskOne);
     }
 
     inQueueX_.FreeTensor(xLocal);
