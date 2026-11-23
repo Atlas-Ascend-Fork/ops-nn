@@ -15,18 +15,26 @@
  * \brief L2NormalizeGrad arch35 (Ascend950) plain tiling-data struct.
  *
  * One definition shared by host tiling (context->GetTilingData<L2NormalizeGradTilingData>())
- * and kernel (GET_TILING_DATA_WITH_STRUCT). [outer, D, inner] reduction model; cores split by outer.
+ * and kernel (GET_TILING_DATA_WITH_STRUCT). [outer, D, inner] model; split by outer or D (7040).
  */
 #ifndef _L2_NORMALIZE_GRAD_TILING_DATA_H_
 #define _L2_NORMALIZE_GRAD_TILING_DATA_H_
 
 #include <cstdint>
 
+namespace L2NormalizeGrad {
+constexpr int64_t ORDERED_DOT_LANES = 8;
+constexpr int64_t ORDERED_DOT_WIDTH = 4 * ORDERED_DOT_LANES;
+constexpr int64_t ORDERED_DOT_GROUP = 16;
+constexpr int64_t ORDERED_DOT_BLOCK = ORDERED_DOT_WIDTH * ORDERED_DOT_GROUP * ORDERED_DOT_GROUP * ORDERED_DOT_GROUP;
+constexpr int64_t ORDERED_DOT_TAIL_SLOTS = 4; // Three cascade levels and the final products.
+} // namespace L2NormalizeGrad
+
 struct L2NormalizeGradTilingData {
     int64_t outer = 0;       // product of dims before the reduce axis
     int64_t dimLen = 0;      // D = length of the reduce axis
     int64_t inner = 0;       // product of dims after the reduce axis
-    int64_t blockFactor = 0; // outer groups per (non-tail) core
+    int64_t blockFactor = 0; // legacy 7050 elements per core only
     int64_t usedCoreNum = 0; // cores actually used
     int64_t colFactor = 0;   // inner columns per tile (strided 7020 / 7030)
     int64_t dFactor = 0;     // reduce-axis rows per tile (strided-split/7030 only; 0 for other keys)
@@ -36,8 +44,7 @@ struct L2NormalizeGradTilingData {
     int64_t reduceBufBytes = 0; // reduceBufSq_/reduceBufS_ (7000/7010)
     int64_t accumBufBytes = 0;  // accumBufSq_/accumBufS_ (7010) / 每列累加器 (7030)
     int64_t tmpBufBytes = 0;    // tmpSumSqBuf_/tmpSumSBuf_ (7000/7010)
-    int64_t ubFactorElems = 0;  // 单次处理元素数(7000 的 ubFactor / 7010 的 ubFactorD):
-                                // 由 host 从平台实际 ubSize 反推,**不是写死常量**
+    int64_t ubFactorElems = 0; // 单次处理元素数。7020 非零表示合并多个 outer 组，零走通用跨步路径。
     // ---- 对齐后的量:一律 host 算好,内核直接取用,不在内核再 AlignUp/除法 ----
     // (对齐值若两边各算一套,就又回到 host 预算与内核分配不同源的老问题)
     int64_t colsAlignBlock = 0;    // AlignUp(D, block)      —— 7000 的 GM 行宽
@@ -56,7 +63,11 @@ struct L2NormalizeGradTilingData {
     int64_t tailColAlignF32 = 0;   // AlignUp(tailColTile, fp32 block)
     int64_t midBufBytes = 0;       // fp32 中间量 tile(x^2 / y*dy)每块字节数
     int64_t sumBufBytes = 0;       // 每列规约结果缓冲字节数(含 VL slack)
-    float eps = 0.0f;              // denominator floor
+    int64_t coreDimLen = 0;        // 7040/7060: D rows per core (block aligned)
+    int64_t coresPerGroup = 0;     // 7040/7060: collaborating shards for one outer
+    int64_t independentTasksPerCore = 0; // 7000-7030: independent reduction tasks
+    int64_t orderedDotBlocks = 0;        // 7040 FP16: number of complete logical FP32 reduction blocks
+    float eps = 0.0f;                    // denominator floor
 };
 
 #endif // _L2_NORMALIZE_GRAD_TILING_DATA_H_

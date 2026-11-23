@@ -102,6 +102,20 @@ def _work_dtype(*tensors):
     return torch.float32
 
 
+def _eps_in_dtype(eps, dtype):
+    """Round the scalar in the working dtype before torch.clamp range checks.
+
+    A decimal spelling just above float32 max may round to finite float32 max,
+    while clamp rejects that Python float directly. Convert on CPU to avoid
+    constructing a CUDA scalar and synchronizing it back through float(tensor).
+    Keep float64 for Promote inputs; genuine overflow and nonfinite values retain
+    their normal dtype-conversion semantics rather than being clipped to max.
+    """
+    scalar_type = np.float64 if dtype == torch.float64 else np.float32
+    with np.errstate(over="ignore", invalid="ignore"):
+        return float(scalar_type(eps))
+
+
 def _compute(x, y, dy, **kwargs):
     """torch.Tensor 进 / 出（档位由 _work_dtype 定），返回 [dx]，顺序照 def.cpp。"""
     axes = _resolve_axis(_attr(kwargs, "dim", ()), x.dim())
@@ -114,7 +128,7 @@ def _compute(x, y, dy, **kwargs):
 
     # ── 以下全部为 torch 库算子拼接，不手写 numpy 数值公式（红线 R3）──
     sq, s = _reduce_pair(xf * xf, yf * dyf, axes)
-    n = torch.clamp(torch.sqrt(sq), min=float(torch.tensor(eps, dtype=work)))
+    n = torch.clamp(torch.sqrt(sq), min=_eps_in_dtype(eps, work))
     dx = (dyf - yf * s) / n
     return [dx]
 
@@ -145,9 +159,7 @@ class _L2NormalizeGradCompose:
         axes = _resolve_axis(self.dim, x.dim())
         xw, yw, dyw = _tp_widen(x), _tp_widen(y), _tp_widen(dy)
         sq, s = _reduce_pair(xw * xw, yw * dyw, axes)
-        n = torch.clamp(
-            torch.sqrt(sq), min=float(torch.tensor(self.eps, dtype=xw.dtype))
-        )
+        n = torch.clamp(torch.sqrt(sq), min=_eps_in_dtype(self.eps, xw.dtype))
         return [((dyw - yw * s) / n).to(dy.dtype)]
 
 

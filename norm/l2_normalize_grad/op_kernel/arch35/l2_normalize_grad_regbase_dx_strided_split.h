@@ -38,7 +38,8 @@ using namespace AscendC;
 template <typename T_X>
 class RegbaseDxStridedSplit : public RegbaseDxBase<T_X> {
     using Base = RegbaseDxBase<T_X>;
-    using Base::blockFactor_;
+    static constexpr uint16_t REDUCTION_GROUP_ROWS = 16;
+    static constexpr uint16_t REDUCTION_TILE_ROWS = REDUCTION_GROUP_ROWS * REDUCTION_GROUP_ROWS;
     using Base::CalcOuterNum;
     using Base::CopyIn2D;
     using Base::CopyOut2D;
@@ -49,6 +50,7 @@ class RegbaseDxStridedSplit : public RegbaseDxBase<T_X> {
     using Base::InitCommon;
     using Base::InitQueues;
     using Base::Ppipe_;
+    using Base::tasksPerCore_;
     using Base::tiling_;
     using Base::usedCoreNum_;
     using Base::xGm_;
@@ -64,8 +66,20 @@ public:
         outer_ = tiling_->outer;
         D_ = tiling_->dimLen;
         inner_ = tiling_->inner;
+        if (tiling_->coreDimLen > 0) {
+            D_ = Min(tiling_->coreDimLen,
+                     D_ - static_cast<int64_t>(GetBlockIdx() % tiling_->coresPerGroup) * tiling_->coreDimLen);
+        }
         colFactor_ = tiling_->colFactor;
         dFactor_ = tiling_->dFactor;
+        // Four contiguous FP16 columns use the FP32 reference's two-level FP32 sum.
+        // Shrinking the row tile keeps the host's queue and scratch allocations valid.
+        useOrderedReduction_ = IsSameType<T_X, half>::value && tiling_->coresPerGroup == 0 && inner_ == 4 &&
+                               colFactor_ == inner_ && dFactor_ >= REDUCTION_TILE_ROWS &&
+                               D_ < REDUCTION_TILE_ROWS * REDUCTION_GROUP_ROWS;
+        if (useOrderedReduction_) {
+            dFactor_ = REDUCTION_TILE_ROWS;
+        }
 
         colFactorAlign_ = tiling_->colFactorAlign; // host 下发,内核不再 AlignUp
         tailColAlign_ = tiling_->tailColAlign;
@@ -104,31 +118,31 @@ public:
         if (coreIdx >= usedCoreNum_) {
             return;
         }
-        int64_t blockTail = outer_ - (usedCoreNum_ - 1) * blockFactor_;
-        int64_t calcOuterNum = coreIdx == usedCoreNum_ - 1 ? blockTail : blockFactor_;
-        for (int64_t o = 0; o < calcOuterNum; o++) {
-            for (int64_t colStart = 0; colStart < inner_; colStart += colFactor_) {
-                int64_t colTile = Min(colFactor_, inner_ - colStart);
-                ZeroSums();
-                int64_t slotIdx = 0;
-                for (int64_t dStart = 0; dStart < D_; dStart += dFactor_) {
-                    AccumChunk(o, dStart, Min(dFactor_, D_ - dStart), colStart, colTile, slotIdx);
-                    if (++slotIdx == chunkSlots_) {
-                        FlushSlots(slotIdx, colTile);
-                        slotIdx = 0;
-                    }
-                }
-                if (slotIdx > 0) {
+        const int64_t colTiles = DivCeil(inner_, colFactor_);
+        const int64_t taskEnd = Min(outer_ * colTiles, (static_cast<int64_t>(coreIdx) + 1) * tasksPerCore_);
+        for (int64_t task = static_cast<int64_t>(coreIdx) * tasksPerCore_; task < taskEnd; ++task) {
+            const int64_t o = task / colTiles;
+            const int64_t colStart = (task % colTiles) * colFactor_;
+            int64_t colTile = Min(colFactor_, inner_ - colStart);
+            ZeroSums();
+            int64_t slotIdx = 0;
+            for (int64_t dStart = 0; dStart < D_; dStart += dFactor_) {
+                AccumChunk(o, dStart, Min(dFactor_, D_ - dStart), colStart, colTile, slotIdx);
+                if (!useOrderedReduction_ && ++slotIdx == chunkSlots_) {
                     FlushSlots(slotIdx, colTile);
+                    slotIdx = 0;
                 }
-                for (int64_t dStart = 0; dStart < D_; dStart += dFactor_) {
-                    WriteChunk(o, dStart, Min(dFactor_, D_ - dStart), colStart, colTile);
-                }
+            }
+            if (slotIdx > 0) {
+                FlushSlots(slotIdx, colTile);
+            }
+            for (int64_t dStart = 0; dStart < D_; dStart += dFactor_) {
+                WriteChunk(o, dStart, Min(dFactor_, D_ - dStart), colStart, colTile);
             }
         }
     }
 
-private:
+protected:
     TQue<QuePosition::VECIN, DEPTH_TWO> inQueueX_;
     TQue<QuePosition::VECIN, DEPTH_TWO> inQueueY_;
     TQue<QuePosition::VECIN, DEPTH_TWO> inQueueDy_;
@@ -181,6 +195,13 @@ private:
         __local_mem__ T_X* xAddr = (__ubuf__ T_X*)xLocal.GetPhyAddr();
         __local_mem__ T_X* yAddr = (__ubuf__ T_X*)yLocal.GetPhyAddr();
         __local_mem__ T_X* dyAddr = (__ubuf__ T_X*)dyLocal.GetPhyAddr();
+        if (useOrderedReduction_) {
+            AccumOrderedChunk(xAddr, yAddr, dyAddr, dLoop);
+            inQueueX_.FreeTensor(xLocal);
+            inQueueY_.FreeTensor(yLocal);
+            inQueueDy_.FreeTensor(dyLocal);
+            return;
+        }
         __local_mem__ float* sqAddr = (__ubuf__ float*)sqLocal.GetPhyAddr();
         __local_mem__ float* prodAddr = (__ubuf__ float*)prodLocal.GetPhyAddr();
 
@@ -216,6 +237,54 @@ private:
         inQueueX_.FreeTensor(xLocal);
         inQueueY_.FreeTensor(yLocal);
         inQueueDy_.FreeTensor(dyLocal);
+    }
+
+    // Sum 16 consecutive rows in order, then sum groups of 16 partials.
+    // At the final tile, combine the short group and the prior tiles in that order.
+    __aicore__ inline void AccumOrderedChunk(__local_mem__ T_X* xAddr, __local_mem__ T_X* yAddr,
+                                             __local_mem__ T_X* dyAddr, uint16_t rows)
+    {
+        __local_mem__ float* sqAddr = (__ubuf__ float*)sumSqBuf_.Get<float>().GetPhyAddr();
+        __local_mem__ float* dotAddr = (__ubuf__ float*)sumSBuf_.Get<float>().GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            LocalMemBar<Reg::MemType::VEC_STORE, Reg::MemType::VEC_LOAD>();
+            uint32_t cols = static_cast<uint32_t>(inner_);
+            MaskReg mask = UpdateMask<float>(cols);
+            RegTensor<float> x, y, dy, term, sqPartial, dotPartial, sqGroup, dotGroup, sqTotal, dotTotal;
+            Duplicate(sqPartial, 0.0F, mask);
+            Duplicate(dotPartial, 0.0F, mask);
+            Duplicate(sqGroup, 0.0F, mask);
+            Duplicate(dotGroup, 0.0F, mask);
+
+            for (uint16_t start = 0; start < rows; start += REDUCTION_GROUP_ROWS) {
+                const uint16_t end = Min(static_cast<uint16_t>(start + REDUCTION_GROUP_ROWS), rows);
+                for (uint16_t row = start; row < end; ++row) {
+                    const uint32_t offset = static_cast<uint32_t>(row * colFactorAlign_);
+                    LoadAndCast(x, xAddr, mask, offset);
+                    Mul(term, x, x, mask);
+                    Add(sqPartial, sqPartial, term, mask);
+                    LoadAndCast(y, yAddr, mask, offset);
+                    LoadAndCast(dy, dyAddr, mask, offset);
+                    Mul(term, y, dy, mask);
+                    Add(dotPartial, dotPartial, term, mask);
+                }
+                if (end - start == REDUCTION_GROUP_ROWS) {
+                    Add(sqGroup, sqGroup, sqPartial, mask);
+                    Add(dotGroup, dotGroup, dotPartial, mask);
+                    Duplicate(sqPartial, 0.0F, mask);
+                    Duplicate(dotPartial, 0.0F, mask);
+                }
+            }
+            DataCopy(sqTotal, sqAddr);
+            DataCopy(dotTotal, dotAddr);
+            Add(sqGroup, sqPartial, sqGroup, mask);
+            Add(dotGroup, dotPartial, dotGroup, mask);
+            Add(sqTotal, sqTotal, sqGroup, mask);
+            Add(dotTotal, dotTotal, dotGroup, mask);
+            DataCopy(sqAddr, sqTotal, mask);
+            DataCopy(dotAddr, dotTotal, mask);
+        }
     }
 
     // 一组槽位满(或 D 走完)时:沿**槽位轴**再做一次 ReduceSum<RA> 树形规约,组结果累进每列和。
@@ -325,7 +394,7 @@ private:
         CopyOut2D(outQueueDx_, o * D_ * inner_ + dStart * inner_ + colStart, dTile, colTile, inner_ - colTile);
     }
 
-private:
+protected:
     TBuf<TPosition::VECCALC> sqBuf_;
     TBuf<TPosition::VECCALC> prodBuf_;
     TBuf<TPosition::VECCALC> chunkSqBuf_;
@@ -348,6 +417,7 @@ private:
     uint16_t accVLs_;
     int64_t chunkSlots_;
     int64_t slotStride_;
+    bool useOrderedReduction_;
 };
 } // namespace L2NormalizeGrad
 #endif // L2_NORMALIZE_GRAD_REGBASE_DX_STRIDED_SPLIT_H

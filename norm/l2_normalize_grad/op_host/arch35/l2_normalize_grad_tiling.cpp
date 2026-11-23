@@ -12,14 +12,16 @@
  * \file l2_normalize_grad_tiling.cpp
  * \brief L2NormalizeGrad arch35 (Ascend950) tiling.
  *
- * Splits the outer groups across AI cores (no cross-core reduction). Selects the DX template by the
- * [outer, D, inner] decomposition: inner==1 -> full-load (7000) or split-D (7010) by D vs UB;
- * inner>1 -> strided (7020), or strided-split (7030) when the whole D cannot stay resident in UB.
+ * Splits outer groups / strided column tiles across AI cores, or splits large D (7040/7060). Selects the DX template by
+ * the [outer, D, inner] decomposition: inner==1 -> full-load (7000) or split-D (7010) by D vs UB; inner>1 -> strided
+ * (7020), or strided-split (7030) when the whole D cannot stay resident in UB. D==1 -> contiguous elementwise (7050).
  * Empty tensor -> 8000.
  */
 
 #include <string>
 #include <algorithm>
+#include <limits>
+#include <numeric>
 #include <graph/utils/type_utils.h>
 #include "l2_normalize_grad_tiling.h"
 #include "register/op_def_registry.h"
@@ -50,17 +52,25 @@ constexpr int64_t MAX_BLOCK_COUNT = 65535; // DataCopyExtParams::blockCount 为 
 // 行宽对齐倍数(1VL);VL 的实际字节数由平台 GetVecRegLen 决定,不写死
 constexpr int64_t BUFFER_NUM = 2;      // double buffer
 constexpr int64_t STRIDED_BUF_NUM = 4; // x + y + dy + dx
+constexpr int64_t STRIDED_QUEUE_AND_MID_UNITS = STRIDED_BUF_NUM * BUFFER_NUM + 2;
 constexpr int64_t FLOAT_BYTE = 4;
 constexpr int64_t UB_RESERVED = 8 * 1024;
 constexpr int64_t FP32_BLOCK = 8;  // FLOAT_NUM_BLOCK(fp32 每 32B 块元素数)
 constexpr int64_t FP16_BLOCK = 16; // HALF_NUM_BLOCK(fp16 每 32B 块元素数)
+constexpr int64_t DMA_BLOCK_BYTES = FP16_BLOCK * sizeof(uint16_t);
+constexpr int64_t BATCHED_STRIDED_GROUP_ELEMS = 4; // FP16 [D=2, inner=2]
 constexpr uint32_t EMPTY_TILING_KEY = 8000;
 constexpr uint32_t FULL_LOAD_KEY = 7000;
 constexpr uint32_t SPLIT_D_KEY = 7010;
 constexpr uint32_t STRIDED_KEY = 7020;
 constexpr uint32_t STRIDED_SPLIT_KEY = 7030;
-constexpr int64_t K_MAX_CHUNK_SLOTS = 64; // 7030 跨分块树形规约的最大组大小(仅占 ~1.7% tile)
-constexpr int64_t MIN_D_TILE = 128;       // 2VL:strided-split 每趟至少铺满这么多行,避免列切太碎
+constexpr uint32_t CROSS_CORE_D_KEY = 7040;
+constexpr uint32_t ELEMENTWISE_KEY = 7050;
+constexpr uint32_t STRIDED_CROSS_CORE_KEY = 7060;
+constexpr int64_t PARTIAL_SLOT_FLOATS = 8; // one 32B slot per core: sq, sHi, sLo, padding
+constexpr int64_t MIN_CHUNKS_PER_CORE = 4; // amortize synchronization on large reductions
+constexpr int64_t K_MAX_CHUNK_SLOTS = 64;  // 7030 跨分块树形规约的最大组大小(仅占 ~1.7% tile)
+constexpr int64_t MIN_D_TILE = 128;        // 2VL:strided-split 每趟至少铺满这么多行,避免列切太碎
 // 与内核常量一一对应(l2_normalize_grad_regbase_common.h / _split_d.h);host 是 UB 尺寸的唯一权威
 
 constexpr int64_t K_SPLIT_D_MAX_CHUNKS = 256; // 与内核累加槽数一致(定长槽,非平台量)
@@ -186,7 +196,7 @@ static ge::graphStatus BuildAxisMask(gert::TilingContext* context, const gert::C
 
 // 连续轴集 -> [outer, dimLen, inner] 三段折叠。非连续(轴号不相邻)在此显式拒收。
 static ge::graphStatus FoldAxisRange(gert::TilingContext* context, const gert::Shape& xShape, int64_t rank,
-                                     uint64_t axisMask, int64_t& outer, int64_t& dimLen, int64_t& inner)
+                                     uint64_t axisMask, bool empty, int64_t& outer, int64_t& dimLen, int64_t& inner)
 {
     int64_t lo = -1;
     int64_t hi = -1;
@@ -207,6 +217,12 @@ static ge::graphStatus FoldAxisRange(gert::TilingContext* context, const gert::S
                     "the reduction axes must form a contiguous range (non-adjacent axis indices are not supported)"),
                 return ge::GRAPH_FAILED);
 
+    if (empty) {
+        outer = 0;
+        dimLen = 1;
+        inner = 1;
+        return ge::GRAPH_SUCCESS;
+    }
     outer = 1;
     dimLen = 1;
     inner = 1;
@@ -243,9 +259,22 @@ static ge::graphStatus ResolveDimAndShape(gert::TilingContext* context, int64_t&
                     ("the rank of x must not exceed " + std::to_string(MAX_MASK_RANK)).c_str()),
                 return ge::GRAPH_FAILED);
 
-    totalNum = 1;
-    for (int64_t i = 0; i < rank; i++) {
-        totalNum *= xShape.GetDim(i);
+    bool empty = false;
+    for (int64_t i = 0; i < rank; ++i) {
+        OP_CHECK_IF(xShape.GetDim(i) < 0, OP_LOGE(context, "Runtime shape has a negative dimension."),
+                    return ge::GRAPH_FAILED);
+        empty = empty || xShape.GetDim(i) == 0;
+    }
+    totalNum = empty ? 0 : 1;
+    if (!empty) {
+        const int64_t elementBytes = context->GetInputDesc(INPUT_X_IDX)->GetDataType() == ge::DT_FLOAT ? 4 : 2;
+        const int64_t maxElements = std::numeric_limits<int64_t>::max() / elementBytes;
+        for (int64_t i = 0; i < rank; ++i) {
+            const int64_t size = xShape.GetDim(i);
+            OP_CHECK_IF(totalNum > maxElements / size, OP_LOGE(context, "Tensor byte offsets exceed int64 range."),
+                        return ge::GRAPH_FAILED);
+            totalNum *= size;
+        }
     }
 
     uint64_t axisMask = 0UL;
@@ -261,7 +290,7 @@ static ge::graphStatus ResolveDimAndShape(gert::TilingContext* context, int64_t&
         return ge::GRAPH_SUCCESS;
     }
 
-    return FoldAxisRange(context, xShape, rank, axisMask, outer, dimLen, inner);
+    return FoldAxisRange(context, xShape, rank, axisMask, empty, outer, dimLen, inner);
 }
 
 // 从平台实际 ubSize 反推单次可处理元素数,而不是写死常量再拿 ubSize 去校验(本末倒置)。
@@ -296,6 +325,24 @@ static void SelectInner1Template(int64_t dimLen, uint64_t ubSize, int64_t vlElem
     ubFactorElems = (tilingKey == FULL_LOAD_KEY) ? fullFactor : DeriveUbFactor(ubSize, true, vlElems);
 }
 
+// Given a column width, solve for the D tile and its tree reduction slots.
+static bool SolveStridedSplitTile(int64_t dimLen, int64_t colFactor, int64_t uElems, int64_t block, int64_t vlElems,
+                                  int64_t& dFactor, int64_t& chunkSlots)
+{
+    const int64_t colAlign = CeilDiv(colFactor, block) * block;
+    // Keep the tree reduction slots whenever possible. Reduce the slot count if no D row fits.
+    for (chunkSlots = K_MAX_CHUNK_SLOTS; chunkSlots >= 1; chunkSlots /= 2) {
+        const int64_t numer = uElems - 14 * vlElems - 4 * colAlign - 2 * chunkSlots * colAlign;
+        dFactor = (numer > 0) ? (numer / (STRIDED_QUEUE_AND_MID_UNITS * colAlign)) : 0;
+        if (dFactor >= 1) {
+            dFactor = std::min({dFactor, dimLen, MAX_BLOCK_COUNT}); // DataCopyPad blockCount is uint16.
+            return true;
+        }
+    }
+    chunkSlots = 1;
+    return false;
+}
+
 // inner > 1:跨步归约。整段 D 可常驻走 strided(7020),否则沿归约轴分块走 strided_split(7030)。
 static void SelectStridedTemplate(int64_t dimLen, int64_t inner, uint64_t ubSize, int64_t block, int64_t vlElems,
                                   uint32_t& tilingKey, int64_t& colFactor, int64_t& dFactor, int64_t& chunkSlots)
@@ -312,12 +359,12 @@ static void SelectStridedTemplate(int64_t dimLen, int64_t inner, uint64_t ubSize
     //   7020: 8*(rows*colAlign + vl) + 2*(rows*colAlign + vl) + 2*(colAlign + vl) <= U
     //         => colAlign <= (U - 12*vl) / (10*rows + 2)
     //   7030: 同上但小缓冲有 4 块(每列和 x2 + 分块规约结果 x2)
-    //         => dFactor  <= (U - 14*vl - 4*colAlign) / (10*colAlign)
+    //         => dFactor <= (U - 14*vl - 4*colAlign - 2*chunkSlots*colAlign) / (10*colAlign)
     // 其中 U = (ubSize - UB_RESERVED)/4 以 fp32 元素计;10 = 4队列x双缓冲 + 2块 fp32 中间量 tile。
-    constexpr int64_t QUEUE_AND_MID_UNITS = STRIDED_BUF_NUM * BUFFER_NUM + 2;
     const int64_t uElems = (static_cast<int64_t>(ubSize) - UB_RESERVED) / FLOAT_BYTE;
     // ① 先试整段 D 常驻(7020)
-    const int64_t colAlignCap = (dimLen > 0) ? ((uElems - 12 * vlElems) / (QUEUE_AND_MID_UNITS * dimLen + 2)) : inner;
+    const int64_t colAlignCap = (dimLen > 0) ? ((uElems - 12 * vlElems) / (STRIDED_QUEUE_AND_MID_UNITS * dimLen + 2)) :
+                                               inner;
     const int64_t maxCol = (colAlignCap / block) * block;
     if (maxCol >= block && dimLen <= MAX_BLOCK_COUNT) {
         tilingKey = STRIDED_KEY;
@@ -327,62 +374,165 @@ static void SelectStridedTemplate(int64_t dimLen, int64_t inner, uint64_t ubSize
     }
     // ② 否则沿 D 切块(7030);列宽先给 D 留 MIN_D_TILE 行余量,解不出就退到最细列宽 block。
     tilingKey = STRIDED_SPLIT_KEY;
-    const int64_t colByDTile = (((uElems - 14 * vlElems) / (QUEUE_AND_MID_UNITS * MIN_D_TILE + 4)) / block) * block;
+    const int64_t colByDTile = (((uElems - 14 * vlElems) / (STRIDED_QUEUE_AND_MID_UNITS * MIN_D_TILE + 4)) / block) *
+                               block;
     colFactor = std::min(inner, (colByDTile < block) ? block : colByDTile);
     // 跨分块结果先进**槽位数组**再做一次树形 ReduceSum,而不是逐块顺序累加:
     // s = Σ(y·dy) 会对消(实测对消 ~400x),顺序链越长残差越大。D=70000 实测相对误差
     // 4.6e-7(顺序) vs 3.8e-8(树形),后者比竞品 GPU 还好一个量级。
-    // 槽位额只占 2*slots*colAlign,相对 QUEUE_AND_MID_UNITS*dFactor*colAlign 极小(实测 ~1.7%);
-    // 解不出时逐级减半直至 slots=1(退化为原顺序累加,严格不劣于改动前)。
     for (int32_t retry = 0; retry < 2; retry++) {
-        const int64_t colAlign = CeilDiv(colFactor, block) * block;
-        for (chunkSlots = K_MAX_CHUNK_SLOTS; chunkSlots >= 1; chunkSlots /= 2) {
-            const int64_t numer = uElems - 14 * vlElems - 4 * colAlign - 2 * chunkSlots * colAlign;
-            dFactor = (numer > 0) ? (numer / (QUEUE_AND_MID_UNITS * colAlign)) : 0;
-            if (dFactor >= 1) {
-                break;
-            }
+        if (SolveStridedSplitTile(dimLen, colFactor, uElems, block, vlElems, dFactor, chunkSlots)) {
+            return;
         }
-        if (chunkSlots < 1) {
-            chunkSlots = 1;
-        }
-        if (dFactor >= 1 || colFactor <= block) {
+        if (colFactor <= block) {
             break;
         }
         colFactor = std::min(inner, block);
     }
-    if (dFactor < 1) {
-        dFactor = 1; // 保底:一次一行,恒可行
-    }
-    dFactor = std::min(dFactor, dimLen);
-    dFactor = std::min(dFactor, MAX_BLOCK_COUNT); // DataCopyPad blockCount 为 uint16,不可截断
+    dFactor = 1; // 保底:一次一行。
 }
 
-static void SelectTemplate(int64_t outer, int64_t dimLen, int64_t inner, int64_t totalNum, int64_t coreNum,
-                           uint64_t ubSize, int64_t block, int64_t vlElems, uint32_t& tilingKey, int64_t& blockFactor,
-                           int64_t& usedCoreNum, int64_t& colFactor, int64_t& dFactor, int64_t& ubFactorElems,
-                           int64_t& chunkSlots)
+// A plan separates legacy element counts from independent tasks and cooperative shards.
+struct TilingPlan {
+    uint32_t key = EMPTY_TILING_KEY;
+    int64_t blockFactor = 0; // 7050 elements only
+    int64_t tasksPerCore = 0;
+    int64_t usedCoreNum = 1;
+    int64_t colFactor = 0;
+    int64_t dFactor = 0;
+    int64_t ubFactorElems = 0;
+    int64_t chunkSlots = 1;
+};
+
+static int64_t BatchedStridedGuardBytes(int64_t vlElems)
 {
-    colFactor = 0;
-    chunkSlots = 1;
-    dFactor = 0;
-    ubFactorElems = 0;
-    if (totalNum == 0) {
-        tilingKey = EMPTY_TILING_KEY;
-        blockFactor = 0;
-        usedCoreNum = 1;
+    return CeilDiv(vlElems * FLOAT_BYTE, DMA_BLOCK_BYTES) * DMA_BLOCK_BYTES;
+}
+
+static void TryBatchStridedGroups(int64_t outer, uint64_t ubSize, int64_t vlElems, TilingPlan& plan)
+{
+    if (vlElems < BATCHED_STRIDED_GROUP_ELEMS || vlElems % BATCHED_STRIDED_GROUP_ELEMS != 0 || ubSize <= UB_RESERVED) {
         return;
     }
-    blockFactor = CeilDiv(outer, coreNum);
-    if (blockFactor < 1) {
-        blockFactor = 1;
+    constexpr int64_t groupsPerBlock = FP16_BLOCK / BATCHED_STRIDED_GROUP_ELEMS;
+    constexpr int64_t bytesPerGroup = BATCHED_STRIDED_GROUP_ELEMS * sizeof(uint16_t);
+    const int64_t groupsPerVector = vlElems / BATCHED_STRIDED_GROUP_ELEMS;
+    const int64_t groupAlign = std::lcm(groupsPerBlock, groupsPerVector);
+    const int64_t perBufferBudget = (static_cast<int64_t>(ubSize) - UB_RESERVED) / (STRIDED_BUF_NUM * BUFFER_NUM);
+    const int64_t availablePayload = perBufferBudget - BatchedStridedGuardBytes(vlElems);
+    if (availablePayload < groupAlign * bytesPerGroup || plan.tasksPerCore < groupAlign) {
+        return;
     }
-    usedCoreNum = CeilDiv(outer, blockFactor);
+    const int64_t maxTileGroups = (availablePayload / bytesPerGroup / groupAlign) * groupAlign;
+
+    // Align the start of each core's contiguous GM range, then balance its UB tiles.
+    const int64_t groupsPerCore = CeilDiv(plan.tasksPerCore, groupsPerBlock) * groupsPerBlock;
+    const int64_t maxCoreGroups = std::min(groupsPerCore, outer);
+    const int64_t tileCount = CeilDiv(maxCoreGroups, maxTileGroups);
+    const int64_t tileGroups = CeilDiv(CeilDiv(maxCoreGroups, tileCount), groupAlign) * groupAlign;
+    plan.ubFactorElems = tileGroups * BATCHED_STRIDED_GROUP_ELEMS;
+    plan.tasksPerCore = groupsPerCore;
+    plan.usedCoreNum = CeilDiv(outer, groupsPerCore);
+}
+
+static TilingPlan BuildIndependentPlan(int64_t outer, int64_t dimLen, int64_t inner, int64_t totalNum, int64_t coreNum,
+                                       uint64_t ubSize, int64_t block, int64_t vlElems)
+{
+    TilingPlan plan;
+    if (totalNum == 0) {
+        return plan;
+    }
+    if (dimLen == 1) {
+        plan.key = ELEMENTWISE_KEY;
+        plan.ubFactorElems = DeriveUbFactor(ubSize, true, vlElems);
+        plan.blockFactor = CeilDiv(CeilDiv(outer, coreNum), block) * block;
+        plan.usedCoreNum = CeilDiv(outer, plan.blockFactor);
+        return plan;
+    }
+    int64_t tasks = outer;
     if (inner == 1) {
-        SelectInner1Template(dimLen, ubSize, vlElems, tilingKey, ubFactorElems);
+        SelectInner1Template(dimLen, ubSize, vlElems, plan.key, plan.ubFactorElems);
     } else {
-        SelectStridedTemplate(dimLen, inner, ubSize, block, vlElems, tilingKey, colFactor, dFactor, chunkSlots);
+        SelectStridedTemplate(dimLen, inner, ubSize, block, vlElems, plan.key, plan.colFactor, plan.dFactor,
+                              plan.chunkSlots);
+        tasks = outer * CeilDiv(inner, plan.colFactor);
     }
+    plan.tasksPerCore = CeilDiv(tasks, coreNum);
+    plan.usedCoreNum = CeilDiv(tasks, plan.tasksPerCore);
+    if (plan.key == STRIDED_KEY && block == FP16_BLOCK && dimLen == 2 && inner == 2 && plan.colFactor == inner) {
+        TryBatchStridedGroups(outer, ubSize, vlElems, plan);
+    }
+    return plan;
+}
+
+// Input buffers use the split kernel's budget. Cooperation
+// only changes ownership and partial workspace; local arithmetic/layout is reused.
+static bool SelectCooperativePlan(int64_t coreNum, int64_t block, int64_t vlElems, uint32_t sysWorkspace,
+                                  L2NormalizeGradTilingData* t, TilingPlan& plan, size_t& userWorkspace)
+{
+    if (plan.key != SPLIT_D_KEY && plan.key != STRIDED_SPLIT_KEY) {
+        return false;
+    }
+    const bool ar = plan.key == SPLIT_D_KEY;
+    if ((!ar && (plan.colFactor != t->inner || t->inner > vlElems)) || t->outer >= coreNum) {
+        return false;
+    }
+    const int64_t unitRows = ar ? t->ubFactorElems : t->dFactor;
+    const int64_t slotBytes = ar ? PARTIAL_SLOT_FLOATS * FLOAT_BYTE : 2 * t->slotStride * FLOAT_BYTE;
+    const int64_t scratchRows = ar ? t->qBufBytes / (PARTIAL_SLOT_FLOATS * FLOAT_BYTE) :
+                                     std::min(t->chunkSlots, t->slotBufBytes / (t->slotStride * FLOAT_BYTE));
+    const uint64_t maxPerCore = ar ? PARTIAL_SLOT_FLOATS * FLOAT_BYTE :
+                                     2 * static_cast<uint64_t>(CeilDiv(vlElems, FP32_BLOCK) * FP32_BLOCK) * FLOAT_BYTE;
+    const uint64_t maxSize = std::numeric_limits<size_t>::max();
+    if (maxPerCore > (maxSize - sysWorkspace) / static_cast<uint64_t>(coreNum)) {
+        return false;
+    }
+    const uint64_t workspaceCap = static_cast<uint64_t>(coreNum) * maxPerCore;
+    const int64_t workspaceRows = static_cast<int64_t>(workspaceCap / t->outer / slotBytes);
+    // Division order avoids overflowing MIN_CHUNKS_PER_CORE * unitRows.
+    const int64_t qCap = std::min(
+        {coreNum / t->outer, t->dimLen / unitRows / MIN_CHUNKS_PER_CORE, scratchRows, workspaceRows});
+    if (qCap < 2) {
+        return false;
+    }
+    const int64_t unalignedRows = CeilDiv(t->dimLen, qCap);
+    if (unalignedRows > std::numeric_limits<int64_t>::max() - (block - 1)) {
+        return false;
+    }
+    const int64_t shardRows = CeilDiv(unalignedRows, block) * block;
+    const int64_t q = CeilDiv(t->dimLen, shardRows);
+    if (q < 2) {
+        return false;
+    }
+    t->coreDimLen = shardRows;
+    t->coresPerGroup = q;
+    t->independentTasksPerCore = 0;
+    plan.tasksPerCore = 0;
+    plan.usedCoreNum = t->outer * q; // <= coreNum by construction
+    plan.key = ar ? CROSS_CORE_D_KEY : STRIDED_CROSS_CORE_KEY;
+    t->usedCoreNum = plan.usedCoreNum;
+    userWorkspace = static_cast<size_t>(plan.usedCoreNum) * slotBytes;
+    using namespace L2NormalizeGrad;
+    // The eight-lane reference uses groups of 16 up through 2^19 four-vector groups.
+    // Keep the existing core ownership and put the independent dot blocks after the core slots.
+    constexpr int64_t maxReferenceGroups = 1L << 19;
+    if (ar && block == FP16_BLOCK && vlElems == 2 * ORDERED_DOT_WIDTH && t->outer == 1 &&
+        t->dimLen >= ORDERED_DOT_BLOCK && t->dimLen / ORDERED_DOT_WIDTH <= maxReferenceGroups) {
+        const int64_t blocks = t->dimLen / ORDERED_DOT_BLOCK;
+        const size_t dotBytes = (blocks + ORDERED_DOT_TAIL_SLOTS) * ORDERED_DOT_WIDTH * FLOAT_BYTE;
+        // A vector load from the final 32-float slot also reads the inactive upper half.
+        if (blocks >= q && dotBytes + ORDERED_DOT_WIDTH * FLOAT_BYTE <= static_cast<size_t>(t->qBufBytes) &&
+            dotBytes <= maxSize - sysWorkspace - userWorkspace) {
+            t->orderedDotBlocks = blocks;
+            userWorkspace += dotBytes;
+        }
+    }
+    return true;
+}
+
+static int64_t StridedSlotBufferBytes(int64_t chunkSlots, int64_t slotStride)
+{
+    return chunkSlots * slotStride * FLOAT_BYTE;
 }
 
 // 计算各模板的 UB 缓冲字节数。**内核不得自行推算**:host 预算与内核分配必须同源,
@@ -411,6 +561,9 @@ static void ComputeBufBytes(uint32_t tilingKey, int64_t dimLen, int64_t colFacto
         reduceBufBytes = ubFactorElems * FLOAT_BYTE;
         accumBufBytes = std::max(K_SPLIT_D_MAX_CHUNKS, K_SPLIT_D_DF_SCRATCH_VLS * vlElems) * FLOAT_BYTE;
         tmpBufBytes = vlElems * FLOAT_BYTE;
+    } else if (tilingKey == STRIDED_KEY && ubFactorElems > 0) {
+        // The batched path computes both column sums in registers, using only the queues in UB.
+        qBufBytes = ubFactorElems * sizeof(uint16_t) + BatchedStridedGuardBytes(vlElems);
     } else if (tilingKey == STRIDED_KEY || tilingKey == STRIDED_SPLIT_KEY) {
         // 归约改用平台 ReduceSum<Pattern::Reduce::RA>,需要两块 **fp32** 中间量 tile(x^2 / y*dy)
         // 与两块每列规约结果;不再有手写 Kahan 的补偿量缓冲。
@@ -423,7 +576,7 @@ static void ComputeBufBytes(uint32_t tilingKey, int64_t dimLen, int64_t colFacto
         // 7030 另需两块"每分块规约结果",与每列和同尺寸,记进 accumBufBytes(校验按 2*accum + 2*sum 计)
         accumBufBytes = (tilingKey == STRIDED_SPLIT_KEY) ? sumBufBytes : 0;
         // 7030 槽位数组:chunkSlots 行 x colAlignF32(= ReduceSum<RA> 的 srcShape),两份(sq/s)
-        slotBufBytes = (tilingKey == STRIDED_SPLIT_KEY) ? (chunkSlots * colAlignF32 * FLOAT_BYTE) : 0;
+        slotBufBytes = (tilingKey == STRIDED_SPLIT_KEY) ? StridedSlotBufferBytes(chunkSlots, colAlignF32) : 0;
     }
 }
 
@@ -463,6 +616,58 @@ static void ComputeAlignedDims(uint32_t tilingKey, int64_t dimLen, int64_t inner
             t->accVLs = CeilDiv(t->accElems, vlElems);
             t->slotStride = t->colFactorAlignF32; // ReduceSum<RA> 的 srcShape[1],须 32B 对齐
         }
+    }
+}
+
+static void TryFullWidthStridedCooperation(int64_t outer, int64_t dimLen, int64_t inner, int64_t coreNum,
+                                           uint64_t ubSize, int64_t block, int64_t vlElems, uint32_t sysWorkspace,
+                                           TilingPlan& plan)
+{
+    // Extend 7060 eligibility only for FP32; keep existing full-width and FP16 routes.
+    if (plan.key != STRIDED_SPLIT_KEY || block != FP32_BLOCK || plan.colFactor == inner || inner > vlElems ||
+        plan.usedCoreNum >= coreNum || outer >= coreNum) {
+        return;
+    }
+
+    TilingPlan fullWidth = plan;
+    fullWidth.colFactor = inner;
+    const int64_t uElems = (static_cast<int64_t>(ubSize) - UB_RESERVED) / FLOAT_BYTE;
+    if (!SolveStridedSplitTile(dimLen, inner, uElems, block, vlElems, fullWidth.dFactor, fullWidth.chunkSlots)) {
+        return;
+    }
+
+    L2NormalizeGradTilingData candidate{};
+    candidate.outer = outer;
+    candidate.dimLen = dimLen;
+    candidate.inner = inner;
+    candidate.dFactor = fullWidth.dFactor;
+    candidate.chunkSlots = fullWidth.chunkSlots;
+    ComputeAlignedDims(STRIDED_SPLIT_KEY, dimLen, inner, inner, 0, block, vlElems, &candidate);
+    candidate.slotBufBytes = StridedSlotBufferBytes(candidate.chunkSlots, candidate.slotStride);
+    TilingPlan cooperative = fullWidth;
+    size_t userWorkspace = 0;
+    if (!SelectCooperativePlan(coreNum, block, vlElems, sysWorkspace, &candidate, cooperative, userWorkspace) ||
+        cooperative.usedCoreNum <= plan.usedCoreNum) {
+        return;
+    }
+
+    const int64_t independentTiles = plan.tasksPerCore * CeilDiv(dimLen, plan.dFactor);
+    if (CeilDiv(candidate.coreDimLen, fullWidth.dFactor) >= independentTiles) {
+        return;
+    }
+
+    // The first independent core has the most columns: its run starts before any tail tile.
+    const int64_t colTiles = CeilDiv(inner, plan.colFactor);
+    const int64_t independentCols = (plan.tasksPerCore / colTiles) * inner +
+                                    (plan.tasksPerCore % colTiles) * plan.colFactor;
+    constexpr int64_t bytesPerElement = 6 * FLOAT_BYTE; // Read x/y/dy, then reread y/dy and write dx.
+    const long double independentBytes = static_cast<long double>(dimLen) * independentCols * bytesPerElement;
+    const long double cooperativeBytes = static_cast<long double>(candidate.coreDimLen) * inner * bytesPerElement;
+    // Charge every partial write and read to the estimate, including the other cores' reads.
+    const long double partialBytes = static_cast<long double>(userWorkspace) * (candidate.coresPerGroup + 1);
+    if (cooperativeBytes + partialBytes < independentBytes) {
+        // Fill the chosen tile's buffers before applying the normal cooperative launch setup.
+        plan = fullWidth;
     }
 }
 
@@ -508,6 +713,10 @@ static ge::graphStatus FillTilingData(gert::TilingContext* context, uint32_t til
     tiling->dimLen = dimLen;
     tiling->inner = inner;
     tiling->blockFactor = blockFactor;
+    tiling->coresPerGroup = 0;
+    tiling->independentTasksPerCore = 0;
+    tiling->coreDimLen = 0;
+    tiling->orderedDotBlocks = 0;
     tiling->usedCoreNum = usedCoreNum;
     tiling->colFactor = colFactor;
     tiling->dFactor = dFactor;
@@ -561,38 +770,41 @@ static ge::graphStatus L2NormalizeGradTilingFunc(gert::TilingContext* context)
     // 拒收的 UT 用例覆盖(dtype/rank/shape 不一致、dim 越界/超长/非连续)。
     OP_CHECK_IF(ResolveDimAndShape(context, outer, dimLen, inner, totalNum, eps) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Failed to resolve dim/shape."), return ge::GRAPH_FAILED);
+    // A length-one reduction is elementwise regardless of the original axis position.
+    if (dimLen == 1) {
+        outer = totalNum;
+        inner = 1;
+    }
 
-    uint32_t tilingKey = 0;
-    int64_t blockFactor = 0;
-    int64_t usedCoreNum = 0;
-    int64_t colFactor = 0;
-    int64_t dFactor = 0;
-    int64_t ubFactorElems = 0;
-    int64_t chunkSlots = 1;
-    // strided 路径 UB 预算按 dtype 的块对齐(fp32=8 / fp16=16),与 kernel colFactorAlign 一致
-    auto xDescForBlock = context->GetInputDesc(INPUT_X_IDX);
-    int64_t block = (xDescForBlock != nullptr && xDescForBlock->GetDataType() == ge::DataType::DT_FLOAT) ? FP32_BLOCK :
-                                                                                                           FP16_BLOCK;
-    SelectTemplate(outer, dimLen, inner, totalNum, coreNum, ubSize, block, vlElems, tilingKey, blockFactor, usedCoreNum,
-                   colFactor, dFactor, ubFactorElems, chunkSlots);
-
-    size_t* currentWorkspace = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
-    currentWorkspace[0] = sysWorkspace; // 系统 workspace 预留经平台接口取,不写死
-
-    // 【传播分支】自身不产生新的拒收条件,其全部触发条件由 FillTilingData 内
-    // CheckUbBudget 一条拒收覆盖(UB 预算越界)。
-    OP_CHECK_IF(FillTilingData(context, tilingKey, ubSize, block, vlElems, outer, dimLen, inner, blockFactor,
-                               usedCoreNum, colFactor, dFactor, ubFactorElems, chunkSlots, eps) != ge::GRAPH_SUCCESS,
+    auto xDesc = context->GetInputDesc(INPUT_X_IDX);
+    const int64_t block = xDesc->GetDataType() == ge::DT_FLOAT ? FP32_BLOCK : FP16_BLOCK;
+    TilingPlan plan = BuildIndependentPlan(outer, dimLen, inner, totalNum, coreNum, ubSize, block, vlElems);
+    TryFullWidthStridedCooperation(outer, dimLen, inner, coreNum, ubSize, block, vlElems, sysWorkspace, plan);
+    const uint32_t bufferKey = plan.key == ELEMENTWISE_KEY ? SPLIT_D_KEY : plan.key;
+    OP_CHECK_IF(FillTilingData(context, bufferKey, ubSize, block, vlElems, outer, dimLen, inner, plan.blockFactor,
+                               plan.usedCoreNum, plan.colFactor, plan.dFactor, plan.ubFactorElems, plan.chunkSlots,
+                               eps) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Failed to fill tiling data."), return ge::GRAPH_FAILED);
-
-    context->SetBlockDim(static_cast<uint32_t>(usedCoreNum > 0 ? usedCoreNum : 1));
-    context->SetTilingKey(tilingKey);
-
+    auto* tiling = context->GetTilingData<L2NormalizeGradTilingData>();
+    tiling->independentTasksPerCore = plan.tasksPerCore;
+    size_t userWorkspace = 0;
+    if (SelectCooperativePlan(coreNum, block, vlElems, sysWorkspace, tiling, plan, userWorkspace)) {
+        OP_CHECK_IF(context->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(context->GetNodeName(), "Failed to set cooperative schedule mode."),
+                    return ge::GRAPH_FAILED);
+    }
+    size_t* workspace = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, workspace);
+    workspace[0] = static_cast<size_t>(sysWorkspace) + userWorkspace;
+    context->SetBlockDim(static_cast<uint32_t>(plan.usedCoreNum));
+    context->SetTilingKey(plan.key);
     OP_LOGI(context->GetNodeName(),
-            "L2NormalizeGrad tiling: key=%u outer=%ld D=%ld inner=%ld blockFactor=%ld usedCore=%ld colFactor=%ld "
-            "dFactor=%ld eps=%f",
-            tilingKey, outer, dimLen, inner, blockFactor, usedCoreNum, colFactor, dFactor, eps);
+            "L2NormalizeGrad tiling: key=%u outer=%ld D=%ld inner=%ld tasksPerCore=%ld usedCore=%ld "
+            "coresPerGroup=%ld coreDimLen=%ld colFactor=%ld dFactor=%ld userWorkspace=%zu eps=%f "
+            "orderedDotBlocks=%ld ubFactorElems=%ld qBufBytes=%ld",
+            plan.key, outer, dimLen, inner, plan.tasksPerCore, plan.usedCoreNum, tiling->coresPerGroup,
+            tiling->coreDimLen, plan.colFactor, plan.dFactor, userWorkspace, eps, tiling->orderedDotBlocks,
+            plan.ubFactorElems, tiling->qBufBytes);
     return ge::GRAPH_SUCCESS;
 }
 

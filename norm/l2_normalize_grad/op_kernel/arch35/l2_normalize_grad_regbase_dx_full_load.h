@@ -33,8 +33,9 @@ using namespace AscendC;
 template <typename T_X>
 class RegbaseDxFullLoad : public RegbaseDxBase<T_X> {
     using Base = RegbaseDxBase<T_X>;
+    static constexpr uint16_t CASCADE_GROUP_LOADS = 8;
+    static constexpr uint16_t CPU_SUM_LANES = 8;
     // 模板基类的成员不在非依赖名字查找里,逐个引入(比满篇 this-> 可读)
-    using Base::blockFactor_;
     using Base::CopyIn2D;
     using Base::CopyOut2D;
     using Base::coreIdx_;
@@ -44,6 +45,7 @@ class RegbaseDxFullLoad : public RegbaseDxBase<T_X> {
     using Base::InitCommon;
     using Base::InitQueues;
     using Base::Ppipe_;
+    using Base::tasksPerCore_;
     using Base::tiling_;
     using Base::usedCoreNum_;
     using Base::xGm_;
@@ -83,8 +85,8 @@ public:
         if (coreIdx >= usedCoreNum_) {
             return;
         }
-        int64_t blockTail = rows_ - (usedCoreNum_ - 1) * blockFactor_;
-        int64_t calcRowNum = coreIdx == usedCoreNum_ - 1 ? blockTail : blockFactor_;
+        int64_t blockTail = rows_ - (usedCoreNum_ - 1) * tasksPerCore_;
+        int64_t calcRowNum = coreIdx == usedCoreNum_ - 1 ? blockTail : tasksPerCore_;
         int64_t calcRowNumRemain = calcRowNum;
         for (int64_t rowIdx = 0; rowIdx < calcRowNum; rowIdx += ubFactorN_) {
             int64_t calcRowNumSub = Min(ubFactorN_, calcRowNumRemain);
@@ -120,16 +122,28 @@ public:
         __local_mem__ T_X* dyAddr = (__ubuf__ T_X*)dyLocal.GetPhyAddr();
         __local_mem__ float* reduceSqAddr = (__ubuf__ float*)reduceSqLocal.GetPhyAddr();
         __local_mem__ float* reduceSAddr = (__ubuf__ float*)reduceSLocal.GetPhyAddr();
+        __local_mem__ float* sSumAddr = (__ubuf__ float*)tmpSumSLocal.GetPhyAddr();
 
-        ReducePass(xAddr, yAddr, dyAddr, reduceSqAddr, reduceSAddr, loopRow, repeatCount, colsBlk);
+        const bool compensateDot = IsSameType<T_X, float>::value && repeatCount == 1;
+        if (compensateDot) {
+            ReducePass<true>(xAddr, yAddr, dyAddr, reduceSqAddr, sSumAddr, loopRow, repeatCount, colsBlk);
+        } else {
+            ReducePass<false>(xAddr, yAddr, dyAddr, reduceSqAddr, reduceSAddr, loopRow, repeatCount, colsBlk);
+        }
 
         uint32_t srcShape[2] = {static_cast<uint32_t>(calcRowNumSub), static_cast<uint32_t>(colsAlignVL_)};
         AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(tmpSumSqLocal, reduceSqLocal, srcShape, false);
-        AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(tmpSumSLocal, reduceSLocal, srcShape, false);
+        // Isolated comparison against the FP32 reference for aligned FP16 rows with one cascade level.
+        const bool useCascade = IsSameType<T_X, half>::value && cols_ == colsAlignVL_ &&
+                                repeatCount >= CASCADE_GROUP_LOADS && repeatCount < 128;
+        if (useCascade) {
+            ReduceDotFp32Cascade(reduceSAddr, sSumAddr, loopRow, repeatCount);
+        } else if (!compensateDot) {
+            AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(tmpSumSLocal, reduceSLocal, srcShape, false);
+        }
 
         LocalTensor<float> dxLocal = outQueueDx_.AllocTensor<float>();
         __local_mem__ float* sqSumAddr = (__ubuf__ float*)tmpSumSqLocal.GetPhyAddr();
-        __local_mem__ float* sSumAddr = (__ubuf__ float*)tmpSumSLocal.GetPhyAddr();
         __local_mem__ T_X* dxAddr = (__ubuf__ T_X*)dxLocal.GetPhyAddr();
 
         ComputePass(yAddr, dyAddr, sqSumAddr, sSumAddr, dxAddr, loopRow, repeatCount, colsBlk);
@@ -141,8 +155,8 @@ public:
         CopyOutDx(rowIdx, calcRowNumSub);
     }
 
-    // Pass 1:两路归约展开(x² 与 y·dy)。Masked(ZEROING),末轮只触碰有效 lane;
-    // 整 VL 写出让尾部 slack 顺带写 0,省一趟 Duplicate。
+    // Pass 1: 展开 x² 与 y·dy。FP32 短行的点积直接在寄存器内补偿归约。
+    template <bool COMPENSATE_DOT>
     __aicore__ inline void ReducePass(__local_mem__ T_X* xAddr, __local_mem__ T_X* yAddr, __local_mem__ T_X* dyAddr,
                                       __local_mem__ float* reduceSqAddr, __local_mem__ float* reduceSAddr,
                                       uint16_t loopRow, uint16_t repeatCount, int64_t colsBlk)
@@ -152,6 +166,12 @@ public:
         {
             RegTensor<float> xReg, yReg, dyReg, sqReg, sReg;
             MaskReg fullMask = CreateMask<float>(); // MaskPattern::ALL, 整 VL 写出
+            RegTensor<int32_t> evenIndex, oddIndex;
+            if constexpr (COMPENSATE_DOT) {
+                Arange(evenIndex, static_cast<int32_t>(0));
+                ShiftLefts(evenIndex, evenIndex, static_cast<int16_t>(1), fullMask);
+                Adds(oddIndex, evenIndex, static_cast<int32_t>(1), fullMask);
+            }
             for (uint16_t r = 0; r < loopRow; r++) {
                 uint32_t sreg = static_cast<uint32_t>(cols_);
                 MaskReg maskReg;
@@ -163,8 +183,107 @@ public:
                     LoadAndCast(yReg, yAddr, maskReg, r * colsBlk + i * oneRepeat);
                     LoadAndCast(dyReg, dyAddr, maskReg, r * colsBlk + i * oneRepeat);
                     Mul(sReg, yReg, dyReg, maskReg);
-                    DataCopy(reduceSAddr + static_cast<uint32_t>(r * colsAlignVL_ + i * oneRepeat), sReg, fullMask);
+                    if constexpr (COMPENSATE_DOT) {
+                        CompensatedDot(sReg, yReg, dyReg, evenIndex, oddIndex, maskReg);
+                        MaskReg first = CreateMask<float, MaskPattern::VL1>();
+                        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(reduceSAddr + r, sReg, first);
+                    } else {
+                        DataCopy(reduceSAddr + static_cast<uint32_t>(r * colsAlignVL_ + i * oneRepeat), sReg, fullMask);
+                    }
                 }
+            }
+        }
+    }
+
+    __aicore__ inline void CompensatedDot(RegTensor<float>& hi, RegTensor<float>& y, RegTensor<float>& dy,
+                                          RegTensor<int32_t>& evenIndex, RegTensor<int32_t>& oddIndex, MaskReg& valid)
+    {
+        RegTensor<float> lo, negHi, lhsHi, rhsHi, lhsLo, rhsLo;
+        Muls(negHi, hi, -1.0F, valid);
+        Muls(lo, y, 1.0F, valid);
+        FusedMulDstAdd(lo, dy, negHi, valid); // 乘积残差 y*dy - hi，只舍入一次。
+        ClearNonFiniteResidual(lo, valid);
+
+        // 相邻项两两合并。掩码外的 lane 为零，奇数长度自然与零配对。
+        for (uint32_t count = static_cast<uint32_t>(cols_); count > 1;) {
+            count = (count + 1) / 2;
+            uint32_t active = count;
+            MaskReg pairs = UpdateMask<float>(active);
+            Gather<float, uint32_t>(lhsHi, hi, (RegTensor<uint32_t>&)evenIndex);
+            Gather<float, uint32_t>(rhsHi, hi, (RegTensor<uint32_t>&)oddIndex);
+            Gather<float, uint32_t>(lhsLo, lo, (RegTensor<uint32_t>&)evenIndex);
+            Gather<float, uint32_t>(rhsLo, lo, (RegTensor<uint32_t>&)oddIndex);
+            DfAccumPairVec(lhsHi, lhsLo, rhsHi, rhsLo, pairs);
+            Adds(hi, lhsHi, 0.0F, pairs);
+            Adds(lo, lhsLo, 0.0F, pairs);
+        }
+        MaskReg first = CreateMask<float, MaskPattern::VL1>();
+        Add(hi, hi, lo, first);
+    }
+
+    __aicore__ inline void SumCascadeChunk(RegTensor<float>& sum, __local_mem__ float* products,
+                                           RegTensor<uint32_t>& upperIndex, MaskReg& halfVector, uint16_t loads)
+    {
+        Duplicate(sum, 0.0F, halfVector);
+        RegTensor<float> values, upper;
+        for (uint16_t i = 0; i < loads; ++i) {
+            DataCopy(values, products + i * V_LENGTH);
+            Gather<float, uint32_t>(upper, values, upperIndex);
+            Add(sum, sum, values, halfVector);
+            Add(sum, sum, upper, halfVector);
+        }
+    }
+
+    __aicore__ inline void ReduceDotFp32Cascade(__local_mem__ float* products, __local_mem__ float* sums, uint16_t rows,
+                                                uint16_t repeatCount)
+    {
+        static_assert(V_LENGTH == 8 * CPU_SUM_LANES);
+        uint16_t chunks = repeatCount / CASCADE_GROUP_LOADS;
+        uint16_t tail = repeatCount % CASCADE_GROUP_LOADS;
+        __VEC_SCOPE__
+        {
+            MaskReg full = CreateMask<float>();
+            MaskReg first = CreateMask<float, MaskPattern::VL1>();
+            uint32_t halfCount = V_LENGTH / 2;
+            uint32_t laneCount = CPU_SUM_LANES;
+            MaskReg halfVector = UpdateMask<float>(halfCount);
+            MaskReg lanes = UpdateMask<float>(laneCount);
+            RegTensor<int32_t> iota, upperIndex, group1, group2, group3;
+            Arange(iota, static_cast<int32_t>(0));
+            Adds(upperIndex, iota, static_cast<int32_t>(V_LENGTH / 2), full);
+            Adds(group1, iota, static_cast<int32_t>(CPU_SUM_LANES), full);
+            Adds(group2, iota, static_cast<int32_t>(2 * CPU_SUM_LANES), full);
+            Adds(group3, iota, static_cast<int32_t>(3 * CPU_SUM_LANES), full);
+
+            for (uint16_t r = 0; r < rows; ++r) {
+                auto row = products + r * colsAlignVL_;
+                RegTensor<float> cascade, partial;
+                Duplicate(cascade, 0.0F, halfVector);
+                for (uint16_t c = 0; c < chunks; ++c) {
+                    SumCascadeChunk(partial, row + c * CASCADE_GROUP_LOADS * V_LENGTH, (RegTensor<uint32_t>&)upperIndex,
+                                    halfVector, CASCADE_GROUP_LOADS);
+                    Add(cascade, cascade, partial, halfVector);
+                }
+                SumCascadeChunk(partial, row + chunks * CASCADE_GROUP_LOADS * V_LENGTH,
+                                (RegTensor<uint32_t>&)upperIndex, halfVector, tail);
+                Add(partial, partial, cascade, halfVector);
+
+                // Preserve the reference's FP32 rounding in the four-way merge and the eight-lane sum.
+                RegTensor<float> a, b, c, merged, total, term;
+                Gather<float, uint32_t>(a, partial, (RegTensor<uint32_t>&)group1);
+                Gather<float, uint32_t>(b, partial, (RegTensor<uint32_t>&)group2);
+                Gather<float, uint32_t>(c, partial, (RegTensor<uint32_t>&)group3);
+                Add(merged, partial, a, lanes);
+                Add(merged, merged, b, lanes);
+                Add(merged, merged, c, lanes);
+                Duplicate(total, 0.0F, first);
+                RegTensor<uint32_t> index;
+                for (uint16_t i = 0; i < CPU_SUM_LANES; ++i) {
+                    Duplicate(index, static_cast<uint32_t>(i), first);
+                    Gather<float, uint32_t>(term, merged, index);
+                    Add(total, total, term, first);
+                }
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(sums + r, total, first);
             }
         }
     }

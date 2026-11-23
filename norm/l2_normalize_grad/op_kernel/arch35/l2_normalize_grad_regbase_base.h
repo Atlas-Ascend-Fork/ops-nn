@@ -44,10 +44,21 @@ protected:
         if (coreIdx_ >= usedCoreNum_) {
             return false;
         }
-        blockFactor_ = tiling_->blockFactor;
+        tasksPerCore_ = tiling_->independentTasksPerCore;
+        blockFactor_ = tiling_->blockFactor; // legacy elementwise path only
         eps_ = tiling_->eps;
 
-        const int64_t gmOffset = static_cast<int64_t>(coreIdx_) * blockFactor_ * groupNum;
+        // Strided kernels address flattened (outer, column-tile) tasks from the
+        // tensor base. Cross-D strided cores instead own a contiguous D shard.
+        int64_t gmOffset = 0;
+        if (tiling_->coresPerGroup > 0) {
+            const int64_t group = coreIdx_ / tiling_->coresPerGroup;
+            const int64_t shard = coreIdx_ % tiling_->coresPerGroup;
+            gmOffset = (group * tiling_->dimLen + shard * tiling_->coreDimLen) * tiling_->inner;
+        } else if (tiling_->inner == 1) {
+            gmOffset = static_cast<int64_t>(coreIdx_) * (tiling_->dimLen == 1 ? blockFactor_ : tasksPerCore_) *
+                       groupNum;
+        }
         xGm_.SetGlobalBuffer((__gm__ T_X*)x + gmOffset);
         yGm_.SetGlobalBuffer((__gm__ T_X*)y + gmOffset);
         dyGm_.SetGlobalBuffer((__gm__ T_X*)dy + gmOffset);
@@ -70,8 +81,8 @@ protected:
     // 本核处理的 outer 组数(末核收尾)。
     __aicore__ inline int64_t CalcOuterNum(int64_t outer) const
     {
-        const int64_t blockTail = outer - static_cast<int64_t>(usedCoreNum_ - 1) * blockFactor_;
-        return (coreIdx_ == usedCoreNum_ - 1) ? blockTail : blockFactor_;
+        const int64_t blockTail = outer - static_cast<int64_t>(usedCoreNum_ - 1) * tasksPerCore_;
+        return (coreIdx_ == usedCoreNum_ - 1) ? blockTail : tasksPerCore_;
     }
 
     // 二维搬入:从 gm[base] 起搬 rows 行 x cols 列,行间在 GM 上隔 srcGap 个元素。
@@ -118,7 +129,8 @@ protected:
 
     uint32_t coreIdx_ = 0;
     uint32_t usedCoreNum_ = 0;
-    int64_t blockFactor_ = 0;
+    int64_t tasksPerCore_ = 0;
+    int64_t blockFactor_ = 0; // 7050 element count
     float eps_ = 0.0f;
 };
 

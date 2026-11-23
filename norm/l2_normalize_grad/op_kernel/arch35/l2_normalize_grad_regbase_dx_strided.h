@@ -35,7 +35,6 @@ using namespace AscendC;
 template <typename T_X>
 class RegbaseDxStrided : public RegbaseDxBase<T_X> {
     using Base = RegbaseDxBase<T_X>;
-    using Base::blockFactor_;
     using Base::CalcOuterNum;
     using Base::CopyIn2D;
     using Base::CopyOut2D;
@@ -46,6 +45,7 @@ class RegbaseDxStrided : public RegbaseDxBase<T_X> {
     using Base::InitCommon;
     using Base::InitQueues;
     using Base::Ppipe_;
+    using Base::tasksPerCore_;
     using Base::tiling_;
     using Base::usedCoreNum_;
     using Base::xGm_;
@@ -72,9 +72,10 @@ public:
             return; // 本核无任务
         }
 
-        // tile = D_ * AlignUp(colFactor, block) + V_LENGTH slack(末行整 VL 载入不越界);
-        // 该尺寸由 host 一次算准下发(qBufBytes),内核不自行推算(见 tiling_data 注释)。
         InitQueues(inQueueX_, inQueueY_, inQueueDy_, outQueueDx_);
+        if (UseBatchedOuter()) {
+            return;
+        }
         // 平台 ReduceSum 的输入需为 fp32 LocalTensor,故另开两块 fp32 中间量 tile(x^2 / y*dy)
         // 与两块每列规约结果;尺寸同样由 host 算好下发。
         Ppipe_->InitBuffer(sqBuf_, tiling_->midBufBytes);
@@ -89,13 +90,15 @@ public:
         if (coreIdx >= usedCoreNum_) {
             return;
         }
-        int64_t blockTail = outer_ - (usedCoreNum_ - 1) * blockFactor_;
-        int64_t calcOuterNum = coreIdx == usedCoreNum_ - 1 ? blockTail : blockFactor_;
-        for (int64_t o = 0; o < calcOuterNum; o++) {
-            for (int64_t colStart = 0; colStart < inner_; colStart += colFactor_) {
-                int64_t colTile = Min(colFactor_, inner_ - colStart);
-                SubProcess(o, colStart, colTile);
-            }
+        if (UseBatchedOuter()) {
+            ProcessBatchedOuter(coreIdx);
+            return;
+        }
+        const int64_t colTiles = DivCeil(inner_, colFactor_);
+        const int64_t taskEnd = Min(outer_ * colTiles, (static_cast<int64_t>(coreIdx) + 1) * tasksPerCore_);
+        for (int64_t task = static_cast<int64_t>(coreIdx) * tasksPerCore_; task < taskEnd; ++task) {
+            const int64_t colStart = (task % colTiles) * colFactor_;
+            SubProcess(task / colTiles, colStart, Min(colFactor_, inner_ - colStart));
         }
     }
 
@@ -131,15 +134,15 @@ public:
         __local_mem__ float* sumSqAddr = (__ubuf__ float*)sumSqLocal.GetPhyAddr();
         __local_mem__ float* sumSAddr = (__ubuf__ float*)sumSLocal.GetPhyAddr();
 
-        BuildMidTiles(xAddr, yAddr, dyAddr, sqAddr, prodAddr, colTile, repeatCount, dLoop, rowStride, rowStrideF32);
-
-        // ── ② 沿首轴(D)按列规约:用平台接口,不自行手写累加/补偿 ──
-        // Pattern::Reduce::RA = 首轴规约保留末轴,与 full_load/split_d 用的 AR 同族。
-        // A 维传**对齐后的宽度**、srcInnerPad=false —— 与 full_load / confusion_softmax_grad 同款用法:
-        // 缓冲已整块清零,pad 车道贡献 0;输出前 colTile 个即所需列和。
-        uint32_t srcShape[2] = {static_cast<uint32_t>(D_), static_cast<uint32_t>(rowStrideF32)};
-        AscendC::ReduceSum<float, AscendC::Pattern::Reduce::RA, true>(sumSqLocal, sqLocal, srcShape, false);
-        AscendC::ReduceSum<float, AscendC::Pattern::Reduce::RA, true>(sumSLocal, prodLocal, srcShape, false);
+        if (IsSameType<T_X, half>::value && D_ == 3) {
+            ReduceThreeRows(xAddr, yAddr, dyAddr, sumSqAddr, sumSAddr, colTile, repeatCount, rowStride);
+        } else {
+            BuildMidTiles(xAddr, yAddr, dyAddr, sqAddr, prodAddr, colTile, repeatCount, dLoop, rowStride, rowStrideF32);
+            // ReduceSum<RA> 按列独立规约，后续只读取 colTile 个有效列。
+            uint32_t srcShape[2] = {static_cast<uint32_t>(D_), static_cast<uint32_t>(rowStrideF32)};
+            AscendC::ReduceSum<float, AscendC::Pattern::Reduce::RA, true>(sumSqLocal, sqLocal, srcShape, false);
+            AscendC::ReduceSum<float, AscendC::Pattern::Reduce::RA, true>(sumSLocal, prodLocal, srcShape, false);
+        }
 
         SynthesizeDx(yAddr, dyAddr, dxAddr, sumSqAddr, sumSAddr, colTile, repeatCount, dLoop, rowStride);
 
@@ -148,6 +151,40 @@ public:
         inQueueDy_.FreeTensor(dyLocal);
         outQueueDx_.EnQue(dxLocal);
         CopyOutTile(o, colStart, colTile);
+    }
+
+    // 三项 FP16 规约按行计算 (p0 + p1) + p2，避免点积重排的舍入误差在 dy - y*s 中放大。
+    __aicore__ inline void ReduceThreeRows(__local_mem__ T_X* xAddr, __local_mem__ T_X* yAddr,
+                                           __local_mem__ T_X* dyAddr, __local_mem__ float* sumSqAddr,
+                                           __local_mem__ float* sumSAddr, int64_t colTile, uint16_t repeatCount,
+                                           int64_t rowStride)
+    {
+        __VEC_SCOPE__
+        {
+            RegTensor<float> x, y, dy, term, sumSq, sumS;
+            uint32_t remaining = static_cast<uint32_t>(colTile);
+            for (uint16_t i = 0; i < repeatCount; ++i) {
+                MaskReg mask = UpdateMask<float>(remaining);
+                const uint32_t col = i * V_LENGTH;
+                LoadAndCast(x, xAddr, mask, col);
+                LoadAndCast(y, yAddr, mask, col);
+                LoadAndCast(dy, dyAddr, mask, col);
+                Mul(sumSq, x, x, mask);
+                Mul(sumS, y, dy, mask);
+                for (uint16_t d = 1; d < 3; ++d) {
+                    const uint32_t off = static_cast<uint32_t>(d * rowStride + col);
+                    LoadAndCast(x, xAddr, mask, off);
+                    LoadAndCast(y, yAddr, mask, off);
+                    LoadAndCast(dy, dyAddr, mask, off);
+                    Mul(term, x, x, mask);
+                    Add(sumSq, sumSq, term, mask);
+                    Mul(term, y, dy, mask);
+                    Add(sumS, sumS, term, mask);
+                }
+                DataCopy(sumSqAddr + col, sumSq, mask);
+                DataCopy(sumSAddr + col, sumS, mask);
+            }
+        }
     }
 
     // ① 逐元素求 x^2 与 y*dy,以 fp32 落进中间量 tile(fp16 载入时顺带 cast)。
@@ -224,6 +261,82 @@ public:
     }
 
 private:
+    static constexpr int64_t BATCHED_GROUP_ELEMENTS = 4;
+
+    __aicore__ inline bool UseBatchedOuter() const
+    {
+        return IsSameType<T_X, half>::value && tiling_->ubFactorElems > 0;
+    }
+
+    __aicore__ inline void ProcessBatchedOuter(uint32_t coreIdx)
+    {
+        const int64_t firstGroup = static_cast<int64_t>(coreIdx) * tasksPerCore_;
+        const int64_t start = firstGroup * BATCHED_GROUP_ELEMENTS;
+        const int64_t end = Min(firstGroup + tasksPerCore_, outer_) * BATCHED_GROUP_ELEMENTS;
+        const int64_t tileElements = tiling_->ubFactorElems;
+        for (int64_t offset = start; offset < end; offset += tileElements) {
+            const int64_t elements = Min(tileElements, end - offset);
+            CopyIn2D(inQueueX_, xGm_, offset, 1, elements, 0);
+            CopyIn2D(inQueueY_, yGm_, offset, 1, elements, 0);
+            CopyIn2D(inQueueDy_, dyGm_, offset, 1, elements, 0);
+
+            LocalTensor<T_X> x = inQueueX_.DeQue<T_X>();
+            LocalTensor<T_X> y = inQueueY_.DeQue<T_X>();
+            LocalTensor<T_X> dy = inQueueDy_.DeQue<T_X>();
+            LocalTensor<T_X> dx = outQueueDx_.AllocTensor<T_X>();
+            ComputeBatchedTile((__ubuf__ T_X*)x.GetPhyAddr(), (__ubuf__ T_X*)y.GetPhyAddr(),
+                               (__ubuf__ T_X*)dy.GetPhyAddr(), (__ubuf__ T_X*)dx.GetPhyAddr(),
+                               static_cast<uint32_t>(elements));
+
+            inQueueX_.FreeTensor(x);
+            inQueueY_.FreeTensor(y);
+            inQueueDy_.FreeTensor(dy);
+            outQueueDx_.EnQue(dx);
+            CopyOut2D(outQueueDx_, offset, 1, elements, 0);
+        }
+    }
+
+    __aicore__ inline void ComputeBatchedTile(__local_mem__ T_X* xAddr, __local_mem__ T_X* yAddr,
+                                              __local_mem__ T_X* dyAddr, __local_mem__ T_X* dxAddr, uint32_t elements)
+    {
+        const float eps = eps_;
+        const uint16_t repeatCount = static_cast<uint16_t>(DivCeil(elements, V_LENGTH));
+        __VEC_SCOPE__
+        {
+            // Each group has lanes [d0c0, d0c1, d1c0, d1c1]. Bit 1 selects its D row.
+            MaskReg fullMask = CreateMask<float>();
+            RegTensor<int32_t> row0Index, row1Index, clearRowBit;
+            Arange(row0Index, static_cast<int32_t>(0));
+            Duplicate(clearRowBit, static_cast<int32_t>(~2), fullMask);
+            And(row0Index, row0Index, clearRowBit, fullMask);
+            Adds(row1Index, row0Index, static_cast<int32_t>(2), fullMask);
+
+            uint32_t remaining = elements;
+            for (uint16_t repeat = 0; repeat < repeatCount; ++repeat) {
+                const uint32_t offset = repeat * V_LENGTH;
+                MaskReg mask = UpdateMask<float>(remaining);
+                RegTensor<float> x, y, dy, sumSq, sumS, row0, row1, norm, ys, sub, dx;
+                LoadAndCast(x, xAddr, mask, offset);
+                LoadAndCast(y, yAddr, mask, offset);
+                LoadAndCast(dy, dyAddr, mask, offset);
+                Mul(sumSq, x, x, mask);
+                Mul(sumS, y, dy, mask);
+                Gather<float, uint32_t>(row0, sumSq, (RegTensor<uint32_t>&)row0Index);
+                Gather<float, uint32_t>(row1, sumSq, (RegTensor<uint32_t>&)row1Index);
+                Add(sumSq, row0, row1, mask);
+                Gather<float, uint32_t>(row0, sumS, (RegTensor<uint32_t>&)row0Index);
+                Gather<float, uint32_t>(row1, sumS, (RegTensor<uint32_t>&)row1Index);
+                Add(sumS, row0, row1, mask);
+                Sqrt(norm, sumSq, mask);
+                Maxs(norm, norm, eps, mask);
+                Mul(ys, y, sumS, mask);
+                Sub(sub, dy, ys, mask);
+                Div(dx, sub, norm, mask);
+                StoreDx<T_X>(dxAddr, offset, dx, mask);
+            }
+        }
+    }
+
     TQue<QuePosition::VECIN, DEPTH_TWO> inQueueX_;
     TQue<QuePosition::VECIN, DEPTH_TWO> inQueueY_;
     TQue<QuePosition::VECIN, DEPTH_TWO> inQueueDy_;

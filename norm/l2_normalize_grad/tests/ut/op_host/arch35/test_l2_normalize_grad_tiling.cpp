@@ -21,6 +21,7 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include "platform/platform_infos_def.h"
 #include "../../../../op_host/arch35/l2_normalize_grad_tiling.h"
+#include "../../../../op_kernel/arch35/l2_normalize_grad_tiling_data.h"
 
 using namespace std;
 using namespace ge;
@@ -90,7 +91,8 @@ ge::graphStatus RunTiling(gert::StorageShape& xShape, gert::StorageShape& yShape
                           gert::StorageShape& dxShape, const std::vector<int64_t>& dim, uint64_t& tilingKey,
                           ge::DataType xDt = ge::DT_FLOAT, ge::DataType yDt = ge::DT_FLOAT,
                           ge::DataType dyDt = ge::DT_FLOAT, ge::DataType dxDt = ge::DT_FLOAT,
-                          ge::Format fmt = ge::FORMAT_ND, const FakePlatform& fp = FakePlatform{})
+                          ge::Format fmt = ge::FORMAT_ND, const FakePlatform& fp = FakePlatform{},
+                          L2NormalizeGradTilingData* actual = nullptr)
 {
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
@@ -140,6 +142,17 @@ ge::graphStatus RunTiling(gert::StorageShape& xShape, gert::StorageShape& yShape
     auto ret = tiling_func(tiling_context);
     if (ret == ge::GRAPH_SUCCESS) {
         tilingKey = tiling_context->GetTilingKey();
+        if (actual != nullptr) {
+            *actual = *tiling_context->GetTilingData<L2NormalizeGradTilingData>();
+            EXPECT_EQ(tiling_context->GetBlockDim(), actual->usedCoreNum);
+            if (tilingKey == 7040U || tilingKey == 7060U) {
+                EXPECT_GE(static_cast<const size_t*>(ws_size->GetData())[0], actual->usedCoreNum * 32);
+            }
+            if (tilingKey == 7060U) {
+                EXPECT_GE(static_cast<const size_t*>(ws_size->GetData())[0],
+                          actual->usedCoreNum * 2 * actual->slotStride * sizeof(float));
+            }
+        }
     }
     return ret;
 }
@@ -216,6 +229,28 @@ TEST_F(L2NormalizeGradTiling, tilingkey_split_d_7010)
     EXPECT_EQ(key, 7010U);
 }
 
+TEST_F(L2NormalizeGradTiling, tilingkey_large_all_axes_cross_core_7040)
+{
+    uint64_t key = 0;
+    auto shape = MakeShape({622960, 3, 3});
+    L2NormalizeGradTilingData actual;
+    EXPECT_EQ(RunTiling(shape, shape, shape, shape, {2, 2, 1, 2, 2, 0, -1, -2, 1, -3}, key, ge::DT_FLOAT, ge::DT_FLOAT,
+                        ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_ND, FakePlatform{}, &actual),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7040U);
+    EXPECT_EQ(actual.usedCoreNum, 64);
+    EXPECT_EQ(actual.coreDimLen, 87608);
+    EXPECT_LT((actual.usedCoreNum - 1) * actual.coreDimLen, actual.dimLen);
+    EXPECT_GE(actual.usedCoreNum * actual.coreDimLen, actual.dimLen);
+}
+
+TEST_F(L2NormalizeGradTiling, tilingkey_small_single_group_keeps_7010)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTilingSameShape({8192}, {0}, key), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7010U);
+}
+
 // 选路边界逐格:D=6080 是 full_load 能吃下的最大行宽,+1 就跨到 split_d。
 // (泛化用例集此前按写死的 6144 预测选路,导致这一档一直落在 7010、7000 上边界零覆盖)
 TEST_F(L2NormalizeGradTiling, tilingkey_boundary_full_load_max)
@@ -238,6 +273,32 @@ TEST_F(L2NormalizeGradTiling, tilingkey_strided_7020)
     uint64_t key = 0;
     EXPECT_EQ(RunTilingSameShape({4, 64, 32}, {1}, key), ge::GRAPH_SUCCESS);
     EXPECT_EQ(key, 7020U);
+}
+
+TEST_F(L2NormalizeGradTiling, strided_batched_tile_scales_with_platform_ub)
+{
+    auto shape = MakeShape({1000003, 2, 2});
+    const FakePlatform largeUb;
+    FakePlatform smallUb = largeUb;
+    smallUb.ubSize /= 2;
+    L2NormalizeGradTilingData largeTile;
+    L2NormalizeGradTilingData smallTile;
+    uint64_t key = 0;
+    auto tile = [&](const FakePlatform& platform, L2NormalizeGradTilingData& actual) {
+        return RunTiling(shape, shape, shape, shape, {1}, key, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+                         ge::DT_FLOAT16, ge::FORMAT_ND, platform, &actual);
+    };
+    ASSERT_EQ(tile(largeUb, largeTile), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7020U);
+    ASSERT_EQ(tile(smallUb, smallTile), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7020U);
+    EXPECT_GT(smallTile.ubFactorElems, 0);
+    EXPECT_LT(smallTile.ubFactorElems, largeTile.ubFactorElems);
+    EXPECT_EQ(smallTile.ubFactorElems % (smallUb.vecRegWidth / sizeof(float)), 0);
+    EXPECT_EQ(smallTile.independentTasksPerCore % 4, 0);
+    EXPECT_LE(8 * smallTile.qBufBytes + 8192, smallUb.ubSize);
+    EXPECT_EQ(smallTile.midBufBytes, 0);
+    EXPECT_EQ(smallTile.sumBufBytes, 0);
 }
 
 // 元素总数为 0 -> empty
@@ -282,7 +343,7 @@ TEST_F(L2NormalizeGradTiling, dim_empty_means_no_reduction)
 {
     uint64_t keyEmpty = 0;
     EXPECT_EQ(RunTilingSameShape({32, 512}, {}, keyEmpty), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(keyEmpty, 7000U);
+    EXPECT_EQ(keyEmpty, 7050U);
 }
 
 // rank==1 且不传 dim:A2 正常算(不归约),不可按“默认轴 1”拒收(issue #31 的真定性)。
@@ -290,7 +351,57 @@ TEST_F(L2NormalizeGradTiling, dim_empty_rank1_accepted)
 {
     uint64_t key = 0;
     EXPECT_EQ(RunTilingSameShape({1024}, {}, key), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(key, 7000U);
+    EXPECT_EQ(key, 7050U);
+}
+
+TEST_F(L2NormalizeGradTiling, strided_wide_inner_uses_column_tasks)
+{
+    uint64_t key = 0;
+    auto s = MakeShape({5, 3, 4, 7, 35785});
+    L2NormalizeGradTilingData actual;
+    ASSERT_EQ(RunTiling(s, s, s, s, {0, 1, 2, 3}, key, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                        ge::FORMAT_ND, FakePlatform{}, &actual),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7020U);
+    EXPECT_EQ(actual.usedCoreNum, 64);
+    const int64_t tasks = (actual.inner + actual.colFactor - 1) / actual.colFactor;
+    EXPECT_LT((actual.usedCoreNum - 1) * actual.independentTasksPerCore, tasks);
+    EXPECT_GE(actual.usedCoreNum * actual.independentTasksPerCore, tasks);
+}
+
+TEST_F(L2NormalizeGradTiling, narrow_inner_long_d_uses_cross_core_shards)
+{
+    for (const int64_t inner : {2, 3, 5}) {
+        uint64_t key = 0;
+        auto s = MakeShape({22536544, inner});
+        L2NormalizeGradTilingData actual;
+        ASSERT_EQ(RunTiling(s, s, s, s, {0}, key, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+                            ge::FORMAT_ND, FakePlatform{}, &actual),
+                  ge::GRAPH_SUCCESS);
+        EXPECT_EQ(key, 7060U);
+        EXPECT_EQ(actual.usedCoreNum, 64);
+        EXPECT_EQ(actual.colFactor, inner);
+        EXPECT_GE(actual.chunkSlots, actual.usedCoreNum);
+        EXPECT_LT((actual.usedCoreNum - 1) * actual.coreDimLen, actual.dimLen);
+        EXPECT_GE(actual.usedCoreNum * actual.coreDimLen, actual.dimLen);
+        EXPECT_EQ(actual.coreDimLen % 16, 0);
+    }
+}
+
+TEST_F(L2NormalizeGradTiling, length_one_axis_is_contiguous_elementwise)
+{
+    uint64_t key = 0;
+    auto s = MakeShape({7, 1, 19});
+    L2NormalizeGradTilingData actual;
+    ASSERT_EQ(RunTiling(s, s, s, s, {1}, key, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+                        ge::FORMAT_ND, FakePlatform{}, &actual),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7050U);
+    EXPECT_EQ(actual.outer, 133);
+    EXPECT_EQ(actual.inner, 1);
+    EXPECT_EQ(actual.blockFactor % 16, 0);
+    EXPECT_LT((actual.usedCoreNum - 1) * actual.blockFactor, actual.outer);
+    EXPECT_GE(actual.usedCoreNum * actual.blockFactor, actual.outer);
 }
 
 // 重复/乱序/正负混写:折算去重排序后与规范形式等价,不可拒收。
@@ -344,7 +455,7 @@ TEST_F(L2NormalizeGradTiling, dim_contiguous_multi_axis_strided)
 TEST_F(L2NormalizeGradTiling, tilingkey_strided_split_7030)
 {
     uint64_t key = 0;
-    EXPECT_EQ(RunTilingSameShape({2, 40000, 2}, {1}, key), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTilingSameShape({2, 40000, 65}, {1}, key), ge::GRAPH_SUCCESS);
     EXPECT_EQ(key, 7030U);
 }
 
@@ -352,7 +463,7 @@ TEST_F(L2NormalizeGradTiling, tilingkey_strided_split_7030)
 TEST_F(L2NormalizeGradTiling, strided_split_handles_d_over_uint16)
 {
     uint64_t key = 0;
-    EXPECT_EQ(RunTilingSameShape({1, 70000, 2}, {1}, key), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(RunTilingSameShape({1, 70000, 65}, {1}, key), ge::GRAPH_SUCCESS);
     EXPECT_EQ(key, 7030U);
 }
 
@@ -465,4 +576,171 @@ TEST_F(L2NormalizeGradTiling, accept_nchw_same_layout_as_nd)
     gert::StorageShape s = MakeShape({2, 16, 4, 4});
     EXPECT_EQ(RunTiling(s, s, s, s, {1}, key, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_NCHW),
               ge::GRAPH_SUCCESS);
+}
+
+TEST_F(L2NormalizeGradTiling, cooperative_outer_groups_cover_and_isolate)
+{
+    for (auto dt : {ge::DT_FLOAT, ge::DT_FLOAT16}) {
+        for (int64_t outer : {2, 3, 8}) {
+            for (int64_t inner : {1, 3}) {
+                auto s = MakeShape({outer, 10000000, inner});
+                uint64_t key = 0;
+                L2NormalizeGradTilingData t;
+                ASSERT_EQ(RunTiling(s, s, s, s, {1}, key, dt, dt, dt, dt, ge::FORMAT_ND, FakePlatform{}, &t),
+                          ge::GRAPH_SUCCESS);
+                EXPECT_EQ(key, inner == 1 ? 7040U : 7060U);
+                EXPECT_EQ(t.coresPerGroup, 64 / outer);
+                EXPECT_EQ(t.usedCoreNum, outer * t.coresPerGroup);
+                EXPECT_EQ(t.independentTasksPerCore, 0);
+                EXPECT_EQ(t.blockFactor, 0);
+                int64_t previousEnd = 0;
+                const int64_t slotBytes = inner == 1 ? 32 : 2 * t.slotStride * 4;
+                for (int64_t group = 0; group < outer; ++group) {
+                    for (int64_t shard = 0; shard < t.coresPerGroup; ++shard) {
+                        const int64_t begin = group * t.dimLen + shard * t.coreDimLen;
+                        const int64_t end = group * t.dimLen + std::min(t.dimLen, (shard + 1) * t.coreDimLen);
+                        EXPECT_EQ(begin, previousEnd);
+                        EXPECT_GT(end, begin);
+                        previousEnd = end;
+                        EXPECT_EQ((group * t.coresPerGroup + shard) * slotBytes % 32, 0);
+                    }
+                }
+                EXPECT_EQ(previousEnd, outer * t.dimLen);
+            }
+        }
+    }
+}
+
+TEST_F(L2NormalizeGradTiling, cooperative_work_and_platform_clipping)
+{
+    auto s = MakeShape({3, 400003, 1});
+    uint64_t key = 0;
+    L2NormalizeGradTilingData t;
+    ASSERT_EQ(RunTiling(s, s, s, s, {1}, key, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_ND,
+                        FakePlatform{}, &t),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7040U);
+    EXPECT_LT(t.coresPerGroup, 64 / 3); // clipped by four-chunk average work, not core budget
+    EXPECT_EQ(t.coresPerGroup, (t.dimLen + t.coreDimLen - 1) / t.coreDimLen);
+    EXPECT_EQ(t.usedCoreNum, 3 * t.coresPerGroup);
+    for (const int64_t cores : {1, 2, 3, 8}) {
+        FakePlatform platform;
+        platform.coreNum = cores;
+        ASSERT_EQ(RunTiling(s, s, s, s, {1}, key, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_ND,
+                            platform, &t),
+                  ge::GRAPH_SUCCESS);
+        EXPECT_LE(t.usedCoreNum, cores);
+        if (cores <= 3) {
+            EXPECT_EQ(key, 7010U);
+            EXPECT_EQ(t.coresPerGroup, 0);
+            EXPECT_GT(t.independentTasksPerCore, 0);
+        }
+    }
+}
+
+TEST_F(L2NormalizeGradTiling, independent_full_load_many_outer_and_wide_inner)
+{
+    for (auto dims : {std::vector<int64_t>{32, 512, 1}, {65, 1000000, 1}, {2, 400003, 65}}) {
+        auto s = MakeShape(dims);
+        uint64_t key = 0;
+        L2NormalizeGradTilingData t;
+        ASSERT_EQ(RunTiling(s, s, s, s, {1}, key, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_ND,
+                            FakePlatform{}, &t),
+                  ge::GRAPH_SUCCESS);
+        EXPECT_NE(key, 7040U);
+        EXPECT_NE(key, 7060U);
+        EXPECT_EQ(t.coresPerGroup, 0);
+        EXPECT_EQ(t.coreDimLen, 0);
+        EXPECT_EQ(t.blockFactor, 0);
+        EXPECT_GT(t.independentTasksPerCore, 0);
+        if (dims[1] == 512) {
+            EXPECT_EQ(key, 7000U);
+            EXPECT_GT(t.ubFactorN, 1);
+        }
+    }
+}
+
+TEST_F(L2NormalizeGradTiling, cooperative_strided_full_width_has_its_own_ub_tile)
+{
+    auto shape = MakeShape({2, 20003, 57});
+    const FakePlatform largeUb;
+    FakePlatform smallUb = largeUb;
+    smallUb.ubSize = 192 * 1024;
+    uint64_t key = 0;
+    L2NormalizeGradTilingData largeTile;
+    L2NormalizeGradTilingData smallTile;
+    auto tile = [&](const FakePlatform& platform, L2NormalizeGradTilingData& actual) {
+        return RunTiling(shape, shape, shape, shape, {1}, key, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                         ge::FORMAT_ND, platform, &actual);
+    };
+    ASSERT_EQ(tile(largeUb, largeTile), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7060U);
+    ASSERT_EQ(tile(smallUb, smallTile), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7060U);
+    EXPECT_EQ(largeTile.colFactor, 57);
+    EXPECT_EQ(smallTile.colFactor, 57);
+    EXPECT_EQ(smallTile.slotStride, 64);
+    EXPECT_EQ(smallTile.coresPerGroup, 32);
+    EXPECT_EQ(smallTile.usedCoreNum, 64);
+    EXPECT_EQ(smallTile.coreDimLen % 8, 0);
+    EXPECT_LT((smallTile.coresPerGroup - 1) * smallTile.coreDimLen, smallTile.dimLen);
+    EXPECT_GE(smallTile.coresPerGroup * smallTile.coreDimLen, smallTile.dimLen);
+    EXPECT_LT(smallTile.dFactor, largeTile.dFactor);
+    EXPECT_LE(8 * smallTile.qBufBytes + 2 * smallTile.midBufBytes + 4 * smallTile.sumBufBytes +
+                  2 * smallTile.slotBufBytes + 8192,
+              smallUb.ubSize);
+    smallUb.coreNum = 32;
+    ASSERT_EQ(tile(smallUb, smallTile), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7060U);
+    EXPECT_EQ(smallTile.usedCoreNum, 32);
+    EXPECT_EQ(smallTile.coresPerGroup, 16);
+    smallUb.coreNum = 1;
+    ASSERT_EQ(tile(smallUb, smallTile), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7030U);
+    smallUb.coreNum = largeUb.coreNum;
+    smallUb.ubSize = 14 * 1024;
+    ASSERT_EQ(tile(smallUb, smallTile), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7030U);
+    EXPECT_LT(smallTile.colFactor, smallTile.inner);
+}
+
+TEST_F(L2NormalizeGradTiling, cooperative_strided_full_width_keeps_independent_fallbacks)
+{
+    for (const auto& dims : {std::vector<int64_t>{1, 20003, 65}, {32, 2048, 61}}) {
+        uint64_t key = 0;
+        ASSERT_EQ(RunTilingSameShape(dims, {1}, key), ge::GRAPH_SUCCESS);
+        EXPECT_EQ(key, 7030U);
+    }
+    uint64_t key = 0;
+    ASSERT_EQ(RunTilingSameShape({1, 20003, 63}, {1}, key, ge::DT_FLOAT16), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7030U);
+}
+
+TEST_F(L2NormalizeGradTiling, aligned_shards_reduce_actual_group_size)
+{
+    // Small fake UB yields RA dFactor=1 with 64 merge slots. qCap=64,
+    // but 16-row alignment produces L=16 and only 17 nonempty shards.
+    FakePlatform platform;
+    platform.ubSize = 20864;
+    auto s = MakeShape({1, 257, 2});
+    uint64_t key = 0;
+    L2NormalizeGradTilingData t;
+    ASSERT_EQ(RunTiling(s, s, s, s, {1}, key, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+                        ge::FORMAT_ND, platform, &t),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 7060U);
+    EXPECT_EQ(t.dFactor, 1);
+    EXPECT_EQ(t.coresPerGroup, 17);
+    EXPECT_EQ(t.coreDimLen, 16);
+    EXPECT_EQ(t.usedCoreNum, 17);
+    EXPECT_EQ(t.dimLen - (t.coresPerGroup - 1) * t.coreDimLen, 1);
+}
+
+TEST_F(L2NormalizeGradTiling, reject_unrepresentable_tensor_offsets)
+{
+    uint64_t key = 0;
+    EXPECT_EQ(RunTilingSameShape({4294967296LL, 4294967296LL}, {1}, key), ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTilingSameShape({-1, 512}, {1}, key), ge::GRAPH_FAILED);
+    EXPECT_EQ(RunTilingSameShape({4294967296LL, 4294967296LL, 0}, {1}, key), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 8000U);
 }

@@ -19,11 +19,16 @@
  * distinguishes load form / reduction shape / empty:
  *   8000 empty | 7000 full-load (inner==1, D fits UB) | 7010 split-D (inner==1, D large)
  *   7020 strided (inner>1, 整段 D 常驻 UB) | 7030 strided-split (inner>1, D 需沿归约轴分块)
+ *   7040 grouped cross-core split-D (inner==1, large D) | 7050 length-one elementwise
+ *   7060 grouped cross-core strided split-D (few inner columns, large D)
  */
 #include "kernel_tiling/kernel_tiling.h"
 #include "kernel_operator.h"
 #include "arch35/l2_normalize_grad_regbase_dx_full_load.h"
 #include "arch35/l2_normalize_grad_regbase_dx_split_d.h"
+#include "arch35/l2_normalize_grad_regbase_dx_cross_core.h"
+#include "arch35/l2_normalize_grad_regbase_dx_elementwise.h"
+#include "arch35/l2_normalize_grad_regbase_dx_strided_cross_core.h"
 #include "arch35/l2_normalize_grad_regbase_dx_strided.h"
 #include "arch35/l2_normalize_grad_regbase_dx_strided_split.h"
 #include "arch35/l2_normalize_grad_empty.h"
@@ -48,6 +53,18 @@ extern "C" __global__ __aicore__ void l2_normalize_grad(GM_ADDR x, GM_ADDR y, GM
     } else if (TILING_KEY_IS(7010)) {
         L2NormalizeGrad::RegbaseDxSplitD<DTYPE_X> op(&pipe, tilingData);
         op.Init(x, y, dy, dx);
+        op.Process();
+    } else if (TILING_KEY_IS(7040)) {
+        L2NormalizeGrad::RegbaseDxCrossCore<DTYPE_X> op(&pipe, tilingData);
+        op.Init(x, y, dy, dx, AscendC::GetUserWorkspace(workspace));
+        op.Process();
+    } else if (TILING_KEY_IS(7050)) {
+        L2NormalizeGrad::RegbaseDxElementwise<DTYPE_X> op(&pipe, tilingData);
+        op.Init(x, y, dy, dx);
+        op.Process();
+    } else if (TILING_KEY_IS(7060)) {
+        L2NormalizeGrad::RegbaseDxStridedCrossCore<DTYPE_X> op(&pipe, tilingData);
+        op.Init(x, y, dy, dx, AscendC::GetUserWorkspace(workspace));
         op.Process();
     } else if (TILING_KEY_IS(7020)) {
         L2NormalizeGrad::RegbaseDxStrided<DTYPE_X> op(&pipe, tilingData);

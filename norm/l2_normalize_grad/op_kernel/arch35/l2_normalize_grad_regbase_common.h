@@ -52,6 +52,8 @@ constexpr uint32_t FLOAT_NUM_BLOCK = 8;                                         
 constexpr uint32_t HALF_NUM_BLOCK = 16;                                              // fp16 elements per 32B block
 constexpr uint32_t DB_NUM = 2;
 constexpr uint32_t DEPTH_TWO = 2;
+constexpr float MAX_FINITE_FP32 = 3.402823466e+38F;
+constexpr DivSpecificMode FP32_PRECISE_DIV_MODE = {MaskMergeMode::ZEROING, true};
 // ⚠️ 单次处理元素数(full_load 的 ubFactor / split_d 的 ubFactorD)**不在内核写死**:
 // 由 host 从平台实际 ubSize 反推后经 tilingData.ubFactorElems 下发(见 host DeriveUbFactor)。
 // 写死常量再拿 ubSize 去校验是本末倒置——平台 UB 变了就要么浪费要么越界。
@@ -76,6 +78,42 @@ template <typename T>
 __aicore__ inline T Min(T left, T right)
 {
     return (left < right ? left : right);
+}
+
+// 非有限主值按原样传播，避免无效的补偿量将 inf 变成 NaN。
+__aicore__ inline void ClearNonFiniteResidual(RegTensor<float>& residual, MaskReg& mask)
+{
+    RegTensor<float> absResidual, zero;
+    MaskReg finite;
+    Abs(absResidual, residual, mask);
+    Compares<float, CMPMODE::LE>(finite, absResidual, MAX_FINITE_FP32, mask);
+    Duplicate(zero, 0.0F, mask);
+    Select(residual, residual, zero, finite);
+}
+
+// TwoSum 返回 FP32 舍入和与舍入残差。
+__aicore__ inline void TwoSumVec(RegTensor<float>& sumReg, RegTensor<float>& errReg, RegTensor<float>& aReg,
+                                 RegTensor<float>& bReg, MaskReg& mask)
+{
+    RegTensor<float> zReg, t1Reg, t2Reg;
+    Add(sumReg, aReg, bReg, mask);
+    Sub(zReg, sumReg, aReg, mask);
+    Sub(t1Reg, sumReg, zReg, mask);
+    Sub(t1Reg, aReg, t1Reg, mask);
+    Sub(t2Reg, bReg, zReg, mask);
+    Add(errReg, t1Reg, t2Reg, mask);
+    ClearNonFiniteResidual(errReg, mask);
+}
+
+// (hi, lo) += (hi2, lo2)
+__aicore__ inline void DfAccumPairVec(RegTensor<float>& hiReg, RegTensor<float>& loReg, RegTensor<float>& hi2Reg,
+                                      RegTensor<float>& lo2Reg, MaskReg& mask)
+{
+    RegTensor<float> sReg, eReg;
+    TwoSumVec(sReg, eReg, hiReg, hi2Reg, mask);
+    Add(eReg, eReg, loReg, mask);
+    Add(eReg, eReg, lo2Reg, mask);
+    TwoSumVec(hiReg, loReg, sReg, eReg, mask);
 }
 
 // Load a VL of T from UB into a fp32 RegTensor, casting fp16 -> fp32 (fp32 passes through).
