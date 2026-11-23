@@ -146,8 +146,9 @@ ge::graphStatus FakeQuantAffineCachemaskTiling::Init()
         if (xRank == 0) {
             // 0 维（标量）x：合法 axis 仅 {0, -1}（与 InferShape 同口径）
             if (axisVal != 0 && axisVal != -1) {
-                OP_LOGE(tilingContext->GetNodeName(),
-                        "A2/A3 non-regbase path: 0-dim x only supports axis 0 or -1 (got %ld).", *axisPtr);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("FakeQuantAffineCachemask", "axis",
+                                                      std::to_string(*axisPtr).c_str(),
+                                                      "for 0-dim x on the non-regbase path, axis must be 0 or -1");
                 return ge::GRAPH_FAILED;
             }
             axisVal = 0;
@@ -156,10 +157,11 @@ ge::graphStatus FakeQuantAffineCachemaskTiling::Init()
             axisVal += xRank;
         }
         if (axisVal != 0) {
-            OP_LOGE(tilingContext->GetNodeName(),
-                    "A2/A3 non-regbase path only supports axis=0 (got %ld); use the aclnn entry (which "
-                    "normalizes via Transpose) or pre-transpose the input for graph-mode calls on this SoC.",
-                    *axisPtr);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "FakeQuantAffineCachemask", "axis",
+                ("the non-regbase path on the current SoC supports only axis=0, but got " + std::to_string(*axisPtr) +
+                 "; use the aclnn entry (which normalizes via Transpose) or pre-transpose the input")
+                    .c_str());
             return ge::GRAPH_FAILED;
         }
     }

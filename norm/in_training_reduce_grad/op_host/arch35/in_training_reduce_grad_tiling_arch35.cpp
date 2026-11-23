@@ -52,8 +52,10 @@ static bool CheckGroupDim(const std::vector<std::vector<int64_t>>& group, int64_
         if (ref == -1) {
             ref = v;
         } else if (v != ref) {
-            OP_LOGE("PadAndSqueeze", "dim %d broadcast incompatible: %s[%d] size %d != %d", (int)dimIdx, tag, (int)i,
-                    (int)v, (int)ref);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                "INTrainingReduceGrad", (std::string(tag) == "input") ? "input" : "pd_x", std::to_string(v),
+                std::string("dim ") + std::to_string(dimIdx) + " broadcast size " + std::to_string(v) +
+                    " is incompatible with " + std::to_string(ref));
             return false;
         }
     }
@@ -241,7 +243,11 @@ public:
         int64_t dyRank = (int64_t)rawInputShapes_[0].size();
         int64_t num = ComputeNumElements(dyRank);
         if (num == 0) {
-            OP_LOGE(ctx_->GetNodeName(), "training_reduce_grad invalid dim value 0. (num=H*W=0)");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "dy", Ops::Base::ToString(ctx_->GetInputShape(0)->GetStorageShape()),
+                "empty tensor (H*W = 0) is not supported");
             return ge::GRAPH_FAILED;
         }
 
@@ -294,8 +300,10 @@ private:
         ge::Format dyFmt = dyDesc->GetFormat().GetStorageFormat();
 
         if (dyFmt != ge::FORMAT_NCHW && dyFmt != ge::FORMAT_NHWC) {
-            OP_LOGE(ctx_->GetNodeName(), "Unsupported format for dy: %d. Only NCHW(%d) and NHWC(%d) are supported.",
-                    static_cast<int>(dyFmt), static_cast<int>(ge::FORMAT_NCHW), static_cast<int>(ge::FORMAT_NHWC));
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "dy", Ops::Base::ToString(dyFmt), "only NCHW and NHWC are supported");
             return ge::GRAPH_FAILED;
         }
 
@@ -304,9 +312,11 @@ private:
             OP_CHECK_NULL_WITH_CONTEXT(ctx_, desc);
             ge::Format iFmt = desc->GetFormat().GetStorageFormat();
             if (iFmt != dyFmt) {
-                OP_LOGE(ctx_->GetNodeName(),
-                        "Input %d format (%d) != dy format (%d). All inputs must share the same format.", i,
-                        static_cast<int>(iFmt), static_cast<int>(dyFmt));
+                OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+                    ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                             "INTrainingReduceGrad"),
+                    "input,dy", Ops::Base::ToString(iFmt) + "," + Ops::Base::ToString(dyFmt),
+                    std::string("input index ") + std::to_string(i) + " must share the same format as dy");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -315,8 +325,10 @@ private:
         OP_CHECK_NULL_WITH_CONTEXT(ctx_, pdxDesc);
         ge::Format pdxFmt = pdxDesc->GetFormat().GetStorageFormat();
         if (pdxFmt != dyFmt) {
-            OP_LOGE(ctx_->GetNodeName(), "pd_x format (%d) != dy format (%d)", static_cast<int>(pdxFmt),
-                    static_cast<int>(dyFmt));
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "pd_x", Ops::Base::ToString(pdxFmt), "format of pd_x must be the same as dy");
             return ge::GRAPH_FAILED;
         }
 
@@ -332,27 +344,40 @@ private:
         OP_CHECK_NULL_WITH_CONTEXT(ctx_, dyDesc);
         ge::DataType dyDtype = dyDesc->GetDataType();
         if (dyDtype != ge::DT_FLOAT16 && dyDtype != ge::DT_FLOAT) {
-            OP_LOGE(ctx_->GetNodeName(), "Unsupported dy dtype: %d", (int)dyDtype);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "dy", Ops::Base::ToString(dyDtype), "supported dtypes are DT_FLOAT16 and DT_FLOAT");
             return ge::GRAPH_FAILED;
         }
         auto xDesc = ctx_->GetInputDesc(1);
         OP_CHECK_NULL_WITH_CONTEXT(ctx_, xDesc);
         if (xDesc->GetDataType() != dyDtype) {
-            OP_LOGE(ctx_->GetNodeName(), "x dtype (%d) != dy dtype (%d)", (int)xDesc->GetDataType(), (int)dyDtype);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "x", Ops::Base::ToString(xDesc->GetDataType()), "dtype of x must be the same as dy");
             return ge::GRAPH_FAILED;
         }
         for (int i = 2; i < MAX_INPUT_SLOTS; i++) {
             auto desc = ctx_->GetInputDesc(i);
             OP_CHECK_NULL_WITH_CONTEXT(ctx_, desc);
             if (desc->GetDataType() != ge::DT_FLOAT) {
-                OP_LOGE(ctx_->GetNodeName(), "Input %d dtype must be fp32, got %d", i, (int)desc->GetDataType());
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                             "INTrainingReduceGrad"),
+                    "channel tensor", Ops::Base::ToString(desc->GetDataType()),
+                    std::string("input index ") + std::to_string(i) + " must be DT_FLOAT");
                 return ge::GRAPH_FAILED;
             }
         }
         auto pdxDesc = ctx_->GetOutputDesc(0);
         OP_CHECK_NULL_WITH_CONTEXT(ctx_, pdxDesc);
         if (pdxDesc->GetDataType() != dyDtype) {
-            OP_LOGE(ctx_->GetNodeName(), "pd_x dtype (%d) != dy dtype (%d)", (int)pdxDesc->GetDataType(), (int)dyDtype);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "pd_x", Ops::Base::ToString(pdxDesc->GetDataType()), "dtype of pd_x must be the same as dy");
             return ge::GRAPH_FAILED;
         }
         dyDtype_ = dyDtype;
@@ -366,71 +391,103 @@ private:
         int64_t dyRank = (int64_t)dy.size();
 
         if (dyRank != RANK_4) {
-            OP_LOGE(ctx_->GetNodeName(), "rank(dy)=%ld, only rank=4 (NCHW/NHWC) is supported", dyRank);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "dy", std::to_string(dyRank) + "D", "only rank 4 (NCHW/NHWC) is supported");
             return ge::GRAPH_FAILED;
         }
 
         for (int64_t d = 0; d < dyRank; d++) {
             if (dy[d] == 0) {
-                OP_LOGE(ctx_->GetNodeName(), "invalid dim value 0: dy dim[%ld]=0 (empty tensor is not supported)", d);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                             "INTrainingReduceGrad"),
+                    "dy", Ops::Base::ToString(ctx_->GetInputShape(0)->GetStorageShape()),
+                    "empty tensor (dim value 0) is not supported");
                 return ge::GRAPH_FAILED;
             }
         }
 
         if (dy != x) {
-            OP_LOGE(ctx_->GetNodeName(), "dy shape != x shape");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "x", Ops::Base::ToString(ctx_->GetInputShape(1)->GetStorageShape()),
+                "shape of x must be the same as dy");
             return ge::GRAPH_FAILED;
         }
 
         auto& varShape = rawInputShapes_[2];
         if ((int64_t)varShape.size() != dyRank) {
-            OP_LOGE(ctx_->GetNodeName(), "variance rank (%d) != dy rank (%ld)", (int)varShape.size(), dyRank);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "variance", std::to_string(varShape.size()) + "D", "rank of variance must be the same as dy");
             return ge::GRAPH_FAILED;
         }
         for (int i = 2; i < MAX_INPUT_SLOTS; i++) {
             if (rawInputShapes_[i] != varShape) {
-                OP_LOGE(ctx_->GetNodeName(), "Input %d shape != variance shape", i);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                             "INTrainingReduceGrad"),
+                    "channel tensor", Ops::Base::ToString(ctx_->GetInputShape(i)->GetStorageShape()),
+                    std::string("input index ") + std::to_string(i) + " must be the same shape as variance");
                 return ge::GRAPH_FAILED;
             }
         }
 
         if (format_ == FORMAT_NCHW_VAL) {
             if (varShape[2] != 1 || varShape[3] != 1) {
-                OP_LOGE(ctx_->GetNodeName(),
-                        "NCHW: variance spatial dims (H,W) must be 1, got shape[2]=%ld shape[3]=%ld", varShape[2],
-                        varShape[3]);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                             "INTrainingReduceGrad"),
+                    "variance", Ops::Base::ToString(ctx_->GetInputShape(2)->GetStorageShape()),
+                    "in NCHW the spatial dims H and W of variance must be 1");
                 return ge::GRAPH_FAILED;
             }
             if (varShape[0] != dy[0] || varShape[1] != dy[1]) {
-                OP_LOGE(ctx_->GetNodeName(),
-                        "NCHW: variance N,C must match dy, got var[N,C]=[%ld,%ld] dy[N,C]=[%ld,%ld]", varShape[0],
-                        varShape[1], dy[0], dy[1]);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                             "INTrainingReduceGrad"),
+                    "variance", Ops::Base::ToString(ctx_->GetInputShape(2)->GetStorageShape()),
+                    "in NCHW the N and C dims of variance must match dy");
                 return ge::GRAPH_FAILED;
             }
         } else {
             if (varShape[1] != 1 || varShape[2] != 1) {
-                OP_LOGE(ctx_->GetNodeName(),
-                        "NHWC: variance spatial dims (H,W) must be 1, got shape[1]=%ld shape[2]=%ld", varShape[1],
-                        varShape[2]);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                             "INTrainingReduceGrad"),
+                    "variance", Ops::Base::ToString(ctx_->GetInputShape(2)->GetStorageShape()),
+                    "in NHWC the spatial dims H and W of variance must be 1");
                 return ge::GRAPH_FAILED;
             }
             if (varShape[0] != dy[0] || varShape[3] != dy[3]) {
-                OP_LOGE(ctx_->GetNodeName(),
-                        "NHWC: variance N,C must match dy, got var[N,C]=[%ld,%ld] dy[N,C]=[%ld,%ld]", varShape[0],
-                        varShape[3], dy[0], dy[3]);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                             "INTrainingReduceGrad"),
+                    "variance", Ops::Base::ToString(ctx_->GetInputShape(2)->GetStorageShape()),
+                    "in NHWC the N and C dims of variance must match dy");
                 return ge::GRAPH_FAILED;
             }
         }
 
         auto& pdxShape = rawOutputShapes_[0];
         if ((int64_t)pdxShape.size() != dyRank) {
-            OP_LOGE(ctx_->GetNodeName(), "pd_x rank (%d) != dy rank (%ld)", (int)pdxShape.size(), dyRank);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                         "INTrainingReduceGrad"),
+                "pd_x", std::to_string(pdxShape.size()) + "D", "rank of pd_x must be the same as dy");
             return ge::GRAPH_FAILED;
         }
         for (int64_t d = 0; d < dyRank; d++) {
             if (pdxShape[d] >= 0 && dy[d] >= 0 && pdxShape[d] != dy[d]) {
-                OP_LOGE(ctx_->GetNodeName(), "pd_x shape must be the same as dy shape: pd_x[%ld]=%ld != dy[%ld]=%ld", d,
-                        pdxShape[d], d, dy[d]);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ((ctx_) != nullptr && (ctx_)->GetNodeName() != nullptr ? (ctx_)->GetNodeName() :
+                                                                             "INTrainingReduceGrad"),
+                    "pd_x", Ops::Base::ToString(ctx_->GetOutputShape(0)->GetStorageShape()),
+                    "shape of pd_x must be the same as dy");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -481,7 +538,7 @@ private:
 
         if (!in_training_reduce_grad::PadAndSqueeze(rawInputShapes_, rawOutputShapes_, maxBroShape_, normalInputShapes_,
                                                     normalOutputShapes_)) {
-            OP_LOGE(ctx_->GetNodeName(), "PadAndSqueeze failed");
+            OP_LOGE_WITHOUT_REPORT(ctx_->GetNodeName(), "PadAndSqueeze failed");
             return ge::GRAPH_FAILED;
         }
         rank_ = (int64_t)maxBroShape_.size();
@@ -491,7 +548,7 @@ private:
         }
 
         if (!in_training_reduce_grad::FindSplitAxis(maxBroShape_, ubPerCore, PHYS_NODES, tiling->split)) {
-            OP_LOGE(ctx_->GetNodeName(), "FindSplitAxis failed");
+            OP_LOGE_WITHOUT_REPORT(ctx_->GetNodeName(), "FindSplitAxis failed");
             return ge::GRAPH_FAILED;
         }
 

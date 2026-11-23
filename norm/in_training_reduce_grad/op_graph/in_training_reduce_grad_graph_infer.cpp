@@ -20,6 +20,8 @@
  *   pd_x.dtype = dy.dtype。
  */
 
+#include <string>
+
 #include "register/op_impl_registry.h"
 #include "op_common/log/log.h"
 
@@ -32,24 +34,24 @@ static ge::graphStatus InferDataTypeForINTrainingReduceGrad(gert::InferDataTypeC
     const char* node = (context->GetNodeName() == nullptr) ? "INTrainingReduceGrad" : context->GetNodeName();
     const ge::DataType dyDataType = context->GetInputDataType(0);
     OP_CHECK_IF(dyDataType != ge::DT_FLOAT16 && dyDataType != ge::DT_FLOAT,
-                OP_LOGE(node, "Unsupported dy dtype: %d. Only DT_FLOAT16(%d) and DT_FLOAT(%d) are supported.",
-                        static_cast<int32_t>(dyDataType), static_cast<int32_t>(ge::DT_FLOAT16),
-                        static_cast<int32_t>(ge::DT_FLOAT)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(node, "dy", Ops::Base::ToString(dyDataType),
+                                                      "supported dtypes are DT_FLOAT16 and DT_FLOAT"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->GetInputDataType(1) != dyDataType,
-                OP_LOGE(node, "x dtype (%d) != dy dtype (%d).", static_cast<int32_t>(context->GetInputDataType(1)),
-                        static_cast<int32_t>(dyDataType)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(node, "x", Ops::Base::ToString(context->GetInputDataType(1)),
+                                                      "dtype of x must be the same as dy"),
                 return ge::GRAPH_FAILED);
     for (size_t i = 2; i < 7; ++i) {
         OP_CHECK_IF(context->GetInputDataType(i) != ge::DT_FLOAT,
-                    OP_LOGE(node, "Input %zu dtype (%d) must be DT_FLOAT(%d).", i,
-                            static_cast<int32_t>(context->GetInputDataType(i)), static_cast<int32_t>(ge::DT_FLOAT)),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        node, "channel tensor", Ops::Base::ToString(context->GetInputDataType(i)),
+                        std::string("input index ") + std::to_string(i) + " must be DT_FLOAT"),
                     return ge::GRAPH_FAILED);
     }
     const ge::DataType declaredOutDataType = context->GetOutputDataType(0);
     OP_CHECK_IF(declaredOutDataType != ge::DT_UNDEFINED && declaredOutDataType != dyDataType,
-                OP_LOGE(node, "Declared pd_x dtype (%d) != dy dtype (%d).", static_cast<int32_t>(declaredOutDataType),
-                        static_cast<int32_t>(dyDataType)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(node, "pd_x", Ops::Base::ToString(declaredOutDataType),
+                                                      "declared dtype of pd_x must be DT_UNDEFINED or the same as dy"),
                 return ge::GRAPH_FAILED);
     if (context->SetOutputDataType(0, dyDataType) != ge::GRAPH_SUCCESS) {
         OP_LOGE(node, "SetOutputDataType for pd_x failed.");

@@ -112,19 +112,30 @@ static ge::graphStatus InferShape4INTrainingReduceGrad(gert::InferShapeContext* 
     }
 
     if (dyShape->GetDimNum() != RANK_4D || (!IsUnknownRank(xShape) && xShape->GetDimNum() != RANK_4D)) {
-        OP_LOGE(context->GetNodeName(),
-                "INTrainingReduceGrad only supports 4D (NCHW/NHWC) inputs, dy rank=%zu, x rank=%zu.",
-                dyShape->GetDimNum(), xShape->GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                           "INTrainingReduceGrad"),
+            (dyShape->GetDimNum() != RANK_4D) ? "dy" : "x",
+            std::to_string((dyShape->GetDimNum() != RANK_4D) ? dyShape->GetDimNum() : xShape->GetDimNum()) + "D",
+            "only 4D (NCHW/NHWC) inputs are supported");
         return ge::GRAPH_FAILED;
     }
 
     if (HasZeroDim(dyShape) || (!IsUnknownRank(xShape) && HasZeroDim(xShape))) {
-        OP_LOGE(context->GetNodeName(), "INTrainingReduceGrad does not support empty tensor (dim value 0).");
+        const bool dyHasZero = HasZeroDim(dyShape);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                           "INTrainingReduceGrad"),
+            dyHasZero ? "dy" : "x", Ops::Base::ToString(dyHasZero ? *dyShape : *xShape),
+            "empty tensor (dim value 0) is not supported");
         return ge::GRAPH_FAILED;
     }
 
     if (!IsUnknownRank(xShape) && !KnownDimsEqual(xShape, dyShape)) {
-        OP_LOGE(context->GetNodeName(), "x shape must be the same as dy shape.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                           "INTrainingReduceGrad"),
+            "x", Ops::Base::ToString(*xShape), "shape of x must be the same as dy");
         return ge::GRAPH_FAILED;
     }
 
@@ -137,9 +148,12 @@ static ge::graphStatus InferShape4INTrainingReduceGrad(gert::InferShapeContext* 
         }
         if (paramShape->GetDimNum() != RANK_4D || !MatchesChannelPattern(paramShape, dyShape) ||
             HasZeroDim(paramShape)) {
-            OP_LOGE(context->GetNodeName(),
-                    "Input %zu must be a 4D channel tensor of [N,C,1,1] (NCHW) or [N,1,1,C] (NHWC) matching dy.",
-                    PARAM_INDEX_BEGIN + i);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                               "INTrainingReduceGrad"),
+                "channel tensor", Ops::Base::ToString(*paramShape),
+                std::string("input index ") + std::to_string(PARAM_INDEX_BEGIN + i) +
+                    " must be a 4D channel tensor of [N,C,1,1] (NCHW) or [N,1,1,C] (NHWC) matching dy");
             return ge::GRAPH_FAILED;
         }
         // 通道张量互一致性（README 约束五者 shape 必须一致）：逐张量各自匹配
@@ -148,10 +162,13 @@ static ge::graphStatus InferShape4INTrainingReduceGrad(gert::InferShapeContext* 
         if (channelRefShape == nullptr) {
             channelRefShape = paramShape;
         } else if (!KnownDimsEqual(paramShape, channelRefShape)) {
-            OP_LOGE(context->GetNodeName(),
-                    "Channel tensors (variance/mean/res_gamma/res_beta/gamma) must share the same shape: input %zu "
-                    "differs from input %zu.",
-                    PARAM_INDEX_BEGIN + i, PARAM_INDEX_BEGIN);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                               "INTrainingReduceGrad"),
+                "channel tensor,variance",
+                Ops::Base::ToString(*paramShape) + "," + Ops::Base::ToString(*channelRefShape),
+                std::string("input index ") + std::to_string(PARAM_INDEX_BEGIN + i) +
+                    " must share the same shape as variance");
             return ge::GRAPH_FAILED;
         }
     }
@@ -162,7 +179,10 @@ static ge::graphStatus InferShape4INTrainingReduceGrad(gert::InferShapeContext* 
     // KnownDimsEqual 对未知维（-1）按通配放行。
     const bool pdRankDeclared = pdXShape->GetDimNum() != 0 && !IsUnknownRank(pdXShape);
     if (!IsUnknownRank(xShape) && pdRankDeclared && !KnownDimsEqual(pdXShape, xShape)) {
-        OP_LOGE(context->GetNodeName(), "Declared pd_x shape must be the same as x shape.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                           "INTrainingReduceGrad"),
+            "pd_x", Ops::Base::ToString(*pdXShape), "declared shape of pd_x must be the same as x");
         return ge::GRAPH_FAILED;
     }
 

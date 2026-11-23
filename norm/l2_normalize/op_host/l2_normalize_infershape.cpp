@@ -76,8 +76,16 @@ static ge::graphStatus InferShape4L2Normalize(gert::InferShapeContext* context)
     const auto* outputDesc = context->GetOutputDesc(OUTPUT_Y_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
-    OP_CHECK_IF(!IsSupportedFormat(*inputDesc) || !IsSupportedFormat(*outputDesc),
-                OP_LOGE(context, "x and y must use ND format."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !IsSupportedFormat(*inputDesc) || !IsSupportedFormat(*outputDesc),
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "L2Normalize"),
+            "x and y",
+            (std::string("x format is ") + std::to_string(static_cast<int64_t>(inputDesc->GetStorageFormat())) +
+             ", y format is " + std::to_string(static_cast<int64_t>(outputDesc->GetStorageFormat())))
+                .c_str(),
+            "only FORMAT_ND is supported"),
+        return ge::GRAPH_FAILED);
     // 动态 rank 使用框架标准标记透传，避免把 {-2} 当成普通的一维 shape 参与后续 rank 校验。
     if (Ops::Base::IsUnknownRank(*input_shape)) {
         Ops::Base::SetUnknownRank(*output_shape);

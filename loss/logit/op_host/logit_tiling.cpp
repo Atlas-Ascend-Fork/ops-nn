@@ -134,8 +134,16 @@ ge::graphStatus LogitTiling::RunBigKernelTiling(gert::TilingContext* context)
         typeLength = 1U;
     }
 
-    if (0 == BLOCK_SIZE || 0 == coreNum || 0 == inputNum) {
-        OP_LOGE(context, "BLOCK_SIZE or coreNum or inputNum is 0");
+    if (0 == BLOCK_SIZE || 0 == coreNum) {
+        OP_LOGE(context, "BLOCK_SIZE or coreNum is 0");
+        return ge::GRAPH_FAILED;
+    }
+    if (0 == inputNum) {
+        const std::string entityName = (context == nullptr || context->GetNodeName() == nullptr) ?
+                                           "Logit" :
+                                           context->GetNodeName();
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(entityName, "input", std::to_string(inputNum),
+                                                  "input element count must be greater than 0");
         return ge::GRAPH_FAILED;
     }
 

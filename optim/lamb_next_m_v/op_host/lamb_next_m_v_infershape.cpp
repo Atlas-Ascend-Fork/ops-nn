@@ -14,6 +14,7 @@
  */
 
 #include <vector>
+#include <string>
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "infershape_broadcast_util.h"
@@ -38,10 +39,13 @@ static ge::graphStatus InferShape4LambNextMV(gert::InferShapeContext* context)
         auto in = context->GetInputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, in);
         // rank 校验先于广播折叠执行, 保证 rank 拒绝不与广播不兼容耦合。
-        OP_CHECK_IF(in->GetDimNum() > MAX_RANK,
-                    OP_LOGE(context->GetNodeName(), "input %zu rank %zu exceeds max supported rank %zu", i,
-                            in->GetDimNum(), MAX_RANK),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            in->GetDimNum() > MAX_RANK,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "LambNextMV"),
+                "input" + std::to_string(i), std::to_string(in->GetDimNum()) + "D",
+                "rank must be less than or equal to 8"),
+            return ge::GRAPH_FAILED);
         inShapes.push_back(in);
     }
     gert::Shape bcShape;
@@ -52,8 +56,12 @@ static ge::graphStatus InferShape4LambNextMV(gert::InferShapeContext* context)
     bcShape = *inShapes[0];
     for (size_t i = 1; i < inShapes.size(); i++) {
         gert::Shape tmp;
-        OP_CHECK_IF(!BroadcastShape(&bcShape, inShapes[i], &tmp),
-                    OP_LOGE(context->GetNodeName(), "input shapes cannot broadcast together"), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            !BroadcastShape(&bcShape, inShapes[i], &tmp),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "LambNextMV"),
+                "all inputs", ToString(*inShapes[i]), "all inputs must be broadcastable to a common shape"),
+            return ge::GRAPH_FAILED);
         bcShape = tmp;
     }
     // 标量归一: 全标量输入 broadcast 得 0 维空 shape (), 与 A2 的 shape_util.scalar2tensor_one
@@ -80,16 +88,21 @@ static ge::graphStatus InferDataType4LambNextMV(gert::InferDataTypeContext* cont
     // 公开契约(README 约束说明): 所有输入的数据类型必须一致, 同为 FLOAT16 或同为 FLOAT。
     // 与 tiling 侧 GetShapeAttrsInfo 的校验保持同一口径, 使图模式在类型推导阶段即拒绝。
     auto input0DType = context->GetInputDataType(0);
-    OP_CHECK_IF(input0DType != ge::DT_FLOAT && input0DType != ge::DT_FLOAT16,
-                OP_LOGE(context->GetNodeName(), "input_mul3 dtype %s is not supported, only float16 or float",
-                        ToString(input0DType).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        input0DType != ge::DT_FLOAT && input0DType != ge::DT_FLOAT16,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "LambNextMV"),
+            "input_mul3", ToString(input0DType), "supported dtypes are float16 and float"),
+        return ge::GRAPH_FAILED);
     for (size_t i = 1; i < IN_NUM; i++) {
         auto curDType = context->GetInputDataType(i);
-        OP_CHECK_IF(curDType != input0DType,
-                    OP_LOGE(context->GetNodeName(), "input %zu dtype %s is not consistent with input0 dtype %s", i,
-                            ToString(curDType).c_str(), ToString(input0DType).c_str()),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            curDType != input0DType,
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "LambNextMV"),
+                "input" + std::to_string(i) + ",input0", ToString(curDType) + "," + ToString(input0DType),
+                "all inputs must have the same dtype as input0"),
+            return ge::GRAPH_FAILED);
     }
     // y1 与 input_mul3 同类型
     context->SetOutputDataType(0, input0DType);

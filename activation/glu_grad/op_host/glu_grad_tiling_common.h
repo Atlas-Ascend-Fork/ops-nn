@@ -151,8 +151,12 @@ inline ge::graphStatus CheckInputParams(gert::TilingContext* context)
                                               "input dtype only support fp16, fp32, bf16 currently, please check."),
         return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF((typeSize <= 0), OP_LOGE(context, "typeSize is invalid %d, please check.", typeSize),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (typeSize <= 0),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "GLUGrad"),
+            "self", std::to_string(typeSize), "the element size derived from the dtype of self must be positive"),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }

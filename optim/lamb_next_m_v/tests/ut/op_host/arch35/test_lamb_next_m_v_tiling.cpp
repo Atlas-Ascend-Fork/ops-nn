@@ -9,9 +9,12 @@
  */
 
 #include <iostream>
+#include <cstdint>
+#include <string>
 #include <vector>
 #include <gtest/gtest.h>
 #include "log/log.h"
+#include "base/err_mgr.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -23,6 +26,78 @@
 using namespace ut_util;
 using namespace std;
 using namespace ge;
+
+namespace {
+// ErrorManager 上下文隔离方式与 rnn/gru_grad/tests/ut/op_host/test_gru_grad_tiling.cpp 一致：
+// 用独立 work_stream_id 记录，避免共享 Host UT 进程内的用例串扰。
+class ScopedErrorContext {
+public:
+    ScopedErrorContext() : savedContext_(error_message::GetErrMgrContext())
+    {
+        auto context = savedContext_;
+        context.work_stream_id = reinterpret_cast<std::uintptr_t>(this);
+        error_message::SetErrMgrContext(context);
+        (void)error_message::GetErrMgrRawErrorMessages();
+    }
+
+    ~ScopedErrorContext()
+    {
+        (void)error_message::GetErrMgrRawErrorMessages();
+        error_message::SetErrMgrContext(savedContext_);
+    }
+
+    ScopedErrorContext(const ScopedErrorContext&) = delete;
+    ScopedErrorContext& operator=(const ScopedErrorContext&) = delete;
+
+private:
+    error_message::ErrorManagerContext savedContext_;
+};
+
+struct CapturedError {
+    size_t count = 0;
+    std::string code;
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+};
+
+// 共用广播工具 (infershape_broadcast_util) 内部会用 OP_LOGE 逐层上报框架内部码 EZ9999，
+// 这些不是本算子的上报入口；统计「首错唯一」时排除内部码，只保留预定义错误码。
+bool IsFrameworkInternalError(const std::string& code) { return code == (std::string("EZ") + "9999"); }
+
+CapturedError CaptureError()
+{
+    CapturedError captured;
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    for (const auto& error : errors) {
+        const std::string code = error.error_id == nullptr ? "" : error.error_id.get();
+        if (IsFrameworkInternalError(code)) {
+            continue;
+        }
+        ++captured.count;
+        captured.code = code;
+        captured.keys.clear();
+        captured.values.clear();
+        for (const auto& key : error.args_key) {
+            captured.keys.emplace_back(key == nullptr ? "" : key.get());
+        }
+        for (const auto& value : error.args_value) {
+            captured.values.emplace_back(value == nullptr ? "" : value.get());
+        }
+    }
+    return captured;
+}
+
+// 按 Arglist 的 key 取实际错误值；缺失时返回可读标记，便于断言失败时定位。
+std::string ErrorValue(const CapturedError& error, const std::string& key)
+{
+    for (size_t i = 0; i < error.keys.size() && i < error.values.size(); ++i) {
+        if (error.keys[i] == key) {
+            return error.values[i];
+        }
+    }
+    return "<missing:" + key + ">";
+}
+} // namespace
 
 class LambNextMVTilingTest : public testing::Test {
 protected:
@@ -508,21 +583,38 @@ TEST_F(LambNextMVTilingTest, lamb_next_mv_brc_bounds_success_collapsed_shape)
 TEST_F(LambNextMVTilingTest, lamb_next_mv_brc_bounds_reject_rank_over_limit)
 {
     std::vector<std::vector<int64_t>> inputDims(13, std::vector<int64_t>{1});
+    ScopedErrorContext errorContext;
     RunLambNextMVBrcTilingCase(inputDims, std::vector<int64_t>(9, 2), ge::DT_FLOAT, ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0012");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "y1");
+    EXPECT_EQ(ErrorValue(error, "incorrect_dim"), "9D");
 }
 
 // CheckLambNextMVBrcBounds coverage: a single dim above UINT32_MAX must be rejected.
 TEST_F(LambNextMVTilingTest, lamb_next_mv_brc_bounds_reject_dim_over_uint32)
 {
     std::vector<std::vector<int64_t>> inputDims(13, std::vector<int64_t>{1});
+    ScopedErrorContext errorContext;
     RunLambNextMVBrcTilingCase(inputDims, {4294967296LL}, ge::DT_FLOAT, ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0009");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "y1");
 }
 
 // CheckLambNextMVBrcBounds coverage: collapse multiplication above INT64_MAX must be rejected.
 TEST_F(LambNextMVTilingTest, lamb_next_mv_brc_bounds_reject_collapse_overflow)
 {
     std::vector<std::vector<int64_t>> inputDims(13, std::vector<int64_t>{1});
+    ScopedErrorContext errorContext;
     RunLambNextMVBrcTilingCase(inputDims, {4294967295LL, 4294967295LL}, ge::DT_FLOAT, ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0009");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "y1");
+    EXPECT_EQ(ErrorValue(error, "incorrect_shape"), "collapsed dim product");
 }
 
 // CheckLambNextMVBrcBounds coverage: total element count above UINT64_MAX must be rejected
@@ -531,5 +623,66 @@ TEST_F(LambNextMVTilingTest, lamb_next_mv_brc_bounds_reject_total_overflow)
 {
     std::vector<std::vector<int64_t>> inputDims(13, std::vector<int64_t>{1});
     inputDims[0] = {4294967295LL, 1, 2};
+    ScopedErrorContext errorContext;
     RunLambNextMVBrcTilingCase(inputDims, {4294967295LL, 4294967295LL, 2}, ge::DT_FLOAT, ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0009");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "y1");
+    EXPECT_EQ(ErrorValue(error, "incorrect_shape"), "total element count");
+}
+
+// CheckLambNextMVBrcBounds coverage: input rank above the output rank must be rejected.
+TEST_F(LambNextMVTilingTest, lamb_next_mv_brc_bounds_reject_input_rank_over_output)
+{
+    std::vector<std::vector<int64_t>> inputDims(13, std::vector<int64_t>{1});
+    inputDims[0] = {2, 3};
+    ScopedErrorContext errorContext;
+    RunLambNextMVBrcTilingCase(inputDims, {3}, ge::DT_FLOAT, ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0012");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "input0");
+    EXPECT_EQ(ErrorValue(error, "incorrect_dim"), "2D");
+}
+
+// CheckLambNextMVBrcBounds coverage: collapsed output dim above UINT32_MAX must be rejected.
+TEST_F(LambNextMVTilingTest, lamb_next_mv_brc_bounds_reject_collapsed_output_over_uint32)
+{
+    std::vector<std::vector<int64_t>> inputDims(13, std::vector<int64_t>{1});
+    ScopedErrorContext errorContext;
+    RunLambNextMVBrcTilingCase(inputDims, {65536, 65536}, ge::DT_FLOAT, ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0009");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "y1");
+    EXPECT_EQ(ErrorValue(error, "incorrect_shape"), "4294967296");
+}
+
+// CheckLambNextMVBrcBounds coverage: collapsed input dim above INT64_MAX must be rejected.
+TEST_F(LambNextMVTilingTest, lamb_next_mv_brc_bounds_reject_collapsed_input_int64_overflow)
+{
+    std::vector<std::vector<int64_t>> inputDims(13, std::vector<int64_t>{1});
+    inputDims[0] = {2, 4611686018427387904LL};
+    ScopedErrorContext errorContext;
+    RunLambNextMVBrcTilingCase(inputDims, {2, 2}, ge::DT_FLOAT, ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0009");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "input0");
+    EXPECT_EQ(ErrorValue(error, "incorrect_shape"), "collapsed dim product");
+}
+
+// CheckLambNextMVBrcBounds coverage: collapsed input dim above UINT32_MAX must be rejected.
+TEST_F(LambNextMVTilingTest, lamb_next_mv_brc_bounds_reject_collapsed_input_over_uint32)
+{
+    std::vector<std::vector<int64_t>> inputDims(13, std::vector<int64_t>{1});
+    inputDims[0] = {2, 2147483648LL};
+    ScopedErrorContext errorContext;
+    RunLambNextMVBrcTilingCase(inputDims, {2, 2}, ge::DT_FLOAT, ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+    EXPECT_EQ(error.count, 1U);
+    EXPECT_EQ(error.code, "EZ0009");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "input0");
+    EXPECT_EQ(ErrorValue(error, "incorrect_shape"), "4294967296");
 }

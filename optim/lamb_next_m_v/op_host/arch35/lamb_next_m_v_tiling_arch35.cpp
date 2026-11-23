@@ -52,15 +52,21 @@ ge::graphStatus CheckLambNextMVBrcBounds(gert::TilingContext* context, uint32_t 
     size_t rank = outShape.GetDimNum();
     OP_CHECK_IF(
         rank > LAMB_BRC_MAX_DIM,
-        OP_LOGE(context->GetNodeName(), "output rank %zu exceeds max supported rank %u", rank, LAMB_BRC_MAX_DIM),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "LambNextMV"),
+            "y1", std::to_string(rank) + "D", "rank must be less than or equal to 8"),
         return ge::GRAPH_FAILED);
 
     std::vector<int64_t> rawOut(rank);
     for (size_t d = 0; d < rank; d++) {
         rawOut[d] = outShape.GetDim(d);
-        OP_CHECK_IF(rawOut[d] < 0 || static_cast<uint64_t>(rawOut[d]) > UINT32_MAX,
-                    OP_LOGE(context->GetNodeName(), "output dim %zu (%ld) exceeds uint32 range", d, rawOut[d]),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            rawOut[d] < 0 || static_cast<uint64_t>(rawOut[d]) > UINT32_MAX,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "LambNextMV"),
+                "y1", Ops::Base::ToString(outShape),
+                "dim " + std::to_string(d) + " = " + std::to_string(rawOut[d]) + " exceeds uint32 range"),
+            return ge::GRAPH_FAILED);
     }
 
     std::vector<std::vector<int64_t>> rawIn(nin, std::vector<int64_t>(rank, 1));
@@ -69,8 +75,13 @@ ge::graphStatus CheckLambNextMVBrcBounds(gert::TilingContext* context, uint32_t 
         OP_CHECK_NULL_WITH_CONTEXT(context, sp);
         const gert::Shape& s = sp->GetStorageShape();
         size_t r = s.GetDimNum();
-        OP_CHECK_IF(r > rank, OP_LOGE(context->GetNodeName(), "input %u rank %zu exceeds output rank %zu", i, r, rank),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            r > rank,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "LambNextMV"),
+                "input" + std::to_string(i), std::to_string(r) + "D",
+                "input rank must not exceed output rank " + std::to_string(rank)),
+            return ge::GRAPH_FAILED);
         for (size_t d = 0; d < r; d++) { // 右对齐补维
             rawIn[i][rank - r + d] = s.GetDim(d);
         }
@@ -89,15 +100,22 @@ ge::graphStatus CheckLambNextMVBrcBounds(gert::TilingContext* context, uint32_t 
         if (merge) {
             OP_CHECK_IF((rawOut[d] != 0 && co.back() > INT64_MAX / rawOut[d]) ||
                             (co.back() != 0 && rawOut[d] > INT64_MAX / co.back()),
-                        OP_LOGE(context->GetNodeName(), "collapsed output dim (%ld x %ld) exceeds int64 range",
-                                co.back(), rawOut[d]),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                           "LambNextMV"),
+                            "y1", "collapsed dim product", "collapsed output dim product exceeds int64 range"),
                         return ge::GRAPH_FAILED);
             co.back() *= rawOut[d];
             for (uint32_t i = 0; i < nin; i++) {
-                OP_CHECK_IF((rawIn[i][d] != 0 && ci[i].back() > INT64_MAX / rawIn[i][d]) ||
-                                (ci[i].back() != 0 && rawIn[i][d] > INT64_MAX / ci[i].back()),
-                            OP_LOGE(context->GetNodeName(), "collapsed input %u dim exceeds int64 range", i),
-                            return ge::GRAPH_FAILED);
+                OP_CHECK_IF(
+                    (rawIn[i][d] != 0 && ci[i].back() > INT64_MAX / rawIn[i][d]) ||
+                        (ci[i].back() != 0 && rawIn[i][d] > INT64_MAX / ci[i].back()),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                       "LambNextMV"),
+                        "input" + std::to_string(i), "collapsed dim product",
+                        "collapsed input dim product exceeds int64 range"),
+                    return ge::GRAPH_FAILED);
                 ci[i].back() *= rawIn[i][d];
             }
         } else {
@@ -116,20 +134,30 @@ ge::graphStatus CheckLambNextMVBrcBounds(gert::TilingContext* context, uint32_t 
 
     uint64_t total = 1;
     for (size_t d = 0; d < co.size(); d++) {
-        OP_CHECK_IF(co[d] < 0 || static_cast<uint64_t>(co[d]) > UINT32_MAX,
-                    OP_LOGE(context->GetNodeName(), "collapsed output dim %zu (%ld) exceeds uint32 range", d, co[d]),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(total != 0 && static_cast<uint64_t>(co[d]) > UINT64_MAX / total,
-                    OP_LOGE(context->GetNodeName(), "total element count exceeds uint64 range"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            co[d] < 0 || static_cast<uint64_t>(co[d]) > UINT32_MAX,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "LambNextMV"),
+                "y1", std::to_string(co[d]), "collapsed output dim " + std::to_string(d) + " exceeds uint32 range"),
+            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            total != 0 && static_cast<uint64_t>(co[d]) > UINT64_MAX / total,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "LambNextMV"),
+                "y1", "total element count", "total element count exceeds uint64 range"),
+            return ge::GRAPH_FAILED);
         total *= static_cast<uint64_t>(co[d]);
     }
     for (uint32_t i = 0; i < nin; i++) {
         for (size_t d = 0; d < ci[i].size(); d++) {
-            OP_CHECK_IF(ci[i][d] < 0 || static_cast<uint64_t>(ci[i][d]) > UINT32_MAX,
-                        OP_LOGE(context->GetNodeName(), "collapsed dim %zu of input %u (%ld) exceeds uint32 range", d,
-                                i, ci[i][d]),
-                        return ge::GRAPH_FAILED);
+            OP_CHECK_IF(
+                ci[i][d] < 0 || static_cast<uint64_t>(ci[i][d]) > UINT32_MAX,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                   "LambNextMV"),
+                    "input" + std::to_string(i), std::to_string(ci[i][d]),
+                    "collapsed dim " + std::to_string(d) + " of input " + std::to_string(i) + " exceeds uint32 range"),
+                return ge::GRAPH_FAILED);
         }
     }
     return ge::GRAPH_SUCCESS;
@@ -217,10 +245,12 @@ ge::graphStatus LambNextMVTiling::DoOpTiling()
     if (outShape0 == nullptr || outShape0->GetStorageShape().GetShapeSize() != 0) {
         // 先做本算子内的形状边界/溢出前置校验(原共用头的校验迁移至此), 再走原公共规划接口。
         OP_CHECK_IF(CheckLambNextMVBrcBounds(context_, static_cast<uint32_t>(INPUT_NUM)) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context_->GetNodeName(), "broadcast shape bounds check failed"), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "broadcast shape bounds check failed"),
+                    return ge::GRAPH_FAILED);
         // 先取返回值再判: 模板实参里的逗号会被预处理器当成 OP_CHECK_IF 的参数分隔符。
         ge::graphStatus planRet = BuildLambBrcPlan<13, 4>(context_, coreNum_, ubSize_, dtSize, td_);
-        OP_CHECK_IF(planRet != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "build broadcast plan failed"),
+        OP_CHECK_IF(planRet != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "build broadcast plan failed"),
                     return ge::GRAPH_FAILED);
     }
 

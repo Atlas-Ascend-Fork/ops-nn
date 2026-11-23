@@ -10,12 +10,68 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+#include <vector>
+
+#include "base/err_mgr.h"
 #include "kernel_run_context_facker.h"
+#include "op_common/log/log.h"
 #include "register/op_impl_registry.h"
 
 namespace {
 
 constexpr const char* OP_TYPE = "L2Normalize";
+
+// ErrorManager raw message helpers: capture the formal error code reported by
+// the remediation target instead of the internal EZ9999 fallback.
+std::vector<std::string> g_ezCodes;
+bool g_ezCodesLoaded = false;
+
+void InitErrMgr()
+{
+    // Anchor libopbase_ut_common.a(log.cpp.o) into this binary: every log helper
+    // used by the infershape op is header-inline, so the archive member holding
+    // REG_FORMAT_ERROR_MSG(EZ00xx registry) would otherwise be dropped and
+    // ReportPredefinedErrMsg could not resolve any formal code.
+    (void)Ops::Base::ToString(ge::DT_FLOAT);
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrErrorMessage();
+    g_ezCodes.clear();
+    g_ezCodesLoaded = false;
+}
+
+void LoadEZCodes()
+{
+    if (g_ezCodesLoaded) {
+        return;
+    }
+    g_ezCodes.clear();
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    for (const auto& e : errors) {
+        g_ezCodes.push_back(e.error_id == nullptr ? std::string() : std::string(e.error_id.get()));
+    }
+    g_ezCodesLoaded = true;
+}
+
+bool HasEZCode(const std::string& code)
+{
+    LoadEZCodes();
+    for (const auto& id : g_ezCodes) {
+        if (id == code) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Number of ErrorManager first errors captured for the current case. A failing
+// exit that reports only its formal code yields exactly one entry; a second
+// entry would mean an internal fallback (EZ9999) was also reported.
+int GetEZCodeCount()
+{
+    LoadEZCodes();
+    return static_cast<int>(g_ezCodes.size());
+}
 
 ge::graphStatus RunInferShape(gert::Shape& inputShape, gert::Shape& outputShape, ge::Format inputFormat = ge::FORMAT_ND,
                               ge::Format outputFormat = ge::FORMAT_ND)
@@ -55,6 +111,31 @@ std::vector<int64_t> ShapeToVector(const gert::Shape& shape)
     }
     return result;
 }
+
+constexpr const char* GUARDED_SUITE = "L2NormalizeInferShape";
+
+// ErrorManager is a process-wide singleton: an error code reported by one case
+// stays visible to every case/suite that runs later in the same test binary.
+// Clear it before each case starts and once more when this suite ends.
+class ErrMgrIsolationGuard : public testing::EmptyTestEventListener {
+public:
+    void OnTestStart(const testing::TestInfo& testInfo) override
+    {
+        (void)testInfo;
+        InitErrMgr();
+    }
+    void OnTestEnd(const testing::TestInfo& testInfo) override
+    {
+        if (std::string(testInfo.test_suite_name()) != GUARDED_SUITE) {
+            return;
+        }
+        InitErrMgr();
+    }
+};
+static const auto _inst_l2normErrMgrGuard = []() {
+    testing::UnitTest::GetInstance()->listeners().Append(new ErrMgrIsolationGuard());
+    return 0;
+}();
 
 } // namespace
 
@@ -120,9 +201,20 @@ TEST(L2NormalizeInferShape, RejectsNonNDInputAndOutputFormats)
 {
     gert::Shape inputShape = {2, 3};
     gert::Shape outputShape = {};
+
+    InitErrMgr();
     EXPECT_EQ(RunInferShape(inputShape, outputShape, ge::FORMAT_NCHW), ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0018")) << "non-ND input format must report EZ0018";
+    EXPECT_EQ(GetEZCodeCount(), 1) << "non-ND input format must report no internal fallback code";
+
+    InitErrMgr();
     EXPECT_EQ(RunInferShape(inputShape, outputShape, ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ), ge::GRAPH_FAILED);
+    EXPECT_TRUE(HasEZCode("EZ0018")) << "non-ND output format must report EZ0018";
+    EXPECT_EQ(GetEZCodeCount(), 1) << "non-ND output format must report no internal fallback code";
+
+    InitErrMgr();
     EXPECT_EQ(RunInferShape(inputShape, outputShape, ge::FORMAT_RESERVED, ge::FORMAT_RESERVED), ge::GRAPH_SUCCESS);
+    EXPECT_FALSE(HasEZCode("EZ0018")) << "FORMAT_RESERVED is accepted, EZ0018 must not be reported";
 }
 
 // FR-P1-011：零元素张量在 GE 动态图下以未知秩 desc（GE_UNKNOWN_RANK，dims={-2}）到达

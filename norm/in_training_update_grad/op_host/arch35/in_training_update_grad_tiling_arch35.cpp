@@ -229,16 +229,23 @@ ge::graphStatus InTrainingUpdateGradTilingBase::GetShapeAttrsInfo()
     // Every product is validated by pairwise quotient BEFORE it is computed (dims are
     // non-negative here), so extreme dim values cannot overflow the int64 check itself.
     OP_CHECK_IF((numC0_ > MAX_C0_LANES),
-                OP_LOGE(context_->GetNodeName(),
-                        "C0 dim of input dy must not exceed %lld (one fp32 vector "
-                        "register); got %lld",
-                        static_cast<long long>(MAX_C0_LANES), static_cast<long long>(numC0_)),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ((context_) != nullptr && (context_)->GetNodeName() != nullptr ? (context_)->GetNodeName() :
+                                                                                     "INTrainingUpdateGrad"),
+                    "dy", ToString(storageShape).c_str(),
+                    ("C0 dim of input dy must not exceed " + std::to_string(MAX_C0_LANES) +
+                     " (one fp32 vector register); got " + std::to_string(numC0_))
+                        .c_str()),
                 return ge::GRAPH_FAILED);
     const auto pairFits = [](int64_t a, int64_t b) {
         return a <= UINT32_LIMIT && b <= (a > 0 ? UINT32_LIMIT / a : UINT32_LIMIT);
     };
     const auto rejectProduct = [this](const std::string& name) {
-        OP_LOGE(context_->GetNodeName(), "Dim product %s of input dy exceeds the uint32 kernel envelope", name.c_str());
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            ((context_) != nullptr && (context_)->GetNodeName() != nullptr ? (context_)->GetNodeName() :
+                                                                             "INTrainingUpdateGrad"),
+            "dy", ToString(context_->GetInputShape(INPUT_DY_IDX)->GetStorageShape()).c_str(),
+            ("Dim product " + name + " of input dy exceeds the uint32 kernel envelope").c_str());
         return ge::GRAPH_FAILED;
     };
     OP_CHECK_IF(!pairFits(numH_, numW_), rejectProduct("H*W"), return ge::GRAPH_FAILED);

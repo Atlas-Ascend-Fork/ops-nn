@@ -44,7 +44,9 @@ static ge::graphStatus FakeQuantAffineCachemaskInferShape(gert::InferShapeContex
     if (!xUnknownRank) {
         // ND 格式仅支持 0-8 维
         OP_CHECK_IF(xShape->GetDimNum() > static_cast<size_t>(MAX_RANK),
-                    OP_LOGE(context, "x rank %zu exceeds max rank %ld", xShape->GetDimNum(), MAX_RANK),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("FakeQuantAffineCachemask", "x",
+                                                             (std::to_string(xShape->GetDimNum()) + "D").c_str(),
+                                                             "x rank must be in range [0, 8]"),
                     return ge::GRAPH_FAILED);
     }
 
@@ -58,18 +60,30 @@ static ge::graphStatus FakeQuantAffineCachemaskInferShape(gert::InferShapeContex
         zeroPointShape != nullptr) {
         // scale/zero_point 仅拒 >=2 维；0 维经 EnsureNotScalar 规整为 {1}（PT 标量语义）。
         // aclnn 侧：per-tensor 同此口径（0 维放行）；per-channel 维持上游 1 维原口径
-        OP_CHECK_IF(scaleShape->GetDimNum() > 1, OP_LOGE(context, "scale should be a 0-D or 1-D tensor"),
+        OP_CHECK_IF(scaleShape->GetDimNum() > 1,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("FakeQuantAffineCachemask", "scale",
+                                                             (std::to_string(scaleShape->GetDimNum()) + "D").c_str(),
+                                                             "scale must be a 0-D or 1-D tensor"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(zeroPointShape->GetDimNum() > 1, OP_LOGE(context, "zero_point should be a 0-D or 1-D tensor"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            zeroPointShape->GetDimNum() > 1,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("FakeQuantAffineCachemask", "zero_point",
+                                                     (std::to_string(zeroPointShape->GetDimNum()) + "D").c_str(),
+                                                     "zero_point must be a 0-D or 1-D tensor"),
+            return ge::GRAPH_FAILED);
         // quant 边界值域（与 arch35 tiling 同口径）：qmin<=qmax 且 |边界|<2^24
         OP_CHECK_IF(*qMinPtr > *qMaxPtr,
-                    OP_LOGE(context, "quant_min %ld should be less than or equal to quant_max %ld", *qMinPtr, *qMaxPtr),
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                        "FakeQuantAffineCachemask", "quant_min, quant_max",
+                        ("quant_min=" + std::to_string(*qMinPtr) + ", quant_max=" + std::to_string(*qMaxPtr)).c_str(),
+                        "quant_min must be less than or equal to quant_max"),
                     return ge::GRAPH_FAILED);
         constexpr int64_t QUANT_BOUND_LIMIT = 16777215; // 2^24 - 1
         OP_CHECK_IF(*qMinPtr < -QUANT_BOUND_LIMIT || *qMaxPtr > QUANT_BOUND_LIMIT,
-                    OP_LOGE(context, "quant bounds out of representable range [-%ld, %ld]", QUANT_BOUND_LIMIT,
-                            QUANT_BOUND_LIMIT),
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                        "FakeQuantAffineCachemask", "quant_min, quant_max",
+                        ("quant_min=" + std::to_string(*qMinPtr) + ", quant_max=" + std::to_string(*qMaxPtr)).c_str(),
+                        "quant_min and quant_max must be in range [-16777215, 16777215]"),
                     return ge::GRAPH_FAILED);
         int64_t rank = static_cast<int64_t>(xShape->GetDimNum());
         int64_t axis = *axisPtr;
@@ -80,12 +94,19 @@ static ge::graphStatus FakeQuantAffineCachemaskInferShape(gert::InferShapeContex
             expectSize = -1;
         } else if (rank == 0) {
             // 0 维（标量）输入：合法 axis 仅 {0, -1}，scale/zero_point 长度须为 1
-            OP_CHECK_IF(axis != 0 && axis != -1, OP_LOGE(context, "axis %ld out of range [-1, 0] for 0-dim x", axis),
-                        return ge::GRAPH_FAILED);
+            OP_CHECK_IF(
+                axis != 0 && axis != -1,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("FakeQuantAffineCachemask", "axis", std::to_string(axis).c_str(),
+                                                      "for 0-dim x, axis must be 0 or -1"),
+                return ge::GRAPH_FAILED);
             expectSize = 1;
         } else {
             OP_CHECK_IF(axis < -rank || axis >= rank,
-                        OP_LOGE(context, "axis %ld out of range [-%ld, %ld]", axis, rank, rank - 1),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            "FakeQuantAffineCachemask", "axis", std::to_string(axis).c_str(),
+                            ("axis must be in range [-" + std::to_string(rank) + ", " + std::to_string(rank - 1) +
+                             "] for x of rank " + std::to_string(rank))
+                                .c_str()),
                         return ge::GRAPH_FAILED);
             positiveAxis = (axis < 0) ? axis + rank : axis;
             expectSize = xShape->GetDim(positiveAxis);
@@ -96,12 +117,18 @@ static ge::graphStatus FakeQuantAffineCachemaskInferShape(gert::InferShapeContex
             // PT（scaleNum/zpNum<=1 标量语义）豁免：单元素/0 维 scale/zero_point 按 per-tensor 解释，
             // 不要求与 axis 维长度一致（与 tiling_arch35 SelectMode 的 MODE_PT 判定同口径）
             OP_CHECK_IF(scaleNum > 1 && scaleNum != expectSize,
-                        OP_LOGE(context, "scale size %ld mismatch with x dim %ld on axis %ld", scaleNum, expectSize,
-                                positiveAxis),
+                        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                            "FakeQuantAffineCachemask", "scale", std::to_string(scaleNum).c_str(),
+                            ("scale size must equal the x dimension size " + std::to_string(expectSize) + " on axis " +
+                             std::to_string(positiveAxis))
+                                .c_str()),
                         return ge::GRAPH_FAILED);
             OP_CHECK_IF(zpNum > 1 && zpNum != expectSize,
-                        OP_LOGE(context, "zero_point size %ld mismatch with x dim %ld on axis %ld", zpNum, expectSize,
-                                positiveAxis),
+                        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                            "FakeQuantAffineCachemask", "zero_point", std::to_string(zpNum).c_str(),
+                            ("zero_point size must equal the x dimension size " + std::to_string(expectSize) +
+                             " on axis " + std::to_string(positiveAxis))
+                                .c_str()),
                         return ge::GRAPH_FAILED);
         }
     }
@@ -127,21 +154,26 @@ static graphStatus FakeQuantAffineCachemaskInferDtype(gert::InferDataTypeContext
     auto inputDtype = context->GetInputDataType(INPUT_IDX_X);
     OP_LOGD(context, "x dtype: %s", Ops::Base::ToString(inputDtype).c_str());
     const std::set<ge::DataType> supportedDtype = {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16};
-    OP_CHECK_IF(supportedDtype.count(inputDtype) == 0,
-                OP_LOGE(context, "x dtype not supported: %s", Ops::Base::ToString(inputDtype).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        supportedDtype.count(inputDtype) == 0,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("FakeQuantAffineCachemask", "x", Ops::Base::ToString(inputDtype).c_str(),
+                                              "supported dtypes are FLOAT, FLOAT16 and BF16"),
+        return ge::GRAPH_FAILED);
     // scale 须与 x 同 dtype（ascend950 注册域每列 x/scale 同型）
     auto scaleDtype = context->GetInputDataType(INPUT_IDX_SCALE);
     OP_CHECK_IF(scaleDtype != inputDtype,
-                OP_LOGE(context, "scale dtype must be same as x: scale=%s x=%s",
-                        Ops::Base::ToString(scaleDtype).c_str(), Ops::Base::ToString(inputDtype).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    "FakeQuantAffineCachemask", "scale, x",
+                    (Ops::Base::ToString(scaleDtype) + ", " + Ops::Base::ToString(inputDtype)).c_str(),
+                    "scale dtype must be the same as x"),
                 return ge::GRAPH_FAILED);
     // zero_point 允许 INT32 或浮点集合（可与 x 交叉组合，对齐 proto 原型与 950 注册矩阵）
     auto zpDtype = context->GetInputDataType(INPUT_IDX_ZERO_POINT);
     OP_CHECK_IF(
         !(zpDtype == ge::DT_INT32 || zpDtype == ge::DT_FLOAT || zpDtype == ge::DT_FLOAT16 || zpDtype == ge::DT_BF16),
-        OP_LOGE(context, "zero_point dtype must be INT32 or float family: zp=%s x=%s",
-                Ops::Base::ToString(zpDtype).c_str(), Ops::Base::ToString(inputDtype).c_str()),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("FakeQuantAffineCachemask", "zero_point",
+                                              Ops::Base::ToString(zpDtype).c_str(),
+                                              "zero_point dtype must be INT32, FLOAT, FLOAT16 or BF16"),
         return ge::GRAPH_FAILED);
     context->SetOutputDataType(OUTPUT_IDX_Y, inputDtype);
     context->SetOutputDataType(OUTPUT_IDX_MASK, DT_BOOL);
