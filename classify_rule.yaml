@@ -1181,6 +1181,8 @@ matmul-c@ops-nn:
         - ops/ops-nn/matmul/gemm_syrk/examples/
         - ops/ops-nn/matmul/gemm_v2/tests/
         - ops/ops-nn/matmul/gemm_v2/examples/
+        - ops/ops-nn/matmul/mat_mul_v2/tests/
+        - ops/ops-nn/matmul/mat_mul_v2/examples/
         - ops/ops-nn/matmul/mat_mul_v3/tests/
         - ops/ops-nn/matmul/mat_mul_v3/examples/
         - ops/ops-nn/matmul/mv/tests/
@@ -1201,6 +1203,8 @@ matmul-c@ops-nn:
         - ops/ops-nn/matmul/trans_mat_mul_weight/examples/
         - ops/ops-nn/matmul/transpose_batch_mat_mul/tests/
         - ops/ops-nn/matmul/transpose_batch_mat_mul/examples/
+        - ops/ops-nn/matmul/batch_mat_mul/examples/
+        - ops/ops-nn/matmul/batch_mat_mul/tests/
         - ops/ops-nn/matmul/weight_quant_batch_matmul/tests/
         - ops/ops-nn/matmul/weight_quant_batch_matmul/examples/
         - ops/ops-nn/matmul/weight_quant_batch_matmul_v2/tests/
@@ -1212,17 +1216,18 @@ matmul-c@ops-nn:
         - ops/ops-nn/matmul/quant_batch_matmul_v3/op_host/quant_batch_matmul_v3_def.cpp
         - ops/ops-nn/matmul/weight_quant_batch_matmul_v2/op_host/weight_quant_batch_matmul_v2_def.cpp
         - ops/ops-nn/matmul/fused_quant_mat_mul/op_host/fused_quant_mat_mul_def.cpp
-        - ops/ops-nn/matmul/fused_mat_mul/examples/arch35/test_aclnn_fused_mat_mul_relu.cpp
-        - ops/ops-nn/matmul/fused_mat_mul/examples/arch35/test_aclnn_fused_mat_mul_gelu.cpp
-        - ops/ops-nn/matmul/fused_mat_mul/examples/arch35/test_aclnn_fused_mat_mul.cpp
-        - ops/ops-nn/matmul/transpose_quant_batch_mat_mul/examples/arch35/test_aclnn_transpose_quant_batch_mat_mul.cpp
+        - ops/ops-nn/matmul/fused_mat_mul/examples/
+        - ops/ops-nn/matmul/fused_mat_mul/tests/
+        - ops/ops-nn/matmul/transpose_quant_batch_mat_mul/examples/
         - ops/ops-nn/matmul/batch_mat_mul_v3/op_host/batch_mat_mul_v3_def.cpp
         - ops/ops-nn/matmul/mat_mul_v3/op_host/mat_mul_v3_def.cpp
-        - ops/ops-nn/matmul/gemm_v3/examples/test_aclnn_gemmv3.cpp
-        - ops/ops-nn/matmul/sparse4to2quant_matmul/examples/test_aclnn_sparse4to2quant_matmul.cpp
-        - ops/ops-nn/matmul/quant_matmul_reduce_sum/examples/test_aclnn_quant_matmul_reduce_sum_weight_nz.cpp
-        - ops/ops-nn/matmul/quant_batch_matmul_inplace_add/examples/arch35/test_aclnn_quant_batch_matmul_inplace_add_mxfp8.cpp
-      non_delivery: null
+        - ops/ops-nn/matmul/gemm_v3/examples/
+        - ops/ops-nn/matmul/gemm_v3/tests/
+        - ops/ops-nn/matmul/sparse4to2quant_matmul/examples/
+        - ops/ops-nn/matmul/quant_matmul_reduce_sum/examples/
+        - ops/ops-nn/matmul/quant_batch_matmul_inplace_add/examples/
+      non_delivery:
+        - ops/ops-nn/matmul/common/cmct/
       open_source: null
 
 matmul@ops-nn:
@@ -1246,6 +1251,7 @@ matmul@ops-nn:
         - ops/ops-nn/matmul/transpose_quant_batch_mat_mul/op_host/op_tiling/arch35/
         - ops/ops-nn/matmul/transpose_quant_batch_mat_mul/op_kernel/arch35/
         - ops/ops-nn/common/src/framework/matmul_onnx_plugin.cpp
+        - ops/ops-nn/matmul/flat_quant/
       opensource_style: null
       kernel_style: null
     unrelease:
@@ -1256,6 +1262,8 @@ matmul@ops-nn:
         - ops/ops-nn/matmul/gemm_v3/examples/
         - ops/ops-nn/matmul/matmul_emu_split_weight/tests/
         - ops/ops-nn/matmul/matmul_emu_split_weight/examples/
+        - ops/ops-nn/matmul/flat_quant/tests/
+        - ops/ops-nn/matmul/flat_quant/examples/
       non_delivery:
         - ops/ops-nn/matmul/common/cmct/
       open_source: null
