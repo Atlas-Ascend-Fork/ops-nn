@@ -159,7 +159,7 @@ English | [简体中文](./README.md)
 
 ## Constraints
 
-- The shapes of the four tensors `var`, `accum`, `x1`, and `var_copy` must be strictly consistent (elementwise computation, with no broadcast between tensors).
+- The shapes of the four tensors `var`, `accum`, `x1`, and `var_copy` must be strictly consistent (elementwise computation, with no broadcast between tensors), and support rank 0~8 (including rank-0, treated as 1 element).
 - `lr`, `momentum`, and `x2` are scalars with shape={1}, participate in the elementwise computation by broadcast, and do not support empty tensors.
 - Only the Ascend 950PR&950DT products are supported (DAV_3510 / arch35, RegBase route).
 

@@ -195,7 +195,6 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
 
     // 标量输入校验（lr/rho/momentum/epsilon，索引 4-7）：
     // README 约束："必须为标量或仅含一个元素的一维张量"且 dtype 与 var 一致。
-    // CODE.04/GEIR.02/03/07/ROUTE.05：此前无任何校验入口，多元素标量静默取首元素、
     // 混合 dtype 在 kernel GM 回退路径按 var dtype 误读，静默交付错误结果。
     const int32_t scalarInputIndices[] = {4, 5, 6, 7}; // lr, rho, momentum, epsilon
     const char* scalarInputNames[] = {"lr", "rho", "momentum", "epsilon"};

@@ -19,6 +19,7 @@
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/math_util.h"
 #include "op_common/op_host/util/platform_util.h"
+#include "op_common/op_host/tiling_base_util.h"
 #include "graph/utils/type_utils.h"
 #include "../../op_kernel/arch35/fused_mul_apply_momentum_extern_tiling_data.h"
 #include "../../op_kernel/arch35/fused_mul_apply_momentum_extern_tiling_key.h"
@@ -27,6 +28,7 @@ namespace optiling {
 
 using Ops::Base::CeilAlign;
 using Ops::Base::CeilDiv;
+using Ops::Base::EnsureNotScalar;
 using Ops::Base::FloorAlign;
 using Ops::Base::FloorDiv;
 
@@ -65,25 +67,26 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t* u
 
 static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* dim0, uint32_t* useNesterovSel)
 {
-    auto varShape = context->GetInputShape(IDX_VAR);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
-    auto accumShape = context->GetInputShape(IDX_ACCUM);
-    OP_CHECK_NULL_WITH_CONTEXT(context, accumShape);
-    auto x1Shape = context->GetInputShape(IDX_X1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, x1Shape);
-    auto varCopyShape = context->GetInputShape(IDX_VAR_COPY);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varCopyShape);
+    auto varShapeInfo = context->GetInputShape(IDX_VAR);
+    OP_CHECK_NULL_WITH_CONTEXT(context, varShapeInfo);
+    auto accumShapeInfo = context->GetInputShape(IDX_ACCUM);
+    OP_CHECK_NULL_WITH_CONTEXT(context, accumShapeInfo);
+    auto x1ShapeInfo = context->GetInputShape(IDX_X1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, x1ShapeInfo);
+    auto varCopyShapeInfo = context->GetInputShape(IDX_VAR_COPY);
+    OP_CHECK_NULL_WITH_CONTEXT(context, varCopyShapeInfo);
 
-    OP_CHECK_IF(varShape->GetStorageShape().GetDimNum() == 0 || accumShape->GetStorageShape().GetDimNum() == 0 ||
-                    x1Shape->GetStorageShape().GetDimNum() == 0 || varCopyShape->GetStorageShape().GetDimNum() == 0,
-                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "var, accum, x1, var_copy", "0D",
-                                                      "0D scalar is not supported, use [1] instead"),
-                return ge::GRAPH_FAILED);
+    // 与 TBE 参考实现一致：0D（rank-0）主张量归一化为 {1}（TBE 静态路径 ()=>(1,)），
+    // 按 1 元素处理；动态秩(-2) 在 DynamicRankSupportFlag(false) 下不应出现。
+    const gert::Shape varShape = EnsureNotScalar(varShapeInfo->GetStorageShape());
+    const gert::Shape accumShape = EnsureNotScalar(accumShapeInfo->GetStorageShape());
+    const gert::Shape x1Shape = EnsureNotScalar(x1ShapeInfo->GetStorageShape());
+    const gert::Shape varCopyShape = EnsureNotScalar(varCopyShapeInfo->GetStorageShape());
 
-    int64_t varSize = varShape->GetStorageShape().GetShapeSize();
-    int64_t accumSize = accumShape->GetStorageShape().GetShapeSize();
-    int64_t x1Size = x1Shape->GetStorageShape().GetShapeSize();
-    int64_t varCopySize = varCopyShape->GetStorageShape().GetShapeSize();
+    int64_t varSize = varShape.GetShapeSize();
+    int64_t accumSize = accumShape.GetShapeSize();
+    int64_t x1Size = x1Shape.GetShapeSize();
+    int64_t varCopySize = varCopyShape.GetShapeSize();
     // var/accum/x1/var_copy 四张量必须同 shape（逐元素运算，张量间无 broadcast）
     OP_CHECK_IF(accumSize != varSize || x1Size != varSize || varCopySize != varSize,
                 OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "var, accum, x1, var_copy",
@@ -92,30 +95,29 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
                 return ge::GRAPH_FAILED);
     *dim0 = varSize;
 
-    OP_CHECK_IF(varShape->GetStorageShape().GetDimNum() > 8,
-                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-                    context->GetNodeName(), "var", std::to_string(varShape->GetStorageShape().GetDimNum()).c_str(),
-                    "The rank of var must be <= 8"),
+    OP_CHECK_IF(varShape.GetDimNum() > 8,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "var",
+                                                         std::to_string(varShape.GetDimNum()).c_str(),
+                                                         "The rank of var must be <= 8"),
                 return ge::GRAPH_FAILED);
 
     // lr/momentum/x2 必须同 shape；允许 0D/多元素/动态，
     // 但拒绝空 scalar：kernel 固定读取第一个元素，空 tensor 会越界。
     constexpr size_t scalarIndices[] = {2, 4, 5}; // lr/momentum/x2
     const char* scalarNames[] = {"lr", "momentum", "x2"};
-    const gert::Shape* scalarShapes[3] = {nullptr, nullptr, nullptr};
+    gert::Shape scalarShapes[3];
     for (size_t i = 0; i < sizeof(scalarIndices) / sizeof(scalarIndices[0]); ++i) {
         auto scalarShape = context->GetInputShape(scalarIndices[i]);
         OP_CHECK_NULL_WITH_CONTEXT(context, scalarShape);
-        const auto& storage = scalarShape->GetStorageShape();
-        OP_CHECK_IF(storage.GetShapeSize() == 0,
+        scalarShapes[i] = EnsureNotScalar(scalarShape->GetStorageShape());
+        OP_CHECK_IF(scalarShapes[i].GetShapeSize() == 0,
                     OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), scalarNames[i], "0",
                                                               "The scalar must not be empty"),
                     return ge::GRAPH_FAILED);
-        scalarShapes[i] = &storage;
     }
-    OP_CHECK_IF(*scalarShapes[0] != *scalarShapes[1] || *scalarShapes[0] != *scalarShapes[2],
+    OP_CHECK_IF(scalarShapes[0] != scalarShapes[1] || scalarShapes[0] != scalarShapes[2],
                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "lr, momentum, x2",
-                                                       Ops::Base::ToString(*scalarShapes[0]).c_str(),
+                                                       Ops::Base::ToString(scalarShapes[0]).c_str(),
                                                        "The shapes of lr/momentum/x2 must be equal"),
                 return ge::GRAPH_FAILED);
 

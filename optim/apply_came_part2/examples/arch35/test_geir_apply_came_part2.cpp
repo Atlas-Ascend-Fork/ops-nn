@@ -48,6 +48,10 @@
 
 namespace {
 
+ge::Session* session_ = nullptr; // 复用于多个 shape 的 GE Session
+
+double g_maxRel = 0.0; // 当前 shape 的最大相对误差
+
 constexpr int kSuccess = 0;
 constexpr int kFailed = -1;
 constexpr float kAtol = 1.0e-4F;
@@ -217,6 +221,10 @@ bool CompareFloat(const float* actual, const std::vector<float>& golden, const s
 {
     for (size_t i = 0; i < golden.size(); ++i) {
         const float error = std::fabs(actual[i] - golden[i]);
+        const double rel = static_cast<double>(error) / (static_cast<double>(std::fabs(golden[i])) + 1.0e-30);
+        if (rel > g_maxRel) {
+            g_maxRel = rel;
+        }
         const float tolerance = kAtol + kRtol * std::fabs(golden[i]);
         if (!std::isfinite(actual[i]) || error > tolerance) {
             std::cerr << name << " value mismatch at index " << i << ": actual=" << actual[i]
@@ -351,12 +359,42 @@ int BuildGraph(const ShapeVector& gradShape, const ShapeVector& rShape, const Sh
 
 } // namespace
 
+bool RunOneShape(const ShapeVector& gradShape, uint32_t graphId)
+{
+    const ShapeVector rShape = {gradShape[0]};
+    const ShapeVector cShape = {gradShape[1]};
+
+    ge::Graph graph("apply_came_part2_static_graph");
+    if (BuildGraph(gradShape, rShape, cShape, graph) != kSuccess) {
+        std::cerr << "ERROR: BuildGraph failed" << std::endl;
+        return false;
+    }
+
+    std::map<ge::AscendString, ge::AscendString> graphOptions;
+    ge::Status status = session_->AddGraph(graphId, graph, graphOptions);
+    if (status != kSuccess) {
+        std::cerr << "ERROR: AddGraph failed: " << ge::GEGetErrorMsgV2().GetString() << std::endl;
+        return false;
+    }
+
+    InputFeeds feeds = MakeFeeds(gradShape, rShape, cShape);
+    std::vector<ge::Tensor> output;
+    status = session_->RunGraph(graphId, feeds.tensors, output);
+    if (status != kSuccess) {
+        std::cerr << "ERROR: RunGraph failed: " << ge::GEGetErrorMsgV2().GetString() << std::endl;
+        return false;
+    }
+
+    g_maxRel = 0.0;
+    GoldenOutputs golden = ComputeGolden(feeds, gradShape);
+    bool passed = VerifyOutput(output, gradShape, rShape, cShape, golden);
+    std::cout << "Shape " << ShapeToString(gradShape) << " : " << (passed ? "PASSED" : "FAILED")
+              << "  max_rel_diff=" << g_maxRel << std::endl;
+    return passed;
+}
+
 int main()
 {
-    const ShapeVector gradShape = {4, 8};
-    const ShapeVector rShape = {4};
-    const ShapeVector cShape = {8};
-
     std::map<ge::AscendString, ge::AscendString> globalOptions = {{"ge.exec.deviceId", "0"}, {"ge.graphRunMode", "1"}};
     ge::Status status = ge::GEInitialize(globalOptions);
     if (status != kSuccess) {
@@ -364,48 +402,35 @@ int main()
         return kFailed;
     }
 
-    ge::Graph graph("apply_came_part2_static_graph");
-    if (BuildGraph(gradShape, rShape, cShape, graph) != kSuccess) {
-        std::cerr << "ERROR: BuildGraph failed" << std::endl;
-        (void)ge::GEFinalize();
-        return kFailed;
-    }
-
     std::map<ge::AscendString, ge::AscendString> buildOptions;
-    ge::Session* session = new (std::nothrow) ge::Session(buildOptions);
-    if (session == nullptr) {
+    session_ = new (std::nothrow) ge::Session(buildOptions);
+    if (session_ == nullptr) {
         std::cerr << "ERROR: unable to create GE Session" << std::endl;
         (void)ge::GEFinalize();
         return kFailed;
     }
 
-    std::map<ge::AscendString, ge::AscendString> graphOptions;
-    status = session->AddGraph(0U, graph, graphOptions);
-    if (status != kSuccess) {
-        std::cerr << "ERROR: AddGraph failed: " << ge::GEGetErrorMsgV2().GetString() << std::endl;
-        delete session;
-        (void)ge::GEFinalize();
-        return kFailed;
+    // 覆盖 issue#57 中的瘦长/扁平失败 shape 与常规 shape
+    const std::vector<ShapeVector> shapes = {
+        {1, 51733}, // s_010 主失败用例（fp32, N=1）
+        {1, 2306},  // s_004 (fp16)
+        {1, 222},   // s_012 (fp16)
+        {1, 247},   // s_002 (fp32)
+        {11, 3747}, // s_015 (fp32)
+        {30, 9},    // s_016 (fp32)
+        {219, 12},  // s_005 (fp32)
+        {1330, 643} // s_007 (fp32)
+    };
+
+    bool allPass = true;
+    for (size_t i = 0; i < shapes.size(); ++i) {
+        allPass = RunOneShape(shapes[i], static_cast<uint32_t>(i)) && allPass;
     }
 
-    InputFeeds feeds = MakeFeeds(gradShape, rShape, cShape);
-    std::vector<ge::Tensor> output;
-    status = session->RunGraph(0U, feeds.tensors, output);
-    if (status != kSuccess) {
-        std::cerr << "ERROR: RunGraph failed: " << ge::GEGetErrorMsgV2().GetString() << std::endl;
-        delete session;
-        (void)ge::GEFinalize();
-        return kFailed;
-    }
-
-    GoldenOutputs golden = ComputeGolden(feeds, gradShape);
-    bool passed = VerifyOutput(output, gradShape, rShape, cShape, golden);
-
-    delete session;
+    delete session_;
     (void)ge::GEFinalize();
 
-    if (passed) {
-        std::cout << "Shape, dtype and values PASSED for " << ShapeToString(gradShape) << std::endl;
+    if (allPass) {
         std::cout << "ApplyCamePart2 static GEIR verification PASSED" << std::endl;
         return kSuccess;
     }

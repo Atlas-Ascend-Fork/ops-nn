@@ -394,6 +394,18 @@ TEST_F(FusedMulApplyMomentumExternTilingTest, tiling_shape_mismatch_failed)
     ExecuteTestCase(para, ge::GRAPH_FAILED, 0UL, EMPTY_EXPECT_TILING_DATA, {});
 }
 
+// —— 主张量 rank=0（0D 标量，与 TBE 参考实现一致）：0D→{1} 归一化放行，dim0=1、单核 ——
+TEST_F(FusedMulApplyMomentumExternTilingTest, tiling_tensor_rank0_zero_dim)
+{
+    TilingInfo info;
+    ASSERT_TRUE(RunTiling({}, false, false, info));
+    EXPECT_EQ(info.tilingKey, 0);
+    const auto* got = reinterpret_cast<const FusedMulApplyMomentumExternTilingData*>(info.tilingData.get());
+    ExpectTilingEq(*got, ExpectTiling(1, DEFAULT_UB_SIZE, DEFAULT_CORE_NUM)); // rank-0 → {1} → 1 元素
+    EXPECT_EQ(got->dim0, 1);
+    EXPECT_EQ(got->coreNum, 1);
+}
+
 // —— 标量为动态维(-1)：kernel 只读首元素，tiling 放行 ——
 TEST_F(FusedMulApplyMomentumExternTilingTest, tiling_scalar_dynamic_dim)
 {

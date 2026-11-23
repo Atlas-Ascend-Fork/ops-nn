@@ -13,18 +13,6 @@
 """
 inplace_apply_centered_rms_prop 在 Kernel/GEIR 测试路径下的 golden。
 
-整改依据（人工处理意见：接受）:
-  - GOLDEN.01: 显式登记 __spec__（Kernel/GEIR 通路）。
-  - GOLDEN.05: 存在语义适用直接竞品（TF ResourceApplyCenteredRMSProp），golden 参考数学
-               改由 Torch 基础算子组合承担，禁止 NumPy 承担参考算术/归约/语义类型转换
-               （NumPy 仅做数据语义桥接）。
-  - GOLDEN.07: float32 分支不再与 kernel 同精度镜像算术；改在 float64 高精度域独立计算后
-               round 到输入 dtype，避免 |grad| > sqrt(FLT_MAX)≈1.8446743e19 时 grad^2 上溢
-               与 kernel 同错而被比较掩盖。
-  - GOLDEN.13: 交付 third_party（tf.raw_ops.ResourceApplyCenteredRMSProp，直接竞品 oracle）。
-  - tolerance: cross_check 三方交叉校验（NPU / golden / third_party），level=L2 最严档，
-    触发 need_3party 运行 GPU 三方比对。
-
 数学（epsilon 加在 sqrt 内部，对标 TF）:
     mg_out  = rho * mg + (1 - rho) * grad
     ms_out  = rho * ms + (1 - rho) * grad^2

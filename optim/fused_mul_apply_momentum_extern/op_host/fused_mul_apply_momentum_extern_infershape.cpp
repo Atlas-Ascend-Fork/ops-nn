@@ -53,11 +53,25 @@ static ge::graphStatus InferShape4FusedMulApplyMomentumExtern(gert::InferShapeCo
     const gert::Shape* varCopyShape = context->GetInputShape(IDX_VAR_COPY);
     OP_CHECK_NULL_WITH_CONTEXT(context, varCopyShape);
 
-    OP_CHECK_IF(varShape->GetDimNum() == 0 || accumShape->GetDimNum() == 0 || x1Shape->GetDimNum() == 0 ||
-                    varCopyShape->GetDimNum() == 0,
-                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "var, accum, x1, var_copy", "0D",
-                                                      "0D scalar is not supported, use [1] instead"),
-                return ge::GRAPH_FAILED);
+    // 与 TBE 参考实现一致：0D（rank-0）主张量与标量均支持（TBE 静态路径把 0D 归一化为 (1,)，
+    // 运行时 tiling 同样 0D→{1} 按 1 元素处理）；动态秩(-2) 在 DynamicRankSupportFlag(false)
+    // 下不应出现，此处防御性透传 {-2}，由运行时 tiling 拒绝。
+    auto IsDynamicOrUnknown = [](const gert::Shape* shape) {
+        return shape == nullptr || Ops::Base::IsUnknownRank(*shape) || shape->GetDimNum() == 0;
+    };
+    if (IsDynamicOrUnknown(varShape) || IsDynamicOrUnknown(accumShape) || IsDynamicOrUnknown(x1Shape) ||
+        IsDynamicOrUnknown(varCopyShape)) {
+        gert::Shape* varOut = context->GetOutputShape(OUT_VAR);
+        OP_CHECK_NULL_WITH_CONTEXT(context, varOut);
+        gert::Shape* varCopyOut = context->GetOutputShape(OUT_VAR_COPY);
+        OP_CHECK_NULL_WITH_CONTEXT(context, varCopyOut);
+        gert::Shape* accumOut = context->GetOutputShape(OUT_ACCUM);
+        OP_CHECK_NULL_WITH_CONTEXT(context, accumOut);
+        *varOut = *varShape;
+        *varCopyOut = *varCopyShape;
+        *accumOut = *accumShape;
+        return ge::GRAPH_SUCCESS;
+    }
 
     // var/accum/x1/var_copy 四张量必须同 shape（逐元素运算，张量间无 broadcast）
     int64_t varSize = varShape->GetShapeSize();

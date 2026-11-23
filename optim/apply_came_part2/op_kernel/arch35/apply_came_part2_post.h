@@ -62,7 +62,7 @@ __aicore__ inline void ApplyCamePart2Post<T>::ParseTilingData(const ApplyCamePar
     totalCoreNum_ = tilingData->totalCoreNum;
     cLoop_ = tilingData->cRcLoopCount;
     rLoop_ = tilingData->rRcLoopCount;
-    usedCoreNum_ = tilingData->rRcCoreNumToUse;
+    usedCoreNum_ = tilingData->uCoreNumToUse;
 
     workspace_ = tilingData->workspaceSize;
 }

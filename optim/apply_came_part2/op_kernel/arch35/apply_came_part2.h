@@ -35,8 +35,8 @@ private:
     __aicore__ inline void ProcessTailCoreR();
     __aicore__ inline void ProcessPerCoreC();
     __aicore__ inline void ProcessTailCoreC();
-    __aicore__ inline void ProcessPerCoreU();
-    __aicore__ inline void ProcessTailCoreU();
+    __aicore__ inline void ProcessUOneRChunk(int rLoopIdx, int64_t curRNumInLoop, int64_t colLoopCount,
+                                             int64_t colNumTail);
     __aicore__ inline void CopyTilingData(const ApplyCamePart2TilingData* tilingData);
     __aicore__ inline void CopyInScalar();
     __aicore__ inline void ProcessR();
@@ -86,16 +86,16 @@ private:
 
 private:
     AscendC::TPipe pipe_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueR_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueSumGradR_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueC_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueSumGradC_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueGrad_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueR_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueSumGradR_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueC_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueSumGradC_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueGrad_;
 
-    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueU_;          // shape: (n, m)
-    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueSumSquareU_; // tensor
-    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueR_;          // shape: (n)
-    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueC_;          // shape: (m)
+    AscendC::TQue<AscendC::QuePosition::VECOUT, U_BUFFER_NUM> outQueU_;          // shape: (n, m)
+    AscendC::TQue<AscendC::QuePosition::VECOUT, U_BUFFER_NUM> outQueSumSquareU_; // tensor
+    AscendC::TQue<AscendC::QuePosition::VECOUT, U_BUFFER_NUM> outQueR_;          // shape: (n)
+    AscendC::TQue<AscendC::QuePosition::VECOUT, U_BUFFER_NUM> outQueC_;          // shape: (m)
 
     // each tbuf may be used for multiple purposes
     AscendC::TBuf<AscendC::QuePosition::VECCALC> ub1Buf_; // 1. rMatrix after broadcast from r
@@ -145,6 +145,7 @@ private:
     int64_t rBlockOffset_;
     int64_t cBlockOffset_;
     int64_t rRcBlockOffset_;
+    int64_t cRcBlockOffset_;
     int64_t sumUOffset_;
 
     const int64_t NUM_PER_BLOCK = BLOCK_SIZE / sizeof(T);

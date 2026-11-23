@@ -156,7 +156,7 @@
 
 ## 约束说明
 
-- `var`、`accum`、`x1`、`var_copy`四张量shape必须严格一致（逐元素运算，张量间无broadcast）。
+- `var`、`accum`、`x1`、`var_copy`四张量shape必须严格一致（逐元素运算，张量间无broadcast），支持rank 0~8（含rank-0，按1元素处理）。
 - `lr`、`momentum`、`x2`为shape={1}的标量，广播参与逐元素运算，不支持空Tensor。
 - 仅支持Ascend 950PR&950DT系列产品（DAV_3510 / arch35，RegBase路线）。
 

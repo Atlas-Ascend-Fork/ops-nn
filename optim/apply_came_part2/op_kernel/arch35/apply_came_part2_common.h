@@ -20,6 +20,8 @@
 #include "kernel_operator.h"
 
 const int32_t BUFFER_NUM = 1;
+// NORMAL 路径流水缓冲深度：MTE(搬入/搬出) 与向量计算重叠，缓解 MTE-bound 场景的访存延迟
+const int32_t U_BUFFER_NUM = 2;
 const int32_t BLOCK_SIZE = 32;
 const int32_t CONFUSION_TRANSPOSE_ALIGHNED_NUM = 16;
 const int32_t CALC_SIZE = 256;

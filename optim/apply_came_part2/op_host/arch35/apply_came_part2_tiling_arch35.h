@@ -41,6 +41,12 @@ TILING_DATA_FIELD_DEF(int64_t, rRcNumPerCore);
 TILING_DATA_FIELD_DEF(int64_t, rRcCoreNumToUse);
 TILING_DATA_FIELD_DEF(int64_t, rRcNumOnTailCore);
 
+// U 阶段 2D 切分：行方向核数不足时用列方向核补足，避免 N 很小的瘦长 shape 退化为单核
+TILING_DATA_FIELD_DEF(int64_t, uCoreNumToUse);
+TILING_DATA_FIELD_DEF(int64_t, cRcNumPerCore);
+TILING_DATA_FIELD_DEF(int64_t, cRcNumOnTailCore);
+TILING_DATA_FIELD_DEF(int64_t, cRcCoreNumToUse);
+
 TILING_DATA_FIELD_DEF(int64_t, rLoopCount);
 TILING_DATA_FIELD_DEF(int64_t, rNumPerLoop);
 TILING_DATA_FIELD_DEF(int64_t, rNumTailLoop);
@@ -62,6 +68,8 @@ TILING_DATA_FIELD_DEF(int64_t, rRcNumTailLoopTailCore);
 TILING_DATA_FIELD_DEF(int64_t, cRcLoopCount);
 TILING_DATA_FIELD_DEF(int64_t, cRcNumPerLoop);
 TILING_DATA_FIELD_DEF(int64_t, cRcNumTailLoop);
+TILING_DATA_FIELD_DEF(int64_t, cRcLoopCountTailCore);
+TILING_DATA_FIELD_DEF(int64_t, cRcNumTailLoopTailCore);
 
 TILING_DATA_FIELD_DEF(int64_t, workspaceSize)
 

@@ -128,6 +128,22 @@ TEST_F(FusedMulApplyMomentumExternInfershape, infershape_scalar_unknown_rank)
     ExecuteTestCase(para, ge::GRAPH_SUCCESS, expect);
 }
 
+// —— 主 tensor 未知 rank(-2)：DynamicRankSupportFlag(false) 下防御性透传（运行时 tiling 拒绝） ——
+TEST_F(FusedMulApplyMomentumExternInfershape, infershape_tensor_unknown_rank)
+{
+    gert::InfershapeContextPara para("FusedMulApplyMomentumExtern", MakeInputs({-2}), MakeOutputs());
+    std::vector<std::vector<int64_t>> expect = {{-2}, {-2}, {-2}};
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, expect);
+}
+
+// —— 主张量 0D(空 shape)：与 TBE 参考实现一致，允许（运行时 tiling 归一化 {1} 按 1 元素处理） ——
+TEST_F(FusedMulApplyMomentumExternInfershape, infershape_tensor_zero_dim_passthrough)
+{
+    gert::InfershapeContextPara para("FusedMulApplyMomentumExtern", MakeInputs({}), MakeOutputs());
+    std::vector<std::vector<int64_t>> expect = {{}, {}, {}};
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, expect);
+}
+
 // —— 标量为多元素(如 [4])：放行，kernel 只读首元素 ——
 TEST_F(FusedMulApplyMomentumExternInfershape, infershape_scalar_multi_element)
 {

@@ -35,8 +35,8 @@ private:
     __aicore__ inline void ProcessTailCoreR();
     __aicore__ inline void ProcessPerCoreC();
     __aicore__ inline void ProcessTailCoreC();
-    __aicore__ inline void ProcessPerCoreU();
-    __aicore__ inline void ProcessTailCoreU();
+    __aicore__ inline void ProcessUOneRChunk(int rLoopIdx, int64_t curRNumInLoop, int64_t colLoopCount,
+                                             int64_t colNumTail);
     __aicore__ inline void CopyTilingData(const ApplyCamePart2TilingData* tilingData);
     __aicore__ inline void CopyInScalar();
     __aicore__ inline void ProcessR();
@@ -79,16 +79,16 @@ private:
 
 private:
     AscendC::TPipe pipe_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueR_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueSumGradR_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueC_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueSumGradC_;
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueGrad_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueR_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueSumGradR_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueC_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueSumGradC_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, U_BUFFER_NUM> inQueGrad_;
 
-    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueU_;          // shape: (n, m)
-    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueSumSquareU_; // scalar
-    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueR_;          // shape: (n)
-    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueC_;          // shape: (m)
+    AscendC::TQue<AscendC::QuePosition::VECOUT, U_BUFFER_NUM> outQueU_;          // shape: (n, m)
+    AscendC::TQue<AscendC::QuePosition::VECOUT, U_BUFFER_NUM> outQueSumSquareU_; // scalar
+    AscendC::TQue<AscendC::QuePosition::VECOUT, U_BUFFER_NUM> outQueR_;          // shape: (n)
+    AscendC::TQue<AscendC::QuePosition::VECOUT, U_BUFFER_NUM> outQueC_;          // shape: (m)
 
     // each tbuf may be used for multiple purposes
     AscendC::TBuf<AscendC::QuePosition::VECCALC> ub1Buf_; // 1. rMatrix after broadcast from r
@@ -145,6 +145,7 @@ private:
     int64_t rBlockOffset_;
     int64_t cBlockOffset_;
     int64_t rRcBlockOffset_;
+    int64_t cRcBlockOffset_;
     int64_t sumUOffset_;
 
     const int64_t NUM_T_PER_BLOCK = BLOCK_SIZE / sizeof(T);
@@ -196,12 +197,12 @@ __aicore__ inline void ApplyCamePart2Float16<T>::Init(GM_ADDR grad, GM_ADDR sumG
     rBufferLength = NUM_T_PER_BLOCK * CeilDiv(rBufferLength, NUM_T_PER_BLOCK);
     cBufferLength = NUM_T_PER_BLOCK * CeilDiv(cBufferLength, NUM_T_PER_BLOCK);
     // init que for in and out
-    pipe_.InitBuffer(inQueR_, BUFFER_NUM, rBufferLength * sizeof(T));
-    pipe_.InitBuffer(inQueC_, BUFFER_NUM, cBufferLength * sizeof(T));
-    pipe_.InitBuffer(inQueSumGradR_, BUFFER_NUM, rBufferLength * sizeof(float));
-    pipe_.InitBuffer(inQueSumGradC_, BUFFER_NUM, cBufferLength * sizeof(float));
-    pipe_.InitBuffer(outQueR_, BUFFER_NUM, rBufferLength * sizeof(T));
-    pipe_.InitBuffer(outQueC_, BUFFER_NUM, cBufferLength * sizeof(T));
+    pipe_.InitBuffer(inQueR_, U_BUFFER_NUM, rBufferLength * sizeof(T));
+    pipe_.InitBuffer(inQueC_, U_BUFFER_NUM, cBufferLength * sizeof(T));
+    pipe_.InitBuffer(inQueSumGradR_, U_BUFFER_NUM, rBufferLength * sizeof(float));
+    pipe_.InitBuffer(inQueSumGradC_, U_BUFFER_NUM, cBufferLength * sizeof(float));
+    pipe_.InitBuffer(outQueR_, U_BUFFER_NUM, rBufferLength * sizeof(T));
+    pipe_.InitBuffer(outQueC_, U_BUFFER_NUM, cBufferLength * sizeof(T));
     InitForCalcU();
     // for cast
     pipe_.InitBuffer(castInRBuf_, rBufferLength * sizeof(float));
@@ -210,7 +211,7 @@ __aicore__ inline void ApplyCamePart2Float16<T>::Init(GM_ADDR grad, GM_ADDR sumG
     pipe_.InitBuffer(castOutCBuf_, cBufferLength * sizeof(float));
 
     int64_t sumSquareUWsNum = CeilAlign(
-        tilingData_.rRcCoreNumToUse * (tilingData_.rRcLoopCount + 1) * (tilingData_.cRcLoopCount + 1), 128);
+        tilingData_.uCoreNumToUse * (tilingData_.rRcLoopCount + 1) * (tilingData_.cRcLoopCount + 1), 128);
     // set sum_square_u as 0
     if (AscendC::GetBlockIdx() == 0) {
         AscendC::InitOutput<float>(sumSquareUWorkspace_, sumSquareUWsNum, (float)0);
@@ -226,9 +227,9 @@ __aicore__ inline void ApplyCamePart2Float16<T>::InitForCalcU()
     int64_t num = tilingData_.rRcNumPerLoop * tilingData_.cRcNumPerLoop;
     num = CeilDiv(num, NUM_T_PER_BLOCK) * NUM_T_PER_BLOCK;
     int64_t uPerLoopSize = num * sizeof(float);
-    pipe_.InitBuffer(inQueGrad_, BUFFER_NUM, uPerLoopSize);
-    pipe_.InitBuffer(outQueU_, BUFFER_NUM, uPerLoopSize);
-    pipe_.InitBuffer(outQueSumSquareU_, BUFFER_NUM, AscendC::ONE_BLK_SIZE);
+    pipe_.InitBuffer(inQueGrad_, U_BUFFER_NUM, uPerLoopSize);
+    pipe_.InitBuffer(outQueU_, U_BUFFER_NUM, uPerLoopSize);
+    pipe_.InitBuffer(outQueSumSquareU_, U_BUFFER_NUM, AscendC::ONE_BLK_SIZE);
     pipe_.InitBuffer(reduceSumWorkQueue_, 1, workLocalNeedSize_ * sizeof(float));
 
     pipe_.InitBuffer(castGradBuf_, uPerLoopSize); // for cast
@@ -262,6 +263,11 @@ __aicore__ inline void ApplyCamePart2Float16<T>::CopyTilingData(const ApplyCameP
     tilingData_.rRcCoreNumToUse = tilingData->rRcCoreNumToUse;
     tilingData_.rRcNumOnTailCore = tilingData->rRcNumOnTailCore;
 
+    tilingData_.uCoreNumToUse = tilingData->uCoreNumToUse;
+    tilingData_.cRcNumPerCore = tilingData->cRcNumPerCore;
+    tilingData_.cRcNumOnTailCore = tilingData->cRcNumOnTailCore;
+    tilingData_.cRcCoreNumToUse = tilingData->cRcCoreNumToUse;
+
     tilingData_.rLoopCount = tilingData->rLoopCount;
     tilingData_.rNumPerLoop = tilingData->rNumPerLoop;
     tilingData_.rLoopCountTailCore = tilingData->rLoopCountTailCore;
@@ -283,6 +289,8 @@ __aicore__ inline void ApplyCamePart2Float16<T>::CopyTilingData(const ApplyCameP
     tilingData_.cRcLoopCount = tilingData->cRcLoopCount;
     tilingData_.cRcNumPerLoop = tilingData->cRcNumPerLoop;
     tilingData_.cRcNumTailLoop = tilingData->cRcNumTailLoop;
+    tilingData_.cRcLoopCountTailCore = tilingData->cRcLoopCountTailCore;
+    tilingData_.cRcNumTailLoopTailCore = tilingData->cRcNumTailLoopTailCore;
 
     tilingData_.ubSize = tilingData->ubSize;
     tilingData_.totalCoreNum = tilingData->totalCoreNum;
@@ -610,98 +618,26 @@ __aicore__ inline void ApplyCamePart2Float16<T>::CalcU(int rLoopIdx, int cLoopId
 }
 
 template <typename T>
-__aicore__ inline void ApplyCamePart2Float16<T>::ProcessPerCoreU()
+__aicore__ inline void ApplyCamePart2Float16<T>::ProcessUOneRChunk(int rLoopIdx, int64_t curRNumInLoop,
+                                                                   int64_t colLoopCount, int64_t colNumTail)
 {
-    const int64_t loopCount = tilingData_.rRcLoopCount;
-
-    int64_t curRNumInLoop = tilingData_.rRcNumPerLoop;
     int64_t curCNumInLoop = 0;
-    int64_t rLoopIdx = 0;
-    // non-tail r loop
-    for (rLoopIdx = 0; rLoopIdx < loopCount - 1; ++rLoopIdx) {
-        CopyInUr(rLoopIdx, curRNumInLoop);
-        int64_t cLoopIdx = 0;
-        // non-tail c loop
-        for (cLoopIdx = 0; cLoopIdx < tilingData_.cRcLoopCount - 1; ++cLoopIdx) {
-            curCNumInLoop = tilingData_.cRcNumPerLoop;
-            CalcU(rLoopIdx, cLoopIdx, curRNumInLoop, curCNumInLoop);
-        }
-
-        // tail c loop
-        curCNumInLoop = tilingData_.cRcNumTailLoop;
-        CalcU(rLoopIdx, cLoopIdx, curRNumInLoop, curCNumInLoop);
-
-        inQueR_.FreeTensor(rRcLocalTensor_);
-    }
-
-    // tail r loop
-    curRNumInLoop = tilingData_.rRcNumTailLoop;
-    if (curRNumInLoop % NUM_T_PER_BLOCK == 0) {
-        CopyInUr(rLoopIdx, curRNumInLoop);
-    } else {
-        CopyInNotAlignedUr(rLoopIdx, curRNumInLoop);
-    }
-
     int64_t cLoopIdx = 0;
-    for (cLoopIdx = 0; cLoopIdx < tilingData_.cRcLoopCount - 1; ++cLoopIdx) {
+    // non-tail c loop
+    for (cLoopIdx = 0; cLoopIdx < colLoopCount - 1; ++cLoopIdx) {
         curCNumInLoop = tilingData_.cRcNumPerLoop;
         CalcU(rLoopIdx, cLoopIdx, curRNumInLoop, curCNumInLoop);
     }
 
     // tail c loop
-    curCNumInLoop = tilingData_.cRcNumTailLoop;
+    curCNumInLoop = colNumTail;
     CalcU(rLoopIdx, cLoopIdx, curRNumInLoop, curCNumInLoop);
-
-    inQueR_.FreeTensor(rRcLocalTensor_);
-}
-
-template <typename T>
-__aicore__ inline void ApplyCamePart2Float16<T>::ProcessTailCoreU()
-{
-    const int64_t loopCount = tilingData_.rRcLoopCountTailCore;
-
-    int64_t curRNumInLoop = tilingData_.rRcNumPerLoop;
-    int64_t curCNumInLoop = 0;
-    int64_t rLoopIdx = 0;
-    // non-tail r loop
-    for (rLoopIdx = 0; rLoopIdx < loopCount - 1; ++rLoopIdx) {
-        CopyInUr(rLoopIdx, curRNumInLoop);
-        int64_t cLoopIdx = 0;
-        // non-tail c loop
-        for (cLoopIdx = 0; cLoopIdx < tilingData_.cRcLoopCount - 1; ++cLoopIdx) {
-            curCNumInLoop = tilingData_.cRcNumPerLoop;
-            CalcU(rLoopIdx, cLoopIdx, curRNumInLoop, curCNumInLoop);
-        }
-
-        // tail c loop
-        curCNumInLoop = tilingData_.cRcNumTailLoop;
-        CalcU(rLoopIdx, cLoopIdx, curRNumInLoop, curCNumInLoop);
-        inQueR_.FreeTensor(rRcLocalTensor_);
-    }
-
-    // tail r loop
-    curRNumInLoop = tilingData_.rRcNumTailLoopTailCore;
-    if (curRNumInLoop % NUM_T_PER_BLOCK == 0) {
-        CopyInUr(rLoopIdx, curRNumInLoop);
-    } else {
-        CopyInNotAlignedUr(rLoopIdx, curRNumInLoop);
-    }
-    int64_t cLoopIdx = 0;
-    for (cLoopIdx = 0; cLoopIdx < tilingData_.cRcLoopCount - 1; ++cLoopIdx) {
-        curCNumInLoop = tilingData_.cRcNumPerLoop;
-        CalcU(rLoopIdx, cLoopIdx, curRNumInLoop, curCNumInLoop);
-    }
-
-    // tail loop
-    curCNumInLoop = tilingData_.cRcNumTailLoop;
-    CalcU(rLoopIdx, cLoopIdx, curRNumInLoop, curCNumInLoop);
-    inQueR_.FreeTensor(rRcLocalTensor_);
 }
 
 template <typename T>
 __aicore__ inline void ApplyCamePart2Float16<T>::ProcessU()
 {
-    if (blockIdx_ >= tilingData_.rRcCoreNumToUse) {
+    if (blockIdx_ >= tilingData_.uCoreNumToUse) {
         return;
     }
 
@@ -712,14 +648,39 @@ __aicore__ inline void ApplyCamePart2Float16<T>::ProcessU()
     float denominator = beta2_ * sumR_ / n_ + (1 - beta2_) * sumGradRc_ / (m_ * n_);
     rcCoefficient_ = 1 / denominator;
 
-    rRcBlockOffset_ = blockIdx_ * tilingData_.rRcNumPerCore;
+    // 2D 切分：row group 沿行、col group 沿列，行列核共同覆盖 N*M 输出矩阵。
+    // 行方向核数不足时用列方向核补足，避免 N 很小的瘦长 shape 由单核处理整个矩阵。
+    int64_t rowGroupIdx = blockIdx_ % tilingData_.rRcCoreNumToUse;
+    int64_t colGroupIdx = blockIdx_ / tilingData_.rRcCoreNumToUse;
+    rRcBlockOffset_ = rowGroupIdx * tilingData_.rRcNumPerCore;
+    cRcBlockOffset_ = colGroupIdx * tilingData_.cRcNumPerCore;
 
-    const bool isTailCore = (blockIdx_ == tilingData_.rRcCoreNumToUse - 1);
-    if (!isTailCore) {
-        this->ProcessPerCoreU();
-    } else {
-        this->ProcessTailCoreU();
+    const bool isTailRowCore = (rowGroupIdx == tilingData_.rRcCoreNumToUse - 1);
+    const bool isTailColCore = (colGroupIdx == tilingData_.cRcCoreNumToUse - 1);
+
+    int64_t rowLoopCount = isTailRowCore ? tilingData_.rRcLoopCountTailCore : tilingData_.rRcLoopCount;
+    int64_t rowNumTail = isTailRowCore ? tilingData_.rRcNumTailLoopTailCore : tilingData_.rRcNumTailLoop;
+    int64_t colLoopCount = isTailColCore ? tilingData_.cRcLoopCountTailCore : tilingData_.cRcLoopCount;
+    int64_t colNumTail = isTailColCore ? tilingData_.cRcNumTailLoopTailCore : tilingData_.cRcNumTailLoop;
+
+    int64_t curRNumInLoop = tilingData_.rRcNumPerLoop;
+    int64_t rLoopIdx = 0;
+    // non-tail r loop
+    for (rLoopIdx = 0; rLoopIdx < rowLoopCount - 1; ++rLoopIdx) {
+        CopyInUr(rLoopIdx, curRNumInLoop);
+        ProcessUOneRChunk(rLoopIdx, curRNumInLoop, colLoopCount, colNumTail);
+        inQueR_.FreeTensor(rRcLocalTensor_);
     }
+
+    // tail r loop
+    curRNumInLoop = rowNumTail;
+    if (curRNumInLoop % NUM_T_PER_BLOCK == 0) {
+        CopyInUr(rLoopIdx, curRNumInLoop);
+    } else {
+        CopyInNotAlignedUr(rLoopIdx, curRNumInLoop);
+    }
+    ProcessUOneRChunk(rLoopIdx, curRNumInLoop, colLoopCount, colNumTail);
+    inQueR_.FreeTensor(rRcLocalTensor_);
 }
 
 template <typename T>
@@ -728,7 +689,7 @@ __aicore__ inline void ApplyCamePart2Float16<T>::CopyInGrad(int rLoopIdx, int cL
 {
     AscendC::LocalTensor<T> gradLocal = inQueGrad_.AllocTensor<T>();
     int64_t startRowNum = rRcBlockOffset_ + rLoopIdx * tilingData_.rRcNumPerLoop;
-    int64_t startColumnNum = cLoopIdx * tilingData_.cRcNumPerLoop;
+    int64_t startColumnNum = cRcBlockOffset_ + cLoopIdx * tilingData_.cRcNumPerLoop;
     int64_t startOffset = startRowNum * tilingData_.m + startColumnNum;
     int64_t tmp = CeilDiv(curCNumInLoop, NUM_T_PER_BLOCK);
     curCNumInLoop = tmp * NUM_T_PER_BLOCK;
@@ -747,7 +708,7 @@ __aicore__ inline void ApplyCamePart2Float16<T>::CopyOutU(int rLoopIdx, int cLoo
 {
     AscendC::LocalTensor<float> uLocal = outQueU_.DeQue<float>();
     int64_t startRowNum = rRcBlockOffset_ + rLoopIdx * tilingData_.rRcNumPerLoop;
-    int64_t startColumnNum = cLoopIdx * tilingData_.cRcNumPerLoop;
+    int64_t startColumnNum = cRcBlockOffset_ + cLoopIdx * tilingData_.cRcNumPerLoop;
     int64_t startOffset = startRowNum * tilingData_.m + startColumnNum;
     if (curCNumInLoop % NUM_T_PER_BLOCK == 0) {
         for (int64_t i = 0; i < curRNumInLoop; ++i) {
@@ -791,7 +752,7 @@ __aicore__ inline void ApplyCamePart2Float16<T>::CopyInNotAlignedGrad(int rLoopI
 {
     AscendC::LocalTensor<T> gradLocal = inQueGrad_.AllocTensor<T>();
     int64_t startRowNum = rRcBlockOffset_ + rLoopIdx * tilingData_.rRcNumPerLoop;
-    int64_t startColumnNum = cLoopIdx * tilingData_.cRcNumPerLoop;
+    int64_t startColumnNum = cRcBlockOffset_ + cLoopIdx * tilingData_.cRcNumPerLoop;
     int64_t startOffset = startRowNum * tilingData_.m + startColumnNum;
     int64_t alignedCNumInLoop = NUM_T_PER_BLOCK * CeilDiv(curCNumInLoop, NUM_T_PER_BLOCK);
     for (int64_t i = 0; i < curRNumInLoop; ++i) {
@@ -847,7 +808,7 @@ __aicore__ inline void ApplyCamePart2Float16<T>::CopyInNotAlignedUc(int loopIdx,
     AscendC::DataCopyPadParams padParams{true, leftPadding, rightPadding, paddingValue};
 
     AscendC::LocalTensor<T> cLocal = inQueC_.AllocTensor<T>();
-    int64_t offset = loopIdx * tilingData_.cRcNumPerLoop;
+    int64_t offset = cRcBlockOffset_ + loopIdx * tilingData_.cRcNumPerLoop;
     AscendC::DataCopyPad(cLocal, cOutGm_[offset], dataCopyParams, padParams);
     inQueC_.EnQue(cLocal);
 }
@@ -867,7 +828,7 @@ template <typename T>
 __aicore__ inline void ApplyCamePart2Float16<T>::CopyInUc(int loopIdx, int64_t dataCount)
 {
     AscendC::LocalTensor<T> cLocal = inQueC_.AllocTensor<T>();
-    int64_t offset = loopIdx * tilingData_.cRcNumPerLoop;
+    int64_t offset = cRcBlockOffset_ + loopIdx * tilingData_.cRcNumPerLoop;
     // aligned
     AscendC::DataCopy(cLocal, cOutGm_[offset], dataCount);
     inQueC_.EnQue(cLocal);

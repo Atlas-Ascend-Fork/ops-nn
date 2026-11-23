@@ -260,13 +260,6 @@ static inline ge::graphStatus Tiling4CalcRc(const int32_t typeSize, ApplyCamePar
     tilingData.set_rRcCoreNumToUse(tilingData.get_rCoreNumToUse());
     tilingData.set_rRcNumOnTailCore(tilingData.get_rNumOnTailCore());
 
-    // 32bytes for each scalar: beta2, sum_grad_r, sum_grad_c, M, N, sum_r, sum_square_u. 7 * 32 in total
-    int64_t ubSize = tilingData.get_ubSize();
-    int64_t availableUbSize = ubSize - NUM_SCALAR_IN_UB * BLOCK_SIZE;
-    availableUbSize -= CalcWorkLocalForReduceSum(typeSize); // ReduceSum
-    const int32_t UB_SIZE_FOR_SYNC_ALL = tilingData.get_totalCoreNum() * 8 * sizeof(int32_t);
-    availableUbSize -= UB_SIZE_FOR_SYNC_ALL; // SyncAll
-    availableUbSize -= sizeof(ApplyCamePart2TilingData);
     // vecin:r, c, grad; 256 + 256 + 256 * 256
     // vecout: u; 256 * 256
     // Tbuf: 3 * grad 3 * 256 * 256
@@ -279,8 +272,45 @@ static inline ge::graphStatus Tiling4CalcRc(const int32_t typeSize, ApplyCamePar
     int64_t rRcNumTailLoopTailCore = tilingData.get_rRcNumOnTailCore() - (rRcLoopCountTailCore - 1) * rRcNumPerLoop;
 
     int64_t cRcNumPerLoop = numPerInstruct;
-    int64_t cRcLoopCount = CeilDiv(tilingData.get_m(), cRcNumPerLoop);
-    int64_t cRcNumTailLoop = tilingData.get_m() - (cRcLoopCount - 1) * cRcNumPerLoop;
+
+    // U 阶段沿 N*M 二维切分：行方向按 rRcCoreNumToUse 切分（与原实现一致），
+    // 当行方向核数不足以占满总核时，用剩余核沿列方向再切分。
+    // 这样 N 很小的瘦长 shape（如 N=1,M=51733）不再由单核处理整个 N*M 矩阵，
+    // 而是按列均匀分摊到全部核，消除 MTE 单核瓶颈。
+    const int64_t leastNumPerBlock = BLOCK_SIZE / typeSize; // 32B 对齐元素数
+    const int64_t totalCoreNum = tilingData.get_totalCoreNum();
+    const int64_t m = tilingData.get_m();
+    int64_t rowCoreNum = tilingData.get_rRcCoreNumToUse();
+    if (rowCoreNum < 1) {
+        rowCoreNum = 1;
+    }
+    // 每个列核至少覆盖一个 cRcNumPerLoop 满块；列核数不超过行切分后剩余的可用核
+    int64_t maxColCoreByCore = totalCoreNum / rowCoreNum;
+    if (maxColCoreByCore < 1) {
+        maxColCoreByCore = 1;
+    }
+    int64_t maxColCoreByData = CeilDiv(m, cRcNumPerLoop);
+    if (maxColCoreByData < 1) {
+        maxColCoreByData = 1;
+    }
+    int64_t colCoreNum = std::min(maxColCoreByCore, maxColCoreByData);
+    int64_t tmpColPerCore = CeilDiv(m, colCoreNum);
+    int64_t cRcNumPerCore = CeilDiv(tmpColPerCore, leastNumPerBlock) * leastNumPerBlock;
+    int64_t cRcCoreNumToUse = CeilDiv(m, cRcNumPerCore);
+    if (cRcCoreNumToUse < 1) {
+        cRcCoreNumToUse = 1;
+    }
+    int64_t cRcNumOnTailCore = m - (cRcCoreNumToUse - 1) * cRcNumPerCore;
+
+    int64_t cRcLoopCount = CeilDiv(cRcNumPerCore, cRcNumPerLoop);
+    int64_t cRcNumTailLoop = cRcNumPerCore - (cRcLoopCount - 1) * cRcNumPerLoop;
+    int64_t cRcLoopCountTailCore = CeilDiv(cRcNumOnTailCore, cRcNumPerLoop);
+    int64_t cRcNumTailLoopTailCore = cRcNumOnTailCore - (cRcLoopCountTailCore - 1) * cRcNumPerLoop;
+
+    int64_t uCoreNumToUse = rowCoreNum * cRcCoreNumToUse;
+    if (uCoreNumToUse > totalCoreNum) {
+        uCoreNumToUse = totalCoreNum;
+    }
 
     auto srcShape = Shape({cRcNumPerLoop, rRcNumPerLoop});
     GetConfusionTransposeOnlyTilingInfo(srcShape, cRcNumPerLoop * rRcNumPerLoop, typeSize,
@@ -292,9 +322,16 @@ static inline ge::graphStatus Tiling4CalcRc(const int32_t typeSize, ApplyCamePar
     tilingData.set_rRcLoopCountTailCore(rRcLoopCountTailCore);
     tilingData.set_rRcNumTailLoopTailCore(rRcNumTailLoopTailCore);
 
+    tilingData.set_uCoreNumToUse(uCoreNumToUse);
+    tilingData.set_cRcNumPerCore(cRcNumPerCore);
+    tilingData.set_cRcNumOnTailCore(cRcNumOnTailCore);
+    tilingData.set_cRcCoreNumToUse(cRcCoreNumToUse);
+
     tilingData.set_cRcLoopCount(cRcLoopCount);
     tilingData.set_cRcNumPerLoop(cRcNumPerLoop);
     tilingData.set_cRcNumTailLoop(cRcNumTailLoop);
+    tilingData.set_cRcLoopCountTailCore(cRcLoopCountTailCore);
+    tilingData.set_cRcNumTailLoopTailCore(cRcNumTailLoopTailCore);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -303,7 +340,8 @@ static inline int64_t GetMaxCoreNumToUse(ApplyCamePart2TilingData& tilingData)
     int64_t tmpMax = (tilingData.get_rCoreNumToUse() > tilingData.get_cCoreNumToUse()) ?
                          tilingData.get_rCoreNumToUse() :
                          tilingData.get_cCoreNumToUse();
-    return (tmpMax > tilingData.get_rRcCoreNumToUse()) ? tmpMax : tilingData.get_rRcCoreNumToUse();
+    // U 阶段可能沿列方向补充列核，使用核数取三者最大
+    return (tmpMax > tilingData.get_uCoreNumToUse()) ? tmpMax : tilingData.get_uCoreNumToUse();
 }
 
 static inline void Print(ApplyCamePart2TilingData& tilingData)
@@ -337,7 +375,7 @@ static ge::graphStatus SetWorkspace(ApplyCamePart2TilingData& tilingData, gert::
     int64_t sysWorkspaceSize = SYS_WORKSPACE;
 
     // sumSquareU workspace: used core number * per core loop number, 512B aligned
-    int64_t sumSquareUWsSize = CeilAlign(tilingData.get_rRcCoreNumToUse() * (tilingData.get_cRcLoopCount() + 1) *
+    int64_t sumSquareUWsSize = CeilAlign(tilingData.get_uCoreNumToUse() * (tilingData.get_cRcLoopCount() + 1) *
                                              (tilingData.get_rRcLoopCount() + 1),
                                          512 / FLOAT_SIZE) *
                                FLOAT_SIZE;
@@ -386,6 +424,11 @@ static inline void Tiling4CalcTypicalNet(ApplyCamePart2TilingData& tilingData, c
     tilingData.set_rRcNumPerCore(rRcNumPerCore);
     tilingData.set_rRcNumOnTailCore(rRcNumOnTailCore);
     tilingData.set_cRcNumPerLoop(m);
+    // 典型路径 U 阶段不沿列切分（cRcNumPerLoop=m 整列一次加载），列核数为 1
+    tilingData.set_cRcCoreNumToUse(1);
+    tilingData.set_cRcNumPerCore(m);
+    tilingData.set_cRcNumOnTailCore(m);
+    tilingData.set_uCoreNumToUse(rRcCoreNumToUse);
 }
 
 static inline bool IsTypicalNet(int64_t n, int64_t m)

@@ -110,7 +110,7 @@ public:
         OpAICoreConfig aiCoreConfig;
         aiCoreConfig.DynamicCompileStaticFlag(true)
             .DynamicFormatFlag(false)
-            .DynamicRankSupportFlag(true)
+            .DynamicRankSupportFlag(false)
             .DynamicShapeSupportFlag(true)
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true)
