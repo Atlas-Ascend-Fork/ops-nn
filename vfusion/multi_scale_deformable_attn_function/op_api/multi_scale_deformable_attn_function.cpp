@@ -68,7 +68,8 @@ const std::tuple<aclTensor*> MultiScaleDeformableAttnFunction(const aclTensor* v
                                            OP_OUTPUT(output));
     OP_CHECK(
         ret == ACLNN_SUCCESS,
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "MultiScaleDeformableAttnFunctionAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                               "ADD_TO_LAUNCHER_LIST_AICORE failed, ret=%d; propagate the lower-layer error.", ret),
         std::tuple<aclTensor*>(nullptr));
     return std::tie(output);
 }

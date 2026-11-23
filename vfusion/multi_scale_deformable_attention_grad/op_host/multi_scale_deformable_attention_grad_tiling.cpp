@@ -80,7 +80,9 @@ ge::graphStatus MultiScaleDeformableAttentionGradTiling::Init()
     auto attn_weight_shape_ptr = TilingContext->GetInputShape(4);
     if (value_shape_ptr == nullptr || spatial_shapes_ptr == nullptr || level_start_index_ptr == nullptr ||
         sampling_loc_shape_ptr == nullptr || attn_weight_shape_ptr == nullptr) {
-        OP_LOGE(TilingContext->GetNodeName(), "input shape ptr is nullptr");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{Ops::Base::GetOpInfo(TilingContext).c_str(),
+                                                            "Tiling input shape metadata is missing"}));
         return ge::GRAPH_FAILED;
     }
     auto value_shape = value_shape_ptr->GetStorageShape();
@@ -90,7 +92,11 @@ ge::graphStatus MultiScaleDeformableAttentionGradTiling::Init()
     auto attn_weight_shape = attn_weight_shape_ptr->GetStorageShape();
     auto compileInfo = reinterpret_cast<const MultiScaleDeformableAttentionGradCompileInfo*>(
         TilingContext->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(TilingContext, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(TilingContext).c_str(),
+                                                                    "Tiling compile info is missing"})),
+                return ge::GRAPH_FAILED);
     uint64_t total_ub_size = compileInfo->ub_size_platform;
     ub_size = total_ub_size - RESERVE_SAPCE;
     uint64_t core_num = compileInfo->total_core_num;
@@ -122,10 +128,14 @@ ge::graphStatus MultiScaleDeformableAttentionGradTiling::Init()
     uint64_t attn_weight_num_levels = attn_weight_shape.GetDim(2);
     if (num_levels != spatial_num_levels || num_levels != level_start_index_num_levels ||
         num_levels != attn_weight_num_levels) {
-        OP_LOGE(TilingContext->GetNodeName(),
-                "numLevels dimensions must be equal: samplingLocLevels=%lu, spatialShapeLevels=%lu, "
-                "levelStartIndexLevels=%lu, attnWeightLevels=%lu",
-                num_levels, spatial_num_levels, level_start_index_num_levels, attn_weight_num_levels);
+        const std::string shapes = Ops::Base::ToString(spatial_shapes) + ", " +
+                                   Ops::Base::ToString(sampling_loc_shape) + ", " +
+                                   Ops::Base::ToString(level_start_index_shape) + ", " +
+                                   Ops::Base::ToString(attn_weight_shape);
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "MultiScaleDeformableAttentionGrad",
+            "value_spatial_shapes, sampling_locations, value_level_start_index, attention_weights", shapes.c_str(),
+            "The level dimensions of all four inputs must match");
         return ge::GRAPH_FAILED;
     }
 
@@ -213,7 +223,10 @@ void MultiScaleDeformableAttentionGradTiling::TilingDataPrint()
 static ge::graphStatus TilingMultiScaleDeformableAttentionGrad(gert::TilingContext* context)
 {
     MultiScaleDeformableAttentionGradTiling tilingObject(context);
-    tilingObject.Init();
+    const auto ret = tilingObject.Init();
+    if (ret != ge::GRAPH_SUCCESS) {
+        return ret;
+    }
     return tilingObject.RunKernelTiling();
 }
 
@@ -221,20 +234,35 @@ static ge::graphStatus TilingPrepareForMultiScaleDeformableAttentionGrad(gert::T
 {
     OP_LOGD("MultiScaleDeformableAttentionGrad:", "TilingPrepareForMultiScaleDeformableAttentionGrad start.");
     auto compileInfo = context->GetCompiledInfo<MultiScaleDeformableAttentionGradCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "TilingPrepare compile info is missing"})),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "TilingPrepare platform info is missing"})),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->total_core_num = ascendcPlatform.GetCoreNumAiv();
     compileInfo->isRegBase = Ops::NN::OpTiling::IsRegbaseSocVersion(context);
-    OP_CHECK_IF((compileInfo->total_core_num <= 0), // 0 negative number
-                OP_LOGE(context->GetNodeName(), "Failed to get core num."), return false);
+    OP_CHECK_IF(
+        (compileInfo->total_core_num <= 0), // 0 negative number
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                            "TilingPrepare requires a positive AIV core count"})),
+        return ge::GRAPH_FAILED);
 
     uint64_t ub_size_platform = 0U; // 0, init
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ub_size_platform);
     compileInfo->ub_size_platform = static_cast<int64_t>(ub_size_platform);
     OP_CHECK_IF((compileInfo->ub_size_platform <= 0), // 0
-                OP_LOGE(context->GetNodeName(), "Failed to get ub size"), return false);
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "TilingPrepare requires positive UB capacity"})),
+                return ge::GRAPH_FAILED);
     OP_LOGD("MultiScaleDeformableAttentionGrad:", "TilingPrepareForMultiScaleDeformableAttentionGrad end.");
     return ge::GRAPH_SUCCESS;
 }

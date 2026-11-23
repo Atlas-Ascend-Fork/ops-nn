@@ -961,3 +961,240 @@ TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_
     std::string expectStr = "1 24 8 32 1 100 3 48 0 1 ";
     EXPECT_EQ(tiling_data_result, expectStr);
 }
+
+// 异常分支用例共享的输入shape（generic非转置布局）。
+struct AttnErrorShapes {
+    uint64_t batch = 1;
+    uint64_t spatial_size = 24;
+    uint64_t num_heads = 8;
+    uint64_t channels = 32;
+    uint64_t num_levels = 1;
+    uint64_t num_query = 100;
+    uint64_t num_point = 2;
+    gert::StorageShape value_shape{{batch, spatial_size, num_heads, channels},
+                                   {batch, spatial_size, num_heads, channels}};
+    gert::StorageShape value_spatial_shapes_shape{{num_levels, 2}, {num_levels, 2}};
+    gert::StorageShape value_level_start_index_shape{{num_levels}, {num_levels}};
+    gert::StorageShape sampling_locations_shape{{batch, num_query, num_heads, num_levels, num_point, 2},
+                                                {batch, num_query, num_heads, num_levels, num_point, 2}};
+    gert::StorageShape attention_weights_shape{{batch, num_query, num_heads, num_levels, num_point},
+                                               {batch, num_query, num_heads, num_levels, num_point}};
+    gert::StorageShape output_shape{{batch, num_query, num_heads* channels}, {batch, num_query, num_heads* channels}};
+};
+
+static const char* kAttnCompileInfoString = R"({
+    "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                      "Intrinsic_fix_pipe_l0c2out": false,
+                      "Intrinsic_data_move_l12ub": true,
+                      "Intrinsic_data_move_l0c2ub": true,
+                      "Intrinsic_data_move_out2l1_nd2nz": false,
+                      "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                      "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                      "CORE_NUM": 48}
+                      })";
+
+struct AttnCompileInfo {
+    int32_t total_core_num = 0;
+    uint64_t ub_size_platform = 0;
+    bool is_inf_base = false;
+    bool isRegBase = false;
+};
+
+// 搭建TilingContext；inputShapes中允许传nullptr以覆盖空指针分支；
+// compileInfo->isRegBase为true时走arch35专用tiling路径。
+static void RunAttnTilingWithShapes(gert::StorageShape* value, gert::StorageShape* spatial,
+                                    gert::StorageShape* levelStart, gert::StorageShape* sampling,
+                                    gert::StorageShape* attnWeight, AttnErrorShapes& shapes,
+                                    AttnCompileInfo* compileInfo, fe::PlatFormInfos& platformInfo,
+                                    std::map<std::string, std::string>& socInfos,
+                                    std::map<std::string, std::string>& aicoreSpec,
+                                    std::map<std::string, std::string>& intrinsics, ge::graphStatus expected)
+{
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MultiScaleDeformableAttnFunction")->tiling;
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    ASSERT_NE(param, nullptr);
+    auto holder = gert::TilingContextFaker()
+                      .NodeIoNum(5, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1})
+                      .InputShapes({value, spatial, levelStart, sampling, attnWeight})
+                      .OutputShapes({&shapes.output_shape})
+                      .CompileInfo(compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+    auto tiling_context = holder.GetContext<gert::TilingContext>();
+    tiling_context->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tiling_context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    EXPECT_EQ(tiling_func(tiling_context), expected);
+}
+
+static void SetupAttnPlatform(fe::PlatFormInfos& platformInfo, std::map<std::string, std::string>& socInfos,
+                              std::map<std::string, std::string>& aicoreSpec,
+                              std::map<std::string, std::string>& intrinsics, AttnCompileInfo& compileInfo)
+{
+    GetPlatFormInfos(kAttnCompileInfoString, socInfos, aicoreSpec, intrinsics);
+    platformInfo.Init();
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance()
+                                 .GetOpImpl("MultiScaleDeformableAttnFunction")
+                                 ->tiling_parse;
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs(
+                                 {const_cast<char*>(kAttnCompileInfoString), reinterpret_cast<void*>(&platformInfo)})
+                             .Outputs({&compileInfo})
+                             .Build();
+    auto parse_platform = kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo();
+    ASSERT_TRUE(parse_platform->Init());
+    parse_platform->SetPlatformRes("SoCInfo", socInfos);
+    parse_platform->SetPlatformRes("AICoreSpec", aicoreSpec);
+    parse_platform->SetCoreNumByCoreType("AICore");
+    parse_platform->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+}
+
+TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_null_input_tensor)
+{
+    fe::PlatFormInfos platform_info;
+    map<string, string> soc_infos, aicore_spec, intrinsics;
+    AttnCompileInfo compile_info;
+    SetupAttnPlatform(platform_info, soc_infos, aicore_spec, intrinsics, compile_info);
+    AttnErrorShapes shapes;
+    RunAttnTilingWithShapes(nullptr, &shapes.value_spatial_shapes_shape, &shapes.value_level_start_index_shape,
+                            &shapes.sampling_locations_shape, &shapes.attention_weights_shape, shapes, &compile_info,
+                            platform_info, soc_infos, aicore_spec, intrinsics, ge::GRAPH_FAILED);
+}
+
+TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_level_mismatch)
+{
+    fe::PlatFormInfos platform_info;
+    map<string, string> soc_infos, aicore_spec, intrinsics;
+    AttnCompileInfo compile_info;
+    SetupAttnPlatform(platform_info, soc_infos, aicore_spec, intrinsics, compile_info);
+    AttnErrorShapes shapes;
+    // spatial_shapes/level_start_index的level维(2)与attention_weights的level维(1)不一致。
+    shapes.value_spatial_shapes_shape = {{2, 2}, {2, 2}};
+    shapes.value_level_start_index_shape = {{2}, {2}};
+    RunAttnTilingWithShapes(&shapes.value_shape, &shapes.value_spatial_shapes_shape,
+                            &shapes.value_level_start_index_shape, &shapes.sampling_locations_shape,
+                            &shapes.attention_weights_shape, shapes, &compile_info, platform_info, soc_infos,
+                            aicore_spec, intrinsics, ge::GRAPH_FAILED);
+}
+
+TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_arch35_success)
+{
+    fe::PlatFormInfos platform_info;
+    map<string, string> soc_infos, aicore_spec, intrinsics;
+    AttnCompileInfo compile_info;
+    SetupAttnPlatform(platform_info, soc_infos, aicore_spec, intrinsics, compile_info);
+    // 直走950(regbase)专用SIMD/SIMT tiling路径。
+    compile_info.isRegBase = true;
+    AttnErrorShapes shapes;
+    RunAttnTilingWithShapes(&shapes.value_shape, &shapes.value_spatial_shapes_shape,
+                            &shapes.value_level_start_index_shape, &shapes.sampling_locations_shape,
+                            &shapes.attention_weights_shape, shapes, &compile_info, platform_info, soc_infos,
+                            aicore_spec, intrinsics, ge::GRAPH_SUCCESS);
+}
+
+TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_arch35_null_tensor)
+{
+    fe::PlatFormInfos platform_info;
+    map<string, string> soc_infos, aicore_spec, intrinsics;
+    AttnCompileInfo compile_info;
+    SetupAttnPlatform(platform_info, soc_infos, aicore_spec, intrinsics, compile_info);
+    compile_info.isRegBase = true;
+    AttnErrorShapes shapes;
+    RunAttnTilingWithShapes(nullptr, &shapes.value_spatial_shapes_shape, &shapes.value_level_start_index_shape,
+                            &shapes.sampling_locations_shape, &shapes.attention_weights_shape, shapes, &compile_info,
+                            platform_info, soc_infos, aicore_spec, intrinsics, ge::GRAPH_FAILED);
+}
+
+TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_arch35_level_mismatch)
+{
+    fe::PlatFormInfos platform_info;
+    map<string, string> soc_infos, aicore_spec, intrinsics;
+    AttnCompileInfo compile_info;
+    SetupAttnPlatform(platform_info, soc_infos, aicore_spec, intrinsics, compile_info);
+    compile_info.isRegBase = true;
+    AttnErrorShapes shapes;
+    shapes.value_spatial_shapes_shape = {{2, 2}, {2, 2}};
+    shapes.value_level_start_index_shape = {{2}, {2}};
+    RunAttnTilingWithShapes(&shapes.value_shape, &shapes.value_spatial_shapes_shape,
+                            &shapes.value_level_start_index_shape, &shapes.sampling_locations_shape,
+                            &shapes.attention_weights_shape, shapes, &compile_info, platform_info, soc_infos,
+                            aicore_spec, intrinsics, ge::GRAPH_FAILED);
+}
+
+TEST_F(MultiScaleDeformableAttnFunctionTiling, MultiScaleDeformableAttnFunction_tiling_parse_error_branches)
+{
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance()
+                                 .GetOpImpl("MultiScaleDeformableAttnFunction")
+                                 ->tiling_parse;
+
+    // compile info为空。
+    {
+        fe::PlatFormInfos platform_info;
+        platform_info.Init();
+        auto kernel_holder = gert::KernelRunContextFaker()
+                                 .KernelIONum(2, 1)
+                                 .Inputs({const_cast<char*>(kAttnCompileInfoString),
+                                          reinterpret_cast<void*>(&platform_info)})
+                                 .Outputs({nullptr})
+                                 .Build();
+        EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_FAILED);
+    }
+    // AIV核数为0。
+    {
+        const char* zero_core = R"({"hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+            "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+            "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072, "CORE_NUM": 0}})";
+        fe::PlatFormInfos platform_info;
+        platform_info.Init();
+        AttnCompileInfo compile_info;
+        map<string, string> soc, spec, intr;
+        GetPlatFormInfos(zero_core, soc, spec, intr);
+        auto kernel_holder = gert::KernelRunContextFaker()
+                                 .KernelIONum(2, 1)
+                                 .Inputs({const_cast<char*>(zero_core), reinterpret_cast<void*>(&platform_info)})
+                                 .Outputs({&compile_info})
+                                 .Build();
+        auto parse_platform = kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo();
+        parse_platform->Init();
+        parse_platform->SetPlatformRes("SoCInfo", soc);
+        parse_platform->SetPlatformRes("AICoreSpec", spec);
+        parse_platform->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+        EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_FAILED);
+    }
+    // UB容量为0。
+    {
+        const char* zero_ub = R"({"hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+            "UB_SIZE": 0, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+            "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072, "CORE_NUM": 48}})";
+        fe::PlatFormInfos platform_info;
+        platform_info.Init();
+        AttnCompileInfo compile_info;
+        map<string, string> soc, spec, intr;
+        GetPlatFormInfos(zero_ub, soc, spec, intr);
+        auto kernel_holder = gert::KernelRunContextFaker()
+                                 .KernelIONum(2, 1)
+                                 .Inputs({const_cast<char*>(zero_ub), reinterpret_cast<void*>(&platform_info)})
+                                 .Outputs({&compile_info})
+                                 .Build();
+        auto parse_platform = kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo();
+        parse_platform->Init();
+        parse_platform->SetPlatformRes("SoCInfo", soc);
+        parse_platform->SetPlatformRes("AICoreSpec", spec);
+        parse_platform->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+        EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_FAILED);
+    }
+}

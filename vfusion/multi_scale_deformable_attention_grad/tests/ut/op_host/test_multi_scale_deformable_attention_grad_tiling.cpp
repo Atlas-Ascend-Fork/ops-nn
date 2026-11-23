@@ -106,10 +106,11 @@ TEST_F(MultiScaleDeformableAttentionGradTiling, MultiScaleDeformableAttentionGra
                                       {batch, spatial_size, num_heads, channels}};
     gert::StorageShape value_spatial_shapes_shape = {{num_levels, 2}, {num_levels, 2}};
     gert::StorageShape value_level_start_index_shape = {{num_levels}, {num_levels}};
-    gert::StorageShape sampling_locations_shape = {{batch, num_query, num_heads, num_levels, num_point, 2},
-                                                   {batch, num_query, num_heads, num_levels, num_point, 2}};
-    gert::StorageShape attention_weights_shape = {{batch, num_query, num_heads, num_levels, num_point},
-                                                  {batch, num_query, num_heads, num_levels, num_point}};
+    // The tiling entry receives the transposed tensors produced by the ACLNN wrapper.
+    gert::StorageShape sampling_locations_shape = {{batch, num_heads, num_levels, num_point, 2, num_query},
+                                                   {batch, num_heads, num_levels, num_point, 2, num_query}};
+    gert::StorageShape attention_weights_shape = {{batch, num_heads, num_levels, num_point, num_query},
+                                                  {batch, num_heads, num_levels, num_point, num_query}};
     gert::StorageShape grad_output_shape = {{batch, num_query, num_heads, channels},
                                             {batch, num_query, num_heads, channels}};
 
@@ -146,4 +147,205 @@ TEST_F(MultiScaleDeformableAttentionGradTiling, MultiScaleDeformableAttentionGra
     auto tiling_key = tiling_context->GetTilingKey();
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
     std::cout << tiling_data_result << std::endl;
+}
+
+// 异常分支用例共享的输入shape（ACLNN wrapper转置后的布局）。
+struct GradErrorShapes {
+    uint64_t batch = 1;
+    uint64_t spatial_size = 24;
+    uint64_t num_heads = 8;
+    uint64_t channels = 2;
+    uint64_t num_levels = 1;
+    uint64_t num_query = 100;
+    uint64_t num_point = 2;
+    gert::StorageShape value_shape{{batch, spatial_size, num_heads, channels},
+                                   {batch, spatial_size, num_heads, channels}};
+    gert::StorageShape value_spatial_shapes_shape{{num_levels, 2}, {num_levels, 2}};
+    gert::StorageShape value_level_start_index_shape{{num_levels}, {num_levels}};
+    gert::StorageShape sampling_locations_shape{{batch, num_heads, num_levels, num_point, 2, num_query},
+                                                {batch, num_heads, num_levels, num_point, 2, num_query}};
+    gert::StorageShape attention_weights_shape{{batch, num_heads, num_levels, num_point, num_query},
+                                               {batch, num_heads, num_levels, num_point, num_query}};
+    gert::StorageShape grad_output_shape{{batch, num_query, num_heads, channels},
+                                         {batch, num_query, num_heads, channels}};
+};
+
+static const char* kGradCompileInfoString = R"({
+    "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                      "Intrinsic_fix_pipe_l0c2out": false,
+                      "Intrinsic_data_move_l12ub": true,
+                      "Intrinsic_data_move_l0c2ub": true,
+                      "Intrinsic_data_move_out2l1_nd2nz": false,
+                      "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                      "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                      "CORE_NUM": 48}
+                      })";
+
+struct GradCompileInfo {
+    int32_t total_core_num = 0;
+    uint64_t ub_size_platform = 0;
+    bool isRegBase = false;
+};
+
+// 搭建TilingContext；inputShapes中允许传nullptr以覆盖空指针分支。
+static void RunGradTilingWithShapes(GradErrorShapes& shapes, gert::StorageShape* value, gert::StorageShape* spatial,
+                                    gert::StorageShape* levelStart, gert::StorageShape* sampling,
+                                    gert::StorageShape* attnWeight, gert::StorageShape* gradOutput,
+                                    GradCompileInfo* compileInfo, fe::PlatFormInfos& platformInfo,
+                                    std::map<std::string, std::string>& socInfos,
+                                    std::map<std::string, std::string>& aicoreSpec,
+                                    std::map<std::string, std::string>& intrinsics, ge::graphStatus expected)
+{
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl("MultiScaleDeformableAttentionGrad")->tiling;
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    ASSERT_NE(param, nullptr);
+    auto holder = gert::TilingContextFaker()
+                      .NodeIoNum(6, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1})
+                      .InputShapes({value, spatial, levelStart, sampling, attnWeight, gradOutput})
+                      .OutputShapes(
+                          {&shapes.value_shape, &shapes.sampling_locations_shape, &shapes.attention_weights_shape})
+                      .CompileInfo(compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+    auto tiling_context = holder.GetContext<gert::TilingContext>();
+    tiling_context->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tiling_context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    EXPECT_EQ(tiling_func(tiling_context), expected);
+}
+
+static void SetupGradPlatform(fe::PlatFormInfos& platformInfo, std::map<std::string, std::string>& socInfos,
+                              std::map<std::string, std::string>& aicoreSpec,
+                              std::map<std::string, std::string>& intrinsics, GradCompileInfo& compileInfo)
+{
+    GetPlatFormInfos(kGradCompileInfoString, socInfos, aicoreSpec, intrinsics);
+    platformInfo.Init();
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance()
+                                 .GetOpImpl("MultiScaleDeformableAttentionGrad")
+                                 ->tiling_parse;
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs(
+                                 {const_cast<char*>(kGradCompileInfoString), reinterpret_cast<void*>(&platformInfo)})
+                             .Outputs({&compileInfo})
+                             .Build();
+    auto parse_platform = kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo();
+    ASSERT_TRUE(parse_platform->Init());
+    parse_platform->SetPlatformRes("SoCInfo", socInfos);
+    parse_platform->SetPlatformRes("AICoreSpec", aicoreSpec);
+    parse_platform->SetCoreNumByCoreType("AICore");
+    parse_platform->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+}
+
+TEST_F(MultiScaleDeformableAttentionGradTiling, MultiScaleDeformableAttentionGrad_tiling_null_input_shape)
+{
+    fe::PlatFormInfos platform_info;
+    map<string, string> soc_infos, aicore_spec, intrinsics;
+    GradCompileInfo compile_info;
+    SetupGradPlatform(platform_info, soc_infos, aicore_spec, intrinsics, compile_info);
+    GradErrorShapes shapes;
+    RunGradTilingWithShapes(shapes, nullptr, &shapes.value_spatial_shapes_shape, &shapes.value_level_start_index_shape,
+                            &shapes.sampling_locations_shape, &shapes.attention_weights_shape,
+                            &shapes.grad_output_shape, &compile_info, platform_info, soc_infos, aicore_spec, intrinsics,
+                            ge::GRAPH_FAILED);
+}
+
+TEST_F(MultiScaleDeformableAttentionGradTiling, MultiScaleDeformableAttentionGrad_tiling_level_mismatch)
+{
+    fe::PlatFormInfos platform_info;
+    map<string, string> soc_infos, aicore_spec, intrinsics;
+    GradCompileInfo compile_info;
+    SetupGradPlatform(platform_info, soc_infos, aicore_spec, intrinsics, compile_info);
+    GradErrorShapes shapes;
+    // spatial_shapes/level_start_index的level维(2)与sampling_locations的level维(1)不一致。
+    shapes.value_spatial_shapes_shape = {{2, 2}, {2, 2}};
+    shapes.value_level_start_index_shape = {{2}, {2}};
+    RunGradTilingWithShapes(shapes, &shapes.value_shape, &shapes.value_spatial_shapes_shape,
+                            &shapes.value_level_start_index_shape, &shapes.sampling_locations_shape,
+                            &shapes.attention_weights_shape, &shapes.grad_output_shape, &compile_info, platform_info,
+                            soc_infos, aicore_spec, intrinsics, ge::GRAPH_FAILED);
+}
+
+TEST_F(MultiScaleDeformableAttentionGradTiling, MultiScaleDeformableAttentionGrad_tiling_parse_null_compile_info)
+{
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance()
+                                 .GetOpImpl("MultiScaleDeformableAttentionGrad")
+                                 ->tiling_parse;
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs(
+                                 {const_cast<char*>(kGradCompileInfoString), reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({nullptr})
+                             .Build();
+    EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(MultiScaleDeformableAttentionGradTiling, MultiScaleDeformableAttentionGrad_tiling_parse_zero_core_num)
+{
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance()
+                                 .GetOpImpl("MultiScaleDeformableAttentionGrad")
+                                 ->tiling_parse;
+    const char* zero_core = R"({"hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+        "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+        "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072, "CORE_NUM": 0}})";
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    GradCompileInfo compile_info;
+    map<string, string> soc, spec, intr;
+    GetPlatFormInfos(zero_core, soc, spec, intr);
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(zero_core), reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+    auto parse_platform = kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo();
+    parse_platform->Init();
+    parse_platform->SetPlatformRes("SoCInfo", soc);
+    parse_platform->SetPlatformRes("AICoreSpec", spec);
+    parse_platform->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+    EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(MultiScaleDeformableAttentionGradTiling, MultiScaleDeformableAttentionGrad_tiling_parse_zero_ub_size)
+{
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance()
+                                 .GetOpImpl("MultiScaleDeformableAttentionGrad")
+                                 ->tiling_parse;
+    const char* zero_ub = R"({"hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+        "UB_SIZE": 0, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+        "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072, "CORE_NUM": 48}})";
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    GradCompileInfo compile_info;
+    map<string, string> soc, spec, intr;
+    GetPlatFormInfos(zero_ub, soc, spec, intr);
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(zero_ub), reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+    auto parse_platform = kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo();
+    parse_platform->Init();
+    parse_platform->SetPlatformRes("SoCInfo", soc);
+    parse_platform->SetPlatformRes("AICoreSpec", spec);
+    parse_platform->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+    EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_FAILED);
 }

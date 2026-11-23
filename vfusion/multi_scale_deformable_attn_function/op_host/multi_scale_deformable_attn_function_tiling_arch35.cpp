@@ -134,7 +134,9 @@ ge::graphStatus Tiling4MultiScaleDeformableAttnArch35(gert::TilingContext* conte
     auto attnWeightTensorPtr = context->GetInputTensor(INPUT_ATTN_WEIGHT);
     if (valueTensorPtr == nullptr || spatialTensorPtr == nullptr || levelStartTensorPtr == nullptr ||
         locationTensorPtr == nullptr || attnWeightTensorPtr == nullptr) {
-        OP_LOGE(context->GetNodeName(), "input tensor is nullptr");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                            "Tiling input tensor metadata is missing"}));
         return ge::GRAPH_FAILED;
     }
 
@@ -146,7 +148,9 @@ ge::graphStatus Tiling4MultiScaleDeformableAttnArch35(gert::TilingContext* conte
 
     auto compileInfo = static_cast<const MultiScaleDeformableAttnFunctionCompileInfo*>(context->GetCompileInfo());
     if (compileInfo == nullptr) {
-        OP_LOGE(context->GetNodeName(), "compile info is null");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(), "Tiling compile info is missing"}));
         return ge::GRAPH_FAILED;
     }
     uint64_t coreNum = compileInfo->totalCoreNum;
@@ -164,10 +168,13 @@ ge::graphStatus Tiling4MultiScaleDeformableAttnArch35(gert::TilingContext* conte
     uint64_t levelStartIndexNumLevels = levelStartShape.GetDim(NUM_LEVEL_DIM);
     if (dims.realLevels != dims.numLevels || dims.locationLevels != dims.numLevels ||
         levelStartIndexNumLevels != dims.numLevels) {
-        OP_LOGE(context->GetNodeName(),
-                "numLevels dimensions must be equal: spatialShape[0]=%lu, attnWeightLevels=%lu, locationLevels=%lu, "
-                "levelStartIndex.numLevels=%lu",
-                dims.numLevels, dims.realLevels, dims.locationLevels, levelStartIndexNumLevels);
+        const std::string shapes = Ops::Base::ToString(spatialShape) + ", " + Ops::Base::ToString(locationShape) +
+                                   ", " + Ops::Base::ToString(levelStartShape) + ", " +
+                                   Ops::Base::ToString(attnWeightShape);
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "MultiScaleDeformableAttnFunction",
+            "value_spatial_shapes, sampling_locations, value_level_start_index, attention_weights", shapes.c_str(),
+            "The level dimensions of all four inputs must match");
         return ge::GRAPH_FAILED;
     }
 
@@ -180,7 +187,9 @@ ge::graphStatus Tiling4MultiScaleDeformableAttnArch35(gert::TilingContext* conte
 
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
     if (currentWorkspace == nullptr) {
-        OP_LOGE(context->GetNodeName(), "currentWorkspace is null");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(), "Tiling workspace size slot is missing"}));
         return ge::GRAPH_FAILED;
     }
     size_t wsSize = sysWorkspaceSize;

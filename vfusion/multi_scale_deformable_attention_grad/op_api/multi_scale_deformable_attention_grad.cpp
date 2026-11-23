@@ -42,7 +42,8 @@ const std::tuple<aclTensor*, aclTensor*, aclTensor*> MultiScaleDeformableAttenti
         OP_INPUT(value, spatialShape, levelStartIndex, location, attnWeight, gradOutput),
         OP_OUTPUT(gradValue, gradLocation, gradAttnWeight));
     if (ret != ACL_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "MultiScaleDeformableAttentionGradAiCore ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                               "ADD_TO_LAUNCHER_LIST_AICORE failed, ret=%d; propagate the lower-layer error.", ret);
         return std::tuple<aclTensor*, aclTensor*, aclTensor*>(nullptr, nullptr, nullptr);
     }
     return std::tie(gradValue, gradLocation, gradAttnWeight);

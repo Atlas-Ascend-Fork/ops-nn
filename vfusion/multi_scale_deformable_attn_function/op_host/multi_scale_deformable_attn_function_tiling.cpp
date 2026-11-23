@@ -175,10 +175,13 @@ static ge::graphStatus TilingFuncForMultiScaleDeformableAttn(gert::TilingContext
     // 的路径，防止不一致 shape 绕过 host 校验进入 kernel（ GetValue/DataCopy 会越界读对应张量）
     uint64_t levelStartIndexNumLevels = levelStartShape.GetDim(NUM_LEVEL_DIM);
     if (realLevels != numLevels || locationLevels != numLevels || levelStartIndexNumLevels != numLevels) {
-        OP_LOGE(context->GetNodeName(),
-                "numLevels dimensions must be equal: spatialShape[0]=%lu, attnWeightLevels=%lu, locationLevels=%lu, "
-                "levelStartIndex[0]=%lu",
-                numLevels, realLevels, locationLevels, levelStartIndexNumLevels);
+        const std::string shapes = Ops::Base::ToString(spatialShape) + ", " + Ops::Base::ToString(locationShape) +
+                                   ", " + Ops::Base::ToString(levelStartShape) + ", " +
+                                   Ops::Base::ToString(attnWeightShape);
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            "MultiScaleDeformableAttnFunction",
+            "value_spatial_shapes, sampling_locations, value_level_start_index, attention_weights", shapes.c_str(),
+            "The level dimensions of all four inputs must match");
         return ge::GRAPH_FAILED;
     }
 
@@ -191,29 +194,37 @@ static ge::graphStatus TilingFuncForMultiScaleDeformableAttn(gert::TilingContext
     }
 
     if (numQueries < NUM_QUERIES_MIN) {
-        OP_LOGE(context->GetNodeName(), "numQueries must be greater than or equal to 32, bug got input %lu",
-                numQueries);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "MultiScaleDeformableAttnFunction", "attention_weights", Ops::Base::ToString(attnWeightShape).c_str(),
+            ("Query count must be at least 32, got " + std::to_string(numQueries)).c_str());
         return ge::GRAPH_FAILED;
     }
 
     if (numHeads > NUM_HEADS_MAX) {
-        OP_LOGE(context->GetNodeName(), "numHeads must be less than or equal to 16, bug got input %lu", numHeads);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "MultiScaleDeformableAttnFunction", "attention_weights", Ops::Base::ToString(attnWeightShape).c_str(),
+            ("Head count must be at most 16, got " + std::to_string(numHeads)).c_str());
         return ge::GRAPH_FAILED;
     }
 
     if (numLevels > NUM_LEVELS_MAX) {
-        OP_LOGE(context->GetNodeName(), "numLevels must be less than or equal to 16, bug got input %lu", numLevels);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "MultiScaleDeformableAttnFunction", "value_spatial_shapes", Ops::Base::ToString(spatialShape).c_str(),
+            ("Level count must be at most 16, got " + std::to_string(numLevels)).c_str());
         return ge::GRAPH_FAILED;
     }
 
     if (numPoints > NUM_POINTS_MAX) {
-        OP_LOGE(context->GetNodeName(), "numPoints must be less than or equal to 16, bug got input %lu", numPoints);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "MultiScaleDeformableAttnFunction", "attention_weights", Ops::Base::ToString(attnWeightShape).c_str(),
+            ("Point count must be at most 16, got " + std::to_string(numPoints)).c_str());
         return ge::GRAPH_FAILED;
     }
 
     if (!((embedDims % EMBED_DIMS_DIV_EIGHT == 0) && (embedDims <= EMBED_DIMS_MAX))) {
-        OP_LOGE(context->GetNodeName(),
-                "embedDims must be divisible by 8 and less than or equal to 256, bug got input %lu", embedDims);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            "MultiScaleDeformableAttnFunction", "value", Ops::Base::ToString(valueShape).c_str(),
+            ("Embedding dimension must be divisible by 8 and at most 256, got " + std::to_string(embedDims)).c_str());
         return ge::GRAPH_FAILED;
     }
 
@@ -253,22 +264,37 @@ static ge::graphStatus TilingPrepare4MultiScaleDeformableAttnFunction(gert::Tili
 {
     OP_LOGD("MultiScaleDeformableAttnFunction:", "TilingPrepare4MultiScaleDeformableAttnFunction start.");
     auto compileInfo = context->GetCompiledInfo<MultiScaleDeformableAttnFunctionCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "TilingPrepare compile info is missing"})),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "TilingPrepare platform info is missing"})),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
     auto socVersion = ascendcPlatform.GetSocVersion();
     compileInfo->isInfBase = (socVersion == platform_ascendc::SocVersion::ASCEND310P) ? true : false;
     compileInfo->isRegBase = Ops::NN::OpTiling::IsRegbaseSocVersion(context);
-    OP_CHECK_IF((compileInfo->totalCoreNum <= 0), // 0 negative number
-                OP_LOGE(context->GetNodeName(), "Failed to get core num."), return false);
+    OP_CHECK_IF(
+        (compileInfo->totalCoreNum <= 0), // 0 negative number
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                            "TilingPrepare requires a positive AIV core count"})),
+        return ge::GRAPH_FAILED);
 
     uint64_t ubSizePlatform = 0U; // 0, init
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatform);
     compileInfo->ubSizePlatform = static_cast<int64_t>(ubSizePlatform);
     OP_CHECK_IF((compileInfo->ubSizePlatform <= 0), // 0
-                OP_LOGE(context->GetNodeName(), "Failed to get ub size"), return false);
+                REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                          (std::vector<const char*>{Ops::Base::GetOpInfo(context).c_str(),
+                                                                    "TilingPrepare requires positive UB capacity"})),
+                return ge::GRAPH_FAILED);
     OP_LOGD("MultiScaleDeformableAttnFunction:", "TilingPrepare4MultiScaleDeformableAttnFunction end.");
     return ge::GRAPH_SUCCESS;
 }
