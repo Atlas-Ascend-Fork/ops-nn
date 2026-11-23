@@ -165,7 +165,7 @@ aclnnStatus aclnnGroupNormBackward(
       <td>C（int64_t）</td>
       <td>输入</td>
       <td>表示输入`gradOut`在C维度上的空间大小。</td>
-      <td><ul><li>C的取值小于等于240000。</li><li>C必须可以被group整除，且C/group≤8000。</li></ul></td>
+      <td><ul><li>C必须可以被group整除。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -264,13 +264,15 @@ aclnnStatus aclnnGroupNormBackward(
   <!-- npu="A3,910b" id8 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
 
-    参数`mean`和`gradOut`的数据类型相同。
+    - 参数`mean`和`gradOut`的数据类型相同。
+    - 参数`C`的取值需小于等于240000，且C/group小于等于8000，否则返回161002。
   <!-- end id8 -->
 
   <!-- npu="950" id9 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
 
-    参数`mean`与`gradOut`支持的数据类型对应关系如下：
+    - C/group需小于等于8000，否则返回161002。
+    - 参数`mean`与`gradOut`支持的数据类型对应关系如下：
 
     |输入参数 | gradOut | mean |
     |--|--|--|
@@ -335,10 +337,10 @@ aclnnStatus aclnnGroupNormBackward(
       <td>当outputMask[2]为true，gradBetaOut的shape与gamma的shape不相同。</td>
     </tr>
     <tr>
-      <td>group不大于0，或者C大于240000。</td>
+      <td>group不大于0。</td>
     </tr>
     <tr>
-      <td>C不能被group整除，或者C/group＞8000。</td>
+      <td>C不能被group整除。</td>
     </tr>
     <tr>
       <td>input的元素个数不等于N*C*HxW。</td>

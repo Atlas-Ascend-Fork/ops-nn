@@ -192,15 +192,20 @@ static bool CheckAttr(int64_t C, int64_t group)
     OP_CHECK(C % group == 0, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected C can be divided by group, but got false."),
              return false);
 
-    if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201 ||
-        GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9201 ||
-        GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9202) {
+    if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
         // 检查C//GROUP是否超过8000
         OP_CHECK(C / group <= UPPER_CARRYING_LIMIT,
                  OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected C / group <= 8000 to be true, but got false."),
                  return false);
         // 检查C是否超过240000
         OP_CHECK(C <= MAX_C_SIZE, OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expecting C to not exceed 240000, got %ld.", C),
+                 return false);
+    } else if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510 ||
+               GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9201 ||
+               GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9202) {
+        // 仅检查C//GROUP是否超过8000，C上限不适用于该类平台
+        OP_CHECK(C / group <= UPPER_CARRYING_LIMIT,
+                 OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Expected C / group <= 8000 to be true, but got false."),
                  return false);
     }
     return true;

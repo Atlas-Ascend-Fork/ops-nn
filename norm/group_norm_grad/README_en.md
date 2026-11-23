@@ -148,6 +148,8 @@ English | [简体中文](./README.md)
   </tbody></table>
 
   - <term>Atlas training products</term>: The data types of the input and output parameters do not support BFLOAT16.
+  - <term>Atlas A2 products</term>, <term>Atlas A3 products</term>: The value of C must be less than or equal to 240000, and C/group must be less than or equal to 8000.
+  - <term>Ascend 950PR&950DT products</term>: C/group must be less than or equal to 8000.
 
 ## Constraints
 

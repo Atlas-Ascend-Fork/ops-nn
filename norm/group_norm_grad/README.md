@@ -146,6 +146,8 @@
   </tbody></table>
 
   - <term>Atlas训练系列产品</term>：输入和输出参数的数据类型不支持BFLOAT16。
+  - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：C的取值需小于等于240000，且C/group需小于等于8000。
+  - <term>Ascend 950PR&950DT系列产品</term>：C/group需小于等于8000。
 
 ## 约束说明
 
