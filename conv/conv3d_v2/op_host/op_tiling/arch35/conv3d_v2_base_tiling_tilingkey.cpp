@@ -31,7 +31,13 @@ ge::graphStatus Conv3dBaseTilingV2::SetTilingKey()
                                     tilingKeyPara_.l0PingPong, tilingKeyPara_.outputOrder, tilingKeyPara_.groupType,
                                     tilingKeyPara_.bigKernel, tilingKeyPara_.weightUbTrans);
 
-    OP_LOGD(paramInfo_.nodeType.c_str(), "AscendC: tiling key: %lu.", tilingKey_);
+    std::stringstream ss;
+    ss << "AscendC: tiling key: " << tilingKey_ << ". fmpTiling[" << tilingKeyPara_.fmpTiling << "], weightTiling["
+       << tilingKeyPara_.weightTiling << "], l1PingPong[" << tilingKeyPara_.l1PingPong << "], l0PingPong["
+       << tilingKeyPara_.l0PingPong << "], outputOrder[" << tilingKeyPara_.outputOrder << "], groupType["
+       << tilingKeyPara_.groupType << "], bigKernel[" << tilingKeyPara_.bigKernel << "], weightUbTrans["
+       << tilingKeyPara_.weightUbTrans << "].";
+    OP_LOGD(paramInfo_.nodeType.c_str(), "%s", ss.str().c_str());
     return ge::GRAPH_SUCCESS;
 }
 } // namespace conv_ops_tiling
