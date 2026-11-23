@@ -443,10 +443,12 @@ int main()
     aclTensor* outputY = nullptr;
     aclTensor* outputScale = nullptr;
 
-    std::vector<float> xHostData = {1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2};
-    std::vector<float> gammaHostData = {2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2};
-    std::vector<float> betaHostData = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-    std::vector<float> scaleOptionalHostData = {1};
+    const aclFloat16 one = aclFloatToFloat16(1.0f);
+    const aclFloat16 two = aclFloatToFloat16(2.0f);
+    std::vector<aclFloat16> xHostData = {one, one, one, one, one, one, one, one, two, two, two, two, two, two, two, two, one, one, one, one, one, one, one, one, two, two, two, two, two, two, two, two};
+    std::vector<aclFloat16> gammaHostData = {two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two, two};
+    std::vector<aclFloat16> betaHostData = {one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one};
+    std::vector<aclFloat16> scaleOptionalHostData = {one};
     std::vector<int8_t> zeroPointOptionalHostData = {1};
 
     std::vector<int8_t> outputYHostData(1 * 1 * 32);
