@@ -10,26 +10,41 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-import functools
 import numpy as np
 import torch
 
+__spec__ = {
+    "mse_loss": "MseLossTestSpec",
+    "aclnnMseLoss": "AclnnMseLossTestSpec",
+    "aclnnMseLossOut": "MseLossOutAclnnSpec",
+    "torch.nn.functional.mse_loss": "TorchMseLossTestSpec",
+}
+
 __golden__ = {
-    "kernel": {"mse_loss": "mse_loss_golden", "mse_loss_grad": "mse_loss_grad_golden"},
-    "aclnn": {
-        "aclnnMseLoss": "aclnn_mse_loss_golden",
-    },
+    "kernel": {"mse_loss": "mse_loss_golden"},
+    "aclnn": {"aclnnMseLoss": "aclnn_mse_loss_golden"},
 }
 
 _REDUCTION_INT_TO_STR = {0: "none", 1: "mean", 2: "sum"}
 
 # aclnnMseLossOut 只经 __spec__ 注册（loader 的 TestSpec 优先于 __golden__，
-# 双注册会产生绕过 spec 的死配置）。aclnnMseLoss 保持原 __golden__ 路径不变。
+# 双注册会产生绕过 spec 的死配置）。
 _TOL = {
     "float32": {"standard": "cross_check", "level": "L1"},
     "float16": {"standard": "cross_check", "level": "L1"},
     "bfloat16": {"standard": "cross_check", "level": "L1"},
 }
+
+
+def _demote_promoted(value):
+    """Like ops-cv !2491: IR/ACLNN exclude FP64 tensors, so undo TTK promotion.
+
+    Do not use this for Torch E2E, which accepts genuine FP64 inputs.
+    """
+    if hasattr(value, "detach"):
+        return value.float() if str(value.dtype) == "torch.float64" else value
+    arr = np.asarray(value)
+    return arr.astype(np.float32) if arr.dtype == np.float64 else value
 
 
 def _red_str(v):
@@ -42,18 +57,20 @@ def _red_str(v):
 def aclnn_mse_loss_golden(self_t, target_t, reduction, out_t=None, **kwargs):
     import torch
 
+    self_t, target_t = map(_demote_promoted, (self_t, target_t))
     red = _REDUCTION_INT_TO_STR.get(int(reduction), "mean")
-    diff = self_t - target_t
+    # Compute from supported input precision; do not inspect DUT output values.
+    compute = torch.promote_types(self_t.dtype, target_t.dtype)
+    if compute in (torch.float16, torch.bfloat16):
+        compute = torch.float32
+    diff = self_t.to(compute) - target_t.to(compute)
     sqr = diff * diff
     if red == "sum":
-        result = sqr.to(torch.float32).sum()
+        result = sqr.sum()
     elif red == "mean":
-        result = sqr.to(torch.float32).sum() / sqr.numel()
+        result = sqr.mean()
     else:
         result = sqr
-    # Ascend ReduceSumOp produces nan when input contains inf (overflow in sqr)
-    if red in ("sum", "mean") and torch.isinf(sqr.to(torch.float32)).any():
-        result = torch.tensor(float("nan"), dtype=torch.float32)
     if out_t is not None and hasattr(out_t, "dtype"):
         result = result.to(out_t.dtype)
     return result
@@ -65,18 +82,17 @@ def aclnn_mse_loss_out_golden(
     """aclnnMseLossOut：mean/sum 归约 0 轴（broadcast 去首维），none 逐元素
     （语义见 docs/aclnnMseLossOut.md 与 aclnn_mse_loss_out.cpp）。
 
-    计算档 = TTK 交付档，不自行抬精度；末位照声明 out dtype 落取值网格与
-    溢出语义（fp16 out 放不下时 golden 与 NPU 同为 ±inf），容器回到交付档
+    FP64 交付输入按接口支持范围回到 FP32；末位照声明 out dtype 落取值网格与
+    溢出语义（fp16 out 放不下时 golden 与 NPU 同为 ±inf），容器回到计算档
     （直返 fp16 会在 np.promote_types(fp16, bfloat16) 抛 TypeError）。
     """
+    self_t, target_t = map(_demote_promoted, (self_t, target_t))
     red = _red_str(reduction)
     diff = self_t - target_t
     sqr = diff * diff
-    if sqr.numel() == 0:
-        # 空张量: NPU 空路径实测输出全 1.0, 不走归约
-        shape = sqr.shape[1:] if red in ("sum", "mean") else sqr.shape
-        result = torch.ones(shape, dtype=diff.dtype, device=diff.device)
-    elif red == "sum":
+    # 按公式归约：空的 0 轴 sum 为 0、mean 为 NaN；其他轴为空时输出仍为空。
+    # API 的空路径不写 out；测试框架的预填值不是数学参考或输出豁免契约。
+    if red == "sum":
         result = sqr.sum(dim=0)
     elif red == "mean":
         result = sqr.sum(dim=0) / sqr.shape[0]
@@ -121,17 +137,14 @@ def _third_party_mse_out(self_t, target_t, reduction, out_t=None):
     """三方腿：torch 原生接口、原生 dtype，不自行抬 fp32。
     与 NPU 链路（MSELossV2→ReduceMean/Sum→Cast，中间均落输入 dtype）逐算子
     同构；抬 fp32 跳过中间舍入会让三方误差虚低、cross_check 三比值误判 NPU。
-    空张量输出全 1.0（与 NPU 实测对齐）。"""
+    空张量同样按框架语义归约，不复制设备空路径保留的输出初值。"""
     red = _red_str(reduction)
     # F.mse_loss 要求同 dtype：混合输入按 result_type 对齐 NPU PromoteType
     work = torch.result_type(self_t, target_t)
     d = torch.nn.functional.mse_loss(
         self_t.to(work), target_t.to(work), reduction="none"
     )
-    if d.numel() == 0:
-        shape = d.shape[1:] if red in ("sum", "mean") else d.shape
-        out = torch.ones(shape, dtype=d.dtype, device=d.device)
-    elif red == "mean":
+    if red == "mean":
         out = d.mean(dim=0)
     elif red == "sum":
         out = d.sum(dim=0)
@@ -188,91 +201,92 @@ class MseLossOutAclnnSpec:
     tolerance = _TOL
 
 
-__spec__ = {
-    "aclnnMseLossOut": "MseLossOutAclnnSpec",
-}
-
-
 def mse_loss_golden(input0, input1, *, reduction="mean", **kwargs):
     """
     Golden function for mse_loss.
     All the parameters (names and order) follow @mse_loss_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
 
+    For reduction="none" the output keeps the input shape, as required by
+    @mse_loss_infershape.cpp. (The reference previously flattened the inputs and
+    returned a 1-D result, which mismatched the declared output shape.)
+
     Args:
         **kwargs: {input,output}_{dtypes,ori_shapes,formats,ori_formats},
                   full_soc_version, short_soc_version, testcase_name
 
     Returns:
-        Output tensor
+        [y]: shape == input shape for reduction="none", scalar otherwise.
     """
+    import torch
+    import torch.nn.functional as F
+
+    input0, input1 = map(_demote_promoted, (input0, input1))
     ori_dtype = input0.dtype
-    reshape_input0 = [functools.reduce(lambda x, y: x * y, input0.shape)]
-    reshape_input1 = [functools.reduce(lambda x, y: x * y, input1.shape)]
-    predict = np.reshape(input0, reshape_input0)
-    label = np.reshape(input1, reshape_input1)
+    predict = input0
+    label = input1
 
     if "float16" in ori_dtype.name:
         predict = predict.astype("float32")
         label = label.astype("float32")
 
-    reduce_elts = 1.0
-    for i in reshape_input0:
-        reduce_elts *= i
-    cof = reduce_elts ** (-1)
-
-    axis_d = tuple(range(len(reshape_input0)))
-    res = np.subtract(predict, label)
-    res_sqr = np.multiply(res, res)
-
-    y = 0.0
-    if reduction == "mean":
-        y = np.sum(res_sqr, axis=axis_d, keepdims=False)
-        y = np.multiply(y, cof)
-    elif reduction == "sum":
-        y = np.sum(res_sqr, axis=axis_d, keepdims=False)
-    elif reduction == "none":
-        y = res_sqr
-
-    if "float16" in ori_dtype.name:
-        y = y.astype(ori_dtype, copy=False)
-
-    return y
+    y = F.mse_loss(
+        torch.from_numpy(predict), torch.from_numpy(label), reduction=reduction
+    )
+    return [y.numpy().astype(ori_dtype, copy=False)]
 
 
-def mse_loss_grad_golden(predict, label, dout, *, reduction="mean", **kwargs):
-    ori_dtype = predict.dtype
-    p_shape = predict.shape
-    l_shape = label.shape
-    d_shape = dout.shape
+def torch_mse_loss_golden(
+    input,
+    target,
+    size_average=None,
+    reduce=None,
+    reduction="mean",
+    weight=None,
+    **kwargs,
+):
+    """E2E golden for torch.nn.functional.mse_loss.
 
-    shape_list = [p_shape, l_shape, d_shape]
-    max_shape = shape_list[0]
-    for s in shape_list[1:]:
-        max_shape = (
-            np.broadcast(max_shape, s).shape
-            if hasattr(np, "broadcast")
-            else [max(s1, s2) for s1, s2 in zip(max_shape, s)]
-        )
+    The parameter list mirrors the full torch signature positionally, because the
+    E2E flow fills every parameter (inputs and attributes alike) by position.
+    Match the legacy CPU framework reference at the input dtype, including
+    intermediate rounding and overflow; do not promote the reference to float64.
+    """
+    import torch
 
-    predict = np.broadcast_to(predict, max_shape)
-    label = np.broadcast_to(label, max_shape)
-    dout = np.broadcast_to(dout, max_shape)
+    # Older Torch versions lack weight; do not pass an absent optional argument.
+    weight_kwargs = {"weight": weight.detach().cpu()} if weight is not None else {}
+    result = torch.nn.functional.mse_loss(
+        input.detach().cpu(),
+        target.detach().cpu(),
+        size_average=size_average,
+        reduce=reduce,
+        reduction=reduction,
+        **weight_kwargs,
+    )
+    return [result]
 
-    if ori_dtype.name in ("float16", "bfloat16"):
-        predict = predict.astype("float32")
-        label = label.astype("float32")
-        dout = dout.astype("float32")
 
-    sub_res = np.subtract(predict, label)
-    if "mean" == reduction:
-        reduce_elts = 1.0
-        for i in p_shape:
-            reduce_elts *= i
-        cof = (reduce_elts ** (-1)) * 2.0
-    else:
-        cof = 2.0
+class MseLossTestSpec:
+    """MseLoss test spec (kernel / GEIR flow, numpy in and out)."""
 
-    norm_grad = sub_res * cof
-    grad_res = norm_grad * dout
-    return grad_res.astype(ori_dtype, copy=False)
+    golden = mse_loss_golden
+    third_party = {"torch": "torch.nn.functional.mse_loss"}
+
+
+class AclnnMseLossTestSpec:
+    """MseLoss test spec (aclnn flow, torch.Tensor in and out)."""
+
+    golden = aclnn_mse_loss_golden
+
+
+class TorchMseLossTestSpec:
+    """MseLoss test spec (e2e flow).
+
+    Dispatch depends on the framework/CANN version and execution mode. With
+    Torch 2.10/CANN 9.3, eager reaches MSELossV2, while GE graphs reach MseLoss.
+    Profile each mode before counting it as coverage of the target kernel;
+    framework numerical agreement alone does not establish that coverage.
+    """
+
+    golden = torch_mse_loss_golden

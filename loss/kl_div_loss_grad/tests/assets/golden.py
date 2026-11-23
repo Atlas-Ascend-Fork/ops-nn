@@ -12,6 +12,10 @@
 
 import numpy as np
 
+__spec__ = {
+    "kl_div_loss_grad": "KlDivLossGradTestSpec",
+}
+
 __golden__ = {"kernel": {"kl_div_loss_grad": "kl_div_loss_grad_golden"}}
 
 
@@ -23,18 +27,23 @@ def _broadcast_to_maxshape(shapes: list):
         else:
             max_value = no_one_shape[0]
         return max_value
+
     max_dim_length = max(len(list(shape)) for shape in shapes)
     input_shapes = []
     for shape in shapes:
-        input_shapes.append([1 for _ in range(max_dim_length - len(shape))] + list(shape))
+        input_shapes.append(
+            [1 for _ in range(max_dim_length - len(shape))] + list(shape)
+        )
     input_shapes = list(map(list, zip(*input_shapes)))
     max_shape = [_max(shape) for shape in input_shapes]
     input_shapes = list(map(list, zip(*input_shapes)))
     return (*input_shapes, max_shape)
 
 
-def kl_div_loss_grad_golden(grad, input_, target, *, reduction='mean', log_target=False, **kwargs):
-    '''
+def kl_div_loss_grad_golden(
+    grad, input_, target, *, reduction="mean", log_target=False, **kwargs
+):
+    """
     Golden function for kl_div_loss_grad.
     All the parameters (names and order) follow @kl_div_loss_grad_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
@@ -45,7 +54,12 @@ def kl_div_loss_grad_golden(grad, input_, target, *, reduction='mean', log_targe
 
     Returns:
         Output tensor
-    '''
+    """
+    # Like ops-cv !2491: this IR excludes FP64; undo TTK's FP32 promotion.
+    grad, input_, target = (
+        value.astype(np.float32) if value.dtype == np.float64 else value
+        for value in (grad, input_, target)
+    )
     grad_shape = grad.shape
     input_shape = input_.shape
     target_shape = target.shape
@@ -66,10 +80,16 @@ def kl_div_loss_grad_golden(grad, input_, target, *, reduction='mean', log_targe
     res = grad * target
     res = -1 * res
     Element_total = input_.size
-    batch_size = input_.shape[0]
 
     if reduction == "batchmean":
+        batch_size = input_.shape[0] if input_.ndim else 1
         res = res / batch_size
     elif reduction == "mean":
         res = res / Element_total
     return res.astype(dtype, copy=False)
+
+
+class KlDivLossGradTestSpec:
+    """KlDivLossGrad test spec (kernel / GEIR flow, numpy in and out)."""
+
+    golden = kl_div_loss_grad_golden

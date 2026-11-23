@@ -12,10 +12,23 @@
 
 import numpy as np
 
+__spec__ = {
+    "cross_entropy_loss_grad": "CrossEntropyLossGradTestSpec",
+    "aclnnCrossEntropyLossGrad": "AclnnCrossEntropyLossGradTestSpec",
+}
+
 __golden__ = {
     "kernel": {"cross_entropy_loss_grad": "cross_entropy_loss_grad_golden"},
     "aclnn": {"aclnnCrossEntropyLossGrad": "aclnn_cross_entropy_loss_grad_golden"},
 }
+
+
+def _demote_promoted(value):
+    """Like ops-cv !2491: IR/ACLNN exclude FP64 tensors, so undo TTK promotion."""
+    if hasattr(value, "detach"):
+        return value.float() if str(value.dtype) == "torch.float64" else value
+    arr = np.asarray(value)
+    return arr.astype(np.float32) if arr.dtype == np.float64 else value
 
 
 def cross_entropy_loss_grad_golden(
@@ -45,6 +58,7 @@ def cross_entropy_loss_grad_golden(
     """
     import torch
 
+    grad_loss, log_prob, weight = map(_demote_promoted, (grad_loss, log_prob, weight))
     input_dtype = grad_loss.dtype
     if input_dtype.name == "bfloat16" or input_dtype.name == "float16":
         grad_loss = grad_loss.astype("float32")
@@ -64,11 +78,16 @@ def cross_entropy_loss_grad_golden(
         weight_input = torch.from_numpy(weight)
     else:
         weight_input = torch.ones(C, dtype=torch.float32).cpu()
-    weight_yn = torch.gather(weight_input, 0, targets).cpu()
-    if ignore_index >= 0:
-        ignore_mask = (targets - ignore_index).bool().float().cpu()
-    else:
-        ignore_mask = torch.ones((N,), dtype=torch.float32).cpu()
+    compute = torch.promote_types(
+        torch.promote_types(grad_loss.dtype, log_prob.dtype), weight_input.dtype
+    )
+    grad_loss, log_prob, weight_input = (
+        tensor.to(compute) for tensor in (grad_loss, log_prob, weight_input)
+    )
+    # Ignored labels may lie outside [0, C); mask before indexing weights.
+    ignore_mask = targets != ignore_index
+    safe_targets = targets.masked_fill(~ignore_mask, 0)
+    weight_yn = torch.gather(weight_input, 0, safe_targets).masked_fill(~ignore_mask, 0)
     if reduction == "mean":
         mean_out_grad = grad_loss * (1 - label_smoothing)  # []
         weight_after_mask = weight_yn * ignore_mask  # [N]
@@ -77,51 +96,54 @@ def cross_entropy_loss_grad_golden(
         loss_out_grad = mean_out_grad.unsqueeze(-1) / weight_after_mask_sum
     elif reduction == "sum":
         sum_out_grad = grad_loss * (1 - label_smoothing)  # []
-        smooth_loss_grad = grad_loss.unsqueeze(-1) * (label_smoothing / C)
+        smooth_loss_grad = grad_loss * (label_smoothing / C)
         loss_out_grad = sum_out_grad.unsqueeze(-1)  # [N]
     else:
         none_out_grad = grad_loss * (1 - label_smoothing)
         smooth_loss_grad = grad_loss * (label_smoothing / C)
         loss_out_grad = none_out_grad
     loss_out_grad = loss_out_grad * ignore_mask
-    nll_loss_grad = loss_out_grad * weight_yn
+    # Mask the loss gradient before log-softmax backward, not its final output.
+    # This handles an all-ignored mean without erasing NaNs in log_prob.
+    nll_loss_grad = (loss_out_grad * weight_yn).masked_fill(~ignore_mask, 0)
     nll_loss_grad = nll_loss_grad.squeeze(0)
     log_softmax_probs_grad_loss_out_sub_part = torch.exp(
         log_prob
     ) * nll_loss_grad.unsqueeze(-1)
-    predictions_grad_loss_out = torch.zeros((N, C)).float()
+    predictions_grad_loss_out = torch.zeros_like(log_prob)
     if nll_loss_grad.dim() == 0:
         nll_loss_grad = nll_loss_grad.unsqueeze(0)
     for i in range(N):
-        predictions_grad_loss_out[i][targets[i]] = nll_loss_grad[i]
+        predictions_grad_loss_out[i][safe_targets[i]] = nll_loss_grad[i]
     predictions_grad_loss_out = (
         log_softmax_probs_grad_loss_out_sub_part - predictions_grad_loss_out
     )
 
     if label_smoothing == 0:
-        out = predictions_grad_loss_out.numpy()
+        out = predictions_grad_loss_out
     else:
         smooth_loss_grad = torch.mul(smooth_loss_grad, ignore_mask)  # [N]
         log_softmax_probs_grad_smooth_loss = torch.mul(
             smooth_loss_grad.unsqueeze(-1), weight_input.unsqueeze(0)
-        )
+        ).masked_fill(~ignore_mask[:, None], 0)
         predictions_grad_smooth_loss = (
             torch.exp(log_prob)
             * torch.sum(log_softmax_probs_grad_smooth_loss, -1, keepdim=True)
             - log_softmax_probs_grad_smooth_loss
         )
         predictions_grad = predictions_grad_loss_out + predictions_grad_smooth_loss
-        out = predictions_grad.numpy()
-    return out.astype(input_dtype, copy=False)
+        out = predictions_grad
+    return out.numpy().astype(input_dtype, copy=False)
 
 
-def _to_torch_f32(tensor):
+def _to_torch_reference(tensor):
     import torch
 
     if tensor is None:
         return None
     if isinstance(tensor, torch.Tensor):
-        return tensor.detach().cpu().to(torch.float32)
+        dtype = torch.float64 if tensor.dtype == torch.float64 else torch.float32
+        return tensor.detach().cpu().to(dtype)
     arr = np.asarray(tensor)
     if arr.dtype not in (
         np.float16,
@@ -134,7 +156,8 @@ def _to_torch_f32(tensor):
         np.uint8,
     ):
         arr = arr.astype(np.float32)
-    return torch.from_numpy(arr).to(torch.float32)
+    dtype = torch.float64 if arr.dtype == np.float64 else torch.float32
+    return torch.from_numpy(arr).to(dtype)
 
 
 def aclnn_cross_entropy_loss_grad_golden(
@@ -170,13 +193,14 @@ def aclnn_cross_entropy_loss_grad_golden(
 
     del grad_zloss, lse_for_zloss, lse_square_scale_for_zloss, out, kwargs
 
+    grad_loss, log_prob, weight = map(_demote_promoted, (grad_loss, log_prob, weight))
     is_torch_tensor = isinstance(grad_loss, torch.Tensor)
     out_dtype = grad_loss.dtype
 
-    grad_loss_t = _to_torch_f32(grad_loss)
-    log_prob_t = _to_torch_f32(log_prob)
+    grad_loss_t = _to_torch_reference(grad_loss)
+    log_prob_t = _to_torch_reference(log_prob)
     if weight is not None:
-        weight_t = _to_torch_f32(weight)
+        weight_t = _to_torch_reference(weight)
     else:
         weight_t = None
     if isinstance(target, torch.Tensor):
@@ -193,11 +217,17 @@ def aclnn_cross_entropy_loss_grad_golden(
             weight_input = weight_t
         else:
             weight_input = torch.ones(C, dtype=torch.float32).cpu()
-        weight_yn = torch.gather(weight_input, 0, target_t).cpu()
-        if ignore_index >= 0:
-            ignore_mask = (target_t - ignore_index).bool().float().cpu()
-        else:
-            ignore_mask = torch.ones((N,), dtype=torch.float32).cpu()
+        compute = torch.promote_types(
+            torch.promote_types(grad_loss_t.dtype, log_prob_t.dtype), weight_input.dtype
+        )
+        grad_loss_t, log_prob_t, weight_input = (
+            tensor.to(compute) for tensor in (grad_loss_t, log_prob_t, weight_input)
+        )
+        ignore_mask = target_t != ignore_index
+        safe_targets = target_t.masked_fill(~ignore_mask, 0)
+        weight_yn = torch.gather(weight_input, 0, safe_targets).masked_fill(
+            ~ignore_mask, 0
+        )
         if reduction == "mean":
             mean_out_grad = grad_loss_t * (1 - label_smoothing)
             weight_after_mask = weight_yn * ignore_mask
@@ -208,23 +238,23 @@ def aclnn_cross_entropy_loss_grad_golden(
             loss_out_grad = mean_out_grad.unsqueeze(-1) / weight_after_mask_sum
         elif reduction == "sum":
             sum_out_grad = grad_loss_t * (1 - label_smoothing)
-            smooth_loss_grad = grad_loss_t.unsqueeze(-1) * (label_smoothing / C)
+            smooth_loss_grad = grad_loss_t * (label_smoothing / C)
             loss_out_grad = sum_out_grad.unsqueeze(-1)
         else:
             none_out_grad = grad_loss_t * (1 - label_smoothing)
             smooth_loss_grad = grad_loss_t * (label_smoothing / C)
             loss_out_grad = none_out_grad
         loss_out_grad = loss_out_grad * ignore_mask
-        nll_loss_grad = loss_out_grad * weight_yn
+        nll_loss_grad = (loss_out_grad * weight_yn).masked_fill(~ignore_mask, 0)
         nll_loss_grad = nll_loss_grad.squeeze(0)
         log_softmax_probs_grad_loss_out_sub_part = torch.exp(
             log_prob_t
         ) * nll_loss_grad.unsqueeze(-1)
-        predictions_grad_loss_out = torch.zeros((N, C)).float()
+        predictions_grad_loss_out = torch.zeros_like(log_prob_t)
         if nll_loss_grad.dim() == 0:
             nll_loss_grad = nll_loss_grad.unsqueeze(0)
         for i in range(N):
-            predictions_grad_loss_out[i][target_t[i]] = nll_loss_grad[i]
+            predictions_grad_loss_out[i][safe_targets[i]] = nll_loss_grad[i]
         predictions_grad_loss_out = (
             log_softmax_probs_grad_loss_out_sub_part - predictions_grad_loss_out
         )
@@ -235,7 +265,7 @@ def aclnn_cross_entropy_loss_grad_golden(
             smooth_loss_grad = torch.mul(smooth_loss_grad, ignore_mask)
             log_softmax_probs_grad_smooth_loss = torch.mul(
                 smooth_loss_grad.unsqueeze(-1), weight_input.unsqueeze(0)
-            )
+            ).masked_fill(~ignore_mask[:, None], 0)
             predictions_grad_smooth_loss = (
                 torch.exp(log_prob_t)
                 * torch.sum(log_softmax_probs_grad_smooth_loss, -1, keepdim=True)
@@ -246,3 +276,15 @@ def aclnn_cross_entropy_loss_grad_golden(
     if is_torch_tensor:
         return result.to(out_dtype)
     return result.numpy().astype(out_dtype)
+
+
+class CrossEntropyLossGradTestSpec:
+    """CrossEntropyLossGrad test spec (kernel / GEIR flow, numpy in and out)."""
+
+    golden = cross_entropy_loss_grad_golden
+
+
+class AclnnCrossEntropyLossGradTestSpec:
+    """CrossEntropyLossGrad test spec (aclnn flow, torch.Tensor in and out)."""
+
+    golden = aclnn_cross_entropy_loss_grad_golden

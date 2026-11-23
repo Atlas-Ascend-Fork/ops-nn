@@ -10,14 +10,17 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-import functools
 import numpy as np
+
+__spec__ = {
+    "l1_loss_grad": "L1LossGradTestSpec",
+}
 
 __golden__ = {"kernel": {"l1_loss_grad": "l1_loss_grad_golden"}}
 
 
-def l1_loss_grad_golden(grads, predict, label, *, reduction='mean', **kwargs):
-    '''
+def l1_loss_grad_golden(grads, predict, label, *, reduction="mean", **kwargs):
+    """
     Golden function for l1_loss_grad.
     All the parameters (names and order) follow @l1_loss_grad_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
@@ -28,16 +31,28 @@ def l1_loss_grad_golden(grads, predict, label, *, reduction='mean', **kwargs):
 
     Returns:
         Output tensor
-    '''
+    """
+    import torch
+
+    # Like ops-cv !2491: this IR excludes FP64; undo TTK's FP32 promotion.
+    grads, predict, label = (
+        value.astype(np.float32) if value.dtype == np.float64 else value
+        for value in (grads, predict, label)
+    )
     input_dtype = grads.dtype
     if input_dtype.name == "bfloat16":
         grads = grads.astype("float32")
         label = label.astype("float32")
         predict = predict.astype("float32")
-    sign = np.where(predict > label, 1.0, 0.0)
-    sign = np.where(predict < label, -1.0, sign)
-    label_shape = label.shape
-    n = functools.reduce(lambda x, y: x * y, label_shape)
+    grads, predict, label = map(torch.from_numpy, (grads, predict, label))
+    sign = torch.where(predict > label, 1.0, 0.0)
+    sign = torch.where(predict < label, -1.0, sign)
     if reduction == "mean":
-        grads = np.divide(grads, n)
-    return np.multiply(sign, grads).astype(input_dtype, copy=False)
+        grads = grads / label.numel()
+    return (sign * grads).numpy().astype(input_dtype, copy=False)
+
+
+class L1LossGradTestSpec:
+    """L1LossGrad test spec (kernel / GEIR flow, numpy in and out)."""
+
+    golden = l1_loss_grad_golden

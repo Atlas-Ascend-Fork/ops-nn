@@ -11,7 +11,10 @@
 # ----------------------------------------------------------------------------
 
 import numpy as np
-import tensorflow as tf
+
+__spec__ = {
+    "sigmoid_cross_entropy_with_logits": "SigmoidCrossEntropyWithLogitsTestSpec",
+}
 
 __golden__ = {
     "kernel": {
@@ -27,13 +30,14 @@ def sigmoid_cross_entropy_with_logits_golden(predict, target, **kwargs):
     @sigmoid_cross_entropy_with_logits_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
 
-    Reference: the canonical framework op
-        tf.nn.sigmoid_cross_entropy_with_logits(logits=predict, labels=target)
+    Reference: the canonical CPU framework op
+        torch.nn.functional.binary_cross_entropy_with_logits(..., reduction="none")
     which returns the element-wise loss (no reduction), equivalent to the stable
         loss = max(logits, 0) - logits * labels + log1p(exp(-|logits|))
     We call the framework op directly (not a self-written NumPy formula) so the
     golden matches the standard SigmoidCrossEntropyWithLogits contract. The op
-    runs on CPU and is independent of the tested NPU operator.
+    runs on CPU and is independent of the tested NPU operator. Using Torch also
+    avoids importing TensorFlow into a worker that has already loaded torch_npu.
 
     Contract (ordinary op, NOT V2):
         - inputs are predict (logits) and target (labels), same shape/dtype;
@@ -42,11 +46,9 @@ def sigmoid_cross_entropy_with_logits_golden(predict, target, **kwargs):
           and V2 (SigmoidCrossEntropyWithLogitsV2) semantics are not mixed in;
         - registration name stays sigmoid_cross_entropy_with_logits.
 
-    NumPy is used only for dtype/shape adaptation around the framework op: the
-    custom golden path is not auto-promoted by TTK, so float16/bfloat16 inputs
-    are upcast to float32 before the op for a stable high-precision reference
-    (fp16-direct vs fp64 ref ~7e-3, fp32-upcast ~9e-7), then the loss is written
-    back to the predict dtype to match the IR output dtype.
+    NumPy is used only for dtype/shape adaptation around the framework op.
+    Float16/bfloat16 inputs are upcast to float32; TTK-promoted double inputs
+    return to float32, the highest floating dtype accepted by this IR.
 
     Args:
         predict: logits, dtype float16 / float / bfloat16.
@@ -58,14 +60,21 @@ def sigmoid_cross_entropy_with_logits_golden(predict, target, **kwargs):
         [loss] following the IR output order; loss shape == predict shape,
         dtype == predict dtype.
     """
+    import torch
+
+    # Like ops-cv !2491: this IR excludes FP64; undo TTK's FP32 promotion.
+    predict, target = (
+        value.astype(np.float32) if value.dtype == np.float64 else value
+        for value in (predict, target)
+    )
     predict_dtype = predict.dtype
+    p = torch.from_numpy(predict.astype(np.float32))
+    t = torch.from_numpy(target.astype(np.float32))
+    loss = torch.nn.functional.binary_cross_entropy_with_logits(p, t, reduction="none")
+    return [loss.numpy().astype(predict_dtype, copy=False)]
 
-    # Upcast to float32 for a stable, dtype-agnostic reference (see docstring),
-    # then call the framework op; NumPy only adapts dtype in/out.
-    p = predict.astype(np.float32)
-    t = target.astype(np.float32)
 
-    loss = np.asarray(tf.nn.sigmoid_cross_entropy_with_logits(logits=p, labels=t))
+class SigmoidCrossEntropyWithLogitsTestSpec:
+    """SigmoidCrossEntropyWithLogits test spec (kernel / GEIR flow, numpy in and out)."""
 
-    loss = loss.astype(predict_dtype, copy=False)
-    return [loss]
+    golden = sigmoid_cross_entropy_with_logits_golden

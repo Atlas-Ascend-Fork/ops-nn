@@ -11,7 +11,10 @@
 # ----------------------------------------------------------------------------
 
 import numpy as np
-import tensorflow as tf
+
+__spec__ = {
+    "sparse_softmax_cross_entropy_with_logits": "SparseSoftmaxCrossEntropyWithLogitsTestSpec",
+}
 
 __golden__ = {
     "kernel": {
@@ -27,14 +30,13 @@ def sparse_softmax_cross_entropy_with_logits_golden(features, labels, **kwargs):
     @sparse_softmax_cross_entropy_with_logits_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
 
-    Reference: the canonical framework op
-        tf.raw_ops.SparseSoftmaxCrossEntropyWithLogits(features, labels)
-    which returns (loss, backprop) per its documented contract:
+    Reference: CPU torch.nn.functional.cross_entropy(reduction="none") and its
+    autograd gradient with respect to features. These implement the TensorFlow
+    SparseSoftmaxCrossEntropyWithLogits (loss, backprop) contract:
         loss_n         = logsumexp(features_n) - features_{n, labels_n}
         backprop_{n,c} = softmax(features)_{n,c} - 1{c == labels_n}
-    We call the framework op directly (not a self-written softmax/log-sum-exp)
-    so the golden matches the standard SparseSoftmaxCrossEntropyWithLogits
-    contract. The framework op is CPU/independent of the tested NPU operator.
+    Both outputs come from independent CPU framework operations, without
+    importing TensorFlow into a worker that has already loaded torch_npu.
 
     Contract checks enforced here:
         - class dimension is the last axis of features (num_classes = C);
@@ -56,16 +58,17 @@ def sparse_softmax_cross_entropy_with_logits_golden(features, labels, **kwargs):
         loss shape == labels shape, backprop shape == features shape,
         both dtype == features dtype.
     """
+    import torch
+
     features_dtype = features.dtype
     feat_shape = features.shape
     label_shape = labels.shape
     num_classes = feat_shape[-1]
 
-    # Flatten leading dims: tf.raw_ops requires 2-D features and 1-D labels.
-    # Lift to float32 for a stable, dtype-agnostic reference computation
-    # (custom golden path is not auto-promoted by TTK, so float16/bfloat16
-    # must be upcast here explicitly, then written back to the IR dtype).
-    x = features.astype(np.float32).reshape(-1, num_classes)
+    # Flatten leading dims to [N, C]. Upcast low precision, but preserve double
+    # inputs (including promoted references from the test framework).
+    compute_dtype = np.float64 if features_dtype == np.float64 else np.float32
+    x = features.astype(compute_dtype).reshape(-1, num_classes)
     y = labels.astype(np.int64).reshape(-1)
 
     if x.shape[0] != y.shape[0]:
@@ -81,12 +84,21 @@ def sparse_softmax_cross_entropy_with_logits_golden(features, labels, **kwargs):
             f"got [{int(y.min())}, {int(y.max())}]"
         )
 
-    loss_f32, backprop_f32 = tf.raw_ops.SparseSoftmaxCrossEntropyWithLogits(
-        features=x, labels=y
-    )
-    loss = np.asarray(loss_f32)
-    backprop = np.asarray(backprop_f32)
+    with torch.enable_grad():
+        logits = torch.from_numpy(x).requires_grad_()
+        loss_tensor = torch.nn.functional.cross_entropy(
+            logits, torch.from_numpy(y), reduction="none"
+        )
+        (backprop_tensor,) = torch.autograd.grad(loss_tensor.sum(), logits)
+    loss = loss_tensor.detach().numpy()
+    backprop = backprop_tensor.numpy()
 
     loss = loss.reshape(label_shape).astype(features_dtype, copy=False)
     backprop = backprop.reshape(feat_shape).astype(features_dtype, copy=False)
     return [loss, backprop]
+
+
+class SparseSoftmaxCrossEntropyWithLogitsTestSpec:
+    """SparseSoftmaxCrossEntropyWithLogits test spec (kernel / GEIR flow, numpy in and out)."""
+
+    golden = sparse_softmax_cross_entropy_with_logits_golden

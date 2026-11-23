@@ -12,11 +12,16 @@
 
 import numpy as np
 
+__spec__ = {
+    "lp_loss": "LpLossTestSpec",
+    "torch.nn.functional.l1_loss": "TorchL1LossTestSpec",
+}
+
 __golden__ = {"kernel": {"lp_loss": "lp_loss_golden"}}
 
 
-def lp_loss_golden(predict, label, *, reduction='mean', **kwargs):
-    '''
+def lp_loss_golden(predict, label, *, reduction="mean", **kwargs):
+    """
     Golden function for lp_loss.
     All the parameters (names and order) follow @lp_loss_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
@@ -27,7 +32,12 @@ def lp_loss_golden(predict, label, *, reduction='mean', **kwargs):
 
     Returns:
         Output tensor
-    '''
+    """
+    # Like ops-cv !2491: this IR excludes FP64; undo TTK's FP32 promotion.
+    predict, label = (
+        value.astype(np.float32) if value.dtype == np.float64 else value
+        for value in (predict, label)
+    )
     predict_shape = predict.shape
     predict_dtype = predict.dtype
 
@@ -59,3 +69,52 @@ def lp_loss_golden(predict, label, *, reduction='mean', **kwargs):
         loss = loss.astype(predict_dtype, copy=False)
 
     return loss
+
+
+def torch_l1_loss_golden(
+    input,
+    target,
+    size_average=None,
+    reduce=None,
+    reduction="mean",
+    weight=None,
+    **kwargs,
+):
+    """E2E golden for torch.nn.functional.l1_loss (LpLoss with p=1).
+
+    The parameter list mirrors the full torch signature positionally, because the
+    E2E flow fills every parameter (inputs and attributes alike) by position.
+    Match the legacy CPU framework reference at the input dtype, including
+    intermediate rounding and overflow; do not promote the reference to float64.
+    """
+    import torch
+
+    # Older Torch versions lack weight; do not pass an absent optional argument.
+    weight_kwargs = {"weight": weight.detach().cpu()} if weight is not None else {}
+    result = torch.nn.functional.l1_loss(
+        input.detach().cpu(),
+        target.detach().cpu(),
+        size_average=size_average,
+        reduce=reduce,
+        reduction=reduction,
+        **weight_kwargs,
+    )
+    return [result]
+
+
+class LpLossTestSpec:
+    """LpLoss test spec (kernel / GEIR flow, numpy in and out)."""
+
+    golden = lp_loss_golden
+
+
+class TorchL1LossTestSpec:
+    """LpLoss test spec (e2e flow).
+
+    Registered because an E2E run was verified to dispatch to this operator:
+    ``torch.nn.functional.l1_loss`` reports eager kernel
+    ``aclnnL1Loss_LpLossAiCore_LpLoss``, i.e. it lands on LpLoss (p=1), which is
+    the only p value this aclnn entry covers.
+    """
+
+    golden = torch_l1_loss_golden

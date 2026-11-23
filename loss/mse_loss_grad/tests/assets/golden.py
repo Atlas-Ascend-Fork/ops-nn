@@ -12,11 +12,15 @@
 
 import numpy as np
 
+__spec__ = {
+    "mse_loss_grad": "MseLossGradTestSpec",
+}
+
 __golden__ = {"kernel": {"mse_loss_grad": "mse_loss_grad_golden"}}
 
 
 def mse_loss_grad_golden(predict, label, dout, *, reduction="mean", **kwargs):
-    '''
+    """
     Golden function for mse_loss_grad_golden.
     All the parameters (names and order) follow @mse_loss_grad_golden_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
@@ -27,8 +31,12 @@ def mse_loss_grad_golden(predict, label, dout, *, reduction="mean", **kwargs):
 
     Returns:
         Output tensor
-    '''
-
+    """
+    # Like ops-cv !2491: this IR excludes FP64; undo TTK's FP32 promotion.
+    predict, label, dout = (
+        value.astype(np.float32) if value.dtype == np.float64 else value
+        for value in (predict, label, dout)
+    )
     ori_dtype = predict.dtype
     p_shape = predict.shape
     l_shape = label.shape
@@ -44,14 +52,20 @@ def mse_loss_grad_golden(predict, label, dout, *, reduction="mean", **kwargs):
         label = label.astype("float32")
         dout = dout.astype("float32")
     sub_res = np.subtract(predict, label)
-    if 'mean' == reduction:
+    if "mean" == reduction:
         reduce_elts = 1.0
         for i in p_shape:
             reduce_elts *= i
-        cof = (reduce_elts**(-1)) * 2.0
+        cof = (reduce_elts ** (-1)) * 2.0
     else:
         cof = 2.0
 
     norm_grad = sub_res * cof
     grad_res = norm_grad * dout
     return grad_res.astype(ori_dtype, copy=False)
+
+
+class MseLossGradTestSpec:
+    """MseLossGrad test spec (kernel / GEIR flow, numpy in and out)."""
+
+    golden = mse_loss_grad_golden

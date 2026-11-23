@@ -13,7 +13,13 @@
 import math
 import numpy as np
 
-__golden__ = {"kernel": {"binary_cross_entropy_grad": "binary_cross_entropy_grad_golden"}}
+__spec__ = {
+    "binary_cross_entropy_grad": "BinaryCrossEntropyGradTestSpec",
+}
+
+__golden__ = {
+    "kernel": {"binary_cross_entropy_grad": "binary_cross_entropy_grad_golden"}
+}
 
 
 def _broadcast_to_maxshape(shapes: list):
@@ -24,10 +30,13 @@ def _broadcast_to_maxshape(shapes: list):
         else:
             max_value = no_one_shape[0]
         return max_value
+
     max_dim_length = max(len(list(shape)) for shape in shapes)
     input_shapes = []
     for shape in shapes:
-        input_shapes.append([1 for _ in range(max_dim_length - len(shape))] + list(shape))
+        input_shapes.append(
+            [1 for _ in range(max_dim_length - len(shape))] + list(shape)
+        )
     input_shapes = list(map(list, zip(*input_shapes)))
     max_shape = [_max(shape) for shape in input_shapes]
     input_shapes = list(map(list, zip(*input_shapes)))
@@ -40,8 +49,10 @@ class Constant:
     SCALAR_EPS = 1e-12
 
 
-def binary_cross_entropy_grad_golden(x, y, grad_output, weight=None, *, reduction='mean', **kwargs):
-    '''
+def binary_cross_entropy_grad_golden(
+    x, y, grad_output, weight=None, *, reduction="mean", **kwargs
+):
+    """
     Golden function for binary_cross_entropy_grad.
     All the parameters (names and order) follow @binary_cross_entropy_grad_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
@@ -52,7 +63,14 @@ def binary_cross_entropy_grad_golden(x, y, grad_output, weight=None, *, reductio
 
     Returns:
         Output tensor
-    '''
+    """
+    # Like ops-cv !2491: this IR excludes FP64; undo TTK's FP32 promotion.
+    x, y, grad_output, weight = (
+        value.astype(np.float32)
+        if value is not None and value.dtype == np.float64
+        else value
+        for value in (x, y, grad_output, weight)
+    )
     x_shape = x.shape
     y_shape = y.shape
     grad_shape = grad_output.shape
@@ -88,3 +106,9 @@ def binary_cross_entropy_grad_golden(x, y, grad_output, weight=None, *, reductio
         result = np.multiply(result, cof)
 
     return result.astype(ori_dtype, copy=False)
+
+
+class BinaryCrossEntropyGradTestSpec:
+    """BinaryCrossEntropyGrad test spec (kernel / GEIR flow, numpy in and out)."""
+
+    golden = binary_cross_entropy_grad_golden

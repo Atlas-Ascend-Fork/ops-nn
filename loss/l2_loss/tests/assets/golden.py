@@ -12,11 +12,15 @@
 
 import numpy as np
 
+__spec__ = {
+    "l2_loss": "L2LossTestSpec",
+}
+
 __golden__ = {"kernel": {"l2_loss": "l2_loss_golden"}}
 
 
 def l2_loss_golden(x, *, output_dtypes=None, **kwargs):
-    '''
+    """
     Golden function for l2_loss.
     All the parameters (names and order) follow @l2_loss_def.cpp without outputs.
     All the input Tensors are numpy.ndarray.
@@ -27,12 +31,18 @@ def l2_loss_golden(x, *, output_dtypes=None, **kwargs):
 
     Returns:
         Output tensor
-    '''
+    """
     out_dtype = kwargs.get("output_dtypes", output_dtypes)[0]
     in_shape = x.shape
     in_data = x.astype(out_dtype)
     reduce_axis = tuple([i for i in range(len(in_shape))])
-    in_data = in_data*(1/(2**0.5))
-    in_data = in_data*in_data
+    in_data = in_data * (1 / (2**0.5))
+    in_data = in_data * in_data
     res = np.sum(in_data, reduce_axis)
     return res
+
+
+class L2LossTestSpec:
+    """L2Loss test spec (kernel / GEIR flow, numpy in and out)."""
+
+    golden = l2_loss_golden
