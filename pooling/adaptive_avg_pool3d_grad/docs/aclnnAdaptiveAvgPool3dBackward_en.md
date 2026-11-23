@@ -158,16 +158,16 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
         <td>The dims of gradOutput, self, and out are not 4 or 5.</td>
       </tr>
       <tr>
-        <td>The shapes of gradOutput, self, and out do not match.</td>
+        <td>The shape of out does not match that of self.</td>
+      </tr>
+      <tr>
+        <td>The dims of gradOutput other than the last three do not match those of self.</td>
       </tr>
       <tr>
         <td>Any dim in the shapes of gradOutput or self is not greater than 0.</td>
       </tr>
       <tr>
         <td>The data formats of gradOutput and self are inconsistent.</td>
-      </tr>
-      <tr>
-        <td>The NC dims are inconsistent.</td>
       </tr>
     </tbody>
     </table>

@@ -156,16 +156,16 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
         <td>gradOutput、self和out的维数不等于4或5。</td>
       </tr>
       <tr>
-        <td>gradOutput、self和out的shape不匹配。</td>
+        <td>out的shape与self不匹配。</td>
+      </tr>
+      <tr>
+        <td>gradOutput除最后三维外的维度与self不一致。</td>
       </tr>
       <tr>
         <td>gradOutput或self的shape的某一维不大于0。</td>
       </tr>
       <tr>
         <td>gradOutput和self的数据格式不一致。</td>
-      </tr>
-      <tr>
-        <td>NC维度不一致。</td>
       </tr>
     </tbody>
     </table>
