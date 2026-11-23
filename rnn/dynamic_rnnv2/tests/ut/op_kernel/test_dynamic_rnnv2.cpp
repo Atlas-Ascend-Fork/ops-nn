@@ -52,7 +52,7 @@ TEST_F(dynamic_r_n_n_v2_test, test_case_1)
     int32_t block_dim = 24;
 
     kernel_ut::SetupTestEnvironment("rnn/dynamic_rnnv2/tests/ut/op_kernel/rnnv2_data", "rnnv2_data");
-    kernel_ut::RunGenData("./rnnv2_data", {"1", "16", "512", "512"});
+    ASSERT_TRUE(kernel_ut::RunGenData("./rnnv2_data", {"1", "16", "512", "512"}));
 
     string path = kernel_ut::GetTestWorkDir();
 
@@ -247,7 +247,7 @@ TEST_F(dynamic_r_n_n_v2_test, test_case_2)
     int32_t block_dim = 24;
 
     kernel_ut::SetupTestEnvironment("rnn/dynamic_rnnv2/tests/ut/op_kernel/rnnv2_data", "rnnv2_data");
-    kernel_ut::RunGenData("./rnnv2_data", {"1", "16", "512", "512"});
+    ASSERT_TRUE(kernel_ut::RunGenData("./rnnv2_data", {"1", "16", "512", "512"}));
 
     string path = kernel_ut::GetTestWorkDir();
 
